@@ -159,6 +159,7 @@
 #  64. assert_delta.ts reportedValues: drop the WANTED_BEFORE skip (the "should return" value reads as a symptom; the finder unit legs fail).
 #  65. seal.ts failThenPass: drop the rewritten-file exclusion (the lone rewritten pinned assertion reads VERIFIED).
 #  67. seal.ts pinDropped: key on the file only again (the F1 unit leg fails); drop the pinLift gate (the F2 unit leg fails); drop CALLED_RIGHT in assert_delta.ts (the called-right unit leg fails).
+#  68. verify.ts goBatchable: drop the targets/changed exclusion (the eligibility leg reads true,true,true,...); runGoBatches: skip the corroboratePass call (the tests-only leg batches 3 files); baseGoBatch: ignore goBatchOn (the base legs count equal go calls); goFileStream: keep every file's events (the base red leg lists every file); baseGoBatch: take every file from the batch with ok = no fail event (the package-state and panic legs fail); goPackagePassed and goStreamGreen both return true at the top (the panic leg and the red-parity leg fail; each of the four checks alone is covered by the others).
 #  66. test_guard.ts defectPinEdits: also accept a structural change (the structural-change unit leg fails) or drop the pin note from seal (the receipt leg fails).
 #  69. edit_shape.ts siblingSites: drop the branch-split test (the straight-line sequence leg reads sibling).
 #  70. edit_shape.ts siblingSites: drop the siblings-agree test (the disagree leg reads sibling) or the literal test (the literal leg reads sibling).
@@ -293,6 +294,11 @@ for kind in mock beforeeach; do
     has "setup $kind: an added $kind in an existing test file is named weakened" "$notes" "weakened test: calc.test.ts"
     [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "setup $kind: it caps the verdict ($(outcome))" || { bad "setup $kind: outcome is '$(outcome)'"; dump; }
 done
+
+# FireLater#24 s3/s4: an implement session that calls a suite already red on the base a spec conflict gets the one correction resume, which now says a base failure is not a conflict; the run delivers.
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_BASE_RED_CONFLICT=1
+[ "$(outcome)" = "VERIFIED" ] && ok "base-red conflict: the correction resume delivered (VERIFIED, not SPEC_CONFLICT)" || { bad "base-red conflict: outcome is '$(outcome)'"; dump; }
+grep -q 'export function multiply' "$REPO/calc.ts" && ok "base-red conflict: the resumed session made the change" || bad "base-red conflict: the change is missing"
 
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict
 n="$(fix_sessions)"
@@ -904,6 +910,29 @@ TS
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go output cap: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go output cap: go is not installed"; fi
 fi
+# Go file a build constraint leaves out (rule 22, real go test through the real engine; the receipt shape of L-Haiku-v132 cli-2459/cli-2478, help_notemplate_test.go behind
+# //go:build urfave_cli_no_template): `go test -json -run ^(TestTagged)$` runs nothing and prints "[no tests to run]". That is a zero run, the same on the base, so the untouched file is
+# skipped by the repo and the fix is VERIFIED on its own fail-then-pass test. Before the fix the stream read as torn ("test count could not be confirmed") and "not run: go:tagged_test.go"
+# capped the run at PARTIAL. Plant: goJson marks a "[no tests to run]" stream dirty again and the run is PARTIAL with that line.
+make_tag_go_repo() {
+    mkdir -p "$1"
+    printf 'module example.com/calc\n\ngo 1.20\n' > "$1/go.mod"
+    printf 'package calc\n\nfunc Add(a, b int) int {\n\treturn a + b\n}\n\nfunc Double(a int) int {\n\treturn a + a + 1\n}\n' > "$1/calc.go"
+    printf 'package calc\n\nimport "testing"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(2, 3) != 5 {\n\t\tt.Fatal("add")\n\t}\n}\n' > "$1/calc_test.go"
+    printf '//go:build special\n\npackage calc\n\nimport "testing"\n\nfunc TestTagged(t *testing.T) {\n\tif Add(1, 1) != 2 {\n\t\tt.Fatal("tagged")\n\t}\n}\n' > "$1/tagged_test.go"
+    return 0
+}
+if command -v go >/dev/null 2>&1; then
+    MAKE_REPO=make_tag_go_repo run_engine "fix Double(a) in calc.go so it returns twice a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.go E2E_STUB_REPLACE=$'\treturn a + a + 1' E2E_STUB_SNIPPET=$'\treturn a * 2' E2E_STUB_TEST_FILE=calc_test.go \
+        E2E_STUB_TEST_APPEND=$'\nfunc TestDouble(t *testing.T) {\n\tif got := Double(3); got != 6 {\n\t\tt.Errorf("want 6 got %d", got)\n\t}\n}' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    notes="$(wo_receipt np)"
+    [ "$(outcome)" = "VERIFIED" ] && ok "go build-tagged file: an untouched test file the default build leaves out does not cap a fail-then-pass fix: VERIFIED" || { bad "go build-tagged file: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$notes" in *"not run: go:tagged_test.go"*) bad "go build-tagged file: still listed as not run: $notes" ;; *"go:tagged_test.go"*) ok "go build-tagged file: disclosed as skipped by the repo, not as not run" ;; *) bad "go build-tagged file: the file is not disclosed at all: $notes" ;; esac
+    gt="$(cd "$ROOT/loki-ts" && bun -e 'const { classifyCheck } = await import("./src/util/check_result.ts"); const ev = (o: object) => JSON.stringify({ Package: "p", ...o }); const s = (...e: string[]) => e.join("\n"); const none = s(ev({ Action: "start" }), ev({ Action: "output", Output: "testing: warning: no tests to run\n" }), ev({ Action: "output", Output: "ok  \tp\t0.1s [no tests to run]\n" }), ev({ Action: "pass" })); const both = s(ev({ Action: "start" }), ev({ Action: "run", Test: "TestA" }), ev({ Action: "pass", Test: "TestA" }), ev({ Action: "output", Output: "ok  \tp\t0.1s [no tests to run]\n" }), ev({ Action: "pass" })); const c = (out: string, ok = true) => { const k = classifyCheck({ kind: "test", runner: "go", ok, out } as never); return `${k.result}:${k.n ?? "-"}`; }; console.log([c(none), c(both), c(none, false)].join(","))' 2>&1 | tail -1)"
+    [ "$gt" = "not_run:0,not_run:-,not_run:-" ] && ok "go no-tests unit: a whole stream that ran no test is a zero run (n 0); one that also reports a passing test is doubt; a non-zero exit is never a zero run ($gt)" || bad "go no-tests unit: got '$gt'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go build-tagged file: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go build-tagged file: go is not installed"; fi
+fi
 # Wall off (the default): no tree snapshot is taken, so a snapshot that cannot be made (here a 1 ms copy budget, as on a huge pnpm tree) never reads as a failed Wall.
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     MAKE_REPO=make_wo_py_repo run_engine "fix double(a) in calc.py so it returns twice a" E2E_WALL= LOKI_E10_WALL=0 E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a + 1' E2E_STUB_SNIPPET=$'    return a * 2' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_WALL_SNAPSHOT_TIMEOUT_S=0.001
@@ -929,6 +958,40 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     [ "$mpd" = "yes|tests/unit_tests_for_long_nodeids_package/test_calc_long_name_here.py" ] && ok "pytest declared-env base proof: a declared env with no venv still yields a fail-then-pass proof naming the file ($mpd)" || bad "pytest declared-env base proof: got '$mpd'"
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest declared-env base proof: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest declared-env base proof: pytest is not installed"; fi
+fi
+# Issue-reported exception as fail-then-pass proof (rule 22, real pytest through the real engine; the receipt shape of L-Haiku-v132 mit-1277: the base raises
+# "RuntimeError: input already opened", which the issue itself shows as what happens now, so the base failure is not an assertion and the run read "no test shown to fail on the base commit and pass on the change: test fails without the fix: yes").
+# A base failure that is exactly an error the issue shows as observed (type and message) counts like an assertion, but only when the failed test asserts a result against a non-trivial
+# expected value. Stays PARTIAL: an error the issue does not quote; one it asks for ("should raise"); a quoted missing-API TypeError; and, with a wrong fix, a test that only calls, re-raises or asserts `is not None` (review of #545, P1-P3).
+# Plants: assertionFailure ignores `reported` (the positive leg reads PARTIAL); MISSING_API drops the TypeError shape (the TypeError leg reads VERIFIED); assertsResult returns true
+# (P1-P3 read VERIFIED); reportedErrors ignores WANTED_CUE (the should-raise leg reads VERIFIED).
+make_rx_py_repo() {
+    mkdir -p "$1"
+    printf 'def add(a, b):\n    return a + b\n\n\ndef double(a, factor=None):\n    raise RuntimeError("double is broken")\n' > "$1/calc.py"
+    printf 'import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n' > "$1/test_calc.py"
+    return 0
+}
+rx() { MAKE_REPO=make_rx_py_repo run_engine "$1" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    raise RuntimeError("double is broken")' E2E_STUB_SNIPPET="$2" E2E_STUB_TEST_FILE=test_calc.py E2E_STUB_TEST_APPEND="$3" LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10; notes="$(wo_receipt np)"; mp="$(wo_receipt mp)"; }
+RX_ISSUE=$'fix double(a) in calc.py: every call fails with\n\n    RuntimeError: double is broken\n\nIt should return twice a.'
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    rx "$RX_ISSUE" $'    return a * 2' $'\n\ndef test_double():\n    assert calc.double(3) == 6\n'
+    [ "$(outcome)" = "VERIFIED" ] && ok "issue-reported exception: a base failure raising exactly the RuntimeError the issue quotes, in a test asserting double(3) == 6, is fail-then-pass proof: VERIFIED" || { bad "issue-reported exception: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$mp" in *"fails without the fix: yes"*"test_calc.py"*) ok "issue-reported exception: the proof line names the file ($mp)" ;; *) bad "issue-reported exception: no proof line naming test_calc.py: '$mp'" ;; esac
+    rx $'fix double(a) in calc.py so it returns twice a' $'    return a * 2' $'\n\ndef test_double():\n    assert calc.double(3) == 6\n'
+    [ "$(outcome)" = "PARTIAL" ] && ok "unreported exception: the same RuntimeError on the base, not quoted by the issue, stays PARTIAL" || { bad "unreported exception: outcome is '$(outcome)'"; dump; }
+    rx $'fix double(a) in calc.py: double(3, factor=2) fails with\n\n    TypeError: double() got an unexpected keyword argument \x27scale\x27\n\nIt should return a times the scale.' $'    return a * 2\n\n\ndef double(a, scale=2):\n    return a * scale' $'\n\ndef test_double_scale():\n    assert calc.double(3, scale=2) == 6\n'
+    case "$(outcome)" in VERIFIED) bad "reported missing-API TypeError: a base failure the issue quotes as an unexpected keyword argument is VERIFIED ($notes)"; dump ;; *) ok "reported missing-API TypeError: stays not VERIFIED ($(outcome))" ;; esac
+    rx $'fix double(a) in calc.py: for a < 0 it should raise\n\n    RuntimeError: double is broken\n\nand for any other a it must return twice a.' $'    return a * 2' $'\n\ndef test_double():\n    assert calc.double(3) == 6\n'
+    [ "$(outcome)" = "PARTIAL" ] && ok "wanted exception: a base failure raising the error the issue asks for (should raise), not one it observed, stays PARTIAL" || { bad "wanted exception: outcome is '$(outcome)' ($notes)"; dump; }
+    for p in $'p1|    return 0|\n\ndef test_double():\n    calc.double(3)\n' $'p2|    return a + 1|\n\ndef test_double():\n    try:\n        calc.double(3)\n    except RuntimeError:\n        raise\n' $'p3|    return a + 1|\n\ndef test_double():\n    assert calc.double(3) is not None\n'; do
+        IFS='|' read -r pn pfix ptest <<< "$p"; ptest="${p#*|*|}"
+        rx "$RX_ISSUE" "$pfix" "$ptest"
+        [ "$(outcome)" = "PARTIAL" ] && ok "issue-reported exception $pn: a wrong fix with a test that asserts no result stays PARTIAL" || { bad "issue-reported exception $pn: outcome is '$(outcome)' ($notes)"; dump; }
+    done
+    rr="$(cd "$ROOT/loki-ts" && bun -e 'const { assertionFailure, reportedErrors } = await import("./src/util/check_result.ts"); const out = (e: string, t = "test_x") => "E       " + e + "\n\nFAILED test_calc.py::" + t + " - " + e + "\n"; const rep = reportedErrors("it raises `RuntimeError(\x27input already opened\x27)` and later\n    ValueError: bad size.\nIt should raise KeyError: missing instead.\n"); const src = "def test_x():\n    assert f() == [1, 2]\n\n\ndef test_y():\n    assert f() is not None\n\n\ndef test_z():\n    with pytest.raises(KeyError):\n        f()\n"; console.log([rep.observed.join("|"), rep.wanted.join("|"), assertionFailure("pytest", out("RuntimeError: input already opened"), rep, src), assertionFailure("pytest", out("RuntimeError: input already opened"), rep, ""), assertionFailure("pytest", out("RuntimeError: input already opened", "test_y"), rep, src), assertionFailure("pytest", out("RuntimeError: input already opened", "test_z"), rep, src), assertionFailure("pytest", out("RuntimeError: other"), rep, src), assertionFailure("pytest", out("KeyError: missing"), rep, src), assertionFailure("pytest", out("ImportError: cannot import name x"), { observed: ["ImportError: cannot import name x"], wanted: [] }, src), assertionFailure("pytest", out("RuntimeError: input already opened") + out("NameError: q"), rep, src)].join(","))' 2>&1 | tail -1)"
+    [ "$rr" = "RuntimeError: input already opened|ValueError: bad size,KeyError,true,false,false,true,false,false,false,false" ] && ok "issue-reported exception unit: observed vs wanted errors are told apart; only an exact observed error in a test that asserts a result (or expects a wanted type) counts ($rr)" || bad "issue-reported exception unit: got '$rr'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "issue-reported exception: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: issue-reported exception: pytest is not installed"; fi
 fi
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
@@ -1255,6 +1318,87 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     [ -n "$(ls "$T"/pin-prompt.*.implement* 2>/dev/null)" ] && [ "$(cat "$T"/pin-prompt.*.implement* 2>/dev/null | grep -c 'pin the behavior')" = "0" ] && ok "defect pin: the brief is unchanged by default (LOKI_E10_DEFECT_PIN unset)" || bad "defect pin: the brief lists pins without LOKI_E10_DEFECT_PIN=1"
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "defect pin: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: defect pin e2e: pytest is not installed"; fi
+fi
+
+# Go test batching (LOKI_E10_GO_BATCH, default on), real `go test`: untouched go test files of one package vouch together in one run; a
+# red file voids the batch and every file runs alone; Wall, task-named and edited files never join (their per-file run is the fail-then-pass
+# proof); the base reruns batch per package with the same verdicts; LOKI_E10_GO_BATCH=0 restores one run per file.
+if command -v go >/dev/null 2>&1; then
+    GB="$T/gobatch"; mkdir -p "$GB/shim"
+    printf '#!/bin/bash\necho "$*" >> "$GOLOG"\nexec "%s" "$@"\n' "$(command -v go)" > "$GB/shim/go"; chmod +x "$GB/shim/go"
+    mkgo() { # <dir> <files> <red indexes, comma separated>
+        local d="$1" i=1 w; mkdir -p "$d/pk"
+        printf 'module example.com/gb\n\ngo 1.21\n' > "$d/go.mod"; printf 'package pk\n\nfunc Id(x int) int { return x }\n' > "$d/pk/pk.go"
+        while [ "$i" -le "$2" ]; do
+            w=$i; case ",$3," in *",$i,"*) w=999 ;; esac
+            printf 'package pk\n\nimport "testing"\n\nfunc TestF%sA(t *testing.T) {\n\tif Id(%s) != %s {\n\t\tt.Fatal("bad")\n\t}\n}\n\nfunc TestF%sB(t *testing.T) {\n\tif Id(2) != 2 {\n\t\tt.Fatal("bad")\n\t}\n}\n' "$i" "$i" "$w" "$i" > "$d/pk/f${i}_test.go"; i=$((i+1))
+        done
+        (cd "$d" && git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -qm base)
+    }
+    mkgo "$GB/green" 4 ""; mkgo "$GB/red" 4 3; mkgo "$GB/basered" 6 2,4,5
+    mkgo "$GB/tonly" 3 ""; rm -f "$GB/tonly/pk/pk.go"; for i in 1 2 3; do printf 'package pk\n\nimport "testing"\n\nfunc TestF%sA(t *testing.T) {}\n\nfunc TestF%sB(t *testing.T) {}\n' "$i" "$i" > "$GB/tonly/pk/f${i}_test.go"; done
+    gofile() { printf 'package pk\n\nimport "testing"\n\nfunc Test%s(t *testing.T) {\n%s\n}\n' "$2" "$3" > "$1"; }
+    mkgl() { # <dir> <f1 f2 f3 base bodies...>: base committed, then head bodies written uncommitted
+        local d="$1"; mkdir -p "$d/pk"; printf 'module example.com/gb\n\ngo 1.21\n' > "$d/go.mod"; printf 'package pk\n\nvar Shared int\n' > "$d/pk/pk.go"
+        gofile "$d/pk/f1_test.go" F1A '	_ = Shared'; gofile "$d/pk/f2_test.go" F2A "$2"; gofile "$d/pk/f3_test.go" F3A "$3"
+        (cd "$d" && git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -qm base)
+        [ -n "${4:-}" ] && gofile "$d/pk/f2_test.go" F2A "$4" && gofile "$d/pk/f3_test.go" F3A "$5"
+        return 0
+    }
+    # global: f2 sets a package global that makes f3 fail beside it on base; alone, both pass on base. Head: both fail (the change broke them).
+    mkgl "$GB/global" '	Shared = 5' '	if Shared == 5 {
+		t.Fatal("order")
+	}' '	Shared = 5
+	t.Fatal("head2")' '	t.Fatal("head3")'
+    # panic: f2 panics (a nil map write) and f3 fails before and after the change; the panic kills the batch binary so f3 has no events.
+    mkgl "$GB/panic" '	var m map[string]int
+	m["a"] = 1' '	t.Fatal("preexisting red")'
+    cat > "$GB/probe.ts" <<'TSEOF'
+const ROOT = process.env.ROOT!, v = await import(ROOT + "/loki-ts/src/engine10/stages/verify.ts"), cr = await import(ROOT + "/loki-ts/src/util/check_result.ts");
+const { failIds } = await import(ROOT + "/loki-ts/src/engine10/failures.ts");
+const repo = process.env.REPO!, n = Number(process.env.N), sig = new AbortController().signal, mode = process.env.MODE;
+const ctx: any = { repoDir: repo, baseSha: Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: repo }).stdout.toString().trim(), emit: () => {} };
+const tests = Array.from({ length: n }, (_, i) => ({ runner: "go", path: `pk/f${i + 1}_test.go` }));
+const alone = async (t: any) => { const tc = cr.commandFor(t, repo, null), a = await v.runOnce(tc.cmd, tc.args, tc.cwd, sig, {}); return { a, c: await cr.corroboratePass(cr.classifyCheck({ kind: "test", ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, runner: "go" }), a.out, "go", tc.args, { cwd: tc.cwd, env: process.env, signal: sig }) }; };
+if (mode === "pure") {
+  const tg = new Set(["go:pk/f1_test.go"]), ch = ["pk/f2_test.go"], f = (i: number, env: any) => v.goBatchable(tests[i], tg, ch, env);
+  console.log([f(2, {}), f(0, {}), f(1, {}), f(2, { LOKI_E10_GO_BATCH: "0" }), f(2, { LOKI_E10_VERIFY_BATCH: "0" })].join(","));
+} else if (mode === "head") {
+  const got = await v.runGoBatches(ctx, tests, null, sig, () => {}), per = new Map<string, string>();
+  for (const t of tests) { const { c } = await alone(t); per.set(v.testCheckName(t), `${c.result}:${c.n}`); }
+  console.log(JSON.stringify({ batched: [...got.entries()].map(([k, c]: any) => `${k}=${c.result}:${c.n}`), alone: [...per.entries()].map(([k, r]) => `${k}=${r}`) }));
+} else {
+  const checks: any[] = [];
+  for (const t of tests) { const { a, c } = await alone(t); checks.push({ name: v.testCheckName(t), cmd: "go test", ...c, ids: c.result === "fail" ? failIds(a.out) : undefined }); }
+  const r = await v.subtractBase(ctx, null, checks, tests, [], new Set(), new Set(process.env.REL ? checks.map((c) => c.name) : []), sig);
+  console.log(JSON.stringify({ knownRed: r.knownRed, weak: r.weak, cnt: r.cnt }));
+}
+TSEOF
+    gb() { env "PATH=$GB/shim:$PATH" "GOLOG=$GB/log" ROOT="$ROOT" "$@" bun --no-env-file --config=/dev/null "$GB/probe.ts" 2>&1; }
+    P="$(gb MODE=pure REPO="$GB/green" N=3)"
+    [ "$P" = "true,false,false,false,false" ] && ok "go batch: an untouched go file batches; Wall/task-named and edited files never do; LOKI_E10_GO_BATCH=0 and LOKI_E10_VERIFY_BATCH=0 turn it off" || bad "go batch eligibility gave: $P"
+    H="$(gb MODE=head REPO="$GB/green" N=4)"
+    [ "$(printf '%s' "$H" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(len(d["batched"])==4 and sorted(d["batched"])==sorted(d["alone"]))' 2>&1)" = True ] \
+        && ok "go batch: a green package vouched in one run gives each file the same result and test count as its own run" || bad "go batch green vs per-file differ: $H"
+    H="$(gb MODE=head REPO="$GB/red" N=4)"
+    [ "$(printf '%s' "$H" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d["batched"]==[] and [a.split("=")[0] for a in d["alone"] if a.split("=")[1].startswith("fail")]==["go:pk/f3_test.go"])' 2>&1)" = True ] \
+        && ok "go batch: one red file voids the batch; every file runs alone and only the red file is attributed" || bad "go batch with a red file gave: $H"
+    H="$(gb MODE=head REPO="$GB/tonly" N=3)"
+    [ "$(printf '%s' "$H" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d["batched"]==[] and all(a.split("=")[1].startswith("not_run") for a in d["alone"]))' 2>&1)" = True ] \
+        && ok "go batch: a package whose pass corroboration refuses (tests only, no module code) is never vouched by the batch; every file runs alone" || bad "go batch tests-only package gave: $H"
+    for knob in 1 0; do : > "$GB/log"; eval "BR$knob=\"\$(gb MODE=base REPO=\"$GB/basered\" N=6 LOKI_E10_GO_BATCH=$knob)\""; eval "BC$knob=\$(grep -c -- '-json -run' \"$GB/log\")"; done
+    [ "$BR1" = "$BR0" ] && printf '%s' "$BR1" | grep -q 'go:pk/f2_test.go","go:pk/f4_test.go","go:pk/f5_test.go' \
+        && ok "go batch: red untouched files on base keep the per-file known-red verdict (red files rerun alone: $BC1 go calls vs $BC0)" || bad "go base batch: verdict '$BR1' vs '$BR0', go calls $BC1 vs $BC0"
+    for fxn in global panic; do for knob in 1 0; do eval "G${fxn}$knob=\"\$(gb MODE=base REPO=\"$GB/$fxn\" N=3 LOKI_E10_GO_BATCH=$knob)\""; done; done
+    [ "$Gglobal1" = "$Gglobal0" ] && printf '%s' "$Gglobal1" | grep -q '"knownRed":\[\]' \
+        && ok "go batch: a file red only beside a sibling's package state on base is rerun alone, so a change-introduced failure is never excused as pre-existing" || bad "go base batch with package state: '$Gglobal1' vs per-file '$Gglobal0'"
+    [ "$Gpanic1" = "$Gpanic0" ] && printf '%s' "$Gpanic1" | grep -q 'f2_test.go","go:pk/f3_test.go' \
+        && ok "go batch: a panic in one file on base leaves later files to rerun alone, each attributed correctly" || bad "go base batch with a panic: '$Gpanic1' vs per-file '$Gpanic0'"
+    for knob in 1 0; do : > "$GB/log"; eval "SR$knob=\"\$(gb MODE=base REPO=\"$GB/green\" N=4 REL=1 LOKI_E10_GO_BATCH=$knob)\""; eval "SC$knob=\$(grep -c -- '-json -run' \"$GB/log\")"; done
+    [ "$SR1" = "$SR0" ] && [ "${SC1:-0}" -lt "${SC0:-0}" ] && ok "go batch: relevant files rerun on base per package give the same counts and weak list ($SC1 go calls vs $SC0)" || bad "go base batch (relevant): '$SR1' vs '$SR0', go calls $SC1 vs $SC0"
+    grep -q 'goBatchable(t, targets0, changed)' loki-ts/src/engine10/stages/verify.ts && ok "go batch: the verify stage selects batch members with goBatchable(Wall, task-named and edited files excluded)" || bad "go batch: verify.ts does not route through goBatchable"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go batch: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go batch: go is not installed"; fi
 fi
 
 finish
