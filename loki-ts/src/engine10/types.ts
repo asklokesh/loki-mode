@@ -8,7 +8,7 @@ export const STAGE_BUDGETS: Readonly<Record<StageName, { targetS: number | null;
   wall: { targetS: 45, limitS: 90 },
   implement: { targetS: 180, limitS: 480 }, // LOKI_E10_IMPLEMENT_KILL_S; 1800 when deep
   verify: { targetS: 60, limitS: 120 },
-  fix: { targetS: 90, limitS: 180 },
+  fix: { targetS: 60, limitS: 90 },
   commit: { targetS: 5, limitS: 30 }, // not in the ENGINE.md table; engine-chosen placeholder
   seal: { targetS: 15, limitS: 60 },
   pr: { targetS: 15, limitS: 60 },

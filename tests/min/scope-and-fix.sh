@@ -733,6 +733,9 @@ wo_legs() {
     WO_RED=1 wo E2E_STUB_SNIPPET="$good" E2E_STUB_TEST_APPEND="$newpass"
     [ "$(outcome)" = "PARTIAL" ] && ok "$label red on base: an edited test file that was already red on the base is not fail-then-pass proof (PARTIAL)" || { bad "$label red on base: outcome is '$(outcome)'"; dump; }
 }
+# Cost step b: a second fix round is not spent when every remaining blocking group is a full-suite failure; the fix session limit is 90 s.
+FR="$(cd "$ROOT/loki-ts" && bun -e 'const { onlyFullSuiteRed } = await import("./src/engine10/machine.ts"); const { fixStage } = await import("./src/engine10/stages/fix.ts"); const g = (s: string) => ({ signature: s }); console.log([onlyFullSuiteRed({ failures_grouped: [g("full suite: vitest FAIL a")] }), onlyFullSuiteRed({ failures_grouped: [g("full suite: npm x"), g("vitest:a.test.ts FAIL b")] }), onlyFullSuiteRed({ failures_grouped: [] }), onlyFullSuiteRed(undefined), fixStage.limitS].join(","))' 2>&1 | tail -1)"
+[ "$FR" = "true,false,false,false,90" ] && ok "fix rounds: only-full-suite red caps at one round; mixed or empty does not; fix limit 90 s ($FR)" || bad "fix rounds: got '$FR'"
 WD="$(cd "$ROOT/loki-ts" && bun -e 'const { wallEnabled } = await import("./src/engine10/sizing.ts"); console.log([wallEnabled({}), wallEnabled({ LOKI_E10_WALL: "" }), wallEnabled({ LOKI_E10_WALL: "0" }), wallEnabled({ LOKI_E10_WALL: "1" }), wallEnabled({ LOKI_E10_WALL: "on" })].join(","))' 2>&1)"
 [ "$WD" = "false,false,false,true,true" ] && ok "wall default: the Wall session is off unless LOKI_E10_WALL=1/on ($WD)" || bad "wall default: wallEnabled gave '$WD'"
 # Wall off (the default): no tree snapshot is taken, so a snapshot that cannot be made (here a 1 ms copy budget, as on a huge pnpm tree) never reads as a failed Wall.

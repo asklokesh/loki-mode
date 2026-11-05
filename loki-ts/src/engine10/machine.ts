@@ -56,6 +56,8 @@ const harnessOnlyFail = (d: Obj | undefined): boolean => { const f = (Array.isAr
 /** FireLater#21: verify's blocking checks are all collateral checks failing the same way on base (collateral_same_error), plus any full suite (which repeats them); a
  *  re-verify after the fix round decides, so a full-suite failure the change caused still blocks there. */
 export const onlyCollateralRed = (d: Obj | undefined): boolean => { const col = Array.isArray(d?.collateral_same_error) ? (d.collateral_same_error as unknown[]).map(String) : [], b = Array.isArray(d?.blocking_checks) ? (d.blocking_checks as unknown[]).map(String) : []; return col.length > 0 && b.length > 0 && b.every((n) => col.includes(n) || n.startsWith("full suite")); };
+/** Cost step b: every blocking group is a full-suite failure (a signature naming "full suite"): a second fix round rarely fixes a suite the change did not touch, so one round is the cap there. */
+export const onlyFullSuiteRed = (d: Obj | undefined): boolean => Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0 && (d.failures_grouped as { signature?: unknown }[]).every((g) => String(g.signature ?? "").startsWith("full suite"));
 export const hasFailures = (d: Obj | undefined): boolean => (Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0 && !harnessOnlyFail(d)) || (typeof d?.holdout_failed === "number" && d.holdout_failed > 0); // C-C4b: a held-out failure is only an opaque count
 /** The fix loop's input after a verify stopped at its limit: the earlier failure groups minus those whose check the stopped verify saw pass
  *  (FireLater#24: fix round 2 was fed a Wall failure the stopped verify had already seen pass, 27 of 27). A group belongs to the check whose
@@ -281,7 +283,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         sigs.push(sigOf(outputs.verify, results[0]));
         let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
         let noopSig: string | null = null; // anti-loop: the verify signature that fed the last fix round that left the tree unchanged
-        for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
+        for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && !(round > 1 && onlyFullSuiteRed(outputs.verify)) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
           const wallBefore = wallSignature(outputs, ctx.repoDir);
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;

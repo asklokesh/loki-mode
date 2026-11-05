@@ -29,8 +29,8 @@ export function buildFixBrief(task: string, groups: FailureGroup[], diff: string
 
 export const fixStage: Stage = {
   name: "fix",
-  targetS: 90,
-  limitS: 180,
+  targetS: 60,
+  limitS: 90,
 
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     const prior = ctx.outputs();
