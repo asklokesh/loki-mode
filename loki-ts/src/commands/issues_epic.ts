@@ -3,7 +3,7 @@
 //      checks the schema, refuses cycles and refuses a slice whose dependencies are not on one stack);
 //   2. a split has at most MAX_SLICES slices; slices run in dependency order, those with satisfied dependencies concurrently up to --parallel, each as a normal engine10 run in its own worktree started on its stack parent's
 //      run branch (roots on HEAD), with the PR base set to that parent branch. The PR itself is the run's own PR stage;
-//   3. a slice that is not VERIFIED or PARTIAL with a PR stops its dependents, which are recorded SKIPPED with the reason;
+//   3. a slice that is not VERIFIED or PARTIAL with a PR stops its dependents and only its dependents (independent slices still run), which are recorded SKIPPED with the reason;
 //   4. renderEpicTree prints the epic as a tree of slice, outcome, PR and cost.
 import type { GhIssue } from "./issues_run.ts";
 import { exitCodeOf, labelCol } from "../engine10/output.ts";
@@ -183,8 +183,8 @@ export function planComment(triageReason: string, slices: readonly Slice[]): str
   ].join("\n");
 }
 
-/** A slice may carry dependents only when it produced a pushed branch with a PR (a kept run branch when the epic runs without PRs) and did not fail or block. */
-export const stacksOn = (r: SliceResult | undefined, needPr = true): boolean => !!r && (!needPr || !!r.pr) && !!r.branch && !/^(FAILED|BLOCKED|SKIPPED)/.test(r.outcome);
+/** A slice may carry dependents only when it produced a pushed branch with a PR (a kept run branch when the epic runs without PRs) and its outcome is VERIFIED, PARTIAL, ALREADY_SATISFIED or COMPLETED. A SPEC_CONFLICT, FAILED, BLOCKED, BUDGET_STOP or SKIPPED slice never carries dependents, even with a kept branch (--no-pr). */
+export const stacksOn = (r: SliceResult | undefined, needPr = true): boolean => !!r && (!needPr || !!r.pr) && !!r.branch && /^(VERIFIED|PARTIAL|ALREADY_SATISFIED|COMPLETED)\b/.test(r.outcome);
 
 /** Run one epic's slices: every slice whose dependencies are satisfied starts at once, up to `parallel` at a time, so independent roots never wait on each other. runSlice gets the parent's run branch (null for a root). */
 export async function runEpicSlices(

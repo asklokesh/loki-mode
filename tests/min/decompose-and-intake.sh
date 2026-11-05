@@ -16,6 +16,8 @@
 #            outranks BUDGET_STOP (exit 3), then PARTIAL (exit 6), then VERIFIED; exit codes via exitCodeOf
 #            (LOKI_DURABLE_STATE=1 gives 20). The Cost line sums unrounded slice figures plus every planning session (a
 #            re-ask included); a refused split reports its planning on a Split planning line that backlog adds.
+#   parallel: independent slices of a split run at once (issues_run.ts epicParallel, LOKI_EPIC_PARALLEL), a FAILED or SPEC_CONFLICT
+#            slice skips only its dependents (issues_epic.ts runEpicSlices, stacksOn allowlist); source level, no dist needed.
 #   labels:  engine10's own sizing sees the issue's labels: when the split is refused (the stub writes no split) and
 #            `loki start acme/search#25` runs the issue as one run, its plan stage still sizes the epic-label issue large.
 #   lean:    `loki start "fix the off-by-one in paginate()"` sizes small and takes the lean path (no plan, no Wall).
@@ -59,6 +61,11 @@
 #  16. pr.ts prTitle: clip by UTF-16 units (what.split("")); the pr face check fails (split pair).
 #  17. run_outputs.ts prWorkflowsSkipping: read a scalar branches: as no list; the pr face check fails (main reads skipped).
 #  18. prWorkflowsSkipping: ignore pull_request_target; the pr face check fails (a running workflow claimed skipped).
+#  19. issues_epic.ts runEpicSlices: `running.size >= 1` instead of `>= Math.max(1, parallel)`; the parallel case A fails (peak 1).
+#  20. runEpicSlices: skip every waiting slice once any finished slice does not stack; the parallel case B fails (s4 SKIPPED).
+#  21. stacksOn: put back the denylist `!/^(FAILED|BLOCKED|SKIPPED)/`; the parallel case C fails (s4 runs on the conflicted branch).
+#  22. issues_run.ts epicParallel: drop the LOKI_EPIC_PARALLEL read; the parallel table fails.
+#  23. startIssueEpic: pass the literal 1 to runOneEpic again; the parallel wiring check fails (peak 1).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -313,6 +320,57 @@ printf '%s\n' "$AGG" | grep -q '^durable BUDGET_STOP 20$' && ok "outcome: exit c
 BL="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import backlog
 print(backlog.parse_result(1, "loki: split refused (x); running the issue as one run\nSplit planning: $0.40 (0 slice runs + 1 planning session)\nOutcome:    FAILED\nCost:       $1.10 (claude)\n")[2])' "$ROOT/autonomy/lib" 2>&1)"
 [ "$BL" = "1.5" ] && ok "outcome: backlog adds a refused split's planning cost to the run's cost (0.40 + 1.10)" || bad "outcome: backlog counted $BL for a refused split, want 1.5"
+
+# --- parallel: independent slices run at once, a failing or spec-conflicting slice skips only its dependents (source level) ---
+PAR="$(ROOT="$ROOT" PT="$T/par" EPIC_TITLE="$EPIC_TITLE" EPIC_BODY="$EPIC_BODY" bun --no-env-file --config=/dev/null -e '
+const ep = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
+const ir = await import(process.env.ROOT + "/loki-ts/src/commands/issues_run.ts");
+const { mkdirSync, writeFileSync } = await import("node:fs");
+const sl = (id, dep) => ({ id, title: id, acceptance: ["ok " + id], depends_on: dep, files: [] });
+const split = JSON.stringify({ slices: [sl("s1", []), sl("s2", []), sl("s3", []), sl("s4", ["s1"])] });
+const plan = ep.parseDecomposition(split);
+const sim = async (verdicts, parallel, needPr) => {
+  let live = 0, peak = 0; const order = [];
+  const runSlice = async (s, k, base) => {
+    live++; peak = Math.max(peak, live); order.push(s.id + (base ? "@" + base : ""));
+    await new Promise((r) => setTimeout(r, 40));
+    live--;
+    const v = verdicts[s.id] ?? "VERIFIED";
+    return { id: s.id, title: s.title, parent: plan.parent[s.id] ?? null, outcome: v, pr: needPr && /^(VERIFIED|PARTIAL)/.test(v) ? "https://github.com/a/b/pull/" + k : null, cost: "$0.10", branch: "loki/e10-" + s.id };
+  };
+  const rs = await ep.runEpicSlices(plan, runSlice, () => {}, parallel, () => {}, needPr);
+  return peak + " " + rs.map((r) => r.id + "=" + r.outcome.split(" ")[0]).join(",") + " " + order.join(",");
+};
+console.log("A " + await sim({}, ir.epicParallel({}, "claude"), true));
+console.log("B " + await sim({ s2: "FAILED (exit 1)", s3: "SPEC_CONFLICT" }, 4, true));
+console.log("C " + await sim({ s1: "SPEC_CONFLICT" }, 4, false));
+console.log("T " + [ir.epicParallel({}, "claude"), ir.epicParallel({ LOKI_EPIC_PARALLEL: "1" }, "claude"), ir.epicParallel({}, "opencode"), ir.epicParallel({ LOKI_EPIC_PARALLEL: "9" }, "claude"), ir.epicParallel({ LOKI_EPIC_PARALLEL: "x" }, "claude")].join(" "));
+const wire = async (envx) => {
+  const runDir = process.env.PT + "/run" + (envx.LOKI_EPIC_PARALLEL ?? "d");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(runDir + "/issue.json", JSON.stringify({ provider: "github", repo: "acme/search", number: 24, title: process.env.EPIC_TITLE, body: process.env.EPIC_BODY, labels: [] }));
+  const three = JSON.stringify({ slices: [sl("s1", []), sl("s2", []), sl("s3", [])] });
+  let live = 0, peak = 0, c = 0, out = "";
+  const rc = await ir.startIssueEpic({ repoDir: runDir, runDir, noPr: true, provider: "claude", env: { LOKI_DIR: runDir + "/.loki", ...envx }, inject: {
+    decompose: async () => three,
+    worktree: { create: (n) => { const p = runDir + "/wt-" + n; mkdirSync(p, { recursive: true }); return p; }, remove: () => {} },
+    runner: async () => { live++; peak = Math.max(peak, live); const id = "e10-" + ++c; await new Promise((r) => setTimeout(r, 40)); live--; return { rc: 0, output: "", verdict: "VERIFIED", costUsd: 0.1, runId: id }; },
+    out: (s) => { out += s; }, err: () => {},
+  } });
+  return "rc" + rc + " peak" + peak + (out.includes("up to " + (envx.LOKI_EPIC_PARALLEL ?? "4") + " at once") ? " said" : " silent");
+};
+console.log("W " + await wire({}));
+console.log("W1 " + await wire({ LOKI_EPIC_PARALLEL: "1" }));' 2>&1)"
+printf '%s\n' "$PAR" | sed 's/^/    parallel: /'
+printf '%s\n' "$PAR" | grep -q '^A 3 s1=VERIFIED,s2=VERIFIED,s3=VERIFIED,s4=VERIFIED s1,s2,s3,s4@loki/e10-s1$' \
+    && ok "parallel: 3 independent slices run at once; the dependent starts after its parent, stacked on the parent's run branch" || bad "parallel: case A wrong"
+printf '%s\n' "$PAR" | grep -q '^B 3 s1=VERIFIED,s2=FAILED,s3=SPEC_CONFLICT,s4=VERIFIED ' \
+    && ok "parallel: a FAILED and a SPEC_CONFLICT slice do not stop the independent slices or the dependent of a passing slice" || bad "parallel: case B wrong"
+printf '%s\n' "$PAR" | grep -q '^C [0-9] s1=SPEC_CONFLICT,s2=VERIFIED,s3=VERIFIED,s4=SKIPPED [^@]*$' \
+    && ok "parallel: a SPEC_CONFLICT slice with a kept branch (--no-pr) skips only its dependent, which never starts" || bad "parallel: case C wrong"
+printf '%s\n' "$PAR" | grep -q '^T 4 1 1 4 4$' && ok "parallel: epicParallel is claude 4, LOKI_EPIC_PARALLEL=1 gives 1, opencode 1, capped at 4, an invalid value ignored" || bad "parallel: epicParallel table wrong"
+printf '%s\n' "$PAR" | grep -q '^W rc0 peak3 said$' && printf '%s\n' "$PAR" | grep -q '^W1 rc0 peak1 said$' \
+    && ok "parallel: startIssueEpic runs 3 independent slices at once by default and one at a time under LOKI_EPIC_PARALLEL=1" || bad "parallel: startIssueEpic wiring wrong"
 
 # --- labels: engine10's own sizing sees the issue's epic label (split refused, so the issue runs as one run) ----------
 L="$T/labels"
