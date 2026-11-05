@@ -942,7 +942,7 @@ export function exercisedViaCallers(unexercised: readonly string[], seed: (name:
     const code = codeOnly(f.src), lines = code.split("\n");
     for (const x of symbolSpans(f.path, f.src)) {
       if (x.container) continue;
-      const name = x.name.split(".").pop()!, called = calledNames(lines.slice(x.start, x.end).join("\n"));
+      const name = x.name.split(".").pop()!, called = calledNames(lines.slice(x.start - 1, x.end).join("\n")); // start is 1-based and the declaration line is kept: a one-line body (`func Double(a int) int { return parse(a) }`) calls from that line
       (byName.get(name) ?? byName.set(name, []).get(name)!).push(called);
       if (seed(name, f.path)) seeds.push(name);
     }
@@ -950,6 +950,12 @@ export function exercisedViaCallers(unexercised: readonly string[], seed: (name:
   const covered = new Set<string>(seeds), work = [...covered];
   for (let n = work.pop(); n !== undefined; n = work.pop()) for (const called of byName.get(n) ?? []) for (const c of called) if (byName.has(c) && !covered.has(c)) { covered.add(c); work.push(c); }
   return unexercised.filter((f) => !covered.has(f));
+}
+/** Fail-then-pass relevance: the test files among `tests` that reach a changed `symbol` through code, by naming a function of a changed file or of an untouched direct caller file whose body calls one (transitively inside those files), the way a Go test reaches an unexported parseFlags only through cmd.Run. Empty for no symbols: a change that declares none is never shown relevant. */
+export function testsReachingSymbols(symbols: readonly string[], tests: readonly { path: string; src: string }[], changed: readonly { path: string; src: string }[], candidates: readonly { path: string; src: string }[]): string[] {
+  if (symbols.length === 0 || tests.length === 0) return [];
+  const files = [...changed, ...callerFiles(changed, candidates)];
+  return tests.filter((t) => { const ids = identifierSet(t.src); return exercisedViaCallers(symbols, (name) => ids.has(name), files).length < symbols.length; }).map((t) => t.path);
 }
 /** TEN-GATES-14: per-gate legibility for `loki verify --explain`. exogenous/independent evidence is exogenous; agent_authored and llm_judge are agent-influenced; absent or unknown provenance is unrecorded, never exogenous. */
 export interface ExplainGate { name: string; class: "exogenous" | "agent-influenced" | "unrecorded"; provenance: string | null; result: string; n: number | null; evidence: string }

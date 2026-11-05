@@ -937,6 +937,34 @@ if command -v go >/dev/null 2>&1; then
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go base proof: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go base proof: go is not installed"; fi
 fi
+# Go fail-then-pass through a caller (rule 22, real go test through the real engine; the receipt shape of L-Haiku-v132 cli-2418/cli-2439): the fix changes an UNEXPORTED function
+# (parse, the run's parseFlags) and the new test calls only the exported Double that calls it. The test fails on the base by assertion and passes on the change, so it is proof even
+# though its text never names parse. Before the fix the receipt read "no test shown to fail on the base commit and pass on the change: test fails without the fix: yes" (the yes
+# with no file named) plus "no passing check references a changed symbol". Plant: testsReachingSymbols returns [] and the run is PARTIAL with exactly those two lines.
+make_wo_go_repo() {
+    mkdir -p "$1"
+    printf 'module example.com/calc\n\ngo 1.20\n' > "$1/go.mod"
+    printf 'package calc\n\nfunc Add(a, b int) int { return a + b }\n\nfunc parse(a int) int {\n\treturn a + a + 1\n}\n\n// Double returns twice a.\nfunc Double(a int) int { return parse(a) }\n' > "$1/calc.go"
+    printf 'package calc\n\nimport "testing"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(2, 3) != 5 {\n\t\tt.Fatal("add")\n\t}\n}\n' > "$1/calc_test.go"
+    printf 'package calc\n\nfunc Inc(n int) int { return Add(n, 1) }\n' > "$1/util.go"
+    printf 'package calc\n\nimport "testing"\n\nfunc TestInc(t *testing.T) {\n\tif Inc(1) != 2 {\n\t\tt.Fatal("inc")\n\t}\n}\n' > "$1/util_test.go"
+    return 0
+}
+if command -v go >/dev/null 2>&1; then
+    MAKE_REPO=make_wo_go_repo run_engine "fix Double(a) in calc.go so it returns twice a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.go E2E_STUB_REPLACE=$'\treturn a + a + 1' E2E_STUB_SNIPPET=$'\treturn a * 2' E2E_STUB_TEST_FILE=calc_test.go \
+        E2E_STUB_TEST_APPEND=$'\nfunc TestDouble(t *testing.T) {\n\tif got := Double(3); got != 6 {\n\t\tt.Errorf("want 6 got %d", got)\n\t}\n}' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    notes="$(wo_receipt np)"; mp="$(wo_receipt mp)"
+    [ "$(outcome)" = "VERIFIED" ] && ok "go caller fail-then-pass: a new test reaching the changed unexported parse only through Double fails on the base and passes on the change: VERIFIED" || { bad "go caller fail-then-pass: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$mp" in *"fails without the fix: yes"*"calc_test.go"*) ok "go caller fail-then-pass: the proof line names the file ($mp)" ;; *) bad "go caller fail-then-pass: no proof line naming calc_test.go: '$mp'" ;; esac
+    case "$notes" in *"no test shown to fail"*|*"no passing check references a changed symbol"*) bad "go caller fail-then-pass: a proof gap is still listed: $notes" ;; *) ok "go caller fail-then-pass: neither proof gap is listed" ;; esac
+    MAKE_REPO=make_wo_go_repo run_engine "fix Double(a) in calc.go so it returns twice a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.go E2E_STUB_REPLACE=$'\treturn a + a + 1' E2E_STUB_SNIPPET=$'\treturn a * 2' E2E_STUB_TEST_FILE=calc_test.go \
+        E2E_STUB_TEST_APPEND=$'\nfunc TestDouble(t *testing.T) {\n\tif got := Double(3); got != 6 && got != 7 {\n\t\tt.Errorf("want 6 got %d", got)\n\t}\n}' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    [ "$(outcome)" = "PARTIAL" ] && ok "go caller passes-on-base: a caller test that also passes on the base is still PARTIAL" || { bad "go caller passes-on-base: outcome is '$(outcome)'"; dump; }
+    gr="$(cd "$ROOT/loki-ts" && bun -e 'const { testsReachingSymbols } = await import("./src/util/check_result.ts"); const ch = [{ path: "calc.go", src: "package calc\nfunc parse(a int) int { return a * 2 }\nfunc Double(a int) int { return parse(a) }\nfunc Add(a, b int) int { return a + b }\n" }], cand = [{ path: "run.go", src: "package calc\nfunc Run(a int) int { return Double(a) }\n" }]; const t = (src: string) => [{ path: "x_test.go", src }]; console.log([testsReachingSymbols(["parse"], t("func TestR(t *testing.T) { Run(1) }"), ch, cand).length, testsReachingSymbols(["parse"], t("func TestA(t *testing.T) { Add(1, 2) }"), ch, cand).length, testsReachingSymbols(["parse"], t("// Double parse\nfunc TestC(t *testing.T) { _ = \"Run\" }"), ch, cand).length, testsReachingSymbols([], t("func TestR(t *testing.T) { Run(1) }"), ch, cand).length].join(","))' 2>&1 | tail -1)"
+    [ "$gr" = "1,0,0,0" ] && ok "go caller reach unit: a test reaches parse through an untouched caller file; one naming only Add, one naming it only in a comment or string, and a change with no symbol do not ($gr)" || bad "go caller reach unit: got '$gr'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go caller fail-then-pass: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go caller fail-then-pass: go is not installed"; fi
+fi
 for vt in 2 latest; do
     VT_NM="$T/vt-$vt/node_modules"
     [ -x "$VT_NM/.bin/vitest" ] || { if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "vitest $vt wall-off: vitest@$vt is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: vitest $vt wall-off: vitest@$vt is not installed (offline?)"; fi; continue; }
