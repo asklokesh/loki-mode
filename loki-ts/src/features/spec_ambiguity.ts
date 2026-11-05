@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"; import { join } from "node:path";
-import { safeGit } from "../util/safe_git.ts"; import { ISSUE_CONTEXT_HEAD, type IssueComment } from "../engine10/fetch_issue.ts";
+import { symbolSpans } from "../util/context_pack.ts"; import { safeGit } from "../util/safe_git.ts"; import { ISSUE_CONTEXT_HEAD, type IssueComment } from "../engine10/fetch_issue.ts";
 // Deterministic spec-ambiguity scoring for Intake (no LLM), kept outside the size-capped engine10 core.
 export interface AmbiguityHit { kind: "marker" | "open_question" | "hedge" | "vague"; excerpt: string; weight: number }
 const AMBIGUITY_RULES: Array<{ kind: AmbiguityHit["kind"]; weight: number; re: RegExp }> = [
@@ -190,8 +190,8 @@ export function transplantFor(c: OpenChoice, picked: number, issue: string, repo
 export const precedentOn = (): boolean => process.env.LOKI_E10_PRECEDENT !== "0";
 /** One tool-less question per open choice: which option do the sibling implementations follow. The voter sees only the options and the sibling bodies. */
 export const SYS_PRECEDENT_VOTE = "You compare code conventions. Answer only in the requested format.";
-export function precedentVotePrompt(c: OpenChoice, siblings: string): string {
-  return [`A change must pick one of these options:\n${c.options.map((o, i) => `OPTION ${i + 1}: ${o}`).join("\n")}`, `Other implementations of the same contract in this repository:\n${siblings}`, "Which option makes the changed code follow the same convention as these other implementations? If they do not all follow the same one, answer NEITHER.", "Answer with exactly one line: OPTION <n> or NEITHER."].join("\n\n");
+export function precedentVotePrompt(c: OpenChoice, siblings: string, comments: string[] = []): string {
+  return [`A change must pick one of these options:\n${c.options.map((o, i) => `OPTION ${i + 1}: ${o}`).join("\n")}`, `Other implementations of the same contract in this repository:\n${siblings}`, ...(comments.length ? [`Maintainer comments on the issue (a maintainer who already chose an option outranks the siblings: answer NEITHER then):\n${comments.map((x) => trunc(x, 400)).join("\n---\n")}`] : []), "Which option makes the changed code follow the same convention as these other implementations? If they do not all follow the same one, answer NEITHER.", "Answer with exactly one line: OPTION <n> or NEITHER."].join("\n\n");
 }
 /** The option index the answer names, or null for NEITHER, an unparseable answer or an out-of-range number. */
 export function parsePrecedentVote(text: string, n: number): number | null {
@@ -201,8 +201,32 @@ export function parsePrecedentVote(text: string, n: number): number | null {
 /** Full-text sibling definitions for the vote: each definition `precedentFor` lists, with its body up to 12 lines. */
 export function siblingBodies(precedent: string, repoDir: string): string {
   const out: string[] = [];
-  for (const m of precedent.matchAll(/sibling (\S+?):(\d+) /g)) { try { const lines = readFileSync(join(repoDir, m[1]!), "utf8").split("\n"), i = Number(m[2]) - 1; let j = i; for (; j < Math.min(lines.length, i + 12); j++) if (/^\}/.test(lines[j]!)) break; out.push(`${m[1]}:${m[2]}\n${lines.slice(i, j + 1).join("\n")}`); } catch { /* unreadable: skipped */ } }
+  for (const m of precedent.matchAll(/sibling (\S+?):(\d+) /g)) {
+    try {
+      const src = readFileSync(join(repoDir, m[1]!), "utf8"), lines = src.split("\n"), at = Number(m[2]);
+      const sp = symbolSpans(m[1]!, src).filter((x) => !x.container && x.start <= at && at <= x.end).sort((a, b) => (a.end - a.start) - (b.end - b.start))[0]; // the innermost definition holding the line, cut at its own end
+      const from = sp ? sp.start : at, to = sp ? Math.min(sp.end, from + 59) : Math.min(lines.length, from + 11);
+      out.push(`${m[1]}:${m[2]}\n${lines.slice(from - 1, to).join("\n")}`);
+    } catch { /* unreadable: skipped */ }
+  }
   return out.join("\n\n");
+}
+/** The sibling definitions a precedent text lists, as [file:line, "Type.member() RET" or ""] pairs. */
+const siblingList = (precedent: string): { at: string; sig: string }[] => [...precedent.matchAll(/sibling (\S+?:\d+) (?:func \(\w+ \*?(\w+)\) (\w+)\([^)]*\) ([^{]+?) \{)?/g)].map((m) => ({ at: m[1]!, sig: m[2] ? `${m[2]}.${m[3]}() ${m[4]!.trim()}` : "" }));
+/** Deterministic refusal: when every sibling body is one `return <expr>` and the expressions differ (receiver name abstracted), the siblings visibly disagree, so no vote is taken and nothing is emitted. */
+export function siblingsDisagree(precedent: string, repoDir: string): boolean {
+  const exprs: string[] = [];
+  for (const body of siblingBodies(precedent, repoDir).split("\n\n")) {
+    const lines = body.split("\n").slice(1), head = lines[0] ?? "", recv = /\((\w+) \*?\w+\)|\b(this|self)\b/.exec(head)?.[1] ?? "", inner = lines.slice(1, -1).map((l) => l.trim()).filter((l) => l && !l.startsWith("//"));
+    if (inner.length !== 1 || !/^return\b/.test(inner[0]!)) return false;
+    exprs.push(inner[0]!.replace(recv ? new RegExp(`\\b${recv}\\b`, "g") : /$^/, "R"));
+  }
+  return exprs.length >= 2 && new Set(exprs).size > 1;
+}
+/** A trusted comment that names a symbol of one of the options: its author may already have decided, in words the cue detector cannot place, so no vote may steer against it. */
+export function commentMentionsOption(c: OpenChoice, comments: { body: string }[] = []): boolean {
+  const syms = [...new Set(c.options.flatMap((o) => snippetsOf(o).flatMap((x) => [x, ...x.split(".")])))].filter((x) => x.length >= 3);
+  return comments.some((cm) => syms.some((x) => cm.body.includes(x)));
 }
 export type PrecedentCall = (system: string, prompt: string) => Promise<string | null>;
 /** The default voter: toolLessCall on the small model, thinking off, priced into the child ledger and cut off by the run's dollar cap. null on any non-ok outcome. */
@@ -215,10 +239,10 @@ async function defaultVoteCall(system: string, prompt: string): Promise<string |
 export async function voteOpenChoices(task: string, ctx: ChoiceCtx = {}, call: PrecedentCall = defaultVoteCall): Promise<(number | null | undefined)[]> {
   try {
     if (!precedentOn() || !ctx.repoDir) return [];
-    const base = resolveChoices(task, { ...ctx, votes: undefined }), choices = base.map((c) => c.basis === "none" && !c.any && (c.precedent?.match(/sibling /g) ?? []).length >= 2 ? c : null);
+    const base = resolveChoices(task, { ...ctx, votes: undefined }), choices = base.map((c) => c.basis === "none" && !c.any && (c.precedent?.match(/sibling /g) ?? []).length >= 2 && !commentMentionsOption(c, ctx.comments) && !siblingsDisagree(c.precedent!, ctx.repoDir!) ? c : null);
     return await Promise.all(choices.map(async (c) => {
       if (!c) return undefined;
-      const text = await call(SYS_PRECEDENT_VOTE, precedentVotePrompt(c, siblingBodies(c.precedent!, ctx.repoDir!)));
+      const text = await call(SYS_PRECEDENT_VOTE, precedentVotePrompt(c, siblingBodies(c.precedent!, ctx.repoDir!), (ctx.comments ?? []).map((x) => x.body)));
       return text === null ? undefined : parsePrecedentVote(text, c.options.length);
     }));
   } catch { return []; }
@@ -229,9 +253,9 @@ export function resolveChoices(task: string, ctx: ChoiceCtx = {}): ChoiceResolut
     const comments = (ctx.comments ?? []).filter((c) => typeof c?.author === "string" && typeof c.association === "string" && typeof c.body === "string"), at = comments.length ? task.lastIndexOf(ISSUE_CONTEXT_HEAD) : -1, issue = at < 0 ? task : task.slice(0, at); // the appended comment section is not the issue's own question
     return detectOpenChoices(issue).map((c, i): ChoiceResolution => {
       const r = settle(c, comments, ctx, issue), vote = ctx.votes?.[i];
-      if (c.any || !ctx.repoDir || !precedentOn() || (r.basis === "none" && vote === null)) return r; // the issue's own list of acceptable outputs beats the siblings; siblings that disagree (vote null) emit nothing
+      if (c.any || !ctx.repoDir || !precedentOn() || (r.basis === "none" && (vote === null || siblingsDisagree(precedentFor(c, ctx.repoDir!), ctx.repoDir!) || (typeof vote === "number" && commentMentionsOption(c, comments))))) return r; // the issue's own list of acceptable outputs beats the siblings; siblings that disagree (vote null) emit nothing
       const prec = precedentFor(c, ctx.repoDir);
-      const out: ChoiceResolution = r.basis === "none" && prec && typeof vote === "number" && vote >= 0 && vote < c.options.length ? { ...r, basis: "precedent", picked: vote, evidence: "the sibling implementations of the same contract in this repo all follow it (one tool-less vote over their code)", precedent: prec } : prec ? { ...r, precedent: prec } : r;
+      const out: ChoiceResolution = r.basis === "none" && prec && typeof vote === "number" && vote >= 0 && vote < c.options.length ? { ...r, basis: "precedent", picked: vote, evidence: `a one-call vote over ${siblingList(prec).length} sibling definitions picked it (${siblingList(prec).map((x) => x.sig ? `${x.sig} at ${x.at}` : x.at).join("; ")}); the siblings may not be unanimous, and the issue's own words and any maintainer comment outrank it`, precedent: prec } : prec ? { ...r, precedent: prec } : r;
       const tp = out.picked !== null && prec ? transplantFor(c, out.picked, issue, ctx.repoDir, prec) : null;
       return tp ? { ...out, transplant: tp } : out; // a maintainer, the issue's own preference or a pinned test settle first: the precedent is then only shown as a check
     });
@@ -250,8 +274,8 @@ export const choiceLine = (c: ChoiceResolution): string => {
   const prec = c.precedent ? ` Sibling precedent in this repo (${c.picked === null ? "prefer the option these follow" : "check your option against these"}): ${c.precedent}.` : "";
   const both = c.any ? " The task lists several acceptable outputs: where they can coexist, build one design that produces every one of them." : "";
   return c.picked === null
-    ? `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> no evidence picks one (${c.evidence}).${prec}${both} ${c.precedent ? "Keep every other existing test true; a test of this one member that pins the option the siblings do not follow moves to the convention. Name the option you chose." : "Keep every existing test and documented behavior true, satisfy both options where they do not conflict, and name the one you chose."}`
-    : `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> implement option ${c.picked + 1}: "${trunc(c.options[c.picked]!, 130)}". Evidence (${c.basis}): ${c.evidence}.${c.fallback ? " A fallback may be added only on top of it." : ""}${c.basis === "precedent" ? " A preference stated in the issue for keeping the old behavior does not override the repo convention; an existing test that pins the old behavior of this one member is updated to the convention, every other test stays true." : ""}${prec}${both}${c.transplant ? (c.transplant.binding ? ` Binding sibling test: add it to the package as a new _test.go file and make it pass; do not edit it, and do not change the target to satisfy another test (${c.transplant.why}):\n${c.transplant.test}` : ` Advisory, the sibling tests also check for the target (${c.transplant.why}): ${c.transplant.statements.map((x) => trunc(x, 120)).join(" | ")}`) : ""}`;
+    ? `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> no evidence picks one (${c.evidence}).${prec}${both} Keep every existing test and documented behavior true, satisfy both options where they do not conflict, and name the one you chose.`
+    : `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> implement option ${c.picked + 1}: "${trunc(c.options[c.picked]!, 130)}". Evidence (${c.basis}): ${c.evidence}.${c.fallback ? " A fallback may be added only on top of it." : ""}${c.basis === "precedent" ? ` The issue's own words and any maintainer comment outrank this line.${(c.precedent?.match(/sibling /g) ?? []).length >= 2 ? " If an existing test pins the other option of this one member and the issue does not ask to keep it, that test may be updated to this option; every other test stays true." : ""}` : ""}${prec}${both}${c.transplant ? (c.transplant.binding ? ` Binding sibling test: add it to the package as a new _test.go file and make it pass; do not edit it, and do not change the target to satisfy another test (${c.transplant.why}):\n${c.transplant.test}` : ` Advisory, the sibling tests also check for the target (${c.transplant.why}): ${c.transplant.statements.map((x) => trunc(x, 120)).join(" | ")}`) : ""}`;
 };
 /** The lines worth sending: a choice nothing decided and nothing could inform (no precedent, not an acceptable-outputs list) is just a question ("faster or cheaper?"), not a spec choice, so it emits nothing. */
 export const emitChoiceLines = (cs: ChoiceResolution[]): string[] => cs.filter((c) => c.basis !== "none" || c.precedent || c.any).map(choiceLine);
