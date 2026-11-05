@@ -10,6 +10,9 @@
 #   bash benchmarks/h2h/run.sh --budget 25 --ledger spend.jsonl stop before a run once spend reaches $25
 #   bash benchmarks/h2h/run.sh --suite replay --configs oracle,noop    replay suite self-check
 #   bash benchmarks/h2h/run.sh --suite hard --configs oracle,noop      hard suite self-check
+#   bash benchmarks/h2h/run.sh --sequences all --configs raw-sonnet,loki-sonnet-learn --laps 2   learning curve: raw arms
+#       (raw-haiku, raw-sonnet) run the sequences beside the Loki arms; --laps N repeats each sequence N times in one repo
+#       (reset to base between laps, Loki memory kept), with a per-run curve and a paired table in the output
 #
 # Configs: raw-haiku, raw-sonnet, raw-opus (`command claude -p <task> --model M --output-format json
 # --dangerously-skip-permissions`), raw-<model>-verify (the same, with one sentence appended asking
