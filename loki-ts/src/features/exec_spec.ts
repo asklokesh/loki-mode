@@ -377,12 +377,25 @@ export function selectCases(e: Emitter, file: string, base: RedFilterResult, tas
   return { file: sealed, binding, advisory, guards };
 }
 
-/** Named sites (resolved in the repo) that no binding case's body names: seal caps the run below VERIFIED on each one unless an
- *  agent-independent passing test names it (engine10/stages/seal.ts specSiteGap). */
+/** Named sites (resolved in the repo) that no binding case's body names. */
 export function uncoveredSites(e: Emitter, binding: string[], full: string, atoms: SpecAtom[], sites: ResolvedSite[]): string[] {
   const resolved = new Set(sites.map((s) => s.symbol)), bodies = binding.map((n) => e.body(full, n)).join("\n");
   return atoms.filter((a) => a.kind === "site" && resolved.has(a.text) && !new RegExp(`\\b${esc(a.text.split(".").pop()!)}\\b`).test(bodies)).map((a) => a.text.split(".").pop()!);
 }
+// A sentence or list item that states a defect or asks for behavior; a site named only elsewhere is a passing mention.
+const DEFECT_OR_ASK = /\binstead of\b|\bends up with\b|\bexits? with\b|\bshould\b|\bexpected\b|\bmust\b|\bneeds? to\b|==|\b(?:bug|wrong|broken|mishandl\w*|drops?|dropped|fails?|failing|ignores?|ignored|incorrect\w*|crash\w*|panics?|regress\w*|missing|loses?|lost|never|doesn't|does not|isn't|is not)\b/i;
+/** The named sites (last segment) that appear in a defect or request sentence or list item of the issue. */
+export function defectSites(task: string): Set<string> {
+  const out = new Set<string>(), prose = task.replace(/```[\s\S]*?```/g, "\n\n");
+  for (const unit of prose.split(/(?<=[.!?])\s+(?=[A-Z`])|\n\s*\n|\n(?=\s*(?:[-*]|\d+[.)])\s)/)) {
+    if (!DEFECT_OR_ASK.test(unit.replace(/`[^`\n]*`/g, " "))) continue;
+    for (const m of unit.matchAll(/`([^`\n]{1,80})`/g)) { const id = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/.exec(m[1]!)?.[1]; if (id) out.add(id.split(".").pop()!); }
+  }
+  return out;
+}
+/** Seal's input (engine10/stages/seal.ts specSiteGap): uncovered sites the issue names in a defect or request sentence. Seal caps the run
+ *  below VERIFIED on each one the diff did not touch and no agent-independent passing test names. */
+export const capSites = (uncovered: string[], task: string): string[] => { const d = defectSites(task); return uncovered.filter((x) => d.has(x)); };
 export function implementBlock(e: Emitter, destRel: string, sel: SpecSelection, full: string, atoms: SpecAtom[], sites: ResolvedSite[]): string {
   const unchecked = uncoveredSites(e, sel.binding, full, atoms, sites);
   const adv = [...sel.advisory, ...sel.guards.map((name) => ({ name, why: "passes on base: keep it passing" }))];
@@ -457,7 +470,7 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
     const again = redFilter(e, o.repoDir, plan.targetRel, sel.file);
     if (!again.built || binding.some((n) => again.cases[n] !== "red")) { sel.advisory.push(...binding.map((name) => ({ name, why: "red on base alone, not once pruned" }))); binding = []; }
   }
-  const brief = implementBlock(e, plan.targetRel, { ...sel, binding }, parsed.file, atoms, sites), extra = { runner, targetRel: plan.targetRel, sites: sites.length, brief, binding, advisory: sel.advisory.map((a) => a.name), guards: sel.guards, dropped, uncoveredSites: uncoveredSites(e, binding, parsed.file, atoms, sites) };
+  const brief = implementBlock(e, plan.targetRel, { ...sel, binding }, parsed.file, atoms, sites), extra = { runner, targetRel: plan.targetRel, sites: sites.length, brief, binding, advisory: sel.advisory.map((a) => a.name), guards: sel.guards, dropped, uncoveredSites: capSites(uncoveredSites(e, binding, parsed.file, atoms, sites), o.task) };
   return binding.length ? done("sealed", `exec spec: ${binding.length} binding case(s) red on base`, { ...extra, file: sel.file }) : done("advisory_only", "exec spec: no binding case red on base; advisory cases only", extra);
 }
 

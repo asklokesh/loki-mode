@@ -64,11 +64,13 @@ async function failThenPass(ctx: RunContext, vraw: Obj[], pctx: ProvenanceCtx, h
 }
 export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these added public functions";
 export const SPEC_SITE_UNCOVERED = "named site without a binding case (no agent-independent passing test names it)";
-/** Exec spec (features/exec_spec.ts): a sealed spec proves only the sites its binding cases name. Each other site the issue names caps the run
- *  below VERIFIED unless a passing test that is neither agent-authored nor the spec file names it, so fixing one named site while another stays
- *  broken never reads VERIFIED on the spec alone. */
-export function specSiteGap(o: Partial<Record<StageName, Obj>>, vraw: Obj[], pctx: ProvenanceCtx, read: (p: string) => string): string[] {
-  const sites = strs(((o.wall?.exec_spec ?? {}) as Obj).uncovered_sites); if (sites.length === 0) return [];
+/** Exec spec (features/exec_spec.ts): a sealed spec proves only the sites its binding cases name. A site caps the run below VERIFIED only when
+ *  all hold: the spec sealed a binding case; the issue names the site in a defect or request sentence (capSites; a passing mention never
+ *  caps); the diff did not touch it (`changed`); and no passing test that is neither agent-authored nor the spec file names it. So fixing one
+ *  defective site while another stays untouched never reads VERIFIED on the spec alone. */
+export function specSiteGap(o: Partial<Record<StageName, Obj>>, vraw: Obj[], pctx: ProvenanceCtx, read: (p: string) => string, changed: string[]): string[] {
+  const es = (o.wall?.exec_spec ?? {}) as Obj, touched = new Set(changed), sites = es.status === "sealed" ? strs(es.uncovered_sites).filter((x) => !touched.has(x)) : [];
+  if (sites.length === 0) return [];
   const wall = new Set(((o.wall?.files as { path: string }[] | undefined) ?? []).map((f) => String(f.path)));
   const sources = vraw.filter((c) => isExecutedProof(c as { result?: unknown; n?: unknown }) && checkProvenance(String(c.name ?? ""), pctx) !== "agent_authored").map((c) => { const n = String(c.name ?? ""); return n.includes(":") && !n.startsWith("full suite:") ? n.slice(n.indexOf(":") + 1) : null; }).filter((p): p is string => p !== null && isTestFile(p) && ![...wall].some((w) => w === p || w.endsWith(`/${p}`))).map(read);
   return symbolGap(sites, sources);
@@ -256,7 +258,7 @@ export const sealStage: Stage = {
     const exoProof = hasExogenousProof(vraw, pctx), proof = !strictProof ? executed : !noWall ? exoProof : exoProof || (ftpGate && (await ftp()).ok); // FC-16: executed n>0 pass from verify's raw checks (a Wall green on base proves only a claim, inside verdictOf); TEN-GATES-02 (D104): that pass must be agent-independent (LOKI_EXOGENOUS_PROOF=0 opts out)
     const uncoveredAfterLimit = o.implement?.exit === "killed" ? strs(o.verify?.uncovered_changed) : []; // FC-21b: changed code no passing impacted check covered; limit path only
     const { lean: leanGap, pub: pubGap } = diffOk ? await symbolGaps(ctx, o, rawDiff, head, vraw, strictProof && noWall ? { pctx, ftp: async () => ftpGate && (await ftp()).ok } : null) : { lean: [], pub: [] }; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL; HONEST-VERIFIED-2
-    const specGap = specSiteGap(o, vraw, pctx, (p) => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return ""; } }); // exec spec: a named site no binding case covers
+    const specGap = strs(((o.wall?.exec_spec ?? {}) as Obj).uncovered_sites).length && diffOk ? specSiteGap(o, vraw, pctx, (p) => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return ""; } }, (await codeSymbols(ctx, rawDiff, head)).all) : []; // exec spec: a defective named site no binding case covers and the diff left alone
     const wpAll = publishableWall(ctx.repoDir, ctx.runDir, o, process.env, loadTaskText(ctx, str(o.intake?.task) ?? undefined)); // pure read of the sealed copies; publishing still happens only on VERIFIED
     const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name)) && c.repo_skipped !== true), !diffOk || diff.stdout === "", capVerify.length > 0 || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp);
 
