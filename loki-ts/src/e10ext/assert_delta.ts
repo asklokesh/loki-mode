@@ -233,7 +233,7 @@ const SYM_CUE = String.raw`\b(?:currently|actual(?:ly)?(?:\s+(?:result|output|va
 const SYM_LIT = String.raw`(?:\x60([^\x60\n]{1,120})\x60|"([^"\n]{1,120})"|'([^'\n]{1,120})'|(-?\d+(?:\.\d+)?)(?![\w.]))`;
 const SYM_BARE = String.raw`(?:\x60([^\x60\n]{1,120})\x60|"([^"\n]{1,120})"|'([^'\n]{1,120})'|(-?\d+(?:\.\d+)?)(?![\w.])|([\w./:@#-]{2,80}))`; // after "actual" only: a bare word
 const WANTED_BEFORE = /\b(?:should|must|shall|expect(?:ed|s)?|want(?:s|ed)?|ought|would|will|to|need(?:s)?|can|could|desired|correct(?:ly)?)\s+(?:\w+\s+){0,2}$/i;
-const CALLED_RIGHT = /^[^.\n]{0,25}?\b(?:which|that)(?:\s+is|'s)\s+(?:right|correct|fine|expected|ok|okay|good)\b|^\W*(?:is\s+|are\s+)?(?:right|correct|fine|expected|ok|okay|good)\b/i; // the issue calls this value right: it is not the symptom
+const CALLED_RIGHT = /^[^.\n]{0,25}?\b(?:which|that)(?:\s+is|'s)\s+(?:right|correct|fine|expected|ok|okay|good)\b|^\W*(?:is|are)\s+(?:right|correct|fine|ok|okay|good)\b/i; // the issue calls this value right: it is not the symptom
 const NOT_VALUE = new Set(["the", "a", "an", "it", "this", "that", "nothing", "error", "wrong", "incorrect", "different", "instead", "but", "and", "not", "no", "of", "in", "on", "for", "with", "as", "is", "was"]);
 const GENERIC_WORD = new Set(["true", "false", "nil", "none", "null", "undefined", ""]);
 export interface ReportedValue { value: string; idents: string[] }
