@@ -2,7 +2,7 @@
 import { installOwned } from "../../project_model/install.ts";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { withStagePrefix } from "../../features/lean_prefix.ts"; import { outOfRepoReask, outOfRepoTests } from "../../project_model/conventions.ts";
+import { withStagePrefix } from "../../features/lean_prefix.ts"; import { fragmentWriterOn, outOfRepoReask, outOfRepoTests } from "../../project_model/conventions.ts";
 import { learningsBlock, lessonsForBrief, orgKnowledgeBlock } from "../../util/pr_lessons.ts"; export { learningsBlock }; // learningsBlock lives with the other brief-note helpers
 import { FINISH_LINE, FIXED_RULES, briefRecord, type BriefRecord } from "../../e10ext/context.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
@@ -175,18 +175,18 @@ export const implementStage: Stage = {
     const size = sizeTask(task, loadRepoMap(prior.intake?.repomap_ref as string | undefined), (prior.intake?.testmap as TestMap | undefined) ?? null).size;
     const rt = routed ? routeStart(ctx, first, prior.plan, size) : null;
     // LOKI_E10_PATCH (default off): lean path only (no plan, no router, no session to continue). Green skips the agentic session; anything else restored the tree and the session below runs as today.
-    let patch: PatchOutcome | undefined, patchS = 0;
+    let patch: PatchOutcome | undefined, patchS = 0, patchNote = ""; // patchNote: the patch reply's lines before its first edit block (its root cause), the green session's summary
     const patchModel = downgrade?.to ?? ctx.model ?? resolveModel(ctx.provider); // a named model only: "claude (provider default)" names none for a tool-less call
     const patchOn = patchEnabled() && !plan && !routed && !resumeId && ctx.provider === "claude" && /^[\w.:@/-]+$/.test(patchModel);
     if (patchOn && !signal.aborted) {
       const started = Date.now();
       try { patch = await runPatchProtocol({ rules: { repoDir: ctx.repoDir, readOnly: readOnly.map((f) => relative(ctx.repoDir, f.path)), task }, brief: patchBrief(ctx, task, impacted), iterationId: `${ctx.runId}-impl-p`, signal,
         call: patchCallOverride ?? patchCallFor(patchModel, join(ctx.repoDir, ".loki")), check: patchCheck(ctx, impacted, readOnly.map((f) => relative(ctx.repoDir, f.path)), signal),
-        record: (n, prompt, reply) => { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, `implement-patch-${n}.txt`), `${prompt}\n\n=== REPLY ===\n${reply ?? "(call failed)"}\n`, "utf8"); } });
+        record: (n, prompt, reply) => { if (reply && n === 1) patchNote = reply.split(/^FILE:/m)[0]!.trim(); mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, `implement-patch-${n}.txt`), `${prompt}\n\n=== REPLY ===\n${reply ?? "(call failed)"}\n`, "utf8"); } });
       } catch (e) { patch = { status: "error", calls: 0, applied: [], refused: [], restored: [], log: [`error before any edit: ${String((e as Error)?.message ?? e).split("\n")[0]!.slice(0, 200)}`], usd: null }; } // the brief or the call setup threw (the protocol restores its own writes): the agentic session runs
       patchS = (Date.now() - started) / 1000;
     }
-    let session: SessionResult = patch?.status === "green" ? { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: patchS, killed: false, summary: patch.log.join("\n") } : await ctx.sessions.run(first);
+    let session: SessionResult = patch?.status === "green" ? { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: patchS, killed: false, summary: patchNote || patch.log.join("\n") } : await ctx.sessions.run(first);
     const ids = patch?.status === "green" ? [`${ctx.runId}-impl-p`] : [first.iterationId];
     if (patch?.status !== "green" && resumeId && !session.killed && session.exit !== 0 && session.exit !== MAX_TURNS_EXIT) { // a failed resume reruns fresh with the same full brief
       planChainMode = "fallback (resume failed)";
@@ -241,6 +241,7 @@ export const implementStage: Stage = {
       ...(sessionResume ? { session_resume: sessionResume } : {}),
       ...(coverage ? { coverage_resume: coverage } : {}), ...(claimAbsent ? { claim_absent: claimAbsent } : {}),
       ...(patch ? { patch: { status: patch.status, calls: patch.calls, applied: patch.applied, refused: patch.refused, restored: patch.restored, usd: patch.usd, log: patch.log, ...(patch.check ? { check: patch.check } : {}) } } : {}),
+      ...(fragmentWriterOn() && session.summary ? { summary_tail: session.summary.slice(-1500) } : {}), // the release-note writer reads the final message
     };
 
     if (exit !== "error") return { status: "completed", data };

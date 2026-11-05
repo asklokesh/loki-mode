@@ -237,6 +237,23 @@ export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): L
   return { cmd: rewritten && !later ? out.join("") : modelCmd, locked, rewritten: rewritten && !later, ...(!locked ? { note: `install not lockfile-locked: ${notes.join("; ")}` } : rewritten ? { note: "install rewritten to its lockfile-frozen form" } : {}) };
 }
 
+/** The project names ruff itself: a [tool.ruff] table, a ruff config file, or ruff in a dependency or tooling manifest. Config detection only. */
+export function projectDeclaresRuff(repoDir: string): boolean {
+  if (["ruff.toml", ".ruff.toml"].some((f) => existsSync(join(repoDir, f)))) return true;
+  const files = ["pyproject.toml", "setup.cfg", "tox.ini", ".pre-commit-config.yaml", "Pipfile", "requirements.txt", "requirements-dev.txt", "dev-requirements.txt"];
+  return files.some((f) => { try { return /\bruff\b/i.test(readFileSync(join(repoDir, f), "utf8")); } catch { return false; } });
+}
+const PEP668 = /externally[- ]managed[- ]environment|PEP 668/i;
+/** A plain pip install the system interpreter refused as externally managed (PEP 668) becomes the same install into a project .venv, plus the runners verify
+ *  names for that venv (pytest always, ruff when the project declares it), because resolveTool prefers .venv/bin and a venv without pytest would turn every check not_run.
+ *  Only a bare `[python3 -m] pip install <args>` is rewritten: a shell operator, redirect or substitution in the command returns null (never reinterpreted). */
+export function venvInstallCmd(cmd: string, cwd: string): string | null {
+  const m = /^\s*(?:python3?\s+-m\s+pip3?|pip3?)\s+install\b([^&|;<>`$()\n]*)$/.exec(cmd);
+  if (!m) return null;
+  const tools = ["pytest", ...(projectDeclaresRuff(cwd) ? ["ruff"] : [])].join(" ");
+  return `python3 -m venv .venv && .venv/bin/python -m pip install${m[1]} && .venv/bin/python -m pip install ${tools}`;
+}
+
 /** One short honest line from the install output (L3): the last non-empty line, whitespace collapsed. */
 const excerpt = (tail: string): string => {
   const l = tail.split("\n").map((x) => x.trim()).filter(Boolean).pop() ?? "";
@@ -273,7 +290,9 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
     li = lockedInstall(input.repoDir, cwd, mc.cmd);
     const before = snapshot(input.repoDir, env);
     const t0 = Date.now();
-    const r = await runDetached(li.cmd, cwd, env, input.signal, budget);
+    let r = await runDetached(li.cmd, cwd, env, input.signal, budget);
+    const venv = r.code !== 0 && !r.cut && PEP668.test(r.tail) ? venvInstallCmd(li.cmd, cwd) : null;
+    if (venv) { li = { ...li, cmd: venv, locked: false, rewritten: false }; r = await runDetached(venv, cwd, env, input.signal, Math.max(1, budget - (Date.now() - t0))); if (r.code === 0 && !r.cut) li = { ...li, note: "system python is externally managed (PEP 668): installed into .venv" }; }
     const dt = (Date.now() - t0) / 1000;
     left -= Date.now() - t0;
     if (!guardTree(input.repoDir, env, before, res)) res.notProven.push(`${name} tree guard not run (git status failed)`);
