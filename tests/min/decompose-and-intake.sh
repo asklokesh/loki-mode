@@ -58,6 +58,7 @@
 #  11. loki-ts/src/engine10/stages/pr.ts prTitle: return the old "Loki 10: <verdict> (<run id>)" title; the pr face check fails.
 #  12. loki-ts/src/commands/issues_run.ts makeWorktrees remove: remove at once whatever deep verify does; the pr face check fails.
 #  13. loki-ts/src/e10ext/reviewer_body.ts criteria: skip inlineCriteria; the pr face check fails (1 criterion listed).
+#  14. issues_epic.ts epicOutcome: drop the SPEC_CONFLICT carve-out from `failed` (the old rule); the conflict assertions fail.
 #  14. issues_epic.ts splitCost: ignore a slice's partial dollars; the partial cost assertions fail. queue.ts newestRecord: drop the partial figure;
 #      the newestRecord and partial slice row assertions fail (the row reads NOT RECORDED).
 #  14. loki-ts/src/util/run_outputs.ts stackSection: never call prWorkflowsSkipping; the pr face check fails (no CI note).
@@ -331,6 +332,19 @@ PRSTATUS="$(printf '%s' "$OUT" | python3 -I -c 'import sys; sys.path.insert(0, s
 echo "    pr mode: backlog reads: $PRSTATUS"
 case "$PRSTATUS" in "True PARTIAL, PR local:///"*) ok "pr mode: backlog counts the PARTIAL split with its draft PRs as done" ;; *) bad "pr mode: backlog reads the PR-mode split as: $PRSTATUS" ;; esac
 
+# --- PR mode, one slice stops on its own SPEC_CONFLICT while the others open PRs: the split is PARTIAL (exit 6), not FAILED ---------
+C2="$T/conflict-split"
+make_repo "$C2" 0
+git init -q --bare "$T/conflict-origin.git"
+git -C "$C2" remote add origin "$T/conflict-origin.git"
+git -C "$C2" push -q origin main
+SPLIT3='{"slices":[{"id":"s1","title":"search backend","acceptance":["full-text search returns ranked rows"],"depends_on":[],"files":["calc.ts"]},{"id":"s2","title":"search index","acceptance":["the index is rebuilt nightly"],"depends_on":[],"files":["calc.ts"]},{"id":"s3","title":"search UI","acceptance":["the search box shows ranked results"],"depends_on":[],"files":["calc.ts"]}]}'
+E2E_STUB_MODE=slice E2E_STUB_CONFLICT_SLICE=s2 E2E_STUB_SPLIT="$SPLIT3" LOKI_EPIC_PARALLEL=1 run_loki "$C2" "$T/conflict-stub.log" start acme/search#25 --max-cost 5
+printf '%s\n' "$OUT" | grep -E '^(#25 s[123] (PARTIAL|VERIFIED|SPEC_CONFLICT)|Outcome:|Reason:|PR:)' | sed 's/^/    conflict e2e: /'
+[ "$RC" -eq 6 ] && printf '%s\n' "$OUT" | grep -Eq '^Outcome: +PARTIAL$' && printf '%s\n' "$OUT" | grep -Eq '^Reason: +slice s2: SPEC_CONFLICT .*\(2 of 3 slices opened a PR' \
+    && [ "$(printf '%s\n' "$OUT" | grep -cE '^PR: +local:///.+#loki/')" = 2 ] \
+    && ok "conflict e2e: one slice stopped on SPEC_CONFLICT and two opened PRs gives Outcome PARTIAL, exit 6, two PR lines" || { bad "conflict e2e: exit $RC, outcome $(printf '%s\n' "$OUT" | grep '^Outcome:')"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
+
 # --- outcome: the split's aggregate verdict, exit code and cost line (pure) -------------------------------------------
 AGG="$(ROOT="$ROOT" PT="$T" bun --no-env-file --config=/dev/null -e '
 const { epicOutcome } = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
@@ -368,6 +382,40 @@ printf '%s\n' "$AGG" | grep -q '^durable BUDGET_STOP 20$' && ok "outcome: exit c
 BL="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import backlog
 print(backlog.parse_result(1, "loki: split refused (x); running the issue as one run\nSplit planning: $0.40 (0 slice runs + 1 planning session)\nOutcome:    FAILED\nCost:       $1.10 (claude)\n")[2])' "$ROOT/autonomy/lib" 2>&1)"
 [ "$BL" = "1.5" ] && ok "outcome: backlog adds a refused split's planning cost to the run's cost (0.40 + 1.10)" || bad "outcome: backlog counted $BL for a refused split, want 1.5"
+
+# --- outcome, a slice stopped on its own SPEC_CONFLICT: PARTIAL when another slice opened a PR (FireLater#24), else unchanged -----------
+CF="$(ROOT="$ROOT" PT="$T" EPIC_TITLE="$EPIC_TITLE" EPIC_BODY="$EPIC_BODY" bun --no-env-file --config=/dev/null -e '
+const { epicOutcome } = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
+const ir = await import(process.env.ROOT + "/loki-ts/src/commands/issues_run.ts");
+const { mkdirSync, writeFileSync } = await import("node:fs");
+const row = (id, outcome, usd, rc, extra = {}) => ({ id, title: id, parent: null, outcome, pr: null, cost: usd === undefined ? "-" : "$" + usd.toFixed(2), usd, rc, ...extra });
+const pr = (n) => "https://github.com/acme/search/pull/" + n;
+const cases = {
+  conflict_pr: [row("s1", "PARTIAL", 0.1, 6, { pr: pr(36), branch: "loki/e10-a" }), row("s2", "VERIFIED", 0.2, 0, { pr: pr(37), branch: "loki/e10-b" }), row("s3", "SPEC_CONFLICT", 0.1, 4, { branch: "loki/e10-c", reason: "spec conflict: two incompatible search backends" }), row("s4", "SPEC_CONFLICT", 0.1, 4, { branch: "loki/e10-d" })],
+  conflict_nopr: [row("s1", "SPEC_CONFLICT", 0.1, 4, { branch: "loki/e10-a" }), row("s2", "SKIPPED (dependency s1 did not pass)", undefined)],
+  failed_with_pr: [row("s1", "VERIFIED", 0.1, 0, { pr: pr(36) }), row("s2", "FAILED (exit 1)", 0.1, 1), row("s3", "SPEC_CONFLICT", 0.1, 4)],
+  conflict_budget: [row("s1", "VERIFIED", 0.1, 0, { pr: pr(36) }), row("s2", "FAILED (exit 3)", 0.1, 3, { budget: true }), row("s3", "SPEC_CONFLICT", 0.1, 4)],
+};
+for (const [k, rows] of Object.entries(cases)) { const o = epicOutcome(rows, [], {}); console.log(k + " " + o.outcome + " " + o.rc + " | " + o.lines.trim().split("\n").filter((l) => /^(Outcome|Reason):/.test(l)).join(" | ")); }
+const sl = (id) => ({ id, title: id, acceptance: ["ok " + id], depends_on: [], files: [] });
+const runDir = process.env.PT + "/runconflict";
+mkdirSync(runDir, { recursive: true });
+writeFileSync(runDir + "/issue.json", JSON.stringify({ provider: "github", repo: "acme/search", number: 24, title: process.env.EPIC_TITLE, body: process.env.EPIC_BODY, labels: [] }));
+let out = "", c = 0;
+const rc = await ir.startIssueEpic({ repoDir: runDir, runDir, noPr: true, provider: "claude", env: { LOKI_DIR: runDir + "/.loki", LOKI_EPIC_PARALLEL: "1" }, inject: {
+  decompose: async () => JSON.stringify({ slices: [sl("s1"), sl("s2"), sl("s3")] }),
+  worktree: { create: (n) => { const p = runDir + "/wt-" + n; mkdirSync(p, { recursive: true }); return p; }, remove: () => {} },
+  runner: async () => { const k = ++c; return k === 2 ? { rc: 4, output: "Outcome:    SPEC_CONFLICT\nReason:     spec conflict: two incompatible search backends\n", verdict: "SPEC_CONFLICT", costUsd: 0.1, runId: "e10-" + k } : { rc: 0, output: "Outcome:    VERIFIED\nPR:         " + pr(30 + k) + "\n", verdict: "VERIFIED", costUsd: 0.1, runId: "e10-" + k }; },
+  out: (s) => { out += s; }, err: () => {},
+} });
+console.log("wire rc" + rc + " | " + out.split("\n").filter((l) => /^(Outcome|Reason):/.test(l)).join(" | "));' 2>&1)"
+printf '%s\n' "$CF" | sed 's/^/    conflict: /'
+printf '%s\n' "$CF" | grep -q "^conflict_pr PARTIAL 6 | Outcome: *PARTIAL | Reason: *slice s3: SPEC_CONFLICT (needs an answer: two incompatible search backends) (2 of 4 slices opened a PR; s3's change is on branch loki/e10-c)\$" \
+    && ok "conflict: a slice stopped on its own SPEC_CONFLICT while others opened PRs gives PARTIAL, exit 6, naming the first stopped slice, its question and the delivered PR count" || bad "conflict: SPEC_CONFLICT with PRs wrong"
+printf '%s\n' "$CF" | grep -q '^conflict_nopr FAILED 1 ' && printf '%s\n' "$CF" | grep -q '^failed_with_pr FAILED 1 | Outcome: *FAILED | Reason: *slice s2: FAILED (exit 1) (1 of 3 slices opened a PR)$' && printf '%s\n' "$CF" | grep -q '^conflict_budget BUDGET_STOP 3 ' \
+    && ok "conflict: SPEC_CONFLICT with no PR stays FAILED; a really FAILED slice and a budget stop outrank a SPEC_CONFLICT" || bad "conflict: unchanged cases wrong"
+printf '%s\n' "$CF" | grep -q "^wire rc6 | Outcome: *PARTIAL | Reason: *slice s2: SPEC_CONFLICT (needs an answer: two incompatible search backends) (2 of 3 slices opened a PR; s2's change is on branch loki/e10-2)\$" \
+    && ok "conflict: startIssueEpic exits 6 PARTIAL for one stopped slice and two PRs, reading the question the slice printed" || bad "conflict: startIssueEpic wiring wrong: $(printf '%s\n' "$CF" | grep '^wire')"
 
 # --- parallel: independent slices run at once, a failing or spec-conflicting slice skips only its dependents (source level) ---
 PAR="$(ROOT="$ROOT" PT="$T/par" EPIC_TITLE="$EPIC_TITLE" EPIC_BODY="$EPIC_BODY" bun --no-env-file --config=/dev/null -e '
