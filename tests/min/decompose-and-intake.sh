@@ -75,7 +75,9 @@
 #  26. manifestModel: drop the SKIP_PKG_DIR filter on other manifests; the diet check fails (test/fixtures/app and docs listed).
 #  27. project_model/discover.ts: drop effort "low" from the discovery session; the diet check fails (effort=undefined).
 #  28. project_model/gather.ts: maxTotalBytes back to 96 KiB; the diet check fails (inlined over 24 KiB).
-#  29. manifestModel: drop the fansOut check; the diet check fails (fan false: an nx root test answered without a session).
+#  29. manifestModel: drop the fansOut check; the diet check fails (fan: an nx root test answered as a manifest model, status ok).
+#  29b. discover.ts: drop the fanOut early return (fall through to the session); the diet check fails (fan 1 session instead of 0).
+#  29c. discover.ts fanOutSessionEnabled: always false; the diet check fails (fan-on false).
 #  30. manifestModel: members only from tracked package.json files; the diet check fails (packages/gen missing).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -474,7 +476,8 @@ console.log([pre.includes("Tracked files (depth-limited):\nsrc/a.ts"), pre.inclu
 # --- diet: the manifests answer the Project Model, so a declared repo costs no discovery session -------------------------------------------
 # 3-day ledger: discovery was 46-48% of Loki's spend. A pnpm workspace, a Python package and a Go module whose manifests declare a test command
 # get a validated model with zero sessions (cached on the next call); a gitignored member package.json still counts; a fixture package.json is
-# never a package; a repo whose manifests name no test command, a test script that fans out over the workspace (nx via `pnpm run test:ci`), and
+# never a package; a repo whose manifests name no test command, a test script that fans out over the workspace (nx via `pnpm run test:ci`) now
+# answers unknown with no session (LOKI_E10_PM_FANOUT_SESSION=1 restores it; no run on TanStack/query ever got an OK model from it); the first two and
 # LOKI_E10_PM_MANIFESTS=0 still reach the session, at low effort with a 4096-token output cap and at most 24 KiB of inlined files.
 D="$T/diet"; mkdir -p "$D"
 mkrepo() { git -C "$1" init -q -b main && git -C "$1" config user.name d && git -C "$1" config user.email d@example.invalid && git -C "$1" add -A && git -C "$1" commit -q -m base; }
@@ -508,7 +511,8 @@ out.push(`ws ${calls.length} ${r.model.status} ${r.source} ${pk(r)} deps=${core?
 ({ r, calls } = await go("py")); out.push(`py ${calls.length} ${r.source} ${pk(r)}`);
 ({ r, calls } = await go("go")); out.push(`go ${calls.length} ${r.source} ${pk(r)}`);
 ({ r, calls } = await go("none")); out.push(`none ${calls.length > 0} effort=${calls[0]?.effort} max=${calls[0]?.maxOutputTokens}`);
-({ r, calls } = await go("fan")); out.push(`fan ${calls.length > 0}`);
+({ r, calls } = await go("fan")); out.push(`fan ${calls.length} ${r.model.status} ${r.owner} ${/test script over the whole workspace/.test(r.model.reason)} ${r.cached}`);
+({ r, calls } = await go("fan", { LOKI_E10_PM_FANOUT_SESSION: "1" })); out.push(`fan-on ${calls.length > 0}`);
 (await import("node:fs")).rmSync(d + "/ws/.loki", { recursive: true, force: true }); ({ r, calls } = await go("ws", { LOKI_E10_PM_MANIFESTS: "0" }));
 const inl = (calls[0]?.brief ?? "").split("<file path=").slice(1).join("").length;
 out.push(`off ${calls.length > 0} inlined<=24KiB=${inl > 0 && inl <= 24 * 1024 + 4096}`);
@@ -519,7 +523,8 @@ again 0 cached=true
 py 0 manifests .=python3 -m pytest -q/python3 -m pip install -e '.[test]'@.
 go 0 manifests .=go test ./.../go mod download@.
 none true effort=low max=4096
-fan true
+fan 0 unknown harness true false
+fan-on true
 off true inlined<=24KiB=true"
 [ "$DIET" = "$WDIET" ] && ok "intake diet: pnpm workspace, Python package and Go module answered from their manifests with no session (cached after); fixture package skipped; no test command or LOKI_E10_PM_MANIFESTS=0 reaches a low-effort, capped session with at most 24 KiB inlined" \
     || { bad "intake diet gave:"; printf '%s\n' "$DIET" | sed 's/^/    | /'; }
