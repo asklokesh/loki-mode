@@ -58,6 +58,8 @@
 #  15. issues_run.ts REAPER_SH: skip the run-dir re-copy; the pr face check fails (addendum lost).
 #  16. pr.ts prTitle: clip by UTF-16 units (what.split("")); the pr face check fails (split pair).
 #  17. run_outputs.ts prWorkflowsSkipping: read a scalar branches: as no list; the pr face check fails (main reads skipped).
+#  18. project_model/discover.ts buildBrief: put the `Write ONLY a JSON object ... ${answerPath}` line back above the tracked-file tree;
+#      the brief prefix check fails (the shared prefix stops before the tree).
 #  18. prWorkflowsSkipping: ignore pull_request_target; the pr face check fails (a running workflow claimed skipped).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -389,6 +391,18 @@ console.log(r.join(" "));
 ' 2>&1)"
 [ "$GUARD" = "false true false true true" ] && ok "lazy zero guard: untouched trusted; dependency edit, deleted ignored file, unknown list withheld" || bad "lazy zero guard gave: $GUARD (want: false true false true true)"
 
+
+# --- brief: the Project Model discovery brief keeps per-run text last so same-repo sessions share a cacheable prefix ------------------
+# EXP-0002 audit F7: the per-run answer path sat before the tree and inlined files, so every later discovery on the same repo missed the cache.
+BRIEF="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { buildBrief } = await import(process.env.ROOT + "/loki-ts/src/project_model/discover.ts");
+const g = { tree: ["src/a.ts", "package.json"], files: [{ path: "package.json", text: "{\"name\":\"x\"}" }] };
+const a = buildBrief(g, "/tmp/run-A/answer.json", null), b = buildBrief(g, "/tmp/run-B/answer.json", ["bad cite"]);
+let n = 0; while (n < a.length && n < b.length && a[n] === b[n]) n++;
+const pre = a.slice(0, n);
+console.log([pre.includes("Tracked files (depth-limited):\nsrc/a.ts"), pre.includes("<file path=\"package.json\">"), a.indexOf("/tmp/run-A") > a.indexOf("<file path="), b.indexOf("REJECTED") > b.indexOf("<file path="), a.endsWith("LOKI_DONE"), b.endsWith("LOKI_DONE")].join(" "));
+' 2>&1)"
+[ "$BRIEF" = "true true true true true true" ] && ok "discovery brief: two briefs for one repo share a prefix holding the tree and files; answer path and retry errors come after, just before LOKI_DONE" || bad "discovery brief gave: $BRIEF (want: true true true true true true)"
 
 # --- pr face: what a split's PRs look like (FireLater#21: six PRs titled "[PARTIAL] Loki 10: PARTIAL (e10-<run id>)", stacked ones with no CI) --
 # Title: the slice title plus "(#21 s2)", the issue title plus "(#24)", else the task's first line; "[PARTIAL]" once, never the run id, clipped at a

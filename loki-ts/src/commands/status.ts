@@ -547,7 +547,7 @@ async function runStatusText(): Promise<number> {
       savedProvider = "";
     }
   }
-  const currentProvider = savedProvider || process.env["LOKI_PROVIDER"] || "claude";
+  const currentProvider = process.env["LOKI_PROVIDER"] || savedProvider || "claude";
   let capability = "full features";
   switch (currentProvider) {
     case "opencode":
