@@ -981,6 +981,101 @@ const tsc = (d: string) => { const r = spawnSync("node_modules/.bin/tsc", ["--no
 const [bs, bo] = tsc(process.argv[1] + "/base"), [hs, ho] = tsc(process.argv[1] + "/head"), keep = new Set(["src/a.ts"]);
 console.log([bs, hs, u(ho, ".", keep, ["src/a.ts"], bo), u(ho, ".", keep, ["src/a.ts"], ho), u(ho, ".", keep, ["src/a.ts"], null)].join(","));' "$PM" 2>&1)"
     [ "$PMR" = "0,2,false,true,false" ] && ok "tsc program membership: a change that imports an untouched file (base tsc green) stays blamed; the same diagnostic on base is excused; no base output is not excused ($PMR)" || bad "tsc program membership: '$PMR' (want 0,2,false,true,false)"
+    # Pre-red excuse (L2). Change 3: a pnpm or npm workspace links its own packages into the root node_modules, so baseDepsLinker refused the root, the base tsc had no tools and
+    # zod's base-red unused-declaration errors were never excused. The real tsc on a workspace-shaped repo must now produce the base diagnostics tscUntouchedLocal compares.
+    WS="$T/tsc-ws"; rm -rf "$WS"; mkdir -p "$WS/packages/pkg/src" "$WS/node_modules/@t"
+    printf '{"name":"root","private":true}\n' > "$WS/package.json"; printf '{"name":"@t/pkg","private":true}\n' > "$WS/packages/pkg/package.json"
+    printf '{"compilerOptions":{"strict":true,"noEmit":true,"noUnusedLocals":true,"target":"ES2022","module":"ESNext","moduleResolution":"Bundler","skipLibCheck":true},"include":["src"]}\n' > "$WS/packages/pkg/tsconfig.json"
+    printf 'const stale = 1;\nexport const keep = 2;\n' > "$WS/packages/pkg/src/legacy.ts"; printf 'export const a = 1;\n' > "$WS/packages/pkg/src/a.ts"
+    for e in "$TSC_NM"/* "$TSC_NM"/.bin; do ln -s "$e" "$WS/node_modules/$(basename "$e")"; done; ln -s ../../packages/pkg "$WS/node_modules/@t/pkg"
+    git -C "$WS" init -q -b main && git -C "$WS" add -- package.json packages && git -C "$WS" -c user.name=t -c user.email=t@t commit -qm base
+    WSR="$(cd "$ROOT/loki-ts" && bun -e '
+const v = await import("./src/engine10/stages/verify.ts"), { spawnSync, execFileSync } = await import("node:child_process"), d = process.argv[1];
+const sha = execFileSync("git", ["-C", d, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), cwd = d + "/packages/pkg";
+const r = spawnSync("node_modules/.bin/tsc", ["--noEmit", "-p", "."], { cwd: d, encoding: "utf8" });
+const head = spawnSync("../../node_modules/.bin/tsc", ["--noEmit", "-p", "."], { cwd, encoding: "utf8" }), ho = (head.stdout ?? "") + (head.stderr ?? "");
+const base = await v.tscOnBase({ repoDir: d, baseSha: sha } as never, cwd, new AbortController().signal, {} as never), keep = new Set(["packages/pkg/src/a.ts"]);
+console.log([head.status, base !== null && /TS6133/.test(base), v.tscUntouchedLocal(ho, "packages/pkg", keep, ["packages/pkg/src/a.ts"], base), v.tscUntouchedLocal(ho, "packages/pkg", keep, ["packages/pkg/src/a.ts"], "")].join(","));' "$WS" 2>&1)"
+    [ "$WSR" = "2,true,true,false" ] && ok "tsc workspace base: the real tsc runs on the base of a repo whose root node_modules links its own package, and its unused-declaration error is excused ($WSR)" || bad "tsc workspace base: '$WSR' (want 2,true,true,false)"
+    # Change 2: a check that fails with no test id because vitest cannot start (config load error), and fails the same way on the base commit, starts no fix session; a startup error
+    # only the change causes, or one with a different error on base, is fix-round input. Real vitest; E2E_WALL= (Wall off, the product default).
+    make_startup_repo() {
+        VT_NM="$TSC_NM" make_vt_repo "$1"
+        printf 'import "./boot.ts";\nexport default {};\n' > "$1/vitest.config.ts"
+        printf '%s\n' "$BOOT" > "$1/boot.ts"
+        printf 'import { expect, test } from "vitest";\nimport * as calc from "./calc";\n\ntest("add again", () => {\n  expect(calc.add(1, 1)).toBe(2);\n});\n' > "$1/util.test.ts"
+    }
+    PREREDS='[e["data"].get("pre_red_checks",[]) for e in E if e["type"]=="stage.completed" and e["stage"]=="verify"][-1]'
+    st_run() { MAKE_REPO=make_startup_repo run_engine "add a multiply(a, b) function to calc.ts" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 "$@"; }
+    BOOT='throw new Error("startup boom");'; st_run E2E_STUB_SNIPPET="$TS_SNIP"
+    case "$(ev "$PREREDS")" in *util.test.ts*) ok "startup error on base: a check the runner cannot start for a test the task did not name, failing the same way on base, is excused" ;; *) bad "startup error on base: util.test.ts not excused"; dump ;; esac
+    case "$(ev "$PREREDS")" in *calc.test.ts*) bad "startup error on base: the task-named calc.test.ts was excused" ;; *) ok "startup error on base: the task-named calc.test.ts is never excused (it feeds the fix round)" ;; esac
+    case "$(ev "$PREREDS")" in *vitest*) ok "startup error on base: a check is listed pre-red" ;; *) bad "startup error on base: not listed pre-red"; dump ;; esac
+    case "$(ev '[x for e in E if e["type"]=="stage.completed" and e["stage"]=="verify" for x in e["data"].get("pre_red",[])][-1:]')" in *"proves nothing"*) ok "startup error on base: the receipt data names it as proving nothing" ;; *) bad "startup error on base: no pre_red note"; dump ;; esac
+    [ "$(outcome)" != "VERIFIED" ] && ok "startup error on base: the run is not VERIFIED on a check that never ran ($(outcome))" || { bad "startup error on base: VERIFIED"; dump; }
+    BOOT='throw new Error("startup boom");'; st_run E2E_STUB_TARGET=vitest.config.ts E2E_STUB_REPLACE='export default {};' E2E_STUB_SNIPPET='export default {}; // edited'
+    [ "$(fix_sessions)" -ge 1 ] && ok "startup error after a test config edit: the same error on base is not excused when the change edited the runner config ($(fix_sessions) fix sessions)" || { bad "startup error after a config edit: no fix session"; dump; }
+    BOOT='import "./calc.ts";'; st_run E2E_STUB_SNIPPET=$'export function (\n'"$TS_SNIP"
+    [ "$(fix_sessions)" -ge 1 ] && ok "startup error from the change: base runs fine, so the check is fix-round input ($(fix_sessions) fix sessions)" || { bad "startup error from the change: no fix session"; dump; }
+    BOOT=$'import "./calc.ts";\nthrow new Error("different cause on base");'; st_run E2E_STUB_SNIPPET=$'export function (\n'"$TS_SNIP"
+    [ "$(fix_sessions)" -ge 1 ] && ok "startup error, other cause on base: a different error is fix-round input ($(fix_sessions) fix sessions)" || { bad "startup error, other cause on base: no fix session"; dump; }
+    # #522 review: in a workspace the root node_modules links the package to HEAD source, so an unguarded base rerun would run the change's own import-time throw and excuse it.
+    make_wsboom_repo() {
+        mkdir -p "$1/packages/lib" "$1/packages/app" "$1/node_modules/@t"
+        printf '{"name":"root","private":true,"workspaces":["packages/*"]}\n' > "$1/package.json"; printf 'node_modules\n' > "$1/.gitignore"
+        printf '{"name":"@t/lib","private":true,"type":"module","main":"index.ts"}\n' > "$1/packages/lib/package.json"; printf '{"name":"@t/app","private":true,"type":"module"}\n' > "$1/packages/app/package.json"
+        printf 'export function add(a: number, b: number): number {\n  return a + b;\n}\n\n// LOKI_STUB_INSERT\n' > "$1/packages/lib/index.ts"
+        printf 'import { expect, test } from "vitest";\nimport { add } from "@t/lib";\n\ntest("app uses lib", () => {\n  expect(add(1, 1)).toBe(2);\n});\n' > "$1/packages/app/app.test.ts"
+        local e; for e in "$TSC_NM"/* "$TSC_NM"/.bin; do ln -s "$e" "$1/node_modules/$(basename "$e")"; done; ln -s ../../packages/lib "$1/node_modules/@t/lib"
+    }
+    MAKE_REPO=make_wsboom_repo run_engine "add a multiply(a, b) function to packages/lib/index.ts" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=packages/lib/index.ts LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 E2E_STUB_SNIPPET=$'throw new Error("import boom");\n'"$TS_SNIP"
+    WSK="$(ev '[(c["name"],c["result"]) for e in E if e["type"]=="stage.completed" and e["stage"]=="verify" for c in e["data"]["checks"]][-3:]')"
+    case "$WSK" in *app.test.ts*fail*) ok "workspace import throw: the app test ran and failed on the change's import-time throw ($WSK)" ;; *) bad "workspace import throw: no failing app test check: '$WSK'"; dump ;; esac
+    case "$(ev "$PREREDS")" in *app.test.ts*) bad "workspace import throw: the change's own throw was excused as pre-red" ;; *) ok "workspace import throw: not excused (the base rerun would resolve the workspace package to head source)" ;; esac
+    [ "$(fix_sessions)" -ge 1 ] && ok "workspace import throw: a fix session runs ($(fix_sessions))" || { bad "workspace import throw: no fix session"; dump; }
+    # Locks the guard: an edit in package a that makes a test in package b fail WITH test ids is never excused (the id path links base deps only through baseDepsLinker, which refuses a workspace).
+    MAKE_REPO=make_wsboom_repo run_engine "add a multiply(a, b) function to packages/lib/index.ts" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=packages/lib/index.ts E2E_STUB_REPLACE='return a + b;' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 E2E_STUB_SNIPPET='return a - b;'
+    WSI="$(ev '[(c["name"],c["result"],len(c.get("ids",[]))) for e in E if e["type"]=="stage.completed" and e["stage"]=="verify" for c in e["data"]["checks"]][:3]')"
+    case "$WSI" in *app.test.ts*fail*) ok "workspace cross-package: the app test failed with test ids after an edit in lib ($WSI)" ;; *) bad "workspace cross-package: '$WSI'"; dump ;; esac
+    case "$WSI" in *"app.test.ts', 'fail', 0"*) bad "workspace cross-package: no test ids parsed, the leg does not exercise the id path" ;; esac
+    case "$(ev "$PREREDS")" in *app.test.ts*) bad "workspace cross-package: a test broken by an edit in another package was excused as pre-red" ;; *) ok "workspace cross-package: not excused" ;; esac
+    [ "$(fix_sessions)" -ge 1 ] && ok "workspace cross-package: a fix session runs ($(fix_sessions))" || { bad "workspace cross-package: no fix session"; dump; }
+    # #522 review round 2: a store package (.pnpm/x@1/node_modules/x) that itself requires a workspace package resolves, by realpath, to the head's store dir and so to head source,
+    # unless it is copied into the shadow store. Real vitest on a hand-built pnpm-shaped repo: head lib throws at import, base lib is fine; the base run must pass and every realpath stay in base.
+    SF="$T/pnpm-shape"; rm -rf "$SF"; mkdir -p "$SF/packages/lib" "$SF/packages/app" "$SF/node_modules/.pnpm/x@1.0.0/node_modules/x" "$SF/node_modules/.pnpm/x@1.0.0/node_modules/@t"
+    printf 'node_modules\n' > "$SF/.gitignore"; printf '{"name":"root","private":true}\n' > "$SF/package.json"
+    printf '{"name":"@t/lib","private":true,"type":"module","main":"index.mjs"}\n' > "$SF/packages/lib/package.json"; printf 'export const v = 1;\n' > "$SF/packages/lib/index.mjs"
+    printf '{"name":"@t/app","private":true,"type":"module"}\n' > "$SF/packages/app/package.json"; printf 'import { expect, test } from "vitest";\nimport { xv } from "x";\n\ntest("x sees lib", () => { expect(xv).toBe(1); });\n' > "$SF/packages/app/app.test.ts"
+    printf '{"name":"x","type":"module","main":"index.mjs"}\n' > "$SF/node_modules/.pnpm/x@1.0.0/node_modules/x/package.json"; printf 'import { v } from "@t/lib";\nexport const xv = v;\n' > "$SF/node_modules/.pnpm/x@1.0.0/node_modules/x/index.mjs"
+    ln -s ../../../../../packages/lib "$SF/node_modules/.pnpm/x@1.0.0/node_modules/@t/lib"; mkdir -p "$SF/packages/app/node_modules"; ln -s ../../../node_modules/.pnpm/x@1.0.0/node_modules/x "$SF/packages/app/node_modules/x"
+    for e in "$TSC_NM"/* "$TSC_NM"/.bin; do ln -s "$e" "$SF/node_modules/$(basename "$e")"; done
+    git -C "$SF" init -q -b main && git -C "$SF" add -- .gitignore package.json packages && git -C "$SF" -c user.name=t -c user.email=t@t commit -qm base
+    printf 'throw new Error("lib import boom");\n' > "$SF/packages/lib/index.mjs"
+    SFR="$(cd "$ROOT/loki-ts" && bun -e '
+const { linkBaseFaithfulDeps: link } = await import("./src/util/base_guard.ts"), { spawnSync, execFileSync } = await import("node:child_process"), { realpathSync } = await import("node:fs"), d = process.argv[1], b = d + "-base";
+execFileSync("git", ["-C", d, "worktree", "add", "-q", "--detach", b, "HEAD"]);
+const ok = link(b, d, b + "/packages/app"), run = (c: string) => spawnSync(c + "/../../node_modules/.bin/vitest", ["run", "app.test.ts"], { cwd: c, encoding: "utf8", timeout: 90000 }).status;
+const x = realpathSync(b + "/packages/app/node_modules/x"), lib = realpathSync(x + "/../@t/lib"), rb = realpathSync(b);
+const first = [ok, run(b + "/packages/app"), run(d + "/packages/app"), x.startsWith(rb + "/") && lib.startsWith(rb + "/")];
+// a package the change adds: its workspace link exists at head but dangles in the base worktree, so base cannot be reproduced and linking must refuse
+const { mkdirSync, symlinkSync, writeFileSync } = await import("node:fs"), b2 = d + "-base2";
+mkdirSync(d + "/packages/newpkg", { recursive: true }); writeFileSync(d + "/packages/newpkg/package.json", "{\"name\":\"@t/newpkg\"}"); mkdirSync(d + "/node_modules/@t", { recursive: true }); symlinkSync("../../packages/newpkg", d + "/node_modules/@t/newpkg");
+execFileSync("git", ["-C", d, "worktree", "add", "-q", "--detach", b2, "HEAD"]);
+console.log([...first, link(b2, d, b2 + "/packages/app")].join(","));' "$SF" 2>&1 | tail -1)"
+    [ "$SFR" = "true,0,1,true,false" ] && ok "pnpm store package reaching a workspace package: the base run uses the base copy (base passes, head throws, realpaths stay in base); a workspace package the change adds dangles in base and linking refuses ($SFR)" || bad "pnpm store package leg: '$SFR' (want true,0,1,true,false)"
+    SG="$(cd "$ROOT/loki-ts" && bun -e '
+const { startupSig: s } = await import("./src/engine10/stages/verify.ts");
+const a = "x\n\u23af\u23af Startup Error \u23af\u23af\nError: No projects were found in /r/pkg (12ms)\n    at start (file:///r/n.js:1:2)\n", b = "x\n\u23af\u23af Startup Error \u23af\u23af\nError: No projects were found in /b/pkg (9ms)\n    at start (file:///b/n.js:5:6)\n";
+console.log([s(a, ["/r"]) === s(b, ["/b"]), s(a) === "", s("all good\n") === "", s(undefined) === "", s(a, ["/r"]) === s(b.replace("No projects were found", "Cannot find module"), ["/b"])].join(","));' 2>&1)"
+    [ "$SG" = "true,false,true,true,false" ] && ok "startup signature unit: paths, line numbers and durations are ignored; a clean run, no output or another error line is not the same ($SG)" || bad "startup signature unit: '$SG'"
+    NC="$(cd "$ROOT/loki-ts" && ROOT="$ROOT" bun -e '
+const rp = await import("./src/runner/repo_profile.ts"), { mkdirSync, writeFileSync, mkdtempSync } = await import("node:fs"), { execFileSync } = await import("node:child_process"), { tmpdir } = await import("node:os"), { join } = await import("node:path");
+const g = mkdtempSync(join(tmpdir(), "nc-")); mkdirSync(g + "/.loki/state", { recursive: true }); execFileSync("git", ["-C", g, "init", "-q", "-b", "main"]); execFileSync("git", ["-C", g, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"]);
+const sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: "pnpm test", exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ["a.test.ts > t1"], attributable: true, failing_errors: { "a.test.ts > t1": ["Error: x"] } } }));
+const r = rp.attributeFullSuite(g, sha, [{ name: "full suite: w", cmd: "(cd . && pnpm test)", result: "fail", ids: ["a.test.ts > t1"], errors: { "a.test.ts > t1": ["Error: x"] } }], [], ["src/z.ts"]);
+console.log(r.preExistingChecks.join(","));' 2>&1)"
+    [ "$NC" = "full suite: w" ] && ok "normCmd: a root package suite spelled '(cd . && pnpm test)' is the baseline's plain 'pnpm test' ($NC)" || bad "normCmd unit: '$NC'"
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "tsc fix input: vitest and typescript could not be installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: tsc fix input: vitest and typescript could not be installed (offline?)"; fi
 fi
