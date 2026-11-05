@@ -9,6 +9,10 @@
 #   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
 #   coverage: multiply() and subtract() on the first turn; negate() only when the prompt carries the coverage brief (tests/min/scope-and-fix.sh, LOKI_E10_COVERAGE_RESUME)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
+#   attempts: EXP-0010 (tests/min/engine10-e2e-stub.sh). Every implement session writes a wrong multiply() (calc.ts, or calc.py when the repo has one) except
+#     the session running in <temp>/loki-attempts-<random>/B<n> where n is E2E_STUB_RIGHT (unset or none: every session is wrong; the primary is attempt 0);
+#     E2E_STUB_NEWFILE=1: every session also creates new_<n>.<ext> and shared_new.<ext> (a file only that attempt owns, and one every attempt creates);
+#     E2E_STUB_WEAKEN=<n>: that attempt drops the multiply assertion from calc.test.ts instead of fixing multiply()
 #   agentonly: multiply() plus an exported square() that only the session's own square.test.ts calls (tests/min/scope-and-fix.sh)
 #   viacaller: multiply() plus an exported scale() that only the untouched ops.ts calls (tests/min/scope-and-fix.sh seeds ops.ts and its test)
 #   wallphantom: the Wall author writes loki_wall_multiply.test.ts calling multiplyAll(), a name the task never asks for
@@ -87,7 +91,7 @@ if [ "${LOKI_E10_STAGE:-}" = "fix" ]; then # before the implement branch: a fix 
   case "${E2E_STUB_FIX:-}" in
     conflict) echo "LOKI_SPEC_CONFLICT: calc.test.ts:7 expects multiply(3, 4) to be 12"; exit 0 ;;
     wallconflict) echo "LOKI_SPEC_CONFLICT: loki_wall_multiply.test.ts:5 calls multiplyAll, which the task never asks for"; exit 0 ;;
-    noprogress) printf '// stub fix pass\n' >> calc.ts; echo "LOKI_DONE"; exit 0 ;;
+    noprogress) if [ -f calc.py ]; then printf '# stub fix pass\n' >> calc.py; else printf '// stub fix pass\n' >> calc.ts; fi; echo "LOKI_DONE"; exit 0 ;;
     rank) printf '// ranked with ts_rank\n' >> frontend/src/hooks/useApi.ts; echo "LOKI_DONE"; exit 0 ;; # moves the vitestred Wall (C2 passes, C3 still fails)
     fixit) python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; echo "LOKI_DONE"; exit 0 ;;
     cfgfirst) if grep -q '"ok": false' cfg.json; then printf '{"ok": true}\n' > cfg.json
@@ -198,7 +202,14 @@ if [ "$stage" = "implement" ]; then
     if [ "${E2E_STUB_SCOPE_EDIT:-}" = "1" ] && [ -f util.ts ]; then printf 'export const MODE = 2;\n' >> util.ts; fi
     if [ "${E2E_STUB_BREAK_CFG:-}" = "1" ] && [ -f cfg.json ]; then printf '{"ok": false}\n' > cfg.json; fi
     if [ "${E2E_STUB_LINTBAD:-}" = "1" ]; then printf '#!/usr/bin/env bash\nif true; then\n  echo BROKEN_A\n' > tool.sh; fi
-    if [ "${E2E_STUB_MODE:-}" = "wrong" ]; then
+    if [ "${E2E_STUB_MODE:-}" = "attempts" ]; then # EXP-0010: the session in attempts/B<E2E_STUB_RIGHT> is right, every other one wrong
+      n=0; case "$(pwd -P)" in */loki-attempts-*/B[0-9]*) n="$(pwd -P)"; n="${n##*/B}" ;; esac
+      op='+'; [ "$n" = "${E2E_STUB_RIGHT:-none}" ] && op='*'
+      if [ "$n" = "${E2E_STUB_WEAKEN:-none}" ] && [ -f calc.test.ts ]; then grep -v 'multiply' calc.test.ts > calc.test.ts.new; mv calc.test.ts.new calc.test.ts; fi # E2E_STUB_WEAKEN=<n>: that attempt also drops the multiply assertion, so a wrong multiply() passes
+      if [ -n "${E2E_STUB_NEWFILE:-}" ]; then ext=ts; c='//'; [ -f calc.py ] && { ext=py; c='#'; }; printf '%s session %s\n' "$c" "$n" > "new_$n.$ext"; printf '%s shared by every attempt\n' "$c" > "shared_new.$ext"; fi # E2E_STUB_NEWFILE=1: each session also creates new_<n> (its own) and shared_new (the same name in every attempt)
+      if [ -f calc.py ]; then printf '\ndef multiply(a, b):\n    return a %s b\n' "$op" >> calc.py
+      else printf '\nexport function multiply(a: number, b: number): number {\n  return a %s b;\n}\n' "$op" >> calc.ts; fi
+    elif [ "${E2E_STUB_MODE:-}" = "wrong" ]; then
       printf '\nexport function multiply(a: number, b: number): number {\n  return a + b;\n}\n' >> calc.ts
     elif [ "${E2E_STUB_MODE:-}" = "coverage" ]; then # the task names multiply, subtract and negate: the first turn does two of the three, the coverage resume does the third
       if printf '%s' "$prompt" | grep -q "List each site, symbol, example or case"; then printf '\nexport function negate(a: number): number {\n  return -a;\n}\n' >> calc.ts
