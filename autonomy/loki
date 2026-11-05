@@ -4207,7 +4207,7 @@ cmd_start() {
     fi
 
     # Load saved provider if not specified on command line
-    if [ -z "$provider" ]; then
+    if [ -z "$provider" ] && [ -z "${LOKI_PROVIDER:-}" ]; then
         if [ -f "$LOKI_DIR/state/provider" ]; then
             provider=$(cat "$LOKI_DIR/state/provider" 2>/dev/null)
             if [ -n "$provider" ]; then
@@ -6896,7 +6896,7 @@ cmd_status() {
     if [ -f "$LOKI_DIR/state/provider" ]; then
         saved_provider=$(cat "$LOKI_DIR/state/provider" 2>/dev/null)
     fi
-    local current_provider="${saved_provider:-${LOKI_PROVIDER:-claude}}"
+    local current_provider="${LOKI_PROVIDER:-${saved_provider:-claude}}"
     # Show provider with capability
     local capability="full features"
     case "$current_provider" in
@@ -7781,11 +7781,11 @@ _cmd_provider_help() {
             echo ""
             echo "Precedence (highest wins):"
             echo "  1. loki start --provider NAME         CLI flag (per-invocation)"
-            echo "  2. .loki/state/provider               saved value (per-project)"
-            echo "  3. LOKI_PROVIDER env var              shell session default"
+            echo "  2. LOKI_PROVIDER env var              shell session default"
+            echo "  3. .loki/state/provider               saved value (per-project)"
             echo "  4. claude                             built-in default"
             echo ""
-            echo "  Note: 'loki status' reflects the SAVED provider, not the env var."
+            echo "  Note: LOKI_PROVIDER, when set, beats the saved value; 'loki status' and 'loki provider show' follow the same order."
             echo "  Run 'loki provider set <name>' to make a project-level choice persist."
             echo ""
             echo "Examples:"
@@ -7805,9 +7805,9 @@ cmd_provider_show() {
         saved_provider=$(cat "$LOKI_DIR/state/provider" 2>/dev/null)
     fi
 
-    local current="${positional_arg:-${saved_provider:-${LOKI_PROVIDER:-claude}}}"
-    # A removed provider saved in .loki/state/provider: the migration line and how to clear it, as `loki start` says.
-    if [ -z "$positional_arg" ] && [ "$current" = "$saved_provider" ] && loki_is_removed_provider "$saved_provider"; then
+    local current="${positional_arg:-${LOKI_PROVIDER:-${saved_provider:-claude}}}"
+    # A removed provider saved in .loki/state/provider (and not overridden by LOKI_PROVIDER): the migration line and how to clear it, as `loki start` says.
+    if [ -z "$positional_arg" ] && [ -z "${LOKI_PROVIDER:-}" ] && [ "$current" = "$saved_provider" ] && loki_is_removed_provider "$saved_provider"; then
         loki_removed_provider_message "$saved_provider" >&2
         loki_removed_saved_provider_hint "$saved_provider" >&2
         exit 2
@@ -7827,7 +7827,9 @@ cmd_provider_show() {
             ;;
     esac
 
-    if [ -n "$saved_provider" ]; then
+    if [ -z "$positional_arg" ] && [ -n "${LOKI_PROVIDER:-}" ]; then
+        echo -e "${DIM}(from LOKI_PROVIDER, which beats the saved choice)${NC}"
+    elif [ -n "$saved_provider" ]; then
         echo -e "${DIM}(saved in .loki/state/provider)${NC}"
     else
         echo -e "${DIM}(default - not explicitly set)${NC}"
@@ -7893,7 +7895,7 @@ cmd_provider_list() {
     if [ -f "$LOKI_DIR/state/provider" ]; then
         saved_provider=$(cat "$LOKI_DIR/state/provider" 2>/dev/null)
     fi
-    local current="${saved_provider:-${LOKI_PROVIDER:-claude}}"
+    local current="${LOKI_PROVIDER:-${saved_provider:-claude}}"
 
     # Check which CLIs are installed
     local claude_status="${RED}not installed${NC}"
@@ -24259,6 +24261,10 @@ cmd_ultracode() {
 
 # Standalone code review - diff-based quality gates (v6.20.0)
 cmd_review() {
+    if [ "${1:-}" = "queue" ]; then
+        echo "loki review queue needs the Bun runtime; unset LOKI_LEGACY_BASH" >&2
+        return 2
+    fi
     local review_staged=false
     local review_pr=""
     local review_since=""
@@ -28060,8 +28066,9 @@ EOF_RENAMES
 # Shared merge gate. One PR (number or branch) merges only when it is not a
 # draft, `gh pr checks` exits 0 after polling pending (rc=8), and, with
 # --require-verified, every clean proof recorded for the PR's head commit
-# (facts.git.head_sha == headRefOid, dirty-tree proofs ignored) says VERIFIED; a stale or missing proof
-# refuses ("gate: head"). The merge passes --match-head-commit so a push after
+# (facts.git.head_sha == headRefOid, dirty-tree proofs ignored) says VERIFIED, or, for a Loki 10 run
+# with no legacy proof, a .loki/runs receipt whose head_sha is the PR head passes `loki verify <run>`;
+# a stale or missing proof refuses ("gate: head"). The merge passes --match-head-commit so a push after
 # the gate cannot land unjudged. On refusal it prints the exact blocking gate
 # ("gate: draft|head|verdict|trust|checks") and leaves the PR open.
 # Usage: _merge_pr_gated <pr> [--require-verified] [--delete-branch]
@@ -28119,6 +28126,22 @@ _merge_pr_gated() {
                 [ -n "$hl" ] || hl="UNREADABLE"
                 if [ -z "$headline" ]; then headline="$hl"; elif [ "$headline" != "$hl" ]; then disagree=true; fi
             done
+            # Loki 10 (`loki start`) records no .loki/proofs: with no legacy proof for this head,
+            # judge the sealed run receipts in .loki/runs. A receipt counts only when its head_sha
+            # is the PR head and `loki verify <run>` agrees (rc 0 VERIFIED; rc 4 is a run outcome
+            # that is not VERIFIED; anything else is not verified). Legacy proof acceptance above is unchanged.
+            if [ -z "$headline" ] && ! $disagree; then
+                local rf="" rid="" vrc=0 rhl=""
+                for rf in .loki/runs/*/receipt.json; do
+                    [ -f "$rf" ] || continue
+                    [ "$(jq -r '.head_sha // empty' "$rf" 2>/dev/null)" = "$head" ] || continue
+                    [ "$(jq -r '.schema // empty' "$rf" 2>/dev/null)" = "loki.v10.receipt/1" ] || continue
+                    rid="$(basename "$(dirname "$rf")")"
+                    vrc=0; "$_LOKI_SCRIPT_DIR/../bin/loki" verify "$rid" >/dev/null 2>&1 || vrc=$?
+                    if [ "$vrc" = "0" ]; then rhl="VERIFIED"; else rhl="NOT VERIFIED (loki verify rc $vrc)"; fi
+                    if [ -z "$headline" ]; then headline="$rhl"; elif [ "$headline" != "$rhl" ]; then disagree=true; fi
+                done
+            fi
             if $disagree; then
                 echo "$pr: not merged, gate: verdict (proofs for PR head ${head:0:12} disagree); PR left open" >&2
                 _pr_record_merge "$pr" "blocked:verdict" "verdict"
@@ -28252,7 +28275,7 @@ cmd_merge() {
             echo "  watch <pr>         Wait for checks; on red run up to LOKI_PR_REPAIR_MAX (2) bounded"
             echo "                     repair sessions on the PR branch, push, re-check, merge when green."
             echo "  pr <pr|branch>     Merge one PR through the same gate (not draft, checks green;"
-            echo "                     --require-verified also needs a VERIFIED run verdict)."
+            echo "                     --require-verified also needs a VERIFIED run: a legacy proof, or a Loki 10 receipt in .loki/runs, for the PR head)."
             echo "  add <pr>...        Queue pull requests"
             echo "  list               Show the queue"
             echo "  run [--dry-run]    Merge one at a time, only when checks are green;"

@@ -23,6 +23,10 @@
 #               equals receipt cost on 3 draft runs, a full suite red only on base
 #               ids is status success and a new failing id stays failure.
 #
+#   capped run (FR09): a metered stub run capped between implement's start and end exits 6 with Outcome: PARTIAL and Reason: cost/time
+#               cap reached, the start line carries "cap $X (--max-cost)" and "estimate: about", main is untouched and
+#               implement's edit is committed on loki/<run>.
+#
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. tests/min/fixtures/e2e/bin/claude: in the done branch print LOKI_DONE
 #      without appending multiply() (the run must stop reading VERIFIED).
@@ -43,6 +47,7 @@
 #   11. loki-ts/src/engine10/stages/xreview.ts: reviewDefaultOn returns true (the default unit line reads medium=1), or false
 #       for high (it reads high=0).
 #   12. loki-ts/src/engine10/stages/xreview.ts: drop the run-model pin for the default review (the high-tier leg reads no --model haiku).
+#   13. loki-ts/src/engine10/machine.ts capReached: return false always (the capped run completes and reads VERIFIED, exit 0).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -59,7 +64,7 @@ TO=(); command -v timeout >/dev/null 2>&1 && TO=(timeout 120)
 
 # run_engine <mode> -> sets REPO, RC, OUT, RUNDIR, STUBENV, KEY
 run_engine() {
-    local mode="$1" d
+    local mode="$1" d; shift
     d="$(mktemp -d "$T/run.XXXXXX")"
     REPO="$d/repo"
     cp -R "$FIX/repo" "$REPO"
@@ -74,7 +79,7 @@ run_engine() {
         LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" \
         E2E_STUB_MODE="$mode" E2E_STUB_LOG="$d/stub.log" E2E_STUB_ENV_LOG="$STUBENV" \
         LOKI_E10_PLAN=1 GH_TOKEN="$CANARY" LOKI_RECEIPT_SIGNING_KEY_FILE="$KEY" \
-        ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$TASK" --no-pr 2>&1)"
+        ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$TASK" --no-pr "$@" 2>&1)"
     RC=$?
     RUNDIR=""
     if [ -f "$REPO/.loki/engine.json" ]; then
@@ -116,6 +121,38 @@ run_engine tamper
 [ "$RC" -ne 0 ] && ok "tampered run exits non-zero" || bad "tampered run exited 0"
 printf '%s\n' "$OUT" | grep -Eq '^Receipt:[[:space:]]+TAMPERED' && ok "tampered run prints Receipt: TAMPERED" || bad "tampered run did not print Receipt: TAMPERED"
 printf '%s\n' "$OUT" | grep -q 'Outcome:    VERIFIED' && bad "tampered run claimed Outcome: VERIFIED" || ok "tampered run never claims Outcome: VERIFIED"
+
+# FR09 hard cap: a metered stub (E2E_STUB_USAGE gives every session a $0.01 cost) first runs uncapped; the cap is then set from
+# that run's own events (the cost before implement's first cost event, plus half of implement's cost), measured here and
+# never hard-coded, so implement starts under the cap and ends over it. A sealed run is never BUDGET_STOP (outcomeOf: BUDGET_STOP
+# needs a run that sealed no receipt), so the capped run reads PARTIAL, exit 6, "cost/time cap reached"; the start line states
+# the cap and the quote before spending, implement's edit is kept as a commit on loki/<run>, and main is untouched.
+E2E_STUB_USAGE=10 run_engine done
+cat > "$T/cap.py" <<'PY'
+import json, sys
+pre, impl, seen = 0.0, 0.0, False
+for l in open(sys.argv[1]):
+    e = json.loads(l)
+    if e["type"] != "cost": continue
+    u = e["data"].get("usd") or 0
+    if e.get("stage") == "implement": seen = True; impl += u
+    elif not seen: pre += u
+print(round(pre + impl / 2, 4) if impl > 0 else "")
+PY
+CAP=""; [ -n "$RUNDIR" ] && CAP="$(python3 -I "$T/cap.py" "$RUNDIR/events.jsonl")"
+if [ -n "$CAP" ]; then
+    E2E_STUB_USAGE=10 run_engine done --max-cost "$CAP"
+    [ "$RC" -eq 6 ] && ok "capped run: cap \$$CAP, exit 6" || { bad "capped run: exit $RC (want 6) with cap $CAP"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
+    printf '%s\n' "$OUT" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' && ok "capped run prints Outcome: PARTIAL, never VERIFIED" || bad "capped run did not print Outcome: PARTIAL"
+    printf '%s\n' "$OUT" | grep -Eq '^Reason:[[:space:]]+cost/time cap reached' && ok "capped run names the cap as the reason" || bad "capped run does not name the cap as the reason"
+    CAPTXT="$(python3 -I -c 'import sys; print("%.2f" % float(sys.argv[1]))' "$CAP")"
+    printf '%s\n' "$OUT" | grep -F "cap \$$CAPTXT (--max-cost)" | grep -q 'estimate: about ' && ok "start line states the cap and quotes cost and time before spending" || bad "start line lacks 'cap \$$CAPTXT (--max-cost)' and 'estimate: about': $(printf '%s\n' "$OUT" | head -1)"
+    git -C "$REPO" show main:calc.ts | grep -q multiply && bad "capped run changed main" || ok "capped run leaves main untouched"
+    capid="$(basename "$RUNDIR")"
+    git -C "$REPO" show "loki/$capid:calc.ts" 2>/dev/null | grep -q multiply && ok "the partial is kept: implement's multiply() is committed on loki/<run>" || bad "loki/<run> has no multiply() after the capped run"
+else
+    bad "capped run: no metered implement cost in the uncapped run's events (run dir '${RUNDIR}')"
+fi
 
 # py_engine <target> [manifest file...] -> REPO, OUT, NOTES (receipt not_proven, one per line)
 py_engine() {
@@ -224,6 +261,10 @@ f="$(pr_facts)"; set -- $f
 [ "$6" = PARTIAL ] && [ "$2" = True ] && ok "reviewer BLOCK caps the verdict at PARTIAL (draft PR)" || bad "BLOCK review gave verdict $6, draft $2"
 [ "$7" = True ] && ok "draft run: result-cost sum equals receipt cost to the cent" || bad "draft run: cost sum differs from the receipt"
 grep -q '"base_red"' "$RUNDIR/receipt-addendum-1.json" 2>/dev/null && bad "addendum marked a suite base_red with no red base" || ok "no base_red mark on a green base"
+# FR08: the review queue and the merge gate bind a receipt to a PR by head_sha, so the pushed PR branch must be exactly the sealed head
+pushed="$(git -C "$D/origin.git" rev-parse "loki/$(basename "$RUNDIR")" 2>/dev/null)"
+sealed="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("head_sha",""))' "$RUNDIR/receipt.json" 2>/dev/null)"
+[ -n "$sealed" ] && [ "$pushed" = "$sealed" ] && ok "pushed PR branch tip equals the receipt head_sha (passport and merge gate bind to it)" || bad "pushed loki/<run> tip '$pushed' differs from receipt head_sha '$sealed'"
 
 run_pr flag none LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=FLAG LOKI_PR_DRAFT=1
 f="$(pr_facts)"; set -- $f

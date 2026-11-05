@@ -34,7 +34,7 @@ function readSavedProvider(): string {
 }
 
 function defaultProvider(positional: string | undefined, saved: string): string {
-  return positional || saved || process.env["LOKI_PROVIDER"] || "claude";
+  return positional || process.env["LOKI_PROVIDER"] || saved || "claude";
 }
 
 export function runProviderShow(positional?: string): number {
@@ -47,7 +47,7 @@ export function runProviderShow(positional?: string): number {
   const saved = readSavedProvider();
   const current = defaultProvider(positional, saved);
   // A removed provider saved in .loki/state/provider: the migration line and how to clear it, as `loki start` says.
-  if (!positional && current === saved && REMOVED_PROVIDERS.has(saved)) {
+  if (!positional && !process.env["LOKI_PROVIDER"] && current === saved && REMOVED_PROVIDERS.has(saved)) {
     process.stderr.write(removedProviderMessage(saved) + removedSavedProviderHint(saved));
     return 2;
   }
@@ -68,7 +68,9 @@ export function runProviderShow(positional?: string): number {
       break;
   }
 
-  if (saved) {
+  if (!positional && process.env["LOKI_PROVIDER"]) {
+    process.stdout.write(`${DIM}(from LOKI_PROVIDER, which beats the saved choice)${NC}\n`);
+  } else if (saved) {
     process.stdout.write(`${DIM}(saved in .loki/state/provider)${NC}\n`);
   } else {
     process.stdout.write(`${DIM}(default - not explicitly set)${NC}\n`);
@@ -101,7 +103,7 @@ export async function runProviderListJson(): Promise<number> {
 
 export async function runProviderList(): Promise<number> {
   const saved = readSavedProvider();
-  const current = saved || process.env["LOKI_PROVIDER"] || "claude";
+  const current = process.env["LOKI_PROVIDER"] || saved || "claude";
 
   process.stdout.write(`${BOLD}Available Providers${NC}\n`);
   process.stdout.write(`\n`);

@@ -1,16 +1,51 @@
 // TEN-ADOPTION-02: package a sealed run as a self-contained directory a third party can re-verify with the Loki CLI.
 import { spawnSync } from "node:child_process";
-import { createPublicKey } from "node:crypto";
+import { createPublicKey, type KeyObject } from "node:crypto";
 import { cpSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, normalize } from "node:path";
 import { computeReceiptHash, verifyReceipt } from "../engine10/verify_cmd.ts";
 import { kidOf, loadSigningKey } from "./receipt_signer.ts";
 import { safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
-import { isEnvelope, runIdGuard } from "../features/receipt_dsse.ts";
+import { isEnvelope, outcomeOf, runIdGuard, signEnvelope } from "../features/receipt_dsse.ts";
 
 export type BundleResult = { ok: true; outDir: string; kid: string } | { ok: false; error: string };
 
 export const VERIFY_COMMAND = "loki verify --pubkey pubkey.jwk receipt.json";
+
+/** The public half of a receipt key as one-line JWK JSON with its kid. The only place this shape is built. */
+export function publicJwk(pub: KeyObject): string {
+  const { kty, crv, x } = pub.export({ format: "jwk" });
+  return JSON.stringify({ kty, crv, x, kid: kidOf(pub), alg: "EdDSA", use: "sig" });
+}
+
+export type Passport = { envelope: string; jwk: string; kid: string; head: string } | { missing: string };
+const PASSPORT_MAX = 60000; // a GitHub comment holds 65536 characters
+
+/** The proof passport for a PR comment: the run receipt as a signed DSSE envelope plus the public JWK, built from one read of receipt.json.
+ *  Same policy as `loki verify --export-dsse`: only a locally VERIFIED receipt of a VERIFIED or ALREADY_SATISFIED run. Never throws; a refusal is a one-line reason. */
+export async function buildPassport(runDir: string, env: NodeJS.ProcessEnv = process.env): Promise<Passport> {
+  try {
+    if (env["LOKI_PR_PASSPORT"] === "0") return { missing: "passport disabled (LOKI_PR_PASSPORT=0)" };
+    const receiptPath = join(runDir, "receipt.json");
+    const text = readFileSync(receiptPath, "utf8");
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const outcome = outcomeOf(parsed);
+    if (isEnvelope(parsed) || (outcome !== "VERIFIED" && outcome !== "ALREADY_SATISFIED")) return { missing: `not issued: run outcome ${outcome}; only VERIFIED receipts get a passport` };
+    const priv = loadSigningKey(false);
+    if (!priv) return { missing: "no receipt signing key on this machine; passport not issued" };
+    const pub = createPublicKey(priv), kid = kidOf(pub);
+    const v = await verifyReceipt(receiptPath, { pubkey: pub, read: () => text });
+    if (v.verdict !== "VERIFIED") return { missing: `receipt is ${v.verdict} locally; passport not issued` };
+    const repoDir = dirname(dirname(dirname(runDir))), home = homedir();
+    if ((repoDir.length > 1 && text.includes(repoDir)) || (home.length > 1 && text.includes(home)) || text.includes("/Users/") || text.includes("/home/")) return { missing: "receipt holds local paths; passport not published (run loki proof bundle)" };
+    const envelope = JSON.stringify(signEnvelope(parsed, priv, kid)), jwk = publicJwk(pub);
+    if (envelope.length + jwk.length > PASSPORT_MAX) return { missing: `passport too large for a PR comment (${envelope.length + jwk.length} bytes); run loki proof bundle ${basename(runDir)}` };
+    return { envelope, jwk, kid, head: String(parsed["head_sha"]) };
+  } catch (e) {
+    return { missing: `passport not issued: ${e instanceof Error ? e.message.split("\n")[0] : "error"}` };
+  }
+}
 
 /** Writes receipt.json, events.jsonl, pubkey.jwk (public half only) and VERIFY.md into outDir.
  *  Refuses, writing nothing, unless the run's receipt is signed and verifies locally against the signer's public key. */
@@ -26,7 +61,6 @@ export async function buildReceiptBundle(runDir: string, outDir: string): Promis
   if (v.verdict !== "VERIFIED") return { ok: false, error: `receipt is ${v.verdict}${v.reasons.length ? `: ${v.reasons.join("; ")}` : ""}; only a locally VERIFIED signed receipt can be bundled` };
   if (!existsSync(eventsPath)) return { ok: false, error: `events.jsonl missing in ${runDir}` };
   if (existsSync(outDir) && readdirSync(outDir).length > 0) return { ok: false, error: `${outDir} already exists and is not empty; refusing to overwrite` };
-  const { kty, crv, x } = pub.export({ format: "jwk" });
   const stage = `${outDir}.tmp-${process.pid}`;
   rmSync(stage, { recursive: true, force: true });
   mkdirSync(stage, { recursive: true });
@@ -42,7 +76,7 @@ export async function buildReceiptBundle(runDir: string, outDir: string): Promis
       copyFileSync(join(runDir, rel), join(stage, rel));
     }
     if (existsSync(join(runDir, "group"))) cpSync(join(runDir, "group"), join(stage, "group"), { recursive: true });
-    writeFileSync(join(stage, "pubkey.jwk"), `${JSON.stringify({ kty, crv, x, kid, alg: "EdDSA", use: "sig" })}\n`);
+    writeFileSync(join(stage, "pubkey.jwk"), `${publicJwk(pub)}\n`);
     writeFileSync(join(stage, "VERIFY.md"), `# Verify this Loki receipt\n\nRun from this directory with the Loki CLI installed (npm i -g loki-mode); no account is needed.\n\n\`\`\`\n${VERIFY_COMMAND}\n\`\`\`\n\nExpected: VERIFIED (exit 0). Key id: ${kid}\n\nreceipt.json and events.jsonl must stay together: verify checks the signed event log beside the receipt.\n`);
     const again = await verifyReceipt(join(stage, "receipt.json"), { pubkey: pub });
     if (again.verdict !== "VERIFIED") throw new Error(`bundle does not verify on its own: ${again.verdict}${again.reasons.length ? `: ${again.reasons.join("; ")}` : ""}`);

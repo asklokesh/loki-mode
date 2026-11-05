@@ -61,7 +61,7 @@ Where the default applies:
 
 | Route | Default applies | What the cap does |
 | --- | --- | --- |
-| engine10 (`loki "<task>"`, the Loki 10 engine) | Only when an API key is set (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`). A subscription run (no key) has no dollar cap. | Ends the run `BUDGET_STOP`, exit 3. |
+| engine10 (`loki "<task>"`, the Loki 10 engine) | Only when an API key is set (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`). A subscription run (no key) has no dollar cap. | Stops starting stages and seals what exists (see "What you keep at the cap"). |
 | Bash loop (`loki start`, `autonomy/run.sh`) | Always, key or not. | Pauses the run (writes `.loki/PAUSE` and `.loki/signals/BUDGET_EXCEEDED`); remove both to resume. |
 
 The README and the engine guide have shown different figures in the past (100 and
@@ -85,7 +85,8 @@ Every start prints the active cap and where it came from.
 
 - engine10: the start line ends the cap clause with `cap $X.XX (SOURCE)` where SOURCE
   is `--max-cost`, `env`, `loki.yaml` or `default`, or `no dollar cap (subscription)`.
-  The default output stays within its 8-line limit.
+  The same line carries the cost and time quote (see "Preview the cost before
+  spending anything"). The default output stays within its 8-line limit.
 - bash route: `Budget limit set: $X.XX (source: flag|env|config|default)`.
 
 A cap set through the bash settings file is reported as `config`; the `--config`
@@ -107,13 +108,35 @@ file loader exports the variable, so it reports as `env`.
 ### Enforcement point and overshoot
 
 engine10 checks the cap before each stage starts (`machine.ts`, `capReached`), using
-the cost events recorded so far. A stage that is already running is not interrupted by
-the dollar cap. The documented overshoot is therefore up to the cost of the stages in
-flight when the cap is crossed (the plan and wall stages can run together). Time caps
-and the per-session time limit still apply inside a stage.
+the cost events recorded so far, and each session is handed what is left of the cap
+(`engine10/session.ts`, `childBudgetLimit`, exported as `LOKI_BUDGET_LIMIT` and passed to
+Claude Code as `--max-budget-usd` by `loki-ts/src/providers/claude_flags.ts`). So a session that is
+already running is bounded by the remaining cap, with a floor of $0.01, and the overshoot is
+bounded per session. The plan and wall stages can run together, so up to two sessions can
+be in flight when the cap is crossed. Time caps and the per-session time limit still apply
+inside a stage. A provider that reports no cost (opencode) has no dollar enforcement; the
+start line warns about it.
 
 The bash route checks after each iteration (`check_budget_limit`), so the overshoot is
 up to one iteration.
+
+### What you keep at the cap
+
+When the cap is reached no later stage starts, but the closing stages (commit and seal)
+still run, so the work done so far is kept and the run ends with a receipt that names the
+cap:
+
+- The edits are committed on `loki/<runId>` and your checkout returns to the branch you
+  started on, untouched. The run prints where the work is.
+- If the cap is crossed while implement is running or after it, the outcome is `PARTIAL`
+  (exit 6) with `Reason: cost/time cap reached`. If it is crossed before any change exists,
+  the outcome is `FAILED` (exit 1) with the same reason and there is nothing to keep.
+  `tests/min/engine10-e2e-stub.sh` pins the first case.
+- `BUDGET_STOP` (exit 3) is reserved for a run that ended without sealing a receipt.
+  Then `.loki/runs/<id>/budget.json` records the cap, the amount spent and the source,
+  and the next step reads "raise with --max-cost". A rerun of the same task starts from
+  that spend (see "A budget stop survives a rerun").
+- To continue after a cap, raise it with `--max-cost` and rerun.
 
 ### Missing prices
 
@@ -174,14 +197,53 @@ See [exit codes](./exit-codes.md) for the full contract.
 
 ## Preview the cost before spending anything
 
-```sh
-loki plan ./prd.md --json
+Every `loki "<task>"` start line carries one quote, printed before any session starts:
+
+```
+... cap $5.00 (--max-cost); estimate: about $0.19 (range $0.12-$0.39), about 1 min (range 1-5 min), first run in this repo (benchmark prior, loki-default)
 ```
 
-Reports complexity, estimated iterations, token usage and cost **without
-executing**. No provider call, no spend. `LOKI_CONFIG_DUMP=1 loki start ./prd.md`
-prints the resolved configuration and exits, so you can confirm your caps are
-actually set before a real run.
+`loki estimate` prints the same quote without starting a run (`--model M`, `--provider P`
+and `--json` are accepted). Where the numbers come from:
+
+- **First run in a repo, or fewer than 3 verified runs of the project shape.** The quote
+  is a benchmark prior: the p10 to p90 range and the median of the measured cost and wall
+  time of Loki runs in the committed citable head-to-head results
+  (`benchmarks/h2h/results`, the file list is `PRIOR_SOURCES` in
+  `loki-ts/src/runner/router/cost_preview.ts`, and `tests/min/outcome-metrics.sh`
+  recomputes every number from those files). A plain `loki start` quotes the
+  `loki-default` band (24 runs): about $0.19, range $0.12-$0.39, about 1 min, range 1-5 min.
+  `loki start --haiku` and `LOKI_ROUTER=auto` quote the `loki-haiku-flag` band (96 runs).
+  A pinned model quotes its own family band.
+- **After 3 verified runs of the same project shape in this repo.** The quote is the
+  median and range of those runs' own cost and time, labelled "from K prior runs of shape S".
+- **Never from task text.** A model with no benchmark row (an opencode model) prints
+  `NOT AVAILABLE (reason)`, never a guess.
+- **Subscription runs.** The dollars are what the same usage would cost at API prices,
+  not an amount billed to you.
+
+Switches: `LOKI_COST_PREVIEW=0` turns every quote surface off, `LOKI_COST_PRIOR=0` drops the
+first-run prior (the line then reads NOT AVAILABLE until history exists), and
+`LOKI_COST_CONFIRM=1` asks y/N before a run starts.
+
+How accurate the quote was: `loki stats --outcomes` prints a `Quote accuracy` row, how many
+of the last 50 sealed runs landed inside the quoted dollar range and the median error against
+the quoted middle (`quote_accuracy` in `--json`).
+
+What the quote is not:
+
+- The prior comes from small benchmark tasks, so it under-quotes large real work until the
+  repo has its own history. The range is shown for that reason.
+- The default band was measured on one account whose Claude Code default model is not
+  recorded (its cost tracks the Opus band, so a Sonnet-default or Pro user is over-quoted).
+- Quote accuracy counts sealed runs only. A run that ended without a receipt has no
+  actual cost on a receipt and is not in the row, so the figure reads optimistic.
+- It is not a cap. The cap is the separate `cap $X` clause on the same line.
+
+For the older loop, `loki plan ./prd.md --json` reports complexity, estimated iterations,
+token usage and cost without executing. No provider call, no spend.
+`LOKI_CONFIG_DUMP=1 loki start ./prd.md` prints the resolved configuration and exits, so you
+can confirm your caps are actually set before a real run.
 
 ## What you are charged for, stated plainly
 

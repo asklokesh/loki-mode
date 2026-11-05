@@ -283,4 +283,84 @@ console.log([same, cur, old, loadDefaultMaxCostUsd() === j.default_max_cost_usd,
 readers="$(grep -rln 'model-pricing' loki-ts/src | xargs grep -l 'readFileSync' | xargs grep -n 'model-pricing.json"' | grep -v '^[^:]*:[0-9]*:import ' || true)"
 [ -z "$readers" ] && ok "no loki-ts/src file reads model-pricing.json at run time" || bad "runtime readers of model-pricing.json: $readers"
 
+# FR09 start-line quote. (a) The first-run prior table equals a recomputation from exactly the committed citable
+# benchmark files it names (nearest rank p10/p50/p90, every outcome counted, cost_usd and seconds > 0). (b) The default
+# path (the provider-default model sentinel) gets a quote with a time band, never NOT AVAILABLE. (c) The router preset,
+# LOKI_COST_PRIOR=0 and LOKI_COST_PREVIEW=0 behave as documented. (d) quoteAccuracy over fixture receipts.
+# Planted defects: (a) PRIOR["loki-haiku"].usd_mid 0.007 -> 0.07; (b) quoteConfig returns null for the sentinel, and
+# separately startBase drops the time clause; (c) quoteConfig ignores routerPreset; (d) usd_high compared with < instead
+# of <=, and separately a NOT RECORDED actual counted as 0.
+(cd "$ROOT/loki-ts" && bun -e '
+const m = await import("./src/runner/router/cost_preview.ts");
+console.log(JSON.stringify({ sources: m.PRIOR_SOURCES, prior: m.PRIOR }));' > "$T/prior.json" 2>"$T/prior.err") || bad "could not load PRIOR from cost_preview.ts: $(tail -3 "$T/prior.err")"
+python3 -I - "$T/prior.json" "$ROOT/benchmarks/h2h/results" > "$T/prior.out" 2>&1 <<'PY'
+import json, os, sys
+d = json.load(open(sys.argv[1])); root = sys.argv[2]; bad = []
+rk = lambda a, p: a[round(p * (len(a) - 1))]
+for cfg, files in d["sources"].items():
+    c, s = [], []
+    for f in files:
+        j = json.load(open(os.path.join(root, f)))
+        if j.get("citable") is not True: bad.append(f"{cfg}: {f} is not citable"); continue
+        for r in j["runs"]:
+            if r.get("config") != cfg: continue
+            cu, sec = r.get("cost_usd"), r.get("seconds")
+            if all(isinstance(x, (int, float)) and not isinstance(x, bool) and x > 0 for x in (cu, sec)): c.append(cu); s.append(sec)
+    c.sort(); s.sort(); p = d["prior"][cfg]
+    want = {"usd": [round(rk(c, .1), 3), round(rk(c, .9), 3)], "usd_mid": round(rk(c, .5), 3), "wall_s": [round(rk(s, .1)), round(rk(s, .9))], "wall_mid_s": round(rk(s, .5)), "n": len(c)}
+    got = {k: p[k] for k in want}
+    if want != got: bad.append(f"{cfg}: table {got} != recomputed {want}")
+if set(d["sources"]) != set(d["prior"]): bad.append("PRIOR and PRIOR_SOURCES keys differ")
+print("; ".join(bad) if bad else "OK " + ",".join(sorted(d["prior"])))
+sys.exit(1 if bad else 0)
+PY
+[ $? -eq 0 ] && ok "PRIOR equals p10/p50/p90 recomputed from its committed citable benchmark files ($(cat "$T/prior.out"))" || bad "PRIOR provenance: $(head -c 400 "$T/prior.out")"
+
+QDIR="$T/quote"; mkdir -p "$QDIR/cache"
+qout="$(cd "$ROOT/loki-ts" && bun -e '
+const m = await import("./src/runner/router/cost_preview.ts");
+const { PROVIDER_DEFAULT_MODEL } = await import("./src/util/claude_model.ts");
+const cache = process.argv[1]!;
+const def = m.priorFor(PROVIDER_DEFAULT_MODEL, {});
+const first = m.startText(m.estimateFromHistory(null, "k", cache, { model: PROVIDER_DEFAULT_MODEL, env: {} }));
+const auto = m.priorFor(PROVIDER_DEFAULT_MODEL, { LOKI_ROUTER: "auto" })?.tier;
+const autoNoHaiku = m.priorFor(PROVIDER_DEFAULT_MODEL, { LOKI_ROUTER: "auto", LOKI_ALLOW_HAIKU: "false" })?.tier;
+const off = m.startText(m.estimateFromHistory(null, "k", cache, { model: PROVIDER_DEFAULT_MODEL, env: { LOKI_COST_PRIOR: "0" } }));
+const opencode = m.priorFor("openrouter/some-vendor/model", {});
+console.log(JSON.stringify({ tier: def?.tier, first, auto, autoNoHaiku, off, opencode }));' "$QDIR/cache" 2>&1)"
+tier="$(printf '%s' "$qout" | jq -r .tier 2>/dev/null)"; first="$(printf '%s' "$qout" | jq -r .first 2>/dev/null)"
+[ "$tier" = "loki-default" ] && ok "default-path model has a prior (loki-default)" || bad "default-path prior: $qout"
+printf '%s' "$first" | grep -qE '^estimate: about \$0\.19 \(range \$0\.12-\$0\.39\), about 1 min \(range 1-5 min\), first run in this repo' && ok "first-run quote carries dollars and a time band: $first" || bad "first-run quote text: $first"
+[ "$(printf '%s' "$qout" | jq -r .auto 2>/dev/null)" = "loki-haiku-flag" ] && ok "LOKI_ROUTER=auto quotes the haiku-flag band" || bad "router auto tier: $qout"
+[ "$(printf '%s' "$qout" | jq -r .autoNoHaiku 2>/dev/null)" = "loki-default" ] && ok "LOKI_ROUTER=auto with LOKI_ALLOW_HAIKU=false keeps the provider-default quote" || bad "router auto, no haiku tier: $qout"
+printf '%s' "$(printf '%s' "$qout" | jq -r .off 2>/dev/null)" | grep -q '^estimate: NOT AVAILABLE' && ok "LOKI_COST_PRIOR=0 drops the first-run prior" || bad "LOKI_COST_PRIOR=0: $qout"
+[ "$(printf '%s' "$qout" | jq -r .opencode 2>/dev/null)" = "null" ] && ok "a model with no benchmark row (opencode) gets no prior, not a wrong one" || bad "opencode prior: $qout"
+eo="$(cd "$ROOT/loki-ts" && LOKI_COST_PREVIEW=0 bun src/cli.ts estimate 2>&1)"
+[ "$eo" = "estimate: OFF (LOKI_COST_PREVIEW=0)" ] && ok "LOKI_COST_PREVIEW=0 makes loki estimate print OFF" || bad "LOKI_COST_PREVIEW=0 estimate: $eo"
+
+# (d) quote accuracy over eight receipts plus an unreadable one and an empty dir. In range: q1 (0.15), q2 (0.30), q3 (0.20),
+# q4 (0.12 = usd_low) and q5 (0.40 = exactly usd_high); above the range: q6 (0.50). Skipped, never counted as 0: q7 actual
+# NOT RECORDED, q8 estimate NOT AVAILABLE, q9 not JSON, q10 no receipt. Range 0.12-0.40; q1..q4 carry usd_mid 0.20, q5/q6 use the range midpoint 0.26.
+QA="$T/qa-repo"; mkdir -p "$QA/.loki/runs"
+qa_rcpt() { # id estimate actual
+    mkdir -p "$QA/.loki/runs/$1"
+    printf '{"cost_preview":{"estimate_source":"rough_prior","estimate":%s,"actual":{"usd":%s,"wall_s":10}}}\n' "$2" "$3" > "$QA/.loki/runs/$1/receipt.json"
+}
+EST='{"usd_low":0.12,"usd_high":0.4,"usd_mid":0.2}'
+qa_rcpt q1 "$EST" 0.15; qa_rcpt q2 "$EST" 0.30; qa_rcpt q3 "$EST" 0.20; qa_rcpt q4 "$EST" 0.12
+qa_rcpt q5 '{"usd_low":0.12,"usd_high":0.4}' 0.40; qa_rcpt q6 '{"usd_low":0.12,"usd_high":0.4}' 0.50
+qa_rcpt q7 "$EST" '"NOT RECORDED"'; qa_rcpt q8 '"NOT AVAILABLE (no project shape recorded for this repo)"' 0.2
+mkdir -p "$QA/.loki/runs/q9"; echo '{not json' > "$QA/.loki/runs/q9/receipt.json"; mkdir -p "$QA/.loki/runs/q10"
+# errors |actual-mid|/actual: q1 0.3333, q2 0.3333, q3 0, q4 0.6667, q5 |0.4-0.26|/0.4 = 0.35, q6 |0.5-0.26|/0.5 = 0.48
+# sorted 0, .3333, .3333, .35, .48, .6667 -> median (0.3333+0.35)/2 = 0.34167
+QAJS='const m = await import("./src/runner/router/cost_preview.ts"); console.log(JSON.stringify(m.quoteAccuracy(process.argv[1]!)));'
+qa="$(cd "$ROOT/loki-ts" && bun -e "$QAJS" "$QA/.loki/runs" 2>&1)"
+[ "$(printf '%s' "$qa" | jq -c '[.n,.within_range,.by_source.rough_prior]' 2>/dev/null)" = "[6,5,6]" ] && ok "quoteAccuracy: n=6, 5 in range (usd_high inclusive); NOT RECORDED, NOT AVAILABLE, unreadable and missing receipts skipped" || bad "quoteAccuracy counts: $qa"
+[ "$(printf '%s' "$qa" | jq -r '(.median_abs_pct_error*10000|round)' 2>/dev/null)" = "3417" ] && ok "quoteAccuracy: median error 34.17% (hand-computed)" || bad "quoteAccuracy median: $qa"
+[ "$(cd "$ROOT/loki-ts" && bun -e "$QAJS" "$T/none" 2>&1 | jq -c '[.n,.median_abs_pct_error]')" = "[0,null]" ] && ok "quoteAccuracy: no runs dir reads n=0, median null" || bad "quoteAccuracy on a missing dir"
+(cd "$QA" && LOKI_TS_ENTRY="$ROOT/loki-ts/dist/loki.js" bash "$ROOT/bin/loki" stats --outcomes --json) >"$T/qa-cli.json" 2>"$T/qa-cli.err"
+[ "$(jq -c '[.quote_accuracy.n,.quote_accuracy.within_range,(.quote_accuracy.median_abs_pct_error*10000|round)]' "$T/qa-cli.json" 2>/dev/null)" = "[6,5,3417]" ] && ok "loki stats --outcomes --json reports quote_accuracy (committed bundle)" || bad "stats --outcomes quote_accuracy (needs a dist rebuild if red): $(head -c 300 "$T/qa-cli.json") $(tail -2 "$T/qa-cli.err")"
+(cd "$QA" && LOKI_TS_ENTRY="$ROOT/loki-ts/dist/loki.js" bash "$ROOT/bin/loki" stats --outcomes) >"$T/qa-cli.txt" 2>&1
+grep -q 'Quote accuracy  *5 of 6 in range, median error 34%' "$T/qa-cli.txt" && ok "loki stats --outcomes prints the Quote accuracy row" || bad "stats --outcomes text row: $(grep -i quote "$T/qa-cli.txt" | head -2)"
+
 finish

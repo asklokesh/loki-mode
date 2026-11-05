@@ -14,6 +14,7 @@ import { REPO_ROOT } from "../../util/paths.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { collapseNotProven, pushErrLine } from "../../util/term_width.ts";
 import { parseSliceHead, sealAccuracyOfFile, stackBase, stackSection, tierSealFor } from "../../util/run_outputs.ts"; import { publishFallback } from "../../util/engine_origin.ts";
 import { postReceiptComment, renderReceiptComment } from "../../util/receipt_surface.ts";
+import { buildPassport } from "../../util/receipt_bundle.ts";
 import { lokiYamlTexts, yamlKey } from "../../util/yaml_key.ts"; import { idempotencyKey, runOnce } from "../../util/outbox.ts";
 /** B7: who opens the PR. LOKI_PR_AUTHOR beats loki.yaml pr.author; anything but "bot" is "me". */
 export function resolvePrAuthor(repoDir: string, environ: NodeJS.ProcessEnv = process.env): "me" | "bot" {
@@ -162,6 +163,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const receiptComment = renderReceiptComment({
     verdict, draft, draftReason: draftReason(verdict, capHit), notProven: [...notProven, ...notProvenOut],
     receiptSha256: seal.receipt_sha256 ?? null, runId: ctx.runId, mutationProof: seal.mutation_line ?? null,
+    passport: await buildPassport(ctx.runDir),
   }); // the same items as the PR body (no new exposure), plus this stage's own commit-status misses
   const commentMiss = postReceiptComment({ scriptPath, env, runDir: ctx.runDir, url, timeoutMs: prChildTimeoutMs(), comment: receiptComment });
   if (commentMiss) notProvenOut.push(commentMiss);

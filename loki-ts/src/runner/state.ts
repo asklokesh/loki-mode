@@ -31,6 +31,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { VALID_PROVIDERS, removedSavedProviderHint, unsupportedProviderMessage } from "./types.ts";
 import { lokiDir } from "../util/paths.ts";
 import { fsyncParentDir, withFileLockSync } from "../util/atomic.ts";
 
@@ -624,6 +625,17 @@ export function readProviderName(opts: { lokiDirOverride?: string } = {}): strin
   } catch {
     return null;
   }
+}
+
+/** The provider a run uses: --provider, then LOKI_PROVIDER, then the project's saved choice (.loki/state/provider), else
+ *  claude. A saved name Loki cannot run returns `refusal`: the migration line (or the supported list) plus how to clear it. */
+export function resolveRunProvider(flag: string | undefined, env: Record<string, string | undefined>, repoDir: string): { provider: string; source: "flag" | "env" | "saved" | "default"; refusal?: string } {
+  if (flag) return { provider: flag, source: "flag" };
+  if (env["LOKI_PROVIDER"]) return { provider: env["LOKI_PROVIDER"], source: "env" };
+  const saved = readProviderName({ lokiDirOverride: join(repoDir, ".loki") });
+  if (saved === null) return { provider: "claude", source: "default" };
+  return VALID_PROVIDERS.has(saved) ? { provider: saved, source: "saved" }
+    : { provider: saved, source: "saved", refusal: unsupportedProviderMessage("loki", "saved provider", saved) + removedSavedProviderHint(saved) };
 }
 
 // --- STATUS.txt ------------------------------------------------------------

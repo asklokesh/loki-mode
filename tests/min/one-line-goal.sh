@@ -122,4 +122,24 @@ printf '#!/bin/sh\necho opencode 0\n' > "$T/pbin/opencode"; chmod +x "$T/pbin/op
 inf="$(PBIN="$T/pbin" bun --no-env-file --config=/dev/null -e 'const m = await import(process.env.ROOT + "/loki-ts/src/util/one_line_goal.ts"); const a = m.inferProvider({ PATH: process.env.PBIN }, false); const b = m.inferProvider({ PATH: process.env.PBIN }, true); const c = m.inferProvider({ PATH: process.env.PBIN + ":" + process.env.FIXDIR + "/bin" }, false); console.log(a?.provider + " " + b + " " + c)' 2>&1)"
 [ "$inf" = "opencode null null" ] && ok "provider inference: opencode when claude is missing; none when named or claude present" || bad "provider inference gave: $inf"
 
+# 6. FR01 goalRef: pasted URLs, "#N" and "fix #N" become the ref the issue path takes; anything else stays text
+gr="$(bun --no-env-file --config=/dev/null -e '
+const m = await import(process.env.ROOT + "/loki-ts/src/util/one_line_goal.ts");
+const RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
+const isRef = (s: string) => RE.test(s) || /^(?:jira|linear):/.test(s);
+const GH = "https://github.com/acme/calc.git", gh = "https://github.com/acme/calc/issues/7";
+const rows: [string, string | null, string | null, NodeJS.ProcessEnv?][] = [
+  [gh + "#issuecomment-1", GH, gh], [gh + "/", GH, gh], [gh + "?x=1", GH, gh], [gh, GH, null],
+  ["https://gitlab.com/g/p/-/issues/3#note_1", null, "https://gitlab.com/g/p/-/issues/3"],
+  ["https://acme.sentry.io/issues/4001/?project=1", null, "https://acme.sentry.io/issues/4001"],
+  ["#7", GH, "acme/calc#7"], ["fix #7", GH, "acme/calc#7"], ["Fix issue 7.", GH, "acme/calc#7"],
+  ["fix acme/other#3", GH, "acme/other#3"], ["fix jira:ENG-1", null, "jira:ENG-1"],
+  ["#7", null, null], ["#7", "https://gitlab.com/g/p.git", null],
+  ["fix #7 and add a test", GH, null], ["add 7 tests", GH, null], ["7", GH, null], ["fix #7\nand more", GH, null],
+  ["#7", GH, null, { LOKI_GOAL_REF: "0" }],
+];
+const bad = rows.filter(([t, o, w, e]) => (m.goalRef(t, o, isRef, e ?? {})?.ref ?? null) !== w).map(([t]) => t);
+console.log(bad.length ? "BAD " + JSON.stringify(bad) : "OK " + rows.length);' 2>&1)"
+[ "$gr" = "OK 18" ] && ok "goalRef: 18 rows (URL suffixes, #N, verb prefix, text stays text, off switch)" || bad "goalRef table: $gr"
+
 finish
