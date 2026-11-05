@@ -23,10 +23,11 @@ test("normalizeOut masks the tree path and heap addresses only", () => {
 });
 
 test("compareRuns: a case counts only when both runs of each tree agree", () => {
-  const probes = [{ id: "same", desc: "", kind: "keep" }, { id: "chg", desc: "", kind: "keep" }, { id: "flk", desc: "", kind: "keep" }, { id: "gone", desc: "", kind: "keep" }, { id: "pflk", desc: "", kind: "keep" }];
-  const b = { same: "1", chg: "a", flk: "t1", gone: "x", pflk: "q" }, b2 = { ...b, flk: "t2" };
-  const p = { same: "1", chg: "b", flk: "t3", pflk: "r" }, p2 = { ...p, flk: "t4", pflk: "s" };
-  expect(Object.fromEntries(compareRuns([b, b2], [p, p2], probes).map((c) => [c.id, c.status]))).toEqual({ same: "same", chg: "changed", flk: "flaky", gone: "missing_patched", pflk: "flaky" });
+  const probes = [{ id: "same", desc: "", kind: "keep" }, { id: "chg", desc: "", kind: "keep" }, { id: "flk", desc: "", kind: "keep" }, { id: "gone", desc: "", kind: "keep" }, { id: "pflk", desc: "", kind: "keep" }, { id: "bflk", desc: "", kind: "keep" }];
+  const b = { same: "1", chg: "a", flk: "t1", gone: "x", pflk: "q", bflk: "u1" }, b2 = { ...b, flk: "t2", bflk: "u2" };
+  const p = { same: "1", chg: "b", flk: "t3", pflk: "r", bflk: "u3" }, p2 = { ...p, flk: "t4", pflk: "s" };
+  // bflk: unstable on base, stable on the patched tree; without the base-side check it would read as a change
+  expect(Object.fromEntries(compareRuns([b, b2], [p, p2], probes).map((c) => [c.id, c.status]))).toEqual({ same: "same", chg: "changed", flk: "flaky", gone: "missing_patched", pflk: "flaky", bflk: "flaky" });
 });
 
 test("verdict parsing: unrequested is never read as requested; first answer wins", () => {
