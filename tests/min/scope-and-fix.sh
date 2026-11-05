@@ -553,6 +553,15 @@ res("parsePrecedentVote: option, neither, out of range, garbage", parsePrecedent
   const AL = like + "\n\nAny of the following outputs is acceptable:\n\n- `DurationSetting.Value` returns the parsed time.Duration\n- `DurationSetting.Value` returns the trimmed string\n";
   const rAL = one(AL, { repoDir: GR, votes: [0, 0] })!;
   res("transplant: an acceptable-outputs list never gets a transplant", !rAL.transplant);
+  // control legs: settings-split (siblings disagree) and settings-acc (siblings agree, the issue lists outputs that conflict with them)
+  const SP = `${process.env.T}/tp-split`; mkdirSync(`${SP}/settings`, { recursive: true });
+  writeFileSync(`${SP}/settings/settings.go`, `package settings\n\n${typ("IntSetting", "int", "0")}\n${typ("BoolSetting", "string", "s.Raw")}\n${typ("DurationSetting", "string", "s.Raw")}`);
+  const sg = (...a: string[]) => execFileSync("git", ["-C", SP, "-c", "user.name=t", "-c", "user.email=t@t", ...a]); sg("init", "-q"); sg("add", "."); sg("commit", "-q", "-m", "seed");
+  let splitCalls = 0; const sv = await voteOpenChoices(like, { repoDir: SP }, async () => { splitCalls++; return "NEITHER"; }), sr = one(like, { repoDir: SP, votes: sv })!;
+  res("control settings-split: siblings disagree, the vote is NEITHER, no line and no transplant", splitCalls === 1 && sv[0] === null && emitChoiceLines([sr]).length === 0 && !sr.transplant);
+  let accCalls = 0; const AC = "DurationSetting.Value should behave like the other settings\n\nEvery other setting type gives me the parsed value from `Value()`.\n\nAny of the following outputs is acceptable:\n\n- `DurationSetting.Value` returns the string, trimmed\n- `DurationSetting.Value` returns the raw string\n";
+  const av = await voteOpenChoices(AC, { repoDir: GR }, async () => { accCalls++; return "OPTION 1"; }), ar = one(AC, { repoDir: GR, votes: av })!, al = emitChoiceLines([ar]).join("\n");
+  res("control settings-acc: siblings agree but the issue lists outputs: no vote call, no binding transplant, the listed outputs line stands", accCalls === 0 && !ar.transplant && !al.includes("Binding sibling test") && al.includes("every one of them"));
   writeFileSync(`${GR}/settings/settings_test.go`, `package settings\n\nimport "testing"\n\n${tcase("IntSetting", "int", "0")}\nfunc TestBoolSettingValue(t *testing.T) {\n\tif got := (BoolSetting{Raw: "true"}).Value(); got != true {\n\t\tt.Fatalf("got %v", got)\n\t}\n}\n`); gg("add", "."); gg("commit", "-q", "-m", "one sibling case");
   res("transplant: a case only one sibling has is not a convention: no transplant", !(await run(like)).transplant);
 }
