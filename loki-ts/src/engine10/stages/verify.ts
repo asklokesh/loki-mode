@@ -217,6 +217,40 @@ async function runVitestBatches(ctx: RunContext, tests: TestRef[], api: ProjectA
   }
   return got;
 }
+// SPEED-GO-BATCH: one `go test -json -run ^(union)$ <pkg>` per package instead of one per file. Each per-file run compiles and links the same package
+// test binary and is then corroborated (a -count=1 -coverprofile rerun plus go list and go tool cover), so 27 files in one package paid 27 builds and
+// 27 corroborations (L-Haiku-v131 cli-2418: 35 s of targeted go runs). The batch vouches only for a whole package that passes AND survives the same
+// corroboratePass a per-file run needs; any failure, torn stream or refused corroboration leaves every file of that package to runCheck, as before.
+// LOKI_E10_GO_BATCH=0 (or LOKI_E10_VERIFY_BATCH=0) turns it off.
+export const goBatchOn = (env: NodeJS.ProcessEnv = process.env): boolean => verifyBatchOn(env) && env["LOKI_E10_GO_BATCH"] !== "0";
+/** A plain per-file go command (check_result.ts runnerCmd): `go test -json -run ^(names)$ <pkg>`; a repo test command or a whole-package run is never batched. */
+const goFileCmd = (t: TestRef, c: { cmd: string; args: string[] }): boolean => t.runner === "go" && c.cmd === "go" && c.args.length === 5 && c.args[0] === "test" && c.args[1] === "-json" && c.args[2] === "-run" && /^\^\([A-Za-z0-9_|]+\)\$$/.test(c.args[3]!);
+/** One file's share of a batched go -json stream: package-level events plus the events of its own top-level tests (and their subtests). */
+export function goFileStream(out: string, names: ReadonlySet<string>): string {
+  return out.split("\n").filter((l) => {
+    if (!l.startsWith("{")) return l.trim() === "" || /^go: /.test(l);
+    try { const e = JSON.parse(l) as { Test?: unknown }; if (typeof e.Test !== "string") return true; const top = e.Test.split("/")[0]!; return names.has(top); } catch { return true; } // an unparseable line stays, so the per-file stream reads torn exactly as the batch would
+  }).join("\n");
+}
+async function runGoBatches(ctx: RunContext, tests: TestRef[], api: ProjectApi | null, signal: AbortSignal, onCheck: (c: VerifyCheck) => void): Promise<Map<string, VerifyCheck>> {
+  const got = new Map<string, VerifyCheck>(), groups = new Map<string, { t: TestRef; tc: ReturnType<typeof commandFor>; names: string[] }[]>();
+  for (const t of tests) { const tc = commandFor(t, ctx.repoDir, api); if (!goFileCmd(t, tc)) continue; const k = `${tc.cwd}\0${tc.args[4]}`; groups.set(k, [...(groups.get(k) ?? []), { t, tc, names: tc.args[3]!.slice(2, -2).split("|") }]); }
+  for (const g of groups.values()) {
+    if (g.length < BATCH_MIN || signal.aborted) continue;
+    const cwd = g[0]!.tc.cwd, union = [...new Set(g.flatMap((x) => x.names))], args = ["test", "-json", "-run", `^(${union.join("|")})$`, g[0]!.tc.args[4]!], t0 = Date.now();
+    const a = await runOnce("go", args, cwd, signal, { timeoutMs: batchTimeoutMs(g.length) });
+    const c = await corroboratePass(classifyCheck({ kind: "test", ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, runner: "go" }), a.out, "go", args, { cwd, env: plainTestEnv(), signal });
+    if (c.result !== "pass") continue; // red, torn or uncorroborated: every file runs alone, so a failure is judged exactly as today
+    const share = (Date.now() - t0) / 1000 / g.length;
+    for (const x of g) {
+      const own = goFileStream(a.out, new Set(x.names)), cf = classifyCheck({ kind: "test", ok: true, out: own, runner: "go" });
+      if (cf.result !== "pass" || (cf.n ?? 0) === 0) continue; // a file whose tests did not all run and pass in the corroborated batch runs alone
+      const check: VerifyCheck = { name: testCheckName(x.t), cmd: x.tc.argv.join(" "), result: "pass", duration_s: share, n: cf.n ?? 0, sk: skipped(own) };
+      got.set(check.name, check); ctx.emit("test.result", "verify", { ...check }); onCheck(check);
+    }
+  }
+  return got;
+}
 /** Selected tests that exercise a symbol the diff declares or changes (check_result.ts changedSymbols) run first, so a stage stopped at its limit
  *  has run the tests most likely to catch this change. Order is otherwise kept. */
 function changedSymbolsFirst(ctx: RunContext, tests: TestRef[], changed: string[]): TestRef[] {
@@ -260,7 +294,18 @@ async function subtractBase(
     const record = (c: VerifyCheck, b: { ok: boolean; cut?: boolean; out: string }): void => { base.set(c, { red: !b.ok && !b.cut ? failIds(b.out) : [], n: ran(b.out) ?? summaryPassFailCount(b.out), sk: skipped(b.out), out: b.cut ? "" : b.out }); };
     // Relevant passes first, on a base without dependencies (their counts are compared as before). Only failing untouched checks need a base run
     // after that: a passing one's base result is never read.
-    for (const { c, t } of sus) { const bc = commandFor(t, dir, api); record(c, await runOnce(bc.cmd, bc.args, bc.cwd, signal, {})); }
+    if (goBatchOn() && !signal.aborted) { // SPEED-GO-BATCH on base: one run per package for the relevant go passes; a cut or missing run leaves every file to the per-file loop below
+      const byPkg = new Map<string, { c: VerifyCheck; bc: ReturnType<typeof commandFor> }[]>();
+      for (const { c, t } of sus) { const bc = commandFor(t, dir, api); if (goFileCmd(t, bc)) { const k = `${bc.cwd}\0${bc.args[4]}`; byPkg.set(k, [...(byPkg.get(k) ?? []), { c, bc }]); } }
+      for (const g of byPkg.values()) {
+        if (g.length < BATCH_MIN || signal.aborted) continue;
+        const names = g.map((x) => x.bc.args[3]!.slice(2, -2).split("|")), args = ["test", "-json", "-run", `^(${[...new Set(names.flat())].join("|")})$`, g[0]!.bc.args[4]!];
+        const a = await runOnce("go", args, g[0]!.bc.cwd, signal, { timeoutMs: batchTimeoutMs(g.length) });
+        if (a.cut || a.missing) continue;
+        g.forEach((x, i) => { const own = goFileStream(a.out, new Set(names[i])); record(x.c, { ok: !/"Action":"fail"/.test(own), out: own }); });
+      }
+    }
+    for (const { c, t } of sus) { if (base.has(c)) continue; const bc = commandFor(t, dir, api); record(c, await runOnce(bc.cmd, bc.args, bc.cwd, signal, {})); }
     const red = un.filter(({ c }) => c.result === "fail" && c.ids?.length && !base.has(c));
     // A suite that needs its dependencies (a vitest package with its own node_modules) yields no ids on a bare base, so its pre-existing failures
     // could never be told apart from new ones (FireLater#24: 23 page tests red on base were fed to the fix rounds). The head's dependency dirs are
@@ -435,7 +480,11 @@ export const verifyStage: Stage = {
     const runTests = async (list: TestRef[]): Promise<void> => {
       const byName = new Map<string, VerifyCheck[]>();
       const alone = async (l: TestRef[]): Promise<void> => { (await mapPool(l, verifyJobs(), async (t) => { const tc = commandFor(t, ctx.repoDir, api), slot: VerifyCheck[] = []; await runCheck(ctx, testCheckName(t), tc.cmd, tc.args, signal, slot, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: [...wallTests, ...relevant].includes(t), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); done.push(...slot); publish(); return slot; }, () => signal.aborted)).forEach((sl, i) => { if (sl) byName.set(testCheckName(l[i]!), sl); }); };
-      await alone(list.filter((t) => !batchable(t)));
+      const goPart = (t: TestRef): boolean => goBatchOn() && t.runner === "go" && !wallNames0.has(testCheckName(t)); // Wall go tests still run alone and first
+      await alone(list.filter((t) => !batchable(t) && !goPart(t)));
+      const goB = await runGoBatches(ctx, list.filter(goPart), api, signal, (c) => { done.push(c); publish(); });
+      for (const [n, c] of goB) byName.set(n, [c]);
+      await alone(list.filter((t) => goPart(t) && !goB.has(testCheckName(t))));
       for (const part of [list.filter((t) => batchable(t) && targets0.has(testCheckName(t))), list.filter((t) => batchable(t) && !targets0.has(testCheckName(t)))]) {
         for (const [n, c] of await runVitestBatches(ctx, part, api, signal, (c) => { done.push(c); publish(); })) byName.set(n, [c]);
       }
