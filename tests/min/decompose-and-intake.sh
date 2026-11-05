@@ -333,7 +333,7 @@ const sim = async (verdicts, parallel, needPr) => {
   let live = 0, peak = 0; const order = [];
   const runSlice = async (s, k, base) => {
     live++; peak = Math.max(peak, live); order.push(s.id + (base ? "@" + base : ""));
-    await new Promise((r) => setTimeout(r, 40));
+    await new Promise((r) => setTimeout(r, s.id === "s1" ? 90 : 40)); // s1 ends last, so a sibling verdict is already recorded when s4 becomes ready
     live--;
     const v = verdicts[s.id] ?? "VERIFIED";
     return { id: s.id, title: s.title, parent: plan.parent[s.id] ?? null, outcome: v, pr: needPr && /^(VERIFIED|PARTIAL)/.test(v) ? "https://github.com/a/b/pull/" + k : null, cost: "$0.10", branch: "loki/e10-" + s.id };
