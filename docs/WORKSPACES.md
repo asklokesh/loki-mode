@@ -13,6 +13,7 @@ workspaces:
     integration: {command: "make e2e", timeout_s: 900, per_stage: false}
     concurrency: 2
     plan: false
+    affected: false
 ```
 
 The `workspaces:` block is validated and fails closed: a misspelled key (for example `afer`) or a wrong type exits 2 and names the key.
@@ -27,6 +28,7 @@ loki workspace show shop
 loki workspace run shop acme/api#12
 loki start --workspace shop "<brief>"   # same runner, from the primary command
 loki workspace infer shop        # print suggested after: edges
+loki workspace affected shop "rename customer id"   # print which repos the goal touches
 loki workspace status            # every recorded run, one row per repo
 loki workspace status <run-id>
 ```
@@ -45,6 +47,31 @@ loki workspace status <run-id>
 - Metrics: each run records `timing` (per repo `started_at` and `finished_at`, epoch seconds) in integration.json. `python3 autonomy/lib/workspace_metrics.py <run-dir> --attention-min 30` prints `prs` (repos with outcome ok), `wall_clock_seconds` (earliest start to latest finish), `prs_per_hour` and `prs_per_attention_minute`. Runs recorded before timing existed, and any run where `--attention-min` is not given, print `unmeasured` for the affected rate, never zero.
 - Verify a run: see "Verify a workspace run" below.
 - Backlog (`loki backlog`) and dashboard starts now share the workspace worktree prep: a per-repo lock, a clean start point and copied dependencies. `LOKI_WORKSPACES=0` restores the previous worktree creation (D51-B05, D51-B06).
+
+## Let the goal pick the repos
+
+```bash
+loki workspace affected shop "rename customer id everywhere"      # print-only, no model call, writes nothing
+LOKI_WORKSPACE_AFFECTED=1 loki workspace run shop "rename customer id everywhere"
+loki start --workspace shop "<goal>"                              # with LOKI_WORKSPACE_AFFECTED=1 or `affected: true`
+```
+
+`affected` searches each repo's tracked files (`git grep`, skipping node_modules, dist, build, vendor and .loki) for terms taken from the goal and prints one row per repo: `selected` with the first `file:line (term)` hit, or `not selected (no match)`, then the run order. Add `--json` for the full selection (`terms`, `selected`, `not_selected`, `evidence`, `fallback`, `order`).
+
+Terms are lexical and limited:
+- Explicit identifiers are taken verbatim: backticked or quoted text, words containing `_`, camelCase words, and capitalised words that do not start the goal.
+- Every run of 2 or 3 consecutive plain words (stopwords such as rename, all, the break a run) becomes spelling variants: `customer_id`, `customer-id`, `customerId`, `CustomerId`, `CUSTOMER_ID`, `customerid`, and `customerID` and `CustomerID` when the last word is 3 letters or fewer. A single plain word is never a term.
+- A hit must sit on word boundaries: `customerId` matches `customerIdentity` no more than `id` matches `idle`.
+- A synonym or abbreviation (`custId` for "customer id") is missed, and a mention in docs or a comment counts as a hit.
+- With an `owner/repo#N` goal the issue owner is always selected and the issue title and body supply the terms (a `gh` failure prints `issue text unavailable` and uses no terms).
+
+Fail-open cases, so a repo is never silently dropped on an error: a repo with no local checkout is included unscanned, a repo whose scan errors or exceeds 60 seconds is included, and when no repo matches at all every repo runs (`no repo matched the goal; running every repo`).
+
+With `affected: true` or `LOKI_WORKSPACE_AFFECTED=1`, `run` runs only the selected repos. Their order is the declared `after` edges plus the edges `infer` computes (manifest, import and OpenAPI generator evidence), limited to the selected repos; an inferred cycle falls back to the declared edges and prints why. Unselected repos are not changed, but the integration command still sees their checkouts through `LOKI_WS_DIR_<OWNER>_<REPO>`. The selection (with evidence) is written to integration.json, so the signed composite.json also attests which repos were chosen and why.
+
+Every repo PR comment now ends with a "Linked PRs" section naming each sibling PR (with `(this PR)` and `(draft)` markers), and the run summary prints each PR URL plus `linked PRs: K of N repos have an open PR (R ready, D draft)`. These need `gh`; without it the line reads 0 of N.
+
+Pruning is off by default, because a lexical miss would leave a repo out of the linked set while the run exits 0. Turn it on per workspace with `affected: true`, or per run (including `loki start --workspace`) with `LOKI_WORKSPACE_AFFECTED=1`.
 
 ## Verify a workspace run
 

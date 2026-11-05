@@ -111,6 +111,7 @@
           },
           "concurrency": { "type": "integer", "minimum": 1 },
           "plan": { "type": "boolean" },
+          "affected": { "type": "boolean" },
           "integration_files": { "type": "array", "items": { "type": "string", "minLength": 1 } }
         }
       }
