@@ -197,7 +197,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
  *  cases reach implement as a brief block only (<runDir>/exec-spec-brief.txt), never sealed, never blocking. */
 async function execSpecWall(ctx: RunContext, signal: AbortSignal, task: string, sizeName: string, runners: RunnerName[], existingTests: string[], leanWhy: string): Promise<WallAuthorOutcome> {
   const iterationId = `${ctx.runId}-execspec`, out = await execSpecAuthor({ task, repoDir: ctx.repoDir, runners, existingTests, sessions: ctx.sessions as never, iterationId, signal });
-  const summary = { status: out.status, reason: out.reason, ...(out.runner ? { runner: out.runner } : {}), atoms: out.atoms, sites: out.sites, binding: out.binding, advisory: out.advisory, guards: out.guards, dropped: out.dropped, duration_s: out.durationS };
+  const summary = { status: out.status, reason: out.reason, ...(out.runner ? { runner: out.runner } : {}), atoms: out.atoms, sites: out.sites, binding: out.binding, advisory: out.advisory, guards: out.guards, dropped: out.dropped, ...(out.uncoveredSites?.length ? { uncovered_sites: out.uncoveredSites } : {}), duration_s: out.durationS };
   if (out.brief) { try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, EXEC_SPEC_BRIEF_FILE), out.brief, "utf8"); } catch { /* best effort: implement runs without the block */ } }
   const spent = out.runner ? { iteration_ids: [iterationId] } : {}; // a generator session ran: its spend reaches the ledger
   if (out.status !== "sealed" || !out.file || !out.targetRel) return { kind: "done", result: { status: "skipped", data: { size: sizeName, exec_spec: summary, ...spent }, reason: `${leanWhy}; ${out.reason}` } };

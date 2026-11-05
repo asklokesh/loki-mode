@@ -1,4 +1,4 @@
-// Executable spec first (LOKI_E10_EXEC_SPEC=1, off by default). New file because no module turns issue text into base-red
+// Executable spec first (on by default; LOKI_E10_EXEC_SPEC=0 opts out). New file because no module turns issue text into base-red
 // executable checks: engine10/stages/wall.ts is a blind agentic session the lean path skips (E-64) and util/spec_file.ts extracts
 // prose clauses only. wall.ts owns the wiring (its lean branch calls execSpecAuthor and seals the result through installWall).
 //
@@ -15,9 +15,9 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import { commandFor, plainTestEnv, spawnGroupSync, stripAnsi } from "../util/check_result.ts";
+import { assertionFailure, commandFor, plainTestEnv, pytestKindsAreAssertion, spawnGroupSync, stripAnsi, vitestErrorsAreAssertion } from "../util/check_result.ts";
 
-export const execSpecEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_EXEC_SPEC === "1";
+export const execSpecEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_EXEC_SPEC ?? "").trim().toLowerCase()); // default on; LOKI_E10_EXEC_SPEC=0 opts out
 export const EXEC_SPEC_BRIEF_FILE = "exec-spec-brief.txt"; // <runDir>/, read by implement.ts
 
 export type AtomKind = "example" | "claim" | "site" | "option" | "location" | "parity" | "pair";
@@ -257,53 +257,66 @@ export function parseGenerated(e: Emitter, reply: string, mustStart = ""): { fil
   return { file };
 }
 
-// ---------- binding: only values the issue itself states may define done ----------
-/** Values the issue states: code spans, fenced code and double-quoted prose strings. */
-export function issueValues(task: string): string[] {
-  const out: string[] = [];
-  for (const m of task.matchAll(/```[\w-]*\n([\s\S]*?)```/g)) out.push(m[1]!);
-  const prose = task.replace(/```[\s\S]*?```/g, " ");
-  for (const m of prose.matchAll(/`([^`\n]+)`/g)) out.push(m[1]!);
-  for (const m of prose.matchAll(/"([^"\n]{1,200})"/g)) out.push(m[1]!);
-  return out;
+// ---------- binding: only values one issue example states may define done ----------
+/** One issue example: a fenced block, or one prose sentence with its code spans. `strs` are the whole values it states (whole code spans
+ *  and quoted strings, never a fragment of either); `nums` are number tokens inside its code (a number in plain prose never counts). */
+export interface IssueUnit { strs: Set<string>; nums: Set<string> }
+const NUM_TOKEN = /(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])/g;
+const quotedIn = (t: string): string[] => [...t.matchAll(/"((?:\\.|[^"\\\n])*)"|'((?:\\.|[^'\\\n])*)'/g)].map((m) => m[1] ?? m[2] ?? "");
+export function issueUnits(task: string): IssueUnit[] {
+  const units: IssueUnit[] = [];
+  for (const m of task.matchAll(/```[\w-]*\n([\s\S]*?)```/g)) units.push({ strs: new Set(quotedIn(m[1]!)), nums: new Set(m[1]!.match(NUM_TOKEN) ?? []) });
+  const prose = task.replace(/```[\s\S]*?```/g, "\n\n");
+  for (const sent of prose.split(/(?<=[.!?])\s+(?=[A-Z`])|\n\s*\n/)) {
+    const spans = [...sent.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]!), outside = sent.replace(/`[^`\n]+`/g, " ");
+    if (!spans.length && !quotedIn(outside).length) continue;
+    units.push({ strs: new Set([...spans, ...spans.flatMap(quotedIn), ...quotedIn(outside)]), nums: new Set(spans.flatMap((x) => x.match(NUM_TOKEN) ?? [])) });
+  }
+  return units;
 }
 const unescape = (s: string): string => s.replace(/\\(["'\\nt`])/g, (_, c: string) => (c === "n" ? "\n" : c === "t" ? "\t" : c));
-/** The literal values of the want assignment in one case: strings and numbers (true/false/nil/None/null are neutral, not values). */
+const LITERAL = /"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|`([^`]*)`|(?<![\w.])(-?\d+(?:\.\d+)?)(?![\w.])/g;
+const literalsOf = (text: string): { v: string; num: boolean }[] => [...text.matchAll(LITERAL)].map((m) => (m[4] !== undefined ? { v: m[4], num: true } : { v: unescape(m[1] ?? m[2] ?? m[3] ?? ""), num: false }));
+const WANT_ASSIGN = /^\s*(?:(?:const|let|var)\s+)?want\b\s*(?::=|=(?!=))/;
+/** The literal values of the want assignment in one case (true/false/nil/None/null are neutral, not values). */
 export function wantLiterals(body: string): string[] | null {
-  const lines = body.split("\n"), i = lines.findIndex((l) => /^\s*(?:(?:const|let|var)\s+)?(?:want|expected)\b\s*(?::=|=(?!=))/.test(l));
+  const lines = body.split("\n"), i = lines.findIndex((l) => WANT_ASSIGN.test(l));
   if (i < 0) return null;
   let text = "", depth = 0;
   for (let k = i; k < lines.length; k++) { const l = lines[k]!; text += `${l}\n`; for (const ch of l.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`]*`/g, "")) { if ("([{".includes(ch)) depth++; else if (")]}".includes(ch)) depth--; } if (depth <= 0) break; }
-  const rhs = text.replace(/^[^=]*?(?::=|=)/, "");
-  const lits = [...rhs.matchAll(/"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|`([^`]*)`|(?<![\w.])(-?\d+(?:\.\d+)?)(?![\w.])/g)].map((m) => (m[4] !== undefined ? m[4] : unescape(m[1] ?? m[2] ?? m[3] ?? "")));
-  return lits;
+  return literalsOf(text.replace(/^[^=]*?(?::=|=)/, "")).map((x) => x.v);
 }
-/** A case is BINDING only when its want has at least one literal and every literal is a value the issue states. */
-export function isBinding(body: string, task: string, values = issueValues(task)): boolean {
-  const lits = wantLiterals(body);
-  if (!lits || lits.length === 0) return false;
-  return lits.every((v) => {
-    if (/^-?\d+(?:\.\d+)?$/.test(v)) return new RegExp(`(?<![\\w.])${esc(v)}(?![\\w.])`).test(task);
-    if (v.length >= 3) return values.some((x) => x.includes(v));
-    return v !== "" && values.some((x) => new RegExp(`(?:^|[^\\w])${esc(v)}(?:$|[^\\w])`).test(x)); // a 1-2 char literal must stand as its own token
-  });
+/** Every literal a case asserts with or feeds in: its body minus the declaration line, failure-message calls and comments. */
+export function caseLiterals(body: string): { v: string; num: boolean }[] {
+  const code = body.split("\n").slice(1).filter((l) => !/^\s*(?:t\.(?:Fatal|Fatalf|Error|Errorf|Log|Logf|Helper)\(|\/\/|#)/.test(l)).join("\n");
+  return literalsOf(code);
+}
+/** A case is BINDING only when (1) want is assigned exactly once from at least one literal and compared after that, and (2) every
+ *  literal the case uses (the call input and the expected value) is stated, whole, by ONE issue example. A fragment of a span
+ *  ("bad" in `error: bad input`), an input the issue never shows, or a number that only appears in prose is advisory. */
+export function isBinding(body: string, task: string, units = issueUnits(task)): boolean {
+  const lines = body.split("\n"), assigns = lines.filter((l) => WANT_ASSIGN.test(l) || /^\s*want\s*(?:\+=|-=)/.test(l)).length;
+  const want = wantLiterals(body), at = lines.findIndex((l) => WANT_ASSIGN.test(l));
+  if (assigns !== 1 || !want || want.length === 0 || !lines.slice(at + 1).some((l) => /\bwant\b/.test(l))) return false;
+  const lits = caseLiterals(body);
+  return units.some((u) => lits.every((x) => (x.num ? u.nums.has(x.v) : u.strs.has(x.v))));
 }
 
-// ---------- base red filter (harness-run, per case) ----------
+// ---------- base red filter (harness-run, per case; red-by-assertion is util/check_result.ts's one rule per runner) ----------
 export type CaseState = "red" | "green" | "error";
 export interface RedFilterResult { built: boolean; cases: Record<string, CaseState>; error?: string; durationS: number }
 
 function parseGo(out: string, names: string[]): RedFilterResult["cases"] | null {
-  const outByTest = new Map<string, string>(), state: Record<string, CaseState> = {}; let any = false;
+  const linesByTest = new Map<string, string[]>(), state: Record<string, CaseState> = {}; let any = false;
   for (const line of out.split("\n")) {
     if (!line.startsWith("{")) continue;
     let ev: { Action?: string; Test?: string; Output?: string }; try { ev = JSON.parse(line); } catch { continue; }
-    if (/^build-/.test(ev.Action ?? "") && ev.Action === "build-fail") return null;
+    if (ev.Action === "build-fail") return null;
     const t = ev.Test?.split("/")[0]; if (!t || !names.includes(t)) continue; any = true;
-    if (ev.Action === "output") outByTest.set(t, (outByTest.get(t) ?? "") + (ev.Output ?? ""));
+    linesByTest.set(t, [...(linesByTest.get(t) ?? []), line]);
     if (ev.Test!.includes("/")) continue;
     if (ev.Action === "pass") state[t] = "green";
-    if (ev.Action === "fail") { const o = outByTest.get(t) ?? ""; state[t] = /\bpanic: |^panic[: ]|test timed out/m.test(o) || !/^\s*\S+_test\.go:\d+: /m.test(o) ? "error" : "red"; }
+    if (ev.Action === "fail") state[t] = assertionFailure("go", linesByTest.get(t)!.join("\n")) ? "red" : "error"; // the Wall's rule, fed this test's own events
   }
   return any ? state : null;
 }
@@ -315,7 +328,7 @@ function parseJunit(xml: string, names: string[]): RedFilterResult["cases"] | nu
     if (!names.includes(name)) { if (/<error\b/.test(inner)) return null; continue; } // a collection error is reported on a synthetic case
     const fail = /<failure\b[^>]*?message="([^"]*)"/.exec(inner);
     if (/<error\b|<skipped\b/.test(inner)) state[name] = "error";
-    else if (/<failure\b/.test(inner)) { const msg = xmlUnescape(fail?.[1] ?? ""); state[name] = /^(?:assert\b|AssertionError\b)/.test(msg) || (msg === "" && /\bAssertionError\b/.test(inner)) ? "red" : "error"; }
+    else if (/<failure\b/.test(inner)) { const msg = xmlUnescape(fail?.[1] ?? "").trim(), kinds = msg ? [msg] : [...xmlUnescape(inner).matchAll(/^E\s+((?:assert\b|[A-Za-z_.]*(?:Error|Exception))\S*)/gm)].map((k) => k[1]!); state[name] = pytestKindsAreAssertion(kinds) ? "red" : "error"; }
     else state[name] = "green";
   }
   return Object.keys(state).length ? state : null;
@@ -326,7 +339,7 @@ function parseVitestJson(json: string, names: string[]): RedFilterResult["cases"
   const state: Record<string, CaseState> = {};
   for (const f of r.testResults ?? []) for (const a of f.assertionResults ?? []) {
     const n = a.title ?? ""; if (!names.includes(n)) continue;
-    state[n] = a.status === "passed" ? "green" : a.status === "failed" ? ((a.failureMessages ?? []).length > 0 && (a.failureMessages ?? []).every((m) => /^AssertionError\b/.test(stripAnsi(m))) ? "red" : "error") : "error";
+    state[n] = a.status === "passed" ? "green" : a.status === "failed" && vitestErrorsAreAssertion((a.failureMessages ?? []).join("\n")) ? "red" : "error";
   }
   return Object.keys(state).length ? state : null;
 }
@@ -349,30 +362,34 @@ export function redFilter(e: Emitter, repoDir: string, destRel: string, file: st
 
 // ---------- selection and the implement brief ----------
 export interface SpecSelection { file: string; binding: string[]; advisory: { name: string; why: string }[]; guards: string[] }
-/** Split the cases: binding = red by assertion on base AND every want literal is issue-stated; advisory = red but not issue-stated;
+/** Split the cases: binding = red by assertion on base AND isBinding (input and expected value from one issue example); advisory = red but not issue-stated;
  *  guards = green on base (regression guards, advisory only); error cases are dropped. The sealed file keeps only binding cases. */
 export function selectCases(e: Emitter, file: string, base: RedFilterResult, task: string): SpecSelection {
-  const values = issueValues(task), binding: string[] = [], advisory: { name: string; why: string }[] = [], guards: string[] = [];
+  const units = issueUnits(task), binding: string[] = [], advisory: { name: string; why: string }[] = [], guards: string[] = [];
   let sealed = file;
   for (const n of e.names(file)) {
     const st = base.cases[n], b = e.body(file, n);
-    if (st === "red" && isBinding(b, task, values)) { binding.push(n); continue; }
-    if (st === "red") advisory.push({ name: n, why: "red on base, but asserts a value the issue does not state" });
+    if (st === "red" && isBinding(b, task, units)) { binding.push(n); continue; }
+    if (st === "red") advisory.push({ name: n, why: "red on base, but its input or expected value is not stated whole by one issue example" });
     else if (st === "green") guards.push(n);
     sealed = e.disable(sealed, n) ?? sealed;
   }
   return { file: sealed, binding, advisory, guards };
 }
 
+/** Named sites (resolved in the repo) that no binding case's body names: seal caps the run below VERIFIED on each one unless an
+ *  agent-independent passing test names it (engine10/stages/seal.ts specSiteGap). */
+export function uncoveredSites(e: Emitter, binding: string[], full: string, atoms: SpecAtom[], sites: ResolvedSite[]): string[] {
+  const resolved = new Set(sites.map((s) => s.symbol)), bodies = binding.map((n) => e.body(full, n)).join("\n");
+  return atoms.filter((a) => a.kind === "site" && resolved.has(a.text) && !new RegExp(`\\b${esc(a.text.split(".").pop()!)}\\b`).test(bodies)).map((a) => a.text.split(".").pop()!);
+}
 export function implementBlock(e: Emitter, destRel: string, sel: SpecSelection, full: string, atoms: SpecAtom[], sites: ResolvedSite[]): string {
-  const cov = new Set(sel.binding.map((n) => atomIdOf(e, n))), resolved = new Set(sites.map((s) => s.symbol));
-  const bodies = sel.binding.map((n) => e.body(full, n)).join("\n");
-  const unchecked = atoms.filter((a) => a.kind === "site" && resolved.has(a.text) && !cov.has(a.id) && !new RegExp(`\\b${esc(a.text.split(".").pop()!)}\\b`).test(bodies)).map((a) => a.text);
+  const unchecked = uncoveredSites(e, sel.binding, full, atoms, sites);
   const adv = [...sel.advisory, ...sel.guards.map((name) => ({ name, why: "passes on base: keep it passing" }))];
   return [
     ...(sel.binding.length ? [`Executable spec: ${destRel} was written from the task before you started and is read-only. These tests fail on the current code, assert values the task itself states, and define done; make every one pass without editing the file:`, ...sel.binding.map((n) => `- ${n}`)] : []),
     ...(adv.length ? [`Advisory spec cases (not required, never blocking; a hint at the intended behavior, possibly wrong):\n${adv.map((a) => `- ${a.why}:\n${e.body(full, a.name).slice(0, 900)}`).join("\n")}`] : []),
-    ...(unchecked.length ? [`Named sites no binding spec test covers; handle each one the task describes: ${unchecked.join(", ")}`] : []),
+    ...(unchecked.length ? [`Named sites no binding spec test covers; handle each one the task describes (the run cannot read VERIFIED until a passing test that is not yours names each): ${unchecked.join(", ")}`] : []),
   ].join("\n");
 }
 
@@ -417,7 +434,7 @@ export function planFor(runner: SpecRunner, repoDir: string, sites: ResolvedSite
   return { runner, targetRel, header: `The file is ${targetRel}; import the code under test from "${spec}".`, mustStart: "", style: style ? read(style) : "" };
 }
 
-export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; durationS: number }
+export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; uncoveredSites?: string[]; durationS: number }
 export async function execSpecAuthor(o: { task: string; repoDir: string; runners: string[]; existingTests: string[]; sessions: Parameters<typeof sessionGenerator>[0]; iterationId: string; signal: AbortSignal }): Promise<ExecSpecOutcome> {
   const t0 = Date.now(), atoms0 = extractSpecAtoms(o.task), done = (status: ExecSpecOutcome["status"], reason: string, extra: Partial<ExecSpecOutcome> = {}): ExecSpecOutcome => ({ status, reason, atoms: atoms0.length, sites: 0, binding: [], advisory: [], guards: [], dropped: [], durationS: (Date.now() - t0) / 1000, ...extra });
   const runner = (["go", "pytest", "vitest"] as SpecRunner[]).find((r) => o.runners.includes(r));
@@ -440,9 +457,9 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
     const again = redFilter(e, o.repoDir, plan.targetRel, sel.file);
     if (!again.built || binding.some((n) => again.cases[n] !== "red")) { sel.advisory.push(...binding.map((name) => ({ name, why: "red on base alone, not once pruned" }))); binding = []; }
   }
-  const brief = implementBlock(e, plan.targetRel, { ...sel, binding }, parsed.file, atoms, sites), extra = { runner, targetRel: plan.targetRel, sites: sites.length, brief, binding, advisory: sel.advisory.map((a) => a.name), guards: sel.guards, dropped };
+  const brief = implementBlock(e, plan.targetRel, { ...sel, binding }, parsed.file, atoms, sites), extra = { runner, targetRel: plan.targetRel, sites: sites.length, brief, binding, advisory: sel.advisory.map((a) => a.name), guards: sel.guards, dropped, uncoveredSites: uncoveredSites(e, binding, parsed.file, atoms, sites) };
   return binding.length ? done("sealed", `exec spec: ${binding.length} binding case(s) red on base`, { ...extra, file: sel.file }) : done("advisory_only", "exec spec: no binding case red on base; advisory cases only", extra);
 }
 
 /** implement.ts reads this: the exec-spec brief block the Wall stage left for this run, or null. */
-export function execSpecBriefOf(runDir: string): string | null { try { const t = readFileSync(join(runDir, EXEC_SPEC_BRIEF_FILE), "utf8").trim(); return t || null; } catch { return null; } }
+export function execSpecBriefOf(runDir: string, env: NodeJS.ProcessEnv = process.env): string | null { if (!execSpecEnabled(env)) return null; try { const t = readFileSync(join(runDir, EXEC_SPEC_BRIEF_FILE), "utf8").trim(); return t || null; } catch { return null; } }
