@@ -956,11 +956,22 @@ export function exercisedViaCallers(unexercised: readonly string[], seed: (name:
  *  testing value (t.Run, b.N, s.T().Run, self.assertEqual, pytest.raises), so `t.Run` never reaches a product Run (review of #541, A1). Go resolves by package: only files in the test's own
  *  directory take part; a test in another package reaches nothing this way. Empty for no symbols: a change that declares none is never shown relevant. */
 const TESTING_CALL = /(?<![\w$.])(?:t|b|f|tb|tt|self|pytest|unittest|mock)\.\w+\s*\(|\.T\(\)\.\w+\s*\(/g;
-export function testsReachingSymbols(symbols: readonly string[], tests: readonly { path: string; src: string }[], changed: readonly { path: string; src: string }[], candidates: readonly { path: string; src: string }[]): string[] {
+/** Go identifiers in a test file that are not product values: anything declared with a testing type (`st *testing.T`, `tb testing.TB`), the receiver of a method in the test file (a
+ *  testify suite's `s`), and every imported package name (assert, require, suite, fmt). A call qualified by one of them never seeds (review of #541: renaming t to st bypassed a name list). */
+function goTestingNames(src: string): Set<string> {
+  const code = codeOnly(src), out = new Set<string>(["suite", "assert", "require", "testing"]);
+  for (const m of code.matchAll(/\b(\w+)(?:\s*,\s*\w+)*\s+\*?testing\.(?:T|B|F|TB|M)\b/g)) out.add(m[1]!);
+  for (const m of code.matchAll(/\bfunc\s*\(\s*(\w+)\s+\*?\w+(?:\[[^\]]*\])?\s*\)/g)) out.add(m[1]!);
+  for (const m of stripComments(src).matchAll(/^\s*(?:import\s+)?(?:(\w+)\s+)?"([^"]+)"\s*$/gm)) out.add(m[1] ?? m[2]!.split("/").filter((x) => !/^v\d+$/.test(x)).pop()!);
+  return out;
+}
+export function testsReachingSymbols(symbols: readonly string[], tests: readonly { path: string; src: string; full?: string }[], changed: readonly { path: string; src: string }[], candidates: readonly { path: string; src: string }[]): string[] {
   if (symbols.length === 0 || tests.length === 0) return [];
   return tests.filter((t) => {
     const go = t.path.endsWith(".go"), dir = dirname(t.path), here = (f: { path: string }): boolean => !go || dirname(f.path) === dir;
-    const ch = changed.filter(here), files = [...ch, ...callerFiles(ch, candidates.filter(here))], calls = calledNames(codeOnly(t.src).replace(TESTING_CALL, " "));
+    let code = codeOnly(t.src).replace(TESTING_CALL, " ");
+    if (go) { const skip = goTestingNames(`${t.full ?? ""}\n${t.src}`); code = code.replace(/(?<![\w$.])(\w+)((?:\(\))?(?:\.\w+(?:\(\))?)*)\.(\w+)\s*\(/g, (all, q: string) => (skip.has(q) ? " " : all)); } // a call through a testing value, a suite receiver or an imported package is not a product call
+    const ch = changed.filter(here), files = [...ch, ...callerFiles(ch, candidates.filter(here))], calls = calledNames(code);
     return files.length > 0 && exercisedViaCallers(symbols, (name) => calls.has(name), files).length < symbols.length;
   }).map((t) => t.path);
 }

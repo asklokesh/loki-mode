@@ -967,7 +967,8 @@ else
 fi
 # Negative (review of #541, A1, real go through the real engine): the change rewrites parse with identical behavior and flips an untouched-by-symbols const; the agent's new test
 # calls only t.Run and Hello (which reads the const), while an existing test in the same file calls Cmd.Run, which calls parse. Seeding on any identifier (t.Run is a Run) or on the
-# whole file read this as fail-then-pass proof for parse and VERIFIED; it must stay PARTIAL. Plant: drop TESTING_CALL or seed from the whole file and this leg reads VERIFIED.
+# whole file read this as fail-then-pass proof for parse and VERIFIED; it must stay PARTIAL, also with the testing value renamed st (review round 2). Plants: drop TESTING_CALL or seed
+# from the whole file (the t.Run leg reads VERIFIED); drop goTestingNames (the st.Run leg reads VERIFIED).
 make_trun_go_repo() {
     mkdir -p "$1"
     printf 'module example.com/calc\n\ngo 1.20\n' > "$1/go.mod"
@@ -981,6 +982,11 @@ if command -v go >/dev/null 2>&1; then
     MAKE_REPO=make_trun_go_repo run_engine "fix parse(a) in calc.go so it handles negative a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.go E2E_STUB_REPLACE=$'\treturn a + a\n}\n\nconst (\n\tunit     = 1\n\tgreeting = "old"' E2E_STUB_SNIPPET=$'\treturn 2 * a\n}\n\nconst (\n\tunit     = 1\n\tgreeting = "new"' E2E_STUB_TEST_FILE=calc_test.go \
         E2E_STUB_TEST_APPEND=$'\nfunc TestGreeting(t *testing.T) {\n\tt.Run("hello", func(t *testing.T) {\n\t\tif Hello() != "new" {\n\t\t\tt.Errorf("got %s", Hello())\n\t\t}\n\t})\n}' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
     [ "$(outcome)" = "PARTIAL" ] && ok "go caller t.Run: a test that reaches parse only through t.Run or through an older test in its file is not proof (PARTIAL)" || { bad "go caller t.Run: outcome is '$(outcome)' ($(wo_receipt np))"; dump; }
+    MAKE_REPO=make_trun_go_repo run_engine "fix parse(a) in calc.go so it handles negative a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.go E2E_STUB_REPLACE=$'\treturn a + a\n}\n\nconst (\n\tunit     = 1\n\tgreeting = "old"' E2E_STUB_SNIPPET=$'\treturn 2 * a\n}\n\nconst (\n\tunit     = 1\n\tgreeting = "new"' E2E_STUB_TEST_FILE=calc_test.go \
+        E2E_STUB_TEST_APPEND=$'\nfunc TestGreeting(st *testing.T) {\n\tst.Run("hello", func(st *testing.T) {\n\t\tif Hello() != "new" {\n\t\t\tst.Errorf("got %s", Hello())\n\t\t}\n\t})\n}' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    [ "$(outcome)" = "PARTIAL" ] && ok "go caller st.Run: the same probe with the testing value named st is not proof either (PARTIAL)" || { bad "go caller st.Run: outcome is '$(outcome)' ($(wo_receipt np))"; dump; }
+    gs="$(cd "$ROOT/loki-ts" && bun -e 'const { testsReachingSymbols } = await import("./src/util/check_result.ts"); const ch = [{ path: "calc.go", src: "package calc\nfunc parse(a int) int {\n\treturn a * 2\n}\n" }], cand = [{ path: "cmd.go", src: "package calc\ntype Cmd struct{}\nfunc (c *Cmd) Run() int {\n\treturn parse(1)\n}\n" }]; const r = (src: string, full = "") => testsReachingSymbols(["parse"], [{ path: "calc_test.go", src, full }], ch, cand).length; console.log([r("func TestX(tc *testing.T) {\n\ttc.Run(\"a\", nil)\n}"), r("func (s *CalcSuite) TestX() {\n\ts.Run(\"a\", nil)\n}"), r("func TestX(t *testing.T) {\n\tsuite.Run(t, new(CalcSuite))\n}"), r("func TestX(t *testing.T) {\n\trequire.Equal(t, 2, (&Cmd{}).Run())\n}", "import (\n\t\"testing\"\n\t\"github.com/stretchr/testify/require\"\n)\n"), r("func TestX(t *testing.T) {\n\tc := &Cmd{}\n\tif c.Run() != 2 {\n\t\tt.Fatal(1)\n\t}\n}")].join(","))' 2>&1 | tail -1)"
+    [ "$gs" = "0,0,0,1,1" ] && ok "go caller testing names unit: tc.Run, a suite receiver s.Run and suite.Run never seed; a product call inside require.Equal and c.Run on a product value do ($gs)" || bad "go caller testing names unit: got '$gs'"
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go caller t.Run: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go caller t.Run: go is not installed"; fi
 fi
