@@ -1,25 +1,26 @@
 // Renders docs/CLI-INVENTORY.md from the registry (FC-18: nothing hand-maintained).
 // Regenerate: bun loki-ts/scripts/gen-cli-modern-doc.ts
-// Guard: loki-ts/tests/cli/registry_guard.test.ts compares the file to this output.
+// Guard: scripts/generate-stale-zero.sh --check fails when the committed file differs from this output.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { REGISTRY, registryPaths, type CmdClass } from "./registry.ts";
+import { REGISTRY, classOf, registryPaths, type CmdClass } from "./registry.ts";
 
 export interface Row {
   command: string;
   where: string;
   cls: CmdClass;
   reason: string;
+  migrate: string;
 }
 
 export function inventoryRows(): Row[] {
   const rows: Row[] = [];
   for (const c of REGISTRY) {
     const where = c.where === "both" ? "bun route, bash fallthrough" : c.where === "bun" ? "loki-ts/src/cli.ts" : "autonomy/loki";
-    rows.push({ command: c.name + (c.hidden ? " (hidden)" : ""), where, cls: c.cls ?? "KEEP-MODERN", reason: c.reason ?? c.desc });
+    rows.push({ command: c.name, where, cls: classOf(c), reason: c.reason ?? c.desc, migrate: c.migrate ?? "" });
     for (const a of c.aliases ?? []) {
       if (a.startsWith("-")) continue;
-      rows.push({ command: a, where, cls: "DELETE", reason: `Alias of ${c.name}; shown only under 'loki help aliases'` });
+      rows.push({ command: a, where, cls: classOf(c), reason: `Alias of ${c.name}`, migrate: "" });
     }
   }
   return rows;
@@ -38,7 +39,7 @@ export function readGaps(repoRoot: string): string[] {
 
 export function renderDoc(repoRoot: string): string {
   const rows = inventoryRows();
-  const counts: Record<string, number> = { "KEEP-MODERN": 0, UPDATE: 0, "DROP-LEGACY": 0, DELETE: 0 };
+  const counts: Record<string, number> = { KEEP: 0, HIDE: 0, FOLD: 0, REMOVED: 0 };
   for (const r of rows) counts[r.cls] = (counts[r.cls] ?? 0) + 1;
   const gaps = readGaps(repoRoot);
   const byTop = new Map<string, number>();
@@ -46,12 +47,12 @@ export function renderDoc(repoRoot: string): string {
   const out: string[] = [];
   out.push("# CLI modernization inventory", "");
   out.push("Generated from `loki-ts/src/cli/registry.ts` by `bun loki-ts/scripts/gen-cli-modern-doc.ts`. Do not edit by hand; the registry guard fails when this file is stale.", "");
-  out.push("Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs modernizing), DROP-LEGACY (drives only the legacy engine; removed under LEGACY-ZERO, hidden from help and completions meanwhile), DELETE (deprecated alias).", "");
+  out.push("Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps working, never shown: machine consumers, CI, dev and enterprise ops), FOLD (behavior moves into the command in the Replacement column; the old name stays a hidden alias that runs unchanged; the replacement may not exist yet), REMOVED (no dependent found; hidden now, exits 2 with the replacement once its removal slice lands).", "");
   out.push("## Counts", "");
-  for (const k of ["KEEP-MODERN", "UPDATE", "DROP-LEGACY", "DELETE"]) out.push(`- ${k}: ${counts[k]}`);
+  for (const k of ["KEEP", "HIDE", "FOLD", "REMOVED"]) out.push(`- ${k}: ${counts[k]}`);
   out.push(`- Total rows: ${rows.length}`, `- Registry paths (commands and nested subcommands): ${registryPaths().length}`, "");
-  out.push("## Commands", "", "| Command | Where dispatched | Class | Reason |", "| --- | --- | --- | --- |");
-  for (const r of rows) out.push(`| ${r.command} | ${r.where} | ${r.cls} | ${r.reason} |`);
+  out.push("## Commands", "", "| Command | Where dispatched | Class | Reason | Replacement |", "| --- | --- | --- | --- | --- |");
+  for (const r of rows) out.push(`| ${r.command} | ${r.where} | ${r.cls} | ${r.reason} | ${r.migrate.replace(/\|/g, "\\|")} |`);
   out.push("", "## Registry gaps (nested paths dispatched but not yet in the registry)", "");
   if (!gaps.length) out.push("None.");
   else for (const [top, n] of [...byTop.entries()].sort()) out.push(`- ${top}: ${n}`);

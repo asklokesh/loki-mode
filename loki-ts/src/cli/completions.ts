@@ -2,7 +2,7 @@
 // the dynamic value source behind `loki __complete <kind>`, and the automatic
 // installer (npm postinstall + first interactive run after an upgrade).
 // Nothing here is hand-maintained: add a command to registry.ts and every shell
-// picks it up. Legacy (DROP-LEGACY), DELETE and hidden entries are never offered.
+// picks it up. Only the KEEP class (the 11 core commands) is offered; HIDE, FOLD and REMOVED never are.
 import { spawnDetached } from "../runner/worker_proc.ts";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync, accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
