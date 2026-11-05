@@ -2,14 +2,14 @@
 
 Generated from `loki-ts/src/cli/registry.ts` by `bun loki-ts/scripts/gen-cli-modern-doc.ts`. Do not edit by hand; the registry guard fails when this file is stale.
 
-Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps working, never shown: machine consumers, CI, dev and enterprise ops), FOLD (behavior moves into the command in the Replacement column; the old name stays a hidden alias that runs unchanged; the replacement may not exist yet), REMOVED (no dependent found; hidden now, exits 2 with the replacement once its removal slice lands).
+Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps working, never shown: machine consumers, CI, dev and enterprise ops), FOLD (behavior moves into the command in the Replacement column; the old name stays a hidden alias that runs unchanged; the replacement may not exist yet), REMOVED (no dependent found; bin/loki exits 2 with the replacement line).
 
 ## Counts
 
 - KEEP: 12
 - HIDE: 41
-- FOLD: 26
-- REMOVED: 65
+- FOLD: 61
+- REMOVED: 30
 - Total rows: 144
 - Registry paths (commands and nested subcommands): 215
 
@@ -28,10 +28,10 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 | restore | autonomy/loki | HIDE | Enterprise retention and backup (D99 item 7) |  |
 | receipt | bun route, bash fallthrough | KEEP | The Evidence Receipt |  |
 | proof | bun route, bash fallthrough | KEEP | Alias of receipt |  |
-| wiki | bun route, bash fallthrough | REMOVED | Bun-native knowledge feature | Use: loki chat |
+| wiki | bun route, bash fallthrough | FOLD | Bun-native knowledge feature | loki chat |
 | control | bun route, bash fallthrough | KEEP | D56 control plane, on by default |  |
-| runs | loki-ts/src/cli.ts | REMOVED | R100-008: one list over the loki projects registry | Use: loki status (this repo) or loki control serve (all projects) |
-| intent | loki-ts/src/cli.ts | REMOVED | Read-only intent view | Use: loki status <run> |
+| runs | loki-ts/src/cli.ts | FOLD | R100-008: one list over the loki projects registry | loki status |
+| intent | loki-ts/src/cli.ts | FOLD | Read-only intent view | loki status <run> |
 | kpis | loki-ts/src/cli.ts | HIDE | Bun-native KPI report |  |
 | report | bun route, bash fallthrough | HIDE | Mixed route; only kpis is Bun |  |
 | trust | bun route, bash fallthrough | FOLD | Trust trajectory surface | loki status --json |
@@ -51,7 +51,7 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 | help | autonomy/loki | HIDE | Core |  |
 | chat | autonomy/loki | KEEP | Provider-neutral conversational verb |  |
 | edit | autonomy/loki | FOLD | Provider-neutral single-edit verb | loki "<change>" --no-pr |
-| diff | autonomy/loki | REMOVED | Passes extra args to git diff | Use: loki status <run> |
+| diff | autonomy/loki | FOLD | Passes extra args to git diff | loki status <run> |
 | models | autonomy/loki | FOLD | Provider-neutral model tiers | loki config list |
 | setup | autonomy/loki | FOLD | Onboarding gate | loki doctor --fix |
 | quick | autonomy/loki | FOLD | Routes to the v10 lean path by default | loki "<task>" --no-pr |
@@ -66,12 +66,12 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 | mcp | autonomy/loki | HIDE | Engine-neutral |  |
 | acp | autonomy/loki | HIDE | Engine-neutral |  |
 | stop | autonomy/loki | KEEP | Session control |  |
-| pause | bun route, bash fallthrough | REMOVED | Session control; Bun writes the Loki 10 run request, bash keeps the legacy PAUSE file | Use: loki stop --graceful |
+| pause | bun route, bash fallthrough | FOLD | Session control; Bun writes the Loki 10 run request, bash keeps the legacy PAUSE file | loki stop --graceful |
 | resume | bun route, bash fallthrough | FOLD | Session control; Bun clears a Loki 10 pause, bash keeps the legacy resume | loki start |
-| cancel | bun route, bash fallthrough | REMOVED | Session control; Loki 10 only | Use: loki stop --graceful |
+| cancel | bun route, bash fallthrough | FOLD | Session control; Loki 10 only | loki stop --graceful |
 | why | autonomy/loki | FOLD | Outcome explainer | loki status |
-| next | autonomy/loki | REMOVED | Guided flow | Use: loki status |
-| logs | autonomy/loki | REMOVED | Engine-neutral | Use: loki status |
+| next | autonomy/loki | FOLD | Guided flow | loki status |
+| logs | autonomy/loki | FOLD | Engine-neutral | loki status |
 | ship | autonomy/loki | REMOVED | Delivery | Use: loki deploy |
 | deploy | autonomy/loki | KEEP | Delivery |  |
 | import | autonomy/loki | REMOVED | Spec intake | Use: loki start <ref or file> |
@@ -79,55 +79,55 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 | issue | autonomy/loki | REMOVED | Issue-mode | Use: loki start owner/repo#N |
 | ci | autonomy/loki | HIDE | Engine-neutral |  |
 | modernize | bun route, bash fallthrough | HIDE | Routed to engine10 modernize |  |
-| share | autonomy/loki | REMOVED | Engine-neutral | Use: loki receipt share |
+| share | autonomy/loki | FOLD | Engine-neutral | loki receipt share |
 | assets | autonomy/loki | REMOVED | Engine-neutral | Use: loki chat |
-| export | autonomy/loki | REMOVED | Duplicates report export | Use: loki verify <run> --sarif or loki status --json |
-| notify | autonomy/loki | REMOVED | Engine-neutral | Use: loki status |
+| export | autonomy/loki | FOLD | Duplicates report export | loki verify <run> --sarif |
+| notify | autonomy/loki | FOLD | Engine-neutral | loki status |
 | tour | autonomy/loki | FOLD | Onboarding | loki start outside a repo |
 | wow | autonomy/loki | FOLD | Onboarding: loki tour --live | loki start outside a repo |
 | try | autonomy/loki | REMOVED | Onboarding: never touches your checkout | Use: loki start <repo url> --no-pr from a fresh clone |
 | factory | autonomy/loki | FOLD | propose, execute, operate unchanged | loki start -v |
-| welcome | autonomy/loki | REMOVED | Onboarding | Use: loki doctor |
-| onboard | autonomy/loki | REMOVED | Overlaps wiki | Use: loki chat |
-| setup-skill | autonomy/loki | REMOVED | Setup | Use: loki doctor --fix |
+| welcome | autonomy/loki | FOLD | Onboarding | loki doctor |
+| onboard | autonomy/loki | FOLD | Overlaps wiki | loki chat |
+| setup-skill | autonomy/loki | FOLD | Setup | loki doctor --fix |
 | self-update | autonomy/loki | HIDE | Maintenance |  |
 | self_update | autonomy/loki | HIDE | Alias of self-update |  |
 | update | autonomy/loki | HIDE | Alias of self-update |  |
 | remote | autonomy/loki | REMOVED | Engine-neutral | Use: loki status |
 | rc | autonomy/loki | REMOVED | Alias of remote |  |
-| cockpit | autonomy/loki | REMOVED | Engine-neutral | Use: loki control serve |
+| cockpit | autonomy/loki | FOLD | Engine-neutral | loki control serve |
 | code | autonomy/loki | REMOVED | Overlaps wiki | Use: loki chat |
 | context | autonomy/loki | REMOVED | Engine-neutral | Use: loki chat |
 | ctx | autonomy/loki | REMOVED | Alias of context |  |
 | secrets | autonomy/loki | HIDE | Security |  |
-| api | autonomy/loki | REMOVED | Engine-neutral | Use: loki control serve |
+| api | autonomy/loki | FOLD | Engine-neutral | loki control serve |
 | sandbox | autonomy/loki | HIDE | Isolation |  |
 | docker | autonomy/loki | HIDE | Isolation |  |
 | web | autonomy/loki | HIDE | Overlaps Control Plane UI |  |
-| preview | autonomy/loki | REMOVED | Delivery | Use: loki deploy |
-| telemetry | autonomy/loki | REMOVED | Privacy surface | Use: loki config set telemetry off |
-| otel | autonomy/loki | REMOVED | Alias of telemetry |  |
+| preview | autonomy/loki | FOLD | Delivery | loki deploy |
+| telemetry | autonomy/loki | FOLD | Privacy surface | loki config set telemetry off |
+| otel | autonomy/loki | FOLD | Alias of telemetry |  |
 | syslog | autonomy/loki | HIDE | Legacy log paths |  |
-| explain | autonomy/loki | REMOVED | Knowledge | Use: loki chat |
+| explain | autonomy/loki | FOLD | Knowledge | loki chat |
 | docs | autonomy/loki | FOLD | Core | loki help |
 | test | autonomy/loki | HIDE | Legacy runner |  |
 | bench | autonomy/loki | HIDE | Engine-neutral |  |
 | voice | autonomy/loki | REMOVED | Experimental | Use: loki start |
-| own | autonomy/loki | REMOVED | Legacy handoff | Use: loki chat |
-| handoff | autonomy/loki | REMOVED | Alias of own |  |
+| own | autonomy/loki | FOLD | Legacy handoff | loki chat |
+| handoff | autonomy/loki | FOLD | Alias of own |  |
 | secure | autonomy/loki | REMOVED | Security | Use: loki doctor |
 | compliance | autonomy/loki | HIDE | Enterprise |  |
 | enterprise | autonomy/loki | HIDE | Enterprise |  |
-| projects | autonomy/loki | REMOVED | Engine-neutral | Use: loki control serve |
+| projects | autonomy/loki | FOLD | Engine-neutral | loki control serve |
 | audit | autonomy/loki | HIDE | Enterprise |  |
-| cost | autonomy/loki | REMOVED | Duplicates report cost | Use: loki start --dry-run (before) and loki status <run> (after) |
+| cost | autonomy/loki | FOLD | Duplicates report cost | loki start --dry-run |
 | metrics | autonomy/loki | HIDE | Duplicates report metrics |  |
-| sentrux | autonomy/loki | REMOVED | Legacy gate input | Use: loki start |
+| sentrux | autonomy/loki | FOLD | Legacy gate input | loki start |
 | magic | autonomy/loki | HIDE | Legacy UI generator |  |
 | estimate | autonomy/loki | FOLD | Estimates the legacy PRD flow | loki start <PRD> --dry-run |
 | plan | autonomy/loki | FOLD | Legacy PRD flow | loki start <PRD> --dry-run |
-| grill | autonomy/loki | REMOVED | Legacy PRD flow | Loki 10 checks the spec itself; run: loki start <PRD> --dry-run |
-| spec | autonomy/loki | REMOVED | Legacy PRD flow | Loki 10 checks the spec itself; run: loki start <PRD> --dry-run |
+| grill | autonomy/loki | FOLD | Legacy PRD flow | loki start <PRD> --dry-run |
+| spec | autonomy/loki | FOLD | Legacy PRD flow | loki start <PRD> --dry-run |
 | backlog | autonomy/loki | FOLD | Drives legacy RARV per issue | loki start owner/repo --label L --parallel K |
 | workspace | autonomy/loki | HIDE | Control Plane spawns workspace run; users get it via start --workspace |  |
 | council | autonomy/loki | REMOVED | Legacy RARV gate | It drove the removed legacy loop; use: loki start "<goal>" |
@@ -139,27 +139,27 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 | watch | autonomy/loki | REMOVED | PRD flow | Rerun with: loki start <PRD> |
 | watchdog | autonomy/loki | REMOVED | Legacy engine | It drove the removed legacy loop; use: loki start "<goal>" |
 | cleanup | autonomy/loki | REMOVED | Legacy run.sh orphans | It drove the removed legacy loop; use: loki start "<goal>" |
-| state | autonomy/loki | REMOVED | Legacy engine | It drove the removed legacy loop; use: loki start "<goal>" |
-| agent | autonomy/loki | REMOVED | Legacy engine | It drove the removed legacy loop; use: loki start "<goal>" |
+| state | autonomy/loki | FOLD | Legacy engine | loki start "<goal>" |
+| agent | autonomy/loki | FOLD | Legacy engine | loki start "<goal>" |
 | agents | autonomy/loki | HIDE | Custom child agents are still read by reviewers |  |
 | trigger | autonomy/loki | HIDE | Event automation server (FR03 extends it) |  |
-| failover | autonomy/loki | REMOVED | Legacy engine | It drove the removed legacy loop; use: loki start "<goal>" |
+| failover | autonomy/loki | FOLD | Legacy engine | loki start "<goal>" |
 | reset | autonomy/loki | REMOVED | Legacy engine | It drove the removed legacy loop; use: loki start "<goal>" |
 | merge | autonomy/loki | HIDE | Control Plane merge list and run |  |
 | heal | autonomy/loki | HIDE | Referenced by docs; no engine10 consumer verified |  |
-| migrate | autonomy/loki | REMOVED | Superseded by modernize | Use: loki "modernize <what> to <target>" |
+| migrate | autonomy/loki | FOLD | Superseded by modernize | loki "modernize <what> to <target>" |
 | dogfood | autonomy/loki | REMOVED | Legacy engine | It drove the removed legacy loop; use: loki start "<goal>" |
 | steer | autonomy/loki | FOLD | Session control | loki chat --attach |
 | outcomes | autonomy/loki | REMOVED | Legacy outcome store | It drove the removed legacy loop; use: loki start "<goal>" |
 | worktree | autonomy/loki | REMOVED | Legacy parallel mode | It drove the removed legacy loop; use: loki start "<goal>" |
 | wt | autonomy/loki | REMOVED | Alias of worktree |  |
-| checkpoint | autonomy/loki | REMOVED | Legacy engine | Use: loki undo |
-| cp | autonomy/loki | REMOVED | Alias of checkpoint |  |
-| analyze | autonomy/loki | REMOVED | Legacy analyze flow | It drove the removed legacy loop; use: loki start "<goal>" |
+| checkpoint | autonomy/loki | FOLD | Legacy engine | loki undo |
+| cp | autonomy/loki | FOLD | Alias of checkpoint |  |
+| analyze | autonomy/loki | FOLD | Legacy analyze flow | loki start "<goal>" |
 | demo | autonomy/loki | FOLD | Legacy engine demo | loki start outside a repo |
 | run | autonomy/loki | FOLD | Alias; use start | loki start |
 | trust-metrics | autonomy/loki | REMOVED | Alias; use trust detail | Use: loki status --json |
-| serve | autonomy/loki | REMOVED | Alias; use api start | Use: loki control serve |
+| serve | autonomy/loki | FOLD | Alias; use api start | loki control serve |
 | open | autonomy/loki | REMOVED | Alias; use dashboard open | Use: loki control serve |
 
 ## Registry gaps (nested paths dispatched but not yet in the registry)

@@ -21,6 +21,11 @@
 #   6. completions/loki.bash: add quick to main_commands: the bash completion check fails.
 #   7. completions/_loki: add a 'plan:...' row to _loki_commands: the zsh completion check fails.
 #   8. autonomy/loki show_help_all: add a `quick` line to the hidden list: the help-all hidden check fails.
+#   10. bin/loki: drop one name from the _loki_removed_suffix table: the table-equals-registry check and that name's
+#       exit-2 check fail.
+#   11. bin/loki: print the removal line without the replacement: every removed-command message check fails.
+#   12. bin/loki: move the removed-command arm below the bun lookup (PATH without bun): the no-engine exit-2 checks fail.
+#   13. registry.ts: flip one FOLD entry to REMOVED without a table row in bin/loki: the table check fails.
 #   9. bin/loki: make `plan` exit 2 (hidden command removed early): the hidden-commands-still-run check fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -85,10 +90,28 @@ for c in $CORE; do
     run bin/loki "$c" --help >/dev/null; rc=$?
     [ "$rc" -eq 0 ] && ok "loki $c --help exits 0" || bad "loki $c --help exited $rc"
 done
-for c in quick plan proof resume steer review trigger merge workspace magic test cost explain ship backlog; do
+for c in quick plan proof resume steer review trigger merge workspace magic test cost explain provider backlog; do
     run bin/loki "$c" --help >/dev/null; rc=$?
     [ "$rc" -eq 0 ] && ok "hidden loki $c --help still runs" || bad "hidden loki $c --help exited $rc"
 done
+
+# ---- Removed commands (registry class REMOVED) exit 2 with their migration line ----
+rm_reg="$(rb 'import { REGISTRY } from "./src/cli/registry.ts"; for (const c of REGISTRY) if (c.cls === "REMOVED") for (const n of [c.name, ...(c.aliases ?? []).filter((a) => !a.startsWith("-"))]) console.log(n + "|" + c.migrate)')"
+rm_tab="$(sed -n '/^_loki_removed_suffix() {/,/^}/p' "$ROOT/bin/loki" | sed -n "s/^        \([a-z0-9-]*\)) printf '%s' '.*/\1/p" | words)"
+rm_names="$(printf '%s\n' "$rm_reg" | cut -d'|' -f1 | words)"
+[ -n "$rm_names" ] && [ "$rm_tab" = "$rm_names" ] && ok "bin/loki removed-command table equals the registry REMOVED names and aliases" || bad "removed table '$rm_tab' differs from registry '$rm_names'"
+mkdir -p "$T/rm-empty"
+rm_bad=""
+while IFS='|' read -r rn rmig; do
+    [ -n "$rn" ] || continue
+    rout="$(cd "$T/rm-empty" && env PATH=/usr/bin:/bin LOKI_PROVIDER=bogus bash "$ROOT/bin/loki" "$rn" 2>"$T/rm-err" </dev/null)"; rrc=$?
+    want_msg="loki: 'loki $rn' was removed in Loki Mode 11.129. $rmig."
+    [ "$rrc" -eq 2 ] && [ -z "$rout" ] && [ "$(cat "$T/rm-err")" = "$want_msg" ] || rm_bad="$rm_bad $rn"
+done <<EOF_RM
+$rm_reg
+EOF_RM
+[ -z "$rm_bad" ] && ok "each removed command exits 2 with one stderr line naming its replacement, with no bun and a bogus provider" || bad "removed commands with a wrong exit, stdout or message:$rm_bad"
+[ ! -e "$T/rm-empty/.loki" ] && ok "removed commands create no .loki state" || bad "a removed command created .loki"
 
 check "completions/loki.bash loads" bash -c "source '$ROOT/completions/loki.bash'"
 

@@ -594,6 +594,49 @@ if [ "${1:-}" = "modernize" ]; then
     unset _loki_mod_a
 fi
 
+# Removed commands (registry class REMOVED) exit 2 with a migration line before any engine, provider
+# check or model call. tests/min/cli-entrypoints.sh compares this table to the registry.
+_loki_removed_suffix() {
+    case "$1" in
+        init) printf '%s' 'Use: loki "<idea>" in an empty folder' ;;
+        template) printf '%s' 'Use: loki start "<one-line goal>"' ;;
+        ship) printf '%s' 'Use: loki deploy' ;;
+        import) printf '%s' 'Use: loki start <ref or file>' ;;
+        issue) printf '%s' 'Use: loki start owner/repo#N' ;;
+        assets) printf '%s' 'Use: loki chat' ;;
+        try) printf '%s' 'Use: loki start <repo url> --no-pr from a fresh clone' ;;
+        remote) printf '%s' 'Use: loki status' ;;
+        rc) printf '%s' 'Use: loki status' ;;
+        code) printf '%s' 'Use: loki chat' ;;
+        context) printf '%s' 'Use: loki chat' ;;
+        ctx) printf '%s' 'Use: loki chat' ;;
+        voice) printf '%s' 'Use: loki start' ;;
+        secure) printf '%s' 'Use: loki doctor' ;;
+        council) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
+        compound) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
+        cluster) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
+        optimize) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
+        ultracode) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
+        monitor) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
+        watch) printf '%s' 'Rerun with: loki start <PRD>' ;;
+        watchdog) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
+        cleanup) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
+        reset) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
+        dogfood) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
+        outcomes) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
+        worktree) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
+        wt) printf '%s' 'It drove the removed legacy loop; use: loki start "<goal>"' ;;
+        trust-metrics) printf '%s' 'Use: loki status --json' ;;
+        open) printf '%s' 'Use: loki control serve' ;;
+        *) return 1 ;;
+    esac
+}
+if _loki_rm_suffix="$(_loki_removed_suffix "${1:-}")"; then
+    echo "loki: 'loki $1' was removed in Loki Mode 11.129. ${_loki_rm_suffix}." >&2
+    exit 2
+fi
+unset _loki_rm_suffix
+
 # `loki legacy` was removed in 11.0.0 (LEGACY-ZERO W1-01): there is one engine.
 case "${1:-}" in
     legacy)
