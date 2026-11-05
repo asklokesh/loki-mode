@@ -131,7 +131,21 @@ Issue refs work the same way:
 ```
 loki owner/repo#123
 loki https://github.com/owner/repo/issues/123
+loki "fix #123"
+loki "#123"
+loki "<issue URL as copied, with ?query or #comment>"
+loki https://github.com/o/r/pull/5       # verify-pr
 ```
+
+A pasted goal that names one issue is read as that issue: a copied URL loses a
+trailing slash, ?query or #fragment, and "#123", "fix #123" or "fix issue 123"
+becomes owner/repo#123 from the checkout's origin ("#N" needs a GitHub origin;
+quote it, since an unquoted # starts a shell comment). Loki prints a `goal:`
+line when it read a ref. Extra words ("fix #123 and add a test") keep the goal
+as text, and LOKI_GOAL_REF=0 turns the reading off. The run itself asks
+nothing: headless intake records its assumptions in the receipt. The only
+terminal prompt is the optional rating after VERIFIED (LOKI_SATISFACTION=0
+turns it off). Models and --deep are not auto-picked yet.
 
 bin/loki routes GitHub, GitLab (`.../-/issues/N`) and Jira
 (`.../browse/KEY`) issue URLs to the v10 engine, and the issue-fetch step
