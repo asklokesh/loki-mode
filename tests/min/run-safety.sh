@@ -340,7 +340,7 @@ git -C "$M" checkout -q -b loki/e10-20261101T000000Z-dead # a cancelled run's br
 BEFORE="$(git -C "$M" status --porcelain)"
 cp -R "$M" "$T/mono2" # the same start, for the run whose fix round moves the Wall
 OUT="$(cd "$M" && PATH="$FIX/vitest-bin:$PATH" FAKE_VITEST_LOG="$T/vitest.log" E2E_STUB_MODE=stack E2E_STUB_TARGET=frontend/src/hooks/useApi.ts \
-    E2E_STUB_SNIPPET='export function useSearch(q: string): string { return api.get(`/search?q=${q}`); }' E2E_STUB_WALL=vitestred E2E_STUB_PROJECT="$PROJ" \
+    E2E_STUB_SNIPPET='export function useSearch(q: string): string { return api.get(`/search?q=${q}`); }' E2E_STUB_WALL=vitestred LOKI_E10_WALL=1 E2E_STUB_PROJECT="$PROJ" \
     LOKI_E10_PLAN=1 LOKI_E10_NO_FETCH=1 ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "add a useSearch(q) hook that calls GET /search through the api client" --no-pr </dev/null 2>&1)"; RC=$?
 EV="$(ls "$M"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
 SUM="$( [ -n "$EV" ] && python3 -I - "$EV" <<'PY'
@@ -450,7 +450,7 @@ console.log(out.join(" | "));
 # the next round runs; round 2 changes nothing on the Wall, and only then is the work delivered PARTIAL.
 M2="$T/mono2"
 OUT2="$(cd "$M2" && PATH="$FIX/vitest-bin:$PATH" E2E_STUB_MODE=stack E2E_STUB_TARGET=frontend/src/hooks/useApi.ts E2E_STUB_FIX=rank \
-    E2E_STUB_SNIPPET='export function useSearch(q: string): string { return api.get(`/search?q=${q}`); }' E2E_STUB_WALL=vitestred E2E_STUB_PROJECT="$PROJ" \
+    E2E_STUB_SNIPPET='export function useSearch(q: string): string { return api.get(`/search?q=${q}`); }' E2E_STUB_WALL=vitestred LOKI_E10_WALL=1 E2E_STUB_PROJECT="$PROJ" \
     LOKI_E10_PLAN=1 LOKI_E10_NO_FETCH=1 ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "add a useSearch(q) hook that calls GET /search through the api client" --no-pr </dev/null 2>&1)"; RC2=$?
 EV2="$(ls "$M2"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
 R2="$( [ -n "$EV2" ] && python3 -I -c 'import json,sys; ev=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]; print(sum(1 for e in ev if e["type"]=="fix.round"))' "$EV2")"

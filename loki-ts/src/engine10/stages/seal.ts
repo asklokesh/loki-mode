@@ -2,7 +2,7 @@
 // `cryptography`). The key is the A-120 local key, created on first use. An empty token means UNSIGNED, never presented as attested.
 import { sanitizeReason } from "../../util/redact.ts";
 import { specReceiptBlock } from "../../util/spec_file.ts"; import { triageReceiptBlock } from "../../features/triage.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock, sealAccuracyBlock } from "../../util/run_outputs.ts"; import { contextCoverageBlock } from "../../util/context_pack.ts";
-import { createHash } from "node:crypto"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
+import { createHash } from "node:crypto"; import { execFileSync } from "node:child_process"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
 import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutation_proof.ts";
@@ -40,13 +40,33 @@ const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? 
 export const EXTERNAL_MODEL_LABEL = "external (no Loki implement session)", EXTERNAL_DIFF_NOT_ISOLATED = "Wall author not filesystem-isolated from the external diff", EXTERNAL_NO_WALL = "external diff sealed with no Wall file that ran; the only checks are the repo's existing tests"; // CW-12 B2/B3
 const externalRun = (o: Partial<Record<StageName, Record<string, unknown>>>): boolean => o.implement?.exit === "external";
 export const LEAN_NO_SYMBOL = "no passing check references a changed symbol and no Wall file ran";
+export const NO_FAIL_THEN_PASS = "no test shown to fail on the base commit and pass on the change";
+/** Wall-off verdict (EVAL-2026-11-05-3): an agent-authored or edited test is proof only when the HARNESS shows it fails on the base commit with the head's test bytes and passes on the change (util/mutation_proof.ts, the same base-worktree run T2 uses). An edited file's own base version must be green on the base first, so a pre-existing red file never reads as discriminating. */
+/** The symbols the diff declares or modifies in non-test code files (the lean rule and the fail-then-pass relevance rule share it). */
+async function codeSymbols(ctx: RunContext, rawDiff: string[], head: string): Promise<{ all: string[]; onBase: Set<string> }> {
+  const code: string[] = [];
+  for (let i = 0; i + 1 < rawDiff.length; i += 2) { const st = rawDiff[i]!.trim().split(" ").pop() ?? "", f = rawDiff[i + 1]!; if (st !== "D" && CODE_FILE_EXT.test(f) && !isTestFile(f)) code.push(f); }
+  const onBase = new Set<string>(); if (code.length === 0) return { all: [], onBase };
+  for (let i = 0; i + 1 < rawDiff.length; i += 2) { const f = rawDiff[i + 1]!; if (code.includes(f) && (rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A") { const b = await safeGitRun(ctx.repoDir, ["show", `${ctx.baseSha}:${f}`], { timeoutMs: 20000 }); if (b.exitCode === 0) for (const id of identifierSet(b.stdout)) onBase.add(id); } }
+  const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...code], { timeoutMs: 20000 });
+  return { all: d.exitCode === 0 ? changedSymbols(d.stdout) : [], onBase };
+}
+async function failThenPass(ctx: RunContext, vraw: Obj[], pctx: ProvenanceCtx, head: string, cs: { all: string[]; onBase: Set<string> }, task: string): Promise<{ ok: boolean; line: string; files: string[] }> {
+  const files = [...new Set(vraw.filter((c) => isExecutedProof(c as { result?: unknown; n?: unknown }) && checkProvenance(String(c.name ?? ""), pctx) === "agent_authored").map((c) => String(c.name).slice(String(c.name).indexOf(":") + 1)))];
+  if (files.length === 0) return { ok: false, line: "", files: [] };
+  const mp = await mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: files.map((path) => ({ path })), checks: vraw as { name: string }[], runner: (ms: number) => new RealBaseTestRunner(undefined, ms, {}, !declaresPythonEnv(ctx.repoDir, head)), headSha: head, requireAssertion: true, baseMustPass: files.filter((f) => pctx.modifiedFiles?.includes(f)) });
+  const symbols = cs.all.filter((s) => cs.onBase.has(s) || new RegExp(`(?<![\\w$])${s.replace(/[$]/g, "\\$")}(?![\\w$])`).test(task)); // a symbol the base already has (a modified one), or one the task itself asks to add: a test that only names a function the change invented proves nothing about the change
+  const read = (p: string): string => { try { return execFileSync("git", ["-C", ctx.repoDir, "show", `${head}:${p}`], { encoding: "utf8", maxBuffer: 16 << 20, timeout: 20_000 }); } catch { return ""; } };
+  const failed = (mp.outcome === "yes" ? mp.failed ?? [] : []).filter((f) => symbolGap(symbols, [read(f)]).length === 0); // an assertion failure on base, in a file that names a symbol this change declares or modifies
+  return { ok: failed.length > 0, line: failed.length > 0 ? `${mp.line} (${failed.join(", ")})` : mp.line, files: failed };
+}
 export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these added public functions";
 /** The two symbol rules, from one read of the diff and the passing checks.
  *  lean (FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL): with no Wall file that ran, the changed code is exercised only if a passing test source names a symbol the diff declares or modifies; the unreferenced symbols, or [].
  *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file), Tests the implementer wrote or edited never clear it. Off by default; LOKI_E10_PUBLIC_GAP=1 turns it on.
  *  Both are [] for an external run (its own rule) and an already-satisfied claim. */
 const CALLER_SCAN = 3000, CALLER_MAX_BYTES = 200_000;
-async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[]): Promise<{ lean: string[]; pub: string[] }> {
+async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[], wallOff: { pctx: ProvenanceCtx; ftp: () => Promise<boolean> } | null = null): Promise<{ lean: string[]; pub: string[] }> {
   const none = { lean: [], pub: [] };
   if (externalRun(o) || o.intake?.already_satisfied === true || o.implement?.exit === "already_done") return none;
   const touched = new Set<string>(), code: string[] = [], added: string[] = [];
@@ -54,10 +74,10 @@ async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, r
   if (code.length === 0) return none;
   const read = (p: string): string => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return ""; } };
   const executed = vraw.filter((c) => isExecutedProof(c as { result?: unknown; n?: unknown })), testOf = (c: Obj): string | null => { const n = String(c.name ?? ""), p = n.slice(n.indexOf(":") + 1); return n.includes(":") && !n.startsWith("full suite:") && isTestFile(p) ? p : null; };
-  const allSources = executed.map(testOf).filter((p): p is string => p !== null).map(read);
+  const allSources = (wallOff ? executed.filter((c) => checkProvenance(String(c.name ?? ""), wallOff.pctx) !== "agent_authored") : executed).map(testOf).filter((p): p is string => p !== null).map(read); // Wall off: a test the run wrote or edited names the symbol trivially, so it counts only through the fail-then-pass proof below
   const ranWall = Array.isArray(o.wall?.files) && o.wall.files.length > 0, leanFiles = code.filter((f) => CODE_FILE_EXT.test(f));
   let lean: string[] = [];
-  if (!ranWall && leanFiles.length) { const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...leanFiles], { timeoutMs: 20000 }); if (d.exitCode === 0) lean = symbolGap(changedSymbols(d.stdout), allSources); }
+  if (!ranWall && leanFiles.length) { const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...leanFiles], { timeoutMs: 20000 }); if (d.exitCode === 0) lean = symbolGap(changedSymbols(d.stdout), allSources); if (lean.length > 0 && wallOff && await wallOff.ftp()) lean = []; }
   if (process.env["LOKI_E10_PUBLIC_GAP"] !== "1") return { lean, pub: [] }; // off by default: the span lines of a file with multi-line docstrings or template literals shift against the stripped text (follow-up task)
   const files = code.filter((f) => API_FILE_EXT.test(f)).map((path) => ({ path, src: read(path) }));
   const fns: string[] = [];
@@ -218,9 +238,12 @@ export const sealStage: Stage = {
     const sysInfo = verifyNotProven.includes(SYSTEM_INTERP) && !declaresPythonEnv(ctx.repoDir, head) ? SYSTEM_INTERP : null; // HONEST-VERIFIED: no dependency manifest means the system interpreter is the project's own, so a pass on it is a pass (informational, never a cap)
     const disclosedSet = new Set(decl.disclosed), capRc = rcNotes.filter((n) => !disclosedSet.has(n)), capVerify = verifyNotProven.filter((n) => !disclosedSet.has(n) && n !== sysInfo); const DECLARED_SUFFIX = " (declared by the plan or required by the passing Wall; disclosed, does not cap)";
     const grp = sealGroup(ctx.runDir, receiptSha256 as never); // D61-13: inert without group/manifest.json
-    const executed = hasExecutedProof(vraw), proof = process.env["LOKI_EXOGENOUS_PROOF"] === "0" ? executed : hasExogenousProof(vraw, pctx); // FC-16: executed n>0 pass from verify's raw checks (a Wall green on base proves only a claim, inside verdictOf); TEN-GATES-02 (D104): that pass must be agent-independent (LOKI_EXOGENOUS_PROOF=0 opts out)
+    const executed = hasExecutedProof(vraw), strictProof = process.env["LOKI_EXOGENOUS_PROOF"] !== "0", noWall = !(Array.isArray(o.wall?.files) && o.wall.files.length > 0);
+    const ftpGate = strictProof && noWall && diffOk && !externalRun(o) && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done" && weakTests.length === 0 && !checks.some((c) => c.result === "fail") && mutationEnabled(); // only a run that could still read VERIFIED pays for the base-tree runs
+    let ftpMemo: Promise<{ ok: boolean; line: string; files: string[] }> | null = null; const ftp = (): Promise<{ ok: boolean; line: string; files: string[] }> => (ftpMemo ??= codeSymbols(ctx, rawDiff, head).then((cs) => failThenPass(ctx, vraw, pctx, head, cs, loadTaskText(ctx, str(o.intake?.task) ?? undefined))));
+    const exoProof = hasExogenousProof(vraw, pctx), proof = !strictProof ? executed : !noWall ? exoProof : exoProof || (ftpGate && (await ftp()).ok); // FC-16: executed n>0 pass from verify's raw checks (a Wall green on base proves only a claim, inside verdictOf); TEN-GATES-02 (D104): that pass must be agent-independent (LOKI_EXOGENOUS_PROOF=0 opts out)
     const uncoveredAfterLimit = o.implement?.exit === "killed" ? strs(o.verify?.uncovered_changed) : []; // FC-21b: changed code no passing impacted check covered; limit path only
-    const { lean: leanGap, pub: pubGap } = diffOk ? await symbolGaps(ctx, o, rawDiff, head, vraw) : { lean: [], pub: [] }; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL; HONEST-VERIFIED-2
+    const { lean: leanGap, pub: pubGap } = diffOk ? await symbolGaps(ctx, o, rawDiff, head, vraw, strictProof && noWall ? { pctx, ftp: async () => ftpGate && (await ftp()).ok } : null) : { lean: [], pub: [] }; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL; HONEST-VERIFIED-2
     const wpAll = publishableWall(ctx.repoDir, ctx.runDir, o, process.env, loadTaskText(ctx, str(o.intake?.task) ?? undefined)); // pure read of the sealed copies; publishing still happens only on VERIFIED
     const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name)) && c.repo_skipped !== true), !diffOk || diff.stdout === "", capVerify.length > 0 || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap], wpAll.notes, wpAll.clauseGap), grp);
 
@@ -229,7 +252,8 @@ export const sealStage: Stage = {
     const verdict1: Verdict = supplyVerdict(verdict0, supply);
     const xr = await crossReview(ctx, verdict1, head, signal), verdict2 = minVerdict(verdict1, xr); // B4: opt-in second-provider review, downgrade only
     // T2: mutation proof always runs after VERIFIED. "no" (Wall passed without the fix) warns; it downgrades to PARTIAL only with LOKI_MUTATION_STRICT=1 AND a plan-declared behavior change (never a harness heuristic). "yes" and inconclusive never change the verdict.
-    const mp = verdict2 === "VERIFIED" && mutationEnabled() ? await mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as { path: string }[]) : [], checks: Array.isArray(o.verify?.checks) ? (o.verify.checks as { name: string }[]) : [], runner: (ms: number) => new RealBaseTestRunner(undefined, ms) }) : null;
+    const mp0 = verdict2 === "VERIFIED" && mutationEnabled() ? await mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as { path: string }[]) : [], checks: Array.isArray(o.verify?.checks) ? (o.verify.checks as { name: string }[]) : [], runner: (ms: number) => new RealBaseTestRunner(undefined, ms) }) : null;
+    const ftpRes = await (ftpMemo as Promise<{ ok: boolean; line: string; files: string[] }> | null), mp = ftpRes?.ok && verdict2 === "VERIFIED" && noWall ? { outcome: "yes" as const, line: ftpRes.line } : mp0; // Wall off: the fail-then-pass run is the receipt's proof line
     const arbCap = Array.isArray(o.wall?.arbitrated) && (o.wall!.arbitrated as unknown[]).length > 0 && (verdict2 === "VERIFIED" || verdict2 === "ALREADY_SATISFIED"), mutCap = mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true, verdict3: Verdict = mutCap || arbCap ? "PARTIAL" : verdict2; // an arbitrated replacement passed only syntactic validators and two referees, so it never carries a success verdict; FC-69: a Wall test that did not execute is disclosed (not_proven), never a verdict downgrade (CTO ruling; D95 THIN)
     const deepG = deepGaps(o.verify?.risk, vraw, Array.isArray(o.deep?.checks) ? (o.deep.checks as Obj[]) : [], modelReviewRan(xr)), notProven = new Set<string>([...deepG.notProven, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? []), ...reviewReceipt(ctx.provider, xr).notProven]);
     const wp = verdict3 === "VERIFIED" ? wpAll : { files: [], notes: wpAll.notes }; for (const n of wp.notes) notProven.add(n); if (verdict3 === "PARTIAL") for (const n of wpAll.clauseGap) notProven.add(n); // FC-VERIFIED-PR-WITHOUT-ITS-TEST: only on VERIFIED, after the receipt's head, tree and diff are fixed
@@ -242,6 +266,7 @@ export const sealStage: Stage = {
     if (verdict === "VERIFIED") for (const n of wpAll.weak) notProven.add(n); // WALL-ASSERT-STRENGTH: a disclosure on the final VERIFIED verdict only, never an input to it
     if (wallGreenOnBase && verdict === "PARTIAL" && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done") notProven.add(WALL_GREEN_ON_BASE_REASON);
     if (!proof && !(wallGreenOnBase && verdict === "ALREADY_SATISFIED") && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = vraw; notProven.add(executed ? AGENT_ONLY_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
+    if (ftpRes && !ftpRes.ok && verdict === "PARTIAL") notProven.add(`${NO_FAIL_THEN_PASS}${ftpRes.line ? `: ${ftpRes.line}` : ""}`); // only when the harness actually ran it and nothing discriminated
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
     for (const n of strs(o.wall?.not_proven)) notProven.add(n);
     if (typeof o.verify?.wall_failure_tail === "string" && o.verify.wall_passed === false) { const tailFile = basename(o.verify.wall_failure_tail), rel = relative(ctx.repoDir, join(ctx.runDir, tailFile)); notProven.add(`Wall failure output kept: ${rel.startsWith("..") || isAbsolute(rel) ? `.loki/runs/${ctx.runId}/${tailFile}` : rel}`); } // WALL-FAILOUT: names the file only, repo-relative (this line reaches the public PR body); the verdict is already decided

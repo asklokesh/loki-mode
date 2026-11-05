@@ -14,7 +14,7 @@ import { hasRelevantTests, isTinyGreenfield, WALL_TINY_BOUND, loadRepoMap, named
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { publishSealed, removeHoldout, sealStageDir, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { clauseEvidenceBlock, evidenceOf, ingestWallCases, wallCasesBrief, wallCasesRunner, withUnreproducedEvidence, type WallEvidence } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingStackTool, projectInterpreter, type EngineTestMap } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
-import { sealedWallDir, baseJobs, classify, plannedGoDir, goPackageBrief, goPackageClash, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, spawnGroupSync, stripAnsi } from "../../util/check_result.ts";
+import { sealedWallDir, assertionFailure, baseJobs, classify, plannedGoDir, goPackageBrief, goPackageClash, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, spawnGroupSync, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, dotenvFileRead, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, rustArities, rustCallClash, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
 import { dotnetTestProject } from "../../util/stack_tools.ts";
@@ -33,20 +33,20 @@ export { classify, notRunReason, pytestCollectionIsRed } from "../../util/check_
 // snapshot from process start, not the live env).
 export class RealBaseTestRunner implements BaseTestRunner {
   lastNotRunFiles: NotRunRow[] = [];
-  constructor(private readonly api?: ProjectApi | null, private readonly timeoutMs: number = BASE_RUN_TIMEOUT_MS, private readonly extraEnv: Record<string, string> = {}) {} // FC-01: undefined = load the repo's cached Project Model per run
-  run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run: number } {
+  constructor(private readonly api?: ProjectApi | null, private readonly timeoutMs: number = BASE_RUN_TIMEOUT_MS, private readonly extraEnv: Record<string, string> = {}, private readonly trustSystem = false) {} // trustSystem: the repo declares no Python environment, so the system interpreter IS its interpreter and its base result counts (seal.ts failThenPass; the Wall path never sets it). FC-01: undefined = load the repo's cached Project Model per run
+  run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run: number; assertFail: number } {
     this.lastNotRunFiles = [];
-    let pass = 0, fail = 0, not_run = 0; const not_run_files: NotRunRow[] = []; const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; for (const f of files) {
+    let pass = 0, fail = 0, not_run = 0, assertFail = 0; const not_run_files: NotRunRow[] = []; const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; for (const f of files) {
       const { cmd, args, interpreter, cwd } = commandFor(f, repoDir, api);
       const r = spawnGroupSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, timeoutMs: Math.max(1000, this.timeoutMs), env: { ...plainTestEnv(), ...this.extraEnv } }); // FC-69: plain env in, ANSI stripped out; group-kill launcher reaps a grandchild runner
-      const status = r.status, out = stripAnsi(r.output), base = classify(f, status, out, repoDir, interpreter);
+      const status = r.status, out = stripAnsi(r.output), base = classify(f, status, out, repoDir, this.trustSystem ? undefined : interpreter);
       const result = base === "not_run" && status === 0 && f.runner === "go" && interpreter !== "system" && corroborateGoPassSync(classifyCheck({ kind: "test", ok: true, out, ...goRunner(cmd, args) }), out, cmd, args.filter((a, k) => a !== "-run" && args[k - 1] !== "-run"), { cwd, env: plainTestEnv() }).result === "pass" ? "pass" : base; // same Go exit 0 corroboration as runEach, synchronous
-      if (result === "pass") pass++; else if (result === "fail") fail++; else { not_run++; not_run_files.push({ file: f.path, reason: notRunReason(status, interpreter), ...(interpreter === "system" ? { interpreter } : {}) }); }
+      if (result === "pass") pass++; else if (result === "fail") { fail++; if (assertionFailure(f.runner, out)) assertFail++; } else { not_run++; not_run_files.push({ file: f.path, reason: notRunReason(status, interpreter), ...(interpreter === "system" ? { interpreter } : {}) }); }
     }
-    this.lastNotRunFiles = not_run_files; return { pass, fail, not_run };
+    this.lastNotRunFiles = not_run_files; return { pass, fail, not_run, assertFail };
   }
   async runEach(repoDir: string, files: TestRef[], jobs: number, corroborate = false, remaining?: () => number): Promise<BaseEachResult[]> { // TEN-SPEED-19: same classification as run(), at most `jobs` processes at once
-    const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; return mapPool(files, jobs, async (f) => { const { cmd, args, interpreter, cwd } = commandFor(f, repoDir, api), r = await spawnCollect(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, env: plainTestEnv(), timeoutMs: Math.max(1000, Math.min(this.timeoutMs, remaining?.() ?? this.timeoutMs)) }), out = stripAnsi(r.output), base = classify(f, r.status, out, repoDir, interpreter), result = corroborate && base === "not_run" && r.status === 0 && f.runner === "go" && interpreter !== "system" && (await corroboratePass(classifyCheck({ kind: "test", ok: true, out, ...goRunner(cmd, args) }), out, cmd, args.filter((a, k) => a !== "-run" && args[k - 1] !== "-run") /* corroboration refuses the -run regex, so it reruns the package */, { cwd, env: plainTestEnv() })).result === "pass" ? "pass" : base; return { pass: +(result === "pass"), fail: +(result === "fail"), not_run: +(result === "not_run"), notRunFiles: result === "not_run" ? [{ file: f.path, reason: notRunReason(r.status, interpreter), ...(interpreter === "system" ? { interpreter } : {}) }] : [] }; }, () => remaining !== undefined && remaining() <= 0); // remaining: the caller's budget; no new file starts once it is spent
+    const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; return mapPool(files, jobs, async (f) => { const { cmd, args, interpreter, cwd } = commandFor(f, repoDir, api), r = await spawnCollect(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, env: plainTestEnv(), timeoutMs: Math.max(1000, Math.min(this.timeoutMs, remaining?.() ?? this.timeoutMs)) }), out = stripAnsi(r.output), base = classify(f, r.status, out, repoDir, this.trustSystem ? undefined : interpreter), result = corroborate && base === "not_run" && r.status === 0 && f.runner === "go" && interpreter !== "system" && (await corroboratePass(classifyCheck({ kind: "test", ok: true, out, ...goRunner(cmd, args) }), out, cmd, args.filter((a, k) => a !== "-run" && args[k - 1] !== "-run") /* corroboration refuses the -run regex, so it reruns the package */, { cwd, env: plainTestEnv() })).result === "pass" ? "pass" : base; return { pass: +(result === "pass"), fail: +(result === "fail"), not_run: +(result === "not_run"), notRunFiles: result === "not_run" ? [{ file: f.path, reason: notRunReason(r.status, interpreter), ...(interpreter === "system" ? { interpreter } : {}) }] : [] }; }, () => remaining !== undefined && remaining() <= 0); // remaining: the caller's budget; no new file starts once it is spent
   }
 }
 
@@ -112,7 +112,7 @@ export type WallAuthorOutcome = { kind: "done"; result: StageResult } | WallAuth
 export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: { model: string; suffix: string; note?: string | undefined }): Promise<WallAuthorOutcome> {
   const done = (result: StageResult): WallAuthorOutcome => ({ kind: "done", result });
   if (signal.aborted) return done({ status: "failed", data: {}, reason: "aborted before wall started" });
-  if (!wallEnabled()) return done({ status: "skipped", data: {}, reason: "LOKI_E10_WALL=0" });
+  if (!wallEnabled()) return done({ status: "skipped", data: {}, reason: "Wall session off (default; LOKI_E10_WALL=1 turns it on)" });
 
   const prior = ctx.outputs();
   const task = loadTaskText(ctx, prior.intake?.task as string | undefined);

@@ -1693,6 +1693,13 @@ export function classify(f: TestRef, status: number | null, output: string, repo
 
 /** TEN-SPEED-19: LOKI_E10_BASE_JOBS, default 1 (sequential); an invalid value or one below 1 falls back to 1, capped at 16. */
 export function baseJobs(): number { const n = Number(process.env.LOKI_E10_BASE_JOBS); return Number.isInteger(n) && n >= 1 ? Math.min(n, 16) : 1; }
+/** True only when a red test file failed on assertions: every reported failure is an assertion, and none is an import, collection, attribute, type or reference error (a test that calls code the base lacks fails that way for ANY change, so it proves nothing about the fix). Only pytest and vitest output is read; every other runner is false (fail-closed: the run reads PARTIAL). */
+export function assertionFailure(runner: string, output: string): boolean {
+  const out = stripAnsi(output);
+  if (runner === "pytest") { if (/^ERROR\s|errors? during collection/m.test(out)) return false; const f = [...out.matchAll(/^FAILED\s+\S+(?:\s+-\s+(.*))?$/gm)].map((m) => m[1] ?? ""); return f.length > 0 && f.every((r) => /^(?:assert\b|AssertionError\b)/.test(r.trim())); }
+  if (runner === "vitest") { const e = [...out.matchAll(/^\s*((?:[A-Za-z]*Error))(?:\s*\[[^\]]*\])?:/gm)].map((m) => m[1]!); return e.length > 0 && e.every((k) => k === "AssertionError"); }
+  return false;
+}
 /** TEN-SPEED-18: LOKI_E10_VERIFY_JOBS, an integer 1..8; unset, invalid or below 1 means 1. */
 export const verifyJobs = (): number => { const n = Number.parseInt(process.env["LOKI_E10_VERIFY_JOBS"] ?? "", 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 8) : 1; };
 /** TEN-SPEED-19: map items through an async fn with at most `jobs` in flight; results keep input order. */

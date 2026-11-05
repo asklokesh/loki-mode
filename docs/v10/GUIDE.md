@@ -92,6 +92,17 @@ loki start "fix the login redirect loop" --no-pr
 `loki chat` is an interactive alternative that can start and join these runs
 (see Chat below).
 
+The Wall session (a separate model session that writes acceptance tests from the
+task alone) is off by default: in the 2026-11-05 measurement it raised the cost
+per merge-ready change and lowered the merge-ready count. `LOKI_E10_WALL=1`
+turns it back on. With it off, a run reads VERIFIED only on evidence the harness
+produced itself: your repo's own tests all pass, a test exercises the changed
+code, no existing test was weakened, and nothing regressed. A test the run wrote
+or edited counts as that exercise only when the harness shows it fails on the
+base commit and passes on the change (the receipt's proof line names the file);
+otherwise the run reads PARTIAL and NOT PROVEN says "no test shown to fail on the
+base commit and pass on the change".
+
 `loki quick "<task>"` is the small-task entry. It runs the same engine
 without opening a pull request (the legacy quick never opened one), and the
 engine's own sizing picks the lean path for a small task: Plan and Wall are

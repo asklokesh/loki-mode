@@ -1,6 +1,7 @@
 // T2 mutation proof v1: after a VERIFIED verdict, re-run the recorded Wall tests on a temporary worktree of the base
 // (pre-fix) tree. The Wall test files are applied, the fix's source changes are not. Data-only helper (D42, lives in util/ to stay out of the e10ext and features line caps): the test
 // runner is injected by seal.ts, so this file imports nothing from stages/. A "no" downgrades only under LOKI_MUTATION_STRICT=1 with a declared behavior change (seal.ts).
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
@@ -9,15 +10,21 @@ import { readScopeText } from "./run_cap.ts";
 import { sealedWallCopy, sealedWallDir } from "./check_result.ts";
 
 export type MutationOutcome = "yes" | "no" | "inconclusive";
-export interface MutationProof { outcome: MutationOutcome; line: string; }
+export interface MutationProof { outcome: MutationOutcome; line: string; failed?: string[]; } // failed: the files whose run failed on the base (serially confirmed), for a caller that must know WHICH test discriminates
 export interface MutationTest { runner: string; path: string; }
-export interface MutationRunner { run(dir: string, files: MutationTest[]): { pass: number; fail: number; not_run?: number }; runEach?(dir: string, files: MutationTest[], jobs: number, corroborate: boolean, remaining?: () => number): Promise<({ pass: number; fail: number; not_run?: number } | undefined)[]>; } // runEach: same per-file result, a few files at once
+export interface MutationRunner { run(dir: string, files: MutationTest[]): { pass: number; fail: number; not_run?: number; assertFail?: number }; runEach?(dir: string, files: MutationTest[], jobs: number, corroborate: boolean, remaining?: () => number): Promise<({ pass: number; fail: number; not_run?: number } | undefined)[]>; } // runEach: same per-file result, a few files at once
 const envJobs = (raw: string | undefined): number => { const n = Number.parseInt(raw ?? "", 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 8) : 1; }; // LOKI_MUTATION_PROOF_JOBS: default 1 = serial (as LOKI_E10_BASE_JOBS / LOKI_E10_VERIFY_JOBS). Opt-in >1 is faster but can give a false "yes" on a Wall test with side effects outside the worktree.
 export interface MutationInput {
   repoDir: string; baseSha: string; runDir: string;
   wallFiles: { path: string }[]; // sealed Wall files as recorded by wall.ts (absolute or repo-relative)
   checks: { name: string }[]; // verify's recorded checks, named `<runner>:<repo-relative path>`
   runner: MutationRunner | ((remainingMs: number) => MutationRunner); env?: NodeJS.ProcessEnv; timeoutS?: number;
+  /** No Wall ran: the "wall files" are the run's own agent-authored test files, read byte-exact from this commit (never the sealed Wall copy or the working tree). */
+  headSha?: string;
+  /** Files that exist at the base: their BASE version must itself pass on the base tree first, else a red file (pre-existing, unrelated) would read as "fails without the fix". Such a file is dropped from the proof. */
+  baseMustPass?: string[];
+  /** A file counts in `failed` only when its base failure was an assertion (runner reports assertFail), never an import, collection or attribute error. */
+  requireAssertion?: boolean;
 }
 /** CTO ruling: the downgrade to PARTIAL is off unless LOKI_MUTATION_STRICT=1 (and then only for a model-declared behavior change). */
 export const mutationStrict = (env: NodeJS.ProcessEnv = process.env): boolean => (env["LOKI_MUTATION_STRICT"] ?? "").trim() === "1";
@@ -45,30 +52,38 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
     const add = git(i.repoDir, ["worktree", "add", "--detach", wt, i.baseSha], Math.max(1000, Math.min(30_000, remaining())));
     added = existsSync(wt) || add.status === 0;
     if (add.status !== 0) return np("could not create the base worktree");
-    const srcs: [string, string][] = [], reset = (): boolean => { // clean base tree for a confirming re-run: the concurrent run may have left files in the shared worktree; linked dependency dirs stay
+    const srcs: [string, string | Buffer][] = [], reset = (): boolean => { // clean base tree for a confirming re-run: the concurrent run may have left files in the shared worktree; linked dependency dirs stay
       if (git(wt as string, ["reset", "-q", "--hard", i.baseSha]).status !== 0 || git(wt as string, ["clean", "-fdxq", ...DEP_DIRS.flatMap((d) => ["-e", d])]).status !== 0) return false;
-      for (const [rel, src] of srcs) { mkdirSync(dirname(join(wt as string, rel)), { recursive: true }); writeFileSync(join(wt as string, rel), readFileSync(src)); } return true; };
-    for (const rel of rels) { // sealed copy first (byte-exact what the run sealed), else the file in the working tree
+      for (const [rel, src] of srcs) { mkdirSync(dirname(join(wt as string, rel)), { recursive: true }); writeFileSync(join(wt as string, rel), typeof src === "string" ? readFileSync(src) : src); } return true; };
+    // B1: the bare worktree has no installed dependencies; link each one that exists in the repo (root and every test file ancestor) so a missing package is never read as a failing test.
+    for (const rel of rels) { const parts = rel.split("/").slice(0, -1); for (let n = 0; n <= parts.length; n++) { const anc = parts.slice(0, n).join("/"); for (const d of DEP_DIRS) { const src = join(i.repoDir, anc, d), dst = join(wt, anc, d); if (existsSync(src) && !existsSync(dst)) { try { symlinkSync(src, dst); } catch { /* the run decides */ } } } } }
+    let active = tests; // the base version of an edited file runs on the pristine base before any overlay
+    const bmp = new Set(i.baseMustPass ?? []);
+    if (bmp.size > 0) {
+      const pre = active.filter((t) => bmp.has(t.path)); if (pre.length > 0) { if (remaining() <= 0) return np("timeout"); const pr = pre.map((t) => (remaining() <= 0 ? null : (typeof i.runner === "function" ? i.runner(remaining()) : i.runner).run(wt as string, [t]))); if (pr.some((r) => !r)) return np("timeout"); const red = new Set(pre.filter((_, k) => !(pr[k]!.pass > 0 && pr[k]!.fail === 0 && (pr[k]!.not_run ?? 0) === 0)).map((t) => t.path)); active = active.filter((t) => !red.has(t.path)); if (active.length === 0) return np("the base version of each edited test file is not green on the base"); }
+    }
+    for (const rel of rels) { // sealed copy first (byte-exact what the run sealed), else the file in the working tree; headSha: the committed bytes
+      if (i.headSha) { try { const buf = execFileSync("git", ["-C", i.repoDir, "show", `${i.headSha}:${rel}`], { maxBuffer: 16 << 20, timeout: 20_000 }); mkdirSync(dirname(join(wt, rel)), { recursive: true }); writeFileSync(join(wt, rel), buf); srcs.push([rel, buf]); continue; } catch { return np(`could not read ${rel} at the head commit`); } }
       const sealed = sealedWallCopy(i.runDir, rel);
       if (!existsSync(sealed) && existsSync(sealedWallDir(i.runDir))) return np(`sealed Wall copy missing: ${rel}`); // never substitute the working-tree file for a deleted sealed copy
       const src = existsSync(sealed) ? sealed : join(i.repoDir, rel);
       if (!existsSync(src)) return np(`Wall file missing: ${rel}`);
       mkdirSync(dirname(join(wt, rel)), { recursive: true }); writeFileSync(join(wt, rel), readFileSync(src)); srcs.push([rel, src]);
     }
-    // B1: the bare worktree has no installed dependencies; link each one that exists in the repo (root and every Wall file ancestor) so a missing package is never read as a failing test.
-    for (const rel of rels) { const parts = rel.split("/").slice(0, -1); for (let n = 0; n <= parts.length; n++) { const anc = parts.slice(0, n).join("/"); for (const d of DEP_DIRS) { const src = join(i.repoDir, anc, d), dst = join(wt, anc, d); if (existsSync(src) && !existsSync(dst)) { try { symlinkSync(src, dst); } catch { /* the run decides */ } } } } }
     let pass = 0, fail = 0, notRun = 0;
     if (remaining() <= 0) return np("timeout");
     const mk = (): MutationRunner => (typeof i.runner === "function" ? i.runner(remaining()) : i.runner), jobs = envJobs((i.env ?? process.env)["LOKI_MUTATION_PROOF_JOBS"]), first = mk();
-    const par = jobs > 1 && tests.length > 1 && first.runEach !== undefined;
-    const rs = par ? await first.runEach!(wt, tests, jobs, false, remaining) : tests.map((t) => (remaining() <= 0 ? null : mk().run(wt as string, [t])));
+    const par = jobs > 1 && active.length > 1 && first.runEach !== undefined;
+    const rs = par ? await first.runEach!(wt, active, jobs, false, remaining) : active.map((t) => (remaining() <= 0 ? null : mk().run(wt as string, [t])));
     if (rs.some((r) => !r)) return np("timeout");
     if (par && remaining() <= 0) return np("timeout"); // concurrent path: a passed deadline is a timeout before any verdict
     // A concurrent fail is not authoritative (children share the temp worktree): it counts only if it reproduces serially.
-    if (par) for (let k = 0; k < rs.length; k++) if (rs[k]!.fail > 0) { if (remaining() <= 0) return np("timeout"); if (!reset()) return np("could not reset the base worktree"); rs[k] = mk().run(wt, [tests[k]!]); if (rs[k]!.fail > 0) break; }
+    let sure = rs.length; // results at index >= sure are concurrent and not confirmed
+    if (par) for (let k = 0; k < rs.length; k++) if (rs[k]!.fail > 0) { if (remaining() <= 0) return np("timeout"); if (!reset()) return np("could not reset the base worktree"); rs[k] = mk().run(wt, [active[k]!]); if (rs[k]!.fail > 0) { sure = k + 1; break; } }
     for (const r of rs) { pass += r!.pass; fail += r!.fail; notRun += r!.not_run ?? 0; }
     if (remaining() <= 0 && fail === 0) return np("timeout");
-    if (fail > 0) return { outcome: "yes", line: `${LABEL}yes` };
+    const failed = active.filter((_, k) => k < sure && rs[k]!.fail > 0 && (!i.requireAssertion || ((rs[k] as { assertFail?: number }).assertFail ?? 0) > 0)).map((t) => t.path);
+    if (fail > 0) return { outcome: "yes", line: `${LABEL}yes`, failed };
     if (pass > 0 && notRun === 0) return { outcome: "no", line: `${LABEL}no (warning: the Wall tests also pass on the old code)` };
     return np("the Wall command did not execute to a result");
   } catch (e) {
