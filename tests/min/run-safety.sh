@@ -195,6 +195,81 @@ run_case sigterm done TERM
 check_case sigterm CANCELLED
 has "sigterm: the summary names the branch holding the run's work" "$OUT" "the run's work is on branch loki/"
 
+# ---- 4b: --detach survives the terminal closing (FR02) ------------------------------------------------------------
+# A wrapper in its own process group stands for the terminal: it starts bin/loki "<task>" --detach, then gets SIGHUP to its whole
+# group after "Detached:" prints. The detached run must still finish VERIFIED, report to a local Slack sink, and leave the checkout
+# as a foreground run does. Only recorded pids are signalled.
+DR="$T/repo-detach"; new_repo "$DR"
+printf 'my own notes, not part of the run\n' > "$DR/notes.txt"
+DBEFORE="$(git -C "$DR" status --porcelain)"
+python3 -I -c '
+import http.server, sys
+out, portf = sys.argv[1], sys.argv[2]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        b = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        open(out, "ab").write(b + b"\n")
+        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+    def log_message(self, *a): pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(portf, "w").write(str(s.server_port))
+s.serve_forever()
+' "$T/slack.jsonl" "$T/slack.port" &
+SINK_PID=$!
+for i in $(seq 1 50); do [ -s "$T/slack.port" ] && break; sleep 0.1; done
+DPORT="$(cat "$T/slack.port" 2>/dev/null)"
+DR_RUN="$DR" DR_PORT="$DPORT" DR_ROOT="$ROOT" DR_TASK="$TASK" \
+    perl -e 'setpgrp(0,0); exec @ARGV' bash -c 'cd "$DR_RUN" && LOKI_DETACH_CAFFEINATE=0 LOKI_SLACK_WEBHOOK_URL="http://127.0.0.1:$DR_PORT/" E2E_STUB_MODE=done E2E_STUB_SLEEP=5 bash "$DR_ROOT/bin/loki" "$DR_TASK" --no-pr --detach; sleep 30' >"$T/detach.out" 2>&1 </dev/null &
+WRAP_PID=$!; disown "$WRAP_PID" 2>/dev/null
+for i in $(seq 1 200); do grep -q '^Detached:' "$T/detach.out" 2>/dev/null && break; sleep 0.1; done
+DOUT="$(cat "$T/detach.out")"
+DPID="$(printf '%s\n' "$DOUT" | sed -n 's/^Detached:.*(pid \([0-9][0-9]*\)).*/\1/p' | head -1)"
+DLOG="$(printf '%s\n' "$DOUT" | sed -n 's/^  Log: *//p' | head -1)"
+has "detach: the launcher prints Detached" "$DOUT" "Detached: the Loki 10 run continues in the background"
+case "$DLOG" in "$DR"/.loki/logs/detached-*.log) ok "detach: the log path is under .loki/logs" ;; *) bad "detach: unexpected log path [$DLOG]" ;; esac
+kill -HUP -- "-$WRAP_PID" 2>/dev/null
+for i in $(seq 1 900); do grep -q '^Outcome:' "$DLOG" 2>/dev/null && break; sleep 0.1; done
+DLOGTXT="$(cat "$DLOG" 2>/dev/null)"
+printf '%s\n' "$DLOGTXT" | grep -Eq "^Outcome:[[:space:]]+VERIFIED" && ok "detach: the run finished VERIFIED after the terminal got SIGHUP" || { bad "detach: no VERIFIED outcome in the log after SIGHUP"; printf '%s\n' "$DLOGTXT" | tail -8 | sed 's/^/    | /'; }
+for i in $(seq 1 100); do kill -0 "$DPID" 2>/dev/null || break; sleep 0.1; done
+if [ -n "$DPID" ] && kill -0 "$DPID" 2>/dev/null; then bad "detach: pid $DPID is still alive after the outcome"; kill -TERM "$DPID" 2>/dev/null; else ok "detach: the detached pid exited after the outcome"; fi
+[ "$(git -C "$DR" branch --show-current)" = feature ] && ok "detach: checkout is back on its start branch" || bad "detach: checkout is on '$(git -C "$DR" branch --show-current)'"
+[ "$(git -C "$DR" status --porcelain)" = "$DBEFORE" ] && ok "detach: git status --porcelain is unchanged" || bad "detach: porcelain was [$DBEFORE], now [$(git -C "$DR" status --porcelain)]"
+[ "$(cat "$DR/notes.txt" 2>/dev/null)" = 'my own notes, not part of the run' ] && ok "detach: the user's untracked file is untouched" || bad "detach: notes.txt changed or vanished"
+for i in $(seq 1 50); do grep -q 'Run finished' "$T/slack.jsonl" 2>/dev/null && break; sleep 0.1; done
+SLK="$(cat "$T/slack.jsonl" 2>/dev/null)"
+has "detach: Slack got the finished message" "$SLK" "Run finished"
+has "detach: the Slack message carries the outcome" "$SLK" "VERIFIED"
+kill -TERM "$WRAP_PID" 2>/dev/null; kill -TERM "$SINK_PID" 2>/dev/null; wait "$SINK_PID" 2>/dev/null
+
+# an engine refusal inside the settle window is reported with the engine's own exit code, never as Detached
+ER="$T/repo-detach-refuse"; new_repo "$ER"
+EOUT="$(cd "$ER" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$TASK" --detach --spec "$T/missing-spec.md" </dev/null 2>"$T/refuse.err")"; ERC=$?
+[ "$ERC" -eq 2 ] && ok "detach: an early refusal exits with the engine's code (2)" || bad "detach: early refusal exit was $ERC, not 2"
+has "detach: the refusal names the engine's reason" "$(cat "$T/refuse.err")" "cannot read the spec file"
+has "detach: the refusal says it ended before it detached" "$(cat "$T/refuse.err")" "ended before it detached"
+case "$EOUT" in *Detached:*) bad "detach: an early refusal printed Detached" ;; *) ok "detach: an early refusal prints no Detached line" ;; esac
+
+# route accepts the flag; a -d after -- is task text; --help and --dry-run never detach
+RT="$(cd "$ER" && bash "$ROOT/bin/loki" route start "$TASK" --detach 2>&1)"; RTRC=$?
+[ "$RTRC" -eq 0 ] && ok "detach: route start --detach exits 0" || bad "detach: route start --detach exited $RTRC"
+has "detach: route start --detach resolves to engine10" "$RT" "engine10"
+case "$RT" in *"not supported by the Loki 10 engine"*) bad "detach: route still refuses --detach" ;; *) ok "detach: route no longer refuses --detach" ;; esac
+RT2="$(cd "$ER" && bash "$ROOT/bin/loki" route start -- "fix the -d flag parsing" 2>&1)"
+has "detach: a -d after -- stays task text in route" "$RT2" "engine10"
+# after a bare -- every word is task text, so "-d" there is never the flag: this run stays in the foreground (stub, a few seconds)
+GR="$T/repo-detach-guard"; new_repo "$GR"
+GOUT="$(cd "$GR" && E2E_STUB_MODE=done ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start --no-pr -- "$TASK" -d </dev/null 2>&1)"
+case "$GOUT" in *Detached:*) bad "detach: a -d after -- detached the run" ;; *) ok "detach: a -d after -- ran in the foreground" ;; esac
+ls "$GR"/.loki/logs/detached-*.log >/dev/null 2>&1 && bad "detach: a -d after -- created a detached log" || ok "detach: a -d after -- created no detached log"
+DRY="$(cd "$ER" && bash "$ROOT/bin/loki" start "$TASK" --detach --dry-run 2>&1)"
+has "detach: start --detach --dry-run starts nothing" "$DRY" "dry-run: nothing was started"
+(cd "$ER" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start --detach --help </dev/null >/dev/null 2>&1)
+(cd "$ER" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "start --detach --help" </dev/null >/dev/null 2>&1)
+# the refusal case above left exactly one log; the -- guard, --dry-run and --help must add none and start no run
+NLOGS="$(ls "$ER"/.loki/logs/detached-*.log 2>/dev/null | wc -l | tr -d ' ')"
+[ "$NLOGS" = 1 ] && [ ! -d "$ER/.loki/runs" ] && ok "detach: -- guard, --dry-run and --help detached nothing and started no run" || bad "detach: $NLOGS detached logs (expected 1), runs: $(ls "$ER/.loki/runs" 2>/dev/null | wc -l | tr -d ' ')"
+
 # ---- 5: a FireLater#24-shaped monorepo --------------------------------------------------------------------------
 # backend/ and frontend/ vitest packages (stand-in vitest, tests/min/fixtures/e2e/vitest-bin), 6 frontend page tests that import the
 # changed hook (3 red on base), four tracked legacy .loki files deleted from the tree long ago, started from a cancelled run's branch

@@ -496,6 +496,44 @@ _loki_bun() {
     done
     return 0
 }
+# FR02: --detach/-d on a Loki 10 run. Re-launches the same engine10 argv in its own session, so closing the terminal
+# sends it no SIGHUP (a foreground run stops on SIGHUP by design, runner/worker_proc.ts). stdin /dev/null, output to a log.
+# Same launcher ladder as autonomy/loki _loki_new_session_exec and run.sh (legacy copies bin/loki cannot source).
+_loki_e10_detach() { # $1 = bun, rest = engine10 args with --detach/-d already removed
+    local lb="$1" top ldir log pid rc=0 settle i=0
+    shift
+    top="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+    ldir="${LOKI_DIR:-$top/.loki}/logs"
+    mkdir -p "$ldir" || { echo "loki: --detach could not create $ldir" >&2; exit 1; }
+    log="$ldir/detached-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
+    export LOKI_DETACHED=1
+    if command -v setsid >/dev/null 2>&1; then
+        nohup setsid "$lb" "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" engine10 "$@" >"$log" 2>&1 </dev/null &
+    elif command -v perl >/dev/null 2>&1; then
+        nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or exit 127;' "$lb" "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" engine10 "$@" >"$log" 2>&1 </dev/null &
+    elif command -v python3 >/dev/null 2>&1; then
+        nohup python3 -c 'import os,sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$lb" "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" engine10 "$@" >"$log" 2>&1 </dev/null &
+    else
+        nohup "$lb" "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" engine10 "$@" >"$log" 2>&1 </dev/null &
+    fi
+    pid=$!
+    if [ "${LOKI_DETACH_CAFFEINATE:-1}" != "0" ] && command -v caffeinate >/dev/null 2>&1; then
+        nohup caffeinate -i -w "$pid" >/dev/null 2>&1 </dev/null &
+    fi
+    settle="${LOKI_DETACH_SETTLE_S:-3}"; case "$settle" in ''|*[!0-9]*) settle=3 ;; esac
+    while [ "$i" -lt $((settle * 10)) ] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+    if ! kill -0 "$pid" 2>/dev/null; then
+        wait "$pid" || rc=$?
+        tail -n 20 "$log" >&2
+        echo "loki: the run ended before it detached (exit $rc); full log: $log" >&2
+        exit "$rc"
+    fi
+    printf 'Detached: the Loki 10 run continues in the background (pid %s); closing this terminal does not stop it.\n' "$pid"
+    printf '  Log:     %s\n  Follow:  loki status --follow\n  Cancel:  loki cancel\n' "$log"
+    printf '  Result:  the PR (or local branch) and receipt land as on a foreground run\n'
+    [ -n "${LOKI_SLACK_WEBHOOK_URL:-}${LOKI_WEBHOOK_URL:-}" ] || printf '  Notify:  set LOKI_SLACK_WEBHOOK_URL before starting to get the outcome in Slack\n'
+    exit 0
+}
 # No working bun for an engine10 command: say why and how to fix it, exit 2. A Homebrew install of loki-mode
 # (its own keg, not an npm install under Homebrew's node) is told the brew formula.
 _loki_no_bun_exit() {
@@ -795,6 +833,24 @@ case "v10" in
                         if [ "$_e10_v" = "--verbose" ]; then _loki_f2p_banner; _loki_print_autonomy; break; fi
                     done
                     unset _e10_v
+                    ;;
+            esac
+            # FR02: strip --detach/-d (task words after a bare -- are never flags) and detach the run.
+            case "${1:-}" in
+                keys|export|status|verify|dashboard|plan) ;;
+                *)
+                    _e10_det=0; _e10_rest=(); _e10_dd=0
+                    for _e10_a in ${_e10_args[@]+"${_e10_args[@]}"}; do
+                        if [ "$_e10_dd" = "0" ]; then
+                            case "$_e10_a" in
+                                --) _e10_dd=1 ;;
+                                --detach|-d) _e10_det=1; continue ;;
+                            esac
+                        fi
+                        _e10_rest+=("$_e10_a")
+                    done
+                    if [ "$_e10_det" = "1" ]; then _loki_e10_detach "$_lb" ${_e10_rest[@]+"${_e10_rest[@]}"}; fi
+                    unset _e10_det _e10_rest _e10_dd _e10_a
                     ;;
             esac
             exec "$_lb" "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" engine10 ${_e10_args[@]+"${_e10_args[@]}"}

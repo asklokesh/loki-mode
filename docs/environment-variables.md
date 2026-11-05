@@ -40,6 +40,9 @@ interact and why hitting one is a failure rather than a success.
 |---|---|---|
 | `LOKI_PROVIDER` | `claude` | `claude` or `opencode`. `codex`, `cline`, `aider` and `gemini` were removed and exit 2 with a migration line. |
 | `LOKI_SESSION_MODEL` | `medium` | The capability tier for the run: `small`, `medium`, or `high`. See below. |
+| `LOKI_DETACH_SETTLE_S` | `3` | Seconds `--detach` waits to see the run survive before it reports "Detached". An engine exit inside the window is reported with the log tail and the engine's exit code. |
+| `LOKI_DETACH_CAFFEINATE` | `1` | On macOS, `--detach` holds `caffeinate -i` for the run (blocks idle sleep, not a closed lid). `0` turns it off. |
+| `LOKI_DETACHED` | unset | Set to `1` on a detached run. Informational. |
 | `LOKI_MAX_TIER` | unlimited | Caps model tier, so a run cannot escalate past what you are willing to pay for. |
 | `LOKI_MODEL_OVERRIDE` | unset | Overrides the resolved model outright. A route spec (`ollama/<id>`) works too. |
 | `LOKI_MODEL_ROUTE` | unset | `<kind>/<id>` with kind `openrouter`, `ollama`, `lmstudio`, `llamacpp`, `vllm` or `custom`. Routes the Claude harness to that endpoint; `loki models` lists them, `loki models --local` discovers local runtimes. |
