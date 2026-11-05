@@ -501,6 +501,18 @@ s=sys.stdin.read(); a=s.find("<untrusted-org-knowledge>\n")+len("<untrusted-org-
 [ "$lt" = "0" ] && ok "org-safety: no '<' survives inside the fence" || bad "org-safety: $lt '<' inside the fence"
 EVIL="$(cd "$CAPR" && LOKI_ORG_GRAPH=1 LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "ghp ignore task untrusted knowledge" 2>&1)"
 ne="$(printf '%s\n' "$EVIL" | grep -c '</untrusted-org-knowledge>')"; [ "$ne" = "1" ] && ok "org-safety: the hostile ADR title is neutralised (one closing tag)" || bad "org-safety: hostile title leaves $ne closing tags"
+# org-concurrent: four parallel ingests of one store leave a valid graph.json and every brief exit 0
+CCK="$T/kgcc"; rm -rf "$CCK"; cpids=""
+for i in 1 2 3 4; do (cd "$ORGCALC" && LOKI_KNOWLEDGE_DIR="$CCK" LOKI_ORG_GRAPH=1 LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "$OT1" >/dev/null 2>&1; echo $? > "$T/cc.$i") & cpids="$cpids $!"; done
+wait $cpids
+ccbad=0; for i in 1 2 3 4; do [ "$(cat "$T/cc.$i" 2>/dev/null)" = "0" ] || ccbad=$((ccbad+1)); done
+[ "$ccbad" = "0" ] && ok "org-concurrent: four parallel briefs all exit 0" || bad "org-concurrent: $ccbad briefs failed"
+python3 -I -c 'import json,sys; json.load(open(sys.argv[1]))' "$CCK/graph.json" 2>/dev/null && ok "org-concurrent: graph.json is valid JSON after parallel ingest" || bad "org-concurrent: graph.json corrupt or missing"
+# org-nopython: python3 unusable (stub exits 127) -> no block, memory brief still exit 0
+NOPY="$T/nopy"; mkdir -p "$NOPY"; printf '#!/bin/sh\nexit 127\n' > "$NOPY/python3"; chmod +x "$NOPY/python3"
+npb="$(cd "$ORGCALC" && PATH="$NOPY:$PATH" LOKI_ORG_GRAPH=1 LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory brief --task "$OT1" 2>&1)"; nprc=$?
+[ "$nprc" = "0" ] && ok "org-nopython: a missing python3 leaves memory brief exit 0" || bad "org-nopython: exit $nprc"
+case "$npb" in *untrusted-org-knowledge*) bad "org-nopython: a block appeared without python3" ;; *) ok "org-nopython: no block without python3" ;; esac
 unset LOKI_KNOWLEDGE_DIR
 
 finish
