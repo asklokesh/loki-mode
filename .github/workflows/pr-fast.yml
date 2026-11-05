@@ -58,4 +58,7 @@ jobs:
       - name: Run scripts/local-ci.sh
         env:
           LOKI_STACKS_REQUIRE: "1"
+          # 4 vCPU runner: 2 tests at a time and 2 units inside run-safety keep timing-sensitive tests (redaction ratio, h2h oracles) stable
+          LOCAL_CI_JOBS: "2"
+          RS_JOBS: "2"
         run: bash scripts/local-ci.sh

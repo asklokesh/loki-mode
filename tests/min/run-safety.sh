@@ -114,30 +114,66 @@ new_repo() { # new_repo <dir>: fixture repo committed on main, checked out on br
     git -C "$1" checkout -q -b feature
 }
 
+# Units run concurrently (RS_JOBS at a time, default 4; 1 = one at a time). Each unit is a function run in its own subshell with its
+# own output file and receipt key, so its fixtures never share state with another unit; the parent prints the outputs in dispatch
+# order and adds up their PASS/FAIL lines, so the assertion set is the same as a serial run. A unit that never reaches its closing
+# marker (killed, or an early exit) is a failure, never a silent loss of its assertions.
+RS_JOBS="${RS_JOBS:-4}"
+UNITS=()
+unit_start() { # unit_start <name> <function> [args...]
+    local name="$1"; shift
+    UNITS+=("$name")
+    while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$RS_JOBS" ]; do sleep 0.2; done
+    (
+        trap - EXIT
+        export LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k-$name.pem"
+        SECONDS=0
+        "$@"
+        echo "UNIT-DONE $name"
+        [ -z "${RS_PROFILE:-}" ] || echo "UNIT-TIME $name ${SECONDS}s"
+    ) >"$T/unit.$name.out" 2>&1 &
+}
+unit_report() { # print every unit's output in dispatch order and add its assertions to the totals
+    local name p f
+    wait
+    for name in ${UNITS[@]+"${UNITS[@]}"}; do
+        grep -v '^UNIT-DONE ' "$T/unit.$name.out"
+        p="$(grep -c '^  PASS: ' "$T/unit.$name.out")"; f="$(grep -c '^  FAIL: ' "$T/unit.$name.out")"
+        _min_pass=$((_min_pass + p)); _min_fail=$((_min_fail + f))
+        grep -qx "UNIT-DONE $name" "$T/unit.$name.out" || bad "unit $name ended before its last line"
+    done
+}
+PROJ='{"workspaceKind":"multi-root","workspaceCite":["backend/package.json"],"packages":[{"name":"mono-api","root":"backend","runner":"vitest","commands":{"test":{"cmd":"npm test","cwd":"backend","cite":["backend/package.json"]},"lint":null,"build":null,"start":null},"ui":{"present":false,"boot":null,"cite":[]},"cite":["backend/package.json"]},{"name":"mono-web","root":"frontend","runner":"vitest","commands":{"test":{"cmd":"npm test","cwd":"frontend","cite":["frontend/package.json"]},"lint":null,"build":null,"start":null},"ui":{"present":false,"boot":null,"cite":[]},"cite":["frontend/package.json"]}],"fingerprintFiles":["backend/package.json","frontend/package.json"]}'
+TASK="add a multiply(a, b) function to calc.ts"
+NAMED="add a del(p) helper next to the api client in frontend/src/lib/api.ts"
+
 # ---- 1-3: help and quoted commands --------------------------------------------
-H="$T/help-repo"
-new_repo "$H"
 names="$( (cd "$ROOT/loki-ts" && bun -e 'import { REGISTRY, allNames } from "./src/cli/registry.ts"; console.log(REGISTRY.flatMap((c) => allNames(c)).join("\n"))'); \
     awk '/^    case "\$command" in$/ { n++ } n == 3 && /^        [a-z_][a-zA-Z0-9_|.-]*\)$/ { sub(/^ +/, ""); sub(/\)$/, ""); print }' "$ROOT/autonomy/loki" | tr '|' '\n')"
 names="$(printf '%s\n' "$names" | grep -v '^-' | grep -v '^$' | sort -u)"
 count="$(printf '%s\n' "$names" | wc -l | tr -d ' ')"
 [ "$count" -ge 100 ] && ok "collected $count registered commands and aliases" || bad "only $count command names collected"
-
-help_bad=""
-for c in $names; do
-    for form in words one; do
-        if [ "$form" = words ]; then set -- "$c" --help; else set -- "$c --help"; fi
-        (cd "$H" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$@" </dev/null >"$T/help.out" 2>&1)
-        rc=$?
-        br="$(git -C "$H" branch --show-current)"
-        if [ -d "$H/.loki/runs" ] || [ "$br" != feature ] || [ "$rc" -eq 124 ]; then
-            help_bad="$help_bad [$form:$c rc=$rc branch=$br runs=$(ls "$H/.loki/runs" 2>/dev/null | wc -l | tr -d ' ')]"
-            rm -rf "$H/.loki/runs"; git -C "$H" checkout -q feature 2>/dev/null
-        fi
+unit_help_chunk() { # unit_help_chunk <k> <of>: every <of>th command from <k>, in a repo of its own
+    local k="$1" of="$2" i=0 c form rc br H="$T/help-repo-$1" bad_here=""
+    new_repo "$H"
+    for c in $names; do
+        i=$((i + 1)); [ $((i % of)) -eq "$k" ] || continue
+        for form in words one; do
+            if [ "$form" = words ]; then set -- "$c" --help; else set -- "$c --help"; fi
+            (cd "$H" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$@" </dev/null >"$T/help-$k.out" 2>&1)
+            rc=$?
+            br="$(git -C "$H" branch --show-current)"
+            if [ -d "$H/.loki/runs" ] || [ "$br" != feature ] || [ "$rc" -eq 124 ]; then
+                bad_here="$bad_here [$form:$c rc=$rc branch=$br runs=$(ls "$H/.loki/runs" 2>/dev/null | wc -l | tr -d ' ')]"
+                rm -rf "$H/.loki/runs"; git -C "$H" checkout -q feature 2>/dev/null
+            fi
+        done
     done
-done
-[ -z "$help_bad" ] && ok "all $count commands with --help (separate and as one argument) started no run" || bad "--help started a run or moved the checkout:$help_bad"
-
+    printf '%s' "$bad_here" > "$T/help-bad.$k"
+}
+unit_goals() {
+    local H="$T/help-repo" goal out rc
+    new_repo "$H"
 out="$(cd "$H" && bash "$ROOT/bin/loki" status --help 2>&1)"
 has "loki status --help prints the status help" "$out" "Usage: loki status"
 
@@ -151,9 +187,10 @@ for goal in "status --help" "doctor --json" "config path" "route start fix-the-l
     has "\"$goal\" prints the goal hint" "$out" 'To give Loki a goal instead, write it as a sentence'
     has "\"$goal\" prints that command's help" "$out" "Help for 'loki ${goal%% *}'"
 done
+}
 
 # ---- 4: the checkout comes back after a FAILED and a cancelled run --------------
-TASK="add a multiply(a, b) function to calc.ts"
+unit_failed_and_cancelled() {
 run_case() { # run_case <name> <stub mode> <signal or ""> -> sets R, OUT, RC
     local name="$1" mode="$2" sig="$3" pid i
     R="$T/repo-$name"
@@ -198,8 +235,10 @@ check_case failed 'FAILED|STALLED'
 run_case sigterm done TERM
 check_case sigterm CANCELLED
 has "sigterm: the summary names the branch holding the run's work" "$OUT" "the run's work is on branch loki/"
+}
 
 # ---- 4b: --detach survives the terminal closing (FR02) ------------------------------------------------------------
+unit_detach() {
 # A wrapper in its own process group stands for the terminal: it starts bin/loki "<task>" --detach, then gets SIGHUP to its whole
 # group after "Detached:" prints. The detached run must still finish VERIFIED, report to a local Slack sink, and leave the checkout
 # as a foreground run does. Only recorded pids are signalled.
@@ -273,11 +312,13 @@ has "detach: start --detach --dry-run starts nothing" "$DRY" "dry-run: nothing w
 # the refusal case above left exactly one log; the -- guard, --dry-run and --help must add none and start no run
 NLOGS="$(ls "$ER"/.loki/logs/detached-*.log 2>/dev/null | wc -l | tr -d ' ')"
 [ "$NLOGS" = 1 ] && [ ! -d "$ER/.loki/runs" ] && ok "detach: -- guard, --dry-run and --help detached nothing and started no run" || bad "detach: $NLOGS detached logs (expected 1), runs: $(ls "$ER/.loki/runs" 2>/dev/null | wc -l | tr -d ' ')"
+}
 
 # ---- 5: a FireLater#24-shaped monorepo --------------------------------------------------------------------------
 # backend/ and frontend/ vitest packages (stand-in vitest, tests/min/fixtures/e2e/vitest-bin), 6 frontend page tests that import the
 # changed hook (3 red on base), four tracked legacy .loki files deleted from the tree long ago, started from a cancelled run's branch
 # sitting on main's tip. The Wall (E2E_STUB_WALL=vitestred) keeps one clause red whatever the code does.
+unit_monorepo() {
 M="$T/mono"
 mkdir -p "$M/backend/src/services" "$M/backend/tests/unit" "$M/frontend/src/lib" "$M/frontend/src/hooks" "$M/.loki/dashboard"
 printf 'node_modules\n' > "$M/.gitignore"
@@ -298,7 +339,6 @@ rm -f "$M/.loki/CONTINUITY.md" "$M/.loki/STATUS.txt" "$M/.loki/autonomy-state.js
 git -C "$M" checkout -q -b loki/e10-20261101T000000Z-dead # a cancelled run's branch, no commits of its own
 BEFORE="$(git -C "$M" status --porcelain)"
 cp -R "$M" "$T/mono2" # the same start, for the run whose fix round moves the Wall
-PROJ='{"workspaceKind":"multi-root","workspaceCite":["backend/package.json"],"packages":[{"name":"mono-api","root":"backend","runner":"vitest","commands":{"test":{"cmd":"npm test","cwd":"backend","cite":["backend/package.json"]},"lint":null,"build":null,"start":null},"ui":{"present":false,"boot":null,"cite":[]},"cite":["backend/package.json"]},{"name":"mono-web","root":"frontend","runner":"vitest","commands":{"test":{"cmd":"npm test","cwd":"frontend","cite":["frontend/package.json"]},"lint":null,"build":null,"start":null},"ui":{"present":false,"boot":null,"cite":[]},"cite":["frontend/package.json"]}],"fingerprintFiles":["backend/package.json","frontend/package.json"]}'
 OUT="$(cd "$M" && PATH="$FIX/vitest-bin:$PATH" FAKE_VITEST_LOG="$T/vitest.log" E2E_STUB_MODE=stack E2E_STUB_TARGET=frontend/src/hooks/useApi.ts \
     E2E_STUB_SNIPPET='export function useSearch(q: string): string { return api.get(`/search?q=${q}`); }' E2E_STUB_WALL=vitestred E2E_STUB_PROJECT="$PROJ" \
     LOKI_E10_PLAN=1 LOKI_E10_NO_FETCH=1 ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "add a useSearch(q) hook that calls GET /search through the api client" --no-pr </dev/null 2>&1)"; RC=$?
@@ -439,7 +479,6 @@ done
 git -C "$M3" init -q -b main && git -C "$M3" config user.name rs && git -C "$M3" config user.email rs@example.invalid
 git -C "$M3" add -A . && git -C "$M3" commit -q -m base
 for leg in same conflict changed unnamed; do cp -R "$M3" "$T/mono3-$leg"; done
-NAMED="add a del(p) helper next to the api client in frontend/src/lib/api.ts"
 m3() { # m3 <leg> <task> <snippet> [VAR=value...]: one run, then one summary line per fact
     local leg="$1" task="$2" snip="$3"; shift 3
     local d="$T/mono3-$leg"
@@ -564,6 +603,8 @@ console.log(removeOwnWallFiles(w, "e10-x").join(","), ["a", "b", "tracked"].map(
 ' 2>&1)"
 [ "$GONE" = "src/loki_wall_a.test.ts false,true,true true" ] && ok "run end removes only its own untracked, unedited Wall file" || bad "Wall cleanup gave: $GONE (want: src/loki_wall_a.test.ts false,true,true true)"
 
+}
+unit_envchg() {
 # ---- 6b: envChangedSince on a real directory tree: a runner adding its cache is no change, a deleted or renamed package is -------------------------
 ENVR="$T/envchg"; mkdir -p "$ENVR/pkg/node_modules/dep-a" "$ENVR/pkg/node_modules/@sc/dep-b"; printf 'node_modules\n' > "$ENVR/.gitignore"; git -C "$ENVR" init -q -b main
 printf 'x\n' > "$ENVR/pkg/node_modules/dep-a/index.js"; printf 'y\n' > "$ENVR/pkg/node_modules/@sc/dep-b/index.js"
@@ -590,6 +631,8 @@ VENVR="$T/venvchg"; mkdir -p "$VENVR/pkg"; printf '.venv\n' > "$VENVR/.gitignore
 VENVWANT=""; if (cd "$VENVR/pkg" && python3 -m venv .venv >/dev/null 2>&1) && [ -d "$VENVR/pkg/.venv" ]; then VENVWANT=" venvlist recorded venvclean false"; else printf '  SKIP: .venv leg: python3 -m venv failed\n'; fi
 ENVOUT="$(env ROOT="$ROOT" E="$ENVR" ${VENVWANT:+VENV="$VENVR"} bun --no-env-file --config=/dev/null "$T/envchg.ts" 2>&1)"
 [ "$ENVOUT" = "cache false delete true rename true$VENVWANT" ] && ok "envChangedSince: a runner cache entry is no change; a deleted scoped package and a renamed package are${VENVWANT:+; a real python3 -m venv is listed (no Lib/site-packages ENOENT on a case-insensitive volume) and unchanged is false}" || bad "envChangedSince gave: $ENVOUT (want: cache false delete true rename true$VENVWANT)"
+
+}
 
 # ---- 7: the same FireLater#21 shapes on real vitest 2.1.9 and 5.1.0 (installed into a temp dir; skipped when npm cannot fetch them) ----------------
 # The stand-in vitest above cannot show what real vitest does: 5.1 writes node_modules/.vitest-cache on every run, and 2.1.9 prints "x page 1 > title"
@@ -652,56 +695,99 @@ PY
 )"
 }
 RVROOT="$T/realvitest"
-for ver in ${RV_VERSIONS:-2.1.9 5.1.0}; do
-    mkdir -p "$RVROOT/$ver" && printf '{"private":true}\n' > "$RVROOT/$ver/package.json"
-    if ! (cd "$RVROOT/$ver" && ${TO[@]+"${TO[@]}"} npm install "vitest@$ver" --no-audit --no-fund --silent >/dev/null 2>&1) || [ ! -x "$RVROOT/$ver/node_modules/.bin/vitest" ]; then
-        printf '  SKIP: real vitest %s: npm could not install it (offline?)\n' "$ver"; continue
-    fi
-    REP_LABEL='  label: (p: string): string => `GET ${p}`,'; REP_EXTRA='  extra: (p: string): string => `GET ${p}`,'
+rv_install() { # rv_install <version>: npm-install real vitest into its own dir; silent when it worked
+    mkdir -p "$RVROOT/$1" && printf '{"private":true}\n' > "$RVROOT/$1/package.json"
+    (cd "$RVROOT/$1" && ${TO[@]+"${TO[@]}"} npm install "vitest@$1" --no-audit --no-fund --silent >/dev/null 2>&1) && [ -x "$RVROOT/$1/node_modules/.bin/vitest" ]
+}
+unit_rv() { # unit_rv <version> <case>
+    local ver="$1" RVOUT RVRC RVS
+    local REP_LABEL='  label: (p: string): string => `GET ${p}`,' REP_EXTRA='  extra: (p: string): string => `GET ${p}`,'
+    case "$2" in
+    same)
     rv_fixture "$T/rv-$ver-same" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-same" "" 'export const del = (p: string): string => `DELETE ${p}`;'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver same: /"
     printf '%s\n' "$RVS" | grep -qx 'pre_red p1,p2' && printf '%s\n' "$RVS" | grep -qx 'verdict PARTIAL' \
         && ok "real vitest $ver same: base-red page tests failing the same way are pre-existing after one round; PARTIAL (rc $RVRC)" \
         || { bad "real vitest $ver same: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    ;;
+    one)
     rv_fixture "$T/rv-$ver-one" 2 "$RVROOT/$ver"; rv_run "$T/rv-$ver-one" "" 'export const del = (p: string): string => `DELETE ${p}`;'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver one: /"
     printf '%s\n' "$RVS" | grep -qx 'pre_red p1' && printf '%s\n' "$RVS" | grep -qx 'verdict PARTIAL' \
         && ok "real vitest $ver one: a lone base-red page test (base run alone, head batched) is known red by its full id; PARTIAL (rc $RVRC)" \
         || { bad "real vitest $ver one: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    ;;
+    backend)
     rv_fixture "$T/rv-$ver-backend" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-backend" "" 'export const sub = (a: number, b: number): number => a - b;' backend/src/util.ts "add a sub(a, b) helper next to add in backend/src/util.ts"
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver backend: /"
     printf '%s\n' "$RVS" | grep -qx 'suite_excused True' && printf '%s\n' "$RVS" | grep -qx 'fix_rounds 0' && printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' \
         && ok "real vitest $ver backend: the untouched frontend suite failing with exactly its base errors is excused by them; delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver backend: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    ;;
+    changed)
     rv_fixture "$T/rv-$ver-changed" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-changed" "$REP_LABEL" '  label: undefined as unknown as (p: string) => string,'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver changed: /"
     ! printf '%s\n' "$RVS" | grep -q '^pre_red .*p1' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
         && ok "real vitest $ver changed: a base-red test the change breaks with a TypeError is never excused; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver changed: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    ;;
+    p8)
     rv_fixture "$T/rv-$ver-p8" 1 "$RVROOT/$ver"; rv_run "$T/rv-$ver-p8" "$REP_EXTRA" '  extra: undefined as unknown as (p: string) => string,'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver p8: /"
     printf '%s\n' "$RVS" | grep -qx 'suite_excused False' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
         && ok "real vitest $ver p8: a full-suite-only test red on base, now failing with a new error, is not excused by its id; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver p8: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    ;;
+    p8new)
     rv_fixture "$T/rv-$ver-p8new" 2 "$RVROOT/$ver"; rv_run "$T/rv-$ver-p8new" "$REP_EXTRA" '  extra: undefined as unknown as (p: string) => string,'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver p8new: /"
     printf '%s\n' "$RVS" | grep -qx 'suite_excused False' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
         && ok "real vitest $ver p8new: a test passing on base that the change breaks with a new error, reached only by dynamic import, is never excused; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver p8new: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    ;;
+    pathnorm)
     rv_fixture "$T/rv-$ver-pathnorm" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-pathnorm" "$REP_LABEL" '  label: (p: string): string => `GET /admin${p}`,'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver pathnorm: /"
     ! printf '%s\n' "$RVS" | grep -q '^pre_red .*p1' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
         && ok "real vitest $ver pathnorm: a base-red test whose asserted URL changed from GET /p to GET /admin/p is not the same error; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver pathnorm: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    ;;
+    unhandled)
     rv_fixture "$T/rv-$ver-unhandled" 2 "$RVROOT/$ver" side; rv_run "$T/rv-$ver-unhandled" "" 'Promise.reject(new Error("boom"));' frontend/src/lib/side.ts "add a side effect to frontend/src/lib/side.ts"
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver unhandled: /"
     printf '%s\n' "$RVS" | grep -qx 'suite_excused False' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
         && ok "real vitest $ver unhandled: a full suite with a new Unhandled Errors block (all tests pass, the base-red p1 same error) is not excused; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver unhandled: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    ;;
+    delpkg)
     rv_fixture "$T/rv-$ver-delpkg" 0 "$RVROOT/$ver" dep; RVRM=frontend/node_modules/dep-x rv_run "$T/rv-$ver-delpkg" "" 'export const del = (p: string): string => `DELETE ${p}`;'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver delpkg: /"
     ! printf '%s\n' "$RVS" | grep -q '^pre_red .*p9' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
         && ok "real vitest $ver delpkg: a test that fails because the change deleted an installed package is not excused by a base run that sees the same deleted package; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver delpkg: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
+    ;;
+    esac
+}
+
+# ---- dispatch: the longest units first so the slowest one starts at once ----------------------------------------
+RV_LIST=""
+for ver in ${RV_VERSIONS:-2.1.9 5.1.0}; do
+    ( rv_install "$ver" ) &
 done
+wait
+for ver in ${RV_VERSIONS:-2.1.9 5.1.0}; do
+    if [ -x "$RVROOT/$ver/node_modules/.bin/vitest" ]; then RV_LIST="$RV_LIST $ver"; else printf '  SKIP: real vitest %s: npm could not install it (offline?)\n' "$ver"; fi
+done
+unit_start monorepo unit_monorepo
+unit_start envchg unit_envchg
+for c in same one backend changed p8 p8new pathnorm unhandled delpkg; do
+    for ver in $RV_LIST; do unit_start "rv-$ver-$c" unit_rv "$ver" "$c"; done
+done
+unit_start failed unit_failed_and_cancelled
+unit_start detach unit_detach
+unit_start goals unit_goals
+for k in 0 1 2 3; do unit_start "help$k" unit_help_chunk "$k" 4; done
+unit_report
+help_bad="$(cat "$T"/help-bad.* 2>/dev/null)"
+[ -z "$help_bad" ] && ok "all $count commands with --help (separate and as one argument) started no run" || bad "--help started a run or moved the checkout:$help_bad"
 finish
