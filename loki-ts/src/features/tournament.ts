@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { plainTestEnv, spawnGroupSync, stripAnsi } from "../util/check_result.ts";
 import { toolLessCall } from "../runner/sdk_invoker.ts";
 import { safeGit } from "../util/safe_git.ts";
+import { editShapeSites, type EditSite } from "../util/edit_shape.ts";
 import { applyDiff, restoreFromUndo, snapshotDiff } from "../e10ext/treeswap.ts";
 import { ATTEMPT_EXCLUDES, treeswapOps, type ExtraAttemptsDeps } from "./attempts.ts";
 import { EMITTERS, execSpecBriefOf, extractSpecAtoms, redFilter } from "./exec_spec.ts";
@@ -550,9 +551,11 @@ function agentDiffLines(ctx: RunContext, skip: Set<string>): { lines: number; go
 
 /** The cheap warning signs that the agent tree may have missed part of the task; the candidates call fires only when one is present
  *  (target: a minority of runs). A named site no binding spec case covers; an issue-quoted line that is still byte-identical in the
- *  agent's changed files. (A residual site from the edit-shape detector, PR 533, joins these once it lands.) */
-export function warningSigns(task: string, unchecked: string[] | undefined, sources: Record<string, string>): string[] {
+ *  agent's changed files; a residual site from the edit-shape detector (util/edit_shape.ts: an unchanged line still holds the pattern the diff removed). */
+export function warningSigns(task: string, unchecked: string[] | undefined, sources: Record<string, string>, residual: EditSite[] = []): string[] {
   const signs: string[] = [];
+  const r = residual.find((x) => x.rule === "residual");
+  if (r) signs.push(`residual site (edit-shape): ${r.path}:${r.line}`);
   if (unchecked?.length) signs.push(`named site without a binding spec case: ${unchecked.slice(0, 3).join(", ")}`);
   const all = Object.values(sources).join("\n");
   for (const a of extractSpecAtoms(task)) if (a.kind === "location" && a.text.trim().length >= 12 && all.includes(a.text.trim())) { signs.push(`quoted line unchanged: ${a.text.trim().split("\n")[0]!.slice(0, 50)}`); break; }
@@ -586,7 +589,9 @@ export async function runTournamentGate(ctx: RunContext, signal: AbortSignal, se
     const c: Context = { issue: String(ctx.outputs().intake?.task ?? ""), files, tests, ...(brief ? { brief } : {}) };
     if (!c.issue || Object.keys(files).length === 0) return skipped("the task text or the base source of the changed files is not readable");
     const now = Object.fromEntries(goFiles.map((f) => [f, (() => { try { return readFileSync(join(ctx.repoDir, f), "utf8"); } catch { return ""; } })()]));
-    const signs = warningSigns(c.issue, input.unchecked, now);
+    let sites: EditSite[] = [];
+    try { sites = editShapeSites(safeGit(ctx.repoDir, ["diff", "-U0", "--no-ext-diff", "--no-renames", ctx.baseSha, "--", ...goFiles]), (f) => { try { return readFileSync(join(ctx.repoDir, f), "utf8"); } catch { return null; } }); } catch { /* the other signs still count */ }
+    const signs = warningSigns(c.issue, input.unchecked, now, sites);
     if (signs.length === 0) return skipped("no warning sign: every named site has a binding spec case and the issue's quoted lines changed; no model call");
 
     const intake = ctx.outputs().intake ?? {}, owned = installOwned(ctx.repoDir, intake.install_created);
