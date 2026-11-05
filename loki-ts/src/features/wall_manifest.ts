@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { pySignatures } from "../util/python.ts";
 import { tsAmbiguous, tsSignatures } from "../util/ts_signatures.ts";
 import { langSignatures } from "../util/context_pack.ts";
+import { escapeRegex } from "../util/regex_escape.ts";
 export interface ManifestFile { path: string; content: string }
 
 export const MANIFEST_MAX_LINES = 400;
@@ -25,7 +26,7 @@ const normStem = (s: string): string => s.toLowerCase().replace(/[._-]+/g, ".").
 const GENERIC_STEMS = ["index", "init", "mod", "main"];
 const mentionsStem = (content: string, stems: string[]): boolean => {
   const c = content.toLowerCase().replace(/[._-]+/g, ".");
-  return stems.some((s) => new RegExp(`(?<![a-z0-9])${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])`).test(c));
+  return stems.some((s) => new RegExp(`(?<![a-z0-9])${escapeRegex(s)}(?![a-z0-9])`).test(c));
 };
 const dirOf = (p: string): string => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const resolveRel = (dir: string, spec: string): string => {

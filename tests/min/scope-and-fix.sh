@@ -162,6 +162,7 @@
 #  66. test_guard.ts defectPinEdits: also accept a structural change (the structural-change unit leg fails) or drop the pin note from seal (the receipt leg fails).
 #  69. edit_shape.ts siblingSites: drop the branch-split test (the straight-line sequence leg reads sibling).
 #  70. edit_shape.ts siblingSites: drop the siblings-agree test (the disagree leg reads sibling) or the literal test (the literal leg reads sibling).
+#  72. regex_escape.ts: drop one metacharacter from the class (the escapeRegex leg fails); re-add a private `const esc = ... replace(/[.*+?^${}()|[\]\\]/g` copy in any src file (the copies leg fails); re-add `if (false as boolean) continue;` (the dead-branch leg fails).
 #  71. edit_shape.ts residualSites: drop COMMON_LIMIT (the idiom leg reads residual) or GO_BUILTIN_T (the .(string) leg reads residual).
 #  72. edit_shape.ts precedenceSites: drop the removed-strict test (the new errors.As leg reads precedence) or the removed-broad test (the isinstance-to-isinstance leg reads precedence).
 #  73. edit_shape.ts fragmentsOf: drop the written-back test (a pattern the hunk keeps reads residual).
@@ -1167,6 +1168,12 @@ while IFS= read -r line; do
 done <<< "$out"
 printf '%s\n' "$out" | grep -q '^OK ' || { bad "edit-shape unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
 printf '%s\n' "$out" | grep -q '^NO ' && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
+# one regex-escape helper: util/regex_escape.ts owns it, no src file re-spells the escape class, and edit_shape has no dead branch
+RE_COPIES="$(cd "$ROOT" && grep -rlF '[.*+?^${}()|[\]\\]' loki-ts/src | grep -v 'util/regex_escape.ts' | tr '\n' ' ')"
+[ -z "$RE_COPIES" ] && ok "regex escape: every file imports escapeRegex from util/regex_escape.ts (no private copy)" || bad "regex escape: private copies remain in: $RE_COPIES"
+RE_OUT="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e 'const { escapeRegex: e } = await import("./src/util/regex_escape.ts"); const s = "a.b*c+d?e^f$g{h}i(j)k|l[m]n\\o"; console.log(new RegExp("^" + e(s) + "$").test(s) && !new RegExp("^" + e("a.b") + "$").test("axb") ? "ok" : "bad")' 2>&1)"
+[ "$RE_OUT" = ok ] && ok "regex escape: escapeRegex matches every metacharacter literally and nothing else" || bad "escapeRegex gave: $RE_OUT"
+grep -q 'false as boolean' "$ROOT/loki-ts/src/util/edit_shape.ts" && bad "edit_shape.ts still carries the dead 'false as boolean' branch" || ok "edit_shape.ts: no dead 'false as boolean' branch"
 
 # ---------------------------------------------------------------- E4: defect pin (an existing assertion that pins the bug the issue reports)
 # Unit: the finder fires only on an assertion whose expected value is the wrong value the issue reports; a pure value replacement of it is a defect-pin change,

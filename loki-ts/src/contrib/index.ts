@@ -23,7 +23,7 @@ export function registerContrib(): void {
   hooks.stageCapability = (stage, env, argv) => stageCapability(stage, env, argv);
   hooks.sealed = writeAiBom;
   hooks.runtimeEvidence = (task) => extractRuntimeEvidence(task) as unknown as Record<string, unknown> | null;
-  hooks.scaffold = (repoDir, baseSha, task, summary) => { if (!fragmentWriterOn()) return null; const r = writeReleaseNoteFragment(repoDir, changedFiles(repoDir, baseSha), task, summary); return "path" in r ? { ...r } : null; };
+  hooks.scaffold = (repoDir, baseSha, task, summary) => { if (!fragmentWriterOn()) return null; const r = writeReleaseNoteFragment(repoDir, changedFiles(repoDir, baseSha), task, summary, { base: baseSha }); return "path" in r ? { ...r } : null; };
   registerModule("./status.ts", () => import("./status.ts"));
   registerModule("./plan_cmd.ts", () => import("./plan_cmd.ts"));
   registerModule("./eta.ts", () => import("./eta.ts"));

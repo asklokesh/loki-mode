@@ -11,6 +11,7 @@ import { basename, extname, join } from "node:path";
 import { classifyRunnerOutput } from "./runner_errors.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { plainTestEnv, stripAnsi } from "../util/check_result.ts";
+import { escapeRegex } from "../util/regex_escape.ts";
 
 export interface LoadOwnerInput {
   repoDir: string;
@@ -26,10 +27,8 @@ export interface LoadOwnerInput {
   skip?: (f: string) => boolean; // install-created paths (FC-DEPS-NOT-INSTALLED): not the code's change
 }
 
-const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 const suffixes = (segs: string[], min: number): string[] => segs.map((_, k) => segs.slice(k).join("/")).filter((x) => x.split("/").length >= min);
-const bounded = (out: string, tok: string, tail: string): boolean => new RegExp(`(?<![\\w.-])${esc(tok)}${tail}`).test(out);
+const bounded = (out: string, tok: string, tail: string): boolean => new RegExp(`(?<![\\w.-])${escapeRegex(tok)}${tail}`).test(out);
 
 /** Changed files the error output names: by repo-relative path, by absolute path, by a package-relative suffix of the path
  *  (src/index.ts for packages/a/src/index.ts), by a Go import path ending in the file's directory (example.com/fx/calc for
@@ -39,10 +38,10 @@ export function changedFilesNamed(out: string, repoDir: string, changed: string[
     if (out.includes(f) || out.includes(join(repoDir, f))) return true;
     const segs = f.split("/");
     if (suffixes(segs, 2).some((x) => x !== f && bounded(out, x, "(?![\\w-])"))) return true;
-    if (extname(f) === ".go" && segs.length > 1 && suffixes(segs.slice(0, -1), 1).some((d) => new RegExp(`(?<=[\\w-])/${esc(d)}(?![\\w./-])`).test(out))) return true;
+    if (extname(f) === ".go" && segs.length > 1 && suffixes(segs.slice(0, -1), 1).some((d) => new RegExp(`(?<=[\\w-])/${escapeRegex(d)}(?![\\w./-])`).test(out))) return true;
     const stem = basename(f, extname(f));
     if (stem.length < 2 || stem === "index" || stem === "__init__") return false; // generic names match by path only
-    return new RegExp(`(?<![\\w-])${esc(stem)}(?![\\w-])`).test(out);
+    return new RegExp(`(?<![\\w-])${escapeRegex(stem)}(?![\\w-])`).test(out);
   });
 }
 

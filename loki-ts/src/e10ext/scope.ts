@@ -7,12 +7,11 @@ import type { Obj } from "../engine10/types.ts";
 import { unitFlags } from "../features/speed/unit_mode.ts";
 import { readPlanScope } from "../util/run_cap.ts";
 import type { Staged } from "./commit_filter.ts";
+import { escapeRegex } from "../util/regex_escape.ts";
 
 export const SCOPE_UNDETERMINED = "scope not determined; all edits committed";
 export const outsideNote = (f: string): string => `outside stated scope: ${f}`;
-
-const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const mentions = (text: string, name: string): boolean => new RegExp(`(?<![\\w./-])${esc(name)}(?![\\w-]|\\.\\w)`).test(text);
+const mentions = (text: string, name: string): boolean => new RegExp(`(?<![\\w./-])${escapeRegex(name)}(?![\\w-]|\\.\\w)`).test(text);
 
 const STOP = new Set(["the", "and", "for", "with", "that", "this", "all", "any", "src", "from", "into", "each", "across", "apply", "add", "use", "make"]);
 const stem = (w: string): string => (w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w);

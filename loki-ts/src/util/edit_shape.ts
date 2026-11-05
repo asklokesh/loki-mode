@@ -15,6 +15,7 @@
 import { langOf, symbolSpans, type Lang, type Span } from "./context_pack.ts";
 import { parseDiffHunks, type DiffHunk } from "./secure_scan.ts";
 import { isTestFile } from "./test_file_text.ts";
+import { escapeRegex } from "./regex_escape.ts";
 
 export interface EditSite { rule: "sibling" | "residual" | "precedence"; path: string; line: number; text: string; why: string }
 export interface EditShapeOpts {
@@ -37,8 +38,6 @@ const ACCUM = /^(?:append|[\w.]+\.(?:push|append|add))$/; // accumulation sites 
 // Utility callees take whatever data the line has: a different argument there is no divergence unless derivation says so.
 const GENERIC = /(?:^|\.)(?:join|resolve|test|exec|match|get|set|has|at|dirname|basename|relative|slice|map|filter|includes|startsWith|endsWith|replace|split|trim|stat|exists|existsSync|readFileSync|lstatSync|open|read|write|isArray|String|Number|Math\.\w+|Path|len|min|max|str|int|abs|get_|Sprintf|Join|Contains|HasPrefix)$/;
 const SELF_ARG = /^(?:self|this|ctx|t)$/;
-
-const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const compactWs = (s: string): string => s.trim().replace(/\s+/g, " ");
 const indentOf = (s: string): number => s.length - s.trimStart().length;
 const isComment = (s: string): boolean => /^\s*(?:\/\/|#|\/\*|\*)/.test(s);
@@ -90,7 +89,7 @@ function enclosing(spans: Span[], line: number): Span | null {
 /** The edited argument is a local whose definition above it (in the function) reads the sibling argument: normalized versus raw input. */
 function derivedFrom(lines: string[], fn: Span, at: number, edited: string, sibling: string): boolean {
   if (!/^[A-Za-z_$][\w$]*$/.test(edited)) return false;
-  const def = new RegExp(`^\\s*(?:(?:const|let|var)\\s+)?${esc(edited)}\\s*(?::=|=)\\s*(.+?)\\s*;?\\s*$`), uses = new RegExp(`(?<![\\w$])${esc(sibling)}(?![\\w$])`);
+  const def = new RegExp(`^\\s*(?:(?:const|let|var)\\s+)?${escapeRegex(edited)}\\s*(?::=|=)\\s*(.+?)\\s*;?\\s*$`), uses = new RegExp(`(?<![\\w$])${escapeRegex(sibling)}(?![\\w$])`);
   for (let k = at - 1; k >= Math.max(fn.start, at - 60); k--) { const m = def.exec(lines[k - 1] ?? ""); if (m) return uses.test(m[1]!); }
   return false;
 }
@@ -121,7 +120,6 @@ function siblingSites(path: string, lines: string[], spans: Span[], added: Set<n
         }
       }
       if (identical || sibs.length === 0 || (!sibs.some((x) => x.derived) && new Set(sibs.map((x) => x.line)).size < 2)) continue; // without derivation evidence one sibling is a coincidence, two agreeing ones are a pattern
-      if (false as boolean) continue; // another branch already passes what this one passes: no isolated divergence
       if (new Set(sibs.map((s) => `${s.pos}\u0000${s.arg}`)).size !== 1) continue; // the siblings disagree among themselves: no consensus to diverge from
       const s0 = sibs[0]!;
       for (const s of sibs) covered.add(s.line); // the sibling site already names these lines; the residual scan must not list them again
@@ -144,16 +142,16 @@ function fragmentsOf(h: DiffHunk, lang: Lang | null): Frag[] {
   for (const raw of h.removed) {
     if (isComment(raw)) continue;
     const line = maskStrings(raw);
-    if (lang === "go") for (const m of line.matchAll(/\.\(\s*(\*?[A-Za-z_][\w.]*)\s*\)/g)) { const t = m[1]!; if (t !== "type" && !GO_BUILTIN_T.has(t.replace(/^\*/, ""))) put(`as:${t}`, `\\.\\(\\s*${esc(t)}\\s*\\)`, `.(${t})`); }
+    if (lang === "go") for (const m of line.matchAll(/\.\(\s*(\*?[A-Za-z_][\w.]*)\s*\)/g)) { const t = m[1]!; if (t !== "type" && !GO_BUILTIN_T.has(t.replace(/^\*/, ""))) put(`as:${t}`, `\\.\\(\\s*${escapeRegex(t)}\\s*\\)`, `.(${t})`); }
     if (lang === "ts") {
-      for (const m of line.matchAll(/\bas\s+([A-Za-z_$][\w$.]*(?:<[^>]*>)?)/g)) { const t = m[1]!; if (!TS_PLAIN_T.has(t)) put(`cast:${t}`, `\\bas\\s+${esc(t)}(?![\\w$])`, `as ${t}`); }
-      for (const m of line.matchAll(/\binstanceof\s+([A-Za-z_$][\w$.]*)/g)) put(`inst:${m[1]}`, `\\binstanceof\\s+${esc(m[1]!)}(?![\\w$])`, `instanceof ${m[1]}`);
+      for (const m of line.matchAll(/\bas\s+([A-Za-z_$][\w$.]*(?:<[^>]*>)?)/g)) { const t = m[1]!; if (!TS_PLAIN_T.has(t)) put(`cast:${t}`, `\\bas\\s+${escapeRegex(t)}(?![\\w$])`, `as ${t}`); }
+      for (const m of line.matchAll(/\binstanceof\s+([A-Za-z_$][\w$.]*)/g)) put(`inst:${m[1]}`, `\\binstanceof\\s+${escapeRegex(m[1]!)}(?![\\w$])`, `instanceof ${m[1]}`);
     }
-    if (lang === "py") for (const m of line.matchAll(/\bisinstance\(\s*[^,()]+,\s*([A-Za-z_][\w.]*)\s*\)/g)) put(`isi:${m[1]}`, `\\bisinstance\\(\\s*[^,()]+,\\s*${esc(m[1]!)}\\s*\\)`, `isinstance(_, ${m[1]})`);
+    if (lang === "py") for (const m of line.matchAll(/\bisinstance\(\s*[^,()]+,\s*([A-Za-z_][\w.]*)\s*\)/g)) put(`isi:${m[1]}`, `\\bisinstance\\(\\s*[^,()]+,\\s*${escapeRegex(m[1]!)}\\s*\\)`, `isinstance(_, ${m[1]})`);
     for (const c of callsIn(raw)) {
       if (c.args.length === 0 || !c.args.some(variableLike)) continue; // all-literal calls are constants, not shared data flow
-      const body = c.args.map((a) => esc(a).replace(/\s+/g, "\\s*")).join("\\s*,\\s*");
-      put(`call:${c.callee}(${c.args.join(",")})`, `(?<![\\w$.])${esc(c.callee)}\\(\\s*${body}\\s*\\)`, `${c.callee}(${c.args.join(", ")})`);
+      const body = c.args.map((a) => escapeRegex(a).replace(/\s+/g, "\\s*")).join("\\s*,\\s*");
+      put(`call:${c.callee}(${c.args.join(",")})`, `(?<![\\w$.])${escapeRegex(c.callee)}\\(\\s*${body}\\s*\\)`, `${c.callee}(${c.args.join(", ")})`);
     }
   }
   return [...out.values()];

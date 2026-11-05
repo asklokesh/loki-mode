@@ -8,6 +8,7 @@ import { plainTestEnv } from "./check_result.ts";
 import { basename, dirname, join } from "node:path";
 import { sweepStaleTmp } from "./atomic.ts";
 import type { Obj } from "../engine10/types.ts";
+import { escapeRegex } from "./regex_escape.ts";
 
 export const RECEIPT_SIGNER_BASENAME = "receipt-ed25519.pem";
 
@@ -66,7 +67,7 @@ export function loadSigningKey(generate = true): KeyObject | null {
         if ((e as NodeJS.ErrnoException).code !== "ENOENT" || !generate) return null;
         mkdirSync(dirname(dirname(file)), { recursive: true, mode: 0o700 });
         mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-        sweepStaleTmp(dirname(file), new RegExp(`${basename(file).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.[0-9a-f]{12}\\.tmp`)); // a killed generator's key temp, age-judged
+        sweepStaleTmp(dirname(file), new RegExp(`${escapeRegex(basename(file))}\\.[0-9a-f]{12}\\.tmp`)); // a killed generator's key temp, age-judged
         const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`; // random, so a stale temp never blocks creation
         writeFileSync(tmp, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }), { flag: "wx", mode: 0o600 });
         try { linkSync(tmp, file); } catch (l) { if ((l as NodeJS.ErrnoException).code !== "EEXIST") throw l; } finally { unlinkSync(tmp); }

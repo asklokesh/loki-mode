@@ -59,6 +59,7 @@
 #      Wall-only path); the delivery check fails. Skip the restore after a failed re-verify: it fails too.
 #  NRM1. commit_filter.ts dropSet: restrict the lockfile rule to st === "A" again; the lockfile check fails. Make manifestChanged
 #      compare dirname equality only (drop the descendant clause); the workspace-member case fails.
+#  NRM4. commit_filter.ts taskWantsLockChange: delete the lockfile-conflict and reinstall-fix clauses; 'resolve the lockfile merge conflict' drops. Loosen the conflict clause to bare `conflict`; 'resolve the merge conflict in the parser' ships.
 #  NRM3. commit_filter.ts dropSet: ignore the task (drop the taskWantsLockChange clause); the task-aware lockfile check fails.
 #  SG4. commit_filter.ts commitUnsealedWork: remove the churn block; the WIP commit carries pnpm-lock.yaml again.
 #  SG5. check_result.ts commandFor: drop the rootProjectsBreakSite null; the workspace command runs from packages/a and fails (No projects were found).
@@ -435,9 +436,9 @@ console.log(out.join(" | "));
 LKT="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const { dropSet } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
 const d = (task) => dropSet(process.env.LK, [{ st: "M", f: "pnpm-lock.yaml" }], null, process.env, undefined, undefined, undefined, task).filter((x) => x.st !== "L").length ? "drop" : "ship";
-console.log(["bump lodash to 4.17.21", "refresh the lock file", "pin lodash to 4.17.20", "regenerate the lockfile", "fix CVE-2024-4067 by updating the lockfile", "update the dependencies of the api", "upgrade the express package", "regenerate pnpm-lock.yaml", "add a login button", "update the readme", "refresh the page when the lock icon is clicked", "sync the lock screen timer", undefined].map(d).join(","));
+console.log(["bump lodash to 4.17.21", "refresh the lock file", "pin lodash to 4.17.20", "regenerate the lockfile", "fix CVE-2024-4067 by updating the lockfile", "update the dependencies of the api", "upgrade the express package", "regenerate pnpm-lock.yaml", "resolve the lockfile merge conflict", "reinstall to fix the lockfile", "add a login button", "update the readme", "refresh the page when the lock icon is clicked", "sync the lock screen timer", "resolve the merge conflict in the parser", "reinstall the app to fix the login", "fix the lockfile-unrelated parser bug", undefined].map(d).join(","));
 ' 2>&1)"
-[ "$LKT" = "ship,ship,ship,ship,ship,ship,ship,ship,drop,drop,drop,drop,drop" ] && ok "commit filter: a lockfile-only change ships when the task bumps or updates a dependency, names a CVE or the lockfile; unrelated tasks drop it" || bad "task-aware lockfile drop gave: $LKT"
+[ "$LKT" = "ship,ship,ship,ship,ship,ship,ship,ship,ship,ship,drop,drop,drop,drop,drop,drop,drop,drop" ] && ok "commit filter: a lockfile-only change ships when the task bumps or updates a dependency, names a CVE or the lockfile, or fixes a lockfile conflict; unrelated tasks drop it" || bad "task-aware lockfile drop gave: $LKT"
 printf '#!/bin/sh\nfor f in "$@"; do printf "formatted\\n" >> "$f"; done\n' > "$LK/node_modules-biome.sh"; mkdir -p "$LK/node_modules/.bin"; cp "$LK/node_modules-biome.sh" "$LK/node_modules/.bin/biome"; rm "$LK/node_modules-biome.sh"; chmod +x "$LK/node_modules/.bin/biome"
 printf '{}\n' > "$LK/biome.json"
 FMT="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '

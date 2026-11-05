@@ -7,6 +7,7 @@ import type { RepoMap } from "../engine10/repomap.ts";
 import { linkedHits } from "../e10ext/compound_match.ts";
 import { pushArgv, taskBlock } from "../engine10/types.ts";
 import type { TestMap } from "../engine10/types.ts";
+import { escapeRegex } from "./regex_escape.ts";
 
 export interface EvidenceHit {
   source: "code" | "test" | "changelog";
@@ -143,7 +144,7 @@ export function buildConfirmBrief(task: string, hits: EvidenceHit[]): string {
 /** Whole-word substring: unlike `String.includes`, "search.ts" does not match inside
  *  "research.ts" (there is no word boundary between the "e" and the "s" that starts the citation). */
 function citesToken(text: string, token: string): boolean {
-  return new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text);
+  return new RegExp(`\\b${escapeRegex(token)}\\b`).test(text);
 }
 
 /** True when `text` names a hit's path (full or basename -- models often cite one without the
