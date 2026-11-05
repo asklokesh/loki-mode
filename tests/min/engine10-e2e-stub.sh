@@ -167,7 +167,7 @@ py_engine() {
     git -C "$REPO" init -q -b main; git -C "$REPO" config user.name e2e; git -C "$REPO" config user.email e2e@example.invalid
     git -C "$REPO" add -A .; git -C "$REPO" commit -q -m base
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u VIRTUAL_ENV \
-        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" E2E_STUB_MODE=stack \
+        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" E2E_STUB_MODE="${PY_MODE:-stack}" \
         E2E_STUB_TARGET="$target" E2E_STUB_SNIPPET="$(printf 'def multiply(a, b):\n    return a * b')" \
         LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "add a multiply(a, b) function to $target" --no-pr 2>&1)"
     NOTES=""
@@ -266,6 +266,10 @@ pushed="$(git -C "$D/origin.git" rev-parse "loki/$(basename "$RUNDIR")" 2>/dev/n
 sealed="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("head_sha",""))' "$RUNDIR/receipt.json" 2>/dev/null)"
 [ -n "$sealed" ] && [ "$pushed" = "$sealed" ] && ok "pushed PR branch tip equals the receipt head_sha (passport and merge gate bind to it)" || bad "pushed loki/<run> tip '$pushed' differs from receipt head_sha '$sealed'"
 
+run_pr highrev none LOKI_RISK_TIER=high E2E_STUB_REVIEW=FLAG LOKI_PR_DRAFT=1
+grep -q 'cross-review flag (claude): stub reviewer concern' "$RUNDIR/receipt.json" && ok "high-risk default-model run: the cross-review ran (no --model label passed to the CLI)" || bad "high-risk default-model run: cross-review did not run (reviewer got the provider-default label as --model?)"
+grep -q 'cross-review not run: claude exited' "$RUNDIR/receipt.json" && bad "high-risk run: reviewer exited non-zero" || ok "high-risk run: reviewer exit clean"
+
 run_pr flag none LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=FLAG LOKI_PR_DRAFT=1
 f="$(pr_facts)"; set -- $f
 [ "$4" = 1 ] && [ "$5" = 0 ] && ok "FLAG run: one review session, no council" || bad "FLAG run facts: $f"
@@ -305,5 +309,136 @@ U="$(unit_review LOKI_REVIEW_DEFAULT=1)"
     && ok "unit: reviewer planned on medium and high only, BLOCK caps at PARTIAL, one reviewer credited only by a run review" || bad "unit gave: $U"
 U="$(unit_review -u LOKI_REVIEW_DEFAULT)"
 case "$U" in "low=0 medium=0 high=1 "*) ok "unit: with no reviewer configured and no LOKI_REVIEW_DEFAULT, only the high tier plans a review session" ;; *) bad "unit (default) gave: $U" ;; esac
+
+# EXP-0010: parallel attempts after a red first attempt. The stub (mode attempts) writes a wrong multiply() in every session except the one in
+# the attempt worktree B<E2E_STUB_RIGHT>; E2E_STUB_FIX=noprogress keeps the primary's fix round red so the extra attempts run. Real bun test, real pytest, real vitest.
+att_ev() { python3 -I -c '
+import json, sys
+for l in open(sys.argv[1]):
+    e = json.loads(l)
+    if e["type"] == "attempts.selected": d = e["data"]; print("winner=%s k=%s early=%s launched=%s" % (d.get("winner"), d.get("k"), d.get("early_accept"), d.get("launched"))); break
+else: print("none")
+' "$RUNDIR/events.jsonl" 2>/dev/null; }
+E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
+[ "$(outcome)" = "VERIFIED" ] && ok "attempts (bun test): the first attempt is wrong, attempt 2 is right: the run is VERIFIED" || { bad "attempts (bun test): outcome '$(outcome)', not VERIFIED"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+[ "$(att_ev)" = "winner=x2 k=3 early=True launched=3" ] && ok "attempts (bun test): the receipt journal names attempt 2 as the winner of 3, early accept ($(att_ev))" || bad "attempts (bun test): attempts.selected is '$(att_ev)'"
+git -C "$REPO" show HEAD:calc.ts | grep -A1 'function multiply' | grep -q 'a \* b' && ok "attempts (bun test): the committed multiply() is the right one" || bad "attempts (bun test): the committed calc.ts holds the wrong multiply()"
+[ "$(verify_run)" = "0 VERIFIED" ] && ok "attempts (bun test): loki verify agrees ($(verify_run))" || bad "attempts (bun test): loki verify says '$(verify_run)'"
+[ "$(git -C "$REPO" worktree list | wc -l | tr -d ' ')" = 1 ] && ok "attempts (bun test): no worktree registration is left in the repo" || bad "attempts (bun test): git worktree list shows a leftover"
+
+E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
+[ "$(outcome)" = "FAILED" ] && ok "attempts (bun test): every attempt wrong: the repo's checks stay red, so the run is FAILED (a red check is never PARTIAL or VERIFIED)" || { bad "attempts (bun test): all wrong gave outcome '$(outcome)'"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+case "$(att_ev)" in winner=*" k=3 early=False launched=3") ok "attempts (bun test): all wrong: the best partial is kept without an early accept ($(att_ev))" ;; *) bad "attempts (bun test): all-wrong attempts.selected is '$(att_ev)'" ;; esac
+git -C "$REPO" show HEAD:calc.ts | grep -q 'export function multiply' && ok "attempts (bun test): all wrong: the best partial is on loki/<run>" || bad "attempts (bun test): all wrong: no partial on loki/<run>"
+
+fix_rounds() { grep -c '"type":"fix.round"' "$RUNDIR/events.jsonl" 2>/dev/null; }
+# EXP-0010 early: LOKI_E10_ATTEMPTS_EARLY=1 runs the attempts before any fix round (Haiku only) and skips the fix rounds when one goes green.
+E2E_STUB_RIGHT=2 LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS_EARLY=1 run_engine attempts
+[ "$(outcome)" = "VERIFIED" ] && [ "$(att_ev)" = "winner=x2 k=2 early=True launched=2" ] && [ "$(fix_rounds)" = 0 ] && ok "attempts early: a wrong first attempt, a right second: VERIFIED with no fix round ($(att_ev))" || { bad "attempts early: outcome '$(outcome)', attempts '$(att_ev)', fix rounds '$(fix_rounds)'"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /'; }
+E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
+[ "$(att_ev)" != none ] && [ "$(fix_rounds)" -ge 1 ] && ok "attempts early: without the switch the fix round runs first ($(fix_rounds) round(s)), then the attempts" || bad "attempts early: switch off gave attempts '$(att_ev)', fix rounds '$(fix_rounds)'"
+E2E_STUB_RIGHT=2 LOKI_E10_ATTEMPTS_EARLY=1 run_engine attempts
+[ "$(att_ev)" = none ] && ok "attempts early: not on Haiku, the switch starts no attempt" || bad "attempts early: a non-Haiku run started attempts ('$(att_ev)')"
+E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS_EARLY=1 run_engine attempts
+[ "$(outcome)" != "VERIFIED" ] && [ "$(att_ev)" != none ] && [ "$(fix_rounds)" -ge 1 ] && ok "attempts early: every attempt wrong: the fix rounds still run afterwards, not VERIFIED ($(outcome), $(fix_rounds) round(s))" || bad "attempts early: all wrong gave '$(outcome)', attempts '$(att_ev)', fix rounds '$(fix_rounds)'"
+E2E_STUB_NEWFILE=1 E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
+rid="$(basename "$RUNDIR")"; files="$(git -C "$REPO" ls-tree -r --name-only "loki/$rid" 2>/dev/null | tr '\n' ' ')"
+[ "$(outcome)" = "VERIFIED" ] && ok "attempts (new files): attempt 2 wins when every attempt creates new files: VERIFIED" || { bad "attempts (new files): outcome '$(outcome)'"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+case " $files " in *" new_2.ts "*) case " $files " in *" shared_new.ts "*) ok "attempts (new files): the winner's own new file and the file every attempt created are committed" ;; *) bad "attempts (new files): shared_new.ts missing: $files" ;; esac ;; *) bad "attempts (new files): new_2.ts missing: $files" ;; esac
+case " $files " in *" new_0.ts "*|*" new_1.ts "*|*" new_3.ts "*) bad "attempts (new files): a losing attempt's new file leaked into the winner's tree: $files" ;; *) ok "attempts (new files): no losing attempt's new file is in the winner's tree" ;; esac
+E2E_STUB_WEAKEN=1 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
+case "$(att_ev)" in winner=x1*) bad "attempts (bun test): an attempt that deleted the failing assertion won ($(att_ev))" ;; *) [ "$(outcome)" != "VERIFIED" ] && ok "attempts (bun test): an attempt that loosens an existing test never wins by passing it ($(att_ev), $(outcome))" || bad "attempts (bun test): a weakened test reached VERIFIED" ;; esac
+E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=0 run_engine attempts
+[ "$(att_ev)" = none ] && [ "$(outcome)" = "STALLED" ] && ok "attempts: LOKI_E10_ATTEMPTS=0 turns it off (no extra session; the fix rounds' stall stands)" || bad "attempts: LOKI_E10_ATTEMPTS=0 gave '$(att_ev)' / '$(outcome)'"
+E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku run_engine attempts
+[ "$(att_ev)" = none ] && ok "attempts: opt-in, so unset starts none even on Haiku" || bad "attempts: an unset LOKI_E10_ATTEMPTS started attempts ('$(att_ev)')"
+E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=on run_engine attempts
+[ "$(att_ev)" = "winner=x2 k=2 early=True launched=2" ] && ok "attempts: LOKI_E10_ATTEMPTS=on is k=2 ($(att_ev))" || bad "attempts: =on gave '$(att_ev)'"
+E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_E10_ATTEMPTS=2 run_engine attempts
+[ "$(att_ev)" = "winner=x2 k=2 early=True launched=2" ] && [ "$(outcome)" = "VERIFIED" ] && ok "attempts: LOKI_E10_ATTEMPTS=2 sets k=2 on any model ($(att_ev))" || bad "attempts: LOKI_E10_ATTEMPTS=2 gave '$(att_ev)' / '$(outcome)'"
+LOKI_SESSION_MODEL=haiku run_engine done
+[ "$(att_ev)" = none ] && [ "$(outcome)" = "VERIFIED" ] && ok "attempts: a first attempt that is green starts no extra session" || bad "attempts: a green first attempt gave '$(att_ev)' / '$(outcome)'"
+
+if python3 -m pytest --version >/dev/null 2>&1; then
+    PY_MODE=attempts E2E_STUB_RIGHT=1 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 py_engine calc.py
+    [ "$(outcome)" = "VERIFIED" ] && ok "attempts (pytest): attempt 1 is right after a wrong first attempt: VERIFIED" || { bad "attempts (pytest): outcome '$(outcome)'"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+    rid="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_id"])' "$REPO/.loki/engine.json" 2>/dev/null)"
+    git -C "$REPO" show "loki/$rid:calc.py" 2>/dev/null | grep -A1 'def multiply' | grep -q 'a \* b' && ok "attempts (pytest): the committed multiply() is the right one" || bad "attempts (pytest): the committed calc.py holds the wrong multiply()"
+    PY_MODE=attempts E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 py_engine calc.py
+    [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "attempts (pytest): every attempt wrong: not VERIFIED ($(outcome))" || bad "attempts (pytest): all wrong gave '$(outcome)'"
+elif [ "${CI:-}" = "true" ]; then
+    bad "attempts: pytest is not installed on the CI runner"
+else
+    echo "SKIP: attempts pytest legs (pytest not installed)"
+fi
+
+# real vitest in a temp fixture (skips cleanly offline; LOKI_STACKS_REQUIRE=1 makes a missing install a failure)
+vt_attempts() { # vt_attempts <right: 2|none> -> REPO, RUNDIR, OUT
+    local d="$T/vt-att-$1"; REPO="$d/repo"; mkdir -p "$REPO"
+    printf '{"name":"vt","private":true,"type":"module"}\n' > "$REPO/package.json"
+    printf 'export function add(a: number, b: number): number {\n  return a + b;\n}\n' > "$REPO/calc.ts"
+    printf 'import { expect, test } from "vitest";\nimport * as calc from "./calc";\n\ntest("add", () => {\n  expect(calc.add(2, 3)).toBe(5);\n});\n\ntest("multiply", () => {\n  const m = (calc as unknown as { multiply?: (a: number, b: number) => number }).multiply;\n  if (m) expect(m(3, 4)).toBe(12);\n});\n' > "$REPO/calc.test.ts"
+    printf 'node_modules\n' > "$REPO/.gitignore"
+    git -C "$REPO" init -q -b main; git -C "$REPO" config user.name e2e; git -C "$REPO" config user.email e2e@example.invalid
+    git -C "$REPO" add -A .; git -C "$REPO" commit -q -m base
+    cp -R "$VTNM" "$REPO/node_modules"
+    OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY \
+        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" E2E_STUB_MODE=attempts E2E_STUB_RIGHT="$1" E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 \
+        LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "add a multiply(a, b) function to calc.ts" --no-pr 2>&1)"
+    local rid; rid="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_id"])' "$REPO/.loki/engine.json" 2>/dev/null)"; RUNDIR="$REPO/.loki/runs/$rid"
+    [ -n "$rid" ] && git -C "$REPO" rev-parse -q --verify "refs/heads/loki/$rid" >/dev/null && git -C "$REPO" checkout -q "loki/$rid"
+}
+VTDIR="$T/vt-install"; mkdir -p "$VTDIR"; printf '{"private":true}\n' > "$VTDIR/package.json"; VTNM="$VTDIR/node_modules"
+if (cd "$VTDIR" && ${TO[@]+"${TO[@]}"} npm install vitest@2 --no-audit --no-fund --silent >/dev/null 2>&1) && [ -x "$VTNM/.bin/vitest" ]; then
+    vt_attempts 2
+    [ "$(outcome)" = "VERIFIED" ] && [ "$(att_ev)" = "winner=x2 k=3 early=True launched=3" ] && ok "attempts (real vitest 2): attempt 2 is right after a wrong first attempt: VERIFIED, winner x2" || { bad "attempts (real vitest 2): outcome '$(outcome)', attempts '$(att_ev)'"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+    vt_attempts none
+    [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "attempts (real vitest 2): every attempt wrong: not VERIFIED ($(outcome))" || bad "attempts (real vitest 2): all wrong gave '$(outcome)'"
+elif [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then
+    bad "attempts: vitest@2 could not be installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"
+else
+    echo "SKIP: attempts vitest legs (vitest@2 could not be installed, offline?)"
+fi
+
+# Unit: the k rule and the selection order (checks green, then fail-then-pass proof, then files outside the task, then diff size, the incumbent last).
+U="$(cd "$ROOT/loki-ts" && bun -e '
+const a = await import("./src/features/attempts.ts"), s = await import("./src/e10ext/select.ts"), { FINISH_LINE } = await import("./src/engine10/types.ts");
+const T = (p) => ({ runner: "bun", path: p }), S = [T("a.test.ts"), T("loki_wall_x.test.ts")], wall = [T("loki_wall_x.test.ts")];
+const chk = (n, r) => ({ name: `bun:${n}`, result: r, interpreter: "project" });
+const diff = (n) => "@@ -1,1 +1," + n + " @@\n" + Array.from({ length: n }, (_, i) => `+l${i}`).join("\n") + "\n";
+const cand = (index, a, w, o = {}) => ({ index, killedOrErrored: false, diff: diff(o.lines ?? 2), alreadyDoneEvidence: false, weakensTest: !!o.weak, outsideFiles: o.out ?? 0, checks: [chk("a.test.ts", a), chk("loki_wall_x.test.ts", w)] });
+const pick = (...c) => s.selectAttempt(c, S, wall).index;
+const out = [];
+out.push(`k=${[[undefined, "haiku"], ["on", "haiku"], ["0", "haiku"], ["3", "sonnet"], ["9", "haiku"], ["x", "haiku"], ["-1", "haiku"], ["2.5", "haiku"]].map(([v, m]) => a.attemptsK(m, v === undefined ? {} : { LOKI_E10_ATTEMPTS: v })).join(",")},${a.attemptsK("haiku", { LOKI_E10_ATTEMPTS_EARLY: "1" })},${a.attemptsK("haiku", { LOKI_E10_ATTEMPTS_EARLY: "1", LOKI_E10_ATTEMPTS: "0" })}`);
+out.push(`green_first=${pick(cand(0, "fail", "pass"), cand(1, "pass", "fail"))}`);
+out.push(`proof_second=${pick(cand(0, "pass", "fail"), cand(1, "pass", "pass"))}`);
+out.push(`outside_before_size=${pick(cand(0, "pass", "pass", { out: 2, lines: 2 }), cand(1, "pass", "pass", { out: 0, lines: 9 }))}`);
+out.push(`smallest_diff=${pick(cand(0, "pass", "pass", { lines: 7 }), cand(1, "pass", "pass", { lines: 3 }))}`);
+out.push(`incumbent_last=${pick(cand(1, "pass", "pass"), cand(0, "pass", "pass"))}`);
+out.push(`weak_disqualified=${pick(cand(0, "pass", "pass", { weak: true }), cand(1, "fail", "fail"))}`);
+out.push(`variants=${[1, 2, 3, 4].map((i) => a.variantBrief("BODY\n\n" + FINISH_LINE, i).includes(a.VARIANTS[(i - 1) % 3])).join(",")}`);
+console.log(out.join(" "));
+' 2>&1)"
+[ "$U" = "k=0,2,0,3,5,0,0,0,2,0 green_first=1 proof_second=1 outside_before_size=1 smallest_diff=1 incumbent_last=0 weak_disqualified=1 variants=true,true,true,true" ] \
+    && ok "unit: k rule (unset off, on is 2, 0 off, N sets, cap 5, junk off) and selection order (checks green, proof, outside files, diff size, incumbent last)" || bad "unit (attempts) gave: $U"
+
+# Unit: runAttempts over fake ops: a green incumbent starts nothing, a throwing session is an errored attempt, a scoring error restores the incumbent, a cap abort keeps the incumbent.
+U="$(cd "$ROOT/loki-ts" && bun -e '
+const a = await import("./src/features/attempts.ts");
+const T = (p) => ({ runner: "bun", path: p }), S = [T("a.test.ts")], chk = (r) => [{ name: "bun:a.test.ts", result: r, interpreter: "project" }];
+const ok = { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false };
+const mk = (o) => { const log = []; return { log, ops: { run: async (i) => { log.push(`run${i}`); return o.run ? o.run(i) : ok; }, enter: (i) => { log.push(`enter${i}`); if (o.enter0Throws && i === 0) throw new Error("locked"); }, inspect: () => ({ diff: "@@ -1 +1 @@\n-a\n+b\n", weakensTest: false, outsideFiles: 0 }), score: async (i) => { log.push(`score${i}`); if (o.scoreThrows === i) throw new Error("boom"); return chk(o.result(i)); } } }; };
+const run = async (o, k = 2, sig = new AbortController().signal) => { const m = mk(o), r = await a.runAttempts(m.ops, k, S, [], sig, {}); return `${r.winner}/${r.launched}/${m.log.join(",")}`; };
+const out = [];
+out.push(`green=${await run({ result: () => "pass" })}`);
+out.push(`throws=${await run({ result: (i) => (i === 0 ? "fail" : "fail"), run: () => { throw new Error("spawn failed"); } })}`);
+out.push(`score_error=${await run({ result: (i) => (i === 0 ? "fail" : "pass"), scoreThrows: 1 })}`);
+out.push(`restore_fail=${await run({ result: (i) => (i === 0 ? "fail" : "pass"), scoreThrows: 1, enter0Throws: true }).catch((e) => e.name)}`);
+const ac = new AbortController(); ac.abort();
+out.push(`aborted=${await run({ result: () => "fail" }, 2, ac.signal)}`);
+console.log(out.join(" "));
+' 2>&1)"
+[ "$U" = "green=0/0/score0 throws=0/2/score0,run1,run2 score_error=0/2/score0,run1,run2,enter1,score1,enter0 restore_fail=AttemptsRestoreError aborted=0/0/score0" ] \
+    && ok "unit: attempts over fake ops (green incumbent starts none, a throwing session is errored, a scoring error restores the incumbent, a failed restore is an AttemptsRestoreError, an aborted run starts none)" || bad "unit (attempts ops) gave: $U"
 
 finish

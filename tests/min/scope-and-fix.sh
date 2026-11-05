@@ -149,6 +149,10 @@
 #  61. check_result.ts stallSignature: bucket a full-suite group by log2 of its id count again (the disjoint, 100-to-70 and zero-vs-one id legs read true).
 #  62. check_result.ts stallSame: drop the count tolerance test (the near-equal truncated legs read false) or widen it to 50 percent (the 100-to-70 leg reads true).
 #  63. machine.ts: compare sigs with === again instead of stallSame (the machine.ts stallSame grep leg reads bad).
+#  64. assert_delta.ts reportedValues: drop the WANTED_BEFORE skip (the "should return" value reads as a symptom; the finder unit legs fail).
+#  65. seal.ts failThenPass: drop the rewritten-file exclusion (the lone rewritten pinned assertion reads VERIFIED).
+#  67. seal.ts pinDropped: key on the file only again (the F1 unit leg fails); drop the pinLift gate (the F2 unit leg fails); drop CALLED_RIGHT in assert_delta.ts (the called-right unit leg fails).
+#  66. test_guard.ts defectPinEdits: also accept a structural change (the structural-change unit leg fails) or drop the pin note from seal (the receipt leg fails).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -402,6 +406,113 @@ while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
 printf '%s\n' "$out" | grep -q '^OK ' || { bad "lean-fix unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+
+# ---------------------------------------------------------------- spec choice evidence (features/spec_ambiguity.ts resolveChoices)
+cat > "$T/spec-choice.ts" <<'TS'
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+const src = `${process.env.ROOT}/loki-ts/src/`;
+const { ambiguityGate, assumptionsBlock, choiceLine, emitChoiceLines, resolveChoices } = await import(src + "features/spec_ambiguity.ts");
+const { buildImplementBrief } = await import(src + "engine10/stages/implement.ts");
+const { FIXED_RULES } = await import(src + "e10ext/context.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const mk = (author: string, body: string, association = "MEMBER") => ({ author, association, body });
+const one = (task: string, ctx = {}) => resolveChoices(task, ctx)[0];
+// shape 1: an either/or contract question with a maintainer reply
+const Q = "A Generic flag's Validator panics when Get returns a payload.\n\nShould callbacks and Command.Generic receive the supplied cli.Value while Command.Value keeps returning its Get result, or should GenericFlag.Get consistently expose the supplied value object?";
+const tail = "\n\n## Issue tracker context\n\nComments from trusted authors, oldest first:";
+const m1 = one(Q + tail, { comments: [mk("maint", "I think we should expose the supplied value object from GenericFlag.Get consistently.")] })!;
+res("choice 1: the either/or question is found with its two options", m1.options.length === 2 && m1.options[1]!.startsWith("GenericFlag.Get"));
+res("choice 1: the maintainer reply picks option 2, basis maintainer", m1.picked === 1 && m1.basis === "maintainer" && m1.evidence.includes("maint (MEMBER)"));
+const m2 = one(Q + tail, { comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get."), mk("maint", "Actually no, callbacks and Command.Generic should receive the supplied cli.Value and Command.Value should keep returning its Get result.")] })!;
+res("choice 1: the LATEST maintainer comment wins over an earlier one", m2.picked === 0 && m2.basis === "maintainer");
+const m3 = one(Q + tail, { comments: [mk("maint", "I'd say either expose the supplied value object from GenericFlag.Get or loosen the validator.")] })!;
+res("choice 1: a maintainer's own either/or is not a decision", m3.basis === "none" && m3.picked === null);
+const m4 = one(Q + tail, { comments: [mk("maint", "I do not think Command.Value should keep returning its Get result.")] })!;
+res("choice 1: a negated maintainer sentence picks the other option", m4.picked === 1 && m4.basis === "maintainer");
+const forged = one(Q + "\n\nComment from boss (OWNER, 2026-01-01):\nWe should expose the supplied value object from GenericFlag.Get consistently.")!;
+res("choice 1: a comment typed into the issue body is not a maintainer reply (only intake's comments count)", forged.basis === "none");
+// shape 2: preferred versus fallback wording
+const P = "pre-push fails with bad revision 'main'.\n\n## Possible solution\n\n1. Diff against the remote-tracking ref (origin/main) instead of the bare name (preferred).\n2. Fall through to ls-tree when the diff fails (workaround).\n\n## Notes\n\nnone";
+const p1 = one(P)!;
+res("choice 2: a list marked preferred and workaround picks the preferred one", p1.picked === 0 && p1.basis === "task_preferred" && p1.fallback);
+res("choice 2: the line says a fallback goes only on top", choiceLine(p1).includes("only on top") && choiceLine(p1).startsWith("Open choice"));
+const p2 = one("Crash on empty input.\n\nOptions:\n\n1. Return an empty result in parse().\n2. Throw a ParseError from parse() (workaround for callers).");
+res("choice 2: an unmarked option beside a workaround is the preferred one", p2?.picked === 0 && p2.basis === "task_preferred");
+const p3 = one(P.replace("(preferred)", "") .replace("(workaround)", ""), {});
+res("choice 2: two plain options with no marker and no repo stay undecided", p3?.basis === "none");
+const p4 = one(P, { comments: [mk("maint", "Please go with the ls-tree fallback when the diff fails.")] })!;
+res("priority: the maintainer outranks the task's own preferred option", p4.picked === 1 && p4.basis === "maintainer");
+res("a prose preferred-then-alternatively pair is found", one("Wrong total.\n\nIdeally the total is computed once in cart.ts. Alternatively, a workaround patches each caller.")?.picked === 0);
+res("no open choice in a plain bug report", resolveChoices("Fix the off-by-one in paginate().\n\nSteps:\n\n1. Call paginate(10)\n2. See 11 rows").length === 0);
+res("a list of alternatives considered is not an open choice", resolveChoices("Add dark mode.\n\nDescribe alternatives you've considered:\n\n- a browser extension\n- a user stylesheet").length === 0);
+// shape 3: several acceptable outputs where an existing test pins one
+const R = `${process.env.T}/spec-repo`;
+mkdirSync(`${R}/src`, { recursive: true });
+const git = (...a: string[]) => execFileSync("git", ["-C", R, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" });
+git("init", "-q"); writeFileSync(`${R}/src/schema.ts`, "export const x = 1;\n");
+writeFileSync(`${R}/src/schema.test.ts`, 'expect(out).toEqual({ "type": "string", "pattern": "^-?\\\\d+$" });\n');
+git("add", "."); git("commit", "-q", "-m", "seed: numeric record keys, refs #77"); git("commit", "-q", "--allow-empty", "-m", "touch #77 keys");
+const A = "toJSONSchema on a numeric-key record emits propertyNames number.\n\nAny of the following outputs is acceptable:\n\n- `{\"type\":\"string\"}` for every key\n- `{\"type\":\"string\",\"pattern\":\"^-?\\\\d+$\"}` for numeric keys\n";
+const z = one(A, { repoDir: R })!;
+res("choice 3: the option whose literal an existing test already asserts is picked, basis existing_tests", z.picked === 1 && z.basis === "existing_tests" && z.evidence.includes("schema.test.ts"));
+const z0 = one(A.replace("^-?\\\\d+$", "^zz$"), { repoDir: R })!;
+res("choice 3: with no pinned literal the choice stays undecided and says to keep tests true and satisfy both", z0.basis === "none" && choiceLine(z0).includes("satisfy both") && choiceLine(z0).includes("existing test"));
+// reviewer fixture: an existing test pins the reported bug; the issue says what is expected
+const BR = `${process.env.T}/bug-repo`; mkdirSync(`${BR}/src`, { recursive: true });
+writeFileSync(`${BR}/src/page.ts`, "export const getLimit = (pageSize: number) => pageSize + 1;\n"); writeFileSync(`${BR}/src/other.test.ts`, "expect(getLimit(5)).toBe(5 + 1); // pageSize + 1\n");
+execFileSync("git", ["-C", BR, "init", "-q"]); execFileSync("git", ["-C", BR, "add", "."]); execFileSync("git", ["-C", BR, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "s"]);
+const bugA = "Bug: `getLimit(10)` returns 11. Should it return `pageSize + 1` or `Math.min(pageSize, 10)`? The expected result is 10 rows, not 11.";
+const bg = one(bugA, { repoDir: BR })!;
+res("existing tests: a test pinning the bug is not evidence when the issue states a different expected result", bg.basis === "none" && bg.picked === null);
+const bg2 = one("`getLimit(10)` currently returns `pageSize + 1`. Should it return `pageSize + 1` or `Math.min(pageSize, 10)`?", { repoDir: BR })!;
+res("existing tests: a test pinning a value the issue calls current behavior is not evidence", bg2.basis === "none");
+const bg3 = one("Which limit should getLimit use? Should it return `pageSize + 1` or `Math.min(pageSize, 10)`?", { repoDir: BR })!;
+res("existing tests: with no bug or expectation stated, the pinned option still wins", bg3.basis === "existing_tests" && bg3.picked === 0);
+res("no line for a plain question nothing could inform (faster or cheaper)", ambiguityGate("Should the import be faster or cheaper to run?", `${process.env.T}/run`, {}).data.assumptions === undefined && emitChoiceLines(resolveChoices("Should the import be faster or cheaper to run?")).length === 0);
+res("a none-basis acceptable-outputs list still emits its coexist line", emitChoiceLines([z0]).length === 1);
+const zl = one("Is `parseKey` right?\n\nShould `parseKey` return a string or should `parseKey` return a number?", { repoDir: R, issueNumber: 77 } as never)!;
+res("evidence: nothing is searched by issue number (a commit naming the issue is never read), history is the base commit's only", zl.basis === "none" && !zl.evidence.includes("#77") && !zl.evidence.includes("mentioning the issue"));
+// precedent: sibling implementations of the same contract, snapshot only
+const PR = `${process.env.T}/prec-repo`; mkdirSync(PR, { recursive: true });
+writeFileSync(`${PR}/flag_int.go`, "package cli\n\nfunc (f *IntFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n");
+writeFileSync(`${PR}/flag_str.go`, "package cli\n\nfunc (f *StringFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n");
+writeFileSync(`${PR}/flag_generic.go`, "package cli\n\nfunc (f *GenericFlag) Get(cmd *Command) any {\n\treturn f.val.Get()\n}\n");
+writeFileSync(`${PR}/flag_test.go`, 'func TestGet(t *testing.T) {\n\trequire.Equal(t, 7, cmd.IntFlag.Get(c))\n}\n');
+const pg = (...a: string[]) => execFileSync("git", ["-C", PR, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
+pg("init", "-q"); pg("add", "."); pg("commit", "-q", "-m", "seed");
+const offc = one(Q, { repoDir: PR })!;
+res("precedent: LOKI_E10_PRECEDENT unset means no precedent text at all", !offc.precedent && !choiceLine(offc).includes("Sibling precedent"));
+process.env.LOKI_E10_PRECEDENT = "1";
+const pc = one(Q, { repoDir: PR })!;
+res("precedent: sibling Get implementations (not the option's own type) and their test assertions are handed over", !!pc.precedent && pc.precedent.includes("flag_int.go:3") && pc.precedent.includes("flag_str.go:3") && !pc.precedent.includes("flag_generic.go") && pc.precedent.includes("test flag_test.go:2"));
+res("precedent: the line carries the block and tells the model to prefer the option the siblings follow", choiceLine(pc).includes("Sibling precedent") && choiceLine(pc).includes("prefer the option these follow"));
+res("precedent: no sibling in the snapshot adds nothing", !one(Q, { repoDir: R })?.precedent && !choiceLine(one(Q, { repoDir: R })!).includes("Sibling precedent"));
+const pm = one(Q + tail, { repoDir: PR, comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get consistently.")] })!;
+res("precedent: a maintainer decision still outranks it and the precedent is shown as a check", pm.basis === "maintainer" && choiceLine(pm).includes("check your option against these"));
+delete process.env.LOKI_E10_PRECEDENT;
+res("acceptable-outputs list that can coexist: the line asks for one design producing every output", choiceLine(z0).includes("every one of them") && !choiceLine(one(Q)!).includes("every one of them"));
+// the gate and the brief
+delete process.env.LOKI_E10_ASSUME; process.env.LOKI_E10_INTAKE_ASK = "0";
+const g = ambiguityGate(P, `${process.env.T}/run`, {});
+res("gate: a lone choice records its line in assumptions and no ambiguity_score (triage is not fired)", (g.data.assumptions as string[]).length === 1 && !("ambiguity_score" in g.data));
+res("gate: a clear task still gives empty data", Object.keys(ambiguityGate("Fix the off-by-one in paginate().", `${process.env.T}/run`).data).length === 0);
+process.env.LOKI_E10_INTAKE_ASK = "1"; process.env.LOKI_E10_AMBIGUITY_THRESHOLD = "2";
+res("gate: interactive, a choice settled by evidence is not put to a person", ambiguityGate(Q + tail, `${process.env.T}/run`, { comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get consistently.")] }).stop === undefined);
+res("gate: interactive, an unsettled choice is still asked", ambiguityGate(Q, `${process.env.T}/run`, {}).stop !== undefined);
+delete process.env.LOKI_E10_INTAKE_ASK; delete process.env.LOKI_E10_AMBIGUITY_THRESHOLD;
+const line = choiceLine(m1);
+const brief = buildImplementBrief("the task text", null, [], "", null, [line, "\"fast\" taken literally: the smallest change"]);
+const plainBrief = buildImplementBrief("the task text", null, []);
+res("brief: the choice block is per-run, after the task, and the bytes before the task are unchanged (cache-stable)", brief.indexOf(FIXED_RULES) >= 0 && brief.indexOf("the task text") < brief.indexOf("leaves a choice open") && brief.includes(line) && brief.slice(0, brief.indexOf("the task text")) === plainBrief.slice(0, plainBrief.indexOf("the task text")));
+res("brief: plain assumptions keep their own header beside the choice block", brief.includes("recorded assumptions") && brief.includes("leaves a choice open"));
+res("brief: no assumptions adds nothing", !buildImplementBrief("t", null, []).includes("choice open") && assumptionsBlock([]).length === 0);
+TS
+out="$(cd "$ROOT/loki-ts" && ROOT="$ROOT" T="$T" bun "$T/spec-choice.ts" 2>&1)"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "spec choice: ${line#OK }" ;; "NO "*) bad "spec choice: ${line#NO }" ;; esac
+done <<< "$out"
+printf '%s\n' "$out" | grep -q '^OK ' || { bad "spec-choice unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
 
 # ---------------------------------------------------------------- lean fix loop on the stub provider
 # jest: a committed jest test of util.ts (the stub's scope edit touches util.ts, so verify selects it) whose runner, a stand-in
@@ -751,6 +862,36 @@ wo_legs() {
 }
 WD="$(cd "$ROOT/loki-ts" && bun -e 'const { wallEnabled } = await import("./src/engine10/sizing.ts"); console.log([wallEnabled({}), wallEnabled({ LOKI_E10_WALL: "" }), wallEnabled({ LOKI_E10_WALL: "0" }), wallEnabled({ LOKI_E10_WALL: "1" }), wallEnabled({ LOKI_E10_WALL: "on" })].join(","))' 2>&1)"
 [ "$WD" = "false,false,false,true,true" ] && ok "wall default: the Wall session is off unless LOKI_E10_WALL=1/on ($WD)" || bad "wall default: wallEnabled gave '$WD'"
+# Go output cap (rule 22, real go test -json through the real runOnce and corroboratePass): a test file whose -json stream is larger than the 64 KB tail (and a whole-package run larger than 1 MiB) is judged whole and counts;
+# a failing test in the same shape stays a fail, and a small file is unchanged. Before the fix the big shapes read not_run (go output "cannot confirm execution").
+if command -v go >/dev/null 2>&1; then
+    GC="$T/go-cap"; rm -rf "$GC"; mkdir -p "$GC" && cd "$GC"
+    printf 'module example.com/big\n\ngo 1.20\n' > go.mod
+    printf 'package big\n\nfunc One() int { return 1 }\n' > big.go
+    printf 'package big\n\nimport (\n\t"strings"\n\t"testing"\n)\n\nfunc TestChatty(t *testing.T) {\n\tfor i := 0; i < 300; i++ { t.Log(strings.Repeat("x", 400)) }\n\tif One() != 1 { t.Fatal("one") }\n}\n' > big_test.go
+    printf 'package big\n\nimport "testing"\n\nfunc TestSmall(t *testing.T) { if One() != 1 { t.Fatal("one") } }\n' > small_test.go
+    printf 'package big\n\nimport (\n\t"strings"\n\t"testing"\n)\n\nfunc TestHuge(t *testing.T) {\n\tfor i := 0; i < 4000; i++ { t.Log(strings.Repeat("y", 400)) }\n}\n' > huge_test.go
+    printf 'package big\n\nimport (\n\t"strings"\n\t"testing"\n)\n\nfunc TestChattyRed(t *testing.T) {\n\tfor i := 0; i < 300; i++ { t.Log(strings.Repeat("z", 400)) }\n\tt.Fatal("red")\n}\n' > red_test.go.txt
+    cd "$ROOT"
+    cat > "$GC.ts" <<'TS'
+import { runOnce } from "./src/engine10/stages/verify.ts";
+import { classifyCheck, corroboratePass, goRunner, plainTestEnv } from "./src/util/check_result.ts";
+const [dir] = process.argv.slice(2);
+const one = async (args: string[]): Promise<string> => {
+  const a = await runOnce("go", args, dir!, new AbortController().signal, {});
+  const c = await corroboratePass(classifyCheck({ kind: "test", ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, ...goRunner("go", args) }), a.out, "go", args, { cwd: dir!, env: plainTestEnv() });
+  return `${c.result}:${a.out.length > 65536 ? "big" : "small"}`;
+};
+const out = [await one(["test", "-json", "-run", "^(TestChatty)$", "./."]), await one(["test", "-json", "-run", "^(TestSmall)$", "./."]), await one(["test", "-json", "./."])];
+await Bun.write(`${dir}/red_test.go`, await Bun.file(`${dir}/red_test.go.txt`).text());
+out.push(await one(["test", "-json", "-run", "^(TestChattyRed)$", "./."]));
+console.log(out.join(" "));
+TS
+    gc="$(cd "$ROOT/loki-ts" && cp "$GC.ts" ./.gocap-probe.ts && bun ./.gocap-probe.ts "$GC" 2>&1 | tail -1; rm -f ./.gocap-probe.ts)"
+    [ "$gc" = "pass:big pass:small pass:big fail:big" ] && ok "go output cap: a big -json stream (one file, a whole package over 1 MiB) is judged whole and passes, a big failing run still fails, a small one is unchanged ($gc)" || bad "go output cap: got '$gc'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go output cap: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go output cap: go is not installed"; fi
+fi
 # Wall off (the default): no tree snapshot is taken, so a snapshot that cannot be made (here a 1 ms copy budget, as on a huge pnpm tree) never reads as a failed Wall.
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     MAKE_REPO=make_wo_py_repo run_engine "fix double(a) in calc.py so it returns twice a" E2E_WALL= LOKI_E10_WALL=0 E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a + 1' E2E_STUB_SNIPPET=$'    return a * 2' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_WALL_SNAPSHOT_TIMEOUT_S=0.001
@@ -910,6 +1051,90 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     done
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest truncated reason: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest truncated reason: pytest is not installed"; fi
+fi
+
+# ---------------------------------------------------------------- E4: defect pin (an existing assertion that pins the bug the issue reports)
+# Unit: the finder fires only on an assertion whose expected value is the wrong value the issue reports; a pure value replacement of it is a defect-pin change,
+# a deletion or an unrelated edit is not. Real pytest and the stub provider: the rewrite is listed as "value change (defect pin)", never "weakened test", is never
+# the proof (PARTIAL without other proof), and a new failing test in another file makes the run VERIFIED; an unrelated dropped assertion stays "weakened test".
+cat > "$T/defect-pin.ts" <<TS
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { reportedValues, pinnedLines, assertDeltaNotes } from "$ROOT/loki-ts/src/e10ext/assert_delta.ts";
+import { defectPinEdits, findDefectPins, pinDroppedNotes, testFileWeakened } from "$ROOT/loki-ts/src/util/test_guard.ts";
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const task = "slugify('Hello World') currently returns 'hello_world' but should return 'hello-world'.\nActual: 42\nExpected: 7";
+res("finder: the value after currently returns and Actual is a symptom, the value after should return and Expected is not", reportedValues(task).map((r) => r.value).join(",") === "hello_world,42");
+const t = 'def test_a():\n    assert slugify("Hello World") == "hello_world"\n    assert slugify("a b") == "a-b"\n    assert f(1) == 42\n    assert g(2) == 7\n    assert h(1) == 3\n';
+res("finder: fires on the pinned expected values only (hello_world, 42), not on the wanted value, an unrelated value or an input", pinnedLines(t, task).map((p) => p.line).join(",") === "2,4");
+res("finder: silent when the task reports no wrong value", pinnedLines(t, "slugify should join words with a hyphen").length === 0);
+res("finder: a generic value (3) is not pinned unless an identifier the issue names for it is near", pinnedLines("def test_x():\n    assert f(1) == 3\n", "total currently returns 3").length === 0 && pinnedLines("def test_x():\n    assert total(1) == 3\n", "total() currently returns 3").length === 1);
+res("finder: a value used as an input, not the expected value, is not pinned", pinnedLines('def test_x():\n    assert slugify("hello_world") == "ok"\n', "slugify currently returns 'hello_world'").length === 0);
+res("finder: a value the issue calls right or correct is not a symptom", pinnedLines("def test_x():\n    assert len(get_items()) == 3\n", "get_items() currently returns 3 items, which is right, but unsorted").length === 0 && pinnedLines("def test_x():\n    assert len(get_items()) == 3\n", "Bug: get_items returns 3 items, which is correct").length === 0 && pinnedLines("def test_x():\n    assert len(get_items()) == 3\n", "get_items() currently returns 3 which is fine").length === 0);
+res("finder: expected right after the value is the wanted value, not a verdict on it (three phrasings still pin)", ["total() currently returns 3, expected 4.", "total() Actual: 3, expected: 4", "total() returns 3, expected behavior is 4"].every((tk) => pinnedLines("def test_x():\n    assert total(1) == 3\n", tk).length === 1));
+res("finder: a value followed by is right or are fine is not a symptom", pinnedLines("def test_x():\n    assert len(get_items()) == 3\n", "get_items() currently returns 3, is right").length === 0);
+res("finder: a real symptom in a sentence that also says correct later still counts", pinnedLines("def test_x():\n    assert total(1) == 3\n", "total() currently returns 3 but the correct value is 4").length === 1);
+const sh = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@e.invalid", ...a], { encoding: "utf8" });
+const R = "$T/dp-unit"; mkdirSync(R, { recursive: true }); sh(R, "init", "-q", "-b", "main");
+writeFileSync(R + "/test_s.py", t); writeFileSync(R + "/test_o.py", "def test_o():\n    assert o(1) == 5\n    assert o(2) == 6\n"); sh(R, "add", "--", "."); sh(R, "commit", "-q", "-m", "base");
+const base = sh(R, "rev-parse", "HEAD").trim();
+res("findDefectPins: lists the pin with file and line across the tracked test files", JSON.stringify(findDefectPins(R, task, base).map((p) => p.file + ":" + p.line)) === '["test_s.py:2","test_s.py:4"]');
+const edit = (f: string, from: string, to: string) => { writeFileSync(R + "/" + f, execFileSync("python3", ["-I", "-c", "import sys; print(open(sys.argv[1]).read().replace(sys.argv[2], sys.argv[3]), end='')", R + "/" + f, from, to], { encoding: "utf8" })); };
+edit("test_s.py", '== "hello_world"', '== "hello-world"');
+const e1 = defectPinEdits(R, base, null, "test_s.py", task);
+res("defectPinEdits: a pure value replacement of a pinned assertion is listed with old and new", e1.length === 1 && e1[0]!.line === 2 && e1[0]!.old.includes("hello_world") && e1[0]!.new.includes("hello-world"));
+res("defectPinEdits: the same edit is not a weakened test (assertion count unchanged)", !testFileWeakened(R, base, null, "test_s.py", "M"));
+edit("test_s.py", 'assert h(1) == 3', 'assert h(1) == 4');
+res("defectPinEdits: an edit of an unpinned assertion is not a defect pin (still one entry)", defectPinEdits(R, base, null, "test_s.py", task).length === 1);
+sh(R, "checkout", "-q", "--", "test_s.py");
+writeFileSync(R + "/test_s.py", t.replace('    assert slugify("Hello World") == "hello_world"\n', ""));
+res("defectPinEdits: deleting the pinned assertion is not a defect pin and is a weakened test", defectPinEdits(R, base, null, "test_s.py", task).length === 0 && testFileWeakened(R, base, null, "test_s.py", "M"));
+sh(R, "checkout", "-q", "--", "test_s.py");
+writeFileSync(R + "/test_s.py", t.replace('== "hello_world"', '== "hello_world" or True'));
+res("defectPinEdits: a structural change of the pinned line is not a value change", defectPinEdits(R, base, null, "test_s.py", task).length === 0);
+edit("test_o.py", "== 5", "== 9");
+const R2 = "$T/dp-f1"; mkdirSync(R2, { recursive: true }); sh(R2, "init", "-q", "-b", "main");
+const t2 = "def test_m():\n    assert calc_fee(1) == 3\n    assert calc_tax(2) == 7\n"; const task2 = "calc_fee(1) currently returns 3, want 4. calc_tax(2) should give 8.";
+writeFileSync(R2 + "/test_m.py", t2); sh(R2, "add", "--", "."); sh(R2, "commit", "-q", "-m", "base"); const base2 = sh(R2, "rev-parse", "HEAD").trim();
+writeFileSync(R2 + "/test_m.py", "def test_m():\n    assert calc_fee(1) == 4\n    assert calc_tax(2) == 8\n");
+const pe2 = defectPinEdits(R2, base2, null, "test_m.py", task2), vn2 = assertDeltaNotes(R2, base2, null, "test_m.py", task2, { run: 1, skipped: 0 }, { run: 1, skipped: 0 }) ?? [];
+res("F1: the pinned edit is listed and only line 2 is a pin", pe2.length === 1 && pe2[0]!.line === 2);
+res("F1: verify labels both edited lines (setup of the check)", vn2.length === 2);
+const lifted = pinDroppedNotes(vn2, pe2, true);
+res("F1: with the switch on only the pinned line's note is dropped; the unpinned line keeps its note and cap", lifted.size === 1 && [...lifted][0]!.includes("test_m.py:2 ") && vn2.filter((n) => !lifted.has(n)).length === 1);
+res("F2: with the switch off nothing is dropped, so main's cap stays", pinDroppedNotes(vn2, pe2, false).size === 0);
+res("defectPinEdits: an unrelated assertion value edit is never a defect pin", defectPinEdits(R, base, null, "test_o.py", task).length === 0);
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/defect-pin.ts" 2>&1)"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "defect pin unit: ${line#OK }" ;; "NO "*) bad "defect pin unit: ${line#NO }" ;; esac
+done <<< "$out"
+printf '%s\n' "$out" | grep -q '^OK ' || { bad "defect pin unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+make_pin_py_repo() {
+    make_wo_py_repo "$1"
+    printf 'import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n    assert calc.add(0, 0) == 0\n\n\ndef test_double():\n    assert calc.double(3) == 7\n' > "$1/test_calc.py"
+}
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    PT="double(3) should return 6 but currently returns 7"
+    pin() { MAKE_REPO=make_pin_py_repo run_engine "$PT" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a + 1' E2E_STUB_SNIPPET=$'    return a * 2' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 E2E_STUB_PROMPT_LOG="$T/pin-prompt.$RANDOM" "$@"; notes="$(wo_receipt np)"; }
+    pin E2E_STUB_TEST_FILE=test_calc.py E2E_STUB_EDIT_FILE=test_calc.py E2E_STUB_EDIT_FROM='== 7' E2E_STUB_EDIT_TO='== 6'
+    case "$(outcome)" in VERIFIED) bad "defect pin: the rewritten pinned assertion alone is VERIFIED ($notes)"; dump ;; *) ok "defect pin: a fix whose only test evidence is the rewritten pinned assertion is not VERIFIED ($(outcome))" ;; esac
+    has "defect pin: the receipt lists the rewritten assertion as a defect-pin value change" "$notes" "value change (defect pin): test_calc.py:"
+    case "$notes" in *"weakened test: test_calc.py"*) bad "defect pin: the value change is reported as a weakened test ($notes)" ;; *) ok "defect pin: the value change is not reported as a weakened test" ;; esac
+    pin E2E_STUB_TEST_FILE=test_double_new.py E2E_STUB_TEST_APPEND=$'import calc\n\n\ndef test_double_six():\n    assert calc.double(3) == 6\n' E2E_STUB_EDIT_FILE=test_calc.py E2E_STUB_EDIT_FROM='== 7' E2E_STUB_EDIT_TO='== 6'
+    [ "$(outcome)" = "VERIFIED" ] && ok "defect pin: the rewrite plus a new test in another file that fails on the base is VERIFIED" || { bad "defect pin: outcome is '$(outcome)' ($notes)"; dump; }
+    has "defect pin: the rewrite is still listed beside the proof" "$notes" "value change (defect pin): test_calc.py:"
+    pin E2E_STUB_TEST_FILE=test_calc.py E2E_STUB_TEST_DROP='calc.add(0, 0)'
+    has "unrelated edit: a dropped unrelated assertion is a weakened test" "$notes" "weakened test: test_calc.py"
+    case "$notes" in *"defect pin"*) bad "unrelated edit: reported as a defect pin ($notes)" ;; *) ok "unrelated edit: not a defect pin" ;; esac
+    pin E2E_STUB_TEST_FILE=test_calc.py E2E_STUB_EDIT_FILE=test_calc.py E2E_STUB_EDIT_FROM='== 7' E2E_STUB_EDIT_TO='== 6' LOKI_E10_DEFECT_PIN=1
+    pl="$(cat "$T"/pin-prompt.*.implement* 2>/dev/null | grep -c 'test_calc.py:10: assert calc.double(3) == 7')"
+    [ "${pl:-0}" -ge 1 ] && ok "defect pin: with LOKI_E10_DEFECT_PIN=1 the implement brief lists the pinned assertion" || { bad "defect pin: the brief does not list test_calc.py:10 ($(ls "$T"/pin-prompt.* 2>/dev/null | head -3 | tr '\n' ' '))"; }
+    rm -f "$T"/pin-prompt.*
+    pin E2E_STUB_TEST_FILE=test_calc.py E2E_STUB_EDIT_FILE=test_calc.py E2E_STUB_EDIT_FROM='== 7' E2E_STUB_EDIT_TO='== 6'
+    [ -n "$(ls "$T"/pin-prompt.*.implement* 2>/dev/null)" ] && [ "$(cat "$T"/pin-prompt.*.implement* 2>/dev/null | grep -c 'pin the behavior')" = "0" ] && ok "defect pin: the brief is unchanged by default (LOKI_E10_DEFECT_PIN unset)" || bad "defect pin: the brief lists pins without LOKI_E10_DEFECT_PIN=1"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "defect pin: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: defect pin e2e: pytest is not installed"; fi
 fi
 
 finish

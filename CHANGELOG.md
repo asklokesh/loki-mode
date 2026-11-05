@@ -5,6 +5,35 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.132.0 (2026-11-05)
+
+Haiku runs get more correct fixes and more honest proof: Loki reads the whole function before editing, counts Go, pytest and pnpm proof it used to drop, and settles open either/or choices from the maintainer.
+
+### Changed
+- On Haiku, the implementer reads the whole function it edits and makes the changed branch match its sibling branches (in a 48-session test on a real issue this raised the correct fix from 2 of 8 to 7 of 8 Haiku sessions), implements the fix the issue prefers with any fallback only on top, and never runs workspace-wide test commands itself.
+- When a repository uses changesets, towncrier, changie, changelog.d or newsfragments, the brief names the convention, its directory and the newest example, and the implementer may add that release-note fragment.
+- When a repository's test script runs over the whole workspace (nx, turbo, lerna, recursive pnpm or yarn), Loki no longer starts a discovery session to name one package's suite; that session never produced a usable answer on such repositories. LOKI_E10_PM_FANOUT_SESSION=1 restores it.
+- When a large issue is split, the planner writes each slice's own checks and "no new failures" instead of "the whole suite passes", because failures already present on the base commit are excused and a red base suite could otherwise stop every slice.
+- Open either/or choices in a task are settled without a model from the latest trusted maintainer comment, the option the issue prefers, or what existing tests pin (deferring to the issue when it calls the pinned value buggy), and the receipt records one line per choice.
+
+### Verdicts
+- A Go test red by assertion on the base and green on the head is accepted as fail-then-pass proof; build failures, panics and already-red tests are not.
+- A truncated pytest summary reason (AssertionEr...) is read from the traceback, so a real assertion proof counts and an ImportError still does not.
+- A pre-existing red full suite is excused in pnpm workspaces: the root package suite spelled (cd . && X) matches the baseline command X, and tsc declaration output and .nx/cache are not read as test configuration.
+- A go test -json stream over about 64 KB (or a whole-package run over 1 MiB) was cut and judged torn, so the check read not_run; both limits are now 16 MiB for go test -json only.
+
+### Fixed
+- A high-risk run on the default model launched its cross-review with the model label instead of a model and lost the review; the review now runs on the default model.
+- A split issue keeps a slice's known partial cost instead of printing NOT RECORDED, and the epic total includes it.
+- A split issue where at least one slice opened a PR and the others stopped on SPEC_CONFLICT (waiting for a human answer) now ends PARTIAL (exit 6) instead of FAILED. A real failed slice, a budget stop, or a split with no PR keeps its previous outcome.
+
+### Added (all off by default)
+- LOKI_E10_COVERAGE_RESUME=1 adds one resumed implement turn on the lean path that maps every site, symbol or case the task names to a change and a test and fixes any gap; about $0.0024 per eligible run on Haiku.
+- LOKI_E10_ATTEMPTS=on runs 2 more independent attempts when a check the change introduced is still red, and keeps the best one.
+- LOKI_E10_ATTEMPTS_EARLY=1 (with attempts on) runs those attempts right after a red first verify on Haiku and skips the fix rounds when one goes green.
+- LOKI_E10_PACK_DIET=1 keeps only the code the task names exactly plus its direct callers and callees in the implement context.
+- LOKI_E10_PRECEDENT=1 adds sibling-implementation precedent to open either/or choices.
+
 ## v11.131.1 (2026-11-05)
 
 `loki outcomes` works again.
