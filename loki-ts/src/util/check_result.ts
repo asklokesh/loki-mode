@@ -943,7 +943,7 @@ export function exercisedViaCallers(unexercised: readonly string[], seed: (name:
     const code = codeOnly(f.src), lines = code.split("\n");
     for (const x of symbolSpans(f.path, f.src)) {
       if (x.container) continue;
-      const name = x.name.split(".").pop()!, called = calledNames(lines.slice(x.start - 1, x.end).join("\n")); // start is 1-based and the declaration line is kept: a one-line body (`func Double(a int) int { return parse(a) }`) calls from that line
+      const name = x.name.split(".").pop()!, called = calledNames(lines.slice(x.start, x.end).join("\n"));
       (byName.get(name) ?? byName.set(name, []).get(name)!).push(called);
       if (seed(name, f.path)) seeds.push(name);
     }
@@ -952,34 +952,19 @@ export function exercisedViaCallers(unexercised: readonly string[], seed: (name:
   for (let n = work.pop(); n !== undefined; n = work.pop()) for (const called of byName.get(n) ?? []) for (const c of called) if (byName.has(c) && !covered.has(c)) { covered.add(c); work.push(c); }
   return unexercised.filter((f) => !covered.has(f));
 }
-/** Fail-then-pass relevance (Go only): the Go test files among `tests` whose ADDED lines call a function of a changed file, or of an untouched direct caller file in the same package, whose
- *  body calls a changed `symbol` (transitively inside those files), the way the new test in cli-2418 reaches the unexported parseFlags through cmd.Run. An allowlist, not a denylist (review
- *  of #541, three rounds: t.Run, a renamed st.Run, an alias x := st, an interface value, Python's dict.get each leaked): a seed is (a) an unqualified call of a function the package's
- *  non-test files declare, never a name the test binds itself, or (b) a method call on a variable the test binds from product construction in its own code (`x := &Name{...}`,
- *  `x := Name{...}`, `x := NewName(...)`, `(&Name{}).M(`, Name declared in the package's non-test files, or `x := helper()` for a test helper of the package declared to return such a type). Every other selector call (testing values, aliases, interfaces, imported
- *  packages) never seeds. Only files in the test's own directory take part. Empty for no symbols and for any non-Go test. */
-export function testsReachingSymbols(symbols: readonly string[], tests: readonly { path: string; src: string; full?: string; helpers?: string }[], changed: readonly { path: string; src: string }[], candidates: readonly { path: string; src: string }[]): string[] {
-  if (symbols.length === 0 || tests.length === 0) return [];
-  return tests.filter((t) => {
-    if (!t.path.endsWith(".go")) return false;
-    const dir = dirname(t.path), here = (f: { path: string }): boolean => dirname(f.path) === dir && f.path.endsWith(".go") && !isTestFile(f.path);
-    const ch = changed.filter(here), files = [...ch, ...callerFiles(ch, candidates.filter(here))];
-    if (files.length === 0) return false;
-    const product = new Set<string>(), all = [...ch, ...candidates.filter(here)];
-    for (const f of all) { for (const x of symbolSpans(f.path, f.src)) product.add(x.name.split(".").pop()!); for (const m of codeOnly(f.src).matchAll(/^type\s+(\w+)/gm)) product.add(m[1]!); }
-    const code = codeOnly(t.src), full = codeOnly(`${t.full ?? ""}\n${t.src}`);
-    const bound = new Set([...full.matchAll(/\b(\w+)(?:\s*,\s*\w+)*\s*:?=(?!=)/g)].map((m) => m[1]!).concat([...full.matchAll(/\bvar\s+(\w+)/g)].map((m) => m[1]!)).concat([...full.matchAll(/[(,]\s*(\w+)\s+\*?[\w.]+(?:\[[^\]]*\])?\s*(?=[,)])/g)].map((m) => m[1]!)));
-    const makers = new Set(product); // plus a test helper of the package that returns a product type (`func buildMinimalTestCommand() *Command`)
-    for (const m of codeOnly(`${t.full ?? ""}\n${t.helpers ?? ""}`).matchAll(/^func\s+(\w+)\s*\([^)]*\)\s*\(?\s*\*?(\w+)\s*[,){]/gm)) if (product.has(m[2]!)) makers.add(m[1]!);
-    const made = new Set<string>();
-    for (const m of code.matchAll(/\b(\w+)\s*:?=(?!=)\s*&?(\w+)\s*[{(]/g)) if (makers.has(m[2]!)) made.add(m[1]!); // a product type literal, a product function's result or a helper returning a product type
-    for (const m of code.matchAll(/\b(\w+)\s*:?=(?!=)[^\n]*/g)) if (made.has(m[1]!) && !(new RegExp(`\\b${m[1]}\\s*:?=\\s*&?(\\w+)\\s*[{(]`).exec(m[0]) && makers.has(new RegExp(`\\b${m[1]}\\s*:?=\\s*&?(\\w+)`).exec(m[0])![1]!))) made.delete(m[1]!); // rebound to anything else later in the test: not product any more
-    const seeds = new Set<string>();
-    for (const m of code.matchAll(/(?<![\w$.)\]])(\w+)\s*\(/g)) if (product.has(m[1]!) && !bound.has(m[1]!)) seeds.add(m[1]!);
-    for (const m of code.matchAll(/(?<![\w$.])(\w+)\.(\w+)\s*\(/g)) if (made.has(m[1]!)) seeds.add(m[2]!);
-    for (const m of code.matchAll(/\(\s*&?(\w+)\s*\{[^{}]*\}\s*\)\.(\w+)\s*\(/g)) if (product.has(m[1]!)) seeds.add(m[2]!);
-    return seeds.size > 0 && exercisedViaCallers(symbols, (name) => seeds.has(name), files).length < symbols.length;
-  }).map((t) => t.path);
+/** Measured fail-then-pass relevance: true when a Go cover profile (go test -coverprofile, any mode) of a test run alone shows an executed block (count > 0) overlapping a changed line.
+ *  `changed` maps each changed file's name as the profile writes it (import path + "/" + file name) to its changed line ranges on the head. Exact, with no name resolution. */
+export function goCoveredChange(profile: string, changed: ReadonlyMap<string, readonly [number, number][]>): boolean {
+  for (const l of profile.split("\n")) {
+    const m = /^(.+):(\d+)\.\d+,(\d+)\.\d+ \d+ (\d+)$/.exec(l.trim()); if (!m || m[4] === "0") continue;
+    const ranges = changed.get(m[1]!), s0 = +m[2]!, e0 = +m[3]!;
+    if (ranges?.some(([s1, e1]) => s0 <= e1 && s1 <= e0)) return true;
+  }
+  return false;
+}
+/** Head line ranges a `git diff -U0` changes, per hunk: the added lines, or the line a pure deletion sits at. */
+export function changedRanges(diffU0: string): [number, number][] {
+  return [...diffU0.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)].map((m) => { const s0 = +m[1]!, n = m[2] === undefined ? 1 : +m[2]; return [Math.max(1, s0), Math.max(1, s0) + Math.max(n, 1) - 1] as [number, number]; });
 }
 /** TEN-GATES-14: per-gate legibility for `loki verify --explain`. exogenous/independent evidence is exogenous; agent_authored and llm_judge are agent-influenced; absent or unknown provenance is unrecorded, never exogenous. */
 export interface ExplainGate { name: string; class: "exogenous" | "agent-influenced" | "unrecorded"; provenance: string | null; result: string; n: number | null; evidence: string }

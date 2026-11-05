@@ -2,7 +2,7 @@
 // `cryptography`). The key is the A-120 local key, created on first use. An empty token means UNSIGNED, never presented as attested.
 import { sanitizeReason } from "../../util/redact.ts";
 import { specReceiptBlock } from "../../util/spec_file.ts"; import { triageReceiptBlock } from "../../features/triage.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock, sealAccuracyBlock } from "../../util/run_outputs.ts"; import { contextCoverageBlock } from "../../util/context_pack.ts";
-import { createHash } from "node:crypto"; import { execFileSync } from "node:child_process"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
+import { createHash } from "node:crypto"; import { execFileSync, spawnSync } from "node:child_process"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
 import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutation_proof.ts";
@@ -22,7 +22,7 @@ import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
-import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, identifierSet, moduleToken, isExecutedProof, CODE_FILE_EXT, testsReachingSymbols, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
+import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, identifierSet, moduleToken, isExecutedProof, CODE_FILE_EXT, goCoveredChange, changedRanges, plainTestEnv, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
@@ -60,7 +60,7 @@ async function failThenPass(ctx: RunContext, vraw: Obj[], pctx: ProvenanceCtx, h
   const symbols = cs.all.filter((s) => cs.onBase.has(s) || new RegExp(`(?<![\\w$])${s.replace(/[$]/g, "\\$")}(?![\\w$])`).test(task)); // a symbol the base already has (a modified one), or one the task itself asks to add: a test that only names a function the change invented proves nothing about the change
   const read = (p: string): string => { try { return execFileSync("git", ["-C", ctx.repoDir, "show", `${head}:${p}`], { encoding: "utf8", maxBuffer: 16 << 20, timeout: 20_000 }); } catch { return ""; } };
   const red = mp.outcome === "yes" ? mp.failed ?? [] : [], added = new Map(await Promise.all(red.map(async (f) => [f, await addedLines(ctx, head, f)] as const))), named = red.filter((f) => symbolGap(symbols, [added.get(f)!]).length === 0); // an assertion failure on base, in a file whose ADDED lines name a symbol this change declares or modifies (an older test in the same file naming it proves nothing: the base version of an edited file is green on the base)
-  const reach = named.length < red.length && symbols.length > 0 ? testsReachingSymbols(symbols, await Promise.all(red.filter((f) => !named.includes(f)).map(async (path) => ({ path, src: added.get(path)!, full: read(path), helpers: await sameDirTests(ctx, head, path) }))), cs.code.map((path) => ({ path, src: read(path) })), await callerCandidates(ctx, head, new Set(cs.code))) : []; // or one whose ADDED lines reach such a symbol through a caller (a Go test calls cmd.Run, which calls the changed unexported parseFlags); only the added lines, since the base version of an edited file is green on the base (baseMustPass), so its red tests are the change's own and an untouched test in the same file never seeds
+  const reach = named.length < red.length && symbols.length > 0 ? await goCoverageRelevant(ctx, head, red.filter((f) => !named.includes(f)), mp.failedTests ?? {}, cs.code) : []; // or, measured: a Go test that failed on the base, run alone on the head with coverage, executes a changed line (a test calls cmd.Run, which runs the changed unexported parseFlags)
   const failed = red.filter((f) => named.includes(f) || reach.includes(f));
   return { ok: failed.some((f) => !rewritten.has(f)), line: failed.length > 0 ? `${mp.line} (${failed.join(", ")})` : mp.line, files: failed }; // E4: a test file whose pinned assertion was rewritten fails on the base, which shows the pin was real, but it is never the proof itself
 }
@@ -70,21 +70,39 @@ export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these
  *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file), Tests the implementer wrote or edited never clear it. Off by default; LOKI_E10_PUBLIC_GAP=1 turns it on.
  *  Both are [] for an external run (its own rule) and an already-satisfied claim. */
 const CALLER_SCAN = 3000, CALLER_MAX_BYTES = 200_000;
-/** The other test files in `path`'s directory at the head (their helpers construct product values), concatenated; "" when none or unreadable. */
-async function sameDirTests(ctx: RunContext, head: string, path: string): Promise<string> {
-  const d = dirname(path), ls = await safeGitRun(ctx.repoDir, ["ls-tree", "-z", "--name-only", `${head}:${d === "." ? "" : d}`], { timeoutMs: 20000 }); if (ls.exitCode !== 0) return "";
-  return ls.stdout.split("\0").filter((n) => n && isTestFile(n) && join(d, n) !== path).slice(0, 200).map((n) => { try { return readFileSync(join(ctx.repoDir, d, n), "utf8"); } catch { return ""; } }).join("\n");
+/** Measured relevance (review of #541 replaced name resolution): the red Go test files of which some test that failed on the base, run ALONE on the head with
+ *  `go test -count=1 -run ^(Name)$ -coverprofile -coverpkg=<changed packages>`, passes and executes a block overlapping a changed line of a changed Go file
+ *  (goCoveredChange). Exact and model-free: an alias, an interface or a same-name method cannot fake an executed line. Go only; no go toolchain, no go.mod,
+ *  no failing test id or no profile means no lift. */
+const COVER_BUDGET_MS = 40_000;
+async function goCoverageRelevant(ctx: RunContext, head: string, files: string[], failedTests: Record<string, string[]>, code: string[]): Promise<string[]> {
+  const deadline = Date.now() + COVER_BUDGET_MS, out: string[] = [], modOf = (f: string): string | null => { for (let d = dirname(f); ; d = dirname(d)) { if (existsSync(join(ctx.repoDir, d, "go.mod"))) return d; if (d === "." || d === "/" || d === "") return null; } };
+  for (const f of files.filter((x) => x.endsWith("_test.go"))) {
+    const names = [...new Set((failedTests[f] ?? []).map((id) => id.slice(id.lastIndexOf("::") + 2)).filter((n) => /^Test\w*$/.test(n)))], mod = modOf(f);
+    if (names.length === 0 || mod === null) continue;
+    const modPath = /^module\s+(\S+)/m.exec(readFileSync(join(ctx.repoDir, mod, "go.mod"), "utf8"))?.[1]; if (!modPath) continue;
+    const rel = (p: string): string => relative(join(ctx.repoDir, mod), join(ctx.repoDir, p)).split("\\").join("/"), pkgArg = (p: string): string => { const d = rel(dirname(p)); return d === "" ? "." : `./${d}`; };
+    const changed = new Map<string, [number, number][]>(), pkgs = new Set<string>();
+    for (const c of code.filter((x) => x.endsWith(".go") && !isTestFile(x) && modOf(x) === mod)) {
+      const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", c], { timeoutMs: 20000 }); if (d.exitCode !== 0) continue;
+      changed.set(`${modPath}/${rel(c)}`, changedRanges(d.stdout)); pkgs.add(pkgArg(c));
+    }
+    if (changed.size === 0) continue;
+    for (const [k, n] of names.slice(0, 2).entries()) {
+      const left = deadline - Date.now(); if (left < 5000) return out; // seal has a 60 s limit: the measured runs share one budget (a cold cli compile with -coverpkg took 30 s, warm 11 s)
+      const prof = join(ctx.runDir, `ftp-cover-${out.length}-${k}.out`);
+      try {
+        const r = spawnSync("go", ["test", "-count=1", "-run", `^(${n})$`, `-coverprofile=${prof}`, `-coverpkg=${[...pkgs].join(",")}`, pkgArg(f)], { cwd: join(ctx.repoDir, mod), env: { ...process.env, ...plainTestEnv() }, encoding: "utf8", timeout: left, maxBuffer: 16 << 20 });
+        if (r.status === 0 && existsSync(prof) && goCoveredChange(readFileSync(prof, "utf8"), changed)) { out.push(f); break; }
+      } catch { /* no go toolchain: no lift */ } finally { rmSync(prof, { force: true }); }
+    }
+  }
+  return out;
 }
 /** The lines the change adds to `path` (git diff -U0 base..head), or "" when the diff cannot be read. */
 async function addedLines(ctx: RunContext, head: string, path: string): Promise<string> {
   const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", path], { timeoutMs: 20000 });
   return d.exitCode === 0 ? d.stdout.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n") : "";
-}
-/** Untouched tracked code files that may call a changed one, bounded like symbolGaps (CALLER_SCAN files of at most CALLER_MAX_BYTES); the list is the head commit's, the bytes the checkout's (untouched files are the same at head). */
-async function callerCandidates(ctx: RunContext, head: string, skip: ReadonlySet<string>): Promise<{ path: string; src: string }[]> {
-  const ls = await safeGitRun(ctx.repoDir, ["ls-tree", "-r", "-z", "--name-only", head], { timeoutMs: 20000 }); if (ls.exitCode !== 0) return [];
-  const read = (p: string): string => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return ""; } };
-  return ls.stdout.split("\0").filter((t) => t && !skip.has(t) && CODE_FILE_EXT.test(t) && !notApiFile(t)).slice(0, CALLER_SCAN).map((path) => ({ path, src: read(path) })).filter((f) => f.src.length > 0 && f.src.length <= CALLER_MAX_BYTES);
 }
 async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[], wallOff: { pctx: ProvenanceCtx; ftp: () => Promise<boolean> } | null = null): Promise<{ lean: string[]; pub: string[] }> {
   const none = { lean: [], pub: [] };
