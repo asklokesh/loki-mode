@@ -7,7 +7,7 @@ import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
-import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
+import { stallSame, stallSignature } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
 
 /** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
 interface WallSplit { author(ctx: RunContext, signal: AbortSignal): Promise<{ kind: string } & Record<string, unknown>>; install(ctx: RunContext, a: never, baseDir: string): StageResult; }
@@ -251,7 +251,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   try {
     let jumped = false, resized = false, stopped: string | null = null;
     const sigs: string[] = [];
-    const sigOf = (d: Obj | undefined, r?: StageResult | null): string => r && r.status !== "completed" ? `verify-crashed-${sigs.length}` : JSON.stringify([...((d?.failures_grouped ?? []) as { signature?: string; carried?: boolean }[]).filter((g) => !g.carried).map((g) => g.signature).sort(), `holdout_failed=${d?.holdout_failed ?? 0}`]); // a crashed or timed-out verify leaves outputs.verify stale: record a marker that never matches (A-113b)
+    const sigOf = (d: Obj | undefined, r?: StageResult | null): string => r && r.status !== "completed" ? `verify-crashed-${sigs.length}` : JSON.stringify([...((d?.failures_grouped ?? []) as { signature?: string; carried?: boolean }[]).filter((g) => !g.carried).map((g) => stallSignature(String(g.signature))).sort(), `holdout_failed=${d?.holdout_failed ?? 0}`]); // a crashed or timed-out verify leaves outputs.verify stale: record a marker that never matches (A-113b)
     for (const step of opts.flow ?? FLOW) {
       const group = (typeof step === "string" ? [step] : [...step]) as StageName[];
       let todo = group;
@@ -301,7 +301,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
           sigs.push(sigOf(outputs.verify, v));
           if (mustJump("verify", v)) break;
           if (wallOnlyAfterFix(outputs, ctx.repoDir) && wallSignature(outputs, ctx.repoDir) === wallBefore) break; // only Loki's own Wall still fails, the same tests the same way, while the repo's own tests pass: the round made no progress on it, so delivery below decides; a round that moved the Wall gets the rounds left
-          if (hasFailures(outputs.verify) && sigs.length >= 2 && sigs.slice(-2).every((x) => x === sigs[sigs.length - 1])) { // no progress: the round left the same failing set, so another round would only spend
+          if (hasFailures(outputs.verify) && sigs.length >= 2 && stallSame(sigs[sigs.length - 2]!, sigs[sigs.length - 1]!)) { // no progress: the round left the same failing set, so another round would only spend
             // A stall may climb once, only on a code-owned failure (a lint-only or harness-owned stall is unchanged); the same routedFix decides here and in the fix stage.
             const up = stallClimb(ctx.model, outputs, sigs[sigs.length - 1] ?? "");
             if (up) {

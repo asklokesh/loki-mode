@@ -140,6 +140,12 @@
 #  57. seal.ts failThenPass: count symbols the base lacks again (the exists-only legs read VERIFIED).
 #  56. check_result.ts assertionFailure: return true (the calls-a-new-function and import-only pytest legs read VERIFIED).
 #  55. seal.ts failThenPass: never trust the system interpreter (the pytest fail-then-pass leg reads PARTIAL).
+#  58. verify.ts TSC_LOCAL: add TS2322 (the tsc untouched unit reads the type-error diagnostic excused), or drop the keep.has test (tsc touched leg starts no fix session).
+#  59. check_result.ts stallSignature: return the signature unchanged (the stall signature unit reads false for the two tq signatures).
+#  60. verify.ts tscUntouchedLocal: drop the base.has test (the program-membership leg reads true: a change that imports an untouched file is excused).
+#  61. check_result.ts stallSignature: bucket a full-suite group by log2 of its id count again (the disjoint, 100-to-70 and zero-vs-one id legs read true).
+#  62. check_result.ts stallSame: drop the count tolerance test (the near-equal truncated legs read false) or widen it to 50 percent (the 100-to-70 leg reads true).
+#  63. machine.ts: compare sigs with === again instead of stallSame (the machine.ts stallSame grep leg reads bad).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -769,5 +775,66 @@ for vt in 2 latest; do
     ws="$(cd "$ROOT/loki-ts" && bun -e 'const { commandFor } = await import("./src/util/check_result.ts"); const { spawnSync } = await import("node:child_process"); const d = process.argv[1]; const c = commandFor({ runner: "vitest", path: "packages/a/src/x.test.js" }, d, null); const r = spawnSync(c.cmd, c.args, { cwd: c.cwd, encoding: "utf8", timeout: 90000 }); const root = spawnSync("npx", ["--no-install", "vitest", "run", "packages/a/src/x.test.js"], { cwd: d, encoding: "utf8", timeout: 90000 }); const o = commandFor({ runner: "vitest", path: "packages/b/y.test.js" }, d, null); console.log([c.cwd.endsWith("packages/a"), c.args.at(-1), r.status, root.status === 0 ? "root-ok" : "root-red", o.cwd === d ? "other-root" : "other-moved"].join("|"))' "$PKG" 2>&1 | tail -1)"
     [ "$ws" = "true|src/x.test.js|0|root-red|other-root" ] && ok "vitest $vt package config: a test file under a package with its own vitest config runs from that package and passes; from the root it is red; a package without one stays at the root ($ws)" || bad "vitest $vt package config: got '$ws'"
 done
+
+# Fix-round input on the REAL tsc and the real vitest (rule 22): an unused-declaration error in a file the change neither touched nor the task named (legacy.ts) is pre-existing and starts no fix
+# session; the same error in a file the change wrote is fix-round input; a tsconfig edit keeps even an untouched-file error blocking. Skipped cleanly when npm or the network is not there.
+TSC_DIR="$T/tsc-vt"; TSC_NM="$TSC_DIR/node_modules"
+if [ ! -x "$TSC_NM/.bin/tsc" ] || [ ! -x "$TSC_NM/.bin/vitest" ]; then mkdir -p "$TSC_DIR"; printf '{"name":"c","private":true,"type":"module"}\n' > "$TSC_DIR/package.json"; (cd "$TSC_DIR" && npm install --no-audit --no-fund --silent vitest@latest typescript@5 >/dev/null 2>&1); fi
+if [ -x "$TSC_NM/.bin/tsc" ] && [ -x "$TSC_NM/.bin/vitest" ]; then
+    make_tsc_repo() {
+        VT_NM="$TSC_NM" make_vt_repo "$1"
+        printf '{"compilerOptions":{"strict":true,"noEmit":true,"noUnusedLocals":true,"target":"ES2022","module":"ESNext","moduleResolution":"Bundler","skipLibCheck":true},"include":["*.ts"]}\n' > "$1/tsconfig.json"
+        printf 'const stale = 1;\nexport const keep = 2;\n' > "$1/legacy.ts"
+    }
+    TS_SNIP=$'export function multiply(a: number, b: number): number {\n  return a * b;\n}\n'
+    tsc_run() { MAKE_REPO=make_tsc_repo run_engine "add a multiply(a, b) function to calc.ts" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 "$@"; }
+    tsc_run E2E_STUB_SNIPPET="$TS_SNIP"
+    tc="$(wo_receipt ck)"; case "$tc" in *"lint:tsc=fail"*) ok "tsc untouched: the real tsc failed on the unused local in legacy.ts ($tc)" ;; *) bad "tsc untouched: no failing lint:tsc check: '$tc'"; dump ;; esac
+    [ "$(fix_sessions)" = "0" ] && ok "tsc untouched: an unused local in an untouched file starts no fix session" || { bad "tsc untouched: $(fix_sessions) fix sessions (want 0)"; dump; }
+    [ "$(ev 'sum(1 for e in E if e["type"]=="fix.round")')" = "0" ] && ok "tsc untouched: no fix.round event" || bad "tsc untouched: fix.round events: $(ev 'sum(1 for e in E if e["type"]=="fix.round")')"
+    tsc_run E2E_STUB_SNIPPET=$'const leak = 1;\n'"$TS_SNIP"
+    [ "$(fix_sessions)" -ge 1 ] && ok "tsc touched: an unused local in the file the change wrote is fix-round input ($(fix_sessions) fix sessions)" || { bad "tsc touched: no fix session"; dump; }
+    tsc_run E2E_STUB_SNIPPET="$TS_SNIP" E2E_STUB_TEST_APPEND=$'export const edited = 1;\n' E2E_STUB_TARGET=tsconfig.json E2E_STUB_REPLACE='"strict":true' E2E_STUB_SNIPPET='"strict":true,"allowJs":false'
+    [ "$(fix_sessions)" -ge 1 ] && ok "tsc config edit: a tsconfig edit keeps the untouched-file error blocking ($(fix_sessions) fix sessions)" || { bad "tsc config edit: no fix session"; dump; }
+    PM="$T/tsc-member"; rm -rf "$PM"; mkdir -p "$PM/base/src" "$PM/base/scripts" "$PM/head/src" "$PM/head/scripts"; ln -s "$TSC_NM" "$PM/base/node_modules"; ln -s "$TSC_NM" "$PM/head/node_modules"
+    for d in base head; do printf '{"compilerOptions":{"strict":true,"noEmit":true,"noUnusedLocals":true,"target":"ES2022","module":"ESNext","moduleResolution":"Bundler","skipLibCheck":true},"include":["src"]}\n' > "$PM/$d/tsconfig.json"; printf 'const stale = 1;\nexport const k = 2;\n' > "$PM/$d/scripts/legacy.ts"; done
+    printf 'export const a = 1;\n' > "$PM/base/src/a.ts"; printf 'import "../scripts/legacy";\nexport const a = 1;\n' > "$PM/head/src/a.ts"
+    PMR="$(cd "$ROOT/loki-ts" && bun -e '
+const { tscUntouchedLocal: u } = await import("./src/engine10/stages/verify.ts"); const { spawnSync } = await import("node:child_process");
+const tsc = (d: string) => { const r = spawnSync("node_modules/.bin/tsc", ["--noEmit", "-p", "."], { cwd: d, encoding: "utf8" }); return [r.status, (r.stdout ?? "") + (r.stderr ?? "")] as const; };
+const [bs, bo] = tsc(process.argv[1] + "/base"), [hs, ho] = tsc(process.argv[1] + "/head"), keep = new Set(["src/a.ts"]);
+console.log([bs, hs, u(ho, ".", keep, ["src/a.ts"], bo), u(ho, ".", keep, ["src/a.ts"], ho), u(ho, ".", keep, ["src/a.ts"], null)].join(","));' "$PM" 2>&1)"
+    [ "$PMR" = "0,2,false,true,false" ] && ok "tsc program membership: a change that imports an untouched file (base tsc green) stays blamed; the same diagnostic on base is excused; no base output is not excused ($PMR)" || bad "tsc program membership: '$PMR' (want 0,2,false,true,false)"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "tsc fix input: vitest and typescript could not be installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: tsc fix input: vitest and typescript could not be installed (offline?)"; fi
+fi
+# stall signature unit: the two real tanstack full-suite signatures (tq-11160 verify 1 and 2: 2160 and 2174 failing ids, different digests) are one failure; a 2160 to 5 drop and a different suite are not.
+SS="$(cd "$ROOT/loki-ts" && bun -e '
+const { stallSignature: s, stallSame: same } = await import("./src/util/check_result.ts"); const eq = (x: string, y: string) => same(JSON.stringify([s(x)]), JSON.stringify([s(y)]));
+const a = "full suite: vitest FAIL packages/solid-query/src/__tests__/useQuery.test.tsx > useQuery > x [a, b, c (+2160 more, set 6d69ece0)]", b = "full suite: vitest FAIL packages/solid-query/src/__tests__/useQuery.test.tsx > useQuery > x [a, b, c (+2174 more, set 4dd1d9b5)]", c = "full suite: vitest FAIL y [a, b, c (+2 more, set 11111111)]";
+const n1 = "full suite: npm ✖ 26 problems (0 errors, 26 warnings)", n2 = "full suite: npm .svelte-kit/output/server/entries/fallbacks/error.svelte.js 1.36 kB";
+const t = "vitest:packages/x.test.tsx FAIL a > b [q (+9 more, set abc)]";
+console.log([eq(a, b), !eq(a, c), s(n1) === s(n2), s(t) === "vitest:packages/x.test.tsx FAIL a > b [q]" || s(t).startsWith("vitest:packages/x.test.tsx FAIL a > b")].join(","));' 2>&1)"
+[ "$SS" = "true,true,true,true" ] && ok "stall signature: noisy full-suite ids and first lines compare equal, a collapse in failing ids does not ($SS)" || bad "stall signature: '$SS'"
+SM="$(cd "$ROOT/loki-ts" && bun -e '
+const { stallSignature: s, stallSame: same } = await import("./src/util/check_result.ts");
+const full = (ids: string[], more = 0, first = "x") => `full suite: vitest FAIL ${first} [${ids.join(", ")}${more ? ` (+${more} more, set ${"a".repeat(8)})` : ""}]`;
+const sg = (...g: string[]) => JSON.stringify([...g.map(s).sort(), "holdout_failed=0"]);
+const head = ["a", "b", "c"], r = [
+  same(sg(full(["a", "b"])), sg(full(["c", "d"]))),
+  same(sg(full(["a", "b"])), sg(full(["b", "a"]))),
+  same(sg(full(head, 97)), sg(full(head, 67))),
+  same(sg(full(head, 2157)), sg(full(head, 2171, "y"))),
+  same(sg(full(head, 97)), sg(full(["a", "b", "z"], 97))),
+  same(sg(full([], 0)), sg(full(["a"]))),
+  same(sg(full(["a", "b", "c"])), sg(full(["a", "b"])))];
+console.log(r.join(","));' 2>&1)"
+[ "$SM" = "false,true,false,true,false,false,false" ] && ok "stall compare: disjoint 2-id sets, 100 to 70 ids, a different head and zero-vs-one id are progress; the same set and a 2160 to 2174 drift are a stall ($SM)" || bad "stall compare: '$SM' (want false,true,false,true,false,false,false)"
+grep -q "stallSame(sigs\[sigs.length - 2\]" "$ROOT/loki-ts/src/engine10/machine.ts" && ok "stall compare: the machine decides a stall with stallSame, never ===" || bad "stall compare: machine.ts does not use stallSame"
+TU="$(cd "$ROOT/loki-ts" && bun -e '
+const { tscUntouchedLocal: u } = await import("./src/engine10/stages/verify.ts");
+const o = "src/v3/tests/a.test.ts:56:8 - error TS6196: \x27_Cat\x27 is declared but never used.\nsrc/v3/tests/b.test.ts(9,1): error TS6133: \x27x\x27 is declared but its value is never read.\n";
+console.log([u(o, "packages/zod", new Set(["packages/zod/src/v4/x.ts"]), ["packages/zod/src/v4/x.ts"], o), u(o, "packages/zod", new Set(["packages/zod/src/v3/tests/a.test.ts"]), [], o), u(o + "src/c.ts:1:1 - error TS2322: no\n", "packages/zod", new Set(), [], o), u(o, "packages/zod", new Set(), ["packages/zod/tsconfig.json"], o), u("", ".", new Set(), [], ""), u("error TS6133 unparsed\n", ".", new Set(), [], "error TS6133 unparsed\n")].join(","));' 2>&1)"
+[ "$TU" = "true,false,false,false,false,false" ] && ok "tsc untouched unit: only unused-declaration errors in untouched, unnamed files with no tsconfig edit are excused ($TU)" || bad "tsc untouched unit: '$TU'"
 
 finish
