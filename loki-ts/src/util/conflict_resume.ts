@@ -98,14 +98,43 @@ export const resumeAfterAlreadyDone = (ctx: RunContext, first: SessionRunOptions
 
 // LOKI_E10_COVERAGE_RESUME (default off): on the lean path (plan skipped) a LOKI_DONE exit with a non-empty diff gets exactly one more turn in the same session.
 // The task text is already in that session, so the fixed brief names no task (cli-2478: the first turn fixed 2 of the 3 sites the issue named).
-export const COVERAGE_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. " + FINISH_LINE;
+export const COVERAGE_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. Before the last line, write one line per site in the current file: `SITE <path>:<line>: changed` or `SITE <path>:<line>: unchanged - <why>`. " + FINISH_LINE;
 export const coverageResumeEnabled = (env = process.env): boolean => ["1", "on", "true"].includes((env.LOKI_E10_COVERAGE_RESUME ?? "").toLowerCase());
 
-/** One coverage turn (suffix "-c"), through resumeWith. Only a clean LOKI_DONE reply replaces the first result: a conflict or already-done claim made here never overrides a session that finished. */
-export async function resumeForCoverage(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> {
-  if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationId: first.iterationId };
-  const r = await resumeWith(ctx, first, firstSession, COVERAGE_BRIEF, "-c"), m = r.session.markers;
-  return m.done && !m.specConflict && !m.alreadyDone && r.session.exit === 0 ? r : { session: { ...firstSession, durationS: r.session.durationS }, iterationId: r.iterationId };
+/** SITE lines the model wrote; only "changed" claims are checked. */
+export function siteClaims(text: string): { path: string; line: number }[] {
+  return [...text.matchAll(/^\W*SITE\s+`?([^\s`:]+):(\d+)`?:\s*changed\b/gim)].map((m) => ({ path: m[1]!, line: Number(m[2]) }));
+}
+/** Site-ledger claimed_change_absent: a site the model says it changed whose current line is byte-identical to the base (no added line of `git diff -U0` covers it). A file the base lacks is all new; an unreadable diff claims nothing. */
+export function claimedChangeAbsent(repoDir: string, baseSha: string, claims: { path: string; line: number }[]): string[] {
+  const added = new Map<string, Set<number> | "new" | null>(), out: string[] = [];
+  for (const c of claims) {
+    if (c.path.split(/[\\/]/).includes("..") || isAbsolute(c.path)) continue;
+    if (!added.has(c.path)) {
+      const onBase = safeGitSpawn(repoDir, ["cat-file", "-e", `${baseSha}:${c.path}`], { encoding: "utf8" }).status === 0;
+      const d = onBase ? safeGitSpawn(repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", baseSha, "--", c.path], { encoding: "utf8" }) : null;
+      const lines = new Set<number>();
+      if (d && d.status === 0) for (const m of d.stdout.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) { const a = Number(m[1]), n = m[2] === undefined ? 1 : Number(m[2]); for (let i = a; i < a + n; i++) lines.add(i); }
+      added.set(c.path, !onBase ? "new" : d && d.status === 0 ? lines : null);
+    }
+    const s = added.get(c.path);
+    if (s instanceof Set && !s.has(c.line) && existsSync(join(repoDir, c.path))) out.push(`${c.path}:${c.line}`);
+  }
+  return [...new Set(out)];
+}
+export const claimAbsentBrief = (sites: string[]): string => `You wrote SITE ... changed for these lines, but each is byte-identical to the base: ${sites.join(", ")}. Make the change at each one, or write it as unchanged with the reason. ` + FINISH_LINE;
+
+/** One coverage turn (suffix "-c"), through resumeWith. Only a clean LOKI_DONE reply replaces the first result: a conflict or already-done claim made here never overrides a session that finished.
+ *  A coverage reply whose SITE claims name a line it did not change is re-asked once (suffix "-c2"), under the same rule. */
+export async function resumeForCoverage(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string; iterationIds: string[]; claimAbsent?: string[] }> {
+  if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationId: first.iterationId, iterationIds: [] };
+  const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
+  const r = await resumeWith(ctx, first, firstSession, COVERAGE_BRIEF, "-c");
+  if (!clean(r.session)) return { session: { ...firstSession, durationS: r.session.durationS }, iterationId: r.iterationId, iterationIds: [r.iterationId] };
+  const absent = claimedChangeAbsent(ctx.repoDir, ctx.baseSha, siteClaims(r.session.summary ?? ""));
+  if (!absent.length || (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { ...r, iterationIds: [r.iterationId], ...(absent.length ? { claimAbsent: absent } : {}) };
+  const r2 = await resumeWith(ctx, { ...first, iterationId: r.iterationId }, r.session, claimAbsentBrief(absent), "2");
+  return { ...(clean(r2.session) ? r2 : { session: { ...r.session, durationS: r2.session.durationS }, iterationId: r2.iterationId }), iterationIds: [r.iterationId, r2.iterationId], claimAbsent: absent };
 }
 
 const oneLine = (s: string): string => s.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 200);

@@ -330,6 +330,99 @@ grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: a run with a plan got
 run_engine "$CTASK" E2E_STUB_MODE=already LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_COVERAGE_RESUME=1
 grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: an already-done first turn got a coverage turn"; dump; } || ok "coverage on: an already-done first turn gets no coverage turn"
 
+# ---------------------------------------------------------------- patch protocol (LOKI_E10_PATCH, default off), unit level with the real node --test runner
+# One tool-less call answers with FILE/SEARCH/REPLACE blocks; the harness refuses config, lockfile and Wall edits before applying, applies
+# all-or-nothing, runs the impacted node:test file itself and allows one repair call. Every non-green end restores the tree byte-identical.
+# Also the coverage resume's claimed_change_absent check (SITE lines naming a line that is byte-identical to the base).
+PP="$T/pp"; mkdir -p "$PP"
+cat > "$PP/unit.ts" <<'TS'
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+const [ROOT, T] = process.argv.slice(2);
+const pp = await import(ROOT + "/loki-ts/src/features/patch_protocol.ts");
+const impl = await import(ROOT + "/loki-ts/src/engine10/stages/implement.ts");
+const cr = await import(ROOT + "/loki-ts/src/util/conflict_resume.ts");
+const res = (name: string, pass: boolean, why = "") => console.log((pass ? "OK " : "NO ") + name + (pass || !why ? "" : ` (${why})`));
+const git = (d: string, ...a: string[]) => execFileSync("git", ["-C", d, ...a], { encoding: "utf8" });
+const PARSE = 'export function parseFlag(arg) {\n  const t = arg.trim();\n  if (t === "-") return { positional: t };\n  return { flag: t.replace(/^-+/, "") };\n}\n';
+const TEST = 'import { test } from "node:test";\nimport assert from "node:assert/strict";\nimport { parseFlag } from "../src/parse.js";\n\ntest("flag", () => {\n  assert.deepEqual(parseFlag("--x"), { flag: "x" });\n});\n';
+let n = 0;
+function repo(): string {
+  const d = join(T, `r${n++}`); mkdirSync(join(d, "src"), { recursive: true }); mkdirSync(join(d, "test"), { recursive: true });
+  writeFileSync(join(d, "package.json"), '{"name":"argkit","type":"module","scripts":{"test":"node --test"}}\n');
+  writeFileSync(join(d, "package-lock.json"), '{"lockfileVersion":3}\n'); writeFileSync(join(d, "tsconfig.json"), '{"compilerOptions":{}}\n');
+  writeFileSync(join(d, "src/parse.js"), PARSE); writeFileSync(join(d, "test/parse.test.js"), TEST); writeFileSync(join(d, "test/loki_wall_parse.test.js"), TEST);
+  git(d, "init", "-q", "-b", "main"); git(d, "config", "user.email", "t@example.invalid"); git(d, "config", "user.name", "t"); git(d, "add", "."); git(d, "commit", "-q", "-m", "base");
+  return d;
+}
+const tmap = { runners: ["node"], tests: [{ runner: "node", path: "test/parse.test.js" }] };
+const fakeCtx = (d: string, map: unknown = tmap) => ({ repoDir: d, runDir: join(d, ".loki", "run"), runId: "r", baseSha: git(d, "rev-parse", "HEAD").trim(), provider: "claude", model: "haiku",
+  outputs: () => ({ intake: { testmap: map, task: "t" } }), emit: () => { throw new Error("patch check emitted an event"); }, tests: { impacted: (m: { tests: unknown[] }) => m.tests, detect: async () => map } });
+const FIX = 'FILE: src/parse.js\n<<<<<<< SEARCH\n  if (t === "-") return { positional: t };\n=======\n  if (t === "-") return { positional: arg };\n>>>>>>> REPLACE\n';
+const ADDTEST = 'FILE: test/parse.test.js\n<<<<<<< SEARCH\n=======\n\ntest("lone dash keeps raw", () => {\n  assert.deepEqual(parseFlag(" - "), { positional: " - " });\n});\n>>>>>>> REPLACE\n';
+const WRONG = 'FILE: src/parse.js\n<<<<<<< SEARCH\n  if (t === "-") return { positional: t };\n=======\n  if (t === "-") return { positional: t + "" };\n>>>>>>> REPLACE\n';
+const scripted = (replies: (string | null)[], seen: string[] = []) => { let i = 0; return async (req: { messages: { content: string }[] }) => { seen.push(pp.flattenMessages(req.messages)); const t = replies[i++]; return { text: t ?? null, usd: 0.001 }; }; };
+const run = async (d: string, replies: (string | null)[], seen: string[] = [], readOnly: string[] = ["test/loki_wall_parse.test.js"], map: unknown = tmap, task = "a lone - keeps the raw arg") => {
+  const ctx = fakeCtx(d, map) as never;
+  return pp.runPatchProtocol({ rules: { repoDir: d, readOnly, task }, brief: "BRIEF", iterationId: "it", signal: new AbortController().signal, call: scripted(replies, seen), check: impl.patchCheck(ctx, ["test/parse.test.js"], readOnly, new AbortController().signal) });
+};
+const clean = (d: string) => git(d, "status", "--porcelain") === "";
+
+res("patch: LOKI_E10_PATCH is off by default and 1/0 switch it", pp.patchEnabled({}) === false && pp.patchEnabled({ LOKI_E10_PATCH: "1" }) === true && pp.patchEnabled({ LOKI_E10_PATCH: "0" }) === false);
+{ const d = repo(), o = await run(d, [`root cause: trims.\n${FIX}${ADDTEST}LOKI_DONE`]);
+  res("patch green: one call, the fix and the new test applied, the real node --test check ran and passed", o.status === "green" && o.calls === 1 && o.applied.length === 2 && (o.check ?? []).join() === "patch:node:test/parse.test.js=pass" && readFileSync(join(d, "src/parse.js"), "utf8").includes("positional: arg"), JSON.stringify(o)); }
+{ const d = repo(), seen: string[] = [], o = await run(d, [`${WRONG}${ADDTEST}LOKI_DONE`, `${'FILE: src/parse.js\n<<<<<<< SEARCH\n  if (t === "-") return { positional: t + "" };\n=======\n  if (t === "-") return { positional: arg };\n>>>>>>> REPLACE\n'}LOKI_DONE`], seen);
+  res("patch repair: a red check gets one repair call carrying the failure digest and the current region; then green", o.status === "green" && o.calls === 2 && /lone dash keeps raw/.test(seen[1] ?? "") && /positional: t \+ ""/.test(seen[1] ?? "") && /Your earlier reply/.test(seen[1] ?? ""), JSON.stringify(o.log) + (seen[1] ?? "").slice(0, 400)); }
+{ const d = repo(), o = await run(d, [`${WRONG}${ADDTEST}LOKI_DONE`, `${WRONG.replace('t + ""', 't + ""')}LOKI_DONE`]);
+  res("patch red twice: at most two calls, status red, every written file restored byte-identical (clean tree)", o.status !== "green" && o.calls === 2 && clean(d) && o.restored.length === 2, JSON.stringify(o) + git(d, "status", "--porcelain")); }
+{ const d = repo(), seen: string[] = [], lock = 'FILE: package-lock.json\n<<<<<<< SEARCH\n{"lockfileVersion":3}\n=======\n{"lockfileVersion":2}\n>>>>>>> REPLACE\n';
+  const o = await run(d, [`${FIX}${lock}${ADDTEST}LOKI_DONE`, `${FIX}${ADDTEST}LOKI_DONE`], seen);
+  res("patch refusal: a lockfile edit the task does not ask for is refused before any edit lands; the repair names it, then green", o.status === "green" && o.calls === 2 && /package-lock\.json: refused, a lockfile/.test(seen[1] ?? "") && readFileSync(join(d, "package-lock.json"), "utf8").includes("3"), JSON.stringify(o)); }
+for (const [label, file, search, repl] of [
+  ["tsconfig paths", "tsconfig.json", '{"compilerOptions":{}}', '{"compilerOptions":{"paths":{"x":["./y"]}}}'],
+  ["a vitest config", "vitest.config.ts", "", "export default {};"],
+  ["the Wall test", "test/loki_wall_parse.test.js", 'test("flag", () => {', 'test.skip("flag", () => {'],
+  ["a path under .git", ".git/hooks/pre-commit", "", "exit 0"],
+  ["a path outside the repo", "../escape.js", "", "x"],
+] as const) {
+  const d = repo(), b = `FILE: ${file}\n<<<<<<< SEARCH\n${search ? search + "\n" : ""}=======\n${repl}\n>>>>>>> REPLACE\n`;
+  const o = await run(d, [`${FIX}${b}LOKI_DONE`, null]);
+  res(`patch refusal: ${label} is refused and nothing from that reply is applied (tree clean)`, o.status === "call_failed" && o.refused.length === 1 && clean(d) && !existsSync(join(T, "escape.js")), JSON.stringify(o));
+}
+{ const d = repo(), seen: string[] = [], noop = 'FILE: src/parse.js\n<<<<<<< SEARCH\n  const t = arg.trim();\n=======\n  const t = arg.trim();\n>>>>>>> REPLACE\n';
+  const o = await run(d, [`${noop}LOKI_DONE`, `${FIX}${ADDTEST}LOKI_DONE`], seen);
+  res("patch claimed change absent: an edit block that leaves its file byte-identical applies nothing and is re-asked once", o.status === "green" && o.calls === 2 && /claimed change absent/.test(seen[1] ?? ""), JSON.stringify(o)); }
+{ const d = repo(), seen: string[] = [], miss = 'FILE: src/parse.js\n<<<<<<< SEARCH\n  if (t === "-")  return { positional: t };\n  const t = arg.trim();\n=======\nx\n>>>>>>> REPLACE\n';
+  const o = await run(d, [`${miss}${ADDTEST}LOKI_DONE`, null], seen);
+  res("patch miss: a SEARCH that matches nothing applies no block of the reply (all-or-nothing) and the repair quotes the nearest text", o.status === "call_failed" && clean(d) && /not found\. Nearest text, src\/parse\.js/.test(seen[1] ?? ""), JSON.stringify(o) + (seen[1] ?? "").slice(-300)); }
+{ const d = repo(), o = await run(d, [null]);
+  res("patch call failed: a failed call is a fallback (status call_failed), nothing written", o.status === "call_failed" && o.calls === 1 && clean(d)); }
+{ const d = repo(), o = await run(d, ["LOKI_SPEC_CONFLICT: test/parse.test.js:6 asserts the opposite"]);
+  res("patch conflict: a spec conflict is left to the agentic session (status conflict, nothing written)", o.status === "conflict" && clean(d)); }
+{ const d = repo(), o = await run(d, [`${FIX}LOKI_DONE`], [], [], { runners: [], tests: [] });
+  res("patch fail closed: no check can run (empty test map), so the result is never green and the tree is restored", o.status === "red" && o.calls === 1 && clean(d), JSON.stringify(o)); }
+{ const d = repo(), o = await run(d, ['FILE: test/parse.test.js\n<<<<<<< SEARCH\n  assert.deepEqual(parseFlag("--x"), { flag: "x" });\n=======\n  assert.ok(true);\n>>>>>>> REPLACE\nLOKI_DONE']);
+  res("patch green is the check, not the verdict: a weakened test can go green here; verify and seal still judge the tree (the edit is kept for them)", o.status === "green" && !clean(d)); }
+{ const p = pp.parseReply("cause\nFILE: `a.ts`\n```ts\n<<<<<<< SEARCH\nx\n=======\ny\n>>>>>>> REPLACE\nNEED: src/b.ts:3-9\nLOKI_DONE");
+  res("patch parse: a backticked path and a fenced block parse; NEED ranges parse", p.blocks.length === 1 && p.blocks[0].file === "a.ts" && p.blocks[0].search === "x\n" && p.needs[0]?.start === 3 && p.needs[0]?.end === 9); }
+{ const d = repo(), brief = pp.buildPatchBrief("fix it", "CODE", pp.testConventions(d, ["test/parse.test.js"]), ["node --test ./test/parse.test.js"]);
+  res("patch brief: fixed rules lead (cache-stable prefix), the test head and its test names and the exact check command follow", brief.startsWith(pp.PATCH_RULES) && /test names: test\("flag"/.test(brief) && brief.includes("node --test ./test/parse.test.js")); }
+// coverage resume: claimed_change_absent
+{ const d = repo(), base = git(d, "rev-parse", "HEAD").trim();
+  writeFileSync(join(d, "src/parse.js"), PARSE.replace("positional: t", "positional: arg")); writeFileSync(join(d, "src/new.js"), "export const x = 1;\n");
+  const claims = cr.siteClaims("SITE src/parse.js:3: changed\nSITE src/parse.js:2: changed\n- SITE `src/new.js:1`: changed\nSITE src/parse.js:4: unchanged - fine\nLOKI_DONE");
+  const absent = cr.claimedChangeAbsent(d, base, claims);
+  res("coverage claim: SITE lines parse (changed claims only, backticks allowed)", claims.length === 3, JSON.stringify(claims));
+  res("coverage claim: a changed line passes, a byte-identical line is claimed_change_absent, a file new on the base passes", absent.join() === "src/parse.js:2", absent.join());
+  res("coverage claim: the coverage brief asks for SITE lines and the re-ask names the absent sites", cr.COVERAGE_BRIEF.includes("SITE <path>:<line>: changed") && cr.claimAbsentBrief(absent).includes("src/parse.js:2")); }
+TS
+out="$(cd "$ROOT/loki-ts" && timeout 300 bun "$PP/unit.ts" "$ROOT" "$PP" 2>&1)"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+printf '%s\n' "$out" | grep -q '^OK ' || { bad "patch protocol unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+
 # ---------------------------------------------------------------- lean fix loop, unit level (L005, L006, L025, L026)
 mkdir -p "$T/l006" "$T/l026"
 cat > "$T/lean-fix.ts" <<TS
