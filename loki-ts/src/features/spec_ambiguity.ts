@@ -24,11 +24,11 @@ export const questionFor = (h: AmbiguityHit): string => h.kind === "open_questio
 export const assumptionFor = (h: AmbiguityHit): string => `"${h.excerpt}" taken literally: the smallest change that satisfies the stated text, no extra scope`;
 // ---- Open choices: an explicit either/or in the task is settled from evidence (no model call), not left for the model to guess. ----
 export const CHOICE_PREFIX = "Open choice";
-export type ChoiceBasis = "maintainer" | "task_preferred" | "existing_tests" | "none";
+export type ChoiceBasis = "maintainer" | "task_preferred" | "existing_tests" | "precedent" | "none";
 export interface OpenChoice { sentence: string; options: string[]; preferred: number | null; fallback: boolean; any?: boolean /* an "acceptable outputs" list: the options may coexist */ }
 export interface ChoiceResolution extends OpenChoice { basis: ChoiceBasis; picked: number | null; evidence: string; precedent?: string }
 /** comments: the trusted comments intake read from issue.json (never parsed back out of the task text, which an issue author could forge). */
-export interface ChoiceCtx { repoDir?: string; comments?: Pick<IssueComment, "author" | "association" | "body">[] }
+export interface ChoiceCtx { repoDir?: string; comments?: Pick<IssueComment, "author" | "association" | "body">[]; votes?: (number | null | undefined)[] /* per choice: option index the siblings follow, null = they disagree (NEITHER), undefined = no vote ran */ }
 const trunc = (s: string, n: number): string => { const cps = Array.from(s.replace(/\s+/g, " ").trim()); return cps.length > n ? `${cps.slice(0, n - 3).join("")}...` : cps.join(""); };
 const AUX = "should|would|does|do|is|are|can|will|must";
 const LIST_ITEM = /^\s*(?:(?:[-*+]|\d+[.)]|\(\d+\)|[A-Da-d][.)])\s+|(?:#+\s*)?(?:\*\*)?(?:option|solution|approach|alternative|proposal)\s*#?\(?(\d+|[A-Da-d])\)?(?:\*\*)?\s*[:.)-]\s*)(.+)$/i;
@@ -141,11 +141,11 @@ function precedentFor(c: OpenChoice, repoDir: string): string {
     let lines: string[]; try { if (statSync(join(repoDir, f)).size > 200_000) continue; lines = readFileSync(join(repoDir, f), "utf8").split("\n"); } catch { continue; }
     const isTest = TEST_FILE.test(f);
     for (const d of dotted) {
-      const [type, member] = d.split("."), key = `${f}:${d}`, esc = member!.replace(/[^\w]/g, "");
+      const [type, member] = d.split("."), esc = member!.replace(/[^\w]/g, "");
       const defRe = new RegExp(`^\\s*(?:func\\s*\\([^)]*\\)\\s*${esc}\\s*\\(|(?:pub\\s+)?(?:async\\s+)?(?:fn|def|function)\\s+${esc}\\s*[<(]|(?:public\\s+|private\\s+|protected\\s+|static\\s+|async\\s+|get\\s+|set\\s+)*${esc}\\s*\\([^)]*\\)\\s*(?::[^{=]+)?\\{)`), callRe = new RegExp(`\\.${esc}\\(`);
       for (let i = 0; i < lines.length; i++) {
         const ln = lines[i]!;
-        if (!isTest && defs.length < 5 && defRe.test(ln) && !new RegExp(`\\b${type}\\b`).test(ln) && !seen.has(key)) { seen.add(key); defs.push(`${f}:${i + 1} ${trunc(lines.slice(i, i + 4).join(" "), 170)}`); }
+        if (!isTest && defs.length < 5 && defRe.test(ln) && !new RegExp(`\\b${type}\\b`).test(ln) && !seen.has(`${f}:${i}`)) { seen.add(`${f}:${i}`); defs.push(`${f}:${i + 1} ${trunc(lines.slice(i, i + 4).join(" "), 170)}`); }
         else if (isTest && tests.length < 3 && callRe.test(ln) && ASSERT.test(ln)) tests.push(`${f}:${i + 1} ${trunc(ln, 120)}`);
       }
     }
@@ -153,13 +153,53 @@ function precedentFor(c: OpenChoice, repoDir: string): string {
   }
   return trunc([...defs.map((x) => `sibling ${x}`), ...tests.map((x) => `test ${x}`)].join(" | "), 800);
 }
+/** Precedent is ON by default; LOKI_E10_PRECEDENT=0 opts out. */
+export const precedentOn = (): boolean => process.env.LOKI_E10_PRECEDENT !== "0";
+/** One tool-less question per open choice: which option do the sibling implementations follow. The voter sees only the options and the sibling bodies. */
+export const SYS_PRECEDENT_VOTE = "You compare code conventions. Answer only in the requested format.";
+export function precedentVotePrompt(c: OpenChoice, siblings: string): string {
+  return [`A change must pick one of these options:\n${c.options.map((o, i) => `OPTION ${i + 1}: ${o}`).join("\n")}`, `Other implementations of the same contract in this repository:\n${siblings}`, "Which option makes the changed code follow the same convention as these other implementations? If they do not all follow the same one, answer NEITHER.", "Answer with exactly one line: OPTION <n> or NEITHER."].join("\n\n");
+}
+/** The option index the answer names, or null for NEITHER, an unparseable answer or an out-of-range number. */
+export function parsePrecedentVote(text: string, n: number): number | null {
+  const m = /\bOPTION\s*(\d+)\b/i.exec(text); if (!m || /\bNEITHER\b/i.test(text.split("\n")[0] ?? "")) return null;
+  const k = Number(m[1]) - 1; return k >= 0 && k < n ? k : null;
+}
+/** Full-text sibling definitions for the vote: each definition `precedentFor` lists, with its body up to 12 lines. */
+export function siblingBodies(precedent: string, repoDir: string): string {
+  const out: string[] = [];
+  for (const m of precedent.matchAll(/sibling (\S+?):(\d+) /g)) { try { const lines = readFileSync(join(repoDir, m[1]!), "utf8").split("\n"), i = Number(m[2]) - 1; let j = i; for (; j < Math.min(lines.length, i + 12); j++) if (/^\}/.test(lines[j]!)) break; out.push(`${m[1]}:${m[2]}\n${lines.slice(i, j + 1).join("\n")}`); } catch { /* unreadable: skipped */ } }
+  return out.join("\n\n");
+}
+export type PrecedentCall = (system: string, prompt: string) => Promise<string | null>;
+/** The default voter: toolLessCall on the small model, thinking off, priced into the child ledger and cut off by the run's dollar cap. null on any non-ok outcome. */
+async function defaultVoteCall(system: string, prompt: string): Promise<string | null> {
+  const { toolLessCall } = await import("../runner/sdk_invoker.ts"), { modelRouteModel } = await import("../providers/model_routes.ts");
+  const dir = process.env["LOKI_DIR"], r = await toolLessCall({ model: process.env["LOKI_E10_PRECEDENT_MODEL"] || modelRouteModel() || "claude-haiku-5-5", system, prompt, maxTokens: 256, thinking: "off", timeoutMs: 30_000, ...(dir ? { ledger: { lokiDir: dir, phase: "precedent-vote" } } : {}) });
+  return r.outcome.kind === "ok" ? r.outcome.value : null;
+}
+/** One vote per open choice that nothing else decided (no maintainer reply, no stated preference, no pinned test, not an acceptable-outputs list) and that has at least two sibling definitions. Fewer than two siblings cannot agree, so no call. Never throws; a failed or capped call leaves that entry undefined. */
+export async function voteOpenChoices(task: string, ctx: ChoiceCtx = {}, call: PrecedentCall = defaultVoteCall): Promise<(number | null | undefined)[]> {
+  try {
+    if (!precedentOn() || !ctx.repoDir) return [];
+    const base = resolveChoices(task, { ...ctx, votes: undefined }), choices = base.map((c) => c.basis === "none" && !c.any && (c.precedent?.match(/sibling /g) ?? []).length >= 2 ? c : null);
+    return await Promise.all(choices.map(async (c) => {
+      if (!c) return undefined;
+      const text = await call(SYS_PRECEDENT_VOTE, precedentVotePrompt(c, siblingBodies(c.precedent!, ctx.repoDir!)));
+      return text === null ? undefined : parsePrecedentVote(text, c.options.length);
+    }));
+  } catch { return []; }
+}
 /** Settles each open choice in the task, in this order: the latest maintainer comment, the option the task names as preferred, the option existing tests and docs already pin, else none (the line then says to keep every existing test true and satisfy both where compatible). Deterministic, no model call, never throws. */
 export function resolveChoices(task: string, ctx: ChoiceCtx = {}): ChoiceResolution[] {
   try {
     const comments = (ctx.comments ?? []).filter((c) => typeof c?.author === "string" && typeof c.association === "string" && typeof c.body === "string"), at = comments.length ? task.lastIndexOf(ISSUE_CONTEXT_HEAD) : -1, issue = at < 0 ? task : task.slice(0, at); // the appended comment section is not the issue's own question
-    return detectOpenChoices(issue).map((c): ChoiceResolution => {
-      const prec = ctx.repoDir && process.env.LOKI_E10_PRECEDENT === "1" ? precedentFor(c, ctx.repoDir) : "", r = settle(c, comments, ctx, issue); // precedent is default off (LOKI_E10_PRECEDENT=1) until the scored L-Haiku arm measures it
-      return prec ? { ...r, precedent: prec } : r;
+    return detectOpenChoices(issue).map((c, i): ChoiceResolution => {
+      const r = settle(c, comments, ctx, issue), vote = ctx.votes?.[i];
+      if (c.any || !ctx.repoDir || !precedentOn() || (r.basis === "none" && vote === null)) return r; // the issue's own list of acceptable outputs beats the siblings; siblings that disagree (vote null) emit nothing
+      const prec = precedentFor(c, ctx.repoDir);
+      if (r.basis === "none" && prec && typeof vote === "number" && vote >= 0 && vote < c.options.length) return { ...r, basis: "precedent", picked: vote, evidence: "the sibling implementations of the same contract in this repo all follow it (one tool-less vote over their code)", precedent: prec };
+      return prec ? { ...r, precedent: prec } : r; // a maintainer, the issue's own preference or a pinned test settle first: the precedent is then only shown as a check
     });
   } catch { return []; }
 }
@@ -176,8 +216,8 @@ export const choiceLine = (c: ChoiceResolution): string => {
   const prec = c.precedent ? ` Sibling precedent in this repo (${c.picked === null ? "prefer the option these follow" : "check your option against these"}): ${c.precedent}.` : "";
   const both = c.any ? " The task lists several acceptable outputs: where they can coexist, build one design that produces every one of them." : "";
   return c.picked === null
-    ? `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> no evidence picks one (${c.evidence}).${prec}${both} Keep every existing test and documented behavior true, satisfy both options where they do not conflict, and name the one you chose.`
-    : `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> implement option ${c.picked + 1}: "${trunc(c.options[c.picked]!, 130)}". Evidence (${c.basis}): ${c.evidence}.${c.fallback ? " A fallback may be added only on top of it." : ""}${prec}${both}`;
+    ? `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> no evidence picks one (${c.evidence}).${prec}${both} ${c.precedent ? "Keep every other existing test true; a test of this one member that pins the option the siblings do not follow moves to the convention. Name the option you chose." : "Keep every existing test and documented behavior true, satisfy both options where they do not conflict, and name the one you chose."}`
+    : `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> implement option ${c.picked + 1}: "${trunc(c.options[c.picked]!, 130)}". Evidence (${c.basis}): ${c.evidence}.${c.fallback ? " A fallback may be added only on top of it." : ""}${c.basis === "precedent" ? " A preference stated in the issue for keeping the old behavior does not override the repo convention; an existing test that pins the old behavior of this one member is updated to the convention, every other test stays true." : ""}${prec}${both}`;
 };
 /** The lines worth sending: a choice nothing decided and nothing could inform (no precedent, not an acceptable-outputs list) is just a question ("faster or cheaper?"), not a spec choice, so it emits nothing. */
 export const emitChoiceLines = (cs: ChoiceResolution[]): string[] => cs.filter((c) => c.basis !== "none" || c.precedent || c.any).map(choiceLine);
