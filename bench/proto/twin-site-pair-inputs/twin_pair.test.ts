@@ -65,7 +65,7 @@ test("hunks on both sides", () => {
 const has = (cmd: string, arg: string) => spawnSync(cmd, [arg], { encoding: "utf8" }).status === 0;
 const git = (cwd: string, ...a: string[]) => spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.hooksPath=/dev/null", ...a], { cwd, encoding: "utf8" });
 
-function e2e(files: Record<string, string>, rel: string, variants: Record<string, string>): Record<string, { red: number; verdicts: string[] }> {
+function e2e(files: Record<string, string>, rel: string, variants: Record<string, string>, env: NodeJS.ProcessEnv = {}): Record<string, { red: number; verdicts: string[] }> {
   const root = mkdtempSync(join(tmpdir(), "loki-twin-test-")), out: Record<string, { red: number; verdicts: string[] }> = {};
   try {
     const base = join(root, "base");
@@ -75,7 +75,7 @@ function e2e(files: Record<string, string>, rel: string, variants: Record<string
       const head = join(root, name);
       spawnSync("cp", ["-R", base, head]);
       writeFileSync(join(head, rel), text);
-      const r = twinPairCheck(base, head, parseHunks(git(head, "diff", "-U0", "--no-color", "HEAD").stdout), { timeoutMs: 240_000 });
+      const r = twinPairCheck(base, head, parseHunks(git(head, "diff", "-U0", "--no-color", "HEAD").stdout), { timeoutMs: 240_000, env });
       out[name] = { red: r.findings.filter((f) => f.red).length, verdicts: r.findings.map((f) => `${f.guard.mode}:${f.verdict}`) };
     }
     return out;
@@ -184,4 +184,15 @@ test.skipIf(!has("go", "version"))("go: errors.As for the Coder ahead of the Bat
   expect(r.wrong!.red).toBeGreaterThan(0);
   expect(r.right!.red).toBe(0);
   expect(r.right!.verdicts.length).toBeGreaterThan(0);
+}, 240_000);
+
+// Measured on this machine: a shared Go build-cache entry removed by another process between compile and link made a
+// probe run end with no records ("link: cannot open file ... go-build ..."), silently losing every guard of that run.
+test.skipIf(!has("go", "version"))("go: a toolchain failure that names no probe line is retried, so the pre guard still decides", () => {
+  const stub = mkdtempSync(join(tmpdir(), "loki-twin-gostub-")), real = spawnSync("sh", ["-c", "command -v go"], { encoding: "utf8" }).stdout.trim();
+  try {
+    writeFileSync(join(stub, "go"), `#!/bin/sh\nif [ "$1" = "test" ] && [ ! -f "${stub}/failed" ]; then touch "${stub}/failed"; echo "link: cannot open file /cache/go-build/ab/x-d: no such file or directory" >&2; exit 1; fi\nexec "${real}" "$@"\n`, { mode: 0o755 });
+    const r = e2e({ "go.mod": "module example.com/st\n\ngo 1.22\n", "st.go": GO_BASE }, "st.go", { wrong: GO_AS("Coder") }, { PATH: `${stub}:${process.env.PATH}` });
+    expect(r.wrong!.verdicts).toContain("pre:inverted");
+  } finally { rmSync(stub, { recursive: true, force: true }); }
 }, 240_000);
