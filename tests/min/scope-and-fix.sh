@@ -497,15 +497,15 @@ process.env.LOKI_E10_PRECEDENT = "0";
 const offc = one(Q, { repoDir: PR })!;
 res("precedent: LOKI_E10_PRECEDENT=0 means no precedent text at all", !offc.precedent && !choiceLine(offc).includes("Sibling precedent"));
 delete process.env.LOKI_E10_PRECEDENT;
-const pc = one(Q, { repoDir: PR })!;
+const pc = one(Q, { repoDir: PR, votes: [1] })!;
 res("precedent: sibling Get implementations (not the option's own type) and their test assertions are handed over", !!pc.precedent && pc.precedent.includes("flag_int.go:3") && pc.precedent.includes("flag_str.go:3") && !pc.precedent.includes("flag_generic.go") && pc.precedent.includes("test flag_test.go:2"));
-res("precedent: the line carries the block and tells the model to prefer the option the siblings follow", choiceLine(pc).includes("Sibling precedent") && choiceLine(pc).includes("prefer the option these follow") && !choiceLine(pc).includes("moves to the convention") && !choiceLine(pc).includes("may be updated"));
+res("precedent: the line carries the block and is attached once a vote picked an option", choiceLine(pc).includes("Sibling precedent") && choiceLine(pc).includes("implement option 2") && !choiceLine(pc).includes("moves to the convention"));
 res("precedent: no sibling in the snapshot adds nothing", !one(Q, { repoDir: R })?.precedent && !choiceLine(one(Q, { repoDir: R })!).includes("Sibling precedent"));
 const pm = one(Q + tail, { repoDir: PR, comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get consistently.")] })!;
 res("precedent: a maintainer decision still outranks it and the precedent is shown as a check", pm.basis === "maintainer" && choiceLine(pm).includes("check your option against these"));
 // open-contract vote: one tool-less call settles an undecided either/or from the sibling definitions (stub model, no real call)
 writeFileSync(`${PR}/flag_two.go`, "package cli\n\nfunc (f *IntFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n\nfunc (f *BoolFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n"); pg("add", "."); pg("commit", "-q", "-m", "two defs in one file");
-res("precedent scan: two sibling definitions in one file are both listed", (pc0 => pc0.includes("flag_two.go:3") && pc0.includes("flag_two.go:7"))(one(Q, { repoDir: PR })!.precedent ?? ""));
+res("precedent scan: two sibling definitions in one file are both listed", (pc0 => pc0.includes("flag_two.go:3") && pc0.includes("flag_two.go:7"))(one(Q, { repoDir: PR, votes: [1] })!.precedent ?? ""));
 let calls = 0, asked = "";
 const stub = (answer: string | null) => async (_s: string, pr: string) => { calls++; asked = pr; return answer; };
 const vA = await voteOpenChoices(Q, { repoDir: PR }, stub("OPTION 2"));
@@ -527,7 +527,7 @@ const vO = await voteOpenChoices(Q, { repoDir: PR }, stub("OPTION 2")), rO = one
 res("knob off: LOKI_E10_PRECEDENT=0 makes no call and adds no precedent even with a vote", calls === 0 && vO.length === 0 && rO.basis === "none" && !rO.precedent);
 delete process.env.LOKI_E10_PRECEDENT;
 const vF = await voteOpenChoices(Q, { repoDir: PR }, stub(null)), rF = one(Q, { repoDir: PR, votes: vF })!;
-res("failed or capped call: no vote, the precedent prose stays and does not tell the model to keep a pinning test", calls === 1 && vF[0] === undefined && rF.basis === "none" && !!rF.precedent && !choiceLine(rF).includes("may be updated") && !choiceLine(rF).includes("moves to the convention"));
+res("failed or capped call: no vote, no precedent hint is emitted without a vote", calls === 1 && vF[0] === undefined && rF.basis === "none" && !rF.precedent && emitChoiceLines([rF]).length === 0);
 calls = 0; const vR = await voteOpenChoices(Q, { repoDir: R }, stub("OPTION 1"));
 res("no siblings in the snapshot: no call", calls === 0 && vR[0] === undefined);
 res("parsePrecedentVote: option, neither, out of range, garbage", parsePrecedentVote("OPTION 2", 2) === 1 && parsePrecedentVote("NEITHER", 2) === null && parsePrecedentVote("OPTION 3", 2) === null && parsePrecedentVote("hmm", 2) === null);
@@ -558,7 +558,7 @@ res("parsePrecedentVote: option, neither, out of range, garbage", parsePrecedent
   writeFileSync(`${SP}/settings/settings.go`, `package settings\n\n${typ("IntSetting", "int", "0")}\n${typ("BoolSetting", "string", "s.Raw")}\n${typ("DurationSetting", "string", "s.Raw")}`);
   const sg = (...a: string[]) => execFileSync("git", ["-C", SP, "-c", "user.name=t", "-c", "user.email=t@t", ...a]); sg("init", "-q"); sg("add", "."); sg("commit", "-q", "-m", "seed");
   let splitCalls = 0; const sv = await voteOpenChoices(like, { repoDir: SP }, async () => { splitCalls++; return "NEITHER"; }), sr = one(like, { repoDir: SP, votes: sv })!;
-  res("control settings-split: siblings disagree, the vote is NEITHER, no line and no transplant", splitCalls === 1 && sv[0] === null && emitChoiceLines([sr]).length === 0 && !sr.transplant);
+  res("control settings-split (multi-statement bodies, Bool already returns the target's string): the signature split is refused before any call, no line and no transplant", splitCalls === 0 && sv[0] === undefined && emitChoiceLines([sr]).length === 0 && !sr.transplant);
   let accCalls = 0; const AC = "DurationSetting.Value should behave like the other settings\n\nEvery other setting type gives me the parsed value from `Value()`.\n\nAny of the following outputs is acceptable:\n\n- `DurationSetting.Value` returns the string, trimmed\n- `DurationSetting.Value` returns the raw string\n";
   const av = await voteOpenChoices(AC, { repoDir: GR }, async () => { accCalls++; return "OPTION 1"; }), ar = one(AC, { repoDir: GR, votes: av })!, al = emitChoiceLines([ar]).join("\n");
   res("control settings-acc: siblings agree but the issue lists outputs: no vote call, no binding transplant, the listed outputs line stands", accCalls === 0 && !ar.transplant && !al.includes("Binding sibling test") && al.includes("every one of them"));

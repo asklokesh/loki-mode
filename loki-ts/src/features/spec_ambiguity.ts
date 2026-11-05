@@ -30,7 +30,7 @@ export type ChoiceBasis = "maintainer" | "task_preferred" | "existing_tests" | "
 export interface OpenChoice { sentence: string; options: string[]; preferred: number | null; fallback: boolean; any?: boolean /* an "acceptable outputs" list: the options may coexist */ }
 export interface ChoiceResolution extends OpenChoice { basis: ChoiceBasis; picked: number | null; evidence: string; precedent?: string; transplant?: Transplant }
 /** comments: the trusted comments intake read from issue.json (never parsed back out of the task text, which an issue author could forge). */
-export interface ChoiceCtx { repoDir?: string; comments?: Pick<IssueComment, "author" | "association" | "body">[]; votes?: (number | null | undefined)[] /* per choice: option index the siblings follow, null = they disagree (NEITHER), undefined = no vote ran */ }
+export interface ChoiceCtx { repoDir?: string; comments?: Pick<IssueComment, "author" | "association" | "body">[]; probe?: boolean /* voteOpenChoices only: attach the sibling listing even without a vote */; votes?: (number | null | undefined)[] /* per choice: option index the siblings follow, null = they disagree (NEITHER), undefined = no vote ran */ }
 const trunc = (s: string, n: number): string => { const cps = Array.from(s.replace(/\s+/g, " ").trim()); return cps.length > n ? `${cps.slice(0, n - 3).join("")}...` : cps.join(""); };
 const AUX = "should|would|does|do|is|are|can|will|must";
 const LIST_ITEM = /^\s*(?:(?:[-*+]|\d+[.)]|\(\d+\)|[A-Da-d][.)])\s+|(?:#+\s*)?(?:\*\*)?(?:option|solution|approach|alternative|proposal)\s*#?\(?(\d+|[A-Da-d])\)?(?:\*\*)?\s*[:.)-]\s*)(.+)$/i;
@@ -223,6 +223,20 @@ export function siblingsDisagree(precedent: string, repoDir: string): boolean {
   }
   return exprs.length >= 2 && new Set(exprs).size > 1;
 }
+/** Go: the siblings' return types for the member are split against the target's current return type (some already return what the target returns now, some do not). Siblings that are not unanimous against the target's current behavior cannot settle the either/or, so no vote and no line. */
+export function siblingsSplitOnTarget(c: OpenChoice, precedent: string, repoDir: string): boolean {
+  try {
+    const sibs = siblingList(precedent).filter((x) => x.sig), types = new Set(sibs.map((x) => x.sig.split(".")[0]!)), members = new Set(sibs.map((x) => /\.(\w+)\(\)/.exec(x.sig)![1]!));
+    const tgt = [...new Set(c.options.flatMap((o) => o.match(/\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b/g) ?? []))].map((d) => d.split(".") as [string, string]).find(([t, m]) => !types.has(t) && members.has(m));
+    if (sibs.length < 2 || !tgt) return false;
+    const def = new RegExp(`^func \\(\\w+ \\*?${reEsc(tgt[0])}\\) ${reEsc(tgt[1])}\\([^)]*\\) ([^{]+?) \\{`, "m");
+    for (const f of safeGit(repoDir, ["ls-files", "-z"], { timeout: 5000, maxBuffer: 64 << 20 }).split("\0").filter((x) => x.endsWith(".go") && !x.endsWith("_test.go")).slice(0, 300)) {
+      const cur = def.exec(readFileSync(join(repoDir, f), "utf8"))?.[1]?.trim(); if (!cur) continue;
+      const same = sibs.filter((x) => x.sig.replace(/^\S+\s/, "") === cur).length; return same > 0 && same < sibs.length;
+    }
+  } catch { /* unreadable: no split claimed */ }
+  return false;
+}
 /** A trusted comment that names a symbol of one of the options: its author may already have decided, in words the cue detector cannot place, so no vote may steer against it. */
 export function commentMentionsOption(c: OpenChoice, comments: { body: string }[] = []): boolean {
   const syms = [...new Set(c.options.flatMap((o) => snippetsOf(o).flatMap((x) => [x, ...x.split(".")])))].filter((x) => x.length >= 3);
@@ -232,28 +246,30 @@ export type PrecedentCall = (system: string, prompt: string) => Promise<string |
 /** The default voter: toolLessCall on the small model, thinking off, priced into the child ledger and cut off by the run's dollar cap. null on any non-ok outcome. */
 async function defaultVoteCall(system: string, prompt: string): Promise<string | null> {
   const { toolLessCall } = await import("../runner/sdk_invoker.ts"), { modelRouteModel } = await import("../providers/model_routes.ts");
-  const dir = process.env["LOKI_DIR"], r = await toolLessCall({ model: process.env["LOKI_E10_PRECEDENT_MODEL"] || modelRouteModel() || "claude-haiku-5-5", system, prompt, maxTokens: 256, thinking: "off", timeoutMs: 30_000, ...(dir ? { ledger: { lokiDir: dir, phase: "precedent-vote" } } : {}) });
+  const dir = process.env["LOKI_DIR"], r = await toolLessCall({ model: process.env["LOKI_E10_PRECEDENT_MODEL"] || modelRouteModel() || "claude-haiku-5-5", system, prompt, maxTokens: 1024, thinking: "off", timeoutMs: 30_000, ...(dir ? { ledger: { lokiDir: dir, phase: "precedent-vote" } } : {}) });
   return r.outcome.kind === "ok" ? r.outcome.value : null;
 }
 /** One vote per open choice that nothing else decided (no maintainer reply, no stated preference, no pinned test, not an acceptable-outputs list) and that has at least two sibling definitions. Fewer than two siblings cannot agree, so no call. Never throws; a failed or capped call leaves that entry undefined. */
 export async function voteOpenChoices(task: string, ctx: ChoiceCtx = {}, call: PrecedentCall = defaultVoteCall): Promise<(number | null | undefined)[]> {
   try {
     if (!precedentOn() || !ctx.repoDir) return [];
-    const base = resolveChoices(task, { ...ctx, votes: undefined }), choices = base.map((c) => c.basis === "none" && !c.any && (c.precedent?.match(/sibling /g) ?? []).length >= 2 && !commentMentionsOption(c, ctx.comments) && !siblingsDisagree(c.precedent!, ctx.repoDir!) ? c : null);
+    const base = resolveChoices(task, { ...ctx, votes: undefined, probe: true }), choices = base.map((c) => c.basis === "none" && !c.any && (c.precedent?.match(/sibling /g) ?? []).length >= 2 && !commentMentionsOption(c, ctx.comments) && !siblingsDisagree(c.precedent!, ctx.repoDir!) && !siblingsSplitOnTarget(c, c.precedent!, ctx.repoDir!) ? c : null);
     return await Promise.all(choices.map(async (c) => {
       if (!c) return undefined;
-      const text = await call(SYS_PRECEDENT_VOTE, precedentVotePrompt(c, siblingBodies(c.precedent!, ctx.repoDir!), (ctx.comments ?? []).map((x) => x.body)));
+      const prompt = precedentVotePrompt(c, siblingBodies(c.precedent!, ctx.repoDir!), (ctx.comments ?? []).map((x) => x.body));
+      const text = await call(SYS_PRECEDENT_VOTE, prompt);
       return text === null ? undefined : parsePrecedentVote(text, c.options.length);
     }));
   } catch { return []; }
 }
 /** Settles each open choice in the task, in this order: the latest maintainer comment, the option the task names as preferred, the option existing tests and docs already pin, else none (the line then says to keep every existing test true and satisfy both where compatible). Deterministic, no model call, never throws. */
+const prec0 = (c: OpenChoice, repoDir: string | undefined): string => (repoDir ? precedentFor(c, repoDir) : "");
 export function resolveChoices(task: string, ctx: ChoiceCtx = {}): ChoiceResolution[] {
   try {
     const comments = (ctx.comments ?? []).filter((c) => typeof c?.author === "string" && typeof c.association === "string" && typeof c.body === "string"), at = comments.length ? task.lastIndexOf(ISSUE_CONTEXT_HEAD) : -1, issue = at < 0 ? task : task.slice(0, at); // the appended comment section is not the issue's own question
     return detectOpenChoices(issue).map((c, i): ChoiceResolution => {
       const r = settle(c, comments, ctx, issue), vote = ctx.votes?.[i];
-      if (c.any || !ctx.repoDir || !precedentOn() || (r.basis === "none" && (vote === null || siblingsDisagree(precedentFor(c, ctx.repoDir!), ctx.repoDir!) || (typeof vote === "number" && commentMentionsOption(c, comments))))) return r; // the issue's own list of acceptable outputs beats the siblings; siblings that disagree (vote null) emit nothing
+      if (c.any || !ctx.repoDir || !precedentOn() || (r.basis === "none" && ((typeof vote !== "number" && !ctx.probe) || siblingsDisagree(prec0(c, ctx.repoDir), ctx.repoDir!) || siblingsSplitOnTarget(c, prec0(c, ctx.repoDir), ctx.repoDir!) || (typeof vote === "number" && commentMentionsOption(c, comments))))) return r; // the issue's own list of acceptable outputs beats the siblings; siblings that disagree (vote null) emit nothing
       const prec = precedentFor(c, ctx.repoDir);
       const out: ChoiceResolution = r.basis === "none" && prec && typeof vote === "number" && vote >= 0 && vote < c.options.length ? { ...r, basis: "precedent", picked: vote, evidence: `a one-call vote over ${siblingList(prec).length} sibling definitions picked it (${siblingList(prec).map((x) => x.sig ? `${x.sig} at ${x.at}` : x.at).join("; ")}); the siblings may not be unanimous, and the issue's own words and any maintainer comment outrank it`, precedent: prec } : prec ? { ...r, precedent: prec } : r;
       const tp = out.picked !== null && prec ? transplantFor(c, out.picked, issue, ctx.repoDir, prec) : null;
