@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.128.0 (2026-11-04)
+
+Fewer sessions on cheap runs, Go tests that count, and a tougher already-done check under --haiku.
+
+### Changed
+
+- Under `--haiku`, when Haiku claims a task is already done with no change and the router redoes it on Sonnet, the redo now carries the reproduce-the-defect challenge, so a second false "already done" is checked rather than accepted. It adds no session.
+- Go tests now count as evidence for the packages they import (resolved through go.mod), so correct Go runs can seal VERIFIED. Exported Go methods are excluded from coverage requirements only on types that actually implement sort, heap or error interfaces.
+- A cap that marks a run PARTIAL when an added public function is not exercised by any passing check is included but OFF by default (`LOKI_E10_PUBLIC_GAP=1` turns it on, experimental): review found it can misread line positions after multi-line docstrings or comments. With it off, verdicts match the previous release.
+- Benchmark record for the change as measured with the cap on: `benchmarks/h2h/results/2026-11-04-0972a4f97.json` (run on 0972a4f97, 1 rep): loki-haiku 24/24 at $0.0116 per passed task, raw Haiku 24/24 at $0.0226, 0 false VERIFIED; one rep, and one expensive raw task skews the raw number.
+
 ## v11.127.0 (2026-11-04)
 
 Large multi-package issues no longer stop on tests that were already failing, and a test the change broke is never excused as pre-existing.

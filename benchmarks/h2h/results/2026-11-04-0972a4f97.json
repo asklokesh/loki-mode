@@ -1,0 +1,3692 @@
+{
+  "benchmark": "h2h-b1",
+  "suite": "tasks",
+  "loki_sha": "0972a4f97",
+  "date": "2026-11-04T17:26:07",
+  "citable": true,
+  "provenance": [
+    {
+      "engine_sha": "0972a4f97bf09d9c1771d669a681c0eb96faee92",
+      "dirty_count": 0,
+      "dirty": [],
+      "citable": true,
+      "bun": "1.3.13",
+      "claude_cli": "2.1.318 (Claude Code)",
+      "python": "3.14.6",
+      "go": "go version go1.26.3 darwin/arm64",
+      "platform": "macOS-27.2-arm64-arm-64bit-Mach-O"
+    }
+  ],
+  "configs": [
+    "raw-haiku",
+    "loki-haiku"
+  ],
+  "reps": 1,
+  "jobs": 4,
+  "timeout_s": 600,
+  "stopped": null,
+  "loki_env": {},
+  "tasks": [
+    "go-bank-transfer",
+    "go-config-merge",
+    "go-ratelimit",
+    "go-store-refactor",
+    "go-topo-schedule",
+    "go-wordfreq-tokenize",
+    "py-cache-ttl",
+    "py-csv-quotes",
+    "py-invoice-rounding",
+    "py-retry-decorator",
+    "py-semver-range",
+    "py-todo-json",
+    "rs-expr-eval",
+    "rs-interval-set",
+    "rs-roman-strict",
+    "rs-shapes-refactor",
+    "rs-stats-percentile",
+    "rs-stock-reserve",
+    "ts-cart-discounts",
+    "ts-cron-next",
+    "ts-duration-fix",
+    "ts-order-currency",
+    "ts-paginate-fix",
+    "ts-validate-refactor"
+  ],
+  "summary": [
+    {
+      "config": "raw-haiku",
+      "n": 24,
+      "passed": 24,
+      "pass_rate": 1.0,
+      "pass_ci95": [
+        0.862,
+        1.0
+      ],
+      "median_s": 26.6,
+      "p90_s": 187.8,
+      "total_cost_usd": 0.542,
+      "cost_per_task_usd": 0.0226,
+      "cost_per_pass_usd": 0.0226,
+      "cost_unmeasured": 0,
+      "mean_sessions": 1,
+      "mean_fix_rounds": null,
+      "timeouts": 0,
+      "by_difficulty": {
+        "hard": [
+          5,
+          5
+        ],
+        "normal": [
+          19,
+          19
+        ]
+      },
+      "accepted": 22,
+      "accepted_n": 24,
+      "accept_ci95": [
+        0.7415,
+        0.9768
+      ],
+      "runs_with_test_edits": 20,
+      "runs_weakening_tests": 2,
+      "cost_per_accepted_usd": 0.0246,
+      "cost_per_accepted_ci95": [
+        0.0231,
+        0.0305
+      ]
+    },
+    {
+      "config": "loki-haiku",
+      "n": 24,
+      "passed": 24,
+      "pass_rate": 1.0,
+      "pass_ci95": [
+        0.862,
+        1.0
+      ],
+      "median_s": 25.7,
+      "p90_s": 190.5,
+      "total_cost_usd": 0.2787,
+      "cost_per_task_usd": 0.0116,
+      "cost_per_pass_usd": 0.0116,
+      "cost_unmeasured": 0,
+      "mean_sessions": 1.62,
+      "mean_fix_rounds": 0.04,
+      "timeouts": 0,
+      "by_difficulty": {
+        "hard": [
+          5,
+          5
+        ],
+        "normal": [
+          19,
+          19
+        ]
+      },
+      "accepted": 23,
+      "accepted_n": 24,
+      "accept_ci95": [
+        0.7976,
+        0.9926
+      ],
+      "runs_with_test_edits": 13,
+      "runs_weakening_tests": 1,
+      "cost_per_accepted_usd": 0.0121,
+      "cost_per_accepted_ci95": [
+        0.0117,
+        0.0146
+      ],
+      "verdict_agreement": 0.7083,
+      "verdict_agree_n": 17,
+      "false_verified": 0,
+      "missed_pass": 7,
+      "verified_recall": 0.7083,
+      "partial_pass": 7,
+      "partial_fail": 0,
+      "outcomes": {
+        "PARTIAL": 7,
+        "VERIFIED": 17
+      }
+    }
+  ],
+  "runs": [
+    {
+      "config": "raw-haiku",
+      "task": "go-bank-transfer",
+      "kind": "multifile",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "cross-module",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 26.43,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/transfer_test.go"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 3,
+      "files": [
+        "account/account.go",
+        "ledger/ledger.go",
+        "tests/transfer_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.01069459,
+      "sessions": 1,
+      "turns": 11,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "go-bank-transfer",
+      "kind": "multifile",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "cross-module",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 22.56,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 2,
+      "files": [
+        "account/account.go",
+        "ledger/ledger.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221225Z-7a0a",
+      "hidden_tail": "",
+      "cost_usd": 0.004444480000000001,
+      "stage_cost_usd": 0.004444,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T221225Z-7a0a",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "scope not determined; all edits committed",
+        "no agent-independent passing test calls these added public functions: Transfer",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 21.603,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 3.695,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0044,
+          "sessions": 1,
+          "seconds": 16.428,
+          "session_seconds": 16.268,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.904,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.069,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.177,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "[intake] reading the task  4s\n[implement] implementing  4s  (intake done 4s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:2b4c3c2a0bbc4fa8b4e44fc4b91cdf6e6ae99344902b69f426d694c7f4595708\nNOT PROVEN: scope not determined; all edits committed, no agent-independent passing test calls these added public functions: Transfer, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 72k tokens; cache read 48k tokens, saved $0.00)\nTime:       22s (intake 4s, implement 16s, verify 1s, commit 0s, seal 0s; slowest: implement 76%)\nNext:       loki verify  (2 files changed (+39 -1)); 8 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "go-config-merge",
+      "kind": "multifile",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "cross-file-bug",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 26.69,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/regression_test.go"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 4,
+      "files": [
+        "config/env.go",
+        "config/file.go",
+        "config/merge.go",
+        "tests/regression_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.01000058,
+      "sessions": 1,
+      "turns": 8,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "go-config-merge",
+      "kind": "multifile",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "cross-file-bug",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 24.76,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 3,
+      "files": [
+        "config/env.go",
+        "config/file.go",
+        "config/merge.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221225Z-725f",
+      "hidden_tail": "",
+      "cost_usd": 0.004688795,
+      "stage_cost_usd": 0.004689,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T221225Z-725f",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "scope not determined; all edits committed",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 23.798,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 3.686,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0047,
+          "sessions": 1,
+          "seconds": 18.683,
+          "session_seconds": 18.535,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.839,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.064,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.19,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "e] reading the task  4s\n[implement] implementing  4s  (intake done 4s)\nOutcome:    VERIFIED\nPR:         none\nReceipt:    sha256:b6cfb714d5883afcc1397996fd6e0cc3ac0a905e87fc1dfe941f9832e12edbd9\nNOT PROVEN: scope not determined; all edits committed, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 74k tokens; cache read 49k tokens, saved $0.00)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       24s (intake 4s, implement 19s, verify 1s, commit 0s, seal 0s; slowest: implement 78%); next: loki status; 7 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "go-ratelimit",
+      "kind": "feature",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 23.98,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 1,
+      "files": [
+        "ratelimit/bucket.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.008650680000000001,
+      "sessions": 1,
+      "turns": 5,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "go-ratelimit",
+      "kind": "feature",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 20.61,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "tests/bucket_test.go"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/bucket_test.go b/tests/bucket_test.go\nnew file mode 100644\nindex 0000000..3633f00\n--- /dev/null\n+++ b/tests/bucket_test.go\n@@ -0,0 +1,79 @@\n+package tests\n+\n+import (\n+\t\"errors\"\n+\t\"math\"\n+\t\"testing\"\n+\t\"time\"\n+\n+\t\"example.com/ratelimit/ratelimit\"\n+)\n+\n+func TestBucketRefillsFractionally(t *testing.T) {\n+\tc := newClock()\n+\tb, err := ratelimit.NewBucket(4, 2, c.Now)\n+\tif err != nil {\n+\t\tt.Fatal(err)\n+\t}\n+\tif !b.Allow(4) {\n+\t\tt.Fatal(\"full bucket should allow capacity\")\n+\t}\n+\tc.Advance(250 * time.Millisecond)\n+\tif got := b.Tokens(); math.Abs(got-0.5) > 1e-9 {\n+\t\tt.Fatalf(\"tokens = %v, want 0.5\", got)\n+\t}\n+\tc.Advance(time.Hour)\n+\tif got := b.Tokens(); got != 4 {\n+\t\tt.Fatalf(\"tokens = %v, want capacity 4\", got)\n+\t}\n+}\n+\n+func TestBucketNoPartialConsume(t *testing.T) {\n+\tc := newClock()\n+\tb, _ := ratelimit.NewBucket(3, 1, c.Now)\n+\tif b.Allow(5) {\n+\t\tt.Fatal(\"n greater than capacity must be refused\")\n+\t}\n+\tif b.Allow(0) || b.Allow(-1) || b.Allow(math.NaN()) {\n+\t\tt.Fatal(\"non-positive or NaN n must be refused\")\n+\t}\n+\tif !b.Allow(2) {\n+\t\tt.Fatal(\"2 of 3 tokens should be allowed\")\n+\t}\n+\tif b.Allow(2) {\n+\t\tt.Fatal(\"refused request must not take a partial amount\")\n+\t}\n+\tif got := b.Tokens(); got != 1 {\n+\t\tt.Fatalf(\"tokens = %v, want 1\", got)\n+\t}\n+}\n+\n+func TestBucketClockBackwards(t *testing.T) {\n+\tc := newClock()\n+\tb, _ := ratelimit.NewBucket(2, 1, c.Now)\n+\tb.Allow(2)\n+\tc.Advance(-time.Second)\n+\tif got := b.Tokens(); got != 0 {\n+\t\tt.Fatalf(\"tokens = %v after clock went back, want 0\", got)\n+\t}\n+\tc.Advance(2 * time.Second) // 1s past the latest seen time\n+\tif got := b.Tokens(); math.Abs(got-1) > 1e-9 {\n+\t\tt.Fatalf(\"tokens = %v, want 1\", got)\n+\t}\n+}\n+\n+func TestBucketRejectsBadConfig(t *testing.T) {\n+\tc := newClock()\n+\tbad := []struct{ cap, rate float64 }{\n+\t\t{0, 1}, {-1, 1}, {math.NaN(), 1}, {math.Inf(1), 1},\n+\t\t{1, 0}, {1, -1}, {1, math.NaN()}, {1, math.Inf(1)},\n+\t}\n+\tfor _, tc := range bad {\n+\t\tif _, err := ratelimit.NewBucket(tc.cap, tc.rate, c.Now); !errors.Is(err, ratelimit.ErrInvalidConfig) {\n+\t\t\tt.Fatalf(\"NewBucket(%v,%v) err = %v, want ErrInvalidConfig\", tc.cap, tc.rate, err)\n+\t\t}\n+\t}\n+\tif _, err := ratelimit.NewBucket(1, 1, nil); !errors.Is(err, ratelimit.ErrInvalidConfig) {\n+\t\tt.Fatalf(\"nil now err = %v, want ErrInvalidConfig\", err)\n+\t}\n+}\n",
+      "files_changed": 2,
+      "files": [
+        "ratelimit/bucket.go",
+        "tests/bucket_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221251Z-eb4b",
+      "hidden_tail": "",
+      "cost_usd": 0.0036732349999999995,
+      "stage_cost_usd": 0.003673,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T221251Z-eb4b",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "one reviewer",
+        "scope not determined; all edits committed",
+        "no agent-independent passing test calls these added public functions: NewBucket, Tokens",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 19.679,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.965,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0037,
+          "sessions": 1,
+          "seconds": 15.675,
+          "session_seconds": 15.531,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 2.483,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.077,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.169,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "repo)\n[implement] implementing  4s  (intake done 1s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:ffba5f9c5af9aa5a3849616d204775aee9574adcec8d7ab34bfc0adc04e4bc9f\nNOT PROVEN: one reviewer, scope not determined; all edits committed, no agent-independent passing test calls these added public functions: NewBucket, Tokens, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 30k tokens; cache read 12k tokens, saved $0.00)\nTime:       20s (intake 1s, implement 16s, verify 2s, commit 0s, seal 0s; slowest: implement 79%)\nNext:       loki verify  (2 files changed (+149 -0)); 9 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "go-store-refactor",
+      "kind": "multifile",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "refactor",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 26.44,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/store_test.go"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 3,
+      "files": [
+        "notes/handlers.go",
+        "notes/store.go",
+        "tests/store_test.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.011245260000000002,
+      "sessions": 1,
+      "turns": 8,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "go-store-refactor",
+      "kind": "multifile",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "refactor",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 21.68,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 2,
+      "files": [
+        "notes/handlers.go",
+        "notes/store.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221253Z-bfbb",
+      "hidden_tail": "",
+      "cost_usd": 0.0035456,
+      "stage_cost_usd": 0.003546,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T221253Z-bfbb",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "no agent-independent passing test calls these added public functions: NewHandlers, Create, Show, List, Delete, NewMemStore, Add, Get",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 20.711,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.016,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0035,
+          "sessions": 1,
+          "seconds": 17.617,
+          "session_seconds": 17.471,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.424,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.093,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.236,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "run in this repo)\n[implement] implementing  4s  (intake done 1s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:2bbdd458eab9960e4bf9f173ddb19f7ccce22b1f68885c8fc0b8d67538484a50\nNOT PROVEN: no agent-independent passing test calls these added public functions: NewHandlers, Create, Show, List, Delete, NewMemStore, Add, Get, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 41k tokens; cache read 23k tokens, saved $0.00)\nTime:       21s (intake 1s, implement 18s, verify 1s, commit 0s, seal 0s; slowest: implement 85%)\nNext:       loki verify  (2 files changed (+55 -34)); 4 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "go-topo-schedule",
+      "kind": "feature",
+      "lang": "go",
+      "difficulty": "hard",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 202.32,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 1,
+      "files": [
+        "sched/plan.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.03995904,
+      "sessions": 1,
+      "turns": 7,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "go-topo-schedule",
+      "kind": "feature",
+      "lang": "go",
+      "difficulty": "hard",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 107.47,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 1,
+      "files": [
+        "sched/plan.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221313Z-c619",
+      "hidden_tail": "",
+      "cost_usd": 0.01794231,
+      "stage_cost_usd": 0.017942,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T221313Z-c619",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "one reviewer",
+        "scope not determined; all edits committed",
+        "no agent-independent passing test calls these added public functions: Plan, Simulate",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 106.46,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.967,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0179,
+          "sessions": 1,
+          "seconds": 103.132,
+          "session_seconds": 102.953,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.68,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.122,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.214,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "o)\n[implement] implementing  4s  (intake done 1s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:509ea5dc4ce68fe438046c8943487c5208c6612d8346c738cb5fd3cf2054dac5\nNOT PROVEN: one reviewer, scope not determined; all edits committed, no agent-independent passing test calls these added public functions: Plan, Simulate, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.02 (claude, 203k tokens; cache read 144k tokens, saved $0.01)\nTime:       1m46s (intake 1s, implement 1m43s, verify 2s, commit 0s, seal 0s; slowest: implement 97%)\nNext:       loki verify  (1 file changed (+541 -0)); 33 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "go-wordfreq-tokenize",
+      "kind": "multifile",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "cross-file-bug",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 21.13,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/rules_test.go"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 3,
+      "files": [
+        "tests/rules_test.go",
+        "wordfreq/count.go",
+        "wordfreq/tokenize.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.00862825,
+      "sessions": 1,
+      "turns": 7,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "go-wordfreq-tokenize",
+      "kind": "multifile",
+      "lang": "go",
+      "difficulty": "normal",
+      "shape": "cross-file-bug",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 26.55,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 2,
+      "files": [
+        "wordfreq/count.go",
+        "wordfreq/tokenize.go"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221319Z-4fc7",
+      "hidden_tail": "",
+      "cost_usd": 0.005365420000000001,
+      "stage_cost_usd": 0.002816,
+      "child_cost_usd": 0.002549,
+      "child_sessions": 1,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261104T221319Z-4fc7",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "cross-review flag (claude): Tokenize now lowercases and splits on any rune that is not a letter, digit or ASCII apostrophe. Before, it split only on whitespace, , and ; . So hello-world becomes two wo",
+        "cross-review flag (claude): Curly apostrophes ( don\u2019t , U+2019) are not word runes, so they split the word into don and t . The new doc comment only mentions ASCII apostrophes, so this is probably int",
+        "cross-review flag (claude): Decomposed Unicode text (a base letter followed by a combining mark, such as e + U+0301) splits at the combining mark, because marks are not letters or digits. Precomposed ",
+        "cross-review flag (claude): No test changes are in the diff, so the new tie-break order, the n <= 0 early return, the empty-input non-nil slice, apostrophe trimming and the case folding are all untest",
+        "cross-review flag (claude): TopN looks correct on reading: the sort comparator is a total order (count, then word) because map keys are unique, so output is deterministic, and the n <= 0 guard also re"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 25.227,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.0,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0028,
+          "sessions": 1,
+          "seconds": 12.856,
+          "session_seconds": 12.702,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 2.147,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.069,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 8.815,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "n reading: the sort comparator is a total order (count, then word) because map keys are unique, so output is deterministic, and the n <= 0 guard also removes the previous panic on negative n . I did not run the code, so this is from reading only., repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 36k tokens; cache read 21k tokens, saved $0.00)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       25s (intake 1s, implement 13s, verify 2s, commit 0s, seal 9s; slowest: implement 51%); next: loki status; 8 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "py-cache-ttl",
+      "kind": "feature",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 34.72,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_cache.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_cache.py b/tests/test_cache.py\nindex bf9d33f..dcdd947 100644\n--- a/tests/test_cache.py\n+++ b/tests/test_cache.py\n@@ -32,3 +32,105 @@ def test_delete_and_len():\n def test_bad_size():\n     with pytest.raises(ValueError):\n         Cache(max_size=0)\n+\n+\n+class FakeClock:\n+    def __init__(self, now=0.0):\n+        self.now = now\n+\n+    def __call__(self):\n+        return self.now\n+\n+\n+def test_default_ttl_expires_at_exact_age():\n+    clock = FakeClock()\n+    c = Cache(ttl=10, clock=clock)\n+    c.set(\"a\", 1)\n+    clock.now = 9.9\n+    assert c.get(\"a\") == 1\n+    clock.now = 10\n+    assert c.get(\"a\", \"gone\") == \"gone\"\n+    assert \"a\" not in c\n+    assert len(c) == 0\n+    assert c.delete(\"a\") is False\n+\n+\n+def test_expired_entry_is_not_counted_by_len_or_contains():\n+    clock = FakeClock()\n+    c = Cache(ttl=5, clock=clock)\n+    c.set(\"a\", 1)\n+    c.set(\"b\", 2)\n+    clock.now = 6\n+    assert len(c) == 0\n+    assert \"a\" not in c and \"b\" not in c\n+\n+\n+def test_per_entry_ttl_overrides_default():\n+    clock = FakeClock()\n+    c = Cache(ttl=10, clock=clock)\n+    c.set(\"short\", 1, ttl=5)\n+    c.set(\"default\", 2)\n+    clock.now = 6\n+    assert \"short\" not in c\n+    assert c.get(\"default\") == 2\n+\n+\n+def test_per_entry_ttl_without_default_expires():\n+    clock = FakeClock()\n+    c = Cache(clock=clock)\n+    c.set(\"forever\", 1)\n+    c.set(\"temp\", 2, ttl=3)\n+    clock.now = 1e6\n+    assert c.get(\"forever\") == 1\n+    assert \"temp\" not in c\n+\n+\n+def test_no_ttl_never_expires():\n+    clock = FakeClock()\n+    c = Cache(clock=clock)\n+    c.set(\"a\", 1)\n+    clock.now = 1e9\n+    assert c.get(\"a\") == 1\n+\n+\n+def test_set_refreshes_lifetime():\n+    clock = FakeClock()\n+    c = Cache(ttl=10, clock=clock)\n+    c.set(\"a\", 1)\n+    clock.now = 8\n+    c.set(\"a\", 2)\n+    clock.now = 12\n+    assert c.get(\"a\") == 2\n+    clock.now = 18\n+    assert \"a\" not in c\n+\n+\n+def test_expired_entries_evicted_before_lru():\n+    clock = FakeClock()\n+    c = Cache(max_size=2, clock=clock)\n+    c.set(\"a\", 1)                 # LRU, never expires\n+    c.set(\"b\", 2, ttl=5)          # more recent, but will expire\n+    clock.now = 10\n+    c.set(\"c\", 3)\n+    assert \"a\" in c\n+    assert \"c\" in c\n+\n+\n+def test_lru_still_used_when_nothing_expired():\n+    clock = FakeClock()\n+    c = Cache(max_size=2, ttl=100, clock=clock)\n+    c.set(\"a\", 1)\n+    c.set(\"b\", 2)\n+    c.get(\"a\")\n+    c.set(\"c\", 3)\n+    assert \"b\" not in c\n+    assert \"a\" in c and \"c\" in c\n+\n+\n+@pytest.mark.parametrize(\"bad\", [0, -1, -0.5])\n+def test_non_positive_ttl_rejected(bad):\n+    with pytest.raises(ValueError):\n+        Cache(ttl=bad)\n+    c = Cache()\n+    with pytest.raises(ValueError):\n+        c.set(\"a\", 1, ttl=bad)\n",
+      "files_changed": 2,
+      "files": [
+        "cachelib/cache.py",
+        "tests/test_cache.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.011123929999999999,
+      "sessions": 1,
+      "turns": 5,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-cache-ttl",
+      "kind": "feature",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 19.23,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_cache_ttl.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_cache_ttl.py b/tests/test_cache_ttl.py\nnew file mode 100644\nindex 0000000..d42f974\n--- /dev/null\n+++ b/tests/test_cache_ttl.py\n@@ -0,0 +1,73 @@\n+import pytest\n+\n+from cachelib import Cache\n+\n+\n+class FakeClock:\n+    def __init__(self):\n+        self.now = 0.0\n+\n+    def __call__(self):\n+        return self.now\n+\n+\n+def test_default_ttl_expires_entry():\n+    clock = FakeClock()\n+    c = Cache(ttl=10, clock=clock)\n+    c.set(\"a\", 1)\n+    clock.now = 9.9\n+    assert c.get(\"a\") == 1\n+    clock.now = 10\n+    assert c.get(\"a\", \"gone\") == \"gone\"\n+    assert \"a\" not in c\n+    assert len(c) == 0\n+    assert c.delete(\"a\") is False\n+\n+\n+def test_per_entry_ttl_overrides_default():\n+    clock = FakeClock()\n+    c = Cache(ttl=100, clock=clock)\n+    c.set(\"short\", 1, ttl=5)\n+    c.set(\"long\", 2)\n+    clock.now = 5\n+    assert \"short\" not in c\n+    assert \"long\" in c\n+\n+\n+def test_no_ttl_never_expires():\n+    clock = FakeClock()\n+    c = Cache(clock=clock)\n+    c.set(\"a\", 1)\n+    clock.now = 1e9\n+    assert c.get(\"a\") == 1\n+\n+\n+def test_reset_refreshes_lifetime():\n+    clock = FakeClock()\n+    c = Cache(ttl=10, clock=clock)\n+    c.set(\"a\", 1)\n+    clock.now = 8\n+    c.set(\"a\", 2)\n+    clock.now = 15\n+    assert c.get(\"a\") == 2\n+\n+\n+def test_expired_entries_evicted_before_lru():\n+    clock = FakeClock()\n+    c = Cache(max_size=2, clock=clock)\n+    c.set(\"old\", 1, ttl=1)\n+    c.set(\"keep\", 2)\n+    clock.now = 1\n+    c.set(\"new\", 3)\n+    assert \"keep\" in c and \"new\" in c\n+    assert len(c) == 2\n+\n+\n+def test_bad_ttl_raises():\n+    with pytest.raises(ValueError):\n+        Cache(ttl=0)\n+    with pytest.raises(ValueError):\n+        Cache(ttl=-1)\n+    c = Cache()\n+    with pytest.raises(ValueError):\n+        c.set(\"a\", 1, ttl=0)\n",
+      "files_changed": 2,
+      "files": [
+        "cachelib/cache.py",
+        "tests/test_cache_ttl.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221347Z-96aa",
+      "hidden_tail": "",
+      "cost_usd": 0.00347698,
+      "stage_cost_usd": 0.003477,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T221347Z-96aa",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "one reviewer",
+        "tests ran on the system interpreter (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 18.21,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.61,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0035,
+          "sessions": 1,
+          "seconds": 15.851,
+          "session_seconds": 15.691,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.148,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.065,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.201,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "\nReceipt:    sha256:c52e1b3b142e3eab69b7bef3a87906aa1086ca71e5813a5803cb15c78622a547\nNOT PROVEN: one reviewer, tests ran on the system interpreter (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap), repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 46k tokens; cache read 31k tokens, saved $0.00)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       18s (intake 1s, implement 16s, verify 1s, commit 0s, seal 0s; slowest: implement 87%); next: loki status; 5 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "py-csv-quotes",
+      "kind": "bugfix",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 19.47,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_parser.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_parser.py b/tests/test_parser.py\nindex 41cd1ff..6f6a8d0 100644\n--- a/tests/test_parser.py\n+++ b/tests/test_parser.py\n@@ -12,3 +12,36 @@ def test_unquoted_fields_are_trimmed():\n def test_parse_text_maps_header():\n     rows = parse_text(\"name,role\\nann,admin\\nbo,viewer\\n\")\n     assert rows == [{\"name\": \"ann\", \"role\": \"admin\"}, {\"name\": \"bo\", \"role\": \"viewer\"}]\n+\n+\n+def test_quoted_field_keeps_comma_and_inner_whitespace():\n+    assert parse_line('a,\"b, c\",d') == [\"a\", \"b, c\", \"d\"]\n+\n+\n+def test_doubled_quote_is_literal_quote():\n+    assert parse_line('\"say \"\"hi\"\"\"') == ['say \"hi\"']\n+\n+\n+def test_quoted_whitespace_is_kept_unquoted_is_trimmed():\n+    assert parse_line('  \" x \" , y ') == [\" x \", \"y\"]\n+\n+\n+def test_trailing_empty_field_is_kept():\n+    assert parse_line(\"a,b,\") == [\"a\", \"b\", \"\"]\n+\n+\n+def test_middle_empty_field_is_kept():\n+    assert parse_line(\"a,,b\") == [\"a\", \"\", \"b\"]\n+\n+\n+def test_empty_quoted_field():\n+    assert parse_line('a,\"\",b') == [\"a\", \"\", \"b\"]\n+\n+\n+def test_blank_line_has_no_fields():\n+    assert parse_line(\"\") == []\n+\n+\n+def test_parse_text_with_quoted_and_empty_fields():\n+    rows = parse_text('name,note\\n\"Smith, J\",\\n')\n+    assert rows == [{\"name\": \"Smith, J\", \"note\": \"\"}]\n",
+      "files_changed": 2,
+      "files": [
+        "csvlite/parser.py",
+        "tests/test_parser.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.008001870000000001,
+      "sessions": 1,
+      "turns": 5,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-csv-quotes",
+      "kind": "bugfix",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 21.37,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_parser_quotes.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_parser_quotes.py b/tests/test_parser_quotes.py\nnew file mode 100644\nindex 0000000..4638270\n--- /dev/null\n+++ b/tests/test_parser_quotes.py\n@@ -0,0 +1,26 @@\n+from csvlite import parse_line, parse_text\n+\n+\n+def test_quoted_field_keeps_comma_and_spaces():\n+    assert parse_line('a,\"b, c\",d') == [\"a\", \"b, c\", \"d\"]\n+\n+\n+def test_doubled_quote_is_literal_quote():\n+    assert parse_line('\"say \"\"hi\"\"\"') == ['say \"hi\"']\n+\n+\n+def test_trailing_empty_field_is_kept():\n+    assert parse_line(\"a,b,\") == [\"a\", \"b\", \"\"]\n+\n+\n+def test_middle_empty_field_is_kept():\n+    assert parse_line(\"a,,b\") == [\"a\", \"\", \"b\"]\n+\n+\n+def test_quoted_empty_field():\n+    assert parse_line('a,\"\",b') == [\"a\", \"\", \"b\"]\n+\n+\n+def test_parse_text_with_quoted_fields():\n+    rows = parse_text('name,note\\nann,\"hi, there\"\\n')\n+    assert rows == [{\"name\": \"ann\", \"note\": \"hi, there\"}]\n",
+      "files_changed": 2,
+      "files": [
+        "csvlite/parser.py",
+        "tests/test_parser_quotes.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221411Z-88ab",
+      "hidden_tail": "",
+      "cost_usd": 0.0032770200000000003,
+      "stage_cost_usd": 0.003277,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T221411Z-88ab",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "tests ran on the system interpreter (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 20.444,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.538,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0033,
+          "sessions": 1,
+          "seconds": 18.423,
+          "session_seconds": 18.16,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.883,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.067,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.209,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": ":         none\nReceipt:    sha256:3eb3ba6e93fab59b921dcfe4ff9edddf30f12744f1ce7d8534850c1e69bb7e42\nNOT PROVEN: tests ran on the system interpreter (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap), repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 42k tokens; cache read 29k tokens, saved $0.00)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       20s (intake 1s, implement 18s, verify 1s, commit 0s, seal 0s; slowest: implement 89%); next: loki status; 4 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "py-invoice-rounding",
+      "kind": "multifile",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "cross-file-bug",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 22.49,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_invoice.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_invoice.py b/tests/test_invoice.py\nindex 1cfe50a..34aea02 100644\n--- a/tests/test_invoice.py\n+++ b/tests/test_invoice.py\n@@ -38,3 +38,48 @@ def test_render_layout():\n def test_qty_must_be_positive():\n     with pytest.raises(ValueError):\n         Invoice(\"INV-3\", 0).add(\"Bolt\", 0, 1)\n+\n+\n+def test_to_cents_uses_decimal_value():\n+    assert to_cents(19.99) == 1999\n+    assert to_cents(0.29) == 29\n+    assert to_cents(0.125) == 13\n+    assert to_cents(1.005) == 101\n+\n+\n+def test_three_items_at_8_25_percent():\n+    inv = Invoice(\"INV-4\", 8.25)\n+    inv.add(\"Widget\", 3, 19.99)\n+    assert inv.subtotal_cents() == 5997\n+    assert inv.tax_cents() == 495\n+    assert inv.total_cents() == 6492\n+    assert inv.render() == (\n+        \"INVOICE INV-4\\n\"\n+        \"3 x Widget @ 19.99 = 59.97\\n\"\n+        \"Subtotal: 59.97\\n\"\n+        \"Tax (8.25%): 4.95\\n\"\n+        \"Total: 64.92\\n\"\n+    )\n+\n+\n+def test_single_item_0_29_is_not_truncated():\n+    inv = Invoice(\"INV-5\", 0)\n+    inv.add(\"Pen\", 1, 0.29)\n+    assert inv.subtotal_cents() == 29\n+    assert inv.total_cents() == 29\n+\n+\n+def test_tax_rounds_half_up_per_line():\n+    # 2.5 cents of tax must become 3 cents, not 2.\n+    inv = Invoice(\"INV-6\", 10)\n+    inv.add(\"Clip\", 1, 0.25)\n+    assert inv.tax_cents() == 3\n+\n+\n+def test_tax_is_sum_of_per_line_taxes():\n+    # Each line is taxed on its own: 0.05 at 10% = 0.005 -> 1 cent per line.\n+    inv = Invoice(\"INV-7\", 10)\n+    for _ in range(3):\n+        inv.add(\"Gum\", 1, 0.05)\n+    assert inv.tax_cents() == 3\n+    assert inv.total_cents() == inv.subtotal_cents() + inv.tax_cents()\n",
+      "files_changed": 3,
+      "files": [
+        "billing/money.py",
+        "billing/tax.py",
+        "tests/test_invoice.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.009562860000000001,
+      "sessions": 1,
+      "turns": 7,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-invoice-rounding",
+      "kind": "multifile",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "cross-file-bug",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 37.88,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_invoice_rounding.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_invoice_rounding.py b/tests/test_invoice_rounding.py\nnew file mode 100644\nindex 0000000..db74f1d\n--- /dev/null\n+++ b/tests/test_invoice_rounding.py\n@@ -0,0 +1,44 @@\n+from billing import Invoice, to_cents\n+\n+\n+def test_unit_price_read_from_decimal_text():\n+    assert to_cents(19.99) == 1999\n+    assert to_cents(0.29) == 29\n+\n+\n+def test_unit_price_half_cent_rounds_up():\n+    assert to_cents(0.125) == 13\n+\n+\n+def test_three_items_at_8_25_percent():\n+    inv = Invoice(\"INV-10\", 8.25)\n+    inv.add(\"Widget\", 3, 19.99)\n+    assert inv.subtotal_cents() == 5997\n+    assert inv.tax_cents() == 495\n+    assert inv.total_cents() == 6492\n+\n+\n+def test_single_item_0_29_is_not_truncated():\n+    inv = Invoice(\"INV-11\", 0)\n+    inv.add(\"Pin\", 1, 0.29)\n+    assert inv.subtotal_cents() == 29\n+    assert inv.total_cents() == 29\n+\n+\n+def test_tax_rounds_half_up_per_line():\n+    inv = Invoice(\"INV-12\", 10)\n+    inv.add(\"A\", 1, 0.25)  # 25 cents -> tax 2.5 -> 3\n+    assert inv.tax_cents() == 3\n+\n+\n+def test_tax_is_sum_of_per_line_taxes():\n+    inv = Invoice(\"INV-13\", 8.25)\n+    inv.add(\"A\", 1, 0.05)\n+    inv.add(\"B\", 1, 0.05)\n+    inv.add(\"C\", 1, 0.05)\n+    # per line: 5 * 8.25% = 0.4125 -> 0 cents each\n+    assert inv.tax_cents() == 0\n+    inv2 = Invoice(\"INV-14\", 50)\n+    inv2.add(\"A\", 1, 0.01)  # 1 * 50% = 0.5 -> 1\n+    inv2.add(\"B\", 1, 0.01)  # 1 * 50% = 0.5 -> 1\n+    assert inv2.tax_cents() == 2\n",
+      "files_changed": 3,
+      "files": [
+        "billing/money.py",
+        "billing/tax.py",
+        "tests/test_invoice_rounding.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221433Z-55e3",
+      "hidden_tail": "",
+      "cost_usd": 0.0075670849999999994,
+      "stage_cost_usd": 0.00416,
+      "child_cost_usd": 0.003407,
+      "child_sessions": 1,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261104T221433Z-55e3",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "cross-review flag (claude): I traced every new and existing test by hand against the code (I could not run them). All the expected values in tests/test_invoice_rounding.py and the existing tests/test_",
+        "cross-review flag (claude): round_half_up uses ROUND_HALF_UP , which rounds ties away from zero, but its docstring and the commit intent say \"halves going up\". For negative amounts these differ: to_ce",
+        "cross-review flag (claude): Tax changes from one rounding on the invoice subtotal to per-line rounding, so totals can differ from before on multi-line invoices. That is the apparent intent, but the pr",
+        "cross-review flag (claude): No test covers render() under the new rounding, or a tax rate given as a float with many decimals (for example, 8.2537). Decimal(str(rate)) handles that, but nothing exerci",
+        "cross-review flag (claude): billing/tax.py no longer imports to_cents , and nothing else in the repo imports invoice_tax_cents apart from invoice.py , so there is no broken import."
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 36.857,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.484,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0042,
+          "sessions": 1,
+          "seconds": 19.927,
+          "session_seconds": 19.748,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.143,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.065,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 14.913,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "e_tax_cents apart from invoice.py , so there is no broken import., tests ran on the system interpreter (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap), scope not determined; all edits committed, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 53k tokens; cache read 35k tokens, saved $0.00)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       37s (intake 0s, implement 20s, verify 1s, commit 0s, seal 15s; slowest: implement 54%); next: loki status; 3 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "py-retry-decorator",
+      "kind": "feature",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "cross-module",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 32.81,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_retry.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 3,
+      "files": [
+        "netutil/http.py",
+        "netutil/retry.py",
+        "tests/test_retry.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.00964695,
+      "sessions": 1,
+      "turns": 7,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-retry-decorator",
+      "kind": "feature",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "cross-module",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 26.97,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 2,
+      "files": [
+        "netutil/http.py",
+        "netutil/retry.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221502Z-2441",
+      "hidden_tail": "",
+      "cost_usd": 0.00311543,
+      "stage_cost_usd": 0.003115,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T221502Z-2441",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "tests ran on the system interpreter (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 25.909,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.563,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0031,
+          "sessions": 1,
+          "seconds": 23.941,
+          "session_seconds": 23.79,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.682,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.07,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.227,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": ":         none\nReceipt:    sha256:4082342dd89daf29556c5a9bd27ac96e1b912aaff7f76587c5ba551d65507d86\nNOT PROVEN: tests ran on the system interpreter (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap), repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 45k tokens; cache read 32k tokens, saved $0.00)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       26s (intake 1s, implement 24s, verify 1s, commit 0s, seal 0s; slowest: implement 92%); next: loki status; 6 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "py-semver-range",
+      "kind": "feature",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 417.65,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_range.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 3,
+      "files": [
+        "semverlite/__init__.py",
+        "semverlite/range.py",
+        "tests/test_range.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.20364231,
+      "sessions": 1,
+      "turns": 21,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-semver-range",
+      "kind": "feature",
+      "lang": "py",
+      "difficulty": "hard",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 209.7,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_range.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_range.py b/tests/test_range.py\nnew file mode 100644\nindex 0000000..0c83a76\n--- /dev/null\n+++ b/tests/test_range.py\n@@ -0,0 +1,71 @@\n+import pytest\n+\n+from semverlite.range import intersects, max_satisfying, min_satisfying, satisfies\n+\n+\n+@pytest.mark.parametrize(\"version, rng, expected\", [\n+    (\"1.2.3-alpha.7\", \">1.2.3-alpha.3\", True),\n+    (\"3.4.5-alpha.9\", \">1.2.3-alpha.3\", False),\n+    (\"2.0.0-rc.1\", \"<2.0.0\", False),\n+    (\"1.0.0-beta\", \"*\", False),\n+    (\"1.5.0-alpha\", \"1.2.3-alpha.1 || ^1.0.0\", False),\n+    (\"2.0.0\", \">1\", True),\n+    (\"1.2.0\", \">=1.2\", True),\n+    (\"1.1.9\", \">=1.2\", False),\n+    (\"1.2.0\", \"<1.2\", False),\n+    (\"1.2.9\", \"1.2.x\", True),\n+    (\"1.3.0\", \"1.2.*\", False),\n+    (\"1.2.0\", \"1.2 - 2.3\", True),\n+    (\"2.4.0\", \"1.2 - 2.3\", False),\n+    (\"2.9.9\", \"1 - 2\", True),\n+    (\"1.3.0\", \"~1.2.3\", False),\n+    (\"0.2.9\", \"~0.2.3\", True),\n+    (\"2.0.0\", \"^1.2.3\", False),\n+    (\"0.3.0\", \"^0.2.3\", False),\n+    (\"0.0.4\", \"^0.0.3\", False),\n+    (\"1.0.0\", \"^0.x\", False),\n+    (\"0.1.0\", \"^0.0\", False),\n+    (\"1.2.9\", \"~1.2.3-beta.2\", True),\n+    (\"1.0.0-rc.10\", \">1.0.0-rc.2\", True),\n+    (\"1.0.0\", \"\", True),\n+])\n+def test_satisfies(version, rng, expected):\n+    assert satisfies(version, rng) is expected\n+\n+\n+def test_max_and_min_satisfying_keep_strings():\n+    vs = [\"1.0.0-rc.10\", \"1.0.0\", \"0.9.0\", \"1.0.0-rc.2\"]\n+    assert max_satisfying(vs, \"<2\") == \"1.0.0\"\n+    assert min_satisfying(vs, \">=1.0.0-rc.2\") == \"1.0.0-rc.2\"\n+    assert max_satisfying(vs, \">2\") is None\n+    assert min_satisfying([], \"*\") is None\n+\n+\n+@pytest.mark.parametrize(\"r1, r2, expected\", [\n+    (\">=1.0.0 <1.0.0\", \"<=1.0.0\", False),\n+    (\"<=1.0.0\", \">=1.0.0\", True),\n+    (\">1.0.0\", \"<1.0.1\", False),\n+    (\">1.2.3-alpha.3\", \"<1.2.3-alpha.4\", True),\n+    (\">=1.2.3-alpha.1 <1.2.3\", \"<1.2.3\", False),\n+    (\"<1.0.0 || >=3.0.0\", \"3.5.0\", True),\n+])\n+def test_intersects(r1, r2, expected):\n+    assert intersects(r1, r2) is expected\n+    assert intersects(r2, r1) is expected\n+\n+\n+@pytest.mark.parametrize(\"bad\", [\"abc\", \">=1.2.a\", \"1.2.3.4\", \"=>1.0.0\", \"1.2.3 -\"])\n+def test_invalid_range_raises(bad):\n+    with pytest.raises(ValueError):\n+        satisfies(\"1.0.0\", bad)\n+    with pytest.raises(ValueError):\n+        max_satisfying([], bad)\n+    with pytest.raises(ValueError):\n+        min_satisfying([], bad)\n+    with pytest.raises(ValueError):\n+        intersects(bad, \"*\")\n+\n+\n+def test_invalid_version_raises():\n+    with pytest.raises(ValueError):\n+        satisfies(\"1.2\", \"*\")\n",
+      "files_changed": 2,
+      "files": [
+        "semverlite/range.py",
+        "tests/test_range.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221524Z-5a28",
+      "hidden_tail": "",
+      "cost_usd": 0.032972804999999994,
+      "stage_cost_usd": 0.032973,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T221524Z-5a28",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "one reviewer",
+        "tests ran on the system interpreter (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)",
+        "no agent-independent passing test calls these added public functions: satisfies, max_satisfying, min_satisfying, intersects",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 208.435,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.351,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.033,
+          "sessions": 1,
+          "seconds": 203.575,
+          "session_seconds": 203.107,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 2.634,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.109,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.197,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "10d09bc3dff7bb30c6c37f9ad607f502f739\nNOT PROVEN: one reviewer, tests ran on the system interpreter (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap), no agent-independent passing test calls these added public functions: satisfies, max_satisfying, min_satisfying, intersects, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.03 (claude, 394k tokens; cache read 289k tokens, saved $0.03)\nTime:       3m28s (intake 1s, implement 3m23s, verify 3s, commit 0s, seal 0s; slowest: implement 98%)\nNext:       loki verify  (2 files changed (+393 -0)); 10 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "py-todo-json",
+      "kind": "multifile",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "cross-module",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 30.7,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/test_cli.py"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/test_cli.py b/tests/test_cli.py\nindex c220926..28c8454 100644\n--- a/tests/test_cli.py\n+++ b/tests/test_cli.py\n@@ -1,5 +1,7 @@\n import json\n \n+import pytest\n+\n from todo import cli\n \n \n@@ -26,3 +28,51 @@ def test_list_text(tmp_path, capsys):\n def test_missing_file_lists_nothing(tmp_path, capsys):\n     assert cli.main([\"--file\", str(tmp_path / \"none.json\"), \"list\"]) == 0\n     assert capsys.readouterr().out == \"\"\n+\n+\n+TASKS = [\n+    {\"id\": 1, \"title\": \"ship it\", \"done\": True},\n+    {\"id\": 2, \"title\": \"write docs\", \"due\": \"2026-03-01\"},\n+    {\"id\": 3, \"title\": \"triage\"},\n+]\n+\n+\n+def test_list_json(tmp_path, capsys):\n+    path = write_tasks(tmp_path, TASKS)\n+    assert cli.main([\"--file\", path, \"list\", \"--format\", \"json\"]) == 0\n+    assert json.loads(capsys.readouterr().out) == [\n+        {\"id\": 2, \"title\": \"write docs\", \"done\": False, \"due\": \"2026-03-01\"},\n+        {\"id\": 3, \"title\": \"triage\", \"done\": False, \"due\": None},\n+        {\"id\": 1, \"title\": \"ship it\", \"done\": True, \"due\": None},\n+    ]\n+\n+\n+def test_list_json_keys_are_exact(tmp_path, capsys):\n+    path = write_tasks(tmp_path, TASKS)\n+    cli.main([\"--file\", path, \"list\", \"--format\", \"json\"])\n+    for record in json.loads(capsys.readouterr().out):\n+        assert list(record) == [\"id\", \"title\", \"done\", \"due\"]\n+\n+\n+def test_list_json_empty(tmp_path, capsys):\n+    assert cli.main([\"--file\", str(tmp_path / \"none.json\"), \"list\", \"--format\", \"json\"]) == 0\n+    assert capsys.readouterr().out.strip() == \"[]\"\n+\n+\n+def test_list_done_text(tmp_path, capsys):\n+    path = write_tasks(tmp_path, TASKS)\n+    assert cli.main([\"--file\", path, \"list\", \"--done\"]) == 0\n+    assert capsys.readouterr().out.splitlines() == [\"[x] 1: ship it\"]\n+\n+\n+def test_list_pending_json(tmp_path, capsys):\n+    path = write_tasks(tmp_path, TASKS)\n+    assert cli.main([\"--file\", path, \"list\", \"--pending\", \"--format\", \"json\"]) == 0\n+    assert [r[\"id\"] for r in json.loads(capsys.readouterr().out)] == [2, 3]\n+\n+\n+def test_done_and_pending_are_mutually_exclusive(tmp_path, capsys):\n+    path = write_tasks(tmp_path, TASKS)\n+    with pytest.raises(SystemExit) as exc:\n+        cli.main([\"--file\", path, \"list\", \"--done\", \"--pending\"])\n+    assert exc.value.code == 2\n",
+      "files_changed": 3,
+      "files": [
+        "tests/test_cli.py",
+        "todo/cli.py",
+        "todo/report.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.01117358,
+      "sessions": 1,
+      "turns": 9,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "py-todo-json",
+      "kind": "multifile",
+      "lang": "py",
+      "difficulty": "normal",
+      "shape": "cross-module",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 18.74,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 2,
+      "files": [
+        "todo/cli.py",
+        "todo/report.py"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221602Z-9534",
+      "hidden_tail": "",
+      "cost_usd": 0.0033604,
+      "stage_cost_usd": 0.00336,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T221602Z-9534",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "tests ran on the system interpreter (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 17.391,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.041,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0034,
+          "sessions": 1,
+          "seconds": 15.013,
+          "session_seconds": 14.762,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.637,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.053,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.198,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": ":         none\nReceipt:    sha256:4dba4ce0f3c1d9b935e6c69e611666b5c067637603a09f5fec4240b200f19262\nNOT PROVEN: tests ran on the system interpreter (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap), repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 58k tokens; cache read 43k tokens, saved $0.00)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       17s (intake 1s, implement 15s, verify 1s, commit 0s, seal 0s; slowest: implement 86%); next: loki status; 6 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "rs-expr-eval",
+      "kind": "feature",
+      "lang": "rust",
+      "difficulty": "hard",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 187.78,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/grammar.rs"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 2,
+      "files": [
+        "src/expr.rs",
+        "tests/grammar.rs"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.03833157,
+      "sessions": 1,
+      "turns": 6,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "rs-expr-eval",
+      "kind": "feature",
+      "lang": "rust",
+      "difficulty": "hard",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 219.64,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/full_eval.rs",
+        "tests/loki_wall_expr.rs"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "7.5 % 2\"), Ok(1.5));\n+    assert_eq!(ev(\"10-4-3\"), Ok(3.0));\n+    assert_ne!(ev(\"2^3^2\"), Ok(64.0));\n+}\n+\n+#[test]\n+fn implicit_multiplication() {\n+    let v = vars(&[(\"x\", 3.0), (\"y\", 5.0), (\"x3\", 2.0)]);\n+    assert_eq!(eval(\"2x\", &v), Ok(6.0));\n+    assert_eq!(eval(\"2 x\", &v), Ok(6.0));\n+    assert_eq!(eval(\"x y\", &v), Ok(15.0));\n+    assert_eq!(eval(\"x3\", &v), Ok(2.0));\n+    assert_eq!(ev(\"2(3+4)\"), Ok(14.0));\n+    assert_eq!(ev(\"(1+2)(3+4)\"), Ok(21.0));\n+    assert_eq!(ev(\"2(3)(4)\"), Ok(24.0));\n+    assert_eq!(ev(\"3abs(-2)\"), Ok(6.0));\n+    assert_eq!(eval(\"2x^2\", &v), Ok(18.0));\n+    assert_eq!(eval(\"-2x\", &v), Ok(-6.0));\n+    assert_eq!(eval(\"2^3x\", &v), Ok(24.0));\n+    assert_eq!(ev(\"6/2(1+2)\"), Ok(9.0));\n+    assert_eq!(eval(\"2x(3)\", &v), Err(EvalError::UnknownFunc(String::from(\"x\"))));\n+    assert_eq!(ev(\"2 3\"), Err(EvalError::Parse { pos: 2 }));\n+    assert_eq!(ev(\"(2)3\"), Err(EvalError::Parse { pos: 3 }));\n+    assert_eq!(eval(\"x 2\", &v), Err(EvalError::Parse { pos: 2 }));\n+    assert_eq!(ev(\"2x\"), Err(EvalError::UnknownVar(String::from(\"x\"))));\n+}\n+\n+#[test]\n+fn parse_error_positions() {\n+    assert_eq!(ev(\"1 + 2)\"), Err(EvalError::Parse { pos: 5 }));\n+    assert_eq!(ev(\"()\"), Err(EvalError::Parse { pos: 1 }));\n+    assert_eq!(ev(\"X\"), Err(EvalError::Parse { pos: 0 }));\n+    assert_eq!(ev(\"1,2\"), Err(EvalError::Parse { pos: 1 }));\n+    assert_eq!(ev(\"min(1 2)\"), Err(EvalError::Parse { pos: 6 }));\n+    assert_eq!(ev(\"min(,1)\"), Err(EvalError::Parse { pos: 4 }));\n+    assert_eq!(ev(\"min(1,)\"), Err(EvalError::Parse { pos: 6 }));\n+    assert_eq!(ev(\"\"), Err(EvalError::Parse { pos: 0 }));\n+    assert_eq!(ev(\"(1 + 2\"), Err(EvalError::Parse { pos: 6 }));\n+    assert_eq!(ev(\"1 +\"), Err(EvalError::Parse { pos: 3 }));\n+    assert_eq!(ev(\"max(1\"), Err(EvalError::Parse { pos: 5 }));\n+    assert_eq!(ev(\"zz + 1)\"), Err(EvalError::Parse { pos: 6 }));\n+    assert_ne!(ev(\"1 +\"), Ok(1.0));\n+}\n+\n+#[test]\n+fn parse_error_beats_eval_error() {\n+    assert_eq!(ev(\"zz/0 +\"), Err(EvalError::Parse { pos: 6 }));\n+    assert_eq!(ev(\"foo(1/0) )\"), Err(EvalError::Parse { pos: 9 }));\n+}\n+\n+#[test]\n+fn functions() {\n+    assert_eq!(ev(\"min(1,2,-3)\"), Ok(-3.0));\n+    assert_eq!(ev(\"max(1,5,2)\"), Ok(5.0));\n+    assert_eq!(ev(\"min(7)\"), Ok(7.0));\n+    assert_eq!(ev(\"abs(-4)\"), Ok(4.0));\n+    assert_eq!(ev(\"sqrt(16)\"), Ok(4.0));\n+    assert_eq!(ev(\"min()\"), Err(EvalError::Arity { name: String::from(\"min\"), expected: String::from(\"at least 1\"), got: 0 }));\n+    assert_eq!(ev(\"max()\"), Err(EvalError::Arity { name: String::from(\"max\"), expected: String::from(\"at least 1\"), got: 0 }));\n+    assert_eq!(ev(\"abs()\"), Err(EvalError::Arity { name: String::from(\"abs\"), expected: String::from(\"1\"), got: 0 }));\n+    assert_eq!(ev(\"abs(1,2)\"), Err(EvalError::Arity { name: String::from(\"abs\"), expected: String::from(\"1\"), got: 2 }));\n+    assert_eq!(ev(\"sqrt()\"), Err(EvalError::Arity { name: String::from(\"sqrt\"), expected: String::from(\"1\"), got: 0 }));\n+    assert_eq!(ev(\"sqrt(1,2)\"), Err(EvalError::Arity { name: String::from(\"sqrt\"), expected: String::from(\"1\"), got: 2 }));\n+    assert_eq!(ev(\"sqrt(-1)\"), Err(EvalError::Domain(String::from(\"sqrt\"))));\n+    assert_eq!(ev(\"sqrt(-1, 2)\"), Err(EvalError::Arity { name: String::from(\"sqrt\"), expected: String::from(\"1\"), got: 2 }));\n+}\n+\n+#[test]\n+fn unknown_names() {\n+    let v = vars(&[(\"foo\", 2.0), (\"abs\", 9.0)]);\n+    assert_eq!(eval(\"foo(1)\", &v), Err(EvalError::UnknownFunc(String::from(\"foo\"))));\n+    assert_eq!(eval(\"foo\", &v), Ok(2.0));\n+    assert_eq!(eval(\"bar\", &v), Err(EvalError::UnknownVar(String::from(\"bar\"))));\n+    assert_eq!(eval(\"abs(-1)\", &v), Ok(1.0));\n+    assert_eq!(eval(\"abs\", &v), Ok(9.0));\n+}\n+\n+#[test]\n+fn evaluation_order_and_errors() {\n+    assert_eq!(ev(\"foo(1/0)\"), Err(EvalError::UnknownFunc(String::from(\"foo\"))));\n+    assert_eq!(ev(\"abs(1/0, 2)\"), Err(EvalError::Arity { name: String::from(\"abs\"), expected: String::from(\"1\"), got: 2 }));\n+    assert_eq!(ev(\"abs(1/0)\"), Err(EvalError::DivByZero));\n+    assert_eq!(ev(\"abs(zz, 1)\"), Err(EvalError::Arity { name: String::from(\"abs\"), expected: String::from(\"1\"), got: 2 }));\n+    assert_eq!(ev(\"1/0 + zz\"), Err(EvalError::DivByZero));\n+    assert_eq!(ev(\"zz + 1/0\"), Err(EvalError::UnknownVar(String::from(\"zz\"))));\n+    assert_eq!(ev(\"min(zz, yy)\"), Err(EvalError::UnknownVar(String::from(\"zz\"))));\n+    assert_eq!(ev(\"min(1/0, zz)\"), Err(EvalError::DivByZero));\n+    assert_eq!(ev(\"sqrt(-1/0)\"), Err(EvalError::DivByZero));\n+    assert_eq!(ev(\"1/0\"), Err(EvalError::DivByZero));\n+    assert_eq!(ev(\"1%0\"), Err(EvalError::DivByZero));\n+    assert_eq!(ev(\"1/-0.0\"), Err(EvalError::DivByZero));\n+    assert_eq!(ev(\"1%(0.0)\"), Err(EvalError::DivByZero));\n+    assert_eq!(ev(\"2^10\"), Ok(1024.0));\n+}\n+\n+#[test]\n+fn deep_nesting_parens() {\n+    let n = 100000;\n+    let s = format!(\"{}1{}\", \"(\".repeat(n), \")\".repeat(n));\n+    assert_eq!(timed(&s), Ok(1.0));\n+    let open = \"(\".repeat(n) + \"1\" + &\")\".repeat(n - 1);\n+    assert_eq!(timed(&open), Err(EvalError::Parse { pos: open.len() }));\n+    let extra = format!(\"{}1{} )\", \"(\".repeat(n), \")\".repeat(n));\n+    assert_eq!(timed(&extra), Err(EvalError::Parse { pos: extra.len() - 1 }));\n+}\n+\n+#[test]\n+fn deep_nested_abs_and_max() {\n+    let n = 100000;\n+    let s = format!(\"{}-3{}\", \"abs(\".repeat(n), \")\".repeat(n));\n+    assert_eq!(timed(&s), Ok(3.0));\n+    let m = format!(\"{}5{}\", \"max(1, \".repeat(n), \")\".repeat(n));\n+    assert_eq!(timed(&m), Ok(5.0));\n+}\n+\n+#[test]\n+fn deep_operator_chains() {\n+    let minus = format!(\"{}1\", \"-\".repeat(100000));\n+    assert_eq!(timed(&minus), Ok(1.0));\n+    let pow = format!(\"{}1\", \"1^\".repeat(100000));\n+    assert_eq!(timed(&pow), Ok(1.0));\n+    let sum = format!(\"{}1\", \"1+\".repeat(199999));\n+    assert_eq!(timed(&sum), Ok(200000.0));\n+    let mul = \"(1)\".repeat(100000);\n+    assert_eq!(timed(&mul), Ok(1.0));\n+    let bad = format!(\"{}1\", \"1+\".repeat(199999)) + \"+\";\n+    assert_eq!(timed(&bad), Err(EvalError::Parse { pos: bad.len() }));\n+}\n",
+      "files_changed": 3,
+      "files": [
+        "src/expr.rs",
+        "tests/full_eval.rs",
+        "tests/loki_wall_expr.rs"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221636Z-dc3f",
+      "hidden_tail": "",
+      "cost_usd": 0.04131715,
+      "stage_cost_usd": 0.03005,
+      "child_cost_usd": 0.011267,
+      "child_sessions": 1,
+      "unpriced_sessions": 0,
+      "sessions": 3,
+      "run_id": "e10-20261104T221636Z-dc3f",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "cross-review flag (claude): No reproducible defect found by tracing. I could not compile or run the tests, so the claim that they pass is unverified. I hand-checked about 40 of the test expectations (",
+        "cross-review flag (claude): Spec gap: Pow returns NaN or inf without error (e.g. (-8)^(1/3) , 0^-1 ), while / and % by zero return DivByZero . Whether this is intended is unspecified in the diff.",
+        "cross-review flag (claude): Spec gap: Ident( is always parsed as a function call, so a variable followed by parentheses (e.g. x(3) or x (y+1) ) yields UnknownFunc rather than implicit multiplication. ",
+        "cross-review flag (claude): Behaviour change: a leading + or - (e.g. +1 , -5 ) and tabs or newlines are now accepted. The old code rejected these with Parse { pos: 0 } , and the old doc described only",
+        "cross-review flag (claude): Identifiers only start with a-z or _ and cannot contain uppercase letters at the start. A caller-supplied variable such as \"PI\" is unreachable and produces Parse with no hi"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 218.665,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.365,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0082,
+          "sessions": 1,
+          "seconds": 132.799,
+          "session_seconds": 42.897,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0219,
+          "sessions": 1,
+          "seconds": 132.338,
+          "session_seconds": 132.069,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 2.251,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.078,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 81.913,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "wall",
+          "haiku"
+        ],
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "contain uppercase letters at the start. A caller-supplied variable such as \"PI\" is unreachable and produces Parse with no hint that the variable exists., repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.04 (claude, 244k tokens; cache read 137k tokens, saved $0.01)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nSpend:      wall 27%, implement 73%; top: implement; saved $2.87 vs top tier\nTime:       3m39s (intake 1s, implement 2m12s, wall 2m13s, verify 2s, commit 0s, seal 1m22s; slowest: wall 61%); next: loki status; 14 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "rs-interval-set",
+      "kind": "feature",
+      "lang": "rust",
+      "difficulty": "hard",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 156.84,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/set_ops.rs"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 2,
+      "files": [
+        "src/intervals.rs",
+        "tests/set_ops.rs"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.03178313,
+      "sessions": 1,
+      "turns": 6,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "rs-interval-set",
+      "kind": "feature",
+      "lang": "rust",
+      "difficulty": "hard",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 190.47,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/canonical_sets.rs",
+        "tests/loki_wall_intervals.rs"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": ");\n+    s.insert(o(2), c(2));\n+    s.insert(c(3), c(2));\n+    assert!(s.is_empty());\n+    assert!(s.ranges().is_empty());\n+    assert_eq!(s.to_string(), \"{}\");\n+    assert!(!s.contains(2.0));\n+}\n+\n+#[test]\n+fn closed_single_point_is_kept() {\n+    let mut s = IntervalSet::new();\n+    s.insert(c(2), c(2));\n+    assert_eq!(s.ranges(), vec![(c(2), c(2))]);\n+    assert!(s.contains(2.0));\n+    assert!(!s.contains(2.5));\n+    assert_eq!(s.measure(), 0);\n+}\n+\n+#[test]\n+fn open_interval_is_non_empty_on_reals() {\n+    let mut s = IntervalSet::new();\n+    s.insert(o(2), o(3));\n+    assert!(!s.is_empty());\n+    assert_eq!(s.ranges(), vec![(o(2), o(3))]);\n+    assert!(s.contains(2.5));\n+    assert!(!s.contains(2.0));\n+    assert!(!s.contains(3.0));\n+}\n+\n+#[test]\n+fn remove_closed_point_splits_interval() {\n+    let mut s = IntervalSet::new();\n+    s.insert(c(1), c(5));\n+    s.remove(c(2), c(2));\n+    assert_eq!(s.ranges(), vec![(c(1), o(2)), (o(2), c(5))]);\n+    assert!(!s.contains(2.0));\n+    assert!(s.contains(1.5));\n+    assert!(s.contains(2.5));\n+}\n+\n+#[test]\n+fn remove_open_interval_keeps_endpoints() {\n+    let mut s = IntervalSet::new();\n+    s.insert(c(1), c(5));\n+    s.remove(o(2), o(4));\n+    assert_eq!(s.ranges(), vec![(c(1), c(2)), (c(4), c(5))]);\n+    assert!(s.contains(2.0));\n+    assert!(s.contains(4.0));\n+    assert!(!s.contains(3.0));\n+}\n+\n+#[test]\n+fn remove_empty_interval_is_noop() {\n+    let mut s = IntervalSet::new();\n+    s.insert(c(1), c(5));\n+    s.remove(o(3), o(3));\n+    s.remove(c(4), c(2));\n+    assert_eq!(s.ranges(), vec![(c(1), c(5))]);\n+}\n+\n+#[test]\n+fn adjacent_pieces_merge_when_union_is_interval() {\n+    let mut s = IntervalSet::new();\n+    s.insert(c(1), o(3));\n+    s.insert(c(3), c(5));\n+    assert_eq!(s.ranges(), vec![(c(1), c(5))]);\n+\n+    let mut t = IntervalSet::new();\n+    t.insert(c(1), c(3));\n+    t.insert(o(3), c(5));\n+    assert_eq!(t.ranges(), vec![(c(1), c(5))]);\n+\n+    let mut u = IntervalSet::new();\n+    u.insert(c(1), c(3));\n+    u.insert(o(3), o(5));\n+    assert_eq!(u.ranges(), vec![(c(1), o(5))]);\n+\n+    let mut v = IntervalSet::new();\n+    v.insert(o(1), o(3));\n+    v.insert(c(3), c(3));\n+    assert_eq!(v.ranges(), vec![(o(1), c(3))]);\n+}\n+\n+#[test]\n+fn missing_point_keeps_pieces_separate() {\n+    let mut s = IntervalSet::new();\n+    s.insert(o(1), o(3));\n+    s.insert(o(3), o(5));\n+    assert_eq!(s.ranges(), vec![(o(1), o(3)), (o(3), o(5))]);\n+\n+    let mut t = IntervalSet::new();\n+    t.insert(c(1), o(3));\n+    t.insert(o(3), c(5));\n+    assert_eq!(t.ranges(), vec![(c(1), o(3)), (o(3), c(5))]);\n+    assert!(!t.contains(3.0));\n+}\n+\n+#[test]\n+fn ranges_are_sorted_and_canonical() {\n+    let mut s = IntervalSet::new();\n+    s.insert(c(10), c(12));\n+    s.insert(c(0), c(1));\n+    s.insert(c(0), c(5));\n+    assert_eq!(s.ranges(), vec![(c(0), c(5)), (c(10), c(12))]);\n+}\n+\n+#[test]\n+fn display_formats_canonical_intervals() {\n+    let mut s = IntervalSet::new();\n+    s.insert(c(7), c(7));\n+    s.insert(c(1), o(3));\n+    s.insert(o(4), c(5));\n+    assert_eq!(s.to_string(), \"{[1,3), (4,5], [7,7]}\");\n+\n+    let mut t = IntervalSet::new();\n+    t.insert(o(-3), c(0));\n+    assert_eq!(t.to_string(), \"{(-3,0]}\");\n+    assert_ne!(t.to_string(), \"{(-3, 0]}\");\n+}\n+\n+#[test]\n+fn measure_sums_lengths_without_double_counting() {\n+    let mut s = IntervalSet::new();\n+    s.insert(c(0), c(10));\n+    s.insert(c(5), c(15));\n+    s.insert(c(20), c(20));\n+    assert_eq!(s.measure(), 15);\n+\n+    let mut t = IntervalSet::new();\n+    t.insert(c(1), o(3));\n+    t.insert(o(3), c(5));\n+    assert_eq!(t.measure(), 4);\n+    assert_ne!(t.measure(), 6);\n+}\n+\n+#[test]\n+fn measure_does_not_overflow_on_full_i64_range() {\n+    let mut s = IntervalSet::new();\n+    s.insert(c(i64::MIN), c(i64::MAX));\n+    assert_eq!(s.measure(), i64::MAX as i128 - i64::MIN as i128);\n+    assert!(s.contains(i64::MIN as f64));\n+    assert!(s.contains(i64::MAX as f64));\n+}\n+\n+#[test]\n+fn extreme_endpoints_work_for_remove_and_contains() {\n+    let mut s = IntervalSet::new();\n+    s.insert(c(i64::MIN), c(i64::MIN));\n+    s.insert(c(i64::MAX), c(i64::MAX));\n+    assert!(s.contains(i64::MIN as f64));\n+    assert!(s.contains(i64::MAX as f64));\n+    s.remove(o(i64::MIN), c(i64::MAX));\n+    assert_eq!(s.ranges(), vec![(c(i64::MIN), c(i64::MIN))]);\n+    assert!(!s.contains(0.0));\n+}\n+\n+#[test]\n+fn complement_example_from_spec() {\n+    let mut s = IntervalSet::new();\n+    s.insert(c(2), o(4));\n+    s.insert(o(6), c(8));\n+    assert_eq!(\n+        s.complement(c(0), c(10)),\n+        vec![(c(0), o(2)), (c(4), c(6)), (o(8), c(10))]\n+    );\n+    assert_ne!(s.complement(c(0), c(10)), vec![(c(0), o(2)), (o(4), o(6)), (o(8), c(10))]);\n+}\n+\n+#[test]\n+fn complement_empty_when_window_empty_or_covered() {\n+    let mut s = IntervalSet::new();\n+    s.insert(c(0), c(10));\n+    assert!(s.complement(c(0), c(10)).is_empty());\n+    assert!(s.complement(c(3), c(3)).is_empty());\n+    assert!(s.complement(o(2), o(2)).is_empty());\n+}\n+\n+#[test]\n+fn complement_of_empty_set_is_window() {\n+    let s = IntervalSet::new();\n+    assert_eq!(s.complement(c(1), o(4)), vec![(c(1), o(4))]);\n+}\n+\n+#[test]\n+fn heavy_workload_runs_under_three_seconds() {\n+    let mut set = IntervalSet::new();\n+    let mut state = 12345u64;\n+    let start = Instant::now();\n+    for i in 0..300_000i64 {\n+        let jitter = (lcg(&mut state) % 1000) as i64;\n+        let base = 1_000_000_000 - i * 3000 - jitter;\n+        let len = (lcg(&mut state) % 1001) as i64;\n+        set.insert(c(base), c(base + len));\n+        if i % 2 == 1 {\n+            let x = (lcg(&mut state) % 1_000_000_001) as i64;\n+            let rlen = (lcg(&mut state) % 1001) as i64;\n+            set.remove(c(x), c(x + rlen));\n+        }\n+        let p = (lcg(&mut state) % 1_000_000_001) as f64;\n+        let _ = set.contains(p);\n+    }\n+    let elapsed = start.elapsed();\n+    assert!(!set.is_empty());\n+    assert!(\n+        elapsed.as_secs_f64() < 3.0,\n+        \"workload took {:?}\",\n+        elapsed\n+    );\n+}\n",
+      "files_changed": 3,
+      "files": [
+        "src/intervals.rs",
+        "tests/canonical_sets.rs",
+        "tests/loki_wall_intervals.rs"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T221929Z-de93",
+      "hidden_tail": "",
+      "cost_usd": 0.03906329,
+      "stage_cost_usd": 0.025481,
+      "child_cost_usd": 0.013582,
+      "child_sessions": 1,
+      "unpriced_sessions": 0,
+      "sessions": 3,
+      "run_id": "e10-20261104T221929Z-de93",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "cross-review flag (claude): contains is wrong for endpoints above 2^53, and the new ceil path does not fix it. Tracing insert(C(0), C(i64::MAX)) then contains(i64::MAX as f64) : the f64 value is 2^63,",
+        "cross-review flag (claude): tests/canonical_sets.rs::contains_at_extremes only checks single points at i64::MIN and i64::MAX . It never checks an interval ending at i64::MAX with a query just outside ",
+        "cross-review flag (claude): scales_with_many_front_inserts asserts only on wall-clock time (< 3 s) and never checks results. It will be flaky on slow or debug CI, and it would not catch a wrong answer",
+        "cross-review flag (claude): The diff has no oracle test. The core of the change is canonicalisation (merge, split, complement), and the hand-picked cases do not check it against a reference. A small-d",
+        "cross-review flag (claude): Missing edge cases: an insert that bridges several stored intervals at once, a remove that spans several intervals, complement with a window that partly covers its first an"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 189.492,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.807,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0065,
+          "sessions": 1,
+          "seconds": 111.615,
+          "session_seconds": 39.555,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.019,
+          "sessions": 1,
+          "seconds": 111.301,
+          "session_seconds": 111.139,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 3.84,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.078,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 72.895,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "wall",
+          "haiku"
+        ],
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "nce, a remove that spans several intervals, complement with a window that partly covers its first and last stored interval, and Display with open bounds., repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.04 (claude, 322k tokens; cache read 236k tokens, saved $0.02)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nSpend:      wall 26%, implement 74%; top: implement; saved $2.35 vs top tier\nTime:       3m09s (intake 1s, implement 1m51s, wall 1m52s, verify 4s, commit 0s, seal 1m13s; slowest: wall 59%); next: loki status; 8 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "rs-roman-strict",
+      "kind": "bugfix",
+      "lang": "rust",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 26.37,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/visible.rs"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/visible.rs b/tests/visible.rs\nindex 3e170e3..26d013f 100644\n--- a/tests/visible.rs\n+++ b/tests/visible.rs\n@@ -22,3 +22,57 @@ fn parses_leading_subtractive_pairs() {\n     assert_eq!(from_roman(\"CDXLIII\"), Ok(443));\n     assert_eq!(from_roman(\"MCMLXXX\"), Ok(1980));\n }\n+\n+#[test]\n+fn rejects_out_of_range_values() {\n+    assert_eq!(to_roman(0), Err(romankit::RomanError::OutOfRange));\n+    assert_eq!(to_roman(4000), Err(romankit::RomanError::OutOfRange));\n+}\n+\n+#[test]\n+fn parses_subtractive_pairs_at_end() {\n+    assert_eq!(from_roman(\"IV\"), Ok(4));\n+    assert_eq!(from_roman(\"XIX\"), Ok(19));\n+}\n+\n+#[test]\n+fn rejects_malformed_numerals() {\n+    use romankit::RomanError::*;\n+    assert_eq!(from_roman(\"\"), Err(Empty));\n+    assert_eq!(from_roman(\"xiv\"), Err(InvalidChar('x')));\n+    assert_eq!(from_roman(\"XI V\"), Err(InvalidChar(' ')));\n+    assert_eq!(from_roman(\"IIII\"), Err(NonCanonical));\n+    assert_eq!(from_roman(\"IC\"), Err(NonCanonical));\n+    assert_eq!(from_roman(\"VX\"), Err(NonCanonical));\n+    assert_eq!(from_roman(\"MMMM\"), Err(NonCanonical));\n+    assert_eq!(from_roman(\"IIV\"), Err(NonCanonical));\n+    assert_eq!(from_roman(\"XM\"), Err(NonCanonical));\n+}\n+\n+#[test]\n+fn roundtrips_entire_range() {\n+    for n in 1..=3999u32 {\n+        let s = to_roman(n).unwrap();\n+        assert_eq!(from_roman(&s), Ok(n), \"numeral {s}\");\n+    }\n+}\n+\n+#[test]\n+fn only_canonical_strings_parse() {\n+    // Every string of up to 4 chars over the Roman alphabet that parses\n+    // must round-trip exactly.\n+    let alphabet = ['I', 'V', 'X', 'L', 'C', 'D', 'M'];\n+    let mut stack = vec![String::new()];\n+    while let Some(s) = stack.pop() {\n+        if let Ok(n) = from_roman(&s) {\n+            assert_eq!(to_roman(n).unwrap(), s);\n+        }\n+        if s.len() < 4 {\n+            for c in alphabet {\n+                let mut t = s.clone();\n+                t.push(c);\n+                stack.push(t);\n+            }\n+        }\n+    }\n+}\n",
+      "files_changed": 2,
+      "files": [
+        "src/roman.rs",
+        "tests/visible.rs"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.00845498,
+      "sessions": 1,
+      "turns": 4,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "rs-roman-strict",
+      "kind": "bugfix",
+      "lang": "rust",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 23.22,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/loki_wall_roman.rs",
+        "tests/strict.rs"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/loki_wall_roman.rs b/tests/loki_wall_roman.rs\nnew file mode 100644\nindex 0000000..5b645b9\n--- /dev/null\n+++ b/tests/loki_wall_roman.rs\n@@ -0,0 +1,63 @@\n+use romankit::{from_roman, to_roman, RomanError};\n+\n+#[test]\n+fn from_roman_parses_subtractive_endings() {\n+    assert_eq!(from_roman(\"IV\").unwrap(), 4);\n+    assert_ne!(from_roman(\"IV\").unwrap(), 6);\n+    assert_eq!(from_roman(\"XIX\").unwrap(), 19);\n+    assert_ne!(from_roman(\"XIX\").unwrap(), 21);\n+}\n+\n+#[test]\n+fn from_roman_rejects_non_canonical_forms() {\n+    assert!(matches!(from_roman(\"IIII\"), Err(RomanError::NonCanonical)));\n+    assert!(matches!(from_roman(\"IC\"), Err(RomanError::NonCanonical)));\n+    assert!(matches!(from_roman(\"VX\"), Err(RomanError::NonCanonical)));\n+    assert!(matches!(from_roman(\"MMMM\"), Err(RomanError::NonCanonical)));\n+    assert!(matches!(from_roman(\"IIV\"), Err(RomanError::NonCanonical)));\n+    assert!(matches!(from_roman(\"XM\"), Err(RomanError::NonCanonical)));\n+}\n+\n+#[test]\n+fn from_roman_rejects_empty_string() {\n+    assert!(matches!(from_roman(\"\"), Err(RomanError::Empty)));\n+}\n+\n+#[test]\n+fn from_roman_reports_first_invalid_char() {\n+    assert!(matches!(from_roman(\"xiv\"), Err(RomanError::InvalidChar('x'))));\n+    assert!(matches!(from_roman(\"X V\"), Err(RomanError::InvalidChar(' '))));\n+    assert!(matches!(from_roman(\"XIq\"), Err(RomanError::InvalidChar('q'))));\n+    assert!(matches!(from_roman(\"IIIx\"), Err(RomanError::InvalidChar('x'))));\n+}\n+\n+#[test]\n+fn from_roman_never_reports_out_of_range() {\n+    for s in [\"IIII\", \"MMMM\", \"IC\", \"VX\", \"IIV\", \"XM\", \"MMMMM\", \"MMMMCMXCIX\"] {\n+        assert!(!matches!(from_roman(s), Err(RomanError::OutOfRange)));\n+    }\n+}\n+\n+#[test]\n+fn to_roman_rejects_out_of_range() {\n+    assert!(matches!(to_roman(0), Err(RomanError::OutOfRange)));\n+    assert!(matches!(to_roman(4000), Err(RomanError::OutOfRange)));\n+    assert!(matches!(to_roman(u32::MAX), Err(RomanError::OutOfRange)));\n+}\n+\n+#[test]\n+fn to_roman_produces_canonical_numerals_at_bounds() {\n+    assert_eq!(to_roman(1).unwrap(), \"I\");\n+    assert_eq!(to_roman(4).unwrap(), \"IV\");\n+    assert_eq!(to_roman(19).unwrap(), \"XIX\");\n+    assert_eq!(to_roman(3999).unwrap(), \"MMMCMXCIX\");\n+    assert_ne!(to_roman(3999).unwrap(), \"MMMM\");\n+}\n+\n+#[test]\n+fn round_trip_accepts_exactly_canonical_numerals() {\n+    for n in 1..=3999u32 {\n+        let s = to_roman(n).unwrap();\n+        assert_eq!(from_roman(&s).unwrap(), n);\n+    }\n+}\ndiff --git a/tests/strict.rs b/tests/strict.rs\nnew file mode 100644\nindex 0000000..8a0bdc6\n--- /dev/null\n+++ b/tests/strict.rs\n@@ -0,0 +1,37 @@\n+use romankit::{from_roman, to_roman, RomanError};\n+\n+#[test]\n+fn to_roman_rejects_out_of_range() {\n+    assert_eq!(to_roman(0), Err(RomanError::OutOfRange));\n+    assert_eq!(to_roman(4000), Err(RomanError::OutOfRange));\n+    assert_eq!(to_roman(1).unwrap(), \"I\");\n+    assert_eq!(to_roman(3999).unwrap(), \"MMMCMXCIX\");\n+}\n+\n+#[test]\n+fn from_roman_parses_subtractive_endings() {\n+    assert_eq!(from_roman(\"IV\"), Ok(4));\n+    assert_eq!(from_roman(\"XIX\"), Ok(19));\n+}\n+\n+#[test]\n+fn from_roman_rejects_empty_and_invalid_chars() {\n+    assert_eq!(from_roman(\"\"), Err(RomanError::Empty));\n+    assert_eq!(from_roman(\"xiv\"), Err(RomanError::InvalidChar('x')));\n+    assert_eq!(from_roman(\"X V\"), Err(RomanError::InvalidChar(' ')));\n+}\n+\n+#[test]\n+fn from_roman_rejects_non_canonical() {\n+    for s in [\"IIII\", \"IC\", \"VX\", \"MMMM\", \"IIV\", \"XM\"] {\n+        assert_eq!(from_roman(s), Err(RomanError::NonCanonical), \"{s}\");\n+    }\n+}\n+\n+#[test]\n+fn from_roman_round_trips_full_range() {\n+    for n in 1..=3999u32 {\n+        let s = to_roman(n).unwrap();\n+        assert_eq!(from_roman(&s), Ok(n), \"{s}\");\n+    }\n+}\n",
+      "files_changed": 3,
+      "files": [
+        "src/roman.rs",
+        "tests/loki_wall_roman.rs",
+        "tests/strict.rs"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T222043Z-a8e9",
+      "hidden_tail": "",
+      "cost_usd": 0.007018685,
+      "stage_cost_usd": 0.007019,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261104T222043Z-a8e9",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "one reviewer",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 22.216,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.968,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0036,
+          "sessions": 1,
+          "seconds": 19.166,
+          "session_seconds": 18.777,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0034,
+          "sessions": 1,
+          "seconds": 16.12,
+          "session_seconds": 15.954,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.814,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.079,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.917,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ],
+        [
+          "wall",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "  4s  (intake done 1s)\nOutcome:    VERIFIED\nPR:         none\nReceipt:    sha256:8fc34131a869a42d588504bcb36220525456cca3cae17c7672d7b66b25408e24\nNOT PROVEN: one reviewer, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 92k tokens; cache read 63k tokens, saved $0.01)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nSpend:      implement 49%, wall 51%; top: wall; saved $0.65 vs top tier\nTime:       22s (intake 1s, implement 16s, wall 19s, verify 1s, commit 0s, seal 1s; slowest: wall 86%); next: loki status; 2 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "rs-shapes-refactor",
+      "kind": "multifile",
+      "lang": "rust",
+      "difficulty": "normal",
+      "shape": "refactor",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 55.21,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 4,
+      "files": [
+        "src/area.rs",
+        "src/lib.rs",
+        "src/perimeter.rs",
+        "src/shape.rs"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.01501247,
+      "sessions": 1,
+      "turns": 9,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "rs-shapes-refactor",
+      "kind": "multifile",
+      "lang": "rust",
+      "difficulty": "normal",
+      "shape": "refactor",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 84.47,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 4,
+      "files": [
+        "src/area.rs",
+        "src/lib.rs",
+        "src/perimeter.rs",
+        "src/shape.rs"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T222132Z-48b2",
+      "hidden_tail": "",
+      "cost_usd": 0.022553695000000002,
+      "stage_cost_usd": 0.022554,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 4,
+      "run_id": "e10-20261104T222132Z-48b2",
+      "verdict": "PARTIAL",
+      "fix_rounds": 1,
+      "not_proven": [
+        "one reviewer",
+        "no tests executed",
+        "wall test discarded: tests/loki_wall_shape.rs (the implementer reported it conflicts with the task while the repo's own tests pass on the change: Wall defect, discarded)",
+        "Delivered over an implementer conflict with the Wall: tests/loki_wall_shape.rs discarded as a Wall defect, so this change is proven only by the repo's own tests (tests/loki_wall_shape.rs:98 expects Re",
+        "no agent-independent passing test calls these added public functions: parse, area, perimeter"
+      ],
+      "spec_conflict_reason": "tests/loki_wall_shape.rs:98 expects Rect{3,4}.area()==Ok(6.0) but the spec requires w*h=12, and tests/loki_wall_shape.rs:135 (area(\"rect\",[2,3])==Ok(6.0)) contradicts any formula that satisfies line 98; tests/loki_wall_shape.rs:89-90 expects Ok(Err(InvalidTriangle)) from parse(\"triangle\",[1,1,5]).ma",
+      "wall_s": 83.527,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.935,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0109,
+          "sessions": 2,
+          "seconds": 30.804,
+          "session_seconds": 48.656,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0056,
+          "sessions": 1,
+          "seconds": 21.677,
+          "session_seconds": 21.501,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.239,
+          "session_seconds": 0.0,
+          "runs": 2
+        },
+        "fix": {
+          "cost_usd": 0.0061,
+          "sessions": 1,
+          "seconds": 49.999,
+          "session_seconds": 31.731,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.054,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.212,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ],
+        [
+          "wall",
+          "haiku"
+        ],
+        [
+          "fix",
+          "haiku"
+        ],
+        [
+          "wall",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "fix.round",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "spec.conflict",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.arbitrated",
+        "wall.sealed"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "{3,4}.area()==Ok(6.0) but the spec requires w*h=12, and tests/loki_wall_shape.rs:135 (area(\"rect\",[2,3])==Ok(6.0)) contradicts any formula that satisfies line 9), no agent-independent passing test calls these added public functions: parse, area, perimeter, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.02 (claude, 258k tokens; cache read 160k tokens, saved $0.01)\nSpend:      implement 25%, wall 48%, fix 27%; top: wall; saved $2.11 vs top tier\nTime:       1m24s (intake 1s, implement 22s, wall 31s, verify 1s, fix 50s, verify 1s, commit 0s, seal 0s; slowest: fix 60%); next: loki verify; 4 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "rs-stats-percentile",
+      "kind": "multifile",
+      "lang": "rust",
+      "difficulty": "normal",
+      "shape": "cross-file-bug",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 23.28,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/stats_regressions.rs"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 2,
+      "files": [
+        "src/stats.rs",
+        "tests/stats_regressions.rs"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.008926680000000001,
+      "sessions": 1,
+      "turns": 7,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "rs-stats-percentile",
+      "kind": "multifile",
+      "lang": "rust",
+      "difficulty": "normal",
+      "shape": "cross-file-bug",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 30.26,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/loki_wall_stats.rs"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/tests/loki_wall_stats.rs b/tests/loki_wall_stats.rs\nnew file mode 100644\nindex 0000000..9538bd5\n--- /dev/null\n+++ b/tests/loki_wall_stats.rs\n@@ -0,0 +1,111 @@\n+use statkit::stats::{count, mean, median, percentile};\n+use statkit::summary;\n+\n+fn close(a: f64, b: f64) -> bool {\n+    (a - b).abs() < 1e-9\n+}\n+\n+fn assert_some_close(actual: Option<f64>, expected: f64) {\n+    match actual {\n+        Some(a) => assert!(close(a, expected), \"got {a}, expected {expected}\"),\n+        None => panic!(\"got None, expected Some({expected})\"),\n+    }\n+}\n+\n+#[test]\n+fn summary_reports_interpolated_p50_and_p90() {\n+    assert_eq!(summary(&[1.0, 2.0, 3.0, 4.0]), \"n=4 mean=2.50 p50=2.50 p90=3.70\");\n+    assert_ne!(summary(&[1.0, 2.0, 3.0, 4.0]), \"n=4 mean=2.50 p50=2.00 p90=3.00\");\n+}\n+\n+#[test]\n+fn summary_does_not_depend_on_input_order() {\n+    assert_eq!(summary(&[4.0, 1.0, 3.0, 2.0]), \"n=4 mean=2.50 p50=2.50 p90=3.70\");\n+    assert_eq!(summary(&[3.0, 4.0, 1.0, 2.0]), summary(&[1.0, 2.0, 3.0, 4.0]));\n+}\n+\n+#[test]\n+fn summary_empty_input_prints_only_count() {\n+    let empty: [f64; 0] = [];\n+    assert_eq!(summary(&empty), \"n=0\");\n+    assert_ne!(summary(&empty), \"n=0 mean=NaN p50=0.00 p90=0.00\");\n+}\n+\n+#[test]\n+fn summary_ignores_nan_values() {\n+    assert_eq!(summary(&[1.0, f64::NAN, 3.0]), \"n=2 mean=2.00 p50=2.00 p90=2.80\");\n+    assert_ne!(summary(&[1.0, f64::NAN, 3.0]), \"n=3 mean=NaN p50=2.00 p90=2.80\");\n+    assert_eq!(summary(&[f64::NAN, f64::NAN]), \"n=0\");\n+}\n+\n+#[test]\n+fn summary_two_decimals_for_single_value() {\n+    assert_eq!(summary(&[1.0]), \"n=1 mean=1.00 p50=1.00 p90=1.00\");\n+    assert_ne!(summary(&[1.0]), \"n=1 mean=1 p50=1 p90=1\");\n+}\n+\n+#[test]\n+fn count_skips_nan() {\n+    assert_eq!(count(&[1.0, f64::NAN, 2.0]), 2);\n+    assert_ne!(count(&[1.0, f64::NAN, 2.0]), 3);\n+    assert_eq!(count(&[f64::NAN]), 0);\n+    let empty: [f64; 0] = [];\n+    assert_eq!(count(&empty), 0);\n+}\n+\n+#[test]\n+fn mean_uses_non_nan_values_and_is_none_when_undefined() {\n+    assert_some_close(mean(&[1.0, 2.0, 3.0, 4.0]), 2.5);\n+    assert_some_close(mean(&[1.0, f64::NAN, 3.0]), 2.0);\n+    assert!(mean(&[f64::NAN]).is_none());\n+    let empty: [f64; 0] = [];\n+    assert!(mean(&empty).is_none());\n+    assert_ne!(mean(&[f64::NAN]), Some(f64::NAN));\n+}\n+\n+#[test]\n+fn median_is_percentile_50_and_is_none_when_undefined() {\n+    assert_some_close(median(&[4.0, 1.0, 3.0, 2.0]), 2.5);\n+    assert_some_close(median(&[1.0, f64::NAN, 3.0]), 2.0);\n+    assert!(median(&[f64::NAN, f64::NAN]).is_none());\n+    let empty: [f64; 0] = [];\n+    assert!(median(&empty).is_none());\n+    assert_ne!(median(&[1.0, 2.0, 3.0, 4.0]), Some(2.0));\n+}\n+\n+#[test]\n+fn percentile_interpolates_and_hits_min_and_max_at_bounds() {\n+    let v = [3.0, 1.0, 4.0, 2.0];\n+    assert_some_close(percentile(&v, 0.0), 1.0);\n+    assert_some_close(percentile(&v, 100.0), 4.0);\n+    assert_some_close(percentile(&v, 90.0), 3.7);\n+    assert_ne!(percentile(&v, 90.0), Some(3.0));\n+}\n+\n+#[test]\n+fn percentile_does_not_depend_on_order_or_mutate_input() {\n+    let v = [3.0, 1.0, 2.0];\n+    assert_some_close(percentile(&v, 50.0), 2.0);\n+    assert_eq!(v, [3.0, 1.0, 2.0]);\n+    assert_some_close(percentile(&[1.0, 2.0, 3.0], 50.0), 2.0);\n+    assert_some_close(percentile(&[2.0, 3.0, 1.0], 25.0), 1.5);\n+    assert_ne!(percentile(&[2.0, 3.0, 1.0], 25.0), Some(2.0));\n+}\n+\n+#[test]\n+fn percentile_ignores_nan_values() {\n+    assert_some_close(percentile(&[f64::NAN, 1.0, 3.0], 50.0), 2.0);\n+    let empty: [f64; 0] = [];\n+    assert!(percentile(&empty, 50.0).is_none());\n+    assert!(percentile(&[f64::NAN], 50.0).is_none());\n+}\n+\n+#[test]\n+fn percentile_rejects_invalid_p() {\n+    let v = [1.0, 2.0, 3.0];\n+    assert!(percentile(&v, f64::NAN).is_none());\n+    assert!(percentile(&v, -0.1).is_none());\n+    assert!(percentile(&v, 100.1).is_none());\n+    assert_some_close(percentile(&v, 0.0), 1.0);\n+    assert_some_close(percentile(&v, 100.0), 3.0);\n+}\n",
+      "files_changed": 2,
+      "files": [
+        "src/stats.rs",
+        "tests/loki_wall_stats.rs"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T222211Z-9ede",
+      "hidden_tail": "",
+      "cost_usd": 0.006971504999999999,
+      "stage_cost_usd": 0.006972,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261104T222211Z-9ede",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "one reviewer",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 29.265,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.901,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0045,
+          "sessions": 1,
+          "seconds": 26.295,
+          "session_seconds": 25.917,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0025,
+          "sessions": 1,
+          "seconds": 11.741,
+          "session_seconds": 11.578,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.852,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.076,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.89,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ],
+        [
+          "wall",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "  4s  (intake done 1s)\nOutcome:    VERIFIED\nPR:         none\nReceipt:    sha256:1e35a919a81c37d3f29a38028a92f6bbf4cfbbef3dd26be1cdf659c69073fb8b\nNOT PROVEN: one reviewer, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 70k tokens; cache read 40k tokens, saved $0.00)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nSpend:      implement 36%, wall 64%; top: wall; saved $0.66 vs top tier\nTime:       29s (intake 1s, implement 12s, wall 26s, verify 1s, commit 0s, seal 1s; slowest: wall 90%); next: loki status; 3 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "rs-stock-reserve",
+      "kind": "multifile",
+      "lang": "rust",
+      "difficulty": "normal",
+      "shape": "cross-module",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 33.44,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/reservations.rs"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 4,
+      "files": [
+        "src/lib.rs",
+        "src/order.rs",
+        "src/stock.rs",
+        "tests/reservations.rs"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.01094314,
+      "sessions": 1,
+      "turns": 9,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "rs-stock-reserve",
+      "kind": "multifile",
+      "lang": "rust",
+      "difficulty": "normal",
+      "shape": "cross-module",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 33.48,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "tests/loki_wall_reservations.rs",
+        "tests/reservations.rs"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "eserve(&o),\n+        Err(ReserveError::Insufficient {\n+            sku: \"a\".to_string(),\n+            requested: 5,\n+            available: 1,\n+        })\n+    );\n+    assert_eq!(inv.available(\"a\"), 1);\n+    assert_eq!(inv.available(\"b\"), 1);\n+    let exact = Order::new(\"e\").with_line(\"a\", 1);\n+    assert!(inv.reserve(&exact).is_ok());\n+}\n+\n+#[test]\n+fn reserve_sums_lines_before_checking_available() {\n+    let mut inv = Inventory::new();\n+    inv.add_stock(\"a\", 3);\n+    let o = Order::new(\"o\").with_line(\"a\", 2).with_line(\"a\", 2);\n+    assert_eq!(\n+        inv.reserve(&o),\n+        Err(ReserveError::Insufficient {\n+            sku: \"a\".to_string(),\n+            requested: 4,\n+            available: 3,\n+        })\n+    );\n+    assert_eq!(inv.available(\"a\"), 3);\n+}\n+\n+#[test]\n+fn reserve_ids_are_fresh_and_zero_orders_hold_nothing() {\n+    let mut inv = Inventory::new();\n+    inv.add_stock(\"a\", 5);\n+    let first = inv.reserve(&Order::new(\"o1\").with_line(\"a\", 1)).unwrap();\n+    let second = inv.reserve(&Order::new(\"o2\").with_line(\"a\", 1)).unwrap();\n+    assert_ne!(first, second);\n+    assert!(inv.release(first).is_ok());\n+    let third = inv.reserve(&Order::new(\"o3\").with_line(\"a\", 1)).unwrap();\n+    assert_ne!(third, first);\n+    assert_ne!(third, second);\n+\n+    let empty: ReservationId = inv.reserve(&Order::new(\"z\").with_line(\"ghost\", 0)).unwrap();\n+    assert_eq!(inv.available(\"a\"), 3);\n+    assert!(!inv.knows(\"ghost\"));\n+    assert!(inv.release(empty).is_ok());\n+    assert_eq!(inv.release(empty), Err(ReserveError::UnknownReservation));\n+}\n+\n+#[test]\n+fn release_frees_held_units_without_changing_on_hand() {\n+    let mut inv = Inventory::new();\n+    inv.add_stock(\"a\", 10);\n+    let id = inv.reserve(&Order::new(\"o\").with_line(\"a\", 4)).unwrap();\n+    assert!(inv.release(id).is_ok());\n+    assert_eq!(inv.available(\"a\"), 10);\n+    assert_eq!(inv.on_hand(\"a\"), 10);\n+    assert_eq!(inv.release(id), Err(ReserveError::UnknownReservation));\n+    assert_eq!(\n+        inv.release(ReservationId(999_999)),\n+        Err(ReserveError::UnknownReservation)\n+    );\n+}\n+\n+#[test]\n+fn commit_ships_units_and_keeps_available_unchanged() {\n+    let mut inv = Inventory::new();\n+    inv.add_stock(\"a\", 10);\n+    let id = inv.reserve(&Order::new(\"o\").with_line(\"a\", 4)).unwrap();\n+    let before = inv.available(\"a\");\n+    assert!(inv.commit(id).is_ok());\n+    assert_eq!(inv.on_hand(\"a\"), 6);\n+    assert_eq!(inv.available(\"a\"), before);\n+    assert_eq!(inv.available(\"a\"), 6);\n+    assert_eq!(inv.commit(id), Err(ReserveError::UnknownReservation));\n+    assert_eq!(inv.release(id), Err(ReserveError::UnknownReservation));\n+    assert_eq!(\n+        inv.commit(ReservationId(999_999)),\n+        Err(ReserveError::UnknownReservation)\n+    );\n+}\n+\n+#[test]\n+fn committed_or_released_reservation_cannot_be_committed_after_release() {\n+    let mut inv = Inventory::new();\n+    inv.add_stock(\"a\", 10);\n+    let id = inv.reserve(&Order::new(\"o\").with_line(\"a\", 3)).unwrap();\n+    assert!(inv.release(id).is_ok());\n+    assert_eq!(inv.commit(id), Err(ReserveError::UnknownReservation));\n+    assert_eq!(inv.on_hand(\"a\"), 10);\n+    assert_eq!(inv.available(\"a\"), 10);\n+}\ndiff --git a/tests/reservations.rs b/tests/reservations.rs\nnew file mode 100644\nindex 0000000..d8178f2\n--- /dev/null\n+++ b/tests/reservations.rs\n@@ -0,0 +1,81 @@\n+use stockkit::{Inventory, Order, ReserveError};\n+\n+#[test]\n+fn quantities_by_sku_sums_sorts_and_drops_zero() {\n+    let order = Order::new(\"o\")\n+        .with_line(\"pear\", 2)\n+        .with_line(\"apple\", 1)\n+        .with_line(\"pear\", 3)\n+        .with_line(\"fig\", 0);\n+    assert_eq!(\n+        order.quantities_by_sku(),\n+        vec![(\"apple\".to_string(), 1), (\"pear\".to_string(), 5)]\n+    );\n+}\n+\n+#[test]\n+fn reserve_reduces_available_but_not_on_hand() {\n+    let mut inv = Inventory::new();\n+    inv.add_stock(\"apple\", 5);\n+    let id = inv.reserve(&Order::new(\"o\").with_line(\"apple\", 3)).unwrap();\n+    assert_eq!(inv.available(\"apple\"), 2);\n+    assert_eq!(inv.on_hand(\"apple\"), 5);\n+    inv.release(id).unwrap();\n+    assert_eq!(inv.available(\"apple\"), 5);\n+    assert_eq!(inv.release(id), Err(ReserveError::UnknownReservation));\n+}\n+\n+#[test]\n+fn commit_drops_on_hand_and_keeps_available() {\n+    let mut inv = Inventory::new();\n+    inv.add_stock(\"apple\", 5);\n+    let id = inv.reserve(&Order::new(\"o\").with_line(\"apple\", 3)).unwrap();\n+    let before = inv.available(\"apple\");\n+    inv.commit(id).unwrap();\n+    assert_eq!(inv.on_hand(\"apple\"), 2);\n+    assert_eq!(inv.available(\"apple\"), before);\n+    assert_eq!(inv.commit(id), Err(ReserveError::UnknownReservation));\n+}\n+\n+#[test]\n+fn reserve_is_all_or_nothing_and_reports_first_failure() {\n+    let mut inv = Inventory::new();\n+    inv.add_stock(\"apple\", 5);\n+    inv.add_stock(\"pear\", 1);\n+    let order = Order::new(\"o\")\n+        .with_line(\"apple\", 2)\n+        .with_line(\"pear\", 2)\n+        .with_line(\"kiwi\", 1);\n+    // Sorted order: apple, kiwi, pear. \"kiwi\" is unknown and is hit before \"pear\".\n+    assert_eq!(\n+        inv.reserve(&order),\n+        Err(ReserveError::UnknownSku(\"kiwi\".to_string()))\n+    );\n+    assert_eq!(inv.available(\"apple\"), 5);\n+    assert_eq!(inv.available(\"pear\"), 1);\n+\n+    let short = Order::new(\"o\").with_line(\"apple\", 2).with_line(\"pear\", 2);\n+    assert_eq!(\n+        inv.reserve(&short),\n+        Err(ReserveError::Insufficient {\n+            sku: \"pear\".to_string(),\n+            requested: 2,\n+            available: 1,\n+        })\n+    );\n+    assert_eq!(inv.available(\"apple\"), 5);\n+}\n+\n+#[test]\n+fn ids_are_never_reused_and_empty_order_holds_nothing() {\n+    let mut inv = Inventory::new();\n+    inv.add_stock(\"apple\", 1);\n+    let a = inv.reserve(&Order::new(\"o\")).unwrap();\n+    let b = inv.reserve(&Order::new(\"o\")).unwrap();\n+    assert_ne!(a, b);\n+    inv.release(a).unwrap();\n+    let c = inv.reserve(&Order::new(\"o\").with_line(\"apple\", 1)).unwrap();\n+    assert_ne!(c, a);\n+    assert_ne!(c, b);\n+    assert_eq!(inv.available(\"apple\"), 0);\n+}\n",
+      "files_changed": 5,
+      "files": [
+        "src/lib.rs",
+        "src/order.rs",
+        "src/stock.rs",
+        "tests/loki_wall_reservations.rs",
+        "tests/reservations.rs"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T222241Z-700a",
+      "hidden_tail": "",
+      "cost_usd": 0.009933760000000002,
+      "stage_cost_usd": 0.009934,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261104T222241Z-700a",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "one reviewer",
+        "outside stated scope: src/lib.rs",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 32.533,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 1.287,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0039,
+          "sessions": 1,
+          "seconds": 29.028,
+          "session_seconds": 22.375,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.006,
+          "sessions": 1,
+          "seconds": 28.705,
+          "session_seconds": 28.534,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.908,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.084,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.884,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "wall",
+          "haiku"
+        ],
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "IED\nPR:         none\nReceipt:    sha256:68393b2fd5cd4207b3c805bd048f49fbe7ba51c94ad7b7a765bc58ffd5b8f61c\nNOT PROVEN: one reviewer, outside stated scope: src/lib.rs, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 125k tokens; cache read 85k tokens, saved $0.01)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nSpend:      wall 40%, implement 60%; top: implement; saved $0.92 vs top tier\nTime:       33s (intake 1s, implement 29s, wall 29s, verify 1s, commit 0s, seal 1s; slowest: wall 89%); next: loki status; 7 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 90/100 (A) - run `loki doctor --repo` for 1 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "ts-cart-discounts",
+      "kind": "feature",
+      "lang": "ts",
+      "difficulty": "normal",
+      "shape": "cross-module",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 66.61,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "test/cart.test.ts"
+      ],
+      "test_weakened": [
+        "test/cart.test.ts"
+      ],
+      "accepted": 0,
+      "test_diff": "diff --git a/test/cart.test.ts b/test/cart.test.ts\nindex b260cc6..9f1b9d5 100644\n--- a/test/cart.test.ts\n+++ b/test/cart.test.ts\n@@ -1,9 +1,52 @@\n import { expect, test } from \"bun:test\";\n-import { cartTotal, subtotal } from \"../src/cart\";\n+import { cartTotal, InvalidDiscountError, subtotal } from \"../src/cart\";\n import { checkoutSummary } from \"../src/checkout\";\n \n const small = [{ sku: \"mug\", priceCents: 1200, qty: 2 }];\n const big = [{ sku: \"lamp\", priceCents: 6000, qty: 1 }];\n+const odd = [{ sku: \"odd\", priceCents: 1005, qty: 1 }];\n+\n+test(\"no code or empty code matches today's total\", () => {\n+  expect(cartTotal(small, undefined)).toBe(2899);\n+  expect(cartTotal(small, \"\")).toBe(2899);\n+  expect(cartTotal(small, \"   \")).toBe(2899);\n+});\n+\n+test(\"SAVE10 takes 10% off the subtotal, rounded to the cent\", () => {\n+  expect(cartTotal(small, \"SAVE10\")).toBe(2160 + 499);\n+  expect(cartTotal(odd, \"SAVE10\")).toBe(1005 - 101 + 499);\n+});\n+\n+test(\"FLAT5 takes 500 cents off the subtotal, never below zero\", () => {\n+  expect(cartTotal(small, \"FLAT5\")).toBe(1900 + 499);\n+  expect(cartTotal([{ sku: \"pen\", priceCents: 300, qty: 1 }], \"FLAT5\")).toBe(0 + 499);\n+});\n+\n+test(\"FREESHIP waives shipping\", () => {\n+  expect(cartTotal(small, \"FREESHIP\")).toBe(2400);\n+});\n+\n+test(\"codes are case-insensitive and ignore surrounding spaces\", () => {\n+  expect(cartTotal(small, \"  save10 \")).toBe(cartTotal(small, \"SAVE10\"));\n+  expect(cartTotal(small, \"flat5\")).toBe(cartTotal(small, \"FLAT5\"));\n+});\n+\n+test(\"free shipping eligibility uses the pre-discount subtotal\", () => {\n+  const justOver = [{ sku: \"rug\", priceCents: 5000, qty: 1 }];\n+  expect(cartTotal(justOver, \"FLAT5\")).toBe(4500);\n+  const underAfterDiscount = [{ sku: \"rug\", priceCents: 5100, qty: 1 }];\n+  expect(cartTotal(underAfterDiscount, \"SAVE10\")).toBe(4590);\n+});\n+\n+test(\"unknown code throws InvalidDiscountError\", () => {\n+  expect(() => cartTotal(small, \"NOPE\")).toThrow(InvalidDiscountError);\n+  expect(() => cartTotal(small, \"constructor\")).toThrow(InvalidDiscountError);\n+});\n+\n+test(\"checkout summary passes the code through\", () => {\n+  expect(checkoutSummary(small, \"SAVE10\")).toBe(\"Total: $26.59\");\n+  expect(() => checkoutSummary(small, \"NOPE\")).toThrow(InvalidDiscountError);\n+});\n \n test(\"subtotal multiplies price by quantity\", () => {\n   expect(subtotal(small)).toBe(2400);\n",
+      "files_changed": 4,
+      "files": [
+        "src/cart.ts",
+        "src/checkout.ts",
+        "src/discounts.ts",
+        "test/cart.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.013353120000000001,
+      "sessions": 1,
+      "turns": 15,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "ts-cart-discounts",
+      "kind": "feature",
+      "lang": "ts",
+      "difficulty": "normal",
+      "shape": "cross-module",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 51.79,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "test/discounts.test.ts"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/test/discounts.test.ts b/test/discounts.test.ts\nnew file mode 100644\nindex 0000000..cd8832b\n--- /dev/null\n+++ b/test/discounts.test.ts\n@@ -0,0 +1,54 @@\n+import { expect, test } from \"bun:test\";\n+import { cartTotal, InvalidDiscountError } from \"../src/cart\";\n+import { checkoutSummary } from \"../src/checkout\";\n+\n+const small = [{ sku: \"mug\", priceCents: 1200, qty: 2 }];\n+const big = [{ sku: \"lamp\", priceCents: 6000, qty: 1 }];\n+const odd = [{ sku: \"pen\", priceCents: 1005, qty: 1 }];\n+\n+test(\"no code or empty code matches today's total\", () => {\n+  expect(cartTotal(small, undefined)).toBe(2899);\n+  expect(cartTotal(small, \"\")).toBe(2899);\n+});\n+\n+test(\"SAVE10 takes 10% off the subtotal, shipping still charged\", () => {\n+  expect(cartTotal(small, \"SAVE10\")).toBe(2160 + 499);\n+});\n+\n+test(\"SAVE10 rounds to the nearest cent\", () => {\n+  // 1005 * 10% = 100.5 -> 101 off\n+  expect(cartTotal(odd, \"SAVE10\")).toBe(1005 - 101 + 499);\n+});\n+\n+test(\"FLAT5 takes 500 cents off the subtotal\", () => {\n+  expect(cartTotal(small, \"FLAT5\")).toBe(2400 - 500 + 499);\n+});\n+\n+test(\"FLAT5 never takes the subtotal below zero\", () => {\n+  const tiny = [{ sku: \"gum\", priceCents: 300, qty: 1 }];\n+  expect(cartTotal(tiny, \"FLAT5\")).toBe(0 + 499);\n+});\n+\n+test(\"FREESHIP waives shipping\", () => {\n+  expect(cartTotal(small, \"FREESHIP\")).toBe(2400);\n+});\n+\n+test(\"free shipping eligibility uses the pre-discount subtotal\", () => {\n+  // 5000 subtotal qualifies for free shipping before SAVE10 reduces it to 4500.\n+  const exact = [{ sku: \"desk\", priceCents: 5000, qty: 1 }];\n+  expect(cartTotal(exact, \"SAVE10\")).toBe(4500);\n+});\n+\n+test(\"codes are case-insensitive and ignore surrounding spaces\", () => {\n+  expect(cartTotal(small, \"  save10 \")).toBe(cartTotal(small, \"SAVE10\"));\n+  expect(cartTotal(small, \"flat5\")).toBe(cartTotal(small, \"FLAT5\"));\n+});\n+\n+test(\"unknown code throws InvalidDiscountError\", () => {\n+  expect(() => cartTotal(small, \"NOPE\")).toThrow(InvalidDiscountError);\n+});\n+\n+test(\"checkoutSummary passes the code through\", () => {\n+  expect(checkoutSummary(small, \"FREESHIP\")).toBe(\"Total: $24.00\");\n+  expect(checkoutSummary(small)).toBe(\"Total: $28.99\");\n+});\n",
+      "files_changed": 4,
+      "files": [
+        "src/cart.ts",
+        "src/checkout.ts",
+        "src/discounts.ts",
+        "test/discounts.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T222258Z-943d",
+      "hidden_tail": "",
+      "cost_usd": 0.00940482,
+      "stage_cost_usd": 0.005885,
+      "child_cost_usd": 0.003519,
+      "child_sessions": 1,
+      "unpriced_sessions": 0,
+      "sessions": 2,
+      "run_id": "e10-20261104T222258Z-943d",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "cross-review flag (claude): No correctness defect found. I traced the arithmetic against src/cart.ts ( SHIPPING_CENTS = 499 , FREE_SHIPPING_MIN_CENTS = 5000 ) and every expected value in test/discount",
+        "cross-review flag (claude): Spec not verifiable: the commit subject in the prompt is truncated (\"cartTotal in src/cart.ts should take an\u2026\"), so I could not check the full requirement against the imple",
+        "cross-review flag (claude): Missing test: no case for prototype-like keys (e.g. \"constructor\" , \"__proto__\" ). The hasOwnProperty guard in lookupDiscount should make them throw InvalidDiscountError , ",
+        "cross-review flag (claude): Missing test: no whitespace-only code (e.g. \" \" ) case, which takes the empty-code path after trimming and should return the undiscounted total.",
+        "cross-review flag (claude): Missing test: no assertion that FLAT5 on a subtotal of exactly 500 (or below) yields a zero subtotal with shipping still applied, which would pin the Math.min clamp at its "
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 50.875,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.54,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0059,
+          "sessions": 1,
+          "seconds": 32.023,
+          "session_seconds": 31.865,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.864,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.066,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 17.059,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "uld return the undiscounted total., cross-review flag (claude): Missing test: no assertion that FLAT5 on a subtotal of exactly 500 (or below) yields a zero subtotal with shipping still applied, which would pin the Math.min clamp at its boundary., repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.01 (claude, 95k tokens; cache read 74k tokens, saved $0.01)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       51s (intake 1s, implement 32s, verify 1s, commit 0s, seal 17s; slowest: implement 63%); next: loki status; 7 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "ts-cron-next",
+      "kind": "feature",
+      "lang": "ts",
+      "difficulty": "hard",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 186.17,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "test/cron.test.ts"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 2,
+      "files": [
+        "src/cron.ts",
+        "test/cron.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.04044102,
+      "sessions": 1,
+      "turns": 14,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "ts-cron-next",
+      "kind": "feature",
+      "lang": "ts",
+      "difficulty": "hard",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 158.04,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "test/cron.test.ts",
+        "test/loki_wall_cron.test.ts"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "g()).toBe(\"2024-01-01T00:00:45.123Z\");\n+  expect(r).toBeInstanceOf(Date);\n+  expect(r).not.toBe(d);\n+  expect(r.getUTCSeconds()).toBe(0);\n+  expect(r.getUTCMilliseconds()).toBe(0);\n+  expect(r.toISOString()).toBe(\"2024-01-01T00:05:00.000Z\");\n+});\n+\n+test(\"month and weekday names are case-insensitive and accept lists and ranges\", () => {\n+  expect(next(\"0 12 * JAN SUN\", \"2024-12-31T00:00:00Z\")).toBe(\"2025-01-05T12:00:00.000Z\");\n+  expect(next(\"0 12 * jan-feb sun\", \"2024-12-31T00:00:00Z\")).toBe(\"2025-01-05T12:00:00.000Z\");\n+  expect(next(\"0 0 1 jan,Jul *\", \"2024-02-01T00:00:00Z\")).toBe(\"2024-07-01T00:00:00.000Z\");\n+  expect(() => nextRun(\"0 0 * JANX *\", new Date(0))).toThrow(CronError);\n+});\n+\n+test(\"day-of-week 0 and 7 both mean Sunday\", () => {\n+  expect(next(\"0 0 * * 0\", \"2024-01-01T00:00:00Z\")).toBe(\"2024-01-07T00:00:00.000Z\");\n+  expect(next(\"0 0 * * 7\", \"2024-01-01T00:00:00Z\")).toBe(\"2024-01-07T00:00:00.000Z\");\n+  expect(() => nextRun(\"0 0 * * 8\", new Date(0))).toThrow(CronError);\n+});\n+\n+test(\"restricted day-of-month and day-of-week match on either\", () => {\n+  expect(next(\"0 0 13 * 5\", \"2024-01-01T00:00:00Z\")).toBe(\"2024-01-05T00:00:00.000Z\");\n+  expect(next(\"0 0 L * 1\", \"2024-01-30T00:00:00Z\")).toBe(\"2024-01-31T00:00:00.000Z\");\n+  expect(next(\"0 0 * 2 5L\", \"2024-02-01T00:00:00Z\")).toBe(\"2024-02-23T00:00:00.000Z\");\n+  expect(next(\"0 0 * 2 5L\", \"2024-02-24T00:00:00Z\")).toBe(\"2025-02-28T00:00:00.000Z\");\n+});\n+\n+test(\"L in day-of-month uses month length including leap day\", () => {\n+  expect(next(\"0 0 L 2 *\", \"2024-02-01T00:00:00Z\")).toBe(\"2024-02-29T00:00:00.000Z\");\n+  expect(next(\"0 0 31 * *\", \"2024-04-30T00:00:00Z\")).toBe(\"2024-05-31T00:00:00.000Z\");\n+  expect(() => nextRun(\"0 0 L/2 * *\", new Date(0))).toThrow(CronError);\n+});\n+\n+test(\"LW is the last weekday of the month\", () => {\n+  expect(next(\"0 0 LW * *\", \"2024-12-01T00:00:00Z\")).toBe(\"2024-12-31T00:00:00.000Z\");\n+  expect(next(\"0 0 LW * *\", \"2024-08-01T00:00:00Z\")).toBe(\"2024-08-30T00:00:00.000Z\");\n+  expect(() => nextRun(\"0 0 1-5W * *\", new Date(0))).toThrow(CronError);\n+});\n+\n+test(\"nW picks the nearest weekday without leaving the month\", () => {\n+  expect(next(\"0 0 15W * *\", \"2024-02-01T00:00:00Z\")).toBe(\"2024-02-15T00:00:00.000Z\");\n+  expect(next(\"0 0 15W * *\", \"2024-06-01T00:00:00Z\")).toBe(\"2024-06-14T00:00:00.000Z\");\n+  expect(next(\"0 0 15W * *\", \"2024-09-01T00:00:00Z\")).toBe(\"2024-09-16T00:00:00.000Z\");\n+  expect(next(\"0 0 1W * *\", \"2024-05-31T00:00:00Z\")).toBe(\"2024-06-03T00:00:00.000Z\");\n+  expect(next(\"0 0 31W * *\", \"2024-03-01T00:00:00Z\")).toBe(\"2024-03-29T00:00:00.000Z\");\n+  expect(() => nextRun(\"0 0 31W 2 *\", new Date(\"2024-02-01T00:00:00Z\"))).toThrow(CronError);\n+});\n+\n+test(\"dL is the last given weekday of the month\", () => {\n+  expect(next(\"0 0 * * 5L\", \"2024-01-01T00:00:00Z\")).toBe(\"2024-01-26T00:00:00.000Z\");\n+  expect(next(\"0 0 * * friL\", \"2024-01-01T00:00:00Z\")).toBe(\"2024-01-26T00:00:00.000Z\");\n+  expect(() => nextRun(\"0 0 * * 5W\", new Date(0))).toThrow(CronError);\n+});\n+\n+test(\"d#k is the k-th weekday of the month and skips months without it\", () => {\n+  expect(next(\"0 0 * * 5#3\", \"2024-01-01T00:00:00Z\")).toBe(\"2024-01-19T00:00:00.000Z\");\n+  expect(next(\"0 0 * * FRI#3\", \"2024-01-01T00:00:00Z\")).toBe(\"2024-01-19T00:00:00.000Z\");\n+  expect(next(\"0 0 * * 5#5\", \"2024-01-01T00:00:00Z\")).toBe(\"2024-03-29T00:00:00.000Z\");\n+  expect(() => nextRun(\"0 0 * * 8#1\", new Date(0))).toThrow(CronError);\n+  expect(() => nextRun(\"0 0 * * 5#0\", new Date(0))).toThrow(CronError);\n+  expect(() => nextRun(\"0 0 * * 5#6\", new Date(0))).toThrow(CronError);\n+});\n+\n+test(\"specials can be mixed in a list\", () => {\n+  expect(next(\"0 0 * * 1#1,5L\", \"2024-01-01T00:00:00Z\")).toBe(\"2024-01-26T00:00:00.000Z\");\n+});\n+\n+test(\"aliases are case-insensitive and reject extra text\", () => {\n+  expect(next(\"@daily\", \"2024-01-01T05:00:00Z\")).toBe(\"2024-01-02T00:00:00.000Z\");\n+  expect(next(\"@HOURLY\", \"2024-01-01T05:30:00Z\")).toBe(\"2024-01-01T06:00:00.000Z\");\n+  expect(next(\"@weekly\", \"2024-01-01T00:00:00Z\")).toBe(\"2024-01-07T00:00:00.000Z\");\n+  expect(next(\"@monthly\", \"2024-01-15T00:00:00Z\")).toBe(\"2024-02-01T00:00:00.000Z\");\n+  expect(next(\"@yearly\", \"2024-06-01T00:00:00Z\")).toBe(\"2025-01-01T00:00:00.000Z\");\n+  expect(next(\"@ANNUALLY\", \"2024-06-01T00:00:00Z\")).toBe(\"2025-01-01T00:00:00.000Z\");\n+  expect(() => nextRun(\"@daily extra\", new Date(0))).toThrow(CronError);\n+  expect(() => nextRun(\"@reboot\", new Date(0))).toThrow(CronError);\n+});\n+\n+test(\"invalid expressions throw CronError\", () => {\n+  const bad = [\n+    \"* * * *\",\n+    \"* * * * * *\",\n+    \"60 * * * *\",\n+    \"* 24 * * *\",\n+    \"* * 0 * *\",\n+    \"* * 32 * *\",\n+    \"* * * 0 *\",\n+    \"* * * 13 *\",\n+    \"* * * * 8\",\n+    \"*/0 * * * *\",\n+    \"5/15 * * * *\",\n+    \"5-1 * * * *\",\n+    \"1,,2 * * * *\",\n+    \",1 * * * *\",\n+    \"MON * * * *\",\n+    \"0 0 * * FOO\",\n+    \"0 0 * FOO *\",\n+    \"0 0 1L * *\",\n+    \"0 0 W * *\",\n+    \"0 0 * * L\",\n+    \"0 0 * * W\",\n+    \"0 0 * * 1-5#2\",\n+    \"0 0 * * 5#\",\n+    \"0 0 @ * *\",\n+  ];\n+  for (const expr of bad) {\n+    expect(() => nextRun(expr, new Date(\"2024-01-01T00:00:00Z\"))).toThrow(CronError);\n+  }\n+  expect(new CronError(\"x\")).toBeInstanceOf(Error);\n+});\n+\n+test(\"throws CronError when no match exists within five years\", () => {\n+  expect(() => nextRun(\"0 0 30 2 *\", new Date(\"2024-01-01T00:00:00Z\"))).toThrow(CronError);\n+});\n+\n+test(\"3000 calls over mixed rare schedules finish under 2 seconds\", () => {\n+  const schedules = [\"0 0 29 2 1\", \"59 23 31 12 5L\", \"0 0 LW 2 *\", \"30 4 15W * 1#5\", \"0 0 29 2 *\"];\n+  const start = performance.now();\n+  for (let i = 0; i < 3000; i++) {\n+    const year = 2000 + (i % 100);\n+    const month = i % 12;\n+    const day = 1 + ((i * 7) % 28);\n+    const d = new Date(Date.UTC(year, month, day, (i * 5) % 24, (i * 13) % 60));\n+    try {\n+      nextRun(schedules[i % 5], d);\n+    } catch (e) {\n+      if (!(e instanceof CronError)) throw e;\n+    }\n+  }\n+  const elapsed = performance.now() - start;\n+  expect(elapsed).toBeLessThan(2000);\n+});\n",
+      "files_changed": 3,
+      "files": [
+        "src/cron.ts",
+        "test/cron.test.ts",
+        "test/loki_wall_cron.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T222315Z-a2ab",
+      "hidden_tail": "",
+      "cost_usd": 0.03653880999999999,
+      "stage_cost_usd": 0.029078,
+      "child_cost_usd": 0.00746,
+      "child_sessions": 1,
+      "unpriced_sessions": 0,
+      "sessions": 3,
+      "run_id": "e10-20261104T222315Z-a2ab",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "cross-review flag (claude): Hang, not a throw: near the top of the Date range, from such as new Date(8.64e15) makes startMs and limitMs NaN ( setUTCFullYear and new Date overflow). Every > comparison ",
+        "cross-review flag (claude): Spec question: 5/15 (start/step with no range) throws CronError . Vixie cron, cronie and Quartz accept it as 5-59/15 . If the spec is classic cron, this is a deviation. The",
+        "cross-review flag (claude): Classic-cron divergence on star detection: dowStar and domStar are true only for a literal * . Vixie sets its star flag for any field that starts with * , so 0 0 1 * */2 an",
+        "cross-review flag (claude): Missing tests: no leap-year Feb 29 case, no 7 as Sunday, no successful match near the 5-year limit, no @annually / @weekly , no 1W on a Sunday (should give Monday the 2nd),",
+        "cross-review flag (claude): The timing test asserts wall-clock time under 2000 ms for 3000 calls. It is unlikely to fail on a normal machine, but it can flake under CI load. Consider dropping the thre"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 157.115,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.475,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "wall": {
+          "cost_usd": 0.0099,
+          "sessions": 1,
+          "seconds": 105.558,
+          "session_seconds": 55.801,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0192,
+          "sessions": 1,
+          "seconds": 105.423,
+          "session_seconds": 105.282,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.818,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.066,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 49.948,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "wall",
+          "haiku"
+        ],
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "heartbeat",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant",
+        "wall.sealed"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "mal machine, but it can flake under CI load. Consider dropping the threshold or moving it out of the unit suite., scope not determined; all edits committed, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.04 (claude, 328k tokens; cache read 231k tokens, saved $0.02)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nSpend:      wall 34%, implement 66%; top: implement; saved $2.71 vs top tier\nTime:       2m37s (intake 0s, implement 1m45s, wall 1m46s, verify 1s, commit 0s, seal 50s; slowest: wall 67%); next: loki status; 7 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "ts-duration-fix",
+      "kind": "bugfix",
+      "lang": "ts",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 22.48,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "test/duration.test.ts"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/test/duration.test.ts b/test/duration.test.ts\nindex d4d9bf1..bcc3fdb 100644\n--- a/test/duration.test.ts\n+++ b/test/duration.test.ts\n@@ -13,3 +13,25 @@ test(\"hours\", () => {\n test(\"loadJob converts the timeout\", () => {\n   expect(loadJob({ name: \"nightly\", timeout: \"5m\" }).timeoutMs).toBe(300_000);\n });\n+\n+test(\"compound durations\", () => {\n+  expect(parseDuration(\"1h30m\")).toBe(5_400_000);\n+  expect(parseDuration(\"2d4h\")).toBe(187_200_000);\n+  expect(parseDuration(\"1m30s\")).toBe(90_000);\n+  expect(parseDuration(\"1h30m15s500ms\")).toBe(5_415_500);\n+});\n+\n+test(\"milliseconds are not read as minutes\", () => {\n+  expect(parseDuration(\"250ms\")).toBe(250);\n+});\n+\n+test(\"whitespace around and between segments is allowed\", () => {\n+  expect(parseDuration(\"  1h 30m  \")).toBe(5_400_000);\n+  expect(parseDuration(\"2d\\t4h\")).toBe(187_200_000);\n+});\n+\n+test(\"invalid input throws\", () => {\n+  for (const bad of [\"\", \"   \", \"10\", \"10mx\", \"5w\", \"1h30\", \"m5\", \"1 m s\", \"1.5h\"]) {\n+    expect(() => parseDuration(bad)).toThrow(\"invalid duration\");\n+  }\n+});\n",
+      "files_changed": 2,
+      "files": [
+        "src/duration.ts",
+        "test/duration.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.00869289,
+      "sessions": 1,
+      "turns": 7,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "ts-duration-fix",
+      "kind": "bugfix",
+      "lang": "ts",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 16.53,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 1,
+      "files": [
+        "src/duration.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T222350Z-9db3",
+      "hidden_tail": "",
+      "cost_usd": 0.00265513,
+      "stage_cost_usd": 0.002655,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T222350Z-9db3",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 15.601,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.459,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0027,
+          "sessions": 1,
+          "seconds": 14.289,
+          "session_seconds": 14.134,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.312,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.058,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.173,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "y-done check pin); estimate: ~$0.19-$0.63 (first run in this repo)\n[implement] implementing  3s  (intake done 0s)\nOutcome:    VERIFIED\nPR:         none\nReceipt:    sha256:d96f5bb911cea1c24eeded12a9a81950b389bea021d33461da34d37a6fad6ef7\nNOT PROVEN: repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 50k tokens; cache read 38k tokens, saved $0.00)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       16s (intake 0s, implement 14s, verify 0s, commit 0s, seal 0s; slowest: implement 91%); next: loki status; 3 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "ts-order-currency",
+      "kind": "multifile",
+      "lang": "ts",
+      "difficulty": "normal",
+      "shape": "cross-module",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 25.31,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "test/orders.test.ts"
+      ],
+      "test_weakened": [
+        "test/orders.test.ts"
+      ],
+      "accepted": 0,
+      "test_diff": "diff --git a/test/orders.test.ts b/test/orders.test.ts\nindex fb68972..20691a8 100644\n--- a/test/orders.test.ts\n+++ b/test/orders.test.ts\n@@ -2,20 +2,41 @@ import { expect, test } from \"bun:test\";\n import { toCsv } from \"../src/export\";\n import { formatOrder } from \"../src/format\";\n import { summarize } from \"../src/report\";\n+import type { Order } from \"../src/types\";\n \n-const orders = [\n+const orders: Order[] = [\n   { id: 1, customer: \"Alice\", totalCents: 1234 },\n-  { id: 2, customer: \"Bob, Jr.\", totalCents: 500 },\n+  { id: 2, customer: \"Bob, Jr.\", totalCents: 500, currency: \"EUR\" },\n+  { id: 3, customer: \"Carol\", totalCents: 800, currency: \"GBP\" },\n ];\n \n-test(\"formatOrder\", () => {\n-  expect(formatOrder(orders[0])).toBe(\"#1 Alice $12.34\");\n+test(\"formatOrder defaults to USD when currency is missing\", () => {\n+  expect(formatOrder(orders[0])).toBe(\"#1 Alice 12.34 USD\");\n });\n \n-test(\"toCsv quotes fields with commas\", () => {\n-  expect(toCsv(orders)).toBe('id,customer,total\\n1,Alice,12.34\\n2,\"Bob, Jr.\",5.00');\n+test(\"formatOrder prints the order's currency code\", () => {\n+  expect(formatOrder(orders[1])).toBe(\"#2 Bob, Jr. 5.00 EUR\");\n+  expect(formatOrder({ id: 7, customer: \"Bob\", totalCents: 1050, currency: \"EUR\" })).toBe(\"#7 Bob 10.50 EUR\");\n });\n \n-test(\"summarize\", () => {\n-  expect(summarize(orders)).toEqual({ count: 2, totalCents: 1734 });\n+test(\"toCsv quotes fields with commas and includes currency column\", () => {\n+  expect(toCsv(orders)).toBe(\n+    'id,customer,total,currency\\n1,Alice,12.34,USD\\n2,\"Bob, Jr.\",5.00,EUR\\n3,Carol,8.00,GBP',\n+  );\n+});\n+\n+test(\"summarize keeps totals separate per currency\", () => {\n+  expect(summarize(orders)).toEqual({\n+    count: 3,\n+    totalsByCurrency: { USD: 1234, EUR: 500, GBP: 800 },\n+  });\n+});\n+\n+test(\"summarize sums orders sharing a currency and omits absent ones\", () => {\n+  expect(\n+    summarize([\n+      { id: 1, customer: \"A\", totalCents: 100 },\n+      { id: 2, customer: \"B\", totalCents: 250, currency: \"USD\" },\n+    ]),\n+  ).toEqual({ count: 2, totalsByCurrency: { USD: 350 } });\n });\n",
+      "files_changed": 5,
+      "files": [
+        "src/export.ts",
+        "src/format.ts",
+        "src/report.ts",
+        "src/types.ts",
+        "test/orders.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.007325650000000001,
+      "sessions": 1,
+      "turns": 4,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "ts-order-currency",
+      "kind": "multifile",
+      "lang": "ts",
+      "difficulty": "normal",
+      "shape": "cross-module",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 20.19,
+      "exit_code": 6,
+      "timed_out": false,
+      "test_edits": [
+        "test/orders.test.ts"
+      ],
+      "test_weakened": [
+        "test/orders.test.ts"
+      ],
+      "accepted": 0,
+      "test_diff": "diff --git a/test/orders.test.ts b/test/orders.test.ts\nindex fb68972..fedd0b9 100644\n--- a/test/orders.test.ts\n+++ b/test/orders.test.ts\n@@ -9,13 +9,17 @@ const orders = [\n ];\n \n test(\"formatOrder\", () => {\n-  expect(formatOrder(orders[0])).toBe(\"#1 Alice $12.34\");\n+  expect(formatOrder(orders[0])).toBe(\"#1 Alice 12.34 USD\");\n+  expect(formatOrder({ id: 7, customer: \"Bob\", totalCents: 1050, currency: \"EUR\" })).toBe(\"#7 Bob 10.50 EUR\");\n });\n \n test(\"toCsv quotes fields with commas\", () => {\n-  expect(toCsv(orders)).toBe('id,customer,total\\n1,Alice,12.34\\n2,\"Bob, Jr.\",5.00');\n+  expect(toCsv(orders)).toBe('id,customer,total,currency\\n1,Alice,12.34,USD\\n2,\"Bob, Jr.\",5.00,USD');\n });\n \n test(\"summarize\", () => {\n-  expect(summarize(orders)).toEqual({ count: 2, totalCents: 1734 });\n+  expect(summarize(orders)).toEqual({ count: 2, totalsByCurrency: { USD: 1734 } });\n+  expect(\n+    summarize([...orders, { id: 3, customer: \"Carol\", totalCents: 200, currency: \"GBP\" }]),\n+  ).toEqual({ count: 3, totalsByCurrency: { USD: 1734, GBP: 200 } });\n });\n",
+      "files_changed": 5,
+      "files": [
+        "src/export.ts",
+        "src/format.ts",
+        "src/report.ts",
+        "src/types.ts",
+        "test/orders.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T222411Z-ac63",
+      "hidden_tail": "",
+      "cost_usd": 0.0037072749999999995,
+      "stage_cost_usd": 0.003707,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T222411Z-ac63",
+      "verdict": "PARTIAL",
+      "fix_rounds": 0,
+      "not_proven": [
+        "one reviewer",
+        "only agent-authored tests executed (no agent-independent proof)",
+        "weakened test: test/orders.test.ts",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 19.227,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.43,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0037,
+          "sessions": 1,
+          "seconds": 17.644,
+          "session_seconds": 17.483,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.568,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.061,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.205,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "cap.sized",
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "PARTIAL",
+      "loki_tail": "$0.19-$0.63 (first run in this repo)\n[implement] implementing  3s  (intake done 0s)\nOutcome:    PARTIAL\nPR:         none\nReceipt:    sha256:5dff14f9d03743e1ad1600a21593297a935be3cd58225781e1856ebe1120f4b2\nNOT PROVEN: one reviewer, only agent-authored tests executed (no agent-independent proof), weakened test: test/orders.test.ts, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 60k tokens; cache read 45k tokens, saved $0.00)\nTime:       19s (intake 0s, implement 18s, verify 1s, commit 0s, seal 0s; slowest: implement 91%)\nNext:       loki verify  (5 files changed (+26 -14)); 5 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "ts-paginate-fix",
+      "kind": "bugfix",
+      "lang": "ts",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 12.08,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [
+        "test/paginate.test.ts"
+      ],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "diff --git a/test/paginate.test.ts b/test/paginate.test.ts\nindex 892f1fc..f94a22e 100644\n--- a/test/paginate.test.ts\n+++ b/test/paginate.test.ts\n@@ -14,3 +14,36 @@ test(\"first page of an evenly divided list\", () => {\n   expect(p.page).toBe(1);\n   expect(p.totalPages).toBe(2);\n });\n+\n+test(\"pages include every item, including the last of each page\", () => {\n+  const p1 = paginate([1, 2, 3, 4], 1, 2);\n+  const p2 = paginate([1, 2, 3, 4], 2, 2);\n+  expect(p1.items).toEqual([1, 2]);\n+  expect(p2.items).toEqual([3, 4]);\n+});\n+\n+test(\"a partial final page is counted and reported by hasNext\", () => {\n+  const items = [1, 2, 3, 4, 5];\n+  const p1 = paginate(items, 1, 2);\n+  const p2 = paginate(items, 2, 2);\n+  const p3 = paginate(items, 3, 2);\n+  expect(p1.totalPages).toBe(3);\n+  expect(p1.hasNext).toBe(true);\n+  expect(p2.hasNext).toBe(true);\n+  expect(p3.items).toEqual([5]);\n+  expect(p3.hasNext).toBe(false);\n+});\n+\n+test(\"a page past the end returns no items instead of throwing\", () => {\n+  const p = paginate([1, 2, 3], 5, 2);\n+  expect(p.items).toEqual([]);\n+  expect(p.hasNext).toBe(false);\n+  expect(p.totalPages).toBe(2);\n+});\n+\n+test(\"an empty input has zero total pages\", () => {\n+  const p = paginate([], 1, 10);\n+  expect(p.items).toEqual([]);\n+  expect(p.totalPages).toBe(0);\n+  expect(p.hasNext).toBe(false);\n+});\n",
+      "files_changed": 2,
+      "files": [
+        "src/paginate.ts",
+        "test/paginate.test.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.00680045,
+      "sessions": 1,
+      "turns": 5,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "ts-paginate-fix",
+      "kind": "bugfix",
+      "lang": "ts",
+      "difficulty": "normal",
+      "shape": "single-file",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 11.66,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 1,
+      "files": [
+        "src/paginate.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T222432Z-b254",
+      "hidden_tail": "",
+      "cost_usd": 0.0018436,
+      "stage_cost_usd": 0.001844,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T222432Z-b254",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 10.629,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.453,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0018,
+          "sessions": 1,
+          "seconds": 9.357,
+          "session_seconds": 9.207,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.308,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.056,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.156,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "dy-done check pin); estimate: ~$0.19-$0.63 (first run in this repo)\n[implement] implementing  3s  (intake done 0s)\nOutcome:    VERIFIED\nPR:         none\nReceipt:    sha256:c894fb828e7364d3d7048c9ca35fafa0bf05b2532f0645b81567864264155d25\nNOT PROVEN: repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 36k tokens; cache read 27k tokens, saved $0.00)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       11s (intake 0s, implement 9s, verify 0s, commit 0s, seal 0s; slowest: implement 87%); next: loki status; 4 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    },
+    {
+      "config": "raw-haiku",
+      "task": "ts-validate-refactor",
+      "kind": "multifile",
+      "lang": "ts",
+      "difficulty": "normal",
+      "shape": "refactor",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 19.23,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 4,
+      "files": [
+        "src/invite.ts",
+        "src/profile.ts",
+        "src/signup.ts",
+        "src/validate.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": null,
+      "hidden_tail": "",
+      "cost_usd": 0.0095904,
+      "sessions": 1,
+      "turns": 8,
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "result_subtype": "success",
+      "is_error": false
+    },
+    {
+      "config": "loki-haiku",
+      "task": "ts-validate-refactor",
+      "kind": "multifile",
+      "lang": "ts",
+      "difficulty": "normal",
+      "shape": "refactor",
+      "rep": 1,
+      "pass": 1,
+      "seconds": 23.16,
+      "exit_code": 0,
+      "timed_out": false,
+      "test_edits": [],
+      "test_weakened": [],
+      "accepted": 1,
+      "test_diff": "",
+      "files_changed": 4,
+      "files": [
+        "src/invite.ts",
+        "src/profile.ts",
+        "src/signup.ts",
+        "src/validate.ts"
+      ],
+      "hidden_leaked_before_scoring": [],
+      "scored_branch": "loki/e10-20261104T222444Z-847b",
+      "hidden_tail": "",
+      "cost_usd": 0.00423563,
+      "stage_cost_usd": 0.004236,
+      "child_cost_usd": 0.0,
+      "child_sessions": 0,
+      "unpriced_sessions": 0,
+      "sessions": 1,
+      "run_id": "e10-20261104T222444Z-847b",
+      "verdict": "VERIFIED",
+      "fix_rounds": 0,
+      "not_proven": [
+        "one reviewer",
+        "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)"
+      ],
+      "spec_conflict_reason": null,
+      "wall_s": 22.279,
+      "stages": {
+        "intake": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.457,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "implement": {
+          "cost_usd": 0.0042,
+          "sessions": 1,
+          "seconds": 20.767,
+          "session_seconds": 20.611,
+          "runs": 1
+        },
+        "verify": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.466,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "commit": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.063,
+          "session_seconds": 0.0,
+          "runs": 1
+        },
+        "seal": {
+          "cost_usd": 0.0,
+          "sessions": 0,
+          "seconds": 0.211,
+          "session_seconds": 0.0,
+          "runs": 1
+        }
+      },
+      "models": [
+        "haiku"
+      ],
+      "session_models": [
+        [
+          "implement",
+          "haiku"
+        ]
+      ],
+      "event_types": [
+        "capability.observed",
+        "capability.recorded",
+        "cost",
+        "log.sealed",
+        "receipt.sealed",
+        "run.completed",
+        "run.started",
+        "session.ended",
+        "session.started",
+        "stage.completed",
+        "stage.skipped",
+        "stage.started",
+        "test.result",
+        "variant"
+      ],
+      "loki_outcome": "VERIFIED",
+      "loki_tail": "in); estimate: ~$0.19-$0.63 (first run in this repo)\n[implement] implementing  3s  (intake done 0s)\nOutcome:    VERIFIED\nPR:         none\nReceipt:    sha256:923ac2bb49afed361b08ddd466cb06b6ad7809b95186547cdae9de6884b3e47d\nNOT PROVEN: one reviewer, repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)\nCost:       $0.00 (claude, 71k tokens; cache read 52k tokens, saved $0.00)\nTier:       haiku tier sealed; top-tier cost avoided not measured; parity here: haiku not measured, opus not measured\nTime:       22s (intake 0s, implement 21s, verify 0s, commit 0s, seal 0s; slowest: implement 93%); next: loki status; 3 requirements uncovered, see: loki plan --requirements; review: .loki/review/HANDOFF.md; Readiness: 75/100 (C) - run `loki doctor --repo` for 3 fix(es)\n"
+    }
+  ]
+}
