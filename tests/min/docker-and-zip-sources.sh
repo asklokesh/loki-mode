@@ -28,8 +28,14 @@ os.chdir(root)
 tracked = subprocess.run(["git", "ls-files"], capture_output=True, text=True, check=True).stdout.split("\n")
 tracked = [t for t in tracked if t]
 
+# Built before the image build, never committed: the docker-build job in release.yml must build it.
+_rel = open(".github/workflows/release.yml").read()
+BUILT_BEFORE_IMAGE = {"loki-ts/dist"} if re.search(r"Build loki-ts dist[^\n]*\n\s+working-directory: loki-ts\n\s+run: \|[\s\S]*?bun run build", _rel) else set()
+
 def exists(src):
     src = src.rstrip("/")
+    if src in BUILT_BEFORE_IMAGE:
+        return True
     if any(c in src for c in "*?["):
         return any(fnmatch.fnmatch(t, src) for t in tracked)
     return any(t == src or t.startswith(src + "/") for t in tracked)

@@ -56,7 +56,7 @@ If you are porting a bash command to the Bun route:
 2. Wire it into the dispatcher at `loki-ts/src/cli.ts`.
 3. Add the route token to `bin/loki:80` (the case statement).
 4. Cover it in the existing `tests/min/` file that owns the concern (for a new top-level command, `tests/min/cli-entrypoints.sh`).
-5. Rebuild the bundle (`cd loki-ts && bun run build`) so `dist-freshness` passes.
+5. Do not commit `loki-ts/dist`: it is built at publish time, by `scripts/local-ci.sh` and by `bin/loki` on a git clone. To rebuild by hand: `cd loki-ts && bun install && bun run build`.
 
 ## Pull Request Process
 

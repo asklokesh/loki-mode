@@ -41,8 +41,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      # dist-freshness rebuilds loki-ts from source and engine10-e2e-stub runs the
-      # committed bundle; the receipt test needs `cryptography` for the JWKS cases
+      # local-ci.sh builds loki-ts/dist (not committed) from these dependencies and
+      # engine10-e2e-stub runs that bundle; the receipt test needs `cryptography` for the JWKS cases
       # (it reports a skip, never a pass, without it); the engine10-e2e-stub python legs need
       # pytest on the system interpreter (a failure, not a skip, when CI=true).
       - name: Install dependencies
