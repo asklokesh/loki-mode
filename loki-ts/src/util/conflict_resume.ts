@@ -98,7 +98,10 @@ export const resumeAfterAlreadyDone = (ctx: RunContext, first: SessionRunOptions
 
 // LOKI_E10_COVERAGE_RESUME (default off): on the lean path (plan skipped) a LOKI_DONE exit with a non-empty diff gets exactly one more turn in the same session.
 // The task text is already in that session, so the fixed brief names no task (cli-2478: the first turn fixed 2 of the 3 sites the issue named).
-export const COVERAGE_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. Before the last line, write one line per site in the current file: `SITE <path>:<line>: changed` or `SITE <path>:<line>: unchanged - <why>`. " + FINISH_LINE;
+export const COVERAGE_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. " + FINISH_LINE;
+// LOKI_E10_CLAIM_CHECK=1 (default off, unmeasured): the coverage turn also writes SITE lines, and a site claimed changed that is byte-identical to the base is re-asked once ("-c2").
+export const claimCheckEnabled = (env = process.env): boolean => ["1", "on", "true"].includes((env.LOKI_E10_CLAIM_CHECK ?? "").toLowerCase());
+export const COVERAGE_CLAIM_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. Before the last line, write one line per site in the current file: `SITE <path>:<line>: changed` or `SITE <path>:<line>: unchanged - <why>`. " + FINISH_LINE;
 export const coverageResumeEnabled = (env = process.env): boolean => ["1", "on", "true"].includes((env.LOKI_E10_COVERAGE_RESUME ?? "").toLowerCase());
 
 /** SITE lines the model wrote; only "changed" claims are checked. */
@@ -129,8 +132,10 @@ export const claimAbsentBrief = (sites: string[]): string => `You wrote SITE ...
 export async function resumeForCoverage(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string; iterationIds: string[]; claimAbsent?: string[] }> {
   if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationId: first.iterationId, iterationIds: [] };
   const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
-  const r = await resumeWith(ctx, first, firstSession, COVERAGE_BRIEF, "-c");
+  const claims = claimCheckEnabled();
+  const r = await resumeWith(ctx, first, firstSession, claims ? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, "-c");
   if (!clean(r.session)) return { session: { ...firstSession, durationS: r.session.durationS }, iterationId: r.iterationId, iterationIds: [r.iterationId] };
+  if (!claims) return { ...r, iterationIds: [r.iterationId] }; // knob off: exactly main's coverage turn
   const absent = claimedChangeAbsent(ctx.repoDir, ctx.baseSha, siteClaims(r.session.summary ?? ""));
   if (!absent.length || (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { ...r, iterationIds: [r.iterationId], ...(absent.length ? { claimAbsent: absent } : {}) };
   const r2 = await resumeWith(ctx, { ...first, iterationId: r.iterationId }, r.session, claimAbsentBrief(absent), "2");

@@ -111,6 +111,8 @@ export function patchCheckRefs(ctx: RunContext, applied: string[], impacted: str
 export function patchCheck(ctx: RunContext, impacted: string[], wall: string[], signal: AbortSignal): (applied: string[]) => Promise<PatchCheck> {
   return async (applied) => {
     const refs = patchCheckRefs(ctx, applied, impacted), quiet = Object.assign(Object.create(ctx) as RunContext, { emit: () => undefined }), out: VerifyCheck[] = [];
+    const map = ctx.outputs().intake?.testmap as TestMap | undefined;
+    if (!refs.some((t) => impacted.includes(t.path) || (map?.tests ?? []).some((m) => m.path === t.path))) return { ok: false, ran: 0, names: refs.map((t) => `patch:${t.runner}:${t.path}=own test only`), digest: "no test that existed before the change covers it; the model's own new test alone is no proof" }; // never green on the model's own test alone: fall back
     for (const t of refs) { const tc = commandFor(t, ctx.repoDir, loadProjectApi(ctx.repoDir)); await runCheck(quiet, `patch:${t.runner}:${t.path}`, tc.cmd, tc.args, signal, out, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}), wall: new Set(wall) }); }
     const ran = out.filter((c) => c.result === "pass" || c.result === "fail" || c.result === "flaky");
     return { ok: ran.length > 0 && ran.length === out.length && out.every((c) => c.result === "pass"), ran: ran.length, names: out.map((c) => `${c.name}=${c.result}`), digest: out.filter((c) => c.result !== "pass").map((c) => `${c.name}: ${c.result}${c.reason ? ` (${c.reason})` : ""}\n${checkExcerpt(c) || c.first_error || ""}`).join("\n").slice(0, 1500) };
@@ -178,9 +180,10 @@ export const implementStage: Stage = {
     const patchOn = patchEnabled() && !plan && !routed && !resumeId && ctx.provider === "claude" && /^[\w.:@/-]+$/.test(patchModel);
     if (patchOn && !signal.aborted) {
       const started = Date.now();
-      patch = await runPatchProtocol({ rules: { repoDir: ctx.repoDir, readOnly: readOnly.map((f) => relative(ctx.repoDir, f.path)), task }, brief: patchBrief(ctx, task, impacted), iterationId: `${ctx.runId}-impl-p`, signal,
+      try { patch = await runPatchProtocol({ rules: { repoDir: ctx.repoDir, readOnly: readOnly.map((f) => relative(ctx.repoDir, f.path)), task }, brief: patchBrief(ctx, task, impacted), iterationId: `${ctx.runId}-impl-p`, signal,
         call: patchCallOverride ?? patchCallFor(patchModel, join(ctx.repoDir, ".loki")), check: patchCheck(ctx, impacted, readOnly.map((f) => relative(ctx.repoDir, f.path)), signal),
         record: (n, prompt, reply) => { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, `implement-patch-${n}.txt`), `${prompt}\n\n=== REPLY ===\n${reply ?? "(call failed)"}\n`, "utf8"); } });
+      } catch (e) { patch = { status: "error", calls: 0, applied: [], refused: [], restored: [], log: [`error before any edit: ${String((e as Error)?.message ?? e).split("\n")[0]!.slice(0, 200)}`], usd: null }; } // the brief or the call setup threw (the protocol restores its own writes): the agentic session runs
       patchS = (Date.now() - started) / 1000;
     }
     let session: SessionResult = patch?.status === "green" ? { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: patchS, killed: false, summary: patch.log.join("\n") } : await ctx.sessions.run(first);

@@ -338,8 +338,10 @@ grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: an already-done first
 PTASK="add a multiply(a, b) function to calc.ts"
 pev() { ev 'next((json.dumps(e["data"].get("patch")) for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), "")'; }
 PLEAN=(LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_SESSION_MODEL=haiku)
-run_engine "$PTASK" E2E_STUB_MODE=done "${PLEAN[@]}"
-grep -q '^patch$' "$(dirname "$ITERS")/stub.log" && bad "patch default: a patch call ran with LOKI_E10_PATCH unset" || ok "patch default: no patch call without LOKI_E10_PATCH"
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=green LOKI_E10_PATCH= "${PLEAN[@]}"
+grep -q '^patch$' "$(dirname "$ITERS")/stub.log" && [ "$(grep -c '^implement ' "$ITERS")" = 0 ] && ok "patch default on: with LOKI_E10_PATCH unset the patch call runs and no agentic session is needed" || { bad "patch default on: no patch call with LOKI_E10_PATCH unset"; dump; }
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=green LOKI_E10_PATCH=0 "${PLEAN[@]}"
+grep -q '^patch$' "$(dirname "$ITERS")/stub.log" && bad "patch opt-out: a patch call ran with LOKI_E10_PATCH=0" || ok "patch opt-out: LOKI_E10_PATCH=0 runs no patch call (today's agentic session only)"
 run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=green LOKI_E10_PATCH=1 "${PLEAN[@]}"
 [ "$(grep -c '^patch$' "$(dirname "$ITERS")/stub.log")" = 2 ] && [ "$(grep -c '^implement ' "$ITERS")" = 0 ] && ok "patch green: the fix call, then the test-only repair call (green had no test), and no agentic implement session" || { bad "patch green: $(grep -c '^patch$' "$(dirname "$ITERS")/stub.log") patch calls, $(grep -c '^implement ' "$ITERS") implement sessions"; dump; }
 case "$(pev)" in *'"status": "green"'*'"calls": 2'*'calc.test.ts'*) ok "patch green: the implement stage records patch status green after 2 calls with calc.test.ts applied" ;; *) bad "patch green: patch record is '$(pev)'" ;; esac
@@ -351,6 +353,8 @@ run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=repair LOKI_E10_PATCH=1 "$
 [ "$(grep -c '^patch$' "$(dirname "$ITERS")/stub.log")" = 2 ] && [ "$(grep -c '^implement ' "$ITERS")" = 0 ] && [ "$(outcome)" = "VERIFIED" ] && ok "patch repair: a red harness check gets one repair call, which goes green; no agentic session; VERIFIED" || { bad "patch repair: $(grep -c '^patch$' "$(dirname "$ITERS")/stub.log") patch calls, outcome '$(outcome)'"; dump; }
 run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=wrongtwice LOKI_E10_PATCH=1 "${PLEAN[@]}"
 [ "$(grep -c '^patch$' "$(dirname "$ITERS")/stub.log")" = 2 ] && [ "$(grep -c '^implement ' "$ITERS")" = 1 ] && ok "patch fallback: still red after the repair call, so the agentic implement session runs (the floor)" || { bad "patch fallback: $(grep -c '^patch$' "$(dirname "$ITERS")/stub.log") patch calls, $(grep -c '^implement ' "$ITERS") implement sessions"; dump; }
+pcost="$(python3 -I -c 'import json,sys; c=json.load(open(sys.argv[1]))["cost"]; print(c["usd"], c["children"]["sessions"])' "$RUNDIR/receipt.json" 2>/dev/null)"
+[ "$pcost" = "0.002 2" ] && ok "patch fallback: both failed patch calls' spend (2 x \$0.001, the stub's price) reaches the receipt total ($pcost)" || bad "patch fallback: receipt cost is '$pcost', want '0.002 2'"
 [ "$(outcome)" = "VERIFIED" ] && [ "$(git -C "$REPO" show HEAD:calc.ts | grep -c 'function multiply')" = 1 ] && git -C "$REPO" show HEAD:calc.ts | grep -A1 'function multiply' | grep -q 'a \* b' && ok "patch fallback: the patch edits were restored first; the agentic session's single right multiply() is committed, VERIFIED" || { bad "patch fallback: outcome '$(outcome)' or a leftover patch edit"; dump; }
 run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=cfg LOKI_E10_PATCH=1 "${PLEAN[@]}"
 case "$(pev)" in *'"status": "green"'*'bunfig.toml: refused'*) ok "patch refusal: a bunfig.toml (runner config) edit is refused before it lands, the repair call goes green" ;; *) bad "patch refusal: patch record is '$(pev)'" ;; esac
@@ -388,13 +392,13 @@ const FIX = 'FILE: src/parse.js\n<<<<<<< SEARCH\n  if (t === "-") return { posit
 const ADDTEST = 'FILE: test/parse.test.js\n<<<<<<< SEARCH\n=======\n\ntest("lone dash keeps raw", () => {\n  assert.deepEqual(parseFlag(" - "), { positional: " - " });\n});\n>>>>>>> REPLACE\n';
 const WRONG = 'FILE: src/parse.js\n<<<<<<< SEARCH\n  if (t === "-") return { positional: t };\n=======\n  if (t === "-") return { positional: t + "" };\n>>>>>>> REPLACE\n';
 const scripted = (replies: (string | null)[], seen: string[] = []) => { let i = 0; return async (req: { messages: { content: string }[] }) => { seen.push(pp.flattenMessages(req.messages)); const t = replies[i++]; return { text: t ?? null, usd: 0.001 }; }; };
-const run = async (d: string, replies: (string | null)[], seen: string[] = [], readOnly: string[] = ["test/loki_wall_parse.test.js"], map: unknown = tmap, task = "a lone - keeps the raw arg") => {
+const run = async (d: string, replies: (string | null)[], seen: string[] = [], readOnly: string[] = ["test/loki_wall_parse.test.js"], map: unknown = tmap, task = "a lone - keeps the raw arg", impacted: string[] = ["test/parse.test.js"], check?: (a: string[]) => Promise<unknown>) => {
   const ctx = fakeCtx(d, map) as never;
-  return pp.runPatchProtocol({ rules: { repoDir: d, readOnly, task }, brief: "BRIEF", iterationId: "it", signal: new AbortController().signal, call: scripted(replies, seen), check: impl.patchCheck(ctx, ["test/parse.test.js"], readOnly, new AbortController().signal) });
+  return pp.runPatchProtocol({ rules: { repoDir: d, readOnly, task }, brief: "BRIEF", iterationId: "it", signal: new AbortController().signal, call: scripted(replies, seen), check: check ?? impl.patchCheck(ctx, impacted, readOnly, new AbortController().signal) });
 };
 const clean = (d: string) => git(d, "status", "--porcelain") === "";
 
-res("patch: LOKI_E10_PATCH is off by default and 1/0 switch it", pp.patchEnabled({}) === false && pp.patchEnabled({ LOKI_E10_PATCH: "1" }) === true && pp.patchEnabled({ LOKI_E10_PATCH: "0" }) === false);
+res("patch: LOKI_E10_PATCH is on by default (unset or empty) and 0/off/false turn it off", pp.patchEnabled({}) === true && pp.patchEnabled({ LOKI_E10_PATCH: "" }) === true && pp.patchEnabled({ LOKI_E10_PATCH: "1" }) === true && pp.patchEnabled({ LOKI_E10_PATCH: "0" }) === false && pp.patchEnabled({ LOKI_E10_PATCH: "off" }) === false && pp.patchEnabled({ LOKI_E10_PATCH: "false" }) === false);
 { const d = repo(), o = await run(d, [`root cause: trims.\n${FIX}${ADDTEST}LOKI_DONE`]);
   res("patch green: one call, the fix and the new test applied, the real node --test check ran and passed", o.status === "green" && o.calls === 1 && o.applied.length === 2 && (o.check ?? []).join() === "patch:node:test/parse.test.js=pass" && readFileSync(join(d, "src/parse.js"), "utf8").includes("positional: arg"), JSON.stringify(o)); }
 { const d = repo(), seen: string[] = [], o = await run(d, [`${WRONG}${ADDTEST}LOKI_DONE`, `${'FILE: src/parse.js\n<<<<<<< SEARCH\n  if (t === "-") return { positional: t + "" };\n=======\n  if (t === "-") return { positional: arg };\n>>>>>>> REPLACE\n'}LOKI_DONE`], seen);
@@ -426,6 +430,20 @@ for (const [label, file, search, repl] of [
 { const d = repo(), red = 'FILE: test/parse.test.js\n<<<<<<< SEARCH\n=======\n\ntest("bad", () => {\n  assert.equal(1, 2);\n});\n>>>>>>> REPLACE\n';
   const o = await run(d, [`${FIX}LOKI_DONE`, `${red}LOKI_DONE`]);
   res("patch test repair: a red new test is dropped and the green fix is kept (the repair never makes the tree worse)", o.status === "green" && o.applied.join() === "src/parse.js" && git(d, "status", "--porcelain").trim() === "M src/parse.js", JSON.stringify(o) + git(d, "status", "--porcelain")); }
+{ const d = repo(), mk = 'FILE: src/parse.js/x.js\n<<<<<<< SEARCH\n=======\nexport const x = 1;\n>>>>>>> REPLACE\n';
+  const o = await run(d, [`${FIX}${mk}LOKI_DONE`, null]);
+  res("patch floor: a reply whose second write fails after the first landed (src/parse.js edited, then src/parse.js/x.js: EEXIST) keeps nothing; the tree is byte-identical", o.status === "call_failed" && clean(d) && readFileSync(join(d, "src/parse.js"), "utf8") === PARSE, JSON.stringify(o) + git(d, "status", "--porcelain")); }
+{ const d = repo(), o = await run(d, [`${FIX}${ADDTEST}LOKI_DONE`], [], undefined, undefined, undefined, undefined, async () => { throw new Error("runner exploded"); });
+  res("patch floor: a check callback that throws ends as status error with every written file restored (the agentic session then runs)", o.status === "error" && clean(d) && /runner exploded/.test(o.log.join()), JSON.stringify(o) + git(d, "status", "--porcelain")); }
+{ const d = repo(), out = join(T, "outside" + n); mkdirSync(out, { recursive: true }); mkdirSync(join(d, "real"), { recursive: true });
+  execFileSync("ln", ["-s", out, join(d, "lnk")]); execFileSync("ln", ["-s", join(d, "real"), join(d, "lnk2")]);
+  const ev = (f: string) => `FILE: ${f}\n<<<<<<< SEARCH\n=======\nexport const evil = 1;\n>>>>>>> REPLACE\n`;
+  const r1 = pp.refusal({ repoDir: d, readOnly: [], task: "t" }, "lnk/evil.ts", null, "x"), r2 = pp.refusal({ repoDir: d, readOnly: [], task: "t" }, "lnk2/evil.ts", null, "x"), r3 = pp.refusal({ repoDir: d, readOnly: [], task: "t" }, "src/new/deep/ok.ts", null, "x");
+  const o = await run(d, [`${ev("lnk/evil.ts")}${FIX}LOKI_DONE`, null]);
+  res("patch symlink: lnk/evil.ts through a link out of the repo and lnk2/evil.ts through a link inside it are both refused (realpath), a new nested path is not", r1 === "outside the repository" && r2 === "outside the repository" && r3 === null && o.refused.length === 1 && !existsSync(join(out, "evil.ts")) && !existsSync(join(d, "real", "evil.ts")) && readFileSync(join(d, "src/parse.js"), "utf8") === PARSE, `${r1}|${r2}|${r3}|${JSON.stringify(o)}`); }
+{ const d = repo(), nt = 'FILE: test/new.test.js\n<<<<<<< SEARCH\n=======\nimport { test } from "node:test";\nimport assert from "node:assert/strict";\nimport { parseFlag } from "../src/parse.js";\ntest("own", () => { assert.deepEqual(parseFlag(" - "), { positional: " - " }); });\n>>>>>>> REPLACE\n';
+  const o = await run(d, [`${FIX}${nt}LOKI_DONE`], [], undefined, { runners: ["node"], tests: [] }, undefined, []);
+  res("patch own test only: when no test that existed before covers the change, the model's own new test passing is not green (fall back, tree restored)", o.status === "red" && clean(d) && /own test only/.test((o.check ?? []).join()), JSON.stringify(o)); }
 { const d = repo(), o = await run(d, [null]);
   res("patch call failed: a failed call is a fallback (status call_failed), nothing written", o.status === "call_failed" && o.calls === 1 && clean(d)); }
 { const d = repo(), o = await run(d, ["LOKI_SPEC_CONFLICT: test/parse.test.js:6 asserts the opposite"]);
@@ -445,7 +463,7 @@ for (const [label, file, search, repl] of [
   const absent = cr.claimedChangeAbsent(d, base, claims);
   res("coverage claim: SITE lines parse (changed claims only, backticks allowed)", claims.length === 3, JSON.stringify(claims));
   res("coverage claim: a changed line passes, a byte-identical line is claimed_change_absent, a file new on the base passes", absent.join() === "src/parse.js:2", absent.join());
-  res("coverage claim: the coverage brief asks for SITE lines and the re-ask names the absent sites", cr.COVERAGE_BRIEF.includes("SITE <path>:<line>: changed") && cr.claimAbsentBrief(absent).includes("src/parse.js:2")); }
+  res("coverage claim: off by default (LOKI_E10_CLAIM_CHECK), the plain coverage brief has no SITE line; the claim brief asks for them and the re-ask names the absent sites", cr.claimCheckEnabled({}) === false && cr.claimCheckEnabled({ LOKI_E10_CLAIM_CHECK: "1" }) === true && !cr.COVERAGE_BRIEF.includes("SITE") && cr.COVERAGE_CLAIM_BRIEF.includes("SITE <path>:<line>: changed") && cr.claimAbsentBrief(absent).includes("src/parse.js:2")); }
 TS
 out="$(cd "$ROOT/loki-ts" && timeout 300 bun "$PP/unit.ts" "$ROOT" "$PP" 2>&1)"
 while IFS= read -r line; do

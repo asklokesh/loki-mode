@@ -4,7 +4,7 @@
 // applies the rest all-or-nothing, runs the targeted check itself and allows at most one compact repair call. Anything
 // short of a green check restores every file it wrote, and the caller runs today's agentic session: the outcome floor is unchanged.
 // New file because no module owns model-written edit blocks; implement.ts only wires it (see the stage).
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, relative, sep } from "node:path";
 import { LOCK_RULES } from "../util/lock_ecosystems.ts";
 import { WALL_FILE, taskWantsLockChange } from "../e10ext/commit_filter.ts";
@@ -14,7 +14,8 @@ import { toolLessCall } from "../runner/sdk_invoker.ts";
 import { run } from "../util/shell.ts";
 import { withChildLedger } from "../util/child_ledger.ts";
 
-export const patchEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => ["1", "on", "true"].includes((env.LOKI_E10_PATCH ?? "").toLowerCase());
+/** Default on; LOKI_E10_PATCH=0 (or off, false, no) turns it off. Every non-green end falls back to the agentic session, so the outcome floor is today's. */
+export const patchEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !["0", "off", "false", "no"].includes((env.LOKI_E10_PATCH ?? "").trim().toLowerCase());
 
 export interface EditBlock { file: string; search: string; replace: string }
 export interface ParsedReply { blocks: EditBlock[]; needs: { file: string; start?: number; end?: number }[]; conflict: string | null; alreadyDone: string | null }
@@ -72,12 +73,28 @@ export interface ApplyRules { repoDir: string; readOnly: string[]; task: string 
 /** Why an edit to `rel` is refused before it is applied, or null. before/after are the file's text without and with the edit (null: absent). */
 export function refusal(rules: ApplyRules, rel: string, before: string | null, after: string): string | null {
   const n = normalize(rel);
-  if (n.startsWith("..") || n.startsWith(sep) || /^[A-Za-z]:/.test(n)) return "outside the repository";
+  if (n.startsWith("..") || n.startsWith(sep) || /^[A-Za-z]:/.test(n) || !contained(rules.repoDir, n)) return "outside the repository";
   if (/(^|\/)\.(git|loki)(\/|$)/.test(n)) return "inside .git or .loki";
   if (WALL_FILE.test(n) || rules.readOnly.includes(n)) return "a read-only Wall test";
   if (LOCKFILES.has(basename(n)) && !taskWantsLockChange(rules.task, n)) return "a lockfile the task does not ask to change";
   if (steersRunner(n, before ?? "", after)) return "a test-runner or compiler config (it steers how tests run)";
   return null;
+}
+
+/** Realpath containment: the target, or for a file still to be created its deepest existing ancestor, must resolve to exactly its own path under the repo's realpath. Any symlink on the way (pointing out of the repo or back into it) is refused, so a write lands only where its path says. */
+export function contained(repoDir: string, rel: string): boolean {
+  try {
+    const root = realpathSync(repoDir);
+    let p = join(root, rel);
+    for (;;) {
+      let exists = false;
+      try { lstatSync(p); exists = true; } catch { /* not there yet */ }
+      if (exists) { const r = realpathSync(p); return r === p && (r === root || r.startsWith(root + sep)); }
+      const up = dirname(p);
+      if (up === p) return false;
+      p = up;
+    }
+  } catch { return false; } // unreadable or a dangling link: fail closed
 }
 
 export interface ApplyResult { ok: boolean; applied: string[]; errors: string[]; refused: string[]; noop: string[] }
@@ -111,10 +128,13 @@ export function applyBlocks(rules: ApplyRules, blocks: EditBlock[], originals: O
   });
   for (const [rel, body] of staged) { const why = refusal(rules, rel, before.get(rel) ?? null, body); if (why) refused.push(`${rel}: refused, ${why}`); }
   if (errors.length || refused.length || noop.length) return { ok: false, applied: [], errors, refused, noop };
-  for (const [rel, body] of staged) {
-    if (!originals.has(rel)) originals.set(rel, before.get(rel) ?? null);
-    const abs = join(rules.repoDir, rel);
-    mkdirSync(dirname(abs), { recursive: true }); writeFileSync(abs, body, "utf8");
+  for (const rel of staged.keys()) if (!originals.has(rel)) originals.set(rel, before.get(rel) ?? null); // every original is recorded before the first write, so any later throw can be undone
+  const written: string[] = [];
+  try {
+    for (const [rel, body] of staged) { const abs = join(rules.repoDir, rel); mkdirSync(dirname(abs), { recursive: true }); writeFileSync(abs, body, "utf8"); written.push(rel); }
+  } catch (e) { // a mid-write failure (EEXIST on a file used as a directory, EACCES): nothing of this reply stays
+    for (const rel of [...staged.keys()]) { const b = before.get(rel) ?? null, abs = join(rules.repoDir, rel); try { if (b === null) { if (written.includes(rel)) rmSync(abs, { force: true }); } else writeFileSync(abs, b, "utf8"); } catch { /* the caller's restore retries */ } }
+    return { ok: false, applied: [], errors: [`the edits could not be written: ${(e as Error).message.split("\n")[0]}`], refused, noop };
   }
   return { ok: true, applied: [...staged.keys()], errors, refused, noop };
 }
@@ -156,7 +176,7 @@ function readRanges(rules: ApplyRules, needs: ParsedReply["needs"], maxChars = 8
 }
 
 export const DIGEST_MAX_CHARS = 1500;
-export type PatchStatus = "green" | "red" | "no_edits" | "rejected" | "conflict" | "already_done" | "call_failed" | "aborted";
+export type PatchStatus = "green" | "red" | "no_edits" | "rejected" | "conflict" | "already_done" | "call_failed" | "aborted" | "error";
 export interface PatchOutcome { status: PatchStatus; calls: number; applied: string[]; refused: string[]; restored: string[]; log: string[]; usd: number | null; check?: string[] }
 export interface PatchDeps {
   rules: ApplyRules; brief: string; iterationId: string; signal: AbortSignal;
@@ -176,6 +196,8 @@ export async function runPatchProtocol(d: PatchDeps): Promise<PatchOutcome> {
     const restored = status === "green" ? [] : restoreOriginals(d.rules.repoDir, originals);
     return { status, calls, applied: status === "green" ? [...applied] : [], refused: refusedAll, restored, log, usd, ...(lastCheck ? { check: lastCheck } : {}) };
   };
+  try { return await rounds(); } catch (e) { log.push(`error: ${String((e as Error)?.message ?? e).split("\n")[0]!.slice(0, 200)}`); return end("error"); } // the floor: any throw restores every written file and the caller runs the agentic session
+  async function rounds(): Promise<PatchOutcome> {
   for (let round = 1; round <= 2; round++) {
     if (d.signal.aborted) return end("aborted");
     calls++;
@@ -211,6 +233,7 @@ export async function runPatchProtocol(d: PatchDeps): Promise<PatchOutcome> {
   }
   const last = messages[messages.length - 1]!;
   return end(last.role === "user" && /^None of your edits/.test(last.content) ? "rejected" : last.role === "user" && /^The harness applied/.test(last.content) ? "red" : "no_edits");
+  }
 }
 
 /** Repo-relative paths of `applied` that are test files (their checks run even when the test map does not list them yet). */
