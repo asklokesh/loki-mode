@@ -22,6 +22,8 @@ export interface NrdContext {
   tests: Record<string, string>; // existing tests, which show how to build inputs
   edited?: string[]; // names of the functions the patch edited (never their new text)
   callers?: string[]; // same-package callers of the edited functions
+  sites?: OutputSite[]; // round 3: string literals and format calls in the edited functions and callers, one required keep case each
+  repoTests?: Record<string, string>; // round 3: every test file of the package, read only to decide whether an edge value (Inf, NaN) is tested
 }
 
 export const SYS_NRD_PROBE = "You write a small behavioral probe program. Output only one fenced code block.";
@@ -44,14 +46,74 @@ export function nrdProbePrompt(c: NrdContext): string {
     'Output one JavaScript (ES module, Node 22+) code block that prints one JSON line per case: {"id":"k1","kind":"keep","desc":"<input in words>","out":<JSON of the result>}.',
     'Wrap each case in try/catch and print out as "THROW:" + message on a throw. Never assert. Import the module with the same relative path the existing test uses, since the program is saved next to it.',
   ].join("\n");
+  const ledger = c.sites?.length
+    ? [`REQUIRED KEEP COVERAGE. Each line below is a string or a formatting call that the edited code or its callers produce output through. For EACH line write at least one keep case whose returned value passes through it, and start that case's desc with the line's tag, for example "[s1] ${"<input in words>"}". Prefer the issue's own example values as inputs. These cases count toward the keep cases.`, ...c.sites.map((x) => `[${x.id}] in ${x.fn}: ${x.text}`)].join("\n")
+    : "";
   return [
     `ISSUE:\n${c.issue}`,
     focus,
     ...Object.entries(c.files).map(([p, s]) => `FILE ${p} (before the fix):\n${s}`),
     ...Object.entries(c.tests).map(([p, s]) => `EXISTING TEST ${p}:\n${s}`),
     kinds,
+    ...(ledger ? [ledger] : []),
     c.lang === "go" ? go : js,
   ].join("\n\n");
+}
+
+// ---- round 3: the mechanical output-site ledger and the edge-value rule (deterministic, no model) ----
+export interface OutputSite { id: string; fn: string; text: string; kind: "literal" | "format" }
+const FORMAT_CALL = /\b(?:fmt\.(?:Sprintf|Fprintf|Printf|Errorf|Sprint|Sprintln|Fprint|Fprintln)|strings\.(?:ToLower|ToUpper|Title|ToTitle|TrimSpace|Trim\w*|Replace\w*|Join|Repeat|Fields|Split\w*)|strconv\.(?:Format\w+|Quote\w*|Itoa|Append\w+)|errors\.New)\s*\(/g;
+/** String literals with a letter pair (outside comments) inside one definition's text: [offset, text] pairs. Shared with mutants.ts. */
+export function goStringLiterals(body: string): { at: number; text: string }[] {
+  const out: { at: number; text: string }[] = [];
+  for (const m of body.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)) {
+    if (body.slice(Math.max(0, m.index! - 1), m.index!) === "`" || !/[A-Za-z]{2}/.test(m[1]!) || /^%\w$/.test(m[1]!)) continue;
+    const line = body.slice(body.lastIndexOf("\n", m.index!) + 1, body.indexOf("\n", m.index!));
+    if (/^\s*\/\//.test(line)) continue; // a comment line
+    out.push({ at: m.index!, text: m[1]! });
+  }
+  return out;
+}
+/** Every string literal and formatting call in the BASE text of `names` (edited definitions first, then callers), as one
+ *  ledger of sites the probe writer must reach. Format calls are listed as their source line; a literal already inside a
+ *  listed format line is not listed again. Capped at `cap` sites, taken round-robin across definitions so no one function
+ *  takes the whole budget. */
+export function outputSites(files: Record<string, string>, names: string[], cap = 14): OutputSite[] {
+  const per: OutputSite[][] = [];
+  for (const n of names) {
+    const sites: OutputSite[] = [];
+    for (const [p, src] of Object.entries(files)) {
+      const lines = src.split("\n");
+      for (const s of symbolSpans(p, src)) {
+        if (s.container || s.name !== n) continue;
+        const body = lines.slice(s.start - 1, s.end).join("\n"), fmtLines = new Set<string>();
+        for (const m of body.matchAll(FORMAT_CALL)) {
+          const line = body.slice(body.lastIndexOf("\n", m.index!) + 1, body.indexOf("\n", m.index!) < 0 ? undefined : body.indexOf("\n", m.index!)).trim();
+          if (line.startsWith("//") || fmtLines.has(line)) continue;
+          fmtLines.add(line); sites.push({ id: "", fn: n, text: line.slice(0, 160), kind: "format" });
+        }
+        for (const l of goStringLiterals(body)) if (![...fmtLines].some((f) => f.includes(`"${l.text}"`)) && !sites.some((x) => x.text === `"${l.text}"`)) sites.push({ id: "", fn: n, text: `"${l.text.slice(0, 120)}"`, kind: "literal" });
+      }
+    }
+    per.push(sites);
+  }
+  const out: OutputSite[] = [];
+  for (let i = 0; out.length < cap && per.some((x) => x.length > i); i++) for (const x of per) if (x[i] && out.length < cap) out.push(x[i]!);
+  return out.map((x, i) => ({ ...x, id: `s${i + 1}` }));
+}
+/** Sites with no keep case tagged for them that ran on base. */
+export function uncoveredSites(sites: OutputSite[], cases: CaseDiff[]): OutputSite[] {
+  return sites.filter((s) => !cases.some((c) => c.kind === "keep" && c.status !== "missing_base" && new RegExp(`\\[${s.id}\\](?![0-9])`).test(c.desc)));
+}
+const EDGE = /\bmath\.(?:Inf|NaN|MaxFloat\d+|SmallestNonzeroFloat\d+)\b|[+-]?\bInf\b|\bNaN\b/;
+const PROBE_HELPERS = new Set(["lokiCase", "lokiAll", "lokiStdout", "func", "any", "return", "len", "append", "make", "string", "int", "float64", "Inf", "NaN"]);
+/** A changed keep case that feeds a fixed edge value (Inf, NaN, the float limits) is advisory unless a repo test line calls one of
+ *  the same functions with an edge value: the repo never pinned that output, so a maintainer fix may legitimately move it. */
+export function edgeAdvisory(snippet: string, desc: string, repoTests: Record<string, string> | undefined): boolean {
+  if (!EDGE.test(snippet) && !EDGE.test(desc)) return false;
+  const called = [...new Set([...snippet.matchAll(/\b([A-Za-z_]\w*)\s*\(/g)].map((m) => m[1]!).filter((n) => !PROBE_HELPERS.has(n) && !/^(?:math|strconv|strings|fmt)$/.test(n)))];
+  const tested = Object.values(repoTests ?? {}).some((t) => t.split("\n").some((l) => EDGE.test(l) && called.some((n) => new RegExp(`\\b${n}\\s*\\(`).test(l))));
+  return !tested;
 }
 
 export interface JudgeCase { label: string; desc: string; before: string; after: string }
@@ -164,6 +226,8 @@ export interface NrdResult {
   notes: string[]; // advisory only: never blocks
   calls: number;
   usage: Usage[];
+  uncovered?: string[]; // round 3: ledger sites no keep case reached
+  advisory?: string[]; // round 3: unrequested edge-value changes kept out of blocking
 }
 
 export interface NrdIo {
@@ -220,6 +284,10 @@ export async function runNoRegression(c: NrdContext, llm: LlmCall, io: NrdIo, op
   }
   const findings = changedKeep.map((x) => ({ id: x.id, desc: x.desc, before: x.before, after: x.after, verdict: verdicts.get(verdictKey(x)) ?? "unknown" as Verdict }));
   for (const f of findings) if (f.verdict === "unknown") notes.push(`case ${f.id} changed and the judge could not decide whether the issue asks for it`);
-  const blocking = findings.filter((f) => f.verdict === "unrequested");
-  return { program: b0.e.program, cases, findings, blocking, groups: nrdFailureGroups(blocking, b0.e.program), notes, calls: usage.length, usage };
+  const edge = new Set(findings.filter((f) => f.verdict === "unrequested" && edgeAdvisory(caseSnippet(b0.e.program, f.id), f.desc, c.repoTests)).map((f) => f.id));
+  for (const id of edge) notes.push(`case ${id} changed on an edge value (Inf, NaN or a float limit) no repo test pins: advisory, not blocking`);
+  const uncovered = c.sites?.length ? uncoveredSites(c.sites, cases) : [];
+  if (uncovered.length) notes.push(`${uncovered.length} output site(s) have no keep case: ${uncovered.map((x) => `${x.id} ${x.fn}`).join(", ")}`);
+  const blocking = findings.filter((f) => f.verdict === "unrequested" && !edge.has(f.id));
+  return { program: b0.e.program, cases, findings, blocking, groups: nrdFailureGroups(blocking, b0.e.program), notes, calls: usage.length, usage, uncovered: uncovered.map((x) => x.id), advisory: [...edge] };
 }

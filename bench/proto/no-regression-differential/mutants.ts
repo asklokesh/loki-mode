@@ -9,9 +9,8 @@ import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { extractProgram, runGoProbe, type ProbeExec } from "../../../loki-ts/src/features/probes.ts";
 import { editedSymbols, runNoRegression, SYS_NRD_JUDGE, type NrdIo } from "../../../loki-ts/src/features/no_regression.ts";
-import { symbolSpans } from "../../../loki-ts/src/util/context_pack.ts";
 import type { LlmCall } from "../../../loki-ts/src/features/tournament.ts";
-import { sh } from "./tree_io.ts";
+import { literalSites, sh } from "./tree_io.ts";
 
 const [listArg, reposArg, trArg, workArg, capArg] = process.argv.slice(2) as [string, string, string, string, string | undefined];
 const repos = resolve(reposArg), work = resolve(workArg), cap = Number(capArg ?? 8);
@@ -22,25 +21,6 @@ for (let i = 1; i + 1 < parts.length; i += 2) programs[Number(parts[i]) - 1] = e
 const env = { GOFLAGS: "-mod=mod", GOTOOLCHAIN: "local" };
 const git = (dir: string, ...a: string[]): string => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", maxBuffer: 1 << 26 });
 const never: LlmCall = async (system) => { if (system === SYS_NRD_JUDGE) return { text: "", usage: { inTok: 0, outTok: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 } }; throw new Error("no probe call in this experiment"); };
-
-/** String literals ("...", with a letter) inside definitions the commit did not edit: [start, end) offsets of their contents. */
-function literalSites(path: string, src: string, edited: string[]): { at: number; end: number; text: string; fn: string }[] {
-  const lines = src.split("\n"), offs: number[] = [0];
-  for (const l of lines) offs.push(offs[offs.length - 1]! + l.length + 1);
-  const out: { at: number; end: number; text: string; fn: string }[] = [];
-  for (const s of symbolSpans(path, src)) {
-    if (s.container || edited.includes(s.name)) continue;
-    const from = offs[s.start - 1]!, to = offs[s.end]!, body = src.slice(from, to);
-    for (const m of body.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)) {
-      const pre = body.slice(Math.max(0, m.index! - 1), m.index!);
-      if (pre === "`" || !/[A-Za-z]{2}/.test(m[1]!) || /^%\w$/.test(m[1]!)) continue;
-      const line = body.slice(body.lastIndexOf("\n", m.index!) + 1, body.indexOf("\n", m.index!));
-      if (/^\s*\/\//.test(line)) continue; // a comment line
-      out.push({ at: from + m.index! + 1, end: from + m.index! + 1 + m[1]!.length, text: m[1]!, fn: s.name });
-    }
-  }
-  return out;
-}
 
 mkdirSync(work, { recursive: true });
 const rows = [];

@@ -13,7 +13,7 @@ export function haikuCli(work: string, log: Transcript[], opts: { effort?: strin
   return async (system, user) => {
     const pf = join(work, `prompt${log.length}-${Date.now()}.txt`);
     writeFileSync(pf, user);
-    const args = ["-p", "--model", "claude-haiku-5-5", "--system-prompt", system, "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "json", ...(opts.effort ? ["--effort", opts.effort] : [])];
+    const args = ["-p", "--model", "claude-haiku-5-5", "--system-prompt", system, "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands", "--no-session-persistence", "--output-format", "json", ...(opts.effort ? ["--effort", opts.effort] : [])];
     const r = await new Promise<{ out: string; code: number | null }>((res) => {
       const p = spawn("claude", args, { cwd: work, stdio: ["pipe", "pipe", "pipe"] });
       let out = ""; p.stdout.on("data", (b: Buffer) => (out += b.toString()));

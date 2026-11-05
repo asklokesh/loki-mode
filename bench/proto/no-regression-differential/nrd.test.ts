@@ -132,3 +132,20 @@ test.skipIf(!hasGo)("go e2e: a module whose go.mod names a language version olde
     expect(r.blocking.map((f) => f.id)).toEqual(["k1"]);
   } finally { rmSync(work, { recursive: true, force: true }); }
 }, 180_000);
+
+// ---- round 3: output-site ledger and edge-value rule ----
+import { edgeAdvisory, outputSites, uncoveredSites } from "../../../loki-ts/src/features/no_regression.ts";
+test("outputSites lists format calls and literals of the named definitions only, round-robin, with tags", () => {
+  const src = 'package p\nimport "fmt"\nfunc A(x string) string { return fmt.Sprintf("a=%s", x) }\nfunc B() string { return "hello world" }\nfunc C() string { return "unrelated text" }\n';
+  const s = outputSites({ "p.go": src }, ["A", "B"]);
+  expect(s.map((x) => `${x.id} ${x.fn} ${x.kind}`)).toEqual(["s1 A format", "s2 B literal"]);
+  expect(s.some((x) => x.text.includes("unrelated"))).toBe(false);
+  const cases = [{ id: "k1", kind: "keep", desc: "[s1] A of x", before: "", after: "", status: "same" as const }, { id: "k2", kind: "keep", desc: "[s12] B", before: "", after: "", status: "same" as const }];
+  expect(uncoveredSites(s, cases).map((x) => x.id)).toEqual(["s2"]); // k1 covers s1; the tag [s12] must not count as [s1], so s2 stays uncovered
+});
+test("edgeAdvisory: an Inf/NaN case is advisory unless a repo test line calls the same function with an edge value", () => {
+  const tests = { "c_test.go": '{"+Inf", Commaf(math.Inf(1)), "+Inf"},\n{"x", CommafWithDigits(1.23, 2), "1.23"},\n' };
+  expect(edgeAdvisory("func() any { return CommafWithDigits(math.Inf(1), 2) }", "CommafWithDigits(+Inf, 2)", tests)).toBe(true);
+  expect(edgeAdvisory("func() any { return Commaf(math.Inf(1)) }", "Commaf +Inf", tests)).toBe(false);
+  expect(edgeAdvisory("func() any { return CommafWithDigits(1.5, 2) }", "plain", tests)).toBe(false);
+});

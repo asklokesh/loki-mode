@@ -4,7 +4,8 @@ import { cpSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { runGoProbe } from "../../../loki-ts/src/features/probes.ts";
-import type { NrdIo } from "../../../loki-ts/src/features/no_regression.ts";
+import { goStringLiterals, type NrdIo } from "../../../loki-ts/src/features/no_regression.ts";
+import { symbolSpans } from "../../../loki-ts/src/util/context_pack.ts";
 
 export const HERMETIC_GO_ENV = { GOFLAGS: "-mod=mod", GOPROXY: "off", GOTOOLCHAIN: "local" };
 
@@ -35,4 +36,18 @@ export function treeIo(src: string, dir: string, patch: string | null, go: { mod
       try { return sh(root, "go", ["test", "-count=1", "-run", run, `./${go.pkgDir}`], env).ok; } finally { rmSync(o, { force: true }); }
     },
   };
+}
+
+/** String literals ("...", with a letter) inside definitions the commit did not edit: [start, end) offsets of their contents.
+ *  The mutant sites of mutants.ts and sites.ts (one shared literal scanner: goStringLiterals in no_regression.ts). */
+export function literalSites(path: string, src: string, edited: string[]): { at: number; end: number; text: string; fn: string }[] {
+  const lines = src.split("\n"), offs: number[] = [0];
+  for (const l of lines) offs.push(offs[offs.length - 1]! + l.length + 1);
+  const out: { at: number; end: number; text: string; fn: string }[] = [];
+  for (const s of symbolSpans(path, src)) {
+    if (s.container || edited.includes(s.name)) continue;
+    const from = offs[s.start - 1]!, body = src.slice(from, offs[s.end]!);
+    for (const l of goStringLiterals(body)) out.push({ at: from + l.at + 1, end: from + l.at + 1 + l.text.length, text: l.text, fn: s.name });
+  }
+  return out;
 }
