@@ -341,7 +341,7 @@ function parseCargo(toks: readonly string[]): { global: string[]; sub: string; r
  *  reported fail; failedTests = the Test names that failed; passed = top-level tests with a "run" event and a final pass (a skip never counts);
  *  complete = every started package has exactly one start and exactly one package-level terminal event, with no repeated run event. Exit 0 plus a complete event stream is counted from this alone, never from plain output (see GO_EXIT0_REASON). */
 function goJson(out: string): { failed: boolean; failedTests: string[]; passed: number; passedNames: string[]; complete: boolean } | null {
-  let any = false, failed = false, dirty = false;
+  let any = false, failed = false, dirty = false, noTests = false;
   const status = new Map<string, string>(), ranSet = new Set<string>(), pkgs = new Set<string>(), failedTests = new Set<string>(), starts = new Map<string, number>(), done = new Map<string, number>();
   for (const x of out.split("\n")) {
     if (!x.trim() || /^go: /.test(x)) continue;
@@ -353,7 +353,7 @@ function goJson(out: string): { failed: boolean; failedTests: string[]; passed: 
     if (e.Action === "start" && !test) { pkgs.add(pkg); starts.set(pkg, (starts.get(pkg) ?? 0) + 1); }
     if (e.Action === "fail") { failed = true; if (test) failedTests.add(`${pkg}::${test}`); }
     if (!/^build-/.test(e.Action) && !starts.has(pkg)) dirty = true; // an event for a package that never started: not the go command's framing
-    if (!test && e.Action === "output" && /\[no tests to run\]/.test(String((e as { Output?: unknown }).Output ?? ""))) dirty = true;
+    if (!test && e.Action === "output" && /\[no tests to run\]/.test(String((e as { Output?: unknown }).Output ?? ""))) noTests = true; // the go command ran no test of the -run set (a file a build constraint leaves out, `//go:build integration`): a zero run, never a pass
     if (!test) { if (/^(?:pass|fail|skip)$/.test(e.Action)) done.set(pkg, (done.get(pkg) ?? 0) + 1); continue; }
     if (test.includes("/")) continue; // subtests roll up into their top-level test
     const k = `${pkg}::${test}`;
@@ -362,6 +362,7 @@ function goJson(out: string): { failed: boolean; failedTests: string[]; passed: 
   }
   if (!any) return null;
   const passedNames = [...status].filter(([, v]) => v === "pass").map(([k]) => k);
+  if (noTests && (passedNames.length > 0 || ranSet.size > 0)) dirty = true; // "no tests to run" beside a test that ran contradicts itself: doubt
   return { failed, failedTests: [...failedTests], passed: passedNames.length, passedNames, complete: !dirty && pkgs.size > 0 && [...pkgs].every((p) => starts.get(p) === 1 && done.get(p) === 1) }; // a torn stream or one with repeated starts, terminals or runs is doubt; a clean forged stream passes this and is caught by corroboratePass
 }
 export const CARGO_RUNNER_REASON = "test count could not be confirmed: a cargo target or alias setting can redirect both the test run and its listing";
