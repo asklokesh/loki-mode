@@ -3,7 +3,7 @@
 import { safeGitSpawn } from "../util/safe_git.ts";
 import { symbolSpans } from "../util/context_pack.ts";
 import { loadProjectApi, siteFor } from "./resolve.ts";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export interface PackageConventions {
@@ -66,6 +66,50 @@ export function conventionsBrief(c: PackageConventions | null): string {
   return c.moduleSystem === "commonjs"
     ? `Package conventions (${decl}): this package compiles as CommonJS. Never use import.meta or top-level await (TS1470, the package's own tsc rejects them); use __dirname and __filename for paths. In files the package's own compiler processes write import statements (they compile to CommonJS) and never require(): a package lint config commonly forbids require() and runs over your file; use require() only in plain .js or .cjs files.`
     : `Package conventions (${decl}): this package is ES modules. Use import syntax; use import.meta.url for file locations; never use require(), __dirname or __filename.`;
+}
+
+export interface ReleaseNoteConvention { kind: string; dir: string; example: string | null }
+const newestIn = (abs: string, rel: string, pat: RegExp): string | null => {
+  try {
+    const f = readdirSync(abs).filter((n) => pat.test(n) && !/^readme/i.test(n)).map((n) => ({ n, t: statSync(join(abs, n)).mtimeMs })).sort((a, b) => b.t - a.t || b.n.localeCompare(a.n))[0];
+    return f ? `${rel}/${f.n}` : null;
+  } catch { return null; }
+};
+/** L3: the release-note fragment convention a repo declares, by its own marker and never by guess: changesets (.changeset/config.json), towncrier ([tool.towncrier] or towncrier.toml, its directory key, default newsfragments), scriv-style changelog.d/, newsfragments/, changie (.changes/unreleased). null when none. */
+export function releaseNoteConvention(repoDir: string): ReleaseNoteConvention | null {
+  const has = (p: string): boolean => existsSync(join(repoDir, p));
+  if (has(".changeset/config.json")) return { kind: "changeset", dir: ".changeset", example: newestIn(join(repoDir, ".changeset"), ".changeset", /\.md$/i) };
+  for (const cfg of ["towncrier.toml", ".towncrier.toml", "pyproject.toml"]) {
+    let t = "";
+    try { t = readFileSync(join(repoDir, cfg), "utf8"); } catch { continue; }
+    const sec = cfg === "pyproject.toml" ? /\[tool\.towncrier\]([\s\S]*?)(?=\n\[|$)/.exec(t)?.[1] : t.replace(/\n\[[\s\S]*$/, "");
+    if (sec === undefined) continue;
+    const dir = (/^\s*directory\s*=\s*["']([^"']+)["']/m.exec(sec)?.[1] ?? "newsfragments").replace(/^\.?\/|\/$/g, "");
+    return { kind: "towncrier", dir, example: newestIn(join(repoDir, dir), dir, /^[^.].*\.[A-Za-z]+(\.md|\.rst)?$/) };
+  }
+  for (const [dir, kind] of [[".changes/unreleased", "changie"], ["changelog.d", "changelog.d"], ["newsfragments", "towncrier"]] as const)
+    if (has(dir)) return { kind, dir, example: newestIn(join(repoDir, dir), dir, /^[^.]/) };
+  return null;
+}
+/** The closest manifest "name" above a file (empty when none within the repo). */
+function packageNameFor(repoDir: string, file: string): string {
+  for (let d = dirname(join(repoDir, file)); d.startsWith(repoDir); d = dirname(d)) {
+    const n = readJson(join(d, "package.json"))?.name;
+    if (typeof n === "string") return n;
+    if (d === repoDir) break;
+  }
+  return "";
+}
+/** The per-run brief line for a release-note fragment convention, placed after the cache-stable prefix; "" when the repo declares none. A changeset line names the package of the first relevant file. */
+export function releaseNoteBrief(repoDir: string, files: string[] = []): string {
+  const c = releaseNoteConvention(repoDir);
+  if (!c) return "";
+  const ex = c.example ? `; newest example: ${c.example}` : "";
+  if (c.kind === "changeset") {
+    const pkg = files.map((f) => packageNameFor(repoDir, f)).find(Boolean) || packageNameFor(repoDir, "package.json");
+    return `Release-note convention (changeset, ${c.dir}/): a user-visible change ships with a new ${c.dir}/<short-kebab-name>.md fragment: front matter with "${pkg || "<package name>"}": patch (minor or major when the task says so), then one line describing the change${ex}.`;
+  }
+  return `Release-note convention (${c.kind}, ${c.dir}/): a user-visible change ships with a new fragment file in ${c.dir}/ named and formatted like the existing ones${ex}.`;
 }
 
 /** A generated Wall file the package's own compiler would reject (import.meta under CommonJS); null when it is fine. Comments and strings are ignored. */
