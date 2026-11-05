@@ -177,6 +177,14 @@
 #  86. tournament.ts applyEdits path guard and the treeswap veto removed together (the test-edit go leg displaces).
 #  87. implement.ts: drop the runTournamentGate call (the engine tournament data leg reads absent).
 #  88. wall.ts: always pass the probe intake (the tournament-off leg finds the probe rules).
+#  89. no_regression.ts issueMentionsChange: count removal words in any sentence, not only in request sentences (the override leg reads true).
+#  90. no_regression.ts issueMentionsChange: stop skipping the title line (the title leg reads true).
+#  91. no_regression.ts runNoRegression: count an "unknown" verdict as blocking (the unknown-advisory leg reads blocking).
+#  92. no_regression.ts overrideVerdict: skip the override (the requested-but-unmentioned leg stays requested).
+#  93. no_regression.ts makeScratch replay: restore the original tests in the user's tree (the user-tree byte-identical leg reads changed).
+#  94. no_regression.ts nrdEnabled: default off (the default-on and the go gate legs read null).
+#  95. no_regression.ts runNrdGate: ignore the unnamed-caller rule and always make the post probe call (the no-extra-call legs see nrd-probe).
+#  96. no_regression.ts nrdGroupsFor: ignore fixRounds (the re-verify leg reads a group).
 #  64. assert_delta.ts reportedValues: drop the WANTED_BEFORE skip (the "should return" value reads as a symptom; the finder unit legs fail).
 #  65. seal.ts failThenPass: drop the rewritten-file exclusion (the lone rewritten pinned assertion reads VERIFIED).
 #  67. seal.ts pinDropped: key on the file only again (the F1 unit leg fails); drop the pinLift gate (the F2 unit leg fails); drop CALLED_RIGHT in assert_delta.ts (the called-right unit leg fails).
@@ -1469,9 +1477,9 @@ if command -v go >/dev/null 2>&1; then
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD2" E2E_STUB_SNIPPET="$ESFIX2" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     [ ! -f "$RUNDIR/tournament-input.json" ] &&  [ "$(tev)" = '"absent":' ] && ok "tournament engine: a spec reply with no probe block leaves no input and the gate reports nothing" || bad "tournament engine: no-probe leg gave '$(tev)'"
     rm -f "$ESPL2".*
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" LOKI_E10_EXEC_SPEC=1 LOKI_E10_TOURNAMENT=0 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY$ES_PROBE_BLOCK" E2E_STUB_PROMPT_LOG="$ESPL2" \
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" LOKI_E10_EXEC_SPEC=1 LOKI_E10_TOURNAMENT=0 LOKI_E10_NRD=0 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY$ES_PROBE_BLOCK" E2E_STUB_PROMPT_LOG="$ESPL2" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD2" E2E_STUB_SNIPPET="$ESFIX2" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
-    if grep -lq 'ONE EXCEPTION to the single-block rule' "$ESPL2".* 2>/dev/null || [ -f "$RUNDIR/tournament-input.json" ] || [ "$(tev)" != '"absent":' ]; then bad "tournament off: LOKI_E10_TOURNAMENT=0 yet the probe rules, the input file or the gate appeared ($(tev))"; else ok "tournament off: no probe rules in the generator brief, no input file, no gate (opt out)"; fi
+    if grep -lq 'ONE EXCEPTION to the single-block rule' "$ESPL2".* 2>/dev/null || [ -f "$RUNDIR/tournament-input.json" ] || [ "$(tev)" != '"absent":' ]; then bad "tournament off: LOKI_E10_TOURNAMENT=0 and LOKI_E10_NRD=0 yet the probe rules, the input file or the gate appeared ($(tev))"; else ok "tournament off: no probe rules in the generator brief, no input file, no gate (opt out)"; fi
 fi
 
 # ---------------------------------------------------------------- E4: defect pin (an existing assertion that pins the bug the issue reports)
@@ -1556,6 +1564,139 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     [ -n "$(ls "$T"/pin-prompt.*.implement* 2>/dev/null)" ] && [ "$(cat "$T"/pin-prompt.*.implement* 2>/dev/null | grep -c 'pin the behavior')" = "0" ] && ok "defect pin: the brief is unchanged by default (LOKI_E10_DEFECT_PIN unset)" || bad "defect pin: the brief lists pins without LOKI_E10_DEFECT_PIN=1"
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "defect pin: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: defect pin e2e: pytest is not installed"; fi
+fi
+
+# ---------------------------------------------------------------- no-regression differential (LOKI_E10_NRD, default on, =0 opts out)
+# features/no_regression.ts. A fix that passes its own checks but changes output nobody asked to change (lh-1474: a shared git-log helper lost
+# --no-merges for the authors list too). The probe cases (the exec-spec call's, plus a post-implement call only when an edited function has
+# same-package callers the issue does not name) run on a scratch copy of the base and a scratch copy of the patched tree; every changed case and
+# every original test the fix rewrote goes to one code-blind judge; "unrequested" (after the deterministic correction) becomes ONE fix-round
+# group, "unknown" a receipt note. Unit (no go, no model): the override and the title skip, verdict handling, the one-group shape, the first-verify-only
+# rule, default on and the knob. Real go test (rule 22): the gate over a real git repo and real scratch trees on the gitlog and flagusage fixtures
+# (every regress-* variant fires, every correct-* variant stays clean), the post call only for unnamed callers, base-test replay, the user's tree
+# byte-identical after a run, a failing model and a killed session.
+NRD_DRV="$T/nrd-drv.ts"
+cat > "$NRD_DRV" <<'NRDDRV'
+import { execFileSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const R = process.env.ROOT!, W = process.env.WORK!;
+const n = await import(`${R}/loki-ts/src/features/no_regression.ts`);
+const t = await import(`${R}/loki-ts/src/features/tournament.ts`);
+const seal = await import(`${R}/loki-ts/src/engine10/stages/seal.ts`);
+const row = (k: string, v: unknown): void => { console.log(`${k}=${v}`); };
+const FX = `${R}/tests/min/fixtures/nrd`;
+
+// ---------- unit ----------
+const GL = readFileSync(`${FX}/gitlog/issue.md`, "utf8");
+row("override", [
+  n.issueMentionsChange(GL, '["git","log","--no-merges","--pretty=format:%an"]', '["git","log","--pretty=format:%an"]'),
+  n.issueMentionsChange("Columns\n\nThe old code would strip the --keep flag silently. Expected: widen the column.", '["a","--keep","x"]', '["a","x"]'),
+  n.issueMentionsChange("Fix changelog that drops merge commits\n\nPlease handle it.", '["merge","commits"]', '["commits"]'),
+  n.issueMentionsChange("Help output\n\nExpected: `-o, --output` first.", '"  --output, -o\\twrite"', '"  -o, --output\\twrite"'),
+  n.issueMentionsChange("Rename the header\n\nExpected: the header reads Title.", '"Heading: alpha"', '"Banner: alpha"'),
+].join(","));
+row("verdict_override", ["requested", "requested", "unknown", "unrequested"].map((v, i) => n.overrideVerdict(i === 1 ? GL : "Rename the header\n\nExpected: the header reads Title.", { id: "k", desc: "d", source: "probe", before: i === 1 ? '["git","log","--no-merges"]' : '"Heading: alpha"', after: i === 1 ? '["git","log"]' : '"Banner: alpha"' }, v as never)).join(","));
+{
+  let calls = 0, flip = 0;
+  const line = (id: string, out: string): string => `LOKIPROBE ${JSON.stringify({ id, desc: `case ${id}`, out })}`;
+  const run = (_p: string, s: "base" | "patched") => { flip++; return { built: true, pruned: [], durationS: 0, stdout: [line("a", s === "base" ? "A0" : "A1"), line("b", s === "base" ? "B0" : "B1"), line("c", s === "base" ? "Heading: x" : "Banner: x"), line("d", `D${flip}`), line("e", "E")].join("\n") }; };
+  const llm = async (_s: string, u: string) => { calls++; return { text: u.includes("CASE a:") ? "a: unrequested\nb: unknown\nc: requested\nd: unrequested\nT_Old: unrequested\nT_Pinned: unrequested" : "", usage: { costUsd: 0 } }; };
+  const replay = () => [{ id: "T_Old", desc: "old", before: "PASS", after: "FAIL: x", source: "replay" as const }, { id: "T_Pinned", desc: "pinned", before: "PASS", after: "FAIL: y", source: "replay" as const, testEdit: '- want := "Q"\n+ want := "Title"' }];
+  const r = await n.runNoRegression({ issue: "Rename the header\n\nExpected: the header reads \"Title\".", programs: ["p"], run, replay, llm });
+  row("fake", [r.blocking.map((f: any) => f.id).join("+"), r.findings.filter((f: any) => f.verdict === "unknown").map((f: any) => f.id).join("+"), r.groups.length, r.groups[0]?.count, calls, r.cases.find((c: any) => c.id === "d")?.status, r.cases.find((c: any) => c.id === "e")?.status].join("|"));
+  const none = await n.runNoRegression({ issue: "x", programs: ["p"], run: () => ({ built: true, pruned: [], durationS: 0, stdout: line("e", "E") }), llm: async () => { calls += 100; return { text: "", usage: { costUsd: 0 } }; } });
+  row("fake_nochange", [none.blocking.length, none.calls, calls].join("|"));
+}
+row("groups", [n.nrdGroupsFor({ no_regression: { groups: [{ signature: "no-regression: x", count: 2, sample: "s" }] } }, 0).length, n.nrdGroupsFor({ no_regression: { groups: [{ signature: "no-regression: x", count: 2, sample: "s" }] } }, 1).length, n.nrdGroupsFor({ no_regression: { groups: [{ bad: 1 }] } }, 0).length, n.nrdGroupsFor(undefined, 0).length].join(","));
+row("knob", [n.nrdEnabled({}), n.nrdEnabled({ LOKI_E10_NRD: "0" }), n.nrdEnabled({ LOKI_E10_NRD: "1" })].join(","));
+row("rules", String(n.nrdProbeIntake.rules === t.probeIntake.rules && t.probeIntake.rules === t.GO_PROBE_RULES));
+
+// ---------- the gate on real repos ----------
+const sh = (cwd: string, ...a: string[]): string => execFileSync("git", ["-C", cwd, ...a], { encoding: "utf8" });
+function mk(fx: string, variant: string): { repo: string; base: string; run: string } {
+  const work = mkdtempSync(join(W, "r-")), repo = join(work, "repo"); cpSync(join(FX, fx, "repo"), repo, { recursive: true });
+  sh(repo, "init", "-q", "-b", "main"); sh(repo, "config", "user.name", "t"); sh(repo, "config", "user.email", "t@example.invalid"); sh(repo, "add", "-A"); sh(repo, "commit", "-q", "-m", "base");
+  const base = sh(repo, "rev-parse", "HEAD").trim();
+  if (variant === "docs") writeFileSync(join(repo, "NOTES.md"), "notes\n"); else if (variant !== "none") execFileSync("git", ["-C", repo, "apply", "-p1", join(FX, fx, "variants", `${variant}.patch`)]);
+  const run = join(work, "run"); mkdirSync(run);
+  const pkg = fx === "gitlog" ? "changelog" : "flags";
+  t.writeTournamentInput(run, { probe: readFileSync(join(FX, fx, "stub", "probe.go"), "utf8"), pkg, targetRel: `${pkg}/loki_wall_spec_test.go` });
+  return { repo, base, run };
+}
+const hashTree = (repo: string): string => {
+  const out: string[] = [];
+  const walk = (d: string): void => { for (const e of readdirSync(d).sort()) { if (e === ".git") continue; const p = join(d, e); if (statSync(p).isDirectory()) walk(p); else out.push(`${p.slice(repo.length)}:${createHash("sha256").update(readFileSync(p)).digest("hex")}`); } };
+  walk(repo);
+  return createHash("sha256").update(out.join("\n") + sh(repo, "status", "--porcelain") + sh(repo, "worktree", "list") + sh(repo, "branch", "-a")).digest("hex").slice(0, 12);
+};
+const leftovers = (): number => readdirSync(tmpdir()).filter((x) => x.startsWith("loki-nrd-")).length;
+async function gate(fx: string, variant: string, o: { env?: NodeJS.ProcessEnv; killed?: boolean; post?: boolean; judgeThrows?: boolean } = {}): Promise<{ s: string; r: any; tags: string[]; same: boolean }> {
+  const { repo, base, run } = mk(fx, variant), truth = JSON.parse(readFileSync(join(FX, fx, "stub", "verdicts.json"), "utf8")) as Record<string, string>, tags: string[] = [];
+  const llm = async (_s: string, u: string, tag: string) => {
+    tags.push(tag);
+    if (tag === "judge" && o.judgeThrows) throw new Error("model transport blew up");
+    if (tag === "nrd-probe") return { text: o.post ? "```go\n" + readFileSync(join(FX, fx, "stub", "probe.go"), "utf8") + "```" : "no block", usage: { costUsd: 0 } };
+    return { text: [...u.matchAll(/^CASE (\S+):/gm)].map((m) => `${m[1]}: ${truth[m[1]!.split("#")[0]!] ?? "unknown"}`).join("\n"), usage: { costUsd: 0 } };
+  };
+  const ctx: any = { repoDir: repo, baseSha: base, runDir: run, outputs: () => ({ intake: { task: readFileSync(join(FX, fx, "issue.md"), "utf8") } }) };
+  const h0 = hashTree(repo), l0 = leftovers();
+  const r = await n.runNrdGate(ctx, new AbortController().signal, { killed: !!o.killed, exit: 0, markers: { done: true } }, [], llm, o.env ?? {});
+  const same = hashTree(repo) === h0 && leftovers() === l0;
+  return { s: `${r?.status ?? "null"}|${tags.join("+") || "-"}|${r?.groups?.[0]?.count ?? 0}`, r, tags, same };
+}
+const legs: [string, string, string, any?][] = [
+  ["go_gitlog_shared", "gitlog", "regress-shared"], ["go_gitlog_param", "gitlog", "correct-param"], ["go_gitlog_render", "gitlog", "regress-render"], ["go_gitlog_edit_ok", "gitlog", "correct-edit-test"], ["go_gitlog_edit_bad", "gitlog", "regress-edit-test"],
+  ["go_flag_lookup", "flagusage", "regress-lookup"], ["go_flag_shared", "flagusage", "regress-shared"], ["go_flag_local", "flagusage", "correct-local"],
+  ["go_post_runs", "gitlog", "regress-shared", { post: true }], ["go_knob0", "gitlog", "regress-shared", { env: { LOKI_E10_NRD: "0" } }], ["go_killed", "gitlog", "regress-shared", { killed: true }], ["go_docs_only", "gitlog", "docs"],
+  ["go_judge_down", "gitlog", "regress-shared", { judgeThrows: true }],
+];
+const done: Record<string, Awaited<ReturnType<typeof gate>>> = {};
+for (const [k, fx, v, o] of legs) { done[k] = await gate(fx, v, o); row(k, done[k]!.s); }
+row("go_tree_untouched", [done["go_gitlog_edit_ok"]!.same, done["go_gitlog_edit_bad"]!.same, done["go_gitlog_shared"]!.same, done["go_judge_down"]!.same].join(","));
+row("go_replay_seen", done["go_gitlog_edit_bad"]!.r.receipt.some((l: string) => l.includes("existing test TestRenderSkipsBlankSubjects")));
+row("go_judge_down_reason", String(done["go_judge_down"]!.r.reason).slice(0, 56));
+row("go_unknown_advisory", done["go_gitlog_shared"]!.r.receipt.some((l: string) => l.startsWith("advisory:")) && done["go_gitlog_shared"]!.r.status === "fired");
+
+// ---------- receipt ----------
+const some = n.nrdReceiptBlock({ no_regression: { receipt: ["no-regression: 9 probe case(s) compared", "unrequested change: x"] } }), none = n.nrdReceiptBlock({ no_regression: { status: "skipped" } });
+const md = seal.renderReceiptMd({ run_id: "r", base_sha: "b", head_sha: "h", receipt_sha256: "s", verdict: "VERIFIED", provider: "p", model: "m", cost: { usd: 0, measured_sessions: 0, total_sessions: 0, partial_usd: 0 }, time: { wall_s: 1 }, checks: [], evidence: [], not_proven: [], verification: {}, ...some } as any);
+row("receipt", [JSON.stringify(none), some.no_regression?.length, md.includes("### No-regression differential\n- no-regression: 9 probe case(s) compared\n- unrequested change: x")].join(","));
+NRDDRV
+NRD_TMP="$T/nrd-tmp"; mkdir -p "$NRD_TMP" "$T/nrd-work"
+if command -v go >/dev/null 2>&1; then
+NRD_OUT="$(cd "$ROOT/loki-ts" && ROOT="$ROOT" WORK="$T/nrd-work" TMPDIR="$NRD_TMP" GOFLAGS=-mod=mod GOTOOLCHAIN=local GOPROXY=off timeout 1500 bun "$NRD_DRV" 2>&1)"
+ng() { printf '%s\n' "$NRD_OUT" | sed -n "s/^$1=//p"; }
+ncheck() { local got; got="$(ng "$2")"; [ "$got" = "$3" ] && ok "no-regression $1" || bad "no-regression $1: got '$got' (want '$3')"; }
+ncheck "override: a removal in a request sentence, a quote, a reorder or an added issue token is mentioned; a removal in a non-request sentence, in the title, or an unmentioned rename is not" override "true,false,false,true,false"
+ncheck "verdict correction: requested stands only when the issue mentions the change; unknown and unrequested are untouched" verdict_override "unrequested,requested,unknown,unrequested"
+ncheck "judge outcomes: unrequested and an unmentioned requested block as ONE group; unknown stays advisory; a pinned-value test rewrite is requested; a case that differs on every run is ignored" fake "a+c+T_Old|b|1|3|1|flaky|same"
+ncheck "no changed case and no replay finding makes no judge call" fake_nochange "0|0|1"
+ncheck "the fix-round group is read on the first verify only and only when well formed" groups "1,0,0,0"
+ncheck "default on, =0 opts out" knob "true,false,true"
+ncheck "the exec-spec probe rules stay byte-identical (cache-stable); the keep list is appended per run" rules "true"
+ncheck "go: the shared-helper fix (lh-1474 shape) fires on the authors command, one group, probe call plus judge" go_gitlog_shared "fired|nrd-probe+judge|1"
+ncheck "go: a param-threaded fix does not fire" go_gitlog_param "clean|judge|0"
+ncheck "go: an unasked heading change fires" go_gitlog_render "fired|judge|1"
+ncheck "go: a correct fix that edits a test it must edit does not fire" go_gitlog_edit_ok "clean|judge|0"
+ncheck "go: a fix that rewrote an existing test to match an unasked heading change fires" go_gitlog_edit_bad "fired|judge|1"
+ncheck "go: base-test replay shows the rewritten test to the judge" go_replay_seen "true"
+ncheck "go: an unasked error-message rewording fires" go_flag_lookup "fired|judge|1"
+ncheck "go: a shared-helper change with an unnamed caller fires and makes the post probe call" go_flag_shared "fired|nrd-probe+judge|1"
+ncheck "go: a correct local fix does not fire and makes no post probe call (every caller is named)" go_flag_local "clean|judge|0"
+ncheck "go: a post-implement probe program is run beside the pre-implement one" go_post_runs "fired|nrd-probe+judge|2"
+ncheck "go: LOKI_E10_NRD=0 does no work and makes no call" go_knob0 "null|-|0"
+ncheck "go: a killed session makes no call" go_killed "skipped|-|0"
+ncheck "go: a diff with no Go source makes no call" go_docs_only "skipped|-|0"
+ncheck "go: a judge call that throws is a receipt-only error, never a group" go_judge_down "error|nrd-probe+judge|0"
+ncheck "go: the error names the cause" go_judge_down_reason "no-regression skipped: model transport blew up"
+ncheck "go: an unknown verdict is advisory on the receipt, never blocking" go_unknown_advisory "true"
+ncheck "go: the user's tree (files, git status, worktrees, branches) is byte-identical after a run and no scratch dir is left, also with a rewritten test and a failing judge" go_tree_untouched "true,true,true,true"
+ncheck "receipt: lines only when a differential ran; the receipt renders them under their own heading" receipt "{},2,true"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "no-regression: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: no-regression: go is not installed"; fi
 fi
 
 finish

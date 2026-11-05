@@ -1,0 +1,30 @@
+diff -ru a/changelog/changelog.go b/changelog/changelog.go
+--- a/changelog/changelog.go
++++ b/changelog/changelog.go
+@@ -8,18 +8,22 @@
+ )
+ 
+ // logArgs is the git log prefix every history query shares.
+-func logArgs(format string) []string {
+-	return []string{"git", "log", "--no-merges", "--pretty=format:" + format}
++func logArgs(format string, merges bool) []string {
++	args := []string{"git", "log"}
++	if !merges {
++		args = append(args, "--no-merges")
++	}
++	return append(args, "--pretty=format:"+format)
+ }
+ 
+ // CommitsCmd lists the commit subjects between two refs.
+ func CommitsCmd(from, to string) []string {
+-	return append(logArgs("%s"), from+".."+to)
++	return append(logArgs("%s", true), from+".."+to)
+ }
+ 
+ // AuthorsCmd lists the author of every commit between two refs, for the credits section.
+ func AuthorsCmd(from, to string) []string {
+-	return append(logArgs("%an <%ae>"), from+".."+to)
++	return append(logArgs("%an <%ae>", false), from+".."+to)
+ }
+ 
+ // LastTagCmd finds the most recent tag reachable from HEAD.

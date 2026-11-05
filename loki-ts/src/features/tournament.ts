@@ -78,14 +78,18 @@ export const GO_PROBE_CASES_FILE = "loki_probe_cases_test.go";
 export const GO_PROBE_HELPER_FILE = "loki_probe_helper_test.go";
 export const PROBE_MARK = "LOKIPROBE ";
 
-/** Fixed text the exec-spec call appends to its rules when the tournament is on (cache-stable). The model writes the cases only; the harness owns lokiProbe. */
-export const GO_PROBE_RULES = [
-  "ONE EXCEPTION to the single-block rule: after the spec file, reply with a second ```go fenced block, a probe file. It is never run as a check and never asserts: it records what the code does.",
+/** The probe file format both the exec-spec call and the no-regression post-implement call ask for (lokiProbe is harness-owned). */
+export const GO_PROBE_FORMAT = [
   `The probe file is a second Go test file in the same package (same package clause). It holds exactly one test function, func ${GO_PROBE_TEST}(t *testing.T), whose body is 6 to 12 calls of the form`,
   '\tlokiProbe("p1", "<the input in words>", func() any { return <call the code and return what it produced> })',
   "lokiProbe is provided by the harness: never define it. Return every observable result of the call: its return values (several as []any{a, b}), an error value as it is, and any output or state the call changes (capture writers and exit hooks with the package's existing test helpers, exactly as the existing test does).",
   "Choose inputs that separate a correct fix from a plausible wrong one: each example in the report, then variants of each (surrounding whitespace, letter case, normalized versus raw spellings, wrapped or nested forms, empty and boundary values), and combinations with the behavior the existing test pins.",
   "Only call identifiers that appear in the definitions or the existing test shown below, and the standard library. No t.Skip, no os.Exit, no network, no sleeps, no subprocesses.",
+].join("\n");
+/** Fixed text the exec-spec call appends to its rules when the tournament is on (cache-stable). The model writes the cases only; the harness owns lokiProbe. */
+export const GO_PROBE_RULES = [
+  "ONE EXCEPTION to the single-block rule: after the spec file, reply with a second ```go fenced block, a probe file. It is never run as a check and never asserts: it records what the code does.",
+  GO_PROBE_FORMAT,
 ].join("\n");
 
 /** The harness-owned helper: per-case recover, canonical rendering (errors as error("msg"), JSON when it shows something, else %#v),
@@ -525,9 +529,9 @@ export function writeTournamentInput(runDir: string, o: { probe?: string; pkg?: 
   const i: TournamentInput = { program: o.probe, pkg: o.pkg, pkgRel: o.targetRel && dirname(o.targetRel) !== "." ? dirname(o.targetRel) : "", ...(o.specFile && o.targetRel ? { spec: o.specFile, targetRel: o.targetRel } : {}), ...(o.unchecked?.length ? { unchecked: o.unchecked } : {}) };
   try { mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, TOURNAMENT_INPUT_FILE), JSON.stringify(i), "utf8"); } catch { /* best effort: without it the gate skips */ }
 }
-const readInput = (runDir: string): TournamentInput | null => { try { const i = JSON.parse(readFileSync(join(runDir, TOURNAMENT_INPUT_FILE), "utf8")) as TournamentInput; return typeof i.program === "string" && typeof i.pkg === "string" ? i : null; } catch { return null; } };
+export const readTournamentInput = (runDir: string): TournamentInput | null => { try { const i = JSON.parse(readFileSync(join(runDir, TOURNAMENT_INPUT_FILE), "utf8")) as TournamentInput; return typeof i.program === "string" && typeof i.pkg === "string" ? i : null; } catch { return null; } };
 
-const baseText = (ctx: RunContext, p: string): string => { try { return safeGit(ctx.repoDir, ["show", `${ctx.baseSha}:${p}`]); } catch { return ""; } };
+export const baseText = (ctx: RunContext, p: string): string => { try { return safeGit(ctx.repoDir, ["show", `${ctx.baseSha}:${p}`]); } catch { return ""; } };
 const FILE_CAP = 24_000, TOTAL_CAP = 60_000;
 /** Changed lines of the agent tree against base (tracked numstat plus untracked files), excluding the run's own sealed files. */
 function agentDiffLines(ctx: RunContext, skip: Set<string>): { lines: number; goFiles: string[] } {
@@ -563,7 +567,7 @@ const skipped = (reason: string, extra: Record<string, unknown> = {}): Tournamen
  *  the agent tree passes its checks. Everything runs in scratch worktrees (treeswap); the primary is touched only to displace the
  *  agent tree, and a failed restore throws AttemptsRestoreError (the run cannot be sealed as delivered work). Never throws otherwise. */
 export async function runTournamentGate(ctx: RunContext, signal: AbortSignal, session: SessionResult, deps: ExtraAttemptsDeps, llm: LlmCall = toolLessLlm(), env: NodeJS.ProcessEnv = process.env): Promise<TournamentSummary | null> {
-  const input = readInput(ctx.runDir);
+  const input = readTournamentInput(ctx.runDir);
   if (!input) return null; // no probe program (exec spec off, not Go, or no probe block): nothing to report, the run is untouched
   if (signal.aborted || session.killed || session.exit !== 0 || !session.markers.done || session.markers.specConflict || session.markers.alreadyDone) return skipped("the implement session did not finish clean (done, no conflict, no already-done claim)");
   if ((ctx.implementLeftS?.() ?? Infinity) < 150) return skipped("not enough implement time left for three tool-less calls and the scratch checks");

@@ -29,7 +29,7 @@ import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_gu
 import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts";
 import { atomicWriteText } from "../../util/atomic.ts";
 import { collapseNotProven } from "../../util/term_width.ts";
-import { tournamentReceiptBlock } from "../../features/tournament.ts";
+import { tournamentReceiptBlock } from "../../features/tournament.ts"; import { nrdReceiptBlock } from "../../features/no_regression.ts";
 import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, splitDeclaredAdvisories } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { misplacedNamedNotes } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
 const SYSTEM_INTERP = "tests ran on the system interpreter", SYSTEM_INTERP_SUFFIX = " (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)"; // verify.ts writes the note
 
@@ -201,6 +201,7 @@ export function renderReceiptMd(r: Receipt): string {
     ...(r.cost.tokens_measured ? [`- Tokens: partial: ${r.cost.input_tokens} input / ${r.cost.output_tokens} output for ${r.cost.tokens_measured.k} of ${r.cost.tokens_measured.n} sessions`] : []),
     ...(r.mutation_proof ? [`- ${r.mutation_proof}`] : []),
     ...(r.tournament?.length ? ["", "### Candidate tournament", ...r.tournament.map((l) => `- ${sanitizeReason(l)}`)] : []),
+    ...(r.no_regression?.length ? ["", "### No-regression differential", ...r.no_regression.map((l) => `- ${sanitizeReason(l)}`)] : []),
     ...(r.route ? routeReceiptLines(r.route) : []), // R1-15: only when the router is on
     "",
     ...(r.checks.some((c) => c.provenance !== undefined) ? [...sec("### Agent-independent checks", r.checks.filter(indep)), "", ...sec("### Agent-authored / advisory checks", r.checks.filter((c) => !indep(c)))] : sec("### Checks", r.checks)),
@@ -379,7 +380,7 @@ export const sealStage: Stage = {
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
-      ...specReceiptBlock(process.env), ...triageReceiptBlock(o.intake), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(), ...sealAccuracyBlock(rawDiff.filter((_, i) => i % 2 === 1), checks, ctx.model), ...contextCoverageBlock(o.implement, rawDiff, ctx.repoDir), ...tournamentReceiptBlock(o.implement), // GAME10-03; L022 context recall and precision
+      ...specReceiptBlock(process.env), ...triageReceiptBlock(o.intake), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(), ...sealAccuracyBlock(rawDiff.filter((_, i) => i % 2 === 1), checks, ctx.model), ...contextCoverageBlock(o.implement, rawDiff, ctx.repoDir), ...tournamentReceiptBlock(o.implement), ...nrdReceiptBlock(o.implement), // GAME10-03; L022 context recall and precision
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only
