@@ -11,9 +11,10 @@ export type Staged = { st: string; f: string };
 /** Parses `git diff --cached --name-status --no-renames -z` output. */
 export const parseStaged = (out: string): Staged[] => out.split("\0").reduce<Staged[]>((a, t, i, all) => (i % 2 === 0 && t ? [...a, { st: t, f: all[i + 1]! }] : a), []);
 
-const MANIFEST = /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod)$/, LOCKFILE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|Cargo\.lock|go\.sum)$/;
+const MANIFEST = /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod)$/;
+export const LOCKFILE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|Cargo\.lock|go\.sum)$/;
 /** A manifest changed in the lockfile's directory or beneath it (a workspace root lockfile legitimately changes when a member's manifest does). */
-const manifestChanged = (staged: Staged[], lock: string): boolean => { const d = dirname(lock); return staged.some(({ f: m }) => MANIFEST.test(m) && (d === "." || dirname(m) === d || dirname(m).startsWith(`${d}/`))); };
+export const manifestChanged = (staged: Staged[], lock: string): boolean => { const d = dirname(lock); return staged.some(({ f: m }) => MANIFEST.test(m) && (d === "." || dirname(m) === d || dirname(m).startsWith(`${d}/`))); };
 
 /** True when the task itself is a dependency change: it names the lockfile, asks to update, upgrade or bump a dependency or package, or names a CVE. Its lockfile edit is the deliverable. */
 export const taskWantsLockChange = (task: string | undefined, lock: string): boolean => !!task && (task.includes(lock) || task.includes(basename(lock)) || /\bCVE-\d{4}-\d+/i.test(task) || /\b(?:update|upgrade|bump)\b[^.\n]{0,60}\b(?:dependenc\w*|packages?|lockfile|lock file|version)\b/i.test(task) || /\b(?:bump|upgrade)\s+[@\w./-]+\s+(?:to|from)\s+v?\d/i.test(task));

@@ -530,4 +530,22 @@ npb="$(cd "$ORGCALC" && PATH="$NOPY:$PATH" LOKI_ORG_GRAPH=1 LOKI_NO_COMPLETIONS=
 case "$npb" in *untrusted-org-knowledge*) bad "org-nopython: a block appeared without python3" ;; *) ok "org-nopython: no block without python3" ;; esac
 unset LOKI_KNOWLEDGE_DIR
 
+# harness-rules (prototype, util/harness_rules.ts): cross-repo harness rules mined from run facts, verdict-safe hooks, rollback
+hr="$(cd "$ROOT/loki-ts" && timeout 60 bun -e '
+import { mine, excuse, wipDrops, observe, judge } from "./src/util/harness_rules.ts";
+const f = (repo, path, by) => ({ run_id: repo, repo, verdict: "FAILED", shipped: [{ path, by, ignored: false, wip: true }], fix_rounds: [], flags: [], cost_usd: 0 });
+const one = mine([f("a", "pnpm-lock.yaml", "harness"), f("a", "pnpm-lock.yaml", "harness")]).length;
+const agentOnly = mine([f("a", "x.lock", "agent"), f("b", "x.lock", "agent")]).length;
+const two = mine([f("a", "pnpm-lock.yaml", "harness"), f("b", "Cargo.lock", "harness")]);
+const cls = two.find((r) => r.id === "wip_drop|cls:lockfile|harness|none"), lit = two.find((r) => r.id.startsWith("wip_drop|lit:"));
+const act = (r) => ({ ...r, state: "active" }), pr = act({ ...cls, id: "p", template: "pre_red", match: "any", writer: "any" });
+const ex = [excuse([pr], "tsc", "1:E", "1:E", false), excuse([pr], "tsc", "1:E", null, false), excuse([pr], "tsc", "1:E", "1:E", true), excuse([pr], "tsc", "1:E", "1:F", false)];
+const keepAgent = wipDrops([act(cls)], [{ path: "yarn.lock", by: "agent", ignored: false, wip: true }]).length;
+const guarded = wipDrops([act({ ...cls, guard: "manifest_unchanged" })], [{ path: "go.mod", by: "agent", ignored: false, wip: true }, { path: "go.sum", by: "harness", ignored: false, wip: true }]).length;
+const r = act(cls); observe(r, true, true); const s1 = r.state; observe(r, true, true);
+const j = judge({ correct: 5, false_green: 0, harm: 0, cost: 1 }, { correct: 9, false_green: 1, harm: 0, cost: 1 });
+console.log([one, agentOnly, !!cls, !!lit, ex.join(","), keepAgent, guarded, s1, r.state, j.accept].join(" "));
+' 2>&1)"
+[ "$hr" = "0 0 true false p,,, 0 0 active rolled_back false" ] && ok "harness-rules: 2-repo support, agent writes never mined, base rerun fail-closed, fail-to-pass never excused, agent lockfile kept, manifest guard, rollback at 2 harms, a false green blocks acceptance" || bad "harness-rules: got '$hr'"
+
 finish
