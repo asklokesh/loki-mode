@@ -454,8 +454,8 @@ const z = one(A, { repoDir: R })!;
 res("choice 3: the option whose literal an existing test already asserts is picked, basis existing_tests", z.picked === 1 && z.basis === "existing_tests" && z.evidence.includes("schema.test.ts"));
 const z0 = one(A.replace("^-?\\\\d+$", "^zz$"), { repoDir: R })!;
 res("choice 3: with no pinned literal the choice stays undecided and says to keep tests true and satisfy both", z0.basis === "none" && choiceLine(z0).includes("satisfy both") && choiceLine(z0).includes("existing test"));
-const zl = one("Is `parseKey` right?\n\nShould `parseKey` return a string or should `parseKey` return a number?", { repoDir: R, issueNumber: 77 })!;
-res("evidence: a commit mentioning the issue number is cited when nothing decides", zl.basis === "none" && zl.evidence.includes("commits mentioning the issue") && zl.evidence.includes("#77"));
+const zl = one("Is `parseKey` right?\n\nShould `parseKey` return a string or should `parseKey` return a number?", { repoDir: R, issueNumber: 77 } as never)!;
+res("evidence: nothing is searched by issue number (a commit naming the issue is never read), history is the base commit's only", zl.basis === "none" && !zl.evidence.includes("#77") && !zl.evidence.includes("mentioning the issue"));
 // the gate and the brief
 delete process.env.LOKI_E10_ASSUME; process.env.LOKI_E10_INTAKE_ASK = "0";
 const g = ambiguityGate(P, `${process.env.T}/run`, {});

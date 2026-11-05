@@ -28,7 +28,7 @@ export type ChoiceBasis = "maintainer" | "task_preferred" | "existing_tests" | "
 export interface OpenChoice { sentence: string; options: string[]; preferred: number | null; fallback: boolean }
 export interface ChoiceResolution extends OpenChoice { basis: ChoiceBasis; picked: number | null; evidence: string }
 /** comments: the trusted comments intake read from issue.json (never parsed back out of the task text, which an issue author could forge). */
-export interface ChoiceCtx { repoDir?: string; issueNumber?: number; comments?: Pick<IssueComment, "author" | "association" | "body">[] }
+export interface ChoiceCtx { repoDir?: string; comments?: Pick<IssueComment, "author" | "association" | "body">[] }
 const trunc = (s: string, n: number): string => { const cps = Array.from(s.replace(/\s+/g, " ").trim()); return cps.length > n ? `${cps.slice(0, n - 3).join("")}...` : cps.join(""); };
 const AUX = "should|would|does|do|is|are|can|will|must";
 const LIST_ITEM = /^\s*(?:(?:[-*+]|\d+[.)]|\(\d+\)|[A-Da-d][.)])\s+|(?:#+\s*)?(?:\*\*)?(?:option|solution|approach|alternative|proposal)\s*#?\(?(\d+|[A-Da-d])\)?(?:\*\*)?\s*[:.)-]\s*)(.+)$/i;
@@ -113,14 +113,14 @@ function byExistingTests(c: OpenChoice, repoDir: string): { k: number; evidence:
   const k = n.indexOf(best);
   return { k, evidence: `existing tests or docs already pin it (${hit[k]!.slice(0, 2).map((h) => `\`${trunc(h.x, 40)}\` in ${h.path}`).join("; ")}); the other option has ${Math.min(...n.filter((_, i) => i !== k))} pinned` };
 }
-/** One line of recent history for the symbols the options name: the newest commits touching their defining files, and any commit mentioning the issue. "" when unavailable. */
+/** One line of recent history for the symbols the options name: the newest commits touching their defining files, local history at the checked-out commit only (never a network fetch, never a linked PR or issue-number search). "" when unavailable. */
 function historyLine(c: OpenChoice, ctx: ChoiceCtx): string {
   if (!ctx.repoDir) return "";
   const git = (a: string[]): string => { try { return safeGit(ctx.repoDir!, a, { timeout: 5000, maxBuffer: 1 << 20 }).trim(); } catch { return ""; } };
   const syms = [...new Set(c.options.flatMap(snippetsOf).filter((x) => /^[\w.]+$/.test(x)))].slice(0, 3), paths = new Set<string>();
   for (const s of syms) for (const f of git(["grep", "-l", "-F", "-e", s, "--", ".", ":(exclude)*test*", ":(exclude)*.md"]).split("\n").filter(Boolean).slice(0, 2)) paths.add(f);
-  const log = paths.size ? git(["log", "-n", "3", "--format=%h %s", "--", ...paths]).split("\n").filter(Boolean) : [], linked = ctx.issueNumber ? git(["log", "-n", "2", `--grep=#${ctx.issueNumber}\\b`, "--format=%h %s"]).split("\n").filter(Boolean) : [];
-  return trunc([log.length ? `recent history of the touched code: ${log.join("; ")}` : "", linked.length ? `commits mentioning the issue: ${linked.join("; ")}` : ""].filter(Boolean).join(". "), 240);
+  const log = paths.size ? git(["log", "-n", "3", "--format=%h %s", "--", ...paths]).split("\n").filter(Boolean) : [];
+  return trunc(log.length ? `recent history of the touched code at the base commit: ${log.join("; ")}` : "", 240);
 }
 /** Settles each open choice in the task, in this order: the latest maintainer comment, the option the task names as preferred, the option existing tests and docs already pin, else none (the line then says to keep every existing test true and satisfy both where compatible). Deterministic, no model call, never throws. */
 export function resolveChoices(task: string, ctx: ChoiceCtx = {}): ChoiceResolution[] {
