@@ -59,6 +59,7 @@
 #  24. providers.ts claudeProvider: drop the compactWindowSettings merge (small leg: the haiku implement with no
 #      advisor carries no window). 25. buildSdkLoopOptions: drop it (unit: sdkwin). 26. compactWindowSettings:
 #      give Sonnet the window (unit: win, and the fix leg's sonnet round).
+#  26b. providers.ts: drop the `title` option from the SDK query (or engine10SessionTitle): unit sdktitle fails (last field false).
 #  27. implement.ts: drop `routerRedid ||` from challenge() (already leg: implement models read 'haiku sonnet sonnet').
 #  28. implement_route.ts routeEscalate: run the claim redo with `first` unchanged (already leg: the redo brief has no challenge).
 #  29. implement.ts: pass `false` for resumeAfterEmptyDone's challenge (already leg: the empty-done correction after the redo has no challenge).
@@ -81,7 +82,7 @@ U="$(cd "$ROOT/loki-ts" && env -u LOKI_SESSION_MODEL -u LOKI_MODEL_OVERRIDE -u L
 import { routerMode, presetExecutor } from "./src/runner/router/flag.ts";
 import { routeRecord, routedFix, routerActive } from "./src/runner/router/unit_model.ts";
 import { hardReason, sizeTask } from "./src/engine10/sizing.ts";
-import { buildSdkLoopOptions, compactWindowSettings } from "./src/runner/providers.ts";
+import { buildSdkLoopOptions, compactWindowSettings, engine10SessionTitle } from "./src/runner/providers.ts";
 import { climb } from "./src/runner/model_rank.ts";
 import { planRouterSession } from "./src/runner/providers.ts";
 import { routerKeptNote } from "./src/util/cost_profile.ts";
@@ -114,6 +115,8 @@ out.push(`opusadv=${JSON.stringify(planRouterSession({ model: "claude-opus-5-5",
 out.push(`adc=${climb("run", "claude-haiku-5-5", "already_done_claim", "x")?.to}`);
 { const saved = process.env.LOKI_ROUTER; delete process.env.LOKI_ROUTER; // router off: the window does not depend on the router
   out.push(`sdkwin=${["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"].map((m) => buildSdkLoopOptions({ tier: "development", model: m, cwd: "/nonexistent" }).settings?.autoCompactWindow ?? "none").join(",")}`);
+  { const fs = await import("node:fs"), src = fs.readFileSync("./src/runner/providers.ts", "utf8"); // EXP-0002b: a title in the SDK query options skips the uncached Haiku title call
+    out.push(`sdktitle=${engine10SessionTitle({ LOKI_E10_STAGE: "plan" }, "x\n<<<TASK\nfix the off-by-one\nin paginate() please " + "y".repeat(80) + "\nTASK\nmore")}|${engine10SessionTitle({ LOKI_E10_STAGE: "intake" }, "no task block")}|${engine10SessionTitle({}, "<<<TASK\nz\nTASK")}|${/includePartialMessages: true,[^\n]*\n\s*\.\.\.\(engine10SessionTitle\(process\.env, call\.prompt\) \? \{ title: engine10SessionTitle\(process\.env, call\.prompt\) \}/.test(src)}`); }
   out.push(`win=${["haiku", "sonnet", "opus", "openrouter/x/y"].map((m) => (compactWindowSettings(m)?.autoCompactWindow ?? "none") + "/" + (compactWindowSettings(m, true)?.autoCompactWindow ?? "none")).join(",")}`);
   process.env.LOKI_ROUTER = saved; }
 out.push(`kept=${routerKeptNote("--haiku", { LOKI_ROUTER: "1" }) !== ""}:${routerKeptNote("--haiku", { LOKI_ROUTER: "auto" })}:${routerKeptNote("--haiku", {})}`);
@@ -131,7 +134,7 @@ const adModel = async (env) => { const saved = { ...process.env }; Object.assign
 out.push(`ad:preset=${await adModel({})}`, `ad:tier=${await adModel({ LOKI_E10_WALL_TIER: "haiku" })}`, `ad:why=${modelDowngrades("claude", A).find((d) => d.stage === "already_done")?.reason}`, `cascade=${fam(cascadeImplementModel(A))}`);
 console.log(out.join(" "));
 ' 2>&1)"
-want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=null hard:spelled3=null hard:suffix=null hard:mono1=null hard:mono5=true hard:dot5=true hard:updir5=null size:mono9=normal size:spelled9=large nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 sdkwin=100000,none,none win=100000/100000,none/none,none/none,none/100000 kept=true:: tsnote=1:unset wall:preset=haiku:haiku:haiku wall:off=sonnet wall:nohaiku=sonnet wall:tier=sonnet wall:override=sonnet wall:sesspin=sonnet wall:why=Wall pin (LOKI_ROUTER=auto preset executor) ad:preset=sonnet ad:tier=haiku ad:why=already-done check pin cascade=sonnet"
+want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=null hard:spelled3=null hard:suffix=null hard:mono1=null hard:mono5=true hard:dot5=true hard:updir5=null size:mono9=normal size:spelled9=large nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 sdkwin=100000,none,none sdktitle=loki plan: fix the off-by-one in paginate() please yyyyyyyyyyyyyyyyyyyy|loki intake|undefined|true win=100000/100000,none/none,none/none,none/100000 kept=true:: tsnote=1:unset wall:preset=haiku:haiku:haiku wall:off=sonnet wall:nohaiku=sonnet wall:tier=sonnet wall:override=sonnet wall:sesspin=sonnet wall:why=Wall pin (LOKI_ROUTER=auto preset executor) ad:preset=sonnet ad:tier=haiku ad:why=already-done check pin cascade=sonnet"
 [ "$U" = "$want" ] && ok "unit: preset executor and record, hardReason on task evidence only, never descend, redacted climb evidence, scoped advisor keeps the executor, --model and LOKI_MODEL_DEVELOPMENT pin, no opus advisor on an opus executor, an already-done claim climbs, the kept-router note, the Wall on the preset executor unless pinned" || bad "unit gave: $U"
 
 # --- e2e on the stub provider ---------------------------------------------------------------------------------------

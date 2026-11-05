@@ -225,6 +225,14 @@ export async function* closeQueryOnResult(q: AsyncIterable<StreamMsg> & { close?
     try { q.close?.(); } catch { /* already closed */ }
   }
 }
+/** Session title for an engine10 stage ("loki <stage>: <first 60 chars of the task>"): the SDK skips its uncached Haiku title call when a title is given (EXP-0002b probe: Haiku 1,208 input tokens, 0 cache, gone with Options.title). The task is read from the brief's quoted task block when it has one; undefined outside an engine stage. */
+export function engine10SessionTitle(env: Record<string, string | undefined>, prompt: string): string | undefined {
+  const stage = env["LOKI_E10_STAGE"]?.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 24);
+  if (!stage) return undefined;
+  const m = /<<<TASK\n([\s\S]*?)\nTASK(?:\n|$)/.exec(prompt);
+  const task = (m?.[1] ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60).trim();
+  return task ? `loki ${stage}: ${task}` : `loki ${stage}`;
+}
 export function engine10CacheTtlEnv(env: Record<string, string | undefined>): Record<string, string> {
   if (!env["LOKI_E10_STAGE"]) return {};
   const ttl = env["LOKI_E10_CACHE_TTL"];
@@ -880,6 +888,7 @@ export function sdkQueryProvider(): ProviderInvoker {
             ...permissionOpts,
             ...(process.env["LOKI_E10_DISALLOWED_TOOLS"] ? { disallowedTools: mergeDisallowedTools(permissionOpts.disallowedTools, process.env["LOKI_E10_DISALLOWED_TOOLS"]) } : {}), // Q18-04: merged with, never replacing, the policy deny list
             includePartialMessages: true, // live delta streaming
+            ...(engine10SessionTitle(process.env, call.prompt) ? { title: engine10SessionTitle(process.env, call.prompt) } : {}), // no SDK Haiku title call
             includeHookEvents: true, // hooks arrive as system messages (parser)
             // S41-11: LOKI_E10_TRIM=1 (bin/loki sets it for a task, a PRD and `loki start`). Read directly from
             // process.env (not the spread-and-stripped `env` object below,
