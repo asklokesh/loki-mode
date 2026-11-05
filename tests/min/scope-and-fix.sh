@@ -181,10 +181,18 @@
 #  83. tournament.ts runTournamentGate: rethrow instead of restoring and recording a skip (the throw go leg crashes).
 #  84. tournament.ts runTournamentGate: never swap the winner in (the displace go leg keeps the wrong tree).
 #  85. tournament.ts tournamentReceiptBlock: return nothing (the receipt leg finds no tournament lines).
-#  86. tournament.ts applyEdits path guard and the treeswap veto removed together (the test-edit go leg displaces).
+#  86. tournament.ts applyEdits path guard: let a candidate edit an existing test file (the test-edit go leg writes the test change into the user's tree).
 #  87. implement.ts: drop the runTournamentGate call (the engine tournament data leg reads absent).
 #  88. wall.ts: always pass the probe intake (the tournament-off leg finds the probe rules).
 #  89. tournament.ts warningSigns: ignore the edit-shape residual site (the signs leg reads 0 for the residual case).
+#  90. tournament.ts runTournamentGate: write the winner's whole scratch tree over the user's tree (the probe side-effect go leg finds leak.txt and a changed go.mod).
+#  91. tournament.ts materialize and the winner: candidates built from base and swapped in with treeswap enter (the probe side-effect go leg loses the agent's new test, added case and go.mod note).
+#  92. tournament.ts select: count wins on inputs the issue never names (the unnamed-input go leg and the unnamed unit leg displace).
+#  93. tournament.ts runTournament: call the candidates model before looking at the agent tree (the agent-red legs make a call).
+#  94. tournament.ts runTournamentGate: truncate a big base file instead of skipping (the big-file go leg calls the model).
+#  95. tournament.ts applyWinnerFiles: skip the undo record (the kill leg finds no record).
+#  96. tournament.ts runTournamentGate: skip the recovery at gate start (the kill leg leaves the half-written file).
+#  97. tournament.ts runTournamentGate: a tick that never throws (the budget leg runs on).
 #  64. assert_delta.ts reportedValues: drop the WANTED_BEFORE skip (the "should return" value reads as a symptom; the finder unit legs fail).
 #  65. seal.ts failThenPass: drop the rewritten-file exclusion (the lone rewritten pinned assertion reads VERIFIED).
 #  67. seal.ts pinDropped: key on the file only again (the F1 unit leg fails); drop the pinLift gate (the F2 unit leg fails); drop CALLED_RIGHT in assert_delta.ts (the called-right unit leg fails).
@@ -1348,7 +1356,7 @@ fi
 # breaks the spec, and the gate stands down before any model call when the diff is over the limit; with LOKI_E10_TOURNAMENT=0 nothing changes.
 TOUR_DRV="$T/tour-drv.ts"
 cat > "$TOUR_DRV" <<'TOURDRV'
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const R = process.env.ROOT!, W = process.env.WORK!;
@@ -1374,6 +1382,7 @@ row("judge", [dd.length, views.map((v: any) => v.viewId).join("/"), ans((v) => l
 // ---------- unit: selection through runTournament with a stub Io ----------
 const lines = (o: Record<string, string>): string => Object.entries(o).map(([id, v]) => `LOKIPROBE ${JSON.stringify({ id, desc: id, out: v })}`).join("\n");
 const cand = (n: number): string => `=== CANDIDATE ${n} ===\n<<<<<<< SEARCH a/a.go\nold\n=======\nc${n}\n>>>>>>> REPLACE\n`;
+const PROG = "package a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"d\", func() any { return F(\"a\") })\n\tlokiProbe(\"p2\", \"d\", func() any { return F(\"b\") })\n\tlokiProbe(\"p3\", \"d\", func() any { return F(\"zzz\") })\n}\n", ISSUE = '`F("a")` and `F("b")` are wrong';
 interface W { base?: Record<string, string>; baseB?: Record<string, string>; agent: Record<string, string>; c1?: Record<string, string>; c2?: Record<string, string>; pass?: Record<string, boolean>; spec?: Record<string, Record<string, "red" | "green" | "error">>; judge?: string | ((u: string) => string); cands?: number; dp?: { reply: string; runs: Record<string, Record<string, string>> }; src?: Record<string, string> }
 async function sel(w: W): Promise<string> {
   const calls: string[] = [], baseOut = w.base ?? { p1: "B0", p2: "B0", p3: "B0" }, runs: Record<string, Record<string, string>> = { agent: w.agent, c1: w.c1 ?? w.agent, c2: w.c2 ?? w.agent };
@@ -1389,7 +1398,7 @@ async function sel(w: W): Promise<string> {
     spec: (d: string) => (w.spec ?? {})[d] ?? null,
   };
   const tf = (d: string): Record<string, string> => ({ "a/a.go": (w.src ?? {})[d] ?? "func F() int {\n\treturn 0\n}" });
-  const r = await t.runTournament({ issue: "i", files: { "a/a.go": "old" }, tests: {} }, llm, io, { program: "PROGRAM", pkg: "a", treeFiles: tf });
+  const r = await t.runTournament({ issue: ISSUE, files: { "a/a.go": "old" }, tests: {} }, llm, io, { program: PROG, pkg: "a", treeFiles: tf });
   return `${r.pick.displaced ? r.pick.winner : "kept"}/${calls.join("+")}`;
 }
 const judgeBacks = (want: string | Record<string, string>) => (u: string) => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const wo = typeof want === "string" ? want : want[id.replace(/^d/, "").split(".")[0]!] ?? want[id.split(".")[0]!]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2] === wo); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n");
@@ -1405,7 +1414,9 @@ row("sel_unstable", await sel({ agent: A, c1: B, base: { p1: "B0", p2: "B0", p3:
 row("sel_position", await sel({ agent: A, c1: B, judge: (u) => u.split("\n").filter((l) => /^PROBE /.test(l)).map((l) => `${/^PROBE (\S+):/.exec(l)![1]}: A`).join("\n") }));
 row("sel_unknown", await sel({ agent: A, c1: B, judge: (u) => u.split("\n").filter((l) => /^PROBE /.test(l)).map((l) => `${/^PROBE (\S+):/.exec(l)![1]}: unknown`).join("\n") }));
 row("sel_judge_down", await sel({ agent: A, c1: B, judge: "" }));
-row("sel_diffprobe", await sel({ src: { agent: "func F() int {\n\treturn 1\n}", c1: "func F() int {\n\treturn 2\n}", c2: "func F() int {\n\treturn 2\n}" }, agent: A, c1: A, c2: A, dp: { reply: "```go\npackage a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"q\", \"dprobe\", func() any { return 1 })\n}\n```", runs: { baseA: { q: "B0" }, baseB: { q: "B0" }, agent: { q: "B0" }, c1: { q: "B" }, c2: { q: "B" } } }, judge: judgeBacks("B") }));
+row("sel_diffprobe", await sel({ src: { agent: "func F() int {\n\treturn 1\n}", c1: "func F() int {\n\treturn 2\n}", c2: "func F() int {\n\treturn 2\n}" }, agent: A, c1: A, c2: A, dp: { reply: "```go\npackage a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"q\", \"dprobe\", func() any { return F(\"a\") })\n}\n```", runs: { baseA: { q: "B0" }, baseB: { q: "B0" }, agent: { q: "B0" }, c1: { q: "B" }, c2: { q: "B" } } }, judge: judgeBacks("B") }));
+row("sel_unnamed", await sel({ agent: { ...A, p3: "B0" }, c1: { ...A, p3: "B" }, judge: judgeBacks("B") }));
+row("sel_agent_red", await sel({ agent: A, c1: B, judge: judgeBacks("B"), pass: { agent: false } }));
 row("sel_diffprobe_not_needed", await sel({ agent: A, c1: B, dp: { reply: "x", runs: {} }, judge: judgeBacks("B") }));
 
 // ---------- real go: the gate over a real repo and real treeswap worktrees ----------
@@ -1419,16 +1430,17 @@ const WRONG = "out = append(out, firstArg)\n\t\t\tcontinue", RIGHT = "out = appe
 const CANDS = (a: string, b: string): string => `=== CANDIDATE 1 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${a}\n>>>>>>> REPLACE\n=== CANDIDATE 2 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${b}\n>>>>>>> REPLACE\n=== CANDIDATE 3 ===\n<<<<<<< SEARCH a/a_test.go\n\t\tt.Fatal(g)\n=======\n\t\tt.Log(g)\n>>>>>>> REPLACE\n`;
 const { attemptDeps } = await import(`${R}/loki-ts/src/engine10/stages/implement.ts`);
 const sh = (c: string, cwd: string): string => execSync(c, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-interface G { agent: string; judge?: (u: string) => string; cands?: string; killed?: boolean; noInput?: boolean; env?: Record<string, string>; llmDown?: boolean; noSign?: boolean; throwOn?: string }
+interface G { probeExtra?: string; agentExtras?: boolean; big?: boolean; report?: boolean; agent: string; judge?: (u: string) => string; cands?: string; killed?: boolean; noInput?: boolean; env?: Record<string, string>; llmDown?: boolean; noSign?: boolean; throwOn?: string }
 let gn = 0;
 async function gate(g: G): Promise<string> {
-  const repo = join(W, `g${gn++}`, "repo"), runDir = join(W, `g${gn}`, "run"); mkdirSync(join(repo, "a"), { recursive: true }); mkdirSync(runDir, { recursive: true });
-  writeFileSync(join(repo, "go.mod"), "module example.com/a\n\ngo 1.21\n"); writeFileSync(join(repo, "a/a.go"), GO_SRC); writeFileSync(join(repo, "a/a_test.go"), GO_TEST);
+  const SRC = g.big ? GO_SRC + "// padding to push the file over the prompt limit\n".repeat(600) : GO_SRC, repo = join(W, `g${gn++}`, "repo"), runDir = join(W, `g${gn}`, "run"); mkdirSync(join(repo, "a"), { recursive: true }); mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(repo, "go.mod"), "module example.com/a\n\ngo 1.21\n"); writeFileSync(join(repo, "a/a.go"), SRC); writeFileSync(join(repo, "a/a_test.go"), GO_TEST);
   sh("git init -q -b main && git add -- . && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m base", repo);
   const baseSha = sh("git rev-parse HEAD", repo), sealedRel = "a/loki_wall_spec_test.go", sealed = HEAD + SPEC_C1;
-  writeFileSync(join(repo, "a/a.go"), GO_SRC.replace(BREAK, g.agent)); writeFileSync(join(repo, sealedRel), sealed);
-  if (!g.noInput) t.writeTournamentInput(runDir, { probe: t.repairGoImports(PROBE).file, pkg: "a", specFile: HEAD + SPEC_C1 + SPEC_P1, targetRel: sealedRel, ...(g.noSign ? {} : { unchecked: ["Report"] }) });
-  const ctx: any = { runId: "r1", repoDir: repo, runDir, baseSha, outputs: () => ({ intake: { task: "# Bare dash drops args\n\n`Split` stops at a lone `-`: `x - a b` gives `[\"-\"]` instead of `[\"-\", \"a\", \"b\"]`.\n" }, wall: { readOnlyFiles: [{ path: join(repo, sealedRel), content: sealed }] } }),
+  writeFileSync(join(repo, "a/a.go"), SRC.replace(BREAK, g.agent)); writeFileSync(join(repo, sealedRel), sealed);
+  if (g.agentExtras) { writeFileSync(join(repo, "a/agent_new_test.go"), "package a\n\nimport \"testing\"\n\nfunc TestAgentNew(t *testing.T) {}\n"); writeFileSync(join(repo, "a/a_test.go"), GO_TEST + "\nfunc TestAgentAddedCase(t *testing.T) {}\n"); writeFileSync(join(repo, "go.mod"), "module example.com/a\n\ngo 1.21\n// agent note\n"); }
+  if (!g.noInput) t.writeTournamentInput(runDir, { probe: t.repairGoImports(g.probeExtra ? PROBE.replace(/\}\n$/, g.probeExtra + "}\n") : PROBE).file, pkg: "a", specFile: HEAD + SPEC_C1 + SPEC_P1, targetRel: sealedRel, ...(g.noSign ? {} : { unchecked: ["Report"] }) });
+  const ctx: any = { runId: "r1", repoDir: repo, runDir, baseSha, outputs: () => ({ intake: { task: "# Bare dash drops args\n\n`Split` stops at a lone `-`: `x - a b` gives `[\"-\"]` instead of `[\"-\", \"a\", \"b\"]`. It also loses what follows a padded dash, `\"  -\"`.\n" }, wall: { readOnlyFiles: [{ path: join(repo, sealedRel), content: sealed }] } }),
     tests: { detect: async () => ({ runners: ["go"], tests: [{ runner: "go", path: "a/a_test.go" }, { runner: "go", path: sealedRel }] }), impacted: () => [] }, sessions: null, emit: () => { throw new Error("the gate must not emit verify events"); } };
   const deps = attemptDeps(ctx, 0, "", 0); deps.impacted = ["a/a_test.go", sealedRel];
   const calls: string[] = [];
@@ -1436,8 +1448,9 @@ async function gate(g: G): Promise<string> {
   const session: any = { killed: g.killed === true, exit: 0, markers: { done: true } };
   const s = await t.runTournamentGate(ctx, new AbortController().signal, session, deps, llm, { ...process.env, ...(g.env ?? {}) });
   if (!s) return "null";
-  const now = readFileSync(join(repo, "a/a.go"), "utf8"), tree = now.includes(WRONG) ? "wrong" : now.includes(RIGHT) ? "right" : "base";
-  return `${s.status}|tree=${tree}|calls=${calls.join("+") || "-"}|sealed=${existsSync(join(repo, sealedRel))}|worktrees=${sh("git worktree list", repo).split("\n").length}|${String(s.reason).slice(0, 60)}${s.status === "error" ? `|receipt=${(s.receipt ?? []).length}` : ""}`;
+  const now = readFileSync(join(repo, "a/a.go"), "utf8"), dash = "if len(firstArg) == 1 {\n\t\t\t", tree = now.includes(dash + RIGHT) ? "right" : now.includes(dash + WRONG) ? "wrong" : now.includes(dash + BREAK) ? "base" : "other";
+  const rep = g.report ? `|leak=${existsSync(join(repo, "a/leak.txt"))}|gomod=${readFileSync(join(repo, "go.mod"), "utf8").includes("leak") ? "leaked" : "clean"}|status=${sh("git status --short", repo).split("\n").map((l) => l.replace(/^\s*\S+\s+/, "")).sort().join(",")}|newtest=${existsSync(join(repo, "a/agent_new_test.go"))}|case=${readFileSync(join(repo, "a/a_test.go"), "utf8").includes("TestAgentAddedCase")}|agentnote=${readFileSync(join(repo, "go.mod"), "utf8").includes("agent note")}` : "";
+  return `${s.status}|tree=${tree}|calls=${calls.join("+") || "-"}|sealed=${existsSync(join(repo, sealedRel))}|worktrees=${sh("git worktree list", repo).split("\n").length}|${String(s.reason).slice(0, 60)}${s.status === "error" ? `|receipt=${(s.receipt ?? []).length}` : ""}${rep}`;
 }
 const backs = (w: string) => (u: string) => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2]!.startsWith(`"[\\"${w}`) || x[2]!.includes(`\\"${w}\\"`)); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n");
 const keepsPad = (u: string): string => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2]!.includes('"  -"') || x[2]!.includes('"\\t-"')); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n");
@@ -1452,6 +1465,21 @@ row("go_throws", await gate({ agent: WRONG, judge: keepsPad, throwOn: "judge" })
 row("go_over_limit", await gate({ agent: WRONG, env: { LOKI_E10_TOURNAMENT_MAX_LINES: "1" } }));
 row("go_killed", await gate({ agent: WRONG, killed: true }));
 row("go_no_input", await gate({ agent: WRONG, noInput: true }));
+const LEAK = `\tlokiProbe("p4", "writes files", func() any { os.WriteFile("leak.txt", []byte("x"), 0o644); f, _ := os.OpenFile("../go.mod", os.O_APPEND|os.O_WRONLY, 0); f.WriteString("// leak\\n"); f.Close(); return 1 })\n`;
+row("go_probe_side_effects", await gate({ agent: WRONG, judge: keepsPad, probeExtra: LEAK, agentExtras: true, report: true }));
+const TRIM = `=== CANDIDATE 1 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${RIGHT}\n>>>>>>> REPLACE\n<<<<<<< SEARCH a/a.go\n\t\tif firstArg == "" || firstArg[0] != '-' {\n\t\t\tout = append(out, rargs[0])\n=======\n\t\tif firstArg == "" || firstArg[0] != '-' {\n\t\t\tout = append(out, trim(rargs[0]))\n>>>>>>> REPLACE\n`;
+row("go_unnamed_input", await gate({ agent: RIGHT, cands: TRIM, probeExtra: `\tlokiProbe("p4", "leading space", func() any { return Split([]string{" x"}) })\n`, judge: (u) => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2] === '["x"]'); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n") }));
+row("go_agent_red", await gate({ agent: "out = append(out, nope)\n\t\t\tcontinue", judge: keepsPad }));
+row("go_big_file", await gate({ agent: WRONG, big: true }));
+row("go_budget", await gate({ agent: WRONG, judge: keepsPad, env: { LOKI_E10_TOURNAMENT_BUDGET_S: "1" }, probeExtra: `\ttime.Sleep(1500 * time.Millisecond)\n` }));
+{ // a kill between the undo record and the end of the apply: the next gate start puts the agent's bytes back
+  const repo = join(W, "kill", "repo"), runDir = join(W, "kill", "run"); mkdirSync(join(repo, "a"), { recursive: true }); mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(repo, "a/a.go"), "agent a.go\n");
+  const kid = spawnSync(process.execPath, ["-e", `const t = await import(${JSON.stringify(R + "/loki-ts/src/features/tournament.ts")}); t.applyWinnerFiles(process.env.REPO, process.env.RUN, [{ path: "a/a.go", content: "candidate a.go\\n" }, { path: "a/new.go", content: "candidate new\\n" }], (i) => { if (i === 0) process.kill(process.pid, "SIGKILL"); });`], { env: { ...process.env, REPO: repo, RUN: runDir } });
+  const mid = readFileSync(join(repo, "a/a.go"), "utf8"), undo = existsSync(join(runDir, "tournament-undo.json"));
+  const r = await t.runTournamentGate({ repoDir: repo, runDir } as any, new AbortController().signal, {} as any, {} as any);
+  row("go_kill_mid_apply", [kid.signal, mid.trim(), undo, readFileSync(join(repo, "a/a.go"), "utf8").trim(), existsSync(join(runDir, "tournament-undo.json")), existsSync(join(repo, "a/new.go")), r].join("|"));
+}
 
 // ---------- unit: warning signs and probe pruning ----------
 const TASK_LOC = "# t\n\n`Split` and `Report` misbehave.\n\n## Location\n\n```go\n\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n```\n";
@@ -1475,6 +1503,8 @@ tcheck "any becomes interface{} outside strings and comments; an unused std impo
 tcheck "candidates parse per number; an ambiguous, unknown-path or missing SEARCH does not apply" cands 'c1:1,c2:1|null,null,"ay"'
 tcheck "order-swap judge: both views must back one output; position answers, unknown and contradictions give no verdict" judge '1,p1.1/p1.2,B,0,0,0,B'
 tcheck "agent kept when no probe separates the trees and no model verdict is asked" sel_same "kept/candidates"
+tcheck "wins only on an input the issue does not name never displace, even anchored" sel_unnamed "kept/candidates+judge"
+tcheck "an agent tree that fails its checks ends the tournament before the candidates call" sel_agent_red "kept/"
 tcheck "two consistent verdicts displace the agent" sel_two "c1/candidates+judge"
 tcheck "one verdict where the agent left the base output does not need a second" sel_one_anchored "c1/candidates+judge"
 tcheck "one verdict where the agent already changed the output is not enough" sel_one_unanchored "kept/candidates+judge"
@@ -1488,6 +1518,12 @@ tcheck "a judge call that fails keeps the agent" sel_judge_down "kept/candidates
 tcheck "the diff probe runs only when the issue probes separate nothing, then the judge rules" sel_diffprobe "c1/candidates+diffprobe+judge"
 tcheck "no diff probe call when the issue probes already separate the trees" sel_diffprobe_not_needed "c1/candidates+judge"
 tcheck "go: a wrong agent tree is displaced in the primary by the right candidate; sealed spec kept, scratch worktrees removed, test-editing candidate refused" go_displace "displaced|tree=right|calls=candidates+judge|sealed=true|worktrees=1|c1 displaces the agent: 2 consistent verdict(s), 0 against, "
+tcheck "go: probe side effects (a written file, an appended go.mod) stay in the scratch tree; only the winner's source edit reaches the user's tree, beside the agent's new test file, added case and go.mod change" go_probe_side_effects "displaced|tree=right|calls=candidates+judge|sealed=true|worktrees=1|c1 displaces the agent: 2 consistent verdict(s), 0 against, |leak=false|gomod=clean|status=a/a.go,a/a_test.go,a/agent_new_test.go,a/loki_wall_spec_test.go,go.mod|newtest=true|case=true|agentnote=true"
+tcheck "go: a right agent tree is not displaced by a verdict on an input the issue never names" go_unnamed_input "kept|tree=right|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
+tcheck "go: an agent tree that fails its own checks makes no model call" go_agent_red "kept|tree=other|calls=-|sealed=true|worktrees=1|agent tree does not pass its checks; kept"
+tcheck "go: a base file over the prompt limit skips the tournament before any model call" go_big_file "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|base file a/a.go is 30464 chars, over the prompt limit (2400"
+tcheck "go: a spent time budget skips, restores nothing it never touched and records the skip" go_budget "error|tree=wrong|calls=-|sealed=true|worktrees=1|tournament skipped: the tournament time budget ran out|receipt=1"
+tcheck "go: a SIGKILL after the first write of a displacement leaves the undo record, and the next gate start puts the agent's file back and removes the partial new file" go_kill_mid_apply "SIGKILL|candidate a.go|true|agent a.go|false|false|"
 tcheck "go: a right agent tree stays (the wrong candidate regresses the spec case P1)" go_right_kept "kept|tree=right|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
 tcheck "go: a margin above the consistent verdicts keeps the agent tree" go_margin3 "kept|tree=wrong|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 3 anchored or 4+ consistent v"
 tcheck "go: a model that returns nothing keeps the agent tree after one call" go_llm_down "kept|tree=wrong|calls=candidates|sealed=true|worktrees=1|no behavioral disagreement"

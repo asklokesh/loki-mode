@@ -11,13 +11,13 @@
 //   - Incumbent-safe selection: the agent's check-passing tree is displaced only by a challenger that regresses no spec case the
 //     agent passes, wins at least `margin` anchored (or margin + 1) consistent verdicts and loses none.
 //   - Calls go through sdk_invoker toolLessCall (no tools, thinking off, priced into the run ledger and the dollar cap).
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { plainTestEnv, spawnGroupSync, stripAnsi } from "../util/check_result.ts";
 import { toolLessCall } from "../runner/sdk_invoker.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { editShapeSites, type EditSite } from "../util/edit_shape.ts";
-import { applyDiff, restoreFromUndo, snapshotDiff } from "../e10ext/treeswap.ts";
+import { applyDiff, snapshotDiff } from "../e10ext/treeswap.ts";
 import { ATTEMPT_EXCLUDES, treeswapOps, type ExtraAttemptsDeps } from "./attempts.ts";
 import { EMITTERS, execSpecBriefOf, extractSpecAtoms, redFilter } from "./exec_spec.ts";
 import { isTestFile } from "../engine10/testmap.ts";
@@ -49,8 +49,6 @@ export interface Io {
   probe(dir: string, program: string): string;
   /** Per-case states of the full executable spec (binding and advisory) in that tree, or null when there is none. */
   spec?(dir: string): SpecStates | null;
-  /** True when the tree edits an existing test or the sealed spec, or otherwise may not enter (treeswap inspect). */
-  vetoed?(dir: string): boolean;
 }
 export interface Context { issue: string; files: Record<string, string>; tests: Record<string, string>; /** what the harness told the implementer (spec brief) */ brief?: string }
 
@@ -413,85 +411,106 @@ export interface Pick { winner: string; reason: string; scores: Record<string, n
  *  (the agent left that input untouched: the missed-site signature); otherwise the challenger needs margin + 1.
  *  picks: probeId -> the output the judge chose on BOTH views (resolveVerdicts). The agent entrant ("agent") is the incumbent and
  *  is displaced only by a check-passing challenger that regresses no spec case the agent passes and, over the probes where the two
- *  differ, wins >= margin consistent verdicts and loses none. Unknown, inconsistent, missing and tied verdicts keep the agent;
+ *  differ, wins >= margin consistent verdicts, at least one of them on an input the issue names, and loses none. Unknown, inconsistent, missing and tied verdicts keep the agent;
  *  cluster size and diff size only order challengers among themselves. */
-export interface SelectOpts { margin?: number; anchor?: ProbeRun }
+export interface SelectOpts { margin?: number; anchor?: ProbeRun; /** probes whose input the issue itself names; with it, a displacement needs a win on one of them */ named?: Set<string> }
 export function select(entrants: Entrant[], d: Disagreement[], picks: Map<string, string>, opts: SelectOpts = {}): Pick {
   const margin = Math.max(1, opts.margin ?? 1), live = entrants.filter((e) => e.checksPass), agent = entrants.find((e) => e.id === "agent");
   if (!agent || !agent.checksPass) return { winner: "agent", reason: "agent tree does not pass its checks; kept", scores: {}, displaced: false };
   const cluster: Record<string, number> = {};
   for (const e of live) cluster[e.id] = 0;
   for (const x of d) for (const o of x.options) for (const id of o.entrants) cluster[id] = (cluster[id] ?? 0) + o.entrants.length;
-  const versus = (c: Entrant): { w: number; l: number; wa: number } => {
-    let w = 0, l = 0, wa = 0;
+  const versus = (c: Entrant): { w: number; l: number; wa: number; wn: number } => {
+    let w = 0, l = 0, wa = 0, wn = 0;
     for (const x of d) {
       const v = picks.get(x.probeId), ao = agent.run[x.probeId], co = c.run[x.probeId];
       if (v === undefined || ao === undefined || co === undefined || ao === co) continue;
-      if (co === v) { w++; if (opts.anchor && opts.anchor[x.probeId] === ao) wa++; } else if (ao === v) l++;
+      if (co === v) { w++; const nm = !opts.named || opts.named.has(x.probeId); if (nm) wn++; if (nm && opts.anchor && opts.anchor[x.probeId] === ao) wa++; } else if (ao === v) l++;
     }
-    return { w, l, wa };
+    return { w, l, wa, wn };
   };
   const scores: Record<string, number> = { agent: 0 }, notes: string[] = [], eligible: { e: Entrant; s: number }[] = [];
   for (const c of live) {
     if (c.id === "agent") continue;
-    const reg = specRegression(agent, c), { w, l, wa } = versus(c);
+    const reg = specRegression(agent, c), { w, l, wa, wn } = versus(c);
     scores[c.id] = w - l;
     if (reg) { notes.push(`${c.id} regresses ${reg}`); continue; }
-    if (l === 0 && (opts.anchor ? wa >= margin || w >= margin + 1 : w >= margin)) eligible.push({ e: c, s: w });
+    if (l === 0 && wn >= 1 && (opts.anchor ? wa >= margin || w >= margin + 1 : w >= margin)) eligible.push({ e: c, s: w });
   }
   const best = [...eligible].sort((a, b) => (b.s - a.s) || (cluster[b.e.id]! - cluster[a.e.id]!) || (a.e.diffLines - b.e.diffLines) || a.e.id.localeCompare(b.e.id))[0];
   const need = opts.anchor ? `${margin} anchored or ${margin + 1}` : `${margin}`;
-  if (!best) return { winner: "agent", reason: d.length === 0 ? "no behavioral disagreement" : `agent kept: no challenger wins ${need}+ consistent verdicts without a loss${notes.length ? ` (${notes.join("; ")})` : ""}`, scores, displaced: false };
+  if (!best) return { winner: "agent", reason: d.length === 0 ? "no behavioral disagreement" : `agent kept: no challenger wins ${need}+ consistent verdicts (one on an input the issue names) without a loss${notes.length ? ` (${notes.join("; ")})` : ""}`, scores, displaced: false };
   return { winner: best.e.id, reason: `${best.e.id} displaces the agent: ${best.s} consistent verdict(s), 0 against, needed ${need}`, scores, displaced: true };
 }
 
-export interface TournamentResult { pick: Pick; entrants: Entrant[]; disagreements: Disagreement[]; picks: Record<string, string>; usd: number; calls: number; unstable: string[]; diffProbe?: { funcs: string[]; cases: number; refused?: string }; candidates: { id: string; applied: boolean }[] }
+export interface TournamentResult { pick: Pick; entrants: Entrant[]; disagreements: Disagreement[]; picks: Record<string, string>; usd: number; calls: number; unstable: string[]; diffProbe?: { funcs: string[]; cases: number; refused?: string }; candidates: { id: string; applied: boolean }[]; named: string[] }
 
 const diffLinesOf = (edits: Edit[]): number => edits.reduce((n, e) => n + e.search.split("\n").length + e.replace.split("\n").length, 0);
 
+const goUnescape = (s: string): string => s.replace(/\\(["\\tnr])/g, (_m, c: string) => (c === "t" ? "\t" : c === "n" ? "\n" : c === "r" ? "\r" : c));
+/** Probes whose input the issue itself names: a string literal of the case (after its id and description) that the issue quotes
+ *  verbatim in quotes or backticks. A displacement needs a win on one of them: an input only the model invented is never enough. */
+export function namedProbes(issue: string, program: string, prefix = ""): Set<string> {
+  const out = new Set<string>(), lines = program.split("\n");
+  for (const b of goCaseBlocks(program)) {
+    const lits = [...lines.slice(b.start, b.end + 1).join("\n").matchAll(/"((?:\\.|[^"\\\n])*)"/g)].map((m) => goUnescape(m[1]!)).slice(2).filter((l) => l.length > 0);
+    if (lits.some((l) => issue.includes(`"${l}"`) || issue.includes(`\`${l}\``))) out.add(`${prefix}${b.id}`);
+  }
+  return out;
+}
+
 /** Runs the tournament over a probe program written earlier (the exec-spec call). Io.materialize("agent") yields the agent session's
- *  finished tree, entered as the incumbent. `treeFiles(dir)` reads the base-relative Go sources of a tree for the diff-directed probe. */
-export async function runTournament(c: Context, llm: LlmCall, io: Io, o: { program: string; pkg: string; treeFiles: (dir: string) => Record<string, string>; margin?: number }): Promise<TournamentResult> {
+ *  finished tree, entered as the incumbent. The agent is evaluated first: when it fails its checks nothing can change and no model
+ *  call is made. `treeFiles(dir)` reads the base-relative Go sources of a tree for the diff-directed probe; `tick` throws when the
+ *  run's time budget is spent. */
+export async function runTournament(c: Context, llm: LlmCall, io: Io, o: { program: string; pkg: string; treeFiles: (dir: string) => Record<string, string>; margin?: number; tick?: () => void }): Promise<TournamentResult> {
   let usd = 0, calls = 0;
-  const call = async (sys: string, user: string, tag: string): Promise<string> => { const r = await llm(sys, user, tag); usd += r.usage.costUsd; calls++; return r.text; };
-  const probeIn = (dir: string, program: string): { run: ProbeRun; probes: Probe[] } => parseProbeOutput(io.probe(dir, program));
-  const specs = parseCandidates(await call(SYS_PATCH, candidatePrompt(c), "candidates")).slice(0, LENSES.length);
+  const tick = o.tick ?? ((): void => {});
+  const call = async (sys: string, user: string, tag: string): Promise<string> => { tick(); const r = await llm(sys, user, tag); usd += r.usage.costUsd; calls++; return r.text; };
+  const probeIn = (dir: string, program: string): { run: ProbeRun; probes: Probe[] } => { tick(); return parseProbeOutput(io.probe(dir, program)); };
   const baseA = io.materialize("base"), baseB = io.materialize("base");
   const pa = baseA ? probeIn(baseA, o.program) : { run: {}, probes: [] }, pb = baseB ? probeIn(baseB, o.program) : { run: {}, probes: [] };
   const stable = stableIds(pa.run, pb.run), unstable = Object.keys(pa.run).filter((k) => !stable.has(k));
   const keep = (r: ProbeRun): ProbeRun => Object.fromEntries(Object.entries(r).filter(([k]) => stable.has(k)));
   const entrants: Entrant[] = [], candidates: { id: string; applied: boolean }[] = [];
   const enter = async (id: string, lens: string, edits: Edit[] | "agent"): Promise<void> => {
+    tick();
     const dir = io.materialize(edits);
     if (edits !== "agent") candidates.push({ id, applied: dir !== null });
     if (!dir) { entrants.push({ id, lens, dir: "", checksPass: false, run: {}, diffLines: 0 }); return; }
-    const ok = !io.vetoed?.(dir) && await io.checks(dir);
+    const ok = await io.checks(dir);
     entrants.push({ id, lens, dir, checksPass: ok, run: ok ? keep(probeIn(dir, o.program).run) : {}, diffLines: edits === "agent" ? 0 : diffLinesOf(edits), spec: ok && io.spec ? io.spec(dir) : null });
   };
+  const done = (pick: Pick, d: Disagreement[], picks: Map<string, string>, named: Set<string>, diffProbe?: TournamentResult["diffProbe"]): TournamentResult => ({ pick, entrants, disagreements: d, picks: Object.fromEntries(picks), usd, calls, unstable, candidates, named: [...named], ...(diffProbe ? { diffProbe } : {}) });
   await enter("agent", "agent session", "agent");
+  const agent = entrants[0]!;
+  if (!agent.checksPass) return done(select(entrants, [], new Map()), [], new Map(), new Set()); // nothing can change: no candidates call, no judge
+  const specs = parseCandidates(await call(SYS_PATCH, candidatePrompt(c), "candidates")).slice(0, LENSES.length);
   for (const s of specs) await enter(s.id, s.lens, s.edits);
-  const probes: Probe[] = pa.probes.filter((p) => stable.has(p.id)), base = keep(pa.run);
-  let diffProbe: TournamentResult["diffProbe"];
+  const probes: Probe[] = pa.probes.filter((p) => stable.has(p.id)), base = keep(pa.run), named = namedProbes(c.issue, o.program);
   const live = entrants.filter((e) => e.checksPass);
-  const agent = entrants.find((e) => e.id === "agent");
-  if (agent?.checksPass && disagreements(entrants, probes).length === 0 && baseA && baseB) { // the issue-derived probes separate nothing: ask for inputs on the code that differs
+  // only probes where a challenger differs from the agent can decide anything (challengers disagreeing among themselves cannot)
+  const vsAgent = (xs: Disagreement[]): Disagreement[] => xs.filter((x) => x.options.length > 1 && x.options.some((q) => q.entrants.includes("agent")));
+  let diffProbe: TournamentResult["diffProbe"];
+  if (live.length > 1 && baseA && baseB && vsAgent(disagreements(entrants, probes)).length === 0) { // the issue-derived probes separate nothing: ask for inputs on the code that differs
     const funcs = differingGoFuncs(live.map((e) => o.treeFiles(e.dir)));
-    if (live.length > 1 && funcs.length > 0) {
+    if (funcs.length > 0) {
       const dc = parseGoProbeCases(extractGoBlock(await call(SYS_DIFFPROBE, diffProbePrompt(c, funcs, o.pkg), "diffprobe")), o.pkg);
       diffProbe = { funcs: funcs.map((f) => `${f.file}:${f.name} x${f.versions.length}`), cases: 0, ...("refused" in dc ? { refused: dc.refused } : {}) };
       if ("file" in dc) {
         const tag = (r: ProbeRun): ProbeRun => Object.fromEntries(Object.entries(r).map(([k, v]) => [`d${k}`, v]));
         const da = probeIn(baseA, dc.file), db = tag(probeIn(baseB, dc.file).run), dra = tag(da.run), ds = stableIds(dra, db);
         diffProbe.cases = ds.size;
+        for (const n of namedProbes(c.issue, dc.file, "d")) named.add(n);
         for (const p of da.probes) if (ds.has(`d${p.id}`)) { probes.push({ id: `d${p.id}`, desc: p.desc }); base[`d${p.id}`] = dra[`d${p.id}`]!; }
         for (const e of live) for (const [k, v] of Object.entries(tag(probeIn(e.dir, dc.file).run))) if (ds.has(k)) e.run[k] = v;
       }
     }
   }
-  const d = disagreements(entrants, probes);
+  const d = vsAgent(disagreements(entrants, probes));
   let picks = new Map<string, string>();
   if (d.length > 0) { const views = judgeViews(d); picks = resolveVerdicts(views, parseVerdicts(await call(SYS_JUDGE, judgePrompt(c, views, base), "judge"))); }
-  return { pick: select(entrants, d, picks, { ...(o.margin ? { margin: o.margin } : {}), anchor: base }), entrants, disagreements: d, picks: Object.fromEntries(picks), usd, calls, unstable, candidates, ...(diffProbe ? { diffProbe } : {}) };
+  return done(select(entrants, d, picks, { ...(o.margin ? { margin: o.margin } : {}), anchor: base, named }), d, picks, named, diffProbe);
 }
 const extractGoBlock = (text: string): string | null => /```go[^\n]*\n([\s\S]*?)```/.exec(text)?.[1] ?? null;
 
@@ -561,15 +580,46 @@ export function warningSigns(task: string, unchecked: string[] | undefined, sour
 export interface TournamentSummary { status: "skipped" | "kept" | "displaced" | "error"; reason: string; receipt?: string[]; [k: string]: unknown }
 const skipped = (reason: string, extra: Record<string, unknown> = {}): TournamentSummary => ({ status: "skipped", reason, ...extra });
 
-/** The implement-stage gate (default on, LOKI_E10_TOURNAMENT=0 opts out, lean path only: the caller passes none when a plan ran). Fires only when the
- *  session finished clean (LOKI_DONE, no conflict, no already-done claim), the exec-spec call left a probe program, the diff is small and
- *  the agent tree passes its checks. Everything runs in scratch worktrees (treeswap); the primary is touched only to displace the
- *  agent tree, and a failed restore throws AttemptsRestoreError (the run cannot be sealed as delivered work). Never throws otherwise. */
+// ---------- applying the winner: only its own source edits reach the user's tree ----------
+export const TOURNAMENT_UNDO_FILE = "tournament-undo.json"; // <runDir>/: the primary's own bytes of every path about to be overwritten
+/** Writes `writes` into the primary. The primary's current bytes of those paths are persisted to <runDir>/tournament-undo.json BEFORE the
+ *  first write, so a kill mid-way is recoverable (recoverTournamentUndo runs at the next gate start); the record is removed once every
+ *  write landed. Nothing but these paths is touched: the agent's tests, go.mod and non-Go files stay as they are. */
+export function applyWinnerFiles(repo: string, runDir: string, writes: { path: string; content: string }[], afterEach?: (i: number) => void): void {
+  const undo = writes.map((w) => { const f = join(repo, w.path); return { path: w.path, b64: existsSync(f) ? readFileSync(f).toString("base64") : null }; });
+  mkdirSync(runDir, { recursive: true });
+  const rec = join(runDir, TOURNAMENT_UNDO_FILE), tmp = `${rec}.tmp`;
+  writeFileSync(tmp, JSON.stringify(undo), "utf8"); renameSync(tmp, rec);
+  writes.forEach((w, i) => { const f = join(repo, w.path); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, w.content); afterEach?.(i); });
+  rmSync(rec, { force: true });
+}
+/** Puts the primary's own bytes back from a record a killed or failed apply left. Returns the paths restored (empty when there is no record). */
+export function recoverTournamentUndo(repo: string, runDir: string): string[] {
+  const rec = join(runDir, TOURNAMENT_UNDO_FILE);
+  if (!existsSync(rec)) return [];
+  const undo = JSON.parse(readFileSync(rec, "utf8")) as { path: string; b64: string | null }[], out: string[] = [];
+  for (const u of undo) { const f = join(repo, u.path); if (u.b64 === null) rmSync(f, { force: true }); else { mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, Buffer.from(u.b64, "base64")); } out.push(u.path); }
+  rmSync(rec, { force: true });
+  return out;
+}
+
+/** The implement-stage gate (default on, LOKI_E10_TOURNAMENT=0 opts out, lean path only: the caller passes none when a plan ran). Fires only
+ *  when the session finished clean (LOKI_DONE, no conflict, no already-done claim), the exec-spec call left a probe program, the diff is
+ *  small, a warning sign says the agent may have missed part of the task, and the agent tree passes its checks. Every tree (the agent's copy
+ *  and the candidates, each the agent's tree plus the candidate's edits to the agent-changed non-test Go files) lives in a scratch worktree
+ *  (treeswap); probes and checks run only there. The user's tree is touched only to displace the agent: the winner's edited source files are
+ *  written over the agent's, after the agent's bytes of exactly those paths are on disk. Any throw restores them, records a skip, and the
+ *  run goes on. */
 export async function runTournamentGate(ctx: RunContext, signal: AbortSignal, session: SessionResult, deps: ExtraAttemptsDeps, llm: LlmCall = toolLessLlm(), env: NodeJS.ProcessEnv = process.env): Promise<TournamentSummary | null> {
+  try { const back = recoverTournamentUndo(ctx.repoDir, ctx.runDir); if (back.length) process.stderr.write(`tournament: restored ${back.join(", ")} from an interrupted displacement\n`); } catch { /* an unreadable record is left for a person */ }
   const input = readInput(ctx.runDir);
   if (!input) return null; // no probe program (exec spec off, not Go, or no probe block): nothing to report, the run is untouched
   if (signal.aborted || session.killed || session.exit !== 0 || !session.markers.done || session.markers.specConflict || session.markers.alreadyDone) return skipped("the implement session did not finish clean (done, no conflict, no already-done claim)");
-  if ((ctx.implementLeftS?.() ?? Infinity) < 150) return skipped("not enough implement time left for three tool-less calls and the scratch checks");
+  const left = ctx.implementLeftS?.() ?? Infinity;
+  if (left < 150) return skipped("not enough implement time left for three tool-less calls and the scratch checks");
+  const deadline = Date.now() + 1000 * Math.min(posInt(env.LOKI_E10_TOURNAMENT_BUDGET_S, 240), left - 90);
+  const tick = (): void => { if (signal.aborted) throw new Error("aborted"); if (Date.now() > deadline) throw new Error("the tournament time budget ran out"); };
+  const remainingMs = (): number => Math.max(5_000, Math.min(60_000, deadline - Date.now()));
   let ops = null as ReturnType<typeof treeswapOps> | null;
   try {
     const map = await ctx.tests.detect(ctx.repoDir), S = map.tests.filter((t) => deps.impacted.includes(t.path));
@@ -578,61 +628,64 @@ export async function runTournamentGate(ctx: RunContext, signal: AbortSignal, se
     if (goFiles.length === 0) return skipped("the agent diff holds no Go source file");
     if (lines > max) return skipped(`the agent diff is ${lines} changed lines, over the ${max} small-diff limit`);
     const files: Record<string, string> = {}; let total = 0;
-    for (const p of goFiles) { const s = baseText(ctx, p); if (s && total + s.length <= TOTAL_CAP) { files[p] = s.slice(0, FILE_CAP); total += Math.min(s.length, FILE_CAP); } }
+    for (const p of goFiles) {
+      const s = baseText(ctx, p);
+      if (!s || s.length > FILE_CAP || total + s.length > TOTAL_CAP) return skipped(`base file ${p} is ${s.length} chars, over the prompt limit (${FILE_CAP} per file, ${TOTAL_CAP} total): a truncated file would break every candidate`);
+      files[p] = s; total += s.length;
+    }
     const tests: Record<string, string> = {};
     for (const t of S) if (t.path.endsWith("_test.go") && !sealed.has(t.path)) { const s = baseText(ctx, t.path); if (s) tests[t.path] = s.slice(0, 6_000); }
     const brief = execSpecBriefOf(ctx.runDir) ?? undefined;
     const c: Context = { issue: String(ctx.outputs().intake?.task ?? ""), files, tests, ...(brief ? { brief } : {}) };
-    if (!c.issue || Object.keys(files).length === 0) return skipped("the task text or the base source of the changed files is not readable");
+    if (!c.issue) return skipped("the task text is not readable");
     const now = Object.fromEntries(goFiles.map((f) => [f, (() => { try { return readFileSync(join(ctx.repoDir, f), "utf8"); } catch { return ""; } })()]));
     let sites: EditSite[] = [];
     try { sites = editShapeSites(safeGit(ctx.repoDir, ["diff", "-U0", "--no-ext-diff", "--no-renames", ctx.baseSha, "--", ...goFiles]), (f) => { try { return readFileSync(join(ctx.repoDir, f), "utf8"); } catch { return null; } }); } catch { /* the other signs still count */ }
     const signs = warningSigns(c.issue, input.unchecked, now, sites);
-    if (signs.length === 0) return skipped("no warning sign: every named site has a binding spec case and the issue's quoted lines changed; no model call");
+    if (signs.length === 0) return skipped("no warning sign: every named site has a binding spec case, the issue's quoted lines changed and no residual site remains; no model call");
 
     const intake = ctx.outputs().intake ?? {}, owned = installOwned(ctx.repoDir, intake.install_created);
     const userUntracked = new Set([...(Array.isArray(intake.preexisting_untracked) ? intake.preexisting_untracked as string[] : []), ...Object.keys((intake.preexisting_untracked_blobs ?? {}) as object)]);
-    const ex = ATTEMPT_EXCLUDES;
-    const slots = LENSES.length + 3; // candidates, the agent copy, two base copies
-    const wallContent = new Map(Object.entries(deps.wallContent ?? {}));
+    const ex = ATTEMPT_EXCLUDES, slots = LENSES.length + 3; // candidates, the agent copy, two base copies
+    const agentSnap = snapshotDiff(ctx.repoDir, ctx.baseSha, ex); // the agent's whole tree, in memory; never written back whole
     const mk = (): ReturnType<typeof treeswapOps> => treeswapOps({
-      primary: ctx.repoDir, runDir: ctx.runDir, base: ctx.baseSha, k: slots, wallPaths: sealed, wallContent, S, outputs: () => ctx.outputs(),
+      primary: ctx.repoDir, runDir: ctx.runDir, base: ctx.baseSha, k: slots, wallPaths: sealed, wallContent: new Map(Object.entries(deps.wallContent ?? {})), S, outputs: () => ctx.outputs(),
       keep: (p) => userUntracked.has(p) || sealed.has(p) || owned(p),
       runSession: () => Promise.reject(new Error("the tournament starts no agent session")), runOne: () => Promise.resolve(),
     });
-    let next = 1; const used = new Map<string, number>();
+    let next = 1; const edited = new Map<string, Record<string, string>>(); // scratch dir -> the candidate's edited files (path -> whole text)
     const spec = input.spec && input.targetRel ? { file: input.spec, rel: input.targetRel } : null;
     const readFiles = (dir: string): Record<string, string> => Object.fromEntries(Object.keys(files).map((f) => [f, (() => { try { return readFileSync(join(dir, f), "utf8"); } catch { return ""; } })()]));
     const io: Io = {
       materialize(edits) {
         ops ??= mk();
         if (next > slots) return null;
-        const i = next++, dir = ops.dirs[i]!;
-        if (edits === "agent") { applyDiff(dir, snapshotDiff(ctx.repoDir, ctx.baseSha, ex), ex); used.set(dir, i); return dir; }
-        if (edits !== "base") {
-          const done = applyEdits(files, edits); if (!done) return null;
-          for (const [p, s] of Object.entries(done)) if (s !== files[p]) { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), s); }
-          for (const [p, s] of wallContent) { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), s); }
-        }
-        used.set(dir, i); return dir;
+        const dir = ops.dirs[next++]!;
+        if (edits === "base") return dir;
+        applyDiff(dir, agentSnap, ex); // every candidate starts from the agent's tree: its tests, go.mod and non-Go changes stay
+        if (edits === "agent") return dir;
+        const done = applyEdits(files, edits); if (!done) return null;
+        const mine: Record<string, string> = {};
+        for (const [p, t] of Object.entries(done)) if (t !== files[p]) { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), t); mine[p] = t; } // the candidate's version of a file replaces the agent's
+        edited.set(dir, mine);
+        return dir;
       },
       async checks(dir) {
         const out: AttemptCheck[] = [], sc = { ...ctx, repoDir: dir, emit: () => {} } as RunContext; // scratch checks are not verify results: no test.result events
-        for (const t of S) await deps.check(sc, t, signal, out);
+        for (const t of S) { tick(); await deps.check(sc, t, signal, out); }
         return out.length > 0 && out.every((x) => x.result === "pass");
       },
-      probe: (dir, program) => runGoProbe(dir, input.pkgRel, input.pkg, program).stdout,
-      ...(spec ? { spec: (dir: string): SpecStates | null => { const r = redFilter(EMITTERS.go, dir, spec.rel, spec.file); return r.built ? r.cases : null; } } : {}),
-      vetoed: (dir) => { const i = used.get(dir); return i === undefined ? false : ops!.inspect(i).weakensTest; },
+      probe: (dir, program) => runGoProbe(dir, input.pkgRel, input.pkg, program, remainingMs()).stdout,
+      ...(spec ? { spec: (dir: string): SpecStates | null => { tick(); const r = redFilter(EMITTERS.go, dir, spec.rel, spec.file); return r.built ? r.cases : null; } } : {}),
     };
-    const r = await runTournament(c, llm, io, { program: input.program, pkg: input.pkg, treeFiles: readFiles, margin: tournamentMargin(env) });
-    const win = r.pick.winner === "agent" ? 0 : used.get(r.entrants.find((e) => e.id === r.pick.winner)?.dir ?? "") ?? 0;
-    if (win > 0 && ops) { for (const p of wallContent.keys()) rmSync(join(ops.dirs[win]!, p), { force: true }); ops.enter(win); } // the primary already holds the sealed files
-    const receipt = receiptLines(r);
-    return { status: win > 0 ? "displaced" : "kept", reason: r.pick.reason, signs, winner: r.pick.winner, calls: r.calls, usd: Number(r.usd.toFixed(6)), candidates: r.candidates, entrants: r.entrants.map((e) => ({ id: e.id, checks: e.checksPass, diff_lines: e.diffLines, probes: Object.keys(e.run).length })), disagreements: r.disagreements.length, verdicts: r.picks, unstable: r.unstable, ...(r.diffProbe ? { diff_probe: r.diffProbe } : {}), receipt };
-  } catch (e) { // any throw: the agent tree is put back byte for byte, the receipt says so, the run goes on
+    const r = await runTournament(c, llm, io, { program: input.program, pkg: input.pkg, treeFiles: readFiles, margin: tournamentMargin(env), tick });
+    const winEdits = r.pick.winner === "agent" ? null : edited.get(r.entrants.find((e) => e.id === r.pick.winner)?.dir ?? "") ?? null;
+    if (winEdits) applyWinnerFiles(ctx.repoDir, ctx.runDir, Object.entries(winEdits).map(([path, content]) => ({ path, content })));
+    const replaced = winEdits ? Object.keys(winEdits) : [], receipt = receiptLines(r, replaced);
+    return { status: winEdits ? "displaced" : "kept", reason: r.pick.reason, signs, winner: r.pick.winner, replaced, calls: r.calls, usd: Number(r.usd.toFixed(6)), candidates: r.candidates, entrants: r.entrants.map((e) => ({ id: e.id, checks: e.checksPass, diff_lines: e.diffLines, probes: Object.keys(e.run).length })), disagreements: r.disagreements.length, verdicts: r.picks, named: r.named, unstable: r.unstable, ...(r.diffProbe ? { diff_probe: r.diffProbe } : {}), receipt };
+  } catch (e) { // any throw: the agent's own bytes are put back for every path an apply may have touched, the receipt says so, the run goes on
     let why = e instanceof Error ? e.message.split("\n")[0]! : String(e);
-    if (ops) { try { ops.enter(0); } catch (e2) { try { restoreFromUndo(ctx.repoDir, ctx.runDir, ATTEMPT_EXCLUDES); } catch (e3) { why += `; restoring the agent tree also failed (${(e3 instanceof Error ? e3.message : String(e3)).split("\n")[0]}, first: ${(e2 instanceof Error ? e2.message : String(e2)).split("\n")[0]})`; } } }
+    try { recoverTournamentUndo(ctx.repoDir, ctx.runDir); } catch (e2) { why += `; restoring the agent's files also failed (${(e2 instanceof Error ? e2.message : String(e2)).split("\n")[0]})`; }
     return { status: "error", reason: `tournament skipped: ${why}`, receipt: [`tournament skipped: ${why}`.replace(/[\u0000-\u001f\u007f]+/g, " ")] };
   } finally {
     try { ops?.dispose(); } catch { /* worktrees removed by exact path; a leak is cleaned with the temp root */ }
@@ -641,11 +694,11 @@ export async function runTournamentGate(ctx: RunContext, signal: AbortSignal, se
 
 // ---------- receipt ----------
 /** One line per candidate and per disagreement, then the decision. The receipt carries these under "Candidate tournament". */
-export function receiptLines(r: TournamentResult): string[] {
+export function receiptLines(r: TournamentResult, replaced: string[] = []): string[] {
   const out: string[] = [];
   for (const e of r.entrants) out.push(`${e.id}: ${e.dir === "" ? "edit did not apply" : e.checksPass ? `checks pass, ${Object.keys(e.run).length} probes` : "checks fail or a test was edited"}`);
   for (const d of r.disagreements) { const v = r.picks[d.probeId]; out.push(`disagreement ${d.probeId} (${d.desc.slice(0, 80)}): ${d.options.map((o) => `${o.entrants.join("+")} -> ${o.out.slice(0, 60)}`).join(" | ")}; judge: ${v === undefined ? "no consistent verdict" : `backed ${v.slice(0, 60)}`}`); }
-  out.push(`decision: ${r.pick.displaced ? `agent tree displaced by ${r.pick.winner}` : "agent tree kept"} (${r.pick.reason})`);
+  out.push(`decision: ${r.pick.displaced ? `agent tree displaced by ${r.pick.winner}; its version of ${replaced.join(", ")} replaced the agent's, everything else the agent changed (tests, go.mod, other files) stays` : "agent tree kept"} (${r.pick.reason})`);
   return out.map((l) => l.replace(/[\u0000-\u001f\u007f]+/g, " "));
 }
 /** seal.ts: the receipt block for the implement output; {} (key omitted, receipt hash unchanged) when no tournament ran. */
