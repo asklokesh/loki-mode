@@ -163,9 +163,13 @@ Flags, from the engine's own `--help`:
   `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set, and no dollar cap on a
   subscription login (usage then counts against your plan limits). Source:
   `loki-ts/src/e10ext/budget_cap.ts`. The start line shows the cap in force,
-  for example `cap $100.00 (default)` or `no dollar cap (subscription)`. Once
-  priced cost reaches the cap the running stage is stopped, no later stage
-  starts, and the run ends BUDGET_STOP with exit code 3. Sessions with no
+  for example `cap $100.00 (default)` or `no dollar cap (subscription)`, then
+  the cost and time quote, for example `estimate: about $0.19 (range
+  $0.12-$0.39), about 1 min (range 1-5 min), first run in this repo (benchmark
+  prior, loki-default)`. Once priced cost reaches the cap no later stage
+  starts and each session is limited to what is left; the closing stages seal
+  what exists (PARTIAL with the work on `loki/<runId>`, or BUDGET_STOP with exit
+  code 3 when no receipt was sealed; see docs/cost-controls.md). Sessions with no
   provider price never count toward the cap. On the previous loop the same cap
   is `LOKI_BUDGET_LIMIT` (default 100.00 USD; set it to an empty string for
   unlimited), and a breach pauses the run instead of killing it.
