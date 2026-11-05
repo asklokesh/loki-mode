@@ -1442,7 +1442,7 @@ async function gate(g: G): Promise<string> {
   sh("git init -q -b main && git add -- . && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m base", repo);
   const baseSha = sh("git rev-parse HEAD", repo), sealedRel = "a/loki_wall_spec_test.go", sealed = HEAD + SPEC_C1;
   writeFileSync(join(repo, "a/a.go"), SRC.replace(BREAK, g.agent)); writeFileSync(join(repo, sealedRel), sealed);
-  if (g.weakenTest) writeFileSync(join(repo, "a/a_test.go"), GO_TEST.replace("t.Fatal(g)", "t.Log(g)"));
+  if (g.weakenTest) writeFileSync(join(repo, "a/a_test.go"), GO_TEST.replace("func TestSplitPlain(t *testing.T) {", "func TestSplitPlain(t *testing.T) {\n\tt.Skip(\"flaky\")"));
   if (g.agentExtras) { writeFileSync(join(repo, "a/agent_new_test.go"), "package a\n\nimport \"testing\"\n\nfunc TestAgentNew(t *testing.T) {}\n"); writeFileSync(join(repo, "a/a_test.go"), GO_TEST + "\nfunc TestAgentAddedCase(t *testing.T) {}\n"); writeFileSync(join(repo, "go.mod"), "module example.com/a\n\ngo 1.21\n// agent note\n"); }
   if (!g.noInput) t.writeTournamentInput(runDir, { probe: t.repairGoImports(g.probeExtra ? PROBE.replace(/\}\n$/, g.probeExtra + "}\n") : PROBE).file, pkg: "a", specFile: HEAD + SPEC_C1 + SPEC_P1, targetRel: sealedRel, ...(g.noSign ? {} : { unchecked: ["Report"] }) });
   const ctx: any = { runId: "r1", repoDir: repo, runDir, baseSha, outputs: () => ({ intake: { task: "# Bare dash drops args\n\n`Split` stops at a lone `-`: `x - a b` gives `[\"-\"]` instead of `[\"-\", \"a\", \"b\"]`. It also loses what follows a padded dash, `\"  -\"`.\n" }, wall: { readOnlyFiles: [{ path: join(repo, sealedRel), content: sealed }] } }),
