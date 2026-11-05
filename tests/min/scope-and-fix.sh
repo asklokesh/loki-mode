@@ -676,12 +676,12 @@ done
 
 # Wall-off verdict on the REAL runners (rule 22; the Wall session is off by default, so a change is VERIFIED only on harness-run evidence): a fix to double() whose NEW test in the
 # existing test file fails on the base commit and passes on the change is VERIFIED; a new test that also passes on the base is PARTIAL (NO_FAIL_THEN_PASS); a weakened test is PARTIAL even beside a
-# fail-then-pass test; a broken fix is not VERIFIED. util's own pre-existing test is the untouched suite (it never names double()). Plant legs are listed in the header (52-55).
+# fail-then-pass test; a broken fix is not VERIFIED. util's pre-existing test runs through calc.add and never names double(), so it is exogenous proof that does not exercise the fix. Plant legs are listed in the header (52-55).
 wo_receipt() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(sys.argv[2] and {"np":r.get("not_proven"),"mp":r.get("mutation_proof"),"ck":[c["name"]+"="+c["result"] for c in r["checks"]]}[sys.argv[2]])' "$RUNDIR/receipt.json" "$1" 2>/dev/null; }
 make_wo_vt_repo() {
     make_vt_repo "$1"
     printf 'export function double(a: number): number {\n  return a + a + 1;\n}\n' > "$1/calc.ts.new"; cat "$1/calc.ts.new" >> "$1/calc.ts"; rm -f "$1/calc.ts.new"
-    printf 'export const inc = (n: number): number => n + 1;\n' > "$1/util.ts"
+    printf 'import { add } from "./calc";\n\nexport const inc = (n: number): number => add(n, 1);\n' > "$1/util.ts"
     printf 'import { expect, test } from "vitest";\nimport { inc } from "./util";\n\ntest("inc", () => {\n  expect(inc(1)).toBe(2);\n});\n' > "$1/util.test.ts"
     [ -n "${WO_RED:-}" ] && printf '\ntest("double", () => {\n  expect(calc.double(3)).toBe(6);\n});\n' >> "$1/calc.test.ts" # WO_RED: calc.test.ts is already red on the base
     return 0
@@ -690,7 +690,7 @@ make_wo_py_repo() {
     mkdir -p "$1"
     printf 'def add(a, b):\n    return a + b\n\n\ndef double(a):\n    return a + a + 1\n' > "$1/calc.py"
     printf 'import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n    assert calc.add(0, 0) == 0\n' > "$1/test_calc.py"
-    printf 'def inc(n):\n    return n + 1\n' > "$1/util.py"
+    printf 'from calc import add\n\n\ndef inc(n):\n    return add(n, 1)\n' > "$1/util.py"
     printf 'import util\n\n\ndef test_inc():\n    assert util.inc(1) == 2\n' > "$1/test_util.py"
     [ -n "${WO_RED:-}" ] && printf '\n\ndef test_double():\n    assert calc.double(3) == 6\n' >> "$1/test_calc.py" # WO_RED: test_calc.py is already red on the base
     return 0
