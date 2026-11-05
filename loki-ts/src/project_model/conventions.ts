@@ -177,6 +177,24 @@ const FEAT = /^(?:feat|feature|add|adds|added|support|allow|introduce|implement)
 /** LOKI_E10_SCAFFOLD gates the fragment writer; the default is set by the measured false-write count (see the PR body). */
 export const fragmentWriterOn = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_SCAFFOLD === "1";
 
+/** The towncrier types a repo declares ([[tool.towncrier.type]] directory keys), else towncrier's defaults. */
+function towncrierTypes(repoDir: string): string[] {
+  const cfg = ["towncrier.toml", ".towncrier.toml", "pyproject.toml"].map((c) => { try { return readFileSync(join(repoDir, c), "utf8"); } catch { return ""; } }).join("\n");
+  const types = [...cfg.matchAll(/\[\[tool\.towncrier\.type\]\][^[]*?directory\s*=\s*["'](\w+)["']/g)].map((m) => m[1]!);
+  return types.length ? types : ["feature", "bugfix", "doc", "removal", "misc"];
+}
+/** A real fragment of the repo (name `<issue>.<type>[.<ext>]` or `+<slug>.<type>[.<ext>]` with a declared type), the newest among those with the most common extension; helper files such as _template.rst never count. */
+function towncrierExample(repoDir: string, dir: string): string | null {
+  const types = towncrierTypes(repoDir);
+  try {
+    const frags = readdirSync(join(repoDir, dir)).filter((n) => /^\+?[\w-]+\.[a-z]+(?:\.[a-z]+)?$/.test(n) && types.includes(n.split(".")[1]!)).map((n) => ({ n, ext: n.split(".").slice(2).join("."), t: statSync(join(repoDir, dir, n)).mtimeMs }));
+    const count = new Map<string, number>(); for (const f of frags) count.set(f.ext, (count.get(f.ext) ?? 0) + 1);
+    const top = [...count.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0]?.[0];
+    const f = frags.filter((x) => x.ext === top).sort((x, y) => y.t - x.t || y.n.localeCompare(x.n))[0];
+    return f ? `${dir}/${f.n}` : null;
+  } catch { return null; }
+}
+
 export type FragmentOutcome = { path: string; kind: string; body: string; validated: "ok" | "unavailable" } | { skipped: string };
 /** Writes the release-note fragment the repo's own convention asks for, when the run's diff has none. `files` are the repo-relative paths the run changed
  *  (changedFiles); `summary` is the tail of the implement session's final message. Writes only for a convention this function can follow exactly
@@ -190,9 +208,10 @@ export function writeReleaseNoteFragment(repoDir: string, files: string[], task:
   if (live.some((f) => f.startsWith(`${conv.dir}/`) && !/readme|config\.json$|\.toml$/i.test(basename(f)))) return { skipped: "the change already carries a fragment" };
   const code = live.filter((f) => FRAGMENT_CODE.test(f) && !isTestFile(f) && !f.startsWith(`${conv.dir}/`));
   if (code.length === 0) return { skipped: "no non-test code changed" };
+  const example = conv.kind === "towncrier" ? towncrierExample(repoDir, conv.dir) : conv.example;
   const raw = fragmentTitle(task);
   if (internalTitle(raw)) return { skipped: "the title marks an internal change (chore, refactor, ci, docs, deps ...)" };
-  const exBody = conv.example ? ((): string => { try { return readFileSync(join(repoDir, conv.example!), "utf8"); } catch { return ""; } })() : "";
+  const exBody = example ? ((): string => { try { return readFileSync(join(repoDir, example), "utf8"); } catch { return ""; } })() : "";
   const title = CONV_PREFIX.test(exBody.replace(/^---[\s\S]*?\n---\s*/, "").trimStart()) ? raw : raw.replace(CONV_PREFIX, ""), note = summaryNote(summary, title); // a conventional prefix stays only where the repo's own fragments carry one
   const lead = title.length >= 12 ? title : note;
   if (!lead) return { skipped: "no usable title or summary for a body" };
@@ -210,12 +229,11 @@ export function writeReleaseNoteFragment(repoDir: string, files: string[], task:
     let n = `${slug}.md`; for (let i = 2; existsSync(join(dir, n)); i++) n = `${slug}-${i}.md`;
     rel = `${conv.dir}/${n}`; text = `---\n${[...names].sort().map((p) => `${q}${p}${q}: ${bump}`).join("\n")}\n---\n\n${sentence(body, exText.replace(/^---[\s\S]*?\n---\s*/, ""))}\n`;
   } else {
-    if (!conv.example) return { skipped: "towncrier: no existing fragment to take the naming from" };
-    const parts = basename(conv.example).split("."), orphan = parts[0]!.startsWith("+");
+    if (!example) return { skipped: "towncrier: no existing fragment to take the naming from" };
+    const parts = basename(example).split("."), orphan = parts[0]!.startsWith("+");
     const issue = /(?:^|[\s(])#(\d+)\b/.exec(task)?.[1];
     if (!issue && !orphan) return { skipped: "towncrier: the task names no issue number and the repo does not use orphan fragments" };
-    const cfgText = ["towncrier.toml", ".towncrier.toml", "pyproject.toml"].map((c) => { try { return readFileSync(join(repoDir, c), "utf8"); } catch { return ""; } }).join("\n");
-    const types = [...cfgText.matchAll(/\[\[tool\.towncrier\.type\]\][^[]*?directory\s*=\s*["'](\w+)["']/g)].map((m) => m[1]!), known = types.length ? types : ["feature", "bugfix", "doc", "removal", "misc"];
+    const known = towncrierTypes(repoDir);
     const kind = FEAT.test(raw) ? known.find((t) => /feat/.test(t)) : FIX.test(raw) ? known.find((t) => /bug|fix/.test(t)) : undefined;
     if (!kind) return { skipped: "towncrier: the change type is not clear from the task" };
     const ext = parts.length >= 3 ? `.${parts[parts.length - 1]}` : "";

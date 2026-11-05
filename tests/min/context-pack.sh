@@ -213,7 +213,7 @@ out.fw_strip = r23.path && rf(join(w23, r23.path), "utf8").endsWith("\n\nadd a -
 const w24 = mk("w24", csFiles({ ".changeset/old.md": '---\n"@acme/core": patch\n---\n\nfix: older fix\n' })); const r24 = wf(w24, ["packages/core/src/a.ts"], "fix: wrong total when the invoice is empty", "", { tools: false }) as { path?: string };
 out.fw_keep_prefix = r24.path && rf(join(w24, r24.path), "utf8").endsWith("\n\nfix: wrong total when the invoice is empty\n") ? "ok" : "bad";
 // towncrier
-const tcFiles = (extra: Record<string, string> = {}) => ({ "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\n', "changes/7.feature.rst": "Added a thing.\n", "pkg/mod.py": "x = 1\n", ...extra });
+const tcFiles = (extra: Record<string, string> = {}) => ({ "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\n', "changes/7.feature.rst": "Added a thing.\n", "changes/_template.rst": "{{ text }}\n", "changes/README.rst": "notes\n", "pkg/mod.py": "x = 1\n", ...extra });
 const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, files, task, "", { tools: false }) as { path?: string; skipped?: string };
 const w17 = mk("w17", tcFiles()); const r17 = tw(w17, "Fix crash when the cache is empty (#42)");
 out.tc_path = r17.path ?? `skipped:${r17.skipped}`; out.tc_text = r17.path ? rf(join(w17, r17.path), "utf8") : "";
