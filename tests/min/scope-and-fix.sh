@@ -197,6 +197,10 @@
 #  99. no_regression.ts overrideVerdict: drop the named-function exemption (the named-function requested leg flips to blocking).
 # 100. no_regression.ts rewriteAssertsIssueValue: accept any issue substring again (the loosely mentioned rewrite reads requested).
 # 101. no_regression.ts runNoRegression: treat an empty judge reply as no finding (the incomplete legs read false).
+# 102. no_regression.ts overrideVerdict: turn a doubtful judge "requested" into "unrequested" again (the verdict-correction and judge-outcome legs read a block).
+# 103. no_regression.ts makeScratch: ignore the user's untracked files (the untracked-in-both-copies leg reads false).
+# 104. no_regression.ts runNoRegression: never report an unbuilt probe as not run (the relative-replace leg reads fired or clean).
+# 105. no_regression.ts runNrdGate: ignore the wall budget (the budget legs read fired).
 #  64. assert_delta.ts reportedValues: drop the WANTED_BEFORE skip (the "should return" value reads as a symptom; the finder unit legs fail).
 #  65. seal.ts failThenPass: drop the rewritten-file exclusion (the lone rewritten pinned assertion reads VERIFIED).
 #  67. seal.ts pinDropped: key on the file only again (the F1 unit leg fails); drop the pinLift gate (the F2 unit leg fails); drop CALLED_RIGHT in assert_delta.ts (the called-right unit leg fails).
@@ -1751,14 +1755,16 @@ row("verdict_override", ["requested", "requested", "unknown", "unrequested"].map
   const empty = await n.runNoRegression({ issue: ISSUE, programs: [{ src: PRE }], run, llm: async () => ({ text: "", usage: { costUsd: 0 } }) });
   row("fake_empty_judge", [!!empty.incomplete, empty.blocking.length, empty.groups.length].join("|"));
 }
+row("stated_override", [n.overrideVerdict("Rename\n\nExpected: the header reads \"Title\".", { id: "k", desc: "d", source: "probe", before: '"Heading"', after: '"Title"' }, "unrequested"), n.overrideVerdict("Rename\n\nExpected: the header reads \"Title\".", { id: "k", desc: "d", source: "probe", before: '"Heading"', after: '"Banner"' }, "unrequested"), n.overrideVerdict("Title\n\nThe old \"Banner\" is wrong.", { id: "k", desc: "d", source: "probe", before: '"Heading"', after: '"Banner"' }, "unrequested")].join(","));
 row("groups", [n.nrdGroupsFor({ no_regression: { groups: [{ signature: "no-regression: x", count: 2, sample: "s" }] } }, 0).length, n.nrdGroupsFor({ no_regression: { groups: [{ signature: "no-regression: x", count: 2, sample: "s" }] } }, 1).length, n.nrdGroupsFor({ no_regression: { groups: [{ bad: 1 }] } }, 0).length, n.nrdGroupsFor(undefined, 0).length].join(","));
 row("knob", [n.nrdEnabled({}), n.nrdEnabled({ LOKI_E10_NRD: "0" }), n.nrdEnabled({ LOKI_E10_NRD: "1" })].join(","));
 row("rules", [t.probeIntake.rules === t.GO_PROBE_RULES, n.nrdProbeIntake.rules === t.GO_PROBE_RULES].join(","));
 
 // ---------- the gate on real repos ----------
 const sh = (cwd: string, ...a: string[]): string => execFileSync("git", ["-C", cwd, ...a], { encoding: "utf8" });
-function mk(fx: string, variant: string): { repo: string; base: string; run: string } {
+function mk(fx: string, variant: string, relReplace = false): { repo: string; base: string; run: string } {
   const work = mkdtempSync(join(W, "r-")), repo = join(work, "repo"); cpSync(join(FX, fx, "repo"), repo, { recursive: true });
+  if (relReplace) { mkdirSync(join(work, "x")); writeFileSync(join(work, "x", "go.mod"), "module example.com/x\n\ngo 1.21\n"); writeFileSync(join(work, "x", "x.go"), "package x\n"); writeFileSync(join(repo, fx === "gitlog" ? "changelog" : "flags", "zz_dep.go"), `package ${fx === "gitlog" ? "changelog" : "flags"}\n\nimport _ "example.com/x"\n`); writeFileSync(join(repo, "go.mod"), readFileSync(join(repo, "go.mod"), "utf8") + "\nrequire example.com/x v0.0.0\n\nreplace example.com/x => ../x\n"); }
   sh(repo, "init", "-q", "-b", "main"); sh(repo, "config", "user.name", "t"); sh(repo, "config", "user.email", "t@example.invalid"); sh(repo, "add", "-A"); sh(repo, "commit", "-q", "-m", "base");
   const base = sh(repo, "rev-parse", "HEAD").trim();
   if (variant === "docs") writeFileSync(join(repo, "NOTES.md"), "notes\n"); else if (variant !== "none") execFileSync("git", ["-C", repo, "apply", "-p1", join(FX, fx, "variants", `${variant}.patch`)]);
@@ -1774,11 +1780,12 @@ const hashTree = (repo: string): string => {
   return createHash("sha256").update(out.join("\n") + sh(repo, "status", "--porcelain") + sh(repo, "worktree", "list") + sh(repo, "branch", "-a")).digest("hex").slice(0, 12);
 };
 const leftovers = (): number => readdirSync(tmpdir()).filter((x) => x.startsWith("loki-nrd-")).length;
-async function gate(fx: string, variant: string, o: { env?: NodeJS.ProcessEnv; killed?: boolean; post?: boolean; judgeThrows?: boolean; judgeEmpty?: boolean } = {}): Promise<{ s: string; r: any; tags: string[]; same: boolean }> {
-  const { repo, base, run } = mk(fx, variant), truth = JSON.parse(readFileSync(join(FX, fx, "stub", "verdicts.json"), "utf8")) as Record<string, string>, tags: string[] = [];
+async function gate(fx: string, variant: string, o: { env?: NodeJS.ProcessEnv; killed?: boolean; post?: boolean; judgeThrows?: boolean; judgeEmpty?: boolean; relReplace?: boolean; slowJudgeMs?: number } = {}): Promise<{ s: string; r: any; tags: string[]; same: boolean }> {
+  const { repo, base, run } = mk(fx, variant, o.relReplace), truth = JSON.parse(readFileSync(join(FX, fx, "stub", "verdicts.json"), "utf8")) as Record<string, string>, tags: string[] = [];
   const llm = async (_s: string, u: string, tag: string) => {
     tags.push(tag);
     if (tag === "judge" && o.judgeThrows) throw new Error("model transport blew up");
+    if (tag === "judge" && o.slowJudgeMs) await new Promise((res) => setTimeout(res, o.slowJudgeMs));
     if (tag === "judge" && o.judgeEmpty) return { text: "", usage: { costUsd: 0 } };
     if (tag === "nrd-probe") return { text: o.post ? "```go\n" + readFileSync(join(FX, fx, "stub", "probe.go"), "utf8") + "```" : "no block", usage: { costUsd: 0 } };
     return { text: [...u.matchAll(/^CASE (\S+):/gm)].map((m) => `${m[1]}: ${truth[m[1]!.split("#")[0]!] ?? "unknown"}`).join("\n"), usage: { costUsd: 0 } };
@@ -1793,7 +1800,7 @@ const legs: [string, string, string, any?][] = [
   ["go_gitlog_shared", "gitlog", "regress-shared"], ["go_gitlog_param", "gitlog", "correct-param"], ["go_gitlog_render", "gitlog", "regress-render"], ["go_gitlog_edit_ok", "gitlog", "correct-edit-test"], ["go_gitlog_edit_bad", "gitlog", "regress-edit-test"],
   ["go_flag_lookup", "flagusage", "regress-lookup"], ["go_flag_shared", "flagusage", "regress-shared"], ["go_flag_local", "flagusage", "correct-local"],
   ["go_post_runs", "gitlog", "regress-shared", { post: true }], ["go_knob0", "gitlog", "regress-shared", { env: { LOKI_E10_NRD: "0" } }], ["go_killed", "gitlog", "regress-shared", { killed: true }], ["go_docs_only", "gitlog", "docs"],
-  ["go_judge_down", "gitlog", "regress-shared", { judgeThrows: true }], ["go_judge_empty", "gitlog", "regress-shared", { judgeEmpty: true }],
+  ["go_judge_down", "gitlog", "regress-shared", { judgeThrows: true }], ["go_judge_empty", "gitlog", "regress-shared", { judgeEmpty: true }], ["go_relreplace", "gitlog", "regress-shared", { relReplace: true }], ["go_budget0", "gitlog", "regress-shared", { env: { LOKI_E10_NRD_BUDGET_S: "0" } }], ["go_budget_slow_judge", "gitlog", "regress-shared", { env: { LOKI_E10_NRD_BUDGET_S: "15" }, slowJudgeMs: 20000 }],
 ];
 if (process.env.NRD_SLOW === "1") { // opt-in slow leg: the other variants of both fixtures, regress-* fire with one judge call, correct-* are clean with none
   for (const [k, fx, v] of [["gitlog", "gitlog", "correct-filter"], ["gitlog", "gitlog", "correct-own"], ["flagusage", "flagusage", "correct-param"]]) row(`slow_${k}_${v}`, (await gate(fx!, v!)).s);
@@ -1804,6 +1811,8 @@ for (const [k, fx, v, o] of legs) { done[k] = await gate(fx, v, o); row(k, done[
 row("go_tree_untouched", [done["go_gitlog_edit_ok"]!.same, done["go_gitlog_edit_bad"]!.same, done["go_gitlog_shared"]!.same, done["go_judge_down"]!.same].join(","));
 row("go_replay_seen", done["go_gitlog_edit_bad"]!.r.receipt.some((l: string) => l.includes("existing test TestRenderSkipsBlankSubjects")));
 row("go_judge_incomplete", [String(done["go_judge_down"]!.r.receipt?.[0]).startsWith("NOT PROVEN: regression check incomplete: model transport"), (done["go_judge_empty"]!.r.receipt as string[]).some((l) => l.startsWith("NOT PROVEN: regression check incomplete: the judge reply was empty")), done["go_judge_empty"]!.r.status].join(","));
+row("go_notrun", [done["go_relreplace"]!.r.status, (done["go_relreplace"]!.r.receipt as string[]).some((l) => l.startsWith("NOT PROVEN: regression check not run: the probe program did not build")), done["go_budget0"]!.r.status, (done["go_budget0"]!.r.receipt as string[]).some((l) => l.startsWith("NOT PROVEN: regression check not run: the 0 s wall budget")), done["go_budget_slow_judge"]!.r.status].join(","));
+{ const { repo, base } = mk("gitlog", "none"); writeFileSync(join(repo, "mine.local"), "x\n"); const sc = n.makeScratch(repo, base, new Set(), ["mine.local"]); row("go_untracked_both", [existsSync(join(sc.base, "mine.local")), existsSync(join(sc.patched, "mine.local"))].join(",")); sc.dispose(); const sc2 = n.makeScratch(repo, base, new Set()); row("go_untracked_agent_only", [existsSync(join(sc2.base, "mine.local")), existsSync(join(sc2.patched, "mine.local"))].join(",")); sc2.dispose(); }
 row("go_judge_down_reason", String(done["go_judge_down"]!.r.reason).slice(0, 56));
 row("go_unknown_advisory", done["go_gitlog_shared"]!.r.receipt.some((l: string) => l.startsWith("advisory:")) && done["go_gitlog_shared"]!.r.status === "fired");
 
@@ -1818,8 +1827,9 @@ NRD_OUT="$(cd "$ROOT/loki-ts" && ROOT="$ROOT" WORK="$T/nrd-work" TMPDIR="$NRD_TM
 ng() { printf '%s\n' "$NRD_OUT" | sed -n "s/^$1=//p"; }
 ncheck() { local got; got="$(ng "$2")"; [ "$got" = "$3" ] && ok "no-regression $1" || bad "no-regression $1: got '$got' (want '$3')"; }
 ncheck "override: a removal in a request sentence, a quote, a reorder or an added issue token is mentioned; a removal in a non-request sentence, in the title, or an unmentioned rename is not" override "true,false,false,true,false"
-ncheck "verdict correction: requested stands only when the issue mentions the change; unknown and unrequested are untouched" verdict_override "unrequested,requested,unknown,unrequested"
-ncheck "judge outcomes: the kind is decided in code (a regression named k or p on an unnamed function is judged; a named function with its stated new output is not); an unnamed function's unmentioned requested change is corrected, a named function's requested stands; unknown stays advisory; a pinned-value rewrite quoted in a request sentence is requested, a loosely mentioned one is not; post-implement cases are always judged; one group" fake "p3+k3+T_Old+T_Loose|k4|1|4|1|flaky|same|false|true"
+ncheck "verdict correction: a judge requested on an unnamed function the issue never mentions becomes advisory unknown, never a block; a mentioned one stands; unknown and unrequested are untouched" verdict_override "unknown,requested,unknown,unrequested"
+ncheck "the correction moves a verdict toward requested only when the new output is stated in a request sentence of the issue (not in a background sentence)" stated_override "requested,unrequested,unrequested"
+ncheck "judge outcomes: the kind is decided in code (a regression named k or p on an unnamed function is judged; a named function with its stated new output is not); an unnamed function's unmentioned judge-requested change is advisory only, a named function's requested stands; unknown stays advisory; a pinned-value rewrite quoted in a request sentence is requested, a loosely mentioned one is not; post-implement cases are always judged; one group" fake "p3+T_Old+T_Loose|k3+k4|1|3|1|flaky|same|false|true"
 ncheck "an empty judge reply is recorded as incomplete, never a pass and never a block" fake_empty_judge "true|0|0"
 ncheck "no changed keep case and no replay finding makes no judge call" fake_nochange "0|0|1"
 ncheck "the fix-round group is read on the first verify only and only when well formed" groups "1,0,0,0"
@@ -1840,6 +1850,9 @@ ncheck "go: a killed session makes no call" go_killed "skipped|-|0"
 ncheck "go: a diff with no Go source makes no call" go_docs_only "skipped|-|0"
 ncheck "go: an empty judge reply is clean on the verdict side and NOT PROVEN on the receipt" go_judge_empty "clean|nrd-probe+judge|0"
 ncheck "go: a failed or empty judge puts a NOT PROVEN regression-check-incomplete line on the receipt" go_judge_incomplete "true,true,clean"
+ncheck "go: a scratch build that fails (go.mod replace to a relative path outside the repo) is NOT PROVEN not run, never clean; an exhausted wall budget is not run too, also while the judge is slow" go_notrun "skipped,true,skipped,true,skipped"
+ncheck "go: the user's own untracked files are in both scratch copies, a file only the agent added is in patched alone" go_untracked_both "true,true"
+ncheck "go: an untracked file that is not listed as the user's is in neither copy until the diff adds it" go_untracked_agent_only "false,true"
 ncheck "go: a judge call that throws is a receipt-only error, never a group" go_judge_down "error|nrd-probe+judge|0"
 ncheck "go: the error names the cause" go_judge_down_reason "no-regression skipped: model transport blew up"
 ncheck "go: an unknown verdict is advisory on the receipt, never blocking" go_unknown_advisory "true"

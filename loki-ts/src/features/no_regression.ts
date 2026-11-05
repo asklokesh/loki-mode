@@ -224,29 +224,37 @@ export function rewriteAssertsIssueValue(issue: string, testEdit: string | undef
   const q = new Set(issueQuoted(issue).map((x) => x.trim())), asks = askSentences(issue);
   return testEdit.split("\n").filter((l) => l.startsWith("+ ")).some((l) => [...l.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]!).some((v) => v.length >= 2 && q.has(v) && asks.some((x) => x.includes(v))));
 }
-/** Probe findings: a judge "requested" on a function the issue names stands (the change follows from the requested one); on a function the issue never names it needs the issue to mention the change. Replay findings: a test rewritten to assert a value the issue states is requested, whatever the judge said. */
-export const overrideVerdict = (issue: string, f: Finding, v: Verdict): Verdict =>
-  f.source === "probe" ? (v === "requested" && !f.named && !issueMentionsChange(issue, f.before, f.after) ? "unrequested" : v) : rewriteAssertsIssueValue(issue, f.testEdit) ? "requested" : v;
+const statedInRequest = (issue: string, v: string): boolean => { const t = unq(v); return t.length >= 3 && askSentences(issue).some((x) => x.includes(t)); };
+/** The corrections only ever move a verdict toward "requested", or a doubtful "requested" to advisory "unknown"; they never turn a judge's "requested" into a block (a
+ *  block sends a fix round that could revert a correct fix). Replay findings: "requested" when the rewritten test asserts a value quoted in a request sentence.
+ *  Probe findings: a judge "requested" on a function the issue never names, with the change not mentioned in the issue, becomes "unknown" (advisory); "unrequested" or
+ *  "unknown" becomes "requested" when the new output itself is stated in a request sentence. */
+export function overrideVerdict(issue: string, f: Finding, v: Verdict): Verdict {
+  if (f.source === "replay") return rewriteAssertsIssueValue(issue, f.testEdit) ? "requested" : v;
+  if (v === "requested") return !f.named && !issueMentionsChange(issue, f.before, f.after) ? "unknown" : v;
+  return statedInRequest(issue, f.after) ? "requested" : v;
+}
 
 // ---------------- the differential ----------------
 export type CaseStatus = "same" | "changed" | "flaky" | "missing_base" | "missing_patched";
 export interface CaseDiff { id: string; desc: string; before: string; after: string; status: CaseStatus }
 /** Run `program` on the base and the patched tree. A case that differs is run once more on both trees and counts as changed only when both reruns agree with the first runs. */
-export function differential(run: (state: "base" | "patched") => ProbeRunResult, notes: string[]): CaseDiff[] {
+export function differential(run: (state: "base" | "patched") => ProbeRunResult, notes: string[]): { cases: CaseDiff[]; unbuilt: string | null } {
   const b0 = run("base"), p0 = run("patched");
   for (const [s, r] of [["base", b0], ["patched", p0]] as const) {
     if (!r.built) notes.push(`${s}: the probe did not build (${r.error?.split("\n").slice(-2).join(" ").slice(0, 160) ?? "no output"})`);
     for (const x of r.pruned) notes.push(`${s}: case ${x.id} dropped (${x.error})`);
   }
+  const unbuilt = !b0.built || !p0.built ? `the probe program did not build in the scratch copy of the ${!b0.built ? "base" : "patched"} tree (${(!b0.built ? b0 : p0).error?.split("\n").slice(-2).join(" ").slice(0, 160) ?? "no output"})` : null;
   const pb = parseProbeOutput(b0.stdout), pp = parseProbeOutput(p0.stdout);
   const suspect = pb.probes.some((p) => pp.run[p.id] !== undefined && pp.run[p.id] !== pb.run[p.id]);
   const b1 = suspect ? parseProbeOutput(run("base").stdout).run : null, p1 = suspect ? parseProbeOutput(run("patched").stdout).run : null;
-  return pb.probes.map((p) => {
+  return { unbuilt, cases: pb.probes.map((p) => {
     const row = { id: p.id, desc: p.desc, before: pb.run[p.id]!, after: pp.run[p.id] ?? "" };
     if (pp.run[p.id] === undefined) return { ...row, status: "missing_patched" as const };
     if (pp.run[p.id] === pb.run[p.id]) return { ...row, status: "same" as const };
     return { ...row, status: b1?.[p.id] === pb.run[p.id] && p1?.[p.id] === pp.run[p.id] ? "changed" as const : "flaky" as const };
-  });
+  }) };
 }
 
 export type GoTestRun = Map<string, { ok: boolean; out: string }>;
@@ -290,7 +298,7 @@ export function caseSnippet(program: string, id: string, max = 600): string {
   return lines.slice(at, end).map((l) => l.trim()).join(" ").slice(0, max);
 }
 export interface NrdFinding extends Finding { verdict: Verdict }
-export interface NrdResult { incomplete?: string; cases: CaseDiff[]; findings: NrdFinding[]; blocking: NrdFinding[]; groups: FailureGroup[]; notes: string[]; calls: number; usd: number }
+export interface NrdResult { incomplete?: string; notRun?: string; cases: CaseDiff[]; findings: NrdFinding[]; blocking: NrdFinding[]; groups: FailureGroup[]; notes: string[]; calls: number; usd: number }
 /** The fix-round input: ONE FailureGroup holding every blocking finding with its before and after output. */
 export function nrdFailureGroups(blocking: NrdFinding[]): FailureGroup[] {
   if (!blocking.length) return [];
@@ -303,7 +311,8 @@ export interface NrdInput { issue: string; programs: NrdProgram[]; run: (program
 /** Cases, judge, corrections, group. Pure over its inputs: the trees live behind `run` and `replay`. Only changed keep cases (and replay findings) are judged; which case is a change case is decided in code by isChangeCase, and post-implement cases are always keep cases. An empty or unreadable judge reply is "incomplete", never a pass and never a block. */
 export async function runNoRegression(i: NrdInput): Promise<NrdResult> {
   const notes: string[] = []; let calls = 0, usd = 0;
-  const tagged = i.programs.flatMap((p) => differential((s) => i.run(p.src, s), notes).map((x) => ({ ...x, post: !!p.post, src: p.src }))), cases: CaseDiff[] = tagged.map(({ post: _p, src: _s, ...x }) => x);
+  const diffs = i.programs.map((p) => ({ p, d: differential((s) => i.run(p.src, s), notes) })), unbuilt = diffs.filter((x) => x.d.unbuilt).map((x) => x.d.unbuilt!), notRun = diffs.length > 0 && unbuilt.length === diffs.length ? unbuilt[0] : undefined;
+  const tagged = diffs.flatMap(({ p, d }) => d.cases.map((x) => ({ ...x, post: !!p.post, src: p.src }))), cases: CaseDiff[] = tagged.map(({ post: _p, src: _s, ...x }) => x);
   for (const x of cases) if (x.status === "missing_patched") notes.push(`case ${x.id} ran on base but not on the patched tree (an API it calls changed)`);
   const flaky = cases.filter((x) => x.status === "flaky").length;
   if (flaky) notes.push(`${flaky} case(s) printed different output on two runs of the same tree and were ignored`);
@@ -313,7 +322,7 @@ export async function runNoRegression(i: NrdInput): Promise<NrdResult> {
     return { id: x.id, desc: x.desc, before: x.before, after: x.after, source: "probe", named: calledNames(snippet).some((n) => mentions(i.issue, n)) };
   }).filter((f): f is Finding => f !== null);
   const all: (Finding & { label: string })[] = [...probe, ...(i.replay?.() ?? []).slice(0, 6)].map((f, n, a) => ({ ...f, label: a.slice(0, n).some((y) => y.id === f.id) ? `${f.id}#${n}` : f.id }));
-  if (!all.length) return { cases, findings: [], blocking: [], groups: [], notes, calls, usd };
+  if (!all.length) return { ...(notRun ? { notRun } : {}), cases, findings: [], blocking: [], groups: [], notes, calls, usd };
   const j = await i.llm(SYS_NRD_JUDGE, nrdJudgePrompt(i.issue, all), "judge");
   calls++; usd += j.usage.costUsd;
   const v = parseNrdVerdicts(j.text);
@@ -321,12 +330,12 @@ export async function runNoRegression(i: NrdInput): Promise<NrdResult> {
   if (incomplete) notes.push(incomplete);
   const findings = all.map(({ label, ...f }): NrdFinding => {
     const raw = v.get(label) ?? "unknown", verdict = overrideVerdict(i.issue, f, raw);
-    if (verdict !== raw) notes.push(`case ${f.id}: judged ${raw}, corrected to ${verdict} by the issue text`);
+    if (verdict !== raw) notes.push(`case ${f.id}: judged ${raw}, ${verdict === "unknown" ? "but the issue never mentions this change: advisory only" : `corrected to ${verdict} by the issue text`}`);
     if (verdict === "unknown") notes.push(`case ${f.id} changed and the judge could not decide whether the issue asks for it`);
     return { ...f, verdict };
   });
   const blocking = findings.filter((f) => f.verdict === "unrequested");
-  return { ...(incomplete ? { incomplete } : {}), cases, findings, blocking, groups: nrdFailureGroups(blocking), notes, calls, usd };
+  return { ...(incomplete ? { incomplete } : {}), ...(notRun ? { notRun } : {}), cases, findings, blocking, groups: nrdFailureGroups(blocking), notes, calls, usd };
 }
 
 // ---------------- scratch trees: the user's tree is only read ----------------
@@ -336,12 +345,16 @@ function extractBase(repoDir: string, sha: string, dir: string): void {
   const r = spawnSync("tar", ["-x", "-C", dir], { input: tar, maxBuffer: 1 << 20 });
   if (r.status !== 0) throw new Error("tar could not unpack the base tree");
 }
-/** <tmp>/loki-nrd-XXXX/{base,patched}: base is `git archive` of the base commit, patched is base plus the agent's diff (sealed files left out). Removed by exact validated path. */
-export function makeScratch(repoDir: string, baseSha: string, skip: Set<string>): { base: string; patched: string; replay(editedTests: string[], baseTest: (p: string) => string | null): string; dispose(): void } {
+/** <tmp>/loki-nrd-XXXX/{base,patched}: base is `git archive` of the base commit plus the user's own untracked files, patched is base plus the agent's diff (sealed files left out). Removed by exact validated path. */
+export function makeScratch(repoDir: string, baseSha: string, skip: Set<string>, userUntracked: string[] = []): { base: string; patched: string; replay(editedTests: string[], baseTest: (p: string) => string | null): string; dispose(): void } {
   const root = mkdtempSync(join(tmpdir(), SCRATCH_PREFIX)), base = join(root, "base"), patched = join(root, "patched"), replay = join(root, "replay");
   const dispose = (): void => { try { if (basename(root).startsWith(SCRATCH_PREFIX) && dirname(realpathSync(root)) === realpathSync(tmpdir()) && !lstatSync(root).isSymbolicLink()) rmSync(root, { recursive: true, force: true }); } catch { /* a leaked temp dir goes with the temp root */ } };
   try {
     extractBase(repoDir, baseSha, base);
+    for (const f of userUntracked) { // the user's own untracked files exist in both copies or in neither: a probe that reads one must not show a spurious change
+      const src = join(repoDir, f);
+      try { if (!f.startsWith("..") && !f.startsWith("/") && lstatSync(src).isFile()) { mkdirSync(dirname(join(base, f)), { recursive: true }); cpSync(src, join(base, f)); } } catch { /* gone or unreadable: left out of both */ }
+    }
     cpSync(base, patched, { recursive: true });
     applyDiff(patched, snapshotDiff(repoDir, baseSha, ATTEMPT_EXCLUDES).filter((e) => !skip.has(e.path)), ATTEMPT_EXCLUDES);
   } catch (e) { dispose(); throw e; }
@@ -358,8 +371,11 @@ export function makeScratch(repoDir: string, baseSha: string, skip: Set<string>)
 // ---------------- the implement-stage gate ----------------
 export interface NrdSummary { status: "skipped" | "clean" | "fired" | "error"; reason: string; calls: number; usd: number; groups?: FailureGroup[]; receipt?: string[] }
 const skip = (reason: string, extra: Partial<NrdSummary> = {}): NrdSummary => ({ status: "skipped", reason, calls: 0, usd: 0, ...extra });
+const nrdBudgetS = (env: NodeJS.ProcessEnv): number => { const n = Number(env.LOKI_E10_NRD_BUDGET_S); return env.LOKI_E10_NRD_BUDGET_S !== undefined && env.LOKI_E10_NRD_BUDGET_S !== "" && Number.isFinite(n) && n >= 0 ? n : 120; };
+class NrdBudgetError extends Error {}
 /** Receipt line for a differential that could not complete: NOT PROVEN, never a block. */
 const notProven = (why: string): string => `NOT PROVEN: regression check incomplete: ${why}`;
+const notRunLine = (why: string): string => `NOT PROVEN: regression check not run: ${why}`;
 const pkgOf = (src: string): string | null => /^package\s+(\w+)/m.exec(src)?.[1] ?? null;
 const oneLine = (s: string): string => s.replace(/[\u0000-\u001f\u007f]+/g, " ");
 
@@ -370,6 +386,10 @@ export async function runNrdGate(ctx: RunContext, signal: AbortSignal, session: 
   if (signal.aborted || session.killed || session.exit !== 0 || !session.markers.done || session.markers.specConflict || session.markers.alreadyDone) return skip("the implement session did not finish clean");
   if ((ctx.implementLeftS?.() ?? Infinity) < 150) return skip("not enough implement time left for the scratch probe runs");
   let scratch: ReturnType<typeof makeScratch> | null = null;
+  const deadline = Date.now() + nrdBudgetS(env) * 1000, left = (): number => deadline - Date.now();
+  const check = (): void => { if (left() <= 0) throw new NrdBudgetError(`the ${nrdBudgetS(env)} s wall budget for the whole differential ran out`); };
+  const timed = <T,>(f: () => Promise<T>): Promise<T> => { check(); return Promise.race([f(), new Promise<never>((_, rej) => setTimeout(() => rej(new NrdBudgetError(`the ${nrdBudgetS(env)} s wall budget for the whole differential ran out`)), left()).unref())]); };
+  const tl: LlmCall = (sys, user, tag) => timed(() => llm(sys, user, tag));
   try {
     const sealed = new Set(wallPaths), issue = String(ctx.outputs().intake?.task ?? "");
     if (!issue) return skip("the task text is not readable");
@@ -391,30 +411,33 @@ export async function runNrdGate(ctx: RunContext, signal: AbortSignal, session: 
       const tests: Record<string, string> = {};
       for (const f of safeGit(ctx.repoDir, ["ls-files", "-z", "--", dir === "" ? "." : dir]).split("\0")) if (f.endsWith("_test.go") && dirname(f).replace(/^\.$/, "") === dir) { const s = baseText(ctx, f); if (s) tests[f] = s; }
       const ctxPack = probeContext(baseFiles, tests, [...names, ...callers]);
-      const r = await llm(SYS_NRD_PROBE, nrdProbePrompt({ issue, pkg, files: ctxPack.files, tests: ctxPack.tests, edited: names, callers, unnamed, sites: outputSites(baseFiles, [...names, ...callers]) }), "nrd-probe");
+      const r = await tl(SYS_NRD_PROBE, nrdProbePrompt({ issue, pkg, files: ctxPack.files, tests: ctxPack.tests, edited: names, callers, unnamed, sites: outputSites(baseFiles, [...names, ...callers]) }), "nrd-probe");
       calls++; usd += r.usage.costUsd;
       const p = parseGoProbeCases(splitProbeBlock(r.text).probe, pkg);
       if ("file" in p) programs.push({ src: p.file, post: true }); else incompleteNote = `the post-implement probe call wrote no usable cases (${p.refused}) for the callers ${unnamed.join(", ")}`;
     }
     if (programs.length === 0) return skip(`no probe program: ${pre ? "the pre-implement program is for another package" : "the exec-spec call left none"}, and every caller of the edited functions is named by the issue`, { calls, usd, ...(incompleteNote ? { receipt: [oneLine(notProven(incompleteNote))] } : {}) });
-    scratch = makeScratch(ctx.repoDir, ctx.baseSha, sealed);
+    check();
+    const intakeOut = ctx.outputs().intake ?? {}, mine = [...(Array.isArray(intakeOut.preexisting_untracked) ? intakeOut.preexisting_untracked as string[] : []), ...Object.keys((intakeOut.preexisting_untracked_blobs ?? {}) as object)];
+    scratch = makeScratch(ctx.repoDir, ctx.baseSha, sealed, mine);
     const tree = scratch, editedTests = diff.filter((e) => e.path.endsWith("_test.go") && dirname(e.path).replace(/^\.$/, "") === dir && baseText(ctx, e.path) !== "").map((e) => e.path);
     const r = await runNoRegression({
-      issue, programs, llm,
-      run: (program, state) => runGoProbe(state === "base" ? tree.base : tree.patched, dir, pkg, program, 45_000),
-      ...(editedTests.length ? { replay: () => replayFindings(goTestResults(tree.base, dir), goTestResults(tree.replay(editedTests, (p) => baseText(ctx, p) || null), dir), editedTests.map((p) => ({ base: baseText(ctx, p), patched: diff.find((e) => e.path === p)?.content?.toString("utf8") ?? "" }))) } : {}),
+      issue, programs, llm: tl,
+      run: (program, state) => { check(); return runGoProbe(state === "base" ? tree.base : tree.patched, dir, pkg, program, Math.max(5_000, Math.min(45_000, left()))); },
+      ...(editedTests.length ? { replay: () => { check(); return replayFindings(goTestResults(tree.base, dir), goTestResults(tree.replay(editedTests, (p) => baseText(ctx, p) || null), dir), editedTests.map((p) => ({ base: baseText(ctx, p), patched: diff.find((e) => e.path === p)?.content?.toString("utf8") ?? "" }))); } } : {}),
     });
     calls += r.calls; usd += r.usd;
     const ran = r.cases.filter((x) => x.status !== "missing_base").length;
     const receipt = [
-      ...(incompleteNote ? [notProven(incompleteNote)] : []), ...(r.incomplete ? [notProven(r.incomplete)] : []),
+      ...(r.notRun ? [notRunLine(r.notRun)] : []), ...(incompleteNote ? [notProven(incompleteNote)] : []), ...(r.incomplete ? [notProven(r.incomplete)] : []),
       `no-regression: ${ran} probe case(s) compared on the base and the patched tree, ${r.cases.filter((x) => x.status === "changed").length} changed, ${r.blocking.length} unrequested${r.blocking.length ? " (one fix round was asked to restore them)" : ""}`,
       ...r.findings.filter((f) => f.verdict === "unknown").map((f) => `advisory: ${f.desc} changed and the issue does not decide it (printed ${clip(f.before, 80)}, now ${clip(f.after, 80)})`),
       ...r.blocking.map((f) => `unrequested change: ${f.desc}: printed ${clip(f.before, 80)}, now ${clip(f.after, 80)}`),
     ].map(oneLine);
-    return { status: r.blocking.length ? "fired" : "clean", reason: r.notes.join("; ") || "no unrequested change", calls, usd: Number(usd.toFixed(6)), ...(r.groups.length ? { groups: r.groups } : {}), receipt };
+    return { status: r.blocking.length ? "fired" : r.notRun ? "skipped" : "clean", reason: r.notes.join("; ") || "no unrequested change", calls, usd: Number(usd.toFixed(6)), ...(r.groups.length ? { groups: r.groups } : {}), receipt };
   } catch (e) {
     const why = oneLine(e instanceof Error ? e.message.split("\n")[0]! : String(e));
+    if (e instanceof NrdBudgetError) return { status: "skipped", reason: `not run: ${why}`.slice(0, 300), calls: 0, usd: 0, receipt: [oneLine(notRunLine(why)).slice(0, 300)] };
     return { status: "error", reason: `no-regression skipped: ${why}`.slice(0, 300), calls: 0, usd: 0, receipt: [oneLine(notProven(why)).slice(0, 300)] };
   } finally { scratch?.dispose(); }
 }
