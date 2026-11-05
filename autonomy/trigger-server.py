@@ -1728,7 +1728,8 @@ def dispatch_event(event_type, payload, dry_run=False):
     if source and HEALTH.is_paused(source):
         status = "paused (source %s; loki trigger resume %s)" % (source, source)
         log_event(event_type, action, "", status)
-        return None, "paused"
+        # A queued job needs a terminal status so its submitter does not poll forever.
+        return (status, JOB_STATUS_FAILED) if event_type == JOB_EVENT else (None, "paused")
     _DISPATCH.source = source
     try:
         summary, status = handler(payload, dry_run=dry_run)
