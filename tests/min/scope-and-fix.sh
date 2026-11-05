@@ -565,6 +565,9 @@ res("parsePrecedentVote: option, neither, out of range, garbage", parsePrecedent
   // review-548 legs
   const b1 = await run(plain + " The output must stay consistent with the documented JSON schema."), b2 = await run(plain + " It fails the same way on every platform.");
   res("saysLikeSiblings: 'consistent with the documented JSON schema' and 'fails the same way' do not bind the transplant", b1.transplant?.binding === false && b2.transplant?.binding === false);
+  const loose = ["It behaves as expected on other platforms.", "This works like it did in the other release.", "Output matches the other format we ship.", "Keep it as is, like the rest of the CLI docs say."];
+  const lr = await Promise.all(loose.map((x) => run(plain + " " + x)));
+  res("saysLikeSiblings: four loose phrases that name no sibling stay advisory", lr.every((r) => r.transplant?.binding === false));
   const b3 = await run(plain + " It should be consistent with IntSetting.Value."), b4 = await run(plain + " DurationSetting.Value should work like the other settings.");
   res("saysLikeSiblings: a sentence naming the sibling type, or 'like the other settings', does bind", b3.transplant?.binding === true && b4.transplant?.binding === true);
   const mt = [mk("maint", "I'd go with the parsed time.Duration from DurationSetting.Value.")];
