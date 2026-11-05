@@ -951,28 +951,33 @@ export function exercisedViaCallers(unexercised: readonly string[], seed: (name:
   for (let n = work.pop(); n !== undefined; n = work.pop()) for (const called of byName.get(n) ?? []) for (const c of called) if (byName.has(c) && !covered.has(c)) { covered.add(c); work.push(c); }
   return unexercised.filter((f) => !covered.has(f));
 }
-/** Fail-then-pass relevance: the test files among `tests` that reach a changed `symbol` through code, by CALLING a function of a changed file or of an untouched direct caller file whose body calls one
- *  (transitively inside those files), the way a Go test reaches an unexported parseFlags only through cmd.Run. Seeds are only names the test calls in code, never a call on the test's own
- *  testing value (t.Run, b.N, s.T().Run, self.assertEqual, pytest.raises), so `t.Run` never reaches a product Run (review of #541, A1). Go resolves by package: only files in the test's own
- *  directory take part; a test in another package reaches nothing this way. Empty for no symbols: a change that declares none is never shown relevant. */
-const TESTING_CALL = /(?<![\w$.])(?:t|b|f|tb|tt|self|pytest|unittest|mock)\.\w+\s*\(|\.T\(\)\.\w+\s*\(/g;
-/** Go identifiers in a test file that are not product values: anything declared with a testing type (`st *testing.T`, `tb testing.TB`), the receiver of a method in the test file (a
- *  testify suite's `s`), and every imported package name (assert, require, suite, fmt). A call qualified by one of them never seeds (review of #541: renaming t to st bypassed a name list). */
-function goTestingNames(src: string): Set<string> {
-  const code = codeOnly(src), out = new Set<string>(["suite", "assert", "require", "testing"]);
-  for (const m of code.matchAll(/\b(\w+)(?:\s*,\s*\w+)*\s+\*?testing\.(?:T|B|F|TB|M)\b/g)) out.add(m[1]!);
-  for (const m of code.matchAll(/\bfunc\s*\(\s*(\w+)\s+\*?\w+(?:\[[^\]]*\])?\s*\)/g)) out.add(m[1]!);
-  for (const m of stripComments(src).matchAll(/^\s*(?:import\s+)?(?:(\w+)\s+)?"([^"]+)"\s*$/gm)) out.add(m[1] ?? m[2]!.split("/").filter((x) => !/^v\d+$/.test(x)).pop()!);
-  return out;
-}
-export function testsReachingSymbols(symbols: readonly string[], tests: readonly { path: string; src: string; full?: string }[], changed: readonly { path: string; src: string }[], candidates: readonly { path: string; src: string }[]): string[] {
+/** Fail-then-pass relevance (Go only): the Go test files among `tests` whose ADDED lines call a function of a changed file, or of an untouched direct caller file in the same package, whose
+ *  body calls a changed `symbol` (transitively inside those files), the way the new test in cli-2418 reaches the unexported parseFlags through cmd.Run. An allowlist, not a denylist (review
+ *  of #541, three rounds: t.Run, a renamed st.Run, an alias x := st, an interface value, Python's dict.get each leaked): a seed is (a) an unqualified call of a function the package's
+ *  non-test files declare, never a name the test binds itself, or (b) a method call on a variable the test binds from product construction in its own code (`x := &Name{...}`,
+ *  `x := Name{...}`, `x := NewName(...)`, `(&Name{}).M(`, Name declared in the package's non-test files, or `x := helper()` for a test helper of the package declared to return such a type). Every other selector call (testing values, aliases, interfaces, imported
+ *  packages) never seeds. Only files in the test's own directory take part. Empty for no symbols and for any non-Go test. */
+export function testsReachingSymbols(symbols: readonly string[], tests: readonly { path: string; src: string; full?: string; helpers?: string }[], changed: readonly { path: string; src: string }[], candidates: readonly { path: string; src: string }[]): string[] {
   if (symbols.length === 0 || tests.length === 0) return [];
   return tests.filter((t) => {
-    const go = t.path.endsWith(".go"), dir = dirname(t.path), here = (f: { path: string }): boolean => !go || dirname(f.path) === dir;
-    let code = codeOnly(t.src).replace(TESTING_CALL, " ");
-    if (go) { const skip = goTestingNames(`${t.full ?? ""}\n${t.src}`); code = code.replace(/(?<![\w$.])(\w+)((?:\(\))?(?:\.\w+(?:\(\))?)*)\.(\w+)\s*\(/g, (all, q: string) => (skip.has(q) ? " " : all)); } // a call through a testing value, a suite receiver or an imported package is not a product call
-    const ch = changed.filter(here), files = [...ch, ...callerFiles(ch, candidates.filter(here))], calls = calledNames(code);
-    return files.length > 0 && exercisedViaCallers(symbols, (name) => calls.has(name), files).length < symbols.length;
+    if (!t.path.endsWith(".go")) return false;
+    const dir = dirname(t.path), here = (f: { path: string }): boolean => dirname(f.path) === dir && f.path.endsWith(".go") && !isTestFile(f.path);
+    const ch = changed.filter(here), files = [...ch, ...callerFiles(ch, candidates.filter(here))];
+    if (files.length === 0) return false;
+    const product = new Set<string>(), all = [...ch, ...candidates.filter(here)];
+    for (const f of all) { for (const x of symbolSpans(f.path, f.src)) product.add(x.name.split(".").pop()!); for (const m of codeOnly(f.src).matchAll(/^type\s+(\w+)/gm)) product.add(m[1]!); }
+    const code = codeOnly(t.src), full = codeOnly(`${t.full ?? ""}\n${t.src}`);
+    const bound = new Set([...full.matchAll(/\b(\w+)(?:\s*,\s*\w+)*\s*:?=(?!=)/g)].map((m) => m[1]!).concat([...full.matchAll(/\bvar\s+(\w+)/g)].map((m) => m[1]!)).concat([...full.matchAll(/[(,]\s*(\w+)\s+\*?[\w.]+(?:\[[^\]]*\])?\s*(?=[,)])/g)].map((m) => m[1]!)));
+    const makers = new Set(product); // plus a test helper of the package that returns a product type (`func buildMinimalTestCommand() *Command`)
+    for (const m of codeOnly(`${t.full ?? ""}\n${t.helpers ?? ""}`).matchAll(/^func\s+(\w+)\s*\([^)]*\)\s*\(?\s*\*?(\w+)\s*[,){]/gm)) if (product.has(m[2]!)) makers.add(m[1]!);
+    const made = new Set<string>();
+    for (const m of code.matchAll(/\b(\w+)\s*:?=(?!=)\s*&?(\w+)\s*[{(]/g)) if (makers.has(m[2]!)) made.add(m[1]!); // a product type literal, a product function's result or a helper returning a product type
+    for (const m of code.matchAll(/\b(\w+)\s*:?=(?!=)[^\n]*/g)) if (made.has(m[1]!) && !(new RegExp(`\\b${m[1]}\\s*:?=\\s*&?(\\w+)\\s*[{(]`).exec(m[0]) && makers.has(new RegExp(`\\b${m[1]}\\s*:?=\\s*&?(\\w+)`).exec(m[0])![1]!))) made.delete(m[1]!); // rebound to anything else later in the test: not product any more
+    const seeds = new Set<string>();
+    for (const m of code.matchAll(/(?<![\w$.)\]])(\w+)\s*\(/g)) if (product.has(m[1]!) && !bound.has(m[1]!)) seeds.add(m[1]!);
+    for (const m of code.matchAll(/(?<![\w$.])(\w+)\.(\w+)\s*\(/g)) if (made.has(m[1]!)) seeds.add(m[2]!);
+    for (const m of code.matchAll(/\(\s*&?(\w+)\s*\{[^{}]*\}\s*\)\.(\w+)\s*\(/g)) if (product.has(m[1]!)) seeds.add(m[2]!);
+    return seeds.size > 0 && exercisedViaCallers(symbols, (name) => seeds.has(name), files).length < symbols.length;
   }).map((t) => t.path);
 }
 /** TEN-GATES-14: per-gate legibility for `loki verify --explain`. exogenous/independent evidence is exogenous; agent_authored and llm_judge are agent-influenced; absent or unknown provenance is unrecorded, never exogenous. */

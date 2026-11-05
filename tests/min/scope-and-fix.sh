@@ -968,7 +968,7 @@ fi
 # Negative (review of #541, A1, real go through the real engine): the change rewrites parse with identical behavior and flips an untouched-by-symbols const; the agent's new test
 # calls only t.Run and Hello (which reads the const), while an existing test in the same file calls Cmd.Run, which calls parse. Seeding on any identifier (t.Run is a Run) or on the
 # whole file read this as fail-then-pass proof for parse and VERIFIED; it must stay PARTIAL, also with the testing value renamed st (review round 2). Plants: drop TESTING_CALL or seed
-# from the whole file (the t.Run leg reads VERIFIED); drop goTestingNames (the st.Run leg reads VERIFIED).
+# from the whole file (the t.Run leg reads VERIFIED); seed every selector call instead of the allowlist (the st.Run and alias legs read VERIFIED).
 make_trun_go_repo() {
     mkdir -p "$1"
     printf 'module example.com/calc\n\ngo 1.20\n' > "$1/go.mod"
@@ -985,10 +985,27 @@ if command -v go >/dev/null 2>&1; then
     MAKE_REPO=make_trun_go_repo run_engine "fix parse(a) in calc.go so it handles negative a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.go E2E_STUB_REPLACE=$'\treturn a + a\n}\n\nconst (\n\tunit     = 1\n\tgreeting = "old"' E2E_STUB_SNIPPET=$'\treturn 2 * a\n}\n\nconst (\n\tunit     = 1\n\tgreeting = "new"' E2E_STUB_TEST_FILE=calc_test.go \
         E2E_STUB_TEST_APPEND=$'\nfunc TestGreeting(st *testing.T) {\n\tst.Run("hello", func(st *testing.T) {\n\t\tif Hello() != "new" {\n\t\t\tst.Errorf("got %s", Hello())\n\t\t}\n\t})\n}' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
     [ "$(outcome)" = "PARTIAL" ] && ok "go caller st.Run: the same probe with the testing value named st is not proof either (PARTIAL)" || { bad "go caller st.Run: outcome is '$(outcome)' ($(wo_receipt np))"; dump; }
-    gs="$(cd "$ROOT/loki-ts" && bun -e 'const { testsReachingSymbols } = await import("./src/util/check_result.ts"); const ch = [{ path: "calc.go", src: "package calc\nfunc parse(a int) int {\n\treturn a * 2\n}\n" }], cand = [{ path: "cmd.go", src: "package calc\ntype Cmd struct{}\nfunc (c *Cmd) Run() int {\n\treturn parse(1)\n}\n" }]; const r = (src: string, full = "") => testsReachingSymbols(["parse"], [{ path: "calc_test.go", src, full }], ch, cand).length; console.log([r("func TestX(tc *testing.T) {\n\ttc.Run(\"a\", nil)\n}"), r("func (s *CalcSuite) TestX() {\n\ts.Run(\"a\", nil)\n}"), r("func TestX(t *testing.T) {\n\tsuite.Run(t, new(CalcSuite))\n}"), r("func TestX(t *testing.T) {\n\trequire.Equal(t, 2, (&Cmd{}).Run())\n}", "import (\n\t\"testing\"\n\t\"github.com/stretchr/testify/require\"\n)\n"), r("func TestX(t *testing.T) {\n\tc := &Cmd{}\n\tif c.Run() != 2 {\n\t\tt.Fatal(1)\n\t}\n}")].join(","))' 2>&1 | tail -1)"
-    [ "$gs" = "0,0,0,1,1" ] && ok "go caller testing names unit: tc.Run, a suite receiver s.Run and suite.Run never seed; a product call inside require.Equal and c.Run on a product value do ($gs)" || bad "go caller testing names unit: got '$gs'"
+    MAKE_REPO=make_trun_go_repo run_engine "fix parse(a) in calc.go so it handles negative a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.go E2E_STUB_REPLACE=$'\treturn a + a\n}\n\nconst (\n\tunit     = 1\n\tgreeting = "old"' E2E_STUB_SNIPPET=$'\treturn 2 * a\n}\n\nconst (\n\tunit     = 1\n\tgreeting = "new"' E2E_STUB_TEST_FILE=calc_test.go \
+        E2E_STUB_TEST_APPEND=$'\nfunc TestGreeting(st *testing.T) {\n\tx := st\n\tx.Run("hello", func(st *testing.T) {\n\t\tif Hello() != "new" {\n\t\t\tst.Errorf("got %s", Hello())\n\t\t}\n\t})\n}' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    [ "$(outcome)" = "PARTIAL" ] && ok "go caller alias: x := st; x.Run is not proof (PARTIAL)" || { bad "go caller alias: outcome is '$(outcome)' ($(wo_receipt np))"; dump; }
+    gs="$(cd "$ROOT/loki-ts" && bun -e 'const { testsReachingSymbols } = await import("./src/util/check_result.ts"); const ch = [{ path: "calc.go", src: "package calc\nfunc parse(a int) int {\n\treturn a * 2\n}\n" }], cand = [{ path: "cmd.go", src: "package calc\ntype Cmd struct{}\nfunc (c *Cmd) Run() int {\n\treturn parse(1)\n}\n" }]; const r = (src: string, full = "") => testsReachingSymbols(["parse"], [{ path: "calc_test.go", src, full }], ch, cand).length; console.log([r("func TestX(tc *testing.T) {\n\ttc.Run(\"a\", nil)\n}"), r("func (s *CalcSuite) TestX() {\n\ts.Run(\"a\", nil)\n}"), r("func TestX(t *testing.T) {\n\tsuite.Run(t, new(CalcSuite))\n}"), r("func TestX(t *testing.T) {\n\trequire.Equal(t, 2, (&Cmd{}).Run())\n}", "import (\n\t\"testing\"\n\t\"github.com/stretchr/testify/require\"\n)\n"), r("func TestX(t *testing.T) {\n\tc := &Cmd{}\n\tif c.Run() != 2 {\n\t\tt.Fatal(1)\n\t}\n}"), r("func TestX(st *testing.T) {\n\tx := st\n\tx.Run(\"a\", nil)\n}"), r("func TestX(t *testing.T) {\n\tvar r runner = t\n\tr.Run(\"a\", nil)\n}"), testsReachingSymbols(["parse"], [{ path: "calc_test.go", src: "func TestX(t *testing.T) {\n\tc := newCmd()\n\t_ = c.Run()\n}", helpers: "func newCmd() *Cmd {\n\treturn &Cmd{}\n}\n" }], ch, cand).length, testsReachingSymbols(["parse"], [{ path: "test_calc.py", src: "def test_x():\n    assert get(1) == 2\n" }], [{ path: "calc.py", src: "def parse(a):\n    return 2 * a\n" }], [{ path: "api.py", src: "def get(a):\n    return parse(a)\n" }]).length].join(","))' 2>&1 | tail -1)"
+    [ "$gs" = "0,0,0,1,1,0,0,1,0" ] && ok "go caller allowlist unit: tc.Run, a suite receiver, suite.Run, an alias of st and an interface value never seed; (&Cmd{}).Run, c := &Cmd{} and c := newCmd() (a helper returning *Cmd) do; Python never reaches ($gs)" || bad "go caller allowlist unit: got '$gs'"
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go caller t.Run: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go caller t.Run: go is not installed"; fi
+fi
+# Python has no caller relevance (review round 3 of #541): calc.parse is rewritten with identical behavior and a dict entry flips; untouched api.get calls parse; the new test reads
+# the dict with d.get("greeting"). dict.get once seeded the product get; it must stay PARTIAL.
+make_dget_py_repo() {
+    mkdir -p "$1"
+    printf 'def parse(a):\n    return a + a\n\n\nMESSAGES = {"greeting": "old"}\n' > "$1/calc.py"
+    printf 'from calc import parse\n\n\ndef get(a):\n    return parse(a)\n' > "$1/api.py"
+    printf 'import calc\n\n\ndef test_parse():\n    assert calc.parse(1) == 2\n' > "$1/test_calc.py"
+    return 0
+}
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    MAKE_REPO=make_dget_py_repo run_engine "fix parse(a) in calc.py so it handles negative a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a\n\n\nMESSAGES = {"greeting": "old"}' E2E_STUB_SNIPPET=$'    return 2 * a\n\n\nMESSAGES = {"greeting": "new"}' E2E_STUB_TEST_FILE=test_calc.py \
+        E2E_STUB_TEST_APPEND=$'\n\ndef test_greeting():\n    d = dict(calc.MESSAGES)\n    assert d.get("greeting") == "new"\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    [ "$(outcome)" = "PARTIAL" ] && ok "python dict.get: a test reading a dict through .get does not reach the product get (PARTIAL)" || { bad "python dict.get: outcome is '$(outcome)' ($(wo_receipt np))"; dump; }
 fi
 for vt in 2 latest; do
     VT_NM="$T/vt-$vt/node_modules"
