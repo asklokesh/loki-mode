@@ -1,0 +1,276 @@
+{
+  "summary": {
+    "commits": 7,
+    "mutants": 21,
+    "ownTestsCatch": 16,
+    "survivors": 5,
+    "survivorsSeenByKeepCase": 1
+  },
+  "rows": [
+    {
+      "id": "pflag-316",
+      "refOwnPass": false,
+      "sites": 3,
+      "mutants": 3,
+      "ownTestsCatch": 3,
+      "survivors": 0,
+      "survivorsSeen": 0,
+      "survivorsSeenOnlyByChangeCase": 0,
+      "refFindings": [],
+      "detail": [
+        {
+          "fn": "ipValue.Type",
+          "literal": "ip",
+          "ownTestsCatch": true,
+          "keepChanged": [
+            "k6",
+            "k9",
+            "k12"
+          ],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "ipConv",
+          "literal": "invalid string being converted to IP address: %s",
+          "ownTestsCatch": true,
+          "keepChanged": [
+            "k7"
+          ],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "FlagSet.GetIP",
+          "literal": "ip",
+          "ownTestsCatch": true,
+          "keepChanged": [
+            "k6"
+          ],
+          "changeCaseMoved": []
+        }
+      ]
+    },
+    {
+      "id": "pflag-282",
+      "refOwnPass": true,
+      "sites": 2,
+      "mutants": 2,
+      "ownTestsCatch": 2,
+      "survivors": 0,
+      "survivorsSeen": 0,
+      "survivorsSeenOnlyByChangeCase": 0,
+      "refFindings": [],
+      "detail": [
+        {
+          "fn": "stringArrayValue.Type",
+          "literal": "stringArray",
+          "ownTestsCatch": true,
+          "keepChanged": [],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "FlagSet.GetStringArray",
+          "literal": "stringArray",
+          "ownTestsCatch": true,
+          "keepChanged": [],
+          "changeCaseMoved": []
+        }
+      ]
+    },
+    {
+      "id": "cobra-2397",
+      "refOwnPass": true,
+      "sites": 7,
+      "mutants": 4,
+      "ownTestsCatch": 4,
+      "survivors": 0,
+      "survivorsSeen": 0,
+      "survivorsSeenOnlyByChangeCase": 0,
+      "refFindings": [],
+      "detail": [
+        {
+          "fn": "legacyArgs",
+          "literal": "unknown command %q for %q%s",
+          "ownTestsCatch": true,
+          "keepChanged": [],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "OnlyValidArgs",
+          "literal": "invalid argument %q for %q%s",
+          "ownTestsCatch": true,
+          "keepChanged": [
+            "k4"
+          ],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "MaximumNArgs",
+          "literal": "accepts at most %d arg(s), received %d",
+          "ownTestsCatch": true,
+          "keepChanged": [
+            "k9"
+          ],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "RangeArgs",
+          "literal": "accepts between %d and %d arg(s), received %d",
+          "ownTestsCatch": true,
+          "keepChanged": [
+            "k10"
+          ],
+          "changeCaseMoved": []
+        }
+      ]
+    },
+    {
+      "id": "cobra-2257",
+      "refOwnPass": true,
+      "sites": 33,
+      "mutants": 6,
+      "ownTestsCatch": 2,
+      "survivors": 4,
+      "survivorsSeen": 0,
+      "survivorsSeenOnlyByChangeCase": 0,
+      "refFindings": [],
+      "detail": [
+        {
+          "fn": "flagCompError.Error",
+          "literal": "Subcommand '",
+          "ownTestsCatch": false,
+          "keepChanged": [],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "ShellCompDirective.string",
+          "literal": "ShellCompDirectiveNoFileComp",
+          "ownTestsCatch": true,
+          "keepChanged": [
+            "k3",
+            "k5",
+            "k7",
+            "k11"
+          ],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "Command.initCompleteCmd",
+          "literal": "%s [command-line]",
+          "ownTestsCatch": false,
+          "keepChanged": [],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "Command.InitDefaultCompletionCmd",
+          "literal": "Generate the autocompletion script for the specifi",
+          "ownTestsCatch": true,
+          "keepChanged": [],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "Command.InitDefaultCompletionCmd",
+          "literal": "autoload -U compinit; compinit",
+          "ownTestsCatch": false,
+          "keepChanged": [],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "CompDebug",
+          "literal": "[Debug] %s",
+          "ownTestsCatch": false,
+          "keepChanged": [],
+          "changeCaseMoved": []
+        }
+      ]
+    },
+    {
+      "id": "semver-1",
+      "refOwnPass": false,
+      "sites": 2,
+      "mutants": 2,
+      "ownTestsCatch": 2,
+      "survivors": 0,
+      "survivorsSeen": 0,
+      "survivorsSeenOnlyByChangeCase": 0,
+      "refFindings": [],
+      "detail": [
+        {
+          "fn": "parseConstraint",
+          "literal": "improper constraint: %s",
+          "ownTestsCatch": true,
+          "keepChanged": [
+            "k11"
+          ],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "parseConstraint",
+          "literal": "constraint Parser Error",
+          "ownTestsCatch": true,
+          "keepChanged": [],
+          "changeCaseMoved": []
+        }
+      ]
+    },
+    {
+      "id": "humanize-si",
+      "refOwnPass": true,
+      "sites": 1,
+      "mutants": 1,
+      "ownTestsCatch": 0,
+      "survivors": 1,
+      "survivorsSeen": 1,
+      "survivorsSeenOnlyByChangeCase": 0,
+      "refFindings": [],
+      "detail": [
+        {
+          "fn": "errInvalid",
+          "literal": "invalid input",
+          "ownTestsCatch": false,
+          "keepChanged": [
+            "k10"
+          ],
+          "changeCaseMoved": []
+        }
+      ]
+    },
+    {
+      "id": "humanize-105",
+      "refOwnPass": false,
+      "sites": 3,
+      "mutants": 3,
+      "ownTestsCatch": 3,
+      "survivors": 0,
+      "survivorsSeen": 0,
+      "survivorsSeenOnlyByChangeCase": 0,
+      "refFindings": [
+        "k8"
+      ],
+      "detail": [
+        {
+          "fn": "Commaf",
+          "literal": "NaN",
+          "ownTestsCatch": true,
+          "keepChanged": [],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "Commaf",
+          "literal": "+Inf",
+          "ownTestsCatch": true,
+          "keepChanged": [
+            "k8"
+          ],
+          "changeCaseMoved": []
+        },
+        {
+          "fn": "Commaf",
+          "literal": "-Inf",
+          "ownTestsCatch": true,
+          "keepChanged": [],
+          "changeCaseMoved": []
+        }
+      ]
+    }
+  ]
+}
