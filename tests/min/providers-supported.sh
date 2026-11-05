@@ -21,6 +21,10 @@
 #             (exit 2); a CRLF-saved name reads as the name; `loki failover --chain claude,bogus` names bogus.
 #   no key:   the same opencode run without OPENROUTER_API_KEY or an opencode
 #             OpenRouter login is refused before any session, naming the key.
+#   toolless: toolLessCall (sdk_invoker.ts), on a stub client and a stub Agent SDK query(): no tools on either route; thinking off is
+#             {type:"disabled"}, low is adaptive at effort low; the subscription route sends tools [], maxTurns 1, no setting sources,
+#             no session file, a fixed title and CLAUDE_CODE_MAX_OUTPUT_TOKENS=maxTokens; each call is one priced child-ledger line (run_id, thinking tokens); an unreadable
+#             result is an unmeasured line; LOKI_E10_MAX_COST_USD bounds the query (maxBudgetUsd) and a reached cap sends nothing.
 #   grep:     no removed provider name in shipped code paths, apart from the
 #             migration lists/message and model-family price or key rows.
 #
@@ -49,6 +53,8 @@
 #      `LOKI_PROVIDER || "claude"` (the plan leg's opencode log stays empty). 17. cost_preview.ts runEstimate: same
 #      (the estimate-saved-codex leg runs instead of refusing). 18. autonomy/route.sh: drop the saved hint on the
 #      unsupported-provider message (the bogus saved leg).
+#  19. sdk_invoker.ts toolLessThinking: off no longer disabled; drop `tools: []`; drop the ledger append on the SDK route; drop the cap
+#      refusal; drop maxBudgetUsd; drop the fixed title; drop the max-output env; meter a cap without a run id (each fails the toolless leg).
 #   9. tests/min/providers-supported.sh run_engine: keep XDG_CONFIG_HOME from the caller and give the no-key leg an
 #      opencode.json with provider.openrouter there (the no-key leg starts a session; proves the isolation matters).
 
@@ -292,6 +298,83 @@ console.log([kind({}), kind({ OPENCODE_CONFIG_CONTENT: "{\"provider\":{\"openrou
 [ "$srcs" = "fatal ok ok ok warn fatal noleak" ] \
     && ok "OpenRouter sources: none refuses; OPENCODE_CONFIG_CONTENT, OPENCODE_CONFIG and project opencode.json pass; an unparseable config warns; no value printed" \
     || bad "OpenRouter sources (none content config project unparseable other-provider leak): $srcs"
+
+# --- toolless: toolLessCall, the one tool-less completion primitive (sdk_invoker.ts) ----------------------------------
+# No network: the API route runs on a stub Anthropic client, the subscription route on a stub Agent SDK query().
+mkdir -p "$T/tl"
+tl="$(cd "$ROOT/loki-ts" && TLDIR="$T/tl" env -u ANTHROPIC_API_KEY -u LOKI_SDK_OAUTH_DEV -u LOKI_E10_MAX_COST_USD -u LOKI_E10_SPENT_USD -u LOKI_E10_RUN_ID bun -e '
+import { readFileSync, existsSync } from "node:fs";
+import { toolLessCall, __setSdkClientForTests, __resetSdkClientForTests, __setToolLessQueryForTests } from "./src/runner/sdk_invoker.ts";
+import { sumChildLedger } from "./src/util/child_ledger.ts";
+const D = process.env.TLDIR, lines = (d) => { const f = `${D}/${d}/metrics/child-sessions.jsonl`; return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []; };
+const out = [], base = { model: "claude-haiku-5-5", system: "sys", prompt: "hi", maxTokens: 300 };
+// api route: a stub client records the request body
+let bodies = [];
+const stub = { baseURL: "https://api.anthropic.com", messages: { create: async (b) => { bodies.push(b); return { content: [{ type: "text", text: "ANS" }], stop_reason: "end_turn", model: "claude-haiku-5-5", usage: { input_tokens: 1000, output_tokens: 100 } }; } }, beta: {} };
+process.env.ANTHROPIC_API_KEY = "k"; __setSdkClientForTests(stub);
+const a = await toolLessCall({ ...base, thinking: "off", ledger: { lokiDir: `${D}/a`, phase: "tl-a" } });
+const b = await toolLessCall({ ...base, thinking: "low", ledger: { lokiDir: `${D}/b`, phase: "tl-b" } });
+out.push(`api:off=${JSON.stringify(bodies[0].thinking)}:${bodies[0].max_tokens}:${bodies[0].output_config?.effort ?? "none"}`);
+out.push(`api:low=${JSON.stringify(bodies[1].thinking)}:${bodies[1].output_config?.effort}`);
+out.push(`api:notools=${bodies.every((x) => x.tools === undefined && x.tool_choice === undefined)}`);
+out.push(`api:res=${a.outcome.kind}:${a.outcome.value}:${a.route}`);
+const la = lines("a");
+out.push(`api:ledger=${la.length}:${la[0]?.phase}:${la[0]?.model}:${la[0]?.input_tokens}:${la[0]?.usd > 0}`);
+__resetSdkClientForTests(); delete process.env.ANTHROPIC_API_KEY;
+// subscription route: a stub query() records its options and yields a result message
+let opts = null, mode = "ok";
+__setToolLessQueryForTests(async function* ({ options }) {
+  opts = options;
+  if (mode === "none") return;
+  yield { type: "assistant", message: { content: [{ type: "thinking", thinking: "hmm" }, { type: "text", text: "SUB" }] } };
+  yield { type: "result", subtype: mode === "budget" ? "error_max_budget_usd" : "success", is_error: false, result: "SUB", total_cost_usd: 0.0003, usage: { input_tokens: 2, output_tokens: 416, cache_read_input_tokens: 0, cache_creation_input_tokens: 720 }, modelUsage: { "claude-haiku-5-5": { thinkingTokens: 387 } } };
+});
+const c = await toolLessCall({ ...base, thinking: "off", ledger: { lokiDir: `${D}/c`, phase: "tl-c" } });
+out.push(`sdk:opts=${JSON.stringify(opts.tools)}:${opts.maxTurns}:${JSON.stringify(opts.thinking)}:${JSON.stringify(opts.settingSources)}:${opts.persistSession}:${opts.systemPrompt}:${opts.model}:${opts.maxBudgetUsd ?? "nocap"}:${opts.title}:${opts.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS}`);
+out.push(`sdk:res=${c.outcome.kind}:${c.outcome.value}:${c.route}:${c.usd}:${c.thinkingTokens}`);
+const lc = lines("c");
+out.push(`sdk:ledger=${lc.length}:${lc[0]?.usd}:${lc[0]?.thinking_tokens}:${lc[0]?.source}:${lc[0]?.outcome}:${lc[0]?.max_tokens}`);
+await toolLessCall({ ...base, thinking: "low", ledger: { lokiDir: `${D}/c2`, phase: "tl-c2" } });
+out.push(`sdk:low=${JSON.stringify(opts.thinking)}:${opts.effort}`);
+mode = "none"; const n = await toolLessCall({ ...base, thinking: "off", ledger: { lokiDir: `${D}/n`, phase: "tl-n" } }); const ln = lines("n");
+out.push(`sdk:noresult=${n.outcome.kind}:${ln.length}:${ln[0]?.cost_status}`);
+mode = "budget"; const bu = await toolLessCall({ ...base, thinking: "off", ledger: { lokiDir: `${D}/bu`, phase: "tl-bu" } });
+out.push(`sdk:budgetstop=${bu.outcome.kind}`);
+// run cap: LOKI_E10_MAX_COST_USD counts the seed and this run child ledger; a reached cap sends nothing
+mode = "ok"; opts = null;
+process.env.LOKI_E10_MAX_COST_USD = "0.01"; process.env.LOKI_E10_RUN_ID = "r1"; process.env.LOKI_E10_SPENT_USD = "0.004";
+const k = await toolLessCall({ ...base, thinking: "off", ledger: { lokiDir: `${D}/k`, phase: "tl-k" } });
+out.push(`cap:remaining=${opts.maxBudgetUsd.toFixed(4)}:${k.outcome.kind}`);
+out.push(`cap:run_id=${lines("k")[0]?.run_id}:${sumChildLedger(`${D}/k`, "r1").partialUsd}`);
+process.env.LOKI_E10_SPENT_USD = "0.0098"; opts = null; // 0.0098 seed + 0.0003 already in the ledger >= 0.01
+const k2 = await toolLessCall({ ...base, thinking: "off", ledger: { lokiDir: `${D}/k`, phase: "tl-k2" } });
+out.push(`cap:reached=${k2.outcome.kind}:${opts === null ? "nosend" : "sent"}:${lines("k").length}`);
+__setSdkClientForTests(stub); process.env.ANTHROPIC_API_KEY = "k"; bodies = [];
+const k3 = await toolLessCall({ ...base, thinking: "off", ledger: { lokiDir: `${D}/k`, phase: "tl-k3" } });
+out.push(`cap:apireached=${k3.outcome.kind}:${bodies.length}`);
+// a cap that cannot be metered (no run id) refuses instead of never tripping
+delete process.env.ANTHROPIC_API_KEY; __resetSdkClientForTests(); delete process.env.LOKI_E10_RUN_ID; opts = null;
+const u = await toolLessCall({ ...base, thinking: "off", ledger: { lokiDir: `${D}/u`, phase: "tl-u" } });
+out.push(`cap:unmeterable=${u.outcome.kind}:${opts === null ? "nosend" : "sent"}`);
+console.log(out.join("\n"));' 2>&1)"
+want_tl='api:off={"type":"disabled"}:300:none
+api:low={"type":"adaptive"}:low
+api:notools=true
+api:res=ok:ANS:api
+api:ledger=1:tl-a:claude-haiku-5-5:1000:true
+sdk:opts=[]:1:{"type":"disabled"}:[]:false:sys:claude-haiku-5-5:nocap:loki-toolless:300
+sdk:res=ok:SUB:agent-sdk:0.0003:387
+sdk:ledger=1:0.0003:387:sdk-toolless:ok:300
+sdk:low={"type":"adaptive"}:low
+sdk:noresult=transport:1:unmeasured
+sdk:budgetstop=budget
+cap:remaining=0.0060:ok
+cap:run_id=r1:0.0003
+cap:reached=budget:nosend:1
+cap:apireached=budget:0
+cap:unmeterable=budget:nosend'
+[ "$tl" = "$want_tl" ] && ok "toolLessCall: no tools, thinking off/low on both routes, priced into the child ledger, run cap refuses and bounds" \
+    || { bad "toolLessCall legs differ"; diff <(printf '%s\n' "$want_tl") <(printf '%s\n' "$tl") | sed 's/^/    | /'; }
 
 # --- no removed provider name in shipped code ------------------------------
 # Allowed: the removed lists and message, GEMINI.md (an agent-rules file name), and model-family price/key rows
