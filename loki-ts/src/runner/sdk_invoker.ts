@@ -488,8 +488,10 @@ export function __setToolLessQueryForTests(fn: ToolLessQuery | null): void { que
 export function toolLessRemainingUsd(env: NodeJS.ProcessEnv, lokiDir: string | undefined): number | null {
   const cap = parseCapUsd(env["LOKI_E10_MAX_COST_USD"]);
   if (cap === null) return null;
-  const runId = env["LOKI_E10_RUN_ID"], seed = Number(env["LOKI_E10_SPENT_USD"]);
-  const spent = (Number.isFinite(seed) && seed > 0 ? seed : 0) + (lokiDir && runId ? sumChildLedger(lokiDir, runId).partialUsd : 0);
+  const runId = env["LOKI_E10_RUN_ID"];
+  if (!lokiDir || !runId) return 0; // a cap that cannot be metered (no ledger dir or run id) refuses rather than never tripping
+  const seed = Number(env["LOKI_E10_SPENT_USD"]);
+  const spent = (Number.isFinite(seed) && seed > 0 ? seed : 0) + sumChildLedger(lokiDir, runId).partialUsd;
   return Math.max(cap - spent, 0);
 }
 
@@ -505,6 +507,7 @@ async function toolLessViaAgentSdk(p: ToolLessParams, ledger: ToolLessParams["le
     const { thinking, effort } = toolLessThinking(p.thinking);
     const env: Record<string, string> = { ...(process.env as Record<string, string>) };
     for (const k of Object.keys(env)) if (k.startsWith("LOKI_E10_")) delete env[k];
+    env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = String(p.maxTokens); // the Agent SDK has no max-tokens option; the CLI reads this env
     const ac = new AbortController(), timer = setTimeout(() => ac.abort(), p.timeoutMs ?? 120_000);
     let text = "", result: Record<string, unknown> | null = null;
     try {
