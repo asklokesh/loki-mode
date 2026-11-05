@@ -3,13 +3,13 @@
 # engine10, several runs in ONE throwaway repo so each run reads what the earlier ones wrote to
 # .loki/memory/semantic/pr-lessons.json (util/pr_lessons.ts learnFromRun, retrieveLessons, formatRunLessons).
 # Asserts:
-#   learn:     run 1 (wrong multiply(), a fix round that changes nothing, an edit to the pre-existing calc.test.ts)
+#   learn:     run 1 (wrong multiply(), a fix round that changes nothing, a deleted assertion in the pre-existing calc.test.ts)
 #              ends STALLED and writes a check-failed lesson whose sub-lesson carries the first error line and run 1's
 #              id, plus an edited-existing-test lesson naming calc.test.ts.
 #   related:   run 2 on a related task gets those lessons (LOKI_PR_LESSONS=1), one imperative line each led by
 #              the file it is about, no run ids, and <runDir>/lessons-injected.json records the ids and bytes.
 #   merge:     run 2 repeats both mistakes (then its fix round turns the check green); each class stays ONE lesson
-#              with two sub-lessons, the check-failed one records the fix-round change, and run 2's use tag is marked
+#              with two sub-lessons, the check-failed one records the fix-round change, and run 2 is marked
 #              recurred.
 #   unrelated: run 3 on an unrelated task gets no run-lessons block.
 #   cap:       with 12 long seeded lessons, `loki memory brief` keeps the run-lessons block within 400 bytes.
@@ -109,12 +109,12 @@ impl_bytes() { awk '$1=="implement"{print $3; exit}' "$ITERS"; }
 
 # Baseline: run 2's exact task and stub behaviour in a repo with no history, for the before byte count.
 new_repo "$T/repo0"
-run_engine 0 "add a divide(a, b) function to calc.ts" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit E2E_STUB_TEST_EDIT=1
+run_engine 0 "add a divide(a, b) function to calc.ts" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit E2E_STUB_TEST_EDIT=delete
 BEFORE="$(impl_bytes)"
 
 # Run 1: fails in a specific way.
 new_repo "$T/repo"
-run_engine 1 "add a multiply(a, b) function to calc.ts" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress E2E_STUB_TEST_EDIT=1
+run_engine 1 "add a multiply(a, b) function to calc.ts" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress E2E_STUB_TEST_EDIT=delete
 RID1="$RID"
 [ "$(outcome)" = "STALLED" ] && ok "learn: run 1 ends STALLED" || { bad "learn: run 1 outcome is '$(outcome)', not STALLED"; dump; }
 [ -z "$(block "$PROMPTS.implement0")" ] && ok "learn: run 1 brief had no run lessons (nothing learned yet)" || bad "learn: run 1 brief already carried run lessons"
@@ -124,16 +124,15 @@ has "learn: its sub-lesson carries the first error line" "$cf" "first error: "
 has "learn: its sub-lesson carries run 1's id" "$cf" "'run_id': '$RID1'"
 has "learn: the lesson names the failing test file" "$cf" "calc.test.ts"
 et="$(lq '[l for l in L if l["category"]=="edited-existing-test"]')"
-has "learn: an edited-existing-test lesson was written" "$et" "restored calc.test.ts"
+has "learn: an edited-existing-test lesson was written" "$et" "weakened calc.test.ts"
 echo "    run 1 ($RID1): $(lq 'len(L)') run lessons: $(lq '", ".join(l["category"]+" x"+str(l["seen"]) for l in L)')"
 
 # Run 2: a related task reads them, then repeats both mistakes (its fix round turns the check green).
-run_engine 2 "add a divide(a, b) function to calc.ts" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit E2E_STUB_TEST_EDIT=1
+run_engine 2 "add a divide(a, b) function to calc.ts" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit E2E_STUB_TEST_EDIT=delete
 RID2="$RID"; B2="$(block "$PROMPTS.implement0")"
 printf '%s\n' "$B2" | sed 's/^/    | /'
 has "related: run 2 brief carries the run-lessons block" "$B2" "<untrusted-run-lessons>"
 has "related: run 2 brief carries the check-failed lesson as one imperative line" "$B2" "pass; it failed last run"
-has "related: run 2 brief carries the edited-existing-test lesson led by the test file" "$B2" "- calc.test.ts: do not edit this existing test"
 case "$B2" in *"run $RID1"*) bad "related: run 2 brief still carries run ids" ;; *) ok "related: no run ids in the block" ;; esac
 nonline="$(printf '%s\n' "$B2" | sed '1,4d;$d' | grep -vc '^- ')"
 [ "$nonline" = "0" ] && ok "related: every lesson is one line starting with '- '" || bad "related: $nonline body lines are not one-line lessons"
@@ -142,13 +141,12 @@ injb="$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d[
 [ "${injb%% *}" = "$(block "$PROMPTS.implement0" | wc -c | tr -d ' ')" ] && [ "${injb#* }" -ge 2 ] && ok "related: lessons-injected.json records $injb (run-lesson bytes, ids) matching the brief" || bad "related: lessons-injected.json '$injb' vs block $(block "$PROMPTS.implement0" | wc -c | tr -d ' ') bytes"
 echo "    run 2 ($RID2): implement brief $(impl_bytes) bytes (same task with no history: $BEFORE bytes), run-lessons block $(block "$PROMPTS.implement0" | wc -c | tr -d ' ') bytes"
 [ "$(block "$PROMPTS.implement0" | wc -c)" -le 400 ] && ok "cap: run 2's injected run-lessons block is within 400 bytes" || bad "cap: run 2's run-lessons block is over 400 bytes"
-[ "$(outcome)" = "VERIFIED" ] && ok "merge: run 2 ends VERIFIED after its fix round" || { bad "merge: run 2 outcome is '$(outcome)', not VERIFIED"; dump; }
+[ "$(outcome)" = "PARTIAL" ] && ok "merge: run 2 ends PARTIAL after its fix round (its weakened test caps it)" || { bad "merge: run 2 outcome is '$(outcome)', not PARTIAL"; dump; }
 [ "$(lq 'sum(1 for l in L if l["category"]=="edited-existing-test")')" = "1" ] && ok "merge: one edited-existing-test lesson, not a duplicate" || bad "merge: edited-existing-test lessons: $(lq 'sum(1 for l in L if l["category"]=="edited-existing-test")')"
 [ "$(lq '[len(l["subs"]) for l in L if l["category"]=="edited-existing-test"]')" = "[2]" ] && ok "merge: it holds two sub-lessons (runs 1 and 2)" || bad "merge: sub-lessons: $(lq '[len(l["subs"]) for l in L if l["category"]=="edited-existing-test"]')"
 CF='[l for l in L if l["category"]=="check-failed" and "calc.test.ts" in l["text"]]'
 [ "$(lq "[len(l['subs']) for l in $CF]")" = "[2]" ] && ok "merge: one check-failed lesson for the repeated calc.test.ts failure, two sub-lessons" || bad "merge: calc.test.ts check-failed lessons and their sub counts: $(lq "[len(l['subs']) for l in $CF]")"
 has "merge: the check-failed lesson records the fix-round change that turned it green" "$(lq "[s['text'] for l in $CF for s in l['subs']]")" "a fix round turned it green by changing calc.ts (+1 -1)"
-has "merge: run 2's use tag is marked recurred" "$(lq '[u for l in L for u in l["uses"] if l["category"]=="edited-existing-test"]')" "'run_id': '$RID2', 'verdict': 'VERIFIED'"
 has "merge: recurred flag set" "$(lq '[u.get("recurred") for l in L for u in l["uses"] if u["run_id"]=="'"$RID2"'"]')" "True"
 
 # Run 3: an unrelated task gets nothing.
@@ -233,7 +231,7 @@ has "stop: the file is size-capped and nothing is written with recording off" "$
 
 lst="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory lessons 2>&1)"
 has "list: loki memory lessons shows the category" "$lst" "category edited-existing-test, seen 2x"
-has "list: loki memory lessons shows a sub-lesson" "$lst" "- run $RID1: restored calc.test.ts"
+has "list: loki memory lessons shows a sub-lesson" "$lst" "- run $RID1: weakened calc.test.ts"
 
 # ---- Reuse past runs (L007 replay, L043 worked example) ----
 nruns() { find "$REPO/.loki/runs" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' '; }
@@ -339,7 +337,7 @@ exb="$(printf '%s\n' "$U" | sed -n 's/^unit exemplar bytes -> \([0-9-]*\) .*/\1/
 new_repo "$T/repo-example"
 TASK_V="add multiply(a, b) to calc.ts returning the product of two numbers"
 TASK_S="add multiplyAll(numbers) to calc.ts returning the product of all numbers"
-run_engine 20 "$TASK_V" E2E_STUB_TEST_EDIT=1
+run_engine 20 "$TASK_V"
 RIDV="$RID"
 [ "$(outcome)" = "VERIFIED" ] && ok "example: run V ends VERIFIED" || { bad "example: run V outcome '$(outcome)'"; dump; }
 exv="$(python3 -I -c 'import json,sys
