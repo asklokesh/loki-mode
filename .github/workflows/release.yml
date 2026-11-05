@@ -408,10 +408,12 @@ jobs:
           test -f release/loki-mode/tests/detect-mock-problems.sh
           (cd release && zip -qr "loki-mode-claude-code-${V}.zip" loki-mode && tar -czf "loki-mode-claude-code-${V}.tar.gz" loki-mode)
           # Brew source asset, attached at creation (releases are immutable).
-          # loki-ts/dist is untracked, so append the built dist to the archive under the same prefix.
-          git archive --format=tar --prefix="loki-mode-${V}/" -o "release/loki-mode-${V}.tar" HEAD
-          tar -rf "release/loki-mode-${V}.tar" --transform "s,^,loki-mode-${V}/," loki-ts/dist
-          gzip -n "release/loki-mode-${V}.tar"
+          # loki-ts/dist is untracked, so extract the archive, add the built dist, then tar it (portable: no GNU-only flags).
+          rm -rf release/brew-stage && mkdir -p release/brew-stage
+          git archive --format=tar --prefix="loki-mode-${V}/" HEAD | tar -xf - -C release/brew-stage
+          cp -R loki-ts/dist "release/brew-stage/loki-mode-${V}/loki-ts/dist"
+          tar -czf "release/loki-mode-${V}.tar.gz" -C release/brew-stage "loki-mode-${V}"
+          rm -rf release/brew-stage
           tar -tzf "release/loki-mode-${V}.tar.gz" | grep -qxF "loki-mode-${V}/loki-ts/dist/loki.js" || { echo "ERROR: brew asset has no loki-ts/dist/loki.js"; exit 1; }
           file "release/loki-mode-${V}.tar.gz" | grep -q 'gzip compressed' || { echo "ERROR: brew asset is not gzip"; exit 1; }
 
