@@ -6,7 +6,7 @@ import { installOwned } from "../../project_model/install.ts";
 import { scopedOutOf } from "../../project_model/scope.ts";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"; import { MANIFESTS } from "../../contrib/wall_snapshot.ts"; import { classifyRunnerOutput } from "../../runner/runner_errors.ts";
+import { basename, isAbsolute, join, relative, resolve } from "node:path"; import { MANIFESTS } from "../../contrib/wall_snapshot.ts"; import { classifyRunnerOutput } from "../../runner/runner_errors.ts";
 import { hiddenConfigChanged, testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst, QUICK_ONLY_NOTE, quickScope, quickSplit } from "../../e10ext/select.ts"; import { dependentNotes, dependentTests } from "../../features/dependents.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
@@ -15,7 +15,7 @@ import { withoutStaleWall, failureExcerpt, EXCERPT_TOTAL_CAP, changedFiles, hidd
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, linkHeadDeps, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, linkBaseFaithfulDeps, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
 interface ImplementOutput { exit?: ImplementExit; }
@@ -289,8 +289,8 @@ async function subtractBase(
     for (const { c, bc } of cmds) if (!base.has(c) && !signal.aborted) record(c, await runOnce(bc.cmd, bc.args, bc.cwd, signal, {}));
     for (const { c, t } of ss) { // a base run that cannot start (no tools, timeout, cut) excuses nothing: the check stays blocking
       if (signal.aborted) break;
-      const bc = commandFor(t, dir, api), chain: string[] = []; for (let d = bc.cwd; d.startsWith(dir); d = dirname(d)) { chain.push(d); if (d === dir) break; }
-      if (!link || !chain.every((d) => link(d))) continue; // the guarded linker: in a workspace the root node_modules resolves packages to HEAD source, so a throw the change caused would fail the same way on "base" (#522 review); no guard pass, no excuse
+      const bc = commandFor(t, dir, api);
+      if (!linkBaseFaithfulDeps(dir, ctx.repoDir, bc.cwd)) continue; // dependencies as they were at base (workspace links retargeted to the base worktree); refused means no excuse
       const r = await runOnce(bc.cmd, bc.args, bc.cwd, signal, {});
           if (!r.ok && !r.cut && !r.missing && failIds(r.out).length === 0 && startupSig(r.out.slice(-WALL_FAILURE_TAIL_CAP), [ctx.repoDir, dir, realOf(ctx.repoDir), realOf(dir)]) === startupSig(failTails.get(c), [ctx.repoDir, realOf(ctx.repoDir)])) { out.names.push(c.name); out.sameError.push(c.name); out.ids.push(`${c.name}: could not start on the base commit either, so it proves nothing about this change`); }
     }
@@ -364,7 +364,7 @@ export async function tscOnBase(ctx: RunContext, groupCwd: string, signal: Abort
     git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, ctx.baseSha]);
     const cwd = join(dir, relative(ctx.repoDir, groupCwd));
     if (!existsSync(join(cwd, "tsconfig.json"))) return null;
-    linkHeadDeps(dir, ctx.repoDir, cwd); // unguarded on purpose: the only caller has already proved every diagnostic is an unused-declaration error (tscLocalKeys), which no resolved dependency can change. A pnpm or npm workspace links its own packages into the root node_modules, so baseDepsLinker refused the root, base had no tsc, and zod's base-red errors were never excused
+    if (!linkBaseFaithfulDeps(dir, ctx.repoDir, cwd)) return null; // base-faithful: workspace links point at the base worktree, so the base tsc sees base code; refused means no base output, fail closed
     const r = await runOnce("npx", ["--no-install", "tsc", "--noEmit", "-p", "."], cwd, AbortSignal.any([signal, AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS)]), { ...opts });
     return r.missing || r.cut ? null : r.out;
   } catch { return null; } finally {

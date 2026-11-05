@@ -288,16 +288,50 @@ export function baseDepsLinker(baseDir: string, repoDir: string, gate: Pick<Zero
   };
 }
 
-/** Links the head's node_modules and .venv into `cwd` of the base worktree `baseDir` and into every dir above it up to `baseDir`, without baseDepsLinker's
- *  depsSeeHead guard (a pnpm/npm workspace always links its own packages into the root node_modules, so the guard refuses every such repo and the base run
- *  then has no tools at all). Only for a base run whose verdict cannot depend on what head code a dependency resolves to: tsc's unused-declaration
- *  errors (decided by one file's own text) and a startup error raised while the runner loads its config, before any test file or source is imported. */
-export function linkHeadDeps(baseDir: string, repoDir: string, cwd: string): void {
-  for (let d = cwd; d.startsWith(baseDir); d = dirname(d)) {
-    const src = join(repoDir, relative(baseDir, d));
-    for (const n of ["node_modules", ".venv"]) { try { if (existsSync(join(src, n)) && !existsSync(join(d, n))) symlinkSync(join(src, n), join(d, n)); } catch { /* none: the base run fails, fail closed */ } }
-    if (d === baseDir) break;
-  }
+/** A base-faithful dependency view for a pnpm/npm/yarn workspace, where depsSeeHead is true for every package because
+ *  (a) a package's node_modules entries are links into the ROOT store (node_modules/.pnpm), outside the package's own dir, and (b) workspace
+ *  packages are linked to their HEAD source dirs. Instead of refusing (baseDepsLinker) or linking head wholesale (linkHeadDeps), build a shadow
+ *  node_modules in the base worktree for `cwd` and every dir above it: each entry links to the head's installed content, except a link whose
+ *  real target is a workspace source dir (inside the repo, outside every node_modules segment), which is retargeted to the SAME path in the base
+ *  worktree. Scopes (@x), .pnpm and .pnpm/node_modules are shadowed one level down so their workspace links are retargeted too. Fail closed:
+ *  false when any workspace link remains that is not retargeted (a store package depending on a workspace package), when a manifest-free check
+ *  cannot be made, or on any error. */
+export function linkBaseFaithfulDeps(baseDir: string, repoDir: string, cwd: string): boolean {
+  let roots: string[];
+  try { roots = [...new Set([resolve(repoDir), realpathSync(repoDir)])]; } catch { return false; }
+  const wsTarget = (rt: string): string | null => {
+    for (const r of roots) if (rt === r || rt.startsWith(r + sep)) { const rel = relative(r, rt); return rel.split(sep).includes("node_modules") ? null : join(baseDir, rel); }
+    return null;
+  };
+  // a store package (.pnpm/<pkg>/node_modules/<dep>, also under an @scope) whose link reaches workspace source (a peer dependency on a workspace package)
+  const storeWs = (d: string, lvl: number): boolean => { try {
+    return readdirSync(d, { withFileTypes: true }).some((e) => {
+      const p = join(d, e.name);
+      if (e.isSymbolicLink()) { try { return wsTarget(realpathSync(p)) !== null; } catch { return false; } }
+      return e.isDirectory() && ((lvl === 0 && e.name === "node_modules") || (lvl === 1 && e.name.startsWith("@"))) ? storeWs(p, lvl + 1) : false;
+    });
+  } catch { return false; } };
+  const SHADOW = (src: string, name: string): boolean => name.startsWith("@") || name === ".pnpm" || (basename(src) === ".pnpm" && (name === "node_modules" || storeWs(join(src, name), 0))) || (basename(dirname(src)) === ".pnpm" && name === "node_modules");
+  let ok = true;
+  const shadow = (src: string, dst: string, depth: number): void => {
+    mkdirSync(dst, { recursive: true });
+    for (const e of readdirSync(src, { withFileTypes: true })) {
+      const p = join(src, e.name), q = join(dst, e.name);
+      if (e.isSymbolicLink()) { let rt: string; try { rt = realpathSync(p); } catch { continue; } symlinkSync(wsTarget(rt) ?? rt, q); }
+      else if (e.isDirectory() && depth < 6 && SHADOW(src, e.name)) shadow(p, q, depth + 1);
+      else symlinkSync(p, q);
+    }
+  };
+  try {
+    for (let d = cwd; d.startsWith(baseDir); d = dirname(d)) {
+      const src = join(repoDir, relative(baseDir, d), "node_modules");
+      if (existsSync(src) && !existsSync(join(d, "node_modules"))) {
+        shadow(src, join(d, "node_modules"), 0);
+      }
+      if (d === baseDir) break;
+    }
+  } catch { return false; }
+  return ok;
 }
 
 /** True when one finished run of a test command executed zero tests (the shared mapping of 0 tests to not_run; a cut or missing run never counts). */
