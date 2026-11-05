@@ -227,6 +227,7 @@ printf '%s\n' "$out" | while IFS= read -r l; do
     case "$l" in
         "ok "*) printf '  PASS: %s\n' "${l#ok }" ;;
         "bad "*) printf '  FAIL: %s\n' "${l#bad }" ;;
+        ERROR:root:*|INFO:root:*|WARNING:root:*) ;;
         *) printf '  note: %s\n' "$l" ;;
     esac
 done
