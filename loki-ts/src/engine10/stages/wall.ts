@@ -18,7 +18,7 @@ import { sealedWallDir, assertionFailure, baseJobs, classify, plannedGoDir, goPa
 import { conventionViolation, conventionsBrief, dotenvFileRead, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, rustArities, rustCallClash, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
 import { dotnetTestProject } from "../../util/stack_tools.ts";
-import { EXEC_SPEC_BRIEF_FILE, execSpecAuthor, execSpecEnabled, execSpecModel } from "../../features/exec_spec.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
+import { EXEC_SPEC_BRIEF_FILE, execSpecAuthor, execSpecEnabled, execSpecModel } from "../../features/exec_spec.ts"; import { probeIntake, tournamentEnabled, writeTournamentInput } from "../../features/tournament.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
 const WALL_PREFIX = "loki_wall_";
 
 export interface WallSealedFile { path: string; sha256: string; runner?: RunnerName; } // path: absolute, in the repo working tree
@@ -196,7 +196,8 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
  *  binding cases (red on base, every expected value stated by the issue) sealed as this run's Wall file through installWall. Advisory
  *  cases reach implement as a brief block only (<runDir>/exec-spec-brief.txt), never sealed, never blocking. */
 async function execSpecWall(ctx: RunContext, signal: AbortSignal, task: string, sizeName: string, runners: RunnerName[], existingTests: string[], leanWhy: string): Promise<WallAuthorOutcome> {
-  const iterationId = `${ctx.runId}-execspec`, out = await execSpecAuthor({ task, repoDir: ctx.repoDir, runners, existingTests, sessions: ctx.sessions as never, iterationId, signal });
+  const iterationId = `${ctx.runId}-execspec`, out = await execSpecAuthor({ task, repoDir: ctx.repoDir, runners, existingTests, sessions: ctx.sessions as never, iterationId, signal, ...(tournamentEnabled() ? { probe: probeIntake } : {}) });
+  writeTournamentInput(ctx.runDir, out); // LOKI_E10_TOURNAMENT: the Go probe cases and the full spec file, for implement's gate
   const summary = { status: out.status, reason: out.reason, ...(out.runner ? { runner: out.runner } : {}), atoms: out.atoms, sites: out.sites, binding: out.binding, advisory: out.advisory, guards: out.guards, dropped: out.dropped, duration_s: out.durationS };
   if (out.brief) { try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, EXEC_SPEC_BRIEF_FILE), out.brief, "utf8"); } catch { /* best effort: implement runs without the block */ } }
   const spent = out.runner ? { iteration_ids: [iterationId] } : {}; // a generator session ran: its spend reaches the ledger

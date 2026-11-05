@@ -380,7 +380,7 @@ export function implementBlock(e: Emitter, destRel: string, sel: SpecSelection, 
 /** One completion with no repo tools. TODO(PR0, feat/toolless-call): call the shared tool-less Haiku primitive (thinking off) once
  *  it lands; until then the default goes through the run's own provider session (ctx.sessions.run) in an empty temp directory with
  *  every tool but Write disallowed, and reads the reply file the session writes. Tests replace it with setExecSpecGenerator. */
-export type SpecGenerator = (brief: string, o: { model: string; iterationId: string; signal: AbortSignal }) => Promise<string | null>;
+export type SpecGenerator = (brief: string, o: { model: string; iterationId: string; signal: AbortSignal; maxTokens?: number }) => Promise<string | null>;
 let generatorOverride: SpecGenerator | null = null;
 export const setExecSpecGenerator = (g: SpecGenerator | null): void => { generatorOverride = g; };
 export const execSpecModel = (env: NodeJS.ProcessEnv = process.env): string => env.LOKI_E10_EXEC_SPEC_MODEL || "haiku";
@@ -389,7 +389,7 @@ export function sessionGenerator(sessions: { run(o: Record<string, unknown>): Pr
   return async (brief, o) => {
     const cwd = mkdtempSync(join(tmpdir(), "loki-execspec-gen-"));
     try {
-      const r = await sessions.run({ stage: "wall", brief: `${brief}\n\nWrite that reply, and nothing else, to the file ${EXEC_SPEC_REPLY} in the current directory with the Write tool; use no other tool.`, tier: "development", model: o.model, iterationId: o.iterationId, limitS: 120, maxOutputTokens: 4096, effort: "low", disallowedTools: "Bash,Read,Edit,MultiEdit,Glob,Grep,LS,WebFetch,WebSearch,Task,NotebookEdit,TodoWrite", signal: o.signal, cwd });
+      const r = await sessions.run({ stage: "wall", brief: `${brief}\n\nWrite that reply, and nothing else, to the file ${EXEC_SPEC_REPLY} in the current directory with the Write tool; use no other tool.`, tier: "development", model: o.model, iterationId: o.iterationId, limitS: 120, maxOutputTokens: o.maxTokens ?? 4096, effort: "low", disallowedTools: "Bash,Read,Edit,MultiEdit,Glob,Grep,LS,WebFetch,WebSearch,Task,NotebookEdit,TodoWrite", signal: o.signal, cwd });
       if (r.killed || r.exit === null) return null;
       const p = join(cwd, EXEC_SPEC_REPLY); return existsSync(p) ? readFileSync(p, "utf8") : null;
     } finally { rmSync(cwd, { recursive: true, force: true }); }
@@ -417,8 +417,9 @@ export function planFor(runner: SpecRunner, repoDir: string, sites: ResolvedSite
   return { runner, targetRel, header: `The file is ${targetRel}; import the code under test from "${spec}".`, mustStart: "", style: style ? read(style) : "" };
 }
 
-export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; durationS: number }
-export async function execSpecAuthor(o: { task: string; repoDir: string; runners: string[]; existingTests: string[]; sessions: Parameters<typeof sessionGenerator>[0]; iterationId: string; signal: AbortSignal }): Promise<ExecSpecOutcome> {
+export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; /** LOKI_E10_TOURNAMENT, Go: the repaired probe cases, the package, and the full generated file (binding and advisory) */ probe?: string; probeRefused?: string; pkg?: string; specFile?: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; durationS: number }
+/** `probe` (features/tournament.ts probeIntake, passed by wall.ts only when LOKI_E10_TOURNAMENT=1): for Go, its rules are appended to the generator brief and the reply may carry a second block of probe cases, kept apart from the spec. */
+export async function execSpecAuthor(o: { task: string; repoDir: string; runners: string[]; existingTests: string[]; sessions: Parameters<typeof sessionGenerator>[0]; iterationId: string; signal: AbortSignal; probe?: { rules: string; take(reply: string, pkg: string): { reply: string; probe?: string; refused?: string } } }): Promise<ExecSpecOutcome> {
   const t0 = Date.now(), atoms0 = extractSpecAtoms(o.task), done = (status: ExecSpecOutcome["status"], reason: string, extra: Partial<ExecSpecOutcome> = {}): ExecSpecOutcome => ({ status, reason, atoms: atoms0.length, sites: 0, binding: [], advisory: [], guards: [], dropped: [], durationS: (Date.now() - t0) / 1000, ...extra });
   const runner = (["go", "pytest", "vitest"] as SpecRunner[]).find((r) => o.runners.includes(r));
   if (!runner) return done("skipped", "exec spec: no supported runner (go, pytest, vitest)");
@@ -428,8 +429,10 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
   if (!plan) return done("skipped", `exec spec: no ${runner} site to place the spec beside`, { sites: sites.length });
   if (existsSync(join(o.repoDir, plan.targetRel))) return done("skipped", `exec spec: ${plan.targetRel} already exists`, { sites: sites.length });
   const gen = generatorOverride ?? sessionGenerator(o.sessions);
-  const reply = await gen(buildGeneratorBrief(e, atoms, sites, plan.header, plan.style), { model: execSpecModel(), iterationId: o.iterationId, signal: o.signal });
-  if (reply === null) return done("skipped", "exec spec: the generator wrote no reply", { sites: sites.length, runner });
+  const probing = runner === "go" ? o.probe : undefined, pkg = plan.mustStart.replace(/^package\s+/, "");
+  const reply0 = await gen([buildGeneratorBrief(e, atoms, sites, plan.header, plan.style), ...(probing ? [probing.rules] : [])].join("\n\n"), { model: execSpecModel(), iterationId: o.iterationId, signal: o.signal, ...(probing ? { maxTokens: 8192 } : {}) });
+  if (reply0 === null) return done("skipped", "exec spec: the generator wrote no reply", { sites: sites.length, runner });
+  const taken = probing ? probing.take(reply0, pkg) : null, reply = taken ? taken.reply : reply0;
   const parsed = parseGenerated(e, reply, plan.mustStart);
   if ("refused" in parsed) return done("skipped", `exec spec: ${parsed.refused}`, { sites: sites.length, runner });
   const base = redFilter(e, o.repoDir, plan.targetRel, parsed.file);
@@ -440,7 +443,7 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
     const again = redFilter(e, o.repoDir, plan.targetRel, sel.file);
     if (!again.built || binding.some((n) => again.cases[n] !== "red")) { sel.advisory.push(...binding.map((name) => ({ name, why: "red on base alone, not once pruned" }))); binding = []; }
   }
-  const brief = implementBlock(e, plan.targetRel, { ...sel, binding }, parsed.file, atoms, sites), extra = { runner, targetRel: plan.targetRel, sites: sites.length, brief, binding, advisory: sel.advisory.map((a) => a.name), guards: sel.guards, dropped };
+  const brief = implementBlock(e, plan.targetRel, { ...sel, binding }, parsed.file, atoms, sites), extra = { runner, targetRel: plan.targetRel, sites: sites.length, brief, binding, advisory: sel.advisory.map((a) => a.name), guards: sel.guards, dropped, ...(taken ? { pkg, specFile: parsed.file, ...(taken.probe ? { probe: taken.probe } : { probeRefused: taken.refused ?? "probe_no_block" }) } : {}) };
   return binding.length ? done("sealed", `exec spec: ${binding.length} binding case(s) red on base`, { ...extra, file: sel.file }) : done("advisory_only", "exec spec: no binding case red on base; advisory cases only", extra);
 }
 
