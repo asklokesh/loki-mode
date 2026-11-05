@@ -152,6 +152,7 @@
 #  64. assert_delta.ts reportedValues: drop the WANTED_BEFORE skip (the "should return" value reads as a symptom; the finder unit legs fail).
 #  65. seal.ts failThenPass: drop the rewritten-file exclusion (the lone rewritten pinned assertion reads VERIFIED).
 #  67. seal.ts pinDropped: key on the file only again (the F1 unit leg fails); drop the pinLift gate (the F2 unit leg fails); drop CALLED_RIGHT in assert_delta.ts (the called-right unit leg fails).
+#  68. verify.ts goBatchable: drop the targets/changed exclusion (the eligibility leg reads true,true,true,...); runGoBatches: vouch without the whole-package pass (the red-file leg batches 3 files); baseGoBatch: ignore goBatchOn (the base legs count equal go calls); goFileStream: keep every file's events (the base red leg lists every file).
 #  66. test_guard.ts defectPinEdits: also accept a structural change (the structural-change unit leg fails) or drop the pin note from seal (the receipt leg fails).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
@@ -1118,6 +1119,62 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     [ -n "$(ls "$T"/pin-prompt.*.implement* 2>/dev/null)" ] && [ "$(cat "$T"/pin-prompt.*.implement* 2>/dev/null | grep -c 'pin the behavior')" = "0" ] && ok "defect pin: the brief is unchanged by default (LOKI_E10_DEFECT_PIN unset)" || bad "defect pin: the brief lists pins without LOKI_E10_DEFECT_PIN=1"
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "defect pin: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: defect pin e2e: pytest is not installed"; fi
+fi
+
+# Go test batching (LOKI_E10_GO_BATCH, default on), real `go test`: untouched go test files of one package vouch together in one run; a
+# red file voids the batch and every file runs alone; Wall, task-named and edited files never join (their per-file run is the fail-then-pass
+# proof); the base reruns batch per package with the same verdicts; LOKI_E10_GO_BATCH=0 restores one run per file.
+if command -v go >/dev/null 2>&1; then
+    GB="$T/gobatch"; mkdir -p "$GB/shim"
+    printf '#!/bin/bash\necho "$*" >> "$GOLOG"\nexec "%s" "$@"\n' "$(command -v go)" > "$GB/shim/go"; chmod +x "$GB/shim/go"
+    mkgo() { # <dir> <files> <red indexes, comma separated>
+        local d="$1" i=1 w; mkdir -p "$d/pk"
+        printf 'module example.com/gb\n\ngo 1.21\n' > "$d/go.mod"; printf 'package pk\n\nfunc Id(x int) int { return x }\n' > "$d/pk/pk.go"
+        while [ "$i" -le "$2" ]; do
+            w=$i; case ",$3," in *",$i,"*) w=999 ;; esac
+            printf 'package pk\n\nimport "testing"\n\nfunc TestF%sA(t *testing.T) {\n\tif Id(%s) != %s {\n\t\tt.Fatal("bad")\n\t}\n}\n\nfunc TestF%sB(t *testing.T) {\n\tif Id(2) != 2 {\n\t\tt.Fatal("bad")\n\t}\n}\n' "$i" "$i" "$w" "$i" > "$d/pk/f${i}_test.go"; i=$((i+1))
+        done
+        (cd "$d" && git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -qm base)
+    }
+    mkgo "$GB/green" 4 ""; mkgo "$GB/red" 4 3; mkgo "$GB/basered" 6 2,4,5
+    cat > "$GB/probe.ts" <<'TSEOF'
+const ROOT = process.env.ROOT!, v = await import(ROOT + "/loki-ts/src/engine10/stages/verify.ts"), cr = await import(ROOT + "/loki-ts/src/util/check_result.ts");
+const { failIds } = await import(ROOT + "/loki-ts/src/engine10/failures.ts");
+const repo = process.env.REPO!, n = Number(process.env.N), sig = new AbortController().signal, mode = process.env.MODE;
+const ctx: any = { repoDir: repo, baseSha: Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: repo }).stdout.toString().trim(), emit: () => {} };
+const tests = Array.from({ length: n }, (_, i) => ({ runner: "go", path: `pk/f${i + 1}_test.go` }));
+const alone = async (t: any) => { const tc = cr.commandFor(t, repo, null), a = await v.runOnce(tc.cmd, tc.args, tc.cwd, sig, {}); return { a, c: await cr.corroboratePass(cr.classifyCheck({ kind: "test", ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, runner: "go" }), a.out, "go", tc.args, { cwd: tc.cwd, env: process.env, signal: sig }) }; };
+if (mode === "pure") {
+  const tg = new Set(["go:pk/f1_test.go"]), ch = ["pk/f2_test.go"], f = (i: number, env: any) => v.goBatchable(tests[i], tg, ch, env);
+  console.log([f(2, {}), f(0, {}), f(1, {}), f(2, { LOKI_E10_GO_BATCH: "0" }), f(2, { LOKI_E10_VERIFY_BATCH: "0" })].join(","));
+} else if (mode === "head") {
+  const got = await v.runGoBatches(ctx, tests, null, sig, () => {}), per = new Map<string, string>();
+  for (const t of tests) { const { c } = await alone(t); per.set(v.testCheckName(t), `${c.result}:${c.n}`); }
+  console.log(JSON.stringify({ batched: [...got.entries()].map(([k, c]: any) => `${k}=${c.result}:${c.n}`), alone: [...per.entries()].map(([k, r]) => `${k}=${r}`) }));
+} else {
+  const checks: any[] = [];
+  for (const t of tests) { const { a, c } = await alone(t); checks.push({ name: v.testCheckName(t), cmd: "go test", ...c, ids: c.result === "fail" ? failIds(a.out) : undefined }); }
+  const r = await v.subtractBase(ctx, null, checks, tests, [], new Set(), new Set(process.env.REL ? checks.map((c) => c.name) : []), sig);
+  console.log(JSON.stringify({ knownRed: r.knownRed, weak: r.weak, cnt: r.cnt }));
+}
+TSEOF
+    gb() { env "PATH=$GB/shim:$PATH" "GOLOG=$GB/log" ROOT="$ROOT" "$@" bun --no-env-file --config=/dev/null "$GB/probe.ts" 2>&1; }
+    P="$(gb MODE=pure REPO="$GB/green" N=3)"
+    [ "$P" = "true,false,false,false,false" ] && ok "go batch: an untouched go file batches; Wall/task-named and edited files never do; LOKI_E10_GO_BATCH=0 and LOKI_E10_VERIFY_BATCH=0 turn it off" || bad "go batch eligibility gave: $P"
+    H="$(gb MODE=head REPO="$GB/green" N=4)"
+    [ "$(printf '%s' "$H" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(len(d["batched"])==4 and sorted(d["batched"])==sorted(d["alone"]))' 2>&1)" = True ] \
+        && ok "go batch: a green package vouched in one run gives each file the same result and test count as its own run" || bad "go batch green vs per-file differ: $H"
+    H="$(gb MODE=head REPO="$GB/red" N=4)"
+    [ "$(printf '%s' "$H" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d["batched"]==[] and [a.split("=")[0] for a in d["alone"] if a.split("=")[1].startswith("fail")]==["go:pk/f3_test.go"])' 2>&1)" = True ] \
+        && ok "go batch: one red file voids the batch; every file runs alone and only the red file is attributed" || bad "go batch with a red file gave: $H"
+    for knob in 1 0; do : > "$GB/log"; eval "BR$knob=\"\$(gb MODE=base REPO=\"$GB/basered\" N=6 LOKI_E10_GO_BATCH=$knob)\""; eval "BC$knob=\$(grep -c -- '-json -run' \"$GB/log\")"; done
+    [ "$BR1" = "$BR0" ] && [ "${BC1:-0}" -lt "${BC0:-0}" ] && printf '%s' "$BR1" | grep -q 'go:pk/f2_test.go","go:pk/f4_test.go","go:pk/f5_test.go' \
+        && ok "go batch: red untouched files rerun on base in one go test (same known-red verdict, $BC1 go calls vs $BC0 per file)" || bad "go base batch: verdict '$BR1' vs '$BR0', go calls $BC1 vs $BC0"
+    for knob in 1 0; do : > "$GB/log"; eval "SR$knob=\"\$(gb MODE=base REPO=\"$GB/green\" N=4 REL=1 LOKI_E10_GO_BATCH=$knob)\""; eval "SC$knob=\$(grep -c -- '-json -run' \"$GB/log\")"; done
+    [ "$SR1" = "$SR0" ] && [ "${SC1:-0}" -lt "${SC0:-0}" ] && ok "go batch: relevant files rerun on base per package give the same counts and weak list ($SC1 go calls vs $SC0)" || bad "go base batch (relevant): '$SR1' vs '$SR0', go calls $SC1 vs $SC0"
+    grep -q 'goBatchable(t, targets0, changed)' loki-ts/src/engine10/stages/verify.ts && ok "go batch: the verify stage selects batch members with goBatchable(Wall, task-named and edited files excluded)" || bad "go batch: verify.ts does not route through goBatchable"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go batch: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go batch: go is not installed"; fi
 fi
 
 finish
