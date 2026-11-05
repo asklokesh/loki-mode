@@ -10,6 +10,8 @@
 #                not name; the edit is kept and the receipt lists "outside stated scope: util.ts" without blocking.
 #   update:      an edit that keeps every assertion and only adds a test case is kept in the existing test file and
 #                reaches the run branch commit, the receipt does not call it weakened, and the run is VERIFIED.
+#   setup:       an added vi.mock call or beforeEach hook in an existing test file (no assertion lost) is named weakened and caps the verdict.
+#   vitest edit: (real vitest 2.x and latest) an added test block stays uncapped and passes; a deleted assertion and an added hook are PARTIAL.
 #   conflict:    implement writes a wrong multiply(); the fix session answers LOKI_SPEC_CONFLICT without editing;
 #                no retry session starts (one fix session, no "-r" iteration) and the run ends BLOCKED. The code the
 #                run wrote stays on its loki/<id> branch (not only in a bundle), where the user looks.
@@ -131,6 +133,7 @@
 #  48. check_result.ts callerFiles: recompute codeOnly over every candidate per candidate (seal perf reads over 5000 ms).
 #  49. verify.ts AND seal.ts: name every edited existing test as "weakened test" again (the update run names calc.test.ts).
 #  50. pub cap real runner (pytest): drop pubGap from verdictOf (the real-pytest leg reads VERIFIED).
+#  51. test_guard.ts: drop SETUP_RE from weakensTest (the setup mock and beforeeach legs read VERIFIED).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -251,6 +254,13 @@ case "$reverted" in *calc.test.ts*) bad "update: tests_reverted names calc.test.
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
 case "$notes" in *"weakened test: calc.test.ts"*) bad "update: an added case was called weakened: $notes" ;; *) ok "update: an added case is not called weakened" ;; esac
 [ "$(outcome)" = "VERIFIED" ] && ok "update: the run is VERIFIED" || { bad "update: outcome is '$(outcome)', not VERIFIED"; dump; }
+
+for kind in mock beforeeach; do
+    run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=$kind LOKI_EXOGENOUS_PROOF=0 # proof opt-out: the added construct alone must cap
+    notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+    has "setup $kind: an added $kind in an existing test file is named weakened" "$notes" "weakened test: calc.test.ts"
+    [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "setup $kind: it caps the verdict ($(outcome))" || { bad "setup $kind: outcome is '$(outcome)'"; dump; }
+done
 
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict
 n="$(fix_sessions)"
@@ -643,6 +653,20 @@ for vt in 2 latest; do
     MAKE_REPO=make_vt_repo run_engine "add a multiply(a, b) function to calc.ts" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts \
         E2E_STUB_SNIPPET=$'export function multiply(a: number, b: number): number {\n  return a * b;\n}\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=1
     [ "$(outcome)" = "VERIFIED" ] && ok "vitest $vt pub cap: only the tested function added, the run is VERIFIED" || { bad "vitest $vt pub cap: control outcome is '$(outcome)'"; dump; }
+    # EXP-0001 on the real vitest: an added test block in the existing calc.test.ts is kept and not called weakened; a deleted assertion or an added hook is.
+    VT_SNIP=$'export function multiply(a: number, b: number): number {\n  return a * b;\n}\n'
+    vt_edit() { MAKE_REPO=make_vt_repo run_engine "add a multiply(a, b) function to calc.ts" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts E2E_STUB_SNIPPET="$VT_SNIP" LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=1 LOKI_EXOGENOUS_PROOF=0 "$@"; notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"; pc="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(" ".join(c["name"]+"="+c["result"] for c in json.load(open(sys.argv[1]))["checks"]))' "$RUNDIR/receipt.json" 2>/dev/null)"; }
+    vt_edit LOKI_E10_PUBLIC_GAP=0 E2E_STUB_TEST_APPEND=$'test("add again", () => {\n  expect(calc.add(1, 1)).toBe(2);\n});'
+    git -C "$REPO" show HEAD:calc.test.ts 2>/dev/null | grep -q 'add again' && ok "vitest $vt added case: the new it/test block is in the run's commit" || { bad "vitest $vt added case: the block did not reach the commit"; dump; }
+    case "$pc" in *"calc.test.ts=pass"*) ok "vitest $vt added case: the real vitest ran the edited file and passed ($pc)" ;; *) bad "vitest $vt added case: no passing calc.test.ts check: '$pc'" ;; esac
+    case "$notes" in *"weakened test:"*) bad "vitest $vt added case: an added block was called weakened: $notes" ;; *) ok "vitest $vt added case: an added block is not called weakened" ;; esac
+    [ "$(outcome)" = "VERIFIED" ] && ok "vitest $vt added case: VERIFIED (agent-only proof and the public-function gap opted out: an edited visible test is agent-authored, so a real run needs the Wall for both)" || { bad "vitest $vt added case: outcome is '$(outcome)'"; dump; }
+    vt_edit E2E_STUB_TEST_DROP='calc.add(2, 3)'
+    has "vitest $vt deleted assertion: the receipt names the weakened test" "$notes" "weakened test: calc.test.ts"
+    [ "$(outcome)" = "PARTIAL" ] && ok "vitest $vt deleted assertion: PARTIAL" || { bad "vitest $vt deleted assertion: outcome is '$(outcome)'"; dump; }
+    vt_edit E2E_STUB_TEST_APPEND=$'import { beforeEach } from "vitest";\nbeforeEach(() => {});'
+    has "vitest $vt added hook: the receipt names the weakened test" "$notes" "weakened test: calc.test.ts"
+    [ "$(outcome)" = "PARTIAL" ] && ok "vitest $vt added hook: PARTIAL" || { bad "vitest $vt added hook: outcome is '$(outcome)'"; dump; }
 done
 
 finish
