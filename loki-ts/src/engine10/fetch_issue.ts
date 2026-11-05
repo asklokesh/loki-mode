@@ -34,6 +34,7 @@ export function isTrustedGithubComment(c: GhComment): boolean {
     && c.author?.is_bot !== true && c.isMinimized !== true && typeof c.body === "string" && c.body.trim() !== ""
     && !c.body.includes(LOKI_COMMENT_MARKER);
 }
+export const ISSUE_CONTEXT_HEAD = "## Issue tracker context"; // withIssueContext appends this section; spec_ambiguity.ts cuts the comments off the task at it
 const renderComment = (c: IssueComment): string => `Comment from ${c.author} (${c.association}${c.created_at ? `, ${c.created_at}` : ""}):\n${c.body.trim()}\n`;
 /** Keeps the newest comments whose rendered text fits in `cap` bytes (one oversized newest comment is cut to fit), returned oldest first. */
 export function capComments(list: IssueComment[], cap = COMMENTS_CAP_BYTES): { comments: IssueComment[]; omitted: number } {
@@ -61,7 +62,7 @@ export function withIssueContext<T extends NormalizedIssue>(issue: T, trusted: I
     parts.push(`Comments from trusted authors, oldest first${omitted ? ` (${omitted} older comment(s) left out to stay within 16 KB)` : ""}:`);
     parts.push(...comments.map(renderComment));
   }
-  const body = parts.length === 0 ? issue.body : `${issue.body.replace(/\s+$/, "")}${issue.body.trim() ? "\n\n" : ""}## Issue tracker context\n\n${parts.join("\n")}`.replace(/\s+$/, "");
+  const body = parts.length === 0 ? issue.body : `${issue.body.replace(/\s+$/, "")}${issue.body.trim() ? "\n\n" : ""}${ISSUE_CONTEXT_HEAD}\n\n${parts.join("\n")}`.replace(/\s+$/, "");
   return { ...issue, body, comments, comments_omitted: omitted, comments_excluded: excluded };
 }
 export type Execer = (cmd: string, args: string[]) => string;

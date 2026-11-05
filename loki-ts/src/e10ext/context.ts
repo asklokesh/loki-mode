@@ -9,6 +9,7 @@ import { FINISH_LINE, type RunContext, type TestMap, type TestRef } from "../eng
 import { unitBrief } from "../features/speed/unit_mode.ts";
 import { signatureDigest } from "../util/ts_signatures.ts";
 import { contextPack, packEnabled, type ContextPack } from "../util/context_pack.ts";
+import { releaseNoteBrief } from "../project_model/conventions.ts";
 import { readVerifiedCommand } from "./repomemory.ts"; import { profileBrief } from "../runner/repo_profile.ts"; import { exampleFiles } from "../util/pr_lessons.ts";
 
 export interface ContextDeps {
@@ -24,10 +25,12 @@ export const FIXED_RULES = [
   "Rules:",
   "- The Wall tests are read-only: do not edit or delete them. Add the regression test where the repository's existing tests for that code live, following their conventions, and never delete, skip or loosen an existing assertion.",
   "- Exception: when the task names an existing test file or asks to change tests, change only what it asks; never remove, skip or loosen any other assertion. An existing test that contradicts the task otherwise is a spec conflict: cite it.",
-  "- Run the impacted tests named below and any other targeted tests you need (the Project Model commands below say how), not the package's full suite: after you stop the harness re-runs your checks, and the full suite when the diff's risk tier is medium or high; a pass that exists only in your reply does not count. Run tests with the exact command the Project Model lists, never a shortened variant that changes how imports resolve; never create files or symlinks in a test directory to make an import work.",
+  "- Before editing a function, open the file and read the whole function, not only the snippet or suggested code quoted in the task (that text is a hint, not the spec). Make the branch you change match its sibling branches in that function: append, return or pass through the same variables they use (raw or normalized input), and add a test case that tells those two apart if the function normalizes input.",
+  "- Implement the fix the issue prefers; add a fallback or workaround only on top of it, never in its place.",
+  "- Run the impacted tests named below and any other targeted tests you need (the Project Model commands below say how), not the package's full suite and never npm test, nx test or another workspace-wide run: after you stop the harness re-runs your checks, and the full suite when the diff's risk tier is medium or high; a pass that exists only in your reply does not count. Run tests with the exact command the Project Model lists, never a shortened variant that changes how imports resolve; never create files or symlinks in a test directory to make an import work.",
   "- Never leave a long-lived server running.",
   "- Never kill processes.",
-  "- Write no documentation unless the task explicitly asks for it. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.",
+  "- Write no documentation unless the task explicitly asks for it, except the release-note fragment a repository convention listed below requires. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.",
   "- Do not commit or push.",
   "- If you add a new third-party registry dependency, list it in .loki/supply-declared.json as a JSON array of {ecosystem,name,version_spec,registry}, leaving out workspace, path, git and local packages.",
   FINISH_LINE,
@@ -70,6 +73,7 @@ export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): Br
     interps.length ? `Detected test interpreter (no test file to run yet; use exactly this executable, never a guessed one): ${interps.join(", ")}` : "",
     cmds.length ? `Impacted test commands:\n${cmds.join("\n")}` : "",
     verified ? `Last verified test command: ${verified}` : "",
+    releaseNoteBrief(ctx.repoDir, files), // L3: one per-run line after the cache prefix; "" when the repo has no fragment convention
     profileBrief(ctx.repoDir), // REPOMEM: validated repo commands + baseline-red tests; byte-stable for an unchanged profile
   ].filter(Boolean).join("\n\n");
   if (!pack) return { text, files, pack: null };

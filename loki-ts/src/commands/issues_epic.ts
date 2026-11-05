@@ -6,7 +6,7 @@
 //   3. a slice that is not VERIFIED or PARTIAL with a PR stops its dependents and only its dependents (independent slices still run), which are recorded SKIPPED with the reason;
 //   4. renderEpicTree prints the epic as a tree of slice, outcome, PR and cost.
 import type { GhIssue } from "./issues_run.ts";
-import { exitCodeOf, labelCol } from "../engine10/output.ts";
+import { exitCodeOf, labelCol, partialCostText } from "../engine10/output.ts";
 import { sliceHeadLine } from "../util/run_outputs.ts";
 
 export interface Slice {
@@ -31,6 +31,7 @@ export interface SliceResult {
   branch?: string | null;
   rc?: number; // the slice run's exit code
   usd?: number | null; // the slice run's own unrounded cost; null when it reported none
+  partial?: { usd: number; measured: number; total: number } | null; // usd is null but some sessions priced: the known dollars (splitCost adds them, the slice still counts unmeasured)
   budget?: boolean; // the slice hit its budget (exit 3, or an Outcome: BUDGET_STOP line when LOKI_DURABLE_STATE maps every failure to 20)
 }
 
@@ -150,6 +151,7 @@ export function decomposeBrief(slug: string, i: GhIssue, triageReason: string, o
     `Use at most ${MAX_SLICES} slices, and fewer when the issue allows. Prefer independent slices (empty depends_on) that can be built at the same time over a chain: add a dependency only when a slice cannot be built without the other's code. A long serial chain is a failure of the plan, because one failed slice skips everything after it.`,
     "Give a slice several dependencies only when they are already on one chain.",
     "When a criterion changes behavior an existing test asserts (for example replacing ILIKE search with full-text search), search the repository's tests for it, put that test file in the slice's files, and say in the criterion that the test is updated to the new behavior. Never write \"existing tests still pass\" for behavior the slice replaces: the implementer treats an unnamed existing test as read-only and stops on the contradiction.",
+    "Never write a criterion that requires a whole test suite, lint or build to pass (for example \"npm run test passes\"): the repository may already have failures the slice did not cause. Write the slice's own checks (named test files, typecheck of its files) and \"no new failures\", because the harness excuses failures already present on the base commit.",
     "Do not edit, create or delete any repository file. You may read the repository to judge scope.",
     `Write exactly one JSON object to the file ${outPath} and nothing else to that file, in this form:`,
     '{"slices":[{"id":"s1","title":"<short title>","acceptance":["<checkable criterion>"],"depends_on":[],"files":["<path if known>"]}]}',
@@ -275,11 +277,12 @@ export function makeSessionDecompose(repoDir: string, lokiDir: string, provider:
 }
 
 /** The one cost sum of a split: slices that ran (a SKIPPED slice never did) plus the planning sessions, from unrounded figures. `parts` counts
- *  every figure that should exist, `measured` those that do; usd is null when none does, never $0.00 for an unknown. */
+ *  every figure that should exist, `measured` those that do; a slice priced for some sessions only adds its known dollars to usd but stays unmeasured; usd is null when none does, never $0.00 for an unknown. */
 export function splitCost(rows: readonly SliceResult[], planUsd: readonly (number | null)[] = []): { usd: number | null; measured: number; parts: number; slices: number; planning: number } {
   const ran = rows.filter((r) => r.cost !== "-"), figures = [...ran.map((r) => (typeof r.usd === "number" ? r.usd : null)), ...planUsd];
   const known = figures.filter((u): u is number => u !== null);
-  return { usd: known.length ? known.reduce((a, u) => a + u, 0) : null, measured: known.length, parts: figures.length, slices: ran.length, planning: planUsd.length };
+  const part = ran.filter((r) => typeof r.usd !== "number" && r.partial).reduce((a, r) => a + (r.partial?.usd ?? 0), 0), any = known.length > 0 || ran.some((r) => typeof r.usd !== "number" && r.partial);
+  return { usd: any ? known.reduce((a, u) => a + u, 0) + part : null, measured: known.length, parts: figures.length, slices: ran.length, planning: planUsd.length };
 }
 /** The cost text shared by the epic tree footer and the Cost line. */
 export function splitCostText(c: ReturnType<typeof splitCost>): string {
