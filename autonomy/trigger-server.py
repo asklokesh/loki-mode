@@ -1032,8 +1032,33 @@ def handle_pull_request_event(payload, dry_run=False):
     return summary, status
 
 
+def build_ci_brief(wf, repo):
+    """One-line, control-char-free brief for a red default-branch CI run, or "" if unusable."""
+    run_id = wf.get("id")
+    if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0:
+        return ""
+    sha = str(wf.get("head_sha") or "")
+    sha7 = sha[:7] if re.fullmatch(r"[0-9a-fA-F]{7,40}", sha) else "unknown"
+    url = str(wf.get("html_url") or "")
+    where = "run %d" % run_id
+    if url.startswith("https://github.com/"):
+        where += ", %s" % _clip(url, 200)
+    brief = (
+        "CI is red on the default branch of %s: workflow '%s' (%s) failed at commit %s on %s. "
+        "Read the failure with `gh run view %d --repo %s --log-failed`, reproduce it locally, "
+        "fix the root cause with the smallest change, and keep every existing test passing. "
+        "Do not skip, disable or delete tests or CI steps."
+        % (repo, _clip(wf.get("name")), where, sha7, _clip(wf.get("head_branch")), run_id, repo))
+    brief = " ".join(CONTROL_CHARS_RE.sub(" ", brief).split())
+    return brief.encode("utf-8")[:SENTRY_BRIEF_MAX].decode("utf-8", errors="ignore")
+
+
 def handle_workflow_run_event(payload, dry_run=False):
-    """Handle workflow_run event: completed+failure -> loki start with context."""
+    """Handle workflow_run: red default-branch CI -> loki start --brief <CI brief> --pr.
+
+    Only the default branch: a red PR branch is `loki merge watch`'s job, and Loki's
+    own loki/* branches must never retrigger themselves.
+    """
     action = payload.get("action", "")
     if action != "completed":
         return None, "skipped (action=%s)" % action
@@ -1041,14 +1066,22 @@ def handle_workflow_run_event(payload, dry_run=False):
     conclusion = wf.get("conclusion", "")
     if conclusion != "failure":
         return None, "skipped (conclusion=%s)" % conclusion
-    wf_name = wf.get("name", "unknown")
     repo = payload.get("repository", {})
     repo_full_name = repo.get("full_name", "")
-    summary = "workflow '%s' failed in %s" % (wf_name, repo_full_name)
-    # CI-failure context: re-run the current spec in the working directory so
-    # the agent can repair the failing build. No issue/PR ref to attach here.
-    args = ["start"]
-    success = run_loki_command(args, dry_run=dry_run)
+    if not valid_repo_full_name(repo_full_name):
+        return None, "rejected (invalid repository name)"
+    default = repo.get("default_branch", "")
+    if not default:
+        return None, "skipped (no default_branch in payload)"
+    branch = str(wf.get("head_branch") or "")
+    if branch != default or branch.startswith("loki/"):
+        return None, ("skipped (failure on branch %s, not the default branch; "
+                      "use loki merge watch for PR branches)" % _clip(branch))
+    brief = build_ci_brief(wf, repo_full_name)
+    if not brief or not valid_spec(brief):
+        return None, "rejected (invalid brief)"
+    summary = "workflow '%s' failed in %s" % (_clip(wf.get("name", "unknown")), repo_full_name)
+    success = run_loki_command(brief_start_args(brief), dry_run=dry_run)
     status = "fired" if success else "error"
     if success:
         send_notification("Trigger fired: CI failure - %s" % summary)
@@ -1703,9 +1736,24 @@ class Dispatcher:
         """True if the same repo#N + action + head sha was accepted and its run is live.
 
         Catches a redelivery under a new delivery id or after a restart. Once the
-        run is no longer live the same key may dispatch again. Only issues and
-        pull_request events carry an intake key.
+        run is no longer live the same key may dispatch again. A red workflow_run
+        has no issue ref: one repair run per repo and head sha, across workflows
+        and redeliveries, so its key stays remembered.
         """
+        if event_type == "workflow_run":
+            repo = (payload.get("repository") or {}).get("full_name", "")
+            wf = payload.get("workflow_run") or {}
+            sha = wf.get("head_sha", "")
+            # Only a red completed run takes the key: a green run of the same sha must not mask it.
+            if (payload.get("action") != "completed" or wf.get("conclusion") != "failure"
+                    or not repo or not sha):
+                return False
+            key = "intake:workflow_run:%s@%s" % (repo, sha)
+            with self._dedup_lock:
+                if key in self._seen_deliveries:
+                    return True
+                self._remember(key)
+                return False
         if event_type not in ("issues", "pull_request"):
             return False
         number = (payload.get("issue") or payload.get("pull_request") or {}).get("number")
