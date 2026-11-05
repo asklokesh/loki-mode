@@ -92,6 +92,7 @@
 #  20k. base_guard.ts depsListing: drop the existsSync(Lib/site-packages) guard; on macOS the 6b .venv leg reads null (always withheld).
 #  21. runner_config.ts hiddenConfigChanged: count every added ignored config again; the unit check fails on .next/package.json.
 #  22. issues_epic.ts epicOutcome: drop the delivered-PR suffix of the Reason line; the unit check fails.
+#  23. repo_profile.ts BASELINE_CMD_TIMEOUT_S back to 60, or attributeFullSuite without the base-run-incomplete line, or baselineSuites reusing a short-cut entry; the base budget unit check fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -639,6 +640,33 @@ console.log(r.join(" | "));
 X3="full suite: w | full suite: w | full suite: w | full suite: w | none | vitest.config.ts"
 [ "$A3" = "$X3" ] && ok "unit: a root package suite '(cd . && X)' matches the baseline's plain X (pre-existing excused, introduced ids still block, other cwd not excused); build output vite.config.d.ts and .nx/cache are not test configuration, a real vitest.config.ts is" \
     || bad "attribution unit gave: $A3 (want: $X3)"
+
+# Base run budget (v131 STALLED tq runs): a suite that takes ~250 s on the change got 60 s on base, timed out, and its pre-existing red was blamed on the change.
+# A base run now gets the same 300 s its own run gets (bounded by a third of the run cap); a cut base run is recorded on the receipt line as "base run
+# incomplete" and excuses nothing; a base entry cut with a shorter budget is measured again, one cut at the current budget is kept.
+G4="$T/basebudget"; mkdir -p "$G4/.loki/state" && git -C "$G4" init -q -b main && printf 'x\n' > "$G4/a.txt" && git -C "$G4" add a.txt && git -C "$G4" -c user.name=t -c user.email=t@t commit -qm init
+B4="$(G="$G4" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), { writeFileSync, execFileSync } = await import("node:fs").then(async (f) => ({ ...f, execFileSync: (await import("node:child_process")).execFileSync }));
+const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const ent = (o) => ({ ran: true, command: "npm test", exit_code: 1, duration_s: 250, timed_out: false, failing_ids: ["a.test.ts > t1"], attributable: true, failing_errors: { "a.test.ts > t1": ["Error: x"] }, ...o });
+const put = (baseline, suites) => writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline, ...(suites ? { suites } : {}) }));
+const full = [{ name: "full suite: npm", cmd: "npm test", result: "fail", ids: ["a.test.ts > t1"], errors: { "a.test.ts > t1": ["Error: x"] } }];
+const r = [];
+put(ent({})); const done = rp.attributeFullSuite(g, sha, full, [], ["src/z.ts"]); r.push(done.preExistingChecks.join(",") + ":" + /base run incomplete/.test(done.line ?? ""));
+put(ent({ timed_out: true, attributable: false, failing_ids: [], duration_s: 60, reason: "timed out" })); const cut = rp.attributeFullSuite(g, sha, full, [], ["src/z.ts"]); r.push(cut.introducedChecks.join(",") + ":" + /base run incomplete for "npm test"/.test(cut.line ?? ""));
+put(ent({ command: "x" }), [ent({ ran: false, name: "s", command: "npm test", timed_out: false, duration_s: null, attributable: false, failing_ids: [], reason: "baseline budget used up" })]); r.push(/base run incomplete/.test(rp.attributeFullSuite(g, sha, full, [], ["src/z.ts"]).line ?? ""));
+const spec = [{ name: "s", cmd: "npm test", cwd: ".", run: "npm test" }], seen = [];
+const run = (cmd, cwd, ms) => { seen.push(ms); return { code: 0, timedOut: false, out: "", missing: false }; };
+const cutAt = (d) => ent({ command: "npm test", timed_out: true, attributable: false, failing_ids: [], duration_s: d, reason: "timed out" });
+put(ent({ command: "pnpm test" }), [cutAt(60)]); rp.baselineSuites(g, spec, { run }); r.push("short-cut rerun " + seen.join(","));
+seen.length = 0; put(ent({ command: "pnpm test" }), [cutAt(300)]); rp.baselineSuites(g, spec, { run }); r.push("full-cut kept " + seen.length);
+seen.length = 0; put(ent({ command: "pnpm test" })); rp.baselineSuites(g, spec, { run }); r.push("fresh " + seen.join(","));
+r.push(rp.baselineCmdS(undefined), rp.baselineCmdS(900), rp.baselineCmdS(120), rp.baselineCmdS(1));
+console.log(r.join(" | "));
+' 2>&1)"
+Y4="full suite: npm:false | full suite: npm:true | true | short-cut rerun 300000 | full-cut kept 0 | fresh 300000 | 300 | 300 | 40 | 1"
+[ "$B4" = "$Y4" ] && ok "unit: a base suite that completes is excused (no cut line); a cut base run is introduced with a base-run-incomplete line, also when the shared budget ran out; a base run gets 300 s (a third of the run cap at most); a short-cut entry is measured again, a fully-cut one is kept" \
+    || bad "base budget unit gave: $B4 (want: $Y4)"
 
 # Wall-only delivery rules, unit-level: a failing full suite that is not known red blocks it; a delivery whose re-verify fails puts the Wall back
 # and records no discard; only known-red checks failing the same way on base are excused at delivery; errors are compared per failing id.
