@@ -22,6 +22,10 @@
 #                multiply() lands and calc.test.ts passes, the fix session answers LOKI_SPEC_CONFLICT citing the Wall
 #                file and the referee runs; the run is delivered PARTIAL (not BLOCKED) with multiply() in calc.ts and
 #                the Wall file listed as discarded, and no session (Wall author and referee included) runs off haiku.
+#   sysedit:     (real pytest, LOKI_E10_SYSEDIT=1, no model) the session rewrites legacy( to modern( at two of three call sites and the visible test
+#                that ties the three together is red after the first verify: the third site is completed, the second verify is green, the run is
+#                VERIFIED and the receipt names the line. A completion that turns another check red is undone (calc.py byte-identical to what the session
+#                left, one fix session, no sysedit.kept). A green first verify never fires it; the knob off never fires it.
 #   lean normal: a normal-size task with a relevant visible test runs no Wall session at all.
 #   coverage:    (lean, E2E_STUB_MODE=coverage: the first turn writes 2 of the 3 named functions) default: no extra session and negate() is
 #                missing; LOKI_E10_COVERAGE_RESUME=1: exactly one "-c" session with the fixed brief writes negate(); a first turn that
@@ -149,6 +153,12 @@
 #  61. check_result.ts stallSignature: bucket a full-suite group by log2 of its id count again (the disjoint, 100-to-70 and zero-vs-one id legs read true).
 #  62. check_result.ts stallSame: drop the count tolerance test (the near-equal truncated legs read false) or widen it to 50 percent (the 100-to-70 leg reads true).
 #  63. machine.ts: compare sigs with === again instead of stallSame (the machine.ts stallSame grep leg reads bad).
+#  64. e10ext/systematic_edit.ts: drop the fan-out guard (the sysedit fan-out leg reads sysedit.kept or an undo event).
+#  65. machine.ts sysedit block: skip rep.undo() (the sysedit undone leg reads calc.py changed).
+#  66. machine.ts sysedit block: keep without the broke check (the sysedit undone leg reads sysedit.kept).
+#  67. machine.ts sysedit block: drop the hasFailures guard (the sysedit green leg reads a sysedit event).
+#  68. contrib/index.ts hooks.sysEdit: ignore sysEditEnabled (the sysedit knob-off leg reads a sysedit event).
+#  69. seal.ts: drop the "completed by rule" disclosure (the sysedit kept leg reads no receipt line).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1030,6 +1040,52 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     done
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest truncated reason: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest truncated reason: pytest is not installed"; fi
+fi
+
+# Systematic-edit completer (LOKI_E10_SYSEDIT=1, real pytest, stub session): the session rewrote two call sites, the third is completed without a model.
+make_se_py_repo() {
+    mkdir -p "$1"
+    printf 'def legacy(a):\n    return a * 2\n\n\ndef modern(a):\n    return a * 2 + 100\n\n\ndef f(a):\n    return legacy(a) + 1\n\n\ndef g(a):\n    return legacy(a) + 2\n\n\ndef h(a):\n    return legacy(a) + 3\n' > "$1/calc.py"
+    printf 'import calc\n\n\ndef test_f_g():\n    assert calc.g(1) - calc.f(1) == 1\n\n\ndef test_f_h():\n    assert calc.h(1) - calc.f(1) == 2\n' > "$1/test_calc.py"
+    [ -n "${SE_FAN:-}" ] && printf '\n\ndef h2(a):\n    return legacy(a) + 4\n\n\ndef h3(a):\n    return legacy(a) + 5\n' >> "$1/calc.py" # SE_FAN: the rule would match 3 unchanged lines against its 2 instances
+    [ -n "${SE_PIN:-}" ] && printf '\n\ndef test_h_legacy():\n    assert calc.h(1) == calc.legacy(1) + 3\n' >> "$1/test_calc.py" # SE_PIN: a check the completion itself breaks
+    return 0
+}
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    SE_FG_OLD=$'def f(a):\n    return legacy(a) + 1\n\n\ndef g(a):\n    return legacy(a) + 2\n'
+    SE_FG_NEW=$'def f(a):\n    return modern(a) + 1\n\n\ndef g(a):\n    return modern(a) + 2\n'
+    SE_ALL_OLD="$SE_FG_OLD"$'\n\ndef h(a):\n    return legacy(a) + 3\n'
+    SE_ALL_NEW="$SE_FG_NEW"$'\n\ndef h(a):\n    return modern(a) + 3\n'
+    SE_TASK="switch f, g and h in calc.py from legacy() to modern()"
+    se() { MAKE_REPO=make_se_py_repo run_engine "$SE_TASK" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 "$@"; }
+    se_h() { sed -nE 's/^    return (legacy|modern)\(a\) \+ 3$/\1/p' "$REPO/calc.py"; }
+    se_np() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(" | ".join(json.load(open(sys.argv[1])).get("not_proven") or []))' "$RUNDIR/receipt.json" 2>/dev/null; }
+    se_ev() { ev "len([e for e in E if e['type'] in ('sysedit.kept','sysedit.undone')])"; }
+    # kept: two of three sites rewritten, test_f_h red, the completion turns it green and breaks nothing
+    se E2E_STUB_REPLACE="$SE_FG_OLD" E2E_STUB_SNIPPET="$SE_FG_NEW" LOKI_E10_SYSEDIT=1
+    [ "$(outcome)" = "VERIFIED" ] && ok "sysedit kept: the third site is completed and the run is VERIFIED" || { bad "sysedit kept: outcome is '$(outcome)'"; dump; }
+    [ "$(se_h)" = "modern" ] && ok "sysedit kept: h() now calls modern()" || bad "sysedit kept: h() reads '$(se_h)'"
+    [ "$(ev "[e['type'] for e in E if e['type'].startswith('sysedit')]")" = "['sysedit.kept']" ] && ok "sysedit kept: one sysedit.kept event, no undo" || { bad "sysedit kept: events '$(ev "[e['type'] for e in E if e['type'].startswith('sysedit')]")'"; dump; }
+    [ "$(fix_sessions)" = "0" ] && ok "sysedit kept: no fix session ran (no model call for the completion)" || { bad "sysedit kept: $(fix_sessions) fix session(s)"; dump; }
+    [ "$(ev "sum(1 for e in E if e['type']=='stage.completed' and e.get('stage')=='verify')")" = "2" ] && ok "sysedit kept: exactly one extra verify" || bad "sysedit kept: verify count '$(ev "sum(1 for e in E if e['type']=='stage.completed' and e.get('stage')=='verify')")'"
+    has "sysedit kept: the receipt names the completed line" "$(se_np)" "completed by rule, no model (LOKI_E10_SYSEDIT; a failing check now passes): calc.py:"
+    # undone: the completion fixes test_f_h but breaks test_h_legacy, so the tree goes back byte for byte
+    SE_PIN=1 se E2E_STUB_REPLACE="$SE_FG_OLD" E2E_STUB_SNIPPET="$SE_FG_NEW" LOKI_E10_SYSEDIT=1
+    exp="$(git -C "$REPO" show HEAD:calc.py)"; want="$(MAKE_REPO= ; d="$T/se-want"; rm -rf "$d"; make_se_py_repo "$d"; python3 -I -c 'import sys; s=open(sys.argv[1]).read(); print(s.replace(sys.argv[2], sys.argv[3]), end="")' "$d/calc.py" "$SE_FG_OLD" "$SE_FG_NEW")"
+    [ "$exp" = "$want" ] && ok "sysedit undone: calc.py is byte-identical to what the session left (h() still legacy)" || { bad "sysedit undone: calc.py differs from the session's tree"; printf '%s\n' "$exp" | sed 's/^/    | /'; }
+    [ "$(ev "[e['type'] for e in E if e['type'].startswith('sysedit')]")" = "['sysedit.undone']" ] && ok "sysedit undone: one sysedit.undone event" || { bad "sysedit undone: events '$(ev "[e['type'] for e in E if e['type'].startswith('sysedit')]")'"; dump; }
+    case "$(outcome)" in VERIFIED) bad "sysedit undone: a red run read VERIFIED" ;; *) ok "sysedit undone: the run is not VERIFIED ($(outcome))" ;; esac
+    case "$(se_np)" in *"completed by rule"*) bad "sysedit undone: the receipt claims a completion that was undone" ;; *) ok "sysedit undone: no completion line in the receipt" ;; esac
+    # fan-out guard: the pattern was rewritten at 2 sites and matches 3 unchanged lines, more than the change itself did: nothing is proposed
+    SE_FAN=1 se E2E_STUB_REPLACE="$SE_FG_OLD" E2E_STUB_SNIPPET="$SE_FG_NEW" LOKI_E10_SYSEDIT=1
+    [ "$(se_ev)" = "0" ] && [ "$(se_h)" = "legacy" ] && ok "sysedit fan-out: a rule matching more lines than the change rewrote proposes nothing" || { bad "sysedit fan-out: events '$(se_ev)', h() reads '$(se_h)'"; dump; }
+    # green first verify: all three sites rewritten, never fires
+    se E2E_STUB_REPLACE="$SE_ALL_OLD" E2E_STUB_SNIPPET="$SE_ALL_NEW" LOKI_E10_SYSEDIT=1
+    [ "$(outcome)" = "VERIFIED" ] && [ "$(se_ev)" = "0" ] && ok "sysedit green: a green first verify never fires the completer" || { bad "sysedit green: outcome '$(outcome)', sysedit events '$(se_ev)'"; dump; }
+    # knob off (the default): never fires
+    se E2E_STUB_REPLACE="$SE_FG_OLD" E2E_STUB_SNIPPET="$SE_FG_NEW"
+    [ "$(se_ev)" = "0" ] && [ "$(se_h)" = "legacy" ] && ok "sysedit off: no event and h() untouched without the knob" || { bad "sysedit off: events '$(se_ev)', h() reads '$(se_h)'"; dump; }
+    case "$(outcome)" in VERIFIED) bad "sysedit off: the half-applied change read VERIFIED" ;; *) ok "sysedit off: the half-applied change is not VERIFIED ($(outcome))" ;; esac
 fi
 
 finish

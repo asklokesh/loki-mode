@@ -10,6 +10,7 @@ import { fixEffort, resolveEffort } from "./effort_policy.ts";
 import { extractRuntimeEvidence } from "./runtime_evidence.ts";
 import { buildTime, firstEventMs, reconciledTotalS } from "./receipt_time.ts";
 import { stageCapability } from "./stage_capability.ts";
+import { repairRewrites, restoreRewrites, sysEditEnabled } from "../e10ext/systematic_edit.ts";
 import { changedSinceBase, MANIFESTS, snapshotTree } from "./wall_snapshot.ts";
 
 export function registerContrib(): void {
@@ -21,6 +22,7 @@ export function registerContrib(): void {
   hooks.stageCapability = (stage, env, argv) => stageCapability(stage, env, argv);
   hooks.sealed = writeAiBom;
   hooks.runtimeEvidence = (task) => extractRuntimeEvidence(task) as unknown as Record<string, unknown> | null;
+  hooks.sysEdit = (repoDir, baseSha) => { if (!sysEditEnabled()) return null; const rep = repairRewrites(repoDir, baseSha); return rep.rewrites.length ? { rewrites: rep.rewrites as unknown as Record<string, unknown>[], undo: () => { restoreRewrites(repoDir, rep); } } : null; };
   registerModule("./status.ts", () => import("./status.ts"));
   registerModule("./plan_cmd.ts", () => import("./plan_cmd.ts"));
   registerModule("./eta.ts", () => import("./eta.ts"));

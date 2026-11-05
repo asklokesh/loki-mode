@@ -305,6 +305,19 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       }
       if (outputs.plan?.intent_declined === true) return { outputs, capHit, stopped: "intent declined" }; // T3: user answered n at the intent card
       if (todo.some((n, i) => mustJump(n, results[i] ?? null))) { jumped = true; continue; }
+      if (todo[0] === "verify" && hooks.sysEdit && hasFailures(outputs.verify) && !capHit && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external") {
+        // LOKI_E10_SYSEDIT=1: zero-model repair before the first fix round. The change rewrote a pattern at some sites; the hook completes the rest and verify runs once more
+        // (no model session). The completion stays only when a failing check now passes and nothing new fails; otherwise undo() restores the tree byte for byte and the first verify stands.
+        let rep: ReturnType<NonNullable<typeof hooks.sysEdit>> = null;
+        try { rep = hooks.sysEdit(ctx.repoDir, ctx.baseSha); } catch { rep = null; }
+        if (rep) {
+          const first = outputs.verify!, v = await runStage("verify", true);
+          const fails = (d: Obj | undefined): Set<string> => new Set((Array.isArray(d?.checks) ? (d!.checks as Obj[]) : []).filter((c) => c.result === "fail").flatMap((c) => (Array.isArray(c.ids) && c.ids.length ? (c.ids as unknown[]) : ["*"]).map((id) => `${String(c.name)} ${String(id)}`)));
+          const before = fails(first), after = fails(outputs.verify), fixed = [...before].filter((k) => !after.has(k)), broke = [...after].filter((k) => !before.has(k));
+          if (v?.status === "completed" && !mustJump("verify", v) && fixed.length && !broke.length) { outputs.implement = { ...outputs.implement, sysedit: { rewrites: rep.rewrites, fixed } }; ctx.emit("sysedit.kept", "verify", { rewrites: rep.rewrites.length, fixed }); }
+          else { rep.undo(); outputs.verify = first; ctx.emit("sysedit.undone", "verify", { rewrites: rep.rewrites.length, fixed: fixed.length, broke }); if (mustJump("verify", v)) { jumped = true; continue; } }
+        }
+      }
       if (todo[0] === "verify") {
         sigs.push(sigOf(outputs.verify, results[0]));
         let attemptsRan = false;
