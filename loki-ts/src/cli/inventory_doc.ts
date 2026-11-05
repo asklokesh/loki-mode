@@ -47,7 +47,7 @@ export function renderDoc(repoRoot: string): string {
   const out: string[] = [];
   out.push("# CLI modernization inventory", "");
   out.push("Generated from `loki-ts/src/cli/registry.ts` by `bun loki-ts/scripts/gen-cli-modern-doc.ts`. Do not edit by hand; the registry guard fails when this file is stale.", "");
-  out.push("Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps working, never shown: machine consumers, CI, dev and enterprise ops), FOLD (behavior moves into the command in the Replacement column; the old name stays a hidden alias that runs unchanged; the replacement may not exist yet), REMOVED (no dependent found; hidden now, exits 2 with the replacement once its removal slice lands).", "");
+  out.push("Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps working, never shown: machine consumers, CI, dev and enterprise ops), FOLD (behavior moves into the command in the Replacement column; the old name stays a hidden alias that runs unchanged; the replacement may not exist yet), REMOVED (no dependent found; bin/loki exits 2 with the replacement line).", "");
   out.push("## Counts", "");
   for (const k of ["KEEP", "HIDE", "FOLD", "REMOVED"]) out.push(`- ${k}: ${counts[k]}`);
   out.push(`- Total rows: ${rows.length}`, `- Registry paths (commands and nested subcommands): ${registryPaths().length}`, "");
