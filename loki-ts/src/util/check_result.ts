@@ -951,11 +951,18 @@ export function exercisedViaCallers(unexercised: readonly string[], seed: (name:
   for (let n = work.pop(); n !== undefined; n = work.pop()) for (const called of byName.get(n) ?? []) for (const c of called) if (byName.has(c) && !covered.has(c)) { covered.add(c); work.push(c); }
   return unexercised.filter((f) => !covered.has(f));
 }
-/** Fail-then-pass relevance: the test files among `tests` that reach a changed `symbol` through code, by naming a function of a changed file or of an untouched direct caller file whose body calls one (transitively inside those files), the way a Go test reaches an unexported parseFlags only through cmd.Run. Empty for no symbols: a change that declares none is never shown relevant. */
+/** Fail-then-pass relevance: the test files among `tests` that reach a changed `symbol` through code, by CALLING a function of a changed file or of an untouched direct caller file whose body calls one
+ *  (transitively inside those files), the way a Go test reaches an unexported parseFlags only through cmd.Run. Seeds are only names the test calls in code, never a call on the test's own
+ *  testing value (t.Run, b.N, s.T().Run, self.assertEqual, pytest.raises), so `t.Run` never reaches a product Run (review of #541, A1). Go resolves by package: only files in the test's own
+ *  directory take part; a test in another package reaches nothing this way. Empty for no symbols: a change that declares none is never shown relevant. */
+const TESTING_CALL = /(?<![\w$.])(?:t|b|f|tb|tt|self|pytest|unittest|mock)\.\w+\s*\(|\.T\(\)\.\w+\s*\(/g;
 export function testsReachingSymbols(symbols: readonly string[], tests: readonly { path: string; src: string }[], changed: readonly { path: string; src: string }[], candidates: readonly { path: string; src: string }[]): string[] {
   if (symbols.length === 0 || tests.length === 0) return [];
-  const files = [...changed, ...callerFiles(changed, candidates)];
-  return tests.filter((t) => { const ids = identifierSet(t.src); return exercisedViaCallers(symbols, (name) => ids.has(name), files).length < symbols.length; }).map((t) => t.path);
+  return tests.filter((t) => {
+    const go = t.path.endsWith(".go"), dir = dirname(t.path), here = (f: { path: string }): boolean => !go || dirname(f.path) === dir;
+    const ch = changed.filter(here), files = [...ch, ...callerFiles(ch, candidates.filter(here))], calls = calledNames(codeOnly(t.src).replace(TESTING_CALL, " "));
+    return files.length > 0 && exercisedViaCallers(symbols, (name) => calls.has(name), files).length < symbols.length;
+  }).map((t) => t.path);
 }
 /** TEN-GATES-14: per-gate legibility for `loki verify --explain`. exogenous/independent evidence is exogenous; agent_authored and llm_judge are agent-influenced; absent or unknown provenance is unrecorded, never exogenous. */
 export interface ExplainGate { name: string; class: "exogenous" | "agent-influenced" | "unrecorded"; provenance: string | null; result: string; n: number | null; evidence: string }

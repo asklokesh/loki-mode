@@ -60,7 +60,7 @@ async function failThenPass(ctx: RunContext, vraw: Obj[], pctx: ProvenanceCtx, h
   const symbols = cs.all.filter((s) => cs.onBase.has(s) || new RegExp(`(?<![\\w$])${s.replace(/[$]/g, "\\$")}(?![\\w$])`).test(task)); // a symbol the base already has (a modified one), or one the task itself asks to add: a test that only names a function the change invented proves nothing about the change
   const read = (p: string): string => { try { return execFileSync("git", ["-C", ctx.repoDir, "show", `${head}:${p}`], { encoding: "utf8", maxBuffer: 16 << 20, timeout: 20_000 }); } catch { return ""; } };
   const red = mp.outcome === "yes" ? mp.failed ?? [] : [], named = red.filter((f) => symbolGap(symbols, [read(f)]).length === 0); // an assertion failure on base, in a file that names a symbol this change declares or modifies
-  const reach = named.length < red.length && symbols.length > 0 ? testsReachingSymbols(symbols, red.filter((f) => !named.includes(f)).map((path) => ({ path, src: read(path) })), cs.code.map((path) => ({ path, src: read(path) })), await callerCandidates(ctx, head, new Set(cs.code))) : []; // or one that reaches such a symbol through a caller (a Go test calls cmd.Run, which calls the changed unexported parseFlags)
+  const reach = named.length < red.length && symbols.length > 0 ? testsReachingSymbols(symbols, await Promise.all(red.filter((f) => !named.includes(f)).map(async (path) => ({ path, src: await addedLines(ctx, head, path) }))), cs.code.map((path) => ({ path, src: read(path) })), await callerCandidates(ctx, head, new Set(cs.code))) : []; // or one whose ADDED lines reach such a symbol through a caller (a Go test calls cmd.Run, which calls the changed unexported parseFlags); only the added lines, since the base version of an edited file is green on the base (baseMustPass), so its red tests are the change's own and an untouched test in the same file never seeds
   const failed = red.filter((f) => named.includes(f) || reach.includes(f));
   return { ok: failed.some((f) => !rewritten.has(f)), line: failed.length > 0 ? `${mp.line} (${failed.join(", ")})` : mp.line, files: failed }; // E4: a test file whose pinned assertion was rewritten fails on the base, which shows the pin was real, but it is never the proof itself
 }
@@ -70,6 +70,11 @@ export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these
  *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file), Tests the implementer wrote or edited never clear it. Off by default; LOKI_E10_PUBLIC_GAP=1 turns it on.
  *  Both are [] for an external run (its own rule) and an already-satisfied claim. */
 const CALLER_SCAN = 3000, CALLER_MAX_BYTES = 200_000;
+/** The lines the change adds to `path` (git diff -U0 base..head), or "" when the diff cannot be read. */
+async function addedLines(ctx: RunContext, head: string, path: string): Promise<string> {
+  const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", path], { timeoutMs: 20000 });
+  return d.exitCode === 0 ? d.stdout.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n") : "";
+}
 /** Untouched tracked code files that may call a changed one, bounded like symbolGaps (CALLER_SCAN files of at most CALLER_MAX_BYTES); the list is the head commit's, the bytes the checkout's (untouched files are the same at head). */
 async function callerCandidates(ctx: RunContext, head: string, skip: ReadonlySet<string>): Promise<{ path: string; src: string }[]> {
   const ls = await safeGitRun(ctx.repoDir, ["ls-tree", "-r", "-z", "--name-only", head], { timeoutMs: 20000 }); if (ls.exitCode !== 0) return [];
