@@ -240,7 +240,7 @@ const fixture = (name: string): string => {
 
 // 1. tool-time deny (the SDK route's PreToolUse callback)
 const cwd = fixture("hook");
-const hook = async (env: Record<string, string>, tool: string, file: string) => { const r = await createConfigFenceHook(cwd, { LOKI_E10_STAGE: "implement", LOKI_CONFIG_FENCE: "1", ...env })({ tool_name: tool, tool_input: { file_path: file }, cwd }) as { hookSpecificOutput?: { permissionDecision?: string } }; return r.hookSpecificOutput?.permissionDecision ?? "none"; };
+const hook = async (env: Record<string, string>, tool: string, file: string) => { const r = await createConfigFenceHook(cwd, { LOKI_E10_STAGE: "implement", ...env })({ tool_name: tool, tool_input: { file_path: file }, cwd }) as { hookSpecificOutput?: { permissionDecision?: string } }; return r.hookSpecificOutput?.permissionDecision ?? "none"; };
 for (const [tool, f] of [["Edit", "vitest.config.ts"], ["Write", "tsconfig.json"], ["MultiEdit", "pnpm-lock.yaml"], ["Edit", join(cwd, "packages/x/tsconfig.build.json")], ["Write", "vitest.config.ts"], ["Edit", ".eslintrc.json"]] as const) say(`deny:${tool}:${f.replace(cwd + "/", "")}`, await hook({}, tool, f));
 for (const [tool, f] of [["Edit", "src/a.ts"], ["Write", "src/new.test.ts"], ["Write", "tests/a.test.ts"], ["Edit", "package.json"], ["Write", "README.md"], ["Edit", "/elsewhere/vitest.config.ts"], ["Bash", "vitest.config.ts"]] as const) say(`pass:${tool}:${f}`, await hook({}, tool, f));
 say("task-names-tsconfig", await hook({ LOKI_E10_FENCE_TASK: "Turn on tsconfig strict mode" }, "Edit", "tsconfig.json"));
@@ -249,7 +249,11 @@ say("task-names-lock", await hook({ LOKI_E10_FENCE_TASK: "Bump left-pad to 2.0.0
 say("allowlisted", await hook({ LOKI_E10_FENCE_ALLOW: '["vitest.config.ts"]' }, "Edit", "vitest.config.ts"));
 say("stage-verify-off", await hook({ LOKI_E10_STAGE: "verify" }, "Edit", "vitest.config.ts"));
 say("switch-off", await hook({ LOKI_CONFIG_FENCE: "0" }, "Edit", "vitest.config.ts"));
-say("default-off", await hook({ LOKI_CONFIG_FENCE: "" }, "Edit", "vitest.config.ts"));
+say("default-on", await hook({}, "Edit", "vitest.config.ts"));
+// a task that names the setting concept (not the file) is allowed the matching edit; an unrelated task is not
+const cz = async (task: string, f: string) => hook({ LOKI_E10_FENCE_TASK: task }, "Edit", f);
+for (const [t, f] of [["Enable strict null checks in the project", "tsconfig.json"], ["Set up path aliases for src", "tsconfig.json"], ["Add coverage thresholds of 80 percent", "vitest.config.ts"], ["Add a vitest setup file that mocks fetch", "vitest.config.ts"], ["Add an ESLint rule banning console.log", "eslint.config.mjs"], ["Add axios as a dependency", "pnpm-lock.yaml"], ["Upgrade lodash", "package-lock.json"], ["Add the rand crate", "Cargo.lock"], ["Add a coverage fail-under of 90", "pytest.ini"]] as const) say(`concept:${f}:${t}`, await cz(t, f));
+for (const [t, f] of [["Fix the off by one in parseRange", "tsconfig.json"], ["Fix the off by one in parseRange", "vitest.config.ts"], ["Rename the helper", "eslint.config.mjs"], ["Fix the off by one in parseRange", "pnpm-lock.yaml"], ["Enable strict null checks", "vitest.config.ts"]] as const) say(`unrelated:${f}:${t}`, await cz(t, f));
 say("fixture-dir-passes", await hook({}, "Write", "tests/fixtures/app/tsconfig.json"));
 for (const f of ["uv.lock", "Gemfile.lock", "composer.lock", "npm-shrinkwrap.json", "Pipfile.lock"]) say(`lock:${f}`, isFencedPath(f));
 // every hook denial is recorded for the receipt and caps the run
@@ -257,10 +261,10 @@ const rd = join(T, "denyrec"); await hook({ LOKI_E10_FENCE_RUNDIR: rd, LOKI_ITER
 const dn = readFenceRecord(rd); say("denial-recorded", dn.denied.map((x: { path: string; session: string }) => `${x.path}@${x.session}`)); say("denial-capped", [fenceNotes(dn).capped, capFenceVerdict("VERIFIED", fenceNotes(dn)), fenceNotes(dn).notProven[0]]);
 
 // 2. real session runner (stub provider = a child process that edits files like a model with Bash would)
-let on = "1";
+let on = ""; // default: the fence is on with no env set
 const run = async (name: string, task: string, script: string, stage = "implement") => {
   const d = fixture(name); mkdirSync(join(d, ".loki"), { recursive: true });
-  process.env["LOKI_CONFIG_FENCE"] = on; process.env["LOKI_E10_TASK_TEXT"] = task; process.env["LOKI_E10_RUN_ID"] = "r1"; process.env["LOKI_E10_STAGE_UNUSED"] = "";
+  if (on === "") delete process.env["LOKI_CONFIG_FENCE"]; else process.env["LOKI_CONFIG_FENCE"] = on; process.env["LOKI_E10_TASK_TEXT"] = task; process.env["LOKI_E10_RUN_ID"] = "r1"; process.env["LOKI_E10_STAGE_UNUSED"] = "";
   const events: { type: string; data: Record<string, unknown> }[] = [];
   const runner = createSessionRunner({ provider: "stub", lokiRoot: join(d, ".loki"), emit: (type: string, _s: string | null, data: Record<string, unknown>) => events.push({ type, data }), childCommand: ["bash", ["-c", script]] });
   const call = (id: string) => runner.run({ stage, brief: "b", tier: "development", iterationId: id, limitS: 30, signal: new AbortController().signal, cwd: d });
@@ -287,7 +291,7 @@ await r.call("it6b"); say("leg6-resume-edit-kept", readFileSync(join(r.d, "vites
 await r.call("it6c"); say("leg6-once", readFileSync(join(r.d, "vitest.config.ts"), "utf8").trim());
 const n = fenceNotes(readFenceRecord(join(r.d, ".loki/runs/r1"))); say("leg6-capped", n.capped); say("leg6-cap-fn", [capFenceVerdict("VERIFIED", n), capFenceVerdict("PARTIAL", n), capFenceVerdict("VERIFIED", { capped: false })]); say("leg6-note", n.notProven.some((l: string) => l.includes("allowlisted") && l.includes("vitest.config.ts")));
 // 4. fence off by default
-on = ""; r = await run("leg7", "Fix src/a.ts", EDIT); await r.call("it7"); say("leg7-default-off-edit-kept", readFileSync(join(r.d, "vitest.config.ts"), "utf8").includes("setupFiles")); on = "1";
+on = "0"; r = await run("leg7", "Fix src/a.ts", EDIT); await r.call("it7"); say("leg7-opt-out-edit-kept", readFileSync(join(r.d, "vitest.config.ts"), "utf8").includes("setupFiles")); on = "";
 // 5. a fixture project's config is test data, never deleted or fenced
 r = await run("leg8", "Fix src/a.ts", `mkdir -p tests/fixtures/app; printf '{}' > tests/fixtures/app/tsconfig.json; echo LOKI_DONE`); await r.call("it8"); say("leg8-fixture-kept", existsSync(join(r.d, "tests/fixtures/app/tsconfig.json")));
 // 6. one task text at tool time and at restore time (cut once, to FENCE_TASK_MAX)
@@ -327,7 +331,9 @@ fchk "dependency task allows the lockfile" "task-names-lock none"
 fchk "allowlisted path passes" "allowlisted none"
 fchk "other stages unfenced" "stage-verify-off none"
 fchk "LOKI_CONFIG_FENCE=0 switches it off" "switch-off none"
-fchk "default is off without LOKI_CONFIG_FENCE=1" "default-off none"
+fchk "default is ON without any env" "default-on deny"
+for c in "tsconfig.json:Enable strict null checks in the project" "tsconfig.json:Set up path aliases for src" "vitest.config.ts:Add coverage thresholds of 80 percent" "vitest.config.ts:Add a vitest setup file that mocks fetch" "eslint.config.mjs:Add an ESLint rule banning console.log" "pnpm-lock.yaml:Add axios as a dependency" "package-lock.json:Upgrade lodash" "Cargo.lock:Add the rand crate" "pytest.ini:Add a coverage fail-under of 90"; do fchk "concept task allows ${c%%:*} (${c#*:})" "concept:${c%%:*}:${c#*:} none"; done
+for c in "tsconfig.json:Fix the off by one in parseRange" "vitest.config.ts:Fix the off by one in parseRange" "eslint.config.mjs:Rename the helper" "pnpm-lock.yaml:Fix the off by one in parseRange" "vitest.config.ts:Enable strict null checks"; do fchk "unrelated task still denies ${c%%:*} (${c#*:})" "unrelated:${c%%:*}:${c#*:} deny"; done
 fchk "a config-named file under a fixtures dir is not fenced" "fixture-dir-passes none"
 fchk "uv.lock is fenced (the commit filter's one lockfile list)" "lock:uv.lock true"
 fchk "Gemfile.lock is fenced" "lock:Gemfile.lock true"
@@ -358,7 +364,7 @@ fchk "allowlist caps VERIFIED" "leg6-capped true"
 fchk "cap function: VERIFIED drops, PARTIAL and uncapped stay" 'leg6-cap-fn ["PARTIAL","PARTIAL","VERIFIED"]'
 fchk "allowlist is named on the receipt" "leg6-note true"
 
-fchk "default off: a session without LOKI_CONFIG_FENCE=1 keeps its config edit" "leg7-default-off-edit-kept true"
+fchk "LOKI_CONFIG_FENCE=0: a session keeps its config edit" "leg7-opt-out-edit-kept true"
 fchk "a created fixture project config is not deleted" "leg8-fixture-kept true"
 fchk "tool-time task text is cut to FENCE_TASK_MAX" "leg9-env-len 8000"
 fchk "restore uses the same cut text (a name past the cut does not allow)" "leg9-restore-uses-same-text true"

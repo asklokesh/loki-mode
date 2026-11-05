@@ -1,4 +1,4 @@
-// E1 config and lockfile write fence (off unless LOKI_CONFIG_FENCE=1). Implement and fix sessions may not change test, build, lint or type config or a lockfile unless the task names it.
+// E1 config and lockfile write fence (on by default; LOKI_CONFIG_FENCE=0 opts out). Implement and fix sessions may not change test, build, lint or type config or a lockfile unless the task names it.
 // Two layers: a tool-time deny on Edit/Write/MultiEdit (runner/host_guard.ts, runner/providers.ts) and, because Bash and other tools can write too,
 // a snapshot before each session and a restore after it of every fenced file the session changed (no regex over Bash commands). Path predicate: util/config_paths.ts.
 // Nothing here may fail a session: every filesystem step is caught and reported on the receipt instead.
@@ -11,8 +11,8 @@ import { safeGit } from "./safe_git.ts";
 const MAX_BYTES = 32 * 1024 * 1024, LIST_BUFFER = 256 * 1024 * 1024, LIST_TIMEOUT_MS = 60_000; // the ls-files output of a 100k-file repo is megabytes: the default 1 MiB buffer would throw
 export const FENCE_TASK_MAX = 8000; // one length at tool time and at restore time
 export const FENCE_STAGES: ReadonlySet<string> = new Set(["implement", "fix"]);
-/** Default OFF: an unnamed config task ("enable strict null checks", "add coverage thresholds") would be blocked until the L-Haiku and held-out arms measure the fence. */
-export const fenceEnabled = (stage: string | undefined, env: NodeJS.ProcessEnv = process.env): boolean => !!stage && FENCE_STAGES.has(stage) && env["LOKI_CONFIG_FENCE"] === "1";
+/** Default ON; LOKI_CONFIG_FENCE=0 opts out. A task that names a setting concept (strict, coverage threshold, setup file, lint rule, a dependency to add) is allowed the matching config edit (util/config_paths.ts). */
+export const fenceEnabled = (stage: string | undefined, env: NodeJS.ProcessEnv = process.env): boolean => !!stage && FENCE_STAGES.has(stage) && env["LOKI_CONFIG_FENCE"] !== "0";
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e)).split("\n")[0]!.slice(0, 160);
 
 /** The task text the engine already carries (the env var, else the run's issue json), cut once to FENCE_TASK_MAX. Empty when unknown: the fence then holds. */
