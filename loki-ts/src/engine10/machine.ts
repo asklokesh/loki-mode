@@ -281,8 +281,9 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (todo[0] === "verify" && hasFailures(outputs.verify) && hooks.scaffoldRepair && hooks.scaffoldUndo && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external") {
         // Zero-model repair before the first fix round (LOKI_E10_SCAFFOLD_SYSTEMATIC=1): the change rewrote a pattern at some sites, the scaffold
         // rewrites the remaining sites of that pattern and verify runs once more (no model session). A rewrite stays only when a failing test or
-        // check now passes and nothing new fails; otherwise it is undone and the first verify's result stands. On real merged refactors this
-        // rule kept 35 of 35 correct rewrites; undoing only on a regression kept 118 correct and 153 wrong.
+        // check now passes and nothing new fails; otherwise it is undone and the first verify's result stands. Replayed with go vet as the check
+        // on merged refactors of two Go repos (tests/min/fixtures/scaffold/recall.ts), this rule kept 35 rewrites, all correct; undoing only on a
+        // regression kept 118 correct and 153 wrong.
         let rw: Obj[] = [];
         try { rw = hooks.scaffoldRepair(ctx.repoDir, ctx.baseSha, String(outputs.intake?.task ?? "")); } catch { rw = []; }
         if (rw.length) {

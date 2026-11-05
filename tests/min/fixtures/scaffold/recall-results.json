@@ -1,0 +1,669 @@
+{
+ "what": "systematic-edit completer (proto/systematic-edit-recall) replayed on real merged multi-site edits from repos outside the corpus; no model calls",
+ "protocol": {
+  "ground_truth": ">= 3 one-line rewrites in one commit's non-test code diff with one identical change bag (tokens only the old line has, tokens only the new line has)",
+  "loo": "one site reverted to the parent's text at a time (first, middle, last per cluster), every other change of the commit applied",
+  "keep2": "only the first 2 sites kept, every other site of the cluster reverted",
+  "caps": "at most 3 clusters per commit (first in diff order); last 1500 non-merge commits of each clone (depth 3000)",
+  "dev_repos": [
+   "spf13/cobra",
+   "psf/requests",
+   "honojs/hono"
+  ],
+  "test_repos_blind": [
+   "gin-gonic/gin",
+   "stretchr/testify",
+   "encode/httpx",
+   "python-attrs/attrs",
+   "typeorm/typeorm",
+   "mobxjs/mobx"
+  ],
+  "test_sample": "30 commits per test repo (seed 2026) among commits with a cluster site in a file of >= 300 lines; policy fixed in code before the test replay",
+  "scored": "a rewrite is correct only when its tokens equal the merged commit's line at a held-out site; any other rewrite is wrong",
+  "policy_prod": "ctx 2, scope file, fan-out 1 (a rule may rewrite at most as many lines as it learned from), lgg + carried-generalized levels, affix guard, no task-name filter"
+ },
+ "dev_loo": {
+  "cobra+requests": {
+   "prod file-fan1": {
+    "commits": 75,
+    "held_out_sites": 348,
+    "correct": 181,
+    "exact_text": 155,
+    "wrong": 262,
+    "recall": 0.52,
+    "precision": 0.409,
+    "commit_macro_recall": 0.539,
+    "files_300_plus_lines": {
+     "commits": 54,
+     "held_out_sites": 211,
+     "recall": 0.545,
+     "precision": 0.446
+    }
+   },
+   "lgg-only file-fan1": {
+    "commits": 75,
+    "held_out_sites": 348,
+    "correct": 178,
+    "exact_text": 153,
+    "wrong": 232,
+    "recall": 0.511,
+    "precision": 0.434,
+    "commit_macro_recall": 0.521,
+    "files_300_plus_lines": {
+     "commits": 54,
+     "held_out_sites": 211,
+     "recall": 0.536,
+     "precision": 0.447
+    }
+   },
+   "unguarded (all candidates)": {
+    "commits": 75,
+    "held_out_sites": 348,
+    "correct": 220,
+    "exact_text": 189,
+    "wrong": 3650,
+    "recall": 0.632,
+    "precision": 0.057,
+    "commit_macro_recall": 0.667,
+    "files_300_plus_lines": {
+     "commits": 54,
+     "held_out_sites": 211,
+     "recall": 0.654,
+     "precision": 0.061
+    }
+   }
+  },
+  "hono": {
+   "prod file-fan1": {
+    "commits": 125,
+    "held_out_sites": 522,
+    "correct": 239,
+    "exact_text": 222,
+    "wrong": 601,
+    "recall": 0.458,
+    "precision": 0.285,
+    "commit_macro_recall": 0.471,
+    "files_300_plus_lines": {
+     "commits": 64,
+     "held_out_sites": 247,
+     "recall": 0.474,
+     "precision": 0.22
+    }
+   },
+   "lgg-only file-fan1": {
+    "commits": 125,
+    "held_out_sites": 522,
+    "correct": 236,
+    "exact_text": 219,
+    "wrong": 523,
+    "recall": 0.452,
+    "precision": 0.311,
+    "commit_macro_recall": 0.464,
+    "files_300_plus_lines": {
+     "commits": 64,
+     "held_out_sites": 247,
+     "recall": 0.47,
+     "precision": 0.251
+    }
+   },
+   "unguarded (all candidates)": {
+    "commits": 125,
+    "held_out_sites": 522,
+    "correct": 300,
+    "exact_text": 283,
+    "wrong": 9326,
+    "recall": 0.575,
+    "precision": 0.031,
+    "commit_macro_recall": 0.569,
+    "files_300_plus_lines": {
+     "commits": 64,
+     "held_out_sites": 247,
+     "recall": 0.623,
+     "precision": 0.021
+    }
+   }
+  }
+ },
+ "test_loo": {
+  "all": {
+   "prod file-fan1": {
+    "commits": 180,
+    "held_out_sites": 900,
+    "correct": 410,
+    "exact_text": 370,
+    "wrong": 1488,
+    "recall": 0.456,
+    "precision": 0.216,
+    "commit_macro_recall": 0.439,
+    "files_300_plus_lines": {
+     "commits": 174,
+     "held_out_sites": 673,
+     "recall": 0.505,
+     "precision": 0.257
+    }
+   },
+   "lgg-only file-fan1": {
+    "commits": 180,
+    "held_out_sites": 900,
+    "correct": 408,
+    "exact_text": 368,
+    "wrong": 1430,
+    "recall": 0.453,
+    "precision": 0.222,
+    "commit_macro_recall": 0.436,
+    "files_300_plus_lines": {
+     "commits": 174,
+     "held_out_sites": 673,
+     "recall": 0.502,
+     "precision": 0.262
+    }
+   },
+   "unguarded (all candidates)": {
+    "commits": 180,
+    "held_out_sites": 900,
+    "correct": 518,
+    "exact_text": 472,
+    "wrong": 23070,
+    "recall": 0.576,
+    "precision": 0.022,
+    "commit_macro_recall": 0.553,
+    "files_300_plus_lines": {
+     "commits": 174,
+     "held_out_sites": 673,
+     "recall": 0.6,
+     "precision": 0.021
+    }
+   }
+  },
+  "gin": {
+   "prod file-fan1": {
+    "commits": 30,
+    "held_out_sites": 129,
+    "correct": 55,
+    "exact_text": 52,
+    "wrong": 86,
+    "recall": 0.426,
+    "precision": 0.39,
+    "commit_macro_recall": 0.433,
+    "files_300_plus_lines": {
+     "commits": 27,
+     "held_out_sites": 77,
+     "recall": 0.494,
+     "precision": 0.463
+    }
+   },
+   "lgg-only file-fan1": {
+    "commits": 30,
+    "held_out_sites": 129,
+    "correct": 55,
+    "exact_text": 52,
+    "wrong": 86,
+    "recall": 0.426,
+    "precision": 0.39,
+    "commit_macro_recall": 0.433,
+    "files_300_plus_lines": {
+     "commits": 27,
+     "held_out_sites": 77,
+     "recall": 0.494,
+     "precision": 0.463
+    }
+   },
+   "unguarded (all candidates)": {
+    "commits": 30,
+    "held_out_sites": 129,
+    "correct": 72,
+    "exact_text": 66,
+    "wrong": 1228,
+    "recall": 0.558,
+    "precision": 0.055,
+    "commit_macro_recall": 0.537,
+    "files_300_plus_lines": {
+     "commits": 27,
+     "held_out_sites": 77,
+     "recall": 0.623,
+     "precision": 0.058
+    }
+   }
+  },
+  "testify": {
+   "prod file-fan1": {
+    "commits": 30,
+    "held_out_sites": 120,
+    "correct": 65,
+    "exact_text": 63,
+    "wrong": 70,
+    "recall": 0.542,
+    "precision": 0.481,
+    "commit_macro_recall": 0.528,
+    "files_300_plus_lines": {
+     "commits": 30,
+     "held_out_sites": 105,
+     "recall": 0.533,
+     "precision": 0.479
+    }
+   },
+   "lgg-only file-fan1": {
+    "commits": 30,
+    "held_out_sites": 120,
+    "correct": 65,
+    "exact_text": 63,
+    "wrong": 70,
+    "recall": 0.542,
+    "precision": 0.481,
+    "commit_macro_recall": 0.528,
+    "files_300_plus_lines": {
+     "commits": 30,
+     "held_out_sites": 105,
+     "recall": 0.533,
+     "precision": 0.479
+    }
+   },
+   "unguarded (all candidates)": {
+    "commits": 30,
+    "held_out_sites": 120,
+    "correct": 73,
+    "exact_text": 71,
+    "wrong": 2130,
+    "recall": 0.608,
+    "precision": 0.033,
+    "commit_macro_recall": 0.62,
+    "files_300_plus_lines": {
+     "commits": 30,
+     "held_out_sites": 105,
+     "recall": 0.6,
+     "precision": 0.033
+    }
+   }
+  },
+  "httpx": {
+   "prod file-fan1": {
+    "commits": 30,
+    "held_out_sites": 153,
+    "correct": 68,
+    "exact_text": 62,
+    "wrong": 260,
+    "recall": 0.444,
+    "precision": 0.207,
+    "commit_macro_recall": 0.35,
+    "files_300_plus_lines": {
+     "commits": 29,
+     "held_out_sites": 114,
+     "recall": 0.526,
+     "precision": 0.221
+    }
+   },
+   "lgg-only file-fan1": {
+    "commits": 30,
+    "held_out_sites": 153,
+    "correct": 68,
+    "exact_text": 62,
+    "wrong": 260,
+    "recall": 0.444,
+    "precision": 0.207,
+    "commit_macro_recall": 0.35,
+    "files_300_plus_lines": {
+     "commits": 29,
+     "held_out_sites": 114,
+     "recall": 0.526,
+     "precision": 0.221
+    }
+   },
+   "unguarded (all candidates)": {
+    "commits": 30,
+    "held_out_sites": 153,
+    "correct": 90,
+    "exact_text": 83,
+    "wrong": 1471,
+    "recall": 0.588,
+    "precision": 0.058,
+    "commit_macro_recall": 0.478,
+    "files_300_plus_lines": {
+     "commits": 29,
+     "held_out_sites": 114,
+     "recall": 0.596,
+     "precision": 0.058
+    }
+   }
+  },
+  "attrs": {
+   "prod file-fan1": {
+    "commits": 30,
+    "held_out_sites": 153,
+    "correct": 95,
+    "exact_text": 83,
+    "wrong": 94,
+    "recall": 0.621,
+    "precision": 0.503,
+    "commit_macro_recall": 0.576,
+    "files_300_plus_lines": {
+     "commits": 30,
+     "held_out_sites": 129,
+     "recall": 0.643,
+     "precision": 0.512
+    }
+   },
+   "lgg-only file-fan1": {
+    "commits": 30,
+    "held_out_sites": 153,
+    "correct": 93,
+    "exact_text": 81,
+    "wrong": 81,
+    "recall": 0.608,
+    "precision": 0.534,
+    "commit_macro_recall": 0.561,
+    "files_300_plus_lines": {
+     "commits": 30,
+     "held_out_sites": 129,
+     "recall": 0.628,
+     "precision": 0.551
+    }
+   },
+   "unguarded (all candidates)": {
+    "commits": 30,
+    "held_out_sites": 153,
+    "correct": 102,
+    "exact_text": 89,
+    "wrong": 620,
+    "recall": 0.667,
+    "precision": 0.141,
+    "commit_macro_recall": 0.646,
+    "files_300_plus_lines": {
+     "commits": 30,
+     "held_out_sites": 129,
+     "recall": 0.682,
+     "precision": 0.163
+    }
+   }
+  },
+  "typeorm": {
+   "prod file-fan1": {
+    "commits": 30,
+    "held_out_sites": 180,
+    "correct": 63,
+    "exact_text": 57,
+    "wrong": 650,
+    "recall": 0.35,
+    "precision": 0.088,
+    "commit_macro_recall": 0.372,
+    "files_300_plus_lines": {
+     "commits": 30,
+     "held_out_sites": 137,
+     "recall": 0.409,
+     "precision": 0.131
+    }
+   },
+   "lgg-only file-fan1": {
+    "commits": 30,
+    "held_out_sites": 180,
+    "correct": 63,
+    "exact_text": 57,
+    "wrong": 642,
+    "recall": 0.35,
+    "precision": 0.089,
+    "commit_macro_recall": 0.372,
+    "files_300_plus_lines": {
+     "commits": 30,
+     "held_out_sites": 137,
+     "recall": 0.409,
+     "precision": 0.134
+    }
+   },
+   "unguarded (all candidates)": {
+    "commits": 30,
+    "held_out_sites": 180,
+    "correct": 79,
+    "exact_text": 73,
+    "wrong": 9504,
+    "recall": 0.439,
+    "precision": 0.008,
+    "commit_macro_recall": 0.476,
+    "files_300_plus_lines": {
+     "commits": 30,
+     "held_out_sites": 137,
+     "recall": 0.489,
+     "precision": 0.009
+    }
+   }
+  },
+  "mobx": {
+   "prod file-fan1": {
+    "commits": 30,
+    "held_out_sites": 165,
+    "correct": 64,
+    "exact_text": 53,
+    "wrong": 328,
+    "recall": 0.388,
+    "precision": 0.163,
+    "commit_macro_recall": 0.372,
+    "files_300_plus_lines": {
+     "commits": 28,
+     "held_out_sites": 111,
+     "recall": 0.423,
+     "precision": 0.177
+    }
+   },
+   "lgg-only file-fan1": {
+    "commits": 30,
+    "held_out_sites": 165,
+    "correct": 64,
+    "exact_text": 53,
+    "wrong": 291,
+    "recall": 0.388,
+    "precision": 0.18,
+    "commit_macro_recall": 0.372,
+    "files_300_plus_lines": {
+     "commits": 28,
+     "held_out_sites": 111,
+     "recall": 0.423,
+     "precision": 0.186
+    }
+   },
+   "unguarded (all candidates)": {
+    "commits": 30,
+    "held_out_sites": 165,
+    "correct": 102,
+    "exact_text": 90,
+    "wrong": 8117,
+    "recall": 0.618,
+    "precision": 0.012,
+    "commit_macro_recall": 0.563,
+    "files_300_plus_lines": {
+     "commits": 28,
+     "held_out_sites": 111,
+     "recall": 0.631,
+     "precision": 0.01
+    }
+   }
+  }
+ },
+ "test_keep2": {
+  "all": {
+   "prod file-fan1": {
+    "commits": 180,
+    "held_out_sites": 2663,
+    "correct": 116,
+    "exact_text": 99,
+    "wrong": 397,
+    "recall": 0.044,
+    "precision": 0.226,
+    "commit_macro_recall": 0.179,
+    "files_300_plus_lines": {
+     "commits": 164,
+     "held_out_sites": 2469,
+     "recall": 0.044,
+     "precision": 0.257
+    }
+   },
+   "lgg-only file-fan1": {
+    "commits": 180,
+    "held_out_sites": 2663,
+    "correct": 112,
+    "exact_text": 95,
+    "wrong": 379,
+    "recall": 0.042,
+    "precision": 0.228,
+    "commit_macro_recall": 0.173,
+    "files_300_plus_lines": {
+     "commits": 164,
+     "held_out_sites": 2469,
+     "recall": 0.042,
+     "precision": 0.258
+    }
+   },
+   "unguarded (all candidates)": {
+    "commits": 180,
+    "held_out_sites": 2663,
+    "correct": 711,
+    "exact_text": 672,
+    "wrong": 6648,
+    "recall": 0.267,
+    "precision": 0.097,
+    "commit_macro_recall": 0.451,
+    "files_300_plus_lines": {
+     "commits": 164,
+     "held_out_sites": 2469,
+     "recall": 0.256,
+     "precision": 0.106
+    }
+   }
+  }
+ },
+ "v1_round1_test_loo": {
+  "gin": {
+   "trials": 129,
+   "commits": 30,
+   "commit_macro_recall": 0,
+   "commits_any_hit": 0,
+   "held": 129,
+   "tp": 0,
+   "exact": 0,
+   "fp_wrong_site": 0,
+   "fp_unchanged": 0,
+   "recall": 0,
+   "precision": null,
+   "trials_any_hit": 0
+  },
+  "testify": {
+   "trials": 120,
+   "commits": 30,
+   "commit_macro_recall": 0,
+   "commits_any_hit": 0,
+   "held": 120,
+   "tp": 0,
+   "exact": 0,
+   "fp_wrong_site": 0,
+   "fp_unchanged": 0,
+   "recall": 0,
+   "precision": null,
+   "trials_any_hit": 0
+  },
+  "httpx": {
+   "trials": 153,
+   "commits": 30,
+   "commit_macro_recall": 0,
+   "commits_any_hit": 0,
+   "held": 153,
+   "tp": 0,
+   "exact": 0,
+   "fp_wrong_site": 0,
+   "fp_unchanged": 0,
+   "recall": 0,
+   "precision": null,
+   "trials_any_hit": 0
+  },
+  "attrs": {
+   "trials": 153,
+   "commits": 30,
+   "commit_macro_recall": 0,
+   "commits_any_hit": 0,
+   "held": 153,
+   "tp": 0,
+   "exact": 0,
+   "fp_wrong_site": 0,
+   "fp_unchanged": 0,
+   "recall": 0,
+   "precision": null,
+   "trials_any_hit": 0
+  },
+  "mobx": {
+   "trials": 165,
+   "commits": 30,
+   "commit_macro_recall": 0,
+   "commits_any_hit": 0,
+   "held": 165,
+   "tp": 0,
+   "exact": 0,
+   "fp_wrong_site": 0,
+   "fp_unchanged": 0,
+   "recall": 0,
+   "precision": null,
+   "trials_any_hit": 0
+  }
+ },
+ "fp_whole_commits_prod": {
+  "gin": {
+   "commits": 300,
+   "commits_with_rewrite": 3,
+   "rewrites": 29,
+   "mean_ms": 566
+  },
+  "testify": {
+   "commits": 300,
+   "commits_with_rewrite": 7,
+   "rewrites": 14,
+   "mean_ms": 620
+  },
+  "httpx": {
+   "commits": 300,
+   "commits_with_rewrite": 3,
+   "rewrites": 7,
+   "mean_ms": 585
+  },
+  "attrs": {
+   "commits": 300,
+   "commits_with_rewrite": 3,
+   "rewrites": 4,
+   "mean_ms": 533
+  },
+  "typeorm": {
+   "commits": 300,
+   "commits_with_rewrite": 17,
+   "rewrites": 105,
+   "mean_ms": 1191
+  },
+  "mobx": {
+   "commits": 300,
+   "commits_with_rewrite": 4,
+   "rewrites": 9,
+   "mean_ms": 664
+  }
+ },
+ "go_vet_gate_test_loo": {
+  "gin": {
+   "trials_with_rewrites": 73,
+   "model_tree_red": 62,
+   "red_to_green": 14,
+   "green_to_red": 3
+  },
+  "testify": {
+   "trials_with_rewrites": 87,
+   "model_tree_red": 83,
+   "red_to_green": 21,
+   "green_to_red": 0
+  },
+  "kept_only_if_it_fixes": {
+   "correct": 35,
+   "wrong": 0,
+   "held_out_sites": 249,
+   "recall": 0.141,
+   "precision": 1.0
+  },
+  "undo_only_on_regression": {
+   "correct": 118,
+   "wrong": 153,
+   "held_out_sites": 249,
+   "recall": 0.474,
+   "precision": 0.435
+  }
+ }
+}
