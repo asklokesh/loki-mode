@@ -270,7 +270,20 @@ function changedSymbolsFirst(ctx: RunContext, tests: TestRef[], changed: string[
 export const feedsFixRound = (c: { name: string; result: string }, pre: { names: string[]; knownRed: string[]; sameError: string[] }): boolean => c.result === "fail" && !pre.names.includes(c.name) && !pre.sameError.includes(c.name) && !isHoldoutCheck(c.name);
 type Counts = { run: number; skipped: number };
 type BaseSubtraction = { ids: string[]; names: string[]; knownRed: string[]; sameError: string[]; weak: string[]; zero: string[]; cnt: Record<string, { b: Counts; h: Counts }> };
-// SPEED-GO-BATCH on base: the go files of one package that need a base rerun (relevant passes for counts, untouched red files for ids) run in one go test per package.
+/** The go -json stream carries a package-level pass event and no package-level fail. */
+export function goPackagePassed(out: string): boolean {
+  let pass = false;
+  for (const l of out.split("\n")) { if (!l.startsWith("{")) continue; try { const e = JSON.parse(l) as { Test?: unknown; Action?: string }; if (typeof e.Test === "string") continue; if (e.Action === "fail") return false; if (e.Action === "pass") pass = true; } catch { return false; } }
+  return pass;
+}
+/** One file's stream shows every named top-level test passed and nothing failed. */
+export function goStreamGreen(own: string, names: readonly string[]): boolean {
+  const passed = new Set<string>();
+  for (const l of own.split("\n")) { if (!l.startsWith("{")) continue; try { const e = JSON.parse(l) as { Test?: unknown; Action?: string }; if (e.Action === "fail") return false; if (e.Action === "pass" && typeof e.Test === "string" && !e.Test.includes("/")) passed.add(e.Test); } catch { return false; } }
+  return names.length > 0 && names.every((n) => passed.has(n));
+}
+// SPEED-GO-BATCH on base: the go files of one package that need a base rerun (relevant passes for counts, untouched red files for ids) run in one go test per package;
+// only a file whose tests all ran and passed in a passing package result is taken from it, every other file reruns alone.
 // A cut or missing run leaves every file to the caller's per-file loop. The fail-then-pass proof itself is seal.ts failThenPass, which this never feeds.
 async function baseGoBatch(items: { c: VerifyCheck; t: TestRef; bc: ReturnType<typeof commandFor> }[], signal: AbortSignal, record: (c: VerifyCheck, b: { ok: boolean; cut?: boolean; out: string }) => void): Promise<void> {
   if (!goBatchOn()) return;
@@ -281,7 +294,8 @@ async function baseGoBatch(items: { c: VerifyCheck; t: TestRef; bc: ReturnType<t
     const names = g.map((x) => x.bc.args[3]!.slice(2, -2).split("|")), args = ["test", "-json", "-run", `^(${[...new Set(names.flat())].join("|")})$`, g[0]!.bc.args[4]!];
     const a = await runOnce("go", args, g[0]!.bc.cwd, signal, { timeoutMs: batchTimeoutMs(g.length) });
     if (a.cut || a.missing) continue;
-    g.forEach((x, i) => { const own = goFileStream(a.out, new Set(names[i])); record(x.c, { ok: !/"Action":"fail"/.test(own), out: own }); });
+    const pkgPass = goPackagePassed(a.out); // a red, panicked or torn package result trusts no file of it: every file reruns alone
+    g.forEach((x, i) => { const own = goFileStream(a.out, new Set(names[i])); if (pkgPass && goStreamGreen(own, names[i]!)) record(x.c, { ok: true, out: own }); }); // only a fully green file is taken from the batch: a red file's verdict may depend on a sibling (package-global state, order), so it reruns alone
   }
 }
 /** A-112: a test check red on head, in a file the diff did not touch, whose every failing id is also red on a pristine detached base  worktree (never a reset of the implement tree, D42 (2)) is  pre_red: ids go to NOT PROVEN,  seal skips it in the verdict, the check
