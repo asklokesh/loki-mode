@@ -41,7 +41,9 @@ function replay(repo: string, scratch: string, max: number, lang = "", since = "
   mkdirSync(scratch, { recursive: true });
   const wp = join(scratch, "wt-parent"), wc = join(scratch, "wt-commit");
   for (const w of [wp, wc]) if (!existsSync(w)) git(repo, "worktree", "add", "--detach", "-f", w, "HEAD");
-  const revs = git(repo, "rev-list", "--no-merges", `--max-count=${max}`, ...(since ? [`--since=${since}`] : []), "HEAD", ...(paths ? ["--", ...paths.split(",")] : [])).stdout.split("\n").filter(Boolean);
+  // LOKI_TWIN_COMMITS (comma list) replays exactly those commits, e.g. to rerun the ones an engine fix affects
+  const only = (process.env.LOKI_TWIN_COMMITS ?? "").split(",").filter(Boolean);
+  const revs = only.length ? only : git(repo, "rev-list", "--no-merges", `--max-count=${max}`, ...(since ? [`--since=${since}`] : []), "HEAD", ...(paths ? ["--", ...paths.split(",")] : [])).stdout.split("\n").filter(Boolean);
   for (const c of revs) {
     const p = git(repo, "rev-parse", `${c}^`).stdout.trim();
     if (!p) continue;

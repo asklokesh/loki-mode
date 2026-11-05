@@ -179,12 +179,15 @@ const GO_AS = (first: "Coder" | "Batch") => {
   const body = GO_BASE.slice(GO_BASE.indexOf("func Status"));
   return GO_BASE.replace(`import (\n\t"fmt"`, `import (\n\t"errors"\n\t"fmt"`).replace(body, `func Status(err error) int {\n${first === "Coder" ? coder + batch : batch + coder}\treturn 1\n}\n`);
 };
-test.skipIf(!has("go", "version"))("go: errors.As for the Coder ahead of the Batch is red, Batch first is green", () => {
-  const r = e2e({ "go.mod": "module example.com/st\n\ngo 1.22\n", "st.go": GO_BASE }, "st.go", { wrong: GO_AS("Coder"), right: GO_AS("Batch") });
-  expect(r.wrong!.red).toBeGreaterThan(0);
-  expect(r.right!.red).toBe(0);
-  expect(r.right!.verdicts.length).toBeGreaterThan(0);
-}, 240_000);
+// go 1.17: the probe must compile in modules whose go directive predates `any` (measured: 15 replay commits lost)
+for (const ver of ["1.22", "1.17"]) {
+  test.skipIf(!has("go", "version"))(`go ${ver}: errors.As for the Coder ahead of the Batch is red, Batch first is green`, () => {
+    const r = e2e({ "go.mod": `module example.com/st\n\ngo ${ver}\n`, "st.go": GO_BASE }, "st.go", { wrong: GO_AS("Coder"), right: GO_AS("Batch") });
+    expect(r.wrong!.red).toBeGreaterThan(0);
+    expect(r.right!.red).toBe(0);
+    expect(r.right!.verdicts.length).toBeGreaterThan(0);
+  }, 240_000);
+}
 
 // Measured on this machine: a shared Go build-cache entry removed by another process between compile and link made a
 // probe run end with no records ("link: cannot open file ... go-build ..."), silently losing every guard of that run.

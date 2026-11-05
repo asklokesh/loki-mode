@@ -1287,7 +1287,7 @@ var lokiTwinAddr = lkregexp.MustCompile("0x[0-9a-f]{6,}")
 func lokiTwinEmit(r lokiTwinRec) {
 	lokiTwinMu.Lock()
 	defer lokiTwinMu.Unlock()
-	f, err := lkos.OpenFile(lkos.Getenv("LOKI_TWIN_OUT"), lkos.O_APPEND|lkos.O_CREATE|lkos.O_WRONLY, 0o600)
+	f, err := lkos.OpenFile(lkos.Getenv("LOKI_TWIN_OUT"), lkos.O_APPEND|lkos.O_CREATE|lkos.O_WRONLY, 0600)
 	if err != nil {
 		return
 	}
@@ -1318,7 +1318,7 @@ func lokiTwinPipe(target **lkos.File) func() string {
 	}
 }
 
-func lokiTwinObserve(call func() []any) map[string]string {
+func lokiTwinObserve(call func() []interface{}) map[string]string {
 	obs := map[string]string{}
 	writerT := lkreflect.TypeOf((*lkio.Writer)(nil)).Elem()
 	bufT := lkreflect.TypeOf(&lkbytes.Buffer{})
@@ -1405,7 +1405,7 @@ func (p *pkg) predExpr(s *site, xv string, deep bool) string {
 		if deep {
 			parts = append(parts, fmt.Sprintf("func() bool { var t %s; return lkerrors.As(%s, &t) }()", t, xv))
 		} else {
-			parts = append(parts, fmt.Sprintf("func() bool { _, ok := any(%s).(%s); return ok }()", xv, t))
+			parts = append(parts, fmt.Sprintf("func() bool { _, ok := interface{}(%s).(%s); return ok }()", xv, t))
 		}
 	}
 	return strings.Join(parts, " || ")
@@ -1448,7 +1448,7 @@ func (p *pkg) writeProbe(outFile string, cos []*chainOut, cases []caseIn, observ
 	}
 	b.WriteString(")\n\nvar _ = lkcontext.TODO\nvar _ = lkerrors.New\n")
 	b.WriteString(probeHelpers)
-	b.WriteString("\nvar lokiTwinVars = []struct {\n\tname string\n\tptr  any\n}{\n")
+	b.WriteString("\nvar lokiTwinVars = []struct {\n\tname string\n\tptr  interface{}\n}{\n")
 	for _, v := range p.vars {
 		b.WriteString(fmt.Sprintf("\t{%q, &%s},\n", v, v))
 	}
@@ -1524,9 +1524,9 @@ func (p *pkg) writeProbe(outFile string, cos []*chainOut, cases []caseIn, observ
 						rs = append(rs, fmt.Sprintf("r%d", k))
 					}
 					stmt = "\t\t" + strings.Join(rs, ", ") + " := " + ce + "\n"
-					rets = "[]any{" + strings.Join(rs, ", ") + "}"
+					rets = "[]interface{}{" + strings.Join(rs, ", ") + "}"
 				}
-				b.WriteString(fmt.Sprintf("\tlokiTwinEmit(lokiTwinRec{Cand: %q, Variant: %q, Obs: lokiTwinObserve(func() []any {\n%s\t\treturn %s\n\t})})\n", key, cl[0], stmt, rets))
+				b.WriteString(fmt.Sprintf("\tlokiTwinEmit(lokiTwinRec{Cand: %q, Variant: %q, Obs: lokiTwinObserve(func() []interface{} {\n%s\t\treturn %s\n\t})})\n", key, cl[0], stmt, rets))
 			}
 			b.WriteString("}\n")
 			lines[key] = [2]int{a, line()}
