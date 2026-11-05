@@ -2,7 +2,7 @@
 import { installOwned } from "../../project_model/install.ts";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { withStagePrefix } from "../../features/lean_prefix.ts"; import { outOfRepoReask, outOfRepoTests } from "../../project_model/conventions.ts";
+import { withStagePrefix } from "../../features/lean_prefix.ts"; import { fragmentWriterOn, outOfRepoReask, outOfRepoTests } from "../../project_model/conventions.ts";
 import { learningsBlock, lessonsForBrief, orgKnowledgeBlock } from "../../util/pr_lessons.ts"; export { learningsBlock }; // learningsBlock lives with the other brief-note helpers
 import { FINISH_LINE, FIXED_RULES, briefRecord, type BriefRecord } from "../../e10ext/context.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
@@ -194,6 +194,7 @@ export const implementStage: Stage = {
       ...(planChainMode ? { plan_chain: planChainMode } : {}),
       ...(sessionResume ? { session_resume: sessionResume } : {}),
       ...(coverage ? { coverage_resume: coverage } : {}),
+      ...(fragmentWriterOn() && session.summary ? { summary_tail: session.summary.slice(-1500) } : {}), // the release-note writer reads the final message
     };
 
     if (exit !== "error") return { status: "completed", data };

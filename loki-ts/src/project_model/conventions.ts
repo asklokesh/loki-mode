@@ -1,9 +1,11 @@
 // FC-23 (L0): a package's module system, read with a parser from the JSON its own directory declares (JSONC comments and trailing commas,
 // relative "extends"), by key and never by file name. null when the package declares nothing.
 import { safeGitSpawn } from "../util/safe_git.ts";
+import { isTestFile } from "../util/test_file_text.ts";
 import { symbolSpans } from "../util/context_pack.ts";
 import { loadProjectApi, siteFor } from "./resolve.ts";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export interface PackageConventions {
@@ -91,15 +93,17 @@ export function releaseNoteConvention(repoDir: string): ReleaseNoteConvention | 
     if (has(dir)) return { kind, dir, example: newestIn(join(repoDir, dir), dir, /^[^.]/) };
   return null;
 }
-/** The closest manifest "name" above a file (empty when none within the repo). */
-function packageNameFor(repoDir: string, file: string): string {
+/** The closest named manifest above a file: its directory (repo-relative, "." for the root), name and private flag; null when none within the repo. */
+function ownerPackage(repoDir: string, file: string): { dir: string; name: string; private: boolean } | null {
   for (let d = dirname(join(repoDir, file)); d.startsWith(repoDir); d = dirname(d)) {
-    const n = readJson(join(d, "package.json"))?.name;
-    if (typeof n === "string") return n;
+    const j = readJson(join(d, "package.json")), n = j?.name;
+    if (typeof n === "string") return { dir: relative(repoDir, d) || ".", name: n, private: j?.private === true };
     if (d === repoDir) break;
   }
-  return "";
+  return null;
 }
+/** The closest manifest "name" above a file (empty when none within the repo). */
+const packageNameFor = (repoDir: string, file: string): string => ownerPackage(repoDir, file)?.name ?? "";
 /** The per-run brief line for a release-note fragment convention, placed after the cache-stable prefix; "" when the repo declares none. A changeset line names the package of the first relevant file. */
 export function releaseNoteBrief(repoDir: string, files: string[] = []): string {
   const c = releaseNoteConvention(repoDir);
@@ -110,6 +114,128 @@ export function releaseNoteBrief(repoDir: string, files: string[] = []): string 
     return `Release-note convention (changeset, ${c.dir}/): a user-visible change ships with a new ${c.dir}/<short-kebab-name>.md fragment: front matter with "${pkg || "<package name>"}": patch (minor or major when the task says so), then one line describing the change${ex}.`;
   }
   return `Release-note convention (${c.kind}, ${c.dir}/): a user-visible change ships with a new fragment file in ${c.dir}/ named and formatted like the existing ones${ex}.`;
+}
+
+// ---- release-note fragment writer (LOKI_E10_SCAFFOLD): the deterministic half of the L3 convention line. No model call. ----
+/** The task itself says not to touch release notes ("no changelog", "skip the changeset", "do not add a news fragment"). */
+export const taskForbidsReleaseNote = (task: string): boolean =>
+  /\b(?:no|without|skip|omit|leave\s+out|don'?t\s+(?:add|write|create|touch|update|need)|do\s+not\s+(?:add|write|create|touch|update|need))\b[^.\n]{0,40}\b(?:change\s?logs?|changesets?|release[\s-]+notes?|news\s?fragments?|fragments?)\b/i.test(task);
+const FRAGMENT_CODE = /\.(ts|tsx|js|jsx|mjs|cjs|go|py|rs|java|kt|rb|php|cs|swift|scala|c|cc|cpp|h|hpp)$/;
+const clean = (t: string): string => t.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+/** The first meaningful task line as a release-note lead: heading marks, a "Title:" label, a "(#12)" or "(#12 s2)" ref and a trailing period dropped. */
+export function fragmentTitle(task: string): string {
+  const line = task.split("\n").map((l) => l.trim()).find((l) => l && !/^(<<<|TASK$|Task \(untrusted)/.test(l)) ?? "";
+  return clean(line).replace(/^#+\s*/, "").replace(/^(title|issue)\s*:\s*/i, "").replace(/\s*\(#\d+(?:\s+\w+)?\)\s*$/, "").replace(/[.\s]+$/, "").slice(0, 160);
+}
+const words = (t: string): Set<string> => new Set(t.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? []);
+/** One sentence of what the run says it changed, from the tail of the implement session's final message; "" when none reads like a maintainer's note.
+ *  Markers, code fences, tables, headings, first-person narration, test-status chatter and a sentence that restates the title are all refused. */
+export function summaryNote(summary: string, title: string): string {
+  const paras = summary.split("\n").filter((l) => !/^\W*LOKI_(?:DONE|ALREADY_DONE|SPEC_CONFLICT)\b/.test(l) && !/^\[sdk-loop/.test(l)).join("\n").split(/\n\s*\n/);
+  const tw = words(title);
+  for (let i = paras.length - 1; i >= 0; i--) {
+    const lines = paras[i]!.split("\n").map((l) => l.trim());
+    if (lines.some((l) => /^(```|\||#)/.test(l))) continue;
+    const text = clean(lines.map((l) => l.replace(/^(?:[-*+]|\d+[.)])\s+/, "")).join(" ")).replace(/\*\*/g, "");
+    for (const s of text.split(/(?<=[.!?])\s+(?=[A-Z`])/)) {
+      const t = s.trim().replace(/[.\s]+$/, "");
+      if (t.length < 20 || t.length > 220 || !/^[A-Za-z`]/.test(t) || /LOKI_|\/Users\/|\/tmp\/|\/home\//.test(t)) continue;
+      if (/^(?:I|I'[a-z]+|Let me|Let's|Now|Done|All\b|The (?:tests?|checks?|build|suite|wall)|Tests?\b|Verified|Ran\b|Note\b|Here|This (?:is|was) (?:done|complete)|Summary|Changes?:)/i.test(t) || /\b(?:tests?|checks?|suite)\b[^.]{0,40}\b(?:pass|passes|passed|green|fail)/i.test(t)) continue;
+      const sw = words(t), common = [...sw].filter((w) => tw.has(w)).length;
+      if (sw.size === 0 || common / Math.min(sw.size, Math.max(tw.size, 1)) >= 0.8) continue; // restates the title
+      return t;
+    }
+  }
+  return "";
+}
+/** The globs a workspace declares (package.json "workspaces", pnpm-workspace.yaml "packages:"); null when the repo is one package. */
+function workspaceGlobs(repoDir: string): string[] | null {
+  const w = readJson(join(repoDir, "package.json"))?.workspaces, g: string[] = [];
+  if (Array.isArray(w)) g.push(...w.map(String)); else if (w && typeof w === "object" && Array.isArray((w as { packages?: unknown }).packages)) g.push(...((w as { packages: unknown[] }).packages).map(String));
+  try {
+    const blk = /^packages:[ \t]*\n((?:[ \t]+-.*\n?|[ \t]*#.*\n?)*)/m.exec(readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8"))?.[1] ?? "";
+    for (const m of blk.matchAll(/^[ \t]+-[ \t]*["']?([^"'\n#]+?)["']?[ \t]*(?:#.*)?$/gm)) g.push(m[1]!);
+  } catch { /* no pnpm workspace */ }
+  return g.length ? g : null;
+}
+const globRe = (g: string): RegExp => new RegExp(`^${g.replace(/^\.\//, "").replace(/\/$/, "").split("/").map((seg) => seg === "**" ? ".*" : seg.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")).join("/")}$`);
+const inWorkspace = (dir: string, globs: string[] | null): boolean =>
+  globs === null ? dir === "." : dir !== "." && globs.some((g) => !g.startsWith("!") && globRe(g).test(dir)) && !globs.some((g) => g.startsWith("!") && globRe(g.slice(1)).test(dir));
+/** The repo's own binary: the repo-local one first, then the PATH. */
+function repoTool(repoDir: string, name: string, rel: string[]): string | null {
+  for (const r of rel) if (existsSync(join(repoDir, r))) return join(repoDir, r);
+  const p = spawnSync(name, ["--version"], { cwd: repoDir, encoding: "utf8", timeout: 15_000 });
+  return p.error || p.status !== 0 ? null : name;
+}
+const sentence = (t: string, example: string): string => (/[.!?]\s*$/.test(example) || example === "" ? `${t.replace(/[.!?]+$/, "")}.` : t.replace(/[.!?]+$/, ""));
+const FEAT = /^(?:feat|feature|add|adds|added|support|allow|introduce|implement)\b/i, FIX = /^(?:fix|fixes|fixed|bug|resolve|correct|handle|prevent|stop|avoid|repair)\b|\b(?:crash|error|regress|incorrect|wrong|broken|fails?)\b/i;
+
+/** LOKI_E10_SCAFFOLD gates the fragment writer; the default is set by the measured false-write count (see the PR body). */
+export const fragmentWriterOn = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_SCAFFOLD === "1";
+
+export type FragmentOutcome = { path: string; kind: string; body: string; validated: "ok" | "unavailable" } | { skipped: string };
+/** Writes the release-note fragment the repo's own convention asks for, when the run's diff has none. `files` are the repo-relative paths the run changed
+ *  (changedFiles); `summary` is the tail of the implement session's final message. Writes only for a convention this function can follow exactly
+ *  (changesets, towncrier) and only from a real example or config; every other case returns the reason it did not. A fragment the repo's own tool rejects is removed again. */
+export function writeReleaseNoteFragment(repoDir: string, files: string[], task: string, summary = "", opts: { tools?: boolean } = {}): FragmentOutcome {
+  const conv = releaseNoteConvention(repoDir);
+  if (!conv) return { skipped: "the repo has no release-note convention" };
+  if (conv.kind !== "changeset" && conv.kind !== "towncrier") return { skipped: `the ${conv.kind} convention is not written automatically` };
+  if (taskForbidsReleaseNote(task)) return { skipped: "the task says no release note" };
+  const live = files.filter((f) => existsSync(join(repoDir, f)));
+  if (live.some((f) => f.startsWith(`${conv.dir}/`) && !/readme|config\.json$|\.toml$/i.test(basename(f)))) return { skipped: "the change already carries a fragment" };
+  const code = live.filter((f) => FRAGMENT_CODE.test(f) && !isTestFile(f) && !f.startsWith(`${conv.dir}/`));
+  if (code.length === 0) return { skipped: "no non-test code changed" };
+  const title = fragmentTitle(task), note = summaryNote(summary, title);
+  const lead = title.length >= 12 ? title : note;
+  if (!lead) return { skipped: "no usable title or summary for a body" };
+  const body = lead === title && note ? `${lead}. ${note}` : lead;
+  const exText = conv.example ? ((): string => { try { return readFileSync(join(repoDir, conv.example!), "utf8"); } catch { return ""; } })() : "";
+  const dir = join(repoDir, conv.dir), slug = title.toLowerCase().replace(/[`'"]/g, "").split(/[^a-z0-9]+/).filter(Boolean).slice(0, 6).join("-") || "change";
+  let rel: string, text: string;
+  if (conv.kind === "changeset") {
+    let cfg: { ignore?: unknown } = {};
+    try { cfg = (parseJsonc(readFileSync(join(dir, "config.json"), "utf8")) ?? {}) as { ignore?: unknown }; } catch { /* default config */ }
+    const ignore = Array.isArray(cfg.ignore) ? cfg.ignore.map(String) : [], globs = workspaceGlobs(repoDir), names = new Set<string>();
+    for (const f of code) { const p = ownerPackage(repoDir, f); if (p && !p.private && !ignore.includes(p.name) && inWorkspace(p.dir, globs)) names.add(p.name); }
+    if (names.size === 0) return { skipped: "no changed file belongs to a public workspace package" };
+    const q = /^---\s*\n\s*(["'])/.exec(exText)?.[1] ?? '"', bump = FEAT.test(title) ? "minor" : "patch";
+    let n = `${slug}.md`; for (let i = 2; existsSync(join(dir, n)); i++) n = `${slug}-${i}.md`;
+    rel = `${conv.dir}/${n}`; text = `---\n${[...names].sort().map((p) => `${q}${p}${q}: ${bump}`).join("\n")}\n---\n\n${sentence(body, exText.replace(/^---[\s\S]*?\n---\s*/, ""))}\n`;
+  } else {
+    if (!conv.example) return { skipped: "towncrier: no existing fragment to take the naming from" };
+    const parts = basename(conv.example).split("."), orphan = parts[0]!.startsWith("+");
+    const issue = /(?:^|[\s(])#(\d+)\b/.exec(task)?.[1];
+    if (!issue && !orphan) return { skipped: "towncrier: the task names no issue number and the repo does not use orphan fragments" };
+    const cfgText = ["towncrier.toml", ".towncrier.toml", "pyproject.toml"].map((c) => { try { return readFileSync(join(repoDir, c), "utf8"); } catch { return ""; } }).join("\n");
+    const types = [...cfgText.matchAll(/\[\[tool\.towncrier\.type\]\][^[]*?directory\s*=\s*["'](\w+)["']/g)].map((m) => m[1]!), known = types.length ? types : ["feature", "bugfix", "doc", "removal", "misc"];
+    const kind = FEAT.test(title) ? known.find((t) => /feat/.test(t)) : FIX.test(title) ? known.find((t) => /bug|fix/.test(t)) : undefined;
+    if (!kind) return { skipped: "towncrier: the change type is not clear from the task" };
+    const ext = parts.length >= 3 ? `.${parts[parts.length - 1]}` : "";
+    const n = `${issue ?? `+${slug}`}.${kind}${ext}`;
+    if (existsSync(join(dir, n))) return { skipped: "towncrier: a fragment with this name exists" };
+    rel = `${conv.dir}/${n}`; text = `${sentence(body, exText)}\n`;
+  }
+  writeFileSync(join(repoDir, rel), text);
+  // The repo's own tool judges it when present: a rejected fragment is removed (the model's own would have failed the same check). An absent or erroring tool never blocks the write.
+  let validated: "ok" | "unavailable" = "unavailable";
+  if (opts.tools !== false) {
+    if (conv.kind === "changeset") {
+      const t = repoTool(repoDir, "changeset", ["node_modules/.bin/changeset"]);
+      if (t) {
+        const r = spawnSync(t, ["status"], { cwd: repoDir, encoding: "utf8", timeout: 60_000 }), out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+        if (r.status === 0) validated = "ok";
+        else if (/not in the workspace|could not parse changeset|invalid version type/i.test(out)) { rmSync(join(repoDir, rel), { force: true }); return { skipped: `changeset status rejected the fragment: ${clean(out).slice(0, 160)}` }; }
+      }
+    } else {
+      const t = repoTool(repoDir, "towncrier", [".venv/bin/towncrier", "venv/bin/towncrier", "node_modules/.bin/towncrier"]);
+      if (t) {
+        const r = spawnSync(t, ["build", "--draft", "--version", "0.0.0"], { cwd: repoDir, encoding: "utf8", timeout: 60_000 });
+        if (r.status === 0) { if (clean(r.stdout ?? "").includes(clean(text).slice(0, 25))) validated = "ok"; else { rmSync(join(repoDir, rel), { force: true }); return { skipped: "towncrier build --draft did not render the fragment" }; } }
+      }
+    }
+  }
+  return { path: rel, kind: conv.kind, body: clean(text.replace(/^---[\s\S]*?\n---\s*/, "")), validated };
 }
 
 /** A generated Wall file the package's own compiler would reject (import.meta under CommonJS); null when it is fine. Comments and strings are ignored. */

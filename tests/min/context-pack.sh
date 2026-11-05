@@ -72,7 +72,7 @@ PY
 git -C "$T/big" init -q -b main && git -C "$T/big" add -A . && git -C "$T/big" -c user.name=c -c user.email=c@x commit -q -m base
 
 cat > "$T/probe.ts" <<'TS'
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const [SRC, T, CTX] = process.argv.slice(2) as string[];
 const { buildRepoMap } = await import(join(SRC, "engine10/repomap.ts"));
@@ -171,6 +171,58 @@ const b1 = bp(out.rn_changeset as string, "task one"), b2 = bp("", "a different 
 const cut = (b: string) => b.slice(0, b.indexOf(FIXED_RULES) + FIXED_RULES.length);
 out.prefix_stable = b1.includes(FIXED_RULES) && b2.includes(FIXED_RULES) && cut(b1) === cut(b2) && !FIXED_RULES.includes("Release-note convention") && b1.indexOf("Release-note convention") > FIXED_RULES.length ? "yes" : "no";
 out.rules = ["read the whole function", "sibling branches", "fix the issue prefers", "never npm test", "release-note fragment a repository convention"].map((k) => FIXED_RULES.includes(k) ? "y" : "n").join("");
+// L3 fragment writer: deterministic release-note fragment from the repo's own convention (LOKI_E10_SCAFFOLD).
+const { writeReleaseNoteFragment: wf, summaryNote, taskForbidsReleaseNote, fragmentWriterOn } = await import(join(SRC, "project_model/conventions.ts"));
+const { readFileSync: rf, existsSync: ex, readdirSync: rd } = await import("node:fs");
+const csFiles = (extra: Record<string, string> = {}) => ({ ".changeset/config.json": '{"ignore":["@acme/ignored"]}', ".changeset/old.md": '---\n"@acme/core": patch\n---\n\nOlder fix.\n', "package.json": '{"name":"root","private":true,"workspaces":["packages/*"]}', "packages/core/package.json": '{"name":"@acme/core"}', "packages/core/src/a.ts": "export const a = 1;\n", "packages/priv/package.json": '{"name":"@acme/priv","private":true}', "packages/priv/src/p.ts": "x\n", "packages/ignored/package.json": '{"name":"@acme/ignored"}', "packages/ignored/src/i.ts": "x\n", "fixtures/demo/package.json": '{"name":"demo-fixture"}', "fixtures/demo/d.ts": "x\n", ...extra });
+const TITLE = "Fix wrong total when the invoice has no lines (#12)", SUMMARY = "I read the code.\n\nThe total now returns 0 for an invoice without line items instead of NaN.\n\nLOKI_DONE";
+const w1 = mk("w1", csFiles()), r1 = wf(w1, ["packages/core/src/a.ts"], TITLE, SUMMARY, { tools: false }) as { path?: string; body?: string; validated?: string; skipped?: string };
+out.fw_path = r1.path ?? `skipped:${r1.skipped}`;
+const t1 = r1.path ? rf(join(w1, r1.path), "utf8") : "";
+out.fw_front = t1.startsWith('---\n"@acme/core": patch\n---\n\n') ? "ok" : `bad:${JSON.stringify(t1)}`;
+out.fw_body = t1.endsWith("Fix wrong total when the invoice has no lines. The total now returns 0 for an invoice without line items instead of NaN.\n") ? "ok" : `bad:${JSON.stringify(t1)}`;
+out.fw_validated = r1.validated;
+const w1q = mk("w1q", csFiles({ ".changeset/old.md": "---\n'@acme/core': patch\n---\n\nOlder fix.\n" })), r1q = wf(w1q, ["packages/core/src/a.ts"], TITLE, "", { tools: false }) as { path?: string };
+out.fw_quote = r1q.path && rf(join(w1q, r1q.path), "utf8").startsWith("---\n'@acme/core': patch") ? "ok" : "bad";
+const skip = (name: string, repo: string, files: string[], task = TITLE, sum = SUMMARY) => { const r = wf(repo, files, task, sum, { tools: false }) as { skipped?: string; path?: string }; return r.skipped ? "skipped" : `wrote:${r.path}`; };
+out.fw_no_task = skip("a", mk("w2", csFiles()), ["packages/core/src/a.ts"], "Fix the total, no changelog needed");
+out.fw_has_frag = skip("b", mk("w3", csFiles({ ".changeset/mine.md": "---\n'@acme/core': patch\n---\n\nx\n" })), ["packages/core/src/a.ts", ".changeset/mine.md"]);
+out.fw_no_conv = skip("c", mk("w4", { "package.json": '{"name":"p"}', "CHANGELOG.md": "# c", "a.ts": "x" }), ["a.ts"]);
+out.fw_tests_only = skip("d", mk("w5", csFiles({ "packages/core/src/a.test.ts": "x\n" })), ["packages/core/src/a.test.ts"]);
+out.fw_docs_only = skip("e", mk("w6", csFiles({ "packages/core/README.md": "x\n" })), ["packages/core/README.md"]);
+out.fw_private = skip("f", mk("w7", csFiles()), ["packages/priv/src/p.ts"]);
+out.fw_ignored = skip("g", mk("w8", csFiles()), ["packages/ignored/src/i.ts"]);
+out.fw_not_workspace = skip("h", mk("w9", csFiles()), ["fixtures/demo/d.ts"]);
+out.fw_deleted = skip("i", mk("w10", csFiles()), ["packages/core/src/gone.ts"]);
+out.fw_no_title = skip("j", mk("w11", csFiles()), ["packages/core/src/a.ts"], "x", "LOKI_DONE");
+out.fw_other_kind = skip("k", mk("w12", { "changelog.d/1.md": "z", "a.ts": "x" }), ["a.ts"]);
+const w13 = mk("w13", csFiles()); const r13 = wf(w13, ["packages/core/src/a.ts"], "Add a --json flag to the exporter", "", { tools: false }) as { path?: string };
+out.fw_minor = r13.path && rf(join(w13, r13.path), "utf8").includes('"@acme/core": minor') ? "ok" : "bad";
+// the repo's own tool judges: a stand-in changeset binary that rejects removes the fragment; one that passes marks it validated
+const stub = (code: number, msg: string) => csFiles({ "node_modules/.bin/changeset": `#!/bin/sh\necho '${msg}'\nexit ${code}\n` });
+const w14 = mk("w14", stub(1, "Error: Found changeset x for package @acme/core which is not in the workspace")); chmodSync(join(w14, "node_modules/.bin/changeset"), 0o755);
+const r14 = wf(w14, ["packages/core/src/a.ts"], TITLE, SUMMARY) as { skipped?: string }; out.fw_rejected = r14.skipped && rd(join(w14, ".changeset")).filter((n: string) => n.startsWith("fix-")).length === 0 ? "removed" : "kept";
+const w15 = mk("w15", stub(1, "Error: Failed to find where HEAD diverged from main")); chmodSync(join(w15, "node_modules/.bin/changeset"), 0o755);
+const r15 = wf(w15, ["packages/core/src/a.ts"], TITLE, SUMMARY) as { validated?: string }; out.fw_env_error = r15.validated === "unavailable" && rd(join(w15, ".changeset")).some((n: string) => n.startsWith("fix-")) ? "kept" : "dropped";
+const w16 = mk("w16", stub(0, "ok")); chmodSync(join(w16, "node_modules/.bin/changeset"), 0o755);
+out.fw_tool_ok = (wf(w16, ["packages/core/src/a.ts"], TITLE, SUMMARY) as { validated?: string }).validated;
+// towncrier
+const tcFiles = (extra: Record<string, string> = {}) => ({ "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\n', "changes/7.feature.rst": "Added a thing.\n", "pkg/mod.py": "x = 1\n", ...extra });
+const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, files, task, "", { tools: false }) as { path?: string; skipped?: string };
+const w17 = mk("w17", tcFiles()); const r17 = tw(w17, "Fix crash when the cache is empty (#42)");
+out.tc_path = r17.path ?? `skipped:${r17.skipped}`; out.tc_text = r17.path ? rf(join(w17, r17.path), "utf8") : "";
+out.tc_no_issue = tw(mk("w18", tcFiles()), "Fix crash when the cache is empty").skipped ? "skipped" : "wrote";
+out.tc_unclear = tw(mk("w19", tcFiles()), "Rework the cache layout for clarity (#43)").skipped ? "skipped" : "wrote";
+out.tc_dup = tw(mk("w20", tcFiles({ "changes/42.bugfix.rst": "Old.\n" })), "Fix crash when the cache is empty (#42)").skipped ? "skipped" : "wrote";
+out.tc_no_example = tw(mk("w21", { "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\n', "changes/.gitkeep": "", "pkg/mod.py": "x" }), "Fix crash when the cache is empty (#42)").skipped ? "skipped" : "wrote";
+out.tc_orphan = ((r) => r.path && /\/\+fix-crash-when-the-cache-is\.bugfix\.rst$/.test(r.path) ? "ok" : `bad:${r.path ?? r.skipped}`)(tw(mk("w22", tcFiles({ "changes/+abc.feature.rst": "Added.\n" })), "Fix crash when the cache is empty"));
+// summaryNote and the task veto
+out.sn_pick = summaryNote("Done.\n\nI changed the loader.\n\nThe loader now skips unreadable files instead of aborting the whole scan.\n\nLOKI_DONE", "Fix loader crash");
+out.sn_chatter = summaryNote("All tests pass.\n\nLet me know if you want more.\n\nLOKI_DONE", "Fix loader crash") === "" ? "empty" : "picked";
+out.sn_restate = summaryNote("Fixed the loader crash when a file is unreadable.", "Fix the loader crash when a file is unreadable") === "" ? "empty" : "picked";
+out.sn_table = summaryNote("| a | b |\n| - | - |\n\n```\ncode here is long enough to count as text\n```\n", "Fix x") === "" ? "empty" : "picked";
+out.veto = [taskForbidsReleaseNote("Fix x, no changelog entry"), taskForbidsReleaseNote("skip the changeset"), taskForbidsReleaseNote("do not add a news fragment"), taskForbidsReleaseNote("Update the changelog generator to sort entries"), taskForbidsReleaseNote("Fix the release notes page")].join(",");
+out.knob = [fragmentWriterOn({}), fragmentWriterOn({ LOKI_E10_SCAFFOLD: "1" }), fragmentWriterOn({ LOKI_E10_SCAFFOLD: "0" })].join(",");
 console.log(JSON.stringify(out));
 TS
 
@@ -213,6 +265,39 @@ rn rn_changie '.changes/unreleased/Fixed-1.yaml' "L3 changie .changes/unreleased
 eqv rn_none empty "L3 a repo with only CHANGELOG.md gets no fragment line"
 eqv prefix_stable yes "L3/L5 the rule prefix is byte-identical across two runs; the convention line sits after it, never inside it"
 eqv rules yyyyy "L5 FIXED_RULES carries the read-whole-function, preferred-fix, targeted-tests and release-note rules"
+eqv fw_path ".changeset/fix-wrong-total-when-the-invoice.md" "FW changeset: a fragment is written next to the repo's own, named from the title"
+eqv fw_front ok "FW changeset: front matter names the workspace package of the changed file (not the private root), double quotes as in the newest example"
+eqv fw_body ok "FW changeset: body is the title plus one maintainer-style sentence from the implement summary"
+eqv fw_quote ok "FW changeset: a single-quoted example gives a single-quoted fragment"
+eqv fw_validated unavailable "FW changeset: no repo tool present reports validated=unavailable and still writes"
+eqv fw_minor ok "FW changeset: a feature title bumps minor"
+eqv fw_no_task skipped "FW veto: the task says no changelog, nothing is written"
+eqv fw_has_frag skipped "FW: the diff already carries a fragment, nothing is written"
+eqv fw_no_conv skipped "FW: a repo with only CHANGELOG.md has no convention, nothing is written"
+eqv fw_tests_only skipped "FW: a test-only change writes nothing"
+eqv fw_docs_only skipped "FW: a docs-only change writes nothing"
+eqv fw_private skipped "FW: a private package is never named"
+eqv fw_ignored skipped "FW: a package in the changeset config ignore list is never named"
+eqv fw_not_workspace skipped "FW: a named package outside the workspace globs is never named"
+eqv fw_deleted skipped "FW: a path that no longer exists counts as no change"
+eqv fw_no_title skipped "FW: no usable title and no usable summary writes nothing"
+eqv fw_other_kind skipped "FW: a convention it cannot follow exactly (changelog.d) writes nothing"
+eqv fw_rejected removed "FW tool: changeset status rejecting the fragment removes it"
+eqv fw_env_error kept "FW tool: an environmental changeset error (no main branch) neither removes nor blocks the write"
+eqv fw_tool_ok ok "FW tool: changeset status exit 0 marks the fragment validated"
+eqv tc_path "changes/42.bugfix.rst" "FW towncrier: <issue>.<type><ext> taken from the task number and the example's extension"
+eqv tc_text "Fix crash when the cache is empty." "FW towncrier: one-line body"
+eqv tc_no_issue skipped "FW towncrier: no issue number and no orphan convention writes nothing"
+eqv tc_unclear skipped "FW towncrier: an unclear change type writes nothing"
+eqv tc_dup skipped "FW towncrier: a fragment for the same issue and type already exists"
+eqv tc_no_example skipped "FW towncrier: no example fragment to take the naming from writes nothing"
+eqv tc_orphan ok "FW towncrier: an orphan-style example gives a +slug fragment without an issue"
+eqv sn_pick "The loader now skips unreadable files instead of aborting the whole scan" "FW summary: the maintainer-style sentence is picked over narration and markers"
+eqv sn_chatter empty "FW summary: test-status and sign-off chatter yields nothing"
+eqv sn_restate empty "FW summary: a sentence that restates the title yields nothing"
+eqv sn_table empty "FW summary: tables and code fences yield nothing"
+eqv veto "true,true,true,false,false" "FW veto: no/skip/do-not phrasings forbid, a task about changelogs or release notes does not"
+eqv knob "false,true,false" "FW knob: LOKI_E10_SCAFFOLD=1 turns the writer on"
 
 # ---- end to end on the stub provider ----
 export LOKI_TS_ENTRY="$ROOT/loki-ts/dist/loki.js"
@@ -224,6 +309,7 @@ run_e2e() { # run_e2e <name> [env...] -> REPO RUNDIR OUT
     mkdir -p "$REPO"
     cp -R "$CTX/ts-invoice/repo"/. "$REPO"
     printf '// LOKI_STUB_INSERT\n' >> "$REPO/src/invoice.ts"
+    [ -n "${E2E_PREP:-}" ] && "$E2E_PREP" "$REPO"
     git -C "$REPO" init -q -b main && git -C "$REPO" config user.name e2e && git -C "$REPO" config user.email e2e@example.invalid
     git -C "$REPO" add -A . && git -C "$REPO" commit -q -m base
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SESSION_MODEL \
@@ -264,6 +350,33 @@ if [ -f "$RUNDIR/events.jsonl" ]; then
     v="$(python3 -I -c 'import json,sys; c=json.loads(sys.argv[1])["context_recall"]; print(c["median"], c["n"])' "$st" 2>&1)"; [ "$v" = "1 1" ] && ok "loki stats --outcomes --json reports median context recall ($v)" || bad "loki stats --outcomes --json context_recall: $v"
 else
     bad "e2e default model: no run events"; printf '%s\n' "$OUT" | tail -30 | sed 's/^/    | /'
+fi
+
+prep_changeset() { # a public package that keeps changesets (the fixture's own manifest is private)
+    mkdir -p "$1/.changeset"
+    printf '{ "name": "billing", "type": "module" }\n' > "$1/package.json"
+    printf '{"ignore":[]}\n' > "$1/.changeset/config.json"
+    printf -- '---\n"billing": patch\n---\n\nOlder fix.\n' > "$1/.changeset/old.md"
+}
+frag_in_history() { git -C "$REPO" log --all --name-only --format= 2>/dev/null | grep -c '^\.changeset/.*\.md$'; }
+scaffold_events() { grep -c '"type":"scaffold.applied"' "$RUNDIR/events.jsonl" 2>/dev/null; }
+E2E_PREP=prep_changeset run_e2e fragon LOKI_E10_SCAFFOLD=1
+if [ -f "$RUNDIR/events.jsonl" ]; then
+    v="$(scaffold_events)"; [ "$v" = 1 ] && ok "e2e fragment writer on: one scaffold.applied event" || bad "e2e fragment writer on: scaffold.applied events=$v"
+    v="$(python3 -I -c 'import json,sys
+for l in open(sys.argv[1]):
+    e=json.loads(l)
+    if e.get("type")=="scaffold.applied": d=e["data"]; print(d["path"].startswith(".changeset/") and d["kind"]=="changeset" and e["stage"]=="implement")' "$RUNDIR/events.jsonl" 2>&1)"; [ "$v" = True ] && ok "e2e fragment writer on: the event names the written changeset" || bad "e2e fragment writer on: scaffold.applied record ($v)"
+    [ "$(frag_in_history)" -ge 2 ] && ok "e2e fragment writer on: the fragment is part of the run's commit" || bad "e2e fragment writer on: no new .changeset fragment in the run's commits"
+else
+    bad "e2e fragment writer on: no run events"; printf '%s\n' "$OUT" | tail -30 | sed 's/^/    | /'
+fi
+E2E_PREP=prep_changeset run_e2e fragoff
+if [ -f "$RUNDIR/events.jsonl" ]; then
+    [ "$(scaffold_events)" = 0 ] && ok "e2e fragment writer off by default: no scaffold event" || bad "e2e fragment writer off: a scaffold event was written"
+    [ "$(frag_in_history)" = 1 ] && ok "e2e fragment writer off by default: no fragment added" || bad "e2e fragment writer off: a fragment was added"
+else
+    bad "e2e fragment writer off: no run events"
 fi
 
 finish
