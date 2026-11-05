@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"; import { join } from "node:path";
-import { listProjectFiles, safeGit } from "../util/safe_git.ts"; import { ISSUE_CONTEXT_HEAD, type IssueComment } from "../engine10/fetch_issue.ts";
+import { safeGit } from "../util/safe_git.ts"; import { ISSUE_CONTEXT_HEAD, type IssueComment } from "../engine10/fetch_issue.ts";
 // Deterministic spec-ambiguity scoring for Intake (no LLM), kept outside the size-capped engine10 core.
 export interface AmbiguityHit { kind: "marker" | "open_question" | "hedge" | "vague"; excerpt: string; weight: number }
 const AMBIGUITY_RULES: Array<{ kind: AmbiguityHit["kind"]; weight: number; re: RegExp }> = [
@@ -99,7 +99,8 @@ const snippetsOf = (opt: string): string[] => [...new Set([...(opt.match(/`([^`]
 const TEST_DOC = /(?:^|\/)(?:tests?|__tests__|docs?|spec)\/|[._-](?:test|spec)\.\w+$|_test\.\w+$|(?:^|\/)test_[^/]*\.py$|\.mdx?$/i;
 function corpus(repoDir: string): { path: string; text: string }[] {
   const out: { path: string; text: string }[] = [];
-  for (const f of listProjectFiles(repoDir).filter((p) => TEST_DOC.test(p)).slice(0, 600)) {
+  let tracked: string[] = []; try { tracked = safeGit(repoDir, ["ls-files", "-z"], { timeout: 5000, maxBuffer: 64 << 20 }).split("\0"); } catch { /* not a git repo: no corpus, and never a walk of an unknown folder */ }
+  for (const f of tracked.filter((p) => TEST_DOC.test(p)).slice(0, 600)) {
     try { if (statSync(join(repoDir, f)).size <= 200_000) out.push({ path: f, text: readFileSync(join(repoDir, f), "utf8").replace(/\s+/g, "") }); } catch { /* unreadable file: not evidence */ }
   }
   return out;
@@ -124,7 +125,7 @@ function historyLine(c: OpenChoice, ctx: ChoiceCtx): string {
 /** Settles each open choice in the task, in this order: the latest maintainer comment, the option the task names as preferred, the option existing tests and docs already pin, else none (the line then says to keep every existing test true and satisfy both where compatible). Deterministic, no model call, never throws. */
 export function resolveChoices(task: string, ctx: ChoiceCtx = {}): ChoiceResolution[] {
   try {
-    const comments = ctx.comments ?? [], at = comments.length ? task.lastIndexOf(ISSUE_CONTEXT_HEAD) : -1, issue = at < 0 ? task : task.slice(0, at); // the appended comment section is not the issue's own question
+    const comments = (ctx.comments ?? []).filter((c) => typeof c?.author === "string" && typeof c.association === "string" && typeof c.body === "string"), at = comments.length ? task.lastIndexOf(ISSUE_CONTEXT_HEAD) : -1, issue = at < 0 ? task : task.slice(0, at); // the appended comment section is not the issue's own question
     return detectOpenChoices(issue).map((c): ChoiceResolution => {
       const m = byMaintainer(c, comments);
       if (m) return { ...c, basis: "maintainer", picked: m.k, evidence: m.evidence };
