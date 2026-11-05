@@ -101,7 +101,7 @@ export const implementStage: Stage = {
     const cascade = downgrade !== null;
     if (downgrade) process.stderr.write(`${downgrade.note}\n`);
     const lessons = lessonsForBrief(ctx.repoDir, ctx.runId, task, [...((prior.plan?.relevant_files as string[] | undefined) ?? []), ...impacted], ctx.runDir); // T6: reviewer lessons plus run lessons on the relevant files or their impacted tests (util/pr_lessons.ts), tagged as used by this run and recorded in lessons-injected.json
-    const bc = briefCtx(ctx, routed ? undefined : downgrade?.to ?? ctx.model), repoMap = bc.text + lessons + learningsBlock(ctx.repoDir) + orgKnowledgeBlock(ctx.repoDir, task, ctx.runDir); // FR06: off unless LOKI_ORG_GRAPH=1; // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths
+    const bc = briefCtx(ctx, routed ? undefined : downgrade?.to ?? ctx.model), repoMap = bc.text + lessons + learningsBlock(ctx.repoDir) + orgKnowledgeBlock(ctx.repoDir, task, ctx.runDir); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths; FR06 org block is off unless LOKI_ORG_GRAPH=1
 
     const spec = specFor(ctx);
     // CH-03: resume plan's session on the same model (never when routed: per-unit models differ). Wall, verify and seal never join the chain. planChain owns eligibility; `!plan` here only keeps plan_chain out of the data when plan was skipped.
