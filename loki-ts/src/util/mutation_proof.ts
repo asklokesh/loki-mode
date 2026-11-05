@@ -12,7 +12,7 @@ import { sealedWallCopy, sealedWallDir } from "./check_result.ts";
 export type MutationOutcome = "yes" | "no" | "inconclusive";
 export interface MutationProof { outcome: MutationOutcome; line: string; failed?: string[]; } // failed: the files whose run failed on the base (serially confirmed), for a caller that must know WHICH test discriminates
 export interface MutationTest { runner: string; path: string; }
-export interface MutationRunner { run(dir: string, files: MutationTest[]): { pass: number; fail: number; not_run?: number }; runEach?(dir: string, files: MutationTest[], jobs: number, corroborate: boolean, remaining?: () => number): Promise<({ pass: number; fail: number; not_run?: number } | undefined)[]>; } // runEach: same per-file result, a few files at once
+export interface MutationRunner { run(dir: string, files: MutationTest[]): { pass: number; fail: number; not_run?: number; assertFail?: number }; runEach?(dir: string, files: MutationTest[], jobs: number, corroborate: boolean, remaining?: () => number): Promise<({ pass: number; fail: number; not_run?: number } | undefined)[]>; } // runEach: same per-file result, a few files at once
 const envJobs = (raw: string | undefined): number => { const n = Number.parseInt(raw ?? "", 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 8) : 1; }; // LOKI_MUTATION_PROOF_JOBS: default 1 = serial (as LOKI_E10_BASE_JOBS / LOKI_E10_VERIFY_JOBS). Opt-in >1 is faster but can give a false "yes" on a Wall test with side effects outside the worktree.
 export interface MutationInput {
   repoDir: string; baseSha: string; runDir: string;
@@ -23,6 +23,8 @@ export interface MutationInput {
   headSha?: string;
   /** Files that exist at the base: their BASE version must itself pass on the base tree first, else a red file (pre-existing, unrelated) would read as "fails without the fix". Such a file is dropped from the proof. */
   baseMustPass?: string[];
+  /** A file counts in `failed` only when its base failure was an assertion (runner reports assertFail), never an import, collection or attribute error. */
+  requireAssertion?: boolean;
 }
 /** CTO ruling: the downgrade to PARTIAL is off unless LOKI_MUTATION_STRICT=1 (and then only for a model-declared behavior change). */
 export const mutationStrict = (env: NodeJS.ProcessEnv = process.env): boolean => (env["LOKI_MUTATION_STRICT"] ?? "").trim() === "1";
@@ -80,7 +82,7 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
     if (par) for (let k = 0; k < rs.length; k++) if (rs[k]!.fail > 0) { if (remaining() <= 0) return np("timeout"); if (!reset()) return np("could not reset the base worktree"); rs[k] = mk().run(wt, [active[k]!]); if (rs[k]!.fail > 0) { sure = k + 1; break; } }
     for (const r of rs) { pass += r!.pass; fail += r!.fail; notRun += r!.not_run ?? 0; }
     if (remaining() <= 0 && fail === 0) return np("timeout");
-    const failed = active.filter((_, k) => k < sure && rs[k]!.fail > 0).map((t) => t.path);
+    const failed = active.filter((_, k) => k < sure && rs[k]!.fail > 0 && (!i.requireAssertion || ((rs[k] as { assertFail?: number }).assertFail ?? 0) > 0)).map((t) => t.path);
     if (fail > 0) return { outcome: "yes", line: `${LABEL}yes`, failed };
     if (pass > 0 && notRun === 0) return { outcome: "no", line: `${LABEL}no (warning: the Wall tests also pass on the old code)` };
     return np("the Wall command did not execute to a result");
