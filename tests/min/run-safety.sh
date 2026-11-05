@@ -62,6 +62,7 @@
 #  NRM3. commit_filter.ts dropSet: ignore the task (drop the taskWantsLockChange clause); the task-aware lockfile check fails.
 #  SG4. commit_filter.ts commitUnsealedWork: remove the churn block; the WIP commit carries pnpm-lock.yaml again.
 #  SG5. check_result.ts commandFor: drop the rootProjectsBreakSite null; the workspace command runs from packages/a and fails (No projects were found).
+#  SG6. failures.ts idNamesFile: return id.includes(f) only; the root-run failure leg fails (the project-prefixed id names no file).
 #  NRM2. repo_profile.ts detectFormatters: drop the biome entry; the formatter check fails.
 #  10. verify.ts sameErrors: excuse every known-red id whatever its first error; the delivery check fails.
 #  11. loki-ts/src/engine10/machine.ts: break after one Wall-only round whatever wallSignature says; the
@@ -467,6 +468,16 @@ for (const p of ["a", "b"]) {
 }
 console.log(out.join(" "));' 2>&1)"
     [ "$WSR" = "a:root:0:true b:pkg:0:true" ] && ok "real vitest: the merged-root package runs from the root and passes; a package that does not merge the root keeps its own directory ($WSR)" || bad "generated vitest commands: $WSR"
+    # A real failing test in the root-run case prints "FAIL  |a| src/x.test.ts > bad" (project prefix, project-relative path): the parser must still see a failing id, keep the check failed
+    # with that line as its first error, and the full-suite attribution must name packages/a/src/x.test.ts (not another file) as the file the id belongs to.
+    printf 'import { expect, it } from "vitest"\nit("bad", () => expect(1).toBe(2))\nit("ok", () => expect(1).toBe(1))\n' > "$WS/packages/a/src/x.test.ts"
+    WSF="$(WS="$WS" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { commandFor, classifyCheck, firstError } = await import(process.env.ROOT + "/loki-ts/src/util/check_result.ts"), { failIds, idNamesFile } = await import(process.env.ROOT + "/loki-ts/src/engine10/failures.ts"), cp = await import("node:child_process");
+const c = commandFor({ runner: "vitest", path: "packages/a/src/x.test.ts" }, process.env.WS, null);
+const r = cp.spawnSync(c.cmd, c.args, { cwd: c.cwd, encoding: "utf8", env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" } }), out = r.stdout + r.stderr;
+const ids = failIds(out), id = ids.find((i) => i.includes(" > ")) ?? "";
+console.log([c.cwd === process.env.WS ? "root" : "pkg", r.status, classifyCheck({ kind: "test", ok: false, cut: false, missing: false, out }).result, ids.length > 0, /^FAIL \|a\| src\/x\.test\.ts > bad/.test(firstError(out)), idNamesFile(id, "packages/a/src/x.test.ts"), idNamesFile(id, "packages/a/src/other.test.ts")].join(" "));' 2>&1)"
+    [ "$WSF" = "root 1 fail true true true false" ] && ok "real vitest root run: a failing test prints a project-prefixed id; it stays a failure with ids and the id names packages/a/src/x.test.ts, not another file ($WSF)" || bad "root-run failure parse: $WSF"
 else
     printf '  SKIP: real vitest workspace: npm could not install it (offline?)\n'
 fi
