@@ -278,6 +278,14 @@ console.log([b.includes("search the repository" + String.fromCharCode(39) + "s t
 ' 2>&1)"
 [ "$BRIEF" = "true true true" ] && ok "split brief: tells the splitter to name and update an existing test that asserts replaced behavior, never to promise it still passes" \
     || bad "split brief gave: $BRIEF (want: true true true)"
+# FireLater#24 s3/s4: the splitter wrote "cd frontend && npm run test passes" for a frontend suite already red on the base; both slices stopped SPEC_CONFLICT. The brief now forbids whole-suite criteria.
+BRIEF2="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const m = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
+const b = m.decomposeBrief("asklokesh/FireLater", { number: 24, title: "Advanced search", body: "Search UI", labels: [] }, "13 parts", "/tmp/x.json");
+console.log([b.includes("Never write a criterion that requires a whole test suite, lint or build to pass"), b.includes("npm run test passes"), b.includes("no new failures"), b.includes("already present on the base commit")].join(" "));
+' 2>&1)"
+[ "$BRIEF2" = "true true true true" ] && ok "split brief: forbids whole-suite criteria (npm run test passes) and asks for the slice's own checks plus no new failures" \
+    || bad "split brief (suite criteria) gave: $BRIEF2 (want: true true true true)"
 
 # --- backlog: a large issue in `loki backlog` runs and splits through the same MASS-2 path, never a drafted spec -------
 B="$T/backlog"
