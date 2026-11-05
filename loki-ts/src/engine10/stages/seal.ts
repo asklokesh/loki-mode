@@ -66,8 +66,9 @@ export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these
 /** The receipt's exec_spec block from <runDir>/exec-spec.json (features/exec_spec.ts): the stage's seconds and its generator session's dollars, so a scored run can weigh what the spec cost. */
 function execSpecBlock(ctx: RunContext): { exec_spec?: { status: string; seconds: number; binding: number; usd: number | null } } {
   let t: Obj; try { t = JSON.parse(readFileSync(join(ctx.runDir, EXEC_SPEC_TELEMETRY_FILE), "utf8")) as Obj; } catch { return {}; }
-  const id = str(t.iteration_id), c = id ? ctx.cost.read(ctx.repoDir, [id]) : null;
-  return { exec_spec: { status: String(t.status ?? ""), seconds: typeof t.seconds === "number" ? t.seconds : 0, binding: typeof t.binding === "number" ? t.binding : 0, usd: c && !c.unmetered && (c.measuredCount ?? 1) > 0 ? c.usd : null } };
+  const id = str(t.iteration_id), c = id ? ctx.cost.read(ctx.repoDir, [id]) : null; // a session generator is read by its iteration id; toolLessCall priced its own call
+  const usd = typeof t.usd === "number" ? t.usd : c && !c.unmetered && (c.measuredCount ?? 1) > 0 ? c.usd : null;
+  return { exec_spec: { status: String(t.status ?? ""), seconds: typeof t.seconds === "number" ? t.seconds : 0, binding: typeof t.binding === "number" ? t.binding : 0, usd } };
 }
 export const SPEC_SITE_UNCOVERED = "named site without a binding case (no agent-independent passing test names it)";
 /** Exec spec (features/exec_spec.ts): a sealed spec proves only the sites its binding cases name. A site caps the run below VERIFIED only when

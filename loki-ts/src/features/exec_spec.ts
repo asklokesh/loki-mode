@@ -15,6 +15,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
+import { describeJudgeOutcome, toolLessCall } from "../runner/sdk_invoker.ts";
+import { resolveClaudeModel } from "../util/claude_model.ts";
 import { assertionFailure, commandFor, plainTestEnv, pytestKindsAreAssertion, spawnGroupSync, stripAnsi, vitestErrorsAreAssertion } from "../util/check_result.ts";
 
 export const execSpecEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_EXEC_SPEC ?? "").trim().toLowerCase()); // default on; LOKI_E10_EXEC_SPEC=0 opts out
@@ -422,13 +424,26 @@ export function implementBlock(e: Emitter, destRel: string, sel: SpecSelection, 
 }
 
 // ---------- the generator seam ----------
-/** One completion with no repo tools. TODO(PR0, feat/toolless-call): call the shared tool-less Haiku primitive (thinking off) once
- *  it lands; until then the default goes through the run's own provider session (ctx.sessions.run) in an empty temp directory with
- *  every tool but Write disallowed, and reads the reply file the session writes. Tests replace it with setExecSpecGenerator. */
-export type SpecGenerator = (brief: string, o: { model: string; iterationId: string; signal: AbortSignal }) => Promise<string | null>;
+/** One completion with no repo tools. The default is toolLessCall (runner/sdk_invoker.ts): no tools, no agent loop, thinking low, priced
+ *  into the run's child ledger (phase exec_spec) and refused once the run dollar cap is reached. Under LOKI_E10_INVOKER=cli every model call
+ *  goes through the configured CLI, so the generator does too (sessionGenerator: an empty temp directory, every tool but Write disallowed).
+ *  Tests replace it with setExecSpecGenerator. A generator returns the reply text, null for no reply, or { none } with the reason. */
+export type SpecGenerator = (brief: string, o: { model: string; iterationId: string; signal: AbortSignal; meter?: { usd?: number | null } }) => Promise<string | null | { none: string }>; // meter.usd: the call's dollars when the generator prices it itself
 let generatorOverride: SpecGenerator | null = null;
 export const setExecSpecGenerator = (g: SpecGenerator | null): void => { generatorOverride = g; };
 export const execSpecModel = (env: NodeJS.ProcessEnv = process.env): string => env.LOKI_E10_EXEC_SPEC_MODEL || "haiku";
+export const EXEC_SPEC_LEDGER_PHASE = "exec_spec";
+export function toolLessGenerator(repoDir: string): SpecGenerator {
+  return async (brief, o) => {
+    if (o.signal.aborted) return null;
+    const r = await toolLessCall({ model: resolveClaudeModel(o.model), prompt: brief, maxTokens: 4096, thinking: "low", timeoutMs: 120_000, ledger: { lokiDir: join(repoDir, ".loki"), phase: EXEC_SPEC_LEDGER_PHASE } });
+    if (o.meter) o.meter.usd = r.usd;
+    if (r.outcome.kind === "ok") return r.outcome.value;
+    return r.outcome.kind === "budget" ? { none: "the run dollar cap is reached, no generator call was made" } : { none: `the generator call ended ${describeJudgeOutcome(r.outcome)}` };
+  };
+}
+export const defaultGenerator = (sessions: Parameters<typeof sessionGenerator>[0], repoDir: string, env: NodeJS.ProcessEnv = process.env): SpecGenerator =>
+  env.LOKI_E10_INVOKER === "cli" ? sessionGenerator(sessions) : toolLessGenerator(repoDir);
 export const EXEC_SPEC_REPLY = "spec_reply.md";
 export function sessionGenerator(sessions: { run(o: Record<string, unknown>): Promise<{ exit: number | null; killed: boolean }> }): SpecGenerator {
   return async (brief, o) => {
@@ -462,9 +477,10 @@ export function planFor(runner: SpecRunner, repoDir: string, sites: ResolvedSite
   return { runner, targetRel, header: `The file is ${targetRel}; import the code under test from "${spec}".`, mustStart: "", style: style ? read(style) : "" };
 }
 
-export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; uncoveredSites?: string[]; durationS: number }
+export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; uncoveredSites?: string[]; generatorUsd?: number | null; durationS: number }
 export async function execSpecAuthor(o: { task: string; repoDir: string; runners: string[]; existingTests: string[]; sessions: Parameters<typeof sessionGenerator>[0]; iterationId: string; signal: AbortSignal }): Promise<ExecSpecOutcome> {
-  const t0 = Date.now(), atoms0 = extractSpecAtoms(o.task), done = (status: ExecSpecOutcome["status"], reason: string, extra: Partial<ExecSpecOutcome> = {}): ExecSpecOutcome => ({ status, reason, atoms: atoms0.length, sites: 0, binding: [], advisory: [], guards: [], dropped: [], durationS: (Date.now() - t0) / 1000, ...extra });
+  let priced: number | null | undefined; // the generator call's dollars when it prices itself (toolLessCall); undefined: read from the session's iteration id
+  const t0 = Date.now(), atoms0 = extractSpecAtoms(o.task), done = (status: ExecSpecOutcome["status"], reason: string, extra: Partial<ExecSpecOutcome> = {}): ExecSpecOutcome => ({ status, reason, atoms: atoms0.length, sites: 0, binding: [], advisory: [], guards: [], dropped: [], durationS: (Date.now() - t0) / 1000, ...(priced !== undefined ? { generatorUsd: priced } : {}), ...extra });
   const runner = (["go", "pytest", "vitest"] as SpecRunner[]).find((r) => o.runners.includes(r));
   if (!runner) return done("skipped", "exec spec: no supported runner (go, pytest, vitest)");
   const sites = resolveSites(atoms0, o.repoDir);
@@ -472,9 +488,10 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
   const atoms = [...atoms0, ...parityAtoms(atoms0, sites), ...pairAtoms(atoms0, sites)], e = EMITTERS[runner], plan = planFor(runner, o.repoDir, sites, o.existingTests);
   if (!plan) return done("skipped", `exec spec: no ${runner} site to place the spec beside`, { sites: sites.length });
   if (existsSync(join(o.repoDir, plan.targetRel))) return done("skipped", `exec spec: ${plan.targetRel} already exists`, { sites: sites.length });
-  const gen = generatorOverride ?? sessionGenerator(o.sessions);
-  const reply = await gen(buildGeneratorBrief(e, atoms, sites, plan.header, plan.style), { model: execSpecModel(), iterationId: o.iterationId, signal: o.signal });
-  if (reply === null) return done("skipped", "exec spec: the generator wrote no reply", { sites: sites.length, runner });
+  const gen = generatorOverride ?? defaultGenerator(o.sessions, o.repoDir);
+  const meter: { usd?: number | null } = {}, reply = await gen(buildGeneratorBrief(e, atoms, sites, plan.header, plan.style), { model: execSpecModel(), iterationId: o.iterationId, signal: o.signal, meter });
+  if (meter.usd !== undefined) priced = meter.usd;
+  if (reply === null || typeof reply !== "string") return done("skipped", `exec spec: ${reply ? reply.none : "the generator wrote no reply"}`, { sites: sites.length, runner });
   const parsed = parseGenerated(e, reply, plan.mustStart);
   if ("refused" in parsed) return done("skipped", `exec spec: ${parsed.refused}`, { sites: sites.length, runner });
   const base = redFilter(e, o.repoDir, plan.targetRel, parsed.file);

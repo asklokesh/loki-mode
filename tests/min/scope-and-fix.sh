@@ -186,6 +186,8 @@
 # 120. seal.ts specSiteGap: ignore the changed-symbol list (exec spec atoms read gap=Report,Report,-).
 # 124. exec_spec.ts defectSites: count every span of a clause with a defect word again (the comparison, negated-scope and see legs read PARTIAL).
 # 125. seal.ts: drop execSpecBlock from the receipt body (the receipt exec_spec leg fails).
+# 126. exec_spec.ts defaultGenerator: always the session generator (the generator leg reads sessions=1 queries=0).
+# 127. exec_spec.ts toolLessGenerator: thinking "off" instead of "low" (the generator leg reads thinking=disabled/undefined).
 # 118. exec_spec.ts execSpecBriefOf: drop the knob check (exec spec atoms read brief=B,B).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
@@ -1485,6 +1487,25 @@ for vt in 2 latest; do
     rm -rf "$T/es-ts-$vt"; make_es_ts "$T/es-ts-$vt" "$VT_NM"
     es_leg "vitest $vt" vitest "$T/es-ts-$vt" src/slug.test.ts "$ES_TS_TASK" "$ES_TS_REPLY" "sealed src/loki_wall_spec.test.ts binding=LokiSpec_C1_Lower advisory=LokiSpec_C2_Other guards=LokiSpec_S1_Plain dropped=LokiSpec_S2_Missing sealed=LokiSpec_C1_Lower:red"
 done
+# generator route (T174): by default one toolLessCall (stub Agent SDK query, no network): no agent session runs, the query has no tools,
+# one turn, thinking adaptive at effort low, its dollars land in the child ledger as phase exec_spec and on the outcome; under
+# LOKI_E10_INVOKER=cli the generator goes through the run's own CLI session instead (the stub provider in these tests).
+if command -v go >/dev/null 2>&1; then
+    rm -rf "$T/es-tl"; make_es_go "$T/es-tl"; (cd "$T/es-tl" && git init -q -b main && git add -- . && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m base)
+    ESTL="$(cd "$ROOT/loki-ts" && ESD="$T/es-tl" TASK="$ES_GO_TASK" REPLY="$ES_GO_REPLY" env -u ANTHROPIC_API_KEY -u LOKI_SDK_OAUTH_DEV -u LOKI_E10_INVOKER -u LOKI_E10_MAX_COST_USD -u LOKI_E10_SPENT_USD LOKI_E10_RUN_ID=t timeout 300 bun -e '
+const es = await import("./src/features/exec_spec.ts"), sdk = await import("./src/runner/sdk_invoker.ts"), { readFileSync, existsSync } = require("node:fs"), e = process.env;
+let opts = null, queries = 0, sessions = 0;
+sdk.__setToolLessQueryForTests(async function* ({ options }) { queries++; opts = options; yield { type: "assistant", message: { content: [{ type: "text", text: e.REPLY }] } }; yield { type: "result", subtype: "success", is_error: false, result: e.REPLY, total_cost_usd: 0.0004, usage: { input_tokens: 2, output_tokens: 400, cache_read_input_tokens: 0, cache_creation_input_tokens: 700 }, modelUsage: { "claude-haiku-5-5": { thinkingTokens: 10 } } }; });
+const fake = { run: async () => { sessions++; return { exit: 0, killed: false }; } };
+const run = () => es.execSpecAuthor({ task: e.TASK, repoDir: e.ESD, runners: ["go"], existingTests: ["a/a_test.go"], sessions: fake, iterationId: "t-execspec", signal: new AbortController().signal });
+const a = await run(), led = `${e.ESD}/.loki/metrics/child-sessions.jsonl`, lines = existsSync(led) ? readFileSync(led, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
+const out = [`tl:${a.status}:sessions=${sessions}:queries=${queries}:tools=${JSON.stringify(opts?.tools)}:turns=${opts?.maxTurns}:thinking=${opts?.thinking?.type}/${opts?.effort}:usd=${a.generatorUsd > 0}:ledger=${lines.map((l) => l.phase).join(",")}`];
+process.env.LOKI_E10_INVOKER = "cli"; const b = await run(); out.push(`cli:${b.status}:sessions=${sessions}:queries=${queries}`);
+console.log(out.join(" | "));' 2>&1)"
+    WESTL="tl:sealed:sessions=0:queries=1:tools=[]:turns=1:thinking=adaptive/low:usd=true:ledger=exec_spec | cli:skipped:sessions=1:queries=1"
+    [ "$ESTL" = "$WESTL" ] && ok "exec spec generator: one toolLessCall by default (no agent session, no tools, thinking low, priced as exec_spec); the CLI invoker uses its session" \
+        || bad "exec spec generator gave: $ESTL (want: $WESTL)"
+fi
 # engine legs: the real bin/loki on the stub provider, Wall off (the product default), lean path.
 if command -v go >/dev/null 2>&1; then
     ESFIX=$'out = append(out, rargs[0])\n\t\t\tcontinue'; ESOLD=$'out = append(out, firstArg)\n\t\t\tbreak'
