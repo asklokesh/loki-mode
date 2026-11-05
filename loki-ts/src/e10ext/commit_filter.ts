@@ -1,5 +1,5 @@
 // Shared by the commit stage and the supervisor backstop: which staged paths a run must never publish.
-import { basename, dirname } from "node:path";
+import { basename, dirname, relative } from "node:path";
 import { untouchedSinceIntake } from "./preexisting_dirty.ts"; import { untouchedUntracked } from "../features/untouched_untracked.ts";
 import { installOwned } from "../project_model/install.ts"; import { toolchainOutputs } from "../util/lock_ecosystems.ts";
 import { runFormatters } from "../runner/repo_profile.ts";
@@ -18,10 +18,31 @@ const manifestChanged = (staged: Staged[], lock: string): boolean => { const d =
 /** True when the task itself is a dependency change: it names the lockfile, asks to update, upgrade or bump a dependency or package, or names a CVE. Its lockfile edit is the deliverable. */
 export const taskWantsLockChange = (task: string | undefined, lock: string): boolean => !!task && (task.includes(lock) || task.includes(basename(lock)) || /\bCVE-\d{4}-\d+/i.test(task) || /\b(?:update|upgrade|bump)\b[^.\n]{0,60}\b(?:dependenc\w*|packages?|lockfile|lock file|version)\b/i.test(task) || /\b(?:bump|upgrade)\s+[@\w./-]+\s+(?:to|from)\s+v?\d/i.test(task));
 
-/** .loki/, intake-time dirt the run left untouched ("L"), Wall files, and a NEW or MODIFIED lockfile with no manifest change at or under its directory (install churn), unless the task is a dependency change. */
+/** Test, build, lint and type-check config: an edit here is almost always a workaround so the run's own checks can start, not part of the change. */
+export const TEST_BUILD_CONFIG = /(^|\/)(?:(?:vitest|vite|jest|webpack|rollup|babel|playwright|eslint)(?:\.[\w-]+)?\.config\.[cm]?[jt]s|jest\.config\.json|tsconfig(?:\.[\w-]+)?\.json|\.eslintrc(?:\.[\w]+)?|\.babelrc|karma\.conf\.[cm]?[jt]s|pytest\.ini|tox\.ini|setup\.cfg|\.coveragerc)$/;
+const quotedGlobs = (text: string): string[] => [...text.matchAll(/["'`]([^"'`\n]*\*[^"'`\n]*)["'`]/g)].map((m) => m[1]!);
+const sansExt = (f: string): string => basename(f).replace(/\.[^.]*$/, "");
+
+/** A modified config file is the change's own when the task names it, a manifest beside or under it changed, or its added or removed lines refer to another file the diff changes (by relative path, name, or a glob that matches it). Fails closed: an unreadable diff keeps the file. */
+export function configNeeded(repoDir: string, staged: Staged[], f: string, baseSha: string | undefined, task: string | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (task && (task.includes(f) || task.toLowerCase().includes(basename(f).toLowerCase()))) return true;
+  if (manifestChanged(staged, f)) return true;
+  let text: string;
+  try { text = safeGit(repoDir, ["--literal-pathspecs", "diff", "--cached", "--no-renames", "-U0", baseSha ?? "HEAD", "--", f], { env }); } catch { return true; }
+  const side = (c: string): Set<string> => new Set(text.split("\n").filter((l) => l.startsWith(c) && !l.startsWith(c.repeat(3))).flatMap((l) => l.slice(1).match(/["'`][^"'`\n]*["'`]|[\w./@-]+/g) ?? []).map((t) => t.replace(/^["'`]|["'`]$/g, "")));
+  const added = side("+"), removed = side("-"), atoms = [...added, ...removed].filter((t) => !(added.has(t) && removed.has(t)) && t.length > 0); // only what the edit added or removed: a glob the config already had is no reference
+  if (atoms.length === 0) return true;
+  const cfgDir = dirname(f), globs = atoms.filter((t) => t.includes("*"));
+  return staged.some(({ st, f: o }) => o !== f && st !== "D" && !o.startsWith(".loki/") && !TEST_BUILD_CONFIG.test(o) && !LOCKFILE.test(o) && (() => {
+    const rel = relative(cfgDir, o), nm = sansExt(o), bn = basename(o);
+    return atoms.some((t) => t === rel || t === `./${rel}` || t === o || t === bn || (nm.length >= 3 && t === nm)) || globs.some((g) => { try { const gl = new Bun.Glob(g.replace(/^\.\//, "")); return gl.match(rel) || gl.match(o); } catch { return false; } });
+  })());
+}
+
+/** .loki/, intake-time dirt the run left untouched ("L"), Wall files, and a NEW or MODIFIED lockfile with no manifest change at or under its directory (install churn), unless the task is a dependency change, and a MODIFIED test/build/lint config the task does not name that nothing else in the diff refers to (a workaround so the run's own check could start). */
 export function dropSet(repoDir: string, staged: Staged[], preexistingDirty: unknown, env: NodeJS.ProcessEnv = process.env, installCreated?: unknown, untrackedBlobs?: unknown, baseSha?: string, task?: string): Staged[] {
   const owned = installOwned(repoDir, installCreated, env), made: object = (installCreated as { files?: object } | null | undefined)?.files ?? {}, tc = toolchainOutputs(repoDir, staged.filter(({ st }) => st === "A").map(({ f }) => f), baseSha); // FC-DEPS-NOT-INSTALLED: what the install made and the run left alone is dropped; an edited one is the run's change, lockfile rule included
-  return staged.concat(untouchedSinceIntake(repoDir, preexistingDirty, env).map((f) => ({ st: "L", f })), untouchedUntracked(repoDir, untrackedBlobs, env).map((f) => ({ st: "L", f })), staged.filter(({ f }) => owned(f)).map(({ f }) => ({ st: "L", f }))).filter(({ st, f }) => f.startsWith(".loki/") || st === "L" || WALL_FILE.test(f) || (st === "A" && tc.has(f)) || ((st === "A" || st === "M") && !Object.hasOwn(made, f) && LOCKFILE.test(f) && !manifestChanged(staged, f) && !taskWantsLockChange(task, f)));
+  return staged.concat(untouchedSinceIntake(repoDir, preexistingDirty, env).map((f) => ({ st: "L", f })), untouchedUntracked(repoDir, untrackedBlobs, env).map((f) => ({ st: "L", f })), staged.filter(({ f }) => owned(f)).map(({ f }) => ({ st: "L", f }))).filter(({ st, f }) => f.startsWith(".loki/") || st === "L" || WALL_FILE.test(f) || (st === "A" && tc.has(f)) || ((st === "A" || st === "M") && !Object.hasOwn(made, f) && LOCKFILE.test(f) && !manifestChanged(staged, f) && !taskWantsLockChange(task, f)) || (st === "M" && TEST_BUILD_CONFIG.test(f) && !configNeeded(repoDir, staged, f, baseSha, task, env)));
 }
 
 /** TEN-QUALITY-16: format only the files the run added or modified and kept (not dropped, deleted or under .loki/) with the repo's own configured formatter; returns them for re-staging. */
@@ -38,7 +59,7 @@ export function backstopCommit(repoDir: string, workerEnv: NodeJS.ProcessEnv, ru
     g(["add", "-A", "--", "."]);
     // same exclusions as the commit stage (A-104c): pre-run dirt, Wall files, stray lockfiles, .loki
     const staged = parseStaged(safeGit(repoDir, ["diff", "--cached", "--name-status", "--no-renames", "-z", base], { env: workerEnv }));
-    const drop = dropSet(repoDir, staged, preexistingDirty, workerEnv, installCreated, untrackedBlobs, undefined, task);
+    const drop = dropSet(repoDir, staged, preexistingDirty, workerEnv, installCreated, untrackedBlobs, base, task);
     if (drop.length > 0) g(["--literal-pathspecs", "reset", "-q", base, "--", ...drop.map(({ f }) => f)]);
     g(["diff", "--cached", "--quiet"]);
   } catch (err) {
