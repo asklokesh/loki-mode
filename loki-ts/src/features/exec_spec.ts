@@ -15,10 +15,13 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
+import { describeJudgeOutcome, toolLessCall } from "../runner/sdk_invoker.ts";
+import { resolveClaudeModel } from "../util/claude_model.ts";
 import { assertionFailure, commandFor, plainTestEnv, pytestKindsAreAssertion, spawnGroupSync, stripAnsi, vitestErrorsAreAssertion } from "../util/check_result.ts";
 
 export const execSpecEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_EXEC_SPEC ?? "").trim().toLowerCase()); // default on; LOKI_E10_EXEC_SPEC=0 opts out
 export const EXEC_SPEC_BRIEF_FILE = "exec-spec-brief.txt"; // <runDir>/, read by implement.ts
+export const EXEC_SPEC_TELEMETRY_FILE = "exec-spec.json"; // <runDir>/, read by seal.ts for the receipt's exec_spec block
 
 export type AtomKind = "example" | "claim" | "site" | "option" | "location" | "parity" | "pair";
 export interface SpecAtom { id: string; kind: AtomKind; text: string; lang?: string; section?: string }
@@ -382,14 +385,28 @@ export function uncoveredSites(e: Emitter, binding: string[], full: string, atom
   const resolved = new Set(sites.map((s) => s.symbol)), bodies = binding.map((n) => e.body(full, n)).join("\n");
   return atoms.filter((a) => a.kind === "site" && resolved.has(a.text) && !new RegExp(`\\b${esc(a.text.split(".").pop()!)}\\b`).test(bodies)).map((a) => a.text.split(".").pop()!);
 }
-// A sentence or list item that states a defect or asks for behavior; a site named only elsewhere is a passing mention.
-const DEFECT_OR_ASK = /\binstead of\b|\bends up with\b|\bexits? with\b|\bshould\b|\bexpected\b|\bmust\b|\bneeds? to\b|==|\b(?:bug|wrong|broken|mishandl\w*|drops?|dropped|fails?|failing|ignores?|ignored|incorrect\w*|crash\w*|panics?|regress\w*|missing|loses?|lost|never|doesn't|does not|isn't|is not)\b/i;
-/** The named sites (last segment) that appear in a defect or request sentence or list item of the issue. */
+// A site is defective only when the defect or request words attach to its own span: it is the subject of a clause that states a defect
+// or asks for behavior ("`Split` drops args", "`Split` should return ...", "`Split` is wrong"), or the object of a fix verb ("Fix `Split`").
+// A comparison ("like `Join` does", "as `Join` does", "see `Join`"), a negated scope ("should not change `Report`", "does not affect
+// `Report`") and a verdict of health ("`Report` is fine") never make a site defective, and neither does a span elsewhere in the sentence.
+const DEFECT_OR_ASK = /\binstead of\b|\bends up with\b|\bexits? with\b|\bshould\b|\bexpected\b|\bmust\b|\bneeds? to\b|==|\b(?:bug|wrong|broken|mishandl\w*|drops?|dropped|fails?|failing|ignores?|ignored|incorrect\w*|crash\w*|panics?|regress\w*|missing|loses?|lost|never|doesn't|does not|isn't|is not|stops?|returns?|gives?)\b/i;
+const HEALTHY = /^\s*(?:\w+\s+){0,2}(?:is|are|works?|stays?|remains?|looks?)\s+(?:fine|correct|ok|okay|right|unaffected|unchanged|good|already correct)\b/i;
+const FIX_VERB = /\b(?:fix|fixes|fixing|change|update|correct|repair|handle|make)\s+`([^`\n]{1,80})`/gi;
+const spanId = (span: string): string | null => { const id = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/.exec(span)?.[1]; return id ? id.split(".").pop()! : null; };
+/** The named sites (last segment) the issue calls defective or asks to change, read clause by clause. */
 export function defectSites(task: string): Set<string> {
   const out = new Set<string>(), prose = task.replace(/```[\s\S]*?```/g, "\n\n");
-  for (const unit of prose.split(/(?<=[.!?])\s+(?=[A-Z`])|\n\s*\n|\n(?=\s*(?:[-*]|\d+[.)])\s)/)) {
-    if (!DEFECT_OR_ASK.test(unit.replace(/`[^`\n]*`/g, " "))) continue;
-    for (const m of unit.matchAll(/`([^`\n]{1,80})`/g)) { const id = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/.exec(m[1]!)?.[1]; if (id) out.add(id.split(".").pop()!); }
+  const spans: string[] = [], masked = prose.replace(/`([^`\n]+)`/g, (_, x: string) => `\`@${spans.push(x) - 1}\``); // split on punctuation outside code spans only
+  const unmask = (t: string): string => t.replace(/`@(\d+)`/g, (_, i: string) => `\`${spans[Number(i)]}\``);
+  for (const unit of masked.split(/(?<=[.!?])\s+(?=[A-Z`])|\n\s*\n|\n(?=\s*(?:[-*]|\d+[.)])\s)/)) {
+    for (const clause of unit.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").split(/;|:\s|,\s*(?=(?:which|but|and|so|while|whereas|though)\b)/i).map(unmask)) {
+      for (const m of clause.matchAll(FIX_VERB)) { const before = clause.slice(0, m.index); if (!/\b(?:not|never|n't)\s+$/i.test(before)) { const id = spanId(m[1]!); if (id) out.add(id); } } // "Fix `X`", never "should not change `X`"
+      const subj = /^\s*(?:(?:the|a|an|also|and|but|so|now|then|here|still)\s+)*`([^`\n]{1,80})`(.*)$/is.exec(clause); // the clause's subject span and its predicate
+      if (!subj) continue;
+      const pred = subj[2]!.replace(/`[^`\n]*`/g, " ");
+      if (HEALTHY.test(pred) || !DEFECT_OR_ASK.test(pred)) continue;
+      const id = spanId(subj[1]!); if (id) out.add(id);
+    }
   }
   return out;
 }
@@ -407,13 +424,26 @@ export function implementBlock(e: Emitter, destRel: string, sel: SpecSelection, 
 }
 
 // ---------- the generator seam ----------
-/** One completion with no repo tools. TODO(PR0, feat/toolless-call): call the shared tool-less Haiku primitive (thinking off) once
- *  it lands; until then the default goes through the run's own provider session (ctx.sessions.run) in an empty temp directory with
- *  every tool but Write disallowed, and reads the reply file the session writes. Tests replace it with setExecSpecGenerator. */
-export type SpecGenerator = (brief: string, o: { model: string; iterationId: string; signal: AbortSignal }) => Promise<string | null>;
+/** One completion with no repo tools. The default is toolLessCall (runner/sdk_invoker.ts): no tools, no agent loop, thinking low, priced
+ *  into the run's child ledger (phase exec_spec) and refused once the run dollar cap is reached. Under LOKI_E10_INVOKER=cli every model call
+ *  goes through the configured CLI, so the generator does too (sessionGenerator: an empty temp directory, every tool but Write disallowed).
+ *  Tests replace it with setExecSpecGenerator. A generator returns the reply text, null for no reply, or { none } with the reason. */
+export type SpecGenerator = (brief: string, o: { model: string; iterationId: string; signal: AbortSignal; meter?: { usd?: number | null } }) => Promise<string | null | { none: string }>; // meter.usd: the call's dollars when the generator prices it itself
 let generatorOverride: SpecGenerator | null = null;
 export const setExecSpecGenerator = (g: SpecGenerator | null): void => { generatorOverride = g; };
 export const execSpecModel = (env: NodeJS.ProcessEnv = process.env): string => env.LOKI_E10_EXEC_SPEC_MODEL || "haiku";
+export const EXEC_SPEC_LEDGER_PHASE = "exec_spec";
+export function toolLessGenerator(repoDir: string): SpecGenerator {
+  return async (brief, o) => {
+    if (o.signal.aborted) return null;
+    const r = await toolLessCall({ model: resolveClaudeModel(o.model), prompt: brief, maxTokens: 4096, thinking: "low", timeoutMs: 120_000, ledger: { lokiDir: join(repoDir, ".loki"), phase: EXEC_SPEC_LEDGER_PHASE } });
+    if (o.meter) o.meter.usd = r.usd;
+    if (r.outcome.kind === "ok") return r.outcome.value;
+    return r.outcome.kind === "budget" ? { none: "the run dollar cap is reached, no generator call was made" } : { none: `the generator call ended ${describeJudgeOutcome(r.outcome)}` };
+  };
+}
+export const defaultGenerator = (sessions: Parameters<typeof sessionGenerator>[0], repoDir: string, env: NodeJS.ProcessEnv = process.env): SpecGenerator =>
+  env.LOKI_E10_INVOKER === "cli" ? sessionGenerator(sessions) : toolLessGenerator(repoDir);
 export const EXEC_SPEC_REPLY = "spec_reply.md";
 export function sessionGenerator(sessions: { run(o: Record<string, unknown>): Promise<{ exit: number | null; killed: boolean }> }): SpecGenerator {
   return async (brief, o) => {
@@ -549,9 +579,10 @@ export function planFor(runner: SpecRunner, repoDir: string, sites: ResolvedSite
   return { runner, targetRel, header: `The file is ${targetRel}; import the code under test from "${spec}".`, mustStart: "", style: style ? read(style) : "" };
 }
 
-export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; uncoveredSites?: string[]; relation?: RelationOutcome; durationS: number }
+export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; uncoveredSites?: string[]; relation?: RelationOutcome; generatorUsd?: number | null; durationS: number }
 export async function execSpecAuthor(o: { task: string; repoDir: string; runners: string[]; existingTests: string[]; sessions: Parameters<typeof sessionGenerator>[0]; iterationId: string; signal: AbortSignal }): Promise<ExecSpecOutcome> {
-  const t0 = Date.now(), atoms0 = extractSpecAtoms(o.task), done = (status: ExecSpecOutcome["status"], reason: string, extra: Partial<ExecSpecOutcome> = {}): ExecSpecOutcome => ({ status, reason, atoms: atoms0.length, sites: 0, binding: [], advisory: [], guards: [], dropped: [], durationS: (Date.now() - t0) / 1000, ...extra });
+  let priced: number | null | undefined; // the generator call's dollars when it prices itself (toolLessCall); undefined: read from the session's iteration id
+  const t0 = Date.now(), atoms0 = extractSpecAtoms(o.task), done = (status: ExecSpecOutcome["status"], reason: string, extra: Partial<ExecSpecOutcome> = {}): ExecSpecOutcome => ({ status, reason, atoms: atoms0.length, sites: 0, binding: [], advisory: [], guards: [], dropped: [], durationS: (Date.now() - t0) / 1000, ...(priced !== undefined ? { generatorUsd: priced } : {}), ...extra });
   const runner = (["go", "pytest", "vitest"] as SpecRunner[]).find((r) => o.runners.includes(r));
   if (!runner) return done("skipped", "exec spec: no supported runner (go, pytest, vitest)");
   const sites = resolveSites(atoms0, o.repoDir);
@@ -569,9 +600,10 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
     const uncov = capSites(atoms.filter((a) => a.kind === "site" && resolved.has(a.text)).map((a) => a.text.split(".").pop()!), o.task).filter((x) => !new RegExp(`\\b${esc(x)}\\b`).test(covered));
     return { ...r, status: "sealed", reason: `exec spec: ${binding.length} binding case(s) red on base (${rel.cases.length} relation)`, runner: "go", binding, uncoveredSites: uncov, brief: [relLine, r.brief ?? ""].filter(Boolean).join("\n"), relation: rel, ...(gen0 ? {} : { file: undefined, targetRel: undefined }) };
   };
-  const gen = generatorOverride ?? sessionGenerator(o.sessions);
-  const reply = await gen(buildGeneratorBrief(e, atoms, sites, plan.header, plan.style), { model: execSpecModel(), iterationId: o.iterationId, signal: o.signal });
-  if (reply === null) return withRel(done("skipped", "exec spec: the generator wrote no reply", { sites: sites.length, runner }));
+  const gen = generatorOverride ?? defaultGenerator(o.sessions, o.repoDir);
+  const meter: { usd?: number | null } = {}, reply = await gen(buildGeneratorBrief(e, atoms, sites, plan.header, plan.style), { model: execSpecModel(), iterationId: o.iterationId, signal: o.signal, meter });
+  if (meter.usd !== undefined) priced = meter.usd;
+  if (reply === null || typeof reply !== "string") return withRel(done("skipped", `exec spec: ${reply ? reply.none : "the generator wrote no reply"}`, { sites: sites.length, runner }));
   const parsed = parseGenerated(e, reply, plan.mustStart);
   if ("refused" in parsed) return withRel(done("skipped", `exec spec: ${parsed.refused}`, { sites: sites.length, runner }));
   const base = redFilter(e, o.repoDir, plan.targetRel, parsed.file);

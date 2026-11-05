@@ -63,6 +63,13 @@
 #                Neither leg runs a Project Model discovery session (one runner at the root, even when cargo lists no test files).
 #                Probe: a task that changes Calc::new() to Calc::new(base) keeps the Wall test calling Calc::new(5) (the Rust
 #                argument count is decided after implement) and reads VERIFIED.
+#   edit shape:  (unit, Go + TypeScript + Python fixtures in a temp git repo; util/edit_shape.ts, the E2 detector, pure and not yet wired)
+#                sibling: an edited branch passing firstArg where its sibling branches in the same function pass rargs[0] is named; a
+#                straight-line sequence, literal-only differences, siblings that disagree and a same-shaped call in another function are not.
+#                residual: an unchanged .(MultiError) / `as Widget` / isinstance(x, Foo) / call with the same arguments left behind by the
+#                rewrite is named; builtin assertions (.(string)) and an idiom on more than 6 lines are not. precedence: a strict type check
+#                widened to errors.As / instanceof / isinstance carries the keep-strict-first note; a new errors.As, instanceof to
+#                instanceof and isinstance to isinstance do not. The brief asks "decide for each listed site", never a fix.
 #   lean fix loop, unit level (bun over loki-ts/src):
 #     L005: failing ids parse from every checked-in failure output (cargo and bun included); fix-brief groups built
 #           from the pytest, jest, vitest, go test, surefire and dotnet failure
@@ -153,26 +160,39 @@
 #  61. check_result.ts stallSignature: bucket a full-suite group by log2 of its id count again (the disjoint, 100-to-70 and zero-vs-one id legs read true).
 #  62. check_result.ts stallSame: drop the count tolerance test (the near-equal truncated legs read false) or widen it to 50 percent (the 100-to-70 leg reads true).
 #  63. machine.ts: compare sigs with === again instead of stallSame (the machine.ts stallSame grep leg reads bad).
-#  64. features/exec_spec.ts parityAtoms: drop the quoted-code condition (exec spec atoms read otherquote=P1).
-#  65. exec_spec.ts parityAtoms: scan s.source (the 45-line excerpt) instead of s.body (exec spec atoms read P0).
-#  66. exec_spec.ts NORM_DOT: drop the no-dot lookbehind (exec spec atoms read prop=P1).
-#  67. exec_spec.ts pairAtoms: let a site pair with its own caller (exec spec atoms list Report+Batch).
-#  68. exec_spec.ts isBinding: return true (every real-runner leg seals the advisory case too).
-#  69. exec_spec.ts parseGo: count a panicking case as red (the go test leg seals or lists the panic case).
-#  70. exec_spec.ts parseJunit: count any failure as red (the pytest leg reads the AttributeError case as advisory, not dropped).
-#  71. exec_spec.ts parseVitestJson: count any failure as red (the vitest legs read the TypeError case as advisory, not dropped).
-#  72. wall.ts: return the lean skip with the knob on (the exec spec engine legs read skipped).
-#  73. implement.ts: drop execSpecBriefOf from the brief (the implement-brief leg fails).
-#  74. exec_spec.ts execSpecEnabled: ignore LOKI_E10_EXEC_SPEC=0 (the exec spec off leg finds a generator session).
-#  75. exec_spec.ts isBinding: drop the one-example rule (any unit per literal) (exec spec atoms read bind=100001).
-#  76. exec_spec.ts isBinding: drop the caseLiterals check, want literals only (exec spec atoms read bind=110001 or more).
-#  77. seal.ts: drop specGap from verdictOf (the second-site leg reads VERIFIED).
-#  79. exec_spec.ts capSites: return every uncovered site (the passing-mention leg reads PARTIAL).
-#  80. seal.ts specSiteGap: ignore the changed-symbol list (exec spec atoms read gap=Report,Report,-).
-#  81. exec_spec.ts relationCasesGo: keep the wrapped observation as the reference instead of the base bare one (relation cases read base=pass).
-#  82. exec_spec.ts statesWrapRelation: return true (relation cases read norel=fired).
-#  83. exec_spec.ts relationSealedTest: compare the wrapped value to the changed tree's own bare value (relation cases read order=pass).
-#  78. exec_spec.ts execSpecBriefOf: drop the knob check (exec spec atoms read brief=B,B).
+#  64. assert_delta.ts reportedValues: drop the WANTED_BEFORE skip (the "should return" value reads as a symptom; the finder unit legs fail).
+#  65. seal.ts failThenPass: drop the rewritten-file exclusion (the lone rewritten pinned assertion reads VERIFIED).
+#  67. seal.ts pinDropped: key on the file only again (the F1 unit leg fails); drop the pinLift gate (the F2 unit leg fails); drop CALLED_RIGHT in assert_delta.ts (the called-right unit leg fails).
+#  66. test_guard.ts defectPinEdits: also accept a structural change (the structural-change unit leg fails) or drop the pin note from seal (the receipt leg fails).
+#  69. edit_shape.ts siblingSites: drop the branch-split test (the straight-line sequence leg reads sibling).
+#  70. edit_shape.ts siblingSites: drop the siblings-agree test (the disagree leg reads sibling) or the literal test (the literal leg reads sibling).
+#  71. edit_shape.ts residualSites: drop COMMON_LIMIT (the idiom leg reads residual) or GO_BUILTIN_T (the .(string) leg reads residual).
+#  72. edit_shape.ts precedenceSites: drop the removed-strict test (the new errors.As leg reads precedence) or the removed-broad test (the isinstance-to-isinstance leg reads precedence).
+#  73. edit_shape.ts fragmentsOf: drop the written-back test (a pattern the hunk keeps reads residual).
+# 104. features/exec_spec.ts parityAtoms: drop the quoted-code condition (exec spec atoms read otherquote=P1).
+# 105. exec_spec.ts parityAtoms: scan s.source (the 45-line excerpt) instead of s.body (exec spec atoms read P0).
+# 106. exec_spec.ts NORM_DOT: drop the no-dot lookbehind (exec spec atoms read prop=P1).
+# 107. exec_spec.ts pairAtoms: let a site pair with its own caller (exec spec atoms list Report+Batch).
+# 108. exec_spec.ts isBinding: return true (every real-runner leg seals the advisory case too).
+# 109. exec_spec.ts parseGo: count a panicking case as red (the go test leg seals or lists the panic case).
+# 110. exec_spec.ts parseJunit: count any failure as red (the pytest leg reads the AttributeError case as advisory, not dropped).
+# 111. exec_spec.ts parseVitestJson: count any failure as red (the vitest legs read the TypeError case as advisory, not dropped).
+# 112. wall.ts: return the lean skip with the knob on (the exec spec engine legs read skipped).
+# 113. implement.ts: drop execSpecBriefOf from the brief (the implement-brief leg fails).
+# 114. exec_spec.ts execSpecEnabled: ignore LOKI_E10_EXEC_SPEC=0 (the exec spec off leg finds a generator session).
+# 115. exec_spec.ts isBinding: drop the one-example rule (any unit per literal) (exec spec atoms read bind=100001).
+# 116. exec_spec.ts isBinding: drop the caseLiterals check, want literals only (exec spec atoms read bind=110001 or more).
+# 117. seal.ts: drop specGap from verdictOf (the second-site leg reads VERIFIED).
+# 119. exec_spec.ts capSites: return every uncovered site (the passing-mention leg reads PARTIAL).
+# 120. seal.ts specSiteGap: ignore the changed-symbol list (exec spec atoms read gap=Report,Report,-).
+# 124. exec_spec.ts defectSites: count every span of a clause with a defect word again (the comparison, negated-scope and see legs read PARTIAL).
+# 125. seal.ts: drop execSpecBlock from the receipt body (the receipt exec_spec leg fails).
+# 126. exec_spec.ts defaultGenerator: always the session generator (the generator leg reads sessions=1 queries=0).
+# 127. exec_spec.ts toolLessGenerator: thinking "off" instead of "low" (the generator leg reads thinking=disabled/undefined).
+# 128. exec_spec.ts relationCasesGo: keep the wrapped observation as the reference instead of the base bare one (relation cases read right=fail).
+# 129. exec_spec.ts statesWrapRelation: return true (relation cases read norel=fired).
+# 130. exec_spec.ts relationSealedTest: compare the wrapped value to the changed tree's own bare value (relation cases read order=pass).
+# 118. exec_spec.ts execSpecBriefOf: drop the knob check (exec spec atoms read brief=B,B).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1033,6 +1053,49 @@ const o = "src/v3/tests/a.test.ts:56:8 - error TS6196: \x27_Cat\x27 is declared 
 console.log([u(o, "packages/zod", new Set(["packages/zod/src/v4/x.ts"]), ["packages/zod/src/v4/x.ts"], o), u(o, "packages/zod", new Set(["packages/zod/src/v3/tests/a.test.ts"]), [], o), u(o + "src/c.ts:1:1 - error TS2322: no\n", "packages/zod", new Set(), [], o), u(o, "packages/zod", new Set(), ["packages/zod/tsconfig.json"], o), u("", ".", new Set(), [], ""), u("error TS6133 unparsed\n", ".", new Set(), [], "error TS6133 unparsed\n")].join(","));' 2>&1)"
 [ "$TU" = "true,false,false,false,false,false" ] && ok "tsc untouched unit: only unused-declaration errors in untouched, unnamed files with no tsconfig edit are excused ($TU)" || bad "tsc untouched unit: '$TU'"
 
+# PEP 668 install (real pip, venv, pytest and ruff; rule 22): a system python that refuses `pip install` as externally managed (a shim stands in for ONLY that refusal, every other
+# call reaches the real python3) must not leave the run on the system interpreter. prepareDeps retries into .venv and adds the runners verify names (pytest, and ruff when the project
+# declares it), so the project's own pytest and ruff run and pass. Plant: venvInstallCmd returns null and the install stays not_run with the PEP 668 line (the leg turns red).
+# Needs network (pip fetches pytest and ruff); skipped cleanly offline or with no python3 venv module.
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import venv, ensurepip' >/dev/null 2>&1 && curl -sfI -m 8 https://pypi.org/simple/pytest/ >/dev/null 2>&1; then
+    PV="$T/pep668"; rm -rf "$PV"; mkdir -p "$PV/bin" "$PV/repo" && REALPY="$(command -v python3)"
+    printf '#!/bin/sh\ncase "$*" in "-m pip install"*) printf "error: externally-managed-environment\\n\\nhint: See PEP 668 for the detailed specification.\\n" >&2; exit 1 ;; esac\nexec "%s" "$@"\n' "$REALPY" > "$PV/bin/python3"; chmod +x "$PV/bin/python3"
+    cd "$PV/repo" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
+    printf '[project]\nname = "calc"\nversion = "0"\ndependencies = []\n\n[tool.ruff]\nline-length = 100\n\n[build-system]\nrequires = ["setuptools"]\nbuild-backend = "setuptools.build_meta"\n\n[tool.setuptools]\npy-modules = ["calc"]\n' > pyproject.toml
+    printf 'def half(a):\n    return a / 2\n' > calc.py; printf 'import calc\n\n\ndef test_half():\n    assert calc.half(3) == 1.5\n' > test_calc.py
+    git add -- . && git commit -q -m base; cd "$ROOT"
+    PD="$(cd "$ROOT/loki-ts" && PATH="$PV/bin:$PATH" timeout 280 bun -e 'import { prepareDeps } from "./src/project_model/install.ts"; import { spawnSync } from "node:child_process"; import { existsSync } from "node:fs";
+const repo = process.argv[1]; const model = { installFor: () => ({ cmd: "python3 -m pip install -e .", cwd: ".", cite: ["pyproject.toml"] }) } as any;
+const r = await prepareDeps({ repoDir: repo, model, failed: [{ root: ".", harnessOwned: true }], signal: new AbortController().signal, timeoutMs: 280000, opts: { runId: "pep668" } });
+const c = r.checks[0]; const py = repo + "/.venv/bin/"; const t = spawnSync(py + "python", ["-m", "pytest", "-q", "test_calc.py"], { cwd: repo, encoding: "utf8" }); const l = existsSync(py + "ruff") ? spawnSync(py + "ruff", ["check", "."], { cwd: repo, encoding: "utf8" }) : { status: -1 };
+console.log([c?.result, c?.reason ?? "", existsSync(py + "pytest"), t.status, l.status, r.notProven.length].join("|"));' "$PV/repo" 2>&1 | tail -1)"
+    [ "$PD" = "pass||true|0|0|0" ] && ok "pep668 install: the refused system install is retried into .venv and the project's own pytest and ruff pass ($PD)" || bad "pep668 install: got '$PD'"
+    cd "$ROOT"
+else
+    echo "  SKIP: pep668 install: needs python3 with venv and network (pypi.org)"
+fi
+
+# PEP 668 retry that FAILS after creating .venv (rule 22, real venv and pip, no network needed): the repo has no .gitignore and the venv has no .gitignore of its own (Python 3.12 and older write none),
+# so a failed install records nothing as install-created; the commit stage's stage list (git add -A, then dropSet) must still hold zero .venv paths, and the check must not claim "installed into .venv".
+# Plant: drop the .venv entry from OUTPUT_DIRS (lock_ecosystems.ts) and hundreds of .venv files are kept for the commit (the leg turns red).
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import venv, ensurepip' >/dev/null 2>&1; then
+    PF="$T/pep668-fail"; rm -rf "$PF"; mkdir -p "$PF/bin" "$PF/repo" && REALPY="$(command -v python3)"
+    printf '#!/bin/sh\ncase "$*" in "-m pip install"*) if [ -z "$VIRTUAL_ENV" ] && [ "$1 $2" = "-m pip" ]; then printf "error: externally-managed-environment\\n\\nhint: See PEP 668 for the detailed specification.\\n" >&2; exit 1; fi ;; esac\nexec "%s" "$@"\n' "$REALPY" > "$PF/bin/python3"; chmod +x "$PF/bin/python3"
+    cd "$PF/repo" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
+    printf 'nonexistent-loki-pkg-xyz==9.9.9\n' > requirements.txt; printf 'def f():\n    return 1\n' > calc.py; git add -- . && git commit -q -m base; BASE="$(git rev-parse HEAD)"; cd "$ROOT"
+    PF_OUT="$(cd "$ROOT/loki-ts" && PATH="$PF/bin:$PATH" PIP_NO_INDEX=1 timeout 280 bun -e 'import { prepareDeps } from "./src/project_model/install.ts"; import { dropSet } from "./src/e10ext/commit_filter.ts"; import { execFileSync } from "node:child_process"; import { rmSync, existsSync } from "node:fs";
+const [repo, base] = process.argv.slice(1); const model = { installFor: () => ({ cmd: "python3 -m pip install -r requirements.txt", cwd: ".", cite: ["requirements.txt"] }) } as any;
+const r = await prepareDeps({ repoDir: repo, model, failed: [{ root: ".", harnessOwned: true }], signal: new AbortController().signal, timeoutMs: 280000, opts: { runId: "pep668fail" } });
+rmSync(repo + "/.venv/.gitignore", { force: true });
+execFileSync("git", ["-C", repo, "add", "-A", "--", "."]);
+const parts = execFileSync("git", ["-C", repo, "diff", "--cached", "--name-status", "--no-renames", "-z", base], { encoding: "utf8" }).split("\0").filter(Boolean); const staged = [] as { st: string; f: string }[]; for (let i = 0; i + 1 < parts.length; i += 2) staged.push({ st: parts[i]!, f: parts[i + 1]! });
+const dropped = new Set(dropSet(repo, staged, undefined, process.env, null, undefined, base).map((d) => d.f)); const kept = staged.filter((s) => !dropped.has(s.f) && s.f.startsWith(".venv/")).length;
+const c = r.checks[0]; console.log([existsSync(repo + "/.venv/pyvenv.cfg"), c?.result, String(c?.lock_note ?? "").includes("installed into .venv"), kept].join("|"));' "$PF/repo" "$BASE" 2>&1 | tail -1)"
+    [ "$PF_OUT" = "true|not_run|false|0" ] && ok "pep668 failed retry: .venv exists, the check is not_run, no 'installed into .venv' note, zero .venv paths kept for the commit ($PF_OUT)" || bad "pep668 failed retry: got '$PF_OUT'"
+else
+    echo "  SKIP: pep668 failed retry: needs python3 with venv"
+fi
+
 # pytest base proof when a narrow terminal ends the summary reason in "..." (rule 22, real pytest): "FAILED tests/test_more.py::IchunkedTests::test_negative_message - AssertionEr..."
 # is an assertion failure (the traceback's E line says AssertionError), not an unknown kind; it was read as "not an assertion" so a real fail-then-pass proof was dropped. A base run that
 # fails by TypeError (the base lacks the new keyword) beside it stays no proof. Plant: drop the "..." test in assertionFailure and the first leg reads "yes|" with no file named.
@@ -1056,6 +1119,168 @@ else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest truncated reason: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest truncated reason: pytest is not installed"; fi
 fi
 
+# ---------------------------------------------------------------- edit shape (E2 detector, pure module)
+cat > "$T/edit-shape.ts" <<'TS'
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+const [root, tmp] = process.argv.slice(2) as [string, string];
+const { editShapeSites, editShapeBrief, EDIT_SHAPE_PROMPT } = await import(root + "/loki-ts/src/util/edit_shape.ts");
+const res = (n: string, okk: boolean) => console.log((okk ? "OK " : "NO ") + n);
+const g = (d: string, ...a: string[]) => execFileSync("git", ["-C", d, ...a], { encoding: "utf8" });
+type Files = Record<string, string>;
+function run(base: Files, head: Files, pkg = false) {
+  const d = mkdtempSync(join(tmp, "es-"));
+  g(d, "init", "-q", "-b", "main"); g(d, "config", "user.name", "e"); g(d, "config", "user.email", "e@e.invalid");
+  const w = (m: Files) => { for (const [p, t] of Object.entries(m)) { mkdirSync(dirname(join(d, p)), { recursive: true }); writeFileSync(join(d, p), t); } };
+  w(base); g(d, "add", "-A"); g(d, "commit", "-q", "-m", "b"); w(head);
+  const diff = g(d, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/");
+  return editShapeSites(diff, (p: string) => { try { return readFileSync(join(d, p), "utf8"); } catch { return null; } }, pkg ? { packageFiles: (p: string) => Object.keys(head).filter((x) => x !== p) } : {}) as { rule: string; path: string; line: number }[];
+}
+const at = (s: { rule: string; path: string; line: number }[]) => s.map((x) => `${x.rule}@${x.path}:${x.line}`).join("+") || "-";
+const has = (s: { rule: string }[], r: string) => s.some((x) => x.rule === r);
+const swap = (t: string, a: string, b: string) => { if (!t.includes(a)) throw new Error("fixture text missing: " + a); return t.replace(a, b); };
+
+const goBase = 'package cmd\n\nfunc parse(a []string, first string) error {\n\tswitch first {\n\tcase "a":\n\t\treturn run(rargs[0])\n\tcase "b":\n\t\treturn run(rargs[0])\n\tcase "c":\n\t\treturn run(rargs[0])\n\t}\n\treturn nil\n}\n';
+const goC = 'case "c":\n\t\treturn run(rargs[0])';
+res("sibling go: the edited branch passes firstArg where its siblings pass rargs[0]", at(run({ "c.go": goBase }, { "c.go": swap(goBase, goC, 'case "c":\n\t\treturn run(firstArg)') })) === "sibling@c.go:10");
+res("sibling go: a straight-line sequence of the same call on different data is not a sibling", !has(run({ "c.go": "package c\n\nfunc f() {\n\tcopyTo(dst, a)\n\tcopyTo(dst, b)\n}\n" }, { "c.go": "package c\n\nfunc f() {\n\tcopyTo(dst, a)\n\tcopyTo(dst, c)\n}\n" }), "sibling"));
+const goLit = goBase.replace(/rargs\[0\]/g, '"x"');
+res("sibling go: a literal-only difference is not a sibling", !has(run({ "c.go": goLit }, { "c.go": swap(goLit, 'case "c":\n\t\treturn run("x")', 'case "c":\n\t\treturn run("y")') }), "sibling"));
+const goDis = swap(goBase, 'run(rargs[0])\n\tcase "b"', 'run(other)\n\tcase "b"');
+res("sibling go: siblings that disagree among themselves leave no consensus to diverge from", !has(run({ "c.go": goDis }, { "c.go": swap(goDis, goC, 'case "c":\n\t\treturn run(firstArg)') }), "sibling"));
+res("sibling go: the only same-shaped call lives in another function", !has(run({ "c.go": "package c\n\nfunc f() error {\n\treturn run(rargs[0])\n}\n\nfunc g() error {\n\treturn run(rargs[0])\n}\n" }, { "c.go": "package c\n\nfunc f() error {\n\treturn run(firstArg)\n}\n\nfunc g() error {\n\treturn run(rargs[0])\n}\n" }), "sibling"));
+const acc = (def: string, last: string) => `package c\n\nfunc f(raw string, ok bool) []string {\n\tvar out []string\n\t${def}\n\tout = append(out, raw)\n\tif ok {\n\t\tout = append(out, ${last})\n\t}\n\treturn out\n}\n`;
+res("sibling go: an append of a local derived from the raw value the sibling append passes (norm versus raw) is named", at(run({ "c.go": acc("n := norm(raw)", "raw") }, { "c.go": acc("n := norm(raw)", "n") })) === "sibling@c.go:8");
+res("sibling go: an append of an unrelated local is not (accumulation sites take different data)", !has(run({ "c.go": acc("n := other()", "raw") }, { "c.go": acc("n := other()", "n") }), "sibling"));
+const pushes = (last: string) => `export function f(raw: string, ok: boolean) {\n  const out: string[] = [];\n  const n = norm(raw);\n  out.push(raw);\n  if (ok) {\n    out.push(${last});\n  }\n  return out;\n}\n`;
+res("sibling ts: out.push of a derived local beside out.push(raw) is named", at(run({ "f.ts": pushes("raw") }, { "f.ts": pushes("n") })) === "sibling@f.ts:6");
+res("sibling ts: out.push of an unrelated local across a branch is not", !has(run({ "f.ts": pushes("raw").replace("norm(raw)", "other()") }, { "f.ts": pushes("n").replace("norm(raw)", "other()") }), "sibling"));
+const goRes = 'package e\n\nfunc a(err error) bool {\n\tif me, ok := err.(MultiError); ok {\n\t\treturn me.Len() > 0\n\t}\n\treturn false\n}\n\nfunc b(err error) int {\n\tif me, ok := err.(MultiError); ok {\n\t\treturn me.Len()\n\t}\n\treturn 0\n}\n';
+const goAs = swap(goRes, "if me, ok := err.(MultiError); ok {\n\t\treturn me.Len() > 0", "var me MultiError\n\tif errors.As(err, &me) {\n\t\treturn me.Len() > 0");
+const goOut = run({ "e.go": goRes }, { "e.go": goAs });
+res("precedence go: a hunk that already held an errors.As beside the strict check is no widening", !has(run({ "e.go": "package e\n\nfunc a(err error) bool {\n\tme, ok := err.(MultiError)\n\tvar o Other\n\tif errors.As(err, &o) { return ok && me != nil }\n\treturn false\n}\n" }, { "e.go": "package e\n\nfunc a(err error) bool {\n\tvar me MultiError\n\tif errors.As(err, &me) { return true }\n\treturn false\n}\n" }), "precedence"));
+res("residual go: the unchanged .(MultiError) in the next function is named (the E2 residual shape), with the precedence note on the rewrite", at(goOut) === "precedence@e.go:5+residual@e.go:12");
+res("precedence go: a brand new errors.As with no strict check removed carries no note", at(run({ "e.go": "package e\n\nfunc a(err error) bool {\n\treturn false\n}\n" }, { "e.go": "package e\n\nfunc a(err error) bool {\n\tvar me MultiError\n\treturn errors.As(err, &me)\n}\n" })) === "-");
+const goStr = (body: string) => "package e\n\nfunc a(v any) string {\n\t" + body + "\n\treturn s\n}\n\nfunc b(v any) string {\n\ts, _ := v.(string)\n\treturn s\n}\n";
+res("residual go: a builtin assertion (.(string)) is no residual shape", at(run({ "e.go": goStr("s, _ := v.(string)") }, { "e.go": goStr("s := fmt.Sprint(v)") })) === "-");
+const loads = (first: string) => "package c\n\nfunc f() {\n\tx := " + first + "(cfg)\n" + Array.from({ length: 8 }, (_, i) => `\ty${i} := load(cfg)\n`).join("") + "}\n";
+res("residual go: a call repeated on more than 6 unchanged lines is an idiom, not a repeated defect", at(run({ "c.go": loads("load") }, { "c.go": loads("read") })) === "-");
+res("residual go: a pattern the hunk writes back is not residual", at(run({ "e.go": goRes }, { "e.go": swap(goRes, "if me, ok := err.(MultiError); ok {\n\t\treturn me.Len() > 0", "if me, ok := err.(MultiError); ok && me != nil {\n\t\treturn me.Len() > 0") })) === "-");
+res("residual go: the package's other files are scanned when the caller lists them", at(run({ "a.go": goRes, "b.go": "package e\n\nfunc c(err error) {\n\t_ = err.(MultiError)\n}\n" }, { "a.go": goAs, "b.go": "package e\n\nfunc c(err error) {\n\t_ = err.(MultiError)\n}\n" }, true)).includes("residual@b.go:4"));
+
+const tsBase = 'export function f(kind: string, raw: string, norm: string) {\n  if (kind === "a") {\n    return load(norm);\n  } else if (kind === "b") {\n    return load(norm);\n  } else {\n    return load(norm);\n  }\n}\nexport function h(x: unknown) { return (x as Widget).id; }\nexport function k(x: unknown) { return (x as Widget).name; }\n';
+res("sibling ts: the else branch passing raw where its siblings pass norm", at(run({ "f.ts": tsBase }, { "f.ts": swap(tsBase, "} else {\n    return load(norm);", "} else {\n    return load(raw);") })) === "sibling@f.ts:7");
+res("residual ts: an unchanged `as Widget` cast beside the rewritten one", at(run({ "f.ts": tsBase }, { "f.ts": swap(tsBase, "(x as Widget).id", "isWidget(x) ? x.id : 0") })) === "residual@f.ts:11");
+const tsP = (c: string) => `export function a(e: unknown) {\n  if (${c}) return 1;\n  return 0;\n}\n`;
+res("precedence ts: constructor === HttpError widened to instanceof", at(run({ "p.ts": tsP("e.constructor === HttpError") }, { "p.ts": tsP("e instanceof HttpError") })) === "precedence@p.ts:2");
+res("precedence ts: instanceof to instanceof is no widening", at(run({ "p.ts": tsP("e instanceof A") }, { "p.ts": tsP("e instanceof B") })) === "-");
+
+const pyBase = 'def f(kind, raw, norm):\n    if kind == "a":\n        return load(norm)\n    elif kind == "b":\n        return load(norm)\n    else:\n        return load(norm)\n\n\ndef g(x):\n    if isinstance(x, Foo):\n        return 1\n    return 0\n\n\ndef h(x):\n    if isinstance(x, Foo):\n        return 2\n    return 0\n';
+res("sibling py: the else branch passing raw where its siblings pass norm", at(run({ "m.py": pyBase }, { "m.py": swap(pyBase, "    else:\n        return load(norm)", "    else:\n        return load(raw)") })) === "sibling@m.py:7");
+res("residual py: an unchanged isinstance(x, Foo) beside the rewritten one", at(run({ "m.py": pyBase }, { "m.py": swap(pyBase, "def g(x):\n    if isinstance(x, Foo):", "def g(x):\n    if hasattr(x, 'foo'):") })) === "residual@m.py:17");
+const pyP = (c: string) => `def g(x):\n    if ${c}:\n        return 1\n    return 0\n`;
+res("precedence py: type(x) is Foo widened to isinstance", at(run({ "m.py": pyP("type(x) is Foo") }, { "m.py": pyP("isinstance(x, Foo)") })) === "precedence@m.py:2");
+res("precedence py: isinstance to isinstance is no widening", at(run({ "m.py": pyP("isinstance(x, Foo)") }, { "m.py": pyP("isinstance(x, Bar)") })) === "-");
+
+const brief = editShapeBrief(goOut) as string;
+res("brief: asks to decide per site and leave it if not, lists file:line and rule; empty list gives no brief", brief.startsWith(EDIT_SHAPE_PROMPT) && EDIT_SHAPE_PROMPT.includes("decide for each listed site") && EDIT_SHAPE_PROMPT.includes("leave it alone if not") && brief.includes("e.go:12 (residual)") && editShapeBrief([]) === null);
+TS
+mkdir -p "$T/es"
+out="$(cd "$ROOT/loki-ts" && bun "$T/edit-shape.ts" "$ROOT" "$T/es" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "edit-shape unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 25 ] || bad "edit-shape unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 25"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+printf '%s\n' "$out" | grep -q '^OK ' || { bad "edit-shape unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+printf '%s\n' "$out" | grep -q '^NO ' && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
+
+# ---------------------------------------------------------------- E4: defect pin (an existing assertion that pins the bug the issue reports)
+# Unit: the finder fires only on an assertion whose expected value is the wrong value the issue reports; a pure value replacement of it is a defect-pin change,
+# a deletion or an unrelated edit is not. Real pytest and the stub provider: the rewrite is listed as "value change (defect pin)", never "weakened test", is never
+# the proof (PARTIAL without other proof), and a new failing test in another file makes the run VERIFIED; an unrelated dropped assertion stays "weakened test".
+cat > "$T/defect-pin.ts" <<TS
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { reportedValues, pinnedLines, assertDeltaNotes } from "$ROOT/loki-ts/src/e10ext/assert_delta.ts";
+import { defectPinEdits, findDefectPins, pinDroppedNotes, testFileWeakened } from "$ROOT/loki-ts/src/util/test_guard.ts";
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const task = "slugify('Hello World') currently returns 'hello_world' but should return 'hello-world'.\nActual: 42\nExpected: 7";
+res("finder: the value after currently returns and Actual is a symptom, the value after should return and Expected is not", reportedValues(task).map((r) => r.value).join(",") === "hello_world,42");
+const t = 'def test_a():\n    assert slugify("Hello World") == "hello_world"\n    assert slugify("a b") == "a-b"\n    assert f(1) == 42\n    assert g(2) == 7\n    assert h(1) == 3\n';
+res("finder: fires on the pinned expected values only (hello_world, 42), not on the wanted value, an unrelated value or an input", pinnedLines(t, task).map((p) => p.line).join(",") === "2,4");
+res("finder: silent when the task reports no wrong value", pinnedLines(t, "slugify should join words with a hyphen").length === 0);
+res("finder: a generic value (3) is not pinned unless an identifier the issue names for it is near", pinnedLines("def test_x():\n    assert f(1) == 3\n", "total currently returns 3").length === 0 && pinnedLines("def test_x():\n    assert total(1) == 3\n", "total() currently returns 3").length === 1);
+res("finder: a value used as an input, not the expected value, is not pinned", pinnedLines('def test_x():\n    assert slugify("hello_world") == "ok"\n', "slugify currently returns 'hello_world'").length === 0);
+res("finder: a value the issue calls right or correct is not a symptom", pinnedLines("def test_x():\n    assert len(get_items()) == 3\n", "get_items() currently returns 3 items, which is right, but unsorted").length === 0 && pinnedLines("def test_x():\n    assert len(get_items()) == 3\n", "Bug: get_items returns 3 items, which is correct").length === 0 && pinnedLines("def test_x():\n    assert len(get_items()) == 3\n", "get_items() currently returns 3 which is fine").length === 0);
+res("finder: expected right after the value is the wanted value, not a verdict on it (three phrasings still pin)", ["total() currently returns 3, expected 4.", "total() Actual: 3, expected: 4", "total() returns 3, expected behavior is 4"].every((tk) => pinnedLines("def test_x():\n    assert total(1) == 3\n", tk).length === 1));
+res("finder: a value followed by is right or are fine is not a symptom", pinnedLines("def test_x():\n    assert len(get_items()) == 3\n", "get_items() currently returns 3, is right").length === 0);
+res("finder: a real symptom in a sentence that also says correct later still counts", pinnedLines("def test_x():\n    assert total(1) == 3\n", "total() currently returns 3 but the correct value is 4").length === 1);
+const sh = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@e.invalid", ...a], { encoding: "utf8" });
+const R = "$T/dp-unit"; mkdirSync(R, { recursive: true }); sh(R, "init", "-q", "-b", "main");
+writeFileSync(R + "/test_s.py", t); writeFileSync(R + "/test_o.py", "def test_o():\n    assert o(1) == 5\n    assert o(2) == 6\n"); sh(R, "add", "--", "."); sh(R, "commit", "-q", "-m", "base");
+const base = sh(R, "rev-parse", "HEAD").trim();
+res("findDefectPins: lists the pin with file and line across the tracked test files", JSON.stringify(findDefectPins(R, task, base).map((p) => p.file + ":" + p.line)) === '["test_s.py:2","test_s.py:4"]');
+const edit = (f: string, from: string, to: string) => { writeFileSync(R + "/" + f, execFileSync("python3", ["-I", "-c", "import sys; print(open(sys.argv[1]).read().replace(sys.argv[2], sys.argv[3]), end='')", R + "/" + f, from, to], { encoding: "utf8" })); };
+edit("test_s.py", '== "hello_world"', '== "hello-world"');
+const e1 = defectPinEdits(R, base, null, "test_s.py", task);
+res("defectPinEdits: a pure value replacement of a pinned assertion is listed with old and new", e1.length === 1 && e1[0]!.line === 2 && e1[0]!.old.includes("hello_world") && e1[0]!.new.includes("hello-world"));
+res("defectPinEdits: the same edit is not a weakened test (assertion count unchanged)", !testFileWeakened(R, base, null, "test_s.py", "M"));
+edit("test_s.py", 'assert h(1) == 3', 'assert h(1) == 4');
+res("defectPinEdits: an edit of an unpinned assertion is not a defect pin (still one entry)", defectPinEdits(R, base, null, "test_s.py", task).length === 1);
+sh(R, "checkout", "-q", "--", "test_s.py");
+writeFileSync(R + "/test_s.py", t.replace('    assert slugify("Hello World") == "hello_world"\n', ""));
+res("defectPinEdits: deleting the pinned assertion is not a defect pin and is a weakened test", defectPinEdits(R, base, null, "test_s.py", task).length === 0 && testFileWeakened(R, base, null, "test_s.py", "M"));
+sh(R, "checkout", "-q", "--", "test_s.py");
+writeFileSync(R + "/test_s.py", t.replace('== "hello_world"', '== "hello_world" or True'));
+res("defectPinEdits: a structural change of the pinned line is not a value change", defectPinEdits(R, base, null, "test_s.py", task).length === 0);
+edit("test_o.py", "== 5", "== 9");
+const R2 = "$T/dp-f1"; mkdirSync(R2, { recursive: true }); sh(R2, "init", "-q", "-b", "main");
+const t2 = "def test_m():\n    assert calc_fee(1) == 3\n    assert calc_tax(2) == 7\n"; const task2 = "calc_fee(1) currently returns 3, want 4. calc_tax(2) should give 8.";
+writeFileSync(R2 + "/test_m.py", t2); sh(R2, "add", "--", "."); sh(R2, "commit", "-q", "-m", "base"); const base2 = sh(R2, "rev-parse", "HEAD").trim();
+writeFileSync(R2 + "/test_m.py", "def test_m():\n    assert calc_fee(1) == 4\n    assert calc_tax(2) == 8\n");
+const pe2 = defectPinEdits(R2, base2, null, "test_m.py", task2), vn2 = assertDeltaNotes(R2, base2, null, "test_m.py", task2, { run: 1, skipped: 0 }, { run: 1, skipped: 0 }) ?? [];
+res("F1: the pinned edit is listed and only line 2 is a pin", pe2.length === 1 && pe2[0]!.line === 2);
+res("F1: verify labels both edited lines (setup of the check)", vn2.length === 2);
+const lifted = pinDroppedNotes(vn2, pe2, true);
+res("F1: with the switch on only the pinned line's note is dropped; the unpinned line keeps its note and cap", lifted.size === 1 && [...lifted][0]!.includes("test_m.py:2 ") && vn2.filter((n) => !lifted.has(n)).length === 1);
+res("F2: with the switch off nothing is dropped, so main's cap stays", pinDroppedNotes(vn2, pe2, false).size === 0);
+res("defectPinEdits: an unrelated assertion value edit is never a defect pin", defectPinEdits(R, base, null, "test_o.py", task).length === 0);
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/defect-pin.ts" 2>&1)"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "defect pin unit: ${line#OK }" ;; "NO "*) bad "defect pin unit: ${line#NO }" ;; esac
+done <<< "$out"
+printf '%s\n' "$out" | grep -q '^OK ' || { bad "defect pin unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+make_pin_py_repo() {
+    make_wo_py_repo "$1"
+    printf 'import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n    assert calc.add(0, 0) == 0\n\n\ndef test_double():\n    assert calc.double(3) == 7\n' > "$1/test_calc.py"
+}
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    PT="double(3) should return 6 but currently returns 7"
+    pin() { MAKE_REPO=make_pin_py_repo run_engine "$PT" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a + 1' E2E_STUB_SNIPPET=$'    return a * 2' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 E2E_STUB_PROMPT_LOG="$T/pin-prompt.$RANDOM" "$@"; notes="$(wo_receipt np)"; }
+    pin E2E_STUB_TEST_FILE=test_calc.py E2E_STUB_EDIT_FILE=test_calc.py E2E_STUB_EDIT_FROM='== 7' E2E_STUB_EDIT_TO='== 6'
+    case "$(outcome)" in VERIFIED) bad "defect pin: the rewritten pinned assertion alone is VERIFIED ($notes)"; dump ;; *) ok "defect pin: a fix whose only test evidence is the rewritten pinned assertion is not VERIFIED ($(outcome))" ;; esac
+    has "defect pin: the receipt lists the rewritten assertion as a defect-pin value change" "$notes" "value change (defect pin): test_calc.py:"
+    case "$notes" in *"weakened test: test_calc.py"*) bad "defect pin: the value change is reported as a weakened test ($notes)" ;; *) ok "defect pin: the value change is not reported as a weakened test" ;; esac
+    pin E2E_STUB_TEST_FILE=test_double_new.py E2E_STUB_TEST_APPEND=$'import calc\n\n\ndef test_double_six():\n    assert calc.double(3) == 6\n' E2E_STUB_EDIT_FILE=test_calc.py E2E_STUB_EDIT_FROM='== 7' E2E_STUB_EDIT_TO='== 6'
+    [ "$(outcome)" = "VERIFIED" ] && ok "defect pin: the rewrite plus a new test in another file that fails on the base is VERIFIED" || { bad "defect pin: outcome is '$(outcome)' ($notes)"; dump; }
+    has "defect pin: the rewrite is still listed beside the proof" "$notes" "value change (defect pin): test_calc.py:"
+    pin E2E_STUB_TEST_FILE=test_calc.py E2E_STUB_TEST_DROP='calc.add(0, 0)'
+    has "unrelated edit: a dropped unrelated assertion is a weakened test" "$notes" "weakened test: test_calc.py"
+    case "$notes" in *"defect pin"*) bad "unrelated edit: reported as a defect pin ($notes)" ;; *) ok "unrelated edit: not a defect pin" ;; esac
+    pin E2E_STUB_TEST_FILE=test_calc.py E2E_STUB_EDIT_FILE=test_calc.py E2E_STUB_EDIT_FROM='== 7' E2E_STUB_EDIT_TO='== 6' LOKI_E10_DEFECT_PIN=1
+    pl="$(cat "$T"/pin-prompt.*.implement* 2>/dev/null | grep -c 'test_calc.py:10: assert calc.double(3) == 7')"
+    [ "${pl:-0}" -ge 1 ] && ok "defect pin: with LOKI_E10_DEFECT_PIN=1 the implement brief lists the pinned assertion" || { bad "defect pin: the brief does not list test_calc.py:10 ($(ls "$T"/pin-prompt.* 2>/dev/null | head -3 | tr '\n' ' '))"; }
+    rm -f "$T"/pin-prompt.*
+    pin E2E_STUB_TEST_FILE=test_calc.py E2E_STUB_EDIT_FILE=test_calc.py E2E_STUB_EDIT_FROM='== 7' E2E_STUB_EDIT_TO='== 6'
+    [ -n "$(ls "$T"/pin-prompt.*.implement* 2>/dev/null)" ] && [ "$(cat "$T"/pin-prompt.*.implement* 2>/dev/null | grep -c 'pin the behavior')" = "0" ] && ok "defect pin: the brief is unchanged by default (LOKI_E10_DEFECT_PIN unset)" || bad "defect pin: the brief lists pins without LOKI_E10_DEFECT_PIN=1"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "defect pin: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: defect pin e2e: pytest is not installed"; fi
+fi
+
+
 # ---------------------------------------------------------------- executable spec first (on by default; LOKI_E10_EXEC_SPEC=0 opts out)
 # features/exec_spec.ts through wall.ts's lean branch. Unit: deterministic atoms, the parity atom from the WHOLE function body (firstArg sits
 # past the 45-line excerpt), never on a property write, the pair atom for two named sites a third site reaches, and the binding rule (only
@@ -1075,7 +1300,7 @@ make_es_go() {
         printf '\tfor ; len(rargs) > 0; rargs = rargs[1:] {\n\t\tfirstArg := strings.TrimSpace(rargs[0])\n'
         for i in $(seq 1 16); do printf '\t\t// gap line %s keeps firstArg outside the window around the quoted code\n' "$i"; done
         printf '\t\tif firstArg == "" || firstArg[0] != %s {\n\t\t\tout = append(out, rargs[0])\n\t\t\tcontinue\n\t\t}\n\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n\t\t\tbreak\n\t\t}\n\t}\n\treturn out\n}\n' "'-'"
-        printf '\ntype StatusCoder interface{ Code() int }\n\ntype Batch []error\n\nfunc (b Batch) Error() string { return "batch" }\n\n// Report returns the exit code for err.\nfunc Report(err error) int {\n\tif sc, ok := err.(StatusCoder); ok {\n\t\treturn sc.Code()\n\t}\n\tif b, ok := err.(Batch); ok {\n\t\treturn len(b)\n\t}\n\treturn 1\n}\n'
+        printf '\ntype StatusCoder interface{ Code() int }\n\ntype Batch []error\n\nfunc (b Batch) Error() string { return "batch" }\n\n// Report returns the exit code for err.\nfunc Report(err error) int {\n\tif sc, ok := err.(StatusCoder); ok {\n\t\treturn sc.Code()\n\t}\n\tif b, ok := err.(Batch); ok {\n\t\treturn len(b)\n\t}\n\treturn 1\n}\n\n// Join is the inverse of Split.\nfunc Join(parts []string) string { return strings.Join(parts, " ") }\n'
     } > "$1/a/a.go"
     printf 'package a\n\nimport "testing"\n\nfunc TestSplitPlain(t *testing.T) {\n\tif g := Split([]string{"x"}); len(g) != 1 {\n\t\tt.Fatal(g)\n\t}\n}\n' > "$1/a/a_test.go"
 }
@@ -1232,7 +1457,7 @@ await import("./src/engine10/stages/wall.ts"); const { specSiteGap } = await imp
 const g = (st, ch) => specSiteGap({ wall: { files: [], exec_spec: { status: st, uncovered_sites: ["Report"] } } }, [], {}, () => "", ch).join("+") || "-";
 out.push(`gap=${g("sealed", [])},${g("sealed", ["Report"])},${g("advisory_only", [])}`, `defect=${[...es.defectSites(task)].sort().join("+")}`);
 console.log(out.join(" | "));' 2>&1)"
-    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | otherquote=P0 | prop=P0 | bind=100000 | brief=none,B | gap=Report,-,- | defect=Batch+Report+Split+StatusCoder+x"
+    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | otherquote=P0 | prop=P0 | bind=100000 | brief=none,B | gap=Report,-,- | defect=Report+Split+x"
     [ "$ESU" = "$WESU" ] && ok "exec spec atoms: parity from the whole body and only from quoted code, never a property write, one pair for the two sites Report reaches, binding only when input and expected value come whole from one issue example, no brief read with the knob off" \
         || bad "exec spec atoms gave: $ESU (want: $WESU)"
 fi
@@ -1266,6 +1491,25 @@ for vt in 2 latest; do
     rm -rf "$T/es-ts-$vt"; make_es_ts "$T/es-ts-$vt" "$VT_NM"
     es_leg "vitest $vt" vitest "$T/es-ts-$vt" src/slug.test.ts "$ES_TS_TASK" "$ES_TS_REPLY" "sealed src/loki_wall_spec.test.ts binding=LokiSpec_C1_Lower advisory=LokiSpec_C2_Other guards=LokiSpec_S1_Plain dropped=LokiSpec_S2_Missing sealed=LokiSpec_C1_Lower:red"
 done
+# generator route (T174): by default one toolLessCall (stub Agent SDK query, no network): no agent session runs, the query has no tools,
+# one turn, thinking adaptive at effort low, its dollars land in the child ledger as phase exec_spec and on the outcome; under
+# LOKI_E10_INVOKER=cli the generator goes through the run's own CLI session instead (the stub provider in these tests).
+if command -v go >/dev/null 2>&1; then
+    rm -rf "$T/es-tl"; make_es_go "$T/es-tl"; (cd "$T/es-tl" && git init -q -b main && git add -- . && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m base)
+    ESTL="$(cd "$ROOT/loki-ts" && ESD="$T/es-tl" TASK="$ES_GO_TASK" REPLY="$ES_GO_REPLY" env -u ANTHROPIC_API_KEY -u LOKI_SDK_OAUTH_DEV -u LOKI_E10_INVOKER -u LOKI_E10_MAX_COST_USD -u LOKI_E10_SPENT_USD LOKI_E10_RUN_ID=t timeout 300 bun -e '
+const es = await import("./src/features/exec_spec.ts"), sdk = await import("./src/runner/sdk_invoker.ts"), { readFileSync, existsSync } = require("node:fs"), e = process.env;
+let opts = null, queries = 0, sessions = 0;
+sdk.__setToolLessQueryForTests(async function* ({ options }) { queries++; opts = options; yield { type: "assistant", message: { content: [{ type: "text", text: e.REPLY }] } }; yield { type: "result", subtype: "success", is_error: false, result: e.REPLY, total_cost_usd: 0.0004, usage: { input_tokens: 2, output_tokens: 400, cache_read_input_tokens: 0, cache_creation_input_tokens: 700 }, modelUsage: { "claude-haiku-5-5": { thinkingTokens: 10 } } }; });
+const fake = { run: async () => { sessions++; return { exit: 0, killed: false }; } };
+const run = () => es.execSpecAuthor({ task: e.TASK, repoDir: e.ESD, runners: ["go"], existingTests: ["a/a_test.go"], sessions: fake, iterationId: "t-execspec", signal: new AbortController().signal });
+const a = await run(), led = `${e.ESD}/.loki/metrics/child-sessions.jsonl`, lines = existsSync(led) ? readFileSync(led, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
+const out = [`tl:${a.status}:sessions=${sessions}:queries=${queries}:tools=${JSON.stringify(opts?.tools)}:turns=${opts?.maxTurns}:thinking=${opts?.thinking?.type}/${opts?.effort}:usd=${a.generatorUsd > 0}:ledger=${lines.map((l) => l.phase).join(",")}`];
+process.env.LOKI_E10_INVOKER = "cli"; const b = await run(); out.push(`cli:${b.status}:sessions=${sessions}:queries=${queries}`);
+console.log(out.join(" | "));' 2>&1)"
+    WESTL="tl:sealed:sessions=0:queries=1:tools=[]:turns=1:thinking=adaptive/low:usd=true:ledger=exec_spec | cli:skipped:sessions=1:queries=1"
+    [ "$ESTL" = "$WESTL" ] && ok "exec spec generator: one toolLessCall by default (no agent session, no tools, thinking low, priced as exec_spec); the CLI invoker uses its session" \
+        || bad "exec spec generator gave: $ESTL (want: $WESTL)"
+fi
 # relation cases (no model call): the issue states a wrap relation, so the harness writes F(R(v)) == F(v) per strictly checked named
 # type with F(v) RECORDED on base. Real go test: both cases red on base; the right fix passes; fixing one type fails; checking Temporary
 # first (the ordering class) fails against the base record although it passes against the changed tree's own F(v) (headref=pass, which
@@ -1386,6 +1630,8 @@ if command -v go >/dev/null 2>&1; then
     [ "$(esw)" = "sealed:TestLokiSpec_C1_KeepsAfterDash:loki_wall_spec_test.go:fail=1" ] && ok "exec spec engine (default on): the binding case is sealed as the run's Wall file and is red on base ($(esw))" || { bad "exec spec engine: wall gave '$(esw)'"; dump; }
     grep -q "Executable spec: a/loki_wall_spec_test.go" "$ESPL.implement0" 2>/dev/null && grep -q "Advisory spec cases" "$ESPL.implement0" && ok "exec spec engine: the implement brief names the binding case and lists the advisory ones" || bad "exec spec engine: the implement brief has no spec block"
     [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: one named site, the right fix turns its sealed case green and is VERIFIED" || { bad "exec spec engine: right-fix outcome '$(outcome)'"; dump; }
+    esr="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; e=json.load(open(sys.argv[1])).get("exec_spec") or {}; print(e.get("status"), "num" if isinstance(e.get("seconds"), (int, float)) and e.get("seconds") >= 0 else "none", e.get("binding"), "usd" in e)' "$RUNDIR/receipt.json" 2>/dev/null)"
+    [ "$esr" = "sealed num 1 True" ] && ok "exec spec engine: the receipt records the stage's status, seconds, binding count and generator dollars ($esr)" || bad "exec spec engine: receipt exec_spec gave '$esr'"
     E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
@@ -1394,6 +1640,12 @@ if command -v go >/dev/null 2>&1; then
     E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1 The loop sits next to \`Report\`, which reads the same arguments." E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: a helper the issue only mentions in passing never costs the right fix its VERIFIED" || { bad "exec spec engine: passing-mention outcome '$(outcome)'"; dump; }
+    # the defect words must attach to the site's own span: a comparison, a negated scope and a health verdict never cap (review round 3)
+    for esx in "\`Split\` should return the operands like \`Join\` does." "Fix \`Split\`. It should not change \`Report\`, which is fine." "\`Split\` drops args; this does not affect \`Report\`." "See \`Join\` for the expected shape; \`Split\` is wrong."; do
+        E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1 $esx" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+            E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+        [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: '$esx' leaves the right fix VERIFIED" || { bad "exec spec engine: '$esx' outcome '$(outcome)'"; dump; }
+    done
     E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE=$'\t\t\tbreak' E2E_STUB_SNIPPET=$'\t\t\tbreak // looked at' LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     [ -n "$(outcome)" ] && [ "$(outcome)" != VERIFIED ] && ok "exec spec engine: a change that leaves the binding case red is not VERIFIED ($(outcome))" || { bad "exec spec engine: no-fix outcome '$(outcome)'"; dump; }

@@ -9,6 +9,7 @@ import { FINISH_LINE, type RunContext, type TestMap, type TestRef } from "../eng
 import { unitBrief } from "../features/speed/unit_mode.ts";
 import { signatureDigest } from "../util/ts_signatures.ts";
 import { contextPack, packEnabled, type ContextPack } from "../util/context_pack.ts";
+import { findDefectPins } from "../util/test_guard.ts";
 import { releaseNoteBrief } from "../project_model/conventions.ts";
 import { readVerifiedCommand } from "./repomemory.ts"; import { profileBrief } from "../runner/repo_profile.ts"; import { exampleFiles } from "../util/pr_lessons.ts";
 
@@ -28,6 +29,7 @@ export const FIXED_RULES = [
   "- Before editing a function, open the file and read the whole function, not only the snippet or suggested code quoted in the task (that text is a hint, not the spec). Make the branch you change match its sibling branches in that function: append, return or pass through the same variables they use (raw or normalized input), and add a test case that tells those two apart if the function normalizes input.",
   "- Implement the fix the issue prefers; add a fallback or workaround only on top of it, never in its place.",
   "- Run the impacted tests named below and any other targeted tests you need (the Project Model commands below say how), not the package's full suite and never npm test, nx test or another workspace-wide run: after you stop the harness re-runs your checks, and the full suite when the diff's risk tier is medium or high; a pass that exists only in your reply does not count. Run tests with the exact command the Project Model lists, never a shortened variant that changes how imports resolve; never create files or symlinks in a test directory to make an import work.",
+  "- Do not edit test, build, lint or type-check config (vitest, jest, vite, tsconfig, eslint) or a lockfile unless the task asks for it. If a listed command cannot start because of that config, leave the config alone, say so in your reply, and continue without that check.",
   "- Never leave a long-lived server running.",
   "- Never kill processes.",
   "- Write no documentation unless the task explicitly asks for it, except the release-note fragment a repository convention listed below requires. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.",
@@ -66,11 +68,14 @@ export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): Br
   const pack = model !== undefined && packEnabled(model) && files.length ? contextPack(ctx.repoDir, task, files, map?.entries ?? []) : null; // L021: haiku and sonnet only; Opus keeps today's bytes
   const whole = new Set((pack?.spans ?? []).filter((s) => s.symbol === null).map((s) => s.path)); // a file the pack shows whole needs no signatures
   const sigs = process.env["LOKI_E10_SIGS"] === "0" || !files.length ? "" : signatureDigest(ctx.repoDir, files.filter((f) => !whole.has(f)).slice(0, 5));
+  // E4: existing assertions whose expected value is the wrong value the issue reports. Off unless LOKI_E10_DEFECT_PIN=1 (prompt text, not yet measured on the benchmark).
+  const pins = process.env["LOKI_E10_DEFECT_PIN"] === "1" ? findDefectPins(ctx.repoDir, task).slice(0, 5) : [];
   const text = [
     files.length ? `Relevant files:\n${files.join("\n")}` : "",
     sigs ? `Key signatures (read the files for bodies):\n${sigs}` : "",
     pack ? pack.text : "",
     interps.length ? `Detected test interpreter (no test file to run yet; use exactly this executable, never a guessed one): ${interps.join(", ")}` : "",
+    pins.length ? `Existing assertions that pin the behavior the task reports as wrong (the correct fix is expected to change these expected values; change only these, and make sure each new expected value fails on the unfixed code):\n${pins.map((p) => `${p.file}:${p.line}: ${p.text.slice(0, 140)}`).join("\n")}` : "",
     cmds.length ? `Impacted test commands:\n${cmds.join("\n")}` : "",
     verified ? `Last verified test command: ${verified}` : "",
     releaseNoteBrief(ctx.repoDir, files), // L3: one per-run line after the cache prefix; "" when the repo has no fragment convention

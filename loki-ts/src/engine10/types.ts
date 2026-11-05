@@ -41,7 +41,7 @@ export const EVENT_TYPES = [
   "tests.restored", "test.result", "test.scoped_out", "test.skipped_on_base", "fix.round", "already.satisfied", "spec.conflict",
   "session.group_reaped",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
-  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "attempts.selected",
+  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "attempts.selected",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */
@@ -183,6 +183,7 @@ export interface Receipt {
   toolchain?: import("../util/receipt_signer.ts").Toolchain; loki_version?: string; // TEN-GATES-22: absent on receipts sealed before it existed, which still verify; loki_version (VERSION at seal) likewise
   /** T2: "test fails without the fix: yes | no | inconclusive (reason)"; omitted when LOKI_MUTATION_PROOF=0 or the verdict was not VERIFIED. */
   mutation_proof?: string;
+  exec_spec?: { status: string; seconds: number; binding: number; usd: number | null }; // present only when the exec spec stage ran: its wall seconds and the generator session's dollars (null when unmetered or no session ran)
   /** XV-1: cross-review judge and whether it is a different vendor than the builder (LOKI_XVENDOR_DEFAULT=1 only). */
   review?: { provider: string | null; vendor_differs: boolean };
   /** T2: the counted outcome for METRICS: "yes" | "no" | "inconclusive". */
