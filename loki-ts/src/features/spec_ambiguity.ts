@@ -150,7 +150,7 @@ export function resolveChoices(task: string, ctx: ChoiceCtx = {}): ChoiceResolut
   try {
     const comments = (ctx.comments ?? []).filter((c) => typeof c?.author === "string" && typeof c.association === "string" && typeof c.body === "string"), at = comments.length ? task.lastIndexOf(ISSUE_CONTEXT_HEAD) : -1, issue = at < 0 ? task : task.slice(0, at); // the appended comment section is not the issue's own question
     return detectOpenChoices(issue).map((c): ChoiceResolution => {
-      const prec = ctx.repoDir ? precedentFor(c, ctx.repoDir) : "", r = settle(c, comments, ctx);
+      const prec = ctx.repoDir && process.env.LOKI_E10_PRECEDENT === "1" ? precedentFor(c, ctx.repoDir) : "", r = settle(c, comments, ctx); // precedent is default off (LOKI_E10_PRECEDENT=1) until the scored L-Haiku arm measures it
       return prec ? { ...r, precedent: prec } : r;
     });
   } catch { return []; }
