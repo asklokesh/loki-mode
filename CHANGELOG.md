@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.128.1 (2026-11-04)
+
+Large issues split into slices no longer stop on a slice that promises existing tests still pass while replacing the behavior those tests check.
+
+### Fixed
+- When `loki start owner/repo#N` splits a large issue, the planner now searches the repository's tests for behavior a slice replaces (for example ILIKE search replaced by full-text search), puts that test file in the slice, and says the test is updated. Before, a slice could say "existing tests still pass", the implementer then treated the unnamed test as read-only and stopped with SPEC_CONFLICT after a few cents, and every dependent slice was skipped (seen on a real 4-slice issue on v11.127.0).
+
 ## v11.128.0 (2026-11-04)
 
 Fewer sessions on cheap runs, Go tests that count, and a tougher already-done check under --haiku.

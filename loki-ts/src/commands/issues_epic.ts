@@ -149,6 +149,7 @@ export function decomposeBrief(slug: string, i: GhIssue, triageReason: string, o
     "a slice that depends on another is built on top of that slice's branch.",
     `Use at most ${MAX_SLICES} slices, and fewer when the issue allows. Prefer independent slices (empty depends_on) that can be built at the same time over a chain: add a dependency only when a slice cannot be built without the other's code. A long serial chain is a failure of the plan, because one failed slice skips everything after it.`,
     "Give a slice several dependencies only when they are already on one chain.",
+    "When a criterion changes behavior an existing test asserts (for example replacing ILIKE search with full-text search), search the repository's tests for it, put that test file in the slice's files, and say in the criterion that the test is updated to the new behavior. Never write \"existing tests still pass\" for behavior the slice replaces: the implementer treats an unnamed existing test as read-only and stops on the contradiction.",
     "Do not edit, create or delete any repository file. You may read the repository to judge scope.",
     `Write exactly one JSON object to the file ${outPath} and nothing else to that file, in this form:`,
     '{"slices":[{"id":"s1","title":"<short title>","acceptance":["<checkable criterion>"],"depends_on":[],"files":["<path if known>"]}]}',
