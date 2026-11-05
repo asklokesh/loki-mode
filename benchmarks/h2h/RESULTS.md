@@ -853,6 +853,52 @@ with both opted in, run from a checkout of that release with this harness and th
   (54/60 is below 55/60); the example arm meets it (55/60, 0.92x) only vacuously, with zero
   examples injected, so it is not evidence either way.
 
+## Learning curve vs raw Claude Code (protocol; paid run pending)
+
+Question: on one repo, does Loki get cheaper and more first-pass-correct from run 1 to run 20, against raw
+Claude Code on the same model? This section is the protocol and the harness that answers it. It holds no
+numbers: the paid run waits for the 3-day benchmark and its results will be added here with a results file.
+
+Arms (`--sequences`, same model in every arm of one comparison):
+
+- `raw-sonnet`, `raw-haiku`: one `claude -p <task>` call per step, no Loki, no memory. The same-model floor.
+- `loki-sonnet-learn` and `loki-haiku-learn`: lessons from earlier runs and the worked example both on
+  (`LOKI_PR_LESSONS=1 LOKI_WORKED_EXAMPLE=1`, the switch a user sets on `loki start`).
+- `loki-sonnet-nolearn` and `loki-haiku-nolearn`: both off (`LOKI_NO_PR_LESSONS=1`). Isolates learning from Loki itself.
+- `loki-haiku-lessons`, `loki-haiku-example`: one knob each, as in the v2 section above.
+- `loki-auto-learn`: no model pin, `LOKI_ROUTER=auto` plus both learn knobs, so the executor comes from the repo's
+  router_history.json. It is compared with `raw-sonnet` and labelled mixed-model: do not read it as same-model.
+
+Definitions:
+
+- `--laps N` runs every sequence N times in a row inside ONE repo copy and ONE throwaway HOME. Between laps the repo
+  is reset to its base commit (main, hard reset, clean) and `.loki` memory is kept. `run_index` = (lap - 1) x steps + step,
+  so a 4-step sequence at `--laps 5` reaches run 20.
+- First-pass: the hidden tests pass and, for a Loki arm, `fix_rounds == 0`. Raw Claude Code has no repair loop, so
+  for a raw arm first-pass is the pass itself. The definition is asymmetric by construction, so pass rate and cost per
+  pass are the headline numbers; first-pass is reported next to them.
+- Pairing: records are paired on (sequence, rep, run_index) between a Loki arm and its raw baseline (`loki-haiku-*`
+  vs `raw-haiku`, `loki-sonnet-*` vs `raw-sonnet`, `loki-auto-learn` vs `raw-sonnet`). The paired table gives the
+  difference in pass rate, the difference in first-pass rate and the cost ratio (sum of Loki cost over sum of raw cost,
+  over pairs where both costs were measured), each with a 95% percentile bootstrap interval: seed 20261104, 2000
+  resamples, so a rerun on the same results gives the same interval.
+- Reading it: an interval that includes zero (or, for the cost ratio, one) is no effect. Reps must be at least 3.
+- Default stays off until measured: lessons, worked example and the router are default off on `loki start`. They flip
+  only if the paired pass difference at run 20 has its interval lower bound at or above 0 AND the cost-ratio interval
+  upper bound at or below 1.0 against `raw-sonnet`.
+
+Caveat: laps repeat identical tasks. From lap 2 the worked example matches a near-duplicate task exactly, and an
+identical base can replay a recorded verdict, so run 20 after laps measures reuse on repeated work, not
+generalization to new work. The lap 1 curve (distinct steps) is reported separately for that reason, and a sequence of
+20 distinct steps is the follow-up.
+
+The paid command (about 4 sequences x 4 steps x 5 laps x 3 reps x 3 arms; set the budget cap on its own ledger):
+
+```bash
+bash benchmarks/h2h/run.sh --sequences py-unit-registry,ts-format-catalog,go-mathx-registry,py-textkit-doctest \
+    --configs raw-sonnet,loki-sonnet-learn,loki-sonnet-nolearn --laps 5 --reps 3 --jobs 4 --budget 60 --ledger learn20.jsonl
+```
+
 ## Spend
 
 - Hard suite, on its own ledger: $56.42 against an $80 cap. Qualifying pilot $0.78 (38 runs of
@@ -890,6 +936,8 @@ bash benchmarks/h2h/run.sh --sequences all --configs loki-haiku-learn,loki-haiku
     --reps 3 --jobs 4 --budget 9.2 --ledger learning.jsonl
 bash benchmarks/h2h/run.sh --sequences all --configs loki-haiku-lessons,loki-haiku-example,loki-haiku-nolearn \
     --reps 3 --jobs 4 --budget 12 --ledger learning-v2.jsonl
+bash benchmarks/h2h/run.sh --sequences all --configs oracle,noop --laps 2           # lap self-check, no model
+bash tests/min/h2h-harness.sh                                          # stub-provider check of the raw arms, laps, curve and paired stats
 ```
 
 Real configs need a logged-in `claude` CLI plus python3, pytest, bun, go and cargo.
