@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs"; import { join } from "node:path";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"; import { join } from "node:path";
+import { listProjectFiles, safeGit } from "../util/safe_git.ts"; import { ISSUE_CONTEXT_HEAD, type IssueComment } from "../engine10/fetch_issue.ts";
 // Deterministic spec-ambiguity scoring for Intake (no LLM), kept outside the size-capped engine10 core.
 export interface AmbiguityHit { kind: "marker" | "open_question" | "hedge" | "vague"; excerpt: string; weight: number }
 const AMBIGUITY_RULES: Array<{ kind: AmbiguityHit["kind"]; weight: number; re: RegExp }> = [
@@ -9,7 +10,7 @@ const AMBIGUITY_RULES: Array<{ kind: AmbiguityHit["kind"]; weight: number; re: R
 /** Deterministic spec-ambiguity score (the no-LLM half of `loki grill`'s interrogation: unresolved markers, open questions, hedges, unmeasured quality words). A sentence with a digit never counts as vague. 0 for a clear spec. */
 export function scoreAmbiguity(task: string): { score: number; hits: AmbiguityHit[] } {
   const hits: AmbiguityHit[] = [];
-  for (const sent of task.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).filter(Boolean)) {
+  for (const sent of sentencesOf(task)) {
     const cps = Array.from(sent), excerpt = cps.length > 100 ? `${cps.slice(0, 97).join("")}...` : sent; // by code point: never splits a surrogate pair
     if (/\?$/.test(sent) && /\b(?:should|which|what|whether|how|or)\b/i.test(sent)) { hits.push({ kind: "open_question", excerpt, weight: 2 }); continue; }
     for (const r of AMBIGUITY_RULES) if (r.re.test(sent) && !(r.kind === "vague" && /\d/.test(sent))) { hits.push({ kind: r.kind, excerpt, weight: r.weight }); break; }
@@ -21,19 +22,141 @@ export const ambiguityThreshold = (): number => { const n = Number(process.env.L
 export function intakeInteractive(): boolean { if (process.env.LOKI_E10_ASSUME === "1") return false; const f = process.env.LOKI_E10_INTAKE_ASK; return f === "1" ? true : f === "0" ? false : Boolean(process.stdin.isTTY && process.stdout.isTTY); }
 export const questionFor = (h: AmbiguityHit): string => h.kind === "open_question" ? h.excerpt : `Spec says: "${h.excerpt}" - what exactly is required (a concrete value, behaviour or acceptance check)?`;
 export const assumptionFor = (h: AmbiguityHit): string => `"${h.excerpt}" taken literally: the smallest change that satisfies the stated text, no extra scope`;
-/** Ambiguity gate: one batched question set, never a silent stall or a guessing loop. Interactive: `stop` carries the checkpoint file and resume offer. Headless: `data` carries the assumptions (copied into the receipt) and intake goes on. A clear spec yields `data: {}`. */
-export function ambiguityGate(task: string, runDir: string): { stop?: { failData: Record<string, unknown>; reason: string }; data: Record<string, unknown> } {
-  const amb = scoreAmbiguity(task);
-  if (amb.score < ambiguityThreshold()) return { data: {} };
-  const qs = [...new Set(amb.hits.map(questionFor))].slice(0, 8), assumptions = [...new Set(amb.hits.map(assumptionFor))].slice(0, 8);
-  if (!intakeInteractive()) return { data: { ambiguity_score: amb.score, assumptions } };
+// ---- Open choices: an explicit either/or in the task is settled from evidence (no model call), not left for the model to guess. ----
+export const CHOICE_PREFIX = "Open choice";
+export type ChoiceBasis = "maintainer" | "task_preferred" | "existing_tests" | "none";
+export interface OpenChoice { sentence: string; options: string[]; preferred: number | null; fallback: boolean }
+export interface ChoiceResolution extends OpenChoice { basis: ChoiceBasis; picked: number | null; evidence: string }
+/** comments: the trusted comments intake read from issue.json (never parsed back out of the task text, which an issue author could forge). */
+export interface ChoiceCtx { repoDir?: string; issueNumber?: number; comments?: Pick<IssueComment, "author" | "association" | "body">[] }
+const trunc = (s: string, n: number): string => { const cps = Array.from(s.replace(/\s+/g, " ").trim()); return cps.length > n ? `${cps.slice(0, n - 3).join("")}...` : cps.join(""); };
+const AUX = "should|would|does|do|is|are|can|will|must";
+const LIST_ITEM = /^\s*(?:(?:[-*+]|\d+[.)]|\(\d+\)|[A-Da-d][.)])\s+|(?:#+\s*)?(?:\*\*)?(?:option|solution|approach|alternative|proposal)\s*#?\(?(\d+|[A-Da-d])\)?(?:\*\*)?\s*[:.)-]\s*)(.+)$/i;
+const LIST_HEAD = /\b(?:(?:possible|proposed|suggested|potential)\s+(?:solutions?|fix(?:es)?|approach(?:es)?|resolutions?)|options|alternatives|acceptable|any of the following|one of the following|either of)\b/i;
+const PREF = /\b(?:prefer(?:red|ably)?|recommended|ideal(?:ly)?|best|first choice|my preference)\b/i, FALLBACK = /\b(?:workaround|fall ?back|alternatively|as a last resort|less ideal|second choice|stop-?gap|temporary|hack)\b/i;
+const PREF_NAMED = [/\b(?:prefer(?:red)?|recommend(?:ed)?|go with|best)\b[^.\n]{0,30}?\b(?:option|solution|approach|fix|choice|alternative)\s*#?\(?(\d+|[A-Da-d])\)?/i, /\b(?:option|solution|approach|fix|choice|alternative)\s*#?\(?(\d+|[A-Da-d])\)?\s+(?:is|would be|seems)\s+(?:the\s+)?(?:preferred|recommended|best|ideal|better|right)/i];
+const sentencesOf = (t: string): string[] => t.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).filter(Boolean);
+const cleanOpt = (s: string): string => s.replace(new RegExp(`^(?:so,?\\s+|and\\s+)?(?:${AUX})\\s+`, "i"), "").replace(/[?.\s]+$/, "").trim();
+/** The two sides of one either/or sentence, or null. Splits at "or <aux>", ", or" or a single " or"; a sentence with several bare "or"s is not split (which "or" is meant is unknowable). */
+function eitherOr(sent: string): string[] | null {
+  const q = new RegExp(`^(?:so,?\\s+|and\\s+)?(?:${AUX})\\b`, "i").test(sent) && /\?$/.test(sent), w = sent.match(/\bwhether\b(.+)$/i), e = sent.match(/\beither\b\s+(.+)$/i);
+  const body = q ? sent : w ? w[1]! : e ? e[1]! : null;
+  if (!body) return null;
+  let parts = body.split(new RegExp(`,?\\s+or\\s+(?=(?:${AUX})\\b)`, "i"));
+  if (parts.length < 2) parts = body.split(/,\s+or\s+/i);
+  if (parts.length < 2) { const bare = body.split(/\s+or\s+/i); if (bare.length === 2) parts = bare; }
+  const opts = parts.map(cleanOpt).filter((x) => x.split(/\s+/).length >= 2);
+  return parts.length === 2 && opts.length === 2 ? opts : null;
+}
+/** Explicit open choices in the issue part of a task: an either/or sentence, an option list (Possible solution, Options, "Option 1:"), or a "preferred ... alternatively" pair. At most 3. */
+export function detectOpenChoices(issue: string): OpenChoice[] {
+  const out: OpenChoice[] = [], lines = issue.split("\n"), labelPref = (items: { label: string; text: string }[]): number | null => {
+    for (const re of PREF_NAMED) { const m = issue.match(re); if (m) { const k = items.findIndex((it, i) => it.label.toLowerCase() === m[1]!.toLowerCase() || String(i + 1) === m[1]); if (k >= 0) return k; } }
+    return null;
+  };
+  for (let i = 0; i < lines.length; i++) { // option lists
+    if (!LIST_ITEM.test(lines[i]!)) continue;
+    const items: { label: string; text: string }[] = []; let j = i, labeled = false;
+    for (; j < lines.length; j++) {
+      const m = lines[j]!.match(LIST_ITEM);
+      if (m) { labeled ||= m[1] !== undefined; items.push({ label: m[1] ?? String(items.length + 1), text: m[2]!.trim() }); } else if (/^\s{2,}\S/.test(lines[j]!) && items.length) items[items.length - 1]!.text += ` ${lines[j]!.trim()}`; else if (lines[j]!.trim() !== "") break;
+    }
+    let k = i - 1; while (k >= 0 && lines[k]!.trim() === "") k--;
+    const intro = k >= 0 ? lines[k]! : "";
+    if (items.length >= 2 && items.length <= 6 && (labeled || (LIST_HEAD.test(intro) && !/considered/i.test(intro)))) {
+      const fb = items.map((it) => FALLBACK.test(it.text)), pf = items.findIndex((it, n) => PREF.test(it.text) && !fb[n]), keep = items.map((_, n) => n).filter((n) => !fb[n]);
+      const preferred = pf >= 0 ? pf : fb.some(Boolean) && keep.length === 1 ? keep[0]! : labelPref(items);
+      out.push({ sentence: trunc(intro.replace(/^[#\s*]+/, "").trim() || items.map((x) => x.text).join(" / "), 100), options: items.map((it) => it.text), preferred, fallback: fb.some(Boolean) });
+    }
+    i = j - 1;
+  }
+  const sents = sentencesOf(issue);
+  for (const s of sents) { const o = eitherOr(s); if (o) out.push({ sentence: s, options: o, preferred: null, fallback: false }); }
+  if (!out.length) { // prose pair: a preferred sentence, then an alternative or workaround sentence
+    const p = sents.findIndex((s) => PREF.test(s) && !/\?$/.test(s)), q = p >= 0 ? sents.findIndex((s, n) => n > p && FALLBACK.test(s)) : -1;
+    if (p >= 0 && q >= 0) out.push({ sentence: sents[p]!, options: [sents[p]!, sents[q]!], preferred: 0, fallback: true });
+  }
+  return out.slice(0, 3);
+}
+const STOP = new Set("the and for are not but with that this from should would could can will does has have its their then than into when what which also only just any all one two out use used using".split(" "));
+const tokens = (t: string): Set<string> => { const s = new Set<string>(); for (const w of t.toLowerCase().match(/[a-z0-9_]+(?:\.[a-z0-9_]+)*/g) ?? []) { for (const p of [w, ...w.split(".")]) if (p.length >= 3 && !STOP.has(p)) s.add(p); } return s; };
+const distinct = (sets: Set<string>[]): Set<string>[] => sets.map((s, i) => new Set([...s].filter((w) => sets.every((o, j) => j === i || !o.has(w)))));
+type Cmt = Pick<IssueComment, "author" | "association" | "body">;
+const DECISION = /\b(?:should|let'?s|we'?ll|we will|prefer|go with|better|makes? sense|agree|instead|the right|please|i'?d|i would|lgtm)\b/i, NEGATION = /\b(?:don'?t|do not|shouldn'?t|should not|not|never)\b/i;
+function byMaintainer(c: OpenChoice, comments: Cmt[]): { k: number; evidence: string } | null {
+  const d = distinct(c.options.map(tokens));
+  for (const cm of [...comments].reverse()) for (const s of sentencesOf(cm.body).reverse()) {
+    if (!DECISION.test(s) || /\beither\b[^.?]*\bor\b/i.test(s)) continue;
+    const t = tokens(s), score = d.map((x) => [...x].filter((w) => t.has(w)).length), best = Math.max(...score);
+    if (best < 1 || score.filter((n) => n === best).length !== 1) continue;
+    let k = score.indexOf(best);
+    if (NEGATION.test(s)) { if (c.options.length !== 2) continue; k = 1 - k; }
+    return { k, evidence: `latest maintainer comment by ${cm.author} (${cm.association}): "${trunc(s, 90)}"` };
+  }
+  return null;
+}
+const snippetsOf = (opt: string): string[] => [...new Set([...(opt.match(/`([^`]{3,80})`/g) ?? []).map((x) => x.slice(1, -1)), ...(opt.match(/"([^"\n]{3,80})"/g) ?? []).map((x) => x.slice(1, -1)), ...(opt.match(/\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\b|\b[a-z]+[A-Z]\w*\b|\b[A-Za-z]+_[A-Za-z_]+\b/g) ?? [])])].filter((x) => x.replace(/\s/g, "").length >= 4 && /[^A-Za-z0-9_\s]|[a-z][A-Z]|_/.test(x)); // a bare word is not a literal worth looking for
+const TEST_DOC = /(?:^|\/)(?:tests?|__tests__|docs?|spec)\/|[._-](?:test|spec)\.\w+$|_test\.\w+$|(?:^|\/)test_[^/]*\.py$|\.mdx?$/i;
+function corpus(repoDir: string): { path: string; text: string }[] {
+  const out: { path: string; text: string }[] = [];
+  for (const f of listProjectFiles(repoDir).filter((p) => TEST_DOC.test(p)).slice(0, 600)) {
+    try { if (statSync(join(repoDir, f)).size <= 200_000) out.push({ path: f, text: readFileSync(join(repoDir, f), "utf8").replace(/\s+/g, "") }); } catch { /* unreadable file: not evidence */ }
+  }
+  return out;
+}
+function byExistingTests(c: OpenChoice, repoDir: string): { k: number; evidence: string } | null {
+  const per = c.options.map(snippetsOf), uniq = per.map((s, i) => s.filter((x) => per.every((o, j) => j === i || !o.includes(x)))), files = corpus(repoDir);
+  const hit = uniq.map((s) => s.flatMap((x) => { const f = files.find((y) => y.text.includes(x.replace(/\s+/g, ""))); return f ? [{ x, path: f.path }] : []; }));
+  const n = hit.map((h) => h.length), best = Math.max(...n);
+  if (best < 1 || n.filter((v) => v === best).length !== 1) return null;
+  const k = n.indexOf(best);
+  return { k, evidence: `existing tests or docs already pin it (${hit[k]!.slice(0, 2).map((h) => `\`${trunc(h.x, 40)}\` in ${h.path}`).join("; ")}); the other option has ${Math.min(...n.filter((_, i) => i !== k))} pinned` };
+}
+/** One line of recent history for the symbols the options name: the newest commits touching their defining files, and any commit mentioning the issue. "" when unavailable. */
+function historyLine(c: OpenChoice, ctx: ChoiceCtx): string {
+  if (!ctx.repoDir) return "";
+  const git = (a: string[]): string => { try { return safeGit(ctx.repoDir!, a, { timeout: 5000, maxBuffer: 1 << 20 }).trim(); } catch { return ""; } };
+  const syms = [...new Set(c.options.flatMap(snippetsOf).filter((x) => /^[\w.]+$/.test(x)))].slice(0, 3), paths = new Set<string>();
+  for (const s of syms) for (const f of git(["grep", "-l", "-F", "-e", s, "--", ".", ":(exclude)*test*", ":(exclude)*.md"]).split("\n").filter(Boolean).slice(0, 2)) paths.add(f);
+  const log = paths.size ? git(["log", "-n", "3", "--format=%h %s", "--", ...paths]).split("\n").filter(Boolean) : [], linked = ctx.issueNumber ? git(["log", "-n", "2", `--grep=#${ctx.issueNumber}\\b`, "--format=%h %s"]).split("\n").filter(Boolean) : [];
+  return trunc([log.length ? `recent history of the touched code: ${log.join("; ")}` : "", linked.length ? `commits mentioning the issue: ${linked.join("; ")}` : ""].filter(Boolean).join(". "), 240);
+}
+/** Settles each open choice in the task, in this order: the latest maintainer comment, the option the task names as preferred, the option existing tests and docs already pin, else none (the line then says to keep every existing test true and satisfy both where compatible). Deterministic, no model call, never throws. */
+export function resolveChoices(task: string, ctx: ChoiceCtx = {}): ChoiceResolution[] {
+  try {
+    const comments = ctx.comments ?? [], at = comments.length ? task.lastIndexOf(ISSUE_CONTEXT_HEAD) : -1, issue = at < 0 ? task : task.slice(0, at); // the appended comment section is not the issue's own question
+    return detectOpenChoices(issue).map((c): ChoiceResolution => {
+      const m = byMaintainer(c, comments);
+      if (m) return { ...c, basis: "maintainer", picked: m.k, evidence: m.evidence };
+      if (c.preferred !== null) return { ...c, basis: "task_preferred", picked: c.preferred, evidence: `the task text names it as preferred${c.fallback ? " and offers the other only as a fallback" : ""}` };
+      const t = ctx.repoDir ? byExistingTests(c, ctx.repoDir) : null, h = historyLine(c, ctx);
+      if (t) return { ...c, basis: "existing_tests", picked: t.k, evidence: [t.evidence, h].filter(Boolean).join(". ") };
+      return { ...c, basis: "none", picked: null, evidence: ["no maintainer reply, stated preference or pinned test or doc decides it", h].filter(Boolean).join(". ") };
+    });
+  } catch { return []; }
+}
+/** The one assumptions line for a resolved choice: the option to implement and its one-line evidence (copied into the receipt and the per-run brief). */
+export const choiceLine = (c: ChoiceResolution): string => c.picked === null
+  ? `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> no evidence picks one (${c.evidence}). Keep every existing test and documented behavior true, satisfy both options where they do not conflict, and name the one you chose.`
+  : `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> implement option ${c.picked + 1}: "${trunc(c.options[c.picked]!, 130)}". Evidence (${c.basis}): ${c.evidence}.${c.fallback ? " A fallback may be added only on top of it." : ""}`;
+/** Ambiguity gate: one batched question set, never a silent stall or a guessing loop. Interactive: `stop` carries the checkpoint file and resume offer. Headless: `data` carries the assumptions (copied into the receipt) and intake goes on. A clear spec yields `data: {}`.
+ *  An explicit open choice (resolveChoices) is answered from evidence first: its line joins the assumptions, and a choice that evidence settled is not asked of a person. */
+export function ambiguityGate(task: string, runDir: string, ctx: ChoiceCtx = {}): { stop?: { failData: Record<string, unknown>; reason: string }; data: Record<string, unknown> } {
+  const choices = resolveChoices(task, ctx), settled = choices.filter((c) => c.basis !== "none").map((c) => c.sentence);
+  const amb = scoreAmbiguity(task), hits = amb.hits.filter((h) => !settled.some((s) => s === h.excerpt || (h.excerpt.endsWith("...") && s.startsWith(h.excerpt.slice(0, -3)))));
+  const score = hits.reduce((n, h) => n + h.weight, 0), choiceLines = choices.map(choiceLine);
+  if (score < ambiguityThreshold()) return { data: choiceLines.length ? { assumptions: choiceLines } : {} };
+  const qs = [...new Set(hits.map(questionFor))].slice(0, 8), assumptions = [...new Set(hits.map(assumptionFor))].slice(0, 8);
+  if (!intakeInteractive()) return { data: { ambiguity_score: score, assumptions: [...assumptions, ...choiceLines] } };
   mkdirSync(runDir, { recursive: true });
   const checkpoint = join(runDir, "intake-questions.md");
-  writeFileSync(checkpoint, `# Spec needs clarification (ambiguity score ${amb.score})\n\n${qs.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n`, "utf8");
-  return { data: {}, stop: { failData: { ambiguity_score: amb.score, questions: qs, checkpoint }, reason: `spec is ambiguous (score ${amb.score}); ${qs.length} question(s) in ${checkpoint}. Resume: answer them in the task text and rerun, run \`loki grill\` for a deeper interrogation, or rerun with LOKI_E10_ASSUME=1 to proceed on recorded assumptions` } };
+  writeFileSync(checkpoint, `# Spec needs clarification (ambiguity score ${score})\n\n${qs.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n`, "utf8");
+  return { data: {}, stop: { failData: { ambiguity_score: score, questions: qs, checkpoint }, reason: `spec is ambiguous (score ${score}); ${qs.length} question(s) in ${checkpoint}. Resume: answer them in the task text and rerun, run \`loki grill\` for a deeper interrogation, or rerun with LOKI_E10_ASSUME=1 to proceed on recorded assumptions` } };
 }
-/** Per-run prompt lines (after the task, never in the cache-stable prefix) telling plan and implement to work on the recorded assumptions instead of guessing. Empty when none. */
+/** Per-run prompt lines (after the task, never in the cache-stable prefix) telling plan and implement to work on the recorded assumptions instead of guessing. Empty when none. A choice line (CHOICE_PREFIX) says it was settled from evidence, so it gets its own header. */
 export function assumptionsBlock(assumptions: unknown): string[] {
   const list = Array.isArray(assumptions) ? assumptions.filter((a): a is string => typeof a === "string" && a.length > 0) : [];
-  return list.length ? [`The task text is ambiguous and nobody could be asked. Work on these recorded assumptions, no extra scope, and say in your final message where one mattered:\n${list.map((a, i) => `${i + 1}. ${a}`).join("\n")}`] : [];
+  const num = (xs: string[]): string => xs.map((a, i) => `${i + 1}. ${a}`).join("\n"), choices = list.filter((a) => a.startsWith(CHOICE_PREFIX)), plain = list.filter((a) => !a.startsWith(CHOICE_PREFIX));
+  return [...(plain.length ? [`The task text is ambiguous and nobody could be asked. Work on these recorded assumptions, no extra scope, and say in your final message where one mattered:\n${num(plain)}`] : []),
+    ...(choices.length ? [`The task leaves a choice open. Each line gives the option to implement and the evidence from the task and the repo (or the rule to follow when none decides it); follow it, no extra scope, and name the option you implemented in your final message:\n${num(choices)}`] : [])];
 }
