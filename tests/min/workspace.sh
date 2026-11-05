@@ -208,8 +208,14 @@ rc, js = capture(workspace.main, ["affected", "shop", "--json", G])
 chk("CLI affected --json exits 0 with an order key and writes no files", rc == 0 and "order" in json.loads(js) and os.listdir(cwd) == [], (rc, js, os.listdir(cwd)))
 rc, _ = capture(workspace.main, ["affected", "nope", "x"])
 chk("CLI affected on an unknown workspace exits 2", rc == 2, rc)
-rc, _ = capture(workspace.main, ["run", "shop", "--affected"])
-chk("CLI run --affected without a goal exits 2", rc == 2, rc)
+rc, _ = capture(workspace.main, ["run", "shop"])
+chk("CLI run without a goal exits 2", rc == 2, rc)
+seen = {}
+_orig_run = workspace.run_workspace
+workspace.run_workspace = lambda name, ref, wss, **kw: (seen.update(kw, ref=ref) or (0, None))
+capture(workspace.main, ["run", "shop", "--affected", "x"])
+workspace.run_workspace = _orig_run
+chk("run has no --affected flag (selection is yaml or env only)", seen.get("affected") is None and seen.get("ref") == "--affected x", seen)
 PYEOF
 )"
 while IFS= read -r l; do

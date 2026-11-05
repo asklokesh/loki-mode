@@ -7,7 +7,6 @@
     loki workspace status [<run-id>]
     loki workspace infer <name>
     loki workspace affected <name> [--json] <goal>
-    loki workspace run <name> --affected <goal>
 
 On by default (LOKI_WORKSPACES=0 disables). Workspaces are defined in loki.yaml:
 
@@ -46,8 +45,8 @@ each topological layer; a failing stage SKIPs every later layer, so a broken
 contract stops before downstream repos build on it.
 
 `affected` prints which repos a goal touches (lexical search of each local checkout, file:line evidence) and
-the run order; no model call, no files. `run --affected` (or `affected: true`, or LOKI_WORKSPACE_AFFECTED=1)
-runs only those repos in declared plus inferred `after` order and records the selection in integration.json.
+the run order; no model call, no files. `affected: true` in the workspace (or LOKI_WORKSPACE_AFFECTED=1)
+makes `run` run only those repos in declared plus inferred `after` order and records the selection in integration.json.
 Unselected repos stay read-only via LOKI_WS_DIR_*. Off by default.
 
 Test seam: LOKI_WORKSPACE_LAUNCHER replaces the engine launcher (called with
@@ -991,7 +990,7 @@ def main(argv):
         say("loki workspace is disabled (LOKI_WORKSPACES=0). Unset it to use workspaces.")
         return 2
     if not argv or argv[0] in ("-h", "--help", "help"):
-        say("Usage: loki workspace list | show <name> | infer <name> | affected <name> [--json] <goal> | run <name> [--affected] <owner/repo#N | task text> | status [<run-id>]")
+        say("Usage: loki workspace list | show <name> | infer <name> | affected <name> [--json] <goal> | run <name> <owner/repo#N | task text> | status [<run-id>]")
         return 0 if argv else 2
     try:
         workspaces, errors = load_workspaces()
@@ -1020,11 +1019,9 @@ def main(argv):
         if rest:
             return affected(argv[1], workspaces, " ".join(rest), as_json="--json" in argv[2:])
     if cmd == "run" and len(argv) >= 3:
-        rest = [a for a in argv[2:] if a != "--affected"]
-        if rest:
-            rc, _ = run_workspace(argv[1], " ".join(rest), workspaces, affected=True if "--affected" in argv[2:] else None)
-            return rc
-    say("Usage: loki workspace list | show <name> | infer <name> | affected <name> [--json] <goal> | run <name> [--affected] <issue-ref> | status [<run-id>]")
+        rc, _ = run_workspace(argv[1], " ".join(argv[2:]), workspaces)
+        return rc
+    say("Usage: loki workspace list | show <name> | infer <name> | affected <name> [--json] <goal> | run <name> <issue-ref> | status [<run-id>]")
     return 2
 
 

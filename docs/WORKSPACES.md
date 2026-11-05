@@ -52,7 +52,7 @@ loki workspace status <run-id>
 
 ```bash
 loki workspace affected shop "rename customer id everywhere"      # print-only, no model call, writes nothing
-loki workspace run shop --affected "rename customer id everywhere"
+LOKI_WORKSPACE_AFFECTED=1 loki workspace run shop "rename customer id everywhere"
 loki start --workspace shop "<goal>"                              # with LOKI_WORKSPACE_AFFECTED=1 or `affected: true`
 ```
 
@@ -67,11 +67,11 @@ Terms are lexical and limited:
 
 Fail-open cases, so a repo is never silently dropped on an error: a repo with no local checkout is included unscanned, a repo whose scan errors or exceeds 60 seconds is included, and when no repo matches at all every repo runs (`no repo matched the goal; running every repo`).
 
-`run --affected` runs only the selected repos. Their order is the declared `after` edges plus the edges `infer` computes (manifest, import and OpenAPI generator evidence), limited to the selected repos; an inferred cycle falls back to the declared edges and prints why. Unselected repos are not changed, but the integration command still sees their checkouts through `LOKI_WS_DIR_<OWNER>_<REPO>`. The selection (with evidence) is written to integration.json, so the signed composite.json also attests which repos were chosen and why.
+With `affected: true` or `LOKI_WORKSPACE_AFFECTED=1`, `run` runs only the selected repos. Their order is the declared `after` edges plus the edges `infer` computes (manifest, import and OpenAPI generator evidence), limited to the selected repos; an inferred cycle falls back to the declared edges and prints why. Unselected repos are not changed, but the integration command still sees their checkouts through `LOKI_WS_DIR_<OWNER>_<REPO>`. The selection (with evidence) is written to integration.json, so the signed composite.json also attests which repos were chosen and why.
 
 Every repo PR comment now ends with a "Linked PRs" section naming each sibling PR (with `(this PR)` and `(draft)` markers), and the run summary prints each PR URL plus `linked PRs: K of N repos have an open PR (R ready, D draft)`. These need `gh`; without it the line reads 0 of N.
 
-Pruning is off by default, because a lexical miss would leave a repo out of the linked set while the run exits 0. Turn it on per run with `--affected`, per workspace with `affected: true`, or for `loki start --workspace` with `LOKI_WORKSPACE_AFFECTED=1`.
+Pruning is off by default, because a lexical miss would leave a repo out of the linked set while the run exits 0. Turn it on per workspace with `affected: true`, or per run (including `loki start --workspace`) with `LOKI_WORKSPACE_AFFECTED=1`.
 
 ## Verify a workspace run
 
