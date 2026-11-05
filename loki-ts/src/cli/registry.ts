@@ -304,7 +304,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("migrate", "FOLD", "bash", "Legacy migration", "Superseded by modernize", { migrate: "loki \"modernize <what> to <target>\"" }),
   cmd("dogfood", "REMOVED", "bash", "Dogfood run", "Legacy engine", { migrate: "It drove the removed legacy loop; use: loki start \"<goal>\"" }),
   cmd("steer", "FOLD", "bash", "Nudge a running build", "Session control", { migrate: "loki chat --attach" }),
-  cmd("outcomes", "REMOVED", "bash", "Outcome analytics", "Legacy outcome store", { migrate: "It drove the removed legacy loop; use: loki start \"<goal>\"" }),
+  cmd("outcomes", "HIDE", "bash", "Outcome analytics: revert, survival and change-failure per receipt; canary {plan,record,evaluate,receipt,verify}", "Live: lib/outcome_ledger.py via cmd_outcomes; documented for self-hosted operators"),
   cmd("worktree", "REMOVED", "bash", "Worktree management", "Legacy parallel mode", { aliases: ["wt"], migrate: "It drove the removed legacy loop; use: loki start \"<goal>\"" }),
   cmd("checkpoint", "FOLD", "bash", "Legacy checkpoints", "Legacy engine", { aliases: ["cp"], migrate: "loki undo" }),
   cmd("analyze", "FOLD", "bash", "Codebase analysis", "Legacy analyze flow", { migrate: "loki start \"<goal>\"" }),
