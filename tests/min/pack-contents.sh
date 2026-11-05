@@ -30,6 +30,8 @@ pkg = json.load(open(os.path.join(root, "package.json")))
 os.chdir(root)
 
 # Produced by `npm run prepublishOnly` in release.yml, absent from a source checkout.
+# loki-ts/dist is not committed: scripts/local-ci.sh builds it before this test, so it must be
+# present on disk and in the tarball here (a missing build fails the required-entry check below).
 BUILT_AT_PUBLISH = {
     "packages/control-plane/dist/server.js",
     "packages/control-plane/dist/ask-tools-server.js",
@@ -53,7 +55,7 @@ res("every package.json files entry resolves on disk", not missing, " ".join(mis
 
 required = [
     "bin/loki", "bin/loki-mode.js", "SKILL.md", "VERSION", "package.json",
-    "loki-ts/dist/loki.js", "providers/model_catalog.json", "autonomy/run.sh", "autonomy/loki",
+    "loki-ts/dist/loki.js", "loki-ts/dist/cockpit.js", "providers/model_catalog.json", "autonomy/run.sh", "autonomy/loki",
     "skills/fixtures/demo-receipt/receipt.json", "skills/fixtures/demo-receipt/pubkey.jwk",
     "web-app/dist/index.html", "benchmarks/seeded-defects/manifest.json",
     "scripts/verify-pr-sandbox.sh",

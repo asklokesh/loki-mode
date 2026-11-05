@@ -25,7 +25,7 @@
 #   3. Commits and pushes (triggers GitHub Actions release workflow)
 #
 # --bump-only: bumps
-# every version file plus loki-ts/dist, then exits. No prompt, no git add,
+# every version file and proves loki-ts builds with it, then exits. No prompt, no git add,
 # no commit, no push -- run this instead of hand-editing
 # VERSION, then commits the result itself.
 #
@@ -148,9 +148,9 @@ Arguments:
 
 Options:
   --dry-run    Show what would be done without making changes
-  --bump-only  Bump version files + loki-ts/dist, then exit. No commit, no push.
+  --bump-only  Bump version files and prove the loki-ts build embeds it, then exit. No commit, no push.
   --check-clean  Run after the release commit: exit 1 naming any tracked file
-               still modified (E-151: a stamped dist map left out of the commit).
+               still modified (E-151: a version file left out of the commit).
   --ship --notes FILE
                One-command ship (bump type defaults to patch): bump, insert FILE
                as the new CHANGELOG section, rebuild dist, commit, check
@@ -407,8 +407,6 @@ bump_all_version_files() {
 # Files staged into the release commit. Kept as its own list, sourced from
 # the same set bump_all_version_files touches, so the commit can never ship
 # a partially-bumped tree (some files updated on disk but left unstaged).
-# Dist files a release commit stages.
-RELEASE_DIST_FILES="loki-ts/dist/loki.js loki-ts/dist/loki.js.map"
 RELEASE_COMMIT_FILES="VERSION package.json SKILL.md docker/Dockerfile docker/Dockerfile.sandbox plugins/loki-mode/.claude-plugin/plugin.json server.json CLAUDE.md dashboard/__init__.py mcp/__init__.py docs/INSTALLATION.md wiki/Home.md wiki/_Sidebar.md wiki/API-Reference.md web-app/src/components/Footer.tsx web-app/src/components/WhatsNew.tsx README.md helm/loki-mode/Chart.yaml deploy/helm/autonomi/Chart.yaml deploy/helm/control-plane/Chart.yaml docs/CLI-REFERENCE.md docs/CLI-INVENTORY.md CHANGELOG.md"
 
 # --- Release gate ---------------------------------------------------------
@@ -418,76 +416,13 @@ RELEASE_COMMIT_FILES="VERSION package.json SKILL.md docker/Dockerfile docker/Doc
 # shellcheck disable=SC2034
 RELEASE_REQUIRED_WORKFLOWS=()
 
-# loki-ts/dist rebuilds are content-hashed (writeDeterministicDebugId
-# in loki-ts/scripts/build.ts) but the hash still shifts across checkouts
-# for bundles whose content never depends on VERSION (cockpit.js today).
-# On a version-only bump that leaves loki.js/loki.js.map genuinely diffing
-# (they embed the version) but cockpit.js/cockpit.js.map diffing in nothing
-# but the "//# debugId=" line / the map's "debugId" field -- pure git churn.
-# For each *.js/*.map under $1, restore it from HEAD when the ONLY diff is
-# that debugId text; files that changed for real (loki.js) are left alone.
-release_restore_debugid_only_dist() {
-    local dist_dir="$1" file rel head_txt work_txt head_norm work_norm
-    local sed_expr='s/(\/\/# debugId=)[0-9A-Fa-f]+/\1X/; s/("debugId"[[:space:]]*:[[:space:]]*")[0-9A-Fa-f]+(")/\1X\2/'
-
-    [ -d "$dist_dir" ] || return 0
-    for file in "$dist_dir"/*.js "$dist_dir"/*.map; do
-        [ -f "$file" ] || continue
-        rel="${file#"$ROOT_DIR"/}"
-        head_txt="$(git -C "$ROOT_DIR" show "HEAD:$rel" 2>/dev/null)" || continue
-        work_txt="$(cat "$file")"
-        [ "$head_txt" = "$work_txt" ] && continue
-
-        head_norm="$(printf '%s' "$head_txt" | sed -E "$sed_expr")"
-        work_norm="$(printf '%s' "$work_txt" | sed -E "$sed_expr")"
-        if [ "$head_norm" = "$work_norm" ]; then
-            git -C "$ROOT_DIR" checkout HEAD -- "$rel"
-            log_step "Restored $rel (debugId-only diff)"
-        fi
-    done
-
-    # a .js file left alone above (it has a REAL diff, e.g. the
-    # version literal) can still have picked up a fresh "//# debugId="
-    # trailer from the rebuild, even though its .map companion was just
-    # restored to HEAD verbatim by the loop above. Shipping that pair
-    # leaves loki.js and loki.js.map carrying two different debugIds.
-    # Whenever a .map is now byte-identical to HEAD, restore only its
-    # companion .js's trailer line to HEAD's value too (the real diff
-    # elsewhere in the .js stays untouched), so the pair matches again.
-    local map_file js_file head_id tmp_js
-    for map_file in "$dist_dir"/*.js.map; do
-        [ -f "$map_file" ] || continue
-        js_file="${map_file%.map}"
-        [ -f "$js_file" ] || continue
-
-        rel="${map_file#"$ROOT_DIR"/}"
-        head_txt="$(git -C "$ROOT_DIR" show "HEAD:$rel" 2>/dev/null)" || continue
-        work_txt="$(cat "$map_file")"
-        [ "$head_txt" = "$work_txt" ] || continue
-
-        rel="${js_file#"$ROOT_DIR"/}"
-        head_txt="$(git -C "$ROOT_DIR" show "HEAD:$rel" 2>/dev/null)" || continue
-        head_id="$(printf '%s\n' "$head_txt" | grep -E -o '^//# debugId=[0-9A-Fa-f]+$' | tail -n1)"
-        [ -n "$head_id" ] || continue
-        grep -qF "$head_id" "$js_file" && continue
-
-        tmp_js="$(mktemp "${js_file}.XXXXXX")" || continue
-        if sed -E "s|^//# debugId=[0-9A-Fa-f]+\$|${head_id}|" "$js_file" >"$tmp_js"; then
-            mv "$tmp_js" "$js_file"
-            log_step "Restored $rel debugId trailer to match HEAD (paired with restored .map)"
-        else
-            rm -f "$tmp_js"
-        fi
-    done
-}
-
 # shared by both run_bump_only failure branches below -- restores
-# loki-ts/dist from HEAD, logs why, and exits non-zero. A build that exits 0
+# logs why and exits non-zero. loki-ts/dist is not tracked (the build is atomic, so
+# a failed build leaves the previous dist untouched). A build that exits 0
 # without embedding the new version is the same "don't ship a stale/broken
 # dist" case as a build that fails outright, so both routes through here.
 release_bump_only_fail() {
     log_error "$1"
-    git -C "$ROOT_DIR" checkout -- loki-ts/dist
     exit 1
 }
 
@@ -515,7 +450,6 @@ PY
 }
 
 # after the release commit no tracked file may still differ from HEAD.
-# dist is tracked, so a plain `git add <file>` suffices for a leftover map.
 release_commit_clean() {
     local dirty
     dirty=$(git -C "${ROOT_DIR}" status --porcelain --untracked-files=no | sed 's/^...//')
@@ -525,7 +459,7 @@ release_commit_clean() {
     return 1
 }
 
-# --bump-only: version files + loki-ts/dist, no git side effects.
+# --bump-only: version files + a proving build of loki-ts/dist (untracked), no git side effects.
 run_bump_only() {
     local current new
 
@@ -544,28 +478,26 @@ run_bump_only() {
 }
 
 # Rebuild loki-ts/dist and require it to embed $1. Shared by --bump-only and
-# --ship. On failure loki-ts/dist is restored from HEAD and the script exits 1.
+# --ship. dist is built, never committed: this proves the build works and embeds $1.
 release_rebuild_dist() {
     local new="$1" dist_file="$ROOT_DIR/loki-ts/dist/loki.js"
     if [ -d "$ROOT_DIR/loki-ts" ]; then
-        # fail fast on a missing node_modules instead of letting
-        # `bun run build` fail mid-bundle and delete tracked dist files.
+        # fail fast on a missing node_modules instead of a mid-bundle resolve error.
         if [ ! -d "$ROOT_DIR/loki-ts/node_modules" ]; then
             log_error "loki-ts/node_modules missing -- run: cd loki-ts && bun install"
             exit 1
         fi
         log_step "Rebuilding loki-ts/dist..."
         if ! ( cd "$ROOT_DIR/loki-ts" && bun run build ); then
-            release_bump_only_fail "loki-ts build failed -- restoring loki-ts/dist from HEAD"
+            release_bump_only_fail "loki-ts build failed"
         fi
         if [ -f "$dist_file" ] && grep -q "$new" "$dist_file"; then
             if ! release_dist_maps_clean; then
-                release_bump_only_fail "loki-ts/dist source maps contain absolute or repo-escaping paths (is loki-ts/node_modules a symlink to another checkout?) -- restoring loki-ts/dist from HEAD"
+                release_bump_only_fail "loki-ts/dist source maps contain absolute or repo-escaping paths (is loki-ts/node_modules a symlink to another checkout?)"
             fi
             log_success "loki-ts/dist rebuilt with $new"
-            release_restore_debugid_only_dist "$ROOT_DIR/loki-ts/dist"
         else
-            release_bump_only_fail "loki-ts/dist rebuild did not embed $new in $dist_file -- restoring loki-ts/dist from HEAD"
+            release_bump_only_fail "loki-ts/dist rebuild did not embed $new in $dist_file"
         fi
     else
         log_warn "loki-ts/ not found, skipping dist rebuild"
@@ -573,7 +505,7 @@ release_rebuild_dist() {
 }
 
 # one `git add` line per modified tracked file; `-f` when the path sits
-# under an ignored directory (a tracked-but-ignored dist needs it).
+# under an ignored directory.
 release_stage_lines() {
     local f
     git -C "$ROOT_DIR" status --porcelain --untracked-files=no | sed 's/^...//' | while IFS= read -r f; do
@@ -594,8 +526,7 @@ release_stage_lines() {
 SHIP_REMOTE="origin"
 SHIP_FORBIDDEN_STAGED="docs/v10/CONTROL.md docs/v10/usage-readings.tsv bun.lock out2.txt .claude/providers.ts"
 # Tracked inputs of `bun run build`. A working-tree edit here would be bundled
-# into the committed dist, so it must match HEAD like the release files do.
-# loki-ts/dist itself is not listed: the build regenerates it wholesale.
+# into the published dist, so it must match HEAD like the release files do.
 SHIP_BUILD_INPUTS="loki-ts/src loki-ts/scripts loki-ts/data loki-ts/package.json loki-ts/tsconfig.json loki-ts/bun.lock loki-ts/bunfig.toml"
 SHIP_PHASE_NAME=""
 SHIP_PHASE_START=0
@@ -790,21 +721,13 @@ run_ship() {
     for f in $ship_gen_changed; do
         git -C "$ROOT_DIR" add -- "$f"
     done
-    for f in $RELEASE_DIST_FILES; do
-        [ -f "$ROOT_DIR/$f" ] || ship_refuse SHIP_DIST_MISSING "$f does not exist after the build"
-        git -C "$ROOT_DIR" add -f -- "$f"
-    done
-    # No pipe into grep -q: under pipefail, grep exiting on its first match SIGPIPEs the still-writing git show (rc 141)
-    # on a multi-MB bundle, which read as "does not embed" (v11.17.60 ship). A here-string reads the blob in full.
-    grep -qF -- "$new" <<<"$(git -C "$ROOT_DIR" show ":loki-ts/dist/loki.js")" \
-        || ship_refuse SHIP_DIST_STALE "staged loki-ts/dist/loki.js does not embed $new"
     staged="$(git -C "$ROOT_DIR" diff --cached --name-only)"
     hit=""
     for f in $SHIP_FORBIDDEN_STAGED; do
         if printf '%s\n' "$staged" | grep -qxF -- "$f"; then hit="$hit $f"; fi
     done
     [ -z "$hit" ] || ship_refuse SHIP_FORBIDDEN_STAGED "refusing to commit:$hit (unstage with git restore --staged)"
-    # Allowlist: every staged path must be a release file or the dist pair.
+    # Allowlist: every staged path must be a release file.
     hit=""
     while IFS= read -r f; do
         [ -n "$f" ] || continue
@@ -820,7 +743,7 @@ run_ship() {
     git -C "$ROOT_DIR" -c user.name=asklokesh -c user.email=lokeshmure@live.com \
         commit -q -m "release: v$new" -- $staged || ship_refuse SHIP_COMMIT_FAILED "git commit failed"
     SHIP_COMMITTED="$(git -C "$ROOT_DIR" rev-parse HEAD)"
-    if [ -n "$(git -C "$ROOT_DIR" diff --name-only HEAD -- VERSION CHANGELOG.md loki-ts/dist/loki.js loki-ts/dist/loki.js.map)" ]; then
+    if [ -n "$(git -C "$ROOT_DIR" diff --name-only HEAD -- VERSION CHANGELOG.md)" ]; then
         ship_refuse SHIP_DIRTY_AFTER_COMMIT "release files still differ from the commit"
     fi
     # Anything the generator changed that the commit did not take is a

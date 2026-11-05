@@ -156,7 +156,7 @@ COPY --chown=loki:loki completions/ ./completions/
 
 # Bun runtime artifacts: shim + pre-built TypeScript bundle + rolling data.
 # loki-ts/dist/loki.js is built by `bun run build` (see loki-ts/scripts/build.ts)
-# and committed to the repo; ~37 KiB minified.
+# before this build (release.yml, or by hand from a clone); it is not committed.
 # loki-ts/data/ holds rolling tables (e.g. model-pricing.json) that budget.ts
 # reads at runtime -- shipping the dir keeps the JSON-as-source-of-truth
 # contract intact across Docker installs.
