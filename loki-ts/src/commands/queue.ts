@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 import { atomicWriteText } from "../util/atomic.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { suggestWord } from "../cli/registry.ts";
+import { partialCostText } from "../engine10/output.ts";
 import { printForecast, readingFromGovernorJson, recordWindowDelta, type UsageReading } from "../contrib/forecast.ts";
 
 export interface QueueItem {
@@ -25,6 +26,7 @@ export interface RunResult {
   output: string;
   verdict?: string | null;
   costUsd?: number | null;
+  partial?: { usd: number; measured: number; total: number } | null; // receipt cost.usd is null but some sessions priced (E-69): the known dollars, never dropped
   didWork?: boolean | null; // the sealed receipt's head_sha differs from its base_sha: the run committed a change; null when no receipt says
   runId?: string | null; // the engine10 run id (.loki/runs/<id>), so `loki issues run` can stack on loki/<id> (MASS-2)
 }
@@ -346,7 +348,7 @@ export async function queueRun(args: readonly string[], d: QueueDeps): Promise<n
         position,
         verdict,
         pr: prUrl,
-        cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : "NOT RECORDED",
+        cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : res.partial ? partialCostText(res.partial.usd, res.partial.measured, res.partial.total, 2) : "NOT RECORDED", // spent (below) stays the measured figure only
         note: g.ok ? "" : `governor unreadable (${g.reason}); proceeded`,
       };
       rows.push(row);
@@ -432,7 +434,7 @@ export async function defaultGovernor(): Promise<GovernorReading> {
 
 // Engine10 writes .loki/runs/<id>/receipt.json; the legacy loops write .loki/proofs/<id>/proof.json.
 // Both carry a top-level verdict and cost.usd. Newest file modified since `since` wins; runs/ first.
-export function newestRecord(lokiDir: string, since: number): { verdict: string | null; costUsd: number | null; runId?: string | null; didWork?: boolean | null } {
+export function newestRecord(lokiDir: string, since: number): { verdict: string | null; costUsd: number | null; partial?: { usd: number; measured: number; total: number } | null; runId?: string | null; didWork?: boolean | null } {
   for (const [sub, file] of [["runs", "receipt.json"], ["proofs", "proof.json"]] as const) {
     const dir = join(lokiDir, sub);
     let best: { t: number; p: string; name: string } | null = null;
@@ -444,12 +446,15 @@ export function newestRecord(lokiDir: string, since: number): { verdict: string 
         if (t >= since && (!best || t > best.t)) best = { t, p, name };
       }
       if (!best) continue;
-      const d = JSON.parse(readFileSync(best.p, "utf8")) as { verdict?: unknown; base_sha?: unknown; head_sha?: unknown; cost?: { usd?: unknown; source?: unknown } };
+      const d = JSON.parse(readFileSync(best.p, "utf8")) as { verdict?: unknown; base_sha?: unknown; head_sha?: unknown; cost?: { usd?: unknown; source?: unknown; partial_usd?: unknown; measured_sessions?: unknown; total_sessions?: unknown } };
       const usd = d.cost?.usd;
       const unmetered = d.cost?.source === "cli-invoker-unmetered";
+      const costUsd = !unmetered && typeof usd === "number" && Number.isFinite(usd) ? usd : null, c = d.cost, num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+      const partial = costUsd === null && !unmetered && num(c?.partial_usd) !== null && (num(c?.measured_sessions) ?? 0) > 0 ? { usd: num(c?.partial_usd) as number, measured: num(c?.measured_sessions) as number, total: Math.max(num(c?.total_sessions) ?? 0, num(c?.measured_sessions) as number) } : null;
       return {
         verdict: typeof d.verdict === "string" ? d.verdict : null,
-        costUsd: !unmetered && typeof usd === "number" && Number.isFinite(usd) ? usd : null,
+        costUsd,
+        ...(partial ? { partial } : {}),
         ...(sub === "runs" ? { runId: best.name, didWork: typeof d.base_sha === "string" && typeof d.head_sha === "string" ? d.base_sha !== d.head_sha : null } : {}),
       };
     } catch {
@@ -500,7 +505,7 @@ export function makeDefaultRunner(lokiDir: string): QueueDeps["runner"] {
       /* log is best effort */
     }
     const proof = newestRecord(runLoki, since);
-    return { rc, output, verdict: proof.verdict, costUsd: proof.costUsd, runId: proof.runId ?? null, didWork: proof.didWork ?? null };
+    return { rc, output, verdict: proof.verdict, costUsd: proof.costUsd, partial: proof.partial ?? null, runId: proof.runId ?? null, didWork: proof.didWork ?? null };
   };
 }
 

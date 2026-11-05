@@ -6,7 +6,7 @@
 //   3. a slice that is not VERIFIED or PARTIAL with a PR stops its dependents and only its dependents (independent slices still run), which are recorded SKIPPED with the reason;
 //   4. renderEpicTree prints the epic as a tree of slice, outcome, PR and cost.
 import type { GhIssue } from "./issues_run.ts";
-import { exitCodeOf, labelCol } from "../engine10/output.ts";
+import { exitCodeOf, labelCol, partialCostText } from "../engine10/output.ts";
 import { sliceHeadLine } from "../util/run_outputs.ts";
 
 export interface Slice {
@@ -31,6 +31,8 @@ export interface SliceResult {
   branch?: string | null;
   rc?: number; // the slice run's exit code
   usd?: number | null; // the slice run's own unrounded cost; null when it reported none
+  reason?: string; // the slice run's own Reason line (a SPEC_CONFLICT's question), when it printed one
+  partial?: { usd: number; measured: number; total: number } | null; // usd is null but some sessions priced: the known dollars (splitCost adds them, the slice still counts unmeasured)
   budget?: boolean; // the slice hit its budget (exit 3, or an Outcome: BUDGET_STOP line when LOKI_DURABLE_STATE maps every failure to 20)
 }
 
@@ -150,6 +152,7 @@ export function decomposeBrief(slug: string, i: GhIssue, triageReason: string, o
     `Use at most ${MAX_SLICES} slices, and fewer when the issue allows. Prefer independent slices (empty depends_on) that can be built at the same time over a chain: add a dependency only when a slice cannot be built without the other's code. A long serial chain is a failure of the plan, because one failed slice skips everything after it.`,
     "Give a slice several dependencies only when they are already on one chain.",
     "When a criterion changes behavior an existing test asserts (for example replacing ILIKE search with full-text search), search the repository's tests for it, put that test file in the slice's files, and say in the criterion that the test is updated to the new behavior. Never write \"existing tests still pass\" for behavior the slice replaces: the implementer treats an unnamed existing test as read-only and stops on the contradiction.",
+    "Never write a criterion that requires a whole test suite, lint or build to pass (for example \"npm run test passes\"): the repository may already have failures the slice did not cause. Write the slice's own checks (named test files, typecheck of its files) and \"no new failures\", because the harness excuses failures already present on the base commit.",
     "Do not edit, create or delete any repository file. You may read the repository to judge scope.",
     `Write exactly one JSON object to the file ${outPath} and nothing else to that file, in this form:`,
     '{"slices":[{"id":"s1","title":"<short title>","acceptance":["<checkable criterion>"],"depends_on":[],"files":["<path if known>"]}]}',
@@ -275,29 +278,34 @@ export function makeSessionDecompose(repoDir: string, lokiDir: string, provider:
 }
 
 /** The one cost sum of a split: slices that ran (a SKIPPED slice never did) plus the planning sessions, from unrounded figures. `parts` counts
- *  every figure that should exist, `measured` those that do; usd is null when none does, never $0.00 for an unknown. */
+ *  every figure that should exist, `measured` those that do; a slice priced for some sessions only adds its known dollars to usd but stays unmeasured; usd is null when none does, never $0.00 for an unknown. */
 export function splitCost(rows: readonly SliceResult[], planUsd: readonly (number | null)[] = []): { usd: number | null; measured: number; parts: number; slices: number; planning: number } {
   const ran = rows.filter((r) => r.cost !== "-"), figures = [...ran.map((r) => (typeof r.usd === "number" ? r.usd : null)), ...planUsd];
   const known = figures.filter((u): u is number => u !== null);
-  return { usd: known.length ? known.reduce((a, u) => a + u, 0) : null, measured: known.length, parts: figures.length, slices: ran.length, planning: planUsd.length };
+  const part = ran.filter((r) => typeof r.usd !== "number" && r.partial).reduce((a, r) => a + (r.partial?.usd ?? 0), 0), any = known.length > 0 || ran.some((r) => typeof r.usd !== "number" && r.partial);
+  return { usd: any ? known.reduce((a, u) => a + u, 0) + part : null, measured: known.length, parts: figures.length, slices: ran.length, planning: planUsd.length };
 }
 /** The cost text shared by the epic tree footer and the Cost line. */
 export function splitCostText(c: ReturnType<typeof splitCost>): string {
   const what = `${c.slices} slice run${c.slices === 1 ? "" : "s"}${c.planning ? ` + ${c.planning} planning session${c.planning === 1 ? "" : "s"}` : ""}`;
   return c.usd === null ? `not measured (${what})` : c.measured < c.parts ? `partial: $${c.usd.toFixed(2)} for ${c.measured} of ${c.parts} (${what})` : `$${c.usd.toFixed(2)} (${what})`;
 }
-/** The whole split issue as one run. FAILED (exit 1) when a slice really failed (not VERIFIED, PARTIAL or SKIPPED, and not a budget stop),
- *  else BUDGET_STOP (exit 3) when a slice hit its budget, else PARTIAL (exit 6) when any slice is PARTIAL, else VERIFIED (0); exit codes go
- *  through exitCodeOf, so LOKI_DURABLE_STATE applies as on any run. One PR line per slice PR, one Cost line (splitCost). Printed in the engine's
- *  summary wording, so `loki backlog` parses it like any run: it counts a PARTIAL with a PR as done and adds the cost to its day ledger. */
+/** The whole split issue as one run. FAILED (exit 1) when a slice really failed (not VERIFIED, PARTIAL, SKIPPED or SPEC_CONFLICT, and not a budget stop),
+ *  else BUDGET_STOP (exit 3) when a slice hit its budget, else PARTIAL (exit 6) when any slice is PARTIAL, or when a slice stopped on its own
+ *  SPEC_CONFLICT (a human answer is awaited, nothing crashed) while at least one other slice opened a PR; a SPEC_CONFLICT split with no PR at all
+ *  stays FAILED; else VERIFIED (0). Exit codes go through exitCodeOf, so LOKI_DURABLE_STATE applies as on any run. One PR line per slice PR, one
+ *  Cost line (splitCost). Printed in the engine's summary wording, so `loki backlog` parses it like any run: it counts a PARTIAL with a PR as done
+ *  and adds the cost to its day ledger. */
 export function epicOutcome(rows: readonly SliceResult[], planUsd: readonly (number | null)[] = [], env: NodeJS.ProcessEnv = process.env): { outcome: "VERIFIED" | "PARTIAL" | "FAILED" | "BUDGET_STOP"; rc: number; lines: string } {
-  const isBudget = (r: SliceResult): boolean => r.budget === true || /^BUDGET_STOP/.test(r.outcome);
-  const failed = rows.find((r) => !isBudget(r) && !/^(VERIFIED|PARTIAL|SKIPPED)/.test(r.outcome)), budget = rows.find(isBudget);
-  const outcome = failed ? "FAILED" : budget ? "BUDGET_STOP" : rows.some((r) => /^PARTIAL/.test(r.outcome)) ? "PARTIAL" : "VERIFIED";
-  const why = failed ?? budget ?? rows.find((r) => /^PARTIAL/.test(r.outcome));
+  const isBudget = (r: SliceResult): boolean => r.budget === true || /^BUDGET_STOP/.test(r.outcome), isConflict = (r: SliceResult): boolean => /^SPEC_CONFLICT\b/.test(r.outcome);
+  const prs = rows.filter((r) => r.pr).length, failed = rows.find((r) => !isBudget(r) && !isConflict(r) && !/^(VERIFIED|PARTIAL|SKIPPED)/.test(r.outcome)), budget = rows.find(isBudget), stopped = rows.find(isConflict);
+  // FireLater#24: a slice that stopped on its own SPEC_CONFLICT is waiting for an answer, not a crash; with a PR already open the split is PARTIAL. No PR at all keeps FAILED.
+  const outcome = failed ? "FAILED" : budget ? "BUDGET_STOP" : stopped ? (prs > 0 ? "PARTIAL" : "FAILED") : rows.some((r) => /^PARTIAL/.test(r.outcome)) ? "PARTIAL" : "VERIFIED";
+  const why = failed ?? budget ?? stopped ?? rows.find((r) => /^PARTIAL/.test(r.outcome));
   // FireLater#21: a FAILED or budget-stopped split still says what it delivered, and where the stopped slice's change is, so 3 open PRs never read as nothing done.
-  const prs = rows.filter((r) => r.pr).length, kept = why && !why.pr && why.branch ? `; ${why.id}'s change is on branch ${why.branch}` : "", got = (outcome === "FAILED" || outcome === "BUDGET_STOP") && prs > 0 ? ` (${prs} of ${rows.length} slices opened a PR${kept})` : "";
-  const lines = [`${labelCol("Outcome")}${outcome}`, ...(why && outcome !== "VERIFIED" ? [`${labelCol("Reason")}slice ${why.id}: ${oneLine(why.outcome)}${got}`] : []),
+  const kept = why && !why.pr && why.branch ? `; ${why.id}'s change is on branch ${why.branch}` : "", got = (outcome === "FAILED" || outcome === "BUDGET_STOP" || (outcome === "PARTIAL" && why === stopped)) && prs > 0 ? ` (${prs} of ${rows.length} slices opened a PR${kept})` : "";
+  const answer = outcome === "PARTIAL" && why === stopped && why?.reason ? ` (needs an answer: ${oneLine(why.reason.replace(/^spec conflict:\s*/i, "")).slice(0, 160)})` : "";
+  const lines = [`${labelCol("Outcome")}${outcome}`, ...(why && outcome !== "VERIFIED" ? [`${labelCol("Reason")}slice ${why.id}: ${oneLine(why.outcome)}${answer}${got}`] : []),
     ...rows.filter((r) => r.pr).map((r) => `${labelCol("PR")}${r.pr}`), `${labelCol("Cost")}${splitCostText(splitCost(rows, planUsd))}`];
   return { outcome, rc: exitCodeOf(outcome, env), lines: `${lines.join("\n")}\n` };
 }

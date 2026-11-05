@@ -184,14 +184,17 @@ export function parseDiffHeaderPath(header: string): string | null {
   return p.startsWith("b/") && p.length > 2 ? p.slice(2) : null;
 }
 
+/** One -U0 hunk: its added lines (new-file line number and text) and its removed lines (text only). */
+export interface DiffHunk { added: { line: number; text: string }[]; removed: string[] }
+
 /**
- * Added lines per path (new-file line number to text) from a `git diff -U0`
- * body. Each @@ header's old and new counts bound its hunk, so an added line
- * whose text begins "++ " (rendered "+++ ...") is content, never a file header.
+ * Hunks per path from a `git diff -U0` body. Each @@ header's old and new counts bound its hunk, so an added line
+ * whose text begins "++ " (rendered "+++ ...") is content, never a file header. A deleted file (no +++ path) has no entry.
  */
-export function parseAddedLines(diff: string): Map<string, Map<number, string>> {
-  const out = new Map<string, Map<number, string>>();
-  let cur: Map<number, string> | null = null;
+export function parseDiffHunks(diff: string): Map<string, DiffHunk[]> {
+  const out = new Map<string, DiffHunk[]>();
+  let cur: DiffHunk[] | null = null;
+  let hunk: DiffHunk | null = null;
   let next = 0;
   let oldLeft = 0;
   let newLeft = 0;
@@ -199,10 +202,11 @@ export function parseAddedLines(diff: string): Map<string, Map<number, string>> 
     if (oldLeft > 0 || newLeft > 0) {
       if (line.startsWith("\\")) continue; // "\ No newline at end of file"
       if (line.startsWith("+")) {
-        if (cur) cur.set(next, line.slice(1));
+        hunk?.added.push({ line: next, text: line.slice(1) });
         next++;
         newLeft--;
       } else if (line.startsWith("-")) {
+        hunk?.removed.push(line.slice(1));
         oldLeft--;
       } else {
         next++;
@@ -213,12 +217,14 @@ export function parseAddedLines(diff: string): Map<string, Map<number, string>> 
     }
     if (line.startsWith("diff --git ")) {
       cur = null;
+      hunk = null;
       continue;
     }
     if (line.startsWith("+++ ")) {
       const p = parseDiffHeaderPath(line.slice(4));
-      cur = p === null ? null : (out.get(p) ?? new Map<number, string>());
+      cur = p === null ? null : (out.get(p) ?? []);
       if (p !== null && cur) out.set(p, cur);
+      hunk = null;
       continue;
     }
     const m = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
@@ -226,8 +232,17 @@ export function parseAddedLines(diff: string): Map<string, Map<number, string>> 
       oldLeft = m[1] === undefined ? 1 : Number(m[1]);
       next = Number(m[2]);
       newLeft = m[3] === undefined ? 1 : Number(m[3]);
+      hunk = { added: [], removed: [] };
+      cur?.push(hunk);
     }
   }
+  return out;
+}
+
+/** Added lines per path (new-file line number to text) from a `git diff -U0` body. */
+export function parseAddedLines(diff: string): Map<string, Map<number, string>> {
+  const out = new Map<string, Map<number, string>>();
+  for (const [p, hunks] of parseDiffHunks(diff)) out.set(p, new Map(hunks.flatMap((h) => h.added.map((a) => [a.line, a.text] as [number, string]))));
   return out;
 }
 
