@@ -1,0 +1,61 @@
+{
+ "selection": "pick_commits.py: newest-first non-merge first-parent commits whose subject reads like a fix (or names an issue), that change exactly one non-test .go file by 3 to 60 lines in a package with tests at base; the first 2 per repo (semver had 1). The issue is the linked GitHub issue or pull request text when the commit names one, else the commit message. Repos are not in bench/corpus or bench/corpus-h2.",
+ "commits": [
+  {
+   "id": "pflag-316",
+   "repo": "spf13/pflag",
+   "dir": "pflag",
+   "sha": "d5e0c0615acee7028e1e2740a11102313be88de1",
+   "file": "ip.go",
+   "issue": "#316 allow for blank ip addresses\n\nI found that in some CI systems they'll often do things like `--ip=$SOME_IP` in the case that `$SOME_IP` is blank or a blank string it would be helpful if we didn't fail out right away and allow for defaulting, this is somewhat similar to https://github.com/spf13/pflag/pull/84 and related to https://github.com/kubernetes/kubernetes/issues/58686"
+  },
+  {
+   "id": "pflag-282",
+   "repo": "spf13/pflag",
+   "dir": "pflag",
+   "sha": "6971c29c4a22981adeaee7f4b437c0cffe08c031",
+   "file": "string_array.go",
+   "issue": "#282 remove dead code for checking error nil\n\nHere is the previous dead code:\n\n1. Assigning: \"err\" = \"nil\".\n2. At condition \"err != nil\", the value of \"err\" must be \"nil\".\n3. The condition \"err != nil\" cannot be true."
+  },
+  {
+   "id": "cobra-2397",
+   "repo": "spf13/cobra",
+   "dir": "cobra",
+   "sha": "ad460ea8f249db69c943a365fb84f3a59042d54e",
+   "file": "args.go",
+   "issue": "#2397 #2396: Add cobra unique args validator\n\n#2396: Add cobra unique args validator `NoDuplicateArgs`"
+  },
+  {
+   "id": "cobra-2257",
+   "repo": "spf13/cobra",
+   "dir": "cobra",
+   "sha": "746ef07158728502482cea9f880a6f4b21ef29a9",
+   "file": "completions.go",
+   "issue": "#2257 Completions modify os.Args\n\nI'm trying to workaround https://github.com/spf13/cobra/issues/1877 by inspecting `os.Args` by hand. In some cases cobra accidentally inserts `--` into `os.Args`.\n\nMinimal example:\n```go\npackage main\n\nimport (\n\t\"os\"\n\t\"strings\"\n\n\t\"github.com/spf13/cobra\"\n)\n\nfunc main() {\n\tcmd := &cobra.Command{\n\t\tTraverseChildren: true,\n\t\tValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {\n\t\t\tcobra.CompErrorln(strings.Join(os.Args[1:], \", \"))\n\t\t\treturn nil, cobra.ShellCompDirectiveDefault\n\t\t},\n\t}\n\tif err := cmd.Execute(); err != nil {\n\t\tpanic(err)\n\t}\n}\n\n```\n\nExpected behaviour:\n```console\n$ go run . __complete x\n[Debug] [Error] __complete, x\n:0\nCompletion ended with directive: ShellCompDirectiveDefault\n```\n\nActual behaviour:\n```console\n$ go run . __complete x\n[Debug] [Error] __complete, --\n:0\nCompletion ended with directive: ShellCompDirectiveDefault\n```"
+  },
+  {
+   "id": "semver-1",
+   "repo": "Masterminds/semver",
+   "dir": "semver",
+   "sha": "429e95e30a373ced3c657c4419bc65aa0fffc1f6",
+   "file": "constraints.go",
+   "issue": "#1 * constraint failing\n\nWhen using `*` as a constraint it is failing with versions when it should return true for all versions."
+  },
+  {
+   "id": "humanize-si",
+   "repo": "dustin/go-humanize",
+   "dir": "go-humanize",
+   "sha": "1b638b2c0d9b358cbae4b51b74f136d9a6055d1a",
+   "file": "si.go",
+   "issue": "si: don't give infinities and NaN an SI prefix\n\nComputeSI clamps the exponent to the range siPrefixTable can name. For an\ninfinite input the exponent is +Inf, so the clamp pins it to 30 and the\nvalue comes back labelled \"Q\": SI(math.Inf(1), \"x\") returns \"+Inf Qx\",\nas if it were a finite number scaled by 10^30. (Before the clamp, the\nsame input divided Inf by Inf and came back as \"NaN x\".)\n\nReturn non-finite inputs unchanged with no prefix, as ComputeSI already\ndoes for zero, so SI(math.Inf(1), \"x\") is \"+Inf x\"."
+  },
+  {
+   "id": "humanize-105",
+   "repo": "dustin/go-humanize",
+   "dir": "go-humanize",
+   "sha": "40736da3e8ed16369b5e6f109548f243d43a7e34",
+   "file": "comma.go",
+   "issue": "#105 Force to show decimal in CommafWithDigits\n\nMy float64 number is 1000.00\n\nActual:\nCommafWithDigits(1000.00, 2) => 1,000\n\nExpect:\nCommafWithDigits(1000.00, 2) => 1,000.00\n\nWhen inputting a decimal like 2 it should have xxxx.xx"
+  }
+ ]
+}

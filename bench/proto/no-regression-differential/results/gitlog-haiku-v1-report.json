@@ -1,0 +1,167 @@
+{
+  "summary": {
+    "fixture": "gitlog",
+    "mode": "haiku",
+    "cases": 11,
+    "calls": 2,
+    "total": {
+      "inTok": 4,
+      "outTok": 2625,
+      "cacheRead": 0,
+      "cacheWrite": 9363,
+      "costUsd": 0.0031855
+    },
+    "caught": "1/3",
+    "false_fires": "0/3",
+    "base_fires": false,
+    "fires_iff_oracle_fails": "4/6"
+  },
+  "rows": [
+    {
+      "variant": "base",
+      "oracle": null,
+      "fires": false,
+      "calls": 0,
+      "blocking": [],
+      "findings": [],
+      "changed": [],
+      "flaky": [],
+      "missing": [],
+      "notes": [
+        "no change case changed output: the probes may not reach the requested change"
+      ]
+    },
+    {
+      "variant": "correct-filter",
+      "oracle": true,
+      "fires": false,
+      "calls": 0,
+      "blocking": [],
+      "findings": [],
+      "changed": [
+        "c1(change)",
+        "c2(change)",
+        "c3(change)"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": []
+    },
+    {
+      "variant": "correct-own",
+      "oracle": true,
+      "fires": false,
+      "calls": 0,
+      "blocking": [],
+      "findings": [],
+      "changed": [
+        "c1(change)",
+        "c2(change)",
+        "c3(change)"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": []
+    },
+    {
+      "variant": "correct-param",
+      "oracle": true,
+      "fires": false,
+      "calls": 0,
+      "blocking": [],
+      "findings": [],
+      "changed": [
+        "c1(change)",
+        "c2(change)",
+        "c3(change)"
+      ],
+      "flaky": [],
+      "missing": [
+        "k2:missing_patched"
+      ],
+      "notes": [
+        "patched: case k2 dropped (not enough arguments in call to logArgs)",
+        "case k2 ran on base but not on the patched tree (an API it calls changed)"
+      ]
+    },
+    {
+      "variant": "regress-contrib",
+      "oracle": false,
+      "fires": false,
+      "calls": 0,
+      "blocking": [],
+      "findings": [],
+      "changed": [
+        "c1(change)",
+        "c2(change)",
+        "c3(change)"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": []
+    },
+    {
+      "variant": "regress-render",
+      "oracle": false,
+      "fires": false,
+      "calls": 0,
+      "blocking": [],
+      "findings": [],
+      "changed": [
+        "c1(change)",
+        "c2(change)",
+        "c3(change)"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": []
+    },
+    {
+      "variant": "regress-shared",
+      "oracle": false,
+      "fires": true,
+      "calls": 0,
+      "blocking": [
+        {
+          "id": "k1",
+          "desc": "authors command keeps --no-merges and author format",
+          "before": "git log --no-merges --pretty=format:%an <%ae> v1.0.0..HEAD",
+          "after": "git log --pretty=format:%an <%ae> v1.0.0..HEAD"
+        }
+      ],
+      "findings": [
+        "k1:unrequested",
+        "k2:unknown"
+      ],
+      "changed": [
+        "c1(change)",
+        "c2(change)",
+        "c3(change)",
+        "k1(keep)",
+        "k2(keep)"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": [
+        "case k2 changed and the judge could not decide whether the issue asks for it"
+      ]
+    }
+  ],
+  "program": "package changelog\n\nimport \"strings\"\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"issue example: commit subjects between v1.2.0 and HEAD\", func() any {\n\t\treturn strings.Join(CommitsCmd(\"v1.2.0\", \"HEAD\"), \" \")\n\t})\n\tlokiCase(\"c2\", \"change\", \"commit subjects between v1.0.0 and v1.1.0\", func() any {\n\t\treturn strings.Join(CommitsCmd(\"v1.0.0\", \"v1.1.0\"), \" \")\n\t})\n\tlokiCase(\"c3\", \"change\", \"argument count of the commit subjects command\", func() any {\n\t\treturn len(CommitsCmd(\"v1.2.0\", \"HEAD\"))\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"authors command keeps --no-merges and author format\", func() any {\n\t\treturn strings.Join(AuthorsCmd(\"v1.0.0\", \"HEAD\"), \" \")\n\t})\n\tlokiCase(\"k2\", \"keep\", \"shared log prefix with a custom format\", func() any {\n\t\treturn strings.Join(logArgs(\"%H\"), \" \")\n\t})\n\tlokiCase(\"k3\", \"keep\", \"last tag command\", func() any {\n\t\treturn strings.Join(LastTagCmd(), \" \")\n\t})\n\tlokiCase(\"k4\", \"keep\", \"render skips blank and whitespace-only subjects\", func() any {\n\t\treturn Render(\"v1.1.0\", []string{\"Add export\", \"  \", \"\", \"Fix crash on empty config\"})\n\t})\n\tlokiCase(\"k5\", \"keep\", \"render with no subjects\", func() any {\n\t\treturn Render(\"v2.0.0\", nil)\n\t})\n\tlokiCase(\"k6\", \"keep\", \"render trims surrounding whitespace from subjects\", func() any {\n\t\treturn Render(\"v1.3.0\", []string{\"  Tidy logging  \"})\n\t})\n\tlokiCase(\"k7\", \"keep\", \"contributors dedupes and sorts author lines\", func() any {\n\t\treturn Contributors([]string{\"bo <bo@x.io>\", \"al <al@x.io>\", \"bo <bo@x.io>\"})\n\t})\n\tlokiCase(\"k8\", \"keep\", \"contributors ignores blank lines and returns nothing for empty input\", func() any {\n\t\treturn Contributors([]string{\"\", \"   \"})\n\t})\n}\n",
+  "judged": [
+    {
+      "label": "k1",
+      "desc": "authors command keeps --no-merges and author format",
+      "before": "git log --no-merges --pretty=format:%an <%ae> v1.0.0..HEAD",
+      "after": "git log --pretty=format:%an <%ae> v1.0.0..HEAD",
+      "verdict": "unrequested"
+    },
+    {
+      "label": "k2",
+      "desc": "shared log prefix with a custom format",
+      "before": "git log --no-merges --pretty=format:%H",
+      "after": "git log --pretty=format:%H",
+      "verdict": "unknown"
+    }
+  ]
+}

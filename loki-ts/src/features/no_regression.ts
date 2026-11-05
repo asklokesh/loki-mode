@@ -32,7 +32,7 @@ export function nrdProbePrompt(c: NrdContext): string {
   const kinds = [
     "Write probe cases that record what this code returns, so its output can be compared before and after the fix. Two kinds:",
     '- "change": each input the issue says must behave differently, starting with its own examples. 2 to 3 cases.',
-    '- "keep": inputs that reach the same code but that the issue does NOT ask to change: the other functions and branches that share code with what the issue names, other options and flags, default, empty and boundary inputs, and the messages, commands and formatted strings the code builds. 6 to 10 cases. A correct fix leaves every keep output exactly as it was.',
+    '- "keep": inputs that reach the same code but that the issue does NOT ask to change: the other functions and branches that share code with what the issue names, other options and flags, default, empty and boundary inputs, and the messages, commands and formatted strings the code builds. Give the other functions the issue\'s own example values too, since after the fix those values reach them, and inputs that differ only in letter case, surrounding whitespace, order or repetition. 8 to 12 cases. A correct fix leaves every keep output exactly as it was.',
   ].join("\n");
   const go = [
     `Output one Go code block: a file in package ${c.pkg ?? "main"}, saved next to the existing test, so unexported identifiers and the existing test helpers are in scope. It declares func lokiCases() and no TestXxx function. Each case is one self-contained statement, with no setup shared between cases:`,
@@ -105,6 +105,31 @@ export function callersOf(names: string[], files: Record<string, string>): strin
     }
   }
   return [...out].sort();
+}
+
+/** What the probe writer sees: each changed file and each file defining one of `names` (the edited definitions and their
+ *  callers), a small file whole and a large one as its head plus those definitions; from the tests, the test functions that
+ *  mention one of `names`, within a budget. */
+export function probeContext(pkgFiles: Record<string, string>, testFiles: Record<string, string>, names: string[], changed: string[] = [], o = { wholeBytes: 12_000, testBytes: 8_000, testsPerFile: 3 }): { files: Record<string, string>; tests: Record<string, string> } {
+  const files: Record<string, string> = {}, tests: Record<string, string> = {};
+  const short = names.map((n) => n.split(".").pop()!);
+  const mentions = (s: string): boolean => short.some((n) => new RegExp(`\\b${n.replace(/[$]/g, "\\$")}\\b`).test(s));
+  for (const [p, src] of Object.entries(pkgFiles)) {
+    const spans = symbolSpans(p, src).filter((s) => !s.container && names.includes(s.name)), lines = src.split("\n");
+    if (spans.length === 0 && !changed.includes(p)) continue; // a changed file is always shown: an added function has no base span
+    if (src.length <= o.wholeBytes) { files[p] = src; continue; }
+    const head = lines.slice(0, Math.max(0, Math.min(...symbolSpans(p, src).map((s) => s.start)) - 1)).join("\n").slice(0, 1500);
+    files[p] = [head, ...spans.map((s) => lines.slice(s.start - 1, s.end).join("\n"))].join("\n\n// ...\n\n");
+  }
+  let budget = o.testBytes;
+  for (const [p, src] of Object.entries(testFiles)) {
+    const lines = src.split("\n");
+    const hits = symbolSpans(p, src).filter((s) => !s.container && mentions(lines.slice(s.start, s.end).join("\n"))).slice(0, o.testsPerFile);
+    const text = hits.map((s) => lines.slice(s.start - 1, s.end).join("\n")).join("\n\n");
+    if (!text || text.length > budget) continue;
+    tests[p] = text; budget -= text.length;
+  }
+  return { files, tests };
 }
 
 // ---- the differential ----
