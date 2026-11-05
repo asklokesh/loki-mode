@@ -166,8 +166,8 @@ const reEsc = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Only an issue that says the target behaves like its siblings makes the transplant binding; a list of acceptable outputs is the spec itself and never does. */
 /** The last CamelCase word that at least two sibling type names share (IntFlag, BoolFlag -> Flag): the family a sentence can name as "the other flags". */
 const familyStem = (types: string[]): string | null => { const n = new Map<string, number>(); for (const t of types) { const w = /[A-Z][a-z0-9]*$/.exec(t)?.[0]; if (w && w !== t) n.set(w, (n.get(w) ?? 0) + 1); } const best = [...n].sort((a, b) => b[1] - a[1])[0]; return best && best[1] >= 2 ? best[0] : null; };
-/** One sentence with a comparison cue that also names something the repo knows: a sibling type name, or the family ("the other flags" for IntFlag and BoolFlag). A bare "other platforms", "the other release" or "as" names no sibling, so it never binds. */
-export const saysLikeSiblings = (issue: string, siblingTypes: string[] = []): boolean => { const stem = familyStem(siblingTypes); return issue.split(/(?<=[.!?])\s+|\n+/).some((st) => /\b(?:like|consistent with|matches|same as)\b/i.test(st) && (siblingTypes.some((t) => new RegExp(`\\b${reEsc(t)}\\b`).test(st)) || (stem !== null && new RegExp(`\\bother ${reEsc(stem)}s?\\b`, "i").test(st)))); };
+/** One sentence with a comparison cue that also names something the repo knows: a sibling type name, or the family ("the other flags" for IntFlag and BoolFlag). The sentence must also name the target type or member. A bare "other platforms", "the other release" or "as" names no sibling, so it never binds. */
+export const saysLikeSiblings = (issue: string, siblingTypes: string[] = [], target: string[] = []): boolean => { const stem = familyStem(siblingTypes); return issue.split(/(?<=[.!?])\s+|\n+/).some((st) => /\b(?:like|consistent with|matches|same as)\b/i.test(st) && target.some((t) => new RegExp(`\\b${reEsc(t)}\\b`).test(st)) && (siblingTypes.some((t) => new RegExp(`\\b${reEsc(t)}\\b`).test(st)) || (stem !== null && new RegExp(`\\bother ${reEsc(stem)}s?\\b`, "i").test(st)))); };
 /** Deterministic, no model call. A shared statement is a repo convention only when 2 or more sibling tests contain it byte for byte after generalization; a lone declaration is never a case. Binding needs the issue to ask for sibling behavior; otherwise advisory. Go only; null when the picked option names no qualified return type for the target. */
 export function transplantFor(c: OpenChoice, picked: number, issue: string, repoDir: string, precedent: string, mayBind = false): Transplant | null {
   try {
@@ -187,7 +187,7 @@ export function transplantFor(c: OpenChoice, picked: number, issue: string, repo
     const fill = (st: string): string => st.replace(/\bTYPE\b/g, tgt[0]).replace(/\bRET\b/g, ret), imports = [...new Set([...ret.matchAll(/\b([a-z]\w*)\./g)].map((m) => m[1]!))];
     const pkg = /^package (\w+)/m.exec(readFileSync(join(repoDir, sibs[0]!.file), "utf8"))?.[1] ?? "";
     const test = `package ${pkg}\n\nimport (\n\t"testing"\n${imports.map((i) => `\t"${i}"\n`).join("")})\n\nfunc TestLokiTransplant_${tgt[0]}${tgt[1]}(t *testing.T) {\n${shared.map((st) => `\t${fill(st).split("\n").join("\n")}`).join("\n")}\n}\n`;
-    const binding = mayBind && saysLikeSiblings(issue, [...types]);
+    const binding = mayBind && saysLikeSiblings(issue, [...types], [tgt[0], tgt[1]]);
     return { binding, why: binding ? `${shared.length} statement(s) shared by 2+ sibling tests, and the issue asks for sibling behavior` : mayBind ? "shared by 2+ sibling tests, but the issue does not ask for sibling behavior: advisory" : "shared by 2+ sibling tests; the option was settled by something other than the sibling vote: advisory", statements: shared.map(fill), test };
   } catch { return null; }
 }
