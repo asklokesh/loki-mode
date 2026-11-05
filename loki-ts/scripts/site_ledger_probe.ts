@@ -9,8 +9,9 @@ import { cpSync, existsSync, readFileSync, readdirSync, writeFileSync } from "no
 import { join } from "node:path";
 import { buildLedger, integrationFindings, microBrief, parseReply, runLedger, twinGroups, type MicroCall } from "../src/util/site_ledger.ts";
 
-const [fixture, work, mode, arg] = process.argv.slice(2);
-if (!fixture || !work || !mode || existsSync(work)) { console.error("usage: <fixtureDir> <workDir(not existing)> ledger|stub|haiku|whole [arg]"); process.exit(64); }
+const [fixtureArg, workArg, mode, arg] = process.argv.slice(2);
+if (!fixtureArg || !workArg || !mode || existsSync(workArg)) { console.error("usage: <fixtureDir> <workDir(not existing)> ledger|stub|haiku|whole [arg]"); process.exit(64); }
+const fixture: string = fixtureArg, work: string = workArg;
 cpSync(fixture, work, { recursive: true });
 const sh = (cmd: string, args: string[], timeoutMs = 120_000) => spawnSync(cmd, args, { cwd: work, encoding: "utf8", timeout: timeoutMs });
 sh("git", ["init", "-q"]); sh("git", ["add", "."]); sh("git", ["-c", "user.name=probe", "-c", "user.email=probe@example.invalid", "commit", "-qm", "base"]);
