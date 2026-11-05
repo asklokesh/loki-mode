@@ -108,6 +108,7 @@ Hidden and legacy-only commands are omitted; see `docs/CLI-INVENTORY.md` for the
 | `loki keys` | Receipt-signing keys |
 | `loki keys export` | Print the public signing key (JWK) |
 | `loki review` | Standalone code review with quality gates |
+| `loki review queue` | Open Loki PRs ranked by risk; low-risk passport-verified PRs marked ready |
 | `loki dashboard` | Operations UI server |
 | `loki dashboard start` | Start |
 | `loki dashboard stop` | Stop |

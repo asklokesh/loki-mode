@@ -5,6 +5,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pushArgv } from "../engine10/types.ts";
 import { run } from "./shell.ts";
+import type { Passport } from "./receipt_bundle.ts";
 
 export interface ReceiptCommentInput {
   verdict: string;
@@ -15,6 +16,8 @@ export interface ReceiptCommentInput {
   runId: string;
   /** Wall-on-the-old-tree line from seal, when mutation proof ran. Absent on older callers. */
   mutationProof?: string | null;
+  /** Proof passport (DSSE envelope + public JWK) for a VERIFIED run; a `missing` reason is printed as one line. Absent: nothing is added. */
+  passport?: Passport | null;
 }
 
 /** The last lines of a run. Same facts as the receipt: verdict, money, time, checks the harness ran, fail-to-pass, hash. A null dollar amount is "not measured", never $0. */
@@ -52,8 +55,45 @@ export function renderReceiptComment(i: ReceiptCommentInput): string {
     ...(i.mutationProof ? [`- Proof: ${i.mutationProof}`] : []),
     "## NOT PROVEN",
     ...items,
+    ...passportLines(i.passport),
     "",
   ].join("\n");
+}
+
+const DSSE_MARK = "<!-- loki-passport:dsse -->", JWK_MARK = "<!-- loki-passport:jwk -->";
+function passportBlock(mark: string, file: string, body: string): string[] {
+  return [mark, `<details><summary>${file}</summary>`, "", "```json", body, "```", "", "</details>"];
+}
+function passportLines(p: Passport | null | undefined): string[] {
+  if (!p) return [];
+  if ("missing" in p) return ["## Proof passport", `- Passport: ${p.missing}`];
+  return [
+    "## Proof passport",
+    "Save the two blocks below as receipt.dsse.json and pubkey.jwk, then run `loki verify --pubkey pubkey.jwk receipt.dsse.json`. Check that the key id is one you trust and the commit is this PR's head.",
+    `- Key id: ${p.kid}`,
+    `- Commit: ${p.head}`,
+    ...passportBlock(DSSE_MARK, "receipt.dsse.json", p.envelope),
+    ...passportBlock(JWK_MARK, "pubkey.jwk", p.jwk),
+  ];
+}
+
+/** The passports a comment body carries, in order. Render and parse live here so they cannot drift apart. */
+export function passportsIn(body: string): { envelope: string; jwk: string | null }[] {
+  const grab = (mark: string, from: number): { text: string; end: number } | null => {
+    const at = body.indexOf(mark, from);
+    if (at < 0) return null;
+    const m = /```json\r?\n([\s\S]*?)\r?\n```/.exec(body.slice(at + mark.length));
+    return m ? { text: m[1]!.trim(), end: at + mark.length + m.index + m[0].length } : null;
+  };
+  const out: { envelope: string; jwk: string | null }[] = [];
+  for (let from = 0; ;) {
+    const e = grab(DSSE_MARK, from);
+    if (!e) break;
+    const nextDsse = body.indexOf(DSSE_MARK, e.end), j = grab(JWK_MARK, e.end);
+    out.push({ envelope: e.text, jwk: j && (nextDsse < 0 || body.indexOf(JWK_MARK, e.end) < nextDsse) ? j.text : null });
+    from = e.end;
+  }
+  return out;
 }
 
 /** GitHub PR number from a push-pr URL. Local and GitLab URLs return null (no comment). */

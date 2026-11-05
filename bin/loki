@@ -886,6 +886,7 @@ fi
 # Bun-routed `report kpis` is not invisible to usage analytics (the v7.8.2 parity
 # the case-arm comment documents). Backgrounded, FD-detached, opt-out honored by
 # loki_telemetry itself.
+_bun_two_token=0
 if [ "${1:-}" = "report" ]; then
     _report_first_sub=""
     for _report_arg in "${@:2}"; do
@@ -894,22 +895,26 @@ if [ "${1:-}" = "report" ]; then
             *) _report_first_sub="$_report_arg"; break ;;
         esac
     done
-    if [ "$_report_first_sub" = "kpis" ]; then
-        if command -v curl &>/dev/null && [ -f "$REPO_ROOT/autonomy/telemetry.sh" ]; then
-            # Disclose once before egress if collection is genuinely enabled
-            # (covers the case where a cli_command is the first ENABLED egress,
-            # e.g. first run was CI/auto-off so .loki-first-run is already set).
-            # AC3: foreground gate evaluation (no FD detach) so the exported
-            # LOKI_TTY_INTERACTIVE signal / real TTY drives the verdict.
-            if ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null \
-                 && declare -f _loki_telemetry_enabled >/dev/null 2>&1 && _loki_telemetry_enabled ); then
-                _loki_disclose_telemetry_once
-            fi
-            ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=$(_loki_known_command "${1:-}")" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
-            disown 2>/dev/null || true
+    [ "$_report_first_sub" = "kpis" ] && _bun_two_token=1
+fi
+# `review queue` (open Loki PRs ranked by risk) is Bun-only; `review` stays bash for every other form.
+# Exactly `review queue` as the first two tokens, so a path or flag value named queue is never hijacked.
+[ "${1:-}" = "review" ] && [ "${2:-}" = "queue" ] && _bun_two_token=1
+if [ "$_bun_two_token" = "1" ]; then
+    if command -v curl &>/dev/null && [ -f "$REPO_ROOT/autonomy/telemetry.sh" ]; then
+        # Disclose once before egress if collection is genuinely enabled
+        # (covers the case where a cli_command is the first ENABLED egress,
+        # e.g. first run was CI/auto-off so .loki-first-run is already set).
+        # AC3: foreground gate evaluation (no FD detach) so the exported
+        # LOKI_TTY_INTERACTIVE signal / real TTY drives the verdict.
+        if ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null \
+             && declare -f _loki_telemetry_enabled >/dev/null 2>&1 && _loki_telemetry_enabled ); then
+            _loki_disclose_telemetry_once
         fi
-        exec bun "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" "$@"
+        ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=$(_loki_known_command "${1:-}")" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+        disown 2>/dev/null || true
     fi
+    exec bun "${_LOKI_BUN_SAFE[@]}" "$BUN_CLI" "$@"
 fi
 
 # Commands ported in Phase 2 -- route to Bun. Everything else goes to bash.
