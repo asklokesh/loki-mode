@@ -219,6 +219,114 @@ else
     bad "indexOf chains differ from the replaced patterns: $fuzz"
 fi
 
+# --- E1: config and lockfile write fence (tool-time deny, post-session restore, spec-conflict allowlist) ---
+cat > "$T/fence.ts" <<'TS'
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const [src, T] = process.argv.slice(2) as [string, string];
+const { createConfigFenceHook } = await import(`${src}/runner/host_guard.ts`);
+const { createSessionRunner } = await import(`${src}/engine10/session.ts`);
+const { readFenceRecord, fenceNotes, capFenceVerdict } = await import(`${src}/util/config_fence.ts`);
+const out: string[] = []; const say = (k: string, v: unknown) => out.push(`${k} ${typeof v === "string" ? v : JSON.stringify(v)}`);
+const git = (d: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd: d, stdio: "ignore" });
+const fixture = (name: string): string => {
+  const d = join(T, name); mkdirSync(join(d, "src"), { recursive: true });
+  writeFileSync(join(d, "vitest.config.ts"), "export default {};\n"); writeFileSync(join(d, "tsconfig.json"), '{"compilerOptions":{"strict":false}}\n');
+  writeFileSync(join(d, "package.json"), '{"name":"x"}\n'); writeFileSync(join(d, "pnpm-lock.yaml"), "lock: 1\n"); writeFileSync(join(d, "src", "a.ts"), "export const a = 1;\n");
+  git(d, "init", "-q"); git(d, "add", "-A"); git(d, "commit", "-q", "-m", "base"); return d;
+};
+
+// 1. tool-time deny (the SDK route's PreToolUse callback)
+const cwd = fixture("hook");
+const hook = async (env: Record<string, string>, tool: string, file: string) => { const r = await createConfigFenceHook(cwd, { LOKI_E10_STAGE: "implement", ...env })({ tool_name: tool, tool_input: { file_path: file }, cwd }) as { hookSpecificOutput?: { permissionDecision?: string } }; return r.hookSpecificOutput?.permissionDecision ?? "none"; };
+for (const [tool, f] of [["Edit", "vitest.config.ts"], ["Write", "tsconfig.json"], ["MultiEdit", "pnpm-lock.yaml"], ["Edit", join(cwd, "packages/x/tsconfig.build.json")], ["Write", "vitest.config.ts"], ["Edit", ".eslintrc.json"]] as const) say(`deny:${tool}:${f.replace(cwd + "/", "")}`, await hook({}, tool, f));
+for (const [tool, f] of [["Edit", "src/a.ts"], ["Write", "src/new.test.ts"], ["Write", "tests/a.test.ts"], ["Edit", "package.json"], ["Write", "README.md"], ["Edit", "/elsewhere/vitest.config.ts"], ["Bash", "vitest.config.ts"]] as const) say(`pass:${tool}:${f}`, await hook({}, tool, f));
+say("task-names-tsconfig", await hook({ LOKI_E10_FENCE_TASK: "Turn on tsconfig strict mode" }, "Edit", "tsconfig.json"));
+say("task-names-tsconfig-not-vitest", await hook({ LOKI_E10_FENCE_TASK: "Turn on tsconfig strict mode" }, "Edit", "vitest.config.ts"));
+say("task-names-lock", await hook({ LOKI_E10_FENCE_TASK: "Bump left-pad to 2.0.0 in the lockfile" }, "Edit", "pnpm-lock.yaml"));
+say("allowlisted", await hook({ LOKI_E10_FENCE_ALLOW: '["vitest.config.ts"]' }, "Edit", "vitest.config.ts"));
+say("stage-verify-off", await hook({ LOKI_E10_STAGE: "verify" }, "Edit", "vitest.config.ts"));
+say("switch-off", await hook({ LOKI_CONFIG_FENCE: "0" }, "Edit", "vitest.config.ts"));
+
+// 2. real session runner (stub provider = a child process that edits files like a model with Bash would)
+const run = async (name: string, task: string, script: string, stage = "implement") => {
+  const d = fixture(name); mkdirSync(join(d, ".loki"), { recursive: true });
+  process.env["LOKI_E10_TASK_TEXT"] = task; process.env["LOKI_E10_RUN_ID"] = "r1"; process.env["LOKI_E10_STAGE_UNUSED"] = "";
+  const events: { type: string; data: Record<string, unknown> }[] = [];
+  const runner = createSessionRunner({ provider: "stub", lokiRoot: join(d, ".loki"), emit: (type: string, _s: string | null, data: Record<string, unknown>) => events.push({ type, data }), childCommand: ["bash", ["-c", script]] });
+  const call = (id: string) => runner.run({ stage, brief: "b", tier: "development", iterationId: id, limitS: 30, signal: new AbortController().signal, cwd: d });
+  return { d, events, runner, call };
+};
+const EDIT = `printf 'export default { test: { setupFiles: ["x"] } };\\n' > vitest.config.ts; sed -i.bak 's/false/true/' tsconfig.json; rm -f tsconfig.json.bak; printf 'export const a = 2;\\n' > src/a.ts; printf 'x' > tsconfig.build.json; echo LOKI_DONE`;
+let r = await run("leg1", "Fix the off by one in src/a.ts", EDIT); let res = await r.call("it1");
+say("leg1-vitest", readFileSync(join(r.d, "vitest.config.ts"), "utf8").trim()); say("leg1-tsconfig-strict-false", readFileSync(join(r.d, "tsconfig.json"), "utf8").includes('"strict":false'));
+say("leg1-created-removed", !existsSync(join(r.d, "tsconfig.build.json"))); say("leg1-product-kept", readFileSync(join(r.d, "src/a.ts"), "utf8").trim()); say("leg1-done", res.markers.done);
+say("leg1-event", r.events.filter((e) => e.type === "config_fence.restored").map((e) => (e.data["paths"] as string[]).sort()));
+say("leg1-record", readFenceRecord(join(r.d, ".loki/runs/r1")).restored.map((x: { path: string }) => x.path).sort()); say("leg1-notes", fenceNotes(readFenceRecord(join(r.d, ".loki/runs/r1"))).capped);
+r = await run("leg2", "Enable tsconfig strict mode and fix the resulting errors in src/a.ts", EDIT); await r.call("it2");
+say("leg2-tsconfig-kept", readFileSync(join(r.d, "tsconfig.json"), "utf8").includes('"strict":true')); say("leg2-vitest-restored", readFileSync(join(r.d, "vitest.config.ts"), "utf8").trim()); say("leg2-product-kept", readFileSync(join(r.d, "src/a.ts"), "utf8").trim());
+r = await run("leg3", "Fix src/a.ts", `printf '{"x":1}\\n' > package.json; printf 'lock: 2\\n' > pnpm-lock.yaml; echo LOKI_DONE`); await r.call("it3");
+say("leg3-lock-follows-manifest", readFileSync(join(r.d, "pnpm-lock.yaml"), "utf8").trim());
+r = await run("leg4", "Fix src/a.ts", `printf 'lock: 2\\n' > pnpm-lock.yaml; echo LOKI_DONE`); await r.call("it4");
+say("leg4-lock-alone-restored", readFileSync(join(r.d, "pnpm-lock.yaml"), "utf8").trim());
+r = await run("leg5", "Fix src/a.ts", `printf 'x' > vitest.config.ts; echo LOKI_DONE`, "wall"); await r.call("it5");
+say("leg5-other-stage-unfenced", readFileSync(join(r.d, "vitest.config.ts"), "utf8").trim());
+// 3. spec conflict naming a config file: that path is allowlisted for the next session only, recorded, and caps VERIFIED
+r = await run("leg6", "Fix src/a.ts", `if [ -n "$LOKI_E10_FENCE_ALLOW" ] && [ "$LOKI_E10_FENCE_ALLOW" != "[]" ]; then printf 'export default { resumed: "%s" };\\n' "$LOKI_ITERATION" > vitest.config.ts; echo LOKI_DONE; else printf 'export default { sneaky: 1 };\\n' > vitest.config.ts; echo "LOKI_SPEC_CONFLICT: vitest.config.ts excludes the file the task needs"; fi`);
+await r.call("it6a"); say("leg6-conflict-session-restored", readFileSync(join(r.d, "vitest.config.ts"), "utf8").trim()); const rec1 = readFenceRecord(join(r.d, ".loki/runs/r1")); say("leg6-allowlisted", rec1.allowlisted.map((x: { path: string }) => x.path));
+await r.call("it6b"); say("leg6-resume-edit-kept", readFileSync(join(r.d, "vitest.config.ts"), "utf8").trim());
+await r.call("it6c"); say("leg6-once", readFileSync(join(r.d, "vitest.config.ts"), "utf8").trim());
+const n = fenceNotes(readFenceRecord(join(r.d, ".loki/runs/r1"))); say("leg6-capped", n.capped); say("leg6-cap-fn", [capFenceVerdict("VERIFIED", n), capFenceVerdict("PARTIAL", n), capFenceVerdict("VERIFIED", { capped: false })]); say("leg6-note", n.notProven.some((l: string) => l.includes("allowlisted") && l.includes("vitest.config.ts")));
+console.log(out.join("\n"));
+TS
+fo="$(cd "$ROOT/loki-ts" && timeout 120 bun "$T/fence.ts" "$ROOT/loki-ts/src" "$T" 2>&1)"
+fchk() { printf '%s\n' "$fo" | grep -qxF -- "$2" && ok "fence: $1" || bad "fence: $1 (wanted: $2)"; }
+fchk "Edit vitest.config.ts denied" "deny:Edit:vitest.config.ts deny"
+fchk "Write tsconfig.json denied" "deny:Write:tsconfig.json deny"
+fchk "MultiEdit lockfile denied" "deny:MultiEdit:pnpm-lock.yaml deny"
+fchk "nested tsconfig.build.json denied (absolute path)" "deny:Edit:packages/x/tsconfig.build.json deny"
+fchk "Write of a new vitest.config.ts denied" "deny:Write:vitest.config.ts deny"
+fchk "eslintrc denied" "deny:Edit:.eslintrc.json deny"
+fchk "product file edit passes" "pass:Edit:src/a.ts none"
+fchk "new test file passes" "pass:Write:src/new.test.ts none"
+fchk "test dir file passes" "pass:Write:tests/a.test.ts none"
+fchk "package.json passes (not fenced)" "pass:Edit:package.json none"
+fchk "docs pass" "pass:Write:README.md none"
+fchk "path outside the workspace is not this fence's concern" "pass:Edit:/elsewhere/vitest.config.ts none"
+fchk "Bash tool is not this hook's concern" "pass:Bash:vitest.config.ts none"
+fchk "task naming tsconfig strict allows tsconfig.json" "task-names-tsconfig none"
+fchk "that task does not allow vitest.config.ts" "task-names-tsconfig-not-vitest deny"
+fchk "dependency task allows the lockfile" "task-names-lock none"
+fchk "allowlisted path passes" "allowlisted none"
+fchk "other stages unfenced" "stage-verify-off none"
+fchk "LOKI_CONFIG_FENCE=0 switches it off" "switch-off none"
+fchk "real session: vitest.config.ts restored after a Bash write" 'leg1-vitest export default {};'
+fchk "real session: tsconfig.json restored" "leg1-tsconfig-strict-false true"
+fchk "real session: created config removed" "leg1-created-removed true"
+fchk "real session: product change kept" "leg1-product-kept export const a = 2;"
+fchk "real session: still reads LOKI_DONE" "leg1-done true"
+fchk "restore emits config_fence.restored with the paths" 'leg1-event [["tsconfig.build.json","tsconfig.json","vitest.config.ts"]]'
+fchk "restore recorded for the receipt" 'leg1-record ["tsconfig.build.json","tsconfig.json","vitest.config.ts"]'
+fchk "a restore alone does not cap the verdict" "leg1-notes false"
+fchk "task naming tsconfig strict: tsconfig.json edit kept" "leg2-tsconfig-kept true"
+fchk "that task: vitest.config.ts still restored" 'leg2-vitest-restored export default {};'
+fchk "that task: product change kept" "leg2-product-kept export const a = 2;"
+fchk "lockfile kept when package.json changed with it" "leg3-lock-follows-manifest lock: 2"
+fchk "lockfile alone is restored" "leg4-lock-alone-restored lock: 1"
+fchk "a stage that is not implement or fix is not restored" "leg5-other-stage-unfenced x"
+fchk "spec conflict naming vitest.config.ts allowlists it" 'leg6-allowlisted ["vitest.config.ts"]'
+fchk "the conflict session's own edit is restored" "leg6-conflict-session-restored export default {};"
+fchk "allowlisted edit kept in the resume session" "leg6-resume-edit-kept export default { resumed: \"it6b\" };"
+fchk "allowlist is once: the session after it is fenced again" "leg6-once export default { resumed: \"it6b\" };"
+fchk "allowlist caps VERIFIED" "leg6-capped true"
+fchk "cap function: VERIFIED drops, PARTIAL and uncapped stay" 'leg6-cap-fn ["PARTIAL","PARTIAL","VERIFIED"]'
+fchk "allowlist is named on the receipt" "leg6-note true"
+
+grep -q 'createConfigFenceHook(call.cwd)' "$ROOT/loki-ts/src/runner/providers.ts" && ok "SDK route wires createConfigFenceHook for Edit, Write and MultiEdit" || bad "SDK route does not wire the config fence hook"
+grep -q 'fencedDenyRules(cwd' "$ROOT/loki-ts/src/runner/providers.ts" && ok "CLI route settings carry the per-file Edit deny rules" || bad "CLI route settings do not carry the fence"
+grep -q 'capFenceVerdict(mutCap' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "seal caps a fence allowlist below VERIFIED" || bad "seal does not read the fence record"
+
 P="$ROOT/loki-ts/src/runner/providers.ts"
 grep -q 'hooks: \[createHostGuardHook(call.cwd)\]' "$P" && ok "SDK route PreToolUse hook is createHostGuardHook" || bad "SDK route does not use createHostGuardHook"
 grep -q 'runSdkHostGuard\|cmd: \["bash", hookPath\]' "$P" && bad "providers.ts still spawns the guard script per Bash call" || ok "providers.ts no longer spawns the guard script itself"
