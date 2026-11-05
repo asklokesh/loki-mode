@@ -158,6 +158,29 @@ func lokiValue(v any) any {
 `;
 }
 
+/** `any` needs language version go1.18, and a module whose go.mod names an older one (pflag says go 1.12, cobra go 1.15)
+ *  rejects it. Rewrites the identifier `any` outside literals and comments to the identical interface{}. */
+export function goAnyCompat(src: string): string {
+  let out = "", i = 0;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i]!;
+    let e = i + 1;
+    if (c === "/" && src[i + 1] === "/") { const j = src.indexOf("\n", i); e = j < 0 ? n : j; }
+    else if (c === "/" && src[i + 1] === "*") { const j = src.indexOf("*/", i + 2); e = j < 0 ? n : j + 2; }
+    else if (c === "`") { const j = src.indexOf("`", i + 1); e = j < 0 ? n : j + 1; }
+    else if (c === '"' || c === "'") { let j = i + 1; while (j < n && src[j] !== c && src[j] !== "\n") j += src[j] === "\\" ? 2 : 1; e = Math.min(n, j + 1); }
+    else if (/[A-Za-z_]/.test(c)) {
+      let j = i; while (j < n && /\w/.test(src[j]!)) j++;
+      const w = src.slice(i, j);
+      const selector = src[i - 1] === "." && src.slice(i - 3, i) !== "..."; // x.any is a field; ...any is a variadic type
+      out += w === "any" && !selector ? "interface{}" : w; i = j; continue;
+    }
+    out += src.slice(i, e); i = e;
+  }
+  return out;
+}
+
 const CASE_START = /^\s*lokiCase\(\s*"([^"]+)"/;
 /** Line ranges (0-based, inclusive) of each lokiCase statement inside func lokiCases(). */
 export function goCaseBlocks(program: string): { id: string; start: number; end: number }[] {
@@ -204,10 +227,10 @@ export function pruneGoProgram(program: string, output: string): { program: stri
 export function runGoProbe(o: { moduleRoot: string; pkgDir: string; pkg: string; program: string; timeoutMs?: number; env?: Record<string, string>; maxRepairs?: number }): ProbeExec {
   const dir = join(o.moduleRoot, o.pkgDir), probeFile = join(dir, GO_PROBE_FILE), helperFile = join(dir, GO_HELPER_FILE);
   const env = { ...plainTestEnv(), ...(o.env ?? {}) }, pkgArg = `./${o.pkgDir.replace(/^\.?\/*/, "")}`.replace(/\/$/, "") || ".";
-  let program = o.program.trimEnd() + "\n";
+  let program = goAnyCompat(o.program.trimEnd() + "\n");
   if (!/^\s*package\s+\w+/m.test(program)) program = `package ${o.pkg}\n\n${program}`;
   const pruned: { id: string; error: string }[] = [];
-  writeFileSync(helperFile, goHelpers(o.pkg));
+  writeFileSync(helperFile, goAnyCompat(goHelpers(o.pkg)));
   try {
     for (let pass = 0; ; pass++) {
       writeFileSync(probeFile, program);

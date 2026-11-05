@@ -1,0 +1,218 @@
+{
+  "summary": {
+    "fixture": "flagusage",
+    "mode": "haiku",
+    "cases": 15,
+    "calls": 2,
+    "total": {
+      "inTok": 4,
+      "outTok": 4010,
+      "cacheRead": 0,
+      "cacheWrite": 9611,
+      "costUsd": 0.0039276
+    },
+    "caught": "3/3",
+    "false_fires": "0/2",
+    "base_fires": false,
+    "fires_iff_oracle_fails": "5/5"
+  },
+  "rows": [
+    {
+      "variant": "base",
+      "oracle": null,
+      "fires": false,
+      "calls": 0,
+      "blocking": [],
+      "findings": [],
+      "changed": [],
+      "flaky": [],
+      "missing": [],
+      "notes": [
+        "no change case changed output: the probes may not reach the requested change"
+      ]
+    },
+    {
+      "variant": "correct-local",
+      "oracle": true,
+      "fires": false,
+      "calls": 0,
+      "blocking": [],
+      "findings": [],
+      "changed": [
+        "c1(change)",
+        "c2(change)",
+        "c3(change)"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": []
+    },
+    {
+      "variant": "correct-param",
+      "oracle": true,
+      "fires": false,
+      "calls": 0,
+      "blocking": [],
+      "findings": [],
+      "changed": [
+        "c1(change)",
+        "c2(change)",
+        "c3(change)"
+      ],
+      "flaky": [],
+      "missing": [
+        "k3:missing_patched",
+        "k4:missing_patched"
+      ],
+      "notes": [
+        "patched: case k3 dropped (not enough arguments in call to names)",
+        "patched: case k4 dropped (not enough arguments in call to names)",
+        "case k3 ran on base but not on the patched tree (an API it calls changed)",
+        "case k4 ran on base but not on the patched tree (an API it calls changed)"
+      ]
+    },
+    {
+      "variant": "regress-default",
+      "oracle": false,
+      "fires": true,
+      "calls": 0,
+      "blocking": [
+        {
+          "id": "k2",
+          "desc": "FlagLine without short alias but with default",
+          "before": "  --verbose\tprint more (default: false)",
+          "after": "  --verbose\tprint more (default false)"
+        }
+      ],
+      "findings": [
+        "k2:unrequested"
+      ],
+      "changed": [
+        "c1(change)",
+        "c2(change)",
+        "c3(change)",
+        "k2(keep)"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": []
+    },
+    {
+      "variant": "regress-lookup",
+      "oracle": false,
+      "fires": true,
+      "calls": 0,
+      "blocking": [
+        {
+          "id": "k8",
+          "desc": "Lookup with uppercase short name -O fails",
+          "before": "[\"{Name: Short: Usage: Default: Required:false}\",\"ERROR: unknown flag: -O\"]",
+          "after": "[\"{Name: Short: Usage: Default: Required:false}\",\"ERROR: unknown flag \\\"-O\\\"\"]"
+        },
+        {
+          "id": "k9",
+          "desc": "Lookup with leading whitespace fails",
+          "before": "[\"{Name: Short: Usage: Default: Required:false}\",\"ERROR: unknown flag:  -o\"]",
+          "after": "[\"{Name: Short: Usage: Default: Required:false}\",\"ERROR: unknown flag \\\" -o\\\"\"]"
+        },
+        {
+          "id": "k12",
+          "desc": "Lookup unknown flag error",
+          "before": "[\"{Name: Short: Usage: Default: Required:false}\",\"ERROR: unknown flag: --nope\"]",
+          "after": "[\"{Name: Short: Usage: Default: Required:false}\",\"ERROR: unknown flag \\\"--nope\\\"\"]"
+        }
+      ],
+      "findings": [
+        "k8:unrequested",
+        "k9:unrequested",
+        "k12:unrequested"
+      ],
+      "changed": [
+        "c1(change)",
+        "c2(change)",
+        "c3(change)",
+        "k8(keep)",
+        "k9(keep)",
+        "k12(keep)"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": []
+    },
+    {
+      "variant": "regress-shared",
+      "oracle": false,
+      "fires": true,
+      "calls": 0,
+      "blocking": [
+        {
+          "id": "k5",
+          "desc": "MissingError message for flag with short alias",
+          "before": "required flag --output, -o not set",
+          "after": "required flag -o, --output not set"
+        }
+      ],
+      "findings": [
+        "k3:unknown",
+        "k5:unrequested"
+      ],
+      "changed": [
+        "c1(change)",
+        "c2(change)",
+        "c3(change)",
+        "k3(keep)",
+        "k5(keep)"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": [
+        "case k3 changed and the judge could not decide whether the issue asks for it"
+      ]
+    }
+  ],
+  "program": "package flags\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"FlagLine with short alias from the issue\", func() any {\n\t\treturn FlagLine(Flag{Name: \"output\", Short: \"o\", Usage: \"write to file\"})\n\t})\n\tlokiCase(\"c2\", \"change\", \"FlagLine with short alias and default\", func() any {\n\t\treturn FlagLine(Flag{Name: \"output\", Short: \"o\", Usage: \"write to file\", Default: \"out.txt\"})\n\t})\n\tlokiCase(\"c3\", \"change\", \"Help listing containing a flag with a short alias\", func() any {\n\t\treturn Help(\"tool\", []Flag{{Name: \"output\", Short: \"o\", Usage: \"write to file\"}})\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"FlagLine for flag without short alias from the issue\", func() any {\n\t\treturn FlagLine(Flag{Name: \"verbose\", Usage: \"print more\"})\n\t})\n\tlokiCase(\"k2\", \"keep\", \"FlagLine without short alias but with default\", func() any {\n\t\treturn FlagLine(Flag{Name: \"verbose\", Usage: \"print more\", Default: \"false\"})\n\t})\n\tlokiCase(\"k3\", \"keep\", \"names() for flag with short alias keeps long-first order\", func() any {\n\t\treturn names(Flag{Name: \"output\", Short: \"o\"})\n\t})\n\tlokiCase(\"k4\", \"keep\", \"names() for flag without short alias\", func() any {\n\t\treturn names(Flag{Name: \"verbose\"})\n\t})\n\tlokiCase(\"k5\", \"keep\", \"MissingError message for flag with short alias\", func() any {\n\t\treturn MissingError(Flag{Name: \"output\", Short: \"o\"}).Error()\n\t})\n\tlokiCase(\"k6\", \"keep\", \"MissingError message for flag without short alias\", func() any {\n\t\treturn MissingError(Flag{Name: \"verbose\"}).Error()\n\t})\n\tlokiCase(\"k7\", \"keep\", \"Lookup by short name -o\", func() any {\n\t\tfs := []Flag{{Name: \"output\", Short: \"o\"}}\n\t\treturn lokiAll(Lookup(fs, \"-o\"))\n\t})\n\tlokiCase(\"k8\", \"keep\", \"Lookup with uppercase short name -O fails\", func() any {\n\t\tfs := []Flag{{Name: \"output\", Short: \"o\"}}\n\t\treturn lokiAll(Lookup(fs, \"-O\"))\n\t})\n\tlokiCase(\"k9\", \"keep\", \"Lookup with leading whitespace fails\", func() any {\n\t\tfs := []Flag{{Name: \"output\", Short: \"o\"}}\n\t\treturn lokiAll(Lookup(fs, \" -o\"))\n\t})\n\tlokiCase(\"k10\", \"keep\", \"Help listing for flag without short alias\", func() any {\n\t\treturn Help(\"tool\", []Flag{{Name: \"verbose\", Usage: \"print more\"}})\n\t})\n\tlokiCase(\"k11\", \"keep\", \"Help with empty program name and no flags\", func() any {\n\t\treturn Help(\"\", nil)\n\t})\n\tlokiCase(\"k12\", \"keep\", \"Lookup unknown flag error\", func() any {\n\t\tfs := []Flag{{Name: \"output\", Short: \"o\"}}\n\t\treturn lokiAll(Lookup(fs, \"--nope\"))\n\t})\n}\n",
+  "judged": [
+    {
+      "label": "k2",
+      "desc": "FlagLine without short alias but with default",
+      "before": "  --verbose\tprint more (default: false)",
+      "after": "  --verbose\tprint more (default false)",
+      "verdict": "unrequested"
+    },
+    {
+      "label": "k8",
+      "desc": "Lookup with uppercase short name -O fails",
+      "before": "[\"{Name: Short: Usage: Default: Required:false}\",\"ERROR: unknown flag: -O\"]",
+      "after": "[\"{Name: Short: Usage: Default: Required:false}\",\"ERROR: unknown flag \\\"-O\\\"\"]",
+      "verdict": "unrequested"
+    },
+    {
+      "label": "k9",
+      "desc": "Lookup with leading whitespace fails",
+      "before": "[\"{Name: Short: Usage: Default: Required:false}\",\"ERROR: unknown flag:  -o\"]",
+      "after": "[\"{Name: Short: Usage: Default: Required:false}\",\"ERROR: unknown flag \\\" -o\\\"\"]",
+      "verdict": "unrequested"
+    },
+    {
+      "label": "k12",
+      "desc": "Lookup unknown flag error",
+      "before": "[\"{Name: Short: Usage: Default: Required:false}\",\"ERROR: unknown flag: --nope\"]",
+      "after": "[\"{Name: Short: Usage: Default: Required:false}\",\"ERROR: unknown flag \\\"--nope\\\"\"]",
+      "verdict": "unrequested"
+    },
+    {
+      "label": "k3",
+      "desc": "names() for flag with short alias keeps long-first order",
+      "before": "--output, -o",
+      "after": "-o, --output",
+      "verdict": "unknown"
+    },
+    {
+      "label": "k5",
+      "desc": "MissingError message for flag with short alias",
+      "before": "required flag --output, -o not set",
+      "after": "required flag -o, --output not set",
+      "verdict": "unrequested"
+    }
+  ]
+}

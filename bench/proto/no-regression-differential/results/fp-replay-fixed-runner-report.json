@@ -1,0 +1,188 @@
+{
+  "summary": {
+    "mode": "replay",
+    "commits": 7,
+    "scored": 7,
+    "false_fires": "1/7",
+    "with_changed_keep_case": "1/7",
+    "calls": 2,
+    "total": {
+      "inTok": 4,
+      "outTok": 34153,
+      "cacheRead": 0,
+      "cacheWrite": 51431,
+      "costUsd": 0.027363099999999998
+    }
+  },
+  "rows": [
+    {
+      "id": "pflag-316",
+      "edited": [
+        "ipValue.Set"
+      ],
+      "callers": [
+        "FlagSet.Parse",
+        "FlagSet.Set",
+        "Set",
+        "flagValueWrapper.Set"
+      ],
+      "cases": 15,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "changedChange": [
+        "c1",
+        "c3"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": [],
+      "program": "package pflag\n\nimport (\n\t\"fmt\"\n\t\"net\"\n)\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"IP flag given --ip= with empty value\", func() interface{} {\n\t\tvar p net.IP\n\t\tfs := NewFlagSet(\"t\", ContinueOnError)\n\t\tfs.IPVar(&p, \"ip\", nil, \"usage\")\n\t\te := fs.Parse([]string{\"--ip=\"})\n\t\treturn lokiAll(p.String(), fmt.Sprint(e))\n\t})\n\tlokiCase(\"c2\", \"change\", \"IP flag given --ip= with whitespace-only value\", func() interface{} {\n\t\tvar p net.IP\n\t\tfs := NewFlagSet(\"t\", ContinueOnError)\n\t\tfs.IPVar(&p, \"ip\", nil, \"usage\")\n\t\te := fs.Parse([]string{\"--ip=   \"})\n\t\treturn lokiAll(p.String(), fmt.Sprint(e))\n\t})\n\tlokiCase(\"c3\", \"change\", \"FlagSet.Set ip with empty string\", func() interface{} {\n\t\tvar p net.IP\n\t\tfs := NewFlagSet(\"t\", ContinueOnError)\n\t\tfs.IPVar(&p, \"ip\", nil, \"usage\")\n\t\te := fs.Set(\"ip\", \"\")\n\t\treturn lokiAll(p.String(), fmt.Sprint(e))\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"IP flag --ip=abc invalid value error\", func() interface{} {\n\t\tvar p net.IP\n\t\tfs := NewFlagSet(\"t\", ContinueOnError)\n\t\tfs.IPVar(&p, \"ip\", nil, \"usage\")\n\t\te := fs.Parse([]string{\"--ip=abc\"})\n\t\treturn lokiAll(p.String(), fmt.Sprint(e))\n\t})\n\tlokiCase(\"k2\", \"keep\", \"IP flag --ip=192.168.1.1 valid IPv4\", func() interface{} {\n\t\tvar p net.IP\n\t\tfs := NewFlagSet(\"t\", ContinueOnError)\n\t\tfs.IPVar(&p, \"ip\", nil, \"usage\")\n\t\te := fs.Parse([]string{\"--ip=192.168.1.1\"})\n\t\treturn lokiAll(p.String(), fmt.Sprint(e))\n\t})\n\tlokiCase(\"k3\", \"keep\", \"IP flag --ip= with surrounding spaces in value\", func() interface{} {\n\t\tvar p net.IP\n\t\tfs := NewFlagSet(\"t\", ContinueOnError)\n\t\tfs.IPVar(&p, \"ip\", nil, \"usage\")\n\t\te := fs.Parse([]string{\"--ip= 10.0.0.1 \"})\n\t\treturn lokiAll(p.String(), fmt.Sprint(e))\n\t})\n\tlokiCase(\"k4\", \"keep\", \"IP flag --ip=FE80::1 uppercase IPv6\", func() interface{} {\n\t\tvar p net.IP\n\t\tfs := NewFlagSet(\"t\", ContinueOnError)\n\t\tfs.IPVar(&p, \"ip\", nil, \"usage\")\n\t\te := fs.Parse([]string{\"--ip=FE80::1\"})\n\t\treturn lokiAll(p.String(), fmt.Sprint(e))\n\t})\n\tlokiCase(\"k5\", \"keep\", \"ipValue.Set with padded ::1\", func() interface{} {\n\t\tvar p net.IP\n\t\tv := newIPValue(nil, &p)\n\t\te := v.Set(\"  ::1  \")\n\t\treturn lokiAll(p.String(), fmt.Sprint(e))\n\t})\n\tlokiCase(\"k6\", \"keep\", \"GetIP on flag with default 1.2.3.4\", func() interface{} {\n\t\tvar p net.IP\n\t\tfs := NewFlagSet(\"t\", ContinueOnError)\n\t\tfs.IPVar(&p, \"ip\", net.ParseIP(\"1.2.3.4\"), \"usage\")\n\t\tip, err := fs.GetIP(\"ip\")\n\t\treturn lokiAll(ip.String(), fmt.Sprint(err))\n\t})\n\tlokiCase(\"k7\", \"keep\", \"ipConv with empty string\", func() interface{} {\n\t\treturn fmt.Sprint(ipConv(\"\"))\n\t})\n\tlokiCase(\"k8\", \"keep\", \"ipConv with 1.2.3.4\", func() interface{} {\n\t\treturn fmt.Sprint(ipConv(\"1.2.3.4\"))\n\t})\n\tlokiCase(\"k9\", \"keep\", \"ipValue Type name\", func() interface{} {\n\t\tvar p net.IP\n\t\treturn newIPValue(nil, &p).Type()\n\t})\n\tlokiCase(\"k10\", \"keep\", \"FlagSet.Set ip with bogus value error\", func() interface{} {\n\t\tvar p net.IP\n\t\tfs := NewFlagSet(\"t\", ContinueOnError)\n\t\tfs.IPVar(&p, \"ip\", nil, \"usage\")\n\t\treturn fmt.Sprint(fs.Set(\"ip\", \"bogus\"))\n\t})\n\tlokiCase(\"k11\", \"keep\", \"IP flag default value string\", func() interface{} {\n\t\tfs := NewFlagSet(\"t\", ContinueOnError)\n\t\tfs.IP(\"ip\", net.ParseIP(\"10.1.1.1\"), \"usage\")\n\t\treturn fs.Lookup(\"ip\").DefValue\n\t})\n\tlokiCase(\"k12\", \"keep\", \"FlagUsages for IP flag\", func() interface{} {\n\t\tvar p net.IP\n\t\tfs := NewFlagSet(\"t\", ContinueOnError)\n\t\tfs.IPVar(&p, \"ip\", nil, \"usage\")\n\t\treturn fs.FlagUsages()\n\t})\n}\n"
+    },
+    {
+      "id": "pflag-282",
+      "edited": [
+        "stringArrayValue.Replace"
+      ],
+      "callers": [
+        "boolSliceValue.Set",
+        "ipSliceValue.Set",
+        "wrap"
+      ],
+      "cases": 15,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "changedChange": [],
+      "flaky": [],
+      "missing": [],
+      "notes": [
+        "no change case changed output: the probes may not reach the requested change"
+      ],
+      "program": "package pflag\n\nimport (\n\t\"fmt\"\n\t\"net\"\n)\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"stringArrayValue.Replace with [a b]\", func() interface{} {\n\t\tvar sa []string\n\t\tv := newStringArrayValue(nil, &sa)\n\t\te := v.Replace([]string{\"a\", \"b\"})\n\t\treturn lokiAll(sa, fmt.Sprint(e))\n\t})\n\tlokiCase(\"c2\", \"change\", \"stringArrayValue.Replace with nil input\", func() interface{} {\n\t\tvar sa []string\n\t\tv := newStringArrayValue(nil, &sa)\n\t\te := v.Replace(nil)\n\t\treturn lokiAll(sa, fmt.Sprint(e))\n\t})\n\tlokiCase(\"c3\", \"change\", \"stringArrayValue.Replace with empty and padded strings\", func() interface{} {\n\t\tvar sa []string\n\t\tv := newStringArrayValue(nil, &sa)\n\t\te := v.Replace([]string{\"\", \" x \"})\n\t\treturn lokiAll(sa, fmt.Sprint(e))\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"boolSliceValue.Set true,FALSE,1\", func() interface{} {\n\t\tvar bs []bool\n\t\tv := newBoolSliceValue(nil, &bs)\n\t\te := v.Set(\"true,FALSE,1\")\n\t\treturn lokiAll(bs, fmt.Sprint(e))\n\t})\n\tlokiCase(\"k2\", \"keep\", \"boolSliceValue.Set true,x invalid\", func() interface{} {\n\t\tvar bs []bool\n\t\tv := newBoolSliceValue(nil, &bs)\n\t\te := v.Set(\"true,x\")\n\t\treturn lokiAll(bs, fmt.Sprint(e))\n\t})\n\tlokiCase(\"k3\", \"keep\", \"boolSliceValue.Replace true,x invalid\", func() interface{} {\n\t\tvar bs []bool\n\t\tv := newBoolSliceValue(nil, &bs)\n\t\te := v.Replace([]string{\"true\", \"x\"})\n\t\treturn lokiAll(bs, fmt.Sprint(e))\n\t})\n\tlokiCase(\"k4\", \"keep\", \"boolSliceValue.Replace T and 0\", func() interface{} {\n\t\tvar bs []bool\n\t\tv := newBoolSliceValue(nil, &bs)\n\t\te := v.Replace([]string{\"T\", \"0\"})\n\t\treturn lokiAll(bs, fmt.Sprint(e))\n\t})\n\tlokiCase(\"k5\", \"keep\", \"ipSliceValue.Set 1.2.3.4, ::1\", func() interface{} {\n\t\tvar ips []net.IP\n\t\tv := newIPSliceValue(nil, &ips)\n\t\te := v.Set(\"1.2.3.4, ::1\")\n\t\treturn lokiAll(fmt.Sprint(ips), fmt.Sprint(e))\n\t})\n\tlokiCase(\"k6\", \"keep\", \"ipSliceValue.Set bogus invalid\", func() interface{} {\n\t\tvar ips []net.IP\n\t\tv := newIPSliceValue(nil, &ips)\n\t\te := v.Set(\"bogus\")\n\t\treturn lokiAll(fmt.Sprint(ips), fmt.Sprint(e))\n\t})\n\tlokiCase(\"k7\", \"keep\", \"ipSliceValue.Replace 10.0.0.1\", func() interface{} {\n\t\tvar ips []net.IP\n\t\tv := newIPSliceValue(nil, &ips)\n\t\te := v.Replace([]string{\"10.0.0.1\"})\n\t\treturn lokiAll(fmt.Sprint(ips), fmt.Sprint(e))\n\t})\n\tlokiCase(\"k8\", \"keep\", \"stringArrayValue.Set a twice\", func() interface{} {\n\t\tvar sa []string\n\t\tv := newStringArrayValue(nil, &sa)\n\t\tv.Set(\"a\")\n\t\te := v.Set(\"a\")\n\t\treturn lokiAll(sa, fmt.Sprint(e))\n\t})\n\tlokiCase(\"k9\", \"keep\", \"stringArrayValue.Append x\", func() interface{} {\n\t\tvar sa []string\n\t\tv := newStringArrayValue(nil, &sa)\n\t\te := v.Append(\"x\")\n\t\treturn lokiAll(sa, fmt.Sprint(e))\n\t})\n\tlokiCase(\"k10\", \"keep\", \"stringArrayValue.String after Replace a,b and c\", func() interface{} {\n\t\tvar sa []string\n\t\tv := newStringArrayValue(nil, &sa)\n\t\tv.Replace([]string{\"a,b\", \"c\"})\n\t\treturn v.String()\n\t})\n\tlokiCase(\"k11\", \"keep\", \"wrap indent 4 width 0 with newline\", func() interface{} {\n\t\treturn wrap(4, 0, \"a\\nb\")\n\t})\n\tlokiCase(\"k12\", \"keep\", \"stringArrayConv of [a,b]\", func() interface{} {\n\t\treturn fmt.Sprint(stringArrayConv(\"[a,b]\"))\n\t})\n}\n"
+    },
+    {
+      "id": "cobra-2397",
+      "edited": [
+        "NoDuplicateArgs"
+      ],
+      "callers": [],
+      "cases": 12,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "changedChange": [],
+      "flaky": [],
+      "missing": [],
+      "notes": [
+        "base: case c1 dropped (undefined: NoDuplicateArgs)",
+        "base: case c2 dropped (undefined: NoDuplicateArgs)",
+        "base: case c3 dropped (undefined: NoDuplicateArgs)",
+        "no change case changed output: the probes may not reach the requested change"
+      ],
+      "program": "package cobra\n\nimport \"fmt\"\n\nfunc lokiCases() {\n\tlokiCase(\"k1\", \"keep\", \"NoArgs with [x]\", func() interface{} {\n\t\treturn fmt.Sprint(NoArgs(&Command{Use: \"root\"}, []string{\"x\"}))\n\t})\n\tlokiCase(\"k2\", \"keep\", \"NoArgs with nil\", func() interface{} {\n\t\treturn fmt.Sprint(NoArgs(&Command{Use: \"root\"}, nil))\n\t})\n\tlokiCase(\"k3\", \"keep\", \"OnlyValidArgs ValidArgs [a] args [a a]\", func() interface{} {\n\t\tcmd := &Command{Use: \"root\", ValidArgs: []string{\"a\"}}\n\t\treturn fmt.Sprint(OnlyValidArgs(cmd, []string{\"a\", \"a\"}))\n\t})\n\tlokiCase(\"k4\", \"keep\", \"OnlyValidArgs ValidArgs [a] args [A] case differs\", func() interface{} {\n\t\tcmd := &Command{Use: \"root\", ValidArgs: []string{\"a\"}}\n\t\treturn fmt.Sprint(OnlyValidArgs(cmd, []string{\"A\"}))\n\t})\n\tlokiCase(\"k5\", \"keep\", \"OnlyValidArgs ValidArgs with description a tab desc and args [a]\", func() interface{} {\n\t\tcmd := &Command{Use: \"root\", ValidArgs: []string{\"a\\tdesc\"}}\n\t\treturn fmt.Sprint(OnlyValidArgs(cmd, []string{\"a\"}))\n\t})\n\tlokiCase(\"k6\", \"keep\", \"ExactArgs(2) with [a a]\", func() interface{} {\n\t\treturn fmt.Sprint(ExactArgs(2)(&Command{Use: \"root\"}, []string{\"a\", \"a\"}))\n\t})\n\tlokiCase(\"k7\", \"keep\", \"ExactArgs(1) with [a a] error\", func() interface{} {\n\t\treturn fmt.Sprint(ExactArgs(1)(&Command{Use: \"root\"}, []string{\"a\", \"a\"}))\n\t})\n\tlokiCase(\"k8\", \"keep\", \"MinimumNArgs(3) with [x] error\", func() interface{} {\n\t\treturn fmt.Sprint(MinimumNArgs(3)(&Command{Use: \"root\"}, []string{\"x\"}))\n\t})\n\tlokiCase(\"k9\", \"keep\", \"MaximumNArgs(1) with [a a] error\", func() interface{} {\n\t\treturn fmt.Sprint(MaximumNArgs(1)(&Command{Use: \"root\"}, []string{\"a\", \"a\"}))\n\t})\n\tlokiCase(\"k10\", \"keep\", \"RangeArgs(1,2) with [a b a] error\", func() interface{} {\n\t\treturn fmt.Sprint(RangeArgs(1, 2)(&Command{Use: \"root\"}, []string{\"a\", \"b\", \"a\"}))\n\t})\n\tlokiCase(\"k11\", \"keep\", \"MatchAll(ExactArgs(2), OnlyValidArgs) with [a a]\", func() interface{} {\n\t\tcmd := &Command{Use: \"root\", ValidArgs: []string{\"a\"}}\n\t\treturn fmt.Sprint(MatchAll(ExactArgs(2), OnlyValidArgs)(cmd, []string{\"a\", \"a\"}))\n\t})\n\tlokiCase(\"k12\", \"keep\", \"ExactValidArgs(1) with [a a] error\", func() interface{} {\n\t\tcmd := &Command{Use: \"root\", ValidArgs: []string{\"a\"}}\n\t\treturn fmt.Sprint(ExactValidArgs(1)(cmd, []string{\"a\", \"a\"}))\n\t})\n}\n"
+    },
+    {
+      "id": "cobra-2257",
+      "edited": [
+        "Command.getCompletions"
+      ],
+      "callers": [
+        "Command.initCompleteCmd"
+      ],
+      "cases": 14,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "changedChange": [
+        "c1",
+        "c2",
+        "c3"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": [],
+      "program": "package cobra\n\nimport \"fmt\"\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"getCompletions on traverse root, args len 2 cap 8 [x, empty]: args slice after call\", func() interface{} {\n\t\troot := &Command{Use: \"root\", TraverseChildren: true, Run: emptyRun}\n\t\targs := make([]string, 2, 8)\n\t\targs[0] = \"x\"\n\t\t_, comps, dir, err := root.getCompletions(args)\n\t\treturn lokiAll(args, comps, dir.string(), fmt.Sprint(err))\n\t})\n\tlokiCase(\"c2\", \"change\", \"getCompletions on non-traverse root, args len 2 cap 8 [x, empty]: args slice after call\", func() interface{} {\n\t\troot := &Command{Use: \"root\", Run: emptyRun}\n\t\targs := make([]string, 2, 8)\n\t\targs[0] = \"x\"\n\t\t_, comps, dir, err := root.getCompletions(args)\n\t\treturn lokiAll(args, comps, dir.string(), fmt.Sprint(err))\n\t})\n\tlokiCase(\"c3\", \"change\", \"getCompletions issue example: args [x] with spare capacity, args slice after call\", func() interface{} {\n\t\troot := &Command{Use: \"root\", TraverseChildren: true, Run: emptyRun}\n\t\targs := make([]string, 1, 4)\n\t\targs[0] = \"x\"\n\t\t_, comps, dir, err := root.getCompletions(args)\n\t\treturn lokiAll(args, comps, dir.string(), fmt.Sprint(err))\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"getCompletions traverse root, ValidArgsFunction sees args for [x]\", func() interface{} {\n\t\troot := &Command{\n\t\t\tUse:              \"root\",\n\t\t\tTraverseChildren: true,\n\t\t\tRun:              emptyRun,\n\t\t\tValidArgsFunction: func(c *Command, a []string, tc string) ([]Completion, ShellCompDirective) {\n\t\t\t\treturn []Completion{fmt.Sprint(a)}, ShellCompDirectiveDefault\n\t\t\t},\n\t\t}\n\t\t_, comps, dir, err := root.getCompletions([]string{\"x\"})\n\t\treturn lokiAll(comps, dir.string(), fmt.Sprint(err))\n\t})\n\tlokiCase(\"k2\", \"keep\", \"getCompletions non-traverse root, ValidArgsFunction sees [x y]\", func() interface{} {\n\t\troot := &Command{\n\t\t\tUse: \"root\",\n\t\t\tRun: emptyRun,\n\t\t\tValidArgsFunction: func(c *Command, a []string, tc string) ([]Completion, ShellCompDirective) {\n\t\t\t\treturn []Completion{fmt.Sprint(a)}, ShellCompDirectiveDefault\n\t\t\t},\n\t\t}\n\t\t_, comps, dir, err := root.getCompletions([]string{\"x\", \"y\", \"\"})\n\t\treturn lokiAll(comps, dir.string(), fmt.Sprint(err))\n\t})\n\tlokiCase(\"k3\", \"keep\", \"getCompletions subcommand prefix ap completes apple\", func() interface{} {\n\t\troot := &Command{Use: \"root\", Run: emptyRun}\n\t\troot.AddCommand(&Command{Use: \"apple\", Short: \"a fruit\", Run: emptyRun})\n\t\t_, comps, dir, err := root.getCompletions([]string{\"ap\"})\n\t\treturn lokiAll(comps, dir.string(), fmt.Sprint(err))\n\t})\n\tlokiCase(\"k4\", \"keep\", \"getCompletions unknown subcommand nope error\", func() interface{} {\n\t\troot := &Command{Use: \"root\", Run: emptyRun}\n\t\troot.AddCommand(&Command{Use: \"apple\", Short: \"a fruit\", Run: emptyRun})\n\t\t_, comps, dir, err := root.getCompletions([]string{\"nope\", \"x\"})\n\t\treturn lokiAll(comps, dir.string(), fmt.Sprint(err))\n\t})\n\tlokiCase(\"k5\", \"keep\", \"getCompletions ValidArgs [xray] with X uppercase prefix\", func() interface{} {\n\t\troot := &Command{Use: \"root\", Run: emptyRun, ValidArgs: []string{\"xray\"}}\n\t\t_, comps, dir, err := root.getCompletions([]string{\"X\"})\n\t\treturn lokiAll(comps, dir.string(), fmt.Sprint(err))\n\t})\n\tlokiCase(\"k6\", \"keep\", \"getCompletions ValidArgs [xray xenon] with [x x] repeated args\", func() interface{} {\n\t\troot := &Command{Use: \"root\", Run: emptyRun, ValidArgs: []string{\"xray\", \"xenon\"}}\n\t\t_, comps, dir, err := root.getCompletions([]string{\"x\", \"x\"})\n\t\treturn lokiAll(comps, dir.string(), fmt.Sprint(err))\n\t})\n\tlokiCase(\"k7\", \"keep\", \"getCompletions flag name completion --he\", func() interface{} {\n\t\troot := &Command{Use: \"root\", Run: emptyRun}\n\t\t_, comps, dir, err := root.getCompletions([]string{\"--he\"})\n\t\treturn lokiAll(comps, dir.string(), fmt.Sprint(err))\n\t})\n\tlokiCase(\"k8\", \"keep\", \"getCompletions empty toComplete on bare root\", func() interface{} {\n\t\troot := &Command{Use: \"root\", Run: emptyRun}\n\t\t_, comps, dir, err := root.getCompletions([]string{\"\"})\n\t\treturn lokiAll(comps, dir.string(), fmt.Sprint(err))\n\t})\n\tlokiCase(\"k9\", \"keep\", \"initCompleteCmd with [__complete x] adds one command\", func() interface{} {\n\t\troot := &Command{Use: \"root\", Run: emptyRun}\n\t\troot.initCompleteCmd([]string{\"__complete\", \"x\"})\n\t\treturn len(root.Commands())\n\t})\n\tlokiCase(\"k10\", \"keep\", \"initCompleteCmd with [x] adds no command\", func() interface{} {\n\t\troot := &Command{Use: \"root\", Run: emptyRun}\n\t\troot.initCompleteCmd([]string{\"x\"})\n\t\treturn len(root.Commands())\n\t})\n\tlokiCase(\"k11\", \"keep\", \"ShellCompDirective NoFileComp string\", func() interface{} {\n\t\treturn ShellCompDirectiveNoFileComp.string()\n\t})\n}\n"
+    },
+    {
+      "id": "semver-1",
+      "edited": [
+        "constraintTilde"
+      ],
+      "callers": [
+        "constraintTildeOrEqual"
+      ],
+      "cases": 15,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "changedChange": [
+        "c1",
+        "c3"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": [],
+      "program": "package semver\n\nimport \"fmt\"\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"NewConstraint * with 1.2.3\", func() interface{} {\n\t\tc, _ := NewConstraint(\"*\")\n\t\tv, _ := NewVersion(\"1.2.3\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"c2\", \"change\", \"NewConstraint * with 0.0.1\", func() interface{} {\n\t\tc, _ := NewConstraint(\"*\")\n\t\tv, _ := NewVersion(\"0.0.1\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"c3\", \"change\", \"constraintTilde directly on parsed * with 1.2.3\", func() interface{} {\n\t\tc, _ := parseConstraint(\"*\")\n\t\tv, _ := NewVersion(\"1.2.3\")\n\t\treturn constraintTilde(v, c)\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"NewConstraint ~1.2.3 with 1.2.4\", func() interface{} {\n\t\tc, _ := NewConstraint(\"~1.2.3\")\n\t\tv, _ := NewVersion(\"1.2.4\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k2\", \"keep\", \"NewConstraint ~1.2.3 with 1.3.0\", func() interface{} {\n\t\tc, _ := NewConstraint(\"~1.2.3\")\n\t\tv, _ := NewVersion(\"1.3.0\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k3\", \"keep\", \"NewConstraint ~1.2.3 with 1.2.2\", func() interface{} {\n\t\tc, _ := NewConstraint(\"~1.2.3\")\n\t\tv, _ := NewVersion(\"1.2.2\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k4\", \"keep\", \"NewConstraint ~1.2.3 with 2.0.0\", func() interface{} {\n\t\tc, _ := NewConstraint(\"~1.2.3\")\n\t\tv, _ := NewVersion(\"2.0.0\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k5\", \"keep\", \"NewConstraint ^1.2.3 with 1.9.0\", func() interface{} {\n\t\tc, _ := NewConstraint(\"^1.2.3\")\n\t\tv, _ := NewVersion(\"1.9.0\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k6\", \"keep\", \"NewConstraint 1.2.3 with 1.2.3\", func() interface{} {\n\t\tc, _ := NewConstraint(\"1.2.3\")\n\t\tv, _ := NewVersion(\"1.2.3\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k7\", \"keep\", \"NewConstraint !=1.2.3 with 1.2.4\", func() interface{} {\n\t\tc, _ := NewConstraint(\"!=1.2.3\")\n\t\tv, _ := NewVersion(\"1.2.4\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k8\", \"keep\", \"NewConstraint 1.x with 1.5.0\", func() interface{} {\n\t\tc, _ := NewConstraint(\"1.x\")\n\t\tv, _ := NewVersion(\"1.5.0\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k9\", \"keep\", \"NewConstraint padded ~> 1.2 with 1.2.9\", func() interface{} {\n\t\tc, _ := NewConstraint(\"  ~>1.2  \")\n\t\tv, _ := NewVersion(\"1.2.9\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k10\", \"keep\", \"NewConstraint 1.2.3 || 2.x with 2.5.0\", func() interface{} {\n\t\tc, _ := NewConstraint(\"1.2.3 || 2.x\")\n\t\tv, _ := NewVersion(\"2.5.0\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k11\", \"keep\", \"parseConstraint foo error\", func() interface{} {\n\t\t_, err := parseConstraint(\"foo\")\n\t\treturn fmt.Sprint(err)\n\t})\n\tlokiCase(\"k12\", \"keep\", \"parseConstraint 1.0 con string and dirty flag\", func() interface{} {\n\t\tc, _ := parseConstraint(\"1.0\")\n\t\treturn lokiAll(c.con.String(), c.dirty)\n\t})\n}\n"
+    },
+    {
+      "id": "humanize-si",
+      "edited": [
+        "ComputeSI"
+      ],
+      "callers": [
+        "SI",
+        "SIWithDigits"
+      ],
+      "cases": 15,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "changedChange": [
+        "c1",
+        "c2",
+        "c3"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": [],
+      "program": "package humanize\n\nimport (\n\t\"fmt\"\n\t\"math\"\n)\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"SI(+Inf, x)\", func() interface{} {\n\t\treturn SI(math.Inf(1), \"x\")\n\t})\n\tlokiCase(\"c2\", \"change\", \"SI(-Inf, x)\", func() interface{} {\n\t\treturn SI(math.Inf(-1), \"x\")\n\t})\n\tlokiCase(\"c3\", \"change\", \"ComputeSI(+Inf) value and prefix\", func() interface{} {\n\t\treturn lokiAll(ComputeSI(math.Inf(1)))\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"SI(0, F)\", func() interface{} {\n\t\treturn SI(0, \"F\")\n\t})\n\tlokiCase(\"k2\", \"keep\", \"SI(1e-30, F) lowest prefix\", func() interface{} {\n\t\treturn SI(1e-30, \"F\")\n\t})\n\tlokiCase(\"k3\", \"keep\", \"SI(1e31, F) above table clamp\", func() interface{} {\n\t\treturn SI(1e31, \"F\")\n\t})\n\tlokiCase(\"k4\", \"keep\", \"SI(1e-31, F) below table clamp\", func() interface{} {\n\t\treturn SI(1e-31, \"F\")\n\t})\n\tlokiCase(\"k5\", \"keep\", \"SI(NaN, x)\", func() interface{} {\n\t\treturn SI(math.NaN(), \"x\")\n\t})\n\tlokiCase(\"k6\", \"keep\", \"SI(-2.2e-12, F) negative\", func() interface{} {\n\t\treturn SI(-2.2e-12, \"F\")\n\t})\n\tlokiCase(\"k7\", \"keep\", \"SIWithDigits(1e6, 0, B)\", func() interface{} {\n\t\treturn SIWithDigits(1e6, 0, \"B\")\n\t})\n\tlokiCase(\"k8\", \"keep\", \"SIWithDigits(2.234e-12, 2, F)\", func() interface{} {\n\t\treturn SIWithDigits(2.234e-12, 2, \"F\")\n\t})\n\tlokiCase(\"k9\", \"keep\", \"ParseSI of 2.2345 pF\", func() interface{} {\n\t\tv, u, err := ParseSI(\"2.2345 pF\")\n\t\treturn lokiAll(v, u, fmt.Sprint(err))\n\t})\n\tlokiCase(\"k10\", \"keep\", \"ParseSI of x1.21JW error\", func() interface{} {\n\t\t_, _, err := ParseSI(\"x1.21JW\")\n\t\treturn fmt.Sprint(err)\n\t})\n\tlokiCase(\"k11\", \"keep\", \"Ftoa(+Inf)\", func() interface{} {\n\t\treturn Ftoa(math.Inf(1))\n\t})\n\tlokiCase(\"k12\", \"keep\", \"ComputeSI(0)\", func() interface{} {\n\t\treturn lokiAll(ComputeSI(0))\n\t})\n}\n"
+    },
+    {
+      "id": "humanize-105",
+      "edited": [
+        "CommafWithDigits"
+      ],
+      "callers": [],
+      "cases": 15,
+      "fires": true,
+      "blocking": [
+        {
+          "id": "k8",
+          "desc": "CommafWithDigits(+Inf, 2)",
+          "before": "+Inf",
+          "after": "+Inf.00",
+          "verdict": "unrequested"
+        }
+      ],
+      "findings": [
+        {
+          "id": "k8",
+          "verdict": "unrequested",
+          "desc": "CommafWithDigits(+Inf, 2)",
+          "before": "+Inf",
+          "after": "+Inf.00"
+        }
+      ],
+      "changedChange": [
+        "c1",
+        "c2",
+        "c3"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": [],
+      "program": "package humanize\n\nimport (\n\t\"fmt\"\n\t\"math\"\n)\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"CommafWithDigits(1000.00, 2)\", func() interface{} {\n\t\treturn CommafWithDigits(1000.00, 2)\n\t})\n\tlokiCase(\"c2\", \"change\", \"CommafWithDigits(1000.5, 2)\", func() interface{} {\n\t\treturn CommafWithDigits(1000.5, 2)\n\t})\n\tlokiCase(\"c3\", \"change\", \"CommafWithDigits(1.2, 3)\", func() interface{} {\n\t\treturn CommafWithDigits(1.2, 3)\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"CommafWithDigits(1.23, 0)\", func() interface{} {\n\t\treturn CommafWithDigits(1.23, 0)\n\t})\n\tlokiCase(\"k2\", \"keep\", \"CommafWithDigits(1.23, 1)\", func() interface{} {\n\t\treturn CommafWithDigits(1.23, 1)\n\t})\n\tlokiCase(\"k3\", \"keep\", \"CommafWithDigits(834142.32, 1)\", func() interface{} {\n\t\treturn CommafWithDigits(834142.32, 1)\n\t})\n\tlokiCase(\"k4\", \"keep\", \"CommafWithDigits(1000, 0)\", func() interface{} {\n\t\treturn CommafWithDigits(1000, 0)\n\t})\n\tlokiCase(\"k5\", \"keep\", \"CommafWithDigits(-1000.5, 0)\", func() interface{} {\n\t\treturn CommafWithDigits(-1000.5, 0)\n\t})\n\tlokiCase(\"k6\", \"keep\", \"Commaf(1000.00)\", func() interface{} {\n\t\treturn Commaf(1000.00)\n\t})\n\tlokiCase(\"k7\", \"keep\", \"Commaf(834142.32)\", func() interface{} {\n\t\treturn Commaf(834142.32)\n\t})\n\tlokiCase(\"k8\", \"keep\", \"CommafWithDigits(+Inf, 2)\", func() interface{} {\n\t\treturn CommafWithDigits(math.Inf(1), 2)\n\t})\n\tlokiCase(\"k9\", \"keep\", \"ParseCommaf(1,000.00)\", func() interface{} {\n\t\tv, err := ParseCommaf(\"1,000.00\")\n\t\treturn lokiAll(v, fmt.Sprint(err))\n\t})\n\tlokiCase(\"k10\", \"keep\", \"Comma(1000)\", func() interface{} {\n\t\treturn Comma(1000)\n\t})\n\tlokiCase(\"k11\", \"keep\", \"Comma(-1000)\", func() interface{} {\n\t\treturn Comma(-1000)\n\t})\n\tlokiCase(\"k12\", \"keep\", \"Comma(1234567)\", func() interface{} {\n\t\treturn Comma(1234567)\n\t})\n}\n"
+    }
+  ]
+}

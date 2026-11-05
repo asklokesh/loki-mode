@@ -1,0 +1,253 @@
+{
+  "summary": {
+    "mode": "haiku",
+    "commits": 7,
+    "scored": 7,
+    "false_fires": "1/7",
+    "with_changed_keep_case": "1/7",
+    "calls": 2,
+    "total": {
+      "inTok": 4,
+      "outTok": 34153,
+      "cacheRead": 0,
+      "cacheWrite": 51431,
+      "costUsd": 0.027363099999999998
+    }
+  },
+  "rows": [
+    {
+      "id": "pflag-316",
+      "edited": [
+        "ipValue.Set"
+      ],
+      "callers": [
+        "FlagSet.Parse",
+        "FlagSet.Set",
+        "Set",
+        "flagValueWrapper.Set"
+      ],
+      "cases": 0,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "changedChange": [],
+      "flaky": [],
+      "missing": [],
+      "notes": [
+        "base: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod)",
+        "base: case c1 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case c2 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case c3 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k1 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k2 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k3 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k4 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k5 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k6 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k7 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k8 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k9 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k10 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k11 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k12 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod)",
+        "patched: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod)",
+        "patched: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod)"
+      ],
+      "program": "package pflag\n\nimport (\n)\n\nfunc lokiCases() {\n}\n"
+    },
+    {
+      "id": "pflag-282",
+      "edited": [
+        "stringArrayValue.Replace"
+      ],
+      "callers": [
+        "boolSliceValue.Set",
+        "ipSliceValue.Set",
+        "wrap"
+      ],
+      "cases": 0,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "changedChange": [],
+      "flaky": [],
+      "missing": [],
+      "notes": [
+        "base: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod)",
+        "base: case c1 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case c2 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case c3 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k1 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k2 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k3 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k4 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k5 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k6 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k7 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k8 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k9 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k10 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k11 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: case k12 dropped (predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod))",
+        "base: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod)",
+        "patched: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod)",
+        "patched: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.12; check go.mod)"
+      ],
+      "program": "package pflag\n\nimport (\n)\n\nfunc lokiCases() {\n}\n"
+    },
+    {
+      "id": "cobra-2397",
+      "edited": [
+        "NoDuplicateArgs"
+      ],
+      "callers": [],
+      "cases": 0,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "changedChange": [],
+      "flaky": [],
+      "missing": [],
+      "notes": [
+        "base: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod)",
+        "base: case c1 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case c2 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case c3 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k1 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k2 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k3 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k4 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k5 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k6 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k7 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k8 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k9 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k10 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k11 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k12 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod)",
+        "patched: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod)",
+        "patched: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod)"
+      ],
+      "program": "package cobra\n\n\nfunc lokiCases() {\n}\n"
+    },
+    {
+      "id": "cobra-2257",
+      "edited": [
+        "Command.getCompletions"
+      ],
+      "callers": [
+        "Command.initCompleteCmd"
+      ],
+      "cases": 0,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "changedChange": [],
+      "flaky": [],
+      "missing": [],
+      "notes": [
+        "base: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod)",
+        "base: case c1 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case c2 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case c3 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k1 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k2 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k3 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k4 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k5 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k6 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k7 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k8 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k9 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k10 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: case k11 dropped (predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod))",
+        "base: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod)",
+        "patched: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod)",
+        "patched: probe did not build: ./zz_loki_probe_helpers_test.go:17:47: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:18:10: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod) | ./zz_loki_probe_helpers_test.go:27:36: predeclared any requires go1.18 or later (-lang was set to go1.15; check go.mod)"
+      ],
+      "program": "package cobra\n\n\nfunc lokiCases() {\n}\n"
+    },
+    {
+      "id": "semver-1",
+      "edited": [
+        "constraintTilde"
+      ],
+      "callers": [
+        "constraintTildeOrEqual"
+      ],
+      "cases": 15,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "changedChange": [
+        "c1",
+        "c3"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": [],
+      "program": "package semver\n\nimport \"fmt\"\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"NewConstraint * with 1.2.3\", func() any {\n\t\tc, _ := NewConstraint(\"*\")\n\t\tv, _ := NewVersion(\"1.2.3\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"c2\", \"change\", \"NewConstraint * with 0.0.1\", func() any {\n\t\tc, _ := NewConstraint(\"*\")\n\t\tv, _ := NewVersion(\"0.0.1\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"c3\", \"change\", \"constraintTilde directly on parsed * with 1.2.3\", func() any {\n\t\tc, _ := parseConstraint(\"*\")\n\t\tv, _ := NewVersion(\"1.2.3\")\n\t\treturn constraintTilde(v, c)\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"NewConstraint ~1.2.3 with 1.2.4\", func() any {\n\t\tc, _ := NewConstraint(\"~1.2.3\")\n\t\tv, _ := NewVersion(\"1.2.4\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k2\", \"keep\", \"NewConstraint ~1.2.3 with 1.3.0\", func() any {\n\t\tc, _ := NewConstraint(\"~1.2.3\")\n\t\tv, _ := NewVersion(\"1.3.0\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k3\", \"keep\", \"NewConstraint ~1.2.3 with 1.2.2\", func() any {\n\t\tc, _ := NewConstraint(\"~1.2.3\")\n\t\tv, _ := NewVersion(\"1.2.2\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k4\", \"keep\", \"NewConstraint ~1.2.3 with 2.0.0\", func() any {\n\t\tc, _ := NewConstraint(\"~1.2.3\")\n\t\tv, _ := NewVersion(\"2.0.0\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k5\", \"keep\", \"NewConstraint ^1.2.3 with 1.9.0\", func() any {\n\t\tc, _ := NewConstraint(\"^1.2.3\")\n\t\tv, _ := NewVersion(\"1.9.0\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k6\", \"keep\", \"NewConstraint 1.2.3 with 1.2.3\", func() any {\n\t\tc, _ := NewConstraint(\"1.2.3\")\n\t\tv, _ := NewVersion(\"1.2.3\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k7\", \"keep\", \"NewConstraint !=1.2.3 with 1.2.4\", func() any {\n\t\tc, _ := NewConstraint(\"!=1.2.3\")\n\t\tv, _ := NewVersion(\"1.2.4\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k8\", \"keep\", \"NewConstraint 1.x with 1.5.0\", func() any {\n\t\tc, _ := NewConstraint(\"1.x\")\n\t\tv, _ := NewVersion(\"1.5.0\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k9\", \"keep\", \"NewConstraint padded ~> 1.2 with 1.2.9\", func() any {\n\t\tc, _ := NewConstraint(\"  ~>1.2  \")\n\t\tv, _ := NewVersion(\"1.2.9\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k10\", \"keep\", \"NewConstraint 1.2.3 || 2.x with 2.5.0\", func() any {\n\t\tc, _ := NewConstraint(\"1.2.3 || 2.x\")\n\t\tv, _ := NewVersion(\"2.5.0\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"k11\", \"keep\", \"parseConstraint foo error\", func() any {\n\t\t_, err := parseConstraint(\"foo\")\n\t\treturn fmt.Sprint(err)\n\t})\n\tlokiCase(\"k12\", \"keep\", \"parseConstraint 1.0 con string and dirty flag\", func() any {\n\t\tc, _ := parseConstraint(\"1.0\")\n\t\treturn lokiAll(c.con.String(), c.dirty)\n\t})\n}\n"
+    },
+    {
+      "id": "humanize-si",
+      "edited": [
+        "ComputeSI"
+      ],
+      "callers": [
+        "SI",
+        "SIWithDigits"
+      ],
+      "cases": 15,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "changedChange": [
+        "c1",
+        "c2",
+        "c3"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": [],
+      "program": "package humanize\n\nimport (\n\t\"fmt\"\n\t\"math\"\n)\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"SI(+Inf, x)\", func() any {\n\t\treturn SI(math.Inf(1), \"x\")\n\t})\n\tlokiCase(\"c2\", \"change\", \"SI(-Inf, x)\", func() any {\n\t\treturn SI(math.Inf(-1), \"x\")\n\t})\n\tlokiCase(\"c3\", \"change\", \"ComputeSI(+Inf) value and prefix\", func() any {\n\t\treturn lokiAll(ComputeSI(math.Inf(1)))\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"SI(0, F)\", func() any {\n\t\treturn SI(0, \"F\")\n\t})\n\tlokiCase(\"k2\", \"keep\", \"SI(1e-30, F) lowest prefix\", func() any {\n\t\treturn SI(1e-30, \"F\")\n\t})\n\tlokiCase(\"k3\", \"keep\", \"SI(1e31, F) above table clamp\", func() any {\n\t\treturn SI(1e31, \"F\")\n\t})\n\tlokiCase(\"k4\", \"keep\", \"SI(1e-31, F) below table clamp\", func() any {\n\t\treturn SI(1e-31, \"F\")\n\t})\n\tlokiCase(\"k5\", \"keep\", \"SI(NaN, x)\", func() any {\n\t\treturn SI(math.NaN(), \"x\")\n\t})\n\tlokiCase(\"k6\", \"keep\", \"SI(-2.2e-12, F) negative\", func() any {\n\t\treturn SI(-2.2e-12, \"F\")\n\t})\n\tlokiCase(\"k7\", \"keep\", \"SIWithDigits(1e6, 0, B)\", func() any {\n\t\treturn SIWithDigits(1e6, 0, \"B\")\n\t})\n\tlokiCase(\"k8\", \"keep\", \"SIWithDigits(2.234e-12, 2, F)\", func() any {\n\t\treturn SIWithDigits(2.234e-12, 2, \"F\")\n\t})\n\tlokiCase(\"k9\", \"keep\", \"ParseSI of 2.2345 pF\", func() any {\n\t\tv, u, err := ParseSI(\"2.2345 pF\")\n\t\treturn lokiAll(v, u, fmt.Sprint(err))\n\t})\n\tlokiCase(\"k10\", \"keep\", \"ParseSI of x1.21JW error\", func() any {\n\t\t_, _, err := ParseSI(\"x1.21JW\")\n\t\treturn fmt.Sprint(err)\n\t})\n\tlokiCase(\"k11\", \"keep\", \"Ftoa(+Inf)\", func() any {\n\t\treturn Ftoa(math.Inf(1))\n\t})\n\tlokiCase(\"k12\", \"keep\", \"ComputeSI(0)\", func() any {\n\t\treturn lokiAll(ComputeSI(0))\n\t})\n}\n"
+    },
+    {
+      "id": "humanize-105",
+      "edited": [
+        "CommafWithDigits"
+      ],
+      "callers": [],
+      "cases": 15,
+      "fires": true,
+      "blocking": [
+        {
+          "id": "k8",
+          "desc": "CommafWithDigits(+Inf, 2)",
+          "before": "+Inf",
+          "after": "+Inf.00",
+          "verdict": "unrequested"
+        }
+      ],
+      "findings": [
+        {
+          "id": "k8",
+          "verdict": "unrequested",
+          "desc": "CommafWithDigits(+Inf, 2)",
+          "before": "+Inf",
+          "after": "+Inf.00"
+        }
+      ],
+      "changedChange": [
+        "c1",
+        "c2",
+        "c3"
+      ],
+      "flaky": [],
+      "missing": [],
+      "notes": [],
+      "program": "package humanize\n\nimport (\n\t\"fmt\"\n\t\"math\"\n)\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"CommafWithDigits(1000.00, 2)\", func() any {\n\t\treturn CommafWithDigits(1000.00, 2)\n\t})\n\tlokiCase(\"c2\", \"change\", \"CommafWithDigits(1000.5, 2)\", func() any {\n\t\treturn CommafWithDigits(1000.5, 2)\n\t})\n\tlokiCase(\"c3\", \"change\", \"CommafWithDigits(1.2, 3)\", func() any {\n\t\treturn CommafWithDigits(1.2, 3)\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"CommafWithDigits(1.23, 0)\", func() any {\n\t\treturn CommafWithDigits(1.23, 0)\n\t})\n\tlokiCase(\"k2\", \"keep\", \"CommafWithDigits(1.23, 1)\", func() any {\n\t\treturn CommafWithDigits(1.23, 1)\n\t})\n\tlokiCase(\"k3\", \"keep\", \"CommafWithDigits(834142.32, 1)\", func() any {\n\t\treturn CommafWithDigits(834142.32, 1)\n\t})\n\tlokiCase(\"k4\", \"keep\", \"CommafWithDigits(1000, 0)\", func() any {\n\t\treturn CommafWithDigits(1000, 0)\n\t})\n\tlokiCase(\"k5\", \"keep\", \"CommafWithDigits(-1000.5, 0)\", func() any {\n\t\treturn CommafWithDigits(-1000.5, 0)\n\t})\n\tlokiCase(\"k6\", \"keep\", \"Commaf(1000.00)\", func() any {\n\t\treturn Commaf(1000.00)\n\t})\n\tlokiCase(\"k7\", \"keep\", \"Commaf(834142.32)\", func() any {\n\t\treturn Commaf(834142.32)\n\t})\n\tlokiCase(\"k8\", \"keep\", \"CommafWithDigits(+Inf, 2)\", func() any {\n\t\treturn CommafWithDigits(math.Inf(1), 2)\n\t})\n\tlokiCase(\"k9\", \"keep\", \"ParseCommaf(1,000.00)\", func() any {\n\t\tv, err := ParseCommaf(\"1,000.00\")\n\t\treturn lokiAll(v, fmt.Sprint(err))\n\t})\n\tlokiCase(\"k10\", \"keep\", \"Comma(1000)\", func() any {\n\t\treturn Comma(1000)\n\t})\n\tlokiCase(\"k11\", \"keep\", \"Comma(-1000)\", func() any {\n\t\treturn Comma(-1000)\n\t})\n\tlokiCase(\"k12\", \"keep\", \"Comma(1234567)\", func() any {\n\t\treturn Comma(1234567)\n\t})\n}\n"
+    }
+  ]
+}

@@ -1,11 +1,11 @@
 // Hermetic tests for the no-regression differential prototype: bun test bench/proto/no-regression-differential/nrd.test.ts
 // The logic tests need nothing; the go test e2e runs the real Go runner on the fixtures and skips when go is not on PATH.
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { goCaseBlocks, normalizeOut, parseProbeOutput, pruneGoProgram } from "../../../loki-ts/src/features/probes.ts";
-import { callersOf, compareRuns, editedSymbols, nrdFailureGroups, parseNrdVerdicts, runNoRegression, SYS_NRD_JUDGE, type NrdContext, type Verdict } from "../../../loki-ts/src/features/no_regression.ts";
+import { goAnyCompat, goCaseBlocks, normalizeOut, parseProbeOutput, pruneGoProgram } from "../../../loki-ts/src/features/probes.ts";
+import { callersOf, compareRuns, editedSymbols, nrdFailureGroups, parseNrdVerdicts, probeContext, runNoRegression, SYS_NRD_JUDGE, type NrdContext, type Verdict } from "../../../loki-ts/src/features/no_regression.ts";
 import type { LlmCall } from "../../../loki-ts/src/features/tournament.ts";
 import { treeIo } from "./tree_io.ts";
 
@@ -16,6 +16,10 @@ test("prefixed probe lines win over JSON the code under test prints", () => {
   const p = parseProbeOutput('{"id":"x","out":1}\nLOKI_PROBE {"id":"k1","kind":"keep","desc":"d","out":["a"]}\nLOKI_PROBE {"id":"k1","out":"dup"}\n=== RUN TestLokiProbe');
   expect(p.run).toEqual({ k1: '["a"]' });
   expect(p.probes).toEqual([{ id: "k1", desc: "d", kind: "keep" }]);
+});
+
+test("goAnyCompat rewrites the any type only, never literals, comments, selectors or longer names", () => {
+  expect(goAnyCompat("func f(v any, vs ...any) any { s := \"any\"; x.any = 1 // any\n\treturn []any{`any`, anyway} }")).toBe("func f(v interface{}, vs ...interface{}) interface{} { s := \"any\"; x.any = 1 // any\n\treturn []interface{}{`any`, anyway} }");
 });
 
 test("normalizeOut masks the tree path and heap addresses only", () => {
@@ -40,6 +44,18 @@ test("editedSymbols and callersOf find the blast radius of a shared helper", () 
   const patched = base.replace('"git", "log", "--no-merges", "--pretty=format:" + format', '"git", "log", "--pretty=format:" + format');
   expect(editedSymbols("changelog.go", base, patched)).toEqual(["logArgs"]);
   expect(callersOf(["logArgs"], { "changelog.go": base })).toEqual(["AuthorsCmd", "CommitsCmd"]);
+});
+
+test("probeContext: a changed file is shown even when its edit only adds a function; a large file shows its head and the named definitions", () => {
+  const small = "package p\n\nfunc A() int { return 1 }\n";
+  const big = `package p\n\nimport "fmt"\n\n${Array.from({ length: 400 }, (_, i) => `func F${i}() string { return fmt.Sprint(${i}) }`).join("\n")}\n\nfunc Target() string { return F1() }\n`;
+  const c = probeContext({ "a.go": small, "big.go": big, "other.go": "package p\n\nfunc Z() {}\n" }, { "a_test.go": "package p\n\nfunc TestTarget(t *testing.T) { _ = Target() }\n\nfunc TestZ(t *testing.T) { Z() }\n" }, ["Target", "NewThing"], ["a.go"]);
+  expect(Object.keys(c.files).sort()).toEqual(["a.go", "big.go"]);
+  expect(c.files["big.go"]).toContain('import "fmt"');
+  expect(c.files["big.go"]).toContain("func Target() string");
+  expect(c.files["big.go"]).not.toContain("func F200()");
+  expect(c.tests["a_test.go"]).toContain("TestTarget");
+  expect(c.tests["a_test.go"]).not.toContain("TestZ");
 });
 
 test("pruneGoProgram drops an unused import and the case holding an error, nothing else", () => {
@@ -100,5 +116,19 @@ test.skipIf(!hasGo)("go e2e: an unasked rewording of an error message fires; the
     expect(r.blocking[0]!.before).toBe('["{Name: Short: Usage: Default: Required:false}","ERROR: unknown flag: --nope"]');
     expect(r.blocking[0]!.after).toBe('["{Name: Short: Usage: Default: Required:false}","ERROR: unknown flag \\"--nope\\""]');
     expect(Bun.spawnSync(["ls", join(io.dir, "flags")]).stdout.toString().trim().split("\n").sort()).toEqual(["flags.go", "flags_test.go"]);
+  } finally { rmSync(work, { recursive: true, force: true }); }
+}, 180_000);
+
+test.skipIf(!hasGo)("go e2e: a module whose go.mod names a language version older than go1.18 still runs the probe", async () => {
+  const work = mkdtempSync(join(tmpdir(), "nrd-e2e-"));
+  try {
+    const src = join(work, "src");
+    cpSync(join(here, "fixtures", "gitlog", "repo"), src, { recursive: true });
+    writeFileSync(join(src, "go.mod"), "module example.com/gitlog\n\ngo 1.12\n"); // pflag's directive: the predeclared any is rejected here
+    const io = treeIo(src, join(work, "t"), join(here, "fixtures", "gitlog", "variants", "regress-shared.patch"), { pkgDir: "changelog", pkg: "changelog" });
+    const truth = JSON.parse(readFileSync(join(here, "fixtures", "gitlog", "stub", "verdicts.json"), "utf8")) as Record<string, Verdict>;
+    const r = await runNoRegression(ctxOf("gitlog", "changelog", "changelog"), stubLlm("gitlog", truth), io);
+    expect(r.cases.length).toBeGreaterThan(5);
+    expect(r.blocking.map((f) => f.id)).toEqual(["k1"]);
   } finally { rmSync(work, { recursive: true, force: true }); }
 }, 180_000);

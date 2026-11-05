@@ -91,6 +91,12 @@ export function editedSymbols(path: string, baseSrc: string, patchedSrc: string)
   return [...new Set([...a.keys(), ...b.keys()])].filter((n) => a.get(n) !== b.get(n)).sort();
 }
 
+/** A definition's text after its signature (from the first brace), so a one-line function keeps its body and loses its own name. */
+function bodyOf(lines: string[], s: { start: number; end: number }): string {
+  const whole = lines.slice(s.start - 1, s.end).join("\n"), at = whole.indexOf("{");
+  return at < 0 ? whole : whole.slice(at + 1);
+}
+
 /** Same-package definitions that call one of `names` (Go methods are matched by their method name). */
 export function callersOf(names: string[], files: Record<string, string>): string[] {
   const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -100,8 +106,7 @@ export function callersOf(names: string[], files: Record<string, string>): strin
     const lines = src.split("\n");
     for (const s of symbolSpans(path, src)) {
       if (s.container || names.includes(s.name)) continue;
-      const text = lines.slice(s.start, s.end).join("\n"); // body only: skip the signature line
-      if (calls.some((re) => re.test(text))) out.add(s.name);
+      if (calls.some((re) => re.test(bodyOf(lines, s)))) out.add(s.name);
     }
   }
   return [...out].sort();
@@ -124,7 +129,7 @@ export function probeContext(pkgFiles: Record<string, string>, testFiles: Record
   let budget = o.testBytes;
   for (const [p, src] of Object.entries(testFiles)) {
     const lines = src.split("\n");
-    const hits = symbolSpans(p, src).filter((s) => !s.container && mentions(lines.slice(s.start, s.end).join("\n"))).slice(0, o.testsPerFile);
+    const hits = symbolSpans(p, src).filter((s) => !s.container && mentions(bodyOf(lines, s))).slice(0, o.testsPerFile);
     const text = hits.map((s) => lines.slice(s.start - 1, s.end).join("\n")).join("\n\n");
     if (!text || text.length > budget) continue;
     tests[p] = text; budget -= text.length;
