@@ -2,7 +2,7 @@
 // probably did not finish. Deterministic, no model, no git, no history (a benchmark checkout has none). Three rules, each
 // justified by how defects repeat, not by any test outcome:
 //   sibling:    the same call in the same function, in a different branch, passes the same other arguments but a different
-//               variable. Branches of one function normally feed their callee from one source; an edit that moved one branch
+//               variable (or, on an accumulation call, only when the edited argument is a local derived from the sibling's). Branches of one function normally feed their callee from one source; an edit that moved one branch
 //               to another source (raw input against normalized input) left the others on the old one, or the reverse.
 //   residual:   an unchanged line holds the exact pattern (a type assertion, an `as` cast, an instanceof/isinstance check or
 //               a call with the same arguments) that the diff just removed from a rewritten line. A defect in a pattern is
@@ -27,11 +27,15 @@ export interface EditShapeOpts {
 export const EDIT_SHAPE_PROMPT = "Edit-shape check (a heuristic; some sites may be false): decide for each listed site whether it has the same defect as the code you changed; leave it alone if not.";
 const COMMON_LIMIT = 6; // a pattern on more unchanged lines than this is an idiom of the file, not a repeated defect
 const PER_RULE_CAP = 3;
-const KEYWORDS = new Set(["if", "for", "while", "switch", "return", "func", "def", "function", "catch", "with", "elif", "else", "select", "case", "go", "defer", "await", "typeof", "sizeof", "new", "throw", "raise", "assert", "print", "len", "cap", "append", "make", "range", "not", "and", "or", "in", "is", "lambda", "super", "this", "self", "str", "int", "float", "bool", "list", "dict", "set", "tuple", "isinstance", "type", "String", "Number", "Boolean", "Array", "Object", "Error", "panic", "recover"]);
+const NEAR = 30; // lines: branch siblings farther away than this are other code in a long function, not the edited site's branches
+const KEYWORDS = new Set(["if", "for", "while", "switch", "return", "func", "def", "function", "catch", "with", "elif", "else", "select", "case", "go", "defer", "await", "typeof", "sizeof", "new", "throw", "raise", "assert", "print", "len", "cap", "make", "range", "not", "and", "or", "in", "is", "lambda", "super", "this", "self", "str", "int", "float", "bool", "list", "dict", "set", "tuple", "isinstance", "type", "String", "Number", "Boolean", "Array", "Object", "Error", "panic", "recover"]);
 const NOISY_CALLEE = /^(?:fmt|log|logger|logging|console|t|b|assert|expect|require|os\.Stderr)\./;
 const GO_BUILTIN_T = new Set(["string", "int", "int64", "int32", "uint", "bool", "error", "float64", "float32", "byte", "rune", "any", "interface{}", "map[string]interface{}", "[]interface{}", "[]string"]);
 const TS_PLAIN_T = new Set(["const", "string", "number", "boolean", "unknown", "never"]);
 const LITERAL_ARG = /^(?:["'`\d]|-?\d|true$|false$|nil$|null$|None$|undefined$|True$|False$)/;
+const ACCUM = /^(?:append|[\w.]+\.(?:push|append|add))$/; // accumulation sites take different data by nature: only derivation evidence makes them siblings
+// Utility callees take whatever data the line has: a different argument there is no divergence unless derivation says so.
+const GENERIC = /(?:^|\.)(?:join|resolve|test|exec|match|get|set|has|at|dirname|basename|relative|slice|map|filter|includes|startsWith|endsWith|replace|split|trim|stat|exists|existsSync|readFileSync|lstatSync|open|read|write|isArray|String|Number|Math\.\w+|Path|len|min|max|str|int|abs|get_|Sprintf|Join|Contains|HasPrefix)$/;
 const SELF_ARG = /^(?:self|this|ctx|t)$/;
 
 const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -83,6 +87,14 @@ function enclosing(spans: Span[], line: number): Span | null {
   return best;
 }
 
+/** The edited argument is a local whose definition above it (in the function) reads the sibling argument: normalized versus raw input. */
+function derivedFrom(lines: string[], fn: Span, at: number, edited: string, sibling: string): boolean {
+  if (!/^[A-Za-z_$][\w$]*$/.test(edited)) return false;
+  const def = new RegExp(`^\\s*(?:(?:const|let|var)\\s+)?${esc(edited)}\\s*(?::=|=)\\s*(.+?)\\s*;?\\s*$`), uses = new RegExp(`(?<![\\w$])${esc(sibling)}(?![\\w$])`);
+  for (let k = at - 1; k >= Math.max(fn.start, at - 60); k--) { const m = def.exec(lines[k - 1] ?? ""); if (m) return uses.test(m[1]!); }
+  return false;
+}
+
 /** Rule 1. */
 function siblingSites(path: string, lines: string[], spans: Span[], added: Set<number>, hunks: DiffHunk[], covered: Set<number>): EditSite[] {
   const out: EditSite[] = [];
@@ -92,7 +104,7 @@ function siblingSites(path: string, lines: string[], spans: Span[], added: Set<n
     for (const c of callsIn(a.text)) {
       if (c.args.length === 0) continue;
       let identical = false;
-      const sibs: { line: number; pos: number; arg: string }[] = [];
+      const sibs: { line: number; pos: number; arg: string; derived: boolean }[] = [];
       for (let n = fn.start; n <= fn.end; n++) {
         if (n === a.line || added.has(n)) continue;
         for (const s of callsIn(lines[n - 1] ?? "")) {
@@ -104,14 +116,16 @@ function siblingSites(path: string, lines: string[], spans: Span[], added: Set<n
           const lo = Math.min(n, a.line), hi = Math.max(n, a.line), need = Math.min(indentOf(lines[n - 1] ?? ""), indentOf(a.text));
           let split = false;
           for (let k = lo + 1; k < hi && !split; k++) { const t = lines[k - 1] ?? ""; if (t.trim() !== "" && indentOf(t) < need) split = true; }
-          if (split) sibs.push({ line: n, pos: diff[0]!, arg: s.args[diff[0]!]! });
+          const derived = derivedFrom(lines, fn, a.line, c.args[diff[0]!]!, s.args[diff[0]!]!);
+          if (derived || (split && !ACCUM.test(c.callee) && !GENERIC.test(c.callee) && Math.abs(n - a.line) <= NEAR)) sibs.push({ line: n, pos: diff[0]!, arg: s.args[diff[0]!]!, derived });
         }
       }
-      if (identical || sibs.length === 0) continue; // another branch already passes what this one passes: no isolated divergence
+      if (identical || sibs.length === 0 || (!sibs.some((x) => x.derived) && new Set(sibs.map((x) => x.line)).size < 2)) continue; // without derivation evidence one sibling is a coincidence, two agreeing ones are a pattern
+      if (false as boolean) continue; // another branch already passes what this one passes: no isolated divergence
       if (new Set(sibs.map((s) => `${s.pos}\u0000${s.arg}`)).size !== 1) continue; // the siblings disagree among themselves: no consensus to diverge from
       const s0 = sibs[0]!;
       for (const s of sibs) covered.add(s.line); // the sibling site already names these lines; the residual scan must not list them again
-      out.push({ rule: "sibling", path, line: a.line, text: compactWs(a.text), why: `passes \`${c.args[s0.pos]}\` to ${c.callee} where the same call at ${sibs.map((s) => s.line).join(", ")} in this function passes \`${s0.arg}\`` });
+      out.push({ rule: "sibling", path, line: a.line, text: compactWs(a.text), why: `passes \`${c.args[s0.pos]}\` to ${c.callee} where the same call at ${[...new Set(sibs.map((s) => s.line))].join(", ")} in this function passes \`${s0.arg}\`` });
     }
   }
   return out;

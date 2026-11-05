@@ -968,6 +968,12 @@ res("sibling go: a literal-only difference is not a sibling", !has(run({ "c.go":
 const goDis = swap(goBase, 'run(rargs[0])\n\tcase "b"', 'run(other)\n\tcase "b"');
 res("sibling go: siblings that disagree among themselves leave no consensus to diverge from", !has(run({ "c.go": goDis }, { "c.go": swap(goDis, goC, 'case "c":\n\t\treturn run(firstArg)') }), "sibling"));
 res("sibling go: the only same-shaped call lives in another function", !has(run({ "c.go": "package c\n\nfunc f() error {\n\treturn run(rargs[0])\n}\n\nfunc g() error {\n\treturn run(rargs[0])\n}\n" }, { "c.go": "package c\n\nfunc f() error {\n\treturn run(firstArg)\n}\n\nfunc g() error {\n\treturn run(rargs[0])\n}\n" }), "sibling"));
+const acc = (def: string, last: string) => `package c\n\nfunc f(raw string, ok bool) []string {\n\tvar out []string\n\t${def}\n\tout = append(out, raw)\n\tif ok {\n\t\tout = append(out, ${last})\n\t}\n\treturn out\n}\n`;
+res("sibling go: an append of a local derived from the raw value the sibling append passes (norm versus raw) is named", at(run({ "c.go": acc("n := norm(raw)", "raw") }, { "c.go": acc("n := norm(raw)", "n") })) === "sibling@c.go:8");
+res("sibling go: an append of an unrelated local is not (accumulation sites take different data)", !has(run({ "c.go": acc("n := other()", "raw") }, { "c.go": acc("n := other()", "n") }), "sibling"));
+const pushes = (last: string) => `export function f(raw: string, ok: boolean) {\n  const out: string[] = [];\n  const n = norm(raw);\n  out.push(raw);\n  if (ok) {\n    out.push(${last});\n  }\n  return out;\n}\n`;
+res("sibling ts: out.push of a derived local beside out.push(raw) is named", at(run({ "f.ts": pushes("raw") }, { "f.ts": pushes("n") })) === "sibling@f.ts:6");
+res("sibling ts: out.push of an unrelated local across a branch is not", !has(run({ "f.ts": pushes("raw").replace("norm(raw)", "other()") }, { "f.ts": pushes("n").replace("norm(raw)", "other()") }), "sibling"));
 const goRes = 'package e\n\nfunc a(err error) bool {\n\tif me, ok := err.(MultiError); ok {\n\t\treturn me.Len() > 0\n\t}\n\treturn false\n}\n\nfunc b(err error) int {\n\tif me, ok := err.(MultiError); ok {\n\t\treturn me.Len()\n\t}\n\treturn 0\n}\n';
 const goAs = swap(goRes, "if me, ok := err.(MultiError); ok {\n\t\treturn me.Len() > 0", "var me MultiError\n\tif errors.As(err, &me) {\n\t\treturn me.Len() > 0");
 const goOut = run({ "e.go": goRes }, { "e.go": goAs });
@@ -1001,7 +1007,7 @@ TS
 mkdir -p "$T/es"
 out="$(cd "$ROOT/loki-ts" && bun "$T/edit-shape.ts" "$ROOT" "$T/es" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "edit-shape unit script crashed or exited non-zero"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 21 ] || bad "edit-shape unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 21"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 25 ] || bad "edit-shape unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 25"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
