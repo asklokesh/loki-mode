@@ -857,6 +857,13 @@ console.log([head.status, base !== null && /TS6133/.test(base), v.tscUntouchedLo
     case "$WSK" in *app.test.ts*fail*) ok "workspace import throw: the app test ran and failed on the change's import-time throw ($WSK)" ;; *) bad "workspace import throw: no failing app test check: '$WSK'"; dump ;; esac
     case "$(ev "$PREREDS")" in *app.test.ts*) bad "workspace import throw: the change's own throw was excused as pre-red" ;; *) ok "workspace import throw: not excused (the base rerun would resolve the workspace package to head source)" ;; esac
     [ "$(fix_sessions)" -ge 1 ] && ok "workspace import throw: a fix session runs ($(fix_sessions))" || { bad "workspace import throw: no fix session"; dump; }
+    # Locks the guard: an edit in package a that makes a test in package b fail WITH test ids is never excused (the id path links base deps only through baseDepsLinker, which refuses a workspace).
+    MAKE_REPO=make_wsboom_repo run_engine "add a multiply(a, b) function to packages/lib/index.ts" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=packages/lib/index.ts E2E_STUB_REPLACE='return a + b;' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 E2E_STUB_SNIPPET='return a - b;'
+    WSI="$(ev '[(c["name"],c["result"],len(c.get("ids",[]))) for e in E if e["type"]=="stage.completed" and e["stage"]=="verify" for c in e["data"]["checks"]][:3]')"
+    case "$WSI" in *app.test.ts*fail*) ok "workspace cross-package: the app test failed with test ids after an edit in lib ($WSI)" ;; *) bad "workspace cross-package: '$WSI'"; dump ;; esac
+    case "$WSI" in *"app.test.ts', 'fail', 0"*) bad "workspace cross-package: no test ids parsed, the leg does not exercise the id path" ;; esac
+    case "$(ev "$PREREDS")" in *app.test.ts*) bad "workspace cross-package: a test broken by an edit in another package was excused as pre-red" ;; *) ok "workspace cross-package: not excused" ;; esac
+    [ "$(fix_sessions)" -ge 1 ] && ok "workspace cross-package: a fix session runs ($(fix_sessions))" || { bad "workspace cross-package: no fix session"; dump; }
     SG="$(cd "$ROOT/loki-ts" && bun -e '
 const { startupSig: s } = await import("./src/engine10/stages/verify.ts");
 const a = "x\n\u23af\u23af Startup Error \u23af\u23af\nError: No projects were found in /r/pkg (12ms)\n    at start (file:///r/n.js:1:2)\n", b = "x\n\u23af\u23af Startup Error \u23af\u23af\nError: No projects were found in /b/pkg (9ms)\n    at start (file:///b/n.js:5:6)\n";
