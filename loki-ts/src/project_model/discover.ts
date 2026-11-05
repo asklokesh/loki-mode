@@ -22,6 +22,8 @@ export function projectModelEnabled(env: NodeJS.ProcessEnv = process.env): boole
 }
 /** Default ON; LOKI_E10_PM_MANIFESTS=0 sends every repo the deterministic signals do not resolve to the discovery session again. */
 export const manifestModelEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_E10_PM_MANIFESTS"] !== "0";
+/** Default OFF; LOKI_E10_PM_FANOUT_SESSION=1 sends a repo whose test script fans out over the workspace (nx, turbo, recursive pnpm) to the discovery session again. 3-day ledger: that session never returned an OK model on such a repo (every attempt on the TanStack/query tasks was killed at its limit, exit 143; the others had no stage budget left), so it spent tokens and 25-48 s for the same unknown model. */
+export const fanOutSessionEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_E10_PM_FANOUT_SESSION"] === "1";
 export const PROJECT_FILE = ".loki/project.json";
 export const UNKNOWN_TTL_MS = 60 * 60 * 1000;
 const SESSION_LIMIT_S = 60; // ceiling for one discovery session; the remaining stage budget lowers it
@@ -171,7 +173,9 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
 
   // Intake diet: the manifests answer it when they declare every package and a test command; the validator holds it to the model's rules.
   if (manifestModelEnabled()) {
-    const raw = manifestModel(ctx.repoDir), v = raw ? validateAnswer(ctx.repoDir, raw) : null;
+    const raw = manifestModel(ctx.repoDir);
+    if (raw && "fanOut" in raw && !fanOutSessionEnabled()) return { model: unknownModel("", `${raw.fanOut} runs its test script over the whole workspace, so no one package's suite is named`), cached: false, attempts: 0, owner: "harness" };
+    const v = raw && !("fanOut" in raw) ? validateAnswer(ctx.repoDir, raw) : null;
     if (v?.ok) {
       const model: ProjectModel = { ...v.model, key: computeKey(ctx.repoDir, v.model.fingerprintFiles, dirs) };
       try { save(ctx.repoDir, model); } catch { /* consumers then see no model; the run goes on */ }
