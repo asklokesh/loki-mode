@@ -32,10 +32,14 @@
 #   example:   a near-duplicate task (>= 3 shared identifier keywords AND Jaccard >= 0.5) gets exactly one worked-example
 #              block within 1200 bytes and the exemplar's files in Relevant files (brief bytes with and without printed);
 #              fewer shared keywords, or many shared but a low Jaccard, gets none.
+#   weakened:  a run whose existing test lost an assertion is PARTIAL and writes the edited-existing-test lesson; the next
+#              related run carries it in its brief and its use tag is marked recurred.
 #   default:   with neither LOKI_PR_LESSONS nor LOKI_WORKED_EXAMPLE set (the default, rule 6), the same similar task gets
 #              no worked example and no run-lessons block, and the run still records its lesson. Every other leg opts in.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
+#   W1. pr_lessons.ts learnFromRun: skip the edited-existing-test add (the weakened legs find no lesson and no injected line).
+#   W2. pr_lessons.ts runLessonLine: render the edited-existing-test line as the old "do not edit" wording (the weakened brief leg fails).
 #   1. loki-ts/src/util/pr_lessons.ts learnFromRun: hash the run id into the lesson id (a repeat duplicates the class).
 #   2. loki-ts/src/util/pr_lessons.ts retrieveLessons: score a run lesson `runScore(...) || 1` (an unrelated run gets them).
 #   3. pr_lessons.ts REPLAY_MIN: ALREADY_SATISFIED 1 instead of 2 (one success replays).
@@ -381,5 +385,18 @@ has "example: loki memory brief shows the worked example for the similar task" "
 lst="$(cd "$REPO" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" memory lessons 2>&1)"
 has "example: loki memory lessons shows the exemplar" "$lst" "worked example: "
 has "example: loki memory lessons shows the replay key" "$lst" "replay key: task "
+
+# weakened test: a run whose existing test lost an assertion is capped PARTIAL, writes the edited-existing-test lesson, and the next
+# related run carries that lesson in its brief and its use tag is marked recurred (a fixture with no failing check, so no check-failed lesson outranks it).
+new_repo "$T/repo-weak"
+TASK_W="add a divide(a, b) function to calc.ts"
+run_engine 30 "$TASK_W" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=delete LOKI_EXOGENOUS_PROOF=0
+[ "$(outcome)" = "PARTIAL" ] && ok "weakened: run 1 is capped PARTIAL" || { bad "weakened: run 1 outcome is '$(outcome)', not PARTIAL"; dump; }
+has "weakened: run 1 wrote an edited-existing-test lesson naming calc.test.ts" "$(lq '[(l["category"], l["files"]) for l in L]')" "('edited-existing-test', ['calc.test.ts'])"
+RIDW1="$RID"
+run_engine 31 "$TASK_W" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=delete LOKI_EXOGENOUS_PROOF=0
+RIDW2="$RID"; BW="$(block "$PROMPTS.implement0")"
+has "weakened: run 2 brief carries the edited-existing-test lesson led by the test file" "$BW" "- calc.test.ts: do not weaken this existing test"
+has "weakened: run 2's use tag on the lesson is marked recurred" "$(lq '[(u["run_id"], u.get("recurred")) for l in L if l["category"]=="edited-existing-test" for u in l["uses"]]')" "('$RIDW2', True)"
 
 finish
