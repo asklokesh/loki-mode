@@ -2,7 +2,7 @@
 // fail-then-pass is "flaky". An empty diff with the already_done marker seals ALREADY_SATISFIED; without it, FAILED (ENGINE.md 2). Reaches testmap.ts/ machine.ts only through RunContext's `tests: TestMapProvider`, injected as a fake in tests, never imported here.
 import { installHint } from "../../util/stack_tools.ts";
 import { atomicWriteText } from "../../util/atomic.ts"; import { redactSecrets } from "../../util/redact.ts";
-import { installOwned } from "../../project_model/install.ts";
+import { awaitBaselineOverlap, installOwned } from "../../project_model/install.ts";
 import { scopedOutOf } from "../../project_model/scope.ts";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -431,6 +431,7 @@ export const verifyStage: Stage = {
   targetS: STAGE_BUDGETS.verify.targetS,
   limitS: STAGE_BUDGETS.verify.limitS,
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
+    { const w = await awaitBaselineOverlap(ctx.repoDir); if (w !== null) ctx.emit("baseline.overlap", "verify", { waited_ms: w }); } // SPEED-BASELINE-OVERLAP: the base worktree baseline lands before anything reads the profile
     let changed: string[]; const ownWall = ((ctx.outputs().wall?.files as { path: string }[] | undefined) ?? []).map((f) => f.path), live = <T extends string | { path: string }>(l: T[]): T[] => withoutStaleWall(l, ownWall, ctx.repoDir); // FC-WALL-LOCATION-BLIND: a loki_wall_* file this run's Wall did not install is invisible to changed, risk and the test map
     try {
       changed = live(changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created)));

@@ -16,7 +16,10 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
-import { baselineSuites } from "../runner/repo_profile.ts";
+import { baselineSuites, commandProfilePath, ensureProfile, loadProfile } from "../runner/repo_profile.ts";
+import { copyFileSync, mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { baseDepsLinker } from "../util/base_guard.ts";
 import { LOCK_RULES, has, inWorkspace, isYarnBerry, type LockRule } from "../util/lock_ecosystems.ts";
 import type { RunContext, RunnerName } from "../engine10/types.ts";
 import type { ProjectApi } from "./api.ts";
@@ -310,13 +313,13 @@ export function absentDepRoots(repoDir: string, model: ProjectApi | null | undef
 export type PhaseTiming = { ms: number; at?: number; cached?: boolean } | { skipped: string }; // at: start offset in ms after intake began
 export type IntakeTiming = Partial<Record<"setup" | "repo_walk" | "already_done" | "project_model" | "deps_install" | "suite_baseline" | "zero_baseline" | "zero_probe", PhaseTiming>>;
 export interface DepsTiming { install?: PhaseTiming; baseline_ms?: number }
-export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit">, signal: AbortSignal, runners: RunnerName[], timing?: DepsTiming): Promise<Record<string, unknown>> {
+export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit">, signal: AbortSignal, runners: RunnerName[], timing?: DepsTiming, skipBaseline = false): Promise<Record<string, unknown>> {
   const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model), before = untrackedTops(ctx.repoDir), t0 = Date.now();
   const r = await prepareDeps({ repoDir: ctx.repoDir, model, failed: roots.map((root) => ({ root, harnessOwned: true })), signal, timeoutMs: INSTALL_CAP_MS, opts: { runId: ctx.runId } });
   for (const c of r.checks) ctx.emit("deps.install", "intake", { ...c });
   const created = r.checks.some((c) => c.result === "pass") ? installCreatedSince(ctx.repoDir, before) : null; // a failed install records nothing, so nothing is hidden
   const installMs = Date.now() - t0, tb = Date.now();
-  baselineSuites(ctx.repoDir, fullSuiteSpecs(ctx.repoDir, runners), { rerun: r.checks.some((c) => c.result === "pass") });
+  if (!skipBaseline) baselineSuites(ctx.repoDir, fullSuiteSpecs(ctx.repoDir, runners), { rerun: r.checks.some((c) => c.result === "pass") });
   const install: PhaseTiming = r.checks.length ? { ms: installMs } : { skipped: r.notProven.length ? "install not attempted" : "no dependencies to install" };
   if (timing) { timing.install = install; timing.baseline_ms = Date.now() - tb; }
   return { ...(r.checks.length || r.notProven.length ? { deps_install: r.checks, deps_not_proven: r.notProven } : {}), ...(created ? { install_created: created } : {}) };
@@ -338,4 +341,36 @@ export function installCreatedSince(repoDir: string, before: Set<string>): Insta
 export function installOwned(repoDir: string, rec: unknown, env: NodeJS.ProcessEnv = process.env): (f: string) => boolean {
   const r = rec as Partial<InstallCreated> | null | undefined, files = r && typeof r.files === "object" && r.files ? r.files : {}, dirs = Array.isArray(r?.dirs) ? r.dirs : [];
   return (f) => dirs.some((d) => typeof d === "string" && f.startsWith(d)) || (Object.hasOwn(files, f) && (() => { try { return hashOf(repoDir, f, env) === files[f]; } catch { return false; } })());
+}
+
+// SPEED-BASELINE-OVERLAP (LOKI_E10_BASELINE_OVERLAP=1): the suite baseline (ensureProfile + the per-package baselineSuites) is the same measurement on
+// the same base commit, taken in a detached worktree of the base by a child process while the implement session works, instead of in the run's own
+// tree before it (L-Haiku-v131: 596 s of the 6,689 s corpus wall was the intake baseline, 75-145 s on each tq task). The worktree gets the head's
+// dependency dirs through baseDepsLinker (its guards fail closed: no link, the child measures what it can, and an unattributable baseline excuses
+// nothing). Verify awaits the child before it reads the profile, so attribution sees exactly the record an in-tree baseline would have written.
+export const baselineOverlapOn = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_BASELINE_OVERLAP === "1" && env.LOKI_REPO_BASELINE !== "0";
+const overlap = new Map<string, { dir: string; done: Promise<number | null>; t0: number }>(); // repoDir -> the base worktree's baseline child
+/** Child side (`loki __baseline <dir> <runners>`): the in-tree intake baseline, run in the base worktree. */
+export function baselineChild(dir: string, runners: RunnerName[]): number { const b = ensureProfile(dir); if (!b) return 1; baselineSuites(dir, fullSuiteSpecs(dir, runners)); return 0; }
+/** True when the started child will be awaited by verify; false (and the caller baselines in-tree as before) when no child could start. A profile already
+ *  recorded for this base and manifest set is reused exactly as ensureProfile would, with no child. */
+export function startBaselineOverlap(repoDir: string, baseSha: string, runners: RunnerName[]): boolean {
+  const old = loadProfile(repoDir); if (old && old.revision === baseSha && old.baseline.failing_ids.length === 0 && (old.suites ?? []).length > 0) return false;
+  let dir = "";
+  try {
+    dir = mkdtempSync(join(tmpdir(), "loki-blo-"));
+    safeGit(repoDir, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, baseSha], { stdio: "ignore", repoDrivers: true });
+    const link = baseDepsLinker(dir, repoDir); link(dir); for (const s of fullSuiteSpecs(repoDir, runners)) if (s.cwd !== ".") link(join(dir, s.cwd));
+    const entry = process.argv[1]; if (!entry) throw new Error("no cli entry");
+    const proc = Bun.spawn([process.execPath, entry, "__baseline", dir, runners.join(",")], { cwd: dir, stdin: "ignore", stdout: "ignore", stderr: "ignore", env: process.env });
+    overlap.set(repoDir, { dir, t0: Date.now(), done: proc.exited.then((c) => c, () => null) });
+    return true;
+  } catch { if (dir) try { safeGit(repoDir, ["worktree", "remove", "--force", dir], { stdio: "ignore" }); } catch { /* best effort */ } return false; }
+}
+/** Verify side: waits for the child (if any), adopts its profile into the run's tree, removes the worktree. Returns ms waited, or null when none was pending. */
+export async function awaitBaselineOverlap(repoDir: string): Promise<number | null> {
+  const o = overlap.get(repoDir); if (!o) return null; overlap.delete(repoDir);
+  const w0 = Date.now(); await o.done;
+  try { const src = commandProfilePath(o.dir); if (existsSync(src)) { mkdirSync(dirname(commandProfilePath(repoDir)), { recursive: true }); copyFileSync(src, commandProfilePath(repoDir)); } } finally { try { safeGit(repoDir, ["worktree", "remove", "--force", "--force", o.dir], { stdio: "ignore" }); } catch { /* best effort */ } }
+  return Date.now() - w0;
 }

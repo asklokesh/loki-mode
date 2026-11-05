@@ -433,6 +433,11 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       return runCompletion(rest);
     }
 
+    case "__baseline": { // SPEED-BASELINE-OVERLAP child (project_model/install.ts startBaselineOverlap): the intake baseline, run in a base worktree
+      const { baselineChild } = await import("./project_model/install.ts");
+      return baselineChild(rest[0] ?? ".", (rest[1] ?? "").split(",").filter(Boolean) as never);
+    }
+
     case "__complete": {
       const { runDynComplete } = await import("./commands/completion.ts");
       return runDynComplete(rest);
