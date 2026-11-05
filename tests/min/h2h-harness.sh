@@ -32,6 +32,11 @@
 #     digest mismatch, a wrong patch count or an unfetchable commit; the fix passes and the parent fails; the
 #     leak check flags hidden content (also over the visible test of the same name) but not namesakes;
 #     H2H_SELFCHECK_FETCH=1 also runs oracle/noop over every real replay and hard task.
+#   learning curve (--sequences with raw-haiku/raw-sonnet and loki-sonnet-learn, loki-sonnet-nolearn, loki-auto-learn arms, --laps N):
+#     each arm's env is exact (the four haiku arms unchanged), a raw sequence step records the arm's own cost and session,
+#     every lap starts from the base tree and re-applies work, reset_lap keeps .loki memory, run_index runs 1..laps*steps,
+#     summarize_curve and the seeded paired bootstrap are exact on fixed records, and a Loki learning arm on the stub is
+#     handed lap 1's worked example in lap 2.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. benchmarks/h2h/h2h.py score(): `return 1 if rc == 0 else 0` -> `return 1`; the
@@ -82,6 +87,13 @@
 #  40. contestant_cmd(): drop the --effort low suffix; the raw-opus-low argv check must fail.
 #  41. config_env(): leave LOKI_E10_EFFORT unset for loki-opus-low; the low-arm env and every-session checks must fail.
 #  42. config_env(): let H2H_LOKI_ENV override the low arm's effort; the refusal check must fail.
+#  43. config_env(): pin every sequence arm to haiku again; the loki-sonnet arms' env check must fail.
+#  44. run_sequence(): give a raw arm {"cost_usd": 0.0, "sessions": 0} again; the raw sequence cost and session checks must fail.
+#  45. run_sequence(): skip reset_lap; the lap-start-clean and oracle lap-2 re-apply checks must fail.
+#  46. reset_lap(): `git clean -fdxq` (no -e .loki); the reset_lap memory check must fail.
+#  47. first_pass(): ignore fix_rounds; the curve first-pass counts must fail.
+#  48. paired(): key records on (sequence, rep, step) instead of run_index; the paired pair count and values must fail.
+#  49. config_env(): drop LOKI_WORKED_EXAMPLE from the -learn suffix; the lap-2 injected-example check must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -408,6 +420,134 @@ has "step state commits when .loki is not gitignored, without .loki" "$learn_out
 has "learning arms: learn opts in to lessons and the worked example, nolearn turns them off" "$learn_out" "arms [('LOKI_PR_LESSONS', '1'), ('LOKI_WORKED_EXAMPLE', '1')] [('LOKI_NO_PR_LESSONS', '1')]"
 has "learning arms: lessons-only and example-only set both knobs explicitly" "$learn_out" "arms2 [('LOKI_PR_LESSONS', '1'), ('LOKI_WORKED_EXAMPLE', '0')] [('LOKI_PR_LESSONS', '0'), ('LOKI_WORKED_EXAMPLE', '1')]"
 has "step learning: recurring-class mistakes, repeats of an earlier step's class, injected bytes and ids" "$learn_out" "learning ['run-a', 'run-n'] ['run-a'] 190 ['run-a']"
+
+# Learning curve vs raw Claude Code (--sequences with raw and Sonnet arms, --laps): arms, raw cost, laps, memory
+# across a lap, curve and paired statistics on fixed records.
+arm_out="$(cd benchmarks/h2h && python3 -I -c '
+import sys; sys.path.insert(0, "."); import h2h
+keys = ("LOKI_SESSION_MODEL", "LOKI_PR_LESSONS", "LOKI_WORKED_EXAMPLE", "LOKI_NO_PR_LESSONS", "LOKI_ROUTER")
+pick = lambda c: sorted((k, v) for k, v in h2h.config_env(c, {}).items() if k in keys)
+for c in ("loki-sonnet-learn", "loki-sonnet-nolearn", "loki-auto-learn", "loki-haiku-learn", "loki-haiku-lessons", "loki-haiku-example", "loki-haiku-nolearn"):
+    print("arm", c, pick(c))
+print("raw", h2h.SEQUENCE_RAW_CONFIGS, all(c in h2h.CONFIGS for c in h2h.SEQUENCE_RAW_CONFIGS))')"
+has "arms: loki-sonnet-learn pins sonnet and turns both learn knobs on" "$arm_out" "arm loki-sonnet-learn [('LOKI_PR_LESSONS', '1'), ('LOKI_SESSION_MODEL', 'sonnet'), ('LOKI_WORKED_EXAMPLE', '1')]"
+has "arms: loki-sonnet-nolearn pins sonnet and turns learning off" "$arm_out" "arm loki-sonnet-nolearn [('LOKI_NO_PR_LESSONS', '1'), ('LOKI_SESSION_MODEL', 'sonnet')]"
+has "arms: loki-auto-learn has no model pin, LOKI_ROUTER=auto and both learn knobs" "$arm_out" "arm loki-auto-learn [('LOKI_PR_LESSONS', '1'), ('LOKI_ROUTER', 'auto'), ('LOKI_WORKED_EXAMPLE', '1')]"
+has "arms: the haiku learn arm is unchanged" "$arm_out" "arm loki-haiku-learn [('LOKI_PR_LESSONS', '1'), ('LOKI_SESSION_MODEL', 'haiku'), ('LOKI_WORKED_EXAMPLE', '1')]"
+has "arms: the haiku lessons arm is unchanged" "$arm_out" "arm loki-haiku-lessons [('LOKI_PR_LESSONS', '1'), ('LOKI_SESSION_MODEL', 'haiku'), ('LOKI_WORKED_EXAMPLE', '0')]"
+has "arms: the haiku example arm is unchanged" "$arm_out" "arm loki-haiku-example [('LOKI_PR_LESSONS', '0'), ('LOKI_SESSION_MODEL', 'haiku'), ('LOKI_WORKED_EXAMPLE', '1')]"
+has "arms: the haiku nolearn arm is unchanged" "$arm_out" "arm loki-haiku-nolearn [('LOKI_NO_PR_LESSONS', '1'), ('LOKI_SESSION_MODEL', 'haiku')]"
+has "arms: raw sequence arms are valid raw configs" "$arm_out" "raw ['raw-haiku', 'raw-sonnet'] True"
+python3 -I benchmarks/h2h/h2h.py --sequences all --configs raw-opus-verify >"$T/badarm.log" 2>&1
+check "sequences: a raw arm outside the sequence list is refused" test "$?" != 0
+H2H_LOKI_ENV=LOKI_ROUTER=0 python3 -I benchmarks/h2h/h2h.py --sequences all --configs loki-auto-learn >"$T/badrouter.log" 2>&1
+check "sequences: H2H_LOKI_ENV may not switch the router off on loki-auto-learn" test "$?" != 0
+has "sequences: the router refusal names LOKI_ROUTER" "$(cat "$T/badrouter.log")" "LOKI_ROUTER"
+
+# A raw arm in a sequence records its own cost and session (not the $0 a non-Loki arm used to get). The stub applies
+# step 1's solution at every step, so step 1 passes and the later steps are recorded as scored.
+SQ=py-report-formats
+J="$T/rawseq.json"
+E2E_STUB_OVERLAY="$ROOT/benchmarks/h2h/sequences/$SQ/steps/s1/solution" TMPDIR="$T" \
+    bash benchmarks/h2h/run.sh --sequences "$SQ" --configs raw-sonnet --out "$J" >"$T/rawseq.log" 2>&1
+check "raw sequence arm: runner exits 0" test "$?" = 0
+check "raw sequence arm: every step records the stub's cost" test "$(runs 'sorted({r["cost_usd"] for r in d["runs"]})')" = "[0.0123]"
+check "raw sequence arm: every step is one session" test "$(runs 'sorted({r["sessions"] for r in d["runs"]})')" = "[1]"
+check "raw sequence arm: step 1 passes, later steps are scored" test "$(runs '[r["pass"] for r in d["runs"]]')" = "[1, 0, 0]"
+check "raw sequence arm: run_index counts the steps" test "$(runs '[r["run_index"] for r in d["runs"]]')" = "[1, 2, 3]"
+
+# --laps: every sequence runs again from its base commit in the same repo. Oracle passes every step of both laps, noop none;
+# each lap starts from a clean base, and the oracle's second-lap step 1 really re-applies work (the reset removed lap 1).
+J="$T/laps.json"
+TMPDIR="$T" bash benchmarks/h2h/run.sh --sequences all --configs oracle,noop --laps 2 --jobs 4 --out "$J" >"$T/laps.log" 2>&1
+check "laps 2: runner exits 0" test "$?" = 0
+check "laps 2: records carry lap 1 and 2" test "$(runs 'sorted({r["lap"] for r in d["runs"]})')" = "[1, 2]"
+check "laps 2: run_index runs 1..2*steps for every sequence" test "$(runs 'all(sorted(r["run_index"] for r in d["runs"] if (r["config"], r["sequence"]) == (c, s)) == list(range(1, 2 * n + 1)) for c, s, n in {(r["config"], r["sequence"], max(x["step"] for x in d["runs"] if x["sequence"] == r["sequence"])) for r in d["runs"]})')" = True
+check "laps 2: every lap starts from the base tree" test "$(runs 'all(r["lap_start_clean"] for r in d["runs"] if r["step"] == 1) and sum(1 for r in d["runs"] if r["step"] == 1) > 0')" = True
+check "laps 2: oracle lap-2 step 1 re-applies work" test "$(runs 'all(r["files_changed"] > 0 for r in d["runs"] if r["config"] == "oracle" and r["lap"] == 2 and r["step"] == 1)')" = True
+check "laps 2: oracle passes every step of both laps" test "$(runs 'all(r["pass"] for r in d["runs"] if r["config"] == "oracle")')" = True
+check "laps 2: noop passes none" test "$(runs 'sum(r["pass"] for r in d["runs"] if r["config"] == "noop")')" = 0
+check "laps 2: no stale hidden file at any step" test "$(runs 'sum(len(r["stale_hidden"]) for r in d["runs"])')" = 0
+check "laps 2: the results file records laps, the curve and the paired list" test "$(runs '(d["laps"], sorted(d["curve"]), d["paired"])')" = "(2, ['by_run_index', 'first_vs_last'], [])"
+
+# reset_lap keeps Loki's memory and removes the step work.
+lap_out="$(cd benchmarks/h2h && python3 -I -c '
+import sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "."); import h2h
+d = Path(tempfile.mkdtemp(dir=sys.argv[1])); r = d / "repo"
+base0 = h2h.prepare_repo({"dir": h2h.SEQUENCES_DIR / "py-report-formats"}, r)
+(r / ".loki/memory/semantic").mkdir(parents=True); (r / ".loki/memory/semantic/pr-lessons.json").write_text("{}")
+(r / "step_work.py").write_text("x = 1\n"); h2h.commit_step_state(r, 1)
+(r / "step_extra.py").write_text("y = 2\n")
+h2h.git(r, "checkout", "-q", "-b", "loki/e10-x")
+h2h.reset_lap(r, base0)
+print("lap-reset", (r / ".loki/memory/semantic/pr-lessons.json").exists(), (r / "step_work.py").exists(), (r / "step_extra.py").exists(),
+      h2h.git(r, "rev-parse", "HEAD^{tree}") == h2h.git(r, "rev-parse", f"{base0}^{{tree}}"), h2h.git(r, "branch", "--show-current").strip())' "$T")"
+has "reset_lap: .loki memory survives, step work and strays are gone, tree is the base, back on main" "$lap_out" "lap-reset True False False True main"
+
+# Curve and paired statistics on fixed records: 2 sequences x 2 reps x run_index 1..4 (2 steps, 2 laps), raw-sonnet and loki-sonnet-learn.
+# raw: run 3 fails on rep 1; one cost unmeasured. loki: one failure at run 1; one pass needed a fix round.
+stat_out="$(cd benchmarks/h2h && python3 -I -c '
+import json, sys
+sys.path.insert(0, "."); import h2h
+runs = []
+for seq in "AB":
+    for rep in (1, 2):
+        for ri in (1, 2, 3, 4):
+            base = {"sequence": seq, "rep": rep, "run_index": ri, "step": (ri - 1) % 2 + 1, "lap": (ri - 1) // 2 + 1}
+            runs.append({**base, "config": "raw-sonnet", "pass": 0 if (ri == 3 and rep == 1) else 1,
+                         "cost_usd": None if (seq, rep, ri) == ("A", 2, 1) else 0.10, "sessions": 1})
+            runs.append({**base, "config": "loki-sonnet-learn", "pass": 0 if (seq, rep, ri) == ("B", 2, 1) else 1, "cost_usd": 0.05,
+                         "fix_rounds": 1 if (seq, rep, ri) == ("A", 1, 2) else 0, "sessions": 2})
+cfgs = ["raw-sonnet", "loki-sonnet-learn"]
+cv = h2h.summarize_curve(runs, cfgs)
+for c in cfgs:
+    rows = [x for x in cv["by_run_index"] if x["config"] == c]
+    print("curve", c, [(x["n"], x["passed"], x["first_pass"], x["cost_unmeasured"]) for x in rows], [x["mean_cost_usd"] for x in rows])
+    f = [x for x in cv["first_vs_last"] if x["config"] == c][0]
+    print("fvl", c, f["first"]["run_index"], f["first"]["pass_ci95"], f["last"]["run_index"], f["last"]["pass_ci95"], f["first"]["cost_per_pass_usd"])
+p = h2h.paired(runs, "loki-sonnet-learn", "raw-sonnet")
+print("paired", p["n_pairs"], p["delta_pass"]["point"], p["delta_first_pass"]["point"], p["cost_ratio"]["point"], p["cost_ratio"]["n_cost_pairs"])
+print("ci-same", json.dumps(p, sort_keys=True) == json.dumps(h2h.paired(runs, "loki-sonnet-learn", "raw-sonnet"), sort_keys=True),
+      all(p[k]["ci95"] and p[k]["ci95"][0] <= p[k]["point"] <= p[k]["ci95"][1] for k in ("delta_pass", "delta_first_pass", "cost_ratio")))
+print("all", [(x["a"], x["b"], x["n_pairs"]) for x in h2h.paired_all(runs, cfgs)])')"
+has "curve: raw-sonnet per-run n, passes, first-pass, unmeasured costs and mean cost" "$stat_out" "curve raw-sonnet [(4, 4, 4, 1), (4, 4, 4, 0), (4, 2, 2, 0), (4, 4, 4, 0)] [0.1, 0.1, 0.1, 0.1]"
+has "curve: a Loki pass with a fix round is not first-pass" "$stat_out" "curve loki-sonnet-learn [(4, 3, 3, 0), (4, 4, 3, 0), (4, 4, 4, 0), (4, 4, 4, 0)] [0.05, 0.05, 0.05, 0.05]"
+has "first vs last: Wilson bounds for run 1 (3/4) and run 4 (4/4), and $ per pass" "$stat_out" "fvl loki-sonnet-learn 1 [0.3006, 0.9544] 4 [0.5101, 1.0] 0.0667"
+has "paired: 16 pairs, pass +1/16, first-pass 0, cost ratio 0.5 over 15 measured pairs" "$stat_out" "paired 16 0.0625 0.0 0.5 15"
+has "paired: the bootstrap interval is deterministic and brackets the point" "$stat_out" "ci-same True True"
+has "paired: loki-sonnet-learn is compared with raw-sonnet only" "$stat_out" "all [('loki-sonnet-learn', 'raw-sonnet', 16)]"
+
+# A Loki learning arm end to end on the stub provider, next to a raw arm, over two laps: a 2-step sequence built here from
+# tests/min/fixtures/e2e/repo (no committed duplicate fixture). Lap 2 step 1 must be handed lap 1's worked example, which
+# is what the -learn suffix switches on; the results file carries the curve and the paired list.
+FIX="$ROOT/tests/min/fixtures/e2e"
+SD="$T/seqs/calc"; mkdir -p "$SD/repo" "$SD/steps/s1/hidden" "$SD/steps/s1/solution" "$SD/steps/s2/hidden" "$SD/steps/s2/solution"
+cp "$FIX/repo/"* "$SD/repo/"
+cat > "$SD/meta.json" <<'JSON'
+{"lang": "ts", "protected": ["calc.test.ts", "bunfig.toml"], "steps": [
+ {"id": "s1", "hidden": {"mul.hidden.test.ts": "h2h_hidden_s1.test.ts"}, "hidden_cmd": ["bun", "test", "./h2h_hidden_s1.test.ts"]},
+ {"id": "s2", "hidden": {"mul.hidden.test.ts": "h2h_hidden_s2.test.ts"}, "hidden_cmd": ["bun", "test", "./h2h_hidden_s2.test.ts"]}]}
+JSON
+printf 'add multiply(a, b) to calc.ts returning the product of two numbers\n' > "$SD/steps/s1/task.txt"
+printf 'add multiply(a, b) to calc.ts returning the product of two numbers\n' > "$SD/steps/s2/task.txt"
+for s in s1 s2; do
+  printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n' > "$SD/steps/$s/hidden/mul.hidden.test.ts"
+  printf 'export function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' > "$SD/steps/$s/solution/calc.ts"
+done
+H2H_SEQUENCES_DIR="$T/seqs" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=1 E2E_STUB_USAGE=50 LOKI_TS_ENTRY="$ROOT/loki-ts/dist/loki.js" \
+    H2H_LOKI_ENV="LOKI_E10_INVOKER=cli,LOKI_CLAUDE_CLI=$FIX/bin/claude,LOKI_E10_PLAN=1" TMPDIR="$T" \
+    bash benchmarks/h2h/run.sh --sequences calc --configs raw-sonnet,loki-sonnet-learn --laps 2 --timeout 120 --allow-dirty \
+    --out "$T/learnseq.json" >"$T/learnseq.log" 2>&1
+J="$T/learnseq.json"
+check "learning arm on the stub: runner exits 0" test "$?" = 0
+check "learning arm on the stub: 4 raw and 4 Loki step records" test "$(runs '(sum(r["config"] == "raw-sonnet" for r in d["runs"]), sum(r["config"] == "loki-sonnet-learn" for r in d["runs"]))')" = "(4, 4)"
+check "learning arm on the stub: every Loki step has a run id and a numeric cost" test "$(runs 'all(r["run_id"] and isinstance(r["cost_usd"], (int, float)) for r in d["runs"] if r["config"].startswith("loki"))')" = True
+check "learning arm on the stub: lap-2 step 1 saw lap 1's worked example in its repo" test "$(runs '[r["lessons_before"]["worked_example"] >= 1 for r in d["runs"] if r["config"].startswith("loki") and r["lap"] == 2 and r["step"] == 1]')" = "[True]"
+check "learning arm on the stub: lap-2 step 1 was injected a worked example" test "$(runs '[bool(r["worked_example"]) for r in d["runs"] if r["config"].startswith("loki") and r["lap"] == 2 and r["step"] == 1]')" = "[True]"
+check "learning arm on the stub: lap-1 step 1 had nothing to inject" test "$(runs '[r["worked_example"] for r in d["runs"] if r["config"].startswith("loki") and r["run_index"] == 1]')" = "[None]"
+check "learning arm on the stub: curve and paired are in the results file" test "$(runs '(sorted(d["curve"]), [(p["a"], p["b"], p["n_pairs"]) for p in d["paired"]])')" = "(['by_run_index', 'first_vs_last'], [('loki-sonnet-learn', 'raw-sonnet', 4)])"
 
 # Replay and hard suites keep only meta.json and task.txt here; the snapshot is rebuilt from the upstream at the
 # pinned commits and must match meta's snapshot_sha256. Offline: a tiny local upstream proves the rebuild, the
