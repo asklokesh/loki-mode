@@ -586,7 +586,7 @@ export function deriveRunLessons(events: readonly RunEvent[], repoDir: string, s
   };
   let failing = new Map<string, string>(), fixed: { path: string; added: number; removed: number }[] = [], changed: string[] = [];
   const reverted = new Set<string>(), outside = new Set<string>();
-  const notes = (v: unknown): void => { for (const n of arr(v)) { const s = String(n), t = /^reverted test edit: (.+)$/.exec(s), o = /^outside stated scope: (.+)$/.exec(s); if (t) reverted.add(rel(t[1])); if (o) outside.add(rel(o[1])); } };
+  const notes = (v: unknown): void => { for (const n of arr(v)) { const s = String(n), t = /^(?:reverted test edit|weakened test): (.+)$/.exec(s), o = /^outside stated scope: (.+)$/.exec(s); if (t) reverted.add(rel(t[1])); if (o) outside.add(rel(o[1])); } };
   for (const e of events) {
     const d = e.data ?? {};
     if (e.type === "stage.completed" && e.stage === "verify") {
@@ -613,7 +613,7 @@ export function deriveRunLessons(events: readonly RunEvent[], repoDir: string, s
   }
   const why = conflictReasonOf(events as unknown as EventEnvelope[]);
   if (why) add({ category: "spec-conflict", key: "", text: "A run here stopped on a spec conflict; check the requirement against the existing tests before editing", sub: `reason: ${clip(why, 200)}`, files: [] });
-  if (reverted.size) add({ category: "edited-existing-test", key: "", text: "Do not edit or delete existing tests: the harness restores them, so the edit is wasted work", sub: `restored ${[...reverted].join(", ")}`, files: [...reverted] });
+  if (reverted.size) add({ category: "edited-existing-test", key: "", text: "Do not delete, skip or loosen assertions in existing tests: the harness caps the verdict, so the edit is wasted work", sub: `weakened ${[...reverted].join(", ")}`, files: [...reverted] });
   if (outside.size) add({ category: "out-of-scope-edit", key: "", text: "Edits outside the stated scope were flagged; change only the files the task needs", sub: `edited ${[...outside].join(", ")}`, files: [...outside] });
   for (const m of out.values()) if (m.category === "check-failed" || m.category === "stage-time-limit") m.files = [...new Set([...m.files, ...changed])].slice(0, 12);
   return [...out.values()];
@@ -672,7 +672,7 @@ const one = (s: string, n: number): string => clip(fence(s), n);
 export function runLessonLine(l: Lesson): string {
   const file = one((l.hit ?? l.files ?? [])[0] ?? "", 60), at = file ? `${file}: ` : "";
   const last = (l.subs ?? []).at(-1)?.text ?? "", when = (l.seen ?? 1) > 1 ? `in ${l.seen} runs` : "last run";
-  if (l.category === "edited-existing-test") return `- ${at}do not edit this existing test; the harness restored it ${when}\n`;
+  if (l.category === "edited-existing-test") return `- ${at}do not weaken this existing test; capped the verdict ${when}\n`;
   if (l.category === "spec-conflict") return `- ${at}check the requirement against existing tests first; a run stopped on a spec conflict (${one(last.replace(/^reason: /, ""), 70)})\n`;
   const m = /^Check (\S+) failed(?:: (.*))?$/.exec(l.text.trim()), check = one(m?.[1] ?? "its check", 60), err = one((m?.[2] ?? last.replace(/^first error: /, "")).replace(/^error:\s*/i, ""), 60);
   return `- ${at}make ${check} pass; it failed ${when}${err ? `: ${err}` : ""}\n`;

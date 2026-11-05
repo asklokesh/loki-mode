@@ -8,7 +8,7 @@ import type { FailureGroup } from "../failures.ts";
 import { hooks } from "../hooks.ts";
 import { treeFingerprint } from "../../util/anti_loop.ts";
 import { buildFixResumeBrief, currentDiff, holdoutNote, runFixSession } from "../../runner/session_resume.ts";
-import { adjudicateWallConflict } from "../../util/conflict_resume.ts"; import { type ReadOnlyFile, restoreReadOnly } from "./implement.ts"; import { restoreBaseTests } from "../../util/test_guard.ts";
+import { adjudicateWallConflict } from "../../util/conflict_resume.ts"; import { type ReadOnlyFile, restoreReadOnly } from "./implement.ts";
 import { installOwned } from "../../project_model/install.ts"; import { relative, resolve } from "node:path"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
@@ -63,7 +63,7 @@ export const fixStage: Stage = {
     const fullBrief = buildFixBrief(task, groups, diffStat, repeated ? { priorDiagnosis: prevDiag } : undefined, holdoutFailed);
     let r = await runFixSession(ctx, sessionBase, `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel, fullBrief, buildFixResumeBrief(groups, diffStat, prevDiag, holdoutFailed, [...((prior.implement?.tests_reverted as string[] | undefined) ?? []), ...((prior.fix?.tests_reverted as string[] | undefined) ?? [])].map((f) => relative(ctx.repoDir, resolve(ctx.repoDir, f))))); // one session per round: a spec conflict starts no retry; the unchanged-tree rule below decides whether it is believed
     const ro = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [], wd = r.session.markers.specConflict && !r.session.killed ? await adjudicateWallConflict(ctx, { ...sessionBase, iterationId: r.ids[r.ids.length - 1]!, brief: fullBrief }, r.session, ro) : null; if (wd) r = { ...r, session: wd.session, ids: [...r.ids, ...wd.ids] }; // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT
-    const testsReverted = [...restoreReadOnly(ro), ...restoreBaseTests(ctx.repoDir, ctx.baseSha, prior.intake)]; // the Wall and pre-existing tests are read-only after any fix pass
+    const testsReverted = restoreReadOnly(ro); // only the Wall is read-only after a fix pass
     const treeAfter = treeFingerprint(ctx.repoDir, ctx.baseSha), conflict =r.session.markers.specConflict && !r.session.killed && treeBefore !== null && treeBefore === treeAfter ? r.session.markers.specConflict : null; // evidence: a claim from a round that edited the tree is work in progress, not an escape from the failure
     ctx.emit("fix.round", "fix", {
       round,
