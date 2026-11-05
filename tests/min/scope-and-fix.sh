@@ -880,8 +880,13 @@ const { linkBaseFaithfulDeps: link } = await import("./src/util/base_guard.ts"),
 execFileSync("git", ["-C", d, "worktree", "add", "-q", "--detach", b, "HEAD"]);
 const ok = link(b, d, b + "/packages/app"), run = (c: string) => spawnSync(c + "/../../node_modules/.bin/vitest", ["run", "app.test.ts"], { cwd: c, encoding: "utf8", timeout: 90000 }).status;
 const x = realpathSync(b + "/packages/app/node_modules/x"), lib = realpathSync(x + "/../@t/lib"), rb = realpathSync(b);
-console.log([ok, run(b + "/packages/app"), run(d + "/packages/app"), x.startsWith(rb + "/") && lib.startsWith(rb + "/")].join(","));' "$SF" 2>&1 | tail -1)"
-    [ "$SFR" = "true,0,1,true" ] && ok "pnpm store package reaching a workspace package: the base run uses the base copy of the workspace package (base passes, head throws, realpaths stay in base) ($SFR)" || bad "pnpm store package leg: '$SFR' (want true,0,1,true)"
+const first = [ok, run(b + "/packages/app"), run(d + "/packages/app"), x.startsWith(rb + "/") && lib.startsWith(rb + "/")];
+// a package the change adds: its workspace link exists at head but dangles in the base worktree, so base cannot be reproduced and linking must refuse
+const { mkdirSync, symlinkSync, writeFileSync } = await import("node:fs"), b2 = d + "-base2";
+mkdirSync(d + "/packages/newpkg", { recursive: true }); writeFileSync(d + "/packages/newpkg/package.json", "{\"name\":\"@t/newpkg\"}"); mkdirSync(d + "/node_modules/@t", { recursive: true }); symlinkSync("../../packages/newpkg", d + "/node_modules/@t/newpkg");
+execFileSync("git", ["-C", d, "worktree", "add", "-q", "--detach", b2, "HEAD"]);
+console.log([...first, link(b2, d, b2 + "/packages/app")].join(","));' "$SF" 2>&1 | tail -1)"
+    [ "$SFR" = "true,0,1,true,false" ] && ok "pnpm store package reaching a workspace package: the base run uses the base copy (base passes, head throws, realpaths stay in base); a workspace package the change adds dangles in base and linking refuses ($SFR)" || bad "pnpm store package leg: '$SFR' (want true,0,1,true,false)"
     SG="$(cd "$ROOT/loki-ts" && bun -e '
 const { startupSig: s } = await import("./src/engine10/stages/verify.ts");
 const a = "x\n\u23af\u23af Startup Error \u23af\u23af\nError: No projects were found in /r/pkg (12ms)\n    at start (file:///r/n.js:1:2)\n", b = "x\n\u23af\u23af Startup Error \u23af\u23af\nError: No projects were found in /b/pkg (9ms)\n    at start (file:///b/n.js:5:6)\n";

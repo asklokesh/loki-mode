@@ -338,7 +338,8 @@ export function linkBaseFaithfulDeps(baseDir: string, repoDir: string, cwd: stri
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, e.name);
       if (e.isSymbolicLink()) {
-        const rt = rp(p); if (rt === null) continue;
+        const rt = rp(p);
+        if (rt === null) { const t = resolve(dirname(p), readlinkSync(p)); if (t.startsWith(baseDir + sep) && !t.split(sep).includes("node_modules")) return true; continue; } // a workspace link retargeted to a base path that does not exist (a package the change adds): base cannot be reproduced
         if (wsRel(rt) !== null) return true;
         const segs = rt.split(sep), i = segs.lastIndexOf(".pnpm");
         if (i >= 0 && i + 1 < segs.length) { const pk = segs.slice(0, i + 2).join(sep); if (!storeBad.has(pk)) storeBad.set(pk, linksOf(join(pk, "node_modules")).some((l) => { const t = rp(l); return t !== null && wsRel(t) !== null; })); if (storeBad.get(pk)) return true; }
