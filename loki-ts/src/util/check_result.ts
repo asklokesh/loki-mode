@@ -1859,13 +1859,27 @@ export function failureSignature(c: { name: string; first_error?: string; ids?: 
   const set = ids.length > 3 ? `${ids.slice(0, 3).join(", ")} (+${ids.length - 3} more, set ${createHash("sha256").update(ids.join("\n")).digest("hex").slice(0, 8)})` : ids.join(", ");
   return [c.name, c.first_error, set ? `[${set}]` : ""].filter(Boolean).join(" ");
 }
-/** A group signature minus what varies between identical failures: the "(+N more, set <digest>)" tail of a long id list and, for a "full suite: <pkg>" group, everything after the check name
- *  (a broken suite fails thousands of ids and its first line is build or lint chatter that changes run to run). Used only to compare two verify runs for a stall; the brief keeps the full signature. */
+/** A group signature minus what varies between identical failures: the "(+N more, set <digest>)" tail of a long id list and, for a "full suite: <pkg>" group, the first line (a broken suite's
+ *  first line is build or lint chatter that changes run to run). A full-suite group keeps its failing ids: all listed -> the exact id set; truncated -> the listed head ids plus " #<total count>",
+ *  which `stallSame` compares within 2 percent. Used only to compare two verify runs for a stall; the brief keeps the full signature. */
 export function stallSignature(sig: string): string {
   const more = /\(\+(\d+) more, set [0-9a-f]+\)/.exec(sig), s = sig.replace(/\s*\(\+\d+ more, set [0-9a-f]+\)/, "");
   if (!/^full suite: /.test(s)) return s;
-  const ids = more ? 3 + Number(more[1]) : (/\[([^\]]*)\]/.exec(s)?.[1] ?? "").split(", ").filter(Boolean).length; // a fix that cuts the failing ids by half or more still reads as progress: the bucket is log2 of the id count
-  return `${/^full suite: \S+/.exec(s)?.[0] ?? s} #${ids > 0 ? Math.floor(Math.log2(ids)) : 0}`;
+  const name = /^full suite: \S+/.exec(s)?.[0] ?? s, listed = (/\[([^\]]*)\]/.exec(s)?.[1] ?? "").split(", ").filter(Boolean);
+  return more ? `${name} [${listed.join(", ")}] #${listed.length + Number(more[1])}` : `${name} [${[...listed].sort().join(", ")}]`;
+}
+/** True when two consecutive verify signatures (JSON arrays of stallSignature strings) describe the same failing set: exact, except a truncated full-suite entry (" #<count>") whose head ids match
+ *  and whose count differs by at most 2 percent. A round that fixed a real share of the ids is progress, never a stall. */
+export function stallSame(a: string, b: string): boolean {
+  if (a === b) return true;
+  let x: unknown, y: unknown;
+  try { x = JSON.parse(a); y = JSON.parse(b); } catch { return false; }
+  if (!Array.isArray(x) || !Array.isArray(y) || x.length !== y.length) return false;
+  return x.every((e, i) => {
+    const f = y[i]; if (e === f) return true;
+    const m = /^(.*) #(\d+)$/s.exec(String(e)), n = /^(.*) #(\d+)$/s.exec(String(f));
+    return !!m && !!n && m[1] === n[1] && Math.abs(Number(m[2]) - Number(n[2])) <= Math.ceil(0.02 * Math.max(Number(m[2]), Number(n[2])));
+  });
 }
 /** L005: one fix-brief group: the signature, and a sample that starts with the command that reruns the check, then its redacted excerpt. */
 export function failureGroup(c: { name: string; cmd: string; first_error?: string; ids?: string[] }, excerpt: string, suite = false): FailureGroup {
