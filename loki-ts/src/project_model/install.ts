@@ -286,6 +286,20 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
   return res;
 }
 
+/** Intake installs every package whose dependencies were never installed (absentDepRoots), whether or not any check needs it. A failed install of a package nothing depends on is disclosed, never a cap:
+ *  a package below the root with no test command, owning none of the changed files, and holding no check verify ran (lefthook's packaging/registries/pypi wrapper needs release binaries
+ *  to install, while the change and every check are Go). Every other install line, and any line that is not a failed install, keeps capping. `checkNames` are verify's check names. */
+export function unusedInstallNotes(lines: readonly string[], model: ProjectApi | null | undefined, changed: readonly string[], checkNames: readonly string[]): { cap: string[]; na: string[] } {
+  const cap: string[] = [], na: string[] = [];
+  for (const l of lines) {
+    const root = /\(install:([^;()]+); harness-owned\)$/.exec(l)?.[1], pkg = root && root !== "." ? model?.packages().find((p) => p.root === root) : undefined;
+    const inRoot = (f: string): boolean => f === root || f.startsWith(`${root}/`), owned = (f: string): boolean => model?.packageOf(f)?.root === root || inRoot(f);
+    const used = !pkg || !!pkg.commands.test || changed.some(owned) || checkNames.some((n) => n === `full suite: ${pkg.name}` || inRoot(n.slice(n.indexOf(":") + 1).trim()));
+    (used ? cap : na).push(used ? l : `install failed for a package no check or changed file depends on: ${l}`);
+  }
+  return { cap, na };
+}
+
 /** FC-DEPS-NOT-INSTALLED: roots of model packages whose install command cites a manifest or lockfile inside the package root while git
  *  shows no untracked or ignored directory directly in that root (nothing was ever installed there: a fresh clone). Ecosystem-agnostic:
  *  git decides, never a list of dependency directory names. A git failure is not evidence of absence, so that package is left alone. */

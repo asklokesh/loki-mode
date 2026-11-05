@@ -2,6 +2,7 @@
 // Each package that declares a test command runs it in its own directory. Returns false when the model is
 // absent or single-root, so the caller keeps its legacy per-runner path unchanged.
 // FC-BASELINE-PER-PACKAGE: fullSuiteSpecs is the one list of full-suite commands; verify runs it and the intake baseline records it.
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { harnessLoadReason } from "../runner/load_owner.ts";
 import { suiteEmptyOnBase } from "../runner/repo_profile.ts";
@@ -19,22 +20,54 @@ interface SuiteCheck { name: string; cmd: string; result: "pass" | "fail" | "not
 /** One full-suite command: `name` and `cmd` are the check's own fields, `run` is what executes in the repo-relative `cwd`. */
 export interface SuiteSpec { name: string; cmd: string; cwd: string; run: string }
 
-/** One spec per multi-root package with a test command; null when the model is absent, single-root or defines none. */
-export function packageSuiteSpecs(api: ProjectApi | null | undefined): SuiteSpec[] | null {
+/** One spec per multi-root package with a test command; null when the model is absent, single-root or defines none. With `repoDir`, a Go package whose test command is a plain `go test`, or a Makefile target that only runs one, runs as `go test -json` (goMakeSuite). */
+export function packageSuiteSpecs(api: ProjectApi | null | undefined, repoDir?: string): SuiteSpec[] | null {
   if (!isMultiRoot(api)) return null;
-  const specs = api.packages().filter((p) => p.commands.test).map((p) => { const tc = p.commands.test!; return { name: `full suite: ${p.name}`, cmd: `(cd ${tc.cwd} && ${tc.cmd})`, cwd: tc.cwd, run: tc.cmd }; });
+  const specs = api.packages().filter((p) => p.commands.test).map((p) => { const tc = p.commands.test!, line = (repoDir !== undefined ? goMakeSuite(repoDir, tc.cwd, tc.cmd) : null) ?? tc.cmd; return { name: `full suite: ${p.name}`, cmd: `(cd ${tc.cwd} && ${line})`, cwd: tc.cwd, run: line }; });
   return specs.length ? specs : null;
+}
+// go test flags goMakeSuite may drop: none selects tests or changes how a result is read (-short and -tags do, so a command with them is kept); -race is dropped like every other, as the single-root Go full suite never runs it. Valued ones take a separate token.
+const GO_TEST_SAFE = new Set(["race", "cpu", "count", "timeout", "parallel", "p", "v", "failfast", "shuffle", "json"]), GO_TEST_VALUED = new Set(["cpu", "count", "timeout", "parallel", "p", "shuffle"]);
+/** A Go module's (go.mod in `cwd`) full-suite command as one Loki can count. Plain go test output is never counted (GO_EXIT0_REASON), so a model command that is a plain `go test ./...` (what
+ *  the model infers from go.mod) or `make <target>` whose target has no prerequisites and one plain `go test` recipe line (lefthook: `go test -cpu 24 -race -count=1 -timeout=30s ./...`) read
+ *  not_run on every run. Returns `go test -json <its packages>`, the command a single-root Go repo already gets (fullSuiteCmd). null (the command is kept) for any other shape: prerequisites,
+ *  a shell operator or variable, a second recipe line, a non-go-test line, -tags, -run, -short or any flag outside GO_TEST_SAFE. */
+export function goMakeSuite(repoDir: string, cwd: string, cmd: string): string | null {
+  const dir = join(repoDir, cwd); if (!existsSync(join(dir, "go.mod"))) return null;
+  const m = /^\s*make\s+([A-Za-z0-9_.-]+)\s*$/.exec(cmd);
+  let line = cmd.trim();
+  if (m) {
+    let text: string; try { text = readFileSync(join(dir, "Makefile"), "utf8"); } catch { return null; }
+    const lines = text.split("\n"), at = lines.findIndex((l) => new RegExp(`^${m[1]!.replace(/[.]/g, "\\.")}\\s*:(?!=)(.*)$`).test(l));
+    if (at < 0 || (/:(.*)$/.exec(lines[at]!)?.[1] ?? "").replace(/#.*/, "").trim() !== "") return null;
+    const recipe: string[] = [];
+    for (const l of lines.slice(at + 1)) { if (!l.startsWith("\t")) { if (l.trim() === "" || /^\s*#/.test(l)) continue; break; } const r = l.trim().replace(/^[@-]+/, ""); if (r !== "" && !r.startsWith("#")) recipe.push(r); }
+    if (recipe.length !== 1) return null;
+    line = recipe[0]!;
+  }
+  if (/[;&|`$()<>\\"']/.test(line)) return null;
+  const toks = line.split(/\s+/);
+  if (toks[0] !== "go" || toks[1] !== "test") return null;
+  const pkgs: string[] = [];
+  for (let k = 2; k < toks.length; k++) {
+    const t = toks[k]!;
+    if (!t.startsWith("-")) { pkgs.push(t); continue; }
+    const flag = t.replace(/^--?/, "").split("=")[0]!;
+    if (!GO_TEST_SAFE.has(flag)) return null;
+    if (GO_TEST_VALUED.has(flag) && !t.includes("=")) k++;
+  }
+  return ["go", "test", "-json", ...pkgs].join(" ");
 }
 
 /** The full-suite commands verify will run: per package from the model, else per detected runner. */
 export function fullSuiteSpecs(repoDir: string, runners: RunnerName[]): SuiteSpec[] {
-  return packageSuiteSpecs(loadProjectApi(repoDir)) ?? runners.map((r) => { const f = fullSuiteCmd(r, repoDir), c = [f.cmd, ...f.args].join(" "); return { name: `full suite: ${r}`, cmd: c, cwd: ".", run: [f.cmd, ...f.args].map(shellWord).join(" ") }; }); // run goes through bash -c: an absolute .venv interpreter under a spaced path must stay one word
+  return packageSuiteSpecs(loadProjectApi(repoDir), repoDir) ?? runners.map((r) => { const f = fullSuiteCmd(r, repoDir), c = [f.cmd, ...f.args].join(" "); return { name: `full suite: ${r}`, cmd: c, cwd: ".", run: [f.cmd, ...f.args].map(shellWord).join(" ") }; }); // run goes through bash -c: an absolute .venv interpreter under a spaced path must stay one word
 }
 
 /** FR05: the full-suite commands verify will run (fullSuiteSpecs, the one list) as repo-profile rows, for readiness and `loki doctor --repo` when the manifests name no test command. Never executed and never persisted, so the baseline, attribution and implementer brief are unchanged. A build tool that is not installed (no wrapper, no committed verify.test_command) is validated:false and names the tool. */
 export function verifyCommandRows(repoDir: string, tm: { runners: RunnerName[]; evidence?: Partial<Record<RunnerName, string>> }, env: NodeJS.ProcessEnv = process.env): ProfileCommand[] {
   try {
-    const multi = packageSuiteSpecs(loadProjectApi(repoDir)) !== null, own = repoTestCommand(repoDir) !== null;
+    const multi = packageSuiteSpecs(loadProjectApi(repoDir), repoDir) !== null, own = repoTestCommand(repoDir) !== null;
     return fullSuiteSpecs(repoDir, tm.runners).map((s, i) => {
       const r = multi ? undefined : tm.runners[i], t = r && !own && !toolOk(r, env, repoDir) ? STACK_TOOLS[r] : undefined;
       return { kind: "test", cmd: s.cmd, source: multi ? ".loki/project.json" : (r && tm.evidence?.[r]) || "test map", validated: t ? false : null, exit_code: null, duration_s: null, failing_ids: [], note: t ? `${t.tool} is not installed` : "verify runs this as the full suite", ...(t ? { fix: t.install } : {}) } as ProfileCommand;
@@ -72,7 +105,7 @@ export async function runPackageSuites(
   checks: SuiteCheck[],
   notProven: Set<string>,
 ): Promise<boolean> {
-  const api = loadProjectApi(repoDir), specs = packageSuiteSpecs(api);
+  const api = loadProjectApi(repoDir), specs = packageSuiteSpecs(api, repoDir);
   if (!api || !specs) return false;
   for (const { name, cmd, cwd, run: line } of specs) {
     const started = Date.now();

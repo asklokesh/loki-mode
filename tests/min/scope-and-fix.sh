@@ -918,6 +918,68 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest declared-env base proof: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest declared-env base proof: pytest is not installed"; fi
 fi
+# Go module whose test command is a Makefile target (rule 22, real go and real make through the real engine; the receipt shape of L-Haiku-v132 lh-1471/1474/1562/1573, lefthook): the
+# repo is multi-root (an npm packaging dir beside the Go module), so the full suite is the model's `make test`, whose recipe is a plain `go test -cpu 24 -race -count=1 -timeout=30s ./...`.
+# Plain go test output is never counted, so before the fix every run read "not run: full suite: <root>" and, with no full suite that ran, every test-less package line capped too.
+# goMakeSuite runs that recipe as `go test -json ./...` (and a plain `go test ./...`, the command the model infers from go.mod for a Go root, the same way): the full suite passes, the
+# test-less package is n/a, and the fix is VERIFIED. A recipe with -tags or a prerequisite keeps make.
+# The root package is named after its directory ("repo" here, "w" in the bench workdir), which is why the bench receipts read "full suite: w".
+# Plant: goMakeSuite returns null and the run is PARTIAL with "not run: full suite: repo".
+make_mk_go_repo() {
+    mkdir -p "$1/packaging/npm/gomod-npm"
+    printf 'module example.com/calc\n\ngo 1.20\n' > "$1/go.mod"
+    printf '.PHONY: test\ntest:\n\tgo test -cpu 2 -count=1 -timeout=60s ./...\n\n.PHONY: lint\nlint:\n\tgo vet ./...\n' > "$1/Makefile"
+    printf 'package calc\n\nfunc Add(a, b int) int {\n\treturn a + b\n}\n\nfunc Double(a int) int {\n\treturn a + a + 1\n}\n' > "$1/calc.go"
+    printf 'package calc\n\nimport "testing"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(2, 3) != 5 {\n\t\tt.Fatal("add")\n\t}\n}\n' > "$1/calc_test.go"
+    printf '{"name":"gomod-npm","version":"0.0.0"}\n' > "$1/packaging/npm/gomod-npm/package.json"
+    return 0
+}
+MKPROJ='{"workspaceKind":"multi-root","workspaceCite":["go.mod"],"packages":[{"name":"gomod","root":".","runner":null,"commands":{"test":{"cmd":"make test","cwd":".","cite":["Makefile"]},"lint":null,"build":null,"start":null},"ui":{"present":false,"boot":null,"cite":[]},"cite":["go.mod","Makefile"]},{"name":"gomod-npm","root":"packaging/npm/gomod-npm","runner":null,"commands":{"test":null,"lint":null,"build":null,"start":null},"ui":{"present":false,"boot":null,"cite":[]},"cite":["packaging/npm/gomod-npm/package.json"]}],"fingerprintFiles":["go.mod","packaging/npm/gomod-npm/package.json"]}'
+if command -v go >/dev/null 2>&1 && command -v make >/dev/null 2>&1; then
+    MAKE_REPO=make_mk_go_repo run_engine "fix Double(a) in calc.go so it returns twice a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.go E2E_STUB_REPLACE=$'\treturn a + a + 1' E2E_STUB_SNIPPET=$'\treturn a * 2' E2E_STUB_TEST_FILE=calc_test.go \
+        E2E_STUB_TEST_APPEND=$'\nfunc TestDouble(t *testing.T) {\n\tif got := Double(3); got != 6 {\n\t\tt.Errorf("want 6 got %d", got)\n\t}\n}' E2E_STUB_PROJECT="$MKPROJ" LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_RISK_TIER=medium
+    notes="$(wo_receipt np)"; ck="$(wo_receipt ck)"
+    case "$ck" in *"full suite: repo=pass"*) ok "go make suite: the Makefile's go test recipe runs as go test -json and the full suite passes ($ck)" ;; *) bad "go make suite: no passing full suite: repo check: '$ck' ($notes)"; dump ;; esac
+    case "$notes" in *"not run: full suite"*|*"gomod-npm defines no test command"*) bad "go make suite: a full-suite gap still caps: $notes" ;; *) ok "go make suite: neither the full suite nor the test-less package is listed as a gap" ;; esac
+    [ "$(outcome)" = "VERIFIED" ] && ok "go make suite: the fix is VERIFIED" || { bad "go make suite: outcome is '$(outcome)' ($notes)"; dump; }
+    MAKE_REPO=make_mk_go_repo run_engine "fix Double(a) in calc.go so it returns twice a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.go E2E_STUB_REPLACE=$'\treturn a + a + 1' E2E_STUB_SNIPPET=$'\treturn a * 2' E2E_STUB_TEST_FILE=calc_test.go \
+        E2E_STUB_TEST_APPEND=$'\nfunc TestDouble(t *testing.T) {\n\tif got := Double(3); got != 6 {\n\t\tt.Errorf("want 6 got %d", got)\n\t}\n}' E2E_STUB_PROJECT="${MKPROJ/make test/go test ./...}" LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_RISK_TIER=medium
+    ck="$(wo_receipt ck)"
+    case "$ck" in *"full suite: repo=pass"*) ok "go make suite: a plain go test ./... model command runs as go test -json and passes ($ck)" ;; *) bad "go make suite: plain go test model command: '$ck' ($(wo_receipt np))"; dump ;; esac
+    mk="$(cd "$ROOT/loki-ts" && bun -e 'const { goMakeSuite } = await import("./src/project_model/package_suite.ts"); const { mkdtempSync, writeFileSync } = await import("node:fs"); const { join } = await import("node:path"); const { tmpdir } = await import("node:os"); const one = (mk: string, gomod = true, cmd = "make test") => { const d = mkdtempSync(join(tmpdir(), "loki-gomk-")); if (gomod) writeFileSync(join(d, "go.mod"), "module x\n"); writeFileSync(join(d, "Makefile"), mk); return String(goMakeSuite(d, ".", cmd)); }; console.log([one("test:\n\tgo test -cpu 24 -race -count=1 -timeout=30s ./...\n"), one("test:\n\t@go test ./internal/... ./cmd/...\n"), one("test:\n\tgo test -tags=integration ./...\n"), one("test: install\n\tgo test ./...\n"), one("test:\n\tgo test ./... && ./e2e.sh\n"), one("test:\n\tgo vet ./...\n\tgo test ./...\n"), one("test:\n\tgo test ./...\n", false), one("test:\n\tgo test -short ./...\n"), one("test:\n\tgo test ./...\n", true, "make check"), one("", true, "go test ./..."), one("", true, "go test -json -race ./pkg"), one("", false, "go test ./..."), one("", true, "go test -tags=e2e ./...")].join("|"))' 2>&1 | tail -1)"
+    [ "$mk" = "go test -json ./...|go test -json ./internal/... ./cmd/...|null|null|null|null|null|null|null|go test -json ./...|go test -json ./pkg|null|null" ] && ok "go make suite unit: a plain go test recipe or model command becomes go test -json with its packages; -tags, a prerequisite, a shell operator, a second line, no go.mod, -short and a missing target keep the command ($mk)" || bad "go make suite unit: got '$mk'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go make suite: go or make is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go make suite: go or make is not installed"; fi
+fi
+# Unused install (rule 22, real go and a real failing install through the real engine; the receipt shape of L-Haiku-v132 lh-*: "install exited 1: hint: See PEP 668 ...
+# (install:packaging/registries/pypi; harness-owned)"). Intake installs every package whose dependencies were never installed; lefthook's pypi wrapper cannot install without release
+# binaries, while the change and every check are Go. A failed install of a package below the root with no test command, no changed file and no check is disclosed as n/a, not a cap.
+# The same failure in a package that owns a changed file, has a test command or holds a check keeps capping (unit). The Go root's model command is the inferred plain `go test ./...`,
+# counted through goMakeSuite above. Plant: unusedInstallNotes returns every line as cap and the run is PARTIAL with the install line on NOT PROVEN.
+make_pyw_go_repo() {
+    mkdir -p "$1/packaging/pypi"
+    printf 'module example.com/calc\n\ngo 1.20\n' > "$1/go.mod"
+    printf 'package calc\n\nfunc Add(a, b int) int {\n\treturn a + b\n}\n\nfunc Double(a int) int {\n\treturn a + a + 1\n}\n' > "$1/calc.go"
+    printf 'package calc\n\nimport "testing"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(2, 3) != 5 {\n\t\tt.Fatal("add")\n\t}\n}\n' > "$1/calc_test.go"
+    printf '[project]\nname = "calc-wrapper"\nversion = "0"\n' > "$1/packaging/pypi/pyproject.toml"
+    printf '#!/bin/sh\necho "error: externally-managed-environment" >&2\necho "hint: See PEP 668 for the detailed specification." >&2\nexit 1\n' > "$1/packaging/pypi/install.sh"; chmod +x "$1/packaging/pypi/install.sh"
+    return 0
+}
+PYWPROJ='{"workspaceKind":"multi-root","workspaceCite":["go.mod"],"packages":[{"name":"calc","root":".","runner":null,"commands":{"test":null,"lint":null,"build":null,"start":null},"ui":{"present":false,"boot":null,"cite":[]},"cite":["go.mod"]},{"name":"packaging/pypi","root":"packaging/pypi","runner":null,"commands":{"test":null,"lint":null,"build":null,"start":null},"ui":{"present":false,"boot":null,"cite":[]},"cite":["packaging/pypi/pyproject.toml"],"install":{"cmd":"./install.sh","cwd":"packaging/pypi","cite":["packaging/pypi/pyproject.toml"]}}],"fingerprintFiles":["go.mod","packaging/pypi/pyproject.toml"]}'
+if command -v go >/dev/null 2>&1; then
+    MAKE_REPO=make_pyw_go_repo run_engine "fix Double(a) in calc.go so it returns twice a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.go E2E_STUB_REPLACE=$'\treturn a + a + 1' E2E_STUB_SNIPPET=$'\treturn a * 2' E2E_STUB_TEST_FILE=calc_test.go \
+        E2E_STUB_TEST_APPEND=$'\nfunc TestDouble(t *testing.T) {\n\tif got := Double(3); got != 6 {\n\t\tt.Errorf("want 6 got %d", got)\n\t}\n}' E2E_STUB_PROJECT="$PYWPROJ" LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    notes="$(wo_receipt np)"; na="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_applicable"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+    ia="$(ev "[e['data'].get('result') for e in E if e['type']=='deps.install' and e['data'].get('name')=='install:packaging/pypi']")"
+    [ "$ia" = "['not_run']" ] && ok "unused install: intake really tried the pypi wrapper install and it failed ($ia)" || bad "unused install: no failed install:packaging/pypi event ('$ia')"
+    case "$notes" in *"install:packaging/pypi"*) bad "unused install: the unused install failure is still on NOT PROVEN: $notes" ;; *) ok "unused install: the failure is not a NOT PROVEN line" ;; esac
+    has "unused install: the failure is disclosed under N/A" "$na" "install failed for a package no check or changed file depends on: install exited 1"
+    [ "$(outcome)" = "VERIFIED" ] && ok "unused install: the Go fix is VERIFIED" || { bad "unused install: outcome is '$(outcome)' ($notes)"; dump; }
+    iu="$(cd "$ROOT/loki-ts" && bun -e 'const { unusedInstallNotes } = await import("./src/project_model/install.ts"); const pk = (root: string, test: boolean) => ({ name: root, root, commands: { test: test ? { cmd: "t", cwd: root } : null } }); const api = (ps: object[]) => ({ packages: () => ps, packageOf: (f: string) => (ps as { root: string }[]).find((p) => p.root !== "." && f.startsWith(p.root + "/")) ?? null }) as never; const l = (r: string) => "install exited 1: hint: See PEP 668 for the detailed specification. (install:" + r + "; harness-owned)"; const n = (ps: object[], ch: string[], cks: string[], line = l("py")) => { const r = unusedInstallNotes([line], api(ps), ch, cks); return r.na.length ? "na" : "cap"; }; console.log([n([pk(".", true), pk("py", false)], ["calc.go"], ["go:calc_test.go"]), n([pk(".", true), pk("py", false)], ["py/w.py"], []), n([pk(".", true), pk("py", true)], ["calc.go"], []), n([pk(".", true), pk("py", false)], ["calc.go"], ["pytest:py/test_w.py"]), n([pk(".", true)], ["calc.go"], [], l(".")), n([pk(".", true), pk("py", false)], ["calc.go"], [], "install:py not run: no budget left for install"), n([pk(".", true)], ["calc.go"], [], l("py")), unusedInstallNotes([l("py")], null, [], []).na.length ? "na" : "cap"].join(","))' 2>&1 | tail -1)"
+    [ "$iu" = "na,cap,cap,cap,cap,cap,cap,cap" ] && ok "unused install unit: only a test-less non-root package with no changed file and no check is n/a; an owned file, a test command, a check inside it, the root, a non-install line, an unknown package and no model keep capping ($iu)" || bad "unused install unit: got '$iu'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "unused install: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: unused install: go is not installed"; fi
+fi
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
 if command -v go >/dev/null 2>&1; then
