@@ -5,8 +5,8 @@ import { isTestFile } from "../util/test_file_text.ts";
 import { symbolSpans } from "../util/context_pack.ts";
 import { loadProjectApi, siteFor } from "./resolve.ts";
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export interface PackageConventions {
   moduleSystem: "commonjs" | "esm";
@@ -218,12 +218,13 @@ export function writeReleaseNoteFragment(repoDir: string, files: string[], task:
   const body = lead === title && note ? `${lead}. ${note}` : lead;
   const exText = exBody;
   const dir = join(repoDir, conv.dir), slug = title.toLowerCase().replace(/[`'"]/g, "").split(/[^a-z0-9]+/).filter(Boolean).slice(0, 6).join("-") || "change";
+  try { const root = realpathSync(repoDir), real = realpathSync(dir); if (real !== root && !real.startsWith(root + sep)) return { skipped: "the fragment directory resolves outside the repo" }; } catch { return { skipped: "the fragment directory cannot be resolved" }; } // a "../x" directory key or a symlinked directory never receives a write
   let rel: string, text: string;
   if (conv.kind === "changeset") {
     let cfg: { ignore?: unknown } = {};
     try { cfg = (parseJsonc(readFileSync(join(dir, "config.json"), "utf8")) ?? {}) as { ignore?: unknown }; } catch { /* default config */ }
     const ignore = Array.isArray(cfg.ignore) ? cfg.ignore.map(String) : [], globs = workspaceGlobs(repoDir), names = new Set<string>();
-    for (const f of code) { const p = ownerPackage(repoDir, f); if (p && !p.private && !ignore.includes(p.name) && inWorkspace(p.dir, globs)) names.add(p.name); }
+    for (const f of code) { const p = ownerPackage(repoDir, f); if (p && !p.private && !ignore.some((g) => g === p.name || (g.includes("*") && new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`).test(p.name))) && inWorkspace(p.dir, globs)) names.add(p.name); }
     if (names.size === 0) return { skipped: "no changed file belongs to a public workspace package" };
     const q = /^---\s*\n\s*(["'])/.exec(exText)?.[1] ?? '"', bump = FEAT.test(raw) ? "minor" : "patch";
     let n = `${slug}.md`; for (let i = 2; existsSync(join(dir, n)); i++) n = `${slug}-${i}.md`;

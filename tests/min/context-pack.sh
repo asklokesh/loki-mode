@@ -232,6 +232,14 @@ const w23 = mk("w23", csFiles()); const r23 = wf(w23, ["packages/core/src/a.ts"]
 out.fw_strip = r23.path && rf(join(w23, r23.path), "utf8").endsWith("\n\nadd a --json flag to the exporter.\n") && rf(join(w23, r23.path), "utf8").includes('"@acme/core": minor') ? "ok" : `bad:${r23.path && rf(join(w23, r23.path), "utf8")}`;
 const w24 = mk("w24", csFiles({ ".changeset/old.md": '---\n"@acme/core": patch\n---\n\nfix: older fix\n' })); const r24 = wf(w24, ["packages/core/src/a.ts"], "fix: wrong total when the invoice is empty", "", { tools: false }) as { path?: string };
 out.fw_keep_prefix = r24.path && rf(join(w24, r24.path), "utf8").endsWith("\n\nfix: wrong total when the invoice is empty\n") ? "ok" : "bad";
+// containment: a directory that resolves outside the repo never receives a write
+const { symlinkSync } = await import("node:fs");
+mk("wo-out", { "7.feature.rst": "x\n" }); const wo = mk("wo1", { "pyproject.toml": '[tool.towncrier]\ndirectory = "../wo-out"\n', "pkg/mod.py": "x = 1\n" });
+out.fw_out_towncrier = (wf(wo, ["pkg/mod.py"], "Fix crash when the cache is empty (#42)", "", { tools: false }) as { skipped?: string }).skipped && !ex(join(T, "rn", "wo-out", "42.bugfix.rst")) ? "skipped" : "wrote";
+mk("sl-real", { "config.json": "{}", "old.md": "---\n\"@acme/core\": patch\n---\n\nOlder.\n" });
+const sl = mk("sl1", { "package.json": '{"name":"@acme/core"}', "src/a.ts": "x\n" }); symlinkSync(join(T, "rn", "sl-real"), join(sl, ".changeset"));
+out.fw_out_symlink = skip("o", sl, ["src/a.ts"]) === "skipped" && rd(join(T, "rn", "sl-real")).length === 2 ? "skipped" : "wrote";
+out.fw_ignore_glob = skip("p", mk("wg", csFiles({ ".changeset/config.json": '{"ignore":["@acme/ign*"]}' })), ["packages/ignored/src/i.ts"]);
 // towncrier
 const tcFiles = (extra: Record<string, string> = {}) => ({ "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\n', "changes/7.feature.rst": "Added a thing.\n", "changes/_template.rst": "{{ text }}\n", "changes/README.rst": "notes\n", "pkg/mod.py": "x = 1\n", ...extra });
 const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, files, task, "", { tools: false }) as { path?: string; skipped?: string };
@@ -326,6 +334,9 @@ eqv fw_body ok "FW changeset: body is the title plus one maintainer-style senten
 eqv fw_quote ok "FW changeset: a single-quoted example gives a single-quoted fragment"
 eqv fw_validated unavailable "FW changeset: no repo tool present reports validated=unavailable and still writes"
 eqv fw_minor ok "FW changeset: a feature title bumps minor"
+eqv fw_out_towncrier skipped "FW containment: a towncrier directory key of ../x writes nothing outside the repo"
+eqv fw_out_symlink skipped "FW containment: a .changeset symlink to an outside directory is never written through"
+eqv fw_ignore_glob skipped "FW: a glob entry in the changeset ignore list vetoes the package"
 eqv fw_internal "skipped,skipped,skipped,skipped,skipped,skipped,skipped,skipped,skipped,skipped" "FW: internal-change titles (chore, refactor, docs, ci, test, build, bump, dependency update, merge, revert) write nothing"
 eqv fw_internal_ok "www" "FW: fix, feat and perf titles still write"
 eqv fw_strip ok "FW: a conventional prefix is dropped from the body and still decides the bump (feat -> minor)"
