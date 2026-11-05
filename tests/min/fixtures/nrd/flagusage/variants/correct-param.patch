@@ -1,0 +1,36 @@
+diff -ru a/flags/flags.go b/flags/flags.go
+--- a/flags/flags.go
++++ b/flags/flags.go
+@@ -16,17 +16,20 @@
+ 	Required bool
+ }
+ 
+-// names renders the flag's spellings, long form first.
+-func names(f Flag) string {
++// names renders the flag's spellings, long form first unless shortFirst is set.
++func names(f Flag, shortFirst bool) string {
+ 	if f.Short == "" {
+ 		return "--" + f.Name
+ 	}
++	if shortFirst {
++		return "-" + f.Short + ", --" + f.Name
++	}
+ 	return "--" + f.Name + ", -" + f.Short
+ }
+ 
+ // FlagLine is one line of the help listing.
+ func FlagLine(f Flag) string {
+-	line := "  " + names(f) + "\t" + f.Usage
++	line := "  " + names(f, true) + "\t" + f.Usage
+ 	if f.Default != "" {
+ 		line += fmt.Sprintf(" (default: %s)", f.Default)
+ 	}
+@@ -48,7 +51,7 @@
+ 
+ // MissingError reports a required flag that was not set.
+ func MissingError(f Flag) error {
+-	return fmt.Errorf("required flag %s not set", names(f))
++	return fmt.Errorf("required flag %s not set", names(f, false))
+ }
+ 
+ // Lookup finds a flag by its long or short name, with or without dashes.

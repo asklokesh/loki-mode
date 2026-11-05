@@ -1786,6 +1786,10 @@ const legs: [string, string, string, any?][] = [
   ["go_post_runs", "gitlog", "regress-shared", { post: true }], ["go_knob0", "gitlog", "regress-shared", { env: { LOKI_E10_NRD: "0" } }], ["go_killed", "gitlog", "regress-shared", { killed: true }], ["go_docs_only", "gitlog", "docs"],
   ["go_judge_down", "gitlog", "regress-shared", { judgeThrows: true }],
 ];
+if (process.env.NRD_SLOW === "1") { // opt-in slow leg: the other variants of both fixtures, regress-* fire with one judge call, correct-* are clean with none
+  for (const [k, fx, v] of [["gitlog", "gitlog", "correct-filter"], ["gitlog", "gitlog", "correct-own"], ["flagusage", "flagusage", "correct-param"]]) row(`slow_${k}_${v}`, (await gate(fx!, v!)).s);
+  for (const [k, fx, v] of [["gitlog", "gitlog", "regress-contrib"], ["flagusage", "flagusage", "regress-default"]]) row(`slow_${k}_${v}`, (await gate(fx!, v!)).s);
+}
 const done: Record<string, Awaited<ReturnType<typeof gate>>> = {};
 for (const [k, fx, v, o] of legs) { done[k] = await gate(fx, v, o); row(k, done[k]!.s); }
 row("go_tree_untouched", [done["go_gitlog_edit_ok"]!.same, done["go_gitlog_edit_bad"]!.same, done["go_gitlog_shared"]!.same, done["go_judge_down"]!.same].join(","));
@@ -1828,6 +1832,13 @@ ncheck "go: the error names the cause" go_judge_down_reason "no-regression skipp
 ncheck "go: an unknown verdict is advisory on the receipt, never blocking" go_unknown_advisory "true"
 ncheck "go: the user's tree (files, git status, worktrees, branches) is byte-identical after a run and no scratch dir is left, also with a rewritten test and a failing judge" go_tree_untouched "true,true,true,true"
 ncheck "receipt: lines only when a differential ran; the receipt renders them under their own heading" receipt "{},2,true"
+if [ "${NRD_SLOW:-0}" = 1 ]; then
+    ncheck "slow: gitlog correct-filter is clean with no call" slow_gitlog_correct-filter "clean|-|0"
+    ncheck "slow: gitlog correct-own is clean with no call" slow_gitlog_correct-own "clean|-|0"
+    ncheck "slow: flagusage correct-param is clean with no call" slow_flagusage_correct-param "clean|-|0"
+    ncheck "slow: gitlog regress-contrib fires with one judge call" slow_gitlog_regress-contrib "fired|judge|1"
+    ncheck "slow: flagusage regress-default fires with one judge call" slow_flagusage_regress-default "fired|judge|1"
+fi
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "no-regression: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: no-regression: go is not installed"; fi
 fi

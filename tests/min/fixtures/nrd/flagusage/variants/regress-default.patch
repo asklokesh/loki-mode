@@ -1,0 +1,25 @@
+diff -ru a/flags/flags.go b/flags/flags.go
+--- a/flags/flags.go
++++ b/flags/flags.go
+@@ -24,11 +24,19 @@
+ 	return "--" + f.Name + ", -" + f.Short
+ }
+ 
++// helpNames renders the spellings for the help listing, short alias first.
++func helpNames(f Flag) string {
++	if f.Short == "" {
++		return "--" + f.Name
++	}
++	return "-" + f.Short + ", --" + f.Name
++}
++
+ // FlagLine is one line of the help listing.
+ func FlagLine(f Flag) string {
+-	line := "  " + names(f) + "\t" + f.Usage
++	line := "  " + helpNames(f) + "\t" + f.Usage
+ 	if f.Default != "" {
+-		line += fmt.Sprintf(" (default: %s)", f.Default)
++		line += fmt.Sprintf(" (default %s)", f.Default)
+ 	}
+ 	return line
+ }
