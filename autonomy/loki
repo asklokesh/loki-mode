@@ -1873,7 +1873,7 @@ show_help_all() {
     echo "  start [SPEC]     Start a build (PRD file, GitHub/GitLab/Jira/Azure issue, or no arg)"
     echo "  plan <PRD-file>  Dry-run analysis: complexity, cost, execution plan"
     echo "  backlog <owner/repo> --all|--label X|--issues N,N   Run every matching open issue, N in parallel"
-    echo "  workspace list | infer <name> | run <name> <ref>   Multi-repo runs from loki.yaml workspaces (LOKI_WORKSPACES=0 disables)"
+    echo "  workspace list | infer <name> | affected <name> \"<goal>\" | run <name> <ref>   Multi-repo runs from loki.yaml workspaces (LOKI_WORKSPACES=0 disables)"
     echo "  start --workspace <name> \"<brief>\"   Run a workspace; start --deploy [--health-url U] deploys after a VERIFIED run"
     echo "  quickstart [idea]  Guided first build: setup, idea, template, plan, go"
     echo "  try <repo-url>     Try Loki on a public repo in a temp clone (--dry-run previews); only the receipt is kept"
