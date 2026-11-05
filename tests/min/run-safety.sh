@@ -93,7 +93,7 @@
 #  21. runner_config.ts hiddenConfigChanged: count every added ignored config again; the unit check fails on .next/package.json.
 #  22. issues_epic.ts epicOutcome: drop the delivered-PR suffix of the Reason line; the unit check fails.
 #  23. repo_profile.ts BASELINE_CMD_TIMEOUT_S back to 60, or attributeFullSuite without the base-run-incomplete line, or baselineSuites reusing a short-cut entry; the base budget unit check fails.
-#  23b. repo_profile.ts: drop flaky_ids from the compared ids, skip the second base pass (runProbed), or drop the suite-red-at-base line; the same unit check fails.
+#  23b. repo_profile.ts: drop flaky_ids from the compared ids, skip the second base pass (runProbed), or drop the suite-red-at-base line, compare flaky ids by id only, skip the error compare in a suite red at base, drop errNamesChanged or the flaky NOT PROVEN line; the same unit check fails.
 #  23c. repo_profile.ts whyFullSuiteNotExcused (or verify.ts not_excused, or seal.ts listing it): return [] or drop the changed-file / new-id / cut / error-text branch; the same unit check fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -669,13 +669,23 @@ const errs = (ids) => Object.fromEntries(ids.map((i) => [i, ["Error: " + i]]));
 const headC = (ids) => [{ name: "full suite: npm", cmd: "npm test", result: "fail", ids, errors: errs(ids) }];
 const att = (ids, changed = ["src/z.ts"]) => rp.attributeFullSuite(g, sha, headC(ids), [], changed);
 const A = ["a.test.ts > t1", "b.test.ts > t2"], F = ["f.test.ts > flip"];
-put(ent({ failing_ids: A, flaky_ids: F, failing_errors: errs(A), flaky_probe: "done" }));
+put(ent({ failing_ids: A, flaky_ids: F, failing_errors: errs([...A, ...F]), flaky_probe: "done" }));
 r.push("flaky " + [att([...A, ...F]).preExistingChecks.length, att([...A, "n.test.ts > new"]).introducedChecks.length, att(["a.test.ts > t1"]).preExistingChecks.length].join(","));
-put(ent({ failing_ids: A, flaky_ids: ["src/z.ts > flip"], failing_errors: errs(A), flaky_probe: "done" })); r.push("changed-file flaky " + att([...A, "src/z.ts > flip"]).introducedChecks.length);
+put(ent({ failing_ids: A, flaky_ids: ["src/z.ts > flip"], failing_errors: errs([...A, "src/z.ts > flip"]), flaky_probe: "done" })); r.push("changed-file flaky " + att([...A, "src/z.ts > flip"]).introducedChecks.length);
 put(ent({ failing_ids: A, failing_errors: errs(A), flaky_probe: "done" })); r.push("no-flaky-record " + att([...A, ...F]).introducedChecks.length);
-const big = Array.from({ length: 600 }, (_, i) => "m" + i + ".test.ts > t"), bigE = errs(big); bigE["m1.test.ts > t"] = ["Error: other"];
+const big = Array.from({ length: 600 }, (_, i) => "m" + i + ".test.ts > t"), bigE = errs(big);
 put(ent({ failing_ids: big, failing_errors: bigE, flaky_probe: "done" })); const m1 = att(big.slice(0, 50)), m2 = att([...big.slice(0, 50), "n.test.ts > new"]);
 r.push("massive " + [m1.preExistingChecks.length, /suite red at base \(600 failing ids\)/.test(m1.line ?? ""), m2.introducedChecks.length].join(","));
+// reviewer inputs: each must be blocked (introduced), and the flaky excuse names itself
+const attE = (ids, errors, changed = ["src/z.ts"]) => rp.attributeFullSuite(g, sha, [{ name: "full suite: npm", cmd: "npm test", result: "fail", ids, errors }], [], changed);
+put(ent({ failing_ids: A, flaky_ids: F, failing_errors: errs([...A, ...F]), flaky_probe: "done" }));
+const fOk = attE([...A, ...F], errs([...A, ...F]));
+r.push("flaky-new-error " + [attE(F, { [F[0]]: ["TypeError: undefined is not a function"] }).introducedChecks.length, fOk.preExistingChecks.length, /fail on only some base passes/.test(fOk.line ?? "")].join(","));
+put(ent({ failing_ids: A, flaky_ids: F, failing_errors: { ...errs(A), [F[0]]: ["Error at src/z.ts:3"] }, flaky_probe: "done" })); r.push("flaky-stack-changed-file " + attE(F, { [F[0]]: ["Error at src/z.ts:3"] }).introducedChecks.length);
+put(ent({ failing_ids: big, failing_errors: bigE, flaky_probe: "done" })); const bigNew = { ...errs(big.slice(0, 50)), [big[7]]: ["TypeError: introduced by change"] };
+r.push("massive-new-error " + [attE(big.slice(0, 50), bigNew).introducedChecks.length, attE(big.slice(0, 50), errs(big.slice(0, 50))).preExistingChecks.length].join(","));
+const bigS = { ...bigE, [big[7]]: ["Error at src/z.ts:9"] }; put(ent({ failing_ids: big, failing_errors: bigS, flaky_probe: "done" })); r.push("massive-stack-changed-file " + attE(big.slice(0, 50), { ...errs(big.slice(0, 50)), [big[7]]: ["Error at src/z.ts:9"] }).introducedChecks.length);
+put(ent({ failing_ids: big, failing_errors: bigE, flaky_probe: "done" })); r.push("massive-duplicate-title " + attE([big[3], big[3]], { [big[3]]: [bigE[big[3]][0], bigE[big[3]][0]] }).introducedChecks.length);
 put(ent({ failing_ids: A, failing_errors: errs(A), flaky_probe: "done" })); r.push("small-red-no-line " + /suite red at base/.test(att(A).line ?? ""));
 // the second base pass: ids on one pass only are flaky, a fast red suite is probed, a slow one is not
 const outFor = (ids) => ids.map((i) => " FAIL  " + i + "\nError: " + i).join("\n") + "\n Test Files  1 failed\n Tests  " + ids.length + " failed\n";
@@ -693,7 +703,7 @@ put(ent({ attributable: false, failing_ids: [], reason: "failing test ids not pa
 r.push("why-none-when-excused " + rp.whyFullSuiteNotExcused(g, sha, [{ name: "full suite: npm", cmd: "npm test", result: "fail", ids: A }], ["src/z.ts"], ["full suite: npm"]).length);
 console.log(r.join(" | "));
 ' 2>&1)"
-Y4="full suite: npm:false | full suite: npm:true | true | short-cut rerun 300000 | full-cut kept 0 | fresh 300000 | 300 | 300 | 40 | 1 | flaky 1,1,1 | changed-file flaky 1 | no-flaky-record 1 | massive 1,true,1 | small-red-no-line false | probe 2;done;b.test.ts > t2+c.test.ts > t3;a.test.ts > t1+b.test.ts > t2 | record 2,false,2,true | why true,true,true,true,true | why-cut true | why-unattributable true | why-none-when-excused 0"
+Y4="full suite: npm:false | full suite: npm:true | true | short-cut rerun 300000 | full-cut kept 0 | fresh 300000 | 300 | 300 | 40 | 1 | flaky 1,1,1 | changed-file flaky 1 | no-flaky-record 1 | massive 1,true,1 | flaky-new-error 1,1,true | flaky-stack-changed-file 1 | massive-new-error 1,1 | massive-stack-changed-file 1 | massive-duplicate-title 1 | small-red-no-line false | probe 2;done;b.test.ts > t2+c.test.ts > t3;a.test.ts > t1+b.test.ts > t2 | record 2,false,2,true | why true,true,true,true,true | why-cut true | why-unattributable true | why-none-when-excused 0"
 [ "$B4" = "$Y4" ] && ok "unit: a base suite that completes is excused (no cut line); a cut base run is introduced with a base-run-incomplete line, also when the shared budget ran out; a base run gets 300 s (a third of the run cap at most); a short-cut entry is measured again, a fully-cut one is kept; a red base suite gets a second pass whose one-pass-only ids are flaky and not blamed on the change (a new id, or one in a changed file, still is); a suite red at base (500+ ids) is excused per id with a suite-red-at-base line; the baseline is written to the run directory; a failing full-suite check that is not excused is named with the rule that kept it blocking" \
     || bad "base budget unit gave: $B4 (want: $Y4)"
 
