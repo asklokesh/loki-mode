@@ -632,7 +632,7 @@ _loki_removed_suffix() {
     esac
 }
 if _loki_rm_suffix="$(_loki_removed_suffix "${1:-}")"; then
-    echo "loki: 'loki $1' was removed in Loki Mode 11.129. ${_loki_rm_suffix}." >&2
+    echo "loki: 'loki $1' was removed in Loki Mode 11.130.0. ${_loki_rm_suffix}." >&2
     exit 2
 fi
 unset _loki_rm_suffix

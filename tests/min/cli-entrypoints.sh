@@ -105,7 +105,7 @@ rm_bad=""
 while IFS='|' read -r rn rmig; do
     [ -n "$rn" ] || continue
     rout="$(cd "$T/rm-empty" && env PATH=/usr/bin:/bin LOKI_PROVIDER=bogus bash "$ROOT/bin/loki" "$rn" 2>"$T/rm-err" </dev/null)"; rrc=$?
-    want_msg="loki: 'loki $rn' was removed in Loki Mode 11.129. $rmig."
+    want_msg="loki: 'loki $rn' was removed in Loki Mode 11.130.0. $rmig."
     [ "$rrc" -eq 2 ] && [ -z "$rout" ] && [ "$(cat "$T/rm-err")" = "$want_msg" ] || rm_bad="$rm_bad $rn"
 done <<EOF_RM
 $rm_reg
