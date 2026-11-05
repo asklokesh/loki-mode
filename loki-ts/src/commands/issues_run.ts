@@ -421,6 +421,8 @@ export async function splitWithReask(d: Pick<IssuesRunDeps, "decompose" | "out">
 }
 
 /** One run with the rate-limit backoff; a worktree run keeps its receipt under `receiptsDir` before the worktree goes. */
+/** The `Reason:` line a slice run printed (a SPEC_CONFLICT carries the question there), or undefined. */
+const slicePrintedReason = (out: string): string | undefined => /^Reason:\s+(.+)$/m.exec(out)?.[1]?.trim() || undefined;
 async function runWithRetry(d: Pick<IssuesRunDeps, "runner" | "sleep" | "out" | "err">, receiptsDir: string, label: string, ref: string, opts: RunOpts, wt: string | null): Promise<RunResult> {
   for (let attempt = 0; ; attempt++) {
     const res = await d.runner(ref, { ...opts, ...(wt ? { cwd: wt } : {}) });
@@ -461,7 +463,7 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
     const prUrl = PR_URL_RE.exec(res.output)?.[0] ?? null;
     const budget = res.rc === 3 || /^Outcome:\s+BUDGET_STOP\b/m.test(res.output);
     const verdict = res.verdict || (res.rc === 0 ? "COMPLETED (no proof verdict)" : `FAILED (exit ${res.rc})`);
-    const r: SliceResult = { id: s.id, title: s.title, parent, outcome: verdict, pr: prUrl, cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : res.partial ? partialCostText(res.partial.usd, res.partial.measured, res.partial.total, 2) : "NOT RECORDED", branch: res.runId ? `loki/${res.runId}` : null, rc: res.rc, usd: typeof res.costUsd === "number" ? res.costUsd : null, ...(typeof res.costUsd !== "number" && res.partial ? { partial: res.partial } : {}), budget };
+    const r: SliceResult = { id: s.id, title: s.title, parent, outcome: verdict, pr: prUrl, cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : res.partial ? partialCostText(res.partial.usd, res.partial.measured, res.partial.total, 2) : "NOT RECORDED", branch: res.runId ? `loki/${res.runId}` : null, rc: res.rc, usd: typeof res.costUsd === "number" ? res.costUsd : null, ...(typeof res.costUsd !== "number" && res.partial ? { partial: res.partial } : {}), budget, ...(/^SPEC_CONFLICT\b/.test(verdict) && slicePrintedReason(res.output) ? { reason: slicePrintedReason(res.output) } : {}) };
     d.out(`#${n} ${s.id} ${verdict}  pr ${prUrl ?? "none"}  cost ${r.cost}\n`);
     return r;
   };
@@ -482,7 +484,7 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
  * call) and only decides whether to ask for a split; the split itself is the model's (one Opus planning session, schema-checked here). A refused split,
  * a non-GitHub issue, LOKI_SPEED=0 or a unit/slice child returns null and the caller runs the single path, which still sizes large (plan kept).
  * Slice receipts are copied to <runDir>/slices/ and the epic record to <runDir>/epic.json. The exit code and the Outcome, PR and Cost lines are the
- * whole split's (issues_epic.ts epicOutcome): FAILED 1, BUDGET_STOP 3, PARTIAL 6, VERIFIED 0. A refused split prints the planning cost as a
+ * whole split's (issues_epic.ts epicOutcome): FAILED 1, BUDGET_STOP 3, PARTIAL 6 (a slice stopped on its own SPEC_CONFLICT while another opened a PR counts), VERIFIED 0. A refused split prints the planning cost as a
  * `Split planning:` line before the single run, so `loki backlog` still counts it.
  */
 export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr: boolean; provider: string; capUsd?: number; env?: NodeJS.ProcessEnv; inject?: Partial<EpicDeps & { decompose: IssuesRunDeps["decompose"] }> }): Promise<number | null> {
