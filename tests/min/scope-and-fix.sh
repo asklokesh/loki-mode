@@ -562,6 +562,18 @@ res("parsePrecedentVote: option, neither, out of range, garbage", parsePrecedent
   let accCalls = 0; const AC = "DurationSetting.Value should behave like the other settings\n\nEvery other setting type gives me the parsed value from `Value()`.\n\nAny of the following outputs is acceptable:\n\n- `DurationSetting.Value` returns the string, trimmed\n- `DurationSetting.Value` returns the raw string\n";
   const av = await voteOpenChoices(AC, { repoDir: GR }, async () => { accCalls++; return "OPTION 1"; }), ar = one(AC, { repoDir: GR, votes: av })!, al = emitChoiceLines([ar]).join("\n");
   res("control settings-acc: siblings agree but the issue lists outputs: no vote call, no binding transplant, the listed outputs line stands", accCalls === 0 && !ar.transplant && !al.includes("Binding sibling test") && al.includes("every one of them"));
+  // review-548 legs
+  const b1 = await run(plain + " The output must stay consistent with the documented JSON schema."), b2 = await run(plain + " It fails the same way on every platform.");
+  res("saysLikeSiblings: 'consistent with the documented JSON schema' and 'fails the same way' do not bind the transplant", b1.transplant?.binding === false && b2.transplant?.binding === false);
+  const b3 = await run(plain + " It should be consistent with IntSetting.Value."), b4 = await run(plain + " DurationSetting.Value should work like the other settings.");
+  res("saysLikeSiblings: a sentence naming the sibling type, or 'like the other settings', does bind", b3.transplant?.binding === true && b4.transplant?.binding === true);
+  const mt = [mk("maint", "I'd go with the parsed time.Duration from DurationSetting.Value.")];
+  const rMt = one(like + tail, { repoDir: GR, comments: mt })!, lMt = choiceLine(rMt);
+  res("maintainer-picked option: any transplant is advisory (never the binding test) and the line says the issue and maintainer outrank it", rMt.basis === "maintainer" && !lMt.includes("Binding sibling test") && !lMt.includes("func TestLokiTransplant") && (!rMt.transplant || lMt.includes("outrank this line")));
+  const wq = "Should `GenericFlag.Get` return the supplied `cli.Value`, or should it return the stored payload?", wm = one(wq + tail, { comments: [mk("maint", "We should return the stored payload from GenericFlag.Get.")] })!;
+  res("byMaintainer: a content word (stored payload) outweighs the shared symbol GenericFlag.Get", wm.basis === "maintainer" && wm.picked === 1);
+  let pasked = ""; await voteOpenChoices(plain + " We rely on this today, so we must not change that behavior.", { repoDir: GR }, async (_s: string, pr: string) => { pasked = pr; return "NEITHER"; });
+  res("the vote prompt carries the issue text, so a must-not-change sentence reaches the voter", pasked.includes("must not change that behavior") && pasked.includes("answer NEITHER"));
   // review legs: nothing here may emit an override of the issue
   calls = 0; const KO = Q + " Many downstream users rely on Command.Value returning the Get result today, so we must not change that behavior.";
   const kv = await voteOpenChoices(KO, { repoDir: PR }, stub("OPTION 2")), kr = choiceLine(one(KO, { repoDir: PR, votes: kv })!);

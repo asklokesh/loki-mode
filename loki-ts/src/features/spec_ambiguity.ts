@@ -83,13 +83,15 @@ export function detectOpenChoices(issue: string): OpenChoice[] {
 const STOP = new Set("the and for are not but with that this from should would could can will does has have its their then than into when what which also only just any all one two out use used using".split(" "));
 const tokens = (t: string): Set<string> => { const s = new Set<string>(); for (const w of t.toLowerCase().match(/[a-z0-9_]+(?:\.[a-z0-9_]+)*/g) ?? []) { for (const p of [w, ...w.split(".")]) if (p.length >= 3 && !STOP.has(p)) s.add(p); } return s; };
 const distinct = (sets: Set<string>[]): Set<string>[] => sets.map((s, i) => new Set([...s].filter((w) => sets.every((o, j) => j === i || !o.has(w)))));
+/** Tokens that came from a dotted identifier (a.b): every option and every comment about it repeats those, so an overlap on them says little about WHICH option a maintainer chose. */
+const symbolTokens = (t: string): Set<string> => { const s = new Set<string>(); for (const w of t.toLowerCase().match(/[a-z0-9_]+(?:\.[a-z0-9_]+)+/g) ?? []) for (const p of [w, ...w.split(".")]) s.add(p); return s; };
 type Cmt = Pick<IssueComment, "author" | "association" | "body">;
 const DECISION = /\b(?:should|let'?s|we'?ll|we will|prefer|go with|better|makes? sense|agree|instead|the right|please|i'?d|i would|lgtm)\b/i, NEGATION = /\b(?:don'?t|do not|shouldn'?t|should not|not|never)\b/i;
 function byMaintainer(c: OpenChoice, comments: Cmt[]): { k: number; evidence: string } | null {
   const d = distinct(c.options.map(tokens));
   for (const cm of [...comments].reverse()) for (const s of sentencesOf(cm.body).reverse()) {
     if (!DECISION.test(s) || /\beither\b.*\bor\b/i.test(s)) continue;
-    const t = tokens(s), score = d.map((x) => [...x].filter((w) => t.has(w)).length), best = Math.max(...score);
+    const t = tokens(s), sym = symbolTokens(`${s} ${c.options.join(" ")}`), score = d.map((x) => [...x].filter((w) => t.has(w)).reduce((n, w) => n + (sym.has(w) ? 1 : 3), 0)), best = Math.max(...score); // a content word outweighs a symbol fragment
     if (best < 1 || score.filter((n) => n === best).length !== 1) continue;
     let k = score.indexOf(best);
     if (NEGATION.test(s)) { if (c.options.length !== 2) continue; k = 1 - k; }
@@ -162,9 +164,9 @@ const goStatements = (body: string): string[] => {
 };
 const reEsc = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Only an issue that says the target behaves like its siblings makes the transplant binding; a list of acceptable outputs is the spec itself and never does. */
-export const saysLikeSiblings = (issue: string): boolean => /\blike (?:the )?(?:other|its sibling|the rest)|\bsame (?:way|as the other)|\bconsistent with\b/i.test(issue);
+export const saysLikeSiblings = (issue: string, siblingTypes: string[] = []): boolean => issue.split(/(?<=[.!?])\s+|\n+/).some((st) => /\b(?:like|as|same as|consistent with|matches|in line with)\b/i.test(st) && (/\b(?:the other|other \w+s?|its siblings?|the rest of|sibling \w+)\b/i.test(st) || siblingTypes.some((t) => new RegExp(`\\b${reEsc(t)}\\b`).test(st)))); // the sentence must name the siblings; "consistent with the JSON schema" or "fails the same way" does not
 /** Deterministic, no model call. A shared statement is a repo convention only when 2 or more sibling tests contain it byte for byte after generalization; a lone declaration is never a case. Binding needs the issue to ask for sibling behavior; otherwise advisory. Go only; null when the picked option names no qualified return type for the target. */
-export function transplantFor(c: OpenChoice, picked: number, issue: string, repoDir: string, precedent: string): Transplant | null {
+export function transplantFor(c: OpenChoice, picked: number, issue: string, repoDir: string, precedent: string, mayBind = false): Transplant | null {
   try {
     const sibs = [...precedent.matchAll(/sibling (\S+?):\d+ func \(\w+ \*?(\w+)\) (\w+)\(\) ([^{]+?) \{/g)].map((m) => ({ file: m[1]!, type: m[2]!, member: m[3]!, ret: m[4]!.trim() }));
     if (sibs.length < 2 || !sibs[0]!.file.endsWith(".go")) return null;
@@ -182,16 +184,16 @@ export function transplantFor(c: OpenChoice, picked: number, issue: string, repo
     const fill = (st: string): string => st.replace(/\bTYPE\b/g, tgt[0]).replace(/\bRET\b/g, ret), imports = [...new Set([...ret.matchAll(/\b([a-z]\w*)\./g)].map((m) => m[1]!))];
     const pkg = /^package (\w+)/m.exec(readFileSync(join(repoDir, sibs[0]!.file), "utf8"))?.[1] ?? "";
     const test = `package ${pkg}\n\nimport (\n\t"testing"\n${imports.map((i) => `\t"${i}"\n`).join("")})\n\nfunc TestLokiTransplant_${tgt[0]}${tgt[1]}(t *testing.T) {\n${shared.map((st) => `\t${fill(st).split("\n").join("\n")}`).join("\n")}\n}\n`;
-    const binding = saysLikeSiblings(issue);
-    return { binding, why: binding ? `${shared.length} statement(s) shared by 2+ sibling tests, and the issue asks for sibling behavior` : "shared by 2+ sibling tests, but the issue does not ask for sibling behavior: advisory", statements: shared.map(fill), test };
+    const binding = mayBind && saysLikeSiblings(issue, [...types]);
+    return { binding, why: binding ? `${shared.length} statement(s) shared by 2+ sibling tests, and the issue asks for sibling behavior` : mayBind ? "shared by 2+ sibling tests, but the issue does not ask for sibling behavior: advisory" : "shared by 2+ sibling tests; the option was settled by something other than the sibling vote: advisory", statements: shared.map(fill), test };
   } catch { return null; }
 }
 /** Precedent is ON by default; LOKI_E10_PRECEDENT=0 opts out. */
 export const precedentOn = (): boolean => process.env.LOKI_E10_PRECEDENT !== "0";
 /** One tool-less question per open choice: which option do the sibling implementations follow. The voter sees only the options and the sibling bodies. */
 export const SYS_PRECEDENT_VOTE = "You compare code conventions. Answer only in the requested format.";
-export function precedentVotePrompt(c: OpenChoice, siblings: string, comments: string[] = []): string {
-  return [`A change must pick one of these options:\n${c.options.map((o, i) => `OPTION ${i + 1}: ${o}`).join("\n")}`, `Other implementations of the same contract in this repository:\n${siblings}`, ...(comments.length ? [`Maintainer comments on the issue (a maintainer who already chose an option outranks the siblings: answer NEITHER then):\n${comments.map((x) => trunc(x, 400)).join("\n---\n")}`] : []), "Which option makes the changed code follow the same convention as these other implementations? If they do not all follow the same one, answer NEITHER.", "Answer with exactly one line: OPTION <n> or NEITHER."].join("\n\n");
+export function precedentVotePrompt(c: OpenChoice, siblings: string, comments: string[] = [], issue = ""): string {
+  return [`A change must pick one of these options:\n${c.options.map((o, i) => `OPTION ${i + 1}: ${o}`).join("\n")}`, `Other implementations of the same contract in this repository:\n${siblings}`, ...(issue ? [`The issue text (if it states a hard requirement that rules out an option, such as that a behavior must not change, answer NEITHER; a mere preference does not count):\n${trunc(issue, 1500)}`] : []), ...(comments.length ? [`Maintainer comments on the issue (a maintainer who already chose an option outranks the siblings: answer NEITHER then):\n${comments.map((x) => trunc(x, 400)).join("\n---\n")}`] : []), "Which option makes the changed code follow the same convention as these other implementations? If they do not all follow the same one, answer NEITHER.", "Answer with exactly one line: OPTION <n> or NEITHER."].join("\n\n");
 }
 /** The option index the answer names, or null for NEITHER, an unparseable answer or an out-of-range number. */
 export function parsePrecedentVote(text: string, n: number): number | null {
@@ -256,7 +258,7 @@ export async function voteOpenChoices(task: string, ctx: ChoiceCtx = {}, call: P
     const base = resolveChoices(task, { ...ctx, votes: undefined, probe: true }), choices = base.map((c) => c.basis === "none" && !c.any && (c.precedent?.match(/sibling /g) ?? []).length >= 2 && !commentMentionsOption(c, ctx.comments) && !siblingsDisagree(c.precedent!, ctx.repoDir!) && !siblingsSplitOnTarget(c, c.precedent!, ctx.repoDir!) ? c : null);
     return await Promise.all(choices.map(async (c) => {
       if (!c) return undefined;
-      const prompt = precedentVotePrompt(c, siblingBodies(c.precedent!, ctx.repoDir!), (ctx.comments ?? []).map((x) => x.body));
+      const prompt = precedentVotePrompt(c, siblingBodies(c.precedent!, ctx.repoDir!), (ctx.comments ?? []).map((x) => x.body), task.includes(ISSUE_CONTEXT_HEAD) ? task.slice(0, task.lastIndexOf(ISSUE_CONTEXT_HEAD)) : task);
       const text = await call(SYS_PRECEDENT_VOTE, prompt);
       return text === null ? undefined : parsePrecedentVote(text, c.options.length);
     }));
@@ -272,7 +274,7 @@ export function resolveChoices(task: string, ctx: ChoiceCtx = {}): ChoiceResolut
       if (c.any || !ctx.repoDir || !precedentOn() || (r.basis === "none" && ((typeof vote !== "number" && !ctx.probe) || siblingsDisagree(prec0(c, ctx.repoDir), ctx.repoDir!) || siblingsSplitOnTarget(c, prec0(c, ctx.repoDir), ctx.repoDir!) || (typeof vote === "number" && commentMentionsOption(c, comments))))) return r; // the issue's own list of acceptable outputs beats the siblings; siblings that disagree (vote null) emit nothing
       const prec = precedentFor(c, ctx.repoDir);
       const out: ChoiceResolution = r.basis === "none" && prec && typeof vote === "number" && vote >= 0 && vote < c.options.length ? { ...r, basis: "precedent", picked: vote, evidence: `a one-call vote over ${siblingList(prec).length} sibling definitions picked it (${siblingList(prec).map((x) => x.sig ? `${x.sig} at ${x.at}` : x.at).join("; ")}); the siblings may not be unanimous, and the issue's own words and any maintainer comment outrank it`, precedent: prec } : prec ? { ...r, precedent: prec } : r;
-      const tp = out.picked !== null && prec ? transplantFor(c, out.picked, issue, ctx.repoDir, prec) : null;
+      const tp = out.picked !== null && prec ? transplantFor(c, out.picked, issue, ctx.repoDir, prec, out.basis === "precedent") : null;
       return tp ? { ...out, transplant: tp } : out; // a maintainer, the issue's own preference or a pinned test settle first: the precedent is then only shown as a check
     });
   } catch { return []; }
@@ -291,7 +293,7 @@ export const choiceLine = (c: ChoiceResolution): string => {
   const both = c.any ? " The task lists several acceptable outputs: where they can coexist, build one design that produces every one of them." : "";
   return c.picked === null
     ? `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> no evidence picks one (${c.evidence}).${prec}${both} Keep every existing test and documented behavior true, satisfy both options where they do not conflict, and name the one you chose.`
-    : `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> implement option ${c.picked + 1}: "${trunc(c.options[c.picked]!, 130)}". Evidence (${c.basis}): ${c.evidence}.${c.fallback ? " A fallback may be added only on top of it." : ""}${c.basis === "precedent" ? ` The issue's own words and any maintainer comment outrank this line.${(c.precedent?.match(/sibling /g) ?? []).length >= 2 ? " If an existing test pins the other option of this one member and the issue does not ask to keep it, that test may be updated to this option; every other test stays true." : ""}` : ""}${prec}${both}${c.transplant ? (c.transplant.binding ? ` Binding sibling test: add it to the package as a new _test.go file and make it pass; do not edit it, and do not change the target to satisfy another test (${c.transplant.why}):\n${c.transplant.test}` : ` Advisory, the sibling tests also check for the target (${c.transplant.why}): ${c.transplant.statements.map((x) => trunc(x, 120)).join(" | ")}`) : ""}`;
+    : `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> implement option ${c.picked + 1}: "${trunc(c.options[c.picked]!, 130)}". Evidence (${c.basis}): ${c.evidence}.${c.fallback ? " A fallback may be added only on top of it." : ""}${c.basis === "precedent" || c.transplant ? ` The issue's own words and any maintainer comment outrank this line.${(c.precedent?.match(/sibling /g) ?? []).length >= 2 ? " If an existing test pins the other option of this one member and the issue does not ask to keep it, that test may be updated to this option; every other test stays true." : ""}` : ""}${prec}${both}${c.transplant ? (c.transplant.binding ? ` Binding sibling test: add it to the package as a new _test.go file and make it pass; do not edit it, and do not change the target to satisfy another test (${c.transplant.why}):\n${c.transplant.test}` : ` Advisory, the sibling tests also check for the target (${c.transplant.why}): ${c.transplant.statements.map((x) => trunc(x, 120)).join(" | ")}`) : ""}`;
 };
 /** The lines worth sending: a choice nothing decided and nothing could inform (no precedent, not an acceptable-outputs list) is just a question ("faster or cheaper?"), not a spec choice, so it emits nothing. */
 export const emitChoiceLines = (cs: ChoiceResolution[]): string[] => cs.filter((c) => c.basis !== "none" || c.precedent || c.any).map(choiceLine);
