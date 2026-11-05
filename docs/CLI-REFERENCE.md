@@ -20,7 +20,7 @@ Hidden and legacy-only commands are omitted; see `docs/CLI-INVENTORY.md` for the
 | `loki memory learn` | Learn lessons from a merged PR's review comments |
 | `loki memory lessons` | List PR review lessons with uses and outcomes |
 | `loki memory brief` | Print the lessons and learnings block an engine10 run injects (plus the org knowledge block with `LOKI_ORG_GRAPH=1`) |
-| `loki memory graph ingest <path>...` | Read services, CODEOWNERS rules and decision docs (docs/adr and similar) from each repo into the org knowledge graph at `~/.loki/knowledge/graph.json`; re-ingesting a repo replaces its facts |
+| `loki memory graph ingest <path>...` | Read services, CODEOWNERS rules and decision docs (ADRs) from each repo into the org knowledge graph at `~/.loki/knowledge/graph.json`; re-ingesting a repo replaces its facts |
 | `loki memory graph ask "<question>"` | Print the cited services, owners, consumers and decisions that match the question (`--repo <dir>` picks the repo, default `.`); reads the store only |
 | `loki memory show` | Show one learning |
 | `loki memory search` | Search learnings |
