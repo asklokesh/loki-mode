@@ -1,0 +1,12 @@
+{"mode":"guarded","linked":false,"linkMs":2,"test":"src/tests/flaky_env.test.ts","head_ids":["needs window","src/tests/flaky_env.test.ts > needs window"],"base_ok":false,"base_ids":["needs window","src/tests/flaky_env.test.ts > needs window"],"knownRed":true,"sameError":true,"base_head":"AssertionError: expected 'undefined' to be 'object' // Object.is equality"}
+{"mode":"guarded","test":"src/tests/uses_core.test.ts","head":"pass"}
+{"mode":"guarded","test":"src/tests/area.test.ts","head":"pass"}
+{"mode":"guarded","linked":false,"tsc_head":["src/bench.ts|TS2305","src/tests/legacy.test.ts|TS6196","src/tests/legacy.test.ts|TS6133"],"tsc_base_missing":["src/bench.ts|TS2305","src/tests/legacy.test.ts|TS6196","src/tests/legacy.test.ts|TS6133"],"tsc_all_on_base":false,"tsc_base_first":""}
+{"mode":"head","linked":true,"linkMs":0,"test":"src/tests/flaky_env.test.ts","head_ids":["needs window","src/tests/flaky_env.test.ts > needs window"],"base_ok":false,"base_ids":["needs window","src/tests/flaky_env.test.ts > needs window"],"knownRed":true,"sameError":true,"base_head":"AssertionError: expected 'undefined' to be 'object' // Object.is equality"}
+{"mode":"head","test":"src/tests/uses_core.test.ts","head":"pass"}
+{"mode":"head","test":"src/tests/area.test.ts","head":"pass"}
+{"mode":"head","linked":true,"tsc_head":["src/bench.ts|TS2305","src/tests/legacy.test.ts|TS6196","src/tests/legacy.test.ts|TS6133"],"tsc_base_missing":[],"tsc_all_on_base":true,"tsc_base_first":"src/bench.ts(1,10): error TS2305: Module '\"@ws/core\"' has no exported member 'parseValid'."}
+{"mode":"faithful","linked":true,"linkMs":108,"test":"src/tests/flaky_env.test.ts","head_ids":["needs window","src/tests/flaky_env.test.ts > needs window"],"base_ok":false,"base_ids":["needs window","src/tests/flaky_env.test.ts > needs window"],"knownRed":true,"sameError":true,"base_head":"AssertionError: expected 'undefined' to be 'object' // Object.is equality"}
+{"mode":"faithful","test":"src/tests/uses_core.test.ts","head":"pass"}
+{"mode":"faithful","test":"src/tests/area.test.ts","head":"pass"}
+{"mode":"faithful","linked":true,"tsc_head":["src/bench.ts|TS2305","src/tests/legacy.test.ts|TS6196","src/tests/legacy.test.ts|TS6133"],"tsc_base_missing":[],"tsc_all_on_base":true,"tsc_base_first":"src/bench.ts(1,10): error TS2305: Module '\"@ws/core\"' has no exported member 'parseValid'."}

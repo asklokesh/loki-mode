@@ -288,6 +288,61 @@ export function baseDepsLinker(baseDir: string, repoDir: string, gate: Pick<Zero
   };
 }
 
+/** PROTO (check 0B): a base-faithful dependency view for a pnpm/npm/yarn workspace, where depsSeeHead is true for every package because
+ *  (a) a package's node_modules entries are links into the ROOT store (node_modules/.pnpm), outside the package's own dir, and (b) workspace
+ *  packages are linked to their HEAD source dirs. Instead of refusing (baseDepsLinker) or linking head wholesale (linkHeadDeps), build a shadow
+ *  node_modules in the base worktree for `cwd` and every dir above it: each entry links to the head's installed content, except a link whose
+ *  real target is a workspace source dir (inside the repo, outside every node_modules segment), which is retargeted to the SAME path in the base
+ *  worktree. Scopes (@x), .pnpm and .pnpm/node_modules are shadowed one level down so their workspace links are retargeted too. Fail closed:
+ *  false when any workspace link remains that is not retargeted (a store package depending on a workspace package), when a manifest-free check
+ *  cannot be made, or on any error. */
+export function linkBaseFaithfulDeps(baseDir: string, repoDir: string, cwd: string): boolean {
+  let roots: string[];
+  try { roots = [...new Set([resolve(repoDir), realpathSync(repoDir)])]; } catch { return false; }
+  const wsTarget = (rt: string): string | null => {
+    for (const r of roots) if (rt === r || rt.startsWith(r + sep)) { const rel = relative(r, rt); return rel.split(sep).includes("node_modules") ? null : join(baseDir, rel); }
+    return null;
+  };
+  const SHADOW = (parentName: string, name: string): boolean => name.startsWith("@") || name === ".pnpm" || (parentName === ".pnpm" && name === "node_modules");
+  let ok = true;
+  const shadow = (src: string, dst: string, depth: number): void => {
+    mkdirSync(dst, { recursive: true });
+    for (const e of readdirSync(src, { withFileTypes: true })) {
+      const p = join(src, e.name), q = join(dst, e.name);
+      if (e.isSymbolicLink()) { let rt: string; try { rt = realpathSync(p); } catch { continue; } symlinkSync(wsTarget(rt) ?? rt, q); }
+      else if (e.isDirectory() && depth < 4 && SHADOW(basename(src), e.name)) shadow(p, q, depth + 1);
+      else symlinkSync(p, q);
+    }
+  };
+  // a store package (.pnpm/<pkg>@<ver>/node_modules/<dep>) that links to workspace source is not shadowed: refuse rather than see head
+  const storeSeesHead = (store: string): boolean => {
+    try {
+      for (const pkg of readdirSync(store)) {
+        if (pkg === "node_modules" || pkg.startsWith(".")) continue;
+        const nm = join(store, pkg, "node_modules"); if (!existsSync(nm)) continue;
+        const walk = (d: string, lvl: number): boolean => readdirSync(d, { withFileTypes: true }).some((e) => {
+          const p = join(d, e.name);
+          if (e.isSymbolicLink()) { try { return wsTarget(realpathSync(p)) !== null; } catch { return false; } }
+          return lvl === 0 && e.isDirectory() && e.name.startsWith("@") ? walk(p, 1) : false;
+        });
+        if (walk(nm, 0)) return true;
+      }
+    } catch { return true; }
+    return false;
+  };
+  try {
+    for (let d = cwd; d.startsWith(baseDir); d = dirname(d)) {
+      const src = join(repoDir, relative(baseDir, d), "node_modules");
+      if (existsSync(src) && !existsSync(join(d, "node_modules"))) {
+        if (existsSync(join(src, ".pnpm")) && storeSeesHead(join(src, ".pnpm"))) ok = false;
+        shadow(src, join(d, "node_modules"), 0);
+      }
+      if (d === baseDir) break;
+    }
+  } catch { return false; }
+  return ok;
+}
+
 /** True when one finished run of a test command executed zero tests (the shared mapping of 0 tests to not_run; a cut or missing run never counts). */
 export function isZeroRun(c: { cmd: string; args: string[] }, b: { ok: boolean; cut: boolean; missing: boolean; out: string }): boolean {
   const last = c.args[c.args.length - 1] ?? "";
