@@ -1,0 +1,57 @@
+{
+  "summary": {
+    "calls": 6,
+    "costUsd": 0.00615084,
+    "votes": [
+      0,
+      0
+    ],
+    "prose_oracle": "0/2",
+    "vote_oracle": "2/2"
+  },
+  "rows": [
+    {
+      "arm": "prose",
+      "n": 1,
+      "ownTestsPass": true,
+      "oracle": false,
+      "valueReturns": "string",
+      "costUsd": 0.0019001,
+      "outTok": 1809
+    },
+    {
+      "arm": "prose",
+      "n": 2,
+      "ownTestsPass": true,
+      "oracle": false,
+      "valueReturns": "string",
+      "costUsd": 0.00098247,
+      "outTok": 1865
+    },
+    {
+      "arm": "vote",
+      "n": 1,
+      "ownTestsPass": true,
+      "oracle": true,
+      "valueReturns": "time.Duration",
+      "costUsd": 0.0016868,
+      "outTok": 1360
+    },
+    {
+      "arm": "vote",
+      "n": 2,
+      "ownTestsPass": true,
+      "oracle": true,
+      "valueReturns": "time.Duration",
+      "costUsd": 0.00070803,
+      "outTok": 1315
+    }
+  ],
+  "proseLines": [
+    "Open choice: \"Should DurationSetting.Value return the parsed time.Duration, or should Value keep returning the string and...\" -> no evidence picks one (no maintainer reply, stated preference or pinned test or doc decides it). Sibling precedent in this repo (prefer the option these follow): sibling settings/settings.go:14 func (s IntSetting) Value() int { n, err := strconv.Atoi(strings.TrimSpace(s.Raw)) if err != nil { return 0 | sibling settings/settings.go:26 func (s BoolSetting) Value() bool { b, err := strconv.ParseBool(strings.TrimSpace(s.Raw)) if err != nil { return false | sibling settings/settings.go:38 func (s ListSetting) Value() []string { var out []string for _, p := range strings.Split(s.Raw, \",\") { if p = strings.TrimSpace(p); p != \"\" {. Keep every existing test and documented behavior true, satisfy both options where they do not conflict, and name the one you chose."
+  ],
+  "voteLines": [
+    "Open choice: \"Should DurationSetting.Value return the parsed time.Duration, or should Value keep returning the string and...\" -> implement option 1: \"DurationSetting.Value return the parsed time.Duration\". Evidence (precedent): the sibling implementations of the same contract in this repo follow it (one tool-less vote over the sibling code). A preference stated in the issue for keeping the old behavior does not override the repo convention; an existing test that pins the old behavior of this one member is updated to the convention, every other test stays true. Sibling precedent in this repo (check your option against these): sibling settings/settings.go:14 func (s IntSetting) Value() int { n, err := strconv.Atoi(strings.TrimSpace(s.Raw)) if err != nil { return 0 | sibling settings/settings.go:26 func (s BoolSetting) Value() bool { b, err := strconv.ParseBool(strings.TrimSpace(s.Raw)) if err != nil { return false | sibling settings/settings.go:38 func (s ListSetting) Value() []string { var out []string for _, p := range strings.Split(s.Raw, \",\") { if p = strings.TrimSpace(p); p != \"\" {."
+  ],
+  "siblings": "settings/settings.go:14\nfunc (s IntSetting) Value() int {\n\tn, err := strconv.Atoi(strings.TrimSpace(s.Raw))\n\tif err != nil {\n\t\treturn 0\n\t}\n\treturn n\n}\n\nsettings/settings.go:26\nfunc (s BoolSetting) Value() bool {\n\tb, err := strconv.ParseBool(strings.TrimSpace(s.Raw))\n\tif err != nil {\n\t\treturn false\n\t}\n\treturn b\n}\n\nsettings/settings.go:38\nfunc (s ListSetting) Value() []string {\n\tvar out []string\n\tfor _, p := range strings.Split(s.Raw, \",\") {\n\t\tif p = strings.TrimSpace(p); p != \"\" {\n\t\t\tout = append(out, p)\n\t\t}\n\t}\n\treturn out\n}"
+}
