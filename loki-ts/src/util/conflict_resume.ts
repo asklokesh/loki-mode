@@ -96,6 +96,18 @@ async function resumeWith(ctx: RunContext, first: SessionRunOptions, firstSessio
 export const resumeAfterEmptyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, challenge = false): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, challenge ? EMPTY_DONE_CHALLENGED : EMPTY_DONE_CORRECTION, "-e");
 export const resumeAfterAlreadyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, ALREADY_DONE_CHALLENGE, "-a");
 
+// LOKI_E10_COVERAGE_RESUME (default off): on the lean path (plan skipped) a LOKI_DONE exit with a non-empty diff gets exactly one more turn in the same session.
+// The task text is already in that session, so the fixed brief names no task (cli-2478: the first turn fixed 2 of the 3 sites the issue named).
+export const COVERAGE_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. " + FINISH_LINE;
+export const coverageResumeEnabled = (env = process.env): boolean => ["1", "on", "true"].includes((env.LOKI_E10_COVERAGE_RESUME ?? "").toLowerCase());
+
+/** One coverage turn (suffix "-c"), through resumeWith. Only a clean LOKI_DONE reply replaces the first result: a conflict or already-done claim made here never overrides a session that finished. */
+export async function resumeForCoverage(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> {
+  if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationId: first.iterationId };
+  const r = await resumeWith(ctx, first, firstSession, COVERAGE_BRIEF, "-c"), m = r.session.markers;
+  return m.done && !m.specConflict && !m.alreadyDone && r.session.exit === 0 ? r : { session: { ...firstSession, durationS: r.session.durationS }, iterationId: r.iterationId };
+}
+
 const oneLine = (s: string): string => s.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 200);
 
 // The Wall referee. An implementer SPEC_CONFLICT that cites a Wall file is only a trigger: the claim text never reaches a referee, the check is chosen by the referee from the file and the task, and a replacement is applied only when
