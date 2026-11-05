@@ -569,4 +569,54 @@ console.log(out.join(" | "));
 WPF="[PARTIAL] Retry utility and recovery handlers (#21 s2) | Retry utility and recovery handlers (#21 s2) | [PARTIAL] Implement Advanced Search and Filtering with Full-Text Search Support (#24) | fix the off-by-one in paginate() | clipped | [PARTIAL] Loki change | whole code points | asked 3 | why Retry utility and recovery handlers | ci.yml | none | none | ci.yml | none | none | ci note | returned at once, kept | removed after deep | branch gone | root gone | addendum kept"
 [ "$PFO" = "$WPF" ] && ok "pr face: titles say the slice or issue and its ref, the outcome once, never the run id; inline criteria listed; a filtered-out stacked base is named; a live deep verify hands its worktree to a reaper that keeps the addendum and removes worktree, branch and root" \
     || bad "pr face gave: $PFO (want: $WPF)"
+# PROTO executable-spec-first (features/exec_spec.ts): deterministic atoms, parity atom from the quoted code, generator-reply
+# refusals, and the base red filter that keeps a case red under a partial fix and green under the full fix (stub reply, no model).
+# Plants: (a) parityAtoms: drop the `locs.some(...)` condition -> parity also fires on the no-quote text (atoms line changes);
+# (b) redFilterGo: count "pass" events as red -> the red/green line changes.
+ESX="$T/exec-spec"; mkdir -p "$ESX/a"
+printf 'module example.com/a\n\ngo 1.22\n' > "$ESX/a/go.mod"
+cat > "$ESX/a/a.go" <<'GOEOF'
+package a
+
+import "strings"
+
+func Split(rargs []string) []string {
+	var out []string
+	for ; len(rargs) > 0; rargs = rargs[1:] {
+		firstArg := strings.TrimSpace(rargs[0])
+		if firstArg == "" || firstArg[0] != '-' {
+			out = append(out, rargs[0])
+			continue
+		}
+		if len(firstArg) == 1 {
+			out = append(out, firstArg)
+			break
+		}
+	}
+	return out
+}
+GOEOF
+ESO="$(cd "$ROOT/loki-ts" && ESX="$ESX" timeout 120 bun -e '
+import * as es from "./src/features/exec_spec.ts";
+import { writeFileSync } from "node:fs";
+const dir = process.env.ESX + "/a", out: string[] = [];
+const quoted = "# Bare dash drops args\n\n`Split` stops at a lone `-`: `x - a b` gives `[\"-\"]`.\n\n## Location\n\n```go\n\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n\t\t\tbreak\n\t\t}\n```\n\n## Expected\n\nThe arguments are retained.\n";
+const plain = quoted.replace(/## Location[\s\S]*?## Expected/, "## Expected");
+for (const t of [quoted, plain]) { const a = es.extractSpecAtoms(t), s = es.resolveSites(a, dir), p = es.parityAtoms(a, s); out.push(`${a.filter((x) => x.kind === "site").map((x) => x.text).join(",")}/${s.map((x) => x.symbol).join(",")}/P${p.length}`); }
+out.push(...["no block", "```go\npackage b\nfunc TestLokiSpec_E1_X(t *testing.T) {}\n```", "```go\npackage a\nfunc TestOther(t *testing.T) {}\n```", "```go\npackage a\nfunc TestLokiSpec_E1_X(t *testing.T) { t.Skip() }\n```"].map((r) => { const g = es.parseGenerated(r, "package a"); return "refused" in g ? g.refused.split(":")[0] : "accepted"; }));
+const spec = "package a\n\nimport (\"reflect\"; \"testing\")\n\nfunc TestLokiSpec_C1_Keeps(t *testing.T) { if g := Split([]string{\"-\", \"a\"}); !reflect.DeepEqual(g, []string{\"-\", \"a\"}) { t.Fatal(g) } }\nfunc TestLokiSpec_P1_Raw(t *testing.T) { if g := Split([]string{\" - \"}); !reflect.DeepEqual(g, []string{\" - \"}) { t.Fatal(g) } }\nfunc TestLokiSpec_S1_Plain(t *testing.T) { if g := Split([]string{\"a\"}); len(g) != 1 { t.Fatal(g) } }\n";
+const run = (): string => { const r = es.redFilterGo(dir, "", spec); return `${r.built ? "built" : "nobuild"} red=${r.red.sort().join("+")} green=${r.green.sort().join("+")}`; };
+const src = (await Bun.file(dir + "/a.go").text());
+out.push(run());
+writeFileSync(dir + "/a.go", src.replace("\t\t\tbreak", "\t\t\tcontinue")); out.push(run());
+writeFileSync(dir + "/a.go", src.replace("\t\t\tbreak", "\t\t\tcontinue").replace("out = append(out, firstArg)", "out = append(out, rargs[0])")); out.push(run());
+writeFileSync(dir + "/a.go", src);
+console.log(out.join(" | "));
+' 2>&1)"
+WES="Split/Split/P1 | Split/Split/P0 | exec_spec_no_go_block | exec_spec_wrong_package | exec_spec_bad_test_names | exec_spec_banned_call | built red=TestLokiSpec_C1_Keeps+TestLokiSpec_P1_Raw green=TestLokiSpec_S1_Plain | built red=TestLokiSpec_P1_Raw green=TestLokiSpec_C1_Keeps+TestLokiSpec_S1_Plain | built red= green=TestLokiSpec_C1_Keeps+TestLokiSpec_P1_Raw+TestLokiSpec_S1_Plain"
+if command -v go >/dev/null 2>&1; then
+    [ "$ESO" = "$WES" ] && ok "exec spec: parity atom only from quoted code, generator replies refused by name, base red filter keeps the parity case red under the partial fix and green under the full fix" \
+        || bad "exec spec gave: $ESO (want: $WES)"
+fi
+
 finish
