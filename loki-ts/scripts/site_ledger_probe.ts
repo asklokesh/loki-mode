@@ -64,8 +64,9 @@ if (mode === "stub") {
   const model = arg ?? "haiku";
   micro = async (b, t) => { writeFileSync(join(work, `.brief-${t.fn}-${usage.calls + 1}.txt`), b); return claude(b, model); };
 }
-const run = await runLedger(work, task, micro);
+const goCheck = () => { spawnSync("gofmt", ["-w", "."], { cwd: work }); const r = sh("go", ["test", "./..."]); return { ok: r.status === 0, out: r.stdout + r.stderr }; };
+const run = await runLedger(work, task, micro, { maxRetries: Number(process.env.LEDGER_MAX_RETRIES ?? 1), ...(process.env.LEDGER_INTERACTION === "1" ? { check: goCheck } : {}) });
 sh("gofmt", ["-w", "."]);
 const c = checks(), a = accept();
-console.log(JSON.stringify({ mode, tasks: run.tasks.map((t) => t.id), rounds: run.rounds, calls: run.calls, first_findings: run.findings, residual: run.residual, checks: { vet: c.vet, test: c.test }, accept: a, usage, tail: c.test ? c.out : undefined }));
+console.log(JSON.stringify({ mode, interaction: run.interaction ?? null, tasks: run.tasks.map((t) => t.id), rounds: run.rounds, calls: run.calls, first_findings: run.findings, residual: run.residual, checks: { vet: c.vet, test: c.test }, accept: a, usage, tail: c.test ? c.out : undefined }));
 void integrationFindings; void parseReply;

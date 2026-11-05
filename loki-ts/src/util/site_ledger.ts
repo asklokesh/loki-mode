@@ -26,7 +26,7 @@ export interface Site { line: number; text: string; idents: string[]; shape: str
 export interface MicroTask { declared?: string[]; id: string; path: string; fn: string; start: number; end: number; lang: Lang; source: string; sites: Site[]; siblingNotes: string[] }
 export interface Disposition { line: number; action: "changed" | "unchanged"; reason: string }
 export interface MicroReply { fn: string | null; dispositions: Disposition[]; imports: string[]; test: string | null }
-export interface Finding { task: string; line: number; kind: "no_disposition" | "claimed_change_absent" | "twin_mixed" | "parse"; detail: string }
+export interface Finding { task: string; line: number; kind: "no_disposition" | "claimed_change_absent" | "twin_mixed" | "parse" | "interaction_fail"; detail: string }
 export type MicroCall = (brief: string, task: MicroTask) => Promise<string>;
 
 const STOP = new Set(["the", "and", "for", "with", "that", "this", "when", "not", "but", "from", "into", "then", "else", "return", "func", "function", "def", "var", "let", "const", "nil", "null", "true", "false", "err", "error", "string", "int", "bool", "type", "if", "ok", "self", "new", "any", "none", "None", "len", "fmt",
@@ -213,10 +213,35 @@ export function applyReplies(repoDir: string, tasks: MicroTask[], replies: Map<s
   return touched;
 }
 
-export interface LedgerRun { tasks: MicroTask[]; rounds: number; calls: number; findings: Finding[]; residual: Finding[]; touched: string[] }
+/** Same-function twin pairs: two sites of one shape inside ONE function, whose order and overlap a per-site test never exercises. */
+export function interactionPairs(tasks: MicroTask[]): { task: MicroTask; a: Site; b: Site }[] {
+  const out: { task: MicroTask; a: Site; b: Site }[] = [];
+  for (const g of twinGroups(tasks)) {
+    const byTask = new Map<string, number[]>();
+    for (const m of g.members) (byTask.get(m.task) ?? byTask.set(m.task, []).get(m.task)!).push(m.line);
+    for (const [id, ls] of byTask) { const t = tasks.find((x) => x.id === id)!; for (let i = 1; i < ls.length; i++) out.push({ task: t, a: t.sites.find((s) => s.line === ls[0])!, b: t.sites.find((s) => s.line === ls[i])! }); }
+  }
+  return out;
+}
+
+/** One test-writer micro-task per same-function twin pair: a single input that reaches BOTH sites, so order and overlap are tested. */
+export function interactionBrief(task: string, p: { task: MicroTask; a: Site; b: Site }, newFn: string): string {
+  return [
+    "You write ONE test. Another worker already changed the function below. Per-site tests already exist; yours must cover the case where ONE input could match BOTH of these two sites, so the order of the checks and their overlap decide the result.",
+    `Task:\n${task.trim()}`,
+    `Changed function ${p.task.fn} in ${p.task.path}:\n${newFn}`,
+    `The two sites (original lines): \`${p.a.text.trim()}\` and \`${p.b.text.trim()}\`.`,
+    "Build an input that satisfies both (for example a value of the second kind that also contains or wraps a value of the first kind, or the reverse) and assert the behavior the TASK asks for, including any output, not what the code does now.",
+    "Reply with exactly one ```test fence holding one test function in the repo's test style, using only same-package names.",
+  ].join("\n\n");
+}
+
+export interface LedgerOpts { maxRetries?: number; check?: () => { ok: boolean; out: string } }
+export interface LedgerRun { tasks: MicroTask[]; rounds: number; calls: number; findings: Finding[]; residual: Finding[]; touched: string[]; interaction?: { pairs: number; first_ok: boolean | null; final_ok: boolean | null } }
 
 /** The deterministic coordinator: ledger -> micro-tasks -> integration check -> at most one re-issue per flagged task. */
-export async function runLedger(repoDir: string, task: string, micro: MicroCall, maxRetries = 1): Promise<LedgerRun> {
+export async function runLedger(repoDir: string, task: string, micro: MicroCall, maxRetriesOrOpts: number | LedgerOpts = 1): Promise<LedgerRun> {
+  const opts: LedgerOpts = typeof maxRetriesOrOpts === "number" ? { maxRetries: maxRetriesOrOpts } : maxRetriesOrOpts, maxRetries = opts.maxRetries ?? 1;
   const tasks = buildLedger(repoDir, task), twins = twinGroups(tasks), replies = new Map<string, MicroReply>();
   let calls = 0;
   const ask = async (t: MicroTask, f: Finding[] = []): Promise<void> => { calls++; replies.set(t.id, parseReply(await micro(microBrief(task, t, tasks.filter((o) => o !== t), twins, f), t), t.lang)); };
@@ -229,6 +254,35 @@ export async function runLedger(repoDir: string, task: string, micro: MicroCall,
     rounds++;
     residual = integrationFindings(tasks, replies); // the second answer stands; what is still open is reported, never dropped
   }
-  const touched = tasks.length ? applyReplies(repoDir, tasks, replies) : [];
-  return { tasks, rounds, calls, findings: first, residual, touched };
+  const base = new Map(tasks.map((t) => [t.path, readFileSync(join(repoDir, t.path), "utf8")]));
+  const testPath = (t: MicroTask): string => join(repoDir, t.path.replace(/\.go$/, "_test.go"));
+  const baseTests = new Map(tasks.map((t) => [testPath(t), existsSync(testPath(t)) ? readFileSync(testPath(t), "utf8") : null]));
+  let touched = tasks.length ? applyReplies(repoDir, tasks, replies) : [];
+  // Integration step 2 (opt-in, needs the repo's own check): pairwise interaction tests for same-function twins.
+  const pairs = opts.check && maxRetries > 0 ? interactionPairs(tasks).filter((p) => replies.get(p.task.id)?.fn) : [];
+  let interaction: LedgerRun["interaction"];
+  if (pairs.length && opts.check) {
+    const pairTests: { t: MicroTask; test: string }[] = [];
+    for (const p of pairs) {
+      calls++;
+      const test = parseReply(await micro(interactionBrief(task, p, replies.get(p.task.id)!.fn!), { ...p.task, id: p.task.id + "#pair" }), p.task.lang).test;
+      if (test) pairTests.push({ t: p.task, test });
+    }
+    const appendPairTests = (): void => { for (const { t, test } of pairTests) { const tp = testPath(t); const cur = existsSync(tp) ? readFileSync(tp, "utf8") : `package ${/^package (\w+)/m.exec(base.get(t.path)!)?.[1] ?? "main"}\n`; const merged = cur.replace(/\n*$/, "\n\n") + test + "\n"; writeFileSync(tp, addImports(merged, "go", goStdImports(merged))); } };
+    appendPairTests();
+    const c1 = opts.check();
+    interaction = { pairs: pairs.length, first_ok: c1.ok, final_ok: c1.ok };
+    if (!c1.ok) {
+      const owners = [...new Set(pairs.map((p) => p.task))];
+      for (const t of owners) residual.push({ task: t.id, line: t.start, kind: "interaction_fail", detail: `a test where one input reaches two same-shape sites fails on your function:\n${c1.out.slice(-1200)}\nReorder or narrow the checks so the task's behavior holds for that input; keep every site's own fix.` });
+      await Promise.all(owners.map((t) => ask(t, residual.filter((f) => f.task === t.id))));
+      rounds++;
+      for (const [p, src] of base) writeFileSync(join(repoDir, p), src);
+      for (const [p, src] of baseTests) if (src !== null) writeFileSync(p, src);
+      touched = applyReplies(repoDir, tasks, replies); appendPairTests();
+      const c2 = opts.check(); interaction.final_ok = c2.ok;
+      residual = [...integrationFindings(tasks, replies), ...(c2.ok ? [] : owners.map((t) => ({ task: t.id, line: t.start, kind: "interaction_fail" as const, detail: c2.out.slice(-400) })))];
+    }
+  }
+  return { tasks, rounds, calls, findings: first, residual, touched, ...(interaction ? { interaction } : {}) };
 }

@@ -12,6 +12,7 @@
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. twinGroups returns [] -> the closure and apply-acceptance legs fail.
 #   2. siblingNotes returns [] -> the siblings leg fails.
+#   3. interactionPairs returns [] -> the "with interaction" leg fails.
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 command -v bun >/dev/null 2>&1 || { echo "site-ledger: needs bun" >&2; exit 2; }
 cd "$ROOT/loki-ts" || exit 2
@@ -44,6 +45,13 @@ if command -v go >/dev/null 2>&1; then
   printf '%s' "$r1" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["calls"]==3 and [(f["kind"],f["line"]) for f in d["first_findings"]]==[("twin_mixed",55)] and d["residual"]==[] and d["checks"]=={"vet":0,"test":0} and d["accept"]["status"]==0' && ok "partial then full: flagged, re-issued, tree green, acceptance green" || bad "r1: $r1"
   r2="$(bun scripts/site_ledger_probe.ts "$F/a" "$T/s2" stub "$F/stub/a_partial_twice.json" 2>&1 | tail -1)"
   printf '%s' "$r2" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert [(f["kind"],f["line"]) for f in d["residual"]]==[("twin_mixed",55)] and d["accept"]["status"]!=0' && ok "partial twice: residual reported, acceptance red" || bad "r2: $r2"
+  # Replay of the two REAL claude-haiku-5-5 replies on fixture a (all three sites fixed, but StatusCoder checked before
+  # GroupError): per-site closure is clean and the repo's own tests pass, yet acceptance fails. The pairwise interaction
+  # step (one input reaching both same-function twins) turns the repo check red and the re-issue fixes the order.
+  r3="$(LEDGER_INTERACTION=0 bun scripts/site_ledger_probe.ts "$F/a" "$T/s3" stub "$F/stub/a_haiku_replay_then_pair.json" 2>&1 | tail -1)"
+  printf '%s' "$r3" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["residual"]==[] and d["checks"]["test"]==0 and d["accept"]["status"]!=0' && ok "haiku replay without interaction: green own checks, red acceptance" || bad "r3: $r3"
+  r4="$(LEDGER_INTERACTION=1 bun scripts/site_ledger_probe.ts "$F/a" "$T/s4" stub "$F/stub/a_haiku_replay_then_pair.json" 2>&1 | tail -1)"
+  printf '%s' "$r4" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["interaction"]=={"pairs":1,"first_ok":False,"final_ok":True} and d["calls"]==4 and d["accept"]["status"]==0' && ok "haiku replay with interaction: pair test red, re-issue, acceptance green" || bad "r4: $r4"
 else
   echo "site-ledger: go not installed, apply legs skipped"
 fi
