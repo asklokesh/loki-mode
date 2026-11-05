@@ -102,10 +102,18 @@ export function calledNames(snippet: string): string[] {
   return [...out];
 }
 const unq = (s: string): string => s.trim().replace(/^"(.*)"$/s, "$1");
-/** Decided in code, never by the model's naming: a case is a "change" case only when it calls a function the issue names AND the issue states its new output, or states
- *  its input while NOT stating the old output as staying ("flags without a short alias keep printing ..."). Every other case is a keep case, whatever its id. */
+const KEEP_WORDS = /\b(?:stays?|unchanged|keeps?|kept|still|as it is|as is|remains?|untouched|must not change|should not change|not change|leave|leaves)\b/i;
+const sentencesOf = (issue: string): string[] => issue.split(/(?<=[.!?])\s+|\n+/).filter((x) => x.trim().length > 0);
+/** A function the issue asks to change: named in it, and in no "stays / unchanged / keep" sentence (a function named only as one that stays is keep-only). */
+export function askedToChange(issue: string, fn: string): boolean {
+  return mentions(issue, fn) && !sentencesOf(issue).some((x) => KEEP_WORDS.test(x) && mentions(x, fn));
+}
+/** True when the case calls at least one function and every function it calls is one the issue asks to change. */
+export const callsOnlyAskedFunctions = (issue: string, snippet: string): boolean => { const fns = calledNames(snippet); return fns.length > 0 && fns.every((n) => askedToChange(issue, n)); };
+/** Decided in code, never by the model's naming: a case is a "change" case only when EVERY function it calls is one the issue asks to change AND the issue states its new
+ *  output, or states its input while NOT stating the old output as staying ("flags without a short alias keep printing ..."). A case touching any other function is a keep case. */
 export function isChangeCase(issue: string, snippet: string, before: string, after: string): boolean {
-  if (!calledNames(snippet).some((n) => mentions(issue, n))) return false;
+  if (!callsOnlyAskedFunctions(issue, snippet)) return false;
   const stated = (v: string): boolean => { const t = unq(v); return t.length >= 2 && issue.includes(t); };
   if (stated(after)) return true;
   const lits = [...snippet.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]!).filter((l) => l.length >= 2 && !/^k?p?\d+$/.test(l));
@@ -178,7 +186,7 @@ export function probeContext(pkgFiles: Record<string, string>, testFiles: Record
 
 // ---------------- the code-blind judge and the deterministic corrections ----------------
 export type Verdict = "requested" | "unrequested" | "unknown";
-export interface Finding { id: string; desc: string; before: string; after: string; source: "replay" | "probe"; testEdit?: string; /** the case calls a function the issue names: its change follows from the requested one */ named?: boolean }
+export interface Finding { id: string; desc: string; before: string; after: string; source: "replay" | "probe"; testEdit?: string; /** every function the case calls is one the issue asks to change: its change follows from the requested one */ named?: boolean }
 const clip = (s: string, max = 400): string => (s.length > max ? `${s.slice(0, max)}...(${s.length - max} more chars)` : s);
 export const SYS_NRD_JUDGE = "You decide whether an issue asks for an observed behavior change. You never see code. Answer only in the requested format.";
 export function nrdJudgePrompt(issue: string, cases: (Finding & { label: string })[]): string {
@@ -228,11 +236,11 @@ const statedInRequest = (issue: string, v: string): boolean => { const t = unq(v
 /** The corrections only ever move a verdict toward "requested", or a doubtful "requested" to advisory "unknown"; they never turn a judge's "requested" into a block (a
  *  block sends a fix round that could revert a correct fix). Replay findings: "requested" when the rewritten test asserts a value quoted in a request sentence.
  *  Probe findings: a judge "requested" on a function the issue never names, with the change not mentioned in the issue, becomes "unknown" (advisory); "unrequested" or
- *  "unknown" becomes "requested" when the new output itself is stated in a request sentence. */
+ *  "unknown" becomes "requested" when every function the case calls is one the issue asks to change and the new output itself is stated in a request sentence. */
 export function overrideVerdict(issue: string, f: Finding, v: Verdict): Verdict {
   if (f.source === "replay") return rewriteAssertsIssueValue(issue, f.testEdit) ? "requested" : v;
   if (v === "requested") return !f.named && !issueMentionsChange(issue, f.before, f.after) ? "unknown" : v;
-  return statedInRequest(issue, f.after) ? "requested" : v;
+  return f.named && statedInRequest(issue, f.after) ? "requested" : v; // only for a case whose every called function the issue asks to change
 }
 
 // ---------------- the differential ----------------
@@ -319,7 +327,7 @@ export async function runNoRegression(i: NrdInput): Promise<NrdResult> {
   const probe = tagged.filter((x) => x.status === "changed").map((x): Finding | null => {
     const snippet = caseSnippet(x.src, x.id);
     if (!x.post && isChangeCase(i.issue, snippet, x.before, x.after)) return null; // the issue asks for exactly this change
-    return { id: x.id, desc: x.desc, before: x.before, after: x.after, source: "probe", named: calledNames(snippet).some((n) => mentions(i.issue, n)) };
+    return { id: x.id, desc: x.desc, before: x.before, after: x.after, source: "probe", named: callsOnlyAskedFunctions(i.issue, snippet) };
   }).filter((f): f is Finding => f !== null);
   const all: (Finding & { label: string })[] = [...probe, ...(i.replay?.() ?? []).slice(0, 6)].map((f, n, a) => ({ ...f, label: a.slice(0, n).some((y) => y.id === f.id) ? `${f.id}#${n}` : f.id }));
   if (!all.length) return { ...(notRun ? { notRun } : {}), cases, findings: [], blocking: [], groups: [], notes, calls, usd };
