@@ -1,0 +1,42 @@
+{
+ "wrong": [
+  {
+   "path": "handle.go",
+   "search": "import (\n\t\"fmt\"",
+   "replace": "import (\n\t\"errors\"\n\t\"fmt\""
+  },
+  {
+   "path": "handle.go",
+   "search": "\tif sc, ok := err.(StatusCoder); ok {",
+   "replace": "\tvar sc StatusCoder\n\tif errors.As(err, &sc) {"
+  },
+  {
+   "path": "handle.go",
+   "search": "\t\tif sc, ok := e.(StatusCoder); ok {",
+   "replace": "\t\tvar sc StatusCoder\n\t\tif errors.As(e, &sc) {"
+  }
+ ],
+ "right": [
+  {
+   "path": "handle.go",
+   "search": "import (\n\t\"fmt\"",
+   "replace": "import (\n\t\"errors\"\n\t\"fmt\""
+  },
+  {
+   "path": "handle.go",
+   "search": "\tif sc, ok := err.(StatusCoder); ok {",
+   "replace": "\tvar sc StatusCoder\n\tif errors.As(err, &sc) {"
+  },
+  {
+   "path": "handle.go",
+   "search": "\t\tif sc, ok := e.(StatusCoder); ok {",
+   "replace": "\t\tvar sc StatusCoder\n\t\tif errors.As(e, &sc) {"
+  },
+  {
+   "path": "handle.go",
+   "search": "\tif b, ok := err.(Batch); ok {",
+   "replace": "\tvar b Batch\n\tif errors.As(err, &b) {"
+  }
+ ],
+ "_note": "Modeled agent trees. wrong = Haiku's real cli-2478 shape (errors.As at the two StatusCoder sites, the Batch assertion left bare); right = all three sites."
+}

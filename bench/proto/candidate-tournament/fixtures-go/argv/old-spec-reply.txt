@@ -1,0 +1,78 @@
+```go
+package argv
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestLokiSpec_C1_BareDashKeepsOperands(t *testing.T) {
+	p := Split([]string{"-", "foo", "bar"})
+	want := []string{"-", "foo", "bar"}
+	if !reflect.DeepEqual(p.Args, want) {
+		t.Fatalf("Args = %#v, want %#v", p.Args, want)
+	}
+}
+
+func TestLokiSpec_C2_BareDashMatchesStdlibOperand(t *testing.T) {
+	p := Split([]string{"-", "foo", "bar"})
+	want := []string{"-", "foo", "bar"}
+	if !reflect.DeepEqual(p.Args, want) {
+		t.Fatalf("Args = %#v, want %#v", p.Args, want)
+	}
+	if len(p.Flags) != 0 {
+		t.Fatalf("Flags = %#v, want none", p.Flags)
+	}
+}
+
+func TestLokiSpec_C3_FlagsAfterBareDashStillParsed(t *testing.T) {
+	p := Split([]string{"-", "-v", "foo"})
+	wantFlags := []string{"-v"}
+	wantArgs := []string{"-", "foo"}
+	if !reflect.DeepEqual(p.Flags, wantFlags) {
+		t.Fatalf("Flags = %#v, want %#v", p.Flags, wantFlags)
+	}
+	if !reflect.DeepEqual(p.Args, wantArgs) {
+		t.Fatalf("Args = %#v, want %#v", p.Args, wantArgs)
+	}
+}
+
+func TestLokiSpec_S1_SplitContinuesPastBareDash(t *testing.T) {
+	p := Split([]string{"a", "-", "foo", "bar"})
+	want := []string{"a", "-", "foo", "bar"}
+	if !reflect.DeepEqual(p.Args, want) {
+		t.Fatalf("Args = %#v, want %#v", p.Args, want)
+	}
+}
+
+func TestLokiSpec_S2_AppendAfterBareDashKeepsOperand(t *testing.T) {
+	p := Split([]string{"-", "foo", " bar "})
+	want := []string{"-", "foo", " bar "}
+	if !reflect.DeepEqual(p.Args, want) {
+		t.Fatalf("Args = %#v, want %#v", p.Args, want)
+	}
+}
+
+func TestLokiSpec_S3_ArgsFieldHoldsOperandsAfterDash(t *testing.T) {
+	p := Split([]string{"-v", "-", "foo", "bar"})
+	wantFlags := []string{"-v"}
+	wantArgs := []string{"-", "foo", "bar"}
+	if !reflect.DeepEqual(p.Flags, wantFlags) {
+		t.Fatalf("Flags = %#v, want %#v", p.Flags, wantFlags)
+	}
+	if !reflect.DeepEqual(p.Args, wantArgs) {
+		t.Fatalf("Args = %#v, want %#v", p.Args, wantArgs)
+	}
+}
+
+func TestLokiSpec_P1_PaddedBareDashAppendsRawInput(t *testing.T) {
+	p := Split([]string{" - "})
+	want := []string{" - "}
+	if !reflect.DeepEqual(p.Args, want) {
+		t.Fatalf("Args = %#v, want %#v", p.Args, want)
+	}
+	if len(p.Flags) != 0 {
+		t.Fatalf("Flags = %#v, want none", p.Flags)
+	}
+}
+```

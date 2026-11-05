@@ -1,0 +1,51 @@
+```go
+package statuserr
+
+import (
+	"errors"
+	"fmt"
+	"testing"
+)
+
+func TestLokiSpec_E1_WrappedStatusReported(t *testing.T) {
+	buf, code := capture(t)
+	err := fmt.Errorf("sync failed: %w", Status("disk quota exceeded", 9))
+	Report(err)
+	if *code != 9 || buf.String() != "sync failed: disk quota exceeded\n" {
+		t.Fatalf("code=%d out=%q", *code, buf.String())
+	}
+}
+
+func TestLokiSpec_S1_ReportNestedWrappedStatus(t *testing.T) {
+	buf, code := capture(t)
+	err := fmt.Errorf("a: %w", fmt.Errorf("b: %w", Status("x", 3)))
+	Report(err)
+	if *code != 3 || buf.String() != "a: b: x\n" {
+		t.Fatalf("code=%d out=%q", *code, buf.String())
+	}
+}
+
+func TestLokiSpec_S3_ReportWrappedBatch(t *testing.T) {
+	buf, code := capture(t)
+	Report(fmt.Errorf("ctx: %w", NewBatch(errors.New("a"), Status("b", 6))))
+	if *code != 6 || buf.String() != "a\nb\n" {
+		t.Fatalf("code=%d out=%q", *code, buf.String())
+	}
+}
+
+func TestLokiSpec_C2_BatchWrappedLastStatus(t *testing.T) {
+	buf, code := capture(t)
+	Report(NewBatch(errors.New("first"), fmt.Errorf("ctx: %w", Status("late", 11))))
+	if *code != 11 || buf.String() != "first\nctx: late\n" {
+		t.Fatalf("code=%d out=%q", *code, buf.String())
+	}
+}
+
+func TestLokiSpec_S6_WrappedStatusZeroCode(t *testing.T) {
+	buf, code := capture(t)
+	Report(fmt.Errorf("w: %w", Status("zero", 0)))
+	if *code != 0 || buf.String() != "w: zero\n" {
+		t.Fatalf("code=%d out=%q", *code, buf.String())
+	}
+}
+```

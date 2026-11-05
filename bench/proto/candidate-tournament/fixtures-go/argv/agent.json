@@ -1,0 +1,17 @@
+{
+ "wrong": [
+  {
+   "path": "split.go",
+   "search": "\t\t\tp.Args = append(p.Args, firstArg)\n\t\t\tbreak",
+   "replace": "\t\t\tp.Args = append(p.Args, firstArg)\n\t\t\tcontinue"
+  }
+ ],
+ "right": [
+  {
+   "path": "split.go",
+   "search": "\t\t\tp.Args = append(p.Args, firstArg)\n\t\t\tbreak",
+   "replace": "\t\t\tp.Args = append(p.Args, rargs[0])\n\t\t\tcontinue"
+  }
+ ],
+ "_note": "Modeled agent trees. wrong = Haiku's real cli-2418 shape (keep the trimmed copy, replace break with continue); right = append the raw rargs[0] and continue."
+}
