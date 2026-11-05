@@ -145,6 +145,7 @@ case "$prompt" in # `loki plan --spec` (tests/min/triage-router.sh): write the s
       [ -n "$out" ] && printf '%s\n' "$E2E_STUB_SPLIT" > "$out"
     fi ;;
 esac
+case "$flags" in *"--model claude (provider default)"*) echo "There's an issue with the selected model (claude (provider default)). It may not exist or you may not have access to it." >&2; exit 1 ;; esac # the real CLI rejects the recorded label as a model id (FireLater#24 s2: every default-model review exited 1)
 if [ "$stage" = review ]; then # the seal cross-review (stages/xreview.ts): E2E_STUB_REVIEW=PASS|FLAG|BLOCK answers in claude's --output-format json shape, with a cost
   if [ -n "${E2E_STUB_REVIEW:-}" ]; then printf '{"type":"result","result":"VERDICT: %s\\n- stub reviewer concern","total_cost_usd":0.01}\n' "$E2E_STUB_REVIEW"; fi
   exit 0

@@ -266,6 +266,10 @@ pushed="$(git -C "$D/origin.git" rev-parse "loki/$(basename "$RUNDIR")" 2>/dev/n
 sealed="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("head_sha",""))' "$RUNDIR/receipt.json" 2>/dev/null)"
 [ -n "$sealed" ] && [ "$pushed" = "$sealed" ] && ok "pushed PR branch tip equals the receipt head_sha (passport and merge gate bind to it)" || bad "pushed loki/<run> tip '$pushed' differs from receipt head_sha '$sealed'"
 
+run_pr highrev none LOKI_RISK_TIER=high E2E_STUB_REVIEW=FLAG LOKI_PR_DRAFT=1
+grep -q 'cross-review flag (claude): stub reviewer concern' "$RUNDIR/receipt.json" && ok "high-risk default-model run: the cross-review ran (no --model label passed to the CLI)" || bad "high-risk default-model run: cross-review did not run (reviewer got the provider-default label as --model?)"
+grep -q 'cross-review not run: claude exited' "$RUNDIR/receipt.json" && bad "high-risk run: reviewer exited non-zero" || ok "high-risk run: reviewer exit clean"
+
 run_pr flag none LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=FLAG LOKI_PR_DRAFT=1
 f="$(pr_facts)"; set -- $f
 [ "$4" = 1 ] && [ "$5" = 0 ] && ok "FLAG run: one review session, no council" || bad "FLAG run facts: $f"

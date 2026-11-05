@@ -63,6 +63,7 @@
 #  SG4. commit_filter.ts commitUnsealedWork: remove the churn block; the WIP commit carries pnpm-lock.yaml again.
 #  SG5. check_result.ts commandFor: drop the rootProjectsBreakSite null; the workspace command runs from packages/a and fails (No projects were found).
 #  SG6. failures.ts idNamesFile: return id.includes(f) only; the root-run failure leg fails (the project-prefixed id names no file).
+#  SG7. commit_filter.ts commitUnsealedWork: drop the rmSync loop; the run-created lockfile stays untracked after the checkout. taskWantsLockChange: re-add the bare `lock` noun; 'refresh the page when the lock icon is clicked' ships its lockfile.
 #  NRM2. repo_profile.ts detectFormatters: drop the biome entry; the formatter check fails.
 #  10. verify.ts sameErrors: excuse every known-red id whatever its first error; the delivery check fails.
 #  11. loki-ts/src/engine10/machine.ts: break after one Wall-only round whatever wallSignature says; the
@@ -402,6 +403,12 @@ WC1U="$(git -C "$WC" reset -q --hard "$BASE_W"; git -C "$WC" checkout -q -B loki
 const { commitUnsealedWork } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
 commitUnsealedWork(true, process.env.W, process.env, "e10-wipu", { base_sha: process.env.B, task: "fix the parser bug", preexisting_dirty: { "pnpm-lock.yaml": "x" } });' >/dev/null 2>&1; printf '%s | %s' "$(git -C "$WC" diff --name-only "$BASE_W" HEAD | tr '\n' ' ')" "$(cat "$WC/pnpm-lock.yaml")")"
 [ "$WC1U" = "app.ts  | user" ] && ok "WIP commit: a lockfile that was dirty at intake is never committed or reverted" || bad "intake-dirty lockfile: [$WC1U]"
+# a lockfile the run CREATED (a yarn repo gains package-lock.json) is neither committed nor left untracked; one untracked at intake stays
+WIPN="$(git -C "$WC" reset -q --hard "$BASE_W"; git -C "$WC" checkout -q -B loki/e10-wipn "$BASE_W"; printf 'n\n' > "$WC/package-lock.json"; printf 'mine\n' > "$WC/yarn.lock"; printf 'b\n' > "$WC/app.ts"; W="$WC" B="$BASE_W" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { commitUnsealedWork } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
+commitUnsealedWork(true, process.env.W, process.env, "e10-wipn", { base_sha: process.env.B, task: "fix the parser bug", preexisting_untracked_blobs: { "yarn.lock": "x" } });' >/dev/null 2>&1; git -C "$WC" checkout -q main 2>&1; printf '%s | %s' "$(git -C "$WC" diff --name-only "$BASE_W" loki/e10-wipn | tr '\n' ' ')" "$(git -C "$WC" status --porcelain | tr '\n' ' ')")"
+[ "$WIPN" = "app.ts  | ?? yarn.lock " ] && ok "WIP commit: a run-created package-lock.json is not committed and leaves no untracked file; a lockfile untracked at intake stays" || bad "run-created lockfile: [$WIPN]"
+rm -f "$WC/yarn.lock"; git -C "$WC" checkout -q loki/e10-wipn 2>/dev/null
 WC2="$(wip_churn "regenerate pnpm-lock.yaml")"
 [ "$WC2" = "app.ts pnpm-lock.yaml  | " ] && ok "WIP commit: a lockfile the task names is committed" || bad "WIP named: [$WC2]"
 
@@ -428,9 +435,9 @@ console.log(out.join(" | "));
 LKT="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const { dropSet } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
 const d = (task) => dropSet(process.env.LK, [{ st: "M", f: "pnpm-lock.yaml" }], null, process.env, undefined, undefined, undefined, task).filter((x) => x.st !== "L").length ? "drop" : "ship";
-console.log(["bump lodash to 4.17.21", "refresh the lock file", "pin lodash to 4.17.20", "fix CVE-2024-4067 by updating the lockfile", "update the dependencies of the api", "upgrade the express package", "regenerate pnpm-lock.yaml", "add a login button", "update the readme", undefined].map(d).join(","));
+console.log(["bump lodash to 4.17.21", "refresh the lock file", "pin lodash to 4.17.20", "regenerate the lockfile", "fix CVE-2024-4067 by updating the lockfile", "update the dependencies of the api", "upgrade the express package", "regenerate pnpm-lock.yaml", "add a login button", "update the readme", "refresh the page when the lock icon is clicked", "sync the lock screen timer", undefined].map(d).join(","));
 ' 2>&1)"
-[ "$LKT" = "ship,ship,ship,ship,ship,ship,ship,drop,drop,drop" ] && ok "commit filter: a lockfile-only change ships when the task bumps or updates a dependency, names a CVE or the lockfile; unrelated tasks drop it" || bad "task-aware lockfile drop gave: $LKT"
+[ "$LKT" = "ship,ship,ship,ship,ship,ship,ship,ship,drop,drop,drop,drop,drop" ] && ok "commit filter: a lockfile-only change ships when the task bumps or updates a dependency, names a CVE or the lockfile; unrelated tasks drop it" || bad "task-aware lockfile drop gave: $LKT"
 printf '#!/bin/sh\nfor f in "$@"; do printf "formatted\\n" >> "$f"; done\n' > "$LK/node_modules-biome.sh"; mkdir -p "$LK/node_modules/.bin"; cp "$LK/node_modules-biome.sh" "$LK/node_modules/.bin/biome"; rm "$LK/node_modules-biome.sh"; chmod +x "$LK/node_modules/.bin/biome"
 printf '{}\n' > "$LK/biome.json"
 FMT="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
