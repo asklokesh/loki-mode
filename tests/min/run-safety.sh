@@ -61,6 +61,7 @@
 #      compare dirname equality only (drop the descendant clause); the workspace-member case fails.
 #  NRM3. commit_filter.ts dropSet: ignore the task (drop the taskWantsLockChange clause); the task-aware lockfile check fails.
 #  SG4. commit_filter.ts commitUnsealedWork: remove the churn block; the WIP commit carries pnpm-lock.yaml again.
+#  SG5. check_result.ts commandFor: drop the rootProjectsBreakSite null; the workspace command runs from packages/a and fails (No projects were found).
 #  NRM2. repo_profile.ts detectFormatters: drop the biome entry; the formatter check fails.
 #  10. verify.ts sameErrors: excuse every known-red id whatever its first error; the delivery check fails.
 #  11. loki-ts/src/engine10/machine.ts: break after one Wall-only round whatever wallSignature says; the
@@ -436,6 +437,33 @@ const c = formatChanged(process.env.LK, [{ st: "M", f: "pkg/b.json" }], new Set(
 console.log(JSON.stringify([a, touched, b, c]));
 ' 2>&1)"
 [ "$FMT" = '[["pkg/b.json"],true,[],[]]' ] && ok "formatter pass: a repo-local biome rewrites the changed file; a failing or missing formatter is a silent no-op" || bad "formatter pass gave: $FMT"
+
+# A workspace whose package vitest config merges the root config, and the root config sets `projects` (zod): `cd packages/a && npx vitest run <file>` never starts
+# ("No projects were found"; it drove four zod implementers to edit vitest.config.ts). The generated command runs from the root instead and passes on real vitest;
+# a package whose config does not merge the root, or a root without projects, keeps the package directory.
+WS="$T/vwork"; WSV=4.0.16
+mkdir -p "$WS/packages/a/src" "$WS/packages/b/src" && printf '{"private":true,"type":"module"}\n' > "$WS/package.json"
+if (cd "$WS" && ${TOM[@]+"${TOM[@]}"} npm install "vitest@$WSV" --no-audit --no-fund --silent >/dev/null 2>&1) && [ -x "$WS/node_modules/.bin/vitest" ]; then
+    printf 'import { defineConfig } from "vitest/config"\nexport default defineConfig({ test: { projects: ["packages/*"], watch: false } })\n' > "$WS/vitest.config.ts"
+    printf '{"name":"a","type":"module"}\n' > "$WS/packages/a/package.json"; printf '{"name":"b","type":"module"}\n' > "$WS/packages/b/package.json"
+    printf 'import { defineProject, mergeConfig } from "vitest/config"\nimport rootConfig from "../../vitest.config.js"\nexport default mergeConfig(rootConfig, defineProject({}))\n' > "$WS/packages/a/vitest.config.ts"
+    printf 'import { defineProject } from "vitest/config"\nexport default defineProject({})\n' > "$WS/packages/b/vitest.config.ts"
+    for p in a b; do printf 'import { expect, it } from "vitest"\nit("ok", () => expect(1).toBe(1))\n' > "$WS/packages/$p/src/x.test.ts"; done
+    WSOLD="$(cd "$WS/packages/a" && NO_COLOR=1 ${TO[@]+"${TO[@]}"} npx --no-install vitest run src/x.test.ts 2>&1 | grep -ciE "no projects were found")"
+    [ "${WSOLD:-0}" -ge 1 ] && ok "real vitest $WSV: the old package-directory command fails on the base with 'No projects were found'" || bad "workspace fixture did not reproduce the failing command"
+    WSR="$(WS="$WS" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { commandFor } = await import(process.env.ROOT + "/loki-ts/src/util/check_result.ts"), cp = await import("node:child_process");
+const out = [];
+for (const p of ["a", "b"]) {
+  const c = commandFor({ runner: "vitest", path: `packages/${p}/src/x.test.ts` }, process.env.WS, null);
+  const r = cp.spawnSync(c.cmd, c.args, { cwd: c.cwd, encoding: "utf8", env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" } });
+  out.push(`${p}:${c.cwd === process.env.WS ? "root" : "pkg"}:${r.status}:${/1 passed/.test(r.stdout + r.stderr)}`);
+}
+console.log(out.join(" "));' 2>&1)"
+    [ "$WSR" = "a:root:0:true b:pkg:0:true" ] && ok "real vitest: the merged-root package runs from the root and passes; a package that does not merge the root keeps its own directory ($WSR)" || bad "generated vitest commands: $WSR"
+else
+    printf '  SKIP: real vitest workspace: npm could not install it (offline?)\n'
+fi
 
 # A batched vitest file reads exactly as the same file run alone: real vitest 4.0.16 non-TTY output vs vitestFileText of its JSON report.
 PAR="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
