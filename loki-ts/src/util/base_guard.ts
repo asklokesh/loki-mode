@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyCheck, goRunner, sealedWallCopy } from "./check_result.ts";
 import { LEGACY_BRANCHES_DIR, listRunIds } from "../commands/run_status.ts";
@@ -288,50 +288,91 @@ export function baseDepsLinker(baseDir: string, repoDir: string, gate: Pick<Zero
   };
 }
 
-/** A base-faithful dependency view for a pnpm/npm/yarn workspace, where depsSeeHead is true for every package because
- *  (a) a package's node_modules entries are links into the ROOT store (node_modules/.pnpm), outside the package's own dir, and (b) workspace
- *  packages are linked to their HEAD source dirs. Instead of refusing (baseDepsLinker) or linking head wholesale (linkHeadDeps), build a shadow
- *  node_modules in the base worktree for `cwd` and every dir above it: each entry links to the head's installed content, except a link whose
- *  real target is a workspace source dir (inside the repo, outside every node_modules segment), which is retargeted to the SAME path in the base
- *  worktree. Scopes (@x), .pnpm and .pnpm/node_modules are shadowed one level down so their workspace links are retargeted too. Fail closed:
- *  false when any workspace link remains that is not retargeted (a store package depending on a workspace package), when a manifest-free check
- *  cannot be made, or on any error. */
+/** A base-faithful dependency view for a pnpm/npm/yarn workspace, where depsSeeHead is true for every package because (a) a package's node_modules entries
+ *  are links into the ROOT store (node_modules/.pnpm), outside the package's own dir, and (b) workspace packages are linked to their HEAD source dirs.
+ *  Instead of refusing (baseDepsLinker) or linking head wholesale, build a shadow node_modules in the base worktree for `cwd` and every dir above it.
+ *  Node follows a link to its realpath, so a store package that reaches workspace source (directly or through another store package) must be COPIED
+ *  into the shadow store (cp -RP keeps its relative links relative, so its workspace links resolve inside the base worktree); every other store package
+ *  is linked to the head's, and a link keeps its relative text so it resolves inside the shadow. A link to workspace source is retargeted to the same
+ *  path in the base worktree, and .bin entries are linked one by one (a shim computes its dir from the spelled path). Fail closed: after linking, every
+ *  link in the shadow is walked, and any that still resolves to head source (inside the repo, outside every node_modules) returns false. */
 export function linkBaseFaithfulDeps(baseDir: string, repoDir: string, cwd: string): boolean {
   let roots: string[];
   try { roots = [...new Set([resolve(repoDir), realpathSync(repoDir)])]; } catch { return false; }
-  const wsTarget = (rt: string): string | null => {
-    for (const r of roots) if (rt === r || rt.startsWith(r + sep)) { const rel = relative(r, rt); return rel.split(sep).includes("node_modules") ? null : join(baseDir, rel); }
-    return null;
+  const inRepo = (rt: string): string | null => { for (const r of roots) if (rt === r || rt.startsWith(r + sep)) return relative(r, rt); return null; };
+  const wsRel = (rt: string): string | null => { const rel = inRepo(rt); return rel !== null && !rel.split(sep).includes("node_modules") ? rel : null; }; // head source: inside the repo, outside every node_modules
+  const rp = (p: string): string | null => { try { return realpathSync(p); } catch { return null; } };
+  const linksOf = (dir: string): string[] => { const out: string[] = []; try { for (const e of readdirSync(dir, { withFileTypes: true })) { const p = join(dir, e.name); if (e.isSymbolicLink()) out.push(p); else if (e.isDirectory() && e.name.startsWith("@")) out.push(...linksOf(p)); } } catch { /* none */ } return out; };
+  const mirrorLink = (p: string, q: string): void => {
+    const rt = rp(p), w = rt === null ? null : wsRel(rt);
+    if (w !== null) { symlinkSync(join(baseDir, w), q); return; }
+    const text = readlinkSync(p); symlinkSync(isAbsolute(text) && rt !== null ? rt : text, q);
   };
-  // a store package (.pnpm/<pkg>/node_modules/<dep>, also under an @scope) whose link reaches workspace source (a peer dependency on a workspace package)
-  const storeWs = (d: string, lvl: number): boolean => { try {
-    return readdirSync(d, { withFileTypes: true }).some((e) => {
-      const p = join(d, e.name);
-      if (e.isSymbolicLink()) { try { return wsTarget(realpathSync(p)) !== null; } catch { return false; } }
-      return e.isDirectory() && ((lvl === 0 && e.name === "node_modules") || (lvl === 1 && e.name.startsWith("@"))) ? storeWs(p, lvl + 1) : false;
-    });
-  } catch { return false; } };
-  const SHADOW = (src: string, name: string): boolean => name.startsWith("@") || name === ".pnpm" || (basename(src) === ".pnpm" && (name === "node_modules" || storeWs(join(src, name), 0))) || (basename(dirname(src)) === ".pnpm" && name === "node_modules");
-  let ok = true;
-  const shadow = (src: string, dst: string, depth: number): void => {
+  const mirror = (src: string, dst: string): void => {
     mkdirSync(dst, { recursive: true });
     for (const e of readdirSync(src, { withFileTypes: true })) {
       const p = join(src, e.name), q = join(dst, e.name);
-      if (e.isSymbolicLink()) { let rt: string; try { rt = realpathSync(p); } catch { continue; } symlinkSync(wsTarget(rt) ?? rt, q); }
-      else if (e.isDirectory() && depth < 6 && SHADOW(src, e.name)) shadow(p, q, depth + 1);
+      if (e.isSymbolicLink()) mirrorLink(p, q);
+      else if (e.isDirectory() && e.name.startsWith("@")) mirror(p, q);
       else symlinkSync(p, q);
     }
   };
+  // store packages that reach workspace source, directly or through another store package that does
+  const reaching = (store: string): Set<string> => {
+    const real = rp(store); const need = new Set<string>(); if (real === null) return need;
+    const deps = new Map<string, Set<string>>();
+    for (const pkg of readdirSync(real)) {
+      if (pkg === "node_modules" || pkg.startsWith(".")) continue;
+      const d = new Set<string>();
+      for (const l of linksOf(join(real, pkg, "node_modules"))) {
+        const rt = rp(l); if (rt === null) continue;
+        if (wsRel(rt) !== null) need.add(pkg); else if (rt.startsWith(real + sep)) d.add(relative(real, rt).split(sep)[0]!);
+      }
+      deps.set(pkg, d);
+    }
+    for (let grew = true; grew;) { grew = false; for (const [pkg, d] of deps) if (!need.has(pkg) && [...d].some((x) => need.has(x))) { need.add(pkg); grew = true; } }
+    return need;
+  };
+  const storeBad = new Map<string, boolean>();
+  const bad = (dir: string, depth: number): boolean => { // a link in the shadow that still resolves to head source, or into a head store package that has one
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isSymbolicLink()) {
+        const rt = rp(p); if (rt === null) continue;
+        if (wsRel(rt) !== null) return true;
+        const segs = rt.split(sep), i = segs.lastIndexOf(".pnpm");
+        if (i >= 0 && i + 1 < segs.length) { const pk = segs.slice(0, i + 2).join(sep); if (!storeBad.has(pk)) storeBad.set(pk, linksOf(join(pk, "node_modules")).some((l) => { const t = rp(l); return t !== null && wsRel(t) !== null; })); if (storeBad.get(pk)) return true; }
+      }
+      else if (e.isDirectory() && depth < 6) { if (bad(p, depth + 1)) return true; }
+    }
+    return false;
+  };
   try {
+    const made: string[] = [];
     for (let d = cwd; d.startsWith(baseDir); d = dirname(d)) {
-      const src = join(repoDir, relative(baseDir, d), "node_modules");
-      if (existsSync(src) && !existsSync(join(d, "node_modules"))) {
-        shadow(src, join(d, "node_modules"), 0);
+      const src = join(repoDir, relative(baseDir, d), "node_modules"), dst = join(d, "node_modules");
+      if (existsSync(src) && !existsSync(dst)) {
+        mkdirSync(dst); made.push(dst);
+        const need = existsSync(join(src, ".pnpm")) ? reaching(join(src, ".pnpm")) : new Set<string>();
+        for (const e of readdirSync(src, { withFileTypes: true })) {
+          const p = join(src, e.name), q = join(dst, e.name);
+          if (e.name === ".pnpm" && e.isDirectory()) {
+            const store = rp(p)!; mkdirSync(q);
+            for (const pk of readdirSync(store)) {
+              if (pk === "node_modules") mirror(join(store, pk), join(q, pk));
+              else if (need.has(pk)) execFileSync("cp", ["-RP", join(store, pk), join(q, pk)], { stdio: "ignore", timeout: 120000 });
+              else symlinkSync(join(store, pk), join(q, pk));
+            }
+          } else if (e.name === ".bin" && e.isDirectory()) mirror(p, q);
+          else if (e.isSymbolicLink()) mirrorLink(p, q);
+          else if (e.isDirectory() && e.name.startsWith("@")) mirror(p, q);
+          else symlinkSync(p, q);
+        }
       }
       if (d === baseDir) break;
     }
+    return !made.some((m) => bad(m, 0));
   } catch { return false; }
-  return ok;
 }
 
 /** True when one finished run of a test command executed zero tests (the shared mapping of 0 tests to not_run; a cut or missing run never counts). */

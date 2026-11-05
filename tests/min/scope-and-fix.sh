@@ -864,6 +864,24 @@ console.log([head.status, base !== null && /TS6133/.test(base), v.tscUntouchedLo
     case "$WSI" in *"app.test.ts', 'fail', 0"*) bad "workspace cross-package: no test ids parsed, the leg does not exercise the id path" ;; esac
     case "$(ev "$PREREDS")" in *app.test.ts*) bad "workspace cross-package: a test broken by an edit in another package was excused as pre-red" ;; *) ok "workspace cross-package: not excused" ;; esac
     [ "$(fix_sessions)" -ge 1 ] && ok "workspace cross-package: a fix session runs ($(fix_sessions))" || { bad "workspace cross-package: no fix session"; dump; }
+    # #522 review round 2: a store package (.pnpm/x@1/node_modules/x) that itself requires a workspace package resolves, by realpath, to the head's store dir and so to head source,
+    # unless it is copied into the shadow store. Real vitest on a hand-built pnpm-shaped repo: head lib throws at import, base lib is fine; the base run must pass and every realpath stay in base.
+    SF="$T/pnpm-shape"; rm -rf "$SF"; mkdir -p "$SF/packages/lib" "$SF/packages/app" "$SF/node_modules/.pnpm/x@1.0.0/node_modules/x" "$SF/node_modules/.pnpm/x@1.0.0/node_modules/@t"
+    printf 'node_modules\n' > "$SF/.gitignore"; printf '{"name":"root","private":true}\n' > "$SF/package.json"
+    printf '{"name":"@t/lib","private":true,"type":"module","main":"index.mjs"}\n' > "$SF/packages/lib/package.json"; printf 'export const v = 1;\n' > "$SF/packages/lib/index.mjs"
+    printf '{"name":"@t/app","private":true,"type":"module"}\n' > "$SF/packages/app/package.json"; printf 'import { expect, test } from "vitest";\nimport { xv } from "x";\n\ntest("x sees lib", () => { expect(xv).toBe(1); });\n' > "$SF/packages/app/app.test.ts"
+    printf '{"name":"x","type":"module","main":"index.mjs"}\n' > "$SF/node_modules/.pnpm/x@1.0.0/node_modules/x/package.json"; printf 'import { v } from "@t/lib";\nexport const xv = v;\n' > "$SF/node_modules/.pnpm/x@1.0.0/node_modules/x/index.mjs"
+    ln -s ../../../../../packages/lib "$SF/node_modules/.pnpm/x@1.0.0/node_modules/@t/lib"; mkdir -p "$SF/packages/app/node_modules"; ln -s ../../../node_modules/.pnpm/x@1.0.0/node_modules/x "$SF/packages/app/node_modules/x"
+    for e in "$TSC_NM"/* "$TSC_NM"/.bin; do ln -s "$e" "$SF/node_modules/$(basename "$e")"; done
+    git -C "$SF" init -q -b main && git -C "$SF" add -- .gitignore package.json packages && git -C "$SF" -c user.name=t -c user.email=t@t commit -qm base
+    printf 'throw new Error("lib import boom");\n' > "$SF/packages/lib/index.mjs"
+    SFR="$(cd "$ROOT/loki-ts" && bun -e '
+const { linkBaseFaithfulDeps: link } = await import("./src/util/base_guard.ts"), { spawnSync, execFileSync } = await import("node:child_process"), { realpathSync } = await import("node:fs"), d = process.argv[1], b = d + "-base";
+execFileSync("git", ["-C", d, "worktree", "add", "-q", "--detach", b, "HEAD"]);
+const ok = link(b, d, b + "/packages/app"), run = (c: string) => spawnSync(c + "/../../node_modules/.bin/vitest", ["run", "app.test.ts"], { cwd: c, encoding: "utf8", timeout: 90000 }).status;
+const x = realpathSync(b + "/packages/app/node_modules/x"), lib = realpathSync(x + "/../@t/lib"), rb = realpathSync(b);
+console.log([ok, run(b + "/packages/app"), run(d + "/packages/app"), x.startsWith(rb + "/") && lib.startsWith(rb + "/")].join(","));' "$SF" 2>&1 | tail -1)"
+    [ "$SFR" = "true,0,1,true" ] && ok "pnpm store package reaching a workspace package: the base run uses the base copy of the workspace package (base passes, head throws, realpaths stay in base) ($SFR)" || bad "pnpm store package leg: '$SFR' (want true,0,1,true)"
     SG="$(cd "$ROOT/loki-ts" && bun -e '
 const { startupSig: s } = await import("./src/engine10/stages/verify.ts");
 const a = "x\n\u23af\u23af Startup Error \u23af\u23af\nError: No projects were found in /r/pkg (12ms)\n    at start (file:///r/n.js:1:2)\n", b = "x\n\u23af\u23af Startup Error \u23af\u23af\nError: No projects were found in /b/pkg (9ms)\n    at start (file:///b/n.js:5:6)\n";
