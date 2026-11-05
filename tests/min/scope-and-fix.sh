@@ -330,6 +330,27 @@ grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: a run with a plan got
 run_engine "$CTASK" E2E_STUB_MODE=already LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_COVERAGE_RESUME=1
 grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: an already-done first turn got a coverage turn"; dump; } || ok "coverage on: an already-done first turn gets no coverage turn"
 
+# ---------------------------------------------------------------- patch protocol on the engine (LOKI_E10_PATCH, default off; stub tool-less call through the CLI invoker)
+PTASK="add a multiply(a, b) function to calc.ts"
+pev() { ev 'next((json.dumps(e["data"].get("patch")) for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), "")'; }
+PLEAN=(LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_SESSION_MODEL=haiku)
+run_engine "$PTASK" E2E_STUB_MODE=done "${PLEAN[@]}"
+grep -q '^patch$' "$(dirname "$ITERS")/stub.log" && bad "patch default: a patch call ran with LOKI_E10_PATCH unset" || ok "patch default: no patch call without LOKI_E10_PATCH"
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=green LOKI_E10_PATCH=1 "${PLEAN[@]}"
+[ "$(grep -c '^patch$' "$(dirname "$ITERS")/stub.log")" = 2 ] && [ "$(grep -c '^implement ' "$ITERS")" = 0 ] && ok "patch green: the fix call, then the test-only repair call (green had no test), and no agentic implement session" || { bad "patch green: $(grep -c '^patch$' "$(dirname "$ITERS")/stub.log") patch calls, $(grep -c '^implement ' "$ITERS") implement sessions"; dump; }
+case "$(pev)" in *'"status": "green"'*'"calls": 2'*'calc.test.ts'*) ok "patch green: the implement stage records patch status green after 2 calls with calc.test.ts applied" ;; *) bad "patch green: patch record is '$(pev)'" ;; esac
+git -C "$REPO" show HEAD:calc.test.ts | grep -q 'multiply(2, 5)' && ok "patch green: the regression test is committed" || bad "patch green: no regression test committed"
+[ "$(outcome)" = "VERIFIED" ] && git -C "$REPO" show HEAD:calc.ts | grep -A1 'function multiply' | grep -q 'a \* b' && ok "patch green: verify and seal judge the patched tree: VERIFIED with the right multiply() committed" || { bad "patch green: outcome '$(outcome)'"; dump; }
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=notest LOKI_E10_PATCH=1 "${PLEAN[@]}"
+case "$(pev)" in *'"status": "green"'*'"calls": 2'*) git -C "$REPO" diff --quiet main HEAD -- calc.test.ts && [ "$(outcome)" = "VERIFIED" ] && ok "patch no test: a test-only repair with no edit keeps the green tree (no agentic session), VERIFIED" || { bad "patch no test: calc.test.ts changed or outcome '$(outcome)'"; dump; } ;; *) bad "patch no test: patch record is '$(pev)'" ;; esac
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=repair LOKI_E10_PATCH=1 "${PLEAN[@]}"
+[ "$(grep -c '^patch$' "$(dirname "$ITERS")/stub.log")" = 2 ] && [ "$(grep -c '^implement ' "$ITERS")" = 0 ] && [ "$(outcome)" = "VERIFIED" ] && ok "patch repair: a red harness check gets one repair call, which goes green; no agentic session; VERIFIED" || { bad "patch repair: $(grep -c '^patch$' "$(dirname "$ITERS")/stub.log") patch calls, outcome '$(outcome)'"; dump; }
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=wrongtwice LOKI_E10_PATCH=1 "${PLEAN[@]}"
+[ "$(grep -c '^patch$' "$(dirname "$ITERS")/stub.log")" = 2 ] && [ "$(grep -c '^implement ' "$ITERS")" = 1 ] && ok "patch fallback: still red after the repair call, so the agentic implement session runs (the floor)" || { bad "patch fallback: $(grep -c '^patch$' "$(dirname "$ITERS")/stub.log") patch calls, $(grep -c '^implement ' "$ITERS") implement sessions"; dump; }
+[ "$(outcome)" = "VERIFIED" ] && [ "$(git -C "$REPO" show HEAD:calc.ts | grep -c 'function multiply')" = 1 ] && git -C "$REPO" show HEAD:calc.ts | grep -A1 'function multiply' | grep -q 'a \* b' && ok "patch fallback: the patch edits were restored first; the agentic session's single right multiply() is committed, VERIFIED" || { bad "patch fallback: outcome '$(outcome)' or a leftover patch edit"; dump; }
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=cfg LOKI_E10_PATCH=1 "${PLEAN[@]}"
+case "$(pev)" in *'"status": "green"'*'bunfig.toml: refused'*) ok "patch refusal: a bunfig.toml (runner config) edit is refused before it lands, the repair call goes green" ;; *) bad "patch refusal: patch record is '$(pev)'" ;; esac
+git -C "$REPO" diff --quiet main HEAD -- bunfig.toml && [ "$(outcome)" = "VERIFIED" ] && ok "patch refusal: bunfig.toml is unchanged on the run branch and the run is VERIFIED" || { bad "patch refusal: bunfig.toml changed or outcome '$(outcome)'"; dump; }
 # ---------------------------------------------------------------- patch protocol (LOKI_E10_PATCH, default off), unit level with the real node --test runner
 # One tool-less call answers with FILE/SEARCH/REPLACE blocks; the harness refuses config, lockfile and Wall edits before applying, applies
 # all-or-nothing, runs the impacted node:test file itself and allows one repair call. Every non-green end restores the tree byte-identical.
@@ -396,6 +417,11 @@ for (const [label, file, search, repl] of [
 { const d = repo(), seen: string[] = [], miss = 'FILE: src/parse.js\n<<<<<<< SEARCH\n  if (t === "-")  return { positional: t };\n  const t = arg.trim();\n=======\nx\n>>>>>>> REPLACE\n';
   const o = await run(d, [`${miss}${ADDTEST}LOKI_DONE`, null], seen);
   res("patch miss: a SEARCH that matches nothing applies no block of the reply (all-or-nothing) and the repair quotes the nearest text", o.status === "call_failed" && clean(d) && /not found\. Nearest text, src\/parse\.js/.test(seen[1] ?? ""), JSON.stringify(o) + (seen[1] ?? "").slice(-300)); }
+{ const d = repo(), seen: string[] = [], o = await run(d, [`${FIX}LOKI_DONE`, `${ADDTEST}LOKI_DONE`], seen);
+  res("patch test repair: a green fix with no test gets the test-only repair call; the test lands and the result stays green", o.status === "green" && o.calls === 2 && o.applied.length === 2 && /add no regression test/.test(seen[1] ?? ""), JSON.stringify(o)); }
+{ const d = repo(), red = 'FILE: test/parse.test.js\n<<<<<<< SEARCH\n=======\n\ntest("bad", () => {\n  assert.equal(1, 2);\n});\n>>>>>>> REPLACE\n';
+  const o = await run(d, [`${FIX}LOKI_DONE`, `${red}LOKI_DONE`]);
+  res("patch test repair: a red new test is dropped and the green fix is kept (the repair never makes the tree worse)", o.status === "green" && o.applied.join() === "src/parse.js" && git(d, "status", "--porcelain").trim() === "M src/parse.js", JSON.stringify(o) + git(d, "status", "--porcelain")); }
 { const d = repo(), o = await run(d, [null]);
   res("patch call failed: a failed call is a fallback (status call_failed), nothing written", o.status === "call_failed" && o.calls === 1 && clean(d)); }
 { const d = repo(), o = await run(d, ["LOKI_SPEC_CONFLICT: test/parse.test.js:6 asserts the opposite"]);

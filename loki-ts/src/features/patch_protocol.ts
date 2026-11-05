@@ -11,6 +11,8 @@ import { WALL_FILE, taskWantsLockChange } from "../e10ext/commit_filter.ts";
 import { steersRunner } from "./runner_config.ts";
 import { isTestFile } from "../util/test_file_text.ts";
 import { toolLessCall } from "../runner/sdk_invoker.ts";
+import { run } from "../util/shell.ts";
+import { withChildLedger } from "../util/child_ledger.ts";
 
 export const patchEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => ["1", "on", "true"].includes((env.LOKI_E10_PATCH ?? "").toLowerCase());
 
@@ -168,7 +170,7 @@ export interface PatchDeps {
 export async function runPatchProtocol(d: PatchDeps): Promise<PatchOutcome> {
   const originals: Originals = new Map(), log: string[] = [], messages: PatchMessage[] = [{ role: "user", content: d.brief }];
   const applied = new Set<string>(), refusedAll: string[] = [];
-  let usd: number | null = 0, calls = 0, lastCheck: string[] | undefined;
+  let usd: number | null = 0, calls = 0, lastCheck: string[] | undefined, greenSnap: Originals | null = null, greenApplied = new Set<string>(); // greenSnap: the green tree's text of each file, kept while the test-only repair runs
   const end = (status: PatchStatus): PatchOutcome => {
     const restored = status === "green" ? [] : restoreOriginals(d.rules.repoDir, originals);
     return { status, calls, applied: status === "green" ? [...applied] : [], refused: refusedAll, restored, log, usd, ...(lastCheck ? { check: lastCheck } : {}) };
@@ -182,20 +184,26 @@ export async function runPatchProtocol(d: PatchDeps): Promise<PatchOutcome> {
     messages.push({ role: "assistant", content: r.text });
     const p = parseReply(r.text);
     const repair = (why: string, body: string): void => { log.push(`call ${round}: ${why}`); messages.push({ role: "user", content: body }); };
+    const keepGreen = (why: string): PatchOutcome => { log.push(`call ${round}: ${why}; kept the green tree without a new test`); for (const [rel, body] of greenSnap!) { if (body === null) rmSync(join(d.rules.repoDir, rel), { force: true }); else writeFileSync(join(d.rules.repoDir, rel), body, "utf8"); if (!greenApplied.has(rel)) { applied.delete(rel); if (originals.get(rel) === body) originals.delete(rel); } } return end("green"); };
+    if (greenSnap && !p.blocks.length) return keepGreen("no test edit");
     if (!p.blocks.length) {
       if (p.conflict) { log.push(`call ${round}: spec conflict: ${p.conflict.slice(0, 200)}`); return end("conflict"); } // the agentic session owns conflict handling (correction, Wall referee)
       if (p.alreadyDone) { log.push(`call ${round}: already done`); return end("already_done"); } // the agentic session owns the already-done challenge
       if (p.needs.length) { repair(`NEED ${p.needs.map((n) => n.file).join(", ")}`, `Requested code (verbatim):\n${readRanges(d.rules, p.needs)}\n\nNow reply with every edit block, then LOKI_DONE.`); continue; }
       repair("no edit blocks", "Your reply had no edit blocks in the FILE/SEARCH/REPLACE form. Reply with every edit block now, then LOKI_DONE."); continue;
     }
+    if (greenSnap) for (const b of p.blocks) { const rel = normalize(b.file).replace(/^\.\//, ""); if (!greenSnap.has(rel)) greenSnap.set(rel, existsSync(join(d.rules.repoDir, rel)) && !rel.startsWith("..") ? readFileSync(join(d.rules.repoDir, rel), "utf8") : null); }
     const a = applyBlocks(d.rules, p.blocks, originals);
     refusedAll.push(...a.refused);
+    if (greenSnap && !a.ok) return keepGreen("test edit rejected");
     if (!a.ok) { repair(`rejected: ${[...a.refused, ...a.errors, ...a.noop].length} problem(s)`, `None of your edits were applied (all-or-nothing):\n${[...a.refused, ...a.errors, ...a.noop].join("\n")}\n\nReply with corrected edit blocks for all of the changes (leave out refused files), then LOKI_DONE.`); continue; }
     for (const f of a.applied) applied.add(f);
     const c = await d.check([...applied]);
     lastCheck = c.names;
     log.push(`call ${round}: applied ${a.applied.join(", ")}; check ${c.ok ? "green" : c.ran ? "red" : "did not run"}`);
-    if (c.ok) return end("green");
+    if (c.ok && (greenSnap || appliedTests([...applied]).length || round === 2)) return end("green");
+    if (c.ok) { greenSnap = new Map(); greenApplied = new Set(applied); repair("green without a regression test", `The check passed, but your edits add no regression test. Add one test case to the test file the dossier names that fails on the original code and passes with your fix. Reply with edit blocks for the test only, then LOKI_DONE.`); continue; } // the one repair call: a test, never a weaker tree
+    if (greenSnap) return keepGreen("the new test is red");
     if (!c.ran) return end("red"); // fail closed: a check that cannot run is never green, and a repair cannot make it run
     repair("red check", `The harness applied your edits and ran the check: it FAILED.\nFailure digest:\n${c.digest.slice(0, DIGEST_MAX_CHARS)}\nCurrent text of the regions you edited:\n${currentRegions(d.rules.repoDir, p.blocks)}\n\nReply with edit blocks against the current text (your earlier edits stay applied), then LOKI_DONE.`);
   }
@@ -214,7 +222,14 @@ export function flattenMessages(messages: PatchMessage[]): string {
 }
 export const PATCH_MAX_TOKENS = 8000;
 /** The production call: runner/sdk_invoker.ts toolLessCall (PR0), thinking off, priced into the run's child ledger under phase "implement-patch". */
-export function patchCallFor(model: string, lokiDir: string, timeoutMs = 180_000): PatchCall {
+export function patchCallFor(model: string, lokiDir: string, timeoutMs = 180_000, env: NodeJS.ProcessEnv = process.env): PatchCall {
+  if (env.LOKI_E10_INVOKER === "cli") return async ({ system, messages, signal }) => { // the CLI invoker (tests/min e2e stub, legacy installs): `claude -p` with no tools, priced by withChildLedger
+    try {
+      const r = await withChildLedger(run, lokiDir, "implement-patch", model)([env.LOKI_CLAUDE_CLI || "claude", "-p", flattenMessages(messages), "--output-format", "json", "--tools", "", "--model", model, "--system-prompt", system, "--strict-mcp-config", "--setting-sources", "project"], { timeoutMs, group: true, signal });
+      const j = JSON.parse(r.stdout) as { result?: unknown; is_error?: boolean; total_cost_usd?: number };
+      return { text: r.exitCode === 0 && !j.is_error && typeof j.result === "string" ? j.result : null, usd: typeof j.total_cost_usd === "number" ? j.total_cost_usd : null };
+    } catch { return { text: null, usd: null }; }
+  };
   return async ({ system, messages }) => {
     const r = await toolLessCall({ model, system, prompt: flattenMessages(messages), maxTokens: PATCH_MAX_TOKENS, thinking: "off", timeoutMs, ledger: { lokiDir, phase: "implement-patch" } });
     return { text: r.outcome.kind === "ok" ? r.outcome.value : null, usd: r.usd };
