@@ -5,6 +5,22 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.130.0 (2026-11-05)
+
+Loki spends far less on understanding your repository, trusts your own tests instead of writing its own, and removed commands now say what to use instead.
+
+### Changed
+- `loki-ts/dist` is built at publish time for npm, Docker and Homebrew and is no longer tracked in git, which removes the most common merge conflict for contributors. Installing from npm is unchanged. A git clone builds it on first run after `bun install`.
+- Intake answers the Project Model from manifests with zero model sessions when every package and a test command are declared; the fallback session runs at low effort with a smaller brief (brief tokens down 92.5 percent on the 20-task corpus). Set LOKI_E10_PM_MANIFESTS=0 to restore the session.
+- The Wall (Loki writing acceptance tests before implementing) is off by default; `LOKI_E10_WALL=1` turns it back on. In the benchmark with it off, more tasks were ready to merge (11 of 20 vs 9 of 20), cost per accepted task was lower and Loki claimed VERIFIED wrongly 0 times vs 1.
+- VERIFIED now needs the repository's own suite green, no weakened test, no regression, and a test that the harness itself runs failing on the base commit with an assertion and passing on the change, which names code that existed before the change. Otherwise the run is PARTIAL with the reason. Runners other than pytest and vitest default to PARTIAL for this proof.
+- scripts/local-ci.sh runs the hermetic tests LOCAL_CI_JOBS at a time (default 4) and still prints results in order, with exit 1 and the failing log on any failure.
+- run-safety splits into concurrent units with the same assertions.
+- CI uses 2 jobs on its 4 vCPU runner; a load-sensitive oracle task is retried once alone before failing.
+
+### Removed
+- 27 commands with no remaining caller (init, template, ship, import, issue, council and others, plus aliases rc, ctx, wt) exit 2 before any engine or provider check, naming the replacement. Commands that still have a live caller stay as hidden aliases.
+
 ## v11.129.0 (2026-11-05)
 
 Loki starts from one line, works across repositories and stacks, quotes cost before it spends, ships cleaner pull requests, and `loki --help` shows 11 commands instead of about 100.
