@@ -1,0 +1,516 @@
+{
+  "fixture": "../bench/proto/candidate-tournament/fixtures-go/argv",
+  "mode": "replay",
+  "pkg": "argv",
+  "wallS": 24.721,
+  "atoms": [
+    "S1:site",
+    "S2:site",
+    "C1:claim",
+    "S3:site",
+    "L1:location",
+    "C2:claim",
+    "C3:claim",
+    "P1:parity"
+  ],
+  "sites": [
+    "Split"
+  ],
+  "spec": [
+    {
+      "source": "pre-implement call",
+      "binding": [
+        "TestLokiSpec_S2_DashBranchAppendsTrimmed",
+        "TestLokiSpec_P1_TrimmedDashKeepsRaw"
+      ],
+      "advisory": [
+        "TestLokiSpec_S1_BreakDropsFlagsAfterDash",
+        "TestLokiSpec_S3_ArgsKeepsOperandsAfterDash",
+        "TestLokiSpec_C1_ArgsAfterDashNotDropped",
+        "TestLokiSpec_C2_RetainsDashAndOperands",
+        "TestLokiSpec_C3_FlagsAfterDashStillParsed"
+      ],
+      "guards": [],
+      "dropped": []
+    },
+    {
+      "source": "round-1 recorded reply",
+      "binding": [
+        "TestLokiSpec_C1_BareDashKeepsOperands",
+        "TestLokiSpec_C2_BareDashMatchesStdlibOperand",
+        "TestLokiSpec_P1_PaddedBareDashAppendsRawInput"
+      ],
+      "advisory": [
+        "TestLokiSpec_C3_FlagsAfterBareDashStillParsed",
+        "TestLokiSpec_S1_SplitContinuesPastBareDash",
+        "TestLokiSpec_S2_AppendAfterBareDashKeepsOperand",
+        "TestLokiSpec_S3_ArgsFieldHoldsOperandsAfterDash"
+      ],
+      "guards": [],
+      "dropped": []
+    }
+  ],
+  "diffProbe": {
+    "called": false,
+    "cases": 0,
+    "stable": 0,
+    "funcs": []
+  },
+  "probe": {
+    "repairedImports": [
+      "+testing"
+    ],
+    "builtOnBase": true,
+    "cases": 9,
+    "stable": 9,
+    "unstable": []
+  },
+  "trees": [
+    {
+      "id": "agent-wrong",
+      "applies": true,
+      "gate": false,
+      "gateRepo": true,
+      "oracle": false,
+      "diffLines": 0,
+      "specRed": [
+        "TestLokiSpec_S2_DashBranchAppendsTrimmed",
+        "TestLokiSpec_P1_TrimmedDashKeepsRaw"
+      ],
+      "probesPrinted": 9
+    },
+    {
+      "id": "agent-right",
+      "applies": true,
+      "gate": true,
+      "gateRepo": true,
+      "oracle": true,
+      "diffLines": 0,
+      "specRed": [],
+      "probesPrinted": 9
+    },
+    {
+      "id": "c1",
+      "applies": true,
+      "gate": true,
+      "gateRepo": true,
+      "oracle": true,
+      "diffLines": 10,
+      "specRed": [],
+      "probesPrinted": 9
+    },
+    {
+      "id": "c2",
+      "applies": true,
+      "gate": true,
+      "gateRepo": true,
+      "oracle": true,
+      "diffLines": 8,
+      "specRed": [],
+      "probesPrinted": 9
+    },
+    {
+      "id": "c3",
+      "applies": true,
+      "gate": true,
+      "gateRepo": true,
+      "oracle": true,
+      "diffLines": 8,
+      "specRed": [],
+      "probesPrinted": 9
+    }
+  ],
+  "disagreements": [
+    {
+      "probe": "p2",
+      "desc": "dash with surrounding spaces then one operand",
+      "options": [
+        {
+          "out": "{\"Flags\":null,\"Args\":[\"-\",\"foo\"]}",
+          "entrants": [
+            "agent-wrong"
+          ]
+        },
+        {
+          "out": "{\"Flags\":null,\"Args\":[\" - \",\"foo\"]}",
+          "entrants": [
+            "agent-right",
+            "c1",
+            "c2",
+            "c3"
+          ]
+        }
+      ]
+    },
+    {
+      "probe": "p3",
+      "desc": "dash with tabs and nothing after it",
+      "options": [
+        {
+          "out": "{\"Flags\":null,\"Args\":[\"-\"]}",
+          "entrants": [
+            "agent-wrong"
+          ]
+        },
+        {
+          "out": "{\"Flags\":null,\"Args\":[\"\\t-\\t\"]}",
+          "entrants": [
+            "agent-right",
+            "c1",
+            "c2",
+            "c3"
+          ]
+        }
+      ]
+    }
+  ],
+  "judge": {
+    "called": true,
+    "raw": {
+      "p2.1": "B",
+      "p3.1": "B",
+      "p2.2": "A",
+      "p3.2": "A"
+    },
+    "consistentPicks": {
+      "p2": "{\"Flags\":null,\"Args\":[\" - \",\"foo\"]}",
+      "p3": "{\"Flags\":null,\"Args\":[\"\\t-\\t\"]}"
+    },
+    "consistent": 2,
+    "agreeWithRight": 2,
+    "disagreements": 2
+  },
+  "outcomes": [
+    {
+      "spec": "pre-implement call",
+      "policy": "stated",
+      "wrongBlockedBySpec": true,
+      "execSpecAlone": {
+        "agentTree": "agent-right",
+        "oracle": true
+      },
+      "withTournament_m1": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "no behavioral disagreement"
+      },
+      "withTournament_m2": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "no behavioral disagreement"
+      },
+      "withTournament_anchored": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "no behavioral disagreement"
+      }
+    },
+    {
+      "spec": "pre-implement call",
+      "policy": "all",
+      "wrongBlockedBySpec": true,
+      "execSpecAlone": {
+        "agentTree": "agent-right",
+        "oracle": true
+      },
+      "withTournament_m1": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "no behavioral disagreement"
+      },
+      "withTournament_m2": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "no behavioral disagreement"
+      },
+      "withTournament_anchored": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "no behavioral disagreement"
+      }
+    },
+    {
+      "spec": "round-1 recorded reply",
+      "policy": "stated",
+      "wrongBlockedBySpec": true,
+      "execSpecAlone": {
+        "agentTree": "agent-right",
+        "oracle": true
+      },
+      "withTournament_m1": "n/a (candidates were briefed from the pre-implement spec)",
+      "withTournament_m2": "n/a",
+      "withTournament_anchored": "n/a"
+    },
+    {
+      "spec": "round-1 recorded reply",
+      "policy": "all",
+      "wrongBlockedBySpec": true,
+      "execSpecAlone": {
+        "agentTree": "agent-right",
+        "oracle": true
+      },
+      "withTournament_m1": "n/a (candidates were briefed from the pre-implement spec)",
+      "withTournament_m2": "n/a",
+      "withTournament_anchored": "n/a"
+    },
+    {
+      "spec": "missed (counterfactual)",
+      "policy": "repo tests only",
+      "agentTree": "agent-wrong",
+      "agentPassesRepoTests": true,
+      "agentOracle": false,
+      "withTournament_m1": {
+        "winner": "c2",
+        "displaced": true,
+        "oracle": true,
+        "reason": "c2 displaces the agent: 2 consistent verdict(s), 0 against, needed 1"
+      },
+      "withTournament_m2": {
+        "winner": "c2",
+        "displaced": true,
+        "oracle": true,
+        "reason": "c2 displaces the agent: 2 consistent verdict(s), 0 against, needed 2"
+      },
+      "withTournament_anchored": {
+        "winner": "c2",
+        "displaced": true,
+        "oracle": true,
+        "reason": "c2 displaces the agent: 2 consistent verdict(s), 0 against, needed 1 anchored or 2"
+      },
+      "roundOneRule": {
+        "winner": "c2",
+        "displaced": false,
+        "oracle": true,
+        "reason": "ranked on 2/2 consistent verdicts"
+      }
+    },
+    {
+      "spec": "missed (counterfactual)",
+      "policy": "repo tests only",
+      "agentTree": "agent-right",
+      "agentPassesRepoTests": true,
+      "agentOracle": true,
+      "withTournament_m1": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "no behavioral disagreement"
+      },
+      "withTournament_m2": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "no behavioral disagreement"
+      },
+      "withTournament_anchored": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "no behavioral disagreement"
+      },
+      "roundOneRule": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "ranked on 2/0 consistent verdicts"
+      }
+    }
+  ],
+  "wrongJudgeSimulation": {
+    "spec/agent-right/random": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-right/positional": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-right/adversarial": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-right/right": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-wrong/random": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-wrong/positional": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-wrong/adversarial": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-wrong/right": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-right/random": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-right/positional": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-right/adversarial": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-right/right": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-wrong/random": {
+      "round1": 0.746,
+      "m1": 0.3085,
+      "m2": 0.061,
+      "anchored": 0.191
+    },
+    "nospec/agent-wrong/positional": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-wrong/adversarial": {
+      "round1": 1,
+      "m1": 1,
+      "m2": 1,
+      "anchored": 1
+    },
+    "nospec/agent-wrong/right": {
+      "round1": 1,
+      "m1": 1,
+      "m2": 1,
+      "anchored": 1
+    },
+    "spec/agent-right+wrong-challenger/random": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-right+wrong-challenger/positional": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-right+wrong-challenger/adversarial": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-right+wrong-challenger/right": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-right+wrong-challenger/random": {
+      "round1": 0.243,
+      "m1": 0.32825,
+      "m2": 0.06725,
+      "anchored": 0.05825
+    },
+    "nospec/agent-right+wrong-challenger/positional": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-right+wrong-challenger/adversarial": {
+      "round1": 1,
+      "m1": 1,
+      "m2": 1,
+      "anchored": 1
+    },
+    "nospec/agent-right+wrong-challenger/right": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    }
+  },
+  "calls": [
+    {
+      "tag": "pre",
+      "outcome": "replayed: success; thinking_blocks=1; turns=1",
+      "usage": {
+        "inTok": 2,
+        "outTok": 5342,
+        "cacheRead": 0,
+        "cacheWrite": 2349,
+        "costUsd": 0.0034372000000000005
+      },
+      "visibleChars": 3605
+    },
+    {
+      "tag": "candidates",
+      "outcome": "replayed: success; thinking_blocks=1; turns=1",
+      "usage": {
+        "inTok": 2,
+        "outTok": 2820,
+        "cacheRead": 0,
+        "cacheWrite": 4486,
+        "costUsd": 0.0028178000000000005
+      },
+      "visibleChars": 892
+    },
+    {
+      "tag": "judge",
+      "outcome": "success; thinking_blocks=1; turns=1; models=claude-haiku-5-5:in=2,out=568,thinking=430,usd=0.0006296000000000001",
+      "usage": {
+        "inTok": 2,
+        "outTok": 568,
+        "cacheRead": 0,
+        "cacheWrite": 1727,
+        "costUsd": 0.0006296000000000001
+      },
+      "visibleChars": 309
+    }
+  ],
+  "total": {
+    "inTok": 6,
+    "outTok": 8730,
+    "cacheRead": 0,
+    "cacheWrite": 8562,
+    "costUsd": 0.006884600000000001
+  }
+}

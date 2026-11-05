@@ -10,13 +10,13 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, write
 import { join } from "node:path";
 import { buildGeneratorBrief, EMITTERS, extractSpecAtoms, implementBlock, pairAtoms, parityAtoms, parseGenerated, planFor, redFilter, resolveSites, selectCases } from "../../../loki-ts/src/features/exec_spec.ts";
 import {
-  applyEdits, candidatePrompt, disagreements, GO_PROBE_RULES, judgePrompt, judgeViews, parseCandidates, parseGoProbeCases, parseProbeOutput,
-  parseVerdicts, PROBE_MARK, resolveVerdicts, runGoProbe, select, stableIds, SYSTEM_PROMPTS, toollessCall,
+  applyEdits, candidatePrompt, differingGoFuncs, diffProbePrompt, disagreements, GO_PROBE_RULES, judgePrompt, judgeViews, parseCandidates, parseGoProbeCases, parseProbeOutput,
+  parseVerdicts, PROBE_MARK, resolveVerdicts, runGoProbe, select, stableIds, SYSTEM_PROMPTS, toollessCall, agentSdkToollessCall,
   type Context, type Edit, type Entrant, type LlmCall, type ProbeRun, type SpecStates, type Usage,
 } from "../../../loki-ts/src/features/tournament.ts";
 import { plainTestEnv, spawnGroupSync, stripAnsi } from "../../../loki-ts/src/util/check_result.ts";
 
-const [fixture, work, mode, canned] = process.argv.slice(2) as [string, string, "stub" | "haiku" | "replay", string | undefined];
+const [fixture, work, mode, canned] = process.argv.slice(2) as [string, string, "stub" | "haiku" | "replay" | "resume", string | undefined]; // resume: replay the recorded calls, make real calls only for the rest
 const repo = join(fixture, "repo"), e = EMITTERS.go;
 const issue = readFileSync(join(fixture, "issue.md"), "utf8");
 const files: Record<string, string> = {}, tests: Record<string, string> = {};
@@ -50,12 +50,17 @@ const transcripts: { tag: string; system: string; user: string; text: string; us
 const BUDGET_FILE = process.env.LOKI_PROTO_CALL_BUDGET_FILE ?? "", BUDGET_MAX = Number(process.env.LOKI_PROTO_CALL_BUDGET_MAX ?? "0");
 let llm: LlmCall;
 let stubTruth: (probeId: string) => string | undefined = () => undefined; // stub judge: the right tree's output for a probe (set once trees exist)
-if (mode === "haiku") {
-  const real = toollessCall({ lokiDir: join(work, ".loki"), maxTokens: 8192 });
+if (mode === "haiku" || mode === "resume") {
+  // LOKI_PROTO_CALL_PATH: "agent-sdk" (default here: this machine's subscription token gets HTTP 429 on direct messages.create) or "messages"
+  const sdkCwd = join(work, "sdk-cwd"); mkdirSync(sdkCwd, { recursive: true });
+  const real = process.env.LOKI_PROTO_CALL_PATH === "messages" ? toollessCall({ lokiDir: join(work, ".loki"), maxTokens: 8192 }) : agentSdkToollessCall({ cwd: sdkCwd });
+  const rec = mode === "resume" ? (JSON.parse(readFileSync(canned!, "utf8")) as { tag: string; text: string; usage: Usage; outcome?: string }[]) : [];
   llm = async (system, user, tag) => {
+    const old = rec.find((x) => x.tag === tag);
+    if (old) { transcripts.push({ tag: tag ?? "", system, user, text: old.text, usage: old.usage, outcome: `replayed: ${old.outcome ?? ""}` }); return { text: old.text, usage: old.usage }; }
     if (BUDGET_FILE) { // a hard cap on real calls across every run of the experiment
       const used = existsSync(BUDGET_FILE) ? Number(readFileSync(BUDGET_FILE, "utf8").trim() || "0") : 0;
-      if (used >= BUDGET_MAX) throw new Error(`real-call budget spent (${used}/${BUDGET_MAX})`);
+      if (used >= BUDGET_MAX) { transcripts.push({ tag: tag ?? "", system, user, text: "", usage: zero(), outcome: `not sent: real-call budget spent (${used}/${BUDGET_MAX})` }); return { text: "", usage: zero(), outcome: "budget" }; }
       writeFileSync(BUDGET_FILE, String(used + 1));
     }
     writeFileSync(join(work, `prompt-${tag}.txt`), `SYSTEM:\n${system}\n\nUSER:\n${user}`);
@@ -139,20 +144,45 @@ const sealedNote = arm.sealed ? `\n\nSEALED SPEC FILE ${plan.targetRel} (read-on
 const ctx: Context = { issue, files, tests, lang: "Go", brief: `${arm.brief ?? ""}${sealedNote}`.trim() || undefined };
 const cand = await llm(SYSTEM_PROMPTS.patch, candidatePrompt(ctx), "candidates");
 const specs = parseCandidates(cand.text);
-interface Row { id: string; dir: string | null; applies: boolean; gate: boolean; spec: SpecStates | null; run: ProbeRun; diffLines: number; oracle: boolean }
+interface Row { id: string; dir: string | null; applies: boolean; gate: boolean; gateRepo: boolean; spec: SpecStates | null; run: ProbeRun; diffLines: number; oracle: boolean }
 const rows: Row[] = [];
 const enter = (id: string, dir: string | null, diffLines: number): void => {
-  if (!dir) { rows.push({ id, dir, applies: false, gate: false, spec: null, run: {}, diffLines, oracle: false }); return; }
-  rows.push({ id, dir, applies: true, gate: gate(arm, dir), spec: specStates(arm, dir), run: keep(probeOf(dir)), diffLines, oracle: oracle(dir) });
+  if (!dir) { rows.push({ id, dir, applies: false, gate: false, gateRepo: false, spec: null, run: {}, diffLines, oracle: false }); return; }
+  rows.push({ id, dir, applies: true, gate: gate(arm, dir), gateRepo: goTest(dir).pass, spec: specStates(arm, dir), run: keep(probeOf(dir)), diffLines, oracle: oracle(dir) });
 };
 enter("agent-wrong", W, 0); enter("agent-right", Rt, 0);
 for (const s of specs) enter(s.id, tree(s.id, s.edits), s.edits.reduce((n, x) => n + x.search.split("\n").length + x.replace.split("\n").length, 0));
-const ent = (r: Row, id = r.id): Entrant => ({ id, lens: id, dir: r.dir ?? "", checksPass: r.gate, run: r.run, diffLines: r.diffLines, spec: r.spec });
+// world "spec": the gate includes the sealed binding spec and the spec veto applies; world "nospec": the counterfactual where the
+// executable spec missed (gate = the repo's own tests only, no spec states), which is where the tournament must earn its keep.
+type World = "spec" | "nospec";
+const ent = (r: Row, id = r.id, world: World = "spec"): Entrant => ({ id, lens: id, dir: r.dir ?? "", checksPass: world === "spec" ? r.gate : r.gateRepo, run: r.run, diffLines: r.diffLines, spec: world === "spec" ? r.spec : null });
 const byId = (id: string): Row => rows.find((r) => r.id === id)!;
 const candRows = rows.filter((r) => r.id.startsWith("c"));
 
+// ---------- 3b. diff-directed probes: trees differ in code but no probe separates them ----------
+const treeFiles = (dir: string): Record<string, string> => Object.fromEntries(Object.keys(files).map((f) => [f, readFileSync(join(dir, f), "utf8")]));
+const sameRun = (a: ProbeRun, b: ProbeRun): boolean => Object.keys(a).every((k) => b[k] === undefined || a[k] === b[k]);
+const wRow0 = byId("agent-wrong"), liveCands = candRows.filter((r) => r.gateRepo && r.dir);
+const unseparated = liveCands.filter((r) => sameRun(wRow0.run, r.run) && differingGoFuncs([treeFiles(W), treeFiles(r.dir!)]).length > 0);
+let diffProbe: { called: boolean; refused?: string; repairedImports?: string[]; cases: number; stable: number; funcs: string[] } = { called: false, cases: 0, stable: 0, funcs: [] };
+if (unseparated.length > 0 && process.env.LOKI_PROTO_DIFF_PROBES !== "0") {
+  const diffs = differingGoFuncs([treeFiles(W), ...unseparated.map((r) => treeFiles(r.dir!))]); // the agent's version first, unlabeled as such
+  const dp = await llm(SYSTEM_PROMPTS.diffProbe, diffProbePrompt(ctx, diffs, pkg), "diffprobe");
+  const dc = parseGoProbeCases(dp.text, pkg);
+  diffProbe = { called: true, cases: 0, stable: 0, funcs: diffs.map((d) => `${d.file}:${d.name} x${d.versions.length}`), ...("refused" in dc ? { refused: dc.refused } : { repairedImports: dc.repairedImports }) };
+  if ("file" in dc) {
+    const tag = (r: ProbeRun): ProbeRun => Object.fromEntries(Object.entries(r).map(([k, v]) => [`d${k}`, v]));
+    const run0 = runGoProbe(base0, "", pkg, dc.file), da = run0.built ? parseProbeOutput(run0.stdout, PROBE_MARK) : { run: {}, probes: [] };
+    const db = tag(parseProbeOutput(runGoProbe(base1, "", pkg, dc.file).stdout, PROBE_MARK).run), dra = tag(da.run);
+    const dstable = stableIds(dra, db);
+    diffProbe.cases = Object.keys(dra).length; diffProbe.stable = dstable.size;
+    for (const p of da.probes) if (dstable.has(`d${p.id}`)) { probes.push({ id: `d${p.id}`, desc: p.desc }); pa.run[`d${p.id}`] = dra[`d${p.id}`]!; stable.add(`d${p.id}`); }
+    for (const r of rows) if (r.dir) { const o = tag(parseProbeOutput(runGoProbe(r.dir, "", pkg, dc.file).stdout, PROBE_MARK).run); for (const [k, v] of Object.entries(o)) if (dstable.has(k)) r.run[k] = v; }
+  }
+}
+
 // ---------- 4. one judge call over the union of disagreements ----------
-const union = disagreements(rows.map((r) => ent(r)), probes);
+const union = disagreements(rows.map((r) => ent(r, r.id, "nospec")), probes); // the weaker gate: a superset of both worlds' disagreements
 const rightRun = byId("agent-right").run;
 stubTruth = (probeId) => rightRun[probeId];
 let raw = new Map<string, string>(), picks = new Map<string, string>(), judgeCalled = false;
@@ -162,10 +192,10 @@ if (union.length > 0) { judgeCalled = true; const j = await llm(SYSTEM_PROMPTS.j
 const verdictScore = { consistent: picks.size, agreeWithRight: [...picks].filter(([p, o]) => rightRun[p] === o).length, disagreements: union.length };
 
 // ---------- 5. outcomes ----------
-const tourney = (agentRow: Row, margin: number, incumbent = true) => {
-  const pool = [ent(agentRow, "agent"), ...candRows.map((r) => ent(r))];
+const tourney = (agentRow: Row, margin: number, world: World = "spec", incumbent = true, anchored = false) => {
+  const pool = [ent(agentRow, "agent", world), ...candRows.map((r) => ent(r, r.id, world))];
   const d = disagreements(pool, probes);
-  const p = select(pool, d, picks, incumbent ? { agentId: "agent", margin } : { margin });
+  const p = select(pool, d, picks, incumbent ? { agentId: "agent", margin, ...(anchored ? { anchor: keep(pa.run) } : {}) } : { margin });
   const win = p.winner === "agent" ? agentRow : byId(p.winner);
   return { winner: p.winner === "agent" ? agentRow.id : p.winner, displaced: p.displaced, oracle: win.oracle, reason: p.reason };
 };
@@ -177,13 +207,17 @@ for (const [name, a] of [["pre-implement call", arm], ...(armOld ? [["round-1 re
   for (const policy of ["stated", "all"] as const) {
     const isBlocked = blocked(a, policy, wRow);
     const shipped = isBlocked ? byId("agent-right") : byId("agent-wrong"); // a blocked wrong tree is assumed repaired (optimistic for exec-spec alone)
-    outcomes.push({ spec: name, policy, wrongBlockedBySpec: isBlocked, execSpecAlone: { agentTree: shipped.id, oracle: shipped.oracle }, withTournament_m1: a === arm ? tourney(shipped, 1) : "n/a (candidates were briefed from the pre-implement spec)", withTournament_m2: a === arm ? tourney(shipped, 2) : "n/a" });
+    outcomes.push({ spec: name, policy, wrongBlockedBySpec: isBlocked, execSpecAlone: { agentTree: shipped.id, oracle: shipped.oracle }, withTournament_m1: a === arm ? tourney(shipped, 1) : "n/a (candidates were briefed from the pre-implement spec)", withTournament_m2: a === arm ? tourney(shipped, 2) : "n/a", withTournament_anchored: a === arm ? tourney(shipped, 1, "spec", true, true) : "n/a" });
   }
+}
+for (const agentId of ["agent-wrong", "agent-right"]) { // counterfactual: the spec missed, the agent shipped this tree
+  const r = byId(agentId);
+  outcomes.push({ spec: "missed (counterfactual)", policy: "repo tests only", agentTree: agentId, agentPassesRepoTests: r.gateRepo, agentOracle: r.oracle, withTournament_m1: tourney(r, 1, "nospec"), withTournament_m2: tourney(r, 2, "nospec"), withTournament_anchored: tourney(r, 1, "nospec", true, true), roundOneRule: tourney(r, 1, "nospec", false) });
 }
 
 // ---------- 6. wrong-judge simulation on the real disagreement structure (zero cost) ----------
-function simulate(kind: "random" | "positional" | "adversarial" | "right", agentRow: Row, rule: "round1" | "m1" | "m2", trials: number): number {
-  const pool = [ent(agentRow, "agent"), ...candRows.map((r) => ent(r))], d = disagreements(pool, probes);
+function simulate(kind: "random" | "positional" | "adversarial" | "right", agentRow: Row, rule: "round1" | "m1" | "m2" | "anchored", trials: number, world: World, extra: Row[] = []): number {
+  const pool = [ent(agentRow, "agent", world), ...[...candRows, ...extra].map((r) => ent(r, r.id, world))], d = disagreements(pool, probes);
   if (d.length === 0) return 0;
   let displaced = 0;
   for (let t = 0; t < trials; t++) {
@@ -198,15 +232,19 @@ function simulate(kind: "random" | "positional" | "adversarial" | "right", agent
       const single = new Map<string, string>();
       for (const v of vs.filter((x) => x.viewId.endsWith(".1"))) { const l = ans.get(v.viewId); const o = v.options.find((x) => x.label === l)?.out; if (o !== undefined) single.set(v.probeId, o); }
       p = select(pool, d, single);
-    } else p = select(pool, d, resolveVerdicts(vs, ans), { agentId: "agent", margin: rule === "m1" ? 1 : 2 });
+    } else p = select(pool, d, resolveVerdicts(vs, ans), { agentId: "agent", margin: rule === "m2" ? 2 : 1, ...(rule === "anchored" ? { anchor: keep(pa.run) } : {}) });
     if (p.winner !== "agent") displaced++;
     if (kind !== "random") return displaced; // deterministic judges: one trial
   }
   return displaced / trials;
 }
 const sim: Record<string, Record<string, number>> = {};
-for (const agentId of ["agent-right", "agent-wrong"]) for (const kind of ["random", "positional", "adversarial", "right"] as const) for (const rule of ["round1", "m1", "m2"] as const) {
-  (sim[`${agentId}/${kind}`] ??= {})[rule] = simulate(kind, byId(agentId), rule, 4000);
+for (const world of ["spec", "nospec"] as const) for (const agentId of ["agent-right", "agent-wrong"]) for (const kind of ["random", "positional", "adversarial", "right"] as const) for (const rule of ["round1", "m1", "m2", "anchored"] as const) {
+  (sim[`${world}/${agentId}/${kind}`] ??= {})[rule] = simulate(kind, byId(agentId), rule, 4000, world);
+}
+// harm: the right tree is the agent and the real wrong tree is entered as one more check-passing challenger
+for (const world of ["spec", "nospec"] as const) for (const kind of ["random", "positional", "adversarial", "right"] as const) for (const rule of ["round1", "m1", "m2", "anchored"] as const) {
+  (sim[`${world}/agent-right+wrong-challenger/${kind}`] ??= {})[rule] = simulate(kind, byId("agent-right"), rule, 4000, world, [byId("agent-wrong")]);
 }
 
 const total = transcripts.reduce((a, t) => ({ inTok: a.inTok + t.usage.inTok, outTok: a.outTok + t.usage.outTok, cacheRead: a.cacheRead + t.usage.cacheRead, cacheWrite: a.cacheWrite + t.usage.cacheWrite, costUsd: a.costUsd + t.usage.costUsd }), zero());
@@ -214,8 +252,9 @@ const report = {
   fixture, mode, pkg, wallS: (Date.now() - t0) / 1000,
   atoms: atoms.map((a) => `${a.id}:${a.kind}`), sites: sites.map((s) => s.symbol),
   spec: [arm, ...(armOld ? [armOld] : [])].map((a) => ({ source: a.source, refused: a.refused, binding: a.binding, advisory: a.advisory, guards: a.guards, dropped: a.dropped })),
-  probe: { refused: "refused" in probeCases ? probeCases.refused : undefined, builtOnBase: probeBuild?.built ?? false, cases: Object.keys(pa.run).length, stable: stable.size, unstable: Object.keys(pa.run).filter((k) => !stable.has(k)), buildError: probeBuild && !probeBuild.built ? probeBuild.error?.slice(-600) : undefined },
-  trees: rows.map((r) => ({ id: r.id, applies: r.applies, gate: r.gate, oracle: r.oracle, diffLines: r.diffLines, specRed: r.spec ? Object.entries(r.spec).filter(([, s]) => s !== "green").map(([n]) => n) : null, probesPrinted: Object.keys(r.run).length })),
+  diffProbe,
+  probe: { refused: "refused" in probeCases ? probeCases.refused : undefined, repairedImports: "file" in probeCases ? probeCases.repairedImports : [], builtOnBase: probeBuild?.built ?? false, cases: Object.keys(pa.run).length, stable: stable.size, unstable: Object.keys(pa.run).filter((k) => !stable.has(k)), buildError: probeBuild && !probeBuild.built ? probeBuild.error?.slice(-600) : undefined },
+  trees: rows.map((r) => ({ id: r.id, applies: r.applies, gate: r.gate, gateRepo: r.gateRepo, oracle: r.oracle, diffLines: r.diffLines, specRed: r.spec ? Object.entries(r.spec).filter(([, s]) => s !== "green").map(([n]) => n) : null, probesPrinted: Object.keys(r.run).length })),
   disagreements: union.map((d) => ({ probe: d.probeId, desc: d.desc, options: d.options.map((o) => ({ out: o.out, entrants: o.entrants })) })),
   judge: { called: judgeCalled, raw: Object.fromEntries(raw), consistentPicks: Object.fromEntries(picks), ...verdictScore },
   outcomes, wrongJudgeSimulation: sim,

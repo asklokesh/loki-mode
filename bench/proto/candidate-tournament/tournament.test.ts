@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   applyEdits, disagreements, judgeViews, parseCandidates, parseGoProbeCases, parseProbeOutput, parseVerdicts, PROBE_MARK,
-  resolveVerdicts, runGoProbe, runTournament, select, stableIds, type Entrant, type Io, type LlmCall, type SpecStates,
+  differingGoFuncs, diffProbePrompt, repairGoImports, resolveVerdicts, runGoProbe, runTournament, select, stableIds, type Entrant, type Io, type LlmCall, type SpecStates,
 } from "../../../loki-ts/src/features/tournament.ts";
 
 const e = (id: string, run: Record<string, string>, checksPass = true, diffLines = 4, spec?: SpecStates): Entrant => ({ id, lens: id, dir: "/x", checksPass, run, diffLines, ...(spec ? { spec } : {}) });
@@ -112,6 +112,23 @@ test("wrong judge 5, wrong once: margin 2 keeps the agent; margin 1 is the docum
   expect(select(ents, d, picks, { agentId: "agent", margin: 1 }).winner).toBe("c1"); // one consistent wrong verdict is enough at margin 1
 });
 
+test("anchored margin: one consistent verdict displaces only an agent that left the probed input at its pre-fix output", () => {
+  const base = { p1: "unhandled", p2: "x" };
+  // true positive: the agent kept the pre-fix output on p1 (missed site); one consistent verdict is enough
+  const tp = [e("agent", { p1: "unhandled", p2: "x" }, true, 0), e("c1", { p1: "handled", p2: "x" }, true, 4)];
+  const t = judgeWith(tp, ["p1", "p2"], (o) => labelOf(o, "handled"));
+  expect(select(tp, t.d, t.picks, { agentId: "agent", anchor: base })).toMatchObject({ winner: "c1", displaced: true });
+  // harm: the agent fixed p1 (its output is not the pre-fix one); one consistent WRONG verdict for the unfixed tree is not enough
+  const harm = [e("agent", { p1: "handled", p2: "x" }, true, 0), e("w", { p1: "unhandled", p2: "x" }, true, 4)];
+  const h = judgeWith(harm, ["p1", "p2"], (o) => labelOf(o, "unhandled"));
+  expect(select(harm, h.d, h.picks, { agentId: "agent", anchor: base }).winner).toBe("agent");
+  expect(select(harm, h.d, h.picks, { agentId: "agent" }).winner).toBe("w"); // plain margin 1 has no such guard
+  // the documented limit: two consistent wrong verdicts on unanchored probes still displace
+  const two = [e("agent", { p1: "handled", p2: "y" }, true, 0), e("w", { p1: "unhandled", p2: "x" }, true, 4)];
+  const t2 = judgeWith(two, ["p1", "p2"], (o) => labelOf(o, o.find((z) => z.out === "unhandled" || z.out === "x")!.out));
+  expect(select(two, t2.d, t2.picks, { agentId: "agent", anchor: base }).winner).toBe("w");
+});
+
 test("right judge: a consistent margin with no loss and no spec regression does displace a wrong agent", () => {
   const ents = [e("agent", { p1: "trimmed", p2: "trimmed2", p3: "s" }, true, 0, { S1: "green", A1: "red" }), e("c1", { p1: "raw", p2: "raw2", p3: "s" }, true, 3, { S1: "green", A1: "green" }), e("c2", { p1: "trimmed", p2: "trimmed2", p3: "s" }, true, 2, { S1: "green", A1: "red" })];
   const { d, picks } = judgeWith(ents, ["p1", "p2", "p3"], (o) => labelOf(o, o.find((x) => x.out.startsWith("raw"))!.out));
@@ -153,6 +170,33 @@ test("parseGoProbeCases refuses what cannot serve as a probe", () => {
   expect(parseGoProbeCases("```go\npackage argv\nfunc TestOther(t *testing.T) {}\n```", "argv")).toEqual({ refused: "probe_no_block" });
 });
 
+test("repairGoImports adds a used std import, drops an unused one, keeps the rest (the first real probe reply lacked testing)", () => {
+  const src = 'package argv\n\nimport (\n\t"fmt"\n\tx "example.com/x"\n)\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe("p1", "a.b", func() any { return []any{strings.TrimSpace(" a "), x.V} })\n}\n';
+  const r = repairGoImports(src);
+  expect([...r.changes].sort()).toEqual(["+strings", "+testing", "-fmt"]);
+  expect(r.file).toContain('\t"strings"');
+  expect(r.file).toContain('x "example.com/x"');
+  expect(r.file).not.toContain('"fmt"');
+  expect(r.file).toContain("func TestLokiProbe(t *testing.T) {");
+  expect(repairGoImports('package p\n\nimport "testing"\n\nfunc TestX(t *testing.T) {}\n').changes).toEqual([]);
+  expect(repairGoImports('package p\n\nfunc TestX(t *testing.T) { _ = "fmt.Println" }\n').changes).toEqual(["+testing"]); // a string is not a use
+  const g = parseGoProbeCases("```go\npackage argv\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"d\", func() any { return 1 })\n}\n```", "argv");
+  expect(g).toMatchObject({ repairedImports: ["+testing"] });
+});
+
+test("differingGoFuncs finds the functions two trees disagree on; diffProbePrompt shows them unlabeled", () => {
+  const base = "package p\n\nfunc A() int {\n\treturn 1\n}\n\nfunc (e *T) Error() string  { return e.msg }\n\nfunc B(x int) int {\n\treturn x\n}\n";
+  const other = base.replace("\treturn x\n", "\treturn x + 1\n");
+  const d = differingGoFuncs([{ "p.go": base, "p_test.go": "x" }, { "p.go": other, "p_test.go": "y" }]);
+  expect(d.map((x) => [x.file, x.name, x.versions.length])).toEqual([["p.go", "B", 2]]);
+  expect(differingGoFuncs([{ "p.go": base }, { "p.go": base }])).toEqual([]);
+  const pr = diffProbePrompt({ issue: "ISSUE TEXT", files: {}, tests: { "p_test.go": "T" }, lang: "Go" }, d, "p");
+  expect(pr).toContain("VERSION 1 of B (p.go):");
+  expect(pr).toContain("VERSION 2 of B (p.go):");
+  expect(pr).toContain("Do not decide which version is right");
+  expect(pr).not.toContain("agent");
+});
+
 // Real go test: a panic is recorded, not fatal; pointer addresses and the tree path are scrubbed, so two copies of the same
 // tree in two directories print identical lines. Skips cleanly without a Go toolchain.
 const goOnPath = Bun.which("go") !== null;
@@ -162,9 +206,9 @@ test.skipIf(!goOnPath)("real go test: the probe runner survives panics and print
     const src = join(root, "src");
     mkdirSync(src);
     writeFileSync(join(src, "go.mod"), "module example.com/p\n\ngo 1.22\n");
-    writeFileSync(join(src, "p.go"), 'package p\n\nimport (\n\t"errors"\n\t"os"\n\t"path/filepath"\n)\n\ntype T struct{ n *int }\n\nfunc Div(a, b int) int { return a / b }\nfunc Ptr() *T { x := 1; return &T{n: &x} }\nfunc Where() string { d, _ := os.Getwd(); return filepath.Join(d, "x") }\nfunc Fail() error { return errors.New("boom") }\n');
+    writeFileSync(join(src, "p.go"), 'package p\n\nimport (\n\t"errors"\n\t"os"\n\t"path/filepath"\n)\n\ntype T struct{ n *int }\n\nfunc Div(a, b int) int { return a / b }\nfunc Ptr() *T { x := 1; return &T{n: &x} }\nfunc Where() string { d, _ := os.Getwd(); return filepath.Join(d, "x") }\nfunc Fail() error { return errors.New("boom") }\nfunc Prog() string { return os.Args[0] + " says hi" }\n');
     writeFileSync(join(src, "p_test.go"), 'package p\n\nimport "testing"\n\nfunc TestDiv(t *testing.T) { if Div(4, 2) != 2 { t.Fatal() } }\n');
-    const cases = 'package p\n\nimport "testing"\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe("p1", "4/2", func() any { return Div(4, 2) })\n\tlokiProbe("p2", "divide by zero", func() any { return Div(1, 0) })\n\tlokiProbe("p3", "pointer struct", func() any { return Ptr() })\n\tlokiProbe("p4", "tree path", func() any { return Where() })\n\tlokiProbe("p5", "error and value", func() any { return []any{Fail(), 7} })\n}\n';
+    const cases = 'package p\n\nimport "testing"\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe("p1", "4/2", func() any { return Div(4, 2) })\n\tlokiProbe("p2", "divide by zero", func() any { return Div(1, 0) })\n\tlokiProbe("p3", "pointer struct", func() any { return Ptr() })\n\tlokiProbe("p4", "tree path", func() any { return Where() })\n\tlokiProbe("p5", "error and value", func() any { return []any{Fail(), 7} })\n\tlokiProbe("p6", "test binary path", func() any { return Prog() })\n}\n';
     const runs = ["a", "b"].map((k) => { const d = join(root, k, "tree"); mkdirSync(join(root, k)); cpSync(src, d, { recursive: true }); return runGoProbe(d, "", "p", cases, 60_000); });
     for (const r of runs) expect(r.built).toBe(true);
     const [a, b] = runs.map((r) => parseProbeOutput(r.stdout, PROBE_MARK).run);
@@ -173,8 +217,15 @@ test.skipIf(!goOnPath)("real go test: the probe runner survives panics and print
     expect(a!.p3).toContain("0x?");
     expect(a!.p4).toBe('"<ROOT>/x"');
     expect(a!.p5).toBe('[error("boom"), 7]');
-    expect([...stableIds(a!, b!)].sort()).toEqual(["p1", "p2", "p3", "p4", "p5"]);
+    expect(a!.p6).toBe('"<BIN> says hi"');
+    expect([...stableIds(a!, b!)].sort()).toEqual(["p1", "p2", "p3", "p4", "p5", "p6"]);
     const broken = runGoProbe(join(root, "a", "tree"), "", "p", cases.replace("Div(4, 2) })", "Nope(4, 2) })"), 60_000);
     expect(broken.built).toBe(false);
+    // a module that declares go 1.13 rejects the predeclared any; the runner rewrites it (but not inside strings) and still builds
+    const old = join(root, "old", "tree"); mkdirSync(join(root, "old")); cpSync(src, old, { recursive: true });
+    writeFileSync(join(old, "go.mod"), "module example.com/p\n\ngo 1.13\n");
+    const r13 = runGoProbe(old, "", "p", cases.replace('"4/2"', '"any 4/2"'), 60_000);
+    expect(r13.built).toBe(true);
+    expect(parseProbeOutput(r13.stdout, PROBE_MARK).probes[0]!.desc).toBe("any 4/2");
   } finally { rmSync(root, { recursive: true, force: true }); }
 }, 120_000);

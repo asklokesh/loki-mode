@@ -1,0 +1,512 @@
+{
+  "fixture": "../bench/proto/candidate-tournament/fixtures-go/statuserr",
+  "mode": "replay",
+  "pkg": "statuserr",
+  "wallS": 44.921,
+  "atoms": [
+    "E1:example",
+    "S1:site",
+    "S2:site",
+    "S3:site",
+    "S4:site",
+    "S5:site",
+    "S6:site",
+    "C1:claim",
+    "S7:site",
+    "C2:claim",
+    "S8:site",
+    "C3:claim",
+    "X1:pair",
+    "X2:pair"
+  ],
+  "sites": [
+    "Report",
+    "StatusCoder",
+    "Batch",
+    "Exiter",
+    "ErrWriter",
+    "Status",
+    "Error",
+    "reportBatch",
+    "Errors"
+  ],
+  "spec": [
+    {
+      "source": "pre-implement call",
+      "binding": [
+        "TestLokiSpec_S5_Exiter_CalledOnceWith9"
+      ],
+      "advisory": [
+        "TestLokiSpec_E1_WrappedStatus",
+        "TestLokiSpec_S1_Report_NestedWrap",
+        "TestLokiSpec_S2_StatusCoder_CustomWrap",
+        "TestLokiSpec_S3_Batch_WrappedStatus",
+        "TestLokiSpec_S6_ErrWriter_WrappedMessage",
+        "TestLokiSpec_S7_Status_WrappedByErrorf"
+      ],
+      "guards": [
+        "TestLokiSpec_X1_StatusCoderWrappingStatusCoder",
+        "TestLokiSpec_X2_BatchAndStatusCoder"
+      ],
+      "dropped": []
+    },
+    {
+      "source": "round-1 recorded reply",
+      "binding": [],
+      "advisory": [
+        "TestLokiSpec_E1_WrappedStatusReported",
+        "TestLokiSpec_S1_ReportNestedWrappedStatus",
+        "TestLokiSpec_S3_ReportWrappedBatch",
+        "TestLokiSpec_C2_BatchWrappedLastStatus",
+        "TestLokiSpec_S6_WrappedStatusZeroCode"
+      ],
+      "guards": [],
+      "dropped": []
+    }
+  ],
+  "diffProbe": {
+    "called": true,
+    "cases": 9,
+    "stable": 9,
+    "funcs": [
+      "handle.go:Report x4",
+      "handle.go:reportBatch x2"
+    ],
+    "repairedImports": []
+  },
+  "probe": {
+    "repairedImports": [],
+    "builtOnBase": true,
+    "cases": 20,
+    "stable": 20,
+    "unstable": []
+  },
+  "trees": [
+    {
+      "id": "agent-wrong",
+      "applies": true,
+      "gate": true,
+      "gateRepo": true,
+      "oracle": false,
+      "diffLines": 0,
+      "specRed": [],
+      "probesPrinted": 20
+    },
+    {
+      "id": "agent-right",
+      "applies": true,
+      "gate": true,
+      "gateRepo": true,
+      "oracle": true,
+      "diffLines": 0,
+      "specRed": [],
+      "probesPrinted": 20
+    },
+    {
+      "id": "c1",
+      "applies": true,
+      "gate": true,
+      "gateRepo": true,
+      "oracle": true,
+      "diffLines": 22,
+      "specRed": [],
+      "probesPrinted": 20
+    },
+    {
+      "id": "c2",
+      "applies": true,
+      "gate": true,
+      "gateRepo": true,
+      "oracle": true,
+      "diffLines": 41,
+      "specRed": [],
+      "probesPrinted": 20
+    },
+    {
+      "id": "c3",
+      "applies": true,
+      "gate": true,
+      "gateRepo": true,
+      "oracle": true,
+      "diffLines": 62,
+      "specRed": [],
+      "probesPrinted": 20
+    }
+  ],
+  "disagreements": [
+    {
+      "probe": "dp8",
+      "desc": "batch wrapped with %w around a batch of plain error a and status b code 6",
+      "options": [
+        {
+          "out": "[\"\", -1]",
+          "entrants": [
+            "agent-wrong"
+          ]
+        },
+        {
+          "out": "[\"a\\nb\\n\", 6]",
+          "entrants": [
+            "agent-right",
+            "c1",
+            "c2",
+            "c3"
+          ]
+        }
+      ]
+    }
+  ],
+  "judge": {
+    "called": true,
+    "raw": {},
+    "consistentPicks": {},
+    "consistent": 0,
+    "agreeWithRight": 0,
+    "disagreements": 1
+  },
+  "outcomes": [
+    {
+      "spec": "pre-implement call",
+      "policy": "stated",
+      "wrongBlockedBySpec": false,
+      "execSpecAlone": {
+        "agentTree": "agent-wrong",
+        "oracle": false
+      },
+      "withTournament_m1": {
+        "winner": "agent-wrong",
+        "displaced": false,
+        "oracle": false,
+        "reason": "agent kept: no challenger wins 1+ consistent verdicts without a loss"
+      },
+      "withTournament_m2": {
+        "winner": "agent-wrong",
+        "displaced": false,
+        "oracle": false,
+        "reason": "agent kept: no challenger wins 2+ consistent verdicts without a loss"
+      },
+      "withTournament_anchored": {
+        "winner": "agent-wrong",
+        "displaced": false,
+        "oracle": false,
+        "reason": "agent kept: no challenger wins 1 anchored or 2+ consistent verdicts without a loss"
+      }
+    },
+    {
+      "spec": "pre-implement call",
+      "policy": "all",
+      "wrongBlockedBySpec": false,
+      "execSpecAlone": {
+        "agentTree": "agent-wrong",
+        "oracle": false
+      },
+      "withTournament_m1": {
+        "winner": "agent-wrong",
+        "displaced": false,
+        "oracle": false,
+        "reason": "agent kept: no challenger wins 1+ consistent verdicts without a loss"
+      },
+      "withTournament_m2": {
+        "winner": "agent-wrong",
+        "displaced": false,
+        "oracle": false,
+        "reason": "agent kept: no challenger wins 2+ consistent verdicts without a loss"
+      },
+      "withTournament_anchored": {
+        "winner": "agent-wrong",
+        "displaced": false,
+        "oracle": false,
+        "reason": "agent kept: no challenger wins 1 anchored or 2+ consistent verdicts without a loss"
+      }
+    },
+    {
+      "spec": "round-1 recorded reply",
+      "policy": "stated",
+      "wrongBlockedBySpec": false,
+      "execSpecAlone": {
+        "agentTree": "agent-wrong",
+        "oracle": false
+      },
+      "withTournament_m1": "n/a (candidates were briefed from the pre-implement spec)",
+      "withTournament_m2": "n/a",
+      "withTournament_anchored": "n/a"
+    },
+    {
+      "spec": "round-1 recorded reply",
+      "policy": "all",
+      "wrongBlockedBySpec": true,
+      "execSpecAlone": {
+        "agentTree": "agent-right",
+        "oracle": true
+      },
+      "withTournament_m1": "n/a (candidates were briefed from the pre-implement spec)",
+      "withTournament_m2": "n/a",
+      "withTournament_anchored": "n/a"
+    },
+    {
+      "spec": "missed (counterfactual)",
+      "policy": "repo tests only",
+      "agentTree": "agent-wrong",
+      "agentPassesRepoTests": true,
+      "agentOracle": false,
+      "withTournament_m1": {
+        "winner": "agent-wrong",
+        "displaced": false,
+        "oracle": false,
+        "reason": "agent kept: no challenger wins 1+ consistent verdicts without a loss"
+      },
+      "withTournament_m2": {
+        "winner": "agent-wrong",
+        "displaced": false,
+        "oracle": false,
+        "reason": "agent kept: no challenger wins 2+ consistent verdicts without a loss"
+      },
+      "withTournament_anchored": {
+        "winner": "agent-wrong",
+        "displaced": false,
+        "oracle": false,
+        "reason": "agent kept: no challenger wins 1 anchored or 2+ consistent verdicts without a loss"
+      },
+      "roundOneRule": {
+        "winner": "c1",
+        "displaced": false,
+        "oracle": true,
+        "reason": "ranked on 0/1 consistent verdicts"
+      }
+    },
+    {
+      "spec": "missed (counterfactual)",
+      "policy": "repo tests only",
+      "agentTree": "agent-right",
+      "agentPassesRepoTests": true,
+      "agentOracle": true,
+      "withTournament_m1": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "no behavioral disagreement"
+      },
+      "withTournament_m2": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "no behavioral disagreement"
+      },
+      "withTournament_anchored": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "no behavioral disagreement"
+      },
+      "roundOneRule": {
+        "winner": "agent-right",
+        "displaced": false,
+        "oracle": true,
+        "reason": "ranked on 0/0 consistent verdicts"
+      }
+    }
+  ],
+  "wrongJudgeSimulation": {
+    "spec/agent-right/random": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-right/positional": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-right/adversarial": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-right/right": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-wrong/random": {
+      "round1": 0.50125,
+      "m1": 0.275,
+      "m2": 0,
+      "anchored": 0.24175
+    },
+    "spec/agent-wrong/positional": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-wrong/adversarial": {
+      "round1": 1,
+      "m1": 1,
+      "m2": 0,
+      "anchored": 1
+    },
+    "spec/agent-wrong/right": {
+      "round1": 1,
+      "m1": 1,
+      "m2": 0,
+      "anchored": 1
+    },
+    "nospec/agent-right/random": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-right/positional": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-right/adversarial": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-right/right": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-wrong/random": {
+      "round1": 0.489,
+      "m1": 0.25175,
+      "m2": 0,
+      "anchored": 0.24625
+    },
+    "nospec/agent-wrong/positional": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-wrong/adversarial": {
+      "round1": 1,
+      "m1": 1,
+      "m2": 0,
+      "anchored": 1
+    },
+    "nospec/agent-wrong/right": {
+      "round1": 1,
+      "m1": 1,
+      "m2": 0,
+      "anchored": 1
+    },
+    "spec/agent-right+wrong-challenger/random": {
+      "round1": 0.49625,
+      "m1": 0.25125,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-right+wrong-challenger/positional": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-right+wrong-challenger/adversarial": {
+      "round1": 1,
+      "m1": 1,
+      "m2": 0,
+      "anchored": 0
+    },
+    "spec/agent-right+wrong-challenger/right": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-right+wrong-challenger/random": {
+      "round1": 0.51225,
+      "m1": 0.25025,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-right+wrong-challenger/positional": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-right+wrong-challenger/adversarial": {
+      "round1": 1,
+      "m1": 1,
+      "m2": 0,
+      "anchored": 0
+    },
+    "nospec/agent-right+wrong-challenger/right": {
+      "round1": 0,
+      "m1": 0,
+      "m2": 0,
+      "anchored": 0
+    }
+  },
+  "calls": [
+    {
+      "tag": "pre",
+      "outcome": "replayed: success; thinking_blocks=1; turns=1; models=claude-haiku-5-5:in=2,out=13996,thinking=10944,usd=0.0076304",
+      "usage": {
+        "inTok": 2,
+        "outTok": 13996,
+        "cacheRead": 0,
+        "cacheWrite": 3161,
+        "costUsd": 0.0076304
+      },
+      "visibleChars": 6000
+    },
+    {
+      "tag": "candidates",
+      "outcome": "replayed: success; thinking_blocks=1; turns=1; models=claude-haiku-5-5:in=2,out=4943,thinking=3344,usd=0.0037283000000000004",
+      "usage": {
+        "inTok": 2,
+        "outTok": 4943,
+        "cacheRead": 0,
+        "cacheWrite": 6283,
+        "costUsd": 0.0037283000000000004
+      },
+      "visibleChars": 2820
+    },
+    {
+      "tag": "diffprobe",
+      "outcome": "success; thinking_blocks=1; turns=1; models=claude-haiku-5-5:in=2,out=2939,thinking=1951,usd=0.0020545",
+      "usage": {
+        "inTok": 2,
+        "outTok": 2939,
+        "cacheRead": 0,
+        "cacheWrite": 2924,
+        "costUsd": 0.0020545
+      },
+      "visibleChars": 2146
+    },
+    {
+      "tag": "judge",
+      "outcome": "not sent: real-call budget spent (6/6)",
+      "usage": {
+        "inTok": 0,
+        "outTok": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "costUsd": 0
+      },
+      "visibleChars": 0
+    }
+  ],
+  "total": {
+    "inTok": 6,
+    "outTok": 21878,
+    "cacheRead": 0,
+    "cacheWrite": 12368,
+    "costUsd": 0.0134132
+  }
+}

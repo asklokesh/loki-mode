@@ -88,7 +88,8 @@ export const GO_PROBE_RULES = [
 ].join("\n");
 
 /** The harness-owned helper: per-case recover, canonical rendering (errors as error("msg"), JSON when it shows something, else %#v),
- *  hex addresses and the tree root scrubbed, one LOKIPROBE line per case. */
+ *  hex addresses, the tree root and the per-run test binary path scrubbed, one LOKIPROBE line per case. The binary path leak was
+ *  measured on spf13/pflag, whose panics print os.Args[0] (a fresh go-build dir every run): 58 of its 86 generic cases. */
 export function goProbeHelper(pkg: string): string {
   return `package ${pkg}
 
@@ -98,13 +99,15 @@ import (
 \t"encoding/json"
 \t"fmt"
 \t"os"
+\t"path/filepath"
 \t"regexp"
 \t"strings"
 )
 
 var lokiProbeAddr = regexp.MustCompile(\`0x[0-9a-fA-F]{5,}\`)
+var lokiProbeBuild = regexp.MustCompile(\`go-build[0-9]+\`)
 
-func lokiProbe(id, desc string, f func() any) {
+func lokiProbe(id, desc string, f func() interface{}) {
 \tout := func() (s string) {
 \t\tdefer func() {
 \t\t\tif r := recover(); r != nil {
@@ -118,18 +121,23 @@ func lokiProbe(id, desc string, f func() any) {
 \t\t\tout = strings.ReplaceAll(out, root, "<ROOT>")
 \t\t}
 \t}
+\tif len(os.Args) > 0 && os.Args[0] != "" {
+\t\tout = strings.ReplaceAll(out, os.Args[0], "<BIN>")
+\t\tout = strings.ReplaceAll(out, filepath.Dir(os.Args[0]), "<BINDIR>")
+\t}
+\tout = lokiProbeBuild.ReplaceAllString(out, "go-build?")
 \tout = lokiProbeAddr.ReplaceAllString(out, "0x?")
 \tb, _ := json.Marshal(map[string]string{"id": id, "desc": desc, "out": out})
 \tfmt.Println("${PROBE_MARK}" + string(b))
 }
 
-func lokiProbeRender(v any) string {
+func lokiProbeRender(v interface{}) string {
 \tswitch x := v.(type) {
 \tcase nil:
 \t\treturn "nil"
 \tcase error:
 \t\treturn fmt.Sprintf("error(%q)", x.Error())
-\tcase []any:
+\tcase []interface{}:
 \t\tparts := make([]string, len(x))
 \t\tfor i, e := range x {
 \t\t\tparts[i] = lokiProbeRender(e)
@@ -145,23 +153,59 @@ func lokiProbeRender(v any) string {
 }
 
 const GO_PROBE_BANNED = /\bt\.Skip|\bos\.Exit\b|"net\/http"|"net"|"os\/exec"|time\.Sleep|\bfunc lokiProbe\b/;
-/** The probe cases block of a reply: the ```go block holding func TestLokiProbe. Refused by name when it cannot serve as a probe. */
-export function parseGoProbeCases(reply: string, pkg: string): { file: string } | { refused: string } {
-  const block = [...reply.matchAll(/```go\n([\s\S]*?)```/g)].map((m) => m[1]!).find((b) => new RegExp(`^func ${GO_PROBE_TEST}\\(t \\*testing\\.T\\)`, "m").test(b));
+/** The probe cases block of a reply: the ```go block holding func TestLokiProbe. Refused by name when it cannot serve as a probe.
+ *  Its standard-library imports are repaired (repairGoImports): the first real reply wrote *testing.T with no import of testing. */
+export function parseGoProbeCases(reply: string, pkg: string): { file: string; repairedImports: string[] } | { refused: string } {
+  const block = [...reply.matchAll(/```go[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1]!).find((b) => new RegExp(`^func ${GO_PROBE_TEST}\\(t \\*testing\\.T\\)`, "m").test(b));
   if (!block) return { refused: "probe_no_block" };
   if (!block.trimStart().startsWith(`package ${pkg}`)) return { refused: `probe_wrong_package: expected package ${pkg}` };
   if (GO_PROBE_BANNED.test(block)) return { refused: "probe_banned_call" };
   if (!/\blokiProbe\(\s*"/.test(block)) return { refused: "probe_no_cases" };
-  return { file: block };
+  const r = repairGoImports(block);
+  return { file: r.file, repairedImports: r.changes };
+}
+
+// Standard-library packages a model-written test file commonly uses, by the qualifier it writes.
+const GO_STD: Record<string, string> = { testing: "testing", fmt: "fmt", errors: "errors", strings: "strings", reflect: "reflect", bytes: "bytes", io: "io", os: "os", strconv: "strconv", sort: "sort", bufio: "bufio", regexp: "regexp", unicode: "unicode", utf8: "unicode/utf8", filepath: "path/filepath", path: "path", json: "encoding/json", math: "math", slices: "slices", maps: "maps", time: "time" };
+/** Make a Go file's imports match its use of the standard library: add a std package it qualifies but does not import, drop an
+ *  import it never uses (both are build errors). Never touches non-std, blank, dot or aliased imports, and never the code. */
+export function repairGoImports(src: string): { file: string; changes: string[] } {
+  const imp = /^import\s+(?:\(\s*\n([\s\S]*?)^\)|("[^"\n]+"))[^\n]*\n?/gm;
+  const specs: string[] = [];
+  for (const m of src.matchAll(imp)) { if (m[1] !== undefined) specs.push(...m[1].split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("//"))); else specs.push(m[2]!); }
+  const body = src.replace(imp, "").replace(/\/\/[^\n]*/g, "").replace(/`[^`]*`/g, '""').replace(/"(?:\\.|[^"\\\n])*"/g, '""').replace(/'(?:\\.|[^'\\\n])*'/g, "''");
+  const used = new Set([...body.matchAll(/(?<![\w.])([a-z][a-z0-9]*)\.[A-Za-z_]/g)].map((m) => m[1]!));
+  const keep: string[] = [], changes: string[] = [];
+  for (const s of specs) {
+    const m = /^(?:([\w.]+)\s+)?"([^"]+)"$/.exec(s);
+    if (!m) { keep.push(s); continue; }
+    const alias = m[1], path = m[2]!, name = alias ?? path.split("/").pop()!;
+    if (alias || !Object.values(GO_STD).includes(path) || used.has(name)) keep.push(s); else changes.push(`-${path}`);
+  }
+  const have = new Set(keep.map((s) => /"([^"]+)"/.exec(s)?.[1]));
+  for (const q of [...used].sort()) { const p = GO_STD[q]; if (p && !have.has(p) && !new RegExp(`\\b(?:var|const|func)\\s+${q}\\b|\\b${q}\\s*:=`).test(body)) { keep.push(`"${p}"`); have.add(p); changes.push(`+${p}`); } }
+  if (changes.length === 0) return { file: src, changes };
+  const stripped = src.replace(imp, ""), at = /^package\s+\w+[^\n]*\n/m.exec(stripped);
+  if (!at) return { file: src, changes: [] };
+  const block = keep.length ? `\nimport (\n${keep.map((s) => `\t${s}`).join("\n")}\n)\n` : "";
+  return { file: stripped.slice(0, at.index + at[0].length) + block + stripped.slice(at.index + at[0].length), changes };
 }
 
 export interface ProbeRunResult { built: boolean; stdout: string; error?: string; durationS: number }
+/** A module whose go directive is below 1.18 rejects the predeclared any: rewrite the cases' any tokens (outside string and rune
+ *  literals and comments) to interface{}. Measured on real repos: 8 of 14 non-corpus modules declare go 1.12 to 1.16. */
+export function goBefore118(treeDir: string): boolean {
+  try { const m = /^go\s+1\.(\d+)/m.exec(readFileSync(join(treeDir, "go.mod"), "utf8")); return !!m && Number(m[1]) < 18; } catch { return false; }
+}
+export function anyToInterface(src: string): string {
+  return src.split(/("(?:\\.|[^"\\\n])*"|`[^`]*`|'(?:\\.|[^'\\\n])*'|\/\/[^\n]*)/).map((part, i) => (i % 2 === 1 ? part : part.replace(/(?<![\w.])any(?!\w)/g, "interface{}"))).join("");
+}
 /** Write the helper and the cases into the package dir, run go test -run ^TestLokiProbe$ -v, remove both files. Built means the
  *  test binary started (its === RUN line printed): a case that panics, exits or hangs still leaves the cases printed before it. */
 export function runGoProbe(treeDir: string, pkgRel: string, pkg: string, cases: string, timeoutMs = 60_000): ProbeRunResult {
   const dir = join(treeDir, pkgRel), helper = join(dir, GO_PROBE_HELPER_FILE), file = join(dir, GO_PROBE_CASES_FILE), t0 = Date.now();
   let real = treeDir; try { real = realpathSync(treeDir); } catch { /* keep the given path */ }
-  writeFileSync(helper, goProbeHelper(pkg)); writeFileSync(file, cases);
+  writeFileSync(helper, goProbeHelper(pkg)); writeFileSync(file, goBefore118(treeDir) ? anyToInterface(cases) : cases);
   try {
     const env = { ...plainTestEnv(), LOKI_PROBE_ROOTS: [real, treeDir].join(process.platform === "win32" ? ";" : ":") };
     const r = spawnGroupSync("go", ["test", "-count=1", "-v", "-run", `^${GO_PROBE_TEST}$`, `-timeout=${Math.max(5, Math.ceil(timeoutMs / 1000))}s`, `./${pkgRel || "."}`], { cwd: treeDir, env, timeoutMs: timeoutMs + 15_000 });
@@ -173,6 +217,48 @@ export function runGoProbe(treeDir: string, pkgRel: string, pkg: string, cases: 
 /** Probe ids whose output is identical in two runs on two copies of the same tree; everything else is unstable and never compared. */
 export function stableIds(a: ProbeRun, b: ProbeRun): Set<string> {
   return new Set(Object.keys(a).filter((k) => Object.prototype.hasOwnProperty.call(b, k) && a[k] === b[k]));
+}
+
+// ---------- diff-directed probes ----------
+// Round-2 finding: probes written from the issue and the base code share the spec writer's blind spot (same information, and in the
+// merged pre-implement call the same completion): on the incomplete-site fixture neither the 9 spec cases nor the 11 probes wrapped
+// a Batch, although all 3 candidates fixed that site. When check-passing trees differ in code but no probe separates them, one more
+// tool-less call sees ONLY the differing functions, unlabeled, and writes inputs on which they behave differently. It never decides
+// which version is right; the code-blind judge still does.
+export interface GoFuncDiff { name: string; file: string; versions: string[] }
+const goFuncs = (src: string): Map<string, string> => {
+  const out = new Map<string, string>(), lines = src.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^func\s+(?:\(([^)]*)\)\s*)?(\w+)\s*[(\[]/.exec(lines[i]!);
+    if (!m) continue;
+    let j = i; while (j < lines.length && lines[j] !== "}" && !/^func .*\}\s*$/.test(lines[j]!)) j++; // gofmt: a top-level func ends at a column-0 "}"
+    out.set(`${(m[1] ?? "").replace(/^\s*\w+\s+/, "").trim()}${m[1] ? "." : ""}${m[2]}`, lines.slice(i, j + 1).join("\n"));
+    i = j;
+  }
+  return out;
+};
+/** Top-level Go functions whose text differs between the base-relative file sets of two or more trees (same files, same names). */
+export function differingGoFuncs(trees: Record<string, string>[]): GoFuncDiff[] {
+  const first = trees[0] ?? {}, out: GoFuncDiff[] = [];
+  for (const file of Object.keys(first).filter((f) => f.endsWith(".go") && !f.endsWith("_test.go")).sort()) {
+    const maps = trees.map((t) => goFuncs(t[file] ?? ""));
+    for (const name of maps[0]!.keys()) {
+      const vs = [...new Set(maps.map((m) => m.get(name)).filter((v): v is string => v !== undefined))];
+      if (vs.length > 1 && maps.every((m) => m.has(name))) out.push({ name, file, versions: vs });
+    }
+  }
+  return out;
+}
+const SYS_DIFFPROBE = "You write probe inputs that make different versions of the same code behave differently. Output only one fenced code block.";
+export function diffProbePrompt(c: Context, diffs: GoFuncDiff[], pkg: string): string {
+  return [
+    GO_PROBE_RULES,
+    `The probe file starts with: package ${pkg}`,
+    "The functions below exist in several versions. Write cases whose inputs make the versions return, print or change state differently. Do not decide which version is right and do not assert anything. Every case must compile against every version: call only exported or package-level identifiers that all versions share.",
+    `ISSUE:\n${c.issue}`,
+    ...diffs.map((d) => d.versions.map((v, i) => `VERSION ${i + 1} of ${d.name} (${d.file}):\n${v}`).join("\n\n")),
+    ...Object.entries(c.tests).map(([p, s]) => `EXISTING TEST ${p} (helpers you may reuse):\n${s}`),
+  ].join("\n\n");
 }
 
 // ---------- judge ----------
@@ -289,7 +375,9 @@ export function specRegression(agent: Entrant, c: Entrant): string | null {
 }
 
 export interface Pick { winner: string; reason: string; scores: Record<string, number>; displaced: boolean }
-export interface SelectOpts { agentId?: string; margin?: number }
+/** anchor: the base tree's probe outputs. With it, a win counts at `margin` only on a probe where the agent's output equals the
+ *  pre-fix output (the agent left that input untouched: the missed-site signature); otherwise the challenger needs margin + 1. */
+export interface SelectOpts { agentId?: string; margin?: number; anchor?: ProbeRun }
 /** picks: probeId -> the output the judge chose on BOTH views (resolveVerdicts).
  *  With a check-passing agent: the agent is the incumbent and is displaced only by a check-passing challenger that regresses no
  *  spec case the agent passes and, over the probes where the two differ, wins >= margin consistent verdicts and loses none.
@@ -301,14 +389,14 @@ export function select(entrants: Entrant[], d: Disagreement[], picks: Map<string
   const cluster: Record<string, number> = {};
   for (const e of live) cluster[e.id] = 0;
   for (const x of d) for (const o of x.options) for (const id of o.entrants) cluster[id] = (cluster[id] ?? 0) + o.entrants.length;
-  const versus = (a: Entrant, c: Entrant): { w: number; l: number } => {
-    let w = 0, l = 0;
+  const versus = (a: Entrant, c: Entrant): { w: number; l: number; wa: number } => {
+    let w = 0, l = 0, wa = 0;
     for (const x of d) {
       const v = picks.get(x.probeId), ao = a.run[x.probeId], co = c.run[x.probeId];
       if (v === undefined || ao === undefined || co === undefined || ao === co) continue;
-      if (co === v) w++; else if (ao === v) l++;
+      if (co === v) { w++; if (opts.anchor && opts.anchor[x.probeId] === ao) wa++; } else if (ao === v) l++;
     }
-    return { w, l };
+    return { w, l, wa };
   };
   const order = (xs: { e: Entrant; s: number }[]): { e: Entrant; s: number }[] => [...xs].sort((a, b) => (b.s - a.s) || (cluster[b.e.id]! - cluster[a.e.id]!) || (a.e.diffLines - b.e.diffLines) || a.e.id.localeCompare(b.e.id));
   if (agent && agent.checksPass) {
@@ -316,14 +404,14 @@ export function select(entrants: Entrant[], d: Disagreement[], picks: Map<string
     const eligible: { e: Entrant; s: number }[] = [];
     for (const c of live) {
       if (c.id === agent.id) continue;
-      const reg = specRegression(agent, c), { w, l } = versus(agent, c);
+      const reg = specRegression(agent, c), { w, l, wa } = versus(agent, c);
       scores[c.id] = w - l;
       if (reg) { notes.push(`${c.id} regresses ${reg}`); continue; }
-      if (l === 0 && w >= margin) eligible.push({ e: c, s: w });
+      if (l === 0 && (opts.anchor ? wa >= margin || w >= margin + 1 : w >= margin)) eligible.push({ e: c, s: w });
     }
-    const best = order(eligible)[0];
-    if (!best) return { winner: agent.id, reason: d.length === 0 ? "no behavioral disagreement" : `agent kept: no challenger wins ${margin}+ consistent verdicts without a loss${notes.length ? ` (${notes.join("; ")})` : ""}`, scores, displaced: false };
-    return { winner: best.e.id, reason: `${best.e.id} displaces the agent: ${best.s} consistent verdict(s), 0 against, margin ${margin}`, scores, displaced: true };
+    const best = order(eligible)[0], need = opts.anchor ? `${margin} anchored or ${margin + 1}` : `${margin}`;
+    if (!best) return { winner: agent.id, reason: d.length === 0 ? "no behavioral disagreement" : `agent kept: no challenger wins ${need}+ consistent verdicts without a loss${notes.length ? ` (${notes.join("; ")})` : ""}`, scores, displaced: false };
+    return { winner: best.e.id, reason: `${best.e.id} displaces the agent: ${best.s} consistent verdict(s), 0 against, needed ${need}`, scores, displaced: true };
   }
   const scores: Record<string, number> = {};
   for (const e of live) {
@@ -342,7 +430,7 @@ const diffLines = (edits: Edit[]): number => edits.reduce((n, e) => n + e.search
 /** Runs the tournament. With `agent`, Io.materialize("agent") yields the agent session's finished tree, entered as the incumbent.
  *  With `program`, the probe program written earlier (by the pre-implement call) is reused and no probe call is made. `mark` is the
  *  probe output mark (Go: PROBE_MARK). */
-export async function runTournament(c: Context, llm: LlmCall, io: Io, opts: { agent?: boolean; lenses?: readonly string[]; program?: string; mark?: string; margin?: number } = {}): Promise<TournamentResult> {
+export async function runTournament(c: Context, llm: LlmCall, io: Io, opts: { agent?: boolean; lenses?: readonly string[]; program?: string; mark?: string; margin?: number; anchored?: boolean } = {}): Promise<TournamentResult> {
   const usage: Usage[] = [];
   const [candRes, probeRes] = await Promise.all([llm(SYS_PATCH, candidatePrompt(c, opts.lenses), "candidates"), opts.program !== undefined ? Promise.resolve(null) : llm(SYS_PROBE, probePrompt(c), "probes")]); // independent: probes never see candidates
   usage.push(candRes.usage); if (probeRes) usage.push(probeRes.usage);
@@ -370,10 +458,10 @@ export async function runTournament(c: Context, llm: LlmCall, io: Io, opts: { ag
     usage.push(j.usage);
     raw = parseVerdicts(j.text); picks = resolveVerdicts(views, raw);
   }
-  return { pick: select(entrants, d, picks, { ...(opts.agent ? { agentId: "agent" } : {}), ...(opts.margin ? { margin: opts.margin } : {}) }), entrants, disagreements: d, verdicts: Object.fromEntries(raw), picks: Object.fromEntries(picks), usage, calls: usage.length, baseRun: keep(pa.run), probes, unstable };
+  return { pick: select(entrants, d, picks, { ...(opts.agent ? { agentId: "agent" } : {}), ...(opts.margin ? { margin: opts.margin } : {}), ...(opts.anchored ? { anchor: keep(pa.run) } : {}) }), entrants, disagreements: d, verdicts: Object.fromEntries(raw), picks: Object.fromEntries(picks), usage, calls: usage.length, baseRun: keep(pa.run), probes, unstable };
 }
 
-export const SYSTEM_PROMPTS = { patch: SYS_PATCH, probe: SYS_PROBE, judge: SYS_JUDGE } as const;
+export const SYSTEM_PROMPTS = { patch: SYS_PATCH, probe: SYS_PROBE, judge: SYS_JUDGE, diffProbe: SYS_DIFFPROBE } as const;
 
 // ---------- the call path ----------
 /** One tool-less Haiku turn through sdk_invoker judgeTextOutcome (messages.create: no tools, no CLI overhead) with thinking
@@ -389,5 +477,30 @@ export function toollessCall(o: { lokiDir: string; model?: string; maxTokens?: n
       try { const r = JSON.parse(l) as Record<string, number>; usage.inTok += r.input_tokens ?? 0; usage.outTok += r.output_tokens ?? 0; usage.cacheRead += r.cache_read_tokens ?? 0; usage.cacheWrite += r.cache_creation_tokens ?? 0; usage.costUsd += r.usd ?? 0; } catch { /* torn line */ }
     }
     return { text: out.kind === "ok" ? out.value : "", usage, outcome: describeJudgeOutcome(out) };
+  };
+}
+
+/** The same tool-less turn through the Agent SDK query() (the claude CLI's own login), for a machine whose subscription token is
+ *  refused on direct messages.create (measured here: HTTP 429 rate_limit_error while count_tokens works). One turn, no tools, no
+ *  setting sources, no MCP, a plain system string that replaces the claude_code preset, thinking disabled. The outcome names the
+ *  thinking blocks seen, so "thinking off" is measured, not assumed. TODO(PR0): replace both with the shared primitive. */
+export function agentSdkToollessCall(o: { cwd: string; model?: string }): LlmCall {
+  return async (system, user) => {
+    const { query } = await import("@anthropic-ai/claude-agent-sdk");
+    const env: Record<string, string> = {}; // options.env replaces the child env: keep PATH/HOME, drop this session's bridge ids
+    for (const [k, v] of Object.entries(process.env)) if (typeof v === "string" && !/^CLAUDE_CODE_(SESSION_ID|MESSAGING_|BRIDGE_|CHILD_SESSION)/.test(k)) env[k] = v;
+    let text = "", thinking = 0, res: Record<string, unknown> | null = null;
+    // title: without one the SDK makes an extra model request to name the session (PR0 found it; the SDK docs say it auto-generates)
+    for await (const m of query({ prompt: user, options: { model: o.model ?? "claude-haiku-5-5", cwd: o.cwd, tools: [], maxTurns: 1, systemPrompt: system, settingSources: [], strictMcpConfig: true, mcpServers: {}, persistSession: false, title: "loki-tournament", thinking: { type: "disabled" }, env } })) {
+      const msg = m as { type: string; message?: { content?: { type: string; text?: string }[] } };
+      if (msg.type === "assistant") for (const b of msg.message?.content ?? []) { if (b.type === "thinking" || b.type === "redacted_thinking") thinking++; else if (b.type === "text") text += b.text ?? ""; }
+      if (msg.type === "result") res = m as unknown as Record<string, unknown>;
+    }
+    const u = (res?.["usage"] ?? {}) as Record<string, number>;
+    const usage: Usage = { inTok: u["input_tokens"] ?? 0, outTok: u["output_tokens"] ?? 0, cacheRead: u["cache_read_input_tokens"] ?? 0, cacheWrite: u["cache_creation_input_tokens"] ?? 0, costUsd: typeof res?.["total_cost_usd"] === "number" ? (res["total_cost_usd"] as number) : 0 };
+    const final = res?.["subtype"] === "success" && typeof res["result"] === "string" ? (res["result"] as string) : text;
+    const mu = (res?.["modelUsage"] ?? {}) as Record<string, Record<string, number>>; // every model request the session made, by model
+    const models = Object.entries(mu).map(([k, v]) => `${k}:in=${v["inputTokens"] ?? 0},out=${v["outputTokens"] ?? 0},thinking=${v["thinkingTokens"] ?? "n/a"},usd=${v["costUSD"] ?? "n/a"}`).join("|");
+    return { text: final, usage, outcome: `${String(res?.["subtype"] ?? "no-result")}; thinking_blocks=${thinking}; turns=${String(res?.["num_turns"] ?? "?")}; models=${models}` };
   };
 }
