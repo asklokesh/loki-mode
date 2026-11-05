@@ -189,6 +189,7 @@ if [ "$stage" = "plan" ] && [ "${E2E_STUB_MODE:-}" = "coverage" ]; then # a non-
 fi
 if [ "$stage" = "implement" ]; then
   sid="$(printf '%s\n' "$prompt" | sed -n 's/^Slice \([A-Za-z0-9_-]*\) of [0-9]* for .*/\1/p' | head -1)"
+  if [ -n "${E2E_STUB_CONFLICT_SLICE:-}" ] && [ "$sid" = "$E2E_STUB_CONFLICT_SLICE" ]; then echo "LOKI_SPEC_CONFLICT: slice $sid asks for two incompatible search backends"; exit 0; fi # tests/min/decompose-and-intake.sh: this one slice stops on its own conflict
   if [ "${E2E_STUB_MODE:-done}" = "slice" ] && [ -n "$sid" ]; then
     printf '\nexport function slice_%s(): string {\n  return "%s";\n}\n' "$sid" "$sid" >> calc.ts
     echo "LOKI_DONE"
