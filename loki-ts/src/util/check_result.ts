@@ -1696,7 +1696,13 @@ export function baseJobs(): number { const n = Number(process.env.LOKI_E10_BASE_
 /** True only when a red test file failed on assertions: every reported failure is an assertion, and none is an import, collection, attribute, type or reference error (a test that calls code the base lacks fails that way for ANY change, so it proves nothing about the fix). Only pytest and vitest output is read; every other runner is false (fail-closed: the run reads PARTIAL). */
 export function assertionFailure(runner: string, output: string): boolean {
   const out = stripAnsi(output);
-  if (runner === "pytest") { if (/^ERROR\s|errors? during collection/m.test(out)) return false; const f = [...out.matchAll(/^FAILED\s+\S+(?:\s+-\s+(.*))?$/gm)].map((m) => m[1] ?? ""); return f.length > 0 && f.every((r) => /^(?:assert\b|AssertionError\b)/.test(r.trim())); }
+  if (runner === "pytest") { // red by assertion: at least one failure is an assertion and none is a missing-API error (import, attribute, name, type, syntax). A behavioral error beside it (OverflowError, ValueError) is the bug itself, not an absent API.
+    if (/^ERROR\s|errors? during collection/m.test(out)) return false;
+    const f = [...out.matchAll(/^FAILED\s+\S+(?:\s+-\s+(.*))?$/gm)].map((m) => (m[1] ?? "").trim());
+    if (f.length === 0) return false;
+    const kinds = f.every((r) => r !== "") ? f : [...out.matchAll(/^E\s+((?:assert\b|[A-Za-z_.]*(?:Error|Exception))\S*)/gm)].map((m) => m[1]!); // a narrow terminal cuts the " - reason" from the summary line: read the traceback's E lines instead
+    return kinds.some((k) => /^(?:assert\b|AssertionError\b)/.test(k)) && !kinds.some((k) => /^(?:Import|ModuleNotFound|Attribute|Name|UnboundLocal|Type|Syntax|Indentation)Error\b/.test(k));
+  }
   if (runner === "vitest") { const e = [...out.matchAll(/^\s*((?:[A-Za-z]*Error))(?:\s*\[[^\]]*\])?:/gm)].map((m) => m[1]!); return e.length > 0 && e.every((k) => k === "AssertionError"); }
   return false;
 }
@@ -1814,8 +1820,22 @@ export function fullSuiteCmd(runner: RunnerName, repoDir: string): { cmd: string
   return { cmd, args: [...pre, ...(runner === "unittest" ? UNITTEST_DISCOVER_ARGS : ["-m", "pytest", "-q"])], ...(runner === "unittest" && interpreter === "system" ? {} : { interpreter }) };
 }
 /** FC-01: the one resolver for a test invocation: a package-owned file runs in its package dir with a package-relative path, else exactly runnerCmd at the root. */
+/** A vitest file with no Project Model owner runs from the nearest directory below the repo root that has its own package.json and a vitest config or a vite config with a test block, as that package's own script does; from the root its jsdom/happy-dom environment is lost ("document is not defined"). null: keep the root. */
+function ownVitestSite(repoDir: string, path: string): PackageSiteLike | null {
+  const cfg = /^vite(st)?\.config\.(?:[cm]?[jt]s|mts)$/;
+  for (let d = dirname(path); d !== "." && d !== "" && d !== "/" && !d.startsWith(".."); d = dirname(d)) {
+    try {
+      const abs = join(repoDir, d);
+      if (!existsSync(join(abs, "package.json"))) continue;
+      const conf = readdirSync(abs).find((n) => cfg.test(n)); if (!conf) continue;
+      if (/^vitest/.test(conf) || /\btest\s*:/.test(readFileSync(join(abs, conf), "utf8").slice(0, 200_000))) return { cwd: abs, root: d, file: relative(d, path) };
+    } catch { /* keep the root */ }
+  }
+  return null;
+}
+type PackageSiteLike = { cwd: string; root: string; file: string };
 export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null): { cwd: string; cmd: string; args: string[]; argv: string[]; interpreter?: Interpreter; pkgRoot: string } {
-  const site = siteFor(api, repoDir, t.path);
+  const site = siteFor(api, repoDir, t.path) ?? (t.runner === "vitest" ? ownVitestSite(repoDir, t.path) : null);
   const base = site?.cwd ?? repoDir, rel = site?.file ?? t.path, mod = t.runner === "go" ? goModDir(base, rel) : base; // go resolves the module from the cwd: a go.mod below the base needs the run to start there
   const [cmd, args, interpreter] = runnerCmd(mod === base ? (site ? { runner: t.runner, path: site.file } : t) : { runner: t.runner, path: relative(mod, join(base, rel)) }, mod === base ? repoDir : mod);
   return { cwd: mod === base ? base : mod, cmd, args, argv: [cmd, ...args], ...(interpreter ? { interpreter } : {}), pkgRoot: mod === base ? site?.root ?? "." : relative(repoDir, mod) || "." };
