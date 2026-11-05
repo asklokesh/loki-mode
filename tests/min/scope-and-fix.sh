@@ -729,6 +729,12 @@ wo_legs() {
 }
 WD="$(cd "$ROOT/loki-ts" && bun -e 'const { wallEnabled } = await import("./src/engine10/sizing.ts"); console.log([wallEnabled({}), wallEnabled({ LOKI_E10_WALL: "" }), wallEnabled({ LOKI_E10_WALL: "0" }), wallEnabled({ LOKI_E10_WALL: "1" }), wallEnabled({ LOKI_E10_WALL: "on" })].join(","))' 2>&1)"
 [ "$WD" = "false,false,false,true,true" ] && ok "wall default: the Wall session is off unless LOKI_E10_WALL=1/on ($WD)" || bad "wall default: wallEnabled gave '$WD'"
+# Wall off (the default): no tree snapshot is taken, so a snapshot that cannot be made (here a 1 ms copy budget, as on a huge pnpm tree) never reads as a failed Wall.
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    MAKE_REPO=make_wo_py_repo run_engine "fix double(a) in calc.py so it returns twice a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a + 1' E2E_STUB_SNIPPET=$'    return a * 2' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_WALL_SNAPSHOT_TIMEOUT_S=0.001
+    wf="$(ev "any(e['type']=='stage.failed' and e.get('stage')=='wall' for e in E)")"
+    [ "$wf" = "False" ] && ok "wall off: a snapshot that cannot be made emits no wall failure ($wf)" || { bad "wall off: wall failure event present or no log ('$wf')"; dump; }
+fi
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     wo_legs pytest make_wo_py_repo calc.py test_calc.py $'    return a * 2' $'    return a * 3' $'    return a + a + 1' $'\n\ndef test_double():\n    assert calc.double(3) == 6\n' $'\n\ndef test_names_double():\n    assert callable(calc.double)\n' $'\n\nimport pytest\n\n\n@pytest.mark.skip\ndef test_later():\n    pass\n' $'    return a * 3\n\n\ndef triple(a):\n    return a * 3' $'\n\ndef test_triple():\n    assert calc.triple(2) == 6\n' $'\n\nfrom calc import triple\n\n\ndef test_imports():\n    pass\n' $'\n\ndef test_triple_exists():\n    assert hasattr(calc, "triple") and callable(calc.triple)\n'
 else
