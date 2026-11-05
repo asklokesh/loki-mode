@@ -734,11 +734,34 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest wall-off: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest wall-off: pytest is not installed"; fi
 fi
+# Base proof on a repo that declares its Python environment (pyproject dependencies) and has no venv, beside a deep test path (a narrow terminal cuts the reason from pytest's FAILED line) with one assertion failure and one OverflowError on the base (rule 22, real pytest):
+# the head ran under the system interpreter, so the base proof must too (was "inconclusive: the base version of each edited test file is not green"), and the file counts as an assertion failure (was "yes" with no file named).
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    MP="$T/mp-decl"; rm -rf "$MP"; mkdir -p "$MP/tests/unit_tests_for_long_nodeids_package" && cd "$MP" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
+    printf '[project]\nname = "calc"\nversion = "0"\ndependencies = []\n' > pyproject.toml; printf 'def half(a):\n    return a // 2\n\n\ndef big(a):\n    if a > 10**6:\n        raise OverflowError("too big")\n    return a\n' > calc.py
+    printf 'import calc\n\n\ndef test_ok():\n    assert calc.half(4) == 2\n' > tests/unit_tests_for_long_nodeids_package/test_calc_long_name_here.py
+    git add -- . && git commit -q -m base && BASE="$(git rev-parse HEAD)"
+    printf 'def half(a):\n    return a / 2\n\n\ndef big(a):\n    return a\n' > calc.py
+    printf '\n\ndef test_half_exact():\n    assert calc.half(3) == 1.5\n\n\ndef test_big_no_overflow():\n    calc.big(10**9)\n' >> tests/unit_tests_for_long_nodeids_package/test_calc_long_name_here.py
+    git add -- . && git commit -q -m head && HEADSHA="$(git rev-parse HEAD)"; cd "$ROOT"
+    mpd="$(cd "$ROOT/loki-ts" && bun -e 'const { mutationProof } = await import("./src/util/mutation_proof.ts"); const { RealBaseTestRunner } = await import("./src/engine10/stages/wall.ts"); const [repo, base, head] = process.argv.slice(1); const f = "tests/unit_tests_for_long_nodeids_package/test_calc_long_name_here.py"; const r = await mutationProof({ repoDir: repo, baseSha: base, runDir: repo + "/.loki", wallFiles: [{ path: f }], checks: [{ name: "pytest:" + f }], runner: (ms: number) => new RealBaseTestRunner(undefined, ms, {}, true), headSha: head, requireAssertion: true, baseMustPass: [f] }); console.log(r.outcome + "|" + (r.failed ?? []).join(","))' "$MP" "$BASE" "$HEADSHA" 2>&1 | tail -1)"
+    [ "$mpd" = "yes|tests/unit_tests_for_long_nodeids_package/test_calc_long_name_here.py" ] && ok "pytest declared-env base proof: a declared env with no venv still yields a fail-then-pass proof naming the file ($mpd)" || bad "pytest declared-env base proof: got '$mpd'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest declared-env base proof: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest declared-env base proof: pytest is not installed"; fi
+fi
 for vt in 2 latest; do
     VT_NM="$T/vt-$vt/node_modules"
     [ -x "$VT_NM/.bin/vitest" ] || { if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "vitest $vt wall-off: vitest@$vt is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: vitest $vt wall-off: vitest@$vt is not installed (offline?)"; fi; continue; }
     export VT_NM
     wo_legs "vitest $vt" make_wo_vt_repo calc.ts calc.test.ts '  return a * 2;' '  return a * 3;' '  return a + a + 1;' $'\ntest("double", () => {\n  expect(calc.double(3)).toBe(6);\n});' $'\ntest("names double", () => {\n  expect(typeof calc.double).toBe("function");\n});' $'\ntest.skip("later", () => {});' $'  return a * 3;\n}\n\nexport function triple(a: number): number {\n  return a * 3;' $'\ntest("triple", () => {\n  expect((calc as any).triple(2)).toBe(6);\n});' $'\nimport { triple } from "./calc";\ntest("imports", () => {\n  void triple;\n});' $'\ntest("triple exists", () => {\n  expect(typeof (calc as any).triple).toBe("function");\n});'
+    # Package-owned vitest config (rule 22, real vitest): a workspace package whose own vite.config.ts sets test.globals. Run from the repo root the config is ignored ("test is not defined", the same shape as jsdom's "document is not defined");
+    # commandFor must start the run in the package directory with no Project Model at all.
+    PKG="$T/ws-$vt"; rm -rf "$PKG"; mkdir -p "$PKG/packages/a/src" "$PKG/packages/b"; ln -s "$VT_NM" "$PKG/node_modules"
+    printf 'packages:\n  - "packages/*"\n' > "$PKG/pnpm-workspace.yaml"; printf '{"name":"root","private":true}\n' > "$PKG/package.json"; printf '{"name":"a","private":true}\n' > "$PKG/packages/a/package.json"; printf '{"name":"b","private":true}\n' > "$PKG/packages/b/package.json"
+    printf 'export default { test: { globals: true } };\n' > "$PKG/packages/a/vite.config.mjs"
+    printf 'test("globals from the package config", () => { expect(1 + 1).toBe(2); });\n' > "$PKG/packages/a/src/x.test.js"
+    ws="$(cd "$ROOT/loki-ts" && bun -e 'const { commandFor } = await import("./src/util/check_result.ts"); const { spawnSync } = await import("node:child_process"); const d = process.argv[1]; const c = commandFor({ runner: "vitest", path: "packages/a/src/x.test.js" }, d, null); const r = spawnSync(c.cmd, c.args, { cwd: c.cwd, encoding: "utf8", timeout: 90000 }); const root = spawnSync("npx", ["--no-install", "vitest", "run", "packages/a/src/x.test.js"], { cwd: d, encoding: "utf8", timeout: 90000 }); const o = commandFor({ runner: "vitest", path: "packages/b/y.test.js" }, d, null); console.log([c.cwd.endsWith("packages/a"), c.args.at(-1), r.status, root.status === 0 ? "root-ok" : "root-red", o.cwd === d ? "other-root" : "other-moved"].join("|"))' "$PKG" 2>&1 | tail -1)"
+    [ "$ws" = "true|src/x.test.js|0|root-red|other-root" ] && ok "vitest $vt package config: a test file under a package with its own vitest config runs from that package and passes; from the root it is red; a package without one stays at the root ($ws)" || bad "vitest $vt package config: got '$ws'"
 done
 
 finish
