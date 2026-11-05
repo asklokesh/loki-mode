@@ -735,6 +735,36 @@ wo_legs() {
 }
 WD="$(cd "$ROOT/loki-ts" && bun -e 'const { wallEnabled } = await import("./src/engine10/sizing.ts"); console.log([wallEnabled({}), wallEnabled({ LOKI_E10_WALL: "" }), wallEnabled({ LOKI_E10_WALL: "0" }), wallEnabled({ LOKI_E10_WALL: "1" }), wallEnabled({ LOKI_E10_WALL: "on" })].join(","))' 2>&1)"
 [ "$WD" = "false,false,false,true,true" ] && ok "wall default: the Wall session is off unless LOKI_E10_WALL=1/on ($WD)" || bad "wall default: wallEnabled gave '$WD'"
+# Go output cap (rule 22, real go test -json through the real runOnce and corroboratePass): a test file whose -json stream is larger than the 64 KB tail (and a whole-package run larger than 1 MiB) is judged whole and counts;
+# a failing test in the same shape stays a fail, and a small file is unchanged. Before the fix the big shapes read not_run (go output "cannot confirm execution").
+if command -v go >/dev/null 2>&1; then
+    GC="$T/go-cap"; rm -rf "$GC"; mkdir -p "$GC" && cd "$GC"
+    printf 'module example.com/big\n\ngo 1.20\n' > go.mod
+    printf 'package big\n\nfunc One() int { return 1 }\n' > big.go
+    printf 'package big\n\nimport (\n\t"strings"\n\t"testing"\n)\n\nfunc TestChatty(t *testing.T) {\n\tfor i := 0; i < 300; i++ { t.Log(strings.Repeat("x", 400)) }\n\tif One() != 1 { t.Fatal("one") }\n}\n' > big_test.go
+    printf 'package big\n\nimport "testing"\n\nfunc TestSmall(t *testing.T) { if One() != 1 { t.Fatal("one") } }\n' > small_test.go
+    printf 'package big\n\nimport (\n\t"strings"\n\t"testing"\n)\n\nfunc TestHuge(t *testing.T) {\n\tfor i := 0; i < 4000; i++ { t.Log(strings.Repeat("y", 400)) }\n}\n' > huge_test.go
+    printf 'package big\n\nimport (\n\t"strings"\n\t"testing"\n)\n\nfunc TestChattyRed(t *testing.T) {\n\tfor i := 0; i < 300; i++ { t.Log(strings.Repeat("z", 400)) }\n\tt.Fatal("red")\n}\n' > red_test.go.txt
+    cd "$ROOT"
+    cat > "$GC.ts" <<'TS'
+import { runOnce } from "./src/engine10/stages/verify.ts";
+import { classifyCheck, corroboratePass, goRunner, plainTestEnv } from "./src/util/check_result.ts";
+const [dir] = process.argv.slice(2);
+const one = async (args: string[]): Promise<string> => {
+  const a = await runOnce("go", args, dir!, new AbortController().signal, {});
+  const c = await corroboratePass(classifyCheck({ kind: "test", ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, ...goRunner("go", args) }), a.out, "go", args, { cwd: dir!, env: plainTestEnv() });
+  return `${c.result}:${a.out.length > 65536 ? "big" : "small"}`;
+};
+const out = [await one(["test", "-json", "-run", "^(TestChatty)$", "./."]), await one(["test", "-json", "-run", "^(TestSmall)$", "./."]), await one(["test", "-json", "./."])];
+await Bun.write(`${dir}/red_test.go`, await Bun.file(`${dir}/red_test.go.txt`).text());
+out.push(await one(["test", "-json", "-run", "^(TestChattyRed)$", "./."]));
+console.log(out.join(" "));
+TS
+    gc="$(cd "$ROOT/loki-ts" && cp "$GC.ts" ./.gocap-probe.ts && bun ./.gocap-probe.ts "$GC" 2>&1 | tail -1; rm -f ./.gocap-probe.ts)"
+    [ "$gc" = "pass:big pass:small pass:big fail:big" ] && ok "go output cap: a big -json stream (one file, a whole package over 1 MiB) is judged whole and passes, a big failing run still fails, a small one is unchanged ($gc)" || bad "go output cap: got '$gc'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go output cap: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go output cap: go is not installed"; fi
+fi
 # Wall off (the default): no tree snapshot is taken, so a snapshot that cannot be made (here a 1 ms copy budget, as on a huge pnpm tree) never reads as a failed Wall.
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     MAKE_REPO=make_wo_py_repo run_engine "fix double(a) in calc.py so it returns twice a" E2E_WALL= LOKI_E10_WALL=0 E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a + 1' E2E_STUB_SNIPPET=$'    return a * 2' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_WALL_SNAPSHOT_TIMEOUT_S=0.001
