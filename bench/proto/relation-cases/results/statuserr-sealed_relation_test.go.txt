@@ -1,0 +1,39 @@
+package statuserr
+
+import (
+	"bytes"
+	"fmt"
+	"testing"
+)
+
+var _ = bytes.NewBuffer
+
+func lokiRelObserve(f func()) (out string) {
+	var trace []string
+	defer func() { out = fmt.Sprint(trace) }()
+	old0 := Exiter
+	Exiter = func(p0 int) { trace = append(trace, fmt.Sprint("Exiter", p0)) }
+	defer func() { Exiter = old0 }()
+	bufOld0 := ErrWriter
+	var buf0 bytes.Buffer
+	ErrWriter = &buf0
+	defer func() { ErrWriter = bufOld0; trace = append(trace, fmt.Sprint("ErrWriter.written=", buf0.Len() > 0)) }()
+	f()
+	return
+}
+
+func TestLokiRelation(t *testing.T) {
+	// Each wrapped value must behave exactly as the bare value behaved before the change (recorded on the original code).
+	for _, c := range []struct{ id, want string; v, rv func() error }{
+		{"StatusCoder_wrapped", "[Exiter3 ErrWriter.written=true]", func() error { return Status("a", 3) }, func() error { return fmt.Errorf("loki: %w", Status("a", 3)) }},
+		{"Batch_wrapped", "[Exiter5 ErrWriter.written=true]", func() error { return NewBatch(Status("a", 3), Status("b", 5)) }, func() error { return fmt.Errorf("loki: %w", NewBatch(Status("a", 3), Status("b", 5))) }},
+		{"Batch_members_wrapped", "[Exiter5 ErrWriter.written=true]", func() error { return NewBatch(Status("a", 3), Status("b", 5)) }, func() error { return NewBatch(fmt.Errorf("loki: %w", Status("a", 3)), fmt.Errorf("loki: %w", Status("b", 5))) }},
+	} {
+		if got := lokiRelObserve(func() { Report(c.v()) }); got != c.want {
+			t.Errorf("%s: the unwrapped value now behaves differently: got %s, before the change %s", c.id, got, c.want)
+		}
+		if got := lokiRelObserve(func() { Report(c.rv()) }); got != c.want {
+			t.Errorf("%s: wrapped value: got %s, want %s (what the unwrapped value does)", c.id, got, c.want)
+		}
+	}
+}

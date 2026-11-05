@@ -1,0 +1,28 @@
+{
+  "summary": {
+    "calls": 2,
+    "costUsd": 0.0027896500000000003,
+    "oracle": "2/2",
+    "relation": "2/2"
+  },
+  "rows": [
+    {
+      "n": 1,
+      "ownTests": true,
+      "relation": true,
+      "oracle": true,
+      "costUsd": 0.0018637,
+      "outTok": 1377,
+      "relErr": ""
+    },
+    {
+      "n": 2,
+      "ownTests": true,
+      "relation": true,
+      "oracle": true,
+      "costUsd": 0.00092595,
+      "outTok": 1734,
+      "relErr": ""
+    }
+  ]
+}

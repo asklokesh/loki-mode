@@ -1,0 +1,137 @@
+{
+ "fixture": "statuserr",
+ "fn": "Report",
+ "observer": {
+  "funcs": [
+   {
+    "name": "Exiter",
+    "params": "code int"
+   }
+  ],
+  "writers": [
+   "ErrWriter"
+  ]
+ },
+ "cases": [
+  "StatusCoder_wrapped: fmt.Errorf(\"loki: %w\", Status(\"a\", 3))",
+  "Batch_wrapped: fmt.Errorf(\"loki: %w\", NewBatch(Status(\"a\", 3), Status(\"b\", 5)))",
+  "Batch_members_wrapped: NewBatch(fmt.Errorf(\"loki: %w\", Status(\"a\", 3)), fmt.Errorf(\"loki: %w\", Status(\"b\", 5)))"
+ ],
+ "base": [
+  {
+   "id": "StatusCoder_wrapped",
+   "redOnBase": true
+  },
+  {
+   "id": "Batch_wrapped",
+   "redOnBase": true
+  },
+  {
+   "id": "Batch_members_wrapped",
+   "redOnBase": true
+  }
+ ],
+ "baseRan": 3,
+ "rows": [
+  {
+   "variant": "two_of_three",
+   "relationPass": false,
+   "oracle": false,
+   "cases": [
+    {
+     "id": "StatusCoder_wrapped",
+     "redOnBase": true,
+     "pass": true,
+     "detail": "base ref [Exiter3 ErrWriter.written=true] | head ref [Exiter3 ErrWriter.written=true] | head rel [Exiter3 ErrWriter.written=true]"
+    },
+    {
+     "id": "Batch_wrapped",
+     "redOnBase": true,
+     "pass": true,
+     "detail": "base ref [Exiter5 ErrWriter.written=true] | head ref [Exiter5 ErrWriter.written=true] | head rel [Exiter5 ErrWriter.written=true]"
+    },
+    {
+     "id": "Batch_members_wrapped",
+     "redOnBase": true,
+     "pass": false,
+     "detail": "base ref [Exiter5 ErrWriter.written=true] | head ref [Exiter5 ErrWriter.written=true] | head rel [Exiter1 ErrWriter.written=true]"
+    }
+   ]
+  },
+  {
+   "variant": "right",
+   "relationPass": true,
+   "oracle": true,
+   "cases": [
+    {
+     "id": "StatusCoder_wrapped",
+     "redOnBase": true,
+     "pass": true,
+     "detail": "base ref [Exiter3 ErrWriter.written=true] | head ref [Exiter3 ErrWriter.written=true] | head rel [Exiter3 ErrWriter.written=true]"
+    },
+    {
+     "id": "Batch_wrapped",
+     "redOnBase": true,
+     "pass": true,
+     "detail": "base ref [Exiter5 ErrWriter.written=true] | head ref [Exiter5 ErrWriter.written=true] | head rel [Exiter5 ErrWriter.written=true]"
+    },
+    {
+     "id": "Batch_members_wrapped",
+     "redOnBase": true,
+     "pass": true,
+     "detail": "base ref [Exiter5 ErrWriter.written=true] | head ref [Exiter5 ErrWriter.written=true] | head rel [Exiter5 ErrWriter.written=true]"
+    }
+   ]
+  },
+  {
+   "variant": "right_unwrap",
+   "relationPass": true,
+   "oracle": true,
+   "cases": [
+    {
+     "id": "StatusCoder_wrapped",
+     "redOnBase": true,
+     "pass": true,
+     "detail": "base ref [Exiter3 ErrWriter.written=true] | head ref [Exiter3 ErrWriter.written=true] | head rel [Exiter3 ErrWriter.written=true]"
+    },
+    {
+     "id": "Batch_wrapped",
+     "redOnBase": true,
+     "pass": true,
+     "detail": "base ref [Exiter5 ErrWriter.written=true] | head ref [Exiter5 ErrWriter.written=true] | head rel [Exiter5 ErrWriter.written=true]"
+    },
+    {
+     "id": "Batch_members_wrapped",
+     "redOnBase": true,
+     "pass": true,
+     "detail": "base ref [Exiter5 ErrWriter.written=true] | head ref [Exiter5 ErrWriter.written=true] | head rel [Exiter5 ErrWriter.written=true]"
+    }
+   ]
+  },
+  {
+   "variant": "ordering_unwrap",
+   "relationPass": false,
+   "oracle": true,
+   "cases": [
+    {
+     "id": "StatusCoder_wrapped",
+     "redOnBase": true,
+     "pass": true,
+     "detail": "base ref [Exiter3 ErrWriter.written=true] | head ref [Exiter3 ErrWriter.written=true] | head rel [Exiter3 ErrWriter.written=true]"
+    },
+    {
+     "id": "Batch_wrapped",
+     "redOnBase": true,
+     "pass": false,
+     "detail": "base ref [Exiter5 ErrWriter.written=true] | head ref [Exiter3 ErrWriter.written=true] | head rel [Exiter3 ErrWriter.written=true]"
+    },
+    {
+     "id": "Batch_members_wrapped",
+     "redOnBase": true,
+     "pass": false,
+     "detail": "base ref [Exiter5 ErrWriter.written=true] | head ref [Exiter3 ErrWriter.written=true] | head rel [Exiter3 ErrWriter.written=true]"
+    }
+   ]
+  }
+ ]
+}
