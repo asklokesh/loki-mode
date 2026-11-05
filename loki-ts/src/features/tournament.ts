@@ -8,12 +8,12 @@
 // Calls (all tool-less, single turn): (1) candidates, (2) probes, (3) adjudication, and (3) runs only when the
 // check-passing candidates disagree on at least one probe. Everything with side effects is injected (Io).
 
+import { extractProgram, parseProbeOutput, type Probe, type ProbeRun } from "./probes.ts";
+
 export interface Usage { inTok: number; outTok: number; cacheRead: number; cacheWrite: number; costUsd: number }
 export interface LlmCall { (system: string, user: string): Promise<{ text: string; usage: Usage }> }
 export interface Edit { path: string; search: string; replace: string }
 export interface CandidateSpec { id: string; lens: string; edits: Edit[] }
-export interface ProbeRun { [probeId: string]: string }
-export interface Probe { id: string; desc: string }
 export interface Io {
   /** Materialize the base tree plus edits into a scratch tree; returns its dir or null when an edit does not apply. */
   materialize(edits: Edit[] | "agent"): string | null;
@@ -89,27 +89,6 @@ export function applyEdits(files: Record<string, string>, edits: Edit[]): Record
     next[e.path] = src.slice(0, at) + e.replace + src.slice(at + e.search.length);
   }
   return next;
-}
-
-export function extractProgram(text: string): string {
-  const m = /```[a-zA-Z]*\n([\s\S]*?)```/.exec(text);
-  return m ? m[1]! : text;
-}
-
-/** Parse probe stdout lines into id -> canonical output and id -> desc. Lines that are not probe JSON are ignored. */
-export function parseProbeOutput(stdout: string): { run: ProbeRun; probes: Probe[] } {
-  const run: ProbeRun = {}, probes: Probe[] = [];
-  for (const line of stdout.split("\n")) {
-    const t = line.trim();
-    if (!t.startsWith("{")) continue;
-    try {
-      const o = JSON.parse(t) as { id?: unknown; desc?: unknown; out?: unknown };
-      if (typeof o.id !== "string") continue;
-      run[o.id] = typeof o.out === "string" ? o.out : JSON.stringify(o.out);
-      probes.push({ id: o.id, desc: typeof o.desc === "string" ? o.desc : o.id });
-    } catch { /* not a probe line */ }
-  }
-  return { run, probes };
 }
 
 export interface Entrant { id: string; lens: string; dir: string; checksPass: boolean; run: ProbeRun; diffLines: number }

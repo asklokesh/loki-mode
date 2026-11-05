@@ -1,0 +1,24 @@
+package changelog
+
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+func lokiCases() {
+	lokiCase("c1", "change", "CommitsCmd from v1.2.0 to HEAD", func() any { return strings.Join(CommitsCmd("v1.2.0", "HEAD"), " ") })
+	lokiCase("c2", "change", "CommitsCmd between two tags", func() any { return CommitsCmd("v1.0.0", "v1.1.0") })
+	lokiCase("k1", "keep", "AuthorsCmd from v1.2.0 to HEAD", func() any { return AuthorsCmd("v1.2.0", "HEAD") })
+	lokiCase("k2", "keep", "LastTagCmd", func() any { return LastTagCmd() })
+	lokiCase("k3", "keep", "Render with a merge subject and a blank one", func() any {
+		return Render("v2.0.0", []string{"Merge pull request #41 from team/export", " ", "Fix crash"})
+	})
+	lokiCase("k4", "keep", "Contributors with names that differ only in case", func() any {
+		return Contributors([]string{"Bo <Bo@x.io>", "bo <bo@x.io>", "al <al@x.io>"})
+	})
+	lokiCase("k5", "keep", "Render with no subjects", func() any { return Render("v0.1.0", nil) })
+	lokiCase("k6", "keep", "the shared log prefix for the subject format", func() any { return logArgs("%s") })
+	lokiCase("k7", "keep", "a helper that does not exist (dropped at base)", func() any { return undefinedHelper() })
+	lokiCase("k8", "keep", "the current time (never stable)", func() any { return time.Now().UnixNano() })
+}

@@ -1,0 +1,12 @@
+diff -ru a/changelog/changelog.go b/changelog/changelog.go
+--- a/changelog/changelog.go
++++ b/changelog/changelog.go
+@@ -9,7 +9,7 @@
+ 
+ // logArgs is the git log prefix every history query shares.
+ func logArgs(format string) []string {
+-	return []string{"git", "log", "--no-merges", "--pretty=format:" + format}
++	return []string{"git", "log", "--pretty=format:" + format}
+ }
+ 
+ // CommitsCmd lists the commit subjects between two refs.

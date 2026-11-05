@@ -1,0 +1,18 @@
+package flags
+
+func lokiCases() {
+	lokiCase("c1", "change", "FlagLine for --output with short alias o", func() any {
+		return FlagLine(Flag{Name: "output", Short: "o", Usage: "write to file"})
+	})
+	lokiCase("c2", "change", "Help with one aliased and one plain flag", func() any {
+		return Help("tool", []Flag{{Name: "verbose", Usage: "print more"}, {Name: "output", Short: "o", Usage: "write to file"}})
+	})
+	lokiCase("k1", "keep", "FlagLine without a short alias", func() any { return FlagLine(Flag{Name: "verbose", Usage: "print more"}) })
+	lokiCase("k2", "keep", "FlagLine with a default and no short alias", func() any {
+		return FlagLine(Flag{Name: "count", Usage: "number of runs", Default: "3"})
+	})
+	lokiCase("k3", "keep", "MissingError for --output with short alias o", func() any { return MissingError(Flag{Name: "output", Short: "o"}) })
+	lokiCase("k4", "keep", "Lookup of an unknown flag", func() any { return lokiAll(Lookup([]Flag{{Name: "output", Short: "o"}}, "--nope")) })
+	lokiCase("k5", "keep", "Lookup by short name", func() any { return lokiAll(Lookup([]Flag{{Name: "output", Short: "o"}}, "-o")) })
+	lokiCase("k6", "keep", "MissingError without a short alias", func() any { return MissingError(Flag{Name: "token"}) })
+}

@@ -1,0 +1,18 @@
+diff -ru a/changelog/changelog.go b/changelog/changelog.go
+--- a/changelog/changelog.go
++++ b/changelog/changelog.go
+@@ -14,7 +14,13 @@
+ 
+ // CommitsCmd lists the commit subjects between two refs.
+ func CommitsCmd(from, to string) []string {
+-	return append(logArgs("%s"), from+".."+to)
++	var args []string
++	for _, a := range logArgs("%s") {
++		if a != "--no-merges" {
++			args = append(args, a)
++		}
++	}
++	return append(args, from+".."+to)
+ }
+ 
+ // AuthorsCmd lists the author of every commit between two refs, for the credits section.

@@ -1,6 +1,7 @@
 // Hermetic logic tests for the tournament prototype: bun test bench/proto/candidate-tournament/tournament.test.ts
 import { expect, test } from "bun:test";
-import { applyEdits, disagreements, parseCandidates, parseProbeOutput, parseVerdicts, select, type Entrant } from "../../../loki-ts/src/features/tournament.ts";
+import { applyEdits, disagreements, parseCandidates, parseVerdicts, select, type Entrant } from "../../../loki-ts/src/features/tournament.ts";
+import { parseProbeOutput } from "../../../loki-ts/src/features/probes.ts";
 
 const e = (id: string, run: Record<string, string>, checksPass = true, diffLines = 4): Entrant => ({ id, lens: id, dir: "/x", checksPass, run, diffLines });
 

@@ -5,8 +5,10 @@
 // never shown to any prompt). <work-dir> must be a run-owned temp dir; every scratch tree goes under it.
 import { cpSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { applyEdits, runTournament, type Context, type Edit, type Io, type LlmCall, type Usage } from "../../../loki-ts/src/features/tournament.ts";
+import { runNodeProbe } from "../../../loki-ts/src/features/probes.ts";
+import { haikuCli, replayCalls, type Transcript } from "../haiku_cli.ts";
 
 const [fixture, work, mode, canned] = process.argv.slice(2) as [string, string, string, string | undefined];
 const repo = join(fixture, "repo");
@@ -30,9 +32,7 @@ const io: Io & { oracle(dir: string): boolean } = {
     return r.status === 0;
   },
   probe(dir, program) {
-    writeFileSync(join(dir, "__probe.mjs"), program);
-    const r = spawnSync("node", ["__probe.mjs"], { cwd: dir, timeout: 20_000, encoding: "utf8" });
-    return r.stdout ?? "";
+    return runNodeProbe(dir, program).stdout;
   },
   oracle(dir) {
     cpSync(join(fixture, "oracle.test.mjs"), join(dir, "__oracle.test.mjs"));
@@ -42,7 +42,7 @@ const io: Io & { oracle(dir: string): boolean } = {
 };
 
 const zero: Usage = { inTok: 0, outTok: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 };
-const transcripts: { system: string; user: string; text: string; usage: Usage }[] = [];
+const transcripts: Transcript[] = [];
 let llm: LlmCall;
 if (mode === "stub") {
   const c = JSON.parse(readFileSync(canned!, "utf8")) as { candidates: string; probes: string; truth: Record<string, string> };
@@ -63,30 +63,9 @@ if (mode === "stub") {
     return { text, usage: zero };
   };
 } else if (mode === "replay") {
-  // zero-cost re-score: returns the texts recorded by an earlier real run, matched by prompt kind
-  const rec = JSON.parse(readFileSync(canned!, "utf8")) as { system: string; text: string; usage: Usage }[];
-  llm = async (system, user) => {
-    const r = rec.find((x) => x.system === system)!;
-    transcripts.push({ system, user, text: r.text, usage: r.usage });
-    return { text: r.text, usage: r.usage };
-  };
+  llm = replayCalls(canned!, transcripts); // zero-cost re-score of the texts an earlier real run recorded
 } else {
-  llm = async (system, user) => {
-    const pf = join(work, `prompt${transcripts.length}-${Date.now()}.txt`);
-    writeFileSync(pf, user);
-    const args = ["-p", "--model", "claude-haiku-5-5", "--system-prompt", system, "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "json"];
-    const r = await new Promise<{ out: string; code: number | null }>((res) => {
-      const p = spawn("claude", args, { cwd: work, stdio: ["pipe", "pipe", "pipe"] });
-      let out = ""; p.stdout.on("data", (b: Buffer) => (out += b.toString()));
-      const t = setTimeout(() => p.kill("SIGTERM"), 240_000);
-      p.on("close", (code) => { clearTimeout(t); res({ out, code }); });
-      p.stdin.end(readFileSync(pf));
-    });
-    const j = JSON.parse(r.out) as { result: string; total_cost_usd: number; usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } };
-    const usage: Usage = { inTok: j.usage.input_tokens, outTok: j.usage.output_tokens, cacheRead: j.usage.cache_read_input_tokens ?? 0, cacheWrite: j.usage.cache_creation_input_tokens ?? 0, costUsd: j.total_cost_usd };
-    transcripts.push({ system, user, text: j.result, usage });
-    return { text: j.result, usage };
-  };
+  llm = haikuCli(work, transcripts);
 }
 
 mkdirSync(work, { recursive: true });
