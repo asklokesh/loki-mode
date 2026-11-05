@@ -827,11 +827,14 @@ console.log([head.status, base !== null && /TS6133/.test(base), v.tscUntouchedLo
         VT_NM="$TSC_NM" make_vt_repo "$1"
         printf 'import "./boot.ts";\nexport default {};\n' > "$1/vitest.config.ts"
         printf '%s\n' "$BOOT" > "$1/boot.ts"
+        printf 'import { expect, test } from "vitest";\nimport * as calc from "./calc";\n\ntest("add again", () => {\n  expect(calc.add(1, 1)).toBe(2);\n});\n' > "$1/util.test.ts"
     }
+    PREREDS='[e["data"].get("pre_red_checks",[]) for e in E if e["type"]=="stage.completed" and e["stage"]=="verify"][-1]'
     st_run() { MAKE_REPO=make_startup_repo run_engine "add a multiply(a, b) function to calc.ts" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 "$@"; }
     BOOT='throw new Error("startup boom");'; st_run E2E_STUB_SNIPPET="$TS_SNIP"
-    [ "$(fix_sessions)" = "0" ] && ok "startup error on base: a check the runner cannot start, failing the same way on base, starts no fix session" || { bad "startup error on base: $(fix_sessions) fix sessions (want 0)"; dump; }
-    case "$(ev '[c for e in E if e["type"]=="stage.completed" and e["stage"]=="verify" for c in e["data"].get("pre_red_checks",[])][-1:]')" in *vitest*) ok "startup error on base: the check is listed pre-red" ;; *) bad "startup error on base: not listed pre-red"; dump ;; esac
+    case "$(ev "$PREREDS")" in *util.test.ts*) ok "startup error on base: a check the runner cannot start for a test the task did not name, failing the same way on base, is excused" ;; *) bad "startup error on base: util.test.ts not excused"; dump ;; esac
+    case "$(ev "$PREREDS")" in *calc.test.ts*) bad "startup error on base: the task-named calc.test.ts was excused" ;; *) ok "startup error on base: the task-named calc.test.ts is never excused (it feeds the fix round)" ;; esac
+    case "$(ev "$PREREDS")" in *vitest*) ok "startup error on base: a check is listed pre-red" ;; *) bad "startup error on base: not listed pre-red"; dump ;; esac
     case "$(ev '[x for e in E if e["type"]=="stage.completed" and e["stage"]=="verify" for x in e["data"].get("pre_red",[])][-1:]')" in *"proves nothing"*) ok "startup error on base: the receipt data names it as proving nothing" ;; *) bad "startup error on base: no pre_red note"; dump ;; esac
     [ "$(outcome)" != "VERIFIED" ] && ok "startup error on base: the run is not VERIFIED on a check that never ran ($(outcome))" || { bad "startup error on base: VERIFIED"; dump; }
     BOOT='throw new Error("startup boom");'; st_run E2E_STUB_TARGET=vitest.config.ts E2E_STUB_REPLACE='export default {};' E2E_STUB_SNIPPET='export default {}; // edited'
@@ -840,6 +843,20 @@ console.log([head.status, base !== null && /TS6133/.test(base), v.tscUntouchedLo
     [ "$(fix_sessions)" -ge 1 ] && ok "startup error from the change: base runs fine, so the check is fix-round input ($(fix_sessions) fix sessions)" || { bad "startup error from the change: no fix session"; dump; }
     BOOT=$'import "./calc.ts";\nthrow new Error("different cause on base");'; st_run E2E_STUB_SNIPPET=$'export function (\n'"$TS_SNIP"
     [ "$(fix_sessions)" -ge 1 ] && ok "startup error, other cause on base: a different error is fix-round input ($(fix_sessions) fix sessions)" || { bad "startup error, other cause on base: no fix session"; dump; }
+    # #522 review: in a workspace the root node_modules links the package to HEAD source, so an unguarded base rerun would run the change's own import-time throw and excuse it.
+    make_wsboom_repo() {
+        mkdir -p "$1/packages/lib" "$1/packages/app" "$1/node_modules/@t"
+        printf '{"name":"root","private":true,"workspaces":["packages/*"]}\n' > "$1/package.json"; printf 'node_modules\n' > "$1/.gitignore"
+        printf '{"name":"@t/lib","private":true,"type":"module","main":"index.ts"}\n' > "$1/packages/lib/package.json"; printf '{"name":"@t/app","private":true,"type":"module"}\n' > "$1/packages/app/package.json"
+        printf 'export function add(a: number, b: number): number {\n  return a + b;\n}\n\n// LOKI_STUB_INSERT\n' > "$1/packages/lib/index.ts"
+        printf 'import { expect, test } from "vitest";\nimport { add } from "@t/lib";\n\ntest("app uses lib", () => {\n  expect(add(1, 1)).toBe(2);\n});\n' > "$1/packages/app/app.test.ts"
+        local e; for e in "$TSC_NM"/* "$TSC_NM"/.bin; do ln -s "$e" "$1/node_modules/$(basename "$e")"; done; ln -s ../../packages/lib "$1/node_modules/@t/lib"
+    }
+    MAKE_REPO=make_wsboom_repo run_engine "add a multiply(a, b) function to packages/lib/index.ts" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=packages/lib/index.ts LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 E2E_STUB_SNIPPET=$'throw new Error("import boom");\n'"$TS_SNIP"
+    WSK="$(ev '[(c["name"],c["result"]) for e in E if e["type"]=="stage.completed" and e["stage"]=="verify" for c in e["data"]["checks"]][-3:]')"
+    case "$WSK" in *app.test.ts*fail*) ok "workspace import throw: the app test ran and failed on the change's import-time throw ($WSK)" ;; *) bad "workspace import throw: no failing app test check: '$WSK'"; dump ;; esac
+    case "$(ev "$PREREDS")" in *app.test.ts*) bad "workspace import throw: the change's own throw was excused as pre-red" ;; *) ok "workspace import throw: not excused (the base rerun would resolve the workspace package to head source)" ;; esac
+    [ "$(fix_sessions)" -ge 1 ] && ok "workspace import throw: a fix session runs ($(fix_sessions))" || { bad "workspace import throw: no fix session"; dump; }
     SG="$(cd "$ROOT/loki-ts" && bun -e '
 const { startupSig: s } = await import("./src/engine10/stages/verify.ts");
 const a = "x\n\u23af\u23af Startup Error \u23af\u23af\nError: No projects were found in /r/pkg (12ms)\n    at start (file:///r/n.js:1:2)\n", b = "x\n\u23af\u23af Startup Error \u23af\u23af\nError: No projects were found in /b/pkg (9ms)\n    at start (file:///b/n.js:5:6)\n";

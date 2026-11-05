@@ -6,7 +6,7 @@ import { installOwned } from "../../project_model/install.ts";
 import { scopedOutOf } from "../../project_model/scope.ts";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve } from "node:path"; import { MANIFESTS } from "../../contrib/wall_snapshot.ts"; import { classifyRunnerOutput } from "../../runner/runner_errors.ts";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"; import { MANIFESTS } from "../../contrib/wall_snapshot.ts"; import { classifyRunnerOutput } from "../../runner/runner_errors.ts";
 import { hiddenConfigChanged, testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst, QUICK_ONLY_NOTE, quickScope, quickSplit } from "../../e10ext/select.ts"; import { dependentNotes, dependentTests } from "../../features/dependents.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
@@ -259,7 +259,7 @@ async function subtractBase(
   const sus = pairs.filter(({ c }) => rel.has(c.name) && c.result === "pass");
   const zc = zeroOk ? un.filter(({ c, t }) => c.result === "not_run" && !c.owner && (c.reason ?? "").startsWith(NO_TESTS_REASON) && !wall.has(c.name) && !isHoldoutCheck(c.name) && !changed.includes(t.path) && zeroIntake.has(c.name)) : []; // Change 2 (pre-red excuse): a test check that failed with no test id, because the runner could not start (a config error, a collection error), is rerun once on base. zeroOk
   // is false after a test config edit, so a startup error the change itself caused is never excused. The base run must fail with the same error lines (startupSig).
-  const ss = zeroOk && !changed.some((f) => MANIFESTS.test(f)) ? pairs.filter(({ c }) => c.result === "fail" && !c.ids?.length && !c.owner && !wall.has(c.name) && !isHoldoutCheck(c.name) && startupSig(failTails.get(c)) !== "") : [];
+  const ss = zeroOk && !changed.some((f) => MANIFESTS.test(f)) ? pairs.filter(({ c }) => c.result === "fail" && !c.ids?.length && !c.owner && !own.has(c.name) && !wall.has(c.name) && !isHoldoutCheck(c.name) && startupSig(failTails.get(c)) !== "") : [];
   if (!(un.some(({ c }) => c.result === "fail" && c.ids?.length) || sus.length || zc.length || ss.length) || signal.aborted) return out;
   const dir = mkdtempSync(join(tmpdir(), "e10-base-"));
   const git = (args: string[]): void => { safeGit(ctx.repoDir, args, { stdio: "ignore", repoDrivers: true }); }; // worktree add checks out base content
@@ -289,7 +289,8 @@ async function subtractBase(
     for (const { c, bc } of cmds) if (!base.has(c) && !signal.aborted) record(c, await runOnce(bc.cmd, bc.args, bc.cwd, signal, {}));
     for (const { c, t } of ss) { // a base run that cannot start (no tools, timeout, cut) excuses nothing: the check stays blocking
       if (signal.aborted) break;
-      const bc = commandFor(t, dir, api); linkHeadDeps(dir, ctx.repoDir, bc.cwd);
+      const bc = commandFor(t, dir, api), chain: string[] = []; for (let d = bc.cwd; d.startsWith(dir); d = dirname(d)) { chain.push(d); if (d === dir) break; }
+      if (!link || !chain.every((d) => link(d))) continue; // the guarded linker: in a workspace the root node_modules resolves packages to HEAD source, so a throw the change caused would fail the same way on "base" (#522 review); no guard pass, no excuse
       const r = await runOnce(bc.cmd, bc.args, bc.cwd, signal, {});
           if (!r.ok && !r.cut && !r.missing && failIds(r.out).length === 0 && startupSig(r.out.slice(-WALL_FAILURE_TAIL_CAP), [ctx.repoDir, dir, realOf(ctx.repoDir), realOf(dir)]) === startupSig(failTails.get(c), [ctx.repoDir, realOf(ctx.repoDir)])) { out.names.push(c.name); out.sameError.push(c.name); out.ids.push(`${c.name}: could not start on the base commit either, so it proves nothing about this change`); }
     }
