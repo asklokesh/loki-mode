@@ -777,6 +777,25 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest declared-env base proof: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest declared-env base proof: pytest is not installed"; fi
 fi
+# Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
+# a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
+if command -v go >/dev/null 2>&1; then
+    GP="$T/mp-go"; rm -rf "$GP"; mkdir -p "$GP" && cd "$GP" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
+    printf 'module example.com/calc\n\ngo 1.20\n' > go.mod
+    for n in assert build panic prered empty; do mkdir -p "$n"; printf 'package %s\n\nfunc Half(a int) int { return a / 2 }\n\nfunc Big(a int) int { return a / (a - 5) }\n' "$n" > "$n/calc.go"; printf 'package %s\n\nimport "testing"\n\nfunc TestOk(t *testing.T) { if Half(4) != 2 { t.Fatal("half") } }\n' "$n" > "$n/calc_test.go"; done
+    printf 'package prered\n\nimport "testing"\n\nfunc TestOk(t *testing.T) { if Half(5) != 3 { t.Fatalf("pre %%d", Half(5)) } }\n' > prered/calc_test.go
+    git add -- . && git commit -q -m base && BASE="$(git rev-parse HEAD)"
+    for n in assert build panic prered empty; do printf 'package %s\n\nfunc Half(a int) int { return (a + 1) / 2 }\n\nfunc Big(a int) int { return a }\n\nfunc Triple(a int) int { return a * 3 }\n' "$n" > "$n/calc.go"; done
+    printf '\nfunc TestHalfRound(t *testing.T) { if Half(5) != 3 { t.Errorf("want 3 got %%d", Half(5)) } }\n' >> assert/calc_test.go
+    printf '\nfunc TestNew(t *testing.T) { if Triple2(2) != 6 { t.Fatal("triple") } }\n' >> build/calc_test.go
+    printf '\nfunc TestBig(t *testing.T) { Big(5) }\n' >> panic/calc_test.go
+    printf '// edited\n' >> prered/calc_test.go; printf 'package empty\n// no tests\n' > empty/calc_test.go
+    git add -- . && git commit -q -m head && HEADSHA="$(git rev-parse HEAD)"; cd "$ROOT"
+    gp="$(cd "$ROOT/loki-ts" && bun -e 'const { mutationProof } = await import("./src/util/mutation_proof.ts"); const { baseProofRunner } = await import("./src/engine10/stages/seal.ts"); const [repo, base, head] = process.argv.slice(1); const out: string[] = []; for (const n of ["assert", "build", "panic", "prered", "empty"]) { const f = n + "/calc_test.go"; const r = await mutationProof({ repoDir: repo, baseSha: base, runDir: repo + "/.loki", wallFiles: [{ path: f }], checks: [{ name: "go:" + f }], runner: baseProofRunner, headSha: head, requireAssertion: true, baseMustPass: n === "prered" ? [f] : [] }); out.push(n + "=" + (r.failed ?? []).length); } console.log(out.join(" "))' "$GP" "$BASE" "$HEADSHA" 2>&1 | tail -1)"
+    [ "$gp" = "assert=1 build=0 panic=0 prered=0 empty=0" ] && ok "go base proof: an assertion failure on the base counts; a build failure, a panic, a red base file and a no-test file do not ($gp)" || bad "go base proof: got '$gp'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go base proof: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go base proof: go is not installed"; fi
+fi
 for vt in 2 latest; do
     VT_NM="$T/vt-$vt/node_modules"
     [ -x "$VT_NM/.bin/vitest" ] || { if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "vitest $vt wall-off: vitest@$vt is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: vitest $vt wall-off: vitest@$vt is not installed (offline?)"; fi; continue; }
