@@ -250,7 +250,6 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   };
   try {
     let jumped = false, resized = false, stopped: string | null = null;
-    let scaffoldRw: Obj[] = []; // the rewrites the scaffold applied before the first verify (undone below when that verify regresses)
     const sigs: string[] = [];
     const sigOf = (d: Obj | undefined, r?: StageResult | null): string => r && r.status !== "completed" ? `verify-crashed-${sigs.length}` : JSON.stringify([...((d?.failures_grouped ?? []) as { signature?: string; carried?: boolean }[]).filter((g) => !g.carried).map((g) => stallSignature(String(g.signature))).sort(), `holdout_failed=${d?.holdout_failed ?? 0}`]); // a crashed or timed-out verify leaves outputs.verify stale: record a marker that never matches (A-113b)
     for (const step of opts.flow ?? FLOW) {
@@ -265,7 +264,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (wallConcurrent() && wallEnabled() && todo.includes("plan") && todo.includes("wall") && !wallJob && await startWallAuthor()) todo = todo.filter((n) => n !== "wall"); // the Wall is now a background job, joined before verify
       if (wallJob && todo.includes("implement") && !(await (wallJob as WallJob).snap)) { const j = wallJob as WallJob, t0 = j.t0; abortWall(); ctx.emit("stage.failed", "wall", { duration_s: (ctx.clock.now() - t0) / 1000, reason: "wall base snapshot unavailable: nothing installed" }); } // the base copy must be complete before implement edits the tree; no copy means no Wall
       if (wallJob && todo[0] === "verify") await installWallJob(); // FC-VACUOUS-WALL-GREEN: a Wall green on base no longer ends the run here
-      if (todo[0] === "verify" && !outputs.verify && hooks.scaffold && outputs.implement && !jumped) { try { const sc = hooks.scaffold(ctx.repoDir, ctx.baseSha, String(outputs.intake?.task ?? "")); if (sc) { outputs.implement = { ...outputs.implement, scaffold: sc }; ctx.emit("scaffold.applied", "implement", sc); scaffoldRw = Array.isArray(sc.rewrites) ? (sc.rewrites as Obj[]) : []; } } catch { /* best-effort: a scaffold failure never stops the run */ } } // zero-model scaffolding (LOKI_E10_SCAFFOLD=1): deterministic edits before the first verify
+      if (todo[0] === "verify" && !outputs.verify && hooks.scaffold && outputs.implement && !jumped) { try { const sc = hooks.scaffold(ctx.repoDir, ctx.baseSha, String(outputs.intake?.task ?? "")); if (sc) { outputs.implement = { ...outputs.implement, scaffold: sc }; ctx.emit("scaffold.applied", "implement", sc); } } catch { /* best-effort: a scaffold failure never stops the run */ } } // zero-model scaffolding (LOKI_E10_SCAFFOLD=1): deterministic edits before the first verify
       const results = await Promise.all(todo.map((n) => runStage(n, !isTail)));
       if (todo[0] === "intake" && results[0]?.status === "failed" && !capHit) {
         return { outputs, capHit, stopped: "intake failed" };
@@ -279,19 +278,20 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       }
       if (outputs.plan?.intent_declined === true) return { outputs, capHit, stopped: "intent declined" }; // T3: user answered n at the intent card
       if (todo.some((n, i) => mustJump(n, results[i] ?? null))) { jumped = true; continue; }
-      if (todo[0] === "verify" && scaffoldRw.length && hasFailures(outputs.verify) && hooks.scaffoldUndo && hooks.scaffoldRedo) {
-        // Undo if the first verify regresses: the first verify ran with the scaffold's rewrites and failed, so verify the model's own tree once (no
-        // model session). A check that fails with the rewrites and passes without them is a regression they caused: keep the model's tree and that
-        // verify. Otherwise the rewrites cost nothing verify can see: re-apply them, which restores the first verify's tree and its result.
-        const first = outputs.verify!, undone = hooks.scaffoldUndo(ctx.repoDir, scaffoldRw);
-        if (undone.length) {
-          const v0 = await runStage("verify", true);
-          const named = (d: Obj | undefined, ok: boolean): Set<string> => new Set((Array.isArray(d?.checks) ? (d!.checks as Obj[]) : []).filter((c) => (ok ? c.result === "pass" || c.result === "flaky" : c.result === "fail")).map((c) => String(c.name)));
-          const regressed = v0?.status === "completed" ? [...named(first, false)].filter((n) => named(outputs.verify, true).has(n)) : [];
-          if (regressed.length) { outputs.implement = { ...outputs.implement, scaffold: { ...(outputs.implement?.scaffold as Obj), undone: undone.length, regressed } }; ctx.emit("scaffold.undone", "verify", { rewrites: undone.length, regressed }); }
-          else { hooks.scaffoldRedo(ctx.repoDir, undone); outputs.verify = first; }
+      if (todo[0] === "verify" && hasFailures(outputs.verify) && hooks.scaffoldRepair && hooks.scaffoldUndo && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external") {
+        // Zero-model repair before the first fix round (LOKI_E10_SCAFFOLD_SYSTEMATIC=1): the change rewrote a pattern at some sites, the scaffold
+        // rewrites the remaining sites of that pattern and verify runs once more (no model session). A rewrite stays only when a failing test or
+        // check now passes and nothing new fails; otherwise it is undone and the first verify's result stands. On real merged refactors this
+        // rule kept 35 of 35 correct rewrites; undoing only on a regression kept 118 correct and 153 wrong.
+        let rw: Obj[] = [];
+        try { rw = hooks.scaffoldRepair(ctx.repoDir, ctx.baseSha, String(outputs.intake?.task ?? "")); } catch { rw = []; }
+        if (rw.length) {
+          const first = outputs.verify!, v = await runStage("verify", true);
+          const fails = (d: Obj | undefined): Set<string> => new Set((Array.isArray(d?.checks) ? (d!.checks as Obj[]) : []).filter((c) => c.result === "fail").flatMap((c) => (Array.isArray(c.ids) && c.ids.length ? (c.ids as unknown[]) : ["*"]).map((id) => `${String(c.name)} ${String(id)}`)));
+          const before = fails(first), after = fails(outputs.verify), fixed = [...before].filter((k) => !after.has(k)), broke = [...after].filter((k) => !before.has(k));
+          if (v?.status === "completed" && !mustJump("verify", v) && fixed.length && !broke.length) { outputs.implement = { ...outputs.implement, scaffold: { ...((outputs.implement?.scaffold as Obj | undefined) ?? {}), rewrites: rw, fixed } }; ctx.emit("scaffold.applied", "verify", { rewrites: rw, fixed }); }
+          else { hooks.scaffoldUndo(ctx.repoDir, rw); outputs.verify = first; ctx.emit("scaffold.undone", "verify", { rewrites: rw.length, fixed: fixed.length, broke }); if (mustJump("verify", v)) { jumped = true; continue; } }
         }
-        scaffoldRw = [];
       }
       if (todo[0] === "verify") {
         sigs.push(sigOf(outputs.verify, results[0]));

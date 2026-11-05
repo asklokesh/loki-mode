@@ -4,8 +4,8 @@
 //   fragment:   the repo keeps release-note fragments (changesets, towncrier) and the change adds none: write one from
 //               the repo's own conventions (package names from the nearest package.json, quote style from existing fragments).
 //   systematic: the change rewrote >=2 lines the same way (a rewrite rule learned on the changed tokens and their context); an
-//               unchanged line of an edited file or its directory siblings that the rule matches gets the same rewrite. The machine
-//               undoes it when the first verify fails a check that passes without it.
+//               unchanged line of an edited file that the rule matches gets the same rewrite. The machine runs it as a repair after a
+//               red first verify and keeps it only when a failing test or check then passes and nothing new fails.
 //   sibling:    detect only: inside a hunk's neighborhood, two calls of one `x = f(x, ...)` form pass different trailing
 //               arguments where one site is next to the edit (raw versus normalized input); reported, never applied.
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -374,8 +374,13 @@ export function undoRewrites(repoDir: string, rw: Rewrite[]): Rewrite[] {
   }
   return done;
 }
-/** Applies rewrites the scaffold proposed (after an undo, to restore them). */
-export const redoRewrites = (repoDir: string, rw: Rewrite[]): void => applyRewrites(repoDir, rw);
+/** The machine's zero-model repair after a red first verify: proposes the systematic completions and writes them. The machine keeps them only
+ *  when a failing test or check now passes and nothing new fails (undoRewrites otherwise). */
+export function repairRewrites(repoDir: string, baseSha: string, task: string): Rewrite[] {
+  const rw = systematicRewrites(repoDir, baseSha, task);
+  if (rw.length) applyRewrites(repoDir, rw);
+  return rw;
+}
 
 // ---------- pass 3: sibling-argument consistency (detect only) ----------
 function siblings(repoDir: string, baseSha: string, changes: Change[]): SiblingNote[] {
@@ -411,7 +416,7 @@ export function scaffold(repoDir: string, baseSha: string, task: string, opts: {
   const changes = changedFiles(repoDir, baseSha);
   const res: ScaffoldResult = { fragments: [], rewrites: [], siblings: [] };
   if (changes.length === 0) return res; // nothing implemented: nothing to scaffold
-  const rw = (opts.systematic ?? systematicEnabled()) ? systematicRewrites(repoDir, baseSha, task, {}, changes) : [];
+  const rw = opts.systematic === true ? systematicRewrites(repoDir, baseSha, task, {}, changes) : []; // the machine runs the systematic pass as a repair after verify (repairRewrites); the fixture driver asks for it here
   if (opts.apply !== false && rw.length) applyRewrites(repoDir, rw);
   res.rewrites = rw;
   res.siblings = siblings(repoDir, baseSha, changes);

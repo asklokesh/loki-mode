@@ -167,7 +167,7 @@ GO
 ( cd "$ROOT/f2a" && timeout 180 go vet ./... && timeout 180 go test ./... 2>&1 | tail -5 )
 
 mk_go "$ROOT/f2b"; haiku_partial "$ROOT/f2b"; printf 'HandleExitCoder does not see an ExitCoder wrapped with %%w\n' > "$ROOT/task-go-b.txt"
-run "F2b go: task never names MultiError -> expect no rewrite" "$ROOT/f2b" "$ROOT/task-go-b.txt" --dry
+run "F2b go: task never names MultiError -> v2 still rewrites both MultiError sites (no task-name filter: on real commits it cut recall to 1 in 294)" "$ROOT/f2b" "$ROOT/task-go-b.txt" --dry
 mk_go "$ROOT/f2c"; perl -0pi -e 's/import \(\n/import (\n\t"errors"\n/; s/\tif exitErr, ok := err\.\(ExitCoder\); ok \{/\tvar exitErr ExitCoder\n\tif errors.As(err, &exitErr) {/' "$ROOT/f2c/errors.go"
 run "F2c go: only one instance rewritten (no rule) -> expect no rewrite" "$ROOT/f2c" "$T2" --dry
 
@@ -228,11 +228,12 @@ printf 'def f():\n    return 1\n' > "$ROOT/f5/pkg/m.py"; commit "$ROOT/f5" base;
 printf 'f returns the wrong value (#42)\n' > "$ROOT/task-f5.txt"
 run "F5 towncrier: expect newsfragments/42.bugfix.md" "$ROOT/f5" "$ROOT/task-f5.txt"; cat "$ROOT/f5/newsfragments/42.bugfix.md" 2>/dev/null
 
-# ---- U: undo if the first verify regresses, through the real engine (bin/loki from source) on the stub provider.
-# SCAFFOLD_ENGINE=1 runs these legs. Each leg's implement session copies a prepared partial edit (the shape Haiku leaves);
-# every other session is the shared e2e stub. U1: the completion is right (kept, verify green, no fix round). U2: the
-# completion is wrong (a site the task excludes): the first verify fails, the model's own tree passes, the rewrite is undone.
-# U3: the completion is right but another failure remains: the model's tree fails the same check, so the rewrite is kept.
+# ---- U: the systematic pass as a zero-model repair after a red first verify, through the real engine (bin/loki from source) on the
+# stub provider. SCAFFOLD_ENGINE=1 runs these legs. Each leg's implement session copies a prepared partial edit (the shape Haiku
+# leaves); every other session is the shared e2e stub. A repair stays only when a failing test then passes and nothing new fails.
+# U1: the model's own test fails, the completion fixes it: kept, 0 fix rounds. U2: the completion would be wrong but the model's
+# tree is green: no repair is tried. U2b: the model's tree is red for another reason and the completion breaks a passing test:
+# undone, the model's tree stands. U3: the completion fixes one failing test while another stays red: kept, fix rounds follow.
 if [ "${SCAFFOLD_ENGINE:-0}" = "1" ]; then
 REPO_ROOT="$(cd "$SP/../../../.." && pwd)"; E2E="$REPO_ROOT/tests/min/fixtures/e2e/bin/claude"
 mkstub() { # mkstub <leg dir> <prepared dir>: implement copies the prepared files over the repo, other stages go to the e2e stub
@@ -252,10 +253,10 @@ engine() { # engine <leg dir> <task>: one run in <leg>/repo; prints rc, outcome,
   echo "outcome: $(sed -n 's/^Outcome:[[:space:]]*\([A-Z_]*\).*/\1/p' "$d/engine.out" | head -1)"
   echo "scaffold events: $(grep -o '"type":"scaffold\.[a-z]*"' "$ev" | tr '\n' ' ')"
   echo "fix rounds: $(grep -c '"type":"fix.round"' "$ev")  verify runs: $(grep -c '"type":"stage.completed","stage":"verify"' "$ev")"
-  grep -o '"type":"scaffold.undone"[^}]*}[^}]*}' "$ev" | head -1
+  grep -o '"type":"scaffold\.[a-z]*","stage":"verify","data":{[^}]*' "$ev" | cut -c1-260 | head -2
 }
 # U2 shape: two of three trim-only helpers start lowercasing; the third must keep the caller's case.
-mk_names() { # mk_names <leg dir>
+mk_names() { # mk_names <leg dir> [1: the model also writes a test that fails for another reason]
   local d="$1"; init "$d/repo"; printf 'module example.com/names\n\ngo 1.22\n' > "$d/repo/go.mod"
   cat > "$d/repo/names.go" <<'GO'
 package names
@@ -286,6 +287,7 @@ GO
   mkdir -p "$d/prep"; sed -e 's/^func Name(s string) string { return strings.TrimSpace(s) }/func Name(s string) string { return strings.ToLower(strings.TrimSpace(s)) }/' \
     -e 's/^func Label(s string) string { return strings.TrimSpace(s) }/func Label(s string) string { return strings.ToLower(strings.TrimSpace(s)) }/' "$d/repo/names.go" > "$d/prep/names.go"
   { cat "$d/repo/names_test.go"; printf '\nfunc TestNameLabelLower(t *testing.T) {\n\tif Name(" AbC ") != "abc" || Label(" X ") != "x" {\n\t\tt.Fatal("not lowercased")\n\t}\n}\n'; } > "$d/prep/names_test.go"
+  if [ "${2:-}" = "1" ]; then printf '\nfunc TestTitleCase(t *testing.T) {\n\tif Name("ab") != "Ab" {\n\t\tt.Fatal("no title case yet")\n\t}\n}\n' >> "$d/prep/names_test.go"; fi
 }
 # U1 and U3 shape: the F2 errors.go with Haiku's 2-of-3 errors.As edit and a visible wrapped-MultiError test.
 mk_errs_leg() { # mk_errs_leg <leg dir> [extra failing test: 1]
@@ -305,14 +307,17 @@ GO
 }
 committed() { git -C "$1/repo" show "$(git -C "$1/repo" for-each-ref --format='%(refname:short)' refs/heads/loki | head -1):$2"; } # the run's committed loki/<run> tree
 TASK_NAMES="Name and Label should lower-case their result (Raw keeps the caller's case)"
-for leg in u1 u2 u3; do mkdir -p "$ROOT/$leg"; done
+for leg in u1 u2 u2b u3; do mkdir -p "$ROOT/$leg"; done
 mk_errs_leg "$ROOT/u1"; mkstub "$ROOT/u1" "$ROOT/u1/prep"
-echo "=== U1 engine: right completion -> scaffold.applied, no undo, verify green, 0 fix rounds"; engine "$ROOT/u1" "$(head -1 "$T2")"
+echo "=== U1 engine: first verify red, the completion fixes it -> scaffold.applied (verify), VERIFIED, 0 fix rounds, 2 verify runs"; engine "$ROOT/u1" "$(head -1 "$T2")"
 committed "$ROOT/u1" errors.go | grep -c 'errors.As(err, &multiErr)' | sed 's/^/U1 multiErr rewrite in the committed tree: /'
 mk_names "$ROOT/u2"; mkstub "$ROOT/u2" "$ROOT/u2/prep"
-echo "=== U2 engine: wrong completion (Raw) -> first verify red, model tree green, scaffold.undone, 0 fix rounds"; engine "$ROOT/u2" "$TASK_NAMES"
+echo "=== U2 engine: the completion would be wrong (Raw) but the model's tree is green -> no repair tried, VERIFIED, 1 verify run"; engine "$ROOT/u2" "$TASK_NAMES"
 committed "$ROOT/u2" names.go | grep -c 'func Raw(s string) string { return strings.TrimSpace(s) }' | sed 's/^/U2 Raw left as the model wrote it in the committed tree: /'
+mk_names "$ROOT/u2b" 1; mkstub "$ROOT/u2b" "$ROOT/u2b/prep"
+echo "=== U2b engine: red for another reason, the completion breaks TestRaw -> scaffold.undone, fix rounds follow, Raw untouched"; engine "$ROOT/u2b" "$TASK_NAMES"
+committed "$ROOT/u2b" names.go | grep -c 'func Raw(s string) string { return strings.TrimSpace(s) }' | sed 's/^/U2b Raw left as the model wrote it in the committed tree: /'
 mk_errs_leg "$ROOT/u3" 1; mkstub "$ROOT/u3" "$ROOT/u3/prep"
-echo "=== U3 engine: right completion, another failure remains -> no undo (re-applied), fix rounds follow"; engine "$ROOT/u3" "$(head -1 "$T2")"
+echo "=== U3 engine: the completion fixes one failing test, another stays red -> scaffold.applied (kept), fix rounds follow"; engine "$ROOT/u3" "$(head -1 "$T2")"
 committed "$ROOT/u3" errors.go | grep -c 'errors.As(err, &multiErr)' | sed 's/^/U3 multiErr rewrite kept in the committed tree: /'
 fi
