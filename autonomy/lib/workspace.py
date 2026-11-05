@@ -6,6 +6,7 @@
     loki workspace run <name> <issue-ref>
     loki workspace status [<run-id>]
     loki workspace infer <name>
+    loki workspace affected <name> [--json] <goal>
 
 On by default (LOKI_WORKSPACES=0 disables). Workspaces are defined in loki.yaml:
 
@@ -42,6 +43,11 @@ pyproject.toml dependencies on other listed repos (print-only, cycle-checked).
 With `integration: {per_stage: true}` the integration command also runs after
 each topological layer; a failing stage SKIPs every later layer, so a broken
 contract stops before downstream repos build on it.
+
+`affected` prints which repos a goal touches (lexical search of each local checkout, file:line evidence) and
+the run order; no model call, no files. `affected: true` in the workspace (or LOKI_WORKSPACE_AFFECTED=1)
+makes `run` run only those repos in declared plus inferred `after` order and records the selection in integration.json.
+Unselected repos stay read-only via LOKI_WS_DIR_*. Off by default.
 
 Test seam: LOKI_WORKSPACE_LAUNCHER replaces the engine launcher (called with
 the issue ref or task text, cwd = the repo worktree).
@@ -218,8 +224,11 @@ def task_for(entry, ref, siblings, plan=None):
     return text, {"LOKI_E10_TASK_TEXT": text}
 
 
-def run_integration(ws, run_dir, worktrees, heads):
-    """Run the integration command once; return the evidence dict."""
+def run_integration(ws, run_dir, worktrees, heads, extra_dirs=None):
+    """Run the integration command once; return the evidence dict.
+
+    extra_dirs: {repo: unchanged checkout} exported read-only as LOKI_WS_DIR_* for repos that did not run.
+    """
     integ = ws.get("integration") or {}
     cmd = integ.get("command")
     ev = {"heads": heads, "exit_code": None, "log_sha256": None, "status": "not_configured"}
@@ -227,7 +236,7 @@ def run_integration(ws, run_dir, worktrees, heads):
         return ev
     timeout = integ.get("timeout_s", 900)
     env = dict(os.environ)
-    for repo, wt in worktrees.items():
+    for repo, wt in list((extra_dirs or {}).items()) + list(worktrees.items()):
         env["LOKI_WS_DIR_" + re.sub(r"[^A-Za-z0-9]", "_", repo).upper()] = wt
     log_path = os.path.join(run_dir, "integration.log")
     with open(log_path, "wb") as lf:
@@ -259,8 +268,12 @@ def _heads(worktrees):
     return out
 
 
-def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
-    """Run the workspace; return (exit_code, evidence_path_or_None)."""
+def run_workspace(name, ref, workspaces, base_dir=None, launcher=None, affected=None):
+    """Run the workspace; return (exit_code, evidence_path_or_None).
+
+    affected: True prunes to the repos the goal touches and adds inferred `after` edges; None reads the
+    workspace `affected` key and LOKI_WORKSPACE_AFFECTED=1. Off by default.
+    """
     ws = workspaces.get(name)
     if ws is None:
         say("workspace: unknown workspace %r (known: %s)" % (name, ", ".join(sorted(workspaces)) or "none"))
@@ -280,6 +293,25 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
     os.makedirs(run_dir, exist_ok=True)
     launcher = launcher or os.environ.get("LOKI_WORKSPACE_LAUNCHER") or os.path.join(REPO_ROOT, "bin", "loki")
     child_env_base = dict(os.environ, LOKI_NO_BROWSER="1")
+
+    on = affected if affected is not None else (ws.get("affected") is True or
+                                                os.environ.get("LOKI_WORKSPACE_AFFECTED") == "1")
+    selection, extra_dirs = None, {}
+    if on:
+        selection = select_affected(ws, ref)
+        repos, note = compose(ws, selection)
+        ordered = order_repos({"repos": repos})
+        for r in selection["selected"]:
+            say("workspace: %s selected (%s)" % (r, selection["evidence"].get(r, "")))
+        for r, why in selection["not_selected"].items():
+            say("workspace: %s not selected (%s)" % (r, why))
+        if selection["fallback"]:
+            say("workspace: " + selection["fallback"])
+        if note:
+            say("workspace: " + note)
+            selection["note"] = note
+        roots = _local_roots(ws.get("repos") or [])
+        extra_dirs = {r: roots[r] for r in selection["not_selected"] if roots.get(r)}
 
     outcome, worktrees, heads, kind = {}, {}, {}, {}
     timing = {}  # repo -> {started_at, finished_at} epoch seconds
@@ -341,7 +373,7 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
             if any(kind[r] != "ok" for r in members):
                 gate[lv] = "failed"
             else:
-                sev = run_integration(ws, run_dir, worktrees, _heads(worktrees))
+                sev = run_integration(ws, run_dir, worktrees, _heads(worktrees), extra_dirs)
                 sev["layer"] = lv
                 stages.append(sev)
                 gate[lv] = "failed" if sev["status"] == "failed" else "passed"
@@ -415,9 +447,11 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
     if per_stage and stages:
         ev = dict(stages[-1], heads=heads, stages=[{k: v for k, v in s_.items() if k != "heads"} for s_ in stages])
     else:
-        ev = run_integration(ws, run_dir, worktrees, heads)
+        ev = run_integration(ws, run_dir, worktrees, heads, extra_dirs)
     ev["outcomes"] = outcome
     ev["timing"] = {r: t for r, t in timing.items() if "finished_at" in t}
+    if selection is not None:
+        ev["selection"] = selection
     ev_path = os.path.join(run_dir, "integration.json")
     tmp = ev_path + ".tmp"
     with open(tmp, "w") as f:
@@ -426,17 +460,24 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
 
     seal_composite(ordered, outcome, ev, run_dir)
 
+    links = {}
     try:
         import workspace_comment
-        workspace_comment.post_comments(name, run_id, run_dir, worktrees, ev, say)
+        links = workspace_comment.find_prs(worktrees)
+        workspace_comment.post_comments(name, run_id, run_dir, worktrees, ev, say, links)
     except Exception as e:  # commenting must never fail the run
         say("workspace: commenting skipped (%s)" % type(e).__name__)
 
     say("")
     say("Summary: workspace %s (%s)" % (name, run_id))
     for repo, res in outcome.items():
-        say("%-30s %s" % (repo, res))
+        pr = links.get(repo)
+        say("%-30s %s" % (repo, res + ("  %s%s" % (pr["url"], " (draft)" if pr.get("draft") else "") if pr else "")))
     say("%-30s %s" % ("integration", ev["status"]))
+    if worktrees:
+        draft = sum(1 for v in links.values() if v.get("draft"))
+        say("linked PRs: %d of %d repos have an open PR (%d ready, %d draft)" % (
+            len(links), len(worktrees), len(links) - draft, draft))
     if ev["status"] == "failed" or any(k == "fail" for k in kind.values()):
         return 1, ev_path
     return (3 if any(k == "budget" for k in kind.values()) else 0), ev_path
@@ -663,24 +704,23 @@ def _openapi_evidence(root, roots):
     return found
 
 
-def infer(name, workspaces, say=say):
-    """Print suggested `after:` edges from manifests; never writes loki.yaml."""
-    ws = workspaces.get(name)
-    if ws is None:
-        say("workspace: unknown workspace %r (known: %s)" % (name, ", ".join(sorted(workspaces)) or "none"))
-        return 2
-    entries = [e for e in ws.get("repos") or [] if isinstance(e.get("repo"), str)]
+def _local_roots(entries):
+    """{repo: absolute local checkout or None} (the entry's path, else ~/.loki/repos/<slug>)."""
     roots = {}
     for e in entries:
         root = os.path.abspath(os.path.expanduser(e["path"])) if e.get("path") else os.path.join(
             os.path.expanduser("~"), ".loki", "repos", _slug(e["repo"]))
         roots[e["repo"]] = root if os.path.isdir(root) else None
+    return roots
+
+
+def infer_edges(entries, roots):
+    """-> (proposed {repo: [deps]}, evidence {(repo, dep): str}) from manifests, imports and generator configs."""
     ids = {e["repo"]: _identities(e, roots[e["repo"]]) if roots[e["repo"]] else set() for e in entries}
     proposed, evidence = {}, {}
     for e in entries:
         repo = e["repo"]
         if not roots[repo]:
-            say("workspace: %s: no local checkout, skipped" % repo)
             proposed[repo] = list(e.get("after") or [])
             continue
         toks = _dep_tokens(roots[repo])
@@ -701,6 +741,21 @@ def infer(name, workspaces, say=say):
                 deps.append(o)
                 evidence[(repo, o)] = imp[o]
         proposed[repo] = deps
+    return proposed, evidence
+
+
+def infer(name, workspaces, say=say):
+    """Print suggested `after:` edges from manifests; never writes loki.yaml."""
+    ws = workspaces.get(name)
+    if ws is None:
+        say("workspace: unknown workspace %r (known: %s)" % (name, ", ".join(sorted(workspaces)) or "none"))
+        return 2
+    entries = [e for e in ws.get("repos") or [] if isinstance(e.get("repo"), str)]
+    roots = _local_roots(entries)
+    for e in entries:
+        if not roots[e["repo"]]:
+            say("workspace: %s: no local checkout, skipped" % e["repo"])
+    proposed, evidence = infer_edges(entries, roots)
     try:
         order_repos({"repos": [{"repo": e["repo"], "after": proposed[e["repo"]]} for e in entries]})
     except ValueError as err:
@@ -716,12 +771,226 @@ def infer(name, workspaces, say=say):
     return 0
 
 
+# ---- goal-driven repo selection (print-only `affected`; pruning via the affected key or env) ----------------------
+_GOAL_STOP = frozenset(
+    "rename change update add remove fix everywhere all every across repos repo the a an to in of for from with "
+    "and or field fields use make new old into on by it its be should so that this as at is are we our code "
+    "support implement".split())
+_SCAN_EXCLUDES = ("node_modules", "dist", "build", "vendor", ".loki")
+_SCAN_TIMEOUT_S = 60
+_MAX_TERMS = 40
+
+
+def _split_words(ident):
+    """Lower-cased words of an identifier: split on _ - and camelCase humps."""
+    out = []
+    for part in re.split(r"[_\-\s]+", ident):
+        out += [w.lower() for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+", part)]
+    return out
+
+
+def _variants(words):
+    """Spelling variants of a word list: snake, kebab, camel, pascal, UPPER_SNAKE, concatenated, and ID forms."""
+    cap = [w.capitalize() for w in words]
+    out = ["_".join(words), "-".join(words), words[0] + "".join(cap[1:]), "".join(cap),
+           "_".join(words).upper(), "".join(words)]
+    if len(words[-1]) <= 3:
+        up = words[-1].upper()
+        out += [words[0] + "".join(cap[1:-1]) + up, "".join(cap[:-1]) + up]
+    return out
+
+
+def goal_terms(text):
+    """Searchable terms for a goal: explicit identifiers verbatim, plus variants of 2-3 word phrases."""
+    text = text or ""
+    explicit = []
+    for m in re.finditer(r"`([^`\n]+)`|\"([^\"\n]+)\"|(?<!\w)'([^'\n]+)'(?!\w)", text):
+        t = (m.group(1) or m.group(2) or m.group(3)).strip()
+        if len(t) >= 3:
+            explicit.append(t)
+    toks = re.findall(r"[A-Za-z][A-Za-z0-9_]*", text)
+    for i, tok in enumerate(toks):
+        if len(tok) < 2 or tok.lower() in _GOAL_STOP:
+            continue
+        if "_" in tok or re.search(r"[a-z0-9][A-Z]", tok) or (i > 0 and tok[0].isupper()):
+            explicit.append(tok)
+    terms = list(explicit)
+    for ident in explicit:
+        words = _split_words(ident)
+        if len(words) >= 2:
+            terms += _variants(words)
+    words = [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z0-9]*", text)]
+    run = []
+    for w in words + [None]:
+        if w is not None and w not in _GOAL_STOP:
+            run.append(w)
+            continue
+        for n in (2, 3):
+            for i in range(len(run) - n + 1):
+                terms += _variants(run[i:i + n])
+        run = []
+    seen, out = set(), []
+    for t in terms:
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out[:_MAX_TERMS]
+
+
+def _term_regex(term):
+    # A term that starts with a capital may follow a lowercase letter (getCustomerId).
+    behind = r"(?<![A-Z0-9])" if term[:1].isupper() else r"(?<![A-Za-z0-9])"
+    return re.compile(behind + re.escape(term) + r"(?![a-z0-9])")
+
+
+def _term_hit(root, terms):
+    """-> (evidence or None, error or None): first tracked line in root with a boundary-matched term."""
+    cmd = ["git", "-C", root, "grep", "-I", "-n", "-F"]
+    for t in terms:
+        cmd += ["-e", t]
+    cmd += ["--", "."] + [":(exclude,glob)**/%s/**" % d for d in _SCAN_EXCLUDES]
+    rx = [(t, _term_regex(t)) for t in terms]
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                             text=True, errors="replace")
+    except OSError as e:
+        return None, type(e).__name__
+    timed_out = []
+
+    def _kill():
+        timed_out.append(1)
+        try:
+            p.kill()
+        except OSError:
+            pass
+    timer = threading.Timer(_SCAN_TIMEOUT_S, _kill)
+    timer.start()
+    try:
+        for line in p.stdout:
+            parts = line.rstrip("\n").split(":", 2)
+            if len(parts) < 3:
+                continue
+            for t, r in rx:
+                if r.search(parts[2]):
+                    p.kill()
+                    p.wait()
+                    return "%s:%s (%s)" % (parts[0], parts[1], t), None
+        rc = p.wait()
+    finally:
+        timer.cancel()
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+        p.stdout.close()
+    if timed_out:
+        return None, "scan timed out after %ds" % _SCAN_TIMEOUT_S
+    if rc in (0, 1):
+        return None, None
+    return None, "git grep exit %d" % rc
+
+
+def select_affected(ws, goal):
+    """Pick the repos a goal touches by lexical search of each local checkout. Never returns an empty selection."""
+    entries = [e for e in ws.get("repos") or [] if isinstance(e.get("repo"), str)]
+    roots = _local_roots(entries)
+    sel = {"mode": "affected", "goal": goal, "terms": [], "selected": [], "not_selected": {}, "evidence": {},
+           "fallback": None}
+    m = REF_RE.match(goal or "")
+    text = goal
+    if m:
+        text = ""
+        try:
+            import backlog  # lazy: backlog imports this module at load time
+            issue = backlog.view_issues(m.group(1), [int(m.group(2))], os.environ)[0]
+            text = "%s\n%s" % (issue.get("title") or "", issue.get("body") or "")
+        except Exception as e:
+            say("workspace: issue text unavailable (%s)" % (str(e).strip().splitlines() or [type(e).__name__])[0])
+    terms = goal_terms(text)
+    sel["terms"] = terms
+    for e in entries:
+        repo = e["repo"]
+        if m and repo == m.group(1):
+            sel["selected"].append(repo)
+            sel["evidence"][repo] = "issue owner"
+        elif not roots[repo]:
+            sel["selected"].append(repo)
+            sel["evidence"][repo] = "no local checkout; included unscanned"
+        elif not terms:
+            sel["not_selected"][repo] = "no match"
+        else:
+            hit, err = _term_hit(roots[repo], terms)
+            if err:
+                sel["selected"].append(repo)
+                sel["evidence"][repo] = "scan failed: %s; included" % err
+            elif hit:
+                sel["selected"].append(repo)
+                sel["evidence"][repo] = hit
+            else:
+                sel["not_selected"][repo] = "no match"
+    if not sel["selected"]:
+        sel["fallback"] = "no repo matched the goal; running every repo"
+        sel["selected"] = [e["repo"] for e in entries]
+        sel["not_selected"] = {}
+    return sel
+
+
+def compose(ws, selection):
+    """-> (repo entries for the selection with inferred `after` merged in, note or None)."""
+    entries = [e for e in ws.get("repos") or [] if isinstance(e.get("repo"), str)]
+    chosen = set(selection["selected"])
+    proposed, _ev = infer_edges(entries, _local_roots(entries))
+    picked, declared = [], []
+    for e in entries:
+        if e["repo"] not in chosen:
+            continue
+        keep = [d for d in e.get("after") or [] if d in chosen]
+        merged = list(dict.fromkeys(keep + [d for d in proposed.get(e["repo"], []) if d in chosen]))
+        picked.append(dict(e, after=merged))
+        declared.append(dict(e, after=keep))
+    try:
+        order_repos({"repos": picked})
+        return picked, None
+    except ValueError as err:
+        return declared, "inferred edges not used: %s" % err
+
+
+def affected(name, workspaces, goal, as_json=False, say=say):
+    """Print which repos a goal touches and the run order. Print-only: no model call, no files."""
+    ws = workspaces.get(name)
+    if ws is None:
+        say("workspace: unknown workspace %r (known: %s)" % (name, ", ".join(sorted(workspaces)) or "none"))
+        return 2
+    sel = select_affected(ws, goal)
+    try:
+        repos, note = compose(ws, sel)
+        order = [e["repo"] for e in order_repos({"repos": repos})]
+    except ValueError as e:
+        say("workspace: %s: %s" % (name, e))
+        return 2
+    if as_json:
+        say(json.dumps(dict(sel, order=order, note=note), indent=2, sort_keys=True))
+        return 0
+    say('workspace %s: affected by "%s" (terms: %s)' % (name, goal, ", ".join(sel["terms"]) or "none"))
+    for e in ws.get("repos") or []:
+        r = e.get("repo")
+        if r in sel["selected"]:
+            say("%-30s selected  %s" % (r, sel["evidence"].get(r, "")))
+        else:
+            say("%-30s not selected (%s)" % (r, sel["not_selected"].get(r, "no match")))
+    if sel["fallback"]:
+        say("workspace: " + sel["fallback"])
+    if note:
+        say("workspace: " + note)
+    say("order: " + " -> ".join(order))
+    return 0
+
+
 def main(argv):
     if not enabled():
         say("loki workspace is disabled (LOKI_WORKSPACES=0). Unset it to use workspaces.")
         return 2
     if not argv or argv[0] in ("-h", "--help", "help"):
-        say("Usage: loki workspace list | show <name> | infer <name> | run <name> <owner/repo#N | task text> | status [<run-id>]")
+        say("Usage: loki workspace list | show <name> | infer <name> | affected <name> [--json] <goal> | run <name> <owner/repo#N | task text> | status [<run-id>]")
         return 0 if argv else 2
     try:
         workspaces, errors = load_workspaces()
@@ -745,10 +1014,14 @@ def main(argv):
         return show(argv[1], workspaces)
     if cmd == "status" and len(argv) <= 2:
         return status(os.getcwd(), argv[1] if len(argv) == 2 else None)
+    if cmd == "affected" and len(argv) >= 3:
+        rest = [a for a in argv[2:] if a != "--json"]
+        if rest:
+            return affected(argv[1], workspaces, " ".join(rest), as_json="--json" in argv[2:])
     if cmd == "run" and len(argv) >= 3:
         rc, _ = run_workspace(argv[1], " ".join(argv[2:]), workspaces)
         return rc
-    say("Usage: loki workspace list | show <name> | run <name> <issue-ref> | status [<run-id>]")
+    say("Usage: loki workspace list | show <name> | infer <name> | affected <name> [--json] <goal> | run <name> <issue-ref> | status [<run-id>]")
     return 2
 
 

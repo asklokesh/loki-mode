@@ -131,7 +131,21 @@ Issue refs work the same way:
 ```
 loki owner/repo#123
 loki https://github.com/owner/repo/issues/123
+loki "fix #123"
+loki "#123"
+loki "<issue URL as copied, with ?query or #comment>"
+loki https://github.com/o/r/pull/5       # verify-pr
 ```
+
+A pasted goal that names one issue is read as that issue: a copied URL loses a
+trailing slash, ?query or #fragment, and "#123", "fix #123" or "fix issue 123"
+becomes owner/repo#123 from the checkout's origin ("#N" needs a GitHub origin;
+quote it, since an unquoted # starts a shell comment). Loki prints a `goal:`
+line when it read a ref. Extra words ("fix #123 and add a test") keep the goal
+as text, and LOKI_GOAL_REF=0 turns the reading off. The run itself asks
+nothing: headless intake records its assumptions in the receipt. The only
+terminal prompt is the optional rating after VERIFIED (LOKI_SATISFACTION=0
+turns it off). Models and --deep are not auto-picked yet.
 
 bin/loki routes GitHub, GitLab (`.../-/issues/N`) and Jira
 (`.../browse/KEY`) issue URLs to the v10 engine, and the issue-fetch step
@@ -163,9 +177,13 @@ Flags, from the engine's own `--help`:
   `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set, and no dollar cap on a
   subscription login (usage then counts against your plan limits). Source:
   `loki-ts/src/e10ext/budget_cap.ts`. The start line shows the cap in force,
-  for example `cap $100.00 (default)` or `no dollar cap (subscription)`. Once
-  priced cost reaches the cap the running stage is stopped, no later stage
-  starts, and the run ends BUDGET_STOP with exit code 3. Sessions with no
+  for example `cap $100.00 (default)` or `no dollar cap (subscription)`, then
+  the cost and time quote, for example `estimate: about $0.19 (range
+  $0.12-$0.39), about 1 min (range 1-5 min), first run in this repo (benchmark
+  prior, loki-default)`. Once priced cost reaches the cap no later stage
+  starts and each session is limited to what is left; the closing stages seal
+  what exists (PARTIAL with the work on `loki/<runId>`, or BUDGET_STOP with exit
+  code 3 when no receipt was sealed; see docs/cost-controls.md). Sessions with no
   provider price never count toward the cap. On the previous loop the same cap
   is `LOKI_BUDGET_LIMIT` (default 100.00 USD; set it to an empty string for
   unlimited), and a breach pauses the run instead of killing it.
@@ -382,7 +400,7 @@ on:
 
 Before anything runs, `loki backlog` triages every issue into one of three classes, each printed with a one-line reason (`--dry-run` prints only this and launches nothing):
 
-- `implement`: a concrete target (a file, function, value or expected result), or a large issue. Only these run. Large has one definition, the same one `loki start owner/repo#N` uses: an epic label (`epic`, `umbrella`, `tracking` or `meta`), or at least two of 4 or more solution parts, 4 or more acceptance criteria, and both a backend and a frontend named. A large issue is split into slices that each run on their own (the reason says `runs split into slices`).
+- `implement`: a concrete target (a file, function, value or expected result), or a large issue. Only these run. Large has one definition, the same one `loki start owner/repo#N` uses: an epic label (`epic`, `umbrella`, `tracking` or `meta`), or at least two of 4 or more solution parts, 4 or more acceptance criteria, and both a backend and a frontend named. A large issue is split into slices that each run on their own (the reason says `runs split into slices`). Slices that do not depend on each other run at the same time (up to 4; `LOKI_EPIC_PARALLEL=1` runs them one at a time), and a slice that fails or reports a spec conflict skips only the slices built on it. Each slice opens its own draft pull request, stacked on the slice it depends on.
 - `spec`: vague or ambiguous (no concrete target named, or an ambiguity score at the threshold). Loki drafts `.loki/specs/<slug>.md` with `loki plan --spec`, runs nothing, and prints `loki start --spec .loki/specs/<slug>.md` to run after you edit or approve it.
 - `human`: the issue touches secrets, production or a destructive operation. Never run headless; listed with the reason. Repos without tests, UI work and infra work still run: Loki writes its own tests and verifies once at the end.
 

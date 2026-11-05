@@ -20,7 +20,9 @@ import { epicOutcome, invalidSplitNote, makeSessionDecompose, splitCost, splitCo
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
 import { safeGit } from "../util/safe_git.ts"; import { deepPid } from "../util/base_guard.ts"; import { spawnDetached } from "../runner/worker_proc.ts";
 import { resolveModel } from "../engine10/session.ts";
+import { resolveRunProvider } from "../runner/state.ts";
 import { deliverables } from "../features/decompose.ts";
+import { providerSlots } from "../features/speed/route.ts";
 
 export interface GhIssue {
   number: number;
@@ -78,6 +80,11 @@ const SLUG_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const DEFAULT_LIMIT = 100;
 // Runs at once when --parallel is not given: this many, never more than the issue count, and never above MAX_PARALLEL.
 const DEFAULT_PARALLEL = Math.min(4, MAX_PARALLEL);
+/** FR04: slices of one `loki start owner/repo#N` split in flight at once. LOKI_EPIC_PARALLEL=<n> (1 = one at a time, the old behavior), else the provider's unit slots (features/speed/route.ts providerSlots: claude 10, opencode 1, unknown 1), never above MAX_PARALLEL. Each slice still starts on HEAD or its parent's run branch, so only the timing changes. */
+export function epicParallel(env: NodeJS.ProcessEnv, provider: string): number {
+  const n = Number(env["LOKI_EPIC_PARALLEL"]);
+  return Math.max(1, Math.min(MAX_PARALLEL, Number.isInteger(n) && n >= 1 ? n : providerSlots(env, provider).slots));
+}
 const RATE_LIMIT_RETRIES = 2;
 
 export function parseIssuesArgs(args: readonly string[]): IssuesRunArgs | string {
@@ -469,8 +476,8 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
 /**
  * `loki start owner/repo#N` (or a `loki backlog` child) on an issue that is large by features/decompose.ts deliverables (its structure, or an epic label;
  * the same rule engine10/sizing.ts and the backlog triage router use):
- * the issue goes down the existing MASS-2 path instead of one whole-issue run, so each slice runs as its own small run, in dependency order
- * (one at a time). Engine Law L0 reconciliation, as in `loki issues run`: the size rule is deterministic and free (the E-45 cost path makes no model
+ * the issue goes down the existing MASS-2 path instead of one whole-issue run, so each slice runs as its own small run, in dependency order,
+ * independent slices at the same time (epicParallel; LOKI_EPIC_PARALLEL=1 runs them one at a time); a slice that is not VERIFIED, PARTIAL or ALREADY_SATISFIED skips only its dependents. Engine Law L0 reconciliation, as in `loki issues run`: the size rule is deterministic and free (the E-45 cost path makes no model
  * call) and only decides whether to ask for a split; the split itself is the model's (one Opus planning session, schema-checked here). A refused split,
  * a non-GitHub issue, LOKI_SPEED=0 or a unit/slice child returns null and the caller runs the single path, which still sizes large (plan kept).
  * Slice receipts are copied to <runDir>/slices/ and the epic record to <runDir>/epic.json. The exit code and the Outcome, PR and Cost lines are the
@@ -480,6 +487,7 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
 export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr: boolean; provider: string; capUsd?: number; env?: NodeJS.ProcessEnv; inject?: Partial<EpicDeps & { decompose: IssuesRunDeps["decompose"] }> }): Promise<number | null> {
   const env = o.env ?? process.env;
   if (env["LOKI_SPEED"] === "0" || env["LOKI_UNIT_ID"]) return null;
+  const parallel = epicParallel(env, o.provider);
   let raw: { provider?: unknown; repo?: unknown; number?: unknown; title?: unknown; body?: unknown; labels?: unknown };
   try { raw = JSON.parse(readFileSync(join(o.runDir, "issue.json"), "utf8")) as typeof raw; } catch { return null; }
   if (raw.provider !== "github" || typeof raw.repo !== "string" || !SLUG_RE.test(raw.repo) || typeof raw.number !== "number") return null;
@@ -508,8 +516,8 @@ export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr:
     if (planUsd.length) d.out(`Split planning: ${splitCostText(splitCost([], planUsd))}\n`); // the single run's own Cost line never includes it
     return null;
   }
-  d.out(`#${issue.number} split into ${plan.slices.length} slices: ${plan.slices.map((s) => s.id + (plan.parent[s.id] ? `<-${plan.parent[s.id]}` : "")).join(", ")}\n`);
-  const r = await runOneEpic(d, raw.repo, { issue, plan }, 1, join(o.runDir, "slices"), !o.noPr);
+  d.out(`#${issue.number} split into ${plan.slices.length} slices: ${plan.slices.map((s) => s.id + (plan.parent[s.id] ? `<-${plan.parent[s.id]}` : "")).join(", ")}; up to ${parallel} at once\n`);
+  const r = await runOneEpic(d, raw.repo, { issue, plan }, parallel, join(o.runDir, "slices"), !o.noPr);
   try { writeFileSync(join(o.runDir, "epic.json"), JSON.stringify({ issue: `${raw.repo}#${issue.number}`, size: size.size, reasons: size.reasons, slices: plan.slices, results: r.results }, null, 2) + "\n"); } catch { /* the printed tree still reports every slice */ }
   d.out(`\n${r.tree}${r.outcome}; ${r.time}\n`);
   const agg = epicOutcome(r.results, planUsd); // the standard Outcome/Reason/PR/Cost lines (the one cost sum), so `loki backlog` reads the true verdict and cost
@@ -659,7 +667,7 @@ export async function runIssues(args: readonly string[], inject?: Partial<Issues
   const userEnv: NodeJS.ProcessEnv = { ...process.env };
   if (!inject?.triage) (await import("../runner/github_token.ts")).withholdGithubTokens(process.env, () => {});
   const base = inject?.runner ?? makeDefaultRunner(lokiDir);
-  const provider = process.env["LOKI_PROVIDER"] ?? "claude";
+  const provider = resolveRunProvider(undefined, process.env, repoDir).provider; // env, then the saved project choice (an unrunnable one is refused by the `loki start` it spawns)
   const d: IssuesRunDeps = {
     repoDir,
     lokiDir,

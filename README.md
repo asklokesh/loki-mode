@@ -46,6 +46,7 @@ loki setup                                   # first-run wizard (or: loki doctor
 loki start "add rate limiting to /api/login" # the primary path: build, verify, seal a receipt, open a PR
 loki start prd.md                            # same, from a PRD file
 loki start owner/repo#123                    # same, from a GitHub, GitLab or Jira issue
+loki "fix #123"                              # an issue of this checkout; a copied issue or PR URL works as is
 loki edit "rename fooBar to foo_bar"         # one small change, no loop
 loki chat                                    # interactive alternative: Plan and Build modes
 ```

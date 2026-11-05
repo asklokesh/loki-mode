@@ -1426,6 +1426,30 @@ export function ignoreRuleChanges(repoDir: string, snap: unknown, baseSha?: stri
   } catch { return ["ignore rules could not be compared with the intake snapshot: git failed"]; }
 }
 
+/** Pure: DiffFiles from a unified patch (`gh pr diff`, `git diff`), for grading a diff that is not in a local checkout. Same critical rules as diffFiles; no dependency tagging (needs the old and new text). */
+export function diffFilesFromPatch(patch: string, rules: { glob: string; source: string }[]): DiffFile[] {
+  const out: DiffFile[] = [];
+  for (const chunk of patch.split(/^diff --git /m).slice(1)) {
+    const lines = chunk.split("\n"), head = /^a\/(.+?) b\/(.+)$/.exec(lines[0] ?? "");
+    if (!head) continue;
+    let status: DiffFile["status"] = "modified", added = 0, deleted = 0, text = "", inHunk = false;
+    for (const l of lines.slice(1)) {
+      if (!inHunk) {
+        if (l.startsWith("new file mode")) status = "added";
+        else if (l.startsWith("deleted file mode")) status = "deleted";
+        else if (l.startsWith("@@")) inHunk = true;
+        continue;
+      }
+      if (l.startsWith("@@")) continue;
+      if (l.startsWith("+")) { added++; text += `${l.slice(1)}\n`; } else if (l.startsWith("-")) deleted++; // inside a hunk every +/- line is content; the +++/--- headers sit before the first @@
+    }
+    const path = status === "deleted" ? head[1]! : head[2]!, f: DiffFile = { path, added, deleted, status }, rule = criticalRuleFor(path, text, rules);
+    if (rule) f.critical = rule;
+    out.push(f);
+  }
+  return out;
+}
+
 /** changedFiles enriched with numstat counts and name-status; untracked files get a line count as additions. Throws on git failure. */
 export function diffFiles(repoDir: string, baseSha: string, skip?: (f: string) => boolean): DiffFile[] {
   const paths = changedFiles(repoDir, baseSha, skip), stat = new Map<string, DiffFile>();

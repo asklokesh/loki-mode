@@ -273,6 +273,7 @@ export interface ProfileCommand {
   duration_s: number | null;
   failing_ids: string[]; // test kind only, [] when the runner output has no parseable ids
   note?: string;
+  fix?: string; // FR05: how to make a not-runnable row runnable
 }
 export interface CommandProfile {
   version: 1;
@@ -637,13 +638,14 @@ export interface Readiness { score: number; grade: "A" | "B" | "C" | "D" | "F"; 
 export interface ReadinessHost { firstTaskReady: boolean; fix?: string | null }
 
 /** Pure score of how ready a repo is for a verified run, from what the profile already recorded. 100 minus a cost per gap; a host that cannot run a first task caps it at 40. */
-export function repoReadiness(p: CommandProfile, host?: ReadinessHost): Readiness {
+export function repoReadiness(p: CommandProfile, host?: ReadinessHost, verify: readonly ProfileCommand[] = []): Readiness {
   const findings: ReadinessFinding[] = [];
   let score = 100;
   const add = (cost: number, f: ReadinessFinding): void => { score -= cost; findings.push(f); };
   const has = (k: CmdKind): boolean => p.commands.some((c) => c.kind === k);
   const b = p.baseline;
-  if (!has("test")) add(30, { id: "no-test-command", severity: "high", message: "No test command found in the repo manifests.", fix: "Add a test script (for example `npm run test`, `pytest`, `go test ./...`) so changes can be verified." });
+  if (!has("test") && verify.length === 0) add(30, { id: "no-test-command", severity: "high", message: "No test command found in the repo manifests.", fix: "Add a test script (for example `npm run test`, `pytest`, `go test ./...`) so changes can be verified." });
+  else if (!has("test")) { const miss = verify.find((c) => c.validated === false); if (miss) add(30, { id: "test-tool-missing", severity: "high", message: `Loki tests this repo with \`${miss.cmd}\` (from ${miss.source}), but ${miss.note}.`, fix: miss.fix ?? `Install the tool \`${miss.cmd.split(" ")[0]}\` needs.` }); } // FR05: verify's own full-suite command (computed at read time, never persisted)
   else if (!b.ran || b.timed_out || !b.attributable) add(15, { id: "baseline-unattributable", severity: "medium", message: `Baseline test run is not usable${b.reason ? ` (${b.reason})` : b.ran ? "" : " (not run)"}.`, fix: "Make the test command runnable from the repo root and finish within the baseline timeout so failures can be attributed." });
   else if (b.failing_ids.length > 0) add(20, { id: "baseline-red", severity: "medium", message: `Baseline is red: ${b.failing_ids.length} test(s) already fail before any change.`, fix: "Fix or quarantine them; until then `loki start` will not blame these on your change." });
   if (!has("lint")) add(10, { id: "no-lint", severity: "low", message: "No lint command found.", fix: "Add a lint script to the manifest." });
@@ -667,10 +669,11 @@ export function readinessNotice(repoDir: string, r: Readiness): string | null {
 
 export const readinessLines = (r: Readiness): string[] => [`  Readiness: ${r.score}/100 (${r.grade})`, ...(r.findings.length ? ["  Fix:", ...r.findings.map((f) => `    - ${f.fix}`)] : [])];
 
-export function renderProfile(p: CommandProfile | null, host?: ReadinessHost): string {
+export function renderProfile(p: CommandProfile | null, host?: ReadinessHost, verify: readonly ProfileCommand[] = []): string {
   if (!p) return "repo profile: none yet (run `loki doctor --repo` to build it; LOKI_REPO_BASELINE=0 disables building)\n";
   const rows = p.commands.map((c) => `  ${c.kind.padEnd(9)} ${c.cmd}  [${c.source}]  ${c.validated === true ? `validated exit=${c.exit_code} ${c.duration_s}s` : c.validated === false ? `not runnable${c.note ? `: ${c.note}` : ""}` : "not executed"}`);
   const b = p.baseline;
   const bl = b.ran ? `${b.command} exit=${b.exit_code}${b.timed_out ? " (timed out)" : ""}, ${b.failing_ids.length} failing id(s)${b.attributable ? "" : `, not attributable${b.reason ? ` (${b.reason})` : ""}`}` : `not run (${b.reason ?? "unknown"})`;
-  return [".loki/state/repo-profile.json", `  revision ${p.revision.slice(0, 12)}  manifest ${p.manifest_hash.slice(0, 12)}  built ${p.created_at}`, ...rows, `  baseline: ${bl}`, ...readinessLines(repoReadiness(p, host))].join("\n") + "\n";
+  const vrows = verify.length ? ["  verify runs (no test command in the manifests):", ...verify.map((c) => `  test      ${c.cmd}  [${c.source}]  ${c.validated === false ? `not runnable: ${c.note}` : "not executed here"}`)] : [];
+  return [".loki/state/repo-profile.json", `  revision ${p.revision.slice(0, 12)}  manifest ${p.manifest_hash.slice(0, 12)}  built ${p.created_at}`, ...rows, ...vrows, `  baseline: ${bl}`, ...readinessLines(repoReadiness(p, host, verify))].join("\n") + "\n";
 }

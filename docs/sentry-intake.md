@@ -27,7 +27,7 @@ The output is a receipt-gated PR only, never a deploy. Whether the PR opens is s
 
 ## Slack, Linear, Jira and Teams delegation
 
-`loki trigger` server setup for delegating a job from chat or a tracker. Both routes enqueue through the same job queue and runner as `POST /jobs`; a completion summary goes back to the origin. Nothing unauthenticated can start a job or choose a reply URL.
+`loki trigger` server setup for delegating a job from chat or a tracker. Both routes enqueue through the same job queue and runner as `POST /jobs`; a completion summary goes back to the origin. Nothing unauthenticated can start a job or choose a reply URL. Sentry, Slack, Linear, Jira and Teams runs each count toward their own source's auto-pause (see "Auto-pause and trigger health" in `docs/DEPLOYMENT.md`).
 
 Secrets are env only and must differ from each other, the GitHub webhook secret, the API token and the Sentry secret (an equal secret disables its route at startup). A missing secret answers 503 naming the variable, and the server logs a startup warning. None of them reach the `loki start` child environment.
 

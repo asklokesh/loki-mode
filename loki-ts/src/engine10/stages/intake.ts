@@ -1,7 +1,7 @@
 // loki-ts/src/engine10/stages/intake.ts -- E-04 Intake (ENGINE.md section 4). Deterministic: dirty-tree refusal, branch creation, .git/info/exclude, the issue already-done check, repo map / test map build, plus one cached Project Model discovery session (EL-W1-01). No PRD. Task arrives as literal text (LOKI_E10_TASK_TEXT) or issue.json (LOKI_E10_ISSUE_JSON, default <runDir>/issue.json); outputs task text, title, repo, resumed for later stages.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { STAGE_BUDGETS, type RunContext, type Stage, type StageResult } from "../types.ts";
+import { STAGE_BUDGETS, type RunContext, type RunnerName, type Stage, type StageResult } from "../types.ts";
 import { buildRepoMap } from "../repomap.ts";
 import { cachedRepoMap, readTestMapCache, repoCacheDir, repoKey, writeTestMapCache } from "../cache.ts";
 import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
@@ -12,6 +12,7 @@ import { snapshotContract } from "../../features/contract.ts";
 import { lazyZeroBaseline, stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
 import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps, type DepsTiming, type IntakeTiming } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { ensureProfile, readinessNotice, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
+import { verifyCommandRows } from "../../project_model/package_suite.ts"; import { untestableReason } from "../testmap.ts";
 import { ambiguityGate } from "../../features/spec_ambiguity.ts"; import { triageGate } from "../../features/triage.ts";
 export interface IntakeOptions { taskText?: string; issueJsonPath?: string; }
 interface IssueFields { state: string | null; closed_by_merged_pr?: boolean }
@@ -102,9 +103,11 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   if (!testmap) { walkCached = false; testmap = await ctx.tests.detect(ctx.repoDir); try { writeTestMapCache(cacheDir, tree, testmap); } catch { /* an unwritable cache only costs the next run a rebuild */ } }
   tm.repo_walk = { ms: walkEnd(), at: walkAt, cached: walkCached }; const baselineAt = at(), baselineEnd = lap(), baselineOn = process.env.LOKI_REPO_BASELINE !== "0";
   const built = baselineOn ? ensureProfile(ctx.repoDir) : null, baselineMs = baselineEnd(); // REPOMEM: commands + a baseline test run on the untouched tree, reused while the manifests are unchanged; never throws
-  const readiness = built ? readinessNotice(ctx.repoDir, repoReadiness(built.profile)) : null; // once per repo and score: a repo-config grade is not part of every run's outcome
+  const readiness = built ? readinessNotice(ctx.repoDir, repoReadiness(built.profile, undefined, built.profile.commands.some((c) => c.kind === "test") ? [] : verifyCommandRows(ctx.repoDir, testmap as { runners: RunnerName[]; evidence?: Partial<Record<RunnerName, string>> }))) : null; // once per repo and score: a repo-config grade is not part of every run's outcome
   if (readiness && process.env.LOKI_E10_READINESS_FOLD === "1") held.fold = readiness;
   else if (readiness) process.stderr.write(`${readiness}\n`); // FV-readiness-env-3; D48 default mode: the supervisor folds it into the last line instead
+  const untestable = untestableReason(testmap.runners, repoMap.files, process.env, ctx.repoDir); // FR05: said before any session, on every run, never folded
+  if (untestable) process.stderr.write(`${process.stderr.isTTY ? "\r\x1b[2K" : ""}loki: cannot run this repo's tests on this machine: ${untestable}. The run continues, but it cannot end VERIFIED.\n`);
   // E-66: "already implemented" as a first-class outcome. A deterministic evidence search over repoMap/testmap/CHANGELOG, confirmed by one short cheap-model session that must cite files; no candidate evidence means no session call (checkAlreadyDone's own gate).
   const adOn = alreadyDoneCheckOn(source), adAt = at(), adEnd = lap(), already = speedEnabled() || !adOn ? null : await checkAlreadyDone(ctx, signal, task, repoMap, testmap); tm.already_done = !adOn ? { skipped: "direct task: the implement session reports LOKI_ALREADY_DONE itself" } : speedEnabled() ? { skipped: "deferred past intake (LOKI_SPEED)" } : { ms: adEnd(), at: adAt }; // D61-04: LOKI_SPEED=1 defers it past intake
   const alreadyData = (already: AlreadyDoneResult): Record<string, unknown> => {
@@ -116,7 +119,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
     const commentArgv = source === "issue" && issueRef ? buildAlreadyDoneCommentArgv(ctx.runId, issueRef, bodyFile) : undefined;
     return { already_satisfied: true, evidence: already.evidence, iteration_ids: [`${ctx.runId}-already-done`], comment, ...(commentArgv ? { comment_argv: commentArgv } : {}) };
   };
-  const base = { ...common, ...ambiguity, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...(readiness ? { readiness } : {}) };
+  const base = { ...common, ...ambiguity, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...(readiness ? { readiness } : {}), ...(untestable ? { untestable } : {}) };
   // FC-15: the claim rests on the PR target. Evidence only in target..HEAD means no claim; Loki's own work there is reported, never refused.
   const stale = already ? unmergedEvidence(ctx.repoDir, already.paths, startBranch) : null;
   if (already && !stale) return { status: "completed", data: { ...base, ignore_snapshot: ignoreSnapshot(ctx.repoDir), ...alreadyData(already) } };

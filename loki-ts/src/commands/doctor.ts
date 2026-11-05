@@ -2361,7 +2361,9 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
     const ready = firstTaskReady(rep);
     const failing = rep.paths.flatMap((x) => x.items).find((i) => i.level === "required" && i.status !== "present");
     const host = { firstTaskReady: ready, fix: failing ? requirementFix(failing.id) : null };
-    const withReadiness = p ? { ...p, readiness: repoReadiness(p, host) } : p;
+    let verify: Awaited<ReturnType<typeof import("../project_model/package_suite.ts").verifyCommandRows>> = [];
+    try { if (p && !p.commands.some((c) => c.kind === "test")) verify = (await import("../project_model/package_suite.ts")).verifyCommandRows(process.cwd(), (await import("../engine10/testmap.ts")).buildTestMap(process.cwd())); } catch { verify = []; } // FR05: what verify runs when the manifests name no test command
+    const withReadiness = p ? { ...p, readiness: repoReadiness(p, host, verify), ...(verify.length ? { verify_commands: verify } : {}) } : p;
     let rt: RoundTripResult | null = null;
     if (roundTrip) {
       try { rt = await (deps.roundTrip ?? defaultRoundTrip)(); } catch (e) { rt = { ok: false, detail: String((e as Error)?.message ?? e).slice(0, 200) }; }
@@ -2373,7 +2375,7 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
       appendFileSync(join(dir, "readiness.jsonl"), JSON.stringify({ ts: new Date().toISOString(), checks, pass: ready, score: withReadiness?.readiness?.score ?? null, roundTrip: rt }) + "\n");
     } catch { /* history is best effort */ }
     if (json) process.stdout.write(JSON.stringify(reqs ? { repo: withReadiness, requirements: rep } : withReadiness, null, 2) + "\n");
-    else process.stdout.write(renderProfile(p, host) + (reqs ? renderRequirementsText(rep) + "\n" : ""));
+    else process.stdout.write(renderProfile(p, host, verify) + (reqs ? renderRequirementsText(rep) + "\n" : ""));
     return 0;
   }
   if (reqs && !json) {

@@ -2,7 +2,7 @@
 
 Loki Mode, by [Autonomi](https://www.autonomi.dev/), turns a spec or an issue into a verified pull request with a receipt you can check. This page covers installing it, a first run, and the options around it.
 
-**Version:** v11.128.1
+**Version:** v11.128.2
 
 **Engine note:** `loki start` is the primary command. `loki start`, `loki "<task>"`, `loki owner/repo#N` and `loki quick` all run the Loki 10 engine, whatever the flag order or input form (PRD file, issue ref, task or one-word brief). The previous loop runs only on `--engine legacy`, `LOKI_ENGINE=legacy`, or for one call when a flag Loki 10 cannot honor is present. See the [user guide](v10/GUIDE.md) and the [5-minute quickstart](QUICKSTART.md).
 
@@ -77,6 +77,12 @@ loki doctor --json    # machine-readable
 ```
 
 `loki doctor --fix` creates state directories and a default config. It never installs system packages or runs sudo; it prints those commands instead.
+
+### Tests Loki can run
+
+Loki detects pytest, unittest, vitest, jest, bun, node, npm, go, cargo, maven, gradle, javac and dotnet tests from the repo's own files, with no environment variable and no config. JVM and .NET repos need `mvn`, `gradle` or `dotnet` on PATH, or a committed `mvnw` or `gradlew` wrapper. A committed `verify.test_command` in `loki.yaml` overrides the detected command. `loki doctor --repo` shows the command Loki will run.
+
+When no test can run on this machine (the build tool is missing and there is no wrapper, or the stack has no runner Loki supports, such as Ruby), `loki start` prints `loki: cannot run this repo's tests on this machine: <reason>` before any model session. The run continues, but it cannot end VERIFIED. Not covered yet: Kotlin tests are not detected, and a Python interpreter without pytest is not flagged up front.
 
 ---
 
