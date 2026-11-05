@@ -55,6 +55,13 @@ function bunIds(output: string): string[] | null {
   const u = [...new Set(ids)];
   return count && u.length >= count ? u : [];
 }
+/** True when a failure id names the changed repo file `f`: the id carries the repo path (`packages/a/src/x.test.ts > t`), or a vitest project prefix and a path relative to
+ *  the project (`|a| src/x.test.ts > t`, printed by a run from a root config with `projects`), which names `f` when `f` ends with that relative path. */
+export function idNamesFile(id: string, f: string): boolean {
+  if (id.includes(f)) return true;
+  const m = /^\|[^|]+\|\s+(\S+?)(?:\s+>\s.*)?$/.exec(id);
+  return !!m && (f === m[1] || f.endsWith(`/${m[1]}`));
+}
 export function failIds(raw: string): string[] {
   const output = stripAnsi(raw), gc = goCargoIds(output);
   if (gc) return gc;
