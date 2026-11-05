@@ -54,7 +54,9 @@ export function answeredTask(task: string, events: readonly EventEnvelope[]): st
 }
 
 export const CONFLICT_CORRECTION =
-  "Loki imposes no file or test limits on you. If your conflict is only about Loki's own rules, finish the task. If the task itself conflicts, restate the conflict. " +
+  "Loki imposes no file or test limits on you. If your conflict is only about Loki's own rules, finish the task. " +
+  "A test or suite that already fails on the base commit is not a conflict: a criterion that a suite passes means no failure beyond those already failing on base, so make your change and leave the base failures alone. " +
+  "If the task itself conflicts, restate the conflict. " +
   FINISH_LINE;
 
 // FC-19b: under this much of the implement window the resume would only die at the limit; the first conflict stands and the run ends BLOCKED with its question.
