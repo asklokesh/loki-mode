@@ -503,6 +503,8 @@ loki_route_dispatch() {
                         loki_route_resolve bare "$@"; verb=bare ;;
                 esac
             fi
+            # FR01: a pasted PR URL is a goal too; `loki <PR URL>` is `loki start <PR URL>` (verify-pr: sandboxed, no model call)
+            if [ "$R_DECIDED" != "1" ] && [ -n "$(_route_pr_url "$first")" ]; then loki_route_resolve start "$@"; verb=bare; fi
             ;;
     esac
     if [ "$R_DECIDED" != "1" ]; then _route_task_first "$verb" "$@"; return 0; fi

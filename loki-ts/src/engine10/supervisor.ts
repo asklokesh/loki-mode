@@ -287,6 +287,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     if (rp.source === "saved") { provider = rp.provider; providerNamed = true; process.env.LOKI_PROVIDER = rp.provider; }
   }
   const olg = await import("../util/one_line_goal.ts"); // R01: infer provider and publish mode instead of refusing; the one-line note says what was assumed
+  if (spec === null) { const g = olg.goalRef(task, readOriginUrl(repoDir), (s) => ISSUE_RE.test(s) || parseTrackerRef(s) !== null); if (g) { task = g.ref; process.stderr.write(`${g.note}\n`); } } // FR01: a pasted issue URL, "#N" or "fix #N" reaches the issue path
   const inferred = olg.inferProvider(process.env, providerNamed); if (inferred) { provider = inferred.provider; process.env.LOKI_PROVIDER = provider; process.stderr.write(`${inferred.note}\n`); }
   let localReason: import("../util/one_line_goal.ts").LocalReason | null = null, origBranch: string | null = null; try { origBranch = safeGit(repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]).trim() || null; } catch { /* detached HEAD: landNext falls back to main */ }
   if (!noPr && sealPatch === null) { const pp = await olg.publishPlan(readOriginUrl(repoDir), () => import("./preflight.ts").then((m) => m.ghReady(process.env as Record<string, string>))); localReason = pp.reason; noPr = pp.noPr; const note = olg.publishNote(pp.reason); if (note) process.stderr.write(`${note}\n`); }

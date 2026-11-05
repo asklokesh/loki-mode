@@ -178,4 +178,26 @@ E=[json.loads(l) for l in open(sys.argv[1]+"/.loki/runs/"+rid+"/events.jsonl") i
 print(json.dumps(next(e["data"].get("intake_timing",{}).get("already_done") for e in E if e["type"]=="stage.completed" and e["stage"]=="intake")))' "$R" 2>&1)"
 case "$ad" in *"direct task"*|""|null|*Error*) bad "already: the issue run skipped the already-done check: $ad" ;; *) ok "already: the issue run still runs the already-done check ($ad)" ;; esac
 
+# --- FR01: "fix #7" in a checkout whose origin is acme/calc runs as issue acme/calc#7 (needs the rebuilt dist; FR01_TS_ENTRY=<src/cli.ts> runs the TS source) ---
+R2="$T/repo2"
+cp -R "$FIX/repo" "$R2"
+git -C "$R2" init -q -b main
+git -C "$R2" config user.name e2e
+git -C "$R2" config user.email e2e@example.invalid
+git -C "$R2" add calc.ts calc.test.ts bunfig.toml
+git -C "$R2" commit -q -m base
+git -C "$R2" remote add origin https://github.com/acme/calc.git
+OUT2="$(cd "$R2" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED \
+    LOKI_TS_ENTRY="${FR01_TS_ENTRY:-$LOKI_TS_ENTRY}" LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" E2E_STUB_PROMPT_LOG="$T/prompt2" \
+    LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "fix #7" --no-pr 2>&1)"
+RC2=$?
+[ "$RC2" -eq 0 ] && ok "goal: loki \"fix #7\" exits 0" || { bad "goal: loki \"fix #7\" exited $RC2"; printf '%s\n' "$OUT2" | tail -12 | sed 's/^/    | /'; }
+case "$OUT2" in *'goal: read "fix #7" as issue acme/calc#7'*) ok "goal: the run says it read the goal as acme/calc#7" ;; *) bad "goal: no goal: line" ;; esac
+gs="$(python3 -I -c 'import json,sys
+rid=json.load(open(sys.argv[1]+"/.loki/engine.json"))["run_id"]
+E=[json.loads(l) for l in open(sys.argv[1]+"/.loki/runs/"+rid+"/events.jsonl") if l.strip()]
+d=next(e["data"] for e in E if e["type"]=="run.started")
+print(d.get("task_source"), d.get("issue_ref"))' "$R2" 2>&1)"
+[ "$gs" = "issue acme/calc#7" ] && ok "goal: run.started has task_source=issue and issue_ref=acme/calc#7" || bad "goal: run.started gave: $gs"
+
 finish

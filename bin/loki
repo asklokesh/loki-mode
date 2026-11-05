@@ -752,6 +752,8 @@ case "v10" in
             ""|-*) _e10=0 ;;
             # http*://*/issues/* also covers GitLab's /-/issues/ URLs.
             */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*) _e10=1 ;;
+            # FR01: a one-word "#N" is an issue of this checkout (engine10 resolves it against origin)
+            \#[0-9]*) case "${1#\#}" in *[!0-9]*) ;; *) _e10=1 ;; esac ;;
             *" "*) _e10=1 ;;
             # ponytail: a one-word argument stays on the legacy CLI. The telemetry
             # allowlist is not a command registry (estimate, intent, outcomes are
