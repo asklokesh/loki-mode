@@ -343,7 +343,6 @@ def load_config():
         "port": 7373,
         "secret": "",
         "dry_run": False,
-        "enabled_events": ["issues", "pull_request", "workflow_run"],
         "workers": DEFAULT_WORKERS,
         "queue_size": DEFAULT_QUEUE_SIZE,
     }
@@ -414,6 +413,132 @@ def log_event(event_type, action, payload_summary, status):
             f.write(line)
 
 
+DURATIONS_KEPT = 50
+
+
+class TriggerHealth:
+    """Per-source run counters and auto-pause, persisted in .loki/triggers/health.json.
+
+    Every mutation re-reads the file under one lock and replaces it atomically, so
+    a `loki trigger resume` run between two events is honored. For `start` runs an
+    exit code 0 means VERIFIED or ALREADY_SATISFIED.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def pause_after():
+        raw = os.environ.get("LOKI_TRIGGER_PAUSE_AFTER", "3")
+        try:
+            n = int(raw)
+        except ValueError:
+            return 3
+        return n if n >= 0 else 3
+
+    def _path(self):
+        return get_loki_dir() / "health.json"
+
+    def _load(self):
+        try:
+            data = json.loads(self._path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save(self, data):
+        path = self._path()
+        tmp = path.with_name("health.json.%d.tmp" % os.getpid())
+        tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+        os.replace(tmp, path)
+
+    @staticmethod
+    def _entry(data, source):
+        e = data.get(source)
+        if not isinstance(e, dict):
+            e = {}
+        e.setdefault("runs", 0)
+        e.setdefault("passed", 0)
+        e.setdefault("consecutive_failures", 0)
+        e.setdefault("paused", False)
+        e.setdefault("paused_at", "")
+        if not isinstance(e.get("durations_s"), list):
+            e["durations_s"] = []
+        data[source] = e
+        return e
+
+    def record(self, source, returncode, elapsed_s):
+        if returncode in (130, 143):
+            return
+        newly_paused = 0
+        with self._lock:
+            data = self._load()
+            e = self._entry(data, source)
+            e["runs"] += 1
+            if returncode == 0:
+                e["passed"] += 1
+                e["consecutive_failures"] = 0
+                e["durations_s"] = (e["durations_s"] + [round(elapsed_s, 1)])[-DURATIONS_KEPT:]
+            else:
+                e["consecutive_failures"] += 1
+                limit = self.pause_after()
+                if (limit > 0 and e["consecutive_failures"] >= limit
+                        and source not in AUTOPAUSE_EXEMPT and not e["paused"]):
+                    e["paused"] = True
+                    e["paused_at"] = _utc_now()
+                    newly_paused = e["consecutive_failures"]
+            try:
+                self._save(data)
+            except OSError as err:
+                logging.error("trigger health write failed: %s", err)
+        if newly_paused:
+            log_event(source, "", "%d consecutive failed runs" % newly_paused, "auto-paused")
+            send_notification(
+                "Trigger source %s paused after %d consecutive failed runs; resume with: loki trigger resume %s"
+                % (source, newly_paused, source))
+
+    def is_paused(self, source):
+        with self._lock:
+            e = self._load().get(source)
+        return bool(isinstance(e, dict) and e.get("paused"))
+
+    def set_paused(self, source, flag):
+        with self._lock:
+            data = self._load()
+            e = self._entry(data, source)
+            e["paused"] = bool(flag)
+            e["paused_at"] = _utc_now() if flag else ""
+            if not flag:
+                e["consecutive_failures"] = 0
+            self._save(data)
+
+    def snapshot(self):
+        with self._lock:
+            return self._load()
+
+    def paused_sources(self):
+        return sorted(k for k, v in self.snapshot().items() if isinstance(v, dict) and v.get("paused"))
+
+
+HEALTH = TriggerHealth()
+
+
+def health_lines():
+    """One status line per source that has any record (the lane metric)."""
+    snap = HEALTH.snapshot()
+    lines = []
+    for src in ALL_SOURCES:
+        e = snap.get(src)
+        if not isinstance(e, dict) or not (e.get("runs") or e.get("paused")):
+            continue
+        d = sorted(x for x in e.get("durations_s", []) if isinstance(x, (int, float)))
+        median = ("%ds" % round(d[len(d) // 2] if len(d) % 2 else (d[len(d) // 2 - 1] + d[len(d) // 2]) / 2)) if d else "n/a"
+        state = "PAUSED since %s" % e.get("paused_at") if e.get("paused") else "active"
+        lines.append("%s: runs %d, passed %d (exit 0 = VERIFIED for start runs), consecutive failures %d, median %s trigger-to-exit, %s"
+                     % (src, e.get("runs", 0), e.get("passed", 0), e.get("consecutive_failures", 0), median, state))
+    return lines
+
+
 def validate_signature(secret, body, signature_header):
     """Validate GitHub HMAC-SHA256 webhook signature (constant-time).
 
@@ -471,7 +596,7 @@ def _remove_quietly(*paths):
             pass
 
 
-def _reap_child(proc):
+def _reap_child(proc, on_exit=None):
     """Wait on a child process so it is always reaped (no zombie).
 
     Used when the dispatch outlives our synchronous wait window: instead of
@@ -485,7 +610,12 @@ def _reap_child(proc):
     try:
         proc.wait()
     except Exception:
-        pass
+        return
+    if on_exit is not None:
+        try:
+            on_exit(proc.returncode)
+        except Exception as e:
+            logging.error("on_exit callback failed: %s", e)
 
 
 # Outcome of a dispatch, as distinct from "did it launch".
@@ -527,13 +657,24 @@ def _scoped_child_env(extra_env=None):
     return env
 
 
-def run_loki_outcome(args, dry_run=False, stdout_sink=None, extra_env=None):
+# Commands whose exit code feeds the per-source trigger health counters.
+RUN_COMMANDS = ("start", "verify-pr")
+
+# Set by dispatch_event on the worker thread: the trigger source of the event
+# being handled, so run_loki_outcome can attribute the run's exit code to it.
+_DISPATCH = threading.local()
+
+
+def run_loki_outcome(args, dry_run=False, stdout_sink=None, extra_env=None, cwd=None, on_exit=None):
     """Run a loki command and report WHICH of the three outcomes occurred.
 
     Returns one of OUTCOME_PASSED / OUTCOME_FAILED / OUTCOME_UNKNOWN. This is
     the honest version of run_loki_command, which answers only "did it launch".
     When stdout_sink is a list, the decoded stdout is appended to it on completion.
     extra_env adds child env vars (e.g. LOKI_STEER_SOURCE) on top of the scoped env.
+    on_exit(returncode) is called once the child ends, also from the reaper thread
+    for a detached run; it gets None when the launch itself failed. A start or
+    verify-pr run launched for a trigger source is also recorded in HEALTH.
     """
     cmd = ["loki"] + args
     if dry_run:
@@ -543,6 +684,15 @@ def run_loki_outcome(args, dry_run=False, stdout_sink=None, extra_env=None):
     # Child output goes to per-run files, never a pipe: past the wait window
     # nothing reads a pipe, so a child writing more than the ~64KB pipe buffer
     # would block forever. The files double as the run log for a detached child.
+    source = getattr(_DISPATCH, "source", None)
+    if source and args and args[0] in RUN_COMMANDS:
+        t0 = time.monotonic()
+        user_cb = on_exit
+
+        def on_exit(rc, _src=source, _t0=t0, _cb=user_cb):
+            HEALTH.record(_src, rc, time.monotonic() - _t0)
+            if _cb is not None:
+                _cb(rc)
     out_path, err_path = _dispatch_log_paths()
     try:
         with open(out_path, "wb") as out_f, open(err_path, "wb") as err_f:
@@ -551,10 +701,13 @@ def run_loki_outcome(args, dry_run=False, stdout_sink=None, extra_env=None):
                 stdout=out_f,
                 stderr=err_f,
                 env=_scoped_child_env(extra_env),
+                cwd=cwd,
             )
     except (FileNotFoundError, OSError) as e:
         logging.error("Failed to launch %s: %s", " ".join(cmd), e)
         _remove_quietly(out_path, err_path)
+        if on_exit is not None:
+            on_exit(None)
         return OUTCOME_FAILED
 
     try:
@@ -571,7 +724,7 @@ def run_loki_outcome(args, dry_run=False, stdout_sink=None, extra_env=None):
         )
         threading.Thread(
             target=_reap_child,
-            args=(proc,),
+            args=(proc, on_exit),
             name="loki-trigger-reaper-%d" % proc.pid,
             daemon=True,
         ).start()
@@ -582,6 +735,11 @@ def run_loki_outcome(args, dry_run=False, stdout_sink=None, extra_env=None):
     _remove_quietly(out_path, err_path)
     if stdout_sink is not None:
         stdout_sink.append(stdout.decode("utf-8", errors="replace"))
+    if on_exit is not None:
+        try:
+            on_exit(proc.returncode)
+        except Exception as e:
+            logging.error("on_exit callback failed: %s", e)
 
     if proc.returncode == 0:
         logging.info("Dispatch pid=%d completed (exit 0)", proc.pid)
@@ -599,7 +757,7 @@ def run_loki_outcome(args, dry_run=False, stdout_sink=None, extra_env=None):
     return OUTCOME_FAILED
 
 
-def run_loki_command(args, dry_run=False, stdout_sink=None):
+def run_loki_command(args, dry_run=False, stdout_sink=None, cwd=None, on_exit=None):
     """Run a loki command synchronously and reap it; or print it if dry_run.
 
     Returns True if the command was launched and exited 0 (or backgrounded
@@ -615,7 +773,7 @@ def run_loki_command(args, dry_run=False, stdout_sink=None):
     passed wants run_loki_outcome instead. Behaviour is unchanged: a detached
     dispatch (UNKNOWN) still reads as True here, exactly as before.
     """
-    return run_loki_outcome(args, dry_run=dry_run, stdout_sink=stdout_sink) in (
+    return run_loki_outcome(args, dry_run=dry_run, stdout_sink=stdout_sink, cwd=cwd, on_exit=on_exit) in (
         OUTCOME_PASSED, OUTCOME_UNKNOWN,
     )
 
@@ -1401,14 +1559,30 @@ def handle_sentry_event(payload, dry_run=False):
 # Map event name -> handler. Keeps do_POST routing declarative. JOB_EVENT rides
 # the same table (and therefore the same bounded queue and worker pool) but is
 # explicitly refused on the /webhook path.
-EVENT_HANDLERS = {
-    "issues": handle_issues_event,
-    "issue_comment": handle_issue_comment_event,
-    "pull_request": handle_pull_request_event,
-    "workflow_run": handle_workflow_run_event,
-    JOB_EVENT: handle_job_event,
-    SENTRY_EVENT: handle_sentry_event,
+# event -> (source name, handler). A None source is steer-only: never counted or paused.
+TRIGGERS = {
+    "issues": ("issues", handle_issues_event),
+    "issue_comment": (None, handle_issue_comment_event),
+    "pull_request": ("pull_request", handle_pull_request_event),
+    "workflow_run": ("ci", handle_workflow_run_event),
+    JOB_EVENT: ("jobs", handle_job_event),
+    SENTRY_EVENT: ("sentry", handle_sentry_event),
 }
+EVENT_HANDLERS = {k: v[1] for k, v in TRIGGERS.items()}
+
+# Sources that share the job queue; _enqueue_job stamps the job with its source.
+JOB_SOURCES = ("jobs", "slack", "linear", "jira", "teams")
+ALL_SOURCES = tuple(sorted({v[0] for v in TRIGGERS.values() if v[0]} | set(JOB_SOURCES)))
+# A direct /jobs caller already gets a per-job failed status and decides for itself.
+AUTOPAUSE_EXEMPT = ("jobs",)
+
+
+def trigger_source(event_type, payload):
+    if event_type == JOB_EVENT:
+        src = payload.get("source") if isinstance(payload, dict) else None
+        return src if src in JOB_SOURCES else "jobs"
+    entry = TRIGGERS.get(event_type)
+    return entry[0] if entry else None
 
 
 def dispatch_event(event_type, payload, dry_run=False):
@@ -1423,11 +1597,19 @@ def dispatch_event(event_type, payload, dry_run=False):
         status = "unsupported event: %s" % event_type
         log_event(event_type, action, "", status)
         return None, status
+    source = trigger_source(event_type, payload)
+    if source and HEALTH.is_paused(source):
+        status = "paused (source %s; loki trigger resume %s)" % (source, source)
+        log_event(event_type, action, "", status)
+        return None, "paused"
+    _DISPATCH.source = source
     try:
         summary, status = handler(payload, dry_run=dry_run)
     except Exception as e:  # defensive: never let a worker die on bad input
         logging.exception("Handler for %s raised: %s", event_type, e)
         summary, status = None, "error"
+    finally:
+        _DISPATCH.source = None
     log_event(event_type, action, summary or "", status)
     return summary, status
 
@@ -1816,7 +1998,8 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
                 "status": "running",
                 "dry_run": self.dry_run,
                 "port": config.get("port", 7373),
-                "enabled_events": config.get("enabled_events", []),
+                "triggers": HEALTH.snapshot(),
+                "paused": HEALTH.paused_sources(),
                 "secret_configured": bool(self.secret),
                 "api_token_configured": bool(self.api_token),
             })
@@ -2097,14 +2280,14 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             return
         self._send_json(202, {"id": job_id, "status": "queued"})
 
-    def _enqueue_job(self, spec, reply_target=None, pr=False, unit_job=None):
+    def _enqueue_job(self, spec, reply_target=None, pr=False, unit_job=None, source="jobs"):
         """Record and enqueue one validated job; shared by /jobs, /slack, /linear.
 
         Returns the job id, or None after sending 429 when the queue is full.
         reply_target must come from an already-verified request.
         """
         job_id = secrets.token_urlsafe(12)
-        job = {"spec": spec, "job_id": job_id}
+        job = {"spec": spec, "job_id": job_id, "source": source}
         if pr:
             job["pr"] = True
         if unit_job is not None:
@@ -2183,7 +2366,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         target = {"kind": "slack"}
         if response_url.startswith(SLACK_REPLY_PREFIX):
             target["response_url"] = response_url
-        job_id = self._enqueue_job(text.strip(), target)
+        job_id = self._enqueue_job(text.strip(), target, source="slack")
         if job_id is None:
             return
         self._send_json(200, {"response_type": "ephemeral",
@@ -2240,7 +2423,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         issue_id = data.get("id")
         target = {"kind": "linear",
                   "issue_id": issue_id if isinstance(issue_id, str) else ""}
-        job_id = self._enqueue_job(spec, target)
+        job_id = self._enqueue_job(spec, target, source="linear")
         if job_id is None:
             return
         self._send_json(202, {"id": job_id, "status": "queued"})
@@ -2298,7 +2481,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         if dup_id or dup_body:
             self._send_json(200, {"status": "duplicate"})
             return
-        job_id = self._enqueue_job(brief, {"kind": "jira", "key": key}, pr=True)
+        job_id = self._enqueue_job(brief, {"kind": "jira", "key": key}, pr=True, source="jira")
         if job_id is None:
             return
         self._send_json(202, {"id": job_id, "status": "queued"})
@@ -2339,7 +2522,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         if self.dispatcher.seen_delivery(teams_dedup_key(activity)):
             self._send_json(200, {"type": "message", "text": "Duplicate, already queued."})
             return
-        job_id = self._enqueue_job(brief, pr=True)
+        job_id = self._enqueue_job(brief, pr=True, source="teams")
         if job_id is None:
             return
         self._send_json(200, {"type": "message", "text": "Queued loki job %s" % job_id})
@@ -2544,7 +2727,25 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Preview triggers without running loki")
     parser.add_argument("--workers", type=int, default=None, help="Worker threads draining the dispatch queue")
     parser.add_argument("--queue-size", type=int, default=None, help="Max in-flight queued dispatches")
+    ctl = parser.add_mutually_exclusive_group()
+    ctl.add_argument("--health", action="store_true", help="Print per-source run counts and pause state, then exit")
+    ctl.add_argument("--pause", metavar="SOURCE", help="Pause a trigger source, then exit")
+    ctl.add_argument("--resume", metavar="SOURCE", help="Resume a paused trigger source, then exit")
     args = parser.parse_args()
+
+    if args.health:
+        lines = health_lines()
+        print("\n".join(lines) if lines else "No triggered runs recorded yet.")
+        return 0
+    for flag, name in ((True, args.pause), (False, args.resume)):
+        if name is None:
+            continue
+        if name not in ALL_SOURCES:
+            print("unknown trigger source: %s (known: %s)" % (name, ", ".join(ALL_SOURCES)))
+            return 2
+        HEALTH.set_paused(name, flag)
+        print("%s: %s" % (name, "PAUSED" if flag else "resumed"))
+        return 0
 
     logging.basicConfig(
         level=logging.INFO,
@@ -2712,7 +2913,7 @@ if __name__ == "__main__":
     if hasattr(signal, "SIGPIPE"):
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
-    main()
+    rc = main()
 
     # ponytail: flush stdout/stderr inside try/except BrokenPipeError before
     # exit, then call os._exit() to avoid daemon thread cleanup during
@@ -2725,4 +2926,4 @@ if __name__ == "__main__":
         sys.stderr.flush()
     except BrokenPipeError:
         pass
-    os._exit(0)
+    os._exit(rc if isinstance(rc, int) else 0)
