@@ -7,7 +7,7 @@ import { learningsBlock, lessonsForBrief, orgKnowledgeBlock } from "../../util/p
 import { FINISH_LINE, FIXED_RULES, briefRecord, type BriefRecord } from "../../e10ext/context.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
-import { attemptsGate, runAttemptsOnCtx } from "../../features/attempts.ts"; // S41-13, default off
+import type { ExtraAttemptsDeps } from "../../features/attempts.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
 import { classifyExitCause } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
 import { adjudicateWallConflict, coverageResumeEnabled, resumeAfterAlreadyDone, resumeAfterConflict, resumeAfterEmptyDone, resumeForCoverage } from "../../util/conflict_resume.ts";
@@ -83,6 +83,19 @@ export function applyExternalPatch(ctx: RunContext, patchPath: string): StageRes
   return { status: "completed", data: { exit: "external", external: true, patch_sha256: sha256(readFileSync(patchPath, "utf8")), tests_reverted: testsReverted, impacted_tests: impactedTests(ctx), iteration_ids: [] } };
 }
 
+/** EXP-0010: the exact brief the first implement session got (saved by the stage); null when it was not saved. */
+export const ATTEMPT_BRIEF_FILE = "implement-brief.txt";
+export function savedImplementBrief(ctx: RunContext): string | null { try { return readFileSync(join(ctx.runDir, ATTEMPT_BRIEF_FILE), "utf8") || null; } catch { return null; } }
+/** EXP-0010: what the extra attempts need beyond the brief, shared with the machine: the impacted-test set, the Wall's bytes, and verify's own runner for one test. */
+export function attemptDeps(ctx: RunContext, k: number, brief: string, limitS: number, model?: string): ExtraAttemptsDeps {
+  const readOnly = (ctx.outputs().wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [];
+  return {
+    k, brief, limitS, impacted: impactedTests(ctx), ...(model ? { model } : {}),
+    wallPaths: readOnly.map((f) => relative(ctx.repoDir, f.path)), wallContent: Object.fromEntries(readOnly.map((f) => [relative(ctx.repoDir, f.path), f.content])),
+    check: (c, t, sg, out) => { const tc = commandFor(t, c.repoDir, loadProjectApi(c.repoDir)); return runCheck(c, `${t.runner}:${t.path}`, tc.cmd, tc.args, sg, out as VerifyCheck[], { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); },
+  };
+}
+
 export const implementStage: Stage = {
   name: "implement",
   targetS: 180,
@@ -106,14 +119,16 @@ export const implementStage: Stage = {
     const spec = specFor(ctx);
     // CH-03: resume plan's session on the same model (never when routed: per-unit models differ). Wall, verify and seal never join the chain. planChain owns eligibility; `!plan` here only keeps plan_chain out of the data when plan was skipped.
     const chain = routed || !plan ? null : planChain(ctx, downgrade?.to ?? ctx.model, fastTierModel(process.env));
-    const own = routed || process.env.LOKI_E10_ATTEMPTS === "2" ? null : interruptedSession(ctx, `${ctx.runId}-impl`); // a rerun continues its own killed session before any plan link
+    const own = routed ? null : interruptedSession(ctx, `${ctx.runId}-impl`); // a rerun continues its own killed session before any plan link
     const ownId = own && "id" in own ? own.id : undefined;
     const resumeId = ownId ?? (chain && "id" in chain ? chain.id : undefined);
     let planChainMode: string | undefined = ownId ? "resumed (interrupted session)" : chain ? (resumeId ? "resumed" : `fresh (${(chain as { why: string }).why})`) : undefined;
     let sessionResume: string | undefined = own ? (ownId ? "resumed" : `fresh (${(own as { why: string }).why})`) : undefined;
+    const fullBrief = buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec), prior.intake?.assumptions);
+    try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, ATTEMPT_BRIEF_FILE), fullBrief, "utf8"); } catch { /* best effort: without it the machine starts no extra attempt */ } // EXP-0010: the extra attempts after a red verify start from this exact brief
     const first: SessionRunOptions = {
       stage: "implement",
-      brief: ownId ? INTERRUPTED_BRIEF : buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec), prior.intake?.assumptions),
+      brief: ownId ? INTERRUPTED_BRIEF : fullBrief,
       tier: "development",
       iterationId: `${ctx.runId}-impl`,
       limitS: implementStage.limitS,
@@ -122,14 +137,12 @@ export const implementStage: Stage = {
       ...(downgrade ? { model: downgrade.to } : {}),
       ...suiteCmdsOpt(ctx.repoDir, prior.intake?.testmap), ...(resumeId ? { resumeSessionId: resumeId } : {}), ...planStopChecks(ctx.repoDir, prior, new Set(impacted), implementStage.limitS, ctx.baseSha), // in-session fix rounds, default on (LOKI_E10_STOP_CHECKS=0 off)
     };
-    const unchained = (): SessionRunOptions => { const { resumeSessionId: _chained, ...rest } = first; return ownId ? { ...rest, brief: buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec), prior.intake?.assumptions) } : rest; }; // read at call time: the router may rewrite first.model; retries and conflict reruns never inherit the chain link
+    const unchained = (): SessionRunOptions => { const { resumeSessionId: _chained, ...rest } = first; return ownId ? { ...rest, brief: fullBrief } : rest; }; // read at call time: the router may rewrite first.model; retries and conflict reruns never inherit the chain link
     // ROUTER-1: per-unit ladder from the plan's route record (runner/router/unit_model.ts). Flag off: none of this runs.
     const size = sizeTask(task, loadRepoMap(prior.intake?.repomap_ref as string | undefined), (prior.intake?.testmap as TestMap | undefined) ?? null).size;
     const rt = routed ? routeStart(ctx, first, prior.plan, size) : null;
-    // S41-13: LOKI_E10_ATTEMPTS=2 on a normal-size task with a non-empty predicted S runs two attempts; the worker env is already token-scrubbed (asserted inside).
-    const two = attemptsGate({ size, predictedS: impacted.length }) ? await runAttemptsOnCtx(ctx, first, signal, impacted, { wallPaths: readOnly.map((f) => relative(ctx.repoDir, f.path)), wallContent: Object.fromEntries(readOnly.map((f) => [relative(ctx.repoDir, f.path), f.content])), check: (c, t, sg, out) => { const tc = commandFor(t, c.repoDir, loadProjectApi(c.repoDir)); return runCheck(c, `${t.runner}:${t.path}`, tc.cmd, tc.args, sg, out as VerifyCheck[], { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); } }) : null;
-    let session = two ? two.session : await ctx.sessions.run(first);
-    const ids = two ? two.ids : [first.iterationId];
+    let session = await ctx.sessions.run(first);
+    const ids = [first.iterationId];
     if (resumeId && !session.killed && session.exit !== 0 && session.exit !== MAX_TURNS_EXIT) { // a failed resume reruns fresh with the same full brief
       planChainMode = "fallback (resume failed)";
       if (ownId) { sessionResume = "fallback (resume failed)"; process.stderr.write(`implement: recorded session ${ownId} was not resumable, starting a fresh session\n`); }
@@ -147,7 +160,7 @@ export const implementStage: Stage = {
     if (!challenged && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && treeIsEmpty(ctx)) { const r = await resumeAfterEmptyDone(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, routerRedid); session = r.session; ids.push(r.iterationId); await challenge(); } // FC-43: one correction for a done exit with no change
 
     let coverage: string | undefined; // L4: lean path only; an attempts run owns its own sessions
-    if (coverageResumeEnabled() && !plan && !two) { if (!signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForCoverage(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; if (r.iterationId !== ids[ids.length - 1]) ids.push(r.iterationId); coverage = "resumed"; } else coverage = "skipped"; }
+    if (coverageResumeEnabled() && !plan) { if (!signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForCoverage(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; if (r.iterationId !== ids[ids.length - 1]) ids.push(r.iterationId); coverage = "resumed"; } else coverage = "skipped"; }
 
     if (process.env.LOKI_E10_REPRO === "1" && !plan && !signal.aborted && !session.killed && session.exit === 0) { let bad: { name: string; why: string }[] = []; try { bad = outOfRepoTests(ctx.repoDir, changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); } catch { /* unreadable tree: no re-ask */ } if (bad.length) { const redo = `${first.iterationId}-oor`; ids.push(redo); session = await ctx.sessions.run({ ...unchained(), brief: withStagePrefix(outOfRepoReask("Rewrite these new test files in place, keeping the same names and what they reproduce.", bad)), iterationId: redo }); } } // TEN-QUALITY-44: the repro test gets the Wall's out-of-repo check and one re-ask
     const testsReverted = restoreReadOnly(readOnly);
@@ -180,7 +193,6 @@ export const implementStage: Stage = {
       duration_s: session.durationS, ...(session.exit === MAX_TURNS_EXIT && !session.killed ? { stop_cause: "max_turns", owner: "harness", limit_s: implementStage.limitS, elapsed_s: session.durationS } : {}),
       ...(planChainMode ? { plan_chain: planChainMode } : {}),
       ...(sessionResume ? { session_resume: sessionResume } : {}),
-      ...(two ? { attempts: two.summary } : {}),
       ...(coverage ? { coverage_resume: coverage } : {}),
     };
 
