@@ -60,3 +60,8 @@ export function defectPinEdits(repoDir: string, baseSha: string, headSha: string
     return out;
   } catch { return []; }
 }
+/** The verify "assertion value changed" notes a defect-pin edit replaces, keyed on the exact file:line of each pin edit so an unpinned edit in the same file keeps its note and its cap. Empty unless lift is on (the cap lift is a verdict change, off by default). */
+export function pinDroppedNotes(verifyNotProven: readonly string[], edits: readonly DefectPinEdit[], lift: boolean): Set<string> {
+  const keys = edits.map((e) => `assertion value changed (not shown to be required by the task): ${e.file}:${e.line} `);
+  return new Set(lift ? verifyNotProven.filter((n) => keys.some((k) => n.startsWith(k))) : []);
+}
