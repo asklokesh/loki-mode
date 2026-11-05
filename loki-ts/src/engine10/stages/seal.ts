@@ -26,7 +26,7 @@ import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publ
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
-import { hooks } from "../hooks.ts";
+import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts";
 import { atomicWriteText } from "../../util/atomic.ts";
 import { collapseNotProven } from "../../util/term_width.ts";
 import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, splitDeclaredAdvisories } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { misplacedNamedNotes } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
@@ -186,7 +186,7 @@ export function renderReceiptMd(r: Receipt): string {
   const usd = r.cost.usd !== null
     ? `$${r.cost.usd.toFixed(4)}`
     : r.cost.measured_sessions > 0
-      ? `partial: $${r.cost.partial_usd.toFixed(4)} for ${r.cost.measured_sessions} of ${r.cost.total_sessions} sessions`
+      ? partialCostText(r.cost.partial_usd, r.cost.measured_sessions, r.cost.total_sessions)
       : "not measured";
   return [
     `## Loki receipt: ${r.verdict}`,

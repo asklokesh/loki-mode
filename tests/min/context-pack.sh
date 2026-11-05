@@ -20,6 +20,8 @@
 #                   context_pack, and the seal stage.completed event and receipt carry context_recall 1; the same
 #                   run on the default model sends no pack but still records brief_files and the coverage.
 #   loki stats --outcomes --json reports the median context recall of those runs.
+#   L3/L5 rules:    release-note fragment line (changeset, towncrier, changelog.d, newsfragments, changie, none) and the
+#                   byte-stable FIXED_RULES prefix (extra planted defects 5 and 6 below).
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/util/context_pack.ts: drop the callee hop (the `for (let hop` loop); the haiku brief loses
@@ -28,6 +30,8 @@
 #   3. loki-ts/src/engine10/stages/implement.ts: drop `brief_files: bc.files` from the stage data (rebuild dist);
 #      the end-to-end brief_files and context_recall assertions fail.
 #   4. loki-ts/src/engine10/repomap.ts: SOURCE_EXT back to ts|tsx|js|jsx|mjs|cjs|py; the L020 ranking legs fail.
+#   5. loki-ts/src/project_model/conventions.ts releaseNoteConvention: drop the .changeset/config.json branch; the changeset legs fail.
+#   6. loki-ts/src/e10ext/context.ts: interpolate the convention line into FIXED_RULES; prefix_stable fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need() { command -v "$1" >/dev/null 2>&1 || { echo "context-pack: needs $1" >&2; exit 2; }; }
@@ -147,6 +151,26 @@ const runs = join(T, "medruns");
 mkdirSync(join(runs, "r9"), { recursive: true }); writeFileSync(join(runs, "r9", "receipt.json"), JSON.stringify({ verdict: "PARTIAL" }));
 const m = cp.contextRecallMedian(runs);
 out.median = `${m.median} ${m.n} ${m.runs_considered}`;
+// L3/L5: release-note fragment convention line and the byte-stable rule prefix.
+const { releaseNoteBrief } = await import(join(SRC, "project_model/conventions.ts"));
+const { buildImplementBrief } = await import(join(SRC, "engine10/stages/implement.ts"));
+const { FIXED_RULES } = await import(join(SRC, "e10ext/context.ts"));
+const { utimesSync } = await import("node:fs");
+const mk = (name: string, files: Record<string, string>) => { const d = join(T, "rn", name); for (const [f, c] of Object.entries(files)) { mkdirSync(join(d, f, ".."), { recursive: true }); writeFileSync(join(d, f), c); } return d; };
+const csRepo = mk("cs", { ".changeset/config.json": "{}", ".changeset/old-fix.md": "x", ".changeset/new-fix.md": "y", ".changeset/README.md": "r", "package.json": '{"name":"rootpkg"}', "packages/core/package.json": '{"name":"@acme/core"}', "packages/core/src/a.ts": "export const a = 1;\n" });
+utimesSync(join(csRepo, ".changeset/old-fix.md"), 1000, 1000); utimesSync(join(csRepo, ".changeset/new-fix.md"), 2000, 2000);
+out.rn_changeset = releaseNoteBrief(csRepo, ["packages/core/src/a.ts"]);
+out.rn_changeset_root = releaseNoteBrief(csRepo, []);
+out.rn_towncrier = releaseNoteBrief(mk("tc", { "pyproject.toml": '[tool.towncrier]\ndirectory = "docs/news"\n', "docs/news/12.bugfix.md": "z" }), []);
+out.rn_changelogd = releaseNoteBrief(mk("cd", { "changelog.d/20240101_fix.md": "z" }), []);
+out.rn_newsfrag = releaseNoteBrief(mk("nf", { "newsfragments/7.feature.rst": "z" }), []);
+out.rn_changie = releaseNoteBrief(mk("ch", { ".changes/unreleased/Fixed-1.yaml": "z" }), []);
+out.rn_none = releaseNoteBrief(mk("no", { "package.json": '{"name":"p"}', "CHANGELOG.md": "# c" }), []) === "" ? "empty" : "present";
+const bp = (rm: string, task: string) => buildImplementBrief(task, null, [], rm);
+const b1 = bp(out.rn_changeset as string, "task one"), b2 = bp("", "a different task entirely");
+const cut = (b: string) => b.slice(0, b.indexOf(FIXED_RULES) + FIXED_RULES.length);
+out.prefix_stable = b1.includes(FIXED_RULES) && b2.includes(FIXED_RULES) && cut(b1) === cut(b2) && !FIXED_RULES.includes("Release-note convention") && b1.indexOf("Release-note convention") > FIXED_RULES.length ? "yes" : "no";
+out.rules = ["read the whole function", "sibling branches", "fix the issue prefers", "never npm test", "release-note fragment a repository convention"].map((k) => FIXED_RULES.includes(k) ? "y" : "n").join("");
 console.log(JSON.stringify(out));
 TS
 
@@ -176,6 +200,19 @@ eqv tiny_null yes "L021 a budget too small for any body sends no pack (not an em
 eqv cov_record "0.667 0.5 3 3" "L022 contextCoverage: recall 2/3, precision 2/4, reads 3 (test and added files excluded, a deleted file counted)"
 eqv stream_reads 3 "L022 stream parser: 3 reads before the first edit (a repeated snapshot counts once, a later read not at all)"
 eqv median "0.5 3 4" "L022 median context recall over sealed runs (an unmeasured run counted as considered only)"
+
+rn() { local v; v="$(get "$1")"; case "$v" in *"$2"*) ok "$3";; *) bad "$3 ($1: got '$v', want it to contain '$2')";; esac; }
+rn rn_changeset '"@acme/core": patch' "L3 changeset: names the package of the relevant file, not the root"
+rn rn_changeset 'newest example: .changeset/new-fix.md' "L3 changeset: newest example by mtime, README excluded"
+rn rn_changeset_root '"rootpkg": patch' "L3 changeset: no relevant file falls back to the root package name"
+rn rn_towncrier 'towncrier, docs/news/' "L3 towncrier: directory key read from [tool.towncrier]"
+rn rn_towncrier 'docs/news/12.bugfix.md' "L3 towncrier: example fragment named"
+rn rn_changelogd 'changelog.d/20240101_fix.md' "L3 changelog.d detected"
+rn rn_newsfrag 'newsfragments/7.feature.rst' "L3 newsfragments detected"
+rn rn_changie '.changes/unreleased/Fixed-1.yaml' "L3 changie .changes/unreleased detected"
+eqv rn_none empty "L3 a repo with only CHANGELOG.md gets no fragment line"
+eqv prefix_stable yes "L3/L5 the rule prefix is byte-identical across two runs; the convention line sits after it, never inside it"
+eqv rules yyyyy "L5 FIXED_RULES carries the read-whole-function, preferred-fix, targeted-tests and release-note rules"
 
 # ---- end to end on the stub provider ----
 export LOKI_TS_ENTRY="$ROOT/loki-ts/dist/loki.js"
