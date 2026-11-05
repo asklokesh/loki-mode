@@ -70,29 +70,54 @@ export function namedSymbols(task: string): string[] {
  * the test file that covers it (header plus the first tests, as the convention to copy) and the exact check command.
  * Deterministic, no model call. Code is copied verbatim so SEARCH text can be lifted from it exactly.
  */
-export function dossier(repoDir: string, task: string, testCmd: string, maxChars = 24_000): { text: string; files: string[] } {
+export function dossier(repoDir: string, task: string, testCmd: string, maxChars = 24_000, depth = 2): { text: string; files: string[] } {
   const files = listFiles(repoDir);
-  const syms = namedSymbols(task);
   const named = files.filter((f) => task.includes(f) || task.includes(f.split("/").pop()!));
-  const parts: string[] = [];
-  const hit = new Set<string>();
-  for (const f of files.filter((x) => !/(^|\/)(test|tests|__tests__|spec)\/|\.(test|spec)\.|_test\./.test(x))) {
-    const lines = readFileSync(join(repoDir, f), "utf8").split("\n");
-    const ranges: [number, number][] = [];
-    for (const sym of syms) {
-      const re = defRegex(sym);
-      for (let i = 0; i < lines.length; i++) if (re.test(lines[i]!)) { ranges.push(enclosingBlock(lines, i, f.endsWith(".py"))); break; }
+  const isTest = (x: string): boolean => /(^|\/)(test|tests|__tests__|spec)\/|\.(test|spec)\.|_test\./.test(x);
+  const src = new Map<string, string[]>();
+  const linesOf = (f: string): string[] => { if (!src.has(f)) src.set(f, readFileSync(join(repoDir, f), "utf8").split("\n")); return src.get(f)!; };
+  const headerEnd = (lines: string[]): number => Math.max(0, lines.findIndex((l) => l.trim() !== "" && !/^\s*(import|from|\/\/|#|"use|package|require|const .* = require)/.test(l)));
+  const kept = new Map<string, { range: [number, number]; why: string }[]>(); // file -> ranges, in discovery order
+  const add = (f: string, r: [number, number], why: string): boolean => {
+    const cur = kept.get(f) ?? [];
+    if (cur.some((x) => x.range[0] <= r[0] && x.range[1] >= r[1])) return false; // already inside a kept range
+    kept.set(f, [...cur.filter((x) => !(r[0] <= x.range[0] && r[1] >= x.range[1])), { range: r, why }]);
+    return true;
+  };
+  const defOf = (f: string, sym: string): [number, number] | null => {
+    const lines = linesOf(f), re = defRegex(sym);
+    for (let i = headerEnd(lines); i < lines.length; i++) if (re.test(lines[i]!)) return enclosingBlock(lines, i, f.endsWith(".py"));
+    return null;
+  };
+  // Depth 0: definitions the task names. Then a bounded closure: callees imported from a relative module or defined in the same file.
+  let frontier: { f: string; r: [number, number] }[] = [];
+  for (const f of files.filter((x) => !isTest(x))) for (const sym of namedSymbols(task)) { const r = defOf(f, sym); if (r && add(f, r, "")) frontier.push({ f, r }); }
+  for (let d = 1; d <= depth && frontier.length; d++) {
+    const next: typeof frontier = [];
+    for (const { f, r } of frontier) {
+      const lines = linesOf(f), body = lines.slice(r[0], r[1] + 1).join("\n");
+      const calls = new Set([...body.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\(/g)].map((m) => m[1]!));
+      const targets: { file: string; sym: string }[] = [];
+      for (const m of lines.slice(0, headerEnd(lines)).join("\n").matchAll(/import\s*\{([^}]+)\}\s*from\s*["'](\.{1,2}\/[^"']+)["']|from\s+(\.+[\w.]*)\s+import\s+([\w, ]+)/g)) {
+        const target = m[2] ? normalize(join(dirname(f), m[2])) : normalize(join(dirname(f), m[3]!.replace(/^\./, "").replace(/\./g, "/") + ".py"));
+        const file = files.find((x) => x === target || x.replace(/\.[^.]+$/, "") === target.replace(/\.[^.]+$/, ""));
+        if (file) for (const n of (m[1] ?? m[4] ?? "").split(",").map((x) => x.trim().split(/\s+as\s+/).pop()!)) if (n && calls.has(n)) targets.push({ file, sym: n });
+      }
+      for (const n of calls) targets.push({ file: f, sym: n });
+      for (const t of targets) { const tr = defOf(t.file, t.sym); if (tr && add(t.file, tr, " (called by the code above)")) next.push({ f: t.file, r: tr }); }
     }
-    if (!ranges.length && !named.includes(f)) continue;
-    hit.add(f);
-    const header = lines.findIndex((l) => l.trim() !== "" && !/^\s*(import|from|\/\/|#|"use|package|require|const .* = require)/.test(l));
-    const head = header > 0 ? `--- ${f}:1-${header}\n${lines.slice(0, header).join("\n")}` : "";
-    if (!ranges.length) { parts.push(`--- ${f} (whole file)\n${lines.join("\n")}`); continue; }
-    if (head) parts.push(head);
-    for (const [a, b] of ranges.sort((x, y) => x[0] - y[0])) parts.push(`--- ${f}:${a + 1}-${b + 1}\n${lines.slice(a, b + 1).join("\n")}`);
+    frontier = next;
+  }
+  const parts: string[] = [];
+  const hit = new Set<string>([...kept.keys()]);
+  for (const f of named) if (!hit.has(f) && !isTest(f)) { parts.push(`--- ${f} (whole file)\n${linesOf(f).join("\n")}`); hit.add(f); }
+  for (const [f, rs] of kept) {
+    const lines = linesOf(f), h = headerEnd(lines);
+    if (h > 0) parts.push(`--- ${f}:1-${h}\n${lines.slice(0, h).join("\n")}`);
+    for (const { range: [a, b], why } of [...rs].sort((x, y) => x.range[0] - y.range[0])) parts.push(`--- ${f}:${a + 1}-${b + 1}${why}\n${lines.slice(a, b + 1).join("\n")}`);
   }
   const testParts: string[] = [];
-  for (const f of files.filter((x) => /(^|\/)(test|tests|__tests__|spec)\/|\.(test|spec)\.|_test\./.test(x))) {
+  for (const f of files.filter(isTest)) {
     const body = readFileSync(join(repoDir, f), "utf8");
     if (![...hit].some((h) => body.includes(h.split("/").pop()!.replace(/\.[^.]+$/, "")))) continue;
     const lines = body.split("\n");
