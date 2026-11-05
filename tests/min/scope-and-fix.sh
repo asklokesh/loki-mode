@@ -872,4 +872,27 @@ const o = "src/v3/tests/a.test.ts:56:8 - error TS6196: \x27_Cat\x27 is declared 
 console.log([u(o, "packages/zod", new Set(["packages/zod/src/v4/x.ts"]), ["packages/zod/src/v4/x.ts"], o), u(o, "packages/zod", new Set(["packages/zod/src/v3/tests/a.test.ts"]), [], o), u(o + "src/c.ts:1:1 - error TS2322: no\n", "packages/zod", new Set(), [], o), u(o, "packages/zod", new Set(), ["packages/zod/tsconfig.json"], o), u("", ".", new Set(), [], ""), u("error TS6133 unparsed\n", ".", new Set(), [], "error TS6133 unparsed\n")].join(","));' 2>&1)"
 [ "$TU" = "true,false,false,false,false,false" ] && ok "tsc untouched unit: only unused-declaration errors in untouched, unnamed files with no tsconfig edit are excused ($TU)" || bad "tsc untouched unit: '$TU'"
 
+# pytest base proof when a narrow terminal ends the summary reason in "..." (rule 22, real pytest): "FAILED tests/test_more.py::IchunkedTests::test_negative_message - AssertionEr..."
+# is an assertion failure (the traceback's E line says AssertionError), not an unknown kind; it was read as "not an assertion" so a real fail-then-pass proof was dropped. A base run that
+# fails by TypeError (the base lacks the new keyword) beside it stays no proof. Plant: drop the "..." test in assertionFailure and the first leg reads "yes|" with no file named.
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    for kind in assert typeerr; do
+        TR="$T/mp-trunc-$kind"; rm -rf "$TR"; mkdir -p "$TR/tests" && cd "$TR" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
+        printf 'def chunk(n):\n    return n\n' > mod.py
+        printf 'import unittest\n\nimport mod\n\n\nclass IchunkedTests(unittest.TestCase):\n    def test_ok(self):\n        self.assertEqual(mod.chunk(1), 1)\n' > tests/test_more.py
+        git add -- . && git commit -q -m base && BASE="$(git rev-parse HEAD)"
+        if [ "$kind" = assert ]; then printf 'def chunk(n):\n    if n < 0:\n        raise ValueError("n must be at least 0")\n    return n\n' > mod.py; printf '\n    def test_negative_message(self):\n        with self.assertRaisesRegex(ValueError, "n must be at least 0"):\n            mod.chunk(-1)\n' >> tests/test_more.py
+        else printf 'def chunk(n, strict=False):\n    return n\n' > mod.py; printf '\n    def test_negative_message(self):\n        self.assertEqual(mod.chunk(1, strict=True), 1)\n' >> tests/test_more.py; fi
+        git add -- . && git commit -q -m head && HEADSHA="$(git rev-parse HEAD)"; cd "$ROOT"
+        mpt="$(cd "$ROOT/loki-ts" && env -u CI -u GITHUB_ACTIONS COLUMNS=80 bun -e 'const { mutationProof } = await import("./src/util/mutation_proof.ts"); const { baseProofRunner } = await import("./src/engine10/stages/seal.ts"); const [repo, base, head] = process.argv.slice(1); const f = "tests/test_more.py"; const r = await mutationProof({ repoDir: repo, baseSha: base, runDir: repo + "/.loki", wallFiles: [{ path: f }], checks: [{ name: "pytest:" + f }], runner: baseProofRunner, headSha: head, requireAssertion: true, baseMustPass: [f] }); console.log(r.outcome + "|" + (r.failed ?? []).join(","));' "$TR" "$BASE" "$HEADSHA" 2>&1 | tail -1)"
+        if [ "$kind" = assert ]; then
+            [ "$mpt" = "yes|tests/test_more.py" ] && ok "pytest truncated reason: an assertion failure whose summary reason ends in '...' still counts as the fail-then-pass proof ($mpt)" || bad "pytest truncated reason: got '$mpt'"
+        else
+            [ "$mpt" = "yes|" ] && ok "pytest truncated reason: a TypeError (new keyword the base lacks) is still no proof ($mpt)" || bad "pytest truncated reason (TypeError): got '$mpt'"
+        fi
+    done
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest truncated reason: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest truncated reason: pytest is not installed"; fi
+fi
+
 finish
