@@ -17,6 +17,7 @@ import json
 import math
 import os
 import platform
+import random
 import pwd
 import re
 import shutil
@@ -60,10 +61,16 @@ CHECK_CONFIGS = ["oracle", "noop"]
 # Learning protocol (--sequences): Loki on Haiku with what it learns from earlier runs in the same repo.
 # learn: run lessons and the worked example both on; lessons: run lessons only; example: the worked example
 # only; nolearn: both off. Each arm sets every knob explicitly, so an engine default never decides an arm.
-SEQUENCE_CONFIGS = ["loki-haiku-learn", "loki-haiku-lessons", "loki-haiku-example", "loki-haiku-nolearn"]
+# loki-<model>-<knob> pins that model; loki-auto-learn pins none and sets LOKI_ROUTER=auto (outcome-routed executor from
+# router_history.json) with both learn knobs. The raw arms have no Loki memory: they are the same-model floor to compare against.
+SEQUENCE_CONFIGS = ["loki-haiku-learn", "loki-haiku-lessons", "loki-haiku-example", "loki-haiku-nolearn",
+                    "loki-sonnet-learn", "loki-sonnet-nolearn", "loki-auto-learn"]
+SEQUENCE_RAW_CONFIGS = ["raw-haiku", "raw-sonnet"]
+BOOTSTRAP_SEED = 20261104
+BOOTSTRAP_RESAMPLES = 2000
 # util/pr_lessons.ts RECURRING: the run-lesson classes a brief line can prevent on the same file.
 RECURRING = ("check-failed", "edited-existing-test", "spec-conflict")
-SEQUENCES_DIR = HERE / "sequences"
+SEQUENCES_DIR = Path(os.environ.get("H2H_SEQUENCES_DIR") or HERE / "sequences")  # test hook, like H2H_CACHE
 SCORE_TIMEOUT_S = 180
 NOISE = (".loki/", "node_modules/", "__pycache__/", ".pytest_cache/", ".bun/", "target/")
 
@@ -332,23 +339,30 @@ def config_env(config, env):
         # it (stages/wall.ts capToRunTier). LOKI_MODEL_OVERRIDE is not used: it is a pin key for the Wall
         # re-author, so that call would climb back to sonnet (engine10/sizing.ts wallModel).
         env["LOKI_SESSION_MODEL"] = LOKI_PINS[config]
-    if config in SEQUENCE_CONFIGS:
-        env["LOKI_SESSION_MODEL"] = "haiku"
+    if config in SEQUENCE_CONFIGS and config != "loki-auto-learn":
+        env["LOKI_SESSION_MODEL"] = config.split("-")[1]
     # util/pr_lessons.ts lessonsInjected (LOKI_PR_LESSONS, "0" off) and workedExampleInjected (LOKI_WORKED_EXAMPLE, "1" on).
-    if config == "loki-haiku-learn":
-        env["LOKI_PR_LESSONS"] = "1"
-        env["LOKI_WORKED_EXAMPLE"] = "1"
-    if config == "loki-haiku-lessons":
-        env["LOKI_PR_LESSONS"] = "1"
-        env["LOKI_WORKED_EXAMPLE"] = "0"
-    if config == "loki-haiku-example":
-        env["LOKI_PR_LESSONS"] = "0"
-        env["LOKI_WORKED_EXAMPLE"] = "1"
-    if config == "loki-haiku-nolearn":
-        # LOKI_NO_PR_LESSONS=1 turns both off whatever else is set.
-        env["LOKI_NO_PR_LESSONS"] = "1"
+    # The arm's knobs come from its name suffix, whatever the model.
+    if config in SEQUENCE_CONFIGS:
+        suffix = config.rsplit("-", 1)[1]
+        if suffix == "learn":
+            env["LOKI_PR_LESSONS"] = "1"
+            env["LOKI_WORKED_EXAMPLE"] = "1"
+        elif suffix == "lessons":
+            env["LOKI_PR_LESSONS"] = "1"
+            env["LOKI_WORKED_EXAMPLE"] = "0"
+        elif suffix == "example":
+            env["LOKI_PR_LESSONS"] = "0"
+            env["LOKI_WORKED_EXAMPLE"] = "1"
+        elif suffix == "nolearn":
+            # LOKI_NO_PR_LESSONS=1 turns both off whatever else is set.
+            env["LOKI_NO_PR_LESSONS"] = "1"
+    if config == "loki-auto-learn":
+        env["LOKI_ROUTER"] = "auto"  # runner/router/flag.ts routerActive: history-routed executor (repoHistoryFloor)
     if config.startswith("loki-"):
         env.update(loki_env_overrides())  # validated at startup; Loki contestants only (raw configs never see them)
+    if config == "loki-auto-learn" and env.get("LOKI_ROUTER") != "auto":
+        raise SystemExit(f"h2h: {config} runs with LOKI_ROUTER=auto; H2H_LOKI_ENV may not set LOKI_ROUTER={env['LOKI_ROUTER']}")
     if config in LOW_EFFORT_CONFIGS and config.startswith("loki-"):
         if env.get("LOKI_E10_EFFORT", LOW_EFFORT) != LOW_EFFORT:
             raise SystemExit(f"h2h: {config} runs at effort {LOW_EFFORT}; H2H_LOKI_ENV may not set LOKI_E10_EFFORT={env['LOKI_E10_EFFORT']}")
@@ -809,23 +823,40 @@ def commit_step_state(repo, step):
         git(repo, "commit", "-q", "-m", f"h2h: state after step {step}")
 
 
-def run_sequence(config, seq, rep, work, timeout_s, keep_dir):
+def reset_lap(repo, base0):
+    """Back to the sequence's base commit for the next lap: main at base0, no step work left in the tree.
+    Loki's .loki memory (lessons, worked examples) is never removed: that is what a lap measures."""
+    git(repo, "checkout", "-q", "-f", "main")
+    git(repo, "reset", "-q", "--hard", base0)
+    git(repo, "clean", "-fdq", "-e", ".loki")
+
+
+def run_sequence(config, seq, rep, work, timeout_s, keep_dir, laps=1):
     """Every step of one sequence, in order, in ONE repo copy with ONE throwaway HOME, so whatever
     Loki records about a run is there for the next. Each step is scored by its own hidden tests,
     which are removed again before the next step starts; the step's result (contestant work as
-    scored) is committed so the next step starts from a clean tree."""
+    scored) is committed so the next step starts from a clean tree. With laps > 1 the repo is reset
+    to its base between laps (reset_lap) and the steps run again; Loki's .loki memory is kept."""
     d = Path(tempfile.mkdtemp(prefix=f"{config}.{seq['id']}.{rep}.", dir=work))
     repo = d / "repo"
     prepare_repo({"dir": seq["dir"]}, repo)
     home = make_home(d / "home")
+    base0 = git(repo, "rev-parse", "HEAD").strip()
     recs = []
-    for i, st in enumerate(seq["steps"], 1):
+    nsteps = len(seq["steps"])
+    for lap, i in ((lap, i) for lap in range(1, laps + 1) for i in range(1, nsteps + 1)):
+        st = seq["steps"][i - 1]
+        if i == 1 and lap > 1:
+            reset_lap(repo, base0)
         env = config_env(config, contestant_env(home, work))
         base = git(repo, "rev-parse", "HEAD").strip()
         rec = {"config": config, "sequence": seq["id"], "step": i, "task": st["task_id"], "lang": seq["lang"], "rep": rep,
+               "lap": lap, "run_index": (lap - 1) * nsteps + i,
                "lessons_before": lesson_counts(repo),
                # Any step's hidden test file already in the repo when this step starts (must stay empty).
                "stale_hidden": sorted(dest for other in seq["steps"] for dest in other["hidden"].values() if (repo / dest).exists())}
+        if i == 1:
+            rec["lap_start_clean"] = git(repo, "rev-parse", "HEAD^{tree}").strip() == git(repo, "rev-parse", f"{base0}^{{tree}}").strip()
         before = loki_branches(repo)
         before_ids = {l["id"] for l in run_lessons(repo) if l.get("category") in RECURRING and (l.get("seen") or 0) > 0}
         if config == "oracle":
@@ -844,6 +875,8 @@ def run_sequence(config, seq, rep, work, timeout_s, keep_dir):
             m["loki_outcome"] = LOKI_EXIT.get(rc, "OTHER")
             m["loki_tail"] = tail_text(d / f"step{i}.out", 800)
             m.update(step_learning(repo, before_ids, m.get("run_id")))
+        elif config.startswith("raw"):
+            m = raw_metrics(d / f"step{i}.out")
         else:
             m = {"cost_usd": 0.0, "sessions": 0}
         restore_protected(st, repo, base)
@@ -889,11 +922,117 @@ def summarize_sequences(results, configs):
     return rows
 
 
+def first_pass(r):
+    """Right on the first attempt. Loki: hidden tests pass with zero fix rounds. Raw Claude Code has no repair
+    loop (one `claude -p` call), so for a raw arm first-pass is the pass itself."""
+    return bool(r["pass"]) and (not r["config"].startswith("loki") or not (r.get("fix_rounds") or 0))
+
+
+def _cost(r):
+    return r["cost_usd"] if isinstance(r.get("cost_usd"), (int, float)) else None
+
+
+def summarize_curve(results, configs):
+    """Per config and run index (lap-major step count, 1..laps*steps): n, passes, first-pass count, mean measured
+    cost. `first_vs_last` compares run index 1 with the last run index of each config (Wilson CIs, $ per pass).
+    Records without a run_index (harness errors) are left out."""
+    rows, fvl = [], []
+    for c in configs:
+        rs = [r for r in results if r["config"] == c and r.get("run_index")]
+        by = {}
+        for r in rs:
+            by.setdefault(r["run_index"], []).append(r)
+        for idx in sorted(by):
+            g = by[idx]
+            costs = [x for x in map(_cost, g) if x is not None]
+            rows.append({"config": c, "run_index": idx, "n": len(g), "passed": sum(bool(r["pass"]) for r in g),
+                         "first_pass": sum(first_pass(r) for r in g),
+                         "mean_cost_usd": round(sum(costs) / len(costs), 4) if costs else None,
+                         "cost_unmeasured": len(g) - len(costs)})
+        if by:
+            ends = {}
+            for label, idx in (("first", min(by)), ("last", max(by))):
+                g = by[idx]
+                n, k = len(g), sum(bool(r["pass"]) for r in g)
+                costs = [x for x in map(_cost, g) if x is not None]
+                ends[label] = {"run_index": idx, "n": n, "passed": k, "pass_ci95": wilson(k, n),
+                               "cost_per_pass_usd": round(sum(costs) / k, 4) if k and costs else None}
+            fvl.append({"config": c, **ends})
+    return {"by_run_index": rows, "first_vs_last": fvl}
+
+
+def _boot_ci(vals):
+    vals = sorted(v for v in vals if v is not None)
+    if len(vals) < 20:
+        return None
+    n = len(vals)
+    return [round(vals[int(0.025 * n)], 4), round(vals[int(0.975 * n) - 1], 4)]
+
+
+def paired(results, a, b):
+    """Config a against config b on the same (sequence, rep, run_index). delta_pass and delta_first_pass are
+    mean differences (a minus b); cost_ratio is sum(a cost) / sum(b cost) over pairs where both costs were
+    measured. Each carries a 95% percentile bootstrap CI (seeded, so a second call gives the same interval)."""
+    def idx(c):
+        return {(r["sequence"], r["rep"], r["run_index"]): r for r in results if r["config"] == c and r.get("run_index")}
+    ia, ib = idx(a), idx(b)
+    pairs = [(ia[k], ib[k]) for k in sorted(ia) if k in ib]
+    n = len(pairs)
+    out = {"a": a, "b": b, "n_pairs": n, "bootstrap": {"seed": BOOTSTRAP_SEED, "resamples": BOOTSTRAP_RESAMPLES}}
+    if not n:
+        return {**out, "delta_pass": None, "delta_first_pass": None, "cost_ratio": None}
+    dp = [int(bool(x["pass"])) - int(bool(y["pass"])) for x, y in pairs]
+    df = [int(first_pass(x)) - int(first_pass(y)) for x, y in pairs]
+    cp = [(_cost(x), _cost(y)) for x, y in pairs if _cost(x) is not None and _cost(y) is not None]
+
+    def ratio(sub):
+        den = sum(y for _, y in sub)
+        return sum(x for x, _ in sub) / den if den else None
+
+    rng = random.Random(BOOTSTRAP_SEED)
+    bp, bf, bc = [], [], []
+    for _ in range(BOOTSTRAP_RESAMPLES):
+        pick = [rng.randrange(n) for _ in range(n)]
+        bp.append(sum(dp[i] for i in pick) / n)
+        bf.append(sum(df[i] for i in pick) / n)
+        bc.append(ratio([cp[rng.randrange(len(cp))] for _ in range(len(cp))]) if cp else None)
+    r0 = ratio(cp) if cp else None
+    return {**out, "delta_pass": {"point": round(sum(dp) / n, 4), "ci95": _boot_ci(bp)},
+            "delta_first_pass": {"point": round(sum(df) / n, 4), "ci95": _boot_ci(bf)},
+            "cost_ratio": {"point": round(r0, 4) if r0 is not None else None, "ci95": _boot_ci(bc), "n_cost_pairs": len(cp)}}
+
+
+# (loki arm prefix, raw baseline). loki-auto-learn has no model pin, so its baseline is labelled mixed-model.
+PAIR_BASELINES = (("loki-haiku-", "raw-haiku"), ("loki-sonnet-", "raw-sonnet"), ("loki-auto-learn", "raw-sonnet"))
+
+
+def paired_all(results, configs):
+    out = []
+    for c in configs:
+        for prefix, raw in PAIR_BASELINES:
+            if c.startswith(prefix) and c in SEQUENCE_CONFIGS and raw in configs:
+                p = paired(results, c, raw)
+                if c == "loki-auto-learn":
+                    p["note"] = "mixed-model: the router picks the executor, raw-sonnet is pinned"
+                out.append(p)
+    return out
+
+
+def _ci_txt(d, pct_=False):
+    if not d or d["point"] is None:
+        return "-"
+    f = (lambda v: f"{v * 100:+.0f}%") if pct_ else (lambda v: f"{v:.2f}")
+    ci = d["ci95"]
+    return f"{f(d['point'])} ({f(ci[0])} to {f(ci[1])})" if ci else f"{f(d['point'])} (CI n/a)"
+
+
 def main_sequences(a, ap):
     configs = [c for c in a.configs.split(",") if c]
     for c in configs:
-        if c not in SEQUENCE_CONFIGS + CHECK_CONFIGS:
-            ap.error(f"--sequences takes configs from {SEQUENCE_CONFIGS + CHECK_CONFIGS}")
+        if c not in SEQUENCE_CONFIGS + SEQUENCE_RAW_CONFIGS + CHECK_CONFIGS:
+            ap.error(f"--sequences takes configs from {SEQUENCE_CONFIGS + SEQUENCE_RAW_CONFIGS + CHECK_CONFIGS}")
+        if c in SEQUENCE_CONFIGS:
+            config_env(c, {})  # refuse a contradicting H2H_LOKI_ENV before any run starts
     all_seqs = sorted(p.name for p in SEQUENCES_DIR.iterdir() if (p / "meta.json").is_file()) if SEQUENCES_DIR.is_dir() else []
     ids = all_seqs if a.sequences == "all" else [x for x in a.sequences.split(",") if x]
     for x in ids:
@@ -922,8 +1061,9 @@ def main_sequences(a, ap):
     def save():
         doc = {"benchmark": "h2h-learning", "loki_sha": sha, "date": dt.datetime.now().isoformat(timespec="seconds"),
                "citable": all(p["citable"] for p in provs), "provenance": provs,
-               "configs": configs, "reps": a.reps, "jobs": a.jobs, "timeout_s": a.timeout, "stopped": state["stopped"],
-               "loki_env": loki_env_overrides(), "sequences": [sq["id"] for sq in seqs], "summary": summarize_sequences(results, configs), "runs": results}
+               "configs": configs, "reps": a.reps, "laps": a.laps, "jobs": a.jobs, "timeout_s": a.timeout, "stopped": state["stopped"],
+               "loki_env": loki_env_overrides(), "sequences": [sq["id"] for sq in seqs], "summary": summarize_sequences(results, configs),
+               "curve": summarize_curve(results, configs), "paired": paired_all(results, configs), "runs": results}
         out.write_text(json.dumps(doc, indent=2) + "\n")
 
     def worker():
@@ -938,7 +1078,7 @@ def main_sequences(a, ap):
                 rep, sq, c = queue.pop(0)
                 log(f"h2h: {c} sequence {sq['id']} rep {rep} (ledger ${spent:.4f}, {len(queue)} queued)")
             try:
-                recs = run_sequence(c, sq, rep, work, a.timeout, a.keep)
+                recs = run_sequence(c, sq, rep, work, a.timeout, a.keep, laps=a.laps)
             except Exception as exc:
                 recs = [{"config": c, "sequence": sq["id"], "step": 0, "task": sq["id"], "rep": rep, "pass": 0, "seconds": 0.0,
                          "exit_code": None, "timed_out": False, "files_changed": 0, "files": [], "cost_usd": None,
@@ -970,7 +1110,7 @@ def main_sequences(a, ap):
     finally:
         if work.name.startswith("loki-h2h.") and work.parent == tmp_root and not a.keep:
             shutil.rmtree(work, ignore_errors=True)
-    results.sort(key=lambda r: (configs.index(r["config"]) if r["config"] in configs else 99, r["sequence"], r["rep"], r["step"]))
+    results.sort(key=lambda r: (configs.index(r["config"]) if r["config"] in configs else 99, r["sequence"], r["rep"], r.get("run_index") or r["step"]))
     save()
     print("| config | steps | pass | 95% CI | $ / pass | median s | sessions | fix rounds | lessons injected | example injected | mean bytes | repeat mistakes |")
     print("|---|---|---|---|---|---|---|---|---|---|---|---|")
@@ -980,6 +1120,20 @@ def main_sequences(a, ap):
         print(f"| {r['config']} | {r['steps']} | {r['passed']}/{r['n']} | {ci[0] * 100:.0f}-{ci[1] * 100:.0f}% | {cpp} | {r['median_s']} "
               f"| {r['mean_sessions']} | {r['mean_fix_rounds']} | {r['steps_with_lessons_injected']}/{r['n']} "
               f"| {r['steps_with_worked_example_injected']}/{r['n']} | {r['mean_injected_bytes']} | {r['steps_repeating_a_mistake']}/{r['n']} |")
+    curve = summarize_curve(results, configs)
+    print("\n| config | run | n | pass | first-pass | mean $ |")
+    print("|---|---|---|---|---|---|")
+    for r in curve["by_run_index"]:
+        mean = f"{r['mean_cost_usd']:.4f}" if r["mean_cost_usd"] is not None else "-"
+        print(f"| {r['config']} | {r['run_index']} | {r['n']} | {r['passed']}/{r['n']} | {r['first_pass']}/{r['n']} | {mean}"
+              f"{' (' + str(r['cost_unmeasured']) + ' unmeasured)' if r['cost_unmeasured'] else ''} |")
+    pairs = paired_all(results, configs)
+    if pairs:
+        print("\n| loki | raw | pairs | d pass (95% CI) | d first-pass (95% CI) | cost ratio (95% CI) |")
+        print("|---|---|---|---|---|---|")
+        for p in pairs:
+            print(f"| {p['a']} | {p['b']}{' (mixed-model)' if p.get('note') else ''} | {p['n_pairs']} | {_ci_txt(p['delta_pass'], True)} "
+                  f"| {_ci_txt(p['delta_first_pass'], True)} | {_ci_txt(p['cost_ratio'])} |")
     print(f"\nresults: {out}")
     if any(r["hidden_leaked_before_scoring"] or r.get("stale_hidden") for r in results):
         log("h2h: hidden test files were visible to a contestant before scoring")
@@ -1134,14 +1288,16 @@ def main(argv=None):
     ap.add_argument("--jobs", type=int, default=1, help="runs in flight at once (default 1); the budget check can "
                     "overshoot by at most jobs-1 runs, and wall times are measured under that concurrency")
     ap.add_argument("--sequences", default="", help="learning protocol: comma list of sequence ids under sequences/ "
-                    f"(or 'all'); configs from {SEQUENCE_CONFIGS + CHECK_CONFIGS}")
+                    f"(or 'all'); configs from {SEQUENCE_CONFIGS + SEQUENCE_RAW_CONFIGS + CHECK_CONFIGS}")
+    ap.add_argument("--laps", type=int, default=1, help="with --sequences: run every sequence this many times in a row in "
+                    "the same repo (reset to base between laps, .loki memory kept); run_index counts across laps")
     ap.add_argument("--resume", default="", help="results JSON from an interrupted invocation: its runs are kept "
                     "and every (config, task, rep) already in it is skipped")
     ap.add_argument("--allow-dirty", action="store_true", help="run Loki configs from a tree with uncommitted changes; "
                     "the results file is stamped citable: false")
     a = ap.parse_args(argv)
-    if a.reps < 1 or a.jobs < 1:
-        ap.error("--reps and --jobs must be at least 1")
+    if a.reps < 1 or a.jobs < 1 or a.laps < 1:
+        ap.error("--reps, --jobs and --laps must be at least 1")
     if a.sequences:
         return main_sequences(a, ap)
 
