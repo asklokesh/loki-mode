@@ -7,7 +7,7 @@ import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
-import { repeatedNoopFix } from "../util/anti_loop.ts"; import { restoreBaseTests } from "../util/test_guard.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
+import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
 
 /** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
 interface WallSplit { author(ctx: RunContext, signal: AbortSignal): Promise<{ kind: string } & Record<string, unknown>>; install(ctx: RunContext, a: never, baseDir: string): StageResult; }
@@ -170,7 +170,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       r = { status: "failed", data: {}, reason: why, killed: true };
       const kept = name === "verify" ? (settled?.status === "completed" ? settled.data : partials.verify) : undefined;
       if (kept) { const prev = outputs.verify; outputs.verify = { ...kept, failures_grouped: stillFailing(prev?.failures_grouped, kept.checks), holdout_failed: prev?.holdout_failed ?? 0, not_proven: [...(Array.isArray(kept.not_proven) ? kept.not_proven : []), VERIFY_STOPPED_NOTE[why]], stopped_at: why, duration_s: dur() }; } // the checks that ran stay in the receipt; the note keeps the verdict below VERIFIED; the fix loop reads the earlier groups minus those the stopped verify saw pass
-      if (name === "implement" && why === "limit") { const ro = (outputs.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [], reverted = [...restoreReadOnly(ro).map((f) => relative(ctx.repoDir, f)), ...restoreBaseTests(ctx.repoDir, ctx.baseSha, outputs.intake)]; outputs.implement = { exit: "killed", limit_s: limitS, elapsed_s: dur(), ...(reverted.length ? { tests_reverted: reverted } : {}) }; } // FC-21 (a): the work that exists is verified, and seal reads exit=killed so the verdict can never be VERIFIED
+      if (name === "implement" && why === "limit") { const ro = (outputs.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [], reverted = restoreReadOnly(ro).map((f) => relative(ctx.repoDir, f)); outputs.implement = { exit: "killed", limit_s: limitS, elapsed_s: dur(), ...(reverted.length ? { tests_reverted: reverted } : {}) }; } // FC-21 (a): the work that exists is verified, and seal reads exit=killed so the verdict can never be VERIFIED
       if (name === "fix") outputs.fix = settled?.status === "completed" ? { ...settled.data, killed: true } : { ...outputs.fix, round: Number(outputs.fix?.round ?? 0) + 1, killed: true }; // a killed round still counts, so the next round gets its own iteration id instead of resuming the killed session
     }
     const res = r as StageResult;
