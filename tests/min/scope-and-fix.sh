@@ -187,7 +187,7 @@
 #  89. tournament.ts warningSigns: ignore the edit-shape residual site (the signs leg reads 0 for the residual case).
 #  90. tournament.ts runTournamentGate: write the winner's whole scratch tree over the user's tree (the probe side-effect go leg finds leak.txt and a changed go.mod).
 #  91. tournament.ts materialize and the winner: candidates built from base and swapped in with treeswap enter (the probe side-effect go leg loses the agent's new test, added case and go.mod note).
-#  92. tournament.ts select: count wins on inputs the issue never names (the unnamed-input go leg and the unnamed unit leg displace).
+#  92. tournament.ts select: drop the issue-named requirement (the two-unnamed-wins unit leg displaces); count unnamed wins as anchored (the unnamed-input legs displace).
 #  93. tournament.ts runTournament: call the candidates model before looking at the agent tree (the agent-red legs make a call).
 #  94. tournament.ts runTournamentGate: truncate a big base file instead of skipping (the big-file go leg calls the model).
 #  95. tournament.ts applyWinnerFiles: skip the undo record (the kill leg finds no record).
@@ -1382,7 +1382,7 @@ row("judge", [dd.length, views.map((v: any) => v.viewId).join("/"), ans((v) => l
 // ---------- unit: selection through runTournament with a stub Io ----------
 const lines = (o: Record<string, string>): string => Object.entries(o).map(([id, v]) => `LOKIPROBE ${JSON.stringify({ id, desc: id, out: v })}`).join("\n");
 const cand = (n: number): string => `=== CANDIDATE ${n} ===\n<<<<<<< SEARCH a/a.go\nold\n=======\nc${n}\n>>>>>>> REPLACE\n`;
-const PROG = "package a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"d\", func() any { return F(\"a\") })\n\tlokiProbe(\"p2\", \"d\", func() any { return F(\"b\") })\n\tlokiProbe(\"p3\", \"d\", func() any { return F(\"zzz\") })\n}\n", ISSUE = '`F("a")` and `F("b")` are wrong';
+const PROG = "package a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"d\", func() any { return F(\"a\") })\n\tlokiProbe(\"p2\", \"d\", func() any { return F(\"b\") })\n\tlokiProbe(\"p3\", \"d\", func() any { return F(\"zzz\") })\n\tlokiProbe(\"p4\", \"d\", func() any { return F(\"yyy\") })\n}\n", ISSUE = '`F("a")` and `F("b")` are wrong';
 interface W { base?: Record<string, string>; baseB?: Record<string, string>; agent: Record<string, string>; c1?: Record<string, string>; c2?: Record<string, string>; pass?: Record<string, boolean>; spec?: Record<string, Record<string, "red" | "green" | "error">>; judge?: string | ((u: string) => string); cands?: number; dp?: { reply: string; runs: Record<string, Record<string, string>> }; src?: Record<string, string> }
 async function sel(w: W): Promise<string> {
   const calls: string[] = [], baseOut = w.base ?? { p1: "B0", p2: "B0", p3: "B0" }, runs: Record<string, Record<string, string>> = { agent: w.agent, c1: w.c1 ?? w.agent, c2: w.c2 ?? w.agent };
@@ -1416,6 +1416,7 @@ row("sel_unknown", await sel({ agent: A, c1: B, judge: (u) => u.split("\n").filt
 row("sel_judge_down", await sel({ agent: A, c1: B, judge: "" }));
 row("sel_diffprobe", await sel({ src: { agent: "func F() int {\n\treturn 1\n}", c1: "func F() int {\n\treturn 2\n}", c2: "func F() int {\n\treturn 2\n}" }, agent: A, c1: A, c2: A, dp: { reply: "```go\npackage a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"q\", \"dprobe\", func() any { return F(\"a\") })\n}\n```", runs: { baseA: { q: "B0" }, baseB: { q: "B0" }, agent: { q: "B0" }, c1: { q: "B" }, c2: { q: "B" } } }, judge: judgeBacks("B") }));
 row("sel_unnamed", await sel({ agent: { ...A, p3: "B0" }, c1: { ...A, p3: "B" }, judge: judgeBacks("B") }));
+row("sel_two_unnamed", await sel({ base: { p1: "B0", p2: "B0", p3: "B0", p4: "B0" }, agent: { ...A, p4: "A" }, c1: { ...A, p3: "B", p4: "B" }, judge: judgeBacks("B") }));
 row("sel_agent_red", await sel({ agent: A, c1: B, judge: judgeBacks("B"), pass: { agent: false } }));
 row("sel_diffprobe_not_needed", await sel({ agent: A, c1: B, dp: { reply: "x", runs: {} }, judge: judgeBacks("B") }));
 
@@ -1504,6 +1505,7 @@ tcheck "candidates parse per number; an ambiguous, unknown-path or missing SEARC
 tcheck "order-swap judge: both views must back one output; position answers, unknown and contradictions give no verdict" judge '1,p1.1/p1.2,B,0,0,0,B'
 tcheck "agent kept when no probe separates the trees and no model verdict is asked" sel_same "kept/candidates"
 tcheck "wins only on an input the issue does not name never displace, even anchored" sel_unnamed "kept/candidates+judge"
+tcheck "two wins that are both on inputs the issue does not name do not displace either" sel_two_unnamed "kept/candidates+judge"
 tcheck "an agent tree that fails its checks ends the tournament before the candidates call" sel_agent_red "kept/"
 tcheck "two consistent verdicts displace the agent" sel_two "c1/candidates+judge"
 tcheck "one verdict where the agent left the base output does not need a second" sel_one_anchored "c1/candidates+judge"
