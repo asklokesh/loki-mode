@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.131.0 (2026-11-05)
+
+Loki proves honest fixes again by testing them against the original code, and spends fewer fix rounds on failures it did not cause.
+
+### Fixed
+- The check that a new test fails on the original code and passes on the change now runs on a correctly installed copy of the original code (same interpreter, nearest package's own vitest config), so honest fixes can reach VERIFIED again; import, collection and missing-function errors still never count as proof.
+- No Wall snapshot is taken when the Wall is off, which removed a "Wall failed" result on large trees.
+
+### Changed
+- Fix rounds stop when a round would get the same failing tests as the previous one, and a TypeScript check that fails only on unused declarations in untouched files is excused only when the same errors already appear on the original code.
+
 ## v11.130.0 (2026-11-05)
 
 Loki spends far less on understanding your repository, trusts your own tests instead of writing its own, and removed commands now say what to use instead.
