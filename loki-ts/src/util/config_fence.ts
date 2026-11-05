@@ -5,7 +5,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { LOCKFILE, MANIFEST, manifestChanged } from "../e10ext/commit_filter.ts";
-import { isFencedPath, taskNamesFenced } from "./config_paths.ts";
+import { isFencedPath, taskNamesFenced, TEST_DIR } from "./config_paths.ts";
 import { safeGit } from "./safe_git.ts";
 
 const MAX_BYTES = 32 * 1024 * 1024, LIST_BUFFER = 256 * 1024 * 1024, LIST_TIMEOUT_MS = 60_000; // the ls-files output of a 100k-file repo is megabytes: the default 1 MiB buffer would throw
@@ -34,6 +34,7 @@ export function fenceDenied(tool: string, file: unknown, cwd: string, allow: Fen
   if (!/^(Edit|Write|MultiEdit)$/.test(tool) || typeof file !== "string" || !file) return null;
   const rel = relative(resolve(cwd), isAbsolute(file) ? file : resolve(cwd, file));
   if (rel === "" || rel.startsWith("..") || isAbsolute(rel) || !isFencedPath(rel) || allow(rel)) return null;
+  if (TEST_DIR.test(rel) && !existsSync(resolve(cwd, rel))) return null; // a new config-named file under a test directory is scaffolding
   return { rel, reason: `LOKI_CONFIG_FENCE: ${rel} is test, build, lint, type config or a lockfile and the task does not ask for it, so the edit was denied. Leave it alone, say so in your reply, and continue without that check. If the task cannot be done without it, finish with LOKI_SPEC_CONFLICT naming ${rel}.` };
 }
 
@@ -68,7 +69,7 @@ export function restoreFenced(cwd: string, snap: FenceSnap, allow: FenceAllow): 
     try {
       const p = join(cwd, rel), before = snap.files.get(rel), cur = existsSync(p) ? readSmall(p) : null;
       if (before) { if (cur && before.equals(cur)) continue; mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, before); out.restored.push(rel); }
-      else if (cur) { rmSync(p, { force: true }); out.restored.push(rel); } // created by the session; a file over the size cap stays and is not counted
+      else if (cur && !TEST_DIR.test(rel)) { rmSync(p, { force: true }); out.restored.push(rel); } // created by the session; a file over the size cap stays and is not counted
     } catch (e) { out.failed.push({ path: rel, reason: msg(e) }); }
   }
   return out;
@@ -104,17 +105,17 @@ export const conflictNamed = (reason: string, known: Iterable<string>, allow: Fe
   return [...known].filter((rel) => !allow(rel) && (r.includes(rel.toLowerCase()) || r.includes(rel.slice(rel.lastIndexOf("/") + 1).toLowerCase())));
 };
 
-/** Receipt lines. A hook denial or a spec-conflict allowlist means the run did not finish the change the task needed (or it is unreviewed): it is capped below VERIFIED (capFenceVerdict). A restore or a fence failure is disclosed only. */
-export function fenceNotes(r: FenceRecord): { notProven: string[]; capped: boolean } {
+/** Receipt lines. A spec-conflict allowlist (an unreviewed edit) always caps below VERIFIED (capFenceVerdict); a hook denial caps only when the final tree has no passing executed check (`provenPass`). A restore or a fence failure is disclosed only. */
+export function fenceNotes(r: FenceRecord, provenPass = false): { notProven: string[]; capped: boolean } {
   const files = (l: { path: string }[]): string => [...new Set(l.map((x) => x.path))].join(", ");
   return {
     notProven: [
       ...(r.restored.length ? [`Config fence restored changes to test, build, lint or type config or a lockfile the task did not ask for: ${files(r.restored)}`] : []),
-      ...(r.denied.length ? [`Config fence denied an edit to ${files(r.denied)}; task needed a fenced config edit, so the run is not VERIFIED`] : []),
+      ...(r.denied.length ? [`Config fence denied an edit to ${files(r.denied)}: a fenced config edit was denied${provenPass ? "; the run has a passing executed check without it (disclosed only)" : " and the run has no passing executed check, so it is not VERIFIED"}`] : []),
       ...(r.allowlisted.length ? [`Config fence allowlisted after the session declared a spec conflict naming it: ${files(r.allowlisted)}; the edit is unreviewed, so the run is not VERIFIED`] : []),
       ...[...new Set(r.failures)].map((f) => `Config fence off or partial: ${f}`),
     ],
-    capped: r.allowlisted.length > 0 || r.denied.length > 0,
+    capped: r.allowlisted.length > 0 || (r.denied.length > 0 && !provenPass),
   };
 }
 /** A fence denial or allowlist caps VERIFIED and ALREADY_SATISFIED at PARTIAL. */
