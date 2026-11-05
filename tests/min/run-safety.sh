@@ -382,7 +382,7 @@ console.log(commitUnsealedWork(true, process.env.U, process.env, "e10-wip", { ba
     && ok "the WIP commit holds the run's edit only; the user's .loki deletion stays uncommitted" || bad "WIP commit: $WIP; committed [$(git -C "$U" show --name-status --format= HEAD | tr '\t\n' ' ')]; porcelain [$(git -C "$U" status --porcelain)]"
 
 # The WIP commit of a FAILED or STALLED run applies the commit stage's lockfile filter: a lockfile rewritten after the commit stage
-# (L-Haiku v131 tq-11327 and tq-11663 shipped pnpm-lock.yaml this way) is not committed (left unstaged in the run worktree).
+# (L-Haiku v131 tq-11327 and tq-11663 shipped pnpm-lock.yaml this way) is not committed and the tree is restored, so the checkout back is clean (item 4).
 WC="$T/wipchurn"; mkdir -p "$WC" && git -C "$WC" init -q -b main && git -C "$WC" config user.name rs && git -C "$WC" config user.email rs@example.invalid
 printf '{"name":"r"}\n' > "$WC/package.json"; printf 'l1\n' > "$WC/pnpm-lock.yaml"; printf 'a\n' > "$WC/app.ts"; printf 'export default { test: {} }\n' > "$WC/vitest.config.ts"
 git -C "$WC" add -A . && git -C "$WC" commit -q -m base
@@ -394,7 +394,13 @@ commitUnsealedWork(true, process.env.W, process.env, "e10-wipc", { base_sha: pro
     printf '%s | %s' "$(git -C "$WC" diff --name-only "$BASE_W" HEAD | tr '\n' ' ')" "$(git -C "$WC" status --porcelain | tr '\n' ' ')"
 }
 WC1="$(wip_churn "fix the parser bug")"
-[ "$WC1" = "app.ts  |  M pnpm-lock.yaml " ] && ok "WIP commit: a pnpm-lock.yaml rewrite is not committed and stays unstaged in the run worktree" || bad "WIP churn: [$WC1]"
+[ "$WC1" = "app.ts  | " ] && ok "WIP commit: a pnpm-lock.yaml rewrite is not committed and the tree is clean for the checkout back" || bad "WIP churn: [$WC1]"
+git -C "$WC" checkout -q main 2>/dev/null; WCB="$(git -C "$WC" status --porcelain)"; git -C "$WC" checkout -q loki/e10-wipc 2>/dev/null
+[ -z "$WCB" ] && ok "WIP commit: git checkout main after a run with a churned lockfile leaves porcelain clean" || bad "checkout main carried: [$WCB]"
+WC1U="$(git -C "$WC" reset -q --hard "$BASE_W"; git -C "$WC" checkout -q -B loki/e10-wipu "$BASE_W"; printf 'user\n' > "$WC/pnpm-lock.yaml"; printf 'b\n' > "$WC/app.ts"; W="$WC" B="$BASE_W" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { commitUnsealedWork } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
+commitUnsealedWork(true, process.env.W, process.env, "e10-wipu", { base_sha: process.env.B, task: "fix the parser bug", preexisting_dirty: { "pnpm-lock.yaml": "x" } });' >/dev/null 2>&1; printf '%s | %s' "$(git -C "$WC" diff --name-only "$BASE_W" HEAD | tr '\n' ' ')" "$(cat "$WC/pnpm-lock.yaml")")"
+[ "$WC1U" = "app.ts  | user" ] && ok "WIP commit: a lockfile that was dirty at intake is never committed or reverted" || bad "intake-dirty lockfile: [$WC1U]"
 WC2="$(wip_churn "regenerate pnpm-lock.yaml")"
 [ "$WC2" = "app.ts pnpm-lock.yaml  | " ] && ok "WIP commit: a lockfile the task names is committed" || bad "WIP named: [$WC2]"
 
@@ -421,9 +427,9 @@ console.log(out.join(" | "));
 LKT="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const { dropSet } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
 const d = (task) => dropSet(process.env.LK, [{ st: "M", f: "pnpm-lock.yaml" }], null, process.env, undefined, undefined, undefined, task).filter((x) => x.st !== "L").length ? "drop" : "ship";
-console.log(["bump lodash to 4.17.21", "fix CVE-2024-4067 by updating the lockfile", "update the dependencies of the api", "upgrade the express package", "regenerate pnpm-lock.yaml", "add a login button", "update the readme", undefined].map(d).join(","));
+console.log(["bump lodash to 4.17.21", "refresh the lock file", "pin lodash to 4.17.20", "fix CVE-2024-4067 by updating the lockfile", "update the dependencies of the api", "upgrade the express package", "regenerate pnpm-lock.yaml", "add a login button", "update the readme", undefined].map(d).join(","));
 ' 2>&1)"
-[ "$LKT" = "ship,ship,ship,ship,ship,drop,drop,drop" ] && ok "commit filter: a lockfile-only change ships when the task bumps or updates a dependency, names a CVE or the lockfile; unrelated tasks drop it" || bad "task-aware lockfile drop gave: $LKT"
+[ "$LKT" = "ship,ship,ship,ship,ship,ship,ship,drop,drop,drop" ] && ok "commit filter: a lockfile-only change ships when the task bumps or updates a dependency, names a CVE or the lockfile; unrelated tasks drop it" || bad "task-aware lockfile drop gave: $LKT"
 printf '#!/bin/sh\nfor f in "$@"; do printf "formatted\\n" >> "$f"; done\n' > "$LK/node_modules-biome.sh"; mkdir -p "$LK/node_modules/.bin"; cp "$LK/node_modules-biome.sh" "$LK/node_modules/.bin/biome"; rm "$LK/node_modules-biome.sh"; chmod +x "$LK/node_modules/.bin/biome"
 printf '{}\n' > "$LK/biome.json"
 FMT="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
