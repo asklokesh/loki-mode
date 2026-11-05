@@ -117,7 +117,9 @@ export function isChangeCase(issue: string, snippet: string, before: string, aft
   const stated = (v: string): boolean => { const t = unq(v); return t.length >= 2 && issue.includes(t); };
   if (stated(after)) return true;
   const lits = [...snippet.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]!).filter((l) => l.length >= 2 && !/^k?p?\d+$/.test(l));
-  return lits.some((l) => issue.includes(l)) && !stated(before);
+  // an input the issue states, the old output not stated as staying: still judged when the new output adds a word found in neither the old output nor the issue (an extra change in the asked function)
+  const known = new Set([...toks(before), ...toks(issue)]);
+  return lits.some((l) => issue.includes(l)) && !stated(before) && toks(after).every((t) => known.has(t));
 }
 /** Per-run text appended after the fixed probe rules in the exec-spec call (never in the cache-stable prefix). Empty when there is no site. */
 export function ledgerText(sites: OutputSite[]): string {
