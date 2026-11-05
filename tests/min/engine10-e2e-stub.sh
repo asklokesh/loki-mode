@@ -331,6 +331,16 @@ E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine 
 case "$(att_ev)" in winner=*" k=3 early=False launched=3") ok "attempts (bun test): all wrong: the best partial is kept without an early accept ($(att_ev))" ;; *) bad "attempts (bun test): all-wrong attempts.selected is '$(att_ev)'" ;; esac
 git -C "$REPO" show HEAD:calc.ts | grep -q 'export function multiply' && ok "attempts (bun test): all wrong: the best partial is on loki/<run>" || bad "attempts (bun test): all wrong: no partial on loki/<run>"
 
+fix_rounds() { grep -c '"type":"fix.round"' "$RUNDIR/events.jsonl" 2>/dev/null; }
+# EXP-0010 early: LOKI_E10_ATTEMPTS_EARLY=1 runs the attempts before any fix round (Haiku only) and skips the fix rounds when one goes green.
+E2E_STUB_RIGHT=2 LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS_EARLY=1 run_engine attempts
+[ "$(outcome)" = "VERIFIED" ] && [ "$(att_ev)" = "winner=x2 k=2 early=True launched=2" ] && [ "$(fix_rounds)" = 0 ] && ok "attempts early: a wrong first attempt, a right second: VERIFIED with no fix round ($(att_ev))" || { bad "attempts early: outcome '$(outcome)', attempts '$(att_ev)', fix rounds '$(fix_rounds)'"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /'; }
+E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
+[ "$(att_ev)" != none ] && [ "$(fix_rounds)" -ge 1 ] && ok "attempts early: without the switch the fix round runs first ($(fix_rounds) round(s)), then the attempts" || bad "attempts early: switch off gave attempts '$(att_ev)', fix rounds '$(fix_rounds)'"
+E2E_STUB_RIGHT=2 LOKI_E10_ATTEMPTS_EARLY=1 run_engine attempts
+[ "$(att_ev)" = none ] && ok "attempts early: not on Haiku, the switch starts no attempt" || bad "attempts early: a non-Haiku run started attempts ('$(att_ev)')"
+E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS_EARLY=1 run_engine attempts
+[ "$(outcome)" != "VERIFIED" ] && [ "$(att_ev)" != none ] && [ "$(fix_rounds)" -ge 1 ] && ok "attempts early: every attempt wrong: the fix rounds still run afterwards, not VERIFIED ($(outcome), $(fix_rounds) round(s))" || bad "attempts early: all wrong gave '$(outcome)', attempts '$(att_ev)', fix rounds '$(fix_rounds)'"
 E2E_STUB_NEWFILE=1 E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
 rid="$(basename "$RUNDIR")"; files="$(git -C "$REPO" ls-tree -r --name-only "loki/$rid" 2>/dev/null | tr '\n' ' ')"
 [ "$(outcome)" = "VERIFIED" ] && ok "attempts (new files): attempt 2 wins when every attempt creates new files: VERIFIED" || { bad "attempts (new files): outcome '$(outcome)'"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
@@ -399,7 +409,7 @@ const diff = (n) => "@@ -1,1 +1," + n + " @@\n" + Array.from({ length: n }, (_, 
 const cand = (index, a, w, o = {}) => ({ index, killedOrErrored: false, diff: diff(o.lines ?? 2), alreadyDoneEvidence: false, weakensTest: !!o.weak, outsideFiles: o.out ?? 0, checks: [chk("a.test.ts", a), chk("loki_wall_x.test.ts", w)] });
 const pick = (...c) => s.selectAttempt(c, S, wall).index;
 const out = [];
-out.push(`k=${[[undefined, "haiku"], ["on", "haiku"], ["0", "haiku"], ["3", "sonnet"], ["9", "haiku"], ["x", "haiku"], ["-1", "haiku"], ["2.5", "haiku"]].map(([v, m]) => a.attemptsK(m, v === undefined ? {} : { LOKI_E10_ATTEMPTS: v })).join(",")}`);
+out.push(`k=${[[undefined, "haiku"], ["on", "haiku"], ["0", "haiku"], ["3", "sonnet"], ["9", "haiku"], ["x", "haiku"], ["-1", "haiku"], ["2.5", "haiku"]].map(([v, m]) => a.attemptsK(m, v === undefined ? {} : { LOKI_E10_ATTEMPTS: v })).join(",")},${a.attemptsK("haiku", { LOKI_E10_ATTEMPTS_EARLY: "1" })},${a.attemptsK("haiku", { LOKI_E10_ATTEMPTS_EARLY: "1", LOKI_E10_ATTEMPTS: "0" })}`);
 out.push(`green_first=${pick(cand(0, "fail", "pass"), cand(1, "pass", "fail"))}`);
 out.push(`proof_second=${pick(cand(0, "pass", "fail"), cand(1, "pass", "pass"))}`);
 out.push(`outside_before_size=${pick(cand(0, "pass", "pass", { out: 2, lines: 2 }), cand(1, "pass", "pass", { out: 0, lines: 9 }))}`);
@@ -409,7 +419,7 @@ out.push(`weak_disqualified=${pick(cand(0, "pass", "pass", { weak: true }), cand
 out.push(`variants=${[1, 2, 3, 4].map((i) => a.variantBrief("BODY\n\n" + FINISH_LINE, i).includes(a.VARIANTS[(i - 1) % 3])).join(",")}`);
 console.log(out.join(" "));
 ' 2>&1)"
-[ "$U" = "k=0,2,0,3,5,0,0,0 green_first=1 proof_second=1 outside_before_size=1 smallest_diff=1 incumbent_last=0 weak_disqualified=1 variants=true,true,true,true" ] \
+[ "$U" = "k=0,2,0,3,5,0,0,0,2,0 green_first=1 proof_second=1 outside_before_size=1 smallest_diff=1 incumbent_last=0 weak_disqualified=1 variants=true,true,true,true" ] \
     && ok "unit: k rule (unset off, on is 2, 0 off, N sets, cap 5, junk off) and selection order (checks green, proof, outside files, diff size, incumbent last)" || bad "unit (attempts) gave: $U"
 
 # Unit: runAttempts over fake ops: a green incumbent starts nothing, a throwing session is an errored attempt, a scoring error restores the incumbent, a cap abort keeps the incumbent.
