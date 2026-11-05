@@ -679,6 +679,27 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: { nam
   return { ...res, line: [res.line, np].filter(Boolean).join("; ") };
 }
 
+/** One line per failing full-suite check that attributeFullSuite did not excuse, saying which rule kept it blocking (so a receipt never shows an unexplained red suite).
+ *  Same inputs and the same profile as attributeFullSuite; `excused` is its preExistingChecks. */
+export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], changed: string[], excused: string[]): string[] {
+  const p = loadProfile(repoDir), all = p ? [p.baseline, ...(p.suites ?? [])] : [], out: string[] = [];
+  for (const c of full.filter((x) => x.result === "fail" && !excused.includes(x.name))) {
+    const why = (r: string): void => { out.push(`not excused: ${c.name} (\`${c.cmd}\`): ${r}`); }, b = all.find((x) => x.ran && normCmd(x.command ?? "") === normCmd(c.cmd)), cutB = all.find((x) => normCmd(x.command ?? "") === normCmd(c.cmd) && (x.timed_out || x.reason === "baseline budget used up"));
+    if (!p) { why("no baseline was recorded"); continue; }
+    if (p.revision !== baseSha) { why("the baseline was measured on another commit"); continue; }
+    if (cutB) { why("base run incomplete (cut off on the original code)"); continue; }
+    if (!b) { why("the baseline did not run this command"); continue; }
+    if (!b.attributable) { why(`the base run is not attributable (${b.reason ?? "no failing ids parsed"})`); continue; }
+    if (!c.ids?.length) { why("its failing ids could not be parsed from the output, so nothing can be compared"); continue; }
+    if (cargoTouched(changed)) { why("the diff edits Rust source or a manifest and cargo ids carry no crate path"); continue; }
+    const known = new Set([...b.failing_ids, ...(b.flaky_ids ?? [])]), fresh = comparableIds(c.ids).filter((i) => !known.has(i)), inChanged = c.ids.filter((i) => changed.some((f) => i.includes(f)) || goIdTouched(repoDir, i, changed));
+    if (inChanged.length) { why(`${inChanged.length} failing id(s) name a changed file (first: ${inChanged[0]})`); continue; }
+    if (fresh.length) { why(`${fresh.length} failing id(s) were not red on base (first: ${fresh[0]})`); continue; }
+    why("every failing id is red on base but the error text differs from base (or an unhandled-errors block differs)");
+  }
+  return out;
+}
+
 /** Static-diagnostic attribution (TEN-QUALITY-02): lint output of head vs base as multisets keyed path/code/message, line and column dropped so shifts do not count.
  *  preExisting only when every head diagnostic key appears in base at the same or a higher count. Fail-closed (introduced): unknown tool, unparseable head or base
  *  output, an empty parse with a non-zero or unknown (null, the default) exit, a summary count >0 with nothing parsed, or a missing base output (file new on head). */
