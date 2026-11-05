@@ -9,6 +9,7 @@ import { FINISH_LINE, type RunContext, type TestMap, type TestRef } from "../eng
 import { unitBrief } from "../features/speed/unit_mode.ts";
 import { signatureDigest } from "../util/ts_signatures.ts";
 import { contextPack, packEnabled, type ContextPack } from "../util/context_pack.ts";
+import { findDefectPins } from "../util/test_guard.ts";
 import { readVerifiedCommand } from "./repomemory.ts"; import { profileBrief } from "../runner/repo_profile.ts"; import { exampleFiles } from "../util/pr_lessons.ts";
 
 export interface ContextDeps {
@@ -63,11 +64,14 @@ export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): Br
   const pack = model !== undefined && packEnabled(model) && files.length ? contextPack(ctx.repoDir, task, files, map?.entries ?? []) : null; // L021: haiku and sonnet only; Opus keeps today's bytes
   const whole = new Set((pack?.spans ?? []).filter((s) => s.symbol === null).map((s) => s.path)); // a file the pack shows whole needs no signatures
   const sigs = process.env["LOKI_E10_SIGS"] === "0" || !files.length ? "" : signatureDigest(ctx.repoDir, files.filter((f) => !whole.has(f)).slice(0, 5));
+  // E4: existing assertions whose expected value is the wrong value the issue reports. Off unless LOKI_E10_DEFECT_PIN=1 (prompt text, not yet measured on the benchmark).
+  const pins = process.env["LOKI_E10_DEFECT_PIN"] === "1" ? findDefectPins(ctx.repoDir, task).slice(0, 5) : [];
   const text = [
     files.length ? `Relevant files:\n${files.join("\n")}` : "",
     sigs ? `Key signatures (read the files for bodies):\n${sigs}` : "",
     pack ? pack.text : "",
     interps.length ? `Detected test interpreter (no test file to run yet; use exactly this executable, never a guessed one): ${interps.join(", ")}` : "",
+    pins.length ? `Existing assertions that pin the behavior the task reports as wrong (the correct fix is expected to change these expected values; change only these, and make sure each new expected value fails on the unfixed code):\n${pins.map((p) => `${p.file}:${p.line}: ${p.text.slice(0, 140)}`).join("\n")}` : "",
     cmds.length ? `Impacted test commands:\n${cmds.join("\n")}` : "",
     verified ? `Last verified test command: ${verified}` : "",
     profileBrief(ctx.repoDir), // REPOMEM: validated repo commands + baseline-red tests; byte-stable for an unchanged profile
