@@ -17,7 +17,7 @@ import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 import { baselineSuites } from "../runner/repo_profile.ts";
-import { LOCK_RULES, has, isYarnBerry, type LockRule } from "../util/lock_ecosystems.ts";
+import { LOCK_RULES, has, inWorkspace, isYarnBerry, type LockRule } from "../util/lock_ecosystems.ts";
 import type { RunContext, RunnerName } from "../engine10/types.ts";
 import type { ProjectApi } from "./api.ts";
 import { fullSuiteSpecs } from "./package_suite.ts";
@@ -156,10 +156,6 @@ function runDetached(cmd: string, cwd: string, env: Record<string, string>, sign
   });
 }
 
-const globRe = (g: string): RegExp => new RegExp(`^${g.replace(/^\.\//, "").replace(/\/+$/, "").replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\0/g, ".*").replace(/\?/g, "[^/]")}$`);
-/** True when `pats` (a workspace declaration; ! excludes) includes the package at `rel` (posix, relative to the ancestor). */
-const inWorkspace = (pats: string[], rel: string): boolean =>
-  pats.some((g) => !g.startsWith("!") && globRe(g).test(rel)) && !pats.some((g) => g.startsWith("!") && globRe(g.slice(1)).test(rel));
 
 export interface LockedInstall { cmd: string; locked: boolean; note?: string; rewritten: boolean }
 

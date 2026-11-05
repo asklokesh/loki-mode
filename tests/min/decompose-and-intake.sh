@@ -24,6 +24,8 @@
 #   intake:  that run, on a repo with 1246 files, 240 test files that each pay an 80 ms process startup (the cost
 #            shape of FireLater's vitest suite) and 20 stale loki/e10-* branches holding unpushed commits, reaches
 #            the end of intake and its first model session in under 15 s; the 20 branches are swept after the run.
+#   diet:    Project Model discovery is read from the manifests (runner/repo_profile.ts manifestModel) with no session when they declare
+#            a test command; otherwise the session runs at low effort, a 4096-token output cap and at most 24 KiB of inlined files.
 #   guard:   the lazy zero baseline (util/base_guard.ts envChangedSince) trusts an untouched environment and
 #            withholds after a dependency file changes or a recorded ignored file disappears.
 #   pr face: unit-level, a slice PR is titled by its slice title plus "(#21 s2)", an issue run by the issue title plus "(#24)",
@@ -68,6 +70,13 @@
 #  21. stacksOn: put back the denylist `!/^(FAILED|BLOCKED|SKIPPED)/`; the parallel case C fails (s4 runs on the conflicted branch).
 #  22. issues_run.ts epicParallel: drop the LOKI_EPIC_PARALLEL read; the parallel table fails.
 #  23. startIssueEpic: pass the literal 1 to runOneEpic again; the parallel wiring check fails (peak 1).
+#  24. runner/repo_profile.ts manifestModel: return null; the diet check fails (every repo runs a session).
+#  25. manifestModel: drop the workspace members (members = []); the diet check fails (no packages/* roots, no dependsOn).
+#  26. manifestModel: drop the SKIP_PKG_DIR filter on other manifests; the diet check fails (test/fixtures/app and docs listed).
+#  27. project_model/discover.ts: drop effort "low" from the discovery session; the diet check fails (effort=undefined).
+#  28. project_model/gather.ts: maxTotalBytes back to 96 KiB; the diet check fails (inlined over 24 KiB).
+#  29. manifestModel: drop the fansOut check; the diet check fails (fan false: an nx root test answered without a session).
+#  30. manifestModel: members only from tracked package.json files; the diet check fails (packages/gen missing).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -461,6 +470,59 @@ const pre = a.slice(0, n);
 console.log([pre.includes("Tracked files (depth-limited):\nsrc/a.ts"), pre.includes("<file path=\"package.json\">"), a.indexOf("/tmp/run-A") > a.indexOf("<file path="), b.indexOf("REJECTED") > b.indexOf("<file path="), a.endsWith("LOKI_DONE"), b.endsWith("LOKI_DONE")].join(" "));
 ' 2>&1)"
 [ "$BRIEF" = "true true true true true true" ] && ok "discovery brief: two briefs for one repo share a prefix holding the tree and files; answer path and retry errors come after, just before LOKI_DONE" || bad "discovery brief gave: $BRIEF (want: true true true true true true)"
+
+# --- diet: the manifests answer the Project Model, so a declared repo costs no discovery session -------------------------------------------
+# 3-day ledger: discovery was 46-48% of Loki's spend. A pnpm workspace, a Python package and a Go module whose manifests declare a test command
+# get a validated model with zero sessions (cached on the next call); a gitignored member package.json still counts; a fixture package.json is
+# never a package; a repo whose manifests name no test command, a test script that fans out over the workspace (nx via `pnpm run test:ci`), and
+# LOKI_E10_PM_MANIFESTS=0 still reach the session, at low effort with a 4096-token output cap and at most 24 KiB of inlined files.
+D="$T/diet"; mkdir -p "$D"
+mkrepo() { git -C "$1" init -q -b main && git -C "$1" config user.name d && git -C "$1" config user.email d@example.invalid && git -C "$1" add -A && git -C "$1" commit -q -m base; }
+W="$D/ws"; mkdir -p "$W/packages/core" "$W/packages/utils" "$W/packages/web" "$W/test/fixtures/app"
+printf '{"name":"root","private":true,"scripts":{"test":"vitest run"}}\n' > "$W/package.json"; printf "packages:\n  - 'packages/*'\n" > "$W/pnpm-workspace.yaml"; echo 'lockfileVersion: 9' > "$W/pnpm-lock.yaml"
+printf '{"name":"@w/core","scripts":{"test":"vitest run"},"dependencies":{"@w/utils":"workspace:*"}}\n' > "$W/packages/core/package.json"
+printf '{"name":"@w/utils","scripts":{"test":"vitest run"}}\n' > "$W/packages/utils/package.json"
+printf '{"name":"@w/web","scripts":{"dev":"vite"},"dependencies":{"react-dom":"18.3.1","@w/core":"workspace:*"}}\n' > "$W/packages/web/package.json"
+printf '{"name":"fixture-app","scripts":{"test":"jest"}}\n' > "$W/test/fixtures/app/package.json"
+mkdir -p "$W/packages/gen"; echo 'package.json' > "$W/packages/gen/.gitignore"; echo 'export {}' > "$W/packages/gen/index.ts" # zod ships a member whose package.json is gitignored
+for i in $(seq 1 80); do head -c 3000 /dev/zero | tr '\0' 'x' > "$W/packages/core/big$i.txt"; done; mkrepo "$W"; printf '{"name":"@w/gen","scripts":{"test":"vitest run"}}\n' > "$W/packages/gen/package.json"
+F="$D/fan"; mkdir -p "$F/packages/a"; printf '{"name":"f","scripts":{"test":"pnpm run test:ci","test:ci":"nx run-many -t test"}}\n' > "$F/package.json"; printf "packages:\n  - 'packages/*'\n" > "$F/pnpm-workspace.yaml"
+printf '{"name":"a","scripts":{"test":"vitest run"}}\n' > "$F/packages/a/package.json"; echo 'lockfileVersion: 9' > "$F/pnpm-lock.yaml"; mkrepo "$F"
+P="$D/py"; mkdir -p "$P/src/pkg" "$P/tests" "$P/docs"; printf '[project]\nname = "pkg"\n\n[project.optional-dependencies]\ntest = ["pytest>=7"]\n' > "$P/pyproject.toml"
+echo 'sphinx' > "$P/docs/requirements.txt"; echo 'def test_x(): assert True' > "$P/tests/test_x.py"; touch "$P/src/pkg/__init__.py"; mkrepo "$P"
+G="$D/go"; mkdir -p "$G/cmd" "$G/docs"; printf 'module example.com/g\n\ngo 1.22\n' > "$G/go.mod"; printf 'module example.com/g/docs\n' > "$G/docs/go.mod"; printf 'package main\nfunc main() {}\n' > "$G/cmd/main.go"; mkrepo "$G"
+N="$D/none"; mkdir -p "$N/a" "$N/b"; echo '{"name":"n"}' > "$N/package.json"; echo '{"name":"a"}' > "$N/a/package.json"; echo '{"name":"b"}' > "$N/b/package.json"; mkrepo "$N"
+DIET="$(ROOT="$ROOT" D="$D" LOKI_E10_PM_STORE="$D/store" bun --no-env-file --config=/dev/null -e '
+const { discoverProjectModel } = await import(process.env.ROOT + "/loki-ts/src/project_model/discover.ts");
+const d = process.env.D, out = [];
+const go = async (name, env = {}) => {
+  const calls = []; Object.assign(process.env, env);
+  const ctx = { repoDir: d + "/" + name, runDir: d + "/run-" + name, runId: "x", model: "claude-haiku-5-5", emit: () => {}, sessions: { run: async (o) => { calls.push(o); return { exit: 0, markers: {}, durationS: 1, killed: false, summary: "" }; } } };
+  const r = await discoverProjectModel(ctx, new AbortController().signal, { budgetS: 120 }); for (const k of Object.keys(env)) delete process.env[k]; return { r, calls };
+};
+const pk = (r) => r.model.packages.map((p) => `${p.root}=${p.commands.test?.cmd ?? "-"}/${p.install ? p.install.cmd + "@" + p.install.cwd : "-"}`).join(",");
+let { r, calls } = await go("ws");
+const core = r.model.packages.find((p) => p.root === "packages/core"), web = r.model.packages.find((p) => p.root === "packages/web");
+out.push(`ws ${calls.length} ${r.model.status} ${r.source} ${pk(r)} deps=${core?.dependsOn} ui=${web?.ui.boot?.cmd}`);
+({ r, calls } = await go("ws")); out.push(`again ${calls.length} cached=${r.cached}`);
+({ r, calls } = await go("py")); out.push(`py ${calls.length} ${r.source} ${pk(r)}`);
+({ r, calls } = await go("go")); out.push(`go ${calls.length} ${r.source} ${pk(r)}`);
+({ r, calls } = await go("none")); out.push(`none ${calls.length > 0} effort=${calls[0]?.effort} max=${calls[0]?.maxOutputTokens}`);
+({ r, calls } = await go("fan")); out.push(`fan ${calls.length > 0}`);
+(await import("node:fs")).rmSync(d + "/ws/.loki", { recursive: true, force: true }); ({ r, calls } = await go("ws", { LOKI_E10_PM_MANIFESTS: "0" }));
+const inl = (calls[0]?.brief ?? "").split("<file path=").slice(1).join("").length;
+out.push(`off ${calls.length > 0} inlined<=24KiB=${inl > 0 && inl <= 24 * 1024 + 4096}`);
+console.log(out.join("\n"));
+' 2>&1)"
+WDIET="ws 0 ok manifests .=pnpm test/pnpm install@.,packages/core=pnpm test/pnpm install@.,packages/gen=pnpm test/pnpm install@.,packages/utils=pnpm test/pnpm install@.,packages/web=-/pnpm install@. deps=packages/utils ui=pnpm run dev
+again 0 cached=true
+py 0 manifests .=python3 -m pytest -q/python3 -m pip install -e '.[test]'@.
+go 0 manifests .=go test ./.../go mod download@.
+none true effort=low max=4096
+fan true
+off true inlined<=24KiB=true"
+[ "$DIET" = "$WDIET" ] && ok "intake diet: pnpm workspace, Python package and Go module answered from their manifests with no session (cached after); fixture package skipped; no test command or LOKI_E10_PM_MANIFESTS=0 reaches a low-effort, capped session with at most 24 KiB inlined" \
+    || { bad "intake diet gave:"; printf '%s\n' "$DIET" | sed 's/^/    | /'; }
 
 # --- pr face: what a split's PRs look like (FireLater#21: six PRs titled "[PARTIAL] Loki 10: PARTIAL (e10-<run id>)", stacked ones with no CI) --
 # Title: the slice title plus "(#21 s2)", the issue title plus "(#24)", else the task's first line; "[PARTIAL]" once, never the run id, clipped at a

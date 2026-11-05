@@ -12,6 +12,13 @@ outcome ladder, where 6 (PARTIAL) is a milder result than 3, 4 and 5 and the
 only safe test is `[ $rc -eq 0 ]` for "verified". Elsewhere, a bigger number is
 never better news.
 
+## Removed commands
+
+A command that was removed (for example `loki council`, `loki init`, `loki ship`)
+exits 2 before any engine, provider check or model call, prints nothing on
+stdout and one line on stderr: `loki: 'loki NAME' was removed in Loki Mode 11.N.
+<replacement>.` The full list is the REMOVED class in `docs/CLI-INVENTORY.md`.
+
 ## `loki start`
 
 Two contracts, and which one you get depends on an environment variable. This
