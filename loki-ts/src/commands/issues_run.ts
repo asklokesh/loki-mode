@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { MAX_PARALLEL, makeDefaultRunner, queueAdd, queueRun, type ItemResult, type QueueDeps, type RunOpts, type RunResult } from "./queue.ts";
+import { partialCostText } from "../engine10/output.ts";
 import { estimateFor, startText, type EstimateResult } from "../runner/router/cost_preview.ts";
 import { epicOutcome, invalidSplitNote, makeSessionDecompose, splitCost, splitCostText, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
@@ -462,7 +463,7 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
     const prUrl = PR_URL_RE.exec(res.output)?.[0] ?? null;
     const budget = res.rc === 3 || /^Outcome:\s+BUDGET_STOP\b/m.test(res.output);
     const verdict = res.verdict || (res.rc === 0 ? "COMPLETED (no proof verdict)" : `FAILED (exit ${res.rc})`);
-    const r: SliceResult = { id: s.id, title: s.title, parent, outcome: verdict, pr: prUrl, cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : "NOT RECORDED", branch: res.runId ? `loki/${res.runId}` : null, rc: res.rc, usd: typeof res.costUsd === "number" ? res.costUsd : null, budget, ...(/^SPEC_CONFLICT\b/.test(verdict) && slicePrintedReason(res.output) ? { reason: slicePrintedReason(res.output) } : {}) };
+    const r: SliceResult = { id: s.id, title: s.title, parent, outcome: verdict, pr: prUrl, cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : res.partial ? partialCostText(res.partial.usd, res.partial.measured, res.partial.total, 2) : "NOT RECORDED", branch: res.runId ? `loki/${res.runId}` : null, rc: res.rc, usd: typeof res.costUsd === "number" ? res.costUsd : null, ...(typeof res.costUsd !== "number" && res.partial ? { partial: res.partial } : {}), budget, ...(/^SPEC_CONFLICT\b/.test(verdict) && slicePrintedReason(res.output) ? { reason: slicePrintedReason(res.output) } : {}) };
     d.out(`#${n} ${s.id} ${verdict}  pr ${prUrl ?? "none"}  cost ${r.cost}\n`);
     return r;
   };

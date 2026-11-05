@@ -9,12 +9,12 @@ import type { VerifyCheck } from "../engine10/stages/verify.ts";
 export type AttemptCheck = VerifyCheck & { exit_code?: number };
 
 export interface AttemptCandidate {
-  /** 0 is "A", 1 is "B"; also the final tie-break (rank key 7). */
+  /** 0 is the incumbent (the first attempt, already in the primary tree), 1.. the extra attempts; also the final tie-break. */
   index: number;
   /** Session was killed or ended in error. */
   killedOrErrored: boolean;
   /** Unified diff of this attempt against baseSha, used for the empty-diff disqualifier and
-   *  for rank key 6 (added + deleted non-blank lines). */
+   *  for the diff-size rank key (added + deleted non-blank lines). */
   diff: string;
   /** LOKI_ALREADY_DONE evidence: an empty diff is disqualified unless this is set. */
   alreadyDoneEvidence: boolean;
@@ -26,6 +26,8 @@ export interface AttemptCandidate {
    *  test never counts, section 4 note under the Deterministic failure definition). */
   checks: AttemptCheck[];
   preRedChecks?: string[]; // FC-LINT-PRE-RED: verify's pre_red_checks for this attempt; a lint check named here also fails on base and is not counted in lintFails
+  /** EXP-0010: edited existing (not new) files the task and plan do not name (e10ext/scope.ts outsideScope); absent counts as 0. Ranked ahead of diff size. */
+  outsideFiles?: number;
 }
 
 export interface SelectResult {
@@ -75,21 +77,24 @@ function isDisqualified(a: AttemptCandidate): boolean {
   return false;
 }
 
-/** The rank tuple for one attempt, each entry oriented so lower is better (section 4 "Rank lexicographically", keys 1-7). */
+/** The rank tuple for one attempt, each entry oriented so lower is better. EXP-0010 order: the repo's own checks green first (key 1), then the
+ *  fail-then-pass proof (the sealed Wall test, red on base, passes: key 2), then fewer failures, more passes, fewer flaky and lint failures, fewer files
+ *  outside what the task names, the smaller diff, and the lower index (the incumbent) last. */
 function rankTuple(a: AttemptCandidate, sNames: Set<string>, wallNames: Set<string>): number[] {
   let wallPasses = 0;
   let deterministicFails = 0;
+  let repoFails = 0;
   let passesInS = 0;
   let flakyInS = 0;
   let lintFails = 0;
   for (const c of a.checks) {
     if (c.name.startsWith("lint:") && isBlockingFail(c, a.preRedChecks)) lintFails++;
-    // wallPasses (key 1) reads `wall` directly, independent of S: a sealed Wall file is written after baseSha and left uncommitted (wall.ts), so S's "exists at baseSha" filter can drop a
-    // Wall test out of S while it still must count at key 1 -- an attempt that fails the Wall must never win because the caller happened to build S without it (R1, reproduced: with the
+    // wallPasses reads `wall` directly, independent of S: a sealed Wall file is written after baseSha and left uncommitted (wall.ts), so S's "exists at baseSha" filter can drop a
+    // Wall test out of S while it still must count there -- an attempt that fails the Wall must never win because the caller happened to build S without it (R1, reproduced: with the
     // Wall test outside S, a Wall failure used to be invisible everywhere).
     const inWall = wallNames.has(c.name);
     if (inWall && c.result === "pass") wallPasses++;
-    // Every count below this line is an S-based count (keys 2-4): a check outside S -- whether attempt-authored or a Wall test the caller left out of S -- never feeds them; only wallPasses
+    // Every count below this line is an S-based count: a check outside S -- whether attempt-authored or a Wall test the caller left out of S -- never feeds them; only wallPasses
     // above sees it. This line is the sole S gate; do not also gate wallPasses on it.
     if (!sNames.has(c.name)) continue;
     if (c.result === "pass" && c.interpreter === "project") passesInS++;
@@ -100,9 +105,10 @@ function rankTuple(a: AttemptCandidate, sNames: Set<string>, wallNames: Set<stri
       (c.exit_code === undefined || !PYTEST_COLLECTION_EXITS.has(c.exit_code))
     ) {
       deterministicFails++;
+      if (!inWall) repoFails++; // the repo's own tests: Loki's Wall test failing alone is a weaker red (machine.ts wallOnlyAfterFix)
     }
   }
-  return [-wallPasses, deterministicFails, -passesInS, flakyInS, lintFails, diffChangedLines(a.diff), a.index];
+  return [repoFails + lintFails > 0 ? 1 : 0, -wallPasses, deterministicFails, -passesInS, flakyInS, lintFails, a.outsideFiles ?? 0, diffChangedLines(a.diff), a.index];
 }
 
 function compareTuples(x: number[], y: number[]): number {
@@ -112,10 +118,10 @@ function compareTuples(x: number[], y: number[]): number {
   return 0;
 }
 
-const RANK_LABELS = ["wallPasses", "deterministicFails", "passesInS", "flakyInS", "lintFails", "diffLines", "index"];
+const RANK_LABELS = ["repoChecksGreen", "wallPasses", "deterministicFails", "passesInS", "flakyInS", "lintFails", "outsideFiles", "diffLines", "index"];
 
 /** Section 4 "Early accept": true only when S is non-empty and every check named in S or in `wall` has a "pass" entry
- *  in this one attempt's checks. The caller (S41-13) uses it to accept a finished attempt and kill the other session
+ *  in this one attempt's checks. The caller (features/attempts.ts) uses it to accept a finished attempt and kill the other session
  *  early. selectAttempt does not implement early accept (one all-failing attempt still returns its index), so the
  *  caller must check isEarlyAccept first. */
 export function isEarlyAccept(attempt: AttemptCandidate, S: TestRef[], wall: TestRef[]): boolean {
@@ -129,7 +135,7 @@ export function isEarlyAccept(attempt: AttemptCandidate, S: TestRef[], wall: Tes
 }
 
 /** Section 4 "Attempt selection (two attempts)". `S` is the shared set (sealed Wall tests plus impacted(changed_A +
- *  changed_B), already filtered to tests existing at baseSha); `wall` is its sealed-Wall subset, used for rank key 1.
+ *  changed_B), already filtered to tests existing at baseSha); `wall` is its sealed-Wall subset, used for the fail-then-pass rank key.
  *  This function only ranks and disqualifies; it never decides early accept (see isEarlyAccept above). */
 export function selectAttempt(attempts: AttemptCandidate[], S: TestRef[], wall: TestRef[]): SelectResult {
   if (attempts.length === 0) throw new Error("selectAttempt: no attempts given");
