@@ -140,6 +140,8 @@
 #  57. seal.ts failThenPass: count symbols the base lacks again (the exists-only legs read VERIFIED).
 #  56. check_result.ts assertionFailure: return true (the calls-a-new-function and import-only pytest legs read VERIFIED).
 #  55. seal.ts failThenPass: never trust the system interpreter (the pytest fail-then-pass leg reads PARTIAL).
+#  58. verify.ts TSC_LOCAL: add TS2322 (the tsc untouched unit reads the type-error diagnostic excused), or drop the keep.has test (tsc touched leg starts no fix session).
+#  59. check_result.ts stallSignature: return the signature unchanged (the stall signature unit reads false for the two tq signatures).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -740,5 +742,42 @@ for vt in 2 latest; do
     export VT_NM
     wo_legs "vitest $vt" make_wo_vt_repo calc.ts calc.test.ts '  return a * 2;' '  return a * 3;' '  return a + a + 1;' $'\ntest("double", () => {\n  expect(calc.double(3)).toBe(6);\n});' $'\ntest("names double", () => {\n  expect(typeof calc.double).toBe("function");\n});' $'\ntest.skip("later", () => {});' $'  return a * 3;\n}\n\nexport function triple(a: number): number {\n  return a * 3;' $'\ntest("triple", () => {\n  expect((calc as any).triple(2)).toBe(6);\n});' $'\nimport { triple } from "./calc";\ntest("imports", () => {\n  void triple;\n});' $'\ntest("triple exists", () => {\n  expect(typeof (calc as any).triple).toBe("function");\n});'
 done
+
+# Fix-round input on the REAL tsc and the real vitest (rule 22): an unused-declaration error in a file the change neither touched nor the task named (legacy.ts) is pre-existing and starts no fix
+# session; the same error in a file the change wrote is fix-round input; a tsconfig edit keeps even an untouched-file error blocking. Skipped cleanly when npm or the network is not there.
+TSC_DIR="$T/tsc-vt"; TSC_NM="$TSC_DIR/node_modules"
+if [ ! -x "$TSC_NM/.bin/tsc" ] || [ ! -x "$TSC_NM/.bin/vitest" ]; then mkdir -p "$TSC_DIR"; printf '{"name":"c","private":true,"type":"module"}\n' > "$TSC_DIR/package.json"; (cd "$TSC_DIR" && npm install --no-audit --no-fund --silent vitest@latest typescript@5 >/dev/null 2>&1); fi
+if [ -x "$TSC_NM/.bin/tsc" ] && [ -x "$TSC_NM/.bin/vitest" ]; then
+    make_tsc_repo() {
+        VT_NM="$TSC_NM" make_vt_repo "$1"
+        printf '{"compilerOptions":{"strict":true,"noEmit":true,"noUnusedLocals":true,"target":"ES2022","module":"ESNext","moduleResolution":"Bundler","skipLibCheck":true},"include":["*.ts"]}\n' > "$1/tsconfig.json"
+        printf 'const stale = 1;\nexport const keep = 2;\n' > "$1/legacy.ts"
+    }
+    TS_SNIP=$'export function multiply(a: number, b: number): number {\n  return a * b;\n}\n'
+    tsc_run() { MAKE_REPO=make_tsc_repo run_engine "add a multiply(a, b) function to calc.ts" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 "$@"; }
+    tsc_run E2E_STUB_SNIPPET="$TS_SNIP"
+    tc="$(wo_receipt ck)"; case "$tc" in *"lint:tsc=fail"*) ok "tsc untouched: the real tsc failed on the unused local in legacy.ts ($tc)" ;; *) bad "tsc untouched: no failing lint:tsc check: '$tc'"; dump ;; esac
+    [ "$(fix_sessions)" = "0" ] && ok "tsc untouched: an unused local in an untouched file starts no fix session" || { bad "tsc untouched: $(fix_sessions) fix sessions (want 0)"; dump; }
+    [ "$(ev 'sum(1 for e in E if e["type"]=="fix.round")')" = "0" ] && ok "tsc untouched: no fix.round event" || bad "tsc untouched: fix.round events: $(ev 'sum(1 for e in E if e["type"]=="fix.round")')"
+    tsc_run E2E_STUB_SNIPPET=$'const leak = 1;\n'"$TS_SNIP"
+    [ "$(fix_sessions)" -ge 1 ] && ok "tsc touched: an unused local in the file the change wrote is fix-round input ($(fix_sessions) fix sessions)" || { bad "tsc touched: no fix session"; dump; }
+    tsc_run E2E_STUB_SNIPPET="$TS_SNIP" E2E_STUB_TEST_APPEND=$'export const edited = 1;\n' E2E_STUB_TARGET=tsconfig.json E2E_STUB_REPLACE='"strict":true' E2E_STUB_SNIPPET='"strict":true,"allowJs":false'
+    [ "$(fix_sessions)" -ge 1 ] && ok "tsc config edit: a tsconfig edit keeps the untouched-file error blocking ($(fix_sessions) fix sessions)" || { bad "tsc config edit: no fix session"; dump; }
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "tsc fix input: vitest and typescript could not be installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: tsc fix input: vitest and typescript could not be installed (offline?)"; fi
+fi
+# stall signature unit: the two real tanstack full-suite signatures (tq-11160 verify 1 and 2: 2160 and 2174 failing ids, different digests) are one failure; a 2160 to 5 drop and a different suite are not.
+SS="$(cd "$ROOT/loki-ts" && bun -e '
+const { stallSignature: s } = await import("./src/util/check_result.ts");
+const a = "full suite: vitest FAIL packages/solid-query/src/__tests__/useQuery.test.tsx > useQuery > x [a, b, c (+2160 more, set 6d69ece0)]", b = "full suite: vitest FAIL packages/solid-query/src/__tests__/useQuery.test.tsx > useQuery > x [a, b, c (+2174 more, set 4dd1d9b5)]", c = "full suite: vitest FAIL y [a, b, c (+2 more, set 11111111)]";
+const n1 = "full suite: npm ✖ 26 problems (0 errors, 26 warnings)", n2 = "full suite: npm .svelte-kit/output/server/entries/fallbacks/error.svelte.js 1.36 kB";
+const t = "vitest:packages/x.test.tsx FAIL a > b [q (+9 more, set abc)]";
+console.log([s(a) === s(b), s(a) !== s(c), s(n1) === s(n2), s(t) === "vitest:packages/x.test.tsx FAIL a > b [q]" || s(t).startsWith("vitest:packages/x.test.tsx FAIL a > b")].join(","));' 2>&1)"
+[ "$SS" = "true,true,true,true" ] && ok "stall signature: noisy full-suite ids and first lines compare equal, a collapse in failing ids does not ($SS)" || bad "stall signature: '$SS'"
+TU="$(cd "$ROOT/loki-ts" && bun -e '
+const { tscUntouchedLocal: u } = await import("./src/engine10/stages/verify.ts");
+const o = "src/v3/tests/a.test.ts:56:8 - error TS6196: \x27_Cat\x27 is declared but never used.\nsrc/v3/tests/b.test.ts(9,1): error TS6133: \x27x\x27 is declared but its value is never read.\n";
+console.log([u(o, "packages/zod", new Set(["packages/zod/src/v4/x.ts"]), ["packages/zod/src/v4/x.ts"]), u(o, "packages/zod", new Set(["packages/zod/src/v3/tests/a.test.ts"]), []), u(o + "src/c.ts:1:1 - error TS2322: no\n", "packages/zod", new Set(), []), u(o, "packages/zod", new Set(), ["packages/zod/tsconfig.json"]), u("", ".", new Set(), []), u("error TS6133 unparsed\n", ".", new Set(), [])].join(","));' 2>&1)"
+[ "$TU" = "true,false,false,false,false,false" ] && ok "tsc untouched unit: only unused-declaration errors in untouched, unnamed files with no tsconfig edit are excused ($TU)" || bad "tsc untouched unit: '$TU'"
 
 finish

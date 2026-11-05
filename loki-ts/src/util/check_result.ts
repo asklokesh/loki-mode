@@ -1839,6 +1839,14 @@ export function failureSignature(c: { name: string; first_error?: string; ids?: 
   const set = ids.length > 3 ? `${ids.slice(0, 3).join(", ")} (+${ids.length - 3} more, set ${createHash("sha256").update(ids.join("\n")).digest("hex").slice(0, 8)})` : ids.join(", ");
   return [c.name, c.first_error, set ? `[${set}]` : ""].filter(Boolean).join(" ");
 }
+/** A group signature minus what varies between identical failures: the "(+N more, set <digest>)" tail of a long id list and, for a "full suite: <pkg>" group, everything after the check name
+ *  (a broken suite fails thousands of ids and its first line is build or lint chatter that changes run to run). Used only to compare two verify runs for a stall; the brief keeps the full signature. */
+export function stallSignature(sig: string): string {
+  const more = /\(\+(\d+) more, set [0-9a-f]+\)/.exec(sig), s = sig.replace(/\s*\(\+\d+ more, set [0-9a-f]+\)/, "");
+  if (!/^full suite: /.test(s)) return s;
+  const ids = more ? 3 + Number(more[1]) : (/\[([^\]]*)\]/.exec(s)?.[1] ?? "").split(", ").filter(Boolean).length; // a fix that cuts the failing ids by half or more still reads as progress: the bucket is log2 of the id count
+  return `${/^full suite: \S+/.exec(s)?.[0] ?? s} #${ids > 0 ? Math.floor(Math.log2(ids)) : 0}`;
+}
 /** L005: one fix-brief group: the signature, and a sample that starts with the command that reruns the check, then its redacted excerpt. */
 export function failureGroup(c: { name: string; cmd: string; first_error?: string; ids?: string[] }, excerpt: string, suite = false): FailureGroup {
   return { signature: failureSignature(c, suite), count: 1, sample: excerpt ? `${c.cmd}\n${excerpt}` : c.cmd };
