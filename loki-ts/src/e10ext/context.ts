@@ -22,7 +22,7 @@ export { FINISH_LINE }; // defined in engine10/types.ts, a leaf module, so confl
 export const FIXED_RULES = [
   "You are the Loki 10 implement stage, doing the complete task described below in this repository. Do whatever a senior engineer would do to finish it correctly: read, change and test as needed across any files the task requires.",
   "Rules:",
-  "- The Wall tests are read-only: do not edit or delete them. Test files that existed before this run are read-only too: the harness restores any edit to one after your session unless the task names that file or asks to change tests, so make your source change satisfy them and put new tests in new files.",
+  "- The Wall tests are read-only: do not edit or delete them. Add the regression test where the repository's existing tests for that code live, following their conventions, and never delete, skip or loosen an existing assertion.",
   "- Exception: when the task names an existing test file or asks to change tests, change only what it asks; never remove, skip or loosen any other assertion. An existing test that contradicts the task otherwise is a spec conflict: cite it.",
   "- Run the impacted tests named below and any other targeted tests you need (the Project Model commands below say how), not the package's full suite: after you stop the harness re-runs your checks, and the full suite when the diff's risk tier is medium or high; a pass that exists only in your reply does not count. Run tests with the exact command the Project Model lists, never a shortened variant that changes how imports resolve; never create files or symlinks in a test directory to make an import work.",
   "- Never leave a long-lived server running.",

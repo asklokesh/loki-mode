@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 # Implement and fix stages on the stub provider (tests/min/fixtures/e2e/bin/claude): the real bin/loki -> committed
-# Bun bundle -> engine10 on a throwaway repo. Pre-existing tests are read-only and the fix loop stops spending.
+# Bun bundle -> engine10 on a throwaway repo. Pre-existing tests are writable (the Wall is not) and the fix loop stops spending.
 # Asserts:
-#   restore:     the implement session weakens calc.test.ts (a test file at the base commit: adds a test.skip) and adds multiply.test.ts;
-#                the calc.test.ts edit is restored after the session and named in implement.tests_reverted, the new
-#                test file is kept, and the run is VERIFIED.
+#   weaken:      the implement session weakens calc.test.ts (a test file at the base commit: adds a test.skip) and adds multiply.test.ts;
+#                the edit is kept (never reverted, no tests_reverted), the receipt names "weakened test: calc.test.ts"
+#                and the verdict is capped below VERIFIED.
+#   delete:      the session deletes an assertion from calc.test.ts: kept, named as weakened, verdict capped below VERIFIED.
 #   scope:       in the same run the session edits util.ts, which plan-scope.json (seeded with the task's calc.ts) does
 #                not name; the edit is kept and the receipt lists "outside stated scope: util.ts" without blocking.
-#   update:      an edit that keeps every assertion and only adds a test case is kept (not restored), and the
-#                verdict stays below VERIFIED with the edited test named on the receipt (a zero-deletion edit can still
-#                weaken a test, so no pure-addition exemption exists).
-#   named:       the same edit is kept when the task names calc.test.ts.
+#   update:      an edit that keeps every assertion and only adds a test case is kept in the existing test file and
+#                reaches the run branch commit, the receipt does not call it weakened, and the run is VERIFIED.
 #   conflict:    implement writes a wrong multiply(); the fix session answers LOKI_SPEC_CONFLICT without editing;
 #                no retry session starts (one fix session, no "-r" iteration) and the run ends BLOCKED. The code the
 #                run wrote stays on its loki/<id> branch (not only in a bundle), where the user looks.
@@ -78,14 +77,14 @@
 #                change runs the full suite again (3 runs) and the run ends VERIFIED.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
-#   1. loki-ts/src/engine10/stages/implement.ts: drop restoreBaseTests from tests_reverted (the restore run fails).
+#   1. loki-ts/src/util/test_guard.ts: testFileWeakened returns false (the weaken and delete legs no longer cap).
 #   2. loki-ts/src/engine10/machine.ts: stall window back to 3 verifies (the no-progress run takes a second round).
 #   3. loki-ts/src/e10ext/scope.ts: ignore plan-scope.json in flagOutsideScope (the receipt no longer lists util.ts).
 #   4. loki-ts/src/util/conflict_resume.ts: deliverOverWallConflict returns null (the wall defect run ends BLOCKED).
 #   5. loki-ts/src/util/wall_knobs.ts: wallConcurrent default back to sequential (the Wall finishes before implement).
 #   6. loki-ts/src/runner/model_rank.ts: capToSessionPin returns the stage pin unchanged (the referee runs on sonnet).
 #   7. loki-ts/src/engine10/sizing.ts: smallTaskPath lean only for small tasks (the normal task runs a Wall session).
-#   8. loki-ts/src/engine10/stages/seal.ts: drop weakTests from the verdict cap (the update run reads VERIFIED).
+#   8. loki-ts/src/engine10/stages/seal.ts: push every edited test into weakTests again (the update run is capped and named weakened).
 #   9. loki-ts/src/engine10/supervisor.ts: keepWork back to VERIFIED or PARTIAL only (the blocked run's branch is gone).
 #  10. loki-ts/src/util/conflict_resume.ts: restore the pre-re-verify "own check passed" requirement (deliver unit fails).
 #  11. loki-ts/src/util/check_result.ts goPackageClash: return null (grounding unit and the go wall leg fail).
@@ -130,7 +129,7 @@
 #  46. check_result.ts addedPublicFunctions: drop the type/declare skip (public unit reads tsalias=Rule+amb).
 #  47. seal.ts symbolGaps: seed an untouched caller's function by the bare name again (the collision run reads VERIFIED).
 #  48. check_result.ts callerFiles: recompute codeOnly over every candidate per candidate (seal perf reads over 5000 ms).
-#  49. verify.ts AND seal.ts: stop naming an edited existing test as "weakened test" (the update run no longer names calc.test.ts).
+#  49. verify.ts AND seal.ts: name every edited existing test as "weakened test" again (the update run names calc.test.ts).
 #  50. pub cap real runner (pytest): drop pubGap from verdictOf (the real-pytest leg reads VERIFIED).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
@@ -230,24 +229,28 @@ TASK="add a multiply(a, b) function to calc.ts"
 
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=1 E2E_STUB_SCOPE_EDIT=1 LOKI_E10_PLAN=auto
 reverted="$(ev '[e["data"].get("tests_reverted") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"]')"
-if cmp -s "$FIX/repo/calc.test.ts" "$REPO/calc.test.ts"; then ok "restore: the edit to the pre-existing calc.test.ts was restored"; else bad "restore: calc.test.ts still carries the session's edit"; dump; fi
-has "restore: implement.tests_reverted names calc.test.ts" "$reverted" "'calc.test.ts'"
-[ -f "$REPO/multiply.test.ts" ] && ok "restore: the new test file multiply.test.ts was kept" || bad "restore: the new test file multiply.test.ts is gone"
-[ "$(outcome)" = "VERIFIED" ] && ok "restore: run is VERIFIED" || { bad "restore: outcome is '$(outcome)', not VERIFIED"; dump; }
+grep -q 'add skipped' "$REPO/calc.test.ts" && ok "weaken: the edit to the pre-existing calc.test.ts is kept, not restored" || { bad "weaken: calc.test.ts was restored"; dump; }
+case "$reverted" in *calc.test.ts*) bad "weaken: tests_reverted names calc.test.ts: $reverted" ;; *) ok "weaken: tests_reverted does not name calc.test.ts" ;; esac
+[ -f "$REPO/multiply.test.ts" ] && ok "weaken: the new test file multiply.test.ts was kept" || bad "weaken: the new test file multiply.test.ts is gone"
+[ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "weaken: the weakened existing test caps the verdict ($(outcome))" || { bad "weaken: outcome is '$(outcome)' with a weakened existing test"; dump; }
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+has "weaken: the receipt names the weakened test" "$notes" "weakened test: calc.test.ts"
 has "scope: the receipt lists the out-of-scope edit" "$notes" "outside stated scope: util.ts"
 grep -q 'MODE = 2' "$REPO/util.ts" && ok "scope: the out-of-scope edit is kept, not reverted" || bad "scope: the util.ts edit was dropped"
 
-run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=update LOKI_EXOGENOUS_PROOF=0 # proof opt-out: the edited test alone must cap, not the agent-only-proof rule
-grep -q 'add again' "$REPO/calc.test.ts" && ok "update: an edit that keeps every assertion and adds a case is kept" || { bad "update: an assertion-preserving edit to calc.test.ts was restored"; dump; }
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=delete LOKI_EXOGENOUS_PROOF=0 # proof opt-out: the deleted assertion alone must cap, not the agent-only-proof rule
+git -C "$REPO" show HEAD:calc.test.ts 2>/dev/null | grep -q 'calc.add(2, 3)' && bad "delete: the deleted assertion came back" || ok "delete: the session's deletion of an assertion is kept, not restored"
+[ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "delete: a deleted assertion caps the verdict ($(outcome))" || { bad "delete: outcome is '$(outcome)' with a deleted assertion"; dump; }
+notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+has "delete: the receipt names the weakened test" "$notes" "weakened test: calc.test.ts"
+
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=update LOKI_EXOGENOUS_PROOF=0 # no Wall runs on this lean task; the proof rule is covered elsewhere
+git -C "$REPO" show HEAD:calc.test.ts 2>/dev/null | grep -q 'add again' && ok "update: an added case in the existing calc.test.ts is in the run's commit" || { bad "update: the added case did not reach the commit"; dump; }
 reverted="$(ev '[e["data"].get("tests_reverted") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"]')"
 case "$reverted" in *calc.test.ts*) bad "update: tests_reverted names calc.test.ts: $reverted" ;; *) ok "update: tests_reverted does not name calc.test.ts" ;; esac
-[ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "update: an edited existing test still caps the verdict ($(outcome))" || { bad "update: outcome is '$(outcome)' with an edited existing test"; dump; }
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
-has "update: the receipt names the edited test" "$notes" "weakened test: calc.test.ts"
-
-run_engine "add a multiply(a, b) function to calc.ts and extend calc.test.ts" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=1
-grep -q 'add again' "$REPO/calc.test.ts" && ok "named: the task names calc.test.ts, so the edit is kept" || bad "named: the edit to a test the task names was restored"
+case "$notes" in *"weakened test: calc.test.ts"*) bad "update: an added case was called weakened: $notes" ;; *) ok "update: an added case is not called weakened" ;; esac
+[ "$(outcome)" = "VERIFIED" ] && ok "update: the run is VERIFIED" || { bad "update: outcome is '$(outcome)', not VERIFIED"; dump; }
 
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict
 n="$(fix_sessions)"
