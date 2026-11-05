@@ -106,11 +106,14 @@ of a hard task (judged from the task, never the repo size: sized large, or
 a task naming more than 4 distinct non-test files), the Opus advisor tool is
 attached to a fix round on Haiku or Sonnet (never to an Opus session), a
 Haiku implement that claims the work is already done with no diff climbs one
-rung, and a code-owned
+rung, the Wall test author (with its re-author, the already-done check and the
+Wall referee) runs on the executor unless `LOKI_E10_WALL_TIER` or a model pin is
+set, and a code-owned
 failure, a stall or a spec conflict climbs the router's ladder (Sonnet, then
 Opus). The start line names the downgrade and the route; the receipt's route
 block records the executor and every climb. `LOKI_ROUTER_EXECUTOR` picks
 another executor; `LOKI_ALLOW_HAIKU=false` makes it Sonnet.
+Every Haiku session (router on or off) carries a 100K `autoCompactWindow`, which keeps requests under Haiku's 100K price cliff. This overrides a user's or project's own `autoCompactWindow` on Haiku sessions; a `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set in the environment wins over it. Sonnet and Opus sessions are not touched.
 `loki quick --help` prints the help; `loki quick -v "<task>"` runs on Loki 10 with
 `--verbose`.
 

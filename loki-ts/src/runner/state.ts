@@ -629,7 +629,7 @@ export function readProviderName(opts: { lokiDirOverride?: string } = {}): strin
 
 /** The provider a run uses: --provider, then LOKI_PROVIDER, then the project's saved choice (.loki/state/provider), else
  *  claude. A saved name Loki cannot run returns `refusal`: the migration line (or the supported list) plus how to clear it. */
-export function runProvider(flag: string | undefined, env: Record<string, string | undefined>, repoDir: string): { provider: string; source: "flag" | "env" | "saved" | "default"; refusal?: string } {
+export function resolveRunProvider(flag: string | undefined, env: Record<string, string | undefined>, repoDir: string): { provider: string; source: "flag" | "env" | "saved" | "default"; refusal?: string } {
   if (flag) return { provider: flag, source: "flag" };
   if (env["LOKI_PROVIDER"]) return { provider: env["LOKI_PROVIDER"], source: "env" };
   const saved = readProviderName({ lokiDirOverride: join(repoDir, ".loki") });

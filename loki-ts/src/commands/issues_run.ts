@@ -20,6 +20,7 @@ import { epicOutcome, invalidSplitNote, makeSessionDecompose, splitCost, splitCo
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
 import { safeGit } from "../util/safe_git.ts"; import { deepPid } from "../util/base_guard.ts"; import { spawnDetached } from "../runner/worker_proc.ts";
 import { resolveModel } from "../engine10/session.ts";
+import { resolveRunProvider } from "../runner/state.ts";
 import { deliverables } from "../features/decompose.ts";
 
 export interface GhIssue {
@@ -659,7 +660,7 @@ export async function runIssues(args: readonly string[], inject?: Partial<Issues
   const userEnv: NodeJS.ProcessEnv = { ...process.env };
   if (!inject?.triage) (await import("../runner/github_token.ts")).withholdGithubTokens(process.env, () => {});
   const base = inject?.runner ?? makeDefaultRunner(lokiDir);
-  const provider = process.env["LOKI_PROVIDER"] ?? "claude";
+  const provider = resolveRunProvider(undefined, process.env, repoDir).provider; // env, then the saved project choice (an unrunnable one is refused by the `loki start` it spawns)
   const d: IssuesRunDeps = {
     repoDir,
     lokiDir,

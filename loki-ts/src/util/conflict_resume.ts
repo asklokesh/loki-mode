@@ -6,9 +6,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { readSessionId } from "../runner/session_resume.ts";
-import { capToRunTier, wallModel } from "../engine10/sizing.ts";
+import { capToRunTier, wallPinModel } from "../engine10/sizing.ts";
 /** The referee and the legacy re-author never run above the run's own model (a haiku run keeps them on haiku), like every other auxiliary Wall pin. */
-const refereeModel = (ctx: RunContext): string => capToRunTier(wallModel(), ctx.model, ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE"]);
+const refereeModel = (ctx: RunContext): string => capToRunTier(wallPinModel(), ctx.model, ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE"]);
 import { assertionCount, changedAssertion, changedRegion, editScopeViolation, quoteInSpec, testSpans, wallAnchor, type WallDefect } from "./wall_owned.ts";
 import { safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
 import { sealedWallCopy, sealedWallDir, WALL_FAILURE_TAIL_FILE } from "./check_result.ts";
@@ -72,17 +72,29 @@ export async function resumeAfterConflict(ctx: RunContext, first: SessionRunOpti
 }
 
 // FC-43: a LOKI_DONE exit whose tree has no change gets one correction before verify fails it. The model says which it was: forgot to edit, already satisfied, or a real conflict.
-export const EMPTY_DONE_CORRECTION =
-  "Your session finished with LOKI_DONE but the working tree has no change against the base. Make the change the task asks for, or if the task is already satisfied finish with LOKI_ALREADY_DONE: <file:line evidence>, or if the task itself conflicts finish with LOKI_SPEC_CONFLICT: <reason; cite test as path:line>. " +
-  FINISH_LINE;
+const EMPTY_DONE_HEAD =
+  "Your session finished with LOKI_DONE but the working tree has no change against the base. Make the change the task asks for, or if the task is already satisfied finish with LOKI_ALREADY_DONE: <file:line evidence>, or if the task itself conflicts finish with LOKI_SPEC_CONFLICT: <reason; cite test as path:line>. ";
+export const EMPTY_DONE_CORRECTION = EMPTY_DONE_HEAD + FINISH_LINE;
 
-/** Same shape as resumeAfterConflict (suffix "-e"): a resume that errors, is killed or ends without a marker leaves the first result standing. */
-export async function resumeAfterEmptyDone(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> {
-  const iterationId = `${first.iterationId}-e`, sid = ctx.provider === "claude" ? readSessionId(ctx.repoDir, first.iterationId) : null;
-  const session = await ctx.sessions.run({ ...first, iterationId, brief: sid ? EMPTY_DONE_CORRECTION : `${first.brief}\n\n${EMPTY_DONE_CORRECTION}`, ...(sid ? { resumeSessionId: sid } : {}) });
+// HONEST-ALREADY-DONE: an implement LOKI_ALREADY_DONE gets one challenge before it is believed (replay boltons #393: the issue's example asserted the
+// current output with the expected lines commented out, the model ran it, saw it pass and claimed done while the prose described the defect).
+const CHALLENGE_STEP =
+  "A task's example code can encode the current, wrong behaviour (expected lines commented out, or asserting today's output), so passing it is not evidence. Reproduce the problem the task's prose describes with a check of the behaviour it asks for. If that check fails on the current code, make the change and finish with LOKI_DONE. Only if the described behaviour already holds, finish with LOKI_ALREADY_DONE: <file:line evidence of that behaviour>. ";
+export const ALREADY_DONE_CHALLENGE = "You finished with LOKI_ALREADY_DONE without changing anything. " + CHALLENGE_STEP + FINISH_LINE;
+// The router's redo of a no-diff already-done claim (runner/router/implement_route.ts) carries the challenge, so it costs no extra session; so does an
+// empty-done correction after that redo. Either way the claim that follows is believed without a further "-a" session.
+export const REDO_CHALLENGE = "An earlier session claimed LOKI_ALREADY_DONE without changing anything. Before you claim it too: " + CHALLENGE_STEP + FINISH_LINE;
+const EMPTY_DONE_CHALLENGED = EMPTY_DONE_HEAD + "Before you claim LOKI_ALREADY_DONE: " + CHALLENGE_STEP + FINISH_LINE;
+
+/** Same shape as resumeAfterConflict: one resume with `correction` (iteration suffix `suffix`); a resume that errors, is killed or ends without a marker leaves the first result standing. */
+async function resumeWith(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, correction: string, suffix: string): Promise<{ session: SessionResult; iterationId: string }> {
+  const iterationId = `${first.iterationId}${suffix}`, sid = ctx.provider === "claude" ? readSessionId(ctx.repoDir, first.iterationId) : null;
+  const session = await ctx.sessions.run({ ...first, iterationId, brief: sid ? correction : `${first.brief}\n\n${correction}`, ...(sid ? { resumeSessionId: sid } : {}) });
   const terminal = !session.killed && (session.markers.done || session.markers.alreadyDone !== null || session.markers.specConflict !== null);
   return { session: { ...(terminal ? session : firstSession), durationS: firstSession.durationS + session.durationS }, iterationId };
 }
+export const resumeAfterEmptyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, challenge = false): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, challenge ? EMPTY_DONE_CHALLENGED : EMPTY_DONE_CORRECTION, "-e");
+export const resumeAfterAlreadyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, ALREADY_DONE_CHALLENGE, "-a");
 
 const oneLine = (s: string): string => s.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 200);
 

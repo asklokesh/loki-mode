@@ -18,7 +18,7 @@
 #     an untouched repo passes none, no step ever sees another step's hidden file, lesson
 #     availability is read from the repo, and an earlier step's loki branch is never re-scored;
 #     every learning arm sets its knobs explicitly; step_learning() counts a step's own recurring-class
-#     mistakes, the ones an earlier step already made (repeats), and reads lessons-injected.json.
+#     mistakes, the ones an earlier step already made (repeats), and reads lessons-injected.json;
 #   accepted without edit: a passing run that weakens a pre-existing test or changes test config is
 #     not accepted, appended cases and new test files are, and the acceptance Wilson interval and
 #     $ per accepted task are exact on fixed records; provenance, model pins, per-session models,

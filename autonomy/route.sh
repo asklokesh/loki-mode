@@ -404,7 +404,10 @@ $(loki_removed_saved_provider_hint "$R_PROVIDER")"
     else
         # L009: a provider with no engine10 invoker is refused, never sent to the legacy loop.
         if ! validate_provider "$R_PROVIDER"; then
-            R_ERR="loki: provider $R_PROVIDER is not supported; use one of: $(loki_supported_providers_joined)"; return 0
+            R_ERR="loki: provider $R_PROVIDER is not supported; use one of: $(loki_supported_providers_joined)"
+            if [ -z "$provider_flag" ] && [ -z "${LOKI_PROVIDER:-}" ]; then R_ERR="$R_ERR
+loki: this project saved provider '$R_PROVIDER' in .loki/state/provider; switch it with: loki provider set claude"; fi
+            return 0
         fi
         if [ "${sz:-0}" -gt "$_ROUTE_PRD_MAX" ] && _route_sdk_claude "$R_PROVIDER"; then
             R_ERR="loki: this PRD is ${sz} bytes, over the ${_ROUTE_PRD_MAX}-byte limit of the Loki 10 engine, and the legacy engine has no Agent SDK path; trim the PRD below 100 KB, or unset LOKI_SDK_MODE, LOKI_SDK and LOKI_SDK_LOOP to run the legacy engine on a provider CLI"

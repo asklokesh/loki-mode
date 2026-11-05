@@ -5,6 +5,46 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.128.0 (2026-11-04)
+
+Fewer sessions on cheap runs, Go tests that count, and a tougher already-done check under --haiku.
+
+### Changed
+
+- Under `--haiku`, when Haiku claims a task is already done with no change and the router redoes it on Sonnet, the redo now carries the reproduce-the-defect challenge, so a second false "already done" is checked rather than accepted. It adds no session.
+- Go tests now count as evidence for the packages they import (resolved through go.mod), so correct Go runs can seal VERIFIED. Exported Go methods are excluded from coverage requirements only on types that actually implement sort, heap or error interfaces.
+- A cap that marks a run PARTIAL when an added public function is not exercised by any passing check is included but OFF by default (`LOKI_E10_PUBLIC_GAP=1` turns it on, experimental): review found it can misread line positions after multi-line docstrings or comments. With it off, verdicts match the previous release.
+- Benchmark record for the change as measured with the cap on: `benchmarks/h2h/results/2026-11-04-0972a4f97.json` (run on 0972a4f97, 1 rep): loki-haiku 24/24 at $0.0116 per passed task, raw Haiku 24/24 at $0.0226, 0 false VERIFIED; one rep, and one expensive raw task skews the raw number.
+
+## v11.127.0 (2026-11-04)
+
+Large multi-package issues no longer stop on tests that were already failing, and a test the change broke is never excused as pre-existing.
+
+### Fixed
+
+- A test that was already failing before the change, with the same error, no longer blocks delivery: it gets one fix round, and if it still fails the same way the run is delivered as PARTIAL with that test named (FireLater#21's frontend slice ended SPEC_CONFLICT with no PR). Each package's own baseline is used, not only the repository root's.
+- A failure is treated as pre-existing only when its errors match the base run exactly: a changed value inside an assertion (for example a different URL path), a new unhandled-error report, a failing test reached only through a dynamic import, or an extra failing case under a repeated `test.each` title now counts as a new failure. Before, a test the change broke could be excused, and in some cases the run was sealed VERIFIED.
+- Deleting or renaming an installed package now counts as a dependency change, so a resulting "Cannot find package" failure is never passed off as pre-existing. Test-runner cache folders (`.vitest-cache`, `.vite-temp`) do not count.
+- Checked against real vitest 2.1.9 and 5.1.0.
+
+## v11.126.1 (2026-11-04)
+
+Every Haiku session now compacts before it can cross Haiku's 100K-token price threshold.
+
+### Fixed
+
+- `loki start --haiku`, the auto preset and every Haiku-pinned session now carry Claude Code's compact window (100,000 tokens, the smallest Claude Code accepts). Before, only routed advisor sessions had it, so a long Haiku implement or acceptance-test session could drift past 100K tokens and pay the higher long-context rate on every request. Claude Code compacts well before the window is full. Sonnet and Opus sessions are unchanged.
+- A user's or project's own `autoCompactWindow` setting is overridden on Haiku sessions; `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the environment still wins.
+
+## v11.126.0 (2026-11-04)
+
+--haiku writes Loki's acceptance tests on Haiku, so it costs less per passed task than raw Claude Code on Haiku.
+
+### Changed
+
+- Under `--haiku` and `--cost lean` (`LOKI_ROUTER=auto`), the acceptance-test (Wall) author now runs on Haiku instead of always on Sonnet. The intake already-done confirmation and the Wall referee stay on Sonnet. `LOKI_E10_WALL_TIER`, `LOKI_MODEL_OVERRIDE`, `LOKI_SESSION_MODEL` and the development model pins still win; without `LOKI_ROUTER` nothing changes.
+- On bench v2 (24 tasks x 2 reps, `benchmarks/h2h/results/2026-11-03-haiku-wall-ae30e6efb.json`, run on ae30e6efb): `--haiku` passed 48/48 at $0.0176 per passed task against raw Haiku 48/48 at $0.0187, with 0 false VERIFIED (31 VERIFIED, 15 PARTIAL, 2 BLOCKED). Before this change `--haiku` cost $0.0433 per passed task.
+
 ## v11.125.0 (2026-11-02)
 
 Loki pull requests are titled after the work, and split issues no longer leave a check pending forever.

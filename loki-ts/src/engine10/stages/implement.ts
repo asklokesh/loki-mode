@@ -10,7 +10,7 @@ import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.t
 import { attemptsGate, runAttemptsOnCtx } from "../../features/attempts.ts"; // S41-13, default off
 import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
 import { classifyExitCause } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
-import { adjudicateWallConflict, resumeAfterConflict, resumeAfterEmptyDone } from "../../util/conflict_resume.ts";
+import { adjudicateWallConflict, resumeAfterAlreadyDone, resumeAfterConflict, resumeAfterEmptyDone } from "../../util/conflict_resume.ts";
 import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
 import { routerActive } from "../../runner/router/unit_model.ts";
@@ -139,7 +139,12 @@ export const implementStage: Stage = {
     if (rt && !signal.aborted) session = await routeEscalate(ctx, first, session, rt, ids, () => treeIsEmpty(ctx)); // triggers b/c (and, under the preset, a no-diff already-done claim): one redo on the next rung
     if (session.markers.specConflict && !session.killed) { const r = await resumeAfterConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; if (r.iterationId !== ids[ids.length - 1]) ids.push(r.iterationId); } // FC-19: one correction, then the conflict is believed
     if (session.markers.specConflict && !session.killed && !signal.aborted) { const w = await adjudicateWallConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, readOnly); if (w) { session = w.session; ids.push(...w.ids); } } // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT: a Wall-anchored conflict goes to the referee (record: outputs.wall.arbitrated)
-    if (!signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && treeIsEmpty(ctx)) { const r = await resumeAfterEmptyDone(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; ids.push(r.iterationId); } // FC-43: one correction for a done exit with no change
+    // HONEST-ALREADY-DONE: an already-done claim gets one challenge before it is believed, including a claim made in reply to the empty-done correction; after a challenge no empty-done correction follows (one extra session at most).
+    // A no-diff claim the router already redid on the next rung (routeEscalate, trigger already_done_claim) was challenged in that redo's brief; an empty-done correction after it carries the challenge too.
+    let challenged = false; const routerRedid = rt?.escalations.some((e) => e.trigger === "already_done_claim") ?? false;
+    const challenge = async (): Promise<void> => { if (signal.aborted || session.killed || !session.markers.alreadyDone || session.markers.specConflict || challenged || routerRedid || process.env.LOKI_E10_ALREADY_DONE_CHALLENGE === "0") return; challenged = true; const r = await resumeAfterAlreadyDone(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; ids.push(r.iterationId); };
+    await challenge();
+    if (!challenged && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && treeIsEmpty(ctx)) { const r = await resumeAfterEmptyDone(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, routerRedid); session = r.session; ids.push(r.iterationId); await challenge(); } // FC-43: one correction for a done exit with no change
 
     if (process.env.LOKI_E10_REPRO === "1" && !plan && !signal.aborted && !session.killed && session.exit === 0) { let bad: { name: string; why: string }[] = []; try { bad = outOfRepoTests(ctx.repoDir, changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); } catch { /* unreadable tree: no re-ask */ } if (bad.length) { const redo = `${first.iterationId}-oor`; ids.push(redo); session = await ctx.sessions.run({ ...unchained(), brief: withStagePrefix(outOfRepoReask("Rewrite these new test files in place, keeping the same names and what they reproduce.", bad)), iterationId: redo }); } } // TEN-QUALITY-44: the repro test gets the Wall's out-of-repo check and one re-ask
     const testsReverted = [...restoreReadOnly(readOnly), ...restoreBaseTests(ctx.repoDir, ctx.baseSha, prior.intake)];
@@ -150,8 +155,10 @@ export const implementStage: Stage = {
       exit = "killed";
     } else if (session.markers.specConflict) {
       exit = "spec_conflict";
-    } else if (session.markers.alreadyDone) {
+    } else if (session.markers.alreadyDone && treeIsEmpty(ctx)) { // an already-done claim over edits is a change, never "already satisfied": the edits are verified and kept, not discarded by commit
       exit = "already_done";
+    } else if (session.markers.alreadyDone) {
+      exit = "done";
     } else if (session.exit !== 0) {
       exit = "error";
     } else {

@@ -2,8 +2,14 @@
 # Stub claude CLI for the engine10 e2e test. Modes via E2E_STUB_MODE:
 #   done (default): the implement session appends multiply() to calc.ts
 #   already: the implement session changes nothing and claims already-done
+#   alreadyfirst: the first implement session claims already-done; the already-done challenge resume makes the multiply() change
+#   emptythenalready: LOKI_DONE with no change, LOKI_ALREADY_DONE in reply to the empty-done correction, the change on the challenge
+#   editalready: adds multiply() and answers LOKI_ALREADY_DONE every time
+#   redothenempty: claims already-done; on the router's redo (REDO_CHALLENGE) LOKI_DONE with no change; already-done again on the empty-done correction
 #   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
+#   agentonly: multiply() plus an exported square() that only the session's own square.test.ts calls (tests/min/scope-and-fix.sh)
+#   viacaller: multiply() plus an exported scale() that only the untouched ops.ts calls (tests/min/scope-and-fix.sh seeds ops.ts and its test)
 #   wallphantom: the Wall author writes loki_wall_multiply.test.ts calling multiplyAll(), a name the task never asks for
 #     (red on base, still red after the correct multiply() lands); E2E_STUB_WALL_SLEEP=<s> makes that author session slow
 # E2E_STUB_WALL (Wall author, any mode): gopkg writes loki_wall_calc_test.go as "package calc" (the tests/ directory is
@@ -11,6 +17,7 @@
 #   correct test calling Calc::new(5) for a task that changes Calc::new() to Calc::new(base) (tests/min/scope-and-fix.sh); vitestred writes a vitest
 #   loki_wall_search.test.ts whose C3 never passes and whose C2 passes once the hook file says ts_rank (E2E_STUB_FIX=rank adds it) (tests/min/run-safety.sh: a Wall-only failure is delivered as PARTIAL)
 # E2E_STUB_TEST_EDIT=1: the implement session weakens calc.test.ts (adds a test.skip) and adds a new multiply.test.ts;
+#   =update adds one test case to calc.test.ts;
 # =update only appends a test case to calc.test.ts (assertions kept), plus the same new file.
 # E2E_STUB_SCOPE_EDIT=1: the implement session also edits util.ts (when the repo has one).
 # E2E_STUB_BREAK_CFG=1: it also writes {"ok": false} to cfg.json (when the repo has one); E2E_STUB_LINTBAD=1: it also writes a tool.sh
@@ -64,7 +71,8 @@ if [ -n "${E2E_STUB_LOG:-}" ]; then echo "$stage" >> "$E2E_STUB_LOG"; fi
 if [ -n "${E2E_STUB_ROUTE_LOG:-}" ]; then # one line per session: engine stage, iteration, --model value, advisorModel from --settings (tests/min/auto-route.sh)
   r_model="$(printf '%s' "$flags" | grep -o -- '--model [^ ]*' | head -1 | cut -d' ' -f2)"
   r_adv="$(printf '%s' "$flags" | grep -o '"advisorModel":"[^"]*"' | head -1 | cut -d'"' -f4)"
-  echo "${LOKI_E10_STAGE:-none} ${LOKI_ITERATION:-none} model=${r_model:-none} advisor=${r_adv:-none} wall=$is_wall" >> "$E2E_STUB_ROUTE_LOG"
+  r_win="$(printf '%s' "$flags" | grep -o '"autoCompactWindow":[0-9]*' | head -1 | cut -d: -f2)"
+  echo "${LOKI_E10_STAGE:-none} ${LOKI_ITERATION:-none} model=${r_model:-none} advisor=${r_adv:-none} wall=$is_wall window=${r_win:-none}" >> "$E2E_STUB_ROUTE_LOG"
 fi
 if [ -n "${E2E_STUB_BUDGET_LOG:-}" ]; then echo "$stage limit=${LOKI_BUDGET_LIMIT:-} ledger=${LOKI_BUDGET_LEDGER:-}" >> "$E2E_STUB_BUDGET_LOG"; fi
 if [ -n "${E2E_STUB_PROMPT_LOG:-}" ]; then printf '%s\n' "$prompt" >> "$E2E_STUB_PROMPT_LOG.$stage$is_wall"; fi # CW-12: the full prompt of every call, one file per stage (wall prompts land in .other1)
@@ -155,9 +163,19 @@ if [ "$stage" = "implement" ]; then
     echo "LOKI_DONE"
   elif [ "${E2E_STUB_MODE:-done}" = "stack" ]; then # tests/min/stacks.sh: replace the LOKI_STUB_INSERT marker (// or # comment) in E2E_STUB_TARGET with E2E_STUB_SNIPPET; E2E_STUB_REPLACE, when set, names the exact text to replace instead
     python3 -I -c 'import os,sys; p=os.environ["E2E_STUB_TARGET"]; n=os.environ["E2E_STUB_SNIPPET"]; o=os.environ.get("E2E_STUB_REPLACE"); s=open(p).read(); open(p,"w").write(s.replace(o, n) if o else s.replace("// LOKI_STUB_INSERT", n).replace("# LOKI_STUB_INSERT", n))'
+    [ -n "${E2E_STUB_RM:-}" ] && rm -rf -- "$E2E_STUB_RM" # E2E_STUB_RM: a path (relative to the repo) the change deletes, e.g. an installed package
     echo "LOKI_DONE"
   elif [ "${E2E_STUB_MODE:-done}" = "already" ]; then
     echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"
+  elif [ "${E2E_STUB_MODE:-done}" = "alreadyfirst" ] && ! printf '%s' "$prompt" | grep -q "You finished with LOKI_ALREADY_DONE"; then # claims done first; the challenge (below) makes the change
+    echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"
+  elif [ "${E2E_STUB_MODE:-done}" = "emptythenalready" ] && ! printf '%s' "$prompt" | grep -q "You finished with LOKI_ALREADY_DONE"; then # LOKI_DONE with no change, then already-done in reply to the empty-done correction; the challenge makes the change
+    if printf '%s' "$prompt" | grep -q "working tree has no change against the base"; then echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"; else echo "LOKI_DONE"; fi
+  elif [ "${E2E_STUB_MODE:-done}" = "redothenempty" ]; then # tests/min/auto-route.sh: the empty-done correction after a router redo carries the challenge
+    if printf '%s' "$prompt" | grep -q "An earlier session claimed LOKI_ALREADY_DONE" && ! printf '%s' "$prompt" | grep -q "working tree has no change against the base"; then echo "LOKI_DONE"; else echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"; fi
+  elif [ "${E2E_STUB_MODE:-done}" = "editalready" ]; then # adds multiply() and still claims already-done, also after the challenge
+    grep -q 'export function multiply' calc.ts || printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts
+    echo "LOKI_ALREADY_DONE: calc.ts:1 multiply exists"
   else
     if [ "${E2E_STUB_MODE:-}" = "tamper" ]; then for f in "$(git rev-parse --show-toplevel)"/.loki/runs/*/events.jsonl; do echo '{"v":1,"type":"forged"}' >> "$f"; done; fi
     if [ "${E2E_STUB_MODE:-}" = "scope" ] || [ "${E2E_STUB_MODE:-}" = "unrelated" ]; then echo 'DEBUG = False' >> settings.py; fi
@@ -172,6 +190,11 @@ if [ "$stage" = "implement" ]; then
     if [ "${E2E_STUB_LINTBAD:-}" = "1" ]; then printf '#!/usr/bin/env bash\nif true; then\n  echo BROKEN_A\n' > tool.sh; fi
     if [ "${E2E_STUB_MODE:-}" = "wrong" ]; then
       printf '\nexport function multiply(a: number, b: number): number {\n  return a + b;\n}\n' >> calc.ts
+    elif [ "${E2E_STUB_MODE:-}" = "agentonly" ]; then # multiply() (the visible test exercises it) plus square(), which only a test this session writes calls
+      printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function square(a: number): number {\n  return a * a;\n}\n' >> calc.ts
+      printf 'import { expect, test } from "bun:test";\nimport { square } from "./calc";\n\ntest("square", () => {\n  expect(square(3)).toBe(9);\n});\n' > square.test.ts
+    elif [ "${E2E_STUB_MODE:-}" = "viacaller" ]; then # multiply() plus scale(), which no test names but the untouched ops.ts twice() calls (a seeded test calls twice)
+      printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function scale(a: number, k: number): number {\n  return a * k;\n}\n' >> calc.ts
     elif [ "${E2E_STUB_MODE:-}" = "localvar" ]; then # FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: multiply() with a local variable and a comment word a test could echo
       printf '\n// let users multiply two numbers\nexport function multiply(a: number, b: number): number {\n  const result = a * b;\n  return result;\n}\n' >> calc.ts
     else

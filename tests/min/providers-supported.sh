@@ -39,10 +39,16 @@
 #   7. loki-ts/src/commands/provider.ts: drop the saved removed-provider check in runProviderShow (saved show leg
 #      prints "Provider: codex", exit 0).
 #   8. providers/loader.sh: change one word of loki_removed_saved_provider_hint (the byte-identical hint leg fails).
-#  10. loki-ts/src/engine10/supervisor.ts: drop the runProvider saved check (the saved-opencode runs go to claude,
+#  10. loki-ts/src/engine10/supervisor.ts: drop the resolveRunProvider saved check (the saved-opencode runs go to claude,
 #      and the bare saved-codex leg runs instead of refusing).
 #  11. autonomy/route.sh _route_provider: drop the trailing-whitespace strip (the CRLF codex leg prints 'codex\r').
 #  12. providers/loader.sh validate_provider: drop `p` from the local list (the failover leg names opencode).
+#  13. autonomy/loki cmd_provider_show: put ${saved_provider} before ${LOKI_PROVIDER} again (bashshow leg names opencode).
+#  14. loki-ts/src/commands/provider.ts defaultProvider (show) or runProviderList: saved before env (bunshow, bunlist legs).
+#  15. autonomy/loki cmd_status: saved before env (bashstatus leg). 16. loki-ts/src/contrib/plan_cmd.ts: back to
+#      `LOKI_PROVIDER || "claude"` (the plan leg's opencode log stays empty). 17. cost_preview.ts runEstimate: same
+#      (the estimate-saved-codex leg runs instead of refusing). 18. autonomy/route.sh: drop the saved hint on the
+#      unsupported-provider message (the bogus saved leg).
 #   9. tests/min/providers-supported.sh run_engine: keep XDG_CONFIG_HOME from the caller and give the no-key leg an
 #      opencode.json with provider.openrouter there (the no-key leg starts a session; proves the isolation matters).
 
@@ -227,6 +233,35 @@ out="$(cd "$G" && env -u LOKI_PROVIDER bash "$ROOT/bin/loki" start "add a functi
 $(hint codex)" ] && ok "a CRLF-saved codex reads as codex (start: migration line and hint)" || bad "CRLF saved: rc=$rc out=$(printf '%s' "$out" | od -c | head -3)"
 out="$(cd "$T/empty" && bash "$ROOT/bin/loki" failover --chain claude,bogus </dev/null 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "invalid provider 'bogus' in chain" && ok "failover --chain claude,bogus names bogus" || bad "failover chain: rc=$rc out=$out"
+
+# Every entry point reads the order flag > LOKI_PROVIDER > saved > claude: show, list and status name the env value, and
+# `loki plan` and `loki estimate` use the saved project choice instead of claude.
+printf 'opencode\n' > "$G/.loki/state/provider"
+for form in bashshow bunshow bashlist bunlist bashstatus; do
+    case "$form" in
+        bashshow) out="$(cd "$G" && LOKI_PROVIDER=claude bash "$ROOT/autonomy/loki" provider show </dev/null 2>&1)"; want='Provider:.* claude$' ;;
+        bunshow) out="$(cd "$G" && LOKI_PROVIDER=claude bun "$LOKI_TS_ENTRY" provider show </dev/null 2>&1)"; want='Provider:.* claude$' ;;
+        bashlist) out="$(cd "$G" && LOKI_PROVIDER=claude bash "$ROOT/autonomy/loki" provider list </dev/null 2>&1)"; want='^ *claude .*\(current\)' ;;
+        bunlist) out="$(cd "$G" && LOKI_PROVIDER=claude bun "$LOKI_TS_ENTRY" provider list </dev/null 2>&1)"; want='^ *claude .*\(current\)' ;;
+        bashstatus) out="$(cd "$G" && LOKI_PROVIDER=claude bash "$ROOT/autonomy/loki" status </dev/null 2>&1)"; want='Provider:.* claude \(' ;;
+    esac
+    clean="$(printf '%s' "$out" | sed $'s/\x1b\\[[0-9;]*m//g')"
+    if printf '%s\n' "$clean" | grep -qE "$want" && ! printf '%s\n' "$clean" | grep -E '^ *opencode .*\(current\)' >/dev/null; then ok "LOKI_PROVIDER=claude over saved opencode ($form): shows claude"
+    else bad "env over saved ($form): $(printf '%s' "$clean" | head -4)"; fi
+done
+out="$(cd "$G" && env -u LOKI_PROVIDER bash "$ROOT/autonomy/loki" provider show </dev/null 2>&1)"
+printf '%s' "$out" | grep -q 'Provider:.* opencode' && ok "saved opencode with no LOKI_PROVIDER: provider show names opencode" || bad "show saved: $(printf '%s' "$out" | head -3)"
+mkdir -p "$T/plan"; rm -f "$T/plan/oc.log"
+out="$(cd "$G" && rm -rf .loki/specs && env -u LOKI_PROVIDER OPENROUTER_API_KEY=sk-or-test-not-a-key PATH="$OCBIN:$FIX/bin:$PATH" E2E_OPENCODE_LOG="$T/plan/oc.log" "${TO[@]}" bash "$ROOT/bin/loki" plan "add a function" --spec </dev/null 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ -s "$T/plan/oc.log" ] && ok "loki plan --spec with opencode saved runs its session on opencode" || bad "plan saved opencode: rc=$rc sessions=$(wc -l < "$T/plan/oc.log" 2>/dev/null || echo 0) out=$(printf '%s' "$out" | tail -2)"
+printf 'codex\n' > "$G/.loki/state/provider"
+out="$(cd "$G" && env -u LOKI_PROVIDER bun "$LOKI_TS_ENTRY" estimate </dev/null 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && [ "$out" = "$(expect_msg codex)
+$(hint codex)" ] && ok "loki estimate with codex saved: exit 2, migration line and hint" || bad "estimate saved codex: rc=$rc out=$(printf '%s' "$out" | head -3)"
+printf 'bogus\n' > "$G/.loki/state/provider"
+out="$(cd "$G" && env -u LOKI_PROVIDER bash "$ROOT/bin/loki" route start "add a function" </dev/null 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "saved provider 'bogus' in .loki/state/provider" && ok "route: an unknown saved provider says it is the saved one and how to clear it" || bad "route unknown saved: rc=$rc out=$(printf '%s' "$out" | head -3)"
+printf 'opencode\n' > "$G/.loki/state/provider"
 
 run_engine nokey PATH="$OCBIN:$FIX/bin:$PATH" E2E_OPENCODE_LOG="$T/nokey/oc.log" -- --provider opencode --model openrouter/deepseek/deepseek-v3.2
 [ "$RC" -ne 0 ] && [ ! -s "$T/nokey/oc.log" ] && printf '%s\n' "$OUT" | grep -q 'export OPENROUTER_API_KEY' \

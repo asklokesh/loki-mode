@@ -3,6 +3,7 @@
 # `vitest run [--reporter=json [--reporter=default] --outputFile=F | --outputFile.json=F] [files...]` in a package dir: each test(...)
 # line is one test; it fails when the line holds /*red*/, or when it asserts toMatch(/WORD/) on the source file the test reads and
 # that file lacks WORD (the Wall tests of the e2e stub); else it passes. The first describe("...") title is the ancestor.
+# A test line holding /*throws:WORD*/ fails with real vitest's TypeError wording when that source file contains WORD (a change that breaks a base-red test differently).
 # A file holding /*hookfail*/ fails in a describe-level afterAll with every test passed (JSON: status "failed", assertions passed); a
 # file holding /*unhandled*/ passes its tests but raises an unhandled rejection (JSON: status "passed"; only the default reporter names
 # it; exit 1). Both are what real vitest 2.1.9, 4.0.16, 4.1.12 and 5.1.0 report. The default reporter prints what the real one prints (non-TTY); the
@@ -45,34 +46,36 @@ for rel in files:
         if m:
             w = re.search(r'toMatch\(/(\w+)/\)', line)
             red = "/*red*/" in line or (w is not None and src is not None and w.group(1) not in src)
-            tests.append((m.group(1), "failed" if red else "passed"))
+            th = re.search(r'/\*throws:(\w+)\*/', line)
+            msg = "TypeError: Cannot read properties of undefined (reading 'get')" if th and src is not None and th.group(1) in src else "AssertionError: expected value to match"
+            tests.append((m.group(1), "failed" if red or msg.startswith("TypeError") else "passed", msg))
     results.append((rel, anc, tests, "/*hookfail*/" in text, "/*unhandled*/" in text))
 
-file_failed = lambda tests, hook: hook or any(s == "failed" for _, s in tests)
+file_failed = lambda tests, hook: hook or any(x[1] == "failed" for x in tests)
 if as_json:
     rep = {"numTotalTests": sum(len(r[2]) for r in results), "success": not any(file_failed(r[2], r[3]) or r[4] for r in results), "testResults": []}
     for rel, anc, tests, hook, _unh in results:
         rep["testResults"].append({"name": os.path.realpath(os.path.join(cwd, rel)), "status": "failed" if file_failed(tests, hook) else "passed", "message": "",
-                                   "assertionResults": [{"status": s, "title": t, "ancestorTitles": anc, "fullName": " ".join(anc + [t]), "failureMessages": ["AssertionError: expected value to match"] if s == "failed" else []} for t, s in tests]})
+                                   "assertionResults": [{"status": s, "title": t, "ancestorTitles": anc, "fullName": " ".join(anc + [t]), "failureMessages": [msg] if s == "failed" else []} for t, s, msg in tests]})
     with open(out_file, "w") as f:
         json.dump(rep, f)
 if show_default:
     print(" RUN  v4.0.16 %s\n" % cwd)
     for rel, anc, tests, hook, _unh in results:
-        bad = [t for t, s in tests if s == "failed"]
+        bad = [t for t, s, _m in tests if s == "failed"]
         print(" %s %s (%d tests%s) 3ms" % ("❯" if bad or hook else "✓", rel, len(tests), " | %d failed" % len(bad) if bad else ""))
-        for t, s in tests:
+        for t, s, _m in tests:
             print("   %s %s 1ms" % ("×" if s == "failed" else "✓", t))
     print("")
     for rel, anc, tests, hook, _unh in results:
-        for t, s in tests:
+        for t, s, msg in tests:
             if s == "failed":
-                print(" FAIL  %s > %s\nAssertionError: expected value to match\n" % (rel, " > ".join(anc + [t])))
+                print(" FAIL  %s > %s\n%s\n" % (rel, " > ".join(anc + [t]), msg))
         if hook:
             print(" FAIL  %s > %s\nError: teardown boom\n" % (rel, " > ".join(anc + ["afterAll"])))
     nf = sum(1 for r in results if file_failed(r[2], r[3]))
-    failed = sum(1 for r in results for _, s in r[2] if s == "failed")
-    passed = sum(1 for r in results for _, s in r[2] if s == "passed")
+    failed = sum(1 for r in results for x in r[2] if x[1] == "failed")
+    passed = sum(1 for r in results for x in r[2] if x[1] == "passed")
     print(" Test Files  %s (%d)" % (" | ".join(x for x in ["%d failed" % nf if nf else "", "%d passed" % (len(results) - nf) if len(results) - nf else ""] if x), len(results)))
     print("      Tests  %s (%d)" % (" | ".join(x for x in ["%d failed" % failed if failed else "", "%d passed" % passed if passed else ""] if x), failed + passed))
     if any(r[4] for r in results):

@@ -10,7 +10,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path"; impor
 import { hiddenConfigChanged, testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst, QUICK_ONLY_NOTE, quickScope, quickSplit } from "../../e10ext/select.ts"; import { dependentNotes, dependentTests } from "../../features/dependents.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
-import { guessRunner, isTestFile } from "../testmap.ts";
+import { guessRunner, isTestFile } from "../testmap.ts"; import { coveredStem } from "../../util/test_file_text.ts"; import { comparableIds, errorsById, sameErrors } from "../failures.ts"; export { errorsById, sameErrors } from "../failures.ts";
 import { withoutStaleWall, failureExcerpt, EXCERPT_TOTAL_CAP, changedFiles, hiddenEdits, ignoreRuleChanges, classifyCheck, corroboratePass, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount, SECURITY_SCAN, fileHashes, briefGroups, failureSignature } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
@@ -60,6 +60,15 @@ const isHold = (c: { name: string }): boolean => isHoldoutCheck(c.name); // C-C4
 const pubHold = (c: VerifyCheck): VerifyCheck => ({ name: "holdout", cmd: "holdout", result: c.result, duration_s: c.duration_s, ...(c.n !== undefined ? { n: c.n } : {}), ...(c.sk !== undefined ? { sk: c.sk } : {}), ...(c.owner ? { owner: c.owner, reason: "holdout infrastructure failure" } : {}) });
 /** The one check name a test run gets: runner:path. Provenance (check_result.ts) parses this shape. */
 export const testCheckName = (t: { runner: string; path: string }): string => `${t.runner}:${t.path}`;
+/** FireLater#21: the relevant tests (impacted by a task-named file) that are not the task's own: neither a named test file nor one whose covered stem is a named
+ *  file's stem (register/page.test.tsx for a named register/page.tsx). A page test that only imports or mocks a named lib/api.ts is collateral: it gets the base
+ *  comparison of an untouched test; failing the same way as on base (sameErrors) it feeds one fix round, and a same-error remainder after that round is
+ *  pre-existing, listed with COLLATERAL_RED, which caps VERIFIED. A new error under the same id is never pre-existing. */
+export const COLLATERAL_RED = "relevant test already failing on base, still failing the same tests (it imports a file the task names; capped, not blocking)";
+export function collateralTests(relevant: TestRef[], named: string[]): TestRef[] {
+  const stems = new Set(named.flatMap((f) => { const s = basename(f).replace(/\.[^.]+$/, ""); return /^(index|__init__|mod)$/.test(s) && f.includes("/") ? [s, basename(f.slice(0, f.lastIndexOf("/")))] : [s]; }));
+  return relevant.filter((t) => !named.includes(t.path) && !stems.has(coveredStem(t.path)));
+}
 const dedupeTests = (tests: TestRef[]): TestRef[] => [...new Map(tests.map((t) => [`${t.runner}:${t.path}`, t] as const)).values()];
 export { changedFiles } from "../../util/check_result.ts"; // one owner: check_result.ts (diffFiles builds on it)
 interface RunOpts {
@@ -218,32 +227,6 @@ function changedSymbolsFirst(ctx: RunContext, tests: TestRef[], changed: string[
   const hits = tests.filter((t) => { try { return re.test(readFileSync(join(ctx.repoDir, t.path), "utf8")); } catch { return false; } });
   return [...hits, ...tests.filter((t) => !hits.includes(t))];
 }
-/** Every error line each failing id reports, sorted (a multiset: test.each and duplicate titles give one id several failures): vitest/jest print it
- *  on the first non-blank line after "FAIL  <id>" (consecutive FAIL lines vitest groups under one error share it), pytest after "FAILED <id> - ".
- *  Only what differs between two runs of the same failure is normalized: timestamps, durations and absolute paths (with any :line:col), so a base
- *  worktree path never makes two equal errors differ. Every other number is kept: "expected 5 to be 6" and "expected 999 to be 6" differ. */
-export function errorsById(out: string): Map<string, string[]> {
-  const norm = (l: string): string => l
-    .replace(/\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/g, "<ts>").replace(/\b\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\b/g, "<ts>")
-    .replace(/(^|[\s(])\/(?:[\w.@-]+\/)*[\w.@-]+(?::\d+){0,2}/g, "$1<path>").replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|us|µs|ns|min)\b/g, "<dur>").replace(/\s+/g, " ").trim();
-  const lines = stripAnsi(out).split("\n").map((l) => l.trim()), m = new Map<string, string[]>(), add = (id: string, e: string): void => { m.set(id, [...(m.get(id) ?? []), e]); };
-  for (const [i, l] of lines.entries()) {
-    const py = /^FAILED (\S+::\S*) - (.+)$/.exec(l); if (py) { add(py[1]!, norm(py[2]!)); continue; }
-    const v = /^FAIL\s+(.+)$/.exec(l); if (!v) continue;
-    const next = lines.slice(i + 1).find((x) => x !== "" && !/^FAIL\s/.test(x)); if (next !== undefined) add(v[1]!.trim(), norm(next));
-  }
-  for (const [k, e] of m) m.set(k, e.sort());
-  return m;
-}
-/** True when every failing id has error lines on head and fails on base with the same normalized lines, the same number of times (equal sorted
- *  multisets: a test.each case newly failing with another error under the same id is a different error). An id with no head error line (its FAIL
- *  line was never printed or was cut) or none on base is not the same error. failIds also lists a test's bare title (vitest's "× title" line): it
- *  stands for the full ids that end in " > title". `head` is the output or its errorsById map. */
-export function sameErrors(head: string | Map<string, string[]>, base: string, ids: string[] | undefined): boolean {
-  const h = typeof head === "string" ? errorsById(head) : head, b = errorsById(base), all = ids ?? [], eq = (x: string[] = [], y: string[] = []): boolean => x.length === y.length && x.every((e, n) => e === y[n]);
-  const keys = (i: string): string[] => (h.has(i) ? [i] : [...h.keys()].filter((k) => k.endsWith(` > ${i}`)));
-  return all.length > 0 && all.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => eq(b.get(k), h.get(k))); });
-}
 /** A failing check the next fix round is given: not pre-existing, not held out, and not known red failing the same way as on base (a known-red check
  *  failing with a different error on head is something the change did, so it is fix-round input). */
 export const feedsFixRound = (c: { name: string; result: string }, pre: { names: string[]; knownRed: string[]; sameError: string[] }): boolean => c.result === "fail" && !pre.names.includes(c.name) && !pre.sameError.includes(c.name) && !isHoldoutCheck(c.name);
@@ -257,7 +240,7 @@ type BaseSubtraction = { ids: string[]; names: string[]; knownRed: string[]; sam
  *  dirs can see head,  depsSeeHead, and, for intake's lazy record, when envChangedSince finds the environment changed since intake) is  out.zero; seal keeps it in the receipt as repo_skipped and out of the verdict.  ponytail: bun/go/cargo/npm yield no ids and no skip count, so they are never subtracted or judged weak. */
 async function subtractBase(
   ctx: RunContext, api: ProjectApi | null, checks: VerifyCheck[], tests: TestRef[], changed: string[],
-  wall: Set<string>, rel: Set<string>, signal: AbortSignal, zeroOk = true, zeroIntake: ZeroGate = zeroGate(null), dep: ReadonlySet<string> = new Set(),
+  wall: Set<string>, rel: Set<string>, signal: AbortSignal, zeroOk = true, zeroIntake: ZeroGate = zeroGate(null), dep: ReadonlySet<string> = new Set(), own: ReadonlySet<string> = rel,
 ): Promise<BaseSubtraction> {
   const out: BaseSubtraction = { ids: [], names: [], knownRed: [], sameError: [], weak: [], zero: [], cnt: {} };
   const pairs = checks.flatMap((c) => {
@@ -305,7 +288,7 @@ async function subtractBase(
       || sus.some(({ c }) => !out.weak.includes(c.name) && base.get(c)!.red.length > 0 && (c.n ?? 0) >= base.get(c)!.n);
     {
       for (const { c } of un) {
-        if (rel.has(c.name) || c.result !== "fail" || !c.ids?.length || !c.ids.every((i) => base.get(c)?.red.includes(i))) continue;
+        if (own.has(c.name) || c.result !== "fail" || !c.ids?.length || !comparableIds(c.ids).every((i) => base.get(c)?.red.includes(i))) continue;
         out.knownRed.push(c.name); // red on base by every failing id
         if (sameErrors(headErrors.get(c) ?? "", base.get(c)!.out, c.ids)) out.sameError.push(c.name); // and failing the same way: never fix-round input, and a delivery may excuse it as pre-existing; a different error feeds the fix round
         if (progress || dep.has(c.name)) { // RX-3: a dependent-only check needs no progress proof
@@ -387,7 +370,7 @@ export const verifyStage: Stage = {
     // E-56: wall.ts seals files under an absolute targetDir; normalize to repo-relative so an absolute Wall path still matches and runs in fast verify.
     const wallPaths = new Set((wall.files ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)));
     // A-114: the relevant tests of the task-named files are always selected, whatever the diff touches.
-    const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string; deps_not_proven?: string[] } | undefined, repoMap = loadRepoMap(intake?.repomap_ref), relevant = ctx.tests.impacted(map, namedFiles(intake?.task ?? "", repoMap));
+    const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string; deps_not_proven?: string[] } | undefined, repoMap = loadRepoMap(intake?.repomap_ref), named = namedFiles(intake?.task ?? "", repoMap), relevant = ctx.tests.impacted(map, named);
     const recorded = new Map((wall.files ?? []).flatMap((f) => (f.runner ? [[isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path, f.runner] as const] : []))); // D122: the runner the Wall recorded for each sealed file; verify never re-detects it after implement
     // FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER: run every sealed Wall path, never only those the runner's discovery lists (loki_wall_x.py is not a pytest-discovered name). No project runner: a Wall-sealed file runs with Loki's bun (harness), as before.
     const wallTests = [...wallPaths].flatMap((p): TestRef[] => { const rec = recorded.get(p), found = map.tests.find((t) => t.path === p && (!rec || t.runner === rec)); if (found) return [found]; const runner = rec ?? guessRunner(basename(p), map.runners, p); return runner && (runner !== "bun" || map.runners.includes("bun") || /[._](?:test|spec)\.[cm]?[jt]sx?$/.test(p)) ? [{ runner, path: p }] : []; }); // harness: `bun test <name>` skips any name bun does not discover as a test (*.test, *_test, *.spec, *_spec)
@@ -424,16 +407,25 @@ export const verifyStage: Stage = {
     const decisive = qs !== null && checks.some((c) => c.result === "fail" && (keep.has(c.name) || changed.includes(c.name.slice(c.name.indexOf(":") + 1)))); // a blocking, Wall, task-named or touched test is never excused as pre-existing red
     if (!decisive) await runTests(split.rest);
     const complete = !decisive; // L025: the full suite and the secret scan run in every complete verify, never in a quick one
-    const pg = ((ctx.outputs().verify?.failures_grouped ?? []) as { signature: string }[]).map((g) => g.signature), fs = (x: string): boolean => x.startsWith("full suite") || x.startsWith("lint:"), same = (a: string[], b: string[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
-    const settle = decisive && pg.some((x) => x.startsWith("full suite")) && same(pg.filter((x) => !fs(x)).sort(), checks.filter((c) => c.result === "fail" && !isHold(c)).map((c) => failureSignature(c)).sort()); // L025: the same targeted failures as last time decide a stall only once the suite is known: rerun it (no model session) rather than carry it
+    const pg = ((ctx.outputs().verify?.failures_grouped ?? []) as { signature: string }[]).map((g) => g.signature), fs = (x: string): boolean => x.startsWith("full suite") || x.startsWith("lint:"), failSigs = (l: { name: string; result: string; first_error?: string; ids?: string[] }[]): string[] => [...new Set(l.filter((c) => c.result === "fail" && !fs(c.name) && !isHoldoutCheck(c.name)).map((c) => failureSignature(c)))].sort(), same = (a: string[], b: string[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
+    const settle = decisive && pg.some((x) => x.startsWith("full suite")) && same(failSigs((ctx.outputs().verify?.checks ?? []) as { name: string; result: string; first_error?: string; ids?: string[] }[]), failSigs(checks.filter((c) => !isHold(c)))); /* compared on every failing check of the last verify, not only those it fed to the fix round: a base-red check excused then still fails now, and must not keep the full suite from rerunning (FireLater#21: a dynamic-import test the change broke was lost from the final verify) */ // L025: the same targeted failures as last time decide a stall only once the suite is known: rerun it (no model session) rather than carry it
     const hold = wall.holdout_dir ? stageHoldout(wall.holdout_dir, ctx.repoDir) : null; if (hold && !hold.missing.length) holdN = hold.tests.length; // P12-05: held-out Wall tests, copied in under neutral names for this run only, blocking (protect), named holdout:N internally and "holdout" in every record that leaves this stage
     try { for (const [i, h] of (hold?.tests ?? []).entries()) { if (signal.aborted) break; const t = h as TestRef, tc = commandFor(t, ctx.repoDir, api); await runCheck(ctx, `holdout:${i + 1}`, tc.cmd, tc.args, signal, checks, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: true, opaque: true, ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); publish(); } } finally { hold?.cleanup(); }
     if (hold?.missing.length) { for (const m of hold.missing) recordHoldoutTriage(ctx.runDir, { check: "holdout:store", result: "not_run", reason: m }); const k: VerifyCheck = { name: "holdout:store", cmd: "holdout", result: "not_run", duration_s: 0, reason: "holdout store unavailable", owner: "harness" }; checks.push(k); ctx.emit("test.result", "verify", { ...pubHold(k) }); } // C-C4b-c: a store failure is a harness/infrastructure failure (not_run, no fix round), never a test failure the fixer sees; the missing-file text stays out of the log
     const targetNames = new Set([...[...wallTests, ...relevant].map(testCheckName), ...checks.filter(isHold).map((c) => c.name)]); // FC-21b: Wall and task-named tests, the proof a limit-stopped run needs
     const cfgChanged = [...new Set([...testConfigChanged(ctx.repoDir, ctx.baseSha, changed), ...hiddenConfigChanged(ctx.repoDir, ctx.outputs().intake?.hidden_cfg)])]; // FC-21b: also feeds uncovered_changed; SEAL-CONFTEST-01: ignored configs added or changed since intake count too
-    const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map(testCheckName)), new Set(relevant.map(testCheckName)), signal, cfgChanged.length === 0, zeroGate((ctx.outputs().intake as { zero_baseline?: unknown } | undefined)?.zero_baseline), depNames);
+    // FireLater#21: a relevant test that is not the task's own (collateral: it only imports or mocks a named file) gets the base comparison any untouched test gets (known red, same error).
+    const collateral = new Set(collateralTests(relevant, named).map(testCheckName)), ownRel = new Set([...relevant.map(testCheckName)].filter((n) => !collateral.has(n)));
+    const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map(testCheckName)), new Set(relevant.map(testCheckName)), signal, cfgChanged.length === 0, zeroGate((ctx.outputs().intake as { zero_baseline?: unknown } | undefined)?.zero_baseline), depNames, ownRel);
+    // A collateral check red on base failing the same way feeds the first fix round (it could be the bug the task describes); after a fix round left it failing
+    // the same way it is pre-existing: not blocking, and named with COLLATERAL_RED, which caps VERIFIED.
+    const fixRounds = Number((ctx.outputs().fix as { round?: unknown } | undefined)?.round ?? 0) || 0, collateralSame = preRed.sameError.filter((n) => collateral.has(n) && !preRed.names.includes(n));
+    const collateralRed = fixRounds >= 1 ? collateralSame : [];
+    if (collateralRed.length) { preRed.names.push(...collateralRed); preRed.ids.push(...checks.filter((c) => collateralRed.includes(c.name)).flatMap((c) => c.ids ?? [])); }
     // REPOMEM: a failing, untouched, non-target test whose every id was already red in the intake baseline (same base commit) is pre-existing: never blocks. Anything else that fails is introduced and always blocks.
-    const attr = attribute(ctx.repoDir, ctx.baseSha, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, ids: c.ids, eligible: !targetNames.has(c.name) && !changed.includes(c.name.slice(c.name.indexOf(":") + 1)) })));
+    // A package's own suite baseline is consulted only for a check the base run showed failing the same way (sameErrors): matching ids alone never excuse a changed error.
+    const suiteOf = (name: string): string | undefined => { const t = tests.find((x) => testCheckName(x) === name), pkg = t ? api?.packageOf(t.path) : null; return pkg?.commands.test ? `full suite: ${pkg.name}` : undefined; };
+    const attr = attribute(ctx.repoDir, ctx.baseSha, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, ids: c.ids, eligible: !targetNames.has(c.name) && !changed.includes(c.name.slice(c.name.indexOf(":") + 1)), ...(suiteOf(c.name) && preRed.sameError.includes(c.name) ? { suite: suiteOf(c.name)! } : {}) })));
     attr.introducedChecks = [...new Set(attr.introducedChecks.map((n) => (isHoldoutCheck(n) ? "holdout" : n)))]; preRed.names.push(...attr.preExistingChecks); preRed.ids.push(...attr.preExistingIds);
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
@@ -459,7 +451,7 @@ export const verifyStage: Stage = {
       if (full.some((c) => c.result === "pass" || c.result === "fail")) { ranDeeper.push("full test command", "full suite"); risk = markExecuted(risk, ranDeeper); recordRisk(ctx.repoDir, risk); }
       // A full-suite failure whose every failing id is one a same-error base-red check or a Wall check already reports adds nothing a fix round could act on.
       const known = new Set(checks.filter((c) => c.result === "fail" && (preRed.sameError.includes(c.name) || wallNames0.has(c.name))).flatMap((c) => c.ids ?? []));
-      for (const c of full) if (c.result === "fail" && c.ids?.length && c.ids.every((i) => known.has(i)) && !preRed.names.includes(c.name)) { preRed.knownRed.push(c.name); preRed.sameError.push(c.name); }
+      for (const c of full) if (c.result === "fail" && c.ids?.length && !c.unhandled?.length /* an Unhandled Errors block names no id, so ids alone never cover it */ && comparableIds(c.ids).every((i) => known.has(i)) && !preRed.names.includes(c.name)) { preRed.knownRed.push(c.name); preRed.sameError.push(c.name); }
     }
     if (risk && risk.tier === "high" && !signal.aborted && complete) { // PR-FIRST-4: the high tier's security scan runs here, before seal, so a receipt never leaves it to the post-PR deep stage (spawned only after VERIFIED). A fail blocks VERIFIED, a not_run (scanner missing or broken) caps at PARTIAL; only a pass or fail is credited
       const { runSecretScan } = await import("./deep.ts");
@@ -472,17 +464,17 @@ export const verifyStage: Stage = {
     const uncoveredChanged = changed.filter((f) => CODE_EXT.test(f) && !isTestFile(f) && !wallPaths.has(f) && !cfgChanged.includes(f) && !covered(f)); // FC-21b: changed code no passing impacted check ran; seal denies VERIFIED after a limit
     const flaky = checks.filter((c) => c.result === "flaky").map((c) => (isHold(c) ? "holdout" : c.name));
     // ponytail: real clustering is failures.ts, which depends on this stage; a naive 1:1 placeholder keeps the section-4 output key populated until that slice lands.
-    const { groups: failuresGrouped, names: blockingNames } = briefGroups(checks.filter((c) => feedsFixRound(c, preRed)), (c) => excerpts.get(c) ?? "", (c) => suites.has(c), EXCERPT_TOTAL_CAP, qs && !complete ? { prev: ctx.outputs().verify, ran: new Set(checks.map((c) => c.name)) } : undefined); // known red failing the same way as on base (or a full suite repeating those and Wall ids) never feeds a fix round; a different error does; TEN-QUALITY-01: sample = rerun cmd + redacted excerpt, 6 KB across all groups
+    const { groups: failuresGrouped, names: blockingNames } = briefGroups(checks.filter((c) => feedsFixRound(c, preRed) || (fixRounds === 0 && collateralSame.includes(c.name))), (c) => excerpts.get(c) ?? "", (c) => suites.has(c), EXCERPT_TOTAL_CAP, qs && !complete ? { prev: ctx.outputs().verify, ran: new Set(checks.map((c) => c.name)) } : undefined); // known red failing the same way as on base (or a full suite repeating those and Wall ids) never feeds a fix round; a different error does; TEN-QUALITY-01: sample = rerun cmd + redacted excerpt, 6 KB across all groups
     const pub = checks.map((c) => (isHold(c) ? pubHold(c) : c)), holdoutFailed = checks.filter((c) => c.result === "fail" && isHold(c) && !preRed.names.includes(c.name)).length; // C-C4b-c: pub leaves this stage, holdoutFailed (C-C4b) is the only form in which a held-out failure reaches the fix stage
     // E-98a/E-115: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter/ruff. A-115: test configuration edits and relevant checks with more skips than base are listed, which makes the verdict PARTIAL at seal.
     const inBase = (f: string): boolean => { try { safeGit(ctx.repoDir, ["cat-file", "-e", `${ctx.baseSha}:${f}`], { stdio: "ignore" }); return true; } catch { return false; } };
     const testCounts: Record<string, unknown> = {}; const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).flatMap((t) => { const k = preRed.cnt[testCheckName(t)]; if (k) testCounts[t.path] = k; return [`weakened test: ${t.path}`, ...(assertDeltaNotes(ctx.repoDir, ctx.baseSha, null, t.path, intake?.task ?? "", k?.b, k?.h) ?? [])]; }); // a relevant test file edited: NOT VERIFIED (seal lists the same line)
-    const weakened = [...modifiedRel, ...cfgChanged.map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`)];
+    const weakened = [...modifiedRel, ...cfgChanged.map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`), ...collateralRed.map((n) => `${COLLATERAL_RED}: ${n}`)];
     const notProven = [...(complete ? [] : [QUICK_ONLY_NOTE]), ...weakened, ...hiddenEdits(ctx.repoDir), ...ignoreRuleChanges(ctx.repoDir, (intake as { ignore_snapshot?: unknown } | undefined)?.ignore_snapshot, ctx.baseSha), ...dependentNotes(dep), ...(intake?.deps_not_proven ?? []), ...pub.filter((c) => c.name === "holdout" && c.result !== "pass").map((c) => (c.result === "not_run" ? "holdout not executed" : "holdout check failed")), ...[...fullNotProven].filter((n) => !naNote(n)), ...pub.filter((c) => c.owner === "harness" && c.name !== "holdout").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
     const wallDropped = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p)); // FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: sealed, but no runner of this repo can run it
     notProven.push(...wallDropped.map((p) => `Wall test not executed: ${p}: ${NO_RUNNER_REASON}`));
     const wallNames = new Set(wallTests.map(testCheckName)), wallRun = checks.filter((c) => wallNames.has(c.name) || isHold(c)), wallFailTail = writeWallFailureTail(ctx.runDir, checks.filter((c) => wallNames.has(c.name) && c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, out: failTails.get(c) ?? "" }))), wallPassed = wallRun.some((c) => c.result === "fail") ? false : wallRun.length > 0 && wallDropped.length === 0 && wallRun.every((c) => c.result === "pass") ? true : undefined; // the receipt's wall.passed: false on any failure, true only when every Wall and holdout check ran and passed, unset otherwise
-    return { status: "completed", data: { checks: pub, flaky, verify_scope: complete ? "complete" : "quick", file_hashes: hashes, blocking_checks: blockingNames, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: failuresGrouped, holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size ? { not_applicable: [...fullNotProven].filter(naNote).map(naText) } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}), ...(preRed.sameError.length ? { known_red_same_error: preRed.sameError } : {}), skipped_on_base: preRed.zero, ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
+    return { status: "completed", data: { checks: pub, flaky, verify_scope: complete ? "complete" : "quick", file_hashes: hashes, blocking_checks: blockingNames, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: failuresGrouped, holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size ? { not_applicable: [...fullNotProven].filter(naNote).map(naText) } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}), ...(preRed.sameError.length ? { known_red_same_error: preRed.sameError } : {}), skipped_on_base: preRed.zero, ...(collateralSame.length && fixRounds === 0 ? { collateral_same_error: collateralSame } : {}), ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
   },
 };
 export const stage = verifyStage;

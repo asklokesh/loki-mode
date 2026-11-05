@@ -22,7 +22,7 @@ import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
-import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, isExecutedProof, CODE_FILE_EXT, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
+import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, identifierSet, moduleToken, isExecutedProof, CODE_FILE_EXT, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
@@ -40,17 +40,41 @@ const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? 
 export const EXTERNAL_MODEL_LABEL = "external (no Loki implement session)", EXTERNAL_DIFF_NOT_ISOLATED = "Wall author not filesystem-isolated from the external diff", EXTERNAL_NO_WALL = "external diff sealed with no Wall file that ran; the only checks are the repo's existing tests"; // CW-12 B2/B3
 const externalRun = (o: Partial<Record<StageName, Record<string, unknown>>>): boolean => o.implement?.exit === "external";
 export const LEAN_NO_SYMBOL = "no passing check references a changed symbol and no Wall file ran";
-/** FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: with no Wall file that ran (and no already-satisfied claim), the changed code is exercised only if a passing pre-existing test source names a symbol the diff declares or modifies. Returns the unreferenced symbols; empty when a Wall ran, the run is external (its own rule), the diff has no non-test code file, or a test references one. */
-async function leanSymbolGap(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[]): Promise<string[]> {
-  if (externalRun(o) || (Array.isArray(o.wall?.files) && o.wall.files.length > 0) || o.intake?.already_satisfied === true || o.implement?.exit === "already_done") return [];
-  const code: string[] = [];
-  for (let i = 0; i + 1 < rawDiff.length; i += 2) { const st = rawDiff[i]!.trim().split(" ").pop() ?? "", f = rawDiff[i + 1]!; if (st !== "D" && CODE_FILE_EXT.test(f) && !isTestFile(f)) code.push(f); }
-  if (code.length === 0) return [];
-  const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...code], { timeoutMs: 20000 });
-  if (d.exitCode !== 0) return [];
-  const sources: string[] = [];
-  for (const c of vraw) if (isExecutedProof(c as { result?: unknown; n?: unknown })) { const n = String(c.name ?? ""), p = n.slice(n.indexOf(":") + 1); if (n.includes(":") && isTestFile(p)) try { sources.push(readFileSync(join(ctx.repoDir, p), "utf8")); } catch { /* unreadable test: contributes no reference */ } }
-  return symbolGap(changedSymbols(d.stdout), sources);
+export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these added public functions";
+/** The two symbol rules, from one read of the diff and the passing checks.
+ *  lean (FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL): with no Wall file that ran, the changed code is exercised only if a passing test source names a symbol the diff declares or modifies; the unreferenced symbols, or [].
+ *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file), Tests the implementer wrote or edited never clear it. Off by default; LOKI_E10_PUBLIC_GAP=1 turns it on.
+ *  Both are [] for an external run (its own rule) and an already-satisfied claim. */
+const CALLER_SCAN = 3000, CALLER_MAX_BYTES = 200_000;
+async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[]): Promise<{ lean: string[]; pub: string[] }> {
+  const none = { lean: [], pub: [] };
+  if (externalRun(o) || o.intake?.already_satisfied === true || o.implement?.exit === "already_done") return none;
+  const touched = new Set<string>(), code: string[] = [], added: string[] = [];
+  for (let i = 0; i + 1 < rawDiff.length; i += 2) { const st = rawDiff[i]!.trim().split(" ").pop() ?? "", f = rawDiff[i + 1]!; touched.add(f); if (st !== "D" && (CODE_FILE_EXT.test(f) || API_FILE_EXT.test(f)) && !isTestFile(f)) code.push(f); if (st === "A") added.push(f); }
+  if (code.length === 0) return none;
+  const read = (p: string): string => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return ""; } };
+  const executed = vraw.filter((c) => isExecutedProof(c as { result?: unknown; n?: unknown })), testOf = (c: Obj): string | null => { const n = String(c.name ?? ""), p = n.slice(n.indexOf(":") + 1); return n.includes(":") && !n.startsWith("full suite:") && isTestFile(p) ? p : null; };
+  const allSources = executed.map(testOf).filter((p): p is string => p !== null).map(read);
+  const ranWall = Array.isArray(o.wall?.files) && o.wall.files.length > 0, leanFiles = code.filter((f) => CODE_FILE_EXT.test(f));
+  let lean: string[] = [];
+  if (!ranWall && leanFiles.length) { const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...leanFiles], { timeoutMs: 20000 }); if (d.exitCode === 0) lean = symbolGap(changedSymbols(d.stdout), allSources); }
+  if (process.env["LOKI_E10_PUBLIC_GAP"] !== "1") return { lean, pub: [] }; // off by default: the span lines of a file with multi-line docstrings or template literals shift against the stripped text (follow-up task)
+  const files = code.filter((f) => API_FILE_EXT.test(f)).map((path) => ({ path, src: read(path) }));
+  const fns: string[] = [];
+  for (const f of files) { const base = added.includes(f.path) ? "" : (await safeGitRun(ctx.repoDir, ["show", `${ctx.baseSha}:${f.path}`], { timeoutMs: 20000 })); const b = typeof base === "string" ? base : base.exitCode === 0 ? base.stdout : null; if (b !== null) fns.push(...addedPublicFunctions(f.path, f.src, b)); }
+  if (fns.length === 0) return { lean, pub: [] };
+  const wall = new Set(((o.wall?.files as { path: string }[] | undefined) ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)));
+  const paths = new Set(executed.map(testOf).filter((p): p is string => p !== null && (wall.has(p) || !touched.has(p))));
+  const ls = await safeGitRun(ctx.repoDir, ["ls-files", "-z"], { timeoutMs: 20000 }), tracked = ls.exitCode === 0 ? ls.stdout.split("\0").filter((t) => t && !touched.has(t)) : [];
+  if (executed.some((c) => String(c.name ?? "").startsWith("full suite:"))) for (const t of tracked) if (isTestFile(t)) paths.add(t);
+  const texts = [...paths].map(read), idents = texts.map((t) => identifierSet(t)), imports = texts.map((t) => identifierSet(t, true)), named = new Set(fns.filter((f) => idents.some((st) => st.has(f))));
+  const pending = [...new Set(fns)].filter((f) => !named.has(f));
+  if (pending.length === 0) return { lean, pub: [] };
+  // Untouched callers of the changed files (bounded: CALLER_SCAN files of at most CALLER_MAX_BYTES each), so coverage through code the run did not edit counts.
+  const candidates = tracked.filter((t) => !notApiFile(t)).slice(0, CALLER_SCAN).map((path) => ({ path, src: read(path) })).filter((f) => f.src.length <= CALLER_MAX_BYTES && !notApiFile(f.path, f.src));
+  // A function of a changed file is seeded by a test naming it; a function of an untouched caller only by a test that also names its module (a test calling subprocess.run( does not exercise an unrelated run() elsewhere).
+  const changedPaths = new Set(files.map((f) => f.path)), seed = (name: string, path: string): boolean => idents.some((st, i) => st.has(name) && (changedPaths.has(path) || imports[i]!.has(moduleToken(path))));
+  return { lean, pub: exercisedViaCallers(pending, seed, [...files, ...callerFiles(files, candidates)]) };
 }
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
 
@@ -113,7 +137,7 @@ export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptChe
   // E-98a B1: verify's own NOT PROVEN (e.g. a system interpreter) downgrades too -- never a silent VERIFIED.
   if (exit === "external" && !(Array.isArray(o.wall?.files) && o.wall.files.length > 0)) return "PARTIAL"; // FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED: an external diff has no watched implement session, so with no Wall file that ran it is never VERIFIED
   if (copyGap.length > 0 || clauseGap.length > 0) return "PARTIAL"; // FALSEVER-SEALCOPY: a Wall file whose sealed copy is missing or not the sealed bytes cannot be shown to be what ran; FALSEVER-CLAUSE: a spec acceptance clause no passing sealed Wall file proves (a marker plus an assertion) is likewise never VERIFIED
-  if (leanGap.length > 0) return "PARTIAL"; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: no Wall file ran and no passing check references a changed symbol, so nothing exercised the change
+  if (leanGap.length > 0) return "PARTIAL"; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL (no Wall file ran and no passing check references a changed symbol) and HONEST-VERIFIED-2 (an added public function no agent-independent passing test names): nothing independent exercised the change
   if (exit === "killed" || checks.length === 0 || checks.some((c) => c.result !== "pass") || verifyNotProven || !proof || wallGreenOnBase) return "PARTIAL"; // FC-VACUOUS-WALL-GREEN: a Wall green on base discriminates nothing, so a changed tree is never VERIFIED on it
   return "VERIFIED";
 }
@@ -196,9 +220,9 @@ export const sealStage: Stage = {
     const grp = sealGroup(ctx.runDir, receiptSha256 as never); // D61-13: inert without group/manifest.json
     const executed = hasExecutedProof(vraw), proof = process.env["LOKI_EXOGENOUS_PROOF"] === "0" ? executed : hasExogenousProof(vraw, pctx); // FC-16: executed n>0 pass from verify's raw checks (a Wall green on base proves only a claim, inside verdictOf); TEN-GATES-02 (D104): that pass must be agent-independent (LOKI_EXOGENOUS_PROOF=0 opts out)
     const uncoveredAfterLimit = o.implement?.exit === "killed" ? strs(o.verify?.uncovered_changed) : []; // FC-21b: changed code no passing impacted check covered; limit path only
-    const leanGap = diffOk ? await leanSymbolGap(ctx, o, rawDiff, head, vraw) : []; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL
+    const { lean: leanGap, pub: pubGap } = diffOk ? await symbolGaps(ctx, o, rawDiff, head, vraw) : { lean: [], pub: [] }; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL; HONEST-VERIFIED-2
     const wpAll = publishableWall(ctx.repoDir, ctx.runDir, o, process.env, loadTaskText(ctx, str(o.intake?.task) ?? undefined)); // pure read of the sealed copies; publishing still happens only on VERIFIED
-    const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name)) && c.repo_skipped !== true), !diffOk || diff.stdout === "", capVerify.length > 0 || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, leanGap, wpAll.notes, wpAll.clauseGap), grp);
+    const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name)) && c.repo_skipped !== true), !diffOk || diff.stdout === "", capVerify.length > 0 || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap], wpAll.notes, wpAll.clauseGap), grp);
 
     // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
     const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.repoDir), process.env);
@@ -248,6 +272,7 @@ export const sealStage: Stage = {
     for (const id of strs(o.verify?.pre_red)) notProven.add(`pre red: ${id}`); // A-112: listed, never downgrades (not via verifyNotProven)
     if (typeof o.verify?.baseline_line === "string" && strs(o.verify?.pre_red).length) notProven.add(o.verify.baseline_line); // REPOMEM: the one-line pre-existing vs introduced split; listed only when a baseline failure was excused, never downgrades
     if (leanGap.length > 0) notProven.add(`${LEAN_NO_SYMBOL}: ${leanGap.join(", ")}`);
+    if (pubGap.length > 0) notProven.add(`${UNEXERCISED_PUBLIC}: ${pubGap.join(", ")}`);
     if (externalRun(o) && !(Array.isArray(o.wall?.files) && o.wall.files.length > 0)) notProven.add(EXTERNAL_NO_WALL); // FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED
     if (externalRun(o)) notProven.add(EXTERNAL_DIFF_NOT_ISOLATED); // CW-12 B2: the Wall author runs on disk beside the external diff until cw01 confinement covers it
     for (const t of strs(o.implement?.tests_reverted)) notProven.add(`reverted test edit: ${t}`);

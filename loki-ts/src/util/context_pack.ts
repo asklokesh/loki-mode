@@ -167,7 +167,7 @@ function pySpans(src: string): Span[] {
     const m = /^(\s*)(?:async\s+)?(def|class)\s+([A-Za-z_]\w*)/.exec(lines[k]!);
     if (!m) continue;
     const indent = m[1]!.length;
-    while (stack.length && stack[stack.length - 1]!.indent >= indent) stack.pop();
+    while (stack.length && (stack[stack.length - 1]!.indent >= indent || stack[stack.length - 1]!.span.end < k + 1)) stack.pop(); // a block that ended before this line (a def under a later module-level if) is no parent
     let end = k, depth = 0;
     for (let j = k; j < lines.length; j++) { for (const c of lines[j]!) { if ("([{".includes(c)) depth++; else if (")]}".includes(c)) depth--; } end = j; if (depth <= 0 && /:\s*$/.test(lines[j]!)) break; }
     for (let j = end + 1; j < lines.length; j++) { const s = lines[j]!; if (s.trim() === "") continue; if (indentOf(s) <= indent) break; end = j; }

@@ -16,7 +16,7 @@ export { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker }; /
 import { stageCapability, workerStages } from "./worker.ts"; import { withholdGithubTokens } from "../runner/github_token.ts"; import { readAliveBeat, writeAliveBeat, writeRunPid } from "../util/run_pid.ts";
 import { EventLog, conflictReasonOf, fold, partialCost, runCostUsd, summaryCost, readEvents, tail } from "./events.ts"; import { stageShareText } from "../util/cost_breakdown.ts";
 import { disclosureLine } from "../providers/provider_guard.ts";
-import { runProvider } from "../runner/state.ts";
+import { resolveRunProvider } from "../runner/state.ts";
 import { budgetNext, capNote, groupEnv, parseCapUsd, priorSpend, resolveCap, SUBSCRIPTION_NOTE, unenforceableNote, writeBudgetStop } from "../e10ext/budget_cap.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
@@ -282,7 +282,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   }
   delete process.env.LOKI_FIRST_RUN_FILES; // read only by the first-run init above; never handed to a model session
   if (!providerNamed) { // the project's saved choice (`loki provider set`), after --provider and LOKI_PROVIDER: a removed or unknown one is refused with how to clear it
-    const rp = runProvider(undefined, process.env, repoDir);
+    const rp = resolveRunProvider(undefined, process.env, repoDir);
     if (rp.refusal) { process.stderr.write(rp.refusal); noteRefusal("no_provider"); return 2; }
     if (rp.source === "saved") { provider = rp.provider; providerNamed = true; process.env.LOKI_PROVIDER = rp.provider; }
   }

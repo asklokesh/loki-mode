@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { DEFAULT_MAX_COST_USD } from "../e10ext/budget_cap.ts"; // LM-002: help states the real default
 import type { ProviderName, SessionTier } from "../runner/types.ts";
-import { runProvider } from "../runner/state.ts";
+import { resolveRunProvider } from "../runner/state.ts";
 import { tokenFreeEnv, safeGitRun } from "../util/safe_git.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { GENERIC_TIERS, VALID_TIERS } from "../util/claude_model.ts";
@@ -613,7 +613,7 @@ export function scopedStartEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 /** TEN-UX-45: what `loki start --dry-run` prints; runs the real preflight (read-only: an uninitialised folder is reported, never git-initialised) and spends nothing. Returns the exit code. */
 export async function dryRunStart(o: ParsedStartOpts, repoDir: string, env: NodeJS.ProcessEnv, out: (s: string) => void = (s) => process.stdout.write(s), err: (s: string) => void = (s) => process.stderr.write(s)): Promise<number> {
-  const rp = runProvider(o.provider, env, repoDir), provider = rp.provider; // the saved project choice counts here too, so the preview names the provider the run would use
+  const rp = resolveRunProvider(o.provider, env, repoDir), provider = rp.provider; // the saved project choice counts here too, so the preview names the provider the run would use
   if (rp.refusal) { err(rp.refusal); return 2; }
   if (!VALID_PROVIDERS.has(provider)) { err(unsupportedProviderMessage("start", "LOKI_PROVIDER", provider)); return 2; }
   const { resolveCap, capNote } = await import("../e10ext/budget_cap.ts");
