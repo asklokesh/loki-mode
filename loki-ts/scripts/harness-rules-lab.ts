@@ -164,14 +164,15 @@ const trainBase = runAll(TRAIN, []); out["train_baseline"] = score(trainBase);
 const cands = mine(trainBase.map((r) => r.facts)); out["candidates"] = cands.length;
 const heldBase = runAll(HELD, []); out["held_baseline"] = score(heldBase);
 const table: unknown[] = [], accepted: Rule[] = [];
-for (const c of cands) {
+const forced = (process.env["LAB_START_RULES"] ?? "").split(",").filter(Boolean); // rollback probe: start LIVE from these accepted ids instead of select()'s pick
+for (const c of forced.length ? [] : cands) {
   const v = judge(score(heldBase), score(runAll(HELD, activate([c]))), 0.0001), tv = judge(score(trainBase), score(runAll(TRAIN, activate([c]))), 0.0001);
   c.validation = { ...v, train_delta: tv.delta_correct }; c.state = v.accept ? "candidate" : "rejected";
   table.push({ rule: c.id, repos: c.support.repos.length, train_d: tv.delta_correct, held_d: v.delta_correct, held_fg: v.delta_false_green, held_harm: v.delta_harm, held_cost: v.delta_cost, accept: v.accept });
   if (v.accept) accepted.push(c);
 }
 out["validation"] = table;
-let active = activate(select(accepted));
+let active = forced.length ? activate(cands.filter((c) => forced.includes(c.id))) : activate(select(accepted));
 const combo = judge(score(heldBase), score(runAll(HELD, active)), 0.0001); out["selected"] = active.map((r) => r.id); out["held_combined"] = combo;
 // LIVE: monitor harm (observable: a passing check fails on the rule's tree), roll back, add harmed shapes to the held-back pool, re-validate
 const liveLog: unknown[] = [], harmedShapes: Fx[] = [];
