@@ -114,6 +114,8 @@ export function formatTierSeal(t: TierSeal): string {
   const tier = t.tier ? plainLine(t.tier, 40) : "", usd = t.topTierCostAvoidedUsd, rec = (k: string): string => { const c = t.record && Object.hasOwn(t.record, k) ? t.record[k] : undefined; return c && c.total > 0 ? `${k} sealed ${c.verified} of ${c.total}` : `${k} not measured`; };
   return `${tier ? `${tier} tier sealed` : "sealed tier not measured"}; top-tier cost avoided ${typeof usd === "number" && Number.isFinite(usd) && usd >= 0 ? `$${usd.toFixed(2)}` : "not measured"}; parity here: ${tier ? rec(tier) : "not measured"}, ${rec(TOP_TIER)}`;
 }
+/** The one wording for a cost known for some sessions only (E-69): shared by the receipt and the split rows, so a partial figure never reads NOT RECORDED. */
+export const partialCostText = (usd: number, measured: number, total: number, digits = 4): string => `partial: $${usd.toFixed(digits)} for ${measured} of ${total} sessions`;
 export function labelCol(text: string): string { return `${text}:`.padEnd(LABEL_WIDTH); }
 function cacheText(c: SummaryInput["cost"]): string {
   if (c.cacheReadTokens === undefined && c.cacheSavedUsd === undefined) return "";

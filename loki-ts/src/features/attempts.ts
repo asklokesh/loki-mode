@@ -22,9 +22,11 @@ export const DEFAULT_ATTEMPTS = 2, MAX_ATTEMPTS = 5, MIN_ATTEMPT_WINDOW_S = 90;
 /** The extra attempts' tree excludes: the linked dependency dir is the primary's own and never part of an attempt's diff. */
 export const ATTEMPT_EXCLUDES = [...DEFAULT_EXCLUDES, "node_modules"];
 
-/** k extra attempts, opt-in: unset is off (even on Haiku), `0` off, a whole number 1..5 sets k, `on`/`true`/`yes` is k=2 (the default k). Anything else is off (fail safe: never more spend than asked). The model is kept for callers; the rule no longer depends on it. */
-export function attemptsK(_model: string | undefined, env: NodeJS.ProcessEnv = process.env): number {
-  const raw = (env.LOKI_E10_ATTEMPTS ?? "").trim().toLowerCase();
+/** LOKI_E10_ATTEMPTS_EARLY=1 (off by default): on Haiku, run the extra attempts right after the first red verify, before any fix round, and skip the fix rounds when one goes green. */
+export const attemptsEarly = (env: NodeJS.ProcessEnv = process.env): boolean => (env.LOKI_E10_ATTEMPTS_EARLY ?? "").trim() === "1";
+/** k extra attempts, opt-in: unset is off (even on Haiku), `0` off, a whole number 1..5 sets k, `on`/`true`/`yes` is k=2 (the default k). Anything else is off (fail safe: never more spend than asked). The model matters only for the early switch, which implies k=2 on Haiku. */
+export function attemptsK(model: string | undefined, env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env.LOKI_E10_ATTEMPTS ?? "").trim().toLowerCase() || (attemptsEarly(env) && /haiku/i.test(model ?? "") ? "on" : ""); // the early switch implies k=2 on Haiku unless LOKI_E10_ATTEMPTS says otherwise
   if (["on", "true", "yes"].includes(raw)) return DEFAULT_ATTEMPTS;
   const n = Number(raw);
   return raw !== "" && Number.isInteger(n) && n > 0 ? Math.min(n, MAX_ATTEMPTS) : 0;

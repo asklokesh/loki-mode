@@ -5,7 +5,7 @@ import { hooks } from "./hooks.ts"; import { wallConcurrent } from "../util/wall
 import { treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
-import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsK, MIN_ATTEMPT_WINDOW_S, runExtraAttempts } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
+import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, MIN_ATTEMPT_WINDOW_S, runExtraAttempts } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
 import { stallSame, stallSignature } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
 
@@ -308,9 +308,14 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (todo.some((n, i) => mustJump(n, results[i] ?? null))) { jumped = true; continue; }
       if (todo[0] === "verify") {
         sigs.push(sigOf(outputs.verify, results[0]));
+        let attemptsRan = false;
+        if (attemptsEarly() && !fatal && !capHit && hasFailures(outputs.verify) && /haiku/i.test(String(outputs.implement?.model ?? ctx.model))) { // EXP-0010 early: a red first attempt on Haiku gets its parallel attempts BEFORE any fix round; a green winner leaves nothing for the fix loop below
+          const x = await extraAttempts(); attemptsRan = x.ran;
+          if (x.changed) { const v = await runStage("verify", true); sigs.push(sigOf(outputs.verify, v)); }
+        }
         let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
         let noopSig: string | null = null; // anti-loop: the verify signature that fed the last fix round that left the tree unchanged
-        for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
+        for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
           const wallBefore = wallSignature(outputs, ctx.repoDir);
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;
@@ -341,7 +346,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
             stopped = "stalled"; break;
           }
         }
-        if (!fatal && !capHit && (stopped === null || stopped === "stalled") && hasFailures(outputs.verify)) { // EXP-0010: a red first attempt gets k more in parallel
+        if (!fatal && !capHit && (stopped === null || stopped === "stalled") && !attemptsRan && hasFailures(outputs.verify)) { // EXP-0010: a red first attempt gets k more in parallel (not again when the early switch already ran them)
           const x = await extraAttempts();
           if (x.ran) stopped = null; // the fix rounds' stall was answered by fresh attempts: the best tree is delivered as PARTIAL when still red, never reported as a stall
           if (x.changed) { const v = await runStage("verify", true); sigs.push(sigOf(outputs.verify, v)); } // verify judges the winner's tree
