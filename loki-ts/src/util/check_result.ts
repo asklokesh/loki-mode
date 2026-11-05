@@ -29,6 +29,7 @@ export function plainTestEnv(base: NodeJS.ProcessEnv = process.env): Record<stri
   const e: Record<string, string> = {};
   for (const [k, v] of Object.entries(tokenFreeEnv(base))) if (typeof v === "string") e[k] = v;
   e["FORCE_COLOR"] = "0"; e["NO_COLOR"] = "1";
+  e["NX_DAEMON"] = "false"; // an Nx daemon outlives the check and keeps rewriting files (pnpm-lock.yaml) after the commit stage
   delete e["CLICOLOR_FORCE"];
   return e;
 }
@@ -1857,8 +1858,20 @@ function ownVitestSite(repoDir: string, path: string): PackageSiteLike | null {
   return null;
 }
 type PackageSiteLike = { cwd: string; root: string; file: string };
+const VITEST_CFG = /^vite(st)?\.config\.(?:[cm]?[jt]s|mts)$/;
+/** A package vitest config that merges the repo root's config while the root config sets `projects`: the root's globs resolve against the package directory and match nothing
+ *  ("No projects were found"), so a run started there never starts (zod: `cd packages/zod && npx vitest run ...`, which drove the implementer to edit vitest.config.ts). The root, whose projects
+ *  include this package, runs the same file correctly. */
+function rootProjectsBreakSite(repoDir: string, site: PackageSiteLike): boolean {
+  try {
+    if (site.cwd === repoDir) return false;
+    const read = (dir: string): string | null => { const n = readdirSync(dir).find((x) => VITEST_CFG.test(x)); return n ? readFileSync(join(dir, n), "utf8").slice(0, 200_000) : null; };
+    const root = read(repoDir), own = read(site.cwd);
+    return root !== null && own !== null && /\bprojects\s*:/.test(root) && /from\s+["'](?:\.\.\/)+vite(?:st)?\.config/.test(own);
+  } catch { return false; }
+}
 export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null): { cwd: string; cmd: string; args: string[]; argv: string[]; interpreter?: Interpreter; pkgRoot: string } {
-  const site = siteFor(api, repoDir, t.path) ?? (t.runner === "vitest" ? ownVitestSite(repoDir, t.path) : null);
+  const found = siteFor(api, repoDir, t.path) ?? (t.runner === "vitest" ? ownVitestSite(repoDir, t.path) : null), site = found && t.runner === "vitest" && rootProjectsBreakSite(repoDir, found) ? null : found;
   const base = site?.cwd ?? repoDir, rel = site?.file ?? t.path, mod = t.runner === "go" ? goModDir(base, rel) : base; // go resolves the module from the cwd: a go.mod below the base needs the run to start there
   const [cmd, args, interpreter] = runnerCmd(mod === base ? (site ? { runner: t.runner, path: site.file } : t) : { runner: t.runner, path: relative(mod, join(base, rel)) }, mod === base ? repoDir : mod);
   return { cwd: mod === base ? base : mod, cmd, args, argv: [cmd, ...args], ...(interpreter ? { interpreter } : {}), pkgRoot: mod === base ? site?.root ?? "." : relative(repoDir, mod) || "." };
