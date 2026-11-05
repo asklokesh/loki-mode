@@ -1711,15 +1711,27 @@ function goAssertionFailure(out: string): boolean {
   if (!pkgFail && failedTests.size === 0) return false;
   return failedTests.size > 0 && [...failedTests].some((k) => asserted.has(k) || [...asserted].some((a) => a.startsWith(`${k}/`)));
 }
-/** True only when a red test file failed on assertions: every reported failure is an assertion, and none is an import, collection, attribute, type or reference error (a test that calls code the base lacks fails that way for ANY change, so it proves nothing about the fix). Only pytest and vitest output is read; every other runner is false (fail-closed: the run reads PARTIAL). */
-export function assertionFailure(runner: string, output: string): boolean {
+/** The errors an issue itself reports, as "Type: message" (`RuntimeError: input already opened`, also written `RuntimeError('input already opened')`): only a Python-style exception name ending in Error or Exception with a message of at least 3 characters. */
+export function reportedErrors(task: string): string[] {
+  const out = new Set<string>();
+  for (const m of task.matchAll(/(?<![\w.])([A-Z][A-Za-z0-9_]*(?:Error|Exception))(?::[ \t]*([^\n`]{3,200})|\(\s*(['"])([^'"\n]{3,200})\3\s*\))/g)) { const msg = (m[2] ?? m[4] ?? "").trim().replace(/[\s.]+$/, ""); if (msg.length >= 3) out.add(`${m[1]}: ${msg}`); }
+  return [...out];
+}
+const MISSING_API = /^(?:Import|ModuleNotFound|Attribute|Name|UnboundLocal|Syntax|Indentation)Error\b|^TypeError: .*(?:unexpected keyword argument|positional argument|required (?:positional|keyword-only) argument|is not callable|takes no arguments)/; // a call the base cannot make, even when the issue quotes it
+/** True only when a red test file failed on assertions: every reported failure is an assertion, and none is an import, collection, attribute, type or reference error (a test that calls code the base lacks fails that way for ANY change, so it proves nothing about the fix). Only pytest and vitest output is read; every other runner is false (fail-closed: the run reads PARTIAL).
+ *  `reported` (pytest; reportedErrors of the issue): a failure that is not an assertion still counts when its exception type and message are exactly an error the issue reports (more-itertools#1277: the issue quotes "RuntimeError: input already opened" and the base raises exactly that), every other failure is an assertion or a reported error, and none is a missing-API error. An exception the issue does not report stays not-proof. */
+export function assertionFailure(runner: string, output: string, reported: readonly string[] = []): boolean {
   const out = stripAnsi(output);
   if (runner === "pytest") { // red by assertion: at least one failure is an assertion and none is a missing-API error (import, attribute, name, type, syntax). A behavioral error beside it (OverflowError, ValueError) is the bug itself, not an absent API.
     if (/^ERROR\s|errors? during collection/m.test(out)) return false;
-    const f = [...out.matchAll(/^FAILED\s+\S+(?:\s+-\s+(.*))?$/gm)].map((m) => (m[1] ?? "").trim());
+    const f = [...out.matchAll(/^(?:SUB)?FAILED(?:\([^)\n]*\))?\s+\S+(?:\s+-\s+(.*))?$/gm)].map((m) => (m[1] ?? "").trim()); // SUBFAILED(...): a failed unittest subTest
     if (f.length === 0) return false;
     const kinds = f.every((r) => r !== "" && !r.endsWith("...")) ? f : [...out.matchAll(/^E\s+((?:assert\b|[A-Za-z_.]*(?:Error|Exception))\S*)/gm)].map((m) => m[1]!); // a narrow terminal cuts the " - reason" from the summary line, or ends it in "..." ("AssertionEr..."): read the traceback's E lines instead
-    return kinds.some((k) => /^(?:assert\b|AssertionError\b)/.test(k)) && !kinds.some((k) => /^(?:Import|ModuleNotFound|Attribute|Name|UnboundLocal|Type|Syntax|Indentation)Error\b/.test(k));
+    const asserted = kinds.some((k) => /^(?:assert\b|AssertionError\b)/.test(k)) && !kinds.some((k) => /^(?:Import|ModuleNotFound|Attribute|Name|UnboundLocal|Type|Syntax|Indentation)Error\b/.test(k));
+    if (asserted || reported.length === 0) return asserted;
+    const norm = (x: string): string => x.replace(/\s+/g, " ").trim().replace(/[\s.]+$/, ""), want = new Set(reported.map(norm));
+    const raised = [...out.matchAll(/^E\s+((?:[A-Za-z_][\w]*\.)*[A-Za-z_]\w*(?:Error|Exception))(?::[ \t]*(.*))?$/gm)].map((m) => norm(`${m[1]!.split(".").pop()!}: ${m[2] ?? ""}`)); // E lines carry the exception and its message; a dotted module prefix is dropped
+    return raised.length > 0 && raised.some((r) => want.has(r)) && raised.every((r) => want.has(r) || /^AssertionError\b/.test(r)) && !raised.some((r) => MISSING_API.test(r)) && !kinds.some((k) => MISSING_API.test(k));
   }
   if (runner === "vitest") { const e = [...out.matchAll(/^\s*((?:[A-Za-z]*Error))(?:\s*\[[^\]]*\])?:/gm)].map((m) => m[1]!); return e.length > 0 && e.every((k) => k === "AssertionError"); }
   if (runner === "go") return goAssertionFailure(out);

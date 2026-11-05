@@ -918,6 +918,30 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest declared-env base proof: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest declared-env base proof: pytest is not installed"; fi
 fi
+# Issue-reported exception as fail-then-pass proof (rule 22, real pytest through the real engine; the receipt shape of L-Haiku-v132 mit-1277: the base raises
+# "RuntimeError: input already opened", which the issue itself quotes, so the base failure is not an assertion and the run read "no test shown to fail on the base commit and pass on the change: test fails without the fix: yes").
+# A base failure that is exactly an error the issue reports (type and message) counts like an assertion; one the issue does not report, and a missing-API TypeError the issue does quote, stay PARTIAL.
+# Plants: assertionFailure ignores `reported` (the positive leg reads PARTIAL); MISSING_API drops the TypeError shape (the TypeError leg reads VERIFIED).
+make_rx_py_repo() {
+    mkdir -p "$1"
+    printf 'def add(a, b):\n    return a + b\n\n\ndef double(a, factor=None):\n    raise RuntimeError("double is broken")\n' > "$1/calc.py"
+    printf 'import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n' > "$1/test_calc.py"
+    return 0
+}
+rx() { MAKE_REPO=make_rx_py_repo run_engine "$1" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    raise RuntimeError("double is broken")' E2E_STUB_SNIPPET="$2" E2E_STUB_TEST_FILE=test_calc.py E2E_STUB_TEST_APPEND="$3" LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10; notes="$(wo_receipt np)"; mp="$(wo_receipt mp)"; }
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    rx $'fix double(a) in calc.py: every call fails with\n\n    RuntimeError: double is broken\n\nIt should return twice a.' $'    return a * 2' $'\n\ndef test_double():\n    assert calc.double(3) == 6\n'
+    [ "$(outcome)" = "VERIFIED" ] && ok "issue-reported exception: a base failure raising exactly the RuntimeError the issue quotes is fail-then-pass proof: VERIFIED" || { bad "issue-reported exception: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$mp" in *"fails without the fix: yes"*"test_calc.py"*) ok "issue-reported exception: the proof line names the file ($mp)" ;; *) bad "issue-reported exception: no proof line naming test_calc.py: '$mp'" ;; esac
+    rx $'fix double(a) in calc.py so it returns twice a' $'    return a * 2' $'\n\ndef test_double():\n    assert calc.double(3) == 6\n'
+    [ "$(outcome)" = "PARTIAL" ] && ok "unreported exception: the same RuntimeError on the base, not quoted by the issue, stays PARTIAL" || { bad "unreported exception: outcome is '$(outcome)'"; dump; }
+    rx $'fix double(a) in calc.py: double(3, factor=2) fails with\n\n    TypeError: double() got an unexpected keyword argument \x27scale\x27\n\nIt should return a times the scale.' $'    return a * 2\n\n\ndef double(a, scale=2):\n    return a * scale' $'\n\ndef test_double_scale():\n    assert calc.double(3, scale=2) == 6\n'
+    case "$(outcome)" in VERIFIED) bad "reported missing-API TypeError: a base failure the issue quotes as an unexpected keyword argument is VERIFIED ($notes)"; dump ;; *) ok "reported missing-API TypeError: stays not VERIFIED ($(outcome))" ;; esac
+    rr="$(cd "$ROOT/loki-ts" && bun -e 'const { assertionFailure, reportedErrors } = await import("./src/util/check_result.ts"); const out = (e: string) => "E       " + e + "\n\nFAILED test_calc.py::test_x - " + e + "\n"; const rep = reportedErrors("it raises `RuntimeError(\x27input already opened\x27)` and later\n    ValueError: bad size.\n"); console.log([rep.join("|"), assertionFailure("pytest", out("RuntimeError: input already opened"), rep), assertionFailure("pytest", out("RuntimeError: input already opened")), assertionFailure("pytest", out("RuntimeError: other"), rep), assertionFailure("pytest", out("ValueError: bad size"), rep), assertionFailure("pytest", out("ImportError: cannot import name x"), ["ImportError: cannot import name x"]), assertionFailure("pytest", out("RuntimeError: input already opened") + out("KeyError: 3"), rep)].join(","))' 2>&1 | tail -1)"
+    [ "$rr" = "RuntimeError: input already opened|ValueError: bad size,true,false,false,true,false,false" ] && ok "issue-reported exception unit: both quoting styles are read; only an exact reported type and message counts, never a missing-API error or beside an unreported one ($rr)" || bad "issue-reported exception unit: got '$rr'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "issue-reported exception: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: issue-reported exception: pytest is not installed"; fi
+fi
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
 if command -v go >/dev/null 2>&1; then
