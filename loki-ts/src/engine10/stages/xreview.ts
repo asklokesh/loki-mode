@@ -11,6 +11,7 @@ import { readRiskRecord } from "../../util/run_summary.ts"; import { capWhole, r
 import { writeReviewerCost } from "../../providers/provider_cost.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { capToSessionPin } from "../../runner/model_rank.ts";
+import { PROVIDER_DEFAULT_MODEL } from "../../util/claude_model.ts";
 import { backstopS, type RunContext, type Verdict } from "../types.ts";
 export type ReviewLevel = "pass" | "flag" | "block" | "not_run";
 export type ReviewedBy = "model" | "deterministic" | "none";
@@ -80,7 +81,7 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   const tier = readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier, medium = tier === "medium";
   let hy: string[] = [], hyOk = false, hyNote = ""; // medium: the deterministic hygiene scan of files the run added (no model call); it can only add a flag, never lift a verdict
   if (medium) { const a = await safeGitRun(ctx.repoDir, ["diff", "--no-color", "--name-only", "-z", "--diff-filter=A", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null); if (a && a.exitCode === 0) { hyOk = true; const added = a.stdout.split("\0").filter(Boolean); const box = Number(process.env["LOKI_E10_HYGIENE_BOX_MS"]), ig = await ignoredPaths(ctx.repoDir, added, box > 0 ? box : 20000); if (ig) hy = hygieneFindings(added, ig); else { hy = hygieneFindings(added, new Set()); hyOk = false; hyNote = "hygiene scan unavailable (git check-ignore did not complete): NOT PROVEN that run-added files are free of ignored or build artifacts"; } } }
-  const pin = medium && p === "claude" ? fastTierModel(process.env) : dflt && p === "claude" && ctx.model ? capToSessionPin(ctx.model) : undefined; // medium reviews on the fast tier (same mapping as the plan session); the unconfigured high-tier default review runs on the run's own model, never above a LOKI_SESSION_MODEL pin (a Haiku run reviews on Haiku); an agent-configured model wins (agent?.model || pin, so an empty one falls back to the pin)
+  const pin = medium && p === "claude" ? fastTierModel(process.env) : dflt && p === "claude" && ctx.model && ctx.model !== PROVIDER_DEFAULT_MODEL ? capToSessionPin(ctx.model) : undefined; // medium reviews on the fast tier (same mapping as the plan session); the unconfigured high-tier default review runs on the run's own model, never above a LOKI_SESSION_MODEL pin (a Haiku run reviews on Haiku); the provider-default label is a record, never a --model value (the CLI rejects it and the review exited 1), so a default-model run omits --model; an agent-configured model wins (agent?.model || pin, so an empty one falls back to the pin)
   const tag = <T extends CrossReview>(r: T): T => {
     const modelRan = r.level !== "not_run", level = hy.length && (r.level === "pass" || r.level === "not_run") ? "flag" : r.level;
     return { ...r, level, notes: hyNote ? [...r.notes, hyNote] : r.notes, ...(hy.length ? { hygiene: hy } : {}), reviewed_by: modelRan ? "model" : hyOk ? "deterministic" : "none", ...(modelRan && p === "claude" && (agent?.model || pin) ? { reviewer_model: (agent?.model || pin)! } : {}), ...(dflt ? { same_vendor_default: true } : {}) };

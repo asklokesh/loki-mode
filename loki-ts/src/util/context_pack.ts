@@ -220,6 +220,16 @@ export function packEnabled(model: string | undefined, env: NodeJS.ProcessEnv = 
   return /haiku|sonnet/i.test(model ?? "");
 }
 
+/** E6 diet: the pack keeps the named spans plus their direct callers and callees, with no fill up to the budget. LOKI_E10_PACK_DIET=1 turns it on, =0 off. */
+export const PACK_DIET_DEFAULT = false;
+export function packDietEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = env["LOKI_E10_PACK_DIET"];
+  return v === "1" ? true : v === "0" ? false : PACK_DIET_DEFAULT;
+}
+const DIET_MAX_CALLERS = 3; // callers per named definition under the diet (five without it)
+const DIET_MAX_CALLEES = 6; // direct callees pulled in per pack under the diet
+const DIET_MAX_DEFS = 3; // a name defined in more files than this is too common to count as named
+
 interface Unit { path: string; start: number; end: number; symbol: string | null; via: PackSpan["via"]; score: number; order: number }
 
 function taskIdentifiers(task: string): Set<string> {
@@ -237,7 +247,8 @@ function taskIdentifiers(task: string): Set<string> {
  * definitions the task names or whose names share the task's words (from the brief's ranked files), then the definitions
  * those bodies call (one and two hops, through the repo map's symbols), then the callers of the named definitions.
  */
-export function contextPack(repoDir: string, task: string, files: string[], symbolIndex: { path: string; symbols: string[] }[] = [], budgetTokens = PACK_BUDGET_TOKENS): ContextPack | null {
+export function contextPack(repoDir: string, task: string, files: string[], symbolIndex: { path: string; symbols: string[] }[] = [], budgetTokens = PACK_BUDGET_TOKENS, env: NodeJS.ProcessEnv = process.env): ContextPack | null {
+  const diet = packDietEnabled(env);
   const ids = taskIdentifiers(task), words = new Set(taskKeywords(task));
   const texts = new Map<string, string[]>(), spansOf = new Map<string, Span[]>();
   const load = (p: string): boolean => {
@@ -293,6 +304,13 @@ export function contextPack(repoDir: string, task: string, files: string[], symb
   units.sort((a, b) => b.score - a.score || a.order - b.order);
   const top = units[0]!.score;
   units.splice(0, units.length, ...units.filter((u) => u.symbol === null || u.score >= top * 0.3)); // weak matches spend no budget
+  if (diet) { // named spans only: a rare definition whose exact name the task writes (or a whole small file it names); no tests, no fill
+    const written = new Set(task.match(/[A-Za-z_]\w*/g) ?? []), defs = new Map<string, Set<string>>();
+    for (const e of symbolIndex) for (const sy of e.symbols) { const l = leaf(sy), v = defs.get(l) ?? new Set<string>(); v.add(e.path); defs.set(l, v); }
+    const strict = (u: Unit): boolean => u.symbol === null ? u.via === "named" : written.has(leaf(u.symbol)) && leaf(u.symbol).length >= 4 && (defs.get(leaf(u.symbol))?.size ?? 0) <= DIET_MAX_DEFS;
+    const named = units.filter((u) => strict(u) && (!isTestFile(u.path) || task.includes(u.path)));
+    units.splice(0, units.length, ...(named.length ? named : units.filter((u) => !isTestFile(u.path)).slice(0, 1)));
+  }
 
   const chosen: Unit[] = [];
   const budgetBytes = budgetTokens * 3;
@@ -322,11 +340,11 @@ export function contextPack(repoDir: string, task: string, files: string[], symb
     return out.slice(0, 2);
   };
   const seen = new Set<string>();
-  for (let hop = 0; hop < 2; hop++) {
+  for (let hop = 0; hop < (diet ? 1 : 2); hop++) { // the diet takes direct callees only
     const idents: { w: string; from: string }[] = [];
     for (const c of [...chosen]) for (const w of texts.get(c.path)!.slice(c.start - 1, c.end).join("\n").match(/[A-Za-z_]\w{2,}/g) ?? []) if (!seen.has(`${c.path}\0${w}`) && !KW.has(w)) { seen.add(`${c.path}\0${w}`); idents.push({ w, from: c.path }); }
     let added = 0;
-    for (const { w, from } of idents.slice(0, MAX_IDENTS_PER_HOP)) for (const d of defsFor(w, from)) if (take({ path: d.path, start: d.span.start, end: d.span.end, symbol: d.span.name, via: "callee", score: 0, order: order++ })) added++;
+    for (const { w, from } of idents.slice(0, MAX_IDENTS_PER_HOP)) for (const d of defsFor(w, from)) if ((!diet || added < DIET_MAX_CALLEES) && take({ path: d.path, start: d.span.start, end: d.span.end, symbol: d.span.name, via: "callee", score: 0, order: order++ })) added++;
     if (!added) break;
   }
 
@@ -335,7 +353,7 @@ export function contextPack(repoDir: string, task: string, files: string[], symb
     let out = "";
     try { out = safeGit(repoDir, ["grep", "-n", "-w", "-I", "--", leaf(u.symbol!)], { stdio: ["ignore", "pipe", "ignore"] }); } catch { continue; }
     const hits = out.split("\n").map((l) => /^(.*?):(\d+):/.exec(l)).filter((m): m is RegExpExecArray => !!m && m[1] !== u.path && !isTestFile(m[1]!));
-    for (const m of hits.slice(0, 5)) {
+    for (const m of hits.slice(0, diet ? DIET_MAX_CALLERS : 5)) {
       if (!load(m[1]!)) continue;
       const line = Number(m[2]);
       const encl = spansOf.get(m[1]!)!.filter((s) => !s.container && s.start <= line && s.end >= line).sort((a, b) => (a.end - a.start) - (b.end - b.start))[0];
