@@ -2,7 +2,7 @@
 // fail-then-pass is "flaky". An empty diff with the already_done marker seals ALREADY_SATISFIED; without it, FAILED (ENGINE.md 2). Reaches testmap.ts/ machine.ts only through RunContext's `tests: TestMapProvider`, injected as a fake in tests, never imported here.
 import { installHint } from "../../util/stack_tools.ts";
 import { atomicWriteText } from "../../util/atomic.ts"; import { redactSecrets } from "../../util/redact.ts";
-import { installOwned } from "../../project_model/install.ts";
+import { installOwned, projectDeclaresRuff } from "../../project_model/install.ts";
 import { scopedOutOf } from "../../project_model/scope.ts";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -314,12 +314,6 @@ const ESLINT_CONFIGS = [".eslintrc", ".eslintrc.json", ".eslintrc.js", ".eslintr
  *  a check entry: a missing tool is not_run, never silently absent (section 9 NOT PROVEN). */
 /** TEN-QUALITY-03: a failed ruff/shellcheck/eslint check whose every diagnostic is also on the base content (git show, fed on stdin, same per-check timeout) is pre-existing. */
 const excuseLint = (ctx: RunContext, signal: AbortSignal, c: VerifyCheck, tool: StaticTool, cmd: string, prefix: string[], cwd: string, rel: string[], opts: RunOpts): Promise<boolean> => c.result !== "fail" || signal.aborted ? Promise.resolve(false) : staticPreExisting(tool, prefix, rel, { run: async (a, stdin) => { if (signal.aborted) return null; const r = await runOnce(cmd, a, cwd, AbortSignal.any([signal, AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS)]), { ...opts, ...(stdin !== undefined ? { stdin } : {}) }); return r.missing || r.cut ? null : r; }, base: (f) => { try { return safeGit(ctx.repoDir, ["show", `${ctx.baseSha}:${relative(ctx.repoDir, join(cwd, f))}`], { stdio: ["ignore", "pipe", "ignore"] }); } catch { return null; } } });
-/** The project names ruff itself: a [tool.ruff] table, a ruff config file, or ruff in a dependency or tooling manifest. Config detection only, never an install. */
-function projectDeclaresRuff(repoDir: string): boolean {
-  if (["ruff.toml", ".ruff.toml"].some((f) => existsSync(join(repoDir, f)))) return true;
-  const files = ["pyproject.toml", "setup.cfg", "tox.ini", ".pre-commit-config.yaml", "Pipfile", "requirements.txt", "requirements-dev.txt", "dev-requirements.txt"];
-  return files.some((f) => { try { return /\bruff\b/i.test(readFileSync(join(repoDir, f), "utf8")); } catch { return false; } });
-}
 /** tsc's unused-declaration diagnostics (noUnusedLocals/Parameters): decided by one file's own text, so an edit elsewhere never causes one. */
 const TSC_LOCAL = new Set(["TS6133", "TS6138", "TS6192", "TS6196", "TS6198", "TS6199", "TS6205"]);
 const TSC_DIAG = /^(\S.*?)(?:\(\d+,\d+\)|:\d+:\d+)\s*(?::|-)\s*error (TS\d+)/gm;
