@@ -322,7 +322,7 @@ echo "    pr mode: backlog reads: $PRSTATUS"
 case "$PRSTATUS" in "True PARTIAL, PR local:///"*) ok "pr mode: backlog counts the PARTIAL split with its draft PRs as done" ;; *) bad "pr mode: backlog reads the PR-mode split as: $PRSTATUS" ;; esac
 
 # --- outcome: the split's aggregate verdict, exit code and cost line (pure) -------------------------------------------
-AGG="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+AGG="$(ROOT="$ROOT" PT="$T" bun --no-env-file --config=/dev/null -e '
 const { epicOutcome } = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
 const row = (id, outcome, usd, rc, extra = {}) => ({ id, title: id, parent: null, outcome, pr: null, cost: usd === undefined ? "-" : usd === null ? "NOT RECORDED" : "$" + usd.toFixed(2), usd, rc, ...extra });
 const cases = {
@@ -330,9 +330,17 @@ const cases = {
   partial: [[row("s1", "VERIFIED", 0.1, 0), row("s2", "PARTIAL", 0.2, 6, { pr: "https://github.com/acme/search/pull/9" })], []],
   budget: [[row("s1", "VERIFIED", 0.1, 0), row("s2", "FAILED (exit 3)", null, 3, { budget: true }), row("s3", "SKIPPED (dependency s2 did not pass)", undefined)], [0.05, 0.05]],
   failed_beats_budget: [[row("s1", "FAILED", 0.05, 1), row("s2", "FAILED (exit 3)", 0.1, 3, { budget: true })], []],
+  partial_cost: [[row("s1", "VERIFIED", 1.76, 0), row("s2", "VERIFIED", null, 0, { partial: { usd: 0.3928382, measured: 1, total: 2 } }), row("s3", "VERIFIED", null, 0)], []],
+  partial_only: [[row("s1", "VERIFIED", null, 0, { partial: { usd: 0.3928382, measured: 1, total: 2 } })], []],
 };
 for (const [k, [rows, plan]] of Object.entries(cases)) { const o = epicOutcome(rows, plan, {}); console.log(k + " " + o.outcome + " " + o.rc + " | " + o.lines.trim().split("\n").join(" | ")); }
-const d = epicOutcome(cases.budget[0], [], { LOKI_DURABLE_STATE: "1" }); console.log("durable " + d.outcome + " " + d.rc);' 2>&1)"
+const d = epicOutcome(cases.budget[0], [], { LOKI_DURABLE_STATE: "1" }); console.log("durable " + d.outcome + " " + d.rc);
+const { newestRecord } = await import(process.env.ROOT + "/loki-ts/src/commands/queue.ts");
+const { mkdirSync, writeFileSync, mkdtempSync, rmSync } = await import("node:fs");
+const nr = (cost) => { const ld = process.env.PT + "/nr" + Math.random().toString(36).slice(2); mkdirSync(ld + "/runs/r1", { recursive: true }); writeFileSync(ld + "/runs/r1/receipt.json", JSON.stringify({ verdict: "VERIFIED", cost })); const r = newestRecord(ld, 0); return JSON.stringify([r.costUsd, r.partial ?? null]); };
+console.log("nr_partial " + nr({ usd: null, partial_usd: 0.3928382, measured_sessions: 1, total_sessions: 2 }));
+console.log("nr_none " + nr({ usd: null, partial_usd: 0, measured_sessions: 0, total_sessions: 2 }));
+console.log("nr_full " + nr({ usd: 0.5, partial_usd: 0.5, measured_sessions: 2, total_sessions: 2 }));' 2>&1)"
 printf '%s\n' "$AGG" | sed 's/^/    outcome: /'
 printf '%s\n' "$AGG" | grep -q '^verified VERIFIED 0 | Outcome: *VERIFIED | Cost: *\$0.31 (2 slice runs + 1 planning session)$' \
     && ok "outcome: every slice VERIFIED gives VERIFIED, exit 0; cost sums unrounded slice figures plus the planning session (0.104+0.204+0.004 = 0.31, not 0.30)" || bad "outcome: all-VERIFIED case wrong"
@@ -340,6 +348,12 @@ printf '%s\n' "$AGG" | grep -q '^partial PARTIAL 6 | Outcome: *PARTIAL | Reason:
 printf '%s\n' "$AGG" | grep -q '^budget BUDGET_STOP 3 | Outcome: *BUDGET_STOP | Reason: *slice s2: FAILED (exit 3) | Cost: *partial: \$0.20 for 3 of 4 (2 slice runs + 2 planning sessions)$' \
     && ok "outcome: a slice budget stop gives BUDGET_STOP, exit 3; a re-asked split counts both planning sessions; cost marked partial" || bad "outcome: budget case wrong"
 printf '%s\n' "$AGG" | grep -q '^failed_beats_budget FAILED 1 ' && ok "outcome: a real FAILED slice outranks a budget stop (FAILED, exit 1)" || bad "outcome: FAILED did not outrank the budget stop"
+printf '%s\n' "$AGG" | grep -q '^partial_cost VERIFIED 0 | Outcome: *VERIFIED | Cost: *partial: \$2.15 for 1 of 3 (3 slice runs)$' \
+    && ok "outcome: a slice priced for 1 of 2 sessions adds its known \$0.39 to the split total (1.76+0.39 = 2.15, still unmeasured), never dropped" || bad "outcome: partial slice dollars dropped from the split total"
+printf '%s\n' "$AGG" | grep -q '^partial_only VERIFIED 0 | Outcome: *VERIFIED | Cost: *partial: \$0.39 for 0 of 1 (1 slice run)$' \
+    && ok "outcome: a split whose only figure is a slice's partial reads partial \$0.39, never not measured or \$0.00" || bad "outcome: partial-only split cost wrong"
+printf '%s\n' "$AGG" | grep -q '^nr_partial \[null,{"usd":0.3928382,"measured":1,"total":2}\]$' && printf '%s\n' "$AGG" | grep -q '^nr_none \[null,null\]$' && printf '%s\n' "$AGG" | grep -q '^nr_full \[0.5,null\]$' \
+    && ok "outcome: queue newestRecord carries a receipt's partial cost (null usd, 1 of 2 sessions); no priced session stays unrecorded; a full cost has no partial" || bad "outcome: newestRecord partial cost wrong: $(printf '%s\n' "$AGG" | grep '^nr_')"
 printf '%s\n' "$AGG" | grep -q '^durable BUDGET_STOP 20$' && ok "outcome: exit codes go through exitCodeOf (LOKI_DURABLE_STATE=1 gives 20)" || bad "outcome: LOKI_DURABLE_STATE exit code wrong"
 BL="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import backlog
 print(backlog.parse_result(1, "loki: split refused (x); running the issue as one run\nSplit planning: $0.40 (0 slice runs + 1 planning session)\nOutcome:    FAILED\nCost:       $1.10 (claude)\n")[2])' "$ROOT/autonomy/lib" 2>&1)"
