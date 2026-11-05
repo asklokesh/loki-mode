@@ -531,6 +531,31 @@ res("failed or capped call: no vote, the precedent prose stays and does not tell
 calls = 0; const vR = await voteOpenChoices(Q, { repoDir: R }, stub("OPTION 1"));
 res("no siblings in the snapshot: no call", calls === 0 && vR[0] === undefined);
 res("parsePrecedentVote: option, neither, out of range, garbage", parsePrecedentVote("OPTION 2", 2) === 1 && parsePrecedentVote("NEITHER", 2) === null && parsePrecedentVote("OPTION 3", 2) === null && parsePrecedentVote("hmm", 2) === null);
+// sibling test transplant (Go): the siblings' tests generalized and filled with the target
+{
+  const GR = `${process.env.T}/tp-repo`; mkdirSync(`${GR}/settings`, { recursive: true });
+  const typ = (t: string, ret: string, zero: string) => `type ${t} struct{ Raw string }\n\nfunc (s ${t}) Value() ${ret} {\n\treturn ${zero}\n}\n`;
+  writeFileSync(`${GR}/settings/settings.go`, `package settings\n\n${typ("IntSetting", "int", "0")}\n${typ("BoolSetting", "bool", "false")}\n${typ("ListSetting", "[]string", "nil")}\n${typ("DurationSetting", "string", "s.Raw")}`);
+  const tcase = (t: string, ret: string, zero: string, extra = true) => `func Test${t}Value(t *testing.T) {\n\tvar zero ${ret}\n\tif got := (${t}{Raw: "nope"}).Value(); got != zero {\n\t\tt.Fatalf("invalid input: got %v", got)\n\t}\n${extra ? "" : ""}}\n`;
+  writeFileSync(`${GR}/settings/settings_test.go`, `package settings\n\nimport "testing"\n\n${tcase("IntSetting", "int", "0")}\n${tcase("BoolSetting", "bool", "false")}\nfunc TestDurationSettingValue(t *testing.T) {\n\tif got := (DurationSetting{Raw: "5s"}).Value(); got != "5s" {\n\t\tt.Fatalf("got %v", got)\n\t}\n}\n`);
+  const gg = (...a: string[]) => execFileSync("git", ["-C", GR, "-c", "user.name=t", "-c", "user.email=t@t", ...a]); gg("init", "-q"); gg("add", "."); gg("commit", "-q", "-m", "seed");
+  const body = "Every other setting type gives me the parsed value from `Value()`. `DurationSetting.Value()` hands back the raw text.\n\nShould DurationSetting.Value return the parsed time.Duration, or should Value keep returning the string and a new Duration() method return the parsed time.Duration?\n\nA value that does not parse should give 0.";
+  const like = "DurationSetting.Value should behave like the other settings\n\n" + body, plain = "DurationSetting.Value returns a string\n\n" + body;
+  const run = async (task: string, ans = "OPTION 1") => { const v = await voteOpenChoices(task, { repoDir: GR }, async () => ans); return one(task, { repoDir: GR, votes: v })!; };
+  const tb = await run(like), tl = choiceLine(tb);
+  res("transplant: issue says like the siblings and 2 siblings share the case: a binding failing test for the target", tb.transplant?.binding === true && tl.includes("Binding sibling test") && tl.includes("func TestLokiTransplant_DurationSettingValue") && tl.includes("var zero time.Duration") && tl.includes('(DurationSetting{Raw: "nope"}).Value()') && tl.includes('"time"'));
+  const ta = await run(plain);
+  res("transplant: the issue does not ask for sibling behavior: advisory, no test body in the line", ta.transplant?.binding === false && choiceLine(ta).includes("Advisory") && !choiceLine(ta).includes("func TestLokiTransplant"));
+  const tn = await run(like, "NEITHER");
+  res("transplant: siblings disagree (NEITHER): no transplant and no line", !tn.transplant && emitChoiceLines([tn]).length === 0);
+  const t2 = await run(like.replace("parsed time.Duration, or should", "parsed time.Duration, or should").replace(/^/, ""), "OPTION 2");
+  res("transplant: the picked option does not name the target member: no transplant", !t2.transplant);
+  const AL = like + "\n\nAny of the following outputs is acceptable:\n\n- `DurationSetting.Value` returns the parsed time.Duration\n- `DurationSetting.Value` returns the trimmed string\n";
+  const rAL = one(AL, { repoDir: GR, votes: [0, 0] })!;
+  res("transplant: an acceptable-outputs list never gets a transplant", !rAL.transplant);
+  writeFileSync(`${GR}/settings/settings_test.go`, `package settings\n\nimport "testing"\n\n${tcase("IntSetting", "int", "0")}\nfunc TestBoolSettingValue(t *testing.T) {\n\tif got := (BoolSetting{Raw: "true"}).Value(); got != true {\n\t\tt.Fatalf("got %v", got)\n\t}\n}\n`); gg("add", "."); gg("commit", "-q", "-m", "one sibling case");
+  res("transplant: a case only one sibling has is not a convention: no transplant", !(await run(like)).transplant);
+}
 // the default voter: toolLessCall on a stub Agent SDK query() (no network): tool-less, thinking off, ledger line, output budget above the thinking leak, run cap stops it
 {
   const { __setToolLessQueryForTests } = await import(src + "runner/sdk_invoker.ts"), { mkdtempSync, readFileSync, existsSync } = await import("node:fs"), { tmpdir } = await import("node:os");
