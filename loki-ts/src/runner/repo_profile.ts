@@ -27,7 +27,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
-import { comparableIds, errorsById, failIds, sameErrors, unhandledBlock } from "../engine10/failures.ts";
+import { comparableIds, errorsById, failIds, idNamesFile, sameErrors, unhandledBlock } from "../engine10/failures.ts";
 import { classifyCheck, emptyDiscovery, exitCodedId, goRunner, isExitCodedScript, plainTestEnv, stripAnsi, type Classified } from "../util/check_result.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
@@ -289,7 +289,12 @@ export interface BaselineRun { code: number | null; timedOut: boolean; out: stri
 export type BaselineRunner = (cmd: string, cwd: string, timeoutMs: number) => BaselineRun;
 
 export const commandProfilePath = (repoDir: string): string => join(repoDir, ".loki", "state", "repo-profile.json");
-const DEFAULT_TIMEOUT_S = 60;
+/** One command's baseline budget: the same 5 minutes deep.ts gives that command's own run on the change (FULL_SUITE_TIMEOUT_MS is derived from this), so a suite that completes on head is never cut short on base (v131: tq's 250 s npm test got 60 s on base, timed out, and its pre-existing red was blamed on the change). */
+export const BASELINE_CMD_TIMEOUT_S = 300;
+/** A cut entry measured with a shorter budget than the current one is measured again; one cut at the current budget is kept (a hanging suite is not re-run for 5 minutes every time). */
+/** A baseline command never gets more than a third of the run's overall cap. */
+export const baselineCmdS = (capS: number | undefined): number => Math.max(1, Math.min(BASELINE_CMD_TIMEOUT_S, Math.floor((capS ?? Infinity) / 3)));
+const cutShort = (b: { timed_out: boolean; duration_s: number | null } | undefined, tmoS: number): boolean => !!b?.timed_out && (b.duration_s ?? 0) < tmoS - 1;
 export const MANIFESTS = ["requirements.txt", "package.json", "Makefile", "makefile", "GNUmakefile", "pyproject.toml", "tox.ini", "pytest.ini", "setup.cfg", "go.mod", "Cargo.toml", "tsconfig.json"];
 const NO_TEST = /no test specified/i;
 
@@ -364,7 +369,8 @@ export function discoverCommands(repoDir: string, pmDir: string = repoDir): Prof
  *  tracked package manifest outside vendored, fixture, example, docs and test directories. Commands come from discoverCommands (one reader
  *  of manifests); install only from a lockfile (or go.mod), so no install ever mutates a lock; dependsOn only from JS manifests naming another
  *  member (other packages leave it absent: edges unknown). Returns the raw answer for validateAnswer, or null when no package has a test
- *  command, the tree cannot be listed or it holds too many manifests to trust a reading (the model session then decides). Never throws. */
+ *  command, the tree cannot be listed or it holds too many manifests to trust a reading (the model session then decides). A test script that fans out over the
+ *  workspace returns { fanOut: <package.json that does> } instead. Never throws. */
 const SKIP_PKG_DIR = /^(node_modules|vendor|third_party|test-?data|.*fixtures?|__\w+__|examples?|samples?|templates?|docs?|tests?|e2e|benchmarks?|\..*)$/;
 const PKG_MANIFESTS = ["package.json", "go.mod", "Cargo.toml", "pyproject.toml", "setup.py"];
 const LOCK_INSTALLS: [string, string][] = [["pnpm-lock.yaml", "pnpm install"], ["yarn.lock", "yarn install"], ["bun.lock", "bun install"], ["bun.lockb", "bun install"], ["package-lock.json", "npm install"], ["uv.lock", "uv sync"], ["poetry.lock", "poetry install"], ["Cargo.lock", "cargo fetch"], ["go.mod", "go mod download"]];
@@ -382,7 +388,7 @@ function fansOut(scripts: Record<string, unknown>): boolean {
   }
   return false;
 }
-export function manifestModel(repoDir: string): Record<string, unknown> | null {
+export function manifestModel(repoDir: string): Record<string, unknown> | { fanOut: string } | null {
   let tracked: string[];
   try { tracked = safeGit(repoDir, ["ls-files", "-z"], { maxBuffer: 256 * 1024 * 1024 }).split("\0").filter(Boolean); } catch { return null; }
   const trackedSet = new Set(tracked), at = (dir: string, f: string): string => (dir === "." ? f : `${dir}/${f}`);
@@ -416,8 +422,10 @@ export function manifestModel(repoDir: string): Record<string, unknown> | null {
     return { name: typeof pj?.["name"] === "string" && pj["name"] ? pj["name"] : d === "." ? basename(resolve(repoDir)) : d, root: d, runner: null, cite: own.length ? own : [cmds[0] ? at(d, cmds[0].source) : at(d, "package.json")],
       commands: { test: cmdOf("test"), lint: cmdOf("lint"), build: cmdOf("build"), start: null }, ui: { present: boot !== null, boot, cite: boot ? boot.cite : [] }, install, ...js };
   });
-  // A test script that fans out over the workspace (nx, turbo, lerna, recursive pnpm or yarn) names no one package's suite: the session decides.
-  if (!packages.some((p) => p.commands.test) || dirs.some((d) => fansOut((json(d)?.["scripts"] ?? {}) as Record<string, unknown>))) return null;
+  // A test script that fans out over the workspace (nx, turbo, lerna, recursive pnpm or yarn) names no one package's suite, so the manifests cannot answer; the caller is told why ({ fanOut }) and decides whether a session is worth it.
+  const fan = dirs.find((d) => fansOut((json(d)?.["scripts"] ?? {}) as Record<string, unknown>));
+  if (fan !== undefined) return { fanOut: at(fan, "package.json") };
+  if (!packages.some((p) => p.commands.test)) return null;
   const wsCite = trackedSet.has("pnpm-workspace.yaml") ? "pnpm-workspace.yaml" : packages[0]!.cite[0]!;
   return { workspaceKind: members.length ? "workspaces" : packages.length > 1 ? "multi-root" : "single", workspaceCite: [wsCite], fingerprintFiles: [...fingerprint].sort(), packages };
 }
@@ -490,13 +498,13 @@ function runOnce(repoDir: string, cmd: string, cwd: string, tmo: number, opts: B
 export function runBaseline(repoDir: string, commands: ProfileCommand[], opts: BuildOpts = {}): CommandProfile["baseline"] {
   const t = commands.find((c) => c.kind === "test");
   if (!t) return { ran: false, command: null, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: "no test command discovered" };
-  const tmo = opts.timeoutS ?? DEFAULT_TIMEOUT_S, { b, missing } = runOnce(repoDir, t.cmd, repoDir, tmo, opts);
+  const tmo = opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, { b, missing } = runOnce(repoDir, t.cmd, repoDir, tmo, opts);
   t.validated = !b.timed_out && !missing && b.exit_code !== null; t.exit_code = b.exit_code; t.duration_s = b.duration_s; t.failing_ids = b.failing_ids;
   if (b.timed_out) t.note = `timed out after ${tmo}s; no baseline`; else if (missing) t.note = "command not found";
   return b;
 }
-const normCmd = (s: string): string => s.replace(/\s+--silent\b/, "").trim();
-export const SUITE_BASELINE_BUDGET_S = 120;
+const normCmd = (s: string): string => s.replace(/\s+--silent\b/, "").trim().replace(/^\(cd \.\s+&&\s+(.+)\)$/, "$1"); // a root package suite is spelled "(cd . && X)" by package_suite.ts but the baseline ran plain "X": same command, never "not the full suite command"
+export const SUITE_BASELINE_BUDGET_S = 300;
 /** FC-BASELINE-PER-PACKAGE: a baseline per full-suite command verify will run (`specs`: package_suite.ts fullSuiteSpecs, the one source), added to the
  *  profile ensureProfile wrote for this HEAD. An entry for the same command is reused unless `rerun` (a dependency install succeeded
  *  since, so a baseline measured before it is stale: the main baseline and every entry are re-run, attributable or not). A root command the main baseline already ran is not run twice. One shared
@@ -510,8 +518,8 @@ export function baselineSuites(repoDir: string, specs: { name: string; cmd: stri
     const old = p.suites ?? [];
     p.suites = specs.filter((s) => s.cwd !== "." || normCmd(s.run) !== normCmd(p.baseline.command ?? "")).map((s) => {
       const prev = old.find((o) => o.command === s.cmd);
-      if (prev?.ran && !opts.rerun && (prev.failing_ids.length === 0 || prev.failing_errors)) return prev; // an entry recorded before failing_errors existed is measured again
-      const tmo = Math.min(opts.timeoutS ?? DEFAULT_TIMEOUT_S, Math.floor(left)), t0 = Date.now();
+      if (prev?.ran && !opts.rerun && !cutShort(prev, Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, Math.floor(left))) && (prev.failing_ids.length === 0 || prev.failing_errors)) return prev; // an entry recorded before failing_errors existed is measured again
+      const tmo = Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, Math.floor(left)), t0 = Date.now();
       if (tmo < 1) return { name: s.name, ran: false, command: s.cmd, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: "baseline budget used up" };
       const { b } = runOnce(repoDir, s.run, join(repoDir, s.cwd), tmo, opts);
       left -= (Date.now() - t0) / 1000;
@@ -544,7 +552,7 @@ const headOf = (repoDir: string): string => { try { return safeGit(repoDir, ["re
 export function ensureProfile(repoDir: string, opts: BuildOpts = {}): { profile: CommandProfile; reused: boolean } | null {
   try {
     const hash = manifestHash(repoDir), rev = headOf(repoDir), old = loadProfile(repoDir);
-    if (old && old.manifest_hash === hash && old.revision === rev && (old.baseline.failing_ids.length === 0 || old.baseline.failing_errors)) return { profile: old, reused: true };
+    if (old && old.manifest_hash === hash && old.revision === rev && !cutShort(old.baseline, opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S) && (old.baseline.failing_ids.length === 0 || old.baseline.failing_errors)) return { profile: old, reused: true };
     const commands = old && old.manifest_hash === hash ? old.commands.map((c) => ({ ...c, ...(c.kind === "test" ? { validated: null, exit_code: null, duration_s: null, failing_ids: [] } : {}) })) : discoverCommands(repoDir);
     const profile: CommandProfile = { version: 1, revision: rev, manifest_hash: hash, created_at: (opts.now?.() ?? new Date()).toISOString(), commands, baseline: runBaseline(repoDir, commands, opts) };
     save(repoDir, profile);
@@ -631,12 +639,15 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: { nam
   const bad = full.filter((c) => c.result === "fail"), none: Attribution = { preExistingChecks: [], preExistingIds: [], introducedChecks: bad.map((c) => c.name), line: null }, p = loadProfile(repoDir);
   if (!bad.length || !p || p.revision !== baseSha) return none;
   const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran), of = (cmd: string) => runs.find((b) => normCmd(b.command ?? "") === normCmd(cmd));
+  // A base run that was cut off (its time or the shared baseline budget ran out) says nothing about which failures were already there: record it, never blame silently.
+  const cut = bad.filter((c) => [p.baseline, ...(p.suites ?? [])].some((b) => normCmd(b.command ?? "") === normCmd(c.cmd) && (b.timed_out || b.reason === "baseline budget used up")));
+  if (cut.length) return { ...none, line: `NOT PROVEN: base run incomplete for ${cut.map((c) => `"${c.cmd}"`).join(", ")} (cut off on the original code), so its failures are not excusable` };
   const ids = (cmd: string): string[] => { const b = of(cmd); return b?.attributable ? b.failing_ids : []; }, miss = bad.find((c) => !of(c.cmd));
   if (miss) return { ...none, line: `baseline: ran ${runs.map((b) => `"${b.command}"`).join(", ") || "nothing"}, not the full suite command "${miss.cmd}", ids not comparable, full suite failures not excused` };
   const known = new Set(bad.flatMap((c) => ids(c.cmd))), block = new Set(blocked), sameAsBase = (c: (typeof bad)[number]): boolean => { const b = of(c.cmd), be = b?.failing_errors, hu = c.unhandled ?? [], bu = b?.failing_unhandled ?? []; return !!be && !!c.errors && hu.length === bu.length && hu.every((x, n) => x === bu[n]) /* an unhandled-errors block names no id: it must repeat on base */ && sameErrors(new Map(Object.entries(c.errors)), be, comparableIds(c.ids ?? [])); };
   if (known.size === 0) return none;
   const unproven = [...new Set(bad.flatMap((c) => c.ids ?? []).filter((i) => !i.includes("::") && goIdTouched(repoDir, i, changed)))];
-  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && sameAsBase(c) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => i.includes(f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
+  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && sameAsBase(c) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => idNamesFile(i, f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
   const rust = (cargoTouched(changed) ? bad : []).map((c) => `NOT PROVEN: ${c.name} may run cargo tests and the diff edits Rust source or a manifest; cargo test ids carry no crate path, so a failure cannot be shown pre-existing`);
   if (!unproven.length && !rust.length) return res;
   const np = [...unproven.map((u) => `NOT PROVEN: package ${u} did not build on base or head; its tests ran on neither`), ...rust].join("; ");

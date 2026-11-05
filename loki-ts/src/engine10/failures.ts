@@ -55,6 +55,13 @@ function bunIds(output: string): string[] | null {
   const u = [...new Set(ids)];
   return count && u.length >= count ? u : [];
 }
+/** True when a failure id names the changed repo file `f`: the id carries the repo path (`packages/a/src/x.test.ts > t`), or a vitest project prefix and a path relative to
+ *  the project (`|a| src/x.test.ts > t`, printed by a run from a root config with `projects`), which names `f` when `f` ends with that relative path. */
+export function idNamesFile(id: string, f: string): boolean {
+  if (id.includes(f)) return true;
+  const m = /^\|[^|]+\|\s+(\S+?)(?:\s+>\s.*)?$/.exec(id);
+  return !!m && (f === m[1] || f.endsWith(`/${m[1]}`));
+}
 export function failIds(raw: string): string[] {
   const output = stripAnsi(raw), gc = goCargoIds(output);
   if (gc) return gc;
@@ -138,3 +145,9 @@ export function comparableIds(ids: readonly string[]): string[] {
   const full = ids.filter((i) => /^[^>]*\.[cm]?[jt]sx? > /.test(i));
   return full.length ? full : [...ids];
 }
+
+/** A runner error before any test ran that the change cannot have caused by itself: no tests found, a config that fails to load or resolve, zero items collected.
+ *  Deliberately excludes "cannot find module", "error during collection" and "test suite failed to run": those are how a typo'd import, a renamed symbol or a
+ *  syntax error in the change's own code surface, and a fix round repairs them cheaply. The one definition of this shape; a group carries no ids, so it reads the text. */
+const ENV_SHAPED = /no tests? (?:found|executed|to run)|no test files found|failed to (?:load|resolve) config|collected 0 items/i;
+export const environmentShaped = (groups: readonly Pick<FailureGroup, "signature" | "sample">[]): boolean => groups.length > 0 && groups.every((g) => ENV_SHAPED.test(`${g.signature}\n${g.sample ?? ""}`));

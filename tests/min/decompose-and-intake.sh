@@ -58,6 +58,9 @@
 #  11. loki-ts/src/engine10/stages/pr.ts prTitle: return the old "Loki 10: <verdict> (<run id>)" title; the pr face check fails.
 #  12. loki-ts/src/commands/issues_run.ts makeWorktrees remove: remove at once whatever deep verify does; the pr face check fails.
 #  13. loki-ts/src/e10ext/reviewer_body.ts criteria: skip inlineCriteria; the pr face check fails (1 criterion listed).
+#  14. issues_epic.ts epicOutcome: drop the SPEC_CONFLICT carve-out from `failed` (the old rule); the conflict assertions fail.
+#  14. issues_epic.ts splitCost: ignore a slice's partial dollars; the partial cost assertions fail. queue.ts newestRecord: drop the partial figure;
+#      the newestRecord and partial slice row assertions fail (the row reads NOT RECORDED).
 #  14. loki-ts/src/util/run_outputs.ts stackSection: never call prWorkflowsSkipping; the pr face check fails (no CI note).
 #  15. issues_run.ts REAPER_SH: skip the run-dir re-copy; the pr face check fails (addendum lost).
 #  16. pr.ts prTitle: clip by UTF-16 units (what.split("")); the pr face check fails (split pair).
@@ -75,7 +78,9 @@
 #  26. manifestModel: drop the SKIP_PKG_DIR filter on other manifests; the diet check fails (test/fixtures/app and docs listed).
 #  27. project_model/discover.ts: drop effort "low" from the discovery session; the diet check fails (effort=undefined).
 #  28. project_model/gather.ts: maxTotalBytes back to 96 KiB; the diet check fails (inlined over 24 KiB).
-#  29. manifestModel: drop the fansOut check; the diet check fails (fan false: an nx root test answered without a session).
+#  29. manifestModel: drop the fansOut check; the diet check fails (fan: an nx root test answered as a manifest model, status ok).
+#  29b. discover.ts: drop the fanOut early return (fall through to the session); the diet check fails (fan 1 session instead of 0).
+#  29c. discover.ts fanOutSessionEnabled: always false; the diet check fails (fan-on false).
 #  30. manifestModel: members only from tracked package.json files; the diet check fails (packages/gen missing).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -274,6 +279,14 @@ console.log([b.includes("search the repository" + String.fromCharCode(39) + "s t
 ' 2>&1)"
 [ "$BRIEF" = "true true true" ] && ok "split brief: tells the splitter to name and update an existing test that asserts replaced behavior, never to promise it still passes" \
     || bad "split brief gave: $BRIEF (want: true true true)"
+# FireLater#24 s3/s4: the splitter wrote "cd frontend && npm run test passes" for a frontend suite already red on the base; both slices stopped SPEC_CONFLICT. The brief now forbids whole-suite criteria.
+BRIEF2="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const m = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
+const b = m.decomposeBrief("asklokesh/FireLater", { number: 24, title: "Advanced search", body: "Search UI", labels: [] }, "13 parts", "/tmp/x.json");
+console.log([b.includes("Never write a criterion that requires a whole test suite, lint or build to pass"), b.includes("npm run test passes"), b.includes("no new failures"), b.includes("already present on the base commit")].join(" "));
+' 2>&1)"
+[ "$BRIEF2" = "true true true true" ] && ok "split brief: forbids whole-suite criteria (npm run test passes) and asks for the slice's own checks plus no new failures" \
+    || bad "split brief (suite criteria) gave: $BRIEF2 (want: true true true true)"
 
 # --- backlog: a large issue in `loki backlog` runs and splits through the same MASS-2 path, never a drafted spec -------
 B="$T/backlog"
@@ -319,8 +332,21 @@ PRSTATUS="$(printf '%s' "$OUT" | python3 -I -c 'import sys; sys.path.insert(0, s
 echo "    pr mode: backlog reads: $PRSTATUS"
 case "$PRSTATUS" in "True PARTIAL, PR local:///"*) ok "pr mode: backlog counts the PARTIAL split with its draft PRs as done" ;; *) bad "pr mode: backlog reads the PR-mode split as: $PRSTATUS" ;; esac
 
+# --- PR mode, one slice stops on its own SPEC_CONFLICT while the others open PRs: the split is PARTIAL (exit 6), not FAILED ---------
+C2="$T/conflict-split"
+make_repo "$C2" 0
+git init -q --bare "$T/conflict-origin.git"
+git -C "$C2" remote add origin "$T/conflict-origin.git"
+git -C "$C2" push -q origin main
+SPLIT3='{"slices":[{"id":"s1","title":"search backend","acceptance":["full-text search returns ranked rows"],"depends_on":[],"files":["calc.ts"]},{"id":"s2","title":"search index","acceptance":["the index is rebuilt nightly"],"depends_on":[],"files":["calc.ts"]},{"id":"s3","title":"search UI","acceptance":["the search box shows ranked results"],"depends_on":[],"files":["calc.ts"]}]}'
+E2E_STUB_MODE=slice E2E_STUB_CONFLICT_SLICE=s2 E2E_STUB_SPLIT="$SPLIT3" LOKI_EPIC_PARALLEL=1 run_loki "$C2" "$T/conflict-stub.log" start acme/search#25 --max-cost 5
+printf '%s\n' "$OUT" | grep -E '^(#25 s[123] (PARTIAL|VERIFIED|SPEC_CONFLICT)|Outcome:|Reason:|PR:)' | sed 's/^/    conflict e2e: /'
+[ "$RC" -eq 6 ] && printf '%s\n' "$OUT" | grep -Eq '^Outcome: +PARTIAL$' && printf '%s\n' "$OUT" | grep -Eq '^Reason: +slice s2: SPEC_CONFLICT .*\(2 of 3 slices opened a PR' \
+    && [ "$(printf '%s\n' "$OUT" | grep -cE '^PR: +local:///.+#loki/')" = 2 ] \
+    && ok "conflict e2e: one slice stopped on SPEC_CONFLICT and two opened PRs gives Outcome PARTIAL, exit 6, two PR lines" || { bad "conflict e2e: exit $RC, outcome $(printf '%s\n' "$OUT" | grep '^Outcome:')"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
+
 # --- outcome: the split's aggregate verdict, exit code and cost line (pure) -------------------------------------------
-AGG="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+AGG="$(ROOT="$ROOT" PT="$T" bun --no-env-file --config=/dev/null -e '
 const { epicOutcome } = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
 const row = (id, outcome, usd, rc, extra = {}) => ({ id, title: id, parent: null, outcome, pr: null, cost: usd === undefined ? "-" : usd === null ? "NOT RECORDED" : "$" + usd.toFixed(2), usd, rc, ...extra });
 const cases = {
@@ -328,9 +354,17 @@ const cases = {
   partial: [[row("s1", "VERIFIED", 0.1, 0), row("s2", "PARTIAL", 0.2, 6, { pr: "https://github.com/acme/search/pull/9" })], []],
   budget: [[row("s1", "VERIFIED", 0.1, 0), row("s2", "FAILED (exit 3)", null, 3, { budget: true }), row("s3", "SKIPPED (dependency s2 did not pass)", undefined)], [0.05, 0.05]],
   failed_beats_budget: [[row("s1", "FAILED", 0.05, 1), row("s2", "FAILED (exit 3)", 0.1, 3, { budget: true })], []],
+  partial_cost: [[row("s1", "VERIFIED", 1.76, 0), row("s2", "VERIFIED", null, 0, { partial: { usd: 0.3928382, measured: 1, total: 2 } }), row("s3", "VERIFIED", null, 0)], []],
+  partial_only: [[row("s1", "VERIFIED", null, 0, { partial: { usd: 0.3928382, measured: 1, total: 2 } })], []],
 };
 for (const [k, [rows, plan]] of Object.entries(cases)) { const o = epicOutcome(rows, plan, {}); console.log(k + " " + o.outcome + " " + o.rc + " | " + o.lines.trim().split("\n").join(" | ")); }
-const d = epicOutcome(cases.budget[0], [], { LOKI_DURABLE_STATE: "1" }); console.log("durable " + d.outcome + " " + d.rc);' 2>&1)"
+const d = epicOutcome(cases.budget[0], [], { LOKI_DURABLE_STATE: "1" }); console.log("durable " + d.outcome + " " + d.rc);
+const { newestRecord } = await import(process.env.ROOT + "/loki-ts/src/commands/queue.ts");
+const { mkdirSync, writeFileSync, mkdtempSync, rmSync } = await import("node:fs");
+const nr = (cost) => { const ld = process.env.PT + "/nr" + Math.random().toString(36).slice(2); mkdirSync(ld + "/runs/r1", { recursive: true }); writeFileSync(ld + "/runs/r1/receipt.json", JSON.stringify({ verdict: "VERIFIED", cost })); const r = newestRecord(ld, 0); return JSON.stringify([r.costUsd, r.partial ?? null]); };
+console.log("nr_partial " + nr({ usd: null, partial_usd: 0.3928382, measured_sessions: 1, total_sessions: 2 }));
+console.log("nr_none " + nr({ usd: null, partial_usd: 0, measured_sessions: 0, total_sessions: 2 }));
+console.log("nr_full " + nr({ usd: 0.5, partial_usd: 0.5, measured_sessions: 2, total_sessions: 2 }));' 2>&1)"
 printf '%s\n' "$AGG" | sed 's/^/    outcome: /'
 printf '%s\n' "$AGG" | grep -q '^verified VERIFIED 0 | Outcome: *VERIFIED | Cost: *\$0.31 (2 slice runs + 1 planning session)$' \
     && ok "outcome: every slice VERIFIED gives VERIFIED, exit 0; cost sums unrounded slice figures plus the planning session (0.104+0.204+0.004 = 0.31, not 0.30)" || bad "outcome: all-VERIFIED case wrong"
@@ -338,10 +372,50 @@ printf '%s\n' "$AGG" | grep -q '^partial PARTIAL 6 | Outcome: *PARTIAL | Reason:
 printf '%s\n' "$AGG" | grep -q '^budget BUDGET_STOP 3 | Outcome: *BUDGET_STOP | Reason: *slice s2: FAILED (exit 3) | Cost: *partial: \$0.20 for 3 of 4 (2 slice runs + 2 planning sessions)$' \
     && ok "outcome: a slice budget stop gives BUDGET_STOP, exit 3; a re-asked split counts both planning sessions; cost marked partial" || bad "outcome: budget case wrong"
 printf '%s\n' "$AGG" | grep -q '^failed_beats_budget FAILED 1 ' && ok "outcome: a real FAILED slice outranks a budget stop (FAILED, exit 1)" || bad "outcome: FAILED did not outrank the budget stop"
+printf '%s\n' "$AGG" | grep -q '^partial_cost VERIFIED 0 | Outcome: *VERIFIED | Cost: *partial: \$2.15 for 1 of 3 (3 slice runs)$' \
+    && ok "outcome: a slice priced for 1 of 2 sessions adds its known \$0.39 to the split total (1.76+0.39 = 2.15, still unmeasured), never dropped" || bad "outcome: partial slice dollars dropped from the split total"
+printf '%s\n' "$AGG" | grep -q '^partial_only VERIFIED 0 | Outcome: *VERIFIED | Cost: *partial: \$0.39 for 0 of 1 (1 slice run)$' \
+    && ok "outcome: a split whose only figure is a slice's partial reads partial \$0.39, never not measured or \$0.00" || bad "outcome: partial-only split cost wrong"
+printf '%s\n' "$AGG" | grep -q '^nr_partial \[null,{"usd":0.3928382,"measured":1,"total":2}\]$' && printf '%s\n' "$AGG" | grep -q '^nr_none \[null,null\]$' && printf '%s\n' "$AGG" | grep -q '^nr_full \[0.5,null\]$' \
+    && ok "outcome: queue newestRecord carries a receipt's partial cost (null usd, 1 of 2 sessions); no priced session stays unrecorded; a full cost has no partial" || bad "outcome: newestRecord partial cost wrong: $(printf '%s\n' "$AGG" | grep '^nr_')"
 printf '%s\n' "$AGG" | grep -q '^durable BUDGET_STOP 20$' && ok "outcome: exit codes go through exitCodeOf (LOKI_DURABLE_STATE=1 gives 20)" || bad "outcome: LOKI_DURABLE_STATE exit code wrong"
 BL="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import backlog
 print(backlog.parse_result(1, "loki: split refused (x); running the issue as one run\nSplit planning: $0.40 (0 slice runs + 1 planning session)\nOutcome:    FAILED\nCost:       $1.10 (claude)\n")[2])' "$ROOT/autonomy/lib" 2>&1)"
 [ "$BL" = "1.5" ] && ok "outcome: backlog adds a refused split's planning cost to the run's cost (0.40 + 1.10)" || bad "outcome: backlog counted $BL for a refused split, want 1.5"
+
+# --- outcome, a slice stopped on its own SPEC_CONFLICT: PARTIAL when another slice opened a PR (FireLater#24), else unchanged -----------
+CF="$(ROOT="$ROOT" PT="$T" EPIC_TITLE="$EPIC_TITLE" EPIC_BODY="$EPIC_BODY" bun --no-env-file --config=/dev/null -e '
+const { epicOutcome } = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
+const ir = await import(process.env.ROOT + "/loki-ts/src/commands/issues_run.ts");
+const { mkdirSync, writeFileSync } = await import("node:fs");
+const row = (id, outcome, usd, rc, extra = {}) => ({ id, title: id, parent: null, outcome, pr: null, cost: usd === undefined ? "-" : "$" + usd.toFixed(2), usd, rc, ...extra });
+const pr = (n) => "https://github.com/acme/search/pull/" + n;
+const cases = {
+  conflict_pr: [row("s1", "PARTIAL", 0.1, 6, { pr: pr(36), branch: "loki/e10-a" }), row("s2", "VERIFIED", 0.2, 0, { pr: pr(37), branch: "loki/e10-b" }), row("s3", "SPEC_CONFLICT", 0.1, 4, { branch: "loki/e10-c", reason: "spec conflict: two incompatible search backends" }), row("s4", "SPEC_CONFLICT", 0.1, 4, { branch: "loki/e10-d" })],
+  conflict_nopr: [row("s1", "SPEC_CONFLICT", 0.1, 4, { branch: "loki/e10-a" }), row("s2", "SKIPPED (dependency s1 did not pass)", undefined)],
+  failed_with_pr: [row("s1", "VERIFIED", 0.1, 0, { pr: pr(36) }), row("s2", "FAILED (exit 1)", 0.1, 1), row("s3", "SPEC_CONFLICT", 0.1, 4)],
+  conflict_budget: [row("s1", "VERIFIED", 0.1, 0, { pr: pr(36) }), row("s2", "FAILED (exit 3)", 0.1, 3, { budget: true }), row("s3", "SPEC_CONFLICT", 0.1, 4)],
+};
+for (const [k, rows] of Object.entries(cases)) { const o = epicOutcome(rows, [], {}); console.log(k + " " + o.outcome + " " + o.rc + " | " + o.lines.trim().split("\n").filter((l) => /^(Outcome|Reason):/.test(l)).join(" | ")); }
+const sl = (id) => ({ id, title: id, acceptance: ["ok " + id], depends_on: [], files: [] });
+const runDir = process.env.PT + "/runconflict";
+mkdirSync(runDir, { recursive: true });
+writeFileSync(runDir + "/issue.json", JSON.stringify({ provider: "github", repo: "acme/search", number: 24, title: process.env.EPIC_TITLE, body: process.env.EPIC_BODY, labels: [] }));
+let out = "", c = 0;
+const rc = await ir.startIssueEpic({ repoDir: runDir, runDir, noPr: true, provider: "claude", env: { LOKI_DIR: runDir + "/.loki", LOKI_EPIC_PARALLEL: "1" }, inject: {
+  decompose: async () => JSON.stringify({ slices: [sl("s1"), sl("s2"), sl("s3")] }),
+  worktree: { create: (n) => { const p = runDir + "/wt-" + n; mkdirSync(p, { recursive: true }); return p; }, remove: () => {} },
+  runner: async () => { const k = ++c; return k === 2 ? { rc: 4, output: "Outcome:    SPEC_CONFLICT\nReason:     spec conflict: two incompatible search backends\n", verdict: "SPEC_CONFLICT", costUsd: 0.1, runId: "e10-" + k } : { rc: 0, output: "Outcome:    VERIFIED\nPR:         " + pr(30 + k) + "\n", verdict: "VERIFIED", costUsd: 0.1, runId: "e10-" + k }; },
+  out: (s) => { out += s; }, err: () => {},
+} });
+console.log("wire rc" + rc + " | " + out.split("\n").filter((l) => /^(Outcome|Reason):/.test(l)).join(" | "));' 2>&1)"
+printf '%s\n' "$CF" | sed 's/^/    conflict: /'
+printf '%s\n' "$CF" | grep -q "^conflict_pr PARTIAL 6 | Outcome: *PARTIAL | Reason: *slice s3: SPEC_CONFLICT (needs an answer: two incompatible search backends) (2 of 4 slices opened a PR; s3's change is on branch loki/e10-c)\$" \
+    && ok "conflict: a slice stopped on its own SPEC_CONFLICT while others opened PRs gives PARTIAL, exit 6, naming the first stopped slice, its question and the delivered PR count" || bad "conflict: SPEC_CONFLICT with PRs wrong"
+printf '%s\n' "$CF" | grep -q '^conflict_nopr FAILED 1 ' && printf '%s\n' "$CF" | grep -q '^failed_with_pr FAILED 1 | Outcome: *FAILED | Reason: *slice s2: FAILED (exit 1) (1 of 3 slices opened a PR)$' && printf '%s\n' "$CF" | grep -q '^conflict_budget BUDGET_STOP 3 ' \
+    && ok "conflict: SPEC_CONFLICT with no PR stays FAILED; a really FAILED slice and a budget stop outrank a SPEC_CONFLICT" || bad "conflict: unchanged cases wrong"
+printf '%s\n' "$CF" | grep -q "^wire rc6 | Outcome: *PARTIAL | Reason: *slice s2: SPEC_CONFLICT (needs an answer: two incompatible search backends) (2 of 3 slices opened a PR; s2's change is on branch loki/e10-2)\$" \
+    && ok "conflict: startIssueEpic exits 6 PARTIAL for one stopped slice and two PRs, reading the question the slice printed" || bad "conflict: startIssueEpic wiring wrong: $(printf '%s\n' "$CF" | grep '^wire')"
 
 # --- parallel: independent slices run at once, a failing or spec-conflicting slice skips only its dependents (source level) ---
 PAR="$(ROOT="$ROOT" PT="$T/par" EPIC_TITLE="$EPIC_TITLE" EPIC_BODY="$EPIC_BODY" bun --no-env-file --config=/dev/null -e '
@@ -382,7 +456,22 @@ const wire = async (envx) => {
   return "rc" + rc + " peak" + peak + (out.includes("up to " + (envx.LOKI_EPIC_PARALLEL ?? "4") + " at once") ? " said" : " silent");
 };
 console.log("W " + await wire({}));
-console.log("W1 " + await wire({ LOKI_EPIC_PARALLEL: "1" }));' 2>&1)"
+console.log("W1 " + await wire({ LOKI_EPIC_PARALLEL: "1" }));
+const wireRun = async (tag, runner) => {
+  const runDir = process.env.PT + "/run" + tag;
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(runDir + "/issue.json", JSON.stringify({ provider: "github", repo: "acme/search", number: 24, title: process.env.EPIC_TITLE, body: process.env.EPIC_BODY, labels: [] }));
+  let out = "", c = 0;
+  const rc = await ir.startIssueEpic({ repoDir: runDir, runDir, noPr: true, provider: "claude", env: { LOKI_DIR: runDir + "/.loki", LOKI_EPIC_PARALLEL: "1" }, inject: {
+    decompose: async () => JSON.stringify({ slices: [sl("s1", []), sl("s2", []), sl("s3", [])] }),
+    worktree: { create: (n) => { const p = runDir + "/wt-" + n; mkdirSync(p, { recursive: true }); return p; }, remove: () => {} },
+    runner: async (ref, o) => runner(++c),
+    out: (s) => { out += s; }, err: () => {},
+  } });
+  return { rc, out };
+};
+const pc = await wireRun("pcost", (k) => k === 2 ? { rc: 0, output: "", verdict: "VERIFIED", costUsd: null, partial: { usd: 0.3928382, measured: 1, total: 2 }, runId: "e10-" + k } : { rc: 0, output: "", verdict: "VERIFIED", costUsd: 0.1, runId: "e10-" + k });
+console.log("PC rc" + pc.rc + " | " + pc.out.split("\n").filter((l) => /^#24 s2 VERIFIED|^Cost:/.test(l)).join(" | "));' 2>&1)"
 printf '%s\n' "$PAR" | sed 's/^/    parallel: /'
 printf '%s\n' "$PAR" | grep -q '^A 3 s1=VERIFIED,s2=VERIFIED,s3=VERIFIED,s4=VERIFIED s1,s2,s3,s4@loki/e10-s1$' \
     && ok "parallel: 3 independent slices run at once; the dependent starts after its parent, stacked on the parent's run branch" || bad "parallel: case A wrong"
@@ -391,6 +480,9 @@ printf '%s\n' "$PAR" | grep -q '^B 3 s1=VERIFIED,s2=FAILED,s3=SPEC_CONFLICT,s4=V
 printf '%s\n' "$PAR" | grep -q '^C [0-9] s1=SPEC_CONFLICT,s2=VERIFIED,s3=VERIFIED,s4=SKIPPED [^@]*$' \
     && ok "parallel: a SPEC_CONFLICT slice with a kept branch (--no-pr) skips only its dependent, which never starts" || bad "parallel: case C wrong"
 printf '%s\n' "$PAR" | grep -q '^T 4 1 1 4 4$' && ok "parallel: epicParallel is claude 4, LOKI_EPIC_PARALLEL=1 gives 1, opencode 1, capped at 4, an invalid value ignored" || bad "parallel: epicParallel table wrong"
+printf '%s\n' "$PAR" | grep -qF '$0.39 for 1 of 2 sessions  ' || true
+printf '%s\n' "$PAR" | grep -q '^PC rc0 | #24 s2 VERIFIED  pr none  cost partial: \$0.39 for 1 of 2 sessions | Cost: *partial: \$0.59 for 2 of 3 (3 slice runs)$' \
+    && ok "parallel: startIssueEpic prints a partially priced slice as partial: \$0.39 for 1 of 2 sessions (never NOT RECORDED) and adds it to the Cost line" || bad "parallel: partial slice cost wiring wrong: $(printf '%s\n' "$PAR" | grep '^PC')"
 printf '%s\n' "$PAR" | grep -q '^W rc0 peak3 said$' && printf '%s\n' "$PAR" | grep -q '^W1 rc0 peak1 said$' \
     && ok "parallel: startIssueEpic runs 3 independent slices at once by default and one at a time under LOKI_EPIC_PARALLEL=1" || bad "parallel: startIssueEpic wiring wrong"
 
@@ -474,7 +566,8 @@ console.log([pre.includes("Tracked files (depth-limited):\nsrc/a.ts"), pre.inclu
 # --- diet: the manifests answer the Project Model, so a declared repo costs no discovery session -------------------------------------------
 # 3-day ledger: discovery was 46-48% of Loki's spend. A pnpm workspace, a Python package and a Go module whose manifests declare a test command
 # get a validated model with zero sessions (cached on the next call); a gitignored member package.json still counts; a fixture package.json is
-# never a package; a repo whose manifests name no test command, a test script that fans out over the workspace (nx via `pnpm run test:ci`), and
+# never a package; a repo whose manifests name no test command, a test script that fans out over the workspace (nx via `pnpm run test:ci`) now
+# answers unknown with no session (LOKI_E10_PM_FANOUT_SESSION=1 restores it; no run on TanStack/query ever got an OK model from it); the first two and
 # LOKI_E10_PM_MANIFESTS=0 still reach the session, at low effort with a 4096-token output cap and at most 24 KiB of inlined files.
 D="$T/diet"; mkdir -p "$D"
 mkrepo() { git -C "$1" init -q -b main && git -C "$1" config user.name d && git -C "$1" config user.email d@example.invalid && git -C "$1" add -A && git -C "$1" commit -q -m base; }
@@ -508,7 +601,8 @@ out.push(`ws ${calls.length} ${r.model.status} ${r.source} ${pk(r)} deps=${core?
 ({ r, calls } = await go("py")); out.push(`py ${calls.length} ${r.source} ${pk(r)}`);
 ({ r, calls } = await go("go")); out.push(`go ${calls.length} ${r.source} ${pk(r)}`);
 ({ r, calls } = await go("none")); out.push(`none ${calls.length > 0} effort=${calls[0]?.effort} max=${calls[0]?.maxOutputTokens}`);
-({ r, calls } = await go("fan")); out.push(`fan ${calls.length > 0}`);
+({ r, calls } = await go("fan")); out.push(`fan ${calls.length} ${r.model.status} ${r.owner} ${/test script over the whole workspace/.test(r.model.reason)} ${r.cached}`);
+({ r, calls } = await go("fan", { LOKI_E10_PM_FANOUT_SESSION: "1" })); out.push(`fan-on ${calls.length > 0}`);
 (await import("node:fs")).rmSync(d + "/ws/.loki", { recursive: true, force: true }); ({ r, calls } = await go("ws", { LOKI_E10_PM_MANIFESTS: "0" }));
 const inl = (calls[0]?.brief ?? "").split("<file path=").slice(1).join("").length;
 out.push(`off ${calls.length > 0} inlined<=24KiB=${inl > 0 && inl <= 24 * 1024 + 4096}`);
@@ -519,7 +613,8 @@ again 0 cached=true
 py 0 manifests .=python3 -m pytest -q/python3 -m pip install -e '.[test]'@.
 go 0 manifests .=go test ./.../go mod download@.
 none true effort=low max=4096
-fan true
+fan 0 unknown harness true false
+fan-on true
 off true inlined<=24KiB=true"
 [ "$DIET" = "$WDIET" ] && ok "intake diet: pnpm workspace, Python package and Go module answered from their manifests with no session (cached after); fixture package skipped; no test command or LOKI_E10_PM_MANIFESTS=0 reaches a low-effort, capped session with at most 24 KiB inlined" \
     || { bad "intake diet gave:"; printf '%s\n' "$DIET" | sed 's/^/    | /'; }

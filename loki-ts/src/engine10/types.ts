@@ -8,7 +8,7 @@ export const STAGE_BUDGETS: Readonly<Record<StageName, { targetS: number | null;
   wall: { targetS: 45, limitS: 90 },
   implement: { targetS: 180, limitS: 480 }, // LOKI_E10_IMPLEMENT_KILL_S; 1800 when deep
   verify: { targetS: 60, limitS: 120 },
-  fix: { targetS: 60, limitS: 90 },
+  fix: { targetS: 90, limitS: 180 },
   commit: { targetS: 5, limitS: 30 }, // not in the ENGINE.md table; engine-chosen placeholder
   seal: { targetS: 15, limitS: 60 },
   pr: { targetS: 15, limitS: 60 },
@@ -41,7 +41,7 @@ export const EVENT_TYPES = [
   "tests.restored", "test.result", "test.scoped_out", "test.skipped_on_base", "fix.round", "already.satisfied", "spec.conflict",
   "session.group_reaped",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
-  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install",
+  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "attempts.selected",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */
