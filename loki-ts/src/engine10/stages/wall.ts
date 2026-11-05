@@ -197,13 +197,14 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
  *  cases reach implement as a brief block only (<runDir>/exec-spec-brief.txt), never sealed, never blocking. */
 async function execSpecWall(ctx: RunContext, signal: AbortSignal, task: string, sizeName: string, runners: RunnerName[], existingTests: string[], leanWhy: string): Promise<WallAuthorOutcome> {
   const iterationId = `${ctx.runId}-execspec`, out = await execSpecAuthor({ task, repoDir: ctx.repoDir, runners, existingTests, sessions: ctx.sessions as never, iterationId, signal });
-  const summary = { status: out.status, reason: out.reason, ...(out.runner ? { runner: out.runner } : {}), atoms: out.atoms, sites: out.sites, binding: out.binding, advisory: out.advisory, guards: out.guards, dropped: out.dropped, ...(out.uncoveredSites?.length ? { uncovered_sites: out.uncoveredSites } : {}), duration_s: out.durationS };
+  const summary = { status: out.status, reason: out.reason, ...(out.runner ? { runner: out.runner } : {}), atoms: out.atoms, sites: out.sites, binding: out.binding, advisory: out.advisory, guards: out.guards, dropped: out.dropped, ...(out.relation ? { relation: out.relation.cases } : {}), ...(out.uncoveredSites?.length ? { uncovered_sites: out.uncoveredSites } : {}), duration_s: out.durationS };
   if (out.brief) { try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, EXEC_SPEC_BRIEF_FILE), out.brief, "utf8"); } catch { /* best effort: implement runs without the block */ } }
   const spent = out.runner ? { iteration_ids: [iterationId] } : {}; // a generator session ran: its spend reaches the ledger
-  if (out.status !== "sealed" || !out.file || !out.targetRel) return { kind: "done", result: { status: "skipped", data: { size: sizeName, exec_spec: summary, ...spent }, reason: `${leanWhy}; ${out.reason}` } };
-  const name = basename(out.targetRel), sealedDir = sealStageDir(ctx.runId, ctx.repoDir); rmSync(sealedDir, { recursive: true, force: true }); mkdirSync(sealedDir, { recursive: true });
-  writeFileSync(join(sealedDir, name), out.file, "utf8");
-  return { kind: "authored", staged: true, execSpec: summary, model: execSpecModel(), iterationId, task, sizeName, runners: [out.runner as RunnerName], targetDir: join(ctx.repoDir, dirname(out.targetRel)), generated: [name], contents: new Map([[name, out.file]]), discarded: [] };
+  const sealedFiles = [...(out.file && out.targetRel ? [{ rel: out.targetRel, text: out.file }] : []), ...(out.relation ? [{ rel: out.relation.targetRel, text: out.relation.file }] : [])]; // the generated spec and the harness's relation cases share one package directory
+  if (out.status !== "sealed" || sealedFiles.length === 0) return { kind: "done", result: { status: "skipped", data: { size: sizeName, exec_spec: summary, ...spent }, reason: `${leanWhy}; ${out.reason}` } };
+  const sealedDir = sealStageDir(ctx.runId, ctx.repoDir); rmSync(sealedDir, { recursive: true, force: true }); mkdirSync(sealedDir, { recursive: true });
+  for (const f of sealedFiles) writeFileSync(join(sealedDir, basename(f.rel)), f.text, "utf8");
+  return { kind: "authored", staged: true, execSpec: summary, model: execSpecModel(), iterationId, task, sizeName, runners: [out.runner as RunnerName], targetDir: join(ctx.repoDir, dirname(sealedFiles[0]!.rel)), generated: sealedFiles.map((f) => basename(f.rel)), contents: new Map(sealedFiles.map((f) => [basename(f.rel), f.text])), discarded: [] };
 }
 
 /** The install-time compile check, run once implement has written its code: a Rust Wall call whose argument count no definition in the crate has AS IT NOW STANDS (so a task that changes a constructor keeps the test that proves it). `afterImplement` false (the sequential Wall installs before implement): nothing is decided here; the delivery over a Wall conflict handles a Wall file that then fails to compile. */

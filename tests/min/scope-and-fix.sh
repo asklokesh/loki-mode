@@ -29,6 +29,7 @@
 #   exec spec:   (default on, LOKI_E10_EXEC_SPEC=0 opts out; lean, Wall off) deterministic atoms, the parity atom from the whole function body, the pair atom,
 #                the binding rule; real go test, pytest and vitest (2 and latest) per-case base runs seal only the binding red case; on the
 #                engine the right fix is VERIFIED, a change that leaves it red is not, and the knob unset runs no generator session.
+#                Relation cases (no model call): a stated wrap relation gives F(R(v)) == F(v) per strictly checked type, recorded on base.
 #   agent-only:  the same lean task, but the session also adds an exported square() that only its own new test calls:
 #                the run is PARTIAL and the receipt names square as unexercised by an agent-independent test.
 #   public unit: addedPublicFunctions reads the file at HEAD against the base: a method added to an existing class, a def
@@ -168,6 +169,9 @@
 #  77. seal.ts: drop specGap from verdictOf (the second-site leg reads VERIFIED).
 #  79. exec_spec.ts capSites: return every uncovered site (the passing-mention leg reads PARTIAL).
 #  80. seal.ts specSiteGap: ignore the changed-symbol list (exec spec atoms read gap=Report,Report,-).
+#  81. exec_spec.ts relationCasesGo: keep the wrapped observation as the reference instead of the base bare one (relation cases read base=pass).
+#  82. exec_spec.ts statesWrapRelation: return true (relation cases read norel=fired).
+#  83. exec_spec.ts relationSealedTest: compare the wrapped value to the changed tree's own bare value (relation cases read order=pass).
 #  78. exec_spec.ts execSpecBriefOf: drop the knob check (exec spec atoms read brief=B,B).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
@@ -1262,6 +1266,116 @@ for vt in 2 latest; do
     rm -rf "$T/es-ts-$vt"; make_es_ts "$T/es-ts-$vt" "$VT_NM"
     es_leg "vitest $vt" vitest "$T/es-ts-$vt" src/slug.test.ts "$ES_TS_TASK" "$ES_TS_REPLY" "sealed src/loki_wall_spec.test.ts binding=LokiSpec_C1_Lower advisory=LokiSpec_C2_Other guards=LokiSpec_S1_Plain dropped=LokiSpec_S2_Missing sealed=LokiSpec_C1_Lower:red"
 done
+# relation cases (no model call): the issue states a wrap relation, so the harness writes F(R(v)) == F(v) per strictly checked named
+# type with F(v) RECORDED on base. Real go test: both cases red on base; the right fix passes; fixing one type fails; checking Temporary
+# first (the ordering class) fails against the base record although it passes against the changed tree's own F(v) (headref=pass, which
+# is why the reference is recorded on base); an issue that states no wrap relation gets no relation case.
+# make_es_rel <dir>: a retry package whose Decide checks Throttled and Temporary with bare assertions; a throttled error is also
+# temporary, so checking Temporary first changes what a bare throttled error does (the ordering class).
+make_es_rel() {
+    mkdir -p "$1/retry"
+    printf 'module example.com/rt\n\ngo 1.21\n' > "$1/go.mod"
+    cat > "$1/retry/retry.go" <<'GOEOF'
+package retry
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"time"
+)
+
+var _ = errors.As
+
+// Temporary is an error that may go away on its own.
+type Temporary interface {
+	error
+	Temporary() bool
+}
+
+// Throttled is an error that names how long to wait.
+type Throttled interface {
+	error
+	RetryAfter() int
+}
+
+type tempErr struct{ msg string }
+
+func (e tempErr) Error() string   { return e.msg }
+func (e tempErr) Temporary() bool { return true }
+
+// Temp returns a Temporary error.
+func Temp(msg string) Temporary { return tempErr{msg} }
+
+type throttled struct {
+	msg   string
+	after int
+}
+
+func (e throttled) Error() string    { return e.msg }
+func (e throttled) Temporary() bool  { return true }
+func (e throttled) RetryAfter() int  { return e.after }
+
+// Throttle returns a Throttled error that waits after seconds.
+func Throttle(msg string, after int) Throttled { return throttled{msg, after} }
+
+// Wait sleeps; tests replace it.
+var Wait = func(sec int) { time.Sleep(time.Duration(sec) * time.Second) }
+
+// Log receives one line per throttled retry.
+var Log io.Writer = io.Discard
+
+// Decide reports whether err is worth retrying, waiting first when the server asked for it.
+func Decide(err error) bool {
+	if th, ok := err.(Throttled); ok {
+		fmt.Fprintln(Log, "throttled:", th.Error())
+		Wait(th.RetryAfter())
+		return true
+	}
+	if t, ok := err.(Temporary); ok {
+		return t.Temporary()
+	}
+	return false
+}
+GOEOF
+    printf 'package retry\n\nimport "testing"\n\nfunc TestDecideTemp(t *testing.T) {\n\tif !Decide(Temp("x")) {\n\t\tt.Fatal("want retry")\n\t}\n}\n' > "$1/retry/retry_test.go"
+}
+ES_REL_TASK='# Decide ignores wrapped errors
+
+`Decide` checks for `Throttled` and `Temporary` with a bare type assertion, so an error wrapped with `fmt.Errorf("%w")` is never retried: `Decide(fmt.Errorf("get: %w", Throttle("slow down", 2)))` returns false and never waits.
+
+## Expected
+
+A wrapped error should be handled exactly like an unwrapped one (errors.As).
+'
+# right: errors.As in the same order. wrongpart: only Throttled. wrongorder: Temporary first (a bare throttled error no longer waits).
+ES_REL_RIGHT=$'\tvar th Throttled\n\tif errors.As(err, &th) {\n\t\tfmt.Fprintln(Log, "throttled:", th.Error())\n\t\tWait(th.RetryAfter())\n\t\treturn true\n\t}\n\tvar t Temporary\n\tif errors.As(err, &t) {\n\t\treturn t.Temporary()\n\t}\n\treturn false'
+ES_REL_PART=$'\tvar th Throttled\n\tif errors.As(err, &th) {\n\t\tfmt.Fprintln(Log, "throttled:", th.Error())\n\t\tWait(th.RetryAfter())\n\t\treturn true\n\t}\n\tif t, ok := err.(Temporary); ok {\n\t\treturn t.Temporary()\n\t}\n\treturn false'
+ES_REL_ORDER=$'\tvar t Temporary\n\tif errors.As(err, &t) {\n\t\treturn t.Temporary()\n\t}\n\tvar th Throttled\n\tif errors.As(err, &th) {\n\t\tfmt.Fprintln(Log, "throttled:", th.Error())\n\t\tWait(th.RetryAfter())\n\t\treturn true\n\t}\n\treturn false'
+ES_REL_OLD=$'\tif th, ok := err.(Throttled); ok {\n\t\tfmt.Fprintln(Log, "throttled:", th.Error())\n\t\tWait(th.RetryAfter())\n\t\treturn true\n\t}\n\tif t, ok := err.(Temporary); ok {\n\t\treturn t.Temporary()\n\t}\n\treturn false'
+if command -v go >/dev/null 2>&1; then
+    rm -rf "$T/es-rel"; make_es_rel "$T/es-rel"
+    ESR="$(cd "$ROOT/loki-ts" && ESD="$T/es-rel" TASK="$ES_REL_TASK" RIGHT="$ES_REL_RIGHT" PART="$ES_REL_PART" ORDER="$ES_REL_ORDER" OLD="$ES_REL_OLD" timeout 300 bun -e 'const es = await import("./src/features/exec_spec.ts");
+const { readFileSync, writeFileSync } = await import("node:fs"), { spawnSync } = await import("node:child_process");
+const dir = process.env.ESD!, task = process.env.TASK!, src = readFileSync(dir + "/retry/retry.go", "utf8"), out: string[] = [];
+const a = es.extractSpecAtoms(task), s = es.resolveSites(a, dir), r = es.relationCasesGo(task, dir, s, a);
+out.push(r ? r.cases.map((n) => n.replace("TestLokiSpec_", "")).join("+") : "none");
+const spec0 = es.relationSpec(task, [src], "retry", new Set(["Decide", "Throttled", "Temporary"]));
+const none = es.relationCasesGo(task.replace(/%w|errors\.As|wrapped|Wrapped/g, "x"), dir, s, a); out.push(`norel=${none ? "fired" : "none"}`);
+const run = () => { writeFileSync(dir + "/retry/" + es.RELATION_FILE_GO, r.file); const p = spawnSync("go", ["test", "-count=1", "-run", "^TestLokiSpec_", "./retry"], { cwd: dir, encoding: "utf8", timeout: 120000 }); return p.status === 0 ? "pass" : "fail"; };
+for (const [k, body] of [["base", null], ["right", process.env.RIGHT], ["part", process.env.PART], ["order", process.env.ORDER]] ) {
+  writeFileSync(dir + "/retry/retry.go", body ? src.replace(process.env.OLD!, body) : src);
+  let line = `${k}=${run()}`;
+  if (k === "order") { require("node:fs").rmSync(dir + "/retry/" + es.RELATION_FILE_GO); const h = es.recordRelation(dir, "retry/" + es.RELATION_FILE_GO, es.relationRecordTest(spec0, "retry")); line += `,headref=${[...h.values()].every(([b, w]) => b === w) ? "pass" : "fail"}`; }
+  out.push(line);
+}
+writeFileSync(dir + "/retry/retry.go", src); try { require("node:fs").rmSync(dir + "/retry/" + es.RELATION_FILE_GO); } catch {}
+console.log(out.join(" | "));
+' 2>&1)"
+    WESR="R1_Throttled_wrapped+R2_Temporary_wrapped | norel=none | base=fail | right=pass | part=fail | order=fail,headref=pass"
+    [ "$ESR" = "$WESR" ] && ok "exec spec relation cases: recorded on base, red on base, right fix passes, the one-type and the ordering fix fail (the head's own reference would pass the ordering fix)" \
+        || bad "exec spec relation cases gave: $ESR (want: $WESR)"
+fi
 # engine legs: the real bin/loki on the stub provider, Wall off (the product default), lean path.
 if command -v go >/dev/null 2>&1; then
     ESFIX=$'out = append(out, rargs[0])\n\t\t\tcontinue'; ESOLD=$'out = append(out, firstArg)\n\t\t\tbreak'
@@ -1283,6 +1397,12 @@ if command -v go >/dev/null 2>&1; then
     E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE=$'\t\t\tbreak' E2E_STUB_SNIPPET=$'\t\t\tbreak // looked at' LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     [ -n "$(outcome)" ] && [ "$(outcome)" != VERIFIED ] && ok "exec spec engine: a change that leaves the binding case red is not VERIFIED ($(outcome))" || { bad "exec spec engine: no-fix outcome '$(outcome)'"; dump; }
+    E2E_WALL= MAKE_REPO=make_es_rel run_engine "$ES_REL_TASK" E2E_STUB_MODE=stack E2E_STUB_TARGET=retry/retry.go E2E_STUB_REPLACE="$ES_REL_OLD" E2E_STUB_SNIPPET="$ES_REL_RIGHT" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    esr="$(ev 'next((",".join(e["data"].get("exec_spec",{}).get("relation",[])) + ":" + ",".join(f["path"].rsplit("/",1)[-1] for f in e["data"].get("files",[])) for e in E if e["stage"]=="wall" and e["type"]=="stage.completed"), "none")')"
+    [ "$esr" = "TestLokiSpec_R1_Throttled_wrapped,TestLokiSpec_R2_Temporary_wrapped:loki_wall_relation_test.go" ] && ok "exec spec engine relation: with no generator reply the relation cases alone are sealed ($esr)" || { bad "exec spec engine relation: wall gave '$esr'"; dump; }
+    [ "$(outcome)" = VERIFIED ] && ok "exec spec engine relation: the right wrap fix is VERIFIED" || { bad "exec spec engine relation: right-fix outcome '$(outcome)'"; dump; }
+    E2E_WALL= MAKE_REPO=make_es_rel run_engine "$ES_REL_TASK" E2E_STUB_MODE=stack E2E_STUB_TARGET=retry/retry.go E2E_STUB_REPLACE="$ES_REL_OLD" E2E_STUB_SNIPPET="$ES_REL_ORDER" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    [ -n "$(outcome)" ] && [ "$(outcome)" != VERIFIED ] && ok "exec spec engine relation: the ordering fix (Temporary first) is not VERIFIED ($(outcome))" || { bad "exec spec engine relation: ordering outcome '$(outcome)'"; dump; }
     E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" LOKI_E10_EXEC_SPEC=0 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     grep -q -- '-execspec' "$ITERS" && bad "exec spec off: a generator session ran with LOKI_E10_EXEC_SPEC=0" || ok "exec spec off: LOKI_E10_EXEC_SPEC=0 runs no generator session and no spec file"
