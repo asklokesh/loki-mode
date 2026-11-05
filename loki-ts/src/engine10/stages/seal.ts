@@ -14,7 +14,7 @@ import { flagOutsideScope } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts"; import { getVersion } from "../../version.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
-import { isTestFile } from "../testmap.ts";
+import { isTestFile } from "../testmap.ts"; import { EXEC_SPEC_TELEMETRY_FILE } from "../../features/exec_spec.ts";
 import { crossReview, minVerdict, modelReviewRan, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
 import { STAGE_BUDGETS, type RunnerName, type Obj, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type Verdict } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
@@ -63,6 +63,12 @@ async function failThenPass(ctx: RunContext, vraw: Obj[], pctx: ProvenanceCtx, h
   return { ok: failed.length > 0, line: failed.length > 0 ? `${mp.line} (${failed.join(", ")})` : mp.line, files: failed };
 }
 export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these added public functions";
+/** The receipt's exec_spec block from <runDir>/exec-spec.json (features/exec_spec.ts): the stage's seconds and its generator session's dollars, so a scored run can weigh what the spec cost. */
+function execSpecBlock(ctx: RunContext): { exec_spec?: { status: string; seconds: number; binding: number; usd: number | null } } {
+  let t: Obj; try { t = JSON.parse(readFileSync(join(ctx.runDir, EXEC_SPEC_TELEMETRY_FILE), "utf8")) as Obj; } catch { return {}; }
+  const id = str(t.iteration_id), c = id ? ctx.cost.read(ctx.repoDir, [id]) : null;
+  return { exec_spec: { status: String(t.status ?? ""), seconds: typeof t.seconds === "number" ? t.seconds : 0, binding: typeof t.binding === "number" ? t.binding : 0, usd: c && !c.unmetered && (c.measuredCount ?? 1) > 0 ? c.usd : null } };
+}
 export const SPEC_SITE_UNCOVERED = "named site without a binding case (no agent-independent passing test names it)";
 /** Exec spec (features/exec_spec.ts): a sealed spec proves only the sites its binding cases name. A site caps the run below VERIFIED only when
  *  all hold: the spec sealed a binding case; the issue names the site in a defect or request sentence (capSites; a passing mention never
@@ -363,6 +369,7 @@ export const sealStage: Stage = {
         ? { spec_conflict_reason: sanitizeReason(str(o.implement?.spec_conflict_reason)!) }
         : {}),
       evidence: strs(o.intake?.evidence), ...(strs(o.intake?.assumptions).length > 0 ? { assumptions: strs(o.intake?.assumptions) } : {}),...(o.intake?.preexisting_dirty ? { pre_existing_dirty: Object.keys(o.intake.preexisting_dirty as object) } : {}),
+      ...execSpecBlock(ctx),
       cost: {
         usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens,
         ...(cost.tokensMeasured && cost.tokensMeasured.k < cost.tokensMeasured.n ? { tokens_measured: cost.tokensMeasured } : {}),

@@ -168,6 +168,8 @@
 #  77. seal.ts: drop specGap from verdictOf (the second-site leg reads VERIFIED).
 #  79. exec_spec.ts capSites: return every uncovered site (the passing-mention leg reads PARTIAL).
 #  80. seal.ts specSiteGap: ignore the changed-symbol list (exec spec atoms read gap=Report,Report,-).
+#  84. exec_spec.ts defectSites: count every span of a clause with a defect word again (the comparison, negated-scope and see legs read PARTIAL).
+#  85. seal.ts: drop execSpecBlock from the receipt body (the receipt exec_spec leg fails).
 #  78. exec_spec.ts execSpecBriefOf: drop the knob check (exec spec atoms read brief=B,B).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
@@ -1071,7 +1073,7 @@ make_es_go() {
         printf '\tfor ; len(rargs) > 0; rargs = rargs[1:] {\n\t\tfirstArg := strings.TrimSpace(rargs[0])\n'
         for i in $(seq 1 16); do printf '\t\t// gap line %s keeps firstArg outside the window around the quoted code\n' "$i"; done
         printf '\t\tif firstArg == "" || firstArg[0] != %s {\n\t\t\tout = append(out, rargs[0])\n\t\t\tcontinue\n\t\t}\n\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n\t\t\tbreak\n\t\t}\n\t}\n\treturn out\n}\n' "'-'"
-        printf '\ntype StatusCoder interface{ Code() int }\n\ntype Batch []error\n\nfunc (b Batch) Error() string { return "batch" }\n\n// Report returns the exit code for err.\nfunc Report(err error) int {\n\tif sc, ok := err.(StatusCoder); ok {\n\t\treturn sc.Code()\n\t}\n\tif b, ok := err.(Batch); ok {\n\t\treturn len(b)\n\t}\n\treturn 1\n}\n'
+        printf '\ntype StatusCoder interface{ Code() int }\n\ntype Batch []error\n\nfunc (b Batch) Error() string { return "batch" }\n\n// Report returns the exit code for err.\nfunc Report(err error) int {\n\tif sc, ok := err.(StatusCoder); ok {\n\t\treturn sc.Code()\n\t}\n\tif b, ok := err.(Batch); ok {\n\t\treturn len(b)\n\t}\n\treturn 1\n}\n\n// Join is the inverse of Split.\nfunc Join(parts []string) string { return strings.Join(parts, " ") }\n'
     } > "$1/a/a.go"
     printf 'package a\n\nimport "testing"\n\nfunc TestSplitPlain(t *testing.T) {\n\tif g := Split([]string{"x"}); len(g) != 1 {\n\t\tt.Fatal(g)\n\t}\n}\n' > "$1/a/a_test.go"
 }
@@ -1228,7 +1230,7 @@ await import("./src/engine10/stages/wall.ts"); const { specSiteGap } = await imp
 const g = (st, ch) => specSiteGap({ wall: { files: [], exec_spec: { status: st, uncovered_sites: ["Report"] } } }, [], {}, () => "", ch).join("+") || "-";
 out.push(`gap=${g("sealed", [])},${g("sealed", ["Report"])},${g("advisory_only", [])}`, `defect=${[...es.defectSites(task)].sort().join("+")}`);
 console.log(out.join(" | "));' 2>&1)"
-    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | otherquote=P0 | prop=P0 | bind=100000 | brief=none,B | gap=Report,-,- | defect=Batch+Report+Split+StatusCoder+x"
+    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | otherquote=P0 | prop=P0 | bind=100000 | brief=none,B | gap=Report,-,- | defect=Report+Split+x"
     [ "$ESU" = "$WESU" ] && ok "exec spec atoms: parity from the whole body and only from quoted code, never a property write, one pair for the two sites Report reaches, binding only when input and expected value come whole from one issue example, no brief read with the knob off" \
         || bad "exec spec atoms gave: $ESU (want: $WESU)"
 fi
@@ -1272,6 +1274,8 @@ if command -v go >/dev/null 2>&1; then
     [ "$(esw)" = "sealed:TestLokiSpec_C1_KeepsAfterDash:loki_wall_spec_test.go:fail=1" ] && ok "exec spec engine (default on): the binding case is sealed as the run's Wall file and is red on base ($(esw))" || { bad "exec spec engine: wall gave '$(esw)'"; dump; }
     grep -q "Executable spec: a/loki_wall_spec_test.go" "$ESPL.implement0" 2>/dev/null && grep -q "Advisory spec cases" "$ESPL.implement0" && ok "exec spec engine: the implement brief names the binding case and lists the advisory ones" || bad "exec spec engine: the implement brief has no spec block"
     [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: one named site, the right fix turns its sealed case green and is VERIFIED" || { bad "exec spec engine: right-fix outcome '$(outcome)'"; dump; }
+    esr="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; e=json.load(open(sys.argv[1])).get("exec_spec") or {}; print(e.get("status"), "num" if isinstance(e.get("seconds"), (int, float)) and e.get("seconds") >= 0 else "none", e.get("binding"), "usd" in e)' "$RUNDIR/receipt.json" 2>/dev/null)"
+    [ "$esr" = "sealed num 1 True" ] && ok "exec spec engine: the receipt records the stage's status, seconds, binding count and generator dollars ($esr)" || bad "exec spec engine: receipt exec_spec gave '$esr'"
     E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
@@ -1280,6 +1284,12 @@ if command -v go >/dev/null 2>&1; then
     E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1 The loop sits next to \`Report\`, which reads the same arguments." E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: a helper the issue only mentions in passing never costs the right fix its VERIFIED" || { bad "exec spec engine: passing-mention outcome '$(outcome)'"; dump; }
+    # the defect words must attach to the site's own span: a comparison, a negated scope and a health verdict never cap (review round 3)
+    for esx in "\`Split\` should return the operands like \`Join\` does." "Fix \`Split\`. It should not change \`Report\`, which is fine." "\`Split\` drops args; this does not affect \`Report\`." "See \`Join\` for the expected shape; \`Split\` is wrong."; do
+        E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1 $esx" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+            E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+        [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: '$esx' leaves the right fix VERIFIED" || { bad "exec spec engine: '$esx' outcome '$(outcome)'"; dump; }
+    done
     E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE=$'\t\t\tbreak' E2E_STUB_SNIPPET=$'\t\t\tbreak // looked at' LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     [ -n "$(outcome)" ] && [ "$(outcome)" != VERIFIED ] && ok "exec spec engine: a change that leaves the binding case red is not VERIFIED ($(outcome))" || { bad "exec spec engine: no-fix outcome '$(outcome)'"; dump; }

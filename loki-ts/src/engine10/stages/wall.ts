@@ -18,7 +18,7 @@ import { sealedWallDir, assertionFailure, baseJobs, classify, plannedGoDir, goPa
 import { conventionViolation, conventionsBrief, dotenvFileRead, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, rustArities, rustCallClash, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
 import { dotnetTestProject } from "../../util/stack_tools.ts";
-import { EXEC_SPEC_BRIEF_FILE, execSpecAuthor, execSpecEnabled, execSpecModel } from "../../features/exec_spec.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
+import { EXEC_SPEC_BRIEF_FILE, EXEC_SPEC_TELEMETRY_FILE, execSpecAuthor, execSpecEnabled, execSpecModel } from "../../features/exec_spec.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
 const WALL_PREFIX = "loki_wall_";
 
 export interface WallSealedFile { path: string; sha256: string; runner?: RunnerName; } // path: absolute, in the repo working tree
@@ -199,6 +199,7 @@ async function execSpecWall(ctx: RunContext, signal: AbortSignal, task: string, 
   const iterationId = `${ctx.runId}-execspec`, out = await execSpecAuthor({ task, repoDir: ctx.repoDir, runners, existingTests, sessions: ctx.sessions as never, iterationId, signal });
   const summary = { status: out.status, reason: out.reason, ...(out.runner ? { runner: out.runner } : {}), atoms: out.atoms, sites: out.sites, binding: out.binding, advisory: out.advisory, guards: out.guards, dropped: out.dropped, ...(out.uncoveredSites?.length ? { uncovered_sites: out.uncoveredSites } : {}), duration_s: out.durationS };
   if (out.brief) { try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, EXEC_SPEC_BRIEF_FILE), out.brief, "utf8"); } catch { /* best effort: implement runs without the block */ } }
+  try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, EXEC_SPEC_TELEMETRY_FILE), JSON.stringify({ status: out.status, seconds: out.durationS, binding: out.binding.length, ...(out.runner ? { iteration_id: iterationId } : {}) }), "utf8"); } catch { /* best effort: the receipt then omits exec_spec */ } // the receipt's exec_spec block (seconds and dollars of this stage)
   const spent = out.runner ? { iteration_ids: [iterationId] } : {}; // a generator session ran: its spend reaches the ledger
   if (out.status !== "sealed" || !out.file || !out.targetRel) return { kind: "done", result: { status: "skipped", data: { size: sizeName, exec_spec: summary, ...spent }, reason: `${leanWhy}; ${out.reason}` } };
   const name = basename(out.targetRel), sealedDir = sealStageDir(ctx.runId, ctx.repoDir); rmSync(sealedDir, { recursive: true, force: true }); mkdirSync(sealedDir, { recursive: true });

@@ -19,6 +19,7 @@ import { assertionFailure, commandFor, plainTestEnv, pytestKindsAreAssertion, sp
 
 export const execSpecEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_EXEC_SPEC ?? "").trim().toLowerCase()); // default on; LOKI_E10_EXEC_SPEC=0 opts out
 export const EXEC_SPEC_BRIEF_FILE = "exec-spec-brief.txt"; // <runDir>/, read by implement.ts
+export const EXEC_SPEC_TELEMETRY_FILE = "exec-spec.json"; // <runDir>/, read by seal.ts for the receipt's exec_spec block
 
 export type AtomKind = "example" | "claim" | "site" | "option" | "location" | "parity" | "pair";
 export interface SpecAtom { id: string; kind: AtomKind; text: string; lang?: string; section?: string }
@@ -382,14 +383,28 @@ export function uncoveredSites(e: Emitter, binding: string[], full: string, atom
   const resolved = new Set(sites.map((s) => s.symbol)), bodies = binding.map((n) => e.body(full, n)).join("\n");
   return atoms.filter((a) => a.kind === "site" && resolved.has(a.text) && !new RegExp(`\\b${esc(a.text.split(".").pop()!)}\\b`).test(bodies)).map((a) => a.text.split(".").pop()!);
 }
-// A sentence or list item that states a defect or asks for behavior; a site named only elsewhere is a passing mention.
-const DEFECT_OR_ASK = /\binstead of\b|\bends up with\b|\bexits? with\b|\bshould\b|\bexpected\b|\bmust\b|\bneeds? to\b|==|\b(?:bug|wrong|broken|mishandl\w*|drops?|dropped|fails?|failing|ignores?|ignored|incorrect\w*|crash\w*|panics?|regress\w*|missing|loses?|lost|never|doesn't|does not|isn't|is not)\b/i;
-/** The named sites (last segment) that appear in a defect or request sentence or list item of the issue. */
+// A site is defective only when the defect or request words attach to its own span: it is the subject of a clause that states a defect
+// or asks for behavior ("`Split` drops args", "`Split` should return ...", "`Split` is wrong"), or the object of a fix verb ("Fix `Split`").
+// A comparison ("like `Join` does", "as `Join` does", "see `Join`"), a negated scope ("should not change `Report`", "does not affect
+// `Report`") and a verdict of health ("`Report` is fine") never make a site defective, and neither does a span elsewhere in the sentence.
+const DEFECT_OR_ASK = /\binstead of\b|\bends up with\b|\bexits? with\b|\bshould\b|\bexpected\b|\bmust\b|\bneeds? to\b|==|\b(?:bug|wrong|broken|mishandl\w*|drops?|dropped|fails?|failing|ignores?|ignored|incorrect\w*|crash\w*|panics?|regress\w*|missing|loses?|lost|never|doesn't|does not|isn't|is not|stops?|returns?|gives?)\b/i;
+const HEALTHY = /^\s*(?:\w+\s+){0,2}(?:is|are|works?|stays?|remains?|looks?)\s+(?:fine|correct|ok|okay|right|unaffected|unchanged|good|already correct)\b/i;
+const FIX_VERB = /\b(?:fix|fixes|fixing|change|update|correct|repair|handle|make)\s+`([^`\n]{1,80})`/gi;
+const spanId = (span: string): string | null => { const id = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/.exec(span)?.[1]; return id ? id.split(".").pop()! : null; };
+/** The named sites (last segment) the issue calls defective or asks to change, read clause by clause. */
 export function defectSites(task: string): Set<string> {
   const out = new Set<string>(), prose = task.replace(/```[\s\S]*?```/g, "\n\n");
-  for (const unit of prose.split(/(?<=[.!?])\s+(?=[A-Z`])|\n\s*\n|\n(?=\s*(?:[-*]|\d+[.)])\s)/)) {
-    if (!DEFECT_OR_ASK.test(unit.replace(/`[^`\n]*`/g, " "))) continue;
-    for (const m of unit.matchAll(/`([^`\n]{1,80})`/g)) { const id = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/.exec(m[1]!)?.[1]; if (id) out.add(id.split(".").pop()!); }
+  const spans: string[] = [], masked = prose.replace(/`([^`\n]+)`/g, (_, x: string) => `\`@${spans.push(x) - 1}\``); // split on punctuation outside code spans only
+  const unmask = (t: string): string => t.replace(/`@(\d+)`/g, (_, i: string) => `\`${spans[Number(i)]}\``);
+  for (const unit of masked.split(/(?<=[.!?])\s+(?=[A-Z`])|\n\s*\n|\n(?=\s*(?:[-*]|\d+[.)])\s)/)) {
+    for (const clause of unit.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").split(/;|:\s|,\s*(?=(?:which|but|and|so|while|whereas|though)\b)/i).map(unmask)) {
+      for (const m of clause.matchAll(FIX_VERB)) { const before = clause.slice(0, m.index); if (!/\b(?:not|never|n't)\s+$/i.test(before)) { const id = spanId(m[1]!); if (id) out.add(id); } } // "Fix `X`", never "should not change `X`"
+      const subj = /^\s*(?:(?:the|a|an|also|and|but|so|now|then|here|still)\s+)*`([^`\n]{1,80})`(.*)$/is.exec(clause); // the clause's subject span and its predicate
+      if (!subj) continue;
+      const pred = subj[2]!.replace(/`[^`\n]*`/g, " ");
+      if (HEALTHY.test(pred) || !DEFECT_OR_ASK.test(pred)) continue;
+      const id = spanId(subj[1]!); if (id) out.add(id);
+    }
   }
   return out;
 }
