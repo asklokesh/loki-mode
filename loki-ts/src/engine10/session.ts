@@ -112,7 +112,7 @@ function parseMarkers(stdout: string): SessionMarkers {
 }
 const lastStageEnd = new WeakMap<SessionRunnerConfig, Map<string, number>>(); // per run: runner config -> stage -> last session end (epoch ms)
 /** Efficiency record plus cost event for one session; a run in another cwd (wall's temp dir) has its result-cost file copied into lokiRoot first, so seal can price it after that dir is gone. */
-function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: string, durationS: number, outText = ""): void {
+export function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: string, durationS: number, outText = ""): void {
   if (!cfg.lokiRoot) return;
   const ownRoot = join(opts.cwd ?? process.cwd(), ".loki");
   const own = resultCostPath(ownRoot, opts.iterationId), dest = resultCostPath(cfg.lokiRoot, opts.iterationId);
@@ -133,7 +133,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   ends.set(opts.stage, endedAt); lastStageEnd.set(cfg, ends);
   const info = { status, durationMs: Math.round(durationS * 1000), model, stage: opts.stage, ...(prev !== undefined ? { gapMs: idleGapMs(endedAt, Math.round(durationS * 1000), prev) } : {}) };
   // No `result` ever arrived: price streamed usage instead of leaving cost_usd null.
-  const c = status === "killed" && !existsSync(dest) ? recordPartialStreamCost(cfg.lokiRoot, opts.iterationId, info) : recordSessionCost(cfg.lokiRoot, opts.iterationId, info);
+  const c = (status === "killed" || capStopOf(outText) !== null) && !existsSync(dest) ? recordPartialStreamCost(cfg.lokiRoot, opts.iterationId, info) : recordSessionCost(cfg.lokiRoot, opts.iterationId, info);
   const ambiguous = c.records?.resume === "ambiguous"; // FIX-RESUME: this resumed session's total may include its predecessor, so its figures are not emitted (NOT RECORDED), never summed on trust
   const unmeasured = tokensUnmeasured(c); // the predicate writeEfficiencyRecord shares: a session without usage emits no token keys, so the control plane never reads a missing session as 0
   cfg.emit?.("cost", opts.stage, {

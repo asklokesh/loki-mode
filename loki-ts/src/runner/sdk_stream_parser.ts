@@ -30,7 +30,6 @@ import { modelOutcome } from "../util/run_identity.ts";
 import { partialUsagePath } from "./budget.ts";
 import { recordAdvisorError } from "./router/advisor_probe.ts";
 import { lokiDirFor } from "../util/paths.ts";
-import { isTestFile } from "../util/test_file_text.ts";
 import { neutralizeEngineMarkers } from "./retry_class.ts";
 import { redactSecrets } from "../util/redact.ts";
 
@@ -105,7 +104,7 @@ export interface ParserContext {
   /** Harness stop rules for an engine stage session (E5): the stream ends early, and the result says which rule fired. */
   stop?: StopRules;
 }
-/** turns: assistant turns; newTokens: input + output + cache-write tokens summed over turns (cache reads are not counted); noEditByTurn: stop when no product-file edit was made by that turn. */
+/** turns: assistant turns; newTokens: input + output + cache-write tokens summed over turns (cache reads are not counted); noEditByTurn: stop when no edit was made by that turn. */
 export interface StopRules { turns?: number; newTokens?: number; noEditByTurn?: number }
 export interface StopFired { rule: "turns" | "new_tokens" | "no_product_edit"; turn: number; new_tokens: number; limit: number }
 
@@ -255,7 +254,7 @@ export async function consumeSdkStream(
   const skillReads: string[] = [];
   let toolResults = 0, toolErrors = 0, mcpToolCount: number | undefined, anonTurn = 0, mcpToolWarned = false;
   const suiteCmds = parseSuiteCmds(process.env["LOKI_E10_SUITE_CMDS"]); let suiteRuns = 0; // L026: in-session runs of the repo's full-suite command, recorded only when the commands are known
-  let productEditSeen = false, stopped: StopFired | undefined; // E5: a product edit is an edit tool on a non-test path, or a Bash that writes (sed -i, redirect, tee, patch, git apply)
+  let productEditSeen = false, stopped: StopFired | undefined; // E5: an edit is any edit tool call (a fix round may repair its own test), or a Bash that writes (sed -i, redirect, tee, patch, git apply)
   let readsBeforeEdit = 0, firstEditSeen = false; // L022: Read/Grep/Glob/LS calls before the first file edit (how much exploring the brief left to do)
   const toolTelemetry = (): Record<string, unknown> => {
     const perTurn = [...toolsByTurn.values()].map((t) => t.size);
@@ -343,7 +342,7 @@ export async function consumeSdkStream(
           const readPath = tool === "Read" ? input["file_path"] : undefined;
           const mod = typeof readPath === "string" ? /(?:^|\/)((?:skills|references)\/[^/]+\.md)$/.exec(readPath)?.[1] : undefined;
           if (mod && !skillReads.includes(mod)) skillReads.push(mod);
-          if (!productEditSeen) { const fp = input["file_path"] ?? input["notebook_path"]; if (/^(Edit|MultiEdit|Write|NotebookEdit)$/.test(tool) ? !(typeof fp === "string" && isTestFile(fp)) : tool === "Bash" && typeof input["command"] === "string" && BASH_WRITES.test(input["command"])) productEditSeen = true; }
+          if (!productEditSeen) { if (/^(Edit|MultiEdit|Write|NotebookEdit)$/.test(tool) || (tool === "Bash" && typeof input["command"] === "string" && BASH_WRITES.test(input["command"]))) productEditSeen = true; }
           if (tool === "Bash" && typeof input["command"] === "string" && isSuiteRun(input["command"], suiteCmds)) suiteRuns++;
           bumpOrchestratorTool(agents, tool, toolDesc(tool, input));
 
