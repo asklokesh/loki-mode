@@ -371,7 +371,7 @@ fchk "the file the run created is editable again in a later session of the run" 
 fchk "a root config is still restored in that later session" 'leg13-root-config-still-restored export default {};'
 fchk "the created file is on the run record" 'leg13-record ["tests/tsconfig.json"]'
 fchk "every lockfile name of the one table is fenced" "lockfile-table true"
-grep -qE 'composer[.]lock|Gemfile[.]lock|uv[.]lock|pnpm-lock' "$ROOT/loki-ts/src/e10ext/commit_filter.ts" "$ROOT/loki-ts/src/util/config_paths.ts" "$ROOT/loki-ts/src/project_model/linguist.ts" && bad "a literal lockfile list sits outside util/lock_ecosystems.ts" || ok "the lockfile list is defined once, in util/lock_ecosystems.ts"
+grep -qE 'composer.{0,2}lock|Gemfile.{0,2}lock|uv.{0,2}lock|pnpm-lock' "$ROOT/loki-ts/src/e10ext/commit_filter.ts" "$ROOT/loki-ts/src/util/config_paths.ts" "$ROOT/loki-ts/src/project_model/linguist.ts" && bad "a literal lockfile list sits outside util/lock_ecosystems.ts" || ok "the lockfile list is defined once, in util/lock_ecosystems.ts"
 fchk "real session: vitest.config.ts restored after a Bash write" 'leg1-vitest export default {};'
 fchk "real session: tsconfig.json restored" "leg1-tsconfig-strict-false true"
 fchk "real session: created config removed" "leg1-created-removed true"
