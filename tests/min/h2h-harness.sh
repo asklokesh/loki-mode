@@ -522,6 +522,8 @@ has "paired: loki-sonnet-learn is compared with raw-sonnet only" "$stat_out" "al
 # A Loki learning arm end to end on the stub provider, next to a raw arm, over two laps: a 2-step sequence built here from
 # tests/min/fixtures/e2e/repo (no committed duplicate fixture). Lap 2 step 1 must be handed lap 1's worked example, which
 # is what the -learn suffix switches on; the results file carries the curve and the paired list.
+# The stub appends a test case (E2E_STUB_TEST_EDIT=update): kept and uncapped, so lap 1 is VERIFIED and teaches a worked example. =1 adds a skip,
+# which seal now caps at PARTIAL (weakened test), and a PARTIAL receipt rightly teaches no worked example.
 FIX="$ROOT/tests/min/fixtures/e2e"
 SD="$T/seqs/calc"; mkdir -p "$SD/repo" "$SD/steps/s1/hidden" "$SD/steps/s1/solution" "$SD/steps/s2/hidden" "$SD/steps/s2/solution"
 cp "$FIX/repo/"* "$SD/repo/"
@@ -536,7 +538,7 @@ for s in s1 s2; do
   printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n' > "$SD/steps/$s/hidden/mul.hidden.test.ts"
   printf 'export function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' > "$SD/steps/$s/solution/calc.ts"
 done
-H2H_SEQUENCES_DIR="$T/seqs" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=1 E2E_STUB_USAGE=50 LOKI_TS_ENTRY="$ROOT/loki-ts/dist/loki.js" \
+H2H_SEQUENCES_DIR="$T/seqs" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=update E2E_STUB_USAGE=50 LOKI_TS_ENTRY="$ROOT/loki-ts/dist/loki.js" \
     H2H_LOKI_ENV="LOKI_E10_INVOKER=cli,LOKI_CLAUDE_CLI=$FIX/bin/claude,LOKI_E10_PLAN=1" TMPDIR="$T" \
     bash benchmarks/h2h/run.sh --sequences calc --configs raw-sonnet,loki-sonnet-learn --laps 2 --timeout 120 --allow-dirty \
     --out "$T/learnseq.json" >"$T/learnseq.log" 2>&1
