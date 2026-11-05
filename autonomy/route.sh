@@ -19,7 +19,7 @@ _ROUTE_OPTVAL_FLAGS=" --mirofish "
 # engine rather than configure it: the route still resolves (R_FRONT=1) but the dispatcher leaves the call to the front end.
 _ROUTE_FRONT_FLAGS=" --workspace --deploy --health-url --health-match --auto-rollback --destination --canary --domain "
 # Flags engine10 honors as-is.
-_ROUTE_E10_FLAGS=" --no-pr --deep --json --verbose --quiet --resume --provider --max-cost --spec --attempts --seal-existing "
+_ROUTE_E10_FLAGS=" --no-pr --deep --json --verbose --quiet --resume --provider --max-cost --spec --attempts --seal-existing --detach -d "
 # The largest PRD engine10 takes: it carries the task in env vars and CLI arguments (with a context pack added under
 # --session-model), and Linux caps one string at 128 KiB. A bigger PRD runs on the legacy engine, or is refused under
 # SDK mode with claude (the legacy engine has no SDK path).
@@ -35,7 +35,6 @@ _route_refusal_hint() {
     case "$1" in
         --ship) echo "engine10 opens the PR itself and does not auto-merge; merge it with 'loki merge-queue', or pass --engine legacy to keep --ship" ;;
         --worktree|-w) echo "engine10 runs each attempt in its own isolated worktree already; drop the flag, or pass --engine legacy for a git-worktree run" ;;
-        --detach|-d) echo "run it in the background yourself ('nohup loki start ... &') or queue it with 'loki queue run', or pass --engine legacy for --detach" ;;
         --parallel) echo "use 'loki queue run --parallel K' or 'loki issues run --parallel K' for parallel runs, or pass --engine legacy for --parallel" ;;
         --issue) echo "give the issue as the task instead: loki start owner/repo#N (or the issue URL)" ;;
         *) echo "drop it, or pass --engine legacy to run the legacy loop with it" ;;

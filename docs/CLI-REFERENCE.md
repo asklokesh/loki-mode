@@ -7,7 +7,7 @@ Hidden and legacy-only commands are omitted; see `docs/CLI-INVENTORY.md` for the
 | --- | --- |
 | `loki version` | Show version |
 | `loki status` | Show current run status, and what the next loki start will do with an interrupted run |
-| `loki doctor` | System prerequisites health check; --json, --fix, --requirements, --repo (repo profile with a 0-100 readiness score and fixes) |
+| `loki doctor` | System prerequisites health check; --json, --fix, --requirements, --repo (repo profile with a 0-100 readiness score and fixes; when the manifests name no test command it lists the full-suite command verify runs for each detected runner, Maven, Gradle, .NET and javac included, and names a build tool that is not installed) |
 | `loki provider` | Show, list or set the AI provider |
 | `loki provider show` | Show current provider |
 | `loki provider list` | List providers and install status |
@@ -108,6 +108,7 @@ Hidden and legacy-only commands are omitted; see `docs/CLI-INVENTORY.md` for the
 | `loki keys` | Receipt-signing keys |
 | `loki keys export` | Print the public signing key (JWK) |
 | `loki review` | Standalone code review with quality gates |
+| `loki review queue` | Open Loki PRs ranked by risk; low-risk passport-verified PRs marked ready |
 | `loki dashboard` | Operations UI server |
 | `loki dashboard start` | Start |
 | `loki dashboard stop` | Stop |

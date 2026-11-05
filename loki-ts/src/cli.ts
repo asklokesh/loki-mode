@@ -178,6 +178,16 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       return 2;
     }
 
+    case "review": {
+      // `review queue` is Bun-only (bin/loki routes exactly `review queue` here); every other `review` form is the bash command.
+      if (rest[0] === "queue") {
+        const { runReviewQueue } = await import("./commands/review_queue.ts");
+        return runReviewQueue(rest.slice(1));
+      }
+      process.stderr.write("loki review is the bash command; only `loki review queue` runs in the Bun CLI\n");
+      return 2;
+    }
+
     case "trust": {
       // R4: visible trust trajectory. Read-only derivation from proof-of-run
       // history (.loki/proofs/) showing whether the agent is earning autonomy

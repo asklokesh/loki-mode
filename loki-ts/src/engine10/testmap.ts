@@ -4,7 +4,7 @@ import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { listProjectFiles } from "../util/safe_git.ts";
 import { loadProjectApi } from "../project_model/resolve.ts"; import { languageBytes } from "../project_model/linguist.ts"; 
 import { attachScope, scopeRefs } from "../project_model/scope.ts";
-import { CS_TEST_RE, DOTNET_MANIFEST_RE, JAVA_TEST_RE, missingStackTool, pascalWords, toolOk } from "../util/stack_tools.ts"; export { missingStackTool };
+import { CS_TEST_RE, DOTNET_MANIFEST_RE, JAVA_TEST_RE, missingStackTool, pascalWords, repoTestCommand, toolOk } from "../util/stack_tools.ts"; export { missingStackTool };
 import { projectInterpreter, pytestPython } from "../util/python.ts"; export { projectInterpreter };
 import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
 import { FOREIGN_SOURCE_RE, GO_TEST_RE, JS_SPEC_RE, JS_TEST_RE, PY_TEST_RE, STDLIB_RUNNERS, coveredStem, detectFromPackageJson, importedRunners, isTestFile, PYTEST_IMPORT_RE, referencedBasenames, scopeRunnersByPackage, COMMANDS, RUNNER_ORDER, guessRunner, type CommandSpec } from "../util/test_file_text.ts";
@@ -22,6 +22,12 @@ export interface EngineTestMap extends TestMap {
 }
 /** Detected runner first; the language holding most runnable sources picks its stdlib runner, else Loki's own bun runs the Wall's bun:test file (docs, plugins, config, JS/TS). Off with LOKI_WALL_HARNESS_RUNNER=0 or no bun on PATH, then the repo's own toolchain (RX-1); `focus` (changed or sealed files) picks the toolchain in a polyglot repo. */
 export const harnessRunners = (runners: RunnerName[], files: readonly string[] = [], env: NodeJS.ProcessEnv = process.env, root?: string, focus: readonly string[] = []): RunnerName[] => pickHarnessRunners(runners, files, env, root, focus).filter((r) => toolOk(r, env, root)); // HV1-03b: a Java or .NET build tool that is not installed is never a runner (the Wall then skips with the tool named, see missingStackTool) instead of a base run that cannot start
+/** FR05: one plain reason no test can run in this repo on this machine, or null when one can. Same decision as the Wall (harnessRunners): no runnable detected runner, no Wall harness runner, and no committed verify.test_command. Intake prints it before any session. */
+export function untestableReason(runners: RunnerName[], files: readonly string[], env: NodeJS.ProcessEnv = process.env, root?: string): string | null {
+  if ((root && repoTestCommand(root)) || harnessRunners(runners, files, env, root).length > 0) return null;
+  const miss = missingStackTool(files, env, root);
+  return miss ? `${miss.tool} is not installed (${miss.install})` : `no test runner Loki can use was found (Loki runs ${[...RUNNER_ORDER, "unittest"].join(", ")} tests)`;
+}
 const pickHarnessRunners = (runners: RunnerName[], files: readonly string[], env: NodeJS.ProcessEnv, root: string | undefined, focus: readonly string[]): RunnerName[] => {
   const onPath = (tool: string): boolean => !!Bun.which(tool, { PATH: env.PATH ?? "" }), w = languageBytes(root, files, (f) => STDLIB_RUNNERS.find((r) => r.ext.test(f))?.runner ?? (/\.[cm]?[jt]sx?$/i.test(f) ? "js" : FOREIGN_SOURCE_RE.test(f) ? "other" : null)), at = (k: string): number => w.get(k) ?? 0, js = at("js"), top = STDLIB_RUNNERS.reduce((a, r) => (at(r.runner) > at(a.runner) ? r : a)), bun: RunnerName[] = env.LOKI_WALL_HARNESS_RUNNER !== "0" && onPath("bun") ? ["bun"] : toolchainRunner(files, focus); // RX-1: no bun either: the repo's own toolchain runs the Wall instead of skipping it
   const t = at(top.runner), o = at("other");

@@ -143,3 +143,24 @@ The bare word `VERIFIED` therefore means: integrity not failed, no failed checks
 - Existing JSON fields are untouched. `verification` is additive.
 - Receipts written before this contract lack `facts.environment` and `facts.git.dirty`. They report environment `not recorded` and may report freshness `unknown`.
 - `loki proof show <id>` used to print the raw JSON. Scripts that parsed it must now pass `--json`.
+
+## Passport on every PR
+
+A VERIFIED Loki 10 PR carries a portable proof passport in its receipt comment (the comment marked `<!-- loki-receipt -->`). It is the run receipt as a signed DSSE envelope (in-toto Statement v1, Ed25519 over the DSSE pre-authentication encoding, the same envelope `loki verify --export-dsse` writes) plus the public JWK of the signing key. The comment also prints the key id and the commit the receipt covers.
+
+To check a PR offline, with no account and no network:
+
+1. Copy the two blocks under "Proof passport" in the comment into `receipt.dsse.json` and `pubkey.jwk`.
+2. Run `loki verify --pubkey pubkey.jwk receipt.dsse.json`. Expected: `verdict: VERIFIED`, exit 0. A changed byte reads TAMPERED (exit 1).
+3. Check that the commit printed in the comment is the PR's head commit.
+
+Key trust: the key inside the comment proves integrity only. Anyone can sign a receipt with their own key and post it with their own matching key. Compare the key id with one you obtained out of band (`loki keys export` prints it), or run `loki verify` with a key file you already trust. `loki review queue` never trusts the embedded key: it checks passports only against `--pubkey FILE` or the local receipt key, and a passport from any other key reads `unchecked`.
+
+What the passport does not cover:
+
+- Draft and non-VERIFIED PRs get no passport; the comment says why (`not issued: run outcome PARTIAL`). Only VERIFIED and ALREADY_SATISFIED receipts are exported, the same policy as `--export-dsse`.
+- `events.jsonl` is not in the envelope, so the event-log checks do not run on a passport. For the full evidence (receipt, event log, key) use `loki proof bundle <run-id>`.
+- The envelope is a copy of the receipt predicate: checks, cost, toolchain, evidence and assumptions are visible to anyone who can read the PR. Two guards keep it from leaking local detail: a receipt that mentions the repository path, your home directory, `/Users/` or `/home/` gets no passport (`receipt holds local paths`), and a passport above 60000 characters is not posted (`passport too large`). In both cases use `loki proof bundle`.
+
+`LOKI_PR_PASSPORT=0` turns the passport off; the comment then says `Passport: passport disabled`. See `docs/merge-queue.md` for `loki review queue`, which ranks open Loki PRs and marks the ones whose passport verifies.
+

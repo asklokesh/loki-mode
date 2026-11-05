@@ -78,6 +78,12 @@ loki doctor --json    # machine-readable
 
 `loki doctor --fix` creates state directories and a default config. It never installs system packages or runs sudo; it prints those commands instead.
 
+### Tests Loki can run
+
+Loki detects pytest, unittest, vitest, jest, bun, node, npm, go, cargo, maven, gradle, javac and dotnet tests from the repo's own files, with no environment variable and no config. JVM and .NET repos need `mvn`, `gradle` or `dotnet` on PATH, or a committed `mvnw` or `gradlew` wrapper. A committed `verify.test_command` in `loki.yaml` overrides the detected command. `loki doctor --repo` shows the command Loki will run.
+
+When no test can run on this machine (the build tool is missing and there is no wrapper, or the stack has no runner Loki supports, such as Ruby), `loki start` prints `loki: cannot run this repo's tests on this machine: <reason>` before any model session. The run continues, but it cannot end VERIFIED. Not covered yet: Kotlin tests are not detected, and a Python interpreter without pytest is not flagged up front.
+
 ---
 
 ## IDE and MCP client install
