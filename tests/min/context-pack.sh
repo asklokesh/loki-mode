@@ -21,12 +21,17 @@
 #                   run on the default model sends no pack but still records brief_files and the coverage.
 #   loki stats --outcomes --json reports the median context recall of those runs.
 #
+#   E6 diet:        LOKI_E10_PACK_DIET (default off): one named definition keeps its span and loses the fill, the
+#                   solution coverage holds, no test spans.
+#
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/util/context_pack.ts: drop the callee hop (the `for (let hop` loop); the haiku brief loses
 #      src/money.ts and roundCents, so the coverage assertions fail.
 #   2. loki-ts/src/util/context_pack.ts: `if (used + c > budgetBytes) return false;` deleted; the budget legs fail.
 #   3. loki-ts/src/engine10/stages/implement.ts: drop `brief_files: bc.files` from the stage data (rebuild dist);
 #      the end-to-end brief_files and context_recall assertions fail.
+#   5. loki-ts/src/util/context_pack.ts: delete the `if (diet) {` filter block; diet_no_fill fails. Drop the
+#      `hop < (diet ? 1 : 2)` bound or the callee hop under diet; diet_keeps_solution fails.
 #   4. loki-ts/src/engine10/repomap.ts: SOURCE_EXT back to ts|tsx|js|jsx|mjs|cjs|py; the L020 ranking legs fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -128,6 +133,21 @@ for (const budget of [6000, 800]) {
   out[`big_${budget}`] = p && p.tokens <= budget && p.tokens === cp.estTokens(p.text) && p.spans.length > 0 ? "within" : `over ${p?.tokens} spans ${p?.spans.length}`;
 }
 
+// E6 diet: named spans plus direct callers and callees only, no fill. Off unless LOKI_E10_PACK_DIET=1 (the mean cut on the
+// 20 corpus briefs, 2.8k estimated tokens, is under the 3.5k default-on bar).
+{
+  const big = join(T, "big"), bmap = buildRepoMap(big).entries, files = ["src/ledger0.ts", "src/ledger1.ts", "src/ledger2.ts"], bt = "fix ledgerEntry0x3 so the ledger entry balance stays a number";
+  const gt = "fix the ledger entry balance", gen = cp.contextPack(big, gt, files, bmap, 6000, {}), genOff = cp.contextPack(big, gt, files, bmap, 6000, { LOKI_E10_PACK_DIET: "0" }), genDiet = cp.contextPack(big, gt, files, bmap, 6000, { LOKI_E10_PACK_DIET: "1" });
+  const base = cp.contextPack(big, bt, files, bmap, 6000, {}), diet = cp.contextPack(big, bt, files, bmap, 6000, { LOKI_E10_PACK_DIET: "1" });
+  out.diet_default_off = cp.packDietEnabled({}) === false && cp.packDietEnabled({ LOKI_E10_PACK_DIET: "1" }) === true && cp.packDietEnabled({ LOKI_E10_PACK_DIET: "0" }) === false && JSON.stringify(gen) === JSON.stringify(genOff) ? "yes" : "no";
+  out.diet_no_fill = gen && genDiet && gen.spans.length > 3 && genDiet.spans.length === 1 && genDiet.tokens < gen.tokens / 2 ? "yes" : `no fill ${gen?.spans.length}/${gen?.tokens} diet ${genDiet?.spans.length}/${genDiet?.tokens}`;
+  out.diet_named_only = base && diet && diet.spans.length === 1 && diet.spans[0].symbol === "ledgerEntry0x3" && diet.spans[0].via === "named" ? "yes" : `no ${JSON.stringify(diet?.spans)}`;
+  const dctx = ctxFor(join(T, "inv"), task);
+  const d0 = briefRecord(dctx, deps, "haiku"); process.env.LOKI_E10_PACK_DIET = "1"; const d1 = briefRecord(dctx, deps, "haiku"); delete process.env.LOKI_E10_PACK_DIET;
+  out.diet_keeps_solution = d1.pack && d1.pack.tokens < d0.pack.tokens && coverage(d1.text, d1.files) === "3/3 2/3" ? "yes" : `no ${d1.pack?.tokens}/${d0.pack?.tokens} ${coverage(d1.text, d1.files)}`;
+  const tmap = buildRepoMap(join(T, "inv")).entries;
+  out.diet_no_tests = (cp.contextPack(join(T, "inv"), task, ["src/invoice.ts", "src/invoice.test.ts"], tmap, 6000, { LOKI_E10_PACK_DIET: "1" })?.spans ?? []).every((x: { path: string }) => !/test/.test(x.path)) ? "yes" : "no";
+}
 out.tiny_null = cp.contextPack(join(T, "big"), "fix ledgerEntry0x3", ["src/ledger0.ts"], [], 50) === null ? "yes" : "no";
 
 // L022: known brief, known diff (name-status pairs), known result-cost record.
@@ -172,6 +192,11 @@ eqv pack_tokens_exact ok "L021 pack tokens recorded and within the 6000 budget"
 echo "    pack spans: $(get pack_spans)"
 eqv big_6000 within "L021 budget holds on large files (6000)"
 eqv big_800 within "L021 budget holds on large files (800)"
+eqv diet_default_off yes "E6 the pack diet is off by default and LOKI_E10_PACK_DIET=1/0 switch it"
+eqv diet_no_fill yes "E6 diet: a task naming nothing keeps its single best definition, not the fill of matching ones (under half the tokens)"
+eqv diet_named_only yes "E6 diet: a task naming one definition keeps that span only"
+eqv diet_keeps_solution yes "E6 diet: ts-invoice keeps invoiceTotal and roundCents (callee) but drops RATES, a second-hop constant: the known cost, 3/3 files 2/3 bodies, fewer tokens"
+eqv diet_no_tests yes "E6 diet: no test file spans in the pack"
 eqv tiny_null yes "L021 a budget too small for any body sends no pack (not an empty header)"
 eqv cov_record "0.667 0.5 3 3" "L022 contextCoverage: recall 2/3, precision 2/4, reads 3 (test and added files excluded, a deleted file counted)"
 eqv stream_reads 3 "L022 stream parser: 3 reads before the first edit (a repeated snapshot counts once, a later read not at all)"
