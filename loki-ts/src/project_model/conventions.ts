@@ -127,6 +127,10 @@ export function fragmentTitle(task: string): string {
   const line = task.split("\n").map((l) => l.trim()).find((l) => l && !/^(<<<|TASK$|Task \(untrusted)/.test(l)) ?? "";
   return clean(line).replace(/^#+\s*/, "").replace(/^(title|issue)\s*:\s*/i, "").replace(/\s*\(#\d+(?:\s+\w+)?\)\s*$/, "").replace(/[.\s]+$/, "").slice(0, 160);
 }
+const CONV_PREFIX = /^(\w+)(?:\([^)]*\))?!?:\s+/;
+/** A title that marks an internal change, which a repo's own release notes leave out: a conventional-commit chore/refactor/ci/build/test/docs/deps/style/revert/release prefix, "Bump ...", "Update dependency ...", "Merge ...", "Revert ...", "Typo". */
+export const internalTitle = (title: string): boolean =>
+  /^(?:chore|refactor|ci|build|tests?|docs?|style|deps?|dev|ops|revert|wip|release|bump|merge|typo|lint)$/i.test(CONV_PREFIX.exec(title)?.[1] ?? "") || /^(?:bump|update (?:dependency|dependencies)|merge|revert|release|fix typos?|typos?)\b/i.test(title);
 const words = (t: string): Set<string> => new Set(t.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? []);
 /** One sentence of what the run says it changed, from the tail of the implement session's final message; "" when none reads like a maintainer's note.
  *  Markers, code fences, tables, headings, first-person narration, test-status chatter and a sentence that restates the title are all refused. */
@@ -186,11 +190,14 @@ export function writeReleaseNoteFragment(repoDir: string, files: string[], task:
   if (live.some((f) => f.startsWith(`${conv.dir}/`) && !/readme|config\.json$|\.toml$/i.test(basename(f)))) return { skipped: "the change already carries a fragment" };
   const code = live.filter((f) => FRAGMENT_CODE.test(f) && !isTestFile(f) && !f.startsWith(`${conv.dir}/`));
   if (code.length === 0) return { skipped: "no non-test code changed" };
-  const title = fragmentTitle(task), note = summaryNote(summary, title);
+  const raw = fragmentTitle(task);
+  if (internalTitle(raw)) return { skipped: "the title marks an internal change (chore, refactor, ci, docs, deps ...)" };
+  const exBody = conv.example ? ((): string => { try { return readFileSync(join(repoDir, conv.example!), "utf8"); } catch { return ""; } })() : "";
+  const title = CONV_PREFIX.test(exBody.replace(/^---[\s\S]*?\n---\s*/, "").trimStart()) ? raw : raw.replace(CONV_PREFIX, ""), note = summaryNote(summary, title); // a conventional prefix stays only where the repo's own fragments carry one
   const lead = title.length >= 12 ? title : note;
   if (!lead) return { skipped: "no usable title or summary for a body" };
   const body = lead === title && note ? `${lead}. ${note}` : lead;
-  const exText = conv.example ? ((): string => { try { return readFileSync(join(repoDir, conv.example!), "utf8"); } catch { return ""; } })() : "";
+  const exText = exBody;
   const dir = join(repoDir, conv.dir), slug = title.toLowerCase().replace(/[`'"]/g, "").split(/[^a-z0-9]+/).filter(Boolean).slice(0, 6).join("-") || "change";
   let rel: string, text: string;
   if (conv.kind === "changeset") {
@@ -199,7 +206,7 @@ export function writeReleaseNoteFragment(repoDir: string, files: string[], task:
     const ignore = Array.isArray(cfg.ignore) ? cfg.ignore.map(String) : [], globs = workspaceGlobs(repoDir), names = new Set<string>();
     for (const f of code) { const p = ownerPackage(repoDir, f); if (p && !p.private && !ignore.includes(p.name) && inWorkspace(p.dir, globs)) names.add(p.name); }
     if (names.size === 0) return { skipped: "no changed file belongs to a public workspace package" };
-    const q = /^---\s*\n\s*(["'])/.exec(exText)?.[1] ?? '"', bump = FEAT.test(title) ? "minor" : "patch";
+    const q = /^---\s*\n\s*(["'])/.exec(exText)?.[1] ?? '"', bump = FEAT.test(raw) ? "minor" : "patch";
     let n = `${slug}.md`; for (let i = 2; existsSync(join(dir, n)); i++) n = `${slug}-${i}.md`;
     rel = `${conv.dir}/${n}`; text = `---\n${[...names].sort().map((p) => `${q}${p}${q}: ${bump}`).join("\n")}\n---\n\n${sentence(body, exText.replace(/^---[\s\S]*?\n---\s*/, ""))}\n`;
   } else {
@@ -209,7 +216,7 @@ export function writeReleaseNoteFragment(repoDir: string, files: string[], task:
     if (!issue && !orphan) return { skipped: "towncrier: the task names no issue number and the repo does not use orphan fragments" };
     const cfgText = ["towncrier.toml", ".towncrier.toml", "pyproject.toml"].map((c) => { try { return readFileSync(join(repoDir, c), "utf8"); } catch { return ""; } }).join("\n");
     const types = [...cfgText.matchAll(/\[\[tool\.towncrier\.type\]\][^[]*?directory\s*=\s*["'](\w+)["']/g)].map((m) => m[1]!), known = types.length ? types : ["feature", "bugfix", "doc", "removal", "misc"];
-    const kind = FEAT.test(title) ? known.find((t) => /feat/.test(t)) : FIX.test(title) ? known.find((t) => /bug|fix/.test(t)) : undefined;
+    const kind = FEAT.test(raw) ? known.find((t) => /feat/.test(t)) : FIX.test(raw) ? known.find((t) => /bug|fix/.test(t)) : undefined;
     if (!kind) return { skipped: "towncrier: the change type is not clear from the task" };
     const ext = parts.length >= 3 ? `.${parts[parts.length - 1]}` : "";
     const n = `${issue ?? `+${slug}`}.${kind}${ext}`;

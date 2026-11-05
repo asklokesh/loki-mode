@@ -206,6 +206,12 @@ const w15 = mk("w15", stub(1, "Error: Failed to find where HEAD diverged from ma
 const r15 = wf(w15, ["packages/core/src/a.ts"], TITLE, SUMMARY) as { validated?: string }; out.fw_env_error = r15.validated === "unavailable" && rd(join(w15, ".changeset")).some((n: string) => n.startsWith("fix-")) ? "kept" : "dropped";
 const w16 = mk("w16", stub(0, "ok")); chmodSync(join(w16, "node_modules/.bin/changeset"), 0o755);
 out.fw_tool_ok = (wf(w16, ["packages/core/src/a.ts"], TITLE, SUMMARY) as { validated?: string }).validated;
+out.fw_internal = ["chore: remove dead code", "refactor(core): split the loader", "docs: explain the flag", "ci: cache deps", "Bump lodash from 1 to 2", "Update dependency vitest to v3", "Merge branch main", "Revert the loader change", "test: more async cases", "build!: drop node 16"].map((t) => skip("m", mk(`wi${t.length}`, csFiles()), ["packages/core/src/a.ts"], t, "")).join(",");
+out.fw_internal_ok = ["fix: wrong total when the invoice is empty", "feat(export): add a --json flag", "perf: faster parse of large invoices"].map((t) => skip("n", mk(`wj${t.length}`, csFiles()), ["packages/core/src/a.ts"], t, "")[0]).join("");
+const w23 = mk("w23", csFiles()); const r23 = wf(w23, ["packages/core/src/a.ts"], "feat(export): add a --json flag to the exporter", "", { tools: false }) as { path?: string };
+out.fw_strip = r23.path && rf(join(w23, r23.path), "utf8").endsWith("\n\nadd a --json flag to the exporter.\n") && rf(join(w23, r23.path), "utf8").includes('"@acme/core": minor') ? "ok" : `bad:${r23.path && rf(join(w23, r23.path), "utf8")}`;
+const w24 = mk("w24", csFiles({ ".changeset/old.md": '---\n"@acme/core": patch\n---\n\nfix: older fix\n' })); const r24 = wf(w24, ["packages/core/src/a.ts"], "fix: wrong total when the invoice is empty", "", { tools: false }) as { path?: string };
+out.fw_keep_prefix = r24.path && rf(join(w24, r24.path), "utf8").endsWith("\n\nfix: wrong total when the invoice is empty\n") ? "ok" : "bad";
 // towncrier
 const tcFiles = (extra: Record<string, string> = {}) => ({ "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\n', "changes/7.feature.rst": "Added a thing.\n", "pkg/mod.py": "x = 1\n", ...extra });
 const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, files, task, "", { tools: false }) as { path?: string; skipped?: string };
@@ -218,13 +224,37 @@ out.tc_no_example = tw(mk("w21", { "pyproject.toml": '[tool.towncrier]\ndirector
 out.tc_orphan = ((r) => r.path && /\/\+fix-crash-when-the-cache-is\.bugfix\.rst$/.test(r.path) ? "ok" : `bad:${r.path ?? r.skipped}`)(tw(mk("w22", tcFiles({ "changes/+abc.feature.rst": "Added.\n" })), "Fix crash when the cache is empty"));
 // summaryNote and the task veto
 out.sn_pick = summaryNote("Done.\n\nI changed the loader.\n\nThe loader now skips unreadable files instead of aborting the whole scan.\n\nLOKI_DONE", "Fix loader crash");
-out.sn_chatter = summaryNote("All tests pass.\n\nLet me know if you want more.\n\nLOKI_DONE", "Fix loader crash") === "" ? "empty" : "picked";
+out.sn_chatter = summaryNote("Running the unit suite passes in every package now.\n\nLet me know if you want more.\n\nLOKI_DONE", "Fix loader crash") === "" ? "empty" : "picked";
 out.sn_restate = summaryNote("Fixed the loader crash when a file is unreadable.", "Fix the loader crash when a file is unreadable") === "" ? "empty" : "picked";
 out.sn_table = summaryNote("| a | b |\n| - | - |\n\n```\ncode here is long enough to count as text\n```\n", "Fix x") === "" ? "empty" : "picked";
 out.veto = [taskForbidsReleaseNote("Fix x, no changelog entry"), taskForbidsReleaseNote("skip the changeset"), taskForbidsReleaseNote("do not add a news fragment"), taskForbidsReleaseNote("Update the changelog generator to sort entries"), taskForbidsReleaseNote("Fix the release notes page")].join(",");
 out.knob = [fragmentWriterOn({}), fragmentWriterOn({ LOKI_E10_SCAFFOLD: "1" }), fragmentWriterOn({ LOKI_E10_SCAFFOLD: "0" })].join(",");
+if (process.env.FW_REAL_CS) { const r = wf(process.env.FW_REAL_CS, ["packages/core/src/a.ts"], TITLE, SUMMARY) as { validated?: string; skipped?: string }; out.fw_real_cs = r.validated ?? `skipped:${r.skipped}`; } else out.fw_real_cs = "offline";
+if (process.env.FW_REAL_TC) { const r = wf(process.env.FW_REAL_TC, ["pkg/mod.py"], TITLE, SUMMARY) as { validated?: string; skipped?: string }; out.fw_real_tc = r.validated ?? `skipped:${r.skipped}`; } else out.fw_real_tc = "offline";
 console.log(JSON.stringify(out));
 TS
+
+# Real-tool fixtures for the fragment writer: the repo's own changeset and towncrier, installed from the registry; both skip cleanly offline.
+export FW_REAL_CS="" FW_REAL_TC=""
+if command -v npm >/dev/null 2>&1; then
+    mkdir -p "$T/real-cs/packages/core/src" "$T/real-cs/.changeset"
+    printf '{"name":"root","private":true,"workspaces":["packages/*"]}\n' > "$T/real-cs/package.json"
+    printf '{"name":"@acme/core","version":"1.0.0"}\n' > "$T/real-cs/packages/core/package.json"
+    printf 'export const a = 1;\n' > "$T/real-cs/packages/core/src/a.ts"
+    printf '{"commit":false,"access":"public","baseBranch":"main","ignore":[]}\n' > "$T/real-cs/.changeset/config.json"
+    printf -- '---\n"@acme/core": patch\n---\n\nOlder fix.\n' > "$T/real-cs/.changeset/old.md"
+    printf 'node_modules\n' > "$T/real-cs/.gitignore"
+    if (cd "$T/real-cs" && timeout 120 npm install --no-audit --no-fund --silent @changesets/cli@2 >/dev/null 2>&1 && [ -x node_modules/.bin/changeset ]); then
+        git -C "$T/real-cs" init -q -b main && git -C "$T/real-cs" add -A . && git -C "$T/real-cs" -c user.name=c -c user.email=c@x commit -q -m base && FW_REAL_CS="$T/real-cs"
+    fi
+fi
+if command -v python3 >/dev/null 2>&1 && timeout 60 python3 -I -m venv "$T/tc-venv" >/dev/null 2>&1 && timeout 120 "$T/tc-venv/bin/pip" install -q towncrier >/dev/null 2>&1 && [ -x "$T/tc-venv/bin/towncrier" ]; then
+    mkdir -p "$T/real-tc/changes" "$T/real-tc/.venv/bin" "$T/real-tc/pkg"
+    ln -s "$T/tc-venv/bin/towncrier" "$T/real-tc/.venv/bin/towncrier"
+    printf '[tool.towncrier]\nname = "demo"\ndirectory = "changes"\n' > "$T/real-tc/pyproject.toml"
+    printf 'Added a thing.\n' > "$T/real-tc/changes/7.feature.rst"; printf 'x = 1\n' > "$T/real-tc/pkg/mod.py"
+    FW_REAL_TC="$T/real-tc"
+fi
 
 probe="$(bun "$T/probe.ts" "$SRC" "$T" "$CTX" 2>"$T/probe.err")"
 [ -n "$probe" ] || { bad "probe produced no output: $(tail -5 "$T/probe.err")"; finish; exit $?; }
@@ -271,6 +301,10 @@ eqv fw_body ok "FW changeset: body is the title plus one maintainer-style senten
 eqv fw_quote ok "FW changeset: a single-quoted example gives a single-quoted fragment"
 eqv fw_validated unavailable "FW changeset: no repo tool present reports validated=unavailable and still writes"
 eqv fw_minor ok "FW changeset: a feature title bumps minor"
+eqv fw_internal "skipped,skipped,skipped,skipped,skipped,skipped,skipped,skipped,skipped,skipped" "FW: internal-change titles (chore, refactor, docs, ci, test, build, bump, dependency update, merge, revert) write nothing"
+eqv fw_internal_ok "www" "FW: fix, feat and perf titles still write"
+eqv fw_strip ok "FW: a conventional prefix is dropped from the body and still decides the bump (feat -> minor)"
+eqv fw_keep_prefix ok "FW: a conventional prefix is kept when the repo's own newest fragment carries one"
 eqv fw_no_task skipped "FW veto: the task says no changelog, nothing is written"
 eqv fw_has_frag skipped "FW: the diff already carries a fragment, nothing is written"
 eqv fw_no_conv skipped "FW: a repo with only CHANGELOG.md has no convention, nothing is written"
@@ -298,6 +332,8 @@ eqv sn_restate empty "FW summary: a sentence that restates the title yields noth
 eqv sn_table empty "FW summary: tables and code fences yield nothing"
 eqv veto "true,true,true,false,false" "FW veto: no/skip/do-not phrasings forbid, a task about changelogs or release notes does not"
 eqv knob "false,true,false" "FW knob: LOKI_E10_SCAFFOLD=1 turns the writer on"
+case "$(get fw_real_cs)" in offline) ok "FW real changeset: skipped (registry unreachable)";; ok) ok "FW real changeset: the repo's own changeset status accepts the written fragment";; *) bad "FW real changeset: $(get fw_real_cs)";; esac
+case "$(get fw_real_tc)" in offline) ok "FW real towncrier: skipped (registry unreachable)";; ok) ok "FW real towncrier: towncrier build --draft renders the written fragment";; *) bad "FW real towncrier: $(get fw_real_tc)";; esac
 
 # ---- end to end on the stub provider ----
 export LOKI_TS_ENTRY="$ROOT/loki-ts/dist/loki.js"
