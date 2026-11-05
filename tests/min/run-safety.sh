@@ -593,6 +593,29 @@ W3="p1,register |  | register | p1,lib,register | none | web/conftest.py,web/pac
 [ "$U3" = "$W3" ] && ok "unit: collateral vs own relevant tests by covered stem; a build tool's ignored package.json is not test configuration, a runner key or conftest.py is; a FAILED split names its PRs and the stopped slice's branch" \
     || bad "unit gave: $U3 (want: $W3)"
 
+# Base-red attribution of a root package suite and generated build output (v11.131.0 STALLED runs, zod and tanstack-query): a package suite spelled
+# "(cd . && pnpm test)" is the same command as the baseline's plain "pnpm test" (else "not the full suite command", nothing excused and the fix round
+# runs on failures base already has); tsc-emitted vite.config.d.ts(.map) and the .nx/cache replay are build output, not runner configuration, while a
+# real vitest.config.ts edit and an introduced failure stay blocking.
+G3="$T/attr"; mkdir -p "$G3/.loki/state" "$G3/pkg/dist-ts" "$G3/.nx/cache/h1" && git -C "$G3" init -q -b main && printf 'dist-ts/\n.nx/\n' > "$G3/.gitignore" && git -C "$G3" add .gitignore && git -C "$G3" -c user.name=t -c user.email=t@t commit -qm init
+A3="$(G="$G3" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), rc = await import(process.env.ROOT + "/loki-ts/src/features/runner_config.ts"), { writeFileSync, execFileSync } = await import("node:fs").then(async (f) => ({ ...f, execFileSync: (await import("node:child_process")).execFileSync }));
+const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const b = { ran: true, command: "pnpm test", exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ["a.test.ts > t1", "b.test.ts > t2"], attributable: true, failing_errors: { "a.test.ts > t1": ["Error: x"], "b.test.ts > t2": ["Error: y"] } };
+writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: b }));
+const full = (cmd, ids) => [{ name: "full suite: w", cmd, result: "fail", ids, errors: Object.fromEntries(ids.map((i) => [i, i.startsWith("a") ? ["Error: x"] : ["Error: y"]])) }];
+const at = (cmd, ids) => rp.attributeFullSuite(g, sha, full(cmd, ids), [], ["src/z.ts"]);
+const r = [at("(cd . && pnpm test)", ["a.test.ts > t1", "b.test.ts > t2"]).preExistingChecks.join(","), at("pnpm test", ["a.test.ts > t1"]).preExistingChecks.join(","), at("(cd . && pnpm test)", ["a.test.ts > t1", "c.test.ts > new"]).introducedChecks.join(","), at("(cd pkg && pnpm test)", ["a.test.ts > t1"]).introducedChecks.join(",")];
+const snap = rc.hiddenRunnerConfigs(g);
+writeFileSync(g + "/pkg/dist-ts/vite.config.d.ts", "export {};\n"); writeFileSync(g + "/pkg/dist-ts/vite.config.d.ts.map", "{}\n"); writeFileSync(g + "/.nx/cache/h1/vitest.config.ts", "export default {};\n");
+r.push(rc.hiddenConfigChanged(g, snap).join(",") || "none");
+writeFileSync(g + "/vitest.config.ts", "export default {};\n"); r.push(rc.hiddenConfigChanged(g, snap).join(","));
+console.log(r.join(" | "));
+' 2>&1)"
+X3="full suite: w | full suite: w | full suite: w | full suite: w | none | vitest.config.ts"
+[ "$A3" = "$X3" ] && ok "unit: a root package suite '(cd . && X)' matches the baseline's plain X (pre-existing excused, introduced ids still block, other cwd not excused); build output vite.config.d.ts and .nx/cache are not test configuration, a real vitest.config.ts is" \
+    || bad "attribution unit gave: $A3 (want: $X3)"
+
 # Wall-only delivery rules, unit-level: a failing full suite that is not known red blocks it; a delivery whose re-verify fails puts the Wall back
 # and records no discard; only known-red checks failing the same way on base are excused at delivery; errors are compared per failing id.
 D="$T/deliver"; mkdir -p "$D"; printf 'wall\n' > "$D/loki_wall_x.test.ts"

@@ -11,7 +11,7 @@ const PKG_KEYS = ["scripts", "jest", "overrides", "resolutions", "imports", "pnp
 const RAW_CONFIGS: Spec[] = [
   { re: /(^|\/)loki\.ya?ml$/ }, // R02: verify.test_command names the command verify runs for a build-tool stack
   { re: /(^|\/)(conftest\.py|(site|user)customize\.py|tox\.ini|bunfig\.toml|\.?pytest\.(ini|toml)|\.mocharc[\w.]*)$/ },
-  { re: /(^|\/)(vitest|vite|jest)\.(config|workspace)\.[\w.]+$/ },
+  { re: /(^|\/)(vitest|vite|jest)\.(config|workspace)\.(?![\w.]*\bd\.[cm]?ts(?:\.map)?$)[\w.]+$/ }, // a tsc-emitted declaration (vite.config.d.ts, .d.ts.map) is build output no runner loads
   { re: /(^|\/)\.cargo\/config(\.toml)?$/ },
   { re: /(^|\/)(site|dist)-packages\/[^/]+\.pth$/ }, // Python runs import lines in a site-packages .pth at startup; a .pth elsewhere (model weights) is not config
   { re: /(^|\/)(babel\.config\.[\w.]+|\.babelrc(\.[\w]+)?|\.pnpmfile\.(cjs|mjs))$/ },
@@ -146,7 +146,7 @@ export function runnerConfigNotes(repoDir: string, baseSha: string, head: string
 // bower_components and vendor are skipped except conftest.py, which pytest does load there (its default norecursedirs names neither). In a site-packages or dist-packages dir the import hooks count: top-level
 // .pth, sitecustomize.py, usercustomize.py and a dist-info entry_points.txt with a [pytest11] plugin section. A hook a sibling *.dist-info/RECORD lists with its current sha256 is exempt, as is the stock virtualenv and uv _virtualenv.pth.
 // Residuals, not checked: a RECORD the agent writes or edits to list a hook's new sha256; a tsconfig.json in node_modules that a project tsconfig extends; the modules a .pth imports (_virtualenv.py, __editable__ finders, _distutils_hack); a pytest-plugin entry_points.txt in a .dist-info at the repo root; an .egg-info entry_points.txt; edits to the module an installed plugin entry loads; a node_modules conftest.py when norecursedirs leaves node_modules in.
-const DEP_TREE = /(^|\/)node_modules\//, PY_LOADED_TREE = /(^|\/)(bower_components|vendor)\//, SITE = /^((?:.*\/)?(?:site|dist)-packages)\/(.+)$/, HOOK = /^([^/]+\.pth|(site|user)customize\.py|[^/]+\.dist-info\/entry_points\.txt)$/;
+const DEP_TREE = /(^|\/)(node_modules|\.nx\/cache)\//, PY_LOADED_TREE = /(^|\/)(bower_components|vendor)\//, SITE = /^((?:.*\/)?(?:site|dist)-packages)\/(.+)$/, HOOK = /^([^/]+\.pth|(site|user)customize\.py|[^/]+\.dist-info\/entry_points\.txt)$/;
 function pipRecorded(repoDir: string, site: string, rel: string, sha: string, memo: Map<string, Set<string>>): boolean {
   let s = memo.get(site);
   if (!s) { s = new Set(); try { for (const d of readdirSync(join(repoDir, site))) if (d.endsWith(".dist-info")) try { for (const l of readFileSync(join(repoDir, site, d, "RECORD"), "utf8").split(/\r?\n/)) { const m = /^"?(.*?)"?,sha256=([\w-]+),/.exec(l); if (m) s.add(`${m[1]}\0${m[2]}`); } } catch { /* no RECORD */ } } catch { /* unreadable dir */ } memo.set(site, s); }
