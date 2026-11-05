@@ -708,6 +708,7 @@ make_wo_vt_repo() {
     printf 'import { add } from "./calc";\n\nexport const inc = (n: number): number => add(n, 1);\n' > "$1/util.ts"
     printf 'import { expect, test } from "vitest";\nimport { inc } from "./util";\n\ntest("inc", () => {\n  expect(inc(1)).toBe(2);\n});\n' > "$1/util.test.ts"
     [ -n "${WO_RED:-}" ] && printf '\ntest("double", () => {\n  expect(calc.double(3)).toBe(6);\n});\n' >> "$1/calc.test.ts" # WO_RED: calc.test.ts is already red on the base
+    [ -n "${WO_PRERED:-}" ] && printf 'import { expect, test } from "vitest";\n\ntest("legacy broken", () => {\n  expect(1).toBe(2);\n});\n' > "$1/legacy.test.ts" # WO_PRERED: an untouched suite is red on the base and stays red (FireLater#24: the red frontend suite beside a clean backend slice)
     return 0
 }
 make_wo_py_repo() {
@@ -717,6 +718,7 @@ make_wo_py_repo() {
     printf 'from calc import add\n\n\ndef inc(n):\n    return add(n, 1)\n' > "$1/util.py"
     printf 'import util\n\n\ndef test_inc():\n    assert util.inc(1) == 2\n' > "$1/test_util.py"
     [ -n "${WO_RED:-}" ] && printf '\n\ndef test_double():\n    assert calc.double(3) == 6\n' >> "$1/test_calc.py" # WO_RED: test_calc.py is already red on the base
+    [ -n "${WO_PRERED:-}" ] && printf 'def test_legacy_broken():\n    assert 1 == 2\n' > "$1/test_legacy.py" # WO_PRERED: an untouched suite is red on the base and stays red
     return 0
 }
 # wo_legs <label> <make_repo> <target> <test file> <fixed body> <broken body> <broken-line> <new failing test> <new passing test> <added skip marker> <broken fix + added triple> <test calling triple> <test importing triple, body passes> <test asserting only that triple exists>
@@ -748,6 +750,11 @@ wo_legs() {
     has "$label exists only: the receipt names the missing fail-then-pass proof" "$notes" "no test shown to fail on the base commit and pass on the change"
     WO_RED=1 wo E2E_STUB_SNIPPET="$good" E2E_STUB_TEST_APPEND="$newpass"
     [ "$(outcome)" = "PARTIAL" ] && ok "$label red on base: an edited test file that was already red on the base is not fail-then-pass proof (PARTIAL)" || { bad "$label red on base: outcome is '$(outcome)'"; dump; }
+    # FireLater#24 s1: a suite red on the base in a file the run never touched (pre_red, not this change) must not shut the fail-then-pass gate, or a clean slice with a real new failing-then-passing test reads PARTIAL.
+    WO_PRERED=1 wo E2E_STUB_SNIPPET="$good" E2E_STUB_TEST_APPEND="$newfail"
+    [ "$(outcome)" = "VERIFIED" ] && ok "$label pre-red suite: a fix with a fail-then-pass test is still VERIFIED beside an untouched suite already red on the base" || { bad "$label pre-red suite: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$mp" in *"fails without the fix: yes"*"$tf"*) ok "$label pre-red suite: the receipt carries the harness-run proof line ($mp)" ;; *) bad "$label pre-red suite: no proof line naming $tf: '$mp'" ;; esac
+    case "$ck" in *"="fail*) ok "$label pre-red suite: the untouched suite is still recorded red (already failing on base)" ;; *) bad "$label pre-red suite: no failing check recorded: '$ck'" ;; esac
 }
 WD="$(cd "$ROOT/loki-ts" && bun -e 'const { wallEnabled } = await import("./src/engine10/sizing.ts"); console.log([wallEnabled({}), wallEnabled({ LOKI_E10_WALL: "" }), wallEnabled({ LOKI_E10_WALL: "0" }), wallEnabled({ LOKI_E10_WALL: "1" }), wallEnabled({ LOKI_E10_WALL: "on" })].join(","))' 2>&1)"
 [ "$WD" = "false,false,false,true,true" ] && ok "wall default: the Wall session is off unless LOKI_E10_WALL=1/on ($WD)" || bad "wall default: wallEnabled gave '$WD'"
