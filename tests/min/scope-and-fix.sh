@@ -424,7 +424,7 @@ cat > "$T/spec-choice.ts" <<'TS'
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 const src = `${process.env.ROOT}/loki-ts/src/`;
-const { ambiguityGate, assumptionsBlock, choiceLine, emitChoiceLines, resolveChoices } = await import(src + "features/spec_ambiguity.ts");
+const { ambiguityGate, assumptionsBlock, choiceLine, emitChoiceLines, parsePrecedentVote, resolveChoices, voteOpenChoices } = await import(src + "features/spec_ambiguity.ts");
 const { buildImplementBrief } = await import(src + "engine10/stages/implement.ts");
 const { FIXED_RULES } = await import(src + "e10ext/context.ts");
 const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
@@ -493,16 +493,58 @@ writeFileSync(`${PR}/flag_generic.go`, "package cli\n\nfunc (f *GenericFlag) Get
 writeFileSync(`${PR}/flag_test.go`, 'func TestGet(t *testing.T) {\n\trequire.Equal(t, 7, cmd.IntFlag.Get(c))\n}\n');
 const pg = (...a: string[]) => execFileSync("git", ["-C", PR, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
 pg("init", "-q"); pg("add", "."); pg("commit", "-q", "-m", "seed");
+process.env.LOKI_E10_PRECEDENT = "0";
 const offc = one(Q, { repoDir: PR })!;
-res("precedent: LOKI_E10_PRECEDENT unset means no precedent text at all", !offc.precedent && !choiceLine(offc).includes("Sibling precedent"));
-process.env.LOKI_E10_PRECEDENT = "1";
+res("precedent: LOKI_E10_PRECEDENT=0 means no precedent text at all", !offc.precedent && !choiceLine(offc).includes("Sibling precedent"));
+delete process.env.LOKI_E10_PRECEDENT;
 const pc = one(Q, { repoDir: PR })!;
 res("precedent: sibling Get implementations (not the option's own type) and their test assertions are handed over", !!pc.precedent && pc.precedent.includes("flag_int.go:3") && pc.precedent.includes("flag_str.go:3") && !pc.precedent.includes("flag_generic.go") && pc.precedent.includes("test flag_test.go:2"));
-res("precedent: the line carries the block and tells the model to prefer the option the siblings follow", choiceLine(pc).includes("Sibling precedent") && choiceLine(pc).includes("prefer the option these follow"));
+res("precedent: the line carries the block and tells the model to prefer the option the siblings follow", choiceLine(pc).includes("Sibling precedent") && choiceLine(pc).includes("prefer the option these follow") && !choiceLine(pc).includes("Keep every existing test and documented behavior true") && choiceLine(pc).includes("moves to the convention"));
 res("precedent: no sibling in the snapshot adds nothing", !one(Q, { repoDir: R })?.precedent && !choiceLine(one(Q, { repoDir: R })!).includes("Sibling precedent"));
 const pm = one(Q + tail, { repoDir: PR, comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get consistently.")] })!;
 res("precedent: a maintainer decision still outranks it and the precedent is shown as a check", pm.basis === "maintainer" && choiceLine(pm).includes("check your option against these"));
+// open-contract vote: one tool-less call settles an undecided either/or from the sibling definitions (stub model, no real call)
+writeFileSync(`${PR}/flag_two.go`, "package cli\n\nfunc (f *IntFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n\nfunc (f *BoolFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n"); pg("add", "."); pg("commit", "-q", "-m", "two defs in one file");
+res("precedent scan: two sibling definitions in one file are both listed", (pc0 => pc0.includes("flag_two.go:3") && pc0.includes("flag_two.go:7"))(one(Q, { repoDir: PR })!.precedent ?? ""));
+let calls = 0, asked = "";
+const stub = (answer: string | null) => async (_s: string, pr: string) => { calls++; asked = pr; return answer; };
+const vA = await voteOpenChoices(Q, { repoDir: PR }, stub("OPTION 2"));
+const rA = one(Q, { repoDir: PR, votes: vA })!;
+res("vote agree: siblings follow option 2, the line says implement option 2 with basis precedent and the pinned-test move", calls === 1 && vA[0] === 1 && rA.basis === "precedent" && rA.picked === 1 && choiceLine(rA).includes("implement option 2") && choiceLine(rA).includes("moves to the convention") === false && choiceLine(rA).includes("is updated to the convention") && emitChoiceLines([rA]).length === 1);
+res("vote prompt carries the sibling bodies and both options but no sibling listing from tests", asked.includes("OPTION 1:") && asked.includes("OPTION 2:") && asked.includes("flag_int.go:3") && asked.includes("flag_two.go:7"));
+calls = 0;
+const vD = await voteOpenChoices(Q, { repoDir: PR }, stub("NEITHER"));
+const rD = one(Q, { repoDir: PR, votes: vD })!;
+res("vote disagree: NEITHER gives no precedent line at all", calls === 1 && vD[0] === null && rD.basis === "none" && !rD.precedent && emitChoiceLines([rD]).length === 0);
+calls = 0;
+const AN = "Get disagrees across flags.\n\nAny of the following outputs is acceptable:\n\n- `IntFlag.Get` returns the raw value\n- `GenericFlag.Get` returns the supplied value\n";
+const vI = await voteOpenChoices(AN, { repoDir: PR }, stub("OPTION 1")), rI = one(AN, { repoDir: PR, votes: [0] })!;
+res("issue states acceptable outputs: no vote call, no precedent, the coexist line stands", calls === 0 && vI[0] === undefined && rI.basis !== "precedent" && !rI.precedent && choiceLine(rI).includes("every one of them"));
+const vM = await voteOpenChoices(Q + tail, { repoDir: PR, comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get consistently.")] }, stub("OPTION 1")), rM = one(Q + tail, { repoDir: PR, comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get consistently.")], votes: [0] })!;
+res("maintainer comment beats the sibling vote: no call, basis stays maintainer", calls === 0 && vM[0] === undefined && rM.basis === "maintainer" && rM.picked !== 0);
+process.env.LOKI_E10_PRECEDENT = "0";
+const vO = await voteOpenChoices(Q, { repoDir: PR }, stub("OPTION 2")), rO = one(Q, { repoDir: PR, votes: [1] })!;
+res("knob off: LOKI_E10_PRECEDENT=0 makes no call and adds no precedent even with a vote", calls === 0 && vO.length === 0 && rO.basis === "none" && !rO.precedent);
 delete process.env.LOKI_E10_PRECEDENT;
+const vF = await voteOpenChoices(Q, { repoDir: PR }, stub(null)), rF = one(Q, { repoDir: PR, votes: vF })!;
+res("failed or capped call: no vote, the precedent prose stays and does not tell the model to keep a pinning test", calls === 1 && vF[0] === undefined && rF.basis === "none" && !!rF.precedent && !choiceLine(rF).includes("Keep every existing test and documented behavior true"));
+calls = 0; const vR = await voteOpenChoices(Q, { repoDir: R }, stub("OPTION 1"));
+res("no siblings in the snapshot: no call", calls === 0 && vR[0] === undefined);
+res("parsePrecedentVote: option, neither, out of range, garbage", parsePrecedentVote("OPTION 2", 2) === 1 && parsePrecedentVote("NEITHER", 2) === null && parsePrecedentVote("OPTION 3", 2) === null && parsePrecedentVote("hmm", 2) === null);
+// the default voter: toolLessCall on a stub Agent SDK query() (no network): tool-less, thinking off, ledger line, output budget above the thinking leak, run cap stops it
+{
+  const { __setToolLessQueryForTests } = await import(src + "runner/sdk_invoker.ts"), { mkdtempSync, readFileSync, existsSync } = await import("node:fs"), { tmpdir } = await import("node:os");
+  const LD = mkdtempSync(`${tmpdir()}/pv-`); const keep = { k: process.env.ANTHROPIC_API_KEY, d: process.env.LOKI_DIR }; delete process.env.ANTHROPIC_API_KEY; process.env.LOKI_DIR = LD;
+  let o: any = null, mode = "ok";
+  __setToolLessQueryForTests(async function* ({ options }: any) { o = options; yield { type: "assistant", message: { content: [{ type: "text", text: "OPTION 2" }] } }; yield { type: "result", subtype: mode === "budget" ? "error_max_budget_usd" : "success", is_error: false, result: "OPTION 2", total_cost_usd: 0.0002, usage: { input_tokens: 400, output_tokens: 70, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, modelUsage: {} }; });
+  const dv = await voteOpenChoices(Q, { repoDir: PR });
+  const led = existsSync(`${LD}/metrics/child-sessions.jsonl`) ? readFileSync(`${LD}/metrics/child-sessions.jsonl`, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
+  res("default voter: a tool-less call, thinking off, output budget of at least 128 tokens, voted option 2", dv[0] === 1 && JSON.stringify(o.tools) === "[]" && o.thinking?.type === "disabled" && Number(o.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) >= 128);
+  res("default voter: priced into the child ledger under precedent-vote", led.length === 1 && led[0].phase === "precedent-vote" && led[0].usd > 0);
+  mode = "budget"; const db = await voteOpenChoices(Q, { repoDir: PR });
+  res("default voter: a run whose dollar cap stops the call gets no vote and keeps the prose", db[0] === undefined);
+  __setToolLessQueryForTests(null); if (keep.k !== undefined) process.env.ANTHROPIC_API_KEY = keep.k; if (keep.d === undefined) delete process.env.LOKI_DIR; else process.env.LOKI_DIR = keep.d;
+}
 res("acceptable-outputs list that can coexist: the line asks for one design producing every output", choiceLine(z0).includes("every one of them") && !choiceLine(one(Q)!).includes("every one of them"));
 // the gate and the brief
 delete process.env.LOKI_E10_ASSUME; process.env.LOKI_E10_INTAKE_ASK = "0";

@@ -13,7 +13,7 @@ import { lazyZeroBaseline, stackedOnLokiRun, unmergedEvidence, unmergedEvidenceN
 import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps, type DepsTiming, type IntakeTiming } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { baselineCmdS, BASELINE_CMD_TIMEOUT_S, ensureProfile, readinessNotice, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 import { verifyCommandRows } from "../../project_model/package_suite.ts"; import { untestableReason } from "../testmap.ts";
-import { ambiguityGate, type ChoiceCtx } from "../../features/spec_ambiguity.ts"; import { triageGate } from "../../features/triage.ts";
+import { ambiguityGate, voteOpenChoices, type ChoiceCtx } from "../../features/spec_ambiguity.ts"; import { triageGate } from "../../features/triage.ts";
 export interface IntakeOptions { taskText?: string; issueJsonPath?: string; }
 interface IssueFields { state: string | null; closed_by_merged_pr?: boolean }
 /** owner/repo#number, when the issue JSON carries both (GitHub); null for anything else, never guessed. */
@@ -92,7 +92,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
     // Deterministic exit: no repo/test map needed, and never a session/LLM call.
     return { status: "completed", data: { ...common, ignore_snapshot: ignoreSnapshot(ctx.repoDir), task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true } };
   }
-  const gate = triageGate(task, ctx.repoDir, ambiguityGate(task, ctx.runDir, { repoDir: ctx.repoDir, comments: issueComments })); const ambiguity = gate.data; // interactive: stop at a checkpoint with a resume offer; headless: assumptions go to the receipt; triage (features/triage.ts) only records the class here, it never stops a direct run
+  const choiceCtx: ChoiceCtx = { repoDir: ctx.repoDir, comments: issueComments }, votes = await voteOpenChoices(task, choiceCtx); const gate = triageGate(task, ctx.repoDir, ambiguityGate(task, ctx.runDir, { ...choiceCtx, votes })); const ambiguity = gate.data; // precedent vote (spec_ambiguity.ts voteOpenChoices): one tool-less call per undecided either/or with siblings; interactive: stop at a checkpoint with a resume offer; headless: assumptions go to the receipt; triage (features/triage.ts) only records the class here, it never stops a direct run
   if (gate.stop) return { status: "failed", data: { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...gate.stop.failData }, reason: gate.stop.reason };
   mkdirSync(ctx.runDir, { recursive: true });
   const repomapRef = join(ctx.runDir, "repomap.json");
