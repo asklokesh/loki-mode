@@ -12,5 +12,6 @@ export interface Hooks {
   stageCapability?(stage: string, env: NodeJS.ProcessEnv, argv: readonly string[]): StageCapability;
   briefFacts?(o: Partial<Record<string, Obj>>, runId: string, runDir: string): BriefFacts; sealed?(runDir: string, receipt: { run_id: string; provider: string; model: string; receipt_sha256: string; cost?: { per_model?: Record<string, unknown> } }): void; // after the receipt files are final; failures never reach the seal
   runtimeEvidence?(task: string): Rec | null;
+  scaffold?(repoDir: string, baseSha: string, task: string): Rec | null; // zero-model passes on the implemented tree, run once right before the first verify; null when off or nothing to do
 }
 export const hooks: Hooks = {};

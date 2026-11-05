@@ -264,6 +264,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (wallConcurrent() && wallEnabled() && todo.includes("plan") && todo.includes("wall") && !wallJob && await startWallAuthor()) todo = todo.filter((n) => n !== "wall"); // the Wall is now a background job, joined before verify
       if (wallJob && todo.includes("implement") && !(await (wallJob as WallJob).snap)) { const j = wallJob as WallJob, t0 = j.t0; abortWall(); ctx.emit("stage.failed", "wall", { duration_s: (ctx.clock.now() - t0) / 1000, reason: "wall base snapshot unavailable: nothing installed" }); } // the base copy must be complete before implement edits the tree; no copy means no Wall
       if (wallJob && todo[0] === "verify") await installWallJob(); // FC-VACUOUS-WALL-GREEN: a Wall green on base no longer ends the run here
+      if (todo[0] === "verify" && !outputs.verify && hooks.scaffold && outputs.implement && !jumped) { try { const sc = hooks.scaffold(ctx.repoDir, ctx.baseSha, String(outputs.intake?.task ?? "")); if (sc) { outputs.implement = { ...outputs.implement, scaffold: sc }; ctx.emit("scaffold.applied", "implement", sc); } } catch { /* best-effort: a scaffold failure never stops the run */ } } // zero-model scaffolding (LOKI_E10_SCAFFOLD=1): deterministic edits before the first verify
       const results = await Promise.all(todo.map((n) => runStage(n, !isTail)));
       if (todo[0] === "intake" && results[0]?.status === "failed" && !capHit) {
         return { outputs, capHit, stopped: "intake failed" };
