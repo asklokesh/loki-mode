@@ -185,6 +185,7 @@
 #  94. no_regression.ts nrdEnabled: default off (the default-on and the go gate legs read null).
 #  95. no_regression.ts runNrdGate: ignore the unnamed-caller rule and always make the post probe call (the no-extra-call legs see nrd-probe).
 #  96. no_regression.ts nrdGroupsFor: ignore fixRounds (the re-verify leg reads a group).
+#  97. no_regression.ts isKeepCase: return true (the correct-fix legs make a judge call; the change-case-never-judged leg reads true).
 #  64. assert_delta.ts reportedValues: drop the WANTED_BEFORE skip (the "should return" value reads as a symptom; the finder unit legs fail).
 #  65. seal.ts failThenPass: drop the rewritten-file exclusion (the lone rewritten pinned assertion reads VERIFIED).
 #  67. seal.ts pinDropped: key on the file only again (the F1 unit leg fails); drop the pinLift gate (the F2 unit leg fails); drop CALLED_RIGHT in assert_delta.ts (the called-right unit leg fails).
@@ -1600,19 +1601,19 @@ row("override", [
 ].join(","));
 row("verdict_override", ["requested", "requested", "unknown", "unrequested"].map((v, i) => n.overrideVerdict(i === 1 ? GL : "Rename the header\n\nExpected: the header reads Title.", { id: "k", desc: "d", source: "probe", before: i === 1 ? '["git","log","--no-merges"]' : '"Heading: alpha"', after: i === 1 ? '["git","log"]' : '"Banner: alpha"' }, v as never)).join(","));
 {
-  let calls = 0, flip = 0;
+  let calls = 0, flip = 0, judgedChange = false;
   const line = (id: string, out: string): string => `LOKIPROBE ${JSON.stringify({ id, desc: `case ${id}`, out })}`;
-  const run = (_p: string, s: "base" | "patched") => { flip++; return { built: true, pruned: [], durationS: 0, stdout: [line("a", s === "base" ? "A0" : "A1"), line("b", s === "base" ? "B0" : "B1"), line("c", s === "base" ? "Heading: x" : "Banner: x"), line("d", `D${flip}`), line("e", "E")].join("\n") }; };
-  const llm = async (_s: string, u: string) => { calls++; return { text: u.includes("CASE a:") ? "a: unrequested\nb: unknown\nc: requested\nd: unrequested\nT_Old: unrequested\nT_Pinned: unrequested" : "", usage: { costUsd: 0 } }; };
+  const run = (_p: string, s: "base" | "patched") => { flip++; return { built: true, pruned: [], durationS: 0, stdout: [line("p1", s === "base" ? "P0" : "P1"), line("k1", s === "base" ? "A0" : "A1"), line("k2", s === "base" ? "B0" : "B1"), line("k3", s === "base" ? "Heading: x" : "Banner: x"), line("k4", `D${flip}`), line("k5", "E")].join("\n") }; };
+  const llm = async (_s: string, u: string) => { calls++; return { text: (judgedChange = judgedChange || u.includes("CASE p1:"), u.includes("CASE k1:")) ? "k1: unrequested\nk2: unknown\nk3: requested\nk4: unrequested\nT_Old: unrequested\nT_Pinned: unrequested" : "", usage: { costUsd: 0 } }; };
   const replay = () => [{ id: "T_Old", desc: "old", before: "PASS", after: "FAIL: x", source: "replay" as const }, { id: "T_Pinned", desc: "pinned", before: "PASS", after: "FAIL: y", source: "replay" as const, testEdit: '- want := "Q"\n+ want := "Title"' }];
   const r = await n.runNoRegression({ issue: "Rename the header\n\nExpected: the header reads \"Title\".", programs: ["p"], run, replay, llm });
-  row("fake", [r.blocking.map((f: any) => f.id).join("+"), r.findings.filter((f: any) => f.verdict === "unknown").map((f: any) => f.id).join("+"), r.groups.length, r.groups[0]?.count, calls, r.cases.find((c: any) => c.id === "d")?.status, r.cases.find((c: any) => c.id === "e")?.status].join("|"));
-  const none = await n.runNoRegression({ issue: "x", programs: ["p"], run: () => ({ built: true, pruned: [], durationS: 0, stdout: line("e", "E") }), llm: async () => { calls += 100; return { text: "", usage: { costUsd: 0 } }; } });
+  row("fake", [r.blocking.map((f: any) => f.id).join("+"), r.findings.filter((f: any) => f.verdict === "unknown").map((f: any) => f.id).join("+"), r.groups.length, r.groups[0]?.count, calls, r.cases.find((c: any) => c.id === "k4")?.status, r.cases.find((c: any) => c.id === "k5")?.status, judgedChange].join("|"));
+  const none = await n.runNoRegression({ issue: "x", programs: ["p"], run: () => ({ built: true, pruned: [], durationS: 0, stdout: line("k5", "E") }), llm: async () => { calls += 100; return { text: "", usage: { costUsd: 0 } }; } });
   row("fake_nochange", [none.blocking.length, none.calls, calls].join("|"));
 }
 row("groups", [n.nrdGroupsFor({ no_regression: { groups: [{ signature: "no-regression: x", count: 2, sample: "s" }] } }, 0).length, n.nrdGroupsFor({ no_regression: { groups: [{ signature: "no-regression: x", count: 2, sample: "s" }] } }, 1).length, n.nrdGroupsFor({ no_regression: { groups: [{ bad: 1 }] } }, 0).length, n.nrdGroupsFor(undefined, 0).length].join(","));
 row("knob", [n.nrdEnabled({}), n.nrdEnabled({ LOKI_E10_NRD: "0" }), n.nrdEnabled({ LOKI_E10_NRD: "1" })].join(","));
-row("rules", String(n.nrdProbeIntake.rules === t.probeIntake.rules && t.probeIntake.rules === t.GO_PROBE_RULES));
+row("rules", [t.probeIntake.rules === t.GO_PROBE_RULES, n.nrdProbeIntake.rules === `${t.GO_PROBE_RULES}\n${n.NRD_KIND_RULES}`].join(","));
 
 // ---------- the gate on real repos ----------
 const sh = (cwd: string, ...a: string[]): string => execFileSync("git", ["-C", cwd, ...a], { encoding: "utf8" });
@@ -1672,20 +1673,20 @@ ng() { printf '%s\n' "$NRD_OUT" | sed -n "s/^$1=//p"; }
 ncheck() { local got; got="$(ng "$2")"; [ "$got" = "$3" ] && ok "no-regression $1" || bad "no-regression $1: got '$got' (want '$3')"; }
 ncheck "override: a removal in a request sentence, a quote, a reorder or an added issue token is mentioned; a removal in a non-request sentence, in the title, or an unmentioned rename is not" override "true,false,false,true,false"
 ncheck "verdict correction: requested stands only when the issue mentions the change; unknown and unrequested are untouched" verdict_override "unrequested,requested,unknown,unrequested"
-ncheck "judge outcomes: unrequested and an unmentioned requested block as ONE group; unknown stays advisory; a pinned-value test rewrite is requested; a case that differs on every run is ignored" fake "a+c+T_Old|b|1|3|1|flaky|same"
-ncheck "no changed case and no replay finding makes no judge call" fake_nochange "0|0|1"
+ncheck "judge outcomes: unrequested and an unmentioned requested keep case block as ONE group; unknown stays advisory; a pinned-value test rewrite is requested; a case that differs on every run is ignored; a changed change case (p) is never judged" fake "k1+k3+T_Old|k2|1|3|1|flaky|same|false"
+ncheck "no changed keep case and no replay finding makes no judge call" fake_nochange "0|0|1"
 ncheck "the fix-round group is read on the first verify only and only when well formed" groups "1,0,0,0"
 ncheck "default on, =0 opts out" knob "true,false,true"
-ncheck "the exec-spec probe rules stay byte-identical (cache-stable); the keep list is appended per run" rules "true"
+ncheck "the exec-spec probe rules stay byte-identical (cache-stable); the NRD kind rules extend them as one fixed suffix, the keep list is per run" rules "true,true"
 ncheck "go: the shared-helper fix (lh-1474 shape) fires on the authors command, one group, probe call plus judge" go_gitlog_shared "fired|nrd-probe+judge|1"
-ncheck "go: a param-threaded fix does not fire" go_gitlog_param "clean|judge|0"
+ncheck "go: a param-threaded fix does not fire and makes no call" go_gitlog_param "clean|-|0"
 ncheck "go: an unasked heading change fires" go_gitlog_render "fired|judge|1"
-ncheck "go: a correct fix that edits a test it must edit does not fire" go_gitlog_edit_ok "clean|judge|0"
+ncheck "go: a correct fix that edits a test it must edit does not fire" go_gitlog_edit_ok "clean|-|0"
 ncheck "go: a fix that rewrote an existing test to match an unasked heading change fires" go_gitlog_edit_bad "fired|judge|1"
 ncheck "go: base-test replay shows the rewritten test to the judge" go_replay_seen "true"
 ncheck "go: an unasked error-message rewording fires" go_flag_lookup "fired|judge|1"
 ncheck "go: a shared-helper change with an unnamed caller fires and makes the post probe call" go_flag_shared "fired|nrd-probe+judge|1"
-ncheck "go: a correct local fix does not fire and makes no post probe call (every caller is named)" go_flag_local "clean|judge|0"
+ncheck "go: a correct local fix does not fire and makes no call, not even the post probe call (every caller is named)" go_flag_local "clean|-|0"
 ncheck "go: a post-implement probe program is run beside the pre-implement one" go_post_runs "fired|nrd-probe+judge|2"
 ncheck "go: LOKI_E10_NRD=0 does no work and makes no call" go_knob0 "null|-|0"
 ncheck "go: a killed session makes no call" go_killed "skipped|-|0"

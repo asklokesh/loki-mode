@@ -93,6 +93,10 @@ export function editedSymbols(path: string, baseSrc: string, patchedSrc: string)
 const mentions = (text: string, name: string): boolean => new RegExp(`(?<![\\w])${name.split(".").pop()!.replace(/[$]/g, "\\$")}(?![\\w])`).test(text);
 
 // ---------------- the keep list: one required probe case per output site ----------------
+/** Case kinds: a keep case (the report does NOT ask to change it) has an id starting k or a ledger tag "[sN]" in its description; every other probe case is a change case the report asks for. */
+export const isKeepCase = (id: string, desc: string): boolean => /^k\d/.test(id) || /^\[s\d+\]/.test(desc);
+/** Fixed text (cache-stable) after the probe rules: the model tags each case's kind in its id, so only keep cases need the judge. */
+export const NRD_KIND_RULES = 'Name each case id by its kind: p1, p2, ... for inputs the report says must behave differently (its own examples and variants of them), and k1, k2, ... for inputs the report does NOT ask to change (other functions and branches that share code with what it names, other options, default, empty and boundary inputs, the messages and strings the code builds). Aim for about half of the cases to be k cases.';
 /** Per-run text appended after the fixed probe rules in the exec-spec call (never in the cache-stable prefix). Empty when there is no site. */
 export function ledgerText(sites: OutputSite[]): string {
   if (!sites.length) return "";
@@ -112,6 +116,7 @@ const goSources = (repoDir: string, dirRel: string): Record<string, string> => {
 /** Passed to execSpecAuthor in place of probeIntake: the same fixed rules (cache-stable) plus the keep list for the code the issue names and its same-package callers. */
 export const nrdProbeIntake = {
   ...probeIntake,
+  rules: `${probeIntake.rules}\n${NRD_KIND_RULES}`,
   ledger(sites: ResolvedSite[], repoDir: string): string {
     const go = sites.filter((s) => s.file.endsWith(".go")); if (!go.length) return "";
     const dir = dirname(go[0]!.file).replace(/^\.$/, ""), files = goSources(repoDir, dir), names = go.filter((s) => dirname(s.file).replace(/^\.$/, "") === dir).map((s) => s.symbol.split(".").pop()!);
@@ -134,7 +139,7 @@ export function nrdProbePrompt(c: { issue: string; pkg: string; files: Record<st
     ...Object.entries(c.files).map(([p, s]) => `FILE ${p} (before the fix):\n${s}`),
     ...Object.entries(c.tests).map(([p, s]) => `EXISTING TEST ${p}:\n${s}`),
     `A fix for this issue edited ${c.edited.join(", ")}. These same-package callers reach the edited code but the issue never names them: ${c.unnamed.join(", ")}. Write the cases for THEM: give each caller the report's own example values and boundary inputs, so a change that leaks into them shows. A correct fix leaves their output exactly as it was.`,
-    `Reply with one \`\`\`go fenced block and nothing else: a probe file in package ${c.pkg}. ${GO_PROBE_FORMAT}`,
+    `Reply with one \`\`\`go fenced block and nothing else: a probe file in package ${c.pkg}. ${GO_PROBE_FORMAT} Every case here is a keep case: name the ids k1, k2, ...`,
     ...(c.sites.length ? [ledgerText(c.sites)] : []),
   ].join("\n\n");
 }
@@ -272,14 +277,14 @@ export function nrdFailureGroups(blocking: NrdFinding[]): FailureGroup[] {
 }
 
 export interface NrdInput { issue: string; programs: string[]; run: (program: string, state: "base" | "patched") => ProbeRunResult; replay?: () => Finding[]; llm: LlmCall }
-/** Cases, judge, corrections, group. Pure over its inputs: the trees live behind `run` and `replay`. Every changed probe case is judged, the cases the issue asks to change included. */
+/** Cases, judge, corrections, group. Pure over its inputs: the trees live behind `run` and `replay`. Only changed keep cases (and replay findings) are judged: the change cases are the ones the issue asks for, so a correct fix costs no judge call. */
 export async function runNoRegression(i: NrdInput): Promise<NrdResult> {
   const notes: string[] = []; let calls = 0, usd = 0;
   const cases = i.programs.flatMap((p) => differential((s) => i.run(p, s), notes));
   for (const x of cases) if (x.status === "missing_patched") notes.push(`case ${x.id} ran on base but not on the patched tree (an API it calls changed)`);
   const flaky = cases.filter((x) => x.status === "flaky").length;
   if (flaky) notes.push(`${flaky} case(s) printed different output on two runs of the same tree and were ignored`);
-  const all: (Finding & { label: string })[] = [...cases.filter((x) => x.status === "changed").map((x) => ({ id: x.id, desc: x.desc, before: x.before, after: x.after, source: "probe" as const })), ...(i.replay?.() ?? []).slice(0, 6)].map((f, n, a) => ({ ...f, label: a.slice(0, n).some((y) => y.id === f.id) ? `${f.id}#${n}` : f.id }));
+  const all: (Finding & { label: string })[] = [...cases.filter((x) => x.status === "changed" && isKeepCase(x.id, x.desc)).map((x) => ({ id: x.id, desc: x.desc, before: x.before, after: x.after, source: "probe" as const })), ...(i.replay?.() ?? []).slice(0, 6)].map((f, n, a) => ({ ...f, label: a.slice(0, n).some((y) => y.id === f.id) ? `${f.id}#${n}` : f.id }));
   if (!all.length) return { cases, findings: [], blocking: [], groups: [], notes, calls, usd };
   const j = await i.llm(SYS_NRD_JUDGE, nrdJudgePrompt(i.issue, all), "judge");
   calls++; usd += j.usage.costUsd;
