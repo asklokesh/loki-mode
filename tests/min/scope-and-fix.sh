@@ -152,7 +152,7 @@
 #  64. assert_delta.ts reportedValues: drop the WANTED_BEFORE skip (the "should return" value reads as a symptom; the finder unit legs fail).
 #  65. seal.ts failThenPass: drop the rewritten-file exclusion (the lone rewritten pinned assertion reads VERIFIED).
 #  67. seal.ts pinDropped: key on the file only again (the F1 unit leg fails); drop the pinLift gate (the F2 unit leg fails); drop CALLED_RIGHT in assert_delta.ts (the called-right unit leg fails).
-#  68. verify.ts goBatchable: drop the targets/changed exclusion (the eligibility leg reads true,true,true,...); runGoBatches: vouch without the whole-package pass (the red-file leg batches 3 files); baseGoBatch: ignore goBatchOn (the base legs count equal go calls); goFileStream: keep every file's events (the base red leg lists every file).
+#  68. verify.ts goBatchable: drop the targets/changed exclusion (the eligibility leg reads true,true,true,...); runGoBatches: skip the corroboratePass call (the tests-only leg batches 3 files); baseGoBatch: ignore goBatchOn (the base legs count equal go calls); goFileStream: keep every file's events (the base red leg lists every file).
 #  66. test_guard.ts defectPinEdits: also accept a structural change (the structural-change unit leg fails) or drop the pin note from seal (the receipt leg fails).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
@@ -1137,6 +1137,7 @@ if command -v go >/dev/null 2>&1; then
         (cd "$d" && git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -qm base)
     }
     mkgo "$GB/green" 4 ""; mkgo "$GB/red" 4 3; mkgo "$GB/basered" 6 2,4,5
+    mkgo "$GB/tonly" 3 ""; rm -f "$GB/tonly/pk/pk.go"; for i in 1 2 3; do printf 'package pk\n\nimport "testing"\n\nfunc TestF%sA(t *testing.T) {}\n\nfunc TestF%sB(t *testing.T) {}\n' "$i" "$i" > "$GB/tonly/pk/f${i}_test.go"; done
     cat > "$GB/probe.ts" <<'TSEOF'
 const ROOT = process.env.ROOT!, v = await import(ROOT + "/loki-ts/src/engine10/stages/verify.ts"), cr = await import(ROOT + "/loki-ts/src/util/check_result.ts");
 const { failIds } = await import(ROOT + "/loki-ts/src/engine10/failures.ts");
@@ -1167,6 +1168,9 @@ TSEOF
     H="$(gb MODE=head REPO="$GB/red" N=4)"
     [ "$(printf '%s' "$H" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d["batched"]==[] and [a.split("=")[0] for a in d["alone"] if a.split("=")[1].startswith("fail")]==["go:pk/f3_test.go"])' 2>&1)" = True ] \
         && ok "go batch: one red file voids the batch; every file runs alone and only the red file is attributed" || bad "go batch with a red file gave: $H"
+    H="$(gb MODE=head REPO="$GB/tonly" N=3)"
+    [ "$(printf '%s' "$H" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d["batched"]==[] and all(a.split("=")[1].startswith("not_run") for a in d["alone"]))' 2>&1)" = True ] \
+        && ok "go batch: a package whose pass corroboration refuses (tests only, no module code) is never vouched by the batch; every file runs alone" || bad "go batch tests-only package gave: $H"
     for knob in 1 0; do : > "$GB/log"; eval "BR$knob=\"\$(gb MODE=base REPO=\"$GB/basered\" N=6 LOKI_E10_GO_BATCH=$knob)\""; eval "BC$knob=\$(grep -c -- '-json -run' \"$GB/log\")"; done
     [ "$BR1" = "$BR0" ] && [ "${BC1:-0}" -lt "${BC0:-0}" ] && printf '%s' "$BR1" | grep -q 'go:pk/f2_test.go","go:pk/f4_test.go","go:pk/f5_test.go' \
         && ok "go batch: red untouched files rerun on base in one go test (same known-red verdict, $BC1 go calls vs $BC0 per file)" || bad "go base batch: verdict '$BR1' vs '$BR0', go calls $BC1 vs $BC0"
