@@ -1,0 +1,7 @@
+{
+ "candidates": "=== CANDIDATE 1 ===\n<<<<<<< SEARCH argparse.mjs\n    if (arg === \"-\") {\n      positional.push(arg);\n      break;\n    }\n=======\n    if (arg === \"-\") {\n      positional.push(arg);\n      continue;\n    }\n>>>>>>> REPLACE\n=== CANDIDATE 2 ===\n<<<<<<< SEARCH argparse.mjs\n    if (arg === \"-\") {\n      positional.push(arg);\n      break;\n    }\n=======\n    if (arg === \"-\") {\n      positional.push(raw);\n      continue;\n    }\n>>>>>>> REPLACE\n=== CANDIDATE 3 ===\n<<<<<<< SEARCH argparse.mjs\n    if (arg === \"-\") {\n      positional.push(arg);\n      brake;\n    }\n=======\n    if (arg === \"-\") continue;\n>>>>>>> REPLACE\n",
+ "probes": "```js\nimport { parseArgs } from \"./argparse.mjs\";\nconst cases = [\n  [\"p1\", \"dash then flag then file\", [\"-\", \"--verbose\", \"file.txt\"]],\n  [\"p2\", \"dash with surrounding spaces then x\", [\" - \", \"x\"]],\n  [\"p3\", \"plain positional\", [\"a\"]],\n];\nfor (const [id, desc, argv] of cases) {\n  let out; try { out = parseArgs(argv); } catch (e) { out = \"THROW:\" + e.message; }\n  console.log(JSON.stringify({ id, desc, out }));\n}\n```",
+ "truth": {
+  "p2": "{\"flags\":{},\"positional\":[\" - \",\"x\"]}"
+ }
+}
