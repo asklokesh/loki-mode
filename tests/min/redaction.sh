@@ -49,12 +49,14 @@ const best = (input: string): number => {
 };
 let worst = 0, slow = 0;
 for (const build of builders) {
-  const small = best(build(50000)), big = best(build(200000));
+  // 8x more input: linear growth reads about 8x, quadratic about 64x. A 32x bar (exponent about 1.67; standalone every input reads about 8x, 16x was seen on a loaded laptop) leaves room for a
+  // loaded CI runner (the old 4x-input, 10x bar read 21.6x on a GitHub runner while the same inputs read 1x to 6.5x locally).
+  const small = best(build(50000)), big = best(build(400000));
   worst = Math.max(worst, big / Math.max(small, 5));
-  if (big >= 1000) slow++;
+  if (big >= 4000) slow++;
 }
-res("growth 50k to 200k stays under 10x (worst " + worst.toFixed(1) + "x)", worst < 10);
-res("no single call takes 1s", slow === 0);
+res("growth 50k to 400k stays under 32x (worst " + worst.toFixed(1) + "x)", worst < 32);
+res("no single 400k call takes 4s", slow === 0);
 TS
 
 out="$(bun run "$T/redact-check.ts" 2>&1)"
