@@ -23,6 +23,9 @@
 #                file and the referee runs; the run is delivered PARTIAL (not BLOCKED) with multiply() in calc.ts and
 #                the Wall file listed as discarded, and no session (Wall author and referee included) runs off haiku.
 #   lean normal: a normal-size task with a relevant visible test runs no Wall session at all.
+#   coverage:    (lean, E2E_STUB_MODE=coverage: the first turn writes 2 of the 3 named functions) default: no extra session and negate() is
+#                missing; LOKI_E10_COVERAGE_RESUME=1: exactly one "-c" session with the fixed brief writes negate(); a first turn that
+#                claims already-done, or a run that has a plan, gets no coverage turn.
 #   agent-only:  the same lean task, but the session also adds an exported square() that only its own new test calls:
 #                the run is PARTIAL and the receipt names square as unexercised by an agent-independent test.
 #   public unit: addedPublicFunctions reads the file at HEAD against the base: a method added to an existing class, a def
@@ -314,6 +317,19 @@ run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHAR
 [ "$(ev 'next((e["data"].get("size") for e in E if e["type"]=="variant" and "size" in e["data"]), None)')" = "normal" ] && ok "lean normal: the task sized normal" || bad "lean normal: the task did not size normal"
 grep -q '^wall ' "$ITERS" && { bad "lean normal: a Wall session ran despite a relevant visible test"; dump; } || ok "lean normal: no Wall session"
 [ "$(outcome)" = "VERIFIED" ] && ok "lean normal: run is VERIFIED" || { bad "lean normal: outcome is '$(outcome)'"; dump; }
+# ---------------------------------------------------------------- coverage resume (L4, LOKI_E10_COVERAGE_RESUME, default off)
+CTASK="add multiply(a, b), subtract(a, b) and negate(a) to calc.ts"
+run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+[ "$(grep -c -- '-c ' "$ITERS")" = "0" ] && grep -q 'export function subtract' "$REPO/calc.ts" && ! grep -q 'export function negate' "$REPO/calc.ts" && ok "coverage default: no coverage turn, the third named function is still missing" || { bad "coverage default: a coverage turn ran or negate() landed"; dump; }
+run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_COVERAGE_RESUME=1
+[ "$(grep -c '^implement .*-c ' "$ITERS")" = "1" ] && ok "coverage on: exactly one -c implement session" || { bad "coverage on: $(grep -c '^implement .*-c ' "$ITERS") -c sessions (want 1)"; dump; }
+grep -q 'export function negate' "$REPO/calc.ts" && grep -q 'export function subtract' "$REPO/calc.ts" && ok "coverage on: the resume wrote the third named function and kept the first two" || { bad "coverage on: negate() missing"; dump; }
+[ "$(ev 'next((e["data"].get("coverage_resume") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), None)')" = "resumed" ] && ok "coverage on: the implement stage records coverage_resume=resumed" || bad "coverage on: coverage_resume not recorded"
+run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=1 LOKI_E10_COVERAGE_RESUME=1
+grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: a run with a plan got a coverage turn"; dump; } || ok "coverage on: a run with a plan stage gets no coverage turn (lean path only)"
+run_engine "$CTASK" E2E_STUB_MODE=already LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_COVERAGE_RESUME=1
+grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: an already-done first turn got a coverage turn"; dump; } || ok "coverage on: an already-done first turn gets no coverage turn"
+
 # ---------------------------------------------------------------- lean fix loop, unit level (L005, L006, L025, L026)
 mkdir -p "$T/l006" "$T/l026"
 cat > "$T/lean-fix.ts" <<TS
@@ -761,6 +777,25 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest declared-env base proof: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest declared-env base proof: pytest is not installed"; fi
 fi
+# Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
+# a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
+if command -v go >/dev/null 2>&1; then
+    GP="$T/mp-go"; rm -rf "$GP"; mkdir -p "$GP" && cd "$GP" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
+    printf 'module example.com/calc\n\ngo 1.20\n' > go.mod
+    for n in assert build panic prered empty; do mkdir -p "$n"; printf 'package %s\n\nfunc Half(a int) int { return a / 2 }\n\nfunc Big(a int) int { return a / (a - 5) }\n' "$n" > "$n/calc.go"; printf 'package %s\n\nimport "testing"\n\nfunc TestOk(t *testing.T) { if Half(4) != 2 { t.Fatal("half") } }\n' "$n" > "$n/calc_test.go"; done
+    printf 'package prered\n\nimport "testing"\n\nfunc TestOk(t *testing.T) { if Half(5) != 3 { t.Fatalf("pre %%d", Half(5)) } }\n' > prered/calc_test.go
+    git add -- . && git commit -q -m base && BASE="$(git rev-parse HEAD)"
+    for n in assert build panic prered empty; do printf 'package %s\n\nfunc Half(a int) int { return (a + 1) / 2 }\n\nfunc Big(a int) int { return a }\n\nfunc Triple(a int) int { return a * 3 }\n' "$n" > "$n/calc.go"; done
+    printf '\nfunc TestHalfRound(t *testing.T) { if Half(5) != 3 { t.Errorf("want 3 got %%d", Half(5)) } }\n' >> assert/calc_test.go
+    printf '\nfunc TestNew(t *testing.T) { if Triple2(2) != 6 { t.Fatal("triple") } }\n' >> build/calc_test.go
+    printf '\nfunc TestBig(t *testing.T) { Big(5) }\n' >> panic/calc_test.go
+    printf '// edited\n' >> prered/calc_test.go; printf 'package empty\n// no tests\n' > empty/calc_test.go
+    git add -- . && git commit -q -m head && HEADSHA="$(git rev-parse HEAD)"; cd "$ROOT"
+    gp="$(cd "$ROOT/loki-ts" && bun -e 'const { mutationProof } = await import("./src/util/mutation_proof.ts"); const { baseProofRunner } = await import("./src/engine10/stages/seal.ts"); const [repo, base, head] = process.argv.slice(1); const out: string[] = []; for (const n of ["assert", "build", "panic", "prered", "empty"]) { const f = n + "/calc_test.go"; const r = await mutationProof({ repoDir: repo, baseSha: base, runDir: repo + "/.loki", wallFiles: [{ path: f }], checks: [{ name: "go:" + f }], runner: baseProofRunner, headSha: head, requireAssertion: true, baseMustPass: n === "prered" ? [f] : [] }); out.push(n + "=" + (r.failed ?? []).length); } console.log(out.join(" "))' "$GP" "$BASE" "$HEADSHA" 2>&1 | tail -1)"
+    [ "$gp" = "assert=1 build=0 panic=0 prered=0 empty=0" ] && ok "go base proof: an assertion failure on the base counts; a build failure, a panic, a red base file and a no-test file do not ($gp)" || bad "go base proof: got '$gp'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go base proof: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go base proof: go is not installed"; fi
+fi
 for vt in 2 latest; do
     VT_NM="$T/vt-$vt/node_modules"
     [ -x "$VT_NM/.bin/vitest" ] || { if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "vitest $vt wall-off: vitest@$vt is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: vitest $vt wall-off: vitest@$vt is not installed (offline?)"; fi; continue; }
@@ -836,5 +871,28 @@ const { tscUntouchedLocal: u } = await import("./src/engine10/stages/verify.ts")
 const o = "src/v3/tests/a.test.ts:56:8 - error TS6196: \x27_Cat\x27 is declared but never used.\nsrc/v3/tests/b.test.ts(9,1): error TS6133: \x27x\x27 is declared but its value is never read.\n";
 console.log([u(o, "packages/zod", new Set(["packages/zod/src/v4/x.ts"]), ["packages/zod/src/v4/x.ts"], o), u(o, "packages/zod", new Set(["packages/zod/src/v3/tests/a.test.ts"]), [], o), u(o + "src/c.ts:1:1 - error TS2322: no\n", "packages/zod", new Set(), [], o), u(o, "packages/zod", new Set(), ["packages/zod/tsconfig.json"], o), u("", ".", new Set(), [], ""), u("error TS6133 unparsed\n", ".", new Set(), [], "error TS6133 unparsed\n")].join(","));' 2>&1)"
 [ "$TU" = "true,false,false,false,false,false" ] && ok "tsc untouched unit: only unused-declaration errors in untouched, unnamed files with no tsconfig edit are excused ($TU)" || bad "tsc untouched unit: '$TU'"
+
+# pytest base proof when a narrow terminal ends the summary reason in "..." (rule 22, real pytest): "FAILED tests/test_more.py::IchunkedTests::test_negative_message - AssertionEr..."
+# is an assertion failure (the traceback's E line says AssertionError), not an unknown kind; it was read as "not an assertion" so a real fail-then-pass proof was dropped. A base run that
+# fails by TypeError (the base lacks the new keyword) beside it stays no proof. Plant: drop the "..." test in assertionFailure and the first leg reads "yes|" with no file named.
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    for kind in assert typeerr; do
+        TR="$T/mp-trunc-$kind"; rm -rf "$TR"; mkdir -p "$TR/tests" && cd "$TR" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
+        printf 'def chunk(n):\n    return n\n' > mod.py
+        printf 'import unittest\n\nimport mod\n\n\nclass IchunkedTests(unittest.TestCase):\n    def test_ok(self):\n        self.assertEqual(mod.chunk(1), 1)\n' > tests/test_more.py
+        git add -- . && git commit -q -m base && BASE="$(git rev-parse HEAD)"
+        if [ "$kind" = assert ]; then printf 'def chunk(n):\n    if n < 0:\n        raise ValueError("n must be at least 0")\n    return n\n' > mod.py; printf '\n    def test_negative_message(self):\n        with self.assertRaisesRegex(ValueError, "n must be at least 0"):\n            mod.chunk(-1)\n' >> tests/test_more.py
+        else printf 'def chunk(n, strict=False):\n    return n\n' > mod.py; printf '\n    def test_negative_message(self):\n        self.assertEqual(mod.chunk(1, strict=True), 1)\n' >> tests/test_more.py; fi
+        git add -- . && git commit -q -m head && HEADSHA="$(git rev-parse HEAD)"; cd "$ROOT"
+        mpt="$(cd "$ROOT/loki-ts" && env -u CI -u GITHUB_ACTIONS COLUMNS=80 bun -e 'const { mutationProof } = await import("./src/util/mutation_proof.ts"); const { baseProofRunner } = await import("./src/engine10/stages/seal.ts"); const [repo, base, head] = process.argv.slice(1); const f = "tests/test_more.py"; const r = await mutationProof({ repoDir: repo, baseSha: base, runDir: repo + "/.loki", wallFiles: [{ path: f }], checks: [{ name: "pytest:" + f }], runner: baseProofRunner, headSha: head, requireAssertion: true, baseMustPass: [f] }); console.log(r.outcome + "|" + (r.failed ?? []).join(","));' "$TR" "$BASE" "$HEADSHA" 2>&1 | tail -1)"
+        if [ "$kind" = assert ]; then
+            [ "$mpt" = "yes|tests/test_more.py" ] && ok "pytest truncated reason: an assertion failure whose summary reason ends in '...' still counts as the fail-then-pass proof ($mpt)" || bad "pytest truncated reason: got '$mpt'"
+        else
+            [ "$mpt" = "yes|" ] && ok "pytest truncated reason: a TypeError (new keyword the base lacks) is still no proof ($mpt)" || bad "pytest truncated reason (TypeError): got '$mpt'"
+        fi
+    done
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest truncated reason: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest truncated reason: pytest is not installed"; fi
+fi
 
 finish

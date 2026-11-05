@@ -7,6 +7,7 @@
 #   editalready: adds multiply() and answers LOKI_ALREADY_DONE every time
 #   redothenempty: claims already-done; on the router's redo (REDO_CHALLENGE) LOKI_DONE with no change; already-done again on the empty-done correction
 #   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
+#   coverage: multiply() and subtract() on the first turn; negate() only when the prompt carries the coverage brief (tests/min/scope-and-fix.sh, LOKI_E10_COVERAGE_RESUME)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
 #   attempts: EXP-0010 (tests/min/engine10-e2e-stub.sh). Every implement session writes a wrong multiply() (calc.ts, or calc.py when the repo has one) except
 #     the session running in <temp>/loki-attempts-<random>/B<n> where n is E2E_STUB_RIGHT (unset or none: every session is wrong; the primary is attempt 0);
@@ -157,6 +158,10 @@ fi
 if [ "$stage" = "implement" ] && [ "${LOKI_E10_STAGE:-}" = "implement" ] && [ -n "${E2E_STUB_IMPL_CONFLICT:-}" ]; then # every implement session off sonnet answers a spec conflict (tests/min/auto-route.sh)
   case "$flags" in *"--model claude-sonnet"*|*"--model sonnet"*) ;; *) echo "LOKI_SPEC_CONFLICT: $E2E_STUB_IMPL_CONFLICT"; exit 0 ;; esac
 fi
+if [ "$stage" = "plan" ] && [ "${E2E_STUB_MODE:-}" = "coverage" ]; then # a non-empty plan: the coverage leg with a plan stage must not resume
+  out="$(printf '%s\n' "$prompt" | sed -n 's/.*to this exact file path: //p' | head -1)"
+  [ -n "$out" ] && printf '1. edit calc.ts\n2. run calc.test.ts\n' > "$out"
+fi
 if [ "$stage" = "implement" ]; then
   sid="$(printf '%s\n' "$prompt" | sed -n 's/^Slice \([A-Za-z0-9_-]*\) of [0-9]* for .*/\1/p' | head -1)"
   if [ "${E2E_STUB_MODE:-done}" = "slice" ] && [ -n "$sid" ]; then
@@ -206,6 +211,9 @@ if [ "$stage" = "implement" ]; then
       else printf '\nexport function multiply(a: number, b: number): number {\n  return a %s b;\n}\n' "$op" >> calc.ts; fi
     elif [ "${E2E_STUB_MODE:-}" = "wrong" ]; then
       printf '\nexport function multiply(a: number, b: number): number {\n  return a + b;\n}\n' >> calc.ts
+    elif [ "${E2E_STUB_MODE:-}" = "coverage" ]; then # the task names multiply, subtract and negate: the first turn does two of the three, the coverage resume does the third
+      if printf '%s' "$prompt" | grep -q "List each site, symbol, example or case"; then printf '\nexport function negate(a: number): number {\n  return -a;\n}\n' >> calc.ts
+      else printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function subtract(a: number, b: number): number {\n  return a - b;\n}\n' >> calc.ts; fi
     elif [ "${E2E_STUB_MODE:-}" = "agentonly" ]; then # multiply() (the visible test exercises it) plus square(), which only a test this session writes calls
       printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function square(a: number): number {\n  return a * a;\n}\n' >> calc.ts
       printf 'import { expect, test } from "bun:test";\nimport { square } from "./calc";\n\ntest("square", () => {\n  expect(square(3)).toBe(9);\n});\n' > square.test.ts

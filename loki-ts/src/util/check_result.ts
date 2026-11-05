@@ -1693,6 +1693,21 @@ export function classify(f: TestRef, status: number | null, output: string, repo
 
 /** TEN-SPEED-19: LOKI_E10_BASE_JOBS, default 1 (sequential); an invalid value or one below 1 falls back to 1, capped at 16. */
 export function baseJobs(): number { const n = Number(process.env.LOKI_E10_BASE_JOBS); return Number.isInteger(n) && n >= 1 ? Math.min(n, 16) : 1; }
+/** Go: red by assertion = the go test -json stream is whole, a test reported fail with a `file_test.go:LINE:` message (t.Error, t.Fatal, testify), and nothing else went wrong: no build failure (a test calling a function the base lacks fails that way for ANY change), no panic, no timeout, no package fail that no test explains. Anything unreadable is false (fail-closed). */
+function goAssertionFailure(out: string): boolean {
+  if (!goJson(out)) return false; // plain or torn output: no reading
+  const failedTests = new Set<string>(), asserted = new Set<string>(); let pkgFail = false;
+  for (const x of out.split("\n")) {
+    if (!x.trim() || /^go: /.test(x)) continue;
+    let e: { Action?: string; Package?: string; Test?: string; Output?: string }; try { e = JSON.parse(x); } catch { return false; }
+    const k = `${e.Package ?? ""}::${e.Test ?? ""}`, o = e.Output ?? "";
+    if (/^build-/.test(e.Action ?? "") || /\[build failed\]|\[setup failed\]|^panic[: ]|\bpanic: |test timed out|fatal error:|^# \S|\.go:\d+:\d+: /m.test(o)) return false;
+    if (e.Action === "fail") { if (e.Test) failedTests.add(k); else pkgFail = true; }
+    if (e.Test && e.Action === "output" && /^\s*\S+_test\.go:\d+: /.test(o)) asserted.add(k);
+  }
+  if (!pkgFail && failedTests.size === 0) return false;
+  return failedTests.size > 0 && [...failedTests].some((k) => asserted.has(k) || [...asserted].some((a) => a.startsWith(`${k}/`)));
+}
 /** True only when a red test file failed on assertions: every reported failure is an assertion, and none is an import, collection, attribute, type or reference error (a test that calls code the base lacks fails that way for ANY change, so it proves nothing about the fix). Only pytest and vitest output is read; every other runner is false (fail-closed: the run reads PARTIAL). */
 export function assertionFailure(runner: string, output: string): boolean {
   const out = stripAnsi(output);
@@ -1700,10 +1715,11 @@ export function assertionFailure(runner: string, output: string): boolean {
     if (/^ERROR\s|errors? during collection/m.test(out)) return false;
     const f = [...out.matchAll(/^FAILED\s+\S+(?:\s+-\s+(.*))?$/gm)].map((m) => (m[1] ?? "").trim());
     if (f.length === 0) return false;
-    const kinds = f.every((r) => r !== "") ? f : [...out.matchAll(/^E\s+((?:assert\b|[A-Za-z_.]*(?:Error|Exception))\S*)/gm)].map((m) => m[1]!); // a narrow terminal cuts the " - reason" from the summary line: read the traceback's E lines instead
+    const kinds = f.every((r) => r !== "" && !r.endsWith("...")) ? f : [...out.matchAll(/^E\s+((?:assert\b|[A-Za-z_.]*(?:Error|Exception))\S*)/gm)].map((m) => m[1]!); // a narrow terminal cuts the " - reason" from the summary line, or ends it in "..." ("AssertionEr..."): read the traceback's E lines instead
     return kinds.some((k) => /^(?:assert\b|AssertionError\b)/.test(k)) && !kinds.some((k) => /^(?:Import|ModuleNotFound|Attribute|Name|UnboundLocal|Type|Syntax|Indentation)Error\b/.test(k));
   }
   if (runner === "vitest") { const e = [...out.matchAll(/^\s*((?:[A-Za-z]*Error))(?:\s*\[[^\]]*\])?:/gm)].map((m) => m[1]!); return e.length > 0 && e.every((k) => k === "AssertionError"); }
+  if (runner === "go") return goAssertionFailure(out);
   return false;
 }
 /** TEN-SPEED-18: LOKI_E10_VERIFY_JOBS, an integer 1..8; unset, invalid or below 1 means 1. */

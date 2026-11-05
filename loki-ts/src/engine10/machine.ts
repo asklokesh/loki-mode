@@ -196,6 +196,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     const impl = outputs.implement, model = typeof impl?.model === "string" ? impl.model : ctx.model, k = attemptsK(model), none = { changed: false, ran: false };
     if (k === 0 || !impl || impl.exit !== "done") return none;
     const note = (why: string): typeof none => { outputs.implement = { ...impl, attempts: { skipped: why } }; return none; };
+    const blocking = outputs.verify?.blocking_checks, pre = Array.isArray(outputs.verify?.pre_red_checks) ? (outputs.verify!.pre_red_checks as unknown[]).map(String) : [];
+    if (Array.isArray(blocking) && !blocking.map(String).some((n) => !n.startsWith("full suite") && !pre.includes(n))) return note("no check the change introduced is failing (full-suite or pre-red only)"); // fresh attempts cannot fix a failure the change did not cause
     const brief = savedImplementBrief(ctx);
     if (!brief) return note("the implement brief was not saved");
     const room = Math.floor(softCapS(ctx.capS) - elapsedS() - ATTEMPTS_TAIL_S), limitS = Math.min(STAGE_BUDGETS.implement.limitS, room);

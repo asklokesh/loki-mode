@@ -1,7 +1,7 @@
 // EXP-0010 parallel attempts after a red first attempt, in features/ because e10ext is at its cap. When the first implement attempt (the incumbent, in the primary tree) ends with the repo's own checks red,
 // k more independent attempts run IN PARALLEL on the same model, each in a detached worktree in its own temp directory (never inside the repo: a test runner run in the primary would discover the attempts' copies) with a different instruction. Every finished attempt is scored by running the shared set S
 // in the PRIMARY tree through treeswap; the first one that passes all of S and the Wall stops the others; otherwise select.ts ranks (checks green, fail-then-pass proof, fewest files outside the task, smallest
-// diff, incumbent last). Core then re-verifies and Seals the one tree left in the primary: this module writes no verdicts and no Wall files. Default on for Haiku (attemptsK), LOKI_E10_ATTEMPTS=0 off, N sets k.
+// diff, incumbent last). Core then re-verifies and Seals the one tree left in the primary: this module writes no verdicts and no Wall files. Opt-in: LOKI_E10_ATTEMPTS=on is k=2, a number sets k, unset or 0 is off.
 // E-141: treeswap's git children inherit process.env, so attempts refuse to start unless that env is already token-scrubbed (the worker's is).
 import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,16 +18,16 @@ import { outsideScope } from "../e10ext/scope.ts";
 import { parseStaged, type Staged } from "../e10ext/commit_filter.ts";
 import { DEFAULT_EXCLUDES, applyDiff, resetToBase, snapshotDiff, swapAttemptIntoWorkingTree } from "../e10ext/treeswap.ts";
 
-export const DEFAULT_ATTEMPTS = 3, MAX_ATTEMPTS = 5, MIN_ATTEMPT_WINDOW_S = 90;
+export const DEFAULT_ATTEMPTS = 2, MAX_ATTEMPTS = 5, MIN_ATTEMPT_WINDOW_S = 90;
 /** The extra attempts' tree excludes: the linked dependency dir is the primary's own and never part of an attempt's diff. */
 export const ATTEMPT_EXCLUDES = [...DEFAULT_EXCLUDES, "node_modules"];
 
-/** k extra attempts: LOKI_E10_ATTEMPTS=0 off, a whole number 1..5 sets k (any model), unset is 3 for a Haiku implement model and off otherwise. An unusable value is off (fail safe: never more spend than asked). */
-export function attemptsK(model: string | undefined, env: NodeJS.ProcessEnv = process.env): number {
-  const raw = (env.LOKI_E10_ATTEMPTS ?? "").trim();
-  if (raw === "") return /haiku/i.test(model ?? "") ? DEFAULT_ATTEMPTS : 0;
+/** k extra attempts, opt-in: unset is off (even on Haiku), `0` off, a whole number 1..5 sets k, `on`/`true`/`yes` is k=2 (the default k). Anything else is off (fail safe: never more spend than asked). The model is kept for callers; the rule no longer depends on it. */
+export function attemptsK(_model: string | undefined, env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env.LOKI_E10_ATTEMPTS ?? "").trim().toLowerCase();
+  if (["on", "true", "yes"].includes(raw)) return DEFAULT_ATTEMPTS;
   const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? Math.min(n, MAX_ATTEMPTS) : 0;
+  return raw !== "" && Number.isInteger(n) && n > 0 ? Math.min(n, MAX_ATTEMPTS) : 0;
 }
 
 /** One distinct instruction per extra attempt (cycled past three), added before the brief's closing line so the cache-stable prefix is untouched. */

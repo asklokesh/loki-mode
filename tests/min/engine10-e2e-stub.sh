@@ -315,40 +315,42 @@ for l in open(sys.argv[1]):
     if e["type"] == "attempts.selected": d = e["data"]; print("winner=%s k=%s early=%s launched=%s" % (d.get("winner"), d.get("k"), d.get("early_accept"), d.get("launched"))); break
 else: print("none")
 ' "$RUNDIR/events.jsonl" 2>/dev/null; }
-E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku run_engine attempts
+E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
 [ "$(outcome)" = "VERIFIED" ] && ok "attempts (bun test): the first attempt is wrong, attempt 2 is right: the run is VERIFIED" || { bad "attempts (bun test): outcome '$(outcome)', not VERIFIED"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
 [ "$(att_ev)" = "winner=x2 k=3 early=True launched=3" ] && ok "attempts (bun test): the receipt journal names attempt 2 as the winner of 3, early accept ($(att_ev))" || bad "attempts (bun test): attempts.selected is '$(att_ev)'"
 git -C "$REPO" show HEAD:calc.ts | grep -A1 'function multiply' | grep -q 'a \* b' && ok "attempts (bun test): the committed multiply() is the right one" || bad "attempts (bun test): the committed calc.ts holds the wrong multiply()"
 [ "$(verify_run)" = "0 VERIFIED" ] && ok "attempts (bun test): loki verify agrees ($(verify_run))" || bad "attempts (bun test): loki verify says '$(verify_run)'"
 [ "$(git -C "$REPO" worktree list | wc -l | tr -d ' ')" = 1 ] && ok "attempts (bun test): no worktree registration is left in the repo" || bad "attempts (bun test): git worktree list shows a leftover"
 
-E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku run_engine attempts
+E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
 [ "$(outcome)" = "FAILED" ] && ok "attempts (bun test): every attempt wrong: the repo's checks stay red, so the run is FAILED (a red check is never PARTIAL or VERIFIED)" || { bad "attempts (bun test): all wrong gave outcome '$(outcome)'"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
 case "$(att_ev)" in winner=*" k=3 early=False launched=3") ok "attempts (bun test): all wrong: the best partial is kept without an early accept ($(att_ev))" ;; *) bad "attempts (bun test): all-wrong attempts.selected is '$(att_ev)'" ;; esac
 git -C "$REPO" show HEAD:calc.ts | grep -q 'export function multiply' && ok "attempts (bun test): all wrong: the best partial is on loki/<run>" || bad "attempts (bun test): all wrong: no partial on loki/<run>"
 
-E2E_STUB_NEWFILE=1 E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku run_engine attempts
+E2E_STUB_NEWFILE=1 E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
 rid="$(basename "$RUNDIR")"; files="$(git -C "$REPO" ls-tree -r --name-only "loki/$rid" 2>/dev/null | tr '\n' ' ')"
 [ "$(outcome)" = "VERIFIED" ] && ok "attempts (new files): attempt 2 wins when every attempt creates new files: VERIFIED" || { bad "attempts (new files): outcome '$(outcome)'"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
 case " $files " in *" new_2.ts "*) case " $files " in *" shared_new.ts "*) ok "attempts (new files): the winner's own new file and the file every attempt created are committed" ;; *) bad "attempts (new files): shared_new.ts missing: $files" ;; esac ;; *) bad "attempts (new files): new_2.ts missing: $files" ;; esac
 case " $files " in *" new_0.ts "*|*" new_1.ts "*|*" new_3.ts "*) bad "attempts (new files): a losing attempt's new file leaked into the winner's tree: $files" ;; *) ok "attempts (new files): no losing attempt's new file is in the winner's tree" ;; esac
-E2E_STUB_WEAKEN=1 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku run_engine attempts
+E2E_STUB_WEAKEN=1 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
 case "$(att_ev)" in winner=x1*) bad "attempts (bun test): an attempt that deleted the failing assertion won ($(att_ev))" ;; *) [ "$(outcome)" != "VERIFIED" ] && ok "attempts (bun test): an attempt that loosens an existing test never wins by passing it ($(att_ev), $(outcome))" || bad "attempts (bun test): a weakened test reached VERIFIED" ;; esac
 E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=0 run_engine attempts
 [ "$(att_ev)" = none ] && [ "$(outcome)" = "STALLED" ] && ok "attempts: LOKI_E10_ATTEMPTS=0 turns it off (no extra session; the fix rounds' stall stands)" || bad "attempts: LOKI_E10_ATTEMPTS=0 gave '$(att_ev)' / '$(outcome)'"
-E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress run_engine attempts
-[ "$(att_ev)" = none ] && ok "attempts: off by default when the implement model is not Haiku" || bad "attempts: a non-Haiku run started attempts ('$(att_ev)')"
+E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku run_engine attempts
+[ "$(att_ev)" = none ] && ok "attempts: opt-in, so unset starts none even on Haiku" || bad "attempts: an unset LOKI_E10_ATTEMPTS started attempts ('$(att_ev)')"
+E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=on run_engine attempts
+[ "$(att_ev)" = "winner=x2 k=2 early=True launched=2" ] && ok "attempts: LOKI_E10_ATTEMPTS=on is k=2 ($(att_ev))" || bad "attempts: =on gave '$(att_ev)'"
 E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_E10_ATTEMPTS=2 run_engine attempts
 [ "$(att_ev)" = "winner=x2 k=2 early=True launched=2" ] && [ "$(outcome)" = "VERIFIED" ] && ok "attempts: LOKI_E10_ATTEMPTS=2 sets k=2 on any model ($(att_ev))" || bad "attempts: LOKI_E10_ATTEMPTS=2 gave '$(att_ev)' / '$(outcome)'"
 LOKI_SESSION_MODEL=haiku run_engine done
 [ "$(att_ev)" = none ] && [ "$(outcome)" = "VERIFIED" ] && ok "attempts: a first attempt that is green starts no extra session" || bad "attempts: a green first attempt gave '$(att_ev)' / '$(outcome)'"
 
 if python3 -m pytest --version >/dev/null 2>&1; then
-    PY_MODE=attempts E2E_STUB_RIGHT=1 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku py_engine calc.py
+    PY_MODE=attempts E2E_STUB_RIGHT=1 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 py_engine calc.py
     [ "$(outcome)" = "VERIFIED" ] && ok "attempts (pytest): attempt 1 is right after a wrong first attempt: VERIFIED" || { bad "attempts (pytest): outcome '$(outcome)'"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
     rid="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_id"])' "$REPO/.loki/engine.json" 2>/dev/null)"
     git -C "$REPO" show "loki/$rid:calc.py" 2>/dev/null | grep -A1 'def multiply' | grep -q 'a \* b' && ok "attempts (pytest): the committed multiply() is the right one" || bad "attempts (pytest): the committed calc.py holds the wrong multiply()"
-    PY_MODE=attempts E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku py_engine calc.py
+    PY_MODE=attempts E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 py_engine calc.py
     [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "attempts (pytest): every attempt wrong: not VERIFIED ($(outcome))" || bad "attempts (pytest): all wrong gave '$(outcome)'"
 elif [ "${CI:-}" = "true" ]; then
     bad "attempts: pytest is not installed on the CI runner"
@@ -367,7 +369,7 @@ vt_attempts() { # vt_attempts <right: 2|none> -> REPO, RUNDIR, OUT
     git -C "$REPO" add -A .; git -C "$REPO" commit -q -m base
     cp -R "$VTNM" "$REPO/node_modules"
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY \
-        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" E2E_STUB_MODE=attempts E2E_STUB_RIGHT="$1" E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku \
+        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" E2E_STUB_MODE=attempts E2E_STUB_RIGHT="$1" E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 \
         LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "add a multiply(a, b) function to calc.ts" --no-pr 2>&1)"
     local rid; rid="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_id"])' "$REPO/.loki/engine.json" 2>/dev/null)"; RUNDIR="$REPO/.loki/runs/$rid"
     [ -n "$rid" ] && git -C "$REPO" rev-parse -q --verify "refs/heads/loki/$rid" >/dev/null && git -C "$REPO" checkout -q "loki/$rid"
@@ -393,7 +395,7 @@ const diff = (n) => "@@ -1,1 +1," + n + " @@\n" + Array.from({ length: n }, (_, 
 const cand = (index, a, w, o = {}) => ({ index, killedOrErrored: false, diff: diff(o.lines ?? 2), alreadyDoneEvidence: false, weakensTest: !!o.weak, outsideFiles: o.out ?? 0, checks: [chk("a.test.ts", a), chk("loki_wall_x.test.ts", w)] });
 const pick = (...c) => s.selectAttempt(c, S, wall).index;
 const out = [];
-out.push(`k=${[[undefined, "haiku"], [undefined, "claude-sonnet-5-5"], ["0", "haiku"], ["2", "sonnet"], ["9", "haiku"], ["x", "haiku"], ["-1", "haiku"], ["2.5", "haiku"]].map(([v, m]) => a.attemptsK(m, v === undefined ? {} : { LOKI_E10_ATTEMPTS: v })).join(",")}`);
+out.push(`k=${[[undefined, "haiku"], ["on", "haiku"], ["0", "haiku"], ["3", "sonnet"], ["9", "haiku"], ["x", "haiku"], ["-1", "haiku"], ["2.5", "haiku"]].map(([v, m]) => a.attemptsK(m, v === undefined ? {} : { LOKI_E10_ATTEMPTS: v })).join(",")}`);
 out.push(`green_first=${pick(cand(0, "fail", "pass"), cand(1, "pass", "fail"))}`);
 out.push(`proof_second=${pick(cand(0, "pass", "fail"), cand(1, "pass", "pass"))}`);
 out.push(`outside_before_size=${pick(cand(0, "pass", "pass", { out: 2, lines: 2 }), cand(1, "pass", "pass", { out: 0, lines: 9 }))}`);
@@ -403,8 +405,8 @@ out.push(`weak_disqualified=${pick(cand(0, "pass", "pass", { weak: true }), cand
 out.push(`variants=${[1, 2, 3, 4].map((i) => a.variantBrief("BODY\n\n" + FINISH_LINE, i).includes(a.VARIANTS[(i - 1) % 3])).join(",")}`);
 console.log(out.join(" "));
 ' 2>&1)"
-[ "$U" = "k=3,0,0,2,5,0,0,0 green_first=1 proof_second=1 outside_before_size=1 smallest_diff=1 incumbent_last=0 weak_disqualified=1 variants=true,true,true,true" ] \
-    && ok "unit: k rule (Haiku 3, other 0, 0 off, N sets, cap 5, junk off) and selection order (checks green, proof, outside files, diff size, incumbent last)" || bad "unit (attempts) gave: $U"
+[ "$U" = "k=0,2,0,3,5,0,0,0 green_first=1 proof_second=1 outside_before_size=1 smallest_diff=1 incumbent_last=0 weak_disqualified=1 variants=true,true,true,true" ] \
+    && ok "unit: k rule (unset off, on is 2, 0 off, N sets, cap 5, junk off) and selection order (checks green, proof, outside files, diff size, incumbent last)" || bad "unit (attempts) gave: $U"
 
 # Unit: runAttempts over fake ops: a green incumbent starts nothing, a throwing session is an errored attempt, a scoring error restores the incumbent, a cap abort keeps the incumbent.
 U="$(cd "$ROOT/loki-ts" && bun -e '
