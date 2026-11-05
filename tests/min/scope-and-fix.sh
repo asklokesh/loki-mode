@@ -145,7 +145,7 @@
 #  60. verify.ts tscUntouchedLocal: drop the base.has test (the program-membership leg reads true: a change that imports an untouched file is excused).
 #  61. check_result.ts stallSignature: bucket a full-suite group by log2 of its id count again (the disjoint, 100-to-70 and zero-vs-one id legs read true).
 #  62. check_result.ts stallSame: drop the count tolerance test (the near-equal truncated legs read false) or widen it to 50 percent (the 100-to-70 leg reads true).
-#  63. machine.ts: compare sigs with === again instead of stallSame (the truncated 2160-to-2174 leg of the unit passes but the machine leg reads no stall; checked by the machine grep leg).
+#  63. machine.ts: compare sigs with === again instead of stallSame (the machine.ts stallSame grep leg reads bad).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
