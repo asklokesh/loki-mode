@@ -475,7 +475,7 @@ for (const [label, file, search, repl] of [
   const absent = cr.claimedChangeAbsent(d, base, claims);
   res("coverage claim: SITE lines parse (changed claims only, backticks allowed)", claims.length === 3, JSON.stringify(claims));
   res("coverage claim: a changed line passes, a byte-identical line is claimed_change_absent, a file new on the base passes", absent.join() === "src/parse.js:2", absent.join());
-  res("coverage claim: off by default (LOKI_E10_CLAIM_CHECK), the plain coverage brief has no SITE line; the claim brief asks for them and the re-ask names the absent sites", cr.claimCheckEnabled({}) === false && cr.claimCheckEnabled({ LOKI_E10_CLAIM_CHECK: "1" }) === true && !cr.COVERAGE_BRIEF.includes("SITE") && cr.COVERAGE_CLAIM_BRIEF.includes("SITE <path>:<line>: changed") && cr.claimAbsentBrief(absent).includes("src/parse.js:2")); }
+  res("coverage claim: on by default (LOKI_E10_CLAIM_CHECK=0 opts out to main's plain coverage brief, which has no SITE line); the claim brief asks for them and the re-ask names the absent sites", cr.claimCheckEnabled({}) === true && cr.claimCheckEnabled({ LOKI_E10_CLAIM_CHECK: "0" }) === false && !cr.COVERAGE_BRIEF.includes("SITE") && cr.COVERAGE_CLAIM_BRIEF.includes("SITE <path>:<line>: changed") && cr.claimAbsentBrief(absent).includes("src/parse.js:2")); }
 TS
 out="$(cd "$ROOT/loki-ts" && timeout 300 bun "$PP/unit.ts" "$ROOT" "$PP" 2>&1)"
 while IFS= read -r line; do

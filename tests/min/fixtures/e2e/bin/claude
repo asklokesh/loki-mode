@@ -72,6 +72,10 @@ if [ -n "${E2E_STUB_ARGV_LOG:-}" ]; then
   echo "$stage$flags" >> "$E2E_STUB_ARGV_LOG"
   rmdir "$lock" 2>/dev/null || true
 fi
+if [ "$stage" = patch ] && [ -z "${E2E_STUB_PATCH:-}" ]; then # default-on patch call with no scripted patch: a priced, edit-free conflict reply, so the protocol restores nothing and today's agentic session runs (no log line: legs that count sessions see today's sessions)
+  echo '{"type":"result","subtype":"success","is_error":false,"result":"LOKI_SPEC_CONFLICT: the stub writes no patch unless E2E_STUB_PATCH is set","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0}}'
+  exit 0
+fi
 if [ -n "${E2E_STUB_LOG:-}" ]; then echo "$stage" >> "$E2E_STUB_LOG"; fi
 if [ -n "${E2E_STUB_ROUTE_LOG:-}" ]; then # one line per session: engine stage, iteration, --model value, advisorModel from --settings (tests/min/auto-route.sh)
   r_model="$(printf '%s' "$flags" | grep -o -- '--model [^ ]*' | head -1 | cut -d' ' -f2)"
