@@ -49,6 +49,7 @@ import os
 import queue
 import re
 import secrets
+import shutil
 import signal
 import socket
 import socketserver
@@ -1589,6 +1590,98 @@ def handle_sentry_event(payload, dry_run=False):
     return summary, status
 
 
+REVIEW_REF_RE = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._/-]{0,199}$")
+FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+REVIEW_CLONE_TIMEOUT = 120
+
+
+def _review_root():
+    return (get_loki_dir() / "review").resolve()
+
+
+def _remove_review_clone(path):
+    """Delete a review clone, only when it sits under the review root."""
+    try:
+        real = Path(path).resolve()
+        if real.parent == _review_root():
+            shutil.rmtree(real, ignore_errors=True)
+    except OSError as e:
+        logging.error("review clone cleanup failed: %s", e)
+
+
+def handle_pull_request_review_event(payload, dry_run=False):
+    """A trusted 'changes requested' review runs `loki verify-pr respond` on a fresh clone of the PR branch."""
+    action = payload.get("action", "")
+    if action != "submitted":
+        return None, "skipped (action=%s)" % action
+    review = payload.get("review") or {}
+    state = str(review.get("state", "")).lower()
+    if state != "changes_requested":
+        return None, "skipped (review state=%s)" % _clip(state, 30)
+    if review.get("author_association") not in TRUSTED_ASSOCIATIONS:
+        return None, "skipped (review author not authorized)"
+    user = review.get("user") or {}
+    if user.get("type") == "Bot" or str(user.get("login", "")).endswith("[bot]"):
+        return None, "skipped (bot review)"
+    if LOKI_COMMENT_MARKER in str(review.get("body") or ""):
+        return None, "skipped (loki-authored review)"
+    pr = payload.get("pull_request") or {}
+    repo_full_name = (payload.get("repository") or {}).get("full_name", "")
+    if not valid_repo_full_name(repo_full_name):
+        return None, "rejected (invalid repository full_name)"
+    number = pr.get("number")
+    if not valid_issue_number(number):
+        return None, "rejected (invalid pull request number)"
+    if pr.get("state") != "open":
+        return None, "skipped (pull request not open)"
+    head = pr.get("head") or {}
+    if (head.get("repo") or {}).get("full_name") != repo_full_name:
+        return None, "skipped (pull request head is a fork)"
+    ref = str(head.get("ref") or "")
+    if not REVIEW_REF_RE.match(ref) or ".." in ref:
+        return None, "rejected (invalid head ref)"
+    sha = str(head.get("sha") or "")
+    if not FULL_SHA_RE.match(sha):
+        return None, "rejected (invalid head sha)"
+    summary = "review changes requested on %s#%s" % (repo_full_name, number)
+    if dry_run:
+        run_loki_command(["verify-pr", "respond", "%s#%s" % (repo_full_name, number)], dry_run=True)
+        return summary, "fired"
+
+    env = _scoped_child_env()
+    try:
+        origin = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True,
+                                timeout=30, env=env).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        origin = ""
+    if not origin:
+        return summary, "error"
+    root = _review_root()
+    root.mkdir(parents=True, exist_ok=True)
+    clone = root / ("pr-%s-%s" % (number, secrets.token_hex(4)))
+    try:
+        subprocess.run(["git", "clone", "--quiet", "--depth", "50", "--single-branch", "--branch", ref,
+                        "--", origin, str(clone)], capture_output=True, timeout=REVIEW_CLONE_TIMEOUT,
+                       env=env, check=True)
+        got = subprocess.run(["git", "-C", str(clone), "rev-parse", "HEAD"], capture_output=True,
+                             text=True, timeout=30, env=env).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as e:
+        logging.error("review clone failed: %s", e)
+        _remove_review_clone(clone)
+        HEALTH.record("review", None, 0.0)
+        return summary, "error"
+    if got.lower() != sha.lower():
+        _remove_review_clone(clone)
+        return None, "skipped (PR head moved)"
+    success = run_loki_command(["verify-pr", "respond", "%s#%s" % (repo_full_name, number)],
+                               cwd=str(clone), on_exit=lambda rc: _remove_review_clone(clone))
+    if success:
+        send_notification("Trigger fired: %s" % summary)
+    else:
+        _remove_review_clone(clone)
+    return summary, "fired" if success else "error"
+
+
 # Map event name -> handler. Keeps do_POST routing declarative. JOB_EVENT rides
 # the same table (and therefore the same bounded queue and worker pool) but is
 # explicitly refused on the /webhook path.
@@ -1598,6 +1691,7 @@ TRIGGERS = {
     "issue_comment": (None, handle_issue_comment_event),
     "pull_request": ("pull_request", handle_pull_request_event),
     "workflow_run": ("ci", handle_workflow_run_event),
+    "pull_request_review": ("review", handle_pull_request_review_event),
     JOB_EVENT: ("jobs", handle_job_event),
     SENTRY_EVENT: ("sentry", handle_sentry_event),
 }
