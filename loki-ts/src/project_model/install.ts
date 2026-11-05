@@ -292,7 +292,7 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
     const t0 = Date.now();
     let r = await runDetached(li.cmd, cwd, env, input.signal, budget);
     const venv = r.code !== 0 && !r.cut && PEP668.test(r.tail) ? venvInstallCmd(li.cmd, cwd) : null;
-    if (venv) { li = { ...li, cmd: venv, locked: false, rewritten: false, note: "system python is externally managed (PEP 668): installed into .venv" }; r = await runDetached(venv, cwd, env, input.signal, Math.max(1, budget - (Date.now() - t0))); }
+    if (venv) { li = { ...li, cmd: venv, locked: false, rewritten: false }; r = await runDetached(venv, cwd, env, input.signal, Math.max(1, budget - (Date.now() - t0))); if (r.code === 0 && !r.cut) li = { ...li, note: "system python is externally managed (PEP 668): installed into .venv" }; }
     const dt = (Date.now() - t0) / 1000;
     left -= Date.now() - t0;
     if (!guardTree(input.repoDir, env, before, res)) res.notProven.push(`${name} tree guard not run (git status failed)`);

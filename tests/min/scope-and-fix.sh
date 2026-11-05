@@ -859,4 +859,25 @@ else
     echo "  SKIP: pep668 install: needs python3 with venv and network (pypi.org)"
 fi
 
+# PEP 668 retry that FAILS after creating .venv (rule 22, real venv and pip, no network needed): the repo has no .gitignore and the venv has no .gitignore of its own (Python 3.12 and older write none),
+# so a failed install records nothing as install-created; the commit stage's stage list (git add -A, then dropSet) must still hold zero .venv paths, and the check must not claim "installed into .venv".
+# Plant: drop the .venv entry from OUTPUT_DIRS (lock_ecosystems.ts) and hundreds of .venv files are kept for the commit (the leg turns red).
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import venv, ensurepip' >/dev/null 2>&1; then
+    PF="$T/pep668-fail"; rm -rf "$PF"; mkdir -p "$PF/bin" "$PF/repo" && REALPY="$(command -v python3)"
+    printf '#!/bin/sh\ncase "$*" in "-m pip install"*) if [ -z "$VIRTUAL_ENV" ] && [ "$1 $2" = "-m pip" ]; then printf "error: externally-managed-environment\\n\\nhint: See PEP 668 for the detailed specification.\\n" >&2; exit 1; fi ;; esac\nexec "%s" "$@"\n' "$REALPY" > "$PF/bin/python3"; chmod +x "$PF/bin/python3"
+    cd "$PF/repo" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
+    printf 'nonexistent-loki-pkg-xyz==9.9.9\n' > requirements.txt; printf 'def f():\n    return 1\n' > calc.py; git add -- . && git commit -q -m base; BASE="$(git rev-parse HEAD)"; cd "$ROOT"
+    PF_OUT="$(cd "$ROOT/loki-ts" && PATH="$PF/bin:$PATH" PIP_NO_INDEX=1 timeout 280 bun -e 'import { prepareDeps } from "./src/project_model/install.ts"; import { dropSet } from "./src/e10ext/commit_filter.ts"; import { execFileSync } from "node:child_process"; import { rmSync, existsSync } from "node:fs";
+const [repo, base] = process.argv.slice(1); const model = { installFor: () => ({ cmd: "python3 -m pip install -r requirements.txt", cwd: ".", cite: ["requirements.txt"] }) } as any;
+const r = await prepareDeps({ repoDir: repo, model, failed: [{ root: ".", harnessOwned: true }], signal: new AbortController().signal, timeoutMs: 280000, opts: { runId: "pep668fail" } });
+rmSync(repo + "/.venv/.gitignore", { force: true });
+execFileSync("git", ["-C", repo, "add", "-A", "--", "."]);
+const parts = execFileSync("git", ["-C", repo, "diff", "--cached", "--name-status", "--no-renames", "-z", base], { encoding: "utf8" }).split("\0").filter(Boolean); const staged = [] as { st: string; f: string }[]; for (let i = 0; i + 1 < parts.length; i += 2) staged.push({ st: parts[i]!, f: parts[i + 1]! });
+const dropped = new Set(dropSet(repo, staged, undefined, process.env, null, undefined, base).map((d) => d.f)); const kept = staged.filter((s) => !dropped.has(s.f) && s.f.startsWith(".venv/")).length;
+const c = r.checks[0]; console.log([existsSync(repo + "/.venv/pyvenv.cfg"), c?.result, String(c?.lock_note ?? "").includes("installed into .venv"), kept].join("|"));' "$PF/repo" "$BASE" 2>&1 | tail -1)"
+    [ "$PF_OUT" = "true|not_run|false|0" ] && ok "pep668 failed retry: .venv exists, the check is not_run, no 'installed into .venv' note, zero .venv paths kept for the commit ($PF_OUT)" || bad "pep668 failed retry: got '$PF_OUT'"
+else
+    echo "  SKIP: pep668 failed retry: needs python3 with venv"
+fi
+
 finish
