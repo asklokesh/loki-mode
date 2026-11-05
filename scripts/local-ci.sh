@@ -5,6 +5,7 @@
 #
 #   bash scripts/local-ci.sh                     run everything, cheap tests first
 #   LOCAL_CI_ONLY=hygiene,pack-contents bash scripts/local-ci.sh    run a subset
+#   LOCAL_CI_JOBS=1 bash scripts/local-ci.sh     one test at a time (default 4 at a time)
 #
 # Needs bun, node, python3, git and npm on PATH, and `bun install --cwd loki-ts
 # --frozen-lockfile` done once (dist-freshness rebuilds loki-ts). Exit 0 only when
@@ -29,19 +30,76 @@ if [ -n "${LOCAL_CI_ONLY:-}" ]; then
 fi
 
 out="$(mktemp -d "${TMPDIR:-/tmp}/loki-local-ci.XXXXXX")" || exit 2
-trap 'case "$out" in */loki-local-ci.*) rm -rf -- "$out" ;; esac' EXIT
+pids=()
+kill_tree() { # kill_tree <pid>: stop a recorded pid and everything it started
+    local c
+    for c in $(pgrep -P "$1" 2>/dev/null); do kill_tree "$c"; done
+    kill -TERM "$1" 2>/dev/null || true
+}
+cleanup() {
+    local p
+    for p in ${pids[@]+"${pids[@]}"}; do kill_tree "$p"; done
+    case "$out" in */loki-local-ci.*) rm -rf -- "$out" ;; esac
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# The tests are hermetic (tests/min/lib.sh: throwaway HOME and temp dir, no model calls), so they run
+# LOCAL_CI_JOBS at a time (default 4; 1 = one after another in the order above). Results print in the
+# order above as each one finishes; with more than one job the slow tests start first.
+JOBS="${LOCAL_CI_JOBS:-4}"
+case "$JOBS" in ''|*[!0-9]*|0) echo "local-ci: LOCAL_CI_JOBS must be a positive integer" >&2; exit 2 ;; esac
+HEAVY=(run-safety scope-and-fix newcomer-path auto-route engine10-e2e-stub learn-from-runs decompose-and-intake host-guard h2h-harness)
+
+order=()
+if [ "$JOBS" -gt 1 ]; then
+    for h in "${HEAVY[@]}"; do
+        for t in "${selected[@]}"; do [ "$t" = "$h" ] && order+=("$t"); done
+    done
+fi
+for t in "${selected[@]}"; do
+    case " ${order[*]-} " in *" $t "*) ;; *) order+=("$t") ;; esac
+done
+
+run_one() { # run_one <test>: log to $out/<test>.log, then record seconds and exit code (the rc file marks completion)
+    local t="$1" start rc
+    start="$(date +%s)"
+    bash "tests/min/$t.sh" >"$out/$t.log" 2>&1
+    rc=$?
+    echo "$(( $(date +%s) - start ))" >"$out/$t.sec"
+    echo "$rc" >"$out/$t.rc.tmp" && mv "$out/$t.rc.tmp" "$out/$t.rc"
+}
 
 failed=()
-for t in "${selected[@]}"; do
-    start="$(date +%s)"
-    if bash "tests/min/$t.sh" >"$out/$t.log" 2>&1; then
-        printf 'PASS  %-24s %3ss\n' "$t" "$(( $(date +%s) - start ))"
-    else
-        printf 'FAIL  %-24s %3ss\n' "$t" "$(( $(date +%s) - start ))"
-        failed+=("$t")
-        sed 's/^/    | /' "$out/$t.log"
-    fi
+next=0      # next entry of "selected" to print
+started=0   # next entry of "order" to start
+report_ready() {
+    local t sec
+    while [ "$next" -lt "${#selected[@]}" ]; do
+        t="${selected[$next]}"
+        [ -f "$out/$t.rc" ] || break
+        sec="$(cat "$out/$t.sec")"
+        if [ "$(cat "$out/$t.rc")" = 0 ]; then
+            printf 'PASS  %-24s %3ss\n' "$t" "$sec"
+        else
+            printf 'FAIL  %-24s %3ss\n' "$t" "$sec"
+            failed+=("$t")
+            sed 's/^/    | /' "$out/$t.log"
+        fi
+        next=$((next + 1))
+    done
+}
+while [ "$next" -lt "${#selected[@]}" ]; do
+    while [ "$started" -lt "${#order[@]}" ] && [ "$(jobs -rp | wc -l | tr -d ' ')" -lt "$JOBS" ]; do
+        run_one "${order[$started]}" &
+        pids+=("$!")
+        started=$((started + 1))
+    done
+    report_ready
+    [ "$next" -lt "${#selected[@]}" ] && sleep 0.2
 done
+wait
 
 if [ "${#failed[@]}" -gt 0 ]; then
     echo "local-ci: FAILED: ${failed[*]}" >&2
