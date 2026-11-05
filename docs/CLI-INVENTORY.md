@@ -11,7 +11,7 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 - FOLD: 26
 - REMOVED: 65
 - Total rows: 144
-- Registry paths (commands and nested subcommands): 214
+- Registry paths (commands and nested subcommands): 215
 
 ## Commands
 

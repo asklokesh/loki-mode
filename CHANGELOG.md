@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.128.2 (2026-11-04)
+
+The provider you save with `loki provider set` now really runs, and Loki's engine sessions cost fewer tokens and show readable titles.
+
+### Fixed
+- `loki provider set opencode` now makes `loki start`, a bare `loki "task"`, `loki quick`, issue mode, `loki plan`, `loki issues run` and `loki estimate` run on opencode. Before, the Loki 10 engine ignored the saved choice and ran claude. Precedence is the same everywhere: `--provider`, then `LOKI_PROVIDER`, then the saved choice, then claude; `loki provider show`, `list`, `status` and `--help` now say so. A saved codex, gemini or unknown name stops at once with the fix command instead of silently running claude.
+
+### Changed
+- The repository discovery brief puts everything that is the same across tasks on one repository first and the per-run answer path last, so back-to-back tasks on the same repository can reuse the cached prompt (audit estimate: about 16K cache-write tokens per task turned into cache reads).
+- Engine sessions on the Agent SDK route now carry a title (`loki <stage>: <task>`), which shows in Claude Code's `/resume` list and skips Claude Code's own title-generation call to Haiku (about 45K uncached tokens per task in the 3-day benchmark ledger).
+
 ## v11.128.1 (2026-11-04)
 
 Large issues split into slices no longer stop on a slice that promises existing tests still pass while replacing the behavior those tests check.

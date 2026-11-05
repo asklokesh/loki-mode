@@ -107,21 +107,24 @@ In the repository: **Settings -> Webhooks -> Add webhook**.
 Now the part that decides what your deployment costs. Tick:
 
 - **Issues** -- an issue being opened starts a build.
-- **Workflow runs** -- a failed CI run starts a repair build.
+- **Workflow runs** -- a failed CI run on the default branch starts a repair build.
+- **Pull request reviews** -- a "changes requested" review from an owner, member or
+  collaborator runs `loki verify-pr respond` on the PR (optional).
 
 Leave **Pull requests** unticked unless you have decided you want it. See
 below.
 
 ### 4. What actually fires
 
-Only these three combinations do anything. Every other event and action is
+Only these combinations do anything. Every other event and action is
 logged and ignored.
 
 | Event | Action | What runs |
 |---|---|---|
 | `issues` | `opened` | `loki start owner/repo#N --pr` |
 | `pull_request` | `synchronize` | `loki start owner/repo#N` |
-| `workflow_run` | `completed` with `conclusion=failure` | `loki start` |
+| `workflow_run` | `completed` with `conclusion=failure`, on the repository's default branch | `loki start --brief <CI brief> --pr` (once per red commit) |
+| `pull_request_review` | `submitted` with state `changes_requested`, trusted reviewer, open same-repo PR | `loki verify-pr respond owner/repo#N` on a fresh clone of the PR branch |
 
 The trigger server runs each of these starts in the foreground on the Loki 10 engine (Wall and VERIFIED apply). A run longer than the dispatch wait window is reaped in the background and its job status stays unknown until it exits.
 
@@ -250,6 +253,38 @@ one line of at most 1000 characters, and an unauthorized comment or an issue wit
 no live run is skipped with nothing written. Subscribe the webhook to "Issue
 comments" to use it. The `issues` `opened` trigger applies the same author gate;
 set `LOKI_TRIGGER_ALLOW_ANY_ISSUE_AUTHOR=1` to let any author start a build.
+
+### Auto-pause and trigger health
+
+Every trigger source counts its own runs: `issues`, `pull_request`, `ci`
+(workflow_run), `review`, `sentry`, `slack`, `linear`, `jira`, `teams` and `jobs`.
+A run counts as failed when it exits non-zero or cannot be launched. Exit 130 and
+143 (cancelled) are ignored. For `loki start` runs, exit 0 means VERIFIED or
+ALREADY_SATISFIED; a BLOCKED, PARTIAL, STALLED or budget stop counts as a failure.
+Detached runs are counted too, when they exit.
+
+After `LOKI_TRIGGER_PAUSE_AFTER` consecutive failed runs from one source (default
+3, `0` turns pausing off but keeps counting) that source pauses itself: further
+events from it are logged as paused and nothing is launched. The `jobs` source
+(direct `POST /jobs`) never auto-pauses, since each caller already gets a per-job
+status.
+
+```
+loki trigger status           # per source: runs, passed, consecutive failures,
+                              # median seconds trigger-to-exit, active or PAUSED
+loki trigger resume <source>  # also clears the failure count
+```
+
+Resume while the source is idle: a resume that lands in the same millisecond as a
+finishing run can be overwritten. State lives in `.loki/triggers/health.json`;
+`GET /status` shows the same counters under `triggers`, and the old
+`enabled_events` field (never enforced) is gone.
+
+Not covered yet: `loki slack serve` mentions (a separate server that does not
+report to this registry), red CI on pull request branches (use `loki merge watch`),
+and review comments that are not attached to an inline thread (`verify-pr respond`
+fixes unresolved inline threads only). The CI repair starts from the checkout the trigger server runs in and does not
+fetch first, so keep that checkout on the default branch and up to date.
 
 ## Triggers that do not exist yet
 

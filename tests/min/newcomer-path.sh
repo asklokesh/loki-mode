@@ -366,6 +366,10 @@ route_is() { # route_is "<description>" "<expected output, lines joined by ~>" [
     got="$(rt ${ev[@]+"${ev[@]}"} PATH="$T/route-sb:/usr/bin:/bin" bash "$RT/bin/loki" "$@")"
     [ "$got" = "$want" ] && ok "route: $d" || bad "route: $d (got: $got)"
 }
+route_is "FR01 a bare PR URL is verify-pr" "BUN: verify-pr https://github.com/o/r/pull/5~" -- https://github.com/o/r/pull/5
+route_is "FR01 a one-word #N reaches engine10" "BUN: engine10 #12~" -- "#12"
+route_is "FR01 #12x stays on the legacy CLI" "BASH: #12x~" -- "#12x"
+route_is "FR01 a plain one-word stays on the legacy CLI" "BASH: fixit~" -- fixit
 route_is "start --attempts 1 <prd> runs engine10 like a plain start" "BUN: engine10 Add x.~" -- start --attempts 1 prd.md
 route_is "start --attempts 1 flag-first brief runs engine10" "BUN: engine10 fix x --no-pr~" -- start --attempts 1 --no-pr "fix x"
 route_is "start --attempts 1 with --parallel is refused by route.sh" "loki: flag --parallel is not supported by the Loki 10 engine; use 'loki queue run --parallel K' or 'loki issues run --parallel K' for parallel runs, or pass --engine legacy for --parallel~" -- start --attempts 1 "fix x" --parallel

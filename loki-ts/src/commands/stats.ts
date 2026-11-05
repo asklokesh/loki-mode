@@ -17,6 +17,7 @@ import { isGroupCostRecord } from "../metrics/kpis.ts";
 import { BOLD, YELLOW, NC } from "../util/colors.ts";
 import { readEvents } from "../engine10/events.ts";
 import { contextRecallMedian } from "../util/context_pack.ts";
+import { quoteAccuracy } from "../runner/router/cost_preview.ts";
 import { projectRun } from "../../../packages/control-plane/src/server/runs.ts";
 import { cacheReadShare, computeOutcomes, outcomesReport } from "../../../packages/control-plane/src/server/routes/stats.ts";
 import { effectiveVerdict } from "../../../packages/control-plane/src/server/integrity.ts";
@@ -508,6 +509,7 @@ function outcomeLines(o: Outcome, indent: string): string[] {
 function renderOutcomes(rows: LocalRun[], json: boolean, loki: string): string {
   const report = outcomesReport(rows);
   const cr = contextRecallMedian(join(loki, "runs")); // L022: how often the brief named the files the run changed
+  const qa = quoteAccuracy(join(loki, "runs")); // FR09: how accurate the start-line quote was
   if (json) {
     const runs = rows.map((r) => ({
       run_id: r.runId, origin_repo: r.originRepo, status: r.endedAt ? "completed" : "running",
@@ -516,11 +518,12 @@ function renderOutcomes(rows: LocalRun[], json: boolean, loki: string): string {
       input_tokens: r.inputTokens, cache_read_tokens: r.cacheReadTokens, cache_creation_tokens: r.cacheCreationTokens, cache_read_share: cacheReadShare(r),
       cost_usd: r.costUsd, wall_s: r.wallS,
     }));
-    return JSON.stringify({ source: "events.jsonl", runs_total: rows.length, ...report, context_recall: { median: cr.median, n: cr.n, last_sealed_runs: cr.runs_considered }, runs }, null, 2);
+    return JSON.stringify({ source: "events.jsonl", runs_total: rows.length, ...report, context_recall: { median: cr.median, n: cr.n, last_sealed_runs: cr.runs_considered }, quote_accuracy: qa, runs }, null, 2);
   }
   const lines = [`${BOLD}Loki Mode -- run outcomes${NC} (${rows.length} runs, ${report.runs_finished} finished, from .loki/runs/*/events.jsonl)`, ""];
   lines.push(...outcomeLines(report, "  "));
   lines.push(`  ${padRight("Context recall (median)", 24)}${padRight(cr.median === null ? nm : `${(cr.median * 100).toFixed(1)}%`, 22)}n=${cr.n} of the last ${cr.runs_considered} sealed runs`);
+  lines.push(`  ${padRight("Quote accuracy", 24)}${padRight(qa.n === 0 ? nm : `${qa.within_range} of ${qa.n} in range, median error ${Math.round((qa.median_abs_pct_error ?? 0) * 100)}%`, 22)}n=${qa.n} of the last 50 sealed runs`);
   const repos = Object.entries(report.by_repo);
   if (repos.length > 1) for (const [repo, o] of repos) lines.push("", `${BOLD}${repo}${NC}`, ...outcomeLines(o, "  "));
   return lines.join("\n");
@@ -547,7 +550,8 @@ const STATS_HELP = [
   "  --efficiency    Include cost/token efficiency breakdown",
   "  --outcomes      Outcomes of this repo's runs (.loki/runs): cost per VERIFIED run,",
   "                  first-pass rate, sessions, fix rounds, escalations, cache-read",
-  "                  share, wall time percentiles and median context recall, each with its n",
+  "                  share, wall time percentiles, median context recall and quote accuracy",
+  "                  (how often the start-line cost quote held, last 50 sealed runs), each with its n",
   "  --since <ISO>   With --outcomes: only runs started at or after this date",
   "  --help, -h      Show this help and exit",
   "",

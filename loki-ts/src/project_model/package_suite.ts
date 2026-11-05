@@ -7,6 +7,8 @@ import { harnessLoadReason } from "../runner/load_owner.ts";
 import { suiteEmptyOnBase } from "../runner/repo_profile.ts";
 import { classifyCheck, corroboratePass, failureExcerpt, firstError, fullSuiteCmd, goRunner, exitCodedId, isExitCodedScript, NO_TESTS_REASON, plainTestEnv, stripAnsi } from "../util/check_result.ts";
 import { run, shellWord } from "../util/shell.ts";
+import type { ProfileCommand } from "../runner/repo_profile.ts"; // type-only: no import cycle
+import { STACK_TOOLS, repoTestCommand, toolOk } from "../util/stack_tools.ts";
 import { errorsById, failIds, unhandledBlock } from "../engine10/failures.ts";
 import type { RunnerName } from "../engine10/types.ts";
 import type { ProjectApi } from "./api.ts";
@@ -27,6 +29,17 @@ export function packageSuiteSpecs(api: ProjectApi | null | undefined): SuiteSpec
 /** The full-suite commands verify will run: per package from the model, else per detected runner. */
 export function fullSuiteSpecs(repoDir: string, runners: RunnerName[]): SuiteSpec[] {
   return packageSuiteSpecs(loadProjectApi(repoDir)) ?? runners.map((r) => { const f = fullSuiteCmd(r, repoDir), c = [f.cmd, ...f.args].join(" "); return { name: `full suite: ${r}`, cmd: c, cwd: ".", run: [f.cmd, ...f.args].map(shellWord).join(" ") }; }); // run goes through bash -c: an absolute .venv interpreter under a spaced path must stay one word
+}
+
+/** FR05: the full-suite commands verify will run (fullSuiteSpecs, the one list) as repo-profile rows, for readiness and `loki doctor --repo` when the manifests name no test command. Never executed and never persisted, so the baseline, attribution and implementer brief are unchanged. A build tool that is not installed (no wrapper, no committed verify.test_command) is validated:false and names the tool. */
+export function verifyCommandRows(repoDir: string, tm: { runners: RunnerName[]; evidence?: Partial<Record<RunnerName, string>> }, env: NodeJS.ProcessEnv = process.env): ProfileCommand[] {
+  try {
+    const multi = packageSuiteSpecs(loadProjectApi(repoDir)) !== null, own = repoTestCommand(repoDir) !== null;
+    return fullSuiteSpecs(repoDir, tm.runners).map((s, i) => {
+      const r = multi ? undefined : tm.runners[i], t = r && !own && !toolOk(r, env, repoDir) ? STACK_TOOLS[r] : undefined;
+      return { kind: "test", cmd: s.cmd, source: multi ? ".loki/project.json" : (r && tm.evidence?.[r]) || "test map", validated: t ? false : null, exit_code: null, duration_s: null, failing_ids: [], note: t ? `${t.tool} is not installed` : "verify runs this as the full suite", ...(t ? { fix: t.install } : {}) } as ProfileCommand;
+    });
+  } catch { return []; }
 }
 
 /** L026: the full-suite command lines of this repo, handed to an implement or fix session so its stream parser can count in-session full-suite runs. */

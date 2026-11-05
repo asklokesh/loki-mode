@@ -19,7 +19,7 @@ _ROUTE_OPTVAL_FLAGS=" --mirofish "
 # engine rather than configure it: the route still resolves (R_FRONT=1) but the dispatcher leaves the call to the front end.
 _ROUTE_FRONT_FLAGS=" --workspace --deploy --health-url --health-match --auto-rollback --destination --canary --domain "
 # Flags engine10 honors as-is.
-_ROUTE_E10_FLAGS=" --no-pr --deep --json --verbose --quiet --resume --provider --max-cost --spec --attempts --seal-existing "
+_ROUTE_E10_FLAGS=" --no-pr --deep --json --verbose --quiet --resume --provider --max-cost --spec --attempts --seal-existing --detach -d "
 # The largest PRD engine10 takes: it carries the task in env vars and CLI arguments (with a context pack added under
 # --session-model), and Linux caps one string at 128 KiB. A bigger PRD runs on the legacy engine, or is refused under
 # SDK mode with claude (the legacy engine has no SDK path).
@@ -35,7 +35,6 @@ _route_refusal_hint() {
     case "$1" in
         --ship) echo "engine10 opens the PR itself and does not auto-merge; merge it with 'loki merge-queue', or pass --engine legacy to keep --ship" ;;
         --worktree|-w) echo "engine10 runs each attempt in its own isolated worktree already; drop the flag, or pass --engine legacy for a git-worktree run" ;;
-        --detach|-d) echo "run it in the background yourself ('nohup loki start ... &') or queue it with 'loki queue run', or pass --engine legacy for --detach" ;;
         --parallel) echo "use 'loki queue run --parallel K' or 'loki issues run --parallel K' for parallel runs, or pass --engine legacy for --parallel" ;;
         --issue) echo "give the issue as the task instead: loki start owner/repo#N (or the issue URL)" ;;
         *) echo "drop it, or pass --engine legacy to run the legacy loop with it" ;;
@@ -48,7 +47,7 @@ _route_has() { case "$1" in *" $2 "*) return 0 ;; esac; return 1; }
 _route_provider() {
     local p="$1"
     if [ -z "$p" ]; then p="${LOKI_PROVIDER:-}"; fi
-    if [ -z "$p" ] && [ -f "${PWD}/.loki/state/provider" ]; then p="$(sed -n '1p' "${PWD}/.loki/state/provider" 2>/dev/null || true)"; fi
+    if [ -z "$p" ] && [ -f "${PWD}/.loki/state/provider" ]; then p="$(sed -n '1p' "${PWD}/.loki/state/provider" 2>/dev/null || true)"; p="${p%"${p##*[![:space:]]}"}"; fi # trailing whitespace, a CRLF line's CR included
     printf '%s' "${p:-claude}"
 }
 
@@ -404,7 +403,10 @@ $(loki_removed_saved_provider_hint "$R_PROVIDER")"
     else
         # L009: a provider with no engine10 invoker is refused, never sent to the legacy loop.
         if ! validate_provider "$R_PROVIDER"; then
-            R_ERR="loki: provider $R_PROVIDER is not supported; use one of: $(loki_supported_providers_joined)"; return 0
+            R_ERR="loki: provider $R_PROVIDER is not supported; use one of: $(loki_supported_providers_joined)"
+            if [ -z "$provider_flag" ] && [ -z "${LOKI_PROVIDER:-}" ]; then R_ERR="$R_ERR
+loki: this project saved provider '$R_PROVIDER' in .loki/state/provider; switch it with: loki provider set claude"; fi
+            return 0
         fi
         if [ "${sz:-0}" -gt "$_ROUTE_PRD_MAX" ] && _route_sdk_claude "$R_PROVIDER"; then
             R_ERR="loki: this PRD is ${sz} bytes, over the ${_ROUTE_PRD_MAX}-byte limit of the Loki 10 engine, and the legacy engine has no Agent SDK path; trim the PRD below 100 KB, or unset LOKI_SDK_MODE, LOKI_SDK and LOKI_SDK_LOOP to run the legacy engine on a provider CLI"
@@ -500,6 +502,8 @@ loki_route_dispatch() {
                         loki_route_resolve bare "$@"; verb=bare ;;
                 esac
             fi
+            # FR01: a pasted PR URL is a goal too; `loki <PR URL>` is `loki start <PR URL>` (verify-pr: sandboxed, no model call)
+            if [ "$R_DECIDED" != "1" ] && [ -n "$(_route_pr_url "$first")" ]; then loki_route_resolve start "$@"; verb=bare; fi
             ;;
     esac
     if [ "$R_DECIDED" != "1" ]; then _route_task_first "$verb" "$@"; return 0; fi

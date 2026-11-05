@@ -31,10 +31,14 @@ provider; other providers and model routes are additions selected with
 
 `start` flags: `--no-pr`, `--deep`, `--provider NAME`, `--model ID`, `--max-cost USD`
 (aliases `--budget`, `--budget-limit`), `--session-model TIER`, `-v` (verbose),
-`--quiet`, `--json`, `--engine legacy|engine10`, `--explain-route`. Flags that
+`--quiet`, `--json`, `--detach` (`-d`), `--engine legacy|engine10`, `--explain-route`. Flags that
 only the previous loop honors (`--simple`, `--complex`, `--parallel`,
 `--isolation`, `--sandbox`, `--max-iterations`, `--compliance`, ...) send that
 one call to the previous loop with a one-line notice.
+
+### Run in the background
+
+`loki start "<task>" --detach` (also `loki "<task>" --detach`, `loki owner/repo#N --detach`, `loki quick ... --detach`) starts the run in its own session and returns at once, so closing the terminal or logging out does not stop it. It prints the pid and the log path (`.loki/logs/detached-*.log`); follow it with `loki status --follow`, stop it with `loki cancel`. When it finishes it reports as a foreground run does: a VERIFIED run opens a ready PR, a PARTIAL run a draft PR, an issue run posts its status comment, and Slack gets the PR, blocked, stuck and finished messages when `LOKI_SLACK_WEBHOOK_URL` is set (see `docs/slack.md`). Exit code: 0 once detached; if the engine refuses or fails within the first `LOKI_DETACH_SETTLE_S` seconds (default 3) the launcher prints the log tail and exits with the engine's own code, and a refusal that comes later lands only in the log (also check `loki status`). Two runs in one checkout are refused by the run lock. The detached run has no terminal, so prompts and the cost forecast behave as in CI. On macOS the run holds a `caffeinate -i` assertion, which blocks idle sleep only: a closed lid on battery still sleeps the Mac. For a run that must survive that, use a machine that stays on, such as the issue-to-pr workflow on a `runs-on: self-hosted` runner (`docs/examples/loki-issue-to-pr.yml.example`, not changed or tested by this feature). Not yet supported with `--spec` or `--attempts`.
 
 Spend cap: `--max-cost`, else `budgets.per_run` in `loki.yaml`, else $100 when
 `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set, else no dollar cap

@@ -115,12 +115,16 @@ function checkLogSeal(receiptPath: string, hash: string, kid: unknown, given?: K
   }
   return null;
 }
+/** A DSSE envelope held in memory (a PR comment, not a file): the same check `loki verify <envelope file>` runs. pubkey: that key only; absent: the local JWKS. */
+export function verifyEnvelopeWith(env: Parameters<typeof verifyDsseReceipt>[0], pubkey?: KeyObject): VerifyResult {
+  return verifyDsseReceipt(env, { pubFor: (kid) => pubFor(kid, pubkey), hash: computeReceiptHash, attest: (j, h) => checkAttestation(j, h, pubkey) });
+}
 export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}): Promise<VerifyResult> {
   if (!existsSync(receiptPath)) return { verdict: "UNCHECKED", reasons: [`receipt not found: ${receiptPath}`] };
   let receipt: Record<string, unknown>;
   try { receipt = JSON.parse((deps.read ?? ((p) => readFileSync(p, "utf8")))(receiptPath)); } catch { return { verdict: "UNCHECKED", reasons: ["receipt.json is not valid JSON"] }; }
   const shape = receiptShapeProblem(receipt); if (shape) return { verdict: "UNCHECKED", reasons: [shape] }; // one gate before any kind dispatch (envelope, composite, plain, group)
-  if (isEnvelope(receipt)) return verifyDsseReceipt(receipt, { pubFor: (kid) => pubFor(kid, deps.pubkey), hash: computeReceiptHash, attest: (j, h) => checkAttestation(j, h, deps.pubkey) }); // INTEL-1: DSSE envelope
+  if (isEnvelope(receipt)) return verifyEnvelopeWith(receipt, deps.pubkey); // INTEL-1: DSSE envelope
   if (isComposite(receipt)) return verifyCompositeFile(receiptPath, receipt, deps);
   const recorded = receipt["receipt_sha256"];
   let computed: string;
