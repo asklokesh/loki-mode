@@ -21406,6 +21406,14 @@ print(json.loads(p.read_text()).get('port', 7373) if p.exists() else 7373)
             else
                 echo "Schedules configured: 0"
             fi
+            python3 "$trigger_server_script" --health
+            ;;
+        resume)
+            if [[ -z "${1:-}" ]]; then
+                echo "Usage: loki trigger resume <source>" >&2
+                return 1
+            fi
+            python3 "$trigger_server_script" --resume "$1"
             ;;
         list)
             python3 "$trigger_schedule_script" list
@@ -21550,6 +21558,7 @@ for line in sys.stdin:
             echo "                        Start the webhook receiver server (default port: 7373)"
             echo "  stop                  Stop the webhook receiver server"
             echo "  status                Show server and schedule status"
+            echo "  resume <source>       Resume a source that auto-paused (also clears its failure count)"
             echo "  list                  List configured schedules"
             echo "  add schedule <name> <cron_expr> <action> [args...]"
             echo "                        Add a cron-based schedule trigger"
@@ -21561,9 +21570,14 @@ for line in sys.stdin:
             echo "  help                  Show this help"
             echo ""
             echo "Webhook events handled:"
-            echo "  issues (opened)        -> loki run <issue_number> --pr --detach"
-            echo "  pull_request (sync)    -> loki run <pr_number> --detach"
-            echo "  workflow_run (failure) -> loki run --detach"
+            echo "  issues opened                          -> loki start o/r#N --pr"
+            echo "  pull_request synchronize               -> loki start o/r#N"
+            echo "  workflow_run failure on default branch -> loki start --brief <CI brief> --pr"
+            echo "  pull_request_review changes_requested  -> loki verify-pr respond o/r#N"
+            echo "  /sentry, /slack, /linear, /jira, /teams -> PR-only or job runs"
+            echo ""
+            echo "Auto-pause: LOKI_TRIGGER_PAUSE_AFTER=N consecutive failed runs pause a source"
+            echo "(default 3, 0 disables). 'loki trigger status' shows each source's health."
             echo ""
             echo "Schedule cron format: minute hour day-of-month month day-of-week"
             echo "  Examples:"
