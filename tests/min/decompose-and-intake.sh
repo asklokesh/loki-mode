@@ -495,7 +495,7 @@ const child = spawn("sleep", ["2"], { stdio: "ignore" }); writeFileSync(rd + "/e
 const t0 = Date.now(); wt.remove("epic-9-s1", p, keep); out.push(Date.now() - t0 < 1000 && existsSync(p) ? "returned at once, kept" : "waited or removed under deep");
 writeFileSync(rd + "/receipt-addendum-1.json", "{}\n"); // the deep worker writes its addendum last
 const root = p.slice(0, p.lastIndexOf("/")), branch = () => { try { execFileSync("git", ["-C", g, "rev-parse", "--verify", "-q", "refs/heads/loki/epic-9-s1"], { stdio: "ignore" }); return true; } catch { return false; } };
-for (let i = 0; i < 40 && existsSync(p); i++) await new Promise((r) => setTimeout(r, 250));
+for (let i = 0; i < 80 && (existsSync(p) || existsSync(root) || branch()); i++) await new Promise((r) => setTimeout(r, 250)); // the reaper removes the directory, then the root and the branch; wait for all three (bounded 20s)
 out.push(existsSync(p) ? "still there" : "removed after deep", branch() ? "branch left" : "branch gone", existsSync(root) ? "root left" : "root gone", existsSync(keep + "/receipts/e10-z/receipt-addendum-1.json") ? "addendum kept" : "addendum lost");
 console.log(out.join(" | "));
 ' 2>&1)"
