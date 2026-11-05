@@ -21406,12 +21406,12 @@ print(json.loads(p.read_text()).get('port', 7373) if p.exists() else 7373)
             fi
             python3 "$trigger_server_script" --health
             ;;
-        pause|resume)
+        resume)
             if [[ -z "${1:-}" ]]; then
-                echo "Usage: loki trigger $subcmd <source>" >&2
+                echo "Usage: loki trigger resume <source>" >&2
                 return 1
             fi
-            python3 "$trigger_server_script" "--$subcmd" "$1"
+            python3 "$trigger_server_script" --resume "$1"
             ;;
         list)
             python3 "$trigger_schedule_script" list
@@ -21556,8 +21556,7 @@ for line in sys.stdin:
             echo "                        Start the webhook receiver server (default port: 7373)"
             echo "  stop                  Stop the webhook receiver server"
             echo "  status                Show server and schedule status"
-            echo "  pause <source>        Stop launching runs from a source (ci, review, sentry, slack, ...)"
-            echo "  resume <source>       Resume a paused source (also clears its failure count)"
+            echo "  resume <source>       Resume a source that auto-paused (also clears its failure count)"
             echo "  list                  List configured schedules"
             echo "  add schedule <name> <cron_expr> <action> [args...]"
             echo "                        Add a cron-based schedule trigger"

@@ -272,7 +272,6 @@ status.
 ```
 loki trigger status           # per source: runs, passed, consecutive failures,
                               # median seconds trigger-to-exit, active or PAUSED
-loki trigger pause <source>
 loki trigger resume <source>  # also clears the failure count
 ```
 

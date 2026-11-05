@@ -2872,7 +2872,6 @@ def main():
     parser.add_argument("--queue-size", type=int, default=None, help="Max in-flight queued dispatches")
     ctl = parser.add_mutually_exclusive_group()
     ctl.add_argument("--health", action="store_true", help="Print per-source run counts and pause state, then exit")
-    ctl.add_argument("--pause", metavar="SOURCE", help="Pause a trigger source, then exit")
     ctl.add_argument("--resume", metavar="SOURCE", help="Resume a paused trigger source, then exit")
     args = parser.parse_args()
 
@@ -2880,14 +2879,12 @@ def main():
         lines = health_lines()
         print("\n".join(lines) if lines else "No triggered runs recorded yet.")
         return 0
-    for flag, name in ((True, args.pause), (False, args.resume)):
-        if name is None:
-            continue
-        if name not in ALL_SOURCES:
-            print("unknown trigger source: %s (known: %s)" % (name, ", ".join(ALL_SOURCES)))
+    if args.resume is not None:
+        if args.resume not in ALL_SOURCES:
+            print("unknown trigger source: %s (known: %s)" % (args.resume, ", ".join(ALL_SOURCES)))
             return 2
-        HEALTH.set_paused(name, flag)
-        print("%s: %s" % (name, "PAUSED" if flag else "resumed"))
+        HEALTH.set_paused(args.resume, False)
+        print("%s: resumed" % args.resume)
         return 0
 
     logging.basicConfig(

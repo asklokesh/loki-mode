@@ -257,7 +257,8 @@ state="$(python3 -I -c 'import json;e=json.load(open(".loki/triggers/health.json
 nosuch="$(bash "$ROOT/autonomy/loki" trigger resume nosuch 2>&1)"; rc_no=$?
 [ "$rc_no" -ne 0 ] && ok "cli: unknown source exits non-zero" || bad "cli: unknown source exited 0"
 has "cli: unknown source names the known ones" "$nosuch" "known: "
-bash "$ROOT/autonomy/loki" trigger pause >/dev/null 2>&1 && bad "cli: pause without a source must fail" || ok "cli: pause without a source fails"
+bash "$ROOT/autonomy/loki" trigger resume >/dev/null 2>&1 && bad "cli: resume without a source must fail" || ok "cli: resume without a source fails"
+bash "$ROOT/autonomy/loki" trigger pause ci >/dev/null 2>&1 && bad "cli: no manual pause subcommand (auto-pause only)" || ok "cli: no manual pause subcommand (auto-pause only)"
 
 # --- HTTP end to end: signed workflow_run reaches the stub loki; /status has triggers ---
 rm -rf "$T/repo/.loki"; : > "$T/calls.log"; echo 0 > "$T/rc"
