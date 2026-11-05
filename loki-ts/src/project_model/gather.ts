@@ -10,10 +10,10 @@ import { safeGit } from "../util/safe_git.ts";
 export const GATHER_CAPS = {
   maxListFiles: 20_000, // tracked files considered at all
   maxDepth: 3, // path components; deeper files are listed by the model's own tools, never inlined
-  maxFileBytes: 16 * 1024, // per inlined file
-  maxFiles: 60, // inlined files
-  maxTotalBytes: 96 * 1024, // inlined bytes
-  maxTreeLines: 300, // paths in the tree listing
+  maxFileBytes: 8 * 1024, // per inlined file
+  maxFiles: 24, // inlined files (intake diet: was 60; the session opens anything else with its tools)
+  maxTotalBytes: 24 * 1024, // inlined bytes (intake diet: was 96 KiB, about 24k prompt tokens reread on every turn)
+  maxTreeLines: 150, // paths in the tree listing
   maxHashBytes: 16 * 1024 * 1024, // per fingerprint file
 } as const;
 

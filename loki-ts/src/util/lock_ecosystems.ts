@@ -50,6 +50,10 @@ export const tomlWorkspace = (dir: string, file: string, header: string): string
   return [...list("members"), ...list("exclude").map((x) => `!${x}`)];
 };
 
+const globRe = (g: string): RegExp => new RegExp(`^${g.replace(/^\.\//, "").replace(/\/+$/, "").replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\0/g, ".*").replace(/\?/g, "[^/]")}$`);
+/** True when `pats` (a workspace declaration; ! excludes) includes the package at `rel` (posix, relative to the ancestor). */
+export const inWorkspace = (pats: string[], rel: string): boolean =>
+  pats.some((g) => !g.startsWith("!") && globRe(g).test(rel)) && !pats.some((g) => g.startsWith("!") && globRe(g.slice(1)).test(rel));
 /** The ecosystem table: one row per package manager, its official frozen form. `poetry install` already honors poetry.lock, so it is kept
  *  as written (`--no-root` would skip installing the project itself and break src-layout imports; `--sync` would delete environment
  *  packages the lock lacks). */

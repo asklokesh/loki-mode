@@ -32,6 +32,7 @@ import { classifyCheck, emptyDiscovery, exitCodedId, goRunner, isExitCodedScript
 import { safeGit } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
 import { atomicWriteFileSync } from "./state.ts";
+import { inWorkspace, pkgWorkspaces, pnpmWorkspaces } from "../util/lock_ecosystems.ts";
 
 // Bumped when the record shape changes. An unrecognized version is treated as
 // ABSENT, never as an error -- an older binary reading a newer artifact must
@@ -314,13 +315,13 @@ function pkgManager(repoDir: string): string {
 const entry = (kind: CmdKind, cmd: string, source: string): ProfileCommand => ({ kind, cmd, source, validated: null, exit_code: null, duration_s: null, failing_ids: [] });
 
 /** Commands named by the repo's own manifests, in a fixed order (node, make, python, go, cargo, CI). The first test command is the baseline one. */
-export function discoverCommands(repoDir: string): ProfileCommand[] {
+export function discoverCommands(repoDir: string, pmDir: string = repoDir): ProfileCommand[] { // pmDir: where the lockfile naming the package manager lives (a workspace member's is the workspace root)
   const out: ProfileCommand[] = [];
   const pj = read(join(repoDir, "package.json"));
   if (pj) {
     let scripts: Record<string, unknown> = {}, hasTs = false;
     try { const j = JSON.parse(pj) as { scripts?: Record<string, unknown>; dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> }; scripts = j.scripts ?? {}; hasTs = !!(j.dependencies?.typescript ?? j.devDependencies?.typescript); } catch { /* malformed manifest: nothing to discover */ }
-    const pm = pkgManager(repoDir), run = (n: string): string => (n === "test" ? `${pm} test` : `${pm} run ${n}`);
+    const pm = pkgManager(pmDir), run = (n: string): string => (n === "test" ? `${pm} test` : `${pm} run ${n}`);
     const has = (n: string): boolean => typeof scripts[n] === "string" && !(n === "test" && NO_TEST.test(String(scripts[n])));
     const pick = (kind: CmdKind, names: string[]): void => { const n = names.find(has); if (n) out.push(entry(kind, run(n), "package.json")); };
     pick("test", ["test"]); pick("lint", ["lint"]); pick("typecheck", ["typecheck", "type-check", "tsc"]);
@@ -335,7 +336,9 @@ export function discoverCommands(repoDir: string): ProfileCommand[] {
     pick("test", ["test", "check"]); pick("lint", ["lint"]); pick("typecheck", ["typecheck", "mypy"]); pick("build", ["build", "all"]);
   }
   const pyTxt = ["pyproject.toml", "pytest.ini", "tox.ini", "setup.cfg"].map((f) => [f, read(join(repoDir, f))] as const).filter(([, t]) => t);
-  const pyPytest = pyTxt.find(([f, t]) => f === "pytest.ini" || /\[tool\.pytest|\[tool:pytest\]|\[pytest\]/.test(t)) ?? (existsSync(join(repoDir, "conftest.py")) ? (["conftest.py", ""] as const) : undefined);
+  // A pytest config section or conftest.py; else a manifest that lists pytest as a dependency beside a tests/ or test/ directory (the common package with no pytest config).
+  const pyDeclares = ["tests", "test"].some((d) => existsSync(join(repoDir, d))) ? [...pyTxt, ["requirements.txt", read(join(repoDir, "requirements.txt"))] as const].find(([, t]) => /^\s*pytest\b|["']pytest\b/m.test(t)) : undefined;
+  const pyPytest = pyTxt.find(([f, t]) => f === "pytest.ini" || /\[tool\.pytest|\[tool:pytest\]|\[pytest\]/.test(t)) ?? (existsSync(join(repoDir, "conftest.py")) ? (["conftest.py", ""] as const) : undefined) ?? pyDeclares;
   if (pyTxt.length || pyPytest) {
     const py = [".venv", "venv"].map((d) => join(d, "bin", "python")).find((p) => existsSync(join(repoDir, p))) ?? "python3";
     if (pyPytest) out.push(entry("test", `${py} -m pytest -q`, pyPytest[0]));
@@ -354,6 +357,79 @@ export function discoverCommands(repoDir: string): ProfileCommand[] {
     }
   }
   return out;
+}
+
+/** Intake diet: the Project Model answer read straight from the manifests, so a repo whose packages, test and install commands are all
+ *  declared costs no discovery session. Packages: the root (when it holds a manifest), every declared JS workspace member, and every other
+ *  tracked package manifest outside vendored, fixture, example, docs and test directories. Commands come from discoverCommands (one reader
+ *  of manifests); install only from a lockfile (or go.mod), so no install ever mutates a lock; dependsOn only from JS manifests naming another
+ *  member (other packages leave it absent: edges unknown). Returns the raw answer for validateAnswer, or null when no package has a test
+ *  command, the tree cannot be listed or it holds too many manifests to trust a reading (the model session then decides). Never throws. */
+const SKIP_PKG_DIR = /^(node_modules|vendor|third_party|test-?data|.*fixtures?|__\w+__|examples?|samples?|templates?|docs?|tests?|e2e|benchmarks?|\..*)$/;
+const PKG_MANIFESTS = ["package.json", "go.mod", "Cargo.toml", "pyproject.toml", "setup.py"];
+const LOCK_INSTALLS: [string, string][] = [["pnpm-lock.yaml", "pnpm install"], ["yarn.lock", "yarn install"], ["bun.lock", "bun install"], ["bun.lockb", "bun install"], ["package-lock.json", "npm install"], ["uv.lock", "uv sync"], ["poetry.lock", "poetry install"], ["Cargo.lock", "cargo fetch"], ["go.mod", "go mod download"]];
+const UI_DEPS = ["react-dom", "vue", "svelte", "@angular/core", "next", "nuxt", "solid-js", "preact", "astro"];
+const MAX_MODEL_PACKAGES = 200;
+const ORCHESTRATOR = /\b(nx|turbo|lerna|run-many|wsrun|ultra)\b|\bpnpm\b[^&|;]*\s(-r|--recursive|--filter|-F)\b|\byarn workspaces\b|\bnpm\b[^&|;]*\s(--workspaces|-ws)\b/;
+type RawCmd = { cmd: string; cwd: string; cite: string[] } | null;
+/** The test script, followed through up to 3 `<pm> run <script>` hops, fans out over the workspace. */
+function fansOut(scripts: Record<string, unknown>): boolean {
+  let body = scripts["test"];
+  for (let hop = 0; hop < 4 && typeof body === "string"; hop++) {
+    if (ORCHESTRATOR.test(body)) return true;
+    const next = /^\s*(?:pnpm|npm|yarn|bun)(?:\s+run)?\s+([\w:.-]+)\s*$/.exec(body)?.[1];
+    body = next && next !== "test" ? scripts[next] : undefined;
+  }
+  return false;
+}
+export function manifestModel(repoDir: string): Record<string, unknown> | null {
+  let tracked: string[];
+  try { tracked = safeGit(repoDir, ["ls-files", "-z"], { maxBuffer: 256 * 1024 * 1024 }).split("\0").filter(Boolean); } catch { return null; }
+  const trackedSet = new Set(tracked), at = (dir: string, f: string): string => (dir === "." ? f : `${dir}/${f}`);
+  const json = (dir: string): Record<string, unknown> | null => { try { const j = JSON.parse(read(join(repoDir, dir, "package.json"))) as unknown; return j && typeof j === "object" && !Array.isArray(j) ? (j as Record<string, unknown>) : null; } catch { return null; } };
+  const isFile = (rel: string): boolean => trackedSet.has(rel) || (() => { try { return lstatSync(join(repoDir, rel)).isFile(); } catch { return false; } })();
+  const wsPats = [...pkgWorkspaces(repoDir), ...pnpmWorkspaces(repoDir)];
+  const manifestDirs = [...new Set(tracked.filter((p) => PKG_MANIFESTS.includes(basename(p))).map((p) => dirname(p)))];
+  // A member's package.json may be untracked (a generated or ignored manifest that pnpm still reads): any directory holding tracked files qualifies.
+  const trackedDirs = new Set<string>(); for (const p of tracked) for (let d = dirname(p); d !== "." && !trackedDirs.has(d); d = dirname(d)) trackedDirs.add(d);
+  const members = wsPats.length === 0 ? [] : [...trackedDirs].filter((d) => inWorkspace(wsPats, d) && isFile(at(d, "package.json"))).sort();
+  const others = manifestDirs.filter((d) => d !== "." && !members.includes(d) && !d.split("/").some((seg) => SKIP_PKG_DIR.test(seg)));
+  const rootHas = MANIFESTS.some((f) => trackedSet.has(f)) || trackedSet.has("setup.py");
+  const dirs = [...(rootHas ? ["."] : []), ...members, ...others.sort()];
+  if (dirs.length === 0 || dirs.length > MAX_MODEL_PACKAGES) return null;
+  const rootLock = LOCK_INSTALLS.find(([f]) => f !== "go.mod" && trackedSet.has(f));
+  const nameToRoot = new Map<string, string>();
+  for (const d of [".", ...members]) { const n = json(d)?.["name"]; if (typeof n === "string" && n) nameToRoot.set(n, d); }
+  const fingerprint = new Set<string>(["pnpm-workspace.yaml"].filter((f) => trackedSet.has(f)));
+  const packages = dirs.map((d) => {
+    const isMember = members.includes(d), cmds = discoverCommands(join(repoDir, d), isMember ? repoDir : join(repoDir, d));
+    const own = [...new Set([...PKG_MANIFESTS, ...MANIFESTS])].map((f) => at(d, f)).filter((f) => trackedSet.has(f) || (isMember && f.endsWith("/package.json") && isFile(f)));
+    own.forEach((f) => fingerprint.add(f));
+    const cmdOf = (kind: CmdKind): RawCmd => { const c = cmds.find((e) => e.kind === kind); return c ? { cmd: c.cmd, cwd: d, cite: [at(d, c.source)] } : null; };
+    const lock = LOCK_INSTALLS.find(([f]) => trackedSet.has(at(d, f)));
+    if (lock) fingerprint.add(at(d, lock[0]));
+    const install: RawCmd = lock ? { cmd: lock[1], cwd: d, cite: [at(d, lock[0])] } : isMember && rootLock ? { cmd: rootLock[1], cwd: ".", cite: [rootLock[0]] } : pyInstall(repoDir, d, trackedSet, at);
+    const pj = json(d), deps = pj ? DEP_KEYS.flatMap((k) => Object.keys((pj[k] as Record<string, unknown> | undefined) ?? {})) : [];
+    const uiDep = deps.some((x) => UI_DEPS.includes(x)), scripts = (pj?.["scripts"] ?? {}) as Record<string, unknown>, pm = pkgManager(isMember ? repoDir : join(repoDir, d));
+    const boot: RawCmd = uiDep && typeof scripts["dev"] === "string" ? { cmd: `${pm} run dev`, cwd: d, cite: [at(d, "package.json")] } : uiDep && typeof scripts["start"] === "string" ? { cmd: `${pm} start`, cwd: d, cite: [at(d, "package.json")] } : null;
+    const js = d === "." || isMember ? (pj ? { dependsOn: [...new Set(deps.map((x) => nameToRoot.get(x)).filter((r): r is string => r !== undefined && r !== d))] } : {}) : {};
+    return { name: typeof pj?.["name"] === "string" && pj["name"] ? pj["name"] : d === "." ? basename(resolve(repoDir)) : d, root: d, runner: null, cite: own.length ? own : [cmds[0] ? at(d, cmds[0].source) : at(d, "package.json")],
+      commands: { test: cmdOf("test"), lint: cmdOf("lint"), build: cmdOf("build"), start: null }, ui: { present: boot !== null, boot, cite: boot ? boot.cite : [] }, install, ...js };
+  });
+  // A test script that fans out over the workspace (nx, turbo, lerna, recursive pnpm or yarn) names no one package's suite: the session decides.
+  if (!packages.some((p) => p.commands.test) || dirs.some((d) => fansOut((json(d)?.["scripts"] ?? {}) as Record<string, unknown>))) return null;
+  const wsCite = trackedSet.has("pnpm-workspace.yaml") ? "pnpm-workspace.yaml" : packages[0]!.cite[0]!;
+  return { workspaceKind: members.length ? "workspaces" : packages.length > 1 ? "multi-root" : "single", workspaceCite: [wsCite], fingerprintFiles: [...fingerprint].sort(), packages };
+}
+const DEP_KEYS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+/** A Python package with no lockfile: its requirements.txt, else an editable install of the project (with its test extra when it declares one), through the interpreter discoverCommands runs pytest with. */
+function pyInstall(repoDir: string, d: string, tracked: Set<string>, at: (dir: string, f: string) => string): RawCmd {
+  const abs = join(repoDir, d), py = [".venv", "venv"].map((v) => join(v, "bin", "python")).find((p) => existsSync(join(abs, p))) ?? "python3";
+  if (tracked.has(at(d, "requirements.txt"))) return { cmd: `${py} -m pip install -r requirements.txt`, cwd: d, cite: [at(d, "requirements.txt")] };
+  const pp = tracked.has(at(d, "pyproject.toml")) ? read(join(abs, "pyproject.toml")) : "";
+  if (!/^\[project\]/m.test(pp) && !tracked.has(at(d, "setup.py"))) return null;
+  const at0 = pp.search(/^\[project\.optional-dependencies\]/m), nl = at0 < 0 ? -1 : pp.indexOf("\n", at0), extras = nl < 0 ? "" : pp.slice(nl + 1).split(/^\[/m)[0]!, extra = ["test", "tests", "testing", "dev"].find((k) => new RegExp(`^\\s*${k}\\s*=`, "m").test(extras));
+  return { cmd: `${py} -m pip install -e ${extra ? `'.[${extra}]'` : "."}`, cwd: d, cite: [at(d, /^\[project\]/m.test(pp) ? "pyproject.toml" : "setup.py")] };
 }
 
 /** TEN-QUALITY-16: a formatter the repo ITSELF configures. `argv` is the command before the file list; `exts` selects the files it owns. Config detection only, never an install. */

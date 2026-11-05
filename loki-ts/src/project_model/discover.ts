@@ -10,7 +10,7 @@ import { MAX_TURNS_EXIT } from "../runner/worker_proc.ts";
 import { defaultCacheRoot, readJson, writeJson } from "../engine10/cache.ts";
 import { capToRunTier } from "../runner/model_rank.ts";
 import { STAGE_BUDGETS, type RunContext, type SessionResult } from "../engine10/types.ts";
-import { MANIFESTS } from "../runner/repo_profile.ts";
+import { MANIFESTS, manifestModel } from "../runner/repo_profile.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { recordRunShape } from "../util/run_shape.ts";
 import { committedModelHash, computeKey, gather, isGitTracked, isSingleDirectory, shallowDirs, type Gathered } from "./gather.ts";
@@ -20,6 +20,8 @@ import { PROJECT_MODEL_SCHEMA, parseCached, unknownModel, validateAnswer, type P
 export function projectModelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env["LOKI_E10_PROJECT_MODEL"] !== "0";
 }
+/** Default ON; LOKI_E10_PM_MANIFESTS=0 sends every repo the deterministic signals do not resolve to the discovery session again. */
+export const manifestModelEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_E10_PM_MANIFESTS"] !== "0";
 export const PROJECT_FILE = ".loki/project.json";
 export const UNKNOWN_TTL_MS = 60 * 60 * 1000;
 const SESSION_LIMIT_S = 60; // ceiling for one discovery session; the remaining stage budget lowers it
@@ -27,6 +29,7 @@ const HARD_GRACE_MS = 5000; // FC-55: past the session limit plus this, a hung s
 const MIN_SESSION_S = 8; // below this a session cannot finish: skip it (fail open)
 const KILL_GRACE_S = 2; // the session kill grace (session.ts, machine.ts)
 const MARGIN_S = 3;
+const DISCOVERY_MAX_OUTPUT_TOKENS = 4096; // hard cap per response: the answer is one JSON object
 
 export interface Discovery {
   model: ProjectModel;
@@ -34,6 +37,7 @@ export interface Discovery {
   attempts: number; // model sessions spent (0 on a cache hit)
   owner?: "model" | "provider" | "harness"; // who owns an unknown result
   sessionModel?: string; // TEN-COST-07: model of the last session ("run" = the run model); absent when no session ran
+  source?: "manifests"; // intake diet: read from the manifests, no session
 }
 
 export function loadCached(repoDir: string, now: number = Date.now()): ProjectModel | null {
@@ -165,6 +169,17 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
   if (isSingleDirectory(ctx.repoDir)) return { model: unknownModel("", "single-directory repo"), cached: false, attempts: 0, owner: "harness" };
   if (signalsResolve(opts.testmap, ctx.repoDir)) return { model: unknownModel("", "deterministic signals resolve the runner and units"), cached: false, attempts: 0, owner: "harness" };
 
+  // Intake diet: the manifests answer it when they declare every package and a test command; the validator holds it to the model's rules.
+  if (manifestModelEnabled()) {
+    const raw = manifestModel(ctx.repoDir), v = raw ? validateAnswer(ctx.repoDir, raw) : null;
+    if (v?.ok) {
+      const model: ProjectModel = { ...v.model, key: computeKey(ctx.repoDir, v.model.fingerprintFiles, dirs) };
+      try { save(ctx.repoDir, model); } catch { /* consumers then see no model; the run goes on */ }
+      recordRunShape(ctx.runDir, model);
+      return { model, cached: false, attempts: 0, source: "manifests" };
+    }
+  }
+
   const deadline = Date.now() + (opts.budgetS ?? Infinity) * 1000;
   const g = gather(ctx.repoDir);
   mkdirSync(ctx.runDir, { recursive: true });
@@ -196,6 +211,8 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
         limitS,
         signal: abort.signal,
         cwd: ctx.repoDir,
+        effort: "low", // intake diet: a manifest reading needs no deep reasoning (the ledger showed it at the provider default, high)
+        maxOutputTokens: DISCOVERY_MAX_OUTPUT_TOKENS,
         ...(attemptModel ? { model: attemptModel } : {}),
       });
       run.catch(() => undefined);
@@ -237,8 +254,8 @@ export async function intakeProjectModel(ctx: RunContext, signal: AbortSignal, s
   if (!projectModelEnabled()) return {};
   try {
     const budgetS = STAGE_BUDGETS.intake.limitS - (Date.now() - startedMs) / 1000 - KILL_GRACE_S - MARGIN_S;
-    const { model, cached, attempts, owner, sessionModel } = await discoverProjectModel(ctx, signal, { budgetS, testmap });
-    return { project_model: { status: model.status, key: model.key, cached, attempts, ...(sessionModel ? { session_model: sessionModel } : {}), ref: PROJECT_FILE, ...(owner ? { owner } : {}), ...(model.reason ? { reason: model.reason } : {}) } };
+    const { model, cached, attempts, owner, sessionModel, source } = await discoverProjectModel(ctx, signal, { budgetS, testmap });
+    return { project_model: { status: model.status, key: model.key, cached, attempts, ...(source ? { source } : {}), ...(sessionModel ? { session_model: sessionModel } : {}), ref: PROJECT_FILE, ...(owner ? { owner } : {}), ...(model.reason ? { reason: model.reason } : {}) } };
   } catch {
     return {};
   }
