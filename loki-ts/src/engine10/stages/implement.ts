@@ -1,4 +1,5 @@
 // E-08: Implement (ENGINE.md 4, 16). One session; the brief marks Wall tests read-only, names only the impacted tests. Afterwards any changed Wall file is restored (tests_reverted) and the exit is classified.
+import { execSpecBriefOf } from "../../features/exec_spec.ts";
 import { installOwned } from "../../project_model/install.ts";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -124,7 +125,7 @@ export const implementStage: Stage = {
     const resumeId = ownId ?? (chain && "id" in chain ? chain.id : undefined);
     let planChainMode: string | undefined = ownId ? "resumed (interrupted session)" : chain ? (resumeId ? "resumed" : `fresh (${(chain as { why: string }).why})`) : undefined;
     let sessionResume: string | undefined = own ? (ownId ? "resumed" : `fresh (${(own as { why: string }).why})`) : undefined;
-    const fullBrief = buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec), prior.intake?.assumptions);
+    const fullBrief = buildImplementBrief(task, plan, impacted, repoMap, [specBriefBlock(spec), execSpecBriefOf(ctx.runDir)].filter(Boolean).join("\n\n") || null, prior.intake?.assumptions); // LOKI_E10_EXEC_SPEC: the binding and advisory spec cases the lean Wall stage left
     try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, ATTEMPT_BRIEF_FILE), fullBrief, "utf8"); } catch { /* best effort: without it the machine starts no extra attempt */ } // EXP-0010: the extra attempts after a red verify start from this exact brief
     const first: SessionRunOptions = {
       stage: "implement",

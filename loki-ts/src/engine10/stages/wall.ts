@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { goPackagePath } from "../../runner/repo_profile.ts";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { type RunContext, type RunnerName, type Stage, type StageResult, type TestMap, type TestRef, taskBlock } from "../types.ts";
 import { clauseDroppedNote, extractClauses, untaggedClauses, type ClauseSet } from "../../util/spec_file.ts";
 import { unitSpec } from "../../features/speed/unit_mode.ts";
@@ -18,6 +18,7 @@ import { sealedWallDir, assertionFailure, baseJobs, classify, plannedGoDir, goPa
 import { conventionViolation, conventionsBrief, dotenvFileRead, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, rustArities, rustCallClash, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
 import { dotnetTestProject } from "../../util/stack_tools.ts";
+import { EXEC_SPEC_BRIEF_FILE, execSpecAuthor, execSpecEnabled, execSpecModel } from "../../features/exec_spec.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
 const WALL_PREFIX = "loki_wall_";
 
 export interface WallSealedFile { path: string; sha256: string; runner?: RunnerName; } // path: absolute, in the repo working tree
@@ -105,14 +106,15 @@ function wallTargetDir(repoDir: string, existingTests: TestRef[], runners: Runne
 /** Runner for a generated file: extension decides for Python/Go, a JS/TS file takes the repo's detected JS runner; anything else never guesses (unselectable). */
 
 /** WC-01a: what wallAuthor hands installWall. Sealed copies live under <runDir>/wall; nothing here touches repoDir. */
-export interface WallAuthored { kind: "authored"; staged?: boolean; model?: string; iterationId?: string; task: string; sizeName: string; runners: RunnerName[]; targetDir: string; generated: string[]; contents: Map<string, string>; discarded: { file: string; reason: string }[]; manifestSha256?: string; holdoutDir?: string; clauses?: ClauseSet; evidence?: WallEvidence; }
+export interface WallAuthored { kind: "authored"; staged?: boolean; execSpec?: Record<string, unknown>; model?: string; iterationId?: string; task: string; sizeName: string; runners: RunnerName[]; targetDir: string; generated: string[]; contents: Map<string, string>; discarded: { file: string; reason: string }[]; manifestSha256?: string; holdoutDir?: string; clauses?: ClauseSet; evidence?: WallEvidence; }
 export type WallAuthorOutcome = { kind: "done"; result: StageResult } | WallAuthored;
 
 /** Session plus compile check. Writes only <runDir>/wall (sealed copies); repoDir is read, never written. */
 export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: { model: string; suffix: string; note?: string | undefined }): Promise<WallAuthorOutcome> {
   const done = (result: StageResult): WallAuthorOutcome => ({ kind: "done", result });
   if (signal.aborted) return done({ status: "failed", data: {}, reason: "aborted before wall started" });
-  if (!wallEnabled()) return done({ status: "skipped", data: {}, reason: "Wall session off (default; LOKI_E10_WALL=1 turns it on)" });
+  const WALL_OFF = "Wall session off (default; LOKI_E10_WALL=1 turns it on)";
+  if (!wallEnabled() && !execSpecEnabled()) return done({ status: "skipped", data: {}, reason: WALL_OFF });
 
   const prior = ctx.outputs();
   const task = loadTaskText(ctx, prior.intake?.task as string | undefined);
@@ -132,8 +134,12 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const focus = namedFiles(task, repoMap);
   const runners: RunnerName[] = testMap ? harnessRunners(engineMap?.packageRunners?.[targetRoot] ?? (packageTests.length ? [...new Set(packageTests.map((t) => t.runner))] : testMap.runners), repoMap?.files ?? [], process.env, ctx.repoDir, focus) : [];
   if (!ctx.externalPatch && planMode() !== "always" && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean") {
-    return done({ status: "skipped", data: { size: sz.size }, reason: `${sz.size} task with a relevant visible test: Wall skipped, verify runs that test at the end` });
+    const leanWhy = `${sz.size} task with a relevant visible test: Wall skipped, verify runs that test at the end`;
+    if (!execSpecEnabled()) return done({ status: "skipped", data: { size: sz.size }, reason: leanWhy });
+    if (wallEnabled() && wallConcurrent()) return done({ status: "skipped", data: { size: sz.size, exec_spec: { status: "skipped" } }, reason: `${leanWhy}; exec spec not run: with the Wall on it is authored alongside implement (LOKI_E10_WALL_CONCURRENT=0 runs it first)` });
+    return execSpecWall(ctx, signal, task, sz.size, runners, existingTests.map((t) => t.path), leanWhy);
   }
+  if (!wallEnabled()) return done({ status: "skipped", data: {}, reason: WALL_OFF }); // exec spec on, not the lean path: the Wall stays off
 
   if (testMap && runners.length === 0) { const miss = missingStackTool(repoMap?.files ?? [], process.env, ctx.repoDir); return done({ status: "skipped", data: { size: sz.size, files: [], no_runner: true, skip_code: harnessSkipCode(), not_proven: [miss ? `Wall not run: ${miss.tool} is not installed on this machine, so this repo could not be tested (harness-owned); ${miss.install}` : "Wall skipped: no runnable test command for this stack"] }, reason: miss ? `${miss.tool} is not installed: the Wall cannot run this repo's tests (harness-owned, not proven); ${miss.install}` : "no runnable test command detected: the Wall cannot write a runnable check" }); } // FC-17: decided before any model session
 
@@ -186,6 +192,20 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   return { kind: "authored", ...(generated.length > 0 ? { staged: true } : {}), model, iterationId, task, sizeName: sz.size, runners, targetDir, generated, contents, discarded, ...(clauseSet.clauses.length ? { clauses: clauseSet } : {}), ...(evidence ? { evidence } : {}), ...(wm ? { manifestSha256: wm.sha256 } : {}), ...(held ? { holdoutDir: held.dir } : {}) };
 }
 
+/** LOKI_E10_EXEC_SPEC on the lean path (features/exec_spec.ts): one tool-less generator call, a harness base run per case, and only the
+ *  binding cases (red on base, every expected value stated by the issue) sealed as this run's Wall file through installWall. Advisory
+ *  cases reach implement as a brief block only (<runDir>/exec-spec-brief.txt), never sealed, never blocking. */
+async function execSpecWall(ctx: RunContext, signal: AbortSignal, task: string, sizeName: string, runners: RunnerName[], existingTests: string[], leanWhy: string): Promise<WallAuthorOutcome> {
+  const iterationId = `${ctx.runId}-execspec`, out = await execSpecAuthor({ task, repoDir: ctx.repoDir, runners, existingTests, sessions: ctx.sessions as never, iterationId, signal });
+  const summary = { status: out.status, reason: out.reason, ...(out.runner ? { runner: out.runner } : {}), atoms: out.atoms, sites: out.sites, binding: out.binding, advisory: out.advisory, guards: out.guards, dropped: out.dropped, duration_s: out.durationS };
+  if (out.brief) { try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, EXEC_SPEC_BRIEF_FILE), out.brief, "utf8"); } catch { /* best effort: implement runs without the block */ } }
+  const spent = out.runner ? { iteration_ids: [iterationId] } : {}; // a generator session ran: its spend reaches the ledger
+  if (out.status !== "sealed" || !out.file || !out.targetRel) return { kind: "done", result: { status: "skipped", data: { size: sizeName, exec_spec: summary, ...spent }, reason: `${leanWhy}; ${out.reason}` } };
+  const name = basename(out.targetRel), sealedDir = sealStageDir(ctx.runId, ctx.repoDir); rmSync(sealedDir, { recursive: true, force: true }); mkdirSync(sealedDir, { recursive: true });
+  writeFileSync(join(sealedDir, name), out.file, "utf8");
+  return { kind: "authored", staged: true, execSpec: summary, model: execSpecModel(), iterationId, task, sizeName, runners: [out.runner as RunnerName], targetDir: join(ctx.repoDir, dirname(out.targetRel)), generated: [name], contents: new Map([[name, out.file]]), discarded: [] };
+}
+
 /** The install-time compile check, run once implement has written its code: a Rust Wall call whose argument count no definition in the crate has AS IT NOW STANDS (so a task that changes a constructor keeps the test that proves it). `afterImplement` false (the sequential Wall installs before implement): nothing is decided here; the delivery over a Wall conflict handles a Wall file that then fails to compile. */
 export function wallInstallReject(repoDir: string, task: string, runners: RunnerName[], afterImplement: boolean): (name: string, content: string) => string | null {
   if (!afterImplement || !runners.includes("cargo")) return () => null;
@@ -224,7 +244,7 @@ function* installCore(ctx: RunContext, a: WallAuthored, baseDir: string, opts: W
     status: "completed",
     data: {
       files: sealedFiles,
-      ...(a.manifestSha256 ? { manifest_sha256: a.manifestSha256 } : {}),
+      ...(a.manifestSha256 ? { manifest_sha256: a.manifestSha256 } : {}), ...(a.execSpec ? { exec_spec: a.execSpec } : {}),
       readOnlyFiles,
       base_run: baseRun,
       ...(notRunFiles.length ? { not_run_files: notRunFiles } : {}),
@@ -252,6 +272,7 @@ export const WALL_REAUTHOR_EXHAUSTED = "Wall re-authored once and still no Wall 
 export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOptions = {}): Promise<StageResult> {
   const t0 = Date.now(), a = await wallAuthor(ctx, signal);
   const first = a.kind === "done" ? a.result : await installWallAsync(ctx, a, ctx.repoDir, opts);
+  if (a.kind === "authored" && a.execSpec) return first; // an exec spec is never re-authored by a Wall session: its cases were already filtered on base
   // COST-11: a cheaper first rung is re-authored exactly once on wallModel() when its result cannot be trusted: nothing usable (nothing written, all discarded or not_run), a killed or timed-out session (N3), or a Wall already green on the base tree (B1: a haiku test that passes before the change may be vacuous, so the sonnet result decides already_satisfied). Never loops. Any doubt escalates.
   const cheap = a.kind === "authored" ? a.model : (first.data.model as string | undefined) ?? "", killed = a.kind === "done" && first.killed === true, usable = a.kind === "authored" && first.status === "completed";
   const unusable = usable && ((first.data.files as unknown[] | undefined) ?? []).length === 0, green = usable && !unusable && (first.data.already_satisfied === true || first.data.reproduction_green_on_base === true || wallGreenOnBaseOf({ wall: first.data })); // same green test seal applies

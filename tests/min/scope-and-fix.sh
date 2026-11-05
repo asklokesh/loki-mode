@@ -26,6 +26,9 @@
 #   coverage:    (lean, E2E_STUB_MODE=coverage: the first turn writes 2 of the 3 named functions) default: no extra session and negate() is
 #                missing; LOKI_E10_COVERAGE_RESUME=1: exactly one "-c" session with the fixed brief writes negate(); a first turn that
 #                claims already-done, or a run that has a plan, gets no coverage turn.
+#   exec spec:   (LOKI_E10_EXEC_SPEC=1, lean, Wall off) deterministic atoms, the parity atom from the whole function body, the pair atom,
+#                the binding rule; real go test, pytest and vitest (2 and latest) per-case base runs seal only the binding red case; on the
+#                engine the right fix is VERIFIED, a change that leaves it red is not, and the knob unset runs no generator session.
 #   agent-only:  the same lean task, but the session also adds an exported square() that only its own new test calls:
 #                the run is PARTIAL and the receipt names square as unexercised by an agent-independent test.
 #   public unit: addedPublicFunctions reads the file at HEAD against the base: a method added to an existing class, a def
@@ -149,6 +152,17 @@
 #  61. check_result.ts stallSignature: bucket a full-suite group by log2 of its id count again (the disjoint, 100-to-70 and zero-vs-one id legs read true).
 #  62. check_result.ts stallSame: drop the count tolerance test (the near-equal truncated legs read false) or widen it to 50 percent (the 100-to-70 leg reads true).
 #  63. machine.ts: compare sigs with === again instead of stallSame (the machine.ts stallSame grep leg reads bad).
+#  64. features/exec_spec.ts parityAtoms: drop the quoted-code condition (exec spec atoms read noquote=P1).
+#  65. exec_spec.ts parityAtoms: scan s.source (the 45-line excerpt) instead of s.body (exec spec atoms read P0).
+#  66. exec_spec.ts NORM_DOT: drop the no-dot lookbehind (exec spec atoms read prop=P1).
+#  67. exec_spec.ts pairAtoms: let a site pair with its own caller (exec spec atoms list Report+Batch).
+#  68. exec_spec.ts isBinding: return true (every real-runner leg seals the advisory case too).
+#  69. exec_spec.ts parseGo: count a panicking case as red (the go test leg seals or lists the panic case).
+#  70. exec_spec.ts parseJunit: count any failure as red (the pytest leg reads the AttributeError case as advisory, not dropped).
+#  71. exec_spec.ts parseVitestJson: count any failure as red (the vitest legs read the TypeError case as advisory, not dropped).
+#  72. wall.ts: return the lean skip with the knob on (the exec spec engine legs read skipped and VERIFIED on the no-fix change).
+#  73. implement.ts: drop execSpecBriefOf from the brief (the implement-brief leg fails).
+#  74. exec_spec.ts execSpecEnabled: default on (the exec spec off leg finds a generator session).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -923,6 +937,219 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     done
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest truncated reason: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest truncated reason: pytest is not installed"; fi
+fi
+
+# ---------------------------------------------------------------- executable spec first (LOKI_E10_EXEC_SPEC, default off)
+# features/exec_spec.ts through wall.ts's lean branch. Unit: deterministic atoms, the parity atom from the WHOLE function body (firstArg sits
+# past the 45-line excerpt), never on a property write, the pair atom for two named sites a third site reaches, and the binding rule (only
+# want literals the issue states). Real runners (rule 22: go test, pytest, vitest 2 and latest): one stubbed generator reply per runner holds
+# a binding red case, an advisory red case, a green guard and an erroring case; only the binding case stays collected in the sealed file.
+# Engine (stub provider, Wall off, lean path): the spec is sealed as the run's Wall file, red on base; the right fix is VERIFIED and the
+# implement brief carries the spec block; a fix that leaves the binding case red is not VERIFIED; with the knob unset no spec session runs.
+# make_es_go <dir>: a cli-2418-shaped Go package. Split's firstArg sits past line 45 of its body (the excerpt cap), a sibling
+# branch appends rargs[0]; Report checks StatusCoder and Batch on one err (the pair class).
+make_es_go() {
+    mkdir -p "$1/a"
+    printf 'module example.com/a\n\ngo 1.21\n' > "$1/go.mod"
+    {
+        printf 'package a\n\nimport "strings"\n\n// Split keeps operands after a lone dash.\nfunc Split(rargs []string) []string {\n\tvar out []string\n'
+        for i in $(seq 1 50); do printf '\t// padding line %s keeps firstArg past the 45-line excerpt\n' "$i"; done
+        printf '\tfor ; len(rargs) > 0; rargs = rargs[1:] {\n\t\tfirstArg := strings.TrimSpace(rargs[0])\n\t\tif firstArg == "" || firstArg[0] != %s {\n\t\t\tout = append(out, rargs[0])\n\t\t\tcontinue\n\t\t}\n\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n\t\t\tbreak\n\t\t}\n\t}\n\treturn out\n}\n' "'-'"
+        printf '\ntype StatusCoder interface{ Code() int }\n\ntype Batch []error\n\nfunc (b Batch) Error() string { return "batch" }\n\n// Report returns the exit code for err.\nfunc Report(err error) int {\n\tif sc, ok := err.(StatusCoder); ok {\n\t\treturn sc.Code()\n\t}\n\tif b, ok := err.(Batch); ok {\n\t\treturn len(b)\n\t}\n\treturn 1\n}\n'
+    } > "$1/a/a.go"
+    printf 'package a\n\nimport "testing"\n\nfunc TestSplitPlain(t *testing.T) {\n\tif g := Split([]string{"x"}); len(g) != 1 {\n\t\tt.Fatal(g)\n\t}\n}\n' > "$1/a/a_test.go"
+}
+ES_GO_TASK='# Bare dash drops args
+
+`Split` stops at a lone `-`: `x - a b` gives `["-"]` instead of `["-", "a", "b"]`. `Report` also mishandles a `Batch` that holds a `StatusCoder`.
+
+## Location
+
+```go
+		if len(firstArg) == 1 {
+			out = append(out, firstArg)
+			break
+		}
+```
+
+## Expected
+
+The arguments after the dash are retained.
+'
+ES_GO_REPLY='```go
+package a
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestLokiSpec_C1_KeepsAfterDash(t *testing.T) {
+	want := []string{"-", "a", "b"}
+	if got := Split([]string{"-", "a", "b"}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLokiSpec_P1_PaddedDash(t *testing.T) {
+	want := []string{"  -", "q"}
+	if got := Split([]string{"  -", "q"}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLokiSpec_S1_Plain(t *testing.T) {
+	want := []string{"x"}
+	if got := Split([]string{"x"}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLokiSpec_C2_Panics(t *testing.T) {
+	var m map[string]int
+	m["x"] = 1
+}
+```'
+# make_es_py <dir>: a pytest package; normalize reads t = raw.strip() on the quoted branch, the sibling appends raw.
+make_es_py() {
+    mkdir -p "$1/tests"
+    printf 'def normalize(tags):\n    out = []\n    for raw in tags:\n        t = raw.strip()\n        if t.startswith("#"):\n            out.append(t[1:])\n            continue\n        out.append(raw)\n    return out\n' > "$1/tags.py"
+    printf 'import tags\n\n\ndef test_plain():\n    assert tags.normalize(["x"]) == ["x"]\n' > "$1/tests/test_tags.py"
+    printf '[pytest]\npythonpath = .\n' > "$1/pytest.ini"
+}
+ES_PY_TASK='# normalize keeps case
+
+`normalize` drops the hash but keeps case: `normalize(["#A"])` gives `["A"]` instead of `["a"]`.
+
+## Location
+
+```python
+        if t.startswith("#"):
+            out.append(t[1:])
+```
+'
+ES_PY_REPLY='```python
+import tags
+
+
+def test_loki_spec_c1_lowercases():
+    want = ["a"]
+    assert tags.normalize(["#A"]) == want
+
+
+def test_loki_spec_p1_upper():
+    want = ["q"]
+    assert tags.normalize(["Q"]) == want
+
+
+def test_loki_spec_s1_plain():
+    want = ["x"]
+    assert tags.normalize(["x"]) == want
+
+
+def test_loki_spec_c2_missing():
+    want = 1
+    assert tags.normalize.missing() == want
+```'
+# make_es_ts <dir> <node_modules>: a vitest package; slug keeps case.
+make_es_ts() {
+    mkdir -p "$1/src"
+    printf '{"name":"s","private":true,"type":"module","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"*"}}\n' > "$1/package.json"
+    printf 'export function slug(s: string): string {\n  const t = s.trim();\n  if (t === "") return s;\n  return t.replace(/ /g, "-");\n}\n' > "$1/src/slug.ts"
+    printf 'import { expect, test } from "vitest";\nimport { slug } from "./slug";\n\ntest("plain", () => {\n  expect(slug("x")).toBe("x");\n});\n' > "$1/src/slug.test.ts"
+    ln -s "$2" "$1/node_modules"
+    printf 'node_modules\n' > "$1/.gitignore"
+}
+ES_TS_TASK='# slug keeps case
+
+`slug` keeps upper case: `slug("A B")` gives `"A-B"` instead of `"a-b"`.
+'
+ES_TS_REPLY='```ts
+import { expect, test } from "vitest";
+import { slug } from "./slug";
+
+test("LokiSpec_C1_Lower", () => {
+  const want = "a-b";
+  expect(slug("A B")).toBe(want);
+});
+
+test("LokiSpec_C2_Other", () => {
+  const want = "zz-top";
+  expect(slug("ZZ top")).toBe(want);
+});
+
+test("LokiSpec_S1_Plain", () => {
+  const want = "x";
+  expect(slug("x")).toBe(want);
+});
+
+test("LokiSpec_S2_Missing", () => {
+  const want = 1;
+  expect((slug as unknown as { nope: () => number }).nope()).toBe(want);
+});
+```'
+if command -v go >/dev/null 2>&1; then
+    ESD="$T/es-go"; rm -rf "$ESD"; make_es_go "$ESD"
+    ESU="$(cd "$ROOT/loki-ts" && ESD="$ESD" TASK="$ES_GO_TASK" timeout 120 bun -e '
+const es = await import("./src/features/exec_spec.ts"), task = process.env.TASK, out = [];
+const a = es.extractSpecAtoms(task), s = es.resolveSites(a, process.env.ESD), p = es.parityAtoms(a, s), x = es.pairAtoms(a, s);
+out.push(a.filter((z) => z.kind === "site").map((z) => z.text).join(","), `P${p.length}`, x.map((z) => z.text.match(/`(\w+)` and `(\w+)`/).slice(1).join("+")).join(","));
+const noQuote = task.replace(/## Location[\s\S]*?## Expected/, "## Expected"), a2 = es.extractSpecAtoms(noQuote); out.push(`noquote=P${es.parityAtoms(a2, es.resolveSites(a2, process.env.ESD)).length}`);
+const prop = { symbol: "set", file: "o.ts", line: 1, source: "", body: "set(value) {\n  this.#i.method = value.toUpperCase();\n  log(value);\n}" };
+out.push(`prop=P${es.parityAtoms([{ id: "L1", kind: "location", text: "this.#i.method = value.toUpperCase();" }], [prop]).length}`);
+const b = (w) => es.isBinding(w, "`f(\"a-b\")` gives `404` instead of `[\"x\", \"y\"]`");
+out.push([b("want := []string{\"x\", \"y\"}"), b("want = 404"), b("const want = \"a-b\";"), b("want := []string{\"x\", \"zz\"}"), b("want := true"), b("if got != 1 {")].map((v) => (v ? 1 : 0)).join(""));
+console.log(out.join(" | "));' 2>&1)"
+    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | prop=P0 | 111000"
+    [ "$ESU" = "$WESU" ] && ok "exec spec atoms: parity from the whole body and only from quoted code, never a property write, one pair for the two sites Report reaches, binding only on issue-stated want literals" \
+        || bad "exec spec atoms gave: $ESU (want: $WESU)"
+fi
+# es_leg <label> <runner> <repo> <existing test> <task> <reply> <want>: execSpecAuthor with the stub reply, then the sealed file run by the real runner on base.
+es_leg() {
+    (cd "$3" && git init -q -b main && git add -- . && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m base)
+    local got
+    got="$(cd "$ROOT/loki-ts" && ESD="$3" RUN="$2" EXIST="$4" TASK="$5" REPLY="$6" timeout 300 bun -e '
+const es = await import("./src/features/exec_spec.ts"), e = process.env;
+es.setExecSpecGenerator(async () => e.REPLY);
+const o = await es.execSpecAuthor({ task: e.TASK, repoDir: e.ESD, runners: [e.RUN], existingTests: [e.EXIST], sessions: null, iterationId: "t", signal: new AbortController().signal });
+const em = es.EMITTERS[e.RUN], sealed = o.file ? es.redFilter(em, e.ESD, o.targetRel, o.file) : null;
+console.log(`${o.status} ${o.targetRel} binding=${o.binding} advisory=${o.advisory} guards=${o.guards} dropped=${o.dropped} sealed=${sealed ? Object.entries(sealed.cases).map(([k, v]) => k + ":" + v).join("+") : "-"}`);' 2>&1)"
+    [ "$got" = "$7" ] && ok "exec spec $1: binding red case sealed alone, advisory, guard and erroring cases kept out ($2 on base)" || bad "exec spec $1 gave: $got (want: $7)"
+}
+if command -v go >/dev/null 2>&1; then
+    rm -rf "$T/es-go2"; make_es_go "$T/es-go2"
+    es_leg "go test" go "$T/es-go2" a/a_test.go "$ES_GO_TASK" "$ES_GO_REPLY" "sealed a/loki_wall_spec_test.go binding=TestLokiSpec_C1_KeepsAfterDash advisory=TestLokiSpec_P1_PaddedDash guards=TestLokiSpec_S1_Plain dropped=TestLokiSpec_C2_Panics sealed=TestLokiSpec_C1_KeepsAfterDash:red"
+elif [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "exec spec go test: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: exec spec go test: go is not installed"; fi
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    rm -rf "$T/es-py"; make_es_py "$T/es-py"
+    es_leg "pytest" pytest "$T/es-py" tests/test_tags.py "$ES_PY_TASK" "$ES_PY_REPLY" "sealed tests/loki_wall_spec_test.py binding=test_loki_spec_c1_lowercases advisory=test_loki_spec_p1_upper guards=test_loki_spec_s1_plain dropped=test_loki_spec_c2_missing sealed=test_loki_spec_c1_lowercases:red"
+elif [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "exec spec pytest: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: exec spec pytest: pytest is not installed"; fi
+for vt in 2 latest; do
+    VT_NM="$T/vt-$vt/node_modules"
+    if [ ! -d "$VT_NM/vitest" ]; then mkdir -p "$T/vt-$vt"; printf '{"name":"c","private":true,"type":"module"}\n' > "$T/vt-$vt/package.json"; (cd "$T/vt-$vt" && timeout 300 npm install --no-audit --no-fund --silent "vitest@$vt" >/dev/null 2>&1); fi
+    if [ ! -x "$VT_NM/.bin/vitest" ]; then
+        if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "exec spec vitest $vt: vitest@$vt could not be installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: exec spec vitest $vt: vitest@$vt could not be installed (offline?)"; fi
+        continue
+    fi
+    rm -rf "$T/es-ts-$vt"; make_es_ts "$T/es-ts-$vt" "$VT_NM"
+    es_leg "vitest $vt" vitest "$T/es-ts-$vt" src/slug.test.ts "$ES_TS_TASK" "$ES_TS_REPLY" "sealed src/loki_wall_spec.test.ts binding=LokiSpec_C1_Lower advisory=LokiSpec_C2_Other guards=LokiSpec_S1_Plain dropped=LokiSpec_S2_Missing sealed=LokiSpec_C1_Lower:red"
+done
+# engine legs: the real bin/loki on the stub provider, Wall off (the product default), lean path.
+if command -v go >/dev/null 2>&1; then
+    ESFIX=$'out = append(out, rargs[0])\n\t\t\tcontinue'; ESOLD=$'out = append(out, firstArg)\n\t\t\tbreak'
+    esw() { ev 'next((e["data"].get("exec_spec",{}).get("status","") + ":" + ",".join(e["data"].get("exec_spec",{}).get("binding",[])) + ":" + ",".join(f["path"].rsplit("/",1)[-1] for f in e["data"].get("files",[])) + ":fail=" + str(e["data"].get("base_run",{}).get("fail")) for e in E if e["stage"]=="wall" and e["type"] in ("stage.completed","stage.skipped")), "none")'; }
+    ESPL="$T/es-prompts"; rm -f "$ESPL".*
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" LOKI_E10_EXEC_SPEC=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" E2E_STUB_PROMPT_LOG="$ESPL" \
+        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    [ "$(esw)" = "sealed:TestLokiSpec_C1_KeepsAfterDash:loki_wall_spec_test.go:fail=1" ] && ok "exec spec engine: the binding case is sealed as the run's Wall file and is red on base ($(esw))" || { bad "exec spec engine: wall gave '$(esw)'"; dump; }
+    grep -q "Executable spec: a/loki_wall_spec_test.go" "$ESPL.implement0" 2>/dev/null && grep -q "Advisory spec cases" "$ESPL.implement0" && ok "exec spec engine: the implement brief names the binding case and lists the advisory ones" || bad "exec spec engine: the implement brief has no spec block"
+    [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: the right fix turns the sealed case green and is VERIFIED" || { bad "exec spec engine: right-fix outcome '$(outcome)'"; dump; }
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" LOKI_E10_EXEC_SPEC=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE=$'\t\t\tbreak' E2E_STUB_SNIPPET=$'\t\t\tbreak // looked at' LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    [ -n "$(outcome)" ] && [ "$(outcome)" != VERIFIED ] && ok "exec spec engine: a change that leaves the binding case red is not VERIFIED ($(outcome))" || { bad "exec spec engine: no-fix outcome '$(outcome)'"; dump; }
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    grep -q -- '-execspec' "$ITERS" && bad "exec spec off: a generator session ran with LOKI_E10_EXEC_SPEC unset" || ok "exec spec off: no generator session and no spec file (default)"
 fi
 
 finish
