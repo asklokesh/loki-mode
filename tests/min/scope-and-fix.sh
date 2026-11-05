@@ -731,7 +731,7 @@ WD="$(cd "$ROOT/loki-ts" && bun -e 'const { wallEnabled } = await import("./src/
 [ "$WD" = "false,false,false,true,true" ] && ok "wall default: the Wall session is off unless LOKI_E10_WALL=1/on ($WD)" || bad "wall default: wallEnabled gave '$WD'"
 # Wall off (the default): no tree snapshot is taken, so a snapshot that cannot be made (here a 1 ms copy budget, as on a huge pnpm tree) never reads as a failed Wall.
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
-    MAKE_REPO=make_wo_py_repo run_engine "fix double(a) in calc.py so it returns twice a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a + 1' E2E_STUB_SNIPPET=$'    return a * 2' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_WALL_SNAPSHOT_TIMEOUT_S=0.001
+    MAKE_REPO=make_wo_py_repo run_engine "fix double(a) in calc.py so it returns twice a" E2E_WALL= LOKI_E10_WALL=0 E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a + 1' E2E_STUB_SNIPPET=$'    return a * 2' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_WALL_SNAPSHOT_TIMEOUT_S=0.001
     wf="$(ev "any(e['type']=='stage.failed' and e.get('stage')=='wall' for e in E)")"
     [ "$wf" = "False" ] && ok "wall off: a snapshot that cannot be made emits no wall failure ($wf)" || { bad "wall off: wall failure event present or no log ('$wf')"; dump; }
 fi
