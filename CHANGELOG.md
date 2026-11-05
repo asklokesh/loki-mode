@@ -5,6 +5,24 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.133.0 (2026-11-05)
+
+Slow and Python test suites are judged correctly against the original code, runs leave your branch clean of lockfile and install churn, and Loki can write the release-note fragment your repository expects.
+
+### Fixed
+- The test run on the original commit now gets 300 s per command (was 60 s, with 120 s shared across suites), the same budget as the full-suite run on the change, so failures already present before the change are excused instead of blamed on it. A run that is still cut off is listed on the receipt as "base run incomplete, not excusable" and excuses nothing.
+- On a system Python that refuses pip installs (PEP 668), Loki installs the project's test dependencies into a project .venv and runs pytest and ruff from it; the .venv never reaches the commit, and lint is never invented for a repo that declares none.
+- In a pnpm or yarn workspace whose vitest config merges the root projects, the edited test file is run from the root, so a failure is attributed to the right package file instead of looking untouched.
+- The work-in-progress commit drops lockfile changes the task did not ask for, and removes a lockfile the run created, so the branch is clean after checkout. A lockfile is kept when the task names it, a manifest beside it changed, or the task is a dependency bump, upgrade or CVE fix.
+- A rewritten test assertion that pins the wrong value an issue reports is always listed on the receipt as "value change (defect pin)" and never counts as fail-then-pass proof.
+- Two timing checks in the test suite (host-guard backtracking and redaction growth) no longer fail on a loaded CI runner, and still catch quadratic slowdowns.
+
+### Added
+- With LOKI_E10_SCAFFOLD=1, a run in a changesets or towncrier repository adds the release-note fragment in the convention of the newest real fragment. It never writes for internal changes, test-only or docs-only changes, private or ignored packages, or a fragment directory outside the repository, and a fragment the repository tooling rejects is removed.
+- With LOKI_E10_DEFECT_PIN=1, the implement brief names existing test assertions that pin the wrong value the issue reports.
+- An internal one-turn, tool-less completion that records its priced cost in the run ledger, applies the output-token limit on both routes, and refuses to run when the cost cap is reached or cannot be metered.
+- An internal edit-shape detector that lists sibling branches passing a different value than the edited one, unchanged lines still holding the pattern a fix removed, and a precedence note when a strict type check is widened.
+
 ## v11.132.0 (2026-11-05)
 
 Haiku runs get more correct fixes and more honest proof: Loki reads the whole function before editing, counts Go, pytest and pnpm proof it used to drop, and settles open either/or choices from the maintainer.

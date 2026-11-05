@@ -27,7 +27,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
-import { comparableIds, errorsById, failIds, sameErrors, unhandledBlock } from "../engine10/failures.ts";
+import { comparableIds, errorsById, failIds, idNamesFile, sameErrors, unhandledBlock } from "../engine10/failures.ts";
 import { classifyCheck, emptyDiscovery, exitCodedId, goRunner, isExitCodedScript, plainTestEnv, stripAnsi, type Classified } from "../util/check_result.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
@@ -670,7 +670,7 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: { nam
   const massive = (cmd: string): boolean => (of(cmd)?.failing_ids.length ?? 0) >= MASSIVE_RED_IDS, known = new Set(bad.flatMap((c) => ids(c.cmd))), block = new Set(blocked), sameAsBase = (c: (typeof bad)[number]): boolean => { const b = of(c.cmd), be = b?.failing_errors, hu = c.unhandled ?? [], bu = b?.failing_unhandled ?? []; const fl = new Set(b?.flaky_ids ?? []), cmp = comparableIds(c.ids ?? []).filter((i) => !fl.has(i)); /* a flaky id has no stable error to compare */ return !!be && !!c.errors && hu.length === bu.length && hu.every((x, n) => x === bu[n]) /* an unhandled-errors block names no id: it must repeat on base */ && (massive(c.cmd) || cmp.length === 0 || sameErrors(new Map(Object.entries(c.errors)), be, cmp)); };
   if (known.size === 0) return none;
   const unproven = [...new Set(bad.flatMap((c) => c.ids ?? []).filter((i) => !i.includes("::") && goIdTouched(repoDir, i, changed)))];
-  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && sameAsBase(c) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => i.includes(f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
+  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && sameAsBase(c) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => idNamesFile(i, f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
   const rust = (cargoTouched(changed) ? bad : []).map((c) => `NOT PROVEN: ${c.name} may run cargo tests and the diff edits Rust source or a manifest; cargo test ids carry no crate path, so a failure cannot be shown pre-existing`);
   const red = res.preExistingChecks.length ? bad.filter((c) => res.preExistingChecks.includes(c.name) && massive(c.cmd)) : [], redLine = red.map((c) => `NOT PROVEN: suite red at base (${of(c.cmd)!.failing_ids.length} failing ids) for "${c.cmd}": it is compared per id, never blocks and proves nothing about this change`).join("; ");
   if (redLine) res.line = [res.line, redLine].filter(Boolean).join("; ");

@@ -60,6 +60,10 @@
 #  NRM1. commit_filter.ts dropSet: restrict the lockfile rule to st === "A" again; the lockfile check fails. Make manifestChanged
 #      compare dirname equality only (drop the descendant clause); the workspace-member case fails.
 #  NRM3. commit_filter.ts dropSet: ignore the task (drop the taskWantsLockChange clause); the task-aware lockfile check fails.
+#  SG4. commit_filter.ts commitUnsealedWork: remove the churn block; the WIP commit carries pnpm-lock.yaml again.
+#  SG5. check_result.ts commandFor: drop the rootProjectsBreakSite null; the workspace command runs from packages/a and fails (No projects were found).
+#  SG6. failures.ts idNamesFile: return id.includes(f) only; the root-run failure leg fails (the project-prefixed id names no file).
+#  SG7. commit_filter.ts commitUnsealedWork: drop the rmSync loop; the run-created lockfile stays untracked after the checkout. taskWantsLockChange: re-add the bare `lock` noun; 'refresh the page when the lock icon is clicked' ships its lockfile.
 #  NRM2. repo_profile.ts detectFormatters: drop the biome entry; the formatter check fails.
 #  10. verify.ts sameErrors: excuse every known-red id whatever its first error; the delivery check fails.
 #  11. loki-ts/src/engine10/machine.ts: break after one Wall-only round whatever wallSignature says; the
@@ -90,7 +94,7 @@
 #  22. issues_epic.ts epicOutcome: drop the delivered-PR suffix of the Reason line; the unit check fails.
 #  23. repo_profile.ts BASELINE_CMD_TIMEOUT_S back to 60, or attributeFullSuite without the base-run-incomplete line, or baselineSuites reusing a short-cut entry; the base budget unit check fails.
 #  23b. repo_profile.ts: drop flaky_ids from the compared ids, skip the second base pass (runProbed), or drop the suite-red-at-base line; the same unit check fails.
-#  23c. repo_profile.ts whyFullSuiteNotExcused: return [] or drop the changed-file / new-id / cut / error-text branch; the same unit check fails.
+#  23c. repo_profile.ts whyFullSuiteNotExcused (or verify.ts not_excused, or seal.ts listing it): return [] or drop the changed-file / new-id / cut / error-text branch; the same unit check fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -382,6 +386,35 @@ console.log(commitUnsealedWork(true, process.env.U, process.env, "e10-wip", { ba
 [ "$WIP" = true ] && [ "$(git -C "$U" show --name-status --format= HEAD | tr '\t\n' ' ')" = "M app.ts " ] && [ "$(git -C "$U" status --porcelain)" = " D .loki/STATUS.txt" ] \
     && ok "the WIP commit holds the run's edit only; the user's .loki deletion stays uncommitted" || bad "WIP commit: $WIP; committed [$(git -C "$U" show --name-status --format= HEAD | tr '\t\n' ' ')]; porcelain [$(git -C "$U" status --porcelain)]"
 
+# The WIP commit of a FAILED or STALLED run applies the commit stage's lockfile filter: a lockfile rewritten after the commit stage
+# (L-Haiku v131 tq-11327 and tq-11663 shipped pnpm-lock.yaml this way) is not committed and the tree is restored, so the checkout back is clean (item 4).
+WC="$T/wipchurn"; mkdir -p "$WC" && git -C "$WC" init -q -b main && git -C "$WC" config user.name rs && git -C "$WC" config user.email rs@example.invalid
+printf '{"name":"r"}\n' > "$WC/package.json"; printf 'l1\n' > "$WC/pnpm-lock.yaml"; printf 'a\n' > "$WC/app.ts"; printf 'export default { test: {} }\n' > "$WC/vitest.config.ts"
+git -C "$WC" add -A . && git -C "$WC" commit -q -m base
+BASE_W="$(git -C "$WC" rev-parse HEAD)"
+wip_churn() { # wip_churn <task>: dirty the tree like a failed run, run the WIP commit, print committed paths | porcelain
+    git -C "$WC" reset -q --hard "$BASE_W"; git -C "$WC" checkout -q -B loki/e10-wipc "$BASE_W"; printf 'b\n' > "$WC/app.ts"; printf 'l2\n' > "$WC/pnpm-lock.yaml";     W="$WC" B="$BASE_W" TK="$1" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { commitUnsealedWork } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
+commitUnsealedWork(true, process.env.W, process.env, "e10-wipc", { base_sha: process.env.B, task: process.env.TK });' >/dev/null 2>&1
+    printf '%s | %s' "$(git -C "$WC" diff --name-only "$BASE_W" HEAD | tr '\n' ' ')" "$(git -C "$WC" status --porcelain | tr '\n' ' ')"
+}
+WC1="$(wip_churn "fix the parser bug")"
+[ "$WC1" = "app.ts  | " ] && ok "WIP commit: a pnpm-lock.yaml rewrite is not committed and the tree is clean for the checkout back" || bad "WIP churn: [$WC1]"
+git -C "$WC" checkout -q main 2>/dev/null; WCB="$(git -C "$WC" status --porcelain)"; git -C "$WC" checkout -q loki/e10-wipc 2>/dev/null
+[ -z "$WCB" ] && ok "WIP commit: git checkout main after a run with a churned lockfile leaves porcelain clean" || bad "checkout main carried: [$WCB]"
+WC1U="$(git -C "$WC" reset -q --hard "$BASE_W"; git -C "$WC" checkout -q -B loki/e10-wipu "$BASE_W"; printf 'user\n' > "$WC/pnpm-lock.yaml"; printf 'b\n' > "$WC/app.ts"; W="$WC" B="$BASE_W" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { commitUnsealedWork } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
+commitUnsealedWork(true, process.env.W, process.env, "e10-wipu", { base_sha: process.env.B, task: "fix the parser bug", preexisting_dirty: { "pnpm-lock.yaml": "x" } });' >/dev/null 2>&1; printf '%s | %s' "$(git -C "$WC" diff --name-only "$BASE_W" HEAD | tr '\n' ' ')" "$(cat "$WC/pnpm-lock.yaml")")"
+[ "$WC1U" = "app.ts  | user" ] && ok "WIP commit: a lockfile that was dirty at intake is never committed or reverted" || bad "intake-dirty lockfile: [$WC1U]"
+# a lockfile the run CREATED (a yarn repo gains package-lock.json) is neither committed nor left untracked; one untracked at intake stays
+WIPN="$(git -C "$WC" reset -q --hard "$BASE_W"; git -C "$WC" checkout -q -B loki/e10-wipn "$BASE_W"; printf 'n\n' > "$WC/package-lock.json"; printf 'mine\n' > "$WC/yarn.lock"; printf 'b\n' > "$WC/app.ts"; W="$WC" B="$BASE_W" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { commitUnsealedWork } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
+commitUnsealedWork(true, process.env.W, process.env, "e10-wipn", { base_sha: process.env.B, task: "fix the parser bug", preexisting_untracked_blobs: { "yarn.lock": "x" } });' >/dev/null 2>&1; git -C "$WC" checkout -q main 2>&1; printf '%s | %s' "$(git -C "$WC" diff --name-only "$BASE_W" loki/e10-wipn | tr '\n' ' ')" "$(git -C "$WC" status --porcelain | tr '\n' ' ')")"
+[ "$WIPN" = "app.ts  | ?? yarn.lock " ] && ok "WIP commit: a run-created package-lock.json is not committed and leaves no untracked file; a lockfile untracked at intake stays" || bad "run-created lockfile: [$WIPN]"
+rm -f "$WC/yarn.lock"; git -C "$WC" checkout -q loki/e10-wipn 2>/dev/null
+WC2="$(wip_churn "regenerate pnpm-lock.yaml")"
+[ "$WC2" = "app.ts pnpm-lock.yaml  | " ] && ok "WIP commit: a lockfile the task names is committed" || bad "WIP named: [$WC2]"
+
 # Acceptance normalizer (EXP-0009): the commit filter drops a NEW or MODIFIED lockfile whose manifest did not change (install churn), keeps one
 # whose manifest changed in its directory or beneath it (workspace root), and the repo's own formatter pass never fails the run.
 LK="$T/lockdrop"; mkdir -p "$LK/pkg" && git -C "$LK" init -q -b main && git -C "$LK" config user.name rs && git -C "$LK" config user.email rs@example.invalid
@@ -405,9 +438,9 @@ console.log(out.join(" | "));
 LKT="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const { dropSet } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
 const d = (task) => dropSet(process.env.LK, [{ st: "M", f: "pnpm-lock.yaml" }], null, process.env, undefined, undefined, undefined, task).filter((x) => x.st !== "L").length ? "drop" : "ship";
-console.log(["bump lodash to 4.17.21", "fix CVE-2024-4067 by updating the lockfile", "update the dependencies of the api", "upgrade the express package", "regenerate pnpm-lock.yaml", "add a login button", "update the readme", undefined].map(d).join(","));
+console.log(["bump lodash to 4.17.21", "refresh the lock file", "pin lodash to 4.17.20", "regenerate the lockfile", "fix CVE-2024-4067 by updating the lockfile", "update the dependencies of the api", "upgrade the express package", "regenerate pnpm-lock.yaml", "add a login button", "update the readme", "refresh the page when the lock icon is clicked", "sync the lock screen timer", undefined].map(d).join(","));
 ' 2>&1)"
-[ "$LKT" = "ship,ship,ship,ship,ship,drop,drop,drop" ] && ok "commit filter: a lockfile-only change ships when the task bumps or updates a dependency, names a CVE or the lockfile; unrelated tasks drop it" || bad "task-aware lockfile drop gave: $LKT"
+[ "$LKT" = "ship,ship,ship,ship,ship,ship,ship,ship,drop,drop,drop,drop,drop" ] && ok "commit filter: a lockfile-only change ships when the task bumps or updates a dependency, names a CVE or the lockfile; unrelated tasks drop it" || bad "task-aware lockfile drop gave: $LKT"
 printf '#!/bin/sh\nfor f in "$@"; do printf "formatted\\n" >> "$f"; done\n' > "$LK/node_modules-biome.sh"; mkdir -p "$LK/node_modules/.bin"; cp "$LK/node_modules-biome.sh" "$LK/node_modules/.bin/biome"; rm "$LK/node_modules-biome.sh"; chmod +x "$LK/node_modules/.bin/biome"
 printf '{}\n' > "$LK/biome.json"
 FMT="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
@@ -421,6 +454,43 @@ const c = formatChanged(process.env.LK, [{ st: "M", f: "pkg/b.json" }], new Set(
 console.log(JSON.stringify([a, touched, b, c]));
 ' 2>&1)"
 [ "$FMT" = '[["pkg/b.json"],true,[],[]]' ] && ok "formatter pass: a repo-local biome rewrites the changed file; a failing or missing formatter is a silent no-op" || bad "formatter pass gave: $FMT"
+
+# A workspace whose package vitest config merges the root config, and the root config sets `projects` (zod): `cd packages/a && npx vitest run <file>` never starts
+# ("No projects were found"; it drove four zod implementers to edit vitest.config.ts). The generated command runs from the root instead and passes on real vitest;
+# a package whose config does not merge the root, or a root without projects, keeps the package directory.
+WS="$T/vwork"; WSV=4.0.16
+mkdir -p "$WS/packages/a/src" "$WS/packages/b/src" && printf '{"private":true,"type":"module"}\n' > "$WS/package.json"
+if (cd "$WS" && ${TOM[@]+"${TOM[@]}"} npm install "vitest@$WSV" --no-audit --no-fund --silent >/dev/null 2>&1) && [ -x "$WS/node_modules/.bin/vitest" ]; then
+    printf 'import { defineConfig } from "vitest/config"\nexport default defineConfig({ test: { projects: ["packages/*"], watch: false } })\n' > "$WS/vitest.config.ts"
+    printf '{"name":"a","type":"module"}\n' > "$WS/packages/a/package.json"; printf '{"name":"b","type":"module"}\n' > "$WS/packages/b/package.json"
+    printf 'import { defineProject, mergeConfig } from "vitest/config"\nimport rootConfig from "../../vitest.config.js"\nexport default mergeConfig(rootConfig, defineProject({}))\n' > "$WS/packages/a/vitest.config.ts"
+    printf 'import { defineProject } from "vitest/config"\nexport default defineProject({})\n' > "$WS/packages/b/vitest.config.ts"
+    for p in a b; do printf 'import { expect, it } from "vitest"\nit("ok", () => expect(1).toBe(1))\n' > "$WS/packages/$p/src/x.test.ts"; done
+    WSOLD="$(cd "$WS/packages/a" && NO_COLOR=1 ${TO[@]+"${TO[@]}"} npx --no-install vitest run src/x.test.ts 2>&1 | grep -ciE "no projects were found")"
+    [ "${WSOLD:-0}" -ge 1 ] && ok "real vitest $WSV: the old package-directory command fails on the base with 'No projects were found'" || bad "workspace fixture did not reproduce the failing command"
+    WSR="$(WS="$WS" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { commandFor } = await import(process.env.ROOT + "/loki-ts/src/util/check_result.ts"), cp = await import("node:child_process");
+const out = [];
+for (const p of ["a", "b"]) {
+  const c = commandFor({ runner: "vitest", path: `packages/${p}/src/x.test.ts` }, process.env.WS, null);
+  const r = cp.spawnSync(c.cmd, c.args, { cwd: c.cwd, encoding: "utf8", env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" } });
+  out.push(`${p}:${c.cwd === process.env.WS ? "root" : "pkg"}:${r.status}:${/1 passed/.test(r.stdout + r.stderr)}`);
+}
+console.log(out.join(" "));' 2>&1)"
+    [ "$WSR" = "a:root:0:true b:pkg:0:true" ] && ok "real vitest: the merged-root package runs from the root and passes; a package that does not merge the root keeps its own directory ($WSR)" || bad "generated vitest commands: $WSR"
+    # A real failing test in the root-run case prints "FAIL  |a| src/x.test.ts > bad" (project prefix, project-relative path): the parser must still see a failing id, keep the check failed
+    # with that line as its first error, and the full-suite attribution must name packages/a/src/x.test.ts (not another file) as the file the id belongs to.
+    printf 'import { expect, it } from "vitest"\nit("bad", () => expect(1).toBe(2))\nit("ok", () => expect(1).toBe(1))\n' > "$WS/packages/a/src/x.test.ts"
+    WSF="$(WS="$WS" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { commandFor, classifyCheck, firstError } = await import(process.env.ROOT + "/loki-ts/src/util/check_result.ts"), { failIds, idNamesFile } = await import(process.env.ROOT + "/loki-ts/src/engine10/failures.ts"), cp = await import("node:child_process");
+const c = commandFor({ runner: "vitest", path: "packages/a/src/x.test.ts" }, process.env.WS, null);
+const r = cp.spawnSync(c.cmd, c.args, { cwd: c.cwd, encoding: "utf8", env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" } }), out = r.stdout + r.stderr;
+const ids = failIds(out), id = ids.find((i) => i.includes(" > ")) ?? "";
+console.log([c.cwd === process.env.WS ? "root" : "pkg", r.status, classifyCheck({ kind: "test", ok: false, cut: false, missing: false, out }).result, ids.length > 0, /^FAIL \|a\| src\/x\.test\.ts > bad/.test(firstError(out)), idNamesFile(id, "packages/a/src/x.test.ts"), idNamesFile(id, "packages/a/src/other.test.ts")].join(" "));' 2>&1)"
+    [ "$WSF" = "root 1 fail true true true false" ] && ok "real vitest root run: a failing test prints a project-prefixed id; it stays a failure with ids and the id names packages/a/src/x.test.ts, not another file ($WSF)" || bad "root-run failure parse: $WSF"
+else
+    printf '  SKIP: real vitest workspace: npm could not install it (offline?)\n'
+fi
 
 # A batched vitest file reads exactly as the same file run alone: real vitest 4.0.16 non-TTY output vs vitestFileText of its JSON report.
 PAR="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
@@ -771,6 +841,7 @@ print("fix_rounds %d" % sum(1 for e in ev if e["type"] == "fix.round"))
 print("pre_red %s" % ",".join(pages(v.get("pre_red_checks", []))))
 print("suite_excused %s" % ("full suite: mono-web" in v.get("pre_red_checks", [])))
 print("verdict %s" % done.get("verdict"))
+print("not_excused %s" % " ;; ".join(n for n in done.get("not_proven", []) if n.startswith("not excused: full suite")))
 PY
 )"
 }
@@ -814,8 +885,8 @@ unit_rv() { # unit_rv <version> <case>
     p8)
     rv_fixture "$T/rv-$ver-p8" 1 "$RVROOT/$ver"; rv_run "$T/rv-$ver-p8" "$REP_EXTRA" '  extra: undefined as unknown as (p: string) => string,'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver p8: /"
-    printf '%s\n' "$RVS" | grep -qx 'suite_excused False' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
-        && ok "real vitest $ver p8: a full-suite-only test red on base, now failing with a new error, is not excused by its id; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
+    printf '%s\n' "$RVS" | grep -qx 'suite_excused False' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] && printf '%s\n' "$RVS" | grep -qE '^not_excused not excused: full suite.*error text differs' \
+        && ok "real vitest $ver p8: a full-suite-only test red on base, now failing with a new error, is not excused by its id; not delivered, and the receipt says the error text differs ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver p8: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
     ;;
     p8new)
