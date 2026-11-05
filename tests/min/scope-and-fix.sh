@@ -137,6 +137,7 @@
 #  52. sizing.ts wallEnabled: default on again (the wall default check reads true,true,false,true,true).
 #  53. seal.ts symbolGaps: count agent-authored test sources again (the passes-on-base legs read VERIFIED).
 #  54. mutation_proof.ts: skip the baseMustPass pre-run (the red-on-base legs read VERIFIED).
+#  57. seal.ts failThenPass: count symbols the base lacks again (the exists-only legs read VERIFIED).
 #  56. check_result.ts assertionFailure: return true (the calls-a-new-function and import-only pytest legs read VERIFIED).
 #  55. seal.ts failThenPass: never trust the system interpreter (the pytest fail-then-pass leg reads PARTIAL).
 
@@ -696,9 +697,9 @@ make_wo_py_repo() {
     [ -n "${WO_RED:-}" ] && printf '\n\ndef test_double():\n    assert calc.double(3) == 6\n' >> "$1/test_calc.py" # WO_RED: test_calc.py is already red on the base
     return 0
 }
-# wo_legs <label> <make_repo> <target> <test file> <fixed body> <broken body> <broken-line> <new failing test> <new passing test> <added skip marker> <broken fix + added triple> <test calling triple> <test importing triple, body passes>
+# wo_legs <label> <make_repo> <target> <test file> <fixed body> <broken body> <broken-line> <new failing test> <new passing test> <added skip marker> <broken fix + added triple> <test calling triple> <test importing triple, body passes> <test asserting only that triple exists>
 wo_legs() {
-    local label="$1" mk="$2" tgt="$3" tf="$4" good="$5" bad_body="$6" buggy="$7" newfail="$8" newpass="$9" skip="${10}" brokentriple="${11}" calltriple="${12}" importtriple="${13}" task="fix double(a) in $3 so it returns twice a"
+    local label="$1" mk="$2" tgt="$3" tf="$4" good="$5" bad_body="$6" buggy="$7" newfail="$8" newpass="$9" skip="${10}" brokentriple="${11}" calltriple="${12}" importtriple="${13}" existstriple="${14}" task="fix double(a) in $3 so it returns twice a"
     wo() { MAKE_REPO="$mk" run_engine "$task" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET="$tgt" E2E_STUB_REPLACE="$buggy" E2E_STUB_TEST_FILE="$tf" LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 "$@"; notes="$(wo_receipt np)"; mp="$(wo_receipt mp)"; ck="$(wo_receipt ck)"; }
     wo E2E_STUB_SNIPPET="$good" E2E_STUB_TEST_APPEND="$newfail"
     [ "$(outcome)" = "VERIFIED" ] && ok "$label fail-then-pass: a fix with a new test that fails on the base and passes on the change is VERIFIED" || { bad "$label fail-then-pass: outcome is '$(outcome)' ($notes)"; dump; }
@@ -719,13 +720,17 @@ wo_legs() {
     has "$label calls a new function: the receipt names the missing fail-then-pass proof" "$notes" "no test shown to fail on the base commit and pass on the change"
     wo E2E_STUB_SNIPPET="$brokentriple" E2E_STUB_TEST_APPEND="$importtriple"
     case "$(outcome)" in VERIFIED) bad "$label import only: a test that merely imports the new function is VERIFIED"; dump ;; *) ok "$label import only: not VERIFIED ($(outcome))" ;; esac
+    # E: the test asserts only that the invented triple() exists, beside a wrong change to double(): it fails on the base by assertion and names a changed symbol, but triple is not on the base and the task never asks for it.
+    wo E2E_STUB_SNIPPET="$brokentriple" E2E_STUB_TEST_APPEND="$existstriple"
+    [ "$(outcome)" = "PARTIAL" ] && ok "$label exists only: a test that asserts only that an invented function exists is not proof (PARTIAL)" || { bad "$label exists only: outcome is '$(outcome)'"; dump; }
+    has "$label exists only: the receipt names the missing fail-then-pass proof" "$notes" "no test shown to fail on the base commit and pass on the change"
     WO_RED=1 wo E2E_STUB_SNIPPET="$good" E2E_STUB_TEST_APPEND="$newpass"
     [ "$(outcome)" = "PARTIAL" ] && ok "$label red on base: an edited test file that was already red on the base is not fail-then-pass proof (PARTIAL)" || { bad "$label red on base: outcome is '$(outcome)'"; dump; }
 }
 WD="$(cd "$ROOT/loki-ts" && bun -e 'const { wallEnabled } = await import("./src/engine10/sizing.ts"); console.log([wallEnabled({}), wallEnabled({ LOKI_E10_WALL: "" }), wallEnabled({ LOKI_E10_WALL: "0" }), wallEnabled({ LOKI_E10_WALL: "1" }), wallEnabled({ LOKI_E10_WALL: "on" })].join(","))' 2>&1)"
 [ "$WD" = "false,false,false,true,true" ] && ok "wall default: the Wall session is off unless LOKI_E10_WALL=1/on ($WD)" || bad "wall default: wallEnabled gave '$WD'"
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
-    wo_legs pytest make_wo_py_repo calc.py test_calc.py $'    return a * 2' $'    return a * 3' $'    return a + a + 1' $'\n\ndef test_double():\n    assert calc.double(3) == 6\n' $'\n\ndef test_names_double():\n    assert callable(calc.double)\n' $'\n\nimport pytest\n\n\n@pytest.mark.skip\ndef test_later():\n    pass\n' $'    return a * 3\n\n\ndef triple(a):\n    return a * 3' $'\n\ndef test_triple():\n    assert calc.triple(2) == 6\n' $'\n\nfrom calc import triple\n\n\ndef test_imports():\n    pass\n'
+    wo_legs pytest make_wo_py_repo calc.py test_calc.py $'    return a * 2' $'    return a * 3' $'    return a + a + 1' $'\n\ndef test_double():\n    assert calc.double(3) == 6\n' $'\n\ndef test_names_double():\n    assert callable(calc.double)\n' $'\n\nimport pytest\n\n\n@pytest.mark.skip\ndef test_later():\n    pass\n' $'    return a * 3\n\n\ndef triple(a):\n    return a * 3' $'\n\ndef test_triple():\n    assert calc.triple(2) == 6\n' $'\n\nfrom calc import triple\n\n\ndef test_imports():\n    pass\n' $'\n\ndef test_triple_exists():\n    assert callable(getattr(calc, "triple", None))\n'
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest wall-off: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest wall-off: pytest is not installed"; fi
 fi
@@ -733,7 +738,7 @@ for vt in 2 latest; do
     VT_NM="$T/vt-$vt/node_modules"
     [ -x "$VT_NM/.bin/vitest" ] || { if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "vitest $vt wall-off: vitest@$vt is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: vitest $vt wall-off: vitest@$vt is not installed (offline?)"; fi; continue; }
     export VT_NM
-    wo_legs "vitest $vt" make_wo_vt_repo calc.ts calc.test.ts '  return a * 2;' '  return a * 3;' '  return a + a + 1;' $'\ntest("double", () => {\n  expect(calc.double(3)).toBe(6);\n});' $'\ntest("names double", () => {\n  expect(typeof calc.double).toBe("function");\n});' $'\ntest.skip("later", () => {});' $'  return a * 3;\n}\n\nexport function triple(a: number): number {\n  return a * 3;' $'\ntest("triple", () => {\n  expect((calc as any).triple(2)).toBe(6);\n});' $'\nimport { triple } from "./calc";\ntest("imports", () => {\n  void triple;\n});'
+    wo_legs "vitest $vt" make_wo_vt_repo calc.ts calc.test.ts '  return a * 2;' '  return a * 3;' '  return a + a + 1;' $'\ntest("double", () => {\n  expect(calc.double(3)).toBe(6);\n});' $'\ntest("names double", () => {\n  expect(typeof calc.double).toBe("function");\n});' $'\ntest.skip("later", () => {});' $'  return a * 3;\n}\n\nexport function triple(a: number): number {\n  return a * 3;' $'\ntest("triple", () => {\n  expect((calc as any).triple(2)).toBe(6);\n});' $'\nimport { triple } from "./calc";\ntest("imports", () => {\n  void triple;\n});' $'\ntest("triple exists", () => {\n  expect(typeof (calc as any).triple).toBe("function");\n});'
 done
 
 finish
