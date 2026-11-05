@@ -17,7 +17,7 @@ import { routerEnabled } from "../runner/router/flag.ts";
 import { exitKind, routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 import { clampBashTimeoutEnv, envWithPwd, pinBashShellEnv, killGroupWithGrace, reapLiveGroup } from "../runner/worker_proc.ts"; import { engine10StaticPrefix, sessionPinModel } from "../runner/providers.ts"; export { sessionPinModel }; import { capToSessionPin } from "../runner/model_rank.ts"; import { idleGapMs, prefixParts, prefixSha } from "../util/cost_breakdown.ts";
-import { allowFor, appendFenceRecord, conflictNamed, fenceEnabled, fenceTask, restoreFenced, snapshotFenced } from "../util/config_fence.ts"; // E1: config and lockfile write fence
+import { allowFor, appendFence, conflictNamed, fenceEnabled, fenceTask, restoreFenced, snapshotFenced } from "../util/config_fence.ts"; // E1: config and lockfile write fence
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
 import { calculateCostFromRecords, partialUsagePath, readEfficiencyDir, recordPartialStreamCost } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
@@ -148,8 +148,10 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       if (opts.signal.aborted || sessionsCancelled()) return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true, stderrTail: "" });
       const env = childEnv(opts, cfg);
       const fenceCwd = opts.cwd ?? process.cwd(), fenceOn = fenceEnabled(opts.stage, process.env); // E1
-      const fenceSnap = fenceOn ? snapshotFenced(fenceCwd) : null, fenceTaskText = fenceOn ? fenceTask(process.env, fenceCwd) : "", fenceAllow = allowFor(fenceTaskText, allowOnce);
-      if (fenceOn) { env["LOKI_E10_FENCE_TASK"] = fenceTaskText.slice(0, 8000); env["LOKI_E10_FENCE_ALLOW"] = JSON.stringify(allowOnce); } else { delete env["LOKI_E10_FENCE_TASK"]; delete env["LOKI_E10_FENCE_ALLOW"]; }
+      const fenceRunId = process.env["LOKI_E10_RUN_ID"], fenceRunDir = fenceRunId ? join(cfg.lokiRoot ?? join(fenceCwd, ".loki"), "runs", fenceRunId) : null;
+      const fenceSnap = fenceOn ? snapshotFenced(fenceCwd) : null, fenceTaskText = fenceOn ? fenceTask(process.env, fenceRunDir ?? undefined) : "", fenceAllow = allowFor(fenceTaskText, allowOnce);
+      if (fenceOn) { env["LOKI_E10_FENCE_TASK"] = fenceTaskText; env["LOKI_E10_FENCE_ALLOW"] = JSON.stringify(allowOnce); if (fenceRunDir) env["LOKI_E10_FENCE_RUNDIR"] = fenceRunDir; else delete env["LOKI_E10_FENCE_RUNDIR"]; } else { for (const k of ["LOKI_E10_FENCE_TASK", "LOKI_E10_FENCE_ALLOW", "LOKI_E10_FENCE_RUNDIR"]) delete env[k]; }
+      if (fenceSnap?.error && fenceRunDir) appendFence(fenceRunDir, { k: "failure", text: `config fence inactive for this session: ${fenceSnap.error}` });
       archivePriorCosts(cfg.lokiRoot, opts.cwd, opts.iterationId);
       const [cmd, args] = cfg.childCommand ?? [
         process.execPath,
@@ -203,17 +205,20 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
           if (!guard.ok) cfg.emit?.("guard.violation", opts.stage, { provider: cfg.provider, violations: guard.violations, reverted: guard.reverted });
           opts.signal.removeEventListener("abort", onAbort);
           if (fenceSnap) { // E1: put back any config or lockfile the session changed (Bash, a tool the hook does not see, the in-session checks), then record it
-            const runId = process.env["LOKI_E10_RUN_ID"], runDir = runId ? join(cfg.lokiRoot ?? join(fenceCwd, ".loki"), "runs", runId) : null;
-            const restored = restoreFenced(fenceCwd, fenceSnap, fenceAllow);
-            if (restored.length > 0) { cfg.emit?.("config_fence.restored", opts.stage, { session_id: sessionId, paths: restored }); if (runDir) appendFenceRecord(runDir, { restored: restored.map((path) => ({ path, stage: opts.stage, session: sessionId })) }); }
+            try {
+              const r = restoreFenced(fenceCwd, fenceSnap, fenceAllow);
+              if (r.restored.length > 0) { cfg.emit?.("config_fence.restored", opts.stage, { session_id: sessionId, paths: r.restored }); if (fenceRunDir) appendFence(fenceRunDir, ...r.restored.map((path) => ({ k: "restored", path, stage: opts.stage, session: sessionId }))); }
+              const failures = [...r.failed.map((f) => `could not restore ${f.path} (${f.reason})`), ...(r.error && !fenceSnap.error ? [r.error] : [])];
+              if (failures.length > 0) { cfg.emit?.("config_fence.failed", opts.stage, { session_id: sessionId, failures }); if (fenceRunDir) appendFence(fenceRunDir, ...failures.map((text) => ({ k: "failure", text }))); }
+            } catch (e) { if (fenceRunDir) appendFence(fenceRunDir, { k: "failure", text: `restore crashed (${e instanceof Error ? e.message.slice(0, 120) : "error"})` }); } // a fence bug never fails the session
             allowOnce = []; // consumed by this session
           }
           // The CLI invoker writes only to its iteration log, never stdout.
           const log = join(opts.cwd ?? process.cwd(), ".loki", `iteration-${sessionId}.log`);
           const logText = existsSync(log) ? readFileSync(log, "utf8") : ""; const markers = parseMarkers(stdout + logText);
           if (fenceSnap && markers.specConflict) { // E1: a conflict naming a config file allowlists that path for the next session; the receipt shows it and it blocks VERIFIED
-            const named = conflictNamed(markers.specConflict, fenceSnap.files.keys(), fenceAllow), runId = process.env["LOKI_E10_RUN_ID"];
-            if (named.length > 0) { allowOnce = named; cfg.emit?.("config_fence.allowlisted", opts.stage, { session_id: sessionId, paths: named }); if (runId) appendFenceRecord(join(cfg.lokiRoot ?? join(fenceCwd, ".loki"), "runs", runId), { allowlisted: named.map((path) => ({ path, session: sessionId })) }); }
+            const named = conflictNamed(markers.specConflict, fenceSnap.files.keys(), fenceAllow);
+            if (named.length > 0) { allowOnce = named; cfg.emit?.("config_fence.allowlisted", opts.stage, { session_id: sessionId, paths: named }); if (fenceRunDir) appendFence(fenceRunDir, ...named.map((path) => ({ k: "allowlisted", path, session: sessionId }))); }
           }
           const durationS = (Date.now() - start) / 1000, authCause = code === 0 ? null : sdkAuthCause(logText); // FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG: the provider text rides the event so the Reason line can name it
           cfg.emit?.("session.ended", opts.stage, {

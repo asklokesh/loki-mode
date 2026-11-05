@@ -967,9 +967,9 @@ if [ -x "$TSC_NM/.bin/tsc" ] && [ -x "$TSC_NM/.bin/vitest" ]; then
     tsc_run E2E_STUB_SNIPPET=$'const leak = 1;\n'"$TS_SNIP"
     [ "$(fix_sessions)" -ge 1 ] && ok "tsc touched: an unused local in the file the change wrote is fix-round input ($(fix_sessions) fix sessions)" || { bad "tsc touched: no fix session"; dump; }
     TSC_CFG_EDIT=(E2E_STUB_SNIPPET="$TS_SNIP" E2E_STUB_TEST_APPEND=$'export const edited = 1;\n' E2E_STUB_TARGET=tsconfig.json E2E_STUB_REPLACE='"strict":true' E2E_STUB_SNIPPET='"strict":true,"allowJs":false')
-    MAKE_REPO=make_tsc_repo run_engine "add a multiply(a, b) function to calc.ts and set tsconfig allowJs to false" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 "${TSC_CFG_EDIT[@]}" # the task names tsconfig, so the config fence lets the edit through
-    [ "$(fix_sessions)" -ge 1 ] && ok "tsc config edit: a tsconfig edit the task asked for keeps the untouched-file error blocking ($(fix_sessions) fix sessions)" || { bad "tsc config edit: no fix session"; dump; }
-    tsc_run "${TSC_CFG_EDIT[@]}" # the task does not name tsconfig: the fence restores the edit, so the untouched-file error never appears
+    tsc_run "${TSC_CFG_EDIT[@]}" # the config write fence is off by default: a tsconfig edit keeps the untouched-file error blocking
+    [ "$(fix_sessions)" -ge 1 ] && ok "tsc config edit: a tsconfig edit keeps the untouched-file error blocking ($(fix_sessions) fix sessions)" || { bad "tsc config edit: no fix session"; dump; }
+    tsc_run LOKI_CONFIG_FENCE=1 "${TSC_CFG_EDIT[@]}" # LOKI_CONFIG_FENCE=1 and the task does not name tsconfig: the fence restores the edit, so the untouched-file error never appears
     fnotes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
     [ "$(fix_sessions)" = "0" ] && ok "tsc config edit unnamed: the fence restored the tsconfig edit, no fix session" || { bad "tsc config edit unnamed: $(fix_sessions) fix sessions (want 0)"; dump; }
     has "tsc config edit unnamed: the receipt records the restore" "$fnotes" "Config fence restored changes to test, build, lint or type config or a lockfile the task did not ask for: tsconfig.json"

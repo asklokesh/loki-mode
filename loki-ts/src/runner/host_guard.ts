@@ -15,7 +15,7 @@ import { isAbsolute, join, resolve, sep } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
 import { envWithPwd } from "./worker_proc.ts";
 import { permissionPolicyMode } from "../providers/claude_flags.ts";
-import { allowFor, fenceDenyReason, fenceEnabled } from "../util/config_fence.ts";
+import { allowFor, appendFence, fenceDenied, fenceEnabled } from "../util/config_fence.ts";
 
 // Host-guard hook timeout, seconds. Mirrors _loki_hook_timeout in autonomy/run.sh (same env var, same default, same validation).
 export const HOOK_TIMEOUT_DEFAULT_S = 30;
@@ -209,7 +209,9 @@ export function createConfigFenceHook(cwd: string, env: NodeJS.ProcessEnv = proc
   return async (input: unknown) => {
     const d = input !== null && typeof input === "object" ? (input as Record<string, unknown>) : {};
     const ti = d["tool_input"] !== null && typeof d["tool_input"] === "object" ? (d["tool_input"] as Record<string, unknown>) : {};
-    const reason = fenceEnabled(env["LOKI_E10_STAGE"], env) ? fenceDenyReason(String(d["tool_name"] ?? ""), ti["file_path"], cwd, allow) : null;
-    return reason ? hostGuardDecision(reason) : {};
+    const hit = fenceEnabled(env["LOKI_E10_STAGE"], env) ? fenceDenied(String(d["tool_name"] ?? ""), ti["file_path"], cwd, allow) : null;
+    if (!hit) return {};
+    if (env["LOKI_E10_FENCE_RUNDIR"]) appendFence(env["LOKI_E10_FENCE_RUNDIR"], { k: "denied", path: hit.rel, session: env["LOKI_ITERATION"] ?? "" }); // the receipt must show a skipped config edit: the run is capped below VERIFIED
+    return hostGuardDecision(hit.reason);
   };
 }
