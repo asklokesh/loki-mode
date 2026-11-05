@@ -194,6 +194,7 @@
 # 132. exec_spec.ts relationCasesGo: keep the wrapped observation as the reference instead of the base bare one (relation cases read right=fail).
 # 133. exec_spec.ts statesWrapRelation: return true (relation cases read norel=fired).
 # 134. exec_spec.ts relationSealedTest: compare the wrapped value to the changed tree's own bare value (relation cases read order=pass).
+# 135. exec_spec.ts defectSites: drop the plural-subject rule (exec spec atoms read open=-,...) or the which-clause rule (open=...,-,-).
 # 118. exec_spec.ts execSpecBriefOf: drop the knob check (exec spec atoms read brief=B,B).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
@@ -1601,8 +1602,10 @@ out.push(`brief=${es.execSpecBriefOf(rd, { LOKI_E10_EXEC_SPEC: "0" }) ?? "none"}
 await import("./src/engine10/stages/wall.ts"); const { specSiteGap } = await import("./src/engine10/stages/seal.ts");
 const g = (st, ch) => specSiteGap({ wall: { files: [], exec_spec: { status: st, uncovered_sites: ["Report"] } } }, [], {}, () => "", ch).join("+") || "-";
 out.push(`gap=${g("sealed", [])},${g("sealed", ["Report"])},${g("advisory_only", [])}`, `defect=${[...es.defectSites(task)].sort().join("+")}`);
+const ds = (x) => [...es.defectSites(x)].sort().join("+") || "-"; // fail-open shapes from review: a plural subject, a contrast with a healthy side, a which-clause about the last span
+out.push("open=" + ["Both `Split` and `Report` should keep the dash.", "`Split` stops at a lone dash, `Report` is unaffected.", "`Report` calls `Split`, which stops at a lone dash.", "`Report` calls `Split`, which is correct."].map(ds).join(","));
 console.log(out.join(" | "));' 2>&1)"
-    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | otherquote=P0 | prop=P0 | bind=100000 | brief=none,B | gap=Report,-,- | defect=Report+x"
+    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | otherquote=P0 | prop=P0 | bind=100000 | brief=none,B | gap=Report,-,- | defect=Report+Split+x | open=Report+Split,Split,Split,-"
     [ "$ESU" = "$WESU" ] && ok "exec spec atoms: parity from the whole body and only from quoted code, never a property write, one pair for the two sites Report reaches, binding only when input and expected value come whole from one issue example, no brief read with the knob off" \
         || bad "exec spec atoms gave: $ESU (want: $WESU)"
 fi

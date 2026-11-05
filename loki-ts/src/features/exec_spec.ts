@@ -389,7 +389,7 @@ export function uncoveredSites(e: Emitter, binding: string[], full: string, atom
 // or asks for behavior ("`Split` drops args", "`Split` should return ...", "`Split` is wrong"), or the object of a fix verb ("Fix `Split`").
 // A comparison ("like `Join` does", "as `Join` does", "see `Join`"), a negated scope ("should not change `Report`", "does not affect
 // `Report`") and a verdict of health ("`Report` is fine") never make a site defective, and neither does a span elsewhere in the sentence.
-const DEFECT_OR_ASK = /\binstead of\b|\bshould\b|\bexpected\b|\bmust\b|\bneeds? to\b|\b(?:bug|wrong|broken|mishandl\w*|drops?|dropped|fails?|failing|ignores?|ignored|incorrect\w*|crash\w*|panics?|regress\w*|missing|loses?|lost|never|doesn't|does not|isn't|is not)\b/i; // explicit defect or request words only: "returns" and "gives" describe behavior, they do not name a defect
+const DEFECT_OR_ASK = /\binstead of\b|\bshould\b|\bexpected\b|\bmust\b|\bneeds? to\b|\b(?:bug|wrong|broken|mishandl\w*|drops?|dropped|fails?|failing|ignores?|ignored|incorrect\w*|crash\w*|panics?|regress\w*|missing|loses?|lost|never|doesn't|does not|isn't|is not|stops? at|stops? on)\b/i; // explicit defect or request words only: "returns" and "gives" describe behavior, they do not name a defect
 const HEALTHY = /^\s*(?:\w+\s+){0,2}(?:is|are|works?|stays?|remains?|looks?)\s+(?:fine|correct|ok|okay|right|unaffected|unchanged|good|already correct)\b|\b(?:returns?|gives?|produces?|prints?|yields?)\s+the\s+(?:right|correct|expected)\b/i;
 const HEALTHY_TAIL = /^\s*which\s+(?:is|are)\s+(?:correct|fine|right|ok|okay|expected|intended)\b/i; // ", which is correct" clears the clause before it
 const FIX_VERB = /\b(?:fix|fixes|fixing|change|update|correct|repair|handle|make)\s+`([^`\n]{1,80})`/gi;
@@ -403,8 +403,13 @@ export function defectSites(task: string): Set<string> {
     // a contrast ("A returns X but B returns Y instead of Z", "A returns the right shape, B should ...") is two clauses: only the side
     // carrying the defect words marks its subject
     const clauses = unit.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").split(/;|:\s|,\s*(?=(?:which|but|and|so|while|whereas|though)\b|`)|\s+(?=(?:but|whereas|while)\s)/i).map(unmask), marks: (string | null)[] = [];
-    for (const clause of clauses) {
+    for (const [ci, clause] of clauses.entries()) {
       let mark: string | null = null;
+      const plural = /^\s*(?:both\s+|also\s+)?`([^`\n]{1,80})`\s+and\s+`([^`\n]{1,80})`(.*)$/is.exec(clause); // "Both `A` and `B` should ...": a plural subject marks each
+      if (plural) { const pred = plural[3]!.replace(/`[^`\n]*`/g, " "); if (!HEALTHY.test(pred) && DEFECT_OR_ASK.test(pred)) for (const x of [plural[1]!, plural[2]!]) { const id = spanId(x); if (id) out.add(id); } }
+      if (ci > 0 && /^\s*which\b/i.test(clause) && !HEALTHY_TAIL.test(clause) && !HEALTHY.test(clause) && DEFECT_OR_ASK.test(clause.replace(/`[^`\n]*`/g, " "))) { // "`Report` calls `Split`, which stops ...": the which-clause describes the last span before it
+        const prev = [...clauses[ci - 1]!.matchAll(/`([^`\n]{1,80})`/g)].pop(); const id = prev ? spanId(prev[1]!) : null; if (id) out.add(id);
+      }
       for (const m of clause.matchAll(FIX_VERB)) { const before = clause.slice(0, m.index); if (!/\b(?:not|never|n't)\s+$/i.test(before)) { const id = spanId(m[1]!); if (id) out.add(id); } } // "Fix `X`", never "should not change `X`"
       const subj = /^\s*(?:(?:the|a|an|also|and|but|so|now|then|here|still|whereas|while)\s+)*`([^`\n]{1,80})`(.*)$/is.exec(clause); // the clause's subject span and its predicate
       if (subj) { const pred = subj[2]!.replace(/`[^`\n]*`/g, " "); if (!HEALTHY.test(pred) && DEFECT_OR_ASK.test(pred)) mark = spanId(subj[1]!); }
