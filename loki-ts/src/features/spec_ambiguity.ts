@@ -86,7 +86,7 @@ const DECISION = /\b(?:should|let'?s|we'?ll|we will|prefer|go with|better|makes?
 function byMaintainer(c: OpenChoice, comments: Cmt[]): { k: number; evidence: string } | null {
   const d = distinct(c.options.map(tokens));
   for (const cm of [...comments].reverse()) for (const s of sentencesOf(cm.body).reverse()) {
-    if (!DECISION.test(s) || /\beither\b[^.?]*\bor\b/i.test(s)) continue;
+    if (!DECISION.test(s) || /\beither\b.*\bor\b/i.test(s)) continue;
     const t = tokens(s), score = d.map((x) => [...x].filter((w) => t.has(w)).length), best = Math.max(...score);
     if (best < 1 || score.filter((n) => n === best).length !== 1) continue;
     let k = score.indexOf(best);

@@ -422,7 +422,7 @@ res("choice 1: the either/or question is found with its two options", m1.options
 res("choice 1: the maintainer reply picks option 2, basis maintainer", m1.picked === 1 && m1.basis === "maintainer" && m1.evidence.includes("maint (MEMBER)"));
 const m2 = one(Q + tail, { comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get."), mk("maint", "Actually no, callbacks and Command.Generic should receive the supplied cli.Value and Command.Value should keep returning its Get result.")] })!;
 res("choice 1: the LATEST maintainer comment wins over an earlier one", m2.picked === 0 && m2.basis === "maintainer");
-const m3 = one(Q + tail, { comments: [mk("maint", "I'd say either tighten the interface or loosen the validator.")] })!;
+const m3 = one(Q + tail, { comments: [mk("maint", "I'd say either expose the supplied value object from GenericFlag.Get or loosen the validator.")] })!;
 res("choice 1: a maintainer's own either/or is not a decision", m3.basis === "none" && m3.picked === null);
 const m4 = one(Q + tail, { comments: [mk("maint", "I do not think Command.Value should keep returning its Get result.")] })!;
 res("choice 1: a negated maintainer sentence picks the other option", m4.picked === 1 && m4.basis === "maintainer");
