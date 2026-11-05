@@ -41,7 +41,7 @@ export const EVENT_TYPES = [
   "tests.restored", "test.result", "test.scoped_out", "test.skipped_on_base", "fix.round", "already.satisfied", "spec.conflict",
   "session.group_reaped",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
-  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied",
+  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "scaffold.undone",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */

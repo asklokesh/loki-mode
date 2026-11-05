@@ -13,5 +13,7 @@ export interface Hooks {
   briefFacts?(o: Partial<Record<string, Obj>>, runId: string, runDir: string): BriefFacts; sealed?(runDir: string, receipt: { run_id: string; provider: string; model: string; receipt_sha256: string; cost?: { per_model?: Record<string, unknown> } }): void; // after the receipt files are final; failures never reach the seal
   runtimeEvidence?(task: string): Rec | null;
   scaffold?(repoDir: string, baseSha: string, task: string): Rec | null; // zero-model passes on the implemented tree, run once right before the first verify; null when off or nothing to do
+  scaffoldUndo?(repoDir: string, rewrites: Rec[]): Rec[]; // restores the lines the scaffold rewrote (the model's own tree); returns the rewrites restored
+  scaffoldRedo?(repoDir: string, rewrites: Rec[]): void; // re-applies them: the first verify's tree again
 }
 export const hooks: Hooks = {};
