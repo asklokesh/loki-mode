@@ -124,7 +124,7 @@ const errs = []; const pe = {}; const saved = process.env.LOKI_ROUTER; process.e
 parseStartArgs(["--haiku", "--cost", "lean", "task"], (x) => errs.push(x), () => {}, (k, v) => { pe[k] = v; }); process.env.LOKI_ROUTER = saved;
 out.push(`tsnote=${errs.filter((e) => e.includes("is already set and wins")).length}:${pe.LOKI_ROUTER ?? "unset"}`);
 const { wallModel, wallFirstModel } = await import("./src/engine10/sizing.ts"); const { modelDowngrades } = await import("./src/runner/model_downgrades.ts");
-const fam = (m) => (m.match(/haiku|sonnet|opus/) ?? [m])[0], A = { LOKI_ROUTER: "auto" };
+const fam = (m) => (m.match(/haiku|sonnet|opus/) ?? [m])[0], A = { LOKI_ROUTER: "auto", LOKI_E10_WALL: "1" };
 out.push(`wall:preset=${fam(wallModel(A))}:${fam(wallFirstModel("large", A))}:${fam(wallFirstModel("small", { ...A, LOKI_E10_WALL_CONCURRENT: "0" }))}`, `wall:off=${fam(wallModel({}))}`, `wall:nohaiku=${fam(wallModel({ ...A, LOKI_ALLOW_HAIKU: "false" }))}`, `wall:tier=${fam(wallModel({ ...A, LOKI_E10_WALL_TIER: "sonnet" }))}`, `wall:override=${fam(wallModel({ ...A, LOKI_MODEL_OVERRIDE: "sonnet" }))}`, `wall:sesspin=${fam(wallModel({ ...A, LOKI_SESSION_MODEL: "sonnet" }))}`);
 out.push(`wall:why=${modelDowngrades("claude", A).find((d) => d.stage === "wall")?.reason}`);
 const { checkAlreadyDone } = await import("./src/engine10/already_done.ts"); const { cascadeImplementModel } = await import("./src/engine10/sizing.ts");
@@ -239,14 +239,14 @@ run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit LOKI_SESSION_MODEL=son
 run_engine "$TASK" E2E_STUB_MODE=done LOKI_ALLOW_HAIKU=false
 [ "$(model_of implement)" = "sonnet" ] && ok "pins: LOKI_ALLOW_HAIKU=false makes the preset executor sonnet" || { bad "pins: implement '$(model_of implement)'"; dump; }
 
-run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=1
+run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=1 LOKI_E10_WALL=1 # the Wall session is off by default; these legs exercise it
 [ "$(model_of wall)" = "haiku" ] && ok "wall: the Wall author ran on the preset executor (haiku)" || { bad "wall: Wall author on '$(model_of wall)'"; dump; }
 [ "$(outcome)" = "VERIFIED" ] && ok "wall: run is VERIFIED" || { bad "wall: outcome '$(outcome)'"; dump; }
 has "wall: the start line names the Wall downgrade and its reason" "$OUT" "LOKI_ROUTER=auto preset executor"
-run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=1 LOKI_E10_WALL_TIER=sonnet
+run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=1 LOKI_E10_WALL=1 LOKI_E10_WALL_TIER=sonnet
 [ "$(model_of wall)" = "sonnet" ] && ok "wall: LOKI_E10_WALL_TIER=sonnet still pins the Wall author" || { bad "wall: pinned Wall author on '$(model_of wall)'"; dump; }
 
-run_engine "$TASK" E2E_STUB_MODE=wallphantom E2E_STUB_FIX=wallconflict E2E_STUB_WALL_SLEEP=3 LOKI_E10_PLAN=1
+run_engine "$TASK" E2E_STUB_MODE=wallphantom E2E_STUB_FIX=wallconflict E2E_STUB_WALL_SLEEP=3 LOKI_E10_PLAN=1 LOKI_E10_WALL=1
 ref="$(awk '$2 ~ /-wa$/ { sub(/^model=/, "", $3); print $3 }' "$ROUTES" | fam | tr '\n' ' ' | sed 's/ $//')"
 auth="$(awk '$1 == "wall" && $2 !~ /-wa$/ { sub(/^model=/, "", $3); print $3 }' "$ROUTES" | fam | tr '\n' ' ' | sed 's/ $//')"
 [ "$auth" = "haiku" ] && [ "$ref" = "sonnet" ] && ok "wall: a Haiku Wall's conflict is refereed on sonnet (the judge tier)" || { bad "wall: Wall author '$auth', referee '$ref'"; dump; }

@@ -80,7 +80,8 @@ const knob = (v: string | undefined, words: string[]): boolean => words.includes
 /** LOKI_E10_PLAN: 0/off/never skips, 1/on/always forces, anything else sizes. */
 export const planMode = (env = process.env): "auto" | "always" | "never" =>
   knob(env.LOKI_E10_PLAN, ["0", "off", "never", "false"]) ? "never" : knob(env.LOKI_E10_PLAN, ["1", "on", "always", "true"]) ? "always" : "auto";
-export const wallEnabled = (env = process.env): boolean => !knob(env.LOKI_E10_WALL, ["0", "off", "false"]);
+/** EVAL-2026-11-05-3: the single-attempt Wall session lost to no Wall (merge-ready 9/20 vs 11/20, 1 false VERIFIED vs 0, higher cost per merge-ready), so it is OFF unless LOKI_E10_WALL=1/on/true opts in. The code stays reachable for a parallel-attempt selector. */
+export const wallEnabled = (env = process.env): boolean => knob(env.LOKI_E10_WALL, ["1", "on", "true"]);
 /** W1-S3: Wall session cap, 90s small / 180s normal; LOKI_E10_WALL_LIMIT_S overrides (clamped to 300; garbage, zero or negative falls back). */
 export const wallLimitS = (size: TaskSize, env = process.env): number => {
   const raw = env.LOKI_E10_WALL_LIMIT_S, n = Number(raw), dflt = size === "small" ? 90 : 180;

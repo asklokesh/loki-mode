@@ -191,6 +191,7 @@ make_rs_repo() {
     printf 'use calc::Calc;\n\n#[test]\nfn adds() {\n    assert_eq!(Calc::new(2).add(3), 5);\n}\n' > "$1/tests/visible.rs"
 }
 
+# LOKI_E10_WALL defaults to 1 here (legs that exercise the Wall); E2E_WALL= (empty) runs a leg with the Wall off, the product default.
 # run_engine <task> <env assignments...> -> sets REPO, RC, OUT, RUNDIR, ITERS (one "<stage> <iteration> <bytes>" line per session). MAKE_REPO picks the starting repo (default the TS calc repo).
 run_engine() {
     local task="$1" d rid; shift
@@ -205,7 +206,7 @@ run_engine() {
     git -C "$REPO" commit -q -m base
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY \
         LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" LOKI_NO_COMPLETIONS=1 \
-        E2E_STUB_LOG="$d/stub.log" E2E_STUB_ITER_LOG="$ITERS" LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" \
+        E2E_STUB_LOG="$d/stub.log" E2E_STUB_ITER_LOG="$ITERS" LOKI_E10_PLAN=1 LOKI_E10_WALL="${E2E_WALL-1}" LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" \
         "$@" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$task" --no-pr 2>&1)"
     RC=$?
     RUNDIR=""
@@ -667,6 +668,53 @@ for vt in 2 latest; do
     vt_edit E2E_STUB_TEST_APPEND=$'import { beforeEach } from "vitest";\nbeforeEach(() => {});'
     has "vitest $vt added hook: the receipt names the weakened test" "$notes" "weakened test: calc.test.ts"
     [ "$(outcome)" = "PARTIAL" ] && ok "vitest $vt added hook: PARTIAL" || { bad "vitest $vt added hook: outcome is '$(outcome)'"; dump; }
+done
+
+# Wall-off verdict on the REAL runners (rule 22; the Wall session is off by default, so a change is VERIFIED only on harness-run evidence): a fix to double() whose NEW test in the
+# existing test file fails on the base commit and passes on the change is VERIFIED; a new test that also passes on the base is PARTIAL (NO_FAIL_THEN_PASS); a weakened test is PARTIAL even beside a
+# fail-then-pass test; a broken fix is not VERIFIED. util's own pre-existing test is the untouched suite (it never names double()). Plant legs are listed in the header (52-55).
+wo_receipt() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(sys.argv[2] and {"np":r.get("not_proven"),"mp":r.get("mutation_proof"),"ck":[c["name"]+"="+c["result"] for c in r["checks"]]}[sys.argv[2]])' "$RUNDIR/receipt.json" "$1" 2>/dev/null; }
+make_wo_vt_repo() {
+    make_vt_repo "$1"
+    printf 'export function double(a: number): number {\n  return a + a + 1;\n}\n' > "$1/calc.ts.new"; cat "$1/calc.ts.new" >> "$1/calc.ts"; rm -f "$1/calc.ts.new"
+    printf 'export const inc = (n: number): number => n + 1;\n' > "$1/util.ts"
+    printf 'import { expect, test } from "vitest";\nimport { inc } from "./util";\n\ntest("inc", () => {\n  expect(inc(1)).toBe(2);\n});\n' > "$1/util.test.ts"
+}
+make_wo_py_repo() {
+    mkdir -p "$1"
+    printf 'def add(a, b):\n    return a + b\n\n\ndef double(a):\n    return a + a + 1\n' > "$1/calc.py"
+    printf 'import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n    assert calc.add(0, 0) == 0\n' > "$1/test_calc.py"
+    printf 'def inc(n):\n    return n + 1\n' > "$1/util.py"
+    printf 'import util\n\n\ndef test_inc():\n    assert util.inc(1) == 2\n' > "$1/test_util.py"
+}
+# wo_legs <label> <make_repo> <target> <test file> <fixed body> <broken body> <broken-line> <new failing test> <new passing test> <added skip marker>
+wo_legs() {
+    local label="$1" mk="$2" tgt="$3" tf="$4" good="$5" bad_body="$6" buggy="$7" newfail="$8" newpass="$9" skip="${10}" task="fix double(a) in $3 so it returns twice a"
+    wo() { MAKE_REPO="$mk" run_engine "$task" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET="$tgt" E2E_STUB_REPLACE="$buggy" E2E_STUB_TEST_FILE="$tf" LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 "$@"; notes="$(wo_receipt np)"; mp="$(wo_receipt mp)"; ck="$(wo_receipt ck)"; }
+    wo E2E_STUB_SNIPPET="$good" E2E_STUB_TEST_APPEND="$newfail"
+    [ "$(outcome)" = "VERIFIED" ] && ok "$label fail-then-pass: a fix with a new test that fails on the base and passes on the change is VERIFIED" || { bad "$label fail-then-pass: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$mp" in *"fails without the fix: yes"*"$tf"*) ok "$label fail-then-pass: the receipt carries the harness-run proof line ($mp)" ;; *) bad "$label fail-then-pass: no proof line naming $tf: '$mp'" ;; esac
+    case "$ck" in *"$tf=pass"*) ok "$label fail-then-pass: the real runner ran the edited file and passed ($ck)" ;; *) bad "$label fail-then-pass: no passing $tf check: '$ck'" ;; esac
+    wo E2E_STUB_SNIPPET="$good" E2E_STUB_TEST_APPEND="$newpass"
+    [ "$(outcome)" = "PARTIAL" ] && ok "$label passes-on-base: a new test that also passes on the base commit is PARTIAL" || { bad "$label passes-on-base: outcome is '$(outcome)'"; dump; }
+    has "$label passes-on-base: the receipt names the missing fail-then-pass proof" "$notes" "no test shown to fail on the base commit and pass on the change"
+    wo E2E_STUB_SNIPPET="$good" E2E_STUB_TEST_APPEND="$newfail$skip"
+    [ "$(outcome)" = "PARTIAL" ] && ok "$label weakened: an added skip marker is PARTIAL even beside a fail-then-pass test" || { bad "$label weakened: outcome is '$(outcome)'"; dump; }
+    has "$label weakened: the receipt names the weakened test" "$notes" "weakened test: $tf"
+    wo E2E_STUB_SNIPPET="$bad_body" E2E_STUB_TEST_APPEND="$newfail"
+    case "$(outcome)" in VERIFIED) bad "$label broken fix: a fix that leaves the new test red is VERIFIED"; dump ;; *) ok "$label broken fix: not VERIFIED ($(outcome))" ;; esac
+    case "$ck" in *"$tf=fail"*) ok "$label broken fix: the real runner saw the new test fail on the change" ;; *) bad "$label broken fix: no failing $tf check: '$ck'" ;; esac
+}
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    wo_legs pytest make_wo_py_repo calc.py test_calc.py $'    return a * 2' $'    return a * 3' $'    return a + a + 1' $'\n\ndef test_double():\n    assert calc.double(3) == 6\n' $'\n\ndef test_add_again():\n    assert calc.add(1, 1) == 2\n' $'\n\nimport pytest\n\n\n@pytest.mark.skip\ndef test_later():\n    pass\n'
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest wall-off: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest wall-off: pytest is not installed"; fi
+fi
+for vt in 2 latest; do
+    VT_NM="$T/vt-$vt/node_modules"
+    [ -x "$VT_NM/.bin/vitest" ] || { if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "vitest $vt wall-off: vitest@$vt is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: vitest $vt wall-off: vitest@$vt is not installed (offline?)"; fi; continue; }
+    export VT_NM
+    wo_legs "vitest $vt" make_wo_vt_repo calc.ts calc.test.ts '  return a * 2;' '  return a * 3;' '  return a + a + 1;' $'\ntest("double", () => {\n  expect(calc.double(3)).toBe(6);\n});' $'\ntest("add again", () => {\n  expect(calc.add(1, 1)).toBe(2);\n});' $'\ntest.skip("later", () => {});'
 done
 
 finish
