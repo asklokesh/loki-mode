@@ -21,6 +21,10 @@
 #             (exit 2); a CRLF-saved name reads as the name; `loki failover --chain claude,bogus` names bogus.
 #   no key:   the same opencode run without OPENROUTER_API_KEY or an opencode
 #             OpenRouter login is refused before any session, naming the key.
+#   toolless: toolLessCall (sdk_invoker.ts), on a stub client and a stub Agent SDK query(): no tools on either route; thinking off is
+#             {type:"disabled"}, low is adaptive at effort low; the subscription route sends tools [], maxTurns 1, no setting sources,
+#             no session file and a fixed title; each call is one priced child-ledger line (run_id, thinking tokens); an unreadable
+#             result is an unmeasured line; LOKI_E10_MAX_COST_USD bounds the query (maxBudgetUsd) and a reached cap sends nothing.
 #   grep:     no removed provider name in shipped code paths, apart from the
 #             migration lists/message and model-family price or key rows.
 #
@@ -49,6 +53,8 @@
 #      `LOKI_PROVIDER || "claude"` (the plan leg's opencode log stays empty). 17. cost_preview.ts runEstimate: same
 #      (the estimate-saved-codex leg runs instead of refusing). 18. autonomy/route.sh: drop the saved hint on the
 #      unsupported-provider message (the bogus saved leg).
+#  19. sdk_invoker.ts toolLessThinking: off no longer disabled; drop `tools: []`; drop the ledger append on the SDK route; drop the cap
+#      refusal; drop maxBudgetUsd; drop the fixed title (each fails the toolless leg).
 #   9. tests/min/providers-supported.sh run_engine: keep XDG_CONFIG_HOME from the caller and give the no-key leg an
 #      opencode.json with provider.openrouter there (the no-key leg starts a session; proves the isolation matters).
 
@@ -324,7 +330,7 @@ __setToolLessQueryForTests(async function* ({ options }) {
   yield { type: "result", subtype: mode === "budget" ? "error_max_budget_usd" : "success", is_error: false, result: "SUB", total_cost_usd: 0.0003, usage: { input_tokens: 2, output_tokens: 416, cache_read_input_tokens: 0, cache_creation_input_tokens: 720 }, modelUsage: { "claude-haiku-5-5": { thinkingTokens: 387 } } };
 });
 const c = await toolLessCall({ ...base, thinking: "off", ledger: { lokiDir: `${D}/c`, phase: "tl-c" } });
-out.push(`sdk:opts=${JSON.stringify(opts.tools)}:${opts.maxTurns}:${JSON.stringify(opts.thinking)}:${JSON.stringify(opts.settingSources)}:${opts.persistSession}:${opts.systemPrompt}:${opts.model}:${opts.maxBudgetUsd ?? "nocap"}`);
+out.push(`sdk:opts=${JSON.stringify(opts.tools)}:${opts.maxTurns}:${JSON.stringify(opts.thinking)}:${JSON.stringify(opts.settingSources)}:${opts.persistSession}:${opts.systemPrompt}:${opts.model}:${opts.maxBudgetUsd ?? "nocap"}:${opts.title}`);
 out.push(`sdk:res=${c.outcome.kind}:${c.outcome.value}:${c.route}:${c.usd}:${c.thinkingTokens}`);
 const lc = lines("c");
 out.push(`sdk:ledger=${lc.length}:${lc[0]?.usd}:${lc[0]?.thinking_tokens}:${lc[0]?.source}:${lc[0]?.outcome}:${lc[0]?.max_tokens}`);
@@ -352,7 +358,7 @@ api:low={"type":"adaptive"}:low
 api:notools=true
 api:res=ok:ANS:api
 api:ledger=1:tl-a:claude-haiku-5-5:1000:true
-sdk:opts=[]:1:{"type":"disabled"}:[]:false:sys:claude-haiku-5-5:nocap
+sdk:opts=[]:1:{"type":"disabled"}:[]:false:sys:claude-haiku-5-5:nocap:loki-toolless
 sdk:res=ok:SUB:agent-sdk:0.0003:387
 sdk:ledger=1:0.0003:387:sdk-toolless:ok:300
 sdk:low={"type":"adaptive"}:low
