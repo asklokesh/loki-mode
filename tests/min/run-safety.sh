@@ -257,9 +257,9 @@ has "detach: route start --detach resolves to engine10" "$RT" "engine10"
 case "$RT" in *"not supported by the Loki 10 engine"*) bad "detach: route still refuses --detach" ;; *) ok "detach: route no longer refuses --detach" ;; esac
 RT2="$(cd "$ER" && bash "$ROOT/bin/loki" route start -- "fix the -d flag parsing" 2>&1)"
 has "detach: a -d after -- stays task text in route" "$RT2" "engine10"
-# after a bare -- every word is task text, so "-d" there is never the flag: this run stays in the foreground (stub, a few seconds)
+# after a bare -- every word is task text, so "-d" there is never the flag (positional-first form, which bin/loki parses itself): this run stays in the foreground (stub, a few seconds)
 GR="$T/repo-detach-guard"; new_repo "$GR"
-GOUT="$(cd "$GR" && E2E_STUB_MODE=done ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start --no-pr -- "$TASK" -d </dev/null 2>&1)"
+GOUT="$(cd "$GR" && E2E_STUB_MODE=done ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$TASK" --no-pr -- -d </dev/null 2>&1)"
 case "$GOUT" in *Detached:*) bad "detach: a -d after -- detached the run" ;; *) ok "detach: a -d after -- ran in the foreground" ;; esac
 ls "$GR"/.loki/logs/detached-*.log >/dev/null 2>&1 && bad "detach: a -d after -- created a detached log" || ok "detach: a -d after -- created no detached log"
 DRY="$(cd "$ER" && bash "$ROOT/bin/loki" start "$TASK" --detach --dry-run 2>&1)"
