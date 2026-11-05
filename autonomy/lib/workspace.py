@@ -771,7 +771,7 @@ def infer(name, workspaces, say=say):
     return 0
 
 
-# ---- goal-driven repo selection (print-only `affected`; pruning in `run --affected`) ----------------------
+# ---- goal-driven repo selection (print-only `affected`; pruning via the affected key or env) ----------------------
 _GOAL_STOP = frozenset(
     "rename change update add remove fix everywhere all every across repos repo the a an to in of for from with "
     "and or field fields use make new old into on by it its be should so that this as at is are we our code "

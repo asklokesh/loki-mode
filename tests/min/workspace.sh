@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Workspaces: goal-driven repo selection (autonomy/lib/workspace.py affected, run --affected), inferred ordering,
+# Workspaces: goal-driven repo selection (autonomy/lib/workspace.py affected), inferred ordering,
 # read-only checkouts for unselected repos, the selection recorded in integration.json, linked PR comments and the
 # summary line, the infer refactor, the loki.yaml schema key, and the CLI. Offline: three throwaway git repos
 # (acme/api, acme/web, acme/docs, plus acme/crm in the boundary case), a stub launcher and a fake gh on PATH.
