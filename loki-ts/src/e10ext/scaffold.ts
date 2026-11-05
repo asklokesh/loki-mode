@@ -150,7 +150,7 @@ interface Rule { left: El[]; old: El[]; right: El[]; neu: El[]; bol: boolean; eo
  *  most fanout x its instance count of lines (it learned from what the change did, so it may not do much more than that); diag:
  *  return every candidate with its evidence, unguarded (the recall probe sweeps guards offline). */
 export interface SystematicOpts { ctx: number; scope: "file" | "dir"; minInstances: number; affix: boolean; taskNames: boolean; fanout: number; diag: boolean }
-export const SYSTEMATIC_DEFAULTS: SystematicOpts = { ctx: 2, scope: "dir", minInstances: 2, affix: true, taskNames: false, fanout: 1, diag: false };
+export const SYSTEMATIC_DEFAULTS: SystematicOpts = { ctx: 2, scope: "file", minInstances: 2, affix: true, taskNames: false, fanout: 1, diag: false };
 
 function instOf(file: string, oldLine: string, newLines: string[]): Inst | null {
   const py = isPy(file), o = tokenize([oldLine], py), n = tokenize(newLines, py);
@@ -305,12 +305,13 @@ export function systematicRewrites(repoDir: string, baseSha: string, task: strin
   const rules = learnRules(xs, o);
   if (rules.length === 0) return [];
   const named = taskIdents(task);
-  const scan = new Map<string, Rule[]>(), home = new Map<Rule, Set<string>>();
+  const scan = new Map<string, Rule[]>(), home = new Map<Rule, Set<string>>(), listed = new Map<string, string[]>();
   for (const r of rules) {
     const fs = new Set(r.inst.map((x) => x.file)); home.set(r, new Set(fs));
     if (o.scope === "dir") for (const f of [...fs]) {
       const dir = dirname(f), ext = /\.[^.]+$/.exec(f)![0];
-      for (const g of safeGit(repoDir, ["ls-files", "-z", "--", dir === "." ? "." : dir]).split("\0")) if (g && dirname(g) === dir && g.endsWith(ext) && !isTestFile(g)) fs.add(g);
+      if (!listed.has(dir)) listed.set(dir, safeGit(repoDir, ["ls-files", "-z", "--", dir === "." ? "." : dir]).split("\0").filter((g) => g && dirname(g) === dir && !isTestFile(g)));
+      for (const g of listed.get(dir)!) if (g.endsWith(ext)) fs.add(g);
     }
     for (const f of fs) scan.set(f, [...(scan.get(f) ?? []), r]);
   }

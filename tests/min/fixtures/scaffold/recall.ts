@@ -11,9 +11,9 @@
 //        bun recall.ts replay <repo> <clusters.json> <completer.ts> <out.json> [--mode loo|keep2] [--task msg|none]
 //        bun recall.ts fp <repo> <maxCommits> <completer.ts> <out.json>
 // A completer module exports complete(repoDir, baseSha, task) => { file, line, before, after[] }[] and never writes.
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { isTestFile } from "../../../../loki-ts/src/util/test_file_text.ts";
 
 const CODE = /\.(ts|tsx|js|jsx|mjs|cjs|go|py)$/;
@@ -94,7 +94,7 @@ function mine(repo: string, max: number): { scanned: number; clusters: Cluster[]
   return { scanned, clusters };
 }
 
-export interface Ev { rule: string; instances: number; matches: number; matches_home: number; home: boolean; specificity: number }
+export interface Ev { rule: string; level?: "lgg" | "cg"; instances: number; matches: number; matches_home: number; home: boolean; specificity: number }
 export interface Rw { file: string; line: number; before: string; after: string[]; evidence?: Ev }
 type Completer = (repoDir: string, baseSha: string, task: string) => Rw[];
 
@@ -116,16 +116,30 @@ function partialTree(repo: string, cl: Cluster, held: Site[]): Map<Site, number>
 const same = (a: string[], b: string[]): boolean => toks(a.join(" ")).join(" ") === toks(b.join(" ")).join(" ");
 
 /** One replayed trial: the held-out sites (where they sit in the partial tree, what the merged commit wrote) and every candidate. */
-interface Raw { repo: string; commit: string; key: string; n: number; big: boolean; ms: number; held: { file: string; line: number; want: string[] }[]; cands: Rw[] }
+interface Raw { repo: string; commit: string; key: string; n: number; big: boolean; ms: number; held: { file: string; line: number; want: string[] }[]; cands: Rw[]; check?: { control: boolean; with: boolean } }
+/** Writes rewrites into the tree (bottom-up per file, each only where its line still reads as before), like the scaffold's apply. */
+function applyRw(repo: string, rws: Rw[]): void {
+  for (const f of new Set(rws.map((r) => r.file))) {
+    const lines = readFileSync(join(repo, f), "utf8").split("\n");
+    for (const r of rws.filter((x) => x.file === f).sort((a, b) => b.line - a.line)) if (lines[r.line - 1] === r.before) lines.splice(r.line - 1, 1, ...r.after);
+    writeFileSync(join(repo, f), lines.join("\n"));
+  }
+}
+/** go vet over the packages the rewrites touch (compile and type errors, the cheapest part of a verify); true when it passes. */
+function goVet(repo: string, rws: Rw[]): boolean {
+  const pkgs = [...new Set(rws.map((r) => `./${dirname(r.file)}`))];
+  const r = spawnSync("go", ["vet", ...pkgs], { cwd: repo, timeout: 300000, stdio: "ignore", env: { ...process.env, GOFLAGS: "-mod=mod", GOTOOLCHAIN: "local" } });
+  return r.status === 0;
+}
 /** A guard policy applied offline to diag candidates: scope "file" keeps candidates in files holding the rule's instances (and
  *  counts fan-out there); a rule may rewrite at most fanout x instances lines; per line the most specific surviving rule wins. */
-export interface Policy { name: string; scope: "file" | "dir"; fanout: number; minSpec?: number }
+export interface Policy { name: string; scope: "file" | "dir"; fanout: number; minSpec?: number; lggOnly?: boolean }
 function select(c: Rw[], p: Policy | null): Rw[] {
   if (!p) return c;
   const byLine = new Map<string, Rw>();
   for (const r of c) {
     const e = r.evidence; if (!e) { byLine.set(`${r.file}:${r.line}`, r); continue; }
-    if (p.scope === "file" && !e.home) continue;
+    if ((p.scope === "file" && !e.home) || (p.lggOnly && e.level === "cg")) continue;
     const m = p.scope === "file" ? e.matches_home : e.matches;
     if (m > p.fanout * e.instances || e.specificity < (p.minSpec ?? 0)) continue;
     const k = `${r.file}:${r.line}`, cur = byLine.get(k);
@@ -165,7 +179,7 @@ async function main(): Promise<void> {
   }
   if (cmd === "replay") {
     const { clusters } = JSON.parse(readFileSync(a!, "utf8")) as { clusters: Cluster[] };
-    const complete = await load(b!), mode = opt("--mode", "loo"), taskMode = opt("--task", "msg");
+    const complete = await load(b!), mode = opt("--mode", "loo"), taskMode = opt("--task", "msg"), checkMode = opt("--check", "");
     const out: Raw[] = [];
     const head = git(repo!, "rev-parse", TIP).trim();
     const perCommit = new Map<string, number>(); // at most 3 clusters per commit (first in diff order), so one mass edit cannot dominate
@@ -175,11 +189,15 @@ async function main(): Promise<void> {
         const at = partialTree(repo!, cl, held), t0 = performance.now();
         let rws: Rw[] = [];
         try { rws = complete(repo!, cl.parent, taskMode === "none" ? "" : cl.message); } catch { rws = []; }
-        out.push({ repo: repo!.split("/").pop()!, commit: cl.commit.slice(0, 10), key: cl.key, n: cl.sites.length, big: held.some((x) => x.fileLines >= 300), ms: Math.round(performance.now() - t0), held: held.map((x) => ({ file: x.file, line: at.get(x)!, want: x.new })), cands: rws });
+        let check: Raw["check"];
+        if (checkMode === "go" && rws.length) { const control = goVet(repo!, rws); applyRw(repo!, rws); check = { control, with: goVet(repo!, rws) }; }
+        out.push({ ...(check ? { check } : {}), repo: repo!.split("/").pop()!, commit: cl.commit.slice(0, 10), key: cl.key, n: cl.sites.length, big: held.some((x) => x.fileLines >= 300), ms: Math.round(performance.now() - t0), held: held.map((x) => ({ file: x.file, line: at.get(x)!, want: x.new })), cands: rws });
       }
     } finally { git(repo!, "checkout", "-q", "-f", head); git(repo!, "clean", "-qfdx"); }
     writeFileSync(c!, JSON.stringify(out));
-    console.log(JSON.stringify(summarize(out.map((t) => score(t, select(t.cands, out.some((x) => x.cands.some((r) => r.evidence)) ? DEFAULT_POLICY : null))))));
+    const pol = out.some((x) => x.cands.some((r) => r.evidence)) ? DEFAULT_POLICY : null;
+    console.log(JSON.stringify(summarize(out.map((t) => score(t, select(t.cands, pol))))));
+    if (checkMode) console.log(JSON.stringify({ after_undo: summarize(out.map((t) => score(t, t.check && t.check.control && !t.check.with ? [] : select(t.cands, pol)))), checked_trials: out.filter((t) => t.check).length, undone_trials: out.filter((t) => t.check && t.check.control && !t.check.with).length, control_red: out.filter((t) => t.check && !t.check.control).length }));
     return;
   }
   if (cmd === "analyze") { // bun recall.ts analyze <policies.json|-> <trials.json>...
@@ -209,7 +227,7 @@ async function main(): Promise<void> {
   }
 }
 
-const DEFAULT_POLICY: Policy = { name: "dir-fan1", scope: "dir", fanout: 1 };
+const DEFAULT_POLICY: Policy = { name: "file-fan1", scope: "file", fanout: 1 }; // the production defaults (SYSTEMATIC_DEFAULTS)
 const DEFAULT_POLICIES: Policy[] = [
   { name: "unguarded", scope: "dir", fanout: Infinity }, { name: "file-unguarded", scope: "file", fanout: Infinity },
   { name: "dir-fan2", scope: "dir", fanout: 2 }, { name: "dir-fan1", scope: "dir", fanout: 1 }, { name: "dir-fan0.5", scope: "dir", fanout: 0.5 },
