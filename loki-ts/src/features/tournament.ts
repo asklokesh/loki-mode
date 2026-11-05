@@ -16,9 +16,9 @@ import { dirname, join } from "node:path";
 import { plainTestEnv, spawnGroupSync, stripAnsi } from "../util/check_result.ts";
 import { toolLessCall } from "../runner/sdk_invoker.ts";
 import { safeGit } from "../util/safe_git.ts";
-import { applyDiff, snapshotDiff } from "../e10ext/treeswap.ts";
-import { AttemptsRestoreError, ATTEMPT_EXCLUDES, treeswapOps, type ExtraAttemptsDeps } from "./attempts.ts";
-import { EMITTERS, execSpecBriefOf, redFilter } from "./exec_spec.ts";
+import { applyDiff, restoreFromUndo, snapshotDiff } from "../e10ext/treeswap.ts";
+import { ATTEMPT_EXCLUDES, treeswapOps, type ExtraAttemptsDeps } from "./attempts.ts";
+import { EMITTERS, execSpecBriefOf, extractSpecAtoms, redFilter } from "./exec_spec.ts";
 import { isTestFile } from "../engine10/testmap.ts";
 import { installOwned } from "../project_model/install.ts";
 import type { AttemptCheck } from "../e10ext/select.ts";
@@ -197,7 +197,7 @@ export function repairGoImports(src: string): { file: string; changes: string[] 
   return { file: stripped.slice(0, at.index + at[0].length) + block + stripped.slice(at.index + at[0].length), changes };
 }
 
-export interface ProbeRunResult { built: boolean; stdout: string; error?: string; durationS: number }
+export interface ProbeRunResult { built: boolean; stdout: string; error?: string; durationS: number; pruned: { id: string; error: string }[] }
 /** A module whose go directive is below 1.18 rejects the predeclared any: rewrite the cases' any tokens (outside string and rune literals and comments) to interface{}. */
 export function goBefore118(treeDir: string): boolean {
   try { const m = /^go\s+1\.(\d+)/m.exec(readFileSync(join(treeDir, "go.mod"), "utf8")); return !!m && Number(m[1]) < 18; } catch { return false; }
@@ -205,17 +205,53 @@ export function goBefore118(treeDir: string): boolean {
 export function anyToInterface(src: string): string {
   return src.split(/("(?:\\.|[^"\\\n])*"|`[^`]*`|'(?:\\.|[^'\\\n])*'|\/\/[^\n]*)/).map((part, i) => (i % 2 === 1 ? part : part.replace(/(?<![\w.])any(?!\w)/g, "interface{}"))).join("");
 }
+const CASE_START = /^\s*lokiProbe\(\s*"([^"]+)"/;
+/** Line ranges (0-based, inclusive) of each lokiProbe statement of the cases file. */
+export function goCaseBlocks(program: string): { id: string; start: number; end: number }[] {
+  const lines = program.split("\n"), starts: { id: string; line: number }[] = [];
+  lines.forEach((l, i) => { const m = CASE_START.exec(l); if (m) starts.push({ id: m[1]!, line: i }); });
+  if (starts.length === 0) return [];
+  let close = lines.length;
+  for (let i = starts[starts.length - 1]!.line + 1; i < lines.length; i++) if (/^\}\s*$/.test(lines[i]!)) { close = i; break; }
+  return starts.map((x, k) => ({ id: x.id, start: x.line, end: (k + 1 < starts.length ? starts[k + 1]!.line : close) - 1 }));
+}
+const CASE_ERR = new RegExp(`${GO_PROBE_CASES_FILE.replace(/\./g, "\\.")}:(\\d+):\\d+: (.+)$`, "gm");
+/** One deterministic repair pass over a cases file that does not compile in a tree: drop unused imports, drop the cases holding the
+ *  other error lines. Null when an error sits outside every case (nothing safe to drop). A case that does not compile in one tree
+ *  is simply absent from that tree's output, so it is never compared. */
+export function pruneGoCases(program: string, output: string): { program: string; pruned: { id: string; error: string }[] } | null {
+  const errs = [...output.matchAll(CASE_ERR)].map((m) => ({ line: Number(m[1]) - 1, msg: m[2]!.trim() }));
+  if (errs.length === 0) return null;
+  const lines = program.split("\n"), drop = new Set<number>(), pruned: { id: string; error: string }[] = [], blocks = goCaseBlocks(program);
+  for (const e of errs) {
+    if (/^"[^"]+" imported and not used/.test(e.msg)) { drop.add(e.line); continue; }
+    const b = blocks.find((x) => e.line >= x.start && e.line <= x.end);
+    if (!b) return null;
+    if (!pruned.some((q) => q.id === b.id)) pruned.push({ id: b.id, error: e.msg });
+    for (let i = b.start; i <= b.end; i++) drop.add(i);
+  }
+  return { program: lines.filter((_, i) => !drop.has(i)).join("\n"), pruned };
+}
 /** Write the helper and the cases into the package dir, run go test -run ^TestLokiProbe$ -v, remove both files. Built means the
- *  test binary started (its === RUN line printed): a case that panics, exits or hangs still leaves the cases printed before it. */
+ *  test binary started (its === RUN line printed): a case that panics, exits or hangs still leaves the cases printed before it.
+ *  Cases that do not compile in this tree are pruned and the run repeated, at most 3 passes. */
 export function runGoProbe(treeDir: string, pkgRel: string, pkg: string, cases: string, timeoutMs = 60_000): ProbeRunResult {
   const dir = join(treeDir, pkgRel), helper = join(dir, GO_PROBE_HELPER_FILE), file = join(dir, GO_PROBE_CASES_FILE), t0 = Date.now();
   let real = treeDir; try { real = realpathSync(treeDir); } catch { /* keep the given path */ }
-  writeFileSync(helper, goProbeHelper(pkg)); writeFileSync(file, goBefore118(treeDir) ? anyToInterface(cases) : cases);
+  let program = goBefore118(treeDir) ? anyToInterface(cases) : cases;
+  const pruned: { id: string; error: string }[] = [];
+  writeFileSync(helper, goProbeHelper(pkg));
   try {
     const env = { ...plainTestEnv(), LOKI_PROBE_ROOTS: [real, treeDir].join(process.platform === "win32" ? ";" : ":") };
-    const r = spawnGroupSync("go", ["test", "-count=1", "-v", "-run", `^${GO_PROBE_TEST}$`, `-timeout=${Math.max(5, Math.ceil(timeoutMs / 1000))}s`, `./${pkgRel || "."}`], { cwd: treeDir, env, timeoutMs: timeoutMs + 15_000 });
-    const out = stripAnsi(r.output), durationS = (Date.now() - t0) / 1000;
-    return out.includes(`=== RUN   ${GO_PROBE_TEST}`) ? { built: true, stdout: out, durationS } : { built: false, stdout: out, error: out.slice(-1500), durationS };
+    for (let pass = 0; ; pass++) {
+      writeFileSync(file, program);
+      const r = spawnGroupSync("go", ["test", "-count=1", "-vet=off", "-gcflags=-e", "-v", "-run", `^${GO_PROBE_TEST}$`, `-timeout=${Math.max(5, Math.ceil(timeoutMs / 1000))}s`, `./${pkgRel || "."}`], { cwd: treeDir, env, timeoutMs: timeoutMs + 15_000 });
+      const out = stripAnsi(r.output), durationS = (Date.now() - t0) / 1000;
+      if (out.includes(`=== RUN   ${GO_PROBE_TEST}`)) return { built: true, stdout: out, durationS, pruned };
+      const fix = pass < 3 ? pruneGoCases(program, out) : null;
+      if (!fix) return { built: false, stdout: out, error: out.slice(-1500), durationS, pruned };
+      program = fix.program; pruned.push(...fix.pruned);
+    }
   } finally { rmSync(helper, { force: true }); rmSync(file, { force: true }); }
 }
 
@@ -482,11 +518,11 @@ export const probeIntake = {
 export type ProbeIntake = typeof probeIntake;
 
 // ---------- the gate: wiring into the implement stage ----------
-export interface TournamentInput { program: string; spec?: string; targetRel?: string; pkg: string; pkgRel: string }
+export interface TournamentInput { program: string; spec?: string; targetRel?: string; pkg: string; pkgRel: string; /** named sites no binding spec case covers */ unchecked?: string[] }
 /** wall.ts calls this from its exec-spec branch with the outcome: the probe cases and the full generated spec file, kept for the gate. No probe, no file. */
-export function writeTournamentInput(runDir: string, o: { probe?: string; pkg?: string; specFile?: string; targetRel?: string }): void {
+export function writeTournamentInput(runDir: string, o: { probe?: string; pkg?: string; specFile?: string; targetRel?: string; unchecked?: string[] }): void {
   if (!o.probe || !o.pkg) return;
-  const i: TournamentInput = { program: o.probe, pkg: o.pkg, pkgRel: o.targetRel && dirname(o.targetRel) !== "." ? dirname(o.targetRel) : "", ...(o.specFile && o.targetRel ? { spec: o.specFile, targetRel: o.targetRel } : {}) };
+  const i: TournamentInput = { program: o.probe, pkg: o.pkg, pkgRel: o.targetRel && dirname(o.targetRel) !== "." ? dirname(o.targetRel) : "", ...(o.specFile && o.targetRel ? { spec: o.specFile, targetRel: o.targetRel } : {}), ...(o.unchecked?.length ? { unchecked: o.unchecked } : {}) };
   try { mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, TOURNAMENT_INPUT_FILE), JSON.stringify(i), "utf8"); } catch { /* best effort: without it the gate skips */ }
 }
 const readInput = (runDir: string): TournamentInput | null => { try { const i = JSON.parse(readFileSync(join(runDir, TOURNAMENT_INPUT_FILE), "utf8")) as TournamentInput; return typeof i.program === "string" && typeof i.pkg === "string" ? i : null; } catch { return null; } };
@@ -506,6 +542,17 @@ function agentDiffLines(ctx: RunContext, skip: Set<string>): { lines: number; go
     files.add(p); try { lines += readFileSync(join(ctx.repoDir, p), "utf8").split("\n").length; } catch { lines += 1; }
   }
   return { lines, goFiles: [...files].filter((f) => f.endsWith(".go") && !isTestFile(f)) };
+}
+
+/** The cheap warning signs that the agent tree may have missed part of the task; the candidates call fires only when one is present
+ *  (target: a minority of runs). A named site no binding spec case covers; an issue-quoted line that is still byte-identical in the
+ *  agent's changed files. (A residual site from the edit-shape detector, PR 533, joins these once it lands.) */
+export function warningSigns(task: string, unchecked: string[] | undefined, sources: Record<string, string>): string[] {
+  const signs: string[] = [];
+  if (unchecked?.length) signs.push(`named site without a binding spec case: ${unchecked.slice(0, 3).join(", ")}`);
+  const all = Object.values(sources).join("\n");
+  for (const a of extractSpecAtoms(task)) if (a.kind === "location" && a.text.trim().length >= 12 && all.includes(a.text.trim())) { signs.push(`quoted line unchanged: ${a.text.trim().split("\n")[0]!.slice(0, 50)}`); break; }
+  return signs;
 }
 
 export interface TournamentSummary { status: "skipped" | "kept" | "displaced" | "error"; reason: string; receipt?: string[]; [k: string]: unknown }
@@ -534,6 +581,9 @@ export async function runTournamentGate(ctx: RunContext, signal: AbortSignal, se
     const brief = execSpecBriefOf(ctx.runDir) ?? undefined;
     const c: Context = { issue: String(ctx.outputs().intake?.task ?? ""), files, tests, ...(brief ? { brief } : {}) };
     if (!c.issue || Object.keys(files).length === 0) return skipped("the task text or the base source of the changed files is not readable");
+    const now = Object.fromEntries(goFiles.map((f) => [f, (() => { try { return readFileSync(join(ctx.repoDir, f), "utf8"); } catch { return ""; } })()]));
+    const signs = warningSigns(c.issue, input.unchecked, now);
+    if (signs.length === 0) return skipped("no warning sign: every named site has a binding spec case and the issue's quoted lines changed; no model call");
 
     const intake = ctx.outputs().intake ?? {}, owned = installOwned(ctx.repoDir, intake.install_created);
     const userUntracked = new Set([...(Array.isArray(intake.preexisting_untracked) ? intake.preexisting_untracked as string[] : []), ...Object.keys((intake.preexisting_untracked_blobs ?? {}) as object)]);
@@ -574,10 +624,11 @@ export async function runTournamentGate(ctx: RunContext, signal: AbortSignal, se
     const win = r.pick.winner === "agent" ? 0 : used.get(r.entrants.find((e) => e.id === r.pick.winner)?.dir ?? "") ?? 0;
     if (win > 0 && ops) { for (const p of wallContent.keys()) rmSync(join(ops.dirs[win]!, p), { force: true }); ops.enter(win); } // the primary already holds the sealed files
     const receipt = receiptLines(r);
-    return { status: win > 0 ? "displaced" : "kept", reason: r.pick.reason, winner: r.pick.winner, calls: r.calls, usd: Number(r.usd.toFixed(6)), candidates: r.candidates, entrants: r.entrants.map((e) => ({ id: e.id, checks: e.checksPass, diff_lines: e.diffLines, probes: Object.keys(e.run).length })), disagreements: r.disagreements.length, verdicts: r.picks, unstable: r.unstable, ...(r.diffProbe ? { diff_probe: r.diffProbe } : {}), receipt };
-  } catch (e) {
-    if (e instanceof AttemptsRestoreError) throw e;
-    return { status: "error", reason: `tournament could not run, agent tree kept: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}` };
+    return { status: win > 0 ? "displaced" : "kept", reason: r.pick.reason, signs, winner: r.pick.winner, calls: r.calls, usd: Number(r.usd.toFixed(6)), candidates: r.candidates, entrants: r.entrants.map((e) => ({ id: e.id, checks: e.checksPass, diff_lines: e.diffLines, probes: Object.keys(e.run).length })), disagreements: r.disagreements.length, verdicts: r.picks, unstable: r.unstable, ...(r.diffProbe ? { diff_probe: r.diffProbe } : {}), receipt };
+  } catch (e) { // any throw: the agent tree is put back byte for byte, the receipt says so, the run goes on
+    let why = e instanceof Error ? e.message.split("\n")[0]! : String(e);
+    if (ops) { try { ops.enter(0); } catch (e2) { try { restoreFromUndo(ctx.repoDir, ctx.runDir, ATTEMPT_EXCLUDES); } catch (e3) { why += `; restoring the agent tree also failed (${(e3 instanceof Error ? e3.message : String(e3)).split("\n")[0]}, first: ${(e2 instanceof Error ? e2.message : String(e2)).split("\n")[0]})`; } } }
+    return { status: "error", reason: `tournament skipped: ${why}`, receipt: [`tournament skipped: ${why}`.replace(/[\u0000-\u001f\u007f]+/g, " ")] };
   } finally {
     try { ops?.dispose(); } catch { /* worktrees removed by exact path; a leak is cleaned with the temp root */ }
   }

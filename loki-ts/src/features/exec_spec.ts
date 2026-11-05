@@ -364,10 +364,15 @@ export function selectCases(e: Emitter, file: string, base: RedFilterResult, tas
   return { file: sealed, binding, advisory, guards };
 }
 
+/** Named sites that resolved in the repo and that no binding spec case covers (by atom id or by naming the symbol). */
+export function uncheckedSites(e: Emitter, binding: string[], full: string, atoms: SpecAtom[], sites: ResolvedSite[]): string[] {
+  const cov = new Set(binding.map((n) => atomIdOf(e, n))), resolved = new Set(sites.map((s) => s.symbol));
+  const bodies = binding.map((n) => e.body(full, n)).join("\n");
+  return atoms.filter((a) => a.kind === "site" && resolved.has(a.text) && !cov.has(a.id) && !new RegExp(`\\b${esc(a.text.split(".").pop()!)}\\b`).test(bodies)).map((a) => a.text);
+}
+
 export function implementBlock(e: Emitter, destRel: string, sel: SpecSelection, full: string, atoms: SpecAtom[], sites: ResolvedSite[]): string {
-  const cov = new Set(sel.binding.map((n) => atomIdOf(e, n))), resolved = new Set(sites.map((s) => s.symbol));
-  const bodies = sel.binding.map((n) => e.body(full, n)).join("\n");
-  const unchecked = atoms.filter((a) => a.kind === "site" && resolved.has(a.text) && !cov.has(a.id) && !new RegExp(`\\b${esc(a.text.split(".").pop()!)}\\b`).test(bodies)).map((a) => a.text);
+  const unchecked = uncheckedSites(e, sel.binding, full, atoms, sites);
   const adv = [...sel.advisory, ...sel.guards.map((name) => ({ name, why: "passes on base: keep it passing" }))];
   return [
     ...(sel.binding.length ? [`Executable spec: ${destRel} was written from the task before you started and is read-only. These tests fail on the current code, assert values the task itself states, and define done; make every one pass without editing the file:`, ...sel.binding.map((n) => `- ${n}`)] : []),
@@ -417,7 +422,7 @@ export function planFor(runner: SpecRunner, repoDir: string, sites: ResolvedSite
   return { runner, targetRel, header: `The file is ${targetRel}; import the code under test from "${spec}".`, mustStart: "", style: style ? read(style) : "" };
 }
 
-export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; /** LOKI_E10_TOURNAMENT, Go: the repaired probe cases, the package, and the full generated file (binding and advisory) */ probe?: string; probeRefused?: string; pkg?: string; specFile?: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; durationS: number }
+export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; /** LOKI_E10_TOURNAMENT, Go: the repaired probe cases, the package, and the full generated file (binding and advisory) */ probe?: string; probeRefused?: string; pkg?: string; specFile?: string; unchecked?: string[]; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; durationS: number }
 /** `probe` (features/tournament.ts probeIntake, passed by wall.ts only when LOKI_E10_TOURNAMENT=1): for Go, its rules are appended to the generator brief and the reply may carry a second block of probe cases, kept apart from the spec. */
 export async function execSpecAuthor(o: { task: string; repoDir: string; runners: string[]; existingTests: string[]; sessions: Parameters<typeof sessionGenerator>[0]; iterationId: string; signal: AbortSignal; probe?: { rules: string; take(reply: string, pkg: string): { reply: string; probe?: string; refused?: string } } }): Promise<ExecSpecOutcome> {
   const t0 = Date.now(), atoms0 = extractSpecAtoms(o.task), done = (status: ExecSpecOutcome["status"], reason: string, extra: Partial<ExecSpecOutcome> = {}): ExecSpecOutcome => ({ status, reason, atoms: atoms0.length, sites: 0, binding: [], advisory: [], guards: [], dropped: [], durationS: (Date.now() - t0) / 1000, ...extra });
@@ -443,7 +448,7 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
     const again = redFilter(e, o.repoDir, plan.targetRel, sel.file);
     if (!again.built || binding.some((n) => again.cases[n] !== "red")) { sel.advisory.push(...binding.map((name) => ({ name, why: "red on base alone, not once pruned" }))); binding = []; }
   }
-  const brief = implementBlock(e, plan.targetRel, { ...sel, binding }, parsed.file, atoms, sites), extra = { runner, targetRel: plan.targetRel, sites: sites.length, brief, binding, advisory: sel.advisory.map((a) => a.name), guards: sel.guards, dropped, ...(taken ? { pkg, specFile: parsed.file, ...(taken.probe ? { probe: taken.probe } : { probeRefused: taken.refused ?? "probe_no_block" }) } : {}) };
+  const brief = implementBlock(e, plan.targetRel, { ...sel, binding }, parsed.file, atoms, sites), extra = { runner, targetRel: plan.targetRel, sites: sites.length, brief, binding, advisory: sel.advisory.map((a) => a.name), guards: sel.guards, dropped, ...(taken ? { pkg, specFile: parsed.file, unchecked: uncheckedSites(e, binding, parsed.file, atoms, sites), ...(taken.probe ? { probe: taken.probe } : { probeRefused: taken.refused ?? "probe_no_block" }) } : {}) };
   return binding.length ? done("sealed", `exec spec: ${binding.length} binding case(s) red on base`, { ...extra, file: sel.file }) : done("advisory_only", "exec spec: no binding case red on base; advisory cases only", extra);
 }
 
