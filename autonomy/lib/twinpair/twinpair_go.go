@@ -84,6 +84,7 @@ type chain struct {
 	Line    int     `json:"line"`
 	Span    [2]int  `json:"span"`
 	Skipped string  `json:"skipped,omitempty"`
+	File    string  `json:"file"`
 
 	fd   *ast.FuncDecl
 	file *srcFile
@@ -650,7 +651,7 @@ func (fi *finder) addChain(subj string, sites []*site) {
 	for k, s := range sites {
 		s.ID = fmt.Sprintf("s%d", k+1)
 	}
-	c := &chain{Func: fi.fd.Name.Name, Subject: subj, Sites: sites, fd: fi.fd, file: fi.sf, Line: fi.p.fset.Position(fi.fd.Pos()).Line}
+	c := &chain{Func: fi.fd.Name.Name, Subject: subj, Sites: sites, fd: fi.fd, file: fi.sf, File: fi.sf.name, Line: fi.p.fset.Position(fi.fd.Pos()).Line}
 	c.Span = [2]int{c.Line, fi.p.fset.Position(fi.fd.End()).Line}
 	if tn, ptr := recvType(fi.fd); tn != "" {
 		c.Recv = tn
@@ -1346,16 +1347,16 @@ func lokiTwinObserve(call func() []any) map[string]string {
 `
 
 type manifest struct {
-	Lang     string              `json:"lang"`
-	Pkg      string              `json:"pkg"`
-	Mode     string              `json:"mode"`
-	Chains   []*chainOut         `json:"chains"`
-	Lines    map[string][2]int   `json:"lines"` // generated-file line range per candidate or variant key
-	Dropped  []string            `json:"dropped,omitempty"`
-	Vars     []string            `json:"vars"`
-	Census   map[string]int      `json:"census,omitempty"`
-	Imports  []string            `json:"imports,omitempty"`
-	Extra    map[string][]string `json:"extra,omitempty"`
+	Lang    string              `json:"lang"`
+	Pkg     string              `json:"pkg"`
+	Mode    string              `json:"mode"`
+	Chains  []*chainOut         `json:"chains"`
+	Lines   map[string][2]int   `json:"lines"` // generated-file line range per candidate or variant key
+	Dropped []string            `json:"dropped,omitempty"`
+	Vars    []string            `json:"vars"`
+	Census  map[string]int      `json:"census,omitempty"`
+	Imports []string            `json:"imports,omitempty"`
+	Extra   map[string][]string `json:"extra,omitempty"`
 }
 
 type chainOut struct {

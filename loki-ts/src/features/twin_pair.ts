@@ -118,13 +118,15 @@ export function verdictPost(g: Guard, o: Observed | undefined): PostVerdict {
   return diff.some((k) => eq(g.alt[k], b[k])) ? "precedence-regression" : "changed";
 }
 
-const short = (v: unknown): string => { const s = typeof v === "string" ? v : JSON.stringify(v); return s.length > 120 ? s.slice(0, 117) + "..." : s; };
+const short = (v: unknown): string => { const s = JSON.stringify(v ?? null); return s.length > 120 ? s.slice(0, 117) + "..." : s; };
+const COMP: Record<string, string> = { ret: "return value", ret0: "return value", exc: "exception", out: "stdout", stdout: "stdout", stderr: "stderr", err: "stderr", panic: "panic", calls: "hook calls", timeout: "timed out", exit: "exit" };
+const compName = (k: string): string => COMP[k] ?? (k.startsWith("w:") ? `writes to ${k.slice(2)}` : /^ret\d+$/.test(k) ? `return value ${+k.slice(3) + 1}` : k);
 const siteSrc = (g: Guard, id: string): string => g.sites.find((s) => s.id === id)?.src ?? id;
 
 /** The finding text for a fix brief: the input, which check took it at base, which takes it now, and what changed. */
 export function findingText(g: Guard, verdict: string, detail: { comp: string; base: unknown; now: unknown }[]): string {
   const where = `${g.func} (${g.file}:${g.line})`;
-  const changes = detail.map((d) => `${d.comp}: ${short(d.base)} -> ${short(d.now)}`).join("; ");
+  const changes = detail.map((d) => `${compName(d.comp)} ${short(d.base)} at base, ${short(d.now)} now`).join("; ");
   const baseSite = g.mode === "pre" ? siteSrc(g, g.takenBy) : siteSrc(g, g.movedTo);
   const nowSite = g.mode === "pre" ? siteSrc(g, g.movedTo) : siteSrc(g, g.takenBy);
   return `Twin-site check (${verdict}): ${where} dispatches \`${g.subject}\` by type. The input \`${g.src}\` was handled at base by \`${baseSite}\`; on the changed code \`${nowSite}\` takes it first (${changes}), which is exactly the outcome of putting that check ahead. Keep the base outcome for values the base code already dispatched by their own type: test the more specific type first, or narrow the earlier check.`;
@@ -199,7 +201,7 @@ export function pyObserve(root: string, file: string, guards: Guard[], o: RunOpt
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 }
 
-interface GoManifest { chains: { key: string; func: string; recv?: string; subject: string; subject_type: string; loop?: string; line: number; sites: ProbeSite[]; skipped?: string; variants: ProbeVariant[] | null; candidates: { id: string; src: string }[] | null; order: string[] }[] | null; lines?: Record<string, [number, number]> }
+interface GoManifest { chains: { key: string; file?: string; func: string; recv?: string; subject: string; subject_type: string; loop?: string; line: number; sites: ProbeSite[]; skipped?: string; variants: ProbeVariant[] | null; candidates: { id: string; src: string }[] | null; order: string[] }[] | null; lines?: Record<string, [number, number]> }
 interface GoRec { cand: string; variant: string; obs?: Obs; preds?: Record<string, boolean> }
 
 /** Generate the probe in pkgDir, run it, drop the candidates or variants a build error points at, retry. The probe file
@@ -211,7 +213,9 @@ function goRun(pkgDir: string, genArgs: string[], o: RunOpts): { man: GoManifest
   try {
     while (attempts < 5) {
       attempts++;
-      const g = run("go", ["run", join(TWIN_LIB, "twinpair_go.go"), ...genArgs, "-out", probe, "-manifest", man, "-drop", [...drop].join(",")], pkgDir, { ...o, env: { GOWORK: "off", ...(o.env ?? {}) } });
+      // a prebuilt engine (LOKI_TWIN_GO_ENGINE) skips the per-call `go run` compile; the source is the fallback
+      const eng = process.env.LOKI_TWIN_GO_ENGINE, gcmd = eng && existsSync(eng) ? eng : "go", gpre = gcmd === "go" ? ["run", join(TWIN_LIB, "twinpair_go.go")] : [];
+      const g = run(gcmd, [...gpre, ...genArgs, "-out", probe, "-manifest", man, "-drop", [...drop].join(",")], pkgDir, { ...o, env: { GOWORK: "off", ...(o.env ?? {}) } });
       if (g.status !== 0 || !existsSync(man)) return { man: null, recs: [], error: `gen: ${(g.stderr || g.stdout).slice(-300)}`, attempts };
       const m = JSON.parse(readFileSync(man, "utf8")) as GoManifest;
       if (!existsSync(probe)) return { man: m, recs: [], attempts };
@@ -244,7 +248,7 @@ export function goProbe(pkgDir: string, mode: "pre" | "post", hunks: string[] = 
   const byCand = new Map<string, GoRec[]>();
   for (const rec of r.recs) byCand.set(rec.cand, [...(byCand.get(rec.cand) ?? []), rec]);
   const chains: ProbeChain[] = (r.man.chains ?? []).map((c) => ({
-    lang: "go" as const, file: "", func: c.func, ...(c.recv ? { recv: c.recv } : {}), subject: c.subject, loop: c.loop ?? null, line: c.line, sites: c.sites, order: c.order, variants: c.variants ?? [], ...(c.skipped ? { skipped: c.skipped } : {}),
+    lang: "go" as const, file: c.file ?? "", func: c.func, ...(c.recv ? { recv: c.recv } : {}), subject: c.subject, loop: c.loop ?? null, line: c.line, sites: c.sites, order: c.order, variants: c.variants ?? [], ...(c.skipped ? { skipped: c.skipped } : {}),
     cands: (c.candidates ?? []).flatMap((cd) => {
       const recs = byCand.get(`${c.key}/${cd.id}`) ?? [];
       const pr = recs.find((x) => x.variant === "preds")?.preds ?? {};
@@ -313,7 +317,7 @@ export function twinPairCheck(baseDir: string, headDir: string, files: FileHunks
     const pre = goProbe(bd, "pre", fs.flatMap((f) => f.old.map(([a, b]) => `${name(f.path)}:${a}:${b}`)), o);
     const post = goProbe(hd, "post", fs.flatMap((f) => f.new.map(([a, b]) => `${name(f.path)}:${a}:${b}`)), o);
     for (const e of [pre.error, post.error]) if (e) res.errors.push(`${dir}: ${e}`);
-    for (const ch of [...pre.chains, ...post.chains]) ch.file = dir || ".";
+    for (const ch of [...pre.chains, ...post.chains]) ch.file = dir ? `${dir}/${ch.file}` : ch.file;
     const gPre = selectGuards(pre.chains, "pre"), gPost = selectGuards(post.chains, "post");
     res.probed.push({ lang: "go", file: dir || ".", chains: pre.chains.length + post.chains.length, eligible: pre.chains.filter((c) => !c.skipped).length + post.chains.filter((c) => !c.skipped).length });
     res.pre += gPre.length; res.post += gPost.length;
