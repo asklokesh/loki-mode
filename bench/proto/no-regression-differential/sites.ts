@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { extractProgram, runGoProbe, type ProbeExec } from "../../../loki-ts/src/features/probes.ts";
-import { callersOf, editedSymbols, nrdJudgePrompt, nrdProbePrompt, outputSites, parseNrdVerdicts, probeContext, runNoRegression, SYS_NRD_JUDGE, type NrdContext, type NrdIo, type NrdResult, type Verdict } from "../../../loki-ts/src/features/no_regression.ts";
+import { callersOf, overrideVerdict, editedSymbols, nrdJudgePrompt, nrdProbePrompt, outputSites, parseNrdVerdicts, probeContext, runNoRegression, SYS_NRD_JUDGE, type NrdContext, type NrdIo, type NrdResult, type Verdict } from "../../../loki-ts/src/features/no_regression.ts";
 import type { LlmCall } from "../../../loki-ts/src/features/tournament.ts";
 import { haikuCli, replayCalls, ZERO_USAGE, type Transcript } from "../haiku_cli.ts";
 import { literalSites, sh, treeIo } from "./tree_io.ts";
@@ -45,7 +45,7 @@ const fx = join(here, "fixtures", "gitlog"), repoA = join(fx, "repo"), pkgDir = 
 const filesA: Record<string, string> = {}, testsA: Record<string, string> = {};
 for (const f of readdirSync(join(repoA, pkgDir)).filter((f) => f.endsWith(".go"))) (f.endsWith("_test.go") ? testsA : filesA)[`${pkgDir}/${f}`] = readFileSync(join(repoA, pkgDir, f), "utf8");
 const issueA = readFileSync(join(fx, "issue.md"), "utf8");
-const variants = readdirSync(join(fx, "variants")).filter((f) => f.endsWith(".patch")).map((f) => f.replace(/\.patch$/, "")).sort();
+const variants = readdirSync(join(fx, "variants")).filter((f) => f.endsWith(".patch") && (mode !== "replay" || !f.includes("-edit-test"))).map((f) => f.replace(/\.patch$/, "")).sort(); // replay: the 6 variants the recorded run had (the edit-test ones came in round 4)
 const A = variants.map((v) => {
   const io = treeIo(repoA, join(work, "A", v), join(fx, "variants", `${v}.patch`), { pkgDir, pkg: "changelog" });
   sh(io.dir, "git", ["apply", "-p1", join(fx, "variants", `${v}.patch`)]);
@@ -128,7 +128,7 @@ const rowsB = [];
 for (const b of B) {
   const x = p1B.get(b.c.id); if (!x) { rowsB.push({ id: b.c.id, skipped: "no program" }); continue; }
   const v = verdictsFor(vB, b.c.id), refKeys = new Set(x.ref.findings.map(keyOf));
-  const rescore = (r: NrdResult) => { const f = r.findings.map((y) => ({ ...y, verdict: v.get(keyOf(y)) ?? "unknown" })); return f; };
+  const rescore = (r: NrdResult) => { const f = r.findings.map((y) => ({ ...y, verdict: overrideVerdict(b.c.issue, y, v.get(keyOf(y)) ?? "unknown") })); return f; };
   const refF = rescore(x.ref), refBlocking = refF.filter((f) => f.verdict === "unrequested" && !(x.ref.advisory ?? []).includes(f.id));
   // edge rule is decided by runNoRegression only when verdicts are present; recompute it here through a verdict-carrying rerun-free path
   const { edgeAdvisory } = await import("../../../loki-ts/src/features/no_regression.ts"), { caseSnippet } = await import("../../../loki-ts/src/features/probes.ts");

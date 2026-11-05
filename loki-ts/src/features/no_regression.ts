@@ -199,6 +199,26 @@ export function probeContext(pkgFiles: Record<string, string>, testFiles: Record
   return { files, tests };
 }
 
+// ---- round 5: the judge cannot call a change "requested" that the issue never mentions (deterministic override) ----
+const TOK = /[^\s"'`,;()[\]{}<>|]+/g;
+const toks = (s: string): string[] => [...s.matchAll(TOK)].map((m) => m[0]!.replace(/[.:!?]+$/, "").toLowerCase()).filter((t) => t.length >= 3 || /\d|-/.test(t));
+const REMOVAL = /\b(?:stop(?:s|ped)?|drop(?:s|ped)?|remov(?:e|es|ed|ing)|strip(?:s|ped)?|without|no longer|omit(?:s|ted)?|delet(?:e|es|ed)|hide|skip)\b/i;
+/** True when the issue mentions the change a case shows: some token the new output adds appears in the issue, or a token the
+ *  new output drops appears within six words after a removal word in a sentence that asks for something ("Preferred fix:
+ *  stop passing --no-merges"); the title is skipped, since it describes the bug ("Changelog drops merge commits"). */
+export function issueMentionsChange(issue: string, before: string, after: string): boolean {
+  const b = new Set(toks(before)), a = new Set(toks(after)), text = issue.toLowerCase();
+  const issueToks = new Set(toks(issue));
+  if ([...a].some((t) => !b.has(t) && issueToks.has(t))) return true;
+  const removed = [...b].filter((t) => !a.has(t));
+  // a removal counts only in a sentence that asks for something (never the title, which describes the bug)
+  const asks = issue.split("\n").slice(1).join("\n").split(/(?<=[.!?])\s+|\n+/).filter((x) => /\b(?:should|expected|expect|prefer(?:red)?|fix|please|must|want|instead)\b/i.test(x));
+  for (const sent of asks) { const words = sent.split(/\s+/); for (let i = 0; i < words.length; i++) if (REMOVAL.test(words[i]!) && words.slice(i + 1, i + 7).some((w) => removed.some((r) => toks(w).includes(r)))) return true; }
+  return text.length === 0;
+}
+/** The verdict after the override: "requested" stands only when the issue mentions the change. */
+export const overrideVerdict = (issue: string, f: { before: string; after: string }, v: Verdict): Verdict => (v === "requested" && !issueMentionsChange(issue, f.before, f.after) ? "unrequested" : v);
+
 // ---- the differential ----
 export type CaseStatus = "same" | "changed" | "flaky" | "missing_base" | "missing_patched";
 export interface CaseDiff { id: string; kind: string; desc: string; before: string; after: string; status: CaseStatus }
@@ -282,7 +302,9 @@ export async function runNoRegression(c: NrdContext, llm: LlmCall, io: NrdIo, op
     const v = parseNrdVerdicts(j.text);
     for (const x of ask) verdicts.set(verdictKey(x), v.get(x.id) ?? "unknown");
   }
-  const findings = changedKeep.map((x) => ({ id: x.id, desc: x.desc, before: x.before, after: x.after, verdict: verdicts.get(verdictKey(x)) ?? "unknown" as Verdict }));
+  const judged = changedKeep.map((x) => ({ id: x.id, desc: x.desc, before: x.before, after: x.after, raw: verdicts.get(verdictKey(x)) ?? "unknown" as Verdict }));
+  for (const f of judged) if (overrideVerdict(c.issue, f, f.raw) !== f.raw) notes.push(`case ${f.id}: judged requested, but the issue never mentions this change; counted as unrequested`);
+  const findings = judged.map(({ raw, ...f }) => ({ ...f, verdict: overrideVerdict(c.issue, f, raw) }));
   for (const f of findings) if (f.verdict === "unknown") notes.push(`case ${f.id} changed and the judge could not decide whether the issue asks for it`);
   const edge = new Set(findings.filter((f) => f.verdict === "unrequested" && edgeAdvisory(caseSnippet(b0.e.program, f.id), f.desc, c.repoTests)).map((f) => f.id));
   for (const id of edge) notes.push(`case ${id} changed on an edge value (Inf, NaN or a float limit) no repo test pins: advisory, not blocking`);

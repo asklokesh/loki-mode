@@ -1,0 +1,529 @@
+{
+  "summary": {
+    "mode": "haiku",
+    "calls": 5,
+    "total": {
+      "inTok": 10,
+      "outTok": 64072,
+      "cacheRead": 0,
+      "cacheWrite": 107947,
+      "costUsd": 0.05362639999999999
+    },
+    "gitlog": {
+      "caught": "3/4",
+      "false_fires": "0/4",
+      "fires_iff_oracle_fails": "7/8"
+    },
+    "commits": {
+      "scored": 7,
+      "false_fires": "0/7",
+      "mutants": 25,
+      "survivors": 5,
+      "survivorsSeen": 4,
+      "survivorsBlocking": 4
+    }
+  },
+  "rowsA": [
+    {
+      "variant": "correct-edit-test",
+      "edited": [
+        "CommitsCmd"
+      ],
+      "sites": 0,
+      "uncovered": [],
+      "oracle": true,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "advisory": [],
+      "cases": 13
+    },
+    {
+      "variant": "correct-filter",
+      "edited": [
+        "CommitsCmd"
+      ],
+      "sites": 0,
+      "uncovered": [],
+      "oracle": true,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "advisory": [],
+      "cases": 13
+    },
+    {
+      "variant": "correct-own",
+      "edited": [
+        "CommitsCmd"
+      ],
+      "sites": 0,
+      "uncovered": [],
+      "oracle": true,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "advisory": [],
+      "cases": 13
+    },
+    {
+      "variant": "correct-param",
+      "edited": [
+        "AuthorsCmd",
+        "CommitsCmd",
+        "logArgs"
+      ],
+      "sites": 5,
+      "uncovered": [],
+      "oracle": true,
+      "fires": false,
+      "blocking": [],
+      "findings": [],
+      "advisory": [],
+      "cases": 12
+    },
+    {
+      "variant": "regress-contrib",
+      "edited": [
+        "CommitsCmd",
+        "Contributors"
+      ],
+      "sites": 1,
+      "uncovered": [],
+      "oracle": false,
+      "fires": true,
+      "blocking": [
+        "k4: contributors differing only in letter case",
+        "k7: contributors with issue merge subject as a line"
+      ],
+      "findings": [
+        "k4:unrequested",
+        "k7:unrequested"
+      ],
+      "advisory": [],
+      "cases": 13
+    },
+    {
+      "variant": "regress-edit-test",
+      "edited": [
+        "CommitsCmd",
+        "Render"
+      ],
+      "sites": 3,
+      "uncovered": [],
+      "oracle": false,
+      "fires": true,
+      "blocking": [
+        "k1: [s1] version heading v1.2.0 with issue merge subject",
+        "k2: [s2] padded subject trimmed under v1.2.0",
+        "k3: [s3] bullet line format for a plain subject under v1.2.0",
+        "k4: render with empty version and no subjects",
+        "k5: render with blank and whitespace-only subjects",
+        "k6: render with repeated subjects",
+        "k7: render with version differing in letter case",
+        "k8: render with subjects in reverse order"
+      ],
+      "findings": [
+        "k1:unrequested",
+        "k2:unrequested",
+        "k3:unrequested",
+        "k4:unrequested",
+        "k5:unrequested",
+        "k6:unrequested",
+        "k7:unrequested",
+        "k8:unrequested"
+      ],
+      "advisory": [],
+      "cases": 14
+    },
+    {
+      "variant": "regress-render",
+      "edited": [
+        "CommitsCmd",
+        "Render"
+      ],
+      "sites": 3,
+      "uncovered": [],
+      "oracle": false,
+      "fires": true,
+      "blocking": [
+        "k1: [s1] version heading v1.2.0 with issue merge subject"
+      ],
+      "findings": [
+        "k1:unrequested"
+      ],
+      "advisory": [],
+      "cases": 14
+    },
+    {
+      "variant": "regress-shared",
+      "edited": [
+        "logArgs"
+      ],
+      "sites": 5,
+      "uncovered": [],
+      "oracle": false,
+      "fires": false,
+      "blocking": [],
+      "findings": [
+        "k1:unknown",
+        "k2:unknown",
+        "k3:unknown",
+        "k4:unknown",
+        "k5:unknown"
+      ],
+      "advisory": [],
+      "cases": 12
+    }
+  ],
+  "rowsB": [
+    {
+      "id": "pflag-316",
+      "refOwnPass": false,
+      "cases": 16,
+      "sites": 14,
+      "uncovered": [],
+      "fires": false,
+      "refFindings": [],
+      "edgeAdvisory": [],
+      "mutants": [
+        {
+          "fn": "ipValue.Type",
+          "literal": "ip",
+          "own": true,
+          "keepChanged": [
+            "k2",
+            "k4",
+            "k5",
+            "k10"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "ipConv",
+          "literal": "invalid string being converted to IP address: %s",
+          "own": true,
+          "keepChanged": [
+            "k3"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "FlagSet.GetIP",
+          "literal": "ip",
+          "own": true,
+          "keepChanged": [
+            "k4",
+            "k12"
+          ],
+          "blocking": []
+        }
+      ]
+    },
+    {
+      "id": "pflag-282",
+      "refOwnPass": true,
+      "cases": 16,
+      "sites": 14,
+      "uncovered": [],
+      "fires": false,
+      "refFindings": [],
+      "edgeAdvisory": [],
+      "mutants": [
+        {
+          "fn": "stringArrayValue.Type",
+          "literal": "stringArray",
+          "own": true,
+          "keepChanged": [
+            "k1",
+            "k2",
+            "k3",
+            "k9"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "FlagSet.GetStringArray",
+          "literal": "stringArray",
+          "own": true,
+          "keepChanged": [
+            "k2",
+            "k10"
+          ],
+          "blocking": []
+        }
+      ]
+    },
+    {
+      "id": "cobra-2397",
+      "refOwnPass": true,
+      "cases": 16,
+      "sites": 14,
+      "uncovered": [],
+      "fires": false,
+      "refFindings": [],
+      "edgeAdvisory": [],
+      "mutants": [
+        {
+          "fn": "legacyArgs",
+          "literal": "unknown command %q for %q%s",
+          "own": true,
+          "keepChanged": [
+            "k1"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "NoArgs",
+          "literal": "unknown command %q for %q",
+          "own": true,
+          "keepChanged": [
+            "k2"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "OnlyValidArgs",
+          "literal": "invalid argument %q for %q%s",
+          "own": true,
+          "keepChanged": [
+            "k3",
+            "k10"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "MinimumNArgs",
+          "literal": "requires at least %d arg(s), only received %d",
+          "own": true,
+          "keepChanged": [
+            "k4"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "MaximumNArgs",
+          "literal": "accepts at most %d arg(s), received %d",
+          "own": true,
+          "keepChanged": [
+            "k5"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "ExactArgs",
+          "literal": "accepts %d arg(s), received %d",
+          "own": true,
+          "keepChanged": [
+            "k6"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "RangeArgs",
+          "literal": "accepts between %d and %d arg(s), received %d",
+          "own": true,
+          "keepChanged": [
+            "k7"
+          ],
+          "blocking": []
+        }
+      ]
+    },
+    {
+      "id": "cobra-2257",
+      "refOwnPass": true,
+      "cases": 16,
+      "sites": 14,
+      "uncovered": [],
+      "fires": false,
+      "refFindings": [],
+      "edgeAdvisory": [],
+      "mutants": [
+        {
+          "fn": "flagCompError.Error",
+          "literal": "Subcommand '",
+          "own": false,
+          "keepChanged": [
+            "k2",
+            "k11"
+          ],
+          "blocking": [
+            "k2",
+            "k11"
+          ]
+        },
+        {
+          "fn": "ShellCompDirective.string",
+          "literal": "ShellCompDirectiveNoSpace",
+          "own": true,
+          "keepChanged": [
+            "k12"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "ShellCompDirective.string",
+          "literal": "ShellCompDirectiveDefault",
+          "own": true,
+          "keepChanged": [],
+          "blocking": []
+        },
+        {
+          "fn": "Command.initCompleteCmd",
+          "literal": "to request completion choices for the specified co",
+          "own": false,
+          "keepChanged": [
+            "k13"
+          ],
+          "blocking": [
+            "k13"
+          ]
+        },
+        {
+          "fn": "Command.InitDefaultCompletionCmd",
+          "literal": "bash",
+          "own": true,
+          "keepChanged": [
+            "k14"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "Command.InitDefaultCompletionCmd",
+          "literal": "${fpath[1]}/_%[1]s",
+          "own": false,
+          "keepChanged": [],
+          "blocking": []
+        },
+        {
+          "fn": "CompDebug",
+          "literal": "[Debug] %s",
+          "own": false,
+          "keepChanged": [
+            "k6",
+            "k8",
+            "k9"
+          ],
+          "blocking": [
+            "k6",
+            "k8",
+            "k9"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "semver-1",
+      "refOwnPass": false,
+      "cases": 15,
+      "sites": 8,
+      "uncovered": [],
+      "fires": false,
+      "refFindings": [],
+      "edgeAdvisory": [],
+      "mutants": [
+        {
+          "fn": "parseConstraint",
+          "literal": "improper constraint: %s",
+          "own": true,
+          "keepChanged": [
+            "k1"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "parseConstraint",
+          "literal": "constraint Parser Error",
+          "own": true,
+          "keepChanged": [],
+          "blocking": []
+        }
+      ]
+    },
+    {
+      "id": "humanize-si",
+      "refOwnPass": true,
+      "cases": 14,
+      "sites": 1,
+      "uncovered": [],
+      "fires": false,
+      "refFindings": [],
+      "edgeAdvisory": [],
+      "mutants": [
+        {
+          "fn": "errInvalid",
+          "literal": "invalid input",
+          "own": false,
+          "keepChanged": [
+            "k1"
+          ],
+          "blocking": [
+            "k1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "humanize-105",
+      "refOwnPass": false,
+      "cases": 14,
+      "sites": 4,
+      "uncovered": [],
+      "fires": false,
+      "refFindings": [
+        "k11:unknown: CommafWithDigits of positive infinity with 2 decimals (Inf passes through Commaf) | +Inf -> +Inf.00"
+      ],
+      "edgeAdvisory": [],
+      "mutants": [
+        {
+          "fn": "Commaf",
+          "literal": "NaN",
+          "own": true,
+          "keepChanged": [
+            "k3"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "Commaf",
+          "literal": "+Inf",
+          "own": true,
+          "keepChanged": [
+            "k4",
+            "k11"
+          ],
+          "blocking": []
+        },
+        {
+          "fn": "Commaf",
+          "literal": "-Inf",
+          "own": true,
+          "keepChanged": [
+            "k5"
+          ],
+          "blocking": []
+        }
+      ]
+    }
+  ],
+  "programsA": [
+    "package changelog\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"issue example: commits in v1.2.0..HEAD\", func() any { return CommitsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"c2\", \"change\", \"earlier tag range v1.0.0..HEAD\", func() any { return CommitsCmd(\"v1.0.0\", \"HEAD\") })\n\tlokiCase(\"c3\", \"change\", \"range from v1.2.0 to branch main\", func() any { return CommitsCmd(\"v1.2.0\", \"main\") })\n\n\tlokiCase(\"k1\", \"keep\", \"authors in issue example range v1.2.0..HEAD\", func() any { return AuthorsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"k2\", \"keep\", \"authors in range v1.0.0..HEAD\", func() any { return AuthorsCmd(\"v1.0.0\", \"HEAD\") })\n\tlokiCase(\"k3\", \"keep\", \"authors with empty refs\", func() any { return AuthorsCmd(\"\", \"\") })\n\tlokiCase(\"k4\", \"keep\", \"last tag lookup with no arguments\", func() any { return LastTagCmd() })\n\tlokiCase(\"k5\", \"keep\", \"render issue merge subject under v1.2.0\", func() any { return Render(\"v1.2.0\", []string{\"Merge pull request #41 from team/export\"}) })\n\tlokiCase(\"k6\", \"keep\", \"render padded, blank and repeated subjects\", func() any { return Render(\"v1.1.0\", []string{\"  Add export  \", \"\", \"   \", \"Add export\"}) })\n\tlokiCase(\"k7\", \"keep\", \"render with empty version and no subjects\", func() any { return Render(\"\", nil) })\n\tlokiCase(\"k8\", \"keep\", \"contributors with issue merge subject as a line\", func() any { return Contributors([]string{\"Merge pull request #41 from team/export\"}) })\n\tlokiCase(\"k9\", \"keep\", \"contributors with padded, repeated and mixed-case lines\", func() any { return Contributors([]string{\" bo <bo@x.io> \", \"BO <bo@x.io>\", \"bo <bo@x.io>\", \"al <al@x.io>\"}) })\n\tlokiCase(\"k10\", \"keep\", \"contributors with empty input\", func() any { return Contributors(nil) })\n}\n",
+    "package changelog\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"issue example: commits in v1.2.0..HEAD\", func() any { return CommitsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"c2\", \"change\", \"earlier tag range v1.0.0..HEAD\", func() any { return CommitsCmd(\"v1.0.0\", \"HEAD\") })\n\tlokiCase(\"c3\", \"change\", \"range from v1.2.0 to branch main\", func() any { return CommitsCmd(\"v1.2.0\", \"main\") })\n\n\tlokiCase(\"k1\", \"keep\", \"authors in issue example range v1.2.0..HEAD\", func() any { return AuthorsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"k2\", \"keep\", \"authors in range v1.0.0..HEAD\", func() any { return AuthorsCmd(\"v1.0.0\", \"HEAD\") })\n\tlokiCase(\"k3\", \"keep\", \"authors with empty refs\", func() any { return AuthorsCmd(\"\", \"\") })\n\tlokiCase(\"k4\", \"keep\", \"last tag lookup with no arguments\", func() any { return LastTagCmd() })\n\tlokiCase(\"k5\", \"keep\", \"render issue merge subject under v1.2.0\", func() any { return Render(\"v1.2.0\", []string{\"Merge pull request #41 from team/export\"}) })\n\tlokiCase(\"k6\", \"keep\", \"render padded, blank and repeated subjects\", func() any { return Render(\"v1.1.0\", []string{\"  Add export  \", \"\", \"   \", \"Add export\"}) })\n\tlokiCase(\"k7\", \"keep\", \"render with empty version and no subjects\", func() any { return Render(\"\", nil) })\n\tlokiCase(\"k8\", \"keep\", \"contributors with issue merge subject as a line\", func() any { return Contributors([]string{\"Merge pull request #41 from team/export\"}) })\n\tlokiCase(\"k9\", \"keep\", \"contributors with padded, repeated and mixed-case lines\", func() any { return Contributors([]string{\" bo <bo@x.io> \", \"BO <bo@x.io>\", \"bo <bo@x.io>\", \"al <al@x.io>\"}) })\n\tlokiCase(\"k10\", \"keep\", \"contributors with empty input\", func() any { return Contributors(nil) })\n}\n",
+    "package changelog\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"issue example: commits in v1.2.0..HEAD\", func() any { return CommitsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"c2\", \"change\", \"earlier tag range v1.0.0..HEAD\", func() any { return CommitsCmd(\"v1.0.0\", \"HEAD\") })\n\tlokiCase(\"c3\", \"change\", \"range from v1.2.0 to branch main\", func() any { return CommitsCmd(\"v1.2.0\", \"main\") })\n\n\tlokiCase(\"k1\", \"keep\", \"authors in issue example range v1.2.0..HEAD\", func() any { return AuthorsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"k2\", \"keep\", \"authors in range v1.0.0..HEAD\", func() any { return AuthorsCmd(\"v1.0.0\", \"HEAD\") })\n\tlokiCase(\"k3\", \"keep\", \"authors with empty refs\", func() any { return AuthorsCmd(\"\", \"\") })\n\tlokiCase(\"k4\", \"keep\", \"last tag lookup with no arguments\", func() any { return LastTagCmd() })\n\tlokiCase(\"k5\", \"keep\", \"render issue merge subject under v1.2.0\", func() any { return Render(\"v1.2.0\", []string{\"Merge pull request #41 from team/export\"}) })\n\tlokiCase(\"k6\", \"keep\", \"render padded, blank and repeated subjects\", func() any { return Render(\"v1.1.0\", []string{\"  Add export  \", \"\", \"   \", \"Add export\"}) })\n\tlokiCase(\"k7\", \"keep\", \"render with empty version and no subjects\", func() any { return Render(\"\", nil) })\n\tlokiCase(\"k8\", \"keep\", \"contributors with issue merge subject as a line\", func() any { return Contributors([]string{\"Merge pull request #41 from team/export\"}) })\n\tlokiCase(\"k9\", \"keep\", \"contributors with padded, repeated and mixed-case lines\", func() any { return Contributors([]string{\" bo <bo@x.io> \", \"BO <bo@x.io>\", \"bo <bo@x.io>\", \"al <al@x.io>\"}) })\n\tlokiCase(\"k10\", \"keep\", \"contributors with empty input\", func() any { return Contributors(nil) })\n}\n",
+    "package changelog\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"issue example: commits in v1.2.0..HEAD\", func() any { return CommitsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"c2\", \"change\", \"earlier tag range v1.0.0..HEAD\", func() any { return CommitsCmd(\"v1.0.0\", \"HEAD\") })\n\tlokiCase(\"c3\", \"change\", \"range from v1.2.0 to branch main\", func() any { return CommitsCmd(\"v1.2.0\", \"main\") })\n\n\tlokiCase(\"k1\", \"keep\", \"[s1] author format %an <%ae> in issue example range v1.2.0..HEAD\", func() any { return AuthorsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"k2\", \"keep\", \"[s2] git binary in author query for range v1.0.0..HEAD\", func() any { return AuthorsCmd(\"v1.0.0\", \"HEAD\") })\n\tlokiCase(\"k3\", \"keep\", \"[s3] log subcommand in author query with empty refs\", func() any { return AuthorsCmd(\"\", \"\") })\n\tlokiCase(\"k4\", \"keep\", \"[s4] --no-merges flag in author query with identical refs HEAD\", func() any { return AuthorsCmd(\"HEAD\", \"HEAD\") })\n\tlokiCase(\"k5\", \"keep\", \"[s5] --pretty=format: prefix in author query with repeated tag v1.2.0\", func() any { return AuthorsCmd(\"v1.2.0\", \"v1.2.0\") })\n\tlokiCase(\"k6\", \"keep\", \"last tag lookup with no arguments\", func() any { return LastTagCmd() })\n\tlokiCase(\"k7\", \"keep\", \"render issue merge subject under v1.2.0\", func() any { return Render(\"v1.2.0\", []string{\"Merge pull request #41 from team/export\"}) })\n\tlokiCase(\"k8\", \"keep\", \"contributors with issue merge subject as a line\", func() any { return Contributors([]string{\"Merge pull request #41 from team/export\"}) })\n\tlokiCase(\"k9\", \"keep\", \"contributors with padded, repeated and mixed-case lines\", func() any { return Contributors([]string{\" bo <bo@x.io> \", \"BO <bo@x.io>\", \"bo <bo@x.io>\", \"al <al@x.io>\"}) })\n}\n",
+    "package changelog\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"issue example: commits in v1.2.0..HEAD\", func() any { return CommitsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"c2\", \"change\", \"earlier tag range v1.0.0..HEAD\", func() any { return CommitsCmd(\"v1.0.0\", \"HEAD\") })\n\tlokiCase(\"c3\", \"change\", \"range from v1.2.0 to branch main\", func() any { return CommitsCmd(\"v1.2.0\", \"main\") })\n\n\tlokiCase(\"k1\", \"keep\", \"[s1] padded author line with surrounding whitespace and a duplicate\", func() any { return Contributors([]string{\"  bo <bo@x.io>  \", \"bo <bo@x.io>\"}) })\n\tlokiCase(\"k2\", \"keep\", \"contributors with repeated author lines\", func() any { return Contributors([]string{\"al <al@x.io>\", \"bo <bo@x.io>\", \"bo <bo@x.io>\"}) })\n\tlokiCase(\"k3\", \"keep\", \"contributors with authors in reverse order\", func() any { return Contributors([]string{\"bo <bo@x.io>\", \"al <al@x.io>\"}) })\n\tlokiCase(\"k4\", \"keep\", \"contributors differing only in letter case\", func() any { return Contributors([]string{\"BO <bo@x.io>\", \"bo <bo@x.io>\"}) })\n\tlokiCase(\"k5\", \"keep\", \"contributors with blank and whitespace-only lines\", func() any { return Contributors([]string{\"\", \"   \"}) })\n\tlokiCase(\"k6\", \"keep\", \"contributors with empty input\", func() any { return Contributors(nil) })\n\tlokiCase(\"k7\", \"keep\", \"contributors with issue merge subject as a line\", func() any { return Contributors([]string{\"Merge pull request #41 from team/export\"}) })\n\tlokiCase(\"k8\", \"keep\", \"authors in issue example range v1.2.0..HEAD\", func() any { return AuthorsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"k9\", \"keep\", \"last tag lookup with no arguments\", func() any { return LastTagCmd() })\n\tlokiCase(\"k10\", \"keep\", \"render issue merge subject under v1.2.0\", func() any { return Render(\"v1.2.0\", []string{\"Merge pull request #41 from team/export\"}) })\n}\n",
+    "package changelog\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"issue example: commits in v1.2.0..HEAD\", func() any { return CommitsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"c2\", \"change\", \"earlier tag range v1.0.0..HEAD\", func() any { return CommitsCmd(\"v1.0.0\", \"HEAD\") })\n\tlokiCase(\"c3\", \"change\", \"range from v1.2.0 to branch main\", func() any { return CommitsCmd(\"v1.2.0\", \"main\") })\n\n\tlokiCase(\"k1\", \"keep\", \"[s1] version heading v1.2.0 with issue merge subject\", func() any { return Render(\"v1.2.0\", []string{\"Merge pull request #41 from team/export\"}) })\n\tlokiCase(\"k2\", \"keep\", \"[s2] padded subject trimmed under v1.2.0\", func() any { return Render(\"v1.2.0\", []string{\"  Add export  \"}) })\n\tlokiCase(\"k3\", \"keep\", \"[s3] bullet line format for a plain subject under v1.2.0\", func() any { return Render(\"v1.2.0\", []string{\"Add export\"}) })\n\tlokiCase(\"k4\", \"keep\", \"render with empty version and no subjects\", func() any { return Render(\"\", nil) })\n\tlokiCase(\"k5\", \"keep\", \"render with blank and whitespace-only subjects\", func() any { return Render(\"v1.1.0\", []string{\"Add export\", \"  \", \"Fix crash on empty config\"}) })\n\tlokiCase(\"k6\", \"keep\", \"render with repeated subjects\", func() any { return Render(\"v1.2.0\", []string{\"Add export\", \"Add export\"}) })\n\tlokiCase(\"k7\", \"keep\", \"render with version differing in letter case\", func() any { return Render(\"V1.2.0\", []string{\"add export\"}) })\n\tlokiCase(\"k8\", \"keep\", \"render with subjects in reverse order\", func() any { return Render(\"v1.2.0\", []string{\"Fix crash\", \"Add export\"}) })\n\tlokiCase(\"k9\", \"keep\", \"authors in issue example range v1.2.0..HEAD\", func() any { return AuthorsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"k10\", \"keep\", \"last tag lookup with no arguments\", func() any { return LastTagCmd() })\n\tlokiCase(\"k11\", \"keep\", \"contributors with a single author line\", func() any { return Contributors([]string{\"bo <bo@x.io>\"}) })\n}\n",
+    "package changelog\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"issue example: commits in v1.2.0..HEAD\", func() any { return CommitsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"c2\", \"change\", \"earlier tag range v1.0.0..HEAD\", func() any { return CommitsCmd(\"v1.0.0\", \"HEAD\") })\n\tlokiCase(\"c3\", \"change\", \"range from v1.2.0 to branch main\", func() any { return CommitsCmd(\"v1.2.0\", \"main\") })\n\n\tlokiCase(\"k1\", \"keep\", \"[s1] version heading v1.2.0 with issue merge subject\", func() any { return Render(\"v1.2.0\", []string{\"Merge pull request #41 from team/export\"}) })\n\tlokiCase(\"k2\", \"keep\", \"[s2] padded subject trimmed under v1.2.0\", func() any { return Render(\"v1.2.0\", []string{\"  Add export  \"}) })\n\tlokiCase(\"k3\", \"keep\", \"[s3] bullet line format for a plain subject under v1.2.0\", func() any { return Render(\"v1.2.0\", []string{\"Add export\"}) })\n\tlokiCase(\"k4\", \"keep\", \"render with empty version and no subjects\", func() any { return Render(\"\", nil) })\n\tlokiCase(\"k5\", \"keep\", \"render with blank and whitespace-only subjects\", func() any { return Render(\"v1.1.0\", []string{\"Add export\", \"  \", \"Fix crash on empty config\"}) })\n\tlokiCase(\"k6\", \"keep\", \"render with repeated subjects\", func() any { return Render(\"v1.2.0\", []string{\"Add export\", \"Add export\"}) })\n\tlokiCase(\"k7\", \"keep\", \"render with version differing in letter case\", func() any { return Render(\"V1.2.0\", []string{\"add export\"}) })\n\tlokiCase(\"k8\", \"keep\", \"render with subjects in reverse order\", func() any { return Render(\"v1.2.0\", []string{\"Fix crash\", \"Add export\"}) })\n\tlokiCase(\"k9\", \"keep\", \"authors in issue example range v1.2.0..HEAD\", func() any { return AuthorsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"k10\", \"keep\", \"last tag lookup with no arguments\", func() any { return LastTagCmd() })\n\tlokiCase(\"k11\", \"keep\", \"contributors with a single author line\", func() any { return Contributors([]string{\"bo <bo@x.io>\"}) })\n}\n",
+    "package changelog\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"issue example: commits in v1.2.0..HEAD\", func() any { return CommitsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"c2\", \"change\", \"earlier tag range v1.0.0..HEAD\", func() any { return CommitsCmd(\"v1.0.0\", \"HEAD\") })\n\tlokiCase(\"c3\", \"change\", \"range from v1.2.0 to branch main\", func() any { return CommitsCmd(\"v1.2.0\", \"main\") })\n\n\tlokiCase(\"k1\", \"keep\", \"[s1] git binary in author query for issue example range v1.2.0..HEAD\", func() any { return AuthorsCmd(\"v1.2.0\", \"HEAD\") })\n\tlokiCase(\"k2\", \"keep\", \"[s2] author format %an <%ae> in range v1.0.0..HEAD\", func() any { return AuthorsCmd(\"v1.0.0\", \"HEAD\") })\n\tlokiCase(\"k3\", \"keep\", \"[s3] log subcommand in author query with empty refs\", func() any { return AuthorsCmd(\"\", \"\") })\n\tlokiCase(\"k4\", \"keep\", \"[s4] --no-merges flag in author query with identical refs HEAD\", func() any { return AuthorsCmd(\"HEAD\", \"HEAD\") })\n\tlokiCase(\"k5\", \"keep\", \"[s5] --pretty=format: prefix in author query with repeated tag v1.2.0\", func() any { return AuthorsCmd(\"v1.2.0\", \"v1.2.0\") })\n\tlokiCase(\"k6\", \"keep\", \"last tag lookup with no arguments\", func() any { return LastTagCmd() })\n\tlokiCase(\"k7\", \"keep\", \"render issue merge subject under v1.2.0\", func() any { return Render(\"v1.2.0\", []string{\"Merge pull request #41 from team/export\"}) })\n\tlokiCase(\"k8\", \"keep\", \"contributors with issue merge subject as a line\", func() any { return Contributors([]string{\"Merge pull request #41 from team/export\"}) })\n\tlokiCase(\"k9\", \"keep\", \"contributors with padded, repeated and mixed-case lines\", func() any { return Contributors([]string{\" bo <bo@x.io> \", \"BO <bo@x.io>\", \"bo <bo@x.io>\", \"al <al@x.io>\"}) })\n}\n"
+  ],
+  "programsB": [
+    "package pflag\n\nimport \"net\"\n\n// Two change cases and fourteen keep cases. The coverage list asks for one\n// keep case per tag (s1 to s14), which exceeds the 8 to 12 target; the\n// coverage list takes precedence.\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"blank string passed to ipValue.Set\", func() any {\n\t\treturn lokiAll(new(ipValue).Set(\"\"))\n\t})\n\tlokiCase(\"c2\", \"change\", \"--ip= with blank value parsed, then read with GetIP\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tf.IP(\"ip\", nil, \"\")\n\t\t_ = f.Parse([]string{\"--ip=\"})\n\t\treturn lokiAll(f.GetIP(\"ip\"))\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"[s1] ipValue.Set with surrounding spaces around 10.0.0.1\", func() any {\n\t\tv := new(ipValue)\n\t\terr := v.Set(\"  10.0.0.1  \")\n\t\treturn lokiAll(v.String(), err)\n\t})\n\tlokiCase(\"k2\", \"keep\", \"[s2] ipValue type name\", func() any {\n\t\treturn new(ipValue).Type()\n\t})\n\tlokiCase(\"k3\", \"keep\", \"[s3] ipConv of text abc that is not an address\", func() any {\n\t\treturn lokiAll(ipConv(\"abc\"))\n\t})\n\tlokiCase(\"k4\", \"keep\", \"[s4] GetIP on an ip flag with default 10.1.2.3\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tf.IP(\"ip\", net.ParseIP(\"10.1.2.3\"), \"\")\n\t\treturn lokiAll(f.GetIP(\"ip\"))\n\t})\n\tlokiCase(\"k5\", \"keep\", \"[s5] usage of ip flag with shorthand i and long name ip\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tf.IPP(\"ip\", \"i\", nil, \"address\")\n\t\treturn f.FlagUsagesWrapped(80)\n\t})\n\tlokiCase(\"k6\", \"keep\", \"[s6] Set on unknown flag name missing\", func() any {\n\t\treturn NewFlagSet(\"t\", ContinueOnError).Set(\"missing\", \"1\").Error()\n\t})\n\tlokiCase(\"k7\", \"keep\", \"[s7] GetIP on undefined flag nope\", func() any {\n\t\treturn lokiAll(NewFlagSet(\"t\", ContinueOnError).GetIP(\"nope\"))\n\t})\n\tlokiCase(\"k8\", \"keep\", \"[s8] UnquoteUsage of a flag whose type is bool\", func() any {\n\t\treturn lokiAll(UnquoteUsage(&Flag{Name: \"b\", Usage: \"toggle\", Value: &flagValueWrapper{flagType: \"bool\"}}))\n\t})\n\tlokiCase(\"k9\", \"keep\", \"[s9] ipValue.Set with input zz that is not an address\", func() any {\n\t\treturn new(ipValue).Set(\"zz\").Error()\n\t})\n\tlokiCase(\"k10\", \"keep\", \"[s10] usage of ip flag with long name only, usage address\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tf.IP(\"ip\", nil, \"address\")\n\t\treturn f.FlagUsagesWrapped(80)\n\t})\n\tlokiCase(\"k11\", \"keep\", \"[s11] Set of invalid value zz on shorthand ip flag\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tf.IPP(\"ip\", \"i\", nil, \"\")\n\t\treturn f.Set(\"ip\", \"zz\").Error()\n\t})\n\tlokiCase(\"k12\", \"keep\", \"[s12] GetIP on a flag of type bool\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tf.VarP(&flagValueWrapper{inner: new(ipValue), flagType: \"bool\"}, \"b\", \"\", \"\")\n\t\treturn lokiAll(f.GetIP(\"b\"))\n\t})\n\tlokiCase(\"k13\", \"keep\", \"[s13] UnquoteUsage of a flag whose type is float64\", func() any {\n\t\treturn lokiAll(UnquoteUsage(&Flag{Name: \"f\", Usage: \"x\", Value: &flagValueWrapper{flagType: \"float64\"}}))\n\t})\n\tlokiCase(\"k14\", \"keep\", \"[s14] usage of string flag s with NoOptDefVal opt\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tf.VarP(&flagValueWrapper{inner: new(ipValue), flagType: \"string\"}, \"s\", \"\", \"x\")\n\t\tf.Lookup(\"s\").NoOptDefVal = \"opt\"\n\t\treturn f.FlagUsagesWrapped(80)\n\t})\n}\n",
+    "package pflag\n\nimport \"net\"\n\n// The issue asks for dead-code removal with no output change, so the two\n// change cases use the issue's own example inputs and are expected to match\n// before and after the fix. Fourteen keep cases cover the required tags\n// (s1 to s14), which exceeds the 8 to 12 target; the coverage list takes\n// precedence.\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"stringArrayValue.Replace with values a and b\", func() any {\n\t\tvar sa []string\n\t\tv := newStringArrayValue(nil, &sa)\n\t\terr := v.Replace([]string{\"a\", \"b\"})\n\t\treturn lokiAll(sa, err)\n\t})\n\tlokiCase(\"c2\", \"change\", \"stringArrayValue.Replace with empty input\", func() any {\n\t\tvar sa []string\n\t\tv := newStringArrayValue(nil, &sa)\n\t\terr := v.Replace([]string{})\n\t\treturn lokiAll(sa, err)\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"[s1] stringArrayValue type name\", func() any {\n\t\treturn new(stringArrayValue).Type()\n\t})\n\tlokiCase(\"k2\", \"keep\", \"[s2] GetStringArray on flag sa with default a, b\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tf.StringArray(\"sa\", []string{\"a\", \"b\"}, \"\")\n\t\treturn lokiAll(f.GetStringArray(\"sa\"))\n\t})\n\tlokiCase(\"k3\", \"keep\", \"[s3] usage of string array flag sa with shorthand s\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tvar p []string\n\t\tf.StringArrayVarP(&p, \"sa\", \"s\", nil, \"items\")\n\t\treturn f.FlagUsagesWrapped(80)\n\t})\n\tlokiCase(\"k4\", \"keep\", \"[s4] GetStringArray on undefined flag nope\", func() any {\n\t\treturn lokiAll(NewFlagSet(\"t\", ContinueOnError).GetStringArray(\"nope\"))\n\t})\n\tlokiCase(\"k5\", \"keep\", \"[s5] UnquoteUsage of a flag whose type is bool\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tf.Bool(\"b\", false, \"toggle\")\n\t\treturn lokiAll(UnquoteUsage(f.Lookup(\"b\")))\n\t})\n\tlokiCase(\"k6\", \"keep\", \"[s6] boolSliceValue.Set with spaces around true and 0\", func() any {\n\t\tvar out []bool\n\t\tv := newBoolSliceValue(nil, &out)\n\t\terr := v.Set(\" true, 0 \")\n\t\treturn lokiAll(out, err)\n\t})\n\tlokiCase(\"k7\", \"keep\", \"[s7] ipSliceValue.Set with spaces around 10.0.0.1 and ::1\", func() any {\n\t\tvar ips []net.IP\n\t\tv := newIPSliceValue(nil, &ips)\n\t\terr := v.Set(\" 10.0.0.1 , ::1 \")\n\t\treturn lokiAll(ips, err)\n\t})\n\tlokiCase(\"k8\", \"keep\", \"[s8] wrap with indent 4, width 0, text a newline b\", func() any {\n\t\treturn wrap(4, 0, \"a\\nb\")\n\t})\n\tlokiCase(\"k9\", \"keep\", \"[s9] usage of string array flag sa with long name only\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tf.StringArray(\"sa\", nil, \"items\")\n\t\treturn f.FlagUsagesWrapped(80)\n\t})\n\tlokiCase(\"k10\", \"keep\", \"[s10] GetStringArray on bool flag b\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tf.Bool(\"b\", false, \"\")\n\t\t_, err := f.GetStringArray(\"b\")\n\t\treturn err.Error()\n\t})\n\tlokiCase(\"k11\", \"keep\", \"[s11] UnquoteUsage of a flag whose type is float64\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tf.Float64(\"f\", 0, \"x\")\n\t\treturn lokiAll(UnquoteUsage(f.Lookup(\"f\")))\n\t})\n\tlokiCase(\"k12\", \"keep\", \"[s12] ipSliceValue.Set with invalid entry nope\", func() any {\n\t\tvar ips []net.IP\n\t\tv := newIPSliceValue(nil, &ips)\n\t\treturn v.Set(\"10.0.0.1, nope\").Error()\n\t})\n\tlokiCase(\"k13\", \"keep\", \"[s13] wrap with indent 60, width 70, text a newline b\", func() any {\n\t\treturn wrap(60, 70, \"a\\nb\")\n\t})\n\tlokiCase(\"k14\", \"keep\", \"[s14] usage of string flag s with NoOptDefVal opt\", func() any {\n\t\tf := NewFlagSet(\"t\", ContinueOnError)\n\t\tf.String(\"s\", \"x\", \"u\")\n\t\tf.Lookup(\"s\").NoOptDefVal = \"opt\"\n\t\treturn f.FlagUsagesWrapped(80)\n\t})\n}\n",
+    "package cobra\n\nimport \"bytes\"\n\n// The new NoDuplicateArgs validator does not exist before the fix, so this\n// file does not reference it (it must compile before and after). The two\n// change cases record how today's validators treat duplicate arguments, the\n// input the issue targets. Fourteen keep cases cover the required tags\n// (s1 to s14), which exceeds the 8 to 12 target; the coverage list takes\n// precedence.\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"OnlyValidArgs with duplicate valid args one, one\", func() any {\n\t\treturn OnlyValidArgs(&Command{Use: \"c\", ValidArgs: []string{\"one\", \"two\"}}, []string{\"one\", \"one\"})\n\t})\n\tlokiCase(\"c2\", \"change\", \"MatchAll(ExactArgs(2), OnlyValidArgs) with duplicate args one, one\", func() any {\n\t\treturn MatchAll(ExactArgs(2), OnlyValidArgs)(&Command{Use: \"c\", ValidArgs: []string{\"one\", \"two\"}}, []string{\"one\", \"one\"})\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"[s1] Find with unknown subcommand verison when root has version subcommand\", func() any {\n\t\troot := &Command{Use: \"root\"}\n\t\troot.AddCommand(&Command{Use: \"version\"})\n\t\t_, _, err := root.Find([]string{\"verison\"})\n\t\treturn err.Error()\n\t})\n\tlokiCase(\"k2\", \"keep\", \"[s2] NoArgs with one arg, command c\", func() any {\n\t\treturn NoArgs(&Command{Use: \"c\"}, []string{\"one\"}).Error()\n\t})\n\tlokiCase(\"k3\", \"keep\", \"[s3] OnlyValidArgs with tab description entry, args one and three\", func() any {\n\t\treturn OnlyValidArgs(&Command{Use: \"c\", ValidArgs: []string{\"one\\tfirst arg\", \"two\"}}, []string{\"one\", \"three\"}).Error()\n\t})\n\tlokiCase(\"k4\", \"keep\", \"[s4] MinimumNArgs(2) with one arg x\", func() any {\n\t\treturn MinimumNArgs(2)(&Command{Use: \"c\"}, []string{\"x\"}).Error()\n\t})\n\tlokiCase(\"k5\", \"keep\", \"[s5] MaximumNArgs(1) with args a and b\", func() any {\n\t\treturn MaximumNArgs(1)(&Command{Use: \"c\"}, []string{\"a\", \"b\"}).Error()\n\t})\n\tlokiCase(\"k6\", \"keep\", \"[s6] ExactArgs(2) with one arg a\", func() any {\n\t\treturn ExactArgs(2)(&Command{Use: \"c\"}, []string{\"a\"}).Error()\n\t})\n\tlokiCase(\"k7\", \"keep\", \"[s7] RangeArgs(1, 3) with four args a, b, c, d\", func() any {\n\t\treturn RangeArgs(1, 3)(&Command{Use: \"c\"}, []string{\"a\", \"b\", \"c\", \"d\"}).Error()\n\t})\n\tlokiCase(\"k8\", \"keep\", \"[s8] getCompletions with unknown subcommand bogus and empty completion word\", func() any {\n\t\troot := &Command{Use: \"root\"}\n\t\troot.AddCommand(&Command{Use: \"sub\", Run: func(*Command, []string) {}})\n\t\t_, _, _, err := root.getCompletions([]string{\"bogus\", \"\"})\n\t\treturn err.Error()\n\t})\n\tlokiCase(\"k9\", \"keep\", \"[s9] Use text of the __complete command\", func() any {\n\t\troot := &Command{Use: \"root\"}\n\t\troot.initCompleteCmd([]string{\"__complete\", \"\"})\n\t\tfor _, cc := range root.Commands() {\n\t\t\tif cc.Name() == \"__complete\" {\n\t\t\t\treturn cc.Use\n\t\t\t}\n\t\t}\n\t\treturn \"\"\n\t})\n\tlokiCase(\"k10\", \"keep\", \"[s10] OnlyValidArgs with invalid arg three, valid args one and two\", func() any {\n\t\treturn OnlyValidArgs(&Command{Use: \"c\", ValidArgs: []string{\"one\", \"two\"}}, []string{\"three\"}).Error()\n\t})\n\tlokiCase(\"k11\", \"keep\", \"[s11] getCompletions parse error for flag --n=abc\", func() any {\n\t\troot := &Command{Use: \"root\"}\n\t\troot.Flags().Int(\"n\", 0, \"\")\n\t\t_, _, _, err := root.getCompletions([]string{\"--n=abc\", \"\"})\n\t\treturn err.Error()\n\t})\n\tlokiCase(\"k12\", \"keep\", \"[s12] Long text of the __complete command\", func() any {\n\t\troot := &Command{Use: \"root\"}\n\t\troot.initCompleteCmd([]string{\"__complete\", \"\"})\n\t\tfor _, cc := range root.Commands() {\n\t\t\tif cc.Name() == \"__complete\" {\n\t\t\t\treturn cc.Long\n\t\t\t}\n\t\t}\n\t\treturn \"\"\n\t})\n\tlokiCase(\"k13\", \"keep\", \"[s13] getCompletions for flag prefix -- with string slice flag ss already set\", func() any {\n\t\troot := &Command{Use: \"root\"}\n\t\troot.Flags().StringSlice(\"ss\", nil, \"\")\n\t\t_, comps, _, _ := root.getCompletions([]string{\"--ss=a\", \"--\"})\n\t\treturn comps\n\t})\n\tlokiCase(\"k14\", \"keep\", \"[s14] __completeNoDesc output strips descriptions from ValidArgs entry one with tab\", func() any {\n\t\troot := &Command{Use: \"root\", ValidArgs: []string{\"one\\tfirst\"}, Run: func(*Command, []string) {}}\n\t\tbuf := new(bytes.Buffer)\n\t\troot.SetOut(buf)\n\t\troot.SetErr(buf)\n\t\troot.SetArgs([]string{\"__completeNoDesc\", \"\"})\n\t\t_, _ = root.ExecuteC()\n\t\treturn buf.String()\n\t})\n}\n",
+    "package cobra\n\nimport (\n\t\"io\"\n\t\"os\"\n)\n\n// Two change cases and fourteen keep cases. The coverage list asks for one\n// keep case per tag (s1 to s14), which exceeds the 8 to 12 target; the\n// coverage list takes precedence. The change cases record the os.Args-style\n// shared backing array effect: the \"--\" that getCompletions appends to the\n// caller's slice (expected to disappear after the fix).\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"getCompletions on root with args x and empty word, caller slice after call\", func() any {\n\t\troot := &Command{Use: \"root\"}\n\t\targs := []string{\"x\", \"\"}\n\t\t_, _, _, _ = root.getCompletions(args)\n\t\treturn args[0] + \"|\" + args[1]\n\t})\n\tlokiCase(\"c2\", \"change\", \"getCompletions on root with args x, y and empty word, caller slice after call\", func() any {\n\t\troot := &Command{Use: \"root\", TraverseChildren: true}\n\t\targs := []string{\"x\", \"y\", \"\"}\n\t\t_, _, _, _ = root.getCompletions(args)\n\t\treturn args[0] + \"|\" + args[1] + \"|\" + args[2]\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"[s1] getCompletions with unknown subcommand bogus and empty word\", func() any {\n\t\troot := &Command{Use: \"root\"}\n\t\troot.AddCommand(&Command{Use: \"sub\", Run: func(*Command, []string) {}})\n\t\t_, _, _, err := root.getCompletions([]string{\"bogus\", \"\"})\n\t\treturn err.Error()\n\t})\n\tlokiCase(\"k2\", \"keep\", \"[s2] flagCompError for subcommand sub and flag f\", func() any {\n\t\treturn (&flagCompError{subCommand: \"sub\", flagName: \"f\"}).Error()\n\t})\n\tlokiCase(\"k3\", \"keep\", \"[s3] ShellCompDirective value 1048576 is out of range\", func() any {\n\t\treturn ShellCompDirective(1 << 20).string()\n\t})\n\tlokiCase(\"k4\", \"keep\", \"[s4] Use text of the __complete command\", func() any {\n\t\troot := &Command{Use: \"root\"}\n\t\troot.initCompleteCmd([]string{\"__complete\", \"\"})\n\t\tfor _, cc := range root.Commands() {\n\t\t\tif cc.Name() == \"__complete\" {\n\t\t\t\treturn cc.Use\n\t\t\t}\n\t\t}\n\t\treturn \"\"\n\t})\n\tlokiCase(\"k5\", \"keep\", \"[s5] Long text of the completion command for root\", func() any {\n\t\troot := &Command{Use: \"root\"}\n\t\troot.InitDefaultCompletionCmd(\"completion\")\n\t\tfor _, cc := range root.Commands() {\n\t\t\tif cc.Name() == \"completion\" {\n\t\t\t\treturn cc.Long\n\t\t\t}\n\t\t}\n\t\treturn \"\"\n\t})\n\tlokiCase(\"k6\", \"keep\", \"[s6] CompDebug with message hello, printed to stderr\", func() any {\n\t\tr, w, _ := os.Pipe()\n\t\told := os.Stderr\n\t\tos.Stderr = w\n\t\tCompDebug(\"hello\", true)\n\t\tos.Stderr = old\n\t\tw.Close()\n\t\tb, _ := io.ReadAll(r)\n\t\treturn string(b)\n\t})\n\tlokiCase(\"k7\", \"keep\", \"[s7] Execute with os.Args[0] cobra.test and root with NoArgs\", func() any {\n\t\tsaved := os.Args\n\t\tos.Args = []string{\"cobra.test\", \"x\"}\n\t\troot := &Command{Use: \"root\", Args: NoArgs, Run: func(*Command, []string) {}}\n\t\troot.SetOut(io.Discard)\n\t\troot.SetErr(io.Discard)\n\t\t_, err := root.ExecuteC()\n\t\tos.Args = saved\n\t\tif err != nil {\n\t\t\treturn err.Error()\n\t\t}\n\t\treturn \"nil\"\n\t})\n\tlokiCase(\"k8\", \"keep\", \"[s8] CompDebugln with message line, printed to stderr\", func() any {\n\t\tr, w, _ := os.Pipe()\n\t\told := os.Stderr\n\t\tos.Stderr = w\n\t\tCompDebugln(\"line\", true)\n\t\tos.Stderr = old\n\t\tw.Close()\n\t\tb, _ := io.ReadAll(r)\n\t\treturn string(b)\n\t})\n\tlokiCase(\"k9\", \"keep\", \"[s9] CompError with message boom, printed to stderr\", func() any {\n\t\tr, w, _ := os.Pipe()\n\t\told := os.Stderr\n\t\tos.Stderr = w\n\t\tCompError(\"boom\")\n\t\tos.Stderr = old\n\t\tw.Close()\n\t\tb, _ := io.ReadAll(r)\n\t\treturn string(b)\n\t})\n\tlokiCase(\"k10\", \"keep\", \"[s10] getCompletions parse error for flag --n=abc\", func() any {\n\t\troot := &Command{Use: \"root\"}\n\t\troot.Flags().Int(\"n\", 0, \"\")\n\t\t_, _, _, err := root.getCompletions([]string{\"--n=abc\", \"\"})\n\t\treturn err.Error()\n\t})\n\tlokiCase(\"k11\", \"keep\", \"[s11] flagCompError for subcommand x y and flag --z\", func() any {\n\t\treturn (&flagCompError{subCommand: \"x y\", flagName: \"--z\"}).Error()\n\t})\n\tlokiCase(\"k12\", \"keep\", \"[s12] ShellCompDirective NoSpace plus NoFileComp\", func() any {\n\t\treturn (ShellCompDirectiveNoSpace | ShellCompDirectiveNoFileComp).string()\n\t})\n\tlokiCase(\"k13\", \"keep\", \"[s13] Long text of the __complete command\", func() any {\n\t\troot := &Command{Use: \"root\"}\n\t\troot.initCompleteCmd([]string{\"__complete\", \"\"})\n\t\tfor _, cc := range root.Commands() {\n\t\t\tif cc.Name() == \"__complete\" {\n\t\t\t\treturn cc.Long\n\t\t\t}\n\t\t}\n\t\treturn \"\"\n\t})\n\tlokiCase(\"k14\", \"keep\", \"[s14] Short text of the bash command under completion\", func() any {\n\t\troot := &Command{Use: \"root\"}\n\t\troot.InitDefaultCompletionCmd(\"completion\")\n\t\tfor _, cc := range root.Commands() {\n\t\t\tif cc.Name() == \"completion\" {\n\t\t\t\tfor _, s := range cc.Commands() {\n\t\t\t\t\tif s.Name() == \"bash\" {\n\t\t\t\t\t\treturn s.Short\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t\treturn \"\"\n\t})\n}\n",
+    "package semver\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"NewConstraint * with version 1.2.3 should be true\", func() any {\n\t\tc, _ := NewConstraint(\"*\")\n\t\tv, _ := NewVersion(\"1.2.3\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"c2\", \"change\", \"NewConstraint * with version 0.0.1 should be true\", func() any {\n\t\tc, _ := NewConstraint(\"*\")\n\t\tv, _ := NewVersion(\"0.0.1\")\n\t\treturn c.Check(v)\n\t})\n\tlokiCase(\"c3\", \"change\", \"parseConstraint * checked against version 5.0.0 should be true\", func() any {\n\t\tc, _ := parseConstraint(\"*\")\n\t\tv, _ := NewVersion(\"5.0.0\")\n\t\treturn c.check(v)\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"[s1] parseConstraint of foo returns improper constraint error\", func() any {\n\t\t_, err := parseConstraint(\"foo\")\n\t\treturn err.Error()\n\t})\n\tlokiCase(\"k2\", \"keep\", \"[s2] NewConstraint with || splits into two OR groups\", func() any {\n\t\tc, _ := NewConstraint(\">= 1.2.3, < 2.0 || => 3.0, < 4\")\n\t\treturn len(c.constraints)\n\t})\n\tlokiCase(\"k3\", \"keep\", \"[s3] [s5] [s8] parseConstraint of 1.2.x takes the x-patch branch\", func() any {\n\t\tc, err := parseConstraint(\"1.2.x\")\n\t\tif err != nil {\n\t\t\treturn err.Error()\n\t\t}\n\t\treturn c.con.String()\n\t})\n\tlokiCase(\"k4\", \"keep\", \"[s4] NewConstraint with comma splits >= 1.1, < 2 into two constraints\", func() any {\n\t\tc, _ := NewConstraint(\">= 1.1, < 2\")\n\t\treturn len(c.constraints[0])\n\t})\n\tlokiCase(\"k5\", \"keep\", \"[s6] parseConstraint of plain 1.2.3 evaluates the x-prerelease branch condition\", func() any {\n\t\tc, _ := parseConstraint(\"1.2.3\")\n\t\treturn c.con.String()\n\t})\n\tlokiCase(\"k6\", \"keep\", \"[s7] parseConstraint of 1.2.3-beta evaluates the prerelease branch condition\", func() any {\n\t\tc, _ := parseConstraint(\"1.2.3-beta\")\n\t\treturn c.con.String()\n\t})\n\tlokiCase(\"k7\", \"keep\", \"tilde ~1.2.3 checked against 1.2.5 is true\", func() any {\n\t\tc, _ := parseConstraint(\"~1.2.3\")\n\t\tv, _ := NewVersion(\"1.2.5\")\n\t\treturn c.check(v)\n\t})\n\tlokiCase(\"k8\", \"keep\", \"tilde ~1.2.3 checked against 1.3.0 is false\", func() any {\n\t\tc, _ := parseConstraint(\"~1.2.3\")\n\t\tv, _ := NewVersion(\"1.3.0\")\n\t\treturn c.check(v)\n\t})\n\tlokiCase(\"k9\", \"keep\", \"equals =1.5 checked against 1.5.1 is false\", func() any {\n\t\tc, _ := parseConstraint(\"=1.5\")\n\t\tv, _ := NewVersion(\"1.5.1\")\n\t\treturn c.check(v)\n\t})\n\tlokiCase(\"k10\", \"keep\", \"not-equal !=4.1 checked against 5.1.0 is true\", func() any {\n\t\tc, _ := parseConstraint(\"!=4.1\")\n\t\tv, _ := NewVersion(\"5.1.0\")\n\t\treturn c.check(v)\n\t})\n\tlokiCase(\"k11\", \"keep\", \"caret ^1.2.3 checked against 2.0.0 is false\", func() any {\n\t\tc, _ := parseConstraint(\"^1.2.3\")\n\t\tv, _ := NewVersion(\"2.0.0\")\n\t\treturn c.check(v)\n\t})\n\tlokiCase(\"k12\", \"keep\", \"parseConstraint of surrounding-whitespace input ' 1.0 ' gives version 1.0.0\", func() any {\n\t\tc, _ := parseConstraint(\" 1.0 \")\n\t\treturn c.con.String()\n\t})\n}\n",
+    "package humanize\n\nimport \"math\"\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"SI of positive infinity should be +Inf x with no prefix\", func() any {\n\t\treturn SI(math.Inf(1), \"x\")\n\t})\n\tlokiCase(\"c2\", \"change\", \"SI of negative infinity should be -Inf x with no prefix\", func() any {\n\t\treturn SI(math.Inf(-1), \"x\")\n\t})\n\tlokiCase(\"c3\", \"change\", \"ComputeSI of positive infinity should return value and empty prefix\", func() any {\n\t\treturn lokiAll(ComputeSI(math.Inf(1)))\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"[s1] ParseSI of x1.21JW returns the invalid input error\", func() any {\n\t\t_, _, err := ParseSI(\"x1.21JW\")\n\t\treturn err.Error()\n\t})\n\tlokiCase(\"k2\", \"keep\", \"SI of 1000000 with unit B formats as 1 MB\", func() any {\n\t\treturn SI(1000000, \"B\")\n\t})\n\tlokiCase(\"k3\", \"keep\", \"SI of zero with unit F formats as 0 F\", func() any {\n\t\treturn SI(0, \"F\")\n\t})\n\tlokiCase(\"k4\", \"keep\", \"SI of negative -100 with unit F formats as -100 F\", func() any {\n\t\treturn SI(-100, \"F\")\n\t})\n\tlokiCase(\"k5\", \"keep\", \"SI of 2.2345e-12 with unit F formats as 2.2345 pF\", func() any {\n\t\treturn SI(2.2345e-12, \"F\")\n\t})\n\tlokiCase(\"k6\", \"keep\", \"SIWithDigits of 2.234e-12 with 2 digits and unit F formats as 2.23 pF\", func() any {\n\t\treturn SIWithDigits(2.234e-12, 2, \"F\")\n\t})\n\tlokiCase(\"k7\", \"keep\", \"ComputeSI of 1000 returns value and k prefix\", func() any {\n\t\treturn lokiAll(ComputeSI(1000.0))\n\t})\n\tlokiCase(\"k8\", \"keep\", \"ComputeSI of 1e6 returns value and M prefix\", func() any {\n\t\treturn lokiAll(ComputeSI(1e6))\n\t})\n\tlokiCase(\"k9\", \"keep\", \"SI of max float64 stays clamped to the Q prefix (finite input)\", func() any {\n\t\treturn SI(math.MaxFloat64, \"x\")\n\t})\n\tlokiCase(\"k10\", \"keep\", \"SI of 1e-30 with unit F formats as 1 qF\", func() any {\n\t\treturn SI(1e-30, \"F\")\n\t})\n\tlokiCase(\"k11\", \"keep\", \"SI of negative -1000 with unit x formats as -1 kx\", func() any {\n\t\treturn SI(-1000, \"x\")\n\t})\n}\n",
+    "package humanize\n\nimport \"math\"\n\nfunc lokiCases() {\n\tlokiCase(\"c1\", \"change\", \"CommafWithDigits of 1000.00 with 2 decimals should be 1,000.00\", func() any {\n\t\treturn CommafWithDigits(1000.00, 2)\n\t})\n\tlokiCase(\"c2\", \"change\", \"CommafWithDigits of 834142.0 with 2 decimals should be 834,142.00\", func() any {\n\t\treturn CommafWithDigits(834142.0, 2)\n\t})\n\tlokiCase(\"c3\", \"change\", \"CommafWithDigits of 1000.5 with 3 decimals should be 1,000.500\", func() any {\n\t\treturn CommafWithDigits(1000.5, 3)\n\t})\n\n\tlokiCase(\"k1\", \"keep\", \"[s1] Commaf of 834142.32 splits integer and fraction parts\", func() any {\n\t\treturn Commaf(834142.32)\n\t})\n\tlokiCase(\"k2\", \"keep\", \"[s1] Commaf of 10.11 splits integer and fraction parts\", func() any {\n\t\treturn Commaf(10.11)\n\t})\n\tlokiCase(\"k3\", \"keep\", \"[s2] Commaf of NaN returns NaN\", func() any {\n\t\treturn Commaf(math.NaN())\n\t})\n\tlokiCase(\"k4\", \"keep\", \"[s3] Commaf of positive infinity returns +Inf\", func() any {\n\t\treturn Commaf(math.Inf(1))\n\t})\n\tlokiCase(\"k5\", \"keep\", \"[s4] Commaf of negative infinity returns -Inf\", func() any {\n\t\treturn Commaf(math.Inf(-1))\n\t})\n\tlokiCase(\"k6\", \"keep\", \"CommafWithDigits of 1.23 with 2 decimals stays 1.23\", func() any {\n\t\treturn CommafWithDigits(1.23, 2)\n\t})\n\tlokiCase(\"k7\", \"keep\", \"CommafWithDigits of 834142.32 with 1 decimal gives 834,142.3\", func() any {\n\t\treturn CommafWithDigits(834142.32, 1)\n\t})\n\tlokiCase(\"k8\", \"keep\", \"CommafWithDigits of 1.23 with 0 decimals gives 1\", func() any {\n\t\treturn CommafWithDigits(1.23, 0)\n\t})\n\tlokiCase(\"k9\", \"keep\", \"Commaf of zero gives 0\", func() any {\n\t\treturn Commaf(0)\n\t})\n\tlokiCase(\"k10\", \"keep\", \"Commaf of negative -1000 gives -1,000\", func() any {\n\t\treturn Commaf(-1000)\n\t})\n\tlokiCase(\"k11\", \"keep\", \"CommafWithDigits of positive infinity with 2 decimals (Inf passes through Commaf)\", func() any {\n\t\treturn CommafWithDigits(math.Inf(1), 2)\n\t})\n}\n"
+  ]
+}

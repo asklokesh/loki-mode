@@ -7,17 +7,17 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { callersOf, nrdJudgePrompt, outputSites, parseNrdVerdicts, runNoRegression, SYS_NRD_JUDGE, SYS_NRD_PROBE, nrdProbePrompt, type NrdContext, type NrdResult, type Verdict } from "../../../loki-ts/src/features/no_regression.ts";
+import { callersOf, overrideVerdict, nrdJudgePrompt, outputSites, parseNrdVerdicts, runNoRegression, SYS_NRD_JUDGE, SYS_NRD_PROBE, nrdProbePrompt, type NrdContext, type NrdResult, type Verdict } from "../../../loki-ts/src/features/no_regression.ts";
 import { extractProgram } from "../../../loki-ts/src/features/probes.ts";
 import type { LlmCall } from "../../../loki-ts/src/features/tournament.ts";
-import { haikuCli, ZERO_USAGE, type Transcript } from "../haiku_cli.ts";
+import { haikuCli, replayCalls, ZERO_USAGE, type Transcript } from "../haiku_cli.ts";
 import { treeIo } from "./tree_io.ts";
 
-const [workArg, reposArg, mode] = process.argv.slice(2) as [string, string, string];
+const [workArg, reposArg, mode, canned] = process.argv.slice(2) as [string, string, string, string | undefined];
 const work = resolve(workArg), repos = resolve(reposArg), here = import.meta.dir;
 mkdirSync(work, { recursive: true });
 const transcripts: Transcript[] = [];
-const llm: LlmCall = haikuCli(work, transcripts, { effort: "low", timeoutMs: 900_000 });
+const llm: LlmCall = mode === "replay" ? replayCalls(canned!, transcripts) : haikuCli(work, transcripts, { effort: "low", timeoutMs: 900_000 });
 const noJudge: LlmCall = async (s, u) => (s === SYS_NRD_JUDGE ? { text: "", usage: ZERO_USAGE } : llm(s, u));
 const goEnv = { ...process.env, GOFLAGS: "-mod=mod", GOTOOLCHAIN: "local" };
 
@@ -98,8 +98,11 @@ if (live.length) {
   const text = (await llm(SYS_NRD_JUDGE, [`There are ${live.length} independent tasks. Judge each case against its own task's issue only.`, ...live.map((s, n) => `=== TASK ${n + 1} ===\n${nrdJudgePrompt(s.issue, s.cases.map((x) => ({ label: lab.get(`${s.tag}\u0000${key(x)}`)!, desc: x.desc, before: x.before, after: x.after })))}`), "Answer one line per case, with the case id exactly as written: <case id>: requested|unrequested|unknown"].join("\n\n"))).text;
   const v = parseNrdVerdicts(text); for (const [k, l] of lab) verdict.set(k, v.get(l) ?? "unknown");
 }
-const blocks = (tag: string, xs: ReplayFinding[]) => xs.filter((x) => verdict.get(`${tag}\u0000${key(x)}`) === "unrequested").map((x) => x.id);
-const out = rows.map((r) => ({ fixture: r.fixture, variant: r.variant, oracle: r.oracle, replayBlocks: blocks(r.fixture, r.replay), keepBlocks: blocks(r.fixture, r.keep?.findings ?? []).filter((id) => !(r.keep?.advisory ?? []).includes(id)), replayFindings: r.replay.map((x) => `${x.id}:${verdict.get(`${r.fixture}\u0000${key(x)}`)}`), keepFindings: (r.keep?.findings ?? []).map((x) => `${x.id}:${verdict.get(`${r.fixture}\u0000${key(x)}`)}`), uncovered: r.keep?.uncovered }));
+const issueOf = (tag: string) => sections.find((x) => x.tag === tag)!.issue;
+// round 5: the override applies to keep cases only; a replayed test failure is judged as is
+const vOf = (tag: string, x: ReplayFinding, keep: boolean): Verdict | undefined => { const v = verdict.get(`${tag}\u0000${key(x)}`); return keep && v ? overrideVerdict(issueOf(tag), x, v) : v; };
+const blocks = (tag: string, xs: ReplayFinding[], keep = false) => xs.filter((x) => vOf(tag, x, keep) === "unrequested").map((x) => x.id);
+const out = rows.map((r) => ({ fixture: r.fixture, variant: r.variant, oracle: r.oracle, replayBlocks: blocks(r.fixture, r.replay), keepBlocks: blocks(r.fixture, r.keep?.findings ?? [], true).filter((id) => !(r.keep?.advisory ?? []).includes(id)), replayFindings: r.replay.map((x) => `${x.id}:${verdict.get(`${r.fixture}\u0000${key(x)}`)}`), keepFindings: (r.keep?.findings ?? []).map((x) => `${x.id}:${vOf(r.fixture, x, true)}`), uncovered: r.keep?.uncovered }));
 const cout = crow.map((c) => ({ id: c.id, editedTests: c.editedTests.length, ran: c.ran, replayFindings: c.replay.map((x) => `${x.id}:${verdict.get(`${c.id}\u0000${key(x)}`)}`), falseFire: blocks(c.id, c.replay).length > 0 }));
 const score = (f: string, which: "replayBlocks" | "keepBlocks" | "both") => { const rs = out.filter((r) => r.fixture === f), fires = (r: (typeof out)[number]) => (which === "both" ? r.replayBlocks.length + r.keepBlocks.length : r[which].length) > 0; return { caught: `${rs.filter((r) => r.oracle === false && fires(r)).length}/${rs.filter((r) => r.oracle === false).length}`, falseFires: `${rs.filter((r) => r.oracle === true && fires(r)).length}/${rs.filter((r) => r.oracle === true).length}` }; };
 const summary = { calls: transcripts.length, costUsd: transcripts.reduce((a, t) => a + t.usage.costUsd, 0), outTok: transcripts.map((t) => t.usage.outTok),

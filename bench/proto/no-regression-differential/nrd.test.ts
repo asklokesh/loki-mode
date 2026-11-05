@@ -149,3 +149,15 @@ test("edgeAdvisory: an Inf/NaN case is advisory unless a repo test line calls th
   expect(edgeAdvisory("func() any { return Commaf(math.Inf(1)) }", "Commaf +Inf", tests)).toBe(false);
   expect(edgeAdvisory("func() any { return CommafWithDigits(1.5, 2) }", "plain", tests)).toBe(false);
 });
+
+// ---- round 5: "requested" needs the issue to mention the change ----
+import { issueMentionsChange, overrideVerdict } from "../../../loki-ts/src/features/no_regression.ts";
+test("override: a change the issue never mentions cannot be requested; the title's bug wording does not count", () => {
+  const issue = readFileSync(join(import.meta.dir, "fixtures", "gitlog", "issue.md"), "utf8");
+  const strip = { before: "## v1.2.0\n\n- Merge pull request #41 from team/export\n", after: "## v1.2.0\n\n- team/export\n" };
+  expect(issueMentionsChange(issue, strip.before, strip.after)).toBe(false);
+  expect(overrideVerdict(issue, strip, "requested")).toBe("unrequested");
+  const asked = { before: "[git log --no-merges --pretty=format:%s v1.2.0..HEAD]", after: "[git log --pretty=format:%s v1.2.0..HEAD]" };
+  expect(overrideVerdict(issue, asked, "requested")).toBe("requested");
+  expect(overrideVerdict(issue, strip, "unknown")).toBe("unknown");
+});
