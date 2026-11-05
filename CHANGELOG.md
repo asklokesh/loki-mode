@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.134.0 (2026-11-05)
+
+More correct work now reads VERIFIED: Go tests behind build tags and failures that raise the error the issue reports are counted as proof, and a suite already red before the change no longer stops a run for a human answer.
+
+### Fixed
+- A Go test file behind a build tag the run does not set ("[no tests to run]" with no test executed) is read as a zero run, the same as on the original commit, instead of capping the run below VERIFIED.
+- A failure on the original commit that raises the exact error type and message the issue reports as current behavior counts as fail-then-pass proof, when the same test asserts the call result against a non-trivial expected value on the change. A test with no assertion, a re-raise, a trivial check, or an error the issue states as wanted behavior is still not proof.
+- When the only failures are ones the original commit already had, the run no longer stops on SPEC_CONFLICT asking which behavior to keep; it continues, and those failures stay on the receipt as pre-existing.
+
+### Changed
+- Go verify runs the untouched test files of a package in one go test call instead of one call per file (26 files went from about 30 s to about 1 s in testing). A file's batch result is used only when the whole package passed and that file's own tests all passed; any other file reruns alone, and files the change touched or the task names keep their own per-file proof. LOKI_E10_GO_BATCH=0 turns it off.
+
 ## v11.133.0 (2026-11-05)
 
 Slow and Python test suites are judged correctly against the original code, runs leave your branch clean of lockfile and install churn, and Loki can write the release-note fragment your repository expects.

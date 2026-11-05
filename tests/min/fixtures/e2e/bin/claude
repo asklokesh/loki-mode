@@ -159,6 +159,9 @@ fi
 if [ "$stage" = "implement" ] && [ "${LOKI_E10_STAGE:-}" = "implement" ] && [ -n "${E2E_STUB_IMPL_CONFLICT:-}" ]; then # every implement session off sonnet answers a spec conflict (tests/min/auto-route.sh)
   case "$flags" in *"--model claude-sonnet"*|*"--model sonnet"*) ;; *) echo "LOKI_SPEC_CONFLICT: $E2E_STUB_IMPL_CONFLICT"; exit 0 ;; esac
 fi
+if [ "$stage" = "implement" ] && [ -n "${E2E_STUB_BASE_RED_CONFLICT:-}" ] && ! printf '%s' "$prompt" | grep -q "already fails on the base commit is not a conflict"; then # FireLater#24 s3/s4: the session calls a suite already red on base a spec conflict until the correction says it is not (tests/min/scope-and-fix.sh)
+  echo "LOKI_SPEC_CONFLICT: the frontend suite already fails on the base commit, so 'npm run test' cannot pass"; exit 0
+fi
 if [ "$stage" = "plan" ] && [ "${E2E_STUB_MODE:-}" = "coverage" ]; then # a non-empty plan: the coverage leg with a plan stage must not resume
   out="$(printf '%s\n' "$prompt" | sed -n 's/.*to this exact file path: //p' | head -1)"
   [ -n "$out" ] && printf '1. edit calc.ts\n2. run calc.test.ts\n' > "$out"
