@@ -29,6 +29,7 @@ export function plainTestEnv(base: NodeJS.ProcessEnv = process.env): Record<stri
   const e: Record<string, string> = {};
   for (const [k, v] of Object.entries(tokenFreeEnv(base))) if (typeof v === "string") e[k] = v;
   e["FORCE_COLOR"] = "0"; e["NO_COLOR"] = "1";
+  e["NX_DAEMON"] = "false"; // an Nx daemon outlives the check and keeps rewriting files (pnpm-lock.yaml) after the commit stage
   delete e["CLICOLOR_FORCE"];
   return e;
 }

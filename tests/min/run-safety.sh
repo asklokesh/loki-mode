@@ -64,6 +64,7 @@
 #  SG2. commit_filter.ts configNeeded: return false after the task check (ignore manifests, references and globs); the manifest, setup-file and glob cases drop
 #      their config and real vitest B fails without it. Return false from the catch (diff unreadable): the fails-closed case drops.
 #  SG3. commit_filter.ts configNeeded: compare every token, not only the ones the edit added or removed; the unchanged include glob matches the new test and A ships the config.
+#  SG4. commit_filter.ts commitUnsealedWork: remove the churn block; the WIP commit carries pnpm-lock.yaml and vitest.config.ts again.
 #  NRM2. repo_profile.ts detectFormatters: drop the biome entry; the formatter check fails.
 #  10. verify.ts sameErrors: excuse every known-red id whatever its first error; the delivery check fails.
 #  11. loki-ts/src/engine10/machine.ts: break after one Wall-only round whatever wallSignature says; the
@@ -382,6 +383,24 @@ console.log(commitUnsealedWork(true, process.env.U, process.env, "e10-wip", { ba
 ' 2>&1)"
 [ "$WIP" = true ] && [ "$(git -C "$U" show --name-status --format= HEAD | tr '\t\n' ' ')" = "M app.ts " ] && [ "$(git -C "$U" status --porcelain)" = " D .loki/STATUS.txt" ] \
     && ok "the WIP commit holds the run's edit only; the user's .loki deletion stays uncommitted" || bad "WIP commit: $WIP; committed [$(git -C "$U" show --name-status --format= HEAD | tr '\t\n' ' ')]; porcelain [$(git -C "$U" status --porcelain)]"
+
+# The WIP commit of a FAILED or STALLED run applies the commit stage's filter: a lockfile or unrelated config rewritten after the commit stage
+# (L-Haiku v131 tq-11327 and tq-11663 shipped pnpm-lock.yaml this way) is not committed and the tree is restored, so the checkout carries no churn.
+WC="$T/wipchurn"; mkdir -p "$WC" && git -C "$WC" init -q -b main && git -C "$WC" config user.name rs && git -C "$WC" config user.email rs@example.invalid
+printf '{"name":"r"}\n' > "$WC/package.json"; printf 'l1\n' > "$WC/pnpm-lock.yaml"; printf 'a\n' > "$WC/app.ts"; printf 'export default { test: {} }\n' > "$WC/vitest.config.ts"
+git -C "$WC" add -A . && git -C "$WC" commit -q -m base
+BASE_W="$(git -C "$WC" rev-parse HEAD)"
+wip_churn() { # wip_churn <task>: dirty the tree like a failed run, run the WIP commit, print committed paths | porcelain
+    git -C "$WC" reset -q --hard "$BASE_W"; git -C "$WC" checkout -q -B loki/e10-wipc "$BASE_W"; printf 'b\n' > "$WC/app.ts"; printf 'l2\n' > "$WC/pnpm-lock.yaml"; printf 'export default { test: { reporters: ["dot"] } }\n' > "$WC/vitest.config.ts"
+    W="$WC" B="$BASE_W" TK="$1" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { commitUnsealedWork } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
+commitUnsealedWork(true, process.env.W, process.env, "e10-wipc", { base_sha: process.env.B, task: process.env.TK });' >/dev/null 2>&1
+    printf '%s | %s' "$(git -C "$WC" diff --name-only "$BASE_W" HEAD | tr '\n' ' ')" "$(git -C "$WC" status --porcelain | tr '\n' ' ')"
+}
+WC1="$(wip_churn "fix the parser bug")"
+[ "$WC1" = "app.ts  | " ] && ok "WIP commit: pnpm-lock.yaml and an unrelated vitest.config.ts rewrite are not committed and the tree is clean" || bad "WIP churn: [$WC1]"
+WC2="$(wip_churn "regenerate pnpm-lock.yaml and make vitest.config.ts print dots")"
+[ "$WC2" = "app.ts pnpm-lock.yaml vitest.config.ts  | " ] && ok "WIP commit: a lockfile and config the task names are committed" || bad "WIP named: [$WC2]"
 
 # Acceptance normalizer (EXP-0009): the commit filter drops a NEW or MODIFIED lockfile whose manifest did not change (install churn), keeps one
 # whose manifest changed in its directory or beneath it (workspace root), and the repo's own formatter pass never fails the run.

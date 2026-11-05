@@ -97,6 +97,11 @@ export function commitUnsealedWork(intact: boolean, repoDir: string, workerEnv: 
     // .loki and the user's paths. Without this the WIP commit deleted a repo's tracked legacy .loki files (FireLater tracks four) on the run branch.
     const spec = ["--", ".loki", ...new Set(users)], keep = [...new Set([...g(["--literal-pathspecs", "ls-files", "--cached", "-z", ...spec]).split("\0"), ...g(["--literal-pathspecs", "diff", "--cached", "--name-only", "--no-renames", "-z", ...spec]).split("\0")].filter(Boolean))];
     if (keep.length > 0) g(["--literal-pathspecs", "reset", "-q", "HEAD", "--", ...keep]);
+    // The commit stage's filter applies here too: install churn and unrelated config the run (or Nx, pnpm, verify after the commit stage) rewrote are not run work. Modified tracked paths go back to base in the index and the tree, so the checkout back to the user's branch carries no churn.
+    const base = intake["base_sha"] as string, task = typeof intake["task"] === "string" ? intake["task"] : undefined;
+    const staged = parseStaged(g(["diff", "--cached", "--name-status", "--no-renames", "-z", base])), mine = new Set(keep);
+    const churn = dropSet(repoDir, staged, intake["preexisting_dirty"], workerEnv, intake["install_created"], intake["preexisting_untracked_blobs"], base, task).filter(({ st, f }) => st !== "L" && !f.startsWith(".loki/") && !WALL_FILE.test(f) && !mine.has(f) && staged.some((s) => s.f === f && (s.st === "M" || s.st === "A")));
+    for (const { f } of churn) { const tracked = staged.find((s) => s.f === f)!.st === "M"; g(["--literal-pathspecs", "reset", "-q", base, "--", f]); if (tracked) g(["--literal-pathspecs", "checkout", "-q", base, "--", f]); }
     try { g(["diff", "--cached", "--quiet"]); return false; } catch (e) { if ((e as { status?: number }).status !== 1) return false; }
     g(["commit", "-q", "-m", `loki: work in progress, not verified (${runId})`, "-m", `Loki-Run: ${runId}`]);
     return true;
