@@ -56,10 +56,10 @@ export function snapshotFenced(cwd: string): FenceSnap {
   return snap;
 }
 
-export interface FenceRestore { restored: string[]; failed: { path: string; reason: string }[]; error?: string }
+export interface FenceRestore { restored: string[]; created: string[]; failed: { path: string; reason: string }[]; error?: string } // created: config-named files under a test directory this session made and kept
 /** Puts back every fenced file the session changed, deleted or created, except what `allow` lets through. One failing file never stops the rest; nothing here throws. */
 export function restoreFenced(cwd: string, snap: FenceSnap, allow: FenceAllow): FenceRestore {
-  const out: FenceRestore = { restored: [], failed: [] };
+  const out: FenceRestore = { restored: [], created: [], failed: [] };
   if (snap.error) return { ...out, error: `config fence inactive for this session: ${snap.error}` };
   let now: string[] = [];
   try { now = scan(cwd); } catch (e) { out.error = `config fence could not list new files after the session (${msg(e)}); only files that existed before it were checked`; }
@@ -69,7 +69,8 @@ export function restoreFenced(cwd: string, snap: FenceSnap, allow: FenceAllow): 
     try {
       const p = join(cwd, rel), before = snap.files.get(rel), cur = existsSync(p) ? readSmall(p) : null;
       if (before) { if (cur && before.equals(cur)) continue; mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, before); out.restored.push(rel); }
-      else if (cur && !TEST_DIR.test(rel)) { rmSync(p, { force: true }); out.restored.push(rel); } // created by the session; a file over the size cap stays and is not counted
+      else if (cur && TEST_DIR.test(rel)) out.created.push(rel); // test scaffolding the run made: kept, and editable again later in this run
+      else if (cur) { rmSync(p, { force: true }); out.restored.push(rel); } // created by the session; a file over the size cap stays and is not counted
     } catch (e) { out.failed.push({ path: rel, reason: msg(e) }); }
   }
   return out;
@@ -77,11 +78,11 @@ export function restoreFenced(cwd: string, snap: FenceSnap, allow: FenceAllow): 
 
 export interface FenceRecord {
   restored: { path: string; stage: string; session: string }[]; allowlisted: { path: string; session: string }[];
-  denied: { path: string; session: string }[]; failures: string[];
+  denied: { path: string; session: string }[]; failures: string[]; created: string[];
 }
 const recPath = (runDir: string): string => join(runDir, "config_fence.jsonl");
 export function readFenceRecord(runDir: string): FenceRecord {
-  const r: FenceRecord = { restored: [], allowlisted: [], denied: [], failures: [] };
+  const r: FenceRecord = { restored: [], allowlisted: [], denied: [], failures: [], created: [] };
   let text = ""; try { text = readFileSync(recPath(runDir), "utf8"); } catch { return r; }
   for (const l of text.split("\n")) {
     try {
@@ -90,6 +91,7 @@ export function readFenceRecord(runDir: string): FenceRecord {
       else if (e.k === "allowlisted") r.allowlisted.push({ path: e["path"]!, session: e["session"]! });
       else if (e.k === "denied") r.denied.push({ path: e["path"]!, session: e["session"]! });
       else if (e.k === "failure") r.failures.push(e["text"]!);
+      else if (e.k === "created" && !r.created.includes(e["path"]!)) r.created.push(e["path"]!);
     } catch { /* a torn line is skipped */ }
   }
   return r;

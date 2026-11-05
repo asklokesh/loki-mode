@@ -230,6 +230,8 @@ const { createConfigFenceHook } = await import(`${src}/runner/host_guard.ts`);
 const { createSessionRunner } = await import(`${src}/engine10/session.ts`);
 const { readFenceRecord, fenceNotes, capFenceVerdict, snapshotFenced, restoreFenced, allowFor, FENCE_TASK_MAX } = await import(`${src}/util/config_fence.ts`);
 const { isFencedPath } = await import(`${src}/util/config_paths.ts`);
+const { LOCKFILE_NAMES } = await import(`${src}/util/lock_ecosystems.ts`);
+const { LOCKFILE: CF_LOCK } = await import(`${src}/e10ext/commit_filter.ts`);
 const out: string[] = []; const say = (k: string, v: unknown) => out.push(`${k} ${typeof v === "string" ? v : JSON.stringify(v)}`);
 const git = (d: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd: d, stdio: "ignore" });
 const fixture = (name: string): string => {
@@ -253,9 +255,10 @@ say("switch-off", await hook({ LOKI_CONFIG_FENCE: "0" }, "Edit", "vitest.config.
 say("default-on", await hook({}, "Edit", "vitest.config.ts"));
 // a task that names the setting concept (not the file) is allowed the matching edit; an unrelated task is not
 const cz = async (task: string, f: string) => hook({ LOKI_E10_FENCE_TASK: task }, "Edit", f);
-for (const [t, f] of [["Enable strict null checks in the project", "tsconfig.json"], ["Set up path aliases for src", "tsconfig.json"], ["Add coverage thresholds of 80 percent", "vitest.config.ts"], ["Add a vitest setup file that mocks fetch", "vitest.config.ts"], ["Add an ESLint rule banning console.log", "eslint.config.mjs"], ["Turn on noImplicitAny and fix the errors", "tsconfig.json"], ["Bump zod to the latest release", "pnpm-lock.yaml"], ["Add axios as a dependency", "pnpm-lock.yaml"], ["Upgrade lodash", "package-lock.json"], ["Add the rand crate", "Cargo.lock"], ["Add a coverage fail-under of 90", "pytest.ini"]] as const) say(`concept:${f}:${t}`, await cz(t, f));
-for (const [t, f] of [["Fix the off by one in parseRange", "tsconfig.json"], ["Fix the off by one in parseRange", "vitest.config.ts"], ["Rename the helper", "eslint.config.mjs"], ["Fix the off by one in parseRange", "pnpm-lock.yaml"], ["Enable strict null checks", "vitest.config.ts"], ["Fix the failing pytest test", "pytest.ini"], ["Fix the eslint warning", "eslint.config.mjs"], ["Add test coverage", "vitest.config.ts"], ["Add strict email validation", "tsconfig.json"], ["Add the user module", "pnpm-lock.yaml"]] as const) say(`unrelated:${f}:${t}`, await cz(t, f));
+for (const [t, f] of [["Enable strict null checks in the project", "tsconfig.json"], ["Set up path aliases for src", "tsconfig.json"], ["Add coverage thresholds of 80 percent", "vitest.config.ts"], ["Add a vitest setup file that mocks fetch", "vitest.config.ts"], ["Add an ESLint rule banning console.log", "eslint.config.mjs"], ["Turn on noImplicitAny and fix the errors", "tsconfig.json"], ["Add a vitest reporter for junit output", "vitest.config.ts"], ["Configure the coverage reporters", "vitest.config.ts"], ["Set the build config to emit sourcemaps", "webpack.config.js"], ["Bump zod to the latest release", "pnpm-lock.yaml"], ["Add axios as a dependency", "pnpm-lock.yaml"], ["Upgrade lodash", "package-lock.json"], ["Add the rand crate", "Cargo.lock"], ["Add a coverage fail-under of 90", "pytest.ini"]] as const) say(`concept:${f}:${t}`, await cz(t, f));
+for (const [t, f] of [["Fix the off by one in parseRange", "tsconfig.json"], ["Fix the off by one in parseRange", "vitest.config.ts"], ["Rename the helper", "eslint.config.mjs"], ["Fix the off by one in parseRange", "pnpm-lock.yaml"], ["Enable strict null checks", "vitest.config.ts"], ["Fix the failing pytest test", "pytest.ini"], ["Fix the eslint warning", "eslint.config.mjs"], ["Add test coverage", "vitest.config.ts"], ["Add strict email validation", "tsconfig.json"], ["Add the user module", "pnpm-lock.yaml"], ["Add a reporter class for CSV output", "vitest.config.ts"], ["Add a build config parser", "webpack.config.js"], ["Add a CSV reporter", "vitest.config.ts"], ["Add a setup file reader", "vitest.config.ts"]] as const) say(`unrelated:${f}:${t}`, await cz(t, f));
 say("fixture-dir-passes", await hook({}, "Write", "tests/fixtures/app/tsconfig.json"));
+say("lockfile-table", LOCKFILE_NAMES.size >= 13 && [...LOCKFILE_NAMES].every((n: string) => isFencedPath(n) && CF_LOCK.test(`pkg/${n}`)));
 for (const f of ["uv.lock", "Gemfile.lock", "composer.lock", "npm-shrinkwrap.json", "Pipfile.lock"]) say(`lock:${f}`, isFencedPath(f));
 // every hook denial is recorded for the receipt and caps the run
 const rd = join(T, "denyrec"); await hook({ LOKI_E10_FENCE_RUNDIR: rd, LOKI_ITERATION: "itD" }, "Edit", "tsconfig.json"); await hook({ LOKI_E10_FENCE_RUNDIR: rd }, "Edit", "src/a.ts");
@@ -299,6 +302,14 @@ const n = fenceNotes(readFenceRecord(join(r.d, ".loki/runs/r1"))); say("leg6-cap
 on = "0"; r = await run("leg7", "Fix src/a.ts", EDIT); await r.call("it7"); say("leg7-opt-out-edit-kept", readFileSync(join(r.d, "vitest.config.ts"), "utf8").includes("setupFiles")); on = "";
 r = await run("leg12", "Fix src/a.ts", `mkdir -p tests test __tests__/x; printf '{}' > tests/tsconfig.json; printf '{}' > test/jest.config.json; printf '[pytest]' > __tests__/x/pytest.ini; echo LOKI_DONE`); await r.call("it12");
 say("leg12-kept", ["tests/tsconfig.json", "test/jest.config.json", "__tests__/x/pytest.ini"].every((f) => existsSync(join(r.d, f))));
+// 9. a config-named file the run created under tests/ stays editable later in the same run; a tracked one the run did not create is still restored
+{ const d = fixture("leg13"); mkdirSync(join(d, "tests"), { recursive: true }); writeFileSync(join(d, "tests/jest.config.json"), "{}\n"); git(d, "add", "-A"); git(d, "commit", "-q", "-m", "t"); mkdirSync(join(d, ".loki"), { recursive: true });
+  process.env["LOKI_E10_TASK_TEXT"] = "Fix src/a.ts"; process.env["LOKI_E10_RUN_ID"] = "r1"; delete process.env["LOKI_CONFIG_FENCE"];
+  const rn = createSessionRunner({ provider: "stub", lokiRoot: join(d, ".loki"), childCommand: ["bash", ["-c", `if [ "$LOKI_ITERATION" = it13a ]; then printf '{"a":1}' > tests/tsconfig.json; printf '{"x":1}' > tests/jest.config.json; else printf '{"a":2}' > tests/tsconfig.json; printf 'export default { x: 2 };' > vitest.config.ts; fi; echo LOKI_DONE`]] });
+  const go = (id: string) => rn.run({ stage: "implement", brief: "b", tier: "development", iterationId: id, limitS: 30, signal: new AbortController().signal, cwd: d });
+  await go("it13a"); say("leg13-created-kept", readFileSync(join(d, "tests/tsconfig.json"), "utf8")); say("leg13-tracked-restored", readFileSync(join(d, "tests/jest.config.json"), "utf8").trim());
+  await go("it13b"); say("leg13-created-editable-later", readFileSync(join(d, "tests/tsconfig.json"), "utf8")); say("leg13-root-config-still-restored", readFileSync(join(d, "vitest.config.ts"), "utf8").trim());
+  say("leg13-record", readFenceRecord(join(d, ".loki/runs/r1")).created); }
 // 5. a fixture project's config is test data, never deleted or fenced
 r = await run("leg8", "Fix src/a.ts", `mkdir -p tests/fixtures/app; printf '{}' > tests/fixtures/app/tsconfig.json; echo LOKI_DONE`); await r.call("it8"); say("leg8-fixture-kept", existsSync(join(r.d, "tests/fixtures/app/tsconfig.json")));
 // 6. one task text at tool time and at restore time (cut once, to FENCE_TASK_MAX)
@@ -339,8 +350,8 @@ fchk "allowlisted path passes" "allowlisted none"
 fchk "other stages unfenced" "stage-verify-off none"
 fchk "LOKI_CONFIG_FENCE=0 switches it off" "switch-off none"
 fchk "default is ON without any env" "default-on deny"
-for c in "tsconfig.json:Turn on noImplicitAny and fix the errors" "pnpm-lock.yaml:Bump zod to the latest release" "tsconfig.json:Enable strict null checks in the project" "tsconfig.json:Set up path aliases for src" "vitest.config.ts:Add coverage thresholds of 80 percent" "vitest.config.ts:Add a vitest setup file that mocks fetch" "eslint.config.mjs:Add an ESLint rule banning console.log" "pnpm-lock.yaml:Add axios as a dependency" "package-lock.json:Upgrade lodash" "Cargo.lock:Add the rand crate" "pytest.ini:Add a coverage fail-under of 90"; do fchk "concept task allows ${c%%:*} (${c#*:})" "concept:${c%%:*}:${c#*:} none"; done
-for c in "pytest.ini:Fix the failing pytest test" "eslint.config.mjs:Fix the eslint warning" "vitest.config.ts:Add test coverage" "tsconfig.json:Add strict email validation" "pnpm-lock.yaml:Add the user module" "tsconfig.json:Fix the off by one in parseRange" "vitest.config.ts:Fix the off by one in parseRange" "eslint.config.mjs:Rename the helper" "pnpm-lock.yaml:Fix the off by one in parseRange" "vitest.config.ts:Enable strict null checks"; do fchk "unrelated task still denies ${c%%:*} (${c#*:})" "unrelated:${c%%:*}:${c#*:} deny"; done
+for c in "vitest.config.ts:Add a vitest reporter for junit output" "vitest.config.ts:Configure the coverage reporters" "webpack.config.js:Set the build config to emit sourcemaps" "tsconfig.json:Turn on noImplicitAny and fix the errors" "pnpm-lock.yaml:Bump zod to the latest release" "tsconfig.json:Enable strict null checks in the project" "tsconfig.json:Set up path aliases for src" "vitest.config.ts:Add coverage thresholds of 80 percent" "vitest.config.ts:Add a vitest setup file that mocks fetch" "eslint.config.mjs:Add an ESLint rule banning console.log" "pnpm-lock.yaml:Add axios as a dependency" "package-lock.json:Upgrade lodash" "Cargo.lock:Add the rand crate" "pytest.ini:Add a coverage fail-under of 90"; do fchk "concept task allows ${c%%:*} (${c#*:})" "concept:${c%%:*}:${c#*:} none"; done
+for c in "vitest.config.ts:Add a reporter class for CSV output" "webpack.config.js:Add a build config parser" "vitest.config.ts:Add a CSV reporter" "vitest.config.ts:Add a setup file reader" "pytest.ini:Fix the failing pytest test" "eslint.config.mjs:Fix the eslint warning" "vitest.config.ts:Add test coverage" "tsconfig.json:Add strict email validation" "pnpm-lock.yaml:Add the user module" "tsconfig.json:Fix the off by one in parseRange" "vitest.config.ts:Fix the off by one in parseRange" "eslint.config.mjs:Rename the helper" "pnpm-lock.yaml:Fix the off by one in parseRange" "vitest.config.ts:Enable strict null checks"; do fchk "unrelated task still denies ${c%%:*} (${c#*:})" "unrelated:${c%%:*}:${c#*:} deny"; done
 fchk "a config-named file under a fixtures dir is not fenced" "fixture-dir-passes none"
 fchk "uv.lock is fenced (the commit filter's one lockfile list)" "lock:uv.lock true"
 fchk "Gemfile.lock is fenced" "lock:Gemfile.lock true"
@@ -354,6 +365,13 @@ fchk "an allowlist caps even with a passing check" "allowlist-caps-even-with-pas
 fchk "a new config-named file under tests, test or __tests__ is not denied" 'hook-new-file-under-tests ["none","none","none"]'
 fchk "an existing root config is still denied" "hook-existing-file-in-root-still-denied deny"
 fchk "a created config-named file under a test dir is not deleted" "leg12-kept true"
+fchk "created under tests/ is kept in the session that made it" 'leg13-created-kept {"a":1}'
+fchk "a tracked tests/ config the run did not create is still restored" 'leg13-tracked-restored {}'
+fchk "the file the run created is editable again in a later session of the run" 'leg13-created-editable-later {"a":2}'
+fchk "a root config is still restored in that later session" 'leg13-root-config-still-restored export default {};'
+fchk "the created file is on the run record" 'leg13-record ["tests/tsconfig.json"]'
+fchk "every lockfile name of the one table is fenced" "lockfile-table true"
+grep -qE 'composer[.]lock|Gemfile[.]lock|uv[.]lock|pnpm-lock' "$ROOT/loki-ts/src/e10ext/commit_filter.ts" "$ROOT/loki-ts/src/util/config_paths.ts" "$ROOT/loki-ts/src/project_model/linguist.ts" && bad "a literal lockfile list sits outside util/lock_ecosystems.ts" || ok "the lockfile list is defined once, in util/lock_ecosystems.ts"
 fchk "real session: vitest.config.ts restored after a Bash write" 'leg1-vitest export default {};'
 fchk "real session: tsconfig.json restored" "leg1-tsconfig-strict-false true"
 fchk "real session: created config removed" "leg1-created-removed true"

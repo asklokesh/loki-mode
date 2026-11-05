@@ -14,10 +14,12 @@ export const isFencedPath = (rel: string): boolean => !/(^|\/)(node_modules|\.lo
 // A task that asks to change a setting needs the matching config edit even when it never names the file ("enable strict null checks" needs tsconfig.json).
 // An action verb plus a setting phrase, in one sentence: a bare word ("pytest", "eslint", "coverage", "strict") never unlocks a file.
 const VERB = "(?:enable|disable|turn(?: \\w+)? (?:on|off)|set(?: up)?|raise|lower|increase|decrease|configure|add|require|enforce|tighten|relax|change|tweak|switch on|switch off)";
-const asks = (phrase: string): RegExp => new RegExp(`\\b${VERB}\\b[^.\\n]{0,50}?\\b(?:${phrase})`, "i");
+// A code-object noun right after the phrase ("a reporter class", "a build config parser") means the task writes code, not config.
+const CODE_NOUN = "(?:class(?:es)?|parser|parsers|module|modules|function|functions|helper|helpers|component|components|service|services|reader|readers|writer|writers|generator|handler|handlers|interface|type|types|tests?|script|scripts|loader class|wrapper|util|utility|utilities)";
+const asks = (phrase: string): RegExp => new RegExp(`\\b${VERB}\\b[^.\\n]{0,50}?\\b(?:${phrase})(?![\\w-])(?!\\s+${CODE_NOUN}\\b)`, "i");
 const CONCEPTS: [RegExp, RegExp][] = [
   [/tsconfig/, asks("strict(?: mode|NullChecks|FunctionTypes|PropertyInitialization)|strict null checks?|strictness flag|noImplicit\\w+|noUnused\\w+|path aliases|path alias|compilerOptions|compiler options?|moduleResolution")],
-  [/(?:vitest|vite|jest|karma|playwright)[\w.-]*(?:config|conf)/, asks("coverage thresholds?|coverage (?:config|settings?)|setup files?|setupFiles|test environment|reporters?")],
+  [/(?:vitest|vite|jest|karma|playwright)[\w.-]*(?:config|conf)/, asks("coverage thresholds?|coverage (?:config|settings?)|setup files?|setupFiles|test environment|(?:test|coverage|vitest|jest|junit) reporters?|reporters? (?:config\\w*|options?|settings?)")],
   [/eslint|\.eslintrc/, asks("lint(?:ing)? rules?|eslint rules?|eslint config\\w*|rule banning|rule forbidding|rule enforcing")],
   [/(?:webpack|rollup|vite|babel)[\w.-]*(?:config)?|\.babelrc/, asks("(?:babel|webpack|rollup|vite) (?:presets?|plugins?|loaders?|config\\w*)|build (?:config\\w*|settings?|options?)")],
   [/pytest\.ini|tox\.ini|setup\.cfg|\.coveragerc/, asks("coverage thresholds?|coverage fail[-_ ]under|fail[-_ ]under|pytest markers?|pytest (?:config\\w*|settings?|options?)|tox (?:env\\w*|config\\w*)")],
