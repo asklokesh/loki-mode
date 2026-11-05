@@ -57,6 +57,9 @@
 #      pass/fail/unhandled case (a failed file explains the exit, so only the banner catches it).
 #   9. loki-ts/src/util/conflict_resume.ts wallFailures: ignore strict (skip the full suite on the
 #      Wall-only path); the delivery check fails. Skip the restore after a failed re-verify: it fails too.
+#  NRM1. commit_filter.ts dropSet: restrict the lockfile rule to st === "A" again; the lockfile check fails. Make manifestChanged
+#      compare dirname equality only (drop the descendant clause); the workspace-member case fails.
+#  NRM2. repo_profile.ts detectFormatters: drop the biome entry; the formatter check fails.
 #  10. verify.ts sameErrors: excuse every known-red id whatever its first error; the delivery check fails.
 #  11. loki-ts/src/engine10/machine.ts: break after one Wall-only round whatever wallSignature says; the
 #      mono2 two-round check fails.
@@ -334,6 +337,39 @@ console.log(commitUnsealedWork(true, process.env.U, process.env, "e10-wip", { ba
 ' 2>&1)"
 [ "$WIP" = true ] && [ "$(git -C "$U" show --name-status --format= HEAD | tr '\t\n' ' ')" = "M app.ts " ] && [ "$(git -C "$U" status --porcelain)" = " D .loki/STATUS.txt" ] \
     && ok "the WIP commit holds the run's edit only; the user's .loki deletion stays uncommitted" || bad "WIP commit: $WIP; committed [$(git -C "$U" show --name-status --format= HEAD | tr '\t\n' ' ')]; porcelain [$(git -C "$U" status --porcelain)]"
+
+# Acceptance normalizer (EXP-0009): the commit filter drops a NEW or MODIFIED lockfile whose manifest did not change (install churn), keeps one
+# whose manifest changed in its directory or beneath it (workspace root), and the repo's own formatter pass never fails the run.
+LK="$T/lockdrop"; mkdir -p "$LK/pkg" && git -C "$LK" init -q -b main && git -C "$LK" config user.name rs && git -C "$LK" config user.email rs@example.invalid
+printf '{"name":"r"}\n' > "$LK/package.json"; printf 'l1\n' > "$LK/pnpm-lock.yaml"; printf '{"name":"p"}\n' > "$LK/pkg/package.json"; printf 'l1\n' > "$LK/pkg/package-lock.json"; printf '{"name":"b"}\n' > "$LK/pkg/b.json"
+git -C "$LK" add -A . && git -C "$LK" commit -q -m base
+LKR="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { dropSet, formatChanged } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
+const d = (staged) => dropSet(process.env.LK, staged, null, process.env).filter((x) => x.st !== "L").map((x) => x.f).sort().join(",") || "-";
+const out = [
+  d([{ st: "M", f: "pnpm-lock.yaml" }, { st: "M", f: "src/a.ts" }]),
+  d([{ st: "A", f: "pkg/package-lock.json" }]),
+  d([{ st: "M", f: "pnpm-lock.yaml" }, { st: "M", f: "package.json" }]),
+  d([{ st: "M", f: "pnpm-lock.yaml" }, { st: "M", f: "pkg/package.json" }]),
+  d([{ st: "M", f: "pkg/package-lock.json" }, { st: "M", f: "package.json" }]),
+  d([{ st: "D", f: "pnpm-lock.yaml" }]),
+];
+console.log(out.join(" | "));
+' 2>&1)"
+[ "$LKR" = "pnpm-lock.yaml | pkg/package-lock.json | - | - | pkg/package-lock.json | -" ] && ok "commit filter: a modified or new lockfile with no manifest change is dropped; one whose manifest changed (own dir or a member) ships; a deletion is untouched" || bad "lockfile drop gave: $LKR"
+printf '#!/bin/sh\nfor f in "$@"; do printf "formatted\\n" >> "$f"; done\n' > "$LK/node_modules-biome.sh"; mkdir -p "$LK/node_modules/.bin"; cp "$LK/node_modules-biome.sh" "$LK/node_modules/.bin/biome"; rm "$LK/node_modules-biome.sh"; chmod +x "$LK/node_modules/.bin/biome"
+printf '{}\n' > "$LK/biome.json"
+FMT="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { formatChanged } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts"), fs = await import("node:fs");
+const a = formatChanged(process.env.LK, [{ st: "M", f: "pkg/b.json" }], new Set());
+const touched = fs.readFileSync(process.env.LK + "/pkg/b.json", "utf8").includes("formatted");
+fs.writeFileSync(process.env.LK + "/node_modules/.bin/biome", "#!/bin/sh\nexit 1\n");
+const b = formatChanged(process.env.LK, [{ st: "M", f: "pkg/b.json" }], new Set());
+fs.rmSync(process.env.LK + "/node_modules/.bin/biome");
+const c = formatChanged(process.env.LK, [{ st: "M", f: "pkg/b.json" }], new Set());
+console.log(JSON.stringify([a, touched, b, c]));
+' 2>&1)"
+[ "$FMT" = '[["pkg/b.json"],true,[],[]]' ] && ok "formatter pass: a repo-local biome rewrites the changed file; a failing or missing formatter is a silent no-op" || bad "formatter pass gave: $FMT"
 
 # A batched vitest file reads exactly as the same file run alone: real vitest 4.0.16 non-TTY output vs vitestFileText of its JSON report.
 PAR="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '

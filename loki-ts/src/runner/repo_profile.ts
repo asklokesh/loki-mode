@@ -367,6 +367,8 @@ export function detectFormatters(repoDir: string): RepoFormatter[] {
   try { prettierKey = pj !== "" && "prettier" in (JSON.parse(pj) as object); } catch { /* malformed manifest: no formatter */ }
   const local = join(repoDir, "node_modules", ".bin", "prettier"); // a repo-local binary only: nothing is fetched
   if ((prettierKey || readdirSync(repoDir).some((f) => /^(\.prettierrc(\.[a-z0-9]+)?|prettier\.config\.[cm]?[jt]s)$/.test(f))) && existsSync(local)) out.push({ tool: "prettier", argv: [local, "--write"], exts: /\.(?:[cm]?[jt]sx?|json|css|scss|md|ya?ml|html)$/ });
+  const biome = join(repoDir, "node_modules", ".bin", "biome"); // same rule: repo-local binary only
+  if (has("biome.json", "biome.jsonc") && existsSync(biome)) out.push({ tool: "biome", argv: [biome, "format", "--write"], exts: /\.(?:[cm]?[jt]sx?|json|jsonc|css)$/ });
   if (has("go.mod")) out.push({ tool: "gofmt", argv: ["gofmt", "-w"], exts: /\.go$/ });
   if (has("rustfmt.toml", ".rustfmt.toml")) {
     const ed = /^\s*edition\s*=\s*"(\d+)"/m.exec(read(join(repoDir, "Cargo.toml")))?.[1];
