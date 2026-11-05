@@ -364,7 +364,8 @@ export function discoverCommands(repoDir: string, pmDir: string = repoDir): Prof
  *  tracked package manifest outside vendored, fixture, example, docs and test directories. Commands come from discoverCommands (one reader
  *  of manifests); install only from a lockfile (or go.mod), so no install ever mutates a lock; dependsOn only from JS manifests naming another
  *  member (other packages leave it absent: edges unknown). Returns the raw answer for validateAnswer, or null when no package has a test
- *  command, the tree cannot be listed or it holds too many manifests to trust a reading (the model session then decides). Never throws. */
+ *  command, the tree cannot be listed or it holds too many manifests to trust a reading (the model session then decides). A test script that fans out over the
+ *  workspace returns { fanOut: <package.json that does> } instead. Never throws. */
 const SKIP_PKG_DIR = /^(node_modules|vendor|third_party|test-?data|.*fixtures?|__\w+__|examples?|samples?|templates?|docs?|tests?|e2e|benchmarks?|\..*)$/;
 const PKG_MANIFESTS = ["package.json", "go.mod", "Cargo.toml", "pyproject.toml", "setup.py"];
 const LOCK_INSTALLS: [string, string][] = [["pnpm-lock.yaml", "pnpm install"], ["yarn.lock", "yarn install"], ["bun.lock", "bun install"], ["bun.lockb", "bun install"], ["package-lock.json", "npm install"], ["uv.lock", "uv sync"], ["poetry.lock", "poetry install"], ["Cargo.lock", "cargo fetch"], ["go.mod", "go mod download"]];
@@ -382,7 +383,7 @@ function fansOut(scripts: Record<string, unknown>): boolean {
   }
   return false;
 }
-export function manifestModel(repoDir: string): Record<string, unknown> | null {
+export function manifestModel(repoDir: string): Record<string, unknown> | { fanOut: string } | null {
   let tracked: string[];
   try { tracked = safeGit(repoDir, ["ls-files", "-z"], { maxBuffer: 256 * 1024 * 1024 }).split("\0").filter(Boolean); } catch { return null; }
   const trackedSet = new Set(tracked), at = (dir: string, f: string): string => (dir === "." ? f : `${dir}/${f}`);
@@ -416,8 +417,10 @@ export function manifestModel(repoDir: string): Record<string, unknown> | null {
     return { name: typeof pj?.["name"] === "string" && pj["name"] ? pj["name"] : d === "." ? basename(resolve(repoDir)) : d, root: d, runner: null, cite: own.length ? own : [cmds[0] ? at(d, cmds[0].source) : at(d, "package.json")],
       commands: { test: cmdOf("test"), lint: cmdOf("lint"), build: cmdOf("build"), start: null }, ui: { present: boot !== null, boot, cite: boot ? boot.cite : [] }, install, ...js };
   });
-  // A test script that fans out over the workspace (nx, turbo, lerna, recursive pnpm or yarn) names no one package's suite: the session decides.
-  if (!packages.some((p) => p.commands.test) || dirs.some((d) => fansOut((json(d)?.["scripts"] ?? {}) as Record<string, unknown>))) return null;
+  // A test script that fans out over the workspace (nx, turbo, lerna, recursive pnpm or yarn) names no one package's suite, so the manifests cannot answer; the caller is told why ({ fanOut }) and decides whether a session is worth it.
+  const fan = dirs.find((d) => fansOut((json(d)?.["scripts"] ?? {}) as Record<string, unknown>));
+  if (fan !== undefined) return { fanOut: at(fan, "package.json") };
+  if (!packages.some((p) => p.commands.test)) return null;
   const wsCite = trackedSet.has("pnpm-workspace.yaml") ? "pnpm-workspace.yaml" : packages[0]!.cite[0]!;
   return { workspaceKind: members.length ? "workspaces" : packages.length > 1 ? "multi-root" : "single", workspaceCite: [wsCite], fingerprintFiles: [...fingerprint].sort(), packages };
 }
@@ -495,7 +498,7 @@ export function runBaseline(repoDir: string, commands: ProfileCommand[], opts: B
   if (b.timed_out) t.note = `timed out after ${tmo}s; no baseline`; else if (missing) t.note = "command not found";
   return b;
 }
-const normCmd = (s: string): string => s.replace(/\s+--silent\b/, "").trim();
+const normCmd = (s: string): string => s.replace(/\s+--silent\b/, "").trim().replace(/^\(cd \.\s+&&\s+(.+)\)$/, "$1"); // a root package suite is spelled "(cd . && X)" by package_suite.ts but the baseline ran plain "X": same command, never "not the full suite command"
 export const SUITE_BASELINE_BUDGET_S = 120;
 /** FC-BASELINE-PER-PACKAGE: a baseline per full-suite command verify will run (`specs`: package_suite.ts fullSuiteSpecs, the one source), added to the
  *  profile ensureProfile wrote for this HEAD. An entry for the same command is reused unless `rerun` (a dependency install succeeded
