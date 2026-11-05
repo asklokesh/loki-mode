@@ -187,8 +187,10 @@ for n in ("acme_api", "acme_web"):
     except OSError: cm[n] = ""
 both = all("Linked PRs:" in v and "https://github.com/acme/api/pull/1" in v and "https://github.com/acme/web/pull/1" in v for v in cm.values())
 chk("each comment links both sibling PRs", both, cm)
-chk("this PR marker sits on the commenting repo's own line", "pull/1 (this PR)" in cm["acme_api"].split("acme/api: ")[1].split("\n")[0] and "(this PR)" not in cm["acme_api"].split("acme/web: ")[1].split("\n")[0], cm["acme_api"])
-chk("draft marker on web", "(draft)" in cm["acme_api"].split("acme/web: ")[1].split("\n")[0])
+def line_of(body, r):
+    return next((l for l in body.split("\n") if l.startswith("- " + r + ": ")), "")
+chk("this PR marker sits on the commenting repo's own line", "(this PR)" in line_of(cm["acme_api"], "acme/api") and "(this PR)" not in line_of(cm["acme_api"], "acme/web"), cm["acme_api"])
+chk("draft marker on web", "(draft)" in line_of(cm["acme_api"], "acme/web"), cm["acme_api"])
 chk("summary line counts linked PRs", "linked PRs: 2 of 2 repos have an open PR (1 ready, 1 draft)" in out, out)
 del os.environ["GH_PRS"]
 
