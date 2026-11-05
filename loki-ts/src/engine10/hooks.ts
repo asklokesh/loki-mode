@@ -7,7 +7,7 @@ export interface StageCapability { stage: string; secrets: string[] | "unknown";
 export interface Hooks {
   time?: { build(ctx: RunContext, stages: Partial<Record<StageName, number>>, firstMs: number | null): ReceiptTime; firstEventMs(path: string): number | null; reconciled(t: ReceiptTime | undefined): number | null };
   costRecords?: { resumeVerdicts(r: { iter: string; rec: Rec }[]): { ambiguous: string[]; separate: string[]; delta: Record<string, Rec> }; build(r: { iter: string; rec: Rec }[], expected: number, ambiguous: string[], separate: string[], delta?: string[]): CostRecords };
-  effort?: { resolve(stage: string, optsEffort: string | undefined): string | undefined; fix(round: number, codeOwned: boolean): string | undefined };
+  effort?: { resolve(stage: string, optsEffort: string | undefined): string | undefined; fix(round: number, codeOwned: boolean, info?: { model?: string; envOnly?: boolean }): string | undefined; caps?(stage: string, model: string): { turns?: number; newTokens?: number; noEditByTurn?: number } | undefined };
   wall?: { snapshotTree(repoDir: string, signal: AbortSignal): Promise<string | null>; changedSinceBase(repoDir: string, baseSha: string): string[] | null; manifests: RegExp };
   stageCapability?(stage: string, env: NodeJS.ProcessEnv, argv: readonly string[]): StageCapability;
   briefFacts?(o: Partial<Record<string, Obj>>, runId: string, runDir: string): BriefFacts; sealed?(runDir: string, receipt: { run_id: string; provider: string; model: string; receipt_sha256: string; cost?: { per_model?: Record<string, unknown> } }): void; // after the receipt files are final; failures never reach the seal

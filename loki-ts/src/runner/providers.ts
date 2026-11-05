@@ -38,7 +38,7 @@ import {
 } from "../providers/claude_flags.ts";
 import { mcpConfigPath } from "../providers/mcp_config.ts";
 import { LEAN_PREFIX } from "../features/lean_prefix.ts";
-import { consumeSdkStream, type StreamMsg } from "./sdk_stream_parser.ts";
+import { consumeSdkStream, type StopRules, type StreamMsg } from "./sdk_stream_parser.ts";
 import { writeSessionId } from "./session_resume.ts";
 import { createTrimHook } from "./trim.ts";
 import { createHostGuardHook, HOST_GUARD_SCRIPT, hookTimeoutSeconds } from "./host_guard.ts";
@@ -213,6 +213,11 @@ export function claudeTierToModel(tier: SessionTier): string {
 export function stageMaxTurns(env: NodeJS.ProcessEnv = process.env): number | undefined {
   const n = Number(env["LOKI_E10_MAX_TURNS"]);
   return env["LOKI_E10_STAGE"] && Number.isInteger(n) && n > 0 ? n : undefined;
+}
+/** The harness stop rules this engine10 stage session runs under (LOKI_E10_STOP_RULES, JSON set by session.ts); undefined outside a stage or when invalid. */
+export function stageStopRules(env: NodeJS.ProcessEnv = process.env): StopRules | undefined {
+  if (!env["LOKI_E10_STAGE"] || !env["LOKI_E10_STOP_RULES"]) return undefined;
+  try { const r = JSON.parse(env["LOKI_E10_STOP_RULES"]) as Record<string, unknown>, ok = (k: string): number | undefined => (Number.isInteger(r[k]) && (r[k] as number) > 0 ? (r[k] as number) : undefined); const out: StopRules = { ...(ok("turns") ? { turns: ok("turns")! } : {}), ...(ok("newTokens") ? { newTokens: ok("newTokens")! } : {}), ...(ok("noEditByTurn") ? { noEditByTurn: ok("noEditByTurn")! } : {}) }; return Object.keys(out).length ? out : undefined; } catch { return undefined; }
 }
 export async function* closeQueryOnResult(q: AsyncIterable<StreamMsg> & { close?: () => void }, enabled: boolean): AsyncGenerator<StreamMsg> {
   if (!enabled) { yield* q; return; }
@@ -944,6 +949,7 @@ export function sdkQueryProvider(): ProviderInvoker {
           hookEventsEnabled: process.env["LOKI_HOOK_EVENTS"] !== "off",
           requestedModel: defaultModel ? PROVIDER_DEFAULT_MODEL : (extra.model ?? model), // P12-23: the exact value resolved for this call, never an inherited env var
           write: (s) => process.stdout.write(s),
+          ...(stageStopRules() ? { stop: stageStopRules() } : {}),
           ...(process.env["LOKI_E10_STAGE"] ? { onSessionId: (id: string) => writeSessionId(call.cwd, process.env["LOKI_ITERATION"] ?? "0", { sessionId: id }) } : {}),
         });
         captured = res.capturedText;
@@ -951,7 +957,8 @@ export function sdkQueryProvider(): ProviderInvoker {
         if (process.env["LOKI_E10_STAGE"]) writeSessionId(call.cwd, process.env["LOKI_ITERATION"] ?? "0", res);
         // Fail-closed: a stream that never produced a terminal result is a
         // failed iteration, never counted as success.
-        exitCode = res.sawResult ? (res.maxTurns ? MAX_TURNS_EXIT : res.exitCode) : 1; // error_max_turns: harness-owned stop, distinct from a code failure
+        exitCode = res.stopped ? MAX_TURNS_EXIT : res.sawResult ? (res.maxTurns ? MAX_TURNS_EXIT : res.exitCode) : 1; // error_max_turns: harness-owned stop, distinct from a code failure
+        if (res.stopped) { const m = `\n[sdk-loop stop: ${res.stopped.rule} limit ${res.stopped.limit} at turn ${res.stopped.turn}, ${res.stopped.new_tokens} new tokens]\n`; captured += m; process.stdout.write(m); } // E5: harness-owned stop, recorded by the stage on the receipt
         if (res.maxTurns) captured += "\n[sdk-loop error: turn cap reached (error_max_turns)]\n";
         rateLimit = res.rateLimit;
       } catch (e) {

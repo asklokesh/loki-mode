@@ -20,6 +20,8 @@ import { clampBashTimeoutEnv, envWithPwd, pinBashShellEnv, killGroupWithGrace, r
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
 import { calculateCostFromRecords, partialUsagePath, readEfficiencyDir, recordPartialStreamCost } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
+/** The harness stop a stage session reported on its output tail ("[sdk-loop stop: <rule> limit N at turn T, K new tokens]", written by providers.ts), or null. */
+export function capStopOf(summary: string | undefined): string | null { const m = /\[sdk-loop stop: ([^\]\n]{1,160})\]/.exec(summary ?? ""); return m ? m[1]! : null; }
 export const HEARTBEAT_MS_DEFAULT = 30_000; // E-68 (augmentiq #52 P0): a provider call emits progress at least every 30s
 /** CH-02: stages Opus marks for the advisor. Wall is never marked (Rule of Two). */
 const ADVISOR_MARKED_STAGES: ReadonlySet<string> = new Set(["plan", "fix"]);
@@ -98,6 +100,8 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
     env[`LOKI_CLAUDE_MODEL_${t}`] = pin;
     env[`LOKI_MODEL_${t}`] = pin;
   }
+  const caps = cfg.provider === "claude" ? hooks.effort?.caps?.(opts.stage, process.env["LOKI_MODEL_OVERRIDE"] || sessionPinModel(process.env) || (pin && pin !== PROVIDER_DEFAULT_MODEL ? pin : "") || opts.model || cfg.model || resolveModel(cfg.provider)) : undefined; // E5: the model the call really runs on (override, session pin, router pin, then the run model); Haiku implement and fix sessions stop at a turn and token cap, and a fix with no product edit
+  if (caps) env["LOKI_E10_STOP_RULES"] = JSON.stringify(caps); else delete env["LOKI_E10_STOP_RULES"];
   return env;
 }
 function parseMarkers(stdout: string): SessionMarkers {

@@ -138,3 +138,7 @@ export function comparableIds(ids: readonly string[]): string[] {
   const full = ids.filter((i) => /^[^>]*\.[cm]?[jt]sx? > /.test(i));
   return full.length ? full : [...ids];
 }
+/** A failure group that is the environment's, not the code's: the runner never started (no tests found, collection or config error, a suite that failed to run, an unresolvable module). */
+const ENV_SHAPED = /no tests? (?:found|executed|to run)|no test files found|errors? during collection|test suite failed to run|failed to (?:load|resolve) config|cannot find module|collected 0 items/i;
+export const environmentShaped = (groups: readonly Pick<FailureGroup, "signature" | "sample">[]): boolean => groups.length > 0 && groups.every((g) => ENV_SHAPED.test(`${g.signature}\n${g.sample ?? ""}`));
+
