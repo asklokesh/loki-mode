@@ -253,6 +253,17 @@ console.log(out.join(" "));
 [ "$SPLITR" = "true 20 520 true s1 src/a.ts 1 50+3 true true true 2 true" ] && ok "split repair: a 520-char criterion is kept whole, empties dropped, 25 criteria merged to 20 with no text lost, a 600-char path dropped, duplicate deps dropped, dropped paths counted and named in the slice task; an empty acceptance list is re-asked once with the exact error" \
     || bad "split repair gave: $SPLITR (want: true 20 520 true s1 src/a.ts 1 50+3 true true true 2 true)"
 
+# --- split brief: a criterion that replaces behavior an existing test asserts must name that test (FireLater#24 s1, v11.127.0) ---------
+# s1 said "use ranked full-text search instead of ILIKE" and "existing issues tests still pass" without naming issues.test.ts:191, which asserts ILIKE;
+# the implementer treats an unnamed existing test as read-only and stopped SPEC_CONFLICT after $0.13, skipping s2-s4. The brief now tells the splitter.
+BRIEF="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const m = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
+const b = m.decomposeBrief("asklokesh/FireLater", { number: 24, title: "Advanced search", body: "Full-text search with ranking replacing ILIKE filtering", labels: [] }, "13 parts", "/tmp/x.json");
+console.log([b.includes("search the repository" + String.fromCharCode(39) + "s tests for it"), b.includes("put that test file in the slice" + String.fromCharCode(39) + "s files"), b.includes("Never write \"existing tests still pass\" for behavior the slice replaces")].join(" "));
+' 2>&1)"
+[ "$BRIEF" = "true true true" ] && ok "split brief: tells the splitter to name and update an existing test that asserts replaced behavior, never to promise it still passes" \
+    || bad "split brief gave: $BRIEF (want: true true true)"
+
 # --- backlog: a large issue in `loki backlog` runs and splits through the same MASS-2 path, never a drafted spec -------
 B="$T/backlog"
 make_repo "$B" 0
