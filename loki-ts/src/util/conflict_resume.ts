@@ -15,6 +15,7 @@ import { sealedWallCopy, sealedWallDir, WALL_FAILURE_TAIL_FILE } from "./check_r
 import { killedTailIndexes } from "./seal_drift.ts";
 import { vacuousCheck } from "../project_model/conventions.ts";
 import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
+import { editShapeBrief, editShapeSites } from "./edit_shape.ts";
 import { FINISH_LINE, taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
 import type { ReadOnlyFile } from "../engine10/stages/implement.ts";
 
@@ -101,10 +102,21 @@ export const resumeAfterAlreadyDone = (ctx: RunContext, first: SessionRunOptions
 export const COVERAGE_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. " + FINISH_LINE;
 export const coverageResumeEnabled = (env = process.env): boolean => ["1", "on", "true"].includes((env.LOKI_E10_COVERAGE_RESUME ?? "").toLowerCase());
 
+// LOKI_E10_SITE_HINTS (default on, =0/off/false opts out): the edit-shape sites (sibling, residual, precedence) of the tree's diff as advisory text in the fix brief and the coverage turn. Never a verdict.
+export const siteHintsEnabled = (env = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_SITE_HINTS ?? "").toLowerCase());
+export function siteHints(ctx: Pick<RunContext, "repoDir" | "baseSha">): string | null {
+  if (!siteHintsEnabled()) return null;
+  try {
+    const g = safeGitSpawn(ctx.repoDir, ["diff", "-U0", ctx.baseSha, "--", ".", ":(exclude).loki", ":(exclude).loki/**"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    if (g.status !== 0 || !g.stdout) return null;
+    return editShapeBrief(editShapeSites(g.stdout, (p) => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return null; } }));
+  } catch { return null; }
+}
+
 /** One coverage turn (suffix "-c"), through resumeWith. Only a clean LOKI_DONE reply replaces the first result: a conflict or already-done claim made here never overrides a session that finished. */
 export async function resumeForCoverage(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> {
   if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationId: first.iterationId };
-  const r = await resumeWith(ctx, first, firstSession, COVERAGE_BRIEF, "-c"), m = r.session.markers;
+  const hints = siteHints(ctx), r = await resumeWith(ctx, first, firstSession, hints ? `${COVERAGE_BRIEF}\n\n${hints}` : COVERAGE_BRIEF, "-c"), m = r.session.markers;
   return m.done && !m.specConflict && !m.alreadyDone && r.session.exit === 0 ? r : { session: { ...firstSession, durationS: r.session.durationS }, iterationId: r.iterationId };
 }
 

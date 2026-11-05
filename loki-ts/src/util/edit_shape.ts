@@ -195,7 +195,7 @@ function precedenceSites(path: string, hunks: DiffHunk[], lang: Lang | null): Ed
     const broad = h.added.find((a) => !isComment(a.text) && BROAD[lang]!.test(a.text));
     if (!strictLine || !broad || h.removed.some((r) => BROAD[lang]!.test(r))) continue;
     const name = BROAD_NAME[lang]!;
-    out.push({ rule: "precedence", path, line: broad.line, text: compactWs(broad.text), why: `a strict type check (\`${compactWs(strictLine).slice(0, 60)}\`) became ${name}, which also matches subtypes or wrapped values; keep every branch that already matched the exact type ahead of it so those values keep their behavior` });
+    out.push({ rule: "precedence", path, line: broad.line, text: compactWs(broad.text), why: `a strict type check (\`${compactWs(strictLine).slice(0, 60)}\`) became ${name}, which also matches subtypes or wrapped values; keep strict exact-type checks first and put errors.As or isinstance fallbacks after them, so values that already matched the exact type keep their behavior` });
   }
   return out;
 }
