@@ -56,6 +56,13 @@
 #   24. autonomy/route.sh: SDK-mode refusal for every provider: the three opencode route checks fail.
 #   25. loki-ts/src/commands/start.ts: the over-cap --dry-run message names --attempts and --spec again: the two
 #       --dry-run message checks fail.
+#   First screen: in an empty folder with no git and a fresh HOME, `loki --help` exits 0, lists exactly the 11 core
+#              commands (start chat status verify receipt stop undo deploy doctor config control), points a new user at
+#              `loki doctor --fix`, shows none of the old front-page commands as a row (edit quick setup models plan resume
+#              cost), and each of those old names still runs (--help exits 0).
+#   26. autonomy/lib/help-core.sh: add a `quick` row to help_core_commands: the first-screen rows check fails.
+#   27. autonomy/lib/help-core.sh: drop the `loki doctor --fix` hint: the first-screen hint check fails.
+#   28. bin/loki: make `edit` exit 2: the old-names-still-run check fails.
 # No network, no model, no real key: the fake key never leaves the machine (stubs answer every call).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -436,5 +443,18 @@ out="$(cd "$REPO" && "${l009_env[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" 
 [ "$rc" -eq 2 ] && ok "--dry-run on a PRD over 100000 bytes exits 2" || bad "--dry-run on a PRD over 100000 bytes exited $rc"
 has "--dry-run on a PRD over 100000 bytes says a run takes it on the legacy engine" "$out" "a run without --dry-run takes it on the legacy engine"
 case "$out" in *"--attempts"*|*"--spec"*) bad "--dry-run over-cap message names --attempts or --spec" ;; *) ok "--dry-run over-cap message names neither --attempts nor --spec" ;; esac
+
+# First screen of a new user: empty folder, fresh HOME, no git. The front page is the 11 core commands; old names still run.
+FS="$T/first-screen"; mkdir -p "$FS"
+out="$(cd "$FS" && bash "$ROOT/bin/loki" --help 2>&1 </dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && ok "first screen: loki --help in an empty folder exits 0" || bad "first screen: loki --help exited $rc"
+fs_rows="$(printf '%s\n' "$out" | awk '/^  [a-z]/ && $1 != "loki" { print $1 }' | sort | tr '\n' ' ')"
+[ "$fs_rows" = "chat config control deploy doctor receipt start status stop undo verify " ] && ok "first screen: exactly the 11 core commands" || bad "first screen rows: '$fs_rows'"
+has "first screen: points a new user at loki doctor --fix" "$out" "first run: loki doctor --fix"
+old_bad=""
+for c in edit quick setup models plan resume cost; do
+    (cd "$FS" && bash "$ROOT/bin/loki" "$c" --help >/dev/null 2>&1 </dev/null) || old_bad="$old_bad $c"
+done
+[ -z "$old_bad" ] && ok "first screen: old front-page names still run (edit quick setup models plan resume cost)" || bad "old names that no longer run:$old_bad"
 
 finish
