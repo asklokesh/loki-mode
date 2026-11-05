@@ -59,6 +59,13 @@
 #                Neither leg runs a Project Model discovery session (one runner at the root, even when cargo lists no test files).
 #                Probe: a task that changes Calc::new() to Calc::new(base) keeps the Wall test calling Calc::new(5) (the Rust
 #                argument count is decided after implement) and reads VERIFIED.
+#   edit shape:  (unit, Go + TypeScript + Python fixtures in a temp git repo; util/edit_shape.ts, the E2 detector, pure and not yet wired)
+#                sibling: an edited branch passing firstArg where its sibling branches in the same function pass rargs[0] is named; a
+#                straight-line sequence, literal-only differences, siblings that disagree and a same-shaped call in another function are not.
+#                residual: an unchanged .(MultiError) / `as Widget` / isinstance(x, Foo) / call with the same arguments left behind by the
+#                rewrite is named; builtin assertions (.(string)) and an idiom on more than 6 lines are not. precedence: a strict type check
+#                widened to errors.As / instanceof / isinstance carries the keep-strict-first note; a new errors.As, instanceof to
+#                instanceof and isinstance to isinstance do not. The brief asks "decide for each listed site", never a fix.
 #   lean fix loop, unit level (bun over loki-ts/src):
 #     L005: failing ids parse from every checked-in failure output (cargo and bun included); fix-brief groups built
 #           from the pytest, jest, vitest, go test, surefire and dotnet failure
@@ -149,6 +156,11 @@
 #  61. check_result.ts stallSignature: bucket a full-suite group by log2 of its id count again (the disjoint, 100-to-70 and zero-vs-one id legs read true).
 #  62. check_result.ts stallSame: drop the count tolerance test (the near-equal truncated legs read false) or widen it to 50 percent (the 100-to-70 leg reads true).
 #  63. machine.ts: compare sigs with === again instead of stallSame (the machine.ts stallSame grep leg reads bad).
+#  64. edit_shape.ts siblingSites: drop the branch-split test (the straight-line sequence leg reads sibling).
+#  65. edit_shape.ts siblingSites: drop the siblings-agree test (the disagree leg reads sibling) or the literal test (the literal leg reads sibling).
+#  66. edit_shape.ts residualSites: drop COMMON_LIMIT (the idiom leg reads residual) or GO_BUILTIN_T (the .(string) leg reads residual).
+#  67. edit_shape.ts precedenceSites: drop the removed-strict test (the new errors.As leg reads precedence) or the removed-broad test (the isinstance-to-isinstance leg reads precedence).
+#  68. edit_shape.ts fragmentsOf: drop the written-back test (a pattern the hunk keeps reads residual).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -894,5 +906,73 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest truncated reason: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest truncated reason: pytest is not installed"; fi
 fi
+
+# ---------------------------------------------------------------- edit shape (E2 detector, pure module)
+cat > "$T/edit-shape.ts" <<'TS'
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+const [root, tmp] = process.argv.slice(2) as [string, string];
+const { editShapeSites, editShapeBrief, EDIT_SHAPE_PROMPT } = await import(root + "/loki-ts/src/util/edit_shape.ts");
+const res = (n: string, okk: boolean) => console.log((okk ? "OK " : "NO ") + n);
+const g = (d: string, ...a: string[]) => execFileSync("git", ["-C", d, ...a], { encoding: "utf8" });
+type Files = Record<string, string>;
+function run(base: Files, head: Files, pkg = false) {
+  const d = mkdtempSync(join(tmp, "es-"));
+  g(d, "init", "-q", "-b", "main"); g(d, "config", "user.name", "e"); g(d, "config", "user.email", "e@e.invalid");
+  const w = (m: Files) => { for (const [p, t] of Object.entries(m)) { mkdirSync(dirname(join(d, p)), { recursive: true }); writeFileSync(join(d, p), t); } };
+  w(base); g(d, "add", "-A"); g(d, "commit", "-q", "-m", "b"); w(head);
+  const diff = g(d, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/");
+  return editShapeSites(diff, (p: string) => { try { return readFileSync(join(d, p), "utf8"); } catch { return null; } }, pkg ? { packageFiles: (p: string) => Object.keys(head).filter((x) => x !== p) } : {}) as { rule: string; path: string; line: number }[];
+}
+const at = (s: { rule: string; path: string; line: number }[]) => s.map((x) => `${x.rule}@${x.path}:${x.line}`).join("+") || "-";
+const has = (s: { rule: string }[], r: string) => s.some((x) => x.rule === r);
+const swap = (t: string, a: string, b: string) => { if (!t.includes(a)) throw new Error("fixture text missing: " + a); return t.replace(a, b); };
+
+const goBase = 'package cmd\n\nfunc parse(a []string, first string) error {\n\tswitch first {\n\tcase "a":\n\t\treturn run(rargs[0])\n\tcase "b":\n\t\treturn run(rargs[0])\n\tcase "c":\n\t\treturn run(rargs[0])\n\t}\n\treturn nil\n}\n';
+const goC = 'case "c":\n\t\treturn run(rargs[0])';
+res("sibling go: the edited branch passes firstArg where its siblings pass rargs[0]", at(run({ "c.go": goBase }, { "c.go": swap(goBase, goC, 'case "c":\n\t\treturn run(firstArg)') })) === "sibling@c.go:10");
+res("sibling go: a straight-line sequence of the same call on different data is not a sibling", !has(run({ "c.go": "package c\n\nfunc f() {\n\tcopyTo(dst, a)\n\tcopyTo(dst, b)\n}\n" }, { "c.go": "package c\n\nfunc f() {\n\tcopyTo(dst, a)\n\tcopyTo(dst, c)\n}\n" }), "sibling"));
+const goLit = goBase.replace(/rargs\[0\]/g, '"x"');
+res("sibling go: a literal-only difference is not a sibling", !has(run({ "c.go": goLit }, { "c.go": swap(goLit, 'case "c":\n\t\treturn run("x")', 'case "c":\n\t\treturn run("y")') }), "sibling"));
+const goDis = swap(goBase, 'run(rargs[0])\n\tcase "b"', 'run(other)\n\tcase "b"');
+res("sibling go: siblings that disagree among themselves leave no consensus to diverge from", !has(run({ "c.go": goDis }, { "c.go": swap(goDis, goC, 'case "c":\n\t\treturn run(firstArg)') }), "sibling"));
+res("sibling go: the only same-shaped call lives in another function", !has(run({ "c.go": "package c\n\nfunc f() error {\n\treturn run(rargs[0])\n}\n\nfunc g() error {\n\treturn run(rargs[0])\n}\n" }, { "c.go": "package c\n\nfunc f() error {\n\treturn run(firstArg)\n}\n\nfunc g() error {\n\treturn run(rargs[0])\n}\n" }), "sibling"));
+const goRes = 'package e\n\nfunc a(err error) bool {\n\tif me, ok := err.(MultiError); ok {\n\t\treturn me.Len() > 0\n\t}\n\treturn false\n}\n\nfunc b(err error) int {\n\tif me, ok := err.(MultiError); ok {\n\t\treturn me.Len()\n\t}\n\treturn 0\n}\n';
+const goAs = swap(goRes, "if me, ok := err.(MultiError); ok {\n\t\treturn me.Len() > 0", "var me MultiError\n\tif errors.As(err, &me) {\n\t\treturn me.Len() > 0");
+const goOut = run({ "e.go": goRes }, { "e.go": goAs });
+res("residual go: the unchanged .(MultiError) in the next function is named (the E2 residual shape), with the precedence note on the rewrite", at(goOut) === "precedence@e.go:5+residual@e.go:12");
+res("precedence go: a brand new errors.As with no strict check removed carries no note", at(run({ "e.go": "package e\n\nfunc a(err error) bool {\n\treturn false\n}\n" }, { "e.go": "package e\n\nfunc a(err error) bool {\n\tvar me MultiError\n\treturn errors.As(err, &me)\n}\n" })) === "-");
+const goStr = (body: string) => "package e\n\nfunc a(v any) string {\n\t" + body + "\n\treturn s\n}\n\nfunc b(v any) string {\n\ts, _ := v.(string)\n\treturn s\n}\n";
+res("residual go: a builtin assertion (.(string)) is no residual shape", at(run({ "e.go": goStr("s, _ := v.(string)") }, { "e.go": goStr("s := fmt.Sprint(v)") })) === "-");
+const loads = (first: string) => "package c\n\nfunc f() {\n\tx := " + first + "(cfg)\n" + Array.from({ length: 8 }, (_, i) => `\ty${i} := load(cfg)\n`).join("") + "}\n";
+res("residual go: a call repeated on more than 6 unchanged lines is an idiom, not a repeated defect", at(run({ "c.go": loads("load") }, { "c.go": loads("read") })) === "-");
+res("residual go: a pattern the hunk writes back is not residual", at(run({ "e.go": goRes }, { "e.go": swap(goRes, "if me, ok := err.(MultiError); ok {\n\t\treturn me.Len() > 0", "if me, ok := err.(MultiError); ok && me != nil {\n\t\treturn me.Len() > 0") })) === "-");
+res("residual go: the package's other files are scanned when the caller lists them", at(run({ "a.go": goRes, "b.go": "package e\n\nfunc c(err error) {\n\t_ = err.(MultiError)\n}\n" }, { "a.go": goAs, "b.go": "package e\n\nfunc c(err error) {\n\t_ = err.(MultiError)\n}\n" }, true)).includes("residual@b.go:4"));
+
+const tsBase = 'export function f(kind: string, raw: string, norm: string) {\n  if (kind === "a") {\n    return load(norm);\n  } else if (kind === "b") {\n    return load(norm);\n  } else {\n    return load(norm);\n  }\n}\nexport function h(x: unknown) { return (x as Widget).id; }\nexport function k(x: unknown) { return (x as Widget).name; }\n';
+res("sibling ts: the else branch passing raw where its siblings pass norm", at(run({ "f.ts": tsBase }, { "f.ts": swap(tsBase, "} else {\n    return load(norm);", "} else {\n    return load(raw);") })) === "sibling@f.ts:7");
+res("residual ts: an unchanged `as Widget` cast beside the rewritten one", at(run({ "f.ts": tsBase }, { "f.ts": swap(tsBase, "(x as Widget).id", "isWidget(x) ? x.id : 0") })) === "residual@f.ts:11");
+const tsP = (c: string) => `export function a(e: unknown) {\n  if (${c}) return 1;\n  return 0;\n}\n`;
+res("precedence ts: constructor === HttpError widened to instanceof", at(run({ "p.ts": tsP("e.constructor === HttpError") }, { "p.ts": tsP("e instanceof HttpError") })) === "precedence@p.ts:2");
+res("precedence ts: instanceof to instanceof is no widening", at(run({ "p.ts": tsP("e instanceof A") }, { "p.ts": tsP("e instanceof B") })) === "-");
+
+const pyBase = 'def f(kind, raw, norm):\n    if kind == "a":\n        return load(norm)\n    elif kind == "b":\n        return load(norm)\n    else:\n        return load(norm)\n\n\ndef g(x):\n    if isinstance(x, Foo):\n        return 1\n    return 0\n\n\ndef h(x):\n    if isinstance(x, Foo):\n        return 2\n    return 0\n';
+res("sibling py: the else branch passing raw where its siblings pass norm", at(run({ "m.py": pyBase }, { "m.py": swap(pyBase, "    else:\n        return load(norm)", "    else:\n        return load(raw)") })) === "sibling@m.py:7");
+res("residual py: an unchanged isinstance(x, Foo) beside the rewritten one", at(run({ "m.py": pyBase }, { "m.py": swap(pyBase, "def g(x):\n    if isinstance(x, Foo):", "def g(x):\n    if hasattr(x, 'foo'):") })) === "residual@m.py:17");
+const pyP = (c: string) => `def g(x):\n    if ${c}:\n        return 1\n    return 0\n`;
+res("precedence py: type(x) is Foo widened to isinstance", at(run({ "m.py": pyP("type(x) is Foo") }, { "m.py": pyP("isinstance(x, Foo)") })) === "precedence@m.py:2");
+res("precedence py: isinstance to isinstance is no widening", at(run({ "m.py": pyP("isinstance(x, Foo)") }, { "m.py": pyP("isinstance(x, Bar)") })) === "-");
+
+const brief = editShapeBrief(goOut) as string;
+res("brief: asks to decide per site and leave it if not, lists file:line and rule; empty list gives no brief", brief.startsWith(EDIT_SHAPE_PROMPT) && EDIT_SHAPE_PROMPT.includes("decide for each listed site") && EDIT_SHAPE_PROMPT.includes("leave it alone if not") && brief.includes("e.go:12 (residual)") && editShapeBrief([]) === null);
+TS
+mkdir -p "$T/es"
+out="$(cd "$ROOT/loki-ts" && bun "$T/edit-shape.ts" "$ROOT" "$T/es" 2>&1)"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+printf '%s\n' "$out" | grep -q '^OK ' || { bad "edit-shape unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+printf '%s\n' "$out" | grep -q '^NO ' && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
 
 finish
