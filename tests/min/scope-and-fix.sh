@@ -941,6 +941,7 @@ res("sibling go: the only same-shaped call lives in another function", !has(run(
 const goRes = 'package e\n\nfunc a(err error) bool {\n\tif me, ok := err.(MultiError); ok {\n\t\treturn me.Len() > 0\n\t}\n\treturn false\n}\n\nfunc b(err error) int {\n\tif me, ok := err.(MultiError); ok {\n\t\treturn me.Len()\n\t}\n\treturn 0\n}\n';
 const goAs = swap(goRes, "if me, ok := err.(MultiError); ok {\n\t\treturn me.Len() > 0", "var me MultiError\n\tif errors.As(err, &me) {\n\t\treturn me.Len() > 0");
 const goOut = run({ "e.go": goRes }, { "e.go": goAs });
+res("precedence go: a hunk that already held an errors.As beside the strict check is no widening", !has(run({ "e.go": "package e\n\nfunc a(err error) bool {\n\tme, ok := err.(MultiError)\n\tvar o Other\n\tif errors.As(err, &o) { return ok && me != nil }\n\treturn false\n}\n" }, { "e.go": "package e\n\nfunc a(err error) bool {\n\tvar me MultiError\n\tif errors.As(err, &me) { return true }\n\treturn false\n}\n" }), "precedence"));
 res("residual go: the unchanged .(MultiError) in the next function is named (the E2 residual shape), with the precedence note on the rewrite", at(goOut) === "precedence@e.go:5+residual@e.go:12");
 res("precedence go: a brand new errors.As with no strict check removed carries no note", at(run({ "e.go": "package e\n\nfunc a(err error) bool {\n\treturn false\n}\n" }, { "e.go": "package e\n\nfunc a(err error) bool {\n\tvar me MultiError\n\treturn errors.As(err, &me)\n}\n" })) === "-");
 const goStr = (body: string) => "package e\n\nfunc a(v any) string {\n\t" + body + "\n\treturn s\n}\n\nfunc b(v any) string {\n\ts, _ := v.(string)\n\treturn s\n}\n";
@@ -968,7 +969,9 @@ const brief = editShapeBrief(goOut) as string;
 res("brief: asks to decide per site and leave it if not, lists file:line and rule; empty list gives no brief", brief.startsWith(EDIT_SHAPE_PROMPT) && EDIT_SHAPE_PROMPT.includes("decide for each listed site") && EDIT_SHAPE_PROMPT.includes("leave it alone if not") && brief.includes("e.go:12 (residual)") && editShapeBrief([]) === null);
 TS
 mkdir -p "$T/es"
-out="$(cd "$ROOT/loki-ts" && bun "$T/edit-shape.ts" "$ROOT" "$T/es" 2>&1)"
+out="$(cd "$ROOT/loki-ts" && bun "$T/edit-shape.ts" "$ROOT" "$T/es" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "edit-shape unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 21 ] || bad "edit-shape unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 21"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
