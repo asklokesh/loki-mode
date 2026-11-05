@@ -119,7 +119,8 @@ export function patchCheck(ctx: RunContext, impacted: string[], wall: string[], 
 /** The patch brief: the context pack's code (the haiku pack), the impacted tests' heads and the exact check commands. */
 export function patchBrief(ctx: RunContext, task: string, impacted: string[]): string {
   const bc = briefCtx(ctx, "haiku"), code = bc.packText ?? "";
-  const tests = impacted.filter((p) => isTestFile(p)), cmds = patchCheckRefs(ctx, [], impacted).map((t) => { const c = commandFor(t, ctx.repoDir, loadProjectApi(ctx.repoDir)); return `${c.pkgRoot !== "." ? `cd ${c.pkgRoot} && ` : ""}${[c.cmd.startsWith(`${ctx.repoDir}/`) ? relative(ctx.repoDir, c.cmd) : c.cmd, ...c.args].join(" ")}`; });
+  const refs = patchCheckRefs(ctx, bc.files.filter((f) => !isTestFile(f)), impacted); // the tests of the code the dossier shows, not only the task's named files
+  const tests = [...new Set([...impacted.filter((p) => isTestFile(p)), ...refs.map((t) => t.path)])], cmds = refs.map((t) => { const c = commandFor(t, ctx.repoDir, loadProjectApi(ctx.repoDir)); return `${c.pkgRoot !== "." ? `cd ${c.pkgRoot} && ` : ""}${[c.cmd.startsWith(`${ctx.repoDir}/`) ? relative(ctx.repoDir, c.cmd) : c.cmd, ...c.args].join(" ")}`; });
   return buildPatchBrief(task, code || bc.text, testConventions(ctx.repoDir, tests), cmds);
 }
 /** Test seam: the e2e drives the protocol with a recorded reply instead of a model. */
@@ -178,7 +179,8 @@ export const implementStage: Stage = {
     if (patchOn && !signal.aborted) {
       const started = Date.now();
       patch = await runPatchProtocol({ rules: { repoDir: ctx.repoDir, readOnly: readOnly.map((f) => relative(ctx.repoDir, f.path)), task }, brief: patchBrief(ctx, task, impacted), iterationId: `${ctx.runId}-impl-p`, signal,
-        call: patchCallOverride ?? patchCallFor(patchModel, join(ctx.repoDir, ".loki")), check: patchCheck(ctx, impacted, readOnly.map((f) => relative(ctx.repoDir, f.path)), signal) });
+        call: patchCallOverride ?? patchCallFor(patchModel, join(ctx.repoDir, ".loki")), check: patchCheck(ctx, impacted, readOnly.map((f) => relative(ctx.repoDir, f.path)), signal),
+        record: (n, prompt, reply) => { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, `implement-patch-${n}.txt`), `${prompt}\n\n=== REPLY ===\n${reply ?? "(call failed)"}\n`, "utf8"); } });
       patchS = (Date.now() - started) / 1000;
     }
     let session: SessionResult = patch?.status === "green" ? { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: patchS, killed: false, summary: patch.log.join("\n") } : await ctx.sessions.run(first);

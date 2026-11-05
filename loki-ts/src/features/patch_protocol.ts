@@ -161,6 +161,7 @@ export interface PatchOutcome { status: PatchStatus; calls: number; applied: str
 export interface PatchDeps {
   rules: ApplyRules; brief: string; iterationId: string; signal: AbortSignal;
   call: PatchCall; check: (applied: string[]) => Promise<PatchCheck>;
+  record?: (call: number, prompt: string, reply: string | null) => void; // the run dir keeps each call's prompt and reply (debugging, the receipt's evidence)
 }
 
 /**
@@ -179,6 +180,7 @@ export async function runPatchProtocol(d: PatchDeps): Promise<PatchOutcome> {
     if (d.signal.aborted) return end("aborted");
     calls++;
     const r = await d.call({ system: PATCH_SYSTEM, messages, iterationId: round === 1 ? d.iterationId : `${d.iterationId}-r`, signal: d.signal });
+    try { d.record?.(round, flattenMessages(messages), r.text); } catch { /* best effort */ }
     usd = usd === null || r.usd === undefined || r.usd === null ? null : usd + r.usd;
     if (r.text === null) { log.push(`call ${round}: failed`); return end("call_failed"); }
     messages.push({ role: "assistant", content: r.text });
