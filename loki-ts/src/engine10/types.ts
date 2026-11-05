@@ -193,6 +193,7 @@ export interface Receipt {
   /** FC-21b: set only when implement was stopped at its time limit; omitted otherwise so other receipts stay byte-stable. */
   /** E5: each implement or fix session the harness stopped at its Haiku turn or token cap, or a fix with no product edit by turn 8 ("fix round 1: no_product_edit limit 8 at turn 8, 31000 new tokens"). Omitted when none fired. */
   session_caps?: string[];
+  patch?: import("../features/patch_protocol.ts").PatchReceipt; // LOKI_E10_PATCH: present only when the patch protocol ran in implement
   implement_limit?: { limit_s: number; elapsed_s: number; stop_cause?: "max_turns"; owner?: "harness" };
   /** T9: provider failovers (stage, from, to, reason, evidence). Omitted when none happened so other receipts stay byte-stable. */
   failover?: import("../runner/provider_failover.ts").FailoverRecord[];

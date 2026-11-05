@@ -176,6 +176,15 @@ function readRanges(rules: ApplyRules, needs: ParsedReply["needs"], maxChars = 8
 }
 
 export const DIGEST_MAX_CHARS = 1500;
+/** The receipt's patch line: whether the patch protocol finished the implement stage (green), handed it to the agentic session (fallback) or threw (error), with its own seconds and dollars. Lets a scored run measure the fallback rate. */
+export interface PatchReceipt { outcome: "green" | "fallback" | "error"; status: string; calls: number; seconds: number | null; usd: number | null }
+export function patchReceipt(p: unknown): PatchReceipt | null {
+  if (!p || typeof p !== "object") return null;
+  const r = p as Record<string, unknown>, status = typeof r["status"] === "string" ? r["status"] : "";
+  if (!status) return null;
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return { outcome: status === "green" ? "green" : status === "error" ? "error" : "fallback", status, calls: num(r["calls"]) ?? 0, seconds: num(r["seconds"]), usd: num(r["usd"]) };
+}
 export type PatchStatus = "green" | "red" | "no_edits" | "rejected" | "conflict" | "already_done" | "call_failed" | "aborted" | "error";
 export interface PatchOutcome { status: PatchStatus; calls: number; applied: string[]; refused: string[]; restored: string[]; log: string[]; usd: number | null; check?: string[] }
 export interface PatchDeps {
