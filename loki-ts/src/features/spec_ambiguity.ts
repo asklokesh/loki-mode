@@ -25,8 +25,8 @@ export const assumptionFor = (h: AmbiguityHit): string => `"${h.excerpt}" taken 
 // ---- Open choices: an explicit either/or in the task is settled from evidence (no model call), not left for the model to guess. ----
 export const CHOICE_PREFIX = "Open choice";
 export type ChoiceBasis = "maintainer" | "task_preferred" | "existing_tests" | "none";
-export interface OpenChoice { sentence: string; options: string[]; preferred: number | null; fallback: boolean }
-export interface ChoiceResolution extends OpenChoice { basis: ChoiceBasis; picked: number | null; evidence: string }
+export interface OpenChoice { sentence: string; options: string[]; preferred: number | null; fallback: boolean; any?: boolean /* an "acceptable outputs" list: the options may coexist */ }
+export interface ChoiceResolution extends OpenChoice { basis: ChoiceBasis; picked: number | null; evidence: string; precedent?: string }
 /** comments: the trusted comments intake read from issue.json (never parsed back out of the task text, which an issue author could forge). */
 export interface ChoiceCtx { repoDir?: string; comments?: Pick<IssueComment, "author" | "association" | "body">[] }
 const trunc = (s: string, n: number): string => { const cps = Array.from(s.replace(/\s+/g, " ").trim()); return cps.length > n ? `${cps.slice(0, n - 3).join("")}...` : cps.join(""); };
@@ -66,7 +66,7 @@ export function detectOpenChoices(issue: string): OpenChoice[] {
     if (items.length >= 2 && items.length <= 6 && (labeled || (LIST_HEAD.test(intro) && !/considered/i.test(intro)))) {
       const fb = items.map((it) => FALLBACK.test(it.text)), pf = items.findIndex((it, n) => PREF.test(it.text) && !fb[n]), keep = items.map((_, n) => n).filter((n) => !fb[n]);
       const preferred = pf >= 0 ? pf : fb.some(Boolean) && keep.length === 1 ? keep[0]! : labelPref(items);
-      out.push({ sentence: trunc(intro.replace(/^[#\s*]+/, "").trim() || items.map((x) => x.text).join(" / "), 100), options: items.map((it) => it.text), preferred, fallback: fb.some(Boolean) });
+      out.push({ sentence: trunc(intro.replace(/^[#\s*]+/, "").trim() || items.map((x) => x.text).join(" / "), 100), options: items.map((it) => it.text), preferred, fallback: fb.some(Boolean), any: /acceptable|any of the following|one of the following|either of/i.test(intro) });
     }
     i = j - 1;
   }
@@ -122,24 +122,55 @@ function historyLine(c: OpenChoice, ctx: ChoiceCtx): string {
   const log = paths.size ? git(["log", "-n", "3", "--format=%h %s", "--", ...paths]).split("\n").filter(Boolean) : [];
   return trunc(log.length ? `recent history of the touched code at the base commit: ${log.join("; ")}` : "", 240);
 }
+const SRC = /\.(?:go|ts|tsx|js|jsx|mjs|py|rs|java|kt|rb|cs)$/, TEST_FILE = /(?:^|\/)(?:tests?|__tests__|spec)\/|[._-](?:test|spec)\.\w+$|_test\.\w+$|(?:^|\/)test_[^/]*\.py$/i, ASSERT = /\b(?:expect|assert|require|Equal|toBe|toEqual|Eq)\w*\b/;
+/** Sibling implementations of the contract an option names, from the checked-out snapshot only: for each `Type.member` in the options, the other definitions of `member` on other types, and the test lines that assert it. Handed to the model as a short block; the model, not this code, judges which option the siblings follow. "" when none. */
+function precedentFor(c: OpenChoice, repoDir: string): string {
+  const dotted = [...new Set(c.options.flatMap((o) => o.match(/\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b/g) ?? []))].slice(0, 4);
+  if (!dotted.length) return "";
+  let tracked: string[] = []; try { tracked = safeGit(repoDir, ["ls-files", "-z"], { timeout: 5000, maxBuffer: 64 << 20 }).split("\0").filter((p) => SRC.test(p)).slice(0, 800); } catch { return ""; }
+  const defs: string[] = [], tests: string[] = [], seen = new Set<string>();
+  for (const f of tracked) {
+    let lines: string[]; try { if (statSync(join(repoDir, f)).size > 200_000) continue; lines = readFileSync(join(repoDir, f), "utf8").split("\n"); } catch { continue; }
+    const isTest = TEST_FILE.test(f);
+    for (const d of dotted) {
+      const [type, member] = d.split("."), key = `${f}:${d}`, esc = member!.replace(/[^\w]/g, "");
+      const defRe = new RegExp(`^\\s*(?:func\\s*\\([^)]*\\)\\s*${esc}\\s*\\(|(?:pub\\s+)?(?:async\\s+)?(?:fn|def|function)\\s+${esc}\\s*[<(]|(?:public\\s+|private\\s+|protected\\s+|static\\s+|async\\s+|get\\s+|set\\s+)*${esc}\\s*\\([^)]*\\)\\s*(?::[^{=]+)?\\{)`), callRe = new RegExp(`\\.${esc}\\(`);
+      for (let i = 0; i < lines.length; i++) {
+        const ln = lines[i]!;
+        if (!isTest && defs.length < 5 && defRe.test(ln) && !new RegExp(`\\b${type}\\b`).test(ln) && !seen.has(key)) { seen.add(key); defs.push(`${f}:${i + 1} ${trunc(lines.slice(i, i + 4).join(" "), 170)}`); }
+        else if (isTest && tests.length < 3 && callRe.test(ln) && ASSERT.test(ln)) tests.push(`${f}:${i + 1} ${trunc(ln, 120)}`);
+      }
+    }
+    if (defs.length >= 5 && tests.length >= 3) break;
+  }
+  return trunc([...defs.map((x) => `sibling ${x}`), ...tests.map((x) => `test ${x}`)].join(" | "), 800);
+}
 /** Settles each open choice in the task, in this order: the latest maintainer comment, the option the task names as preferred, the option existing tests and docs already pin, else none (the line then says to keep every existing test true and satisfy both where compatible). Deterministic, no model call, never throws. */
 export function resolveChoices(task: string, ctx: ChoiceCtx = {}): ChoiceResolution[] {
   try {
     const comments = (ctx.comments ?? []).filter((c) => typeof c?.author === "string" && typeof c.association === "string" && typeof c.body === "string"), at = comments.length ? task.lastIndexOf(ISSUE_CONTEXT_HEAD) : -1, issue = at < 0 ? task : task.slice(0, at); // the appended comment section is not the issue's own question
     return detectOpenChoices(issue).map((c): ChoiceResolution => {
-      const m = byMaintainer(c, comments);
-      if (m) return { ...c, basis: "maintainer", picked: m.k, evidence: m.evidence };
-      if (c.preferred !== null) return { ...c, basis: "task_preferred", picked: c.preferred, evidence: `the task text names it as preferred${c.fallback ? " and offers the other only as a fallback" : ""}` };
-      const t = ctx.repoDir ? byExistingTests(c, ctx.repoDir) : null, h = historyLine(c, ctx);
-      if (t) return { ...c, basis: "existing_tests", picked: t.k, evidence: [t.evidence, h].filter(Boolean).join(". ") };
-      return { ...c, basis: "none", picked: null, evidence: ["no maintainer reply, stated preference or pinned test or doc decides it", h].filter(Boolean).join(". ") };
+      const prec = ctx.repoDir ? precedentFor(c, ctx.repoDir) : "", r = settle(c, comments, ctx);
+      return prec ? { ...r, precedent: prec } : r;
     });
   } catch { return []; }
 }
+function settle(c: OpenChoice, comments: Cmt[], ctx: ChoiceCtx): ChoiceResolution {
+  const m = byMaintainer(c, comments);
+  if (m) return { ...c, basis: "maintainer", picked: m.k, evidence: m.evidence };
+  if (c.preferred !== null) return { ...c, basis: "task_preferred", picked: c.preferred, evidence: `the task text names it as preferred${c.fallback ? " and offers the other only as a fallback" : ""}` };
+  const t = ctx.repoDir ? byExistingTests(c, ctx.repoDir) : null, h = historyLine(c, ctx);
+  if (t) return { ...c, basis: "existing_tests", picked: t.k, evidence: [t.evidence, h].filter(Boolean).join(". ") };
+  return { ...c, basis: "none", picked: null, evidence: ["no maintainer reply, stated preference or pinned test or doc decides it", h].filter(Boolean).join(". ") };
+}
 /** The one assumptions line for a resolved choice: the option to implement and its one-line evidence (copied into the receipt and the per-run brief). */
-export const choiceLine = (c: ChoiceResolution): string => c.picked === null
-  ? `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> no evidence picks one (${c.evidence}). Keep every existing test and documented behavior true, satisfy both options where they do not conflict, and name the one you chose.`
-  : `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> implement option ${c.picked + 1}: "${trunc(c.options[c.picked]!, 130)}". Evidence (${c.basis}): ${c.evidence}.${c.fallback ? " A fallback may be added only on top of it." : ""}`;
+export const choiceLine = (c: ChoiceResolution): string => {
+  const prec = c.precedent ? ` Sibling precedent in this repo (${c.picked === null ? "prefer the option these follow" : "check your option against these"}): ${c.precedent}.` : "";
+  const both = c.any ? " The task lists several acceptable outputs: where they can coexist, build one design that produces every one of them." : "";
+  return c.picked === null
+    ? `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> no evidence picks one (${c.evidence}).${prec}${both} Keep every existing test and documented behavior true, satisfy both options where they do not conflict, and name the one you chose.`
+    : `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> implement option ${c.picked + 1}: "${trunc(c.options[c.picked]!, 130)}". Evidence (${c.basis}): ${c.evidence}.${c.fallback ? " A fallback may be added only on top of it." : ""}${prec}${both}`;
+};
 /** Ambiguity gate: one batched question set, never a silent stall or a guessing loop. Interactive: `stop` carries the checkpoint file and resume offer. Headless: `data` carries the assumptions (copied into the receipt) and intake goes on. A clear spec yields `data: {}`.
  *  An explicit open choice (resolveChoices) is answered from evidence first: its line joins the assumptions, and a choice that evidence settled is not asked of a person. */
 export function ambiguityGate(task: string, runDir: string, ctx: ChoiceCtx = {}): { stop?: { failData: Record<string, unknown>; reason: string }; data: Record<string, unknown> } {

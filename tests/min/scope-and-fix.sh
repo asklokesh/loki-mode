@@ -456,6 +456,21 @@ const z0 = one(A.replace("^-?\\\\d+$", "^zz$"), { repoDir: R })!;
 res("choice 3: with no pinned literal the choice stays undecided and says to keep tests true and satisfy both", z0.basis === "none" && choiceLine(z0).includes("satisfy both") && choiceLine(z0).includes("existing test"));
 const zl = one("Is `parseKey` right?\n\nShould `parseKey` return a string or should `parseKey` return a number?", { repoDir: R, issueNumber: 77 } as never)!;
 res("evidence: nothing is searched by issue number (a commit naming the issue is never read), history is the base commit's only", zl.basis === "none" && !zl.evidence.includes("#77") && !zl.evidence.includes("mentioning the issue"));
+// precedent: sibling implementations of the same contract, snapshot only
+const PR = `${process.env.T}/prec-repo`; mkdirSync(PR, { recursive: true });
+writeFileSync(`${PR}/flag_int.go`, "package cli\n\nfunc (f *IntFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n");
+writeFileSync(`${PR}/flag_str.go`, "package cli\n\nfunc (f *StringFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n");
+writeFileSync(`${PR}/flag_generic.go`, "package cli\n\nfunc (f *GenericFlag) Get(cmd *Command) any {\n\treturn f.val.Get()\n}\n");
+writeFileSync(`${PR}/flag_test.go`, 'func TestGet(t *testing.T) {\n\trequire.Equal(t, 7, cmd.IntFlag.Get(c))\n}\n');
+const pg = (...a: string[]) => execFileSync("git", ["-C", PR, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
+pg("init", "-q"); pg("add", "."); pg("commit", "-q", "-m", "seed");
+const pc = one(Q, { repoDir: PR })!;
+res("precedent: sibling Get implementations (not the option's own type) and their test assertions are handed over", !!pc.precedent && pc.precedent.includes("flag_int.go:3") && pc.precedent.includes("flag_str.go:3") && !pc.precedent.includes("flag_generic.go") && pc.precedent.includes("test flag_test.go:2"));
+res("precedent: the line carries the block and tells the model to prefer the option the siblings follow", choiceLine(pc).includes("Sibling precedent") && choiceLine(pc).includes("prefer the option these follow"));
+res("precedent: no sibling in the snapshot adds nothing", !one(Q, { repoDir: R })?.precedent && !choiceLine(one(Q, { repoDir: R })!).includes("Sibling precedent"));
+const pm = one(Q + tail, { repoDir: PR, comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get consistently.")] })!;
+res("precedent: a maintainer decision still outranks it and the precedent is shown as a check", pm.basis === "maintainer" && choiceLine(pm).includes("check your option against these"));
+res("acceptable-outputs list that can coexist: the line asks for one design producing every output", choiceLine(z0).includes("every one of them") && !choiceLine(one(Q)!).includes("every one of them"));
 // the gate and the brief
 delete process.env.LOKI_E10_ASSUME; process.env.LOKI_E10_INTAKE_ASK = "0";
 const g = ambiguityGate(P, `${process.env.T}/run`, {});
