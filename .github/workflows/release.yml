@@ -89,6 +89,13 @@ jobs:
 
       # Same check as the PR gate: every files entry resolves, runtime files are
       # packed, no test code, bytecode or stale doc tree is.
+      # loki-ts/dist is no longer committed: build it before the contents check reads package.json files entries on disk.
+      - name: Build loki-ts dist
+        run: |
+          set -euo pipefail
+          (cd loki-ts && bun run build)
+          test -f loki-ts/dist/loki.js && test -f loki-ts/dist/cockpit.js || { echo "FATAL: loki-ts/dist not built"; exit 1; }
+
       - name: Check tarball contents (tests/min/pack-contents.sh)
         run: bash tests/min/pack-contents.sh
 
@@ -414,7 +421,9 @@ jobs:
           cp -R loki-ts/dist "release/brew-stage/loki-mode-${V}/loki-ts/dist"
           tar -czf "release/loki-mode-${V}.tar.gz" -C release/brew-stage "loki-mode-${V}"
           rm -rf release/brew-stage
-          tar -tzf "release/loki-mode-${V}.tar.gz" | grep -qxF "loki-mode-${V}/loki-ts/dist/loki.js" || { echo "ERROR: brew asset has no loki-ts/dist/loki.js"; exit 1; }
+          # List to a file first: `tar | grep -q` under pipefail fails when grep exits early and tar gets SIGPIPE.
+          tar -tzf "release/loki-mode-${V}.tar.gz" > "$RUNNER_TEMP/brew.list"
+          grep -qxF "loki-mode-${V}/loki-ts/dist/loki.js" "$RUNNER_TEMP/brew.list" || { echo "ERROR: brew asset has no loki-ts/dist/loki.js"; exit 1; }
           file "release/loki-mode-${V}.tar.gz" | grep -q 'gzip compressed' || { echo "ERROR: brew asset is not gzip"; exit 1; }
 
       # a tag already on the remote is reused only if it points at the
