@@ -58,6 +58,8 @@
 #  11. loki-ts/src/engine10/stages/pr.ts prTitle: return the old "Loki 10: <verdict> (<run id>)" title; the pr face check fails.
 #  12. loki-ts/src/commands/issues_run.ts makeWorktrees remove: remove at once whatever deep verify does; the pr face check fails.
 #  13. loki-ts/src/e10ext/reviewer_body.ts criteria: skip inlineCriteria; the pr face check fails (1 criterion listed).
+#  14. issues_epic.ts splitCost: ignore a slice's partial dollars; the partial cost assertions fail. queue.ts newestRecord: drop the partial figure;
+#      the newestRecord and partial slice row assertions fail (the row reads NOT RECORDED).
 #  14. loki-ts/src/util/run_outputs.ts stackSection: never call prWorkflowsSkipping; the pr face check fails (no CI note).
 #  15. issues_run.ts REAPER_SH: skip the run-dir re-copy; the pr face check fails (addendum lost).
 #  16. pr.ts prTitle: clip by UTF-16 units (what.split("")); the pr face check fails (split pair).
@@ -398,7 +400,22 @@ const wire = async (envx) => {
   return "rc" + rc + " peak" + peak + (out.includes("up to " + (envx.LOKI_EPIC_PARALLEL ?? "4") + " at once") ? " said" : " silent");
 };
 console.log("W " + await wire({}));
-console.log("W1 " + await wire({ LOKI_EPIC_PARALLEL: "1" }));' 2>&1)"
+console.log("W1 " + await wire({ LOKI_EPIC_PARALLEL: "1" }));
+const wireRun = async (tag, runner) => {
+  const runDir = process.env.PT + "/run" + tag;
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(runDir + "/issue.json", JSON.stringify({ provider: "github", repo: "acme/search", number: 24, title: process.env.EPIC_TITLE, body: process.env.EPIC_BODY, labels: [] }));
+  let out = "", c = 0;
+  const rc = await ir.startIssueEpic({ repoDir: runDir, runDir, noPr: true, provider: "claude", env: { LOKI_DIR: runDir + "/.loki", LOKI_EPIC_PARALLEL: "1" }, inject: {
+    decompose: async () => JSON.stringify({ slices: [sl("s1", []), sl("s2", []), sl("s3", [])] }),
+    worktree: { create: (n) => { const p = runDir + "/wt-" + n; mkdirSync(p, { recursive: true }); return p; }, remove: () => {} },
+    runner: async (ref, o) => runner(++c),
+    out: (s) => { out += s; }, err: () => {},
+  } });
+  return { rc, out };
+};
+const pc = await wireRun("pcost", (k) => k === 2 ? { rc: 0, output: "", verdict: "VERIFIED", costUsd: null, partial: { usd: 0.3928382, measured: 1, total: 2 }, runId: "e10-" + k } : { rc: 0, output: "", verdict: "VERIFIED", costUsd: 0.1, runId: "e10-" + k });
+console.log("PC rc" + pc.rc + " | " + pc.out.split("\n").filter((l) => /^#24 s2 VERIFIED|^Cost:/.test(l)).join(" | "));' 2>&1)"
 printf '%s\n' "$PAR" | sed 's/^/    parallel: /'
 printf '%s\n' "$PAR" | grep -q '^A 3 s1=VERIFIED,s2=VERIFIED,s3=VERIFIED,s4=VERIFIED s1,s2,s3,s4@loki/e10-s1$' \
     && ok "parallel: 3 independent slices run at once; the dependent starts after its parent, stacked on the parent's run branch" || bad "parallel: case A wrong"
@@ -407,6 +424,9 @@ printf '%s\n' "$PAR" | grep -q '^B 3 s1=VERIFIED,s2=FAILED,s3=SPEC_CONFLICT,s4=V
 printf '%s\n' "$PAR" | grep -q '^C [0-9] s1=SPEC_CONFLICT,s2=VERIFIED,s3=VERIFIED,s4=SKIPPED [^@]*$' \
     && ok "parallel: a SPEC_CONFLICT slice with a kept branch (--no-pr) skips only its dependent, which never starts" || bad "parallel: case C wrong"
 printf '%s\n' "$PAR" | grep -q '^T 4 1 1 4 4$' && ok "parallel: epicParallel is claude 4, LOKI_EPIC_PARALLEL=1 gives 1, opencode 1, capped at 4, an invalid value ignored" || bad "parallel: epicParallel table wrong"
+printf '%s\n' "$PAR" | grep -qF '$0.39 for 1 of 2 sessions  ' || true
+printf '%s\n' "$PAR" | grep -q '^PC rc0 | #24 s2 VERIFIED  pr none  cost partial: \$0.39 for 1 of 2 sessions | Cost: *partial: \$0.59 for 2 of 3 (3 slice runs)$' \
+    && ok "parallel: startIssueEpic prints a partially priced slice as partial: \$0.39 for 1 of 2 sessions (never NOT RECORDED) and adds it to the Cost line" || bad "parallel: partial slice cost wiring wrong: $(printf '%s\n' "$PAR" | grep '^PC')"
 printf '%s\n' "$PAR" | grep -q '^W rc0 peak3 said$' && printf '%s\n' "$PAR" | grep -q '^W1 rc0 peak1 said$' \
     && ok "parallel: startIssueEpic runs 3 independent slices at once by default and one at a time under LOKI_EPIC_PARALLEL=1" || bad "parallel: startIssueEpic wiring wrong"
 
