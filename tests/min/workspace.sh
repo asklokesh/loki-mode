@@ -93,7 +93,7 @@ def cfg(names, **extra):
     d.update(extra)
     return {"workspaces": {"shop": d}}
 def chk(desc, cond, detail=""):
-    print(("PASS: " if cond else "FAIL: ") + desc + ("" if cond else " (%s)" % detail))
+    print(("PASS: " if cond else "FAIL: ") + desc + ("" if cond else " (%s)" % (detail,)))
 def capture(fn, *a, **k):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
