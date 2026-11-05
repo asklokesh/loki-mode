@@ -1,0 +1,441 @@
+{
+  "summary": {
+    "calls": 5,
+    "costUsd": 0.036597099999999994,
+    "outTok": [
+      2563,
+      2642,
+      27450,
+      696,
+      394
+    ],
+    "gitlog": {
+      "all": "caught 3/4, false fires 0/4",
+      "replay": "caught 1/4, false fires 0/4",
+      "probe": "caught 3/4, false fires 0/4"
+    },
+    "flagusage": {
+      "all": "caught 3/3, false fires 2/2",
+      "probe": "caught 3/3, false fires 2/2"
+    },
+    "commits": {
+      "falseFires": "2/7",
+      "replayFalseFires": "1/7",
+      "probeFalseFires": "1/7",
+      "withFinding": "4/7"
+    },
+    "postProbeWouldFire": "5/20"
+  },
+  "rows": [
+    {
+      "tag": "gitlog",
+      "name": "correct-edit-test",
+      "oracle": true,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [],
+      "probe": [
+        "p1:requested",
+        "p2:requested",
+        "p3:requested",
+        "p4:requested",
+        "p10:requested",
+        "p11:requested",
+        "p12:requested"
+      ],
+      "fires": false,
+      "replayFires": false,
+      "probeFires": false
+    },
+    {
+      "tag": "gitlog",
+      "name": "correct-filter",
+      "oracle": true,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [],
+      "probe": [
+        "p1:requested",
+        "p2:requested",
+        "p3:requested",
+        "p4:requested",
+        "p10:requested",
+        "p11:requested",
+        "p12:requested"
+      ],
+      "fires": false,
+      "replayFires": false,
+      "probeFires": false
+    },
+    {
+      "tag": "gitlog",
+      "name": "correct-own",
+      "oracle": true,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [],
+      "probe": [
+        "p1:requested",
+        "p2:requested",
+        "p3:requested",
+        "p4:requested",
+        "p10:requested",
+        "p11:requested",
+        "p12:requested"
+      ],
+      "fires": false,
+      "replayFires": false,
+      "probeFires": false
+    },
+    {
+      "tag": "gitlog",
+      "name": "correct-param",
+      "oracle": true,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [],
+      "probe": [
+        "p1:requested",
+        "p2:requested",
+        "p3:requested",
+        "p4:requested",
+        "p10:requested",
+        "p11:requested",
+        "p12:requested"
+      ],
+      "fires": false,
+      "replayFires": false,
+      "probeFires": false
+    },
+    {
+      "tag": "gitlog",
+      "name": "regress-contrib",
+      "oracle": false,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [],
+      "probe": [
+        "p1:requested",
+        "p2:requested",
+        "p3:requested",
+        "p4:requested",
+        "p10:requested",
+        "p11:requested",
+        "p12:requested"
+      ],
+      "fires": false,
+      "replayFires": false,
+      "probeFires": false
+    },
+    {
+      "tag": "gitlog",
+      "name": "regress-edit-test",
+      "oracle": false,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [
+        "T_TestRenderSkipsBlankSubjects:unrequested"
+      ],
+      "probe": [
+        "p1:requested",
+        "p2:requested",
+        "p3:requested",
+        "p4:requested",
+        "p7:unrequested",
+        "p10:requested",
+        "p11:requested",
+        "p12:requested"
+      ],
+      "fires": true,
+      "replayFires": true,
+      "probeFires": true
+    },
+    {
+      "tag": "gitlog",
+      "name": "regress-render",
+      "oracle": false,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [],
+      "probe": [
+        "p1:requested",
+        "p2:requested",
+        "p3:requested",
+        "p4:requested",
+        "p7:unrequested",
+        "p10:requested",
+        "p11:requested",
+        "p12:requested"
+      ],
+      "fires": true,
+      "replayFires": false,
+      "probeFires": true
+    },
+    {
+      "tag": "gitlog",
+      "name": "regress-shared",
+      "oracle": false,
+      "built": true,
+      "postProbe": [
+        "AuthorsCmd"
+      ],
+      "uncovered": [],
+      "replay": [],
+      "probe": [
+        "p1:requested",
+        "p2:requested",
+        "p3:requested",
+        "p4:requested",
+        "p5:unrequested",
+        "p9:unrequested",
+        "p10:requested",
+        "p11:requested",
+        "p12:requested",
+        "post_p1:requested",
+        "post_p2:unrequested",
+        "post_p3:requested",
+        "post_p4:unrequested",
+        "post_p5:requested",
+        "post_p6:unrequested",
+        "post_p7:requested",
+        "post_p8:unrequested",
+        "post_p9:requested",
+        "post_p10:unrequested"
+      ],
+      "fires": true,
+      "replayFires": false,
+      "probeFires": true
+    },
+    {
+      "tag": "flagusage",
+      "name": "correct-local",
+      "oracle": true,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [],
+      "probe": [
+        "p1:requested",
+        "p3:requested",
+        "p10:unrequested"
+      ],
+      "fires": true,
+      "replayFires": false,
+      "probeFires": true
+    },
+    {
+      "tag": "flagusage",
+      "name": "correct-param",
+      "oracle": true,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [],
+      "probe": [
+        "p1:requested",
+        "p3:requested",
+        "p10:unrequested"
+      ],
+      "fires": true,
+      "replayFires": false,
+      "probeFires": true
+    },
+    {
+      "tag": "flagusage",
+      "name": "regress-default",
+      "oracle": false,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [],
+      "probe": [
+        "p1:requested",
+        "p3:requested",
+        "p10:unrequested"
+      ],
+      "fires": true,
+      "replayFires": false,
+      "probeFires": true
+    },
+    {
+      "tag": "flagusage",
+      "name": "regress-lookup",
+      "oracle": false,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [],
+      "probe": [
+        "p1:requested",
+        "p3:requested",
+        "p8:unrequested",
+        "p9:unrequested",
+        "p10:unrequested"
+      ],
+      "fires": true,
+      "replayFires": false,
+      "probeFires": true
+    },
+    {
+      "tag": "flagusage",
+      "name": "regress-shared",
+      "oracle": false,
+      "built": true,
+      "postProbe": [
+        "MissingError"
+      ],
+      "uncovered": [],
+      "replay": [],
+      "probe": [
+        "p1:requested",
+        "p3:requested",
+        "p4:unrequested",
+        "p5:unrequested",
+        "p10:unrequested"
+      ],
+      "fires": true,
+      "replayFires": false,
+      "probeFires": true
+    },
+    {
+      "tag": "pflag-316",
+      "name": "pflag-316",
+      "oracle": true,
+      "built": false,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [
+        "T_TestIP:requested"
+      ],
+      "probe": [],
+      "fires": false,
+      "replayFires": false,
+      "probeFires": false
+    },
+    {
+      "tag": "pflag-282",
+      "name": "pflag-282",
+      "oracle": true,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [],
+      "probe": [],
+      "fires": false,
+      "replayFires": false,
+      "probeFires": false
+    },
+    {
+      "tag": "cobra-2397",
+      "name": "cobra-2397",
+      "oracle": true,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [],
+      "probe": [],
+      "fires": false,
+      "replayFires": false,
+      "probeFires": false
+    },
+    {
+      "tag": "cobra-2257",
+      "name": "cobra-2257",
+      "oracle": true,
+      "built": true,
+      "postProbe": [
+        "Command.initCompleteCmd"
+      ],
+      "uncovered": [
+        "s2",
+        "s3",
+        "s4",
+        "s5",
+        "s6",
+        "s7",
+        "s8",
+        "s9",
+        "s10",
+        "s11",
+        "s12",
+        "s13",
+        "s14"
+      ],
+      "replay": [],
+      "probe": [],
+      "fires": false,
+      "replayFires": false,
+      "probeFires": false
+    },
+    {
+      "tag": "semver-1",
+      "name": "semver-1",
+      "oracle": true,
+      "built": true,
+      "postProbe": [
+        "constraintTildeOrEqual"
+      ],
+      "uncovered": [],
+      "replay": [
+        "T_TestConstraintsCheck:unknown"
+      ],
+      "probe": [
+        "p1:requested"
+      ],
+      "fires": false,
+      "replayFires": false,
+      "probeFires": false
+    },
+    {
+      "tag": "humanize-si",
+      "name": "humanize-si",
+      "oracle": true,
+      "built": true,
+      "postProbe": [
+        "SIWithDigits"
+      ],
+      "uncovered": [],
+      "replay": [],
+      "probe": [
+        "p1:unrequested"
+      ],
+      "fires": true,
+      "replayFires": false,
+      "probeFires": true
+    },
+    {
+      "tag": "humanize-105",
+      "name": "humanize-105",
+      "oracle": true,
+      "built": true,
+      "postProbe": [],
+      "uncovered": [],
+      "replay": [
+        "T_TestCommafWithDigits:unrequested"
+      ],
+      "probe": [
+        "p1:requested"
+      ],
+      "fires": true,
+      "replayFires": true,
+      "probeFires": false
+    }
+  ],
+  "programs": {
+    "gitlog": "package changelog\n\nimport (\n\t\"testing\"\n)\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"CommitsCmd for the example range v1.2.0 to HEAD\", func() any {\n\t\treturn CommitsCmd(\"v1.2.0\", \"HEAD\")\n\t})\n\tlokiProbe(\"p2\", \"CommitsCmd with surrounding whitespace in the from ref\", func() any {\n\t\treturn CommitsCmd(\"  v1.2.0 \", \"HEAD\")\n\t})\n\tlokiProbe(\"p3\", \"CommitsCmd with an empty from ref\", func() any {\n\t\treturn CommitsCmd(\"\", \"HEAD\")\n\t})\n\tlokiProbe(\"p4\", \"CommitsCmd called twice in a row, checking the second result is unaffected by the first\", func() any {\n\t\treturn []any{CommitsCmd(\"v1.2.0\", \"HEAD\"), CommitsCmd(\"v1.1.0\", \"main\")}\n\t})\n\tlokiProbe(\"p5\", \"AuthorsCmd for the same example range\", func() any {\n\t\treturn AuthorsCmd(\"v1.2.0\", \"HEAD\")\n\t})\n\tlokiProbe(\"p6\", \"LastTagCmd with no arguments\", func() any {\n\t\treturn LastTagCmd()\n\t})\n\tlokiProbe(\"p7\", \"Render of a merge-commit subject with trailing spaces, a blank entry, and a tab-indented entry\", func() any {\n\t\treturn Render(\"v1.2.0\", []string{\"Merge pull request #41 from team/export  \", \"\", \"\\tAdd export\"})\n\t})\n\tlokiProbe(\"p8\", \"Contributors with padded and duplicated author lines plus a blank line\", func() any {\n\t\treturn Contributors([]string{\" bo <bo@x.io> \", \"bo <bo@x.io>\", \"\"})\n\t})\n\tlokiProbe(\"p9\", \"logArgs with a custom hash and subject format\", func() any {\n\t\treturn logArgs(\"%H %s\")\n\t})\n\tlokiProbe(\"p10\", \"CommitsCmd with the range reversed, from HEAD to v1.2.0\", func() any {\n\t\treturn CommitsCmd(\"HEAD\", \"v1.2.0\")\n\t})\n\tlokiProbe(\"p11\", \"CommitsCmd with nested range syntax in the to ref\", func() any {\n\t\treturn CommitsCmd(\"v1.2.0\", \"a..b\")\n\t})\n\tlokiProbe(\"p12\", \"CommitsCmd with an empty to ref\", func() any {\n\t\treturn CommitsCmd(\"v1.2.0\", \"\")\n\t})\n}\n",
+    "flagusage": "package flags\n\nimport \"testing\"\n\nfunc TestLokiProbe(t *testing.T) {\n\toutput := Flag{Name: \"output\", Short: \"o\", Usage: \"write to file\"}\n\tverbose := Flag{Name: \"verbose\", Usage: \"print more\"}\n\tport := Flag{Name: \"port\", Short: \"p\", Usage: \"listen port\", Default: \"8080\"}\n\tconfig := Flag{Name: \"config\", Usage: \"config path\", Required: true}\n\tfs := []Flag{output}\n\n\tlokiProbe(\"p1\", \"report example: FlagLine of output with short alias o\", func() any { return FlagLine(output) })\n\tlokiProbe(\"p2\", \"flag without short alias: FlagLine of verbose\", func() any { return FlagLine(verbose) })\n\tlokiProbe(\"p3\", \"help listing with verbose and output, sorted by name\", func() any { return Help(\"tool\", []Flag{verbose, output}) })\n\tlokiProbe(\"p4\", \"names of output with short alias o\", func() any { return names(output) })\n\tlokiProbe(\"p5\", \"missing error for required output flag with short alias o\", func() any {\n\t\treturn MissingError(Flag{Name: \"output\", Short: \"o\", Required: true})\n\t})\n\tlokiProbe(\"p6\", \"lookup of output by short spelling -o\", func() any {\n\t\tf, err := Lookup(fs, \"-o\")\n\t\treturn []any{f, err}\n\t})\n\tlokiProbe(\"p7\", \"lookup of output by short spelling with double dashes --o\", func() any {\n\t\tf, err := Lookup(fs, \"--o\")\n\t\treturn []any{f, err}\n\t})\n\tlokiProbe(\"p8\", \"lookup of output with upper case spelling --OUTPUT should fail\", func() any {\n\t\tf, err := Lookup(fs, \"--OUTPUT\")\n\t\treturn []any{f, err}\n\t})\n\tlokiProbe(\"p9\", \"lookup of output with leading space before -o should fail\", func() any {\n\t\tf, err := Lookup(fs, \" -o\")\n\t\treturn []any{f, err}\n\t})\n\tlokiProbe(\"p10\", \"[s1] default suffix on short-aliased flag port with default 8080\", func() any { return FlagLine(port) })\n\tlokiProbe(\"p11\", \"[s2] usage header with program name containing a space and no flags\", func() any { return Help(\"my tool\", nil) })\n\tlokiProbe(\"p12\", \"[s3] missing error for required long-only flag config\", func() any { return MissingError(config) })\n}\n",
+    "pflag-282": "package pflag\n\nimport \"testing\"\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"Replace with two values returns nil error and stores them\", func() any {\n\t\tvar target []string\n\t\tsv := newStringArrayValue(nil, &target)\n\t\terr := sv.Replace([]string{\"a\", \"b\"})\n\t\treturn []any{err, target, sv.GetSlice()}\n\t})\n\tlokiProbe(\"p1\", \"Replace with empty slice clears the previous value\", func() any {\n\t\tvar target []string\n\t\tsv := newStringArrayValue([]string{\"old\"}, &target)\n\t\terr := sv.Replace([]string{})\n\t\treturn []any{err, target, len(target)}\n\t})\n\tlokiProbe(\"p1\", \"Replace with nil slice yields an empty non-nil slice\", func() any {\n\t\tvar target []string\n\t\tsv := newStringArrayValue([]string{\"old\"}, &target)\n\t\terr := sv.Replace(nil)\n\t\treturn []any{err, target == nil, len(target)}\n\t})\n\tlokiProbe(\"p1\", \"Replace copies input: mutating input afterwards does not change stored value\", func() any {\n\t\tvar target []string\n\t\tsv := newStringArrayValue(nil, &target)\n\t\tin := []string{\"x\", \"y\"}\n\t\t_ = sv.Replace(in)\n\t\tin[0] = \"changed\"\n\t\treturn target\n\t})\n\tlokiProbe(\"p1\", \"Set blank value on first call stores one empty string\", func() any {\n\t\tvar target []string\n\t\tsv := newStringArrayValue(nil, &target)\n\t\terr := sv.Set(\"\")\n\t\treturn []any{err, target}\n\t})\n\tlokiProbe(\"p1\", \"Replace then Set appends to the replaced slice\", func() any {\n\t\tvar target []string\n\t\tsv := newStringArrayValue(nil, &target)\n\t\t_ = sv.Replace([]string{\"r\"})\n\t\terr := sv.Set(\"s\")\n\t\treturn []any{err, target}\n\t})\n\tlokiProbe(\"p1\", \"String of values a and 'b c' via writeAsCSV\", func() any {\n\t\tvar target []string\n\t\tsv := newStringArrayValue([]string{\"a\", \"b c\"}, &target)\n\t\treturn sv.String()\n\t})\n\tlokiProbe(\"p1\", \"stringArrayConv of \\\"[a,b]\\\"\", func() any {\n\t\tv, err := stringArrayConv(\"[a,b]\")\n\t\treturn []any{v, err}\n\t})\n\tlokiProbe(\"p1\", \"stringArrayConv of \\\"[]\\\" (empty array)\", func() any {\n\t\tv, err := stringArrayConv(\"[]\")\n\t\treturn []any{v, err}\n\t})\n\tlokiProbe(\"p1\", \"stringArrayConv of quoted comma element \\\"[\\\\\\\"a,b\\\\\\\",c]\\\"\", func() any {\n\t\tv, err := stringArrayConv(\"[\\\"a,b\\\",c]\")\n\t\treturn []any{v, err}\n\t})\n\tlokiProbe(\"p1\", \"stringArrayConv of padded \\\" [x] \\\" (outer whitespace)\", func() any {\n\t\tv, err := stringArrayConv(\" [x] \")\n\t\treturn []any{v, err}\n\t})\n}\n",
+    "cobra-2397": "package cobra\n\nimport \"testing\"\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"OnlyValidArgs with duplicate valid args one,one\", func() any {\n\t\tout, err := executeCommand(getCommand(OnlyValidArgs, true), \"one\", \"one\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"OnlyValidArgs with one valid and one invalid arg one,a\", func() any {\n\t\tout, err := executeCommand(getCommand(OnlyValidArgs, true), \"one\", \"a\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"MatchAll(OnlyValidArgs, ExactArgs(2)) with one,one\", func() any {\n\t\tout, err := executeCommand(getCommand(MatchAll(OnlyValidArgs, ExactArgs(2)), true), \"one\", \"one\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"ExactValidArgs(2) with valid one,two\", func() any {\n\t\tout, err := executeCommand(getCommand(ExactValidArgs(2), true), \"one\", \"two\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"ExactValidArgs(2) with one,a (invalid arg)\", func() any {\n\t\tout, err := executeCommand(getCommand(ExactValidArgs(2), true), \"one\", \"a\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"ExactArgs(2) with a,a (non-valid list, duplicates allowed)\", func() any {\n\t\tout, err := executeCommand(getCommand(ExactArgs(2), false), \"a\", \"a\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"NoArgs with zero args\", func() any {\n\t\tout, err := executeCommand(getCommand(NoArgs, false))\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"MinimumNArgs(2) with a,a\", func() any {\n\t\tout, err := executeCommand(getCommand(MinimumNArgs(2), false), \"a\", \"a\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"MaximumNArgs(2) with a,b,c\", func() any {\n\t\tout, err := executeCommand(getCommand(MaximumNArgs(2), false), \"a\", \"b\", \"c\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"RangeArgs(1,3) with zero args\", func() any {\n\t\tout, err := executeCommand(getCommand(RangeArgs(1, 3), false))\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"ArbitraryArgs with one,one,one\", func() any {\n\t\tout, err := executeCommand(getCommand(ArbitraryArgs, true), \"one\", \"one\", \"one\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"MatchAll(ExactArgs(1), OnlyValidArgs) with one,one (count fails)\", func() any {\n\t\tout, err := executeCommand(getCommand(MatchAll(ExactArgs(1), OnlyValidArgs), true), \"one\", \"one\")\n\t\treturn []any{out, err}\n\t})\n}\n",
+    "cobra-2257": "package cobra\n\nimport (\n\t\"io\"\n\t\"os\"\n\t\"testing\"\n)\n\nfunc TestLokiProbe(t *testing.T) {\n\tcapture := func(stream **os.File, f func()) string {\n\t\tr, w, err := os.Pipe()\n\t\tif err != nil {\n\t\t\treturn err.Error()\n\t\t}\n\t\told := *stream\n\t\t*stream = w\n\t\tf()\n\t\t*stream = old\n\t\tw.Close()\n\t\tb, _ := io.ReadAll(r)\n\t\tr.Close()\n\t\treturn string(b)\n\t}\n\tnewRoot := func(comps []Completion, dir ShellCompDirective) *Command {\n\t\treturn &Command{\n\t\t\tUse: \"root\",\n\t\t\tRun: emptyRun,\n\t\t\tValidArgsFunction: func(cmd *Command, args []string, toComplete string) ([]Completion, ShellCompDirective) {\n\t\t\t\treturn comps, dir\n\t\t\t},\n\t\t}\n\t}\n\tfindComplete := func() *Command {\n\t\tc := &Command{Use: \"root\", Run: emptyRun}\n\t\tc.initCompleteCmd([]string{\"__complete\", \"x\"})\n\t\tsub, _, _ := c.Find([]string{\"__complete\"})\n\t\treturn sub\n\t}\n\n\tlokiProbe(\"p1\", \"[s1] CompErrorln(\\\"disk full\\\") writes the message to stderr\", func() any {\n\t\treturn capture(&os.Stderr, func() { CompErrorln(\"disk full\") })\n\t})\n\tlokiProbe(\"p1\", \"[s2] nil Command execute returns the nil-command error\", func() any {\n\t\tvar c *Command\n\t\terr := c.execute([]string{})\n\t\treturn err\n\t})\n\tlokiProbe(\"p1\", \"[s3] initCompleteCmd builds __complete with its Use line\", func() any {\n\t\treturn findComplete().Use\n\t})\n\tlokiProbe(\"p1\", \"[s4] deprecated child prints the deprecation notice\", func() any {\n\t\troot := &Command{Use: \"root\", Run: emptyRun}\n\t\tchild := &Command{Use: \"child\", Run: emptyRun, Deprecated: \"use other\"}\n\t\troot.AddCommand(child)\n\t\tout, err := executeCommand(root, \"child\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"[s5] initCompleteCmd Long text for __complete\", func() any {\n\t\treturn findComplete().Long\n\t})\n\tlokiProbe(\"p1\", \"[s6] help flag declared as string instead of bool\", func() any {\n\t\troot := &Command{Use: \"root\", Run: emptyRun}\n\t\troot.Flags().String(\"help\", \"\", \"help text\")\n\t\tout, err := executeCommand(root)\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"[s7] NoDesc completion strips description: apple<TAB>fruit\", func() any {\n\t\troot := newRoot([]Completion{CompletionWithDesc(\"apple\", \"fruit\")}, ShellCompDirectiveNoFileComp)\n\t\tout, err := executeCommand(root, ShellCompNoDescRequestCmd, \"x\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"[s8] root command with Version 1.2.3 prints version on --version\", func() any {\n\t\troot := &Command{Use: \"root\", Version: \"1.2.3\", Run: emptyRun}\n\t\tout, err := executeCommand(root, \"--version\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"[s9] completion with a line break: line1 newline line2 keeps only line1\", func() any {\n\t\troot := newRoot([]Completion{\"line1\\nline2\"}, ShellCompDirectiveDefault)\n\t\tout, err := executeCommand(root, ShellCompRequestCmd, \"x\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"[s10] version flag declared as string instead of bool\", func() any {\n\t\troot := &Command{Use: \"root\", Version: \"1.2.3\", Run: emptyRun}\n\t\troot.Flags().String(\"version\", \"\", \"version text\")\n\t\tout, err := executeCommand(root)\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"[s11] padded completion \\\"  padded  \\\" is trimmed\", func() any {\n\t\troot := newRoot([]Completion{\"  padded  \"}, ShellCompDirectiveDefault)\n\t\tout, err := executeCommand(root, ShellCompRequestCmd, \"x\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"[s12] plain completion tomato is printed with a newline\", func() any {\n\t\troot := newRoot([]Completion{\"tomato\"}, ShellCompDirectiveDefault)\n\t\tout, err := executeCommand(root, ShellCompRequestCmd, \"x\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"[s13] directive line for NoFileComp (:4) with no completions\", func() any {\n\t\troot := newRoot(nil, ShellCompDirectiveNoFileComp)\n\t\tout, err := executeCommand(root, ShellCompRequestCmd, \"x\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"[s14] stderr line for NoSpace|NoFileComp directive\", func() any {\n\t\troot := newRoot([]Completion{\"a\"}, ShellCompDirectiveNoSpace|ShellCompDirectiveNoFileComp)\n\t\tout, err := executeCommand(root, ShellCompRequestCmd, \"x\")\n\t\treturn []any{out, err}\n\t})\n\tlokiProbe(\"p1\", \"issue example: __complete x with TraverseChildren leaves os.Args unchanged\", func() any {\n\t\tbefore := append([]string(nil), os.Args...)\n\t\troot := &Command{\n\t\t\tUse:              \"root\",\n\t\t\tRun:              emptyRun,\n\t\t\tTraverseChildren: true,\n\t\t\tValidArgsFunction: func(cmd *Command, args []string, toComplete string) ([]Completion, ShellCompDirective) {\n\t\t\t\treturn nil, ShellCompDirectiveDefault\n\t\t\t},\n\t\t}\n\t\tout, err := executeCommand(root, ShellCompRequestCmd, \"x\")\n\t\tafter := append([]string(nil), os.Args...)\n\t\tos.Args = before\n\t\treturn []any{out, err, before, after}\n\t})\n}\n",
+    "semver-1": "package semver\n\nimport \"testing\"\n\nfunc TestLokiProbe(t *testing.T) {\n\tcheck := func(con, ver string) any {\n\t\tc, err := NewConstraint(con)\n\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t\tv, err := NewVersion(ver)\n\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t\treturn c.Check(v)\n\t}\n\n\tlokiProbe(\"p1\", \"[*] bare * constraint against 1.2.3 (issue: expect true)\", func() any {\n\t\treturn check(\"*\", \"1.2.3\")\n\t})\n\tlokiProbe(\"p1\", \"* constraint against 0.0.0\", func() any {\n\t\treturn check(\"*\", \"0.0.0\")\n\t})\n\tlokiProbe(\"p1\", \"* with surrounding spaces against 10.20.30\", func() any {\n\t\treturn check(\" * \", \"10.20.30\")\n\t})\n\tlokiProbe(\"p1\", \"x constraint against 3.0.1\", func() any {\n\t\treturn check(\"x\", \"3.0.1\")\n\t})\n\tlokiProbe(\"p1\", \"*.* constraint against 2.5.0\", func() any {\n\t\treturn check(\"*.*\", \"2.5.0\")\n\t})\n\tlokiProbe(\"p1\", \"* constraint against prerelease 1.2.3-rc.1\", func() any {\n\t\treturn check(\"*\", \"1.2.3-rc.1\")\n\t})\n\tlokiProbe(\"p1\", \">=* constraint against 5.0.0\", func() any {\n\t\treturn check(\">=*\", \"5.0.0\")\n\t})\n\tlokiProbe(\"p1\", \"~* constraint against 9.9.9\", func() any {\n\t\treturn check(\"~*\", \"9.9.9\")\n\t})\n\tlokiProbe(\"p1\", \"^* constraint against 9.9.9\", func() any {\n\t\treturn check(\"^*\", \"9.9.9\")\n\t})\n\tlokiProbe(\"p1\", \"1.* constraint against 2.0.0 (boundary, expect false)\", func() any {\n\t\treturn check(\"1.*\", \"2.0.0\")\n\t})\n\tlokiProbe(\"p1\", \"OR list \\\"1.0.0 || *\\\" against 7.0.0\", func() any {\n\t\treturn check(\"1.0.0 || *\", \"7.0.0\")\n\t})\n\tlokiProbe(\"p1\", \"parseConstraint(\\\"*\\\") dirty flags and major, isX variants\", func() any {\n\t\tcs, err := parseConstraint(\"*\")\n\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t\treturn []any{cs.dirty, cs.minorDirty, cs.con.Major(), isX(\"*\"), isX(\"X\"), isX(\"x1\")}\n\t})\n}\n",
+    "humanize-si": "package humanize\n\nimport (\n\t\"math\"\n\t\"testing\"\n)\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"[+Inf] SI(+Inf, \\\"x\\\") (issue: expect \\\"+Inf x\\\")\", func() any {\n\t\treturn SI(math.Inf(1), \"x\")\n\t})\n\tlokiProbe(\"p1\", \"SI(-Inf, \\\"x\\\") (expect \\\"-Inf x\\\")\", func() any {\n\t\treturn SI(math.Inf(-1), \"x\")\n\t})\n\tlokiProbe(\"p1\", \"SI(NaN, \\\"x\\\") (expect \\\"NaN x\\\")\", func() any {\n\t\treturn SI(math.NaN(), \"x\")\n\t})\n\tlokiProbe(\"p1\", \"ComputeSI(+Inf) returns value and prefix\", func() any {\n\t\tv, p := ComputeSI(math.Inf(1))\n\t\treturn []any{v, p}\n\t})\n\tlokiProbe(\"p1\", \"SIWithDigits(+Inf, 2, \\\"x\\\")\", func() any {\n\t\treturn SIWithDigits(math.Inf(1), 2, \"x\")\n\t})\n\tlokiProbe(\"p1\", \"SI(0, \\\"x\\\") baseline zero with no prefix\", func() any {\n\t\treturn SI(0, \"x\")\n\t})\n\tlokiProbe(\"p1\", \"SI(1e6, \\\"B\\\") finite path still gives 1 MB\", func() any {\n\t\treturn SI(1e6, \"B\")\n\t})\n\tlokiProbe(\"p1\", \"SI(MaxFloat64, \\\"x\\\") finite stays with prefix Q\", func() any {\n\t\treturn SI(math.MaxFloat64, \"x\")\n\t})\n\tlokiProbe(\"p1\", \"ComputeSI(-Inf) returns value and prefix\", func() any {\n\t\tv, p := ComputeSI(math.Inf(-1))\n\t\treturn []any{v, p}\n\t})\n\tlokiProbe(\"p1\", \"ComputeSI(-0.0) sign bit and prefix\", func() any {\n\t\tv, p := ComputeSI(math.Copysign(0, -1))\n\t\treturn []any{v, math.Signbit(v), p}\n\t})\n\tlokiProbe(\"p1\", \"ParseSI(\\\"+Inf x\\\") on the output of SI(+Inf)\", func() any {\n\t\tf, u, err := ParseSI(\"+Inf x\")\n\t\treturn []any{f, u, err}\n\t})\n\tlokiProbe(\"p1\", \"SI(1e30, \\\"x\\\") finite boundary of the table\", func() any {\n\t\treturn SI(1e30, \"x\")\n\t})\n\tlokiProbe(\"p1\", \"SIWithDigits(NaN, 0, \\\"x\\\")\", func() any {\n\t\treturn SIWithDigits(math.NaN(), 0, \"x\")\n\t})\n\tlokiProbe(\"p1\", \"SI(1e-30, \\\"x\\\") smallest table exponent\", func() any {\n\t\treturn SI(1e-30, \"x\")\n\t})\n}\n",
+    "humanize-105": "package humanize\n\nimport (\n\t\"math\"\n\t\"testing\"\n)\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"[1000.00] CommafWithDigits(1000.00, 2) (issue: expect \\\"1,000.00\\\")\", func() any {\n\t\treturn CommafWithDigits(1000.00, 2)\n\t})\n\tlokiProbe(\"p1\", \"CommafWithDigits(1000, 0) (expect \\\"1,000\\\")\", func() any {\n\t\treturn CommafWithDigits(1000, 0)\n\t})\n\tlokiProbe(\"p1\", \"CommafWithDigits(1000.5, 2) (expect \\\"1,000.50\\\")\", func() any {\n\t\treturn CommafWithDigits(1000.5, 2)\n\t})\n\tlokiProbe(\"p1\", \"CommafWithDigits(1.23, 2) (existing behaviour \\\"1.23\\\")\", func() any {\n\t\treturn CommafWithDigits(1.23, 2)\n\t})\n\tlokiProbe(\"p1\", \"CommafWithDigits(1.2, 3) (expect \\\"1.200\\\")\", func() any {\n\t\treturn CommafWithDigits(1.2, 3)\n\t})\n\tlokiProbe(\"p1\", \"CommafWithDigits(-1000, 2) (expect \\\"-1,000.00\\\")\", func() any {\n\t\treturn CommafWithDigits(-1000, 2)\n\t})\n\tlokiProbe(\"p1\", \"CommafWithDigits(834142.32, 1) (existing \\\"834,142.3\\\")\", func() any {\n\t\treturn CommafWithDigits(834142.32, 1)\n\t})\n\tlokiProbe(\"p1\", \"CommafWithDigits(1e-7, 2) (expect \\\"0.00\\\")\", func() any {\n\t\treturn CommafWithDigits(1e-7, 2)\n\t})\n\tlokiProbe(\"p1\", \"CommafWithDigits(+Inf, 2) (expect \\\"+Inf\\\", no decimals)\", func() any {\n\t\treturn CommafWithDigits(math.Inf(1), 2)\n\t})\n\tlokiProbe(\"p1\", \"CommafWithDigits(NaN, 2) (expect \\\"NaN\\\")\", func() any {\n\t\treturn CommafWithDigits(math.NaN(), 2)\n\t})\n\tlokiProbe(\"p1\", \"Commaf(1000) baseline (expect \\\"1,000\\\")\", func() any {\n\t\treturn Commaf(1000)\n\t})\n\tlokiProbe(\"p1\", \"CommafWithDigits(1234567.5, 3) (expect \\\"1,234,567.500\\\")\", func() any {\n\t\treturn CommafWithDigits(1234567.5, 3)\n\t})\n\tlokiProbe(\"p1\", \"ParseCommaf(\\\"1,000.00\\\") round trip\", func() any {\n\t\tv, err := ParseCommaf(\"1,000.00\")\n\t\treturn []any{v, err}\n\t})\n\tlokiProbe(\"p1\", \"CommafWithDigits(1000.25, 0) (boundary, expect \\\"1,000\\\")\", func() any {\n\t\treturn CommafWithDigits(1000.25, 0)\n\t})\n}\n"
+  }
+}

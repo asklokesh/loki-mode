@@ -19,6 +19,7 @@ import { safeGit } from "../util/safe_git.ts";
 import { applyDiff, restoreFromUndo, snapshotDiff } from "../e10ext/treeswap.ts";
 import { ATTEMPT_EXCLUDES, treeswapOps, type ExtraAttemptsDeps } from "./attempts.ts";
 import { EMITTERS, execSpecBriefOf, extractSpecAtoms, redFilter } from "./exec_spec.ts";
+import { ledgerFor, nrdEnabled } from "./no_regression.ts";
 import { isTestFile } from "../engine10/testmap.ts";
 import { installOwned } from "../project_model/install.ts";
 import type { AttemptCheck } from "../e10ext/select.ts";
@@ -510,6 +511,8 @@ export function toolLessLlm(model = tournamentModel(), env: NodeJS.ProcessEnv = 
  *  splitter. take() returns the reply without its probe block (what the spec parser reads) and the repaired probe file or a named refusal. */
 export const probeIntake = {
   rules: GO_PROBE_RULES,
+  /** LOKI_E10_NRD=1: the no-regression differential's per-run output-site ledger, appended after the fixed rules (no extra call). */
+  ledger: (repoDir: string, sites: { symbol: string; file: string }[]): string => (nrdEnabled() ? ledgerFor(repoDir, sites) : ""),
   take(reply: string, pkg: string): { reply: string; probe?: string; refused?: string } {
     const s = splitProbeBlock(reply), p = parseGoProbeCases(s.probe, pkg);
     return { reply: s.spec, ...("file" in p ? { probe: p.file } : { refused: p.refused }) };
