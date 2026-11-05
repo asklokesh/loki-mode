@@ -2,8 +2,8 @@
 // open choice names; their visible tests are generalized into templates with two slots, TYPE (the sibling's type name) and RET
 // (the sibling's member return type), and filled with the target. Deterministic, no model call.
 // Binding rule: a template statement is binding only when 2 or more siblings share it byte for byte after generalization (so
-// its values are a repo convention, not a guess) AND the issue says the target should behave like its siblings or lists
-// acceptable outputs. Everything else is advisory.
+// its values are a repo convention, not a guess) AND the issue says the target should behave like its siblings. An issue
+// that lists acceptable outputs is its own spec and wins over the siblings, so it never makes a transplant binding.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -21,7 +21,7 @@ function statements(body: string): string[] {
 }
 const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export const saysLikeSiblings = (issue: string): boolean => /\blike (?:the )?(?:other|its sibling|the rest)|\bsame (?:way|as the other)|\bconsistent with\b|\bacceptable outputs?\b/i.test(issue);
+export const saysLikeSiblings = (issue: string): boolean => /\blike (?:the )?(?:other|its sibling|the rest)|\bsame (?:way|as the other)|\bconsistent with\b/i.test(issue); // an "acceptable outputs" list is the spec itself and may contradict the siblings (fixture settings-acc): it never makes a transplant binding
 
 /** `precedent` is the precedentFor text (it names each sibling as `sibling <file>:<line> func (s T) member() RET`). */
 export function transplant(issue: string, repoDir: string, precedent: string, target: { type: string; member: string; ret: string; pkg: string }, testFiles: string[]): Transplant {

@@ -1,0 +1,55 @@
+{
+  "summary": {
+    "calls": 4,
+    "costUsd": 0.0030913900000000003,
+    "votes": [
+      null,
+      null
+    ],
+    "transplant": {
+      "binding": false,
+      "why": "no statement shared by 2 siblings"
+    },
+    "oracle_by_arm": {
+      "vote": "2/2"
+    }
+  },
+  "rows": [
+    {
+      "arm": "vote",
+      "n": 1,
+      "ownTestsPass": true,
+      "oracle": true,
+      "valueReturns": "string",
+      "costUsd": 0.0014425000000000002,
+      "outTok": 1015
+    },
+    {
+      "arm": "vote",
+      "n": 2,
+      "ownTestsPass": true,
+      "oracle": true,
+      "valueReturns": "string",
+      "costUsd": 0.00059294,
+      "outTok": 1092
+    }
+  ],
+  "proseLines": [
+    "Open choice: \"Acceptable outputs for `DurationSetting{Raw: \" 5s \"}`:\" -> no evidence picks one (no maintainer reply, stated preference or pinned test or doc decides it). Sibling precedent in this repo (the outputs the task lists win over these): sibling settings/settings.go:14 func (s IntSetting) Value() int { n, err := strconv.Atoi(strings.TrimSpace(s.Raw)) if err != nil { return 0 | sibling settings/settings.go:26 func (s BoolSetting) Value() bool { b, err := strconv.ParseBool(strings.TrimSpace(s.Raw)) if err != nil { return false | sibling settings/settings.go:38 func (s ListSetting) Value() []string { var out []string for _, p := range strings.Split(s.Raw, \",\") { if p = strings.TrimSpace(p); p != \"\" {. The task lists several acceptable outputs: where they can coexist, build one design that produces every one of them. Keep every existing test and documented behavior true, satisfy both options where they do not conflict, and name the one you chose."
+  ],
+  "voteLines": [
+    "Open choice: \"Acceptable outputs for `DurationSetting{Raw: \" 5s \"}`:\" -> no evidence picks one (no maintainer reply, stated preference or pinned test or doc decides it). The task lists several acceptable outputs: where they can coexist, build one design that produces every one of them. Keep every existing test and documented behavior true, satisfy both options where they do not conflict, and name the one you chose."
+  ],
+  "siblings": "settings/settings.go:14\nfunc (s IntSetting) Value() int {\n\tn, err := strconv.Atoi(strings.TrimSpace(s.Raw))\n\tif err != nil {\n\t\treturn 0\n\t}\n\treturn n\n}\n\nsettings/settings.go:26\nfunc (s BoolSetting) Value() bool {\n\tb, err := strconv.ParseBool(strings.TrimSpace(s.Raw))\n\tif err != nil {\n\t\treturn false\n\t}\n\treturn b\n}\n\nsettings/settings.go:38\nfunc (s ListSetting) Value() []string {\n\tvar out []string\n\tfor _, p := range strings.Split(s.Raw, \",\") {\n\t\tif p = strings.TrimSpace(p); p != \"\" {\n\t\t\tout = append(out, p)\n\t\t}\n\t}\n\treturn out\n}",
+  "transplant": {
+    "binding": false,
+    "why": "no statement shared by 2 siblings",
+    "statements": [],
+    "test": null,
+    "siblings": [
+      "IntSetting",
+      "BoolSetting",
+      "ListSetting"
+    ]
+  }
+}

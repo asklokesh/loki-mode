@@ -175,7 +175,8 @@ export function resolveChoices(task: string, ctx: ChoiceCtx = {}): ChoiceResolut
     const comments = (ctx.comments ?? []).filter((c) => typeof c?.author === "string" && typeof c.association === "string" && typeof c.body === "string"), at = comments.length ? task.lastIndexOf(ISSUE_CONTEXT_HEAD) : -1, issue = at < 0 ? task : task.slice(0, at); // the appended comment section is not the issue's own question
     return detectOpenChoices(issue).map((c, i): ChoiceResolution => {
       const prec = ctx.repoDir && process.env.LOKI_E10_PRECEDENT === "1" ? precedentFor(c, ctx.repoDir) : "", r = settle(c, comments, ctx, issue); // precedent is default off (LOKI_E10_PRECEDENT=1) until the scored L-Haiku arm measures it
-      const vote = ctx.votes?.[i];
+      const vote = ctx.votes?.[i]; // undefined: no vote was taken; null: the vote answered NEITHER
+      if (prec && vote === null) return r; // siblings that decide nothing are not evidence: no precedent block, so a choice nothing else informs emits no line
       if (prec && r.basis === "none" && typeof vote === "number" && vote >= 0 && vote < c.options.length) return { ...r, basis: "precedent", picked: vote, evidence: "the sibling implementations of the same contract in this repo follow it (one tool-less vote over the sibling code)", precedent: prec };
       return prec ? { ...r, precedent: prec } : r;
     });
@@ -191,11 +192,11 @@ function settle(c: OpenChoice, comments: Cmt[], ctx: ChoiceCtx, issue: string): 
 }
 /** The one assumptions line for a resolved choice: the option to implement and its one-line evidence (copied into the receipt and the per-run brief). */
 export const choiceLine = (c: ChoiceResolution): string => {
-  const prec = c.precedent ? ` Sibling precedent in this repo (${c.picked === null ? "prefer the option these follow" : "check your option against these"}): ${c.precedent}.` : "";
+  const prec = c.precedent ? ` Sibling precedent in this repo (${c.any ? "the outputs the task lists win over these" : c.picked === null ? "prefer the option these follow" : "check your option against these"}): ${c.precedent}.` : "";
   const both = c.any ? " The task lists several acceptable outputs: where they can coexist, build one design that produces every one of them." : "";
   return c.picked === null
     ? `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> no evidence picks one (${c.evidence}).${prec}${both} Keep every existing test and documented behavior true, satisfy both options where they do not conflict, and name the one you chose.`
-    : `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> implement option ${c.picked + 1}: "${trunc(c.options[c.picked]!, 130)}". Evidence (${c.basis}): ${c.evidence}.${c.fallback ? " A fallback may be added only on top of it." : ""}${c.basis === "precedent" ? " A preference stated in the issue for keeping the old behavior does not override the repo convention; an existing test that pins the old behavior of this one member is updated to the convention, every other test stays true." : ""}${prec}${both}`;
+    : `${CHOICE_PREFIX}: "${trunc(c.sentence, 110)}" -> implement option ${c.picked + 1}: "${trunc(c.options[c.picked]!, 130)}". Evidence (${c.basis}): ${c.evidence}.${c.fallback ? " A fallback may be added only on top of it." : ""}${c.basis === "precedent" && !c.any ? " A preference stated in the issue for keeping the old behavior does not override the repo convention; an existing test that pins the old behavior of this one member is updated to the convention, every other test stays true." : ""}${prec}${both}`;
 };
 /** The lines worth sending: a choice nothing decided and nothing could inform (no precedent, not an acceptable-outputs list) is just a question ("faster or cheaper?"), not a spec choice, so it emits nothing. */
 export const emitChoiceLines = (cs: ChoiceResolution[]): string[] => cs.filter((c) => c.basis !== "none" || c.precedent || c.any).map(choiceLine);
