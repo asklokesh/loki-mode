@@ -15,7 +15,7 @@ import { withoutStaleWall, failureExcerpt, EXCERPT_TOTAL_CAP, changedFiles, hidd
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, linkHeadDeps, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
 interface ImplementOutput { exit?: ImplementExit; }
@@ -234,6 +234,12 @@ function changedSymbolsFirst(ctx: RunContext, tests: TestRef[], changed: string[
 export const feedsFixRound = (c: { name: string; result: string }, pre: { names: string[]; knownRed: string[]; sameError: string[] }): boolean => c.result === "fail" && !pre.names.includes(c.name) && !pre.sameError.includes(c.name) && !isHoldoutCheck(c.name);
 type Counts = { run: number; skipped: number };
 type BaseSubtraction = { ids: string[]; names: string[]; knownRed: string[]; sameError: string[]; weak: string[]; zero: string[]; cnt: Record<string, { b: Counts; h: Counts }> };
+const realOf = (p: string): string => { try { return realpathSync(p); } catch { return p; } };
+/** The error lines of a failed run that printed no failing test id (vitest "Startup Error", a config that matches no project, a missing module, a pytest collection error), with paths, line numbers and durations dropped: two runs fail the same way when these are equal and non-empty. `roots` are path prefixes to strip (the head and base checkouts). */
+export function startupSig(tail: string | undefined, roots: readonly string[] = []): string {
+  const text = [...roots].sort((a, b) => b.length - a.length).reduce((t, r) => t.split(r.replace(/\/+$/, "") + "/").join(""), tail ?? ""); // longest first: a realpath (/private/var/...) holds the spelled one (/var/...)
+  return text.split("\n").map((l) => l.trim()).filter((l) => /error|no projects|cannot find|not found|failed to/i.test(l) && !/^at\s/.test(l)).map((l) => l.replace(/:\d+(?::\d+)?\b/g, "").replace(/\b\d+(?:\.\d+)?\s?m?s\b/g, "N")).slice(0, 6).join("\n");
+}
 /** A-112: a test check red on head, in a file the diff did not touch, whose every failing id is also red on a pristine detached base  worktree (never a reset of the implement tree, D42 (2)) is  pre_red: ids go to NOT PROVEN,  seal skips it in the verdict, the check
  *  stays  "fail" and in the fix loop unless the TARGET progressed: a passing Wall test, or a relevant test (`rel`: impacted  tests of the task-named  files, the lean-path Wall stand-in)  that failed on base, now passes and ran no fewer tests (absent or skipped is
  *  not green). Relevant checks  are never pre_red. Base  reruns get no node_modules or .venv: a dependency-only failure yields no ids (failIds needs  the count covered).  A-115: a relevant check that passes with more skipped or deselected tests than  base is `weak`:
@@ -251,7 +257,10 @@ async function subtractBase(
   });
   const un = pairs.filter(({ t }) => !changed.includes(t.path));
   const sus = pairs.filter(({ c }) => rel.has(c.name) && c.result === "pass");
-  const zc = zeroOk ? un.filter(({ c, t }) => c.result === "not_run" && !c.owner && (c.reason ?? "").startsWith(NO_TESTS_REASON) && !wall.has(c.name) && !isHoldoutCheck(c.name) && !changed.includes(t.path) && zeroIntake.has(c.name)) : []; if (!(un.some(({ c }) => c.result === "fail" && c.ids?.length) || sus.length || zc.length) || signal.aborted) return out;
+  const zc = zeroOk ? un.filter(({ c, t }) => c.result === "not_run" && !c.owner && (c.reason ?? "").startsWith(NO_TESTS_REASON) && !wall.has(c.name) && !isHoldoutCheck(c.name) && !changed.includes(t.path) && zeroIntake.has(c.name)) : []; // Change 2 (pre-red excuse): a test check that failed with no test id, because the runner could not start (a config error, a collection error), is rerun once on base. zeroOk
+  // is false after a test config edit, so a startup error the change itself caused is never excused. The base run must fail with the same error lines (startupSig).
+  const ss = zeroOk && !changed.some((f) => MANIFESTS.test(f)) ? pairs.filter(({ c }) => c.result === "fail" && !c.ids?.length && !c.owner && !wall.has(c.name) && !isHoldoutCheck(c.name) && startupSig(failTails.get(c)) !== "") : [];
+  if (!(un.some(({ c }) => c.result === "fail" && c.ids?.length) || sus.length || zc.length || ss.length) || signal.aborted) return out;
   const dir = mkdtempSync(join(tmpdir(), "e10-base-"));
   const git = (args: string[]): void => { safeGit(ctx.repoDir, args, { stdio: "ignore", repoDrivers: true }); }; // worktree add checks out base content
   try {
@@ -278,6 +287,12 @@ async function subtractBase(
       }
     }
     for (const { c, bc } of cmds) if (!base.has(c) && !signal.aborted) record(c, await runOnce(bc.cmd, bc.args, bc.cwd, signal, {}));
+    for (const { c, t } of ss) { // a base run that cannot start (no tools, timeout, cut) excuses nothing: the check stays blocking
+      if (signal.aborted) break;
+      const bc = commandFor(t, dir, api); linkHeadDeps(dir, ctx.repoDir, bc.cwd);
+      const r = await runOnce(bc.cmd, bc.args, bc.cwd, signal, {});
+          if (!r.ok && !r.cut && !r.missing && failIds(r.out).length === 0 && startupSig(r.out.slice(-WALL_FAILURE_TAIL_CAP), [ctx.repoDir, dir, realOf(ctx.repoDir), realOf(dir)]) === startupSig(failTails.get(c), [ctx.repoDir, realOf(ctx.repoDir)])) { out.names.push(c.name); out.sameError.push(c.name); out.ids.push(`${c.name}: could not start on the base commit either, so it proves nothing about this change`); }
+    }
     out.zero = await zeroOnBase(zc.map(({ c, t }) => ({ name: c.name, ...commandFor(t, dir, api) })), dir, ctx.repoDir, (r) => runOnce(r.cmd, r.args, r.cwd, signal, {}), (n) => ctx.emit("test.skipped_on_base", "verify", { note: `skipped on base: ${n}`, check: n }), zeroIntake);
     out.weak = sus
       .filter(({ c }) => (c.sk ?? 0) > base.get(c)!.sk || (c.n ?? 0) < base.get(c)!.n)
@@ -341,14 +356,14 @@ function tscLocalKeys(out: string, pkgRel: string, keep: ReadonlySet<string>, ch
   return found.every((m) => TSC_LOCAL.has(m[2]!) && !keep.has(join(pkgRel === "." ? "" : pkgRel, m[1]!.trim()))) ? found.map((m) => `${m[1]!.trim()}|${m[2]}`) : null;
 }
 /** The same `tsc --noEmit` on a pristine detached base worktree with the head's dependency dirs linked (the package's and the repo root's); null when base cannot be checked (fail closed). */
-async function tscOnBase(ctx: RunContext, groupCwd: string, signal: AbortSignal, opts: RunOpts): Promise<string | null> {
+export async function tscOnBase(ctx: RunContext, groupCwd: string, signal: AbortSignal, opts: RunOpts): Promise<string | null> {
   if (signal.aborted) return null;
   const dir = mkdtempSync(join(tmpdir(), "e10-basetsc-")), git = (args: string[]): void => { safeGit(ctx.repoDir, args, { stdio: "ignore", repoDrivers: true }); };
   try {
     git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, ctx.baseSha]);
-    const cwd = join(dir, relative(ctx.repoDir, groupCwd)), link = baseDepsLinker(dir, ctx.repoDir);
-    if (!existsSync(join(cwd, "tsconfig.json")) || !link(cwd)) return null;
-    if (cwd !== dir) link(dir);
+    const cwd = join(dir, relative(ctx.repoDir, groupCwd));
+    if (!existsSync(join(cwd, "tsconfig.json"))) return null;
+    linkHeadDeps(dir, ctx.repoDir, cwd); // unguarded on purpose: the only caller has already proved every diagnostic is an unused-declaration error (tscLocalKeys), which no resolved dependency can change. A pnpm or npm workspace links its own packages into the root node_modules, so baseDepsLinker refused the root, base had no tsc, and zod's base-red errors were never excused
     const r = await runOnce("npx", ["--no-install", "tsc", "--noEmit", "-p", "."], cwd, AbortSignal.any([signal, AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS)]), { ...opts });
     return r.missing || r.cut ? null : r.out;
   } catch { return null; } finally {

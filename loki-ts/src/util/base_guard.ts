@@ -288,6 +288,18 @@ export function baseDepsLinker(baseDir: string, repoDir: string, gate: Pick<Zero
   };
 }
 
+/** Links the head's node_modules and .venv into `cwd` of the base worktree `baseDir` and into every dir above it up to `baseDir`, without baseDepsLinker's
+ *  depsSeeHead guard (a pnpm/npm workspace always links its own packages into the root node_modules, so the guard refuses every such repo and the base run
+ *  then has no tools at all). Only for a base run whose verdict cannot depend on what head code a dependency resolves to: tsc's unused-declaration
+ *  errors (decided by one file's own text) and a startup error raised while the runner loads its config, before any test file or source is imported. */
+export function linkHeadDeps(baseDir: string, repoDir: string, cwd: string): void {
+  for (let d = cwd; d.startsWith(baseDir); d = dirname(d)) {
+    const src = join(repoDir, relative(baseDir, d));
+    for (const n of ["node_modules", ".venv"]) { try { if (existsSync(join(src, n)) && !existsSync(join(d, n))) symlinkSync(join(src, n), join(d, n)); } catch { /* none: the base run fails, fail closed */ } }
+    if (d === baseDir) break;
+  }
+}
+
 /** True when one finished run of a test command executed zero tests (the shared mapping of 0 tests to not_run; a cut or missing run never counts). */
 export function isZeroRun(c: { cmd: string; args: string[] }, b: { ok: boolean; cut: boolean; missing: boolean; out: string }): boolean {
   const last = c.args[c.args.length - 1] ?? "";

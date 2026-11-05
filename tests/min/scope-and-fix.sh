@@ -805,6 +805,54 @@ const tsc = (d: string) => { const r = spawnSync("node_modules/.bin/tsc", ["--no
 const [bs, bo] = tsc(process.argv[1] + "/base"), [hs, ho] = tsc(process.argv[1] + "/head"), keep = new Set(["src/a.ts"]);
 console.log([bs, hs, u(ho, ".", keep, ["src/a.ts"], bo), u(ho, ".", keep, ["src/a.ts"], ho), u(ho, ".", keep, ["src/a.ts"], null)].join(","));' "$PM" 2>&1)"
     [ "$PMR" = "0,2,false,true,false" ] && ok "tsc program membership: a change that imports an untouched file (base tsc green) stays blamed; the same diagnostic on base is excused; no base output is not excused ($PMR)" || bad "tsc program membership: '$PMR' (want 0,2,false,true,false)"
+    # Pre-red excuse (L2). Change 3: a pnpm or npm workspace links its own packages into the root node_modules, so baseDepsLinker refused the root, the base tsc had no tools and
+    # zod's base-red unused-declaration errors were never excused. The real tsc on a workspace-shaped repo must now produce the base diagnostics tscUntouchedLocal compares.
+    WS="$T/tsc-ws"; rm -rf "$WS"; mkdir -p "$WS/packages/pkg/src" "$WS/node_modules/@t"
+    printf '{"name":"root","private":true}\n' > "$WS/package.json"; printf '{"name":"@t/pkg","private":true}\n' > "$WS/packages/pkg/package.json"
+    printf '{"compilerOptions":{"strict":true,"noEmit":true,"noUnusedLocals":true,"target":"ES2022","module":"ESNext","moduleResolution":"Bundler","skipLibCheck":true},"include":["src"]}\n' > "$WS/packages/pkg/tsconfig.json"
+    printf 'const stale = 1;\nexport const keep = 2;\n' > "$WS/packages/pkg/src/legacy.ts"; printf 'export const a = 1;\n' > "$WS/packages/pkg/src/a.ts"
+    for e in "$TSC_NM"/* "$TSC_NM"/.bin; do ln -s "$e" "$WS/node_modules/$(basename "$e")"; done; ln -s ../../packages/pkg "$WS/node_modules/@t/pkg"
+    git -C "$WS" init -q -b main && git -C "$WS" add -- package.json packages && git -C "$WS" -c user.name=t -c user.email=t@t commit -qm base
+    WSR="$(cd "$ROOT/loki-ts" && bun -e '
+const v = await import("./src/engine10/stages/verify.ts"), { spawnSync, execFileSync } = await import("node:child_process"), d = process.argv[1];
+const sha = execFileSync("git", ["-C", d, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), cwd = d + "/packages/pkg";
+const r = spawnSync("node_modules/.bin/tsc", ["--noEmit", "-p", "."], { cwd: d, encoding: "utf8" });
+const head = spawnSync("../../node_modules/.bin/tsc", ["--noEmit", "-p", "."], { cwd, encoding: "utf8" }), ho = (head.stdout ?? "") + (head.stderr ?? "");
+const base = await v.tscOnBase({ repoDir: d, baseSha: sha } as never, cwd, new AbortController().signal, {} as never), keep = new Set(["packages/pkg/src/a.ts"]);
+console.log([head.status, base !== null && /TS6133/.test(base), v.tscUntouchedLocal(ho, "packages/pkg", keep, ["packages/pkg/src/a.ts"], base), v.tscUntouchedLocal(ho, "packages/pkg", keep, ["packages/pkg/src/a.ts"], "")].join(","));' "$WS" 2>&1)"
+    [ "$WSR" = "2,true,true,false" ] && ok "tsc workspace base: the real tsc runs on the base of a repo whose root node_modules links its own package, and its unused-declaration error is excused ($WSR)" || bad "tsc workspace base: '$WSR' (want 2,true,true,false)"
+    # Change 2: a check that fails with no test id because vitest cannot start (config load error), and fails the same way on the base commit, starts no fix session; a startup error
+    # only the change causes, or one with a different error on base, is fix-round input. Real vitest; E2E_WALL= (Wall off, the product default).
+    make_startup_repo() {
+        VT_NM="$TSC_NM" make_vt_repo "$1"
+        printf 'import "./boot.ts";\nexport default {};\n' > "$1/vitest.config.ts"
+        printf '%s\n' "$BOOT" > "$1/boot.ts"
+    }
+    st_run() { MAKE_REPO=make_startup_repo run_engine "add a multiply(a, b) function to calc.ts" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 "$@"; }
+    BOOT='throw new Error("startup boom");'; st_run E2E_STUB_SNIPPET="$TS_SNIP"
+    [ "$(fix_sessions)" = "0" ] && ok "startup error on base: a check the runner cannot start, failing the same way on base, starts no fix session" || { bad "startup error on base: $(fix_sessions) fix sessions (want 0)"; dump; }
+    case "$(ev '[c for e in E if e["type"]=="stage.completed" and e["stage"]=="verify" for c in e["data"].get("pre_red_checks",[])][-1:]')" in *vitest*) ok "startup error on base: the check is listed pre-red" ;; *) bad "startup error on base: not listed pre-red"; dump ;; esac
+    case "$(ev '[x for e in E if e["type"]=="stage.completed" and e["stage"]=="verify" for x in e["data"].get("pre_red",[])][-1:]')" in *"proves nothing"*) ok "startup error on base: the receipt data names it as proving nothing" ;; *) bad "startup error on base: no pre_red note"; dump ;; esac
+    [ "$(outcome)" != "VERIFIED" ] && ok "startup error on base: the run is not VERIFIED on a check that never ran ($(outcome))" || { bad "startup error on base: VERIFIED"; dump; }
+    BOOT='throw new Error("startup boom");'; st_run E2E_STUB_TARGET=vitest.config.ts E2E_STUB_REPLACE='export default {};' E2E_STUB_SNIPPET='export default {}; // edited'
+    [ "$(fix_sessions)" -ge 1 ] && ok "startup error after a test config edit: the same error on base is not excused when the change edited the runner config ($(fix_sessions) fix sessions)" || { bad "startup error after a config edit: no fix session"; dump; }
+    BOOT='import "./calc.ts";'; st_run E2E_STUB_SNIPPET=$'export function (\n'"$TS_SNIP"
+    [ "$(fix_sessions)" -ge 1 ] && ok "startup error from the change: base runs fine, so the check is fix-round input ($(fix_sessions) fix sessions)" || { bad "startup error from the change: no fix session"; dump; }
+    BOOT=$'import "./calc.ts";\nthrow new Error("different cause on base");'; st_run E2E_STUB_SNIPPET=$'export function (\n'"$TS_SNIP"
+    [ "$(fix_sessions)" -ge 1 ] && ok "startup error, other cause on base: a different error is fix-round input ($(fix_sessions) fix sessions)" || { bad "startup error, other cause on base: no fix session"; dump; }
+    SG="$(cd "$ROOT/loki-ts" && bun -e '
+const { startupSig: s } = await import("./src/engine10/stages/verify.ts");
+const a = "x\n\u23af\u23af Startup Error \u23af\u23af\nError: No projects were found in /r/pkg (12ms)\n    at start (file:///r/n.js:1:2)\n", b = "x\n\u23af\u23af Startup Error \u23af\u23af\nError: No projects were found in /b/pkg (9ms)\n    at start (file:///b/n.js:5:6)\n";
+console.log([s(a, ["/r"]) === s(b, ["/b"]), s(a) === "", s("all good\n") === "", s(undefined) === "", s(a, ["/r"]) === s(b.replace("No projects were found", "Cannot find module"), ["/b"])].join(","));' 2>&1)"
+    [ "$SG" = "true,false,true,true,false" ] && ok "startup signature unit: paths, line numbers and durations are ignored; a clean run, no output or another error line is not the same ($SG)" || bad "startup signature unit: '$SG'"
+    NC="$(cd "$ROOT/loki-ts" && ROOT="$ROOT" bun -e '
+const rp = await import("./src/runner/repo_profile.ts"), { mkdirSync, writeFileSync, mkdtempSync } = await import("node:fs"), { execFileSync } = await import("node:child_process"), { tmpdir } = await import("node:os"), { join } = await import("node:path");
+const g = mkdtempSync(join(tmpdir(), "nc-")); mkdirSync(g + "/.loki/state", { recursive: true }); execFileSync("git", ["-C", g, "init", "-q", "-b", "main"]); execFileSync("git", ["-C", g, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"]);
+const sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: "pnpm test", exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ["a.test.ts > t1"], attributable: true, failing_errors: { "a.test.ts > t1": ["Error: x"] } } }));
+const r = rp.attributeFullSuite(g, sha, [{ name: "full suite: w", cmd: "(cd . && pnpm test)", result: "fail", ids: ["a.test.ts > t1"], errors: { "a.test.ts > t1": ["Error: x"] } }], [], ["src/z.ts"]);
+console.log(r.preExistingChecks.join(","));' 2>&1)"
+    [ "$NC" = "full suite: w" ] && ok "normCmd: a root package suite spelled '(cd . && pnpm test)' is the baseline's plain 'pnpm test' ($NC)" || bad "normCmd unit: '$NC'"
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "tsc fix input: vitest and typescript could not be installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: tsc fix input: vitest and typescript could not be installed (offline?)"; fi
 fi
