@@ -23,7 +23,7 @@
 #   L3/L5 rules:    release-note fragment line (changeset, towncrier, changelog.d, newsfragments, changie, none) and the
 #                   byte-stable FIXED_RULES prefix (extra planted defects 5 and 6 below).
 #
-#   E6 diet:        LOKI_E10_PACK_DIET (default off): one named definition keeps its span and loses the fill, the
+#   E6 diet:        LOKI_E10_PACK_DIET (default on, =0 opts out): one named definition keeps its span and loses the fill, the
 #                   solution coverage holds, no test spans.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
@@ -122,7 +122,7 @@ const coverage = (text: string, files: string[]) => {
   return `${f}/${Object.keys(sol).length} ${b}/${n}`;
 };
 const ictx = ctxFor(join(T, "inv"), task);
-const opus = briefRecord(ictx, deps, "claude-opus-4-6"), haiku = briefRecord(ictx, deps, "haiku");
+const opus = briefRecord(ictx, deps, "claude-opus-4-6"); process.env.LOKI_E10_PACK_DIET = "0"; const haiku = briefRecord(ictx, deps, "haiku"); delete process.env.LOKI_E10_PACK_DIET; // L021 pins the fill path; the diet is covered below
 out.cov_opus = coverage(opus.text, opus.files);
 out.cov_haiku = coverage(haiku.text, haiku.files);
 out.opus_golden = opus.text === readFileSync(join(CTX, "ts-invoice/opus-brief.golden"), "utf8") && opus.text === briefContext(ictx, deps) && opus.pack === null ? "identical" : "differs";
@@ -137,17 +137,16 @@ for (const budget of [6000, 800]) {
   out[`big_${budget}`] = p && p.tokens <= budget && p.tokens === cp.estTokens(p.text) && p.spans.length > 0 ? "within" : `over ${p?.tokens} spans ${p?.spans.length}`;
 }
 
-// E6 diet: named spans plus direct callers and callees only, no fill. Off unless LOKI_E10_PACK_DIET=1 (the mean cut on the
-// 20 corpus briefs, 2.8k estimated tokens, is under the 3.5k default-on bar).
+// E6 diet: named spans plus direct callers and callees only, no fill. On by default; LOKI_E10_PACK_DIET=0 opts out.
 {
   const big = join(T, "big"), bmap = buildRepoMap(big).entries, files = ["src/ledger0.ts", "src/ledger1.ts", "src/ledger2.ts"], bt = "fix ledgerEntry0x3 so the ledger entry balance stays a number";
-  const gt = "fix the ledger entry balance", gen = cp.contextPack(big, gt, files, bmap, 6000, {}), genOff = cp.contextPack(big, gt, files, bmap, 6000, { LOKI_E10_PACK_DIET: "0" }), genDiet = cp.contextPack(big, gt, files, bmap, 6000, { LOKI_E10_PACK_DIET: "1" });
-  const base = cp.contextPack(big, bt, files, bmap, 6000, {}), diet = cp.contextPack(big, bt, files, bmap, 6000, { LOKI_E10_PACK_DIET: "1" });
-  out.diet_default_off = cp.packDietEnabled({}) === false && cp.packDietEnabled({ LOKI_E10_PACK_DIET: "1" }) === true && cp.packDietEnabled({ LOKI_E10_PACK_DIET: "0" }) === false && JSON.stringify(gen) === JSON.stringify(genOff) ? "yes" : "no";
+  const gt = "fix the ledger entry balance", gen = cp.contextPack(big, gt, files, bmap, 6000, { LOKI_E10_PACK_DIET: "0" }), genDef = cp.contextPack(big, gt, files, bmap, 6000, {}), genDiet = cp.contextPack(big, gt, files, bmap, 6000, { LOKI_E10_PACK_DIET: "1" });
+  const base = cp.contextPack(big, bt, files, bmap, 6000, { LOKI_E10_PACK_DIET: "0" }), diet = cp.contextPack(big, bt, files, bmap, 6000, {});
+  out.diet_default_on = cp.packDietEnabled({}) === true && cp.packDietEnabled({ LOKI_E10_PACK_DIET: "1" }) === true && cp.packDietEnabled({ LOKI_E10_PACK_DIET: "0" }) === false && JSON.stringify(genDef) === JSON.stringify(genDiet) && JSON.stringify(gen) !== JSON.stringify(genDef) ? "yes" : "no";
   out.diet_no_fill = gen && genDiet && gen.spans.length > 3 && genDiet.spans.length === 1 && genDiet.tokens < gen.tokens / 2 ? "yes" : `no fill ${gen?.spans.length}/${gen?.tokens} diet ${genDiet?.spans.length}/${genDiet?.tokens}`;
   out.diet_named_only = base && diet && diet.spans.length === 1 && diet.spans[0].symbol === "ledgerEntry0x3" && diet.spans[0].via === "named" ? "yes" : `no ${JSON.stringify(diet?.spans)}`;
   const dctx = ctxFor(join(T, "inv"), task);
-  const d0 = briefRecord(dctx, deps, "haiku"); process.env.LOKI_E10_PACK_DIET = "1"; const d1 = briefRecord(dctx, deps, "haiku"); delete process.env.LOKI_E10_PACK_DIET;
+  process.env.LOKI_E10_PACK_DIET = "0"; const d0 = briefRecord(dctx, deps, "haiku"); delete process.env.LOKI_E10_PACK_DIET; const d1 = briefRecord(dctx, deps, "haiku");
   out.diet_keeps_solution = d1.pack && d1.pack.tokens < d0.pack.tokens && coverage(d1.text, d1.files) === "3/3 2/3" ? "yes" : `no ${d1.pack?.tokens}/${d0.pack?.tokens} ${coverage(d1.text, d1.files)}`;
   const tmap = buildRepoMap(join(T, "inv")).entries;
   out.diet_no_tests = (cp.contextPack(join(T, "inv"), task, ["src/invoice.ts", "src/invoice.test.ts"], tmap, 6000, { LOKI_E10_PACK_DIET: "1" })?.spans ?? []).every((x: { path: string }) => !/test/.test(x.path)) ? "yes" : "no";
@@ -192,7 +191,7 @@ const cut = (b: string) => b.slice(0, b.indexOf(FIXED_RULES) + FIXED_RULES.lengt
 out.prefix_stable = b1.includes(FIXED_RULES) && b2.includes(FIXED_RULES) && cut(b1) === cut(b2) && !FIXED_RULES.includes("Release-note convention") && b1.indexOf("Release-note convention") > FIXED_RULES.length ? "yes" : "no";
 out.rules = ["read the whole function", "sibling branches", "fix the issue prefers", "never npm test", "release-note fragment a repository convention"].map((k) => FIXED_RULES.includes(k) ? "y" : "n").join("");
 // L3 fragment writer: deterministic release-note fragment from the repo's own convention (LOKI_E10_SCAFFOLD).
-const { writeReleaseNoteFragment: wf, summaryNote, taskForbidsReleaseNote, fragmentWriterOn } = await import(join(SRC, "project_model/conventions.ts"));
+const { writeReleaseNoteFragment: wf, summaryNote, taskForbidsReleaseNote, fragmentWriterOn, fragmentNoticeLine } = await import(join(SRC, "project_model/conventions.ts"));
 const { readFileSync: rf, existsSync: ex, readdirSync: rd } = await import("node:fs");
 const csFiles = (extra: Record<string, string> = {}) => ({ ".changeset/config.json": '{"ignore":["@acme/ignored"]}', ".changeset/old.md": '---\n"@acme/core": patch\n---\n\nOlder fix.\n', "package.json": '{"name":"root","private":true,"workspaces":["packages/*"]}', "packages/core/package.json": '{"name":"@acme/core"}', "packages/core/src/a.ts": "export const a = 1;\n", "packages/priv/package.json": '{"name":"@acme/priv","private":true}', "packages/priv/src/p.ts": "x\n", "packages/ignored/package.json": '{"name":"@acme/ignored"}', "packages/ignored/src/i.ts": "x\n", "fixtures/demo/package.json": '{"name":"demo-fixture"}', "fixtures/demo/d.ts": "x\n", ...extra });
 const TITLE = "Fix wrong total when the invoice has no lines (#12)", SUMMARY = "I read the code.\n\nThe total now returns 0 for an invoice without line items instead of NaN.\n\nLOKI_DONE";
@@ -256,6 +255,9 @@ out.sn_chatter = summaryNote("Running the unit suite passes in every package now
 out.sn_restate = summaryNote("Fixed the loader crash when a file is unreadable.", "Fix the loader crash when a file is unreadable") === "" ? "empty" : "picked";
 out.sn_table = summaryNote("| a | b |\n| - | - |\n\n```\ncode here is long enough to count as text\n```\n", "Fix x") === "" ? "empty" : "picked";
 out.veto = [taskForbidsReleaseNote("Fix x, no changelog entry"), taskForbidsReleaseNote("skip the changeset"), taskForbidsReleaseNote("do not add a news fragment"), taskForbidsReleaseNote("Update the changelog generator to sort entries"), taskForbidsReleaseNote("Fix the release notes page")].join(",");
+{ const { renderReviewerBody } = await import(join(SRC, "e10ext/reviewer_body.ts")), L = fragmentNoticeLine(".changeset/x.md");
+  const body = (outputs: Record<string, Record<string, unknown>>) => renderReviewerBody({ verdict: "VERIFIED", draftReason: null, notProven: [], receiptPath: null, receiptSha256: null, signed: null, runId: "r", outputs }, {}, "0.0.0");
+  out.pr_line = [body({ implement: { scaffold: { path: ".changeset/x.md", kind: "changeset" } } }).includes(`- ${L}`), body({ implement: {} }).includes("Loki added")].join(","); }
 out.knob = [fragmentWriterOn({}), fragmentWriterOn({ LOKI_E10_SCAFFOLD: "1" }), fragmentWriterOn({ LOKI_E10_SCAFFOLD: "0" })].join(",");
 if (process.env.FW_REAL_CS) { const r = wf(process.env.FW_REAL_CS, ["packages/core/src/a.ts"], TITLE, SUMMARY) as { validated?: string; skipped?: string }; out.fw_real_cs = r.validated ?? `skipped:${r.skipped}`; } else out.fw_real_cs = "offline";
 if (process.env.FW_REAL_TC) { const r = wf(process.env.FW_REAL_TC, ["pkg/mod.py"], TITLE, SUMMARY) as { validated?: string; skipped?: string }; out.fw_real_tc = r.validated ?? `skipped:${r.skipped}`; } else out.fw_real_tc = "offline";
@@ -306,7 +308,7 @@ eqv pack_tokens_exact ok "L021 pack tokens recorded and within the 6000 budget"
 echo "    pack spans: $(get pack_spans)"
 eqv big_6000 within "L021 budget holds on large files (6000)"
 eqv big_800 within "L021 budget holds on large files (800)"
-eqv diet_default_off yes "E6 the pack diet is off by default and LOKI_E10_PACK_DIET=1/0 switch it"
+eqv diet_default_on yes "E6 the pack diet is on by default and LOKI_E10_PACK_DIET=0 opts out"
 eqv diet_no_fill yes "E6 diet: a task naming nothing keeps its single best definition, not the fill of matching ones (under half the tokens)"
 eqv diet_named_only yes "E6 diet: a task naming one definition keeps that span only"
 eqv diet_keeps_solution yes "E6 diet: ts-invoice keeps invoiceTotal and roundCents (callee) but drops RATES, a second-hop constant: the known cost, 3/3 files 2/3 bodies, fewer tokens"
@@ -367,7 +369,8 @@ eqv sn_chatter empty "FW summary: test-status and sign-off chatter yields nothin
 eqv sn_restate empty "FW summary: a sentence that restates the title yields nothing"
 eqv sn_table empty "FW summary: tables and code fences yield nothing"
 eqv veto "true,true,true,false,false" "FW veto: no/skip/do-not phrasings forbid, a task about changelogs or release notes does not"
-eqv knob "false,true,false" "FW knob: LOKI_E10_SCAFFOLD=1 turns the writer on"
+eqv pr_line "true,false" "FW notice: the PR body carries the added-fragment line only when the writer wrote one"
+eqv knob "true,true,false" "FW knob: the writer is on by default and LOKI_E10_SCAFFOLD=0 opts out"
 case "$(get fw_real_cs)" in offline) ok "FW real changeset: skipped (registry unreachable)";; ok) ok "FW real changeset: the repo's own changeset status accepts the written fragment";; *) bad "FW real changeset: $(get fw_real_cs)";; esac
 case "$(get fw_real_tc)" in offline) ok "FW real towncrier: skipped (registry unreachable)";; ok) ok "FW real towncrier: towncrier build --draft renders the written fragment";; *) bad "FW real towncrier: $(get fw_real_tc)";; esac
 
@@ -432,21 +435,22 @@ prep_changeset() { # a public package that keeps changesets (the fixture's own m
 }
 frag_in_history() { git -C "$REPO" log --all --name-only --format= 2>/dev/null | grep -c '^\.changeset/.*\.md$'; }
 scaffold_events() { grep -c '"type":"scaffold.applied"' "$RUNDIR/events.jsonl" 2>/dev/null; }
-E2E_PREP=prep_changeset run_e2e fragon LOKI_E10_SCAFFOLD=1
+E2E_PREP=prep_changeset run_e2e fragon
 if [ -f "$RUNDIR/events.jsonl" ]; then
     v="$(scaffold_events)"; [ "$v" = 1 ] && ok "e2e fragment writer on: one scaffold.applied event" || bad "e2e fragment writer on: scaffold.applied events=$v"
     v="$(python3 -I -c 'import json,sys
 for l in open(sys.argv[1]):
     e=json.loads(l)
     if e.get("type")=="scaffold.applied": d=e["data"]; print(d["path"].startswith(".changeset/") and d["kind"]=="changeset" and e["stage"]=="implement")' "$RUNDIR/events.jsonl" 2>&1)"; [ "$v" = True ] && ok "e2e fragment writer on: the event names the written changeset" || bad "e2e fragment writer on: scaffold.applied record ($v)"
+    v="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(any(n.startswith("Loki added .changeset/") and n.endswith("delete it if this change needs no release note (LOKI_E10_SCAFFOLD=0 turns this off).") for n in r.get("not_proven",[])))' "$RUNDIR/receipt.json" 2>&1)"; [ "$v" = True ] && ok "e2e fragment writer on: the receipt carries the added-fragment line" || bad "e2e fragment writer on: receipt lacks the added-fragment line ($v)"
     [ "$(frag_in_history)" -ge 2 ] && ok "e2e fragment writer on: the fragment is part of the run's commit" || bad "e2e fragment writer on: no new .changeset fragment in the run's commits"
 else
     bad "e2e fragment writer on: no run events"; printf '%s\n' "$OUT" | tail -30 | sed 's/^/    | /'
 fi
-E2E_PREP=prep_changeset run_e2e fragoff
+E2E_PREP=prep_changeset run_e2e fragoff LOKI_E10_SCAFFOLD=0
 if [ -f "$RUNDIR/events.jsonl" ]; then
-    [ "$(scaffold_events)" = 0 ] && ok "e2e fragment writer off by default: no scaffold event" || bad "e2e fragment writer off: a scaffold event was written"
-    [ "$(frag_in_history)" = 1 ] && ok "e2e fragment writer off by default: no fragment added" || bad "e2e fragment writer off: a fragment was added"
+    [ "$(scaffold_events)" = 0 ] && ok "e2e fragment writer =0: no scaffold event" || bad "e2e fragment writer off: a scaffold event was written"
+    [ "$(frag_in_history)" = 1 ] && ok "e2e fragment writer =0: no fragment added" || bad "e2e fragment writer off: a fragment was added"
 else
     bad "e2e fragment writer off: no run events"
 fi

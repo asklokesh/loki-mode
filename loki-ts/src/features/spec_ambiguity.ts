@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"; import { join } from "node:path";
+import { isOff } from "../council/role_agents.ts";
 import { safeGit } from "../util/safe_git.ts"; import { ISSUE_CONTEXT_HEAD, type IssueComment } from "../engine10/fetch_issue.ts";
 // Deterministic spec-ambiguity scoring for Intake (no LLM), kept outside the size-capped engine10 core.
 export interface AmbiguityHit { kind: "marker" | "open_question" | "hedge" | "vague"; excerpt: string; weight: number }
@@ -158,7 +159,7 @@ export function resolveChoices(task: string, ctx: ChoiceCtx = {}): ChoiceResolut
   try {
     const comments = (ctx.comments ?? []).filter((c) => typeof c?.author === "string" && typeof c.association === "string" && typeof c.body === "string"), at = comments.length ? task.lastIndexOf(ISSUE_CONTEXT_HEAD) : -1, issue = at < 0 ? task : task.slice(0, at); // the appended comment section is not the issue's own question
     return detectOpenChoices(issue).map((c): ChoiceResolution => {
-      const prec = ctx.repoDir && process.env.LOKI_E10_PRECEDENT === "1" ? precedentFor(c, ctx.repoDir) : "", r = settle(c, comments, ctx, issue); // precedent is default off (LOKI_E10_PRECEDENT=1) until the scored L-Haiku arm measures it
+      const prec = ctx.repoDir && !isOff(process.env.LOKI_E10_PRECEDENT) ? precedentFor(c, ctx.repoDir) : "", r = settle(c, comments, ctx, issue); // precedent is on by default; LOKI_E10_PRECEDENT=0 opts out
       return prec ? { ...r, precedent: prec } : r;
     });
   } catch { return []; }

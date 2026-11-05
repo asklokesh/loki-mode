@@ -220,8 +220,8 @@ export function packEnabled(model: string | undefined, env: NodeJS.ProcessEnv = 
   return /haiku|sonnet/i.test(model ?? "");
 }
 
-/** E6 diet: the pack keeps the named spans plus their direct callers and callees, with no fill up to the budget. LOKI_E10_PACK_DIET=1 turns it on, =0 off. */
-export const PACK_DIET_DEFAULT = false;
+/** E6 diet: the pack keeps the named spans plus their direct callers and callees, with no fill up to the budget. On by default; LOKI_E10_PACK_DIET=0 opts out. */
+export const PACK_DIET_DEFAULT = true;
 export function packDietEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const v = env["LOKI_E10_PACK_DIET"];
   return v === "1" ? true : v === "0" ? false : PACK_DIET_DEFAULT;
