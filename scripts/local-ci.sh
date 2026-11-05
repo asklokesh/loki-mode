@@ -6,8 +6,9 @@
 #   bash scripts/local-ci.sh                     run everything, cheap tests first
 #   LOCAL_CI_ONLY=hygiene,pack-contents bash scripts/local-ci.sh    run a subset
 #
-# Needs bun, node, python3, git and npm on PATH, and `bun install --cwd loki-ts
-# --frozen-lockfile` done once (dist-freshness rebuilds loki-ts). Exit 0 only when
+# Needs bun, node, python3, git and npm on PATH. loki-ts/dist is not committed: this
+# script installs loki-ts dependencies when missing and builds dist when it is missing
+# or older than loki-ts/src, VERSION or the build script (the tests run the bundle). Exit 0 only when
 # every selected test passes. There is one tier; LOCAL_CI_TIER is not read.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -26,6 +27,15 @@ if [ -n "${LOCAL_CI_ONLY:-}" ]; then
     for w in "${want[@]}"; do
         if [ -f "tests/min/$w.sh" ]; then selected+=("$w"); else echo "local-ci: no such test: $w" >&2; exit 2; fi
     done
+fi
+
+# Build loki-ts/dist once, serially, before any test runs it (parallel tests must not race a build).
+if [ ! -f loki-ts/dist/loki.js ] || [ ! -f loki-ts/dist/cockpit.js ] \
+   || [ -n "$(find loki-ts/src loki-ts/scripts loki-ts/data VERSION -type f -newer loki-ts/dist/loki.js -print -quit 2>/dev/null)" ]; then
+    if [ ! -d loki-ts/node_modules ]; then
+        bun install --cwd loki-ts --frozen-lockfile >&2 || { echo "local-ci: bun install failed in loki-ts" >&2; exit 2; }
+    fi
+    (cd loki-ts && bun run build >&2) || { echo "local-ci: loki-ts build failed" >&2; exit 2; }
 fi
 
 out="$(mktemp -d "${TMPDIR:-/tmp}/loki-local-ci.XXXXXX")" || exit 2

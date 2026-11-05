@@ -101,8 +101,8 @@ fi
 #   1. LOKI_TS_ENTRY=...   -- explicit override (custom builds, tests)
 #   2. BUN_FROM_SOURCE=1   -- prefer src/cli.ts (used by bench --compare-dist
 #                             and during Phase 3 development before dist ships)
-#   3. dist/loki.js exists -- production path (npm/Docker/Homebrew artifact)
-#   4. fall back to src    -- in-repo development before first build
+#   3. dist/loki.js exists -- production path (npm/Docker/Homebrew artifact; built at publish time)
+#   4. src only (git clone) -- builds dist once when loki-ts/node_modules exists, else runs src
 #
 # v7.4.2 fix (BUG-1): BUN_FROM_SOURCE=1 used to hard-fail on npm/Docker/brew
 # installs because src/ is excluded by .npmignore. Now we warn once and fall
@@ -135,8 +135,8 @@ elif [ "${BUN_FROM_SOURCE:-0}" = "1" ] || [ "${BUN_FROM_SOURCE:-}" = "true" ]; t
     fi
 elif [ -f "$REPO_ROOT/loki-ts/dist/loki.js" ]; then
     BUN_CLI="$REPO_ROOT/loki-ts/dist/loki.js"
-    # Stale-dist freshness guard. dist/loki.js is gitignored (loki-ts/.gitignore)
-    # and rebuilt by package.json's prepack and the release Docker build, so on
+    # Stale-dist freshness guard. dist/loki.js is untracked (gitignored in loki-ts/.gitignore)
+    # and built by package.json's prepack, the release Docker build and the brew asset, so on
     # released channels (npm/Docker/brew) src/cli.ts is absent and this guard is
     # a no-op -- dist is always current there. On a DEV machine / worktree the
     # gitignored dist can predate the current dispatcher: e.g. a new shim->Bun
@@ -153,7 +153,22 @@ elif [ -f "$REPO_ROOT/loki-ts/dist/loki.js" ]; then
         BUN_CLI="$REPO_ROOT/loki-ts/src/cli.ts"
     fi
 elif [ -f "$REPO_ROOT/loki-ts/src/cli.ts" ]; then
+    # Git clone: loki-ts/dist is built, never committed. Build it once (autonomy/run.sh and the
+    # control plane call dist/loki.js directly), then run it. The build is atomic, so a failure
+    # leaves no dist and the run falls back to src as it always did.
     BUN_CLI="$REPO_ROOT/loki-ts/src/cli.ts"
+    if command -v bun >/dev/null 2>&1; then
+        if [ -d "$REPO_ROOT/loki-ts/node_modules" ]; then
+            echo "loki: building loki-ts/dist (first run from a git clone, a few seconds)" >&2
+            if (cd "$REPO_ROOT/loki-ts" && bun run build >/dev/null 2>&1) && [ -f "$REPO_ROOT/loki-ts/dist/loki.js" ]; then
+                BUN_CLI="$REPO_ROOT/loki-ts/dist/loki.js"
+            else
+                echo "loki: build failed; running from source. To see why: cd loki-ts && bun run build" >&2
+            fi
+        else
+            echo "loki: loki-ts is not built. Run: cd loki-ts && bun install && bun run build" >&2
+        fi
+    fi
 else
     # Neither dist nor src available; fall through to bash silently.
     _loki_bash_or_refuse "$@"

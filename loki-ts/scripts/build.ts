@@ -17,7 +17,7 @@
  */
 import { resolve, dirname, isAbsolute, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { rm, stat, readFile, writeFile, realpath } from "node:fs/promises";
+import { rm, rename, stat, readFile, writeFile, realpath } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { sourceFingerprint } from "../src/util/producer_fingerprint.ts";
 
@@ -25,7 +25,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(HERE, "..");
 const REPO_ROOT = resolve(PKG_ROOT, "..");
 const ENTRY = resolve(PKG_ROOT, "src", "cli.ts");
-const OUTDIR = resolve(PKG_ROOT, "dist");
+const FINAL_DIR = resolve(PKG_ROOT, "dist");
+// Build into a sibling of dist (same depth, so source-map paths and the content-derived debugId are
+// identical) and swap it in only after both bundles succeed. A failed build (no node_modules in a fresh
+// worktree, a resolve error) must leave the previous dist untouched, never an empty directory.
+const OUTDIR = resolve(PKG_ROOT, `.bun-build-${process.pid}`);
 const OUTFILE = resolve(OUTDIR, "loki.js");
 
 // v7.4.3 (BUG-8): read the canonical version from VERSION at build time so
@@ -148,9 +152,20 @@ export async function buildWithDeterministicRoot(
 }
 
 async function main(): Promise<number> {
-  // Clean prior artifacts so a failed/partial build cannot masquerade as a
-  // good one. Bun.build with `outdir` overwrites individual files but does
-  // not garbage-collect stale chunks.
+  try {
+    const code = await build();
+    if (code !== 0) return code;
+    await rm(FINAL_DIR, { recursive: true, force: true });
+    await rename(OUTDIR, FINAL_DIR);
+    return 0;
+  } finally {
+    await rm(OUTDIR, { recursive: true, force: true });
+  }
+}
+
+async function build(): Promise<number> {
+  // The staging dir is fresh per process, so a partial build can never masquerade as a good one and
+  // stale chunks from a previous build cannot linger.
   await rm(OUTDIR, { recursive: true, force: true });
 
   const t0 = performance.now();
@@ -192,7 +207,7 @@ async function main(): Promise<number> {
 
   const info = await stat(OUTFILE);
   process.stdout.write(
-    `build: ok  ${formatBytes(info.size)}  ${elapsedMs.toFixed(1)} ms  ->  ${OUTFILE}\n`,
+    `build: ok  ${formatBytes(info.size)}  ${elapsedMs.toFixed(1)} ms  ->  ${resolve(FINAL_DIR, "loki.js")}\n`,
   );
 
   // Second entry: the cockpit render CLI (invoked by autonomy/lib/
@@ -220,7 +235,7 @@ async function main(): Promise<number> {
   }
   const cockpitInfo = await stat(cockpitOut);
   process.stdout.write(
-    `build: ok  ${formatBytes(cockpitInfo.size)}  ->  ${cockpitOut}\n`,
+    `build: ok  ${formatBytes(cockpitInfo.size)}  ->  ${resolve(FINAL_DIR, "cockpit.js")}\n`,
   );
   return 0;
 }

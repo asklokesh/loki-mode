@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
-# The committed bundles (loki-ts/dist/loki.js, cockpit.js) are what npm, Docker and
-# Homebrew run, and nothing else rebuilds them. This rebuilds loki-ts from the
-# current source in a temp copy of the tree (the committed dist is never touched)
-# and requires the output to equal the committed bundles, ignoring the debugId line
-# (it is derived from a source map whose paths depend on where node_modules sits).
-# Also requires web-app/dist/index.html to reference only assets that exist.
-# Needs `bun install --cwd loki-ts --frozen-lockfile` first, and the pinned Bun
-# (see .github/workflows/pr-fast.yml): a different Bun can emit different bytes.
+# loki-ts/dist is built, never committed: npm (prepack), Docker, the Homebrew asset and bin/loki
+# on a git clone all build it. This test (name kept for the gate lists that name it) proves the
+# build works from the current source in a temp copy of the tree and yields loki.js and
+# cockpit.js (plus maps) that embed VERSION, that nothing under loki-ts/dist is tracked in git,
+# and that web-app/dist/index.html references only assets that exist. The packed-tarball half
+# (dist is inside `npm pack`) lives in pack-contents.sh.
+# Needs `bun install --cwd loki-ts --frozen-lockfile` first and the pinned Bun (see
+# .github/workflows/pr-fast.yml).
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
-#   1. loki-ts/src/cli.ts: change any string literal without rebuilding dist.
-#   2. web-app/dist/index.html: point a script src at /assets/missing-plant.js.
+#   1. loki-ts/src/cli.ts: add a syntax error, the build step must fail.
+#   2. `git add -f loki-ts/dist/loki.js`: the untracked check must fail.
+#   3. loki-ts/scripts/build.ts: skip writing cockpit.js, the output check must fail.
+#   4. web-app/dist/index.html: point a script src at /assets/missing-plant.js.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
 need tar
 cd "$ROOT" || exit 2
 
-echo "TEST: dist freshness"
+echo "TEST: dist build"
 
 [ -d loki-ts/node_modules ] || { echo "dist-freshness: run 'bun install --cwd loki-ts --frozen-lockfile' first" >&2; exit 2; }
 
@@ -33,14 +35,16 @@ fi
 (cd "$B/loki-ts" && bun run scripts/build.ts) > "$T/build.out" 2>&1 \
     && ok "loki-ts builds from source" || { bad "loki-ts build failed: $(tail -5 "$T/build.out")"; finish; exit $?; }
 
-norm() { sed -E 's/^\/\/# debugId=[A-F0-9]{32}$/\/\/# debugId=X/' "$1"; }
-for f in loki.js cockpit.js; do
-    if [ -f "loki-ts/dist/$f" ] && [ "$(norm "$B/loki-ts/dist/$f" | shasum -a 256)" = "$(norm "loki-ts/dist/$f" | shasum -a 256)" ]; then
-        ok "committed loki-ts/dist/$f equals a fresh build"
-    else
-        bad "committed loki-ts/dist/$f is stale: run 'cd loki-ts && bun run build' and commit"
-    fi
+want="$(tr -d '\n' < VERSION)"
+for f in loki.js loki.js.map cockpit.js cockpit.js.map; do
+    [ -s "$B/loki-ts/dist/$f" ] && ok "fresh build wrote loki-ts/dist/$f" || bad "fresh build did not write loki-ts/dist/$f"
 done
+grep -qF "\"$want\"" "$B/loki-ts/dist/loki.js" 2>/dev/null \
+    && ok "fresh loki.js embeds VERSION $want" || bad "fresh loki.js does not embed VERSION $want"
+
+tracked="$(git ls-files loki-ts/dist 2>/dev/null)"
+[ -z "$tracked" ] && ok "no file under loki-ts/dist is tracked" \
+    || bad "loki-ts/dist is built at publish time and must not be committed; run: git rm -r --cached loki-ts/dist ($(printf '%s' "$tracked" | tr '\n' ' '))"
 
 missing="$(python3 -I - "$ROOT/web-app/dist" <<'PY'
 import os, re, sys

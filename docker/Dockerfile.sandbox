@@ -224,7 +224,7 @@ COPY --chown=loki:loki integrations/ ./integrations/
 COPY --chown=loki:loki completions/ ./completions/
 
 # Bun runtime artifacts: shim + pre-built TypeScript bundle + rolling data.
-# loki-ts/dist/loki.js is built by `bun run build` and committed to the repo.
+# loki-ts/dist/loki.js is built by `bun run build` before the build (release.yml, or by hand); it is not committed.
 # loki-ts/data/ holds rolling tables (e.g. model-pricing.json) that budget.ts
 # reads at runtime; shipping the dir keeps cost/budget on real pricing instead
 # of the stale built-in fallback (matches the single-stage Dockerfile).

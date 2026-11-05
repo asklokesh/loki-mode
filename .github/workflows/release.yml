@@ -75,8 +75,7 @@ jobs:
           node-version: '22'
 
       - name: Setup Bun
-        # The npm prepack hook builds the loki-ts dist; without bun it falls
-        # back to the committed dist.
+        # The npm prepack hook builds the loki-ts dist (not committed); a failed build fails the pack.
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.13
@@ -126,6 +125,7 @@ jobs:
             echo "FATAL: packed package.json version != VERSION ${want}"; exit 1; }
           mkdir -p "$RUNNER_TEMP/npm-tarball" "$RUNNER_TEMP/unpack"
           cp "$tgz" "$RUNNER_TEMP/npm-tarball/"
+          grep -qxF package/loki-ts/dist/cockpit.js "$RUNNER_TEMP/tgz.list" || { echo "FATAL: packed tarball is missing loki-ts/dist/cockpit.js"; exit 1; }
           tar -xzf "$tgz" -C "$RUNNER_TEMP/unpack" package/loki-ts/dist/loki.js
           grep -q "\"${want}\"" "$RUNNER_TEMP/unpack/package/loki-ts/dist/loki.js" || {
             echo "FATAL: packed dist does not embed VERSION ${want}"; exit 1; }
@@ -338,6 +338,22 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
+      # loki-ts/dist is not committed and the Homebrew formula installs this job's brew asset, so the
+      # asset must carry a built dist. Same pinned Bun as the other build jobs.
+      - name: Setup Bun (brew asset carries loki-ts/dist)
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.13
+          no-cache: true
+
+      - name: Build loki-ts dist for the brew asset
+        working-directory: loki-ts
+        run: |
+          set -euo pipefail
+          bun install --production
+          bun run build
+          test -f dist/loki.js && test -f dist/cockpit.js || { echo "FATAL: loki-ts/dist not built"; exit 1; }
+
       - name: Check if release exists
         id: check_release
         env:
@@ -392,7 +408,11 @@ jobs:
           test -f release/loki-mode/tests/detect-mock-problems.sh
           (cd release && zip -qr "loki-mode-claude-code-${V}.zip" loki-mode && tar -czf "loki-mode-claude-code-${V}.tar.gz" loki-mode)
           # Brew source asset, attached at creation (releases are immutable).
-          git archive --format=tar.gz --prefix="loki-mode-${V}/" -o "release/loki-mode-${V}.tar.gz" HEAD
+          # loki-ts/dist is untracked, so append the built dist to the archive under the same prefix.
+          git archive --format=tar --prefix="loki-mode-${V}/" -o "release/loki-mode-${V}.tar" HEAD
+          tar -rf "release/loki-mode-${V}.tar" --transform "s,^,loki-mode-${V}/," loki-ts/dist
+          gzip -n "release/loki-mode-${V}.tar"
+          tar -tzf "release/loki-mode-${V}.tar.gz" | grep -qxF "loki-mode-${V}/loki-ts/dist/loki.js" || { echo "ERROR: brew asset has no loki-ts/dist/loki.js"; exit 1; }
           file "release/loki-mode-${V}.tar.gz" | grep -q 'gzip compressed' || { echo "ERROR: brew asset is not gzip"; exit 1; }
 
       # a tag already on the remote is reused only if it points at the
@@ -705,7 +725,7 @@ jobs:
           # never restores a cache an issue-triggered job could have written.
           no-cache: true
 
-      - name: Build loki-ts dist (Dockerfile COPY needs loki-ts/dist/loki.js)
+      - name: Build loki-ts dist (not committed; Dockerfile COPY needs loki-ts/dist/loki.js)
         working-directory: loki-ts
         run: |
           set -euo pipefail

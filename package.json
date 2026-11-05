@@ -123,7 +123,7 @@
   ],
   "scripts": {
     "postinstall": "node bin/loki-postinstall.js || exit 0",
-    "prepack": "find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; if command -v bun >/dev/null 2>&1; then (cd loki-ts && bun install --production && bun run build) || echo 'WARN: loki-ts build failed, using existing dist if present'; else echo 'WARN: bun not on PATH, skipping loki-ts build (using committed dist if present)'; fi; find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; node tools/normalize-package-permissions.mjs .",
+    "prepack": "find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; if command -v bun >/dev/null 2>&1; then (cd loki-ts && bun install --production && bun run build) || { echo 'FATAL: loki-ts build failed; refusing to pack without loki-ts/dist' >&2; exit 1; }; else echo 'WARN: bun not on PATH, packing without loki-ts/dist (loki builds it on first run from a git clone; the registry package needs bun at publish)' >&2; fi; find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; node tools/normalize-package-permissions.mjs .",
     "prepublishOnly": "cd web-app && npm ci && npm run build && test -f dist/index.html && grep -q /lab/assets/ dist/index.html && cd ../packages/control-plane && bun install --frozen-lockfile && bun run build:all && test -f ui/dist/index.html && test -f dist/server.js && test -f dist/ask-tools-server.js",
     "test": "bash scripts/local-ci.sh"
   },

@@ -448,7 +448,7 @@ for f in "${CHANGED[@]}"; do
     case "$f" in
         tests/lib/* | tests/run-all-tests.sh | package.json | */package.json \
             | requirements*.txt | requirements*.in | */requirements*.txt | */requirements*.in \
-            | loki-ts/dist/* | VERSION | .github/workflows/*)
+            | VERSION | .github/workflows/*)
             emit R0 ALL "matched broad-blast-radius path: $f"
             finish
             ;;
