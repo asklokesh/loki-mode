@@ -168,7 +168,8 @@ else
 fi
 
 cat > "$T/adv.ts" <<'TS'
-// 32 KB inputs shaped to make a backtracking pattern blow up; prints one line per case with its ms.
+// 32 KB inputs shaped to make a backtracking pattern blow up; prints one line per case with its ms. The bar is 500 ms:
+// catastrophic or quadratic backtracking on 32 KB takes seconds, while 50 ms flaked on a loaded CI runner (JIT warmup).
 const { scriptRuleMayApply } = await import(process.argv[2]!);
 const K = 32768;
 const rep = (u: string) => u.repeat(Math.ceil(K / u.length));
@@ -188,12 +189,12 @@ const p = Bun.spawn({ cmd: [process.execPath, process.argv[1], process.argv[2]],
 const timer = setTimeout(() => p.kill(9), 20000);
 process.stdout.write(await new Response(p.stdout).text()); await p.exited; clearTimeout(timer);' "$T/adv.ts" "$ROOT/loki-ts/src/runner/host_guard.ts" 2>&1)"
 printf '%s\n' "$adv" | sed 's/^/    /'
-slow="$(printf '%s\n' "$adv" | awk '$1 == "ADV" && $2 + 0 >= 50' | wc -l | tr -d ' ')"
+slow="$(printf '%s\n' "$adv" | awk '$1 == "ADV" && $2 + 0 >= 500' | wc -l | tr -d ' ')"
 nadv="$(printf '%s\n' "$adv" | grep -c '^ADV [0-9]')"
 if printf '%s\n' "$adv" | grep -q '^ADV-DONE' && [ "$nadv" -ge 14 ] && [ "$slow" = "0" ]; then
-    ok "every 32 KB adversarial input decided in under 50 ms ($nadv cases)"
+    ok "every 32 KB adversarial input decided in under 500 ms ($nadv cases)"
 else
-    bad "adversarial inputs: $nadv decided, $slow at 50 ms or more, finished: $(printf '%s\n' "$adv" | grep -c '^ADV-DONE') (killed at 20 s if 0)"
+    bad "adversarial inputs: $nadv decided, $slow at 500 ms or more, finished: $(printf '%s\n' "$adv" | grep -c '^ADV-DONE') (killed at 20 s if 0)"
 fi
 
 fuzz="$(cd "$ROOT/loki-ts" && bun -e '

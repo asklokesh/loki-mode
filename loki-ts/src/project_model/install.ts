@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
-import { baselineSuites } from "../runner/repo_profile.ts";
+import { baselineCmdS, baselineSuites, SUITE_BASELINE_BUDGET_S } from "../runner/repo_profile.ts";
 import { LOCK_RULES, has, inWorkspace, isYarnBerry, type LockRule } from "../util/lock_ecosystems.ts";
 import type { RunContext, RunnerName } from "../engine10/types.ts";
 import type { ProjectApi } from "./api.ts";
@@ -237,6 +237,23 @@ export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): L
   return { cmd: rewritten && !later ? out.join("") : modelCmd, locked, rewritten: rewritten && !later, ...(!locked ? { note: `install not lockfile-locked: ${notes.join("; ")}` } : rewritten ? { note: "install rewritten to its lockfile-frozen form" } : {}) };
 }
 
+/** The project names ruff itself: a [tool.ruff] table, a ruff config file, or ruff in a dependency or tooling manifest. Config detection only. */
+export function projectDeclaresRuff(repoDir: string): boolean {
+  if (["ruff.toml", ".ruff.toml"].some((f) => existsSync(join(repoDir, f)))) return true;
+  const files = ["pyproject.toml", "setup.cfg", "tox.ini", ".pre-commit-config.yaml", "Pipfile", "requirements.txt", "requirements-dev.txt", "dev-requirements.txt"];
+  return files.some((f) => { try { return /\bruff\b/i.test(readFileSync(join(repoDir, f), "utf8")); } catch { return false; } });
+}
+const PEP668 = /externally[- ]managed[- ]environment|PEP 668/i;
+/** A plain pip install the system interpreter refused as externally managed (PEP 668) becomes the same install into a project .venv, plus the runners verify
+ *  names for that venv (pytest always, ruff when the project declares it), because resolveTool prefers .venv/bin and a venv without pytest would turn every check not_run.
+ *  Only a bare `[python3 -m] pip install <args>` is rewritten: a shell operator, redirect or substitution in the command returns null (never reinterpreted). */
+export function venvInstallCmd(cmd: string, cwd: string): string | null {
+  const m = /^\s*(?:python3?\s+-m\s+pip3?|pip3?)\s+install\b([^&|;<>`$()\n]*)$/.exec(cmd);
+  if (!m) return null;
+  const tools = ["pytest", ...(projectDeclaresRuff(cwd) ? ["ruff"] : [])].join(" ");
+  return `python3 -m venv .venv && .venv/bin/python -m pip install${m[1]} && .venv/bin/python -m pip install ${tools}`;
+}
+
 /** One short honest line from the install output (L3): the last non-empty line, whitespace collapsed. */
 const excerpt = (tail: string): string => {
   const l = tail.split("\n").map((x) => x.trim()).filter(Boolean).pop() ?? "";
@@ -273,7 +290,9 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
     li = lockedInstall(input.repoDir, cwd, mc.cmd);
     const before = snapshot(input.repoDir, env);
     const t0 = Date.now();
-    const r = await runDetached(li.cmd, cwd, env, input.signal, budget);
+    let r = await runDetached(li.cmd, cwd, env, input.signal, budget);
+    const venv = r.code !== 0 && !r.cut && PEP668.test(r.tail) ? venvInstallCmd(li.cmd, cwd) : null;
+    if (venv) { li = { ...li, cmd: venv, locked: false, rewritten: false }; r = await runDetached(venv, cwd, env, input.signal, Math.max(1, budget - (Date.now() - t0))); if (r.code === 0 && !r.cut) li = { ...li, note: "system python is externally managed (PEP 668): installed into .venv" }; }
     const dt = (Date.now() - t0) / 1000;
     left -= Date.now() - t0;
     if (!guardTree(input.repoDir, env, before, res)) res.notProven.push(`${name} tree guard not run (git status failed)`);
@@ -310,13 +329,13 @@ export function absentDepRoots(repoDir: string, model: ProjectApi | null | undef
 export type PhaseTiming = { ms: number; at?: number; cached?: boolean } | { skipped: string }; // at: start offset in ms after intake began
 export type IntakeTiming = Partial<Record<"setup" | "repo_walk" | "already_done" | "project_model" | "deps_install" | "suite_baseline" | "zero_baseline" | "zero_probe", PhaseTiming>>;
 export interface DepsTiming { install?: PhaseTiming; baseline_ms?: number }
-export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit">, signal: AbortSignal, runners: RunnerName[], timing?: DepsTiming): Promise<Record<string, unknown>> {
+export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit"> & { capS?: number }, signal: AbortSignal, runners: RunnerName[], timing?: DepsTiming): Promise<Record<string, unknown>> {
   const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model), before = untrackedTops(ctx.repoDir), t0 = Date.now();
   const r = await prepareDeps({ repoDir: ctx.repoDir, model, failed: roots.map((root) => ({ root, harnessOwned: true })), signal, timeoutMs: INSTALL_CAP_MS, opts: { runId: ctx.runId } });
   for (const c of r.checks) ctx.emit("deps.install", "intake", { ...c });
   const created = r.checks.some((c) => c.result === "pass") ? installCreatedSince(ctx.repoDir, before) : null; // a failed install records nothing, so nothing is hidden
   const installMs = Date.now() - t0, tb = Date.now();
-  baselineSuites(ctx.repoDir, fullSuiteSpecs(ctx.repoDir, runners), { rerun: r.checks.some((c) => c.result === "pass") });
+  baselineSuites(ctx.repoDir, fullSuiteSpecs(ctx.repoDir, runners), { rerun: r.checks.some((c) => c.result === "pass"), timeoutS: baselineCmdS(ctx.capS), budgetS: Math.min(SUITE_BASELINE_BUDGET_S, baselineCmdS(ctx.capS)) });
   const install: PhaseTiming = r.checks.length ? { ms: installMs } : { skipped: r.notProven.length ? "install not attempted" : "no dependencies to install" };
   if (timing) { timing.install = install; timing.baseline_ms = Date.now() - tb; }
   return { ...(r.checks.length || r.notProven.length ? { deps_install: r.checks, deps_not_proven: r.notProven } : {}), ...(created ? { install_created: created } : {}) };
