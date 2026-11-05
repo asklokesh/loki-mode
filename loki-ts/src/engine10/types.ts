@@ -188,6 +188,7 @@ export interface Receipt {
   /** T2: the counted outcome for METRICS: "yes" | "no" | "inconclusive". */
   mutation_outcome?: "yes" | "no" | "inconclusive";
   /** FC-21b: set only when implement was stopped at its time limit; omitted otherwise so other receipts stay byte-stable. */
+  patch?: import("../features/patch_protocol.ts").PatchReceipt; // LOKI_E10_PATCH: present only when the patch protocol ran in implement
   implement_limit?: { limit_s: number; elapsed_s: number; stop_cause?: "max_turns"; owner?: "harness" };
   /** T9: provider failovers (stage, from, to, reason, evidence). Omitted when none happened so other receipts stay byte-stable. */
   failover?: import("../runner/provider_failover.ts").FailoverRecord[];
