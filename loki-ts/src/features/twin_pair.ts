@@ -230,7 +230,7 @@ interface GoRec { cand: string; variant: string; obs?: Obs; preds?: Record<strin
 function goRun(pkgDir: string, genArgs: string[], o: RunOpts): { man: GoManifest | null; recs: GoRec[]; error?: string; attempts: number } {
   const tmp = mkdtempSync(join(tmpdir(), "loki-twin-")), probe = join(pkgDir, GO_PROBE_FILE), man = join(tmp, "manifest.json"), outF = join(tmp, "out.jsonl");
   const drop = new Set<string>(), noImport = new Set<string>();
-  let attempts = 0, last = "";
+  let attempts = 0, last = "", retried = false;
   try {
     while (attempts < 5) {
       attempts++;
@@ -247,6 +247,9 @@ function goRun(pkgDir: string, genArgs: string[], o: RunOpts): { man: GoManifest
       const errs = [...text.matchAll(new RegExp(`${GO_PROBE_FILE.replace(/\./g, "\\.")}:(\\d+):\\d+: (.*)`, "g"))];
       if (errs.length === 0 || existsSync(outF)) {
         const recs = existsSync(outF) ? readFileSync(outF, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as GoRec) : [];
+        // a failure that names no probe line is the toolchain's, not the probe's (measured: a shared build cache entry
+        // removed by another process between compile and link); run once more before giving up
+        if (recs.length === 0 && errs.length === 0 && !retried) { retried = true; last = text.slice(-600); continue; }
         return { man: m, recs, attempts, ...(recs.length === 0 ? { error: `probe: ${text.slice(-400)}` } : {}) };
       }
       let progress = false;
@@ -298,11 +301,11 @@ export function goObserve(pkgDir: string, guards: Guard[], o: RunOpts = {}): Map
     }
     writeFileSync(join(tmp, "cases.json"), JSON.stringify(cases));
     const r = goRun(pkgDir, ["observe", "-pkg", ".", "-cases", join(tmp, "cases.json")], o);
-    const chainOf = new Map<string, { order: string[] }>();
+    const chainOf = new Map<string, { order: string[] }>(), why = r.recs.length === 0 ? (r.error ?? "no records") : "";
     for (const c of r.man?.chains ?? []) for (const cd of c.candidates ?? []) chainOf.set(cd.id, { order: c.order });
     for (const [k, id] of keyOf) {
       const recs = r.recs.filter((x) => x.cand === id);
-      if (recs.length === 0) { res.set(k, { key: k, missing: true }); continue; }
+      if (recs.length === 0) { res.set(k, { key: k, missing: true, ...(why ? { build_error: why.slice(-300) } : {}) }); continue; }
       const obs: { real?: Obs; real2?: Obs } = {};
       for (const x of recs) if (x.variant === "real" || x.variant === "real2") obs[x.variant] = x.obs ?? {};
       res.set(k, { key: k, preds: recs.find((x) => x.variant === "preds")?.preds ?? {}, order: chainOf.get(id)?.order ?? [], obs });

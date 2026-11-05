@@ -1427,6 +1427,9 @@ func (p *pkg) writeProbe(outFile string, cos []*chainOut, cases []caseIn, observ
 	line := func() int { return strings.Count(b.String(), "\n") + 1 }
 	imports := map[string]bool{}
 	for _, co := range cos {
+		if observeOnly {
+			break // no function copies are written, so the function's own imports would be unused
+		}
 		for _, im := range usedImports(co.chain) {
 			imports[im] = true
 		}
