@@ -401,4 +401,22 @@ console.log(out.join(" "));
 [ "$U" = "k=3,0,0,2,5,0,0,0 green_first=1 proof_second=1 outside_before_size=1 smallest_diff=1 incumbent_last=0 weak_disqualified=1 variants=true,true,true,true" ] \
     && ok "unit: k rule (Haiku 3, other 0, 0 off, N sets, cap 5, junk off) and selection order (checks green, proof, outside files, diff size, incumbent last)" || bad "unit (attempts) gave: $U"
 
+# Unit: runAttempts over fake ops: a green incumbent starts nothing, a throwing session is an errored attempt, a scoring error restores the incumbent, a cap abort keeps the incumbent.
+U="$(cd "$ROOT/loki-ts" && bun -e '
+const a = await import("./src/features/attempts.ts");
+const T = (p) => ({ runner: "bun", path: p }), S = [T("a.test.ts")], chk = (r) => [{ name: "bun:a.test.ts", result: r, interpreter: "project" }];
+const ok = { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false };
+const mk = (o) => { const log = []; return { log, ops: { run: async (i) => { log.push(`run${i}`); return o.run ? o.run(i) : ok; }, enter: (i) => log.push(`enter${i}`), inspect: () => ({ diff: "@@ -1 +1 @@\n-a\n+b\n", weakensTest: false, outsideFiles: 0 }), score: async (i) => { log.push(`score${i}`); if (o.scoreThrows === i) throw new Error("boom"); return chk(o.result(i)); } } }; };
+const run = async (o, k = 2, sig = new AbortController().signal) => { const m = mk(o), r = await a.runAttempts(m.ops, k, S, [], sig, {}); return `${r.winner}/${r.launched}/${m.log.join(",")}`; };
+const out = [];
+out.push(`green=${await run({ result: () => "pass" })}`);
+out.push(`throws=${await run({ result: (i) => (i === 0 ? "fail" : "fail"), run: () => { throw new Error("spawn failed"); } })}`);
+out.push(`score_error=${await run({ result: (i) => (i === 0 ? "fail" : "pass"), scoreThrows: 1 })}`);
+const ac = new AbortController(); ac.abort();
+out.push(`aborted=${await run({ result: () => "fail" }, 2, ac.signal)}`);
+console.log(out.join(" "));
+' 2>&1)"
+[ "$U" = "green=0/0/score0 throws=0/2/score0,run1,run2 score_error=0/2/score0,run1,run2,enter1,score1,enter0 aborted=0/0/score0" ] \
+    && ok "unit: attempts over fake ops (green incumbent starts none, a throwing session is errored, a scoring error restores the incumbent, an aborted run starts none)" || bad "unit (attempts ops) gave: $U"
+
 finish
