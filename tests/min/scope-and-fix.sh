@@ -163,6 +163,20 @@
 #  72. wall.ts: return the lean skip with the knob on (the exec spec engine legs read skipped and VERIFIED on the no-fix change).
 #  73. implement.ts: drop execSpecBriefOf from the brief (the implement-brief leg fails).
 #  74. exec_spec.ts execSpecEnabled: default on (the exec spec off leg finds a generator session).
+#  75. tournament.ts resolveVerdicts: accept one view (the order-swap judge and position-judge legs read a verdict).
+#  76. tournament.ts select: drop the spec-regression veto (the spec veto leg displaces).
+#  77. tournament.ts select: count an unanchored win at margin (the one-unanchored-verdict leg displaces).
+#  78. tournament.ts runTournament: treat every tree as passing its checks (the failing-check leg displaces).
+#  79. tournament.ts stableIds: keep every case (the unstable-probe leg displaces).
+#  80. tournament.ts pruneGoCases: never prune (the pruning leg reads empty).
+#  81. tournament.ts runTournamentGate: drop the small-diff limit (the over-limit go leg makes model calls).
+#  82. tournament.ts runTournamentGate: drop the warning-sign skip (the no-sign go leg makes model calls).
+#  83. tournament.ts runTournamentGate: rethrow instead of restoring and recording a skip (the throw go leg crashes).
+#  84. tournament.ts runTournamentGate: never swap the winner in (the displace go leg keeps the wrong tree).
+#  85. tournament.ts tournamentReceiptBlock: return nothing (the receipt leg finds no tournament lines).
+#  86. tournament.ts applyEdits path guard and the treeswap veto removed together (the test-edit go leg displaces).
+#  87. implement.ts: drop the runTournamentGate call (the engine tournament data leg reads absent).
+#  88. wall.ts: always pass the probe intake (the tournament-off leg finds the probe rules).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1372,7 +1386,7 @@ row("go_displace", await gate({ agent: WRONG, judge: keepsPad }));
 row("go_right_kept", await gate({ agent: RIGHT, judge: keepsPad }));
 row("go_margin3", await gate({ agent: WRONG, judge: keepsPad, env: { LOKI_E10_TOURNAMENT_MARGIN: "3" } }));
 row("go_llm_down", await gate({ agent: WRONG, llmDown: true }));
-row("go_test_edit_only", await gate({ agent: WRONG, judge: keepsPad, cands: CANDS(BREAK, BREAK).replace(/=== CANDIDATE 2[\s\S]*?(?==== CANDIDATE 3)/, "") }));
+row("go_test_edit_only", await gate({ agent: WRONG, judge: keepsPad, cands: `=== CANDIDATE 1 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${RIGHT}\n>>>>>>> REPLACE\n<<<<<<< SEARCH a/a_test.go\n\t\tt.Fatal(g)\n=======\n\t\tt.Log(g)\n>>>>>>> REPLACE\n` }));
 row("go_no_sign", await gate({ agent: WRONG, noSign: true }));
 row("go_throws", await gate({ agent: WRONG, judge: keepsPad, throwOn: "judge" }));
 row("go_over_limit", await gate({ agent: WRONG, env: { LOKI_E10_TOURNAMENT_MAX_LINES: "1" } }));
@@ -1417,7 +1431,7 @@ tcheck "go: a wrong agent tree is displaced in the primary by the right candidat
 tcheck "go: a right agent tree stays (the wrong candidate regresses the spec case P1)" go_right_kept "kept|tree=right|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
 tcheck "go: a margin above the consistent verdicts keeps the agent tree" go_margin3 "kept|tree=wrong|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 3 anchored or 4+ consistent v"
 tcheck "go: a model that returns nothing keeps the agent tree after one call" go_llm_down "kept|tree=wrong|calls=candidates|sealed=true|worktrees=1|no behavioral disagreement"
-tcheck "go: candidates that only edit a test never reach the checks" go_test_edit_only "kept|tree=wrong|calls=candidates|sealed=true|worktrees=1|no behavioral disagreement"
+tcheck "go: a candidate that also edits an existing test never reaches the checks, so its right fix cannot displace" go_test_edit_only "kept|tree=wrong|calls=candidates|sealed=true|worktrees=1|no behavioral disagreement"
 tcheck "go: no warning sign (every named site covered, quoted lines changed) makes no model call" go_no_sign "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|no warning sign: every named site has a binding spec case an"
 tcheck "go: a throw in the middle of the tournament leaves the agent tree as it was, records a skip on the receipt and never fails the run" go_throws "error|tree=wrong|calls=candidates+judge|sealed=true|worktrees=1|tournament skipped: model transport blew up|receipt=1"
 tcheck "warning signs: an uncovered named site, or an issue-quoted line still byte-identical; neither on a plain issue" signs "0,1,1,0"
@@ -1445,7 +1459,7 @@ if command -v go >/dev/null 2>&1; then
     [ "$(esw)" = "sealed:TestLokiSpec_C1_KeepsAfterDash:loki_wall_spec_test.go:fail=1" ] && ok "tournament engine: a probe block after the spec leaves the spec sealed as before ($(esw))" || { bad "tournament engine: wall gave '$(esw)'"; dump; }
     grep -lq 'ONE EXCEPTION to the single-block rule' "$ESPL2".* 2>/dev/null && ok "tournament engine: the generator brief carries the probe rules" || bad "tournament engine: the generator brief has no probe rules"
     [ -f "$RUNDIR/tournament-input.json" ] && python3 -I -c 'import json,sys; i=json.load(open(sys.argv[1])); sys.exit(0 if i["pkg"]=="a" and "TestLokiProbe" in i["program"] and "TestLokiSpec_P1_PaddedDash" in i["spec"] and i["targetRel"]=="a/loki_wall_spec_test.go" and i["pkgRel"]=="a" else 1)' "$RUNDIR/tournament-input.json" && ok "tournament engine: the run dir holds the probe cases, the package and the full spec file" || bad "tournament engine: tournament-input.json missing or wrong"
-    [ "$(tev)" = '"skipped":the agent diff is 4 changed lines, over the 1 small' ] && ok "tournament engine: the gate stands down before any model call on an over-limit diff ($(tev))" || bad "tournament engine: implement tournament data '$(tev)'"
+    [ "$(tev)" = '"skipped":the agent diff is 4 changed lines, over ' ] && ok "tournament engine: the gate stands down before any model call on an over-limit diff ($(tev))" || bad "tournament engine: implement tournament data '$(tev)'"
     [ "$(outcome)" = VERIFIED ] && ok "tournament engine: the run is VERIFIED with the knob on" || { bad "tournament engine: outcome '$(outcome)'"; dump; }
     E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" LOKI_E10_EXEC_SPEC=1 LOKI_E10_TOURNAMENT=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD2" E2E_STUB_SNIPPET="$ESFIX2" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
