@@ -5,6 +5,31 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.129.0 (2026-11-05)
+
+Loki starts from one line, works across repositories and stacks, quotes cost before it spends, ships cleaner pull requests, and `loki --help` shows 11 commands instead of about 100.
+
+### Added
+- One-line goals: `loki "fix #123"`, `loki "#12"`, an issue URL copied from the browser (trailing slash, query or comment fragment), a Sentry issue link, and a bare PR URL now each reach the existing issue, text or verify-pr path with no flags and no questions. On by default because it only adds new input forms; every input that worked before behaves identically. Set LOKI_GOAL_REF=0 to keep the old text behavior.
+- Review queue: `loki review queue` lists open Loki PRs ranked by risk, marks low-risk receipt-clean PRs ready with a short summary, and every VERIFIED PR comment now carries a proof passport that can be checked offline. The passport is on by default; set `LOKI_PR_PASSPORT=0` to turn it off.
+- Zero-config on any stack: Loki shows the test command it will run on Maven, Gradle, .NET, Go, Python and JS repos with no env vars, and says plainly up front when it cannot test. On by default.
+- Parallel units: a large issue on `loki start` splits into independent slices that run at the same time and merge in order into one PR, and a failing slice does not stop independent ones. On by default; set `LOKI_EPIC_PARALLEL=1` to return to the serial order.
+- Quote and cap: `loki start` prints about $X, about N minutes and the cap before spending, stops at the cap with a usable partial, and `loki stats` shows how accurate past quotes were. On by default.
+- Close the laptop: `loki start "<task>" --detach` hands the run to the background so it keeps going after the terminal closes and reports the outcome to the PR and Slack. Off unless you pass `--detach`.
+- Event-driven automations: after `loki trigger start`, red CI on the default branch, Sentry alerts, trusted "changes requested" PR reviews, Slack /loki reports and Linear, Jira and Teams delegations start Loki through one trigger registry. Each source counts runs and auto-pauses after repeated failures (LOKI_TRIGGER_PAUSE_AFTER, default 3, 0 disables); `loki trigger status` shows per-source health and `loki trigger resume <source>` clears a pause. It only runs under a trigger server the user starts; `loki start` behavior is unchanged.
+- Auto-composed multi-repo runs: `loki workspace affected <name> "<goal>"` prints, with no model call and no writes, which repos a goal touches and in what order. With `affected: true` in the workspace or `LOKI_WORKSPACE_AFFECTED=1`, `loki workspace run` and `loki start --workspace` run only those repos ordered by declared and inferred `after` edges, and every repo PR gets a comment linking its sibling PRs. Repo selection and inferred ordering are off by default; the switch is `affected: true` or `LOKI_WORKSPACE_AFFECTED=1`. The linked-PR comment and run summary line are on.
+- The head-to-head harness (benchmarks/h2h) gains a learning curve protocol: raw and Loki sequence arms run in laps over the same repo, with a paired bootstrap comparing laps. It is opt-in and only runs when you invoke the h2h harness with --laps (paid, off by default); `loki start` behavior is unchanged.
+- With `LOKI_ORG_GRAPH=1` (off by default until measured), `loki start` adds a short cited "Org knowledge" block to the implement brief: the services this repository defines, CODEOWNERS for the paths the task touches, services in other ingested repositories that depend on it, and ADRs that match the task. Facts live in `~/.loki/knowledge/graph.json`. `loki memory graph ingest <path>` adds repositories; trackers and chat are not read yet.
+
+### Changed
+- `loki --help` and tab completion list only start, chat, status, verify, receipt, stop, undo, deploy, doctor, config and control. Every other command still works exactly as before; `loki help all` lists the rest. Nothing a script runs today changes.
+- Test files that existed before a run are no longer read-only: an implementer can add a test case to them. Edits to them are no longer reverted. A weakened existing test (an assertion or case removed, a skip added, or an added setup, teardown, mock or fixture) is still named in the receipt and caps the verdict at PARTIAL; only an added test case passes uncapped. Loki's own acceptance tests stay read-only. On the 14 benchmark tasks Loki previously failed, this raised merge-ready results from 0 to 3 (independent evaluator, one seed).
+
+### Fixed
+- A lockfile that changed only because Loki installed packages (no manifest change in its directory) is left out of the commit, so the pull request holds only the change the task asked for. A lockfile still ships when its manifest changed, when the task asks to update, upgrade or bump a dependency or package, names the lockfile, or names a CVE.
+- The changed-files formatter pass also runs a repository's own biome binary.
+- The learning-curve harness test used a fixture that weakens a test, which now correctly caps the run at PARTIAL and teaches no worked example; it uses an added test case instead. No change to loki start.
+
 ## v11.128.2 (2026-11-04)
 
 The provider you save with `loki provider set` now really runs, and Loki's engine sessions cost fewer tokens and show readable titles.
