@@ -152,7 +152,7 @@
 #  61. check_result.ts stallSignature: bucket a full-suite group by log2 of its id count again (the disjoint, 100-to-70 and zero-vs-one id legs read true).
 #  62. check_result.ts stallSame: drop the count tolerance test (the near-equal truncated legs read false) or widen it to 50 percent (the 100-to-70 leg reads true).
 #  63. machine.ts: compare sigs with === again instead of stallSame (the machine.ts stallSame grep leg reads bad).
-#  64. features/exec_spec.ts parityAtoms: drop the quoted-code condition (exec spec atoms read noquote=P1).
+#  64. features/exec_spec.ts parityAtoms: drop the quoted-code condition (exec spec atoms read otherquote=P1).
 #  65. exec_spec.ts parityAtoms: scan s.source (the 45-line excerpt) instead of s.body (exec spec atoms read P0).
 #  66. exec_spec.ts NORM_DOT: drop the no-dot lookbehind (exec spec atoms read prop=P1).
 #  67. exec_spec.ts pairAtoms: let a site pair with its own caller (exec spec atoms list Report+Batch).
@@ -946,7 +946,8 @@ fi
 # a binding red case, an advisory red case, a green guard and an erroring case; only the binding case stays collected in the sealed file.
 # Engine (stub provider, Wall off, lean path): the spec is sealed as the run's Wall file, red on base; the right fix is VERIFIED and the
 # implement brief carries the spec block; a fix that leaves the binding case red is not VERIFIED; with the knob unset no spec session runs.
-# make_es_go <dir>: a cli-2418-shaped Go package. Split's firstArg sits past line 45 of its body (the excerpt cap), a sibling
+# make_es_go <dir>: a cli-2418-shaped Go package. Split's firstArg sits past line 45 of its body (the excerpt cap) and more than
+# 12 lines above the quoted code (outside the excerpt's window), a sibling
 # branch appends rargs[0]; Report checks StatusCoder and Batch on one err (the pair class).
 make_es_go() {
     mkdir -p "$1/a"
@@ -954,7 +955,9 @@ make_es_go() {
     {
         printf 'package a\n\nimport "strings"\n\n// Split keeps operands after a lone dash.\nfunc Split(rargs []string) []string {\n\tvar out []string\n'
         for i in $(seq 1 50); do printf '\t// padding line %s keeps firstArg past the 45-line excerpt\n' "$i"; done
-        printf '\tfor ; len(rargs) > 0; rargs = rargs[1:] {\n\t\tfirstArg := strings.TrimSpace(rargs[0])\n\t\tif firstArg == "" || firstArg[0] != %s {\n\t\t\tout = append(out, rargs[0])\n\t\t\tcontinue\n\t\t}\n\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n\t\t\tbreak\n\t\t}\n\t}\n\treturn out\n}\n' "'-'"
+        printf '\tfor ; len(rargs) > 0; rargs = rargs[1:] {\n\t\tfirstArg := strings.TrimSpace(rargs[0])\n'
+        for i in $(seq 1 16); do printf '\t\t// gap line %s keeps firstArg outside the window around the quoted code\n' "$i"; done
+        printf '\t\tif firstArg == "" || firstArg[0] != %s {\n\t\t\tout = append(out, rargs[0])\n\t\t\tcontinue\n\t\t}\n\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n\t\t\tbreak\n\t\t}\n\t}\n\treturn out\n}\n' "'-'"
         printf '\ntype StatusCoder interface{ Code() int }\n\ntype Batch []error\n\nfunc (b Batch) Error() string { return "batch" }\n\n// Report returns the exit code for err.\nfunc Report(err error) int {\n\tif sc, ok := err.(StatusCoder); ok {\n\t\treturn sc.Code()\n\t}\n\tif b, ok := err.(Batch); ok {\n\t\treturn len(b)\n\t}\n\treturn 1\n}\n'
     } > "$1/a/a.go"
     printf 'package a\n\nimport "testing"\n\nfunc TestSplitPlain(t *testing.T) {\n\tif g := Split([]string{"x"}); len(g) != 1 {\n\t\tt.Fatal(g)\n\t}\n}\n' > "$1/a/a_test.go"
@@ -1095,12 +1098,13 @@ const es = await import("./src/features/exec_spec.ts"), task = process.env.TASK,
 const a = es.extractSpecAtoms(task), s = es.resolveSites(a, process.env.ESD), p = es.parityAtoms(a, s), x = es.pairAtoms(a, s);
 out.push(a.filter((z) => z.kind === "site").map((z) => z.text).join(","), `P${p.length}`, x.map((z) => z.text.match(/`(\w+)` and `(\w+)`/).slice(1).join("+")).join(","));
 const noQuote = task.replace(/## Location[\s\S]*?## Expected/, "## Expected"), a2 = es.extractSpecAtoms(noQuote); out.push(`noquote=P${es.parityAtoms(a2, es.resolveSites(a2, process.env.ESD)).length}`);
+const other = task.replace(/```go[\s\S]*?```/, "```go\n\treturn out\n```"), a3 = es.extractSpecAtoms(other); out.push(`otherquote=P${es.parityAtoms(a3, es.resolveSites(a3, process.env.ESD)).length}`);
 const prop = { symbol: "set", file: "o.ts", line: 1, source: "", body: "set(value) {\n  this.#i.method = value.toUpperCase();\n  log(value);\n}" };
 out.push(`prop=P${es.parityAtoms([{ id: "L1", kind: "location", text: "this.#i.method = value.toUpperCase();" }], [prop]).length}`);
 const b = (w) => es.isBinding(w, "`f(\"a-b\")` gives `404` instead of `[\"x\", \"y\"]`");
 out.push([b("want := []string{\"x\", \"y\"}"), b("want = 404"), b("const want = \"a-b\";"), b("want := []string{\"x\", \"zz\"}"), b("want := true"), b("if got != 1 {")].map((v) => (v ? 1 : 0)).join(""));
 console.log(out.join(" | "));' 2>&1)"
-    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | prop=P0 | 111000"
+    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | otherquote=P0 | prop=P0 | 111000"
     [ "$ESU" = "$WESU" ] && ok "exec spec atoms: parity from the whole body and only from quoted code, never a property write, one pair for the two sites Report reaches, binding only on issue-stated want literals" \
         || bad "exec spec atoms gave: $ESU (want: $WESU)"
 fi
