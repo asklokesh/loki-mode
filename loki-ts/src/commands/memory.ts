@@ -11,7 +11,7 @@ import { homeLokiDir, lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { runInline } from "../util/python.ts";
 import { redactSecrets } from "../util/redact.ts";
 import { run } from "../util/shell.ts";
-import { GhError, type Lesson, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, MAX_RECENT, defaultGh, loadLessons, promoteLesson, removeLesson, retrieveLessons } from "../util/pr_lessons.ts";
+import { GhError, orgKnowledgeBlock, type Lesson, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, MAX_RECENT, defaultGh, loadLessons, promoteLesson, removeLesson, retrieveLessons } from "../util/pr_lessons.ts";
 import { learningsBlock } from "../engine10/stages/implement.ts";
 
 const LEARNINGS_DIR = resolve(homeLokiDir(), "learnings");
@@ -224,7 +224,7 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
       const i = argv.indexOf("--task");
       const task = i >= 0 ? (argv[i + 1] ?? "") : "";
       if (i >= 0 && (task === "" || task.startsWith("--"))) { process.stderr.write("Usage: loki memory brief [--task <text>]\n"); return 2; }
-      process.stdout.write((formatLessonsForBrief(retrieveLessons(process.cwd(), task)) + learningsBlock(process.cwd())).trimStart());
+      process.stdout.write((formatLessonsForBrief(retrieveLessons(process.cwd(), task)) + learningsBlock(process.cwd()) + orgKnowledgeBlock(process.cwd(), task)).trimStart());
       return 0;
     }
     case "search": {
