@@ -10,6 +10,7 @@ import { GITHUB_TOKEN_VARS, SENTINEL_PREFIX } from "../util/credential_env.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { testFileWeakened } from "../util/test_guard.ts";
 import { readPlanScope } from "../util/run_cap.ts";
+import { installOwned } from "../project_model/install.ts";
 import { isTestFile } from "../engine10/testmap.ts";
 import { FINISH_LINE, type Obj, type RunContext, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
 import { isEarlyAccept, selectAttempt, type AttemptCandidate, type AttemptCheck } from "../e10ext/select.ts";
@@ -48,6 +49,8 @@ export function assertScrubbedEnv(env: NodeJS.ProcessEnv): void {
   }
 }
 
+/** The incumbent's tree could not be put back: the primary holds an unknown mix, so the caller must not let this run seal as delivered work. */
+export class AttemptsRestoreError extends Error { constructor(msg: string) { super(msg); this.name = "AttemptsRestoreError"; } }
 export interface AttemptInspect { diff: string; weakensTest: boolean; outsideFiles: number }
 export interface AttemptOps {
   /** Run extra attempt i (1..k) in its own tree. */
@@ -109,7 +112,7 @@ export async function runAttempts(ops: AttemptOps, k: number, S: TestRef[], wall
   } catch (e) {
     killAll();
     await Promise.allSettled(all);
-    ops.enter(0); // the incumbent comes back; if even this throws, the caller sees the error and the run ends rather than sealing an unknown tree
+    try { ops.enter(0); } catch (e2) { throw new AttemptsRestoreError(`the first attempt's tree could not be restored (${(e2 as Error).message.split("\n")[0]}) after: ${(e as Error).message.split("\n")[0]}`); }
     return summary(0, `attempts error, incumbent kept: ${(e as Error).message.split("\n")[0]}`, false, k);
   } finally {
     killAll();
@@ -130,6 +133,7 @@ function removeAttemptTrees(primary: string, root: string, dirs: string[]): void
 export function treeswapOps(a: {
   primary: string; runDir: string; base: string; k: number; wallPaths: Set<string>; wallContent?: Map<string, string>; // wallContent: sealed bytes per Wall path; a Wall file is weakened only if it differs from these or is deleted
   outputs: () => Partial<Record<string, Obj>>; // outsideScope reads the plan, task and contract
+  keep: (path: string) => boolean; // untracked files that are not the first attempt's work: the user's own (recorded at intake), the installed Wall, install-owned dependency files
   runSession: (i: number, cwd: string, signal: AbortSignal) => Promise<SessionResult>;
   runOne: (t: TestRef, out: AttemptCheck[]) => Promise<unknown>; S: TestRef[];
 }): AttemptOps & { dispose(): void; dirs: string[] } {
@@ -144,7 +148,7 @@ export function treeswapOps(a: {
       if (existsSync(nm) && !lstatSync(nm).isSymbolicLink() && !existsSync(join(dir, "node_modules"))) { try { symlinkSync(nm, join(dir, "node_modules")); } catch { /* an attempt without deps still edits; scoring runs in the primary */ } }
     }
   } catch (e) { dispose(); throw e; }
-  const pre = new Set(untracked(a.primary)); // the user's own untracked files and the installed Wall: never dropped between attempts
+  const pre = new Set(untracked(a.primary).filter(a.keep)); // never dropped between attempts; every other untracked file now in the primary is the first attempt's own work (this runs after it finished), dropped when another attempt's tree is entered and counted in its diff
   let snapInc: ReturnType<typeof snapshotDiff> | null = null;
   // installWall leaves the sealed Wall files untracked in the primary, so presence in a diff proves nothing: judge by bytes.
   const wallWeakened = (root: string, isPrimary: boolean, p: string, touched: Set<string>): boolean => {
@@ -193,9 +197,12 @@ export async function runExtraAttempts(ctx: RunContext, signal: AbortSignal, dep
   const map = await ctx.tests.detect(ctx.repoDir);
   const S = map.tests.filter((t) => deps.impacted.includes(t.path)), wall = S.filter((t) => deps.wallPaths.includes(t.path));
   if (S.length === 0) return null;
+  const intake = ctx.outputs().intake ?? {}, owned = installOwned(ctx.repoDir, intake.install_created);
+  const userUntracked = new Set([...(Array.isArray(intake.preexisting_untracked) ? intake.preexisting_untracked as string[] : []), ...Object.keys((intake.preexisting_untracked_blobs ?? {}) as object)]); // the same record commit and discard trust for "the user's own untracked files"
   const ids = Array.from({ length: deps.k }, (_, n) => `${ctx.runId}-impl-x${n + 1}`);
   const ops = treeswapOps({
     primary: ctx.repoDir, runDir: ctx.runDir, base: ctx.baseSha, k: deps.k, wallPaths: new Set(deps.wallPaths), ...(deps.wallContent ? { wallContent: new Map(Object.entries(deps.wallContent)) } : {}), S, outputs: () => ctx.outputs(),
+    keep: (p) => userUntracked.has(p) || deps.wallPaths.includes(p) || owned(p),
     runSession: (i, cwd, sig): Promise<SessionResult> => { const o: SessionRunOptions = { stage: "implement", brief: variantBrief(deps.brief, i), tier: "development", iterationId: ids[i - 1]!, limitS: deps.limitS, signal: sig, cwd, ...(deps.model ? { model: deps.model } : {}) }; return ctx.sessions.run(o); },
     runOne: (t, out) => deps.check(ctx, t, signal, out),
   });

@@ -121,7 +121,7 @@ function compareTuples(x: number[], y: number[]): number {
 const RANK_LABELS = ["repoChecksGreen", "wallPasses", "deterministicFails", "passesInS", "flakyInS", "lintFails", "outsideFiles", "diffLines", "index"];
 
 /** Section 4 "Early accept": true only when S is non-empty and every check named in S or in `wall` has a "pass" entry
- *  in this one attempt's checks. The caller (S41-13) uses it to accept a finished attempt and kill the other session
+ *  in this one attempt's checks. The caller (features/attempts.ts) uses it to accept a finished attempt and kill the other session
  *  early. selectAttempt does not implement early accept (one all-failing attempt still returns its index), so the
  *  caller must check isEarlyAccept first. */
 export function isEarlyAccept(attempt: AttemptCandidate, S: TestRef[], wall: TestRef[]): boolean {

@@ -5,7 +5,7 @@ import { hooks } from "./hooks.ts"; import { wallConcurrent } from "../util/wall
 import { treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
-import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { attemptsK, MIN_ATTEMPT_WINDOW_S, runExtraAttempts } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
+import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsK, MIN_ATTEMPT_WINDOW_S, runExtraAttempts } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
 import { stallSame, stallSignature } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
 
@@ -209,7 +209,9 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       outputs.implement = { ...impl, attempts: r.summary, iteration_ids: [...(Array.isArray(impl.iteration_ids) ? impl.iteration_ids as string[] : []), ...r.ids] };
       ctx.emit("attempts.selected", "implement", r.summary);
       return { changed: r.tookExtra, ran: r.launched > 0 };
-    } catch (err) { return note(`attempts could not run: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`); }
+    } catch (err) {
+      if (err instanceof AttemptsRestoreError) { outputs.implement = { ...impl, exit: "killed", attempts: { error: err.message } }; process.stderr.write(`loki: ${err.message}; the run cannot be sealed as delivered work\n`); return { changed: false, ran: true }; } // exit=killed: seal never reads this as VERIFIED (FC-21 (a))
+      return note(`attempts could not run: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`); }
     finally { timeline.push({ stage: "implement", startMs: t0, endMs: ctx.clock.now() }); }
   };
   /** True when the flow must jump to the tail (commit, seal, pr). */

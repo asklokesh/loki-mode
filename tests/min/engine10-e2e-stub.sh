@@ -327,6 +327,11 @@ E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku run_engine attempts
 case "$(att_ev)" in winner=*" k=3 early=False launched=3") ok "attempts (bun test): all wrong: the best partial is kept without an early accept ($(att_ev))" ;; *) bad "attempts (bun test): all-wrong attempts.selected is '$(att_ev)'" ;; esac
 git -C "$REPO" show HEAD:calc.ts | grep -q 'export function multiply' && ok "attempts (bun test): all wrong: the best partial is on loki/<run>" || bad "attempts (bun test): all wrong: no partial on loki/<run>"
 
+E2E_STUB_NEWFILE=1 E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku run_engine attempts
+rid="$(basename "$RUNDIR")"; files="$(git -C "$REPO" ls-tree -r --name-only "loki/$rid" 2>/dev/null | tr '\n' ' ')"
+[ "$(outcome)" = "VERIFIED" ] && ok "attempts (new files): attempt 2 wins when every attempt creates new files: VERIFIED" || { bad "attempts (new files): outcome '$(outcome)'"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+case " $files " in *" new_2.ts "*) case " $files " in *" shared_new.ts "*) ok "attempts (new files): the winner's own new file and the file every attempt created are committed" ;; *) bad "attempts (new files): shared_new.ts missing: $files" ;; esac ;; *) bad "attempts (new files): new_2.ts missing: $files" ;; esac
+case " $files " in *" new_0.ts "*|*" new_1.ts "*|*" new_3.ts "*) bad "attempts (new files): a losing attempt's new file leaked into the winner's tree: $files" ;; *) ok "attempts (new files): no losing attempt's new file is in the winner's tree" ;; esac
 E2E_STUB_WEAKEN=1 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku run_engine attempts
 case "$(att_ev)" in winner=x1*) bad "attempts (bun test): an attempt that deleted the failing assertion won ($(att_ev))" ;; *) [ "$(outcome)" != "VERIFIED" ] && ok "attempts (bun test): an attempt that loosens an existing test never wins by passing it ($(att_ev), $(outcome))" || bad "attempts (bun test): a weakened test reached VERIFIED" ;; esac
 E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=0 run_engine attempts
@@ -406,17 +411,18 @@ U="$(cd "$ROOT/loki-ts" && bun -e '
 const a = await import("./src/features/attempts.ts");
 const T = (p) => ({ runner: "bun", path: p }), S = [T("a.test.ts")], chk = (r) => [{ name: "bun:a.test.ts", result: r, interpreter: "project" }];
 const ok = { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false };
-const mk = (o) => { const log = []; return { log, ops: { run: async (i) => { log.push(`run${i}`); return o.run ? o.run(i) : ok; }, enter: (i) => log.push(`enter${i}`), inspect: () => ({ diff: "@@ -1 +1 @@\n-a\n+b\n", weakensTest: false, outsideFiles: 0 }), score: async (i) => { log.push(`score${i}`); if (o.scoreThrows === i) throw new Error("boom"); return chk(o.result(i)); } } }; };
+const mk = (o) => { const log = []; return { log, ops: { run: async (i) => { log.push(`run${i}`); return o.run ? o.run(i) : ok; }, enter: (i) => { log.push(`enter${i}`); if (o.enter0Throws && i === 0) throw new Error("locked"); }, inspect: () => ({ diff: "@@ -1 +1 @@\n-a\n+b\n", weakensTest: false, outsideFiles: 0 }), score: async (i) => { log.push(`score${i}`); if (o.scoreThrows === i) throw new Error("boom"); return chk(o.result(i)); } } }; };
 const run = async (o, k = 2, sig = new AbortController().signal) => { const m = mk(o), r = await a.runAttempts(m.ops, k, S, [], sig, {}); return `${r.winner}/${r.launched}/${m.log.join(",")}`; };
 const out = [];
 out.push(`green=${await run({ result: () => "pass" })}`);
 out.push(`throws=${await run({ result: (i) => (i === 0 ? "fail" : "fail"), run: () => { throw new Error("spawn failed"); } })}`);
 out.push(`score_error=${await run({ result: (i) => (i === 0 ? "fail" : "pass"), scoreThrows: 1 })}`);
+out.push(`restore_fail=${await run({ result: (i) => (i === 0 ? "fail" : "pass"), scoreThrows: 1, enter0Throws: true }).catch((e) => e.name)}`);
 const ac = new AbortController(); ac.abort();
 out.push(`aborted=${await run({ result: () => "fail" }, 2, ac.signal)}`);
 console.log(out.join(" "));
 ' 2>&1)"
-[ "$U" = "green=0/0/score0 throws=0/2/score0,run1,run2 score_error=0/2/score0,run1,run2,enter1,score1,enter0 aborted=0/0/score0" ] \
-    && ok "unit: attempts over fake ops (green incumbent starts none, a throwing session is errored, a scoring error restores the incumbent, an aborted run starts none)" || bad "unit (attempts ops) gave: $U"
+[ "$U" = "green=0/0/score0 throws=0/2/score0,run1,run2 score_error=0/2/score0,run1,run2,enter1,score1,enter0 restore_fail=AttemptsRestoreError aborted=0/0/score0" ] \
+    && ok "unit: attempts over fake ops (green incumbent starts none, a throwing session is errored, a scoring error restores the incumbent, a failed restore is an AttemptsRestoreError, an aborted run starts none)" || bad "unit (attempts ops) gave: $U"
 
 finish
