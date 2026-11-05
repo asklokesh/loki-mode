@@ -19,6 +19,8 @@ import { safeGit } from "../util/safe_git.ts";
 import { editShapeSites, type EditSite } from "../util/edit_shape.ts";
 import { applyDiff, snapshotDiff } from "../e10ext/treeswap.ts";
 import { ATTEMPT_EXCLUDES, treeswapOps, type ExtraAttemptsDeps } from "./attempts.ts";
+import { parseStaged } from "../e10ext/commit_filter.ts";
+import { testFileWeakened } from "../util/test_guard.ts";
 import { EMITTERS, execSpecBriefOf, extractSpecAtoms, redFilter } from "./exec_spec.ts";
 import { isTestFile } from "../engine10/testmap.ts";
 import { installOwned } from "../project_model/install.ts";
@@ -448,13 +450,15 @@ export interface TournamentResult { pick: Pick; entrants: Entrant[]; disagreemen
 const diffLinesOf = (edits: Edit[]): number => edits.reduce((n, e) => n + e.search.split("\n").length + e.replace.split("\n").length, 0);
 
 const goUnescape = (s: string): string => s.replace(/\\(["\\tnr])/g, (_m, c: string) => (c === "t" ? "\t" : c === "n" ? "\n" : c === "r" ? "\r" : c));
-/** Probes whose input the issue itself names: a string literal of the case (after its id and description) that the issue quotes
- *  verbatim in quotes or backticks. A displacement needs a win on one of them: an input only the model invented is never enough. */
+/** Probes whose WHOLE input the issue itself names: every string literal of the case's input (after its id and description) that is
+ *  two or more characters long (all literals when none is) must be quoted verbatim, in quotes or backticks, in the issue. One quoted
+ *  literal beside an invented one is not enough; a one-character operand is incidental. A displacement needs a win on such a probe. */
 export function namedProbes(issue: string, program: string, prefix = ""): Set<string> {
   const out = new Set<string>(), lines = program.split("\n");
   for (const b of goCaseBlocks(program)) {
     const lits = [...lines.slice(b.start, b.end + 1).join("\n").matchAll(/"((?:\\.|[^"\\\n])*)"/g)].map((m) => goUnescape(m[1]!)).slice(2).filter((l) => l.length > 0);
-    if (lits.some((l) => issue.includes(`"${l}"`) || issue.includes(`\`${l}\``))) out.add(`${prefix}${b.id}`);
+    const long = lits.filter((l) => l.length >= 2), need = long.length ? long : lits;
+    if (need.length > 0 && need.every((l) => issue.includes(`"${l}"`) || issue.includes(`\`${l}\``))) out.add(`${prefix}${b.id}`);
   }
   return out;
 }
@@ -594,7 +598,7 @@ export function applyWinnerFiles(repo: string, runDir: string, writes: { path: s
   rmSync(rec, { force: true });
 }
 /** Puts the primary's own bytes back from a record a killed or failed apply left. Returns the paths restored (empty when there is no record). */
-export function recoverTournamentUndo(repo: string, runDir: string): string[] {
+export function recoverTournamentUndo(repo: string, runDir: string): string[] { // implement.ts calls this at stage start, before any session
   const rec = join(runDir, TOURNAMENT_UNDO_FILE);
   if (!existsSync(rec)) return [];
   const undo = JSON.parse(readFileSync(rec, "utf8")) as { path: string; b64: string | null }[], out: string[] = [];
@@ -611,7 +615,6 @@ export function recoverTournamentUndo(repo: string, runDir: string): string[] {
  *  written over the agent's, after the agent's bytes of exactly those paths are on disk. Any throw restores them, records a skip, and the
  *  run goes on. */
 export async function runTournamentGate(ctx: RunContext, signal: AbortSignal, session: SessionResult, deps: ExtraAttemptsDeps, llm: LlmCall = toolLessLlm(), env: NodeJS.ProcessEnv = process.env): Promise<TournamentSummary | null> {
-  try { const back = recoverTournamentUndo(ctx.repoDir, ctx.runDir); if (back.length) process.stderr.write(`tournament: restored ${back.join(", ")} from an interrupted displacement\n`); } catch { /* an unreadable record is left for a person */ }
   const input = readInput(ctx.runDir);
   if (!input) return null; // no probe program (exec spec off, not Go, or no probe block): nothing to report, the run is untouched
   if (signal.aborted || session.killed || session.exit !== 0 || !session.markers.done || session.markers.specConflict || session.markers.alreadyDone) return skipped("the implement session did not finish clean (done, no conflict, no already-done claim)");
@@ -626,6 +629,8 @@ export async function runTournamentGate(ctx: RunContext, signal: AbortSignal, se
     if (S.length === 0) return skipped("no impacted test to gate a candidate against");
     const sealed = new Set(deps.wallPaths), { lines, goFiles } = agentDiffLines(ctx, sealed), max = tournamentMaxLines(env);
     if (goFiles.length === 0) return skipped("the agent diff holds no Go source file");
+    const weak = parseStaged(safeGit(ctx.repoDir, ["diff", "--name-status", "--no-renames", "-z", ctx.baseSha, "--", ".", ...ATTEMPT_EXCLUDES.map((e) => `:(exclude)${e}`)])).filter(({ st, f }) => st !== "A" && isTestFile(f) && !sealed.has(f) && testFileWeakened(ctx.repoDir, ctx.baseSha, null, f, st)).map(({ f }) => f);
+    if (weak.length > 0) return skipped(`the agent edited an existing test the weakened-test rule flags (${weak.slice(0, 2).join(", ")}): candidates would inherit it, so the tournament stands down`);
     if (lines > max) return skipped(`the agent diff is ${lines} changed lines, over the ${max} small-diff limit`);
     const files: Record<string, string> = {}; let total = 0;
     for (const p of goFiles) {

@@ -191,8 +191,11 @@
 #  93. tournament.ts runTournament: call the candidates model before looking at the agent tree (the agent-red legs make a call).
 #  94. tournament.ts runTournamentGate: truncate a big base file instead of skipping (the big-file go leg calls the model).
 #  95. tournament.ts applyWinnerFiles: skip the undo record (the kill leg finds no record).
-#  96. tournament.ts runTournamentGate: skip the recovery at gate start (the kill leg leaves the half-written file).
 #  97. tournament.ts runTournamentGate: a tick that never throws (the budget leg runs on).
+#  98. tournament.ts namedProbes: any one quoted literal names the input again (the incidental-literal go leg displaces).
+#  99. implement.ts: drop the recoverTournamentUndo call at stage start (the kill leg leaves the half-written file).
+# 100. implement.ts: run the tournament gate before restoreReadOnly again (the gate-order leg fails).
+# 101. tournament.ts runTournamentGate: drop the weakened-test stand-down (the weakened-test go leg calls the model).
 #  64. assert_delta.ts reportedValues: drop the WANTED_BEFORE skip (the "should return" value reads as a symptom; the finder unit legs fail).
 #  65. seal.ts failThenPass: drop the rewritten-file exclusion (the lone rewritten pinned assertion reads VERIFIED).
 #  67. seal.ts pinDropped: key on the file only again (the F1 unit leg fails); drop the pinLift gate (the F2 unit leg fails); drop CALLED_RIGHT in assert_delta.ts (the called-right unit leg fails).
@@ -1431,7 +1434,7 @@ const WRONG = "out = append(out, firstArg)\n\t\t\tcontinue", RIGHT = "out = appe
 const CANDS = (a: string, b: string): string => `=== CANDIDATE 1 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${a}\n>>>>>>> REPLACE\n=== CANDIDATE 2 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${b}\n>>>>>>> REPLACE\n=== CANDIDATE 3 ===\n<<<<<<< SEARCH a/a_test.go\n\t\tt.Fatal(g)\n=======\n\t\tt.Log(g)\n>>>>>>> REPLACE\n`;
 const { attemptDeps } = await import(`${R}/loki-ts/src/engine10/stages/implement.ts`);
 const sh = (c: string, cwd: string): string => execSync(c, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-interface G { probeExtra?: string; agentExtras?: boolean; big?: boolean; report?: boolean; agent: string; judge?: (u: string) => string; cands?: string; killed?: boolean; noInput?: boolean; env?: Record<string, string>; llmDown?: boolean; noSign?: boolean; throwOn?: string }
+interface G { weakenTest?: boolean; probeExtra?: string; agentExtras?: boolean; big?: boolean; report?: boolean; agent: string; judge?: (u: string) => string; cands?: string; killed?: boolean; noInput?: boolean; env?: Record<string, string>; llmDown?: boolean; noSign?: boolean; throwOn?: string }
 let gn = 0;
 async function gate(g: G): Promise<string> {
   const SRC = g.big ? GO_SRC + "// padding to push the file over the prompt limit\n".repeat(600) : GO_SRC, repo = join(W, `g${gn++}`, "repo"), runDir = join(W, `g${gn}`, "run"); mkdirSync(join(repo, "a"), { recursive: true }); mkdirSync(runDir, { recursive: true });
@@ -1439,6 +1442,7 @@ async function gate(g: G): Promise<string> {
   sh("git init -q -b main && git add -- . && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m base", repo);
   const baseSha = sh("git rev-parse HEAD", repo), sealedRel = "a/loki_wall_spec_test.go", sealed = HEAD + SPEC_C1;
   writeFileSync(join(repo, "a/a.go"), SRC.replace(BREAK, g.agent)); writeFileSync(join(repo, sealedRel), sealed);
+  if (g.weakenTest) writeFileSync(join(repo, "a/a_test.go"), GO_TEST.replace("t.Fatal(g)", "t.Log(g)"));
   if (g.agentExtras) { writeFileSync(join(repo, "a/agent_new_test.go"), "package a\n\nimport \"testing\"\n\nfunc TestAgentNew(t *testing.T) {}\n"); writeFileSync(join(repo, "a/a_test.go"), GO_TEST + "\nfunc TestAgentAddedCase(t *testing.T) {}\n"); writeFileSync(join(repo, "go.mod"), "module example.com/a\n\ngo 1.21\n// agent note\n"); }
   if (!g.noInput) t.writeTournamentInput(runDir, { probe: t.repairGoImports(g.probeExtra ? PROBE.replace(/\}\n$/, g.probeExtra + "}\n") : PROBE).file, pkg: "a", specFile: HEAD + SPEC_C1 + SPEC_P1, targetRel: sealedRel, ...(g.noSign ? {} : { unchecked: ["Report"] }) });
   const ctx: any = { runId: "r1", repoDir: repo, runDir, baseSha, outputs: () => ({ intake: { task: "# Bare dash drops args\n\n`Split` stops at a lone `-`: `x - a b` gives `[\"-\"]` instead of `[\"-\", \"a\", \"b\"]`. It also loses what follows a padded dash, `\"  -\"`.\n" }, wall: { readOnlyFiles: [{ path: join(repo, sealedRel), content: sealed }] } }),
@@ -1470,6 +1474,8 @@ const LEAK = `\tlokiProbe("p4", "writes files", func() any { os.WriteFile("leak.
 row("go_probe_side_effects", await gate({ agent: WRONG, judge: keepsPad, probeExtra: LEAK, agentExtras: true, report: true }));
 const TRIM = `=== CANDIDATE 1 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${RIGHT}\n>>>>>>> REPLACE\n<<<<<<< SEARCH a/a.go\n\t\tif firstArg == "" || firstArg[0] != '-' {\n\t\t\tout = append(out, rargs[0])\n=======\n\t\tif firstArg == "" || firstArg[0] != '-' {\n\t\t\tout = append(out, trim(rargs[0]))\n>>>>>>> REPLACE\n`;
 row("go_unnamed_input", await gate({ agent: RIGHT, cands: TRIM, probeExtra: `\tlokiProbe("p4", "leading space", func() any { return Split([]string{" x"}) })\n`, judge: (u) => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2] === '["x"]'); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n") }));
+row("go_incidental_literal", await gate({ agent: RIGHT, cands: TRIM, probeExtra: `\tlokiProbe("p4", "leading space beside an issue literal", func() any { return Split([]string{" x", "a"}) })\n`, judge: (u) => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2] === '["x","a"]'); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n") }));
+row("go_weakened_test", await gate({ agent: WRONG, judge: keepsPad, weakenTest: true }));
 row("go_agent_red", await gate({ agent: "out = append(out, nope)\n\t\t\tcontinue", judge: keepsPad }));
 row("go_big_file", await gate({ agent: WRONG, big: true }));
 row("go_budget", await gate({ agent: WRONG, judge: keepsPad, env: { LOKI_E10_TOURNAMENT_BUDGET_S: "1" }, probeExtra: `\ttime.Sleep(1500 * time.Millisecond)\n` }));
@@ -1478,7 +1484,8 @@ row("go_budget", await gate({ agent: WRONG, judge: keepsPad, env: { LOKI_E10_TOU
   writeFileSync(join(repo, "a/a.go"), "agent a.go\n");
   const kid = spawnSync(process.execPath, ["-e", `const t = await import(${JSON.stringify(R + "/loki-ts/src/features/tournament.ts")}); t.applyWinnerFiles(process.env.REPO, process.env.RUN, [{ path: "a/a.go", content: "candidate a.go\\n" }, { path: "a/new.go", content: "candidate new\\n" }], (i) => { if (i === 0) process.kill(process.pid, "SIGKILL"); });`], { env: { ...process.env, REPO: repo, RUN: runDir } });
   const mid = readFileSync(join(repo, "a/a.go"), "utf8"), undo = existsSync(join(runDir, "tournament-undo.json"));
-  const r = await t.runTournamentGate({ repoDir: repo, runDir } as any, new AbortController().signal, {} as any, {} as any);
+  const { implementStage } = await import(`${R}/loki-ts/src/engine10/stages/implement.ts`);
+  const r = await implementStage.run({ repoDir: repo, runDir } as any, new AbortController().signal).then(() => "ran", () => "stopped-after-recovery"); // the stage recovers first; it stops on the bare ctx right after
   row("go_kill_mid_apply", [kid.signal, mid.trim(), undo, readFileSync(join(repo, "a/a.go"), "utf8").trim(), existsSync(join(runDir, "tournament-undo.json")), existsSync(join(repo, "a/new.go")), r].join("|"));
 }
 
@@ -1522,10 +1529,12 @@ tcheck "no diff probe call when the issue probes already separate the trees" sel
 tcheck "go: a wrong agent tree is displaced in the primary by the right candidate; sealed spec kept, scratch worktrees removed, test-editing candidate refused" go_displace "displaced|tree=right|calls=candidates+judge|sealed=true|worktrees=1|c1 displaces the agent: 2 consistent verdict(s), 0 against, "
 tcheck "go: probe side effects (a written file, an appended go.mod) stay in the scratch tree; only the winner's source edit reaches the user's tree, beside the agent's new test file, added case and go.mod change" go_probe_side_effects "displaced|tree=right|calls=candidates+judge|sealed=true|worktrees=1|c1 displaces the agent: 2 consistent verdict(s), 0 against, |leak=false|gomod=clean|status=a/a.go,a/a_test.go,a/agent_new_test.go,a/loki_wall_spec_test.go,go.mod|newtest=true|case=true|agentnote=true"
 tcheck "go: a right agent tree is not displaced by a verdict on an input the issue never names" go_unnamed_input "kept|tree=right|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
+tcheck "go: an input with one issue-quoted literal beside an invented one (\" x\" with a) is not named, so one anchored verdict cannot displace a right tree" go_incidental_literal "kept|tree=right|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
+tcheck "go: an agent that weakened an existing test makes no model call" go_weakened_test "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|the agent edited an existing test the weakened-test rule flags"
 tcheck "go: an agent tree that fails its own checks makes no model call" go_agent_red "kept|tree=other|calls=-|sealed=true|worktrees=1|agent tree does not pass its checks; kept"
 tcheck "go: a base file over the prompt limit skips the tournament before any model call" go_big_file "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|base file a/a.go is 30464 chars, over the prompt limit (2400"
 tcheck "go: a spent time budget skips, restores nothing it never touched and records the skip" go_budget "error|tree=wrong|calls=-|sealed=true|worktrees=1|tournament skipped: the tournament time budget ran out|receipt=1"
-tcheck "go: a SIGKILL after the first write of a displacement leaves the undo record, and the next gate start puts the agent's file back and removes the partial new file" go_kill_mid_apply "SIGKILL|candidate a.go|true|agent a.go|false|false|"
+tcheck "go: a SIGKILL after the first write of a displacement leaves the undo record, and the next implement stage start (before any session) puts the agent's file back and removes the partial new file" go_kill_mid_apply "SIGKILL|candidate a.go|true|agent a.go|false|false|stopped-after-recovery"
 tcheck "go: a right agent tree stays (the wrong candidate regresses the spec case P1)" go_right_kept "kept|tree=right|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
 tcheck "go: a margin above the consistent verdicts keeps the agent tree" go_margin3 "kept|tree=wrong|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 3 anchored or 4+ consistent v"
 tcheck "go: a model that returns nothing keeps the agent tree after one call" go_llm_down "kept|tree=wrong|calls=candidates|sealed=true|worktrees=1|no behavioral disagreement"
@@ -1538,6 +1547,11 @@ tcheck "go: an agent diff over the small-diff limit makes no model call" go_over
 tcheck "go: a killed session makes no model call" go_killed "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|the implement session did not finish clean (done, no conflic"
 tcheck "go: no probe program from the exec-spec call makes no model call and reports nothing" go_no_input "null"
 tcheck "receipt: lines only when a tournament ran; the receipt renders them under their own heading" receipt "{},2,true"
+# the gate runs after the Wall and tests are restored (so candidates are checked against the original Wall), and recovery runs before the session
+IMPL="$ROOT/loki-ts/src/engine10/stages/implement.ts"
+g_line="$(grep -n 'await runTournamentGate(' "$IMPL" | head -1 | cut -d: -f1)"; r_line="$(grep -n 'const testsReverted = restoreReadOnly(readOnly)' "$IMPL" | head -1 | cut -d: -f1)"; s_line="$(grep -n 'let session = await ctx.sessions.run(first)' "$IMPL" | head -1 | cut -d: -f1)"; u_line="$(grep -n 'recoverTournamentUndo(ctx.repoDir' "$IMPL" | head -1 | cut -d: -f1)"
+[ -n "$g_line" ] && [ -n "$r_line" ] && [ "$g_line" -gt "$r_line" ] && ok "tournament: the gate runs after restoreReadOnly (candidates see the original Wall and tests)" || bad "tournament: gate line '$g_line' is not after restoreReadOnly line '$r_line'"
+[ -n "$u_line" ] && [ -n "$s_line" ] && [ "$u_line" -lt "$s_line" ] && ok "tournament: the undo recovery runs before the first implement session" || bad "tournament: recovery line '$u_line' is not before the first session line '$s_line'"
 # engine legs: the real bin/loki on the stub provider, exec spec on, lean path. The stub reply carries a probe block after the spec.
 ES_PROBE_BLOCK='
 
