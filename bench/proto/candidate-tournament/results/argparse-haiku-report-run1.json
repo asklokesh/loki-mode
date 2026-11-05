@@ -1,0 +1,105 @@
+{
+  "fixture": "fixtures/argparse",
+  "mode": "haiku",
+  "pick": {
+    "winner": "c3",
+    "reason": "adjudicated 0/1 disagreements",
+    "scores": {
+      "c1": 0,
+      "c2": 0,
+      "c3": 0
+    }
+  },
+  "winnerOracle": true,
+  "entrants": [
+    {
+      "id": "c1",
+      "checks": true,
+      "oracle": false,
+      "diffLines": 8,
+      "score": 0
+    },
+    {
+      "id": "c2",
+      "checks": true,
+      "oracle": true,
+      "diffLines": 8,
+      "score": 0
+    },
+    {
+      "id": "c3",
+      "checks": true,
+      "oracle": true,
+      "diffLines": 5,
+      "score": 0
+    }
+  ],
+  "probes": 10,
+  "disagreements": [
+    {
+      "probeId": "p4",
+      "desc": "lone dash padded with spaces on both sides, then long flag",
+      "options": [
+        {
+          "label": "A",
+          "out": "{\"flags\":{\"verbose\":true},\"positional\":[\"-\"]}",
+          "entrants": [
+            "c1"
+          ]
+        },
+        {
+          "label": "B",
+          "out": "{\"flags\":{\"verbose\":true},\"positional\":[\"  -  \"]}",
+          "entrants": [
+            "c2",
+            "c3"
+          ]
+        }
+      ]
+    }
+  ],
+  "verdicts": {},
+  "baseRun": {
+    "p1": "{\"flags\":{},\"positional\":[\"-\"]}",
+    "p2": "{\"flags\":{},\"positional\":[\"-\"]}",
+    "p3": "{\"flags\":{},\"positional\":[\"-\"]}",
+    "p4": "{\"flags\":{},\"positional\":[\"-\"]}",
+    "p5": "{\"flags\":{},\"positional\":[\"-\"]}",
+    "p6": "{\"flags\":{\"out\":\"-\"},\"positional\":[\"b\"]}",
+    "p7": "{\"flags\":{},\"positional\":[\"a\",\"-\"]}",
+    "p8": "{\"flags\":{\"x\":true,\"y\":true},\"positional\":[\"-\"]}",
+    "p9": "{\"flags\":{},\"positional\":[\"-\",\"--verbose\"]}",
+    "p10": "{\"flags\":{},\"positional\":[\"\",\"-\"]}"
+  },
+  "calls": 3,
+  "usage": [
+    {
+      "inTok": 2,
+      "outTok": 1203,
+      "cacheRead": 0,
+      "cacheWrite": 4508,
+      "costUsd": 0.0015033
+    },
+    {
+      "inTok": 2,
+      "outTok": 2262,
+      "cacheRead": 0,
+      "cacheWrite": 4471,
+      "costUsd": 0.0020254
+    },
+    {
+      "inTok": 2,
+      "outTok": 334,
+      "cacheRead": 0,
+      "cacheWrite": 4071,
+      "costUsd": 0.0009814000000000001
+    }
+  ],
+  "total": {
+    "inTok": 6,
+    "outTok": 3799,
+    "cacheRead": 0,
+    "cacheWrite": 13050,
+    "costUsd": 0.0045101
+  }
+}

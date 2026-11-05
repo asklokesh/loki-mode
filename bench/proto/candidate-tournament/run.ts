@@ -62,6 +62,14 @@ if (mode === "stub") {
     transcripts.push({ system, user, text, usage: zero });
     return { text, usage: zero };
   };
+} else if (mode === "replay") {
+  // zero-cost re-score: returns the texts recorded by an earlier real run, matched by prompt kind
+  const rec = JSON.parse(readFileSync(canned!, "utf8")) as { system: string; text: string; usage: Usage }[];
+  llm = async (system, user) => {
+    const r = rec.find((x) => x.system === system)!;
+    transcripts.push({ system, user, text: r.text, usage: r.usage });
+    return { text: r.text, usage: r.usage };
+  };
 } else {
   llm = async (system, user) => {
     const pf = join(work, `prompt${transcripts.length}-${Date.now()}.txt`);

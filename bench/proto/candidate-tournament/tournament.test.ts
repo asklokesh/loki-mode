@@ -42,5 +42,5 @@ test("no disagreement keeps the agent tree", () => {
 });
 
 test("verdict parsing tolerates markdown bold and case", () => {
-  expect([...parseVerdicts("**p1**: B\np2: unknown\np3 : a\nnoise")]).toEqual([["p1", "B"], ["p2", "unknown"], ["p3", "A"]]);
+  expect([...parseVerdicts("**p1**: B\np2: unknown\np3 : a\np4: option B\nnoise")]).toEqual([["p1", "B"], ["p2", "unknown"], ["p3", "A"], ["p4", "B"]]);
 });

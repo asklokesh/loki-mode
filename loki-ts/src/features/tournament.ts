@@ -131,7 +131,7 @@ export function disagreements(entrants: Entrant[], probes: Probe[]): Disagreemen
 export function parseVerdicts(text: string): Map<string, string> {
   const v = new Map<string, string>();
   for (const line of text.split("\n")) {
-    const m = /^\s*\**\s*([A-Za-z0-9_-]+)\s*\**\s*:\s*\**\s*([A-Z]|unknown)\b/i.exec(line);
+    const m = /^\s*\**\s*([A-Za-z0-9_-]+)\s*\**\s*:\s*\**\s*(?:option\s+)?([A-Z]|unknown)\b/i.exec(line); // Haiku answered "p4: option B" in the first real run
     if (m) v.set(m[1]!, m[2]!.length === 1 ? m[2]!.toUpperCase() : "unknown");
   }
   return v;
