@@ -759,6 +759,7 @@ type filler struct {
 	p      *pkg
 	seed   int
 	usedCx bool
+	depth  int
 }
 
 var ints = map[string]bool{"int": true, "int8": true, "int16": true, "int32": true, "int64": true, "uint": true, "uint8": true, "uint16": true, "uint32": true, "uint64": true, "uintptr": true, "byte": true, "rune": true}
@@ -813,7 +814,22 @@ func (fl *filler) value(t string, errs []string) string {
 				return t + "(" + inner + ")"
 			}
 		case *ast.StructType:
-			return t + "{}"
+			// scalar fields get this seed's values, so two nested payloads (an outer and an inner one) differ
+			if fl.depth > 0 {
+				return t + "{}"
+			}
+			fl.depth++
+			var fs []string
+			for _, f := range ut.Fields.List {
+				ft := exprStr(f.Type)
+				for _, n := range fieldNames(f) {
+					if v := fl.value(ft, nil); v != "" && v != "nil" && !strings.HasPrefix(v, "*new(") && !strings.HasSuffix(v, "{}") {
+						fs = append(fs, n+": "+v)
+					}
+				}
+			}
+			fl.depth--
+			return t + "{" + strings.Join(fs, ", ") + "}"
 		}
 		return "*new(" + t + ")"
 	}
@@ -860,6 +876,22 @@ func (p *pkg) templates(c string, ptr bool) []string {
 		}
 	}
 	return out
+}
+
+// fieldNames lists a struct field's names; an embedded field is named by its type (T for T, *T and pkg.T).
+func fieldNames(f *ast.Field) []string {
+	if len(f.Names) > 0 {
+		var out []string
+		for _, n := range f.Names {
+			out = append(out, n.Name)
+		}
+		return out
+	}
+	t := strings.TrimPrefix(exprStr(f.Type), "*")
+	if i := strings.LastIndex(t, "."); i >= 0 {
+		t = t[i+1:]
+	}
+	return []string{t}
 }
 
 func mentions(fd *ast.FuncDecl, c string) bool {
@@ -924,16 +956,16 @@ func (p *pkg) instantiate(tpl, c string, errs []string, seed int, fl *filler) st
 		var fs []string
 		for _, f := range st.Fields.List {
 			t := exprStr(f.Type)
-			for _, n := range f.Names {
+			for _, n := range fieldNames(f) {
 				if t == "error" || t == "[]error" {
 					if len(errs) > 0 {
-						fs = append(fs, n.Name+": "+fl.value(t, errs))
+						fs = append(fs, n+": "+fl.value(t, errs))
 					}
 					continue
 				}
 				v := fl.value(t, nil)
 				if v != "" && v != "nil" && !strings.HasPrefix(v, "*new(") {
-					fs = append(fs, n.Name+": "+v)
+					fs = append(fs, n+": "+v)
 				}
 			}
 		}
@@ -966,7 +998,7 @@ func hasErrSlot(p *pkg, tpl, c string) bool {
 	case strings.Contains(tpl, "@FIELDS"):
 		for _, f := range p.kind[c].(*ast.StructType).Fields.List {
 			t := exprStr(f.Type)
-			if (t == "error" || t == "[]error") && len(f.Names) > 0 {
+			if t == "error" || t == "[]error" {
 				return true
 			}
 		}
@@ -1680,8 +1712,17 @@ func scan(root string) {
 				if len(cs) > 0 {
 					census["with_candidates"]++
 				}
+				pairs := 0
+				for _, cd := range cs {
+					if strings.Contains(cd.Note, "wrapping") || strings.Contains(cd.Note, "satisfies both") {
+						pairs++
+					}
+				}
+				if pairs > 0 {
+					census["with_pair_candidates"]++
+				}
 				rel, _ := filepath.Rel(root, path)
-				hits = append(hits, map[string]any{"pkg": rel, "func": c.Func, "recv": c.Recv, "line": c.Line, "sites": len(c.Sites), "candidates": len(cs)})
+				hits = append(hits, map[string]any{"pkg": rel, "func": c.Func, "recv": c.Recv, "line": c.Line, "sites": len(c.Sites), "candidates": len(cs), "pair_candidates": pairs})
 			}
 		}
 		return nil

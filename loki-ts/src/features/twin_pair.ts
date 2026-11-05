@@ -29,7 +29,7 @@ export type Obs = Record<string, unknown>;
 export interface ProbeSite { id: string; kind: string; line: number; src: string }
 export interface ProbeVariant { id: string; kind: "broaden" | "narrow" | "swap" | "identity"; site: string; site2?: string | null; order: string[] }
 export interface ProbeCand { key: string; src: string; preds: Record<string, boolean | null>; vpreds: Record<string, boolean | null>; obs: Record<string, Obs> }
-export interface ProbeChain { lang: "py" | "go"; file: string; func: string; recv?: string; subject: string; loop?: string | null; line: number; sites: ProbeSite[]; order: string[]; variants: ProbeVariant[]; cands: ProbeCand[]; skipped?: string }
+export interface ProbeChain { lang: "py" | "go"; file: string; func: string; recv?: string; subject: string; loop?: string | null; line: number; sites: ProbeSite[]; order: string[]; variants: ProbeVariant[]; cands: ProbeCand[]; skipped?: string; reach?: string[] }
 export interface Guard { lang: "py" | "go"; file: string; func: string; recv?: string; subject: string; loop?: string | null; line: number; mode: "pre" | "post"; src: string; variant: string; vkind: string; takenBy: string; movedTo: string; comps: string[]; ref: Obs; alt: Obs; sites: ProbeSite[] }
 export interface Observed { key: string; missing?: boolean; build_error?: string; preds?: Record<string, boolean | null>; order?: string[]; obs?: { real?: Obs; real2?: Obs } }
 export type PreVerdict = "kept" | "inverted" | "changed" | "unknown";
@@ -55,7 +55,9 @@ export function selectGuards(chains: ProbeChain[], mode: "pre" | "post", maxPerC
   const out: Guard[] = [];
   for (const ch of chains) {
     if (ch.skipped) continue;
-    const reachable = new Set(ch.cands.map((c) => firstMatch(ch.order, c.preds)).filter((s): s is string => s !== null));
+    // sites some candidate reaches first: the kept pair inputs plus the engine's whole pool (ch.reach), since a value
+    // that reaches only one site is never kept as a pair input yet still proves that site is live
+    const reachable = new Set([...(ch.reach ?? []), ...ch.cands.map((c) => firstMatch(ch.order, c.preds)).filter((s): s is string => s !== null)]);
     const mine: Guard[] = [];
     for (const c of ch.cands) {
       const fm = firstMatch(ch.order, c.preds);
@@ -80,10 +82,16 @@ export function selectGuards(chains: ProbeChain[], mode: "pre" | "post", maxPerC
         mine.push({ lang: ch.lang, file: ch.file, func: ch.func, ...(ch.recv ? { recv: ch.recv } : {}), subject: ch.subject, loop: ch.loop ?? null, line: ch.line, mode, src: c.src, variant: v.id, vkind: v.kind, takenBy: fm, movedTo, comps, ref: pick(c.obs.real!), alt: pick(c.obs[v.id]!), sites: ch.sites });
       }
     }
-    // one guard per candidate first, then the rest, so a few guards cover distinct inputs
-    const seen = new Set<string>(), first: Guard[] = [], rest: Guard[] = [];
-    for (const g of mine) (seen.has(g.src) ? rest : (seen.add(g.src), first)).push(g);
-    out.push(...[...first, ...rest].slice(0, maxPerChain));
+    // the cap keeps one guard per site pair first (which check took x, which would take it), then one per input,
+    // then the rest, so a capped chain still covers every pair of sites that can steal from each other
+    const pairSeen = new Set<string>(), srcSeen = new Set<string>(), tiers: Guard[][] = [[], [], []];
+    for (const g of mine) {
+      const pk = `${g.takenBy}>${g.movedTo}`;
+      if (!pairSeen.has(pk)) { pairSeen.add(pk); srcSeen.add(g.src); tiers[0]!.push(g); }
+      else if (!srcSeen.has(g.src)) { srcSeen.add(g.src); tiers[1]!.push(g); }
+      else tiers[2]!.push(g);
+    }
+    out.push(...tiers.flat().slice(0, maxPerChain));
   }
   return out;
 }
@@ -108,7 +116,7 @@ export function verdictPre(g: Guard, o: Observed | undefined): PreVerdict {
 
 /** post: the guard was derived on the changed tree (ref = changed, alt = precedence restored); o is base's run. */
 export function verdictPost(g: Guard, o: Observed | undefined): PostVerdict {
-  if (!o) return "unknown";
+  if (!o || o.missing || o.build_error) return "unknown";
   if (o.preds && o.order && o.order.length > 0 && firstMatch(o.order, o.preds) === null) return "unhandled-at-base";
   if (!o.order || o.order.length === 0) return "unhandled-at-base";
   const stable = stableOn(o);
@@ -118,7 +126,20 @@ export function verdictPost(g: Guard, o: Observed | undefined): PostVerdict {
   return diff.some((k) => eq(g.alt[k], b[k])) ? "precedence-regression" : "changed";
 }
 
-const short = (v: unknown): string => { const s = JSON.stringify(v ?? null); return s.length > 120 ? s.slice(0, 117) + "..." : s; };
+/** A recorded value as a reader sees it: the Python engine's tagged JSON is unwrapped, everything else is JSON-quoted. */
+const show = (v: unknown): string => {
+  if (typeof v === "string" && v.startsWith("{\"t\":")) {
+    try {
+      const t = JSON.parse(v) as { t: string; v?: unknown; type?: string };
+      if (t.t === "unsupported") return `a ${t.type} object`;
+      if (t.t === "exc") return `raises ${(t as { type?: string }).type}`;
+      if (t.t === "none") return "None";
+      if ("v" in t) return JSON.stringify(t.v);
+    } catch { /* not tagged */ }
+  }
+  return JSON.stringify(v ?? null);
+};
+const short = (v: unknown): string => { const s = show(v); return s.length > 120 ? s.slice(0, 117) + "..." : s; };
 const COMP: Record<string, string> = { ret: "return value", ret0: "return value", exc: "exception", out: "stdout", stdout: "stdout", stderr: "stderr", err: "stderr", panic: "panic", calls: "hook calls", timeout: "timed out", exit: "exit" };
 const compName = (k: string): string => COMP[k] ?? (k.startsWith("w:") ? `writes to ${k.slice(2)}` : /^ret\d+$/.test(k) ? `return value ${+k.slice(3) + 1}` : k);
 const siteSrc = (g: Guard, id: string): string => g.sites.find((s) => s.id === id)?.src ?? id;
@@ -127,9 +148,9 @@ const siteSrc = (g: Guard, id: string): string => g.sites.find((s) => s.id === i
 export function findingText(g: Guard, verdict: string, detail: { comp: string; base: unknown; now: unknown }[]): string {
   const where = `${g.func} (${g.file}:${g.line})`;
   const changes = detail.map((d) => `${compName(d.comp)} ${short(d.base)} at base, ${short(d.now)} now`).join("; ");
-  const baseSite = g.mode === "pre" ? siteSrc(g, g.takenBy) : siteSrc(g, g.movedTo);
-  const nowSite = g.mode === "pre" ? siteSrc(g, g.movedTo) : siteSrc(g, g.takenBy);
-  return `Twin-site check (${verdict}): ${where} dispatches \`${g.subject}\` by type. The input \`${g.src}\` was handled at base by \`${baseSite}\`; on the changed code \`${nowSite}\` takes it first (${changes}), which is exactly the outcome of putting that check ahead. Keep the base outcome for values the base code already dispatched by their own type: test the more specific type first, or narrow the earlier check.`;
+  const keep = "Keep the base outcome for values the base code already dispatched by their own type: test the more specific type first, or narrow the earlier check.";
+  if (g.mode === "pre") return `Twin-site check (${verdict}): ${where} dispatches \`${g.subject}\` by type. The input \`${g.src}\` was handled at base by \`${siteSrc(g, g.takenBy)}\`; on the changed code it behaves as if \`${siteSrc(g, g.movedTo)}\` took it first (${changes}). ${keep}`;
+  return `Twin-site check (${verdict}): ${where} dispatches \`${g.subject}\` by type. On the changed code the input \`${g.src}\` reaches both \`${siteSrc(g, g.takenBy)}\` and \`${siteSrc(g, g.movedTo)}\`, and the first one takes it (${changes}); with \`${siteSrc(g, g.movedTo)}\` first the outcome is the base one again. ${keep}`;
 }
 
 export function findings(pre: Guard[], preObs: Map<string, Observed>, post: Guard[], postObs: Map<string, Observed>): TwinFinding[] {
@@ -175,7 +196,7 @@ export function parseHunks(diff: string): FileHunks[] {
 interface RunOpts { timeoutMs?: number; env?: NodeJS.ProcessEnv }
 const run = (cmd: string, args: string[], cwd: string, o: RunOpts = {}) => spawnSync(cmd, args, { cwd, encoding: "utf8", timeout: o.timeoutMs ?? 180_000, env: { ...process.env, ...(o.env ?? {}) }, maxBuffer: 64 * 1024 * 1024 });
 
-interface PyFunc { func: string; line: number; subject: string; loop?: string | null; sites: ProbeSite[]; order?: string[]; variants?: ProbeVariant[]; candidates?: { src: string; preds: Record<string, boolean | null>; vpreds: Record<string, boolean | null>; obs: Record<string, Obs> }[]; skipped?: string; chain: number }
+interface PyFunc { func: string; line: number; subject: string; loop?: string | null; sites: ProbeSite[]; order?: string[]; reach?: string[]; variants?: ProbeVariant[]; candidates?: { src: string; preds: Record<string, boolean | null>; vpreds: Record<string, boolean | null>; obs: Record<string, Obs> }[]; skipped?: string; chain: number }
 
 export function pyProbe(root: string, file: string, mode: "pre" | "post", hunks: [number, number][] = [], o: RunOpts = {}): { chains: ProbeChain[]; error?: string } {
   const args = ["-I", join(TWIN_LIB, "twinpair_py.py"), "probe", "--root", root, "--file", file, "--mode", mode, ...hunks.flatMap(([a, b]) => ["--hunk", `${a}:${b}`])];
@@ -183,7 +204,7 @@ export function pyProbe(root: string, file: string, mode: "pre" | "post", hunks:
   let d: { error?: string; functions?: PyFunc[] };
   try { d = JSON.parse(r.stdout); } catch { return { chains: [], error: `python probe: ${(r.stderr || r.stdout || String(r.error ?? "")).slice(-300)}` }; }
   if (d.error) return { chains: [], error: d.error };
-  return { chains: (d.functions ?? []).map((f) => ({ lang: "py" as const, file, func: f.func, subject: f.subject, loop: f.loop ?? null, line: f.line, sites: f.sites, order: f.order ?? f.sites.map((s) => s.id), variants: f.variants ?? [], ...(f.skipped ? { skipped: f.skipped } : {}), cands: (f.candidates ?? []).map((c, i) => ({ key: `${f.func}#${f.chain}#${i}`, src: c.src, preds: c.preds, vpreds: c.vpreds, obs: c.obs })) })) };
+  return { chains: (d.functions ?? []).map((f) => ({ lang: "py" as const, file, func: f.func, subject: f.subject, loop: f.loop ?? null, line: f.line, sites: f.sites, order: f.order ?? f.sites.map((s) => s.id), variants: f.variants ?? [], ...(f.skipped ? { skipped: f.skipped } : {}), ...(f.reach ? { reach: f.reach } : {}), cands: (f.candidates ?? []).map((c, i) => ({ key: `${f.func}#${f.chain}#${i}`, src: c.src, preds: c.preds, vpreds: c.vpreds, obs: c.obs })) })) };
 }
 
 export function pyObserve(root: string, file: string, guards: Guard[], o: RunOpts = {}): Map<string, Observed> {

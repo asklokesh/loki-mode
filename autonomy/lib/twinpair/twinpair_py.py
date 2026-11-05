@@ -302,6 +302,10 @@ def variants_for(ch, g):
                 op = ast.In() if isinstance(tn, ast.Tuple) else ast.Is()
                 _set_core(b, ast.Compare(left=ast.Call(func=ast.Name("type", ast.Load()), args=[ast.Name(subj, ast.Load())], keywords=[]), ops=[op], comparators=[copy.deepcopy(tn)]))
             out.append({"id": "narrow_%s" % sid, "kind": "narrow", "site": sid, "tf": tfn})
+    uniq = {}
+    for v in out:
+        uniq.setdefault(v["id"], v)
+    out = list(uniq.values())
     for i in range(len(sites)):
         for j in range(i + 1, len(sites)):
             a, b = sites[i], sites[j]
@@ -623,13 +627,16 @@ def probe(root, rel, only, mode, hunks=None):
         item["variants"] = [{"id": v["id"], "kind": v["kind"], "site": v["site"], "site2": v.get("site2"), "order": order_of(fc, ch)} for v, _fn, fc in var_fns]
         item["order"] = order_of(fid, ch)
         item["span"] = [fnode.lineno, getattr(fnode, "end_lineno", fnode.lineno)]
-        cands = []
+        cands, reach = [], set()
         for src in srcs:
             try:
                 x = build(src, ns)
             except Exception:
                 continue
             preds = site_preds(fid, ch, g, x)
+            fm0 = first_match(item["order"], preds)
+            if fm0:
+                reach.add(fm0)
             vpreds = {v["id"]: site_preds(fc, ch, g, x)[v["site"]] for v, _fn, fc in var_fns if v["kind"] in ("broaden", "narrow")}
             if qualifies(item["order"], preds, vpreds, item["variants"], mode):
                 cands.append({"src": src, "preds": preds, "vpreds": vpreds})
@@ -648,6 +655,7 @@ def probe(root, rel, only, mode, hunks=None):
                 c["obs"][v["id"]] = observe(fn, receiver, fnode, kind, ch, c["src"], ns)
         item["candidates"] = kept
         item["candidates_considered"] = len(srcs)
+        item["reach"] = sorted(reach)  # sites some pool value reaches first, qualifying or not
         res.append(item)
     return {"lang": "py", "file": rel, "module": modname, "functions": res}
 

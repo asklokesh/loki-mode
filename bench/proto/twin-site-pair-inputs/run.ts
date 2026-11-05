@@ -37,11 +37,11 @@ function fixture(fx: string, variant: string, rel: string, scratch: string) {
 
 const TYPE_SYNTAX: Record<string, RegExp> = { py: /\bisinstance\(|\btype\([^)]*\)\s*(is|==|in)\b|__class__\s+is\b/, go: /\.\([A-Za-z*][\w.*]*\)|\.\(type\)|errors\.As\(/ };
 
-function replay(repo: string, scratch: string, max: number, lang = "", since = "") {
+function replay(repo: string, scratch: string, max: number, lang = "", since = "", paths = "") {
   mkdirSync(scratch, { recursive: true });
   const wp = join(scratch, "wt-parent"), wc = join(scratch, "wt-commit");
   for (const w of [wp, wc]) if (!existsSync(w)) git(repo, "worktree", "add", "--detach", "-f", w, "HEAD");
-  const revs = git(repo, "rev-list", "--no-merges", `--max-count=${max}`, ...(since ? [`--since=${since}`] : []), "HEAD").stdout.split("\n").filter(Boolean);
+  const revs = git(repo, "rev-list", "--no-merges", `--max-count=${max}`, ...(since ? [`--since=${since}`] : []), "HEAD", ...(paths ? ["--", ...paths.split(",")] : [])).stdout.split("\n").filter(Boolean);
   for (const c of revs) {
     const p = git(repo, "rev-parse", `${c}^`).stdout.trim();
     if (!p) continue;
@@ -66,6 +66,6 @@ function replay(repo: string, scratch: string, max: number, lang = "", since = "
 
 const [mode, ...rest] = process.argv.slice(2);
 if (mode === "fixture") fixture(rest[0]!, rest[1]!, rest[2]!, rest[3]!);
-else if (mode === "replay") replay(rest[0]!, rest[1]!, +(rest[2] ?? "200"), rest[3] ?? "", rest[4] ?? "");
+else if (mode === "replay") replay(rest[0]!, rest[1]!, +(rest[2] ?? "200"), rest[3] ?? "", rest[4] ?? "", rest[5] ?? "");
 else { console.error("usage: run.ts fixture|replay ..."); process.exit(2); }
 void readFileSync;
