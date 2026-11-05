@@ -1,0 +1,273 @@
+{
+  "summary": {
+    "calls": 3,
+    "costUsd": 0.0075915999999999996,
+    "outTok": [
+      3348,
+      2889,
+      2161
+    ],
+    "gitlog": {
+      "replay": {
+        "caught": "0/4",
+        "falseFires": "0/4"
+      },
+      "keepPreImplement": {
+        "caught": "4/4",
+        "falseFires": "0/4"
+      },
+      "both": {
+        "caught": "4/4",
+        "falseFires": "0/4"
+      }
+    },
+    "flagusage": {
+      "replay": {
+        "caught": "0/3",
+        "falseFires": "0/2"
+      },
+      "keepPreImplement": {
+        "caught": "2/3",
+        "falseFires": "0/2"
+      },
+      "both": {
+        "caught": "2/3",
+        "falseFires": "0/2"
+      }
+    },
+    "commits": {
+      "replayFalseFires": "1/7",
+      "withReplayFinding": "3/7"
+    }
+  },
+  "rows": [
+    {
+      "fixture": "gitlog",
+      "variant": "correct-edit-test",
+      "oracle": true,
+      "replayBlocks": [],
+      "keepBlocks": [],
+      "replayFindings": [],
+      "keepFindings": [],
+      "uncovered": []
+    },
+    {
+      "fixture": "gitlog",
+      "variant": "correct-filter",
+      "oracle": true,
+      "replayBlocks": [],
+      "keepBlocks": [],
+      "replayFindings": [],
+      "keepFindings": [],
+      "uncovered": []
+    },
+    {
+      "fixture": "gitlog",
+      "variant": "correct-own",
+      "oracle": true,
+      "replayBlocks": [],
+      "keepBlocks": [],
+      "replayFindings": [],
+      "keepFindings": [],
+      "uncovered": []
+    },
+    {
+      "fixture": "gitlog",
+      "variant": "correct-param",
+      "oracle": true,
+      "replayBlocks": [],
+      "keepBlocks": [],
+      "replayFindings": [],
+      "keepFindings": [],
+      "uncovered": []
+    },
+    {
+      "fixture": "gitlog",
+      "variant": "regress-contrib",
+      "oracle": false,
+      "replayBlocks": [],
+      "keepBlocks": [
+        "k10"
+      ],
+      "replayFindings": [],
+      "keepFindings": [
+        "k10:unrequested"
+      ],
+      "uncovered": []
+    },
+    {
+      "fixture": "gitlog",
+      "variant": "regress-edit-test",
+      "oracle": false,
+      "replayBlocks": [],
+      "keepBlocks": [
+        "k6",
+        "k7",
+        "k8",
+        "k9"
+      ],
+      "replayFindings": [
+        "T_TestRenderSkipsBlankSubjects:unknown"
+      ],
+      "keepFindings": [
+        "k6:unrequested",
+        "k7:unrequested",
+        "k8:unrequested",
+        "k9:unrequested"
+      ],
+      "uncovered": []
+    },
+    {
+      "fixture": "gitlog",
+      "variant": "regress-render",
+      "oracle": false,
+      "replayBlocks": [],
+      "keepBlocks": [
+        "k6"
+      ],
+      "replayFindings": [],
+      "keepFindings": [
+        "k6:unrequested"
+      ],
+      "uncovered": []
+    },
+    {
+      "fixture": "gitlog",
+      "variant": "regress-shared",
+      "oracle": false,
+      "replayBlocks": [],
+      "keepBlocks": [
+        "k1",
+        "k2",
+        "k4"
+      ],
+      "replayFindings": [],
+      "keepFindings": [
+        "k1:unrequested",
+        "k2:unrequested",
+        "k3:requested",
+        "k4:unrequested"
+      ],
+      "uncovered": []
+    },
+    {
+      "fixture": "flagusage",
+      "variant": "correct-local",
+      "oracle": true,
+      "replayBlocks": [],
+      "keepBlocks": [],
+      "replayFindings": [],
+      "keepFindings": [],
+      "uncovered": []
+    },
+    {
+      "fixture": "flagusage",
+      "variant": "correct-param",
+      "oracle": true,
+      "replayBlocks": [],
+      "keepBlocks": [],
+      "replayFindings": [],
+      "keepFindings": [],
+      "uncovered": []
+    },
+    {
+      "fixture": "flagusage",
+      "variant": "regress-default",
+      "oracle": false,
+      "replayBlocks": [],
+      "keepBlocks": [
+        "k1"
+      ],
+      "replayFindings": [],
+      "keepFindings": [
+        "k1:unrequested"
+      ],
+      "uncovered": []
+    },
+    {
+      "fixture": "flagusage",
+      "variant": "regress-lookup",
+      "oracle": false,
+      "replayBlocks": [],
+      "keepBlocks": [
+        "k8"
+      ],
+      "replayFindings": [],
+      "keepFindings": [
+        "k8:unrequested"
+      ],
+      "uncovered": []
+    },
+    {
+      "fixture": "flagusage",
+      "variant": "regress-shared",
+      "oracle": false,
+      "replayBlocks": [],
+      "keepBlocks": [],
+      "replayFindings": [],
+      "keepFindings": [],
+      "uncovered": []
+    }
+  ],
+  "commits": [
+    {
+      "id": "pflag-316",
+      "editedTests": 1,
+      "ran": 146,
+      "replayFindings": [
+        "T_TestIP:requested"
+      ],
+      "falseFire": false
+    },
+    {
+      "id": "pflag-282",
+      "editedTests": 0,
+      "ran": 0,
+      "replayFindings": [],
+      "falseFire": false
+    },
+    {
+      "id": "cobra-2397",
+      "editedTests": 1,
+      "ran": 256,
+      "replayFindings": [],
+      "falseFire": false
+    },
+    {
+      "id": "cobra-2257",
+      "editedTests": 1,
+      "ran": 255,
+      "replayFindings": [],
+      "falseFire": false
+    },
+    {
+      "id": "semver-1",
+      "editedTests": 1,
+      "ran": 15,
+      "replayFindings": [
+        "T_TestConstraintsCheck:unrequested"
+      ],
+      "falseFire": true
+    },
+    {
+      "id": "humanize-si",
+      "editedTests": 1,
+      "ran": 42,
+      "replayFindings": [],
+      "falseFire": false
+    },
+    {
+      "id": "humanize-105",
+      "editedTests": 1,
+      "ran": 41,
+      "replayFindings": [
+        "T_TestCommafWithDigits:requested"
+      ],
+      "falseFire": false
+    }
+  ],
+  "programs": {
+    "gitlog": "package changelog\n\nimport \"strings\"\n\nfunc lokiCases() {\n\t// change: the issue's own example, and neighbouring ranges that also must keep merge subjects\n\tlokiCase(\"c1\", \"change\", \"CommitsCmd v1.2.0..HEAD (issue example)\", func() any {\n\t\treturn strings.Join(CommitsCmd(\"v1.2.0\", \"HEAD\"), \" \")\n\t})\n\tlokiCase(\"c2\", \"change\", \"CommitsCmd v1.1.0..v1.2.0\", func() any {\n\t\treturn strings.Join(CommitsCmd(\"v1.1.0\", \"v1.2.0\"), \" \")\n\t})\n\tlokiCase(\"c3\", \"change\", \"CommitsCmd v1.0.0..HEAD\", func() any {\n\t\treturn strings.Join(CommitsCmd(\"v1.0.0\", \"HEAD\"), \" \")\n\t})\n\n\t// keep: shared helpers, sibling commands, and formatting that the fix must not alter\n\tlokiCase(\"k1\", \"keep\", \"AuthorsCmd v1.2.0..HEAD (issue example values)\", func() any {\n\t\treturn strings.Join(AuthorsCmd(\"v1.2.0\", \"HEAD\"), \" \")\n\t})\n\tlokiCase(\"k2\", \"keep\", \"AuthorsCmd empty from ref\", func() any {\n\t\treturn strings.Join(AuthorsCmd(\"\", \"HEAD\"), \" \")\n\t})\n\tlokiCase(\"k3\", \"keep\", \"logArgs with subject format\", func() any {\n\t\treturn strings.Join(logArgs(\"%s\"), \" \")\n\t})\n\tlokiCase(\"k4\", \"keep\", \"logArgs with author format\", func() any {\n\t\treturn strings.Join(logArgs(\"%an <%ae>\"), \" \")\n\t})\n\tlokiCase(\"k5\", \"keep\", \"LastTagCmd\", func() any {\n\t\treturn strings.Join(LastTagCmd(), \" \")\n\t})\n\tlokiCase(\"k6\", \"keep\", \"Render with merge subject from issue\", func() any {\n\t\treturn Render(\"v1.2.0\", []string{\"Merge pull request #41 from team/export\"})\n\t})\n\tlokiCase(\"k7\", \"keep\", \"Render with nil subjects\", func() any {\n\t\treturn Render(\"v1.2.0\", nil)\n\t})\n\tlokiCase(\"k8\", \"keep\", \"Render trims whitespace and skips blanks\", func() any {\n\t\treturn Render(\"v1.2.0\", []string{\"  Add export  \", \"\", \"  \"})\n\t})\n\tlokiCase(\"k9\", \"keep\", \"Render with empty version\", func() any {\n\t\treturn Render(\"\", []string{\"x\"})\n\t})\n\tlokiCase(\"k10\", \"keep\", \"Contributors case and whitespace variants\", func() any {\n\t\treturn Contributors([]string{\"bo <bo@x.io>\", \"BO <bo@x.io>\", \" bo <bo@x.io> \"})\n\t})\n\tlokiCase(\"k11\", \"keep\", \"Contributors sorts and dedupes\", func() any {\n\t\treturn Contributors([]string{\"zed <z@x.io>\", \"al <al@x.io>\", \"zed <z@x.io>\"})\n\t})\n\tlokiCase(\"k12\", \"keep\", \"Contributors nil input\", func() any {\n\t\treturn Contributors(nil)\n\t})\n}\n",
+    "flagusage": "package flags\n\nfunc lokiCases() {\n\t// change cases\n\tlokiCase(\"c1\", \"change\", \"FlagLine issue example: long and short names\", func() any {\n\t\treturn FlagLine(Flag{Name: \"output\", Short: \"o\", Usage: \"write to file\"})\n\t})\n\tlokiCase(\"c2\", \"change\", \"Help listing for the issue example flag with a short alias\", func() any {\n\t\treturn Help(\"tool\", []Flag{{Name: \"output\", Short: \"o\", Usage: \"write to file\"}})\n\t})\n\tlokiCase(\"c3\", \"change\", \"FlagLine issue example with a default and a short alias\", func() any {\n\t\treturn FlagLine(Flag{Name: \"output\", Short: \"o\", Usage: \"write to file\", Default: \"out.txt\"})\n\t})\n\n\t// keep cases\n\tlokiCase(\"k1\", \"keep\", \"[s1] FlagLine of a no-short flag with a default value\", func() any {\n\t\treturn FlagLine(Flag{Name: \"verbose\", Usage: \"print more\", Default: \"false\"})\n\t})\n\tlokiCase(\"k2\", \"keep\", \"[s2] Help header for a single no-short flag named verbose\", func() any {\n\t\treturn Help(\"tool\", []Flag{{Name: \"verbose\", Usage: \"print more\"}})\n\t})\n\tlokiCase(\"k3\", \"keep\", \"[s3] MissingError for a required no-short flag named verbose\", func() any {\n\t\treturn MissingError(Flag{Name: \"verbose\", Required: true})\n\t})\n\tlokiCase(\"k4\", \"keep\", \"FlagLine issue example flag without a short alias, the verbose example\", func() any {\n\t\treturn FlagLine(Flag{Name: \"verbose\", Usage: \"print more\"})\n\t})\n\tlokiCase(\"k5\", \"keep\", \"Help with no-short flags given out of order, sorted by name\", func() any {\n\t\treturn Help(\"tool\", []Flag{{Name: \"verbose\", Usage: \"print more\"}, {Name: \"alpha\", Usage: \"first\"}})\n\t})\n\tlokiCase(\"k6\", \"keep\", \"Help with empty program name and no flags\", func() any {\n\t\treturn Help(\"\", nil)\n\t})\n\tlokiCase(\"k7\", \"keep\", \"Lookup issue example flag by short name -o\", func() any {\n\t\tfs := []Flag{{Name: \"output\", Short: \"o\"}}\n\t\treturn lokiAll(Lookup(fs, \"-o\"))\n\t})\n\tlokiCase(\"k8\", \"keep\", \"Lookup unknown flag --nope returns the unknown flag error\", func() any {\n\t\tfs := []Flag{{Name: \"output\", Short: \"o\"}}\n\t\treturn lokiAll(Lookup(fs, \"--nope\"))\n\t})\n\tlokiCase(\"k9\", \"keep\", \"MissingError for a required no-short flag with uppercase name Verbose\", func() any {\n\t\treturn MissingError(Flag{Name: \"Verbose\", Required: true})\n\t})\n\tlokiCase(\"k10\", \"keep\", \"FlagLine no-short flag with surrounding whitespace in usage text\", func() any {\n\t\treturn FlagLine(Flag{Name: \"verbose\", Usage: \"  print more  \"})\n\t})\n}\n"
+  }
+}
