@@ -341,10 +341,17 @@ check "oracle/noop self-check: runner exits 0" test "$?" = 0
 check "loki env: the results file records H2H_LOKI_ENV" test "$(runs 'd.get("loki_env")')" = "{'LOKI_E10_FIX_RESUME': '1'}"
 ntasks="$(find benchmarks/h2h/tasks -mindepth 2 -maxdepth 2 -name meta.json | wc -l | tr -d ' ')"
 check "self-check covered every task ($ntasks)" test "$(runs 'len(d["tasks"])')" = "$ntasks"
-check "oracle passes every task" test "$(runs '[s["passed"] == s["n"] for s in d["summary"] if s["config"] == "oracle"]')" = "[True]"
-check "noop passes no task" test "$(runs '[s["passed"] for s in d["summary"] if s["config"] == "noop"]')" = "[0]"
 failed_oracle="$(runs '",".join(r["task"] for r in d["runs"] if r["config"] == "oracle" and not r["pass"])')"
 [ -z "$failed_oracle" ] || echo "  oracle failed on: $failed_oracle"
+# Some hidden tests carry wall-clock budgets (py-semver-range: 1s and 2s) that an overloaded runner can miss; a task the oracle
+# failed under load must pass when run alone, so a wrong reference solution (which fails alone too) still fails this check.
+oracle_ok="$(runs '[s["passed"] == s["n"] for s in d["summary"] if s["config"] == "oracle"]')"
+if [ "$oracle_ok" != "[True]" ] && [ -n "$failed_oracle" ]; then
+    TMPDIR="$T" bash benchmarks/h2h/run.sh --configs oracle --tasks "$failed_oracle" --jobs 1 --out "$T/selfcheck-retry.json" >"$T/selfcheck-retry.log" 2>&1
+    [ "$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print([s["passed"] == s["n"] for s in d["summary"] if s["config"] == "oracle"])' "$T/selfcheck-retry.json" 2>/dev/null)" = "[True]" ] && oracle_ok="[True]"
+fi
+check "oracle passes every task" test "$oracle_ok" = "[True]"
+check "noop passes no task" test "$(runs '[s["passed"] for s in d["summary"] if s["config"] == "noop"]')" = "[0]"
 passed_noop="$(runs '",".join(r["task"] for r in d["runs"] if r["config"] == "noop" and r["pass"])')"
 [ -z "$passed_noop" ] || echo "  noop passed on: $passed_noop"
 meta() { python3 -I -c '
