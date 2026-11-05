@@ -222,3 +222,58 @@ export function classifyTestEdit(file: string, oldText: string, newText: string,
   if (r.verdict !== "value-change" || !r.items?.length) return weak;
   return r.items.map((i) => ({ kind: "literal-only" as const, file, line: i.line, old: i.old, new: i.new, inTask: true }));
 }
+
+// E4 defect pin: an existing assertion whose expected value is the wrong value the issue reports (its "actual" or "currently returns" value) pins the bug, so the
+// correct fix must change it. Pure and language-neutral: the issue text is only the symptom matcher, no wording of any answer is built in.
+const LIT_RE = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|`([^`\n]*)`|(?<![\w.])(-?\d+(?:\.\d+)?)(?![\w.])/g;
+const literalsOf = (line: string): { v: string; at: number }[] => [...line.matchAll(LIT_RE)].map((m) => ({ v: (m[1] ?? m[2] ?? m[3] ?? m[4] ?? "").trim(), at: m.index ?? 0 }));
+/** The line with every literal replaced by a placeholder; two lines with equal skeletons differ only in literal values. */
+export const literalSkeleton = (line: string): string => line.replace(LIT_RE, "\0").replace(/\s+/g, " ").trim();
+const SYM_CUE = String.raw`\b(?:currently|actual(?:ly)?(?:\s+(?:result|output|value|behaviou?r))?|got|gets?|returns?|returned|prints?|outputs?|yields?|produces?|results?\s+in|evaluates?\s+to)\b\s*[:=]?\s*(?:is\s+|are\s+)?`;
+const SYM_LIT = String.raw`(?:\x60([^\x60\n]{1,120})\x60|"([^"\n]{1,120})"|'([^'\n]{1,120})'|(-?\d+(?:\.\d+)?)(?![\w.]))`;
+const SYM_BARE = String.raw`(?:\x60([^\x60\n]{1,120})\x60|"([^"\n]{1,120})"|'([^'\n]{1,120})'|(-?\d+(?:\.\d+)?)(?![\w.])|([\w./:@#-]{2,80}))`; // after "actual" only: a bare word
+const WANTED_BEFORE = /\b(?:should|must|shall|expect(?:ed|s)?|want(?:s|ed)?|ought|would|will|to|need(?:s)?|can|could|desired|correct(?:ly)?)\s+(?:\w+\s+){0,2}$/i;
+const CALLED_RIGHT = /^[^.\n]{0,25}?\b(?:which|that)(?:\s+is|'s)\s+(?:right|correct|fine|expected|ok|okay|good)\b|^\W*(?:is|are)\s+(?:right|correct|fine|ok|okay|good)\b/i; // the issue calls this value right: it is not the symptom
+const NOT_VALUE = new Set(["the", "a", "an", "it", "this", "that", "nothing", "error", "wrong", "incorrect", "different", "instead", "but", "and", "not", "no", "of", "in", "on", "for", "with", "as", "is", "was"]);
+const GENERIC_WORD = new Set(["true", "false", "nil", "none", "null", "undefined", ""]);
+export interface ReportedValue { value: string; idents: string[] }
+/** Wrong values the issue reports as what happens today ("currently returns X", "Actual: X", "got X"), with the code identifiers named in the same line. A value after "should"/"expected" is the wanted one and is skipped. */
+export function reportedValues(task: string): ReportedValue[] {
+  const out: ReportedValue[] = [];
+  for (const line of task.split("\n")) {
+    const idents = [...new Set([...line.matchAll(/`([A-Za-z_][\w.]{2,60})`|\b([A-Za-z_]\w{2,})\(|\b([a-z]+(?:[A-Z][a-z0-9]+)+|[a-z]+(?:_[a-z0-9]+)+)\b/g)].map((m) => (m[1] ?? m[2] ?? m[3])!))];
+    for (const strong of [false, true]) {
+      const re = new RegExp(strong ? String.raw`\b(?:actual(?:\s+(?:result|output|value|behaviou?r))?|currently\s+(?:returns?|gives?|prints?|outputs?|yields?|produces?))\b\s*[:=]?\s*(?:is\s+)?${SYM_BARE}` : SYM_CUE + SYM_LIT, "gi");
+      for (const m of line.matchAll(re)) {
+        if (WANTED_BEFORE.test(line.slice(Math.max(0, (m.index ?? 0) - 30), m.index ?? 0))) continue;
+        if (CALLED_RIGHT.test(line.slice((m.index ?? 0) + m[0].length))) continue;
+        const value = (m.slice(1).find((g) => g !== undefined) ?? "").trim();
+        if (value === "" || NOT_VALUE.has(value.toLowerCase()) || out.some((r) => r.value === value)) continue;
+        out.push({ value, idents: idents.filter((i) => i !== value) });
+      }
+    }
+  }
+  return out;
+}
+const isGenericValue = (v: string): boolean => GENERIC_WORD.has(v.toLowerCase()) || (/^-?\d+(\.\d+)?$/.test(v) ? Math.abs(Number(v)) < 10 : v.length <= 3);
+const EXPECT_LINE = /\b(?:expect\w*|assert\w*|should|want\w*|golden|Equal\w*|toBe\w*|toEqual|toStrictEqual|toMatch\w*|equals?)\b|==/i;
+const EQUAL_CALL = /Equal|toBe|toEqual|assertEquals|assertThat/;
+export interface PinnedLine { line: number; text: string; value: string }
+/** Lines of one test file that pin a reported wrong value: a literal equal to the value in the expected position (last literal of an assertion or `want:` line, or the first argument of an Equal-style call). A short or common value ("", 0, true, 3 characters or less) counts only when a code identifier the issue names for it appears on the line or in the 8 lines above. */
+export function pinnedLines(testText: string, task: string): PinnedLine[] {
+  const rv = reportedValues(task);
+  if (!rv.length) return [];
+  const lines = testText.split("\n"), out: PinnedLine[] = [];
+  lines.forEach((text, i) => {
+    if (text.length > 400 || !EXPECT_LINE.test(text)) return;
+    const lits = literalsOf(text);
+    lits.forEach((l, k) => {
+      if (!(k === lits.length - 1 || (k === 0 && EQUAL_CALL.test(text)))) return;
+      const hit = rv.find((r) => r.value === l.v);
+      if (!hit || out.some((p) => p.line === i + 1)) return;
+      if (isGenericValue(hit.value)) { const near = lines.slice(Math.max(0, i - 8), i + 1).join("\n"); if (!hit.idents.some((id) => new RegExp(`(?<![\\w$])${id.split(".").pop()!.replace(/[$]/g, "\\$")}(?![\\w$])`).test(near))) return; }
+      out.push({ line: i + 1, text, value: hit.value });
+    });
+  });
+  return out;
+}

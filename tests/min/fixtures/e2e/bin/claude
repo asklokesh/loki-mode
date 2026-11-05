@@ -200,6 +200,7 @@ if [ "$stage" = "implement" ]; then
     tf="${E2E_STUB_TEST_FILE:-calc.test.ts}" # E2E_STUB_TEST_FILE: the test file the two edits below act on (default calc.test.ts)
     [ -n "${E2E_STUB_TEST_DROP:-}" ] && { grep -v -- "$E2E_STUB_TEST_DROP" "$tf" > "$tf.new"; mv "$tf.new" "$tf"; } # E2E_STUB_TEST_DROP: a grep pattern whose lines leave the test file
     [ -n "${E2E_STUB_TEST_APPEND:-}" ] && printf '%s\n' "$E2E_STUB_TEST_APPEND" >> "$tf" # E2E_STUB_TEST_APPEND: text appended to the test file
+    [ -n "${E2E_STUB_EDIT_FROM:-}" ] && python3 -I -c 'import os; p=os.environ["E2E_STUB_EDIT_FILE"]; s=open(p).read(); open(p,"w").write(s.replace(os.environ["E2E_STUB_EDIT_FROM"], os.environ["E2E_STUB_EDIT_TO"]))' # E2E_STUB_EDIT_FILE: rewrite E2E_STUB_EDIT_FROM to E2E_STUB_EDIT_TO there (an existing assertion's value)
     [ -n "${E2E_STUB_RM:-}" ] && rm -rf -- "$E2E_STUB_RM" # E2E_STUB_RM: a path (relative to the repo) the change deletes, e.g. an installed package
     echo "LOKI_DONE"
   elif [ "${E2E_STUB_MODE:-done}" = "already" ]; then
