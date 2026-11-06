@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.137.2 (2026-11-06)
+
+Loki on Haiku no longer short-cuts implement with a one-call patch, which raised merge-ready from 9 to 14 of 20 on the benchmark.
+
+### Changed
+- The implement patch step (LOKI_E10_PATCH) is now off by default; LOKI_E10_PATCH=1 opts in. On the v11.137.1 Haiku benchmark it finished 9 of 20 runs without the agentic session and cost 5 merge-ready tasks (9 vs 14 of 20; judge pass 10 vs 18) at the same median time per task.
+
 ## v11.137.1 (2026-11-06)
 
 A run that settles an open choice itself, or leaves a behavior change unsettled, no longer reads VERIFIED.
