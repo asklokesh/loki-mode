@@ -85,6 +85,7 @@ FIX="$ROOT/tests/min/fixtures/e2e"
 export LOKI_TS_ENTRY="${_ENTRY_IN:-$ROOT/loki-ts/dist/loki.js}"
 unset LOKI_NO_PR_LESSONS
 export LOKI_PR_LESSONS=1 LOKI_WORKED_EXAMPLE=1 # lesson injection is opt-in; these legs test it on, the default legs unset both
+export LOKI_E10_COVERAGE_RESUME=0 # the coverage turn (default on) is a second implement brief; these legs count briefs and sessions, scope-and-fix owns the coverage legs
 UNSET=()
 TO=(); command -v timeout >/dev/null 2>&1 && TO=(timeout 120)
 

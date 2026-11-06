@@ -10,10 +10,17 @@
 # Also: a Docker build stage that copies loki-ts/src must copy every loki-ts file src/ imports from
 # outside src/ (v11.118.0's image build broke on ../../data/model-pricing.json).
 #
+# Also: the control-plane server bundles the way docker/Dockerfile.control-plane builds it: a tree holding only
+# packages/control-plane (with its own dependencies), loki-ts/src, loki-ts/data and schemas, and NO loki-ts node_modules.
+# Any loki-ts file the server reaches must not need a loki-ts dependency at build time (v11.135.0's image broke on a
+# static "@anthropic-ai/sdk" import reached through engine10/stages/implement.ts). Skipped when bun or the install is unavailable.
+#
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. docker/Dockerfile: add `COPY --chown=loki:loki plantdir/ ./plantdir/`
 #      (a directory that does not exist).
 #   2. .github/workflows/release.yml: put `plantdir` in the `for d in ...` loop.
+#   3. loki-ts/src/runner/sdk_invoker.ts: restore v11.135.0's file (the static value import of "@anthropic-ai/sdk"):
+#      the control-plane bundle leg fails with Could not resolve.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -120,5 +127,23 @@ while IFS= read -r l; do
         *) [ -n "$l" ] && bad "unexpected output: $l" ;;
     esac
 done < "$T/res.txt"
+
+# --- The control-plane server bundles without loki-ts's node_modules (docker/Dockerfile.control-plane build stage) ---
+if command -v bun >/dev/null 2>&1; then
+    CP="$T/cp-build"; mkdir -p "$CP/packages" "$CP/loki-ts"
+    cp -R "$ROOT/packages/control-plane" "$CP/packages/control-plane"; rm -rf "$CP/packages/control-plane/node_modules" "$CP/packages/control-plane/dist"
+    cp -R "$ROOT/loki-ts/src" "$ROOT/loki-ts/data" "$CP/loki-ts/"; cp -R "$ROOT/schemas" "$CP/schemas"
+    if (cd "$CP/packages/control-plane" && timeout 300 bun install --frozen-lockfile >"$T/cp-install.log" 2>&1); then
+        if (cd "$CP/packages/control-plane" && timeout 300 bun run build:server >"$T/cp-build.log" 2>&1); then
+            ok "control-plane server bundles with only its own dependencies, as the Docker build stage does"
+        else
+            bad "control-plane server does not bundle without loki-ts's node_modules: $(grep -m1 -E 'error' "$T/cp-build.log")"
+        fi
+    else
+        echo "  SKIP: control-plane bundle: bun install failed (offline?)"
+    fi
+else
+    echo "  SKIP: control-plane bundle: bun is not installed"
+fi
 
 finish

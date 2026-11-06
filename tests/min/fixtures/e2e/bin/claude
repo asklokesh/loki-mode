@@ -34,6 +34,7 @@
 #   overlay: a plain `-p <task>` call copies E2E_STUB_OVERLAY over the cwd (h2h benchmark harness)
 # E2E_STUB_SLEEP=<s>: the implement session sleeps after its edit, so a test can signal the run mid-session (tests/min/run-safety.sh).
 # E2E_STUB_SPLIT (JSON text): the MASS-2 split planning session writes it to the file its brief names.
+# E2E_STUB_SPEC_REPLY (text): the exec-spec generator session (its brief names spec_reply.md, LOKI_E10_EXEC_SPEC) writes it there.
 # E2E_STUB_IMPL_CONFLICT=<text>: an implement session not on sonnet answers LOKI_SPEC_CONFLICT: <text>; on sonnet it implements.
 # E2E_STUB_ROUTE_LOG gets "<LOKI_E10_STAGE> <iteration> model=<--model> advisor=<advisorModel> wall=<0|1>" per call.
 # Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo); E2E_STUB_BUDGET_LOG gets its LOKI_BUDGET_LIMIT and LEDGER.
@@ -92,6 +93,7 @@ if [ -n "${E2E_STUB_USAGE:-}" ] && [ -n "${LOKI_ITERATION:-}" ]; then
   mkdir -p .loki/metrics
   printf '{"total_cost_usd":0.01,"input_tokens":%s,"output_tokens":%s,"cache_read_tokens":0,"cache_creation_tokens":0,"model":"stub","source":"e2e-stub"}\n' "$(( ${#prompt} / 4 ))" "$E2E_STUB_USAGE" > ".loki/metrics/result-cost-$LOKI_ITERATION.json"
 fi
+if [ -n "${E2E_STUB_SPEC_REPLY:-}" ]; then case "$prompt" in *"to the file spec_reply.md in the current directory"*) printf '%s\n' "$E2E_STUB_SPEC_REPLY" > spec_reply.md; echo "LOKI_DONE"; exit 0 ;; esac; fi
 if [ "$stage" = patch ]; then # E2E_STUB_PATCH: green appends a right multiply(); repair writes a wrong one first and fixes it in the repair call;
   # wrongtwice stays wrong (the agentic session then runs); cfg also edits bunfig.toml (refused), the repair call leaves it out;
   # a green tree with no test gets the test-only repair: the stub adds a multiply test (notest: answers with no edit, the green tree is kept)
@@ -193,6 +195,9 @@ fi
 if [ "$stage" = "plan" ] && [ "${E2E_STUB_MODE:-}" = "coverage" ]; then # a non-empty plan: the coverage leg with a plan stage must not resume
   out="$(printf '%s\n' "$prompt" | sed -n 's/.*to this exact file path: //p' | head -1)"
   [ -n "$out" ] && printf '1. edit calc.ts\n2. run calc.test.ts\n' > "$out"
+fi
+if [ "$stage" = "implement" ] && [ "${E2E_STUB_MODE:-done}" != "coverage" ] && printf '%s' "$prompt" | grep -q "List each site, symbol, example or case"; then
+  echo "LOKI_DONE"; exit 0 # the coverage turn (LOKI_E10_COVERAGE_RESUME, default on) on a change the first turn completed: a real model edits nothing; replaying the first turn's edit would duplicate it
 fi
 if [ "$stage" = "implement" ]; then
   sid="$(printf '%s\n' "$prompt" | sed -n 's/^Slice \([A-Za-z0-9_-]*\) of [0-9]* for .*/\1/p' | head -1)"

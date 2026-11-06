@@ -70,6 +70,10 @@ export const LOCK_RULES: LockRule[] = [
   { tool: "composer", subs: ["install", "update"], locks: ["composer.lock"], locked: (s) => s === "install", build: (_s, r) => ["composer", "install", ...r] },
 ];
 
+/** Every lockfile name: the rules' own plus go.sum. The one definition; commit_filter.ts, project_model/linguist.ts and the config write fence import it. */
+export const LOCKFILE_NAMES: ReadonlySet<string> = new Set([...LOCK_RULES.flatMap((r) => r.locks), "go.sum"]);
+export const LOCKFILE_RE = { test: (path: string): boolean => LOCKFILE_NAMES.has(path.slice(path.lastIndexOf("/") + 1)) };
+
 /** Yarn Berry (2+): .yarnrc.yml beside the lockfile or package.json packageManager yarn@>=2; anything else is Classic. */
 export function isYarnBerry(dir: string): boolean {
   if (existsSync(join(dir, ".yarnrc.yml"))) return true;
@@ -129,14 +133,16 @@ export function declaresPythonDep(repoDir: string, name: string): boolean { retu
 const OUTPUT_DIRS: { dir: string; sigs: string[] }[] = [ // a toolchain's build output dir; `sigs` are files the toolchain itself writes in it (cachedir.org tag, cargo's rustc info), so a user's own `target/` is never matched by name alone
   { dir: "target", sigs: ["CACHEDIR.TAG", ".rustc_info.json"] },
   { dir: ".venv", sigs: ["pyvenv.cfg"] }, { dir: ".gradle", sigs: [] }, { dir: "node_modules", sigs: [] }, { dir: "__pycache__", sigs: [] },
+  { dir: "*.egg-info", sigs: ["PKG-INFO"] }, // setuptools writes <name>.egg-info/PKG-INFO on `pip install -e .`
 ];
-/** Of the paths a run ADDED, those inside a toolchain's own build output (a signed cargo target/, .gradle, node_modules, __pycache__). An output dir that already holds any file tracked at the run's base commit is the user's: nothing in it is returned, and when the base cannot be read nothing is dropped. */
+const outDirIs = (d: { dir: string }, seg: string): boolean => (d.dir.startsWith("*") ? seg.endsWith(d.dir.slice(1)) && seg.length > d.dir.length - 1 : d.dir === seg); // "*.x" matches a name ending in .x
+/** Of the paths a run ADDED, those inside a toolchain's own build output (a signed cargo target/, .gradle, node_modules, __pycache__, a setuptools <name>.egg-info/). An output dir that already holds any file tracked at the run's base commit is the user's: nothing in it is returned, and when the base cannot be read nothing is dropped. */
 export function toolchainOutputs(repoDir: string, added: string[], baseSha?: string): Set<string> {
   const dirOf = new Map<string, string>(), tracked = new Map<string, boolean>(), out = new Set<string>();
   for (const f of added) {
     const parts = f.split("/");
     for (let i = 0; i < parts.length - 1; i++) {
-      const o = OUTPUT_DIRS.find((d) => d.dir === parts[i]); if (!o) continue;
+      const o = OUTPUT_DIRS.find((d) => outDirIs(d, parts[i]!)); if (!o) continue;
       const dir = parts.slice(0, i + 1).join("/");
       if (o.sigs.length === 0 || o.sigs.some((s) => existsSync(join(repoDir, dir, s)))) { dirOf.set(f, dir); break; }
     }
@@ -150,7 +156,7 @@ export function toolchainOutputs(repoDir: string, added: string[], baseSha?: str
 /** One scope note per output dir the commit left out, so the drop is disclosed in the receipt. */
 export function toolchainDropNotes(repoDir: string, dropped: string[], baseSha?: string): string[] {
   const n = new Map<string, number>();
-  for (const f of toolchainOutputs(repoDir, dropped, baseSha)) { const p = f.split("/"), i = p.findIndex((x) => OUTPUT_DIRS.some((d) => d.dir === x)), k = p.slice(0, i + 1).join("/"); n.set(k, (n.get(k) ?? 0) + 1); }
+  for (const f of toolchainOutputs(repoDir, dropped, baseSha)) { const p = f.split("/"), i = p.findIndex((x) => OUTPUT_DIRS.some((d) => outDirIs(d, x))), k = p.slice(0, i + 1).join("/"); n.set(k, (n.get(k) ?? 0) + 1); }
   return [...n].map(([d, c]) => `toolchain build output left out of the commit: ${d}/ (${c} file${c === 1 ? "" : "s"})`);
 }
 

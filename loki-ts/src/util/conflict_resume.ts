@@ -1,5 +1,6 @@
 // FC-19: a LOKI_SPEC_CONFLICT from implement gets exactly one resume with a correction before it is believed. No wording of the model's reason is
 // inspected (L0): the model itself says whether its conflict was only about Loki's own rules or about the task.
+import { isOff } from "../council/role_agents.ts";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -15,6 +16,7 @@ import { sealedWallCopy, sealedWallDir, WALL_FAILURE_TAIL_FILE } from "./check_r
 import { killedTailIndexes } from "./seal_drift.ts";
 import { vacuousCheck } from "../project_model/conventions.ts";
 import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
+import { editShapeBrief, editShapeSites } from "./edit_shape.ts";
 import { FINISH_LINE, taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
 import type { ReadOnlyFile } from "../engine10/stages/implement.ts";
 
@@ -55,7 +57,7 @@ export function answeredTask(task: string, events: readonly EventEnvelope[]): st
 
 export const CONFLICT_CORRECTION =
   "Loki imposes no file or test limits on you. If your conflict is only about Loki's own rules, finish the task. " +
-  "A test or suite that already fails on the base commit is not a conflict: a criterion that a suite passes means no failure beyond those already failing on base, so make your change and leave the base failures alone. " +
+  "A check (test, suite, typecheck or lint) that already fails on the base commit is not a conflict: a criterion that a check passes means no failure beyond those already failing on base, so make your change and leave the base failures alone. " +
   "If the task itself conflicts, restate the conflict. " +
   FINISH_LINE;
 
@@ -98,13 +100,24 @@ async function resumeWith(ctx: RunContext, first: SessionRunOptions, firstSessio
 export const resumeAfterEmptyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, challenge = false): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, challenge ? EMPTY_DONE_CHALLENGED : EMPTY_DONE_CORRECTION, "-e");
 export const resumeAfterAlreadyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, ALREADY_DONE_CHALLENGE, "-a");
 
-// LOKI_E10_COVERAGE_RESUME (default off): on the lean path (plan skipped) a LOKI_DONE exit with a non-empty diff gets exactly one more turn in the same session.
+// LOKI_E10_COVERAGE_RESUME (default on; =0/off/false opts out): on the lean path (plan skipped) a LOKI_DONE exit with a non-empty diff gets exactly one more turn in the same session.
 // The task text is already in that session, so the fixed brief names no task (cli-2478: the first turn fixed 2 of the 3 sites the issue named).
 export const COVERAGE_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. " + FINISH_LINE;
 // LOKI_E10_CLAIM_CHECK (default on, =0 opts out; only with LOKI_E10_COVERAGE_RESUME): the coverage turn also writes SITE lines, and a site claimed changed that is byte-identical to the base is re-asked once ("-c2"). One extra session, only when such a claim is found.
 export const claimCheckEnabled = (env = process.env): boolean => !["0", "off", "false", "no"].includes((env.LOKI_E10_CLAIM_CHECK ?? "").trim().toLowerCase());
 export const COVERAGE_CLAIM_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. Before the last line, write one line per site in the current file: `SITE <path>:<line>: changed` or `SITE <path>:<line>: unchanged - <why>`. " + FINISH_LINE;
-export const coverageResumeEnabled = (env = process.env): boolean => ["1", "on", "true"].includes((env.LOKI_E10_COVERAGE_RESUME ?? "").toLowerCase());
+export const coverageResumeEnabled = (env = process.env): boolean => !isOff(env.LOKI_E10_COVERAGE_RESUME);
+
+// LOKI_E10_SITE_HINTS (default on, =0/off/false opts out): the edit-shape sites (sibling, residual, precedence) of the tree's diff as advisory text in the fix brief and the coverage turn. Never a verdict.
+export const siteHintsEnabled = (env = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_SITE_HINTS ?? "").toLowerCase());
+export function siteHints(ctx: Pick<RunContext, "repoDir" | "baseSha">): string | null {
+  if (!siteHintsEnabled()) return null;
+  try {
+    const g = safeGitSpawn(ctx.repoDir, ["diff", "-U0", ctx.baseSha, "--", ".", ":(exclude).loki", ":(exclude).loki/**"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    if (g.status !== 0 || !g.stdout) return null;
+    return editShapeBrief(editShapeSites(g.stdout, (p) => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return null; } }));
+  } catch { return null; }
+}
 
 /** SITE lines the model wrote; only "changed" claims are checked. */
 export function siteClaims(text: string): { path: string; line: number }[] {
@@ -135,7 +148,7 @@ export async function resumeForCoverage(ctx: RunContext, first: SessionRunOption
   if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationId: first.iterationId, iterationIds: [] };
   const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
   const claims = claimCheckEnabled();
-  const r = await resumeWith(ctx, first, firstSession, claims ? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, "-c");
+  const hints = siteHints(ctx), base = claims ? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith(ctx, first, firstSession, hints ? `${base}\n\n${hints}` : base, "-c");
   if (!clean(r.session)) return { session: { ...firstSession, durationS: r.session.durationS }, iterationId: r.iterationId, iterationIds: [r.iterationId] };
   if (!claims) return { ...r, iterationIds: [r.iterationId] }; // knob off: exactly main's coverage turn
   const absent = claimedChangeAbsent(ctx.repoDir, ctx.baseSha, siteClaims(r.session.summary ?? ""));

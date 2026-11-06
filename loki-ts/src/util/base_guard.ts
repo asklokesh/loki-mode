@@ -16,6 +16,7 @@ import { safeGit } from "./safe_git.ts";
 import { addedManifestOk } from "./lock_ecosystems.ts";
 import { isTestFile } from "./test_file_text.ts";
 import { currentBranch } from "../e10ext/stop_restore.ts";
+import { escapeRegex } from "./regex_escape.ts";
 
 function git(repoDir: string, args: string[], timeout = 20000, extraEnv: Record<string, string> = {}): string | null {
   try {
@@ -325,8 +326,7 @@ export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx)
   for (let i = 0; i + 1 < c.rawDiff.length; i += 2) { const st = c.rawDiff[i]!.trim().split(" ").pop(); if (st === "A") added.add(c.rawDiff[i + 1]!); if (st === "A" || st === "M") changed.add(c.rawDiff[i + 1]!); }
   let wallText: string | null = null;
   const wall = (): string => wallText ??= c.wallPaths.map((w) => { for (const f of [sealedWallCopy(c.runDir, w), join(c.repoDir, w)]) try { return readFileSync(f, "utf8"); } catch { /* try next */ } return ""; }).join("\n");
-  const esc = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const named = (f: string): boolean => new RegExp(`${f.includes("/") ? `(?<![\\w./-])${esc(f)}(?![\\w-])|` : ""}[/"'\`]${esc(basename(f))}(?=["'\`\\s);]|$)`).test(wall());
+  const named = (f: string): boolean => new RegExp(`${f.includes("/") ? `(?<![\\w./-])${escapeRegex(f)}(?![\\w-])|` : ""}[/"'\`]${escapeRegex(basename(f))}(?=["'\`\\s);]|$)`).test(wall());
   const linkOk = (f: string): boolean => {
     try {
       const root = realpathSync(c.repoDir), t = realpathSync(join(c.repoDir, f)), rel = relative(root, t);
@@ -336,7 +336,7 @@ export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx)
   const capping: string[] = [], disclosed: string[] = [], extra: string[] = [];
   for (const n of notes) {
     const m = ADVISORY_PATH.exec(n), f = m?.[1] ?? m?.[2];
-    const ok = !!m && !!f && added.has(f) && c.wallPassedN && ((m[2] !== undefined && linkOk(f) && (c.planFiles.includes(f) || named(f))) || (m[1] !== undefined && addedManifestOk(f, c, wall(), esc, extra)));
+    const ok = !!m && !!f && added.has(f) && c.wallPassedN && ((m[2] !== undefined && linkOk(f) && (c.planFiles.includes(f) || named(f))) || (m[1] !== undefined && addedManifestOk(f, c, wall(), escapeRegex, extra)));
     (ok ? disclosed : capping).push(n);
   }
   return extra.length ? { capping, disclosed, extra } : { capping, disclosed };

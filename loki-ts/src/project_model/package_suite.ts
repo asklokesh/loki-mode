@@ -2,6 +2,7 @@
 // Each package that declares a test command runs it in its own directory. Returns false when the model is
 // absent or single-root, so the caller keeps its legacy per-runner path unchanged.
 // FC-BASELINE-PER-PACKAGE: fullSuiteSpecs is the one list of full-suite commands; verify runs it and the intake baseline records it.
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { harnessLoadReason } from "../runner/load_owner.ts";
 import { suiteEmptyOnBase } from "../runner/repo_profile.ts";
@@ -17,24 +18,52 @@ import { isMultiRoot, loadProjectApi } from "./resolve.ts";
 interface SuiteCheck { name: string; cmd: string; result: "pass" | "fail" | "not_run"; duration_s: number; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; first_error?: string; excerpt?: string; count?: string }
 
 /** One full-suite command: `name` and `cmd` are the check's own fields, `run` is what executes in the repo-relative `cwd`. */
-export interface SuiteSpec { name: string; cmd: string; cwd: string; run: string }
+export interface SuiteSpec { name: string; cmd: string; cwd: string; run: string; go?: string } // go: the plain `go test -json <pkgs>` a Go full suite is read and corroborated as (goMakeSuite)
 
-/** One spec per multi-root package with a test command; null when the model is absent, single-root or defines none. */
-export function packageSuiteSpecs(api: ProjectApi | null | undefined): SuiteSpec[] | null {
+/** One spec per multi-root package with a test command; null when the model is absent, single-root or defines none. With `repoDir`, a Go package whose test command is a plain `go test`, or a Makefile target that only runs one, runs as `go test -json` (goMakeSuite). */
+export function packageSuiteSpecs(api: ProjectApi | null | undefined, repoDir?: string): SuiteSpec[] | null {
   if (!isMultiRoot(api)) return null;
-  const specs = api.packages().filter((p) => p.commands.test).map((p) => { const tc = p.commands.test!; return { name: `full suite: ${p.name}`, cmd: `(cd ${tc.cwd} && ${tc.cmd})`, cwd: tc.cwd, run: tc.cmd }; });
+  const specs = api.packages().filter((p) => p.commands.test).map((p): SuiteSpec => { const tc = p.commands.test!, g = repoDir !== undefined ? goMakeSuite(repoDir, tc.cwd, tc.cmd) : null, line = g?.run ?? tc.cmd; return { name: `full suite: ${p.name}`, cmd: `(cd ${tc.cwd} && ${line})`, cwd: tc.cwd, run: line, ...(g ? { go: g.go } : {}) }; });
   return specs.length ? specs : null;
 }
+/** A Go module's (go.mod in `cwd`) full-suite command made countable WITHOUT changing what runs: plain go test output is never counted (GO_EXIT0_REASON), so a model command that is a plain
+ *  `go test ...` (what the model infers from go.mod) or `make <target>` over one plain `go test` recipe line (lefthook: `go test -cpu 24 -race -count=1 -timeout=30s ./...`) read not_run
+ *  on every run. A plain go test gets `-json` after `go test`, every flag kept. A make target still runs through make (exports, .ONESHELL, the recipe's own flags all apply), silent, with
+ *  GOFLAGS=-json appended to the caller's GOFLAGS, so go test emits its event stream. `go` is the plain `go test -json <pkgs>` the stream is read and corroborated as. null (the command
+ *  is kept, never counted) when make might run something else or the injection might change it: a GNUmakefile or lowercase makefile, an include, override, MAKEFLAGS, SHELL or any
+ *  GOFLAGS in the Makefile, a second rule or a prerequisite for the target, a recipe of more than one line, a shell operator or variable in it, or a recipe line that is not go test.
+ *  A red make stays red; a repeated -count or multi-value -cpu repeats run events, which read as doubt (not_run), never a pass. Review of #543 (C1-C3): the earlier rewrite dropped -race
+ *  and the Makefile's exports and read a red suite green. */
+export function goMakeSuite(repoDir: string, cwd: string, cmd: string): { run: string; go: string } | null {
+  const dir = join(repoDir, cwd); if (!existsSync(join(dir, "go.mod"))) return null;
+  const goLine = (line: string): string[] | null => { if (/[;&|`$()<>\\"'\n]/.test(line)) return null; const t = line.trim().split(/\s+/); return t[0] === "go" && t[1] === "test" ? t : null; };
+  const pkgsOf = (toks: string[]): string[] => { const out: string[] = []; for (let k = 2; k < toks.length; k++) { const t = toks[k]!; if (!t.startsWith("-")) { if (!/^-/.test(toks[k - 1] ?? "") || toks[k - 1]!.includes("=") || !GO_VALUED.has(toks[k - 1]!.replace(/^--?/, ""))) out.push(t); } } return out; };
+  const m = /^\s*make\s+([A-Za-z0-9_.-]+)\s*$/.exec(cmd);
+  if (!m) { const t = goLine(cmd); if (!t) return null; const p = pkgsOf(t); return { run: ["go", "test", ...(t.includes("-json") ? [] : ["-json"]), ...t.slice(2)].join(" "), go: ["go", "test", "-json", ...p].join(" ") }; }
+  let names: string[]; try { names = readdirSync(dir); } catch { return null; }
+  if (!names.includes("Makefile") || names.includes("GNUmakefile") || names.includes("makefile")) return null;
+  let text: string; try { text = readFileSync(join(dir, "Makefile"), "utf8"); } catch { return null; }
+  if (/^\s*(?:-?include|sinclude|override)\b|GOFLAGS|MAKEFLAGS|^\s*SHELL\s*[:?+!]?=|^\s*MAKEFILES\b/m.test(text)) return null;
+  const lines = text.split("\n"), target = m[1]!.replace(/[.]/g, "\\."), rule = new RegExp(`^(?:[^:#=\\s]+\\s+)*${target}(?:\\s+[^:#=\\s]+)*\\s*::?(?!=)(.*)$`);
+  const rules = lines.flatMap((l, i) => (rule.test(l) ? [i] : []));
+  if (rules.length !== 1 || /^[^:]*::/.test(lines[rules[0]!]!)) return null;
+  const at = rules[0]!; if ((rule.exec(lines[at]!)![1] ?? "").replace(/#.*/, "").trim() !== "") return null;
+  const recipe: string[] = [];
+  for (const l of lines.slice(at + 1)) { if (!l.startsWith("\t")) { if (l.trim() === "" || /^\s*#/.test(l)) continue; break; } const r = l.trim().replace(/^[@+-]+/, ""); if (r !== "" && !r.startsWith("#")) recipe.push(r); }
+  const t = recipe.length === 1 ? goLine(recipe[0]!) : null; if (!t) return null;
+  return { run: `make -s ${m[1]} GOFLAGS="\${GOFLAGS:+\$GOFLAGS }-json"`, go: ["go", "test", "-json", ...pkgsOf(t)].join(" ") };
+}
+const GO_VALUED = new Set(["cpu", "count", "timeout", "parallel", "p", "shuffle", "run", "skip", "tags", "exec", "o", "coverprofile", "covermode", "coverpkg", "bench", "benchtime", "list", "vet", "mod", "modfile", "overlay", "pkgdir", "asmflags", "gcflags", "ldflags", "toolexec", "trimpath", "fuzz", "fuzztime", "outputdir", "memprofile", "cpuprofile", "blockprofile", "mutexprofile", "trace"]); // go test flags that take the next token as their value
 
 /** The full-suite commands verify will run: per package from the model, else per detected runner. */
 export function fullSuiteSpecs(repoDir: string, runners: RunnerName[]): SuiteSpec[] {
-  return packageSuiteSpecs(loadProjectApi(repoDir)) ?? runners.map((r) => { const f = fullSuiteCmd(r, repoDir), c = [f.cmd, ...f.args].join(" "); return { name: `full suite: ${r}`, cmd: c, cwd: ".", run: [f.cmd, ...f.args].map(shellWord).join(" ") }; }); // run goes through bash -c: an absolute .venv interpreter under a spaced path must stay one word
+  return packageSuiteSpecs(loadProjectApi(repoDir), repoDir) ?? runners.map((r) => { const f = fullSuiteCmd(r, repoDir), c = [f.cmd, ...f.args].join(" "); return { name: `full suite: ${r}`, cmd: c, cwd: ".", run: [f.cmd, ...f.args].map(shellWord).join(" ") }; }); // run goes through bash -c: an absolute .venv interpreter under a spaced path must stay one word
 }
 
 /** FR05: the full-suite commands verify will run (fullSuiteSpecs, the one list) as repo-profile rows, for readiness and `loki doctor --repo` when the manifests name no test command. Never executed and never persisted, so the baseline, attribution and implementer brief are unchanged. A build tool that is not installed (no wrapper, no committed verify.test_command) is validated:false and names the tool. */
 export function verifyCommandRows(repoDir: string, tm: { runners: RunnerName[]; evidence?: Partial<Record<RunnerName, string>> }, env: NodeJS.ProcessEnv = process.env): ProfileCommand[] {
   try {
-    const multi = packageSuiteSpecs(loadProjectApi(repoDir)) !== null, own = repoTestCommand(repoDir) !== null;
+    const multi = packageSuiteSpecs(loadProjectApi(repoDir), repoDir) !== null, own = repoTestCommand(repoDir) !== null;
     return fullSuiteSpecs(repoDir, tm.runners).map((s, i) => {
       const r = multi ? undefined : tm.runners[i], t = r && !own && !toolOk(r, env, repoDir) ? STACK_TOOLS[r] : undefined;
       return { kind: "test", cmd: s.cmd, source: multi ? ".loki/project.json" : (r && tm.evidence?.[r]) || "test map", validated: t ? false : null, exit_code: null, duration_s: null, failing_ids: [], note: t ? `${t.tool} is not installed` : "verify runs this as the full suite", ...(t ? { fix: t.install } : {}) } as ProfileCommand;
@@ -72,18 +101,18 @@ export async function runPackageSuites(
   checks: SuiteCheck[],
   notProven: Set<string>,
 ): Promise<boolean> {
-  const api = loadProjectApi(repoDir), specs = packageSuiteSpecs(api);
+  const api = loadProjectApi(repoDir), specs = packageSuiteSpecs(api, repoDir);
   if (!api || !specs) return false;
-  for (const { name, cmd, cwd, run: line } of specs) {
+  for (const { name, cmd, cwd, run: line, go } of specs) {
     const started = Date.now();
     const r = await run(["bash", "-c", line], { cwd: join(repoDir, cwd), timeoutMs: opts.timeoutMs, env: suiteEnv(opts.path) });
     const duration_s = (Date.now() - started) / 1000;
     if (signal.aborted) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`not run: ${name} (aborted)`); continue; }
     // FC-16 C1 / FC-02: the same parser and load-error ownership as the legacy per-runner path, per package.
-    const out = stripAnsi(`${r.stdout}\n${r.stderr}`); // FC-FULLSUITE-ANSI-IDS
+    const out = stripAnsi(`${r.stdout}\n${r.stderr}`).replace(go ? /^make(?:\[\d+\])?: .*$/gm : /(?!)/, ""); // FC-FULLSUITE-ANSI-IDS; a make-wrapped Go suite (goMakeSuite) drops make's own lines so the go test -json stream reads whole
     const lr = r.exitCode === 0 || !opts.baseSha ? undefined : await harnessLoadReason({ repoDir, baseSha: opts.baseSha, ...(opts.skip ? { skip: opts.skip } : {}), out, cmd: "bash", args: ["-c", line], signal, cwd: join(repoDir, cwd), env: suiteEnv(opts.path) });
     if (lr) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`${lr} (${name}; harness-owned)`); continue; }
-    const cls = await corroboratePass(classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...goRunner(line), exitCoded: isExitCodedScript(line) }), out, line, undefined, { cwd: join(repoDir, cwd), env: suiteEnv(opts.path), signal }); // FC-FULL-SUITE-EXIT-CODED-SCRIPT
+    const cls = await corroboratePass(classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...(go ? { runner: "go" as const } : goRunner(line)), exitCoded: !go && isExitCodedScript(line) }), out, go ?? line, undefined, { cwd: join(repoDir, cwd), env: suiteEnv(opts.path), signal }); // FC-FULL-SUITE-EXIT-CODED-SCRIPT
     if (cls.result === "not_run" && r.exitCode === 0 && opts.targetPassed === true && suiteEmptyOnBase(repoDir, opts.baseSha, line, cmd, cls, out, cwd)) { notProven.add(`${NA_PREFIX}${name} (ran 0 tests on base and head; the Wall or a task-named check passed with executed tests)`); continue; } // a full suite that discovers nothing is a disclosed note, not a gate, once a target check proved the change
     checks.push({ name, cmd, result: cls.result, duration_s, ...(cls.count ? { count: cls.count } : {}), ...(cls.result === "fail" ? { ids: cls.count ? [exitCodedId(line, out, repoDir) ?? []].flat() as string[] : failIds(out), errors: Object.fromEntries(errorsById(out)), ...(unhandledBlock(out).length ? { unhandled: unhandledBlock(out) } : {}), first_error: firstError(out), excerpt: failureExcerpt(out, repoDir) } : {}) });
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);

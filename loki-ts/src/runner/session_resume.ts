@@ -98,9 +98,9 @@ export function writeSessionId(repoDir: string, iterationId: string, res: { sess
 /** MW-2: the new user turn of a resumed round; the session already holds the task, plan and earlier work. */
 export function holdoutNote(n: number): string[] { return n > 0 ? [`${n} hidden acceptance check${n === 1 ? "" : "s"} failed. Their content is withheld; re-read the task and make the behavior correct for inputs the visible tests do not cover.`] : []; } // C-C4b: the only form in which a held-out failure reaches a fix brief
 /** L006: a resumed session still remembers its own test edits, so the brief names the ones the harness restored. */
-export function buildFixResumeBrief(groups: { signature: string; count: number; sample: string }[], diffStat: string | null, priorDiagnosis: string | null, holdoutFailed = 0, reverted: string[] = []): string {
+export function buildFixResumeBrief(groups: { signature: string; count: number; sample: string }[], diffStat: string | null, priorDiagnosis: string | null, holdoutFailed = 0, reverted: string[] = [], hints: string | null = null): string {
   return ["The Fast verify run failed. Fix these grouped failures:", ...groups.map((g, i) => `${i + 1}. (${g.count}x) ${g.signature}\n   sample: ${g.sample}`), ...holdoutNote(holdoutFailed),
-    ...(reverted.length ? [`The harness restored your edits to these read-only test files after your last turn; they are back to their original content, so do not edit them again: ${[...new Set(reverted)].join(", ")}`] : []), `Diff so far:\n${diffStat ?? "(diff stat is not available)"}`, `Your previous diagnosis: ${priorDiagnosis ?? "(none was recorded)"}`].join("\n\n");
+    ...(reverted.length ? [`The harness restored your edits to these read-only test files after your last turn; they are back to their original content, so do not edit them again: ${[...new Set(reverted)].join(", ")}`] : []), ...(hints ? [hints] : []), `Diff so far:\n${diffStat ?? "(diff stat is not available)"}`, `Your previous diagnosis: ${priorDiagnosis ?? "(none was recorded)"}`].join("\n\n");
 }
 
 /** TEN-QUALITY-07: the live diff against the run base, computed fresh each fix round (no stage records one). Stat always; bounded hunks

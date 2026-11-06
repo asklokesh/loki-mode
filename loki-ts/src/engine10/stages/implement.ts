@@ -1,4 +1,5 @@
 // E-08: Implement (ENGINE.md 4, 16). One session; the brief marks Wall tests read-only, names only the impacted tests. Afterwards any changed Wall file is restored (tests_reverted) and the exit is classified.
+import { execSpecBriefOf } from "../../features/exec_spec.ts"; import { recoverTournamentUndo, runTournamentGate, tournamentEnabled } from "../../features/tournament.ts"; import { runNrdGate } from "../../features/no_regression.ts";
 import { installOwned } from "../../project_model/install.ts";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -9,7 +10,7 @@ import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
 import type { ExtraAttemptsDeps } from "../../features/attempts.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, checkExcerpt, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
-import { classifyExitCause, resolveModel } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
+import { capStopOf, classifyExitCause, resolveModel } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
 import { adjudicateWallConflict, coverageResumeEnabled, resumeAfterAlreadyDone, resumeAfterConflict, resumeAfterEmptyDone, resumeForCoverage } from "../../util/conflict_resume.ts";
 import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
@@ -136,6 +137,7 @@ export const implementStage: Stage = {
 
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     rmSync(join(ctx.repoDir, ".loki", "supply-declared.json"), { force: true }); // T10 B3: never judge this run by a stale declaration
+    try { recoverTournamentUndo(ctx.repoDir, ctx.runDir); } catch { /* an unreadable record is left for a person */ } // a displacement a kill cut short is undone before any session can write newer edits
     if (ctx.externalPatch) return applyExternalPatch(ctx, ctx.externalPatch);
     const prior = ctx.outputs();
     const task = (prior.intake?.task as string | undefined) ?? "";
@@ -157,7 +159,7 @@ export const implementStage: Stage = {
     const resumeId = ownId ?? (chain && "id" in chain ? chain.id : undefined);
     let planChainMode: string | undefined = ownId ? "resumed (interrupted session)" : chain ? (resumeId ? "resumed" : `fresh (${(chain as { why: string }).why})`) : undefined;
     let sessionResume: string | undefined = own ? (ownId ? "resumed" : `fresh (${(own as { why: string }).why})`) : undefined;
-    const fullBrief = buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec), prior.intake?.assumptions);
+    const fullBrief = buildImplementBrief(task, plan, impacted, repoMap, [specBriefBlock(spec), execSpecBriefOf(ctx.runDir)].filter(Boolean).join("\n\n") || null, prior.intake?.assumptions); // LOKI_E10_EXEC_SPEC: the binding and advisory spec cases the lean Wall stage left
     try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, ATTEMPT_BRIEF_FILE), fullBrief, "utf8"); } catch { /* best effort: without it the machine starts no extra attempt */ } // EXP-0010: the extra attempts after a red verify start from this exact brief
     const first: SessionRunOptions = {
       stage: "implement",
@@ -210,6 +212,8 @@ export const implementStage: Stage = {
 
     if (process.env.LOKI_E10_REPRO === "1" && !plan && !signal.aborted && !session.killed && session.exit === 0) { let bad: { name: string; why: string }[] = []; try { bad = outOfRepoTests(ctx.repoDir, changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); } catch { /* unreadable tree: no re-ask */ } if (bad.length) { const redo = `${first.iterationId}-oor`; ids.push(redo); session = await ctx.sessions.run({ ...unchained(), brief: withStagePrefix(outOfRepoReask("Rewrite these new test files in place, keeping the same names and what they reproduce.", bad)), iterationId: redo }); } } // TEN-QUALITY-44: the repro test gets the Wall's out-of-repo check and one re-ask
     const testsReverted = restoreReadOnly(readOnly);
+    const tournament = tournamentEnabled() && !plan ? await runTournamentGate(ctx, signal, session, attemptDeps(ctx, 0, "", 0)) : undefined; // after the Wall files are restored, so candidates are checked against the original Wall and tests; LOKI_E10_TOURNAMENT (Go, lean path, on by default but inert without an exec-spec probe block; =0 opts out): features/tournament.ts
+    const noRegression = !plan ? await runNrdGate(ctx, signal, session, readOnly.map((f) => relative(ctx.repoDir, f.path))) : null; // LOKI_E10_NRD (Go, lean path, default on, =0 opts out): features/no_regression.ts, after the tournament and the Wall restore; the first verify hands its finding to one fix round
     const iterationId = ids[ids.length - 1]!;
     // E-68 classifies exit codes; a non-killed, marker-less non-zero exit is an error, never "done".
     let exit: ImplementExit | "error";
@@ -236,11 +240,13 @@ export const implementStage: Stage = {
       cascade,
       ...(downgrade ? { model_downgrade: downgrade.note } : {}),
       iteration_ids: ids, model: rt ? rt.current : downgrade?.to ?? ctx.model, ...(rt ? { route_model: rt.current, route_escalations: rt.escalations } : {}), session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
-      duration_s: session.durationS, ...(session.exit === MAX_TURNS_EXIT && !session.killed ? { stop_cause: "max_turns", owner: "harness", limit_s: implementStage.limitS, elapsed_s: session.durationS } : {}),
+      duration_s: session.durationS, ...(session.exit === MAX_TURNS_EXIT && !session.killed ? { stop_cause: "max_turns", owner: "harness", limit_s: implementStage.limitS, elapsed_s: session.durationS, ...(capStopOf(session.summary) ? { session_cap: capStopOf(session.summary) } : {}) } : {}),
       ...(planChainMode ? { plan_chain: planChainMode } : {}),
       ...(sessionResume ? { session_resume: sessionResume } : {}),
       ...(coverage ? { coverage_resume: coverage } : {}), ...(claimAbsent ? { claim_absent: claimAbsent } : {}),
-      ...(patch ? { patch: { status: patch.status, calls: patch.calls, applied: patch.applied, refused: patch.refused, restored: patch.restored, usd: patch.usd, log: patch.log, ...(patch.check ? { check: patch.check } : {}) } } : {}),
+      ...(patch ? { patch: { status: patch.status, seconds: Math.round(patchS * 10) / 10, calls: patch.calls, applied: patch.applied, refused: patch.refused, restored: patch.restored, usd: patch.usd, log: patch.log, ...(patch.check ? { check: patch.check } : {}) } } : {}),
+      ...(tournament ? { tournament } : {}),
+      ...(noRegression ? { no_regression: noRegression } : {}),
       ...(fragmentWriterOn() && session.summary ? { summary_tail: session.summary.slice(-1500) } : {}), // the release-note writer reads the final message
     };
 

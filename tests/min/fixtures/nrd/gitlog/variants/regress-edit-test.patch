@@ -1,0 +1,36 @@
+diff -ru a/changelog/changelog.go b/changelog/changelog.go
+--- a/changelog/changelog.go
++++ b/changelog/changelog.go
+@@ -12,9 +12,9 @@
+ 	return []string{"git", "log", "--no-merges", "--pretty=format:" + format}
+ }
+ 
+-// CommitsCmd lists the commit subjects between two refs.
++// CommitsCmd lists the commit subjects between two refs, merge commits included.
+ func CommitsCmd(from, to string) []string {
+-	return append(logArgs("%s"), from+".."+to)
++	return []string{"git", "log", "--pretty=format:%s", from + ".." + to}
+ }
+ 
+ // AuthorsCmd lists the author of every commit between two refs, for the credits section.
+@@ -30,7 +30,7 @@
+ // Render formats commit subjects as a markdown list under a version heading.
+ func Render(version string, subjects []string) string {
+ 	var b strings.Builder
+-	fmt.Fprintf(&b, "## %s\n\n", version)
++	fmt.Fprintf(&b, "### %s\n\n", version)
+ 	for _, s := range subjects {
+ 		s = strings.TrimSpace(s)
+ 		if s == "" {
+diff -ru a/changelog/changelog_test.go b/changelog/changelog_test.go
+--- a/changelog/changelog_test.go
++++ b/changelog/changelog_test.go
+@@ -22,7 +22,7 @@
+ 
+ func TestRenderSkipsBlankSubjects(t *testing.T) {
+ 	got := Render("v1.1.0", []string{"Add export", "  ", "Fix crash on empty config"})
+-	want := "## v1.1.0\n\n- Add export\n- Fix crash on empty config\n"
++	want := "### v1.1.0\n\n- Add export\n- Fix crash on empty config\n"
+ 	if got != want {
+ 		t.Fatalf("Render = %q", got)
+ 	}

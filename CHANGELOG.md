@@ -5,6 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.137.0 (2026-11-05)
+
+Loki on Haiku now writes test cases from the issue before implement, checks wrapped-error relations, compares candidate fixes on Go, flags output changes nobody asked for, and turns its accuracy features on by default.
+
+### Added
+- Executable spec (on by default, LOKI_E10_EXEC_SPEC=0 off): before implement on a small Go, pytest or vitest task, one tool-less call writes test cases from the issue; a case defines done only when its input and expected value come whole from one issue example and it fails on the original code by assertion. A site the issue names as broken that no binding case covers and the change did not touch holds the run at PARTIAL.
+- Relation cases: when a Go issue asks for wrapped errors to be handled, the harness writes cases that require the wrapped value to behave like the bare one, using behavior recorded twice on the original code, with no message text recorded.
+- Go candidate tournament (on by default, LOKI_E10_TOURNAMENT=0 off): on a Go fix with a warning sign, up to three candidate patches are probed in scratch copies; the agent's source is replaced only when an input the issue quotes word for word separates them and the judge agrees in both orders. A probe never costs the run its spec.
+- No-regression differential (on by default, LOKI_E10_NRD=0 off): probes and replays of edited tests compare the original and changed code in scratch copies; an output change the issue never asked for gets one fix round, and an uncertain judgment is a receipt note only.
+- Systematic-edit completer (on by default, LOKI_E10_SYSEDIT=0 off): after a red check, a half-applied one-line rewrite pattern is finished with no model call and kept only when the failing check turns green and nothing new fails.
+- Fix rounds and the coverage turn list sibling and leftover sites of the change as advice (LOKI_E10_SITE_HINTS=0 off).
+- The receipt records the patch protocol's outcome, seconds and dollars.
+
+### Changed
+- On by default (=0 turns each off): the coverage turn, the leaner context pack, the defect-pin brief, and the release-note fragment writer, whose added file is named on the receipt and in the PR body.
+- On Haiku, fix rounds run at medium effort, dropping to low only for environment failures; a fix session stopped by a cap keeps its cost on the receipt, and a test-only repair counts as an edit.
+- The conflict correction for checks already red on the original code names tests, suites, typecheck and lint.
+
+### Fixed
+- Docker images build again: the server bundle no longer fails on "@anthropic-ai/sdk".
+- The config fence's records are held by the runner, Edit/Write/MultiEdit on .loki/ are denied in every stage, a config file the run created under a test directory stays editable, and code nouns no longer unlock config edits.
+- A multi-root Go full suite run through make is counted, with make run as written.
+- Install metadata (<name>.egg-info) no longer lands in the commit, and lockfile merge-conflict and reinstall tasks keep the lockfile.
+
 ## v11.136.0 (2026-11-05)
 
 Large red test suites are judged test by test, and an open either/or in a task is settled by the convention the sibling code already follows.

@@ -18,7 +18,17 @@
 import { inferenceGeoParam } from "../providers/model_routes.ts";
 import { assertStaticSchema } from "../council/finding_schema.ts";
 import { tmpdir } from "node:os";
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+// The SDK is loaded lazily inside try/catch: a bundle that reaches this module but never calls a model (the control
+// plane's server, built without loki-ts's node_modules) must still build, and bun leaves a try-wrapped dynamic import of
+// a package it cannot resolve as a runtime import. A missing SDK means no client, which every caller already handles.
+let _sdk: typeof Anthropic | null = null;
+async function loadSdk(): Promise<typeof Anthropic | null> {
+  if (_sdk) return _sdk;
+  try { _sdk = (await import("@anthropic-ai/sdk")).default; } catch { _sdk = null; }
+  return _sdk;
+}
+void loadSdk(); // eager, as the static import was: sync callers (sdkJudgeAvailable) see a client once the module settles
 import { estimateTokens } from "../providers/price_table.ts";
 import { appendChildLedger, type LedgerRecord, recordFromClaudeResult, recordFromUsage, sumChildLedger, unmeasuredRecord } from "../util/child_ledger.ts";
 import { parseCapUsd } from "../e10ext/budget_cap.ts";
@@ -181,7 +191,7 @@ function client(): Anthropic | null {
       // timeout-retries under the OS-level ceiling the bash caller wraps us in.
       // One retry tolerates a transient blip without letting worst-case latency
       // balloon (council review, security-arch lens).
-      _client = new Anthropic({ apiKey: key, maxRetries: 1 });
+      _client = _sdk ? new _sdk({ apiKey: key, maxRetries: 1 }) : null;
     } catch {
       _client = null;
     }
@@ -198,7 +208,8 @@ function client(): Anthropic | null {
     const token = readFreshOauthToken();
     if (!token) return null;
     try {
-      return new Anthropic({
+      if (!_sdk) return null;
+      return new _sdk({
         authToken: token,
         maxRetries: 1,
         // The Messages API requires this beta header to accept a claude.ai OAuth
@@ -347,6 +358,7 @@ function classifyStop(msg: Anthropic.Message): JudgeOutcome<string> {
 //   refused   -> ONE retry with server-side fallback (eligible models only)
 // Anything else is returned as its named outcome. Never throws.
 async function runJudge(params: JudgeParams | TextParams, schema: Record<string, unknown> | null): Promise<JudgeOutcome<string>> {
+  await loadSdk();
   const c = client();
   if (!c) return { kind: "transport" };
   const { prompt, model, effort, timeoutMs = 120_000, system } = params;
@@ -539,6 +551,7 @@ export async function toolLessCall(p: ToolLessParams): Promise<ToolLessResult> {
   const lokiDir = p.ledger?.lokiDir ?? process.env["LOKI_DIR"];
   const ledger = lokiDir ? { lokiDir, phase: p.ledger?.phase ?? "toolless" } : undefined;
   const remaining = toolLessRemainingUsd(process.env, lokiDir);
+  await loadSdk();
   if (remaining !== null && remaining <= 0) return { outcome: { kind: "budget" }, route: client() ? "api" : "agent-sdk", usd: null, thinkingTokens: null };
   if (client() === null) return toolLessViaAgentSdk(p, ledger, remaining);
   const { thinking, effort } = toolLessThinking(p.thinking);

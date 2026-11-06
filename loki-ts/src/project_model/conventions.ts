@@ -1,5 +1,6 @@
 // FC-23 (L0): a package's module system, read with a parser from the JSON its own directory declares (JSONC comments and trailing commas,
 // relative "extends"), by key and never by file name. null when the package declares nothing.
+import { isOff } from "../council/role_agents.ts";
 import { safeGitSpawn } from "../util/safe_git.ts";
 import { isTestFile } from "../util/test_file_text.ts";
 import { symbolSpans } from "../util/context_pack.ts";
@@ -7,6 +8,9 @@ import { loadProjectApi, siteFor } from "./resolve.ts";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { escapeRegex } from "../util/regex_escape.ts";
+import { isGeneratedSource } from "../util/check_result.ts";
+import { isVendoredOrGenerated } from "./linguist.ts";
 
 export interface PackageConventions {
   moduleSystem: "commonjs" | "esm";
@@ -174,8 +178,10 @@ function repoTool(repoDir: string, name: string, rel: string[]): string | null {
 const sentence = (t: string, example: string): string => (/[.!?]\s*$/.test(example) || example === "" ? `${t.replace(/[.!?]+$/, "")}.` : t.replace(/[.!?]+$/, ""));
 const FEAT = /^(?:feat|feature|add|adds|added|support|allow|introduce|implement)\b/i, FIX = /^(?:fix|fixes|fixed|bug|resolve|correct|handle|prevent|stop|avoid|repair)\b|\b(?:crash|error|regress|incorrect|wrong|broken|fails?)\b/i;
 
-/** LOKI_E10_SCAFFOLD gates the fragment writer; the default is set by the measured false-write count (see the PR body). */
-export const fragmentWriterOn = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_SCAFFOLD === "1";
+/** LOKI_E10_SCAFFOLD gates the fragment writer. On by default; =0 opts out. */
+export const fragmentWriterOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_SCAFFOLD);
+/** The one line the receipt and the PR body carry whenever the writer added a fragment, so the write is never silent. */
+export const fragmentNoticeLine = (path: string): string => `Loki added ${path} as the release note for this change; delete it if this change needs no release note (LOKI_E10_SCAFFOLD=0 turns this off).`;
 
 /** The towncrier types a repo declares ([[tool.towncrier.type]] directory keys), else towncrier's defaults. */
 function towncrierTypes(repoDir: string): string[] {
@@ -196,17 +202,25 @@ function towncrierExample(repoDir: string, dir: string): string | null {
 }
 
 export type FragmentOutcome = { path: string; kind: string; body: string; validated: "ok" | "unavailable" } | { skipped: string };
+/** Which changed files count as code for a fragment: a file that exists at `ref` (the run base, else HEAD) always counts, being a tracked change; a file the run created counts
+ *  only when it is not git-ignored and not generated (generated marker or path, or linguist vendored/generated). Untracked generated output never triggers a fragment. */
+export function runCode(repoDir: string, files: string[], ref = "HEAD"): string[] {
+  const tracked = (f: string): boolean => safeGitSpawn(repoDir, ["cat-file", "-e", `${ref}:${f}`], { timeout: 5000 }).status === 0;
+  const ignored = (f: string): boolean => safeGitSpawn(repoDir, ["check-ignore", "-q", "--", f], { timeout: 5000 }).status === 0;
+  const head = (f: string): string => { try { return readFileSync(join(repoDir, f), "utf8").slice(0, 4096); } catch { return ""; } };
+  return files.filter((f) => tracked(f) || (!ignored(f) && !isGeneratedSource(f, head(f)) && !isVendoredOrGenerated(f, {}, head(f))));
+}
 /** Writes the release-note fragment the repo's own convention asks for, when the run's diff has none. `files` are the repo-relative paths the run changed
  *  (changedFiles); `summary` is the tail of the implement session's final message. Writes only for a convention this function can follow exactly
  *  (changesets, towncrier) and only from a real example or config; every other case returns the reason it did not. A fragment the repo's own tool rejects is removed again. */
-export function writeReleaseNoteFragment(repoDir: string, files: string[], task: string, summary = "", opts: { tools?: boolean } = {}): FragmentOutcome {
+export function writeReleaseNoteFragment(repoDir: string, files: string[], task: string, summary = "", opts: { tools?: boolean; base?: string } = {}): FragmentOutcome {
   const conv = releaseNoteConvention(repoDir);
   if (!conv) return { skipped: "the repo has no release-note convention" };
   if (conv.kind !== "changeset" && conv.kind !== "towncrier") return { skipped: `the ${conv.kind} convention is not written automatically` };
   if (taskForbidsReleaseNote(task)) return { skipped: "the task says no release note" };
   const live = files.filter((f) => existsSync(join(repoDir, f)));
   if (live.some((f) => f.startsWith(`${conv.dir}/`) && !/readme|config\.json$|\.toml$/i.test(basename(f)))) return { skipped: "the change already carries a fragment" };
-  const code = live.filter((f) => FRAGMENT_CODE.test(f) && !isTestFile(f) && !f.startsWith(`${conv.dir}/`));
+  const code = runCode(repoDir, live, opts.base).filter((f) => FRAGMENT_CODE.test(f) && !isTestFile(f) && !f.startsWith(`${conv.dir}/`));
   if (code.length === 0) return { skipped: "no non-test code changed" };
   const example = conv.kind === "towncrier" ? towncrierExample(repoDir, conv.dir) : conv.example;
   const raw = fragmentTitle(task);
@@ -528,7 +542,7 @@ export function misplacedNamedNotes(task: string, rawDiff: string[], repoDir: st
 }
 /** Whether the task names the directory as a home for the file: a path with a slash (`tests/`, `cmd/server`) or a phrase such as "in/under/inside the X directory". The bare words tests, test and spec never count, and neither does a mention that says the tests live there ("put the tests in tests/"): that is the home of the tests, not of the named file. */
 const taskNamesDir = (task: string, dir: string): boolean => {
-  const d = dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const d = escapeRegex(dir);
   return [...task.matchAll(new RegExp(`(?<![\\w.-])${d}/|\\b(?:in|into|under|inside|within)\\s+(?:the\\s+)?[\`"']?${d}/?[\`"']?\\s+(?:directory|dir|folder)\\b`, "g"))].some((m) => !/\b(?:tests?|specs?)\b[^.;\n]{0,30}\b(?:in|into|under|inside|to|at|within)\s+(?:the\s+)?$/i.test(task.slice(0, m.index!) + (/^(?:in|into|under|inside|within)\b/.test(m[0]) ? `${/^\w+/.exec(m[0])![0]} ` : "")));
 };
 
@@ -576,7 +590,7 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
     return { reports, created };
   };
   const runs = [...new Set([pkg, repoDir])].map(scan);
-  const planned = (rel: string): boolean => !!planText && rel.split("/").some((_, i, a) => { const pre = a.slice(0, i + 1).join("/"); return (i > 0 || a.length === 1) && !existsSync(join(repoDir, pre)) && new RegExp(`(?<![\\w-])${pre.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(planText); }); // only a path named with its parent (plugins/ralph-loop) is planned, never a bare segment or basename
+  const planned = (rel: string): boolean => !!planText && rel.split("/").some((_, i, a) => { const pre = a.slice(0, i + 1).join("/"); return (i > 0 || a.length === 1) && !existsSync(join(repoDir, pre)) && new RegExp(`(?<![\\w-])${escapeRegex(pre)}(?![\\w-])`).test(planText); }); // only a path named with its parent (plugins/ralph-loop) is planned, never a bare segment or basename
   const phantom = (r: { out: string; rel: string; tail?: string }, created: string[]): boolean => {
     const rel = r.rel; if (!rel || rel.startsWith("..") || isAbsolute(rel) || /(^|\/)(\.git|\.loki|dist|build|coverage|tmp)(\/|$)/.test(rel) || existsSync(r.out) || planned(rel) || named.has(rel)) return false; // a task-named file at its named repo path is the implementer's to create
     if (r.tail) { const seen = (from: string): boolean => { let d = from; for (let i = 0; i < 64; i++) { if (existsSync(join(d, r.tail!))) return true; if (d === repoDir || d === dirname(d)) return false; d = dirname(d); } return false; }; if ([testDir, pkg, repoDir].some(seen)) return false; } // a walk-up path found at any directory the walk passes (test dir or package root, up to the repo root) is real

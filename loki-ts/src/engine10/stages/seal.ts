@@ -1,5 +1,6 @@
 // E-10: commit and Seal (docs/v10/ENGINE.md sections 4, 9). Writes receipt.json and receipt.md, computes receipt_sha256, and signs natively with node:crypto Ed25519 (A-121; no python, no
 // `cryptography`). The key is the A-120 local key, created on first use. An empty token means UNSIGNED, never presented as attested.
+import { isOff } from "../../council/role_agents.ts";
 import { capFenceVerdict, fenceNotes, readFenceRecord } from "../../util/config_fence.ts";
 import { sanitizeReason } from "../../util/redact.ts";
 import { specReceiptBlock } from "../../util/spec_file.ts"; import { triageReceiptBlock } from "../../features/triage.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock, sealAccuracyBlock } from "../../util/run_outputs.ts"; import { contextCoverageBlock } from "../../util/context_pack.ts";
@@ -15,7 +16,7 @@ import { flagOutsideScope } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts"; import { getVersion } from "../../version.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
-import { isTestFile } from "../testmap.ts";
+import { isTestFile } from "../testmap.ts"; import { EXEC_SPEC_TELEMETRY_FILE } from "../../features/exec_spec.ts";
 import { crossReview, minVerdict, modelReviewRan, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
 import { STAGE_BUDGETS, type RunnerName, type Obj, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type Verdict } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
@@ -29,8 +30,10 @@ import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
 import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts";
 import { atomicWriteText } from "../../util/atomic.ts";
+import { patchReceipt } from "../../features/patch_protocol.ts";
 import { collapseNotProven } from "../../util/term_width.ts";
-import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, splitDeclaredAdvisories } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { misplacedNamedNotes } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
+import { tournamentReceiptBlock } from "../../features/tournament.ts"; import { nrdReceiptBlock } from "../../features/no_regression.ts";
+import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, splitDeclaredAdvisories } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { fragmentNoticeLine, misplacedNamedNotes } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
 const SYSTEM_INTERP = "tests ran on the system interpreter", SYSTEM_INTERP_SUFFIX = " (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)"; // verify.ts writes the note
 
 export const SIGNING_UNAVAILABLE = "receipt signing unavailable (no usable signing key: invalid key or unwritable ~/.loki/keys)", AGENT_ONLY_REASON = "only agent-authored tests executed (no agent-independent proof)", WALL_GREEN_ON_BASE_REASON = "Wall green on base: no Wall test discriminates the change"; // TEN-GATES-02
@@ -64,6 +67,25 @@ async function failThenPass(ctx: RunContext, vraw: Obj[], pctx: ProvenanceCtx, h
   return { ok: failed.some((f) => !rewritten.has(f)), line: failed.length > 0 ? `${mp.line} (${failed.join(", ")})` : mp.line, files: failed }; // E4: a test file whose pinned assertion was rewritten fails on the base, which shows the pin was real, but it is never the proof itself
 }
 export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these added public functions";
+/** The receipt's exec_spec block from <runDir>/exec-spec.json (features/exec_spec.ts): the stage's seconds and its generator session's dollars, so a scored run can weigh what the spec cost. */
+function execSpecBlock(ctx: RunContext): { exec_spec?: { status: string; seconds: number; binding: number; usd: number | null } } {
+  let t: Obj; try { t = JSON.parse(readFileSync(join(ctx.runDir, EXEC_SPEC_TELEMETRY_FILE), "utf8")) as Obj; } catch { return {}; }
+  const id = str(t.iteration_id), c = id ? ctx.cost.read(ctx.repoDir, [id]) : null; // a session generator is read by its iteration id; toolLessCall priced its own call
+  const usd = typeof t.usd === "number" ? t.usd : c && !c.unmetered && (c.measuredCount ?? 1) > 0 ? c.usd : null;
+  return { exec_spec: { status: String(t.status ?? ""), seconds: typeof t.seconds === "number" ? t.seconds : 0, binding: typeof t.binding === "number" ? t.binding : 0, usd } };
+}
+export const SPEC_SITE_UNCOVERED = "named site without a binding case (no agent-independent passing test names it)";
+/** Exec spec (features/exec_spec.ts): a sealed spec proves only the sites its binding cases name. A site caps the run below VERIFIED only when
+ *  all hold: the spec sealed a binding case; the issue names the site in a defect or request sentence (capSites; a passing mention never
+ *  caps); the diff did not touch it (`changed`); and no passing test that is neither agent-authored nor the spec file names it. So fixing one
+ *  defective site while another stays untouched never reads VERIFIED on the spec alone. */
+export function specSiteGap(o: Partial<Record<StageName, Obj>>, vraw: Obj[], pctx: ProvenanceCtx, read: (p: string) => string, changed: string[]): string[] {
+  const es = (o.wall?.exec_spec ?? {}) as Obj, touched = new Set(changed), sites = es.status === "sealed" ? strs(es.uncovered_sites).filter((x) => !touched.has(x)) : [];
+  if (sites.length === 0) return [];
+  const wall = new Set(((o.wall?.files as { path: string }[] | undefined) ?? []).map((f) => String(f.path)));
+  const sources = vraw.filter((c) => isExecutedProof(c as { result?: unknown; n?: unknown }) && checkProvenance(String(c.name ?? ""), pctx) !== "agent_authored").map((c) => { const n = String(c.name ?? ""); return n.includes(":") && !n.startsWith("full suite:") ? n.slice(n.indexOf(":") + 1) : null; }).filter((p): p is string => p !== null && isTestFile(p) && ![...wall].some((w) => w === p || w.endsWith(`/${p}`))).map(read);
+  return symbolGap(sites, sources);
+}
 /** The two symbol rules, from one read of the diff and the passing checks.
  *  lean (FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL): with no Wall file that ran, the changed code is exercised only if a passing test source names a symbol the diff declares or modifies; the unreferenced symbols, or [].
  *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file), Tests the implementer wrote or edited never clear it. Off by default; LOKI_E10_PUBLIC_GAP=1 turns it on.
@@ -200,6 +222,8 @@ export function renderReceiptMd(r: Receipt): string {
     `- Provider: ${r.provider} (${r.model})  Cost: ${usd}  Wall: ${r.time.wall_s}s (stages)  Total to seal: ${hooks.time?.reconciled(r.time) ?? "NOT RECORDED"}${(hooks.time?.reconciled(r.time) ?? null) === null ? "" : "s"}`,
     ...(r.cost.tokens_measured ? [`- Tokens: partial: ${r.cost.input_tokens} input / ${r.cost.output_tokens} output for ${r.cost.tokens_measured.k} of ${r.cost.tokens_measured.n} sessions`] : []),
     ...(r.mutation_proof ? [`- ${r.mutation_proof}`] : []),
+    ...(r.tournament?.length ? ["", "### Candidate tournament", ...r.tournament.map((l) => `- ${sanitizeReason(l)}`)] : []),
+    ...(r.no_regression?.length ? ["", "### No-regression differential", ...r.no_regression.map((l) => `- ${sanitizeReason(l)}`)] : []),
     ...(r.route ? routeReceiptLines(r.route) : []), // R1-15: only when the router is on
     "",
     ...(r.checks.some((c) => c.provenance !== undefined) ? [...sec("### Agent-independent checks", r.checks.filter(indep)), "", ...sec("### Agent-authored / advisory checks", r.checks.filter((c) => !indep(c)))] : sec("### Checks", r.checks)),
@@ -211,6 +235,8 @@ export function renderReceiptMd(r: Receipt): string {
   ].join("\n");
 }
 
+/** E5: the harness session stops (implement, then each fix round) for the receipt. */
+export const sessionCaps = (o: Partial<Record<string, Obj>>): string[] => [...(typeof o.implement?.session_cap === "string" ? [`implement: ${o.implement.session_cap}`] : []), ...strs(o.fix?.session_caps)];
 export const sealStage: Stage = {
   name: "seal",
   ...STAGE_BUDGETS.seal,
@@ -248,12 +274,13 @@ export const sealStage: Stage = {
     const pinFiles = new Set(pinEdits.map((e) => e.file));
     let ftpMemo: Promise<{ ok: boolean; line: string; files: string[] }> | null = null; const ftp = (): Promise<{ ok: boolean; line: string; files: string[] }> => (ftpMemo ??= codeSymbols(ctx, rawDiff, head).then((cs) => failThenPass(ctx, vraw, pctx, head, cs, loadTaskText(ctx, str(o.intake?.task) ?? undefined), pinFiles)));
     const exoProof = hasExogenousProof(vraw, pctx), proof = !strictProof ? executed : !noWall ? exoProof : exoProof || (ftpGate && (await ftp()).ok); // FC-16: executed n>0 pass from verify's raw checks (a Wall green on base proves only a claim, inside verdictOf); TEN-GATES-02 (D104): that pass must be agent-independent (LOKI_EXOGENOUS_PROOF=0 opts out)
-    const pinLift = process.env["LOKI_E10_DEFECT_PIN"] === "1"; // the cap lift is a verdict change, unmeasured: off unless the switch is on; the receipt note is always on
+    const pinLift = !isOff(process.env["LOKI_E10_DEFECT_PIN"]); // on by default, =0 opts out: lifts the cap only for the exact pinned file:line of a pure value replacement; the rewritten file never counts as proof and the receipt note is always on
     const pinDropped = pinDroppedNotes(verifyNotProven, pinEdits, pinLift);
     const uncoveredAfterLimit = o.implement?.exit === "killed" ? strs(o.verify?.uncovered_changed) : []; // FC-21b: changed code no passing impacted check covered; limit path only
     const { lean: leanGap, pub: pubGap } = diffOk ? await symbolGaps(ctx, o, rawDiff, head, vraw, strictProof && noWall ? { pctx, ftp: async () => ftpGate && (await ftp()).ok } : null) : { lean: [], pub: [] }; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL; HONEST-VERIFIED-2
+    const specGap = strs(((o.wall?.exec_spec ?? {}) as Obj).uncovered_sites).length && diffOk ? specSiteGap(o, vraw, pctx, (p) => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return ""; } }, (await codeSymbols(ctx, rawDiff, head)).all) : []; // exec spec: a defective named site no binding case covers and the diff left alone
     const wpAll = publishableWall(ctx.repoDir, ctx.runDir, o, process.env, loadTaskText(ctx, str(o.intake?.task) ?? undefined)); // pure read of the sealed copies; publishing still happens only on VERIFIED
-    const verdict0 = capGroupVerdict(verdictOf(o, live, !diffOk || diff.stdout === "", capVerify.some((n) => !pinDropped.has(n)) || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap], wpAll.notes, wpAll.clauseGap), grp);
+    const verdict0 = capGroupVerdict(verdictOf(o, live, !diffOk || diff.stdout === "", capVerify.some((n) => !pinDropped.has(n)) || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp);
 
     // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
     const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.repoDir), process.env);
@@ -272,12 +299,14 @@ export const sealStage: Stage = {
     for (const rel of reprovedBad) notProven.add(`Wall test fails at its committed path: ${rel}`);
     if (reprovedBad.length > 0 && !wallDone) { await g(ctx)(["update-ref", "HEAD", "HEAD^"]); await g(ctx)(["read-tree", "HEAD"]); } // drop the child: nothing unproven is published
     const wallPub = wallPub0 && reprovedBad.length === 0, verdict: Verdict = reprovedBad.length > 0 ? "PARTIAL" : verdict3;
+    { const sx = o.implement?.sysedit as Obj | undefined, sites = (Array.isArray(sx?.rewrites) ? (sx!.rewrites as Obj[]) : []).map((r) => `${String(r.file)}:${String(r.line)}`); if (sites.length) notProven.add(`completed by rule, no model (LOKI_E10_SYSEDIT; a failing check now passes): ${sites.join(", ")}`); } // a disclosure of lines the run did not write itself, never an input to the verdict
     if (verdict === "VERIFIED") for (const n of wpAll.weak) notProven.add(n); // WALL-ASSERT-STRENGTH: a disclosure on the final VERIFIED verdict only, never an input to it
     if (wallGreenOnBase && verdict === "PARTIAL" && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done") notProven.add(WALL_GREEN_ON_BASE_REASON);
     if (!proof && !(wallGreenOnBase && verdict === "ALREADY_SATISFIED") && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = vraw; notProven.add(executed ? AGENT_ONLY_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
     if (ftpRes && !ftpRes.ok && verdict === "PARTIAL") notProven.add(`${NO_FAIL_THEN_PASS}${ftpRes.line ? `: ${ftpRes.line}` : ""}`); // only when the harness actually ran it and nothing discriminated
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
     for (const n of strs(o.wall?.not_proven)) notProven.add(n);
+    for (const n of strs(o.fix?.not_proven)) notProven.add(n); // E5: a fix session the harness stopped
     if (typeof o.verify?.wall_failure_tail === "string" && o.verify.wall_passed === false) { const tailFile = basename(o.verify.wall_failure_tail), rel = relative(ctx.repoDir, join(ctx.runDir, tailFile)); notProven.add(`Wall failure output kept: ${rel.startsWith("..") || isAbsolute(rel) ? `.loki/runs/${ctx.runId}/${tailFile}` : rel}`); } // WALL-FAILOUT: names the file only, repo-relative (this line reaches the public PR body); the verdict is already decided
     for (const x of Array.isArray(o.wall?.arbitrated) ? (o.wall!.arbitrated as Obj[]) : []) notProven.add(`Wall assertion arbitrated (${x.kind === "legacy" ? "legacy re-author, no referees, no validation" : "spec clause, two referees"}): ${String(x.check)} test ${String(x.test)}: old assertion ${JSON.stringify(x.old_assertion)} replaced by ${JSON.stringify(x.new_assertion)}; spec quote ${JSON.stringify(x.spec_quote)}${arbCap ? "; verdict capped at PARTIAL" : ""}`); // listed here and capped at PARTIAL above (verdict3): a replacement test body is validated syntactically, not per-test against the base // TEN-COST-09: a skipped Wall is disclosed, never read as passed
     for (const d of Array.isArray(o.wall?.discarded) ? (o.wall!.discarded as Obj[]) : []) notProven.add(`wall test discarded: ${String(d.file)} (${String(d.reason)})`); // FC-23
@@ -311,9 +340,11 @@ export const sealStage: Stage = {
     for (const n of strs(o.verify?.not_excused)) notProven.add(n); // why a failing full-suite check was not excused as pre-existing; the check already blocks, this only names the rule
     if (leanGap.length > 0) notProven.add(`${LEAN_NO_SYMBOL}: ${leanGap.join(", ")}`);
     if (pubGap.length > 0) notProven.add(`${UNEXERCISED_PUBLIC}: ${pubGap.join(", ")}`);
+    if (specGap.length > 0) notProven.add(`${SPEC_SITE_UNCOVERED}: ${specGap.join(", ")}`);
     if (externalRun(o) && !(Array.isArray(o.wall?.files) && o.wall.files.length > 0)) notProven.add(EXTERNAL_NO_WALL); // FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED
     if (externalRun(o)) notProven.add(EXTERNAL_DIFF_NOT_ISOLATED); // CW-12 B2: the Wall author runs on disk beside the external diff until cw01 confinement covers it
     for (const t of strs(o.implement?.tests_reverted)) notProven.add(`reverted test edit: ${t}`);
+    { const sc = o.implement?.scaffold as { path?: unknown } | undefined; if (typeof sc?.path === "string") notProven.add(fragmentNoticeLine(sc.path)); } // L3 fragment writer: a disclosure, never a verdict input
     if (ctx.provider !== "claude") notProven.add("kill blocking not enforced");
     // Section 7: model_override_applied lives on run.started, which outputs() never carries.
     if (process.env["LOKI_MODEL_OVERRIDE"]?.trim() && ctx.provider !== "claude") notProven.add("model override not applied");
@@ -355,11 +386,12 @@ export const sealStage: Stage = {
       wall: { files: wallFiles.map((f) => ({ path: String(f.path), sha256: String(f.sha256) })), passed: wallPassed, ...(typeof o.wall?.manifest_sha256 === "string" && /^[0-9a-f]{64}$/.test(o.wall.manifest_sha256) ? { manifest_sha256: o.wall.manifest_sha256 } : {}) },
       checks,
       not_proven: [],
-      verdict, ...(typeof o.implement?.limit_s === "number" ? { implement_limit: { limit_s: o.implement.limit_s, elapsed_s: typeof o.implement.elapsed_s === "number" ? o.implement.elapsed_s : 0, ...(o.implement.stop_cause === "max_turns" ? { stop_cause: "max_turns" as const, owner: "harness" as const } : {}) } } : {}), ...(grp.section ? { group: grp.section } : {}), ...(ctx.failovers && ctx.failovers().length > 0 ? { failover: ctx.failovers() } : {}),
+      verdict, ...(patchReceipt(o.implement?.patch) ? { patch: patchReceipt(o.implement?.patch)! } : {}), ...(sessionCaps(o).length ? { session_caps: sessionCaps(o) } : {}), ...(typeof o.implement?.limit_s === "number" ? { implement_limit: { limit_s: o.implement.limit_s, elapsed_s: typeof o.implement.elapsed_s === "number" ? o.implement.elapsed_s : 0, ...(o.implement.stop_cause === "max_turns" ? { stop_cause: "max_turns" as const, owner: "harness" as const } : {}) } } : {}), ...(grp.section ? { group: grp.section } : {}), ...(ctx.failovers && ctx.failovers().length > 0 ? { failover: ctx.failovers() } : {}),
       ...(str(o.implement?.spec_conflict_reason) !== null
         ? { spec_conflict_reason: sanitizeReason(str(o.implement?.spec_conflict_reason)!) }
         : {}),
       evidence: strs(o.intake?.evidence), ...(strs(o.intake?.assumptions).length > 0 ? { assumptions: strs(o.intake?.assumptions) } : {}),...(o.intake?.preexisting_dirty ? { pre_existing_dirty: Object.keys(o.intake.preexisting_dirty as object) } : {}),
+      ...execSpecBlock(ctx),
       cost: {
         usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens,
         ...(cost.tokensMeasured && cost.tokensMeasured.k < cost.tokensMeasured.n ? { tokens_measured: cost.tokensMeasured } : {}),
@@ -381,7 +413,7 @@ export const sealStage: Stage = {
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
-      ...specReceiptBlock(process.env), ...triageReceiptBlock(o.intake), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(), ...sealAccuracyBlock(rawDiff.filter((_, i) => i % 2 === 1), checks, ctx.model), ...contextCoverageBlock(o.implement, rawDiff, ctx.repoDir), // GAME10-03; L022 context recall and precision
+      ...specReceiptBlock(process.env), ...triageReceiptBlock(o.intake), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(), ...sealAccuracyBlock(rawDiff.filter((_, i) => i % 2 === 1), checks, ctx.model), ...contextCoverageBlock(o.implement, rawDiff, ctx.repoDir), ...tournamentReceiptBlock(o.implement), ...nrdReceiptBlock(o.implement), // GAME10-03; L022 context recall and precision
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only

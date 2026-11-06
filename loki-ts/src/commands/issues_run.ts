@@ -24,6 +24,7 @@ import { resolveModel } from "../engine10/session.ts";
 import { resolveRunProvider } from "../runner/state.ts";
 import { deliverables } from "../features/decompose.ts";
 import { providerSlots } from "../features/speed/route.ts";
+import { escapeRegex } from "../util/regex_escape.ts";
 
 export interface GhIssue {
   number: number;
@@ -123,7 +124,7 @@ export function parseIssuesArgs(args: readonly string[]): IssuesRunArgs | string
 /** The issue number a Loki PR already covers: head loki/issue-N, or a loki/* PR whose body links the issue. */
 export function coveredIssues(slug: string, prs: readonly { headRefName?: string; body?: string }[]): Set<number> {
   const out = new Set<number>();
-  const esc = slug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const esc = escapeRegex(slug);
   const link = new RegExp(`(?:^|[^A-Za-z0-9_/#])(?:${esc})?#(\\d+)\\b|github\\.com/${esc}/issues/(\\d+)\\b`, "gi");
   for (const pr of prs) {
     const head = pr.headRefName ?? "";

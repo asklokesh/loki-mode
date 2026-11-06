@@ -41,7 +41,7 @@ export const EVENT_TYPES = [
   "tests.restored", "test.result", "test.scoped_out", "test.skipped_on_base", "fix.round", "already.satisfied", "spec.conflict",
   "session.group_reaped",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
-  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "attempts.selected",
+  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "sysedit.kept", "sysedit.undone", "attempts.selected",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */
@@ -178,16 +178,22 @@ export interface Receipt {
   seeded_corpus?: import("../util/run_outputs.ts").SeededCorpus; /* TEN-GATES-15 */ supply?: import("../supply/supply_guard.ts").SupplyBlock; // T10: present only when the guard found newly added dependencies
   context?: import("../util/context_pack.ts").ContextCoverage; seal_accuracy?: string; // L022: brief coverage of the changed files. GAME10-03: signed line read from the measured wrong-pass results, or "Seal accuracy: not measured"
   route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on.
+  no_regression?: string[]; // LOKI_E10_NRD: keep-case differential lines; omitted (hash unchanged) when none ran
+  tournament?: string[]; // LOKI_E10_TOURNAMENT: one line per candidate, per probe disagreement, and the decision; omitted (hash unchanged) when no tournament ran
   cost_preview?: Record<string, unknown>; // 11.3.0 T1: absent under LOKI_COST_PREVIEW=0
   verdict: Verdict;
   toolchain?: import("../util/receipt_signer.ts").Toolchain; loki_version?: string; // TEN-GATES-22: absent on receipts sealed before it existed, which still verify; loki_version (VERSION at seal) likewise
   /** T2: "test fails without the fix: yes | no | inconclusive (reason)"; omitted when LOKI_MUTATION_PROOF=0 or the verdict was not VERIFIED. */
   mutation_proof?: string;
+  exec_spec?: { status: string; seconds: number; binding: number; usd: number | null }; // present only when the exec spec stage ran: its wall seconds and the generator session's dollars (null when unmetered or no session ran)
   /** XV-1: cross-review judge and whether it is a different vendor than the builder (LOKI_XVENDOR_DEFAULT=1 only). */
   review?: { provider: string | null; vendor_differs: boolean };
   /** T2: the counted outcome for METRICS: "yes" | "no" | "inconclusive". */
   mutation_outcome?: "yes" | "no" | "inconclusive";
   /** FC-21b: set only when implement was stopped at its time limit; omitted otherwise so other receipts stay byte-stable. */
+  /** E5: each implement or fix session the harness stopped at its Haiku turn or token cap, or a fix with no product edit by turn 8 ("fix round 1: no_product_edit limit 8 at turn 8, 31000 new tokens"). Omitted when none fired. */
+  session_caps?: string[];
+  patch?: import("../features/patch_protocol.ts").PatchReceipt; // LOKI_E10_PATCH: present only when the patch protocol ran in implement
   implement_limit?: { limit_s: number; elapsed_s: number; stop_cause?: "max_turns"; owner?: "harness" };
   /** T9: provider failovers (stage, from, to, reason, evidence). Omitted when none happened so other receipts stay byte-stable. */
   failover?: import("../runner/provider_failover.ts").FailoverRecord[];

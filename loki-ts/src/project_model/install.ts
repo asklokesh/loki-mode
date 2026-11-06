@@ -305,6 +305,27 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
   return res;
 }
 
+/** Intake installs every package whose dependencies were never installed (absentDepRoots), whether or not any check needs it. A failed install of a package nothing depends on is disclosed, never a cap:
+ *  a package below the root with no test command, owning none of the changed files, holding no check verify ran, and whose ecosystem no check uses (lefthook's packaging/registries/pypi wrapper
+ *  needs release binaries to install, while the change and every check are Go). A check of the same ecosystem anywhere in the repo could import what the install provides (a root pytest that
+ *  importorskips it), so it keeps the cap (review of #543, C4), and so does a check or install whose ecosystem is unknown. Every other install line, and any line that is not a failed install,
+ *  keeps capping. `checkNames` are verify's check names. */
+const ecoOfCmd = (cmd: string): string | null => /\b(?:pip3?|python3?|uv|poetry|pdm|pipenv|hatch|tox|pytest)\b/.test(cmd) ? "py" : /\b(?:npm|pnpm|yarn|bun|npx|node)\b/.test(cmd) ? "js" : /\bcargo\b/.test(cmd) ? "rust" : /\b(?:mvn|mvnw|gradle|gradlew)\b/.test(cmd) ? "jvm" : /\bdotnet\b/.test(cmd) ? "dotnet" : /\bgo\b/.test(cmd) ? "go" : null;
+const ecoOfDir = (repoDir: string | undefined, root: string): string | null => { if (!repoDir) return null; const has = (f: string): boolean => existsSync(join(repoDir, root, f)); return has("go.mod") ? "go" : has("pyproject.toml") || has("setup.py") || has("setup.cfg") ? "py" : has("package.json") ? "js" : has("Cargo.toml") ? "rust" : null; };
+const ECO_PREFIX: [RegExp, string][] = [[/^go:/, "go"], [/^(?:pytest|unittest|lint:ruff|lint:mypy|lint:pyright)\b/, "py"], [/^(?:vitest|jest|bun|node|mocha|lint:eslint|lint:tsc|tsc)\b/, "js"], [/^cargo:/, "rust"], [/^(?:maven|gradle|javac):/, "jvm"], [/^dotnet:/, "dotnet"]];
+export function unusedInstallNotes(lines: readonly string[], model: ProjectApi | null | undefined, changed: readonly string[], checkNames: readonly string[], repoDir?: string): { cap: string[]; na: string[] } {
+  const cap: string[] = [], na: string[] = [];
+  const checkEco = (n: string): string | null => { for (const [re, e] of ECO_PREFIX) if (re.test(n)) return e; const pk = n.startsWith("full suite: ") ? model?.packages().find((p) => `full suite: ${p.name}` === n) : undefined; return pk ? ecoOfDir(repoDir, pk.root) ?? (pk.commands.test ? ecoOfCmd(pk.commands.test.cmd) : null) : null; };
+  for (const l of lines) {
+    const root = /\(install:([^;()]+); harness-owned\)$/.exec(l)?.[1], pkg = root && root !== "." ? model?.packages().find((p) => p.root === root) : undefined;
+    const inRoot = (f: string): boolean => f === root || f.startsWith(`${root}/`), owned = (f: string): boolean => model?.packageOf(f)?.root === root || inRoot(f);
+    const eco = pkg ? (model?.installFor(pkg.root)?.cmd ? ecoOfCmd(model.installFor(pkg.root)!.cmd) : null) ?? ecoOfDir(repoDir, pkg.root) : null;
+    const used = !pkg || !eco || !!pkg.commands.test || changed.some(owned) || checkNames.some((n) => n === `full suite: ${pkg.name}` || inRoot(n.slice(n.indexOf(":") + 1).trim()) || (checkEco(n) ?? eco) === eco);
+    (used ? cap : na).push(used ? l : `install failed for a package no check or changed file depends on: ${l}`);
+  }
+  return { cap, na };
+}
+
 /** FC-DEPS-NOT-INSTALLED: roots of model packages whose install command cites a manifest or lockfile inside the package root while git
  *  shows no untracked or ignored directory directly in that root (nothing was ever installed there: a fresh clone). Ecosystem-agnostic:
  *  git decides, never a list of dependency directory names. A git failure is not evidence of absence, so that package is left alone. */

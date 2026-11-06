@@ -884,7 +884,9 @@ const GENERATED_PATH = /(?:\.pb\.go|_pb2(?:_grpc)?\.pyi?|\.pb\.[cm]?[jt]s|[._-]g
 const TEST_SUPPORT_PATH = /(^|\/)(?:tests?|__tests__|spec|testutils?|testhelpers?|test_?helpers?|testing|testdata|fixtures?|mocks?)\/|(^|\/)conftest\.py$/;
 const GENERATED_HEADER = /^\s*(?:\/\/|#)\s*Code generated .* DO NOT EDIT\.?\s*$|@generated\b/m;
 /** True when `path` holds no public API a test is owed: a test file, test support code, a generated file or a type declaration file. */
-export const notApiFile = (path: string, src = ""): boolean => !API_FILE_EXT.test(path) || isTestFile(path) || TEST_SUPPORT_PATH.test(path) || GENERATED_PATH.test(path) || GENERATED_HEADER.test(src.slice(0, 2000));
+export const notApiFile = (path: string, src = ""): boolean => !API_FILE_EXT.test(path) || isTestFile(path) || TEST_SUPPORT_PATH.test(path) || isGeneratedSource(path, src);
+/** True when the path names generated code (protobuf, *.gen.*, .d.ts) or the first 2000 bytes carry a generated-file marker. */
+export const isGeneratedSource = (path: string, src = ""): boolean => GENERATED_PATH.test(path) || GENERATED_HEADER.test(src.slice(0, 2000));
 const tsExportList = (src: string): Set<string> => new Set([...src.matchAll(/^\s*export\s*\{([^}]*)\}/gm)].flatMap((m) => m[1]!.split(",").map((x) => x.trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean)).concat([...src.matchAll(/^\s*export\s+default\s+([A-Za-z_$][\w$]*)\s*;?\s*$/gm)].map((m) => m[1]!)));
 /** HONEST-VERIFIED-2: the public functions `head` defines that `base` (the file at the run base, "" for a new file) does not, by qualified name, so a signature-only edit or a moved body is not "added". Spans come from util/context_pack.ts symbolSpans (Python nesting read from the whole file, not from a diff hunk). Public: Python names with no leading underscore on the function or its class (a function nested in a function is private); Go exported funcs, `var X = func`, and exported methods on exported types (standard interface methods excluded); Rust `pub fn`; TS/JS functions and arrow consts that are exported (`export function`, `export const`, `export { f }`), and non-private methods of exported classes. */
 export function addedPublicFunctions(path: string, head: string, base: string): string[] {
@@ -1759,16 +1761,20 @@ export function assertionFailure(runner: string, output: string, reported: Repor
     const f = [...out.matchAll(/^(?:SUB)?FAILED(?:\([^)\n]*\))?\s+\S+(?:\s+-\s+(.*))?$/gm)].map((m) => (m[1] ?? "").trim()); // SUBFAILED(...): a failed unittest subTest
     if (f.length === 0) return false;
     const kinds = f.every((r) => r !== "" && !r.endsWith("...")) ? f : [...out.matchAll(/^E\s+((?:assert\b|[A-Za-z_.]*(?:Error|Exception))\S*)/gm)].map((m) => m[1]!); // a narrow terminal cuts the " - reason" from the summary line, or ends it in "..." ("AssertionEr..."): read the traceback's E lines instead
-    const asserted = kinds.some((k) => /^(?:assert\b|AssertionError\b)/.test(k)) && !kinds.some((k) => /^(?:Import|ModuleNotFound|Attribute|Name|UnboundLocal|Type|Syntax|Indentation)Error\b/.test(k));
+    const asserted = pytestKindsAreAssertion(kinds);
     if (asserted || reported.observed.length === 0 || !assertsResult(src, out, reported)) return asserted; // the reported-error path needs a test that asserts a result (review of #545: a bare call, a re-raise or `is not None` passed with a wrong fix)
     const norm = (x: string): string => x.replace(/\s+/g, " ").trim().replace(/[\s.]+$/, ""), want = new Set(reported.observed.map(norm));
     const raised = [...out.matchAll(/^E\s+((?:[A-Za-z_][\w]*\.)*[A-Za-z_]\w*(?:Error|Exception))(?::[ \t]*(.*))?$/gm)].map((m) => norm(`${m[1]!.split(".").pop()!}: ${m[2] ?? ""}`)); // E lines carry the exception and its message; a dotted module prefix is dropped
     return raised.length > 0 && raised.some((r) => want.has(r)) && raised.every((r) => want.has(r) || /^AssertionError\b/.test(r)) && !raised.some((r) => MISSING_API.test(r)) && !kinds.some((k) => MISSING_API.test(k));
   }
-  if (runner === "vitest") { const e = [...out.matchAll(/^\s*((?:[A-Za-z]*Error))(?:\s*\[[^\]]*\])?:/gm)].map((m) => m[1]!); return e.length > 0 && e.every((k) => k === "AssertionError"); }
+  if (runner === "vitest") return vitestErrorsAreAssertion(out);
   if (runner === "go") return goAssertionFailure(out);
   return false;
 }
+/** The one pytest red-by-assertion rule (assertionFailure per file, features/exec_spec.ts per case): at least one failure kind is an assertion and none is a missing-API error. */
+export const pytestKindsAreAssertion = (kinds: string[]): boolean => kinds.some((k) => /^(?:assert\b|AssertionError\b)/.test(k)) && !kinds.some((k) => /^(?:Import|ModuleNotFound|Attribute|Name|UnboundLocal|Type|Syntax|Indentation)Error\b/.test(k));
+/** The one vitest red-by-assertion rule (assertionFailure per file, features/exec_spec.ts per case): every reported error is an AssertionError. */
+export const vitestErrorsAreAssertion = (text: string): boolean => { const e = [...stripAnsi(text).matchAll(/^\s*((?:[A-Za-z]*Error))(?:\s*\[[^\]]*\])?:/gm)].map((m) => m[1]!); return e.length > 0 && e.every((k) => k === "AssertionError"); };
 /** TEN-SPEED-18: LOKI_E10_VERIFY_JOBS, an integer 1..8; unset, invalid or below 1 means 1. */
 export const verifyJobs = (): number => { const n = Number.parseInt(process.env["LOKI_E10_VERIFY_JOBS"] ?? "", 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 8) : 1; };
 /** TEN-SPEED-19: map items through an async fn with at most `jobs` in flight; results keep input order. */

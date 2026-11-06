@@ -2,7 +2,7 @@
 import { lstatSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { untouchedSinceIntake } from "./preexisting_dirty.ts"; import { untouchedUntracked } from "../features/untouched_untracked.ts";
-import { installOwned } from "../project_model/install.ts"; import { toolchainOutputs } from "../util/lock_ecosystems.ts";
+import { installOwned } from "../project_model/install.ts"; import { LOCKFILE_RE as LOCKFILE, toolchainOutputs } from "../util/lock_ecosystems.ts"; export { LOCKFILE };
 import { runFormatters } from "../runner/repo_profile.ts";
 import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
 
@@ -12,12 +12,12 @@ export type Staged = { st: string; f: string };
 /** Parses `git diff --cached --name-status --no-renames -z` output. */
 export const parseStaged = (out: string): Staged[] => out.split("\0").reduce<Staged[]>((a, t, i, all) => (i % 2 === 0 && t ? [...a, { st: t, f: all[i + 1]! }] : a), []);
 
-export const MANIFEST = /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod|Pipfile|Gemfile|composer\.json)$/, LOCKFILE = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|uv\.lock|Pipfile\.lock|Gemfile\.lock|composer\.lock|Cargo\.lock|go\.sum)$/; // the one manifest and lockfile lists; util/config_paths.ts and the config write fence import them
+export const MANIFEST = /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod|Pipfile|Gemfile|composer\.json)$/; // the one manifest list; the lockfile list is util/lock_ecosystems.ts LOCKFILE_RE (imported below); util/config_paths.ts and the config write fence import both
 /** A manifest changed in the lockfile's directory or beneath it (a workspace root lockfile legitimately changes when a member's manifest does). */
 export const manifestChanged = (staged: Staged[], lock: string): boolean => { const d = dirname(lock); return staged.some(({ f: m }) => MANIFEST.test(m) && (d === "." || dirname(m) === d || dirname(m).startsWith(`${d}/`))); };
 
 /** True when the task itself is a dependency change: it names the lockfile, asks to update, upgrade or bump a dependency or package, or names a CVE. Its lockfile edit is the deliverable. */
-export const taskWantsLockChange = (task: string | undefined, lock: string): boolean => !!task && (task.includes(lock) || task.includes(basename(lock)) || /\bCVE-\d{4}-\d+/i.test(task) || /\b(?:update|upgrade|bump)\b[^.\n]{0,60}\b(?:dependenc\w*|packages?|lockfile|lock file|version)\b/i.test(task) || /\b(?:refresh|regenerate|re-generate|sync|rebuild)\b[^.\n]{0,40}\b(?:lockfile|lock file|lock-file)\b/i.test(task) || /\b(?:bump|upgrade)\s+[@\w./-]+\s+(?:to|from)\s+v?\d/i.test(task) || /\bpin\s+[@\w./-]+\s+(?:to|at)\s+v?\d/i.test(task));
+export const taskWantsLockChange = (task: string | undefined, lock: string): boolean => !!task && (task.includes(lock) || task.includes(basename(lock)) || /\bCVE-\d{4}-\d+/i.test(task) || /\b(?:update|upgrade|bump)\b[^.\n]{0,60}\b(?:dependenc\w*|packages?|lockfile|lock file|version)\b/i.test(task) || /\b(?:refresh|regenerate|re-generate|sync|rebuild)\b[^.\n]{0,40}\b(?:lockfile|lock file|lock-file)\b/i.test(task) || /\b(?:bump|upgrade)\s+[@\w./-]+\s+(?:to|from)\s+v?\d/i.test(task) || /\bpin\s+[@\w./-]+\s+(?:to|at)\s+v?\d/i.test(task) || /\b(?:lock-?file|lock file)\s+(?:merge\s+)?conflicts?\b/i.test(task) || /\bconflicts?\b[^.\n]{0,20}\b(?:in|on|of)\s+(?:the\s+)?(?:lock-?file|lock file)(?![\w-])/i.test(task) || /\bre-?install\b[^.\n]{0,30}\b(?:fix|repair)\b[^.\n]{0,30}\b(?:lock-?file|lock file)(?![\w-])/i.test(task) || /\b(?:fix|repair)\s+(?:the\s+|our\s+)?(?:lock-?file|lock file)(?![\w-])/i.test(task));
 
 /** .loki/, intake-time dirt the run left untouched ("L"), Wall files, and a NEW or MODIFIED lockfile with no manifest change at or under its directory (install churn), unless the task is a dependency change */
 export function dropSet(repoDir: string, staged: Staged[], preexistingDirty: unknown, env: NodeJS.ProcessEnv = process.env, installCreated?: unknown, untrackedBlobs?: unknown, baseSha?: string, task?: string): Staged[] {

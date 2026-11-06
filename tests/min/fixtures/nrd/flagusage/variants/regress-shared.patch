@@ -1,0 +1,18 @@
+diff -ru a/flags/flags.go b/flags/flags.go
+--- a/flags/flags.go
++++ b/flags/flags.go
+@@ -16,12 +16,12 @@
+ 	Required bool
+ }
+ 
+-// names renders the flag's spellings, long form first.
++// names renders the flag's spellings, short alias first.
+ func names(f Flag) string {
+ 	if f.Short == "" {
+ 		return "--" + f.Name
+ 	}
+-	return "--" + f.Name + ", -" + f.Short
++	return "-" + f.Short + ", --" + f.Name
+ }
+ 
+ // FlagLine is one line of the help listing.

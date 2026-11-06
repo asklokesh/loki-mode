@@ -6,12 +6,11 @@ import { speedLikelyFiles } from "../features/speed/lean_select.ts"; import { de
 import { resolveClaudeModel } from "../util/claude_model.ts"; import { presetExecutor, routerPreset } from "../runner/router/flag.ts"; import { envOverride } from "../runner/router/decision.ts"; import { isTestFile } from "../util/test_file_text.ts"; import { wallConcurrent } from "../util/wall_knobs.ts";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap, TestRef } from "./types.ts";
-
-const escRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+import { escapeRegex } from "../util/regex_escape.ts";
 /** Repo-map files whose basename appears in the task as an exact token (not inside a longer name like myindex.ts or index.tsx; a trailing sentence period is fine); no keyword scoring, tune from eval data. */
 export function namedFiles(task: string, map: RepoMap | null): string[] {
   const text = task.toLowerCase();
-  return (map?.files ?? []).filter((f) => new RegExp(`(?<![\\w.-])${escRe(basename(f).toLowerCase())}(?![\\w-]|\\.\\w)`).test(text));
+  return (map?.files ?? []).filter((f) => new RegExp(`(?<![\\w.-])${escapeRegex(basename(f).toLowerCase())}(?![\\w-]|\\.\\w)`).test(text));
 }
 
 /** P12-46: "large" = names more than LARGE_NAMED_FILES distinct non-test files (namedDistinct: "fix index.ts" in a monorepo of nine index.ts is one), or several independent deliverables by structure (features/decompose.ts deliverables); never lean, and an issue ref goes to the MASS-2 split (commands/issues_run.ts startIssueEpic). A large unit never runs in parallel. */
@@ -40,7 +39,7 @@ export const HARD_NAMED_FILES = 4;
  *  allowed ("./src/a.ts" is src/a.ts; "../src/a.ts" is not). A root file has no path to spell out, so its name is a bare basename. */
 export function namedDistinct(task: string, map: RepoMap | null): number {
   const text = task.toLowerCase(), named = namedFiles(task, map).filter((f) => !isTestFile(f)).map((f) => f.toLowerCase());
-  const spelled = new Set(named.filter((f) => f.includes("/") && new RegExp(`(?<![\\w./-])(?:\\./)?${escRe(f)}(?![\\w-]|\\.\\w)`).test(text)));
+  const spelled = new Set(named.filter((f) => f.includes("/") && new RegExp(`(?<![\\w./-])(?:\\./)?${escapeRegex(f)}(?![\\w-]|\\.\\w)`).test(text)));
   const spelledBase = new Set([...spelled].map((f) => basename(f)));
   return spelled.size + new Set(named.map((f) => basename(f)).filter((b) => !spelledBase.has(b))).size;
 }

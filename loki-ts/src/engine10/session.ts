@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { diffShortstat, diffSignature, untrackedList } from "../util/anti_loop.ts"; export { diffShortstat, diffSignature, untrackedList }; // watchdog diff signature lives with the other tree-change detectors
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join } from "node:path"; import { tmpdir } from "node:os"; import { randomUUID } from "node:crypto";
 import { archivePriorCosts, writeProviderCost, stageMedianGapMs } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
 import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
@@ -17,10 +17,12 @@ import { routerEnabled } from "../runner/router/flag.ts";
 import { exitKind, routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 import { clampBashTimeoutEnv, envWithPwd, pinBashShellEnv, killGroupWithGrace, reapLiveGroup } from "../runner/worker_proc.ts"; import { engine10StaticPrefix, sessionPinModel } from "../runner/providers.ts"; export { sessionPinModel }; import { capToSessionPin } from "../runner/model_rank.ts"; import { idleGapMs, prefixParts, prefixSha } from "../util/cost_breakdown.ts";
-import { allowFor, appendFence, conflictNamed, fenceEnabled, fenceTask, restoreFenced, snapshotFenced } from "../util/config_fence.ts"; // E1: config and lockfile write fence
+import { allowFor, appendFence, conflictNamed, createdOf, markCreated, fenceEnabled, fenceTask, healRecord, mergeDenials, restoreFenced, snapshotFenced } from "../util/config_fence.ts"; // E1: config and lockfile write fence
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
 import { calculateCostFromRecords, partialUsagePath, readEfficiencyDir, recordPartialStreamCost } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
+/** The harness stop a stage session reported on its output tail ("[sdk-loop stop: <rule> limit N at turn T, K new tokens]", written by providers.ts), or null. */
+export function capStopOf(summary: string | undefined): string | null { const m = /\[sdk-loop stop: ([^\]\n]{1,160})\]/.exec(summary ?? ""); return m ? m[1]! : null; }
 export const HEARTBEAT_MS_DEFAULT = 30_000; // E-68 (augmentiq #52 P0): a provider call emits progress at least every 30s
 /** CH-02: stages Opus marks for the advisor. Wall is never marked (Rule of Two). */
 const ADVISOR_MARKED_STAGES: ReadonlySet<string> = new Set(["plan", "fix"]);
@@ -99,6 +101,8 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
     env[`LOKI_CLAUDE_MODEL_${t}`] = pin;
     env[`LOKI_MODEL_${t}`] = pin;
   }
+  const caps = cfg.provider === "claude" ? hooks.effort?.caps?.(opts.stage, process.env["LOKI_MODEL_OVERRIDE"] || sessionPinModel(process.env) || (pin && pin !== PROVIDER_DEFAULT_MODEL ? pin : "") || opts.model || cfg.model || resolveModel(cfg.provider)) : undefined; // E5: the model the call really runs on (override, session pin, router pin, then the run model); Haiku implement and fix sessions stop at a turn and token cap, and a fix with no product edit
+  if (caps) env["LOKI_E10_STOP_RULES"] = JSON.stringify(caps); else delete env["LOKI_E10_STOP_RULES"];
   return env;
 }
 function parseMarkers(stdout: string): SessionMarkers {
@@ -109,7 +113,7 @@ function parseMarkers(stdout: string): SessionMarkers {
 }
 const lastStageEnd = new WeakMap<SessionRunnerConfig, Map<string, number>>(); // per run: runner config -> stage -> last session end (epoch ms)
 /** Efficiency record plus cost event for one session; a run in another cwd (wall's temp dir) has its result-cost file copied into lokiRoot first, so seal can price it after that dir is gone. */
-function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: string, durationS: number, outText = ""): void {
+export function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: string, durationS: number, outText = ""): void {
   if (!cfg.lokiRoot) return;
   const ownRoot = join(opts.cwd ?? process.cwd(), ".loki");
   const own = resultCostPath(ownRoot, opts.iterationId), dest = resultCostPath(cfg.lokiRoot, opts.iterationId);
@@ -130,7 +134,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   ends.set(opts.stage, endedAt); lastStageEnd.set(cfg, ends);
   const info = { status, durationMs: Math.round(durationS * 1000), model, stage: opts.stage, ...(prev !== undefined ? { gapMs: idleGapMs(endedAt, Math.round(durationS * 1000), prev) } : {}) };
   // No `result` ever arrived: price streamed usage instead of leaving cost_usd null.
-  const c = status === "killed" && !existsSync(dest) ? recordPartialStreamCost(cfg.lokiRoot, opts.iterationId, info) : recordSessionCost(cfg.lokiRoot, opts.iterationId, info);
+  const c = (status === "killed" || capStopOf(outText) !== null) && !existsSync(dest) ? recordPartialStreamCost(cfg.lokiRoot, opts.iterationId, info) : recordSessionCost(cfg.lokiRoot, opts.iterationId, info);
   const ambiguous = c.records?.resume === "ambiguous"; // FIX-RESUME: this resumed session's total may include its predecessor, so its figures are not emitted (NOT RECORDED), never summed on trust
   const unmeasured = tokensUnmeasured(c); // the predicate writeEfficiencyRecord shares: a session without usage emits no token keys, so the control plane never reads a missing session as 0
   cfg.emit?.("cost", opts.stage, {
@@ -149,8 +153,9 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       const env = childEnv(opts, cfg);
       const fenceCwd = opts.cwd ?? process.cwd(), fenceOn = fenceEnabled(opts.stage, process.env); // E1
       const fenceRunId = process.env["LOKI_E10_RUN_ID"], fenceRunDir = fenceRunId ? join(cfg.lokiRoot ?? join(fenceCwd, ".loki"), "runs", fenceRunId) : null;
-      const fenceSnap = fenceOn ? snapshotFenced(fenceCwd) : null, fenceTaskText = fenceOn ? fenceTask(process.env, fenceRunDir ?? undefined) : "", fenceAllow = allowFor(fenceTaskText, allowOnce);
-      if (fenceOn) { env["LOKI_E10_FENCE_TASK"] = fenceTaskText; env["LOKI_E10_FENCE_ALLOW"] = JSON.stringify(allowOnce); if (fenceRunDir) env["LOKI_E10_FENCE_RUNDIR"] = fenceRunDir; else delete env["LOKI_E10_FENCE_RUNDIR"]; } else { for (const k of ["LOKI_E10_FENCE_TASK", "LOKI_E10_FENCE_ALLOW", "LOKI_E10_FENCE_RUNDIR"]) delete env[k]; }
+      const fenceDenyLog = join(tmpdir(), `loki-fence-${randomUUID()}.jsonl`); // private to this session: outside the repo, and not in the model's own environment
+      const fenceSnap = fenceOn ? snapshotFenced(fenceCwd) : null, fenceTaskText = fenceOn ? fenceTask(process.env, fenceRunDir ?? undefined) : "", fenceCreated = fenceOn && fenceRunDir ? createdOf(fenceRunDir) : [], fenceAllow = allowFor(fenceTaskText, [...allowOnce, ...fenceCreated]); // a config-named test file an earlier session of this run created (held in this process) stays editable
+      if (fenceOn) { env["LOKI_E10_FENCE_TASK"] = fenceTaskText; env["LOKI_E10_FENCE_ALLOW"] = JSON.stringify([...allowOnce, ...fenceCreated]); env["LOKI_E10_FENCE_DENYLOG"] = fenceDenyLog; } else { for (const k of ["LOKI_E10_FENCE_TASK", "LOKI_E10_FENCE_ALLOW", "LOKI_E10_FENCE_DENYLOG"]) delete env[k]; }
       if (fenceSnap?.error && fenceRunDir) appendFence(fenceRunDir, { k: "failure", text: `config fence inactive for this session: ${fenceSnap.error}` });
       archivePriorCosts(cfg.lokiRoot, opts.cwd, opts.iterationId);
       const [cmd, args] = cfg.childCommand ?? [
@@ -208,11 +213,13 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
             try {
               const r = restoreFenced(fenceCwd, fenceSnap, fenceAllow);
               if (r.restored.length > 0) { cfg.emit?.("config_fence.restored", opts.stage, { session_id: sessionId, paths: r.restored }); if (fenceRunDir) appendFence(fenceRunDir, ...r.restored.map((path) => ({ k: "restored", path, stage: opts.stage, session: sessionId }))); }
+              if (r.created.length > 0 && fenceRunDir) markCreated(fenceRunDir, r.created);
               const failures = [...r.failed.map((f) => `could not restore ${f.path} (${f.reason})`), ...(r.error && !fenceSnap.error ? [r.error] : [])];
               if (failures.length > 0) { cfg.emit?.("config_fence.failed", opts.stage, { session_id: sessionId, failures }); if (fenceRunDir) appendFence(fenceRunDir, ...failures.map((text) => ({ k: "failure", text }))); }
             } catch (e) { if (fenceRunDir) appendFence(fenceRunDir, { k: "failure", text: `restore crashed (${e instanceof Error ? e.message.slice(0, 120) : "error"})` }); } // a fence bug never fails the session
             allowOnce = []; // consumed by this session
           }
+          if (fenceRunDir) { mergeDenials(fenceRunDir, fenceDenyLog); healRecord(fenceRunDir); } // the ledger is the record: whatever the session did to the run file is undone
           // The CLI invoker writes only to its iteration log, never stdout.
           const log = join(opts.cwd ?? process.cwd(), ".loki", `iteration-${sessionId}.log`);
           const logText = existsSync(log) ? readFileSync(log, "utf8") : ""; const markers = parseMarkers(stdout + logText);

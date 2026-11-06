@@ -1,0 +1,27 @@
+diff -ru a/changelog/changelog.go b/changelog/changelog.go
+--- a/changelog/changelog.go
++++ b/changelog/changelog.go
+@@ -12,9 +12,9 @@
+ 	return []string{"git", "log", "--no-merges", "--pretty=format:" + format}
+ }
+ 
+-// CommitsCmd lists the commit subjects between two refs.
++// CommitsCmd lists the commit subjects between two refs, merge commits included.
+ func CommitsCmd(from, to string) []string {
+-	return append(logArgs("%s"), from+".."+to)
++	return []string{"git", "log", "--pretty=format:%s", from + ".." + to}
+ }
+ 
+ // AuthorsCmd lists the author of every commit between two refs, for the credits section.
+@@ -35,6 +35,11 @@
+ 		s = strings.TrimSpace(s)
+ 		if s == "" {
+ 			continue
++		}
++		if strings.HasPrefix(s, "Merge pull request ") {
++			if i := strings.Index(s, " from "); i >= 0 {
++				s = s[i+len(" from "):]
++			}
+ 		}
+ 		fmt.Fprintf(&b, "- %s\n", s)
+ 	}
