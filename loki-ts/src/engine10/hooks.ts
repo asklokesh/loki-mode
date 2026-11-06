@@ -12,6 +12,6 @@ export interface Hooks {
   stageCapability?(stage: string, env: NodeJS.ProcessEnv, argv: readonly string[]): StageCapability;
   briefFacts?(o: Partial<Record<string, Obj>>, runId: string, runDir: string): BriefFacts; sealed?(runDir: string, receipt: { run_id: string; provider: string; model: string; receipt_sha256: string; cost?: { per_model?: Record<string, unknown> } }): void; // after the receipt files are final; failures never reach the seal
   runtimeEvidence?(task: string): Rec | null;
-  sysEdit?(repoDir: string, baseSha: string): { rewrites: Rec[]; undo(): void } | null; // zero-model systematic-edit repair after a red first verify (LOKI_E10_SYSEDIT=1): writes the completions; undo() restores the touched files byte for byte; null when off or nothing to complete
+  sysEdit?(repoDir: string, baseSha: string): { rewrites: Rec[]; undo(): void } | null; // zero-model systematic-edit repair after a red first verify (on by default, LOKI_E10_SYSEDIT=0 opts out): writes the completions; undo() restores the touched files byte for byte; null when off or nothing to complete
 }
 export const hooks: Hooks = {};

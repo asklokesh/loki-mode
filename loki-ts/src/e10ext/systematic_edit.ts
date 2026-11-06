@@ -1,4 +1,4 @@
-// Systematic-edit completer (LOKI_E10_SYSEDIT=1, off by default): a zero-model repair run once after a red first verify. When the change
+// Systematic-edit completer (on by default; LOKI_E10_SYSEDIT=0 opts out): a zero-model repair run once after a red first verify. When the change
 // rewrote >=2 lines the same way (a rewrite rule learned on the changed tokens and their context), an unchanged line of an edited file that the
 // rule matches gets the same rewrite. The machine keeps the completion only when a failing check then passes and nothing new fails; otherwise
 // restoreRewrites puts every touched file back byte for byte. Proposals are low precision (0.216 blind, tests/min/fixtures/scaffold/recall-results
@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { isTestFile } from "../util/test_file_text.ts";
 import { safeGit } from "../util/safe_git.ts";
 
-export const sysEditEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_SYSEDIT === "1";
+export const sysEditEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_SYSEDIT !== "0";
 
 export interface Rewrite { file: string; line: number; before: string; after: string[]; rule: string }
 /** What a repair wrote: the rewrites and each touched file's exact text before and after, so an undo restores the bytes. */
