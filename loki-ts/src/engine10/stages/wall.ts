@@ -14,11 +14,11 @@ import { hasRelevantTests, isTinyGreenfield, WALL_TINY_BOUND, loadRepoMap, named
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { publishSealed, removeHoldout, sealStageDir, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { clauseEvidenceBlock, evidenceOf, ingestWallCases, wallCasesBrief, wallCasesRunner, withUnreproducedEvidence, type WallEvidence } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingStackTool, projectInterpreter, type EngineTestMap } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
-import { sealedWallDir, assertionFailure, baseJobs, classify, plannedGoDir, goPackageBrief, goPackageClash, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, spawnGroupSync, stripAnsi } from "../../util/check_result.ts";
+import { sealedWallDir, assertionFailure, type ReportedErrors, baseJobs, classify, plannedGoDir, goPackageBrief, goPackageClash, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, spawnGroupSync, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, dotenvFileRead, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, rustArities, rustCallClash, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
 import { dotnetTestProject } from "../../util/stack_tools.ts";
-import { EXEC_SPEC_BRIEF_FILE, execSpecAuthor, execSpecEnabled, execSpecModel } from "../../features/exec_spec.ts"; import { probeIntake, tournamentEnabled, writeTournamentInput } from "../../features/tournament.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
+import { EXEC_SPEC_BRIEF_FILE, EXEC_SPEC_TELEMETRY_FILE, execSpecAuthor, execSpecEnabled, execSpecModel } from "../../features/exec_spec.ts"; import { probeIntake, tournamentEnabled, writeTournamentInput } from "../../features/tournament.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
 const WALL_PREFIX = "loki_wall_";
 
 export interface WallSealedFile { path: string; sha256: string; runner?: RunnerName; } // path: absolute, in the repo working tree
@@ -34,7 +34,7 @@ export { classify, notRunReason, pytestCollectionIsRed } from "../../util/check_
 // snapshot from process start, not the live env).
 export class RealBaseTestRunner implements BaseTestRunner {
   lastNotRunFiles: NotRunRow[] = [];
-  constructor(private readonly api?: ProjectApi | null, private readonly timeoutMs: number = BASE_RUN_TIMEOUT_MS, private readonly extraEnv: Record<string, string> = {}, private readonly trustSystem = false) {} // trustSystem: the repo declares no Python environment, so the system interpreter IS its interpreter and its base result counts (seal.ts failThenPass; the Wall path never sets it). FC-01: undefined = load the repo's cached Project Model per run
+  constructor(private readonly api?: ProjectApi | null, private readonly timeoutMs: number = BASE_RUN_TIMEOUT_MS, private readonly extraEnv: Record<string, string> = {}, private readonly trustSystem = false, private readonly reported: ReportedErrors = { observed: [], wanted: [] }) {} // trustSystem: the repo declares no Python environment, so the system interpreter IS its interpreter and its base result counts (seal.ts failThenPass; the Wall path never sets it). FC-01: undefined = load the repo's cached Project Model per run
   run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run: number; assertFail: number } {
     this.lastNotRunFiles = [];
     let pass = 0, fail = 0, not_run = 0, assertFail = 0; const not_run_files: NotRunRow[] = []; const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; for (const f of files) {
@@ -42,7 +42,7 @@ export class RealBaseTestRunner implements BaseTestRunner {
       const r = spawnGroupSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, timeoutMs: Math.max(1000, this.timeoutMs), env: { ...plainTestEnv(), ...this.extraEnv } }); // FC-69: plain env in, ANSI stripped out; group-kill launcher reaps a grandchild runner
       const status = r.status, out = stripAnsi(r.output), base = classify(f, status, out, repoDir, this.trustSystem ? undefined : interpreter);
       const result = base === "not_run" && status === 0 && f.runner === "go" && interpreter !== "system" && corroborateGoPassSync(classifyCheck({ kind: "test", ok: true, out, ...goRunner(cmd, args) }), out, cmd, args.filter((a, k) => a !== "-run" && args[k - 1] !== "-run"), { cwd, env: plainTestEnv() }).result === "pass" ? "pass" : base; // same Go exit 0 corroboration as runEach, synchronous
-      if (result === "pass") pass++; else if (result === "fail") { fail++; if (assertionFailure(f.runner, out)) assertFail++; } else { not_run++; not_run_files.push({ file: f.path, reason: notRunReason(status, interpreter), ...(interpreter === "system" ? { interpreter } : {}) }); }
+      if (result === "pass") pass++; else if (result === "fail") { fail++; if (assertionFailure(f.runner, out, this.reported, this.reported.observed.length ? (() => { try { return readFileSync(join(repoDir, f.path), "utf8"); } catch { return ""; } })() : "")) assertFail++; } else { not_run++; not_run_files.push({ file: f.path, reason: notRunReason(status, interpreter), ...(interpreter === "system" ? { interpreter } : {}) }); }
     }
     this.lastNotRunFiles = not_run_files; return { pass, fail, not_run, assertFail };
   }
@@ -198,8 +198,9 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
 async function execSpecWall(ctx: RunContext, signal: AbortSignal, task: string, sizeName: string, runners: RunnerName[], existingTests: string[], leanWhy: string): Promise<WallAuthorOutcome> {
   const iterationId = `${ctx.runId}-execspec`, out = await execSpecAuthor({ task, repoDir: ctx.repoDir, runners, existingTests, sessions: ctx.sessions as never, iterationId, signal, ...(tournamentEnabled() ? { probe: probeIntake } : {}) });
   writeTournamentInput(ctx.runDir, out); // LOKI_E10_TOURNAMENT: the Go probe cases and the full spec file, for implement's gate
-  const summary = { status: out.status, reason: out.reason, ...(out.runner ? { runner: out.runner } : {}), atoms: out.atoms, sites: out.sites, binding: out.binding, advisory: out.advisory, guards: out.guards, dropped: out.dropped, duration_s: out.durationS };
+  const summary = { status: out.status, reason: out.reason, ...(out.runner ? { runner: out.runner } : {}), atoms: out.atoms, sites: out.sites, binding: out.binding, advisory: out.advisory, guards: out.guards, dropped: out.dropped, ...(out.uncoveredSites?.length ? { uncovered_sites: out.uncoveredSites } : {}), duration_s: out.durationS };
   if (out.brief) { try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, EXEC_SPEC_BRIEF_FILE), out.brief, "utf8"); } catch { /* best effort: implement runs without the block */ } }
+  try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, EXEC_SPEC_TELEMETRY_FILE), JSON.stringify({ status: out.status, seconds: out.durationS, binding: out.binding.length, ...(out.generatorUsd !== undefined ? { usd: out.generatorUsd } : out.runner ? { iteration_id: iterationId } : {}) }), "utf8"); } catch { /* best effort: the receipt then omits exec_spec */ } // the receipt's exec_spec block (seconds and dollars of this stage)
   const spent = out.runner ? { iteration_ids: [iterationId] } : {}; // a generator session ran: its spend reaches the ledger
   if (out.status !== "sealed" || !out.file || !out.targetRel) return { kind: "done", result: { status: "skipped", data: { size: sizeName, exec_spec: summary, ...spent }, reason: `${leanWhy}; ${out.reason}` } };
   const name = basename(out.targetRel), sealedDir = sealStageDir(ctx.runId, ctx.repoDir); rmSync(sealedDir, { recursive: true, force: true }); mkdirSync(sealedDir, { recursive: true });

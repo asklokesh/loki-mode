@@ -1,5 +1,6 @@
 // E-10: commit and Seal (docs/v10/ENGINE.md sections 4, 9). Writes receipt.json and receipt.md, computes receipt_sha256, and signs natively with node:crypto Ed25519 (A-121; no python, no
 // `cryptography`). The key is the A-120 local key, created on first use. An empty token means UNSIGNED, never presented as attested.
+import { capFenceVerdict, fenceNotes, readFenceRecord } from "../../util/config_fence.ts";
 import { sanitizeReason } from "../../util/redact.ts";
 import { specReceiptBlock } from "../../util/spec_file.ts"; import { triageReceiptBlock } from "../../features/triage.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock, sealAccuracyBlock } from "../../util/run_outputs.ts"; import { contextCoverageBlock } from "../../util/context_pack.ts";
 import { createHash } from "node:crypto"; import { execFileSync } from "node:child_process"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
@@ -14,7 +15,7 @@ import { flagOutsideScope } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts"; import { getVersion } from "../../version.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
-import { isTestFile } from "../testmap.ts";
+import { isTestFile } from "../testmap.ts"; import { EXEC_SPEC_TELEMETRY_FILE } from "../../features/exec_spec.ts";
 import { crossReview, minVerdict, modelReviewRan, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
 import { STAGE_BUDGETS, type RunnerName, type Obj, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type Verdict } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
@@ -22,7 +23,7 @@ import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
-import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, identifierSet, moduleToken, isExecutedProof, CODE_FILE_EXT, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
+import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, identifierSet, moduleToken, isExecutedProof, CODE_FILE_EXT, reportedErrors, type ReportedErrors, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
@@ -53,17 +54,36 @@ async function codeSymbols(ctx: RunContext, rawDiff: string[], head: string): Pr
   return { all: d.exitCode === 0 ? changedSymbols(d.stdout) : [], onBase };
 }
 /** The fail-then-pass base runner. Every file it runs already passed on the head under this same interpreter, so a base assertion failure under it is a like-for-like difference: trustSystem is on even when the repo declares a Python environment (4 of 4 more-itertools runs read inconclusive without it). */
-export const baseProofRunner = (ms: number): RealBaseTestRunner => new RealBaseTestRunner(undefined, ms, {}, true);
+export const baseProofRunner = (ms: number, reported: ReportedErrors = { observed: [], wanted: [] }): RealBaseTestRunner => new RealBaseTestRunner(undefined, ms, {}, true, reported); // reported: the errors the issue quotes (reportedErrors), a base failure raising exactly one counts like an assertion
 async function failThenPass(ctx: RunContext, vraw: Obj[], pctx: ProvenanceCtx, head: string, cs: { all: string[]; onBase: Set<string> }, task: string, rewritten: ReadonlySet<string> = new Set()): Promise<{ ok: boolean; line: string; files: string[] }> {
   const files = [...new Set(vraw.filter((c) => isExecutedProof(c as { result?: unknown; n?: unknown }) && checkProvenance(String(c.name ?? ""), pctx) === "agent_authored").map((c) => String(c.name).slice(String(c.name).indexOf(":") + 1)))];
   if (files.length === 0) return { ok: false, line: "", files: [] };
-  const mp = await mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: files.map((path) => ({ path })), checks: vraw as { name: string }[], runner: (ms: number) => baseProofRunner(ms), headSha: head, requireAssertion: true, baseMustPass: files.filter((f) => pctx.modifiedFiles?.includes(f)) });
+  const mp = await mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: files.map((path) => ({ path })), checks: vraw as { name: string }[], runner: (ms: number) => baseProofRunner(ms, reportedErrors(task)), headSha: head, requireAssertion: true, baseMustPass: files.filter((f) => pctx.modifiedFiles?.includes(f)) });
   const symbols = cs.all.filter((s) => cs.onBase.has(s) || new RegExp(`(?<![\\w$])${s.replace(/[$]/g, "\\$")}(?![\\w$])`).test(task)); // a symbol the base already has (a modified one), or one the task itself asks to add: a test that only names a function the change invented proves nothing about the change
   const read = (p: string): string => { try { return execFileSync("git", ["-C", ctx.repoDir, "show", `${head}:${p}`], { encoding: "utf8", maxBuffer: 16 << 20, timeout: 20_000 }); } catch { return ""; } };
   const failed = (mp.outcome === "yes" ? mp.failed ?? [] : []).filter((f) => symbolGap(symbols, [read(f)]).length === 0); // an assertion failure on base, in a file that names a symbol this change declares or modifies
   return { ok: failed.some((f) => !rewritten.has(f)), line: failed.length > 0 ? `${mp.line} (${failed.join(", ")})` : mp.line, files: failed }; // E4: a test file whose pinned assertion was rewritten fails on the base, which shows the pin was real, but it is never the proof itself
 }
 export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these added public functions";
+/** The receipt's exec_spec block from <runDir>/exec-spec.json (features/exec_spec.ts): the stage's seconds and its generator session's dollars, so a scored run can weigh what the spec cost. */
+function execSpecBlock(ctx: RunContext): { exec_spec?: { status: string; seconds: number; binding: number; usd: number | null } } {
+  let t: Obj; try { t = JSON.parse(readFileSync(join(ctx.runDir, EXEC_SPEC_TELEMETRY_FILE), "utf8")) as Obj; } catch { return {}; }
+  const id = str(t.iteration_id), c = id ? ctx.cost.read(ctx.repoDir, [id]) : null; // a session generator is read by its iteration id; toolLessCall priced its own call
+  const usd = typeof t.usd === "number" ? t.usd : c && !c.unmetered && (c.measuredCount ?? 1) > 0 ? c.usd : null;
+  return { exec_spec: { status: String(t.status ?? ""), seconds: typeof t.seconds === "number" ? t.seconds : 0, binding: typeof t.binding === "number" ? t.binding : 0, usd } };
+}
+export const SPEC_SITE_UNCOVERED = "named site without a binding case (no agent-independent passing test names it)";
+/** Exec spec (features/exec_spec.ts): a sealed spec proves only the sites its binding cases name. A site caps the run below VERIFIED only when
+ *  all hold: the spec sealed a binding case; the issue names the site in a defect or request sentence (capSites; a passing mention never
+ *  caps); the diff did not touch it (`changed`); and no passing test that is neither agent-authored nor the spec file names it. So fixing one
+ *  defective site while another stays untouched never reads VERIFIED on the spec alone. */
+export function specSiteGap(o: Partial<Record<StageName, Obj>>, vraw: Obj[], pctx: ProvenanceCtx, read: (p: string) => string, changed: string[]): string[] {
+  const es = (o.wall?.exec_spec ?? {}) as Obj, touched = new Set(changed), sites = es.status === "sealed" ? strs(es.uncovered_sites).filter((x) => !touched.has(x)) : [];
+  if (sites.length === 0) return [];
+  const wall = new Set(((o.wall?.files as { path: string }[] | undefined) ?? []).map((f) => String(f.path)));
+  const sources = vraw.filter((c) => isExecutedProof(c as { result?: unknown; n?: unknown }) && checkProvenance(String(c.name ?? ""), pctx) !== "agent_authored").map((c) => { const n = String(c.name ?? ""); return n.includes(":") && !n.startsWith("full suite:") ? n.slice(n.indexOf(":") + 1) : null; }).filter((p): p is string => p !== null && isTestFile(p) && ![...wall].some((w) => w === p || w.endsWith(`/${p}`))).map(read);
+  return symbolGap(sites, sources);
+}
 /** The two symbol rules, from one read of the diff and the passing checks.
  *  lean (FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL): with no Wall file that ran, the changed code is exercised only if a passing test source names a symbol the diff declares or modifies; the unreferenced symbols, or [].
  *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file), Tests the implementer wrote or edited never clear it. Off by default; LOKI_E10_PUBLIC_GAP=1 turns it on.
@@ -242,8 +262,8 @@ export const sealStage: Stage = {
     const sysInfo = verifyNotProven.includes(SYSTEM_INTERP) && !declaresPythonEnv(ctx.repoDir, head) ? SYSTEM_INTERP : null; // HONEST-VERIFIED: no dependency manifest means the system interpreter is the project's own, so a pass on it is a pass (informational, never a cap)
     const disclosedSet = new Set(decl.disclosed), capRc = rcNotes.filter((n) => !disclosedSet.has(n)), capVerify = verifyNotProven.filter((n) => !disclosedSet.has(n) && n !== sysInfo); const DECLARED_SUFFIX = " (declared by the plan or required by the passing Wall; disclosed, does not cap)";
     const grp = sealGroup(ctx.runDir, receiptSha256 as never); // D61-13: inert without group/manifest.json
-    const executed = hasExecutedProof(vraw), strictProof = process.env["LOKI_EXOGENOUS_PROOF"] !== "0", noWall = !(Array.isArray(o.wall?.files) && o.wall.files.length > 0);
-    const ftpGate = strictProof && noWall && diffOk && !externalRun(o) && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done" && weakTests.length === 0 && !checks.some((c) => c.result === "fail") && mutationEnabled(); // only a run that could still read VERIFIED pays for the base-tree runs
+    const live = checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name)) && c.repo_skipped !== true), executed = hasExecutedProof(vraw), strictProof = process.env["LOKI_EXOGENOUS_PROOF"] !== "0", noWall = !(Array.isArray(o.wall?.files) && o.wall.files.length > 0);
+    const ftpGate = strictProof && noWall && diffOk && !externalRun(o) && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done" && weakTests.length === 0 && !live.some((c) => c.result === "fail") && mutationEnabled(); // only a run that could still read VERIFIED pays for the base-tree runs; a check red on the base too (pre_red) is not this change failing, exactly as verdictOf reads it (FireLater#24 s1: a red frontend suite on base shut this gate, so the new backend tests never earned their fail-then-pass proof and a clean slice read PARTIAL)
     // E4 defect pin: a pure value replacement of an existing assertion that pins the wrong value the issue reports is listed as "value change (defect pin)", not weakened. It never counts as proof (an edited pre-existing test is agent-authored).
     const pinEdits = diffOk ? rawDiff.flatMap((m, i) => { const st = m.trim().split(" ").pop() ?? ""; const f = rawDiff[i + 1]; return i % 2 === 0 && st === "M" && f && isTestFile(f) && !weakTests.includes(f) ? defectPinEdits(ctx.repoDir, ctx.baseSha, head, f, loadTaskText(ctx, str(o.intake?.task) ?? undefined)) : []; }) : [];
     const pinFiles = new Set(pinEdits.map((e) => e.file));
@@ -253,8 +273,9 @@ export const sealStage: Stage = {
     const pinDropped = pinDroppedNotes(verifyNotProven, pinEdits, pinLift);
     const uncoveredAfterLimit = o.implement?.exit === "killed" ? strs(o.verify?.uncovered_changed) : []; // FC-21b: changed code no passing impacted check covered; limit path only
     const { lean: leanGap, pub: pubGap } = diffOk ? await symbolGaps(ctx, o, rawDiff, head, vraw, strictProof && noWall ? { pctx, ftp: async () => ftpGate && (await ftp()).ok } : null) : { lean: [], pub: [] }; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL; HONEST-VERIFIED-2
+    const specGap = strs(((o.wall?.exec_spec ?? {}) as Obj).uncovered_sites).length && diffOk ? specSiteGap(o, vraw, pctx, (p) => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return ""; } }, (await codeSymbols(ctx, rawDiff, head)).all) : []; // exec spec: a defective named site no binding case covers and the diff left alone
     const wpAll = publishableWall(ctx.repoDir, ctx.runDir, o, process.env, loadTaskText(ctx, str(o.intake?.task) ?? undefined)); // pure read of the sealed copies; publishing still happens only on VERIFIED
-    const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name)) && c.repo_skipped !== true), !diffOk || diff.stdout === "", capVerify.some((n) => !pinDropped.has(n)) || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap], wpAll.notes, wpAll.clauseGap), grp);
+    const verdict0 = capGroupVerdict(verdictOf(o, live, !diffOk || diff.stdout === "", capVerify.some((n) => !pinDropped.has(n)) || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp);
 
     // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
     const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.repoDir), process.env);
@@ -263,7 +284,8 @@ export const sealStage: Stage = {
     // T2: mutation proof always runs after VERIFIED. "no" (Wall passed without the fix) warns; it downgrades to PARTIAL only with LOKI_MUTATION_STRICT=1 AND a plan-declared behavior change (never a harness heuristic). "yes" and inconclusive never change the verdict.
     const mp0 = verdict2 === "VERIFIED" && mutationEnabled() ? await mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as { path: string }[]) : [], checks: Array.isArray(o.verify?.checks) ? (o.verify.checks as { name: string }[]) : [], runner: (ms: number) => new RealBaseTestRunner(undefined, ms) }) : null;
     const ftpRes = await (ftpMemo as Promise<{ ok: boolean; line: string; files: string[] }> | null), mp = ftpRes?.ok && verdict2 === "VERIFIED" && noWall ? { outcome: "yes" as const, line: ftpRes.line } : mp0; // Wall off: the fail-then-pass run is the receipt's proof line
-    const arbCap = Array.isArray(o.wall?.arbitrated) && (o.wall!.arbitrated as unknown[]).length > 0 && (verdict2 === "VERIFIED" || verdict2 === "ALREADY_SATISFIED"), mutCap = mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true, verdict3: Verdict = mutCap || arbCap ? "PARTIAL" : verdict2; // an arbitrated replacement passed only syntactic validators and two referees, so it never carries a success verdict; FC-69: a Wall test that did not execute is disclosed (not_proven), never a verdict downgrade (CTO ruling; D95 THIN)
+    const fenceRec = fenceNotes(readFenceRecord(ctx.runDir), executed); // E1: what the config write fence restored, and any allowlist a spec conflict earned (caps below VERIFIED)
+    const arbCap = Array.isArray(o.wall?.arbitrated) && (o.wall!.arbitrated as unknown[]).length > 0 && (verdict2 === "VERIFIED" || verdict2 === "ALREADY_SATISFIED"), mutCap = mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true, verdict3: Verdict = capFenceVerdict(mutCap || arbCap ? "PARTIAL" : verdict2, fenceRec); // an arbitrated replacement passed only syntactic validators and two referees, so it never carries a success verdict; FC-69: a Wall test that did not execute is disclosed (not_proven), never a verdict downgrade (CTO ruling; D95 THIN)
     const deepG = deepGaps(o.verify?.risk, vraw, Array.isArray(o.deep?.checks) ? (o.deep.checks as Obj[]) : [], modelReviewRan(xr)), notProven = new Set<string>([...deepG.notProven, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? []), ...reviewReceipt(ctx.provider, xr).notProven]);
     const wp = verdict3 === "VERIFIED" ? wpAll : { files: [], notes: wpAll.notes }; for (const n of wp.notes) notProven.add(n); if (verdict3 === "PARTIAL") for (const n of wpAll.clauseGap) notProven.add(n); // FC-VERIFIED-PR-WITHOUT-ITS-TEST: only on VERIFIED, after the receipt's head, tree and diff are fixed
     const wallPub0 = wp.files.length > 0 ? await publishWall(g(ctx), ctx.runId, ctx.repoDir, wp.files, wallDone) : false; if (wp.files.length > 0 && !wallPub0) notProven.add("Wall tests not published (child commit failed or committed bytes differ from the sealed copy)");
@@ -304,11 +326,13 @@ export const sealStage: Stage = {
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
     for (const n of verifyNotProven) if (!dropped.has(n)) notProven.add(disclosedSet.has(n) ? n + DECLARED_SUFFIX : n === sysInfo ? n + SYSTEM_INTERP_SUFFIX : n);
     for (const n of rcNotes) notProven.add(disclosedSet.has(n) ? n + DECLARED_SUFFIX : n); for (const n of decl.extra ?? []) notProven.add(n);
+    for (const n of fenceRec.notProven) notProven.add(n);
     for (const n of [...strs(o.commit?.not_proven), ...strs(o.commit?.scope_notes)]) notProven.add(n); // D58: scope_notes = edits flagged outside stated scope (never reverted) or scope undetermined; separate key so they never force FAILED
     for (const id of strs(o.verify?.pre_red)) notProven.add(`pre red: ${id}`); // A-112: listed, never downgrades (not via verifyNotProven)
     if (typeof o.verify?.baseline_line === "string" && strs(o.verify?.pre_red).length) notProven.add(o.verify.baseline_line); // REPOMEM: the one-line pre-existing vs introduced split; listed only when a baseline failure was excused, never downgrades
     if (leanGap.length > 0) notProven.add(`${LEAN_NO_SYMBOL}: ${leanGap.join(", ")}`);
     if (pubGap.length > 0) notProven.add(`${UNEXERCISED_PUBLIC}: ${pubGap.join(", ")}`);
+    if (specGap.length > 0) notProven.add(`${SPEC_SITE_UNCOVERED}: ${specGap.join(", ")}`);
     if (externalRun(o) && !(Array.isArray(o.wall?.files) && o.wall.files.length > 0)) notProven.add(EXTERNAL_NO_WALL); // FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED
     if (externalRun(o)) notProven.add(EXTERNAL_DIFF_NOT_ISOLATED); // CW-12 B2: the Wall author runs on disk beside the external diff until cw01 confinement covers it
     for (const t of strs(o.implement?.tests_reverted)) notProven.add(`reverted test edit: ${t}`);
@@ -358,6 +382,7 @@ export const sealStage: Stage = {
         ? { spec_conflict_reason: sanitizeReason(str(o.implement?.spec_conflict_reason)!) }
         : {}),
       evidence: strs(o.intake?.evidence), ...(strs(o.intake?.assumptions).length > 0 ? { assumptions: strs(o.intake?.assumptions) } : {}),...(o.intake?.preexisting_dirty ? { pre_existing_dirty: Object.keys(o.intake.preexisting_dirty as object) } : {}),
+      ...execSpecBlock(ctx),
       cost: {
         usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens,
         ...(cost.tokensMeasured && cost.tokensMeasured.k < cost.tokensMeasured.n ? { tokens_measured: cost.tokensMeasured } : {}),

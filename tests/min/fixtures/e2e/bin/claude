@@ -58,6 +58,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 case "$prompt" in
+  *"implement stage in patch mode"*) stage=patch ;; # LOKI_E10_PATCH: the tool-less patch call (features/patch_protocol.ts), before the implement match
   *"code reviewer"*) stage=review ;; # any model review session: the seal cross-review, or a post-PR reviewer
   *"Loki 10 plan stage"*) stage=plan ;;
   *"Loki 10 implement stage"*) stage=implement ;;
@@ -71,6 +72,10 @@ if [ -n "${E2E_STUB_ARGV_LOG:-}" ]; then
   until mkdir "$lock" 2>/dev/null; do n=$((n + 1)); [ "$n" -gt 500 ] && break; sleep 0.01; done
   echo "$stage$flags" >> "$E2E_STUB_ARGV_LOG"
   rmdir "$lock" 2>/dev/null || true
+fi
+if [ "$stage" = patch ] && [ -z "${E2E_STUB_PATCH:-}" ]; then # default-on patch call with no scripted patch: a priced, edit-free conflict reply, so the protocol restores nothing and today's agentic session runs (no log line: legs that count sessions see today's sessions)
+  echo '{"type":"result","subtype":"success","is_error":false,"result":"LOKI_SPEC_CONFLICT: the stub writes no patch unless E2E_STUB_PATCH is set","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0}}'
+  exit 0
 fi
 if [ -n "${E2E_STUB_LOG:-}" ]; then echo "$stage" >> "$E2E_STUB_LOG"; fi
 if [ -n "${E2E_STUB_ROUTE_LOG:-}" ]; then # one line per session: engine stage, iteration, --model value, advisorModel from --settings (tests/min/auto-route.sh)
@@ -89,6 +94,29 @@ if [ -n "${E2E_STUB_USAGE:-}" ] && [ -n "${LOKI_ITERATION:-}" ]; then
   printf '{"total_cost_usd":0.01,"input_tokens":%s,"output_tokens":%s,"cache_read_tokens":0,"cache_creation_tokens":0,"model":"stub","source":"e2e-stub"}\n' "$(( ${#prompt} / 4 ))" "$E2E_STUB_USAGE" > ".loki/metrics/result-cost-$LOKI_ITERATION.json"
 fi
 if [ -n "${E2E_STUB_SPEC_REPLY:-}" ]; then case "$prompt" in *"to the file spec_reply.md in the current directory"*) printf '%s\n' "$E2E_STUB_SPEC_REPLY" > spec_reply.md; echo "LOKI_DONE"; exit 0 ;; esac; fi
+if [ "$stage" = patch ]; then # E2E_STUB_PATCH: green appends a right multiply(); repair writes a wrong one first and fixes it in the repair call;
+  # wrongtwice stays wrong (the agentic session then runs); cfg also edits bunfig.toml (refused), the repair call leaves it out;
+  # a green tree with no test gets the test-only repair: the stub adds a multiply test (notest: answers with no edit, the green tree is kept)
+  MUL_OK='FILE: calc.ts\n<<<<<<< SEARCH\n=======\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n>>>>>>> REPLACE\n'
+  MUL_BAD='FILE: calc.ts\n<<<<<<< SEARCH\n=======\nexport function multiply(a: number, b: number): number {\n  return a + b;\n}\n>>>>>>> REPLACE\n'
+  CFG='FILE: bunfig.toml\n<<<<<<< SEARCH\n=======\n[test]\nroot = "."\n>>>>>>> REPLACE\n'
+  FIXB='FILE: calc.ts\n<<<<<<< SEARCH\nexport function multiply(a: number, b: number): number {\n  return a + b;\n=======\nexport function multiply(a: number, b: number): number {\n  return a * b;\n>>>>>>> REPLACE\n'
+  TESTB='FILE: calc.test.ts\n<<<<<<< SEARCH\n=======\n\ntest("multiply", () => {\n  expect((calc as unknown as { multiply: (a: number, b: number) => number }).multiply(2, 5)).toBe(10);\n});\n>>>>>>> REPLACE\n'
+  repair=0; case "$prompt" in *"add no regression test"*) repair=t ;; *"Your earlier reply:"*) repair=1 ;; esac
+  [ "$repair" = t ] && [ "${E2E_STUB_PATCH:-green}" != notest ] && { body="$TESTB"; repair=done; }
+  case "${E2E_STUB_PATCH:-green}:$repair" in
+    *:done) ;;
+    notest:t) body="" ;;
+    notest:*) body="$MUL_OK" ;;
+    green:*|cfg:1) body="$MUL_OK" ;;
+    repair:0|wrongtwice:*) body="$MUL_BAD" ;;
+    repair:1) body="$FIXB" ;;
+    cfg:0) body="$CFG$MUL_OK" ;;
+    *) body="LOKI_SPEC_CONFLICT: stub" ;;
+  esac
+  python3 -I -c 'import json,sys; print(json.dumps({"type":"result","subtype":"success","is_error":False,"result":"stub patch\n"+sys.argv[1].encode().decode("unicode_escape")+"LOKI_DONE","total_cost_usd":0.001,"usage":{"input_tokens":10,"output_tokens":20}}))' "$body"
+  exit 0
+fi
 if [ "${LOKI_E10_STAGE:-}" = "fix" ]; then # before the implement branch: a fix brief also carries the implement rules text
   case "${E2E_STUB_FIX:-}" in
     conflict) echo "LOKI_SPEC_CONFLICT: calc.test.ts:7 expects multiply(3, 4) to be 12"; exit 0 ;;
@@ -160,6 +188,9 @@ if [ "$stage" = "other" ] && [ "${E2E_STUB_MODE:-}" = "overlay" ]; then # tests/
 fi
 if [ "$stage" = "implement" ] && [ "${LOKI_E10_STAGE:-}" = "implement" ] && [ -n "${E2E_STUB_IMPL_CONFLICT:-}" ]; then # every implement session off sonnet answers a spec conflict (tests/min/auto-route.sh)
   case "$flags" in *"--model claude-sonnet"*|*"--model sonnet"*) ;; *) echo "LOKI_SPEC_CONFLICT: $E2E_STUB_IMPL_CONFLICT"; exit 0 ;; esac
+fi
+if [ "$stage" = "implement" ] && [ -n "${E2E_STUB_BASE_RED_CONFLICT:-}" ] && ! printf '%s' "$prompt" | grep -q "already fails on the base commit is not a conflict"; then # FireLater#24 s3/s4: the session calls a suite already red on base a spec conflict until the correction says it is not (tests/min/scope-and-fix.sh)
+  echo "LOKI_SPEC_CONFLICT: the frontend suite already fails on the base commit, so 'npm run test' cannot pass"; exit 0
 fi
 if [ "$stage" = "plan" ] && [ "${E2E_STUB_MODE:-}" = "coverage" ]; then # a non-empty plan: the coverage leg with a plan stage must not resume
   out="$(printf '%s\n' "$prompt" | sed -n 's/.*to this exact file path: //p' | head -1)"
