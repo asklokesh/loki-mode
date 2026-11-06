@@ -46,7 +46,7 @@ const shq = (w: string): string => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${w.repla
 const detectedInterpreters = (tm: TestMap | undefined, repoDir: string, d: ContextDeps): string[] => [...new Set((tm?.runners ?? []).flatMap((runner) => { try { const c = d.cmd({ runner, path: "" } as TestRef, repoDir)[0]; return c ? [`${shq(c.startsWith(`${repoDir}/`) ? c.slice(repoDir.length + 1) : c)} (${runner})`] : []; } catch { return []; } }))]; // RUN5-C1i: executable per detected runner via the test-run resolver; none detected, none invented
 export function briefContext(ctx: RunContext, d: ContextDeps): string { return briefRecord(ctx, d).text; }
 /** L021/L022: the brief context, the exact file list it names (brief_files) and, for a haiku or sonnet executor, the context pack it carries. No model (fix stage) or an Opus model: the text is byte-identical to briefContext before L021. */
-export interface BriefRecord { text: string; files: string[]; pack: Omit<ContextPack, "text"> | null }
+export interface BriefRecord { text: string; files: string[]; pack: Omit<ContextPack, "text"> | null; packText?: string /* the pack block alone (the patch protocol's dossier) */ }
 export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): BriefRecord {
   const unit = unitBrief(); // D61-11: a unit brief is its pack files only
   if (unit !== null) return { text: unit, files: unit ? unit.split("\n").slice(1) : [], pack: null };
@@ -83,5 +83,5 @@ export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): Br
   ].filter(Boolean).join("\n\n");
   if (!pack) return { text, files, pack: null };
   const { text: _packText, ...record } = pack;
-  return { text, files: [...new Set([...files, ...pack.files])], pack: record };
+  return { text, files: [...new Set([...files, ...pack.files])], pack: record, packText: pack.text };
 }
