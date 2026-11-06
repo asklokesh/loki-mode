@@ -15,6 +15,7 @@ import { isAbsolute, join, resolve, sep } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
 import { envWithPwd } from "./worker_proc.ts";
 import { permissionPolicyMode } from "../providers/claude_flags.ts";
+import { allowFor, appendFence, fenceDenied, fenceEnabled } from "../util/config_fence.ts";
 
 // Host-guard hook timeout, seconds. Mirrors _loki_hook_timeout in autonomy/run.sh (same env var, same default, same validation).
 export const HOOK_TIMEOUT_DEFAULT_S = 30;
@@ -193,5 +194,24 @@ export function createHostGuardHook(cwd: string, env: NodeJS.ProcessEnv = proces
     if (real !== root && !real!.startsWith(root + sep)) return hostGuardDecision("LOKI_HOST_GUARD: Bash command cwd is outside the assigned workspace.");
     appendAudit(inputCwd, command);
     return compiled ? {} : ALLOW;
+  };
+}
+
+/**
+ * E1: the PreToolUse callback for Edit, Write and MultiEdit in an implement or fix session. Denies a write to test, build, lint or type config
+ * or a lockfile the task does not name (LOKI_E10_FENCE_TASK) or a spec conflict allowlisted (LOKI_E10_FENCE_ALLOW). New test files and product
+ * files are never fenced. Bash and any other writer are covered by the restore after the session (engine10/session.ts), not by reading commands.
+ */
+export function createConfigFenceHook(cwd: string, env: NodeJS.ProcessEnv = process.env): (input: unknown) => Promise<Decision | Record<string, never>> {
+  let allowed: string[] = [];
+  try { const a = JSON.parse(env["LOKI_E10_FENCE_ALLOW"] ?? "[]") as unknown; if (Array.isArray(a)) allowed = a.filter((x): x is string => typeof x === "string"); } catch { /* none */ }
+  const allow = allowFor(env["LOKI_E10_FENCE_TASK"] ?? "", allowed);
+  return async (input: unknown) => {
+    const d = input !== null && typeof input === "object" ? (input as Record<string, unknown>) : {};
+    const ti = d["tool_input"] !== null && typeof d["tool_input"] === "object" ? (d["tool_input"] as Record<string, unknown>) : {};
+    const hit = fenceEnabled(env["LOKI_E10_STAGE"], env) ? fenceDenied(String(d["tool_name"] ?? ""), ti["file_path"], cwd, allow) : null;
+    if (!hit) return {};
+    if (env["LOKI_E10_FENCE_RUNDIR"]) appendFence(env["LOKI_E10_FENCE_RUNDIR"], { k: "denied", path: hit.rel, session: env["LOKI_ITERATION"] ?? "" }); // the receipt must show a skipped config edit: the run is capped below VERIFIED
+    return hostGuardDecision(hit.reason);
   };
 }
