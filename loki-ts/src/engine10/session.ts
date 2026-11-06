@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { diffShortstat, diffSignature, untrackedList } from "../util/anti_loop.ts"; export { diffShortstat, diffSignature, untrackedList }; // watchdog diff signature lives with the other tree-change detectors
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join } from "node:path"; import { tmpdir } from "node:os"; import { randomUUID } from "node:crypto";
 import { archivePriorCosts, writeProviderCost, stageMedianGapMs } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
 import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
@@ -17,7 +17,7 @@ import { routerEnabled } from "../runner/router/flag.ts";
 import { exitKind, routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 import { clampBashTimeoutEnv, envWithPwd, pinBashShellEnv, killGroupWithGrace, reapLiveGroup } from "../runner/worker_proc.ts"; import { engine10StaticPrefix, sessionPinModel } from "../runner/providers.ts"; export { sessionPinModel }; import { capToSessionPin } from "../runner/model_rank.ts"; import { idleGapMs, prefixParts, prefixSha } from "../util/cost_breakdown.ts";
-import { allowFor, appendFence, conflictNamed, fenceEnabled, fenceTask, restoreFenced, snapshotFenced } from "../util/config_fence.ts"; // E1: config and lockfile write fence
+import { allowFor, appendFence, conflictNamed, fenceEnabled, fenceTask, healRecord, mergeDenials, restoreFenced, snapshotFenced } from "../util/config_fence.ts"; // E1: config and lockfile write fence
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
 import { calculateCostFromRecords, partialUsagePath, readEfficiencyDir, recordPartialStreamCost } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
@@ -149,8 +149,9 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       const env = childEnv(opts, cfg);
       const fenceCwd = opts.cwd ?? process.cwd(), fenceOn = fenceEnabled(opts.stage, process.env); // E1
       const fenceRunId = process.env["LOKI_E10_RUN_ID"], fenceRunDir = fenceRunId ? join(cfg.lokiRoot ?? join(fenceCwd, ".loki"), "runs", fenceRunId) : null;
+      const fenceDenyLog = join(tmpdir(), `loki-fence-${randomUUID()}.jsonl`); // private to this session: outside the repo, and not in the model's own environment
       const fenceSnap = fenceOn ? snapshotFenced(fenceCwd) : null, fenceTaskText = fenceOn ? fenceTask(process.env, fenceRunDir ?? undefined) : "", fenceAllow = allowFor(fenceTaskText, allowOnce);
-      if (fenceOn) { env["LOKI_E10_FENCE_TASK"] = fenceTaskText; env["LOKI_E10_FENCE_ALLOW"] = JSON.stringify(allowOnce); if (fenceRunDir) env["LOKI_E10_FENCE_RUNDIR"] = fenceRunDir; else delete env["LOKI_E10_FENCE_RUNDIR"]; } else { for (const k of ["LOKI_E10_FENCE_TASK", "LOKI_E10_FENCE_ALLOW", "LOKI_E10_FENCE_RUNDIR"]) delete env[k]; }
+      if (fenceOn) { env["LOKI_E10_FENCE_TASK"] = fenceTaskText; env["LOKI_E10_FENCE_ALLOW"] = JSON.stringify(allowOnce); env["LOKI_E10_FENCE_DENYLOG"] = fenceDenyLog; } else { for (const k of ["LOKI_E10_FENCE_TASK", "LOKI_E10_FENCE_ALLOW", "LOKI_E10_FENCE_DENYLOG"]) delete env[k]; }
       if (fenceSnap?.error && fenceRunDir) appendFence(fenceRunDir, { k: "failure", text: `config fence inactive for this session: ${fenceSnap.error}` });
       archivePriorCosts(cfg.lokiRoot, opts.cwd, opts.iterationId);
       const [cmd, args] = cfg.childCommand ?? [
@@ -213,6 +214,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
             } catch (e) { if (fenceRunDir) appendFence(fenceRunDir, { k: "failure", text: `restore crashed (${e instanceof Error ? e.message.slice(0, 120) : "error"})` }); } // a fence bug never fails the session
             allowOnce = []; // consumed by this session
           }
+          if (fenceRunDir) { mergeDenials(fenceRunDir, fenceDenyLog); healRecord(fenceRunDir); } // the ledger is the record: whatever the session did to the run file is undone
           // The CLI invoker writes only to its iteration log, never stdout.
           const log = join(opts.cwd ?? process.cwd(), ".loki", `iteration-${sessionId}.log`);
           const logText = existsSync(log) ? readFileSync(log, "utf8") : ""; const markers = parseMarkers(stdout + logText);
