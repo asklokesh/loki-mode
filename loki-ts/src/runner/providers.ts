@@ -466,7 +466,7 @@ function cliSettingsJson(hostGuard: boolean, router: Partial<NonNullable<RouterS
 // and MultiEdit); a file the session creates is not covered here, the restore after the session (engine10/session.ts) removes it.
 type WriteFence = { permissions: { blockWritesOutsideWorkingDirectories?: true; deny?: string[] } };
 function implementWriteFence(cwd?: string): WriteFence | undefined { // cwd given: the CLI route, which has no in-process hook (the SDK route denies through createConfigFenceHook)
-  const stage = process.env["LOKI_E10_STAGE"], deny = cwd && fenceEnabled(stage) ? fencedDenyRules(cwd, process.env) : [];
+  const stage = process.env["LOKI_E10_STAGE"], deny = [...(cwd && stage ? [`Edit(/${resolve(cwd, ".loki")}/**)`] : []), ...(cwd && fenceEnabled(stage) ? fencedDenyRules(cwd, process.env) : [])]; // .loki/ run state in every engine10 stage
   if (stage !== "implement" && deny.length === 0) return undefined;
   return { permissions: { ...(stage === "implement" ? { blockWritesOutsideWorkingDirectories: true as const } : {}), ...(deny.length > 0 ? { deny } : {}) } };
 }
@@ -905,19 +905,19 @@ export function sdkQueryProvider(): ProviderInvoker {
             // which deliberately drops LOKI_E10_* for the CHILD session) --
             // this hook runs in the parent process, so the flag applies to
             // THIS session regardless of what the child inherits.
-            ...(hostGuardRequired(call.cwd) || fenceEnabled(process.env["LOKI_E10_STAGE"]) || process.env["LOKI_E10_TRIM"] === "1" || stopSpec
+            ...(hostGuardRequired(call.cwd) || process.env["LOKI_E10_STAGE"] || process.env["LOKI_E10_TRIM"] === "1" || stopSpec
               ? {
                   hooks: {
                     ...(stopSpec ? { Stop: [{ timeout: stopSpec.budgetS + STOP_HOOK_MARGIN_S, hooks: [createStopChecksHook(stopSpec)] }] } : {}),
-                    ...(hostGuardRequired(call.cwd) || fenceEnabled(process.env["LOKI_E10_STAGE"])
+                    ...(hostGuardRequired(call.cwd) || process.env["LOKI_E10_STAGE"]
                       ? {
                           PreToolUse: [
                             ...(hostGuardRequired(call.cwd) ? [{
                               matcher: "Bash",
                               hooks: [createHostGuardHook(call.cwd)], // in-process; validate-bash.sh runs only for a command one of its rules could deny
                             }] : []),
-                            ...(fenceEnabled(process.env["LOKI_E10_STAGE"]) ? [{
-                              matcher: "Edit|Write|MultiEdit", // E1: config and lockfile fence; session.ts restores whatever else a session changes
+                            ...(process.env["LOKI_E10_STAGE"] ? [{
+                              matcher: "Edit|Write|MultiEdit", // .loki/ run state (every engine10 stage) and the E1 config and lockfile fence (when on); session.ts restores whatever else a session changes
                               hooks: [createConfigFenceHook(call.cwd)],
                             }] : []),
                           ],
