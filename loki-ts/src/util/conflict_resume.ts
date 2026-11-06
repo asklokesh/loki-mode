@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { readSessionId } from "../runner/session_resume.ts";
 import { capToRunTier, wallPinModel } from "../engine10/sizing.ts";
+import { keptUnderLean } from "./cost_profile.ts";
 /** The referee and the legacy re-author never run above the run's own model (a haiku run keeps them on haiku), like every other auxiliary Wall pin. */
 const refereeModel = (ctx: RunContext): string => capToRunTier(wallPinModel(), ctx.model, ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE"]);
 import { assertionCount, changedAssertion, changedRegion, editScopeViolation, quoteInSpec, testSpans, wallAnchor, type WallDefect } from "./wall_owned.ts";
@@ -103,8 +104,9 @@ export const resumeAfterAlreadyDone = (ctx: RunContext, first: SessionRunOptions
 // LOKI_E10_COVERAGE_RESUME (default on; =0/off/false opts out): on the lean path (plan skipped) a LOKI_DONE exit with a non-empty diff gets exactly one more turn in the same session.
 // The task text is already in that session, so the fixed brief names no task (cli-2478: the first turn fixed 2 of the 3 sites the issue named).
 export const COVERAGE_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. " + FINISH_LINE;
-// LOKI_E10_CLAIM_CHECK (default on, =0 opts out; only with LOKI_E10_COVERAGE_RESUME): the coverage turn also writes SITE lines, and a site claimed changed that is byte-identical to the base is re-asked once ("-c2"). One extra session, only when such a claim is found.
-export const claimCheckEnabled = (env = process.env): boolean => !["0", "off", "false", "no"].includes((env.LOKI_E10_CLAIM_CHECK ?? "").trim().toLowerCase());
+// LOKI_E10_CLAIM_CHECK (only with LOKI_E10_COVERAGE_RESUME): the coverage turn also writes SITE lines, and a site claimed changed that is byte-identical to the base is re-asked once ("-c2"). One extra session, only when such a claim is found.
+// Off by default under LOKI_E10_LEAN_CALLS (util/cost_profile.ts: the re-ask edited nothing in 14 of 14 bench sessions); =1 turns it on, LOKI_E10_LEAN_CALLS=0 restores the old default (on).
+export const claimCheckEnabled = (env = process.env): boolean => keptUnderLean(env.LOKI_E10_CLAIM_CHECK, env);
 export const COVERAGE_CLAIM_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. Before the last line, write one line per site in the current file: `SITE <path>:<line>: changed` or `SITE <path>:<line>: unchanged - <why>`. " + FINISH_LINE;
 export const coverageResumeEnabled = (env = process.env): boolean => !isOff(env.LOKI_E10_COVERAGE_RESUME);
 

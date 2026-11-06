@@ -19,9 +19,12 @@ import { describeJudgeOutcome, toolLessCall } from "../runner/sdk_invoker.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
 import { assertionFailure, commandFor, plainTestEnv, pytestKindsAreAssertion, spawnGroupSync, stripAnsi, vitestErrorsAreAssertion } from "../util/check_result.ts";
 import { escapeRegex } from "../util/regex_escape.ts";
+import { keptUnderLean } from "../util/cost_profile.ts";
 
 export const execSpecEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_EXEC_SPEC ?? "").trim().toLowerCase()); // default on; LOKI_E10_EXEC_SPEC=0 opts out
-export const EXEC_SPEC_BRIEF_FILE = "exec-spec-brief.txt"; // <runDir>/, read by implement.ts
+/** Whether wall.ts calls the generator: the knob is on AND, under LOKI_E10_LEAN_CALLS (util/cost_profile.ts, default on), LOKI_E10_EXEC_SPEC is set explicitly. */
+export const execSpecGenerates = (env: NodeJS.ProcessEnv = process.env): boolean => keptUnderLean(env.LOKI_E10_EXEC_SPEC, env);
+export const EXEC_SPEC_BRIEF_FILE ="exec-spec-brief.txt"; // <runDir>/, read by implement.ts
 export const EXEC_SPEC_TELEMETRY_FILE = "exec-spec.json"; // <runDir>/, read by seal.ts for the receipt's exec_spec block
 
 export type AtomKind = "example" | "claim" | "site" | "option" | "location" | "parity" | "pair";
