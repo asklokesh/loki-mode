@@ -341,7 +341,7 @@ function parseCargo(toks: readonly string[]): { global: string[]; sub: string; r
  *  reported fail; failedTests = the Test names that failed; passed = top-level tests with a "run" event and a final pass (a skip never counts);
  *  complete = every started package has exactly one start and exactly one package-level terminal event, with no repeated run event. Exit 0 plus a complete event stream is counted from this alone, never from plain output (see GO_EXIT0_REASON). */
 function goJson(out: string): { failed: boolean; failedTests: string[]; passed: number; passedNames: string[]; complete: boolean } | null {
-  let any = false, failed = false, dirty = false;
+  let any = false, failed = false, dirty = false, noTests = false;
   const status = new Map<string, string>(), ranSet = new Set<string>(), pkgs = new Set<string>(), failedTests = new Set<string>(), starts = new Map<string, number>(), done = new Map<string, number>();
   for (const x of out.split("\n")) {
     if (!x.trim() || /^go: /.test(x)) continue;
@@ -353,7 +353,7 @@ function goJson(out: string): { failed: boolean; failedTests: string[]; passed: 
     if (e.Action === "start" && !test) { pkgs.add(pkg); starts.set(pkg, (starts.get(pkg) ?? 0) + 1); }
     if (e.Action === "fail") { failed = true; if (test) failedTests.add(`${pkg}::${test}`); }
     if (!/^build-/.test(e.Action) && !starts.has(pkg)) dirty = true; // an event for a package that never started: not the go command's framing
-    if (!test && e.Action === "output" && /\[no tests to run\]/.test(String((e as { Output?: unknown }).Output ?? ""))) dirty = true;
+    if (!test && e.Action === "output" && /\[no tests to run\]/.test(String((e as { Output?: unknown }).Output ?? ""))) noTests = true; // the go command ran no test of the -run set (a file a build constraint leaves out, `//go:build integration`): a zero run, never a pass
     if (!test) { if (/^(?:pass|fail|skip)$/.test(e.Action)) done.set(pkg, (done.get(pkg) ?? 0) + 1); continue; }
     if (test.includes("/")) continue; // subtests roll up into their top-level test
     const k = `${pkg}::${test}`;
@@ -362,6 +362,7 @@ function goJson(out: string): { failed: boolean; failedTests: string[]; passed: 
   }
   if (!any) return null;
   const passedNames = [...status].filter(([, v]) => v === "pass").map(([k]) => k);
+  if (noTests && (passedNames.length > 0 || ranSet.size > 0)) dirty = true; // "no tests to run" beside a test that ran contradicts itself: doubt
   return { failed, failedTests: [...failedTests], passed: passedNames.length, passedNames, complete: !dirty && pkgs.size > 0 && [...pkgs].every((p) => starts.get(p) === 1 && done.get(p) === 1) }; // a torn stream or one with repeated starts, terminals or runs is doubt; a clean forged stream passes this and is caught by corroboratePass
 }
 export const CARGO_RUNNER_REASON = "test count could not be confirmed: a cargo target or alias setting can redirect both the test run and its listing";
@@ -1712,15 +1713,57 @@ function goAssertionFailure(out: string): boolean {
   if (!pkgFail && failedTests.size === 0) return false;
   return failedTests.size > 0 && [...failedTests].some((k) => asserted.has(k) || [...asserted].some((a) => a.startsWith(`${k}/`)));
 }
-/** True only when a red test file failed on assertions: every reported failure is an assertion, and none is an import, collection, attribute, type or reference error (a test that calls code the base lacks fails that way for ANY change, so it proves nothing about the fix). Only pytest and vitest output is read; every other runner is false (fail-closed: the run reads PARTIAL). */
-export function assertionFailure(runner: string, output: string): boolean {
+/** The errors an issue reports. observed: "Type: message" errors the issue shows as what happens now (`RuntimeError: input already opened`, also `RuntimeError('input already opened')`); an error any of whose
+ *  mentions sits after should, must, expected, want, instead or the like on its line or the non-empty line above is what the issue asks for, not what it saw, and is left out. wanted: the exception types the issue asks to be raised. */
+export interface ReportedErrors { observed: string[]; wanted: string[] }
+const WANTED_CUE = /\b(?:should|must|shall|expect(?:s|ed)?|want(?:s|ed)?|ought|needs? to|instead|would like|supposed to|to raise|will raise|rather)\b/i;
+export function reportedErrors(task: string): ReportedErrors {
+  const seen = new Map<string, boolean>(), wanted = new Set<string>();
+  for (const m of task.matchAll(/(?<![\w.])([A-Z][A-Za-z0-9_]*(?:Error|Exception))(?::[ \t]*([^\n`]{3,200})|\(\s*(['"])([^'"\n]{3,200})\3\s*\))?/g)) {
+    const ls = task.slice(0, m.index!).split("\n"), prev = ls.slice(0, -1).reverse().find((l) => l.trim() !== "") ?? "", before = `${prev}\n${ls[ls.length - 1]!}`, want = WANTED_CUE.test(before), msg = (m[2] ?? m[4] ?? "").trim().replace(/[\s.]+$/, ""); // before: the mention's own line and the non-empty line above ("it should raise", then the error on its own line)
+    if (want) wanted.add(m[1]!);
+    if (msg.length < 3) continue;
+    const k = `${m[1]}: ${msg}`; seen.set(k, (seen.get(k) ?? true) && !want);
+  }
+  return { observed: [...seen].filter(([, ok]) => ok).map(([k]) => k), wanted: [...wanted] };
+}
+/** pytest: the body of each test function the base run names as failed (FAILED/SUBFAILED node ids) asserts a result against a non-trivial expected value (assertEqual and kin, or `assert a == b`
+ *  with two different sides and no bare None/True/False), or expects an issue-requested exception type other than the observed one (pytest.raises / assertRaises). A bare call, a re-raise,
+ *  `is not None` or truthiness is not. Any failed test whose function cannot be found in `src` makes this false. */
+export function assertsResult(src: string, output: string, rep: ReportedErrors): boolean {
+  const names = [...new Set([...stripAnsi(output).matchAll(/^(?:SUB)?FAILED(?:\([^)\n]*\))?\s+\S*::(\w+)(?:\[[^\]\s]*\])?(?:\s|$)/gm)].map((m) => m[1]!))];
+  if (names.length === 0) return false;
+  const lines = src.split("\n"), observedTypes = new Set(rep.observed.map((e) => e.slice(0, e.indexOf(":"))));
+  const trivial = (x: string): boolean => /^(?:None|True|False)$/.test(x.trim()) || x.trim() === "";
+  const strong = (body: string): boolean => {
+    const code = body.replace(/#[^\n]*/g, "");
+    if (/\bself\.assert(?:Equal|ListEqual|TupleEqual|DictEqual|SetEqual|SequenceEqual|CountEqual|AlmostEqual|MultiLineEqual)\s*\(/.test(code)) return true;
+    for (const m of code.matchAll(/^\s*assert\s+(.+?)\s*==\s*(.+?)\s*(?:,.*)?$/gm)) if (!trivial(m[1]!) && !trivial(m[2]!) && m[1]!.trim() !== m[2]!.trim()) return true;
+    for (const m of code.matchAll(/\b(?:pytest\.raises|self\.assertRaises(?:Regex)?)\s*\(\s*(?:\w+\.)*(\w+)/g)) if (rep.wanted.includes(m[1]!) && !observedTypes.has(m[1]!)) return true;
+    return false;
+  };
+  return names.every((n) => {
+    const at = lines.findIndex((l) => new RegExp(`^(\\s*)(?:async\\s+)?def\\s+${n}\\s*\\(`).test(l)); if (at < 0) return false;
+    const ind = /^(\s*)/.exec(lines[at]!)![1]!.length, body: string[] = [];
+    for (const l of lines.slice(at + 1)) { if (l.trim() !== "" && /^(\s*)/.exec(l)![1]!.length <= ind) break; body.push(l); }
+    return strong(body.join("\n"));
+  });
+}
+const MISSING_API = /^(?:Import|ModuleNotFound|Attribute|Name|UnboundLocal|Syntax|Indentation)Error\b|^TypeError: .*(?:unexpected keyword argument|positional argument|required (?:positional|keyword-only) argument|is not callable|takes no arguments)/; // a call the base cannot make, even when the issue quotes it
+/** True only when a red test file failed on assertions: every reported failure is an assertion, and none is an import, collection, attribute, type or reference error (a test that calls code the base lacks fails that way for ANY change, so it proves nothing about the fix). Only pytest and vitest output is read; every other runner is false (fail-closed: the run reads PARTIAL).
+ *  `reported` (pytest; reportedErrors of the issue) and `src` (the test file): a failure that is not an assertion still counts when its exception type and message are exactly an error the issue shows as observed, the failed test asserts a result (assertsResult) (more-itertools#1277: the issue quotes "RuntimeError: input already opened" and the base raises exactly that), every other failure is an assertion or a reported error, and none is a missing-API error. An exception the issue does not report stays not-proof. */
+export function assertionFailure(runner: string, output: string, reported: ReportedErrors = { observed: [], wanted: [] }, src = ""): boolean {
   const out = stripAnsi(output);
   if (runner === "pytest") { // red by assertion: at least one failure is an assertion and none is a missing-API error (import, attribute, name, type, syntax). A behavioral error beside it (OverflowError, ValueError) is the bug itself, not an absent API.
     if (/^ERROR\s|errors? during collection/m.test(out)) return false;
-    const f = [...out.matchAll(/^FAILED\s+\S+(?:\s+-\s+(.*))?$/gm)].map((m) => (m[1] ?? "").trim());
+    const f = [...out.matchAll(/^(?:SUB)?FAILED(?:\([^)\n]*\))?\s+\S+(?:\s+-\s+(.*))?$/gm)].map((m) => (m[1] ?? "").trim()); // SUBFAILED(...): a failed unittest subTest
     if (f.length === 0) return false;
     const kinds = f.every((r) => r !== "" && !r.endsWith("...")) ? f : [...out.matchAll(/^E\s+((?:assert\b|[A-Za-z_.]*(?:Error|Exception))\S*)/gm)].map((m) => m[1]!); // a narrow terminal cuts the " - reason" from the summary line, or ends it in "..." ("AssertionEr..."): read the traceback's E lines instead
-    return kinds.some((k) => /^(?:assert\b|AssertionError\b)/.test(k)) && !kinds.some((k) => /^(?:Import|ModuleNotFound|Attribute|Name|UnboundLocal|Type|Syntax|Indentation)Error\b/.test(k));
+    const asserted = kinds.some((k) => /^(?:assert\b|AssertionError\b)/.test(k)) && !kinds.some((k) => /^(?:Import|ModuleNotFound|Attribute|Name|UnboundLocal|Type|Syntax|Indentation)Error\b/.test(k));
+    if (asserted || reported.observed.length === 0 || !assertsResult(src, out, reported)) return asserted; // the reported-error path needs a test that asserts a result (review of #545: a bare call, a re-raise or `is not None` passed with a wrong fix)
+    const norm = (x: string): string => x.replace(/\s+/g, " ").trim().replace(/[\s.]+$/, ""), want = new Set(reported.observed.map(norm));
+    const raised = [...out.matchAll(/^E\s+((?:[A-Za-z_][\w]*\.)*[A-Za-z_]\w*(?:Error|Exception))(?::[ \t]*(.*))?$/gm)].map((m) => norm(`${m[1]!.split(".").pop()!}: ${m[2] ?? ""}`)); // E lines carry the exception and its message; a dotted module prefix is dropped
+    return raised.length > 0 && raised.some((r) => want.has(r)) && raised.every((r) => want.has(r) || /^AssertionError\b/.test(r)) && !raised.some((r) => MISSING_API.test(r)) && !kinds.some((k) => MISSING_API.test(k));
   }
   if (runner === "vitest") { const e = [...out.matchAll(/^\s*((?:[A-Za-z]*Error))(?:\s*\[[^\]]*\])?:/gm)].map((m) => m[1]!); return e.length > 0 && e.every((k) => k === "AssertionError"); }
   if (runner === "go") return goAssertionFailure(out);
