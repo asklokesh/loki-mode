@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.137.1 (2026-11-06)
+
+A run that settles an open choice itself, or leaves a behavior change unsettled, no longer reads VERIFIED.
+
+### Fixed
+- A run that picks an open either/or itself, or leaves a behavior change or its regression check unsettled, now reads PARTIAL instead of VERIFIED, with the reason on NOT PROVEN. On the v11.137 Haiku benchmark this removes 3 of the 4 false VERIFIED results and downgrades none of the 6 correct ones. LOKI_E10_OPEN_DECISION_CAP=0 opts out.
+
 ## v11.137.0 (2026-11-05)
 
 Loki on Haiku now writes test cases from the issue before implement, checks wrapped-error relations, compares candidate fixes on Go, flags output changes nobody asked for, and turns its accuracy features on by default.

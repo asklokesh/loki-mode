@@ -187,6 +187,18 @@ export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptChe
   return "VERIFIED";
 }
 
+/** FALSEVER-OPEN-DECISION (LOKI_E10_OPEN_DECISION_CAP, default on, =0 opts out): NOT PROVEN lines for what the run decided without the issue deciding it.
+ *  An intake assumption (an either/or the vote or the model picked), a no-regression change the issue does not decide (advisory), and a differential that did not run or complete. */
+/** An intake open-choice line the run settled itself: no evidence picked an option, or the precedent vote did. A choice the task, a maintainer or an existing test settles, and any other assumption (a brief's defaults), is not one. */
+const runPickedChoice = (a: string): boolean => /^Open choice: .* -> (?:no evidence picks one|implement option \d+: .*Evidence \((?:precedent|none)\))/s.test(a);
+export function openDecisionNotes(o: Partial<Record<StageName, Obj>>, env: NodeJS.ProcessEnv = process.env): string[] {
+  if (["0", "off", "false", "no"].includes((env.LOKI_E10_OPEN_DECISION_CAP ?? "").trim().toLowerCase())) return [];
+  const nrd = ((o.implement?.no_regression as { receipt?: unknown } | undefined)?.receipt), lines = Array.isArray(nrd) ? nrd.map(String) : [];
+  return [...strs(o.intake?.assumptions).filter(runPickedChoice).map((a) => `open choice the issue does not decide, picked by the run: ${a}`),
+    ...lines.filter((l) => l.startsWith("advisory:")).map((l) => `behavior change the issue does not decide: ${l.slice("advisory:".length).trim()}`),
+    ...lines.filter((l) => l.startsWith("NOT PROVEN:"))];
+}
+
 /** FC-21b: verify's target_checks (Wall and task-named relevant tests) names a test that ran n>0 and passed; read from verify's raw checks, never from prose. */
 export function targetProofOf(v: Obj | undefined): boolean {
   const names = new Set(strs(v?.target_checks)), raw = Array.isArray(v?.checks) ? (v.checks as Obj[]) : [];
@@ -290,8 +302,9 @@ export const sealStage: Stage = {
     const mp0 = verdict2 === "VERIFIED" && mutationEnabled() ? await mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as { path: string }[]) : [], checks: Array.isArray(o.verify?.checks) ? (o.verify.checks as { name: string }[]) : [], runner: (ms: number) => new RealBaseTestRunner(undefined, ms) }) : null;
     const ftpRes = await (ftpMemo as Promise<{ ok: boolean; line: string; files: string[] }> | null), mp = ftpRes?.ok && verdict2 === "VERIFIED" && noWall ? { outcome: "yes" as const, line: ftpRes.line } : mp0; // Wall off: the fail-then-pass run is the receipt's proof line
     const fenceRec = fenceNotes(readFenceRecord(ctx.runDir), executed); // E1: what the config write fence restored, and any allowlist a spec conflict earned (caps below VERIFIED)
-    const arbCap = Array.isArray(o.wall?.arbitrated) && (o.wall!.arbitrated as unknown[]).length > 0 && (verdict2 === "VERIFIED" || verdict2 === "ALREADY_SATISFIED"), mutCap = mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true, verdict3: Verdict = capFenceVerdict(mutCap || arbCap ? "PARTIAL" : verdict2, fenceRec); // an arbitrated replacement passed only syntactic validators and two referees, so it never carries a success verdict; FC-69: a Wall test that did not execute is disclosed (not_proven), never a verdict downgrade (CTO ruling; D95 THIN)
-    const deepG = deepGaps(o.verify?.risk, vraw, Array.isArray(o.deep?.checks) ? (o.deep.checks as Obj[]) : [], modelReviewRan(xr)), notProven = new Set<string>([...deepG.notProven, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? []), ...reviewReceipt(ctx.provider, xr).notProven]);
+    const arbCap = Array.isArray(o.wall?.arbitrated) && (o.wall!.arbitrated as unknown[]).length > 0 && (verdict2 === "VERIFIED" || verdict2 === "ALREADY_SATISFIED"), mutCap = mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true, verdict3a: Verdict = capFenceVerdict(mutCap || arbCap ? "PARTIAL" : verdict2, fenceRec); // an arbitrated replacement passed only syntactic validators and two referees, so it never carries a success verdict; FC-69: a Wall test that did not execute is disclosed (not_proven), never a verdict downgrade (CTO ruling; D95 THIN)
+    const openNotes = openDecisionNotes(o), verdict3: Verdict = openNotes.length > 0 && verdict3a === "VERIFIED" ? "PARTIAL" : verdict3a; // FALSEVER-OPEN-DECISION: an open either/or the run picked itself, or a behavior change or regression check the run could not settle, is never VERIFIED
+    const deepG = deepGaps(o.verify?.risk, vraw, Array.isArray(o.deep?.checks) ? (o.deep.checks as Obj[]) : [], modelReviewRan(xr)), notProven = new Set<string>([...deepG.notProven, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? []), ...reviewReceipt(ctx.provider, xr).notProven, ...openNotes]);
     const wp = verdict3 === "VERIFIED" ? wpAll : { files: [], notes: wpAll.notes }; for (const n of wp.notes) notProven.add(n); if (verdict3 === "PARTIAL") for (const n of wpAll.clauseGap) notProven.add(n); // FC-VERIFIED-PR-WITHOUT-ITS-TEST: only on VERIFIED, after the receipt's head, tree and diff are fixed
     const wallPub0 = wp.files.length > 0 ? await publishWall(g(ctx), ctx.runId, ctx.repoDir, wp.files, wallDone) : false; if (wp.files.length > 0 && !wallPub0) notProven.add("Wall tests not published (child commit failed or committed bytes differ from the sealed copy)");
     // #238: the Wall proof counts only at the committed path: re-run each published file where the tree holds it, with the runner that owns it. A failure there is NOT PROVEN, named by path, and the verdict is PARTIAL.
