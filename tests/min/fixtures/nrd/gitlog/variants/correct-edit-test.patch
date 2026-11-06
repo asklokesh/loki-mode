@@ -1,0 +1,28 @@
+diff -ru a/changelog/changelog.go b/changelog/changelog.go
+--- a/changelog/changelog.go
++++ b/changelog/changelog.go
+@@ -12,9 +12,9 @@
+ 	return []string{"git", "log", "--no-merges", "--pretty=format:" + format}
+ }
+ 
+-// CommitsCmd lists the commit subjects between two refs.
++// CommitsCmd lists the commit subjects between two refs, merge commits included.
+ func CommitsCmd(from, to string) []string {
+-	return append(logArgs("%s"), from+".."+to)
++	return []string{"git", "log", "--pretty=format:%s", from + ".." + to}
+ }
+ 
+ // AuthorsCmd lists the author of every commit between two refs, for the credits section.
+diff -ru a/changelog/changelog_test.go b/changelog/changelog_test.go
+--- a/changelog/changelog_test.go
++++ b/changelog/changelog_test.go
+@@ -11,6 +11,9 @@
+ 	if !strings.HasPrefix(got, "git log") || !strings.HasSuffix(got, "v1.0.0..HEAD") {
+ 		t.Fatalf("CommitsCmd = %q", got)
+ 	}
++	if strings.Contains(got, "--no-merges") {
++		t.Fatalf("CommitsCmd must list merge commits: %q", got)
++	}
+ }
+ 
+ func TestLastTagCmd(t *testing.T) {
