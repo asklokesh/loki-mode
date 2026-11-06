@@ -189,10 +189,12 @@ export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptChe
 
 /** FALSEVER-OPEN-DECISION (LOKI_E10_OPEN_DECISION_CAP, default on, =0 opts out): NOT PROVEN lines for what the run decided without the issue deciding it.
  *  An intake assumption (an either/or the vote or the model picked), a no-regression change the issue does not decide (advisory), and a differential that did not run or complete. */
+/** An intake open-choice line the run settled itself: no evidence picked an option, or the precedent vote did. A choice the task, a maintainer or an existing test settles, and any other assumption (a brief's defaults), is not one. */
+const runPickedChoice = (a: string): boolean => /^Open choice: .* -> (?:no evidence picks one|implement option \d+: .*Evidence \((?:precedent|none)\))/s.test(a);
 export function openDecisionNotes(o: Partial<Record<StageName, Obj>>, env: NodeJS.ProcessEnv = process.env): string[] {
   if (["0", "off", "false", "no"].includes((env.LOKI_E10_OPEN_DECISION_CAP ?? "").trim().toLowerCase())) return [];
   const nrd = ((o.implement?.no_regression as { receipt?: unknown } | undefined)?.receipt), lines = Array.isArray(nrd) ? nrd.map(String) : [];
-  return [...strs(o.intake?.assumptions).map((a) => `open choice the issue does not decide, picked by the run: ${a}`),
+  return [...strs(o.intake?.assumptions).filter(runPickedChoice).map((a) => `open choice the issue does not decide, picked by the run: ${a}`),
     ...lines.filter((l) => l.startsWith("advisory:")).map((l) => `behavior change the issue does not decide: ${l.slice("advisory:".length).trim()}`),
     ...lines.filter((l) => l.startsWith("NOT PROVEN:"))];
 }
