@@ -205,12 +205,13 @@ export function createHostGuardHook(cwd: string, env: NodeJS.ProcessEnv = proces
 export function createConfigFenceHook(cwd: string, env: NodeJS.ProcessEnv = process.env): (input: unknown) => Promise<Decision | Record<string, never>> {
   let allowed: string[] = [];
   try { const a = JSON.parse(env["LOKI_E10_FENCE_ALLOW"] ?? "[]") as unknown; if (Array.isArray(a)) allowed = a.filter((x): x is string => typeof x === "string"); } catch { /* none */ }
+  const wrote = new Set<string>(); // new test-dir config files this session wrote: editable again in the same session
   const allow = allowFor(env["LOKI_E10_FENCE_TASK"] ?? "", allowed);
   return async (input: unknown) => {
     const d = input !== null && typeof input === "object" ? (input as Record<string, unknown>) : {};
     const ti = d["tool_input"] !== null && typeof d["tool_input"] === "object" ? (d["tool_input"] as Record<string, unknown>) : {};
     if (!env["LOKI_E10_STAGE"]) return {};
-    const hit = fenceDenied(String(d["tool_name"] ?? ""), ti["file_path"], cwd, fenceEnabled(env["LOKI_E10_STAGE"], env) ? allow : () => true, true); // .loki/ (the harness's run state) is denied in every engine10 stage; the config fence only when it is on
+    const hit = fenceDenied(String(d["tool_name"] ?? ""), ti["file_path"], cwd, fenceEnabled(env["LOKI_E10_STAGE"], env) ? (rel) => allow(rel) || wrote.has(rel) : () => true, true, (rel) => wrote.add(rel)); // .loki/ (the harness's run state) is denied in every engine10 stage; the config fence only when it is on
     if (!hit) return {};
     if (env["LOKI_E10_FENCE_DENYLOG"] && !hit.rel.startsWith(".loki")) appendDenial(env["LOKI_E10_FENCE_DENYLOG"], hit.rel, env["LOKI_ITERATION"] ?? ""); // the receipt must show a skipped config edit; the runner merges this private log
     return hostGuardDecision(hit.reason);

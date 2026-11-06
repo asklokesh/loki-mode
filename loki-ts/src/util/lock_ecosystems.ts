@@ -70,6 +70,10 @@ export const LOCK_RULES: LockRule[] = [
   { tool: "composer", subs: ["install", "update"], locks: ["composer.lock"], locked: (s) => s === "install", build: (_s, r) => ["composer", "install", ...r] },
 ];
 
+/** Every lockfile name: the rules' own plus go.sum. The one definition; commit_filter.ts, project_model/linguist.ts and the config write fence import it. */
+export const LOCKFILE_NAMES: ReadonlySet<string> = new Set([...LOCK_RULES.flatMap((r) => r.locks), "go.sum"]);
+export const LOCKFILE_RE = { test: (path: string): boolean => LOCKFILE_NAMES.has(path.slice(path.lastIndexOf("/") + 1)) };
+
 /** Yarn Berry (2+): .yarnrc.yml beside the lockfile or package.json packageManager yarn@>=2; anything else is Classic. */
 export function isYarnBerry(dir: string): boolean {
   if (existsSync(join(dir, ".yarnrc.yml"))) return true;
