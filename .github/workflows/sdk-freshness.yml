@@ -1,7 +1,8 @@
 name: sdk-freshness
 
-# Anthropic SDK pins must never be more than 7 days behind the newest
-# release. Scheduled here so release.yml stays push-only.
+# Anthropic SDK pins and the Claude Code bundled in the pinned Agent SDK must never
+# trail the registry latest by more than the grace (7 days from that upstream release,
+# LOKI_SDK_FRESHNESS_DAYS overrides). Scheduled here so release.yml stays push-only.
 on:
   schedule:
     - cron: '17 6 * * *'
@@ -16,5 +17,5 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Anthropic SDK pins are within 7 days of the newest release
+      - name: Anthropic SDK pins and bundled Claude Code are within the grace of latest
         run: python3 scripts/dep-inventory.py --sdk-freshness

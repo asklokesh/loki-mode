@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.137.3 (2026-11-06)
+
+Loki now runs on the latest Claude Code and Anthropic SDKs, and its safety hooks fail closed.
+
+### Changed
+- Agent SDK 0.3.316 -> 0.3.318, Anthropic SDK 1.3.0 -> 1.6.0, bundled Claude Code 2.1.316 -> 2.1.318, Python anthropic 2.3.0 -> 2.6.0, pinned together everywhere including the Docker image (which had been left at 0.3.314).
+- On the SDK route, the host-guard and config-fence hooks now block a tool call when the hook itself fails, instead of letting it run.
+- The dependency freshness check also covers the bundled Claude Code and reports how many releases each pin is behind.
+
 ## v11.137.2 (2026-11-06)
 
 Loki on Haiku no longer short-cuts implement with a one-call patch, which raised merge-ready from 9 to 14 of 20 on the benchmark.

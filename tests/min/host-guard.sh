@@ -13,6 +13,8 @@
 #   compiled:   under LOKI_PERMISSION_POLICY=compiled an allowed command gets no decision from either, and a
 #               denied one is still denied;
 #   wiring:     the SDK route's PreToolUse hook is createHostGuardHook and providers.ts no longer spawns the script;
+#   fail closed: the host guard and config fence matchers set onFailure "block", and the SDK refuses such a session
+#               on a CLI that does not honor the option;
 #   speed:      the median in-process verdict on the ordinary commands is under 5 ms (the script takes ~0.3 s);
 #   adversarial: each 32 KB input built to make a backtracking pattern blow up (a heredoc of repeated `curl|`,
 #               `base64|`, `eval`, fork-bomb heads, digit runs, dash runs, ...) is decided in under 50 ms, in a child
@@ -38,6 +40,7 @@
 #  14. put back the old regex for the curl|wget rule, /(?:curl|wget)[\s\S]*\|[\s\S]*sh/; the 32 KB `curl|`
 #      heredoc takes minutes, the child is killed at 20 s and the adversarial check fails.
 #  15. drop `pos = end` in inOrder (steps no longer in order); the random-command comparison fails (186 of 4000).
+#  16. (providers.ts) drop onFailure "block" from the config fence matcher; the fail-closed count reads 1 of 2.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -449,5 +452,30 @@ grep -q 'capFenceVerdict(mutCap' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && 
 P="$ROOT/loki-ts/src/runner/providers.ts"
 grep -q 'hooks: \[createHostGuardHook(call.cwd)\]' "$P" && ok "SDK route PreToolUse hook is createHostGuardHook" || bad "SDK route does not use createHostGuardHook"
 grep -q 'runSdkHostGuard\|cmd: \["bash", hookPath\]' "$P" && bad "providers.ts still spawns the guard script per Bash call" || ok "providers.ts no longer spawns the guard script itself"
+
+# Fail closed (SDK 0.3.317 onFailure): the host guard and the config fence matchers each carry onFailure "block", so
+# a hook that throws or returns invalid output blocks the tool call instead of letting it run. The real SDK, driven
+# against the e2e stub binary, starts a session with a "block" matcher when the CLI says it honors the option and
+# refuses the session when it does not (an older CLI would ignore "block").
+n="$(grep -A3 -E 'hooks: \[(createHostGuardHook|createConfigFenceHook)\(call\.cwd\)\]' "$P" | grep -c 'onFailure: "block"')"
+[ "$n" -eq 2 ] && ok "host guard and config fence matchers both set onFailure \"block\"" || bad "onFailure \"block\" on $n of the 2 safety matchers"
+cat > "$T/block.ts" <<'TS'
+const [sdkPath, exe, cwd] = process.argv.slice(2) as [string, string, string];
+const { query } = await import(sdkPath);
+const out: string[] = [];
+try {
+  const q = query({ prompt: "hello", options: { pathToClaudeCodeExecutable: exe, cwd, env: { ...process.env, E2E_STUB_MODE: "done" }, hooks: { PreToolUse: [{ matcher: "Bash", hooks: [async () => ({})], onFailure: "block" }] } } });
+  for await (const m of q) if ((m as { type: string }).type === "result") out.push(`result:${(m as { subtype: string }).subtype}`);
+} catch (e) { out.push(`error:${(e as Error).message}`); }
+console.log(out.join(" ") || "none");
+process.exit(0);
+TS
+SDK_MJS="$ROOT/loki-ts/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs"
+STUB_EXE="$ROOT/tests/min/fixtures/e2e/sdk/@anthropic-ai/claude-agent-sdk-stub/claude"
+mkdir -p "$T/blockcwd"
+r="$(env -u E2E_SDK_STUB_OLD_CLI bun "$T/block.ts" "$SDK_MJS" "$STUB_EXE" "$T/blockcwd" 2>&1)"
+[ "$r" = "result:success" ] && ok "a block matcher session runs on a CLI that honors onFailure" || bad "block matcher session on a current CLI: $r"
+r="$(E2E_SDK_STUB_OLD_CLI=1 bun "$T/block.ts" "$SDK_MJS" "$STUB_EXE" "$T/blockcwd" 2>&1)"
+case "$r" in error:*"does not honor onFailure"*) ok "the SDK refuses a block matcher session on a CLI without onFailure" ;; *) bad "old CLI with a block matcher was not refused: $r" ;; esac
 
 finish
