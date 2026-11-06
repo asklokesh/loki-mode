@@ -336,7 +336,7 @@ export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx)
   const capping: string[] = [], disclosed: string[] = [], extra: string[] = [];
   for (const n of notes) {
     const m = ADVISORY_PATH.exec(n), f = m?.[1] ?? m?.[2];
-    const ok = !!m && !!f && added.has(f) && c.wallPassedN && ((m[2] !== undefined && linkOk(f) && (c.planFiles.includes(f) || named(f))) || (m[1] !== undefined && addedManifestOk(f, c, wall(), esc, extra)));
+    const ok = !!m && !!f && added.has(f) && c.wallPassedN && ((m[2] !== undefined && linkOk(f) && (c.planFiles.includes(f) || named(f))) || (m[1] !== undefined && addedManifestOk(f, c, wall(), escapeRegex, extra)));
     (ok ? disclosed : capping).push(n);
   }
   return extra.length ? { capping, disclosed, extra } : { capping, disclosed };
