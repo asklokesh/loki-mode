@@ -489,7 +489,7 @@ const ids = failIds(out), id = ids.find((i) => i.includes(" > ")) ?? "";
 console.log([c.cwd === process.env.WS ? "root" : "pkg", r.status, classifyCheck({ kind: "test", ok: false, cut: false, missing: false, out }).result, ids.length > 0, /^FAIL \|a\| src\/x\.test\.ts > bad/.test(firstError(out)), idNamesFile(id, "packages/a/src/x.test.ts"), idNamesFile(id, "packages/a/src/other.test.ts")].join(" "));' 2>&1)"
     [ "$WSF" = "root 1 fail true true true false" ] && ok "real vitest root run: a failing test prints a project-prefixed id; it stays a failure with ids and the id names packages/a/src/x.test.ts, not another file ($WSF)" || bad "root-run failure parse: $WSF"
 else
-    printf '  SKIP: real vitest workspace: npm could not install it (offline?)\n'
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "real vitest workspace: npm could not install it (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else printf '  SKIP: real vitest workspace: npm could not install it (offline?)\n'; fi
 fi
 
 # A batched vitest file reads exactly as the same file run alone: real vitest 4.0.16 non-TTY output vs vitestFileText of its JSON report.
@@ -937,7 +937,7 @@ for ver in ${RV_VERSIONS:-2.1.9 5.1.0}; do
 done
 wait
 for ver in ${RV_VERSIONS:-2.1.9 5.1.0}; do
-    if [ -x "$RVROOT/$ver/node_modules/.bin/vitest" ]; then RV_LIST="$RV_LIST $ver"; else printf '  SKIP: real vitest %s: npm could not install it (offline?)\n' "$ver"; fi
+    if [ -x "$RVROOT/$ver/node_modules/.bin/vitest" ]; then RV_LIST="$RV_LIST $ver"; elif [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "real vitest $ver: npm could not install it (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else printf '  SKIP: real vitest %s: npm could not install it (offline?)\n' "$ver"; fi
 done
 unit_start monorepo unit_monorepo
 unit_start envchg unit_envchg
