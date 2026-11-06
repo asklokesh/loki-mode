@@ -6,6 +6,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isTestFile } from "../util/test_file_text.ts";
+import { parseDiffHunks } from "../util/secure_scan.ts";
 import { safeGit } from "../util/safe_git.ts";
 
 export const sysEditEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_SYSEDIT !== "0";
@@ -44,18 +45,6 @@ function tokenize(lines: string[], py: boolean): Tok[] {
   return out;
 }
 const isCommentLine = (l: string, py: boolean): boolean => (py ? /^\s*#/ : /^\s*(\/\/|\/\*|\*)/).test(l);
-
-type Hunk = { oldStart: number; removed: string[]; newStart: number; added: string[] };
-function hunks(diff: string): Hunk[] {
-  const out: Hunk[] = []; let cur: Hunk | null = null;
-  for (const l of diff.split("\n")) {
-    const h = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(l);
-    if (h) { cur = { oldStart: +h[1]!, removed: [], newStart: +h[2]!, added: [] }; out.push(cur); continue; }
-    if (!cur || l.startsWith("---") || l.startsWith("+++")) continue;
-    if (l.startsWith("-")) cur.removed.push(l.slice(1)); else if (l.startsWith("+")) cur.added.push(l.slice(1));
-  }
-  return out;
-}
 
 /** One rewritten line: old tokens o, new tokens n (over the k new lines joined), and the common prefix p and suffix s. */
 interface Inst { file: string; o: Tok[]; n: Tok[]; nText: string; p: number; s: number; indent: string }
@@ -209,10 +198,11 @@ export function systematicRewrites(repoDir: string, baseSha: string): Rewrite[] 
   const wrote = new Map<string, Set<number>>(), xs: Inst[] = [];
   for (const f of files) {
     const set = new Set<number>(); wrote.set(f, set);
-    for (const h of hunks(safeGit(repoDir, ["diff", "-U0", "--no-color", baseSha, "--", f]))) {
-      for (let i = 0; i < h.added.length; i++) set.add(h.newStart + i);
+    for (const h of parseDiffHunks(safeGit(repoDir, ["diff", "-U0", "--no-color", baseSha, "--", f])).get(f) ?? []) { // reused: secure_scan's -U0 parser (new-file line numbers, removed text)
+      for (const a of h.added) set.add(a.line);
       if (h.removed.length === 0 || h.added.length === 0) continue;
-      const pairs: [string, string[]][] = h.removed.length === h.added.length ? h.removed.map((r, i) => [r, [h.added[i]!]]) : h.removed.length === 1 ? [[h.removed[0]!, h.added]] : [];
+      const added = h.added.map((a) => a.text);
+      const pairs: [string, string[]][] = h.removed.length === added.length ? h.removed.map((r, i) => [r, [added[i]!]]) : h.removed.length === 1 ? [[h.removed[0]!, added]] : [];
       for (const [r, a] of pairs) { if (isCommentLine(r, isPy(f))) continue; const x = instOf(f, r, a); if (x) xs.push(x); }
     }
   }

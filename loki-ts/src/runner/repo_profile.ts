@@ -27,7 +27,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
-import { comparableIds, errorsById, failIds, sameErrors, unhandledBlock } from "../engine10/failures.ts";
+import { comparableIds, errorsById, failIds, idNamesFile, sameErrors, unhandledBlock } from "../engine10/failures.ts";
 import { classifyCheck, emptyDiscovery, exitCodedId, goRunner, isExitCodedScript, plainTestEnv, stripAnsi, type Classified } from "../util/check_result.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
@@ -282,14 +282,19 @@ export interface CommandProfile {
   manifest_hash: string;
   created_at: string;
   commands: ProfileCommand[];
-  baseline: { ran: boolean; command: string | null; exit_code: number | null; duration_s: number | null; timed_out: boolean; failing_ids: string[]; attributable: boolean; reason?: string; zero_tests?: boolean; failing_unhandled?: string[]; failing_errors?: Record<string, string[]> /* FireLater#21: errorsById of the run, so a full suite is excused only for the same errors */ };
+  baseline: { ran: boolean; command: string | null; exit_code: number | null; duration_s: number | null; timed_out: boolean; failing_ids: string[]; attributable: boolean; reason?: string; zero_tests?: boolean; failing_unhandled?: string[]; failing_errors?: Record<string, string[]> /* FireLater#21: errorsById of the run, so a full suite is excused only for the same errors */; flaky_ids?: string[] /* ids that failed on exactly one of two base passes */; flaky_probe?: string /* "done", or why the second pass was skipped; absent on an entry written before the probe */ };
   suites?: (CommandProfile["baseline"] & { name: string })[]; // FC-BASELINE-PER-PACKAGE: one per full-suite command verify runs; `command` is the check's cmd
 }
 export interface BaselineRun { code: number | null; timedOut: boolean; out: string; missing?: boolean }
 export type BaselineRunner = (cmd: string, cwd: string, timeoutMs: number) => BaselineRun;
 
 export const commandProfilePath = (repoDir: string): string => join(repoDir, ".loki", "state", "repo-profile.json");
-const DEFAULT_TIMEOUT_S = 60;
+/** One command's baseline budget: the same 5 minutes deep.ts gives that command's own run on the change (FULL_SUITE_TIMEOUT_MS is derived from this), so a suite that completes on head is never cut short on base (v131: tq's 250 s npm test got 60 s on base, timed out, and its pre-existing red was blamed on the change). */
+export const BASELINE_CMD_TIMEOUT_S = 300;
+/** A cut entry measured with a shorter budget than the current one is measured again; one cut at the current budget is kept (a hanging suite is not re-run for 5 minutes every time). */
+/** A baseline command never gets more than a third of the run's overall cap. */
+export const baselineCmdS = (capS: number | undefined): number => Math.max(1, Math.min(BASELINE_CMD_TIMEOUT_S, Math.floor((capS ?? Infinity) / 3)));
+const cutShort = (b: { timed_out: boolean; duration_s: number | null } | undefined, tmoS: number): boolean => !!b?.timed_out && (b.duration_s ?? 0) < tmoS - 1;
 export const MANIFESTS = ["requirements.txt", "package.json", "Makefile", "makefile", "GNUmakefile", "pyproject.toml", "tox.ini", "pytest.ini", "setup.cfg", "go.mod", "Cargo.toml", "tsconfig.json"];
 const NO_TEST = /no test specified/i;
 
@@ -489,17 +494,31 @@ function runOnce(repoDir: string, cmd: string, cwd: string, tmo: number, opts: B
   const reason = attributable ? undefined : r.timedOut ? "timed out" : missing ? "command not found" : "failing test ids not parseable, failures cannot be attributed";
   return { b: { ran: true, command: cmd, exit_code: r.code, duration_s: dur, timed_out: r.timedOut, failing_ids: ids, attributable, ...(reason ? { reason } : {}), ...(ids.length ? { failing_errors: Object.fromEntries(errorsById(r.out)) } : {}), ...(unhandledBlock(r.out).length ? { failing_unhandled: unhandledBlock(r.out) } : {}), zero_tests: r.code === 0 && emptyDiscovery(classifyCheck({ kind: "test", ok: true, out: r.out, ...goRunner(cmd) }), r.out) }, missing };
 }
+/** A suite red at base is run a second time (only when the first pass fit FLAKE_PROBE_MAX_S and did not time out): an id that fails on one pass and not the other is flaky,
+ *  recorded as flaky_ids, so a head run is not blamed for an id that flips without any change (tanstack-query: 2054 to 2183 red ids, up to 14 new flaky ids per pass). */
+export const FLAKE_PROBE_MAX_S = 120;
+/** A baseline with this many failing ids is "suite red at base": the comparison is per id and its pass never counts as proof. */
+export const MASSIVE_RED_IDS = 500;
+function runProbed(repoDir: string, cmd: string, cwd: string, tmo: number, opts: BuildOpts): { b: CommandProfile["baseline"]; missing: boolean } {
+  const first = runOnce(repoDir, cmd, cwd, tmo, opts), b = first.b;
+  if (!b.failing_ids.length) return { b: { ...b, flaky_probe: "done" }, missing: first.missing };
+  if (b.timed_out || first.missing || (b.duration_s ?? 0) > FLAKE_PROBE_MAX_S) return { b: { ...b, flaky_probe: `skipped: first pass ${b.duration_s ?? "?"}s` }, missing: first.missing };
+  const second = runOnce(repoDir, cmd, cwd, tmo, opts).b;
+  if (second.timed_out || second.exit_code === null) return { b: { ...b, flaky_probe: "skipped: second pass did not finish" }, missing: first.missing };
+  const one = new Set(b.failing_ids), two = new Set(second.failing_ids), flaky = [...one].filter((i) => !two.has(i)).concat([...two].filter((i) => !one.has(i)));
+  return { b: { ...b, flaky_probe: "done", ...(flaky.length ? { flaky_ids: flaky, failing_errors: { ...(second.failing_errors ?? {}), ...(b.failing_errors ?? {}) } } : {}) }, missing: first.missing };
+}
 /** Runs the first test command once and records it on the command. */
 export function runBaseline(repoDir: string, commands: ProfileCommand[], opts: BuildOpts = {}): CommandProfile["baseline"] {
   const t = commands.find((c) => c.kind === "test");
   if (!t) return { ran: false, command: null, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: "no test command discovered" };
-  const tmo = opts.timeoutS ?? DEFAULT_TIMEOUT_S, { b, missing } = runOnce(repoDir, t.cmd, repoDir, tmo, opts);
+  const tmo = opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, { b, missing } = runProbed(repoDir, t.cmd, repoDir, tmo, opts);
   t.validated = !b.timed_out && !missing && b.exit_code !== null; t.exit_code = b.exit_code; t.duration_s = b.duration_s; t.failing_ids = b.failing_ids;
   if (b.timed_out) t.note = `timed out after ${tmo}s; no baseline`; else if (missing) t.note = "command not found";
   return b;
 }
 const normCmd = (s: string): string => s.replace(/\s+--silent\b/, "").trim().replace(/^\(cd \.\s+&&\s+(.+)\)$/, "$1"); // a root package suite is spelled "(cd . && X)" by package_suite.ts but the baseline ran plain "X": same command, never "not the full suite command"
-export const SUITE_BASELINE_BUDGET_S = 120;
+export const SUITE_BASELINE_BUDGET_S = 300;
 /** FC-BASELINE-PER-PACKAGE: a baseline per full-suite command verify will run (`specs`: package_suite.ts fullSuiteSpecs, the one source), added to the
  *  profile ensureProfile wrote for this HEAD. An entry for the same command is reused unless `rerun` (a dependency install succeeded
  *  since, so a baseline measured before it is stale: the main baseline and every entry are re-run, attributable or not). A root command the main baseline already ran is not run twice. One shared
@@ -513,10 +532,10 @@ export function baselineSuites(repoDir: string, specs: { name: string; cmd: stri
     const old = p.suites ?? [];
     p.suites = specs.filter((s) => s.cwd !== "." || normCmd(s.run) !== normCmd(p.baseline.command ?? "")).map((s) => {
       const prev = old.find((o) => o.command === s.cmd);
-      if (prev?.ran && !opts.rerun && (prev.failing_ids.length === 0 || prev.failing_errors)) return prev; // an entry recorded before failing_errors existed is measured again
-      const tmo = Math.min(opts.timeoutS ?? DEFAULT_TIMEOUT_S, Math.floor(left)), t0 = Date.now();
+      if (prev?.ran && !opts.rerun && !cutShort(prev, Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, Math.floor(left))) && (prev.failing_ids.length === 0 || (prev.failing_errors && prev.flaky_probe !== undefined))) return prev; // an entry recorded before failing_errors existed is measured again
+      const tmo = Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, Math.floor(left)), t0 = Date.now();
       if (tmo < 1) return { name: s.name, ran: false, command: s.cmd, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: "baseline budget used up" };
-      const { b } = runOnce(repoDir, s.run, join(repoDir, s.cwd), tmo, opts);
+      const { b } = runProbed(repoDir, s.run, join(repoDir, s.cwd), tmo, opts);
       left -= (Date.now() - t0) / 1000;
       return { name: s.name, ...b, command: s.cmd };
     });
@@ -533,6 +552,15 @@ export function suiteEmptyOnBase(repoDir: string, baseSha: string | undefined, l
   return e?.ran === true && e.exit_code === 0 && e.zero_tests === true;
 }
 
+/** Keeps the intake baseline in the run directory (<runDir>/baseline.json): per command, exit code, duration, whether it was cut off, failing ids and flaky ids, so a receipt and later analysis read what base measured. Never throws. */
+export function writeBaselineRecord(repoDir: string, runDir: string): void {
+  try {
+    const p = loadProfile(repoDir); if (!p) return;
+    const row = (b: CommandProfile["baseline"] & { name?: string }) => ({ ...(b.name ? { name: b.name } : {}), command: b.command, ran: b.ran, exit_code: b.exit_code, duration_s: b.duration_s, cut_off: b.timed_out || b.reason === "baseline budget used up", ...(b.reason ? { reason: b.reason } : {}), attributable: b.attributable, failing_count: b.failing_ids.length, failing_ids: b.failing_ids, flaky_ids: b.flaky_ids ?? [], flaky_probe: b.flaky_probe ?? null });
+    mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, "baseline.json"), JSON.stringify({ revision: p.revision, baseline: row(p.baseline), suites: (p.suites ?? []).map(row) }, null, 2) + "\n");
+  } catch { /* the record is evidence, never a reason to stop a run */ }
+}
+
 export function loadProfile(repoDir: string): CommandProfile | null {
   try { const p = JSON.parse(readFileSync(commandProfilePath(repoDir), "utf8")) as CommandProfile; return p?.version === 1 && Array.isArray(p.commands) && p.baseline ? p : null; } catch { return null; }
 }
@@ -547,7 +575,7 @@ const headOf = (repoDir: string): string => { try { return safeGit(repoDir, ["re
 export function ensureProfile(repoDir: string, opts: BuildOpts = {}): { profile: CommandProfile; reused: boolean } | null {
   try {
     const hash = manifestHash(repoDir), rev = headOf(repoDir), old = loadProfile(repoDir);
-    if (old && old.manifest_hash === hash && old.revision === rev && (old.baseline.failing_ids.length === 0 || old.baseline.failing_errors)) return { profile: old, reused: true };
+    if (old && old.manifest_hash === hash && old.revision === rev && !cutShort(old.baseline, opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S) && (old.baseline.failing_ids.length === 0 || (old.baseline.failing_errors && old.baseline.flaky_probe !== undefined))) return { profile: old, reused: true };
     const commands = old && old.manifest_hash === hash ? old.commands.map((c) => ({ ...c, ...(c.kind === "test" ? { validated: null, exit_code: null, duration_s: null, failing_ids: [] } : {}) })) : discoverCommands(repoDir);
     const profile: CommandProfile = { version: 1, revision: rev, manifest_hash: hash, created_at: (opts.now?.() ?? new Date()).toISOString(), commands, baseline: runBaseline(repoDir, commands, opts) };
     save(repoDir, profile);
@@ -634,16 +662,45 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: { nam
   const bad = full.filter((c) => c.result === "fail"), none: Attribution = { preExistingChecks: [], preExistingIds: [], introducedChecks: bad.map((c) => c.name), line: null }, p = loadProfile(repoDir);
   if (!bad.length || !p || p.revision !== baseSha) return none;
   const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran), of = (cmd: string) => runs.find((b) => normCmd(b.command ?? "") === normCmd(cmd));
-  const ids = (cmd: string): string[] => { const b = of(cmd); return b?.attributable ? b.failing_ids : []; }, miss = bad.find((c) => !of(c.cmd));
+  // A base run that was cut off (its time or the shared baseline budget ran out) says nothing about which failures were already there: record it, never blame silently.
+  const cut = bad.filter((c) => [p.baseline, ...(p.suites ?? [])].some((b) => normCmd(b.command ?? "") === normCmd(c.cmd) && (b.timed_out || b.reason === "baseline budget used up")));
+  if (cut.length) return { ...none, line: `NOT PROVEN: base run incomplete for ${cut.map((c) => `"${c.cmd}"`).join(", ")} (cut off on the original code), so its failures are not excusable` };
+  const ids = (cmd: string): string[] => { const b = of(cmd); return b?.attributable ? [...b.failing_ids, ...(b.flaky_ids ?? [])] : []; }, miss = bad.find((c) => !of(c.cmd));
   if (miss) return { ...none, line: `baseline: ran ${runs.map((b) => `"${b.command}"`).join(", ") || "nothing"}, not the full suite command "${miss.cmd}", ids not comparable, full suite failures not excused` };
-  const known = new Set(bad.flatMap((c) => ids(c.cmd))), block = new Set(blocked), sameAsBase = (c: (typeof bad)[number]): boolean => { const b = of(c.cmd), be = b?.failing_errors, hu = c.unhandled ?? [], bu = b?.failing_unhandled ?? []; return !!be && !!c.errors && hu.length === bu.length && hu.every((x, n) => x === bu[n]) /* an unhandled-errors block names no id: it must repeat on base */ && sameErrors(new Map(Object.entries(c.errors)), be, comparableIds(c.ids ?? [])); };
+  const massive = (cmd: string): boolean => (of(cmd)?.failing_ids.length ?? 0) >= MASSIVE_RED_IDS, known = new Set(bad.flatMap((c) => ids(c.cmd))), block = new Set(blocked), sameAsBase = (c: (typeof bad)[number]): boolean => { const b = of(c.cmd), be = b?.failing_errors, hu = c.unhandled ?? [], bu = b?.failing_unhandled ?? []; /* every id, flaky or not, must repeat its stored base error (a flaky id keeps the error of the pass it failed on), at the same multiplicity, whatever the suite size */ return !!be && !!c.errors && hu.length === bu.length && hu.every((x, n) => x === bu[n]) /* an unhandled-errors block names no id: it must repeat on base */ && sameErrors(new Map(Object.entries(c.errors)), be, comparableIds(c.ids ?? [])); },
+    /* a flaky id, or any id of a suite red at base, whose head error text names a file the change edited is the change's own failure, whatever the id */ errNamesChanged = (c: (typeof bad)[number]): boolean => { const fl = new Set(of(c.cmd)?.flaky_ids ?? []), all = massive(c.cmd), keys = Object.keys(c.errors ?? {}).filter((k) => all || [...fl].some((i) => k === i || k.endsWith(` > ${i}`))); return keys.some((k) => (c.errors?.[k] ?? []).some((l) => changed.some((f) => l.includes(f)))); };
   if (known.size === 0) return none;
   const unproven = [...new Set(bad.flatMap((c) => c.ids ?? []).filter((i) => !i.includes("::") && goIdTouched(repoDir, i, changed)))];
-  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && sameAsBase(c) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => i.includes(f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
+  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && sameAsBase(c) && !errNamesChanged(c) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => idNamesFile(i, f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
   const rust = (cargoTouched(changed) ? bad : []).map((c) => `NOT PROVEN: ${c.name} may run cargo tests and the diff edits Rust source or a manifest; cargo test ids carry no crate path, so a failure cannot be shown pre-existing`);
+  const red = res.preExistingChecks.length ? bad.filter((c) => res.preExistingChecks.includes(c.name) && massive(c.cmd)) : [], redLine = red.map((c) => `NOT PROVEN: suite red at base (${of(c.cmd)!.failing_ids.length} failing ids) for "${c.cmd}": it is compared per id, never blocks and proves nothing about this change`).join("; ");
+  if (redLine) res.line = [res.line, redLine].filter(Boolean).join("; ");
+  const flakyOnly = bad.filter((c) => res.preExistingChecks.includes(c.name)).flatMap((c) => { const b = of(c.cmd), base = new Set(b?.failing_ids ?? []), hit = comparableIds(c.ids ?? []).filter((i) => (b?.flaky_ids ?? []).includes(i) && !base.has(i)); return hit.length ? [`NOT PROVEN: "${c.cmd}" was excused with ${hit.length} id(s) that fail on only some base passes (flaky), e.g. ${hit[0]}; the change was not shown to leave them alone`] : []; }).join("; ");
+  if (flakyOnly) res.line = [res.line, flakyOnly].filter(Boolean).join("; ");
   if (!unproven.length && !rust.length) return res;
   const np = [...unproven.map((u) => `NOT PROVEN: package ${u} did not build on base or head; its tests ran on neither`), ...rust].join("; ");
   return { ...res, line: [res.line, np].filter(Boolean).join("; ") };
+}
+
+/** One line per failing full-suite check that attributeFullSuite did not excuse, saying which rule kept it blocking (so a receipt never shows an unexplained red suite).
+ *  Same inputs and the same profile as attributeFullSuite; `excused` is its preExistingChecks. */
+export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], changed: string[], excused: string[]): string[] {
+  const p = loadProfile(repoDir), all = p ? [p.baseline, ...(p.suites ?? [])] : [], out: string[] = [];
+  for (const c of full.filter((x) => x.result === "fail" && !excused.includes(x.name))) {
+    const why = (r: string): void => { out.push(`not excused: ${c.name} (\`${c.cmd}\`): ${r}`); }, b = all.find((x) => x.ran && normCmd(x.command ?? "") === normCmd(c.cmd)), cutB = all.find((x) => normCmd(x.command ?? "") === normCmd(c.cmd) && (x.timed_out || x.reason === "baseline budget used up"));
+    if (!p) { why("no baseline was recorded"); continue; }
+    if (p.revision !== baseSha) { why("the baseline was measured on another commit"); continue; }
+    if (cutB) { why("base run incomplete (cut off on the original code)"); continue; }
+    if (!b) { why("the baseline did not run this command"); continue; }
+    if (!b.attributable) { why(`the base run is not attributable (${b.reason ?? "no failing ids parsed"})`); continue; }
+    if (!c.ids?.length) { why("its failing ids could not be parsed from the output, so nothing can be compared"); continue; }
+    if (cargoTouched(changed)) { why("the diff edits Rust source or a manifest and cargo ids carry no crate path"); continue; }
+    const known = new Set([...b.failing_ids, ...(b.flaky_ids ?? [])]), fresh = comparableIds(c.ids).filter((i) => !known.has(i)), inChanged = c.ids.filter((i) => changed.some((f) => i.includes(f)) || goIdTouched(repoDir, i, changed));
+    if (inChanged.length) { why(`${inChanged.length} failing id(s) name a changed file (first: ${inChanged[0]})`); continue; }
+    if (fresh.length) { why(`${fresh.length} failing id(s) were not red on base (first: ${fresh[0]})`); continue; }
+    why("every failing id is red on base but the error text differs from base (or an unhandled-errors block differs)");
+  }
+  return out;
 }
 
 /** Static-diagnostic attribution (TEN-QUALITY-02): lint output of head vs base as multisets keyed path/code/message, line and column dropped so shifts do not count.

@@ -11,9 +11,9 @@ import { hooks } from "../hooks.ts";
 import { snapshotContract } from "../../features/contract.ts";
 import { lazyZeroBaseline, stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
 import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps, type DepsTiming, type IntakeTiming } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { ensureProfile, readinessNotice, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { baselineCmdS, BASELINE_CMD_TIMEOUT_S, ensureProfile, readinessNotice, writeBaselineRecord, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 import { verifyCommandRows } from "../../project_model/package_suite.ts"; import { untestableReason } from "../testmap.ts";
-import { ambiguityGate, type ChoiceCtx } from "../../features/spec_ambiguity.ts"; import { triageGate } from "../../features/triage.ts";
+import { ambiguityGate, voteOpenChoices, type ChoiceCtx } from "../../features/spec_ambiguity.ts"; import { triageGate } from "../../features/triage.ts";
 export interface IntakeOptions { taskText?: string; issueJsonPath?: string; }
 interface IssueFields { state: string | null; closed_by_merged_pr?: boolean }
 /** owner/repo#number, when the issue JSON carries both (GitHub); null for anything else, never guessed. */
@@ -92,7 +92,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
     // Deterministic exit: no repo/test map needed, and never a session/LLM call.
     return { status: "completed", data: { ...common, ignore_snapshot: ignoreSnapshot(ctx.repoDir), task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true } };
   }
-  const gate = triageGate(task, ctx.repoDir, ambiguityGate(task, ctx.runDir, { repoDir: ctx.repoDir, comments: issueComments })); const ambiguity = gate.data; // interactive: stop at a checkpoint with a resume offer; headless: assumptions go to the receipt; triage (features/triage.ts) only records the class here, it never stops a direct run
+  const choiceCtx: ChoiceCtx = { repoDir: ctx.repoDir, comments: issueComments }, votes = await voteOpenChoices(task, choiceCtx); const gate = triageGate(task, ctx.repoDir, ambiguityGate(task, ctx.runDir, { ...choiceCtx, votes })); const ambiguity = gate.data; // precedent vote (spec_ambiguity.ts voteOpenChoices): one tool-less call per undecided either/or with siblings; interactive: stop at a checkpoint with a resume offer; headless: assumptions go to the receipt; triage (features/triage.ts) only records the class here, it never stops a direct run
   if (gate.stop) return { status: "failed", data: { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...gate.stop.failData }, reason: gate.stop.reason };
   mkdirSync(ctx.runDir, { recursive: true });
   const repomapRef = join(ctx.runDir, "repomap.json");
@@ -103,7 +103,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   let testmap = readTestMapCache(cacheDir, tree);
   if (!testmap) { walkCached = false; testmap = await ctx.tests.detect(ctx.repoDir); try { writeTestMapCache(cacheDir, tree, testmap); } catch { /* an unwritable cache only costs the next run a rebuild */ } }
   tm.repo_walk = { ms: walkEnd(), at: walkAt, cached: walkCached }; const baselineAt = at(), baselineEnd = lap(), baselineOn = process.env.LOKI_REPO_BASELINE !== "0";
-  const built = baselineOn ? ensureProfile(ctx.repoDir) : null, baselineMs = baselineEnd(); // REPOMEM: commands + a baseline test run on the untouched tree, reused while the manifests are unchanged; never throws
+  const built = baselineOn ? ensureProfile(ctx.repoDir, { timeoutS: baselineCmdS(ctx.capS) }) : null, baselineMs = baselineEnd(); // REPOMEM: commands + a baseline test run on the untouched tree, reused while the manifests are unchanged; never throws
   const readiness = built ? readinessNotice(ctx.repoDir, repoReadiness(built.profile, undefined, built.profile.commands.some((c) => c.kind === "test") ? [] : verifyCommandRows(ctx.repoDir, testmap as { runners: RunnerName[]; evidence?: Partial<Record<RunnerName, string>> }))) : null; // once per repo and score: a repo-config grade is not part of every run's outcome
   if (readiness && process.env.LOKI_E10_READINESS_FOLD === "1") held.fold = readiness;
   else if (readiness) process.stderr.write(`${readiness}\n`); // FV-readiness-env-3; D48 default mode: the supervisor folds it into the last line instead
@@ -125,7 +125,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   const stale = already ? unmergedEvidence(ctx.repoDir, already.paths, startBranch) : null;
   if (already && !stale) return { status: "completed", data: { ...base, ignore_snapshot: ignoreSnapshot(ctx.repoDir), ...alreadyData(already) } };
   if (stale) process.stderr.write(`engine10: ${stale.lokiOwn ? unmergedEvidenceNote(stale) : `evidence for the task is on ${stale.branch ?? "HEAD"} but not on ${stale.target}; implementing`}\n`); // L5/L6: the operator sees it when the run goes on to implement
-  const pmAt = at(), pmEnd = lap(), pm = await intakeProjectModel(ctx, signal, t0, testmap); tm.project_model = Object.keys(pm).length ? { ms: pmEnd(), at: pmAt, cached: (pm["project_model"] as { cached?: boolean }).cached === true } : { skipped: "project model disabled or unavailable" }; const dt: DepsTiming = {}, depsAt = at(), depsData = await intakeDeps(ctx, signal, testmap.runners, dt);
+  const pmAt = at(), pmEnd = lap(), pm = await intakeProjectModel(ctx, signal, t0, testmap); tm.project_model = Object.keys(pm).length ? { ms: pmEnd(), at: pmAt, cached: (pm["project_model"] as { cached?: boolean }).cached === true } : { skipped: "project model disabled or unavailable" }; const dt: DepsTiming = {}, depsAt = at(), depsData = await intakeDeps(ctx, signal, testmap.runners, dt); if (baselineOn) writeBaselineRecord(ctx.repoDir, ctx.runDir);
   tm.deps_install = dt.install && "ms" in dt.install ? { ...dt.install, at: depsAt } : dt.install ?? { skipped: "install step did not run" }; tm.suite_baseline = baselineOn ? { ms: baselineMs + (dt.baseline_ms ?? 0), at: baselineAt, cached: built?.reused ?? false } : { skipped: "LOKI_REPO_BASELINE=0" };
   const zbAt = at(), zbEnd = lap(), zero_baseline = lazyZeroBaseline(ctx.repoDir); tm.zero_baseline = { ms: zbEnd(), at: zbAt }; tm.zero_probe = { skipped: "lazy: verify measures only its zero-run candidates on base (util/base_guard.ts lazyZeroBaseline)" }; // recorded last, after Loki's own install and baseline: since_ms is when an agent could first touch the environment
   const data = { ...base, ...(stale?.lokiOwn ? { unmerged_loki_work: { branch: stale.branch, target: stale.target, commits: stale.commits, message: unmergedEvidenceNote(stale) } } : {}), ...pm, ...depsData, zero_baseline, hidden_cfg: (() => { try { return hiddenRunnerConfigs(ctx.repoDir); } catch { return null; } })(), ignore_snapshot: ignoreSnapshot(ctx.repoDir), intake_timing: tm, repomap_ref: repomapRef, testmap, already_satisfied: false };
@@ -134,6 +134,6 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
 }
 export const stage: Stage = {
   name: "intake",
-  ...STAGE_BUDGETS.intake, limitS: STAGE_BUDGETS.intake.limitS + INSTALL_CAP_MS / 1000 + SUITE_BASELINE_BUDGET_S, // one table (types.ts); discovery gets what remains of its limit, plus the FC-DEPS-NOT-INSTALLED install and per-command baseline caps
+  ...STAGE_BUDGETS.intake, limitS: STAGE_BUDGETS.intake.limitS + INSTALL_CAP_MS / 1000 + BASELINE_CMD_TIMEOUT_S + SUITE_BASELINE_BUDGET_S, // one table (types.ts); discovery gets what remains of its limit, plus the FC-DEPS-NOT-INSTALLED install and per-command baseline caps
   run: (ctx, signal) => runIntake(ctx, signal),
 };

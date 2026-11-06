@@ -128,7 +128,7 @@ export function declaresPythonDep(repoDir: string, name: string): boolean { retu
 
 const OUTPUT_DIRS: { dir: string; sigs: string[] }[] = [ // a toolchain's build output dir; `sigs` are files the toolchain itself writes in it (cachedir.org tag, cargo's rustc info), so a user's own `target/` is never matched by name alone
   { dir: "target", sigs: ["CACHEDIR.TAG", ".rustc_info.json"] },
-  { dir: ".gradle", sigs: [] }, { dir: "node_modules", sigs: [] }, { dir: "__pycache__", sigs: [] },
+  { dir: ".venv", sigs: ["pyvenv.cfg"] }, { dir: ".gradle", sigs: [] }, { dir: "node_modules", sigs: [] }, { dir: "__pycache__", sigs: [] },
 ];
 /** Of the paths a run ADDED, those inside a toolchain's own build output (a signed cargo target/, .gradle, node_modules, __pycache__). An output dir that already holds any file tracked at the run's base commit is the user's: nothing in it is returned, and when the base cannot be read nothing is dropped. */
 export function toolchainOutputs(repoDir: string, added: string[], baseSha?: string): Set<string> {

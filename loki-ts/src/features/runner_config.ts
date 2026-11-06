@@ -71,7 +71,7 @@ export function testConfigChanged(repoDir: string, baseSha: string, changed: str
 }
 /** The one before/after rule for a runner config: no spec is no config, a section-less config counts on any change, a shared file counts when its
  *  runner-relevant section differs (an absent side is an empty document). Unparseable means changed (fail closed). */
-function steersRunner(f: string, before: string, after: string): boolean {
+export function steersRunner(f: string, before: string, after: string): boolean { // also the patch protocol's pre-apply refusal (features/patch_protocol.ts)
   const spec = RUNNER_CONFIGS.find((s) => s.re.test(f));
   if (!spec) return false;
   if (!spec.shared) return true;
