@@ -480,7 +480,11 @@ const OBSERVABLE_ARG = /^(?:u?int(?:8|16|32|64)?|float(?:32|64)|bool|byte|rune)$
 // errors.As/Is, Unwrap) and states a defect or request about it. "text is wrapped at 80 columns" or "Do not use errors.Is here" is not one.
 const WRAP_TERM = /%w\b|\bwrapped\s+(?:\w+\s+)?errors?\b|\berrors?\s+(?:that\s+(?:is|are|was|were)\s+|is\s+|are\s+)?wrapped\b|\berrors\.(?:As|Is)\b|\bUnwrap\b/i;
 const WRAP_ASK = /\bshould\b|\bmust\b|\bhandled?\b|\bhandles\b|\binstead of\b|\bnever\b|\bignor(?:e|es|ed)\b|\bnot\s+(?:recogni[sz]ed|handled|retried|found|seen|detected|matched|treated)\b|\bfails?\b|\bmisses\b|\b(?:does|did|is|are)\s+not\b|\b(?:doesn't|didn't|isn't|aren't)/i;
-export const statesWrapRelation = (task: string): boolean => task.replace(/```[\s\S]*?```/g, "\n\n").split(/(?<=[.!?])\s+(?=[A-Z`])|\n\s*\n|\n(?=\s*(?:[-*]|\d+[.)])\s)/).some((u) => WRAP_TERM.test(u) && WRAP_ASK.test(u) && !/\b(?:do not|don't|never|avoid)\s+(?:use|call|add)\b/i.test(u));
+// Not a request about handling wrapped errors: a negated wrap ("should not wrap the error with %w", "never wrap"), advice against the
+// helpers ("Do not use errors.Is"), or a sentence about the message text ("the wrapped error message is too long").
+const WRAP_NEGATED = /\b(?:do not|don't|never|avoid|should not|shouldn't|must not|mustn't|stop)\s+(?:\w+\s+){0,2}?(?:use|call|add|wrap(?:ping)?)\b/i;
+const WRAP_TEXT = /\bwrapped\s+(?:\w+\s+)?errors?(?:'s)?\s+(?:message|text|string|output)\b|\b(?:message|text|string)\s+of\s+(?:the\s+|a\s+)?wrapped\b/i;
+export const statesWrapRelation = (task: string): boolean => task.replace(/```[\s\S]*?```/g, "\n\n").split(/(?<=[.!?])\s+(?=[A-Z`])|\n\s*\n|\n(?=\s*(?:[-*]|\d+[.)])\s)/).some((u) => WRAP_TERM.test(u) && WRAP_ASK.test(u) && !WRAP_NEGATED.test(u) && !WRAP_TEXT.test(u));
 export interface RelCase { id: string; type: string; v: string; rv: string }
 export interface RelSpec { fn: string; returns: boolean; cases: RelCase[]; observe: string }
 interface GoDecls { ifaces: string[]; funcs: { name: string; params: string; ret: string; body: string }[]; vars: { name: string; params?: string; writer: boolean }[] }

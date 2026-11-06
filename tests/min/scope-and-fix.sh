@@ -199,6 +199,7 @@
 # 137. exec_spec.ts statesWrapRelation: any wrap word anywhere again (relation cases read ask=1111).
 # 138. exec_spec.ts relationCasesGo: trust one record (stable returns true) (relation cases read flaky=R1_Throttled_wrapped+R2_Temporary_wrapped).
 # 139. exec_spec.ts defectSites: drop the designed() check (exec spec atoms read open=...,Split+Join or Join).
+# 140. exec_spec.ts statesWrapRelation: drop WRAP_NEGATED (relation cases read ask=0011110) or WRAP_TEXT (ask=0011001).
 # 118. exec_spec.ts execSpecBriefOf: drop the knob check (exec spec atoms read brief=B,B).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
@@ -2023,7 +2024,7 @@ const dir = process.env.ESD!, task = process.env.TASK!, src = readFileSync(dir +
 const a = es.extractSpecAtoms(task), s = es.resolveSites(a, dir), r = es.relationCasesGo(task, dir, s, a);
 out.push(r ? r.cases.map((n) => n.replace("TestLokiSpec_", "")).join("+") : "none");
 out.push(`msgfree=${!!r && /fmt\.Sprint\("Notify", p0\)/.test(r.file) && !/p1\)\)/.test(r.file)}`); // Notify(sec, msg): only the number is recorded, never the message the wrap changes
-out.push("ask=" + ["The help text is wrapped at 80 columns and should stay so.", "Do not use errors.Is here; compare the code.", "A wrapped error should be handled exactly like an unwrapped one.", "`Report` does not see a status error wrapped with %w."].map((x) => (es.statesWrapRelation(x) ? 1 : 0)).join(""));
+out.push("ask=" + ["The help text is wrapped at 80 columns and should stay so.", "Do not use errors.Is here; compare the code.", "A wrapped error should be handled exactly like an unwrapped one.", "`Report` does not see a status error wrapped with %w.", "`Save` should not wrap the error with %w.", "Never wrap the error; errors.As must not be needed.", "The wrapped error message is too long and should be shorter."].map((x) => (es.statesWrapRelation(x) ? 1 : 0)).join(""));
 const fl = es.relationCasesGo(task, process.env.FLAKY, es.resolveSites(es.extractSpecAtoms(task), process.env.FLAKY), es.extractSpecAtoms(task)); out.push(`flaky=${fl ? fl.cases.map((n) => n.replace("TestLokiSpec_", "")).join("+") : "none"}`); // an observation that differs between two base records is never sealed
 const spec0 = es.relationSpec(task, [src], "retry", new Set(["Decide", "Throttled", "Temporary"]));
 const none = es.relationCasesGo(task.replace(/%w|errors\.As|wrapped|Wrapped/g, "x"), dir, s, a); out.push(`norel=${none ? "fired" : "none"}`);
@@ -2037,7 +2038,7 @@ for (const [k, body] of [["base", null], ["right", process.env.RIGHT], ["part", 
 writeFileSync(dir + "/retry/retry.go", src); try { require("node:fs").rmSync(dir + "/retry/" + es.RELATION_FILE_GO); } catch {}
 console.log(out.join(" | "));
 ' 2>&1)"
-    WESR="R1_Throttled_wrapped+R2_Temporary_wrapped | msgfree=true | ask=0011 | flaky=R1_Temporary_wrapped | norel=none | base=fail | right=pass | part=fail | order=fail,headref=pass"
+    WESR="R1_Throttled_wrapped+R2_Temporary_wrapped | msgfree=true | ask=0011000 | flaky=R1_Temporary_wrapped | norel=none | base=fail | right=pass | part=fail | order=fail,headref=pass"
     [ "$ESR" = "$WESR" ] && ok "exec spec relation cases: recorded on base, red on base, right fix passes, the one-type and the ordering fix fail (the head's own reference would pass the ordering fix)" \
         || bad "exec spec relation cases gave: $ESR (want: $WESR)"
 fi
