@@ -93,6 +93,8 @@
 #  21. runner_config.ts hiddenConfigChanged: count every added ignored config again; the unit check fails on .next/package.json.
 #  22. issues_epic.ts epicOutcome: drop the delivered-PR suffix of the Reason line; the unit check fails.
 #  23. repo_profile.ts BASELINE_CMD_TIMEOUT_S back to 60, or attributeFullSuite without the base-run-incomplete line, or baselineSuites reusing a short-cut entry; the base budget unit check fails.
+#  23b. repo_profile.ts: drop flaky_ids from the compared ids, skip the second base pass (runProbed), or drop the suite-red-at-base line, compare flaky ids by id only, skip the error compare in a suite red at base, drop errNamesChanged or the flaky NOT PROVEN line; the same unit check fails.
+#  23c. repo_profile.ts whyFullSuiteNotExcused (or verify.ts not_excused, or seal.ts listing it): return [] or drop the changed-file / new-id / cut / error-text branch; the same unit check fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -487,7 +489,7 @@ const ids = failIds(out), id = ids.find((i) => i.includes(" > ")) ?? "";
 console.log([c.cwd === process.env.WS ? "root" : "pkg", r.status, classifyCheck({ kind: "test", ok: false, cut: false, missing: false, out }).result, ids.length > 0, /^FAIL \|a\| src\/x\.test\.ts > bad/.test(firstError(out)), idNamesFile(id, "packages/a/src/x.test.ts"), idNamesFile(id, "packages/a/src/other.test.ts")].join(" "));' 2>&1)"
     [ "$WSF" = "root 1 fail true true true false" ] && ok "real vitest root run: a failing test prints a project-prefixed id; it stays a failure with ids and the id names packages/a/src/x.test.ts, not another file ($WSF)" || bad "root-run failure parse: $WSF"
 else
-    printf '  SKIP: real vitest workspace: npm could not install it (offline?)\n'
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "real vitest workspace: npm could not install it (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else printf '  SKIP: real vitest workspace: npm could not install it (offline?)\n'; fi
 fi
 
 # A batched vitest file reads exactly as the same file run alone: real vitest 4.0.16 non-TTY output vs vitestFileText of its JSON report.
@@ -646,7 +648,7 @@ X3="full suite: w | full suite: w | full suite: w | full suite: w | none | vites
 # incomplete" and excuses nothing; a base entry cut with a shorter budget is measured again, one cut at the current budget is kept.
 G4="$T/basebudget"; mkdir -p "$G4/.loki/state" && git -C "$G4" init -q -b main && printf 'x\n' > "$G4/a.txt" && git -C "$G4" add a.txt && git -C "$G4" -c user.name=t -c user.email=t@t commit -qm init
 B4="$(G="$G4" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
-const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), { writeFileSync, execFileSync } = await import("node:fs").then(async (f) => ({ ...f, execFileSync: (await import("node:child_process")).execFileSync }));
+const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), { writeFileSync, readFileSync, execFileSync } = await import("node:fs").then(async (f) => ({ ...f, execFileSync: (await import("node:child_process")).execFileSync }));
 const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const ent = (o) => ({ ran: true, command: "npm test", exit_code: 1, duration_s: 250, timed_out: false, failing_ids: ["a.test.ts > t1"], attributable: true, failing_errors: { "a.test.ts > t1": ["Error: x"] }, ...o });
 const put = (baseline, suites) => writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline, ...(suites ? { suites } : {}) }));
@@ -662,10 +664,47 @@ put(ent({ command: "pnpm test" }), [cutAt(60)]); rp.baselineSuites(g, spec, { ru
 seen.length = 0; put(ent({ command: "pnpm test" }), [cutAt(300)]); rp.baselineSuites(g, spec, { run }); r.push("full-cut kept " + seen.length);
 seen.length = 0; put(ent({ command: "pnpm test" })); rp.baselineSuites(g, spec, { run }); r.push("fresh " + seen.join(","));
 r.push(rp.baselineCmdS(undefined), rp.baselineCmdS(900), rp.baselineCmdS(120), rp.baselineCmdS(1));
+// per-id attribution: flaky ids and a suite red at base
+const errs = (ids) => Object.fromEntries(ids.map((i) => [i, ["Error: " + i]]));
+const headC = (ids) => [{ name: "full suite: npm", cmd: "npm test", result: "fail", ids, errors: errs(ids) }];
+const att = (ids, changed = ["src/z.ts"]) => rp.attributeFullSuite(g, sha, headC(ids), [], changed);
+const A = ["a.test.ts > t1", "b.test.ts > t2"], F = ["f.test.ts > flip"];
+put(ent({ failing_ids: A, flaky_ids: F, failing_errors: errs([...A, ...F]), flaky_probe: "done" }));
+r.push("flaky " + [att([...A, ...F]).preExistingChecks.length, att([...A, "n.test.ts > new"]).introducedChecks.length, att(["a.test.ts > t1"]).preExistingChecks.length].join(","));
+put(ent({ failing_ids: A, flaky_ids: ["src/z.ts > flip"], failing_errors: errs([...A, "src/z.ts > flip"]), flaky_probe: "done" })); r.push("changed-file flaky " + att([...A, "src/z.ts > flip"]).introducedChecks.length);
+put(ent({ failing_ids: A, failing_errors: errs(A), flaky_probe: "done" })); r.push("no-flaky-record " + att([...A, ...F]).introducedChecks.length);
+const big = Array.from({ length: 600 }, (_, i) => "m" + i + ".test.ts > t"), bigE = errs(big);
+put(ent({ failing_ids: big, failing_errors: bigE, flaky_probe: "done" })); const m1 = att(big.slice(0, 50)), m2 = att([...big.slice(0, 50), "n.test.ts > new"]);
+r.push("massive " + [m1.preExistingChecks.length, /suite red at base \(600 failing ids\)/.test(m1.line ?? ""), m2.introducedChecks.length].join(","));
+// reviewer inputs: each must be blocked (introduced), and the flaky excuse names itself
+const attE = (ids, errors, changed = ["src/z.ts"]) => rp.attributeFullSuite(g, sha, [{ name: "full suite: npm", cmd: "npm test", result: "fail", ids, errors }], [], changed);
+put(ent({ failing_ids: A, flaky_ids: F, failing_errors: errs([...A, ...F]), flaky_probe: "done" }));
+const fOk = attE([...A, ...F], errs([...A, ...F]));
+r.push("flaky-new-error " + [attE(F, { [F[0]]: ["TypeError: undefined is not a function"] }).introducedChecks.length, fOk.preExistingChecks.length, /fail on only some base passes/.test(fOk.line ?? "")].join(","));
+put(ent({ failing_ids: A, flaky_ids: F, failing_errors: { ...errs(A), [F[0]]: ["Error at src/z.ts:3"] }, flaky_probe: "done" })); r.push("flaky-stack-changed-file " + attE(F, { [F[0]]: ["Error at src/z.ts:3"] }).introducedChecks.length);
+put(ent({ failing_ids: big, failing_errors: bigE, flaky_probe: "done" })); const bigNew = { ...errs(big.slice(0, 50)), [big[7]]: ["TypeError: introduced by change"] };
+r.push("massive-new-error " + [attE(big.slice(0, 50), bigNew).introducedChecks.length, attE(big.slice(0, 50), errs(big.slice(0, 50))).preExistingChecks.length].join(","));
+const bigS = { ...bigE, [big[7]]: ["Error at src/z.ts:9"] }; put(ent({ failing_ids: big, failing_errors: bigS, flaky_probe: "done" })); r.push("massive-stack-changed-file " + attE(big.slice(0, 50), { ...errs(big.slice(0, 50)), [big[7]]: ["Error at src/z.ts:9"] }).introducedChecks.length);
+put(ent({ failing_ids: big, failing_errors: bigE, flaky_probe: "done" })); r.push("massive-duplicate-title " + attE([big[3], big[3]], { [big[3]]: [bigE[big[3]][0], bigE[big[3]][0]] }).introducedChecks.length);
+put(ent({ failing_ids: A, failing_errors: errs(A), flaky_probe: "done" })); r.push("small-red-no-line " + /suite red at base/.test(att(A).line ?? ""));
+// the second base pass: ids on one pass only are flaky, a fast red suite is probed, a slow one is not
+const outFor = (ids) => ids.map((i) => " FAIL  " + i + "\nError: " + i).join("\n") + "\n Test Files  1 failed\n Tests  " + ids.length + " failed\n";
+const passes = [["a.test.ts > t1", "b.test.ts > t2"], ["a.test.ts > t1", "c.test.ts > t3"]]; let n = 0;
+const run2 = () => ({ code: 1, timedOut: false, out: outFor(passes[Math.min(n++, 1)]), missing: false });
+put(ent({ command: "pnpm test" })); rp.baselineSuites(g, spec, { run: run2, rerun: true });
+const pr = rp.loadProfile(g).suites[0]; r.push("probe " + [n, pr.flaky_probe, (pr.flaky_ids ?? []).sort().join("+"), pr.failing_ids.join("+")].join(";"));
+rp.writeBaselineRecord(g, g + "/runrec"); const rec = JSON.parse(readFileSync(g + "/runrec/baseline.json", "utf8")); r.push("record " + [rec.suites[0].failing_count, rec.suites[0].cut_off, rec.suites[0].flaky_ids.length, rec.revision === sha].join(","));
+// why a full-suite check was not excused
+const why = (ids, errors, changed = ["src/z.ts"]) => rp.whyFullSuiteNotExcused(g, sha, [{ name: "full suite: npm", cmd: "npm test", result: "fail", ids, errors }], changed, []).join("|");
+put(ent({ failing_ids: A, failing_errors: errs(A), flaky_ids: F, flaky_probe: "done" }));
+r.push("why " + [/1 failing id\(s\) were not red on base \(first: n.test.ts > new\)/.test(why([...A, "n.test.ts > new"], errs([...A, "n.test.ts > new"]))), /name a changed file/.test(why([...A, "src/z.ts > t"], errs(A))), /error text differs/.test(why(A, { [A[0]]: ["Error: other"], [A[1]]: ["Error: " + A[1]] })), /could not be parsed/.test(why([], {})), why(A, errs(A)).length > 0].join(","));
+put(ent({ timed_out: true, attributable: false, failing_ids: [], duration_s: 60, reason: "timed out" })); r.push("why-cut " + /base run incomplete/.test(why(A, errs(A))));
+put(ent({ attributable: false, failing_ids: [], reason: "failing test ids not parseable, failures cannot be attributed" })); r.push("why-unattributable " + /not attributable/.test(why(A, errs(A))));
+r.push("why-none-when-excused " + rp.whyFullSuiteNotExcused(g, sha, [{ name: "full suite: npm", cmd: "npm test", result: "fail", ids: A }], ["src/z.ts"], ["full suite: npm"]).length);
 console.log(r.join(" | "));
 ' 2>&1)"
-Y4="full suite: npm:false | full suite: npm:true | true | short-cut rerun 300000 | full-cut kept 0 | fresh 300000 | 300 | 300 | 40 | 1"
-[ "$B4" = "$Y4" ] && ok "unit: a base suite that completes is excused (no cut line); a cut base run is introduced with a base-run-incomplete line, also when the shared budget ran out; a base run gets 300 s (a third of the run cap at most); a short-cut entry is measured again, a fully-cut one is kept" \
+Y4="full suite: npm:false | full suite: npm:true | true | short-cut rerun 300000 | full-cut kept 0 | fresh 300000 | 300 | 300 | 40 | 1 | flaky 1,1,1 | changed-file flaky 1 | no-flaky-record 1 | massive 1,true,1 | flaky-new-error 1,1,true | flaky-stack-changed-file 1 | massive-new-error 1,1 | massive-stack-changed-file 1 | massive-duplicate-title 1 | small-red-no-line false | probe 2;done;b.test.ts > t2+c.test.ts > t3;a.test.ts > t1+b.test.ts > t2 | record 2,false,2,true | why true,true,true,true,true | why-cut true | why-unattributable true | why-none-when-excused 0"
+[ "$B4" = "$Y4" ] && ok "unit: a base suite that completes is excused (no cut line); a cut base run is introduced with a base-run-incomplete line, also when the shared budget ran out; a base run gets 300 s (a third of the run cap at most); a short-cut entry is measured again, a fully-cut one is kept; a red base suite gets a second pass whose one-pass-only ids are flaky and not blamed on the change (a new id, or one in a changed file, still is); a suite red at base (500+ ids) is excused per id with a suite-red-at-base line; the baseline is written to the run directory; a failing full-suite check that is not excused is named with the rule that kept it blocking" \
     || bad "base budget unit gave: $B4 (want: $Y4)"
 
 # Wall-only delivery rules, unit-level: a failing full suite that is not known red blocks it; a delivery whose re-verify fails puts the Wall back
@@ -812,6 +851,7 @@ print("fix_rounds %d" % sum(1 for e in ev if e["type"] == "fix.round"))
 print("pre_red %s" % ",".join(pages(v.get("pre_red_checks", []))))
 print("suite_excused %s" % ("full suite: mono-web" in v.get("pre_red_checks", [])))
 print("verdict %s" % done.get("verdict"))
+print("not_excused %s" % " ;; ".join(n for n in done.get("not_proven", []) if n.startswith("not excused: full suite")))
 PY
 )"
 }
@@ -855,8 +895,8 @@ unit_rv() { # unit_rv <version> <case>
     p8)
     rv_fixture "$T/rv-$ver-p8" 1 "$RVROOT/$ver"; rv_run "$T/rv-$ver-p8" "$REP_EXTRA" '  extra: undefined as unknown as (p: string) => string,'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver p8: /"
-    printf '%s\n' "$RVS" | grep -qx 'suite_excused False' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
-        && ok "real vitest $ver p8: a full-suite-only test red on base, now failing with a new error, is not excused by its id; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
+    printf '%s\n' "$RVS" | grep -qx 'suite_excused False' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] && printf '%s\n' "$RVS" | grep -qE '^not_excused not excused: full suite.*error text differs' \
+        && ok "real vitest $ver p8: a full-suite-only test red on base, now failing with a new error, is not excused by its id; not delivered, and the receipt says the error text differs ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver p8: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
     ;;
     p8new)
@@ -897,7 +937,7 @@ for ver in ${RV_VERSIONS:-2.1.9 5.1.0}; do
 done
 wait
 for ver in ${RV_VERSIONS:-2.1.9 5.1.0}; do
-    if [ -x "$RVROOT/$ver/node_modules/.bin/vitest" ]; then RV_LIST="$RV_LIST $ver"; else printf '  SKIP: real vitest %s: npm could not install it (offline?)\n' "$ver"; fi
+    if [ -x "$RVROOT/$ver/node_modules/.bin/vitest" ]; then RV_LIST="$RV_LIST $ver"; elif [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "real vitest $ver: npm could not install it (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else printf '  SKIP: real vitest %s: npm could not install it (offline?)\n' "$ver"; fi
 done
 unit_start monorepo unit_monorepo
 unit_start envchg unit_envchg

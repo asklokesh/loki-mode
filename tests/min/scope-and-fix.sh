@@ -624,7 +624,7 @@ cat > "$T/spec-choice.ts" <<'TS'
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 const src = `${process.env.ROOT}/loki-ts/src/`;
-const { ambiguityGate, assumptionsBlock, choiceLine, emitChoiceLines, resolveChoices } = await import(src + "features/spec_ambiguity.ts");
+const { ambiguityGate, assumptionsBlock, choiceLine, emitChoiceLines, parsePrecedentVote, resolveChoices, siblingBodies, voteOpenChoices } = await import(src + "features/spec_ambiguity.ts");
 const { buildImplementBrief } = await import(src + "engine10/stages/implement.ts");
 const { FIXED_RULES } = await import(src + "e10ext/context.ts");
 const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
@@ -693,16 +693,125 @@ writeFileSync(`${PR}/flag_generic.go`, "package cli\n\nfunc (f *GenericFlag) Get
 writeFileSync(`${PR}/flag_test.go`, 'func TestGet(t *testing.T) {\n\trequire.Equal(t, 7, cmd.IntFlag.Get(c))\n}\n');
 const pg = (...a: string[]) => execFileSync("git", ["-C", PR, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
 pg("init", "-q"); pg("add", "."); pg("commit", "-q", "-m", "seed");
+process.env.LOKI_E10_PRECEDENT = "0";
 const offc = one(Q, { repoDir: PR })!;
-res("precedent: LOKI_E10_PRECEDENT unset means no precedent text at all", !offc.precedent && !choiceLine(offc).includes("Sibling precedent"));
-process.env.LOKI_E10_PRECEDENT = "1";
-const pc = one(Q, { repoDir: PR })!;
+res("precedent: LOKI_E10_PRECEDENT=0 means no precedent text at all", !offc.precedent && !choiceLine(offc).includes("Sibling precedent"));
+delete process.env.LOKI_E10_PRECEDENT;
+const pc = one(Q, { repoDir: PR, votes: [1] })!;
 res("precedent: sibling Get implementations (not the option's own type) and their test assertions are handed over", !!pc.precedent && pc.precedent.includes("flag_int.go:3") && pc.precedent.includes("flag_str.go:3") && !pc.precedent.includes("flag_generic.go") && pc.precedent.includes("test flag_test.go:2"));
-res("precedent: the line carries the block and tells the model to prefer the option the siblings follow", choiceLine(pc).includes("Sibling precedent") && choiceLine(pc).includes("prefer the option these follow"));
+res("precedent: the line carries the block and is attached once a vote picked an option", choiceLine(pc).includes("Sibling precedent") && choiceLine(pc).includes("implement option 2") && !choiceLine(pc).includes("moves to the convention"));
 res("precedent: no sibling in the snapshot adds nothing", !one(Q, { repoDir: R })?.precedent && !choiceLine(one(Q, { repoDir: R })!).includes("Sibling precedent"));
 const pm = one(Q + tail, { repoDir: PR, comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get consistently.")] })!;
 res("precedent: a maintainer decision still outranks it and the precedent is shown as a check", pm.basis === "maintainer" && choiceLine(pm).includes("check your option against these"));
+// open-contract vote: one tool-less call settles an undecided either/or from the sibling definitions (stub model, no real call)
+writeFileSync(`${PR}/flag_two.go`, "package cli\n\nfunc (f *IntFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n\nfunc (f *BoolFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n"); pg("add", "."); pg("commit", "-q", "-m", "two defs in one file");
+res("precedent scan: two sibling definitions in one file are both listed", (pc0 => pc0.includes("flag_two.go:3") && pc0.includes("flag_two.go:7"))(one(Q, { repoDir: PR, votes: [1] })!.precedent ?? ""));
+let calls = 0, asked = "";
+const stub = (answer: string | null) => async (_s: string, pr: string) => { calls++; asked = pr; return answer; };
+const vA = await voteOpenChoices(Q, { repoDir: PR }, stub("OPTION 2"));
+const rA = one(Q, { repoDir: PR, votes: vA })!;
+res("vote agree: siblings follow option 2, the line says implement option 2 with basis precedent and the pinned-test move", calls === 1 && vA[0] === 1 && rA.basis === "precedent" && rA.picked === 1 && choiceLine(rA).includes("implement option 2") && !choiceLine(rA).includes("does not override") && choiceLine(rA).includes("outrank this line") && choiceLine(rA).includes("may be updated to this option") && choiceLine(rA).includes("4 sibling definitions picked it") && choiceLine(rA).includes("IntFlag.Get() any at flag_int.go:3") && !choiceLine(rA).includes("all follow") && emitChoiceLines([rA]).length === 1);
+res("vote prompt carries the sibling bodies and both options but no sibling listing from tests", asked.includes("OPTION 1:") && asked.includes("OPTION 2:") && asked.includes("flag_int.go:3") && asked.includes("flag_two.go:7"));
+calls = 0;
+const vD = await voteOpenChoices(Q, { repoDir: PR }, stub("NEITHER"));
+const rD = one(Q, { repoDir: PR, votes: vD })!;
+res("vote disagree: NEITHER gives no precedent line at all", calls === 1 && vD[0] === null && rD.basis === "none" && !rD.precedent && emitChoiceLines([rD]).length === 0);
+calls = 0;
+const AN = "Get disagrees across flags.\n\nAny of the following outputs is acceptable:\n\n- `IntFlag.Get` returns the raw value\n- `GenericFlag.Get` returns the supplied value\n";
+const vI = await voteOpenChoices(AN, { repoDir: PR }, stub("OPTION 1")), rI = one(AN, { repoDir: PR, votes: [0] })!;
+res("issue states acceptable outputs: no vote call, no precedent, the coexist line stands", calls === 0 && vI[0] === undefined && rI.basis !== "precedent" && !rI.precedent && choiceLine(rI).includes("every one of them"));
+const vM = await voteOpenChoices(Q + tail, { repoDir: PR, comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get consistently.")] }, stub("OPTION 1")), rM = one(Q + tail, { repoDir: PR, comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get consistently.")], votes: [0] })!;
+res("maintainer comment beats the sibling vote: no call, basis stays maintainer", calls === 0 && vM[0] === undefined && rM.basis === "maintainer" && rM.picked !== 0);
+process.env.LOKI_E10_PRECEDENT = "0";
+const vO = await voteOpenChoices(Q, { repoDir: PR }, stub("OPTION 2")), rO = one(Q, { repoDir: PR, votes: [1] })!;
+res("knob off: LOKI_E10_PRECEDENT=0 makes no call and adds no precedent even with a vote", calls === 0 && vO.length === 0 && rO.basis === "none" && !rO.precedent);
 delete process.env.LOKI_E10_PRECEDENT;
+const vF = await voteOpenChoices(Q, { repoDir: PR }, stub(null)), rF = one(Q, { repoDir: PR, votes: vF })!;
+res("failed or capped call: no vote, no precedent hint is emitted without a vote", calls === 1 && vF[0] === undefined && rF.basis === "none" && !rF.precedent && emitChoiceLines([rF]).length === 0);
+calls = 0; const vR = await voteOpenChoices(Q, { repoDir: R }, stub("OPTION 1"));
+res("no siblings in the snapshot: no call", calls === 0 && vR[0] === undefined);
+res("parsePrecedentVote: option, neither, out of range, garbage", parsePrecedentVote("OPTION 2", 2) === 1 && parsePrecedentVote("NEITHER", 2) === null && parsePrecedentVote("OPTION 3", 2) === null && parsePrecedentVote("hmm", 2) === null);
+// sibling test transplant (Go): the siblings' tests generalized and filled with the target
+{
+  const GR = `${process.env.T}/tp-repo`; mkdirSync(`${GR}/settings`, { recursive: true });
+  const typ = (t: string, ret: string, zero: string) => `type ${t} struct{ Raw string }\n\nfunc (s ${t}) Value() ${ret} {\n\traw := s.Raw\n\t_ = raw\n\treturn ${zero}\n}\n`;
+  writeFileSync(`${GR}/settings/settings.go`, `package settings\n\n${typ("IntSetting", "int", "0")}\n${typ("BoolSetting", "bool", "false")}\n${typ("ListSetting", "[]string", "nil")}\n${typ("DurationSetting", "string", "s.Raw")}`);
+  const tcase = (t: string, ret: string, zero: string, extra = true) => `func Test${t}Value(t *testing.T) {\n\tvar zero ${ret}\n\tif got := (${t}{Raw: "nope"}).Value(); got != zero {\n\t\tt.Fatalf("invalid input: got %v", got)\n\t}\n${extra ? "" : ""}}\n`;
+  writeFileSync(`${GR}/settings/settings_test.go`, `package settings\n\nimport "testing"\n\n${tcase("IntSetting", "int", "0")}\n${tcase("BoolSetting", "bool", "false")}\nfunc TestDurationSettingValue(t *testing.T) {\n\tif got := (DurationSetting{Raw: "5s"}).Value(); got != "5s" {\n\t\tt.Fatalf("got %v", got)\n\t}\n}\n`);
+  const gg = (...a: string[]) => execFileSync("git", ["-C", GR, "-c", "user.name=t", "-c", "user.email=t@t", ...a]); gg("init", "-q"); gg("add", "."); gg("commit", "-q", "-m", "seed");
+  const body = "Every other setting type gives me the parsed value from `Value()`. `DurationSetting.Value()` hands back the raw text.\n\nShould DurationSetting.Value return the parsed time.Duration, or should Value keep returning the string and a new Duration() method return the parsed time.Duration?\n\nA value that does not parse should give 0.";
+  const like = "DurationSetting.Value should behave like the other settings\n\n" + body, plain = "DurationSetting.Value returns a string\n\n" + body;
+  const run = async (task: string, ans = "OPTION 1") => { const v = await voteOpenChoices(task, { repoDir: GR }, async () => ans); return one(task, { repoDir: GR, votes: v })!; };
+  const tb = await run(like), tl = choiceLine(tb);
+  res("transplant: issue says like the siblings and 2 siblings share the case: a binding failing test for the target", tb.transplant?.binding === true && tl.includes("Binding sibling test") && tl.includes("func TestLokiTransplant_DurationSettingValue") && tl.includes("var zero time.Duration") && tl.includes('(DurationSetting{Raw: "nope"}).Value()') && tl.includes('"time"'));
+  const ta = await run(plain);
+  res("transplant: the issue does not ask for sibling behavior: advisory, no test body in the line", ta.transplant?.binding === false && choiceLine(ta).includes("Advisory") && !choiceLine(ta).includes("func TestLokiTransplant"));
+  const tn = await run(like, "NEITHER");
+  res("transplant: siblings disagree (NEITHER): no transplant and no line", !tn.transplant && emitChoiceLines([tn]).length === 0);
+  const t2 = await run(like.replace("parsed time.Duration, or should", "parsed time.Duration, or should").replace(/^/, ""), "OPTION 2");
+  res("transplant: the picked option does not name the target member: no transplant", !t2.transplant);
+  const AL = like + "\n\nAny of the following outputs is acceptable:\n\n- `DurationSetting.Value` returns the parsed time.Duration\n- `DurationSetting.Value` returns the trimmed string\n";
+  const rAL = one(AL, { repoDir: GR, votes: [0, 0] })!;
+  res("transplant: an acceptable-outputs list never gets a transplant", !rAL.transplant);
+  // control legs: settings-split (siblings disagree) and settings-acc (siblings agree, the issue lists outputs that conflict with them)
+  const SP = `${process.env.T}/tp-split`; mkdirSync(`${SP}/settings`, { recursive: true });
+  writeFileSync(`${SP}/settings/settings.go`, `package settings\n\n${typ("IntSetting", "int", "0")}\n${typ("BoolSetting", "string", "s.Raw")}\n${typ("DurationSetting", "string", "s.Raw")}`);
+  const sg = (...a: string[]) => execFileSync("git", ["-C", SP, "-c", "user.name=t", "-c", "user.email=t@t", ...a]); sg("init", "-q"); sg("add", "."); sg("commit", "-q", "-m", "seed");
+  let splitCalls = 0; const sv = await voteOpenChoices(like, { repoDir: SP }, async () => { splitCalls++; return "NEITHER"; }), sr = one(like, { repoDir: SP, votes: sv })!;
+  res("control settings-split (multi-statement bodies, Bool already returns the target's string): the signature split is refused before any call, no line and no transplant", splitCalls === 0 && sv[0] === undefined && emitChoiceLines([sr]).length === 0 && !sr.transplant);
+  let accCalls = 0; const AC = "DurationSetting.Value should behave like the other settings\n\nEvery other setting type gives me the parsed value from `Value()`.\n\nAny of the following outputs is acceptable:\n\n- `DurationSetting.Value` returns the string, trimmed\n- `DurationSetting.Value` returns the raw string\n";
+  const av = await voteOpenChoices(AC, { repoDir: GR }, async () => { accCalls++; return "OPTION 1"; }), ar = one(AC, { repoDir: GR, votes: av })!, al = emitChoiceLines([ar]).join("\n");
+  res("control settings-acc: siblings agree but the issue lists outputs: no vote call, no binding transplant, the listed outputs line stands", accCalls === 0 && !ar.transplant && !al.includes("Binding sibling test") && al.includes("every one of them"));
+  // review-548 legs
+  const b1 = await run(plain + " The output must stay consistent with the documented JSON schema."), b2 = await run(plain + " It fails the same way on every platform.");
+  res("saysLikeSiblings: 'consistent with the documented JSON schema' and 'fails the same way' do not bind the transplant", b1.transplant?.binding === false && b2.transplant?.binding === false);
+  const lib = await run(plain + " Handle it like other setting libraries do in Python.");
+  res("saysLikeSiblings: a sentence naming the family but not the target type or member stays advisory", lib.transplant?.binding === false);
+  const loose = ["It behaves as expected on other platforms.", "This works like it did in the other release.", "Output matches the other format we ship.", "Keep it as is, like the rest of the CLI docs say."];
+  const lr = await Promise.all(loose.map((x) => run(plain + " " + x)));
+  res("saysLikeSiblings: four loose phrases that name no sibling stay advisory", lr.every((r) => r.transplant?.binding === false));
+  const b3 = await run(plain + " It should be consistent with IntSetting.Value."), b4 = await run(plain + " DurationSetting.Value should work like the other settings.");
+  res("saysLikeSiblings: a sentence naming the sibling type, or 'like the other settings', does bind", b3.transplant?.binding === true && b4.transplant?.binding === true);
+  const mt = [mk("maint", "I'd go with the parsed time.Duration from DurationSetting.Value.")];
+  const rMt = one(like + tail, { repoDir: GR, comments: mt })!, lMt = choiceLine(rMt);
+  res("maintainer-picked option: any transplant is advisory (never the binding test) and the line says the issue and maintainer outrank it", rMt.basis === "maintainer" && !lMt.includes("Binding sibling test") && !lMt.includes("func TestLokiTransplant") && (!rMt.transplant || lMt.includes("outrank this line")));
+  const wq = "Should `GenericFlag.Get` return the supplied `cli.Value`, or should it return the stored payload?", wm = one(wq + tail, { comments: [mk("maint", "We should return the stored payload from GenericFlag.Get.")] })!;
+  res("byMaintainer: a content word (stored payload) outweighs the shared symbol GenericFlag.Get", wm.basis === "maintainer" && wm.picked === 1);
+  let pasked = ""; await voteOpenChoices(plain + " We rely on this today, so we must not change that behavior.", { repoDir: GR }, async (_s: string, pr: string) => { pasked = pr; return "NEITHER"; });
+  res("the vote prompt carries the issue text, so a must-not-change sentence reaches the voter", pasked.includes("must not change that behavior") && pasked.includes("answer NEITHER"));
+  // review legs: nothing here may emit an override of the issue
+  calls = 0; const KO = Q + " Many downstream users rely on Command.Value returning the Get result today, so we must not change that behavior.";
+  const kv = await voteOpenChoices(KO, { repoDir: PR }, stub("OPTION 2")), kr = choiceLine(one(KO, { repoDir: PR, votes: kv })!);
+  res("keep-old statement the detector misses: the line says the issue outranks it and never says the preference does not override", !kr.includes("does not override") && !kr.includes("preference stated") && (!kr.includes("implement option") || kr.includes("outrank this line")));
+  calls = 0; const mc = [mk("maint", "Leave GenericFlag.Get as it is, the supplied value object breaks serialization.")];
+  const mv = await voteOpenChoices(Q + tail, { repoDir: PR, comments: mc }, stub("OPTION 2")), mr = one(Q + tail, { repoDir: PR, comments: mc, votes: [1] })!;
+  res("maintainer comment with no cue word that names an option symbol vetoes the vote: no call, no precedent basis", calls === 0 && mv[0] === undefined && mr.basis !== "precedent");
+  const S2 = `${process.env.T}/tp-split2`; mkdirSync(S2, { recursive: true });
+  writeFileSync(`${S2}/a.go`, "package cli\n\nfunc (f *IntFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n"); writeFileSync(`${S2}/b.go`, "package cli\n\nfunc (f *StringFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n"); writeFileSync(`${S2}/c.go`, "package cli\n\nfunc (f *BoolFlag) Get(cmd *Command) any {\n\treturn f.supplied\n}\n");
+  const g2 = (...a: string[]) => execFileSync("git", ["-C", S2, "-c", "user.name=t", "-c", "user.email=t@t", ...a]); g2("init", "-q"); g2("add", "."); g2("commit", "-q", "-m", "seed");
+  calls = 0; const v2 = await voteOpenChoices(Q, { repoDir: S2 }, stub("OPTION 2")), r2 = one(Q, { repoDir: S2, votes: [1] })!;
+  res("2:1 split with trivial bodies: the siblings visibly differ, so no call, no precedent, no line", calls === 0 && v2[0] === undefined && r2.basis === "none" && !r2.precedent && emitChoiceLines([r2]).length === 0);
+  const TSR = `${process.env.T}/tp-ts`; mkdirSync(TSR, { recursive: true });
+  writeFileSync(`${TSR}/a.ts`, "export class A {\n  get(): number {\n    return 1;\n  }\n  other(): string {\n    return 'LEAKED_NEXT_METHOD';\n  }\n}\n");
+  const tb2 = siblingBodies("sibling a.ts:2 get(): number {", TSR);
+  res("siblingBodies cuts a TS method at its own span, not a fixed window", tb2.includes("return 1;") && !tb2.includes("LEAKED_NEXT_METHOD"));
+  writeFileSync(`${GR}/settings/settings_test.go`, `package settings\n\nimport "testing"\n\n${tcase("IntSetting", "int", "0")}\nfunc TestBoolSettingValue(t *testing.T) {\n\tif got := (BoolSetting{Raw: "true"}).Value(); got != true {\n\t\tt.Fatalf("got %v", got)\n\t}\n}\n`); gg("add", "."); gg("commit", "-q", "-m", "one sibling case");
+  res("transplant: a case only one sibling has is not a convention: no transplant", !(await run(like)).transplant);
+}
+// the default voter: toolLessCall on a stub Agent SDK query() (no network): tool-less, thinking off, ledger line, output budget above the thinking leak, run cap stops it
+{
+  const { __setToolLessQueryForTests } = await import(src + "runner/sdk_invoker.ts"), { mkdtempSync, readFileSync, existsSync } = await import("node:fs"), { tmpdir } = await import("node:os");
+  const LD = mkdtempSync(`${tmpdir()}/pv-`); const keep = { k: process.env.ANTHROPIC_API_KEY, d: process.env.LOKI_DIR }; delete process.env.ANTHROPIC_API_KEY; process.env.LOKI_DIR = LD;
+  let o: any = null, mode = "ok";
+  __setToolLessQueryForTests(async function* ({ options }: any) { o = options; yield { type: "assistant", message: { content: [{ type: "text", text: "OPTION 2" }] } }; yield { type: "result", subtype: mode === "budget" ? "error_max_budget_usd" : "success", is_error: false, result: "OPTION 2", total_cost_usd: 0.0002, usage: { input_tokens: 400, output_tokens: 70, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, modelUsage: {} }; });
+  const dv = await voteOpenChoices(Q, { repoDir: PR });
+  const led = existsSync(`${LD}/metrics/child-sessions.jsonl`) ? readFileSync(`${LD}/metrics/child-sessions.jsonl`, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
+  res("default voter: a tool-less call, thinking off, output budget of at least 128 tokens, voted option 2", dv[0] === 1 && JSON.stringify(o.tools) === "[]" && o.thinking?.type === "disabled" && Number(o.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) >= 128);
+  res("default voter: priced into the child ledger under precedent-vote", led.length === 1 && led[0].phase === "precedent-vote" && led[0].usd > 0);
+  mode = "budget"; const db = await voteOpenChoices(Q, { repoDir: PR });
+  res("default voter: a run whose dollar cap stops the call gets no vote and keeps the prose", db[0] === undefined);
+  __setToolLessQueryForTests(null); if (keep.k !== undefined) process.env.ANTHROPIC_API_KEY = keep.k; if (keep.d === undefined) delete process.env.LOKI_DIR; else process.env.LOKI_DIR = keep.d;
+}
 res("acceptable-outputs list that can coexist: the line asks for one design producing every output", choiceLine(z0).includes("every one of them") && !choiceLine(one(Q)!).includes("every one of them"));
 // the gate and the brief
 delete process.env.LOKI_E10_ASSUME; process.env.LOKI_E10_INTAKE_ASK = "0";
