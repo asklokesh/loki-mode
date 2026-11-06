@@ -26,7 +26,7 @@
 #   coverage:    (lean, E2E_STUB_MODE=coverage: the first turn writes 2 of the 3 named functions) default: no extra session and negate() is
 #                missing; LOKI_E10_COVERAGE_RESUME=1: exactly one "-c" session with the fixed brief writes negate(); a first turn that
 #                claims already-done, or a run that has a plan, gets no coverage turn.
-#   exec spec:   (LOKI_E10_EXEC_SPEC=1, lean, Wall off) deterministic atoms, the parity atom from the whole function body, the pair atom,
+#   exec spec:   (default on, LOKI_E10_EXEC_SPEC=0 opts out; lean, Wall off) deterministic atoms, the parity atom from the whole function body, the pair atom,
 #                the binding rule; real go test, pytest and vitest (2 and latest) per-case base runs seal only the binding red case; on the
 #                engine the right fix is VERIFIED, a change that leaves it red is not, and the knob unset runs no generator session.
 #   agent-only:  the same lean task, but the session also adds an exported square() that only its own new test calls:
@@ -159,71 +159,89 @@
 #  61. check_result.ts stallSignature: bucket a full-suite group by log2 of its id count again (the disjoint, 100-to-70 and zero-vs-one id legs read true).
 #  62. check_result.ts stallSame: drop the count tolerance test (the near-equal truncated legs read false) or widen it to 50 percent (the 100-to-70 leg reads true).
 #  63. machine.ts: compare sigs with === again instead of stallSame (the machine.ts stallSame grep leg reads bad).
-#  64. features/exec_spec.ts parityAtoms: drop the quoted-code condition (exec spec atoms read otherquote=P1).
-#  65. exec_spec.ts parityAtoms: scan s.source (the 45-line excerpt) instead of s.body (exec spec atoms read P0).
-#  66. exec_spec.ts NORM_DOT: drop the no-dot lookbehind (exec spec atoms read prop=P1).
-#  67. exec_spec.ts pairAtoms: let a site pair with its own caller (exec spec atoms list Report+Batch).
-#  68. exec_spec.ts isBinding: return true (every real-runner leg seals the advisory case too).
-#  69. exec_spec.ts parseGo: count a panicking case as red (the go test leg seals or lists the panic case).
-#  70. exec_spec.ts parseJunit: count any failure as red (the pytest leg reads the AttributeError case as advisory, not dropped).
-#  71. exec_spec.ts parseVitestJson: count any failure as red (the vitest legs read the TypeError case as advisory, not dropped).
-#  72. wall.ts: return the lean skip with the knob on (the exec spec engine legs read skipped and VERIFIED on the no-fix change).
-#  73. implement.ts: drop execSpecBriefOf from the brief (the implement-brief leg fails).
-#  74. exec_spec.ts execSpecEnabled: default on (the exec spec off leg finds a generator session).
-#  75. tournament.ts resolveVerdicts: accept one view (the order-swap judge and position-judge legs read a verdict).
-#  76. tournament.ts select: drop the spec-regression veto (the spec veto leg displaces).
-#  77. tournament.ts select: count an unanchored win at margin (the one-unanchored-verdict leg displaces).
-#  78. tournament.ts runTournament: treat every tree as passing its checks (the failing-check leg displaces).
-#  79. tournament.ts stableIds: keep every case (the unstable-probe leg displaces).
-#  80. tournament.ts pruneGoCases: never prune (the pruning leg reads empty).
-#  81. tournament.ts runTournamentGate: drop the small-diff limit (the over-limit go leg makes model calls).
-#  82. tournament.ts runTournamentGate: drop the warning-sign skip (the no-sign go leg makes model calls).
-#  83. tournament.ts runTournamentGate: rethrow instead of restoring and recording a skip (the throw go leg crashes).
-#  84. tournament.ts runTournamentGate: never swap the winner in (the displace go leg keeps the wrong tree).
-#  85. tournament.ts tournamentReceiptBlock: return nothing (the receipt leg finds no tournament lines).
-#  86. tournament.ts applyEdits path guard: let a candidate edit an existing test file (the test-edit go leg writes the test change into the user's tree).
-#  87. implement.ts: drop the runTournamentGate call (the engine tournament data leg reads absent).
-#  88. wall.ts: always pass the probe intake (the tournament-off leg finds the probe rules).
-#  89. tournament.ts warningSigns: ignore the edit-shape residual site (the signs leg reads 0 for the residual case).
-#  90. tournament.ts runTournamentGate: write the winner's whole scratch tree over the user's tree (the probe side-effect go leg finds leak.txt and a changed go.mod).
-#  91. tournament.ts materialize and the winner: candidates built from base and swapped in with treeswap enter (the probe side-effect go leg loses the agent's new test, added case and go.mod note).
-#  92. tournament.ts select: drop the issue-named requirement (the two-unnamed-wins unit leg displaces); count unnamed wins as anchored (the unnamed-input legs displace).
-#  93. tournament.ts runTournament: call the candidates model before looking at the agent tree (the agent-red legs make a call).
-#  94. tournament.ts runTournamentGate: truncate a big base file instead of skipping (the big-file go leg calls the model).
-#  95. tournament.ts applyWinnerFiles: skip the undo record (the kill leg finds no record).
-#  97. tournament.ts runTournamentGate: a tick that never throws (the budget leg runs on).
-#  98. tournament.ts namedProbes: any one quoted literal names the input again (the incidental-literal go leg displaces).
-#  99. implement.ts: drop the recoverTournamentUndo call at stage start (the kill leg leaves the half-written file).
-# 100. implement.ts: run the tournament gate before restoreReadOnly again (the gate-order leg fails).
-# 101. tournament.ts runTournamentGate: drop the weakened-test stand-down (the weakened-test go leg calls the model).
-# 102. no_regression.ts issueMentionsChange: count removal words in any sentence, not only in request sentences (the override leg reads true).
-# 103. no_regression.ts issueMentionsChange: stop skipping the title line (the title leg reads true).
-# 104. no_regression.ts runNoRegression: count an "unknown" verdict as blocking (the unknown-advisory leg reads blocking).
-# 105. no_regression.ts overrideVerdict: skip the override (the requested-but-unmentioned leg stays requested).
-# 106. no_regression.ts makeScratch replay: restore the original tests in the user's tree (the user-tree byte-identical leg reads changed).
-# 107. no_regression.ts nrdEnabled: default off (the default-on and the go gate legs read null).
-# 108. no_regression.ts runNrdGate: ignore the unnamed-caller rule and always make the post probe call (the no-extra-call legs see nrd-probe).
-# 109. no_regression.ts nrdGroupsFor: ignore fixRounds (the re-verify leg reads a group).
-# 110. no_regression.ts isChangeCase: return true (the regression-named-p leg is never judged).
-# 111. no_regression.ts overrideVerdict: drop the named-function exemption (the named-function requested leg flips to blocking).
-# 112. no_regression.ts rewriteAssertsIssueValue: accept any issue substring again (the loosely mentioned rewrite reads requested).
-# 113. no_regression.ts runNoRegression: treat an empty judge reply as no finding (the incomplete legs read false).
-# 114. no_regression.ts overrideVerdict: turn a doubtful judge "requested" into "unrequested" again (the verdict-correction and judge-outcome legs read a block).
-# 115. no_regression.ts makeScratch: ignore the user's untracked files (the untracked-in-both-copies leg reads false).
-# 116. no_regression.ts runNoRegression: never report an unbuilt probe as not run (the relative-replace leg reads fired or clean).
-# 117. no_regression.ts runNrdGate: ignore the wall budget (the budget legs read fired).
-# 118. no_regression.ts callsOnlyAskedFunctions: require only one called function to be asked for, not every one (the named-and-unnamed-together case reads unjudged).
-# 119. no_regression.ts askedToChange: ignore the stays/unchanged/keep sentences (the function-named-only-as-staying case reads unjudged).
-# 120. no_regression.ts isChangeCase: drop the added-word condition on the input-stated branch (the extra-change-in-the-asked-function case reads unjudged).
+# 201. tournament.ts resolveVerdicts: accept one view (the order-swap judge and position-judge legs read a verdict).
+# 202. tournament.ts select: drop the spec-regression veto (the spec veto leg displaces).
+# 203. tournament.ts select: count an unanchored win at margin (the one-unanchored-verdict leg displaces).
+# 204. tournament.ts runTournament: treat every tree as passing its checks (the failing-check leg displaces).
+# 205. tournament.ts stableIds: keep every case (the unstable-probe leg displaces).
+# 206. tournament.ts pruneGoCases: never prune (the pruning leg reads empty).
+# 207. tournament.ts runTournamentGate: drop the small-diff limit (the over-limit go leg makes model calls).
+# 208. tournament.ts runTournamentGate: drop the warning-sign skip (the no-sign go leg makes model calls).
+# 209. tournament.ts runTournamentGate: rethrow instead of restoring and recording a skip (the throw go leg crashes).
+# 210. tournament.ts runTournamentGate: never swap the winner in (the displace go leg keeps the wrong tree).
+# 211. tournament.ts tournamentReceiptBlock: return nothing (the receipt leg finds no tournament lines).
+# 212. tournament.ts applyEdits path guard: let a candidate edit an existing test file (the test-edit go leg writes the test change into the user's tree).
+# 213. implement.ts: drop the runTournamentGate call (the engine tournament data leg reads absent).
+# 214. wall.ts: always pass the probe intake (the tournament-off leg finds the probe rules).
+# 215. tournament.ts warningSigns: ignore the edit-shape residual site (the signs leg reads 0 for the residual case).
+# 216. tournament.ts runTournamentGate: write the winner's whole scratch tree over the user's tree (the probe side-effect go leg finds leak.txt and a changed go.mod).
+# 217. tournament.ts materialize and the winner: candidates built from base and swapped in with treeswap enter (the probe side-effect go leg loses the agent's new test, added case and go.mod note).
+# 218. tournament.ts select: drop the issue-named requirement (the two-unnamed-wins unit leg displaces); count unnamed wins as anchored (the unnamed-input legs displace).
+# 219. tournament.ts runTournament: call the candidates model before looking at the agent tree (the agent-red legs make a call).
+# 220. tournament.ts runTournamentGate: truncate a big base file instead of skipping (the big-file go leg calls the model).
+# 221. tournament.ts applyWinnerFiles: skip the undo record (the kill leg finds no record).
+# 222. tournament.ts runTournamentGate: a tick that never throws (the budget leg runs on).
+# 223. tournament.ts runTournament: call the judge even when no disagreement is on an issue-named probe (the unnamed unit legs read a judge call).
+# 224. tournament.ts namedProbes: any one quoted literal names the input again (the incidental-literal go leg displaces).
+# 225. implement.ts: drop the recoverTournamentUndo call at stage start (the kill leg leaves the half-written file).
+# 226. implement.ts: run the tournament gate before restoreReadOnly again (the gate-order leg fails).
+# 227. tournament.ts runTournamentGate: drop the weakened-test stand-down (the weakened-test go leg calls the model).
+# 228. exec_spec.ts execSpecAuthor: no second call without the probe on an unusable combined reply (the none and cut_spec fallback legs read skipped).
+# 229. exec_spec.ts execSpecAuthor: cap the combined call at 8192 again (the fallback legs read max=8192).
+# 230. exec_spec.ts execSpecAuthor: an unusable probe block triggers the spec-only rerun (the cut_probe leg reads two calls).
+# 231. tournament.ts runTournament: make the candidates call even when no probe case is issue-named (the no-named unit leg reads a candidates call).
+# 232. tournament.ts runTournamentGate: ignore the recorded probe skip (the engine no-probe leg reads absent).
+# 132. no_regression.ts issueMentionsChange: count removal words in any sentence, not only in request sentences (the override leg reads true).
+# 133. no_regression.ts issueMentionsChange: stop skipping the title line (the title leg reads true).
+# 134. no_regression.ts runNoRegression: count an "unknown" verdict as blocking (the unknown-advisory leg reads blocking).
+# 135. no_regression.ts overrideVerdict: skip the override (the requested-but-unmentioned leg stays requested).
+# 136. no_regression.ts makeScratch replay: restore the original tests in the user's tree (the user-tree byte-identical leg reads changed).
+# 137. no_regression.ts nrdEnabled: default off (the default-on and the go gate legs read null).
+# 138. no_regression.ts runNrdGate: ignore the unnamed-caller rule and always make the post probe call (the no-extra-call legs see nrd-probe).
+# 139. no_regression.ts nrdGroupsFor: ignore fixRounds (the re-verify leg reads a group).
+# 140. no_regression.ts isChangeCase: return true (the regression-named-p leg is never judged).
+# 141. no_regression.ts overrideVerdict: drop the named-function exemption (the named-function requested leg flips to blocking).
+# 142. no_regression.ts rewriteAssertsIssueValue: accept any issue substring again (the loosely mentioned rewrite reads requested).
+# 143. no_regression.ts runNoRegression: treat an empty judge reply as no finding (the incomplete legs read false).
+# 144. no_regression.ts overrideVerdict: turn a doubtful judge "requested" into "unrequested" again (the verdict-correction and judge-outcome legs read a block).
+# 145. no_regression.ts makeScratch: ignore the user's untracked files (the untracked-in-both-copies leg reads false).
+# 146. no_regression.ts runNoRegression: never report an unbuilt probe as not run (the relative-replace leg reads fired or clean).
+# 147. no_regression.ts runNrdGate: ignore the wall budget (the budget legs read fired).
+# 148. no_regression.ts callsOnlyAskedFunctions: require only one called function to be asked for, not every one (the named-and-unnamed-together case reads unjudged).
+# 149. no_regression.ts askedToChange: ignore the stays/unchanged/keep sentences (the function-named-only-as-staying case reads unjudged).
+# 150. no_regression.ts isChangeCase: drop the added-word condition on the input-stated branch (the extra-change-in-the-asked-function case reads unjudged).
 #  64. assert_delta.ts reportedValues: drop the WANTED_BEFORE skip (the "should return" value reads as a symptom; the finder unit legs fail).
 #  65. seal.ts failThenPass: drop the rewritten-file exclusion (the lone rewritten pinned assertion reads VERIFIED).
 #  67. seal.ts pinDropped: key on the file only again (the F1 unit leg fails); drop the pinLift gate (the F2 unit leg fails); drop CALLED_RIGHT in assert_delta.ts (the called-right unit leg fails).
+#  68. verify.ts goBatchable: drop the targets/changed exclusion (the eligibility leg reads true,true,true,...); runGoBatches: skip the corroboratePass call (the tests-only leg batches 3 files); baseGoBatch: ignore goBatchOn (the base legs count equal go calls); goFileStream: keep every file's events (the base red leg lists every file); baseGoBatch: take every file from the batch with ok = no fail event (the package-state and panic legs fail); goPackagePassed and goStreamGreen both return true at the top (the panic leg and the red-parity leg fail; each of the four checks alone is covered by the others).
 #  66. test_guard.ts defectPinEdits: also accept a structural change (the structural-change unit leg fails) or drop the pin note from seal (the receipt leg fails).
 #  69. edit_shape.ts siblingSites: drop the branch-split test (the straight-line sequence leg reads sibling).
 #  70. edit_shape.ts siblingSites: drop the siblings-agree test (the disagree leg reads sibling) or the literal test (the literal leg reads sibling).
 #  71. edit_shape.ts residualSites: drop COMMON_LIMIT (the idiom leg reads residual) or GO_BUILTIN_T (the .(string) leg reads residual).
 #  72. edit_shape.ts precedenceSites: drop the removed-strict test (the new errors.As leg reads precedence) or the removed-broad test (the isinstance-to-isinstance leg reads precedence).
 #  73. edit_shape.ts fragmentsOf: drop the written-back test (a pattern the hunk keeps reads residual).
+# 104. features/exec_spec.ts parityAtoms: drop the quoted-code condition (exec spec atoms read otherquote=P1).
+# 105. exec_spec.ts parityAtoms: scan s.source (the 45-line excerpt) instead of s.body (exec spec atoms read P0).
+# 106. exec_spec.ts NORM_DOT: drop the no-dot lookbehind (exec spec atoms read prop=P1).
+# 107. exec_spec.ts pairAtoms: let a site pair with its own caller (exec spec atoms list Report+Batch).
+# 108. exec_spec.ts isBinding: return true (every real-runner leg seals the advisory case too).
+# 109. exec_spec.ts parseGo: count a panicking case as red (the go test leg seals or lists the panic case).
+# 110. exec_spec.ts parseJunit: count any failure as red (the pytest leg reads the AttributeError case as advisory, not dropped).
+# 111. exec_spec.ts parseVitestJson: count any failure as red (the vitest legs read the TypeError case as advisory, not dropped).
+# 112. wall.ts: return the lean skip with the knob on (the exec spec engine legs read skipped).
+# 113. implement.ts: drop execSpecBriefOf from the brief (the implement-brief leg fails).
+# 114. exec_spec.ts execSpecEnabled: ignore LOKI_E10_EXEC_SPEC=0 (the exec spec off leg finds a generator session).
+# 115. exec_spec.ts isBinding: drop the one-example rule (any unit per literal) (exec spec atoms read bind=100001).
+# 116. exec_spec.ts isBinding: drop the caseLiterals check, want literals only (exec spec atoms read bind=110001 or more).
+# 117. seal.ts: drop specGap from verdictOf (the second-site leg reads VERIFIED).
+# 119. exec_spec.ts capSites: return every uncovered site (the passing-mention leg reads PARTIAL).
+# 120. seal.ts specSiteGap: ignore the changed-symbol list (exec spec atoms read gap=Report,Report,-).
+# 124. exec_spec.ts defectSites: count every span of a clause with a defect word again (the comparison, negated-scope and see legs read PARTIAL).
+# 125. seal.ts: drop execSpecBlock from the receipt body (the receipt exec_spec leg fails).
+# 126. exec_spec.ts defaultGenerator: always the session generator (the generator leg reads sessions=1 queries=0).
+# 127. exec_spec.ts toolLessGenerator: thinking "off" instead of "low" (the generator leg reads thinking=disabled/undefined).
+# 131. exec_spec.ts DEFECT_OR_ASK: count returns/gives again, or drop the contrast split (the "Join returns ... but Split" and "Report gives 1" legs read PARTIAL).
+# 118. exec_spec.ts execSpecBriefOf: drop the knob check (exec spec atoms read brief=B,B).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -353,6 +371,11 @@ for kind in mock beforeeach; do
     [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "setup $kind: it caps the verdict ($(outcome))" || { bad "setup $kind: outcome is '$(outcome)'"; dump; }
 done
 
+# FireLater#24 s3/s4: an implement session that calls a suite already red on the base a spec conflict gets the one correction resume, which now says a base failure is not a conflict; the run delivers.
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_BASE_RED_CONFLICT=1
+[ "$(outcome)" = "VERIFIED" ] && ok "base-red conflict: the correction resume delivered (VERIFIED, not SPEC_CONFLICT)" || { bad "base-red conflict: outcome is '$(outcome)'"; dump; }
+grep -q 'export function multiply' "$REPO/calc.ts" && ok "base-red conflict: the resumed session made the change" || bad "base-red conflict: the change is missing"
+
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict
 n="$(fix_sessions)"
 [ "$n" = "1" ] && ok "conflict: one fix session, no retry" || { bad "conflict: $n fix sessions (want 1)"; dump; }
@@ -404,6 +427,143 @@ run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=1 LOKI_E10_COVERAGE_RES
 grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: a run with a plan got a coverage turn"; dump; } || ok "coverage on: a run with a plan stage gets no coverage turn (lean path only)"
 run_engine "$CTASK" E2E_STUB_MODE=already LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_COVERAGE_RESUME=1
 grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: an already-done first turn got a coverage turn"; dump; } || ok "coverage on: an already-done first turn gets no coverage turn"
+
+# ---------------------------------------------------------------- patch protocol on the engine (LOKI_E10_PATCH, default off; stub tool-less call through the CLI invoker)
+PTASK="add a multiply(a, b) function to calc.ts"
+pev() { ev 'next((json.dumps(e["data"].get("patch")) for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), "")'; }
+PLEAN=(LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_SESSION_MODEL=haiku)
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=green LOKI_E10_PATCH= "${PLEAN[@]}"
+grep -q '^patch$' "$(dirname "$ITERS")/stub.log" && [ "$(grep -c '^implement ' "$ITERS")" = 0 ] && ok "patch default on: with LOKI_E10_PATCH unset the patch call runs and no agentic session is needed" || { bad "patch default on: no patch call with LOKI_E10_PATCH unset"; dump; }
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=green LOKI_E10_PATCH=0 "${PLEAN[@]}"
+grep -q '^patch$' "$(dirname "$ITERS")/stub.log" && bad "patch opt-out: a patch call ran with LOKI_E10_PATCH=0" || ok "patch opt-out: LOKI_E10_PATCH=0 runs no patch call (today's agentic session only)"
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=green LOKI_E10_PATCH=1 "${PLEAN[@]}"
+[ "$(grep -c '^patch$' "$(dirname "$ITERS")/stub.log")" = 2 ] && [ "$(grep -c '^implement ' "$ITERS")" = 0 ] && ok "patch green: the fix call, then the test-only repair call (green had no test), and no agentic implement session" || { bad "patch green: $(grep -c '^patch$' "$(dirname "$ITERS")/stub.log") patch calls, $(grep -c '^implement ' "$ITERS") implement sessions"; dump; }
+case "$(pev)" in *'"status": "green"'*'"calls": 2'*'calc.test.ts'*) ok "patch green: the implement stage records patch status green after 2 calls with calc.test.ts applied" ;; *) bad "patch green: patch record is '$(pev)'" ;; esac
+git -C "$REPO" show HEAD:calc.test.ts | grep -q 'multiply(2, 5)' && ok "patch green: the regression test is committed" || bad "patch green: no regression test committed"
+[ "$(outcome)" = "PARTIAL" ] && printf '%s\n' "$OUT" | grep -q 'only agent-authored tests executed' && git -C "$REPO" show HEAD:calc.ts | grep -A1 'function multiply' | grep -q 'a \* b' && ok "patch green: verify and seal judge the patched tree as for any session: the right multiply() is committed and its agent-authored test alone reads PARTIAL" || { bad "patch green: outcome '$(outcome)'"; dump; }
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=notest LOKI_E10_PATCH=1 "${PLEAN[@]}"
+case "$(pev)" in *'"status": "green"'*'"calls": 2'*) git -C "$REPO" diff --quiet main HEAD -- calc.test.ts && [ "$(outcome)" = "VERIFIED" ] && ok "patch no test: a test-only repair with no edit keeps the green tree (no agentic session), VERIFIED" || { bad "patch no test: calc.test.ts changed or outcome '$(outcome)'"; dump; } ;; *) bad "patch no test: patch record is '$(pev)'" ;; esac
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=repair LOKI_E10_PATCH=1 "${PLEAN[@]}"
+[ "$(grep -c '^patch$' "$(dirname "$ITERS")/stub.log")" = 2 ] && [ "$(grep -c '^implement ' "$ITERS")" = 0 ] && [ "$(outcome)" = "VERIFIED" ] && ok "patch repair: a red harness check gets one repair call, which goes green; no agentic session; VERIFIED" || { bad "patch repair: $(grep -c '^patch$' "$(dirname "$ITERS")/stub.log") patch calls, outcome '$(outcome)'"; dump; }
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=wrongtwice LOKI_E10_PATCH=1 "${PLEAN[@]}"
+[ "$(grep -c '^patch$' "$(dirname "$ITERS")/stub.log")" = 2 ] && [ "$(grep -c '^implement ' "$ITERS")" = 1 ] && ok "patch fallback: still red after the repair call, so the agentic implement session runs (the floor)" || { bad "patch fallback: $(grep -c '^patch$' "$(dirname "$ITERS")/stub.log") patch calls, $(grep -c '^implement ' "$ITERS") implement sessions"; dump; }
+pcost="$(python3 -I -c 'import json,sys; c=json.load(open(sys.argv[1]))["cost"]; print(c["usd"], c["children"]["sessions"])' "$RUNDIR/receipt.json" 2>/dev/null)"
+[ "$pcost" = "0.002 2" ] && ok "patch fallback: both failed patch calls' spend (2 x \$0.001, the stub's price) reaches the receipt total ($pcost)" || bad "patch fallback: receipt cost is '$pcost', want '0.002 2'"
+[ "$(outcome)" = "VERIFIED" ] && [ "$(git -C "$REPO" show HEAD:calc.ts | grep -c 'function multiply')" = 1 ] && git -C "$REPO" show HEAD:calc.ts | grep -A1 'function multiply' | grep -q 'a \* b' && ok "patch fallback: the patch edits were restored first; the agentic session's single right multiply() is committed, VERIFIED" || { bad "patch fallback: outcome '$(outcome)' or a leftover patch edit"; dump; }
+run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=cfg LOKI_E10_PATCH=1 "${PLEAN[@]}"
+case "$(pev)" in *'"status": "green"'*'bunfig.toml: refused'*) ok "patch refusal: a bunfig.toml (runner config) edit is refused before it lands, the repair call goes green" ;; *) bad "patch refusal: patch record is '$(pev)'" ;; esac
+git -C "$REPO" diff --quiet main HEAD -- bunfig.toml && [ "$(outcome)" = "VERIFIED" ] && ok "patch refusal: bunfig.toml is unchanged on the run branch and the run is VERIFIED" || { bad "patch refusal: bunfig.toml changed or outcome '$(outcome)'"; dump; }
+# ---------------------------------------------------------------- patch protocol (LOKI_E10_PATCH, default off), unit level with the real node --test runner
+# One tool-less call answers with FILE/SEARCH/REPLACE blocks; the harness refuses config, lockfile and Wall edits before applying, applies
+# all-or-nothing, runs the impacted node:test file itself and allows one repair call. Every non-green end restores the tree byte-identical.
+# Also the coverage resume's claimed_change_absent check (SITE lines naming a line that is byte-identical to the base).
+PP="$T/pp"; mkdir -p "$PP"
+cat > "$PP/unit.ts" <<'TS'
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+const [ROOT, T] = process.argv.slice(2);
+const pp = await import(ROOT + "/loki-ts/src/features/patch_protocol.ts");
+const impl = await import(ROOT + "/loki-ts/src/engine10/stages/implement.ts");
+const cr = await import(ROOT + "/loki-ts/src/util/conflict_resume.ts");
+const res = (name: string, pass: boolean, why = "") => console.log((pass ? "OK " : "NO ") + name + (pass || !why ? "" : ` (${why})`));
+const git = (d: string, ...a: string[]) => execFileSync("git", ["-C", d, ...a], { encoding: "utf8" });
+const PARSE = 'export function parseFlag(arg) {\n  const t = arg.trim();\n  if (t === "-") return { positional: t };\n  return { flag: t.replace(/^-+/, "") };\n}\n';
+const TEST = 'import { test } from "node:test";\nimport assert from "node:assert/strict";\nimport { parseFlag } from "../src/parse.js";\n\ntest("flag", () => {\n  assert.deepEqual(parseFlag("--x"), { flag: "x" });\n});\n';
+let n = 0;
+function repo(): string {
+  const d = join(T, `r${n++}`); mkdirSync(join(d, "src"), { recursive: true }); mkdirSync(join(d, "test"), { recursive: true });
+  writeFileSync(join(d, "package.json"), '{"name":"argkit","type":"module","scripts":{"test":"node --test"}}\n');
+  writeFileSync(join(d, "package-lock.json"), '{"lockfileVersion":3}\n'); writeFileSync(join(d, "tsconfig.json"), '{"compilerOptions":{}}\n');
+  writeFileSync(join(d, "src/parse.js"), PARSE); writeFileSync(join(d, "test/parse.test.js"), TEST); writeFileSync(join(d, "test/loki_wall_parse.test.js"), TEST);
+  git(d, "init", "-q", "-b", "main"); git(d, "config", "user.email", "t@example.invalid"); git(d, "config", "user.name", "t"); git(d, "add", "."); git(d, "commit", "-q", "-m", "base");
+  return d;
+}
+const tmap = { runners: ["node"], tests: [{ runner: "node", path: "test/parse.test.js" }] };
+const fakeCtx = (d: string, map: unknown = tmap) => ({ repoDir: d, runDir: join(d, ".loki", "run"), runId: "r", baseSha: git(d, "rev-parse", "HEAD").trim(), provider: "claude", model: "haiku",
+  outputs: () => ({ intake: { testmap: map, task: "t" } }), emit: () => { throw new Error("patch check emitted an event"); }, tests: { impacted: (m: { tests: unknown[] }) => m.tests, detect: async () => map } });
+const FIX = 'FILE: src/parse.js\n<<<<<<< SEARCH\n  if (t === "-") return { positional: t };\n=======\n  if (t === "-") return { positional: arg };\n>>>>>>> REPLACE\n';
+const ADDTEST = 'FILE: test/parse.test.js\n<<<<<<< SEARCH\n=======\n\ntest("lone dash keeps raw", () => {\n  assert.deepEqual(parseFlag(" - "), { positional: " - " });\n});\n>>>>>>> REPLACE\n';
+const WRONG = 'FILE: src/parse.js\n<<<<<<< SEARCH\n  if (t === "-") return { positional: t };\n=======\n  if (t === "-") return { positional: t + "" };\n>>>>>>> REPLACE\n';
+const scripted = (replies: (string | null)[], seen: string[] = []) => { let i = 0; return async (req: { messages: { content: string }[] }) => { seen.push(pp.flattenMessages(req.messages)); const t = replies[i++]; return { text: t ?? null, usd: 0.001 }; }; };
+const run = async (d: string, replies: (string | null)[], seen: string[] = [], readOnly: string[] = ["test/loki_wall_parse.test.js"], map: unknown = tmap, task = "a lone - keeps the raw arg", impacted: string[] = ["test/parse.test.js"], check?: (a: string[]) => Promise<unknown>) => {
+  const ctx = fakeCtx(d, map) as never;
+  return pp.runPatchProtocol({ rules: { repoDir: d, readOnly, task }, brief: "BRIEF", iterationId: "it", signal: new AbortController().signal, call: scripted(replies, seen), check: check ?? impl.patchCheck(ctx, impacted, readOnly, new AbortController().signal) });
+};
+const clean = (d: string) => git(d, "status", "--porcelain") === "";
+
+res("patch: LOKI_E10_PATCH is on by default (unset or empty) and 0/off/false turn it off", pp.patchEnabled({}) === true && pp.patchEnabled({ LOKI_E10_PATCH: "" }) === true && pp.patchEnabled({ LOKI_E10_PATCH: "1" }) === true && pp.patchEnabled({ LOKI_E10_PATCH: "0" }) === false && pp.patchEnabled({ LOKI_E10_PATCH: "off" }) === false && pp.patchEnabled({ LOKI_E10_PATCH: "false" }) === false);
+{ const d = repo(), o = await run(d, [`root cause: trims.\n${FIX}${ADDTEST}LOKI_DONE`]);
+  res("patch green: one call, the fix and the new test applied, the real node --test check ran and passed", o.status === "green" && o.calls === 1 && o.applied.length === 2 && (o.check ?? []).join() === "patch:node:test/parse.test.js=pass" && readFileSync(join(d, "src/parse.js"), "utf8").includes("positional: arg"), JSON.stringify(o)); }
+{ const d = repo(), seen: string[] = [], o = await run(d, [`${WRONG}${ADDTEST}LOKI_DONE`, `${'FILE: src/parse.js\n<<<<<<< SEARCH\n  if (t === "-") return { positional: t + "" };\n=======\n  if (t === "-") return { positional: arg };\n>>>>>>> REPLACE\n'}LOKI_DONE`], seen);
+  res("patch repair: a red check gets one repair call carrying the failure digest and the current region; then green", o.status === "green" && o.calls === 2 && /lone dash keeps raw/.test(seen[1] ?? "") && /positional: t \+ ""/.test(seen[1] ?? "") && /Your earlier reply/.test(seen[1] ?? ""), JSON.stringify(o.log) + (seen[1] ?? "").slice(0, 400)); }
+{ const d = repo(), o = await run(d, [`${WRONG}${ADDTEST}LOKI_DONE`, `${WRONG.replace('t + ""', 't + ""')}LOKI_DONE`]);
+  res("patch red twice: at most two calls, status red, every written file restored byte-identical (clean tree)", o.status !== "green" && o.calls === 2 && clean(d) && o.restored.length === 2, JSON.stringify(o) + git(d, "status", "--porcelain")); }
+{ const d = repo(), seen: string[] = [], lock = 'FILE: package-lock.json\n<<<<<<< SEARCH\n{"lockfileVersion":3}\n=======\n{"lockfileVersion":2}\n>>>>>>> REPLACE\n';
+  const o = await run(d, [`${FIX}${lock}${ADDTEST}LOKI_DONE`, `${FIX}${ADDTEST}LOKI_DONE`], seen);
+  res("patch refusal: a lockfile edit the task does not ask for is refused before any edit lands; the repair names it, then green", o.status === "green" && o.calls === 2 && /package-lock\.json: refused, a lockfile/.test(seen[1] ?? "") && readFileSync(join(d, "package-lock.json"), "utf8").includes("3"), JSON.stringify(o)); }
+for (const [label, file, search, repl] of [
+  ["tsconfig paths", "tsconfig.json", '{"compilerOptions":{}}', '{"compilerOptions":{"paths":{"x":["./y"]}}}'],
+  ["a vitest config", "vitest.config.ts", "", "export default {};"],
+  ["the Wall test", "test/loki_wall_parse.test.js", 'test("flag", () => {', 'test.skip("flag", () => {'],
+  ["a path under .git", ".git/hooks/pre-commit", "", "exit 0"],
+  ["a path outside the repo", "../escape.js", "", "x"],
+] as const) {
+  const d = repo(), b = `FILE: ${file}\n<<<<<<< SEARCH\n${search ? search + "\n" : ""}=======\n${repl}\n>>>>>>> REPLACE\n`;
+  const o = await run(d, [`${FIX}${b}LOKI_DONE`, null]);
+  res(`patch refusal: ${label} is refused and nothing from that reply is applied (tree clean)`, o.status === "call_failed" && o.refused.length === 1 && clean(d) && !existsSync(join(T, "escape.js")), JSON.stringify(o));
+}
+{ const d = repo(), seen: string[] = [], noop = 'FILE: src/parse.js\n<<<<<<< SEARCH\n  const t = arg.trim();\n=======\n  const t = arg.trim();\n>>>>>>> REPLACE\n';
+  const o = await run(d, [`${noop}LOKI_DONE`, `${FIX}${ADDTEST}LOKI_DONE`], seen);
+  res("patch claimed change absent: an edit block that leaves its file byte-identical applies nothing and is re-asked once", o.status === "green" && o.calls === 2 && /claimed change absent/.test(seen[1] ?? ""), JSON.stringify(o)); }
+{ const d = repo(), seen: string[] = [], miss = 'FILE: src/parse.js\n<<<<<<< SEARCH\n  if (t === "-")  return { positional: t };\n  const t = arg.trim();\n=======\nx\n>>>>>>> REPLACE\n';
+  const o = await run(d, [`${miss}${ADDTEST}LOKI_DONE`, null], seen);
+  res("patch miss: a SEARCH that matches nothing applies no block of the reply (all-or-nothing) and the repair quotes the nearest text", o.status === "call_failed" && clean(d) && /not found\. Nearest text, src\/parse\.js/.test(seen[1] ?? ""), JSON.stringify(o) + (seen[1] ?? "").slice(-300)); }
+{ const d = repo(), seen: string[] = [], o = await run(d, [`${FIX}LOKI_DONE`, `${ADDTEST}LOKI_DONE`], seen);
+  res("patch test repair: a green fix with no test gets the test-only repair call; the test lands and the result stays green", o.status === "green" && o.calls === 2 && o.applied.length === 2 && /add no regression test/.test(seen[1] ?? ""), JSON.stringify(o)); }
+{ const d = repo(), red = 'FILE: test/parse.test.js\n<<<<<<< SEARCH\n=======\n\ntest("bad", () => {\n  assert.equal(1, 2);\n});\n>>>>>>> REPLACE\n';
+  const o = await run(d, [`${FIX}LOKI_DONE`, `${red}LOKI_DONE`]);
+  res("patch test repair: a red new test is dropped and the green fix is kept (the repair never makes the tree worse)", o.status === "green" && o.applied.join() === "src/parse.js" && git(d, "status", "--porcelain").trim() === "M src/parse.js", JSON.stringify(o) + git(d, "status", "--porcelain")); }
+{ const d = repo(), mk = 'FILE: src/parse.js/x.js\n<<<<<<< SEARCH\n=======\nexport const x = 1;\n>>>>>>> REPLACE\n';
+  const o = await run(d, [`${FIX}${mk}LOKI_DONE`, null]);
+  res("patch floor: a reply whose second write fails after the first landed (src/parse.js edited, then src/parse.js/x.js: EEXIST) keeps nothing; the tree is byte-identical", o.status === "call_failed" && clean(d) && readFileSync(join(d, "src/parse.js"), "utf8") === PARSE, JSON.stringify(o) + git(d, "status", "--porcelain")); }
+{ const d = repo(), o = await run(d, [`${FIX}${ADDTEST}LOKI_DONE`], [], undefined, undefined, undefined, undefined, async () => { throw new Error("runner exploded"); });
+  res("patch floor: a check callback that throws ends as status error with every written file restored (the agentic session then runs)", o.status === "error" && clean(d) && /runner exploded/.test(o.log.join()), JSON.stringify(o) + git(d, "status", "--porcelain")); }
+{ const d = repo(), out = join(T, "outside" + n); mkdirSync(out, { recursive: true }); mkdirSync(join(d, "real"), { recursive: true });
+  execFileSync("ln", ["-s", out, join(d, "lnk")]); execFileSync("ln", ["-s", join(d, "real"), join(d, "lnk2")]);
+  const ev = (f: string) => `FILE: ${f}\n<<<<<<< SEARCH\n=======\nexport const evil = 1;\n>>>>>>> REPLACE\n`;
+  const r1 = pp.refusal({ repoDir: d, readOnly: [], task: "t" }, "lnk/evil.ts", null, "x"), r2 = pp.refusal({ repoDir: d, readOnly: [], task: "t" }, "lnk2/evil.ts", null, "x"), r3 = pp.refusal({ repoDir: d, readOnly: [], task: "t" }, "src/new/deep/ok.ts", null, "x");
+  const o = await run(d, [`${ev("lnk/evil.ts")}${FIX}LOKI_DONE`, null]);
+  res("patch symlink: lnk/evil.ts through a link out of the repo and lnk2/evil.ts through a link inside it are both refused (realpath), a new nested path is not", r1 === "outside the repository" && r2 === "outside the repository" && r3 === null && o.refused.length === 1 && !existsSync(join(out, "evil.ts")) && !existsSync(join(d, "real", "evil.ts")) && readFileSync(join(d, "src/parse.js"), "utf8") === PARSE, `${r1}|${r2}|${r3}|${JSON.stringify(o)}`); }
+{ const d = repo(), nt = 'FILE: test/new.test.js\n<<<<<<< SEARCH\n=======\nimport { test } from "node:test";\nimport assert from "node:assert/strict";\nimport { parseFlag } from "../src/parse.js";\ntest("own", () => { assert.deepEqual(parseFlag(" - "), { positional: " - " }); });\n>>>>>>> REPLACE\n';
+  const o = await run(d, [`${FIX}${nt}LOKI_DONE`], [], undefined, { runners: ["node"], tests: [] }, undefined, []);
+  res("patch own test only: when no test that existed before covers the change, the model's own new test passing is not green (fall back, tree restored)", o.status === "red" && clean(d) && /own test only/.test((o.check ?? []).join()), JSON.stringify(o)); }
+{ const d = repo(), o = await run(d, [null]);
+  res("patch call failed: a failed call is a fallback (status call_failed), nothing written", o.status === "call_failed" && o.calls === 1 && clean(d)); }
+{ const d = repo(), o = await run(d, ["LOKI_SPEC_CONFLICT: test/parse.test.js:6 asserts the opposite"]);
+  res("patch conflict: a spec conflict is left to the agentic session (status conflict, nothing written)", o.status === "conflict" && clean(d)); }
+{ const d = repo(), o = await run(d, [`${FIX}LOKI_DONE`], [], [], { runners: [], tests: [] });
+  res("patch fail closed: no check can run (empty test map), so the result is never green and the tree is restored", o.status === "red" && o.calls === 1 && clean(d), JSON.stringify(o)); }
+{ const d = repo(), o = await run(d, ['FILE: test/parse.test.js\n<<<<<<< SEARCH\n  assert.deepEqual(parseFlag("--x"), { flag: "x" });\n=======\n  assert.ok(true);\n>>>>>>> REPLACE\nLOKI_DONE']);
+  res("patch green is the check, not the verdict: a weakened test can go green here; verify and seal still judge the tree (the edit is kept for them)", o.status === "green" && !clean(d)); }
+{ const p = pp.parseReply("cause\nFILE: `a.ts`\n```ts\n<<<<<<< SEARCH\nx\n=======\ny\n>>>>>>> REPLACE\nNEED: src/b.ts:3-9\nLOKI_DONE");
+  res("patch parse: a backticked path and a fenced block parse; NEED ranges parse", p.blocks.length === 1 && p.blocks[0].file === "a.ts" && p.blocks[0].search === "x\n" && p.needs[0]?.start === 3 && p.needs[0]?.end === 9); }
+{ const d = repo(), brief = pp.buildPatchBrief("fix it", "CODE", pp.testConventions(d, ["test/parse.test.js"]), ["node --test ./test/parse.test.js"]);
+  res("patch brief: fixed rules lead (cache-stable prefix), the test head and its test names and the exact check command follow", brief.startsWith(pp.PATCH_RULES) && /test names: test\("flag"/.test(brief) && brief.includes("node --test ./test/parse.test.js")); }
+// coverage resume: claimed_change_absent
+{ const d = repo(), base = git(d, "rev-parse", "HEAD").trim();
+  writeFileSync(join(d, "src/parse.js"), PARSE.replace("positional: t", "positional: arg")); writeFileSync(join(d, "src/new.js"), "export const x = 1;\n");
+  const claims = cr.siteClaims("SITE src/parse.js:3: changed\nSITE src/parse.js:2: changed\n- SITE `src/new.js:1`: changed\nSITE src/parse.js:4: unchanged - fine\nLOKI_DONE");
+  const absent = cr.claimedChangeAbsent(d, base, claims);
+  res("coverage claim: SITE lines parse (changed claims only, backticks allowed)", claims.length === 3, JSON.stringify(claims));
+  res("coverage claim: a changed line passes, a byte-identical line is claimed_change_absent, a file new on the base passes", absent.join() === "src/parse.js:2", absent.join());
+  res("coverage claim: on by default (LOKI_E10_CLAIM_CHECK=0 opts out to main's plain coverage brief, which has no SITE line); the claim brief asks for them and the re-ask names the absent sites", cr.claimCheckEnabled({}) === true && cr.claimCheckEnabled({ LOKI_E10_CLAIM_CHECK: "0" }) === false && !cr.COVERAGE_BRIEF.includes("SITE") && cr.COVERAGE_CLAIM_BRIEF.includes("SITE <path>:<line>: changed") && cr.claimAbsentBrief(absent).includes("src/parse.js:2")); }
+TS
+out="$(cd "$ROOT/loki-ts" && timeout 300 bun "$PP/unit.ts" "$ROOT" "$PP" 2>&1)"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+printf '%s\n' "$out" | grep -q '^OK ' || { bad "patch protocol unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
 
 # ---------------------------------------------------------------- lean fix loop, unit level (L005, L006, L025, L026)
 mkdir -p "$T/l006" "$T/l026"
@@ -483,7 +643,7 @@ cat > "$T/spec-choice.ts" <<'TS'
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 const src = `${process.env.ROOT}/loki-ts/src/`;
-const { ambiguityGate, assumptionsBlock, choiceLine, emitChoiceLines, resolveChoices } = await import(src + "features/spec_ambiguity.ts");
+const { ambiguityGate, assumptionsBlock, choiceLine, emitChoiceLines, parsePrecedentVote, resolveChoices, siblingBodies, voteOpenChoices } = await import(src + "features/spec_ambiguity.ts");
 const { buildImplementBrief } = await import(src + "engine10/stages/implement.ts");
 const { FIXED_RULES } = await import(src + "e10ext/context.ts");
 const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
@@ -552,16 +712,125 @@ writeFileSync(`${PR}/flag_generic.go`, "package cli\n\nfunc (f *GenericFlag) Get
 writeFileSync(`${PR}/flag_test.go`, 'func TestGet(t *testing.T) {\n\trequire.Equal(t, 7, cmd.IntFlag.Get(c))\n}\n');
 const pg = (...a: string[]) => execFileSync("git", ["-C", PR, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
 pg("init", "-q"); pg("add", "."); pg("commit", "-q", "-m", "seed");
+process.env.LOKI_E10_PRECEDENT = "0";
 const offc = one(Q, { repoDir: PR })!;
-res("precedent: LOKI_E10_PRECEDENT unset means no precedent text at all", !offc.precedent && !choiceLine(offc).includes("Sibling precedent"));
-process.env.LOKI_E10_PRECEDENT = "1";
-const pc = one(Q, { repoDir: PR })!;
+res("precedent: LOKI_E10_PRECEDENT=0 means no precedent text at all", !offc.precedent && !choiceLine(offc).includes("Sibling precedent"));
+delete process.env.LOKI_E10_PRECEDENT;
+const pc = one(Q, { repoDir: PR, votes: [1] })!;
 res("precedent: sibling Get implementations (not the option's own type) and their test assertions are handed over", !!pc.precedent && pc.precedent.includes("flag_int.go:3") && pc.precedent.includes("flag_str.go:3") && !pc.precedent.includes("flag_generic.go") && pc.precedent.includes("test flag_test.go:2"));
-res("precedent: the line carries the block and tells the model to prefer the option the siblings follow", choiceLine(pc).includes("Sibling precedent") && choiceLine(pc).includes("prefer the option these follow"));
+res("precedent: the line carries the block and is attached once a vote picked an option", choiceLine(pc).includes("Sibling precedent") && choiceLine(pc).includes("implement option 2") && !choiceLine(pc).includes("moves to the convention"));
 res("precedent: no sibling in the snapshot adds nothing", !one(Q, { repoDir: R })?.precedent && !choiceLine(one(Q, { repoDir: R })!).includes("Sibling precedent"));
 const pm = one(Q + tail, { repoDir: PR, comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get consistently.")] })!;
 res("precedent: a maintainer decision still outranks it and the precedent is shown as a check", pm.basis === "maintainer" && choiceLine(pm).includes("check your option against these"));
+// open-contract vote: one tool-less call settles an undecided either/or from the sibling definitions (stub model, no real call)
+writeFileSync(`${PR}/flag_two.go`, "package cli\n\nfunc (f *IntFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n\nfunc (f *BoolFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n"); pg("add", "."); pg("commit", "-q", "-m", "two defs in one file");
+res("precedent scan: two sibling definitions in one file are both listed", (pc0 => pc0.includes("flag_two.go:3") && pc0.includes("flag_two.go:7"))(one(Q, { repoDir: PR, votes: [1] })!.precedent ?? ""));
+let calls = 0, asked = "";
+const stub = (answer: string | null) => async (_s: string, pr: string) => { calls++; asked = pr; return answer; };
+const vA = await voteOpenChoices(Q, { repoDir: PR }, stub("OPTION 2"));
+const rA = one(Q, { repoDir: PR, votes: vA })!;
+res("vote agree: siblings follow option 2, the line says implement option 2 with basis precedent and the pinned-test move", calls === 1 && vA[0] === 1 && rA.basis === "precedent" && rA.picked === 1 && choiceLine(rA).includes("implement option 2") && !choiceLine(rA).includes("does not override") && choiceLine(rA).includes("outrank this line") && choiceLine(rA).includes("may be updated to this option") && choiceLine(rA).includes("4 sibling definitions picked it") && choiceLine(rA).includes("IntFlag.Get() any at flag_int.go:3") && !choiceLine(rA).includes("all follow") && emitChoiceLines([rA]).length === 1);
+res("vote prompt carries the sibling bodies and both options but no sibling listing from tests", asked.includes("OPTION 1:") && asked.includes("OPTION 2:") && asked.includes("flag_int.go:3") && asked.includes("flag_two.go:7"));
+calls = 0;
+const vD = await voteOpenChoices(Q, { repoDir: PR }, stub("NEITHER"));
+const rD = one(Q, { repoDir: PR, votes: vD })!;
+res("vote disagree: NEITHER gives no precedent line at all", calls === 1 && vD[0] === null && rD.basis === "none" && !rD.precedent && emitChoiceLines([rD]).length === 0);
+calls = 0;
+const AN = "Get disagrees across flags.\n\nAny of the following outputs is acceptable:\n\n- `IntFlag.Get` returns the raw value\n- `GenericFlag.Get` returns the supplied value\n";
+const vI = await voteOpenChoices(AN, { repoDir: PR }, stub("OPTION 1")), rI = one(AN, { repoDir: PR, votes: [0] })!;
+res("issue states acceptable outputs: no vote call, no precedent, the coexist line stands", calls === 0 && vI[0] === undefined && rI.basis !== "precedent" && !rI.precedent && choiceLine(rI).includes("every one of them"));
+const vM = await voteOpenChoices(Q + tail, { repoDir: PR, comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get consistently.")] }, stub("OPTION 1")), rM = one(Q + tail, { repoDir: PR, comments: [mk("maint", "We should expose the supplied value object from GenericFlag.Get consistently.")], votes: [0] })!;
+res("maintainer comment beats the sibling vote: no call, basis stays maintainer", calls === 0 && vM[0] === undefined && rM.basis === "maintainer" && rM.picked !== 0);
+process.env.LOKI_E10_PRECEDENT = "0";
+const vO = await voteOpenChoices(Q, { repoDir: PR }, stub("OPTION 2")), rO = one(Q, { repoDir: PR, votes: [1] })!;
+res("knob off: LOKI_E10_PRECEDENT=0 makes no call and adds no precedent even with a vote", calls === 0 && vO.length === 0 && rO.basis === "none" && !rO.precedent);
 delete process.env.LOKI_E10_PRECEDENT;
+const vF = await voteOpenChoices(Q, { repoDir: PR }, stub(null)), rF = one(Q, { repoDir: PR, votes: vF })!;
+res("failed or capped call: no vote, no precedent hint is emitted without a vote", calls === 1 && vF[0] === undefined && rF.basis === "none" && !rF.precedent && emitChoiceLines([rF]).length === 0);
+calls = 0; const vR = await voteOpenChoices(Q, { repoDir: R }, stub("OPTION 1"));
+res("no siblings in the snapshot: no call", calls === 0 && vR[0] === undefined);
+res("parsePrecedentVote: option, neither, out of range, garbage", parsePrecedentVote("OPTION 2", 2) === 1 && parsePrecedentVote("NEITHER", 2) === null && parsePrecedentVote("OPTION 3", 2) === null && parsePrecedentVote("hmm", 2) === null);
+// sibling test transplant (Go): the siblings' tests generalized and filled with the target
+{
+  const GR = `${process.env.T}/tp-repo`; mkdirSync(`${GR}/settings`, { recursive: true });
+  const typ = (t: string, ret: string, zero: string) => `type ${t} struct{ Raw string }\n\nfunc (s ${t}) Value() ${ret} {\n\traw := s.Raw\n\t_ = raw\n\treturn ${zero}\n}\n`;
+  writeFileSync(`${GR}/settings/settings.go`, `package settings\n\n${typ("IntSetting", "int", "0")}\n${typ("BoolSetting", "bool", "false")}\n${typ("ListSetting", "[]string", "nil")}\n${typ("DurationSetting", "string", "s.Raw")}`);
+  const tcase = (t: string, ret: string, zero: string, extra = true) => `func Test${t}Value(t *testing.T) {\n\tvar zero ${ret}\n\tif got := (${t}{Raw: "nope"}).Value(); got != zero {\n\t\tt.Fatalf("invalid input: got %v", got)\n\t}\n${extra ? "" : ""}}\n`;
+  writeFileSync(`${GR}/settings/settings_test.go`, `package settings\n\nimport "testing"\n\n${tcase("IntSetting", "int", "0")}\n${tcase("BoolSetting", "bool", "false")}\nfunc TestDurationSettingValue(t *testing.T) {\n\tif got := (DurationSetting{Raw: "5s"}).Value(); got != "5s" {\n\t\tt.Fatalf("got %v", got)\n\t}\n}\n`);
+  const gg = (...a: string[]) => execFileSync("git", ["-C", GR, "-c", "user.name=t", "-c", "user.email=t@t", ...a]); gg("init", "-q"); gg("add", "."); gg("commit", "-q", "-m", "seed");
+  const body = "Every other setting type gives me the parsed value from `Value()`. `DurationSetting.Value()` hands back the raw text.\n\nShould DurationSetting.Value return the parsed time.Duration, or should Value keep returning the string and a new Duration() method return the parsed time.Duration?\n\nA value that does not parse should give 0.";
+  const like = "DurationSetting.Value should behave like the other settings\n\n" + body, plain = "DurationSetting.Value returns a string\n\n" + body;
+  const run = async (task: string, ans = "OPTION 1") => { const v = await voteOpenChoices(task, { repoDir: GR }, async () => ans); return one(task, { repoDir: GR, votes: v })!; };
+  const tb = await run(like), tl = choiceLine(tb);
+  res("transplant: issue says like the siblings and 2 siblings share the case: a binding failing test for the target", tb.transplant?.binding === true && tl.includes("Binding sibling test") && tl.includes("func TestLokiTransplant_DurationSettingValue") && tl.includes("var zero time.Duration") && tl.includes('(DurationSetting{Raw: "nope"}).Value()') && tl.includes('"time"'));
+  const ta = await run(plain);
+  res("transplant: the issue does not ask for sibling behavior: advisory, no test body in the line", ta.transplant?.binding === false && choiceLine(ta).includes("Advisory") && !choiceLine(ta).includes("func TestLokiTransplant"));
+  const tn = await run(like, "NEITHER");
+  res("transplant: siblings disagree (NEITHER): no transplant and no line", !tn.transplant && emitChoiceLines([tn]).length === 0);
+  const t2 = await run(like.replace("parsed time.Duration, or should", "parsed time.Duration, or should").replace(/^/, ""), "OPTION 2");
+  res("transplant: the picked option does not name the target member: no transplant", !t2.transplant);
+  const AL = like + "\n\nAny of the following outputs is acceptable:\n\n- `DurationSetting.Value` returns the parsed time.Duration\n- `DurationSetting.Value` returns the trimmed string\n";
+  const rAL = one(AL, { repoDir: GR, votes: [0, 0] })!;
+  res("transplant: an acceptable-outputs list never gets a transplant", !rAL.transplant);
+  // control legs: settings-split (siblings disagree) and settings-acc (siblings agree, the issue lists outputs that conflict with them)
+  const SP = `${process.env.T}/tp-split`; mkdirSync(`${SP}/settings`, { recursive: true });
+  writeFileSync(`${SP}/settings/settings.go`, `package settings\n\n${typ("IntSetting", "int", "0")}\n${typ("BoolSetting", "string", "s.Raw")}\n${typ("DurationSetting", "string", "s.Raw")}`);
+  const sg = (...a: string[]) => execFileSync("git", ["-C", SP, "-c", "user.name=t", "-c", "user.email=t@t", ...a]); sg("init", "-q"); sg("add", "."); sg("commit", "-q", "-m", "seed");
+  let splitCalls = 0; const sv = await voteOpenChoices(like, { repoDir: SP }, async () => { splitCalls++; return "NEITHER"; }), sr = one(like, { repoDir: SP, votes: sv })!;
+  res("control settings-split (multi-statement bodies, Bool already returns the target's string): the signature split is refused before any call, no line and no transplant", splitCalls === 0 && sv[0] === undefined && emitChoiceLines([sr]).length === 0 && !sr.transplant);
+  let accCalls = 0; const AC = "DurationSetting.Value should behave like the other settings\n\nEvery other setting type gives me the parsed value from `Value()`.\n\nAny of the following outputs is acceptable:\n\n- `DurationSetting.Value` returns the string, trimmed\n- `DurationSetting.Value` returns the raw string\n";
+  const av = await voteOpenChoices(AC, { repoDir: GR }, async () => { accCalls++; return "OPTION 1"; }), ar = one(AC, { repoDir: GR, votes: av })!, al = emitChoiceLines([ar]).join("\n");
+  res("control settings-acc: siblings agree but the issue lists outputs: no vote call, no binding transplant, the listed outputs line stands", accCalls === 0 && !ar.transplant && !al.includes("Binding sibling test") && al.includes("every one of them"));
+  // review-548 legs
+  const b1 = await run(plain + " The output must stay consistent with the documented JSON schema."), b2 = await run(plain + " It fails the same way on every platform.");
+  res("saysLikeSiblings: 'consistent with the documented JSON schema' and 'fails the same way' do not bind the transplant", b1.transplant?.binding === false && b2.transplant?.binding === false);
+  const lib = await run(plain + " Handle it like other setting libraries do in Python.");
+  res("saysLikeSiblings: a sentence naming the family but not the target type or member stays advisory", lib.transplant?.binding === false);
+  const loose = ["It behaves as expected on other platforms.", "This works like it did in the other release.", "Output matches the other format we ship.", "Keep it as is, like the rest of the CLI docs say."];
+  const lr = await Promise.all(loose.map((x) => run(plain + " " + x)));
+  res("saysLikeSiblings: four loose phrases that name no sibling stay advisory", lr.every((r) => r.transplant?.binding === false));
+  const b3 = await run(plain + " It should be consistent with IntSetting.Value."), b4 = await run(plain + " DurationSetting.Value should work like the other settings.");
+  res("saysLikeSiblings: a sentence naming the sibling type, or 'like the other settings', does bind", b3.transplant?.binding === true && b4.transplant?.binding === true);
+  const mt = [mk("maint", "I'd go with the parsed time.Duration from DurationSetting.Value.")];
+  const rMt = one(like + tail, { repoDir: GR, comments: mt })!, lMt = choiceLine(rMt);
+  res("maintainer-picked option: any transplant is advisory (never the binding test) and the line says the issue and maintainer outrank it", rMt.basis === "maintainer" && !lMt.includes("Binding sibling test") && !lMt.includes("func TestLokiTransplant") && (!rMt.transplant || lMt.includes("outrank this line")));
+  const wq = "Should `GenericFlag.Get` return the supplied `cli.Value`, or should it return the stored payload?", wm = one(wq + tail, { comments: [mk("maint", "We should return the stored payload from GenericFlag.Get.")] })!;
+  res("byMaintainer: a content word (stored payload) outweighs the shared symbol GenericFlag.Get", wm.basis === "maintainer" && wm.picked === 1);
+  let pasked = ""; await voteOpenChoices(plain + " We rely on this today, so we must not change that behavior.", { repoDir: GR }, async (_s: string, pr: string) => { pasked = pr; return "NEITHER"; });
+  res("the vote prompt carries the issue text, so a must-not-change sentence reaches the voter", pasked.includes("must not change that behavior") && pasked.includes("answer NEITHER"));
+  // review legs: nothing here may emit an override of the issue
+  calls = 0; const KO = Q + " Many downstream users rely on Command.Value returning the Get result today, so we must not change that behavior.";
+  const kv = await voteOpenChoices(KO, { repoDir: PR }, stub("OPTION 2")), kr = choiceLine(one(KO, { repoDir: PR, votes: kv })!);
+  res("keep-old statement the detector misses: the line says the issue outranks it and never says the preference does not override", !kr.includes("does not override") && !kr.includes("preference stated") && (!kr.includes("implement option") || kr.includes("outrank this line")));
+  calls = 0; const mc = [mk("maint", "Leave GenericFlag.Get as it is, the supplied value object breaks serialization.")];
+  const mv = await voteOpenChoices(Q + tail, { repoDir: PR, comments: mc }, stub("OPTION 2")), mr = one(Q + tail, { repoDir: PR, comments: mc, votes: [1] })!;
+  res("maintainer comment with no cue word that names an option symbol vetoes the vote: no call, no precedent basis", calls === 0 && mv[0] === undefined && mr.basis !== "precedent");
+  const S2 = `${process.env.T}/tp-split2`; mkdirSync(S2, { recursive: true });
+  writeFileSync(`${S2}/a.go`, "package cli\n\nfunc (f *IntFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n"); writeFileSync(`${S2}/b.go`, "package cli\n\nfunc (f *StringFlag) Get(cmd *Command) any {\n\treturn f.value\n}\n"); writeFileSync(`${S2}/c.go`, "package cli\n\nfunc (f *BoolFlag) Get(cmd *Command) any {\n\treturn f.supplied\n}\n");
+  const g2 = (...a: string[]) => execFileSync("git", ["-C", S2, "-c", "user.name=t", "-c", "user.email=t@t", ...a]); g2("init", "-q"); g2("add", "."); g2("commit", "-q", "-m", "seed");
+  calls = 0; const v2 = await voteOpenChoices(Q, { repoDir: S2 }, stub("OPTION 2")), r2 = one(Q, { repoDir: S2, votes: [1] })!;
+  res("2:1 split with trivial bodies: the siblings visibly differ, so no call, no precedent, no line", calls === 0 && v2[0] === undefined && r2.basis === "none" && !r2.precedent && emitChoiceLines([r2]).length === 0);
+  const TSR = `${process.env.T}/tp-ts`; mkdirSync(TSR, { recursive: true });
+  writeFileSync(`${TSR}/a.ts`, "export class A {\n  get(): number {\n    return 1;\n  }\n  other(): string {\n    return 'LEAKED_NEXT_METHOD';\n  }\n}\n");
+  const tb2 = siblingBodies("sibling a.ts:2 get(): number {", TSR);
+  res("siblingBodies cuts a TS method at its own span, not a fixed window", tb2.includes("return 1;") && !tb2.includes("LEAKED_NEXT_METHOD"));
+  writeFileSync(`${GR}/settings/settings_test.go`, `package settings\n\nimport "testing"\n\n${tcase("IntSetting", "int", "0")}\nfunc TestBoolSettingValue(t *testing.T) {\n\tif got := (BoolSetting{Raw: "true"}).Value(); got != true {\n\t\tt.Fatalf("got %v", got)\n\t}\n}\n`); gg("add", "."); gg("commit", "-q", "-m", "one sibling case");
+  res("transplant: a case only one sibling has is not a convention: no transplant", !(await run(like)).transplant);
+}
+// the default voter: toolLessCall on a stub Agent SDK query() (no network): tool-less, thinking off, ledger line, output budget above the thinking leak, run cap stops it
+{
+  const { __setToolLessQueryForTests } = await import(src + "runner/sdk_invoker.ts"), { mkdtempSync, readFileSync, existsSync } = await import("node:fs"), { tmpdir } = await import("node:os");
+  const LD = mkdtempSync(`${tmpdir()}/pv-`); const keep = { k: process.env.ANTHROPIC_API_KEY, d: process.env.LOKI_DIR }; delete process.env.ANTHROPIC_API_KEY; process.env.LOKI_DIR = LD;
+  let o: any = null, mode = "ok";
+  __setToolLessQueryForTests(async function* ({ options }: any) { o = options; yield { type: "assistant", message: { content: [{ type: "text", text: "OPTION 2" }] } }; yield { type: "result", subtype: mode === "budget" ? "error_max_budget_usd" : "success", is_error: false, result: "OPTION 2", total_cost_usd: 0.0002, usage: { input_tokens: 400, output_tokens: 70, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, modelUsage: {} }; });
+  const dv = await voteOpenChoices(Q, { repoDir: PR });
+  const led = existsSync(`${LD}/metrics/child-sessions.jsonl`) ? readFileSync(`${LD}/metrics/child-sessions.jsonl`, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
+  res("default voter: a tool-less call, thinking off, output budget of at least 128 tokens, voted option 2", dv[0] === 1 && JSON.stringify(o.tools) === "[]" && o.thinking?.type === "disabled" && Number(o.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) >= 128);
+  res("default voter: priced into the child ledger under precedent-vote", led.length === 1 && led[0].phase === "precedent-vote" && led[0].usd > 0);
+  mode = "budget"; const db = await voteOpenChoices(Q, { repoDir: PR });
+  res("default voter: a run whose dollar cap stops the call gets no vote and keeps the prose", db[0] === undefined);
+  __setToolLessQueryForTests(null); if (keep.k !== undefined) process.env.ANTHROPIC_API_KEY = keep.k; if (keep.d === undefined) delete process.env.LOKI_DIR; else process.env.LOKI_DIR = keep.d;
+}
 res("acceptable-outputs list that can coexist: the line asks for one design producing every output", choiceLine(z0).includes("every one of them") && !choiceLine(one(Q)!).includes("every one of them"));
 // the gate and the brief
 delete process.env.LOKI_E10_ASSUME; process.env.LOKI_E10_INTAKE_ASK = "0";
@@ -890,6 +1159,7 @@ make_wo_vt_repo() {
     printf 'import { add } from "./calc";\n\nexport const inc = (n: number): number => add(n, 1);\n' > "$1/util.ts"
     printf 'import { expect, test } from "vitest";\nimport { inc } from "./util";\n\ntest("inc", () => {\n  expect(inc(1)).toBe(2);\n});\n' > "$1/util.test.ts"
     [ -n "${WO_RED:-}" ] && printf '\ntest("double", () => {\n  expect(calc.double(3)).toBe(6);\n});\n' >> "$1/calc.test.ts" # WO_RED: calc.test.ts is already red on the base
+    [ -n "${WO_PRERED:-}" ] && printf 'import { expect, test } from "vitest";\n\ntest("legacy broken", () => {\n  expect(1).toBe(2);\n});\n' > "$1/legacy.test.ts" # WO_PRERED: an untouched suite is red on the base and stays red (FireLater#24: the red frontend suite beside a clean backend slice)
     return 0
 }
 make_wo_py_repo() {
@@ -899,6 +1169,7 @@ make_wo_py_repo() {
     printf 'from calc import add\n\n\ndef inc(n):\n    return add(n, 1)\n' > "$1/util.py"
     printf 'import util\n\n\ndef test_inc():\n    assert util.inc(1) == 2\n' > "$1/test_util.py"
     [ -n "${WO_RED:-}" ] && printf '\n\ndef test_double():\n    assert calc.double(3) == 6\n' >> "$1/test_calc.py" # WO_RED: test_calc.py is already red on the base
+    [ -n "${WO_PRERED:-}" ] && printf 'def test_legacy_broken():\n    assert 1 == 2\n' > "$1/test_legacy.py" # WO_PRERED: an untouched suite is red on the base and stays red
     return 0
 }
 # wo_legs <label> <make_repo> <target> <test file> <fixed body> <broken body> <broken-line> <new failing test> <new passing test> <added skip marker> <broken fix + added triple> <test calling triple> <test importing triple, body passes> <test asserting only that triple exists>
@@ -930,7 +1201,15 @@ wo_legs() {
     has "$label exists only: the receipt names the missing fail-then-pass proof" "$notes" "no test shown to fail on the base commit and pass on the change"
     WO_RED=1 wo E2E_STUB_SNIPPET="$good" E2E_STUB_TEST_APPEND="$newpass"
     [ "$(outcome)" = "PARTIAL" ] && ok "$label red on base: an edited test file that was already red on the base is not fail-then-pass proof (PARTIAL)" || { bad "$label red on base: outcome is '$(outcome)'"; dump; }
+    # FireLater#24 s1: a suite red on the base in a file the run never touched (pre_red, not this change) must not shut the fail-then-pass gate, or a clean slice with a real new failing-then-passing test reads PARTIAL.
+    WO_PRERED=1 wo E2E_STUB_SNIPPET="$good" E2E_STUB_TEST_APPEND="$newfail"
+    [ "$(outcome)" = "VERIFIED" ] && ok "$label pre-red suite: a fix with a fail-then-pass test is still VERIFIED beside an untouched suite already red on the base" || { bad "$label pre-red suite: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$mp" in *"fails without the fix: yes"*"$tf"*) ok "$label pre-red suite: the receipt carries the harness-run proof line ($mp)" ;; *) bad "$label pre-red suite: no proof line naming $tf: '$mp'" ;; esac
+    case "$ck" in *"="fail*) ok "$label pre-red suite: the untouched suite is still recorded red (already failing on base)" ;; *) bad "$label pre-red suite: no failing check recorded: '$ck'" ;; esac
 }
+# Cost step b: a second fix round is not spent when every remaining blocking group is a full-suite or no-tests/config failure; the change's own import, collection and syntax errors keep round 2; the fix session limit stays 180 s.
+FR="$(cd "$ROOT/loki-ts" && bun -e 'const { onlyFullSuiteRed } = await import("./src/engine10/machine.ts"); const { fixStage } = await import("./src/engine10/stages/fix.ts"); const g = (s: string) => ({ signature: s }); console.log([onlyFullSuiteRed({ failures_grouped: [g("full suite: vitest FAIL a")] }), onlyFullSuiteRed({ failures_grouped: [g("full suite: npm x"), g("vitest:a.test.ts FAIL b")] }), onlyFullSuiteRed({ failures_grouped: [] }), onlyFullSuiteRed(undefined), onlyFullSuiteRed({ failures_grouped: [{ signature: "vitest:a.test.ts", sample: "Error: No test files found, exiting with code 1" }] }), onlyFullSuiteRed({ failures_grouped: [{ signature: "pytest:t.py", sample: "ERROR collecting t.py: errors during collection" }, g("vitest:b.test.ts expected 1 to be 2")] }), fixStage.limitS, onlyFullSuiteRed({ failures_grouped: [{ signature: "vitest:src/a.test.ts", sample: "Error: Cannot find module './helperz' imported from /r/src/a.ts" }] }), onlyFullSuiteRed({ failures_grouped: [{ signature: "pytest:tests/t.py", sample: "ImportError: cannot import name 'parse_v2'\nInterrupted: 1 error during collection" }] }), onlyFullSuiteRed({ failures_grouped: [{ signature: "jest:src/a.test.ts", sample: "Test suite failed to run\nSyntaxError: Unexpected token" }] })].join(","))' 2>&1 | tail -1)"
+[ "$FR" = "true,false,false,false,true,false,180,false,false,false" ] && ok "fix rounds: only-full-suite or no-tests red caps at one round; mixed, empty and the change's own import, collection and syntax errors do not; fix limit 180 s ($FR)" || bad "fix rounds: got '$FR'"
 WD="$(cd "$ROOT/loki-ts" && bun -e 'const { wallEnabled } = await import("./src/engine10/sizing.ts"); console.log([wallEnabled({}), wallEnabled({ LOKI_E10_WALL: "" }), wallEnabled({ LOKI_E10_WALL: "0" }), wallEnabled({ LOKI_E10_WALL: "1" }), wallEnabled({ LOKI_E10_WALL: "on" })].join(","))' 2>&1)"
 [ "$WD" = "false,false,false,true,true" ] && ok "wall default: the Wall session is off unless LOKI_E10_WALL=1/on ($WD)" || bad "wall default: wallEnabled gave '$WD'"
 # Go output cap (rule 22, real go test -json through the real runOnce and corroboratePass): a test file whose -json stream is larger than the 64 KB tail (and a whole-package run larger than 1 MiB) is judged whole and counts;
@@ -963,6 +1242,29 @@ TS
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go output cap: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go output cap: go is not installed"; fi
 fi
+# Go file a build constraint leaves out (rule 22, real go test through the real engine; the receipt shape of L-Haiku-v132 cli-2459/cli-2478, help_notemplate_test.go behind
+# //go:build urfave_cli_no_template): `go test -json -run ^(TestTagged)$` runs nothing and prints "[no tests to run]". That is a zero run, the same on the base, so the untouched file is
+# skipped by the repo and the fix is VERIFIED on its own fail-then-pass test. Before the fix the stream read as torn ("test count could not be confirmed") and "not run: go:tagged_test.go"
+# capped the run at PARTIAL. Plant: goJson marks a "[no tests to run]" stream dirty again and the run is PARTIAL with that line.
+make_tag_go_repo() {
+    mkdir -p "$1"
+    printf 'module example.com/calc\n\ngo 1.20\n' > "$1/go.mod"
+    printf 'package calc\n\nfunc Add(a, b int) int {\n\treturn a + b\n}\n\nfunc Double(a int) int {\n\treturn a + a + 1\n}\n' > "$1/calc.go"
+    printf 'package calc\n\nimport "testing"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(2, 3) != 5 {\n\t\tt.Fatal("add")\n\t}\n}\n' > "$1/calc_test.go"
+    printf '//go:build special\n\npackage calc\n\nimport "testing"\n\nfunc TestTagged(t *testing.T) {\n\tif Add(1, 1) != 2 {\n\t\tt.Fatal("tagged")\n\t}\n}\n' > "$1/tagged_test.go"
+    return 0
+}
+if command -v go >/dev/null 2>&1; then
+    MAKE_REPO=make_tag_go_repo run_engine "fix Double(a) in calc.go so it returns twice a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.go E2E_STUB_REPLACE=$'\treturn a + a + 1' E2E_STUB_SNIPPET=$'\treturn a * 2' E2E_STUB_TEST_FILE=calc_test.go \
+        E2E_STUB_TEST_APPEND=$'\nfunc TestDouble(t *testing.T) {\n\tif got := Double(3); got != 6 {\n\t\tt.Errorf("want 6 got %d", got)\n\t}\n}' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    notes="$(wo_receipt np)"
+    [ "$(outcome)" = "VERIFIED" ] && ok "go build-tagged file: an untouched test file the default build leaves out does not cap a fail-then-pass fix: VERIFIED" || { bad "go build-tagged file: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$notes" in *"not run: go:tagged_test.go"*) bad "go build-tagged file: still listed as not run: $notes" ;; *"go:tagged_test.go"*) ok "go build-tagged file: disclosed as skipped by the repo, not as not run" ;; *) bad "go build-tagged file: the file is not disclosed at all: $notes" ;; esac
+    gt="$(cd "$ROOT/loki-ts" && bun -e 'const { classifyCheck } = await import("./src/util/check_result.ts"); const ev = (o: object) => JSON.stringify({ Package: "p", ...o }); const s = (...e: string[]) => e.join("\n"); const none = s(ev({ Action: "start" }), ev({ Action: "output", Output: "testing: warning: no tests to run\n" }), ev({ Action: "output", Output: "ok  \tp\t0.1s [no tests to run]\n" }), ev({ Action: "pass" })); const both = s(ev({ Action: "start" }), ev({ Action: "run", Test: "TestA" }), ev({ Action: "pass", Test: "TestA" }), ev({ Action: "output", Output: "ok  \tp\t0.1s [no tests to run]\n" }), ev({ Action: "pass" })); const c = (out: string, ok = true) => { const k = classifyCheck({ kind: "test", runner: "go", ok, out } as never); return `${k.result}:${k.n ?? "-"}`; }; console.log([c(none), c(both), c(none, false)].join(","))' 2>&1 | tail -1)"
+    [ "$gt" = "not_run:0,not_run:-,not_run:-" ] && ok "go no-tests unit: a whole stream that ran no test is a zero run (n 0); one that also reports a passing test is doubt; a non-zero exit is never a zero run ($gt)" || bad "go no-tests unit: got '$gt'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go build-tagged file: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go build-tagged file: go is not installed"; fi
+fi
 # Wall off (the default): no tree snapshot is taken, so a snapshot that cannot be made (here a 1 ms copy budget, as on a huge pnpm tree) never reads as a failed Wall.
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     MAKE_REPO=make_wo_py_repo run_engine "fix double(a) in calc.py so it returns twice a" E2E_WALL= LOKI_E10_WALL=0 E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a + 1' E2E_STUB_SNIPPET=$'    return a * 2' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_WALL_SNAPSHOT_TIMEOUT_S=0.001
@@ -988,6 +1290,40 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     [ "$mpd" = "yes|tests/unit_tests_for_long_nodeids_package/test_calc_long_name_here.py" ] && ok "pytest declared-env base proof: a declared env with no venv still yields a fail-then-pass proof naming the file ($mpd)" || bad "pytest declared-env base proof: got '$mpd'"
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest declared-env base proof: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest declared-env base proof: pytest is not installed"; fi
+fi
+# Issue-reported exception as fail-then-pass proof (rule 22, real pytest through the real engine; the receipt shape of L-Haiku-v132 mit-1277: the base raises
+# "RuntimeError: input already opened", which the issue itself shows as what happens now, so the base failure is not an assertion and the run read "no test shown to fail on the base commit and pass on the change: test fails without the fix: yes").
+# A base failure that is exactly an error the issue shows as observed (type and message) counts like an assertion, but only when the failed test asserts a result against a non-trivial
+# expected value. Stays PARTIAL: an error the issue does not quote; one it asks for ("should raise"); a quoted missing-API TypeError; and, with a wrong fix, a test that only calls, re-raises or asserts `is not None` (review of #545, P1-P3).
+# Plants: assertionFailure ignores `reported` (the positive leg reads PARTIAL); MISSING_API drops the TypeError shape (the TypeError leg reads VERIFIED); assertsResult returns true
+# (P1-P3 read VERIFIED); reportedErrors ignores WANTED_CUE (the should-raise leg reads VERIFIED).
+make_rx_py_repo() {
+    mkdir -p "$1"
+    printf 'def add(a, b):\n    return a + b\n\n\ndef double(a, factor=None):\n    raise RuntimeError("double is broken")\n' > "$1/calc.py"
+    printf 'import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n' > "$1/test_calc.py"
+    return 0
+}
+rx() { MAKE_REPO=make_rx_py_repo run_engine "$1" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    raise RuntimeError("double is broken")' E2E_STUB_SNIPPET="$2" E2E_STUB_TEST_FILE=test_calc.py E2E_STUB_TEST_APPEND="$3" LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10; notes="$(wo_receipt np)"; mp="$(wo_receipt mp)"; }
+RX_ISSUE=$'fix double(a) in calc.py: every call fails with\n\n    RuntimeError: double is broken\n\nIt should return twice a.'
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    rx "$RX_ISSUE" $'    return a * 2' $'\n\ndef test_double():\n    assert calc.double(3) == 6\n'
+    [ "$(outcome)" = "VERIFIED" ] && ok "issue-reported exception: a base failure raising exactly the RuntimeError the issue quotes, in a test asserting double(3) == 6, is fail-then-pass proof: VERIFIED" || { bad "issue-reported exception: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$mp" in *"fails without the fix: yes"*"test_calc.py"*) ok "issue-reported exception: the proof line names the file ($mp)" ;; *) bad "issue-reported exception: no proof line naming test_calc.py: '$mp'" ;; esac
+    rx $'fix double(a) in calc.py so it returns twice a' $'    return a * 2' $'\n\ndef test_double():\n    assert calc.double(3) == 6\n'
+    [ "$(outcome)" = "PARTIAL" ] && ok "unreported exception: the same RuntimeError on the base, not quoted by the issue, stays PARTIAL" || { bad "unreported exception: outcome is '$(outcome)'"; dump; }
+    rx $'fix double(a) in calc.py: double(3, factor=2) fails with\n\n    TypeError: double() got an unexpected keyword argument \x27scale\x27\n\nIt should return a times the scale.' $'    return a * 2\n\n\ndef double(a, scale=2):\n    return a * scale' $'\n\ndef test_double_scale():\n    assert calc.double(3, scale=2) == 6\n'
+    case "$(outcome)" in VERIFIED) bad "reported missing-API TypeError: a base failure the issue quotes as an unexpected keyword argument is VERIFIED ($notes)"; dump ;; *) ok "reported missing-API TypeError: stays not VERIFIED ($(outcome))" ;; esac
+    rx $'fix double(a) in calc.py: for a < 0 it should raise\n\n    RuntimeError: double is broken\n\nand for any other a it must return twice a.' $'    return a * 2' $'\n\ndef test_double():\n    assert calc.double(3) == 6\n'
+    [ "$(outcome)" = "PARTIAL" ] && ok "wanted exception: a base failure raising the error the issue asks for (should raise), not one it observed, stays PARTIAL" || { bad "wanted exception: outcome is '$(outcome)' ($notes)"; dump; }
+    for p in $'p1|    return 0|\n\ndef test_double():\n    calc.double(3)\n' $'p2|    return a + 1|\n\ndef test_double():\n    try:\n        calc.double(3)\n    except RuntimeError:\n        raise\n' $'p3|    return a + 1|\n\ndef test_double():\n    assert calc.double(3) is not None\n'; do
+        IFS='|' read -r pn pfix ptest <<< "$p"; ptest="${p#*|*|}"
+        rx "$RX_ISSUE" "$pfix" "$ptest"
+        [ "$(outcome)" = "PARTIAL" ] && ok "issue-reported exception $pn: a wrong fix with a test that asserts no result stays PARTIAL" || { bad "issue-reported exception $pn: outcome is '$(outcome)' ($notes)"; dump; }
+    done
+    rr="$(cd "$ROOT/loki-ts" && bun -e 'const { assertionFailure, reportedErrors } = await import("./src/util/check_result.ts"); const out = (e: string, t = "test_x") => "E       " + e + "\n\nFAILED test_calc.py::" + t + " - " + e + "\n"; const rep = reportedErrors("it raises `RuntimeError(\x27input already opened\x27)` and later\n    ValueError: bad size.\nIt should raise KeyError: missing instead.\n"); const src = "def test_x():\n    assert f() == [1, 2]\n\n\ndef test_y():\n    assert f() is not None\n\n\ndef test_z():\n    with pytest.raises(KeyError):\n        f()\n"; console.log([rep.observed.join("|"), rep.wanted.join("|"), assertionFailure("pytest", out("RuntimeError: input already opened"), rep, src), assertionFailure("pytest", out("RuntimeError: input already opened"), rep, ""), assertionFailure("pytest", out("RuntimeError: input already opened", "test_y"), rep, src), assertionFailure("pytest", out("RuntimeError: input already opened", "test_z"), rep, src), assertionFailure("pytest", out("RuntimeError: other"), rep, src), assertionFailure("pytest", out("KeyError: missing"), rep, src), assertionFailure("pytest", out("ImportError: cannot import name x"), { observed: ["ImportError: cannot import name x"], wanted: [] }, src), assertionFailure("pytest", out("RuntimeError: input already opened") + out("NameError: q"), rep, src)].join(","))' 2>&1 | tail -1)"
+    [ "$rr" = "RuntimeError: input already opened|ValueError: bad size,KeyError,true,false,false,true,false,false,false,false" ] && ok "issue-reported exception unit: observed vs wanted errors are told apart; only an exact observed error in a test that asserts a result (or expects a wanted type) counts ($rr)" || bad "issue-reported exception unit: got '$rr'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "issue-reported exception: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: issue-reported exception: pytest is not installed"; fi
 fi
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
@@ -1041,8 +1377,13 @@ if [ -x "$TSC_NM/.bin/tsc" ] && [ -x "$TSC_NM/.bin/vitest" ]; then
     [ "$(ev 'sum(1 for e in E if e["type"]=="fix.round")')" = "0" ] && ok "tsc untouched: no fix.round event" || bad "tsc untouched: fix.round events: $(ev 'sum(1 for e in E if e["type"]=="fix.round")')"
     tsc_run E2E_STUB_SNIPPET=$'const leak = 1;\n'"$TS_SNIP"
     [ "$(fix_sessions)" -ge 1 ] && ok "tsc touched: an unused local in the file the change wrote is fix-round input ($(fix_sessions) fix sessions)" || { bad "tsc touched: no fix session"; dump; }
-    tsc_run E2E_STUB_SNIPPET="$TS_SNIP" E2E_STUB_TEST_APPEND=$'export const edited = 1;\n' E2E_STUB_TARGET=tsconfig.json E2E_STUB_REPLACE='"strict":true' E2E_STUB_SNIPPET='"strict":true,"allowJs":false'
+    TSC_CFG_EDIT=(E2E_STUB_SNIPPET="$TS_SNIP" E2E_STUB_TEST_APPEND=$'export const edited = 1;\n' E2E_STUB_TARGET=tsconfig.json E2E_STUB_REPLACE='"strict":true' E2E_STUB_SNIPPET='"strict":true,"allowJs":false')
+    MAKE_REPO=make_tsc_repo run_engine "add a multiply(a, b) function to calc.ts and set tsconfig allowJs to false" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 "${TSC_CFG_EDIT[@]}" # the task names tsconfig, so the config write fence (on by default) lets the edit through
     [ "$(fix_sessions)" -ge 1 ] && ok "tsc config edit: a tsconfig edit keeps the untouched-file error blocking ($(fix_sessions) fix sessions)" || { bad "tsc config edit: no fix session"; dump; }
+    tsc_run "${TSC_CFG_EDIT[@]}" # the task does not name tsconfig: the fence (on by default) restores the edit, so the untouched-file error never appears
+    fnotes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+    [ "$(fix_sessions)" = "0" ] && ok "tsc config edit unnamed: the fence restored the tsconfig edit, no fix session" || { bad "tsc config edit unnamed: $(fix_sessions) fix sessions (want 0)"; dump; }
+    has "tsc config edit unnamed: the receipt records the restore" "$fnotes" "Config fence restored changes to test, build, lint or type config or a lockfile the task did not ask for: tsconfig.json"
     PM="$T/tsc-member"; rm -rf "$PM"; mkdir -p "$PM/base/src" "$PM/base/scripts" "$PM/head/src" "$PM/head/scripts"; ln -s "$TSC_NM" "$PM/base/node_modules"; ln -s "$TSC_NM" "$PM/head/node_modules"
     for d in base head; do printf '{"compilerOptions":{"strict":true,"noEmit":true,"noUnusedLocals":true,"target":"ES2022","module":"ESNext","moduleResolution":"Bundler","skipLibCheck":true},"include":["src"]}\n' > "$PM/$d/tsconfig.json"; printf 'const stale = 1;\nexport const k = 2;\n' > "$PM/$d/scripts/legacy.ts"; done
     printf 'export const a = 1;\n' > "$PM/base/src/a.ts"; printf 'import "../scripts/legacy";\nexport const a = 1;\n' > "$PM/head/src/a.ts"
@@ -1150,456 +1491,6 @@ else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest truncated reason: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest truncated reason: pytest is not installed"; fi
 fi
 
-# ---------------------------------------------------------------- executable spec first (LOKI_E10_EXEC_SPEC, default off)
-# features/exec_spec.ts through wall.ts's lean branch. Unit: deterministic atoms, the parity atom from the WHOLE function body (firstArg sits
-# past the 45-line excerpt), never on a property write, the pair atom for two named sites a third site reaches, and the binding rule (only
-# want literals the issue states). Real runners (rule 22: go test, pytest, vitest 2 and latest): one stubbed generator reply per runner holds
-# a binding red case, an advisory red case, a green guard and an erroring case; only the binding case stays collected in the sealed file.
-# Engine (stub provider, Wall off, lean path): the spec is sealed as the run's Wall file, red on base; the right fix is VERIFIED and the
-# implement brief carries the spec block; a fix that leaves the binding case red is not VERIFIED; with the knob unset no spec session runs.
-# make_es_go <dir>: a cli-2418-shaped Go package. Split's firstArg sits past line 45 of its body (the excerpt cap) and more than
-# 12 lines above the quoted code (outside the excerpt's window), a sibling
-# branch appends rargs[0]; Report checks StatusCoder and Batch on one err (the pair class).
-make_es_go() {
-    mkdir -p "$1/a"
-    printf 'module example.com/a\n\ngo 1.21\n' > "$1/go.mod"
-    {
-        printf 'package a\n\nimport "strings"\n\n// Split keeps operands after a lone dash.\nfunc Split(rargs []string) []string {\n\tvar out []string\n'
-        for i in $(seq 1 50); do printf '\t// padding line %s keeps firstArg past the 45-line excerpt\n' "$i"; done
-        printf '\tfor ; len(rargs) > 0; rargs = rargs[1:] {\n\t\tfirstArg := strings.TrimSpace(rargs[0])\n'
-        for i in $(seq 1 16); do printf '\t\t// gap line %s keeps firstArg outside the window around the quoted code\n' "$i"; done
-        printf '\t\tif firstArg == "" || firstArg[0] != %s {\n\t\t\tout = append(out, rargs[0])\n\t\t\tcontinue\n\t\t}\n\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n\t\t\tbreak\n\t\t}\n\t}\n\treturn out\n}\n' "'-'"
-        printf '\ntype StatusCoder interface{ Code() int }\n\ntype Batch []error\n\nfunc (b Batch) Error() string { return "batch" }\n\n// Report returns the exit code for err.\nfunc Report(err error) int {\n\tif sc, ok := err.(StatusCoder); ok {\n\t\treturn sc.Code()\n\t}\n\tif b, ok := err.(Batch); ok {\n\t\treturn len(b)\n\t}\n\treturn 1\n}\n'
-    } > "$1/a/a.go"
-    printf 'package a\n\nimport "testing"\n\nfunc TestSplitPlain(t *testing.T) {\n\tif g := Split([]string{"x"}); len(g) != 1 {\n\t\tt.Fatal(g)\n\t}\n}\n' > "$1/a/a_test.go"
-}
-ES_GO_TASK='# Bare dash drops args
-
-`Split` stops at a lone `-`: `x - a b` gives `["-"]` instead of `["-", "a", "b"]`. `Report` also mishandles a `Batch` that holds a `StatusCoder`.
-
-## Location
-
-```go
-		if len(firstArg) == 1 {
-			out = append(out, firstArg)
-			break
-		}
-```
-
-## Expected
-
-The arguments after the dash are retained.
-'
-ES_GO_REPLY='```go
-package a
-
-import (
-	"reflect"
-	"testing"
-)
-
-func TestLokiSpec_C1_KeepsAfterDash(t *testing.T) {
-	want := []string{"-", "a", "b"}
-	if got := Split([]string{"-", "a", "b"}); !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestLokiSpec_P1_PaddedDash(t *testing.T) {
-	want := []string{"  -", "q"}
-	if got := Split([]string{"  -", "q"}); !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestLokiSpec_S1_Plain(t *testing.T) {
-	want := []string{"x"}
-	if got := Split([]string{"x"}); !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestLokiSpec_C2_Panics(t *testing.T) {
-	var m map[string]int
-	m["x"] = 1
-}
-```'
-# make_es_py <dir>: a pytest package; normalize reads t = raw.strip() on the quoted branch, the sibling appends raw.
-make_es_py() {
-    mkdir -p "$1/tests"
-    printf 'def normalize(tags):\n    out = []\n    for raw in tags:\n        t = raw.strip()\n        if t.startswith("#"):\n            out.append(t[1:])\n            continue\n        out.append(raw)\n    return out\n' > "$1/tags.py"
-    printf 'import tags\n\n\ndef test_plain():\n    assert tags.normalize(["x"]) == ["x"]\n' > "$1/tests/test_tags.py"
-    printf '[pytest]\npythonpath = .\n' > "$1/pytest.ini"
-}
-ES_PY_TASK='# normalize keeps case
-
-`normalize` drops the hash but keeps case: `normalize(["#A"])` gives `["A"]` instead of `["a"]`.
-
-## Location
-
-```python
-        if t.startswith("#"):
-            out.append(t[1:])
-```
-'
-ES_PY_REPLY='```python
-import tags
-
-
-def test_loki_spec_c1_lowercases():
-    want = ["a"]
-    assert tags.normalize(["#A"]) == want
-
-
-def test_loki_spec_p1_upper():
-    want = ["q"]
-    assert tags.normalize(["Q"]) == want
-
-
-def test_loki_spec_s1_plain():
-    want = ["x"]
-    assert tags.normalize(["x"]) == want
-
-
-def test_loki_spec_c2_missing():
-    want = 1
-    assert tags.normalize.missing() == want
-```'
-# make_es_ts <dir> <node_modules>: a vitest package; slug keeps case.
-make_es_ts() {
-    mkdir -p "$1/src"
-    printf '{"name":"s","private":true,"type":"module","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"*"}}\n' > "$1/package.json"
-    printf 'export function slug(s: string): string {\n  const t = s.trim();\n  if (t === "") return s;\n  return t.replace(/ /g, "-");\n}\n' > "$1/src/slug.ts"
-    printf 'import { expect, test } from "vitest";\nimport { slug } from "./slug";\n\ntest("plain", () => {\n  expect(slug("x")).toBe("x");\n});\n' > "$1/src/slug.test.ts"
-    ln -s "$2" "$1/node_modules"
-    printf 'node_modules\n' > "$1/.gitignore"
-}
-ES_TS_TASK='# slug keeps case
-
-`slug` keeps upper case: `slug("A B")` gives `"A-B"` instead of `"a-b"`.
-'
-ES_TS_REPLY='```ts
-import { expect, test } from "vitest";
-import { slug } from "./slug";
-
-test("LokiSpec_C1_Lower", () => {
-  const want = "a-b";
-  expect(slug("A B")).toBe(want);
-});
-
-test("LokiSpec_C2_Other", () => {
-  const want = "zz-top";
-  expect(slug("ZZ top")).toBe(want);
-});
-
-test("LokiSpec_S1_Plain", () => {
-  const want = "x";
-  expect(slug("x")).toBe(want);
-});
-
-test("LokiSpec_S2_Missing", () => {
-  const want = 1;
-  expect((slug as unknown as { nope: () => number }).nope()).toBe(want);
-});
-```'
-if command -v go >/dev/null 2>&1; then
-    ESD="$T/es-go"; rm -rf "$ESD"; make_es_go "$ESD"
-    ESU="$(cd "$ROOT/loki-ts" && ESD="$ESD" TASK="$ES_GO_TASK" timeout 120 bun -e '
-const es = await import("./src/features/exec_spec.ts"), task = process.env.TASK, out = [];
-const a = es.extractSpecAtoms(task), s = es.resolveSites(a, process.env.ESD), p = es.parityAtoms(a, s), x = es.pairAtoms(a, s);
-out.push(a.filter((z) => z.kind === "site").map((z) => z.text).join(","), `P${p.length}`, x.map((z) => z.text.match(/`(\w+)` and `(\w+)`/).slice(1).join("+")).join(","));
-const noQuote = task.replace(/## Location[\s\S]*?## Expected/, "## Expected"), a2 = es.extractSpecAtoms(noQuote); out.push(`noquote=P${es.parityAtoms(a2, es.resolveSites(a2, process.env.ESD)).length}`);
-const other = task.replace(/```go[\s\S]*?```/, "```go\n\treturn out\n```"), a3 = es.extractSpecAtoms(other); out.push(`otherquote=P${es.parityAtoms(a3, es.resolveSites(a3, process.env.ESD)).length}`);
-const prop = { symbol: "set", file: "o.ts", line: 1, source: "", body: "set(value) {\n  this.#i.method = value.toUpperCase();\n  log(value);\n}" };
-out.push(`prop=P${es.parityAtoms([{ id: "L1", kind: "location", text: "this.#i.method = value.toUpperCase();" }], [prop]).length}`);
-const b = (w) => es.isBinding(w, "`f(\"a-b\")` gives `404` instead of `[\"x\", \"y\"]`");
-out.push([b("want := []string{\"x\", \"y\"}"), b("want = 404"), b("const want = \"a-b\";"), b("want := []string{\"x\", \"zz\"}"), b("want := true"), b("if got != 1 {")].map((v) => (v ? 1 : 0)).join(""));
-console.log(out.join(" | "));' 2>&1)"
-    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | otherquote=P0 | prop=P0 | 111000"
-    [ "$ESU" = "$WESU" ] && ok "exec spec atoms: parity from the whole body and only from quoted code, never a property write, one pair for the two sites Report reaches, binding only on issue-stated want literals" \
-        || bad "exec spec atoms gave: $ESU (want: $WESU)"
-fi
-# es_leg <label> <runner> <repo> <existing test> <task> <reply> <want>: execSpecAuthor with the stub reply, then the sealed file run by the real runner on base.
-es_leg() {
-    (cd "$3" && git init -q -b main && git add -- . && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m base)
-    local got
-    got="$(cd "$ROOT/loki-ts" && ESD="$3" RUN="$2" EXIST="$4" TASK="$5" REPLY="$6" timeout 300 bun -e '
-const es = await import("./src/features/exec_spec.ts"), e = process.env;
-es.setExecSpecGenerator(async () => e.REPLY);
-const o = await es.execSpecAuthor({ task: e.TASK, repoDir: e.ESD, runners: [e.RUN], existingTests: [e.EXIST], sessions: null, iterationId: "t", signal: new AbortController().signal });
-const em = es.EMITTERS[e.RUN], sealed = o.file ? es.redFilter(em, e.ESD, o.targetRel, o.file) : null;
-console.log(`${o.status} ${o.targetRel} binding=${o.binding} advisory=${o.advisory} guards=${o.guards} dropped=${o.dropped} sealed=${sealed ? Object.entries(sealed.cases).map(([k, v]) => k + ":" + v).join("+") : "-"}`);' 2>&1)"
-    [ "$got" = "$7" ] && ok "exec spec $1: binding red case sealed alone, advisory, guard and erroring cases kept out ($2 on base)" || bad "exec spec $1 gave: $got (want: $7)"
-}
-if command -v go >/dev/null 2>&1; then
-    rm -rf "$T/es-go2"; make_es_go "$T/es-go2"
-    es_leg "go test" go "$T/es-go2" a/a_test.go "$ES_GO_TASK" "$ES_GO_REPLY" "sealed a/loki_wall_spec_test.go binding=TestLokiSpec_C1_KeepsAfterDash advisory=TestLokiSpec_P1_PaddedDash guards=TestLokiSpec_S1_Plain dropped=TestLokiSpec_C2_Panics sealed=TestLokiSpec_C1_KeepsAfterDash:red"
-elif [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "exec spec go test: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: exec spec go test: go is not installed"; fi
-if python3 -I -c 'import pytest' >/dev/null 2>&1; then
-    rm -rf "$T/es-py"; make_es_py "$T/es-py"
-    es_leg "pytest" pytest "$T/es-py" tests/test_tags.py "$ES_PY_TASK" "$ES_PY_REPLY" "sealed tests/loki_wall_spec_test.py binding=test_loki_spec_c1_lowercases advisory=test_loki_spec_p1_upper guards=test_loki_spec_s1_plain dropped=test_loki_spec_c2_missing sealed=test_loki_spec_c1_lowercases:red"
-elif [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "exec spec pytest: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: exec spec pytest: pytest is not installed"; fi
-for vt in 2 latest; do
-    VT_NM="$T/vt-$vt/node_modules"
-    if [ ! -d "$VT_NM/vitest" ]; then mkdir -p "$T/vt-$vt"; printf '{"name":"c","private":true,"type":"module"}\n' > "$T/vt-$vt/package.json"; (cd "$T/vt-$vt" && timeout 300 npm install --no-audit --no-fund --silent "vitest@$vt" >/dev/null 2>&1); fi
-    if [ ! -x "$VT_NM/.bin/vitest" ]; then
-        if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "exec spec vitest $vt: vitest@$vt could not be installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: exec spec vitest $vt: vitest@$vt could not be installed (offline?)"; fi
-        continue
-    fi
-    rm -rf "$T/es-ts-$vt"; make_es_ts "$T/es-ts-$vt" "$VT_NM"
-    es_leg "vitest $vt" vitest "$T/es-ts-$vt" src/slug.test.ts "$ES_TS_TASK" "$ES_TS_REPLY" "sealed src/loki_wall_spec.test.ts binding=LokiSpec_C1_Lower advisory=LokiSpec_C2_Other guards=LokiSpec_S1_Plain dropped=LokiSpec_S2_Missing sealed=LokiSpec_C1_Lower:red"
-done
-# engine legs: the real bin/loki on the stub provider, Wall off (the product default), lean path.
-if command -v go >/dev/null 2>&1; then
-    ESFIX=$'out = append(out, rargs[0])\n\t\t\tcontinue'; ESOLD=$'out = append(out, firstArg)\n\t\t\tbreak'
-    esw() { ev 'next((e["data"].get("exec_spec",{}).get("status","") + ":" + ",".join(e["data"].get("exec_spec",{}).get("binding",[])) + ":" + ",".join(f["path"].rsplit("/",1)[-1] for f in e["data"].get("files",[])) + ":fail=" + str(e["data"].get("base_run",{}).get("fail")) for e in E if e["stage"]=="wall" and e["type"] in ("stage.completed","stage.skipped")), "none")'; }
-    ESPL="$T/es-prompts"; rm -f "$ESPL".*
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" LOKI_E10_EXEC_SPEC=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" E2E_STUB_PROMPT_LOG="$ESPL" \
-        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
-    [ "$(esw)" = "sealed:TestLokiSpec_C1_KeepsAfterDash:loki_wall_spec_test.go:fail=1" ] && ok "exec spec engine: the binding case is sealed as the run's Wall file and is red on base ($(esw))" || { bad "exec spec engine: wall gave '$(esw)'"; dump; }
-    grep -q "Executable spec: a/loki_wall_spec_test.go" "$ESPL.implement0" 2>/dev/null && grep -q "Advisory spec cases" "$ESPL.implement0" && ok "exec spec engine: the implement brief names the binding case and lists the advisory ones" || bad "exec spec engine: the implement brief has no spec block"
-    [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: the right fix turns the sealed case green and is VERIFIED" || { bad "exec spec engine: right-fix outcome '$(outcome)'"; dump; }
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" LOKI_E10_EXEC_SPEC=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
-        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE=$'\t\t\tbreak' E2E_STUB_SNIPPET=$'\t\t\tbreak // looked at' LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
-    [ -n "$(outcome)" ] && [ "$(outcome)" != VERIFIED ] && ok "exec spec engine: a change that leaves the binding case red is not VERIFIED ($(outcome))" || { bad "exec spec engine: no-fix outcome '$(outcome)'"; dump; }
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
-        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
-    grep -q -- '-execspec' "$ITERS" && bad "exec spec off: a generator session ran with LOKI_E10_EXEC_SPEC unset" || ok "exec spec off: no generator session and no spec file (default)"
-fi
-
-# ---------------------------------------------------------------- Go candidate tournament (LOKI_E10_TOURNAMENT, default on, =0 opts out)
-# features/tournament.ts. Unit (stub Io, no model, no go): the probe text parsers, the order-swap judge, and the selection rule: the agent's
-# check-passing tree is displaced only by a check-passing challenger that regresses no spec case the agent passes, loses no probe, and wins
-# one anchored verdict (the agent left the input as the base had it) or two consistent verdicts; an unstable probe is dropped; a diff probe
-# runs only when the issue probes separate nothing. Real go test (rule 22): the gate over a real git repo, real treeswap scratch worktrees,
-# real go test checks plus the sealed spec, real probe runs, a stubbed model: a wrong agent tree is displaced by the right candidate in the
-# primary (sealed spec kept, worktrees removed), a right agent tree, a position-answering judge, an unsure judge, a model failure and a
-# margin above the verdicts all keep the agent. Engine (stub provider, exec spec on, lean path): the probe block rides on the spec call, never
-# breaks the spec, and the gate stands down before any model call when the diff is over the limit; with LOKI_E10_TOURNAMENT=0 nothing changes.
-TOUR_DRV="$T/tour-drv.ts"
-cat > "$TOUR_DRV" <<'TOURDRV'
-import { execSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-const R = process.env.ROOT!, W = process.env.WORK!;
-const t = await import(`${R}/loki-ts/src/features/tournament.ts`);
-const row = (k: string, v: unknown): void => { console.log(`${k}=${v}`); };
-
-// ---------- unit: parsers ----------
-const REPLY = "```go\npackage a\n\nfunc TestLokiSpec_C1_X(t *testing.T) {}\n```\n\n```go\npackage a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"d\", func() any { return strings.ToUpper(\"x\") })\n}\n```";
-const sp = t.splitProbeBlock(REPLY), sp2 = t.splitProbeBlock(REPLY.slice(REPLY.indexOf("```go", 5)) + "\n\n" + REPLY.slice(0, REPLY.indexOf("```go", 5)));
-row("split", [sp.spec.includes("TestLokiProbe"), sp.spec.includes("TestLokiSpec_C1_X"), sp.probe?.includes("TestLokiProbe"), sp2.spec.includes("TestLokiProbe"), sp2.spec.includes("TestLokiSpec_C1_X"), t.splitProbeBlock("```go\npackage a\n```").probe].join(","));
-const pc = (b: string | null, pkg = "a") => { const r = t.parseGoProbeCases(b, pkg); return "file" in r ? `ok(${r.repairedImports.join("")})` : r.refused.split(":")[0]; };
-row("probe", [pc(sp.probe), pc(null), pc("package b\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p\", \"d\", f)\n}"), pc("package a\nfunc TestLokiProbe(t *testing.T) {\n\tos.Exit(1)\n\tlokiProbe(\"p\", \"d\", f)\n}"), pc("package a\nfunc TestLokiProbe(t *testing.T) {\n}"), pc("package a\nfunc lokiProbe() {}\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p\", \"d\", f)\n}")].join(","));
-row("any", t.anyToInterface('x := any(1) // any\ny := "any"').replace(/\n/g, "~") + "|" + t.repairGoImports('package a\n\nimport (\n\t"fmt"\n)\n\nfunc F(t *testing.T) { _ = strings.TrimSpace("") }\n').changes.join(""));
-const C = t.parseCandidates("=== CANDIDATE 1 ===\n<<<<<<< SEARCH a.go\nx\n=======\ny\n>>>>>>> REPLACE\n=== CANDIDATE 2 ===\n<<<<<<< SEARCH b.go\nq\n=======\nz\n>>>>>>> REPLACE\n");
-row("cands", C.map((c: any) => `${c.id}:${c.edits.length}`).join(",") + "|" + [t.applyEdits({ "a.go": "x x" }, C[0].edits), t.applyEdits({ "a.go": "x" }, [{ path: "zz.go", search: "x", replace: "y" }]), t.applyEdits({ "a.go": "ax" }, C[0].edits)?.["a.go"]].map((v) => v === null ? "null" : JSON.stringify(v)).join(","));
-const ents = (a: Record<string, string>, b: Record<string, string>) => [{ id: "agent", lens: "", dir: "", checksPass: true, run: a, diffLines: 0 }, { id: "c1", lens: "", dir: "", checksPass: true, run: b, diffLines: 4 }];
-const pr = (...ids: string[]) => ids.map((id) => ({ id, desc: id }));
-const dd = t.disagreements(ents({ p1: "A", p2: "A" }, { p1: "B", p2: "A" }), pr("p1", "p2")), views = t.judgeViews(dd);
-const ans = (f: (v: any) => string) => t.resolveVerdicts(views, t.parseVerdicts(views.map((v: any) => `${v.viewId}: ${f(v)}`).join("\n")));
-const lab = (v: any, out: string) => v.options.find((o: any) => o.out === out)?.label ?? "unknown";
-row("judge", [dd.length, views.map((v: any) => v.viewId).join("/"), ans((v) => lab(v, "B")).get("p1"), ans(() => "A").size, ans(() => "unknown").size, ans((v) => (v.viewId.endsWith(".1") ? lab(v, "B") : lab(v, "A"))).size, t.parseVerdicts("p4: option B - why\n**p5**: unknown\n").get("p4")].join(","));
-
-// ---------- unit: selection through runTournament with a stub Io ----------
-const lines = (o: Record<string, string>): string => Object.entries(o).map(([id, v]) => `LOKIPROBE ${JSON.stringify({ id, desc: id, out: v })}`).join("\n");
-const cand = (n: number): string => `=== CANDIDATE ${n} ===\n<<<<<<< SEARCH a/a.go\nold\n=======\nc${n}\n>>>>>>> REPLACE\n`;
-const PROG = "package a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"d\", func() any { return F(\"a\") })\n\tlokiProbe(\"p2\", \"d\", func() any { return F(\"b\") })\n\tlokiProbe(\"p3\", \"d\", func() any { return F(\"zzz\") })\n\tlokiProbe(\"p4\", \"d\", func() any { return F(\"yyy\") })\n}\n", ISSUE = '`F("a")` and `F("b")` are wrong';
-interface W { base?: Record<string, string>; baseB?: Record<string, string>; agent: Record<string, string>; c1?: Record<string, string>; c2?: Record<string, string>; pass?: Record<string, boolean>; spec?: Record<string, Record<string, "red" | "green" | "error">>; judge?: string | ((u: string) => string); cands?: number; dp?: { reply: string; runs: Record<string, Record<string, string>> }; src?: Record<string, string> }
-async function sel(w: W): Promise<string> {
-  const calls: string[] = [], baseOut = w.base ?? { p1: "B0", p2: "B0", p3: "B0" }, runs: Record<string, Record<string, string>> = { agent: w.agent, c1: w.c1 ?? w.agent, c2: w.c2 ?? w.agent };
-  let bases = 0;
-  const llm = async (_s: string, u: string, tag: string) => { calls.push(tag);
-    if (tag === "candidates") return { text: cand(1) + (w.cands === 1 ? "" : cand(2)), usage: { costUsd: 0.001 } };
-    if (tag === "diffprobe") return { text: w.dp?.reply ?? "", usage: { costUsd: 0.001 } };
-    return { text: typeof w.judge === "function" ? w.judge(u) : w.judge ?? "", usage: { costUsd: 0.0005 } }; };
-  const io = {
-    materialize: (e: any) => (e === "agent" ? "agent" : e === "base" ? (bases++ === 0 ? "baseA" : "baseB") : e[0].replace === "c1" ? "c1" : "c2"),
-    checks: async (d: string) => (w.pass ?? {})[d] ?? true,
-    probe: (d: string, program: string) => program.includes("dprobe") ? lines(w.dp!.runs[d] ?? w.dp!.runs.agent!) : lines(d === "baseA" ? baseOut : d === "baseB" ? (w.baseB ?? baseOut) : runs[d]!),
-    spec: (d: string) => (w.spec ?? {})[d] ?? null,
-  };
-  const tf = (d: string): Record<string, string> => ({ "a/a.go": (w.src ?? {})[d] ?? "func F() int {\n\treturn 0\n}" });
-  const r = await t.runTournament({ issue: ISSUE, files: { "a/a.go": "old" }, tests: {} }, llm, io, { program: PROG, pkg: "a", treeFiles: tf });
-  return `${r.pick.displaced ? r.pick.winner : "kept"}/${calls.join("+")}`;
-}
-const judgeBacks = (want: string | Record<string, string>) => (u: string) => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const wo = typeof want === "string" ? want : want[id.replace(/^d/, "").split(".")[0]!] ?? want[id.split(".")[0]!]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2] === wo); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n");
-const A = { p1: "A", p2: "A", p3: "A" }, B = { p1: "B", p2: "B", p3: "A" };
-row("sel_same", await sel({ agent: A, judge: "" }));
-row("sel_two", await sel({ agent: A, c1: B, judge: judgeBacks("B") }));
-row("sel_one_unanchored", await sel({ agent: A, c1: { ...A, p1: "B" }, judge: judgeBacks("B") }));
-row("sel_one_anchored", await sel({ agent: { ...A, p1: "B0" }, c1: { ...A, p1: "B" }, judge: judgeBacks("B") }));
-row("sel_loses_one", await sel({ agent: A, c1: { p1: "B", p2: "B", p3: "B" }, judge: judgeBacks({ p1: "B", p2: "B", p3: "A" }) }));
-row("sel_spec_veto", await sel({ agent: A, c1: B, judge: judgeBacks("B"), spec: { agent: { S1: "green" }, c1: { S1: "red" }, c2: { S1: "green" } } }));
-row("sel_check_fail", await sel({ agent: A, c1: B, judge: judgeBacks("B"), pass: { c1: false } }));
-row("sel_unstable", await sel({ agent: A, c1: B, base: { p1: "B0", p2: "B0", p3: "B0" }, baseB: { p1: "X", p2: "Y", p3: "B0" }, judge: judgeBacks("B") }));
-row("sel_position", await sel({ agent: A, c1: B, judge: (u) => u.split("\n").filter((l) => /^PROBE /.test(l)).map((l) => `${/^PROBE (\S+):/.exec(l)![1]}: A`).join("\n") }));
-row("sel_unknown", await sel({ agent: A, c1: B, judge: (u) => u.split("\n").filter((l) => /^PROBE /.test(l)).map((l) => `${/^PROBE (\S+):/.exec(l)![1]}: unknown`).join("\n") }));
-row("sel_judge_down", await sel({ agent: A, c1: B, judge: "" }));
-row("sel_diffprobe", await sel({ src: { agent: "func F() int {\n\treturn 1\n}", c1: "func F() int {\n\treturn 2\n}", c2: "func F() int {\n\treturn 2\n}" }, agent: A, c1: A, c2: A, dp: { reply: "```go\npackage a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"q\", \"dprobe\", func() any { return F(\"a\") })\n}\n```", runs: { baseA: { q: "B0" }, baseB: { q: "B0" }, agent: { q: "B0" }, c1: { q: "B" }, c2: { q: "B" } } }, judge: judgeBacks("B") }));
-row("sel_unnamed", await sel({ agent: { ...A, p3: "B0" }, c1: { ...A, p3: "B" }, judge: judgeBacks("B") }));
-row("sel_two_unnamed", await sel({ base: { p1: "B0", p2: "B0", p3: "B0", p4: "B0" }, agent: { ...A, p4: "A" }, c1: { ...A, p3: "B", p4: "B" }, judge: judgeBacks("B") }));
-row("sel_agent_red", await sel({ agent: A, c1: B, judge: judgeBacks("B"), pass: { agent: false } }));
-row("sel_diffprobe_not_needed", await sel({ agent: A, c1: B, dp: { reply: "x", runs: {} }, judge: judgeBacks("B") }));
-
-// ---------- real go: the gate over a real repo and real treeswap worktrees ----------
-const HEAD = `package a\n\nimport (\n\t"reflect"\n\t"testing"\n)\n\n`;
-const SPEC_C1 = `func TestLokiSpec_C1_KeepsAfterDash(t *testing.T) {\n\twant := []string{"-", "a", "b"}\n\tif got := Split([]string{"-", "a", "b"}); !reflect.DeepEqual(got, want) {\n\t\tt.Fatalf("got %q", got)\n\t}\n}\n`;
-const SPEC_P1 = `\nfunc TestLokiSpec_P1_PaddedDash(t *testing.T) {\n\twant := []string{"  -", "q"}\n\tif got := Split([]string{"  -", "q"}); !reflect.DeepEqual(got, want) {\n\t\tt.Fatalf("got %q", got)\n\t}\n}\n`;
-const PROBE = `package a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe("p1", "padded dash then operand", func() any { return Split([]string{"  -", "q"}) })\n\tlokiProbe("p2", "tab padded dash", func() any { return Split([]string{"\\t-", "q"}) })\n\tlokiProbe("p3", "plain operands", func() any { return Split([]string{"x", "y"}) })\n}\n`; // no testing import: repairGoImports adds it
-const GO_SRC = "package a\n\n// Split keeps operands after a lone dash.\nfunc Split(rargs []string) []string {\n\tvar out []string\n\tfor ; len(rargs) > 0; rargs = rargs[1:] {\n\t\tfirstArg := trim(rargs[0])\n\t\tif firstArg == \"\" || firstArg[0] != '-' {\n\t\t\tout = append(out, rargs[0])\n\t\t\tcontinue\n\t\t}\n\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n\t\t\tbreak\n\t\t}\n\t}\n\treturn out\n}\n\nfunc trim(s string) string {\n\tfor len(s) > 0 && (s[0] == 32 || s[0] == 9) {\n\t\ts = s[1:]\n\t}\n\treturn s\n}\n";
-const GO_TEST = 'package a\n\nimport "testing"\n\nfunc TestSplitPlain(t *testing.T) {\n\tif g := Split([]string{"x"}); len(g) != 1 {\n\t\tt.Fatal(g)\n\t}\n}\n';
-const WRONG = "out = append(out, firstArg)\n\t\t\tcontinue", RIGHT = "out = append(out, rargs[0])\n\t\t\tcontinue", BREAK = "out = append(out, firstArg)\n\t\t\tbreak";
-const CANDS = (a: string, b: string): string => `=== CANDIDATE 1 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${a}\n>>>>>>> REPLACE\n=== CANDIDATE 2 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${b}\n>>>>>>> REPLACE\n=== CANDIDATE 3 ===\n<<<<<<< SEARCH a/a_test.go\n\t\tt.Fatal(g)\n=======\n\t\tt.Log(g)\n>>>>>>> REPLACE\n`;
-const { attemptDeps } = await import(`${R}/loki-ts/src/engine10/stages/implement.ts`);
-const sh = (c: string, cwd: string): string => execSync(c, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-interface G { weakenTest?: boolean; probeExtra?: string; agentExtras?: boolean; big?: boolean; report?: boolean; agent: string; judge?: (u: string) => string; cands?: string; killed?: boolean; noInput?: boolean; env?: Record<string, string>; llmDown?: boolean; noSign?: boolean; throwOn?: string }
-let gn = 0;
-async function gate(g: G): Promise<string> {
-  const SRC = g.big ? GO_SRC + "// padding to push the file over the prompt limit\n".repeat(600) : GO_SRC, repo = join(W, `g${gn++}`, "repo"), runDir = join(W, `g${gn}`, "run"); mkdirSync(join(repo, "a"), { recursive: true }); mkdirSync(runDir, { recursive: true });
-  writeFileSync(join(repo, "go.mod"), "module example.com/a\n\ngo 1.21\n"); writeFileSync(join(repo, "a/a.go"), SRC); writeFileSync(join(repo, "a/a_test.go"), GO_TEST);
-  sh("git init -q -b main && git add -- . && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m base", repo);
-  const baseSha = sh("git rev-parse HEAD", repo), sealedRel = "a/loki_wall_spec_test.go", sealed = HEAD + SPEC_C1;
-  writeFileSync(join(repo, "a/a.go"), SRC.replace(BREAK, g.agent)); writeFileSync(join(repo, sealedRel), sealed);
-  if (g.weakenTest) writeFileSync(join(repo, "a/a_test.go"), GO_TEST.replace("func TestSplitPlain(t *testing.T) {", "func TestSplitPlain(t *testing.T) {\n\tt.Skip(\"flaky\")"));
-  if (g.agentExtras) { writeFileSync(join(repo, "a/agent_new_test.go"), "package a\n\nimport \"testing\"\n\nfunc TestAgentNew(t *testing.T) {}\n"); writeFileSync(join(repo, "a/a_test.go"), GO_TEST + "\nfunc TestAgentAddedCase(t *testing.T) {}\n"); writeFileSync(join(repo, "go.mod"), "module example.com/a\n\ngo 1.21\n// agent note\n"); }
-  if (!g.noInput) t.writeTournamentInput(runDir, { probe: t.repairGoImports(g.probeExtra ? PROBE.replace(/\}\n$/, g.probeExtra + "}\n") : PROBE).file, pkg: "a", specFile: HEAD + SPEC_C1 + SPEC_P1, targetRel: sealedRel, ...(g.noSign ? {} : { unchecked: ["Report"] }) });
-  const ctx: any = { runId: "r1", repoDir: repo, runDir, baseSha, outputs: () => ({ intake: { task: "# Bare dash drops args\n\n`Split` stops at a lone `-`: `x - a b` gives `[\"-\"]` instead of `[\"-\", \"a\", \"b\"]`. It also loses what follows a padded dash, `\"  -\"`.\n" }, wall: { readOnlyFiles: [{ path: join(repo, sealedRel), content: sealed }] } }),
-    tests: { detect: async () => ({ runners: ["go"], tests: [{ runner: "go", path: "a/a_test.go" }, { runner: "go", path: sealedRel }] }), impacted: () => [] }, sessions: null, emit: () => { throw new Error("the gate must not emit verify events"); } };
-  const deps = attemptDeps(ctx, 0, "", 0); deps.impacted = ["a/a_test.go", sealedRel];
-  const calls: string[] = [];
-  const llm = async (_s: string, u: string, tag: string) => { calls.push(tag); if (g.throwOn === tag) throw new Error("model transport blew up"); if (g.llmDown) return { text: "", usage: { costUsd: 0 } }; return tag === "candidates" ? { text: g.cands ?? CANDS(RIGHT, WRONG), usage: { costUsd: 0.001 } } : { text: g.judge ? g.judge(u) : "", usage: { costUsd: 0.0005 } }; };
-  const session: any = { killed: g.killed === true, exit: 0, markers: { done: true } };
-  const s = await t.runTournamentGate(ctx, new AbortController().signal, session, deps, llm, { ...process.env, ...(g.env ?? {}) });
-  if (!s) return "null";
-  const now = readFileSync(join(repo, "a/a.go"), "utf8"), dash = "if len(firstArg) == 1 {\n\t\t\t", tree = now.includes(dash + RIGHT) ? "right" : now.includes(dash + WRONG) ? "wrong" : now.includes(dash + BREAK) ? "base" : "other";
-  const rep = g.report ? `|leak=${existsSync(join(repo, "a/leak.txt"))}|gomod=${readFileSync(join(repo, "go.mod"), "utf8").includes("leak") ? "leaked" : "clean"}|status=${sh("git status --short", repo).split("\n").map((l) => l.replace(/^\s*\S+\s+/, "")).sort().join(",")}|newtest=${existsSync(join(repo, "a/agent_new_test.go"))}|case=${readFileSync(join(repo, "a/a_test.go"), "utf8").includes("TestAgentAddedCase")}|agentnote=${readFileSync(join(repo, "go.mod"), "utf8").includes("agent note")}` : "";
-  return `${s.status}|tree=${tree}|calls=${calls.join("+") || "-"}|sealed=${existsSync(join(repo, sealedRel))}|worktrees=${sh("git worktree list", repo).split("\n").length}|${String(s.reason).slice(0, 60)}${s.status === "error" ? `|receipt=${(s.receipt ?? []).length}` : ""}${rep}`;
-}
-const backs = (w: string) => (u: string) => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2]!.startsWith(`"[\\"${w}`) || x[2]!.includes(`\\"${w}\\"`)); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n");
-const keepsPad = (u: string): string => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2]!.includes('"  -"') || x[2]!.includes('"\\t-"')); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n");
-void backs;
-row("go_displace", await gate({ agent: WRONG, judge: keepsPad }));
-row("go_right_kept", await gate({ agent: RIGHT, judge: keepsPad }));
-row("go_margin3", await gate({ agent: WRONG, judge: keepsPad, env: { LOKI_E10_TOURNAMENT_MARGIN: "3" } }));
-row("go_llm_down", await gate({ agent: WRONG, llmDown: true }));
-row("go_test_edit_only", await gate({ agent: WRONG, judge: keepsPad, cands: `=== CANDIDATE 1 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${RIGHT}\n>>>>>>> REPLACE\n<<<<<<< SEARCH a/a_test.go\n\t\tt.Fatal(g)\n=======\n\t\tt.Log(g)\n>>>>>>> REPLACE\n` }));
-row("go_no_sign", await gate({ agent: WRONG, noSign: true }));
-row("go_throws", await gate({ agent: WRONG, judge: keepsPad, throwOn: "judge" }));
-row("go_over_limit", await gate({ agent: WRONG, env: { LOKI_E10_TOURNAMENT_MAX_LINES: "1" } }));
-row("go_killed", await gate({ agent: WRONG, killed: true }));
-row("go_no_input", await gate({ agent: WRONG, noInput: true }));
-const LEAK = `\tlokiProbe("p4", "writes files", func() any { os.WriteFile("leak.txt", []byte("x"), 0o644); f, _ := os.OpenFile("../go.mod", os.O_APPEND|os.O_WRONLY, 0); f.WriteString("// leak\\n"); f.Close(); return 1 })\n`;
-row("go_probe_side_effects", await gate({ agent: WRONG, judge: keepsPad, probeExtra: LEAK, agentExtras: true, report: true }));
-const TRIM = `=== CANDIDATE 1 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${RIGHT}\n>>>>>>> REPLACE\n<<<<<<< SEARCH a/a.go\n\t\tif firstArg == "" || firstArg[0] != '-' {\n\t\t\tout = append(out, rargs[0])\n=======\n\t\tif firstArg == "" || firstArg[0] != '-' {\n\t\t\tout = append(out, trim(rargs[0]))\n>>>>>>> REPLACE\n`;
-row("go_unnamed_input", await gate({ agent: RIGHT, cands: TRIM, probeExtra: `\tlokiProbe("p4", "leading space", func() any { return Split([]string{" x"}) })\n`, judge: (u) => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2] === '["x"]'); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n") }));
-row("go_incidental_literal", await gate({ agent: RIGHT, cands: TRIM, probeExtra: `\tlokiProbe("p4", "leading space beside an issue literal", func() any { return Split([]string{" x", "a"}) })\n`, judge: (u) => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2] === '["x","a"]'); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n") }));
-row("go_weakened_test", await gate({ agent: WRONG, judge: keepsPad, weakenTest: true }));
-row("go_agent_red", await gate({ agent: "out = append(out, nope)\n\t\t\tcontinue", judge: keepsPad }));
-row("go_big_file", await gate({ agent: WRONG, big: true }));
-row("go_budget", await gate({ agent: WRONG, judge: keepsPad, env: { LOKI_E10_TOURNAMENT_BUDGET_S: "1" }, probeExtra: `\ttime.Sleep(1500 * time.Millisecond)\n` }));
-{ // a kill between the undo record and the end of the apply: the next gate start puts the agent's bytes back
-  const repo = join(W, "kill", "repo"), runDir = join(W, "kill", "run"); mkdirSync(join(repo, "a"), { recursive: true }); mkdirSync(runDir, { recursive: true });
-  writeFileSync(join(repo, "a/a.go"), "agent a.go\n");
-  const kid = spawnSync(process.execPath, ["-e", `const t = await import(${JSON.stringify(R + "/loki-ts/src/features/tournament.ts")}); t.applyWinnerFiles(process.env.REPO, process.env.RUN, [{ path: "a/a.go", content: "candidate a.go\\n" }, { path: "a/new.go", content: "candidate new\\n" }], (i) => { if (i === 0) process.kill(process.pid, "SIGKILL"); });`], { env: { ...process.env, REPO: repo, RUN: runDir } });
-  const mid = readFileSync(join(repo, "a/a.go"), "utf8"), undo = existsSync(join(runDir, "tournament-undo.json"));
-  const { implementStage } = await import(`${R}/loki-ts/src/engine10/stages/implement.ts`);
-  const r = await implementStage.run({ repoDir: repo, runDir } as any, new AbortController().signal).then(() => "ran", () => "stopped-after-recovery"); // the stage recovers first; it stops on the bare ctx right after
-  row("go_kill_mid_apply", [kid.signal, mid.trim(), undo, readFileSync(join(repo, "a/a.go"), "utf8").trim(), existsSync(join(runDir, "tournament-undo.json")), existsSync(join(repo, "a/new.go")), r].join("|"));
-}
-
-// ---------- unit: warning signs and probe pruning ----------
-const TASK_LOC = "# t\n\n`Split` and `Report` misbehave.\n\n## Location\n\n```go\n\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n```\n";
-row("signs", [t.warningSigns(TASK_LOC, [], { "a/a.go": "x" }).length, t.warningSigns(TASK_LOC, ["Report"], {}).length, t.warningSigns(TASK_LOC, [], { "a/a.go": "\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n" }).length, t.warningSigns("# t\n`F` is wrong.", [], { "a/a.go": "x" }).length, t.warningSigns("# t\n`F` is wrong.", [], { "a/a.go": "x" }, [{ rule: "residual", path: "a/a.go", line: 9, text: "x", why: "w" }]).length, t.warningSigns("# t\n`F` is wrong.", [], { "a/a.go": "x" }, [{ rule: "sibling", path: "a/a.go", line: 9, text: "x", why: "w" }]).length].join(","));
-const PRUNE = "package a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"ok\", func() any { return 1 })\n\tlokiProbe(\"p2\", \"bad\", func() any { return nope() })\n\tlokiProbe(\"p3\", \"ok\", func() any { return 3 })\n}\n";
-const pj = t.pruneGoCases(PRUNE, "# x\nloki_probe_cases_test.go:5:40: undefined: nope\n");
-row("prune", [pj?.pruned.map((p: any) => p.id).join("+"), pj?.program.includes("p2"), pj?.program.includes("p3"), t.pruneGoCases(PRUNE, "loki_probe_cases_test.go:3:1: syntax error") === null, t.pruneGoCases(PRUNE, "nothing") === null].join(","));
-
-// ---------- receipt ----------
-const seal = await import(`${R}/loki-ts/src/engine10/stages/seal.ts`);
-const none = t.tournamentReceiptBlock({ tournament: { status: "skipped" } }), some = t.tournamentReceiptBlock({ tournament: { receipt: ["c1: checks pass", "decision: agent tree kept (x)"] } });
-const md = seal.renderReceiptMd({ run_id: "r", base_sha: "b", head_sha: "h", receipt_sha256: "s", verdict: "VERIFIED", provider: "p", model: "m", cost: { usd: 0, measured_sessions: 0, total_sessions: 0, partial_usd: 0 }, time: { wall_s: 1 }, checks: [], evidence: [], not_proven: [], verification: {}, ...some } as any);
-row("receipt", [JSON.stringify(none), some.tournament?.length, md.includes("### Candidate tournament\n- c1: checks pass\n- decision: agent tree kept (x)")].join(","));
-TOURDRV
-TOUR_OUT="$(cd "$ROOT/loki-ts" && ROOT="$ROOT" WORK="$T/tour-work" timeout 1200 bun "$TOUR_DRV" 2>&1)"
-tg() { printf '%s\n' "$TOUR_OUT" | sed -n "s/^$1=//p"; }
-tcheck() { local got; got="$(tg "$2")"; [ "$got" = "$3" ] && ok "tournament $1" || bad "tournament $1: got '$got' (want '$3')"; }
-tcheck "probe block: split from the spec in either order, one block left alone" split "false,true,true,false,true,"
-tcheck "probe parser: wrong package, banned call, no cases and a redefined lokiProbe are refused by name; missing std imports repaired" probe "ok(+strings+testing),probe_no_block,probe_wrong_package,probe_banned_call,probe_no_cases,probe_banned_call"
-tcheck "any becomes interface{} outside strings and comments; an unused std import is dropped, a used one added" any 'x := interface{}(1) // any~y := "any"|-fmt+strings+testing'
-tcheck "candidates parse per number; an ambiguous, unknown-path or missing SEARCH does not apply" cands 'c1:1,c2:1|null,null,"ay"'
-tcheck "order-swap judge: both views must back one output; position answers, unknown and contradictions give no verdict" judge '1,p1.1/p1.2,B,0,0,0,B'
-tcheck "agent kept when no probe separates the trees and no model verdict is asked" sel_same "kept/candidates"
-tcheck "wins only on an input the issue does not name never displace, even anchored" sel_unnamed "kept/candidates+judge"
-tcheck "two wins that are both on inputs the issue does not name do not displace either" sel_two_unnamed "kept/candidates+judge"
-tcheck "an agent tree that fails its checks ends the tournament before the candidates call" sel_agent_red "kept/"
-tcheck "two consistent verdicts displace the agent" sel_two "c1/candidates+judge"
-tcheck "one verdict where the agent left the base output does not need a second" sel_one_anchored "c1/candidates+judge"
-tcheck "one verdict where the agent already changed the output is not enough" sel_one_unanchored "kept/candidates+judge"
-tcheck "a challenger that loses a probe never displaces, whatever it wins" sel_loses_one "kept/candidates+judge"
-tcheck "a challenger that regresses a spec case the agent passes is vetoed" sel_spec_veto "kept/candidates+judge"
-tcheck "a challenger failing the checks never displaces" sel_check_fail "kept/candidates"
-tcheck "a probe whose output differs between two base copies is dropped" sel_unstable "kept/candidates"
-tcheck "a judge that answers by position cannot displace" sel_position "kept/candidates+judge"
-tcheck "an unsure judge keeps the agent" sel_unknown "kept/candidates+judge"
-tcheck "a judge call that fails keeps the agent" sel_judge_down "kept/candidates+judge"
-tcheck "the diff probe runs only when the issue probes separate nothing, then the judge rules" sel_diffprobe "c1/candidates+diffprobe+judge"
-tcheck "no diff probe call when the issue probes already separate the trees" sel_diffprobe_not_needed "c1/candidates+judge"
-tcheck "go: a wrong agent tree is displaced in the primary by the right candidate; sealed spec kept, scratch worktrees removed, test-editing candidate refused" go_displace "displaced|tree=right|calls=candidates+judge|sealed=true|worktrees=1|c1 displaces the agent: 2 consistent verdict(s), 0 against, "
-tcheck "go: probe side effects (a written file, an appended go.mod) stay in the scratch tree; only the winner's source edit reaches the user's tree, beside the agent's new test file, added case and go.mod change" go_probe_side_effects "displaced|tree=right|calls=candidates+judge|sealed=true|worktrees=1|c1 displaces the agent: 2 consistent verdict(s), 0 against, |leak=false|gomod=clean|status=a/a.go,a/a_test.go,a/agent_new_test.go,a/loki_wall_spec_test.go,go.mod|newtest=true|case=true|agentnote=true"
-tcheck "go: a right agent tree is not displaced by a verdict on an input the issue never names" go_unnamed_input "kept|tree=right|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
-tcheck "go: an input with one issue-quoted literal beside an invented one (\" x\" with a) is not named, so one anchored verdict cannot displace a right tree" go_incidental_literal "kept|tree=right|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
-tcheck "go: an agent that weakened an existing test makes no model call" go_weakened_test "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|the agent edited an existing test the weakened-test rule fla"
-tcheck "go: an agent tree that fails its own checks makes no model call" go_agent_red "kept|tree=other|calls=-|sealed=true|worktrees=1|agent tree does not pass its checks; kept"
-tcheck "go: a base file over the prompt limit skips the tournament before any model call" go_big_file "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|base file a/a.go is 30464 chars, over the prompt limit (2400"
-tcheck "go: a spent time budget skips, restores nothing it never touched and records the skip" go_budget "error|tree=wrong|calls=-|sealed=true|worktrees=1|tournament skipped: the tournament time budget ran out|receipt=1"
-tcheck "go: a SIGKILL after the first write of a displacement leaves the undo record, and the next implement stage start (before any session) puts the agent's file back and removes the partial new file" go_kill_mid_apply "SIGKILL|candidate a.go|true|agent a.go|false|false|stopped-after-recovery"
-tcheck "go: a right agent tree stays (the wrong candidate regresses the spec case P1)" go_right_kept "kept|tree=right|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
-tcheck "go: a margin above the consistent verdicts keeps the agent tree" go_margin3 "kept|tree=wrong|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 3 anchored or 4+ consistent v"
-tcheck "go: a model that returns nothing keeps the agent tree after one call" go_llm_down "kept|tree=wrong|calls=candidates|sealed=true|worktrees=1|no behavioral disagreement"
-tcheck "go: a candidate that also edits an existing test never reaches the checks, so its right fix cannot displace" go_test_edit_only "kept|tree=wrong|calls=candidates|sealed=true|worktrees=1|no behavioral disagreement"
-tcheck "go: no warning sign (every named site covered, quoted lines changed) makes no model call" go_no_sign "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|no warning sign: every named site has a binding spec case an"
-tcheck "go: a throw in the middle of the tournament leaves the agent tree as it was, records a skip on the receipt and never fails the run" go_throws "error|tree=wrong|calls=candidates+judge|sealed=true|worktrees=1|tournament skipped: model transport blew up|receipt=1"
-tcheck "warning signs: an uncovered named site, an issue-quoted line still byte-identical, or an edit-shape residual site (a sibling site alone is not one); none on a plain issue" signs "0,1,1,0,1,0"
-tcheck "probe pruning drops only the case that does not compile; an error outside every case or no error prunes nothing" prune "p2,false,true,true,true"
-tcheck "go: an agent diff over the small-diff limit makes no model call" go_over_limit "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|the agent diff is 2 changed lines, over the 1 small-diff lim"
-tcheck "go: a killed session makes no model call" go_killed "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|the implement session did not finish clean (done, no conflic"
-tcheck "go: no probe program from the exec-spec call makes no model call and reports nothing" go_no_input "null"
-tcheck "receipt: lines only when a tournament ran; the receipt renders them under their own heading" receipt "{},2,true"
-# the gate runs after the Wall and tests are restored (so candidates are checked against the original Wall), and recovery runs before the session
-IMPL="$ROOT/loki-ts/src/engine10/stages/implement.ts"
-g_line="$(grep -n 'await runTournamentGate(' "$IMPL" | head -1 | cut -d: -f1)"; r_line="$(grep -n 'const testsReverted = restoreReadOnly(readOnly)' "$IMPL" | head -1 | cut -d: -f1)"; s_line="$(grep -n 'let session = await ctx.sessions.run(first)' "$IMPL" | head -1 | cut -d: -f1)"; u_line="$(grep -n 'recoverTournamentUndo(ctx.repoDir' "$IMPL" | head -1 | cut -d: -f1)"
-[ -n "$g_line" ] && [ -n "$r_line" ] && [ "$g_line" -gt "$r_line" ] && ok "tournament: the gate runs after restoreReadOnly (candidates see the original Wall and tests)" || bad "tournament: gate line '$g_line' is not after restoreReadOnly line '$r_line'"
-[ -n "$u_line" ] && [ -n "$s_line" ] && [ "$u_line" -lt "$s_line" ] && ok "tournament: the undo recovery runs before the first implement session" || bad "tournament: recovery line '$u_line' is not before the first session line '$s_line'"
-# engine legs: the real bin/loki on the stub provider, exec spec on, lean path. The stub reply carries a probe block after the spec.
-ES_PROBE_BLOCK='
-
-```go
-package a
-
-func TestLokiProbe(t *testing.T) {
-	lokiProbe("p1", "padded dash then operand", func() any { return Split([]string{"  -", "q"}) })
-}
-```'
-ESPL2="$T/tour-prompts"; rm -f "$ESPL2".*
-if command -v go >/dev/null 2>&1; then
-    ESFIX2=$'out = append(out, rargs[0])\n\t\t\tcontinue'; ESOLD2=$'out = append(out, firstArg)\n\t\t\tbreak'
-    tev() { ev 'next((json.dumps(e["data"].get("tournament",{}).get("status","absent")) + ":" + str(e["data"].get("tournament",{}).get("reason",""))[:40] for e in E if e["stage"]=="implement" and e["type"]=="stage.completed"), "none")'; }
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" LOKI_E10_EXEC_SPEC=1 LOKI_E10_TOURNAMENT=1 LOKI_E10_TOURNAMENT_MAX_LINES=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY$ES_PROBE_BLOCK" E2E_STUB_PROMPT_LOG="$ESPL2" \
-        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD2" E2E_STUB_SNIPPET="$ESFIX2" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
-    [ "$(esw)" = "sealed:TestLokiSpec_C1_KeepsAfterDash:loki_wall_spec_test.go:fail=1" ] && ok "tournament engine: a probe block after the spec leaves the spec sealed as before ($(esw))" || { bad "tournament engine: wall gave '$(esw)'"; dump; }
-    grep -lq 'ONE EXCEPTION to the single-block rule' "$ESPL2".* 2>/dev/null && ok "tournament engine: the generator brief carries the probe rules" || bad "tournament engine: the generator brief has no probe rules"
-    [ -f "$RUNDIR/tournament-input.json" ] && python3 -I -c 'import json,sys; i=json.load(open(sys.argv[1])); sys.exit(0 if i["pkg"]=="a" and "TestLokiProbe" in i["program"] and "TestLokiSpec_P1_PaddedDash" in i["spec"] and i["targetRel"]=="a/loki_wall_spec_test.go" and i["pkgRel"]=="a" else 1)' "$RUNDIR/tournament-input.json" && ok "tournament engine: the run dir holds the probe cases, the package and the full spec file" || bad "tournament engine: tournament-input.json missing or wrong"
-    [ "$(tev)" = '"skipped":the agent diff is 4 changed lines, over ' ] && ok "tournament engine: the gate stands down before any model call on an over-limit diff ($(tev))" || bad "tournament engine: implement tournament data '$(tev)'"
-    [ "$(outcome)" = VERIFIED ] && ok "tournament engine: the run is VERIFIED with the knob on" || { bad "tournament engine: outcome '$(outcome)'"; dump; }
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" LOKI_E10_EXEC_SPEC=1 LOKI_E10_TOURNAMENT=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
-        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD2" E2E_STUB_SNIPPET="$ESFIX2" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
-    [ ! -f "$RUNDIR/tournament-input.json" ] &&  [ "$(tev)" = '"absent":' ] && ok "tournament engine: a spec reply with no probe block leaves no input and the gate reports nothing" || bad "tournament engine: no-probe leg gave '$(tev)'"
-    rm -f "$ESPL2".*
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" LOKI_E10_EXEC_SPEC=1 LOKI_E10_TOURNAMENT=0 LOKI_E10_NRD=0 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY$ES_PROBE_BLOCK" E2E_STUB_PROMPT_LOG="$ESPL2" \
-        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD2" E2E_STUB_SNIPPET="$ESFIX2" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
-    if grep -lq 'ONE EXCEPTION to the single-block rule' "$ESPL2".* 2>/dev/null || [ -f "$RUNDIR/tournament-input.json" ] || [ "$(tev)" != '"absent":' ]; then bad "tournament off: LOKI_E10_TOURNAMENT=0 and LOKI_E10_NRD=0 yet the probe rules, the input file or the gate appeared ($(tev))"; else ok "tournament off: no probe rules in the generator brief, no input file, no gate (opt out)"; fi
-fi
 # ---------------------------------------------------------------- edit shape (E2 detector, pure module)
 cat > "$T/edit-shape.ts" <<'TS'
 import { execFileSync } from "node:child_process";
@@ -1759,6 +1650,618 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     [ -n "$(ls "$T"/pin-prompt.*.implement* 2>/dev/null)" ] && [ "$(cat "$T"/pin-prompt.*.implement* 2>/dev/null | grep -c 'pin the behavior')" = "0" ] && ok "defect pin: the brief is unchanged by default (LOKI_E10_DEFECT_PIN unset)" || bad "defect pin: the brief lists pins without LOKI_E10_DEFECT_PIN=1"
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "defect pin: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: defect pin e2e: pytest is not installed"; fi
+fi
+
+# Go test batching (LOKI_E10_GO_BATCH, default on), real `go test`: untouched go test files of one package vouch together in one run; a
+# red file voids the batch and every file runs alone; Wall, task-named and edited files never join (their per-file run is the fail-then-pass
+# proof); the base reruns batch per package with the same verdicts; LOKI_E10_GO_BATCH=0 restores one run per file.
+if command -v go >/dev/null 2>&1; then
+    GB="$T/gobatch"; mkdir -p "$GB/shim"
+    printf '#!/bin/bash\necho "$*" >> "$GOLOG"\nexec "%s" "$@"\n' "$(command -v go)" > "$GB/shim/go"; chmod +x "$GB/shim/go"
+    mkgo() { # <dir> <files> <red indexes, comma separated>
+        local d="$1" i=1 w; mkdir -p "$d/pk"
+        printf 'module example.com/gb\n\ngo 1.21\n' > "$d/go.mod"; printf 'package pk\n\nfunc Id(x int) int { return x }\n' > "$d/pk/pk.go"
+        while [ "$i" -le "$2" ]; do
+            w=$i; case ",$3," in *",$i,"*) w=999 ;; esac
+            printf 'package pk\n\nimport "testing"\n\nfunc TestF%sA(t *testing.T) {\n\tif Id(%s) != %s {\n\t\tt.Fatal("bad")\n\t}\n}\n\nfunc TestF%sB(t *testing.T) {\n\tif Id(2) != 2 {\n\t\tt.Fatal("bad")\n\t}\n}\n' "$i" "$i" "$w" "$i" > "$d/pk/f${i}_test.go"; i=$((i+1))
+        done
+        (cd "$d" && git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -qm base)
+    }
+    mkgo "$GB/green" 4 ""; mkgo "$GB/red" 4 3; mkgo "$GB/basered" 6 2,4,5
+    mkgo "$GB/tonly" 3 ""; rm -f "$GB/tonly/pk/pk.go"; for i in 1 2 3; do printf 'package pk\n\nimport "testing"\n\nfunc TestF%sA(t *testing.T) {}\n\nfunc TestF%sB(t *testing.T) {}\n' "$i" "$i" > "$GB/tonly/pk/f${i}_test.go"; done
+    gofile() { printf 'package pk\n\nimport "testing"\n\nfunc Test%s(t *testing.T) {\n%s\n}\n' "$2" "$3" > "$1"; }
+    mkgl() { # <dir> <f1 f2 f3 base bodies...>: base committed, then head bodies written uncommitted
+        local d="$1"; mkdir -p "$d/pk"; printf 'module example.com/gb\n\ngo 1.21\n' > "$d/go.mod"; printf 'package pk\n\nvar Shared int\n' > "$d/pk/pk.go"
+        gofile "$d/pk/f1_test.go" F1A '	_ = Shared'; gofile "$d/pk/f2_test.go" F2A "$2"; gofile "$d/pk/f3_test.go" F3A "$3"
+        (cd "$d" && git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -qm base)
+        [ -n "${4:-}" ] && gofile "$d/pk/f2_test.go" F2A "$4" && gofile "$d/pk/f3_test.go" F3A "$5"
+        return 0
+    }
+    # global: f2 sets a package global that makes f3 fail beside it on base; alone, both pass on base. Head: both fail (the change broke them).
+    mkgl "$GB/global" '	Shared = 5' '	if Shared == 5 {
+		t.Fatal("order")
+	}' '	Shared = 5
+	t.Fatal("head2")' '	t.Fatal("head3")'
+    # panic: f2 panics (a nil map write) and f3 fails before and after the change; the panic kills the batch binary so f3 has no events.
+    mkgl "$GB/panic" '	var m map[string]int
+	m["a"] = 1' '	t.Fatal("preexisting red")'
+    cat > "$GB/probe.ts" <<'TSEOF'
+const ROOT = process.env.ROOT!, v = await import(ROOT + "/loki-ts/src/engine10/stages/verify.ts"), cr = await import(ROOT + "/loki-ts/src/util/check_result.ts");
+const { failIds } = await import(ROOT + "/loki-ts/src/engine10/failures.ts");
+const repo = process.env.REPO!, n = Number(process.env.N), sig = new AbortController().signal, mode = process.env.MODE;
+const ctx: any = { repoDir: repo, baseSha: Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: repo }).stdout.toString().trim(), emit: () => {} };
+const tests = Array.from({ length: n }, (_, i) => ({ runner: "go", path: `pk/f${i + 1}_test.go` }));
+const alone = async (t: any) => { const tc = cr.commandFor(t, repo, null), a = await v.runOnce(tc.cmd, tc.args, tc.cwd, sig, {}); return { a, c: await cr.corroboratePass(cr.classifyCheck({ kind: "test", ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, runner: "go" }), a.out, "go", tc.args, { cwd: tc.cwd, env: process.env, signal: sig }) }; };
+if (mode === "pure") {
+  const tg = new Set(["go:pk/f1_test.go"]), ch = ["pk/f2_test.go"], f = (i: number, env: any) => v.goBatchable(tests[i], tg, ch, env);
+  console.log([f(2, {}), f(0, {}), f(1, {}), f(2, { LOKI_E10_GO_BATCH: "0" }), f(2, { LOKI_E10_VERIFY_BATCH: "0" })].join(","));
+} else if (mode === "head") {
+  const got = await v.runGoBatches(ctx, tests, null, sig, () => {}), per = new Map<string, string>();
+  for (const t of tests) { const { c } = await alone(t); per.set(v.testCheckName(t), `${c.result}:${c.n}`); }
+  console.log(JSON.stringify({ batched: [...got.entries()].map(([k, c]: any) => `${k}=${c.result}:${c.n}`), alone: [...per.entries()].map(([k, r]) => `${k}=${r}`) }));
+} else {
+  const checks: any[] = [];
+  for (const t of tests) { const { a, c } = await alone(t); checks.push({ name: v.testCheckName(t), cmd: "go test", ...c, ids: c.result === "fail" ? failIds(a.out) : undefined }); }
+  const r = await v.subtractBase(ctx, null, checks, tests, [], new Set(), new Set(process.env.REL ? checks.map((c) => c.name) : []), sig);
+  console.log(JSON.stringify({ knownRed: r.knownRed, weak: r.weak, cnt: r.cnt }));
+}
+TSEOF
+    gb() { env "PATH=$GB/shim:$PATH" "GOLOG=$GB/log" ROOT="$ROOT" "$@" bun --no-env-file --config=/dev/null "$GB/probe.ts" 2>&1; }
+    P="$(gb MODE=pure REPO="$GB/green" N=3)"
+    [ "$P" = "true,false,false,false,false" ] && ok "go batch: an untouched go file batches; Wall/task-named and edited files never do; LOKI_E10_GO_BATCH=0 and LOKI_E10_VERIFY_BATCH=0 turn it off" || bad "go batch eligibility gave: $P"
+    H="$(gb MODE=head REPO="$GB/green" N=4)"
+    [ "$(printf '%s' "$H" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(len(d["batched"])==4 and sorted(d["batched"])==sorted(d["alone"]))' 2>&1)" = True ] \
+        && ok "go batch: a green package vouched in one run gives each file the same result and test count as its own run" || bad "go batch green vs per-file differ: $H"
+    H="$(gb MODE=head REPO="$GB/red" N=4)"
+    [ "$(printf '%s' "$H" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d["batched"]==[] and [a.split("=")[0] for a in d["alone"] if a.split("=")[1].startswith("fail")]==["go:pk/f3_test.go"])' 2>&1)" = True ] \
+        && ok "go batch: one red file voids the batch; every file runs alone and only the red file is attributed" || bad "go batch with a red file gave: $H"
+    H="$(gb MODE=head REPO="$GB/tonly" N=3)"
+    [ "$(printf '%s' "$H" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d["batched"]==[] and all(a.split("=")[1].startswith("not_run") for a in d["alone"]))' 2>&1)" = True ] \
+        && ok "go batch: a package whose pass corroboration refuses (tests only, no module code) is never vouched by the batch; every file runs alone" || bad "go batch tests-only package gave: $H"
+    for knob in 1 0; do : > "$GB/log"; eval "BR$knob=\"\$(gb MODE=base REPO=\"$GB/basered\" N=6 LOKI_E10_GO_BATCH=$knob)\""; eval "BC$knob=\$(grep -c -- '-json -run' \"$GB/log\")"; done
+    [ "$BR1" = "$BR0" ] && printf '%s' "$BR1" | grep -q 'go:pk/f2_test.go","go:pk/f4_test.go","go:pk/f5_test.go' \
+        && ok "go batch: red untouched files on base keep the per-file known-red verdict (red files rerun alone: $BC1 go calls vs $BC0)" || bad "go base batch: verdict '$BR1' vs '$BR0', go calls $BC1 vs $BC0"
+    for fxn in global panic; do for knob in 1 0; do eval "G${fxn}$knob=\"\$(gb MODE=base REPO=\"$GB/$fxn\" N=3 LOKI_E10_GO_BATCH=$knob)\""; done; done
+    [ "$Gglobal1" = "$Gglobal0" ] && printf '%s' "$Gglobal1" | grep -q '"knownRed":\[\]' \
+        && ok "go batch: a file red only beside a sibling's package state on base is rerun alone, so a change-introduced failure is never excused as pre-existing" || bad "go base batch with package state: '$Gglobal1' vs per-file '$Gglobal0'"
+    [ "$Gpanic1" = "$Gpanic0" ] && printf '%s' "$Gpanic1" | grep -q 'f2_test.go","go:pk/f3_test.go' \
+        && ok "go batch: a panic in one file on base leaves later files to rerun alone, each attributed correctly" || bad "go base batch with a panic: '$Gpanic1' vs per-file '$Gpanic0'"
+    for knob in 1 0; do : > "$GB/log"; eval "SR$knob=\"\$(gb MODE=base REPO=\"$GB/green\" N=4 REL=1 LOKI_E10_GO_BATCH=$knob)\""; eval "SC$knob=\$(grep -c -- '-json -run' \"$GB/log\")"; done
+    [ "$SR1" = "$SR0" ] && [ "${SC1:-0}" -lt "${SC0:-0}" ] && ok "go batch: relevant files rerun on base per package give the same counts and weak list ($SC1 go calls vs $SC0)" || bad "go base batch (relevant): '$SR1' vs '$SR0', go calls $SC1 vs $SC0"
+    grep -q 'goBatchable(t, targets0, changed)' loki-ts/src/engine10/stages/verify.ts && ok "go batch: the verify stage selects batch members with goBatchable(Wall, task-named and edited files excluded)" || bad "go batch: verify.ts does not route through goBatchable"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go batch: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go batch: go is not installed"; fi
+fi
+
+
+# ---------------------------------------------------------------- executable spec first (on by default; LOKI_E10_EXEC_SPEC=0 opts out)
+# features/exec_spec.ts through wall.ts's lean branch. Unit: deterministic atoms, the parity atom from the WHOLE function body (firstArg sits
+# past the 45-line excerpt), never on a property write, the pair atom for two named sites a third site reaches, and the binding rule (only
+# want literals the issue states). Real runners (rule 22: go test, pytest, vitest 2 and latest): one stubbed generator reply per runner holds
+# a binding red case, an advisory red case, a green guard and an erroring case; only the binding case stays collected in the sealed file.
+# Engine (stub provider, Wall off, lean path): the spec is sealed as the run's Wall file, red on base; the right fix is VERIFIED and the
+# implement brief carries the spec block; a fix that leaves the binding case red is not VERIFIED; with the knob unset no spec session runs.
+# make_es_go <dir>: a cli-2418-shaped Go package. Split's firstArg sits past line 45 of its body (the excerpt cap) and more than
+# 12 lines above the quoted code (outside the excerpt's window), a sibling
+# branch appends rargs[0]; Report checks StatusCoder and Batch on one err (the pair class).
+make_es_go() {
+    mkdir -p "$1/a"
+    printf 'module example.com/a\n\ngo 1.21\n' > "$1/go.mod"
+    {
+        printf 'package a\n\nimport "strings"\n\n// Split keeps operands after a lone dash.\nfunc Split(rargs []string) []string {\n\tvar out []string\n'
+        for i in $(seq 1 50); do printf '\t// padding line %s keeps firstArg past the 45-line excerpt\n' "$i"; done
+        printf '\tfor ; len(rargs) > 0; rargs = rargs[1:] {\n\t\tfirstArg := strings.TrimSpace(rargs[0])\n'
+        for i in $(seq 1 16); do printf '\t\t// gap line %s keeps firstArg outside the window around the quoted code\n' "$i"; done
+        printf '\t\tif firstArg == "" || firstArg[0] != %s {\n\t\t\tout = append(out, rargs[0])\n\t\t\tcontinue\n\t\t}\n\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n\t\t\tbreak\n\t\t}\n\t}\n\treturn out\n}\n' "'-'"
+        printf '\ntype StatusCoder interface{ Code() int }\n\ntype Batch []error\n\nfunc (b Batch) Error() string { return "batch" }\n\n// Report returns the exit code for err.\nfunc Report(err error) int {\n\tif sc, ok := err.(StatusCoder); ok {\n\t\treturn sc.Code()\n\t}\n\tif b, ok := err.(Batch); ok {\n\t\treturn len(b)\n\t}\n\treturn 1\n}\n\n// Join is the inverse of Split.\nfunc Join(parts []string) string { return strings.Join(parts, " ") }\n'
+    } > "$1/a/a.go"
+    printf 'package a\n\nimport "testing"\n\nfunc TestSplitPlain(t *testing.T) {\n\tif g := Split([]string{"x"}); len(g) != 1 {\n\t\tt.Fatal(g)\n\t}\n}\n' > "$1/a/a_test.go"
+}
+ES_GO_TASK='# Bare dash drops args
+
+`Split` stops at a lone `-`: `x - a b` gives `["-"]` instead of `["-", "a", "b"]`. `Report` also mishandles a `Batch` that holds a `StatusCoder`.
+
+## Location
+
+```go
+		if len(firstArg) == 1 {
+			out = append(out, firstArg)
+			break
+		}
+```
+
+## Expected
+
+The arguments after the dash are retained.
+'
+ES_GO_REPLY='```go
+package a
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestLokiSpec_C1_KeepsAfterDash(t *testing.T) {
+	want := []string{"-", "a", "b"}
+	if got := Split([]string{"-", "a", "b"}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLokiSpec_P1_PaddedDash(t *testing.T) {
+	want := []string{"  -", "q"}
+	if got := Split([]string{"  -", "q"}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLokiSpec_S1_Plain(t *testing.T) {
+	want := []string{"x"}
+	if got := Split([]string{"x"}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLokiSpec_C2_Panics(t *testing.T) {
+	var m map[string]int
+	m["x"] = 1
+}
+```'
+# make_es_py <dir>: a pytest package; normalize reads t = raw.strip() on the quoted branch, the sibling appends raw.
+make_es_py() {
+    mkdir -p "$1/tests"
+    printf 'def normalize(tags):\n    out = []\n    for raw in tags:\n        t = raw.strip()\n        if t.startswith("#"):\n            out.append(t[1:])\n            continue\n        out.append(raw)\n    return out\n' > "$1/tags.py"
+    printf 'import tags\n\n\ndef test_plain():\n    assert tags.normalize(["x"]) == ["x"]\n' > "$1/tests/test_tags.py"
+    printf '[pytest]\npythonpath = .\n' > "$1/pytest.ini"
+}
+ES_PY_TASK='# normalize keeps case
+
+`normalize` drops the hash but keeps case: `normalize(["#A"])` gives `["A"]` instead of `["a"]`.
+
+## Location
+
+```python
+        if t.startswith("#"):
+            out.append(t[1:])
+```
+'
+ES_PY_REPLY='```python
+import tags
+
+
+def test_loki_spec_c1_lowercases():
+    want = ["a"]
+    assert tags.normalize(["#A"]) == want
+
+
+def test_loki_spec_p1_upper():
+    want = ["q"]
+    assert tags.normalize(["Q"]) == want
+
+
+def test_loki_spec_s1_plain():
+    want = ["x"]
+    assert tags.normalize(["x"]) == want
+
+
+def test_loki_spec_c2_missing():
+    want = 1
+    assert tags.normalize.missing() == want
+```'
+# make_es_ts <dir> <node_modules>: a vitest package; slug keeps case.
+make_es_ts() {
+    mkdir -p "$1/src"
+    printf '{"name":"s","private":true,"type":"module","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"*"}}\n' > "$1/package.json"
+    printf 'export function slug(s: string): string {\n  const t = s.trim();\n  if (t === "") return s;\n  return t.replace(/ /g, "-");\n}\n' > "$1/src/slug.ts"
+    printf 'import { expect, test } from "vitest";\nimport { slug } from "./slug";\n\ntest("plain", () => {\n  expect(slug("x")).toBe("x");\n});\n' > "$1/src/slug.test.ts"
+    ln -s "$2" "$1/node_modules"
+    printf 'node_modules\n' > "$1/.gitignore"
+}
+ES_TS_TASK='# slug keeps case
+
+`slug` keeps upper case: `slug("A B")` gives `"A-B"` instead of `"a-b"`.
+'
+ES_TS_REPLY='```ts
+import { expect, test } from "vitest";
+import { slug } from "./slug";
+
+test("LokiSpec_C1_Lower", () => {
+  const want = "a-b";
+  expect(slug("A B")).toBe(want);
+});
+
+test("LokiSpec_C2_Other", () => {
+  const want = "zz-top";
+  expect(slug("ZZ top")).toBe(want);
+});
+
+test("LokiSpec_S1_Plain", () => {
+  const want = "x";
+  expect(slug("x")).toBe(want);
+});
+
+test("LokiSpec_S2_Missing", () => {
+  const want = 1;
+  expect((slug as unknown as { nope: () => number }).nope()).toBe(want);
+});
+```'
+if command -v go >/dev/null 2>&1; then
+    ESD="$T/es-go"; rm -rf "$ESD"; make_es_go "$ESD"
+    ESU="$(cd "$ROOT/loki-ts" && ESD="$ESD" TASK="$ES_GO_TASK" timeout 120 bun -e '
+const es = await import("./src/features/exec_spec.ts"), task = process.env.TASK, out = [];
+const a = es.extractSpecAtoms(task), s = es.resolveSites(a, process.env.ESD), p = es.parityAtoms(a, s), x = es.pairAtoms(a, s);
+out.push(a.filter((z) => z.kind === "site").map((z) => z.text).join(","), `P${p.length}`, x.map((z) => z.text.match(/`(\w+)` and `(\w+)`/).slice(1).join("+")).join(","));
+const noQuote = task.replace(/## Location[\s\S]*?## Expected/, "## Expected"), a2 = es.extractSpecAtoms(noQuote); out.push(`noquote=P${es.parityAtoms(a2, es.resolveSites(a2, process.env.ESD)).length}`);
+const other = task.replace(/```go[\s\S]*?```/, "```go\n\treturn out\n```"), a3 = es.extractSpecAtoms(other); out.push(`otherquote=P${es.parityAtoms(a3, es.resolveSites(a3, process.env.ESD)).length}`);
+const prop = { symbol: "set", file: "o.ts", line: 1, source: "", body: "set(value) {\n  this.#i.method = value.toUpperCase();\n  log(value);\n}" };
+out.push(`prop=P${es.parityAtoms([{ id: "L1", kind: "location", text: "this.#i.method = value.toUpperCase();" }], [prop]).length}`);
+const fn = (...l) => ["func TestLokiSpec_C1_X(t *testing.T) {", ...l, "}"].join("\n"), cmp = "\tif got != want {\n\t\tt.Fatalf(\"got %q\", got)\n\t}";
+const slug = "`Slug(\"A B\")` gives `\"A-B\"` instead of `\"a-b\"`.", B = (body, t) => (es.isBinding(body, t) ? 1 : 0);
+out.push("bind=" + [B(fn("\twant := \"a-b\"", "\tgot := Slug(\"A B\")", cmp), slug), // input and expected value from one example
+  B(fn("\twant := \"a-b\"", "\tgot := Slug(\"A    B\")", "\tif got != \"a-b-b-b\" {", "\t}"), slug), // an input the issue never shows, asserting another value
+  B(fn("\twant := \"a-b\"", "\twant = \"qqq\"", "\tgot := Slug(\"A B\")", cmp), slug), // want reassigned
+  B(fn("\twant := \"bad\"", "\tgot := Parse().Error()", cmp), "`Parse()` returns `error: bad input` instead of nil."), // a fragment of a span
+  B(fn("\twant := 3", "\tgot := Retries()", cmp), "It stops after 3 retries instead of 5."), // a number only in prose
+  B(fn("\twant := \"a-b\"", "\tgot := Slug(\"A B\")", cmp), "`Slug(\"A B\")` is wrong. It should give `\"a-b\"`.")].join("")); // input and value from two examples
+const { mkdtempSync: mk, writeFileSync: wf } = require("node:fs"), rd = mk(require("node:os").tmpdir() + "/loki-es-brief-"); wf(rd + "/exec-spec-brief.txt", "B");
+out.push(`brief=${es.execSpecBriefOf(rd, { LOKI_E10_EXEC_SPEC: "0" }) ?? "none"},${es.execSpecBriefOf(rd, {}) ?? "none"}`); require("node:fs").rmSync(rd, { recursive: true, force: true });
+await import("./src/engine10/stages/wall.ts"); const { specSiteGap } = await import("./src/engine10/stages/seal.ts");
+const g = (st, ch) => specSiteGap({ wall: { files: [], exec_spec: { status: st, uncovered_sites: ["Report"] } } }, [], {}, () => "", ch).join("+") || "-";
+out.push(`gap=${g("sealed", [])},${g("sealed", ["Report"])},${g("advisory_only", [])}`, `defect=${[...es.defectSites(task)].sort().join("+")}`);
+console.log(out.join(" | "));' 2>&1)"
+    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | otherquote=P0 | prop=P0 | bind=100000 | brief=none,B | gap=Report,-,- | defect=Report+x"
+    [ "$ESU" = "$WESU" ] && ok "exec spec atoms: parity from the whole body and only from quoted code, never a property write, one pair for the two sites Report reaches, binding only when input and expected value come whole from one issue example, no brief read with the knob off" \
+        || bad "exec spec atoms gave: $ESU (want: $WESU)"
+fi
+# es_leg <label> <runner> <repo> <existing test> <task> <reply> <want>: execSpecAuthor with the stub reply, then the sealed file run by the real runner on base.
+es_leg() {
+    (cd "$3" && git init -q -b main && git add -- . && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m base)
+    local got
+    got="$(cd "$ROOT/loki-ts" && ESD="$3" RUN="$2" EXIST="$4" TASK="$5" REPLY="$6" timeout 300 bun -e '
+const es = await import("./src/features/exec_spec.ts"), e = process.env;
+es.setExecSpecGenerator(async () => e.REPLY);
+const o = await es.execSpecAuthor({ task: e.TASK, repoDir: e.ESD, runners: [e.RUN], existingTests: [e.EXIST], sessions: null, iterationId: "t", signal: new AbortController().signal });
+const em = es.EMITTERS[e.RUN], sealed = o.file ? es.redFilter(em, e.ESD, o.targetRel, o.file) : null;
+console.log(`${o.status} ${o.targetRel} binding=${o.binding} advisory=${o.advisory} guards=${o.guards} dropped=${o.dropped} sealed=${sealed ? Object.entries(sealed.cases).map(([k, v]) => k + ":" + v).join("+") : "-"}`);' 2>&1)"
+    [ "$got" = "$7" ] && ok "exec spec $1: binding red case sealed alone, advisory, guard and erroring cases kept out ($2 on base)" || bad "exec spec $1 gave: $got (want: $7)"
+}
+if command -v go >/dev/null 2>&1; then
+    rm -rf "$T/es-go2"; make_es_go "$T/es-go2"
+    es_leg "go test" go "$T/es-go2" a/a_test.go "$ES_GO_TASK" "$ES_GO_REPLY" "sealed a/loki_wall_spec_test.go binding=TestLokiSpec_C1_KeepsAfterDash advisory=TestLokiSpec_P1_PaddedDash guards=TestLokiSpec_S1_Plain dropped=TestLokiSpec_C2_Panics sealed=TestLokiSpec_C1_KeepsAfterDash:red"
+elif [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "exec spec go test: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: exec spec go test: go is not installed"; fi
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    rm -rf "$T/es-py"; make_es_py "$T/es-py"
+    es_leg "pytest" pytest "$T/es-py" tests/test_tags.py "$ES_PY_TASK" "$ES_PY_REPLY" "sealed tests/loki_wall_spec_test.py binding=test_loki_spec_c1_lowercases advisory=test_loki_spec_p1_upper guards=test_loki_spec_s1_plain dropped=test_loki_spec_c2_missing sealed=test_loki_spec_c1_lowercases:red"
+elif [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "exec spec pytest: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: exec spec pytest: pytest is not installed"; fi
+for vt in 2 latest; do
+    VT_NM="$T/vt-$vt/node_modules"
+    if [ ! -d "$VT_NM/vitest" ]; then mkdir -p "$T/vt-$vt"; printf '{"name":"c","private":true,"type":"module"}\n' > "$T/vt-$vt/package.json"; (cd "$T/vt-$vt" && timeout 300 npm install --no-audit --no-fund --silent "vitest@$vt" >/dev/null 2>&1); fi
+    if [ ! -x "$VT_NM/.bin/vitest" ]; then
+        if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "exec spec vitest $vt: vitest@$vt could not be installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: exec spec vitest $vt: vitest@$vt could not be installed (offline?)"; fi
+        continue
+    fi
+    rm -rf "$T/es-ts-$vt"; make_es_ts "$T/es-ts-$vt" "$VT_NM"
+    es_leg "vitest $vt" vitest "$T/es-ts-$vt" src/slug.test.ts "$ES_TS_TASK" "$ES_TS_REPLY" "sealed src/loki_wall_spec.test.ts binding=LokiSpec_C1_Lower advisory=LokiSpec_C2_Other guards=LokiSpec_S1_Plain dropped=LokiSpec_S2_Missing sealed=LokiSpec_C1_Lower:red"
+done
+# generator route (T174): by default one toolLessCall (stub Agent SDK query, no network): no agent session runs, the query has no tools,
+# one turn, thinking adaptive at effort low, its dollars land in the child ledger as phase exec_spec and on the outcome; under
+# LOKI_E10_INVOKER=cli the generator goes through the run's own CLI session instead (the stub provider in these tests).
+if command -v go >/dev/null 2>&1; then
+    rm -rf "$T/es-tl"; make_es_go "$T/es-tl"; (cd "$T/es-tl" && git init -q -b main && git add -- . && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m base)
+    ESTL="$(cd "$ROOT/loki-ts" && ESD="$T/es-tl" TASK="$ES_GO_TASK" REPLY="$ES_GO_REPLY" env -u ANTHROPIC_API_KEY -u LOKI_SDK_OAUTH_DEV -u LOKI_E10_INVOKER -u LOKI_E10_MAX_COST_USD -u LOKI_E10_SPENT_USD LOKI_E10_RUN_ID=t timeout 300 bun -e '
+const es = await import("./src/features/exec_spec.ts"), sdk = await import("./src/runner/sdk_invoker.ts"), { readFileSync, existsSync } = require("node:fs"), e = process.env;
+let opts = null, queries = 0, sessions = 0;
+sdk.__setToolLessQueryForTests(async function* ({ options }) { queries++; opts = options; yield { type: "assistant", message: { content: [{ type: "text", text: e.REPLY }] } }; yield { type: "result", subtype: "success", is_error: false, result: e.REPLY, total_cost_usd: 0.0004, usage: { input_tokens: 2, output_tokens: 400, cache_read_input_tokens: 0, cache_creation_input_tokens: 700 }, modelUsage: { "claude-haiku-5-5": { thinkingTokens: 10 } } }; });
+const fake = { run: async () => { sessions++; return { exit: 0, killed: false }; } };
+const run = () => es.execSpecAuthor({ task: e.TASK, repoDir: e.ESD, runners: ["go"], existingTests: ["a/a_test.go"], sessions: fake, iterationId: "t-execspec", signal: new AbortController().signal });
+const a = await run(), led = `${e.ESD}/.loki/metrics/child-sessions.jsonl`, lines = existsSync(led) ? readFileSync(led, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
+const out = [`tl:${a.status}:sessions=${sessions}:queries=${queries}:tools=${JSON.stringify(opts?.tools)}:turns=${opts?.maxTurns}:thinking=${opts?.thinking?.type}/${opts?.effort}:usd=${a.generatorUsd > 0}:ledger=${lines.map((l) => l.phase).join(",")}`];
+process.env.LOKI_E10_INVOKER = "cli"; const b = await run(); out.push(`cli:${b.status}:sessions=${sessions}:queries=${queries}`);
+console.log(out.join(" | "));' 2>&1)"
+    WESTL="tl:sealed:sessions=0:queries=1:tools=[]:turns=1:thinking=adaptive/low:usd=true:ledger=exec_spec | cli:skipped:sessions=1:queries=1"
+    [ "$ESTL" = "$WESTL" ] && ok "exec spec generator: one toolLessCall by default (no agent session, no tools, thinking low, priced as exec_spec); the CLI invoker uses its session" \
+        || bad "exec spec generator gave: $ESTL (want: $WESTL)"
+fi
+# engine legs: the real bin/loki on the stub provider, Wall off (the product default), lean path.
+if command -v go >/dev/null 2>&1; then
+    ESFIX=$'out = append(out, rargs[0])\n\t\t\tcontinue'; ESOLD=$'out = append(out, firstArg)\n\t\t\tbreak'
+    esw() { ev 'next((e["data"].get("exec_spec",{}).get("status","") + ":" + ",".join(e["data"].get("exec_spec",{}).get("binding",[])) + ":" + ",".join(f["path"].rsplit("/",1)[-1] for f in e["data"].get("files",[])) + ":fail=" + str(e["data"].get("base_run",{}).get("fail")) for e in E if e["stage"]=="wall" and e["type"] in ("stage.completed","stage.skipped")), "none")'; }
+    ESPL="$T/es-prompts"; rm -f "$ESPL".*; ES_GO_TASK1="$(printf '%s' "$ES_GO_TASK" | sed 's/ `Report` also mishandles a `Batch` that holds a `StatusCoder`\.//')"
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" E2E_STUB_PROMPT_LOG="$ESPL" \
+        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    [ "$(esw)" = "sealed:TestLokiSpec_C1_KeepsAfterDash:loki_wall_spec_test.go:fail=1" ] && ok "exec spec engine (default on): the binding case is sealed as the run's Wall file and is red on base ($(esw))" || { bad "exec spec engine: wall gave '$(esw)'"; dump; }
+    grep -q "Executable spec: a/loki_wall_spec_test.go" "$ESPL.implement0" 2>/dev/null && grep -q "Advisory spec cases" "$ESPL.implement0" && ok "exec spec engine: the implement brief names the binding case and lists the advisory ones" || bad "exec spec engine: the implement brief has no spec block"
+    [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: one named site, the right fix turns its sealed case green and is VERIFIED" || { bad "exec spec engine: right-fix outcome '$(outcome)'"; dump; }
+    esr="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; e=json.load(open(sys.argv[1])).get("exec_spec") or {}; print(e.get("status"), "num" if isinstance(e.get("seconds"), (int, float)) and e.get("seconds") >= 0 else "none", e.get("binding"), "usd" in e)' "$RUNDIR/receipt.json" 2>/dev/null)"
+    [ "$esr" = "sealed num 1 True" ] && ok "exec spec engine: the receipt records the stage's status, seconds, binding count and generator dollars ($esr)" || bad "exec spec engine: receipt exec_spec gave '$esr'"
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+    [ "$(outcome)" = PARTIAL ] && ok "exec spec engine: Split fixed but Report (named, no binding case) untouched is not VERIFIED ($(outcome))" || { bad "exec spec engine: second-site outcome '$(outcome)'"; dump; }
+    has "exec spec engine: the receipt names the named site without a binding case" "$notes" "named site without a binding case (no agent-independent passing test names it): Report"
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1 The loop sits next to \`Report\`, which reads the same arguments." E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: a helper the issue only mentions in passing never costs the right fix its VERIFIED" || { bad "exec spec engine: passing-mention outcome '$(outcome)'"; dump; }
+    # the defect words must attach to the site's own span: a comparison, a negated scope and a health verdict never cap (review round 3)
+    for esx in "\`Split\` should return the operands like \`Join\` does." "Fix \`Split\`. It should not change \`Report\`, which is fine." "\`Split\` drops args; this does not affect \`Report\`." "See \`Join\` for the expected shape; \`Split\` is wrong." \
+        "\`Join\` returns \`[\"a\"]\` for one operand but \`Split\` returns \`[\"-\"]\` instead of \`[\"-\", \"a\"]\`." "\`Join\` returns the right shape, \`Split\` should do the same." \
+        "\`Split\` drops args. \`Report\` gives 1 for a nil error, which is correct."; do
+        E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1 $esx" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+            E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+        [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: '$esx' leaves the right fix VERIFIED" || { bad "exec spec engine: '$esx' outcome '$(outcome)'"; dump; }
+    done
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE=$'\t\t\tbreak' E2E_STUB_SNIPPET=$'\t\t\tbreak // looked at' LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    [ -n "$(outcome)" ] && [ "$(outcome)" != VERIFIED ] && ok "exec spec engine: a change that leaves the binding case red is not VERIFIED ($(outcome))" || { bad "exec spec engine: no-fix outcome '$(outcome)'"; dump; }
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" LOKI_E10_EXEC_SPEC=0 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    grep -q -- '-execspec' "$ITERS" && bad "exec spec off: a generator session ran with LOKI_E10_EXEC_SPEC=0" || ok "exec spec off: LOKI_E10_EXEC_SPEC=0 runs no generator session and no spec file"
+# ---------------------------------------------------------------- Go candidate tournament (LOKI_E10_TOURNAMENT, default on, =0 opts out)
+# features/tournament.ts. Unit (stub Io, no model, no go): the probe text parsers, the order-swap judge, and the selection rule: the agent's
+# check-passing tree is displaced only by a check-passing challenger that regresses no spec case the agent passes, loses no probe, and wins
+# one anchored verdict (the agent left the input as the base had it) or two consistent verdicts; an unstable probe is dropped; a diff probe
+# runs only when the issue probes separate nothing. Real go test (rule 22): the gate over a real git repo, real treeswap scratch worktrees,
+# real go test checks plus the sealed spec, real probe runs, a stubbed model: a wrong agent tree is displaced by the right candidate in the
+# primary (sealed spec kept, worktrees removed), a right agent tree, a position-answering judge, an unsure judge, a model failure and a
+# margin above the verdicts all keep the agent. Engine (stub provider, exec spec on, lean path): the probe block rides on the spec call, never
+# breaks the spec, and the gate stands down before any model call when the diff is over the limit; with LOKI_E10_TOURNAMENT=0 nothing changes.
+TOUR_DRV="$T/tour-drv.ts"
+cat > "$TOUR_DRV" <<'TOURDRV'
+import { execSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const R = process.env.ROOT!, W = process.env.WORK!;
+const t = await import(`${R}/loki-ts/src/features/tournament.ts`);
+const row = (k: string, v: unknown): void => { console.log(`${k}=${v}`); };
+
+// ---------- unit: parsers ----------
+const REPLY = "```go\npackage a\n\nfunc TestLokiSpec_C1_X(t *testing.T) {}\n```\n\n```go\npackage a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"d\", func() any { return strings.ToUpper(\"x\") })\n}\n```";
+const sp = t.splitProbeBlock(REPLY), sp2 = t.splitProbeBlock(REPLY.slice(REPLY.indexOf("```go", 5)) + "\n\n" + REPLY.slice(0, REPLY.indexOf("```go", 5)));
+row("split", [sp.spec.includes("TestLokiProbe"), sp.spec.includes("TestLokiSpec_C1_X"), sp.probe?.includes("TestLokiProbe"), sp2.spec.includes("TestLokiProbe"), sp2.spec.includes("TestLokiSpec_C1_X"), t.splitProbeBlock("```go\npackage a\n```").probe].join(","));
+const pc = (b: string | null, pkg = "a") => { const r = t.parseGoProbeCases(b, pkg); return "file" in r ? `ok(${r.repairedImports.join("")})` : r.refused.split(":")[0]; };
+row("probe", [pc(sp.probe), pc(null), pc("package b\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p\", \"d\", f)\n}"), pc("package a\nfunc TestLokiProbe(t *testing.T) {\n\tos.Exit(1)\n\tlokiProbe(\"p\", \"d\", f)\n}"), pc("package a\nfunc TestLokiProbe(t *testing.T) {\n}"), pc("package a\nfunc lokiProbe() {}\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p\", \"d\", f)\n}")].join(","));
+row("any", t.anyToInterface('x := any(1) // any\ny := "any"').replace(/\n/g, "~") + "|" + t.repairGoImports('package a\n\nimport (\n\t"fmt"\n)\n\nfunc F(t *testing.T) { _ = strings.TrimSpace("") }\n').changes.join(""));
+const C = t.parseCandidates("=== CANDIDATE 1 ===\n<<<<<<< SEARCH a.go\nx\n=======\ny\n>>>>>>> REPLACE\n=== CANDIDATE 2 ===\n<<<<<<< SEARCH b.go\nq\n=======\nz\n>>>>>>> REPLACE\n");
+row("cands", C.map((c: any) => `${c.id}:${c.edits.length}`).join(",") + "|" + [t.applyEdits({ "a.go": "x x" }, C[0].edits), t.applyEdits({ "a.go": "x" }, [{ path: "zz.go", search: "x", replace: "y" }]), t.applyEdits({ "a.go": "ax" }, C[0].edits)?.["a.go"]].map((v) => v === null ? "null" : JSON.stringify(v)).join(","));
+const ents = (a: Record<string, string>, b: Record<string, string>) => [{ id: "agent", lens: "", dir: "", checksPass: true, run: a, diffLines: 0 }, { id: "c1", lens: "", dir: "", checksPass: true, run: b, diffLines: 4 }];
+const pr = (...ids: string[]) => ids.map((id) => ({ id, desc: id }));
+const dd = t.disagreements(ents({ p1: "A", p2: "A" }, { p1: "B", p2: "A" }), pr("p1", "p2")), views = t.judgeViews(dd);
+const ans = (f: (v: any) => string) => t.resolveVerdicts(views, t.parseVerdicts(views.map((v: any) => `${v.viewId}: ${f(v)}`).join("\n")));
+const lab = (v: any, out: string) => v.options.find((o: any) => o.out === out)?.label ?? "unknown";
+row("judge", [dd.length, views.map((v: any) => v.viewId).join("/"), ans((v) => lab(v, "B")).get("p1"), ans(() => "A").size, ans(() => "unknown").size, ans((v) => (v.viewId.endsWith(".1") ? lab(v, "B") : lab(v, "A"))).size, t.parseVerdicts("p4: option B - why\n**p5**: unknown\n").get("p4")].join(","));
+
+// ---------- unit: selection through runTournament with a stub Io ----------
+const lines = (o: Record<string, string>): string => Object.entries(o).map(([id, v]) => `LOKIPROBE ${JSON.stringify({ id, desc: id, out: v })}`).join("\n");
+const cand = (n: number): string => `=== CANDIDATE ${n} ===\n<<<<<<< SEARCH a/a.go\nold\n=======\nc${n}\n>>>>>>> REPLACE\n`;
+const PROG = "package a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"d\", func() any { return F(\"a\") })\n\tlokiProbe(\"p2\", \"d\", func() any { return F(\"b\") })\n\tlokiProbe(\"p3\", \"d\", func() any { return F(\"zzz\") })\n\tlokiProbe(\"p4\", \"d\", func() any { return F(\"yyy\") })\n}\n", ISSUE = '`F("a")` and `F("b")` are wrong';
+interface W { prog?: string; base?: Record<string, string>; baseB?: Record<string, string>; agent: Record<string, string>; c1?: Record<string, string>; c2?: Record<string, string>; pass?: Record<string, boolean>; spec?: Record<string, Record<string, "red" | "green" | "error">>; judge?: string | ((u: string) => string); cands?: number; dp?: { reply: string; runs: Record<string, Record<string, string>> }; src?: Record<string, string> }
+async function sel(w: W): Promise<string> {
+  const calls: string[] = [], baseOut = w.base ?? { p1: "B0", p2: "B0", p3: "B0" }, runs: Record<string, Record<string, string>> = { agent: w.agent, c1: w.c1 ?? w.agent, c2: w.c2 ?? w.agent };
+  let bases = 0;
+  const llm = async (_s: string, u: string, tag: string) => { calls.push(tag);
+    if (tag === "candidates") return { text: cand(1) + (w.cands === 1 ? "" : cand(2)), usage: { costUsd: 0.001 } };
+    if (tag === "diffprobe") return { text: w.dp?.reply ?? "", usage: { costUsd: 0.001 } };
+    return { text: typeof w.judge === "function" ? w.judge(u) : w.judge ?? "", usage: { costUsd: 0.0005 } }; };
+  const io = {
+    materialize: (e: any) => (e === "agent" ? "agent" : e === "base" ? (bases++ === 0 ? "baseA" : "baseB") : e[0].replace === "c1" ? "c1" : "c2"),
+    checks: async (d: string) => (w.pass ?? {})[d] ?? true,
+    probe: (d: string, program: string) => program.includes("dprobe") ? lines(w.dp!.runs[d] ?? w.dp!.runs.agent!) : lines(d === "baseA" ? baseOut : d === "baseB" ? (w.baseB ?? baseOut) : runs[d]!),
+    spec: (d: string) => (w.spec ?? {})[d] ?? null,
+  };
+  const tf = (d: string): Record<string, string> => ({ "a/a.go": (w.src ?? {})[d] ?? "func F() int {\n\treturn 0\n}" });
+  const r = await t.runTournament({ issue: ISSUE, files: { "a/a.go": "old" }, tests: {} }, llm, io, { program: w.prog ?? PROG, pkg: "a", treeFiles: tf });
+  return `${r.pick.displaced ? r.pick.winner : "kept"}/${calls.join("+")}`;
+}
+const judgeBacks = (want: string | Record<string, string>) => (u: string) => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const wo = typeof want === "string" ? want : want[id.replace(/^d/, "").split(".")[0]!] ?? want[id.split(".")[0]!]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2] === wo); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n");
+const A = { p1: "A", p2: "A", p3: "A" }, B = { p1: "B", p2: "B", p3: "A" };
+row("sel_same", await sel({ agent: A, judge: "" }));
+row("sel_two", await sel({ agent: A, c1: B, judge: judgeBacks("B") }));
+row("sel_one_unanchored", await sel({ agent: A, c1: { ...A, p1: "B" }, judge: judgeBacks("B") }));
+row("sel_one_anchored", await sel({ agent: { ...A, p1: "B0" }, c1: { ...A, p1: "B" }, judge: judgeBacks("B") }));
+row("sel_loses_one", await sel({ agent: A, c1: { p1: "B", p2: "B", p3: "B" }, judge: judgeBacks({ p1: "B", p2: "B", p3: "A" }) }));
+row("sel_spec_veto", await sel({ agent: A, c1: B, judge: judgeBacks("B"), spec: { agent: { S1: "green" }, c1: { S1: "red" }, c2: { S1: "green" } } }));
+row("sel_check_fail", await sel({ agent: A, c1: B, judge: judgeBacks("B"), pass: { c1: false } }));
+row("sel_unstable", await sel({ agent: A, c1: B, base: { p1: "B0", p2: "B0", p3: "B0" }, baseB: { p1: "X", p2: "Y", p3: "B0" }, judge: judgeBacks("B") }));
+row("sel_position", await sel({ agent: A, c1: B, judge: (u) => u.split("\n").filter((l) => /^PROBE /.test(l)).map((l) => `${/^PROBE (\S+):/.exec(l)![1]}: A`).join("\n") }));
+row("sel_unknown", await sel({ agent: A, c1: B, judge: (u) => u.split("\n").filter((l) => /^PROBE /.test(l)).map((l) => `${/^PROBE (\S+):/.exec(l)![1]}: unknown`).join("\n") }));
+row("sel_judge_down", await sel({ agent: A, c1: B, judge: "" }));
+row("sel_diffprobe", await sel({ src: { agent: "func F() int {\n\treturn 1\n}", c1: "func F() int {\n\treturn 2\n}", c2: "func F() int {\n\treturn 2\n}" }, agent: A, c1: A, c2: A, dp: { reply: "```go\npackage a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"q\", \"dprobe\", func() any { return F(\"a\") })\n}\n```", runs: { baseA: { q: "B0" }, baseB: { q: "B0" }, agent: { q: "B0" }, c1: { q: "B" }, c2: { q: "B" } } }, judge: judgeBacks("B") }));
+row("sel_unnamed", await sel({ agent: { ...A, p3: "B0" }, c1: { ...A, p3: "B" }, judge: judgeBacks("B") }));
+row("sel_two_unnamed", await sel({ base: { p1: "B0", p2: "B0", p3: "B0", p4: "B0" }, agent: { ...A, p4: "A" }, c1: { ...A, p3: "B", p4: "B" }, judge: judgeBacks("B") }));
+row("sel_no_named", await sel({ prog: "package a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p3\", \"d\", func() any { return F(\"zzz\") })\n}\n", agent: A, c1: B, judge: judgeBacks("B") }));
+row("sel_agent_red", await sel({ agent: A, c1: B, judge: judgeBacks("B"), pass: { agent: false } }));
+row("sel_diffprobe_not_needed", await sel({ agent: A, c1: B, dp: { reply: "x", runs: {} }, judge: judgeBacks("B") }));
+
+// ---------- real go: the gate over a real repo and real treeswap worktrees ----------
+const HEAD = `package a\n\nimport (\n\t"reflect"\n\t"testing"\n)\n\n`;
+const SPEC_C1 = `func TestLokiSpec_C1_KeepsAfterDash(t *testing.T) {\n\twant := []string{"-", "a", "b"}\n\tif got := Split([]string{"-", "a", "b"}); !reflect.DeepEqual(got, want) {\n\t\tt.Fatalf("got %q", got)\n\t}\n}\n`;
+const SPEC_P1 = `\nfunc TestLokiSpec_P1_PaddedDash(t *testing.T) {\n\twant := []string{"  -", "q"}\n\tif got := Split([]string{"  -", "q"}); !reflect.DeepEqual(got, want) {\n\t\tt.Fatalf("got %q", got)\n\t}\n}\n`;
+const PROBE = `package a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe("p1", "padded dash then operand", func() any { return Split([]string{"  -", "q"}) })\n\tlokiProbe("p2", "tab padded dash", func() any { return Split([]string{"\\t-", "q"}) })\n\tlokiProbe("p3", "plain operands", func() any { return Split([]string{"x", "y"}) })\n}\n`; // no testing import: repairGoImports adds it
+const GO_SRC = "package a\n\n// Split keeps operands after a lone dash.\nfunc Split(rargs []string) []string {\n\tvar out []string\n\tfor ; len(rargs) > 0; rargs = rargs[1:] {\n\t\tfirstArg := trim(rargs[0])\n\t\tif firstArg == \"\" || firstArg[0] != '-' {\n\t\t\tout = append(out, rargs[0])\n\t\t\tcontinue\n\t\t}\n\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n\t\t\tbreak\n\t\t}\n\t}\n\treturn out\n}\n\nfunc trim(s string) string {\n\tfor len(s) > 0 && (s[0] == 32 || s[0] == 9) {\n\t\ts = s[1:]\n\t}\n\treturn s\n}\n";
+const GO_TEST = 'package a\n\nimport "testing"\n\nfunc TestSplitPlain(t *testing.T) {\n\tif g := Split([]string{"x"}); len(g) != 1 {\n\t\tt.Fatal(g)\n\t}\n}\n';
+const WRONG = "out = append(out, firstArg)\n\t\t\tcontinue", RIGHT = "out = append(out, rargs[0])\n\t\t\tcontinue", BREAK = "out = append(out, firstArg)\n\t\t\tbreak";
+const CANDS = (a: string, b: string): string => `=== CANDIDATE 1 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${a}\n>>>>>>> REPLACE\n=== CANDIDATE 2 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${b}\n>>>>>>> REPLACE\n=== CANDIDATE 3 ===\n<<<<<<< SEARCH a/a_test.go\n\t\tt.Fatal(g)\n=======\n\t\tt.Log(g)\n>>>>>>> REPLACE\n`;
+const { attemptDeps } = await import(`${R}/loki-ts/src/engine10/stages/implement.ts`);
+const sh = (c: string, cwd: string): string => execSync(c, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+interface G { probeSkip?: string; weakenTest?: boolean; probeExtra?: string; agentExtras?: boolean; big?: boolean; report?: boolean; agent: string; judge?: (u: string) => string; cands?: string; killed?: boolean; noInput?: boolean; env?: Record<string, string>; llmDown?: boolean; noSign?: boolean; throwOn?: string }
+let gn = 0;
+async function gate(g: G): Promise<string> {
+  const SRC = g.big ? GO_SRC + "// padding to push the file over the prompt limit\n".repeat(600) : GO_SRC, repo = join(W, `g${gn++}`, "repo"), runDir = join(W, `g${gn}`, "run"); mkdirSync(join(repo, "a"), { recursive: true }); mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(repo, "go.mod"), "module example.com/a\n\ngo 1.21\n"); writeFileSync(join(repo, "a/a.go"), SRC); writeFileSync(join(repo, "a/a_test.go"), GO_TEST);
+  sh("git init -q -b main && git add -- . && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m base", repo);
+  const baseSha = sh("git rev-parse HEAD", repo), sealedRel = "a/loki_wall_spec_test.go", sealed = HEAD + SPEC_C1;
+  writeFileSync(join(repo, "a/a.go"), SRC.replace(BREAK, g.agent)); writeFileSync(join(repo, sealedRel), sealed);
+  if (g.weakenTest) writeFileSync(join(repo, "a/a_test.go"), GO_TEST.replace("func TestSplitPlain(t *testing.T) {", "func TestSplitPlain(t *testing.T) {\n\tt.Skip(\"flaky\")"));
+  if (g.agentExtras) { writeFileSync(join(repo, "a/agent_new_test.go"), "package a\n\nimport \"testing\"\n\nfunc TestAgentNew(t *testing.T) {}\n"); writeFileSync(join(repo, "a/a_test.go"), GO_TEST + "\nfunc TestAgentAddedCase(t *testing.T) {}\n"); writeFileSync(join(repo, "go.mod"), "module example.com/a\n\ngo 1.21\n// agent note\n"); }
+  if (g.probeSkip) t.writeTournamentInput(runDir, { probeSkip: g.probeSkip, pkg: "a" });
+  else if (!g.noInput) t.writeTournamentInput(runDir, { probe: t.repairGoImports(g.probeExtra ? PROBE.replace(/\}\n$/, g.probeExtra + "}\n") : PROBE).file, pkg: "a", specFile: HEAD + SPEC_C1 + SPEC_P1, targetRel: sealedRel, ...(g.noSign ? {} : { unchecked: ["Report"] }) });
+  const ctx: any = { runId: "r1", repoDir: repo, runDir, baseSha, outputs: () => ({ intake: { task: "# Bare dash drops args\n\n`Split` stops at a lone `-`: `x - a b` gives `[\"-\"]` instead of `[\"-\", \"a\", \"b\"]`. It also loses what follows a padded dash, `\"  -\"`.\n" }, wall: { readOnlyFiles: [{ path: join(repo, sealedRel), content: sealed }] } }),
+    tests: { detect: async () => ({ runners: ["go"], tests: [{ runner: "go", path: "a/a_test.go" }, { runner: "go", path: sealedRel }] }), impacted: () => [] }, sessions: null, emit: () => { throw new Error("the gate must not emit verify events"); } };
+  const deps = attemptDeps(ctx, 0, "", 0); deps.impacted = ["a/a_test.go", sealedRel];
+  const calls: string[] = [];
+  const llm = async (_s: string, u: string, tag: string) => { calls.push(tag); if (g.throwOn === tag) throw new Error("model transport blew up"); if (g.llmDown) return { text: "", usage: { costUsd: 0 } }; return tag === "candidates" ? { text: g.cands ?? CANDS(RIGHT, WRONG), usage: { costUsd: 0.001 } } : { text: g.judge ? g.judge(u) : "", usage: { costUsd: 0.0005 } }; };
+  const session: any = { killed: g.killed === true, exit: 0, markers: { done: true } };
+  const s = await t.runTournamentGate(ctx, new AbortController().signal, session, deps, llm, { ...process.env, ...(g.env ?? {}) });
+  if (!s) return "null";
+  const now = readFileSync(join(repo, "a/a.go"), "utf8"), dash = "if len(firstArg) == 1 {\n\t\t\t", tree = now.includes(dash + RIGHT) ? "right" : now.includes(dash + WRONG) ? "wrong" : now.includes(dash + BREAK) ? "base" : "other";
+  const rep = g.report ? `|leak=${existsSync(join(repo, "a/leak.txt"))}|gomod=${readFileSync(join(repo, "go.mod"), "utf8").includes("leak") ? "leaked" : "clean"}|status=${sh("git status --short", repo).split("\n").map((l) => l.replace(/^\s*\S+\s+/, "")).sort().join(",")}|newtest=${existsSync(join(repo, "a/agent_new_test.go"))}|case=${readFileSync(join(repo, "a/a_test.go"), "utf8").includes("TestAgentAddedCase")}|agentnote=${readFileSync(join(repo, "go.mod"), "utf8").includes("agent note")}` : "";
+  return `${s.status}|tree=${tree}|calls=${calls.join("+") || "-"}|sealed=${existsSync(join(repo, sealedRel))}|worktrees=${sh("git worktree list", repo).split("\n").length}|${String(s.reason).slice(0, 60)}${s.status === "error" ? `|receipt=${(s.receipt ?? []).length}` : ""}${rep}`;
+}
+const backs = (w: string) => (u: string) => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2]!.startsWith(`"[\\"${w}`) || x[2]!.includes(`\\"${w}\\"`)); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n");
+const keepsPad = (u: string): string => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2]!.includes('"  -"') || x[2]!.includes('"\\t-"')); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n");
+void backs;
+row("go_displace", await gate({ agent: WRONG, judge: keepsPad }));
+row("go_right_kept", await gate({ agent: RIGHT, judge: keepsPad }));
+row("go_margin3", await gate({ agent: WRONG, judge: keepsPad, env: { LOKI_E10_TOURNAMENT_MARGIN: "3" } }));
+row("go_llm_down", await gate({ agent: WRONG, llmDown: true }));
+row("go_test_edit_only", await gate({ agent: WRONG, judge: keepsPad, cands: `=== CANDIDATE 1 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${RIGHT}\n>>>>>>> REPLACE\n<<<<<<< SEARCH a/a_test.go\n\t\tt.Fatal(g)\n=======\n\t\tt.Log(g)\n>>>>>>> REPLACE\n` }));
+row("go_no_sign", await gate({ agent: WRONG, noSign: true }));
+row("go_throws", await gate({ agent: WRONG, judge: keepsPad, throwOn: "judge" }));
+row("go_over_limit", await gate({ agent: WRONG, env: { LOKI_E10_TOURNAMENT_MAX_LINES: "1" } }));
+row("go_killed", await gate({ agent: WRONG, killed: true }));
+row("go_no_input", await gate({ agent: WRONG, noInput: true }));
+const LEAK = `\tlokiProbe("p4", "writes files", func() any { os.WriteFile("leak.txt", []byte("x"), 0o644); f, _ := os.OpenFile("../go.mod", os.O_APPEND|os.O_WRONLY, 0); f.WriteString("// leak\\n"); f.Close(); return 1 })\n`;
+row("go_probe_side_effects", await gate({ agent: WRONG, judge: keepsPad, probeExtra: LEAK, agentExtras: true, report: true }));
+const TRIM = `=== CANDIDATE 1 ===\n<<<<<<< SEARCH a/a.go\n\t\t\t${BREAK}\n=======\n\t\t\t${RIGHT}\n>>>>>>> REPLACE\n<<<<<<< SEARCH a/a.go\n\t\tif firstArg == "" || firstArg[0] != '-' {\n\t\t\tout = append(out, rargs[0])\n=======\n\t\tif firstArg == "" || firstArg[0] != '-' {\n\t\t\tout = append(out, trim(rargs[0]))\n>>>>>>> REPLACE\n`;
+row("go_unnamed_input", await gate({ agent: RIGHT, cands: TRIM, probeExtra: `\tlokiProbe("p4", "leading space", func() any { return Split([]string{" x"}) })\n`, judge: (u) => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2] === '["x"]'); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n") }));
+row("go_incidental_literal", await gate({ agent: RIGHT, cands: TRIM, probeExtra: `\tlokiProbe("p4", "leading space beside an issue literal", func() any { return Split([]string{" x", "a"}) })\n`, judge: (u) => u.split("\n\n").filter((b) => b.startsWith("PROBE ")).map((b) => { const id = /^PROBE (\S+):/.exec(b)![1]; const m = [...b.matchAll(/option ([A-Z]): (.*)/g)].find((x) => x[2] === '["x","a"]'); return `${id}: ${m ? m[1] : "unknown"}`; }).join("\n") }));
+row("go_weakened_test", await gate({ agent: WRONG, judge: keepsPad, weakenTest: true }));
+row("go_probe_skip", await gate({ agent: WRONG, probeSkip: "the combined spec and probe reply was unusable" }));
+row("go_agent_red", await gate({ agent: "out = append(out, nope)\n\t\t\tcontinue", judge: keepsPad }));
+row("go_big_file", await gate({ agent: WRONG, big: true }));
+row("go_budget", await gate({ agent: WRONG, judge: keepsPad, env: { LOKI_E10_TOURNAMENT_BUDGET_S: "1" }, probeExtra: `\ttime.Sleep(1500 * time.Millisecond)\n` }));
+{ // a kill between the undo record and the end of the apply: the next gate start puts the agent's bytes back
+  const repo = join(W, "kill", "repo"), runDir = join(W, "kill", "run"); mkdirSync(join(repo, "a"), { recursive: true }); mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(repo, "a/a.go"), "agent a.go\n");
+  const kid = spawnSync(process.execPath, ["-e", `const t = await import(${JSON.stringify(R + "/loki-ts/src/features/tournament.ts")}); t.applyWinnerFiles(process.env.REPO, process.env.RUN, [{ path: "a/a.go", content: "candidate a.go\\n" }, { path: "a/new.go", content: "candidate new\\n" }], (i) => { if (i === 0) process.kill(process.pid, "SIGKILL"); });`], { env: { ...process.env, REPO: repo, RUN: runDir } });
+  const mid = readFileSync(join(repo, "a/a.go"), "utf8"), undo = existsSync(join(runDir, "tournament-undo.json"));
+  const { implementStage } = await import(`${R}/loki-ts/src/engine10/stages/implement.ts`);
+  const r = await implementStage.run({ repoDir: repo, runDir } as any, new AbortController().signal).then(() => "ran", () => "stopped-after-recovery"); // the stage recovers first; it stops on the bare ctx right after
+  row("go_kill_mid_apply", [kid.signal, mid.trim(), undo, readFileSync(join(repo, "a/a.go"), "utf8").trim(), existsSync(join(runDir, "tournament-undo.json")), existsSync(join(repo, "a/new.go")), r].join("|"));
+}
+
+// ---------- unit: warning signs and probe pruning ----------
+const TASK_LOC = "# t\n\n`Split` and `Report` misbehave.\n\n## Location\n\n```go\n\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n```\n";
+row("signs", [t.warningSigns(TASK_LOC, [], { "a/a.go": "x" }).length, t.warningSigns(TASK_LOC, ["Report"], {}).length, t.warningSigns(TASK_LOC, [], { "a/a.go": "\t\tif len(firstArg) == 1 {\n\t\t\tout = append(out, firstArg)\n" }).length, t.warningSigns("# t\n`F` is wrong.", [], { "a/a.go": "x" }).length, t.warningSigns("# t\n`F` is wrong.", [], { "a/a.go": "x" }, [{ rule: "residual", path: "a/a.go", line: 9, text: "x", why: "w" }]).length, t.warningSigns("# t\n`F` is wrong.", [], { "a/a.go": "x" }, [{ rule: "sibling", path: "a/a.go", line: 9, text: "x", why: "w" }]).length].join(","));
+const PRUNE = "package a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"ok\", func() any { return 1 })\n\tlokiProbe(\"p2\", \"bad\", func() any { return nope() })\n\tlokiProbe(\"p3\", \"ok\", func() any { return 3 })\n}\n";
+const pj = t.pruneGoCases(PRUNE, "# x\nloki_probe_cases_test.go:5:40: undefined: nope\n");
+row("prune", [pj?.pruned.map((p: any) => p.id).join("+"), pj?.program.includes("p2"), pj?.program.includes("p3"), t.pruneGoCases(PRUNE, "loki_probe_cases_test.go:3:1: syntax error") === null, t.pruneGoCases(PRUNE, "nothing") === null].join(","));
+
+// ---------- receipt ----------
+const seal = await import(`${R}/loki-ts/src/engine10/stages/seal.ts`);
+const none = t.tournamentReceiptBlock({ tournament: { status: "skipped" } }), some = t.tournamentReceiptBlock({ tournament: { receipt: ["c1: checks pass", "decision: agent tree kept (x)"] } });
+const md = seal.renderReceiptMd({ run_id: "r", base_sha: "b", head_sha: "h", receipt_sha256: "s", verdict: "VERIFIED", provider: "p", model: "m", cost: { usd: 0, measured_sessions: 0, total_sessions: 0, partial_usd: 0 }, time: { wall_s: 1 }, checks: [], evidence: [], not_proven: [], verification: {}, ...some } as any);
+row("receipt", [JSON.stringify(none), some.tournament?.length, md.includes("### Candidate tournament\n- c1: checks pass\n- decision: agent tree kept (x)")].join(","));
+TOURDRV
+TOUR_OUT="$(cd "$ROOT/loki-ts" && ROOT="$ROOT" WORK="$T/tour-work" timeout 1200 bun "$TOUR_DRV" 2>&1)"
+tg() { printf '%s\n' "$TOUR_OUT" | sed -n "s/^$1=//p"; }
+tcheck() { local got; got="$(tg "$2")"; [ "$got" = "$3" ] && ok "tournament $1" || bad "tournament $1: got '$got' (want '$3')"; }
+tcheck "probe block: split from the spec in either order, one block left alone" split "false,true,true,false,true,"
+tcheck "probe parser: wrong package, banned call, no cases and a redefined lokiProbe are refused by name; missing std imports repaired" probe "ok(+strings+testing),probe_no_block,probe_wrong_package,probe_banned_call,probe_no_cases,probe_banned_call"
+tcheck "any becomes interface{} outside strings and comments; an unused std import is dropped, a used one added" any 'x := interface{}(1) // any~y := "any"|-fmt+strings+testing'
+tcheck "candidates parse per number; an ambiguous, unknown-path or missing SEARCH does not apply" cands 'c1:1,c2:1|null,null,"ay"'
+tcheck "order-swap judge: both views must back one output; position answers, unknown and contradictions give no verdict" judge '1,p1.1/p1.2,B,0,0,0,B'
+tcheck "agent kept when no probe separates the trees and no model verdict is asked" sel_same "kept/candidates"
+tcheck "no judge call when no disagreement sits on an input the issue names: wins only on unnamed inputs never displace, even anchored" sel_unnamed "kept/candidates"
+tcheck "two wins that are both on inputs the issue does not name do not displace either" sel_two_unnamed "kept/candidates"
+tcheck "no candidates call when no probe case uses an input the issue quotes" sel_no_named "kept/"
+tcheck "an agent tree that fails its checks ends the tournament before the candidates call" sel_agent_red "kept/"
+tcheck "two consistent verdicts displace the agent" sel_two "c1/candidates+judge"
+tcheck "one verdict where the agent left the base output does not need a second" sel_one_anchored "c1/candidates+judge"
+tcheck "one verdict where the agent already changed the output is not enough" sel_one_unanchored "kept/candidates+judge"
+tcheck "a challenger that loses a probe never displaces, whatever it wins" sel_loses_one "kept/candidates+judge"
+tcheck "a challenger that regresses a spec case the agent passes is vetoed" sel_spec_veto "kept/candidates+judge"
+tcheck "a challenger failing the checks never displaces" sel_check_fail "kept/candidates"
+tcheck "a probe whose output differs between two base copies is dropped" sel_unstable "kept/candidates"
+tcheck "a judge that answers by position cannot displace" sel_position "kept/candidates+judge"
+tcheck "an unsure judge keeps the agent" sel_unknown "kept/candidates+judge"
+tcheck "a judge call that fails keeps the agent" sel_judge_down "kept/candidates+judge"
+tcheck "the diff probe runs only when the issue probes separate nothing, then the judge rules" sel_diffprobe "c1/candidates+diffprobe+judge"
+tcheck "no diff probe call when the issue probes already separate the trees" sel_diffprobe_not_needed "c1/candidates+judge"
+tcheck "go: a wrong agent tree is displaced in the primary by the right candidate; sealed spec kept, scratch worktrees removed, test-editing candidate refused" go_displace "displaced|tree=right|calls=candidates+judge|sealed=true|worktrees=1|c1 displaces the agent: 2 consistent verdict(s), 0 against, "
+tcheck "go: probe side effects (a written file, an appended go.mod) stay in the scratch tree; only the winner's source edit reaches the user's tree, beside the agent's new test file, added case and go.mod change" go_probe_side_effects "displaced|tree=right|calls=candidates+judge|sealed=true|worktrees=1|c1 displaces the agent: 2 consistent verdict(s), 0 against, |leak=false|gomod=clean|status=a/a.go,a/a_test.go,a/agent_new_test.go,a/loki_wall_spec_test.go,go.mod|newtest=true|case=true|agentnote=true"
+tcheck "go: a right agent tree is not displaced by a verdict on an input the issue never names" go_unnamed_input "kept|tree=right|calls=candidates|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
+tcheck "go: an input with one issue-quoted literal beside an invented one (\" x\" with a) is not named, so one anchored verdict cannot displace a right tree" go_incidental_literal "kept|tree=right|calls=candidates|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
+tcheck "go: an agent that weakened an existing test makes no model call" go_weakened_test "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|the agent edited an existing test the weakened-test rule fla"
+tcheck "go: a recorded probe skip (the spec call could not carry a probe) ends the gate with a receipt line and no model call" go_probe_skip "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|tournament skipped: the combined spec and probe reply was unusabl"
+tcheck "go: an agent tree that fails its own checks makes no model call" go_agent_red "kept|tree=other|calls=-|sealed=true|worktrees=1|agent tree does not pass its checks; kept"
+tcheck "go: a base file over the prompt limit skips the tournament before any model call" go_big_file "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|base file a/a.go is 30464 chars, over the prompt limit (2400"
+tcheck "go: a spent time budget skips, restores nothing it never touched and records the skip" go_budget "error|tree=wrong|calls=-|sealed=true|worktrees=1|tournament skipped: the tournament time budget ran out|receipt=1"
+tcheck "go: a SIGKILL after the first write of a displacement leaves the undo record, and the next implement stage start (before any session) puts the agent's file back and removes the partial new file" go_kill_mid_apply "SIGKILL|candidate a.go|true|agent a.go|false|false|stopped-after-recovery"
+tcheck "go: a right agent tree stays (the wrong candidate regresses the spec case P1)" go_right_kept "kept|tree=right|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
+tcheck "go: a margin above the consistent verdicts keeps the agent tree" go_margin3 "kept|tree=wrong|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 3 anchored or 4+ consistent v"
+tcheck "go: a model that returns nothing keeps the agent tree after one call" go_llm_down "kept|tree=wrong|calls=candidates|sealed=true|worktrees=1|no behavioral disagreement"
+tcheck "go: a candidate that also edits an existing test never reaches the checks, so its right fix cannot displace" go_test_edit_only "kept|tree=wrong|calls=candidates|sealed=true|worktrees=1|no behavioral disagreement"
+tcheck "go: no warning sign (every named site covered, quoted lines changed) makes no model call" go_no_sign "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|no warning sign: every named site has a binding spec case, t"
+tcheck "go: a throw in the middle of the tournament leaves the agent tree as it was, records a skip on the receipt and never fails the run" go_throws "error|tree=wrong|calls=candidates+judge|sealed=true|worktrees=1|tournament skipped: model transport blew up|receipt=1"
+tcheck "warning signs: an uncovered named site, an issue-quoted line still byte-identical, or an edit-shape residual site (a sibling site alone is not one); none on a plain issue" signs "0,1,1,0,1,0"
+tcheck "probe pruning drops only the case that does not compile; an error outside every case or no error prunes nothing" prune "p2,false,true,true,true"
+tcheck "go: an agent diff over the small-diff limit makes no model call" go_over_limit "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|the agent diff is 2 changed lines, over the 1 small-diff lim"
+tcheck "go: a killed session makes no model call" go_killed "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|the implement session did not finish clean (done, no conflic"
+tcheck "go: no probe program from the exec-spec call makes no model call and reports nothing" go_no_input "null"
+tcheck "receipt: lines only when a tournament ran; the receipt renders them under their own heading" receipt "{},2,true"
+# a probe never costs the run its spec: a truncated or unusable combined reply keeps a complete spec block, else the spec is asked for again alone
+tes_leg() { # <label> <mode> <want>
+    local d="$T/tour-es-$2" got; rm -rf "$d"; make_es_go "$d"
+    (cd "$d" && git init -q -b main && git add -- . && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m base)
+    got="$(cd "$ROOT/loki-ts" && ESD="$d" MODE="$2" TASK="${ES_GO_TASK1:-$ES_GO_TASK}" REPLY="$ES_GO_REPLY" timeout 300 bun -e '
+const es = await import("./src/features/exec_spec.ts"), tn = await import("./src/features/tournament.ts"), e = process.env;
+const PROBE = "\n\n```go\npackage a\n\nfunc TestLokiProbe(t *testing.T) {\n\tlokiProbe(\"p1\", \"d\", func() any { return Split([]string{\"x\"}) })\n}\n```";
+let calls = 0, max = 0;
+es.setExecSpecGenerator(async (brief, o) => {
+  calls++; if (calls === 1) max = o.maxTokens ?? 0;
+  const combined = brief.includes("ONE EXCEPTION");
+  if (e.MODE === "none") return combined ? { none: "the generator call ended truncated" } : e.REPLY;
+  if (e.MODE === "cut_probe") return combined ? e.REPLY + "\n\n```go\npackage a\n\nfunc TestLokiProbe(t" : e.REPLY;
+  if (e.MODE === "cut_spec") return combined ? "```go\npackage a\n\nfunc TestLokiSpec_C1_X(t *testing.T) {" : e.REPLY;
+  return combined ? e.REPLY + PROBE : e.REPLY;
+});
+const o = await es.execSpecAuthor({ task: e.TASK, repoDir: e.ESD, runners: ["go"], existingTests: ["a/a_test.go"], sessions: null, iterationId: "t", signal: new AbortController().signal, probe: tn.probeIntake });
+console.log(`${o.status}|calls=${calls}|max=${max}|probe=${o.probe ? "set" : "none"}|skip=${(o.probeSkip ?? "").slice(0, 38)}`);' 2>&1 | tail -1)"
+    [ "$got" = "$3" ] && ok "tournament spec fallback: $1" || bad "tournament spec fallback $1 gave: $got (want: $3)"
+}
+if command -v go >/dev/null 2>&1; then
+    SKIPW="the combined spec and probe reply was "
+    tes_leg "a combined reply with its probe block keeps the spec and the probe, one call at the 16384 cap" ok "sealed|calls=1|max=16384|probe=set|skip="
+    tes_leg "a combined call that ends truncated (no text) asks for the spec again without the probe: the spec is still sealed" none "sealed|calls=2|max=16384|probe=none|skip=$SKIPW"
+    tes_leg "a reply truncated inside the spec block asks again without the probe: the spec is still sealed" cut_spec "sealed|calls=2|max=16384|probe=none|skip=$SKIPW"
+    tes_leg "a reply truncated inside the probe block keeps its complete spec block without a second call" cut_probe "sealed|calls=1|max=16384|probe=none|skip=probe_no_block"
+fi
+# the gate runs after the Wall and tests are restored (so candidates are checked against the original Wall), and recovery runs before the session
+IMPL="$ROOT/loki-ts/src/engine10/stages/implement.ts"
+g_line="$(grep -n 'await runTournamentGate(' "$IMPL" | head -1 | cut -d: -f1)"; r_line="$(grep -n 'const testsReverted = restoreReadOnly(readOnly)' "$IMPL" | head -1 | cut -d: -f1)"; s_line="$(grep -n 'await ctx.sessions.run(first)' "$IMPL" | head -1 | cut -d: -f1)"; u_line="$(grep -n 'recoverTournamentUndo(ctx.repoDir' "$IMPL" | head -1 | cut -d: -f1)"
+[ -n "$g_line" ] && [ -n "$r_line" ] && [ "$g_line" -gt "$r_line" ] && ok "tournament: the gate runs after restoreReadOnly (candidates see the original Wall and tests)" || bad "tournament: gate line '$g_line' is not after restoreReadOnly line '$r_line'"
+[ -n "$u_line" ] && [ -n "$s_line" ] && [ "$u_line" -lt "$s_line" ] && ok "tournament: the undo recovery runs before the first implement session" || bad "tournament: recovery line '$u_line' is not before the first session line '$s_line'"
+# engine legs: the real bin/loki on the stub provider, exec spec on, lean path. The stub reply carries a probe block after the spec.
+ES_PROBE_BLOCK='
+
+```go
+package a
+
+func TestLokiProbe(t *testing.T) {
+	lokiProbe("p1", "padded dash then operand", func() any { return Split([]string{"  -", "q"}) })
+}
+```'
+ESPL2="$T/tour-prompts"; rm -f "$ESPL2".*
+if command -v go >/dev/null 2>&1; then
+    ESFIX2=$'out = append(out, rargs[0])\n\t\t\tcontinue'; ESOLD2=$'out = append(out, firstArg)\n\t\t\tbreak'
+    tev() { ev 'next((json.dumps(e["data"].get("tournament",{}).get("status","absent")) + ":" + str(e["data"].get("tournament",{}).get("reason",""))[:40] for e in E if e["stage"]=="implement" and e["type"]=="stage.completed"), "none")'; }
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" LOKI_E10_EXEC_SPEC=1 LOKI_E10_TOURNAMENT=1 LOKI_E10_TOURNAMENT_MAX_LINES=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY$ES_PROBE_BLOCK" E2E_STUB_PROMPT_LOG="$ESPL2" \
+        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD2" E2E_STUB_SNIPPET="$ESFIX2" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    [ "$(esw)" = "sealed:TestLokiSpec_C1_KeepsAfterDash:loki_wall_spec_test.go:fail=1" ] && ok "tournament engine: a probe block after the spec leaves the spec sealed as before ($(esw))" || { bad "tournament engine: wall gave '$(esw)'"; dump; }
+    grep -lq 'ONE EXCEPTION to the single-block rule' "$ESPL2".* 2>/dev/null && ok "tournament engine: the generator brief carries the probe rules" || bad "tournament engine: the generator brief has no probe rules"
+    [ -f "$RUNDIR/tournament-input.json" ] && python3 -I -c 'import json,sys; i=json.load(open(sys.argv[1])); sys.exit(0 if i["pkg"]=="a" and "TestLokiProbe" in i["program"] and "TestLokiSpec_P1_PaddedDash" in i["spec"] and i["targetRel"]=="a/loki_wall_spec_test.go" and i["pkgRel"]=="a" else 1)' "$RUNDIR/tournament-input.json" && ok "tournament engine: the run dir holds the probe cases, the package and the full spec file" || bad "tournament engine: tournament-input.json missing or wrong"
+    [ "$(tev)" = '"skipped":the agent diff is 4 changed lines, over ' ] && ok "tournament engine: the gate stands down before any model call on an over-limit diff ($(tev))" || bad "tournament engine: implement tournament data '$(tev)'"
+    [ "$(outcome)" = VERIFIED ] && ok "tournament engine: the run is VERIFIED with the knob on" || { bad "tournament engine: outcome '$(outcome)'"; dump; }
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" LOKI_E10_EXEC_SPEC=1 LOKI_E10_TOURNAMENT=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD2" E2E_STUB_SNIPPET="$ESFIX2" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    [ "$(tev)" = '"skipped":tournament skipped: probe_no_block' ] && ok "tournament engine: a spec reply with no probe block keeps the spec and the gate records the skip" || bad "tournament engine: no-probe leg gave '$(tev)'"
+    rm -f "$ESPL2".*
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" LOKI_E10_EXEC_SPEC=1 LOKI_E10_TOURNAMENT=0 LOKI_E10_NRD=0 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY$ES_PROBE_BLOCK" E2E_STUB_PROMPT_LOG="$ESPL2" \
+        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD2" E2E_STUB_SNIPPET="$ESFIX2" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    if grep -lq 'ONE EXCEPTION to the single-block rule' "$ESPL2".* 2>/dev/null || [ -f "$RUNDIR/tournament-input.json" ] || [ "$(tev)" != '"absent":' ]; then bad "tournament off: LOKI_E10_TOURNAMENT=0 and LOKI_E10_NRD=0 yet the probe rules, the input file or the gate appeared ($(tev))"; else ok "tournament off: no probe rules in the generator brief, no input file, no gate (opt out)"; fi
+fi
 fi
 
 # ---------------------------------------------------------------- no-regression differential (LOKI_E10_NRD, default on, =0 opts out)

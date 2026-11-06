@@ -1,4 +1,4 @@
-// Executable spec first (LOKI_E10_EXEC_SPEC=1, off by default). New file because no module turns issue text into base-red
+// Executable spec first (on by default; LOKI_E10_EXEC_SPEC=0 opts out). New file because no module turns issue text into base-red
 // executable checks: engine10/stages/wall.ts is a blind agentic session the lean path skips (E-64) and util/spec_file.ts extracts
 // prose clauses only. wall.ts owns the wiring (its lean branch calls execSpecAuthor and seals the result through installWall).
 //
@@ -15,10 +15,13 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import { commandFor, plainTestEnv, spawnGroupSync, stripAnsi } from "../util/check_result.ts";
+import { describeJudgeOutcome, toolLessCall } from "../runner/sdk_invoker.ts";
+import { resolveClaudeModel } from "../util/claude_model.ts";
+import { assertionFailure, commandFor, plainTestEnv, pytestKindsAreAssertion, spawnGroupSync, stripAnsi, vitestErrorsAreAssertion } from "../util/check_result.ts";
 
-export const execSpecEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_EXEC_SPEC === "1";
+export const execSpecEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_EXEC_SPEC ?? "").trim().toLowerCase()); // default on; LOKI_E10_EXEC_SPEC=0 opts out
 export const EXEC_SPEC_BRIEF_FILE = "exec-spec-brief.txt"; // <runDir>/, read by implement.ts
+export const EXEC_SPEC_TELEMETRY_FILE = "exec-spec.json"; // <runDir>/, read by seal.ts for the receipt's exec_spec block
 
 export type AtomKind = "example" | "claim" | "site" | "option" | "location" | "parity" | "pair";
 export interface SpecAtom { id: string; kind: AtomKind; text: string; lang?: string; section?: string }
@@ -257,53 +260,66 @@ export function parseGenerated(e: Emitter, reply: string, mustStart = ""): { fil
   return { file };
 }
 
-// ---------- binding: only values the issue itself states may define done ----------
-/** Values the issue states: code spans, fenced code and double-quoted prose strings. */
-export function issueValues(task: string): string[] {
-  const out: string[] = [];
-  for (const m of task.matchAll(/```[\w-]*\n([\s\S]*?)```/g)) out.push(m[1]!);
-  const prose = task.replace(/```[\s\S]*?```/g, " ");
-  for (const m of prose.matchAll(/`([^`\n]+)`/g)) out.push(m[1]!);
-  for (const m of prose.matchAll(/"([^"\n]{1,200})"/g)) out.push(m[1]!);
-  return out;
+// ---------- binding: only values one issue example states may define done ----------
+/** One issue example: a fenced block, or one prose sentence with its code spans. `strs` are the whole values it states (whole code spans
+ *  and quoted strings, never a fragment of either); `nums` are number tokens inside its code (a number in plain prose never counts). */
+export interface IssueUnit { strs: Set<string>; nums: Set<string> }
+const NUM_TOKEN = /(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])/g;
+const quotedIn = (t: string): string[] => [...t.matchAll(/"((?:\\.|[^"\\\n])*)"|'((?:\\.|[^'\\\n])*)'/g)].map((m) => m[1] ?? m[2] ?? "");
+export function issueUnits(task: string): IssueUnit[] {
+  const units: IssueUnit[] = [];
+  for (const m of task.matchAll(/```[\w-]*\n([\s\S]*?)```/g)) units.push({ strs: new Set(quotedIn(m[1]!)), nums: new Set(m[1]!.match(NUM_TOKEN) ?? []) });
+  const prose = task.replace(/```[\s\S]*?```/g, "\n\n");
+  for (const sent of prose.split(/(?<=[.!?])\s+(?=[A-Z`])|\n\s*\n/)) {
+    const spans = [...sent.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]!), outside = sent.replace(/`[^`\n]+`/g, " ");
+    if (!spans.length && !quotedIn(outside).length) continue;
+    units.push({ strs: new Set([...spans, ...spans.flatMap(quotedIn), ...quotedIn(outside)]), nums: new Set(spans.flatMap((x) => x.match(NUM_TOKEN) ?? [])) });
+  }
+  return units;
 }
 const unescape = (s: string): string => s.replace(/\\(["'\\nt`])/g, (_, c: string) => (c === "n" ? "\n" : c === "t" ? "\t" : c));
-/** The literal values of the want assignment in one case: strings and numbers (true/false/nil/None/null are neutral, not values). */
+const LITERAL = /"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|`([^`]*)`|(?<![\w.])(-?\d+(?:\.\d+)?)(?![\w.])/g;
+const literalsOf = (text: string): { v: string; num: boolean }[] => [...text.matchAll(LITERAL)].map((m) => (m[4] !== undefined ? { v: m[4], num: true } : { v: unescape(m[1] ?? m[2] ?? m[3] ?? ""), num: false }));
+const WANT_ASSIGN = /^\s*(?:(?:const|let|var)\s+)?want\b\s*(?::=|=(?!=))/;
+/** The literal values of the want assignment in one case (true/false/nil/None/null are neutral, not values). */
 export function wantLiterals(body: string): string[] | null {
-  const lines = body.split("\n"), i = lines.findIndex((l) => /^\s*(?:(?:const|let|var)\s+)?(?:want|expected)\b\s*(?::=|=(?!=))/.test(l));
+  const lines = body.split("\n"), i = lines.findIndex((l) => WANT_ASSIGN.test(l));
   if (i < 0) return null;
   let text = "", depth = 0;
   for (let k = i; k < lines.length; k++) { const l = lines[k]!; text += `${l}\n`; for (const ch of l.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`]*`/g, "")) { if ("([{".includes(ch)) depth++; else if (")]}".includes(ch)) depth--; } if (depth <= 0) break; }
-  const rhs = text.replace(/^[^=]*?(?::=|=)/, "");
-  const lits = [...rhs.matchAll(/"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|`([^`]*)`|(?<![\w.])(-?\d+(?:\.\d+)?)(?![\w.])/g)].map((m) => (m[4] !== undefined ? m[4] : unescape(m[1] ?? m[2] ?? m[3] ?? "")));
-  return lits;
+  return literalsOf(text.replace(/^[^=]*?(?::=|=)/, "")).map((x) => x.v);
 }
-/** A case is BINDING only when its want has at least one literal and every literal is a value the issue states. */
-export function isBinding(body: string, task: string, values = issueValues(task)): boolean {
-  const lits = wantLiterals(body);
-  if (!lits || lits.length === 0) return false;
-  return lits.every((v) => {
-    if (/^-?\d+(?:\.\d+)?$/.test(v)) return new RegExp(`(?<![\\w.])${esc(v)}(?![\\w.])`).test(task);
-    if (v.length >= 3) return values.some((x) => x.includes(v));
-    return v !== "" && values.some((x) => new RegExp(`(?:^|[^\\w])${esc(v)}(?:$|[^\\w])`).test(x)); // a 1-2 char literal must stand as its own token
-  });
+/** Every literal a case asserts with or feeds in: its body minus the declaration line, failure-message calls and comments. */
+export function caseLiterals(body: string): { v: string; num: boolean }[] {
+  const code = body.split("\n").slice(1).filter((l) => !/^\s*(?:t\.(?:Fatal|Fatalf|Error|Errorf|Log|Logf|Helper)\(|\/\/|#)/.test(l)).join("\n");
+  return literalsOf(code);
+}
+/** A case is BINDING only when (1) want is assigned exactly once from at least one literal and compared after that, and (2) every
+ *  literal the case uses (the call input and the expected value) is stated, whole, by ONE issue example. A fragment of a span
+ *  ("bad" in `error: bad input`), an input the issue never shows, or a number that only appears in prose is advisory. */
+export function isBinding(body: string, task: string, units = issueUnits(task)): boolean {
+  const lines = body.split("\n"), assigns = lines.filter((l) => WANT_ASSIGN.test(l) || /^\s*want\s*(?:\+=|-=)/.test(l)).length;
+  const want = wantLiterals(body), at = lines.findIndex((l) => WANT_ASSIGN.test(l));
+  if (assigns !== 1 || !want || want.length === 0 || !lines.slice(at + 1).some((l) => /\bwant\b/.test(l))) return false;
+  const lits = caseLiterals(body);
+  return units.some((u) => lits.every((x) => (x.num ? u.nums.has(x.v) : u.strs.has(x.v))));
 }
 
-// ---------- base red filter (harness-run, per case) ----------
+// ---------- base red filter (harness-run, per case; red-by-assertion is util/check_result.ts's one rule per runner) ----------
 export type CaseState = "red" | "green" | "error";
 export interface RedFilterResult { built: boolean; cases: Record<string, CaseState>; error?: string; durationS: number }
 
 function parseGo(out: string, names: string[]): RedFilterResult["cases"] | null {
-  const outByTest = new Map<string, string>(), state: Record<string, CaseState> = {}; let any = false;
+  const linesByTest = new Map<string, string[]>(), state: Record<string, CaseState> = {}; let any = false;
   for (const line of out.split("\n")) {
     if (!line.startsWith("{")) continue;
     let ev: { Action?: string; Test?: string; Output?: string }; try { ev = JSON.parse(line); } catch { continue; }
-    if (/^build-/.test(ev.Action ?? "") && ev.Action === "build-fail") return null;
+    if (ev.Action === "build-fail") return null;
     const t = ev.Test?.split("/")[0]; if (!t || !names.includes(t)) continue; any = true;
-    if (ev.Action === "output") outByTest.set(t, (outByTest.get(t) ?? "") + (ev.Output ?? ""));
+    linesByTest.set(t, [...(linesByTest.get(t) ?? []), line]);
     if (ev.Test!.includes("/")) continue;
     if (ev.Action === "pass") state[t] = "green";
-    if (ev.Action === "fail") { const o = outByTest.get(t) ?? ""; state[t] = /\bpanic: |^panic[: ]|test timed out/m.test(o) || !/^\s*\S+_test\.go:\d+: /m.test(o) ? "error" : "red"; }
+    if (ev.Action === "fail") state[t] = assertionFailure("go", linesByTest.get(t)!.join("\n")) ? "red" : "error"; // the Wall's rule, fed this test's own events
   }
   return any ? state : null;
 }
@@ -315,7 +331,7 @@ function parseJunit(xml: string, names: string[]): RedFilterResult["cases"] | nu
     if (!names.includes(name)) { if (/<error\b/.test(inner)) return null; continue; } // a collection error is reported on a synthetic case
     const fail = /<failure\b[^>]*?message="([^"]*)"/.exec(inner);
     if (/<error\b|<skipped\b/.test(inner)) state[name] = "error";
-    else if (/<failure\b/.test(inner)) { const msg = xmlUnescape(fail?.[1] ?? ""); state[name] = /^(?:assert\b|AssertionError\b)/.test(msg) || (msg === "" && /\bAssertionError\b/.test(inner)) ? "red" : "error"; }
+    else if (/<failure\b/.test(inner)) { const msg = xmlUnescape(fail?.[1] ?? "").trim(), kinds = msg ? [msg] : [...xmlUnescape(inner).matchAll(/^E\s+((?:assert\b|[A-Za-z_.]*(?:Error|Exception))\S*)/gm)].map((k) => k[1]!); state[name] = pytestKindsAreAssertion(kinds) ? "red" : "error"; }
     else state[name] = "green";
   }
   return Object.keys(state).length ? state : null;
@@ -326,7 +342,7 @@ function parseVitestJson(json: string, names: string[]): RedFilterResult["cases"
   const state: Record<string, CaseState> = {};
   for (const f of r.testResults ?? []) for (const a of f.assertionResults ?? []) {
     const n = a.title ?? ""; if (!names.includes(n)) continue;
-    state[n] = a.status === "passed" ? "green" : a.status === "failed" ? ((a.failureMessages ?? []).length > 0 && (a.failureMessages ?? []).every((m) => /^AssertionError\b/.test(stripAnsi(m))) ? "red" : "error") : "error";
+    state[n] = a.status === "passed" ? "green" : a.status === "failed" && vitestErrorsAreAssertion((a.failureMessages ?? []).join("\n")) ? "red" : "error";
   }
   return Object.keys(state).length ? state : null;
 }
@@ -349,46 +365,90 @@ export function redFilter(e: Emitter, repoDir: string, destRel: string, file: st
 
 // ---------- selection and the implement brief ----------
 export interface SpecSelection { file: string; binding: string[]; advisory: { name: string; why: string }[]; guards: string[] }
-/** Split the cases: binding = red by assertion on base AND every want literal is issue-stated; advisory = red but not issue-stated;
+/** Split the cases: binding = red by assertion on base AND isBinding (input and expected value from one issue example); advisory = red but not issue-stated;
  *  guards = green on base (regression guards, advisory only); error cases are dropped. The sealed file keeps only binding cases. */
 export function selectCases(e: Emitter, file: string, base: RedFilterResult, task: string): SpecSelection {
-  const values = issueValues(task), binding: string[] = [], advisory: { name: string; why: string }[] = [], guards: string[] = [];
+  const units = issueUnits(task), binding: string[] = [], advisory: { name: string; why: string }[] = [], guards: string[] = [];
   let sealed = file;
   for (const n of e.names(file)) {
     const st = base.cases[n], b = e.body(file, n);
-    if (st === "red" && isBinding(b, task, values)) { binding.push(n); continue; }
-    if (st === "red") advisory.push({ name: n, why: "red on base, but asserts a value the issue does not state" });
+    if (st === "red" && isBinding(b, task, units)) { binding.push(n); continue; }
+    if (st === "red") advisory.push({ name: n, why: "red on base, but its input or expected value is not stated whole by one issue example" });
     else if (st === "green") guards.push(n);
     sealed = e.disable(sealed, n) ?? sealed;
   }
   return { file: sealed, binding, advisory, guards };
 }
 
-/** Named sites that resolved in the repo and that no binding spec case covers (by atom id or by naming the symbol). */
-export function uncheckedSites(e: Emitter, binding: string[], full: string, atoms: SpecAtom[], sites: ResolvedSite[]): string[] {
-  const cov = new Set(binding.map((n) => atomIdOf(e, n))), resolved = new Set(sites.map((s) => s.symbol));
-  const bodies = binding.map((n) => e.body(full, n)).join("\n");
-  return atoms.filter((a) => a.kind === "site" && resolved.has(a.text) && !cov.has(a.id) && !new RegExp(`\\b${esc(a.text.split(".").pop()!)}\\b`).test(bodies)).map((a) => a.text);
+/** Named sites (resolved in the repo) that no binding case's body names. */
+export function uncoveredSites(e: Emitter, binding: string[], full: string, atoms: SpecAtom[], sites: ResolvedSite[]): string[] {
+  const resolved = new Set(sites.map((s) => s.symbol)), bodies = binding.map((n) => e.body(full, n)).join("\n");
+  return atoms.filter((a) => a.kind === "site" && resolved.has(a.text) && !new RegExp(`\\b${esc(a.text.split(".").pop()!)}\\b`).test(bodies)).map((a) => a.text.split(".").pop()!);
 }
-
+// A site is defective only when the defect or request words attach to its own span: it is the subject of a clause that states a defect
+// or asks for behavior ("`Split` drops args", "`Split` should return ...", "`Split` is wrong"), or the object of a fix verb ("Fix `Split`").
+// A comparison ("like `Join` does", "as `Join` does", "see `Join`"), a negated scope ("should not change `Report`", "does not affect
+// `Report`") and a verdict of health ("`Report` is fine") never make a site defective, and neither does a span elsewhere in the sentence.
+const DEFECT_OR_ASK = /\binstead of\b|\bshould\b|\bexpected\b|\bmust\b|\bneeds? to\b|\b(?:bug|wrong|broken|mishandl\w*|drops?|dropped|fails?|failing|ignores?|ignored|incorrect\w*|crash\w*|panics?|regress\w*|missing|loses?|lost|never|doesn't|does not|isn't|is not)\b/i; // explicit defect or request words only: "returns" and "gives" describe behavior, they do not name a defect
+const HEALTHY = /^\s*(?:\w+\s+){0,2}(?:is|are|works?|stays?|remains?|looks?)\s+(?:fine|correct|ok|okay|right|unaffected|unchanged|good|already correct)\b|\b(?:returns?|gives?|produces?|prints?|yields?)\s+the\s+(?:right|correct|expected)\b/i;
+const HEALTHY_TAIL = /^\s*which\s+(?:is|are)\s+(?:correct|fine|right|ok|okay|expected|intended)\b/i; // ", which is correct" clears the clause before it
+const FIX_VERB = /\b(?:fix|fixes|fixing|change|update|correct|repair|handle|make)\s+`([^`\n]{1,80})`/gi;
+const spanId = (span: string): string | null => { const id = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/.exec(span)?.[1]; return id ? id.split(".").pop()! : null; };
+/** The named sites (last segment) the issue calls defective or asks to change, read clause by clause. */
+export function defectSites(task: string): Set<string> {
+  const out = new Set<string>(), prose = task.replace(/```[\s\S]*?```/g, "\n\n");
+  const spans: string[] = [], masked = prose.replace(/`([^`\n]+)`/g, (_, x: string) => `\`@${spans.push(x) - 1}\``); // split on punctuation outside code spans only
+  const unmask = (t: string): string => t.replace(/`@(\d+)`/g, (_, i: string) => `\`${spans[Number(i)]}\``);
+  for (const unit of masked.split(/(?<=[.!?])\s+(?=[A-Z`])|\n\s*\n|\n(?=\s*(?:[-*]|\d+[.)])\s)/)) {
+    // a contrast ("A returns X but B returns Y instead of Z", "A returns the right shape, B should ...") is two clauses: only the side
+    // carrying the defect words marks its subject
+    const clauses = unit.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").split(/;|:\s|,\s*(?=(?:which|but|and|so|while|whereas|though)\b|`)|\s+(?=(?:but|whereas|while)\s)/i).map(unmask), marks: (string | null)[] = [];
+    for (const clause of clauses) {
+      let mark: string | null = null;
+      for (const m of clause.matchAll(FIX_VERB)) { const before = clause.slice(0, m.index); if (!/\b(?:not|never|n't)\s+$/i.test(before)) { const id = spanId(m[1]!); if (id) out.add(id); } } // "Fix `X`", never "should not change `X`"
+      const subj = /^\s*(?:(?:the|a|an|also|and|but|so|now|then|here|still|whereas|while)\s+)*`([^`\n]{1,80})`(.*)$/is.exec(clause); // the clause's subject span and its predicate
+      if (subj) { const pred = subj[2]!.replace(/`[^`\n]*`/g, " "); if (!HEALTHY.test(pred) && DEFECT_OR_ASK.test(pred)) mark = spanId(subj[1]!); }
+      if (HEALTHY_TAIL.test(clause) && marks.length) marks[marks.length - 1] = null;
+      marks.push(mark);
+    }
+    for (const m of marks) if (m) out.add(m);
+  }
+  return out;
+}
+/** Seal's input (engine10/stages/seal.ts specSiteGap): uncovered sites the issue names in a defect or request sentence. Seal caps the run
+ *  below VERIFIED on each one the diff did not touch and no agent-independent passing test names. */
+export const capSites = (uncovered: string[], task: string): string[] => { const d = defectSites(task); return uncovered.filter((x) => d.has(x)); };
 export function implementBlock(e: Emitter, destRel: string, sel: SpecSelection, full: string, atoms: SpecAtom[], sites: ResolvedSite[]): string {
-  const unchecked = uncheckedSites(e, sel.binding, full, atoms, sites);
+  const unchecked = uncoveredSites(e, sel.binding, full, atoms, sites);
   const adv = [...sel.advisory, ...sel.guards.map((name) => ({ name, why: "passes on base: keep it passing" }))];
   return [
     ...(sel.binding.length ? [`Executable spec: ${destRel} was written from the task before you started and is read-only. These tests fail on the current code, assert values the task itself states, and define done; make every one pass without editing the file:`, ...sel.binding.map((n) => `- ${n}`)] : []),
     ...(adv.length ? [`Advisory spec cases (not required, never blocking; a hint at the intended behavior, possibly wrong):\n${adv.map((a) => `- ${a.why}:\n${e.body(full, a.name).slice(0, 900)}`).join("\n")}`] : []),
-    ...(unchecked.length ? [`Named sites no binding spec test covers; handle each one the task describes: ${unchecked.join(", ")}`] : []),
+    ...(unchecked.length ? [`Named sites no binding spec test covers; handle each one the task describes (the run cannot read VERIFIED until a passing test that is not yours names each): ${unchecked.join(", ")}`] : []),
   ].join("\n");
 }
 
 // ---------- the generator seam ----------
-/** One completion with no repo tools. TODO(PR0, feat/toolless-call): call the shared tool-less Haiku primitive (thinking off) once
- *  it lands; until then the default goes through the run's own provider session (ctx.sessions.run) in an empty temp directory with
- *  every tool but Write disallowed, and reads the reply file the session writes. Tests replace it with setExecSpecGenerator. */
-export type SpecGenerator = (brief: string, o: { model: string; iterationId: string; signal: AbortSignal; maxTokens?: number }) => Promise<string | null>;
+/** One completion with no repo tools. The default is toolLessCall (runner/sdk_invoker.ts): no tools, no agent loop, thinking low, priced
+ *  into the run's child ledger (phase exec_spec) and refused once the run dollar cap is reached. Under LOKI_E10_INVOKER=cli every model call
+ *  goes through the configured CLI, so the generator does too (sessionGenerator: an empty temp directory, every tool but Write disallowed).
+ *  Tests replace it with setExecSpecGenerator. A generator returns the reply text, null for no reply, or { none } with the reason. */
+export type SpecGenerator = (brief: string, o: { model: string; iterationId: string; signal: AbortSignal; maxTokens?: number; meter?: { usd?: number | null } }) => Promise<string | null | { none: string }>; // meter.usd: the call's dollars when the generator prices it itself
 let generatorOverride: SpecGenerator | null = null;
 export const setExecSpecGenerator = (g: SpecGenerator | null): void => { generatorOverride = g; };
 export const execSpecModel = (env: NodeJS.ProcessEnv = process.env): string => env.LOKI_E10_EXEC_SPEC_MODEL || "haiku";
+export const EXEC_SPEC_LEDGER_PHASE = "exec_spec";
+export function toolLessGenerator(repoDir: string): SpecGenerator {
+  return async (brief, o) => {
+    if (o.signal.aborted) return null;
+    const r = await toolLessCall({ model: resolveClaudeModel(o.model), prompt: brief, maxTokens: o.maxTokens ?? 4096, thinking: "low", timeoutMs: 120_000, ledger: { lokiDir: join(repoDir, ".loki"), phase: EXEC_SPEC_LEDGER_PHASE } });
+    if (o.meter) o.meter.usd = r.usd;
+    if (r.outcome.kind === "ok") return r.outcome.value;
+    return r.outcome.kind === "budget" ? { none: "the run dollar cap is reached, no generator call was made" } : { none: `the generator call ended ${describeJudgeOutcome(r.outcome)}` };
+  };
+}
+export const defaultGenerator = (sessions: Parameters<typeof sessionGenerator>[0], repoDir: string, env: NodeJS.ProcessEnv = process.env): SpecGenerator =>
+  env.LOKI_E10_INVOKER === "cli" ? sessionGenerator(sessions) : toolLessGenerator(repoDir);
 export const EXEC_SPEC_REPLY = "spec_reply.md";
 export function sessionGenerator(sessions: { run(o: Record<string, unknown>): Promise<{ exit: number | null; killed: boolean }> }): SpecGenerator {
   return async (brief, o) => {
@@ -422,10 +482,11 @@ export function planFor(runner: SpecRunner, repoDir: string, sites: ResolvedSite
   return { runner, targetRel, header: `The file is ${targetRel}; import the code under test from "${spec}".`, mustStart: "", style: style ? read(style) : "" };
 }
 
-export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; /** LOKI_E10_TOURNAMENT, Go: the repaired probe cases, the package, and the full generated file (binding and advisory) */ probe?: string; probeRefused?: string; pkg?: string; specFile?: string; unchecked?: string[]; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; durationS: number }
-/** `probe` (features/tournament.ts probeIntake, passed by wall.ts only when LOKI_E10_TOURNAMENT=1): for Go, its rules are appended to the generator brief and the reply may carry a second block of probe cases, kept apart from the spec. */
+export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; uncoveredSites?: string[]; generatorUsd?: number | null; /** LOKI_E10_TOURNAMENT, Go: the repaired probe cases, the package, the full generated file (binding and advisory) and the named sites no binding case covers */ probe?: string; probeSkip?: string; pkg?: string; specFile?: string; unchecked?: string[]; durationS: number }
+/** `probe` (features/tournament.ts probeIntake, passed by wall.ts only when LOKI_E10_TOURNAMENT is not 0): for Go, its rules are appended to the generator brief and the reply may carry a second block of probe cases, kept apart from the spec. */
 export async function execSpecAuthor(o: { task: string; repoDir: string; runners: string[]; existingTests: string[]; sessions: Parameters<typeof sessionGenerator>[0]; iterationId: string; signal: AbortSignal; probe?: { rules: string; /** dynamic lines appended after the rules (the no-regression keep ledger), "" for none */ ledger?(sites: ResolvedSite[], repoDir: string): string; take(reply: string, pkg: string): { reply: string; probe?: string; refused?: string } } }): Promise<ExecSpecOutcome> {
-  const t0 = Date.now(), atoms0 = extractSpecAtoms(o.task), done = (status: ExecSpecOutcome["status"], reason: string, extra: Partial<ExecSpecOutcome> = {}): ExecSpecOutcome => ({ status, reason, atoms: atoms0.length, sites: 0, binding: [], advisory: [], guards: [], dropped: [], durationS: (Date.now() - t0) / 1000, ...extra });
+  let priced: number | null | undefined; // the generator call's dollars when it prices itself (toolLessCall); undefined: read from the session's iteration id
+  const t0 = Date.now(), atoms0 = extractSpecAtoms(o.task), done = (status: ExecSpecOutcome["status"], reason: string, extra: Partial<ExecSpecOutcome> = {}): ExecSpecOutcome => ({ status, reason, atoms: atoms0.length, sites: 0, binding: [], advisory: [], guards: [], dropped: [], durationS: (Date.now() - t0) / 1000, ...(priced !== undefined ? { generatorUsd: priced } : {}), ...extra });
   const runner = (["go", "pytest", "vitest"] as SpecRunner[]).find((r) => o.runners.includes(r));
   if (!runner) return done("skipped", "exec spec: no supported runner (go, pytest, vitest)");
   const sites = resolveSites(atoms0, o.repoDir);
@@ -433,12 +494,22 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
   const atoms = [...atoms0, ...parityAtoms(atoms0, sites), ...pairAtoms(atoms0, sites)], e = EMITTERS[runner], plan = planFor(runner, o.repoDir, sites, o.existingTests);
   if (!plan) return done("skipped", `exec spec: no ${runner} site to place the spec beside`, { sites: sites.length });
   if (existsSync(join(o.repoDir, plan.targetRel))) return done("skipped", `exec spec: ${plan.targetRel} already exists`, { sites: sites.length });
-  const gen = generatorOverride ?? sessionGenerator(o.sessions);
+  const gen = generatorOverride ?? defaultGenerator(o.sessions, o.repoDir);
   const probing = runner === "go" ? o.probe : undefined, pkg = plan.mustStart.replace(/^package\s+/, "");
-  const reply0 = await gen([buildGeneratorBrief(e, atoms, sites, plan.header, plan.style), ...(probing ? [probing.rules, ...(probing.ledger ? [probing.ledger(sites, o.repoDir)] : [])].filter(Boolean) : [])].join("\n\n"), { model: execSpecModel(), iterationId: o.iterationId, signal: o.signal, ...(probing ? { maxTokens: 8192 } : {}) });
-  if (reply0 === null) return done("skipped", "exec spec: the generator wrote no reply", { sites: sites.length, runner });
-  const taken = probing ? probing.take(reply0, pkg) : null, reply = taken ? taken.reply : reply0;
-  const parsed = parseGenerated(e, reply, plan.mustStart);
+  const ask = async (withProbe: boolean): Promise<string | null | { none: string }> => {
+    const meter: { usd?: number | null } = {}, r = await gen([buildGeneratorBrief(e, atoms, sites, plan.header, plan.style), ...(withProbe && probing ? [probing.rules, ...(probing.ledger ? [probing.ledger(sites, o.repoDir)] : [])].filter(Boolean) : [])].join("\n\n"), { model: execSpecModel(), iterationId: o.iterationId, signal: o.signal, meter, ...(withProbe && probing ? { maxTokens: 16384 } : {}) }); // a cap, not a typical size: spec plus probe measured 5.3k to 14k output tokens on Haiku
+    if (meter.usd !== undefined) priced = priced === null || meter.usd === null ? null : (priced ?? 0) + meter.usd;
+    return r;
+  };
+  let reply0 = await ask(!!probing), taken = probing && typeof reply0 === "string" ? probing.take(reply0, pkg) : null;
+  let parsed = typeof reply0 === "string" ? parseGenerated(e, taken ? taken.reply : reply0, plan.mustStart) : null;
+  let probeSkip: string | undefined;
+  if (probing && (!parsed || "refused" in parsed)) { // a probe never costs the run its spec: ask again for the spec alone, as without the tournament
+    probeSkip = `the combined spec and probe reply was unusable (${!parsed ? (reply0 && typeof reply0 === "object" ? reply0.none : "no reply") : parsed.refused}); the spec was asked for again without the probe`;
+    taken = null; reply0 = await ask(false);
+    parsed = typeof reply0 === "string" ? parseGenerated(e, reply0, plan.mustStart) : null;
+  }
+  if (reply0 === null || typeof reply0 !== "string" || !parsed) return done("skipped", `exec spec: ${reply0 ? (reply0 as { none: string }).none : "the generator wrote no reply"}`, { sites: sites.length, runner });
   if ("refused" in parsed) return done("skipped", `exec spec: ${parsed.refused}`, { sites: sites.length, runner });
   const base = redFilter(e, o.repoDir, plan.targetRel, parsed.file);
   if (!base.built) return done("skipped", "exec spec: the generated file did not build on the base tree; it proves nothing and was dropped", { sites: sites.length, runner, dropped: e.names(parsed.file) });
@@ -448,9 +519,9 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
     const again = redFilter(e, o.repoDir, plan.targetRel, sel.file);
     if (!again.built || binding.some((n) => again.cases[n] !== "red")) { sel.advisory.push(...binding.map((name) => ({ name, why: "red on base alone, not once pruned" }))); binding = []; }
   }
-  const brief = implementBlock(e, plan.targetRel, { ...sel, binding }, parsed.file, atoms, sites), extra = { runner, targetRel: plan.targetRel, sites: sites.length, brief, binding, advisory: sel.advisory.map((a) => a.name), guards: sel.guards, dropped, ...(taken ? { pkg, specFile: parsed.file, unchecked: uncheckedSites(e, binding, parsed.file, atoms, sites), ...(taken.probe ? { probe: taken.probe } : { probeRefused: taken.refused ?? "probe_no_block" }) } : {}) };
+  const brief = implementBlock(e, plan.targetRel, { ...sel, binding }, parsed.file, atoms, sites), extra = { runner, targetRel: plan.targetRel, sites: sites.length, brief, binding, advisory: sel.advisory.map((a) => a.name), guards: sel.guards, dropped, uncoveredSites: capSites(uncoveredSites(e, binding, parsed.file, atoms, sites), o.task), ...(probing ? { pkg, specFile: parsed.file, unchecked: uncoveredSites(e, binding, parsed.file, atoms, sites), ...(taken?.probe ? { probe: taken.probe } : { probeSkip: probeSkip ?? taken?.refused ?? "probe_no_block" }) } : {}) };
   return binding.length ? done("sealed", `exec spec: ${binding.length} binding case(s) red on base`, { ...extra, file: sel.file }) : done("advisory_only", "exec spec: no binding case red on base; advisory cases only", extra);
 }
 
 /** implement.ts reads this: the exec-spec brief block the Wall stage left for this run, or null. */
-export function execSpecBriefOf(runDir: string): string | null { try { const t = readFileSync(join(runDir, EXEC_SPEC_BRIEF_FILE), "utf8").trim(); return t || null; } catch { return null; } }
+export function execSpecBriefOf(runDir: string, env: NodeJS.ProcessEnv = process.env): string | null { if (!execSpecEnabled(env)) return null; try { const t = readFileSync(join(runDir, EXEC_SPEC_BRIEF_FILE), "utf8").trim(); return t || null; } catch { return null; } }

@@ -185,6 +185,7 @@ export interface Receipt {
   toolchain?: import("../util/receipt_signer.ts").Toolchain; loki_version?: string; // TEN-GATES-22: absent on receipts sealed before it existed, which still verify; loki_version (VERSION at seal) likewise
   /** T2: "test fails without the fix: yes | no | inconclusive (reason)"; omitted when LOKI_MUTATION_PROOF=0 or the verdict was not VERIFIED. */
   mutation_proof?: string;
+  exec_spec?: { status: string; seconds: number; binding: number; usd: number | null }; // present only when the exec spec stage ran: its wall seconds and the generator session's dollars (null when unmetered or no session ran)
   /** XV-1: cross-review judge and whether it is a different vendor than the builder (LOKI_XVENDOR_DEFAULT=1 only). */
   review?: { provider: string | null; vendor_differs: boolean };
   /** T2: the counted outcome for METRICS: "yes" | "no" | "inconclusive". */

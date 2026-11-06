@@ -9,16 +9,18 @@ import { FINISH_LINE, FIXED_RULES, briefRecord, type BriefRecord } from "../../e
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
 import type { ExtraAttemptsDeps } from "../../features/attempts.ts";
-import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
-import { classifyExitCause } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
+import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, checkExcerpt, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
+import { classifyExitCause, resolveModel } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
 import { adjudicateWallConflict, coverageResumeEnabled, resumeAfterAlreadyDone, resumeAfterConflict, resumeAfterEmptyDone, resumeForCoverage } from "../../util/conflict_resume.ts";
 import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
 import { routerActive } from "../../runner/router/unit_model.ts";
-import { type ImplementExit, type RunContext, type SessionRunOptions, type Stage, type StageResult, type TestMap, taskBlock } from "../types.ts";
+import { type ImplementExit, type RunContext, type SessionResult, type SessionRunOptions, type Stage, type StageResult, type TestMap, type TestRef, taskBlock } from "../types.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { sha256 } from "./seal.ts";
 import { assumptionsBlock } from "../../features/spec_ambiguity.ts";
 import { loadSpecFile, specBriefBlock, type LoadedSpec } from "../../util/spec_file.ts";
+import { appliedTests, buildPatchBrief, patchCallFor, patchEnabled, runPatchProtocol, testConventions, type PatchCall, type PatchCheck, type PatchOutcome } from "../../features/patch_protocol.ts";
+import { isTestFile } from "../../util/test_file_text.ts";
 
 /** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
 export interface ReadOnlyFile { path: string; content: string; }
@@ -97,6 +99,37 @@ export function attemptDeps(ctx: RunContext, k: number, brief: string, limitS: n
   };
 }
 
+/** LOKI_E10_PATCH: the patch protocol's harness-run check. The impacted tests of the applied files plus every applied test file (its runner from a mapped file with the same extension), at most PATCH_MAX_CHECKS, run by verify's own runner with no events emitted. */
+const PATCH_MAX_CHECKS = 6;
+export function patchCheckRefs(ctx: RunContext, applied: string[], impacted: string[]): TestRef[] {
+  const map = ctx.outputs().intake?.testmap as TestMap | undefined;
+  const ext = (p: string): string => p.slice(p.lastIndexOf("."));
+  const fromMap = map ? [...ctx.tests.impacted(map, applied.filter((f) => !isTestFile(f))), ...map.tests.filter((t) => impacted.includes(t.path) || applied.includes(t.path))] : [];
+  const extra = appliedTests(applied).filter((f) => !fromMap.some((t) => t.path === f)).flatMap((f): TestRef[] => { const r = map?.tests.find((t) => ext(t.path) === ext(f))?.runner ?? (map?.runners.length === 1 ? map.runners[0] : undefined); return r ? [{ runner: r, path: f }] : []; });
+  const seen = new Set<string>();
+  return [...extra, ...fromMap].filter((t) => !seen.has(t.path) && !!seen.add(t.path)).slice(0, PATCH_MAX_CHECKS);
+}
+export function patchCheck(ctx: RunContext, impacted: string[], wall: string[], signal: AbortSignal): (applied: string[]) => Promise<PatchCheck> {
+  return async (applied) => {
+    const refs = patchCheckRefs(ctx, applied, impacted), quiet = Object.assign(Object.create(ctx) as RunContext, { emit: () => undefined }), out: VerifyCheck[] = [];
+    const map = ctx.outputs().intake?.testmap as TestMap | undefined;
+    if (!refs.some((t) => impacted.includes(t.path) || (map?.tests ?? []).some((m) => m.path === t.path))) return { ok: false, ran: 0, names: refs.map((t) => `patch:${t.runner}:${t.path}=own test only`), digest: "no test that existed before the change covers it; the model's own new test alone is no proof" }; // never green on the model's own test alone: fall back
+    for (const t of refs) { const tc = commandFor(t, ctx.repoDir, loadProjectApi(ctx.repoDir)); await runCheck(quiet, `patch:${t.runner}:${t.path}`, tc.cmd, tc.args, signal, out, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}), wall: new Set(wall) }); }
+    const ran = out.filter((c) => c.result === "pass" || c.result === "fail" || c.result === "flaky");
+    return { ok: ran.length > 0 && ran.length === out.length && out.every((c) => c.result === "pass"), ran: ran.length, names: out.map((c) => `${c.name}=${c.result}`), digest: out.filter((c) => c.result !== "pass").map((c) => `${c.name}: ${c.result}${c.reason ? ` (${c.reason})` : ""}\n${checkExcerpt(c) || c.first_error || ""}`).join("\n").slice(0, 1500) };
+  };
+}
+/** The patch brief: the context pack's code (the haiku pack), the impacted tests' heads and the exact check commands. */
+export function patchBrief(ctx: RunContext, task: string, impacted: string[]): string {
+  const bc = briefCtx(ctx, "haiku"), code = bc.packText ?? "";
+  const refs = patchCheckRefs(ctx, bc.files.filter((f) => !isTestFile(f)), impacted); // the tests of the code the dossier shows, not only the task's named files
+  const tests = [...new Set([...impacted.filter((p) => isTestFile(p)), ...refs.map((t) => t.path)])], cmds = refs.map((t) => { const c = commandFor(t, ctx.repoDir, loadProjectApi(ctx.repoDir)); return `${c.pkgRoot !== "." ? `cd ${c.pkgRoot} && ` : ""}${[c.cmd.startsWith(`${ctx.repoDir}/`) ? relative(ctx.repoDir, c.cmd) : c.cmd, ...c.args].join(" ")}`; });
+  return buildPatchBrief(task, code || bc.text, testConventions(ctx.repoDir, tests), cmds);
+}
+/** Test seam: the e2e drives the protocol with a recorded reply instead of a model. */
+let patchCallOverride: PatchCall | null = null;
+export function __setPatchCallForTests(c: PatchCall | null): void { patchCallOverride = c; }
+
 export const implementStage: Stage = {
   name: "implement",
   targetS: 180,
@@ -143,9 +176,21 @@ export const implementStage: Stage = {
     // ROUTER-1: per-unit ladder from the plan's route record (runner/router/unit_model.ts). Flag off: none of this runs.
     const size = sizeTask(task, loadRepoMap(prior.intake?.repomap_ref as string | undefined), (prior.intake?.testmap as TestMap | undefined) ?? null).size;
     const rt = routed ? routeStart(ctx, first, prior.plan, size) : null;
-    let session = await ctx.sessions.run(first);
-    const ids = [first.iterationId];
-    if (resumeId && !session.killed && session.exit !== 0 && session.exit !== MAX_TURNS_EXIT) { // a failed resume reruns fresh with the same full brief
+    // LOKI_E10_PATCH (default off): lean path only (no plan, no router, no session to continue). Green skips the agentic session; anything else restored the tree and the session below runs as today.
+    let patch: PatchOutcome | undefined, patchS = 0, patchNote = ""; // patchNote: the patch reply's lines before its first edit block (its root cause), the green session's summary
+    const patchModel = downgrade?.to ?? ctx.model ?? resolveModel(ctx.provider); // a named model only: "claude (provider default)" names none for a tool-less call
+    const patchOn = patchEnabled() && !plan && !routed && !resumeId && ctx.provider === "claude" && /^[\w.:@/-]+$/.test(patchModel);
+    if (patchOn && !signal.aborted) {
+      const started = Date.now();
+      try { patch = await runPatchProtocol({ rules: { repoDir: ctx.repoDir, readOnly: readOnly.map((f) => relative(ctx.repoDir, f.path)), task }, brief: patchBrief(ctx, task, impacted), iterationId: `${ctx.runId}-impl-p`, signal,
+        call: patchCallOverride ?? patchCallFor(patchModel, join(ctx.repoDir, ".loki")), check: patchCheck(ctx, impacted, readOnly.map((f) => relative(ctx.repoDir, f.path)), signal),
+        record: (n, prompt, reply) => { if (reply && n === 1) patchNote = reply.split(/^FILE:/m)[0]!.trim(); mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, `implement-patch-${n}.txt`), `${prompt}\n\n=== REPLY ===\n${reply ?? "(call failed)"}\n`, "utf8"); } });
+      } catch (e) { patch = { status: "error", calls: 0, applied: [], refused: [], restored: [], log: [`error before any edit: ${String((e as Error)?.message ?? e).split("\n")[0]!.slice(0, 200)}`], usd: null }; } // the brief or the call setup threw (the protocol restores its own writes): the agentic session runs
+      patchS = (Date.now() - started) / 1000;
+    }
+    let session: SessionResult = patch?.status === "green" ? { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: patchS, killed: false, summary: patchNote || patch.log.join("\n") } : await ctx.sessions.run(first);
+    const ids = patch?.status === "green" ? [`${ctx.runId}-impl-p`] : [first.iterationId];
+    if (patch?.status !== "green" && resumeId && !session.killed && session.exit !== 0 && session.exit !== MAX_TURNS_EXIT) { // a failed resume reruns fresh with the same full brief
       planChainMode = "fallback (resume failed)";
       if (ownId) { sessionResume = "fallback (resume failed)"; process.stderr.write(`implement: recorded session ${ownId} was not resumable, starting a fresh session\n`); }
       const retry = `${first.iterationId}f`; ids.push(retry);
@@ -162,7 +207,8 @@ export const implementStage: Stage = {
     if (!challenged && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && treeIsEmpty(ctx)) { const r = await resumeAfterEmptyDone(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, routerRedid); session = r.session; ids.push(r.iterationId); await challenge(); } // FC-43: one correction for a done exit with no change
 
     let coverage: string | undefined; // L4: lean path only; an attempts run owns its own sessions
-    if (coverageResumeEnabled() && !plan) { if (!signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForCoverage(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; if (r.iterationId !== ids[ids.length - 1]) ids.push(r.iterationId); coverage = "resumed"; } else coverage = "skipped"; }
+    let claimAbsent: string[] | undefined; // site-ledger claimed_change_absent: SITE lines naming a line the coverage turn did not change, re-asked once
+    if (coverageResumeEnabled() && !plan) { if (patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForCoverage(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); claimAbsent = r.claimAbsent; coverage = "resumed"; } else coverage = patch?.status === "green" ? "skipped (patch green)" : "skipped"; }
 
     if (process.env.LOKI_E10_REPRO === "1" && !plan && !signal.aborted && !session.killed && session.exit === 0) { let bad: { name: string; why: string }[] = []; try { bad = outOfRepoTests(ctx.repoDir, changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); } catch { /* unreadable tree: no re-ask */ } if (bad.length) { const redo = `${first.iterationId}-oor`; ids.push(redo); session = await ctx.sessions.run({ ...unchained(), brief: withStagePrefix(outOfRepoReask("Rewrite these new test files in place, keeping the same names and what they reproduce.", bad)), iterationId: redo }); } } // TEN-QUALITY-44: the repro test gets the Wall's out-of-repo check and one re-ask
     const testsReverted = restoreReadOnly(readOnly);
@@ -197,7 +243,8 @@ export const implementStage: Stage = {
       duration_s: session.durationS, ...(session.exit === MAX_TURNS_EXIT && !session.killed ? { stop_cause: "max_turns", owner: "harness", limit_s: implementStage.limitS, elapsed_s: session.durationS } : {}),
       ...(planChainMode ? { plan_chain: planChainMode } : {}),
       ...(sessionResume ? { session_resume: sessionResume } : {}),
-      ...(coverage ? { coverage_resume: coverage } : {}),
+      ...(coverage ? { coverage_resume: coverage } : {}), ...(claimAbsent ? { claim_absent: claimAbsent } : {}),
+      ...(patch ? { patch: { status: patch.status, calls: patch.calls, applied: patch.applied, refused: patch.refused, restored: patch.restored, usd: patch.usd, log: patch.log, ...(patch.check ? { check: patch.check } : {}) } } : {}),
       ...(tournament ? { tournament } : {}),
       ...(noRegression ? { no_regression: noRegression } : {}),
       ...(fragmentWriterOn() && session.summary ? { summary_tail: session.summary.slice(-1500) } : {}), // the release-note writer reads the final message
