@@ -953,6 +953,35 @@ export function exercisedViaCallers(unexercised: readonly string[], seed: (name:
   for (let n = work.pop(); n !== undefined; n = work.pop()) for (const called of byName.get(n) ?? []) for (const c of called) if (byName.has(c) && !covered.has(c)) { covered.add(c); work.push(c); }
   return unexercised.filter((f) => !covered.has(f));
 }
+/** The executed blocks (count > 0) of a Go cover profile (go test -coverprofile, any mode), per file as the profile names it (import path + "/" + file name), as line ranges. */
+export function goExecuted(profile: string): Map<string, [number, number][]> {
+  const out = new Map<string, [number, number][]>();
+  for (const l of profile.split("\n")) { const m = /^(.+):(\d+)\.\d+,(\d+)\.\d+ \d+ (\d+)$/.exec(l.trim()); if (!m || m[4] === "0") continue; (out.get(m[1]!) ?? out.set(m[1]!, []).get(m[1]!)!).push([+m[2]!, +m[3]!]); }
+  return out;
+}
+/** One `git diff -U0` hunk: base lines [a, a+b) are replaced by head lines [c, c+d) whose text is `lines` (b 0: inserted after base line a). */
+export interface Hunk { a: number; b: number; c: number; d: number; lines: string[] }
+export function parseHunks(diffU0: string): Hunk[] {
+  const out: Hunk[] = []; let cur: Hunk | null = null;
+  for (const l of diffU0.split("\n")) {
+    const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(l);
+    if (m) { cur = { a: +m[1]!, b: m[2] === undefined ? 1 : +m[2], c: +m[3]!, d: m[4] === undefined ? 1 : +m[4], lines: [] }; out.push(cur); continue; }
+    if (cur && l.startsWith("+") && !l.startsWith("+++")) cur.lines.push(l.slice(1));
+  }
+  return out;
+}
+/** `base` with only `hunks` applied (each from the same base..head -U0 diff), applied last first so earlier line numbers hold. */
+export function applyHunks(base: string, hunks: readonly Hunk[]): string {
+  const lines = base.split("\n");
+  for (const h of [...hunks].sort((x, y) => y.a - x.a)) lines.splice(h.b === 0 ? h.a : h.a - 1, h.b, ...h.lines);
+  return lines.join("\n");
+}
+/** A Go `go test -json` stream in which test `name` itself reported pass: "[no tests to run]", a zero run, another test passing, or a fail is not. */
+export function goSingleTestPassed(out: string, name: string): boolean {
+  let passed = false;
+  for (const l of out.split("\n")) { let e: { Action?: string; Test?: string }; try { e = JSON.parse(l); } catch { continue; } if (e.Action === "fail") return false; if (e.Test === name && e.Action === "pass") passed = true; }
+  return passed;
+}
 /** TEN-GATES-14: per-gate legibility for `loki verify --explain`. exogenous/independent evidence is exogenous; agent_authored and llm_judge are agent-influenced; absent or unknown provenance is unrecorded, never exogenous. */
 export interface ExplainGate { name: string; class: "exogenous" | "agent-influenced" | "unrecorded"; provenance: string | null; result: string; n: number | null; evidence: string }
 export function explainGates(receiptPath: string): ExplainGate[] {

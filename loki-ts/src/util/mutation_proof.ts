@@ -10,9 +10,9 @@ import { readScopeText } from "./run_cap.ts";
 import { sealedWallCopy, sealedWallDir } from "./check_result.ts";
 
 export type MutationOutcome = "yes" | "no" | "inconclusive";
-export interface MutationProof { outcome: MutationOutcome; line: string; failed?: string[]; } // failed: the files whose run failed on the base (serially confirmed), for a caller that must know WHICH test discriminates
+export interface MutationProof { outcome: MutationOutcome; line: string; failed?: string[]; failedTests?: Record<string, string[]>; } // failedTests: per failed file, the test ids the runner read as failing (Go: pkg::TestName), when it reports them // failed: the files whose run failed on the base (serially confirmed), for a caller that must know WHICH test discriminates
 export interface MutationTest { runner: string; path: string; }
-export interface MutationRunner { run(dir: string, files: MutationTest[]): { pass: number; fail: number; not_run?: number; assertFail?: number }; runEach?(dir: string, files: MutationTest[], jobs: number, corroborate: boolean, remaining?: () => number): Promise<({ pass: number; fail: number; not_run?: number } | undefined)[]>; } // runEach: same per-file result, a few files at once
+export interface MutationRunner { run(dir: string, files: MutationTest[]): { pass: number; fail: number; not_run?: number; assertFail?: number; failedIds?: string[] }; runEach?(dir: string, files: MutationTest[], jobs: number, corroborate: boolean, remaining?: () => number): Promise<({ pass: number; fail: number; not_run?: number } | undefined)[]>; } // runEach: same per-file result, a few files at once
 const envJobs = (raw: string | undefined): number => { const n = Number.parseInt(raw ?? "", 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 8) : 1; }; // LOKI_MUTATION_PROOF_JOBS: default 1 = serial (as LOKI_E10_BASE_JOBS / LOKI_E10_VERIFY_JOBS). Opt-in >1 is faster but can give a false "yes" on a Wall test with side effects outside the worktree.
 export interface MutationInput {
   repoDir: string; baseSha: string; runDir: string;
@@ -83,7 +83,8 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
     for (const r of rs) { pass += r!.pass; fail += r!.fail; notRun += r!.not_run ?? 0; }
     if (remaining() <= 0 && fail === 0) return np("timeout");
     const failed = active.filter((_, k) => k < sure && rs[k]!.fail > 0 && (!i.requireAssertion || ((rs[k] as { assertFail?: number }).assertFail ?? 0) > 0)).map((t) => t.path);
-    if (fail > 0) return { outcome: "yes", line: `${LABEL}yes`, failed };
+    const failedTests = Object.fromEntries(active.flatMap((t, k) => (failed.includes(t.path) && (rs[k] as { failedIds?: string[] }).failedIds?.length ? [[t.path, (rs[k] as { failedIds?: string[] }).failedIds!]] : [])));
+    if (fail > 0) return { outcome: "yes", line: `${LABEL}yes`, failed, failedTests };
     if (pass > 0 && notRun === 0) return { outcome: "no", line: `${LABEL}no (warning: the Wall tests also pass on the old code)` };
     return np("the Wall command did not execute to a result");
   } catch (e) {

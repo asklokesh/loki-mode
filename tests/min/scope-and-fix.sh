@@ -1159,6 +1159,81 @@ if command -v go >/dev/null 2>&1; then
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go base proof: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go base proof: go is not installed"; fi
 fi
+# Go fail-then-pass through a caller, measured (rule 22, real go through the real engine; the receipt shape of L-Haiku-v132 cli-2418/cli-2439): the fix changes an UNEXPORTED function
+# (parse, the run's parseFlags) and the new test calls only the exported Double that calls it. The test fails on the base by assertion and passes on the change; run alone on the head
+# with -coverprofile it executes the changed line, and re-run on a clean base archive plus ONLY that hunk it passes (goCoverageRelevant: coverage plus hunk ablation). Before the fix the
+# receipt read "no test shown to fail on the base commit and pass on the change: test fails without the fix: yes" (no file named) plus "no passing check references a changed symbol".
+# Review of #541 (four rounds of name-based reach) and the lead's policy: every probe below must read PARTIAL. t.Run, st.Run, x := st and Widget.Run reach no changed line; a neutral
+# touch executes one but the base failure comes from a const the ablation leaves out; a hunk that needs a package-level const does not compile when ablated; a test reading head-only
+# testdata fails on the clean base archive; a change inside init() and a comment-only hunk inside an executed function never count; Python has no measured path. Plants: skip the ablation (the neutral-touch leg reads VERIFIED); select every hunk for ablation (neutral touch
+# VERIFIED); copy the head tree instead of a base archive (testdata VERIFIED); goSingleTestPassed accepts any pass (unit red).
+TO_SAVE=("${TO[@]+"${TO[@]}"}"); command -v timeout >/dev/null 2>&1 && TO=(timeout 300) # these legs run go test three extra times in seal; a loaded host CANCELs them at 120 s
+make_wo_go_repo() {
+    mkdir -p "$1"
+    printf 'module example.com/calc\n\ngo 1.20\n' > "$1/go.mod"
+    printf 'package calc\n\nfunc Add(a, b int) int { return a + b }\n\nfunc parse(a int) int {\n\treturn a + a + 1\n}\n\n// Double returns twice a.\nfunc Double(a int) int { return parse(a) }\n' > "$1/calc.go"
+    printf 'package calc\n\nimport "testing"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(2, 3) != 5 {\n\t\tt.Fatal("add")\n\t}\n}\n' > "$1/calc_test.go"
+    printf 'package calc\n\nfunc Inc(n int) int { return Add(n, 1) }\n' > "$1/util.go"
+    printf 'package calc\n\nimport "testing"\n\nfunc TestInc(t *testing.T) {\n\tif Inc(1) != 2 {\n\t\tt.Fatal("inc")\n\t}\n}\n' > "$1/util_test.go"
+    return 0
+}
+GO_DOUBLE_TEST=$'\nfunc TestDouble(t *testing.T) {\n\tif got := Double(3); got != 6 {\n\t\tt.Errorf("want 6 got %d", got)\n\t}\n}'
+gorun() { MAKE_REPO="$1" run_engine "$2" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.go E2E_STUB_REPLACE="$3" E2E_STUB_SNIPPET="$4" E2E_STUB_TEST_FILE="${GO_TF:-calc_test.go}" E2E_STUB_TEST_APPEND="$5" LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 "${@:6}"; notes="$(wo_receipt np)"; mp="$(wo_receipt mp)"; }
+if command -v go >/dev/null 2>&1; then
+    gorun make_wo_go_repo "fix Double(a) in calc.go so it returns twice a" $'\treturn a + a + 1' $'\treturn a * 2' "$GO_DOUBLE_TEST"
+    [ "$(outcome)" = "VERIFIED" ] && ok "go caller fail-then-pass: a new test reaching the changed unexported parse only through Double, measured by coverage and hunk ablation: VERIFIED" || { bad "go caller fail-then-pass: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$mp" in *"fails without the fix: yes"*"calc_test.go"*) ok "go caller fail-then-pass: the proof line names the file ($mp)" ;; *) bad "go caller fail-then-pass: no proof line naming calc_test.go: '$mp'" ;; esac
+    case "$notes" in *"no test shown to fail"*|*"no passing check references a changed symbol"*) bad "go caller fail-then-pass: a proof gap is still listed: $notes" ;; *) ok "go caller fail-then-pass: neither proof gap is listed" ;; esac
+    gorun make_wo_go_repo "fix Double(a) in calc.go so it returns twice a" $'\treturn a + a + 1' $'\treturn a * 2' $'\nfunc TestDouble(t *testing.T) {\n\tif got := Double(3); got != 6 && got != 7 {\n\t\tt.Errorf("want 6 got %d", got)\n\t}\n}'
+    [ "$(outcome)" = "PARTIAL" ] && ok "go caller passes-on-base: a caller test that also passes on the base is still PARTIAL" || { bad "go caller passes-on-base: outcome is '$(outcome)'"; dump; }
+    gorun make_wo_go_repo "fix Double(a) in calc.go so it returns twice a" $'\treturn a + a + 1\n}' $'\treturn a * factor\n}\n\nconst factor = 2' "$GO_DOUBLE_TEST"
+    [ "$(outcome)" = "PARTIAL" ] && ok "go ablation compile: a counted hunk that needs a package-level const the ablation leaves out does not compile, so no lift (PARTIAL, fail closed)" || { bad "go ablation compile: outcome is '$(outcome)' ($notes)"; dump; }
+    GO_TF=data_test.go gorun make_wo_go_repo "fix Double(a) in calc.go so it returns twice a" $'\treturn a + a + 1' $'\treturn a * 2' $'package calc\n\nimport (\n\t"os"\n\t"testing"\n)\n\nfunc TestDoubleFile(t *testing.T) {\n\tb, err := os.ReadFile("testdata/want.txt")\n\tif err != nil || string(b) != "6" {\n\t\tt.Fatalf("want file: %v", err)\n\t}\n\tif got := Double(3); got != 6 {\n\t\tt.Errorf("want 6 got %d", got)\n\t}\n}' E2E_STUB_EXTRA_FILE=testdata/want.txt E2E_STUB_EXTRA_TEXT=6
+    [ "$(outcome)" = "PARTIAL" ] && ok "go ablation testdata: a test that needs a head-only testdata file fails on the clean base archive, so no lift (PARTIAL, fail closed)" || { bad "go ablation testdata: outcome is '$(outcome)' ($notes)"; dump; }
+    gr="$(cd "$ROOT/loki-ts" && bun -e 'const { goExecuted, parseHunks, applyHunks, goSingleTestPassed } = await import("./src/util/check_result.ts"); const h = parseHunks("@@ -2 +2 @@\n-b\n+B\n@@ -4,0 +5,2 @@\n+x\n+y\n@@ -6,2 +7,0 @@\n-f\n-g\n"); const ev = (...e: object[]) => e.map((x) => JSON.stringify(x)).join("\n"); console.log([JSON.stringify(h.map((x) => [x.a, x.b, x.c, x.d, x.lines.length])), applyHunks("a\nb\nc\nd\ne\nf\ng\nh", h).split("\n").join("/"), applyHunks("a\nb\nc\nd\ne\nf\ng\nh", [h[0]!]).split("\n").join("/"), JSON.stringify([...goExecuted("mode: set\nm/c.go:4.2,6.3 1 1\nm/c.go:8.2,8.9 1 0\n")]), goSingleTestPassed(ev({ Action: "run", Test: "TestA" }, { Action: "pass", Test: "TestA" }, { Action: "pass" }), "TestA"), goSingleTestPassed(ev({ Action: "output", Output: "ok p [no tests to run]\n" }, { Action: "pass" }), "TestA"), goSingleTestPassed(ev({ Action: "pass", Test: "TestB" }, { Action: "pass" }), "TestA"), goSingleTestPassed(ev({ Action: "pass", Test: "TestA" }, { Action: "fail" }), "TestA")].join("|"))' 2>&1 | tail -1)"
+    [ "$gr" = '[[2,1,2,1,1],[4,0,5,2,2],[6,2,7,0,0]]|a/B/c/d/x/y/e/h|a/B/c/d/e/f/g/h|[["m/c.go",[[4,6]]]]|true|false|false|false' ] && ok "go ablation unit: -U0 hunks parse and apply alone or together; only executed blocks count; only the named test's own pass event is a pass ($gr)" || bad "go ablation unit: got '$gr'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "go caller fail-then-pass: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: go caller fail-then-pass: go is not installed"; fi
+fi
+make_trun_go_repo() {
+    mkdir -p "$1"
+    printf 'module example.com/calc\n\ngo 1.20\n' > "$1/go.mod"
+    if [ -n "${TRUN_INIT:-}" ]; then printf 'package calc\n\nfunc parse(a int) int {\n\treturn a + a\n}\n\nconst unit = 1\n\nvar greeting string\n\nfunc init() {\n\tgreeting = "old"\n}\n' > "$1/calc.go"
+    else printf 'package calc\n\nfunc parse(a int) int {\n\treturn a + a\n}\n\nconst (\n\tunit     = 1\n\tgreeting = "old"\n)\n' > "$1/calc.go"; fi
+    printf 'package calc\n\ntype Cmd struct{}\n\nfunc (c *Cmd) Run() int {\n\treturn parse(unit)\n}\n' > "$1/cmd.go"
+    if [ -n "${TRUN_TOUCH:-}" ]; then printf 'package calc\n\nfunc Hello() string {\n\t_ = parse(unit)\n\treturn greeting\n}\n' > "$1/hello.go"; else printf 'package calc\n\nfunc Hello() string {\n\treturn greeting\n}\n' > "$1/hello.go"; fi
+    printf 'package calc\n\ntype Widget struct{}\n\nfunc (w *Widget) Run() string {\n\treturn greeting\n}\n' > "$1/widget.go"
+    printf 'package calc\n\nimport "testing"\n\nfunc TestCmd(t *testing.T) {\n\tif (&Cmd{}).Run() != 2 {\n\t\tt.Fatal("run")\n\t}\n}\n' > "$1/calc_test.go"
+    return 0
+}
+trun() { gorun make_trun_go_repo "fix parse(a) in calc.go so it handles negative a" $'\treturn a + a\n}\n\nconst (\n\tunit     = 1\n\tgreeting = "old"' $'\treturn 2 * a\n}\n\nconst (\n\tunit     = 1\n\tgreeting = "new"' "$1"; [ "$(outcome)" = "PARTIAL" ] && ok "go caller $2: not proof (PARTIAL)" || { bad "go caller $2: outcome is '$(outcome)' ($notes)"; dump; }; }
+if command -v go >/dev/null 2>&1; then
+    trun $'\nfunc TestGreeting(t *testing.T) {\n\tt.Run("hello", func(t *testing.T) {\n\t\tif Hello() != "new" {\n\t\t\tt.Errorf("got %s", Hello())\n\t\t}\n\t})\n}' "t.Run probe (a const flips, parse is touched with no behavior change, an older test in the file calls Cmd.Run)"
+    trun $'\nfunc TestGreeting(st *testing.T) {\n\tst.Run("hello", func(st *testing.T) {\n\t\tif Hello() != "new" {\n\t\t\tst.Errorf("got %s", Hello())\n\t\t}\n\t})\n}' "st.Run probe"
+    trun $'\nfunc TestGreeting(st *testing.T) {\n\tx := st\n\tx.Run("hello", func(st *testing.T) {\n\t\tif Hello() != "new" {\n\t\t\tst.Errorf("got %s", Hello())\n\t\t}\n\t})\n}' "alias probe (x := st)"
+    trun $'\nfunc TestWidget(t *testing.T) {\n\tw := &Widget{}\n\tif got := w.Run(); got != "new" {\n\t\tt.Errorf("got %s", got)\n\t}\n}' "Widget.Run probe (a method named like Cmd.Run)"
+    TRUN_TOUCH=1 trun $'\nfunc TestGreeting(t *testing.T) {\n\tif Hello() != "new" {\n\t\tt.Errorf("got %s", Hello())\n\t}\n}' "neutral touch (the test executes the changed parse, but only the const flip turns it green, and the ablation leaves the const out)"
+    HELLO_TEST=$'\nfunc TestGreeting(t *testing.T) {\n\tif Hello() != "new" {\n\t\tt.Errorf("got %s", Hello())\n\t}\n}'
+    TRUN_INIT=1 gorun make_trun_go_repo "fix the greeting in calc.go" $'\tgreeting = "old"' $'\tgreeting = "new"' "$HELLO_TEST"
+    [ "$(outcome)" = "PARTIAL" ] && ok "go caller init probe: a change inside init() runs under every test and never counts (PARTIAL)" || { bad "go caller init probe: outcome is '$(outcome)' ($notes)"; dump; }
+    TRUN_TOUCH=1 gorun make_trun_go_repo "fix parse(a) in calc.go so it handles negative a" $'\treturn a + a\n}\n\nconst (\n\tunit     = 1\n\tgreeting = "old"' $'\t// doubled\n\treturn a + a\n}\n\nconst (\n\tunit     = 1\n\tgreeting = "new"' "$HELLO_TEST"
+    [ "$(outcome)" = "PARTIAL" ] && ok "go caller comment probe: a comment-only hunk inside an executed function never counts (PARTIAL)" || { bad "go caller comment probe: outcome is '$(outcome)' ($notes)"; dump; }
+fi
+# Python has no caller relevance (review round 3 of #541): calc.parse is rewritten with identical behavior and a dict entry flips; untouched api.get calls parse; the new test reads
+# the dict with d.get("greeting"). dict.get once seeded the product get; it must stay PARTIAL.
+make_dget_py_repo() {
+    mkdir -p "$1"
+    printf 'def parse(a):\n    return a + a\n\n\nMESSAGES = {"greeting": "old"}\n' > "$1/calc.py"
+    printf 'from calc import parse\n\n\ndef get(a):\n    return parse(a)\n' > "$1/api.py"
+    printf 'import calc\n\n\ndef test_parse():\n    assert calc.parse(1) == 2\n' > "$1/test_calc.py"
+    return 0
+}
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    MAKE_REPO=make_dget_py_repo run_engine "fix parse(a) in calc.py so it handles negative a" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a\n\n\nMESSAGES = {"greeting": "old"}' E2E_STUB_SNIPPET=$'    return 2 * a\n\n\nMESSAGES = {"greeting": "new"}' E2E_STUB_TEST_FILE=test_calc.py \
+        E2E_STUB_TEST_APPEND=$'\n\ndef test_greeting():\n    d = dict(calc.MESSAGES)\n    assert d.get("greeting") == "new"\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    [ "$(outcome)" = "PARTIAL" ] && ok "python dict.get: a test reading a dict through .get does not reach the product get (PARTIAL)" || { bad "python dict.get: outcome is '$(outcome)' ($(wo_receipt np))"; dump; }
+fi
+TO=("${TO_SAVE[@]+"${TO_SAVE[@]}"}")
 for vt in 2 latest; do
     VT_NM="$T/vt-$vt/node_modules"
     [ -x "$VT_NM/.bin/vitest" ] || { if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "vitest $vt wall-off: vitest@$vt is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: vitest $vt wall-off: vitest@$vt is not installed (offline?)"; fi; continue; }

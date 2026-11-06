@@ -3,7 +3,7 @@
 import { capFenceVerdict, fenceNotes, readFenceRecord } from "../../util/config_fence.ts";
 import { sanitizeReason } from "../../util/redact.ts";
 import { specReceiptBlock } from "../../util/spec_file.ts"; import { triageReceiptBlock } from "../../features/triage.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock, sealAccuracyBlock } from "../../util/run_outputs.ts"; import { contextCoverageBlock } from "../../util/context_pack.ts";
-import { createHash } from "node:crypto"; import { execFileSync } from "node:child_process"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
+import { createHash } from "node:crypto"; import { execFileSync, spawnSync } from "node:child_process"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
 import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutation_proof.ts";
@@ -15,7 +15,7 @@ import { flagOutsideScope } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts"; import { getVersion } from "../../version.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
-import { isTestFile } from "../testmap.ts";
+import { isTestFile } from "../testmap.ts"; import { symbolSpans } from "../../util/context_pack.ts";
 import { crossReview, minVerdict, modelReviewRan, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
 import { STAGE_BUDGETS, type RunnerName, type Obj, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type Verdict } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
@@ -23,7 +23,7 @@ import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
-import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, identifierSet, moduleToken, isExecutedProof, CODE_FILE_EXT, reportedErrors, type ReportedErrors, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
+import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, identifierSet, moduleToken, isExecutedProof, CODE_FILE_EXT, reportedErrors, type ReportedErrors, goExecuted, parseHunks, applyHunks, goSingleTestPassed, type Hunk, plainTestEnv, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
@@ -44,23 +44,25 @@ export const LEAN_NO_SYMBOL = "no passing check references a changed symbol and 
 export const NO_FAIL_THEN_PASS = "no test shown to fail on the base commit and pass on the change";
 /** Wall-off verdict (EVAL-2026-11-05-3): an agent-authored or edited test is proof only when the HARNESS shows it fails on the base commit with the head's test bytes and passes on the change (util/mutation_proof.ts, the same base-worktree run T2 uses). An edited file's own base version must be green on the base first, so a pre-existing red file never reads as discriminating. */
 /** The symbols the diff declares or modifies in non-test code files (the lean rule and the fail-then-pass relevance rule share it). */
-async function codeSymbols(ctx: RunContext, rawDiff: string[], head: string): Promise<{ all: string[]; onBase: Set<string> }> {
+async function codeSymbols(ctx: RunContext, rawDiff: string[], head: string): Promise<{ all: string[]; onBase: Set<string>; code: string[] }> {
   const code: string[] = [];
   for (let i = 0; i + 1 < rawDiff.length; i += 2) { const st = rawDiff[i]!.trim().split(" ").pop() ?? "", f = rawDiff[i + 1]!; if (st !== "D" && CODE_FILE_EXT.test(f) && !isTestFile(f)) code.push(f); }
-  const onBase = new Set<string>(); if (code.length === 0) return { all: [], onBase };
+  const onBase = new Set<string>(); if (code.length === 0) return { all: [], onBase, code };
   for (let i = 0; i + 1 < rawDiff.length; i += 2) { const f = rawDiff[i + 1]!; if (code.includes(f) && (rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A") { const b = await safeGitRun(ctx.repoDir, ["show", `${ctx.baseSha}:${f}`], { timeoutMs: 20000 }); if (b.exitCode === 0) for (const id of identifierSet(b.stdout)) onBase.add(id); } }
   const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...code], { timeoutMs: 20000 });
-  return { all: d.exitCode === 0 ? changedSymbols(d.stdout) : [], onBase };
+  return { all: d.exitCode === 0 ? changedSymbols(d.stdout) : [], onBase, code };
 }
 /** The fail-then-pass base runner. Every file it runs already passed on the head under this same interpreter, so a base assertion failure under it is a like-for-like difference: trustSystem is on even when the repo declares a Python environment (4 of 4 more-itertools runs read inconclusive without it). */
 export const baseProofRunner = (ms: number, reported: ReportedErrors = { observed: [], wanted: [] }): RealBaseTestRunner => new RealBaseTestRunner(undefined, ms, {}, true, reported); // reported: the errors the issue quotes (reportedErrors), a base failure raising exactly one counts like an assertion
-async function failThenPass(ctx: RunContext, vraw: Obj[], pctx: ProvenanceCtx, head: string, cs: { all: string[]; onBase: Set<string> }, task: string, rewritten: ReadonlySet<string> = new Set()): Promise<{ ok: boolean; line: string; files: string[] }> {
+async function failThenPass(ctx: RunContext, vraw: Obj[], pctx: ProvenanceCtx, head: string, cs: { all: string[]; onBase: Set<string>; code: string[] }, task: string, rewritten: ReadonlySet<string> = new Set()): Promise<{ ok: boolean; line: string; files: string[] }> {
   const files = [...new Set(vraw.filter((c) => isExecutedProof(c as { result?: unknown; n?: unknown }) && checkProvenance(String(c.name ?? ""), pctx) === "agent_authored").map((c) => String(c.name).slice(String(c.name).indexOf(":") + 1)))];
   if (files.length === 0) return { ok: false, line: "", files: [] };
   const mp = await mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: files.map((path) => ({ path })), checks: vraw as { name: string }[], runner: (ms: number) => baseProofRunner(ms, reportedErrors(task)), headSha: head, requireAssertion: true, baseMustPass: files.filter((f) => pctx.modifiedFiles?.includes(f)) });
   const symbols = cs.all.filter((s) => cs.onBase.has(s) || new RegExp(`(?<![\\w$])${s.replace(/[$]/g, "\\$")}(?![\\w$])`).test(task)); // a symbol the base already has (a modified one), or one the task itself asks to add: a test that only names a function the change invented proves nothing about the change
   const read = (p: string): string => { try { return execFileSync("git", ["-C", ctx.repoDir, "show", `${head}:${p}`], { encoding: "utf8", maxBuffer: 16 << 20, timeout: 20_000 }); } catch { return ""; } };
-  const failed = (mp.outcome === "yes" ? mp.failed ?? [] : []).filter((f) => symbolGap(symbols, [read(f)]).length === 0); // an assertion failure on base, in a file that names a symbol this change declares or modifies
+  const red = mp.outcome === "yes" ? mp.failed ?? [] : [], added = new Map(await Promise.all(red.map(async (f) => [f, await addedLines(ctx, head, f)] as const))), named = red.filter((f) => symbolGap(symbols, [added.get(f)!]).length === 0); // an assertion failure on base, in a file whose ADDED lines name a symbol this change declares or modifies (an older test in the same file naming it proves nothing: the base version of an edited file is green on the base)
+  const reach = named.length < red.length && symbols.length > 0 ? await goCoverageRelevant(ctx, head, red.filter((f) => !named.includes(f)), mp.failedTests ?? {}, cs.code) : []; // or, measured: a Go test that failed on the base, run alone on the head with coverage, executes a changed line (a test calls cmd.Run, which runs the changed unexported parseFlags)
+  const failed = red.filter((f) => named.includes(f) || reach.includes(f));
   return { ok: failed.some((f) => !rewritten.has(f)), line: failed.length > 0 ? `${mp.line} (${failed.join(", ")})` : mp.line, files: failed }; // E4: a test file whose pinned assertion was rewritten fails on the base, which shows the pin was real, but it is never the proof itself
 }
 export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these added public functions";
@@ -69,6 +71,60 @@ export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these
  *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file), Tests the implementer wrote or edited never clear it. Off by default; LOKI_E10_PUBLIC_GAP=1 turns it on.
  *  Both are [] for an external run (its own rule) and an already-satisfied claim. */
 const CALLER_SCAN = 3000, CALLER_MAX_BYTES = 200_000;
+/** Measured relevance with hunk ablation (lead policy for #541, after four review rounds of name-based reach). A red Go test file counts when one of its tests that failed on the base:
+ *  1. run ALONE on the head with `go test -count=1 -run ^(Name)$ -coverprofile -coverpkg=<changed packages>`, passes and executes a changed hunk that is executable code inside a
+ *     function body (never init, TestMain, a package-level const/var/type line, or a comment-only hunk; a hunk reaching outside a function body is never selected), and
+ *  2. re-run the same way (`go test -json -count=1 -run ^(Name)$`, the same env) on a clean `git archive` of the BASE plus the head test file and ONLY those selected hunks
+ *     (no head testdata, embed, generated or ignored file), it passes: the reported pass event of that very test, never a zero run.
+ *  A behavior-neutral touch beside the real cause (an untracked const or dict), an ablated tree that does not compile, and a test that errors all read no lift (fail closed).
+ *  Coverage and ablation share one budget inside seal's 60 s limit; out of budget, no go toolchain, no go.mod or no failing test id means no lift. Go only (other runners: no lift). */
+const COVER_BUDGET_MS = 45_000, NOT_BODY = /^(?:init|TestMain)$/;
+async function goCoverageRelevant(ctx: RunContext, head: string, files: string[], failedTests: Record<string, string[]>, code: string[]): Promise<string[]> {
+  const deadline = Date.now() + COVER_BUDGET_MS, out: string[] = [], modOf = (f: string): string | null => { for (let d = dirname(f); ; d = dirname(d)) { if (existsSync(join(ctx.repoDir, d, "go.mod"))) return d; if (d === "." || d === "/" || d === "") return null; } };
+  const show = (ref: string, p: string): string | null => { try { return execFileSync("git", ["-C", ctx.repoDir, "show", `${ref}:${p}`], { encoding: "utf8", maxBuffer: 16 << 20, timeout: 20_000, stdio: ["ignore", "pipe", "ignore"] }); } catch { return null; } };
+  const env = { ...process.env, ...plainTestEnv() };
+  for (const f of files.filter((x) => x.endsWith("_test.go"))) {
+    const names = [...new Set((failedTests[f] ?? []).map((id) => id.slice(id.lastIndexOf("::") + 2)).filter((n) => /^Test\w*$/.test(n)))], mod = modOf(f), testSrc = show(head, f);
+    if (names.length === 0 || mod === null || testSrc === null) continue;
+    const modPath = /^module\s+(\S+)/m.exec(readFileSync(join(ctx.repoDir, mod, "go.mod"), "utf8"))?.[1]; if (!modPath) continue;
+    const rel = (p: string): string => relative(join(ctx.repoDir, mod), join(ctx.repoDir, p)).split("\\").join("/"), pkgArg = (p: string): string => { const d = rel(dirname(p)); return d === "" ? "." : `./${d}`; };
+    const per: { path: string; prof: string; base: string; hunks: Hunk[]; body: [number, number][] }[] = [], pkgs = new Set<string>();
+    for (const c of code.filter((x) => x.endsWith(".go") && !isTestFile(x) && modOf(x) === mod)) {
+      const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", c], { timeoutMs: 20000 }), hs = show(head, c); if (d.exitCode !== 0 || hs === null) continue;
+      const body = symbolSpans(c, hs).filter((x) => !x.container && !NOT_BODY.test(x.name.split(".").pop()!)).map((x) => [x.start + 1, x.end] as [number, number]); // the lines after the func line through its closing brace
+      per.push({ path: c, prof: `${modPath}/${rel(c)}`, base: show(ctx.baseSha, c) ?? "", hunks: parseHunks(d.stdout), body }); pkgs.add(pkgArg(c));
+    }
+    if (per.length === 0) continue;
+    for (const [k, n] of names.slice(0, 2).entries()) {
+      let left = deadline - Date.now(); if (left < 5000) return out;
+      const prof = join(ctx.runDir, `ftp-cover-${out.length}-${k}.out`), box = join(ctx.runDir, `ftp-ablate-${out.length}-${k}`), tar = `${box}.tar`;
+      try {
+        const r = spawnSync("go", ["test", "-count=1", "-run", `^(${n})$`, `-coverprofile=${prof}`, `-coverpkg=${[...pkgs].join(",")}`, pkgArg(f)], { cwd: join(ctx.repoDir, mod), env, encoding: "utf8", timeout: left, maxBuffer: 16 << 20 });
+        if (r.status !== 0 || !existsSync(prof)) continue;
+        const ran = goExecuted(readFileSync(prof, "utf8")), pick = per.map((p) => ({ p, hunks: p.hunks.filter((h) => {
+          if (h.d === 0) return false; const lo = h.c, hi = h.c + h.d - 1;
+          if (!p.body.some(([s0, e0]) => s0 <= lo && hi <= e0)) return false; // wholly inside one function body
+          if (!h.lines.some((l) => l.trim() !== "" && !/^\s*\/\//.test(l))) return false; // comment-only
+          return (ran.get(p.prof) ?? []).some(([s0, e0]) => s0 <= hi && lo <= e0);
+        }) })).filter((x) => x.hunks.length > 0);
+        if (pick.length === 0) continue;
+        left = deadline - Date.now(); if (left < 5000) return out;
+        mkdirSync(box, { recursive: true });
+        if ((await safeGitRun(ctx.repoDir, ["archive", "--format=tar", "-o", tar, ctx.baseSha], { timeoutMs: 20000 })).exitCode !== 0 || spawnSync("tar", ["-xf", tar, "-C", box], { timeout: 20_000 }).status !== 0) continue;
+        mkdirSync(dirname(join(box, f)), { recursive: true }); writeFileSync(join(box, f), testSrc);
+        for (const { p, hunks } of pick) writeFileSync(join(box, p.path), applyHunks(p.base, hunks));
+        const a = spawnSync("go", ["test", "-json", "-count=1", "-run", `^(${n})$`, pkgArg(f)], { cwd: join(box, mod), env, encoding: "utf8", timeout: deadline - Date.now(), maxBuffer: 16 << 20 });
+        if (a.status === 0 && goSingleTestPassed(a.stdout ?? "", n)) { out.push(f); break; }
+      } catch { /* no go toolchain or out of time: no lift */ } finally { rmSync(prof, { force: true }); rmSync(tar, { force: true }); rmSync(box, { recursive: true, force: true }); }
+    }
+  }
+  return out;
+}
+/** The lines the change adds to `path` (git diff -U0 base..head), or "" when the diff cannot be read. */
+async function addedLines(ctx: RunContext, head: string, path: string): Promise<string> {
+  const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", path], { timeoutMs: 20000 });
+  return d.exitCode === 0 ? d.stdout.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n") : "";
+}
 async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[], wallOff: { pctx: ProvenanceCtx; ftp: () => Promise<boolean> } | null = null): Promise<{ lean: string[]; pub: string[] }> {
   const none = { lean: [], pub: [] };
   if (externalRun(o) || o.intake?.already_satisfied === true || o.implement?.exit === "already_done") return none;

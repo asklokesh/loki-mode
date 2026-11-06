@@ -204,6 +204,7 @@ if [ "$stage" = "implement" ]; then
     echo "LOKI_DONE"
   elif [ "${E2E_STUB_MODE:-done}" = "stack" ]; then # tests/min/stacks.sh: replace the LOKI_STUB_INSERT marker (// or # comment) in E2E_STUB_TARGET with E2E_STUB_SNIPPET; E2E_STUB_REPLACE, when set, names the exact text to replace instead
     python3 -I -c 'import os,sys; p=os.environ["E2E_STUB_TARGET"]; n=os.environ["E2E_STUB_SNIPPET"]; o=os.environ.get("E2E_STUB_REPLACE"); s=open(p).read(); open(p,"w").write(s.replace(o, n) if o else s.replace("// LOKI_STUB_INSERT", n).replace("# LOKI_STUB_INSERT", n))'
+    [ -n "${E2E_STUB_EXTRA_FILE:-}" ] && mkdir -p "$(dirname "$E2E_STUB_EXTRA_FILE")" && printf '%s' "${E2E_STUB_EXTRA_TEXT:-}" > "$E2E_STUB_EXTRA_FILE" # E2E_STUB_EXTRA_FILE: one more file the change adds (a testdata fixture), with E2E_STUB_EXTRA_TEXT as its bytes
     tf="${E2E_STUB_TEST_FILE:-calc.test.ts}" # E2E_STUB_TEST_FILE: the test file the two edits below act on (default calc.test.ts)
     [ -n "${E2E_STUB_TEST_DROP:-}" ] && { grep -v -- "$E2E_STUB_TEST_DROP" "$tf" > "$tf.new"; mv "$tf.new" "$tf"; } # E2E_STUB_TEST_DROP: a grep pattern whose lines leave the test file
     [ -n "${E2E_STUB_TEST_APPEND:-}" ] && printf '%s\n' "$E2E_STUB_TEST_APPEND" >> "$tf" # E2E_STUB_TEST_APPEND: text appended to the test file
