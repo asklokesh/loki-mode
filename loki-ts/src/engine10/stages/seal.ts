@@ -14,7 +14,7 @@ import { flagOutsideScope } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts"; import { getVersion } from "../../version.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
-import { isTestFile } from "../testmap.ts";
+import { isTestFile } from "../testmap.ts"; import { symbolSpans } from "../../util/context_pack.ts";
 import { crossReview, minVerdict, modelReviewRan, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
 import { STAGE_BUDGETS, type RunnerName, type Obj, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type Verdict } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
@@ -22,7 +22,7 @@ import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
-import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, identifierSet, moduleToken, isExecutedProof, CODE_FILE_EXT, goCoveredChange, changedRanges, plainTestEnv, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
+import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, identifierSet, moduleToken, isExecutedProof, CODE_FILE_EXT, goExecuted, parseHunks, applyHunks, goSingleTestPassed, type Hunk, plainTestEnv, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
@@ -70,31 +70,51 @@ export const UNEXERCISED_PUBLIC = "no agent-independent passing test calls these
  *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file), Tests the implementer wrote or edited never clear it. Off by default; LOKI_E10_PUBLIC_GAP=1 turns it on.
  *  Both are [] for an external run (its own rule) and an already-satisfied claim. */
 const CALLER_SCAN = 3000, CALLER_MAX_BYTES = 200_000;
-/** Measured relevance (review of #541 replaced name resolution): the red Go test files of which some test that failed on the base, run ALONE on the head with
- *  `go test -count=1 -run ^(Name)$ -coverprofile -coverpkg=<changed packages>`, passes and executes a block overlapping a changed line of a changed Go file
- *  (goCoveredChange). Exact and model-free: an alias, an interface or a same-name method cannot fake an executed line. Go only; no go toolchain, no go.mod,
- *  no failing test id or no profile means no lift. */
-const COVER_BUDGET_MS = 40_000;
+/** Measured relevance with hunk ablation (lead policy for #541, after four review rounds of name-based reach). A red Go test file counts when one of its tests that failed on the base:
+ *  1. run ALONE on the head with `go test -count=1 -run ^(Name)$ -coverprofile -coverpkg=<changed packages>`, passes and executes a changed hunk that is executable code inside a
+ *     function body (never init, TestMain, a package-level const/var/type line, or a comment-only hunk; a hunk reaching outside a function body is never selected), and
+ *  2. re-run the same way (`go test -json -count=1 -run ^(Name)$`, the same env) on a clean `git archive` of the BASE plus the head test file and ONLY those selected hunks
+ *     (no head testdata, embed, generated or ignored file), it passes: the reported pass event of that very test, never a zero run.
+ *  A behavior-neutral touch beside the real cause (an untracked const or dict), an ablated tree that does not compile, and a test that errors all read no lift (fail closed).
+ *  Coverage and ablation share one budget inside seal's 60 s limit; out of budget, no go toolchain, no go.mod or no failing test id means no lift. Go only (other runners: no lift). */
+const COVER_BUDGET_MS = 45_000, NOT_BODY = /^(?:init|TestMain)$/;
 async function goCoverageRelevant(ctx: RunContext, head: string, files: string[], failedTests: Record<string, string[]>, code: string[]): Promise<string[]> {
   const deadline = Date.now() + COVER_BUDGET_MS, out: string[] = [], modOf = (f: string): string | null => { for (let d = dirname(f); ; d = dirname(d)) { if (existsSync(join(ctx.repoDir, d, "go.mod"))) return d; if (d === "." || d === "/" || d === "") return null; } };
+  const show = (ref: string, p: string): string | null => { try { return execFileSync("git", ["-C", ctx.repoDir, "show", `${ref}:${p}`], { encoding: "utf8", maxBuffer: 16 << 20, timeout: 20_000, stdio: ["ignore", "pipe", "ignore"] }); } catch { return null; } };
+  const env = { ...process.env, ...plainTestEnv() };
   for (const f of files.filter((x) => x.endsWith("_test.go"))) {
-    const names = [...new Set((failedTests[f] ?? []).map((id) => id.slice(id.lastIndexOf("::") + 2)).filter((n) => /^Test\w*$/.test(n)))], mod = modOf(f);
-    if (names.length === 0 || mod === null) continue;
+    const names = [...new Set((failedTests[f] ?? []).map((id) => id.slice(id.lastIndexOf("::") + 2)).filter((n) => /^Test\w*$/.test(n)))], mod = modOf(f), testSrc = show(head, f);
+    if (names.length === 0 || mod === null || testSrc === null) continue;
     const modPath = /^module\s+(\S+)/m.exec(readFileSync(join(ctx.repoDir, mod, "go.mod"), "utf8"))?.[1]; if (!modPath) continue;
     const rel = (p: string): string => relative(join(ctx.repoDir, mod), join(ctx.repoDir, p)).split("\\").join("/"), pkgArg = (p: string): string => { const d = rel(dirname(p)); return d === "" ? "." : `./${d}`; };
-    const changed = new Map<string, [number, number][]>(), pkgs = new Set<string>();
+    const per: { path: string; prof: string; base: string; hunks: Hunk[]; body: [number, number][] }[] = [], pkgs = new Set<string>();
     for (const c of code.filter((x) => x.endsWith(".go") && !isTestFile(x) && modOf(x) === mod)) {
-      const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", c], { timeoutMs: 20000 }); if (d.exitCode !== 0) continue;
-      changed.set(`${modPath}/${rel(c)}`, changedRanges(d.stdout)); pkgs.add(pkgArg(c));
+      const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", c], { timeoutMs: 20000 }), hs = show(head, c); if (d.exitCode !== 0 || hs === null) continue;
+      const body = symbolSpans(c, hs).filter((x) => !x.container && !NOT_BODY.test(x.name.split(".").pop()!)).map((x) => [x.start + 1, x.end] as [number, number]); // the lines after the func line through its closing brace
+      per.push({ path: c, prof: `${modPath}/${rel(c)}`, base: show(ctx.baseSha, c) ?? "", hunks: parseHunks(d.stdout), body }); pkgs.add(pkgArg(c));
     }
-    if (changed.size === 0) continue;
+    if (per.length === 0) continue;
     for (const [k, n] of names.slice(0, 2).entries()) {
-      const left = deadline - Date.now(); if (left < 5000) return out; // seal has a 60 s limit: the measured runs share one budget (a cold cli compile with -coverpkg took 30 s, warm 11 s)
-      const prof = join(ctx.runDir, `ftp-cover-${out.length}-${k}.out`);
+      let left = deadline - Date.now(); if (left < 5000) return out;
+      const prof = join(ctx.runDir, `ftp-cover-${out.length}-${k}.out`), box = join(ctx.runDir, `ftp-ablate-${out.length}-${k}`), tar = `${box}.tar`;
       try {
-        const r = spawnSync("go", ["test", "-count=1", "-run", `^(${n})$`, `-coverprofile=${prof}`, `-coverpkg=${[...pkgs].join(",")}`, pkgArg(f)], { cwd: join(ctx.repoDir, mod), env: { ...process.env, ...plainTestEnv() }, encoding: "utf8", timeout: left, maxBuffer: 16 << 20 });
-        if (r.status === 0 && existsSync(prof) && goCoveredChange(readFileSync(prof, "utf8"), changed)) { out.push(f); break; }
-      } catch { /* no go toolchain: no lift */ } finally { rmSync(prof, { force: true }); }
+        const r = spawnSync("go", ["test", "-count=1", "-run", `^(${n})$`, `-coverprofile=${prof}`, `-coverpkg=${[...pkgs].join(",")}`, pkgArg(f)], { cwd: join(ctx.repoDir, mod), env, encoding: "utf8", timeout: left, maxBuffer: 16 << 20 });
+        if (r.status !== 0 || !existsSync(prof)) continue;
+        const ran = goExecuted(readFileSync(prof, "utf8")), pick = per.map((p) => ({ p, hunks: p.hunks.filter((h) => {
+          if (h.d === 0) return false; const lo = h.c, hi = h.c + h.d - 1;
+          if (!p.body.some(([s0, e0]) => s0 <= lo && hi <= e0)) return false; // wholly inside one function body
+          if (!h.lines.some((l) => l.trim() !== "" && !/^\s*\/\//.test(l))) return false; // comment-only
+          return (ran.get(p.prof) ?? []).some(([s0, e0]) => s0 <= hi && lo <= e0);
+        }) })).filter((x) => x.hunks.length > 0);
+        if (pick.length === 0) continue;
+        left = deadline - Date.now(); if (left < 5000) return out;
+        mkdirSync(box, { recursive: true });
+        if ((await safeGitRun(ctx.repoDir, ["archive", "--format=tar", "-o", tar, ctx.baseSha], { timeoutMs: 20000 })).exitCode !== 0 || spawnSync("tar", ["-xf", tar, "-C", box], { timeout: 20_000 }).status !== 0) continue;
+        mkdirSync(dirname(join(box, f)), { recursive: true }); writeFileSync(join(box, f), testSrc);
+        for (const { p, hunks } of pick) writeFileSync(join(box, p.path), applyHunks(p.base, hunks));
+        const a = spawnSync("go", ["test", "-json", "-count=1", "-run", `^(${n})$`, pkgArg(f)], { cwd: join(box, mod), env, encoding: "utf8", timeout: deadline - Date.now(), maxBuffer: 16 << 20 });
+        if (a.status === 0 && goSingleTestPassed(a.stdout ?? "", n)) { out.push(f); break; }
+      } catch { /* no go toolchain or out of time: no lift */ } finally { rmSync(prof, { force: true }); rmSync(tar, { force: true }); rmSync(box, { recursive: true, force: true }); }
     }
   }
   return out;
