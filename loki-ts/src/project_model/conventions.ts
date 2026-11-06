@@ -1,5 +1,6 @@
 // FC-23 (L0): a package's module system, read with a parser from the JSON its own directory declares (JSONC comments and trailing commas,
 // relative "extends"), by key and never by file name. null when the package declares nothing.
+import { isOff } from "../council/role_agents.ts";
 import { safeGitSpawn } from "../util/safe_git.ts";
 import { isTestFile } from "../util/test_file_text.ts";
 import { symbolSpans } from "../util/context_pack.ts";
@@ -177,8 +178,10 @@ function repoTool(repoDir: string, name: string, rel: string[]): string | null {
 const sentence = (t: string, example: string): string => (/[.!?]\s*$/.test(example) || example === "" ? `${t.replace(/[.!?]+$/, "")}.` : t.replace(/[.!?]+$/, ""));
 const FEAT = /^(?:feat|feature|add|adds|added|support|allow|introduce|implement)\b/i, FIX = /^(?:fix|fixes|fixed|bug|resolve|correct|handle|prevent|stop|avoid|repair)\b|\b(?:crash|error|regress|incorrect|wrong|broken|fails?)\b/i;
 
-/** LOKI_E10_SCAFFOLD gates the fragment writer; the default is set by the measured false-write count (see the PR body). */
-export const fragmentWriterOn = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_SCAFFOLD === "1";
+/** LOKI_E10_SCAFFOLD gates the fragment writer. On by default; =0 opts out. */
+export const fragmentWriterOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_SCAFFOLD);
+/** The one line the receipt and the PR body carry whenever the writer added a fragment, so the write is never silent. */
+export const fragmentNoticeLine = (path: string): string => `Loki added ${path} as the release note for this change; delete it if this change needs no release note (LOKI_E10_SCAFFOLD=0 turns this off).`;
 
 /** The towncrier types a repo declares ([[tool.towncrier.type]] directory keys), else towncrier's defaults. */
 function towncrierTypes(repoDir: string): string[] {

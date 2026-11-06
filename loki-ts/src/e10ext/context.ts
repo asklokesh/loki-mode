@@ -2,6 +2,7 @@
 // relevant files (plan relevant_files, else keyword selection over the tree-keyed cached map), their
 // impacted tests with one exact command each, and E-126 repo memory's verified command. Data only, no
 // verdict logic (D42). plan.ts/verify.ts are stages, so core passes selectRelevantFiles and runnerCmd in.
+import { isOff } from "../council/role_agents.ts";
 import { readRepoMapCache, repoCacheDir, repoKey } from "../engine10/cache.ts";
 import type { RepoMap } from "../engine10/repomap.ts";
 import { loadRepoMap } from "../engine10/sizing.ts";
@@ -68,8 +69,8 @@ export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): Br
   const pack = model !== undefined && packEnabled(model) && files.length ? contextPack(ctx.repoDir, task, files, map?.entries ?? []) : null; // L021: haiku and sonnet only; Opus keeps today's bytes
   const whole = new Set((pack?.spans ?? []).filter((s) => s.symbol === null).map((s) => s.path)); // a file the pack shows whole needs no signatures
   const sigs = process.env["LOKI_E10_SIGS"] === "0" || !files.length ? "" : signatureDigest(ctx.repoDir, files.filter((f) => !whole.has(f)).slice(0, 5));
-  // E4: existing assertions whose expected value is the wrong value the issue reports. Off unless LOKI_E10_DEFECT_PIN=1 (prompt text, not yet measured on the benchmark).
-  const pins = process.env["LOKI_E10_DEFECT_PIN"] === "1" ? findDefectPins(ctx.repoDir, task).slice(0, 5) : [];
+  // E4: existing assertions whose expected value is the wrong value the issue reports. On by default; LOKI_E10_DEFECT_PIN=0 opts out.
+  const pins = !isOff(process.env["LOKI_E10_DEFECT_PIN"]) ? findDefectPins(ctx.repoDir, task).slice(0, 5) : [];
   const text = [
     files.length ? `Relevant files:\n${files.join("\n")}` : "",
     sigs ? `Key signatures (read the files for bodies):\n${sigs}` : "",

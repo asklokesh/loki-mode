@@ -1,5 +1,6 @@
 // FC-19: a LOKI_SPEC_CONFLICT from implement gets exactly one resume with a correction before it is believed. No wording of the model's reason is
 // inspected (L0): the model itself says whether its conflict was only about Loki's own rules or about the task.
+import { isOff } from "../council/role_agents.ts";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -99,13 +100,13 @@ async function resumeWith(ctx: RunContext, first: SessionRunOptions, firstSessio
 export const resumeAfterEmptyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, challenge = false): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, challenge ? EMPTY_DONE_CHALLENGED : EMPTY_DONE_CORRECTION, "-e");
 export const resumeAfterAlreadyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, ALREADY_DONE_CHALLENGE, "-a");
 
-// LOKI_E10_COVERAGE_RESUME (default off): on the lean path (plan skipped) a LOKI_DONE exit with a non-empty diff gets exactly one more turn in the same session.
+// LOKI_E10_COVERAGE_RESUME (default on; =0/off/false opts out): on the lean path (plan skipped) a LOKI_DONE exit with a non-empty diff gets exactly one more turn in the same session.
 // The task text is already in that session, so the fixed brief names no task (cli-2478: the first turn fixed 2 of the 3 sites the issue named).
 export const COVERAGE_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. " + FINISH_LINE;
 // LOKI_E10_CLAIM_CHECK (default on, =0 opts out; only with LOKI_E10_COVERAGE_RESUME): the coverage turn also writes SITE lines, and a site claimed changed that is byte-identical to the base is re-asked once ("-c2"). One extra session, only when such a claim is found.
 export const claimCheckEnabled = (env = process.env): boolean => !["0", "off", "false", "no"].includes((env.LOKI_E10_CLAIM_CHECK ?? "").trim().toLowerCase());
 export const COVERAGE_CLAIM_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. Before the last line, write one line per site in the current file: `SITE <path>:<line>: changed` or `SITE <path>:<line>: unchanged - <why>`. " + FINISH_LINE;
-export const coverageResumeEnabled = (env = process.env): boolean => ["1", "on", "true"].includes((env.LOKI_E10_COVERAGE_RESUME ?? "").toLowerCase());
+export const coverageResumeEnabled = (env = process.env): boolean => !isOff(env.LOKI_E10_COVERAGE_RESUME);
 
 // LOKI_E10_SITE_HINTS (default on, =0/off/false opts out): the edit-shape sites (sibling, residual, precedence) of the tree's diff as advisory text in the fix brief and the coverage turn. Never a verdict.
 export const siteHintsEnabled = (env = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_SITE_HINTS ?? "").toLowerCase());
