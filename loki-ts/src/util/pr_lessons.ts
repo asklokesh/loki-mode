@@ -417,6 +417,7 @@ export async function replayKnownVerdict(repoDir: string, task: string, o: { fre
     const key: ReplayKey = { task_sha256: createHash("sha256").update(task).digest("hex"), base_sha: base, loki_version: getVersion(), provider: o.provider, model: o.model };
     const r = knownVerdict(repoDir, key);
     if (!r) return null;
+    if (r.verdict === "SPEC_CONFLICT" && (await import("../features/opus_consult.ts")).neverStopActive()) return null; // LOKI_E10_OPUS_CONSULT never-stop: a recorded stop is not replayed, the run settles it instead
     const code = r.verdict === "SPEC_CONFLICT" ? 4 : 0;
     const dir = join(repoDir, ".loki", "memory");
     mkdirSync(dir, { recursive: true });

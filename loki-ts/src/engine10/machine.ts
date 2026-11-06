@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { hooks } from "./hooks.ts"; import { wallConcurrent } from "../util/wall_knobs.ts"; import { wallEnabled } from "./sizing.ts";
 import { treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
+import { assumptionOf, consultAvailable, neverStopActive, readConsults, type NeverStopRecord } from "../features/opus_consult.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./failures.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, MIN_ATTEMPT_WINDOW_S, runExtraAttempts } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
@@ -347,9 +348,16 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
           const wallBefore = wallSignature(outputs, ctx.repoDir);
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;
+          { const ns = (outputs.implement?.never_stop as (NeverStopRecord & { pending?: boolean })[] | undefined) ?? [], last = ns[ns.length - 1]; if (last?.pending && fx.status === "completed") { delete last.pending; last.assumption = assumptionOf(String(outputs.fix?.diagnosis ?? "")); last.consulted = readConsults(ctx.runDir).some((c) => c.stage.startsWith("fix") && c.advice !== null); } } // LOKI_E10_OPUS_CONSULT: the round after a settled fix conflict names the choice it made
           // FireLater#21: a fix-round conflict over failures verify showed failing the same way on base, in tests that only import a named file, is checked by one
           // re-verify (no model session): after this round those failures are pre-existing, so a run with nothing else failing is delivered capped, never SPEC_CONFLICT.
           if (fx.status === "completed" && outputs.fix?.exit === "spec_conflict" && onlyCollateralRed(outputs.verify)) { const v = await runStage("verify", true); if (mustJump("verify", v)) break; if (!hasFailures(outputs.verify)) break; }
+          if (fx.status === "completed" && outputs.fix?.exit === "spec_conflict" && neverStopActive()) { // LOKI_E10_OPUS_CONSULT never-stop: never pinned as the run's conflict; a round left gets the never-stop brief (and the consult), the last round delivers the tree as it is to seal (capped at PARTIAL, FAILED while red)
+            const more = round < MAX_FIX_ROUNDS + extraRounds;
+            outputs.implement = { ...outputs.implement, never_stop: [...((outputs.implement?.never_stop as unknown[] | undefined) ?? []), { stage: "fix", conflict: String(outputs.fix.spec_conflict_reason ?? "unspecified"), assumption: null, consulted: false, ...(more ? { pending: true } : {}) }] };
+            if (more) continue;
+            break;
+          }
           if (fx.status === "completed" && outputs.fix?.exit === "spec_conflict") { outputs.implement = { ...outputs.implement, exit: "spec_conflict", spec_conflict_reason: outputs.fix.spec_conflict_reason ?? null }; break; } // FC-FIX-CONFLICT-STALLED: a confirmed fix-round conflict is the implement conflict for seal, output and the supervisor
           const noop = fx.status === "completed" && repeatedNoopFix(outputs.fix), fedBy = sigs[sigs.length - 1] ?? null;
           // Two no-op rounds in a row against the same fully-run failure: the model is looping. A crashed verify between them never matches (sigOf), so a flaky or harness-owned verify still gets its re-run (A-113b).
@@ -371,6 +379,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
               ctx.emit("route.escalated", "fix", { ...up });
               continue;
             }
+            if (round === 1 && round < MAX_FIX_ROUNDS + extraRounds && consultAvailable(ctx.runDir)) continue; // LOKI_E10_OPUS_CONSULT: a red verify after the first fix round gets the one consult in round 2 before any stall stop
             stopped = "stalled"; break;
           }
         }

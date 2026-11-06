@@ -488,6 +488,7 @@ export interface ToolLessParams {
   timeoutMs?: number;
   cwd?: string; // Agent SDK route: a directory with no project settings to read; default os tmpdir
   ledger?: { lokiDir: string; phase: string }; // default: LOKI_DIR and phase "toolless"; no directory means no line
+  noCache?: boolean; // Agent SDK route: a one-shot call whose prompt is never reused writes no prompt cache (DISABLE_PROMPT_CACHING=1); a 1h cache write costs 2x the input rate
 }
 export interface ToolLessResult { outcome: JudgeOutcome<string>; route: "api" | "agent-sdk"; usd: number | null; thinkingTokens: number | null }
 
@@ -520,6 +521,7 @@ async function toolLessViaAgentSdk(p: ToolLessParams, ledger: ToolLessParams["le
     const env: Record<string, string> = { ...(process.env as Record<string, string>) };
     for (const k of Object.keys(env)) if (k.startsWith("LOKI_E10_")) delete env[k];
     env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = String(p.maxTokens); // the Agent SDK has no max-tokens option; the CLI reads this env
+    if (p.noCache) env["DISABLE_PROMPT_CACHING"] = "1";
     const ac = new AbortController(), timer = setTimeout(() => ac.abort(), p.timeoutMs ?? 120_000);
     let text = "", result: Record<string, unknown> | null = null;
     try {
