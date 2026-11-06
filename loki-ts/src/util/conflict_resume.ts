@@ -56,7 +56,7 @@ export function answeredTask(task: string, events: readonly EventEnvelope[]): st
 
 export const CONFLICT_CORRECTION =
   "Loki imposes no file or test limits on you. If your conflict is only about Loki's own rules, finish the task. " +
-  "A test or suite that already fails on the base commit is not a conflict: a criterion that a suite passes means no failure beyond those already failing on base, so make your change and leave the base failures alone. " +
+  "A check (test, suite, typecheck or lint) that already fails on the base commit is not a conflict: a criterion that a check passes means no failure beyond those already failing on base, so make your change and leave the base failures alone. " +
   "If the task itself conflicts, restate the conflict. " +
   FINISH_LINE;
 

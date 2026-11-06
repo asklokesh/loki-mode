@@ -4,6 +4,7 @@
 // name) is ignored. A one-line flow map (`budgets: { per_run: 5 }`) is read too. CRLF is normalized; a trailing comment is stripped; quotes are removed.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { escapeRegex } from "./regex_escape.ts";
 
 /** The text of each existing, readable loki.yaml then loki.yml in repoDir (unreadable files skipped). { yamlOnly: true } reads loki.yaml only. */
 export function lokiYamlTexts(repoDir: string, opts: { yamlOnly?: boolean } = {}): string[] {
@@ -15,8 +16,6 @@ export function lokiYamlTexts(repoDir: string, opts: { yamlOnly?: boolean } = {}
   }
   return out;
 }
-
-const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const clean = (v: string): string => v.replace(/(^|[ \t]+)#.*$/, "").trim().replace(/^(["'])(.*)\1$/, "$2");
 
@@ -32,7 +31,7 @@ function flowKey(body: string, key: string): string | null {
     else cur += c;
   }
   parts.push(cur);
-  const want = new RegExp(`^\\s*${esc(key)}\\s*:\\s*(.*)$`);
+  const want = new RegExp(`^\\s*${escapeRegex(key)}\\s*:\\s*(.*)$`);
   for (const part of parts) {
     const kv = want.exec(part);
     if (kv) { const v = clean(kv[1]!); return v === "" ? null : v; }
@@ -42,12 +41,12 @@ function flowKey(body: string, key: string): string | null {
 
 export function yamlKey(text: string, parent: string, key: string): string | null {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const flow = new RegExp(`^${esc(parent)}:[ \\t]*\\{(.*)\\}[ \\t]*(?:#.*)?$`);
+  const flow = new RegExp(`^${escapeRegex(parent)}:[ \\t]*\\{(.*)\\}[ \\t]*(?:#.*)?$`);
   for (const l of lines) { const fm = flow.exec(l); if (fm) return flowKey(fm[1]!, key); }
-  const head = new RegExp(`^${esc(parent)}:[ \\t]*(?:#.*)?$`);
+  const head = new RegExp(`^${escapeRegex(parent)}:[ \\t]*(?:#.*)?$`);
   const start = lines.findIndex((l) => head.test(l));
   if (start < 0) return null;
-  const want = new RegExp(`^${esc(key)}:[ \\t]*(.*)$`);
+  const want = new RegExp(`^${escapeRegex(key)}:[ \\t]*(.*)$`);
   let indent: string | null = null;
   for (let i = start + 1; i < lines.length; i++) {
     const l = lines[i]!;
