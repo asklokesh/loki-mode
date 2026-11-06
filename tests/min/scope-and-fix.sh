@@ -221,7 +221,6 @@
 #  71. edit_shape.ts residualSites: drop COMMON_LIMIT (the idiom leg reads residual) or GO_BUILTIN_T (the .(string) leg reads residual).
 #  72. edit_shape.ts precedenceSites: drop the removed-strict test (the new errors.As leg reads precedence) or the removed-broad test (the isinstance-to-isinstance leg reads precedence).
 #  73. edit_shape.ts fragmentsOf: drop the written-back test (a pattern the hunk keeps reads residual).
-<<<<<<< HEAD
 # 104. features/exec_spec.ts parityAtoms: drop the quoted-code condition (exec spec atoms read otherquote=P1).
 # 105. exec_spec.ts parityAtoms: scan s.source (the 45-line excerpt) instead of s.body (exec spec atoms read P0).
 # 106. exec_spec.ts NORM_DOT: drop the no-dot lookbehind (exec spec atoms read prop=P1).
@@ -253,12 +252,10 @@
 # 139. exec_spec.ts defectSites: drop the designed() check (exec spec atoms read open=...,Split+Join or Join).
 # 140. exec_spec.ts statesWrapRelation: drop WRAP_NEGATED (relation cases read ask=0011110) or WRAP_TEXT (ask=0011001).
 # 118. exec_spec.ts execSpecBriefOf: drop the knob check (exec spec atoms read brief=B,B).
-=======
 #  74. conflict_resume.ts siteHints: drop the siteHintsEnabled test (the knob 0, off and false legs read a hint).
 #  75. edit_shape.ts precedenceSites: drop the remedy wording from the why text (the python and go widening legs read false).
 #  76. edit_shape.ts editShapeSites: drop the max slice (the cap leg reads 9).
 #  77. fix.ts buildFixBrief or session_resume.ts buildFixResumeBrief: ignore hints, or conflict_resume.ts resumeForCoverage: drop the hints append (the carries-the-hints and wiring legs read false).
->>>>>>> origin/feat/fixbrief-site-hints
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1779,7 +1776,6 @@ else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "defect pin: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: defect pin e2e: pytest is not installed"; fi
 fi
 
-<<<<<<< HEAD
 # Go test batching (LOKI_E10_GO_BATCH, default on), real `go test`: untouched go test files of one package vouch together in one run; a
 # red file voids the batch and every file runs alone; Wall, task-named and edited files never join (their per-file run is the fail-then-pass
 # proof); the base reruns batch per package with the same verdicts; LOKI_E10_GO_BATCH=0 restores one run per file.
@@ -2683,7 +2679,6 @@ fi
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "no-regression: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: no-regression: go is not installed"; fi
 fi
-=======
 # ---------------------------------------------------------------- site hints (LOKI_E10_SITE_HINTS, default on: edit-shape sites in the fix and coverage briefs)
 cat > "$T/site-hints.ts" <<'TS'
 import { execFileSync } from "node:child_process";
@@ -2735,6 +2730,5 @@ while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
 printf '%s\n' "$out" | grep -q '^NO ' && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
->>>>>>> origin/feat/fixbrief-site-hints
 
 finish
