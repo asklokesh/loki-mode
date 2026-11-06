@@ -518,6 +518,24 @@ export function runBaseline(repoDir: string, commands: ProfileCommand[], opts: B
   return b;
 }
 const normCmd = (s: string): string => s.replace(/\s+--silent\b/, "").trim().replace(/^\(cd \.\s+&&\s+(.+)\)$/, "$1"); // a root package suite is spelled "(cd . && X)" by package_suite.ts but the baseline ran plain "X": same command, never "not the full suite command"
+/** SPEED-BASE-ALIAS (LOKI_BASELINE_SCRIPT_ALIAS=0 opts out): `npm test`, `pnpm test` and `yarn test` (with or without `run`) at the repo root run the same package.json script, so one base
+ *  run of it speaks for the others. Only when the root package.json declares that script and no pre/post hook for it (npm runs pretest and posttest, pnpm and yarn berry do not), so the
+ *  commands run exactly the same thing. A tanstack-query baseline ran `pnpm test` and then `npm test --silent`, twice each (51 s), for one script. */
+const PM_SCRIPT = /^(?:npm|pnpm|yarn)(?:\s+run)?\s+([\w:.-]+)$/;
+export function sameRootScript(repoDir: string, a: string, b: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.LOKI_BASELINE_SCRIPT_ALIAS === "0") return false;
+  const ma = PM_SCRIPT.exec(normCmd(a)), mb = PM_SCRIPT.exec(normCmd(b)), name = ma?.[1];
+  if (!name || name !== mb?.[1]) return false;
+  try {
+    const scripts = (JSON.parse(readFileSync(join(repoDir, "package.json"), "utf8")) as { scripts?: Record<string, unknown> }).scripts ?? {};
+    return typeof scripts[name] === "string" && scripts[`pre${name}`] === undefined && scripts[`post${name}`] === undefined;
+  } catch { return false; }
+}
+/** The base entry for `cmd`: the entry that ran exactly this command (normCmd) first, else the root baseline when it ran the same root script (sameRootScript). `ranOnly` skips entries that never ran. */
+function baseFor(repoDir: string, p: CommandProfile, cmd: string, ranOnly: boolean): CommandProfile["baseline"] | undefined {
+  const all = [p.baseline, ...(p.suites ?? [])].filter((b) => !ranOnly || b.ran);
+  return all.find((b) => normCmd(b.command ?? "") === normCmd(cmd)) ?? ((!ranOnly || p.baseline.ran) && sameRootScript(repoDir, p.baseline.command ?? "", cmd) ? p.baseline : undefined);
+}
 export const SUITE_BASELINE_BUDGET_S = 300;
 /** FC-BASELINE-PER-PACKAGE: a baseline per full-suite command verify will run (`specs`: package_suite.ts fullSuiteSpecs, the one source), added to the
  *  profile ensureProfile wrote for this HEAD. An entry for the same command is reused unless `rerun` (a dependency install succeeded
@@ -530,7 +548,8 @@ export function baselineSuites(repoDir: string, specs: { name: string; cmd: stri
     if (opts.rerun && p.baseline.ran) p.baseline = runBaseline(repoDir, p.commands, opts);
     let left = opts.budgetS ?? SUITE_BASELINE_BUDGET_S;
     const old = p.suites ?? [];
-    p.suites = specs.filter((s) => s.cwd !== "." || normCmd(s.run) !== normCmd(p.baseline.command ?? "")).map((s) => {
+    const rootSpeaks = (run: string): boolean => normCmd(run) === normCmd(p.baseline.command ?? "") || (p.baseline.ran && p.baseline.attributable && !p.baseline.timed_out && sameRootScript(repoDir, p.baseline.command ?? "", run)); // an alias is reused only when its base run is complete and attributable; otherwise the suite is measured under its own command
+    p.suites = specs.filter((s) => s.cwd !== "." || !rootSpeaks(s.run)).map((s) => {
       const prev = old.find((o) => o.command === s.cmd);
       if (prev?.ran && !opts.rerun && !cutShort(prev, Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, Math.floor(left))) && (prev.failing_ids.length === 0 || (prev.failing_errors && prev.flaky_probe !== undefined))) return prev; // an entry recorded before failing_errors existed is measured again
       const tmo = Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, Math.floor(left)), t0 = Date.now();
@@ -548,7 +567,7 @@ export function baselineSuites(repoDir: string, specs: { name: string; cmd: stri
 export function suiteEmptyOnBase(repoDir: string, baseSha: string | undefined, line: string, name: string, cls: Classified, out: string, cwd = "."): boolean {
   const p = baseSha ? loadProfile(repoDir) : null;
   if (!p || p.revision !== baseSha || !emptyDiscovery(cls, out)) return false;
-  const e = p.suites?.find((x) => x.command === name) ?? (cwd === "." && normCmd(p.baseline.command ?? "") === normCmd(line) ? p.baseline : undefined); // the root baseline speaks only for the repo root, never for a package directory
+  const e = p.suites?.find((x) => x.command === name) ?? (cwd === "." && (normCmd(p.baseline.command ?? "") === normCmd(line) || sameRootScript(repoDir, p.baseline.command ?? "", line)) ? p.baseline : undefined); // the root baseline speaks only for the repo root, never for a package directory
   return e?.ran === true && e.exit_code === 0 && e.zero_tests === true;
 }
 
@@ -661,9 +680,9 @@ function cargoTouched(changed: string[]): boolean {
 export function attributeFullSuite(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], blocked: string[], changed: string[]): Attribution {
   const bad = full.filter((c) => c.result === "fail"), none: Attribution = { preExistingChecks: [], preExistingIds: [], introducedChecks: bad.map((c) => c.name), line: null }, p = loadProfile(repoDir);
   if (!bad.length || !p || p.revision !== baseSha) return none;
-  const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran), of = (cmd: string) => runs.find((b) => normCmd(b.command ?? "") === normCmd(cmd));
+  const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran), of = (cmd: string) => baseFor(repoDir, p, cmd, true);
   // A base run that was cut off (its time or the shared baseline budget ran out) says nothing about which failures were already there: record it, never blame silently.
-  const cut = bad.filter((c) => [p.baseline, ...(p.suites ?? [])].some((b) => normCmd(b.command ?? "") === normCmd(c.cmd) && (b.timed_out || b.reason === "baseline budget used up")));
+  const cut = bad.filter((c) => { const b = baseFor(repoDir, p, c.cmd, false); return !!b && (b.timed_out || b.reason === "baseline budget used up"); });
   if (cut.length) return { ...none, line: `NOT PROVEN: base run incomplete for ${cut.map((c) => `"${c.cmd}"`).join(", ")} (cut off on the original code), so its failures are not excusable` };
   const ids = (cmd: string): string[] => { const b = of(cmd); return b?.attributable ? [...b.failing_ids, ...(b.flaky_ids ?? [])] : []; }, miss = bad.find((c) => !of(c.cmd));
   if (miss) return { ...none, line: `baseline: ran ${runs.map((b) => `"${b.command}"`).join(", ") || "nothing"}, not the full suite command "${miss.cmd}", ids not comparable, full suite failures not excused` };
@@ -685,9 +704,9 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: { nam
 /** One line per failing full-suite check that attributeFullSuite did not excuse, saying which rule kept it blocking (so a receipt never shows an unexplained red suite).
  *  Same inputs and the same profile as attributeFullSuite; `excused` is its preExistingChecks. */
 export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], changed: string[], excused: string[]): string[] {
-  const p = loadProfile(repoDir), all = p ? [p.baseline, ...(p.suites ?? [])] : [], out: string[] = [];
+  const p = loadProfile(repoDir), out: string[] = [];
   for (const c of full.filter((x) => x.result === "fail" && !excused.includes(x.name))) {
-    const why = (r: string): void => { out.push(`not excused: ${c.name} (\`${c.cmd}\`): ${r}`); }, b = all.find((x) => x.ran && normCmd(x.command ?? "") === normCmd(c.cmd)), cutB = all.find((x) => normCmd(x.command ?? "") === normCmd(c.cmd) && (x.timed_out || x.reason === "baseline budget used up"));
+    const why = (r: string): void => { out.push(`not excused: ${c.name} (\`${c.cmd}\`): ${r}`); }, b = p ? baseFor(repoDir, p, c.cmd, true) : undefined, b0 = p ? baseFor(repoDir, p, c.cmd, false) : undefined, cutB = b0 && (b0.timed_out || b0.reason === "baseline budget used up") ? b0 : undefined;
     if (!p) { why("no baseline was recorded"); continue; }
     if (p.revision !== baseSha) { why("the baseline was measured on another commit"); continue; }
     if (cutB) { why("base run incomplete (cut off on the original code)"); continue; }

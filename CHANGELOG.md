@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.137.4 (2026-11-06)
+
+Loki on Haiku finishes tasks about 14% faster with the same outcomes.
+
+### Changed
+- The executable-spec call now starts during intake and is reused when its request is unchanged (LOKI_E10_EXEC_SPEC_PREFETCH=0 opts out).
+- The Go no-regression differential runs alongside verify instead of after implement (LOKI_E10_NRD_OVERLAP=0 opts out).
+- npm, pnpm and yarn running the same root test script share one base run (LOKI_BASELINE_SCRIPT_ALIAS=0 opts out).
+- Paired on 6 benchmark tasks against v11.137.2: median 343.5 s to 295.5 s per task, identical outcomes on all 6.
+
 ## v11.137.3 (2026-11-06)
 
 Loki now runs on the latest Claude Code and Anthropic SDKs, and its safety hooks fail closed.

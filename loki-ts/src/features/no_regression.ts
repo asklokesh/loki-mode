@@ -357,7 +357,7 @@ function extractBase(repoDir: string, sha: string, dir: string): void {
   if (r.status !== 0) throw new Error("tar could not unpack the base tree");
 }
 /** <tmp>/loki-nrd-XXXX/{base,patched}: base is `git archive` of the base commit plus the user's own untracked files, patched is base plus the agent's diff (sealed files left out). Removed by exact validated path. */
-export function makeScratch(repoDir: string, baseSha: string, skip: Set<string>, userUntracked: string[] = []): { base: string; patched: string; replay(editedTests: string[], baseTest: (p: string) => string | null): string; dispose(): void } {
+export function makeScratch(repoDir: string, baseSha: string, skip: Set<string>, userUntracked: string[] = [], diff?: ReturnType<typeof snapshotDiff>): { base: string; patched: string; replay(editedTests: string[], baseTest: (p: string) => string | null): string; dispose(): void } {
   const root = mkdtempSync(join(tmpdir(), SCRATCH_PREFIX)), base = join(root, "base"), patched = join(root, "patched"), replay = join(root, "replay");
   const dispose = (): void => { try { if (basename(root).startsWith(SCRATCH_PREFIX) && dirname(realpathSync(root)) === realpathSync(tmpdir()) && !lstatSync(root).isSymbolicLink()) rmSync(root, { recursive: true, force: true }); } catch { /* a leaked temp dir goes with the temp root */ } };
   try {
@@ -367,7 +367,7 @@ export function makeScratch(repoDir: string, baseSha: string, skip: Set<string>,
       try { if (!f.startsWith("..") && !f.startsWith("/") && lstatSync(src).isFile()) { mkdirSync(dirname(join(base, f)), { recursive: true }); cpSync(src, join(base, f)); } } catch { /* gone or unreadable: left out of both */ }
     }
     cpSync(base, patched, { recursive: true });
-    applyDiff(patched, snapshotDiff(repoDir, baseSha, ATTEMPT_EXCLUDES).filter((e) => !skip.has(e.path)), ATTEMPT_EXCLUDES);
+    applyDiff(patched, (diff ?? snapshotDiff(repoDir, baseSha, ATTEMPT_EXCLUDES)).filter((e) => !skip.has(e.path)), ATTEMPT_EXCLUDES); // `diff`: the caller's own snapshot, taken before verify could stage anything in the tree
   } catch (e) { dispose(); throw e; }
   return {
     base, patched, dispose,
@@ -430,7 +430,7 @@ export async function runNrdGate(ctx: RunContext, signal: AbortSignal, session: 
     if (programs.length === 0) return skip(`no probe program: ${pre ? "the pre-implement program is for another package" : "the exec-spec call left none"}, and every caller of the edited functions is named by the issue`, { calls, usd, ...(incompleteNote ? { receipt: [oneLine(notProven(incompleteNote))] } : {}) });
     check();
     const intakeOut = ctx.outputs().intake ?? {}, mine = [...(Array.isArray(intakeOut.preexisting_untracked) ? intakeOut.preexisting_untracked as string[] : []), ...Object.keys((intakeOut.preexisting_untracked_blobs ?? {}) as object)];
-    scratch = makeScratch(ctx.repoDir, ctx.baseSha, sealed, mine);
+    scratch = makeScratch(ctx.repoDir, ctx.baseSha, sealed, mine, diff);
     const tree = scratch, editedTests = diff.filter((e) => e.path.endsWith("_test.go") && dirname(e.path).replace(/^\.$/, "") === dir && baseText(ctx, e.path) !== "").map((e) => e.path);
     const r = await runNoRegression({
       issue, programs, llm: tl,
@@ -451,6 +451,27 @@ export async function runNrdGate(ctx: RunContext, signal: AbortSignal, session: 
     if (e instanceof NrdBudgetError) return { status: "skipped", reason: `not run: ${why}`.slice(0, 300), calls: 0, usd: 0, receipt: [oneLine(notRunLine(why)).slice(0, 300)] };
     return { status: "error", reason: `no-regression skipped: ${why}`.slice(0, 300), calls: 0, usd: 0, receipt: [oneLine(notProven(why)).slice(0, 300)] };
   } finally { scratch?.dispose(); }
+}
+
+/** SPEED-NRD-OVERLAP (LOKI_E10_NRD_OVERLAP=0 opts out): implement starts the differential and returns; it then runs while verify runs the tests (it reads the tree only before its
+ *  first wait, then works on scratch copies), and verify waits for it before it returns, so its failure group still reaches the first fix round. Seal waits too, for a run that skips
+ *  verify. settleNrd writes the summary into the current implement output, the same key the serial path sets, and records it as an nrd.completed event. Measured: 23 to 120 s after the
+ *  implement session on Go tasks (L-Haiku-v1371-nopatch: cli-2439 120 s, lh-1573 113 s with the tournament), all of it before verify began. */
+export const nrdOverlapOn = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_NRD_OVERLAP !== "0";
+const pendingNrd = new Map<string, Promise<NrdSummary | null>>(); // runDir -> the differential still running
+export function startNrdGate(ctx: RunContext, signal: AbortSignal, session: SessionResult, wallPaths: string[], run: typeof runNrdGate = runNrdGate): void {
+  pendingNrd.set(ctx.runDir, run(ctx, signal, session, wallPaths).catch((e: unknown): NrdSummary => ({ status: "error", reason: `no-regression skipped: ${oneLine(String((e as Error)?.message ?? e)).slice(0, 200)}`, calls: 0, usd: 0, receipt: [notProven(oneLine(String((e as Error)?.message ?? e)).slice(0, 200))] })));
+}
+/** Waits for the differential implement started, if any, and records it. Idempotent: the second caller finds nothing pending. */
+export async function settleNrd(ctx: Pick<RunContext, "runDir" | "outputs" | "emit">): Promise<void> {
+  const p = pendingNrd.get(ctx.runDir);
+  if (!p) return;
+  const r = await p;
+  pendingNrd.delete(ctx.runDir);
+  const impl = ctx.outputs().implement;
+  if (!r || !impl) return;
+  impl.no_regression = r;
+  ctx.emit("nrd.completed", "implement", { ...r });
 }
 
 /** verify.ts: the first verify (no fix round yet) carries the finding as one more failure group, so the fix loop gives it one round; the re-verify never repeats it. */

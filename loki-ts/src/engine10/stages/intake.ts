@@ -1,7 +1,7 @@
 // loki-ts/src/engine10/stages/intake.ts -- E-04 Intake (ENGINE.md section 4). Deterministic: dirty-tree refusal, branch creation, .git/info/exclude, the issue already-done check, repo map / test map build, plus one cached Project Model discovery session (EL-W1-01). No PRD. Task arrives as literal text (LOKI_E10_TASK_TEXT) or issue.json (LOKI_E10_ISSUE_JSON, default <runDir>/issue.json); outputs task text, title, repo, resumed for later stages.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { STAGE_BUDGETS, type RunContext, type RunnerName, type Stage, type StageResult } from "../types.ts";
+import { STAGE_BUDGETS, type RunContext, type RunnerName, type Stage, type StageResult, type TestMap } from "../types.ts";
 import { buildRepoMap } from "../repomap.ts";
 import { cachedRepoMap, readTestMapCache, repoCacheDir, repoKey, writeTestMapCache } from "../cache.ts";
 import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
@@ -10,10 +10,11 @@ import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_don
 import { hooks } from "../hooks.ts";
 import { snapshotContract } from "../../features/contract.ts";
 import { lazyZeroBaseline, stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
-import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps, type DepsTiming, type IntakeTiming } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
+import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps, type DepsTiming, type IntakeTiming, type PhaseTiming } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { baselineCmdS, BASELINE_CMD_TIMEOUT_S, ensureProfile, readinessNotice, writeBaselineRecord, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 import { verifyCommandRows } from "../../project_model/package_suite.ts"; import { untestableReason } from "../testmap.ts";
 import { ambiguityGate, voteOpenChoices, type ChoiceCtx } from "../../features/spec_ambiguity.ts"; import { triageGate } from "../../features/triage.ts";
+import { execSpecPrefetchOn, prefetchExecSpec } from "../../features/exec_spec.ts"; import { wallEnabled } from "../sizing.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
 export interface IntakeOptions { taskText?: string; issueJsonPath?: string; }
 interface IssueFields { state: string | null; closed_by_merged_pr?: boolean }
 /** owner/repo#number, when the issue JSON carries both (GitHub); null for anything else, never guessed. */
@@ -46,6 +47,18 @@ function loadIssue(path: string): IssueFields {
 export const alreadyDoneCheckOn = (source: "text" | "issue", env: NodeJS.ProcessEnv = process.env): boolean => source === "issue" || env.LOKI_E10_ALREADY_DONE_CHECK === "1";
 /** True only on a deterministic, positive signal: a false negative (state unknown) must never claim already-done. */
 function isAlreadyDone(issue: IssueFields): boolean { return issue.state === "closed" || issue.closed_by_merged_pr === true; }
+/** SPEED-EXEC-SPEC-PREFETCH: start the exec-spec generator call the Wall stage will make on the lean path (wall.ts wallRoute decides, for both), so the model writes while intake runs the
+ *  baseline. Off the lean path, with the Wall authored alongside implement, or with LOKI_E10_EXEC_SPEC_PREFETCH=0, nothing starts. Never throws. */
+async function prefetchLeanExecSpec(ctx: RunContext, task: string, repoMap: ReturnType<typeof buildRepoMap>, testmap: TestMap, signal: AbortSignal): Promise<PhaseTiming> {
+  if (!execSpecPrefetchOn()) return { skipped: "LOKI_E10_EXEC_SPEC_PREFETCH=0 or exec spec off" };
+  try {
+    const { wallRoute, execSpecCall } = await import("./wall.ts"); // lazy: wall.ts imports the verify stage
+    const route = wallRoute(ctx, task, repoMap, testmap);
+    if (!route.lean) return { skipped: "not the lean path: no exec spec call to start" };
+    if (wallEnabled() && wallConcurrent()) return { skipped: "the Wall is authored alongside implement" };
+    return prefetchExecSpec(execSpecCall(ctx, task, route.runners, testmap.tests.map((t) => t.path), signal)) ? { ms: 0 } : { skipped: "the exec spec prelude starts no call" };
+  } catch { return { skipped: "prefetch setup failed" }; }
+}
 export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: IntakeOptions = {}): Promise<StageResult> {
   const held: { fold: string | null } = { fold: null }; // per call: set only when the supervisor would fold the Readiness line into the last line; a failed intake never reaches that line, so it is printed here
   const flush = (): void => { if (held.fold) process.stderr.write(`${held.fold}\n`); held.fold = null; };
@@ -102,7 +115,9 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   writeFileSync(repomapRef, JSON.stringify(repoMap));
   let testmap = readTestMapCache(cacheDir, tree);
   if (!testmap) { walkCached = false; testmap = await ctx.tests.detect(ctx.repoDir); try { writeTestMapCache(cacheDir, tree, testmap); } catch { /* an unwritable cache only costs the next run a rebuild */ } }
-  tm.repo_walk = { ms: walkEnd(), at: walkAt, cached: walkCached }; const baselineAt = at(), baselineEnd = lap(), baselineOn = process.env.LOKI_REPO_BASELINE !== "0";
+  tm.repo_walk = { ms: walkEnd(), at: walkAt, cached: walkCached };
+  tm.exec_spec_prefetch = await prefetchLeanExecSpec(ctx, task, repoMap, testmap, signal); // SPEED-EXEC-SPEC-PREFETCH: the Wall stage's generator call starts now and runs while the baseline below does
+  const baselineAt = at(), baselineEnd = lap(), baselineOn = process.env.LOKI_REPO_BASELINE !== "0";
   const built = baselineOn ? ensureProfile(ctx.repoDir, { timeoutS: baselineCmdS(ctx.capS) }) : null, baselineMs = baselineEnd(); // REPOMEM: commands + a baseline test run on the untouched tree, reused while the manifests are unchanged; never throws
   const readiness = built ? readinessNotice(ctx.repoDir, repoReadiness(built.profile, undefined, built.profile.commands.some((c) => c.kind === "test") ? [] : verifyCommandRows(ctx.repoDir, testmap as { runners: RunnerName[]; evidence?: Partial<Record<RunnerName, string>> }))) : null; // once per repo and score: a repo-config grade is not part of every run's outcome
   if (readiness && process.env.LOKI_E10_READINESS_FOLD === "1") held.fold = readiness;

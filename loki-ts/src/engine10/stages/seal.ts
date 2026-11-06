@@ -32,7 +32,7 @@ import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.
 import { atomicWriteText } from "../../util/atomic.ts";
 import { patchReceipt } from "../../features/patch_protocol.ts";
 import { collapseNotProven } from "../../util/term_width.ts";
-import { tournamentReceiptBlock } from "../../features/tournament.ts"; import { nrdReceiptBlock } from "../../features/no_regression.ts";
+import { tournamentReceiptBlock } from "../../features/tournament.ts"; import { nrdReceiptBlock, settleNrd } from "../../features/no_regression.ts";
 import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, splitDeclaredAdvisories } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { fragmentNoticeLine, misplacedNamedNotes } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
 const SYSTEM_INTERP = "tests ran on the system interpreter", SYSTEM_INTERP_SUFFIX = " (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)"; // verify.ts writes the note
 
@@ -254,6 +254,7 @@ export const sealStage: Stage = {
   ...STAGE_BUDGETS.seal,
   extraLimitS: (c) => reviewExtraLimitS(c), // lazy: xreview and seal import each other transitively
   async run(ctx: RunContext, signal?: AbortSignal): Promise<StageResult> {
+    await settleNrd(ctx); // SPEED-NRD-OVERLAP: a run that skipped verify still records the differential implement started before the verdict reads it
     const o = ctx.outputs(), stale = staleAtSeal(ctx.repoDir, ctx); if (stale.length) return { status: "failed", data: { stale_wall_revisions: stale.map((r) => r.rev) }, reason: staleReason(stale) };
     const top = (await git(ctx, ["rev-parse", "HEAD"])).out.trim(), wallDone = await wallChild(g(ctx), ctx.runId, ctx.repoDir, o.wall?.files); // FC-VERIFIED-PR-WITHOUT-ITS-TEST: a re-seal after the Wall child commit binds the product head again
     const head = wallDone ? (await git(ctx, ["rev-parse", "HEAD^"])).out.trim() : top;
