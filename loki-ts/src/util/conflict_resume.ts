@@ -109,6 +109,16 @@ export const COVERAGE_BRIEF = "List each site, symbol, example or case the task 
 export const claimCheckEnabled = (env = process.env): boolean => keptUnderLean(env.LOKI_E10_CLAIM_CHECK, env);
 export const COVERAGE_CLAIM_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. Before the last line, write one line per site in the current file: `SITE <path>:<line>: changed` or `SITE <path>:<line>: unchanged - <why>`. " + FINISH_LINE;
 export const coverageResumeEnabled = (env = process.env): boolean => !isOff(env.LOKI_E10_COVERAGE_RESUME);
+// LOKI_E10_COVERAGE_MAX_TURNS (default 10; =0/off opts out to the stage budget's cap): the coverage turn ("-c", "-c2") ends at this many turns.
+// On the v11.137 Haiku bench arms, 31 of 36 coverage turns took 2 to 8 turns; the other 5 took 13 to 33 (up to $0.031, more than the implement session), and
+// each of those tasks was merge-ready in another arm whose coverage turn took 8 or fewer. A capped turn ends like a reply without LOKI_DONE: the first result stands.
+export const COVERAGE_MAX_TURNS_DEFAULT = 10;
+export const coverageMaxTurns = (env = process.env): number | undefined => {
+  const v = (env.LOKI_E10_COVERAGE_MAX_TURNS ?? "").trim();
+  if (isOff(v)) return undefined;
+  const n = Number(v);
+  return v !== "" && Number.isInteger(n) && n > 0 ? n : COVERAGE_MAX_TURNS_DEFAULT;
+};
 
 // LOKI_E10_SITE_HINTS (default on, =0/off/false opts out): the edit-shape sites (sibling, residual, precedence) of the tree's diff as advisory text in the fix brief and the coverage turn. Never a verdict.
 export const siteHintsEnabled = (env = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_SITE_HINTS ?? "").toLowerCase());
@@ -150,12 +160,13 @@ export async function resumeForCoverage(ctx: RunContext, first: SessionRunOption
   if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationId: first.iterationId, iterationIds: [] };
   const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
   const claims = claimCheckEnabled();
-  const hints = siteHints(ctx), base = claims ? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith(ctx, first, firstSession, hints ? `${base}\n\n${hints}` : base, "-c");
+  const cap = coverageMaxTurns(), capped: SessionRunOptions = { ...first, ...(cap ? { maxTurns: cap } : {}) };
+  const hints = siteHints(ctx), base = claims ? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith(ctx, capped, firstSession, hints ? `${base}\n\n${hints}` : base, "-c");
   if (!clean(r.session)) return { session: { ...firstSession, durationS: r.session.durationS }, iterationId: r.iterationId, iterationIds: [r.iterationId] };
   if (!claims) return { ...r, iterationIds: [r.iterationId] }; // knob off: exactly main's coverage turn
   const absent = claimedChangeAbsent(ctx.repoDir, ctx.baseSha, siteClaims(r.session.summary ?? ""));
   if (!absent.length || (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { ...r, iterationIds: [r.iterationId], ...(absent.length ? { claimAbsent: absent } : {}) };
-  const r2 = await resumeWith(ctx, { ...first, iterationId: r.iterationId }, r.session, claimAbsentBrief(absent), "2");
+  const r2 = await resumeWith(ctx, { ...capped, iterationId: r.iterationId }, r.session, claimAbsentBrief(absent), "2");
   return { ...(clean(r2.session) ? r2 : { session: { ...r.session, durationS: r2.session.durationS }, iterationId: r2.iterationId }), iterationIds: [r.iterationId, r2.iterationId], claimAbsent: absent };
 }
 
