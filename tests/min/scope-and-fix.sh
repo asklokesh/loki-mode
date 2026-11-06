@@ -30,7 +30,7 @@
 #   coverage:    (lean, E2E_STUB_MODE=coverage: the first turn writes 2 of the 3 named functions) default: no extra session and negate() is
 #                missing (=0); default (unset): exactly one "-c" session with the fixed brief writes negate(); a first turn that
 #                claims already-done, or a run that has a plan, gets no coverage turn.
-#   exec spec:   (on with LOKI_E10_EXEC_SPEC=1 or LOKI_E10_LEAN_CALLS=0, =0 opts out; lean, Wall off) deterministic atoms, the parity atom from the whole function body, the pair atom,
+#   exec spec:   (default on, LOKI_E10_EXEC_SPEC=0 opts out; lean, Wall off) deterministic atoms, the parity atom from the whole function body, the pair atom,
 #                the binding rule; real go test, pytest and vitest (2 and latest) per-case base runs seal only the binding red case; on the
 #                engine the right fix is VERIFIED, a change that leaves it red is not, and the knob unset runs no generator session.
 #                Relation cases (no model call): a stated wrap relation gives F(R(v)) == F(v) per strictly checked type, recorded on base.
@@ -326,7 +326,6 @@ make_rs_repo() {
 }
 
 # LOKI_E10_WALL defaults to 1 here (legs that exercise the Wall); E2E_WALL= (empty) runs a leg with the Wall off, the product default.
-# LOKI_E10_LEAN_CALLS defaults to 0 here, so every leg keeps the exec spec generator and the coverage claim re-ask; a leg passes LOKI_E10_LEAN_CALLS= for the product default.
 # run_engine <task> <env assignments...> -> sets REPO, RC, OUT, RUNDIR, ITERS (one "<stage> <iteration> <bytes>" line per session). MAKE_REPO picks the starting repo (default the TS calc repo).
 run_engine() {
     local task="$1" d rid; shift
@@ -342,7 +341,6 @@ run_engine() {
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY \
         LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" LOKI_NO_COMPLETIONS=1 \
         E2E_STUB_LOG="$d/stub.log" E2E_STUB_ITER_LOG="$ITERS" LOKI_E10_PLAN=1 LOKI_E10_WALL="${E2E_WALL-1}" LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" \
-        LOKI_E10_LEAN_CALLS=0 \
         "$@" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$task" --no-pr 2>&1)"
     RC=$?
     RUNDIR=""
@@ -2343,13 +2341,6 @@ if command -v go >/dev/null 2>&1; then
     E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" LOKI_E10_EXEC_SPEC=0 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     grep -q -- '-execspec' "$ITERS" && bad "exec spec off: a generator session ran with LOKI_E10_EXEC_SPEC=0" || ok "exec spec off: LOKI_E10_EXEC_SPEC=0 runs no generator session and no spec file"
-    # LOKI_E10_LEAN_CALLS (default on; run_engine pins =0 for the legs above): an unset LOKI_E10_EXEC_SPEC makes no generator call, =1 keeps it.
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" LOKI_E10_LEAN_CALLS= E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
-        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
-    if grep -q -- '-execspec' "$ITERS"; then bad "lean calls: a generator session ran with LOKI_E10_EXEC_SPEC unset"; dump; else ok "lean calls (default): LOKI_E10_EXEC_SPEC unset runs no generator session, outcome $(outcome)"; fi
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" LOKI_E10_LEAN_CALLS= LOKI_E10_EXEC_SPEC=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
-        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
-    [ "$(esw)" = "sealed:TestLokiSpec_C1_KeepsAfterDash:loki_wall_spec_test.go:fail=1" ] && ok "lean calls: LOKI_E10_EXEC_SPEC=1 keeps the generator and seals its binding case ($(esw))" || { bad "lean calls: LOKI_E10_EXEC_SPEC=1 wall gave '$(esw)'"; dump; }
 # ---------------------------------------------------------------- Go candidate tournament (LOKI_E10_TOURNAMENT, default on, =0 opts out)
 # features/tournament.ts. Unit (stub Io, no model, no go): the probe text parsers, the order-swap judge, and the selection rule: the agent's
 # check-passing tree is displaced only by a check-passing challenger that regresses no spec case the agent passes, loses no probe, and wins

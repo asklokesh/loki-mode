@@ -18,7 +18,7 @@ import { sealedWallDir, assertionFailure, type ReportedErrors, baseJobs, classif
 import { conventionViolation, conventionsBrief, dotenvFileRead, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, rustArities, rustCallClash, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
 import { dotnetTestProject } from "../../util/stack_tools.ts";
-import { EXEC_SPEC_BRIEF_FILE, EXEC_SPEC_TELEMETRY_FILE, execSpecAuthor, execSpecGenerates, execSpecModel } from "../../features/exec_spec.ts"; import { probeIntake, tournamentEnabled, writeTournamentInput } from "../../features/tournament.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts"; import { nrdEnabled, nrdProbeIntake } from "../../features/no_regression.ts";
+import { EXEC_SPEC_BRIEF_FILE, EXEC_SPEC_TELEMETRY_FILE, execSpecAuthor, execSpecEnabled, execSpecModel } from "../../features/exec_spec.ts"; import { probeIntake, tournamentEnabled, writeTournamentInput } from "../../features/tournament.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts"; import { nrdEnabled, nrdProbeIntake } from "../../features/no_regression.ts";
 const WALL_PREFIX = "loki_wall_";
 
 export interface WallSealedFile { path: string; sha256: string; runner?: RunnerName; } // path: absolute, in the repo working tree
@@ -114,7 +114,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const done = (result: StageResult): WallAuthorOutcome => ({ kind: "done", result });
   if (signal.aborted) return done({ status: "failed", data: {}, reason: "aborted before wall started" });
   const WALL_OFF = "Wall session off (default; LOKI_E10_WALL=1 turns it on)";
-  if (!wallEnabled() && !execSpecGenerates()) return done({ status: "skipped", data: {}, reason: WALL_OFF });
+  if (!wallEnabled() && !execSpecEnabled()) return done({ status: "skipped", data: {}, reason: WALL_OFF });
 
   const prior = ctx.outputs();
   const task = loadTaskText(ctx, prior.intake?.task as string | undefined);
@@ -135,7 +135,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const runners: RunnerName[] = testMap ? harnessRunners(engineMap?.packageRunners?.[targetRoot] ?? (packageTests.length ? [...new Set(packageTests.map((t) => t.runner))] : testMap.runners), repoMap?.files ?? [], process.env, ctx.repoDir, focus) : [];
   if (!ctx.externalPatch && planMode() !== "always" && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean") {
     const leanWhy = `${sz.size} task with a relevant visible test: Wall skipped, verify runs that test at the end`;
-    if (!execSpecGenerates()) return done({ status: "skipped", data: { size: sz.size }, reason: leanWhy });
+    if (!execSpecEnabled()) return done({ status: "skipped", data: { size: sz.size }, reason: leanWhy });
     if (wallEnabled() && wallConcurrent()) return done({ status: "skipped", data: { size: sz.size, exec_spec: { status: "skipped" } }, reason: `${leanWhy}; exec spec not run: with the Wall on it is authored alongside implement (LOKI_E10_WALL_CONCURRENT=0 runs it first)` });
     return execSpecWall(ctx, signal, task, sz.size, runners, existingTests.map((t) => t.path), leanWhy);
   }
