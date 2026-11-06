@@ -19,7 +19,7 @@
 #   1. docker/Dockerfile: add `COPY --chown=loki:loki plantdir/ ./plantdir/`
 #      (a directory that does not exist).
 #   2. .github/workflows/release.yml: put `plantdir` in the `for d in ...` loop.
-#   3. loki-ts/src/runner/sdk_invoker.ts: back to `import Anthropic from "@anthropic-ai/sdk"` (a static value import):
+#   3. loki-ts/src/runner/sdk_invoker.ts: restore v11.135.0's file (the static value import of "@anthropic-ai/sdk"):
 #      the control-plane bundle leg fails with Could not resolve.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
