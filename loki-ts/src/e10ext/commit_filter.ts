@@ -2,7 +2,7 @@
 import { lstatSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { untouchedSinceIntake } from "./preexisting_dirty.ts"; import { untouchedUntracked } from "../features/untouched_untracked.ts";
-import { installOwned } from "../project_model/install.ts"; import { toolchainOutputs } from "../util/lock_ecosystems.ts";
+import { installOwned } from "../project_model/install.ts"; import { LOCKFILE_RE as LOCKFILE, toolchainOutputs } from "../util/lock_ecosystems.ts"; export { LOCKFILE };
 import { runFormatters } from "../runner/repo_profile.ts";
 import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
 
@@ -12,7 +12,7 @@ export type Staged = { st: string; f: string };
 /** Parses `git diff --cached --name-status --no-renames -z` output. */
 export const parseStaged = (out: string): Staged[] => out.split("\0").reduce<Staged[]>((a, t, i, all) => (i % 2 === 0 && t ? [...a, { st: t, f: all[i + 1]! }] : a), []);
 
-export const MANIFEST = /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod|Pipfile|Gemfile|composer\.json)$/, LOCKFILE = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|uv\.lock|Pipfile\.lock|Gemfile\.lock|composer\.lock|Cargo\.lock|go\.sum)$/; // the one manifest and lockfile lists; util/config_paths.ts and the config write fence import them
+export const MANIFEST = /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod|Pipfile|Gemfile|composer\.json)$/; // the one manifest list; the lockfile list is util/lock_ecosystems.ts LOCKFILE_RE (imported below); util/config_paths.ts and the config write fence import both
 /** A manifest changed in the lockfile's directory or beneath it (a workspace root lockfile legitimately changes when a member's manifest does). */
 export const manifestChanged = (staged: Staged[], lock: string): boolean => { const d = dirname(lock); return staged.some(({ f: m }) => MANIFEST.test(m) && (d === "." || dirname(m) === d || dirname(m).startsWith(`${d}/`))); };
 

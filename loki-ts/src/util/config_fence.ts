@@ -30,12 +30,12 @@ export type FenceAllow = (rel: string) => boolean;
 export const allowFor = (task: string, allowed: Iterable<string> = []): FenceAllow => { const a = new Set(allowed); return (rel) => a.has(rel) || taskNamesFenced(task, rel); };
 
 /** Deny reason for a write tool aimed at a fenced path (or, with `state`, anything under .loki/, the harness's run state), else null. `file` is the tool's file_path; a path outside `cwd` is not this fence's concern. */
-export function fenceDenied(tool: string, file: unknown, cwd: string, allow: FenceAllow, state = false): { rel: string; reason: string } | null {
+export function fenceDenied(tool: string, file: unknown, cwd: string, allow: FenceAllow, state = false, onNewTestFile?: (rel: string) => void): { rel: string; reason: string } | null {
   if (!/^(Edit|Write|MultiEdit)$/.test(tool) || typeof file !== "string" || !file) return null;
   const rel = relative(resolve(cwd), isAbsolute(file) ? file : resolve(cwd, file));
   if (state && /^\.loki(\/|$)/.test(rel)) return { rel, reason: `LOKI_RUN_STATE: ${rel} is the harness's own run state (the receipt and checkpoints are built from it), so the edit was denied. Nothing in the task needs it.` };
   if (rel === "" || rel.startsWith("..") || isAbsolute(rel) || !isFencedPath(rel) || allow(rel)) return null;
-  if (TEST_DIR.test(rel) && !existsSync(resolve(cwd, rel))) return null; // a new config-named file under a test directory is scaffolding
+  if (TEST_DIR.test(rel) && !existsSync(resolve(cwd, rel))) { onNewTestFile?.(rel); return null; } // a new config-named file under a test directory is scaffolding
   return { rel, reason: `LOKI_CONFIG_FENCE: ${rel} is test, build, lint, type config or a lockfile and the task does not ask for it, so the edit was denied. Leave it alone, say so in your reply, and continue without that check. If the task cannot be done without it, finish with LOKI_SPEC_CONFLICT naming ${rel}.` };
 }
 
@@ -57,10 +57,10 @@ export function snapshotFenced(cwd: string): FenceSnap {
   return snap;
 }
 
-export interface FenceRestore { restored: string[]; failed: { path: string; reason: string }[]; error?: string }
+export interface FenceRestore { restored: string[]; created: string[]; failed: { path: string; reason: string }[]; error?: string }
 /** Puts back every fenced file the session changed, deleted or created, except what `allow` lets through. One failing file never stops the rest; nothing here throws. */
 export function restoreFenced(cwd: string, snap: FenceSnap, allow: FenceAllow): FenceRestore {
-  const out: FenceRestore = { restored: [], failed: [] };
+  const out: FenceRestore = { restored: [], created: [], failed: [] };
   if (snap.error) return { ...out, error: `config fence inactive for this session: ${snap.error}` };
   let now: string[] = [];
   try { now = scan(cwd); } catch (e) { out.error = `config fence could not list new files after the session (${msg(e)}); only files that existed before it were checked`; }
@@ -70,7 +70,8 @@ export function restoreFenced(cwd: string, snap: FenceSnap, allow: FenceAllow): 
     try {
       const p = join(cwd, rel), before = snap.files.get(rel), cur = existsSync(p) ? readSmall(p) : null;
       if (before) { if (cur && before.equals(cur)) continue; mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, before); out.restored.push(rel); }
-      else if (cur && !TEST_DIR.test(rel)) { rmSync(p, { force: true }); out.restored.push(rel); } // created by the session; a file over the size cap stays and is not counted
+      else if (cur && TEST_DIR.test(rel)) out.created.push(rel); // test scaffolding the run made (absent at session start, under a test directory): kept, and editable again later in this run
+      else if (cur) { rmSync(p, { force: true }); out.restored.push(rel); } // created by the session; a file over the size cap stays and is not counted
     } catch (e) { out.failed.push({ path: rel, reason: msg(e) }); }
   }
   return out;
@@ -117,6 +118,11 @@ export function mergeDenials(runDir: string, logPath: string): void {
   if (d.length > 0) appendFence(runDir, ...d);
   try { rmSync(logPath, { force: true }); } catch { /* best effort */ }
 }
+
+// Config-named test files this run created. Kept in the runner process, never read back from a file the model can reach.
+const createdByRun = new Map<string, Set<string>>();
+export const markCreated = (runDir: string, paths: Iterable<string>): void => { const s = createdByRun.get(runDir) ?? new Set<string>(); for (const p of paths) if (TEST_DIR.test(p) && isFencedPath(p)) s.add(p); createdByRun.set(runDir, s); };
+export const createdOf = (runDir: string): string[] => [...(createdByRun.get(runDir) ?? [])];
 
 /** Existing fenced files a LOKI_SPEC_CONFLICT reason names (path, or basename), minus what the task already allows. */
 export const conflictNamed = (reason: string, known: Iterable<string>, allow: FenceAllow): string[] => {

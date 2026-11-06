@@ -4,13 +4,11 @@
 import { closeSync, lstatSync, openSync, readSync } from "node:fs";
 import { extname, join } from "node:path";
 import { safeGit } from "../util/safe_git.ts";
-import { LOCK_RULES } from "../util/lock_ecosystems.ts";
+import { LOCKFILE_RE } from "../util/lock_ecosystems.ts";
 import rules from "./linguist_rules.json" with { type: "json" };
 
 export interface LinguistAttrs { vendored?: boolean; generated?: boolean; documentation?: boolean; detectable?: boolean; language?: string }
 const VENDOR_RES = (rules.vendor as readonly string[]).map((p) => new RegExp(p)), DOC_RES = (rules.documentation as readonly string[]).map((p) => new RegExp(p));
-const LOCKFILES = new Set<string>([...LOCK_RULES.flatMap((r) => r.locks), "go.sum"]); // lock names come from the one lock-ecosystem table, never a second literal list
-const LOCKFILE_RE = { test: (path: string): boolean => LOCKFILES.has(path.slice(path.lastIndexOf("/") + 1)) };
 const GENERATED_NAME_RE = /(\.min\.(js|css)|\.(js|css)\.map|\.designer\.cs|\.Designer\.vb|\.pbxproj)$/i;
 const PROTOBUF_EXT = /^\.(py|java|h|cc|cpp|m|rb|php)$/, THRIFT_EXT = /^\.(rb|py|go|js|m|java|h|cc|cpp|php)$/;
 /** [extension, header regex, how many leading lines it may appear in]; each mirrors one generated.rb check. */
