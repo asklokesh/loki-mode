@@ -58,6 +58,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 case "$prompt" in
+  *"Loki Opus consult"*) stage=consult ;; # LOKI_E10_OPUS_CONSULT: the tool-less consult call (features/opus_consult.ts)
   *"implement stage in patch mode"*) stage=patch ;; # LOKI_E10_PATCH: the tool-less patch call (features/patch_protocol.ts), before the implement match
   *"code reviewer"*) stage=review ;; # any model review session: the seal cross-review, or a post-PR reviewer
   *"Loki 10 plan stage"*) stage=plan ;;
@@ -94,6 +95,11 @@ if [ -n "${E2E_STUB_USAGE:-}" ] && [ -n "${LOKI_ITERATION:-}" ]; then
   printf '{"total_cost_usd":0.01,"input_tokens":%s,"output_tokens":%s,"cache_read_tokens":0,"cache_creation_tokens":0,"model":"stub","source":"e2e-stub"}\n' "$(( ${#prompt} / 4 ))" "$E2E_STUB_USAGE" > ".loki/metrics/result-cost-$LOKI_ITERATION.json"
 fi
 if [ -n "${E2E_STUB_SPEC_REPLY:-}" ]; then case "$prompt" in *"to the file spec_reply.md in the current directory"*) printf '%s\n' "$E2E_STUB_SPEC_REPLY" > spec_reply.md; echo "LOKI_DONE"; exit 0 ;; esac; fi
+if [ "$stage" = consult ]; then # E2E_STUB_CONSULT=fail: an error reply (no advice); else a priced diagnosis naming the intended behavior
+  if [ "${E2E_STUB_CONSULT:-}" = "fail" ]; then echo '{"type":"result","subtype":"error_during_execution","is_error":true,"total_cost_usd":0.002,"usage":{"input_tokens":10,"output_tokens":0}}'; exit 0; fi
+  echo '{"type":"result","subtype":"success","is_error":false,"result":"DIAGNOSIS: multiply adds instead of multiplying.\nINTENDED: STUB_ADVICE multiply(a, b) returns a * b.","total_cost_usd":0.002,"usage":{"input_tokens":100,"output_tokens":20}}'
+  exit 0
+fi
 if [ "$stage" = patch ]; then # E2E_STUB_PATCH: green appends a right multiply(); repair writes a wrong one first and fixes it in the repair call;
   # wrongtwice stays wrong (the agentic session then runs); cfg also edits bunfig.toml (refused), the repair call leaves it out;
   # a green tree with no test gets the test-only repair: the stub adds a multiply test (notest: answers with no edit, the green tree is kept)
@@ -121,6 +127,8 @@ if [ "${LOKI_E10_STAGE:-}" = "fix" ]; then # before the implement branch: a fix 
   case "${E2E_STUB_FIX:-}" in
     conflict) echo "LOKI_SPEC_CONFLICT: calc.test.ts:7 expects multiply(3, 4) to be 12"; exit 0 ;;
     wallconflict) echo "LOKI_SPEC_CONFLICT: loki_wall_multiply.test.ts:5 calls multiplyAll, which the task never asks for"; exit 0 ;;
+    consultfix) if printf '%s' "$prompt" | grep -q "STUB_ADVICE"; then python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; echo "ASSUMPTION: the reviewer says multiply means a * b"; else printf '// stub fix pass\n' >> calc.ts; fi; echo "LOKI_DONE"; exit 0 ;; # LOKI_E10_OPUS_CONSULT: only the consult advice fixes multiply()
+    nsconflict) if printf '%s' "$prompt" | grep -q "Do not stop on this conflict"; then python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; echo "ASSUMPTION: multiply means a * b"; echo "LOKI_DONE"; else echo "LOKI_SPEC_CONFLICT: calc.test.ts:7 expects multiply(3, 4) to be 12"; fi; exit 0 ;; # never-stop: a conflict until the never-stop brief
     noprogress) if [ -f calc.py ]; then printf '# stub fix pass\n' >> calc.py; else printf '// stub fix pass\n' >> calc.ts; fi; echo "LOKI_DONE"; exit 0 ;;
     rank) printf '// ranked with ts_rank\n' >> frontend/src/hooks/useApi.ts; echo "LOKI_DONE"; exit 0 ;; # moves the vitestred Wall (C2 passes, C3 still fails)
     fixit) python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; echo "LOKI_DONE"; exit 0 ;;
@@ -188,6 +196,14 @@ if [ "$stage" = "other" ] && [ "${E2E_STUB_MODE:-}" = "overlay" ]; then # tests/
 fi
 if [ "$stage" = "implement" ] && [ "${LOKI_E10_STAGE:-}" = "implement" ] && [ -n "${E2E_STUB_IMPL_CONFLICT:-}" ]; then # every implement session off sonnet answers a spec conflict (tests/min/auto-route.sh)
   case "$flags" in *"--model claude-sonnet"*|*"--model sonnet"*) ;; *) echo "LOKI_SPEC_CONFLICT: $E2E_STUB_IMPL_CONFLICT"; exit 0 ;; esac
+fi
+if [ "$stage" = "implement" ] && [ "${LOKI_E10_STAGE:-}" = "implement" ] && [ -n "${E2E_STUB_NS_CONFLICT:-}" ]; then # LOKI_E10_OPUS_CONSULT never-stop: implement answers a spec conflict until the never-stop brief; then it implements (E2E_STUB_NS_CONFLICT=wrong: a wrong multiply) and names its ASSUMPTION
+  if printf '%s' "$prompt" | grep -q "Do not stop on this conflict"; then
+    op='*'; [ "$E2E_STUB_NS_CONFLICT" = "wrong" ] && op='+'
+    printf '\nexport function multiply(a: number, b: number): number {\n  return a %s b;\n}\n' "$op" >> calc.ts
+    echo "ASSUMPTION: multiply(a, b) is the product"; echo "LOKI_DONE"; exit 0
+  fi
+  echo "LOKI_SPEC_CONFLICT: the task does not say whether multiply rounds its result"; exit 0
 fi
 if [ "$stage" = "implement" ] && [ -n "${E2E_STUB_BASE_RED_CONFLICT:-}" ] && ! printf '%s' "$prompt" | grep -q "already fails on the base commit is not a conflict"; then # FireLater#24 s3/s4: the session calls a suite already red on base a spec conflict until the correction says it is not (tests/min/scope-and-fix.sh)
   echo "LOKI_SPEC_CONFLICT: the frontend suite already fails on the base commit, so 'npm run test' cannot pass"; exit 0

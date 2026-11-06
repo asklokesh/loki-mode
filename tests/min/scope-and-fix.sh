@@ -402,7 +402,7 @@ run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_BASE_RED_CONFLICT=1
 [ "$(outcome)" = "VERIFIED" ] && ok "base-red conflict: the correction resume delivered (VERIFIED, not SPEC_CONFLICT)" || { bad "base-red conflict: outcome is '$(outcome)'"; dump; }
 grep -q 'export function multiply' "$REPO/calc.ts" && ok "base-red conflict: the resumed session made the change" || bad "base-red conflict: the change is missing"
 
-run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict LOKI_E10_OPUS_CONSULT=0 # the opt-out keeps the legacy stop; the default never-stop legs follow this block
 n="$(fix_sessions)"
 [ "$n" = "1" ] && ok "conflict: one fix session, no retry" || { bad "conflict: $n fix sessions (want 1)"; dump; }
 grep -q -- '-r ' "$ITERS" && bad "conflict: a '-r' retry session started" || ok "conflict: no '-r' retry iteration"
@@ -411,6 +411,45 @@ rid="$(basename "${RUNDIR:-none}")"
 git -C "$REPO" rev-parse -q --verify "refs/heads/loki/$rid" >/dev/null && ok "conflict: the blocked run keeps its branch loki/$rid" || bad "conflict: the blocked run's branch loki/$rid is gone"
 grep -q 'export function multiply' "$REPO/calc.ts" && ok "conflict: the code the blocked run wrote is on that branch" || { bad "conflict: the blocked run's multiply() is not on a visible branch"; dump; }
 [ "$(git -C "$REPO" rev-parse --abbrev-ref HEAD)" = "loki/$rid" ] && [ "$(git -C "$REPO" log -1 --format=%s main)" = "base" ] && ok "conflict: main is untouched; the work sits only on the run branch" || bad "conflict: main moved or the run branch was not checked out"
+
+# ---------------------------------------------------------------- LOKI_E10_OPUS_CONSULT (default on, =0 opts out): never-stop plus one tool-less Opus consult
+# consults <n>: stub consult calls this run; ctrig: the recorded triggers; rnp: the receipt NOT PROVEN list; rusd: receipt dollars and child sessions
+consults() { grep -c '^consult$' "$(dirname "$ITERS")/stub.log" 2>/dev/null || true; }
+ctrig() { python3 -I -c 'import json,sys; print(",".join(c["trigger"] for c in json.load(open(sys.argv[1]))))' "$RUNDIR/opus-consult.json" 2>/dev/null; }
+rnp() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null; }
+rusd() { python3 -I -c 'import json,sys; c=json.load(open(sys.argv[1]))["cost"]; print(c["usd"], c["children"]["sessions"])' "$RUNDIR/receipt.json" 2>/dev/null; }
+# never-stop on implement: the session conflicts through the FC-19 correction; one consult (trigger stop), then the never-stop resume implements and names its ASSUMPTION
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1
+[ "$(outcome)" = "PARTIAL" ] && ok "never-stop: a headless implement conflict delivers PARTIAL, not BLOCKED" || { bad "never-stop: outcome is '$(outcome)', want PARTIAL"; dump; }
+[ "$RC" != 4 ] && ok "never-stop: exit code is not 4 ($RC)" || bad "never-stop: exit code 4"
+git -C "$REPO" show HEAD:calc.ts 2>/dev/null | grep -A1 'function multiply' | grep -q 'a \* b' && ok "never-stop: the inferred multiply() is committed" || { bad "never-stop: no committed multiply()"; dump; }
+grep -q -- '-n ' "$ITERS" && ok "never-stop: the '-n' never-stop resume ran" || bad "never-stop: no '-n' resume session"
+[ "$(consults)" = 1 ] && [ "$(ctrig)" = "stop" ] && ok "never-stop: exactly one consult, trigger stop" || bad "never-stop: $(consults) consult calls, triggers '$(ctrig)'"
+has "never-stop: the receipt discloses the settled conflict and the session's assumption" "$(rnp)" "spec conflict the run settled itself instead of stopping (implement): the task does not say whether multiply rounds its result -> implemented the most likely intent: multiply(a, b) is the product (after one Opus consult)"
+has "never-stop: the receipt discloses the consult with its model and dollars" "$(rnp)" 'Opus consult (stop, implement, claude-opus-5-5): ok, $0.0020'
+case "$(rusd)" in 0.002\ *) ok "never-stop: the consult's \$0.002 reaches the receipt total ($(rusd))" ;; *) bad "never-stop: receipt cost '$(rusd)', want the consult's 0.002" ;; esac
+grep -h 'opus-consult-stop' "$REPO"/.loki/metrics/child-sessions.jsonl >/dev/null 2>&1 && ok "never-stop: the consult is a child-ledger line (phase opus-consult-stop)" || bad "never-stop: no opus-consult-stop child-ledger line"
+# the cap: with LOKI_E10_CONSULT_MAX=0 no consult runs, never-stop still delivers (PARTIAL)
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_CONSULT_MAX=0
+[ "$(consults)" = 0 ] && [ "$(outcome)" = "PARTIAL" ] && ok "consult cap 0: no consult call, never-stop still delivers PARTIAL" || { bad "consult cap 0: $(consults) consults, outcome '$(outcome)'"; dump; }
+# opt-out and the explicit interactive opt-in keep the stop: BLOCKED, no consult, no '-n' resume
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_OPUS_CONSULT=0
+[ "$(outcome)" = "BLOCKED" ] && [ "$(consults)" = 0 ] && ! grep -q -- '-n ' "$ITERS" && ok "consult opt-out: LOKI_E10_OPUS_CONSULT=0 ends BLOCKED with no consult and no never-stop resume" || { bad "consult opt-out: outcome '$(outcome)', $(consults) consults"; dump; }
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_INTAKE_ASK=1
+[ "$(outcome)" = "BLOCKED" ] && ! grep -q -- '-n ' "$ITERS" && ok "never-stop: the explicit interactive opt-in (LOKI_E10_INTAKE_ASK=1) keeps the stop (BLOCKED)" || { bad "never-stop interactive: outcome '$(outcome)'"; dump; }
+# never-stop on a fix round: round 1 conflicts with the tree unchanged; round 2 gets the never-stop brief and the consult and fixes multiply()
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=nsconflict
+[ "$(fix_sessions)" = 2 ] && [ "$(outcome)" = "PARTIAL" ] && ok "never-stop fix: a fix-round conflict gets a second round, which delivers PARTIAL (not BLOCKED)" || { bad "never-stop fix: $(fix_sessions) fix sessions, outcome '$(outcome)'"; dump; }
+[ "$(ctrig)" = "stop" ] && ok "never-stop fix: the second round's consult is trigger stop" || bad "never-stop fix: triggers '$(ctrig)'"
+has "never-stop fix: the receipt names the fix conflict and the second round's assumption" "$(rnp)" "spec conflict the run settled itself instead of stopping (fix): calc.test.ts:7 expects multiply(3, 4) to be 12 -> implemented the most likely intent: multiply means a * b (after one Opus consult)"
+# red verify after the first fix round: the consult advice (trigger red-verify) is what fixes multiply(); a disclosure, never a cap
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=consultfix
+[ "$(fix_sessions)" = 2 ] && [ "$(ctrig)" = "red-verify" ] && [ "$(outcome)" = "VERIFIED" ] && ok "red-verify consult: round 2 carries the advice and fixes multiply(); VERIFIED (the consult does not cap)" || { bad "red-verify consult: $(fix_sessions) fix sessions, triggers '$(ctrig)', outcome '$(outcome)'"; dump; }
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=consultfix LOKI_E10_OPUS_CONSULT=0
+[ "$(consults)" = 0 ] && [ "$(outcome)" = "STALLED" ] && ok "red-verify consult off: no consult, the same run stalls after one round as before" || { bad "red-verify consult off: $(consults) consults, outcome '$(outcome)'"; dump; }
+# at most one consult per run: the implement conflict spends it, so the red verify after round 1 gets none and the run stays red
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=wrong E2E_STUB_FIX=consultfix
+[ "$(consults)" = 1 ] && [ "$(ctrig)" = "stop" ] && ok "consult cap 1: the stop consult spends the run's one consult; the later red verify gets none" || { bad "consult cap 1: $(consults) consults, triggers '$(ctrig)'"; dump; }
 
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress
 n="$(fix_sessions)"
@@ -677,6 +716,19 @@ res("E5 caps: Sonnet, other stages, the policy off and LOKI_E10_SESSION_CAPS=off
   const nr = (receipt: string[]) => ({ implement: { no_regression: { receipt } } });
   res("open decision: an intake assumption, an advisory change and a not-run differential each give a NOT PROVEN line", odn({ intake: { assumptions: ['Open choice: "a or b?" -> implement option 2: "b". Evidence (precedent): a one-call vote over 5 sibling definitions picked it.'] } }).length === 1 && odn({ intake: { assumptions: ['Open choice: "a or b?" -> no evidence picks one (no stated preference).'] } }).length === 1 && odn(nr(["no-regression: 11 probe case(s) compared, 5 changed, 0 unrequested", "advisory: wrapped Exit with code 0 changed and the issue does not decide it (printed a, now b)"]))[0] === "behavior change the issue does not decide: wrapped Exit with code 0 changed and the issue does not decide it (printed a, now b)" && odn(nr(["NOT PROVEN: regression check not run: the probe program did not build"])).length === 1);
   res("open decision: a settled differential (0 unrequested, no advisory), no differential, no assumption, a choice the task or a maintainer settles and a brief default give none; LOKI_E10_OPEN_DECISION_CAP=0 gives none", odn(nr(["no-regression: 12 probe case(s) compared on the base and the patched tree, 7 changed, 0 unrequested"])).length === 0 && odn({}).length === 0 && odn({ intake: { assumptions: [] } }).length === 0 && odn({ intake: { assumptions: ['Open choice: "a or b?" -> implement option 1: "a". Evidence (task_preferred): the task text names it as preferred.', 'Open choice: "a or b?" -> implement option 2: "b". Evidence (maintainer): a maintainer comment decides it.', "the brief names no port, so the server listens on 3000"] } }).length === 0 && odn({ intake: { assumptions: ["x"] } }, { LOKI_E10_OPEN_DECISION_CAP: "0" }).length === 0); }
+{ const oc = await import("$ROOT/loki-ts/src/features/opus_consult.ts"); const { runPickedChoice } = await import("$ROOT/loki-ts/src/engine10/stages/seal.ts"); // LOKI_E10_OPUS_CONSULT unit rules
+  const ocDir = "$T/oc-unit"; let calls = 0; oc.__setConsultCallForTests(async () => { calls++; return { text: "DIAGNOSIS: x\nINTENDED: y", usd: 0.03, outcome: "ok" }; });
+  const base = { runDir: ocDir, repoDir: ocDir, stage: "implement", trigger: "open-choice" as const, task: "t", evidence: "e", diff: null, code: "" };
+  const a1 = await oc.runConsult(base, {}), a2 = await oc.runConsult({ ...base, trigger: "stop" }, {});
+  res("consult: the first call returns the advice, a second in the same run is refused by the default cap of 1 (one call made)", a1 === "DIAGNOSIS: x\nINTENDED: y" && a2 === null && calls === 1 && oc.readConsults(ocDir).length === 1);
+  res("consult: LOKI_E10_CONSULT_MAX=2 allows a second; LOKI_E10_OPUS_CONSULT=0 allows none", (await oc.runConsult({ ...base, trigger: "stop" }, { LOKI_E10_CONSULT_MAX: "2" })) !== null && (await oc.runConsult({ ...base, runDir: ocDir + "-off" }, { LOKI_E10_OPUS_CONSULT: "0" })) === null && calls === 2);
+  oc.__setConsultCallForTests(null);
+  res("consult: default model is claude-opus-5-5; never-stop is on by default, off with the knob off or the explicit interactive opt-in", oc.consultModel({}) === "claude-opus-5-5" && oc.neverStopActive({}) && !oc.neverStopActive({ LOKI_E10_OPUS_CONSULT: "0" }) && !oc.neverStopActive({ LOKI_E10_INTAKE_ASK: "1" }));
+  res("consult: the disclosure names trigger, stage, model and dollars", oc.consultNotes(ocDir)[0]!.startsWith("Opus consult (open-choice, implement, claude-opus-5-5): ok, $0.0300; advice: DIAGNOSIS: x INTENDED: y"));
+  res("never-stop: one seal NOT PROVEN line per settled conflict, none without a record", oc.neverStopNotes({ never_stop: [{ stage: "implement", conflict: "c", assumption: "a", consulted: true }] }).length === 1 && oc.neverStopNotes({}).length === 0 && oc.neverStopNotes(undefined).length === 0);
+  res("never-stop: the brief forbids the stop, asks for an ASSUMPTION line and carries the advice; assumptionOf reads it", oc.neverStopBrief("r", "ADV").includes("Do not stop on this conflict") && oc.neverStopBrief("r", "ADV").includes("ADV") && oc.assumptionOf("x\nASSUMPTION: it is the product\nLOKI_DONE") === "it is the product");
+  res("open-choice trigger: a choice the run settles itself (no evidence, or the precedent vote) is a trigger; one the task settles is not", runPickedChoice('Open choice: "a or b?" -> no evidence picks one (x).') && runPickedChoice('Open choice: "a or b?" -> implement option 2: "b". Evidence (precedent): v.') && !runPickedChoice('Open choice: "a or b?" -> implement option 1: "a". Evidence (task_preferred): t.'));
+  res("consult prompt: the stub marker, the trigger and each section within its cap", oc.consultPrompt("red-verify", { task: "T".repeat(9000), evidence: "E", diff: null, code: "" }).startsWith("Loki Opus consult (trigger: red-verify)") && oc.consultPrompt("stop", { task: "T".repeat(9000), evidence: "E", diff: null, code: "" }).length < 6500); }
 const { sessionCaps: sealCaps } = await import("$ROOT/loki-ts/src/engine10/stages/seal.ts");
 res("E5 receipt: seal lists the implement stop and every fix-round stop in order, and nothing when none fired", JSON.stringify(sealCaps({ implement: { session_cap: "turns limit 45 at turn 45, 90000 new tokens" }, fix: { session_caps: ["fix round 1: no_product_edit limit 8 at turn 8, 35000 new tokens"] } } as never)) === JSON.stringify(["implement: turns limit 45 at turn 45, 90000 new tokens", "fix round 1: no_product_edit limit 8 at turn 8, 35000 new tokens"]) && sealCaps({ implement: {}, fix: { session_caps: [] } } as never).length === 0);
 res("E5 capStopOf reads the stop line and nothing else", capStopOf("x\n[sdk-loop stop: no_product_edit limit 8 at turn 8, 9000 new tokens]\n") === "no_product_edit limit 8 at turn 8, 9000 new tokens" && capStopOf("[sdk-loop error: turn cap reached (error_max_turns)]") === null && capStopOf(undefined) === null);
