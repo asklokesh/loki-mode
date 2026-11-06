@@ -195,6 +195,10 @@
 # 133. exec_spec.ts statesWrapRelation: return true (relation cases read norel=fired).
 # 134. exec_spec.ts relationSealedTest: compare the wrapped value to the changed tree's own bare value (relation cases read order=pass).
 # 135. exec_spec.ts defectSites: drop the plural-subject rule (exec spec atoms read open=-,...) or the which-clause rule (open=...,-,-).
+# 136. exec_spec.ts relation observer: record every argument again (relation cases read msgfree=false; the engine right fix reads PARTIAL).
+# 137. exec_spec.ts statesWrapRelation: any wrap word anywhere again (relation cases read ask=1111).
+# 138. exec_spec.ts relationCasesGo: trust one record (stable returns true) (relation cases read flaky=R1_Throttled_wrapped+R2_Temporary_wrapped).
+# 139. exec_spec.ts defectSites: drop the designed() check (exec spec atoms read open=...,Split+Join or Join).
 # 118. exec_spec.ts execSpecBriefOf: drop the knob check (exec spec atoms read brief=B,B).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
@@ -1755,9 +1759,9 @@ await import("./src/engine10/stages/wall.ts"); const { specSiteGap } = await imp
 const g = (st, ch) => specSiteGap({ wall: { files: [], exec_spec: { status: st, uncovered_sites: ["Report"] } } }, [], {}, () => "", ch).join("+") || "-";
 out.push(`gap=${g("sealed", [])},${g("sealed", ["Report"])},${g("advisory_only", [])}`, `defect=${[...es.defectSites(task)].sort().join("+")}`);
 const ds = (x) => [...es.defectSites(x)].sort().join("+") || "-"; // fail-open shapes from review: a plural subject, a contrast with a healthy side, a which-clause about the last span
-out.push("open=" + ["Both `Split` and `Report` should keep the dash.", "`Split` stops at a lone dash, `Report` is unaffected.", "`Report` calls `Split`, which stops at a lone dash.", "`Report` calls `Split`, which is correct."].map(ds).join(","));
+out.push("open=" + ["Both `Split` and `Report` should keep the dash.", "`Split` stops at a lone dash, `Report` is unaffected.", "`Report` calls `Split`, which stops at a lone dash.", "`Report` calls `Split`, which is correct.", "`Split` calls `Join`, which stops at the first error, and that is by design.", "`Join`, which stops on empty input, is fine."].map(ds).join(","));
 console.log(out.join(" | "));' 2>&1)"
-    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | otherquote=P0 | prop=P0 | bind=100000 | brief=none,B | gap=Report,-,- | defect=Report+Split+x | open=Report+Split,Split,Split,-"
+    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | otherquote=P0 | prop=P0 | bind=100000 | brief=none,B | gap=Report,-,- | defect=Report+Split+x | open=Report+Split,Split,Split,-,-,-"
     [ "$ESU" = "$WESU" ] && ok "exec spec atoms: parity from the whole body and only from quoted code, never a property write, one pair for the two sites Report reaches, binding only when input and expected value come whole from one issue example, no brief read with the knob off" \
         || bad "exec spec atoms gave: $ESU (want: $WESU)"
 fi
@@ -1866,6 +1870,9 @@ func Throttle(msg string, after int) Throttled { return throttled{msg, after} }
 // Wait sleeps; tests replace it.
 var Wait = func(sec int) { time.Sleep(time.Duration(sec) * time.Second) }
 
+// Notify tells the caller how long it waits and why; tests replace it.
+var Notify = func(sec int, msg string) {}
+
 // Log receives one line per throttled retry.
 var Log io.Writer = io.Discard
 
@@ -1873,6 +1880,7 @@ var Log io.Writer = io.Discard
 func Decide(err error) bool {
 	if th, ok := err.(Throttled); ok {
 		fmt.Fprintln(Log, "throttled:", th.Error())
+		Notify(th.RetryAfter(), th.Error())
 		Wait(th.RetryAfter())
 		return true
 	}
@@ -1893,17 +1901,21 @@ ES_REL_TASK='# Decide ignores wrapped errors
 A wrapped error should be handled exactly like an unwrapped one (errors.As).
 '
 # right: errors.As in the same order. wrongpart: only Throttled. wrongorder: Temporary first (a bare throttled error no longer waits).
-ES_REL_RIGHT=$'\tvar th Throttled\n\tif errors.As(err, &th) {\n\t\tfmt.Fprintln(Log, "throttled:", th.Error())\n\t\tWait(th.RetryAfter())\n\t\treturn true\n\t}\n\tvar t Temporary\n\tif errors.As(err, &t) {\n\t\treturn t.Temporary()\n\t}\n\treturn false'
-ES_REL_PART=$'\tvar th Throttled\n\tif errors.As(err, &th) {\n\t\tfmt.Fprintln(Log, "throttled:", th.Error())\n\t\tWait(th.RetryAfter())\n\t\treturn true\n\t}\n\tif t, ok := err.(Temporary); ok {\n\t\treturn t.Temporary()\n\t}\n\treturn false'
-ES_REL_ORDER=$'\tvar t Temporary\n\tif errors.As(err, &t) {\n\t\treturn t.Temporary()\n\t}\n\tvar th Throttled\n\tif errors.As(err, &th) {\n\t\tfmt.Fprintln(Log, "throttled:", th.Error())\n\t\tWait(th.RetryAfter())\n\t\treturn true\n\t}\n\treturn false'
-ES_REL_OLD=$'\tif th, ok := err.(Throttled); ok {\n\t\tfmt.Fprintln(Log, "throttled:", th.Error())\n\t\tWait(th.RetryAfter())\n\t\treturn true\n\t}\n\tif t, ok := err.(Temporary); ok {\n\t\treturn t.Temporary()\n\t}\n\treturn false'
+ES_REL_RIGHT=$'\tvar th Throttled\n\tif errors.As(err, &th) {\n\t\tfmt.Fprintln(Log, "throttled:", th.Error())\n\t\tNotify(th.RetryAfter(), th.Error())\n\t\tWait(th.RetryAfter())\n\t\treturn true\n\t}\n\tvar t Temporary\n\tif errors.As(err, &t) {\n\t\treturn t.Temporary()\n\t}\n\treturn false'
+ES_REL_PART=$'\tvar th Throttled\n\tif errors.As(err, &th) {\n\t\tfmt.Fprintln(Log, "throttled:", th.Error())\n\t\tNotify(th.RetryAfter(), th.Error())\n\t\tWait(th.RetryAfter())\n\t\treturn true\n\t}\n\tif t, ok := err.(Temporary); ok {\n\t\treturn t.Temporary()\n\t}\n\treturn false'
+ES_REL_ORDER=$'\tvar t Temporary\n\tif errors.As(err, &t) {\n\t\treturn t.Temporary()\n\t}\n\tvar th Throttled\n\tif errors.As(err, &th) {\n\t\tfmt.Fprintln(Log, "throttled:", th.Error())\n\t\tNotify(th.RetryAfter(), th.Error())\n\t\tWait(th.RetryAfter())\n\t\treturn true\n\t}\n\treturn false'
+ES_REL_OLD=$'\tif th, ok := err.(Throttled); ok {\n\t\tfmt.Fprintln(Log, "throttled:", th.Error())\n\t\tNotify(th.RetryAfter(), th.Error())\n\t\tWait(th.RetryAfter())\n\t\treturn true\n\t}\n\tif t, ok := err.(Temporary); ok {\n\t\treturn t.Temporary()\n\t}\n\treturn false'
 if command -v go >/dev/null 2>&1; then
     rm -rf "$T/es-rel"; make_es_rel "$T/es-rel"
-    ESR="$(cd "$ROOT/loki-ts" && ESD="$T/es-rel" TASK="$ES_REL_TASK" RIGHT="$ES_REL_RIGHT" PART="$ES_REL_PART" ORDER="$ES_REL_ORDER" OLD="$ES_REL_OLD" timeout 300 bun -e 'const es = await import("./src/features/exec_spec.ts");
+    rm -rf "$T/es-flaky"; make_es_rel "$T/es-flaky"; python3 -I -c 'import sys; p=sys.argv[1]; s=open(p).read(); s=s.replace("Notify(th.RetryAfter(), th.Error())", "Notify(int(time.Now().UnixNano()%1000003), th.Error())", 1); open(p,"w").write(s)' "$T/es-flaky/retry/retry.go"
+    ESR="$(cd "$ROOT/loki-ts" && ESD="$T/es-rel" FLAKY="$T/es-flaky" TASK="$ES_REL_TASK" RIGHT="$ES_REL_RIGHT" PART="$ES_REL_PART" ORDER="$ES_REL_ORDER" OLD="$ES_REL_OLD" timeout 300 bun -e 'const es = await import("./src/features/exec_spec.ts");
 const { readFileSync, writeFileSync } = await import("node:fs"), { spawnSync } = await import("node:child_process");
 const dir = process.env.ESD!, task = process.env.TASK!, src = readFileSync(dir + "/retry/retry.go", "utf8"), out: string[] = [];
 const a = es.extractSpecAtoms(task), s = es.resolveSites(a, dir), r = es.relationCasesGo(task, dir, s, a);
 out.push(r ? r.cases.map((n) => n.replace("TestLokiSpec_", "")).join("+") : "none");
+out.push(`msgfree=${!!r && /fmt\.Sprint\("Notify", p0\)/.test(r.file) && !/p1\)\)/.test(r.file)}`); // Notify(sec, msg): only the number is recorded, never the message the wrap changes
+out.push("ask=" + ["The help text is wrapped at 80 columns and should stay so.", "Do not use errors.Is here; compare the code.", "A wrapped error should be handled exactly like an unwrapped one.", "`Report` does not see a status error wrapped with %w."].map((x) => (es.statesWrapRelation(x) ? 1 : 0)).join(""));
+const fl = es.relationCasesGo(task, process.env.FLAKY, es.resolveSites(es.extractSpecAtoms(task), process.env.FLAKY), es.extractSpecAtoms(task)); out.push(`flaky=${fl ? fl.cases.map((n) => n.replace("TestLokiSpec_", "")).join("+") : "none"}`); // an observation that differs between two base records is never sealed
 const spec0 = es.relationSpec(task, [src], "retry", new Set(["Decide", "Throttled", "Temporary"]));
 const none = es.relationCasesGo(task.replace(/%w|errors\.As|wrapped|Wrapped/g, "x"), dir, s, a); out.push(`norel=${none ? "fired" : "none"}`);
 const run = () => { writeFileSync(dir + "/retry/" + es.RELATION_FILE_GO, r.file); const p = spawnSync("go", ["test", "-count=1", "-run", "^TestLokiSpec_", "./retry"], { cwd: dir, encoding: "utf8", timeout: 120000 }); return p.status === 0 ? "pass" : "fail"; };
@@ -1916,7 +1928,7 @@ for (const [k, body] of [["base", null], ["right", process.env.RIGHT], ["part", 
 writeFileSync(dir + "/retry/retry.go", src); try { require("node:fs").rmSync(dir + "/retry/" + es.RELATION_FILE_GO); } catch {}
 console.log(out.join(" | "));
 ' 2>&1)"
-    WESR="R1_Throttled_wrapped+R2_Temporary_wrapped | norel=none | base=fail | right=pass | part=fail | order=fail,headref=pass"
+    WESR="R1_Throttled_wrapped+R2_Temporary_wrapped | msgfree=true | ask=0011 | flaky=R1_Temporary_wrapped | norel=none | base=fail | right=pass | part=fail | order=fail,headref=pass"
     [ "$ESR" = "$WESR" ] && ok "exec spec relation cases: recorded on base, red on base, right fix passes, the one-type and the ordering fix fail (the head's own reference would pass the ordering fix)" \
         || bad "exec spec relation cases gave: $ESR (want: $WESR)"
 fi

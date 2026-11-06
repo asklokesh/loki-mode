@@ -407,7 +407,8 @@ export function defectSites(task: string): Set<string> {
       let mark: string | null = null;
       const plural = /^\s*(?:both\s+|also\s+)?`([^`\n]{1,80})`\s+and\s+`([^`\n]{1,80})`(.*)$/is.exec(clause); // "Both `A` and `B` should ...": a plural subject marks each
       if (plural) { const pred = plural[3]!.replace(/`[^`\n]*`/g, " "); if (!HEALTHY.test(pred) && DEFECT_OR_ASK.test(pred)) for (const x of [plural[1]!, plural[2]!]) { const id = spanId(x); if (id) out.add(id); } }
-      if (ci > 0 && /^\s*which\b/i.test(clause) && !HEALTHY_TAIL.test(clause) && !HEALTHY.test(clause) && DEFECT_OR_ASK.test(clause.replace(/`[^`\n]*`/g, " "))) { // "`Report` calls `Split`, which stops ...": the which-clause describes the last span before it
+      const designed = (t: string | undefined): boolean => !!t && /\bby design\b|\bas (?:intended|designed|expected)\b|\bintended\b|\b(?:is|are)\s+(?:fine|correct|expected|intended|right|ok|okay)\b/i.test(t);
+      if (ci > 0 && /^\s*which\b/i.test(clause) && !HEALTHY_TAIL.test(clause) && !HEALTHY.test(clause) && !designed(clause) && !designed(clauses[ci + 1]) && DEFECT_OR_ASK.test(clause.replace(/`[^`\n]*`/g, " "))) { // a which-clause followed by "by design" or "is fine" is healthy // "`Report` calls `Split`, which stops ...": the which-clause describes the last span before it
         const prev = [...clauses[ci - 1]!.matchAll(/`([^`\n]{1,80})`/g)].pop(); const id = prev ? spanId(prev[1]!) : null; if (id) out.add(id);
       }
       for (const m of clause.matchAll(FIX_VERB)) { const before = clause.slice(0, m.index); if (!/\b(?:not|never|n't)\s+$/i.test(before)) { const id = spanId(m[1]!); if (id) out.add(id); } } // "Fix `X`", never "should not change `X`"
@@ -473,7 +474,13 @@ export function sessionGenerator(sessions: { run(o: Record<string, unknown>): Pr
 // and whether each io.Writer variable it reaches was written (never the text: the issue does not fix it). The reference is RECORDED
 // on the base tree, never F(v) on the changed tree: an ordering fix that changes the bare value too would otherwise pass.
 export const RELATION_FILE_GO = "loki_wall_relation_test.go";
-export const statesWrapRelation = (task: string): boolean => /%w\b|\berrors\.(?:As|Is)\b|\bUnwrap\b|\bwrapped\b|\bwrapping\b/i.test(task);
+export const RELATION_WRAP_PREFIX = "loki: "; // the wrap's own text: a recorded observation that contains it carries message text, never behavior
+const OBSERVABLE_ARG = /^(?:u?int(?:8|16|32|64)?|float(?:32|64)|bool|byte|rune)$/;
+// The issue must ASK about wrapped errors: a sentence or list item that names a wrapped error (%w, "wrapped error", "error wrapped",
+// errors.As/Is, Unwrap) and states a defect or request about it. "text is wrapped at 80 columns" or "Do not use errors.Is here" is not one.
+const WRAP_TERM = /%w\b|\bwrapped\s+(?:\w+\s+)?errors?\b|\berrors?\s+(?:that\s+(?:is|are|was|were)\s+|is\s+|are\s+)?wrapped\b|\berrors\.(?:As|Is)\b|\bUnwrap\b/i;
+const WRAP_ASK = /\bshould\b|\bmust\b|\bhandled?\b|\bhandles\b|\binstead of\b|\bnever\b|\bignor(?:e|es|ed)\b|\bnot\s+(?:recogni[sz]ed|handled|retried|found|seen|detected|matched|treated)\b|\bfails?\b|\bmisses\b|\b(?:does|did|is|are)\s+not\b|\b(?:doesn't|didn't|isn't|aren't)/i;
+export const statesWrapRelation = (task: string): boolean => task.replace(/```[\s\S]*?```/g, "\n\n").split(/(?<=[.!?])\s+(?=[A-Z`])|\n\s*\n|\n(?=\s*(?:[-*]|\d+[.)])\s)/).some((u) => WRAP_TERM.test(u) && WRAP_ASK.test(u) && !/\b(?:do not|don't|never|avoid)\s+(?:use|call|add)\b/i.test(u));
 export interface RelCase { id: string; type: string; v: string; rv: string }
 export interface RelSpec { fn: string; returns: boolean; cases: RelCase[]; observe: string }
 interface GoDecls { ifaces: string[]; funcs: { name: string; params: string; ret: string; body: string }[]; vars: { name: string; params?: string; writer: boolean }[] }
@@ -499,7 +506,7 @@ export function relationSpec(task: string, files: string[], pkg: string, named: 
     for (const p of params.split(",").map((x) => x.trim())) { const ty = p.split(/\s+/).pop()!; if (ty === "string") out.push(JSON.stringify(k === 0 ? "a" : "b")); else if (ty === "int") out.push(String(k === 0 ? 3 : 5)); else if (ty === "...error" && members.length) out.push(...members); else return null; }
     return out.join(", ");
   };
-  const R = (x: string): string => `fmt.Errorf("loki: %w", ${x})`, cases: RelCase[] = [];
+  const R = (x: string): string => `fmt.Errorf("${RELATION_WRAP_PREFIX}%w", ${x})`, cases: RelCase[] = [];
   const leaf = strict.filter((t) => { const c = ctor(t); return c && !c.params.includes("...error"); });
   for (const t of strict) {
     const c = ctor(t); if (!c) continue;
@@ -512,7 +519,7 @@ export function relationSpec(task: string, files: string[], pkg: string, named: 
   if (!cases.length) return null;
   const obsFuncs = d.vars.filter((v) => v.params !== undefined && new RegExp(`\\b${v.name}\\s*\\(`).test(body));
   const obsWriters = d.vars.filter((v) => v.writer && new RegExp(`\\b${v.name}\\b`).test(body)).map((v) => v.name);
-  const rec = obsFuncs.map((f, i) => { const ps = f.params!.split(",").filter((x) => x.trim()), sig = ps.map((p, j) => `p${j} ${p.trim().split(/\s+/).pop()}`).join(", "); return `\told${i} := ${f.name}\n\t${f.name} = func(${sig}) { trace = append(trace, fmt.Sprint(${[JSON.stringify(f.name), ...ps.map((_, j) => `p${j}`)].join(", ")})) }\n\tdefer func() { ${f.name} = old${i} }()`; }).join("\n");
+  const rec = obsFuncs.map((f, i) => { const ps = f.params!.split(",").filter((x) => x.trim()), sig = ps.map((p, j) => `p${j} ${p.trim().split(/\s+/).pop()}`).join(", "); const shown = ps.map((p, j) => (OBSERVABLE_ARG.test(p.trim().split(/\s+/).pop()!) ? `p${j}` : null)).filter((x): x is string => x !== null); return `\told${i} := ${f.name}\n\t${f.name} = func(${sig}) { trace = append(trace, fmt.Sprint(${[JSON.stringify(f.name), ...shown].join(", ")})) }\n\tdefer func() { ${f.name} = old${i} }()`; }).join("\n"); // a call is recorded with its numeric and bool arguments only: a string or error argument carries message text, which the issue never fixes and the wrap changes
   const wr = obsWriters.map((w, i) => `\tbufOld${i} := ${w}\n\tvar buf${i} bytes.Buffer\n\t${w} = &buf${i}\n\tdefer func() { ${w} = bufOld${i}; trace = append(trace, fmt.Sprint("${w}.written=", buf${i}.Len() > 0)) }()`).join("\n");
   const observe = `func lokiRelObserve(f func() string) (out string) {\n\tvar trace []string\n\tdefer func() { out = fmt.Sprint(trace) }()\n${rec}\n${wr}\n\tif r := f(); r != "" {\n\t\ttrace = append(trace, "ret="+r)\n\t}\n\treturn\n}`;
   return { fn: F.name, returns: F.ret !== "", cases, observe };
@@ -538,7 +545,7 @@ func TestLokiSpec_R${i + 1}_${c.id}(t *testing.T) {
 export function recordRelation(repoDir: string, destRel: string, file: string, timeoutMs = 120_000): Map<string, [string, string]> | null {
   const dest = join(repoDir, destRel); writeFileSync(dest, file, "utf8");
   try {
-    const c = commandFor({ runner: "go", path: destRel }, repoDir), r = spawnGroupSync(c.cmd, c.args, { cwd: c.cwd, timeoutMs, env: plainTestEnv() }), out = new Map<string, [string, string]>();
+    const c = commandFor({ runner: "go", path: destRel }, repoDir), args = c.args[0] === "test" ? ["test", "-count=1", ...c.args.slice(1)] : c.args, r = spawnGroupSync(c.cmd, args, { cwd: c.cwd, timeoutMs, env: plainTestEnv() }), out = new Map<string, [string, string]>(); // -count=1: a cached result would make the second record agree trivially
     for (const line of stripAnsi(r.output).split("\n")) {
       let text = line; if (line.startsWith("{")) { try { text = (JSON.parse(line) as { Output?: string }).Output ?? ""; } catch { continue; } }
       const m = /^LOKI_REL (\S+)\t(.*)\t(.*)$/.exec(text.replace(/\n$/, "")); if (m) out.set(m[1]!, [m[2]!, m[3]!]);
@@ -557,8 +564,9 @@ export function relationCasesGo(task: string, repoDir: string, sites: ResolvedSi
     const pkg = /^package\s+(\w+)/m.exec(files[0] ?? "")?.[1]; if (!pkg) continue;
     const spec = relationSpec(task, files, pkg, named); if (!spec) continue;
     const targetRel = join(dir, RELATION_FILE_GO); if (existsSync(join(repoDir, targetRel))) continue;
-    const rec = recordRelation(repoDir, targetRel, relationRecordTest(spec, pkg)); if (!rec) continue;
-    const ref = new Map([...rec].filter(([, [bare, wrapped]]) => bare !== wrapped).map(([id, [bare]]) => [id, bare]));
+    const prog = relationRecordTest(spec, pkg), rec = recordRelation(repoDir, targetRel, prog), rec2 = rec ? recordRelation(repoDir, targetRel, prog) : null; if (!rec || !rec2) continue;
+    const stable = (id: string, bare: string, wrapped: string): boolean => { const b = rec2.get(id); return !!b && b[0] === bare && b[1] === wrapped; }; // recorded twice: a case whose observation varies between runs proves nothing
+    const ref = new Map([...rec].filter(([id, [bare, wrapped]]) => bare !== wrapped && stable(id, bare, wrapped) && !bare.includes(RELATION_WRAP_PREFIX.trim()) && !wrapped.includes(RELATION_WRAP_PREFIX.trim())).map(([id, [bare]]) => [id, bare]));
     if (!ref.size) continue;
     const file = relationSealedTest(spec, pkg, ref), e = EMITTERS.go, check = redFilter(e, repoDir, targetRel, file), red = e.names(file).filter((n) => check.cases[n] === "red");
     if (!check.built || red.length === 0) continue;
