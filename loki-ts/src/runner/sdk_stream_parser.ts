@@ -101,7 +101,12 @@ export interface ParserContext {
   write?: (s: string) => void;
   /** Called once, at the first frame carrying a session id, so a SIGKILL before stream end still leaves a resumable id (FC-IMPLEMENT-RESUME-STARTS-OVER). */
   onSessionId?: (id: string) => void;
+  /** Harness stop rules for an engine stage session (E5): the stream ends early, and the result says which rule fired. */
+  stop?: StopRules;
 }
+/** turns: assistant turns; newTokens: input + output + cache-write tokens summed over turns (cache reads are not counted); noEditByTurn: stop when no edit was made by that turn. */
+export interface StopRules { turns?: number; newTokens?: number; noEditByTurn?: number }
+export interface StopFired { rule: "turns" | "new_tokens" | "no_product_edit"; turn: number; new_tokens: number; limit: number }
 
 interface AgentInfo {
   agent_id: string;
@@ -163,6 +168,8 @@ export interface StreamResult {
   refusedNoFallback: boolean;
   // True iff the terminal result frame carried subtype error_max_turns: the session hit its turn cap.
   maxTurns: boolean;
+  /** Set when a ParserContext stop rule ended the stream before the SDK result frame. */
+  stopped?: StopFired;
 }
 
 export async function consumeSdkStream(
@@ -247,6 +254,7 @@ export async function consumeSdkStream(
   const skillReads: string[] = [];
   let toolResults = 0, toolErrors = 0, mcpToolCount: number | undefined, anonTurn = 0, mcpToolWarned = false;
   const suiteCmds = parseSuiteCmds(process.env["LOKI_E10_SUITE_CMDS"]); let suiteRuns = 0; // L026: in-session runs of the repo's full-suite command, recorded only when the commands are known
+  let productEditSeen = false, stopped: StopFired | undefined; // E5: an edit is any edit tool call (a fix round may repair its own test), or a Bash that writes (sed -i, redirect, tee, patch, git apply)
   let readsBeforeEdit = 0, firstEditSeen = false; // L022: Read/Grep/Glob/LS calls before the first file edit (how much exploring the brief left to do)
   const toolTelemetry = (): Record<string, unknown> => {
     const perTurn = [...toolsByTurn.values()].map((t) => t.size);
@@ -334,6 +342,7 @@ export async function consumeSdkStream(
           const readPath = tool === "Read" ? input["file_path"] : undefined;
           const mod = typeof readPath === "string" ? /(?:^|\/)((?:skills|references)\/[^/]+\.md)$/.exec(readPath)?.[1] : undefined;
           if (mod && !skillReads.includes(mod)) skillReads.push(mod);
+          if (!productEditSeen) { if (/^(Edit|MultiEdit|Write|NotebookEdit)$/.test(tool) || (tool === "Bash" && typeof input["command"] === "string" && BASH_WRITES.test(input["command"]))) productEditSeen = true; }
           if (tool === "Bash" && typeof input["command"] === "string" && isSuiteRun(input["command"], suiteCmds)) suiteRuns++;
           bumpOrchestratorTool(agents, tool, toolDesc(tool, input));
 
@@ -377,6 +386,13 @@ export async function consumeSdkStream(
       }
       // saveAgents once per assistant message (orchestrator tool_count updates)
       saveAgents(agentsFile, agents);
+      if (ctx.stop && !stopped) {
+        const turn = usageById.size; let nt = 0; for (const v of usageById.values()) nt += (v["input_tokens"] ?? 0) + (v["output_tokens"] ?? 0) + (v["cache_creation_input_tokens"] ?? 0);
+        const fired = ctx.stop.noEditByTurn !== undefined && turn >= ctx.stop.noEditByTurn && !productEditSeen ? { rule: "no_product_edit" as const, limit: ctx.stop.noEditByTurn }
+          : ctx.stop.newTokens !== undefined && nt >= ctx.stop.newTokens ? { rule: "new_tokens" as const, limit: ctx.stop.newTokens }
+          : ctx.stop.turns !== undefined && turn >= ctx.stop.turns ? { rule: "turns" as const, limit: ctx.stop.turns } : undefined;
+        if (fired) { stopped = { ...fired, turn, new_tokens: nt }; break; }
+      }
       continue;
     }
 
@@ -508,8 +524,9 @@ export async function consumeSdkStream(
     }
   }
 
-  return { exitCode, sessionId: sessionId ?? seenSessionId, totalCostUsd, capturedText: captured, rateLimit, sawResult, truncated: guard.truncated || !sawResult, refused, refusedNoFallback, maxTurns };
+  return { exitCode, sessionId: sessionId ?? seenSessionId, totalCostUsd, capturedText: captured, rateLimit, sawResult, truncated: guard.truncated || !sawResult, refused, refusedNoFallback, maxTurns, ...(stopped ? { stopped } : {}) };
 }
+const BASH_WRITES = /\bsed\s+(?:-[A-Za-z]*i|--in-place)|(?:^|[^>&0-9])>>?\s*(?!\/dev\/null)[^\s&|]|\btee\b|\bpatch\b|\bgit\s+apply\b|\bperl\s+-[A-Za-z]*i/;
 
 // --- helpers (translations of the Python functions) -----------------------
 

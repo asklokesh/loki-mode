@@ -4,11 +4,11 @@ import { withStagePrefix } from "../../features/lean_prefix.ts"; import { FINISH
 import { routedFix, routerActive } from "../../runner/router/unit_model.ts";
 import { cascadeDowngrade, escalationModel } from "../sizing.ts";
 import { MAX_FIX_ROUNDS, type RunContext, type Stage, type StageResult, taskBlock } from "../types.ts";
-import type { FailureGroup } from "../failures.ts";
+import { environmentShaped, type FailureGroup } from "../failures.ts";
 import { hooks } from "../hooks.ts";
 import { treeFingerprint } from "../../util/anti_loop.ts";
 import { buildFixResumeBrief, currentDiff, holdoutNote, runFixSession } from "../../runner/session_resume.ts";
-import { adjudicateWallConflict } from "../../util/conflict_resume.ts"; import { type ReadOnlyFile, restoreReadOnly } from "./implement.ts";
+import { capStopOf } from "../session.ts"; import { adjudicateWallConflict } from "../../util/conflict_resume.ts"; import { type ReadOnlyFile, restoreReadOnly } from "./implement.ts";
 import { installOwned } from "../../project_model/install.ts"; import { relative, resolve } from "node:path"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
@@ -58,7 +58,7 @@ export const fixStage: Stage = {
     if (downgrade && pinnedModel === downgrade.to) process.stderr.write(`${downgrade.note}\n`);
     if (climbed) ctx.emit("route.escalated", "fix", { ...climbed });
     const prevDiag = (prior.fix?.diagnosis as string | undefined) ?? null; const chain = { sessionId: (prior.fix?.session_id ?? prior.implement?.session_id ?? null) as string | null, model: (prior.fix?.model ?? prior.implement?.model ?? ctx.model) as string };
-    const effort = hooks.effort?.fix(round, testFailures.length > 0);
+    const effort = hooks.effort?.fix(round, testFailures.length > 0, { model: actualModel, envOnly: environmentShaped(groups.filter((g) => !g.carried)) });
     const sessionBase = { stage: "fix" as const, tier: "development" as const, limitS: fixStage.limitS, signal, cwd: ctx.repoDir, ...suiteCmdsOpt(ctx.repoDir, prior.intake?.testmap), ...(effort ? { effort } : {}), ...(pinnedModel ? { model: pinnedModel } : {}), ...(routedPin ? { model: routedPin } : {}) };
     const fullBrief = buildFixBrief(task, groups, diffStat, repeated ? { priorDiagnosis: prevDiag } : undefined, holdoutFailed);
     let r = await runFixSession(ctx, sessionBase, `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel, fullBrief, buildFixResumeBrief(groups, diffStat, prevDiag, holdoutFailed, [...((prior.implement?.tests_reverted as string[] | undefined) ?? []), ...((prior.fix?.tests_reverted as string[] | undefined) ?? [])].map((f) => relative(ctx.repoDir, resolve(ctx.repoDir, f))))); // one session per round: a spec conflict starts no retry; the unchanged-tree rule below decides whether it is believed
@@ -74,11 +74,12 @@ export const fixStage: Stage = {
       ...(repeated ? { escalation_reason: reason, escalation_model: actualModel } : {}),
     });
 
+    const capStop = capStopOf(r.session.summary), capNote = capStop ? `fix round ${round} stopped by the harness (${capStop}): the failures it was fed are NOT PROVEN fixed` : null; // E5: a runaway or no-edit fix session is a harness stop, never a believed fix
     return {
       status: "completed",
       // Every round's session id, since each round replaces this stage's output.
       data: { round, signatures, diagnosis: r.session.summary ?? null, groups_fed: groups.length, diff_stat: diffStat, tree_before: treeBefore, tree_after: treeAfter, ...(conflict ? { exit: "spec_conflict", spec_conflict_reason: conflict } : {}), killed: r.session.killed, tests_reverted: testsReverted, cascade: repeated, model: actualModel,
-        ...(stallEsc ? { stall_escalated: true } : {}), ...(climbed ? { route_escalation: climbed } : {}), iteration_ids: r.ids, session_id: r.sessionId, fix_resume: r.mode, ...(r.why ? { fix_resume_why: r.why } : {}),
+        ...(stallEsc ? { stall_escalated: true } : {}), ...(climbed ? { route_escalation: climbed } : {}), ...(capStop ? { session_cap: capStop } : {}), session_caps: [...((prior.fix?.session_caps as string[] | undefined) ?? []), ...(capStop ? [`fix round ${round}: ${capStop}`] : [])], not_proven: [...((prior.fix?.not_proven as string[] | undefined) ?? []), ...(capNote ? [capNote] : [])], iteration_ids: r.ids, session_id: r.sessionId, fix_resume: r.mode, ...(r.why ? { fix_resume_why: r.why } : {}),
         fix_rounds: [...((prior.fix?.fix_rounds as unknown[] | undefined) ?? []), { round, fix_resume: r.mode, cache_read_tokens: r.cacheRead }] },
     };
   },
