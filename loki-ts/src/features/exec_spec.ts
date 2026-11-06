@@ -602,18 +602,53 @@ export function planFor(runner: SpecRunner, repoDir: string, sites: ResolvedSite
   return { runner, targetRel, header: `The file is ${targetRel}; import the code under test from "${spec}".`, mustStart: "", style: style ? read(style) : "" };
 }
 
-export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; uncoveredSites?: string[]; relation?: RelationOutcome; generatorUsd?: number | null; /** LOKI_E10_TOURNAMENT, Go: the repaired probe cases, the package, the full generated file (binding and advisory) and the named sites no binding case covers */ probe?: string; probeSkip?: string; pkg?: string; specFile?: string; unchecked?: string[]; durationS: number }
+export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; uncoveredSites?: string[]; relation?: RelationOutcome; generatorUsd?: number | null; /** LOKI_E10_TOURNAMENT, Go: the repaired probe cases, the package, the full generated file (binding and advisory) and the named sites no binding case covers */ probe?: string; probeSkip?: string; pkg?: string; specFile?: string; unchecked?: string[]; /** SPEED-EXEC-SPEC-PREFETCH: "hit" when the first generator reply was the one intake started, "miss" when intake started one for another brief */ prefetch?: "hit" | "miss"; durationS: number }
+type ExecSpecInput = Parameters<typeof execSpecAuthor>[0];
+/** The deterministic start of execSpecAuthor: the runner, the resolved sites, the atoms and where the spec goes, or why the exec spec does not run (with the outcome's extra fields). */
+function specPrelude(o: Pick<ExecSpecInput, "task" | "repoDir" | "runners" | "existingTests">): { runner: SpecRunner; atoms0: SpecAtom[]; sites: ResolvedSite[]; atoms: SpecAtom[]; e: Emitter; plan: ExecSpecPlan } | { skip: string; atoms0: SpecAtom[]; extra: Partial<ExecSpecOutcome> } {
+  const atoms0 = extractSpecAtoms(o.task), runner = (["go", "pytest", "vitest"] as SpecRunner[]).find((r) => o.runners.includes(r));
+  if (!runner) return { skip: "exec spec: no supported runner (go, pytest, vitest)", atoms0, extra: {} };
+  const sites = resolveSites(atoms0, o.repoDir);
+  if (sites.length === 0) return { skip: "exec spec: no named site resolved in the repo", atoms0, extra: {} };
+  const atoms = [...atoms0, ...parityAtoms(atoms0, sites), ...pairAtoms(atoms0, sites)], e = EMITTERS[runner], plan = planFor(runner, o.repoDir, sites, o.existingTests);
+  if (!plan) return { skip: `exec spec: no ${runner} site to place the spec beside`, atoms0, extra: { sites: sites.length } };
+  if (existsSync(join(o.repoDir, plan.targetRel))) return { skip: `exec spec: ${plan.targetRel} already exists`, atoms0, extra: { sites: sites.length } };
+  return { runner, atoms0, sites, atoms, e, plan };
+}
+/** The generator brief and its output cap for one ask (`withProbe`: the Go probe rules ride along, a larger cap). */
+function generatorAsk(pre: { e: Emitter; atoms: SpecAtom[]; sites: ResolvedSite[]; plan: ExecSpecPlan }, probing: ExecSpecInput["probe"] | undefined, withProbe: boolean, repoDir: string): { brief: string; maxTokens?: number } {
+  const brief = [buildGeneratorBrief(pre.e, pre.atoms, pre.sites, pre.plan.header, pre.plan.style), ...(withProbe && probing ? [probing.rules, ...(probing.ledger ? [probing.ledger(pre.sites, repoDir)] : [])].filter(Boolean) : [])].join("\n\n");
+  return { brief, ...(withProbe && probing ? { maxTokens: 16384 } : {}) }; // a cap, not a typical size: spec plus probe measured 5.3k to 14k output tokens on Haiku
+}
+/** SPEED-EXEC-SPEC-PREFETCH (LOKI_E10_EXEC_SPEC_PREFETCH=0 opts out): intake starts the first generator call as soon as the repo map and the test map exist, so the model writes the
+ *  spec while intake runs the baseline. The Wall stage's call takes it only when its brief, model and cap are byte-identical (the same call, made earlier); any difference makes a fresh
+ *  call, so what the spec is built from never changes. The tool-less generator only: a session generator would run a Wall session during intake. One pending call per repo. */
+export const execSpecPrefetchOn = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_EXEC_SPEC_PREFETCH !== "0" && env.LOKI_E10_INVOKER !== "cli" && execSpecEnabled(env);
+interface Prefetched { key: string; reply: Promise<string | null | { none: string }>; meter: { usd?: number | null } }
+const prefetched = new Map<string, Prefetched>(); // repoDir -> the one pending call
+const prefetchKey = (model: string, maxTokens: number | undefined, brief: string): string => `${model}\0${maxTokens ?? ""}\0${brief}`;
+/** Starts the call execSpecAuthor's first ask will make, and returns true when it did. Never throws; a prelude that skips starts nothing. */
+export function prefetchExecSpec(o: ExecSpecInput, env: NodeJS.ProcessEnv = process.env): boolean {
+  try {
+    if (!execSpecPrefetchOn(env) || o.signal.aborted) return false;
+    const pre = specPrelude(o);
+    if ("skip" in pre) return false;
+    const probing = pre.runner === "go" ? o.probe : undefined, a = generatorAsk(pre, probing, !!probing, o.repoDir), model = execSpecModel(env), meter: { usd?: number | null } = {};
+    const gen = generatorOverride ?? toolLessGenerator(o.repoDir), reply = gen(a.brief, { model, iterationId: o.iterationId, signal: o.signal, meter, ...(a.maxTokens ? { maxTokens: a.maxTokens } : {}) });
+    reply.catch(() => { /* awaited by the Wall stage, or dropped */ });
+    prefetched.set(o.repoDir, { key: prefetchKey(model, a.maxTokens, a.brief), reply, meter });
+    return true;
+  } catch { return false; }
+}
+/** Test seam: forget any pending prefetch. */
+export const resetExecSpecPrefetch = (): void => { prefetched.clear(); };
 /** `probe` (features/tournament.ts probeIntake, passed by wall.ts only when LOKI_E10_TOURNAMENT is not 0): for Go, its rules are appended to the generator brief and the reply may carry a second block of probe cases, kept apart from the spec. */
 export async function execSpecAuthor(o: { task: string; repoDir: string; runners: string[]; existingTests: string[]; sessions: Parameters<typeof sessionGenerator>[0]; iterationId: string; signal: AbortSignal; probe?: { rules: string; /** dynamic lines appended after the rules (the no-regression keep ledger), "" for none */ ledger?(sites: ResolvedSite[], repoDir: string): string; take(reply: string, pkg: string): { reply: string; probe?: string; refused?: string } } }): Promise<ExecSpecOutcome> {
   let priced: number | null | undefined; // the generator call's dollars when it prices itself (toolLessCall); undefined: read from the session's iteration id
-  const t0 = Date.now(), atoms0 = extractSpecAtoms(o.task), done = (status: ExecSpecOutcome["status"], reason: string, extra: Partial<ExecSpecOutcome> = {}): ExecSpecOutcome => ({ status, reason, atoms: atoms0.length, sites: 0, binding: [], advisory: [], guards: [], dropped: [], durationS: (Date.now() - t0) / 1000, ...(priced !== undefined ? { generatorUsd: priced } : {}), ...extra });
-  const runner = (["go", "pytest", "vitest"] as SpecRunner[]).find((r) => o.runners.includes(r));
-  if (!runner) return done("skipped", "exec spec: no supported runner (go, pytest, vitest)");
-  const sites = resolveSites(atoms0, o.repoDir);
-  if (sites.length === 0) return done("skipped", "exec spec: no named site resolved in the repo");
-  const atoms = [...atoms0, ...parityAtoms(atoms0, sites), ...pairAtoms(atoms0, sites)], e = EMITTERS[runner], plan = planFor(runner, o.repoDir, sites, o.existingTests);
-  if (!plan) return done("skipped", `exec spec: no ${runner} site to place the spec beside`, { sites: sites.length });
-  if (existsSync(join(o.repoDir, plan.targetRel))) return done("skipped", `exec spec: ${plan.targetRel} already exists`, { sites: sites.length });
+  let prefetch: ExecSpecOutcome["prefetch"]; // SPEED-EXEC-SPEC-PREFETCH telemetry
+  const t0 = Date.now(), pre0 = specPrelude(o), atoms0 = pre0.atoms0, done = (status: ExecSpecOutcome["status"], reason: string, extra: Partial<ExecSpecOutcome> = {}): ExecSpecOutcome => ({ status, reason, atoms: atoms0.length, sites: 0, binding: [], advisory: [], guards: [], dropped: [], durationS: (Date.now() - t0) / 1000, ...(priced !== undefined ? { generatorUsd: priced } : {}), ...(prefetch ? { prefetch } : {}), ...extra });
+  if ("skip" in pre0) { if (prefetched.has(o.repoDir)) prefetch = "miss"; prefetched.delete(o.repoDir); return done("skipped", pre0.skip, pre0.extra); }
+  const { runner, sites, atoms, e, plan } = pre0;
   // Relation cases first: deterministic, no model call, binding by construction (recorded on base).
   const rel = runner === "go" ? relationCasesGo(o.task, o.repoDir, sites, atoms) : null, relDir = rel ? dirname(rel.targetRel) : null;
   const relLine = rel ? `Relation cases: ${rel.targetRel} was written by the harness from the wrap relation the task states and is read-only. Each checks that ${rel.fn} treats a wrapped value exactly as it treated the bare value on the original code (recorded there, not guessed); make every one pass: ${rel.cases.join(", ")}` : "";
@@ -627,7 +662,13 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
   const gen = generatorOverride ?? defaultGenerator(o.sessions, o.repoDir);
   const probing = runner === "go" ? o.probe : undefined, pkg = plan.mustStart.replace(/^package\s+/, "");
   const ask = async (withProbe: boolean): Promise<string | null | { none: string }> => {
-    const meter: { usd?: number | null } = {}, r = await gen([buildGeneratorBrief(e, atoms, sites, plan.header, plan.style), ...(withProbe && probing ? [probing.rules, ...(probing.ledger ? [probing.ledger(sites, o.repoDir)] : [])].filter(Boolean) : [])].join("\n\n"), { model: execSpecModel(), iterationId: o.iterationId, signal: o.signal, meter, ...(withProbe && probing ? { maxTokens: 16384 } : {}) }); // a cap, not a typical size: spec plus probe measured 5.3k to 14k output tokens on Haiku
+    const a = generatorAsk({ e, atoms, sites, plan }, probing, withProbe, o.repoDir), model = execSpecModel(), early = prefetched.get(o.repoDir);
+    prefetched.delete(o.repoDir); // taken or stale: never reused by a later ask
+    const hit = early && early.key === prefetchKey(model, a.maxTokens, a.brief) ? early : null;
+    if (early) prefetch = hit ? "hit" : "miss";
+    let meter: { usd?: number | null } = {}, r: string | null | { none: string };
+    if (hit) { r = await hit.reply.catch(() => null); meter = hit.meter; }
+    else r = await gen(a.brief, { model, iterationId: o.iterationId, signal: o.signal, meter, ...(a.maxTokens ? { maxTokens: a.maxTokens } : {}) });
     if (meter.usd !== undefined) priced = priced === null || meter.usd === null ? null : (priced ?? 0) + meter.usd;
     return r;
   };

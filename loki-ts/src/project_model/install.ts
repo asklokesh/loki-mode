@@ -348,7 +348,7 @@ export function absentDepRoots(repoDir: string, model: ProjectApi | null | undef
  *  baseline for the full-suite commands verify will run. Returns intake's data; deps_not_proven reaches the receipt via verify's not_proven. */
 /** Per-subphase intake wall time. A phase that did not run is `{ skipped: reason }`, never `{ ms: 0 }`. */
 export type PhaseTiming = { ms: number; at?: number; cached?: boolean } | { skipped: string }; // at: start offset in ms after intake began
-export type IntakeTiming = Partial<Record<"setup" | "repo_walk" | "already_done" | "project_model" | "deps_install" | "suite_baseline" | "zero_baseline" | "zero_probe", PhaseTiming>>;
+export type IntakeTiming = Partial<Record<"setup" | "repo_walk" | "exec_spec_prefetch" | "already_done" | "project_model" | "deps_install" | "suite_baseline" | "zero_baseline" | "zero_probe", PhaseTiming>>;
 export interface DepsTiming { install?: PhaseTiming; baseline_ms?: number }
 export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit"> & { capS?: number }, signal: AbortSignal, runners: RunnerName[], timing?: DepsTiming): Promise<Record<string, unknown>> {
   const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model), before = untrackedTops(ctx.repoDir), t0 = Date.now();

@@ -109,6 +109,24 @@ function wallTargetDir(repoDir: string, existingTests: TestRef[], runners: Runne
 export interface WallAuthored { kind: "authored"; staged?: boolean; execSpec?: Record<string, unknown>; model?: string; iterationId?: string; task: string; sizeName: string; runners: RunnerName[]; targetDir: string; generated: string[]; contents: Map<string, string>; discarded: { file: string; reason: string }[]; manifestSha256?: string; holdoutDir?: string; clauses?: ClauseSet; evidence?: WallEvidence; }
 export type WallAuthorOutcome = { kind: "done"; result: StageResult } | WallAuthored;
 
+/** The task's size, the runners a Wall or exec spec targets, and whether the lean path applies (Wall skipped; the exec spec runs there when it is on). One function for wallAuthor
+ *  and intake's exec-spec prefetch (SPEED-EXEC-SPEC-PREFETCH), so both take the same decision on the same inputs. */
+export function wallRoute(ctx: Pick<RunContext, "repoDir" | "externalPatch" | "tests">, task: string, repoMap: ReturnType<typeof loadRepoMap>, testMap: TestMap | null): { sz: ReturnType<typeof sizeTask>; runners: RunnerName[]; lean: boolean; api: ProjectApi | null; targetRoot: string } {
+  const existingTests: TestRef[] = testMap?.tests ?? [];
+  const sz = sizeTask(task, repoMap, testMap);
+  const scopeDir = wallTargetDir(ctx.repoDir, existingTests), api = loadProjectApi(ctx.repoDir), scopePkg = api?.packageOf(`${relative(ctx.repoDir, scopeDir)}/x`);
+  const engineMap = testMap as EngineTestMap | null;
+  const firstTest = existingTests[0]?.path;
+  const targetRoot = scopePkg?.root ?? (firstTest ? engineMap?.testPackages?.[firstTest] : undefined) ?? ".";
+  const packageTests = existingTests.filter((t) => (api?.packageRootOf(t.path) ?? engineMap?.testPackages?.[t.path] ?? ".") === targetRoot);
+  const focus = namedFiles(task, repoMap);
+  const runners: RunnerName[] = testMap ? harnessRunners(engineMap?.packageRunners?.[targetRoot] ?? (packageTests.length ? [...new Set(packageTests.map((t) => t.runner))] : testMap.runners), repoMap?.files ?? [], process.env, ctx.repoDir, focus) : [];
+  return { sz, runners, api, targetRoot, lean: !ctx.externalPatch && planMode() !== "always" && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean" };
+}
+/** The exec-spec call execSpecWall makes, built from the same inputs; intake passes it to prefetchExecSpec so the generator call overlaps the baseline run. */
+export const execSpecCall = (ctx: Pick<RunContext, "repoDir" | "runId" | "sessions">, task: string, runners: RunnerName[], existingTests: string[], signal: AbortSignal): Parameters<typeof execSpecAuthor>[0] =>
+  ({ task, repoDir: ctx.repoDir, runners, existingTests, sessions: ctx.sessions as never, iterationId: `${ctx.runId}-execspec`, signal, ...(nrdEnabled() ? { probe: nrdProbeIntake } : tournamentEnabled() ? { probe: probeIntake } : {}) });
+
 /** Session plus compile check. Writes only <runDir>/wall (sealed copies); repoDir is read, never written. */
 export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: { model: string; suffix: string; note?: string | undefined }): Promise<WallAuthorOutcome> {
   const done = (result: StageResult): WallAuthorOutcome => ({ kind: "done", result });
@@ -125,15 +143,8 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   // E-64: skip Wall too on the lean path (plan.ts, which always runs, logs this same decision on "variant"). LOKI_E10_PLAN=always forces a plan even for a small task, so the lean path never applies: a forced plan still gets the
   // Wall's independent acceptance tests. An external diff (CW-12) never takes the lean skip: the Wall is its only independent proof.
   const repoMap = loadRepoMap(repomapRef);
-  const sz = sizeTask(task, repoMap, testMap);
-  const scopeDir = wallTargetDir(ctx.repoDir, existingTests), api = loadProjectApi(ctx.repoDir), scopePkg = api?.packageOf(`${relative(ctx.repoDir, scopeDir)}/x`);
-  const engineMap = testMap as EngineTestMap | null;
-  const firstTest = existingTests[0]?.path;
-  const targetRoot = scopePkg?.root ?? (firstTest ? engineMap?.testPackages?.[firstTest] : undefined) ?? ".";
-  const packageTests = existingTests.filter((t) => (api?.packageRootOf(t.path) ?? engineMap?.testPackages?.[t.path] ?? ".") === targetRoot);
-  const focus = namedFiles(task, repoMap);
-  const runners: RunnerName[] = testMap ? harnessRunners(engineMap?.packageRunners?.[targetRoot] ?? (packageTests.length ? [...new Set(packageTests.map((t) => t.runner))] : testMap.runners), repoMap?.files ?? [], process.env, ctx.repoDir, focus) : [];
-  if (!ctx.externalPatch && planMode() !== "always" && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean") {
+  const { sz, runners, lean, api, targetRoot } = wallRoute(ctx, task, repoMap, testMap);
+  if (lean) {
     const leanWhy = `${sz.size} task with a relevant visible test: Wall skipped, verify runs that test at the end`;
     if (!execSpecEnabled()) return done({ status: "skipped", data: { size: sz.size }, reason: leanWhy });
     if (wallEnabled() && wallConcurrent()) return done({ status: "skipped", data: { size: sz.size, exec_spec: { status: "skipped" } }, reason: `${leanWhy}; exec spec not run: with the Wall on it is authored alongside implement (LOKI_E10_WALL_CONCURRENT=0 runs it first)` });
@@ -196,9 +207,9 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
  *  binding cases (red on base, every expected value stated by the issue) sealed as this run's Wall file through installWall. Advisory
  *  cases reach implement as a brief block only (<runDir>/exec-spec-brief.txt), never sealed, never blocking. */
 async function execSpecWall(ctx: RunContext, signal: AbortSignal, task: string, sizeName: string, runners: RunnerName[], existingTests: string[], leanWhy: string): Promise<WallAuthorOutcome> {
-  const iterationId = `${ctx.runId}-execspec`, out = await execSpecAuthor({ task, repoDir: ctx.repoDir, runners, existingTests, sessions: ctx.sessions as never, iterationId, signal, ...(nrdEnabled() ? { probe: nrdProbeIntake } : tournamentEnabled() ? { probe: probeIntake } : {}) });
+  const iterationId = `${ctx.runId}-execspec`, out = await execSpecAuthor(execSpecCall(ctx, task, runners, existingTests, signal));
   writeTournamentInput(ctx.runDir, out); // LOKI_E10_TOURNAMENT: the Go probe cases and the full spec file, for implement's gate
-  const summary = { status: out.status, reason: out.reason, ...(out.runner ? { runner: out.runner } : {}), atoms: out.atoms, sites: out.sites, binding: out.binding, advisory: out.advisory, guards: out.guards, dropped: out.dropped, ...(out.relation ? { relation: out.relation.cases } : {}), ...(out.uncoveredSites?.length ? { uncovered_sites: out.uncoveredSites } : {}), duration_s: out.durationS };
+  const summary = { status: out.status, reason: out.reason, ...(out.runner ? { runner: out.runner } : {}), atoms: out.atoms, sites: out.sites, binding: out.binding, advisory: out.advisory, guards: out.guards, dropped: out.dropped, ...(out.relation ? { relation: out.relation.cases } : {}), ...(out.uncoveredSites?.length ? { uncovered_sites: out.uncoveredSites } : {}), ...(out.prefetch ? { prefetch: out.prefetch } : {}), duration_s: out.durationS };
   if (out.brief) { try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, EXEC_SPEC_BRIEF_FILE), out.brief, "utf8"); } catch { /* best effort: implement runs without the block */ } }
   try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, EXEC_SPEC_TELEMETRY_FILE), JSON.stringify({ status: out.status, seconds: out.durationS, binding: out.binding.length, ...(out.generatorUsd !== undefined ? { usd: out.generatorUsd } : out.runner ? { iteration_id: iterationId } : {}) }), "utf8"); } catch { /* best effort: the receipt then omits exec_spec */ } // the receipt's exec_spec block (seconds and dollars of this stage)
   const spent = out.runner ? { iteration_ids: [iterationId] } : {}; // a generator session ran: its spend reaches the ledger

@@ -2147,6 +2147,23 @@ console.log(`${o.status} ${o.targetRel} binding=${o.binding} advisory=${o.adviso
 if command -v go >/dev/null 2>&1; then
     rm -rf "$T/es-go2"; make_es_go "$T/es-go2"
     es_leg "go test" go "$T/es-go2" a/a_test.go "$ES_GO_TASK" "$ES_GO_REPLY" "sealed a/loki_wall_spec_test.go binding=TestLokiSpec_C1_KeepsAfterDash advisory=TestLokiSpec_P1_PaddedDash guards=TestLokiSpec_S1_Plain dropped=TestLokiSpec_C2_Panics sealed=TestLokiSpec_C1_KeepsAfterDash:red"
+    # SPEED-EXEC-SPEC-PREFETCH: intake starts the generator call; the Wall stage's first ask takes it only when brief, model and cap are identical (one call, the same
+    # outcome as without it); any other brief makes a fresh call; the knob, the CLI invoker and a prelude that skips start nothing.
+    rm -rf "$T/es-go3"; make_es_go "$T/es-go3"; (cd "$T/es-go3" && git init -q -b main && git add -- . && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m base)
+    ESPF="$(cd "$ROOT/loki-ts" && ESD="$T/es-go3" TASK="$ES_GO_TASK" REPLY="$ES_GO_REPLY" env -u LOKI_E10_INVOKER -u LOKI_E10_EXEC_SPEC_MODEL -u LOKI_E10_EXEC_SPEC_PREFETCH timeout 300 bun -e '
+const es = await import("./src/features/exec_spec.ts"), tn = await import("./src/features/tournament.ts"), e = process.env;
+let calls = 0; const briefs = []; es.setExecSpecGenerator(async (brief) => { calls++; briefs.push(brief); await new Promise((r) => setTimeout(r, 30)); return e.REPLY; });
+const inp = (o = {}) => ({ task: e.TASK, repoDir: e.ESD, runners: ["go"], existingTests: ["a/a_test.go"], sessions: null, iterationId: "t", signal: new AbortController().signal, ...o });
+const out = [];
+const started = es.prefetchExecSpec(inp(), {}), a = await es.execSpecAuthor(inp()); out.push(`hit:${started}:${calls}:${a.status}:${a.prefetch}`);
+calls = 0; const b = await es.execSpecAuthor(inp()); out.push(`none:${calls}:${b.status}:${b.prefetch ?? "-"}:${JSON.stringify([a.binding, a.advisory, a.guards, a.dropped, a.file]) === JSON.stringify([b.binding, b.advisory, b.guards, b.dropped, b.file])}`);
+calls = 0; briefs.length = 0; es.prefetchExecSpec(inp({ probe: tn.probeIntake }), {}); const c = await es.execSpecAuthor(inp()); out.push(`miss:${calls}:${c.prefetch}:${briefs[1] !== briefs[0]}`);
+calls = 0; out.push(`off:${es.prefetchExecSpec(inp(), { LOKI_E10_EXEC_SPEC_PREFETCH: "0" })}:${es.prefetchExecSpec(inp(), { LOKI_E10_INVOKER: "cli" })}:${es.prefetchExecSpec(inp(), { LOKI_E10_EXEC_SPEC: "0" })}:${es.prefetchExecSpec(inp({ runners: ["bun"] }), {})}:${calls}`);
+const d = await es.execSpecAuthor(inp()); out.push(`after-off:${d.prefetch ?? "-"}`);
+console.log(out.join(" | "));' 2>&1)"
+    WESPF="hit:true:1:sealed:hit | none:1:sealed:-:true | miss:2:miss:true | off:false:false:false:false:0 | after-off:-"
+    [ "$ESPF" = "$WESPF" ] && ok "exec spec prefetch: the call intake started is taken when the brief is identical (one call, same outcome as without it), a different brief makes a fresh call, the knob, the CLI invoker, exec spec off and a skipping prelude start nothing" \
+        || bad "exec spec prefetch gave: $ESPF (want: $WESPF)"
 elif [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "exec spec go test: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: exec spec go test: go is not installed"; fi
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     rm -rf "$T/es-py"; make_es_py "$T/es-py"
@@ -2662,6 +2679,22 @@ row("stated_override", [n.overrideVerdict("Rename\n\nExpected: the header reads 
 row("groups", [n.nrdGroupsFor({ no_regression: { groups: [{ signature: "no-regression: x", count: 2, sample: "s" }] } }, 0).length, n.nrdGroupsFor({ no_regression: { groups: [{ signature: "no-regression: x", count: 2, sample: "s" }] } }, 1).length, n.nrdGroupsFor({ no_regression: { groups: [{ bad: 1 }] } }, 0).length, n.nrdGroupsFor(undefined, 0).length].join(","));
 row("knob", [n.nrdEnabled({}), n.nrdEnabled({ LOKI_E10_NRD: "0" }), n.nrdEnabled({ LOKI_E10_NRD: "1" })].join(","));
 row("rules", [t.probeIntake.rules === t.GO_PROBE_RULES, n.nrdProbeIntake.rules === t.GO_PROBE_RULES].join(","));
+// SPEED-NRD-OVERLAP: implement starts the differential, verify (or seal) settles it into the implement output that is current then
+{
+  const evs: string[] = []; let impl: any = { exit: "done" };
+  const ctx: any = { runDir: join(tmpdir(), "nrd-ovl-1"), outputs: () => ({ implement: impl }), emit: (ty: string) => { evs.push(ty); } };
+  let release!: () => void; const held = new Promise<void>((res) => { release = res; });
+  const fake = async () => { await held; return { status: "fired", reason: "x", calls: 1, usd: 0, groups: [{ signature: "no-regression: x", count: 1, sample: "s" }], receipt: ["unrequested change: x"] }; };
+  n.startNrdGate(ctx, new AbortController().signal, {} as never, [], fake as never);
+  const before = impl.no_regression === undefined, s1 = n.settleNrd(ctx); let settled = false; void s1.then(() => { settled = true; });
+  await new Promise((res) => setTimeout(res, 30)); const waits = !settled;
+  impl = { ...impl, attempts: { skipped: "x" } }; // the machine may replace the implement output while the differential runs
+  release(); await s1; await n.settleNrd(ctx);
+  row("overlap", [before, waits, impl.no_regression?.status, n.nrdGroupsFor(impl, 0).length, evs.join("+"), n.nrdOverlapOn({}), n.nrdOverlapOn({ LOKI_E10_NRD_OVERLAP: "0" })].join(","));
+  let impl2: any = {}; const ctx2: any = { runDir: join(tmpdir(), "nrd-ovl-2"), outputs: () => ({ implement: impl2 }), emit: () => undefined };
+  n.startNrdGate(ctx2, new AbortController().signal, {} as never, [], (async () => { throw new Error("boom"); }) as never); await n.settleNrd(ctx2);
+  row("overlap_error", [impl2.no_regression?.status, String(impl2.no_regression?.receipt?.[0]).startsWith("NOT PROVEN: regression check incomplete: boom")].join(","));
+}
 
 // ---------- the gate on real repos ----------
 const sh = (cwd: string, ...a: string[]): string => execFileSync("git", ["-C", cwd, ...a], { encoding: "utf8" });
@@ -2716,6 +2749,7 @@ row("go_replay_seen", done["go_gitlog_edit_bad"]!.r.receipt.some((l: string) => 
 row("go_judge_incomplete", [String(done["go_judge_down"]!.r.receipt?.[0]).startsWith("NOT PROVEN: regression check incomplete: model transport"), (done["go_judge_empty"]!.r.receipt as string[]).some((l) => l.startsWith("NOT PROVEN: regression check incomplete: the judge reply was empty")), done["go_judge_empty"]!.r.status].join(","));
 row("go_notrun", [done["go_relreplace"]!.r.status, (done["go_relreplace"]!.r.receipt as string[]).some((l) => l.startsWith("NOT PROVEN: regression check not run: the probe program did not build")), done["go_budget0"]!.r.status, (done["go_budget0"]!.r.receipt as string[]).some((l) => l.startsWith("NOT PROVEN: regression check not run: the 0 s wall budget")), done["go_budget_slow_judge"]!.r.status].join(","));
 { const { repo, base } = mk("gitlog", "none"); writeFileSync(join(repo, "mine.local"), "x\n"); const sc = n.makeScratch(repo, base, new Set(), ["mine.local"]); row("go_untracked_both", [existsSync(join(sc.base, "mine.local")), existsSync(join(sc.patched, "mine.local"))].join(",")); sc.dispose(); const sc2 = n.makeScratch(repo, base, new Set()); row("go_untracked_agent_only", [existsSync(join(sc2.base, "mine.local")), existsSync(join(sc2.patched, "mine.local"))].join(",")); sc2.dispose(); }
+{ const { repo, base } = mk("gitlog", "docs"); const given = n.makeScratch(repo, base, new Set(), [], []), own = n.makeScratch(repo, base, new Set()); row("go_scratch_given_diff", [existsSync(join(given.patched, "NOTES.md")), existsSync(join(own.patched, "NOTES.md"))].join(",")); given.dispose(); own.dispose(); }
 row("go_judge_down_reason", String(done["go_judge_down"]!.r.reason).slice(0, 56));
 row("go_unknown_advisory", done["go_gitlog_shared"]!.r.receipt.some((l: string) => l.startsWith("advisory:")) && done["go_gitlog_shared"]!.r.status === "fired");
 
@@ -2738,6 +2772,8 @@ ncheck "no changed keep case and no replay finding makes no judge call" fake_noc
 ncheck "an extra unasked change (--reverse) in the asked function CommitsCmd is not a change case, so it is judged; the requested removal alone is a change case and is not" change_repro "false,true"
 ncheck "the fix-round group is read on the first verify only and only when well formed" groups "1,0,0,0"
 ncheck "default on, =0 opts out" knob "true,false,true"
+ncheck "overlap: implement starts the differential and returns; settle waits for it, writes it into the implement output current at that time (a replaced one too), records nrd.completed once, and its group reaches the first verify; default on, LOKI_E10_NRD_OVERLAP=0 opts out" overlap "true,true,fired,1,nrd.completed,true,false"
+ncheck "overlap: a differential that throws settles as a receipt-only NOT PROVEN error, never a hang" overlap_error "error,true"
 ncheck "the exec-spec probe rules stay byte-identical (cache-stable); the NRD kind rules extend them as one fixed suffix, the keep list is per run" rules "true,true"
 ncheck "go: the shared-helper fix (lh-1474 shape) fires on the authors command, one group, probe call plus judge" go_gitlog_shared "fired|nrd-probe+judge|1"
 ncheck "go: a param-threaded fix does not fire (one judge call confirms the changed variant of the named function is requested)" go_gitlog_param "clean|judge|0"
@@ -2758,6 +2794,7 @@ ncheck "go: a scratch build that fails (go.mod replace to a relative path outsid
 ncheck "go: the user's own untracked files are in both scratch copies, a file only the agent added is in patched alone" go_untracked_both "true,true"
 ncheck "go: an untracked file that is not listed as the user's is in neither copy until the diff adds it" go_untracked_agent_only "false,true"
 ncheck "go: a judge call that throws is a receipt-only error, never a group" go_judge_down "error|nrd-probe+judge|0"
+ncheck "go: the patched scratch copy is built from the diff the gate snapshotted before verify began, never from what the tree holds later" go_scratch_given_diff "false,true"
 ncheck "go: the error names the cause" go_judge_down_reason "no-regression skipped: model transport blew up"
 ncheck "go: an unknown verdict is advisory on the receipt, never blocking" go_unknown_advisory "true"
 ncheck "go: the user's tree (files, git status, worktrees, branches) is byte-identical after a run and no scratch dir is left, also with a rewritten test and a failing judge" go_tree_untouched "true,true,true,true"
@@ -2772,6 +2809,13 @@ fi
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "no-regression: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: no-regression: go is not installed"; fi
 fi
+# SPEED-NRD-OVERLAP wiring: verify settles the differential before it reads the implement output for the fix-round group; seal settles it before it reads any output.
+v_settle="$(grep -n 'await settleNrd(ctx)' "$ROOT/loki-ts/src/engine10/stages/verify.ts" | head -1 | cut -d: -f1)"; v_group="$(grep -n 'nrdGroupsFor(ctx.outputs().implement' "$ROOT/loki-ts/src/engine10/stages/verify.ts" | head -1 | cut -d: -f1)"
+s_settle="$(grep -n 'await settleNrd(ctx)' "$ROOT/loki-ts/src/engine10/stages/seal.ts" | head -1 | cut -d: -f1)"; s_out="$(grep -n 'const o = ctx.outputs(), stale = staleAtSeal' "$ROOT/loki-ts/src/engine10/stages/seal.ts" | head -1 | cut -d: -f1)"
+i_start="$(grep -c 'if (overlap) startNrdGate(ctx, signal, session' "$ROOT/loki-ts/src/engine10/stages/implement.ts")"
+[ -n "$v_settle" ] && [ -n "$v_group" ] && [ "$v_settle" -lt "$v_group" ] && [ -n "$s_settle" ] && [ -n "$s_out" ] && [ "$s_settle" -lt "$s_out" ] && [ "$i_start" = 1 ] \
+    && ok "no-regression overlap: implement starts the differential under the knob, verify settles it before the fix-round group is read, seal before any output is read" \
+    || bad "no-regression overlap wiring: verify settle line '$v_settle' group line '$v_group', seal settle '$s_settle' outputs '$s_out', implement start count '$i_start'"
 # ---------------------------------------------------------------- site hints (LOKI_E10_SITE_HINTS, default on: edit-shape sites in the fix and coverage briefs)
 cat > "$T/site-hints.ts" <<'TS'
 import { execFileSync } from "node:child_process";

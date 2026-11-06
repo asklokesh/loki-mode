@@ -708,6 +708,39 @@ Y4="full suite: npm:false | full suite: npm:true | true | short-cut rerun 300000
 [ "$B4" = "$Y4" ] && ok "unit: a base suite that completes is excused (no cut line); a cut base run is introduced with a base-run-incomplete line, also when the shared budget ran out; a base run gets 300 s (a third of the run cap at most); a short-cut entry is measured again, a fully-cut one is kept; a red base suite gets a second pass whose one-pass-only ids are flaky and not blamed on the change (a new id, or one in a changed file, still is); a suite red at base (500+ ids) is excused per id with a suite-red-at-base line; the baseline is written to the run directory; a failing full-suite check that is not excused is named with the rule that kept it blocking" \
     || bad "base budget unit gave: $B4 (want: $Y4)"
 
+# SPEED-BASE-ALIAS (tanstack-query, L-Haiku-v1371-nopatch tq-11327: the baseline ran `pnpm test` and then the full-suite command `npm test --silent`, twice
+# each, 51 s for one package.json script). npm, pnpm and yarn running the same root script with no pre/post hook share one base run: the suite is not
+# run again and its failures are attributed against that run. A pre/post hook, another script, a package directory, a cut or unattributable root run,
+# or LOKI_BASELINE_SCRIPT_ALIAS=0 keeps the suite's own run; a cut root run never excuses, an exact-command entry always wins over the alias.
+G5="$T/basealias"; mkdir -p "$G5/.loki/state" && git -C "$G5" init -q -b main && printf '{"name":"w","scripts":{"test":"vitest run"}}\n' > "$G5/package.json" && git -C "$G5" add package.json && git -C "$G5" -c user.name=t -c user.email=t@t commit -qm init
+B5="$(G="$G5" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), { writeFileSync, execFileSync } = await import("node:fs").then(async (f) => ({ ...f, execFileSync: (await import("node:child_process")).execFileSync }));
+const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), r = [];
+const A = ["a.test.ts > t1"], errs = (ids) => Object.fromEntries(ids.map((i) => [i, ["Error: " + i]]));
+const ent = (o) => ({ ran: true, command: "pnpm test", exit_code: 1, duration_s: 29, timed_out: false, failing_ids: A, attributable: true, failing_errors: errs(A), flaky_probe: "done", ...o });
+const put = (baseline, suites) => writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline, ...(suites ? { suites } : {}) }));
+const pkg = (scripts) => writeFileSync(g + "/package.json", JSON.stringify({ name: "w", scripts }));
+const same = (a, b, env = {}) => rp.sameRootScript(g, a, b, env);
+r.push("same " + [same("pnpm test", "npm test --silent"), same("pnpm test", "(cd . && npm run test)"), same("yarn test", "npm test"), same("pnpm test", "npm run lint"), same("pnpm test", "npm test", { LOKI_BASELINE_SCRIPT_ALIAS: "0" }), same("pnpm test", "npx vitest run")].join(","));
+pkg({ test: "vitest run", pretest: "tsc" }); r.push("pre-hook " + same("pnpm test", "npm test")); pkg({ test: "vitest run", posttest: "x" }); r.push("post-hook " + same("pnpm test", "npm test")); pkg({ lint: "x" }); r.push("no-script " + same("pnpm test", "npm test")); pkg({ test: "vitest run" });
+const spec = [{ name: "full suite: npm", cmd: "npm test --silent", cwd: ".", run: "npm test --silent" }, { name: "full suite: p", cmd: "(cd pkg && pnpm test)", cwd: "pkg", run: "pnpm test" }], seen = [];
+const run = (cmd, cwd) => { seen.push(cmd + "@" + cwd.slice(g.length)); return { code: 0, timedOut: false, out: "", missing: false }; };
+put(ent({})); rp.baselineSuites(g, spec, { run }); r.push("reused " + seen.join(";") + " suites=" + rp.loadProfile(g).suites.map((x) => x.command).join(";"));
+seen.length = 0; put(ent({ timed_out: true, attributable: false, failing_ids: [], reason: "timed out", duration_s: 300 })); rp.baselineSuites(g, spec, { run }); r.push("cut-root " + seen.join(";"));
+seen.length = 0; put(ent({ attributable: false, failing_ids: [], reason: "failing test ids not parseable, failures cannot be attributed" })); rp.baselineSuites(g, spec, { run }); r.push("unattributable-root " + seen.join(";"));
+seen.length = 0; process.env.LOKI_BASELINE_SCRIPT_ALIAS = "0"; put(ent({})); rp.baselineSuites(g, spec, { run }); delete process.env.LOKI_BASELINE_SCRIPT_ALIAS; r.push("opt-out " + seen.join(";"));
+const head = (ids) => [{ name: "full suite: npm", cmd: "npm test --silent", result: "fail", ids, errors: errs(ids) }];
+put(ent({})); r.push("excused " + rp.attributeFullSuite(g, sha, head(A), [], ["src/z.ts"]).preExistingChecks.join(","));
+r.push("introduced " + rp.attributeFullSuite(g, sha, head([...A, "n.test.ts > new"]), [], ["src/z.ts"]).introducedChecks.join(","));
+process.env.LOKI_BASELINE_SCRIPT_ALIAS = "0"; const off = rp.attributeFullSuite(g, sha, head(A), [], ["src/z.ts"]); delete process.env.LOKI_BASELINE_SCRIPT_ALIAS; r.push("off " + off.introducedChecks.join(",") + ":" + /not the full suite command/.test(off.line ?? ""));
+put(ent({ timed_out: true, attributable: false, failing_ids: [], reason: "timed out", duration_s: 300 })); const cut = rp.attributeFullSuite(g, sha, head(A), [], ["src/z.ts"]); r.push("cut " + cut.introducedChecks.join(",") + ":" + /base run incomplete/.test(cut.line ?? ""));
+put(ent({ timed_out: true, attributable: false, failing_ids: [], reason: "timed out", duration_s: 300 }), [ent({ name: "full suite: npm", command: "npm test --silent", duration_s: 26 })]); const own = rp.attributeFullSuite(g, sha, head(A), [], ["src/z.ts"]); r.push("own-entry-wins " + own.preExistingChecks.join(",") + ":" + /base run incomplete/.test(own.line ?? "") + ":" + rp.whyFullSuiteNotExcused(g, sha, head([...A, "n.test.ts > new"]), ["src/z.ts"], []).join("").includes("were not red on base"));
+console.log(r.join(" | "));
+' 2>&1)"
+Y5="same true,true,true,false,false,false | pre-hook false | post-hook false | no-script false | reused pnpm test@/pkg suites=(cd pkg && pnpm test) | cut-root npm test --silent@;pnpm test@/pkg | unattributable-root npm test --silent@;pnpm test@/pkg | opt-out npm test --silent@;pnpm test@/pkg | excused full suite: npm | introduced full suite: npm | off full suite: npm:true | cut full suite: npm:true | own-entry-wins full suite: npm:false:true"
+[ "$B5" = "$Y5" ] && ok "unit: npm, pnpm and yarn running the same root script with no pre/post hook share one base run (not run twice, attributed against it, new ids still block); a hook, another script, a package dir, a cut or unattributable root run or LOKI_BASELINE_SCRIPT_ALIAS=0 keeps the suite's own run; a cut root never excuses; an exact entry wins" \
+    || bad "base alias unit gave: $B5 (want: $Y5)"
+
 # Wall-only delivery rules, unit-level: a failing full suite that is not known red blocks it; a delivery whose re-verify fails puts the Wall back
 # and records no discard; only known-red checks failing the same way on base are excused at delivery; errors are compared per failing id.
 D="$T/deliver"; mkdir -p "$D"; printf 'wall\n' > "$D/loki_wall_x.test.ts"
