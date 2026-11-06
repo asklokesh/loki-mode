@@ -18,6 +18,7 @@ import { dirname, join, relative } from "node:path";
 import { describeJudgeOutcome, toolLessCall } from "../runner/sdk_invoker.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
 import { assertionFailure, commandFor, plainTestEnv, pytestKindsAreAssertion, spawnGroupSync, stripAnsi, vitestErrorsAreAssertion } from "../util/check_result.ts";
+import { escapeRegex } from "../util/regex_escape.ts";
 
 export const execSpecEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_EXEC_SPEC ?? "").trim().toLowerCase()); // default on; LOKI_E10_EXEC_SPEC=0 opts out
 export const EXEC_SPEC_BRIEF_FILE = "exec-spec-brief.txt"; // <runDir>/, read by implement.ts
@@ -159,7 +160,7 @@ export function parityAtoms(atoms: SpecAtom[], sites: ResolvedSite[]): SpecAtom[
     const hits = [...src.matchAll(NORM_GO)].map((m) => ({ n: m[1]!, fn: m[2]!, r: m[3]!.trim() })).concat([...src.matchAll(NORM_DOT)].map((m) => ({ n: m[1]!, fn: m[3]!, r: m[2]!.trim() })));
     for (const h of hits) {
       if (h.n === h.r) continue; // x = x.trim() rebinds the raw value itself: no sibling can still read the raw form
-      const nRe = new RegExp(`\\b${h.n}\\b`), rRe = new RegExp(`(?<![\\w.])${h.r.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w])`);
+      const nRe = new RegExp(`\\b${h.n}\\b`), rRe = new RegExp(`(?<![\\w.])${escapeRegex(h.r)}(?![\\w])`);
       const rawUses = src.split("\n").filter((l) => rRe.test(l) && !nRe.test(l)).length;
       if (!locs.some((l) => nRe.test(l.text)) || rawUses === 0 || out.some((o) => o.text.includes(`\`${h.n}\``))) continue;
       out.push({ id: `P${out.length + 1}`, kind: "parity", text: `The quoted code reads \`${h.n}\`, the ${h.fn} copy of \`${h.r}\`, while ${rawUses} other line(s) of ${s.symbol} use \`${h.r}\` itself. Reproduce the reported situation with the input that reaches the quoted code changed so ${h.fn} alters it (${PERTURB[h.fn] ?? "make the normalized and raw forms differ"}), and assert the result the other branches give for raw input.` });
@@ -201,7 +202,7 @@ const blockAfter = (file: string, startRe: RegExp, endRe: RegExp, eofOk = false)
   for (let k = s + 1; k < lines.length; k++) if (endRe.test(lines[k]!)) return { start: s, end: eofOk ? k - 1 : k };
   return eofOk ? { start: s, end: lines.length - 1 } : null;
 };
-const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const esc = escapeRegex;
 const sliceLines = (file: string, b: { start: number; end: number } | null): string => b ? file.split("\n").slice(b.start, b.end + 1).join("\n") : "";
 const COMMON_RULES = (prefix: string): string[] => [
   `Every test is named ${prefix}<AtomId>_<Short> where <AtomId> is the id of the atom it covers (E1, C2, S3, P1, X1, ...).`,

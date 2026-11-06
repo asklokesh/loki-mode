@@ -2,6 +2,7 @@
 // Used by the config write fence (runner/host_guard.ts hook, util/config_fence.ts restore). The lockfile and manifest lists are the commit filter's own (e10ext/commit_filter.ts), imported, not copied.
 import { basename } from "node:path";
 import { LOCKFILE, taskWantsLockChange } from "../e10ext/commit_filter.ts";
+import { escapeRegex } from "./regex_escape.ts";
 
 /** Test, build, lint and type-check config: an edit here is almost always a workaround so the run's own checks can start, not part of the change. */
 export const TEST_BUILD_CONFIG = /(^|\/)(?:(?:vitest|vite|jest|webpack|rollup|babel|playwright|eslint)(?:\.[\w-]+)?\.config\.[cm]?[jt]s|jest\.config\.json|tsconfig(?:\.[\w-]+)?\.json|\.eslintrc(?:\.[\w]+)?|\.babelrc|karma\.conf\.[cm]?[jt]s|pytest\.ini|tox\.ini|setup\.cfg|\.coveragerc)$/;
@@ -35,5 +36,5 @@ export function taskNamesFenced(task: string, rel: string): boolean {
   const t = task.toLowerCase(), bn = basename(rel).toLowerCase(), stem = bn.replace(/\.[^.]*$/, "").replace(/^\./, "");
   if (LOCKFILE.test(rel)) return taskWantsLockChange(task, rel) || DEP_TASK.test(task);
   if (CONCEPTS.some(([c, w]) => c.test(rel) && w.test(task))) return true;
-  return t.includes(rel.toLowerCase()) || t.includes(bn) || (stem.length >= 5 && /conf/i.test(stem) && new RegExp(`(^|[^\\w])${stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^\\w]|$)`).test(t));
+  return t.includes(rel.toLowerCase()) || t.includes(bn) || (stem.length >= 5 && /conf/i.test(stem) && new RegExp(`(^|[^\\w])${escapeRegex(stem)}([^\\w]|$)`).test(t));
 }

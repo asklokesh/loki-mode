@@ -73,6 +73,7 @@ echo "TEST: router auto preset (Haiku executes, Opus plans hard tasks, the route
 
 FIX="$ROOT/tests/min/fixtures/e2e"
 export LOKI_TS_ENTRY="$ROOT/loki-ts/dist/loki.js"
+export LOKI_E10_COVERAGE_RESUME=0 # the coverage turn (default on) adds one implement session; these legs count the routed sessions, scope-and-fix owns the coverage legs
 TO=(); command -v timeout >/dev/null 2>&1 && TO=(timeout 120)
 TOKEN="ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab"
 

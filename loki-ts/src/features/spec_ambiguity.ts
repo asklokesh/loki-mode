@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"; import { join } from "node:path";
 import { symbolSpans } from "../util/context_pack.ts"; import { safeGit } from "../util/safe_git.ts"; import { ISSUE_CONTEXT_HEAD, type IssueComment } from "../engine10/fetch_issue.ts";
+import { escapeRegex } from "../util/regex_escape.ts";
 // Deterministic spec-ambiguity scoring for Intake (no LLM), kept outside the size-capped engine10 core.
 export interface AmbiguityHit { kind: "marker" | "open_question" | "hedge" | "vague"; excerpt: string; weight: number }
 const AMBIGUITY_RULES: Array<{ kind: AmbiguityHit["kind"]; weight: number; re: RegExp }> = [
@@ -162,7 +163,7 @@ const goStatements = (body: string): string[] => {
   for (const line of body.split("\n")) { cur.push(line); for (const ch of line) { if (ch === "{") depth++; else if (ch === "}") depth--; } if (depth === 0 && cur.join("").trim()) { out.push(cur.join("\n").trim()); cur = []; } }
   return out;
 };
-const reEsc = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const reEsc = escapeRegex;
 /** Only an issue that says the target behaves like its siblings makes the transplant binding; a list of acceptable outputs is the spec itself and never does. */
 /** The last CamelCase word that at least two sibling type names share (IntFlag, BoolFlag -> Flag): the family a sentence can name as "the other flags". */
 const familyStem = (types: string[]): string | null => { const n = new Map<string, number>(); for (const t of types) { const w = /[A-Z][a-z0-9]*$/.exec(t)?.[0]; if (w && w !== t) n.set(w, (n.get(w) ?? 0) + 1); } const best = [...n].sort((a, b) => b[1] - a[1])[0]; return best && best[1] >= 2 ? best[0] : null; };

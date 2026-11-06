@@ -23,6 +23,7 @@ import { safeGit, safeGitArgs, safeGitEnv } from "../util/safe_git.ts";
 import { ATTEMPT_EXCLUDES } from "./attempts.ts";
 import type { ResolvedSite } from "./exec_spec.ts";
 import { GO_PROBE_FORMAT, baseText, parseGoProbeCases, parseProbeOutput, probeIntake, readTournamentInput, runGoProbe, splitProbeBlock, toolLessLlm, type LlmCall, type ProbeRunResult } from "./tournament.ts";
+import { escapeRegex } from "../util/regex_escape.ts";
 
 export const nrdEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_NRD !== "0";
 const MAX_EDITED = 8, MAX_PKG_BYTES = 120_000, SCRATCH_PREFIX = "loki-nrd-";
@@ -67,7 +68,7 @@ export function outputSites(files: Record<string, string>, names: string[], cap 
 }
 /** Same-package definitions that call one of `names` (a Go method is matched by its method name). */
 export function callersOf(names: string[], files: Record<string, string>): string[] {
-  const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const esc = escapeRegex;
   const calls = names.map((n) => (n.includes(".") ? new RegExp(`\\.${esc(n.split(".").pop()!)}\\s*\\(`) : new RegExp(`(?:^|[^\\w.])${esc(n)}\\s*\\(`, "m")));
   const out = new Set<string>();
   for (const [path, src] of Object.entries(files)) {
@@ -302,7 +303,7 @@ export function replayFindings(base: GoTestRun, now: GoTestRun, tests: { base: s
 
 /** The probe case's source line(s). */
 export function caseSnippet(program: string, id: string, max = 600): string {
-  const lines = program.split("\n"), at = lines.findIndex((l) => new RegExp(`^\\s*lokiProbe\\(\\s*"${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`).test(l));
+  const lines = program.split("\n"), at = lines.findIndex((l) => new RegExp(`^\\s*lokiProbe\\(\\s*"${escapeRegex(id)}"`).test(l));
   if (at < 0) return "";
   let end = at + 1; while (end < lines.length && !/^\s*lokiProbe\(/.test(lines[end]!) && !/^\}\s*$/.test(lines[end]!)) end++;
   return lines.slice(at, end).map((l) => l.trim()).join(" ").slice(0, max);
