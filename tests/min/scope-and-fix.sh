@@ -2828,7 +2828,7 @@ res("buildFixBrief carries the hints when given and is unchanged when not", fb.i
 const rb = buildFixResumeBrief([], null, null, 0, [], h), rb0 = buildFixResumeBrief([], null, null, 0, []);
 res("buildFixResumeBrief carries the hints when given and is unchanged when not", rb.includes(h) && !rb0.includes(h) && rb.replace(`${h}\n\n`, "") === rb0);
 const cr = readFileSync(root + "/loki-ts/src/util/conflict_resume.ts", "utf8"), fx = readFileSync(root + "/loki-ts/src/engine10/stages/fix.ts", "utf8");
-res("wiring: resumeForCoverage appends siteHints to the coverage brief (claim or plain) and fix.ts passes siteHints to both briefs", /const hints = siteHints\(ctx\), base = claims \? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith\(ctx, first, firstSession, hints \? `\$\{base\}/.test(cr) && /const hints = siteHints\(ctx\);/.test(fx) && /holdoutFailed, hints\)/.test(fx) && /\), hints\)\); \/\/ one session/.test(fx));
+res("wiring: resumeForCoverage appends siteHints to the coverage brief (claim or plain) and fix.ts passes siteHints to both briefs", /const hints = siteHints\(ctx\), base = claims \? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith\(ctx, capped, firstSession, hints \? `\$\{base\}/.test(cr) && /const hints = siteHints\(ctx\);/.test(fx) && /holdoutFailed, hints\)/.test(fx) && /\), hints\)\); \/\/ one session/.test(fx));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/site-hints.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "site-hints unit script crashed or exited non-zero"
