@@ -24,8 +24,8 @@ export type ConsultTrigger = "stop" | "red-verify" | "open-choice";
 export const CONSULT_FILE = "opus-consult.json";
 /** claude-opus-5-5: Claude Opus 5.5, $4 / $20 per MTok, cache read $0.20 (claude-api skill, 2026-10-06; loki-ts/data/model-pricing.json "opus"). */
 export const CONSULT_MODEL_DEFAULT = "claude-opus-5-5";
-const MAX_TOKENS = 1500; // a diagnosis and an intended behavior, not code; thinking cannot be disabled on Opus 5.5, so "low" effort bounds it
-const CAP = { task: 6000, evidence: 3000, diff: 6000, code: 8000 };
+const MAX_TOKENS = 1200; // a diagnosis and an intended behavior, not code; thinking cannot be disabled on Opus 5.5, so "low" effort bounds it
+const CAP = { task: 5000, evidence: 2500, diff: 5000, code: 6000 }; // about 5k input tokens: measured on cli-2418 (bench, 2026-11-06), 23k chars with a 1h cache write cost $0.077 per consult
 
 export const consultEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_OPUS_CONSULT);
 /** Never-stop is on with the knob unless the run explicitly asks a person (LOKI_E10_INTAKE_ASK=1). */
@@ -53,7 +53,7 @@ export function consultCallFor(model: string, lokiDir: string, env: NodeJS.Proce
     } catch { return { text: null, usd: null, outcome: "transport" }; }
   };
   return async (system, prompt, phase) => {
-    const r = await toolLessCall({ model, system, prompt, maxTokens: MAX_TOKENS, thinking: "low", timeoutMs, ledger: { lokiDir, phase } });
+    const r = await toolLessCall({ model, system, prompt, maxTokens: MAX_TOKENS, thinking: "low", timeoutMs, ledger: { lokiDir, phase }, noCache: true });
     return { text: r.outcome.kind === "ok" ? r.outcome.value : null, usd: r.usd, outcome: r.outcome.kind };
   };
 }
@@ -63,7 +63,7 @@ export function __setConsultCallForTests(c: ConsultCall | null): void { callOver
 
 export const CONSULT_SYSTEM =
   "You advise a fast, cheaper coding agent that is working on a task in a repository. You have no tools: read the task, the evidence and the code below. " +
-  "Reply in at most 180 words, plain text, exactly two labeled parts. DIAGNOSIS: what is wrong or what the agent is missing, naming files, functions and lines. " +
+  "Reply in at most 120 words, plain text, exactly two labeled parts. DIAGNOSIS: what is wrong or what the agent is missing, naming files, functions and lines. " +
   "INTENDED: the behavior the task most likely wants, concrete enough to implement (names, values, edge cases). Never ask a question and never refuse for ambiguity: " +
   "when the task can be read two ways, pick the reading its author most likely meant, keep existing tests and documented behavior true where they do not contradict it, and say why in one sentence.";
 const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n)}\n[... truncated]` : s);
