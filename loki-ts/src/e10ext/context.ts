@@ -29,6 +29,7 @@ export const FIXED_RULES = [
   "- Before editing a function, open the file and read the whole function, not only the snippet or suggested code quoted in the task (that text is a hint, not the spec). Make the branch you change match its sibling branches in that function: append, return or pass through the same variables they use (raw or normalized input), and add a test case that tells those two apart if the function normalizes input.",
   "- Implement the fix the issue prefers; add a fallback or workaround only on top of it, never in its place.",
   "- Run the impacted tests named below and any other targeted tests you need (the Project Model commands below say how), not the package's full suite and never npm test, nx test or another workspace-wide run: after you stop the harness re-runs your checks, and the full suite when the diff's risk tier is medium or high; a pass that exists only in your reply does not count. Run tests with the exact command the Project Model lists, never a shortened variant that changes how imports resolve; never create files or symlinks in a test directory to make an import work.",
+  "- Do not edit test, build, lint or type-check config (vitest, jest, vite, tsconfig, eslint) or a lockfile unless the task asks for it. If a listed command cannot start because of that config, leave the config alone, say so in your reply, and continue without that check.",
   "- Never leave a long-lived server running.",
   "- Never kill processes.",
   "- Write no documentation unless the task explicitly asks for it, except the release-note fragment a repository convention listed below requires. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.",
@@ -45,7 +46,7 @@ const shq = (w: string): string => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${w.repla
 const detectedInterpreters = (tm: TestMap | undefined, repoDir: string, d: ContextDeps): string[] => [...new Set((tm?.runners ?? []).flatMap((runner) => { try { const c = d.cmd({ runner, path: "" } as TestRef, repoDir)[0]; return c ? [`${shq(c.startsWith(`${repoDir}/`) ? c.slice(repoDir.length + 1) : c)} (${runner})`] : []; } catch { return []; } }))]; // RUN5-C1i: executable per detected runner via the test-run resolver; none detected, none invented
 export function briefContext(ctx: RunContext, d: ContextDeps): string { return briefRecord(ctx, d).text; }
 /** L021/L022: the brief context, the exact file list it names (brief_files) and, for a haiku or sonnet executor, the context pack it carries. No model (fix stage) or an Opus model: the text is byte-identical to briefContext before L021. */
-export interface BriefRecord { text: string; files: string[]; pack: Omit<ContextPack, "text"> | null }
+export interface BriefRecord { text: string; files: string[]; pack: Omit<ContextPack, "text"> | null; packText?: string /* the pack block alone (the patch protocol's dossier) */ }
 export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): BriefRecord {
   const unit = unitBrief(); // D61-11: a unit brief is its pack files only
   if (unit !== null) return { text: unit, files: unit ? unit.split("\n").slice(1) : [], pack: null };
@@ -82,5 +83,5 @@ export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): Br
   ].filter(Boolean).join("\n\n");
   if (!pack) return { text, files, pack: null };
   const { text: _packText, ...record } = pack;
-  return { text, files: [...new Set([...files, ...pack.files])], pack: record };
+  return { text, files: [...new Set([...files, ...pack.files])], pack: record, packText: pack.text };
 }
