@@ -15,7 +15,7 @@ import { isAbsolute, join, resolve, sep } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
 import { envWithPwd } from "./worker_proc.ts";
 import { permissionPolicyMode } from "../providers/claude_flags.ts";
-import { allowFor, appendDenial, fenceDenied, fenceEnabled } from "../util/config_fence.ts";
+import { allowFor, appendDenial, fenceDenied, fenceEnabled, harnessOutputs } from "../util/config_fence.ts";
 
 // Host-guard hook timeout, seconds. Mirrors _loki_hook_timeout in autonomy/run.sh (same env var, same default, same validation).
 export const HOOK_TIMEOUT_DEFAULT_S = 30;
@@ -206,12 +206,12 @@ export function createConfigFenceHook(cwd: string, env: NodeJS.ProcessEnv = proc
   let allowed: string[] = [];
   try { const a = JSON.parse(env["LOKI_E10_FENCE_ALLOW"] ?? "[]") as unknown; if (Array.isArray(a)) allowed = a.filter((x): x is string => typeof x === "string"); } catch { /* none */ }
   const wrote = new Set<string>(); // new test-dir config files this session wrote: editable again in the same session
-  const allow = allowFor(env["LOKI_E10_FENCE_TASK"] ?? "", allowed);
+  const allow = allowFor(env["LOKI_E10_FENCE_TASK"] ?? "", allowed), outputs = harnessOutputs(cwd, env); // HARNESS-OUTPUTS: the exact .loki/ files this stage's brief names
   return async (input: unknown) => {
     const d = input !== null && typeof input === "object" ? (input as Record<string, unknown>) : {};
     const ti = d["tool_input"] !== null && typeof d["tool_input"] === "object" ? (d["tool_input"] as Record<string, unknown>) : {};
     if (!env["LOKI_E10_STAGE"]) return {};
-    const hit = fenceDenied(String(d["tool_name"] ?? ""), ti["file_path"], cwd, fenceEnabled(env["LOKI_E10_STAGE"], env) ? (rel) => allow(rel) || wrote.has(rel) : () => true, true, (rel) => wrote.add(rel)); // .loki/ (the harness's run state) is denied in every engine10 stage; the config fence only when it is on
+    const hit = fenceDenied(String(d["tool_name"] ?? ""), ti["file_path"], cwd, fenceEnabled(env["LOKI_E10_STAGE"], env) ? (rel) => allow(rel) || wrote.has(rel) : () => true, true, (rel) => wrote.add(rel), outputs); // .loki/ (the harness's run state) is denied in every engine10 stage except the files its brief names; the config fence only when it is on
     if (!hit) return {};
     if (env["LOKI_E10_FENCE_DENYLOG"] && !hit.rel.startsWith(".loki")) appendDenial(env["LOKI_E10_FENCE_DENYLOG"], hit.rel, env["LOKI_ITERATION"] ?? ""); // the receipt must show a skipped config edit; the runner merges this private log
     return hostGuardDecision(hit.reason);

@@ -85,6 +85,8 @@ export interface SessionRunOptions {
   /** Pins this session's model for its tier (E-45 Wall on sonnet); unset inherits the run model. */
   model?: string;
   resumeSessionId?: string; suiteCmds?: string[]; // MW-2: provider session to resume (LOKI_E10_FIX_RESUME), unset starts fresh; L026: full-suite command lines the stream parser counts
+  outputs?: string[]; // HARNESS-OUTPUTS: absolute paths this session's own brief tells it to write (plan-output.txt, plan-scope.json, an answer json); the .loki/ run-state deny lets exactly these through and nothing else
+  maxTurns?: number; // a tighter turn cap than the stage budget's (claude SDK loop: the session ends with exit 98, harness-owned); unset keeps the derived cap
   maxOutputTokens?: number; /* claude: per-response output limit, CLAUDE_CODE_MAX_OUTPUT_TOKENS; unset keeps the provider default */ effort?: string; // EL-W0-06, L1: provider reasoning effort; omitted when unset so the provider default applies
 }
 export interface SessionResult {

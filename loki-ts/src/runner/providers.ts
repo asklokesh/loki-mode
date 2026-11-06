@@ -42,7 +42,7 @@ import { consumeSdkStream, type StopRules, type StreamMsg } from "./sdk_stream_p
 import { writeSessionId } from "./session_resume.ts";
 import { createTrimHook } from "./trim.ts";
 import { createConfigFenceHook, createHostGuardHook, HOST_GUARD_SCRIPT, hookTimeoutSeconds } from "./host_guard.ts";
-import { fenceEnabled, fencedDenyRules } from "../util/config_fence.ts";
+import { fenceEnabled, fencedDenyRules, harnessOutputs, stateDenyRules } from "../util/config_fence.ts";
 import { createStopChecksHook, parseStopChecks, STOP_HOOK_MARGIN_S } from "./stop_checks.ts";
 import { advisorPair, probeAdvisor, ROUTER_ADVISOR_MODEL } from "./router/advisor_probe.ts";
 import { advisorOnlyEnabled, routerEnabled, routerPreset, sessionPlanEnabled } from "./router/flag.ts";
@@ -466,7 +466,7 @@ function cliSettingsJson(hostGuard: boolean, router: Partial<NonNullable<RouterS
 // and MultiEdit); a file the session creates is not covered here, the restore after the session (engine10/session.ts) removes it.
 type WriteFence = { permissions: { blockWritesOutsideWorkingDirectories?: true; deny?: string[] } };
 function implementWriteFence(cwd?: string): WriteFence | undefined { // cwd given: the CLI route, which has no in-process hook (the SDK route denies through createConfigFenceHook)
-  const stage = process.env["LOKI_E10_STAGE"], deny = [...(cwd && stage ? [`Edit(/${resolve(cwd, ".loki")}/**)`] : []), ...(cwd && fenceEnabled(stage) ? fencedDenyRules(cwd, process.env) : [])]; // .loki/ run state in every engine10 stage
+  const stage = process.env["LOKI_E10_STAGE"], deny = [...(cwd && stage ? stateDenyRules(cwd, harnessOutputs(cwd, process.env)) : []), ...(cwd && fenceEnabled(stage) ? fencedDenyRules(cwd, process.env) : [])]; // .loki/ run state in every engine10 stage, except the exact files the stage brief names (HARNESS-OUTPUTS)
   if (stage !== "implement" && deny.length === 0) return undefined;
   return { permissions: { ...(stage === "implement" ? { blockWritesOutsideWorkingDirectories: true as const } : {}), ...(deny.length > 0 ? { deny } : {}) } };
 }

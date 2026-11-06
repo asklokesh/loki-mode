@@ -262,13 +262,13 @@ sessions() { wc -l < "$ITERS" | tr -d ' '; }
 # replay: an identical SPEC_CONFLICT rerun returns the known verdict with no session.
 new_repo "$T/repo-replay"
 TASK_SC="add a multiply(a, b) function to calc.ts"
-run_engine 10 "$TASK_SC" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict
+run_engine 10 "$TASK_SC" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict LOKI_E10_OPUS_CONSULT=0 # the legacy stop (opt-out); never-stop runs never replay a stop
 RIDSC="$RID"; S10="$(sessions)"
 [ "$(outcome)" = "BLOCKED" ] && [ "$RC" -eq 4 ] && ok "replay: run 1 ends BLOCKED (SPEC_CONFLICT), exit 4, $S10 sessions" || { bad "replay: run 1 outcome '$(outcome)' rc $RC"; dump; }
 lv="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("loki_version"))' "$REPO/.loki/runs/$RIDSC/receipt.json" 2>/dev/null)"
 [ "$lv" = "$VERSION_NOW" ] && ok "replay: receipt.json records loki_version $lv" || bad "replay: receipt loki_version is '$lv', want $VERSION_NOW"
 before_runs="$(nruns)"; t0="$(date +%s)"
-run_engine 11 "$TASK_SC" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict
+run_engine 11 "$TASK_SC" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict LOKI_E10_OPUS_CONSULT=0
 dt=$(( $(date +%s) - t0 ))
 [ "$RC" -eq 4 ] && ok "replay: run 2 exits 4" || { bad "replay: run 2 exit $RC, want 4"; dump; }
 [ "$(sessions)" = "0" ] && [ "$(nruns)" = "$before_runs" ] && ok "replay: run 2 started 0 sessions and wrote no run (no session.started anywhere)" || bad "replay: run 2 sessions $(sessions), runs $before_runs -> $(nruns)"

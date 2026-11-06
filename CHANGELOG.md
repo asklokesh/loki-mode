@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.138.0 (2026-11-06)
+
+Loki no longer stalls or stops on an open question, its plan step can write its own plan again, and Haiku runs spend less on turns that never change the result.
+
+### Added
+- Never-stop plus one Opus consult (LOKI_E10_OPUS_CONSULT, default on, =0 opts out): a run that would stop on an ambiguous or conflicting spec implements its best reading, discloses the choice and caps at PARTIAL; one tool-less Opus call fires only at a would-be stop, a red verify after the first fix round, or an open choice the run would settle itself.
+
+### Changed
+- Cost (default on, each with an =0 opt-out): the claim re-ask that never edited is skipped, the coverage turn is capped at 10 turns (LOKI_E10_COVERAGE_MAX_TURNS), and a fix round is skipped when only the full suite is red for reasons the change cannot reach (LOKI_E10_SUITE_FIX_SKIP).
+
+### Fixed
+- The run-state guard no longer blocks the files a stage's own brief tells it to write (plan output and scope, project-model answer, spec criteria); run record files stay denied even if listed.
+
 ## v11.137.4 (2026-11-06)
 
 Loki on Haiku finishes tasks about 14% faster with the same outcomes.

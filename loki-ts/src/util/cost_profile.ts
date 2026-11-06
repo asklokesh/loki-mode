@@ -49,6 +49,17 @@ export function applyCostProfile(
   return `cost profile ${n}: ${levers.length ? levers.map((k) => `${k}=${patch[k]}`).join(" ") : "all levers already set by env"}`;
 }
 
+/** LOKI_E10_LEAN_CALLS (default on; =0/off/false opts out): skips the coverage claim re-ask "-c2", whose result changed no outcome on the
+ *  20-task Haiku bench (v11.137.1, patch off: 11 of 11 sessions edited nothing, and 3 of 3 on v11.137.0; 4.6% of the arm's dollars).
+ *  An explicit LOKI_E10_CLAIM_CHECK=1 keeps the call; =0 still turns it off. */
+export const leanCallsEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !["0", "off", "false", "no"].includes((env.LOKI_E10_LEAN_CALLS ?? "").trim().toLowerCase());
+/** A model call gated by its own knob `v` under LOKI_E10_LEAN_CALLS: an off value turns it off, any other set value turns it on, unset follows the lean knob (off when lean). */
+export const keptUnderLean = (v: string | undefined, env: NodeJS.ProcessEnv = process.env): boolean => {
+  const s = (v ?? "").trim().toLowerCase();
+  if (["0", "off", "false", "no"].includes(s)) return false;
+  return s !== "" || !leanCallsEnabled(env);
+};
+
 /** One line when an explicit LOKI_ROUTER other than auto wins over `flag` (--haiku, --cost lean); '' otherwise. bin/loki and autonomy/loki print the same line. */
 export function routerKeptNote(flag: string, env: NodeJS.ProcessEnv): string {
   const r = (env.LOKI_ROUTER ?? "").trim();

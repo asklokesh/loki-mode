@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { diffShortstat, diffSignature, untrackedList } from "../util/anti_loop.ts"; export { diffShortstat, diffSignature, untrackedList }; // watchdog diff signature lives with the other tree-change detectors
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path"; import { tmpdir } from "node:os"; import { randomUUID } from "node:crypto";
+import { dirname, join, resolve } from "node:path"; import { tmpdir } from "node:os"; import { randomUUID } from "node:crypto";
 import { archivePriorCosts, writeProviderCost, stageMedianGapMs } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
 import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
@@ -17,7 +17,7 @@ import { routerEnabled } from "../runner/router/flag.ts";
 import { exitKind, routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 import { clampBashTimeoutEnv, envWithPwd, pinBashShellEnv, killGroupWithGrace, reapLiveGroup } from "../runner/worker_proc.ts"; import { engine10StaticPrefix, sessionPinModel } from "../runner/providers.ts"; export { sessionPinModel }; import { capToSessionPin } from "../runner/model_rank.ts"; import { idleGapMs, prefixParts, prefixSha } from "../util/cost_breakdown.ts";
-import { allowFor, appendFence, conflictNamed, createdOf, markCreated, fenceEnabled, fenceTask, healRecord, mergeDenials, restoreFenced, snapshotFenced } from "../util/config_fence.ts"; // E1: config and lockfile write fence
+import { allowFor, appendFence, conflictNamed, createdOf, markCreated, fenceEnabled, fenceTask, HARNESS_OUTPUTS_ENV, healRecord, mergeDenials, restoreFenced, snapshotFenced } from "../util/config_fence.ts"; // E1: config and lockfile write fence
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
 import { calculateCostFromRecords, partialUsagePath, readEfficiencyDir, recordPartialStreamCost } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
@@ -77,6 +77,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   env["LOKI_E10_TIER"] = opts.tier; if (cfg.provider === "claude" && opts.stopChecks?.checks.length) env["LOKI_E10_STOP_CHECKS"] = JSON.stringify(opts.stopChecks); else delete env["LOKI_E10_STOP_CHECKS"]; // in-session fix rounds: only the per-call option sets it
   env["LOKI_E10_PROVIDER"] = cfg.provider;
   if (opts.disallowedTools) env["LOKI_E10_DISALLOWED_TOOLS"] = opts.disallowedTools; else delete env["LOKI_E10_DISALLOWED_TOOLS"];
+  if (opts.outputs?.length) env[HARNESS_OUTPUTS_ENV] = JSON.stringify(opts.outputs.map((p) => resolve(opts.cwd ?? process.cwd(), p))); else delete env[HARNESS_OUTPUTS_ENV]; // HARNESS-OUTPUTS: only the per-call option sets it
   if (opts.suiteCmds?.length) env["LOKI_E10_SUITE_CMDS"] = JSON.stringify(opts.suiteCmds); else delete env["LOKI_E10_SUITE_CMDS"]; if (opts.resumeSessionId) env["LOKI_E10_RESUME_SESSION"] = opts.resumeSessionId; else delete env["LOKI_E10_RESUME_SESSION"]; // MW-2: only the per-call option sets it
   // Only ever ADD variables here; never blank an inherited var for a non-claude provider (LOKI_HOST_GUARD gates resolveProvider's fail-closed throw, providers.ts:63).
   if (cfg.provider === "claude") {
@@ -85,7 +86,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
     else env["LOKI_SDK_LOOP"] = "1";
     env["LOKI_HOST_GUARD"] = "1";
     env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"; // an engine stage never needs background work; a Bash at its timeout stops instead of auto-backgrounding and pinning a finished session
-    if (process.env["LOKI_E10_STAGE"]) delete env["LOKI_E10_MAX_TURNS"]; clampBashTimeoutEnv(env, opts.limitS); pinBashShellEnv(env); if (opts.maxOutputTokens) env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = String(opts.maxOutputTokens); // a nested run inside a stage session inherits the derived cap, never an explicit user value; Wall author output bound, other stages keep the inherited value
+    if (process.env["LOKI_E10_STAGE"]) delete env["LOKI_E10_MAX_TURNS"]; clampBashTimeoutEnv(env, opts.limitS); if (opts.maxTurns && opts.maxTurns > 0) env["LOKI_E10_MAX_TURNS"] = String(Math.min(Number(env["LOKI_E10_MAX_TURNS"]) || opts.maxTurns, opts.maxTurns)); pinBashShellEnv(env); if (opts.maxOutputTokens) env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = String(opts.maxOutputTokens); // a nested run inside a stage session inherits the derived cap, never an explicit user value; Wall author output bound, other stages keep the inherited value
     if (env["LOKI_E10_PREFIX"] === undefined) env["LOKI_E10_PREFIX"] = "lean"; // TEN-COST-13: lean cache-stable prefix by default; an explicit user value (including off) wins
     const forced = process.env["LOKI_MODEL_OVERRIDE"] || sessionPinModel(process.env); // the override, else the session pin (after the override, ahead of the per-tier vars; throws on an unrecognized pin)
     if (forced) for (const t of ["PLANNING", "DEVELOPMENT", "FAST"]) env[`LOKI_CLAUDE_MODEL_${t}`] = forced;

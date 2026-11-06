@@ -93,6 +93,7 @@ export const planStage: Stage = {
       limitS: planStage.limitS,
       signal,
       cwd: ctx.repoDir,
+      outputs: [outputPath, join(ctx.runDir, PLAN_SCOPE_FILE)], // HARNESS-OUTPUTS: the two files the brief names; the rest of .loki/ stays denied
       ...pr.pinFor(onSonnet, ctx.model),
     });
     let session = await runPlan(false);

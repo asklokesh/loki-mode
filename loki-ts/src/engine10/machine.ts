@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { hooks } from "./hooks.ts"; import { wallConcurrent } from "../util/wall_knobs.ts"; import { wallEnabled } from "./sizing.ts";
 import { treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
+import { assumptionOf, consultAvailable, neverStopActive, readConsults, type NeverStopRecord } from "../features/opus_consult.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./failures.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, MIN_ATTEMPT_WINDOW_S, runExtraAttempts } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
@@ -58,6 +59,16 @@ const harnessOnlyFail = (d: Obj | undefined): boolean => { const f = (Array.isAr
 export const onlyCollateralRed = (d: Obj | undefined): boolean => { const col = Array.isArray(d?.collateral_same_error) ? (d.collateral_same_error as unknown[]).map(String) : [], b = Array.isArray(d?.blocking_checks) ? (d.blocking_checks as unknown[]).map(String) : []; return col.length > 0 && b.length > 0 && b.every((n) => col.includes(n) || n.startsWith("full suite")); };
 /** Cost step b: every blocking group is a full-suite failure or a startup failure: a second fix round rarely fixes a suite the change did not touch or a runner that never started (failures.ts environmentShaped), so one round is the cap there. */
 export const onlyFullSuiteRed = (d: Obj | undefined): boolean => Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0 && (d.failures_grouped as { signature?: unknown; sample?: unknown }[]).every((g) => String(g.signature ?? "").startsWith("full suite") || environmentShaped([{ signature: String(g.signature ?? ""), sample: String(g.sample ?? "") }]));
+/** LOKI_E10_SUITE_FIX_SKIP (default on; =0/off/false opts out): no fix round at all when every blocking group is a full-suite or startup failure (onlyFullSuiteRed),
+ *  no failing full-suite id names a file the change edited, no held-out check failed, and a targeted test of the change ran and passed. On the v11.137 Haiku bench arms, 21 such first rounds turned none of their runs
+ *  green (18 made no edit). The skip is a NOT PROVEN line on the receipt and the verify stays red, so such a run is never VERIFIED. */
+export const suiteFixSkipEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SUITE_FIX_SKIP"] ?? "").trim());
+export const SUITE_FIX_SKIP_NOTE = "fix round skipped: only full-suite failures remained while the change's own targeted tests passed, so those failures are NOT PROVEN unrelated to the change (LOKI_E10_SUITE_FIX_SKIP=0 runs the round)";
+export const suiteOnlyRed = (d: Obj | undefined): boolean => {
+  const checks = Array.isArray(d?.checks) ? (d.checks as Obj[]) : [], changed = (Array.isArray(d?.changed_files) ? d.changed_files : []).map(String).filter((f) => f && !f.startsWith(".loki/"));
+  const namesChanged = checks.some((c) => c?.result === "fail" && String(c.name ?? "").startsWith("full suite") && (Array.isArray(c.ids) ? c.ids : []).some((i) => changed.some((f) => String(i).includes(f)))); // a failing id in a file the change edited is the change's own failure: the round runs
+  return onlyFullSuiteRed(d) && !namesChanged && !(Number(d?.holdout_failed ?? 0) > 0) && checks.some((c) => c?.result === "pass" && typeof c.n === "number" && c.n > 0 && !/^(full suite|lint:|security scan|select-tests|holdout)/.test(String(c.name ?? "")));
+};
 export const hasFailures = (d: Obj | undefined): boolean => (Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0 && !harnessOnlyFail(d)) || (typeof d?.holdout_failed === "number" && d.holdout_failed > 0); // C-C4b: a held-out failure is only an opaque count
 /** The fix loop's input after a verify stopped at its limit: the earlier failure groups minus those whose check the stopped verify saw pass
  *  (FireLater#24: fix round 2 was fed a Wall failure the stopped verify had already seen pass, 27 of 27). A group belongs to the check whose
@@ -331,13 +342,22 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         }
         let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
         let noopSig: string | null = null; // anti-loop: the verify signature that fed the last fix round that left the tree unchanged
-        for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && !(round > 1 && onlyFullSuiteRed(outputs.verify)) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
+        const suiteSkip = suiteFixSkipEnabled() && !fatal && !capHit && outputs.implement?.exit === "done" && hasFailures(outputs.verify) && suiteOnlyRed(outputs.verify);
+        if (suiteSkip) { outputs.verify = { ...outputs.verify, not_proven: [...(Array.isArray(outputs.verify?.not_proven) ? outputs.verify.not_proven : []), SUITE_FIX_SKIP_NOTE] }; ctx.emit("loop.repeat", "fix", { reason: SUITE_FIX_SKIP_NOTE, round: 0, skipped: true }); }
+        for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && !((round > 1 || suiteSkip) && onlyFullSuiteRed(outputs.verify)) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
           const wallBefore = wallSignature(outputs, ctx.repoDir);
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;
+          { const ns = (outputs.implement?.never_stop as (NeverStopRecord & { pending?: boolean })[] | undefined) ?? [], last = ns[ns.length - 1]; if (last?.pending && fx.status === "completed") { delete last.pending; last.assumption = assumptionOf(String(outputs.fix?.diagnosis ?? "")); last.consulted = readConsults(ctx.runDir).some((c) => c.stage.startsWith("fix") && c.advice !== null); } } // LOKI_E10_OPUS_CONSULT: the round after a settled fix conflict names the choice it made
           // FireLater#21: a fix-round conflict over failures verify showed failing the same way on base, in tests that only import a named file, is checked by one
           // re-verify (no model session): after this round those failures are pre-existing, so a run with nothing else failing is delivered capped, never SPEC_CONFLICT.
           if (fx.status === "completed" && outputs.fix?.exit === "spec_conflict" && onlyCollateralRed(outputs.verify)) { const v = await runStage("verify", true); if (mustJump("verify", v)) break; if (!hasFailures(outputs.verify)) break; }
+          if (fx.status === "completed" && outputs.fix?.exit === "spec_conflict" && neverStopActive()) { // LOKI_E10_OPUS_CONSULT never-stop: never pinned as the run's conflict; a round left gets the never-stop brief (and the consult), the last round delivers the tree as it is to seal (capped at PARTIAL, FAILED while red)
+            const more = round < MAX_FIX_ROUNDS + extraRounds;
+            outputs.implement = { ...outputs.implement, never_stop: [...((outputs.implement?.never_stop as unknown[] | undefined) ?? []), { stage: "fix", conflict: String(outputs.fix.spec_conflict_reason ?? "unspecified"), assumption: null, consulted: false, ...(more ? { pending: true } : {}) }] };
+            if (more) continue;
+            break;
+          }
           if (fx.status === "completed" && outputs.fix?.exit === "spec_conflict") { outputs.implement = { ...outputs.implement, exit: "spec_conflict", spec_conflict_reason: outputs.fix.spec_conflict_reason ?? null }; break; } // FC-FIX-CONFLICT-STALLED: a confirmed fix-round conflict is the implement conflict for seal, output and the supervisor
           const noop = fx.status === "completed" && repeatedNoopFix(outputs.fix), fedBy = sigs[sigs.length - 1] ?? null;
           // Two no-op rounds in a row against the same fully-run failure: the model is looping. A crashed verify between them never matches (sigOf), so a flaky or harness-owned verify still gets its re-run (A-113b).
@@ -359,6 +379,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
               ctx.emit("route.escalated", "fix", { ...up });
               continue;
             }
+            if (round === 1 && round < MAX_FIX_ROUNDS + extraRounds && consultAvailable(ctx.runDir)) continue; // LOKI_E10_OPUS_CONSULT: a red verify after the first fix round gets the one consult in round 2 before any stall stop
             stopped = "stalled"; break;
           }
         }

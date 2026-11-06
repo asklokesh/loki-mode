@@ -1,6 +1,7 @@
 // FC-19: a LOKI_SPEC_CONFLICT from implement gets exactly one resume with a correction before it is believed. No wording of the model's reason is
 // inspected (L0): the model itself says whether its conflict was only about Loki's own rules or about the task.
 import { isOff } from "../council/role_agents.ts";
+import { neverStopBrief } from "../features/opus_consult.ts";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -8,6 +9,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { readSessionId } from "../runner/session_resume.ts";
 import { capToRunTier, wallPinModel } from "../engine10/sizing.ts";
+import { keptUnderLean } from "./cost_profile.ts";
 /** The referee and the legacy re-author never run above the run's own model (a haiku run keeps them on haiku), like every other auxiliary Wall pin. */
 const refereeModel = (ctx: RunContext): string => capToRunTier(wallPinModel(), ctx.model, ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE"]);
 import { assertionCount, changedAssertion, changedRegion, editScopeViolation, quoteInSpec, testSpans, wallAnchor, type WallDefect } from "./wall_owned.ts";
@@ -98,15 +100,29 @@ async function resumeWith(ctx: RunContext, first: SessionRunOptions, firstSessio
   return { session: { ...(terminal ? session : firstSession), durationS: firstSession.durationS + session.durationS }, iterationId };
 }
 export const resumeAfterEmptyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, challenge = false): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, challenge ? EMPTY_DONE_CHALLENGED : EMPTY_DONE_CORRECTION, "-e");
+/** LOKI_E10_OPUS_CONSULT never-stop: one resume (suffix "-n") that implements the most likely intent instead of stopping. A resume that errors, is killed, ends without a marker or restates the conflict leaves the conflict standing (BLOCKED). */
+export const resumeNeverStop = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, reason: string, advice: string | null): Promise<{ session: SessionResult; iterationId: string }> =>
+  (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S ? Promise.resolve({ session: firstSession, iterationId: first.iterationId }) : resumeWith(ctx, first, firstSession, neverStopBrief(reason, advice), "-n");
 export const resumeAfterAlreadyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, ALREADY_DONE_CHALLENGE, "-a");
 
 // LOKI_E10_COVERAGE_RESUME (default on; =0/off/false opts out): on the lean path (plan skipped) a LOKI_DONE exit with a non-empty diff gets exactly one more turn in the same session.
 // The task text is already in that session, so the fixed brief names no task (cli-2478: the first turn fixed 2 of the 3 sites the issue named).
 export const COVERAGE_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. " + FINISH_LINE;
-// LOKI_E10_CLAIM_CHECK (default on, =0 opts out; only with LOKI_E10_COVERAGE_RESUME): the coverage turn also writes SITE lines, and a site claimed changed that is byte-identical to the base is re-asked once ("-c2"). One extra session, only when such a claim is found.
-export const claimCheckEnabled = (env = process.env): boolean => !["0", "off", "false", "no"].includes((env.LOKI_E10_CLAIM_CHECK ?? "").trim().toLowerCase());
+// LOKI_E10_CLAIM_CHECK (only with LOKI_E10_COVERAGE_RESUME): the coverage turn also writes SITE lines, and a site claimed changed that is byte-identical to the base is re-asked once ("-c2"). One extra session, only when such a claim is found.
+// Off by default under LOKI_E10_LEAN_CALLS (util/cost_profile.ts: the re-ask edited nothing in 14 of 14 bench sessions); =1 turns it on, LOKI_E10_LEAN_CALLS=0 restores the old default (on).
+export const claimCheckEnabled = (env = process.env): boolean => keptUnderLean(env.LOKI_E10_CLAIM_CHECK, env);
 export const COVERAGE_CLAIM_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. Before the last line, write one line per site in the current file: `SITE <path>:<line>: changed` or `SITE <path>:<line>: unchanged - <why>`. " + FINISH_LINE;
 export const coverageResumeEnabled = (env = process.env): boolean => !isOff(env.LOKI_E10_COVERAGE_RESUME);
+// LOKI_E10_COVERAGE_MAX_TURNS (default 10; =0/off opts out to the stage budget's cap): the coverage turn ("-c", "-c2") ends at this many turns.
+// On the v11.137 Haiku bench arms, 31 of 36 coverage turns took 2 to 8 turns; the other 5 took 13 to 33 (up to $0.031, more than the implement session), and
+// each of those tasks was merge-ready in another arm whose coverage turn took 8 or fewer. A capped turn ends like a reply without LOKI_DONE: the first result stands.
+export const COVERAGE_MAX_TURNS_DEFAULT = 10;
+export const coverageMaxTurns = (env = process.env): number | undefined => {
+  const v = (env.LOKI_E10_COVERAGE_MAX_TURNS ?? "").trim();
+  if (isOff(v)) return undefined;
+  const n = Number(v);
+  return v !== "" && Number.isInteger(n) && n > 0 ? n : COVERAGE_MAX_TURNS_DEFAULT;
+};
 
 // LOKI_E10_SITE_HINTS (default on, =0/off/false opts out): the edit-shape sites (sibling, residual, precedence) of the tree's diff as advisory text in the fix brief and the coverage turn. Never a verdict.
 export const siteHintsEnabled = (env = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_SITE_HINTS ?? "").toLowerCase());
@@ -148,12 +164,13 @@ export async function resumeForCoverage(ctx: RunContext, first: SessionRunOption
   if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationId: first.iterationId, iterationIds: [] };
   const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
   const claims = claimCheckEnabled();
-  const hints = siteHints(ctx), base = claims ? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith(ctx, first, firstSession, hints ? `${base}\n\n${hints}` : base, "-c");
+  const cap = coverageMaxTurns(), capped: SessionRunOptions = { ...first, ...(cap ? { maxTurns: cap } : {}) };
+  const hints = siteHints(ctx), base = claims ? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith(ctx, capped, firstSession, hints ? `${base}\n\n${hints}` : base, "-c");
   if (!clean(r.session)) return { session: { ...firstSession, durationS: r.session.durationS }, iterationId: r.iterationId, iterationIds: [r.iterationId] };
   if (!claims) return { ...r, iterationIds: [r.iterationId] }; // knob off: exactly main's coverage turn
   const absent = claimedChangeAbsent(ctx.repoDir, ctx.baseSha, siteClaims(r.session.summary ?? ""));
   if (!absent.length || (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { ...r, iterationIds: [r.iterationId], ...(absent.length ? { claimAbsent: absent } : {}) };
-  const r2 = await resumeWith(ctx, { ...first, iterationId: r.iterationId }, r.session, claimAbsentBrief(absent), "2");
+  const r2 = await resumeWith(ctx, { ...capped, iterationId: r.iterationId }, r.session, claimAbsentBrief(absent), "2");
   return { ...(clean(r2.session) ? r2 : { session: { ...r.session, durationS: r2.session.durationS }, iterationId: r2.iterationId }), iterationIds: [r.iterationId, r2.iterationId], claimAbsent: absent };
 }
 

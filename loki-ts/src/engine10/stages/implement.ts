@@ -11,12 +11,13 @@ import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.t
 import type { ExtraAttemptsDeps } from "../../features/attempts.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, checkExcerpt, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
 import { capStopOf, classifyExitCause, resolveModel } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
-import { adjudicateWallConflict, coverageResumeEnabled, resumeAfterAlreadyDone, resumeAfterConflict, resumeAfterEmptyDone, resumeForCoverage } from "../../util/conflict_resume.ts";
+import { adjudicateWallConflict, coverageResumeEnabled, resumeAfterAlreadyDone, resumeNeverStop, resumeAfterConflict, resumeAfterEmptyDone, resumeForCoverage } from "../../util/conflict_resume.ts";
 import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
 import { routerActive } from "../../runner/router/unit_model.ts";
 import { type ImplementExit, type RunContext, type SessionResult, type SessionRunOptions, type Stage, type StageResult, type TestMap, type TestRef, taskBlock } from "../types.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { sha256 } from "./seal.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { runPickedChoice, sha256 } from "./seal.ts";
+import { adviceBlock, assumptionOf, consultEnabled, neverStopActive, runConsult, type NeverStopRecord } from "../../features/opus_consult.ts"; import { currentDiff } from "../../runner/session_resume.ts";
 import { assumptionsBlock } from "../../features/spec_ambiguity.ts";
 import { loadSpecFile, specBriefBlock, type LoadedSpec } from "../../util/spec_file.ts";
 import { appliedTests, buildPatchBrief, patchCallFor, patchEnabled, runPatchProtocol, testConventions, type PatchCall, type PatchCheck, type PatchOutcome } from "../../features/patch_protocol.ts";
@@ -159,7 +160,9 @@ export const implementStage: Stage = {
     const resumeId = ownId ?? (chain && "id" in chain ? chain.id : undefined);
     let planChainMode: string | undefined = ownId ? "resumed (interrupted session)" : chain ? (resumeId ? "resumed" : `fresh (${(chain as { why: string }).why})`) : undefined;
     let sessionResume: string | undefined = own ? (ownId ? "resumed" : `fresh (${(own as { why: string }).why})`) : undefined;
-    const fullBrief = buildImplementBrief(task, plan, impacted, repoMap, [specBriefBlock(spec), execSpecBriefOf(ctx.runDir)].filter(Boolean).join("\n\n") || null, prior.intake?.assumptions); // LOKI_E10_EXEC_SPEC: the binding and advisory spec cases the lean Wall stage left
+    const picked = (Array.isArray(prior.intake?.assumptions) ? (prior.intake!.assumptions as unknown[]) : []).filter((a): a is string => typeof a === "string" && runPickedChoice(a)); // LOKI_E10_OPUS_CONSULT trigger open-choice: an either/or the run would settle by itself
+    const choiceAdvice = picked.length && consultEnabled() && !ownId && !signal.aborted ? await runConsult({ runDir: ctx.runDir, repoDir: ctx.repoDir, stage: "implement", trigger: "open-choice", task, evidence: picked.join("\n"), diff: null, code: bc.packText ?? bc.text }) : null;
+    const fullBrief = buildImplementBrief(task, plan, impacted, repoMap, [specBriefBlock(spec), execSpecBriefOf(ctx.runDir), ...adviceBlock(choiceAdvice)].filter(Boolean).join("\n\n") || null, prior.intake?.assumptions); // the advice joins the per-task part of the brief, never the cache-stable prefix // LOKI_E10_EXEC_SPEC: the binding and advisory spec cases the lean Wall stage left
     try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, ATTEMPT_BRIEF_FILE), fullBrief, "utf8"); } catch { /* best effort: without it the machine starts no extra attempt */ } // EXP-0010: the extra attempts after a red verify start from this exact brief
     const first: SessionRunOptions = {
       stage: "implement",
@@ -199,6 +202,13 @@ export const implementStage: Stage = {
     if (rt && !signal.aborted) session = await routeEscalate(ctx, first, session, rt, ids, () => treeIsEmpty(ctx)); // triggers b/c (and, under the preset, a no-diff already-done claim): one redo on the next rung
     if (session.markers.specConflict && !session.killed) { const r = await resumeAfterConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; if (r.iterationId !== ids[ids.length - 1]) ids.push(r.iterationId); } // FC-19: one correction, then the conflict is believed
     if (session.markers.specConflict && !session.killed && !signal.aborted) { const w = await adjudicateWallConflict(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, readOnly); if (w) { session = w.session; ids.push(...w.ids); } } // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT: a Wall-anchored conflict goes to the referee (record: outputs.wall.arbitrated)
+    let neverStop: NeverStopRecord | undefined; // LOKI_E10_OPUS_CONSULT never-stop: a headless run does not end BLOCKED on a conflict it can settle; one consult, then one resume that implements the most likely intent
+    if (session.markers.specConflict && !session.killed && !signal.aborted && neverStopActive()) {
+      const reason = session.markers.specConflict;
+      const advice = await runConsult({ runDir: ctx.runDir, repoDir: ctx.repoDir, stage: "implement", trigger: "stop", task, evidence: `The agent stopped with LOKI_SPEC_CONFLICT: ${reason}\n\nIts last message:\n${(session.summary ?? "").slice(-1500)}`, diff: currentDiff(ctx.repoDir, ctx.baseSha, 6000, true), code: bc.packText ?? bc.text });
+      const r = await resumeNeverStop(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, reason, advice); session = r.session; if (r.iterationId !== ids[ids.length - 1]) ids.push(r.iterationId);
+      if (!session.markers.specConflict) neverStop = { stage: "implement", conflict: reason, assumption: assumptionOf(session.summary), consulted: advice !== null };
+    }
     // HONEST-ALREADY-DONE: an already-done claim gets one challenge before it is believed, including a claim made in reply to the empty-done correction; after a challenge no empty-done correction follows (one extra session at most).
     // A no-diff claim the router already redid on the next rung (routeEscalate, trigger already_done_claim) was challenged in that redo's brief; an empty-done correction after it carries the challenge too.
     let challenged = false; const routerRedid = rt?.escalations.some((e) => e.trigger === "already_done_claim") ?? false;
@@ -248,6 +258,7 @@ export const implementStage: Stage = {
       ...(patch ? { patch: { status: patch.status, seconds: Math.round(patchS * 10) / 10, calls: patch.calls, applied: patch.applied, refused: patch.refused, restored: patch.restored, usd: patch.usd, log: patch.log, ...(patch.check ? { check: patch.check } : {}) } } : {}),
       ...(tournament ? { tournament } : {}),
       ...(noRegression ? { no_regression: noRegression } : {}),
+      ...(neverStop ? { never_stop: [neverStop] } : {}),
       ...(fragmentWriterOn() && session.summary ? { summary_tail: session.summary.slice(-1500) } : {}), // the release-note writer reads the final message
     };
 
