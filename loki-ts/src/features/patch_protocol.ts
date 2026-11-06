@@ -15,7 +15,8 @@ import { run } from "../util/shell.ts";
 import { withChildLedger } from "../util/child_ledger.ts";
 
 /** Default on; LOKI_E10_PATCH=0 (or off, false, no) turns it off. Every non-green end falls back to the agentic session, so the outcome floor is today's. */
-export const patchEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !["0", "off", "false", "no"].includes((env.LOKI_E10_PATCH ?? "").trim().toLowerCase());
+// Default off (opt in with 1/on/true/yes): on the v11.137.1 Haiku bench (EVAL-2026-11-06, 20 tasks) the patch protocol finished 9 runs alone and cost 5 merge-ready (9 vs 14 with it off; judge 10 vs 18) at the same median wall (212 s vs 213 s).
+export const patchEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => ["1", "on", "true", "yes"].includes((env.LOKI_E10_PATCH ?? "").trim().toLowerCase());
 
 export interface EditBlock { file: string; search: string; replace: string }
 export interface ParsedReply { blocks: EditBlock[]; needs: { file: string; start?: number; end?: number }[]; conflict: string | null; alreadyDone: string | null }

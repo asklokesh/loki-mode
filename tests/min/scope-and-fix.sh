@@ -459,7 +459,7 @@ PTASK="add a multiply(a, b) function to calc.ts"
 pev() { ev 'next((json.dumps(e["data"].get("patch")) for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), "")'; }
 PLEAN=(LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_SESSION_MODEL=haiku)
 run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=green LOKI_E10_PATCH= "${PLEAN[@]}"
-grep -q '^patch$' "$(dirname "$ITERS")/stub.log" && [ "$(grep -c '^implement ' "$ITERS")" = 0 ] && ok "patch default on: with LOKI_E10_PATCH unset the patch call runs and no agentic session is needed" || { bad "patch default on: no patch call with LOKI_E10_PATCH unset"; dump; }
+grep -q '^patch$' "$(dirname "$ITERS")/stub.log" && bad "patch default off: a patch call ran with LOKI_E10_PATCH unset" || ok "patch default off: with LOKI_E10_PATCH unset no patch call runs (the agentic session does the work)"
 run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=green LOKI_E10_PATCH=0 "${PLEAN[@]}"
 grep -q '^patch$' "$(dirname "$ITERS")/stub.log" && bad "patch opt-out: a patch call ran with LOKI_E10_PATCH=0" || ok "patch opt-out: LOKI_E10_PATCH=0 runs no patch call (today's agentic session only)"
 run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=green LOKI_E10_PATCH=1 "${PLEAN[@]}"
@@ -522,7 +522,7 @@ const run = async (d: string, replies: (string | null)[], seen: string[] = [], r
 };
 const clean = (d: string) => git(d, "status", "--porcelain") === "";
 
-res("patch: LOKI_E10_PATCH is on by default (unset or empty) and 0/off/false turn it off", pp.patchEnabled({}) === true && pp.patchEnabled({ LOKI_E10_PATCH: "" }) === true && pp.patchEnabled({ LOKI_E10_PATCH: "1" }) === true && pp.patchEnabled({ LOKI_E10_PATCH: "0" }) === false && pp.patchEnabled({ LOKI_E10_PATCH: "off" }) === false && pp.patchEnabled({ LOKI_E10_PATCH: "false" }) === false);
+res("patch: LOKI_E10_PATCH is off by default (unset or empty) and 1/on/true turn it on", pp.patchEnabled({}) === false && pp.patchEnabled({ LOKI_E10_PATCH: "" }) === false && pp.patchEnabled({ LOKI_E10_PATCH: "on" }) === true && pp.patchEnabled({ LOKI_E10_PATCH: "true" }) === true && pp.patchEnabled({ LOKI_E10_PATCH: "1" }) === true && pp.patchEnabled({ LOKI_E10_PATCH: "0" }) === false && pp.patchEnabled({ LOKI_E10_PATCH: "off" }) === false && pp.patchEnabled({ LOKI_E10_PATCH: "false" }) === false);
 { const d = repo(), o = await run(d, [`root cause: trims.\n${FIX}${ADDTEST}LOKI_DONE`]);
   res("patch green: one call, the fix and the new test applied, the real node --test check ran and passed", o.status === "green" && o.calls === 1 && o.applied.length === 2 && (o.check ?? []).join() === "patch:node:test/parse.test.js=pass" && readFileSync(join(d, "src/parse.js"), "utf8").includes("positional: arg"), JSON.stringify(o)); }
 { const d = repo(), seen: string[] = [], o = await run(d, [`${WRONG}${ADDTEST}LOKI_DONE`, `${'FILE: src/parse.js\n<<<<<<< SEARCH\n  if (t === "-") return { positional: t + "" };\n=======\n  if (t === "-") return { positional: arg };\n>>>>>>> REPLACE\n'}LOKI_DONE`], seen);
