@@ -389,7 +389,7 @@ export function uncoveredSites(e: Emitter, binding: string[], full: string, atom
 // or asks for behavior ("`Split` drops args", "`Split` should return ...", "`Split` is wrong"), or the object of a fix verb ("Fix `Split`").
 // A comparison ("like `Join` does", "as `Join` does", "see `Join`"), a negated scope ("should not change `Report`", "does not affect
 // `Report`") and a verdict of health ("`Report` is fine") never make a site defective, and neither does a span elsewhere in the sentence.
-const DEFECT_OR_ASK = /\binstead of\b|\bshould\b|\bexpected\b|\bmust\b|\bneeds? to\b|\b(?:bug|wrong|broken|mishandl\w*|drops?|dropped|fails?|failing|ignores?|ignored|incorrect\w*|crash\w*|panics?|regress\w*|missing|loses?|lost|never|doesn't|does not|isn't|is not)\b/i; // explicit defect or request words only: "returns" and "gives" describe behavior, they do not name a defect
+const DEFECT_OR_ASK = /\binstead of\b|\bshould\b|\bexpected\b|\bmust\b|\bneeds? to\b|\b(?:bug|wrong|broken|mishandl\w*|drops?|dropped|fails?|failing|ignores?|ignored|incorrect\w*|crash\w*|panics?|regress\w*|missing|loses?|lost|never|doesn't|does not|isn't|is not|stops? at|stops? on)\b/i; // explicit defect or request words only: "returns" and "gives" describe behavior, they do not name a defect
 const HEALTHY = /^\s*(?:\w+\s+){0,2}(?:is|are|works?|stays?|remains?|looks?)\s+(?:fine|correct|ok|okay|right|unaffected|unchanged|good|already correct)\b|\b(?:returns?|gives?|produces?|prints?|yields?)\s+the\s+(?:right|correct|expected)\b/i;
 const HEALTHY_TAIL = /^\s*which\s+(?:is|are)\s+(?:correct|fine|right|ok|okay|expected|intended)\b/i; // ", which is correct" clears the clause before it
 const FIX_VERB = /\b(?:fix|fixes|fixing|change|update|correct|repair|handle|make)\s+`([^`\n]{1,80})`/gi;
@@ -403,8 +403,14 @@ export function defectSites(task: string): Set<string> {
     // a contrast ("A returns X but B returns Y instead of Z", "A returns the right shape, B should ...") is two clauses: only the side
     // carrying the defect words marks its subject
     const clauses = unit.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").split(/;|:\s|,\s*(?=(?:which|but|and|so|while|whereas|though)\b|`)|\s+(?=(?:but|whereas|while)\s)/i).map(unmask), marks: (string | null)[] = [];
-    for (const clause of clauses) {
+    for (const [ci, clause] of clauses.entries()) {
       let mark: string | null = null;
+      const plural = /^\s*(?:both\s+|also\s+)?`([^`\n]{1,80})`\s+and\s+`([^`\n]{1,80})`(.*)$/is.exec(clause); // "Both `A` and `B` should ...": a plural subject marks each
+      if (plural) { const pred = plural[3]!.replace(/`[^`\n]*`/g, " "); if (!HEALTHY.test(pred) && DEFECT_OR_ASK.test(pred)) for (const x of [plural[1]!, plural[2]!]) { const id = spanId(x); if (id) out.add(id); } }
+      const designed = (t: string | undefined): boolean => !!t && /\bby design\b|\bas (?:intended|designed|expected)\b|\bintended\b|\b(?:is|are)\s+(?:fine|correct|expected|intended|right|ok|okay)\b/i.test(t);
+      if (ci > 0 && /^\s*which\b/i.test(clause) && !HEALTHY_TAIL.test(clause) && !HEALTHY.test(clause) && !designed(clause) && !designed(clauses[ci + 1]) && DEFECT_OR_ASK.test(clause.replace(/`[^`\n]*`/g, " "))) { // a which-clause followed by "by design" or "is fine" is healthy // "`Report` calls `Split`, which stops ...": the which-clause describes the last span before it
+        const prev = [...clauses[ci - 1]!.matchAll(/`([^`\n]{1,80})`/g)].pop(); const id = prev ? spanId(prev[1]!) : null; if (id) out.add(id);
+      }
       for (const m of clause.matchAll(FIX_VERB)) { const before = clause.slice(0, m.index); if (!/\b(?:not|never|n't)\s+$/i.test(before)) { const id = spanId(m[1]!); if (id) out.add(id); } } // "Fix `X`", never "should not change `X`"
       const subj = /^\s*(?:(?:the|a|an|also|and|but|so|now|then|here|still|whereas|while)\s+)*`([^`\n]{1,80})`(.*)$/is.exec(clause); // the clause's subject span and its predicate
       if (subj) { const pred = subj[2]!.replace(/`[^`\n]*`/g, " "); if (!HEALTHY.test(pred) && DEFECT_OR_ASK.test(pred)) mark = spanId(subj[1]!); }
@@ -461,6 +467,119 @@ export function sessionGenerator(sessions: { run(o: Record<string, unknown>): Pr
   };
 }
 
+// ---------- relation cases (Go): binding invariance checks recorded on the base tree, no model call ----------
+// When the issue states a wrap relation (%w, errors.As/Is, Unwrap, "wrapped"), the harness writes one case per named interface type the
+// base code checks with a bare `x.(T)` inside the reach of a named function F(err error): F(R(v)) must behave exactly as F(v) did on the
+// BASE tree, with R(x) = fmt.Errorf("loki: %w", x). Behavior is what F returns plus the package's func-variable calls (with arguments)
+// and whether each io.Writer variable it reaches was written (never the text: the issue does not fix it). The reference is RECORDED
+// on the base tree, never F(v) on the changed tree: an ordering fix that changes the bare value too would otherwise pass.
+export const RELATION_FILE_GO = "loki_wall_relation_test.go";
+export const RELATION_WRAP_PREFIX = "loki: "; // the wrap's own text: a recorded observation that contains it carries message text, never behavior
+const OBSERVABLE_ARG = /^(?:u?int(?:8|16|32|64)?|float(?:32|64)|bool|byte|rune)$/;
+// The issue must ASK about wrapped errors: a sentence or list item that names a wrapped error (%w, "wrapped error", "error wrapped",
+// errors.As/Is, Unwrap) and states a defect or request about it. "text is wrapped at 80 columns" or "Do not use errors.Is here" is not one.
+const WRAP_TERM = /%w\b|\bwrapped\s+(?:\w+\s+)?errors?\b|\berrors?\s+(?:that\s+(?:is|are|was|were)\s+|is\s+|are\s+)?wrapped\b|\berrors\.(?:As|Is)\b|\bUnwrap\b/i;
+const WRAP_ASK = /\bshould\b|\bmust\b|\bhandled?\b|\bhandles\b|\binstead of\b|\bnever\b|\bignor(?:e|es|ed)\b|\bnot\s+(?:recogni[sz]ed|handled|retried|found|seen|detected|matched|treated)\b|\bfails?\b|\bmisses\b|\b(?:does|did|is|are)\s+not\b|\b(?:doesn't|didn't|isn't|aren't)/i;
+// Not a request about handling wrapped errors: a negated wrap ("should not wrap the error with %w", "never wrap"), advice against the
+// helpers ("Do not use errors.Is"), or a sentence about the message text ("the wrapped error message is too long").
+const WRAP_NEGATED = /\b(?:do not|don't|never|avoid|should not|shouldn't|must not|mustn't|stop)\s+(?:\w+\s+){0,2}?(?:use|call|add|wrap(?:ping)?)\b/i;
+const WRAP_TEXT = /\bwrapped\s+(?:\w+\s+)?errors?(?:'s)?\s+(?:message|text|string|output)\b|\b(?:message|text|string)\s+of\s+(?:the\s+|a\s+)?wrapped\b/i;
+export const statesWrapRelation = (task: string): boolean => task.replace(/```[\s\S]*?```/g, "\n\n").split(/(?<=[.!?])\s+(?=[A-Z`])|\n\s*\n|\n(?=\s*(?:[-*]|\d+[.)])\s)/).some((u) => WRAP_TERM.test(u) && WRAP_ASK.test(u) && !WRAP_NEGATED.test(u) && !WRAP_TEXT.test(u));
+export interface RelCase { id: string; type: string; v: string; rv: string }
+export interface RelSpec { fn: string; returns: boolean; cases: RelCase[]; observe: string }
+interface GoDecls { ifaces: string[]; funcs: { name: string; params: string; ret: string; body: string }[]; vars: { name: string; params?: string; writer: boolean }[] }
+function goDecls(src: string): GoDecls {
+  const ifaces = [...src.matchAll(/^type\s+([A-Z]\w*)\s+interface\b/gm)].map((m) => m[1]!);
+  const bodyOf = (at: number): string => { let d = 0, i = src.indexOf("{", at); const st = i; for (; i < src.length; i++) { if (src[i] === "{") d++; else if (src[i] === "}" && --d === 0) break; } return src.slice(st, i + 1); };
+  const funcs = [...src.matchAll(/^func\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*([^{]*)\{/gm)].map((m) => ({ name: m[1]!, params: m[2]!.trim(), ret: m[3]!.trim(), body: bodyOf(m.index!) }));
+  const vars = [...src.matchAll(/^var\s+([A-Z]\w*)\s*(?:=\s*func\s*\(([^)]*)\)|(io\.Writer))/gm)].map((m) => ({ name: m[1]!, ...(m[2] !== undefined ? { params: m[2] } : {}), writer: !!m[3] }));
+  return { ifaces, funcs, vars };
+}
+/** The relation spec for the package holding a named site, or null when the issue states no wrap relation or nothing qualifies. */
+export function relationSpec(task: string, files: string[], pkg: string, named: Set<string>): RelSpec | null {
+  if (!statesWrapRelation(task)) return null;
+  const d = goDecls(files.join("\n"));
+  const strictIn = (body: string): string[] => [...body.matchAll(/\.\(\s*([A-Z]\w*)\s*\)/g)].map((m) => m[1]!).filter((t) => d.ifaces.includes(t));
+  const reach = (name: string, seen = new Set<string>()): string[] => { const f = d.funcs.find((x) => x.name === name); if (!f || seen.has(name)) return []; seen.add(name); return [f.body, ...d.funcs.filter((g) => new RegExp(`\\b${g.name}\\s*\\(`).test(f.body)).flatMap((g) => reach(g.name, seen))]; };
+  const F = d.funcs.find((f) => named.has(f.name) && /^[A-Z]/.test(f.name) && /^\w+\s+error$/.test(f.params) && strictIn(reach(f.name).join("\n")).length > 0);
+  if (!F) return null;
+  const body = reach(F.name).join("\n"), strict = [...new Set(strictIn(body))], ctor = (t: string) => d.funcs.find((f) => /^[A-Z]/.test(f.name) && f.ret === t);
+  const args = (params: string, k: number, members: string[] = []): string | null => {
+    if (!params) return "";
+    const out: string[] = [];
+    for (const p of params.split(",").map((x) => x.trim())) { const ty = p.split(/\s+/).pop()!; if (ty === "string") out.push(JSON.stringify(k === 0 ? "a" : "b")); else if (ty === "int") out.push(String(k === 0 ? 3 : 5)); else if (ty === "...error" && members.length) out.push(...members); else return null; }
+    return out.join(", ");
+  };
+  const R = (x: string): string => `fmt.Errorf("${RELATION_WRAP_PREFIX}%w", ${x})`, cases: RelCase[] = [];
+  const leaf = strict.filter((t) => { const c = ctor(t); return c && !c.params.includes("...error"); });
+  for (const t of strict) {
+    const c = ctor(t); if (!c) continue;
+    if (!c.params.includes("...error")) { const a = args(c.params, 0); if (a === null) continue; const v = `${c.name}(${a})`; cases.push({ id: `${t}_wrapped`, type: t, v, rv: R(v) }); continue; }
+    const lc = leaf.map((x) => ctor(x)!).find(Boolean); if (!lc) continue;
+    const a0 = args(lc.params, 0), a1 = args(lc.params, 1); if (a0 === null || a1 === null) continue;
+    const m0 = `${lc.name}(${a0})`, m1 = `${lc.name}(${a1})`, v = `${c.name}(${m0}, ${m1})`;
+    cases.push({ id: `${t}_wrapped`, type: t, v, rv: R(v) }, { id: `${t}_members_wrapped`, type: t, v, rv: `${c.name}(${R(m0)}, ${R(m1)})` });
+  }
+  if (!cases.length) return null;
+  const obsFuncs = d.vars.filter((v) => v.params !== undefined && new RegExp(`\\b${v.name}\\s*\\(`).test(body));
+  const obsWriters = d.vars.filter((v) => v.writer && new RegExp(`\\b${v.name}\\b`).test(body)).map((v) => v.name);
+  const rec = obsFuncs.map((f, i) => { const ps = f.params!.split(",").filter((x) => x.trim()), sig = ps.map((p, j) => `p${j} ${p.trim().split(/\s+/).pop()}`).join(", "); const shown = ps.map((p, j) => (OBSERVABLE_ARG.test(p.trim().split(/\s+/).pop()!) ? `p${j}` : null)).filter((x): x is string => x !== null); return `\told${i} := ${f.name}\n\t${f.name} = func(${sig}) { trace = append(trace, fmt.Sprint(${[JSON.stringify(f.name), ...shown].join(", ")})) }\n\tdefer func() { ${f.name} = old${i} }()`; }).join("\n"); // a call is recorded with its numeric and bool arguments only: a string or error argument carries message text, which the issue never fixes and the wrap changes
+  const wr = obsWriters.map((w, i) => `\tbufOld${i} := ${w}\n\tvar buf${i} bytes.Buffer\n\t${w} = &buf${i}\n\tdefer func() { ${w} = bufOld${i}; trace = append(trace, fmt.Sprint("${w}.written=", buf${i}.Len() > 0)) }()`).join("\n");
+  const observe = `func lokiRelObserve(f func() string) (out string) {\n\tvar trace []string\n\tdefer func() { out = fmt.Sprint(trace) }()\n${rec}\n${wr}\n\tif r := f(); r != "" {\n\t\ttrace = append(trace, "ret="+r)\n\t}\n\treturn\n}`;
+  return { fn: F.name, returns: F.ret !== "", cases, observe };
+}
+const relCall = (spec: RelSpec, x: string): string => spec.returns ? `func() string { return fmt.Sprint(${spec.fn}(${x})) }` : `func() string { ${spec.fn}(${x}); return "" }`;
+const relHeader = (pkg: string): string => `package ${pkg}\n\nimport (\n\t"bytes"\n\t"fmt"\n\t"testing"\n)\n\nvar _ = bytes.NewBuffer\n`;
+/** The record program: prints F(v) and F(R(v)) per case, run on the BASE tree only. */
+export const relationRecordTest = (spec: RelSpec, pkg: string): string => `${relHeader(pkg)}\n${spec.observe}\n\nfunc TestLokiRelRecord(t *testing.T) {\n${spec.cases.map((c) => `\tfmt.Println("LOKI_REL " + ${JSON.stringify(c.id)} + "\\t" + lokiRelObserve(${relCall(spec, c.v)}) + "\\t" + lokiRelObserve(${relCall(spec, c.rv)}))`).join("\n")}\n}\n`;
+/** The sealed form: one case per relation, each asserting the bare and the wrapped value both behave as the bare value did on base. */
+export function relationSealedTest(spec: RelSpec, pkg: string, ref: Map<string, string>): string {
+  return `${relHeader(pkg)}\n${spec.observe}\n${spec.cases.filter((c) => ref.has(c.id)).map((c, i) => `
+func TestLokiSpec_R${i + 1}_${c.id}(t *testing.T) {
+\twant := ${JSON.stringify(ref.get(c.id))} // recorded on the original code: what the bare value did before the change
+\tif got := lokiRelObserve(${relCall(spec, c.v)}); got != want {
+\t\tt.Errorf("the bare value now behaves differently: got %s, before the change %s", got, want)
+\t}
+\tif got := lokiRelObserve(${relCall(spec, c.rv)}); got != want {
+\t\tt.Errorf("the wrapped value: got %s, want %s (what the bare value does)", got, want)
+\t}
+}`).join("\n")}\n`;
+}
+/** Record on the base tree: id -> [bare, wrapped]. Null when the record program does not build or prints nothing. */
+export function recordRelation(repoDir: string, destRel: string, file: string, timeoutMs = 120_000): Map<string, [string, string]> | null {
+  const dest = join(repoDir, destRel); writeFileSync(dest, file, "utf8");
+  try {
+    const c = commandFor({ runner: "go", path: destRel }, repoDir), args = c.args[0] === "test" ? ["test", "-count=1", ...c.args.slice(1)] : c.args, r = spawnGroupSync(c.cmd, args, { cwd: c.cwd, timeoutMs, env: plainTestEnv() }), out = new Map<string, [string, string]>(); // -count=1: a cached result would make the second record agree trivially
+    for (const line of stripAnsi(r.output).split("\n")) {
+      let text = line; if (line.startsWith("{")) { try { text = (JSON.parse(line) as { Output?: string }).Output ?? ""; } catch { continue; } }
+      const m = /^LOKI_REL (\S+)\t(.*)\t(.*)$/.exec(text.replace(/\n$/, "")); if (m) out.set(m[1]!, [m[2]!, m[3]!]);
+    }
+    return out.size ? out : null;
+  } finally { rmSync(dest, { force: true }); }
+}
+export interface RelationOutcome { targetRel: string; file: string; cases: string[]; fn: string; types: string[] }
+/** Relation cases for a Go repo: recorded on base, only the cases red on base sealed (a wrapped value that already behaves like the bare
+ *  one proves nothing), confirmed red once more in their sealed form. Binding by construction: no value is guessed. */
+export function relationCasesGo(task: string, repoDir: string, sites: ResolvedSite[], atoms: SpecAtom[]): RelationOutcome | null {
+  if (!statesWrapRelation(task)) return null;
+  const named = new Set(atoms.filter((a) => a.kind === "site").map((a) => a.text.split(".").pop()!));
+  for (const dir of [...new Set(sites.filter((s) => s.file.endsWith(".go")).map((s) => dirname(s.file)))]) {
+    let files: string[] = []; try { files = readdirSync(join(repoDir, dir)).filter((f) => f.endsWith(".go") && !f.endsWith("_test.go")).sort().map((f) => readFileSync(join(repoDir, dir, f), "utf8")); } catch { continue; }
+    const pkg = /^package\s+(\w+)/m.exec(files[0] ?? "")?.[1]; if (!pkg) continue;
+    const spec = relationSpec(task, files, pkg, named); if (!spec) continue;
+    const targetRel = join(dir, RELATION_FILE_GO); if (existsSync(join(repoDir, targetRel))) continue;
+    const prog = relationRecordTest(spec, pkg), rec = recordRelation(repoDir, targetRel, prog), rec2 = rec ? recordRelation(repoDir, targetRel, prog) : null; if (!rec || !rec2) continue;
+    const stable = (id: string, bare: string, wrapped: string): boolean => { const b = rec2.get(id); return !!b && b[0] === bare && b[1] === wrapped; }; // recorded twice: a case whose observation varies between runs proves nothing
+    const ref = new Map([...rec].filter(([id, [bare, wrapped]]) => bare !== wrapped && stable(id, bare, wrapped) && !bare.includes(RELATION_WRAP_PREFIX.trim()) && !wrapped.includes(RELATION_WRAP_PREFIX.trim())).map(([id, [bare]]) => [id, bare]));
+    if (!ref.size) continue;
+    const file = relationSealedTest(spec, pkg, ref), e = EMITTERS.go, check = redFilter(e, repoDir, targetRel, file), red = e.names(file).filter((n) => check.cases[n] === "red");
+    if (!check.built || red.length === 0) continue;
+    let sealed = file; for (const n of e.names(file)) if (!red.includes(n)) sealed = e.disable(sealed, n) ?? sealed;
+    return { targetRel, file: sealed, cases: red, fn: spec.fn, types: [...new Set(spec.cases.filter((c) => red.some((n) => n.endsWith(`_${c.id}`))).map((c) => c.type))] };
+  }
+  return null;
+}
+
 // ---------- the author: atoms -> one call -> base red filter -> selection ----------
 export interface ExecSpecPlan { runner: SpecRunner; targetRel: string; header: string; mustStart: string; style: string }
 /** Where the spec file goes and what it must start with: Go in the package of the first resolved site (in-package, so unexported
@@ -482,7 +601,7 @@ export function planFor(runner: SpecRunner, repoDir: string, sites: ResolvedSite
   return { runner, targetRel, header: `The file is ${targetRel}; import the code under test from "${spec}".`, mustStart: "", style: style ? read(style) : "" };
 }
 
-export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; uncoveredSites?: string[]; generatorUsd?: number | null; /** LOKI_E10_TOURNAMENT, Go: the repaired probe cases, the package, the full generated file (binding and advisory) and the named sites no binding case covers */ probe?: string; probeSkip?: string; pkg?: string; specFile?: string; unchecked?: string[]; durationS: number }
+export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; uncoveredSites?: string[]; relation?: RelationOutcome; generatorUsd?: number | null; /** LOKI_E10_TOURNAMENT, Go: the repaired probe cases, the package, the full generated file (binding and advisory) and the named sites no binding case covers */ probe?: string; probeSkip?: string; pkg?: string; specFile?: string; unchecked?: string[]; durationS: number }
 /** `probe` (features/tournament.ts probeIntake, passed by wall.ts only when LOKI_E10_TOURNAMENT is not 0): for Go, its rules are appended to the generator brief and the reply may carry a second block of probe cases, kept apart from the spec. */
 export async function execSpecAuthor(o: { task: string; repoDir: string; runners: string[]; existingTests: string[]; sessions: Parameters<typeof sessionGenerator>[0]; iterationId: string; signal: AbortSignal; probe?: { rules: string; /** dynamic lines appended after the rules (the no-regression keep ledger), "" for none */ ledger?(sites: ResolvedSite[], repoDir: string): string; take(reply: string, pkg: string): { reply: string; probe?: string; refused?: string } } }): Promise<ExecSpecOutcome> {
   let priced: number | null | undefined; // the generator call's dollars when it prices itself (toolLessCall); undefined: read from the session's iteration id
@@ -494,6 +613,16 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
   const atoms = [...atoms0, ...parityAtoms(atoms0, sites), ...pairAtoms(atoms0, sites)], e = EMITTERS[runner], plan = planFor(runner, o.repoDir, sites, o.existingTests);
   if (!plan) return done("skipped", `exec spec: no ${runner} site to place the spec beside`, { sites: sites.length });
   if (existsSync(join(o.repoDir, plan.targetRel))) return done("skipped", `exec spec: ${plan.targetRel} already exists`, { sites: sites.length });
+  // Relation cases first: deterministic, no model call, binding by construction (recorded on base).
+  const rel = runner === "go" ? relationCasesGo(o.task, o.repoDir, sites, atoms) : null, relDir = rel ? dirname(rel.targetRel) : null;
+  const relLine = rel ? `Relation cases: ${rel.targetRel} was written by the harness from the wrap relation the task states and is read-only. Each checks that ${rel.fn} treats a wrapped value exactly as it treated the bare value on the original code (recorded there, not guessed); make every one pass: ${rel.cases.join(", ")}` : "";
+  const withRel = (r: ExecSpecOutcome): ExecSpecOutcome => {
+    if (!rel) return r;
+    const gen0 = r.status === "sealed" && r.file && r.targetRel && dirname(r.targetRel) === relDir ? r : null; // one Wall directory per run: a generated spec elsewhere stays advisory
+    const binding = [...(gen0 ? r.binding : []), ...rel.cases], covered = [gen0?.file ?? "", rel.fn, ...rel.types].join("\n"), resolved = new Set(sites.map((x) => x.symbol)); // a relation case covers its function and the type it wraps
+    const uncov = capSites(atoms.filter((a) => a.kind === "site" && resolved.has(a.text)).map((a) => a.text.split(".").pop()!), o.task).filter((x) => !new RegExp(`\\b${esc(x)}\\b`).test(covered));
+    return { ...r, status: "sealed", reason: `exec spec: ${binding.length} binding case(s) red on base (${rel.cases.length} relation)`, runner: "go", binding, uncoveredSites: uncov, brief: [relLine, r.brief ?? ""].filter(Boolean).join("\n"), relation: rel, ...(gen0 ? {} : { file: undefined, targetRel: undefined }) };
+  };
   const gen = generatorOverride ?? defaultGenerator(o.sessions, o.repoDir);
   const probing = runner === "go" ? o.probe : undefined, pkg = plan.mustStart.replace(/^package\s+/, "");
   const ask = async (withProbe: boolean): Promise<string | null | { none: string }> => {
@@ -509,10 +638,10 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
     taken = null; reply0 = await ask(false);
     parsed = typeof reply0 === "string" ? parseGenerated(e, reply0, plan.mustStart) : null;
   }
-  if (reply0 === null || typeof reply0 !== "string" || !parsed) return done("skipped", `exec spec: ${reply0 ? (reply0 as { none: string }).none : "the generator wrote no reply"}`, { sites: sites.length, runner });
-  if ("refused" in parsed) return done("skipped", `exec spec: ${parsed.refused}`, { sites: sites.length, runner });
+  if (reply0 === null || typeof reply0 !== "string" || !parsed) return withRel(done("skipped", `exec spec: ${reply0 ? (reply0 as { none: string }).none : "the generator wrote no reply"}`, { sites: sites.length, runner }));
+  if ("refused" in parsed) return withRel(done("skipped", `exec spec: ${parsed.refused}`, { sites: sites.length, runner }));
   const base = redFilter(e, o.repoDir, plan.targetRel, parsed.file);
-  if (!base.built) return done("skipped", "exec spec: the generated file did not build on the base tree; it proves nothing and was dropped", { sites: sites.length, runner, dropped: e.names(parsed.file) });
+  if (!base.built) return withRel(done("skipped", "exec spec: the generated file did not build on the base tree; it proves nothing and was dropped", { sites: sites.length, runner, dropped: e.names(parsed.file) }));
   const sel = selectCases(e, parsed.file, base, o.task), dropped = e.names(parsed.file).filter((n) => base.cases[n] === "error" || base.cases[n] === undefined);
   let binding = sel.binding;
   if (binding.length) { // the pruned file is what gets sealed: confirm on base that it still builds and every kept case is still red
@@ -520,7 +649,7 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
     if (!again.built || binding.some((n) => again.cases[n] !== "red")) { sel.advisory.push(...binding.map((name) => ({ name, why: "red on base alone, not once pruned" }))); binding = []; }
   }
   const brief = implementBlock(e, plan.targetRel, { ...sel, binding }, parsed.file, atoms, sites), extra = { runner, targetRel: plan.targetRel, sites: sites.length, brief, binding, advisory: sel.advisory.map((a) => a.name), guards: sel.guards, dropped, uncoveredSites: capSites(uncoveredSites(e, binding, parsed.file, atoms, sites), o.task), ...(probing ? { pkg, specFile: parsed.file, unchecked: uncoveredSites(e, binding, parsed.file, atoms, sites), ...(taken?.probe ? { probe: taken.probe } : { probeSkip: probeSkip ?? taken?.refused ?? "probe_no_block" }) } : {}) };
-  return binding.length ? done("sealed", `exec spec: ${binding.length} binding case(s) red on base`, { ...extra, file: sel.file }) : done("advisory_only", "exec spec: no binding case red on base; advisory cases only", extra);
+  return withRel(binding.length ? done("sealed", `exec spec: ${binding.length} binding case(s) red on base`, { ...extra, file: sel.file }) : done("advisory_only", "exec spec: no binding case red on base; advisory cases only", extra));
 }
 
 /** implement.ts reads this: the exec-spec brief block the Wall stage left for this run, or null. */
