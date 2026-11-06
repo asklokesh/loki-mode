@@ -451,7 +451,7 @@ run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=consultfix LOKI_E10_OPUS_CON
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=wrong E2E_STUB_FIX=consultfix
 [ "$(consults)" = 1 ] && [ "$(ctrig)" = "stop" ] && ok "consult cap 1: the stop consult spends the run's one consult; the later red verify gets none" || { bad "consult cap 1: $(consults) consults, triggers '$(ctrig)'"; dump; }
 
-run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress LOKI_E10_OPUS_CONSULT=0 # the stall rule alone; with the consult on, round 2 gets the red-verify consult first (legs above)
 n="$(fix_sessions)"
 [ "$n" = "1" ] && ok "no progress: one fix round, then fixing stops" || { bad "no progress: $n fix sessions (want 1)"; dump; }
 [ "$(ev 'sum(1 for e in E if e["type"]=="fix.round")')" = "1" ] && ok "no progress: one fix.round event" || bad "no progress: fix.round events: $(ev 'sum(1 for e in E if e["type"]=="fix.round")')"
@@ -470,7 +470,7 @@ models="$(ev 'sorted({str(e["data"].get("model")) for e in E if e["type"]=="cost
 case "$models" in *haiku*) ;; *) models="none recorded: $models" ;; esac
 printf '%s\n' "$models" | tr -d "[]'" | tr ',' '\n' | grep -v haiku | grep -q '[a-z]' && bad "wall defect: a session ran off haiku: $models" || ok "wall defect: every session ran on haiku ($models)"
 if [ -s "$T/argv.log" ]; then
-    pinned="$(grep -o -- '--model [^ ]*' "$T/argv.log" | sort -u)"
+    pinned="$(grep -v '^consult ' "$T/argv.log" | grep -o -- '--model [^ ]*' | sort -u)" # the one Opus consult (LOKI_E10_OPUS_CONSULT) is the deliberate exception: an advisor call, not a session
     [ -n "$pinned" ] && [ -z "$(printf '%s\n' "$pinned" | grep -v haiku)" ] && ok "wall defect: every --model argument was haiku ($pinned)" || bad "wall defect: --model arguments: '${pinned}'"
 else
     bad "wall defect: argv log is empty"
@@ -724,7 +724,7 @@ res("E5 caps: Sonnet, other stages, the policy off and LOKI_E10_SESSION_CAPS=off
   res("consult: LOKI_E10_CONSULT_MAX=2 allows a second; LOKI_E10_OPUS_CONSULT=0 allows none", (await oc.runConsult({ ...base, trigger: "stop" }, { LOKI_E10_CONSULT_MAX: "2" })) !== null && (await oc.runConsult({ ...base, runDir: ocDir + "-off" }, { LOKI_E10_OPUS_CONSULT: "0" })) === null && calls === 2);
   oc.__setConsultCallForTests(null);
   res("consult: default model is claude-opus-5-5; never-stop is on by default, off with the knob off or the explicit interactive opt-in", oc.consultModel({}) === "claude-opus-5-5" && oc.neverStopActive({}) && !oc.neverStopActive({ LOKI_E10_OPUS_CONSULT: "0" }) && !oc.neverStopActive({ LOKI_E10_INTAKE_ASK: "1" }));
-  res("consult: the disclosure names trigger, stage, model and dollars", oc.consultNotes(ocDir)[0]!.startsWith("Opus consult (open-choice, implement, claude-opus-5-5): ok, $0.0300; advice: DIAGNOSIS: x INTENDED: y"));
+  res("consult: the disclosure names trigger, stage, model and dollars", oc.consultNotes(ocDir)[0]!.startsWith("Opus consult (open-choice, implement, claude-opus-5-5): ok, \$0.0300; advice: DIAGNOSIS: x INTENDED: y"));
   res("never-stop: one seal NOT PROVEN line per settled conflict, none without a record", oc.neverStopNotes({ never_stop: [{ stage: "implement", conflict: "c", assumption: "a", consulted: true }] }).length === 1 && oc.neverStopNotes({}).length === 0 && oc.neverStopNotes(undefined).length === 0);
   res("never-stop: the brief forbids the stop, asks for an ASSUMPTION line and carries the advice; assumptionOf reads it", oc.neverStopBrief("r", "ADV").includes("Do not stop on this conflict") && oc.neverStopBrief("r", "ADV").includes("ADV") && oc.assumptionOf("x\nASSUMPTION: it is the product\nLOKI_DONE") === "it is the product");
   res("open-choice trigger: a choice the run settles itself (no evidence, or the precedent vote) is a trigger; one the task settles is not", runPickedChoice('Open choice: "a or b?" -> no evidence picks one (x).') && runPickedChoice('Open choice: "a or b?" -> implement option 2: "b". Evidence (precedent): v.') && !runPickedChoice('Open choice: "a or b?" -> implement option 1: "a". Evidence (task_preferred): t.'));
@@ -996,7 +996,7 @@ suites="$(ev 'sum(1 for e in E if e["type"]=="test.result" and str(e["data"].get
 sig="$(ev '[g["signature"] for e in E if e["type"]=="fix.round" for g in e["data"]["groups"] if g["signature"].startswith("full suite")][0]')"
 case "$sig" in "full suite: bun "?*) ok "full suite signature carries its first failing line: $sig" ;; *) bad "full suite signature is only the check name: '$sig'" ;; esac
 
-run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress LOKI_RISK_TIER=medium
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress LOKI_RISK_TIER=medium LOKI_E10_OPUS_CONSULT=0 # the stall rule alone, as the no-progress leg
 last="$(ev '[e["data"] for e in E if e["type"]=="stage.completed" and e["stage"]=="verify"][-1]')"
 has "quick-only end: the last verify is quick" "$last" "'verify_scope': 'quick'"
 has "quick-only end: verify lists the missing complete verify as NOT PROVEN" "$last" "quick re-verify only"
@@ -2866,7 +2866,7 @@ res("buildFixBrief carries the hints when given and is unchanged when not", fb.i
 const rb = buildFixResumeBrief([], null, null, 0, [], h), rb0 = buildFixResumeBrief([], null, null, 0, []);
 res("buildFixResumeBrief carries the hints when given and is unchanged when not", rb.includes(h) && !rb0.includes(h) && rb.replace(`${h}\n\n`, "") === rb0);
 const cr = readFileSync(root + "/loki-ts/src/util/conflict_resume.ts", "utf8"), fx = readFileSync(root + "/loki-ts/src/engine10/stages/fix.ts", "utf8");
-res("wiring: resumeForCoverage appends siteHints to the coverage brief (claim or plain) and fix.ts passes siteHints to both briefs", /const hints = siteHints\(ctx\), base = claims \? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith\(ctx, first, firstSession, hints \? `\$\{base\}/.test(cr) && /const hints = siteHints\(ctx\);/.test(fx) && /holdoutFailed, hints\)/.test(fx) && /\), hints\)\); \/\/ one session/.test(fx));
+res("wiring: resumeForCoverage appends siteHints to the coverage brief (claim or plain) and fix.ts passes siteHints to both briefs", /const hints = siteHints\(ctx\), base = claims \? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith\(ctx, first, firstSession, hints \? `\$\{base\}/.test(cr) && /const hints = siteHints\(ctx\);/.test(fx) && /holdoutFailed, hintsPlus\)/.test(fx) && /\), hintsPlus\)\); \/\/ one session/.test(fx) && /const hintsPlus = \[hints, /.test(fx));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/site-hints.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "site-hints unit script crashed or exited non-zero"
