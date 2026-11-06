@@ -221,6 +221,7 @@
 #  71. edit_shape.ts residualSites: drop COMMON_LIMIT (the idiom leg reads residual) or GO_BUILTIN_T (the .(string) leg reads residual).
 #  72. edit_shape.ts precedenceSites: drop the removed-strict test (the new errors.As leg reads precedence) or the removed-broad test (the isinstance-to-isinstance leg reads precedence).
 #  73. edit_shape.ts fragmentsOf: drop the written-back test (a pattern the hunk keeps reads residual).
+<<<<<<< HEAD
 # 104. features/exec_spec.ts parityAtoms: drop the quoted-code condition (exec spec atoms read otherquote=P1).
 # 105. exec_spec.ts parityAtoms: scan s.source (the 45-line excerpt) instead of s.body (exec spec atoms read P0).
 # 106. exec_spec.ts NORM_DOT: drop the no-dot lookbehind (exec spec atoms read prop=P1).
@@ -252,6 +253,12 @@
 # 139. exec_spec.ts defectSites: drop the designed() check (exec spec atoms read open=...,Split+Join or Join).
 # 140. exec_spec.ts statesWrapRelation: drop WRAP_NEGATED (relation cases read ask=0011110) or WRAP_TEXT (ask=0011001).
 # 118. exec_spec.ts execSpecBriefOf: drop the knob check (exec spec atoms read brief=B,B).
+=======
+#  74. conflict_resume.ts siteHints: drop the siteHintsEnabled test (the knob 0, off and false legs read a hint).
+#  75. edit_shape.ts precedenceSites: drop the remedy wording from the why text (the python and go widening legs read false).
+#  76. edit_shape.ts editShapeSites: drop the max slice (the cap leg reads 9).
+#  77. fix.ts buildFixBrief or session_resume.ts buildFixResumeBrief: ignore hints, or conflict_resume.ts resumeForCoverage: drop the hints append (the carries-the-hints and wiring legs read false).
+>>>>>>> origin/feat/fixbrief-site-hints
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1772,6 +1779,7 @@ else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "defect pin: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: defect pin e2e: pytest is not installed"; fi
 fi
 
+<<<<<<< HEAD
 # Go test batching (LOKI_E10_GO_BATCH, default on), real `go test`: untouched go test files of one package vouch together in one run; a
 # red file voids the batch and every file runs alone; Wall, task-named and edited files never join (their per-file run is the fail-then-pass
 # proof); the base reruns batch per package with the same verdicts; LOKI_E10_GO_BATCH=0 restores one run per file.
@@ -2675,5 +2683,58 @@ fi
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "no-regression: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: no-regression: go is not installed"; fi
 fi
+=======
+# ---------------------------------------------------------------- site hints (LOKI_E10_SITE_HINTS, default on: edit-shape sites in the fix and coverage briefs)
+cat > "$T/site-hints.ts" <<'TS'
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { tmpdir } from "node:os";
+const root = process.argv[2]!;
+const { siteHints } = await import(root + "/loki-ts/src/util/conflict_resume.ts");
+const { buildFixBrief } = await import(root + "/loki-ts/src/engine10/stages/fix.ts");
+const { buildFixResumeBrief } = await import(root + "/loki-ts/src/runner/session_resume.ts");
+const res = (n: string, okk: boolean) => console.log((okk ? "OK " : "NO ") + n);
+const g = (d: string, ...a: string[]) => execFileSync("git", ["-C", d, ...a], { encoding: "utf8" });
+type Files = Record<string, string>;
+function run(base: Files, head: Files, knob: string | undefined = undefined): string | null {
+  const d = mkdtempSync(join(tmpdir(), "loki-sh-"));
+  g(d, "init", "-q", "-b", "main"); g(d, "config", "user.name", "e"); g(d, "config", "user.email", "e@e.invalid");
+  const w = (m: Files) => { for (const [p, t] of Object.entries(m)) { mkdirSync(dirname(join(d, p)), { recursive: true }); writeFileSync(join(d, p), t); } };
+  w(base); g(d, "add", "-A"); g(d, "commit", "-qm", "base"); const sha = g(d, "rev-parse", "HEAD").trim();
+  w(head);
+  if (knob !== undefined) process.env.LOKI_E10_SITE_HINTS = knob; else delete process.env.LOKI_E10_SITE_HINTS;
+  try { return siteHints({ repoDir: d, baseSha: sha }); } finally { rmSync(d, { recursive: true, force: true }); }
+}
+const sites = (s: string | null): number => (s ?? "").split("\n").filter((l) => l.startsWith("- ")).length;
+const REMEDY = "keep strict exact-type checks first and put errors.As or isinstance fallbacks after them";
+const pyP = (c: string, n = "g") => `def ${n}(x):\n    if ${c}:\n        return 1\n    return 0\n`;
+const pyOut = run({ "m.py": pyP("type(x) is Foo") }, { "m.py": pyP("isinstance(x, Foo)") });
+res("python widening (type(x) is Foo to isinstance) lists the precedence site with the remedy, on by default", sites(pyOut) === 1 && pyOut!.includes("m.py:2 (precedence)") && pyOut!.includes(REMEDY));
+const goP = (c: string) => `package m\n\nimport "errors"\n\nfunc g(err error) int {\n\t${c} {\n\t\treturn 1\n\t}\n\treturn 0\n}\n\nvar _ = errors.New\n`;
+const goOut = run({ "m.go": goP("if _, ok := err.(*MyErr); ok") }, { "m.go": goP("if errors.As(err, &me)") });
+res("go widening (type assertion to errors.As) lists the precedence site with the remedy", sites(goOut) === 1 && goOut!.includes("m.go:") && goOut!.includes("(precedence)") && goOut!.includes(REMEDY));
+res("clean change (a return value edit): no hint at all", run({ "m.py": pyP("type(x) is Foo") }, { "m.py": pyP("type(x) is Foo").replace("return 1", "return 2") }) === null);
+res("knob 0 opts out: no hint on the python widening", run({ "m.py": pyP("type(x) is Foo") }, { "m.py": pyP("isinstance(x, Foo)") }, "0") === null);
+res("knob off and false opt out too", ["off", "false"].every((k) => run({ "m.py": pyP("type(x) is Foo") }, { "m.py": pyP("isinstance(x, Foo)") }, k) === null));
+const names = ["a", "b", "c", "d", "e", "f", "h", "i", "j"];
+const many = run({ "m.py": names.map((n) => pyP("type(x) is Foo", n)).join("\n") }, { "m.py": names.map((n) => pyP("isinstance(x, Foo)", n)).join("\n") });
+res("cap: nine widened checks list at most 6 sites", sites(many) === 6);
+const h = "Edit-shape check: X";
+const fb = buildFixBrief("task", [], null, undefined, 0, h), fb0 = buildFixBrief("task", [], null, undefined, 0);
+res("buildFixBrief carries the hints when given and is unchanged when not", fb.includes(h) && !fb0.includes(h) && fb.replace(`\n\n${h}`, "") === fb0);
+const rb = buildFixResumeBrief([], null, null, 0, [], h), rb0 = buildFixResumeBrief([], null, null, 0, []);
+res("buildFixResumeBrief carries the hints when given and is unchanged when not", rb.includes(h) && !rb0.includes(h) && rb.replace(`${h}\n\n`, "") === rb0);
+const cr = readFileSync(root + "/loki-ts/src/util/conflict_resume.ts", "utf8"), fx = readFileSync(root + "/loki-ts/src/engine10/stages/fix.ts", "utf8");
+res("wiring: resumeForCoverage appends siteHints to COVERAGE_BRIEF and fix.ts passes siteHints to both briefs", /const hints = siteHints\(ctx\), r = await resumeWith\(ctx, first, firstSession, hints \? `\$\{COVERAGE_BRIEF\}/.test(cr) && /const hints = siteHints\(ctx\);/.test(fx) && /holdoutFailed, hints\)/.test(fx) && /\), hints\)\); \/\/ one session/.test(fx));
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/site-hints.ts" "$ROOT" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "site-hints unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 9 ] || bad "site-hints unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 9"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+printf '%s\n' "$out" | grep -q '^NO ' && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
+>>>>>>> origin/feat/fixbrief-site-hints
 
 finish

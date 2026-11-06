@@ -8,13 +8,13 @@ import { environmentShaped, type FailureGroup } from "../failures.ts";
 import { hooks } from "../hooks.ts";
 import { treeFingerprint } from "../../util/anti_loop.ts";
 import { buildFixResumeBrief, currentDiff, holdoutNote, runFixSession } from "../../runner/session_resume.ts";
-import { capStopOf } from "../session.ts"; import { adjudicateWallConflict } from "../../util/conflict_resume.ts"; import { type ReadOnlyFile, restoreReadOnly } from "./implement.ts";
+import { capStopOf } from "../session.ts"; import { adjudicateWallConflict, siteHints } from "../../util/conflict_resume.ts"; import { type ReadOnlyFile, restoreReadOnly } from "./implement.ts";
 import { installOwned } from "../../project_model/install.ts"; import { relative, resolve } from "node:path"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
 function isTestFailure(g: FailureGroup): boolean { return !g.signature.startsWith("lint:") && g.signature !== "select-tests"; }
 
-export function buildFixBrief(task: string, groups: FailureGroup[], diff: string | null, escalation?: { priorDiagnosis: string | null }, holdoutFailed = 0): string {
+export function buildFixBrief(task: string, groups: FailureGroup[], diff: string | null, escalation?: { priorDiagnosis: string | null }, holdoutFailed = 0, hints: string | null = null): string {
   return withStagePrefix([ // FIXED_RULES leads (the cache-stable prefix implement shares) and FINISH_LINE closes
     FIXED_RULES,
     ...taskBlock(task),
@@ -22,6 +22,7 @@ export function buildFixBrief(task: string, groups: FailureGroup[], diff: string
     groups.length ? groups.map((g, i) => `${i + 1}. (${g.count}x) ${g.signature}\n   sample: ${g.sample}`).join("\n") : "(no grouped failures were provided)",
     ...holdoutNote(holdoutFailed),
     `Diff of the files this run changed:\n${diff ?? "(the diff is not available)"}`,
+    ...(hints ? [hints] : []),
     ...(escalation ? [`ESCALATED ROUND: the same failure repeated after your previous fix. Re-read the full failure output above, find the root cause, and do not repeat the earlier approach.\nYour previous diagnosis: ${escalation.priorDiagnosis ?? "(none was recorded)"}`] : []),
     FINISH_LINE,
   ].join("\n\n"));
@@ -60,8 +61,9 @@ export const fixStage: Stage = {
     const prevDiag = (prior.fix?.diagnosis as string | undefined) ?? null; const chain = { sessionId: (prior.fix?.session_id ?? prior.implement?.session_id ?? null) as string | null, model: (prior.fix?.model ?? prior.implement?.model ?? ctx.model) as string };
     const effort = hooks.effort?.fix(round, testFailures.length > 0, { model: actualModel, envOnly: environmentShaped(groups.filter((g) => !g.carried)) });
     const sessionBase = { stage: "fix" as const, tier: "development" as const, limitS: fixStage.limitS, signal, cwd: ctx.repoDir, ...suiteCmdsOpt(ctx.repoDir, prior.intake?.testmap), ...(effort ? { effort } : {}), ...(pinnedModel ? { model: pinnedModel } : {}), ...(routedPin ? { model: routedPin } : {}) };
-    const fullBrief = buildFixBrief(task, groups, diffStat, repeated ? { priorDiagnosis: prevDiag } : undefined, holdoutFailed);
-    let r = await runFixSession(ctx, sessionBase, `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel, fullBrief, buildFixResumeBrief(groups, diffStat, prevDiag, holdoutFailed, [...((prior.implement?.tests_reverted as string[] | undefined) ?? []), ...((prior.fix?.tests_reverted as string[] | undefined) ?? [])].map((f) => relative(ctx.repoDir, resolve(ctx.repoDir, f))))); // one session per round: a spec conflict starts no retry; the unchanged-tree rule below decides whether it is believed
+    const hints = siteHints(ctx); // LOKI_E10_SITE_HINTS, advisory
+    const fullBrief = buildFixBrief(task, groups, diffStat, repeated ? { priorDiagnosis: prevDiag } : undefined, holdoutFailed, hints);
+    let r = await runFixSession(ctx, sessionBase, `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel, fullBrief, buildFixResumeBrief(groups, diffStat, prevDiag, holdoutFailed, [...((prior.implement?.tests_reverted as string[] | undefined) ?? []), ...((prior.fix?.tests_reverted as string[] | undefined) ?? [])].map((f) => relative(ctx.repoDir, resolve(ctx.repoDir, f))), hints)); // one session per round: a spec conflict starts no retry; the unchanged-tree rule below decides whether it is believed
     const ro = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [], wd = r.session.markers.specConflict && !r.session.killed ? await adjudicateWallConflict(ctx, { ...sessionBase, iterationId: r.ids[r.ids.length - 1]!, brief: fullBrief }, r.session, ro) : null; if (wd) r = { ...r, session: wd.session, ids: [...r.ids, ...wd.ids] }; // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT
     const testsReverted = restoreReadOnly(ro); // only the Wall is read-only after a fix pass
     const treeAfter = treeFingerprint(ctx.repoDir, ctx.baseSha), conflict =r.session.markers.specConflict && !r.session.killed && treeBefore !== null && treeBefore === treeAfter ? r.session.markers.specConflict : null; // evidence: a claim from a round that edited the tree is work in progress, not an escape from the failure

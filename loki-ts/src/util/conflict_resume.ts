@@ -15,6 +15,7 @@ import { sealedWallCopy, sealedWallDir, WALL_FAILURE_TAIL_FILE } from "./check_r
 import { killedTailIndexes } from "./seal_drift.ts";
 import { vacuousCheck } from "../project_model/conventions.ts";
 import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
+import { editShapeBrief, editShapeSites } from "./edit_shape.ts";
 import { FINISH_LINE, taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
 import type { ReadOnlyFile } from "../engine10/stages/implement.ts";
 
@@ -106,6 +107,17 @@ export const claimCheckEnabled = (env = process.env): boolean => !["0", "off", "
 export const COVERAGE_CLAIM_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. Before the last line, write one line per site in the current file: `SITE <path>:<line>: changed` or `SITE <path>:<line>: unchanged - <why>`. " + FINISH_LINE;
 export const coverageResumeEnabled = (env = process.env): boolean => ["1", "on", "true"].includes((env.LOKI_E10_COVERAGE_RESUME ?? "").toLowerCase());
 
+// LOKI_E10_SITE_HINTS (default on, =0/off/false opts out): the edit-shape sites (sibling, residual, precedence) of the tree's diff as advisory text in the fix brief and the coverage turn. Never a verdict.
+export const siteHintsEnabled = (env = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_SITE_HINTS ?? "").toLowerCase());
+export function siteHints(ctx: Pick<RunContext, "repoDir" | "baseSha">): string | null {
+  if (!siteHintsEnabled()) return null;
+  try {
+    const g = safeGitSpawn(ctx.repoDir, ["diff", "-U0", ctx.baseSha, "--", ".", ":(exclude).loki", ":(exclude).loki/**"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    if (g.status !== 0 || !g.stdout) return null;
+    return editShapeBrief(editShapeSites(g.stdout, (p) => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return null; } }));
+  } catch { return null; }
+}
+
 /** SITE lines the model wrote; only "changed" claims are checked. */
 export function siteClaims(text: string): { path: string; line: number }[] {
   return [...text.matchAll(/^\W*SITE\s+`?([^\s`:]+):(\d+)`?:\s*changed\b/gim)].map((m) => ({ path: m[1]!, line: Number(m[2]) }));
@@ -135,7 +147,7 @@ export async function resumeForCoverage(ctx: RunContext, first: SessionRunOption
   if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationId: first.iterationId, iterationIds: [] };
   const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
   const claims = claimCheckEnabled();
-  const r = await resumeWith(ctx, first, firstSession, claims ? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, "-c");
+  const hints = siteHints(ctx), base = claims ? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith(ctx, first, firstSession, hints ? `${base}\n\n${hints}` : base, "-c");
   if (!clean(r.session)) return { session: { ...firstSession, durationS: r.session.durationS }, iterationId: r.iterationId, iterationIds: [r.iterationId] };
   if (!claims) return { ...r, iterationIds: [r.iterationId] }; // knob off: exactly main's coverage turn
   const absent = claimedChangeAbsent(ctx.repoDir, ctx.baseSha, siteClaims(r.session.summary ?? ""));
