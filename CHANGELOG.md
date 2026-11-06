@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.136.0 (2026-11-05)
+
+Large red test suites are judged test by test, and an open either/or in a task is settled by the convention the sibling code already follows.
+
+### Fixed
+- A full-suite check is judged per test id: a failing test is excused only when it failed on the original commit with the same error the same number of times, and never when its error names a file the change touched. Flaky ids are measured with a second base pass, a suite with 500 or more failing ids at base reads "not proven: suite red at base", the intake baseline is saved in the run directory, and every full-suite failure that is not excused gets a "not excused: <check>: <reason>" receipt line.
+
+### Added
+- When a task leaves an either/or contract open, one small tool-less vote checks which option the sibling implementations follow and the brief says "implement option k". The issue's own words and any maintainer comment outrank the vote; siblings that disagree, or a failed vote, give no line. A transplanted sibling test binds only after a vote and only when the issue says the target should behave like named siblings. On by default; LOKI_E10_PRECEDENT=0 turns it off.
+
 ## v11.135.0 (2026-11-05)
 
 Loki on Haiku tries a cheaper one-call patch first, a run can no longer pass by loosening the project configuration, and correct work beside an already-red suite reads VERIFIED.
