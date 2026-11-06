@@ -305,7 +305,7 @@ export async function generateSpec(o: GenerateOpts): Promise<GeneratedSpec> {
   const jsonPath = join(runDir, "spec-criteria.json");
   const res = await o.sessions.run({
     stage: "plan", brief: specJsonBrief(o.task, jsonPath), tier: "fast", iterationId: `spec-${slug}`,
-    limitS: o.limitS ?? 90, signal: o.signal ?? new AbortController().signal, cwd: o.repoDir,
+    limitS: o.limitS ?? 90, signal: o.signal ?? new AbortController().signal, cwd: o.repoDir, outputs: [jsonPath], // HARNESS-OUTPUTS
   });
   if (res.killed || res.exit !== 0) throw new Error(`spec session failed (exit ${res.exit ?? "killed"})`);
   let parsed: unknown;

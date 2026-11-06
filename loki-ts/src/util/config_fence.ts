@@ -2,7 +2,7 @@
 // Two layers: a tool-time deny on Edit/Write/MultiEdit (runner/host_guard.ts, runner/providers.ts) and, because Bash and other tools can write too,
 // a snapshot before each session and a restore after it of every fenced file the session changed (no regex over Bash commands). Path predicate: util/config_paths.ts.
 // Nothing here may fail a session: every filesystem step is caught and reported on the receipt instead.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { LOCKFILE, MANIFEST, manifestChanged } from "../e10ext/commit_filter.ts";
 import { isFencedPath, taskNamesFenced, TEST_DIR } from "./config_paths.ts";
@@ -29,10 +29,24 @@ export type FenceAllow = (rel: string) => boolean;
 /** A fenced path is editable when the task names it or a spec conflict allowlisted it for this session. */
 export const allowFor = (task: string, allowed: Iterable<string> = []): FenceAllow => { const a = new Set(allowed); return (rel) => a.has(rel) || taskNamesFenced(task, rel); };
 
-/** Deny reason for a write tool aimed at a fenced path (or, with `state`, anything under .loki/, the harness's run state), else null. `file` is the tool's file_path; a path outside `cwd` is not this fence's concern. */
-export function fenceDenied(tool: string, file: unknown, cwd: string, allow: FenceAllow, state = false, onNewTestFile?: (rel: string) => void): { rel: string; reason: string } | null {
+// HARNESS-OUTPUTS: a stage brief can name a file under .loki/ for the session to write (plan-output.txt, plan-scope.json, project-model.answer.json,
+// spec-criteria.json). session.ts passes those exact absolute paths in this env var; the .loki/ deny lets each one through and nothing else.
+// A run record name is never let through, even if a caller lists it: the receipt, the event log, run and fence state are the harness's alone.
+export const HARNESS_OUTPUTS_ENV = "LOKI_E10_WRITE_OUTPUTS";
+export const RUN_RECORD = /(^|\/)(receipt[^/]*|events\.jsonl|[^/]*state\.json|config_fence\.jsonl|[^/]*ledger[^/]*|checkpoints?|state)(\/|$)/;
+/** The harness-directed output files for this session: absolute, under `cwd`/.loki/, never a run record. Anything malformed is dropped (the deny then holds). */
+export function harnessOutputs(cwd: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  let a: unknown; try { a = JSON.parse(env[HARNESS_OUTPUTS_ENV] ?? "[]"); } catch { return []; }
+  if (!Array.isArray(a)) return [];
+  const root = resolve(cwd, ".loki");
+  return [...new Set(a.filter((p): p is string => typeof p === "string" && isAbsolute(p)).map((p) => resolve(p)).filter((p) => { const r = relative(root, p); return r !== "" && !r.startsWith("..") && !isAbsolute(r) && !RUN_RECORD.test(r); }))];
+}
+
+/** Deny reason for a write tool aimed at a fenced path (or, with `state`, anything under .loki/, the harness's run state, except the exact `outputs` the stage brief names), else null. `file` is the tool's file_path; a path outside `cwd` is not this fence's concern. */
+export function fenceDenied(tool: string, file: unknown, cwd: string, allow: FenceAllow, state = false, onNewTestFile?: (rel: string) => void, outputs: readonly string[] = []): { rel: string; reason: string } | null {
   if (!/^(Edit|Write|MultiEdit)$/.test(tool) || typeof file !== "string" || !file) return null;
-  const rel = relative(resolve(cwd), isAbsolute(file) ? file : resolve(cwd, file));
+  const abs = resolve(cwd, file), rel = relative(resolve(cwd), abs);
+  if (state && /^\.loki(\/|$)/.test(rel) && outputs.includes(abs)) return null; // the stage's own brief asked for exactly this file
   if (state && /^\.loki(\/|$)/.test(rel)) return { rel, reason: `LOKI_RUN_STATE: ${rel} is the harness's own run state (the receipt and checkpoints are built from it), so the edit was denied. Nothing in the task needs it.` };
   if (rel === "" || rel.startsWith("..") || isAbsolute(rel) || !isFencedPath(rel) || allow(rel)) return null;
   if (TEST_DIR.test(rel) && !existsSync(resolve(cwd, rel))) { onNewTestFile?.(rel); return null; } // a new config-named file under a test directory is scaffolding
@@ -145,6 +159,23 @@ export function fenceNotes(r: FenceRecord, provenPass = false): { notProven: str
 }
 /** A fence denial or allowlist caps VERIFIED and ALREADY_SATISFIED at PARTIAL. */
 export const capFenceVerdict = <V extends string>(verdict: V, rec: { capped: boolean }): V | "PARTIAL" => (rec.capped && (verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED") ? "PARTIAL" : verdict);
+
+/** CLI-route deny rules for .loki/ (a Claude Code deny rule always beats an allow rule, so the exception is built by omission): one rule for the whole
+ *  tree without outputs; with outputs, a rule for every existing entry beside each output and its ancestor directories, plus every run record name in an
+ *  output's directory whether or not it exists yet. A new non-record file the session creates beside an output is not denied here, as with fencedDenyRules. */
+export function stateDenyRules(cwd: string, outputs: readonly string[] = []): string[] {
+  const root = resolve(cwd, ".loki");
+  if (outputs.length === 0) return [`Edit(/${root}/**)`];
+  const keep = new Set(outputs), chain = new Set<string>([root]), rules = new Set<string>();
+  for (const o of outputs) for (let d = dirname(o); d.startsWith(root + "/"); d = dirname(d)) chain.add(d);
+  for (const dir of chain) {
+    let names: string[] = []; try { names = readdirSync(dir); } catch { /* not created yet */ }
+    for (const n of names) { const p = join(dir, n); if (!keep.has(p) && !chain.has(p)) { rules.add(`Edit(/${p})`); rules.add(`Edit(/${p}/**)`); } }
+  }
+  for (const d of new Set(outputs.map((o) => dirname(o)))) for (const n of RUN_RECORD_NAMES) { rules.add(`Edit(/${join(d, n)})`); rules.add(`Edit(/${join(d, n)}/**)`); }
+  return [...rules];
+}
+const RUN_RECORD_NAMES = ["receipt.json", "receipt.md", "events.jsonl", "run.state.json", "state.json", "config_fence.jsonl", "ledger.csv", "checkpoints", "state"];
 
 /** CLI route: one `Edit(//abs/path)` permission deny per existing fenced file the task does not name (the CLI applies Edit rules to Edit, Write and MultiEdit). A failed listing returns none (the restore after the session is the backstop and reports it). */
 export function fencedDenyRules(cwd: string, env: NodeJS.ProcessEnv = process.env): string[] {

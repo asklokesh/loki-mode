@@ -214,7 +214,7 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
         iterationId: `${ctx.runId}-project-model${attempt > 1 ? "-retry" : ""}`,
         limitS,
         signal: abort.signal,
-        cwd: ctx.repoDir,
+        cwd: ctx.repoDir, outputs: [answerPath], // HARNESS-OUTPUTS: the answer file the brief names
         effort: "low", // intake diet: a manifest reading needs no deep reasoning (the ledger showed it at the provider default, high)
         maxOutputTokens: DISCOVERY_MAX_OUTPUT_TOKENS,
         ...(attemptModel ? { model: attemptModel } : {}),

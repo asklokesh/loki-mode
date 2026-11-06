@@ -274,6 +274,24 @@ const rd = join(T, "denyrec"), dl = join(T, "denylog.jsonl"); await hook({ LOKI_
 for (const [env, f] of [[{}, ".loki/runs/r1/config_fence.jsonl"], [{ LOKI_CONFIG_FENCE: "0" }, ".loki/runs/r1/config_fence.jsonl"], [{ LOKI_E10_STAGE: "plan" }, ".loki/runs/r1/receipt.json"], [{ LOKI_E10_STAGE: "verify" }, ".loki/state.json"]] as const) say(`state:${JSON.stringify(env)}:${f}`, await hook(env as Record<string, string>, "Write", f));
 say("state-denial-not-on-receipt", readFenceRecord(rd).denied.length);
 say("no-stage-no-hook", await hook({ LOKI_E10_STAGE: "" }, "Write", ".loki/runs/r1/x"));
+// HARNESS-OUTPUTS: the exact .loki/ files a stage brief names (plan-output.txt, plan-scope.json) are writable; every other .loki/ path, and a run
+// record even when a caller lists it, stays denied. The tuning runs' plan sessions were denied both files and lost their plan.
+{ const { harnessOutputs, stateDenyRules } = await import(`${src}/util/config_fence.ts`); const { childEnv } = await import(`${src}/engine10/session.ts`);
+  const rd2 = join(cwd, ".loki/runs/r1"), po = join(rd2, "plan-output.txt"), ps = join(rd2, "plan-scope.json");
+  const pe = { LOKI_E10_STAGE: "plan", LOKI_E10_WRITE_OUTPUTS: JSON.stringify([po, ps, join(rd2, "receipt.json"), join(rd2, "events.jsonl"), join(cwd, ".loki/state.json")]) };
+  say("outputs-allowed", [await hook(pe, "Write", po), await hook(pe, "Write", ".loki/runs/r1/plan-scope.json"), await hook(pe, "Edit", ps), await hook(pe, "MultiEdit", ".loki/runs/r1/./plan-output.txt")]);
+  say("outputs-record-denied", await Promise.all([join(rd2, "receipt.json"), ".loki/runs/r1/events.jsonl", ".loki/runs/r1/run.state.json", ".loki/state.json", ".loki/runs/r1/config_fence.jsonl", ".loki/runs/r1/plan-output.txt.bak", ".loki/runs/r2/plan-output.txt", ".loki/runs/r1/plan-output.txt/x"].map((f) => hook(pe, "Write", f))));
+  say("outputs-unset-denied", await hook({ LOKI_E10_STAGE: "plan" }, "Write", po));
+  say("outputs-relative-or-bad-ignored", [await hook({ LOKI_E10_STAGE: "plan", LOKI_E10_WRITE_OUTPUTS: '[".loki/runs/r1/plan-output.txt"]' }, "Write", po), await hook({ LOKI_E10_STAGE: "plan", LOKI_E10_WRITE_OUTPUTS: "not json" }, "Write", po)]);
+  say("outputs-filtered", harnessOutputs(cwd, pe).map((p: string) => p.replace(cwd + "/", "")));
+  const base = { stage: "plan", brief: "b", tier: "fast", iterationId: "itO", limitS: 30, signal: new AbortController().signal, cwd };
+  say("outputs-env", [childEnv({ ...base, outputs: [po, ".loki/runs/r1/plan-scope.json"] }, { provider: "stub" })["LOKI_E10_WRITE_OUTPUTS"] === JSON.stringify([po, ps]), childEnv(base, { provider: "stub" })["LOKI_E10_WRITE_OUTPUTS"] ?? "unset"]);
+  // CLI route: deny rules beat allow rules, so the exception is the absence of a rule for exactly the outputs
+  mkdirSync(join(cwd, ".loki/state"), { recursive: true }); mkdirSync(join(cwd, ".loki/runs/r0"), { recursive: true }); mkdirSync(rd2, { recursive: true }); writeFileSync(join(rd2, "events.jsonl"), ""); writeFileSync(join(rd2, "notes.txt"), ""); writeFileSync(po, ""); // po exists already: a plan retry rewrites it
+  const rules: string[] = stateDenyRules(cwd, harnessOutputs(cwd, pe)), has = (p: string) => rules.includes(`Edit(/${p})`);
+  say("cli-outputs-not-denied", [has(po), has(ps), rules.some((r) => r.endsWith("/.loki/**)") || r === `Edit(/${rd2}/**)`)]);
+  say("cli-records-denied", [has(join(rd2, "events.jsonl")), has(join(rd2, "receipt.json")), has(join(rd2, "run.state.json")), has(join(rd2, "notes.txt")), has(join(cwd, ".loki/state")), has(join(cwd, ".loki/runs/r0"))]);
+  say("cli-no-outputs-whole-tree", JSON.stringify(stateDenyRules(cwd, [])) === JSON.stringify([`Edit(/${join(cwd, ".loki")}/**)`])); }
 const dn = readFenceRecord(rd); say("denial-recorded", dn.denied.map((x: { path: string; session: string }) => `${x.path}@${x.session}`)); say("denial-capped", [fenceNotes(dn).capped, capFenceVerdict("VERIFIED", fenceNotes(dn)), fenceNotes(dn).notProven[0]]);
 say("denial-with-passing-check", [fenceNotes(dn, true).capped, capFenceVerdict("VERIFIED", fenceNotes(dn, true)), fenceNotes(dn, true).notProven[0]]);
 say("allowlist-caps-even-with-passing-check", fenceNotes({ restored: [], denied: [], failures: [], allowlisted: [{ path: "vitest.config.ts", session: "s" }] }, true).capped);
@@ -391,6 +409,15 @@ fchk "state: denied in the plan stage" 'state:{"LOKI_E10_STAGE":"plan"}:.loki/ru
 fchk "state: denied in the verify stage" 'state:{"LOKI_E10_STAGE":"verify"}:.loki/state.json deny'
 fchk "a .loki denial is not a config denial on the receipt" "state-denial-not-on-receipt 1"
 fchk "outside an engine10 session the hook has no opinion" "no-stage-no-hook none"
+fchk "plan stage may write the two files its brief names (absolute, relative, normalized)" 'outputs-allowed ["none","none","none","none"]'
+fchk "run ledger and run state stay denied even when listed as outputs; a sibling, another run, a child path are denied" 'outputs-record-denied ["deny","deny","deny","deny","deny","deny","deny","deny"]'
+fchk "without declared outputs the plan file is denied" "outputs-unset-denied deny"
+fchk "a relative or malformed output list allows nothing" 'outputs-relative-or-bad-ignored ["deny","deny"]'
+fchk "run record names are dropped from the output list" 'outputs-filtered [".loki/runs/r1/plan-output.txt",".loki/runs/r1/plan-scope.json"]'
+fchk "session env carries the outputs resolved against cwd, and only for the call that sets them" 'outputs-env [true,"unset"]'
+fchk "CLI route: no deny rule for the outputs and no whole-tree rule" "cli-outputs-not-denied [false,false,false]"
+fchk "CLI route: run records, siblings and other .loki entries keep a deny rule" "cli-records-denied [true,true,true,true,true,true]"
+fchk "CLI route without outputs denies the whole .loki tree" "cli-no-outputs-whole-tree true"
 fchk "forged and unknown lines the model appended to the run file are gone after the session" "leg14-forged-lines-gone true"
 fchk "a denial the hook logged is merged into the record" "leg14-denial-merged true"
 fchk "the model deleting the run file does not lose restore or denial lines" "leg14-deleted-file-healed true"
@@ -446,6 +473,11 @@ fchk "a failed listing is reported by the restore" "nogit-restore-reports true"
 fchk "a failed listing reaches the receipt" "nogit-receipt-line true"
 grep -q 'LOCKFILE_PATH\|MANIFEST_PATH' "$ROOT/loki-ts/src/util/config_paths.ts" "$ROOT/loki-ts/src/util/config_fence.ts" && bad "fence keeps its own lockfile or manifest regex" || ok "fence imports the commit filter's lockfile and manifest lists"
 grep -q 'createConfigFenceHook(call.cwd)' "$ROOT/loki-ts/src/runner/providers.ts" && ok "SDK route wires createConfigFenceHook for Edit, Write and MultiEdit" || bad "SDK route does not wire the config fence hook"
+grep -q 'stateDenyRules(cwd, harnessOutputs(cwd' "$ROOT/loki-ts/src/runner/providers.ts" && ok "CLI route .loki deny rules leave the stage's declared outputs writable" || bad "CLI route .loki deny ignores the declared outputs"
+# Every session whose brief names a .loki/ file to write declares it: plan (plan-output.txt, plan-scope.json), project-model discovery, spec criteria.
+grep -q 'outputs: \[outputPath, join(ctx.runDir, PLAN_SCOPE_FILE)\]' "$ROOT/loki-ts/src/engine10/stages/plan.ts" && ok "plan stage declares both files its brief names" || bad "plan stage does not declare its output files"
+grep -q 'outputs: \[answerPath\]' "$ROOT/loki-ts/src/project_model/discover.ts" && ok "project-model discovery declares its answer file" || bad "discovery does not declare its answer file"
+grep -q 'outputs: \[jsonPath\]' "$ROOT/loki-ts/src/util/spec_file.ts" && ok "spec generation declares its criteria file" || bad "spec generation does not declare its criteria file"
 grep -q 'fencedDenyRules(cwd' "$ROOT/loki-ts/src/runner/providers.ts" && ok "CLI route settings carry the per-file Edit deny rules" || bad "CLI route settings do not carry the fence"
 grep -q 'capFenceVerdict(mutCap' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "seal caps a fence allowlist below VERIFIED" || bad "seal does not read the fence record"
 
