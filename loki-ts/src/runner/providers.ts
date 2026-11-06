@@ -384,7 +384,7 @@ export function compactWindowSettings(model: string, routed = false): { autoComp
 
 // Claude Code version bundled in the pinned Agent SDK. A test (providers.test.ts, "providers advisor" block) asserts this equals the
 // installed SDK's claudeCodeVersion, so an SDK bump that forgets it fails CI instead of silently mis-probing.
-export const SDK_BUNDLED_CLAUDE_CODE = "2.1.316";
+export const SDK_BUNDLED_CLAUDE_CODE = "2.1.318";
 function bundledClaudeCodeVersion(): string {
   return SDK_BUNDLED_CLAUDE_CODE;
 }
@@ -915,10 +915,12 @@ export function sdkQueryProvider(): ProviderInvoker {
                             ...(hostGuardRequired(call.cwd) ? [{
                               matcher: "Bash",
                               hooks: [createHostGuardHook(call.cwd)], // in-process; validate-bash.sh runs only for a command one of its rules could deny
+                              onFailure: "block", // SDK 0.3.317: a guard that throws or returns invalid output blocks the call (SDK default lets it run)
                             }] : []),
                             ...(process.env["LOKI_E10_STAGE"] ? [{
                               matcher: "Edit|Write|MultiEdit", // .loki/ run state (every engine10 stage) and the E1 config and lockfile fence (when on); session.ts restores whatever else a session changes
                               hooks: [createConfigFenceHook(call.cwd)],
+                              onFailure: "block", // fail closed, as the host guard
                             }] : []),
                           ],
                         }

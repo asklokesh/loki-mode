@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import re
 import subprocess
 import sys
@@ -1390,11 +1391,13 @@ def self_test() -> int:
         # ---- SDK freshness (RQ-106): offline stubbed registry responses
         now = datetime(2026, 10, 23, tzinfo=timezone.utc)
 
-        def stub(releases: dict):
-            return {"npm": lambda _n: {v: now - timedelta(days=d) for v, d in releases.items()}}
+        def stub(releases: dict, latest: str | None = None):
+            times = {v: now - timedelta(days=d) for v, d in releases.items()}
+            return {"npm": lambda _n: (times, latest or max(times, key=version_tuple))}
 
-        def fresh(pin: str, releases: dict):
-            return sdk_freshness([("npm", "package.json", "@anthropic-ai/sdk", pin)], now, stub(releases))
+        def fresh(pin: str, releases: dict, latest: str | None = None, grace: int | None = None,
+                  name: str = "@anthropic-ai/sdk"):
+            return sdk_freshness([("npm", "package.json", name, pin)], now, stub(releases, latest), grace_days=grace)
 
         check("freshness: pin current -> pass", fresh("1.2.0", {"1.1.0": 30, "1.2.0": 2})[1] == 0)
         check("freshness: pin behind a 3-day-old release -> pass",
@@ -1404,6 +1407,41 @@ def self_test() -> int:
         check("freshness: red output names package, pin, latest and age",
               "@anthropic-ai/sdk" in red_lines[0] and "pin=1.1.0" in red_lines[0]
               and "latest=1.2.0" in red_lines[0] and "age=8d" in red_lines[0])
+        # The grace counts from the upstream release of the FIRST newer version: several quick releases after an
+        # 8-day-old one do not reset it (the guard stayed green while the pin trailed by three releases).
+        check("freshness: behind 3 releases, the oldest newer one past the grace -> red",
+              fresh("1.1.0", {"1.1.0": 30, "1.2.0": 8, "1.3.0": 2, "1.4.0": 1})[1] == 1)
+        check("freshness: red output counts the releases behind",
+              "behind=3" in fresh("1.1.0", {"1.1.0": 30, "1.2.0": 8, "1.3.0": 2, "1.4.0": 1})[0][0])
+        check("freshness: a version newer than dist-tag latest (next) is ignored -> pass",
+              fresh("1.2.0", {"1.1.0": 30, "1.2.0": 20, "1.3.0": 9}, latest="1.2.0")[1] == 0)
+        check("freshness: grace is configurable (3 days, release 4 days old -> red)",
+              fresh("1.1.0", {"1.1.0": 30, "1.2.0": 4}, grace=3)[1] == 1)
+        check("freshness: grace 0 means any newer latest is red",
+              fresh("1.1.0", {"1.1.0": 30, "1.2.0": 0}, grace=0)[1] == 1)
+        _saved_env = os.environ.get("LOKI_SDK_FRESHNESS_DAYS")
+        try:
+            os.environ["LOKI_SDK_FRESHNESS_DAYS"] = "2"
+            check("freshness: LOKI_SDK_FRESHNESS_DAYS sets the grace", freshness_grace_days() == 2)
+            check("freshness: --grace-days wins over the env var", freshness_grace_days(5) == 5)
+            os.environ["LOKI_SDK_FRESHNESS_DAYS"] = "x"
+            check("freshness: a non-integer env value falls back to the default",
+                  freshness_grace_days() == FRESHNESS_WINDOW_DAYS)
+        finally:
+            if _saved_env is None:
+                os.environ.pop("LOKI_SDK_FRESHNESS_DAYS", None)
+            else:
+                os.environ["LOKI_SDK_FRESHNESS_DAYS"] = _saved_env
+        check("freshness: bundled Claude Code behind a 9-day-old CLI release -> red",
+              fresh("2.1.316", {"2.1.316": 20, "2.1.318": 9}, name=CLAUDE_CODE_PACKAGE)[1] == 1)
+
+        cc_dir = tmp / "bundled-cc"
+        (cc_dir / "loki-ts" / "src" / "runner").mkdir(parents=True)
+        (cc_dir / BUNDLED_CC_FILE).write_text('// x\nexport const SDK_BUNDLED_CLAUDE_CODE = "2.1.318";\n')
+        check("freshness: the bundled Claude Code constant is collected as a pin",
+              collect_sdk_pins(cc_dir, [BUNDLED_CC_FILE]) == [("npm", BUNDLED_CC_FILE, CLAUDE_CODE_PACKAGE, "2.1.318")])
+        check("freshness: the real providers.ts carries a parsable SDK_BUNDLED_CLAUDE_CODE",
+              BUNDLED_CC_RE.search((Path(__file__).resolve().parent.parent / BUNDLED_CC_FILE).read_text()) is not None)
 
         for label, req, want in (("== exact", "anthropic==2.2.0\n", "2.2.0"),
                                  (">= floor", "anthropic>=0.40,<1.0.0\n", "0.40")):
@@ -1422,12 +1460,21 @@ def self_test() -> int:
 
 
 # --------------------------------------------------------------------------
-# SDK freshness guard (RQ-106, D115): never more than 7 days behind
+# SDK freshness guard (RQ-106, D115): never more than the grace behind latest
 # --------------------------------------------------------------------------
 
+# Grace in days, counted from the UPSTREAM release date of each newer version (never from our last bump).
+# LOKI_SDK_FRESHNESS_DAYS or --grace-days overrides it. Only versions at or below the registry's "latest"
+# (npm dist-tag latest, PyPI info.version) count, so a release still on "next" never turns the guard red.
 FRESHNESS_WINDOW_DAYS = 7
 FRESHNESS_PACKAGES = SDK_PACKAGE_NAMES | {"anthropic"}
 _PLAIN_VERSION = re.compile(r"^\d+(\.\d+)+$")
+# The Claude Code the SDK route runs is the one bundled in the pinned Agent SDK, named by this constant
+# (tests/min/version-consistency.sh holds it equal to the installed SDK's claudeCodeVersion). Raw users run
+# @anthropic-ai/claude-code latest, so a bundle behind it is Loki running below raw.
+BUNDLED_CC_FILE = "loki-ts/src/runner/providers.ts"
+BUNDLED_CC_RE = re.compile(r'^export const SDK_BUNDLED_CLAUDE_CODE = "(\d+(?:\.\d+)+)";$', re.M)
+CLAUDE_CODE_PACKAGE = "@anthropic-ai/claude-code"
 
 
 def _parse_time(ts: str) -> datetime:
@@ -1435,23 +1482,26 @@ def _parse_time(ts: str) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-def fetch_npm_times(pkg: str) -> dict:
+def fetch_npm_times(pkg: str) -> tuple[dict, str | None]:
+    """({version: release time}, dist-tag latest) for one npm package."""
     data = _fetch_json(f"https://registry.npmjs.org/{pkg}")
-    return {v: _parse_time(t) for v, t in data.get("time", {}).items() if _PLAIN_VERSION.match(v)}
+    times = {v: _parse_time(t) for v, t in data.get("time", {}).items() if _PLAIN_VERSION.match(v)}
+    return times, data.get("dist-tags", {}).get("latest")
 
 
-def fetch_pypi_times(pkg: str) -> dict:
+def fetch_pypi_times(pkg: str) -> tuple[dict, str | None]:
+    """({version: first non-yanked upload time}, info.version) for one PyPI package."""
     data = _fetch_json(f"https://pypi.org/pypi/{pkg}/json")
     out = {}
     for v, files in data.get("releases", {}).items():
         live = [f for f in files if not f.get("yanked") and f.get("upload_time_iso_8601")]
         if live and _PLAIN_VERSION.match(v):
             out[v] = min(_parse_time(f["upload_time_iso_8601"]) for f in live)
-    return out
+    return out, data.get("info", {}).get("version")
 
 
 def collect_sdk_pins(repo_root: Path, files: list[str]) -> list[tuple[str, str, str, str]]:
-    """(ecosystem, file, name, pinned version) for every freshness package."""
+    """(ecosystem, file, name, pinned version) for every freshness package, plus the bundled Claude Code."""
     pins = []
 
     def add(eco: str, f: str, name: str, spec: str) -> None:
@@ -1471,24 +1521,44 @@ def collect_sdk_pins(repo_root: Path, files: list[str]) -> list[tuple[str, str, 
         elif f.endswith("pyproject.toml"):
             for name, spec in parse_pyproject_deps((repo_root / f).read_text(), repo_root / f):
                 add("pypi", f, name, spec)
+        elif f == BUNDLED_CC_FILE:
+            m = BUNDLED_CC_RE.search((repo_root / f).read_text())
+            if m:
+                pins.append(("npm", f, CLAUDE_CODE_PACKAGE, m.group(1)))
     return pins
 
 
-def sdk_freshness(pins: list, now: datetime, fetch_times=None) -> tuple[list[str], int]:
-    """Red when the newest release older than the window is newer than the pin."""
+def freshness_grace_days(override: int | None = None) -> int:
+    """--grace-days, else LOKI_SDK_FRESHNESS_DAYS, else FRESHNESS_WINDOW_DAYS. A non-integer or negative value is skipped."""
+    for raw in (override, os.environ.get("LOKI_SDK_FRESHNESS_DAYS")):
+        try:
+            n = int(raw) if raw is not None and str(raw).strip() != "" else None
+        except ValueError:
+            n = None
+        if n is not None and n >= 0:
+            return n
+    return FRESHNESS_WINDOW_DAYS
+
+
+def sdk_freshness(pins: list, now: datetime, fetch_times=None, grace_days: int | None = None) -> tuple[list[str], int]:
+    """Red when a version newer than the pin, at or below latest, was released more than the grace ago."""
     fetch_times = fetch_times or {"npm": fetch_npm_times, "pypi": fetch_pypi_times}
-    cutoff = now - timedelta(days=FRESHNESS_WINDOW_DAYS)
+    grace = FRESHNESS_WINDOW_DAYS if grace_days is None else grace_days
+    cutoff = now - timedelta(days=grace)
     lines, rc = [], 0
     for eco, f, name, pin in sorted(pins):
-        times = fetch_times[eco](name)
-        newest = max(times, key=version_tuple)
-        due = [v for v, t in times.items() if t <= cutoff]
+        times, latest = fetch_times[eco](name)
+        if latest not in times:
+            latest = max(times, key=version_tuple)
+        released = {v: t for v, t in times.items() if version_tuple(v) <= version_tuple(latest)}
+        due = [v for v, t in released.items() if t <= cutoff]
         target = max(due, key=version_tuple) if due else None
-        age = (now - times[newest]).days
+        age = (now - times[latest]).days
+        behind = sum(1 for v in released if version_tuple(v) > version_tuple(pin))
         stale = target is not None and version_tuple(target) > version_tuple(pin)
         rc = rc or int(stale)
-        lines.append(f"{'STALE' if stale else 'ok'} {name} ({f}) pin={pin} latest={newest} "
-                     f"age={age}d due={target or 'none'} window={FRESHNESS_WINDOW_DAYS}d")
+        lines.append(f"{'STALE' if stale else 'ok'} {name} ({f}) pin={pin} latest={latest} "
+                     f"age={age}d behind={behind} due={target or 'none'} grace={grace}d")
     return lines, rc
 
 
@@ -1504,7 +1574,10 @@ def main() -> int:
     parser.add_argument("--self-test", action="store_true",
                          help="Run offline fixture checks (no network, no repo scan) and exit")
     parser.add_argument("--sdk-freshness", action="store_true",
-                         help="Exit non-zero when a pinned Anthropic SDK is behind a release older than 7 days")
+                         help="Exit non-zero when a pinned Anthropic SDK or the bundled Claude Code is behind a "
+                              "release older than the grace (default 7 days from that release)")
+    parser.add_argument("--grace-days", type=int, default=None,
+                         help="Freshness grace in days (default: LOKI_SDK_FRESHNESS_DAYS, else 7)")
     args = parser.parse_args()
 
     if args.self_test:
@@ -1512,7 +1585,8 @@ def main() -> int:
 
     if args.sdk_freshness:
         root = Path(args.repo_root) if args.repo_root else Path(__file__).resolve().parent.parent
-        lines, rc = sdk_freshness(collect_sdk_pins(root, git_ls_files(root)), datetime.now(timezone.utc))
+        lines, rc = sdk_freshness(collect_sdk_pins(root, git_ls_files(root)), datetime.now(timezone.utc),
+                                  grace_days=freshness_grace_days(args.grace_days))
         print("\n".join(lines))
         return rc
 

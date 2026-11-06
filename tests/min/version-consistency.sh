@@ -9,7 +9,8 @@
 # the previous release (the drift that left the MCP registry stale for 30 releases);
 # the server.json case and tests/test-server-json-current.sh must both fail.
 # Reverted afterwards. Second planted defect: SDK_BUNDLED_CLAUDE_CODE back to 2.1.314 with the 0.3.316
-# pin; the SDK_BUNDLED_CLAUDE_CODE case must fail.
+# pin; the SDK_BUNDLED_CLAUDE_CODE case must fail. Third: docker/Dockerfile agent SDK back to 0.3.314 with the
+# 0.3.318 pin; the Dockerfile case must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 cd "$ROOT" || exit 2
@@ -56,6 +57,19 @@ if [ -f "$sdk_meta" ]; then
 else
     bad "$sdk_meta is missing (run bun install --cwd loki-ts --frozen-lockfile)"
 fi
+# Every other pin site of the two npm SDKs names the loki-ts/package.json version: the image install line
+# (docker/Dockerfile, which pinned 0.3.314 / 1.3.0 while package.json moved on) and both lockfiles.
+sdk_api="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependencies"]["@anthropic-ai/sdk"])' loki-ts/package.json)"
+expect docker/Dockerfile "@anthropic-ai/claude-agent-sdk@$sdk_ts " 1
+expect docker/Dockerfile "@anthropic-ai/sdk@$sdk_api " 1
+expect loki-ts/bun.lock "\"@anthropic-ai/claude-agent-sdk@$sdk_ts\"" 1
+expect loki-ts/bun.lock "\"@anthropic-ai/sdk@$sdk_api\"" 1
+lock_pair="$(python3 -c 'import json,sys; p=json.load(open(sys.argv[1]))["packages"]; print(p["node_modules/@anthropic-ai/claude-agent-sdk"]["version"], p["node_modules/@anthropic-ai/sdk"]["version"])' package-lock.json)"
+[ "$lock_pair" = "$sdk_ts $sdk_api" ] && ok "package-lock.json resolves claude-agent-sdk $sdk_ts and sdk $sdk_api" || bad "package-lock.json resolves '$lock_pair', want '$sdk_ts $sdk_api'"
+
+# The freshness guard (scripts/dep-inventory.py --sdk-freshness, run daily by sdk-freshness.yml) is offline-testable:
+# its self-test covers the grace, the dist-tag latest bound and the bundled Claude Code pin.
+python3 scripts/dep-inventory.py --self-test >"$T/di.out" 2>&1 && ok "scripts/dep-inventory.py --self-test" || bad "scripts/dep-inventory.py --self-test: $(grep -E 'FAIL' "$T/di.out" | head -3 | tr '\n' ' ')"
 
 bash tests/test-server-json-current.sh >"$T/sj.out" 2>&1 && ok "tests/test-server-json-current.sh" || bad "tests/test-server-json-current.sh: $(tail -3 "$T/sj.out" | tr '\n' ' ')"
 bash tests/test-plugin-json-current.sh >"$T/pj.out" 2>&1 && ok "tests/test-plugin-json-current.sh" || bad "tests/test-plugin-json-current.sh: $(tail -3 "$T/pj.out" | tr '\n' ' ')"

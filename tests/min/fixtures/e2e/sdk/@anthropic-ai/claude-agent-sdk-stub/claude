@@ -2,7 +2,9 @@
 // Stub Agent SDK platform binary for the API-key path test (tests/min/newcomer-path.sh). The bundled
 // SDK spawns it as it would its own claude binary, speaking stream-json on stdin/stdout. Each user turn
 // is handed to the e2e CLI stub (tests/min/fixtures/e2e/bin/claude -p <prompt>) and its stdout comes back as the result,
-// so the engine sees the same session behaviour as the CLI-invoker test. No network, no model.
+// so the engine sees the same session behaviour as the CLI-invoker test. No network, no model. The initialize reply
+// carries hook_on_failure_supported, as Claude Code 2.1.317+ does (the SDK refuses a session with onFailure "block"
+// hooks without it); E2E_SDK_STUB_OLD_CLI=1 answers as an older CLI (tests/min/host-guard.sh).
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -18,7 +20,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   let msg: { type?: string; request_id?: string; request?: { subtype?: string }; message?: { content?: unknown } };
   try { msg = JSON.parse(line); } catch { continue; }
   if (msg.type === "control_request") {
-    send({ type: "control_response", response: { subtype: "success", request_id: msg.request_id, response: msg.request?.subtype === "initialize" ? { commands: [], models: [], output_style: "default", available_output_styles: ["default"] } : {} } });
+    send({ type: "control_response", response: { subtype: "success", request_id: msg.request_id, response: msg.request?.subtype === "initialize" ? { commands: [], models: [], output_style: "default", available_output_styles: ["default"], ...(process.env.E2E_SDK_STUB_OLD_CLI ? {} : { hook_on_failure_supported: true }) } : {} } });
     continue;
   }
   if (msg.type !== "user") continue;
