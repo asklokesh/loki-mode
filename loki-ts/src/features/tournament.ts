@@ -513,7 +513,8 @@ export async function runTournament(c: Context, llm: LlmCall, io: Io, o: { progr
   }
   const d = vsAgent(disagreements(entrants, probes));
   let picks = new Map<string, string>();
-  if (d.length > 0) { const views = judgeViews(d); picks = resolveVerdicts(views, parseVerdicts(await call(SYS_JUDGE, judgePrompt(c, views, base), "judge"))); }
+  if (d.some((x) => named.has(x.probeId))) { const views = judgeViews(d); // no named disagreement: no verdict can displace, so no judge call
+    picks = resolveVerdicts(views, parseVerdicts(await call(SYS_JUDGE, judgePrompt(c, views, base), "judge"))); }
   return done(select(entrants, d, picks, { ...(o.margin ? { margin: o.margin } : {}), anchor: base, named }), d, picks, named, diffProbe);
 }
 const extractGoBlock = (text: string): string | null => /```go[^\n]*\n([\s\S]*?)```/.exec(text)?.[1] ?? null;

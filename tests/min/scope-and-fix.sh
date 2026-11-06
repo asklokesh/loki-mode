@@ -192,6 +192,7 @@
 #  94. tournament.ts runTournamentGate: truncate a big base file instead of skipping (the big-file go leg calls the model).
 #  95. tournament.ts applyWinnerFiles: skip the undo record (the kill leg finds no record).
 #  97. tournament.ts runTournamentGate: a tick that never throws (the budget leg runs on).
+#  102. tournament.ts runTournament: call the judge even when no disagreement is on an issue-named probe (the unnamed unit legs read a judge call).
 #  98. tournament.ts namedProbes: any one quoted literal names the input again (the incidental-literal go leg displaces).
 #  99. implement.ts: drop the recoverTournamentUndo call at stage start (the kill leg leaves the half-written file).
 # 100. implement.ts: run the tournament gate before restoreReadOnly again (the gate-order leg fails).
@@ -1511,8 +1512,8 @@ tcheck "any becomes interface{} outside strings and comments; an unused std impo
 tcheck "candidates parse per number; an ambiguous, unknown-path or missing SEARCH does not apply" cands 'c1:1,c2:1|null,null,"ay"'
 tcheck "order-swap judge: both views must back one output; position answers, unknown and contradictions give no verdict" judge '1,p1.1/p1.2,B,0,0,0,B'
 tcheck "agent kept when no probe separates the trees and no model verdict is asked" sel_same "kept/candidates"
-tcheck "wins only on an input the issue does not name never displace, even anchored" sel_unnamed "kept/candidates+judge"
-tcheck "two wins that are both on inputs the issue does not name do not displace either" sel_two_unnamed "kept/candidates+judge"
+tcheck "no judge call when no disagreement sits on an input the issue names: wins only on unnamed inputs never displace, even anchored" sel_unnamed "kept/candidates"
+tcheck "two wins that are both on inputs the issue does not name do not displace either" sel_two_unnamed "kept/candidates"
 tcheck "an agent tree that fails its checks ends the tournament before the candidates call" sel_agent_red "kept/"
 tcheck "two consistent verdicts displace the agent" sel_two "c1/candidates+judge"
 tcheck "one verdict where the agent left the base output does not need a second" sel_one_anchored "c1/candidates+judge"
@@ -1528,8 +1529,8 @@ tcheck "the diff probe runs only when the issue probes separate nothing, then th
 tcheck "no diff probe call when the issue probes already separate the trees" sel_diffprobe_not_needed "c1/candidates+judge"
 tcheck "go: a wrong agent tree is displaced in the primary by the right candidate; sealed spec kept, scratch worktrees removed, test-editing candidate refused" go_displace "displaced|tree=right|calls=candidates+judge|sealed=true|worktrees=1|c1 displaces the agent: 2 consistent verdict(s), 0 against, "
 tcheck "go: probe side effects (a written file, an appended go.mod) stay in the scratch tree; only the winner's source edit reaches the user's tree, beside the agent's new test file, added case and go.mod change" go_probe_side_effects "displaced|tree=right|calls=candidates+judge|sealed=true|worktrees=1|c1 displaces the agent: 2 consistent verdict(s), 0 against, |leak=false|gomod=clean|status=a/a.go,a/a_test.go,a/agent_new_test.go,a/loki_wall_spec_test.go,go.mod|newtest=true|case=true|agentnote=true"
-tcheck "go: a right agent tree is not displaced by a verdict on an input the issue never names" go_unnamed_input "kept|tree=right|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
-tcheck "go: an input with one issue-quoted literal beside an invented one (\" x\" with a) is not named, so one anchored verdict cannot displace a right tree" go_incidental_literal "kept|tree=right|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
+tcheck "go: a right agent tree is not displaced by a verdict on an input the issue never names" go_unnamed_input "kept|tree=right|calls=candidates|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
+tcheck "go: an input with one issue-quoted literal beside an invented one (\" x\" with a) is not named, so one anchored verdict cannot displace a right tree" go_incidental_literal "kept|tree=right|calls=candidates|sealed=true|worktrees=1|agent kept: no challenger wins 1 anchored or 2+ consistent v"
 tcheck "go: an agent that weakened an existing test makes no model call" go_weakened_test "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|the agent edited an existing test the weakened-test rule fla"
 tcheck "go: an agent tree that fails its own checks makes no model call" go_agent_red "kept|tree=other|calls=-|sealed=true|worktrees=1|agent tree does not pass its checks; kept"
 tcheck "go: a base file over the prompt limit skips the tournament before any model call" go_big_file "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|base file a/a.go is 30464 chars, over the prompt limit (2400"
@@ -1539,7 +1540,7 @@ tcheck "go: a right agent tree stays (the wrong candidate regresses the spec cas
 tcheck "go: a margin above the consistent verdicts keeps the agent tree" go_margin3 "kept|tree=wrong|calls=candidates+judge|sealed=true|worktrees=1|agent kept: no challenger wins 3 anchored or 4+ consistent v"
 tcheck "go: a model that returns nothing keeps the agent tree after one call" go_llm_down "kept|tree=wrong|calls=candidates|sealed=true|worktrees=1|no behavioral disagreement"
 tcheck "go: a candidate that also edits an existing test never reaches the checks, so its right fix cannot displace" go_test_edit_only "kept|tree=wrong|calls=candidates|sealed=true|worktrees=1|no behavioral disagreement"
-tcheck "go: no warning sign (every named site covered, quoted lines changed) makes no model call" go_no_sign "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|no warning sign: every named site has a binding spec case an"
+tcheck "go: no warning sign (every named site covered, quoted lines changed) makes no model call" go_no_sign "skipped|tree=wrong|calls=-|sealed=true|worktrees=1|no warning sign: every named site has a binding spec case, t"
 tcheck "go: a throw in the middle of the tournament leaves the agent tree as it was, records a skip on the receipt and never fails the run" go_throws "error|tree=wrong|calls=candidates+judge|sealed=true|worktrees=1|tournament skipped: model transport blew up|receipt=1"
 tcheck "warning signs: an uncovered named site, an issue-quoted line still byte-identical, or an edit-shape residual site (a sibling site alone is not one); none on a plain issue" signs "0,1,1,0,1,0"
 tcheck "probe pruning drops only the case that does not compile; an error outside every case or no error prunes nothing" prune "p2,false,true,true,true"
