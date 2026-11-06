@@ -1,5 +1,5 @@
 // E-08: Implement (ENGINE.md 4, 16). One session; the brief marks Wall tests read-only, names only the impacted tests. Afterwards any changed Wall file is restored (tests_reverted) and the exit is classified.
-import { execSpecBriefOf } from "../../features/exec_spec.ts";
+import { execSpecBriefOf } from "../../features/exec_spec.ts"; import { recoverTournamentUndo, runTournamentGate, tournamentEnabled } from "../../features/tournament.ts";
 import { installOwned } from "../../project_model/install.ts";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -137,6 +137,7 @@ export const implementStage: Stage = {
 
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     rmSync(join(ctx.repoDir, ".loki", "supply-declared.json"), { force: true }); // T10 B3: never judge this run by a stale declaration
+    try { recoverTournamentUndo(ctx.repoDir, ctx.runDir); } catch { /* an unreadable record is left for a person */ } // a displacement a kill cut short is undone before any session can write newer edits
     if (ctx.externalPatch) return applyExternalPatch(ctx, ctx.externalPatch);
     const prior = ctx.outputs();
     const task = (prior.intake?.task as string | undefined) ?? "";
@@ -211,6 +212,7 @@ export const implementStage: Stage = {
 
     if (process.env.LOKI_E10_REPRO === "1" && !plan && !signal.aborted && !session.killed && session.exit === 0) { let bad: { name: string; why: string }[] = []; try { bad = outOfRepoTests(ctx.repoDir, changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); } catch { /* unreadable tree: no re-ask */ } if (bad.length) { const redo = `${first.iterationId}-oor`; ids.push(redo); session = await ctx.sessions.run({ ...unchained(), brief: withStagePrefix(outOfRepoReask("Rewrite these new test files in place, keeping the same names and what they reproduce.", bad)), iterationId: redo }); } } // TEN-QUALITY-44: the repro test gets the Wall's out-of-repo check and one re-ask
     const testsReverted = restoreReadOnly(readOnly);
+    const tournament = tournamentEnabled() && !plan ? await runTournamentGate(ctx, signal, session, attemptDeps(ctx, 0, "", 0)) : undefined; // after the Wall files are restored, so candidates are checked against the original Wall and tests; LOKI_E10_TOURNAMENT (Go, lean path, on by default but inert without an exec-spec probe block; =0 opts out): features/tournament.ts
     const iterationId = ids[ids.length - 1]!;
     // E-68 classifies exit codes; a non-killed, marker-less non-zero exit is an error, never "done".
     let exit: ImplementExit | "error";
@@ -242,6 +244,7 @@ export const implementStage: Stage = {
       ...(sessionResume ? { session_resume: sessionResume } : {}),
       ...(coverage ? { coverage_resume: coverage } : {}), ...(claimAbsent ? { claim_absent: claimAbsent } : {}),
       ...(patch ? { patch: { status: patch.status, calls: patch.calls, applied: patch.applied, refused: patch.refused, restored: patch.restored, usd: patch.usd, log: patch.log, ...(patch.check ? { check: patch.check } : {}) } } : {}),
+      ...(tournament ? { tournament } : {}),
       ...(fragmentWriterOn() && session.summary ? { summary_tail: session.summary.slice(-1500) } : {}), // the release-note writer reads the final message
     };
 
