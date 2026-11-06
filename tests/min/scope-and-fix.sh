@@ -1592,6 +1592,23 @@ else
     echo "  SKIP: pep668 failed retry: needs python3 with venv"
 fi
 
+# setuptools install output (rule 22, real venv and pip): `pip install -e .` writes <name>.egg-info/ (with PKG-INFO) into the repo. The commit stage's stage list (git add -A, then dropSet with
+# nothing recorded as install-created) must hold zero egg-info paths, while an egg-info directory the user already tracks at the base is kept. Needs network (pip fetches setuptools); skipped offline.
+# Plant: remove the "*.egg-info" entry from OUTPUT_DIRS (lock_ecosystems.ts) and the egg-info files are kept for the commit (the leg turns red).
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import venv, ensurepip' >/dev/null 2>&1 && curl -sfI -m 8 https://pypi.org/simple/setuptools/ >/dev/null 2>&1; then
+    EG="$T/egg-info"; rm -rf "$EG"; mkdir -p "$EG/repo/kept.egg-info" && cd "$EG/repo" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
+    printf '[project]\nname = "calc"\nversion = "0"\n\n[build-system]\nrequires = ["setuptools"]\nbuild-backend = "setuptools.build_meta"\n\n[tool.setuptools]\npy-modules = ["calc"]\n' > pyproject.toml
+    printf 'def f():\n    return 1\n' > calc.py; printf 'Name: kept\n' > kept.egg-info/PKG-INFO; git add -- . && git commit -q -m base; BASE="$(git rev-parse HEAD)"
+    python3 -m venv "$EG/venv" && timeout 280 "$EG/venv/bin/python" -m pip install -q -e . >/dev/null 2>&1; printf 'Name: kept2\n' > kept.egg-info/PKG-INFO; printf 'x\n' > kept.egg-info/new.txt; cd "$ROOT"
+    EG_OUT="$(cd "$ROOT/loki-ts" && timeout 120 bun -e 'import { dropSet } from "./src/e10ext/commit_filter.ts"; import { execFileSync } from "node:child_process"; import { existsSync } from "node:fs";
+const [repo, base] = process.argv.slice(1); execFileSync("git", ["-C", repo, "add", "-A", "--", "."]);
+const parts = execFileSync("git", ["-C", repo, "diff", "--cached", "--name-status", "--no-renames", "-z", base], { encoding: "utf8" }).split("\0").filter(Boolean); const staged = [] as { st: string; f: string }[]; for (let i = 0; i + 1 < parts.length; i += 2) staged.push({ st: parts[i]!, f: parts[i + 1]! });
+const dropped = new Set(dropSet(repo, staged, undefined, process.env, null, undefined, base).map((d) => d.f)); const kept = staged.filter((s) => !dropped.has(s.f));
+console.log([existsSync(repo + "/calc.egg-info/PKG-INFO"), kept.filter((s) => s.f.startsWith("calc.egg-info/")).length, kept.filter((s) => s.f.startsWith("kept.egg-info/")).length].join("|"));' "$EG/repo" "$BASE" 2>&1 | tail -1)"
+    [ "$EG_OUT" = "true|0|2" ] && ok "egg-info install output: calc.egg-info/ from pip install -e . is left out of the commit, the user's tracked kept.egg-info/ edits stay ($EG_OUT)" || bad "egg-info install output: got '$EG_OUT'"
+else
+    echo "  SKIP: egg-info install output: needs python3 with venv and network (pypi.org)"
+fi
 # pytest base proof when a narrow terminal ends the summary reason in "..." (rule 22, real pytest): "FAILED tests/test_more.py::IchunkedTests::test_negative_message - AssertionEr..."
 # is an assertion failure (the traceback's E line says AssertionError), not an unknown kind; it was read as "not an assertion" so a real fail-then-pass proof was dropped. A base run that
 # fails by TypeError (the base lacks the new keyword) beside it stays no proof. Plant: drop the "..." test in assertionFailure and the first leg reads "yes|" with no file named.
