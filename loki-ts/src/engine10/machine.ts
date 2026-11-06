@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import { hooks } from "./hooks.ts"; import { wallConcurrent } from "../util/wall_knobs.ts"; import { wallEnabled } from "./sizing.ts";
 import { treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
-import { REGISTRY } from "./registry.ts";
+import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./failures.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, MIN_ATTEMPT_WINDOW_S, runExtraAttempts } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
 import { stallSame, stallSignature } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
@@ -56,6 +56,8 @@ const harnessOnlyFail = (d: Obj | undefined): boolean => { const f = (Array.isAr
 /** FireLater#21: verify's blocking checks are all collateral checks failing the same way on base (collateral_same_error), plus any full suite (which repeats them); a
  *  re-verify after the fix round decides, so a full-suite failure the change caused still blocks there. */
 export const onlyCollateralRed = (d: Obj | undefined): boolean => { const col = Array.isArray(d?.collateral_same_error) ? (d.collateral_same_error as unknown[]).map(String) : [], b = Array.isArray(d?.blocking_checks) ? (d.blocking_checks as unknown[]).map(String) : []; return col.length > 0 && b.length > 0 && b.every((n) => col.includes(n) || n.startsWith("full suite")); };
+/** Cost step b: every blocking group is a full-suite failure or a startup failure: a second fix round rarely fixes a suite the change did not touch or a runner that never started (failures.ts environmentShaped), so one round is the cap there. */
+export const onlyFullSuiteRed = (d: Obj | undefined): boolean => Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0 && (d.failures_grouped as { signature?: unknown; sample?: unknown }[]).every((g) => String(g.signature ?? "").startsWith("full suite") || environmentShaped([{ signature: String(g.signature ?? ""), sample: String(g.sample ?? "") }]));
 export const hasFailures = (d: Obj | undefined): boolean => (Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0 && !harnessOnlyFail(d)) || (typeof d?.holdout_failed === "number" && d.holdout_failed > 0); // C-C4b: a held-out failure is only an opaque count
 /** The fix loop's input after a verify stopped at its limit: the earlier failure groups minus those whose check the stopped verify saw pass
  *  (FireLater#24: fix round 2 was fed a Wall failure the stopped verify had already seen pass, 27 of 27). A group belongs to the check whose
@@ -316,7 +318,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         }
         let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
         let noopSig: string | null = null; // anti-loop: the verify signature that fed the last fix round that left the tree unchanged
-        for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
+        for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && !(round > 1 && onlyFullSuiteRed(outputs.verify)) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
           const wallBefore = wallSignature(outputs, ctx.repoDir);
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;

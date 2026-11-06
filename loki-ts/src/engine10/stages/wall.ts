@@ -14,7 +14,7 @@ import { hasRelevantTests, isTinyGreenfield, WALL_TINY_BOUND, loadRepoMap, named
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { publishSealed, removeHoldout, sealStageDir, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { clauseEvidenceBlock, evidenceOf, ingestWallCases, wallCasesBrief, wallCasesRunner, withUnreproducedEvidence, type WallEvidence } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingStackTool, projectInterpreter, type EngineTestMap } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
-import { sealedWallDir, assertionFailure, readableFailIds, baseJobs, classify, plannedGoDir, goPackageBrief, goPackageClash, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, spawnGroupSync, stripAnsi } from "../../util/check_result.ts";
+import { sealedWallDir, assertionFailure, readableFailIds, type ReportedErrors, baseJobs, classify, plannedGoDir, goPackageBrief, goPackageClash, corroboratePass, corroborateGoPassSync, goRunner, harnessSkipCode, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, spawnGroupSync, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, dotenvFileRead, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions, rustArities, rustCallClash, vacuousCheck } from "../../project_model/conventions.ts"; // FC-23
 
 import { dotnetTestProject } from "../../util/stack_tools.ts";
@@ -33,7 +33,7 @@ export { classify, notRunReason, pytestCollectionIsRed } from "../../util/check_
 // snapshot from process start, not the live env).
 export class RealBaseTestRunner implements BaseTestRunner {
   lastNotRunFiles: NotRunRow[] = [];
-  constructor(private readonly api?: ProjectApi | null, private readonly timeoutMs: number = BASE_RUN_TIMEOUT_MS, private readonly extraEnv: Record<string, string> = {}, private readonly trustSystem = false) {} // trustSystem: the repo declares no Python environment, so the system interpreter IS its interpreter and its base result counts (seal.ts failThenPass; the Wall path never sets it). FC-01: undefined = load the repo's cached Project Model per run
+  constructor(private readonly api?: ProjectApi | null, private readonly timeoutMs: number = BASE_RUN_TIMEOUT_MS, private readonly extraEnv: Record<string, string> = {}, private readonly trustSystem = false, private readonly reported: ReportedErrors = { observed: [], wanted: [] }) {} // trustSystem: the repo declares no Python environment, so the system interpreter IS its interpreter and its base result counts (seal.ts failThenPass; the Wall path never sets it). FC-01: undefined = load the repo's cached Project Model per run
   run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run: number; assertFail: number; failedIds: string[] } {
     this.lastNotRunFiles = [];
     let pass = 0, fail = 0, not_run = 0, assertFail = 0; const failedIds: string[] = []; const not_run_files: NotRunRow[] = []; const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; for (const f of files) {
@@ -41,7 +41,7 @@ export class RealBaseTestRunner implements BaseTestRunner {
       const r = spawnGroupSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, timeoutMs: Math.max(1000, this.timeoutMs), env: { ...plainTestEnv(), ...this.extraEnv } }); // FC-69: plain env in, ANSI stripped out; group-kill launcher reaps a grandchild runner
       const status = r.status, out = stripAnsi(r.output), base = classify(f, status, out, repoDir, this.trustSystem ? undefined : interpreter);
       const result = base === "not_run" && status === 0 && f.runner === "go" && interpreter !== "system" && corroborateGoPassSync(classifyCheck({ kind: "test", ok: true, out, ...goRunner(cmd, args) }), out, cmd, args.filter((a, k) => a !== "-run" && args[k - 1] !== "-run"), { cwd, env: plainTestEnv() }).result === "pass" ? "pass" : base; // same Go exit 0 corroboration as runEach, synchronous
-      if (result === "pass") pass++; else if (result === "fail") { fail++; if (assertionFailure(f.runner, out)) assertFail++; if (f.runner === "go") failedIds.push(...readableFailIds("go", out)); } else { not_run++; not_run_files.push({ file: f.path, reason: notRunReason(status, interpreter), ...(interpreter === "system" ? { interpreter } : {}) }); }
+      if (result === "pass") pass++; else if (result === "fail") { fail++; if (assertionFailure(f.runner, out, this.reported, this.reported.observed.length ? (() => { try { return readFileSync(join(repoDir, f.path), "utf8"); } catch { return ""; } })() : "")) assertFail++; if (f.runner === "go") failedIds.push(...readableFailIds("go", out)); } else { not_run++; not_run_files.push({ file: f.path, reason: notRunReason(status, interpreter), ...(interpreter === "system" ? { interpreter } : {}) }); }
     }
     this.lastNotRunFiles = not_run_files; return { pass, fail, not_run, assertFail, failedIds };
   }
