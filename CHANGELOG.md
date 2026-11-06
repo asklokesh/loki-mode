@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.135.0 (2026-11-05)
+
+Loki on Haiku tries a cheaper one-call patch first, a run can no longer pass by loosening the project configuration, and correct work beside an already-red suite reads VERIFIED.
+
+### Added
+- On a small task, the implement step first tries one tool-less patch call and counts it only when a check that existed before the change ran and passed. Any error or a red check restores every touched file and the full agent session runs as before. It refuses edits to lockfiles, test-runner configs, the sealed test file, .loki, .git and anything that resolves outside the repository. On by default; LOKI_E10_PATCH=0 turns it off.
+- In implement and fix sessions, Loki denies edits to test, build, lint and type configuration files and lockfiles, and puts back any such file a session changed, deleted or created. A task that names the setting with an action (for example "enable strict null checks", "add a vitest setup file", "upgrade lodash") may edit it. Every denial and restore is listed on the receipt. On by default; LOKI_CONFIG_FENCE=0 turns it off.
+
+### Fixed
+- Failures the original commit already had are filtered out the same way for the fail-then-pass check and for the verdict, so a change with real proof beside an already-red suite is no longer held at PARTIAL by those old failures.
+- When the only red check after a fix round is a full suite that failed for an environment reason (no tests found, config failed to load, zero items collected), the run stops instead of spending another fix round. Failures the change itself causes, such as a missing module, a collection error or a syntax error, keep the next fix round.
+
 ## v11.134.0 (2026-11-05)
 
 More correct work now reads VERIFIED: Go tests behind build tags and failures that raise the error the issue reports are counted as proof, and a suite already red before the change no longer stops a run for a human answer.
