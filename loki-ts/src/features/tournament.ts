@@ -489,9 +489,11 @@ export async function runTournament(c: Context, llm: LlmCall, io: Io, o: { progr
   await enter("agent", "agent session", "agent");
   const agent = entrants[0]!;
   if (!agent.checksPass) return done(select(entrants, [], new Map()), [], new Map(), new Set()); // nothing can change: no candidates call, no judge
+  const named = namedProbes(c.issue, o.program);
+  if (named.size === 0) return done({ winner: "agent", reason: "no probe case uses an input the issue quotes, so no verdict could displace the agent: no candidates call", scores: {}, displaced: false }, [], new Map(), named); // only a diff-probe case could then differ, and it needs candidates
   const specs = parseCandidates(await call(SYS_PATCH, candidatePrompt(c), "candidates")).slice(0, LENSES.length);
   for (const s of specs) await enter(s.id, s.lens, s.edits);
-  const probes: Probe[] = pa.probes.filter((p) => stable.has(p.id)), base = keep(pa.run), named = namedProbes(c.issue, o.program);
+  const probes: Probe[] = pa.probes.filter((p) => stable.has(p.id)), base = keep(pa.run);
   const live = entrants.filter((e) => e.checksPass);
   // only probes where a challenger differs from the agent can decide anything (challengers disagreeing among themselves cannot)
   const vsAgent = (xs: Disagreement[]): Disagreement[] => xs.filter((x) => x.options.length > 1 && x.options.some((q) => q.entrants.includes("agent")));
@@ -543,9 +545,10 @@ export const probeIntake = {
 export type ProbeIntake = typeof probeIntake;
 
 // ---------- the gate: wiring into the implement stage ----------
-export interface TournamentInput { program: string; spec?: string; targetRel?: string; pkg: string; pkgRel: string; /** named sites no binding spec case covers */ unchecked?: string[] }
+export interface TournamentInput { program: string; spec?: string; targetRel?: string; pkg: string; pkgRel: string; /** named sites no binding spec case covers */ unchecked?: string[]; /** why no probe program exists: the gate reports it on the receipt */ skip?: string }
 /** wall.ts calls this from its exec-spec branch with the outcome: the probe cases and the full generated spec file, kept for the gate. No probe, no file. */
-export function writeTournamentInput(runDir: string, o: { probe?: string; pkg?: string; specFile?: string; targetRel?: string; unchecked?: string[] }): void {
+export function writeTournamentInput(runDir: string, o: { probe?: string; probeSkip?: string; pkg?: string; specFile?: string; targetRel?: string; unchecked?: string[] }): void {
+  if (!o.probe && o.probeSkip) { try { mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, TOURNAMENT_INPUT_FILE), JSON.stringify({ program: "", pkg: o.pkg ?? "", pkgRel: "", skip: o.probeSkip } satisfies TournamentInput), "utf8"); } catch { /* best effort */ } return; }
   if (!o.probe || !o.pkg) return;
   const i: TournamentInput = { program: o.probe, pkg: o.pkg, pkgRel: o.targetRel && dirname(o.targetRel) !== "." ? dirname(o.targetRel) : "", ...(o.specFile && o.targetRel ? { spec: o.specFile, targetRel: o.targetRel } : {}), ...(o.unchecked?.length ? { unchecked: o.unchecked } : {}) };
   try { mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, TOURNAMENT_INPUT_FILE), JSON.stringify(i), "utf8"); } catch { /* best effort: without it the gate skips */ }
@@ -617,7 +620,8 @@ export function recoverTournamentUndo(repo: string, runDir: string): string[] { 
  *  run goes on. */
 export async function runTournamentGate(ctx: RunContext, signal: AbortSignal, session: SessionResult, deps: ExtraAttemptsDeps, llm: LlmCall = toolLessLlm(), env: NodeJS.ProcessEnv = process.env): Promise<TournamentSummary | null> {
   const input = readInput(ctx.runDir);
-  if (!input) return null; // no probe program (exec spec off, not Go, or no probe block): nothing to report, the run is untouched
+  if (!input) return null; // exec spec off or not Go: nothing to report, the run is untouched
+  if (input.skip) return { status: "skipped", reason: `tournament skipped: ${input.skip}`, receipt: [`tournament skipped: ${input.skip}`.replace(/[\u0000-\u001f\u007f]+/g, " ")] }; // the exec-spec call left no probe program
   if (signal.aborted || session.killed || session.exit !== 0 || !session.markers.done || session.markers.specConflict || session.markers.alreadyDone) return skipped("the implement session did not finish clean (done, no conflict, no already-done claim)");
   const left = ctx.implementLeftS?.() ?? Infinity;
   if (left < 150) return skipped("not enough implement time left for three tool-less calls and the scratch checks");

@@ -482,7 +482,7 @@ export function planFor(runner: SpecRunner, repoDir: string, sites: ResolvedSite
   return { runner, targetRel, header: `The file is ${targetRel}; import the code under test from "${spec}".`, mustStart: "", style: style ? read(style) : "" };
 }
 
-export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; uncoveredSites?: string[]; generatorUsd?: number | null; /** LOKI_E10_TOURNAMENT, Go: the repaired probe cases, the package, the full generated file (binding and advisory) and the named sites no binding case covers */ probe?: string; probeRefused?: string; pkg?: string; specFile?: string; unchecked?: string[]; durationS: number }
+export interface ExecSpecOutcome { status: "sealed" | "advisory_only" | "skipped"; reason: string; runner?: SpecRunner; targetRel?: string; file?: string; brief?: string; atoms: number; sites: number; binding: string[]; advisory: string[]; guards: string[]; dropped: string[]; uncoveredSites?: string[]; generatorUsd?: number | null; /** LOKI_E10_TOURNAMENT, Go: the repaired probe cases, the package, the full generated file (binding and advisory) and the named sites no binding case covers */ probe?: string; probeSkip?: string; pkg?: string; specFile?: string; unchecked?: string[]; durationS: number }
 /** `probe` (features/tournament.ts probeIntake, passed by wall.ts only when LOKI_E10_TOURNAMENT is not 0): for Go, its rules are appended to the generator brief and the reply may carry a second block of probe cases, kept apart from the spec. */
 export async function execSpecAuthor(o: { task: string; repoDir: string; runners: string[]; existingTests: string[]; sessions: Parameters<typeof sessionGenerator>[0]; iterationId: string; signal: AbortSignal; probe?: { rules: string; take(reply: string, pkg: string): { reply: string; probe?: string; refused?: string } } }): Promise<ExecSpecOutcome> {
   let priced: number | null | undefined; // the generator call's dollars when it prices itself (toolLessCall); undefined: read from the session's iteration id
@@ -496,11 +496,20 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
   if (existsSync(join(o.repoDir, plan.targetRel))) return done("skipped", `exec spec: ${plan.targetRel} already exists`, { sites: sites.length });
   const gen = generatorOverride ?? defaultGenerator(o.sessions, o.repoDir);
   const probing = runner === "go" ? o.probe : undefined, pkg = plan.mustStart.replace(/^package\s+/, "");
-  const meter: { usd?: number | null } = {}, reply0 = await gen([buildGeneratorBrief(e, atoms, sites, plan.header, plan.style), ...(probing ? [probing.rules] : [])].join("\n\n"), { model: execSpecModel(), iterationId: o.iterationId, signal: o.signal, meter, ...(probing ? { maxTokens: 8192 } : {}) });
-  if (meter.usd !== undefined) priced = meter.usd;
-  if (reply0 === null || typeof reply0 !== "string") return done("skipped", `exec spec: ${reply0 ? reply0.none : "the generator wrote no reply"}`, { sites: sites.length, runner });
-  const taken = probing ? probing.take(reply0, pkg) : null, reply = taken ? taken.reply : reply0;
-  const parsed = parseGenerated(e, reply, plan.mustStart);
+  const ask = async (withProbe: boolean): Promise<string | null | { none: string }> => {
+    const meter: { usd?: number | null } = {}, r = await gen([buildGeneratorBrief(e, atoms, sites, plan.header, plan.style), ...(withProbe && probing ? [probing.rules] : [])].join("\n\n"), { model: execSpecModel(), iterationId: o.iterationId, signal: o.signal, meter, ...(withProbe && probing ? { maxTokens: 16384 } : {}) }); // a cap, not a typical size: spec plus probe measured 5.3k to 14k output tokens on Haiku
+    if (meter.usd !== undefined) priced = priced === null || meter.usd === null ? null : (priced ?? 0) + meter.usd;
+    return r;
+  };
+  let reply0 = await ask(!!probing), taken = probing && typeof reply0 === "string" ? probing.take(reply0, pkg) : null;
+  let parsed = typeof reply0 === "string" ? parseGenerated(e, taken ? taken.reply : reply0, plan.mustStart) : null;
+  let probeSkip: string | undefined;
+  if (probing && (!parsed || "refused" in parsed)) { // a probe never costs the run its spec: ask again for the spec alone, as without the tournament
+    probeSkip = `the combined spec and probe reply was unusable (${!parsed ? (reply0 && typeof reply0 === "object" ? reply0.none : "no reply") : parsed.refused}); the spec was asked for again without the probe`;
+    taken = null; reply0 = await ask(false);
+    parsed = typeof reply0 === "string" ? parseGenerated(e, reply0, plan.mustStart) : null;
+  }
+  if (reply0 === null || typeof reply0 !== "string" || !parsed) return done("skipped", `exec spec: ${reply0 ? (reply0 as { none: string }).none : "the generator wrote no reply"}`, { sites: sites.length, runner });
   if ("refused" in parsed) return done("skipped", `exec spec: ${parsed.refused}`, { sites: sites.length, runner });
   const base = redFilter(e, o.repoDir, plan.targetRel, parsed.file);
   if (!base.built) return done("skipped", "exec spec: the generated file did not build on the base tree; it proves nothing and was dropped", { sites: sites.length, runner, dropped: e.names(parsed.file) });
@@ -510,7 +519,7 @@ export async function execSpecAuthor(o: { task: string; repoDir: string; runners
     const again = redFilter(e, o.repoDir, plan.targetRel, sel.file);
     if (!again.built || binding.some((n) => again.cases[n] !== "red")) { sel.advisory.push(...binding.map((name) => ({ name, why: "red on base alone, not once pruned" }))); binding = []; }
   }
-  const brief = implementBlock(e, plan.targetRel, { ...sel, binding }, parsed.file, atoms, sites), extra = { runner, targetRel: plan.targetRel, sites: sites.length, brief, binding, advisory: sel.advisory.map((a) => a.name), guards: sel.guards, dropped, uncoveredSites: capSites(uncoveredSites(e, binding, parsed.file, atoms, sites), o.task), ...(taken ? { pkg, specFile: parsed.file, unchecked: uncoveredSites(e, binding, parsed.file, atoms, sites), ...(taken.probe ? { probe: taken.probe } : { probeRefused: taken.refused ?? "probe_no_block" }) } : {}) };
+  const brief = implementBlock(e, plan.targetRel, { ...sel, binding }, parsed.file, atoms, sites), extra = { runner, targetRel: plan.targetRel, sites: sites.length, brief, binding, advisory: sel.advisory.map((a) => a.name), guards: sel.guards, dropped, uncoveredSites: capSites(uncoveredSites(e, binding, parsed.file, atoms, sites), o.task), ...(probing ? { pkg, specFile: parsed.file, unchecked: uncoveredSites(e, binding, parsed.file, atoms, sites), ...(taken?.probe ? { probe: taken.probe } : { probeSkip: probeSkip ?? taken?.refused ?? "probe_no_block" }) } : {}) };
   return binding.length ? done("sealed", `exec spec: ${binding.length} binding case(s) red on base`, { ...extra, file: sel.file }) : done("advisory_only", "exec spec: no binding case red on base; advisory cases only", extra);
 }
 
