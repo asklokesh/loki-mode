@@ -339,7 +339,17 @@ Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 
 - **PR**: the opened pull request URL, or `none` when the run used
   `--no-pr` or never got that far. A draft PR adds the draft reason in
-  parentheses.
+  parentheses. Before opening the PR, Loki checks the run branch against
+  origin's default branch as fetched at the start of the run: a merge
+  conflict, or commits the PR would carry from a branch that is ahead of it,
+  opens the PR as a draft (even a VERIFIED one) whose body starts with
+  "Not mergeable as is" and names the files or the commit count. A stacked
+  slice PR (`LOKI_PR_BASE`) is not checked this way. A change that adds or
+  bumps a dependency in `package.json`, `pyproject.toml` or `go.mod` while
+  the repo's lockfile for it (for example `package-lock.json`, `uv.lock`,
+  `go.sum`) stays unchanged is never VERIFIED: CI installs from that
+  lockfile would fail, so the receipt lists it as NOT PROVEN. A repo with no
+  lockfile there gets no such line.
 
 The PR body is reviewable in 60 seconds (note: the INTEL-3 `renderPrBody` renderer, a 60-line reviewer-first layout, exists but is not yet wired into the live PR stage, which still uses `renderReviewerBody`). It leads with what the issue asked,
 then what changed and why, how it was tested, NOT PROVEN, and the receipt digest

@@ -12,7 +12,7 @@ import { LEGACY_BRANCHES_DIR, listRunIds } from "../commands/run_status.ts";
 import { runOwnerAlive } from "./run_pid.ts";
 import { findInterrupted } from "./run_outputs.ts";
 import { migrateSessionFiles } from "../runner/session_resume.ts";
-import { safeGit } from "./safe_git.ts";
+import { safeGit, safeGitSpawn } from "./safe_git.ts";
 import { addedManifestOk } from "./lock_ecosystems.ts";
 import { isTestFile } from "./test_file_text.ts";
 import { currentBranch } from "../e10ext/stop_restore.ts";
@@ -107,6 +107,32 @@ export function stackedOnLokiRun(repoDir: string, target: ResolvedBase | null = 
   const mb = git(repoDir, ["rev-parse", "--verify", "-q", `${target.ref}^{commit}`]);
   if (!mb || !/^[0-9a-f]{40}$/.test(mb)) return null;
   return { branch, target: target.ref, commits: chunks.length, base_sha: mb, message: `skipped ${chunks.length} unaccepted Loki commit(s) on ${branch}; merge them first to build on them; base moved to the ${target.ref} tip, which may include upstream commits not yet pulled locally` };
+}
+
+export interface MergeReadiness { target: string; conflicts: string[]; foreign: number }
+
+/** FC-MERGEABLE: would the run branch merge into the PR target as GitHub sees it? Checks HEAD against origin's default branch as
+ *  fetched at intake (no network here). `conflicts`: paths `git merge-tree` cannot merge (repo merge drivers off, as on GitHub).
+ *  `foreign`: commits under the run's base that the target lacks (a run started on a feature branch or a stale fork point), which
+ *  the PR would carry as unrelated changes. Null when it cannot be judged: no origin default branch, an unreadable base, or a git
+ *  without `merge-tree --write-tree` (2.38+). Never throws. */
+export function mergeReadiness(repoDir: string, baseSha: string, target: ResolvedBase | null = resolveBase(repoDir, "", false)): MergeReadiness | null {
+  if (!target || target.source !== "remote-default" || !/^[0-9a-f]{40}$/.test(baseSha)) return null;
+  const foreign = Number(git(repoDir, ["rev-list", "--count", `${target.ref}..${baseSha}`]) ?? "NaN");
+  if (!Number.isInteger(foreign)) return null;
+  const r = safeGitSpawn(repoDir, ["merge-tree", "--write-tree", "--name-only", "--no-messages", target.ref, "HEAD"], { encoding: "utf8", timeout: 20000 });
+  if (r.status !== 0 && r.status !== 1) return null; // 0 clean, 1 conflicts; anything else (old git, bad ref, timeout) is unjudged
+  const conflicts = r.status === 1 ? [...new Set(String(r.stdout).split("\n").slice(1).map((l) => l.trim()).filter((l) => l !== ""))] : [];
+  return { target: target.ref, conflicts, foreign };
+}
+
+/** The NOT PROVEN lines for a merge-readiness result: empty when the branch merges cleanly and carries only the run's commits. */
+export function mergeReadinessNotes(m: MergeReadiness | null): string[] {
+  if (!m) return [];
+  const out: string[] = [];
+  if (m.conflicts.length) out.push(`merge conflict with ${m.target} in ${m.conflicts.slice(0, 5).join(", ")}${m.conflicts.length > 5 ? ` (+${m.conflicts.length - 5} more)` : ""}: rebase the branch before review`);
+  if (m.foreign > 0) out.push(`the PR also carries ${m.foreign} commit(s) that are not on ${m.target} and not from this run (the run started from a branch ahead of it)`);
+  return out;
 }
 
 /** Start-line fragment naming the PR target and the base the run starts from (no network). Agrees with intake via stackedOnLokiRun. */

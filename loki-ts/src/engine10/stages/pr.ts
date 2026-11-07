@@ -14,6 +14,7 @@ import { REPO_ROOT } from "../../util/paths.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { collapseNotProven, pushErrLine } from "../../util/term_width.ts";
 import { parseSliceHead, sealAccuracyOfFile, stackBase, stackSection, tierSealFor } from "../../util/run_outputs.ts"; import { publishFallback } from "../../util/engine_origin.ts";
 import { postReceiptComment, renderReceiptComment } from "../../util/receipt_surface.ts";
+import { mergeReadiness, mergeReadinessNotes } from "../../util/base_guard.ts";
 import { buildPassport } from "../../util/receipt_bundle.ts";
 import { lokiYamlTexts, yamlKey } from "../../util/yaml_key.ts"; import { idempotencyKey, runOnce } from "../../util/outbox.ts";
 /** B7: who opens the PR. LOKI_PR_AUTHOR beats loki.yaml pr.author; anything but "bot" is "me". */
@@ -122,6 +123,10 @@ export function partialHead(verdict: Verdict, notProven: string[]): string {
   const clip = (r: string): string => (r.length > 160 ? `${r.slice(0, 157)}...` : r);
   return [`## Not proven`, `This run sealed PARTIAL: ${np.length} thing${np.length === 1 ? " is" : "s are"} not proven. Opened as a draft so the work is reviewable.`, ...np.slice(0, 10).map((r) => `- ${clip(r)}`), ...(np.length > 10 ? [`- (+${np.length - 10} more, total ${np.length}; the full list is in the receipt)`] : []), ""].join("\n") + "\n";
 }
+/** FC-MERGEABLE: a branch that will not merge cleanly says so first, above the verdict, so a reviewer never starts on it. Empty when clean. */
+export function mergeHead(notes: string[]): string {
+  return notes.length ? ["## Not mergeable as is", "Opened as a draft:", ...notes.map((n) => `- ${n}`), ""].join("\n") + "\n" : "";
+}
 export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions = {}): Promise<StageResult> {
   if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before pr started" };
   const pinnedOrigin = ctx.pinnedOrigin;
@@ -130,14 +135,15 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const verdict = seal.verdict ?? "PARTIAL"; // fail-safe: an unknown verdict is never treated as VERIFIED
   const notProven = collapseNotProven(seal.not_proven ?? []); // FC-OUTCOME-FLOOD: display only; receipt.json keeps the full list
   const capHit = ctx.capHit?.() ?? false;
-  const draft = verdict !== "VERIFIED" || capHit || process.env.LOKI_PR_DRAFT === "1" || (ctx as PrContext).draft === true; // MASS-1: `loki issues run --draft` asks for drafts only; it never un-drafts
   const base = stackBase(process.env);
   if (base === null) return { status: "failed", data: {}, reason: "LOKI_PR_BASE is not a valid branch name: refusing to push" };
+  const mergeNotes = base ? [] : mergeReadinessNotes(mergeReadiness(ctx.repoDir, ctx.baseSha)); // FC-MERGEABLE: a stacked slice targets its parent run branch, not the default branch, so it is not judged here
+  const draft = verdict !== "VERIFIED" || capHit || mergeNotes.length > 0 || process.env.LOKI_PR_DRAFT === "1" || (ctx as PrContext).draft === true; // MASS-1: `loki issues run --draft` asks for drafts only; it never un-drafts. A branch that conflicts with the target or carries foreign commits is never opened ready for review
   mkdirSync(ctx.runDir, { recursive: true });
   const link = issueLink(ctx.runDir, verdict);
   const bodyFile = join(ctx.runDir, "pr-body.md");
   const beforeAfter = await beforeAfterBlock(ctx.repoDir, ctx.runDir, ((ctx.outputs().verify?.["changed_files"] ?? []) as unknown[]).map(String), ctx.baseSha, { signal });
-  const reviewerBody = partialHead(verdict, notProven) + renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs(), sealAccuracy: sealAccuracyOfFile(seal.receipt_path ?? null) });
+  const reviewerBody = mergeHead(mergeNotes) + partialHead(verdict, notProven) + renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs(), sealAccuracy: sealAccuracyOfFile(seal.receipt_path ?? null) });
   const tpl = readPrTemplate(ctx.repoDir), shaped = tpl === null ? reviewerBody : applyPrTemplate(reviewerBody, tpl, receiptProof(verdict, ctx.outputs(), seal.receipt_sha256 ?? null)); // no template: today's body, byte-identical
   writeFileSync(bodyFile, withAiMarker(withSealRoute(shaped, process.env, seal), aiMarkerLine({ runId: ctx.runId, provider: ctx.provider, model: ctx.model })) + (verdict === "VERIFIED" ? `\n${tierBodyLine(tierSealFor(ctx.repoDir, ctx.runId))}\n` : "") + intentSection(ctx.outputs().plan) + specPrLine(process.env) + triagePrLine(ctx.outputs().intake) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + link + stackSection(process.env, base, link !== "", ctx.repoDir) + (ctx.handoffMd ?? ""), "utf8");
   const title = prTitle(verdict, ctx.runDir, String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? "")); // PR-FIRST-1 prefix, FireLater#21 wording
@@ -148,7 +154,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const { url, localOk, existing } = pr;
   ctx.emit("pr.opened", "pr", { url, draft, existing });
   const headSha = safeGit(ctx.repoDir, ["rev-parse", "HEAD"]).trim();
-  const notProvenOut: string[] = [];
+  const notProvenOut: string[] = [...mergeNotes];
   if (localOk) {
     // A local bare origin (the eval harness) has no commit status API.
     notProvenOut.push("commit status loki/deep-verify not set (local origin)");
