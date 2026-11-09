@@ -8,14 +8,15 @@ import { homedir } from "node:os";
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 // Walk up from the bundle/source location until we find a directory
-// containing both VERSION and autonomy/run.sh -- the repo root marker.
+// containing both VERSION and autonomy/loki (the bash CLI every install ships) -- the repo root marker.
+// Not autonomy/run.sh: that is the legacy loop, and install detection must not depend on it.
 // This works for both `bun src/cli.ts` (HERE = loki-ts/src/util) and
 // `bun loki-ts/dist/loki.js` (HERE = loki-ts/dist), avoiding the bug
 // where a hardcoded depth resolved to the wrong directory in dist mode.
 function findRepoRoot(): string {
   let dir = HERE;
   for (let i = 0; i < 6; i++) {
-    if (existsSync(resolve(dir, "VERSION")) && existsSync(resolve(dir, "autonomy/run.sh"))) {
+    if (existsSync(resolve(dir, "VERSION")) && existsSync(resolve(dir, "autonomy/loki"))) {
       return dir;
     }
     const parent = dirname(dir);
@@ -33,7 +34,7 @@ export const REPO_ROOT = findRepoRoot();
 export function findRepoRootForVersion(here: string): string {
   let dir = here;
   for (let i = 0; i < 6; i++) {
-    if (existsSync(resolve(dir, "VERSION")) && existsSync(resolve(dir, "autonomy/run.sh"))) {
+    if (existsSync(resolve(dir, "VERSION")) && existsSync(resolve(dir, "autonomy/loki"))) {
       return dir;
     }
     const parent = dirname(dir);

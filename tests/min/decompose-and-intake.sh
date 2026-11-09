@@ -33,6 +33,11 @@
 #            PR into a branch every pull_request workflow filters out says CI will not run yet; a slice worktree whose deep
 #            verify is alive is handed to a detached reaper that waits for it, keeps the addendum and removes worktree,
 #            branch and temp root (FireLater#21: loki/deep-verify stayed pending on every PR).
+#   mergeable: unit-level, util/base_guard.ts mergeReadiness finds a conflict with origin's default branch and counts commits
+#            the PR would carry from a branch ahead of it; the real runPr (stub push script) opens a conflicting VERIFIED
+#            branch as a draft whose body leads with the conflict, and a clean one ready for review. A dependency added to a
+#            manifest whose lockfile exists on disk but was not updated is NOT PROVEN (util/check_result.ts staleLockfileNotes,
+#            wired into seal's VERIFIED cap); a repo with no lockfile, an updated lockfile or a scripts-only edit gets no line.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/engine10/sizing.ts: drop `if (st.large) return { size: "large", ... }` (rebuild dist); the
@@ -82,6 +87,10 @@
 #  29b. discover.ts: drop the fanOut early return (fall through to the session); the diet check fails (fan 1 session instead of 0).
 #  29c. discover.ts fanOutSessionEnabled: always false; the diet check fails (fan-on false).
 #  30. manifestModel: members only from tracked package.json files; the diet check fails (packages/gen missing).
+#  31. stages/pr.ts runPr: drop `mergeNotes.length > 0` from draft; the mergeable checks fail (a conflicting PR opens ready).
+#  32. base_guard.ts mergeReadiness: never read the conflicted paths (conflicts always []); the mergeable checks fail.
+#  33. check_result.ts staleLockfileNotes: flag the manifest even when no lockfile exists on disk; the stale lockfile check fails (none=1).
+#  34. stages/seal.ts: drop staleLockfileNotes from openNotes; the stale lockfile check fails (wired=false).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -550,6 +559,59 @@ console.log(r.join(" "));
 ' 2>&1)"
 [ "$GUARD" = "false true false true true" ] && ok "lazy zero guard: untouched trusted; dependency edit, deleted ignored file, unknown list withheld" || bad "lazy zero guard gave: $GUARD (want: false true false true true)"
 
+# --- mergeable: the PR stage checks the run branch against origin's default branch before it opens the PR --------------------
+# FC-MERGEABLE: a branch that conflicts with the target, or carries commits from a branch ahead of it, opens as a draft that says so first.
+M="$T/merge"; mkdir -p "$M"
+git init -q --bare -b main "$M/origin.git"
+git init -q -b main "$M/r"; git -C "$M/r" config user.name m; git -C "$M/r" config user.email m@example.invalid
+printf 'export const a = 1;\nexport const b = 2;\n' > "$M/r/calc.ts"; git -C "$M/r" add calc.ts; git -C "$M/r" commit -q -m base
+git -C "$M/r" remote add origin "$M/origin.git"; git -C "$M/r" push -q origin main; git -C "$M/r" fetch -q origin; git -C "$M/r" remote set-head origin main
+git clone -q "$M/origin.git" "$M/up"; git -C "$M/up" config user.name u; git -C "$M/up" config user.email u@example.invalid
+git -C "$M/r" checkout -q -b loki/clean; echo 'export const c = 3;' > "$M/r/new.ts"; git -C "$M/r" add new.ts; git -C "$M/r" commit -q -m clean
+sed -i.bak 's/b = 2/b = 20/' "$M/up/calc.ts"; git -C "$M/up" commit -q -am upstream; git -C "$M/up" push -q origin main; git -C "$M/r" fetch -q origin
+git -C "$M/r" checkout -q -b loki/conflict main; sed -i.bak 's/b = 2/b = 200/' "$M/r/calc.ts"; git -C "$M/r" commit -q -am mine
+git -C "$M/r" checkout -q -b feat main; echo 'x' > "$M/r/f1"; git -C "$M/r" add f1; git -C "$M/r" commit -q -m f1; echo 'y' > "$M/r/f2"; git -C "$M/r" add f2; git -C "$M/r" commit -q -m f2
+git -C "$M/r" checkout -q -b loki/foreign; echo 'z' > "$M/r/f3"; git -C "$M/r" add f3; git -C "$M/r" commit -q -m run
+git init -q -b main "$M/lone"; git -C "$M/lone" config user.name l; git -C "$M/lone" config user.email l@example.invalid; git -C "$M/lone" commit -q --allow-empty -m base
+printf '#!/usr/bin/env bash\n[ "$1" = push-pr ] && { printf "%%s\\n" "$*" >> "$PUSH_LOG"; echo created; echo "local://$_LOKI_PINNED_ORIGIN#$3"; }\nexit 0\n' > "$M/push.sh"
+MERGE="$(ROOT="$ROOT" M="$M" PUSH_LOG="$M/push.log" bun --no-env-file --config=/dev/null -e '
+const { mergeReadiness, mergeReadinessNotes } = await import(process.env.ROOT + "/loki-ts/src/util/base_guard.ts");
+const { runPr } = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/pr.ts");
+const { execFileSync } = await import("node:child_process"); const { readFileSync, mkdirSync } = await import("node:fs");
+const m = process.env.M, r = m + "/r", g = (...a) => execFileSync("git", ["-C", r, ...a], { encoding: "utf8" }).trim();
+const at = (b) => { g("checkout", "-q", b); return mergeReadiness(r, g("merge-base", b, "main")); };
+const out = [], clean = at("loki/clean"), conf = at("loki/conflict"), forn = (() => { g("checkout", "-q", "loki/foreign"); return mergeReadiness(r, g("rev-parse", "HEAD~1")); })();
+out.push(`clean=${clean?.conflicts.length}/${clean?.foreign}/${mergeReadinessNotes(clean).length}`, `conflict=${conf?.conflicts.join(",")}/${conf?.foreign}`, `foreign=${forn?.conflicts.length}/${forn?.foreign}`, `lone=${mergeReadiness(m + "/lone", execFileSync("git", ["-C", m + "/lone", "rev-parse", "HEAD"], { encoding: "utf8" }).trim())}`);
+const pr = async (b, verdict) => { g("checkout", "-q", b); const runDir = m + "/run-" + b.replace("/", "-"); mkdirSync(runDir, { recursive: true });
+  const ctx = { repoDir: r, runDir, runId: "e10-test", branch: b, baseSha: g("merge-base", b, "main"), provider: "claude", model: "claude-haiku-5-5", pinnedOrigin: m + "/origin.git", capHit: () => false, emit: () => {},
+    outputs: () => ({ seal: { verdict, not_proven: [] }, intake: { task: "change b" }, verify: { changed_files: ["calc.ts"] } }) };
+  const res = await runPr(ctx, new AbortController().signal, { pushScriptPath: m + "/push.sh" }); const body = readFileSync(runDir + "/pr-body.md", "utf8");
+  return `${res.status}:${res.data.draft}:${body.startsWith("## Not mergeable as is")}:${(res.data.not_proven ?? []).some((n) => n.startsWith("merge conflict with origin/main in calc.ts"))}`; };
+out.push(`prconflict=${await pr("loki/conflict", "VERIFIED")}`, `prclean=${await pr("loki/clean", "VERIFIED")}`);
+console.log(out.join(" "));
+' 2>&1)"
+want="clean=0/0/0 conflict=calc.ts/0 foreign=0/2 lone=null prconflict=completed:true:true:true prclean=completed:false:false:false"
+[ "$MERGE" = "$want" ] && ok "merge readiness: a conflicting VERIFIED branch opens as a draft led by the conflict; a clean one opens ready; foreign commits counted; no origin is unjudged" || bad "merge readiness gave: $MERGE (want: $want)"
+grep -c -- '--draft' "$M/push.log" 2>/dev/null | grep -qx 1 && ok "merge readiness: only the conflicting PR was pushed with --draft" || bad "merge readiness: --draft count in push log: $(grep -c -- '--draft' "$M/push.log" 2>/dev/null)"
+# FC-STALE-LOCKFILE: a dependency change whose existing lockfile was left stale fails a CI install, so it is NOT PROVEN (seal caps VERIFIED); no lockfile, no line.
+L="$T/lock"; mkdir -p "$L"
+lockrepo() { # lockrepo <dir> <files...>: package.json (and web/package.json) plus the named lockfiles, committed; then a dependency is added
+    mkdir -p "$1/web"; printf '{"name":"a","dependencies":{"x":"1.0.0"}}\n' > "$1/package.json"; printf '{"name":"w","dependencies":{"y":"1.0.0"}}\n' > "$1/web/package.json"
+    local d="$1"; shift; for f in "$@"; do echo '{}' > "$d/$f"; done
+    git -C "$d" init -q -b main && git -C "$d" config user.name l && git -C "$d" config user.email l@example.invalid && git -C "$d" add -A && git -C "$d" commit -q -m base
+}
+lockrepo "$L/root" package-lock.json; printf '{"name":"w","dependencies":{"y":"1.0.0","z":"2.0.0"}}\n' > "$L/root/web/package.json"
+lockrepo "$L/none"; printf '{"name":"a","dependencies":{"x":"1.0.0","z":"2.0.0"}}\n' > "$L/none/package.json"
+lockrepo "$L/upd" package-lock.json; printf '{"name":"a","dependencies":{"x":"1.0.0","z":"2.0.0"}}\n' > "$L/upd/package.json"; echo '{"z":1}' > "$L/upd/package-lock.json"
+lockrepo "$L/scripts" package-lock.json; printf '{"name":"a","scripts":{"t":"x"},"dependencies":{"x":"1.0.0"}}\n' > "$L/scripts/package.json"
+LOCK="$(ROOT="$ROOT" L="$L" bun --no-env-file --config=/dev/null -e '
+const cr = await import(process.env.ROOT + "/loki-ts/src/util/check_result.ts");
+const { execFileSync } = await import("node:child_process"); const { readFileSync } = await import("node:fs");
+const one = (n) => { const d = process.env.L + "/" + n, base = execFileSync("git", ["-C", d, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(); return cr.staleLockfileNotes(d, cr.classifyRisk(cr.diffFiles(d, base), {})); };
+const r = one("root"), wired = /staleLockfileNotes\(ctx\.repoDir, o\.verify\?\.risk\)\], verdict3: Verdict = openNotes\.length > 0 && verdict3a === "VERIFIED" \? "PARTIAL"/.test(readFileSync(process.env.ROOT + "/loki-ts/src/engine10/stages/seal.ts", "utf8"));
+console.log([r.length, r[0]?.startsWith("dependency manifest web/package.json changed but package-lock.json was not updated"), one("none").length, one("upd").length, one("scripts").length, wired].join(" "));
+' 2>&1)"
+[ "$LOCK" = "1 true 0 0 0 true" ] && ok "stale lockfile: a dependency added under a root package-lock.json is NOT PROVEN (seal caps VERIFIED); no lockfile, an updated lockfile or a scripts-only edit gives no line" || bad "stale lockfile gave: $LOCK (want: 1 true 0 0 0 true)"
 
 # --- brief: the Project Model discovery brief keeps per-run text last so same-repo sessions share a cacheable prefix ------------------
 # EXP-0002 audit F7: the per-run answer path sat before the tree and inlined files, so every later discovery on the same repo missed the cache.

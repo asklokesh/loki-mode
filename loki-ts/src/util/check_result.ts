@@ -1063,6 +1063,28 @@ const MANIFEST_LOCKS: [RegExp, RegExp][] = [
   [/(^|\/)go\.mod$/, /(^|\/)go\.sum$/],
 ];
 const dirOf = (p: string): string => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
+export const MANIFEST_NO_LOCK = "manifest changed without lockfile: ";
+const LOCK_NAMES: [RegExp, string[]][] = [
+  [/(^|\/)package\.json$/, ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"]],
+  [/(^|\/)pyproject\.toml$/, ["poetry.lock", "uv.lock", "pdm.lock", "Pipfile.lock"]],
+  [/(^|\/)go\.mod$/, ["go.sum"]],
+];
+/** FC-STALE-LOCKFILE: the TEN-GATES-18 advisory says a manifest's dependency set changed with no lockfile change beside it. When the repo
+ *  really keeps a lockfile for that manifest (same or ancestor dir, on disk), CI installs from it (npm ci, a frozen pnpm or yarn install,
+ *  uv/poetry --locked, go's missing go.sum entry) fail, so seal reads each such line as NOT PROVEN and caps VERIFIED. A repo with no
+ *  lockfile there has nothing to update and stays advisory only. Never throws. */
+export function staleLockfileNotes(repoDir: string, risk: unknown): string[] {
+  const adv = (risk as { advisories?: unknown } | null | undefined)?.advisories;
+  return (Array.isArray(adv) ? adv : []).flatMap((a) => {
+    if (typeof a !== "string" || !a.startsWith(MANIFEST_NO_LOCK)) return [];
+    const p = a.slice(MANIFEST_NO_LOCK.length), names = LOCK_NAMES.find(([m]) => m.test(p))?.[1] ?? [];
+    for (let d = dirOf(p); ; d = dirOf(d)) {
+      const hit = names.find((n) => { try { return existsSync(join(repoDir, d, n)); } catch { return false; } });
+      if (hit) return [`dependency manifest ${p} changed but ${d ? `${d}/` : ""}${hit} was not updated: a CI install from the lockfile fails until it is regenerated`];
+      if (d === "") return [];
+    }
+  });
+}
 const PKG_DEP_KEYS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
 const PYPROJECT_NONDEP = /^(name|version|description|readme|license|requires-python|python|authors|maintainers|keywords|classifiers|homepage|repository|documentation|packages|include|exclude)$/;
 
@@ -1177,7 +1199,7 @@ export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process
     else ignored = `LOKI_RISK_TIER=${asked} ignored: lowering from ${computed} needs LOKI_RISK_OVERRIDE_REASON`;
   }
   const plan = PLAN[tier], checks_deferred = deferredOf(tier, plan.selected, []);
-  const advisories = manifestsWithoutLock(files).map((p) => `manifest changed without lockfile: ${p}`);
+  const advisories = manifestsWithoutLock(files).map((p) => `${MANIFEST_NO_LOCK}${p}`);
   const summary = summaryOf({ tier, computed, reasons, ...(override ? { override } : {}), checks_deferred }) + (advisories.length ? `; advisory: ${advisories.join(", ")}` : "");
   return {
     version: 1, tier, computed, reasons,

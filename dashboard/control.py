@@ -87,7 +87,7 @@ def find_skill_dir() -> Path:
     if explicit:
         configured = Path(explicit).expanduser().resolve()
         if ((configured / "SKILL.md").exists()
-                and (configured / "autonomy" / "run.sh").exists()):
+                and (configured / "autonomy" / "loki").exists()):
             return configured
         raise RuntimeError(f"LOKI_SKILL_DIR is not a Loki source tree: {configured}")
 
@@ -113,7 +113,7 @@ def find_skill_dir() -> Path:
             continue
         try:
             if ((candidate / "SKILL.md").exists()
-                    and (candidate / "autonomy" / "run.sh").exists()):
+                    and (candidate / "autonomy" / "loki").exists()):
                 return candidate
         except OSError:
             continue
@@ -124,7 +124,6 @@ def find_skill_dir() -> Path:
     return _cwd_or_none() or Path(__file__).resolve().parent.parent
 
 SKILL_DIR = find_skill_dir()
-RUN_SH = SKILL_DIR / "autonomy" / "run.sh"
 
 
 def _cwd_or_skill_dir() -> Path:
