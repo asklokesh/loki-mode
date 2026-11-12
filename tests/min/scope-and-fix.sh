@@ -32,6 +32,8 @@
 #                session runs; =1: exactly one "-c" session with the fixed brief writes negate(); a first turn that claims already-done, or a run
 #                that has a plan, gets no coverage turn. Unit: the folded line sits after FOLD_PLAN_INSTRUCTION, asks for a test per named site,
 #                and every opt-out gives main's brief byte for byte; the claim variant re-asks once ("-c2") on an absent claim.
+#   ranked remedy: (F1, LOKI_E10_RANKED_REMEDY, default on) intake records an issue's first-ranked remedy; a MISSING check starts one -rr resume, IMPLEMENTED,
+#                =0 and a task with no ranked list start none (no check call at all for the last two).
 #   exec spec:   (off by default under LOKI_E10_LEAN_CALLS, LOKI_E10_EXEC_SPEC=1 turns it on; lean, Wall off) deterministic atoms, the parity atom from the whole function body, the pair atom,
 #                the binding rule; real go test, pytest and vitest (2 and latest) per-case base runs seal only the binding red case; on the
 #                engine the right fix is VERIFIED, a change that leaves it red is not, and the knob unset runs no generator session.
@@ -274,6 +276,7 @@
 # 234. implement.ts buildImplementBrief: drop coverageFoldLines (the fold brief and wiring legs fail).
 # 237. opus_consult.ts consultEnabled: back to on by default (the consult default unit leg and the unset consult-off engine leg fail).
 # 238. machine.ts suiteOnlyRed: drop clause (a)'s targeted-pass check (suite fix skip clauses reads 0000 for the tq row).
+# 239. conflict_resume.ts parseRemedyCheck: accept MISSING even beside IMPLEMENTED (the ranked remedy check unit leg reads missing,implemented,missing,null,null).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -505,6 +508,20 @@ run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=1
 grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: a run with a plan got a coverage turn"; dump; } || ok "coverage on: a run with a plan stage gets no coverage turn (lean path only)"
 run_engine "$CTASK" E2E_STUB_MODE=already LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
 grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: an already-done first turn got a coverage turn"; dump; } || ok "coverage on: an already-done first turn gets no coverage turn"
+# ---------------------------------------------------------------- F1 ranked remedy (LOKI_E10_RANKED_REMEDY, default on, =0 opts out; stub tool-less check through the CLI invoker)
+RTASK=$'add a multiply(a, b) function to calc.ts\n\n### Possible solution\n\nIn order of preference:\n\n1. Add multiply(a, b) to calc.ts returning a * b.\n2. Inline the product at each call site.'
+remedies() { grep -c '^remedy$' "$(dirname "$ITERS")/stub.log" 2>/dev/null || true; }
+rrec() { ev 'next((json.dumps(e["data"].get("ranked_remedy")) for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), "none")'; }
+run_engine "$RTASK" E2E_STUB_MODE=done E2E_STUB_REMEDY=missing LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+[ "$(remedies)" = 1 ] && [ "$(grep -c '^implement .*-rr ' "$ITERS")" = 1 ] && ok "ranked remedy: a ranked list gets one check, and MISSING starts exactly one -rr resume" || { bad "ranked remedy missing: $(remedies) checks, $(grep -c '^implement .*-rr ' "$ITERS") -rr sessions (want 1 and 1)"; dump; }
+case "$(rrec)" in *'"check": "missing"'*'"resumed": true'*) ok "ranked remedy: the implement stage records the check and the resume ($(rrec))" ;; *) bad "ranked remedy: implement record '$(rrec)'" ;; esac
+[ "$(ev 'next((e["data"].get("ranked_remedy","")[:30] for e in E if e["type"]=="stage.completed" and e["stage"]=="intake"), "none")')" = "Add multiply(a, b) to calc.ts " ] && ok "ranked remedy: intake records remedy 1 as ranked_remedy" || bad "ranked remedy: intake ranked_remedy missing"
+run_engine "$RTASK" E2E_STUB_MODE=done LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+[ "$(remedies)" = 1 ] && [ "$(grep -c '^implement .*-rr ' "$ITERS")" = 0 ] && ok "ranked remedy: IMPLEMENTED starts no resume" || { bad "ranked remedy implemented: $(remedies) checks, $(grep -c '^implement .*-rr ' "$ITERS") -rr sessions (want 1 and 0)"; dump; }
+run_engine "$RTASK" E2E_STUB_MODE=done E2E_STUB_REMEDY=missing LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_RANKED_REMEDY=0
+[ "$(remedies)" = 0 ] && [ "$(grep -c '^implement .*-rr ' "$ITERS")" = 0 ] && ok "ranked remedy =0: no check and no resume" || { bad "ranked remedy =0: $(remedies) checks"; dump; }
+run_engine "add a multiply(a, b) function to calc.ts" E2E_STUB_MODE=done E2E_STUB_REMEDY=missing LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+[ "$(remedies)" = 0 ] && ok "ranked remedy: a task with no ranked list makes no check call (\$0)" || { bad "ranked remedy: $(remedies) checks on a plain task"; dump; }
 
 # ---------------------------------------------------------------- patch protocol on the engine (LOKI_E10_PATCH, default off; stub tool-less call through the CLI invoker)
 PTASK="add a multiply(a, b) function to calc.ts"
@@ -677,6 +694,23 @@ res("patch receipt: green, error and every other status map to green, error and 
   delete process.env.LOKI_E10_CLAIM_CHECK; const b = await cr.reaskFoldedClaims(sctx, opts, done("SITE src/parse.js:2: changed\nLOKI_DONE"));
   if (prevCc === undefined) delete process.env.LOKI_E10_CLAIM_CHECK; else process.env.LOKI_E10_CLAIM_CHECK = prevCc;
   res("coverage fold claim: with LOKI_E10_CLAIM_CHECK=1 an absent claim gets one -c2 re-ask, a changed claim none; the default (off under LOKI_E10_LEAN_CALLS) asks nothing", seen.join() === "it-c2" && a.claimAbsent?.join() === "src/parse.js:2" && a.iterationIds.join() === "it-c2" && a2.iterationIds.length === 0 && b.iterationIds.length === 0 && b.claimAbsent === undefined, `${seen.join()}|${JSON.stringify([a.iterationIds, a2.iterationIds, b.iterationIds])}`); }
+// F1 ranked remedy (LOKI_E10_RANKED_REMEDY, default on): deterministic extraction, the per-task brief line, the one-word check parser and the one targeted resume
+{ const sa = await import(ROOT + "/loki-ts/src/features/spec_ambiguity.ts");
+  const LH = "### Possible solution\n\nAny of these would fix it, roughly in order of preference:\n\n1. Resolve the fallback against the remote-tracking ref (`origin/main`) rather than the bare local name.\n2. Fall through to the existing `git ls-tree` branch.\n3. At minimum, do not fail the hook.\n";
+  const r1 = sa.rankedRemedy(LH), r2 = sa.rankedRemedy("### Possible solution\n\nIgnore a single trailing NUL in `parseFilesFromString`.\n"), r3 = sa.rankedRemedy("### Steps to reproduce\n\n1. run it\n2. see the error\n");
+  const r4 = sa.rankedRemedy("Suggested fix:\n\n1. Wrap the error as a workaround.\n2. The preferred fix is to return early.\n"), r5 = sa.rankedRemedy("### Proposed fix\n\n1. Only one item.\n");
+  res("ranked remedy: a numbered list under a remedy heading or a preference order gives remedy 1; a single remedy, numbered steps elsewhere and a one-item list give none; the item marked preferred (and not a fallback) wins", r1?.first.startsWith("Resolve the fallback against the remote-tracking ref (`origin/main`)") === true && r1?.count === 3 && r2 === null && r3 === null && r4?.first === "The preferred fix is to return early." && r5 === null, JSON.stringify([r1, r2, r3, r4, r5]));
+  res("ranked remedy: the knob is on by default and =0 opts out", sa.rankedRemedyEnabled({}) && !sa.rankedRemedyEnabled({ LOKI_E10_RANKED_REMEDY: "0" }));
+  const T1 = "fix the push fallback\n\n" + LH, plain = impl.buildImplementBrief(T1, null, []), withR = impl.buildImplementBrief(T1, null, [], "", null, undefined, r1!.first), line = sa.rankedRemedyBlock(r1!.first)[0]!;
+  res("ranked remedy: the brief names remedy 1 once, after the task text and outside the cache-stable prefix; no remedy gives today's brief byte for byte; COVERAGE_FOLD is unchanged", withR.split(line).length === 2 && withR.indexOf(line) > withR.indexOf("fix the push fallback") && withR.replace(`\n\n${line}`, "") === plain && impl.buildImplementBrief(T1, null, [], "", null, undefined, undefined) === plain && !cr.COVERAGE_FOLD.includes("remed"));
+  const pr = [cr.parseRemedyCheck("MISSING"), cr.parseRemedyCheck("implemented."), cr.parseRemedyCheck("MISSING or IMPLEMENTED"), cr.parseRemedyCheck(null), cr.parseRemedyCheck("not sure")].map(String).join(",");
+  res("ranked remedy check: only a one-sided MISSING or IMPLEMENTED parses; both, neither or no reply is unparsed", pr === "missing,implemented,null,null,null", pr);
+  const d = repo(), base = git(d, "rev-parse", "HEAD").trim(), seen: string[] = [], prompts: string[] = [], ok1 = { exit: 0, markers: { done: true, specConflict: null, alreadyDone: null }, durationS: 1, killed: false, summary: "LOKI_DONE" };
+  const sctx = { provider: "stub", repoDir: d, baseSha: base, sessions: { run: async (o: { iterationId: string; brief: string }) => { seen.push(o.iterationId); prompts.push(o.brief); return ok1; } } };
+  const opts = { stage: "implement", brief: "b", tier: "development", iterationId: "it", limitS: 600, signal: new AbortController().signal };
+  const runWith = async (reply: string | null) => { cr.__setRemedyCheckForTests(async (system: string, prompt: string) => { prompts.push(prompt); return { text: reply, usd: 0.0004, outcome: reply ? "ok" : "failed" }; }); try { return await cr.resumeForRemedy(sctx, opts, ok1, "use origin/main", "diff --git a/x b/x\n+x"); } finally { cr.__setRemedyCheckForTests(null); } };
+  const m = await runWith("MISSING"), i = await runWith("IMPLEMENTED"), u = await runWith(null);
+  res("ranked remedy resume: MISSING starts one -rr resume naming the remedy; IMPLEMENTED and a failed check start none; each records the verdict", seen.join() === "it-rr" && m.record.check === "missing" && m.record.resumed && i.record.check === "implemented" && !i.record.resumed && u.record.check === "unparsed" && !u.record.resumed && prompts.some((p) => p.includes("Loki remedy check.") && p.includes("use origin/main")) && prompts.some((p) => p.includes('first-choice remedy is not in your change: "use origin/main"')), `${seen.join()}|${JSON.stringify([m.record, i.record, u.record])}`); }
 TS
 out="$(cd "$ROOT/loki-ts" && timeout 300 bun "$PP/unit.ts" "$ROOT" "$PP" 2>&1)"
 while IFS= read -r line; do
@@ -3010,10 +3044,12 @@ const mcA = readFileSync(root + "/loki-ts/src/engine10/machine.ts", "utf8"), vfA
 res("wiring: verify collects tscUnusedUntouched for each still-failing tsc check and publishes lint_unused_untouched; the machine skips round 1 on suiteOnlyRed and picks the tsc note", /unusedTsc\.push\(\{ check: c\.name, \.\.\.tscUnusedUntouched\(tscOut\.get\(c\) \?\? "", g\.root, changedAll \?\? changed\) \}\)/.test(vfA) && /lint_unused_untouched: unusedTsc\.filter/.test(vfA) && /!\(suiteSkip \|\| \(round > 1 && onlyFullSuiteRed\(outputs\.verify\)\)\)/.test(mcA) && /suiteFixSkipClauses\(\)\?\.tsc && tscGroupAside\(outputs\.verify\) \? SUITE_FIX_SKIP_TSC_NOTE : SUITE_FIX_SKIP_NOTE/.test(mcA));
 const im = readFileSync(root + "/loki-ts/src/engine10/stages/implement.ts", "utf8");
 res("wiring: the plan-skipped implement brief adds coverageFoldLines right after FOLD_PLAN_INSTRUCTION, and fold mode runs only the claim check on the implement session (no -c turn)", /\.\.\.\(plan \? \[\] : \[FOLD_PLAN_INSTRUCTION, \.\.\.coverageFoldLines\(\)\]\)/.test(im) && /else if \(coverageMode\(\) === "fold" && !plan\) \{/.test(im) && /const r = await reaskFoldedClaims\(ctx, /.test(im) && /if \(coverageResumeEnabled\(\) && !plan\)/.test(im));
+const inF1 = readFileSync(root + "/loki-ts/src/engine10/stages/intake.ts", "utf8");
+res("wiring: intake records rankedRemedy as ranked_remedy under its knob; implement passes it to the brief and runs resumeForRemedy only after a clean done with a non-empty diff", /const remedy = rankedRemedyEnabled\(\) \? rankedRemedy\(task\) : null;/.test(inF1) && /\.\.\.\(remedy \? \{ ranked_remedy: remedy\.first \} : \{\}\)/.test(inF1) && /prior\.intake\?\.assumptions, rankedRemedyEnabled\(\) \? prior\.intake\?\.ranked_remedy : undefined\)/.test(im) && /if \(remedy && patch\?\.status !== "green" && !signal\.aborted && !session\.killed && session\.exit === 0 && session\.markers\.done && !session\.markers\.specConflict && !session\.markers\.alreadyDone && !treeIsEmpty\(ctx\)\) \{ const r = await resumeForRemedy\(/.test(im));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/site-hints.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "site-hints unit script crashed or exited non-zero"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 11 ] || bad "site-hints unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 11"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 12 ] || bad "site-hints unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 12"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

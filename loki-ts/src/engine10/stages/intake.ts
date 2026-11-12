@@ -13,7 +13,7 @@ import { lazyZeroBaseline, stackedOnLokiRun, unmergedEvidence, unmergedEvidenceN
 import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps, type DepsTiming, type IntakeTiming, type PhaseTiming } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { baselineCmdS, BASELINE_CMD_TIMEOUT_S, ensureProfile, readinessNotice, writeBaselineRecord, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 import { verifyCommandRows } from "../../project_model/package_suite.ts"; import { untestableReason } from "../testmap.ts";
-import { ambiguityGate, voteOpenChoices, type ChoiceCtx } from "../../features/spec_ambiguity.ts"; import { triageGate } from "../../features/triage.ts";
+import { ambiguityGate, rankedRemedy, rankedRemedyEnabled, voteOpenChoices, type ChoiceCtx } from "../../features/spec_ambiguity.ts"; import { triageGate } from "../../features/triage.ts";
 import { execSpecPrefetchOn, prefetchExecSpec } from "../../features/exec_spec.ts"; import { wallEnabled } from "../sizing.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
 export interface IntakeOptions { taskText?: string; issueJsonPath?: string; }
 interface IssueFields { state: string | null; closed_by_merged_pr?: boolean }
@@ -135,7 +135,8 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
     const commentArgv = source === "issue" && issueRef ? buildAlreadyDoneCommentArgv(ctx.runId, issueRef, bodyFile) : undefined;
     return { already_satisfied: true, evidence: already.evidence, iteration_ids: [`${ctx.runId}-already-done`], comment, ...(commentArgv ? { comment_argv: commentArgv } : {}) };
   };
-  const base = { ...common, ...ambiguity, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...(readiness ? { readiness } : {}), ...(untestable ? { untestable } : {}) };
+  const remedy = rankedRemedyEnabled() ? rankedRemedy(task) : null; // F1 LOKI_E10_RANKED_REMEDY: the issue's first-ranked remedy (deterministic), read by implement
+  const base = { ...common, ...ambiguity, ...(remedy ? { ranked_remedy: remedy.first } : {}), task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...(readiness ? { readiness } : {}), ...(untestable ? { untestable } : {}) };
   // FC-15: the claim rests on the PR target. Evidence only in target..HEAD means no claim; Loki's own work there is reported, never refused.
   const stale = already ? unmergedEvidence(ctx.repoDir, already.paths, startBranch) : null;
   if (already && !stale) return { status: "completed", data: { ...base, ignore_snapshot: ignoreSnapshot(ctx.repoDir), ...alreadyData(already) } };

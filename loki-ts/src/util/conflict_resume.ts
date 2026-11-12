@@ -1,7 +1,7 @@
 // FC-19: a LOKI_SPEC_CONFLICT from implement gets exactly one resume with a correction before it is believed. No wording of the model's reason is
 // inspected (L0): the model itself says whether its conflict was only about Loki's own rules or about the task.
 import { isOff } from "../council/role_agents.ts";
-import { neverStopBrief } from "../features/opus_consult.ts";
+import { consultCallFor, neverStopBrief } from "../features/opus_consult.ts";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -447,4 +447,28 @@ export async function deliverOverWallConflict(o: Outs, repoDir: string, reverify
   if (kr.length) { v.pre_red_checks = [...pre, ...kr]; v.pre_red = [...strList(v.pre_red), ...checks.filter((c) => kr.includes(String(c.name))).flatMap((c) => strList(c.ids))]; }
   o.implement = { ...o.implement, exit: "done", conflict_delivered: files };
   return files;
+}
+
+// F1 LOKI_E10_RANKED_REMEDY (features/spec_ambiguity.ts rankedRemedy): one tool-less Haiku check (input capped near 4k tokens, at most 50 output tokens, thinking off) of the diff against
+// the issue's first-ranked remedy, after a clean LOKI_DONE with a non-empty diff. Only a parsed MISSING starts one targeted resume ("-rr"); a failed or unparsed reply starts nothing,
+// and only a clean LOKI_DONE reply replaces the first result. It fires only when intake recorded a ranked remedy.
+export const REMEDY_CHECK_SYSTEM = "You check whether one code change implements one stated remedy. You have no tools. Reply with exactly one word: IMPLEMENTED or MISSING.";
+const REMEDY_DIFF_CAP = 12_000;
+export const remedyCheckPrompt = (remedy: string, diff: string): string => `Loki remedy check.\nRemedy (the issue's first choice): ${remedy}\n\nDiff:\n${diff.length > REMEDY_DIFF_CAP ? `${diff.slice(0, REMEDY_DIFF_CAP)}\n[... truncated]` : diff}`;
+/** "missing" only on a reply that says MISSING and not IMPLEMENTED; "implemented" on the reverse; null otherwise (no resume). */
+export const parseRemedyCheck = (text: string | null): "missing" | "implemented" | null => { const t = (text ?? "").toUpperCase(); const m = /\bMISSING\b/.test(t), i = /\bIMPLEMENTED\b/.test(t); return m && !i ? "missing" : i && !m ? "implemented" : null; };
+export const remedyResumeBrief = (remedy: string): string => `The issue's first-choice remedy is not in your change: "${remedy}". Implement that remedy now, keep any other fix only on top of it, run the targeted tests, then finish. ` + FINISH_LINE;
+let remedyCallOverride: ((system: string, prompt: string) => Promise<{ text: string | null; usd: number | null; outcome: string }>) | null = null;
+/** TEST SEAM: replace the remedy check call. Production code must never call this. */
+export function __setRemedyCheckForTests(c: typeof remedyCallOverride): void { remedyCallOverride = c; }
+export interface RemedyRecord { check: "implemented" | "missing" | "unparsed"; usd: number | null; resumed: boolean }
+export async function resumeForRemedy(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, remedy: string, diff: string, env: NodeJS.ProcessEnv = process.env): Promise<{ session: SessionResult; iterationIds: string[]; record: RemedyRecord }> {
+  const call = remedyCallOverride ?? ((s: string, p: string) => consultCallFor(env.LOKI_E10_RANKED_REMEDY_MODEL || "claude-haiku-5-5", join(ctx.repoDir, ".loki"), env, 60_000, { maxTokens: 50, thinking: "off" })(s, p, "ranked-remedy-check"));
+  let r: { text: string | null; usd: number | null; outcome: string };
+  try { r = await call(REMEDY_CHECK_SYSTEM, remedyCheckPrompt(remedy, diff)); } catch { r = { text: null, usd: null, outcome: "transport" }; }
+  const verdict = parseRemedyCheck(r.text), record: RemedyRecord = { check: verdict ?? "unparsed", usd: r.usd, resumed: false };
+  if (verdict !== "missing" || (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationIds: [], record };
+  const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
+  const s = await resumeWith(ctx, first, firstSession, remedyResumeBrief(remedy), "-rr");
+  return { session: clean(s.session) ? s.session : { ...firstSession, durationS: s.session.durationS }, iterationIds: [s.iterationId], record: { ...record, resumed: true } };
 }
