@@ -65,3 +65,29 @@ export function pinDroppedNotes(verifyNotProven: readonly string[], edits: reado
   const keys = edits.map((e) => `assertion value changed (not shown to be required by the task): ${e.file}:${e.line} `);
   return new Set(lift ? verifyNotProven.filter((n) => keys.some((k) => n.startsWith(k))) : []);
 }
+
+/** Z2 LOKI_E10_PINNED_TEST_UPDATE: one updated test the session reported on an `UPDATED TEST <path>:<line>: <old> -> <new>; issue: "<sentence>"` line, checked by the harness.
+ *  verified only when the file is a test file on base that the change modified, the old expectation is on base within 3 lines of <line>, the new one is in the edited file, and
+ *  the quoted sentence (at least 12 characters) is in the task text; `why` names the first check that failed. The receipt lists every one (pinned_test_updates). */
+export interface PinnedTestUpdate { test: string; line: number; old: string; new: string; issue: string; verified: boolean; why?: string }
+const UPDATED_RE = /^\W*UPDATED TEST\s+`?([^\s`:]+):(\d+)`?:\s*(.+?)\s*->\s*(.+?)\s*;\s*issue:\s*["“](.+?)["”]\s*\.?\s*$/gm;
+const flat = (t: string): string => t.replace(/[\s`]+/g, "").replace(/'/g, "\"");
+export function pinnedTestUpdates(repoDir: string, baseSha: string, reply: string, task: string): PinnedTestUpdate[] {
+  const out: PinnedTestUpdate[] = [];
+  for (const m of (reply ?? "").matchAll(UPDATED_RE)) {
+    const u: PinnedTestUpdate = { test: m[1]!, line: Number(m[2]), old: m[3]!.slice(0, 300), new: m[4]!.slice(0, 300), issue: m[5]!.slice(0, 400), verified: false };
+    const fail = (why: string): void => { out.push({ ...u, why }); };
+    if (!isTestFile(u.test) || u.test.split("/").includes("..")) { fail("not a test file"); continue; }
+    let base: string; try { base = safeGit(repoDir, ["show", `${baseSha}:${u.test}`]); } catch { fail("not on the base commit"); continue; }
+    let head: string; try { head = readFileSync(join(repoDir, u.test), "utf8"); } catch { fail("not in the edited tree"); continue; }
+    if (head === base) { fail("the file is unchanged"); continue; }
+    const win = base.split("\n").slice(Math.max(0, u.line - 4), u.line + 3).join("\n");
+    if (!flat(win).includes(flat(u.old))) { fail("the old expectation is not at that line on base"); continue; }
+    if (!flat(head).includes(flat(u.new))) { fail("the new expectation is not in the edited file"); continue; }
+    if (flat(u.issue).length < 12 || !flat(task).includes(flat(u.issue))) { fail("the quoted sentence is not in the task"); continue; }
+    out.push({ ...u, verified: true });
+  }
+  return out.slice(0, 12);
+}
+/** Seal: one NOT PROVEN line per reported update the harness could not check (a checked one is listed in the receipt only). */
+export const pinnedUpdateNotes = (xs: readonly PinnedTestUpdate[]): string[] => xs.filter((x) => !x.verified).map((x) => `test update reported but not verified: ${x.test}:${x.line} (${x.why ?? "unchecked"})`);

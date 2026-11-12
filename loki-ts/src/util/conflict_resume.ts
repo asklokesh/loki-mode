@@ -19,6 +19,7 @@ import { killedTailIndexes } from "./seal_drift.ts";
 import { vacuousCheck } from "../project_model/conventions.ts";
 import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
 import { editShapeBrief, editShapeSites, precedenceBrief, precedenceCheckEnabled } from "./edit_shape.ts";
+import { isTestFile } from "./test_file_text.ts";
 import { FINISH_LINE, taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
 import type { ReadOnlyFile } from "../engine10/stages/implement.ts";
 
@@ -63,18 +64,56 @@ export const CONFLICT_CORRECTION =
   "If the task itself conflicts, restate the conflict. " +
   FINISH_LINE;
 
+// Z1, part of Z2 LOKI_E10_PINNED_TEST_UPDATE (default on, =0 opts out): an implement LOKI_SPEC_CONFLICT that cites an existing test (path:line) whose cited lines assert a literal the task text
+// itself quotes is the case where the test pins the very behavior the issue reports as wrong. The one FC-19 correction then says to update that expected value to the issue's
+// stated behavior instead of the generic "base failures are not a conflict" text. On the tuning bench one run ended BLOCKED with an empty diff this way after the generic
+// correction repeated the conflict. Deterministic: the cite, the file tracked on base, a literal of at least 4 characters with a digit or a symbol found in the task.
+export const pinConflictEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PINNED_TEST_UPDATE"] ?? "").trim()); // the Z2 knob (e10ext/context.ts pinnedTestUpdateEnabled)
+const CITE_RE = /((?:[\w.@-]+\/)*[\w.@-]+\.[A-Za-z]{1,5}):(\d+)(?:\s*-\s*(\d+))?/g;
+const norm = (t: string): string => t.replace(/[\s`]+/g, "").replace(/'/g, "\"");
+/** The literal fragments of some source lines: quoted strings, [..] and {..} groups; each normalized (no whitespace, one quote style), at least 4 chars with a digit or a symbol. */
+export function literalFragments(text: string): string[] {
+  const out = new Set<string>(), add = (x: string): void => { const n = norm(x); if (n.length >= 4 && /[\d[\]{}:,]/.test(n)) out.add(n); };
+  for (const m of text.matchAll(/(["'])((?:\\.|(?!\1)[^\\\n])*)\1/g)) add(m[2]!);
+  for (const m of text.matchAll(/\[[^[\]\n]{1,80}\]/g)) add(m[0]);
+  for (const m of text.matchAll(/\{[^{}\n]{1,120}\}/g)) add(m[0]);
+  return [...out];
+}
+/** The cited test (as path:line) when the conflict names an existing test file whose cited lines (at most 40; one line widens to the next 5) assert a literal the task quotes; null otherwise. */
+export function pinnedTestCite(repoDir: string, baseSha: string, reason: string, task: string): string | null {
+  if (!reason || !task) return null;
+  let tracked: string[] | null = null;
+  const nt = norm(task);
+  for (const m of reason.matchAll(CITE_RE)) {
+    const cited = m[1]!, from = Number(m[2]), to = Math.min(m[3] ? Number(m[3]) : from + 5, from + 40);
+    if (/(^|\/)loki_wall_/.test(cited) || cited.split("/").includes("..")) continue; // a Wall file goes to the referee
+    tracked ??= (safeGitSpawn(repoDir, ["ls-tree", "-r", "--name-only", baseSha], { encoding: "utf8" }).stdout ?? "").split("\n").filter(Boolean);
+    const hits = tracked.filter((f) => f === cited || f.endsWith(`/${cited}`));
+    if (hits.length !== 1 || !isTestFile(hits[0]!)) continue;
+    const blob = safeGitSpawn(repoDir, ["show", `${baseSha}:${hits[0]}`], { encoding: "utf8" });
+    if (blob.status !== 0) continue;
+    const lines = blob.stdout.split("\n").slice(Math.max(0, from - 1), Math.max(from, to));
+    if (literalFragments(lines.join("\n")).some((f) => nt.includes(f))) return `${hits[0]}:${from}`;
+  }
+  return null;
+}
+export const pinConflictBrief = (cite: string): string =>
+  `The test you cited (${cite}) asserts the behavior the issue reports as wrong. That is not a conflict: update that expected value to the behavior the issue states (change only that assertion and keep every other one), make sure the new value fails on the unfixed code, then implement the fix. Before the last line write \`UPDATED TEST <path>:<line>: <old expectation> -> <new expectation>; issue: "<the issue sentence that asks for it>"\`. ` + FINISH_LINE;
+
 // FC-19b: under this much of the implement window the resume would only die at the limit; the first conflict stands and the run ends BLOCKED with its question.
 export const RESUME_MIN_LEFT_S = 60;
 
 /** Re-runs the implement session once after a spec conflict, with the first call's options: resumes the provider session when one was recorded, else starts fresh with the original brief plus the correction. */
-export async function resumeAfterConflict(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> {
+export async function resumeAfterConflict(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string; pinnedTest?: string }> {
   if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationId: first.iterationId };
+  const task = String(ctx.outputs?.().intake?.task ?? ""), pin = pinConflictEnabled() && ctx.baseSha ? pinnedTestCite(ctx.repoDir, ctx.baseSha, firstSession.markers.specConflict ?? "", task) : null; // Z1: a conflict on a test that pins the reported behavior gets the update-the-value correction
+  const correction = pin ? pinConflictBrief(pin) : CONFLICT_CORRECTION;
   const iterationId = `${first.iterationId}-r`, sid = ctx.provider === "claude" ? readSessionId(ctx.repoDir, first.iterationId) : null;
-  const session = await ctx.sessions.run({ ...first, iterationId, brief: sid ? CONFLICT_CORRECTION : `${first.brief}\n\n${CONFLICT_CORRECTION}`, ...(sid ? { resumeSessionId: sid } : {}) });
+  const session = await ctx.sessions.run({ ...first, iterationId, brief: sid ? correction : `${first.brief}\n\n${correction}`, ...(sid ? { resumeSessionId: sid } : {}) });
   const terminal = !session.killed && (session.markers.done || session.markers.alreadyDone !== null || session.markers.specConflict !== null);
   const durationS = firstSession.durationS + session.durationS;
   // A resume that errors, is killed or ends without a marker must not erase the question: the first session's conflict stands.
-  return { session: { ...(terminal ? session : firstSession), durationS }, iterationId };
+  return { session: { ...(terminal ? session : firstSession), durationS }, iterationId, ...(pin ? { pinnedTest: pin } : {}) };
 }
 
 // FC-43: a LOKI_DONE exit whose tree has no change gets one correction before verify fails it. The model says which it was: forgot to edit, already satisfied, or a real conflict.

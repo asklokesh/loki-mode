@@ -279,6 +279,8 @@
 # 241. conflict_resume.ts parseRemedyCheck: drop the NOT IMPLEMENTED rule (the ranked remedy check unit leg reads implemented for NOT IMPLEMENTED).
 # 242. scope.ts crossPackageTestEdits: drop the source-change-in-package check (the J3 scope leg also drops packages/a/src/a.test.ts beside a.ts).
 # 243. edit_shape.ts precedenceSites: drop otherChecks (the F3 precedence leg reads 7:- for the Go site and the follow-up is null).
+# 244. conflict_resume.ts pinnedTestCite: drop the literal-in-task check (the Z1 leg cites tests/temp.test.ts:6 and the unrelated task).
+# 245. context.ts fixedRules: return LEGACY_FIXED_RULES by default (the Z2 leg reads false for the knob and the brief).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -437,6 +439,49 @@ done
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_BASE_RED_CONFLICT=1
 [ "$(outcome)" = "VERIFIED" ] && ok "base-red conflict: the correction resume delivered (VERIFIED, not SPEC_CONFLICT)" || { bad "base-red conflict: outcome is '$(outcome)'"; dump; }
 grep -q 'export function multiply' "$REPO/calc.ts" && ok "base-red conflict: the resumed session made the change" || bad "base-red conflict: the change is missing"
+# Z1, part of Z2 (LOKI_E10_PINNED_TEST_UPDATE, default on, =0 opts out): the pinned-test conflict correction. A synthetic repo (no bench task text, names or files): an existing test asserts the exact output
+# the task reports as wrong. A conflict citing it (by path or basename) gets the update-the-value correction; a cited test sharing no literal with the task, a cited source file, a
+# Wall file, no cite and =0 keep the generic correction. The literal filter ignores plain words.
+Z1D="$T/z1"; rm -rf "$Z1D"; mkdir -p "$Z1D/src" "$Z1D/tests"; git init -q -b main "$Z1D"
+printf 'export function convert(c: number) {\n  return { unit: "F", value: c * 9 / 5 + 32 };\n}\n' > "$Z1D/src/temp.ts"
+printf 'import { convert } from "../src/temp";\ntest("zero", () => {\n  expect(convert(0)).toEqual({ unit: "F", value: 32 });\n});\ntest("other", () => {\n  expect(convert(5).unit).toBe("F");\n});\n' > "$Z1D/tests/temp.test.ts"
+git -C "$Z1D" add -- . && git -C "$Z1D" -c user.name=z -c user.email=z@x commit -q -m base; Z1B="$(git -C "$Z1D" rev-parse HEAD)"
+Z1R="$(cd "$ROOT/loki-ts" && Z1D="$Z1D" Z1B="$Z1B" bun -e '
+const cr = await import("./src/util/conflict_resume.ts"), d = process.env.Z1D, b = process.env.Z1B;
+const task = "convert(0) returns `{ unit: \"F\", value: 32 }` but the unit should stay Celsius: `{ unit: \"C\", value: 0 }`.";
+const c = (reason, t = task) => cr.pinnedTestCite(d, b, reason, t) ?? "null";
+const out = [c("tests/temp.test.ts:3 asserts the current output, so the change conflicts"), c("temp.test.ts:3 pins it"), c("tests/temp.test.ts:6 expects F"), c("src/temp.ts:2 already returns F"), c("tests/loki_wall_temp.test.ts:3 pins it"), c("the existing tests disagree"), c("tests/temp.test.ts:3 pins it", "make the converter configurable")];
+out.push(cr.literalFragments("expect(x).toBe(\"number\"); toEqual([0, 1]); { a: 1 }").join(";"));
+const seen = [], conflict = { exit: 0, markers: { done: false, specConflict: "tests/temp.test.ts:3 asserts the current output", alreadyDone: null }, durationS: 1, killed: false, summary: "" };
+const sctx = { provider: "stub", repoDir: d, baseSha: b, outputs: () => ({ intake: { task } }), sessions: { run: async (o) => { seen.push(o.brief.includes("asserts the behavior the issue reports as wrong") ? "pin" : o.brief.includes("already fails on the base commit is not a conflict") ? "generic" : "other"); return { ...conflict, markers: { done: true, specConflict: null, alreadyDone: null } }; } } };
+const opts = { stage: "implement", brief: "b", tier: "development", iterationId: "it", limitS: 600, signal: new AbortController().signal };
+const r1 = await cr.resumeAfterConflict(sctx, opts, conflict); process.env.LOKI_E10_PINNED_TEST_UPDATE = "0"; const r2 = await cr.resumeAfterConflict(sctx, opts, conflict); delete process.env.LOKI_E10_PINNED_TEST_UPDATE;
+out.push(`${seen.join(",")}|${r1.pinnedTest ?? "-"}|${r2.pinnedTest ?? "-"}|${r1.iterationId}`);
+console.log(out.join(" | "));' 2>&1)"
+[ "$Z1R" = 'tests/temp.test.ts:3 | tests/temp.test.ts:3 | null | null | null | null | null | [0,1];{a:1} | pin,generic|tests/temp.test.ts:3|-|it-r' ] && ok "Z1 pinned conflict: a conflict citing (by path or basename) an existing test whose assertion is a literal the task quotes gets the update-the-value correction in the one -r resume; a test sharing no literal, a source file, a Wall file, no cite, an unrelated task and =0 keep the generic correction; plain words are no literal ($Z1R)" || bad "Z1 pinned conflict gave: $Z1R"
+grep -q 'pinConflict = r.pinnedTest;' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'pin_conflict: pinConflict' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && ok "Z1 wiring: implement records the pinned test the correction named (pin_conflict)" || bad "Z1 wiring: implement does not record pin_conflict"
+# Z2 pinned-test update (LOKI_E10_PINNED_TEST_UPDATE, default on, =0 opts out), same synthetic repo: the Rules block lets an existing assertion that pins the OLD behavior the issue
+# asks to change be updated (every other protection named), =0 gives the v11.139.0 text and both stay cache-stable constants; the implement and fix briefs lead with it. A reported
+# UPDATED TEST line is verified only when the old value is on base at that line, the new one is in the edited file and the quoted sentence is in the task; each failure names why.
+Z2R="$(cd "$ROOT/loki-ts" && Z1D="$Z1D" Z1B="$Z1B" bun -e '
+const c = await import("./src/e10ext/context.ts"), tg = await import("./src/util/test_guard.ts"), impl = await import("./src/engine10/stages/implement.ts"), fx = await import("./src/engine10/stages/fix.ts"), seal = await import("./src/engine10/stages/seal.ts"), fs = await import("node:fs"), d = process.env.Z1D, b = process.env.Z1B;
+const R = c.FIXED_RULES, L = c.LEGACY_FIXED_RULES, out = [];
+out.push(String(R.includes("An existing assertion that pins the OLD behavior the issue explicitly asks to change is not a spec conflict") && R.includes("Never delete a test, add skip, xfail or only, widen a tolerance, or touch a test unrelated to the behavior the issue names") && R.includes("UPDATED TEST <path>:<line>") && !R.includes("An existing test that contradicts the task otherwise is a spec conflict: cite it.")));
+out.push(String(L.includes("never remove, skip or loosen any other assertion. An existing test that contradicts the task otherwise is a spec conflict: cite it.") && c.fixedRules({}) === R && c.fixedRules({ LOKI_E10_PINNED_TEST_UPDATE: "0" }) === L));
+const b1 = impl.buildImplementBrief("first task", null, []), b2 = impl.buildImplementBrief("another task entirely", null, []);
+process.env.LOKI_E10_PINNED_TEST_UPDATE = "0"; const b0 = impl.buildImplementBrief("first task", null, []); delete process.env.LOKI_E10_PINNED_TEST_UPDATE;
+out.push(String(b1.indexOf(R) >= 0 && b2.indexOf(R) >= 0 && b1.slice(0, b1.indexOf(R) + R.length) === b2.slice(0, b2.indexOf(R) + R.length) && b0.includes(L) && !b0.includes(R)));
+fs.writeFileSync(d + "/tests/temp.test.ts", fs.readFileSync(d + "/tests/temp.test.ts", "utf8").replace("{ unit: \"F\", value: 32 }", "{ unit: \"C\", value: 0 }"));
+const task = "convert(0) returns `{ unit: \"F\", value: 32 }` but the unit should stay Celsius: `{ unit: \"C\", value: 0 }`.";
+const line = (old, nw, iss, p = "tests/temp.test.ts", n = 3) => `UPDATED TEST ${p}:${n}: ${old} -> ${nw}; issue: "${iss}"`;
+const ok = line("{ unit: \"F\", value: 32 }", "{ unit: \"C\", value: 0 }", "the unit should stay Celsius");
+const reply = [ok, line("{ unit: \"K\" }", "{ unit: \"C\", value: 0 }", "the unit should stay Celsius"), line("{ unit: \"F\", value: 32 }", "{ unit: \"X\" }", "the unit should stay Celsius"), line("{ unit: \"F\", value: 32 }", "{ unit: \"C\", value: 0 }", "please make it faster than before"), line("x", "y", "the unit should stay Celsius", "src/temp.ts", 2), "LOKI_DONE"].join("\n");
+const ups = tg.pinnedTestUpdates(d, b, reply, task);
+out.push(ups.map((u) => u.verified ? "ok" : u.why).join(";"));
+out.push(tg.pinnedUpdateNotes(ups).length, JSON.stringify(Object.keys(seal.pinnedUpdatesBlock({ pinned_test_updates: ups }))), JSON.stringify(seal.pinnedUpdatesBlock({})));
+console.log(out.join(" | "));' 2>&1)"
+[ "$Z2R" = 'true | true | true | ok;the old expectation is not at that line on base;the new expectation is not in the edited file;the quoted sentence is not in the task;not a test file | 4 | ["pinned_test_updates"] | {}' ] && ok "Z2 pinned test update: the Rules block updates a test that pins the old behavior the issue asks to change and names every other protection; =0 restores the v11.139.0 text; both briefs lead with a cache-stable rules block; a reported update is verified against base, head and the task, each failure named, and the receipt lists them ($Z2R)" || bad "Z2 pinned test update gave: $Z2R"
+grep -q 'fixedRules(), // Z2: the pinned-test rule' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'fixedRules(), // Z2: same rules block as implement' "$ROOT/loki-ts/src/engine10/stages/fix.ts" && grep -q 'pinned_test_updates: pinnedUpdates' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q '...pinnedUpdatesBlock(o.implement),' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'for (const n of pinnedUpdateNotes(pinnedUpdatesOf(o.implement))) notProven.add(n);' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "Z2 wiring: implement and fix lead with fixedRules(); implement records the checked updates; seal lists them in the receipt and names each unverified one" || bad "Z2 wiring: the rules block, the update record or the receipt block is not wired"
 
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict # the default (consult and never-stop off) keeps the legacy stop; the opted-in never-stop legs follow this block
 n="$(fix_sessions)"

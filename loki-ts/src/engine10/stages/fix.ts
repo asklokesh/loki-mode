@@ -1,6 +1,6 @@
 // E-17: Fix rounds (ENGINE.md 4, 16). One fix round is one provider session: the fixed rules, the task, the failing tests with their first error lines and the diff of the files the run changed (no plan, repo map or file list, so the session does not reread the repo). The machine loops [Fix -> Fast verify], calling this stage
 // again after each failure; MAX_FIX_ROUNDS caps rounds itself (a 3rd call is a no-op stage.skipped, moving to Seal/PARTIAL). Depends on session.ts/verify.ts only through types.ts shapes.
-import { withStagePrefix } from "../../features/lean_prefix.ts"; import { FINISH_LINE, FIXED_RULES } from "../../e10ext/context.ts";
+import { withStagePrefix } from "../../features/lean_prefix.ts"; import { FINISH_LINE, fixedRules } from "../../e10ext/context.ts";
 import { routedFix, routerActive } from "../../runner/router/unit_model.ts";
 import { cascadeDowngrade, escalationModel } from "../sizing.ts";
 import { MAX_FIX_ROUNDS, type RunContext, type Stage, type StageResult, taskBlock } from "../types.ts";
@@ -17,7 +17,7 @@ function isTestFailure(g: FailureGroup): boolean { return !g.signature.startsWit
 
 export function buildFixBrief(task: string, groups: FailureGroup[], diff: string | null, escalation?: { priorDiagnosis: string | null }, holdoutFailed = 0, hints: string | null = null): string {
   return withStagePrefix([ // FIXED_RULES leads (the cache-stable prefix implement shares) and FINISH_LINE closes
-    FIXED_RULES,
+    fixedRules(), // Z2: same rules block as implement
     ...taskBlock(task),
     "The previous Fast verify run failed. Fix the code these failures name; do not hunt for a different bug and do not edit or delete an existing test. Each sample starts with the command that reruns it:",
     groups.length ? groups.map((g, i) => `${i + 1}. (${g.count}x) ${g.signature}\n   sample: ${g.sample}`).join("\n") : "(no grouped failures were provided)",

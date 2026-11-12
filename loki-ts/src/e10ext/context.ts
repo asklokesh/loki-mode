@@ -22,7 +22,30 @@ export interface ContextDeps {
 // S41-10b: the implement/fix brief's leading block. A plain constant, no task text or interpolation, so
 // every brief starts with the same bytes (cache-stable prefix). Per-task context is appended after it. E-150: repeated verbatim as the brief's last line (recency); same bytes every task.
 export { FINISH_LINE }; // defined in engine10/types.ts, a leaf module, so conflict_resume and steer import it without a cycle through this file
+// Z2 LOKI_E10_PINNED_TEST_UPDATE (default on, =0 opts out): an existing test that pins the OLD behavior the issue explicitly asks to change is updated, not declared a spec conflict.
+// On the real-world bench this rule's older form ("an existing test that contradicts the task is a spec conflict") made Haiku skip a site the issue named (old tests pinned private
+// state the fix had to change), and stopped two other runs BLOCKED; raw Haiku simply updated those tests. Each update is reported on an UPDATED TEST line that the implement stage
+// checks against base, head and the task and seal lists in the receipt (pinned_test_updates). Every other protection stays.
+export const PINNED_UPDATE_LINE = "UPDATED TEST";
+const PINNED_RULE = "- Exception: when the task names an existing test file or asks to change tests, change only what it asks. An existing assertion that pins the OLD behavior the issue explicitly asks to change is not a spec conflict: change its expected value to the behavior the issue states, change nothing else in that test, and before the last line of your reply write one line per such change: `UPDATED TEST <path>:<line>: <old expectation> -> <new expectation>; issue: \"<the issue sentence that asks for the new behavior>\"`. Never delete a test, add skip, xfail or only, widen a tolerance, or touch a test unrelated to the behavior the issue names; any other existing test that contradicts the task is a spec conflict: cite it.";
 export const FIXED_RULES = [
+  "You are the Loki 10 implement stage, doing the complete task described below in this repository. Do whatever a senior engineer would do to finish it correctly: read, change and test as needed across any files the task requires.",
+  "Rules:",
+  "- The Wall tests are read-only: do not edit or delete them. Add the regression test where the repository's existing tests for that code live, following their conventions, and never delete, skip or loosen an existing assertion.",
+  PINNED_RULE,
+  "- Before editing a function, open the file and read the whole function, not only the snippet or suggested code quoted in the task (that text is a hint, not the spec). Make the branch you change match its sibling branches in that function: append, return or pass through the same variables they use (raw or normalized input), and add a test case that tells those two apart if the function normalizes input.",
+  "- Implement the fix the issue prefers; add a fallback or workaround only on top of it, never in its place.",
+  "- Run the impacted tests named below and any other targeted tests you need (the Project Model commands below say how), not the package's full suite and never npm test, nx test or another workspace-wide run: after you stop the harness re-runs your checks, and the full suite when the diff's risk tier is medium or high; a pass that exists only in your reply does not count. Run tests with the exact command the Project Model lists, never a shortened variant that changes how imports resolve; never create files or symlinks in a test directory to make an import work.",
+  "- Do not edit test, build, lint or type-check config (vitest, jest, vite, tsconfig, eslint) or a lockfile unless the task asks for it. If a listed command cannot start because of that config, leave the config alone, say so in your reply, and continue without that check.",
+  "- Never leave a long-lived server running.",
+  "- Never kill processes.",
+  "- Write no documentation unless the task explicitly asks for it, except the release-note fragment a repository convention listed below requires. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.",
+  "- Do not commit or push.",
+  "- If you add a new third-party registry dependency, list it in .loki/supply-declared.json as a JSON array of {ecosystem,name,version_spec,registry}, leaving out workspace, path, git and local packages.",
+  FINISH_LINE,
+].join("\n");
+/** The old rules text (LOKI_E10_PINNED_TEST_UPDATE=0): byte-identical to v11.139.0. */
+export const LEGACY_FIXED_RULES = [
   "You are the Loki 10 implement stage, doing the complete task described below in this repository. Do whatever a senior engineer would do to finish it correctly: read, change and test as needed across any files the task requires.",
   "Rules:",
   "- The Wall tests are read-only: do not edit or delete them. Add the regression test where the repository's existing tests for that code live, following their conventions, and never delete, skip or loosen an existing assertion.",
@@ -38,6 +61,9 @@ export const FIXED_RULES = [
   "- If you add a new third-party registry dependency, list it in .loki/supply-declared.json as a JSON array of {ecosystem,name,version_spec,registry}, leaving out workspace, path, git and local packages.",
   FINISH_LINE,
 ].join("\n");
+export const pinnedTestUpdateEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PINNED_TEST_UPDATE"] ?? "").trim());
+/** The rules block the implement and fix briefs lead with: FIXED_RULES by default, the v11.139.0 text with the knob off. Either way a constant, so the prefix stays cache-stable. */
+export const fixedRules = (env: NodeJS.ProcessEnv = process.env): string => (pinnedTestUpdateEnabled(env) ? FIXED_RULES : LEGACY_FIXED_RULES);
 
 const MAX_FILES = 20;
 const MAX_TESTS = 10;
