@@ -67,6 +67,7 @@
 #  SG7. commit_filter.ts commitUnsealedWork: drop the rmSync loop; the run-created lockfile stays untracked after the checkout. taskWantsLockChange: re-add the bare `lock` noun; 'refresh the page when the lock icon is clicked' ships its lockfile.
 #  NRM2. repo_profile.ts detectFormatters: drop the biome entry; the formatter check fails.
 #  J1. repo_profile.ts runFormattersRecord: drop the base-clean comparison; the J1 formatter leg formats b.py and fails.
+#  J2. commit_filter.ts commitUnsealedWork: exempt Wall files from the churn reset again; the J2 WIP commit leg commits loki_wall_w.test.ts by default.
 #  10. verify.ts sameErrors: excuse every known-red id whatever its first error; the delivery check fails.
 #  11. loki-ts/src/engine10/machine.ts: break after one Wall-only round whatever wallSignature says; the
 #      mono2 two-round check fails.
@@ -416,6 +417,23 @@ commitUnsealedWork(true, process.env.W, process.env, "e10-wipn", { base_sha: pro
 rm -f "$WC/yarn.lock"; git -C "$WC" checkout -q loki/e10-wipn 2>/dev/null
 WC2="$(wip_churn "regenerate pnpm-lock.yaml")"
 [ "$WC2" = "app.ts pnpm-lock.yaml  | " ] && ok "WIP commit: a lockfile the task names is committed" || bad "WIP named: [$WC2]"
+# J2 LOKI_COMMIT_WALL (off by default, =1 publishes): the WIP commit of an unsealed end leaves the run's loki_wall_* file out and removes it from the tree (the sealed copy stays
+# in the run dir), like a run-created lockfile; =1 keeps the old exemption and commits it. A VERIFIED seal publishes no Wall child by default and records the kept files, hashes and rerun commands instead.
+WJ="$T/wipwall"; rm -rf "$WJ"; mkdir -p "$WJ" && git -C "$WJ" init -q -b main && git -C "$WJ" config user.name rs && git -C "$WJ" config user.email rs@example.invalid
+printf 'a\n' > "$WJ/app.ts"; git -C "$WJ" add -A . && git -C "$WJ" commit -q -m base; BASE_J="$(git -C "$WJ" rev-parse HEAD)"
+wip_wall() { # wip_wall <LOKI_COMMIT_WALL value>: committed paths | porcelain
+    git -C "$WJ" reset -q --hard "$BASE_J"; git -C "$WJ" clean -qfd; git -C "$WJ" checkout -q -B loki/e10-wipw "$BASE_J"; printf 'b\n' > "$WJ/app.ts"; printf 'test("w", () => {});\n' > "$WJ/loki_wall_w.test.ts"
+    W="$WJ" B="$BASE_J" CW="$1" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { commitUnsealedWork } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
+if (process.env.CW === "") delete process.env.LOKI_COMMIT_WALL; else process.env.LOKI_COMMIT_WALL = process.env.CW;
+commitUnsealedWork(true, process.env.W, process.env, "e10-wipw", { base_sha: process.env.B, task: "fix app" });' >/dev/null 2>&1
+    printf '%s | %s' "$(git -C "$WJ" diff --name-only "$BASE_J" HEAD | tr '\n' ' ')" "$(git -C "$WJ" status --porcelain | tr '\n' ' ')"
+}
+WJ0="$(wip_wall "")"; WJ1="$(wip_wall 1)"
+[ "$WJ0" = "app.ts  | " ] && [ "$WJ1" = "app.ts loki_wall_w.test.ts  | " ] && ok "J2 WIP commit: a loki_wall_* file stays out of the run branch by default and leaves the tree (the sealed copy is in the run dir), so the checkout back is clean; LOKI_COMMIT_WALL=1 commits it as before" || bad "J2 WIP commit: default [$WJ0], =1 [$WJ1]"
+CWE="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e 'const r = await import(process.env.ROOT + "/loki-ts/src/util/check_result.ts"); console.log([{}, { LOKI_COMMIT_WALL: "1" }, { LOKI_COMMIT_WALL: "on" }, { LOKI_COMMIT_WALL: "0" }, { LOKI_COMMIT_WALL: "" }].map((e) => (r.commitWallEnabled(e) ? 1 : 0)).join(""))' 2>&1)"
+SEALJ="$ROOT/loki-ts/src/engine10/stages/seal.ts"
+[ "$CWE" = "01100" ] && grep -q 'const wp = verdict3 === "VERIFIED" && commitWallEnabled() ? wpAll : { files: \[\], notes: wpAll.notes }, wallKept = verdict3 === "VERIFIED" && !commitWallEnabled() ? wpAll.files : \[\];' "$SEALJ" && grep -q 'wall_kept: { files: wallKept.map((f) => f.rel), sha256:' "$SEALJ" && ok "J2 seal: Wall publishing is off unless LOKI_COMMIT_WALL=1; a VERIFIED seal records the kept files, their sha256, rerun commands and sealed dir ($CWE)" || bad "J2 seal: commitWallEnabled gave '$CWE' or seal.ts is not wired"
 
 # Acceptance normalizer (EXP-0009): the commit filter drops a NEW or MODIFIED lockfile whose manifest did not change (install churn), keeps one
 # whose manifest changed in its directory or beneath it (workspace root), and the repo's own formatter pass never fails the run.
