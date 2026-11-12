@@ -23,6 +23,8 @@
 #   L3/L5 rules:    release-note fragment line (changeset, towncrier, changelog.d, newsfragments, changie, none) and the
 #                   byte-stable FIXED_RULES prefix (extra planted defects 5 and 6 below).
 #
+#   F2 conventions: (LOKI_E10_DIFF_CONVENTIONS, default on) a changeset naming a package no changed file belongs to, and a declaration added between a doc
+#                   comment and the declaration it documents, each give one finding verify hands to the first fix round; negatives and =0 give none.
 #   B diet:       (lever B, on by default under LOKI_E10_LEAN_CALLS) Key signatures drop beside a pack (LOKI_E10_SIGS=1 always, =0 never); impacted test
 #                   commands cap at 3 lines of 200 chars and a longer one is named by file, never cut (LOKI_E10_CMD_DIET=0 opts out).
 #
@@ -41,6 +43,7 @@
 #   5. loki-ts/src/project_model/conventions.ts releaseNoteConvention: drop the .changeset/config.json branch; the changeset legs fail.
 #   6. loki-ts/src/e10ext/context.ts: interpolate the convention line into FIXED_RULES; prefix_stable fails.
 #   7. loki-ts/src/e10ext/context.ts impactedCmdBlock: drop the 200-char filter (a long command prints whole); b_cmds fails.
+#   8. loki-ts/src/project_model/conventions.ts changesetPackageMismatch: drop the owned-package test; the F2 diff conventions leg reads 2,true,true,0,1,0,true.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need() { command -v "$1" >/dev/null 2>&1 || { echo "context-pack: needs $1" >&2; exit 2; }; }
@@ -489,4 +492,27 @@ else
     bad "e2e fragment writer off: no run events"
 fi
 
+
+# F2 diff conventions (LOKI_E10_DIFF_CONVENTIONS, default on, =0 opts out): on a real git repo, an added changeset naming a package no changed non-test file belongs to (the tq-11327/2
+# shape) and an added function between a JSDoc block and the function it documents (the tq-11663/1 shape) each give one finding; a pending changeset already on base, a decorator,
+# an overload of the documented name, a lint-disable line, a comment-only addition and a declaration added with its own doc comment give none; the knob off gives none.
+DC="$T/dc"; rm -rf "$DC"; mkdir -p "$DC/packages/core/src" "$DC/packages/react/src" "$DC/.changeset"
+printf '{"name":"root","private":true,"workspaces":["packages/*"]}\n' > "$DC/package.json"
+printf '{"name":"@acme/core"}\n' > "$DC/packages/core/package.json"; printf '{"name":"@acme/react"}\n' > "$DC/packages/react/package.json"
+printf '{"commit":false}\n' > "$DC/.changeset/config.json"; printf -- '---\n"@acme/core": patch\n---\n\nPending.\n' > "$DC/.changeset/pending.md"
+printf '/**\n * Saves the client.\n */\nexport function save(): void {}\n\n/** Loads. */\nexport function load(): void {}\n\n/** Parses. */\nexport function parse(a: string): string;\nexport function parse(a: unknown): string { return String(a); }\n\n/** Docs for Widget. */\nexport class Widget {}\n' > "$DC/packages/react/src/a.ts"
+git -C "$DC" init -q -b main && git -C "$DC" add -- . && git -C "$DC" -c user.name=c -c user.email=c@x commit -q -m base
+DCR="$(cd "$ROOT/loki-ts" && DC="$DC" bun -e '
+const cv = await import("./src/project_model/conventions.ts"), { writeFileSync } = await import("node:fs"), { execFileSync } = await import("node:child_process"), d = process.env.DC;
+const base = execFileSync("git", ["-C", d, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), A = d + "/packages/react/src/a.ts";
+writeFileSync(d + "/.changeset/new.md", "---\n\x27@acme/core\x27: patch\n---\n\nfix(react): x\n");
+writeFileSync(A, "/**\n * Saves the client.\n */\nfunction saveOnChange(): void {}\nexport function save(): void {}\n\n/** Loads. */\n// eslint-disable-next-line no-console\nexport function load(): void {}\n\n/** Parses. */\nexport function parse(a: number): string;\nexport function parse(a: string): string;\nexport function parse(a: unknown): string { return String(a); }\n\n/** Docs for Widget. */\n@sealed\nexport class Widget {}\n\n/** Mine. */\nexport function extra(): void {}\n");
+const changed = [".changeset/new.md", "packages/react/src/a.ts"], f = cv.diffConventionFindings(d, base, changed, {});
+const out = [f.length, f.some((x) => x.startsWith(".changeset/new.md names the package \"@acme/core\"") && x.includes("@acme/react")), f.some((x) => x.startsWith("packages/react/src/a.ts:4: the added saveOnChange sits between the doc comment ending at line 3 and save")), cv.diffConventionFindings(d, base, changed, { LOKI_E10_DIFF_CONVENTIONS: "0" }).length];
+writeFileSync(d + "/.changeset/new.md", "---\n\x27@acme/react\x27: patch\n---\n\nfix(react): x\n");
+out.push(cv.diffConventionFindings(d, base, [".changeset/new.md", "packages/react/src/a.ts"], {}).filter((x) => x.startsWith(".changeset")).length, cv.diffConventionFindings(d, base, [".changeset/pending.md", "packages/react/src/a.ts"], {}).filter((x) => x.startsWith(".changeset")).length, cv.diffConventionsEnabled({}));
+console.log(out.join(","));' 2>&1)"
+[ "$DCR" = "2,true,true,0,0,0,true" ] && ok "F2 diff conventions: a wrong-package changeset and a declaration inserted under another's doc comment each give one finding with the fix line; a decorator, an overload, a lint-disable line, a self-documented addition, a correct or pending changeset and =0 give none ($DCR)" || bad "F2 diff conventions: got '$DCR' (want 2,true,true,0,0,0,true)"
+VSRC="$ROOT/loki-ts/src/engine10/stages/verify.ts"
+grep -q 'const conventions = fixRounds === 0 && complete && !signal.aborted ? diffConventionFindings(ctx.repoDir, ctx.baseSha, changed) : \[\];' "$VSRC" && grep -q '\.\.\.(conventions.length ? \[{ signature: `diff conventions: ${conventions.length} finding(s)`' "$VSRC" && ok "F2 wiring: verify runs diffConventionFindings on the first complete verify only and hands the findings to one fix round as a failure group" || bad "F2 wiring: verify does not wire diffConventionFindings as one first-round group"
 finish
