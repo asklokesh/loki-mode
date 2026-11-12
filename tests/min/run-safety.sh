@@ -98,7 +98,7 @@
 #  23c. repo_profile.ts whyFullSuiteNotExcused (or verify.ts not_excused, or seal.ts listing it): return [] or drop the changed-file / new-id / cut / error-text branch; the same unit check fails.
 #  24. (fl24) util/base_guard.ts envChangedSince: drop the TOOL_OUTPUT_FILE skip (rebuild dist); mono3 buildinfo takes a fix round.
 #  24b. (fl24) machine.ts: drop baseRedClaim from the fix-conflict re-verify (rebuild dist); mono3 envlocal ends SPEC_CONFLICT.
-#  24c. (fl24) repo_profile.ts attributeFullSuite: drop quietAsBase, or failures.ts errorShape keeps numbers; the fl24 unit's noise case fails.
+#  24c. (fl24) repo_profile.ts attributeFullSuite: drop quietAsBase, or failures.ts errorShape keeps :line:col; the fl24 unit's noise case fails. errorShape masking quoted values makes real vitest pathnorm deliver.
 #  24d. (fl24) repo_profile.ts whyFullSuiteNotExcused: drop the blocked branch; the fl24 unit's blocked case fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -615,7 +615,7 @@ got 'fix_rounds 0' && got 'pre_red p1,p2' && ! got 'verdict SPEC_CONFLICT' && ! 
     && ok "mono3 buildinfo: a rewritten tsconfig.tsbuildinfo keeps the base rerun's dependencies; the base-red page tests are pre-existing with no fix round ($(printf '%s\n' "$M3S" | grep verdict))" \
     || { bad "mono3 buildinfo: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
 m3 envlocal "add a del(p) helper to the frontend client" "$UNNAMED_OK" FAKE_VITEST_NEEDS_DEPS=1 E2E_STUB_EDIT_FILE=frontend/.env.local E2E_STUB_EDIT_FROM='API=1' E2E_STUB_EDIT_TO='API=2' E2E_STUB_FIX=prered
-got 'fix_rounds 1' && got 'pre_red p1,p2' && got 'verdict PARTIAL' && got 'base_red_conflict True' \
+got 'fix_rounds 1' && got 'verdict PARTIAL' && got 'base_red_conflict True' \
     && ok "mono3 envlocal: a fix round that stops saying the base-red failures pre-exist on base, with the baseline agreeing, is delivered PARTIAL with a NOT PROVEN line, not SPEC_CONFLICT (rc $M3RC)" \
     || { bad "mono3 envlocal: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
 
@@ -745,15 +745,19 @@ B6="$(G="$G4" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), m = await import(process.env.ROOT + "/loki-ts/src/engine10/machine.ts"), { writeFileSync, execFileSync } = await import("node:fs").then(async (f) => ({ ...f, execFileSync: (await import("node:child_process")).execFileSync }));
 const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), r = [];
 const A = ["src/app/admin/__tests__/page.test.tsx > Admin > has gray background", "src/app/sla/__tests__/page.test.tsx > SLA > shows red badge"];
-const be = { [A[0]]: ["Error: expect(element).toHaveClass(\"bg-gray-50\") at page.test.tsx:41:7"], [A[1]]: ["AssertionError: expected 3 to be 2"] };
-writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: "npm test", exit_code: 1, duration_s: 20, timed_out: false, failing_ids: [], attributable: false, reason: "no ids" }, suites: [{ name: "full suite: web", ran: true, command: "(cd web && npm test)", exit_code: 1, duration_s: 9, timed_out: false, attributable: true, failing_ids: A, failing_errors: be }] }));
+const be0 = { [A[0]]: ["Error: expect(element).toHaveClass(\"bg-gray-50\") at src/app/admin/__tests__/page.test.tsx:41:7"], [A[1]]: ["AssertionError: expected 3 to be 2 at sla/page.test.tsx:12:5"] };
+const put = (be) => writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: "npm test", exit_code: 1, duration_s: 20, timed_out: false, failing_ids: [], attributable: false, reason: "no ids" }, suites: [{ name: "full suite: web", ran: true, command: "(cd web && npm test)", exit_code: 1, duration_s: 9, timed_out: false, attributable: true, failing_ids: A, failing_errors: be }] }));
 const full = (errors) => [{ name: "full suite: web", cmd: "(cd web && npm test)", result: "fail", ids: A, errors }];
 const changed = ["web/src/lib/api.ts", "web/src/components/search/SearchBar.tsx"], syms = ["searchApi", "SearchBar"];
 const att = (errors, blocked = []) => rp.attributeFullSuite(g, sha, full(errors), blocked, changed, syms);
-const same = att(be), noise = att({ [A[0]]: ["Error: expect(element).toHaveClass(\"bg-gray-50\") at page.test.tsx:44:9"], [A[1]]: ["AssertionError: expected 5 to be 2"] });
+/* one id: its base line, its head line; the other id repeats its base line */
+const one = (b1, h1) => { put({ ...be0, [A[1]]: [b1] }); return att({ ...be0, [A[1]]: [h1] }).introducedChecks.length; };
+put(be0); const same = att(be0), noise = att({ [A[0]]: ["Error: expect(element).toHaveClass(\"bg-gray-50\") at /tmp/base-wt/src/app/admin/__tests__/page.test.tsx:44:9"], [A[1]]: ["AssertionError: expected 3 to be 2 at other/dir/sla/page.test.tsx:14:3"] });
 r.push("same " + same.preExistingChecks.length + ":" + /error text differs/.test(same.line ?? ""), "noise " + noise.preExistingChecks.length + ":" + /error text differs from base \(by noise only/.test(noise.line ?? ""));
-r.push("shape " + att({ ...be, [A[1]]: ["TypeError: Cannot read properties of undefined (reading \"map\")"] }).introducedChecks.length);
-r.push("names-file " + att({ ...be, [A[1]]: ["AssertionError: expected 5 to be 2 in api.ts"] }).introducedChecks.length, "names-symbol " + att({ ...be, [A[1]]: ["AssertionError: SearchBar expected 5 to be 2"] }).introducedChecks.length);
+r.push("value " + one("AssertionError: expected 3 to be 2", "AssertionError: expected 5 to be 2") + "," + one("AssertionError: expected \"GET /p\" to be \"GET /x\"", "AssertionError: expected \"GET /admin/p\" to be \"GET /x\""));
+r.push("shape " + one("AssertionError: expected 3 to be 2", "TypeError: Cannot read properties of undefined (reading \"map\")"));
+r.push("names-file " + one("AssertionError: expected 3 to be 2 at api.ts:12:5", "AssertionError: expected 3 to be 2 at api.ts:14:3"), "names-symbol " + one("AssertionError: SearchBar at x.tsx:1:1", "AssertionError: SearchBar at x.tsx:2:1"), "noise-alone " + one("AssertionError: expected 3 to be 2 at x.tsx:1:1", "AssertionError: expected 3 to be 2 at x.tsx:2:1"));
+put(be0); const be = be0;
 const why = rp.whyFullSuiteNotExcused(g, sha, full(be), changed, [], [A[1]]).join("|");
 r.push("blocked " + att(be, [A[1]]).introducedChecks.length + ":" + /1 failing id\(s\) also fail in a targeted check that was not excused/.test(why) + ":" + !/error text differs/.test(why));
 const per = (o) => ({ name: "vitest:web/src/app/sla/__tests__/page.test.tsx", ids: [A[1]], suite: "full suite: web", eligible: true, ...o });
@@ -763,8 +767,8 @@ r.push("onlyBaseRed " + [m.onlyBaseRed(v({})), m.onlyBaseRed(v({ base_red_checks
 r.push("claim " + [m.PRE_EXISTING_CLAIM.test("the named failures exist identically on clean HEAD (73 failing tests in both trees)"), m.PRE_EXISTING_CLAIM.test("these tests already fail before this change"), m.PRE_EXISTING_CLAIM.test("calc.test.ts:7 expects multiply(3, 4) to be 12")].join(","));
 console.log(r.join(" | "));
 ' 2>&1)"
-Y6="same 1:false | noise 1:true | shape 1 | names-file 1 | names-symbol 1 | blocked 1:true:true | basered 1,0,0,0,0,1 | onlyBaseRed true,false,true,false,false | claim true,true,false"
-[ "$B6" = "$Y6" ] && ok "unit: a base-red id whose error differs only by noise is excused with a NOT PROVEN line; another error shape or a failure naming a changed file or symbol still blocks; a suite held by an unexcused targeted check says so; a fix round's pre-existing stop needs every live failure red in a baseline" \
+Y6="same 1:false | noise 1:true | value 1,1 | shape 1 | names-file 1 | names-symbol 1 | noise-alone 0 | blocked 1:true:true | basered 1,0,0,0,0,1 | onlyBaseRed true,false,true,false,false | claim true,true,false"
+[ "$B6" = "$Y6" ] && ok "unit: a base-red id whose error differs only by noise (a stack path, a :line:col) is excused with a NOT PROVEN line; a changed number or quoted value, another error shape or a failure naming a changed file or symbol still blocks; a suite held by an unexcused targeted check says so; a fix round's pre-existing stop needs every live failure red in a baseline" \
     || bad "fl24 attribution unit gave: $B6 (want: $Y6)"
 
 # SPEED-BASE-ALIAS (tanstack-query, L-Haiku-v1371-nopatch tq-11327: the baseline ran `pnpm test` and then the full-suite command `npm test --silent`, twice

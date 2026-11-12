@@ -1,5 +1,5 @@
 // engine10/failures.ts -- failing test ids (A-112) and the FailureGroup shape fix.ts consumes (E-17). The per-runner parsers and groupFailures had no production caller (only their own tests) and were deleted by A-115.
-import { javaSummary, stripAnsi } from "../util/check_result.ts"; import { dotnetSummary } from "../util/dotnet_test.ts"; export { failureGroup, failureSignature } from "../util/check_result.ts"; // L005: one owner of failure-line normalizing
+import { javaSummary, stripAnsi } from "../util/check_result.ts"; import { dotnetSummary } from "../util/dotnet_test.ts"; import { escapeRegex } from "../util/regex_escape.ts"; export { failureGroup, failureSignature } from "../util/check_result.ts"; // L005: one owner of failure-line normalizing
 export interface FailureGroup {
   signature: string; // normalized reason: numbers and quoted values collapsed
   count: number;
@@ -147,9 +147,11 @@ export function errorsNameNoChange(head: string | Map<string, string[]> | Record
   const keys = (i: string): string[] => (h.has(i) ? [i] : [...h.keys()].filter((k) => k.endsWith(` > ${i}`)));
   return ids.length > 0 && ids.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => (h.get(k) ?? []).length > 0 && !(h.get(k) ?? []).some(names)); });
 }
-/** fl24: an error line with its run-to-run noise masked: quoted values, numbers (line, column, counts, durations, snapshot indexes), hex ids and
- *  file paths. "expected 5 to be 6" and "expected 7 to be 6" share a shape; an AssertionError and a TypeError never do. */
-export const errorShape = (line: string): string => line.replace(/'[^']*'|"[^"]*"|`[^`]*`/g, "<q>").replace(/(?:[\w.@<>-]*\/)+[\w.@<>-]+/g, "<p>").replace(/\b0x[0-9a-f]+\b/gi, "<n>").replace(/\d+(?:\.\d+)?/g, "<n>").replace(/\s+/g, " ").trim();
+/** fl24: an error line with only its run-to-run noise masked, outside quoted text: the directories of a relative file path (a stack frame read from
+ *  another worktree), the :line:col after a file name, hex ids and durations. Quoted values and every other number are kept as printed (normError's rule):
+ *  "expected 'GET /admin/p' to be 'GET /p'" and "expected 5 to be 6" are the assertion, never noise; an AssertionError and a TypeError never match. */
+export const errorShape = (line: string): string => line.split(/('[^']*'|"[^"]*"|`[^`]*`)/).map((part, n) => (n % 2 === 1 ? part : part
+  .replace(/\/?(?:[\w.@-]+\/)+([\w.@-]+\.\w+)/g, "$1").replace(/(\.\w+):\d+(?::\d+)?/g, "$1:<n>").replace(/\b0x[0-9a-f]+\b/gi, "<hex>").replace(/\b\d+(?:\.\d+)?\s?ms\b/g, "<dur>"))).join("").replace(/\s+/g, " ").trim();
 /** sameErrors on errorShape: every id has head error lines and fails on base with lines of the same shapes, the same number of times. */
 export function sameErrorShape(head: string | Map<string, string[]> | Record<string, string[]>, base: string | Map<string, string[]> | Record<string, string[]>, ids: readonly string[]): boolean {
   const asMap = (x: string | Map<string, string[]> | Record<string, string[]>): Map<string, string[]> => typeof x === "string" ? errorsById(x) : x instanceof Map ? x : new Map(Object.entries(x));
@@ -162,7 +164,7 @@ export const noiseOnlyErrors = (head: string | Map<string, string[]> | Record<st
   sameErrorShape(head, base, ids) && errorsNameNoChange(head, ids, changed, symbols);
 /** A predicate: does this error line name a changed file (its repo path, or its file name when that has an extension and 4+ characters) or a changed symbol (a whole word, 3+ characters)? */
 export function lineNamesChange(changed: readonly string[], symbols: readonly string[] = []): (line: string) => boolean {
-  const word = (l: string, w: string): boolean => new RegExp(`(?<![\\w$])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w$])`).test(l);
+  const word = (l: string, w: string): boolean => new RegExp(`(?<![\\w$])${escapeRegex(w)}(?![\\w$])`).test(l);
   const files = changed.flatMap((f) => { const b = f.slice(f.lastIndexOf("/") + 1); return /\.\w+$/.test(b) && b.length >= 4 ? [f, b] : [f]; }), syms = symbols.filter((s) => s.length >= 3);
   return (l) => files.some((f) => l.includes(f) && word(l, f)) || syms.some((s) => word(l, s));
 }
