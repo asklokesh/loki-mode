@@ -27,10 +27,12 @@
 #                VERIFIED and the receipt names the line. A completion that turns another check red is undone (calc.py byte-identical to what the session
 #                left, one fix session, no sysedit.kept). A green first verify never fires it; LOKI_E10_SYSEDIT=0 never fires it.
 #   lean normal: a normal-size task with a relevant visible test runs no Wall session at all.
-#   coverage:    (lean, E2E_STUB_MODE=coverage: the first turn writes 2 of the 3 named functions) default: no extra session and negate() is
-#                missing (=0); default (unset): exactly one "-c" session with the fixed brief writes negate(); a first turn that
-#                claims already-done, or a run that has a plan, gets no coverage turn.
-#   exec spec:   (default on, LOKI_E10_EXEC_SPEC=0 opts out; lean, Wall off) deterministic atoms, the parity atom from the whole function body, the pair atom,
+#   coverage:    (lean, E2E_STUB_MODE=coverage: the first turn writes 2 of the 3 named functions) =0: no extra session, no folded line and negate() is
+#                missing; default (unset, fold): the implement brief carries the folded coverage line, one session writes all three and no "-c"
+#                session runs; =1: exactly one "-c" session with the fixed brief writes negate(); a first turn that claims already-done, or a run
+#                that has a plan, gets no coverage turn. Unit: the folded line sits after FOLD_PLAN_INSTRUCTION, asks for a test per named site,
+#                and every opt-out gives main's brief byte for byte; the claim variant re-asks once ("-c2") on an absent claim.
+#   exec spec:   (off by default under LOKI_E10_LEAN_CALLS, LOKI_E10_EXEC_SPEC=1 turns it on; lean, Wall off) deterministic atoms, the parity atom from the whole function body, the pair atom,
 #                the binding rule; real go test, pytest and vitest (2 and latest) per-case base runs seal only the binding red case; on the
 #                engine the right fix is VERIFIED, a change that leaves it red is not, and the knob unset runs no generator session.
 #                Relation cases (no model call): a stated wrap relation gives F(R(v)) == F(v) per strictly checked type, recorded on base.
@@ -237,7 +239,7 @@
 # 111. exec_spec.ts parseVitestJson: count any failure as red (the vitest legs read the TypeError case as advisory, not dropped).
 # 112. wall.ts: return the lean skip with the knob on (the exec spec engine legs read skipped).
 # 113. implement.ts: drop execSpecBriefOf from the brief (the implement-brief leg fails).
-# 114. exec_spec.ts execSpecEnabled: ignore LOKI_E10_EXEC_SPEC=0 (the exec spec off leg finds a generator session).
+# 114. exec_spec.ts execSpecEnabled: back to on by default (the exec spec atoms read on=1111010 and the unset exec spec off leg finds a generator session).
 # 115. exec_spec.ts isBinding: drop the one-example rule (any unit per literal) (exec spec atoms read bind=100001).
 # 116. exec_spec.ts isBinding: drop the caseLiterals check, want literals only (exec spec atoms read bind=110001 or more).
 # 117. seal.ts: drop specGap from verdictOf (the second-site leg reads VERIFIED).
@@ -257,7 +259,7 @@
 # 138. exec_spec.ts relationCasesGo: trust one record (stable returns true) (relation cases read flaky=R1_Throttled_wrapped+R2_Temporary_wrapped).
 # 139. exec_spec.ts defectSites: drop the designed() check (exec spec atoms read open=...,Split+Join or Join).
 # 140. exec_spec.ts statesWrapRelation: drop WRAP_NEGATED (relation cases read ask=0011110) or WRAP_TEXT (ask=0011001).
-# 118. exec_spec.ts execSpecBriefOf: drop the knob check (exec spec atoms read brief=B,B).
+# 118. exec_spec.ts execSpecBriefOf: drop the knob check (exec spec atoms read brief=B,B,B).
 #  74. conflict_resume.ts siteHints: drop the siteHintsEnabled test (the knob 0, off and false legs read a hint).
 #  75. edit_shape.ts precedenceSites: drop the remedy wording from the why text (the python and go widening legs read false).
 #  76. edit_shape.ts editShapeSites: drop the max slice (the cap leg reads 9).
@@ -268,7 +270,9 @@
 #  77. machine.ts sysedit block: drop the hasFailures guard (the sysedit green leg reads a sysedit event).
 #  78. contrib/index.ts hooks.sysEdit: ignore sysEditEnabled (the sysedit LOKI_E10_SYSEDIT=0 leg reads a sysedit event).
 #  79. seal.ts: drop the "completed by rule" disclosure (the sysedit kept leg reads no receipt line).
-# 233. opus_consult.ts consultEnabled: back to on by default (the consult default unit leg and the unset consult-off engine leg fail).
+# 233. conflict_resume.ts coverageMode: unset returns "turn" (the coverage mode, fold and e2e default legs fail).
+# 234. implement.ts buildImplementBrief: drop coverageFoldLines (the fold brief and wiring legs fail).
+# 237. opus_consult.ts consultEnabled: back to on by default (the consult default unit leg and the unset consult-off engine leg fail).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -413,7 +417,7 @@ git -C "$REPO" rev-parse -q --verify "refs/heads/loki/$rid" >/dev/null && ok "co
 grep -q 'export function multiply' "$REPO/calc.ts" && ok "conflict: the code the blocked run wrote is on that branch" || { bad "conflict: the blocked run's multiply() is not on a visible branch"; dump; }
 [ "$(git -C "$REPO" rev-parse --abbrev-ref HEAD)" = "loki/$rid" ] && [ "$(git -C "$REPO" log -1 --format=%s main)" = "base" ] && ok "conflict: main is untouched; the work sits only on the run branch" || bad "conflict: main moved or the run branch was not checked out"
 
-# ---------------------------------------------------------------- LOKI_E10_OPUS_CONSULT (off by default, =1 opts in): never-stop plus one tool-less Opus consult
+# ---------------------------------------------------------------- LOKI_E10_OPUS_CONSULT (off by default under LOKI_E10_LEAN_CALLS, =1 opts in): never-stop plus one tool-less Opus consult
 # consults <n>: stub consult calls this run; ctrig: the recorded triggers; rnp: the receipt NOT PROVEN list; rusd: receipt dollars and child sessions
 consults() { grep -c '^consult$' "$(dirname "$ITERS")/stub.log" 2>/dev/null || true; }
 ctrig() { python3 -I -c 'import json,sys; print(",".join(c["trigger"] for c in json.load(open(sys.argv[1]))))' "$RUNDIR/opus-consult.json" 2>/dev/null; }
@@ -436,7 +440,7 @@ run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_OPUS_CONSU
 # opt-out and the explicit interactive opt-in keep the stop: BLOCKED, no consult, no '-n' resume
 for coff in LOKI_E10_OPUS_CONSULT=0 LOKI_E10_OPUS_CONSULT=; do
     run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 "$coff"
-    [ "$(outcome)" = "BLOCKED" ] && [ "$(consults)" = 0 ] && ! grep -q -- '-n ' "$ITERS" && ok "consult off: $coff (=0, and unset: the default) ends BLOCKED with no consult and no never-stop resume" || { bad "consult off ($coff): outcome '$(outcome)', $(consults) consults"; dump; }
+    [ "$(outcome)" = "BLOCKED" ] && [ "$(consults)" = 0 ] && ! grep -q -- '-n ' "$ITERS" && ok "consult off: $coff (=0, and unset: the default under LOKI_E10_LEAN_CALLS) ends BLOCKED with no consult and no never-stop resume" || { bad "consult off ($coff): outcome '$(outcome)', $(consults) consults"; dump; }
 done
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_OPUS_CONSULT=1 LOKI_E10_INTAKE_ASK=1
 [ "$(outcome)" = "BLOCKED" ] && ! grep -q -- '-n ' "$ITERS" && ok "never-stop: the explicit interactive opt-in (LOKI_E10_INTAKE_ASK=1) keeps the stop (BLOCKED)" || { bad "never-stop interactive: outcome '$(outcome)'"; dump; }
@@ -483,14 +487,19 @@ run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHAR
 [ "$(ev 'next((e["data"].get("size") for e in E if e["type"]=="variant" and "size" in e["data"]), None)')" = "normal" ] && ok "lean normal: the task sized normal" || bad "lean normal: the task did not size normal"
 grep -q '^wall ' "$ITERS" && { bad "lean normal: a Wall session ran despite a relevant visible test"; dump; } || ok "lean normal: no Wall session"
 [ "$(outcome)" = "VERIFIED" ] && ok "lean normal: run is VERIFIED" || { bad "lean normal: outcome is '$(outcome)'"; dump; }
-# ---------------------------------------------------------------- coverage resume (L4, LOKI_E10_COVERAGE_RESUME, default on, =0 opts out)
+# ---------------------------------------------------------------- coverage (L4, LOKI_E10_COVERAGE_RESUME: default fold, =1 the separate turn, =0 neither)
 CTASK="add multiply(a, b), subtract(a, b) and negate(a) to calc.ts"
+covrec() { ev 'next((e["data"].get("coverage_resume") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), None)'; }
 run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_COVERAGE_RESUME=0
-[ "$(grep -c -- '-c ' "$ITERS")" = "0" ] && grep -q 'export function subtract' "$REPO/calc.ts" && ! grep -q 'export function negate' "$REPO/calc.ts" && ok "coverage =0: no coverage turn, the third named function is still missing" || { bad "coverage =0: a coverage turn ran or negate() landed"; dump; }
+[ "$(grep -c -- '-c ' "$ITERS")" = "0" ] && grep -q 'export function subtract' "$REPO/calc.ts" && ! grep -q 'export function negate' "$REPO/calc.ts" && ok "coverage =0: no coverage turn and no folded line, the third named function is still missing" || { bad "coverage =0: a coverage turn ran or negate() landed"; dump; }
 run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
-[ "$(grep -c '^implement .*-c ' "$ITERS")" = "1" ] && ok "coverage default (unset): exactly one -c implement session" || { bad "coverage default: $(grep -c '^implement .*-c ' "$ITERS") -c sessions (want 1)"; dump; }
-grep -q 'export function negate' "$REPO/calc.ts" && grep -q 'export function subtract' "$REPO/calc.ts" && ok "coverage default: the resume wrote the third named function and kept the first two" || { bad "coverage default: negate() missing"; dump; }
-[ "$(ev 'next((e["data"].get("coverage_resume") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), None)')" = "resumed" ] && ok "coverage default: the implement stage records coverage_resume=resumed" || bad "coverage default: coverage_resume not recorded"
+[ "$(grep -c '^implement .*-c ' "$ITERS")" = "0" ] && [ "$(grep -c '^implement ' "$ITERS")" = "1" ] && ok "coverage default (unset, fold): one implement session and no -c turn" || { bad "coverage default: $(grep -c '^implement ' "$ITERS") implement sessions, $(grep -c '^implement .*-c ' "$ITERS") -c (want 1 and 0)"; dump; }
+grep -q 'export function negate' "$REPO/calc.ts" && grep -q 'export function subtract' "$REPO/calc.ts" && ok "coverage default: the folded brief line got all three named functions in the first session" || { bad "coverage default: negate() missing"; dump; }
+[ "$(covrec)" = "folded" ] && ok "coverage default: the implement stage records coverage_resume=folded" || bad "coverage default: coverage_resume is '$(covrec)'"
+run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_COVERAGE_RESUME=1
+[ "$(grep -c '^implement .*-c ' "$ITERS")" = "1" ] && ok "coverage =1 (opt-out of the fold): exactly one -c implement session" || { bad "coverage =1: $(grep -c '^implement .*-c ' "$ITERS") -c sessions (want 1)"; dump; }
+grep -q 'export function negate' "$REPO/calc.ts" && grep -q 'export function subtract' "$REPO/calc.ts" && ok "coverage =1: the resume wrote the third named function and kept the first two" || { bad "coverage =1: negate() missing"; dump; }
+[ "$(covrec)" = "resumed" ] && ok "coverage =1: the implement stage records coverage_resume=resumed" || bad "coverage =1: coverage_resume is '$(covrec)'"
 run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=1
 grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: a run with a plan got a coverage turn"; dump; } || ok "coverage on: a run with a plan stage gets no coverage turn (lean path only)"
 run_engine "$CTASK" E2E_STUB_MODE=already LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
@@ -641,6 +650,32 @@ res("patch receipt: green, error and every other status map to green, error and 
   const cc = (e) => cr.claimCheckEnabled(e) ? 1 : 0, ccs = [{}, { LOKI_E10_CLAIM_CHECK: "1" }, { LOKI_E10_CLAIM_CHECK: "0" }, { LOKI_E10_LEAN_CALLS: "0" }, { LOKI_E10_LEAN_CALLS: "0", LOKI_E10_CLAIM_CHECK: "0" }, { LOKI_E10_LEAN_CALLS: "", LOKI_E10_CLAIM_CHECK: " " }].map(cc).join("");
   res("coverage claim: off by default under LOKI_E10_LEAN_CALLS (the re-ask edited nothing on the bench); =1 keeps it, =0 keeps it off, LOKI_E10_LEAN_CALLS=0 restores the old default on", ccs === "010100", ccs);
   res("coverage claim: LOKI_E10_CLAIM_CHECK=0 gives main's plain coverage brief, which has no SITE line; the claim brief asks for them and the re-ask names the absent sites", cr.claimCheckEnabled({ LOKI_E10_CLAIM_CHECK: "0" }) === false && !cr.COVERAGE_BRIEF.includes("SITE") && cr.COVERAGE_CLAIM_BRIEF.includes("SITE <path>:<line>: changed") && cr.claimAbsentBrief(absent).includes("src/parse.js:2")); }
+// coverage fold (LOKI_E10_COVERAGE_RESUME default fold): the implement brief carries the requirement, the separate turn is the opt-out
+{ const KEYS = ["LOKI_E10_COVERAGE_RESUME", "LOKI_E10_LEAN_CALLS", "LOKI_E10_CLAIM_CHECK"], saved = KEYS.map((k) => process.env[k]);
+  const withEnv = (e: Record<string, string>, f: () => string): string => { for (const k of KEYS) delete process.env[k]; Object.assign(process.env, e); try { return f(); } finally { KEYS.forEach((k, i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; }); } };
+  const modes = [{}, { LOKI_E10_COVERAGE_RESUME: "1" }, { LOKI_E10_COVERAGE_RESUME: "on" }, { LOKI_E10_COVERAGE_RESUME: "0" }, { LOKI_E10_COVERAGE_RESUME: "off" }, { LOKI_E10_COVERAGE_RESUME: "fold" }, { LOKI_E10_LEAN_CALLS: "0" }, { LOKI_E10_LEAN_CALLS: "0", LOKI_E10_COVERAGE_RESUME: "fold" }, { LOKI_E10_LEAN_CALLS: "0", LOKI_E10_COVERAGE_RESUME: "0" }].map((e) => cr.coverageMode(e)).join(",");
+  res("coverage mode: unset folds under LOKI_E10_LEAN_CALLS; =1/on is the separate turn; =0/off is neither; =fold folds; LOKI_E10_LEAN_CALLS=0 restores the turn as the default", modes === "fold,turn,turn,off,off,fold,turn,fold,off", modes);
+  res("coverage mode: the separate turn runs only in turn mode", cr.coverageResumeEnabled({}) === false && cr.coverageResumeEnabled({ LOKI_E10_COVERAGE_RESUME: "1" }) === true && cr.coverageResumeEnabled({ LOKI_E10_COVERAGE_RESUME: "0" }) === false && cr.coverageResumeEnabled({ LOKI_E10_LEAN_CALLS: "0" }) === true);
+  const TASK = "add negate(a) to calc.ts";
+  const fold = withEnv({}, () => impl.buildImplementBrief(TASK, null, [])), turn = withEnv({ LOKI_E10_COVERAGE_RESUME: "1" }, () => impl.buildImplementBrief(TASK, null, [])), off = withEnv({ LOKI_E10_COVERAGE_RESUME: "0" }, () => impl.buildImplementBrief(TASK, null, [])), lean0 = withEnv({ LOKI_E10_LEAN_CALLS: "0" }, () => impl.buildImplementBrief(TASK, null, []));
+  const claim = withEnv({ LOKI_E10_CLAIM_CHECK: "1" }, () => impl.buildImplementBrief(TASK, null, [])), planned = withEnv({}, () => impl.buildImplementBrief(TASK, "1. edit calc.ts", []));
+  res("coverage fold: the plan-skipped brief carries the folded line once, right after FOLD_PLAN_INSTRUCTION and before the task text (cache-stable prefix)", fold.split(cr.COVERAGE_FOLD).length === 2 && fold.includes(`${impl.FOLD_PLAN_INSTRUCTION}\n\n${cr.COVERAGE_FOLD}`) && fold.indexOf(cr.COVERAGE_FOLD) < fold.indexOf(TASK));
+  res("coverage fold: the folded line maps every named site to its hunk and test, asks for a test where none exists, carries no FINISH_LINE, and does not match the separate turn's wording", /map each one to the hunk and the test that cover it/.test(cr.COVERAGE_FOLD) && /Fix any that is not covered, and add a test for any that has none/.test(cr.COVERAGE_FOLD) && !cr.COVERAGE_FOLD.includes("LOKI_DONE") && !cr.COVERAGE_FOLD.includes("List each site"));
+  res("coverage fold: opt-outs (=1, =0, LOKI_E10_LEAN_CALLS=0) give a brief byte-identical to the fold brief minus the folded line (main's brief)", turn === fold.replace(`\n\n${cr.COVERAGE_FOLD}`, "") && off === turn && lean0 === turn && !turn.includes("go over every site"));
+  res("coverage fold: LOKI_E10_CLAIM_CHECK=1 folds the claim variant (SITE lines); a brief with a plan has no folded line", claim.includes(cr.COVERAGE_FOLD_CLAIM) && claim.includes("SITE <path>:<line>: changed") && !planned.includes("go over every site"));
+  const t1 = withEnv({}, () => impl.buildImplementBrief("first task text", null, [])), t2 = withEnv({}, () => impl.buildImplementBrief("a very different second task", null, []));
+  const head = (b: string) => b.slice(0, b.indexOf(cr.COVERAGE_FOLD) + cr.COVERAGE_FOLD.length);
+  res("coverage fold: two tasks share the same brief bytes through the folded line", head(t1) === head(t2) && head(t1).length > cr.COVERAGE_FOLD.length);
+  // the claim variant under fold: the session's own SITE lines are checked, one "-c2" re-ask when a claimed line is byte-identical to base
+  const d = repo(), base = git(d, "rev-parse", "HEAD").trim(); writeFileSync(join(d, "src/parse.js"), PARSE.replace("positional: t", "positional: arg"));
+  const seen: string[] = [], done = (summary: string) => ({ exit: 0, markers: { done: true, specConflict: null, alreadyDone: null }, durationS: 1, killed: false, summary });
+  const sctx = { provider: "stub", repoDir: d, baseSha: base, sessions: { run: async (o: { iterationId: string }) => { seen.push(o.iterationId); return done("LOKI_DONE"); } } };
+  const opts = { stage: "implement", brief: "b", tier: "development", iterationId: "it", limitS: 600, signal: new AbortController().signal };
+  const prevCc = process.env.LOKI_E10_CLAIM_CHECK;
+  process.env.LOKI_E10_CLAIM_CHECK = "1"; const a = await cr.reaskFoldedClaims(sctx, opts, done("SITE src/parse.js:2: changed\nLOKI_DONE")); const a2 = await cr.reaskFoldedClaims(sctx, opts, done("SITE src/parse.js:3: changed\nLOKI_DONE"));
+  delete process.env.LOKI_E10_CLAIM_CHECK; const b = await cr.reaskFoldedClaims(sctx, opts, done("SITE src/parse.js:2: changed\nLOKI_DONE"));
+  if (prevCc === undefined) delete process.env.LOKI_E10_CLAIM_CHECK; else process.env.LOKI_E10_CLAIM_CHECK = prevCc;
+  res("coverage fold claim: with LOKI_E10_CLAIM_CHECK=1 an absent claim gets one -c2 re-ask, a changed claim none; the default (off under LOKI_E10_LEAN_CALLS) asks nothing", seen.join() === "it-c2" && a.claimAbsent?.join() === "src/parse.js:2" && a.iterationIds.join() === "it-c2" && a2.iterationIds.length === 0 && b.iterationIds.length === 0 && b.claimAbsent === undefined, `${seen.join()}|${JSON.stringify([a.iterationIds, a2.iterationIds, b.iterationIds])}`); }
 TS
 out="$(cd "$ROOT/loki-ts" && timeout 300 bun "$PP/unit.ts" "$ROOT" "$PP" 2>&1)"
 while IFS= read -r line; do
@@ -736,7 +771,7 @@ res("E5 caps: Sonnet, other stages, the policy off and LOKI_E10_SESSION_CAPS=off
   res("consult: the first call returns the advice, a second in the same run is refused by the default cap of 1 (one call made)", a1 === "DIAGNOSIS: x\nINTENDED: y" && a2 === null && calls === 1 && oc.readConsults(ocDir).length === 1);
   res("consult: LOKI_E10_CONSULT_MAX=2 allows a second; LOKI_E10_OPUS_CONSULT=0 and the default (unset) allow none", (await oc.runConsult({ ...base, trigger: "stop" }, { ...on, LOKI_E10_CONSULT_MAX: "2" })) !== null && (await oc.runConsult({ ...base, runDir: ocDir + "-off" }, { LOKI_E10_OPUS_CONSULT: "0" })) === null && (await oc.runConsult({ ...base, runDir: ocDir + "-default" }, {})) === null && calls === 2);
   oc.__setConsultCallForTests(null);
-  res("consult: default model is claude-opus-5-5; consult and never-stop are off by default (EVAL-2026-11-12-1, on cost), on with =1/on, off with =0 or the explicit interactive opt-in", oc.consultModel({}) === "claude-opus-5-5" && !oc.consultEnabled({}) && !oc.neverStopActive({}) && !oc.consultEnabled({ LOKI_E10_OPUS_CONSULT: "" }) && oc.consultEnabled({ LOKI_E10_OPUS_CONSULT: "1" }) && oc.consultEnabled({ LOKI_E10_OPUS_CONSULT: "on" }) && oc.neverStopActive({ LOKI_E10_OPUS_CONSULT: "1" }) && !oc.neverStopActive({ LOKI_E10_OPUS_CONSULT: "0" }) && !oc.neverStopActive({ LOKI_E10_OPUS_CONSULT: "1", LOKI_E10_INTAKE_ASK: "1" }));
+  res("consult: default model is claude-opus-5-5; consult and never-stop are off by default under LOKI_E10_LEAN_CALLS (EVAL-2026-11-12-1), on with =1 or LOKI_E10_LEAN_CALLS=0, off with =0 or the explicit interactive opt-in", oc.consultModel({}) === "claude-opus-5-5" && !oc.consultEnabled({}) && !oc.neverStopActive({}) && oc.consultEnabled({ LOKI_E10_OPUS_CONSULT: "1" }) && oc.neverStopActive({ LOKI_E10_OPUS_CONSULT: "1" }) && oc.neverStopActive({ LOKI_E10_LEAN_CALLS: "0" }) && !oc.neverStopActive({ LOKI_E10_LEAN_CALLS: "0", LOKI_E10_OPUS_CONSULT: "0" }) && !oc.neverStopActive({ LOKI_E10_OPUS_CONSULT: "1", LOKI_E10_INTAKE_ASK: "1" }));
   res("consult: the disclosure names trigger, stage, model and dollars", oc.consultNotes(ocDir)[0]!.startsWith("Opus consult (open-choice, implement, claude-opus-5-5): ok, \$0.0300; advice: DIAGNOSIS: x INTENDED: y"));
   res("never-stop: one seal NOT PROVEN line per settled conflict, none without a record", oc.neverStopNotes({ never_stop: [{ stage: "implement", conflict: "c", assumption: "a", consulted: true }] }).length === 1 && oc.neverStopNotes({}).length === 0 && oc.neverStopNotes(undefined).length === 0);
   res("never-stop: the brief forbids the stop, asks for an ASSUMPTION line and carries the advice; assumptionOf reads it", oc.neverStopBrief("r", "ADV").includes("Do not stop on this conflict") && oc.neverStopBrief("r", "ADV").includes("ADV") && oc.assumptionOf("x\nASSUMPTION: it is the product\nLOKI_DONE") === "it is the product");
@@ -2019,7 +2054,7 @@ else
 fi
 
 
-# ---------------------------------------------------------------- executable spec first (on by default; LOKI_E10_EXEC_SPEC=0 opts out)
+# ---------------------------------------------------------------- executable spec first (off by default under LOKI_E10_LEAN_CALLS; LOKI_E10_EXEC_SPEC=1 turns it on)
 # features/exec_spec.ts through wall.ts's lean branch. Unit: deterministic atoms, the parity atom from the WHOLE function body (firstArg sits
 # past the 45-line excerpt), never on a property write, the pair atom for two named sites a third site reaches, and the binding rule (only
 # want literals the issue states). Real runners (rule 22: go test, pytest, vitest 2 and latest): one stubbed generator reply per runner holds
@@ -2190,14 +2225,14 @@ out.push("bind=" + [B(fn("\twant := \"a-b\"", "\tgot := Slug(\"A B\")", cmp), sl
   B(fn("\twant := 3", "\tgot := Retries()", cmp), "It stops after 3 retries instead of 5."), // a number only in prose
   B(fn("\twant := \"a-b\"", "\tgot := Slug(\"A B\")", cmp), "`Slug(\"A B\")` is wrong. It should give `\"a-b\"`.")].join("")); // input and value from two examples
 const { mkdtempSync: mk, writeFileSync: wf } = require("node:fs"), rd = mk(require("node:os").tmpdir() + "/loki-es-brief-"); wf(rd + "/exec-spec-brief.txt", "B");
-out.push(`brief=${es.execSpecBriefOf(rd, { LOKI_E10_EXEC_SPEC: "0" }) ?? "none"},${es.execSpecBriefOf(rd, {}) ?? "none"}`); require("node:fs").rmSync(rd, { recursive: true, force: true });
+out.push(`brief=${es.execSpecBriefOf(rd, { LOKI_E10_EXEC_SPEC: "0" }) ?? "none"},${es.execSpecBriefOf(rd, { LOKI_E10_EXEC_SPEC: "1" }) ?? "none"},${es.execSpecBriefOf(rd, {}) ?? "none"}`, "on=" + [{}, { LOKI_E10_EXEC_SPEC: "" }, { LOKI_E10_EXEC_SPEC: "1" }, { LOKI_E10_EXEC_SPEC: "on" }, { LOKI_E10_EXEC_SPEC: "0" }, { LOKI_E10_LEAN_CALLS: "0" }, { LOKI_E10_LEAN_CALLS: "0", LOKI_E10_EXEC_SPEC: "0" }].map((e) => es.execSpecEnabled(e) ? 1 : 0).join("")); require("node:fs").rmSync(rd, { recursive: true, force: true });
 await import("./src/engine10/stages/wall.ts"); const { specSiteGap } = await import("./src/engine10/stages/seal.ts");
 const g = (st, ch) => specSiteGap({ wall: { files: [], exec_spec: { status: st, uncovered_sites: ["Report"] } } }, [], {}, () => "", ch).join("+") || "-";
 out.push(`gap=${g("sealed", [])},${g("sealed", ["Report"])},${g("advisory_only", [])}`, `defect=${[...es.defectSites(task)].sort().join("+")}`);
 const ds = (x) => [...es.defectSites(x)].sort().join("+") || "-"; // fail-open shapes from review: a plural subject, a contrast with a healthy side, a which-clause about the last span
 out.push("open=" + ["Both `Split` and `Report` should keep the dash.", "`Split` stops at a lone dash, `Report` is unaffected.", "`Report` calls `Split`, which stops at a lone dash.", "`Report` calls `Split`, which is correct.", "`Split` calls `Join`, which stops at the first error, and that is by design.", "`Join`, which stops on empty input, is fine."].map(ds).join(","));
 console.log(out.join(" | "));' 2>&1)"
-    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | otherquote=P0 | prop=P0 | bind=100000 | brief=none,B | gap=Report,-,- | defect=Report+Split+x | open=Report+Split,Split,Split,-,-,-"
+    WESU="Split,Report,Batch,StatusCoder | P1 | Batch+StatusCoder | noquote=P0 | otherquote=P0 | prop=P0 | bind=100000 | brief=none,B,none | on=0011010 | gap=Report,-,- | defect=Report+Split+x | open=Report+Split,Split,Split,-,-,-"
     [ "$ESU" = "$WESU" ] && ok "exec spec atoms: parity from the whole body and only from quoted code, never a property write, one pair for the two sites Report reaches, binding only when input and expected value come whole from one issue example, no brief read with the knob off" \
         || bad "exec spec atoms gave: $ESU (want: $WESU)"
 fi
@@ -2223,15 +2258,15 @@ if command -v go >/dev/null 2>&1; then
 const es = await import("./src/features/exec_spec.ts"), tn = await import("./src/features/tournament.ts"), e = process.env;
 let calls = 0; const briefs = []; es.setExecSpecGenerator(async (brief) => { calls++; briefs.push(brief); await new Promise((r) => setTimeout(r, 30)); return e.REPLY; });
 const inp = (o = {}) => ({ task: e.TASK, repoDir: e.ESD, runners: ["go"], existingTests: ["a/a_test.go"], sessions: null, iterationId: "t", signal: new AbortController().signal, ...o });
-const out = [];
-const started = es.prefetchExecSpec(inp(), {}), a = await es.execSpecAuthor(inp()); out.push(`hit:${started}:${calls}:${a.status}:${a.prefetch}`);
+const out = [], on = { LOKI_E10_EXEC_SPEC: "1" };
+const started = es.prefetchExecSpec(inp(), on), a = await es.execSpecAuthor(inp()); out.push(`hit:${started}:${calls}:${a.status}:${a.prefetch}`);
 calls = 0; const b = await es.execSpecAuthor(inp()); out.push(`none:${calls}:${b.status}:${b.prefetch ?? "-"}:${JSON.stringify([a.binding, a.advisory, a.guards, a.dropped, a.file]) === JSON.stringify([b.binding, b.advisory, b.guards, b.dropped, b.file])}`);
-calls = 0; briefs.length = 0; es.prefetchExecSpec(inp({ probe: tn.probeIntake }), {}); const c = await es.execSpecAuthor(inp()); out.push(`miss:${calls}:${c.prefetch}:${briefs[1] !== briefs[0]}`);
-calls = 0; out.push(`off:${es.prefetchExecSpec(inp(), { LOKI_E10_EXEC_SPEC_PREFETCH: "0" })}:${es.prefetchExecSpec(inp(), { LOKI_E10_INVOKER: "cli" })}:${es.prefetchExecSpec(inp(), { LOKI_E10_EXEC_SPEC: "0" })}:${es.prefetchExecSpec(inp({ runners: ["bun"] }), {})}:${calls}`);
+calls = 0; briefs.length = 0; es.prefetchExecSpec(inp({ probe: tn.probeIntake }), on); const c = await es.execSpecAuthor(inp()); out.push(`miss:${calls}:${c.prefetch}:${briefs[1] !== briefs[0]}`);
+calls = 0; out.push(`off:${es.prefetchExecSpec(inp(), { ...on, LOKI_E10_EXEC_SPEC_PREFETCH: "0" })}:${es.prefetchExecSpec(inp(), { ...on, LOKI_E10_INVOKER: "cli" })}:${es.prefetchExecSpec(inp(), { LOKI_E10_EXEC_SPEC: "0" })}:${es.prefetchExecSpec(inp({ runners: ["bun"] }), on)}:${es.prefetchExecSpec(inp(), {})}:${calls}`);
 const d = await es.execSpecAuthor(inp()); out.push(`after-off:${d.prefetch ?? "-"}`);
 console.log(out.join(" | "));' 2>&1)"
-    WESPF="hit:true:1:sealed:hit | none:1:sealed:-:true | miss:2:miss:true | off:false:false:false:false:0 | after-off:-"
-    [ "$ESPF" = "$WESPF" ] && ok "exec spec prefetch: the call intake started is taken when the brief is identical (one call, same outcome as without it), a different brief makes a fresh call, the knob, the CLI invoker, exec spec off and a skipping prelude start nothing" \
+    WESPF="hit:true:1:sealed:hit | none:1:sealed:-:true | miss:2:miss:true | off:false:false:false:false:false:0 | after-off:-"
+    [ "$ESPF" = "$WESPF" ] && ok "exec spec prefetch: the call intake started is taken when the brief is identical (one call, same outcome as without it), a different brief makes a fresh call, the knob, the CLI invoker, exec spec off (explicit or the default) and a skipping prelude start nothing" \
         || bad "exec spec prefetch gave: $ESPF (want: $WESPF)"
 elif [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "exec spec go test: go is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: exec spec go test: go is not installed"; fi
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
@@ -2390,41 +2425,43 @@ if command -v go >/dev/null 2>&1; then
     ESFIX=$'out = append(out, rargs[0])\n\t\t\tcontinue'; ESOLD=$'out = append(out, firstArg)\n\t\t\tbreak'
     esw() { ev 'next((e["data"].get("exec_spec",{}).get("status","") + ":" + ",".join(e["data"].get("exec_spec",{}).get("binding",[])) + ":" + ",".join(f["path"].rsplit("/",1)[-1] for f in e["data"].get("files",[])) + ":fail=" + str(e["data"].get("base_run",{}).get("fail")) for e in E if e["stage"]=="wall" and e["type"] in ("stage.completed","stage.skipped")), "none")'; }
     ESPL="$T/es-prompts"; rm -f "$ESPL".*; ES_GO_TASK1="$(printf '%s' "$ES_GO_TASK" | sed 's/ `Report` also mishandles a `Batch` that holds a `StatusCoder`\.//')"
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" E2E_STUB_PROMPT_LOG="$ESPL" \
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" LOKI_E10_EXEC_SPEC=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" E2E_STUB_PROMPT_LOG="$ESPL" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
-    [ "$(esw)" = "sealed:TestLokiSpec_C1_KeepsAfterDash:loki_wall_spec_test.go:fail=1" ] && ok "exec spec engine (default on): the binding case is sealed as the run's Wall file and is red on base ($(esw))" || { bad "exec spec engine: wall gave '$(esw)'"; dump; }
+    [ "$(esw)" = "sealed:TestLokiSpec_C1_KeepsAfterDash:loki_wall_spec_test.go:fail=1" ] && ok "exec spec engine (LOKI_E10_EXEC_SPEC=1): the binding case is sealed as the run's Wall file and is red on base ($(esw))" || { bad "exec spec engine: wall gave '$(esw)'"; dump; }
     grep -q "Executable spec: a/loki_wall_spec_test.go" "$ESPL.implement0" 2>/dev/null && grep -q "Advisory spec cases" "$ESPL.implement0" && ok "exec spec engine: the implement brief names the binding case and lists the advisory ones" || bad "exec spec engine: the implement brief has no spec block"
     [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: one named site, the right fix turns its sealed case green and is VERIFIED" || { bad "exec spec engine: right-fix outcome '$(outcome)'"; dump; }
     esr="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; e=json.load(open(sys.argv[1])).get("exec_spec") or {}; print(e.get("status"), "num" if isinstance(e.get("seconds"), (int, float)) and e.get("seconds") >= 0 else "none", e.get("binding"), "usd" in e)' "$RUNDIR/receipt.json" 2>/dev/null)"
     [ "$esr" = "sealed num 1 True" ] && ok "exec spec engine: the receipt records the stage's status, seconds, binding count and generator dollars ($esr)" || bad "exec spec engine: receipt exec_spec gave '$esr'"
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK" LOKI_E10_EXEC_SPEC=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
     [ "$(outcome)" = PARTIAL ] && ok "exec spec engine: Split fixed but Report (named, no binding case) untouched is not VERIFIED ($(outcome))" || { bad "exec spec engine: second-site outcome '$(outcome)'"; dump; }
     has "exec spec engine: the receipt names the named site without a binding case" "$notes" "named site without a binding case (no agent-independent passing test names it): Report"
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1 The loop sits next to \`Report\`, which reads the same arguments." E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1 The loop sits next to \`Report\`, which reads the same arguments." LOKI_E10_EXEC_SPEC=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: a helper the issue only mentions in passing never costs the right fix its VERIFIED" || { bad "exec spec engine: passing-mention outcome '$(outcome)'"; dump; }
     # the defect words must attach to the site's own span: a comparison, a negated scope and a health verdict never cap (review round 3)
     for esx in "\`Split\` should return the operands like \`Join\` does." "Fix \`Split\`. It should not change \`Report\`, which is fine." "\`Split\` drops args; this does not affect \`Report\`." "See \`Join\` for the expected shape; \`Split\` is wrong." \
         "\`Join\` returns \`[\"a\"]\` for one operand but \`Split\` returns \`[\"-\"]\` instead of \`[\"-\", \"a\"]\`." "\`Join\` returns the right shape, \`Split\` should do the same." \
         "\`Split\` drops args. \`Report\` gives 1 for a nil error, which is correct."; do
-        E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1 $esx" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+        E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1 $esx" LOKI_E10_EXEC_SPEC=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
             E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
         [ "$(outcome)" = VERIFIED ] && ok "exec spec engine: '$esx' leaves the right fix VERIFIED" || { bad "exec spec engine: '$esx' outcome '$(outcome)'"; dump; }
     done
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" LOKI_E10_EXEC_SPEC=1 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
         E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE=$'\t\t\tbreak' E2E_STUB_SNIPPET=$'\t\t\tbreak // looked at' LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     [ -n "$(outcome)" ] && [ "$(outcome)" != VERIFIED ] && ok "exec spec engine: a change that leaves the binding case red is not VERIFIED ($(outcome))" || { bad "exec spec engine: no-fix outcome '$(outcome)'"; dump; }
-    E2E_WALL= MAKE_REPO=make_es_rel run_engine "$ES_REL_TASK" E2E_STUB_MODE=stack E2E_STUB_TARGET=retry/retry.go E2E_STUB_REPLACE="$ES_REL_OLD" E2E_STUB_SNIPPET="$ES_REL_RIGHT" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    E2E_WALL= MAKE_REPO=make_es_rel run_engine "$ES_REL_TASK" LOKI_E10_EXEC_SPEC=1 E2E_STUB_MODE=stack E2E_STUB_TARGET=retry/retry.go E2E_STUB_REPLACE="$ES_REL_OLD" E2E_STUB_SNIPPET="$ES_REL_RIGHT" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     esr="$(ev 'next((",".join(e["data"].get("exec_spec",{}).get("relation",[])) + ":" + ",".join(f["path"].rsplit("/",1)[-1] for f in e["data"].get("files",[])) for e in E if e["stage"]=="wall" and e["type"]=="stage.completed"), "none")')"
     [ "$esr" = "TestLokiSpec_R1_Throttled_wrapped,TestLokiSpec_R2_Temporary_wrapped:loki_wall_relation_test.go" ] && ok "exec spec engine relation: with no generator reply the relation cases alone are sealed ($esr)" || { bad "exec spec engine relation: wall gave '$esr'"; dump; }
     [ "$(outcome)" = VERIFIED ] && ok "exec spec engine relation: the right wrap fix is VERIFIED" || { bad "exec spec engine relation: right-fix outcome '$(outcome)'"; dump; }
-    E2E_WALL= MAKE_REPO=make_es_rel run_engine "$ES_REL_TASK" E2E_STUB_MODE=stack E2E_STUB_TARGET=retry/retry.go E2E_STUB_REPLACE="$ES_REL_OLD" E2E_STUB_SNIPPET="$ES_REL_ORDER" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+    E2E_WALL= MAKE_REPO=make_es_rel run_engine "$ES_REL_TASK" LOKI_E10_EXEC_SPEC=1 E2E_STUB_MODE=stack E2E_STUB_TARGET=retry/retry.go E2E_STUB_REPLACE="$ES_REL_OLD" E2E_STUB_SNIPPET="$ES_REL_ORDER" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
     [ -n "$(outcome)" ] && [ "$(outcome)" != VERIFIED ] && ok "exec spec engine relation: the ordering fix (Temporary first) is not VERIFIED ($(outcome))" || { bad "exec spec engine relation: ordering outcome '$(outcome)'"; dump; }
-    E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" LOKI_E10_EXEC_SPEC=0 E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
-        E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
-    grep -q -- '-execspec' "$ITERS" && bad "exec spec off: a generator session ran with LOKI_E10_EXEC_SPEC=0" || ok "exec spec off: LOKI_E10_EXEC_SPEC=0 runs no generator session and no spec file"
+    for esoff in LOKI_E10_EXEC_SPEC=0 LOKI_E10_EXEC_SPEC=; do
+        E2E_WALL= MAKE_REPO=make_es_go run_engine "$ES_GO_TASK1" "$esoff" E2E_STUB_SPEC_REPLY="$ES_GO_REPLY" \
+            E2E_STUB_MODE=stack E2E_STUB_TARGET=a/a.go E2E_STUB_REPLACE="$ESOLD" E2E_STUB_SNIPPET="$ESFIX" LOKI_E10_PLAN=auto GOFLAGS=-mod=mod
+        grep -q -- '-execspec' "$ITERS" && bad "exec spec off: a generator session ran with $esoff" || ok "exec spec off: $esoff (=0, and unset: the default under LOKI_E10_LEAN_CALLS) runs no generator session and no spec file"
+    done
 # ---------------------------------------------------------------- Go candidate tournament (LOKI_E10_TOURNAMENT, default on, =0 opts out)
 # features/tournament.ts. Unit (stub Io, no model, no go): the probe text parsers, the order-swap judge, and the selection rule: the agent's
 # check-passing tree is displaced only by a check-passing challenger that regresses no spec case the agent passes, loses no probe, and wins
@@ -2928,10 +2965,12 @@ const rb = buildFixResumeBrief([], null, null, 0, [], h), rb0 = buildFixResumeBr
 res("buildFixResumeBrief carries the hints when given and is unchanged when not", rb.includes(h) && !rb0.includes(h) && rb.replace(`${h}\n\n`, "") === rb0);
 const cr = readFileSync(root + "/loki-ts/src/util/conflict_resume.ts", "utf8"), fx = readFileSync(root + "/loki-ts/src/engine10/stages/fix.ts", "utf8");
 res("wiring: resumeForCoverage appends siteHints to the coverage brief (claim or plain) and fix.ts passes siteHints to both briefs", /const hints = siteHints\(ctx\), base = claims \? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith\(ctx, capped, firstSession, hints \? `\$\{base\}/.test(cr) && /const hints = siteHints\(ctx\);/.test(fx) && /holdoutFailed, hintsPlus\)/.test(fx) && /\), hintsPlus\)\); \/\/ one session/.test(fx) && /const hintsPlus = \[hints, /.test(fx));
+const im = readFileSync(root + "/loki-ts/src/engine10/stages/implement.ts", "utf8");
+res("wiring: the plan-skipped implement brief adds coverageFoldLines right after FOLD_PLAN_INSTRUCTION, and fold mode runs only the claim check on the implement session (no -c turn)", /\.\.\.\(plan \? \[\] : \[FOLD_PLAN_INSTRUCTION, \.\.\.coverageFoldLines\(\)\]\)/.test(im) && /else if \(coverageMode\(\) === "fold" && !plan\) \{/.test(im) && /const r = await reaskFoldedClaims\(ctx, /.test(im) && /if \(coverageResumeEnabled\(\) && !plan\)/.test(im));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/site-hints.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "site-hints unit script crashed or exited non-zero"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 9 ] || bad "site-hints unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 9"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 10 ] || bad "site-hints unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 10"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

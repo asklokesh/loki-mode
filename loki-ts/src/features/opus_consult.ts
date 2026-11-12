@@ -1,4 +1,4 @@
-// LOKI_E10_OPUS_CONSULT (off by default, =1 opts in): one tool-less strong-model consult at the points where a cheap run is most likely
+// LOKI_E10_OPUS_CONSULT (off by default under LOKI_E10_LEAN_CALLS, =1 turns it on): one tool-less strong-model consult at the points where a cheap run is most likely
 // to go wrong, plus the never-stop policy. New file: no existing module owns a strong-model advisory call (tournament.ts and
 // patch_protocol.ts own their own Haiku calls; this one reuses their call path and the child ledger).
 //
@@ -15,7 +15,7 @@
 // interactive opt-in that keeps the old stop (a person is there to answer `loki answer`).
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { truthy } from "../runner/providers.ts";
+import { keptUnderLean } from "../util/cost_profile.ts";
 import { toolLessCall } from "../runner/sdk_invoker.ts";
 import { withChildLedger } from "../util/child_ledger.ts";
 import { run } from "../util/shell.ts";
@@ -27,11 +27,11 @@ export const CONSULT_MODEL_DEFAULT = "claude-opus-5-5";
 const MAX_TOKENS = 1200; // a diagnosis and an intended behavior, not code; thinking cannot be disabled on Opus 5.5, so "low" effort bounds it
 const CAP = { task: 5000, evidence: 2500, diff: 5000, code: 6000 }; // about 5k input tokens: measured on cli-2418 (bench, 2026-11-06), 23k chars with a 1h cache write cost $0.077 per consult
 
-/** Off by default (=1/true/yes/on turns it on), on cost: on the 20-task Haiku tuning bench (EVAL-2026-11-12-1, v11.138.0) each firing cost about $0.034 (about $0.010
- *  per task on average), and on the 6 tasks where it fired the run cost $0.48 for 3/6 merge-ready with it on against $0.29 for 4/6 with it off. False VERIFIED is no
- *  worse with it off (0 against 2). The arm-level merge-ready gap (17/20 against 11/20) is mostly one-seed variance, not the consult: it fired on only 1 of the 6
- *  tasks gained. */
-export const consultEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => truthy(env.LOKI_E10_OPUS_CONSULT);
+/** Off by default under LOKI_E10_LEAN_CALLS (util/cost_profile.ts), on cost: on the 20-task Haiku tuning bench (EVAL-2026-11-12-1, v11.138.0) each firing cost about
+ *  $0.034 (about $0.010 per task on average), and on the 6 tasks where it fired the run cost $0.48 for 3/6 merge-ready with it on against $0.29 for 4/6 with it off.
+ *  False VERIFIED is no worse with it off (0 against 2). The arm-level merge-ready gap (17/20 against 11/20) is mostly one-seed variance, not the consult: it fired on
+ *  only 1 of the 6 tasks gained. =1 turns both on; =0 keeps them off; LOKI_E10_LEAN_CALLS=0 restores the old default (on). */
+export const consultEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => keptUnderLean(env.LOKI_E10_OPUS_CONSULT, env);
 /** Never-stop is on with the knob unless the run explicitly asks a person (LOKI_E10_INTAKE_ASK=1). */
 export const neverStopActive = (env: NodeJS.ProcessEnv = process.env): boolean => consultEnabled(env) && env.LOKI_E10_INTAKE_ASK !== "1";
 export const consultModel = (env: NodeJS.ProcessEnv = process.env): string => env.LOKI_E10_CONSULT_MODEL || CONSULT_MODEL_DEFAULT;

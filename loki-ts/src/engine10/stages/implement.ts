@@ -11,7 +11,7 @@ import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.t
 import type { ExtraAttemptsDeps } from "../../features/attempts.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, checkExcerpt, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
 import { capStopOf, classifyExitCause, resolveModel } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
-import { adjudicateWallConflict, coverageResumeEnabled, resumeAfterAlreadyDone, resumeNeverStop, resumeAfterConflict, resumeAfterEmptyDone, resumeForCoverage } from "../../util/conflict_resume.ts";
+import { adjudicateWallConflict, coverageFoldLines, coverageMode, coverageResumeEnabled, reaskFoldedClaims, resumeAfterAlreadyDone, resumeNeverStop, resumeAfterConflict, resumeAfterEmptyDone, resumeForCoverage } from "../../util/conflict_resume.ts";
 import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
 import { routerActive } from "../../runner/router/unit_model.ts";
@@ -39,13 +39,13 @@ export function impactedTests(ctx: RunContext): string[] {
 }
 
 export const briefCtx = (ctx: RunContext, model?: string): BriefRecord => briefRecord(ctx, { select: selectRelevantFiles, cmd: (t, repoDir) => { const c = commandFor(t, repoDir, loadProjectApi(repoDir)); return [c.cmd, c.args, c.interpreter, c.pkgRoot]; } }, model); // L021: a haiku or sonnet model adds the context pack
-// Plan skipped: one fixed line, no per-task text, placed right after FIXED_RULES so every skipped-plan brief shares the same cache-stable prefix.
+// Plan skipped: fixed lines (this one, then the folded coverage line), no per-task text, placed right after FIXED_RULES so every skipped-plan brief shares the same cache-stable prefix.
 export const FOLD_PLAN_INSTRUCTION = "Before editing, write the files you will change and the test you will run, in at most 10 lines, then proceed.";
 const REPRO_LINE = "If the task reports a bug, first add a new test function that reproduces it, run it and see it fail, then fix the code and run that test again.";
 export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = "", spec: string | null = null, assumptions: unknown = undefined): string {
   return withStagePrefix([ // FIXED_RULES leads and FINISH_LINE closes, both byte-identical per task
     FIXED_RULES,
-    ...(plan ? [] : [FOLD_PLAN_INSTRUCTION]),
+    ...(plan ? [] : [FOLD_PLAN_INSTRUCTION, ...coverageFoldLines()]), // LOKI_E10_COVERAGE_RESUME fold (default): fixed bytes before any per-task text; turn and off add nothing (main's brief)
     ...taskBlock(task),
     ...assumptionsBlock(assumptions),
     ...(spec ? [spec] : []), // SPEC-FIRST-INTENT: the user-edited spec is the authoritative intent; absent adds nothing
@@ -219,6 +219,10 @@ export const implementStage: Stage = {
     let coverage: string | undefined; // L4: lean path only; an attempts run owns its own sessions
     let claimAbsent: string[] | undefined; // site-ledger claimed_change_absent: SITE lines naming a line the coverage turn did not change, re-asked once
     if (coverageResumeEnabled() && !plan) { if (patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForCoverage(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); claimAbsent = r.claimAbsent; coverage = "resumed"; } else coverage = patch?.status === "green" ? "skipped (patch green)" : "skipped"; }
+    else if (coverageMode() === "fold" && !plan) { // the brief carried COVERAGE_FOLD (buildImplementBrief), so no separate turn; with LOKI_E10_CLAIM_CHECK on, the session's own SITE lines get the claim check
+      coverage = patch?.status === "green" ? "skipped (patch green)" : "folded";
+      if (patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await reaskFoldedClaims(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); claimAbsent = r.claimAbsent; }
+    }
 
     if (process.env.LOKI_E10_REPRO === "1" && !plan && !signal.aborted && !session.killed && session.exit === 0) { let bad: { name: string; why: string }[] = []; try { bad = outOfRepoTests(ctx.repoDir, changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); } catch { /* unreadable tree: no re-ask */ } if (bad.length) { const redo = `${first.iterationId}-oor`; ids.push(redo); session = await ctx.sessions.run({ ...unchained(), brief: withStagePrefix(outOfRepoReask("Rewrite these new test files in place, keeping the same names and what they reproduce.", bad)), iterationId: redo }); } } // TEN-QUALITY-44: the repro test gets the Wall's out-of-repo check and one re-ask
     const testsReverted = restoreReadOnly(readOnly);

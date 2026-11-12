@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.139.0 (2026-11-12)
+
+Loki on Haiku now costs about a third of v11.138.1 per task and finishes about 30% faster, at the same or better merge-readiness, by no longer paying for add-on calls that did not change the result.
+
+### Changed
+- The executable-spec call is off by default (LOKI_E10_EXEC_SPEC=1 opts back in). On the 20-task Haiku tuning bench it never became a binding check, and since v11.137.4 one call could carry up to 966k cached tokens at long-context prices.
+- The separate coverage turn is folded into the implement brief: the implementer is asked up front to change and test every site the task names (LOKI_E10_COVERAGE_RESUME=1 restores the separate turn).
+- The Opus consult stays off by default as in v11.138.1, now grouped with the other lean defaults; LOKI_E10_LEAN_CALLS=0 restores every v11.138.0 default at once.
+
+### Measured
+- Tuning bench, 20 tasks, two seeds each: merge-ready 29/40 against 25/40 for v11.138.1 (paired +0.10, 95% CI -0.05 to +0.25, no task lost in both seeds), $0.0116 against $0.0353 per task, mean wall 179 s against 252 s. Raw Haiku on the same tasks costs $0.0175 per task.
+- Held-out bench, 20 repos never used for tuning, scored on fair hidden tests only (16 scoreable tasks): merge-ready 3/16, the same as v11.138.0 and v11.137.2, at $0.0251 against $0.0659 per task. Raw Haiku scores 5/16 and raw Opus 6/16 there; closing that gap is the next release's focus.
+
 ## v11.138.1 (2026-11-11)
 
 Loki no longer calls Opus or keeps going on a conflicting spec by default, so Haiku runs cost less and stop reporting wrong successes from that path.
