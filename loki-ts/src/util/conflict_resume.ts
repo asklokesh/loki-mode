@@ -4,7 +4,7 @@ import { isOff } from "../council/role_agents.ts";
 import { consultCallFor, neverStopBrief } from "../features/opus_consult.ts";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { readSessionId } from "../runner/session_resume.ts";
@@ -531,7 +531,8 @@ export async function resumeForPrecedence(ctx: RunContext, first: SessionRunOpti
   try {
     const g = safeGitSpawn(ctx.repoDir, ["diff", "-U0", ctx.baseSha, "--", ".", ":(exclude).loki", ":(exclude).loki/**"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     if (g.status !== 0 || !g.stdout) return none;
-    const sites = editShapeSites(g.stdout, (p) => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return null; } }).filter((x) => x.rule === "precedence" && x.others?.length);
+    const sameDir = (p: string): string[] => { try { const d = dirname(p); return readdirSync(join(ctx.repoDir, d)).slice(0, 60).map((f) => (d === "." ? f : `${d}/${f}`)); } catch { return []; } }; // class declarations beside the edited file (the ancestor check)
+    const sites = editShapeSites(g.stdout, (p) => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return null; } }, { packageFiles: sameDir }).filter((x) => x.rule === "precedence" && x.others?.length);
     n = sites.length; brief = precedenceBrief(sites);
   } catch { return none; }
   if (!brief) return none;

@@ -1996,12 +1996,12 @@ const goAfter = "package relay\n\nimport \"errors\"\n\nfunc route(err error) int
 const goDiff = "diff --git a/relay/route.go b/relay/route.go\n--- a/relay/route.go\n+++ b/relay/route.go\n@@ -4 +6,2 @@ func route(err error) int {\n-\tif n, ok := err.(Notifier); ok {\n+\tvar n Notifier\n+\tif errors.As(err, &n) {\n";
 const goAlone = "package relay\n\nimport \"errors\"\n\nfunc one(err error) int {\n\tvar n Notifier\n\tif errors.As(err, &n) {\n\t\treturn n.Code()\n\t}\n\treturn 0\n}\n";
 const goAloneDiff = goDiff.replace("func route", "func one").replace("@@ -4 +6,2 @@", "@@ -4 +6,2 @@");
-const py = "def size(x):\n    if isinstance(x, Node):\n        return 1\n    if isinstance(x, Group):\n        return len(x.items)\n    return 0\n";
-const pyDiff = "diff --git a/t/size.py b/t/size.py\n--- a/t/size.py\n+++ b/t/size.py\n@@ -2 +2 @@ def size(x):\n-    if isinstance(x, Leaf):\n+    if isinstance(x, Node):\n";
+const py = "class Leaf(Node):\n    pass\n\n\ndef size(x):\n    if isinstance(x, Node):\n        return 1\n    if isinstance(x, Group):\n        return len(x.items)\n    return 0\n", pyNoRel = py.replace("class Leaf(Node):", "class Leaf(Base):");
+const pyDiff = "diff --git a/t/size.py b/t/size.py\n--- a/t/size.py\n+++ b/t/size.py\n@@ -6 +6 @@ def size(x):\n-    if isinstance(x, Leaf):\n+    if isinstance(x, Node):\n";
 const pySame = pyDiff.replace("+    if isinstance(x, Node):", "+    if isinstance(x, Leaf) and x:");
 const ts = "export function pick(kind: string): number {\n  if ([\"a\", \"b\"].includes(kind)) return 1;\n  if (kind instanceof Object) return 2;\n  return 0;\n}\n";
 const tsDiff = "diff --git a/src/pick.ts b/src/pick.ts\n--- a/src/pick.ts\n+++ b/src/pick.ts\n@@ -2 +2 @@ export function pick(kind: string): number {\n-  if (kind === \"a\") return 1;\n+  if ([\"a\", \"b\"].includes(kind)) return 1;\n";
-const out = [sites(goDiff, "relay/route.go", goAfter), sites(goAloneDiff, "relay/route.go", goAlone), sites(pyDiff, "t/size.py", py), sites(pySame, "t/size.py", py.replace("isinstance(x, Node)", "isinstance(x, Leaf) and x")), sites(tsDiff, "src/pick.ts", ts)];
+const out = [sites(goDiff, "relay/route.go", goAfter), sites(goAloneDiff, "relay/route.go", goAlone), sites(pyDiff, "t/size.py", py), sites(pySame, "t/size.py", py.replace("isinstance(x, Node):\n        return 1", "isinstance(x, Leaf) and x:\n        return 1")), sites(pyDiff, "t/size.py", pyNoRel), sites(tsDiff, "src/pick.ts", ts)];
 const brief = es.precedenceBrief(es.editShapeSites(goDiff, (p) => (p === "relay/route.go" ? goAfter : null)));
 out.push(String(!!brief && brief.includes("Bundle (line 10)") && brief.includes("add a test case for each")), String(es.precedenceBrief([]) === null), [es.precedenceCheckEnabled({}), es.precedenceCheckEnabled({ LOKI_E10_PRECEDENCE_CHECK: "0" })].join());
 fs.writeFileSync(d + "/relay/route.go", goAfter);
@@ -2013,7 +2013,7 @@ fs.writeFileSync(d + "/relay/route.go", "package relay\n\nfunc route(err error) 
 const c = await cr.resumeForPrecedence({ ...sctx, baseSha: process.env.F3B }, opts, ok1, {});
 out.push(`${seen.join(",")}|${a.sites},${b.sites},${c.sites}`);
 console.log(out.join(" | "));' 2>&1)"
-[ "$F3R" = "7:Bundle | 7:- | 2:Group | none | 2:Object | true | true | true,false | it-pr:true|1,0,0" ] && ok "F3 precedence: Go errors.As ahead of an assertion branch, a Python isinstance moved beside another isinstance branch and a TS === widened to includes each name the other branch's input; a lone widening carries no input and a check left strict none; the follow-up names the input and asks for a test; one -pr resume on a real repo, none with =0 or for a change that widens nothing ($F3R)" || bad "F3 precedence gave: $F3R"
+[ "$F3R" = "7:Bundle | 7:- | 6:Group | none | none | 2:Object | true | true | true,false | it-pr:true|1,0,0" ] && ok "F3 precedence: Go errors.As ahead of an assertion branch, a Python isinstance moved to an ancestor the file declares (class Leaf(Node)) beside another isinstance branch and a TS === widened to includes each name the other branch's input; a lone widening carries no input, a check left strict and a move to a type the code does not make an ancestor give none; the follow-up names the input and asks for a test; one -pr resume on a real repo, none with =0 or for a change that widens nothing ($F3R)" || bad "F3 precedence gave: $F3R"
 grep -q 'const r = await resumeForPrecedence(ctx, { ...unchained(), iterationId: ids\[ids.length - 1\]! }, session);' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'precedence_check: precedenceRec' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && ok "F3 wiring: implement runs resumeForPrecedence after a clean done with a non-empty diff and records precedence_check" || bad "F3 wiring: implement does not run or record resumeForPrecedence"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac

@@ -184,7 +184,8 @@ const STRICT: Record<string, RegExp[]> = {
 const BROAD: Record<string, RegExp> = { go: /\berrors\.(?:As|Is)\(/, py: /\bisinstance\(/, ts: /\binstanceof\b/ };
 const BROAD_NAME: Record<string, string> = { go: "errors.As", py: "isinstance", ts: "instanceof" };
 
-// F3: the same-type widenings (isinstance(x, A) to isinstance(x, B), instanceof A to instanceof B) and an exact comparison widened to a membership test (== or === to includes / in).
+// F3: a type check moved to an ANCESTOR of its type (isinstance(x, A) to isinstance(x, B) or instanceof A to instanceof B, where the scanned code declares `class A(B)` or
+// `class A extends B`, directly or through up to 3 levels) and an exact comparison widened to a membership test (== or === to includes / in). A move to an unrelated or unknown type is no widening.
 const TYPE_ARG: Record<string, RegExp> = { py: /\bisinstance\(\s*[^,()]+,\s*\(?\s*([A-Za-z_][\w.]*)/, ts: /\binstanceof\s+([A-Za-z_$][\w$.]*)/ };
 const EXACT_EQ = /([A-Za-z_$][\w$.]*)\s*===?\s*(?:["'`][^"'`]*["'`]|-?\d)/, MEMBER: Record<string, RegExp> = { py: /\bin\s+[[({A-Za-z_]/, ts: /\.includes\(/, go: /\b(?:strings|slices)\.Contains\(/ };
 /** The other type or value checks inside the same function span as `line` (unchanged lines only): each held its own branch before the change. */
@@ -201,7 +202,20 @@ function otherChecks(lines: string[], spans: Span[], line: number, added: Set<nu
   return out.slice(0, 6);
 }
 /** Rule 3. */
-function precedenceSites(path: string, hunks: DiffHunk[], lang: Lang | null, lines: string[] = [], spans: Span[] = [], added: Set<number> = new Set()): EditSite[] {
+/** The ancestors of a class the scanned files declare (Python `class A(B, C)`, TS/JS `class A extends B`), up to 3 levels. */
+function ancestorsOf(name: string, texts: string[], lang: Lang): Set<string> {
+  const out = new Set<string>(); let frontier = [name];
+  for (let depth = 0; depth < 3 && frontier.length; depth++) {
+    const next: string[] = [];
+    for (const n of frontier) for (const t of texts) {
+      const re = lang === "py" ? new RegExp(`^\\s*class\\s+${escapeRegex(n)}\\s*\\(([^)]*)\\)`, "gm") : new RegExp(`\\bclass\\s+${escapeRegex(n)}\\b[^{]*?\\bextends\\s+([A-Za-z_$][\\w$.]*)`, "g");
+      for (const m of t.matchAll(re)) for (const b of m[1]!.split(",").map((x) => x.trim().split(".").pop()!.replace(/\[.*$/, "")).filter(Boolean)) if (!out.has(b)) { out.add(b); next.push(b); }
+    }
+    frontier = next;
+  }
+  return out;
+}
+function precedenceSites(path: string, hunks: DiffHunk[], lang: Lang | null, lines: string[] = [], spans: Span[] = [], added: Set<number> = new Set(), texts: string[] = []): EditSite[] {
   if (lang !== "go" && lang !== "py" && lang !== "ts") return [];
   const out: EditSite[] = [];
   const push = (line: number, text: string, why: string): void => { const others = lines.length ? otherChecks(lines, spans, line, added, lang) : []; out.push({ rule: "precedence", path, line, text: compactWs(text), why, ...(others.length ? { others } : {}) }); };
@@ -213,7 +227,7 @@ function precedenceSites(path: string, hunks: DiffHunk[], lang: Lang | null, lin
     if (ta) {
       const r = h.removed.map((x) => ta.exec(maskStrings(x))?.[1]).find(Boolean), a = h.added.find((x) => !isComment(x.text) && ta.test(maskStrings(x.text)));
       const at = a ? ta.exec(maskStrings(a.text))?.[1] : undefined;
-      if (r && a && at && at !== r) { push(a.line, a.text, `the type check moved from ${r} to ${at}; if ${at} is broader, it now also matches values that took another branch`); continue; }
+      if (r && a && at && at !== r && ancestorsOf(r.split(".").pop()!, texts, lang).has(at.split(".").pop()!)) { push(a.line, a.text, `the type check moved from ${r} to its ancestor ${at}, which also matches values that took another branch`); continue; }
     }
     const eq = h.removed.map((x) => EXACT_EQ.exec(maskStrings(x))?.[1]).find(Boolean), mem = h.added.find((x) => !isComment(x.text) && MEMBER[lang]!.test(maskStrings(x.text)) && !!eq && x.text.includes(eq.split(".").pop()!));
     if (eq && mem && !h.removed.some((x) => MEMBER[lang]!.test(maskStrings(x)))) push(mem.line, mem.text, `an exact comparison on ${eq} became a membership test, which also matches values that took another branch`);
@@ -232,7 +246,7 @@ export function editShapeSites(diff: string, readFile: (path: string) => string 
     const added = new Set(hunks.flatMap((h) => h.added.map((a) => a.line)));
     const scan = [{ path, lines }];
     for (const p of opts.packageFiles?.(path) ?? []) { if (p === path || langOf(p) !== lang) continue; const t = readFile(p); if (t !== null) scan.push({ path: p, lines: t.split("\n") }); }
-    all.push(...precedenceSites(path, hunks, lang, lines, symbolSpans(path, src), added));
+    all.push(...precedenceSites(path, hunks, lang, lines, symbolSpans(path, src), added, scan.map((f) => f.lines.join("\n"))));
     const covered = new Set<number>();
     if (lang) all.push(...siblingSites(path, lines, symbolSpans(path, src), added, hunks, covered));
     all.push(...residualSites(path, hunks, added, covered, scan, lang));
