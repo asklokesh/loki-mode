@@ -316,25 +316,27 @@ att_ev() { python3 -I -c '
 import json, sys
 for l in open(sys.argv[1]):
     e = json.loads(l)
-    if e["type"] == "attempts.selected": d = e["data"]; print("winner=%s k=%s early=%s launched=%s" % (d.get("winner"), d.get("k"), d.get("early_accept"), d.get("launched"))); break
+    if e["type"] == "attempts.selected": d = e["data"]; print("winner=%s total=%s early=%s launched=%s" % (d.get("winner"), d.get("total"), d.get("early_accept"), d.get("launched"))); break
 else: print("none")
 ' "$RUNDIR/events.jsonl" 2>/dev/null; }
 E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
 [ "$(outcome)" = "VERIFIED" ] && ok "attempts (bun test): the first attempt is wrong, attempt 2 is right: the run is VERIFIED" || { bad "attempts (bun test): outcome '$(outcome)', not VERIFIED"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
-[ "$(att_ev)" = "winner=x2 k=3 early=True launched=3" ] && ok "attempts (bun test): the receipt journal names attempt 2 as the winner of 3, early accept ($(att_ev))" || bad "attempts (bun test): attempts.selected is '$(att_ev)'"
+[ "$(att_ev)" = "winner=x2 total=3 early=True launched=2" ] && ok "attempts (bun test): the receipt journal names attempt 2 as the winner of 3 total attempts (2 extra), early accept ($(att_ev))" || bad "attempts (bun test): attempts.selected is '$(att_ev)'"
 git -C "$REPO" show HEAD:calc.ts | grep -A1 'function multiply' | grep -q 'a \* b' && ok "attempts (bun test): the committed multiply() is the right one" || bad "attempts (bun test): the committed calc.ts holds the wrong multiply()"
 [ "$(verify_run)" = "0 VERIFIED" ] && ok "attempts (bun test): loki verify agrees ($(verify_run))" || bad "attempts (bun test): loki verify says '$(verify_run)'"
+att_rc() { python3 -I -c 'import json,sys; a=json.load(open(sys.argv[1])).get("attempts"); print("none" if a is None else "%d|%s" % (len(a), a[-1]))' "$RUNDIR/receipt.json" 2>/dev/null; }
+case "$(att_rc)" in *"|selected attempt 3 (x2) of "*" scored (3 requested): early accept"*) ok "attempts (bun test): the signed receipt records every attempt and the selection reason ($(att_rc))" ;; *) bad "attempts (bun test): receipt attempts is '$(att_rc)'" ;; esac
 [ "$(git -C "$REPO" worktree list | wc -l | tr -d ' ')" = 1 ] && ok "attempts (bun test): no worktree registration is left in the repo" || bad "attempts (bun test): git worktree list shows a leftover"
 
 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
 [ "$(outcome)" = "FAILED" ] && ok "attempts (bun test): every attempt wrong: the repo's checks stay red, so the run is FAILED (a red check is never PARTIAL or VERIFIED)" || { bad "attempts (bun test): all wrong gave outcome '$(outcome)'"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
-case "$(att_ev)" in winner=*" k=3 early=False launched=3") ok "attempts (bun test): all wrong: the best partial is kept without an early accept ($(att_ev))" ;; *) bad "attempts (bun test): all-wrong attempts.selected is '$(att_ev)'" ;; esac
+case "$(att_ev)" in winner=*" total=3 early=False launched=2") ok "attempts (bun test): all wrong: the best partial is kept without an early accept ($(att_ev))" ;; *) bad "attempts (bun test): all-wrong attempts.selected is '$(att_ev)'" ;; esac
 git -C "$REPO" show HEAD:calc.ts | grep -q 'export function multiply' && ok "attempts (bun test): all wrong: the best partial is on loki/<run>" || bad "attempts (bun test): all wrong: no partial on loki/<run>"
 
 fix_rounds() { grep -c '"type":"fix.round"' "$RUNDIR/events.jsonl" 2>/dev/null; }
 # EXP-0010 early: LOKI_E10_ATTEMPTS_EARLY=1 runs the attempts before any fix round (Haiku only) and skips the fix rounds when one goes green.
-E2E_STUB_RIGHT=2 LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS_EARLY=1 run_engine attempts
-[ "$(outcome)" = "VERIFIED" ] && [ "$(att_ev)" = "winner=x2 k=2 early=True launched=2" ] && [ "$(fix_rounds)" = 0 ] && ok "attempts early: a wrong first attempt, a right second: VERIFIED with no fix round ($(att_ev))" || { bad "attempts early: outcome '$(outcome)', attempts '$(att_ev)', fix rounds '$(fix_rounds)'"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /'; }
+E2E_STUB_RIGHT=1 LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS_EARLY=1 run_engine attempts
+[ "$(outcome)" = "VERIFIED" ] && [ "$(att_ev)" = "winner=x1 total=2 early=True launched=1" ] && [ "$(fix_rounds)" = 0 ] && ok "attempts early: a wrong first attempt, a right second: VERIFIED with no fix round ($(att_ev))" || { bad "attempts early: outcome '$(outcome)', attempts '$(att_ev)', fix rounds '$(fix_rounds)'"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /'; }
 E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine attempts
 [ "$(att_ev)" != none ] && [ "$(fix_rounds)" -ge 1 ] && ok "attempts early: without the switch the fix round runs first ($(fix_rounds) round(s)), then the attempts" || bad "attempts early: switch off gave attempts '$(att_ev)', fix rounds '$(fix_rounds)'"
 E2E_STUB_RIGHT=2 LOKI_E10_ATTEMPTS_EARLY=1 run_engine attempts
@@ -352,12 +354,12 @@ E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEM
 [ "$(att_ev)" = none ] && [ "$(outcome)" = "STALLED" ] && ok "attempts: LOKI_E10_ATTEMPTS=0 turns it off (no extra session; the fix rounds' stall stands)" || bad "attempts: LOKI_E10_ATTEMPTS=0 gave '$(att_ev)' / '$(outcome)'"
 E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku run_engine attempts
 [ "$(att_ev)" = none ] && ok "attempts: opt-in, so unset starts none even on Haiku" || bad "attempts: an unset LOKI_E10_ATTEMPTS started attempts ('$(att_ev)')"
-E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=on run_engine attempts
-[ "$(att_ev)" = "winner=x2 k=2 early=True launched=2" ] && ok "attempts: LOKI_E10_ATTEMPTS=on is k=2 ($(att_ev))" || bad "attempts: =on gave '$(att_ev)'"
-E2E_STUB_RIGHT=2 E2E_STUB_FIX=noprogress LOKI_E10_ATTEMPTS=2 run_engine attempts
-[ "$(att_ev)" = "winner=x2 k=2 early=True launched=2" ] && [ "$(outcome)" = "VERIFIED" ] && ok "attempts: LOKI_E10_ATTEMPTS=2 sets k=2 on any model ($(att_ev))" || bad "attempts: LOKI_E10_ATTEMPTS=2 gave '$(att_ev)' / '$(outcome)'"
-LOKI_SESSION_MODEL=haiku run_engine done
-[ "$(att_ev)" = none ] && [ "$(outcome)" = "VERIFIED" ] && ok "attempts: a first attempt that is green starts no extra session" || bad "attempts: a green first attempt gave '$(att_ev)' / '$(outcome)'"
+E2E_STUB_RIGHT=1 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=on run_engine attempts
+[ "$(att_ev)" = "winner=x1 total=2 early=True launched=1" ] && ok "attempts: LOKI_E10_ATTEMPTS=on is 2 total attempts (one extra) ($(att_ev))" || bad "attempts: =on gave '$(att_ev)'"
+E2E_STUB_RIGHT=1 E2E_STUB_FIX=noprogress LOKI_E10_ATTEMPTS=2 run_engine attempts
+[ "$(att_ev)" = "winner=x1 total=2 early=True launched=1" ] && [ "$(outcome)" = "VERIFIED" ] && ok "attempts: LOKI_E10_ATTEMPTS=2 is 2 total attempts on any model (it meant 2 extra before 11.140) ($(att_ev))" || bad "attempts: LOKI_E10_ATTEMPTS=2 gave '$(att_ev)' / '$(outcome)'"
+LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 run_engine done
+[ "$(att_ev)" = none ] && [ "$(att_rc)" = none ] && [ "$(outcome)" = "VERIFIED" ] && ok "attempts: a clean first attempt (verify green, nothing NOT PROVEN) starts no extra session even with LOKI_E10_ATTEMPTS=3" || bad "attempts: a green first attempt gave '$(att_ev)' / '$(outcome)'"
 
 if python3 -m pytest --version >/dev/null 2>&1; then
     PY_MODE=attempts E2E_STUB_RIGHT=1 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku LOKI_E10_ATTEMPTS=3 py_engine calc.py
@@ -391,7 +393,7 @@ vt_attempts() { # vt_attempts <right: 2|none> -> REPO, RUNDIR, OUT
 VTDIR="$T/vt-install"; mkdir -p "$VTDIR"; printf '{"private":true}\n' > "$VTDIR/package.json"; VTNM="$VTDIR/node_modules"
 if (cd "$VTDIR" && ${TO[@]+"${TO[@]}"} npm install vitest@2 --no-audit --no-fund --silent >/dev/null 2>&1) && [ -x "$VTNM/.bin/vitest" ]; then
     vt_attempts 2
-    [ "$(outcome)" = "VERIFIED" ] && [ "$(att_ev)" = "winner=x2 k=3 early=True launched=3" ] && ok "attempts (real vitest 2): attempt 2 is right after a wrong first attempt: VERIFIED, winner x2" || { bad "attempts (real vitest 2): outcome '$(outcome)', attempts '$(att_ev)'"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+    [ "$(outcome)" = "VERIFIED" ] && [ "$(att_ev)" = "winner=x2 total=3 early=True launched=2" ] && ok "attempts (real vitest 2): attempt 2 is right after a wrong first attempt: VERIFIED, winner x2" || { bad "attempts (real vitest 2): outcome '$(outcome)', attempts '$(att_ev)'"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
     vt_attempts none
     [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "attempts (real vitest 2): every attempt wrong: not VERIFIED ($(outcome))" || bad "attempts (real vitest 2): all wrong gave '$(outcome)'"
 elif [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then
@@ -400,45 +402,76 @@ else
     echo "SKIP: attempts vitest legs (vitest@2 could not be installed, offline?)"
 fi
 
-# Unit: the k rule and the selection order (checks green, then fail-then-pass proof, then files outside the task, then diff size, the incumbent last).
+# Unit: the N rule (LOKI_E10_ATTEMPTS is the TOTAL count; before 11.140 it was the extra count), the rank order (verify green, then no spec conflict, then fewer NOT PROVEN lines;
+# pre red lines never count; a disqualified attempt never wins), the PICK parser, and the order-swapped tie review (it counts only when both orders name the same attempt).
 U="$(cd "$ROOT/loki-ts" && bun -e '
 const a = await import("./src/features/attempts.ts"), s = await import("./src/e10ext/select.ts"), { FINISH_LINE } = await import("./src/engine10/types.ts");
-const T = (p) => ({ runner: "bun", path: p }), S = [T("a.test.ts"), T("loki_wall_x.test.ts")], wall = [T("loki_wall_x.test.ts")];
-const chk = (n, r) => ({ name: `bun:${n}`, result: r, interpreter: "project" });
-const diff = (n) => "@@ -1,1 +1," + n + " @@\n" + Array.from({ length: n }, (_, i) => `+l${i}`).join("\n") + "\n";
-const cand = (index, a, w, o = {}) => ({ index, killedOrErrored: false, diff: diff(o.lines ?? 2), alreadyDoneEvidence: false, weakensTest: !!o.weak, outsideFiles: o.out ?? 0, checks: [chk("a.test.ts", a), chk("loki_wall_x.test.ts", w)] });
-const pick = (...c) => s.selectAttempt(c, S, wall).index;
+const sig = (red, np, conflict = false) => ({ red, conflict, notProven: Array.from({ length: np }, (_, i) => `n${i}`) });
+const cand = (index, g, o = {}) => ({ index, killedOrErrored: !!o.killed, diff: o.empty ? "" : "@@ -1 +1 @@\n-a\n+b\n", alreadyDoneEvidence: false, weakensTest: !!o.weak, ...(g ? { signal: g } : {}) });
+const pick = (...c) => s.rankAttempts(c).index;
 const out = [];
-out.push(`k=${[[undefined, "haiku"], ["on", "haiku"], ["0", "haiku"], ["3", "sonnet"], ["9", "haiku"], ["x", "haiku"], ["-1", "haiku"], ["2.5", "haiku"]].map(([v, m]) => a.attemptsK(m, v === undefined ? {} : { LOKI_E10_ATTEMPTS: v })).join(",")},${a.attemptsK("haiku", { LOKI_E10_ATTEMPTS_EARLY: "1" })},${a.attemptsK("haiku", { LOKI_E10_ATTEMPTS_EARLY: "1", LOKI_E10_ATTEMPTS: "0" })}`);
-out.push(`green_first=${pick(cand(0, "fail", "pass"), cand(1, "pass", "fail"))}`);
-out.push(`proof_second=${pick(cand(0, "pass", "fail"), cand(1, "pass", "pass"))}`);
-out.push(`outside_before_size=${pick(cand(0, "pass", "pass", { out: 2, lines: 2 }), cand(1, "pass", "pass", { out: 0, lines: 9 }))}`);
-out.push(`smallest_diff=${pick(cand(0, "pass", "pass", { lines: 7 }), cand(1, "pass", "pass", { lines: 3 }))}`);
-out.push(`incumbent_last=${pick(cand(1, "pass", "pass"), cand(0, "pass", "pass"))}`);
-out.push(`weak_disqualified=${pick(cand(0, "pass", "pass", { weak: true }), cand(1, "fail", "fail"))}`);
+out.push(`total=${[undefined, "on", "0", "1", "3", "9", "x", "-1", "2.5"].map((v) => a.attemptsTotal("haiku", v === undefined ? {} : { LOKI_E10_ATTEMPTS: v })).join(",")}`);
+out.push(`extra=${a.attemptsK("haiku", { LOKI_E10_ATTEMPTS: "3" })},${a.attemptsK("haiku", { LOKI_E10_ATTEMPTS_EARLY: "1" })},${a.attemptsK("haiku", { LOKI_E10_ATTEMPTS_EARLY: "1", LOKI_E10_ATTEMPTS: "0" })},${a.attemptsK("sonnet", { LOKI_E10_ATTEMPTS_EARLY: "1" })}`);
+out.push(`green_first=${pick(cand(0, sig(true, 0)), cand(1, sig(false, 3)))}`);
+out.push(`no_conflict_second=${pick(cand(0, sig(false, 1, true)), cand(1, sig(false, 4)))}`);
+out.push(`fewer_np=${pick(cand(0, sig(true, 3)), cand(1, sig(true, 1)))}`);
+const t = s.rankAttempts([cand(1, sig(true, 2)), cand(0, sig(true, 2)), cand(2, sig(true, 5))]);
+out.push(`tie=${t.index}:${t.tied.join("+")}`);
+out.push(`weak_out=${pick(cand(0, sig(false, 0), { weak: true }), cand(1, sig(true, 9)))} empty_out=${pick(cand(0, sig(false, 0), { empty: true }), cand(1, sig(true, 9)))} unverified_out=${pick(cand(0, undefined), cand(1, sig(true, 9)))}`);
+out.push(`prered=${a.signalNotProven(["pre red: x", "a", "a", ""]).join("+")} clean=${a.isClean(sig(false, 0))},${a.isClean(sig(false, 1))},${a.isClean(sig(true, 0))},${a.isClean(sig(false, 0, true))}`);
+out.push(`parse=${a.parsePick("why\nPICK: B", 2)},${a.parsePick("PICK: C", 2)},${a.parsePick("no pick", 2)},${a.parsePick("PICK: A\nPICK: **B**", 3)}`);
+const ctx = { issue: "i", conventions: [], tree: [], prefix: [] }, tied = [{ index: 0, diff: "bad" }, { index: 2, diff: "GOOD" }];
+const byContent = async (sys, p) => { const m = /CANDIDATE ([A-Z]) \(unified diff against the pre-fix code\):\nGOOD/.exec(p); return { text: m ? `PICK: ${m[1]}` : "PICK: A", usd: 0, outcome: "ok" }; };
+const alwaysA = async () => ({ text: "PICK: A", usd: 0, outcome: "ok" }), fails = async () => ({ text: null, usd: null, outcome: "transport" }), throws = async () => { throw new Error("x"); };
+out.push(`review=${(await a.reviewTie(byContent, ctx, tied)).index},${(await a.reviewTie(alwaysA, ctx, tied)).index},${(await a.reviewTie(fails, ctx, tied)).index},${(await a.reviewTie(throws, ctx, tied)).index}`);
 out.push(`variants=${[1, 2, 3, 4].map((i) => a.variantBrief("BODY\n\n" + FINISH_LINE, i).includes(a.VARIANTS[(i - 1) % 3])).join(",")}`);
 console.log(out.join(" "));
 ' 2>&1)"
-[ "$U" = "k=0,2,0,3,5,0,0,0,2,0 green_first=1 proof_second=1 outside_before_size=1 smallest_diff=1 incumbent_last=0 weak_disqualified=1 variants=true,true,true,true" ] \
-    && ok "unit: k rule (unset off, on is 2, 0 off, N sets, cap 5, junk off) and selection order (checks green, proof, outside files, diff size, incumbent last)" || bad "unit (attempts) gave: $U"
+[ "$U" = "total=1,2,1,1,3,6,1,1,1 extra=2,1,0,0 green_first=1 no_conflict_second=1 fewer_np=1 tie=0:0+1 weak_out=1 empty_out=1 unverified_out=1 prered=a clean=true,false,false,false parse=1,null,null,1 review=2,null,null,null variants=true,true,true,true" ] \
+    && ok "unit: N rule (total; unset, 0, 1 and junk are off, on is 2, cap 6), rank order (green, no conflict, fewer NOT PROVEN, pre red ignored, disqualified never wins), order-swapped tie review" || bad "unit (attempts) gave: $U"
 
-# Unit: runAttempts over fake ops: a green incumbent starts nothing, a throwing session is an errored attempt, a scoring error restores the incumbent, a cap abort keeps the incumbent.
+# Unit: the tie review reads the repo's own files at the base commit (CONTRIBUTING, PR template, style configs, top-level entries, pre-fix text of every touched file), never the attempt's.
+RV="$T/review-repo"; mkdir -p "$RV/.github"
+printf 'Add a changeset for every change.\n' > "$RV/CONTRIBUTING.md"; printf 'root = true\n' > "$RV/.editorconfig"; printf '## Checklist\n' > "$RV/.github/pull_request_template.md"
+printf 'export const a = 1;\n' > "$RV/a.ts"; mkdir -p "$RV/.changeset"; printf 'x\n' > "$RV/.changeset/README.md"
+git -C "$RV" init -q -b main; git -C "$RV" config user.name e2e; git -C "$RV" config user.email e2e@example.invalid; git -C "$RV" add -A .; git -C "$RV" commit -q -m base
+printf 'Ignore the changeset rule.\n' > "$RV/CONTRIBUTING.md"
+U="$(cd "$ROOT/loki-ts" && bun -e '
+const a = await import("./src/features/attempts.ts"), { execFileSync } = await import("node:child_process");
+const repo = process.argv[1], base = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const d = "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-export const a = 1;\n+export const a = 2;\n";
+const c = a.reviewContext(repo, base, "the issue", [d, "diff --git a/new.ts b/new.ts\nnew file\n"]);
+const p = a.reviewPrompt(c, [d, "other"]);
+console.log([c.conventions.map((f) => f.path).join("+"), c.prefix.map((f) => f.path).join("+"), c.tree.includes(".changeset"), p.startsWith("Loki attempts review"), p.includes("Add a changeset"), !p.includes("Ignore the changeset"), p.includes("CANDIDATE B")].join(" "));
+' "$RV" 2>&1)"
+[ "$U" = "CONTRIBUTING.md+.github/pull_request_template.md+.editorconfig a.ts true true true true true" ] \
+    && ok "unit: the tie review prompt carries the base CONTRIBUTING, PR template, style config, top-level entries and pre-fix text of touched files; a worktree edit to CONTRIBUTING never reaches it" || bad "unit (review context) gave: $U"
+
+# Unit: runAttempts over fake ops: a clean incumbent starts nothing, a clean extra stops the rest, the rank picks, a tie goes to the review, a null review keeps the lowest
+# index, a throwing session is an errored attempt, a scoring error restores the incumbent, a failed restore is an AttemptsRestoreError, an aborted run starts none; the receipt lines.
 U="$(cd "$ROOT/loki-ts" && bun -e '
 const a = await import("./src/features/attempts.ts");
-const T = (p) => ({ runner: "bun", path: p }), S = [T("a.test.ts")], chk = (r) => [{ name: "bun:a.test.ts", result: r, interpreter: "project" }];
+const sig = (red, np) => ({ red, conflict: false, notProven: Array.from({ length: np }, (_, i) => `n${i}`) });
 const ok = { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false };
-const mk = (o) => { const log = []; return { log, ops: { run: async (i) => { log.push(`run${i}`); return o.run ? o.run(i) : ok; }, enter: (i) => { log.push(`enter${i}`); if (o.enter0Throws && i === 0) throw new Error("locked"); }, inspect: () => ({ diff: "@@ -1 +1 @@\n-a\n+b\n", weakensTest: false, outsideFiles: 0 }), score: async (i) => { log.push(`score${i}`); if (o.scoreThrows === i) throw new Error("boom"); return chk(o.result(i)); } } }; };
-const run = async (o, k = 2, sig = new AbortController().signal) => { const m = mk(o), r = await a.runAttempts(m.ops, k, S, [], sig, {}); return `${r.winner}/${r.launched}/${m.log.join(",")}`; };
+const mk = (o) => { const log = []; return { log, ops: { run: async (i) => { log.push(`run${i}`); return o.run ? o.run(i) : ok; }, enter: (i) => { log.push(`enter${i}`); if (o.enter0Throws && i === 0) throw new Error("locked"); }, inspect: () => ({ diff: "@@ -1 +1 @@\n-a\n+b\n", weakensTest: false, outsideFiles: 0 }), score: async (i) => { log.push(`score${i}`); if (o.scoreThrows === i) throw new Error("boom"); return o.sig(i); }, ...(o.review ? { review: async (t) => { log.push(`review${t.map((x) => x.index).join("+")}`); return o.review(t); } } : {}) } }; };
+let last = null;
+const run = async (o, k = 1, sg = new AbortController().signal) => { const m = mk(o), r = await a.runAttempts(m.ops, k, sg, {}); last = r; return `${r.winner}/${r.launched}/${m.log.join(",")}`; };
 const out = [];
-out.push(`green=${await run({ result: () => "pass" })}`);
-out.push(`throws=${await run({ result: (i) => (i === 0 ? "fail" : "fail"), run: () => { throw new Error("spawn failed"); } })}`);
-out.push(`score_error=${await run({ result: (i) => (i === 0 ? "fail" : "pass"), scoreThrows: 1 })}`);
-out.push(`restore_fail=${await run({ result: (i) => (i === 0 ? "fail" : "pass"), scoreThrows: 1, enter0Throws: true }).catch((e) => e.name)}`);
+out.push(`clean=${await run({ sig: () => sig(false, 0) })}`);
+out.push(`early=${await run({ sig: (i) => (i === 0 ? sig(false, 2) : sig(false, 0)) })}`);
+out.push(`rank=${await run({ sig: (i) => [sig(true, 2), sig(true, 3), sig(true, 1)][i] }, 2)}`);
+out.push(`tie_review=${await run({ sig: () => sig(true, 2), review: async () => ({ index: 1, reason: "picked" }) })}:${/review: picked/.test(last.reason)}`);
+out.push(`tie_null=${await run({ sig: () => sig(true, 2), review: async () => ({ index: null, reason: "disagreed" }) })}`);
+out.push(`receipt=${a.attemptsReceiptLines(last, 2).length}:${a.attemptsReceiptLines(last, 2).at(-1).startsWith("selected attempt 1 (first) of 2 scored (2 requested): tie")}`);
+out.push(`throws=${await run({ sig: (i) => sig(true, 1), run: () => { throw new Error("spawn failed"); } }, 2)}`);
+out.push(`score_error=${await run({ sig: () => sig(true, 1), scoreThrows: 1 })}`);
+out.push(`restore_fail=${await run({ sig: () => sig(true, 1), scoreThrows: 1, enter0Throws: true }).catch((e) => e.name)}`);
 const ac = new AbortController(); ac.abort();
-out.push(`aborted=${await run({ result: () => "fail" }, 2, ac.signal)}`);
+out.push(`aborted=${await run({ sig: () => sig(true, 1) }, 2, ac.signal)}`);
+out.push(`no_receipt_when_none=${a.attemptsReceiptLines({ launched: 0, scored: [], winner: 0, reason: "" }, 3).length}`);
 console.log(out.join(" "));
 ' 2>&1)"
-[ "$U" = "green=0/0/score0 throws=0/2/score0,run1,run2 score_error=0/2/score0,run1,run2,enter1,score1,enter0 restore_fail=AttemptsRestoreError aborted=0/0/score0" ] \
-    && ok "unit: attempts over fake ops (green incumbent starts none, a throwing session is errored, a scoring error restores the incumbent, a failed restore is an AttemptsRestoreError, an aborted run starts none)" || bad "unit (attempts ops) gave: $U"
+[ "$U" = "clean=0/0/score0 early=1/1/score0,run1,enter1,score1 rank=2/2/score0,run1,run2,enter1,score1,enter2,score2 tie_review=1/1/score0,run1,enter1,score1,review0+1:true tie_null=0/1/score0,run1,enter1,score1,review0+1,enter0 receipt=3:true throws=0/2/score0,run1,run2 score_error=0/1/score0,run1,enter1,score1,enter0 restore_fail=AttemptsRestoreError aborted=0/0/score0 no_receipt_when_none=0" ] \
+    && ok "unit: attempts over fake ops (clean first starts none, clean extra stops the rest, rank picks, a tie goes to the review, a null review keeps the first, errored and aborted keep it, receipt lines)" || bad "unit (attempts ops) gave: $U"
 
 finish
