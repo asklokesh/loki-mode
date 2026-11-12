@@ -27,9 +27,10 @@ export const CONSULT_MODEL_DEFAULT = "claude-opus-5-5";
 const MAX_TOKENS = 1200; // a diagnosis and an intended behavior, not code; thinking cannot be disabled on Opus 5.5, so "low" effort bounds it
 const CAP = { task: 5000, evidence: 2500, diff: 5000, code: 6000 }; // about 5k input tokens: measured on cli-2418 (bench, 2026-11-06), 23k chars with a 1h cache write cost $0.077 per consult
 
-/** Off by default under LOKI_E10_LEAN_CALLS (util/cost_profile.ts): on the 20-task Haiku tuning bench (EVAL-2026-11-12-1, v11.138.0) the arm with the consult and
- *  never-stop off reached merge-ready 17/20 against 11/20 with them on (paired +0.30, 95% CI [+0.10, +0.50], no task lost), false VERIFIED 0 against 2, at $0.0351
- *  against $0.0592 per task. =1 turns both on; =0 keeps them off; LOKI_E10_LEAN_CALLS=0 restores the old default (on). */
+/** Off by default under LOKI_E10_LEAN_CALLS (util/cost_profile.ts), on cost: on the 20-task Haiku tuning bench (EVAL-2026-11-12-1, v11.138.0) each firing cost about
+ *  $0.034 (about $0.010 per task on average), and on the 6 tasks where it fired the run cost $0.48 for 3/6 merge-ready with it on against $0.29 for 4/6 with it off.
+ *  False VERIFIED is no worse with it off (0 against 2). The arm-level merge-ready gap (17/20 against 11/20) is mostly one-seed variance, not the consult: it fired on
+ *  only 1 of the 6 tasks gained. =1 turns both on; =0 keeps them off; LOKI_E10_LEAN_CALLS=0 restores the old default (on). */
 export const consultEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => keptUnderLean(env.LOKI_E10_OPUS_CONSULT, env);
 /** Never-stop is on with the knob unless the run explicitly asks a person (LOKI_E10_INTAKE_ASK=1). */
 export const neverStopActive = (env: NodeJS.ProcessEnv = process.env): boolean => consultEnabled(env) && env.LOKI_E10_INTAKE_ASK !== "1";
