@@ -51,7 +51,8 @@ export function flagOutsideScope(o: Partial<Record<string, Obj>>, staged: Staged
 /** J3 LOKI_E10_SCOPE_TEST_DROP (default on, =0 opts out): the one non-advisory scope rule. A test file the run added or modified in an owner package (a Go directory, a JS/TS
  *  package with its own package.json) where the change has no non-test change, the package has source files, and the task names neither the file nor the package, is reset to
  *  base before commit with a NOT PROVEN note. Python layouts and files with no owner are never touched, nor is any source file, nor a test-only change (no source change anywhere).
- *  On the tuning bench it fires on the 3 cross-package test scope fails (v1371 and v1380 tq-11327, v1381 lh-1474) and on 0 of 160 lean runs. */
+ *  The failure it targets: a coverage pass adding a test to a neighbouring package the change never touched, which a reviewer reads as out of scope; on the tuning
+ *  bench it fired on 3 such judge fails and on 0 of 160 lean runs. */
 export const scopeTestDropEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SCOPE_TEST_DROP"] ?? "").trim());
 export const crossPackageTestNote = (f: string): string => `test-only edit outside the change's packages dropped: ${f} (no source change in its package, and the task does not name it)`;
 const JS_EXT = /\.(?:[cm]?[jt]sx?)$/;

@@ -323,8 +323,8 @@ export function assumptionsBlock(assumptions: unknown): string[] {
     ...(choices.length ? [`The task leaves a choice open. Each line gives the option to implement and the evidence from the task and the repo (or the rule to follow when none decides it); follow it, no extra scope, and name the option you implemented in your final message:\n${num(choices)}`] : [])];
 }
 
-// F1 ranked-remedy enforcement (LOKI_E10_RANKED_REMEDY, default on, =0 opts out). On the 20-task Haiku bench (L-Haiku-lean139) lh-1474 lost both seeds by implementing only the
-// issue's second remedy while its "Possible solution" list ranks them "roughly in order of preference"; every hidden-pass diff in the tuning arms implements remedy 1. The rule
+// F1 ranked-remedy enforcement (LOKI_E10_RANKED_REMEDY, default on, =0 opts out). The failure it targets: an issue lists its remedies in order of preference and the change
+// implements only a lower-ranked one (a fallback) in place of the first, while the correct fixes implement remedy 1. The rule
 // "implement the fix the issue prefers" (FIXED_RULES) already existed and did not hold, so intake records remedy 1, the implement brief names it as the first site of the
 // coverage check, and one tool-less check of the diff gates one targeted resume (util/conflict_resume.ts resumeForRemedy). Stored as intake.ranked_remedy, never in
 // assumptions (those feed the open-decision cap and the consult trigger).
