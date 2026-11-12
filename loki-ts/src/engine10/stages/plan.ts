@@ -27,8 +27,12 @@ export { selectRelevantFiles };
 /** The plan session is also the consent gate and the cap sizer. LOKI_CONFIRM keeps it at every size; for a normal task it is also kept when the intent card is shown on a terminal, or when the task names no files in a multi-package repo (nothing else would size the run cap). A small task never plans. The counts are lazy: they are read only when reached. */
 export function keepsPlanForConsentOrCap(env: NodeJS.ProcessEnv, tty: boolean, size: string, named: () => number, packages: () => number): boolean {
   if (confirmRequested(env)) return true;
-  return size === "normal" && ((intentCardEnabled(env) && tty) || (named() === 0 && packages() > 1));
+  return size === "normal" && ((intentCardEnabled(env) && tty) || (!planFoldMonorepo(env) && named() === 0 && packages() > 1));
 }
+/** LOKI_E10_PLAN_FOLD_MONOREPO (lever C, off by default; =1 opts in): a normal task that names no file in a multi-package repo no longer keeps its plan session for the cap sizer,
+ *  so the plan folds into the implement brief like any other normal task (the run then keeps the default cap). On the 20-task Haiku bench (L-Haiku-lean139) these were the 6 plan
+ *  sessions, all zod, about $0.0051 each ($0.0008/task); their merge-ready effect is unmeasured, so the bench decides before it can default on. */
+export const planFoldMonorepo = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_PLAN_FOLD_MONOREPO"] ?? "").trim());
 
 /** Truncates the planner's output to at most `max` non-empty lines: engine-side enforcement, since nothing stops a session from writing more. */
 export function truncatePlan(raw: string, max: number = MAX_PLAN_LINES): string {

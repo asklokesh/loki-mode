@@ -277,6 +277,7 @@
 # 237. opus_consult.ts consultEnabled: back to on by default (the consult default unit leg and the unset consult-off engine leg fail).
 # 238. machine.ts suiteOnlyRed: drop clause (a)'s targeted-pass check (suite fix skip clauses reads 0000 for the tq row).
 # 239. conflict_resume.ts parseRemedyCheck: accept MISSING even beside IMPLEMENTED (the ranked remedy check unit leg reads missing,implemented,missing,null,null).
+# 240. plan.ts planFoldMonorepo: default on (any value but 0/off) (the plan fold leg reads 00001101).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1435,6 +1436,10 @@ const o1 = "src/v3/tests/a.test.ts:56:8 - error TS6196: \x27_Cat\x27 is declared
 out.push([U(o1), U("\x1b[96m" + o1.replace("src/v3", "src/v3")), U(o1, ["packages/zod/src/v3/tests/a.test.ts"]), U(o1 + "src/c.ts:1:1 - error TS2322: no\n"), U(o1 + "error TS6133 unparsed\n"), U(o1, ["packages/zod/tsconfig.json"]), U(""), U(o1.replace("TS6196", "TS6192"))].join(","));
 console.log(out.join(" | "));' 2>&1)"
 [ "$SKC" = "1001,1010 | 0000000 | 11,11,01,10,00,off | truefalsetrue | ok,ok,diagnostic,code,1,a,no,code" ] && ok "suite fix skip clauses: (a) skips the tq shape and (b) the zod shape, each alone under its sub-knob and neither under =suite; a failing or empty targeted check, an id in an untested changed source file, a holdout, an unmarked or other tsc group, or a targeted failure keeps the round; tscUnusedUntouched accepts only TS6133/TS6196 outside changed files, ANSI stripped ($SKC)" || bad "suite fix skip clauses: got '$SKC'"
+# Lever C, LOKI_E10_PLAN_FOLD_MONOREPO (off by default, =1 opts in): a normal task naming no file in a multi-package repo keeps its plan session by default; =1 folds it into implement.
+# A named file, a single package, consent (LOKI_CONFIRM) and a small task behave as before; plan.ts passes the env to the predicate at the skip decision.
+PFM="$(cd "$ROOT/loki-ts" && bun -e 'const p = await import("./src/engine10/stages/plan.ts"); const k = (e, s = "normal", n = 0, pk = 3) => (p.keepsPlanForConsentOrCap(e, false, s, () => n, () => pk) ? 1 : 0); console.log([k({}), k({ LOKI_E10_PLAN_FOLD_MONOREPO: "1" }), k({}, "normal", 1), k({}, "normal", 0, 1), k({ LOKI_E10_PLAN_FOLD_MONOREPO: "0" }), k({ LOKI_E10_PLAN_FOLD_MONOREPO: "1", LOKI_CONFIRM: "1" }), k({}, "small"), p.planFoldMonorepo({}) ? 1 : 0].join(""))' 2>&1)"
+[ "$PFM" = "10001100" ] && grep -q '(!planFoldMonorepo(env) && named() === 0 && packages() > 1)' "$ROOT/loki-ts/src/engine10/stages/plan.ts" && ok "plan fold (lever C): off by default (a no-named-file monorepo task keeps its plan); =1 folds it; named files, one package, consent and small tasks unchanged; wired in keepsPlanForConsentOrCap ($PFM)" || bad "plan fold (lever C): got '$PFM' (want 10001100) or the predicate is not wired"
 WD="$(cd "$ROOT/loki-ts" && bun -e 'const { wallEnabled } = await import("./src/engine10/sizing.ts"); console.log([wallEnabled({}), wallEnabled({ LOKI_E10_WALL: "" }), wallEnabled({ LOKI_E10_WALL: "0" }), wallEnabled({ LOKI_E10_WALL: "1" }), wallEnabled({ LOKI_E10_WALL: "on" })].join(","))' 2>&1)"
 [ "$WD" = "false,false,false,true,true" ] && ok "wall default: the Wall session is off unless LOKI_E10_WALL=1/on ($WD)" || bad "wall default: wallEnabled gave '$WD'"
 # Go output cap (rule 22, real go test -json through the real runOnce and corroboratePass): a test file whose -json stream is larger than the 64 KB tail (and a whole-package run larger than 1 MiB) is judged whole and counts;
