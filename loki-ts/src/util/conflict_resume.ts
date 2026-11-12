@@ -493,6 +493,8 @@ export async function deliverOverWallConflict(o: Outs, repoDir: string, reverify
 // and only a clean LOKI_DONE reply replaces the first result. It fires only when intake recorded a ranked remedy.
 export const REMEDY_CHECK_SYSTEM = "You check whether one code change implements one stated remedy. You have no tools. Reply with exactly one word: IMPLEMENTED or MISSING.";
 const REMEDY_DIFF_CAP = 12_000;
+/** T201: the CLI turns a reply longer than CLAUDE_CODE_MAX_OUTPUT_TOKENS into an error, and Haiku answers this one-word check with 6 to 700 tokens: at 50, 9 of 12 concurrent checks failed; at 256, 0 of 12. Output is billed by the tokens actually written. */
+export const REMEDY_MAX_TOKENS = 256;
 export const remedyCheckPrompt = (remedy: string, diff: string): string => `Loki remedy check.\nRemedy (the issue's first choice): ${remedy}\n\nDiff:\n${diff.length > REMEDY_DIFF_CAP ? `${diff.slice(0, REMEDY_DIFF_CAP)}\n[... truncated]` : diff}`;
 /** The verdict of one reply. The first verdict word decides, after markdown and punctuation are stripped: MISSING, NOT IMPLEMENTED, NOT PRESENT, ABSENT or NO give
  *  "missing"; IMPLEMENTED, PRESENT or YES give "implemented". A reply with no verdict word, or with both verdicts on its first line (MISSING or IMPLEMENTED), is null and starts
@@ -506,16 +508,14 @@ export const remedyResumeBrief = (remedy: string): string => `The issue's first-
 let remedyCallOverride: ((system: string, prompt: string) => Promise<{ text: string | null; usd: number | null; outcome: string }>) | null = null;
 /** TEST SEAM: replace the remedy check call. Production code must never call this. */
 export function __setRemedyCheckForTests(c: typeof remedyCallOverride): void { remedyCallOverride = c; }
-/** check: "unparsed" when an answer arrived without a verdict, "failed" when no answer arrived (call: the call outcome of the last attempt, attempts: 1 or 2). */
-export interface RemedyRecord { check: "implemented" | "missing" | "unparsed" | "failed"; usd: number | null; resumed: boolean; call?: string; attempts?: number }
+/** check: "unparsed" when an answer arrived without a verdict, "failed" when no answer arrived (call: the call outcome, retries already done by the shared tool-less path). */
+export interface RemedyRecord { check: "implemented" | "missing" | "unparsed" | "failed"; usd: number | null; resumed: boolean; call?: string }
 export async function resumeForRemedy(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, remedy: string, diff: string, env: NodeJS.ProcessEnv = process.env): Promise<{ session: SessionResult; iterationIds: string[]; record: RemedyRecord }> {
-  const call = remedyCallOverride ?? ((s: string, p: string) => consultCallFor(env.LOKI_E10_RANKED_REMEDY_MODEL || "claude-haiku-5-5", join(ctx.repoDir, ".loki"), env, 60_000, { maxTokens: 50, thinking: "off" })(s, p, "ranked-remedy-check"));
-  // On the lean140 bench 3 of the 4 checks never got an answer (child ledger outcome "transport", 0 tokens) while the same call succeeds alone in 1.5 to 4.7 s; one retry
-  // after a call that returned no text costs nothing when it fails again (no tokens are billed on a transport failure).
-  const once = async (): Promise<{ text: string | null; usd: number | null; outcome: string }> => { try { return await call(REMEDY_CHECK_SYSTEM, remedyCheckPrompt(remedy, diff)); } catch { return { text: null, usd: null, outcome: "transport" }; } };
-  let r = await once(), attempts = 1;
-  if (r.text === null && (ctx.implementLeftS?.() ?? Infinity) >= RESUME_MIN_LEFT_S) { const first = r.usd; r = await once(); attempts = 2; if (typeof first === "number") r = { ...r, usd: (r.usd ?? 0) + first }; }
-  const verdict = parseRemedyCheck(r.text), record: RemedyRecord = { check: verdict ?? (r.text === null ? "failed" : "unparsed"), usd: r.usd, resumed: false, call: r.outcome, attempts };
+  const call = remedyCallOverride ?? ((s: string, p: string) => consultCallFor(env.LOKI_E10_RANKED_REMEDY_MODEL || "claude-haiku-5-5", join(ctx.repoDir, ".loki"), env, 60_000, { maxTokens: REMEDY_MAX_TOKENS, thinking: "off" })(s, p, "ranked-remedy-check"));
+  // T201: the shared tool-less path (runner/sdk_invoker.ts) retries only transient failures, with backoff; a reply over the output cap comes back truncated (no text).
+  let r: { text: string | null; usd: number | null; outcome: string };
+  try { r = await call(REMEDY_CHECK_SYSTEM, remedyCheckPrompt(remedy, diff)); } catch { r = { text: null, usd: null, outcome: "transport" }; }
+  const verdict = parseRemedyCheck(r.text), record: RemedyRecord = { check: verdict ?? (r.text === null ? "failed" : "unparsed"), usd: r.usd, resumed: false, call: r.outcome };
   if (verdict !== "missing" || (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationIds: [], record };
   const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
   const s = await resumeWith(ctx, first, firstSession, remedyResumeBrief(remedy), "-rr");

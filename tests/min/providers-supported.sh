@@ -55,6 +55,7 @@
 #      unsupported-provider message (the bogus saved leg).
 #  19. sdk_invoker.ts toolLessThinking: off no longer disabled; drop `tools: []`; drop the ledger append on the SDK route; drop the cap
 #      refusal; drop maxBudgetUsd; drop the fixed title; drop the max-output env; meter a cap without a run id (each fails the toolless leg).
+#  20. sdk_invoker.ts classifyToolLessFailure: drop the output-cap branch (the T201 cap leg reads cap=transport, not truncated).
 #   9. tests/min/providers-supported.sh run_engine: keep XDG_CONFIG_HOME from the caller and give the no-key leg an
 #      opencode.json with provider.openrouter there (the no-key leg starts a session; proves the isolation matters).
 
@@ -375,6 +376,57 @@ cap:apireached=budget:0
 cap:unmeterable=budget:nosend'
 [ "$tl" = "$want_tl" ] && ok "toolLessCall: no tools, thinking off/low on both routes, priced into the child ledger, run cap refuses and bounds" \
     || { bad "toolLessCall legs differ"; diff <(printf '%s\n' "$want_tl") <(printf '%s\n' "$tl") | sed 's/^/    | /'; }
+
+# T201: a failed tool-less Agent SDK call is recorded in full (class, message, HTTP status, CLI stderr tail, elapsed, our timeout) and classified. The CLI's output-cap error
+# ("response exceeded the N output token maximum", the measured cause of the bench's empty remedy checks) is truncated and never retried; a transient error (HTTP 429/5xx,
+# overloaded, a reset connection) is retried with backoff up to 3 calls in all; auth, our own timeout and a stream with no result stop at once. Stub query() only, no network.
+t201="$(cd "$ROOT/loki-ts" && TLDIR="$T/t201" env -u ANTHROPIC_API_KEY -u LOKI_SDK_OAUTH_DEV -u LOKI_E10_MAX_COST_USD -u LOKI_E10_SPENT_USD -u LOKI_E10_RUN_ID bun -e '
+import { readFileSync, existsSync } from "node:fs";
+import { toolLessCall, __setToolLessQueryForTests, __setToolLessBackoffForTests, classifyToolLessFailure } from "./src/runner/sdk_invoker.ts";
+const D = process.env.TLDIR, lines = (d) => { const f = `${D}/${d}/metrics/child-sessions.jsonl`; return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []; };
+const base = { model: "claude-haiku-5-5", system: "sys", prompt: "hi", maxTokens: 50, thinking: "off" };
+const waits = []; __setToolLessBackoffForTests((a) => { waits.push(a); return 0; });
+let calls = 0, script = [];
+const httpErr = (status, msg) => Object.assign(new Error(msg), { status });
+__setToolLessQueryForTests(async function* ({ options }) {
+  const step = script[Math.min(calls, script.length - 1)]; calls++;
+  if (step === "ok") { yield { type: "assistant", message: { content: [{ type: "text", text: "MISSING" }] } }; yield { type: "result", subtype: "success", is_error: false, result: "MISSING", total_cost_usd: 0.0002, usage: { input_tokens: 900, output_tokens: 2 } }; return; }
+  if (step === "cap") { options.stderr?.("cli: reply too long\n"); throw new Error("Claude Code returned an error result: API Error: The response exceeded the 50 output token maximum. To configure this behavior, set the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment variable."); }
+  if (step === "529") throw httpErr(529, "Overloaded");
+  if (step === "429") throw httpErr(429, "rate limited");
+  if (step === "reset") throw new Error("fetch failed: ECONNRESET");
+  if (step === "auth") throw httpErr(401, "invalid x-api-key");
+  if (step === "none") return;
+  if (step === "slow") { await new Promise((r) => { options.abortController.signal.addEventListener("abort", r); }); throw new Error("aborted"); }
+});
+const run = async (name, steps, extra = {}) => { calls = 0; waits.length = 0; script = steps; const r = await toolLessCall({ ...base, ...extra, ledger: { lokiDir: `${D}/${name}`, phase: name } }); const l = lines(name); return `${name}=${r.outcome.kind}:${calls}:${waits.join("+") || "-"}:${l.map((x) => x.outcome).join("+")}`; };
+const out = [];
+out.push(await run("cap", ["cap", "ok"]));
+const lc = lines("cap")[0]?.error ?? {};
+out.push(`cap_record=${lc.class}:${/exceeded the 50 output token maximum/.test(lc.message)}:${(lc.stderr ?? "").includes("reply too long")}:${lc.timed_out}:${lc.attempt}:${typeof lc.elapsed_ms}`);
+out.push(await run("overloaded", ["529", "529", "ok"]));
+out.push(await run("ratelimit", ["429"]));
+const lr = lines("ratelimit"); out.push(`ratelimit_record=${lr.map((x) => `${x.error?.status}/${x.error?.attempt}`).join(",")}`);
+out.push(await run("reset", ["reset", "ok"]));
+out.push(await run("auth", ["auth", "ok"]));
+out.push(await run("noresult", ["none", "ok"]));
+out.push(await run("timeout", ["slow", "ok"], { timeoutMs: 50 }));
+const lt = lines("timeout")[0]?.error ?? {}; out.push(`timeout_record=${lt.timed_out}`);
+out.push("classify=" + [{ message: "x exceeded the 256 output token maximum" }, { message: "boom", status: 503 }, { message: "socket hang up" }, { message: "Overloaded" }, { message: "nope", status: 403 }, { message: "late", timed_out: true, status: 503 }, { message: "the stream ended without a result message" }].map((f) => classifyToolLessFailure(f)).join(","));
+console.log(out.join("\n"));' 2>&1)"
+want_t201='cap=truncated:1:-:truncated
+cap_record=Error:true:true:false:1:number
+overloaded=ok:3:1+2:transport+transport+ok
+ratelimit=transport:3:1+2:transport+transport+transport
+ratelimit_record=429/1,429/2,429/3
+reset=ok:2:1:transport+ok
+auth=transport:1:-:transport
+noresult=transport:1:-:transport
+timeout=transport:1:-:transport
+timeout_record=true
+classify=output_cap,transient,transient,transient,fatal,fatal,fatal'
+[ "$t201" = "$want_t201" ] && ok "T201 toolless: a failed call records its class, message, HTTP status, CLI stderr and timeout; the output-cap error is truncated and not retried; 529, 429 and a reset connection retry with backoff up to 3 calls; auth, no result and our own timeout stop at once" || { bad "T201 toolless gave:"; printf '%s\n' "$t201" | sed 's/^/    | /'; }
+grep -q 'export const REMEDY_MAX_TOKENS = 256;' "$ROOT/loki-ts/src/util/conflict_resume.ts" && grep -q '{ maxTokens: REMEDY_MAX_TOKENS, thinking: "off" }' "$ROOT/loki-ts/src/util/conflict_resume.ts" && grep -q 'if (client() === null) return toolLessViaAgentSdkRetrying(p, ledger, remaining);' "$ROOT/loki-ts/src/runner/sdk_invoker.ts" && ok "T201 wiring: toolLessCall takes the retrying Agent SDK route, and the remedy check runs at a 256-token cap" || bad "T201 wiring: the retrying route or the remedy cap is not wired"
 
 # --- no removed provider name in shipped code ------------------------------
 # Allowed: the removed lists and message, GEMINI.md (an agent-rules file name), and model-family price/key rows
