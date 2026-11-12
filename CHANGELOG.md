@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.138.1 (2026-11-11)
+
+Loki no longer calls Opus or keeps going on a conflicting spec by default, so Haiku runs cost less and stop reporting wrong successes from that path.
+
+### Changed
+- The Opus consult and never-stop are now off by default (LOKI_E10_OPUS_CONSULT=1 opts back in). A run that meets a conflicting or ambiguous spec ends BLOCKED and says why, as it did before v11.138.0. Measured on the 20-task Haiku tuning bench (EVAL-2026-11-12-1): each consult cost about $0.034 (about $0.010 per task on average); on the 6 tasks where it fired, runs cost $0.48 for 3 merge-ready with it on against $0.29 for 4 with it off; false VERIFIED was 2 with it on against 0 with it off. The arm-level merge-ready gap (11/20 against 17/20) is mostly single-seed variance, not the consult. Users on v11.138.0 can get the same behavior today with LOKI_E10_OPUS_CONSULT=0.
+
 ## v11.138.0 (2026-11-06)
 
 Loki no longer stalls or stops on an open question, its plan step can write its own plan again, and Haiku runs spend less on turns that never change the result.
