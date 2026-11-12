@@ -3,6 +3,8 @@
 # the next npx on PATH.
 here="$(cd "$(dirname "$0")" && pwd -P)"
 [ "${1:-}" = "--no-install" ] && shift
+# FAKE_VITEST_NEEDS_DEPS=1: like a real package, vitest only resolves from the package's own node_modules (fl24: a base worktree without them parses no ids).
+if [ "${1:-}" = "vitest" ] && [ "${FAKE_VITEST_NEEDS_DEPS:-0}" = 1 ] && [ ! -d node_modules ]; then echo "npm error could not determine executable to run" >&2; exit 1; fi
 if [ "${1:-}" = "vitest" ]; then shift; exec python3 -I "$here/vitest" "$@"; fi
 IFS=: read -r -a dirs <<< "$PATH"
 for d in "${dirs[@]}"; do

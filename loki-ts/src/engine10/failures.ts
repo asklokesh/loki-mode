@@ -138,6 +138,34 @@ export function sameErrors(head: string | Map<string, string[]>, base: string | 
   const keys = (i: string): string[] => (h.has(i) ? [i] : [...h.keys()].filter((k) => k.endsWith(` > ${i}`)));
   return all.length > 0 && all.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => eq(b.get(k), h.get(k))); });
 }
+/** fl24: half of the second chance when sameErrors says the text differs (noiseOnlyErrors). True when every id has head error lines and none of them
+ *  names a changed file (its repo path, or its file name when that has an extension) or a changed symbol (a whole word, 3 characters or more). The
+ *  caller has already required the id red on base and the test file untouched; go and cargo output carries no error lines, so it never passes (fail
+ *  closed). Excusing on this is listed NOT PROVEN by the caller: the text was not shown equal. */
+export function errorsNameNoChange(head: string | Map<string, string[]> | Record<string, string[]>, ids: readonly string[], changed: readonly string[], symbols: readonly string[] = []): boolean {
+  const h = typeof head === "string" ? errorsById(head) : head instanceof Map ? head : new Map(Object.entries(head)), names = lineNamesChange(changed, symbols);
+  const keys = (i: string): string[] => (h.has(i) ? [i] : [...h.keys()].filter((k) => k.endsWith(` > ${i}`)));
+  return ids.length > 0 && ids.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => (h.get(k) ?? []).length > 0 && !(h.get(k) ?? []).some(names)); });
+}
+/** fl24: an error line with its run-to-run noise masked: quoted values, numbers (line, column, counts, durations, snapshot indexes), hex ids and
+ *  file paths. "expected 5 to be 6" and "expected 7 to be 6" share a shape; an AssertionError and a TypeError never do. */
+export const errorShape = (line: string): string => line.replace(/'[^']*'|"[^"]*"|`[^`]*`/g, "<q>").replace(/(?:[\w.@<>-]*\/)+[\w.@<>-]+/g, "<p>").replace(/\b0x[0-9a-f]+\b/gi, "<n>").replace(/\d+(?:\.\d+)?/g, "<n>").replace(/\s+/g, " ").trim();
+/** sameErrors on errorShape: every id has head error lines and fails on base with lines of the same shapes, the same number of times. */
+export function sameErrorShape(head: string | Map<string, string[]> | Record<string, string[]>, base: string | Map<string, string[]> | Record<string, string[]>, ids: readonly string[]): boolean {
+  const asMap = (x: string | Map<string, string[]> | Record<string, string[]>): Map<string, string[]> => typeof x === "string" ? errorsById(x) : x instanceof Map ? x : new Map(Object.entries(x));
+  const h = asMap(head), b = asMap(base), shapes = (x: string[] = []): string => x.map(errorShape).sort().join("\n");
+  const keys = (i: string): string[] => (h.has(i) ? [i] : [...h.keys()].filter((k) => k.endsWith(` > ${i}`)));
+  return ids.length > 0 && ids.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => b.has(k) && (h.get(k) ?? []).length === (b.get(k) ?? []).length && shapes(h.get(k)) === shapes(b.get(k))); });
+}
+/** fl24: the one second-chance rule when sameErrors is false: the same error shapes as base (noise only) and no failure naming the change. */
+export const noiseOnlyErrors = (head: string | Map<string, string[]> | Record<string, string[]>, base: string | Map<string, string[]> | Record<string, string[]>, ids: readonly string[], changed: readonly string[], symbols: readonly string[] = []): boolean =>
+  sameErrorShape(head, base, ids) && errorsNameNoChange(head, ids, changed, symbols);
+/** A predicate: does this error line name a changed file (its repo path, or its file name when that has an extension and 4+ characters) or a changed symbol (a whole word, 3+ characters)? */
+export function lineNamesChange(changed: readonly string[], symbols: readonly string[] = []): (line: string) => boolean {
+  const word = (l: string, w: string): boolean => new RegExp(`(?<![\\w$])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w$])`).test(l);
+  const files = changed.flatMap((f) => { const b = f.slice(f.lastIndexOf("/") + 1); return /\.\w+$/.test(b) && b.length >= 4 ? [f, b] : [f]; }), syms = symbols.filter((s) => s.length >= 3);
+  return (l) => files.some((f) => l.includes(f) && word(l, f)) || syms.some((s) => word(l, s));
+}
 /** FireLater#21: the ids two runs are compared by. vitest prints a test's bare title on its "x" line in one version ("x bg", 5.x) and the describe path in
  *  another ("x page 1 > bg", 2.1.9), and Loki's batched per-file text prints the bare title; only the full "file > describe > title" ids from FAIL
  *  lines agree across them. When a list has full ids, only those are compared; otherwise (pytest, go, cargo) every id is. */

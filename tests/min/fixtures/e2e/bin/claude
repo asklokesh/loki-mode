@@ -126,6 +126,7 @@ fi
 if [ "${LOKI_E10_STAGE:-}" = "fix" ]; then # before the implement branch: a fix brief also carries the implement rules text
   case "${E2E_STUB_FIX:-}" in
     conflict) echo "LOKI_SPEC_CONFLICT: calc.test.ts:7 expects multiply(3, 4) to be 12"; exit 0 ;;
+    prered) echo "LOKI_SPEC_CONFLICT: the named failures exist identically on clean HEAD (2 failing tests in both trees); they pre-exist on base and come from tests asserting old classes"; exit 0 ;; # fl24: FireLater#24's fix-round stop
     wallconflict) echo "LOKI_SPEC_CONFLICT: loki_wall_multiply.test.ts:5 calls multiplyAll, which the task never asks for"; exit 0 ;;
     consultfix) if printf '%s' "$prompt" | grep -q "STUB_ADVICE"; then python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; echo "ASSUMPTION: the reviewer says multiply means a * b"; else printf '// stub fix pass\n' >> calc.ts; fi; echo "LOKI_DONE"; exit 0 ;; # LOKI_E10_OPUS_CONSULT: only the consult advice fixes multiply()
     nsconflict) if printf '%s' "$prompt" | grep -q "Do not stop on this conflict"; then python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; echo "ASSUMPTION: multiply means a * b"; echo "LOKI_DONE"; else echo "LOKI_SPEC_CONFLICT: calc.test.ts:7 expects multiply(3, 4) to be 12"; fi; exit 0 ;; # never-stop: a conflict until the never-stop brief
@@ -180,7 +181,12 @@ case "$prompt" in # `loki plan --spec` (tests/min/triage-router.sh): write the s
   *"PR-sized slices"*) # the MASS-2 split session (tests/min/decompose-and-intake.sh)
     if [ -n "${E2E_STUB_SPLIT:-}" ]; then
       out="$(printf '%s\n' "$prompt" | sed -n 's/^Write exactly one JSON object to the file \(.*\) and nothing else to that file, in this form:$/\1/p' | head -1)"
-      [ -n "$out" ] && printf '%s\n' "$E2E_STUB_SPLIT" > "$out"
+      # fl24: the real CLI refuses a Write its --settings deny covers. With the whole-.loki/ run-state rule (no HARNESS-OUTPUTS entry for the file) the
+      # session prints the split in a fence followed by more than 4096 characters of prose, as Opus did on FireLater#24 (v11.139.0).
+      case "$flags" in
+        *"Edit(/${out%%/.loki/*}/.loki/**)"*) printf 'A hook blocked the file write. Here is the JSON instead.\n\n```json\n%s\n```\n\n' "$E2E_STUB_SPLIT"; for _ in $(seq 1 60); do echo "Cleanup: I started no processes and created no temp files; the check found no stray loki or test processes."; done ;;
+        *) [ -n "$out" ] && printf '%s\n' "$E2E_STUB_SPLIT" > "$out" ;;
+      esac
     fi ;;
 esac
 case "$flags" in *"--model claude (provider default)"*) echo "There's an issue with the selected model (claude (provider default)). It may not exist or you may not have access to it." >&2; exit 1 ;; esac # the real CLI rejects the recorded label as a model id (FireLater#24 s2: every default-model review exited 1)

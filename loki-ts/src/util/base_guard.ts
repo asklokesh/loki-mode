@@ -199,6 +199,9 @@ export function zeroGate(rec: unknown): ZeroGate {
 }
 // Test runners write their own caches inside node_modules and .venv on every run (Loki's verify included); they hold no dependency code.
 const RUNNER_CACHE_DIRS = [".vite", ".vite-temp", ".vitest", ".vitest-cache", ".cache", "__pycache__", ".pytest_cache"]; // FireLater#21: vitest 5.1 writes node_modules/.vitest-cache on every run
+// fl24 (FireLater#24, v11.139.0): an ignored file a typecheck, linter or Finder rewrites as its own output, never something a test imports. The implement
+// session's `tsc --noEmit` rewrote frontend/tsconfig.tsbuildinfo, so every base rerun ran without node_modules, parsed no ids, and 22 page tests red on base blocked.
+const TOOL_OUTPUT_FILE = /(?:^|\/)(?:[^/]*\.tsbuildinfo|\.eslintcache|\.stylelintcache|\.DS_Store)$/;
 /** The packages a dependency dir holds (names, "@scope/name" for scoped ones; a venv's site-packages entries as "py/<name>"), runner caches left out; null
  *  past the bound. A deleted or renamed package changes this list and nothing a files-only walk can see (the parent directory's ctime also moves when a
  *  runner adds its cache entry, so directories alone cannot tell the two apart). */
@@ -235,7 +238,7 @@ export function envChangedSince(repoDir: string, pkgDir: string, sinceMs: number
     for (const rel of ignored) {
       const st = statSync(join(repoDir, rel), { throwIfNoEntry: false }); // a dangling link reads as missing, which withholds
       if (!st) return true;
-      if (!st.isDirectory()) roots.push(join(repoDir, rel));
+      if (!st.isDirectory() && !TOOL_OUTPUT_FILE.test(rel)) roots.push(join(repoDir, rel));
     }
     const depRoots: string[] = [];
     for (const d of ["node_modules", ".venv"]) if (existsSync(join(pkgDir, d))) { roots.push(join(pkgDir, d)); depRoots.push(join(pkgDir, d)); }
