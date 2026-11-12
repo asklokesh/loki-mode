@@ -7,7 +7,7 @@
 #   editalready: adds multiply() and answers LOKI_ALREADY_DONE every time
 #   redothenempty: claims already-done; on the router's redo (REDO_CHALLENGE) LOKI_DONE with no change; already-done again on the empty-done correction
 #   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
-#   coverage: multiply() and subtract() on the first turn; negate() only when the prompt carries the coverage brief (tests/min/scope-and-fix.sh, LOKI_E10_COVERAGE_RESUME)
+#   coverage: multiply() and subtract() on the first turn; negate() only when the prompt carries the coverage brief, or all three on a first turn whose brief carries the folded coverage line (tests/min/scope-and-fix.sh, LOKI_E10_COVERAGE_RESUME)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
 #   attempts: EXP-0010 (tests/min/engine10-e2e-stub.sh). Every implement session writes a wrong multiply() (calc.ts, or calc.py when the repo has one) except
 #     the session running in <temp>/loki-attempts-<random>/B<n> where n is E2E_STUB_RIGHT (unset or none: every session is wrong; the primary is attempt 0);
@@ -213,7 +213,7 @@ if [ "$stage" = "plan" ] && [ "${E2E_STUB_MODE:-}" = "coverage" ]; then # a non-
   [ -n "$out" ] && printf '1. edit calc.ts\n2. run calc.test.ts\n' > "$out"
 fi
 if [ "$stage" = "implement" ] && [ "${E2E_STUB_MODE:-done}" != "coverage" ] && printf '%s' "$prompt" | grep -q "List each site, symbol, example or case"; then
-  echo "LOKI_DONE"; exit 0 # the coverage turn (LOKI_E10_COVERAGE_RESUME, default on) on a change the first turn completed: a real model edits nothing; replaying the first turn's edit would duplicate it
+  echo "LOKI_DONE"; exit 0 # the coverage turn (LOKI_E10_COVERAGE_RESUME=1) on a change the first turn completed: a real model edits nothing; replaying the first turn's edit would duplicate it
 fi
 if [ "$stage" = "implement" ]; then
   sid="$(printf '%s\n' "$prompt" | sed -n 's/^Slice \([A-Za-z0-9_-]*\) of [0-9]* for .*/\1/p' | head -1)"
@@ -268,6 +268,7 @@ if [ "$stage" = "implement" ]; then
       printf '\nexport function multiply(a: number, b: number): number {\n  return a + b;\n}\n' >> calc.ts
     elif [ "${E2E_STUB_MODE:-}" = "coverage" ]; then # the task names multiply, subtract and negate: the first turn does two of the three, the coverage resume does the third
       if printf '%s' "$prompt" | grep -q "List each site, symbol, example or case"; then printf '\nexport function negate(a: number): number {\n  return -a;\n}\n' >> calc.ts
+      elif printf '%s' "$prompt" | grep -q "go over every site, symbol, example or case the task names"; then printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function subtract(a: number, b: number): number {\n  return a - b;\n}\n\nexport function negate(a: number): number {\n  return -a;\n}\n' >> calc.ts # the folded coverage line (LOKI_E10_COVERAGE_RESUME default fold): the first turn covers all three
       else printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function subtract(a: number, b: number): number {\n  return a - b;\n}\n' >> calc.ts; fi
     elif [ "${E2E_STUB_MODE:-}" = "agentonly" ]; then # multiply() (the visible test exercises it) plus square(), which only a test this session writes calls
       printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function square(a: number): number {\n  return a * a;\n}\n' >> calc.ts

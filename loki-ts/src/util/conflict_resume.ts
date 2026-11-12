@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { readSessionId } from "../runner/session_resume.ts";
 import { capToRunTier, wallPinModel } from "../engine10/sizing.ts";
-import { keptUnderLean } from "./cost_profile.ts";
+import { keptUnderLean, leanCallsEnabled } from "./cost_profile.ts";
 /** The referee and the legacy re-author never run above the run's own model (a haiku run keeps them on haiku), like every other auxiliary Wall pin. */
 const refereeModel = (ctx: RunContext): string => capToRunTier(wallPinModel(), ctx.model, ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE"]);
 import { assertionCount, changedAssertion, changedRegion, editScopeViolation, quoteInSpec, testSpans, wallAnchor, type WallDefect } from "./wall_owned.ts";
@@ -105,14 +105,32 @@ export const resumeNeverStop = (ctx: RunContext, first: SessionRunOptions, first
   (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S ? Promise.resolve({ session: firstSession, iterationId: first.iterationId }) : resumeWith(ctx, first, firstSession, neverStopBrief(reason, advice), "-n");
 export const resumeAfterAlreadyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, ALREADY_DONE_CHALLENGE, "-a");
 
-// LOKI_E10_COVERAGE_RESUME (default on; =0/off/false opts out): on the lean path (plan skipped) a LOKI_DONE exit with a non-empty diff gets exactly one more turn in the same session.
-// The task text is already in that session, so the fixed brief names no task (cli-2478: the first turn fixed 2 of the 3 sites the issue named).
+// LOKI_E10_COVERAGE_RESUME, lean path only (plan skipped). Three modes (coverageMode):
+//   fold (the default under LOKI_E10_LEAN_CALLS): the implement brief carries COVERAGE_FOLD, a fixed line right after FIXED_RULES (cache-stable prefix), so the first
+//     session maps every named site to a hunk and a test itself. On the 20-task Haiku bench (v11.137.1, patch off) the separate turn cost 18% of the arm's dollars
+//     (18 of 20 tasks, about 128k cached tokens re-read each) for 1 source edit in 18; 9 of 18 added tests, so the folded line keeps the turn's test requirement.
+//   turn (=1/on, or LOKI_E10_LEAN_CALLS=0): a LOKI_DONE exit with a non-empty diff gets exactly one more turn in the same session (suffix "-c").
+//     The task text is already in that session, so the fixed brief names no task (cli-2478: the first turn fixed 2 of the 3 sites the issue named).
+//   off (=0/off/false): neither.
 export const COVERAGE_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. " + FINISH_LINE;
 // LOKI_E10_CLAIM_CHECK (only with LOKI_E10_COVERAGE_RESUME): the coverage turn also writes SITE lines, and a site claimed changed that is byte-identical to the base is re-asked once ("-c2"). One extra session, only when such a claim is found.
 // Off by default under LOKI_E10_LEAN_CALLS (util/cost_profile.ts: the re-ask edited nothing in 14 of 14 bench sessions); =1 turns it on, LOKI_E10_LEAN_CALLS=0 restores the old default (on).
 export const claimCheckEnabled = (env = process.env): boolean => keptUnderLean(env.LOKI_E10_CLAIM_CHECK, env);
 export const COVERAGE_CLAIM_BRIEF = "List each site, symbol, example or case the task names. Map each to the hunk and the test that covers it. Fix any that is not covered. Before the last line, write one line per site in the current file: `SITE <path>:<line>: changed` or `SITE <path>:<line>: unchanged - <why>`. " + FINISH_LINE;
-export const coverageResumeEnabled = (env = process.env): boolean => !isOff(env.LOKI_E10_COVERAGE_RESUME);
+export type CoverageMode = "fold" | "turn" | "off";
+export const coverageMode = (env = process.env): CoverageMode => {
+  const v = (env.LOKI_E10_COVERAGE_RESUME ?? "").trim().toLowerCase();
+  if (isOff(v)) return "off";
+  if (v === "fold") return "fold";
+  return v !== "" || !leanCallsEnabled(env) ? "turn" : "fold";
+};
+/** The separate coverage turn ("-c"): turn mode only. */
+export const coverageResumeEnabled = (env = process.env): boolean => coverageMode(env) === "turn";
+// The folded form: no FINISH_LINE (the brief closes with it) and no siteHints (they read the diff, which does not exist yet). Its wording differs from COVERAGE_BRIEF on purpose.
+export const COVERAGE_FOLD = "Before you finish, go over every site, symbol, example or case the task names and map each one to the hunk and the test that cover it. Fix any that is not covered, and add a test for any that has none.";
+export const COVERAGE_FOLD_CLAIM = COVERAGE_FOLD + " Before the last line, write one line per site in the current file: `SITE <path>:<line>: changed` or `SITE <path>:<line>: unchanged - <why>`.";
+/** The fixed lines a plan-skipped implement brief adds right after FOLD_PLAN_INSTRUCTION: one line in fold mode (the claim variant when LOKI_E10_CLAIM_CHECK is on), none otherwise. */
+export const coverageFoldLines = (env = process.env): string[] => coverageMode(env) === "fold" ? [claimCheckEnabled(env) ? COVERAGE_FOLD_CLAIM : COVERAGE_FOLD] : [];
 // LOKI_E10_COVERAGE_MAX_TURNS (default 10; =0/off opts out to the stage budget's cap): the coverage turn ("-c", "-c2") ends at this many turns.
 // On the v11.137 Haiku bench arms, 31 of 36 coverage turns took 2 to 8 turns; the other 5 took 13 to 33 (up to $0.031, more than the implement session), and
 // each of those tasks was merge-ready in another arm whose coverage turn took 8 or fewer. A capped turn ends like a reply without LOKI_DONE: the first result stands.
@@ -168,10 +186,26 @@ export async function resumeForCoverage(ctx: RunContext, first: SessionRunOption
   const hints = siteHints(ctx), base = claims ? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith(ctx, capped, firstSession, hints ? `${base}\n\n${hints}` : base, "-c");
   if (!clean(r.session)) return { session: { ...firstSession, durationS: r.session.durationS }, iterationId: r.iterationId, iterationIds: [r.iterationId] };
   if (!claims) return { ...r, iterationIds: [r.iterationId] }; // knob off: exactly main's coverage turn
-  const absent = claimedChangeAbsent(ctx.repoDir, ctx.baseSha, siteClaims(r.session.summary ?? ""));
-  if (!absent.length || (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { ...r, iterationIds: [r.iterationId], ...(absent.length ? { claimAbsent: absent } : {}) };
-  const r2 = await resumeWith(ctx, { ...capped, iterationId: r.iterationId }, r.session, claimAbsentBrief(absent), "2");
-  return { ...(clean(r2.session) ? r2 : { session: { ...r.session, durationS: r2.session.durationS }, iterationId: r2.iterationId }), iterationIds: [r.iterationId, r2.iterationId], claimAbsent: absent };
+  const c = await reaskAbsentClaims(ctx, { ...capped, iterationId: r.iterationId }, r.session, "2");
+  return { ...c, iterationIds: [r.iterationId, ...c.iterationIds] };
+}
+
+/** The claim re-ask shared by the coverage turn and the folded form: SITE claims in `s`'s reply that name a line byte-identical to the base get one resume
+ *  (suffix `suffix` on `from.iterationId`); only a clean LOKI_DONE reply replaces `s`. No absent claim, or too little implement time, starts nothing. */
+async function reaskAbsentClaims(ctx: RunContext, from: SessionRunOptions, s: SessionResult, suffix: string): Promise<{ session: SessionResult; iterationId: string; iterationIds: string[]; claimAbsent?: string[] }> {
+  const absent = claimedChangeAbsent(ctx.repoDir, ctx.baseSha, siteClaims(s.summary ?? ""));
+  if (!absent.length || (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: s, iterationId: from.iterationId, iterationIds: [], ...(absent.length ? { claimAbsent: absent } : {}) };
+  const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
+  const r2 = await resumeWith(ctx, from, s, claimAbsentBrief(absent), suffix);
+  return { ...(clean(r2.session) ? r2 : { session: { ...s, durationS: r2.session.durationS }, iterationId: r2.iterationId }), iterationIds: [r2.iterationId], claimAbsent: absent };
+}
+
+/** Fold mode (coverageMode "fold") with LOKI_E10_CLAIM_CHECK on: the implement session wrote the SITE lines itself (COVERAGE_FOLD_CLAIM), so the claim check reads that
+ *  reply and re-asks once (suffix "-c2", the same id the coverage turn's re-ask uses). The caller passes only a clean LOKI_DONE session with a non-empty diff. */
+export async function reaskFoldedClaims(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string; iterationIds: string[]; claimAbsent?: string[] }> {
+  if (!claimCheckEnabled()) return { session: firstSession, iterationId: first.iterationId, iterationIds: [] };
+  const cap = coverageMaxTurns();
+  return reaskAbsentClaims(ctx, { ...first, ...(cap ? { maxTurns: cap } : {}) }, firstSession, "-c2");
 }
 
 const oneLine = (s: string): string => s.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 200);

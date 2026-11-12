@@ -401,6 +401,32 @@ function tscLocalKeys(out: string, pkgRel: string, keep: ReadonlySet<string>, ch
   if (found.length === 0 || found.length !== (out.match(/error TS\d+/g) ?? []).length) return null;
   return found.every((m) => TSC_LOCAL.has(m[2]!) && !keep.has(join(pkgRel === "." ? "" : pkgRel, m[1]!.trim()))) ? found.map((m) => `${m[1]!.trim()}|${m[2]}`) : null;
 }
+/** LOKI_E10_SUITE_FIX_SKIP (wide), only when the base tsc run is unavailable (tscOnBase null; a pnpm workspace whose node_modules links into the repo is refused by baseDepsLinker):
+ *  every diagnostic (`keys`, the tscLocalKeys shape: unused-declaration codes in files the change neither touched nor the task named, no tsconfig edited) sits in a TEST file
+ *  that is on the base commit and that no added line of the change names. Such a code depends on the file's own text alone (the same bytes as on base), and a test file joins
+ *  the program through the unchanged tsconfig globs, not through an import the change could add, so base reported the same diagnostic. Feeds only the fix-round skip
+ *  (machine.ts suiteOnlyRed): the check stays blocking and the run is never VERIFIED on it. Fail closed: an unreadable change (`added` null), a non-test file, a file not on
+ *  base or one whose stem an added line mentions. */
+export function tscBaseRedDerived(keys: readonly string[], pkgRel: string, onBase: (repoPath: string) => boolean, added: string | null): boolean {
+  if (added === null || keys.length === 0) return false;
+  return keys.every((k) => {
+    const file = k.slice(0, k.lastIndexOf("|")), p = join(pkgRel === "." ? "" : pkgRel, file), stem = basename(file).replace(/\.[cm]?[jt]sx?$/, "");
+    return isTestFile(p) && onBase(p) && stem.length > 0 && !added.includes(stem);
+  });
+}
+/** The added text of the change: `+` lines of `git diff -U0` for files on base, the whole file for files not on base; null when any part is unreadable. */
+function addedLines(ctx: RunContext, changed: readonly string[]): string | null {
+  try {
+    const out: string[] = [];
+    for (const f of changed) {
+      let onBase = true; try { safeGit(ctx.repoDir, ["cat-file", "-e", `${ctx.baseSha}:${f}`], { stdio: "ignore" }); } catch { onBase = false; }
+      if (!onBase) { if (existsSync(join(ctx.repoDir, f))) out.push(readFileSync(join(ctx.repoDir, f), "utf8")); continue; }
+      const d = safeGit(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", ctx.baseSha, "--", f], { timeout: 20000 });
+      out.push(...d.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")));
+    }
+    return out.join("\n");
+  } catch { return null; }
+}
 /** The same `tsc --noEmit` on a pristine detached base worktree with the head's dependency dirs linked (the package's and the repo root's); null when base cannot be checked (fail closed). */
 async function tscOnBase(ctx: RunContext, groupCwd: string, signal: AbortSignal, opts: RunOpts): Promise<string | null> {
   if (signal.aborted) return null;
@@ -419,9 +445,9 @@ async function tscOnBase(ctx: RunContext, groupCwd: string, signal: AbortSignal,
   }
 }
 export async function runLintChecks(
-  ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts & { api?: ProjectApi | null; keep?: ReadonlySet<string> } = {},
+  ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts & { api?: ProjectApi | null; keep?: ReadonlySet<string>; baseRed?: string[] } = {},
 ): Promise<string[]> {
-  const { api, keep, ...runOpts } = opts; opts = runOpts; const pre: string[] = []; // check names whose static diagnostics are all pre-existing
+  const { api, keep, baseRed, ...runOpts } = opts; opts = runOpts; const pre: string[] = []; // check names whose static diagnostics are all pre-existing; baseRed collects tsc checks tscBaseRedDerived decides (still blocking)
   const py = changed.filter((f) => f.endsWith(".py"));
   const [ruffCmd, interpreter, uvPre] = py.length ? resolveTool(ctx.repoDir, "ruff", "ruff") : ["ruff", "system", []] as ReturnType<typeof resolveTool>; // E-98a: same project-first resolution as pytest
   if (py.length && (interpreter !== "system" || Bun.which("ruff", { PATH: process.env["PATH"] ?? "" }) || projectDeclaresRuff(ctx.repoDir))) { // FC-LINT-TOOL-NEVER-USED-BY-PROJECT: a repo that neither declares ruff nor has one installed has no lint to run
@@ -437,7 +463,7 @@ export async function runLintChecks(
   // FC-01: tsc and eslint belong to the package that owns the file: config lookup, cwd and file paths are per package.
   for (const g of groupByPackage(api, ctx.repoDir, changed.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f)))) {
     const sfx = g.root === "." ? "" : `:${g.root}`, co = g.root === "." ? opts : { ...opts, cwd: g.cwd };
-    if (existsSync(join(g.cwd, "tsconfig.json"))) { const c = await runCheck(ctx, `lint:tsc${sfx}`, "npx", ["--no-install", "tsc", "--noEmit", "-p", "."], signal, checks, { ...co, kind: "static" }); if (c.result === "fail" && keep && tscLocalKeys(tscOut.get(c) ?? "", g.root, keep, [...keep]) && tscUntouchedLocal(tscOut.get(c) ?? "", g.root, keep, [...keep], await tscOnBase(ctx, g.cwd, signal, co))) pre.push(c.name); }
+    if (existsSync(join(g.cwd, "tsconfig.json"))) { const c = await runCheck(ctx, `lint:tsc${sfx}`, "npx", ["--no-install", "tsc", "--noEmit", "-p", "."], signal, checks, { ...co, kind: "static" }); if (c.result === "fail" && keep) { const keys = tscLocalKeys(tscOut.get(c) ?? "", g.root, keep, [...keep]); if (keys) { const baseOut = await tscOnBase(ctx, g.cwd, signal, co); if (tscUntouchedLocal(tscOut.get(c) ?? "", g.root, keep, [...keep], baseOut)) pre.push(c.name); else if (baseOut === null && baseRed && tscBaseRedDerived(keys, g.root, (p) => { try { safeGit(ctx.repoDir, ["cat-file", "-e", `${ctx.baseSha}:${p}`], { stdio: "ignore" }); return true; } catch { return false; } }, addedLines(ctx, changed))) baseRed.push(c.name); } } }
     if (ESLINT_CONFIGS.some((f) => existsSync(join(g.cwd, f)))) { const c = await runCheck(ctx, `lint:eslint${sfx}`, "npx", ["--no-install", "eslint", ...g.rel], signal, checks, { ...co, kind: "static" }); if (await excuseLint(ctx, signal, c, "eslint", "npx", ["--no-install", "eslint"], g.cwd, g.rel, co)) pre.push(c.name); }
   }
   return pre;
@@ -531,9 +557,10 @@ export const verifyStage: Stage = {
     const suiteOf = (name: string): string | undefined => { const t = tests.find((x) => testCheckName(x) === name), pkg = t ? api?.packageOf(t.path) : null; return pkg?.commands.test ? `full suite: ${pkg.name}` : undefined; };
     const attr = attribute(ctx.repoDir, ctx.baseSha, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, ids: c.ids, eligible: !targetNames.has(c.name) && !changed.includes(c.name.slice(c.name.indexOf(":") + 1)), ...(suiteOf(c.name) && preRed.sameError.includes(c.name) ? { suite: suiteOf(c.name)! } : {}) })));
     attr.introducedChecks = [...new Set(attr.introducedChecks.map((n) => (isHoldoutCheck(n) ? "holdout" : n)))]; preRed.names.push(...attr.preExistingChecks); preRed.ids.push(...attr.preExistingIds);
+    const lintBaseRed: string[] = []; // tscBaseRedDerived: still blocking; read by the fix-round skip only (data.lint_base_red)
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
-      const lintPre = await runLintChecks(ctx, complete || [...(qs?.blocking ?? [])].some((n) => n.startsWith("lint:")) ? changed : changed.filter((f) => qs?.since.includes(f)), signal, checks, { api, wall: wallPaths, keep: new Set([...changed, ...named]) }); // L025: a quick verify lints only what changed since, unless a lint check blocked last time
+      const lintPre = await runLintChecks(ctx, complete || [...(qs?.blocking ?? [])].some((n) => n.startsWith("lint:")) ? changed : changed.filter((f) => qs?.since.includes(f)), signal, checks, { api, wall: wallPaths, keep: new Set([...changed, ...named]), baseRed: lintBaseRed }); // L025: a quick verify lints only what changed since, unless a lint check blocked last time
       preRed.names.push(...lintPre); // TEN-QUALITY-03: the same pre-existing path tests use
       if (lintPre.length) attr.line = [attr.line, `baseline: ${lintPre.join(", ")} static diagnostics already on base (not blocking)`].filter(Boolean).join("; ");
       // Self-hosting only: also run the repo's own fast-gate selector (section 4).
@@ -580,7 +607,7 @@ export const verifyStage: Stage = {
     notProven.push(...wallDropped.map((p) => `Wall test not executed: ${p}: ${NO_RUNNER_REASON}`));
     const wallNames = new Set(wallTests.map(testCheckName)), wallRun = checks.filter((c) => wallNames.has(c.name) || isHold(c)), wallFailTail = writeWallFailureTail(ctx.runDir, checks.filter((c) => wallNames.has(c.name) && c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, out: failTails.get(c) ?? "" }))), wallPassed = wallRun.some((c) => c.result === "fail") ? false : wallRun.length > 0 && wallDropped.length === 0 && wallRun.every((c) => c.result === "pass") ? true : undefined; // the receipt's wall.passed: false on any failure, true only when every Wall and holdout check ran and passed, unset otherwise
     await settleNrd(ctx); // SPEED-NRD-OVERLAP: the differential implement started has run beside these checks; its group joins this verify's
-    return { status: "completed", data: { checks: pub, flaky, verify_scope: complete ? "complete" : "quick", file_hashes: hashes, blocking_checks: blockingNames, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: [...failuresGrouped, ...nrdGroupsFor(ctx.outputs().implement, fixRounds)], holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size || depsNotes.na.length ? { not_applicable: [...[...fullNotProven].filter(naNote).map(naText), ...depsNotes.na] } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(notExcused.length ? { not_excused: notExcused } : {}), ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}), ...(preRed.sameError.length ? { known_red_same_error: preRed.sameError } : {}), skipped_on_base: preRed.zero, ...(collateralSame.length && fixRounds === 0 ? { collateral_same_error: collateralSame } : {}), ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
+    return { status: "completed", data: { checks: pub, flaky, verify_scope: complete ? "complete" : "quick", file_hashes: hashes, blocking_checks: blockingNames, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: [...failuresGrouped, ...nrdGroupsFor(ctx.outputs().implement, fixRounds)], holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size || depsNotes.na.length ? { not_applicable: [...[...fullNotProven].filter(naNote).map(naText), ...depsNotes.na] } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(lintBaseRed.length ? { lint_base_red: lintBaseRed } : {}), ...(notExcused.length ? { not_excused: notExcused } : {}), ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}), ...(preRed.sameError.length ? { known_red_same_error: preRed.sameError } : {}), skipped_on_base: preRed.zero, ...(collateralSame.length && fixRounds === 0 ? { collateral_same_error: collateralSame } : {}), ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
   },
 };
 export const stage = verifyStage;
