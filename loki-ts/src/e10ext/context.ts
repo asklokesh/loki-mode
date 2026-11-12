@@ -12,6 +12,7 @@ import { signatureDigest } from "../util/ts_signatures.ts";
 import { contextPack, packEnabled, type ContextPack } from "../util/context_pack.ts";
 import { findDefectPins } from "../util/test_guard.ts";
 import { releaseNoteBrief } from "../project_model/conventions.ts";
+import { leanCallsEnabled } from "../util/cost_profile.ts";
 import { readVerifiedCommand } from "./repomemory.ts"; import { profileBrief } from "../runner/repo_profile.ts"; import { exampleFiles } from "../util/pr_lessons.ts";
 
 export interface ContextDeps {
@@ -41,6 +42,22 @@ export const FIXED_RULES = [
 
 const MAX_FILES = 20;
 const MAX_TESTS = 10;
+// Brief diet (lever B), both on by default under LOKI_E10_LEAN_CALLS (util/cost_profile.ts). On the 20-task Haiku bench (L-Haiku-lean139) implement briefs averaged 24,484 chars;
+// Go briefs carried 4,186 chars of impacted `-run '^(A|B|...)$'` commands per run (up to 17,145) and the Key signatures block 3,707 chars per run beside a context pack.
+// LOKI_E10_CMD_DIET (=0 opts out): at most CMD_LINES impacted test commands of at most CMD_CHARS each. A longer command is never printed cut (the rules say run the exact
+// command): its test file is named instead. The harness reruns every impacted test after the session stops.
+// LOKI_E10_SIGS: =0 never prints Key signatures, =1 always does; unset drops them when a context pack is present.
+const CMD_LINES = 3, CMD_CHARS = 200;
+const dietDefault = (v: string | undefined, env: NodeJS.ProcessEnv): boolean => (v === undefined || v.trim() === "" ? leanCallsEnabled(env) : !isOff(v));
+export const cmdDietEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => dietDefault(env["LOKI_E10_CMD_DIET"], env);
+export const sigsShown = (packPresent: boolean, env: NodeJS.ProcessEnv = process.env): boolean => { const v = (env["LOKI_E10_SIGS"] ?? "").trim(); return v === "0" ? false : v !== "" ? true : !(packPresent && leanCallsEnabled(env)); };
+/** The impacted-test block: every command (diet off), or at most CMD_LINES commands of at most CMD_CHARS each plus the files of the rest, named, never cut. */
+export function impactedCmdBlock(cmds: { cmd: string; file: string }[], diet: boolean = cmdDietEnabled()): string {
+  if (!cmds.length) return "";
+  if (!diet) return `Impacted test commands:\n${cmds.map((c) => c.cmd).join("\n")}`;
+  const shown = cmds.filter((c) => c.cmd.length <= CMD_CHARS).slice(0, CMD_LINES), rest = cmds.filter((c) => !shown.includes(c)).map((c) => c.file);
+  return [shown.length ? `Impacted test commands:\n${shown.map((c) => c.cmd).join("\n")}` : "", rest.length ? `Other impacted test files (run each with its runner's Project Model command; the harness reruns them after you stop): ${[...new Set(rest)].join(", ")}` : ""].filter(Boolean).join("\n");
+}
 
 const shq = (w: string): string => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`);
 
@@ -68,7 +85,7 @@ export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): Br
   // L020: no plan and no ranked file leaves the Relevant files block out (the head of `git ls-files` named files the task never touches)
   const pack = model !== undefined && packEnabled(model) && files.length ? contextPack(ctx.repoDir, task, files, map?.entries ?? []) : null; // L021: haiku and sonnet only; Opus keeps today's bytes
   const whole = new Set((pack?.spans ?? []).filter((s) => s.symbol === null).map((s) => s.path)); // a file the pack shows whole needs no signatures
-  const sigs = process.env["LOKI_E10_SIGS"] === "0" || !files.length ? "" : signatureDigest(ctx.repoDir, files.filter((f) => !whole.has(f)).slice(0, 5));
+  const sigs = !sigsShown(pack !== null) || !files.length ? "" : signatureDigest(ctx.repoDir, files.filter((f) => !whole.has(f)).slice(0, 5));
   // E4: existing assertions whose expected value is the wrong value the issue reports. On by default; LOKI_E10_DEFECT_PIN=0 opts out.
   const pins = !isOff(process.env["LOKI_E10_DEFECT_PIN"]) ? findDefectPins(ctx.repoDir, task).slice(0, 5) : [];
   const text = [
@@ -77,7 +94,7 @@ export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): Br
     pack ? pack.text : "",
     interps.length ? `Detected test interpreter (no test file to run yet; use exactly this executable, never a guessed one): ${interps.join(", ")}` : "",
     pins.length ? `Existing assertions that pin the behavior the task reports as wrong (the correct fix is expected to change these expected values; change only these, and make sure each new expected value fails on the unfixed code):\n${pins.map((p) => `${p.file}:${p.line}: ${p.text.slice(0, 140)}`).join("\n")}` : "",
-    cmds.length ? `Impacted test commands:\n${cmds.join("\n")}` : "",
+    impactedCmdBlock(cmds.map((cmd, i) => ({ cmd, file: rel(refs[i]!.path) }))), // LOKI_E10_CMD_DIET
     verified ? `Last verified test command: ${verified}` : "",
     releaseNoteBrief(ctx.repoDir, files), // L3: one per-run line after the cache prefix; "" when the repo has no fragment convention
     profileBrief(ctx.repoDir), // REPOMEM: validated repo commands + baseline-red tests; byte-stable for an unchanged profile

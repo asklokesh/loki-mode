@@ -615,3 +615,58 @@ export function phantomReason(miss: string[], repoFiles: string[], testDir = "",
   const wrong = loc.length ? `references repo path(s) built from the wrong directory: your test file is copied to ${testDir}/, so __dirname and import.meta.dir are that directory, not the repo root; ${loc.join("; ")}. Compute the root from ${testDir}/ (go up ${testDir.split("/").length} level(s)) or use process.cwd() only if the runner starts at the root, and build every repo path from it` : "", typo = rest.length ? `references repo path(s) that do not exist in the repository and that the plan does not create: ${rest.map(hint).join("; ")}. Locate the real code by searching the repository; do not copy a name from the task text as a path` : "";
   return [wrong, typo].filter(Boolean).join(". Also, it ");
 }
+
+// LOKI_E10_DIFF_CONVENTIONS (default on, =0 opts out): two deterministic checks of the change, each a one-line fix-brief finding when it fires and $0 otherwise. On the 20-task Haiku
+// bench (L-Haiku-lean139) they are the two seed-level judge fails: tq-11327/2 (a changeset naming @tanstack/query-core for a change in packages/react-query) and tq-11663/1 (a new
+// function inserted between a JSDoc block and the function it documents). verify.ts hands the findings to the first fix round only (the no-regression pattern), so they never cap a verdict.
+export const diffConventionsEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_DIFF_CONVENTIONS);
+const CHANGESET_ENTRY = /^\s*["']?(@?[\w.-]+(?:\/[\w.-]+)?)["']?\s*:\s*(?:major|minor|patch|none)\b/;
+/** A changeset the change added that names a package no changed non-test file belongs to. `added` holds the added .changeset/*.md files with their text. */
+export function changesetPackageMismatch(repoDir: string, added: { path: string; text: string }[], changed: readonly string[]): string[] {
+  const owned = new Set(changed.filter((f) => !f.startsWith(".changeset/") && !isTestFile(f)).map((f) => ownerPackage(repoDir, f)?.name).filter((n): n is string => !!n));
+  if (owned.size === 0) return [];
+  const out: string[] = [];
+  for (const a of added) {
+    const fm = /^---\s*\n([\s\S]*?)\n---/m.exec(a.text)?.[1] ?? "";
+    for (const line of fm.split("\n")) { const n = CHANGESET_ENTRY.exec(line)?.[1]; if (n && !owned.has(n)) out.push(`${a.path} names the package "${n}", but no changed non-test file belongs to it (changed packages: ${[...owned].join(", ")}): name the package that owns the change`); }
+  }
+  return out;
+}
+const DOC_END = /^\s*(?:\*\/|\/\*\*.*\*\/)\s*$|^\s*\/\/\//;
+const DECL = /^\s*(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:function\*?\s+([A-Za-z_$][\w$]*)|(?:const|let|var|class|interface|type|enum|abstract\s+class)\s+([A-Za-z_$][\w$]*))|^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)|^\s*(?:pub(?:\([\w:]+\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait|type|const|static)\s+([A-Za-z_]\w*)/;
+const declName = (l: string): string | null => { const m = DECL.exec(l); return m ? (m[1] ?? m[2] ?? m[3] ?? m[4] ?? null) : null; };
+/** An added declaration placed directly under an existing doc comment (a line ending a block comment, a `/** ... *\/` line or `///`, and a `//` block in Go) whose next unchanged line is the
+ *  declaration that comment documents. Pure: reads one file's `git diff -U3` text. A decorator, an overload of the same name, a lint-disable line or a comment-only addition never fires. */
+export function docCommentDisplaced(file: string, diff: string): string[] {
+  const goDoc = file.endsWith(".go"), out: string[] = [];
+  for (const h of diff.split(/^@@ /m).slice(1)) {
+    const m = /^-\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@[^\n]*\n/.exec(h); if (!m) continue;
+    const lines = h.slice(m[0].length).split("\n").filter((l, i, a) => !(i === a.length - 1 && l === "") && !l.startsWith("\\"));
+    let newNo = Number(m[1]);
+    const nos = lines.map((l) => { const n = newNo; if (!l.startsWith("-")) newNo++; return n; });
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i]!.startsWith("+") || lines[i - 1]!.startsWith("+")) continue; // the start of a run of added lines
+      const prev = lines[i - 1]!; if (!prev.startsWith(" ")) continue;
+      const pt = prev.slice(1); if (!(DOC_END.test(pt) || (goDoc && /^\s*\/\//.test(pt)))) continue;
+      let j = i; while (j < lines.length && lines[j]!.startsWith("+")) j++;
+      const next = lines[j]; if (!next || !next.startsWith(" ")) continue;
+      const added = lines.slice(i, j).map((l) => l.slice(1)), first = added.find((l) => l.trim() !== "") ?? "";
+      const name = declName(first), docOf = declName(next.slice(1));
+      if (!name || !docOf || name === docOf) continue; // not a declaration (decorator, comment, lint-disable line), or an overload of the documented one
+      out.push(`${file}:${nos[i]}: the added ${name} sits between the doc comment ending at line ${nos[i - 1]} and ${docOf}, which that comment documents; move ${name} above the doc comment`);
+    }
+  }
+  return out;
+}
+/** Both checks over the change against `baseSha`; [] when the knob is off or nothing fires. */
+export function diffConventionFindings(repoDir: string, baseSha: string, changed: readonly string[], env: NodeJS.ProcessEnv = process.env): string[] {
+  if (!diffConventionsEnabled(env)) return [];
+  const onBase = (f: string): boolean => safeGitSpawn(repoDir, ["cat-file", "-e", `${baseSha}:${f}`], { encoding: "utf8" }).status === 0;
+  const added = changed.filter((f) => /^\.changeset\/[^/]+\.md$/.test(f) && !/README\.md$/i.test(f) && !onBase(f) && existsSync(join(repoDir, f))).map((f) => ({ path: f, text: readFileSync(join(repoDir, f), "utf8") }));
+  const out = changesetPackageMismatch(repoDir, added, changed);
+  for (const f of changed.filter((x) => /\.(ts|tsx|js|jsx|mjs|cjs|go|rs|java|kt|swift|cs)$/.test(x) && onBase(x))) {
+    const d = safeGitSpawn(repoDir, ["diff", "-U3", "--no-color", "--no-ext-diff", "--no-textconv", baseSha, "--", f], { encoding: "utf8" });
+    if (d.status === 0 && d.stdout) out.push(...docCommentDisplaced(f, d.stdout));
+  }
+  return out.slice(0, 6);
+}

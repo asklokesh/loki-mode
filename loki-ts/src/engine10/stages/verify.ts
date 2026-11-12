@@ -15,7 +15,7 @@ import { goJsonStream, GO_JSON_KEEP, withoutStaleWall, failureExcerpt, EXCERPT_T
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { attribute, attributeFullSuite, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { diffConventionFindings } from "../../project_model/conventions.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { attribute, attributeFullSuite, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
 interface ImplementOutput { exit?: ImplementExit; }
@@ -395,6 +395,22 @@ export function tscUntouchedLocal(out: string, pkgRel: string, keep: ReadonlySet
   return keys.every((k) => base.has(k));
 }
 /** The "file|code" of every diagnostic when the whole output has the excusable shape (see tscUntouchedLocal, minus the base comparison); null otherwise. */
+/** LOKI_E10_SUITE_FIX_SKIP clause (b) (engine10/machine.ts suiteOnlyRed): a failed tsc check whose whole output (ANSI stripped) is only TS6133/TS6196 unused-declaration errors, every one in a file
+ *  outside changed_files, with no tsconfig in the change. Such an error is decided by its own file's text, so the change cannot have caused it. Feeds only the fix-round skip: the check stays
+ *  blocking. `why` names the first reason it does not qualify (published on the verify data so a bench can see why a group was kept). */
+const TSC_UNUSED = new Set(["TS6133", "TS6196"]);
+export function tscUnusedUntouched(out: string, pkgRel: string, changed: readonly string[]): { ok: boolean; why?: string } {
+  const o = stripAnsi(out);
+  if (o.length >= 60000) return { ok: false, why: "output at the 60000-char cap" };
+  if (changed.some((f) => /(^|\/)tsconfig[^/]*\.json$/.test(f))) return { ok: false, why: "a tsconfig is in the change" };
+  const found = [...o.matchAll(TSC_DIAG)], total = (o.match(/error TS\d+/g) ?? []).length;
+  if (found.length === 0) return { ok: false, why: "no parsed diagnostic" };
+  if (found.length !== total) return { ok: false, why: `${total - found.length} error line(s) not parsed` };
+  const other = found.find((m) => !TSC_UNUSED.has(m[2]!));
+  if (other) return { ok: false, why: `code ${other[2]} in ${other[1]!.trim()}` };
+  const mine = found.find((m) => changed.includes(join(pkgRel === "." ? "" : pkgRel, m[1]!.trim())));
+  return mine ? { ok: false, why: `diagnostic in changed file ${join(pkgRel === "." ? "" : pkgRel, mine[1]!.trim())}` } : { ok: true };
+}
 function tscLocalKeys(out: string, pkgRel: string, keep: ReadonlySet<string>, changed: readonly string[]): string[] | null {
   if (out.length >= 60000 || changed.some((f) => /(^|\/)tsconfig[^/]*\.json$/.test(f))) return null;
   const found = [...out.matchAll(TSC_DIAG)];
@@ -419,9 +435,9 @@ async function tscOnBase(ctx: RunContext, groupCwd: string, signal: AbortSignal,
   }
 }
 export async function runLintChecks(
-  ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts & { api?: ProjectApi | null; keep?: ReadonlySet<string> } = {},
+  ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts & { api?: ProjectApi | null; keep?: ReadonlySet<string>; unusedTsc?: { check: string; ok: boolean; why?: string }[]; changedAll?: readonly string[] } = {},
 ): Promise<string[]> {
-  const { api, keep, ...runOpts } = opts; opts = runOpts; const pre: string[] = []; // check names whose static diagnostics are all pre-existing
+  const { api, keep, unusedTsc, changedAll, ...runOpts } = opts; opts = runOpts; const pre: string[] = []; // check names whose static diagnostics are all pre-existing; unusedTsc collects tscUnusedUntouched per still-failing tsc check
   const py = changed.filter((f) => f.endsWith(".py"));
   const [ruffCmd, interpreter, uvPre] = py.length ? resolveTool(ctx.repoDir, "ruff", "ruff") : ["ruff", "system", []] as ReturnType<typeof resolveTool>; // E-98a: same project-first resolution as pytest
   if (py.length && (interpreter !== "system" || Bun.which("ruff", { PATH: process.env["PATH"] ?? "" }) || projectDeclaresRuff(ctx.repoDir))) { // FC-LINT-TOOL-NEVER-USED-BY-PROJECT: a repo that neither declares ruff nor has one installed has no lint to run
@@ -437,7 +453,7 @@ export async function runLintChecks(
   // FC-01: tsc and eslint belong to the package that owns the file: config lookup, cwd and file paths are per package.
   for (const g of groupByPackage(api, ctx.repoDir, changed.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f)))) {
     const sfx = g.root === "." ? "" : `:${g.root}`, co = g.root === "." ? opts : { ...opts, cwd: g.cwd };
-    if (existsSync(join(g.cwd, "tsconfig.json"))) { const c = await runCheck(ctx, `lint:tsc${sfx}`, "npx", ["--no-install", "tsc", "--noEmit", "-p", "."], signal, checks, { ...co, kind: "static" }); if (c.result === "fail" && keep && tscLocalKeys(tscOut.get(c) ?? "", g.root, keep, [...keep]) && tscUntouchedLocal(tscOut.get(c) ?? "", g.root, keep, [...keep], await tscOnBase(ctx, g.cwd, signal, co))) pre.push(c.name); }
+    if (existsSync(join(g.cwd, "tsconfig.json"))) { const c = await runCheck(ctx, `lint:tsc${sfx}`, "npx", ["--no-install", "tsc", "--noEmit", "-p", "."], signal, checks, { ...co, kind: "static" }); if (c.result === "fail" && keep && tscLocalKeys(tscOut.get(c) ?? "", g.root, keep, [...keep]) && tscUntouchedLocal(tscOut.get(c) ?? "", g.root, keep, [...keep], await tscOnBase(ctx, g.cwd, signal, co))) pre.push(c.name); if (c.result === "fail" && unusedTsc && !pre.includes(c.name)) unusedTsc.push({ check: c.name, ...tscUnusedUntouched(tscOut.get(c) ?? "", g.root, changedAll ?? changed) }); }
     if (ESLINT_CONFIGS.some((f) => existsSync(join(g.cwd, f)))) { const c = await runCheck(ctx, `lint:eslint${sfx}`, "npx", ["--no-install", "eslint", ...g.rel], signal, checks, { ...co, kind: "static" }); if (await excuseLint(ctx, signal, c, "eslint", "npx", ["--no-install", "eslint"], g.cwd, g.rel, co)) pre.push(c.name); }
   }
   return pre;
@@ -531,9 +547,10 @@ export const verifyStage: Stage = {
     const suiteOf = (name: string): string | undefined => { const t = tests.find((x) => testCheckName(x) === name), pkg = t ? api?.packageOf(t.path) : null; return pkg?.commands.test ? `full suite: ${pkg.name}` : undefined; };
     const attr = attribute(ctx.repoDir, ctx.baseSha, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, ids: c.ids, eligible: !targetNames.has(c.name) && !changed.includes(c.name.slice(c.name.indexOf(":") + 1)), ...(suiteOf(c.name) && preRed.sameError.includes(c.name) ? { suite: suiteOf(c.name)! } : {}) })));
     attr.introducedChecks = [...new Set(attr.introducedChecks.map((n) => (isHoldoutCheck(n) ? "holdout" : n)))]; preRed.names.push(...attr.preExistingChecks); preRed.ids.push(...attr.preExistingIds);
+    const unusedTsc: { check: string; ok: boolean; why?: string }[] = []; // LOKI_E10_SUITE_FIX_SKIP clause (b): read by machine.ts suiteOnlyRed only; the checks stay blocking
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
-      const lintPre = await runLintChecks(ctx, complete || [...(qs?.blocking ?? [])].some((n) => n.startsWith("lint:")) ? changed : changed.filter((f) => qs?.since.includes(f)), signal, checks, { api, wall: wallPaths, keep: new Set([...changed, ...named]) }); // L025: a quick verify lints only what changed since, unless a lint check blocked last time
+      const lintPre = await runLintChecks(ctx, complete || [...(qs?.blocking ?? [])].some((n) => n.startsWith("lint:")) ? changed : changed.filter((f) => qs?.since.includes(f)), signal, checks, { api, wall: wallPaths, keep: new Set([...changed, ...named]), unusedTsc, changedAll: changed }); // L025: a quick verify lints only what changed since, unless a lint check blocked last time
       preRed.names.push(...lintPre); // TEN-QUALITY-03: the same pre-existing path tests use
       if (lintPre.length) attr.line = [attr.line, `baseline: ${lintPre.join(", ")} static diagnostics already on base (not blocking)`].filter(Boolean).join("; ");
       // Self-hosting only: also run the repo's own fast-gate selector (section 4).
@@ -579,8 +596,9 @@ export const verifyStage: Stage = {
     const wallDropped = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p)); // FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: sealed, but no runner of this repo can run it
     notProven.push(...wallDropped.map((p) => `Wall test not executed: ${p}: ${NO_RUNNER_REASON}`));
     const wallNames = new Set(wallTests.map(testCheckName)), wallRun = checks.filter((c) => wallNames.has(c.name) || isHold(c)), wallFailTail = writeWallFailureTail(ctx.runDir, checks.filter((c) => wallNames.has(c.name) && c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, out: failTails.get(c) ?? "" }))), wallPassed = wallRun.some((c) => c.result === "fail") ? false : wallRun.length > 0 && wallDropped.length === 0 && wallRun.every((c) => c.result === "pass") ? true : undefined; // the receipt's wall.passed: false on any failure, true only when every Wall and holdout check ran and passed, unset otherwise
+    const conventions = fixRounds === 0 && complete && !signal.aborted ? diffConventionFindings(ctx.repoDir, ctx.baseSha, changed) : []; // LOKI_E10_DIFF_CONVENTIONS: one fix round gets these lines, like the no-regression finding; never a check, never a cap
     await settleNrd(ctx); // SPEED-NRD-OVERLAP: the differential implement started has run beside these checks; its group joins this verify's
-    return { status: "completed", data: { checks: pub, flaky, verify_scope: complete ? "complete" : "quick", file_hashes: hashes, blocking_checks: blockingNames, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: [...failuresGrouped, ...nrdGroupsFor(ctx.outputs().implement, fixRounds)], holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size || depsNotes.na.length ? { not_applicable: [...[...fullNotProven].filter(naNote).map(naText), ...depsNotes.na] } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(notExcused.length ? { not_excused: notExcused } : {}), ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}), ...(preRed.sameError.length ? { known_red_same_error: preRed.sameError } : {}), skipped_on_base: preRed.zero, ...(collateralSame.length && fixRounds === 0 ? { collateral_same_error: collateralSame } : {}), ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
+    return { status: "completed", data: { checks: pub, flaky, verify_scope: complete ? "complete" : "quick", file_hashes: hashes, blocking_checks: blockingNames, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: [...failuresGrouped, ...nrdGroupsFor(ctx.outputs().implement, fixRounds), ...(conventions.length ? [{ signature: `diff conventions: ${conventions.length} finding(s)`, count: conventions.length, sample: conventions.join("\n") }] : [])], ...(conventions.length ? { diff_conventions: conventions } : {}), holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size || depsNotes.na.length ? { not_applicable: [...[...fullNotProven].filter(naNote).map(naText), ...depsNotes.na] } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(unusedTsc.length ? { lint_unused_untouched: unusedTsc.filter((u) => u.ok).map((u) => u.check), lint_unused_why: Object.fromEntries(unusedTsc.filter((u) => !u.ok).map((u) => [u.check, u.why ?? ""])) } : {}), ...(notExcused.length ? { not_excused: notExcused } : {}), ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}), ...(preRed.sameError.length ? { known_red_same_error: preRed.sameError } : {}), skipped_on_base: preRed.zero, ...(collateralSame.length && fixRounds === 0 ? { collateral_same_error: collateralSame } : {}), ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
   },
 };
 export const stage = verifyStage;

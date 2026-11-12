@@ -1,4 +1,4 @@
-// Executable spec first (on by default; LOKI_E10_EXEC_SPEC=0 opts out). New file because no module turns issue text into base-red
+// Executable spec first (off by default under LOKI_E10_LEAN_CALLS; LOKI_E10_EXEC_SPEC=1 turns it on). New file because no module turns issue text into base-red
 // executable checks: engine10/stages/wall.ts is a blind agentic session the lean path skips (E-64) and util/spec_file.ts extracts
 // prose clauses only. wall.ts owns the wiring (its lean branch calls execSpecAuthor and seals the result through installWall).
 //
@@ -19,8 +19,12 @@ import { describeJudgeOutcome, toolLessCall } from "../runner/sdk_invoker.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
 import { assertionFailure, commandFor, plainTestEnv, pytestKindsAreAssertion, spawnGroupSync, stripAnsi, vitestErrorsAreAssertion } from "../util/check_result.ts";
 import { escapeRegex } from "../util/regex_escape.ts";
+import { keptUnderLean } from "../util/cost_profile.ts";
 
-export const execSpecEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_EXEC_SPEC ?? "").trim().toLowerCase()); // default on; LOKI_E10_EXEC_SPEC=0 opts out
+/** LOKI_E10_EXEC_SPEC: off by default under LOKI_E10_LEAN_CALLS (util/cost_profile.ts). On the 20-task Haiku bench (v11.137.1, patch off) 16 of 20 tasks paid for the
+ *  generator call (17.5% of the arm's dollars), it sealed a binding case in 0 of 16 and 7 of 16 replies were dropped because the file did not build on base.
+ *  =1 turns it on; =0 keeps it off; LOKI_E10_LEAN_CALLS=0 restores the old default (on). With it off the Go tournament has no probe block and stays inert. */
+export const execSpecEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => keptUnderLean(env.LOKI_E10_EXEC_SPEC, env);
 export const EXEC_SPEC_BRIEF_FILE = "exec-spec-brief.txt"; // <runDir>/, read by implement.ts
 export const EXEC_SPEC_TELEMETRY_FILE = "exec-spec.json"; // <runDir>/, read by seal.ts for the receipt's exec_spec block
 
