@@ -268,6 +268,7 @@
 #  77. machine.ts sysedit block: drop the hasFailures guard (the sysedit green leg reads a sysedit event).
 #  78. contrib/index.ts hooks.sysEdit: ignore sysEditEnabled (the sysedit LOKI_E10_SYSEDIT=0 leg reads a sysedit event).
 #  79. seal.ts: drop the "completed by rule" disclosure (the sysedit kept leg reads no receipt line).
+# 233. opus_consult.ts consultEnabled: back to on by default (the consult default unit leg and the unset consult-off engine leg fail).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -402,7 +403,7 @@ run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_BASE_RED_CONFLICT=1
 [ "$(outcome)" = "VERIFIED" ] && ok "base-red conflict: the correction resume delivered (VERIFIED, not SPEC_CONFLICT)" || { bad "base-red conflict: outcome is '$(outcome)'"; dump; }
 grep -q 'export function multiply' "$REPO/calc.ts" && ok "base-red conflict: the resumed session made the change" || bad "base-red conflict: the change is missing"
 
-run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict LOKI_E10_OPUS_CONSULT=0 # the opt-out keeps the legacy stop; the default never-stop legs follow this block
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict # the default (consult and never-stop off) keeps the legacy stop; the opted-in never-stop legs follow this block
 n="$(fix_sessions)"
 [ "$n" = "1" ] && ok "conflict: one fix session, no retry" || { bad "conflict: $n fix sessions (want 1)"; dump; }
 grep -q -- '-r ' "$ITERS" && bad "conflict: a '-r' retry session started" || ok "conflict: no '-r' retry iteration"
@@ -412,14 +413,14 @@ git -C "$REPO" rev-parse -q --verify "refs/heads/loki/$rid" >/dev/null && ok "co
 grep -q 'export function multiply' "$REPO/calc.ts" && ok "conflict: the code the blocked run wrote is on that branch" || { bad "conflict: the blocked run's multiply() is not on a visible branch"; dump; }
 [ "$(git -C "$REPO" rev-parse --abbrev-ref HEAD)" = "loki/$rid" ] && [ "$(git -C "$REPO" log -1 --format=%s main)" = "base" ] && ok "conflict: main is untouched; the work sits only on the run branch" || bad "conflict: main moved or the run branch was not checked out"
 
-# ---------------------------------------------------------------- LOKI_E10_OPUS_CONSULT (default on, =0 opts out): never-stop plus one tool-less Opus consult
+# ---------------------------------------------------------------- LOKI_E10_OPUS_CONSULT (off by default, =1 opts in): never-stop plus one tool-less Opus consult
 # consults <n>: stub consult calls this run; ctrig: the recorded triggers; rnp: the receipt NOT PROVEN list; rusd: receipt dollars and child sessions
 consults() { grep -c '^consult$' "$(dirname "$ITERS")/stub.log" 2>/dev/null || true; }
 ctrig() { python3 -I -c 'import json,sys; print(",".join(c["trigger"] for c in json.load(open(sys.argv[1]))))' "$RUNDIR/opus-consult.json" 2>/dev/null; }
 rnp() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null; }
 rusd() { python3 -I -c 'import json,sys; c=json.load(open(sys.argv[1]))["cost"]; print(c["usd"], c["children"]["sessions"])' "$RUNDIR/receipt.json" 2>/dev/null; }
 # never-stop on implement: the session conflicts through the FC-19 correction; one consult (trigger stop), then the never-stop resume implements and names its ASSUMPTION
-run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_OPUS_CONSULT=1
 [ "$(outcome)" = "PARTIAL" ] && ok "never-stop: a headless implement conflict delivers PARTIAL, not BLOCKED" || { bad "never-stop: outcome is '$(outcome)', want PARTIAL"; dump; }
 [ "$RC" != 4 ] && ok "never-stop: exit code is not 4 ($RC)" || bad "never-stop: exit code 4"
 git -C "$REPO" show HEAD:calc.ts 2>/dev/null | grep -A1 'function multiply' | grep -q 'a \* b' && ok "never-stop: the inferred multiply() is committed" || { bad "never-stop: no committed multiply()"; dump; }
@@ -430,25 +431,27 @@ has "never-stop: the receipt discloses the consult with its model and dollars" "
 case "$(rusd)" in 0.002\ *) ok "never-stop: the consult's \$0.002 reaches the receipt total ($(rusd))" ;; *) bad "never-stop: receipt cost '$(rusd)', want the consult's 0.002" ;; esac
 grep -h 'opus-consult-stop' "$REPO"/.loki/metrics/child-sessions.jsonl >/dev/null 2>&1 && ok "never-stop: the consult is a child-ledger line (phase opus-consult-stop)" || bad "never-stop: no opus-consult-stop child-ledger line"
 # the cap: with LOKI_E10_CONSULT_MAX=0 no consult runs, never-stop still delivers (PARTIAL)
-run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_CONSULT_MAX=0
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_OPUS_CONSULT=1 LOKI_E10_CONSULT_MAX=0
 [ "$(consults)" = 0 ] && [ "$(outcome)" = "PARTIAL" ] && ok "consult cap 0: no consult call, never-stop still delivers PARTIAL" || { bad "consult cap 0: $(consults) consults, outcome '$(outcome)'"; dump; }
 # opt-out and the explicit interactive opt-in keep the stop: BLOCKED, no consult, no '-n' resume
-run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_OPUS_CONSULT=0
-[ "$(outcome)" = "BLOCKED" ] && [ "$(consults)" = 0 ] && ! grep -q -- '-n ' "$ITERS" && ok "consult opt-out: LOKI_E10_OPUS_CONSULT=0 ends BLOCKED with no consult and no never-stop resume" || { bad "consult opt-out: outcome '$(outcome)', $(consults) consults"; dump; }
-run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_INTAKE_ASK=1
+for coff in LOKI_E10_OPUS_CONSULT=0 LOKI_E10_OPUS_CONSULT=; do
+    run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 "$coff"
+    [ "$(outcome)" = "BLOCKED" ] && [ "$(consults)" = 0 ] && ! grep -q -- '-n ' "$ITERS" && ok "consult off: $coff (=0, and unset: the default) ends BLOCKED with no consult and no never-stop resume" || { bad "consult off ($coff): outcome '$(outcome)', $(consults) consults"; dump; }
+done
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_OPUS_CONSULT=1 LOKI_E10_INTAKE_ASK=1
 [ "$(outcome)" = "BLOCKED" ] && ! grep -q -- '-n ' "$ITERS" && ok "never-stop: the explicit interactive opt-in (LOKI_E10_INTAKE_ASK=1) keeps the stop (BLOCKED)" || { bad "never-stop interactive: outcome '$(outcome)'"; dump; }
 # never-stop on a fix round: round 1 conflicts with the tree unchanged; round 2 gets the never-stop brief and the consult and fixes multiply()
-run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=nsconflict
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=nsconflict LOKI_E10_OPUS_CONSULT=1
 [ "$(fix_sessions)" = 2 ] && [ "$(outcome)" = "PARTIAL" ] && ok "never-stop fix: a fix-round conflict gets a second round, which delivers PARTIAL (not BLOCKED)" || { bad "never-stop fix: $(fix_sessions) fix sessions, outcome '$(outcome)'"; dump; }
 [ "$(ctrig)" = "stop" ] && ok "never-stop fix: the second round's consult is trigger stop" || bad "never-stop fix: triggers '$(ctrig)'"
 has "never-stop fix: the receipt names the fix conflict and the second round's assumption" "$(rnp)" "spec conflict the run settled itself instead of stopping (fix): calc.test.ts:7 expects multiply(3, 4) to be 12 -> implemented the most likely intent: multiply means a * b (after one Opus consult)"
 # red verify after the first fix round: the consult advice (trigger red-verify) is what fixes multiply(); a disclosure, never a cap
-run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=consultfix
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=consultfix LOKI_E10_OPUS_CONSULT=1
 [ "$(fix_sessions)" = 2 ] && [ "$(ctrig)" = "red-verify" ] && [ "$(outcome)" = "VERIFIED" ] && ok "red-verify consult: round 2 carries the advice and fixes multiply(); VERIFIED (the consult does not cap)" || { bad "red-verify consult: $(fix_sessions) fix sessions, triggers '$(ctrig)', outcome '$(outcome)'"; dump; }
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=consultfix LOKI_E10_OPUS_CONSULT=0
 [ "$(consults)" = 0 ] && [ "$(outcome)" = "STALLED" ] && ok "red-verify consult off: no consult, the same run stalls after one round as before" || { bad "red-verify consult off: $(consults) consults, outcome '$(outcome)'"; dump; }
 # at most one consult per run: the implement conflict spends it, so the red verify after round 1 gets none and the run stays red
-run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=wrong E2E_STUB_FIX=consultfix
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=wrong E2E_STUB_FIX=consultfix LOKI_E10_OPUS_CONSULT=1
 [ "$(consults)" = 1 ] && [ "$(ctrig)" = "stop" ] && ok "consult cap 1: the stop consult spends the run's one consult; the later red verify gets none" || { bad "consult cap 1: $(consults) consults, triggers '$(ctrig)'"; dump; }
 
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress LOKI_E10_OPUS_CONSULT=0 # the stall rule alone; with the consult on, round 2 gets the red-verify consult first (legs above)
@@ -729,11 +732,11 @@ res("E5 caps: Sonnet, other stages, the policy off and LOKI_E10_SESSION_CAPS=off
 { const oc = await import("$ROOT/loki-ts/src/features/opus_consult.ts"); const { runPickedChoice } = await import("$ROOT/loki-ts/src/engine10/stages/seal.ts"); // LOKI_E10_OPUS_CONSULT unit rules
   const ocDir = "$T/oc-unit"; let calls = 0; oc.__setConsultCallForTests(async () => { calls++; return { text: "DIAGNOSIS: x\nINTENDED: y", usd: 0.03, outcome: "ok" }; });
   const base = { runDir: ocDir, repoDir: ocDir, stage: "implement", trigger: "open-choice" as const, task: "t", evidence: "e", diff: null, code: "" };
-  const a1 = await oc.runConsult(base, {}), a2 = await oc.runConsult({ ...base, trigger: "stop" }, {});
+  const on = { LOKI_E10_OPUS_CONSULT: "1" }, a1 = await oc.runConsult(base, on), a2 = await oc.runConsult({ ...base, trigger: "stop" }, on);
   res("consult: the first call returns the advice, a second in the same run is refused by the default cap of 1 (one call made)", a1 === "DIAGNOSIS: x\nINTENDED: y" && a2 === null && calls === 1 && oc.readConsults(ocDir).length === 1);
-  res("consult: LOKI_E10_CONSULT_MAX=2 allows a second; LOKI_E10_OPUS_CONSULT=0 allows none", (await oc.runConsult({ ...base, trigger: "stop" }, { LOKI_E10_CONSULT_MAX: "2" })) !== null && (await oc.runConsult({ ...base, runDir: ocDir + "-off" }, { LOKI_E10_OPUS_CONSULT: "0" })) === null && calls === 2);
+  res("consult: LOKI_E10_CONSULT_MAX=2 allows a second; LOKI_E10_OPUS_CONSULT=0 and the default (unset) allow none", (await oc.runConsult({ ...base, trigger: "stop" }, { ...on, LOKI_E10_CONSULT_MAX: "2" })) !== null && (await oc.runConsult({ ...base, runDir: ocDir + "-off" }, { LOKI_E10_OPUS_CONSULT: "0" })) === null && (await oc.runConsult({ ...base, runDir: ocDir + "-default" }, {})) === null && calls === 2);
   oc.__setConsultCallForTests(null);
-  res("consult: default model is claude-opus-5-5; never-stop is on by default, off with the knob off or the explicit interactive opt-in", oc.consultModel({}) === "claude-opus-5-5" && oc.neverStopActive({}) && !oc.neverStopActive({ LOKI_E10_OPUS_CONSULT: "0" }) && !oc.neverStopActive({ LOKI_E10_INTAKE_ASK: "1" }));
+  res("consult: default model is claude-opus-5-5; consult and never-stop are off by default (EVAL-2026-11-12-1, on cost), on with =1/on, off with =0 or the explicit interactive opt-in", oc.consultModel({}) === "claude-opus-5-5" && !oc.consultEnabled({}) && !oc.neverStopActive({}) && !oc.consultEnabled({ LOKI_E10_OPUS_CONSULT: "" }) && oc.consultEnabled({ LOKI_E10_OPUS_CONSULT: "1" }) && oc.consultEnabled({ LOKI_E10_OPUS_CONSULT: "on" }) && oc.neverStopActive({ LOKI_E10_OPUS_CONSULT: "1" }) && !oc.neverStopActive({ LOKI_E10_OPUS_CONSULT: "0" }) && !oc.neverStopActive({ LOKI_E10_OPUS_CONSULT: "1", LOKI_E10_INTAKE_ASK: "1" }));
   res("consult: the disclosure names trigger, stage, model and dollars", oc.consultNotes(ocDir)[0]!.startsWith("Opus consult (open-choice, implement, claude-opus-5-5): ok, \$0.0300; advice: DIAGNOSIS: x INTENDED: y"));
   res("never-stop: one seal NOT PROVEN line per settled conflict, none without a record", oc.neverStopNotes({ never_stop: [{ stage: "implement", conflict: "c", assumption: "a", consulted: true }] }).length === 1 && oc.neverStopNotes({}).length === 0 && oc.neverStopNotes(undefined).length === 0);
   res("never-stop: the brief forbids the stop, asks for an ASSUMPTION line and carries the advice; assumptionOf reads it", oc.neverStopBrief("r", "ADV").includes("Do not stop on this conflict") && oc.neverStopBrief("r", "ADV").includes("ADV") && oc.assumptionOf("x\nASSUMPTION: it is the product\nLOKI_DONE") === "it is the product");
