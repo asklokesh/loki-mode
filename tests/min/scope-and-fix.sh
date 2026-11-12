@@ -32,7 +32,6 @@
 #                session runs; =1: exactly one "-c" session with the fixed brief writes negate(); a first turn that claims already-done, or a run
 #                that has a plan, gets no coverage turn. Unit: the folded line sits after FOLD_PLAN_INSTRUCTION, asks for a test per named site,
 #                and every opt-out gives main's brief byte for byte; the claim variant re-asks once ("-c2") on an absent claim.
-#   fix skip wide: (unit) payloads modeled on the 7 bench fix rounds, and the real tsc with the base run unavailable: the base-red tsc group (verify lint_base_red) joins the full-suite skip.
 #   exec spec:   (off by default under LOKI_E10_LEAN_CALLS, LOKI_E10_EXEC_SPEC=1 turns it on; lean, Wall off) deterministic atoms, the parity atom from the whole function body, the pair atom,
 #                the binding rule; real go test, pytest and vitest (2 and latest) per-case base runs seal only the binding red case; on the
 #                engine the right fix is VERIFIED, a change that leaves it red is not, and the knob unset runs no generator session.
@@ -273,8 +272,6 @@
 #  79. seal.ts: drop the "completed by rule" disclosure (the sysedit kept leg reads no receipt line).
 # 233. conflict_resume.ts coverageMode: unset returns "turn" (the coverage mode, fold and e2e default legs fail).
 # 234. implement.ts buildImplementBrief: drop coverageFoldLines (the fold brief and wiring legs fail).
-# 235. machine.ts suiteOnlyRed: ignore lint_base_red (suite fix skip wide reads 0001100 for wide).
-# 236. verify.ts tscBaseRedDerived: drop the isTestFile check (suite fix skip wide reads 1110000 for the derive cases).
 # 237. opus_consult.ts consultEnabled: back to on by default (the consult default unit leg and the unset consult-off engine leg fail).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
@@ -1382,27 +1379,6 @@ FR="$(cd "$ROOT/loki-ts" && bun -e 'const { onlyFullSuiteRed } = await import(".
 SK="$(cd "$ROOT/loki-ts" && bun -e 'const m = await import("./src/engine10/machine.ts"); const full = { name: "full suite: vitest", result: "fail", ids: ["other.test.ts > x"] }, tgt = { name: "vitest:a.test.ts", result: "pass", n: 3 }, g = [{ signature: "full suite: vitest FAIL other" }], v = (o) => ({ failures_grouped: g, changed_files: ["src/a.ts"], checks: [full, tgt], ...o });
 console.log([m.suiteOnlyRed(v({})), m.suiteOnlyRed(v({ checks: [full, { ...tgt, n: 0 }] })), m.suiteOnlyRed(v({ checks: [{ ...full, ids: ["src/a.ts > y"] }, tgt] })), m.suiteOnlyRed(v({ holdout_failed: 1 })), m.suiteOnlyRed(v({ failures_grouped: [...g, { signature: "vitest:a.test.ts FAIL b" }] })), m.suiteOnlyRed(v({ checks: [full, { ...tgt, name: "lint:tsc" }] })), m.suiteFixSkipEnabled({}), m.suiteFixSkipEnabled({ LOKI_E10_SUITE_FIX_SKIP: "0" }), m.SUITE_FIX_SKIP_NOTE.includes("NOT PROVEN")].join(","));' 2>&1)"
 [ "$SK" = "true,false,false,false,false,false,true,false,true" ] && ok "suite fix skip: only a suite-only red with a passing targeted test and no failing id in a changed file skips the round; =0 runs it; the receipt line says NOT PROVEN ($SK)" || bad "suite fix skip: got '$SK'"
-# LOKI_E10_SUITE_FIX_SKIP wide (default under LOKI_E10_LEAN_CALLS): payloads modeled on the verify data of the 7 fix rounds of the 20-task Haiku bench (v11.137.1, patch off; trimmed to the
-# fields suiteOnlyRed reads; the zod rows add the lint_base_red the v11.137.1 verify could not record yet, and rows 2-3 reuse zod-6304's check names). All 7 rounds left the tree byte-identical. Wide skips the 3 zod rounds (only a base-red tsc group plus full suites) and the 2 the narrow
-# predicate already skips; tq-11160 and tq-11327 keep their round because a failing full-suite id names a test file the change edited (newly red).
-SKW="$(cd "$ROOT/loki-ts" && bun -e '
-const m = await import("./src/engine10/machine.ts"), v = await import("./src/engine10/stages/verify.ts");
-const fs = (name, ids = []) => ({ name, result: "fail", ids }), ps = (name, n) => ({ name, result: "pass", n }), G = (...s) => s.map((signature) => ({ signature }));
-const LINT = "lint:tsc:packages/zod src/v3/tests/intersection.test.ts - error TS6196: '"'"'_Cat'"'"' is declared but never used.";
-const zod = (o = {}) => ({ checks: [ps("vitest:packages/zod/src/v4/classic/tests/from-json-schema.test.ts", 200), { name: "lint:tsc:packages/zod", result: "fail", ids: [] }, fs("full suite: w"), fs("full suite: zod")], failures_grouped: G(LINT, "full suite: w FAIL |@zod/treeshaking| locale-treeshake.test.ts > locale tree-shaking", "full suite: zod ELIFECYCLE Test failed."), changed_files: ["packages/zod/src/v4/classic/from-json-schema.ts", "packages/zod/src/v4/classic/tests/from-json-schema.test.ts"], holdout_failed: 0, lint_base_red: ["lint:tsc:packages/zod"], ...o });
-const tq11171 = { checks: [ps("vitest:packages/query-core/src/__tests__/mutationObserver.test.tsx", 16), fs("full suite: vitest", ["should notify query cache when a query becomes stale"]), fs("full suite: npm")], failures_grouped: G("full suite: npm 48: // @ts-expect-error"), changed_files: ["packages/query-core/src/__tests__/mutationObserver.test.tsx", "packages/query-core/src/mutationObserver.ts"], holdout_failed: 0 };
-const tq11663 = { checks: [ps("vitest:packages/query-persist-client-core/src/__tests__/persist.test.ts", 15), ps("lint:tsc", undefined), fs("full suite: vitest", ["should continue retry after focus regain and resolve all promises"]), fs("full suite: npm")], failures_grouped: G("full suite: npm s/index-DxGKdFog.js(1,753): error TS7005"), changed_files: ["packages/query-persist-client-core/src/__tests__/persist.test.ts", "packages/query-persist-client-core/src/persist.ts"], holdout_failed: 0 };
-const tq11160 = { checks: [ps("vitest:packages/query-core/src/__tests__/queryObserver.test.tsx", 76), fs("full suite: vitest", ["packages/query-core/src/__tests__/queryObserver.test.tsx > queryObserver > should clear interval when unsubscribing to a refetchInterval query"]), fs("full suite: npm")], failures_grouped: G("full suite: vitest FAIL packages/solid-query/src/__tests__/useQuery.test.tsx", "full suite: npm .svelte-kit/output"), changed_files: ["packages/query-core/src/__tests__/queryObserver.test.tsx", "packages/query-core/src/queryObserver.ts"], holdout_failed: 0 };
-const tq11327 = { checks: [ps("vitest:packages/react-query/src/__tests__/QueryResetErrorBoundary.test.tsx", 15), fs("full suite: vitest", ["packages/react-query/src/__tests__/QueryResetErrorBoundary.test.tsx > QueryErrorResetBoundary > useQuery > should retry on mount"]), fs("full suite: npm")], failures_grouped: G("full suite: vitest FAIL packages/react-query/src/__tests__/useQuery.test.tsx"), changed_files: ["packages/react-query/src/__tests__/QueryResetErrorBoundary.test.tsx", "packages/react-query/src/errorBoundaryUtils.ts"], holdout_failed: 0 };
-const bench = [zod(), zod({ changed_files: ["packages/zod/src/v4/classic/tests/default.test.ts", "packages/zod/src/v4/core/memoizer.ts"] }), zod({ changed_files: ["packages/zod/src/v4/classic/tests/to-json-schema.test.ts", "packages/zod/src/v4/core/json-schema-processors.ts"] }), tq11171, tq11663, tq11160, tq11327];
-const out = [bench.map((d) => m.suiteOnlyRed(d, true) ? 1 : 0).join(""), bench.map((d) => m.suiteOnlyRed(d, false) ? 1 : 0).join("")];
-out.push([zod({ lint_base_red: undefined }), zod({ lint_base_red: ["lint:tsc"] }), zod({ holdout_failed: 1 }), zod({ failures_grouped: [...G(LINT), ...G("vitest:a.test.ts FAIL b")] }), zod({ checks: zod().checks.map((c) => c.result === "pass" ? { ...c, n: 0 } : c) }), zod({ checks: [...zod().checks, fs("full suite: zod", ["packages/zod/src/v4/classic/tests/from-json-schema.test.ts > x"])] }), zod({ failures_grouped: G(LINT) })].map((d) => m.suiteOnlyRed(d, true) ? 1 : 0).join(""));
-out.push([{}, { LOKI_E10_SUITE_FIX_SKIP: "" }, { LOKI_E10_SUITE_FIX_SKIP: "1" }, { LOKI_E10_SUITE_FIX_SKIP: "suite" }, { LOKI_E10_SUITE_FIX_SKIP: "0" }, { LOKI_E10_LEAN_CALLS: "0" }, { LOKI_E10_LEAN_CALLS: "0", LOKI_E10_SUITE_FIX_SKIP: "1" }].map((e) => m.suiteFixSkipMode(e)).join(","));
-out.push(`${m.lintBaseRedSkip(zod())}${m.lintBaseRedSkip(tq11171)}${m.SUITE_FIX_SKIP_LINT_NOTE.includes("NOT PROVEN") && m.SUITE_FIX_SKIP_LINT_NOTE.includes("LOKI_E10_SUITE_FIX_SKIP=suite")}`);
-const onBase = (p) => !p.includes("new.test"), K = ["src/v3/tests/intersection.test.ts|TS6196", "src/v4/classic/tests/enum.test.ts|TS6133"];
-out.push([v.tscBaseRedDerived(K, "packages/zod", onBase, "+ const x = 1;"), v.tscBaseRedDerived(K, ".", onBase, ""), v.tscBaseRedDerived([...K, "src/v4/core/util.ts|TS6133"], "packages/zod", onBase, ""), v.tscBaseRedDerived([...K, "src/new.test.ts|TS6133"], "packages/zod", onBase, ""), v.tscBaseRedDerived(K, "packages/zod", onBase, "+import \"./enum.test\";"), v.tscBaseRedDerived(K, "packages/zod", onBase, null), v.tscBaseRedDerived([], "packages/zod", onBase, "")].map((b) => b ? 1 : 0).join(""));
-console.log(out.join(" | "));' 2>&1)"
-[ "$SKW" = "1111100 | 0001100 | 0000001 | wide,wide,wide,suite,off,suite,wide | truefalsetrue | 1100000" ] && ok "suite fix skip wide: on payloads modeled on the 7 bench fix rounds wide skips the 3 zod rounds plus the 2 the narrow skip takes and keeps the 2 whose failing ids name a changed file; no lint_base_red, another check, a holdout, a targeted failure, no passing targeted test or a changed-file id runs the round, a base-red tsc group alone skips it; =suite and LOKI_E10_LEAN_CALLS=0 keep v11.138.0; tscBaseRedDerived accepts only untouched test files on base no added line names ($SKW)" || bad "suite fix skip wide: got '$SKW'"
 WD="$(cd "$ROOT/loki-ts" && bun -e 'const { wallEnabled } = await import("./src/engine10/sizing.ts"); console.log([wallEnabled({}), wallEnabled({ LOKI_E10_WALL: "" }), wallEnabled({ LOKI_E10_WALL: "0" }), wallEnabled({ LOKI_E10_WALL: "1" }), wallEnabled({ LOKI_E10_WALL: "on" })].join(","))' 2>&1)"
 [ "$WD" = "false,false,false,true,true" ] && ok "wall default: the Wall session is off unless LOKI_E10_WALL=1/on ($WD)" || bad "wall default: wallEnabled gave '$WD'"
 # Go output cap (rule 22, real go test -json through the real runOnce and corroboratePass): a test file whose -json stream is larger than the 64 KB tail (and a whole-package run larger than 1 MiB) is judged whole and counts;
@@ -1649,25 +1625,6 @@ if [ -x "$TSC_NM/.bin/tsc" ] && [ -x "$TSC_NM/.bin/vitest" ]; then
     tc="$(wo_receipt ck)"; case "$tc" in *"lint:tsc=fail"*) ok "tsc untouched: the real tsc failed on the unused local in legacy.ts ($tc)" ;; *) bad "tsc untouched: no failing lint:tsc check: '$tc'"; dump ;; esac
     [ "$(fix_sessions)" = "0" ] && ok "tsc untouched: an unused local in an untouched file starts no fix session" || { bad "tsc untouched: $(fix_sessions) fix sessions (want 0)"; dump; }
     [ "$(ev 'sum(1 for e in E if e["type"]=="fix.round")')" = "0" ] && ok "tsc untouched: no fix.round event" || bad "tsc untouched: fix.round events: $(ev 'sum(1 for e in E if e["type"]=="fix.round")')"
-    # LOKI_E10_SUITE_FIX_SKIP wide on the real tsc: node_modules is a real directory whose links reach outside the repo plus one link into it (the pnpm workspace
-    # shape), so baseDepsLinker refuses the base tsc run (tscOnBase null). The only tsc error is an unused local in an untouched TEST file: verify records it in
-    # lint_base_red, the check stays blocking, and the default (wide) starts no fix session and names the skip; =suite (v11.138.0) runs the round.
-    make_tsc_ws_repo() {
-        make_tsc_repo "$1"; rm -f "$1/legacy.ts" "$1/node_modules"; mkdir -p "$1/node_modules"
-        for e in "$TSC_NM"/* "$TSC_NM"/.bin; do ln -s "$e" "$1/node_modules/$(basename "$e")"; done
-        ln -s .. "$1/node_modules/ws-self"
-        printf 'import { expect, test } from "vitest";\n\nconst stale = 1;\n\ntest("legacy", () => {\n  expect(1).toBe(1);\n});\n' > "$1/legacy.test.ts"
-    }
-    tsc_ws_run() { MAKE_REPO=make_tsc_ws_repo run_engine "add a multiply(a, b) function to calc.ts" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 E2E_STUB_SNIPPET="$TS_SNIP" "$@"; }
-    tsc_ws_run
-    lbr="$(ev 'next((",".join(e["data"].get("lint_base_red") or []) for e in E if e["type"]=="stage.completed" and e["stage"]=="verify"), "none")')"
-    wnotes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
-    [ "$lbr" = "lint:tsc" ] && ok "tsc base unavailable: verify records the untouched test file's unused local in lint_base_red ($lbr)" || { bad "tsc base unavailable: lint_base_red is '$lbr'"; dump; }
-    [ "$(fix_sessions)" = "0" ] && [ "$(ev 'sum(1 for e in E if e["type"]=="loop.repeat" and e["data"].get("skipped") is True)')" = "1" ] && ok "tsc base unavailable: the wide skip starts no fix session and records one skipped loop.repeat" || { bad "tsc base unavailable: $(fix_sessions) fix sessions (want 0)"; dump; }
-    has "tsc base unavailable: the receipt names the lint skip as NOT PROVEN" "$wnotes" "unused-declaration tsc errors in test files the change did not touch"
-    [ -n "$(outcome)" ] && [ "$(outcome)" != VERIFIED ] && ok "tsc base unavailable: the skipped run is never VERIFIED ($(outcome))" || { bad "tsc base unavailable: outcome '$(outcome)'"; dump; }
-    tsc_ws_run LOKI_E10_SUITE_FIX_SKIP=suite
-    [ "$(fix_sessions)" -ge 1 ] && ok "tsc base unavailable: LOKI_E10_SUITE_FIX_SKIP=suite keeps the v11.138.0 rule and runs the round ($(fix_sessions) fix sessions)" || { bad "tsc base unavailable =suite: no fix session"; dump; }
     tsc_run E2E_STUB_SNIPPET=$'const leak = 1;\n'"$TS_SNIP"
     [ "$(fix_sessions)" -ge 1 ] && ok "tsc touched: an unused local in the file the change wrote is fix-round input ($(fix_sessions) fix sessions)" || { bad "tsc touched: no fix session"; dump; }
     TSC_CFG_EDIT=(E2E_STUB_SNIPPET="$TS_SNIP" E2E_STUB_TEST_APPEND=$'export const edited = 1;\n' E2E_STUB_TARGET=tsconfig.json E2E_STUB_REPLACE='"strict":true' E2E_STUB_SNIPPET='"strict":true,"allowJs":false')
@@ -3008,13 +2965,12 @@ const rb = buildFixResumeBrief([], null, null, 0, [], h), rb0 = buildFixResumeBr
 res("buildFixResumeBrief carries the hints when given and is unchanged when not", rb.includes(h) && !rb0.includes(h) && rb.replace(`${h}\n\n`, "") === rb0);
 const cr = readFileSync(root + "/loki-ts/src/util/conflict_resume.ts", "utf8"), fx = readFileSync(root + "/loki-ts/src/engine10/stages/fix.ts", "utf8");
 res("wiring: resumeForCoverage appends siteHints to the coverage brief (claim or plain) and fix.ts passes siteHints to both briefs", /const hints = siteHints\(ctx\), base = claims \? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith\(ctx, capped, firstSession, hints \? `\$\{base\}/.test(cr) && /const hints = siteHints\(ctx\);/.test(fx) && /holdoutFailed, hintsPlus\)/.test(fx) && /\), hintsPlus\)\); \/\/ one session/.test(fx) && /const hintsPlus = \[hints, /.test(fx));
-const im = readFileSync(root + "/loki-ts/src/engine10/stages/implement.ts", "utf8"), mc = readFileSync(root + "/loki-ts/src/engine10/machine.ts", "utf8"), vf = readFileSync(root + "/loki-ts/src/engine10/stages/verify.ts", "utf8");
+const im = readFileSync(root + "/loki-ts/src/engine10/stages/implement.ts", "utf8");
 res("wiring: the plan-skipped implement brief adds coverageFoldLines right after FOLD_PLAN_INSTRUCTION, and fold mode runs only the claim check on the implement session (no -c turn)", /\.\.\.\(plan \? \[\] : \[FOLD_PLAN_INSTRUCTION, \.\.\.coverageFoldLines\(\)\]\)/.test(im) && /else if \(coverageMode\(\) === "fold" && !plan\) \{/.test(im) && /const r = await reaskFoldedClaims\(ctx, /.test(im) && /if \(coverageResumeEnabled\(\) && !plan\)/.test(im));
-res("wiring: verify passes its lint_base_red collector to runLintChecks and publishes it; the machine skips round 1 on suiteOnlyRed and picks the lint note in wide mode", /baseRed: lintBaseRed \}\)/.test(vf) && /lint_base_red: lintBaseRed/.test(vf) && /!\(suiteSkip \|\| \(round > 1 && onlyFullSuiteRed\(outputs\.verify\)\)\)/.test(mc) && /suiteFixSkipMode\(\) === "wide" && lintBaseRedSkip\(outputs\.verify\) \? SUITE_FIX_SKIP_LINT_NOTE : SUITE_FIX_SKIP_NOTE/.test(mc));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/site-hints.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "site-hints unit script crashed or exited non-zero"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 11 ] || bad "site-hints unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 11"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 10 ] || bad "site-hints unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 10"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
