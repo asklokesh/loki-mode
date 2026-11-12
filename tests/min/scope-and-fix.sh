@@ -278,6 +278,7 @@
 # 239. conflict_resume.ts parseRemedyCheck: accept MISSING even beside IMPLEMENTED (the ranked remedy check unit leg reads missing for MISSING or IMPLEMENTED).
 # 241. conflict_resume.ts parseRemedyCheck: drop the NOT IMPLEMENTED rule (the ranked remedy check unit leg reads implemented for NOT IMPLEMENTED).
 # 242. scope.ts crossPackageTestEdits: drop the source-change-in-package check (the J3 scope leg also drops packages/a/src/a.test.ts beside a.ts).
+# 243. edit_shape.ts precedenceSites: drop otherChecks (the F3 precedence leg reads 7:- for the Go site and the follow-up is null).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1936,6 +1937,39 @@ mkdir -p "$T/es"
 out="$(cd "$ROOT/loki-ts" && bun "$T/edit-shape.ts" "$ROOT" "$T/es" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "edit-shape unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 25 ] || bad "edit-shape unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 25"
+# F3 widened-check precedence (LOKI_E10_PRECEDENCE_CHECK, default on, =0 opts out). Synthetic repos only (no bench task text, names or files): Go `x.(T)` widened to errors.As ahead of
+# another assertion branch, Python isinstance moved to another class beside a second isinstance branch, TS === widened to includes beside an instanceof branch. Each site names
+# the other branch's input; a widening with no other check in its function, a pure rename and a strict check left strict give no site. One "-pr" resume on a real git repo,
+# none with =0 or without a site.
+F3D="$T/f3"; rm -rf "$F3D"; mkdir -p "$F3D/relay"; git init -q -b main "$F3D"
+printf 'package relay\n\nfunc route(err error) int {\n\tif n, ok := err.(Notifier); ok {\n\t\treturn n.Code()\n\t}\n\tif b, ok := err.(Bundle); ok {\n\t\treturn len(b.Items())\n\t}\n\treturn 0\n}\n' > "$F3D/relay/route.go"
+git -C "$F3D" add -- . && git -C "$F3D" -c user.name=f -c user.email=f@x commit -q -m base; F3B="$(git -C "$F3D" rev-parse HEAD)"
+F3R="$(cd "$ROOT/loki-ts" && F3D="$F3D" F3B="$F3B" bun -e '
+const es = await import("./src/util/edit_shape.ts"), cr = await import("./src/util/conflict_resume.ts"), fs = await import("node:fs"), d = process.env.F3D;
+const sites = (diff, file, src) => es.editShapeSites(diff, (p) => (p === file ? src : null)).filter((s) => s.rule === "precedence").map((s) => `${s.line}:${(s.others ?? []).map((o) => o.kind).join("+") || "-"}`).join(",") || "none";
+const goAfter = "package relay\n\nimport \"errors\"\n\nfunc route(err error) int {\n\tvar n Notifier\n\tif errors.As(err, &n) {\n\t\treturn n.Code()\n\t}\n\tif b, ok := err.(Bundle); ok {\n\t\treturn len(b.Items())\n\t}\n\treturn 0\n}\n";
+const goDiff = "diff --git a/relay/route.go b/relay/route.go\n--- a/relay/route.go\n+++ b/relay/route.go\n@@ -4 +6,2 @@ func route(err error) int {\n-\tif n, ok := err.(Notifier); ok {\n+\tvar n Notifier\n+\tif errors.As(err, &n) {\n";
+const goAlone = "package relay\n\nimport \"errors\"\n\nfunc one(err error) int {\n\tvar n Notifier\n\tif errors.As(err, &n) {\n\t\treturn n.Code()\n\t}\n\treturn 0\n}\n";
+const goAloneDiff = goDiff.replace("func route", "func one").replace("@@ -4 +6,2 @@", "@@ -4 +6,2 @@");
+const py = "def size(x):\n    if isinstance(x, Node):\n        return 1\n    if isinstance(x, Group):\n        return len(x.items)\n    return 0\n";
+const pyDiff = "diff --git a/t/size.py b/t/size.py\n--- a/t/size.py\n+++ b/t/size.py\n@@ -2 +2 @@ def size(x):\n-    if isinstance(x, Leaf):\n+    if isinstance(x, Node):\n";
+const pySame = pyDiff.replace("+    if isinstance(x, Node):", "+    if isinstance(x, Leaf) and x:");
+const ts = "export function pick(kind: string): number {\n  if ([\"a\", \"b\"].includes(kind)) return 1;\n  if (kind instanceof Object) return 2;\n  return 0;\n}\n";
+const tsDiff = "diff --git a/src/pick.ts b/src/pick.ts\n--- a/src/pick.ts\n+++ b/src/pick.ts\n@@ -2 +2 @@ export function pick(kind: string): number {\n-  if (kind === \"a\") return 1;\n+  if ([\"a\", \"b\"].includes(kind)) return 1;\n";
+const out = [sites(goDiff, "relay/route.go", goAfter), sites(goAloneDiff, "relay/route.go", goAlone), sites(pyDiff, "t/size.py", py), sites(pySame, "t/size.py", py.replace("isinstance(x, Node)", "isinstance(x, Leaf) and x")), sites(tsDiff, "src/pick.ts", ts)];
+const brief = es.precedenceBrief(es.editShapeSites(goDiff, (p) => (p === "relay/route.go" ? goAfter : null)));
+out.push(String(!!brief && brief.includes("Bundle (line 10)") && brief.includes("add a test case for each")), String(es.precedenceBrief([]) === null), [es.precedenceCheckEnabled({}), es.precedenceCheckEnabled({ LOKI_E10_PRECEDENCE_CHECK: "0" })].join());
+fs.writeFileSync(d + "/relay/route.go", goAfter);
+const seen = [], ok1 = { exit: 0, markers: { done: true, specConflict: null, alreadyDone: null }, durationS: 1, killed: false, summary: "LOKI_DONE" };
+const sctx = { provider: "stub", repoDir: d, baseSha: process.env.F3B, sessions: { run: async (o) => { seen.push(o.iterationId + ":" + o.brief.includes("Bundle (line 10)")); return ok1; } } };
+const opts = { stage: "implement", brief: "b", tier: "development", iterationId: "it", limitS: 600, signal: new AbortController().signal };
+const a = await cr.resumeForPrecedence(sctx, opts, ok1, {}), b = await cr.resumeForPrecedence(sctx, opts, ok1, { LOKI_E10_PRECEDENCE_CHECK: "0" });
+fs.writeFileSync(d + "/relay/route.go", "package relay\n\nfunc route(err error) int {\n\tif n, ok := err.(Notifier); ok {\n\t\treturn n.Code()\n\t}\n\tif b, ok := err.(Bundle); ok {\n\t\treturn len(b.Items())\n\t}\n\treturn 1\n}\n");
+const c = await cr.resumeForPrecedence({ ...sctx, baseSha: process.env.F3B }, opts, ok1, {});
+out.push(`${seen.join(",")}|${a.sites},${b.sites},${c.sites}`);
+console.log(out.join(" | "));' 2>&1)"
+[ "$F3R" = "7:Bundle | 7:- | 2:Group | none | 2:Object | true | true | true,false | it-pr:true|1,0,0" ] && ok "F3 precedence: Go errors.As ahead of an assertion branch, a Python isinstance moved beside another isinstance branch and a TS === widened to includes each name the other branch's input; a lone widening carries no input and a check left strict none; the follow-up names the input and asks for a test; one -pr resume on a real repo, none with =0 or for a change that widens nothing ($F3R)" || bad "F3 precedence gave: $F3R"
+grep -q 'const r = await resumeForPrecedence(ctx, { ...unchained(), iterationId: ids\[ids.length - 1\]! }, session);' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'precedence_check: precedenceRec' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && ok "F3 wiring: implement runs resumeForPrecedence after a clean done with a non-empty diff and records precedence_check" || bad "F3 wiring: implement does not run or record resumeForPrecedence"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

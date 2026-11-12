@@ -18,7 +18,7 @@ import { sealedWallCopy, sealedWallDir, WALL_FAILURE_TAIL_FILE } from "./check_r
 import { killedTailIndexes } from "./seal_drift.ts";
 import { vacuousCheck } from "../project_model/conventions.ts";
 import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
-import { editShapeBrief, editShapeSites } from "./edit_shape.ts";
+import { editShapeBrief, editShapeSites, precedenceBrief, precedenceCheckEnabled } from "./edit_shape.ts";
 import { FINISH_LINE, taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
 import type { ReadOnlyFile } from "../engine10/stages/implement.ts";
 
@@ -481,4 +481,22 @@ export async function resumeForRemedy(ctx: RunContext, first: SessionRunOptions,
   const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
   const s = await resumeWith(ctx, first, firstSession, remedyResumeBrief(remedy), "-rr");
   return { session: clean(s.session) ? s.session : { ...firstSession, durationS: s.session.durationS }, iterationIds: [s.iterationId], record: { ...record, resumed: true } };
+}
+
+/** F3 LOKI_E10_PRECEDENCE_CHECK (util/edit_shape.ts precedenceBrief): after a clean LOKI_DONE with a non-empty diff, a widened check whose function still holds other type or
+ *  value checks gets one follow-up resume ("-pr") naming each of those inputs. Nothing fires (no session, $0) without such a site; only a clean LOKI_DONE replaces the first result. */
+export async function resumeForPrecedence(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, env: NodeJS.ProcessEnv = process.env): Promise<{ session: SessionResult; iterationIds: string[]; sites: number }> {
+  const none = { session: firstSession, iterationIds: [] as string[], sites: 0 };
+  if (!precedenceCheckEnabled(env) || (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return none;
+  let brief: string | null = null, n = 0;
+  try {
+    const g = safeGitSpawn(ctx.repoDir, ["diff", "-U0", ctx.baseSha, "--", ".", ":(exclude).loki", ":(exclude).loki/**"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    if (g.status !== 0 || !g.stdout) return none;
+    const sites = editShapeSites(g.stdout, (p) => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return null; } }).filter((x) => x.rule === "precedence" && x.others?.length);
+    n = sites.length; brief = precedenceBrief(sites);
+  } catch { return none; }
+  if (!brief) return none;
+  const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
+  const r = await resumeWith(ctx, first, firstSession, `${brief}\n\n${FINISH_LINE}`, "-pr");
+  return { session: clean(r.session) ? r.session : { ...firstSession, durationS: r.session.durationS }, iterationIds: [r.iterationId], sites: n };
 }

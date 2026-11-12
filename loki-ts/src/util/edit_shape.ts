@@ -17,7 +17,7 @@ import { parseDiffHunks, type DiffHunk } from "./secure_scan.ts";
 import { isTestFile } from "./test_file_text.ts";
 import { escapeRegex } from "./regex_escape.ts";
 
-export interface EditSite { rule: "sibling" | "residual" | "precedence"; path: string; line: number; text: string; why: string }
+export interface EditSite { rule: "sibling" | "residual" | "precedence"; path: string; line: number; text: string; why: string; /** precedence only: the other checks in the same function that held their own branch before the change */ others?: { line: number; kind: string }[] }
 export interface EditShapeOpts {
   /** Other files of the edited file's package (repo-relative), scanned for residual sites. Default: the edited file only. */
   packageFiles?: (path: string) => string[];
@@ -181,19 +181,42 @@ const STRICT: Record<string, RegExp[]> = {
   py: [/\btype\(\s*[^()]+\)\s*(?:is|==)\s*[A-Za-z_]/, /\.__class__\s*(?:is|==)\s*[A-Za-z_]/],
   ts: [/\.constructor\s*===?\s*[A-Za-z_$]/],
 };
-const BROAD: Record<string, RegExp> = { go: /\berrors\.As\(/, py: /\bisinstance\(/, ts: /\binstanceof\b/ };
+const BROAD: Record<string, RegExp> = { go: /\berrors\.(?:As|Is)\(/, py: /\bisinstance\(/, ts: /\binstanceof\b/ };
 const BROAD_NAME: Record<string, string> = { go: "errors.As", py: "isinstance", ts: "instanceof" };
 
+// F3: the same-type widenings (isinstance(x, A) to isinstance(x, B), instanceof A to instanceof B) and an exact comparison widened to a membership test (== or === to includes / in).
+const TYPE_ARG: Record<string, RegExp> = { py: /\bisinstance\(\s*[^,()]+,\s*\(?\s*([A-Za-z_][\w.]*)/, ts: /\binstanceof\s+([A-Za-z_$][\w$.]*)/ };
+const EXACT_EQ = /([A-Za-z_$][\w$.]*)\s*===?\s*(?:["'`][^"'`]*["'`]|-?\d)/, MEMBER: Record<string, RegExp> = { py: /\bin\s+[[({A-Za-z_]/, ts: /\.includes\(/, go: /\b(?:strings|slices)\.Contains\(/ };
+/** The other type or value checks inside the same function span as `line` (unchanged lines only): each held its own branch before the change. */
+function otherChecks(lines: string[], spans: Span[], line: number, added: Set<number>, lang: Lang): { line: number; kind: string }[] {
+  const span = spans.filter((sp) => !sp.container && sp.start <= line && line <= sp.end).sort((a, b) => (a.end - a.start) - (b.end - b.start))[0];
+  if (!span) return [];
+  const pats: RegExp[] = lang === "go" ? [/\.\(\s*(\*?[A-Za-z_][\w.]*)\s*\)/g, /^\s*case\s+(\*?[A-Z][\w.]*(?:\s*,\s*\*?[A-Z][\w.]*)*)\s*:/g] : lang === "py" ? [/\bisinstance\(\s*[^,()]+,\s*\(?\s*([A-Za-z_][\w.]*)/g] : [/\binstanceof\s+([A-Za-z_$][\w$.]*)/g];
+  const out: { line: number; kind: string }[] = [], seen = new Set<string>();
+  for (let i = span.start; i <= span.end; i++) {
+    if (i === line || added.has(i)) continue;
+    const t = lines[i - 1] ?? ""; if (isComment(t)) continue;
+    for (const re of pats) for (const m of maskStrings(t).matchAll(re)) for (const k of m[1]!.split(/\s*,\s*/)) { const kind = k.trim(); if (kind && kind !== "type" && !seen.has(kind)) { seen.add(kind); out.push({ line: i, kind }); } }
+  }
+  return out.slice(0, 6);
+}
 /** Rule 3. */
-function precedenceSites(path: string, hunks: DiffHunk[], lang: Lang | null): EditSite[] {
+function precedenceSites(path: string, hunks: DiffHunk[], lang: Lang | null, lines: string[] = [], spans: Span[] = [], added: Set<number> = new Set()): EditSite[] {
   if (lang !== "go" && lang !== "py" && lang !== "ts") return [];
   const out: EditSite[] = [];
+  const push = (line: number, text: string, why: string): void => { const others = lines.length ? otherChecks(lines, spans, line, added, lang) : []; out.push({ rule: "precedence", path, line, text: compactWs(text), why, ...(others.length ? { others } : {}) }); };
   for (const h of hunks) {
     const strictLine = h.removed.find((r) => !isComment(r) && STRICT[lang]!.some((re) => re.test(maskStrings(r))) && !BROAD[lang]!.test(r));
     const broad = h.added.find((a) => !isComment(a.text) && BROAD[lang]!.test(a.text));
-    if (!strictLine || !broad || h.removed.some((r) => BROAD[lang]!.test(r))) continue;
-    const name = BROAD_NAME[lang]!;
-    out.push({ rule: "precedence", path, line: broad.line, text: compactWs(broad.text), why: `a strict type check (\`${compactWs(strictLine).slice(0, 60)}\`) became ${name}, which also matches subtypes or wrapped values; keep strict exact-type checks first and put errors.As or isinstance fallbacks after them, so values that already matched the exact type keep their behavior` });
+    if (strictLine && broad && !h.removed.some((r) => BROAD[lang]!.test(r))) { push(broad.line, broad.text, `a strict type check (\`${compactWs(strictLine).slice(0, 60)}\`) became ${BROAD_NAME[lang]!}, which also matches subtypes or wrapped values; keep strict exact-type checks first and put errors.As or isinstance fallbacks after them`); continue; }
+    const ta = TYPE_ARG[lang];
+    if (ta) {
+      const r = h.removed.map((x) => ta.exec(maskStrings(x))?.[1]).find(Boolean), a = h.added.find((x) => !isComment(x.text) && ta.test(maskStrings(x.text)));
+      const at = a ? ta.exec(maskStrings(a.text))?.[1] : undefined;
+      if (r && a && at && at !== r) { push(a.line, a.text, `the type check moved from ${r} to ${at}; if ${at} is broader, it now also matches values that took another branch`); continue; }
+    }
+    const eq = h.removed.map((x) => EXACT_EQ.exec(maskStrings(x))?.[1]).find(Boolean), mem = h.added.find((x) => !isComment(x.text) && MEMBER[lang]!.test(maskStrings(x.text)) && !!eq && x.text.includes(eq.split(".").pop()!));
+    if (eq && mem && !h.removed.some((x) => MEMBER[lang]!.test(maskStrings(x)))) push(mem.line, mem.text, `an exact comparison on ${eq} became a membership test, which also matches values that took another branch`);
   }
   return out;
 }
@@ -209,7 +232,7 @@ export function editShapeSites(diff: string, readFile: (path: string) => string 
     const added = new Set(hunks.flatMap((h) => h.added.map((a) => a.line)));
     const scan = [{ path, lines }];
     for (const p of opts.packageFiles?.(path) ?? []) { if (p === path || langOf(p) !== lang) continue; const t = readFile(p); if (t !== null) scan.push({ path: p, lines: t.split("\n") }); }
-    all.push(...precedenceSites(path, hunks, lang));
+    all.push(...precedenceSites(path, hunks, lang, lines, symbolSpans(path, src), added));
     const covered = new Set<number>();
     if (lang) all.push(...siblingSites(path, lines, symbolSpans(path, src), added, hunks, covered));
     all.push(...residualSites(path, hunks, added, covered, scan, lang));
@@ -223,4 +246,16 @@ export function editShapeSites(diff: string, readFile: (path: string) => string 
 export function editShapeBrief(sites: EditSite[]): string | null {
   if (sites.length === 0) return null;
   return `${EDIT_SHAPE_PROMPT}\n${sites.map((s) => `- ${s.path}:${s.line} (${s.rule}) ${s.why}: ${s.text.slice(0, 120)}`).join("\n")}`;
+}
+
+/** F3 LOKI_E10_PRECEDENCE_CHECK (default on, =0 opts out): after a clean implement, a precedence site whose function still holds other type or value checks gets one follow-up resume
+ *  ("-pr") naming each of those inputs and requiring it still takes its own branch. On the tuning bench the widened errors.As in cli-2478 sat ahead of the MultiError branch in both lean
+ *  seeds and every raw arm that failed hidden; the passing diffs kept the exact checks first. Deterministic from the diff; $0 when nothing fires. */
+export const precedenceCheckEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PRECEDENCE_CHECK"] ?? "").trim());
+/** The follow-up brief for precedence sites that carry other checks; null when none does. */
+export function precedenceBrief(sites: EditSite[]): string | null {
+  const live = sites.filter((s) => s.rule === "precedence" && s.others?.length);
+  if (!live.length) return null;
+  return ["Your change widened a type or value check. Before it, each input listed under a site took its own branch; make every one of them still take that branch (keep the exact checks first, or exclude them from the broad one), and add a test case for each that would fail if it took the broad branch instead.",
+    ...live.map((s) => `- ${s.path}:${s.line}: ${s.why}. Inputs that had their own branch: ${s.others!.map((o) => `${o.kind} (line ${o.line})`).join(", ")}`)].join("\n");
 }
