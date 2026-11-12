@@ -276,7 +276,8 @@
 # 234. implement.ts buildImplementBrief: drop coverageFoldLines (the fold brief and wiring legs fail).
 # 237. opus_consult.ts consultEnabled: back to on by default (the consult default unit leg and the unset consult-off engine leg fail).
 # 238. machine.ts suiteOnlyRed: drop clause (a)'s targeted-pass check (suite fix skip clauses reads 0000 for the tq row).
-# 239. conflict_resume.ts parseRemedyCheck: accept MISSING even beside IMPLEMENTED (the ranked remedy check unit leg reads missing,implemented,missing,null,null).
+# 239. conflict_resume.ts parseRemedyCheck: accept MISSING even beside IMPLEMENTED (the ranked remedy check unit leg reads missing for MISSING or IMPLEMENTED).
+# 241. conflict_resume.ts parseRemedyCheck: drop the NOT IMPLEMENTED rule (the ranked remedy check unit leg reads implemented for NOT IMPLEMENTED).
 # 240. plan.ts planFoldMonorepo: default on (any value but 0/off) (the plan fold leg reads 00001101).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
@@ -704,14 +705,15 @@ res("patch receipt: green, error and every other status map to green, error and 
   res("ranked remedy: the knob is on by default and =0 opts out", sa.rankedRemedyEnabled({}) && !sa.rankedRemedyEnabled({ LOKI_E10_RANKED_REMEDY: "0" }));
   const T1 = "fix the push fallback\n\n" + LH, plain = impl.buildImplementBrief(T1, null, []), withR = impl.buildImplementBrief(T1, null, [], "", null, undefined, r1!.first), line = sa.rankedRemedyBlock(r1!.first)[0]!;
   res("ranked remedy: the brief names remedy 1 once, after the task text and outside the cache-stable prefix; no remedy gives today's brief byte for byte; COVERAGE_FOLD is unchanged", withR.split(line).length === 2 && withR.indexOf(line) > withR.indexOf("fix the push fallback") && withR.replace(`\n\n${line}`, "") === plain && impl.buildImplementBrief(T1, null, [], "", null, undefined, undefined) === plain && !cr.COVERAGE_FOLD.includes("remed"));
-  const pr = [cr.parseRemedyCheck("MISSING"), cr.parseRemedyCheck("implemented."), cr.parseRemedyCheck("MISSING or IMPLEMENTED"), cr.parseRemedyCheck(null), cr.parseRemedyCheck("not sure")].map(String).join(",");
-  res("ranked remedy check: only a one-sided MISSING or IMPLEMENTED parses; both, neither or no reply is unparsed", pr === "missing,implemented,null,null,null", pr);
+  const RS = ["MISSING", "**MISSING**", "Missing.", "MISSING: the diff keeps the bare local name", "NOT IMPLEMENTED", "The remedy is NOT implemented.", "No", "IMPLEMENTED", "implemented.", "`IMPLEMENTED`", "Answer: IMPLEMENTED", "Yes, it is implemented", "IMPLEMENTED\nbut MISSING tests", "MISSING or IMPLEMENTED", "not sure", "", null];
+  const pr = RS.map((x) => String(cr.parseRemedyCheck(x))).join(",");
+  res("ranked remedy check: real-shaped Haiku answers parse by their first verdict word (markdown, punctuation, case, a trailing reason and NOT IMPLEMENTED included); both verdicts on one line, no verdict or no reply give null", pr === "missing,missing,missing,missing,missing,missing,missing,implemented,implemented,implemented,implemented,implemented,implemented,null,null,null,null", pr);
   const d = repo(), base = git(d, "rev-parse", "HEAD").trim(), seen: string[] = [], prompts: string[] = [], ok1 = { exit: 0, markers: { done: true, specConflict: null, alreadyDone: null }, durationS: 1, killed: false, summary: "LOKI_DONE" };
   const sctx = { provider: "stub", repoDir: d, baseSha: base, sessions: { run: async (o: { iterationId: string; brief: string }) => { seen.push(o.iterationId); prompts.push(o.brief); return ok1; } } };
   const opts = { stage: "implement", brief: "b", tier: "development", iterationId: "it", limitS: 600, signal: new AbortController().signal };
   const runWith = async (reply: string | null) => { cr.__setRemedyCheckForTests(async (system: string, prompt: string) => { prompts.push(prompt); return { text: reply, usd: 0.0004, outcome: reply ? "ok" : "failed" }; }); try { return await cr.resumeForRemedy(sctx, opts, ok1, "use origin/main", "diff --git a/x b/x\n+x"); } finally { cr.__setRemedyCheckForTests(null); } };
   const m = await runWith("MISSING"), i = await runWith("IMPLEMENTED"), u = await runWith(null);
-  res("ranked remedy resume: MISSING starts one -rr resume naming the remedy; IMPLEMENTED and a failed check start none; each records the verdict", seen.join() === "it-rr" && m.record.check === "missing" && m.record.resumed && i.record.check === "implemented" && !i.record.resumed && u.record.check === "unparsed" && !u.record.resumed && prompts.some((p) => p.includes("Loki remedy check.") && p.includes("use origin/main")) && prompts.some((p) => p.includes('first-choice remedy is not in your change: "use origin/main"')), `${seen.join()}|${JSON.stringify([m.record, i.record, u.record])}`); }
+  res("ranked remedy resume: MISSING starts one -rr resume naming the remedy; IMPLEMENTED starts none; a call with no answer is retried once and then recorded as failed (never unparsed), starting none", seen.join() === "it-rr" && m.record.check === "missing" && m.record.resumed && i.record.check === "implemented" && !i.record.resumed && u.record.check === "failed" && u.record.attempts === 2 && !u.record.resumed && m.record.attempts === 1 && m.record.call === "ok" && prompts.filter((p) => p.startsWith("Loki remedy check.")).length === 4 && prompts.some((p) => p.includes("Loki remedy check.") && p.includes("use origin/main")) && prompts.some((p) => p.includes('first-choice remedy is not in your change: "use origin/main"')), `${seen.join()}|${JSON.stringify([m.record, i.record, u.record])}`); }
 TS
 out="$(cd "$ROOT/loki-ts" && timeout 300 bun "$PP/unit.ts" "$ROOT" "$PP" 2>&1)"
 while IFS= read -r line; do
