@@ -263,8 +263,8 @@ export function editShapeBrief(sites: EditSite[]): string | null {
 }
 
 /** F3 LOKI_E10_PRECEDENCE_CHECK (default on, =0 opts out): after a clean implement, a precedence site whose function still holds other type or value checks gets one follow-up resume
- *  ("-pr") naming each of those inputs and requiring it still takes its own branch. On the tuning bench the widened errors.As in cli-2478 sat ahead of the MultiError branch in both lean
- *  seeds and every raw arm that failed hidden; the passing diffs kept the exact checks first. Deterministic from the diff; $0 when nothing fires. */
+ *  ("-pr") naming each of those inputs and requiring it still takes its own branch. The failure it targets: an exact type assertion widened to an unwrapping check and placed ahead
+ *  of an existing assertion branch, so values that matched both now take the broad branch; correct fixes keep the exact checks first. Deterministic from the diff; $0 when nothing fires. */
 export const precedenceCheckEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PRECEDENCE_CHECK"] ?? "").trim());
 /** The follow-up brief for precedence sites that carry other checks; null when none does. */
 export function precedenceBrief(sites: EditSite[]): string | null {
