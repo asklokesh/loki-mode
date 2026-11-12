@@ -66,6 +66,7 @@
 #  SG6. failures.ts idNamesFile: return id.includes(f) only; the root-run failure leg fails (the project-prefixed id names no file).
 #  SG7. commit_filter.ts commitUnsealedWork: drop the rmSync loop; the run-created lockfile stays untracked after the checkout. taskWantsLockChange: re-add the bare `lock` noun; 'refresh the page when the lock icon is clicked' ships its lockfile.
 #  NRM2. repo_profile.ts detectFormatters: drop the biome entry; the formatter check fails.
+#  J1. repo_profile.ts runFormattersRecord: drop the base-clean comparison; the J1 formatter leg formats b.py and fails.
 #  10. verify.ts sameErrors: excuse every known-red id whatever its first error; the delivery check fails.
 #  11. loki-ts/src/engine10/machine.ts: break after one Wall-only round whatever wallSignature says; the
 #      mono2 two-round check fails.
@@ -455,6 +456,26 @@ const c = formatChanged(process.env.LK, [{ st: "M", f: "pkg/b.json" }], new Set(
 console.log(JSON.stringify([a, touched, b, c]));
 ' 2>&1)"
 [ "$FMT" = '[["pkg/b.json"],true,[],[]]' ] && ok "formatter pass: a repo-local biome rewrites the changed file; a failing or missing formatter is a silent no-op" || bad "formatter pass gave: $FMT"
+# J1 LOKI_E10_FORMAT_RESOLVE (default on, =0 opts out): the formatter binary is resolved like verify's linter. A fake ruff lives only in the repo's .venv (PATH has none), "formats" by
+# rewriting BAD to ok, and prints the formatted stdin in --stdin-filename mode. Base-clean a.py and new c.py are formatted; b.py, already unformatted on base, is left alone and recorded;
+# the commit record names the venv binary. =0 spawns the bare `ruff`, which is not on PATH, and formats nothing.
+FV="$T/fmtvenv"; rm -rf "$FV"; mkdir -p "$FV/.venv/bin"; git init -q -b main "$FV"
+printf '[tool.ruff]\nline-length = 88\n' > "$FV/pyproject.toml"; printf 'x = 1\n' > "$FV/a.py"; printf 'y = BAD\n' > "$FV/b.py"
+printf '#!/bin/sh\n[ "$1" = format ] || exit 2; shift\nif [ "$1" = --stdin-filename ]; then perl -pe "s/BAD/ok/g"; exit 0; fi\nfor f in "$@"; do perl -pi -e "s/BAD/ok/g" "$f"; done\n' > "$FV/.venv/bin/ruff"; chmod +x "$FV/.venv/bin/ruff"
+git -C "$FV" add -- . && git -C "$FV" -c user.name=f -c user.email=f@x commit -q -m base
+FVB="$(git -C "$FV" rev-parse HEAD)"
+printf 'x = BAD\n' > "$FV/a.py"; printf 'y = BAD\nz = BAD\n' > "$FV/b.py"; printf 'c = BAD\n' > "$FV/c.py"
+FVR="$(FV="$FV" FVB="$FVB" ROOT="$ROOT" PATH="/usr/bin:/bin" "$(command -v bun)" --no-env-file --config=/dev/null -e '
+const { formatChangedRecord } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts"), fs = await import("node:fs"), d = process.env.FV;
+const st = [{ st: "M", f: "a.py" }, { st: "M", f: "b.py" }, { st: "A", f: "c.py" }], rd = (f) => fs.readFileSync(d + "/" + f, "utf8");
+const r = formatChangedRecord(d, st, new Set(), { ...process.env }, process.env.FVB), rec = r.records[0] ?? {};
+const out = [r.formatted.join("+"), rd("a.py").trim(), rd("b.py").includes("BAD"), rd("c.py").trim(), rec.tool, String(rec.cmd).endsWith(".venv/bin/ruff format"), JSON.stringify(rec.skipped)];
+fs.writeFileSync(d + "/a.py", "x = BAD\n");
+const off = formatChangedRecord(d, [{ st: "M", f: "a.py" }], new Set(), { ...process.env, LOKI_E10_FORMAT_RESOLVE: "0" }, process.env.FVB);
+out.push(off.formatted.length, rd("a.py").includes("BAD"), String(off.records[0]?.error ?? "").startsWith("formatter not runnable: ruff"));
+console.log(out.join(" | "));' 2>&1)"
+[ "$FVR" = 'a.py+c.py | x = ok | true | c = ok | ruff | true | [{"file":"b.py","why":"base text is not formatter-clean"}] | 0 | true | true' ] && ok "J1 formatter: the repo venv's ruff formats the base-clean modified file and the new file, leaves a file already unformatted on base alone with the reason, and the record names the venv binary; =0 spawns the bare ruff (not on PATH), formats nothing and records why" || bad "J1 formatter gave: $FVR"
+grep -q 'fmtRec = formatChangedRecord(ctx.repoDir, staged, dropped, process.env, ctx.baseSha), fmt = fmtRec.formatted;' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'const format = fmtRec.records.length ? { format: fmtRec.records } : {};' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "J1 wiring: the commit stage formats with the base commit and records the formatter pass on its data" || bad "J1 wiring: the commit stage does not pass the base or record the formatter pass"
 
 # A workspace whose package vitest config merges the root config, and the root config sets `projects` (zod): `cd packages/a && npx vitest run <file>` never starts
 # ("No projects were found"; it drove four zod implementers to edit vitest.config.ts). The generated command runs from the root instead and passes on real vitest;

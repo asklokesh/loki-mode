@@ -28,8 +28,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { comparableIds, errorsById, failIds, idNamesFile, sameErrors, unhandledBlock } from "../engine10/failures.ts";
-import { classifyCheck, emptyDiscovery, exitCodedId, goRunner, isExitCodedScript, plainTestEnv, stripAnsi, type Classified } from "../util/check_result.ts";
-import { safeGit } from "../util/safe_git.ts";
+import { classifyCheck, emptyDiscovery, exitCodedId, goRunner, isExitCodedScript, plainTestEnv, resolveTool, stripAnsi, type Classified } from "../util/check_result.ts";
+import { safeGit, safeGitSpawn } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
 import { atomicWriteFileSync } from "./state.ts";
 import { inWorkspace, pkgWorkspaces, pnpmWorkspaces } from "../util/lock_ecosystems.ts";
@@ -440,37 +440,64 @@ function pyInstall(repoDir: string, d: string, tracked: Set<string>, at: (dir: s
   return { cmd: `${py} -m pip install -e ${extra ? `'.[${extra}]'` : "."}`, cwd: d, cite: [at(d, /^\[project\]/m.test(pp) ? "pyproject.toml" : "setup.py")] };
 }
 
-/** TEN-QUALITY-16: a formatter the repo ITSELF configures. `argv` is the command before the file list; `exts` selects the files it owns. Config detection only, never an install. */
-export interface RepoFormatter { tool: string; argv: string[]; exts: RegExp }
-export function detectFormatters(repoDir: string): RepoFormatter[] {
+/** TEN-QUALITY-16: a formatter the repo ITSELF configures. `argv` is the command before the file list; `exts` selects the files it owns; `stdin` is the same formatter reading one
+ *  file's text on stdin and printing the formatted text (the base-clean check). Config detection only, never an install. */
+export interface RepoFormatter { tool: string; argv: string[]; exts: RegExp; stdin?: (file: string) => string[] }
+/** J1 LOKI_E10_FORMAT_RESOLVE (default on, =0 opts out): the formatter binary is resolved the way verify resolves its linter (util/check_result.ts resolveTool: the project venv, then
+ *  `uv run`, then PATH), and a file the change modified is formatted only when its BASE blob is already formatter-clean, so the run never reformats lines it did not write.
+ *  On the tuning bench the bare `ruff` argv found no binary (the repo's ruff is .venv/bin/ruff, not on PATH), spawnSync failed and nothing was formatted: 11 judge fails were
+ *  formatting. =0 restores the bare argv and no base check. */
+export const formatResolveEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_FORMAT_RESOLVE"] ?? "").trim());
+export function detectFormatters(repoDir: string, env: NodeJS.ProcessEnv = process.env): RepoFormatter[] {
   const out: RepoFormatter[] = [];
   const has = (...fs: string[]): boolean => fs.some((f) => existsSync(join(repoDir, f)));
   const pp = read(join(repoDir, "pyproject.toml")), pj = read(join(repoDir, "package.json"));
-  if (/\[tool\.ruff/.test(pp) || has("ruff.toml", ".ruff.toml")) out.push({ tool: "ruff", argv: ["ruff", "format"], exts: /\.pyi?$/ });
+  if (/\[tool\.ruff/.test(pp) || has("ruff.toml", ".ruff.toml")) {
+    const [cmd, , pre] = formatResolveEnabled(env) ? resolveTool(repoDir, "ruff", "ruff") : ["ruff", "system", [] as string[]];
+    out.push({ tool: "ruff", argv: [cmd, ...pre, "format"], exts: /\.pyi?$/, stdin: (f) => [cmd, ...pre, "format", "--stdin-filename", f, "-"] });
+  }
   let prettierKey = false;
   try { prettierKey = pj !== "" && "prettier" in (JSON.parse(pj) as object); } catch { /* malformed manifest: no formatter */ }
   const local = join(repoDir, "node_modules", ".bin", "prettier"); // a repo-local binary only: nothing is fetched
-  if ((prettierKey || readdirSync(repoDir).some((f) => /^(\.prettierrc(\.[a-z0-9]+)?|prettier\.config\.[cm]?[jt]s)$/.test(f))) && existsSync(local)) out.push({ tool: "prettier", argv: [local, "--write"], exts: /\.(?:[cm]?[jt]sx?|json|css|scss|md|ya?ml|html)$/ });
+  if ((prettierKey || readdirSync(repoDir).some((f) => /^(\.prettierrc(\.[a-z0-9]+)?|prettier\.config\.[cm]?[jt]s)$/.test(f))) && existsSync(local)) out.push({ tool: "prettier", argv: [local, "--write"], exts: /\.(?:[cm]?[jt]sx?|json|css|scss|md|ya?ml|html)$/, stdin: (f) => [local, "--stdin-filepath", f] });
   const biome = join(repoDir, "node_modules", ".bin", "biome"); // same rule: repo-local binary only
-  if (has("biome.json", "biome.jsonc") && existsSync(biome)) out.push({ tool: "biome", argv: [biome, "format", "--write"], exts: /\.(?:[cm]?[jt]sx?|json|jsonc|css)$/ });
-  if (has("go.mod")) out.push({ tool: "gofmt", argv: ["gofmt", "-w"], exts: /\.go$/ });
+  if (has("biome.json", "biome.jsonc") && existsSync(biome)) out.push({ tool: "biome", argv: [biome, "format", "--write"], exts: /\.(?:[cm]?[jt]sx?|json|jsonc|css)$/, stdin: (f) => [biome, "format", `--stdin-file-path=${f}`] });
+  if (has("go.mod")) out.push({ tool: "gofmt", argv: ["gofmt", "-w"], exts: /\.go$/, stdin: () => ["gofmt"] });
   if (has("rustfmt.toml", ".rustfmt.toml")) {
     const ed = /^\s*edition\s*=\s*"(\d+)"/m.exec(read(join(repoDir, "Cargo.toml")))?.[1];
-    out.push({ tool: "rustfmt", argv: ["rustfmt", ...(ed ? ["--edition", ed] : [])], exts: /\.rs$/ });
+    out.push({ tool: "rustfmt", argv: ["rustfmt", ...(ed ? ["--edition", ed] : [])], exts: /\.rs$/, stdin: () => ["rustfmt", ...(ed ? ["--edition", ed] : []), "--emit", "stdout"] });
   }
   return out;
 }
 
-/** Runs each detected formatter once over the regular files (no symlinks) it owns. A missing binary or nonzero exit is a no-op; returns the files a formatter exited 0 on. env must already be token-free. */
-export function runFormatters(repoDir: string, files: string[], env: NodeJS.ProcessEnv): string[] {
-  const fmts = detectFormatters(repoDir);
+/** What the commit stage's formatter pass did, recorded on the commit data so a silent no-op cannot recur unseen: per formatter, the files it formatted and the files it left alone with why. */
+export interface FormatRecord { tool: string; cmd: string; formatted: string[]; skipped: { file: string; why: string }[]; error?: string }
+/** Runs each detected formatter once over the regular files (no symlinks) it owns. With LOKI_E10_FORMAT_RESOLVE on and a base commit, a file present on base whose base text is not
+ *  formatter-clean (the formatter's stdin mode prints something else, or fails) is left alone. A missing binary or nonzero exit formats nothing and is recorded. env must already be token-free. */
+export function runFormattersRecord(repoDir: string, files: string[], env: NodeJS.ProcessEnv, baseSha?: string): { formatted: string[]; records: FormatRecord[] } {
+  const fmts = detectFormatters(repoDir, env), check = formatResolveEnabled(env) && !!baseSha;
   const mine = fmts.length ? files.filter((f) => { try { return lstatSync(join(repoDir, f)).isFile(); } catch { return false; } }) : [];
-  return fmts.flatMap((fm) => {
-    const own = mine.filter((f) => fm.exts.test(f));
-    const r = own.length ? spawnSync(fm.argv[0]!, [...fm.argv.slice(1), ...own.map((f) => `./${f}`)], { cwd: repoDir, env, stdio: "ignore", timeout: 30000 }) : null;
-    return r && !r.error && r.status === 0 ? own : [];
-  });
+  const records: FormatRecord[] = [], formatted: string[] = [];
+  for (const fm of fmts) {
+    const own = mine.filter((f) => fm.exts.test(f)); if (!own.length) continue;
+    const rec: FormatRecord = { tool: fm.tool, cmd: fm.argv.join(" "), formatted: [], skipped: [] };
+    const ok = check && fm.stdin ? own.filter((f) => {
+      const b = safeGitSpawn(repoDir, ["show", `${baseSha}:${f}`], { encoding: "utf8" }); if (b.status !== 0) return true; // new on this run: nothing on base to protect
+      const [c, ...a] = fm.stdin!(f), r = spawnSync(c!, a, { cwd: repoDir, env, input: b.stdout, encoding: "utf8", timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
+      if (r.error || r.status !== 0) { rec.skipped.push({ file: f, why: r.error ? `formatter not runnable (${(r.error as NodeJS.ErrnoException).code ?? "error"})` : `formatter check exited ${r.status} on the base text` }); return false; }
+      if (r.stdout !== b.stdout) { rec.skipped.push({ file: f, why: "base text is not formatter-clean" }); return false; }
+      return true;
+    }) : own;
+    if (ok.length) {
+      const r = spawnSync(fm.argv[0]!, [...fm.argv.slice(1), ...ok.map((f) => `./${f}`)], { cwd: repoDir, env, stdio: "ignore", timeout: 30000 });
+      if (!r.error && r.status === 0) { rec.formatted = ok; formatted.push(...ok); } else rec.error = r.error ? `formatter not runnable: ${fm.argv[0]} (${(r.error as NodeJS.ErrnoException).code ?? "error"})` : `formatter exited ${r.status}`;
+    }
+    records.push(rec);
+  }
+  return { formatted, records };
 }
+/** The formatted files only (the commit stage re-stages them). */
+export function runFormatters(repoDir: string, files: string[], env: NodeJS.ProcessEnv, baseSha?: string): string[] { return runFormattersRecord(repoDir, files, env, baseSha).formatted; }
 
 /** Default runner: `sh -c` in repoDir, an explicit scoped env (token-free, no color, no bytecode litter), SIGKILL on timeout. */
 export const shellRunner: BaselineRunner = (cmd, cwd, timeoutMs) => {
