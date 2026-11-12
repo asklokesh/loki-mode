@@ -27,7 +27,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
-import { comparableIds, errorsById, failIds, idNamesFile, sameErrors, unhandledBlock } from "../engine10/failures.ts";
+import { comparableIds, errorsById, failIds, idNamesFile, lineNamesChange, noiseOnlyErrors, sameErrors, unhandledBlock } from "../engine10/failures.ts";
 import { classifyCheck, emptyDiscovery, exitCodedId, goRunner, isExitCodedScript, plainTestEnv, resolveTool, stripAnsi, type Classified } from "../util/check_result.ts";
 import { safeGit, safeGitSpawn } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
@@ -704,7 +704,7 @@ function cargoTouched(changed: string[]): boolean {
  *  already failed (`blocked`) or one naming a changed file is never excused. */
 /** FireLater#21 (review): ids alone never excuse a full suite. Each failing id must fail on base with the same error lines (sameErrors against the baseline's
  *  failing_errors); a suite whose output or baseline has no error lines for an id (a baseline recorded before failing_errors, go, cargo) is not excused. */
-export function attributeFullSuite(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], blocked: string[], changed: string[]): Attribution {
+export function attributeFullSuite(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], blocked: string[], changed: string[], symbols: readonly string[] = []): Attribution {
   const bad = full.filter((c) => c.result === "fail"), none: Attribution = { preExistingChecks: [], preExistingIds: [], introducedChecks: bad.map((c) => c.name), line: null }, p = loadProfile(repoDir);
   if (!bad.length || !p || p.revision !== baseSha) return none;
   const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran), of = (cmd: string) => baseFor(repoDir, p, cmd, true);
@@ -714,15 +714,18 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: { nam
   const ids = (cmd: string): string[] => { const b = of(cmd); return b?.attributable ? [...b.failing_ids, ...(b.flaky_ids ?? [])] : []; }, miss = bad.find((c) => !of(c.cmd));
   if (miss) return { ...none, line: `baseline: ran ${runs.map((b) => `"${b.command}"`).join(", ") || "nothing"}, not the full suite command "${miss.cmd}", ids not comparable, full suite failures not excused` };
   const massive = (cmd: string): boolean => (of(cmd)?.failing_ids.length ?? 0) >= MASSIVE_RED_IDS, known = new Set(bad.flatMap((c) => ids(c.cmd))), block = new Set(blocked), sameAsBase = (c: (typeof bad)[number]): boolean => { const b = of(c.cmd), be = b?.failing_errors, hu = c.unhandled ?? [], bu = b?.failing_unhandled ?? []; /* every id, flaky or not, must repeat its stored base error (a flaky id keeps the error of the pass it failed on), at the same multiplicity, whatever the suite size */ return !!be && !!c.errors && hu.length === bu.length && hu.every((x, n) => x === bu[n]) /* an unhandled-errors block names no id: it must repeat on base */ && sameErrors(new Map(Object.entries(c.errors)), be, comparableIds(c.ids ?? [])); },
+    /* fl24: the second chance when the text differs: the same unhandled block, the same error shapes (noise only) and no head error line naming a changed file or symbol (noiseOnlyErrors); listed NOT PROVEN below */ quietAsBase = (c: (typeof bad)[number]): boolean => { const be = of(c.cmd)?.failing_errors, hu = c.unhandled ?? [], bu = of(c.cmd)?.failing_unhandled ?? []; return !!be && !!c.errors && hu.length === bu.length && hu.every((x, n) => x === bu[n]) && noiseOnlyErrors(c.errors, be, comparableIds(c.ids ?? []), changed, symbols); },
     /* a flaky id, or any id of a suite red at base, whose head error text names a file the change edited is the change's own failure, whatever the id */ errNamesChanged = (c: (typeof bad)[number]): boolean => { const fl = new Set(of(c.cmd)?.flaky_ids ?? []), all = massive(c.cmd), keys = Object.keys(c.errors ?? {}).filter((k) => all || [...fl].some((i) => k === i || k.endsWith(` > ${i}`))); return keys.some((k) => (c.errors?.[k] ?? []).some((l) => changed.some((f) => l.includes(f)))); };
   if (known.size === 0) return none;
   const unproven = [...new Set(bad.flatMap((c) => c.ids ?? []).filter((i) => !i.includes("::") && goIdTouched(repoDir, i, changed)))];
-  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && sameAsBase(c) && !errNamesChanged(c) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => idNamesFile(i, f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
+  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && (sameAsBase(c) || quietAsBase(c)) && !errNamesChanged(c) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => idNamesFile(i, f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
   const rust = (cargoTouched(changed) ? bad : []).map((c) => `NOT PROVEN: ${c.name} may run cargo tests and the diff edits Rust source or a manifest; cargo test ids carry no crate path, so a failure cannot be shown pre-existing`);
   const red = res.preExistingChecks.length ? bad.filter((c) => res.preExistingChecks.includes(c.name) && massive(c.cmd)) : [], redLine = red.map((c) => `NOT PROVEN: suite red at base (${of(c.cmd)!.failing_ids.length} failing ids) for "${c.cmd}": it is compared per id, never blocks and proves nothing about this change`).join("; ");
   if (redLine) res.line = [res.line, redLine].filter(Boolean).join("; ");
   const flakyOnly = bad.filter((c) => res.preExistingChecks.includes(c.name)).flatMap((c) => { const b = of(c.cmd), base = new Set(b?.failing_ids ?? []), hit = comparableIds(c.ids ?? []).filter((i) => (b?.flaky_ids ?? []).includes(i) && !base.has(i)); return hit.length ? [`NOT PROVEN: "${c.cmd}" was excused with ${hit.length} id(s) that fail on only some base passes (flaky), e.g. ${hit[0]}; the change was not shown to leave them alone`] : []; }).join("; ");
   if (flakyOnly) res.line = [res.line, flakyOnly].filter(Boolean).join("; ");
+  const quiet = bad.filter((c) => res.preExistingChecks.includes(c.name) && !sameAsBase(c)).map((c) => `NOT PROVEN: "${c.cmd}" was excused as red on base although its error text differs from base (by noise only: the same error shapes); no changed file or symbol appears in any failure`).join("; ");
+  if (quiet) res.line = [res.line, quiet].filter(Boolean).join("; ");
   if (!unproven.length && !rust.length) return res;
   const np = [...unproven.map((u) => `NOT PROVEN: package ${u} did not build on base or head; its tests ran on neither`), ...rust].join("; ");
   return { ...res, line: [res.line, np].filter(Boolean).join("; ") };
@@ -730,7 +733,7 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: { nam
 
 /** One line per failing full-suite check that attributeFullSuite did not excuse, saying which rule kept it blocking (so a receipt never shows an unexplained red suite).
  *  Same inputs and the same profile as attributeFullSuite; `excused` is its preExistingChecks. */
-export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], changed: string[], excused: string[]): string[] {
+export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], changed: string[], excused: string[], blocked: readonly string[] = []): string[] {
   const p = loadProfile(repoDir), out: string[] = [];
   for (const c of full.filter((x) => x.result === "fail" && !excused.includes(x.name))) {
     const why = (r: string): void => { out.push(`not excused: ${c.name} (\`${c.cmd}\`): ${r}`); }, b = p ? baseFor(repoDir, p, c.cmd, true) : undefined, b0 = p ? baseFor(repoDir, p, c.cmd, false) : undefined, cutB = b0 && (b0.timed_out || b0.reason === "baseline budget used up") ? b0 : undefined;
@@ -744,9 +747,35 @@ export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: {
     const known = new Set([...b.failing_ids, ...(b.flaky_ids ?? [])]), fresh = comparableIds(c.ids).filter((i) => !known.has(i)), inChanged = c.ids.filter((i) => changed.some((f) => i.includes(f)) || goIdTouched(repoDir, i, changed));
     if (inChanged.length) { why(`${inChanged.length} failing id(s) name a changed file (first: ${inChanged[0]})`); continue; }
     if (fresh.length) { why(`${fresh.length} failing id(s) were not red on base (first: ${fresh[0]})`); continue; }
-    why("every failing id is red on base but the error text differs from base (or an unhandled-errors block differs)");
+    // fl24: FireLater#24 read "error text differs" when the text was identical: 146 of its ids also failed in 22 targeted checks that were not excused.
+    const held = new Set(blocked), inBlocked = c.ids.filter((i) => held.has(i));
+    if (inBlocked.length) { why(`${inBlocked.length} failing id(s) also fail in a targeted check that was not excused (first: ${inBlocked[0]})`); continue; }
+    why("every failing id is red on base but the error text differs from base and a failure names a changed file or symbol (or an unhandled-errors block differs)");
   }
   return out;
+}
+
+/** fl24: the still-failing checks whose every comparable id is red on base by id alone, the harness's evidence for a fix round that stops with
+ *  "these failures pre-exist on base" (machine.ts). An id counts red on base when this run's own base rerun showed it (`knownRed`, verify's
+ *  subtractBase) or the intake profile on this exact base commit lists it: the check's package suite (`suite`), the root baseline, or the
+ *  baseline of the check's own command (`cmd`, a full suite). A check is left out when the caller marks it ineligible (a target, Wall or
+ *  holdout check, or a test file the run touched), when an id names a changed file, when the diff edits Rust source or a manifest, or when any
+ *  of its head error lines names a changed file or symbol, or when this run's base rerun printed errors of another shape (`shapeDiffers`: the change
+ *  altered the failure). Text is otherwise not compared (a profile suite's reporter wording differs from a per-file run's): evidence for the claim only. */
+export function baseRedById(repoDir: string, baseSha: string, failing: { name: string; cmd?: string; ids?: string[]; errors?: Map<string, string[]> | Record<string, string[]>; suite?: string; eligible: boolean }[], knownRed: readonly string[], changed: string[], symbols: readonly string[] = [], shapeDiffers: readonly string[] = []): string[] {
+  const p = loadProfile(repoDir), names = lineNamesChange(changed, symbols);
+  if (cargoTouched(changed)) return [];
+  const idsOf = (b: CommandProfile["baseline"] | undefined): string[] => (b && b.ran && b.attributable && !b.timed_out && b.reason !== "baseline budget used up" ? [...b.failing_ids, ...(b.flaky_ids ?? [])] : []);
+  return failing.filter((f) => {
+    const ids = comparableIds(f.ids ?? []);
+    if (!f.eligible || shapeDiffers.includes(f.name) || ids.length === 0 || ids.some((i) => changed.some((c) => idNamesFile(i, c)) || goIdTouched(repoDir, i, changed))) return false;
+    const lines = f.errors instanceof Map ? [...f.errors.values()].flat() : Object.values(f.errors ?? {}).flat();
+    if (lines.some(names)) return false;
+    if (knownRed.includes(f.name)) return true;
+    if (!p || p.revision !== baseSha) return false;
+    const base = new Set([...idsOf(p.baseline), ...idsOf(f.suite ? p.suites?.find((s) => s.name === f.suite) : undefined), ...idsOf(f.cmd ? baseFor(repoDir, p, f.cmd, true) : undefined)]);
+    return ids.every((i) => base.has(i));
+  }).map((f) => f.name);
 }
 
 /** Static-diagnostic attribution (TEN-QUALITY-02): lint output of head vs base as multisets keyed path/code/message, line and column dropped so shifts do not count.

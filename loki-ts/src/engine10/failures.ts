@@ -1,5 +1,5 @@
 // engine10/failures.ts -- failing test ids (A-112) and the FailureGroup shape fix.ts consumes (E-17). The per-runner parsers and groupFailures had no production caller (only their own tests) and were deleted by A-115.
-import { javaSummary, stripAnsi } from "../util/check_result.ts"; import { dotnetSummary } from "../util/dotnet_test.ts"; export { failureGroup, failureSignature } from "../util/check_result.ts"; // L005: one owner of failure-line normalizing
+import { javaSummary, stripAnsi } from "../util/check_result.ts"; import { dotnetSummary } from "../util/dotnet_test.ts"; import { escapeRegex } from "../util/regex_escape.ts"; export { failureGroup, failureSignature } from "../util/check_result.ts"; // L005: one owner of failure-line normalizing
 export interface FailureGroup {
   signature: string; // normalized reason: numbers and quoted values collapsed
   count: number;
@@ -137,6 +137,36 @@ export function sameErrors(head: string | Map<string, string[]>, base: string | 
   const h = asMap(head), b = asMap(base), all = ids ?? [], eq = (x: string[] = [], y: string[] = []): boolean => x.length === y.length && x.every((e, n) => e === y[n]);
   const keys = (i: string): string[] => (h.has(i) ? [i] : [...h.keys()].filter((k) => k.endsWith(` > ${i}`)));
   return all.length > 0 && all.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => eq(b.get(k), h.get(k))); });
+}
+/** fl24: half of the second chance when sameErrors says the text differs (noiseOnlyErrors). True when every id has head error lines and none of them
+ *  names a changed file (its repo path, or its file name when that has an extension) or a changed symbol (a whole word, 3 characters or more). The
+ *  caller has already required the id red on base and the test file untouched; go and cargo output carries no error lines, so it never passes (fail
+ *  closed). Excusing on this is listed NOT PROVEN by the caller: the text was not shown equal. */
+export function errorsNameNoChange(head: string | Map<string, string[]> | Record<string, string[]>, ids: readonly string[], changed: readonly string[], symbols: readonly string[] = []): boolean {
+  const h = typeof head === "string" ? errorsById(head) : head instanceof Map ? head : new Map(Object.entries(head)), names = lineNamesChange(changed, symbols);
+  const keys = (i: string): string[] => (h.has(i) ? [i] : [...h.keys()].filter((k) => k.endsWith(` > ${i}`)));
+  return ids.length > 0 && ids.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => (h.get(k) ?? []).length > 0 && !(h.get(k) ?? []).some(names)); });
+}
+/** fl24: an error line with only its run-to-run noise masked, outside quoted text: the directories of a relative file path (a stack frame read from
+ *  another worktree), the :line:col after a file name, hex ids and durations. Quoted values and every other number are kept as printed (normError's rule):
+ *  "expected 'GET /admin/p' to be 'GET /p'" and "expected 5 to be 6" are the assertion, never noise; an AssertionError and a TypeError never match. */
+export const errorShape = (line: string): string => line.split(/('[^']*'|"[^"]*"|`[^`]*`)/).map((part, n) => (n % 2 === 1 ? part : part
+  .replace(/\/?(?:[\w.@-]+\/)+([\w.@-]+\.\w+)/g, "$1").replace(/(\.\w+):\d+(?::\d+)?/g, "$1:<n>").replace(/\b0x[0-9a-f]+\b/gi, "<hex>").replace(/\b\d+(?:\.\d+)?\s?ms\b/g, "<dur>"))).join("").replace(/\s+/g, " ").trim();
+/** sameErrors on errorShape: every id has head error lines and fails on base with lines of the same shapes, the same number of times. */
+export function sameErrorShape(head: string | Map<string, string[]> | Record<string, string[]>, base: string | Map<string, string[]> | Record<string, string[]>, ids: readonly string[]): boolean {
+  const asMap = (x: string | Map<string, string[]> | Record<string, string[]>): Map<string, string[]> => typeof x === "string" ? errorsById(x) : x instanceof Map ? x : new Map(Object.entries(x));
+  const h = asMap(head), b = asMap(base), shapes = (x: string[] = []): string => x.map(errorShape).sort().join("\n");
+  const keys = (i: string): string[] => (h.has(i) ? [i] : [...h.keys()].filter((k) => k.endsWith(` > ${i}`)));
+  return ids.length > 0 && ids.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => b.has(k) && (h.get(k) ?? []).length === (b.get(k) ?? []).length && shapes(h.get(k)) === shapes(b.get(k))); });
+}
+/** fl24: the one second-chance rule when sameErrors is false: the same error shapes as base (noise only) and no failure naming the change. */
+export const noiseOnlyErrors = (head: string | Map<string, string[]> | Record<string, string[]>, base: string | Map<string, string[]> | Record<string, string[]>, ids: readonly string[], changed: readonly string[], symbols: readonly string[] = []): boolean =>
+  sameErrorShape(head, base, ids) && errorsNameNoChange(head, ids, changed, symbols);
+/** A predicate: does this error line name a changed file (its repo path, or its file name when that has an extension and 4+ characters) or a changed symbol (a whole word, 3+ characters)? */
+export function lineNamesChange(changed: readonly string[], symbols: readonly string[] = []): (line: string) => boolean {
+  const word = (l: string, w: string): boolean => new RegExp(`(?<![\\w$])${escapeRegex(w)}(?![\\w$])`).test(l);
+  const files = changed.flatMap((f) => { const b = f.slice(f.lastIndexOf("/") + 1); return /\.\w+$/.test(b) && b.length >= 4 ? [f, b] : [f]; }), syms = symbols.filter((s) => s.length >= 3);
+  return (l) => files.some((f) => l.includes(f) && word(l, f)) || syms.some((s) => word(l, s));
 }
 /** FireLater#21: the ids two runs are compared by. vitest prints a test's bare title on its "x" line in one version ("x bg", 5.x) and the describe path in
  *  another ("x page 1 > bg", 2.1.9), and Loki's batched per-file text prints the bare title; only the full "file > describe > title" ids from FAIL
