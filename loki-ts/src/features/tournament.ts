@@ -663,9 +663,9 @@ export async function runTournamentGate(ctx: RunContext, signal: AbortSignal, se
     const ex = ATTEMPT_EXCLUDES, slots = LENSES.length + 3; // candidates, the agent copy, two base copies
     const agentSnap = snapshotDiff(ctx.repoDir, ctx.baseSha, ex); // the agent's whole tree, in memory; never written back whole
     const mk = (): ReturnType<typeof treeswapOps> => treeswapOps({
-      primary: ctx.repoDir, runDir: ctx.runDir, base: ctx.baseSha, k: slots, wallPaths: sealed, wallContent: new Map(Object.entries(deps.wallContent ?? {})), S, outputs: () => ctx.outputs(),
+      primary: ctx.repoDir, runDir: ctx.runDir, base: ctx.baseSha, k: slots, wallPaths: sealed, wallContent: new Map(Object.entries(deps.wallContent ?? {})), outputs: () => ctx.outputs(),
       keep: (p) => userUntracked.has(p) || sealed.has(p) || owned(p),
-      runSession: () => Promise.reject(new Error("the tournament starts no agent session")), runOne: () => Promise.resolve(),
+      runSession: () => Promise.reject(new Error("the tournament starts no agent session")),
     });
     let next = 1; const edited = new Map<string, Record<string, string>>(); // scratch dir -> the candidate's edited files (path -> whole text)
     const spec = input.spec && input.targetRel ? { file: input.spec, rel: input.targetRel } : null;

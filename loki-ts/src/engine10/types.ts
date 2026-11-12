@@ -183,6 +183,7 @@ export interface Receipt {
   pinned_test_updates?: import("../util/test_guard.ts").PinnedTestUpdate[]; // Z2 LOKI_E10_PINNED_TEST_UPDATE: each existing test updated to the issue's stated behavior; omitted (hash unchanged) when none
   no_regression?: string[]; // LOKI_E10_NRD: keep-case differential lines; omitted (hash unchanged) when none ran
   tournament?: string[]; // LOKI_E10_TOURNAMENT: one line per candidate, per probe disagreement, and the decision; omitted (hash unchanged) when no tournament ran
+  attempts?: string[]; // LOKI_E10_ATTEMPTS: one line per implement attempt and the selection reason; omitted (hash unchanged) when no extra attempt ran
   cost_preview?: Record<string, unknown>; // 11.3.0 T1: absent under LOKI_COST_PREVIEW=0
   verdict: Verdict;
   toolchain?: import("../util/receipt_signer.ts").Toolchain; loki_version?: string; // TEN-GATES-22: absent on receipts sealed before it existed, which still verify; loki_version (VERSION at seal) likewise
