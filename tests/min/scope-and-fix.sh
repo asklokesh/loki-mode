@@ -273,6 +273,7 @@
 # 233. conflict_resume.ts coverageMode: unset returns "turn" (the coverage mode, fold and e2e default legs fail).
 # 234. implement.ts buildImplementBrief: drop coverageFoldLines (the fold brief and wiring legs fail).
 # 237. opus_consult.ts consultEnabled: back to on by default (the consult default unit leg and the unset consult-off engine leg fail).
+# 238. machine.ts suiteOnlyRed: drop clause (a)'s targeted-pass check (suite fix skip clauses reads 0000 for the tq row).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1379,6 +1380,27 @@ FR="$(cd "$ROOT/loki-ts" && bun -e 'const { onlyFullSuiteRed } = await import(".
 SK="$(cd "$ROOT/loki-ts" && bun -e 'const m = await import("./src/engine10/machine.ts"); const full = { name: "full suite: vitest", result: "fail", ids: ["other.test.ts > x"] }, tgt = { name: "vitest:a.test.ts", result: "pass", n: 3 }, g = [{ signature: "full suite: vitest FAIL other" }], v = (o) => ({ failures_grouped: g, changed_files: ["src/a.ts"], checks: [full, tgt], ...o });
 console.log([m.suiteOnlyRed(v({})), m.suiteOnlyRed(v({ checks: [full, { ...tgt, n: 0 }] })), m.suiteOnlyRed(v({ checks: [{ ...full, ids: ["src/a.ts > y"] }, tgt] })), m.suiteOnlyRed(v({ holdout_failed: 1 })), m.suiteOnlyRed(v({ failures_grouped: [...g, { signature: "vitest:a.test.ts FAIL b" }] })), m.suiteOnlyRed(v({ checks: [full, { ...tgt, name: "lint:tsc" }] })), m.suiteFixSkipEnabled({}), m.suiteFixSkipEnabled({ LOKI_E10_SUITE_FIX_SKIP: "0" }), m.SUITE_FIX_SKIP_NOTE.includes("NOT PROVEN")].join(","));' 2>&1)"
 [ "$SK" = "true,false,false,false,false,false,true,false,true" ] && ok "suite fix skip: only a suite-only red with a passing targeted test and no failing id in a changed file skips the round; =0 runs it; the receipt line says NOT PROVEN ($SK)" || bad "suite fix skip: got '$SK'"
+# LOKI_E10_SUITE_FIX_SKIP clauses (a) and (b): payloads modeled on the lean139 bench verify data (trimmed to the fields suiteOnlyRed reads; the zod row adds the lint_unused_untouched
+# field verify now publishes). tq-11160: the failing full-suite ids name the edited test file whose targeted check passed (n=76). zod-6304: only a tsc group of unused declarations in
+# untouched test files beside full suites. Negatives: the targeted check fails or ran 0 tests, an id in a changed source file with no targeted check, a holdout, a tsc group verify did not mark.
+SKC="$(cd "$ROOT/loki-ts" && bun -e '
+const m = await import("./src/engine10/machine.ts"), v = await import("./src/engine10/stages/verify.ts");
+const fs = (name, ids = []) => ({ name, result: "fail", ids }), ps = (name, n) => ({ name, result: "pass", n }), G = (...s) => s.map((signature) => ({ signature }));
+const TF = "packages/query-core/src/__tests__/queryObserver.test.tsx";
+const tq = (o = {}) => ({ checks: [ps("vitest:" + TF, 76), fs("full suite: vitest", [TF + " > queryObserver > should clear interval when unsubscribing to a refetchInterval query"]), fs("full suite: npm")], failures_grouped: G("full suite: vitest FAIL packages/solid-query/src/__tests__/useQuery.test.tsx", "full suite: npm .svelte-kit/output"), changed_files: [TF, "packages/query-core/src/queryObserver.ts"], holdout_failed: 0, ...o });
+const LINT = "lint:tsc:packages/zod src/v3/tests/intersection.test.ts - error TS6196: x";
+const zod = (o = {}) => ({ checks: [ps("vitest:packages/zod/src/v4/classic/tests/from-json-schema.test.ts", 200), fs("lint:tsc:packages/zod"), fs("full suite: w"), fs("full suite: zod")], failures_grouped: G(LINT, "full suite: w FAIL locale tree-shaking", "full suite: zod ELIFECYCLE"), changed_files: ["packages/zod/src/v4/classic/from-json-schema.ts", "packages/zod/src/v4/classic/tests/from-json-schema.test.ts"], holdout_failed: 0, lint_unused_untouched: ["lint:tsc:packages/zod"], ...o });
+const ALL = { ids: true, tsc: true }, NONE = { ids: false, tsc: false }, NOIDS = { ids: false, tsc: true }, NOTSC = { ids: true, tsc: false };
+const b = (x) => (x ? 1 : 0), out = [];
+out.push([tq(), zod()].map((d) => [ALL, NONE, NOIDS, NOTSC].map((c) => b(m.suiteOnlyRed(d, c))).join("")).join(","));
+out.push([tq({ checks: [{ name: "vitest:" + TF, result: "fail", ids: ["x"] }, ...tq().checks.slice(1)] }), tq({ checks: [ps("vitest:" + TF, 0), ...tq().checks.slice(1)] }), tq({ checks: [...tq().checks, fs("full suite: vitest", ["packages/query-core/src/queryObserver.ts > y"])] }), tq({ holdout_failed: 1 }), zod({ lint_unused_untouched: undefined }), zod({ lint_unused_untouched: ["lint:tsc"] }), zod({ failures_grouped: [...G(LINT), ...G("vitest:a.test.ts FAIL b")] })].map((d) => b(m.suiteOnlyRed(d, ALL))).join(""));
+out.push([{}, { LOKI_E10_SUITE_FIX_SKIP: "1" }, { LOKI_E10_SUITE_FIX_SKIP: "noids" }, { LOKI_E10_SUITE_FIX_SKIP: "notsc" }, { LOKI_E10_SUITE_FIX_SKIP: "suite" }, { LOKI_E10_SUITE_FIX_SKIP: "0" }].map((e) => { const c = m.suiteFixSkipClauses(e); return c ? `${b(c.ids)}${b(c.tsc)}` : "off"; }).join(","));
+out.push(`${m.tscGroupAside(zod())}${m.tscGroupAside(tq())}${m.SUITE_FIX_SKIP_TSC_NOTE.includes("NOT PROVEN")}`);
+const U = (o, ch = ["packages/zod/src/v4/x.ts"]) => { const r = v.tscUnusedUntouched(o, "packages/zod", ch); return r.ok ? "ok" : r.why.split(" ")[0]; };
+const o1 = "src/v3/tests/a.test.ts:56:8 - error TS6196: \x27_Cat\x27 is declared but never used.\nsrc/v3/tests/b.test.ts(9,1): error TS6133: \x27x\x27 is declared but its value is never read.\n";
+out.push([U(o1), U("\x1b[96m" + o1.replace("src/v3", "src/v3")), U(o1, ["packages/zod/src/v3/tests/a.test.ts"]), U(o1 + "src/c.ts:1:1 - error TS2322: no\n"), U(o1 + "error TS6133 unparsed\n"), U(o1, ["packages/zod/tsconfig.json"]), U(""), U(o1.replace("TS6196", "TS6192"))].join(","));
+console.log(out.join(" | "));' 2>&1)"
+[ "$SKC" = "1001,1010 | 0000000 | 11,11,01,10,00,off | truefalsetrue | ok,ok,diagnostic,code,1,a,no,code" ] && ok "suite fix skip clauses: (a) skips the tq shape and (b) the zod shape, each alone under its sub-knob and neither under =suite; a failing or empty targeted check, an id in an untested changed source file, a holdout, an unmarked or other tsc group, or a targeted failure keeps the round; tscUnusedUntouched accepts only TS6133/TS6196 outside changed files, ANSI stripped ($SKC)" || bad "suite fix skip clauses: got '$SKC'"
 WD="$(cd "$ROOT/loki-ts" && bun -e 'const { wallEnabled } = await import("./src/engine10/sizing.ts"); console.log([wallEnabled({}), wallEnabled({ LOKI_E10_WALL: "" }), wallEnabled({ LOKI_E10_WALL: "0" }), wallEnabled({ LOKI_E10_WALL: "1" }), wallEnabled({ LOKI_E10_WALL: "on" })].join(","))' 2>&1)"
 [ "$WD" = "false,false,false,true,true" ] && ok "wall default: the Wall session is off unless LOKI_E10_WALL=1/on ($WD)" || bad "wall default: wallEnabled gave '$WD'"
 # Go output cap (rule 22, real go test -json through the real runOnce and corroboratePass): a test file whose -json stream is larger than the 64 KB tail (and a whole-package run larger than 1 MiB) is judged whole and counts;
@@ -1625,6 +1647,25 @@ if [ -x "$TSC_NM/.bin/tsc" ] && [ -x "$TSC_NM/.bin/vitest" ]; then
     tc="$(wo_receipt ck)"; case "$tc" in *"lint:tsc=fail"*) ok "tsc untouched: the real tsc failed on the unused local in legacy.ts ($tc)" ;; *) bad "tsc untouched: no failing lint:tsc check: '$tc'"; dump ;; esac
     [ "$(fix_sessions)" = "0" ] && ok "tsc untouched: an unused local in an untouched file starts no fix session" || { bad "tsc untouched: $(fix_sessions) fix sessions (want 0)"; dump; }
     [ "$(ev 'sum(1 for e in E if e["type"]=="fix.round")')" = "0" ] && ok "tsc untouched: no fix.round event" || bad "tsc untouched: fix.round events: $(ev 'sum(1 for e in E if e["type"]=="fix.round")')"
+    # LOKI_E10_SUITE_FIX_SKIP clause (b) on the real tsc: node_modules is a real directory whose links reach outside the repo plus one link into it (the pnpm workspace shape), so the
+    # base tsc comparison is refused and the unused local in an untouched test file stays a blocking tsc failure (the zod bench shape). Verify records the check in
+    # lint_unused_untouched, the default starts no fix session and names the skip; =notsc runs the round.
+    make_tsc_ws_repo() {
+        make_tsc_repo "$1"; rm -f "$1/legacy.ts" "$1/node_modules"; mkdir -p "$1/node_modules"
+        for e in "$TSC_NM"/* "$TSC_NM"/.bin; do ln -s "$e" "$1/node_modules/$(basename "$e")"; done
+        ln -s .. "$1/node_modules/ws-self"
+        printf 'import { expect, test } from "vitest";\n\nconst stale = 1;\n\ntest("legacy", () => {\n  expect(1).toBe(1);\n});\n' > "$1/legacy.test.ts"
+    }
+    tsc_ws_run() { MAKE_REPO=make_tsc_ws_repo run_engine "add a multiply(a, b) function to calc.ts" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.ts LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=0 LOKI_EXOGENOUS_PROOF=0 E2E_STUB_SNIPPET="$TS_SNIP" "$@"; }
+    tsc_ws_run
+    luu="$(ev 'next((",".join(e["data"].get("lint_unused_untouched") or []) for e in E if e["type"]=="stage.completed" and e["stage"]=="verify"), "none")')"
+    wnotes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+    [ "$luu" = "lint:tsc" ] && ok "tsc clause (b): verify records the untouched test file's unused local in lint_unused_untouched ($luu)" || { bad "tsc clause (b): lint_unused_untouched is '$luu'"; dump; }
+    [ "$(fix_sessions)" = "0" ] && [ "$(ev 'sum(1 for e in E if e["type"]=="loop.repeat" and e["data"].get("skipped") is True)')" = "1" ] && ok "tsc clause (b): the skip starts no fix session and records one skipped loop.repeat" || { bad "tsc clause (b): $(fix_sessions) fix sessions (want 0)"; dump; }
+    has "tsc clause (b): the receipt names the tsc skip as NOT PROVEN" "$wnotes" "unused-declaration tsc errors in files the change did not touch"
+    [ -n "$(outcome)" ] && [ "$(outcome)" != VERIFIED ] && ok "tsc clause (b): the skipped run is never VERIFIED ($(outcome))" || { bad "tsc clause (b): outcome '$(outcome)'"; dump; }
+    tsc_ws_run LOKI_E10_SUITE_FIX_SKIP=notsc
+    [ "$(fix_sessions)" -ge 1 ] && ok "tsc clause (b): LOKI_E10_SUITE_FIX_SKIP=notsc runs the round ($(fix_sessions) fix sessions)" || { bad "tsc clause (b) =notsc: no fix session"; dump; }
     tsc_run E2E_STUB_SNIPPET=$'const leak = 1;\n'"$TS_SNIP"
     [ "$(fix_sessions)" -ge 1 ] && ok "tsc touched: an unused local in the file the change wrote is fix-round input ($(fix_sessions) fix sessions)" || { bad "tsc touched: no fix session"; dump; }
     TSC_CFG_EDIT=(E2E_STUB_SNIPPET="$TS_SNIP" E2E_STUB_TEST_APPEND=$'export const edited = 1;\n' E2E_STUB_TARGET=tsconfig.json E2E_STUB_REPLACE='"strict":true' E2E_STUB_SNIPPET='"strict":true,"allowJs":false')
@@ -2965,12 +3006,14 @@ const rb = buildFixResumeBrief([], null, null, 0, [], h), rb0 = buildFixResumeBr
 res("buildFixResumeBrief carries the hints when given and is unchanged when not", rb.includes(h) && !rb0.includes(h) && rb.replace(`${h}\n\n`, "") === rb0);
 const cr = readFileSync(root + "/loki-ts/src/util/conflict_resume.ts", "utf8"), fx = readFileSync(root + "/loki-ts/src/engine10/stages/fix.ts", "utf8");
 res("wiring: resumeForCoverage appends siteHints to the coverage brief (claim or plain) and fix.ts passes siteHints to both briefs", /const hints = siteHints\(ctx\), base = claims \? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith\(ctx, capped, firstSession, hints \? `\$\{base\}/.test(cr) && /const hints = siteHints\(ctx\);/.test(fx) && /holdoutFailed, hintsPlus\)/.test(fx) && /\), hintsPlus\)\); \/\/ one session/.test(fx) && /const hintsPlus = \[hints, /.test(fx));
+const mcA = readFileSync(root + "/loki-ts/src/engine10/machine.ts", "utf8"), vfA = readFileSync(root + "/loki-ts/src/engine10/stages/verify.ts", "utf8");
+res("wiring: verify collects tscUnusedUntouched for each still-failing tsc check and publishes lint_unused_untouched; the machine skips round 1 on suiteOnlyRed and picks the tsc note", /unusedTsc\.push\(\{ check: c\.name, \.\.\.tscUnusedUntouched\(tscOut\.get\(c\) \?\? "", g\.root, changedAll \?\? changed\) \}\)/.test(vfA) && /lint_unused_untouched: unusedTsc\.filter/.test(vfA) && /!\(suiteSkip \|\| \(round > 1 && onlyFullSuiteRed\(outputs\.verify\)\)\)/.test(mcA) && /suiteFixSkipClauses\(\)\?\.tsc && tscGroupAside\(outputs\.verify\) \? SUITE_FIX_SKIP_TSC_NOTE : SUITE_FIX_SKIP_NOTE/.test(mcA));
 const im = readFileSync(root + "/loki-ts/src/engine10/stages/implement.ts", "utf8");
 res("wiring: the plan-skipped implement brief adds coverageFoldLines right after FOLD_PLAN_INSTRUCTION, and fold mode runs only the claim check on the implement session (no -c turn)", /\.\.\.\(plan \? \[\] : \[FOLD_PLAN_INSTRUCTION, \.\.\.coverageFoldLines\(\)\]\)/.test(im) && /else if \(coverageMode\(\) === "fold" && !plan\) \{/.test(im) && /const r = await reaskFoldedClaims\(ctx, /.test(im) && /if \(coverageResumeEnabled\(\) && !plan\)/.test(im));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/site-hints.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "site-hints unit script crashed or exited non-zero"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 10 ] || bad "site-hints unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 10"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 11 ] || bad "site-hints unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 11"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
