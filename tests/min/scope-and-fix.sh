@@ -277,6 +277,7 @@
 # 237. opus_consult.ts consultEnabled: back to on by default (the consult default unit leg and the unset consult-off engine leg fail).
 # 239. conflict_resume.ts parseRemedyCheck: accept MISSING even beside IMPLEMENTED (the ranked remedy check unit leg reads missing for MISSING or IMPLEMENTED).
 # 241. conflict_resume.ts parseRemedyCheck: drop the NOT IMPLEMENTED rule (the ranked remedy check unit leg reads implemented for NOT IMPLEMENTED).
+# 242. scope.ts crossPackageTestEdits: drop the source-change-in-package check (the J3 scope leg also drops packages/a/src/a.test.ts beside a.ts).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -384,6 +385,31 @@ notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(ope
 has "weaken: the receipt names the weakened test" "$notes" "weakened test: calc.test.ts"
 has "scope: the receipt lists the out-of-scope edit" "$notes" "outside stated scope: util.ts"
 grep -q 'MODE = 2' "$REPO/util.ts" && ok "scope: the out-of-scope edit is kept, not reverted" || bad "scope: the util.ts edit was dropped"
+# J3 LOKI_E10_SCOPE_TEST_DROP (default on, =0 opts out): a test-only edit in a package the change does not touch is reset before commit. A JS workspace (packages/a, packages/b),
+# Go directories and a Python file: the cross-package test is dropped; one the task names, one in the changed package, a test-only change, a Go tests-only directory and Python stay.
+XP="$T/xpkg"; rm -rf "$XP"; mkdir -p "$XP/packages/a/src" "$XP/packages/b/src" "$XP/pkg/x" "$XP/pkg/y" "$XP/tests" "$XP/py"
+printf '{"name":"root","private":true,"workspaces":["packages/*"]}\n' > "$XP/package.json"; printf '{"name":"@acme/a"}\n' > "$XP/packages/a/package.json"; printf '{"name":"@acme/b"}\n' > "$XP/packages/b/package.json"
+for f in packages/a/src/a.ts packages/b/src/b.ts pkg/x/x.go pkg/y/y.go py/m.py; do printf 'x\n' > "$XP/$f"; done
+for f in packages/a/src/a.test.ts packages/b/src/b.test.ts pkg/y/y_test.go tests/t_test.go py/test_m.py; do printf 't\n' > "$XP/$f"; done
+XPR="$(cd "$ROOT/loki-ts" && XP="$XP" bun -e '
+const sc = await import("./src/e10ext/scope.ts"), d = process.env.XP;
+const tracked = ["packages/a/src/a.ts", "packages/b/src/b.ts", "pkg/x/x.go", "pkg/y/y.go", "py/m.py", "packages/a/src/a.test.ts", "packages/b/src/b.test.ts", "pkg/y/y_test.go", "tests/t_test.go", "py/test_m.py", "package.json", "packages/a/package.json", "packages/b/package.json"];
+const M = (...fs) => fs.map((f) => ({ st: "M", f })), x = (staged, task = "fix the parser bug") => sc.crossPackageTestEdits(d, staged, task, tracked).join("+") || "-";
+console.log([
+  x(M("packages/a/src/a.ts", "packages/b/src/b.test.ts")),
+  x(M("packages/a/src/a.ts", "packages/b/src/b.test.ts"), "fix the parser bug and cover packages/b"),
+  x(M("packages/a/src/a.ts", "packages/b/src/b.test.ts"), "fix the parser bug; @acme/b needs a test too"),
+  x(M("packages/a/src/a.ts", "packages/a/src/a.test.ts")),
+  x(M("packages/b/src/b.test.ts")),
+  x(M("pkg/x/x.go", "pkg/y/y_test.go")),
+  x(M("pkg/x/x.go", "tests/t_test.go")),
+  x(M("py/m.py", "py/test_m.py", "packages/a/src/a.ts")),
+  x([{ st: "M", f: "packages/a/src/a.ts" }, { st: "A", f: "packages/b/src/new.test.ts" }]),
+  [sc.scopeTestDropEnabled({}), sc.scopeTestDropEnabled({ LOKI_E10_SCOPE_TEST_DROP: "0" })].join(),
+].join(" | "));' 2>&1)"
+[ "$XPR" = "packages/b/src/b.test.ts | - | - | - | - | pkg/y/y_test.go | - | - | packages/b/src/new.test.ts | true,false" ] && ok "J3 scope: a test edit or new test in a package (JS workspace or Go directory) the change does not touch is dropped; the task naming the path or package, a test in the changed package, a test-only change, a Go tests-only directory and Python stay; =0 opts out ($XPR)" || bad "J3 scope gave: $XPR"
+SJ3="$ROOT/loki-ts/src/engine10/stages/seal.ts"
+grep -q 'const xpkg = scopeTestDropEnabled() ? crossPackageTestEdits(ctx.repoDir, staged.filter' "$SJ3" && grep -q 'const dropped = new Set(\[...drop.map(({ f }) => f), ...xpkg\])' "$SJ3" && grep -q 'const notes = \[...xpkg.map(crossPackageTestNote),' "$SJ3" && ok "J3 wiring: the commit stage resets the cross-package test edits before commit, keeps them out of the formatter pass and names each one" || bad "J3 wiring: the commit stage does not reset and name the cross-package test edits"
 
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=delete LOKI_EXOGENOUS_PROOF=0 # proof opt-out: the deleted assertion alone must cap, not the agent-only-proof rule
 git -C "$REPO" show HEAD:calc.test.ts 2>/dev/null | grep -q 'calc.add(2, 3)' && bad "delete: the deleted assertion came back" || ok "delete: the session's deletion of an assertion is kept, not restored"

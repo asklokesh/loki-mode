@@ -1,7 +1,8 @@
 // D76: scope control is ADVISORY. It flags edits outside every scope signal and never reverts or drops them. Signals (no model call): the files
 // plan-scope.json names (when present, that list is the scope), plan's relevant_files, any path or basename the plan, task or contract names,
 // directories matching a noun of the issue, and planned directories. No plan signal = undetermined.
-import { basename, dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { isTestFile } from "../engine10/testmap.ts";
 import type { Obj } from "../engine10/types.ts";
 import { unitFlags } from "../features/speed/unit_mode.ts";
@@ -45,4 +46,37 @@ export function flagOutsideScope(o: Partial<Record<string, Obj>>, staged: Staged
   const unit = unitFlags(staged, process.env, (o.intake?.preexisting_dirty ?? {}) as Record<string, string>); // D61-11: null unless a unit spec is active
   const un = outsideScope(o, staged, runDir ? readPlanScope(runDir) : []), seen = new Set((unit ?? []).map(outsideNote));
   return [...(unit ?? []).map(outsideNote), ...(un ? un.map(outsideNote).filter((n) => !seen.has(n)) : staged.length > 0 ? [SCOPE_UNDETERMINED] : [])];
+}
+
+/** J3 LOKI_E10_SCOPE_TEST_DROP (default on, =0 opts out): the one non-advisory scope rule. A test file the run added or modified in an owner package (a Go directory, a JS/TS
+ *  package with its own package.json) where the change has no non-test change, the package has source files, and the task names neither the file nor the package, is reset to
+ *  base before commit with a NOT PROVEN note. Python layouts and files with no owner are never touched, nor is any source file, nor a test-only change (no source change anywhere).
+ *  On the tuning bench it fires on the 3 cross-package test scope fails (v1371 and v1380 tq-11327, v1381 lh-1474) and on 0 of 160 lean runs. */
+export const scopeTestDropEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SCOPE_TEST_DROP"] ?? "").trim());
+export const crossPackageTestNote = (f: string): string => `test-only edit outside the change's packages dropped: ${f} (no source change in its package, and the task does not name it)`;
+const JS_EXT = /\.(?:[cm]?[jt]sx?)$/;
+/** The owner package of a file: its directory for Go, the nearest directory holding a package.json for JS/TS (repo root included); null otherwise. */
+function ownerOf(repoDir: string, f: string): { dir: string; name: string } | null {
+  if (f.endsWith(".go")) { const d = dirname(f); return { dir: d, name: basename(d) }; }
+  if (!JS_EXT.test(f)) return null;
+  for (let d = dirname(f); ; d = dirname(d)) {
+    const pj = join(repoDir, d, "package.json");
+    if (existsSync(pj)) { let name = basename(d === "." ? repoDir : d); try { const n = (JSON.parse(readFileSync(pj, "utf8")) as { name?: unknown }).name; if (typeof n === "string") name = n; } catch { /* unreadable manifest: the directory name */ } return { dir: d, name }; }
+    if (d === "." || d === "") return null;
+  }
+}
+/** The staged test files to reset (see scopeTestDropEnabled). `tracked` lists the repo's tracked files (for "the package has source files"). */
+export function crossPackageTestEdits(repoDir: string, staged: Staged[], task: string, tracked: readonly string[]): string[] {
+  const live = staged.filter(({ st, f }) => (st === "A" || st === "M") && !f.startsWith(".loki/"));
+  const src = live.filter(({ f }) => !isTestFile(f) && (f.endsWith(".go") || JS_EXT.test(f)));
+  if (src.length === 0) return [];
+  const srcOwners = new Set(src.map(({ f }) => ownerOf(repoDir, f)?.dir).filter((d): d is string => d !== undefined));
+  const inPkg = (dir: string, f: string): boolean => dir === "." || f.startsWith(`${dir}/`);
+  const hasSource = (o: { dir: string }, go: boolean): boolean => tracked.some((t) => !isTestFile(t) && (go ? dirname(t) === o.dir && t.endsWith(".go") : JS_EXT.test(t) && inPkg(o.dir, t) && ownerOf(repoDir, t)?.dir === o.dir));
+  return live.filter(({ f }) => {
+    if (!isTestFile(f)) return false;
+    const o = ownerOf(repoDir, f); if (!o || srcOwners.has(o.dir)) return false;
+    if (mentions(task, f) || mentions(task, basename(f)) || (o.dir !== "." && (mentions(task, o.dir) || mentions(task, basename(o.dir)))) || mentions(task, o.name)) return false;
+    return hasSource(o, f.endsWith(".go"));
+  }).map(({ f }) => f);
 }
