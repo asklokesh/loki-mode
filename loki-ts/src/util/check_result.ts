@@ -1801,8 +1801,16 @@ export function assertionFailure(runner: string, output: string, reported: Repor
   }
   if (runner === "vitest") return vitestErrorsAreAssertion(out);
   if (runner === "go") return goAssertionFailure(out);
+  if ((runner === "node" || runner === "jest" || runner === "mocha") && assertJsOn()) return jsAssertionFailure(out);
   return false;
 }
+/** ASSERT-JS (LOKI_E10_ASSERT_JS, default on, =0 opts out): node:test, jest and mocha red by assertion. At least one failure is an assertion (node:assert's
+ *  AssertionError / ERR_ASSERTION, chai's AssertionError, jest's `expect(received).<matcher>` report), and none is a missing-API or load failure: a value that is
+ *  not a function or constructor, a ReferenceError, a SyntaxError, a module that cannot be found, an export that does not exist, or a suite that failed to load. */
+export const assertJsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_ASSERT_JS"] ?? "").trim());
+const JS_ASSERTED = /\bAssertionError\b|\bERR_ASSERTION\b|\bexpect\((?:received|value)\)\.\w+/;
+const JS_MISSING_API = /\bTypeError: [^\n]*\bis not a (?:function|constructor)\b|\bReferenceError: |\bSyntaxError: |Cannot find module|ERR_MODULE_NOT_FOUND|does not provide an export named|is not exported|Test suite failed to run|failureType: '(?:hookFailed|cancelledByParent)'|test failed to load/;
+export function jsAssertionFailure(out: string): boolean { const t = stripAnsi(out); return JS_ASSERTED.test(t) && !JS_MISSING_API.test(t); }
 /** The one pytest red-by-assertion rule (assertionFailure per file, features/exec_spec.ts per case): at least one failure kind is an assertion and none is a missing-API error. */
 export const pytestKindsAreAssertion = (kinds: string[]): boolean => kinds.some((k) => /^(?:assert\b|AssertionError\b)/.test(k)) && !kinds.some((k) => /^(?:Import|ModuleNotFound|Attribute|Name|UnboundLocal|Type|Syntax|Indentation)Error\b/.test(k));
 /** The one vitest red-by-assertion rule (assertionFailure per file, features/exec_spec.ts per case): every reported error is an AssertionError. */

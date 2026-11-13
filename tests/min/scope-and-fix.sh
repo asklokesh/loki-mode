@@ -287,6 +287,7 @@
 # 249. testmap.ts mochaTargets: ignore devDependencies (the R5 leg maps a mocha package to nothing).
 # 250. attempts.ts attemptModel: always entry 1 (the cascade leg runs the extra attempt on Haiku).
 # 251. testmap.ts buildTestMap: stop passing `marks` to scopeRunnersByPackage (the multi-module go map leg reads no tests).
+# 252. check_result.ts jsAssertionFailure: drop JS_MISSING_API (the assert-js unit's missing-function case reads true).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1702,6 +1703,17 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "issue-reported exception: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: issue-reported exception: pytest is not installed"; fi
 fi
+# ASSERT-JS (verify-dev 2026-11-13, commander.js: "test fails without the fix: yes" never counted, because assertionFailure read only pytest, vitest and go):
+# node:test, jest and mocha failures count as red by assertion when the output carries an assertion (ERR_ASSERTION, AssertionError, expect(received).x)
+# and no missing-API or load failure (not a function, ReferenceError, SyntaxError, a module or export that does not exist, a suite that failed to run).
+AJ="$(cd "$ROOT/loki-ts" && bun -e '
+const { assertionFailure } = await import("./src/util/check_result.ts");
+const node = "not ok 1 - source\n  failureType: \x27testCodeFailure\x27\n  code: \x27ERR_ASSERTION\x27\n  name: \x27AssertionError\x27\n", jest = "  ● opts > source\n\n    expect(received).toBe(expected)\n";
+const r = [assertionFailure("node", node), assertionFailure("jest", jest), assertionFailure("mocha", "AssertionError: expected [] to have keys"),
+  assertionFailure("node", "TypeError: cmd.sourceWithGlobals is not a function\nAssertionError\n"), assertionFailure("mocha", "Error: Cannot find module \x27../lib/x.js\x27\nAssertionError"),
+  assertionFailure("jest", "Test suite failed to run\n expect(received).toBe"), assertionFailure("node", "not ok 1\n  error: \x27boom\x27\n  TypeError: Cannot read properties of undefined\n")];
+process.env.LOKI_E10_ASSERT_JS = "0"; r.push(assertionFailure("node", node)); console.log(r.join(","));' 2>&1)"
+[ "$AJ" = "true,true,true,false,false,false,false,false" ] && ok "assert-js unit: node:test, jest and mocha assertions are red by assertion; a missing function, a missing module, a suite that failed to run, a bare TypeError and LOKI_E10_ASSERT_JS=0 are not" || bad "assert-js unit gave: $AJ"
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
 if command -v go >/dev/null 2>&1; then
