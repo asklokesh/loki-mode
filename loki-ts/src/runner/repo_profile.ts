@@ -729,14 +729,14 @@ export function sameUnattributableRed(repoDir: string, baseSha: string, full: Fu
   }).map((c) => c.name);
 }
 export const SAME_RED_NOTE = "excused as red on base in the identical kind (same command, same exit code, the same unparseable output shape; no failing id could be compared)";
-export function attributeFullSuite(repoDir: string, baseSha: string, full: FullCheck[], blocked: string[], changed: string[], symbols: readonly string[] = []): Attribution {
+export function attributeFullSuite(repoDir: string, baseSha: string, full: FullCheck[], blocked: string[], changed: string[], symbols: readonly string[] = [], shownIds: ReadonlySet<string> = new Set()): Attribution {
   const same = sameUnattributableRed(repoDir, baseSha, full);
-  const res = attributeFullSuiteById(repoDir, baseSha, same.length ? full.filter((c) => !same.includes(c.name)) : full, blocked, changed, symbols);
+  const res = attributeFullSuiteById(repoDir, baseSha, same.length ? full.filter((c) => !same.includes(c.name)) : full, blocked, changed, symbols, shownIds);
   if (!same.length) return res;
   const note = full.filter((c) => same.includes(c.name)).map((c) => `NOT PROVEN: "${c.cmd}" was ${SAME_RED_NOTE}`).join("; ");
   return { ...res, preExistingChecks: [...res.preExistingChecks, ...same], introducedChecks: res.introducedChecks.filter((n) => !same.includes(n)), line: [res.line, note].filter(Boolean).join("; ") };
 }
-function attributeFullSuiteById(repoDir: string, baseSha: string, full: FullCheck[], blocked: string[], changed: string[], symbols: readonly string[] = []): Attribution {
+function attributeFullSuiteById(repoDir: string, baseSha: string, full: FullCheck[], blocked: string[], changed: string[], symbols: readonly string[] = [], shownIds: ReadonlySet<string> = new Set()): Attribution { // shownIds: TOUCHED-BASE-RED ids an edited file's own run showed red on base with the same error; only they may name that changed file here
   const bad = full.filter((c) => c.result === "fail"), none: Attribution = { preExistingChecks: [], preExistingIds: [], introducedChecks: bad.map((c) => c.name), line: null }, p = loadProfile(repoDir);
   if (!bad.length || !p || p.revision !== baseSha) return none;
   const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran), of = (cmd: string) => baseFor(repoDir, p, cmd, true);
@@ -750,7 +750,7 @@ function attributeFullSuiteById(repoDir: string, baseSha: string, full: FullChec
     /* a flaky id, or any id of a suite red at base, whose head error text names a file the change edited is the change's own failure, whatever the id */ errNamesChanged = (c: (typeof bad)[number]): boolean => { const fl = new Set(of(c.cmd)?.flaky_ids ?? []), all = massive(c.cmd), keys = Object.keys(c.errors ?? {}).filter((k) => all || [...fl].some((i) => k === i || k.endsWith(` > ${i}`))); return keys.some((k) => (c.errors?.[k] ?? []).some((l) => changed.some((f) => l.includes(f)))); };
   if (known.size === 0) return none;
   const unproven = [...new Set(bad.flatMap((c) => c.ids ?? []).filter((i) => !i.includes("::") && goIdTouched(repoDir, i, changed)))];
-  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && (sameAsBase(c) || quietAsBase(c)) && !errNamesChanged(c) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => idNamesFile(i, f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
+  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && (sameAsBase(c) || quietAsBase(c)) && !errNamesChanged(c) && (c.ids ?? []).every((i) => !block.has(i) && (shownIds.has(i) || !changed.some((f) => idNamesFile(i, f))) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
   const rust = (cargoTouched(changed) ? bad : []).map((c) => `NOT PROVEN: ${c.name} may run cargo tests and the diff edits Rust source or a manifest; cargo test ids carry no crate path, so a failure cannot be shown pre-existing`);
   const red = res.preExistingChecks.length ? bad.filter((c) => res.preExistingChecks.includes(c.name) && massive(c.cmd)) : [], redLine = red.map((c) => `NOT PROVEN: suite red at base (${of(c.cmd)!.failing_ids.length} failing ids) for "${c.cmd}": it is compared per id, never blocks and proves nothing about this change`).join("; ");
   if (redLine) res.line = [res.line, redLine].filter(Boolean).join("; ");
@@ -798,7 +798,7 @@ export function collateralOnBaseline(repoDir: string, baseSha: string, test: str
   return redOnBaseProfile(p, comparableIds(c.ids ?? []), c.errors);
 }
 export const TOUCHED_RED = "edited test file red on base by every failing id with the same errors; the cases the change added or edited pass (excused, not blocking)";
-export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: FullCheck[], changed: string[], excused: string[], blocked: readonly string[] = []): string[] {
+export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: FullCheck[], changed: string[], excused: string[], blocked: readonly string[] = [], shownIds: ReadonlySet<string> = new Set()): string[] {
   const p = loadProfile(repoDir), out: string[] = [];
   for (const c of full.filter((x) => x.result === "fail" && !excused.includes(x.name))) {
     const why = (r: string): void => { out.push(`not excused: ${c.name} (\`${c.cmd}\`): ${r}`); }, b = p ? baseFor(repoDir, p, c.cmd, true) : undefined, b0 = p ? baseFor(repoDir, p, c.cmd, false) : undefined, cutB = b0 && (b0.timed_out || b0.reason === "baseline budget used up") ? b0 : undefined;
@@ -809,7 +809,7 @@ export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: F
     if (!b.attributable) { why(`the base run is not attributable (${b.reason ?? "no failing ids parsed"})${baseRedShapeOn() ? `; BASE-RED-SHAPE: exit base ${b.exit_code} head ${c.exit ?? "unknown"}, shape ${!b.failing_shape ? "not recorded on base" : !c.shape ? "absent on head (ids parsed)" : b.failing_shape === c.shape ? "same" : "differs"}` : ""}`); continue; } // BASE-RED-SHAPE marker: why the identical-kind rule did not excuse it
     if (!c.ids?.length) { why("its failing ids could not be parsed from the output, so nothing can be compared"); continue; }
     if (cargoTouched(changed)) { why("the diff edits Rust source or a manifest and cargo ids carry no crate path"); continue; }
-    const known = new Set([...b.failing_ids, ...(b.flaky_ids ?? [])]), fresh = comparableIds(c.ids).filter((i) => !known.has(i)), inChanged = c.ids.filter((i) => changed.some((f) => i.includes(f)) || goIdTouched(repoDir, i, changed)); // ID-PKG-RELATIVE: the same rule attributeFullSuite uses
+    const known = new Set([...b.failing_ids, ...(b.flaky_ids ?? [])]), fresh = comparableIds(c.ids).filter((i) => !known.has(i)), inChanged = c.ids.filter((i) => (!shownIds.has(i) && changed.some((f) => idNamesFile(i, f))) || goIdTouched(repoDir, i, changed)); // ID-PKG-RELATIVE: the same rule attributeFullSuite uses
     if (inChanged.length) { why(`${inChanged.length} failing id(s) name a changed file (first: ${inChanged[0]})`); continue; }
     if (fresh.length) { why(`${fresh.length} failing id(s) were not red on base (first: ${fresh[0]})`); continue; }
     // fl24: FireLater#24 read "error text differs" when the text was identical: 146 of its ids also failed in 22 targeted checks that were not excused.

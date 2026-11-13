@@ -301,6 +301,7 @@
 # 263. verify.ts ownTests: drop the changed-file condition (fl24 own-by-path reads a/page.test.ts own for an unedited a/x/page.ts).
 # 264. repo_profile.ts touchedRedOnBase: drop the editedTitles check (fl24 touched-base-red's failing edited case reads true; the newly-failing fl24 monorepo run reads PARTIAL).
 # 265. repo_profile.ts collateralOnBaseline: drop the paired-source check (fl24 collateral-baseline's changed web/src/app/x/page.ts reads true).
+# 266. failures.ts idNamesFile: drop the package-relative branch (fl24 id-pkg-relative reads false for frontend/src/components/S.test.ts).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1883,6 +1884,12 @@ const same = { [id]: ["AssertionError: x"] }, nid = "src/app/x/__tests__/page.te
 const r = [cb([id], same, ["web/src/lib/api.ts"]), cb([id], same, ["web/src/app/x/page.ts"]), cb([id], same, [T1]), cb([id, nid], { ...same, [nid]: ["AssertionError: y"] }, []), cb([id], { [id]: ["TypeError: z"] }, [])];
 process.env.LOKI_E10_COLLATERAL_BASELINE = "0"; r.push(cb([id], same, [])); console.log(r.join(","));' 2>&1)"
 [ "$FD" = "true,false,false,false,false,false" ] && ok "fl24 collateral-baseline: excused only when unedited, the paired source unchanged and ids and errors equal the baseline; a changed paired source, an edited test, a new id, another error and =0 keep the cap" || bad "fl24 collateral-baseline gave: $FD"
+# FL24-ID-PKG-RELATIVE (acc-154; FireLater#24 side note): a package-relative vitest id ("src/x.test.ts > t", printed by a run in frontend/) names the repo file
+# frontend/src/x.test.ts. Before it such an id never named its changed file, so a failure in an edited file could be excused (fail open); =0 restores the old rule.
+FI="$(cd "$ROOT/loki-ts" && bun -e '
+const fl = await import("./src/engine10/failures.ts"), r = [fl.idNamesFile("src/components/S.test.ts > a", "frontend/src/components/S.test.ts"), fl.idNamesFile("src/components/S.test.ts > a", "frontend/src/other/S.test.ts"), fl.idNamesFile("frontend/src/components/S.test.ts > a", "frontend/src/components/S.test.ts")];
+process.env.LOKI_E10_ID_PKG_RELATIVE = "0"; r.push(fl.idNamesFile("src/components/S.test.ts > a", "frontend/src/components/S.test.ts")); console.log(r.join(","));' 2>&1)"
+[ "$FI" = "true,false,true,false" ] && ok "fl24 id-pkg-relative: a package-relative id names its changed repo file, not a file elsewhere; a repo-relative id still does; =0 restores the old rule" || bad "fl24 id-pkg-relative gave: $FI"
 # FL24-MONOREPO (acc-154; FireLater#24 slices s3 and s4 FAILED on 11.140.0 with 0 failures introduced). A backend plus frontend monorepo whose frontend page
 # tests under (group) and [id] routes are red on base (stale assertions) and import the lib/api.ts the slice edits; the task spells new paths, names one page
 # "is not modified" and one chart as "the pattern in"; the slice edits api.ts and adds one passing case to the base-red Sidebar.test.ts. Real vitest.

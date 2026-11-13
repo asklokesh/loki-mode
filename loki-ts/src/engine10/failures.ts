@@ -60,8 +60,13 @@ function bunIds(output: string): string[] | null {
 export function idNamesFile(id: string, f: string): boolean {
   if (id.includes(f)) return true;
   const m = /^\|[^|]+\|\s+(\S+?)(?:\s+>\s.*)?$/.exec(id);
-  return !!m && (f === m[1] || f.endsWith(`/${m[1]}`));
+  if (m && (f === m[1] || f.endsWith(`/${m[1]}`))) return true;
+  // ID-PKG-RELATIVE (LOKI_E10_ID_PKG_RELATIVE, default on, =0 opts out): a package's own run prints ids relative to the package ("src/x.test.ts > t" from
+  // frontend/); they name the repo file frontend/src/x.test.ts. Before it such an id never named its changed file, so a failure in it could be excused (fail open).
+  const lead = /^([\w@.()[\]/-]+\.[cm]?[jt]sx?)\s+>\s/.exec(id);
+  return !!lead && idPkgRelativeOn() && lead[1]!.includes("/") && f.endsWith(`/${lead[1]}`);
 }
+export const idPkgRelativeOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_ID_PKG_RELATIVE"] ?? "").trim());
 export function failIds(raw: string): string[] {
   const output = stripAnsi(raw), gc = goCargoIds(output);
   if (gc) return gc;
