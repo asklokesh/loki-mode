@@ -289,6 +289,7 @@
 # 251. testmap.ts buildTestMap: stop passing `marks` to scopeRunnersByPackage (the multi-module go map leg reads no tests).
 # 252. check_result.ts jsAssertionFailure: drop JS_MISSING_API (the assert-js unit's missing-function case reads true).
 # 253. check_result.ts spawnFailedTool: drop the 6-line bound (the spawn-not-run leg's long ENOENT output reads missing).
+# 254. testmap.ts buildTestMap: ignore pyCfg (the pytest-fallback leg's conftest.py case reads unittest).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1726,6 +1727,19 @@ const v = await import("./src/engine10/stages/verify.ts"), d = process.env.SN, s
 const one = async (c) => { const r = await v.runOnce(d + "/bin/" + c, [], d, sig, opts); return `${r.missing}:${r.spawnTool ?? "-"}`; };
 const r = [await one("uvx"), await one("sh127"), await one("longtest")]; process.env.LOKI_E10_SPAWN_NOT_RUN = "0"; r.push(await one("uvx")); console.log(r.join(","));' 2>&1)"
 [ "$SR" = "true:ruff,true:ruff,false:-,false:-" ] && ok "spawn-not-run: a tool that could not start (uv spawn error, shell exit 127) is a missing tool, not a failure; a long test output naming ENOENT and LOKI_E10_SPAWN_NOT_RUN=0 stay failures" || bad "spawn-not-run gave: $SR"
+# PYTEST-FALLBACK (verify-dev 2026-11-13, Python-Markdown: a unittest repo whose venv has no pytest; every test_*.py ran as pytest and "failed" in 0.05 s with no ids):
+# tests marked pytest only by their test_*.py names run under unittest when the repo's .venv cannot import pytest. A venv that has pytest, a conftest.py,
+# a test file importing pytest, and LOKI_E10_PYTEST_FALLBACK=0 keep pytest. (The .venv python here is a stand-in that answers only `-c "import pytest"`.)
+PF="$(cd "$ROOT/loki-ts" && bun -e '
+const tm = await import("./src/engine10/testmap.ts"), { mkdtempSync, writeFileSync, mkdirSync, chmodSync } = require("node:fs"), { join } = require("node:path");
+const mk = (pytestOk, extra) => { const r = mkdtempSync(join(process.argv[1], "pyfb-")); mkdirSync(join(r, ".venv/bin"), { recursive: true }); mkdirSync(join(r, "tests"));
+  writeFileSync(join(r, ".venv/bin/python"), `#!/bin/sh\nexit ${pytestOk ? 0 : 1}\n`); chmodSync(join(r, ".venv/bin/python"), 0o755);
+  writeFileSync(join(r, "pyproject.toml"), "[project]\nname = \"m\"\n"); writeFileSync(join(r, "tests/test_core.py"), "import unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(1, 1)\n");
+  for (const [f, t] of extra) writeFileSync(join(r, f), t); for (const a of [["init", "-q"], ["add", "-A"]]) Bun.spawnSync(["git", "-C", r, ...a]); return r; };
+const run = (r) => { const m = tm.buildTestMap(r); return [...new Set(m.tests.map((t) => t.runner))].join("+") + "/" + m.runners.join("+"); };
+const r = [run(mk(false, [])), run(mk(true, [])), run(mk(false, [["tests/conftest.py", "\n"]])), run(mk(false, [["tests/test_p.py", "import pytest\n"]]))];
+process.env.LOKI_E10_PYTEST_FALLBACK = "0"; r.push(run(mk(false, []))); console.log(r.join(","));' "$T" 2>&1)"
+[ "$PF" = "unittest/unittest,pytest/pytest,pytest/pytest,pytest/pytest,pytest/pytest" ] && ok "pytest-fallback: name-only pytest tests run under unittest when the repo venv cannot import pytest; a venv with pytest, a conftest.py, a pytest import and LOKI_E10_PYTEST_FALLBACK=0 keep pytest" || bad "pytest-fallback gave: $PF"
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
 if command -v go >/dev/null 2>&1; then
