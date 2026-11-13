@@ -8,7 +8,10 @@ import type { Obj } from "../engine10/types.ts";
 import { contributionGuides, releaseNoteConvention, releaseNoteProblems, taskForbidsReleaseNote } from "../project_model/conventions.ts";
 import { detectFormatters } from "../runner/repo_profile.ts";
 import { safeGit } from "../util/safe_git.ts";
-import { isTestFile } from "../util/test_file_text.ts";
+import { isTestFile as narrowTestFile } from "../util/test_file_text.ts";
+/** A test file by name or location in any common layout (the shared helper misses Rust tests.rs, a top-level test/ dir, __tests__/, JVM *Test sources). */
+const TEST_DIR = /(?:^|\/)(?:tests?|__tests__|specs?|testing|[a-z]*Test)\//, TEST_NAME = /(?:^|\/)(?:tests?\.[a-z]+|test_[^/]+|[^/]+_tests?\.[a-z]+|[^/]+\.(?:test|spec)\.[a-z]+|[A-Z][^/]*Tests?\.(?:kt|java|cs|scala|swift|groovy))$/;
+export const isTestFile = (f: string): boolean => narrowTestFile(f) || TEST_DIR.test(f) || TEST_NAME.test(f);
 
 /** Off (`0`), `on` (default: the turn runs only when a deterministic item flags, so a clean minimal diff is never touched and costs nothing), or `always`. */
 export type SelfReviewMode = "off" | "on" | "always";

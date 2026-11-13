@@ -337,6 +337,7 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
   out.sr_settled = sum(sr.settleItems(clBefore, clAfter, reply));
   out.sr_no_turn_settle = sum(sr.settleItems(clBefore, null, null));
   out.sr_parse = JSON.stringify([...sr.parseReviewLines("REVIEW a: ok: fine\n`REVIEW d: justified: matches style`\nREVIEW z: ok\nreview b: FIXED: x").entries()]);
+  out.sr_testfiles = ["src/de/tests.rs", "test/expect.js", "test/main.ts", "kotlinpoet/src/jvmTest/kotlin/a/CodeBlockTest.kt", "__tests__/base.js", "tests/test_x.py", "pkg/x_test.go", "src/a.spec.ts", "src/lib.rs", "lib/a.js", "src/contest.py", "docs/testing.md"].map((f) => sr.isTestFile(f) ? "t" : "s").join("");
   out.sr_mode = [sr.selfReviewMode({}), sr.selfReviewMode({ LOKI_E10_SELF_REVIEW: "0" }), sr.selfReviewMode({ LOKI_E10_SELF_REVIEW: "always" }), sr.selfReviewMaxTurns({}), sr.selfReviewMaxTurns({ LOKI_E10_SELF_REVIEW_MAX_TURNS: "4" }), sr.selfReviewMaxTurns({ LOKI_E10_SELF_REVIEW_MAX_TURNS: "x" })].join(",");
   out.sr_receipt = JSON.stringify([sr.selfReviewReceiptBlock({ self_review: { mode: "on", turn: null, items: [] } }), sr.selfReviewReceiptBlock({}), sr.selfReviewReceiptBlock(undefined)]);
   const src = (f: string) => rf(join(SRC, f), "utf8");
@@ -525,6 +526,7 @@ eqv sr_brief yes "SR the review brief carries the contribution rules, the flagge
 eqv sr_settled "release_note=fixed,stray_files=fixed,test=unresolved,format=ok,scope=justified" "SR settling: a flag the after-turn check no longer finds is fixed; a persisting flag is justified only with a stated reason, else unresolved"
 eqv sr_no_turn_settle "release_note=flagged,stray_files=flagged,test=flagged,format=ok,scope=flagged" "SR with no turn (too little time) the flags stay flagged on the receipt"
 eqv sr_parse '[["release_note",{"verdict":"ok","reason":"fine"}],["format",{"verdict":"justified","reason":"matches style"}],["stray_files",{"verdict":"fixed","reason":"x"}]]' "SR REVIEW reply lines parse by item (backticks and case tolerated, unknown items ignored)"
+eqv sr_testfiles "ttttttttssss" "SR the test detector covers Rust tests.rs, a top-level test/ dir, __tests__/, JVM *Test sources, Python, Go and JS layouts, and not source or docs"
 eqv sr_mode "on,off,always,12,4,12" "SR knob: on by default, =0 off, always; the turn cap (cost cap) is 12 unless LOKI_E10_SELF_REVIEW_MAX_TURNS sets a positive integer"
 eqv sr_receipt '[{"self_review":{"mode":"on","turn":null,"items":[]}},{},{}]' "SR the receipt carries self_review only when the stage recorded it"
 eqv sr_wired yes "SR wiring: implement runs the bounded -rv resume only when wanted and records self_review; seal puts it on the receipt"
