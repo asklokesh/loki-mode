@@ -333,8 +333,16 @@ $(loki_removed_saved_provider_hint "$R_PROVIDER")"
         R_MODEL="$LOKI_OPENCODE_MODEL"
     elif [ "$R_PROVIDER" = "opencode" ]; then
         R_MODEL="opencode default (unreported)"
-    elif [ "$R_PROVIDER" = "claude" ]; then
+    elif [ "$R_PROVIDER" = "claude" ] && [ -n "${LOKI_CLAUDE_MODEL_DEVELOPMENT:-}${LOKI_MODEL_DEVELOPMENT:-}${LOKI_CLAUDE_MODEL_PLANNING:-}${LOKI_MODEL_PLANNING:-}${LOKI_CLAUDE_MODEL_FAST:-}${LOKI_MODEL_FAST:-}" ]; then
         R_MODEL="${LOKI_CLAUDE_MODEL_DEVELOPMENT:-${LOKI_MODEL_DEVELOPMENT:-claude (provider default)}}"
+    elif [ "$R_PROVIDER" = "claude" ]; then
+        # acc-156: no model named, so engine10 pins its default (DEFAULT_SESSION_MODEL in loki-ts/src/util/claude_model.ts; tests/min/newcomer-path.sh checks the two agree)
+        local _dsm; _dsm="$(printf '%s' "${LOKI_DEFAULT_SESSION_MODEL:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+        case "$_dsm" in
+            provider) R_MODEL="claude (provider default)" ;;
+            "") R_MODEL="sonnet (Loki default)" ;;
+            *) R_MODEL="$_dsm (LOKI_DEFAULT_SESSION_MODEL)" ;;
+        esac
     else
         R_MODEL="$R_PROVIDER (model not recorded)"
     fi

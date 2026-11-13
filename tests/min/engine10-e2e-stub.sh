@@ -49,6 +49,11 @@
 #   12. loki-ts/src/engine10/stages/xreview.ts: drop the run-model pin for the default review (the high-tier leg reads no --model haiku).
 #   13. loki-ts/src/engine10/machine.ts capReached: return false always (the capped run completes and reads VERIFIED, exit 0).
 #   14. loki-ts/src/util/check_result.ts changedSymbols: drop the ENCLOSING-DECL fallback (the enclosing-declaration unit line reads method=[]).
+#   15. claude_model.ts chooseSessionModel: ignore EXPLICIT_MODEL_ENV (the env leg reads sonnet, source default).
+#   16. supervisor.ts: do not export the default pin (the default leg reads the provider default and no --model).
+#   17. seal.ts: drop model_source (every default-model leg reads absent).
+#   18. claude_model.ts chooseSessionModel: ignore LOKI_DEFAULT_SESSION_MODEL=provider (the provider leg reads sonnet).
+#   19. claude_model.ts DEFAULT_SESSION_MODEL changed to haiku without autonomy/route.sh (the newcomer-path acc-156 route leg reads ts haiku, route sonnet).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -96,7 +101,7 @@ run_engine() {
         LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" \
         E2E_STUB_MODE="$mode" E2E_STUB_LOG="$d/stub.log" E2E_STUB_ENV_LOG="$STUBENV" \
         LOKI_E10_PLAN=1 GH_TOKEN="$CANARY" LOKI_RECEIPT_SIGNING_KEY_FILE="$KEY" \
-        ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$TASK" --no-pr "$@" 2>&1)"
+        ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" ${E2E_VERB:+"$E2E_VERB"} "$TASK" --no-pr "$@" 2>&1)"
     RC=$?
     RUNDIR=""
     if [ -f "$REPO/.loki/engine.json" ]; then
@@ -144,6 +149,39 @@ printf '%s\n' "$OUT" | grep -q 'Outcome:    VERIFIED' && bad "tampered run claim
 # never hard-coded, so implement starts under the cap and ends over it. A sealed run is never BUDGET_STOP (outcomeOf: BUDGET_STOP
 # needs a run that sealed no receipt), so the capped run reads PARTIAL, exit 6, "cost/time cap reached"; the start line states
 # the cap and the quote before spending, implement's edit is kept as a commit on loki/<run>, and main is untouched.
+# acc-156: a bare run with no model named starts on Loki's default session model (DEFAULT_SESSION_MODEL, sonnet), never the CLI's own account default;
+# a flag or a model env wins, and LOKI_DEFAULT_SESSION_MODEL=provider gives the old run with no --model. The start line and the receipt say which and why.
+# dm_facts -> "<receipt model>~<receipt model_source>~<implement --model value or none>~<start line model clause>"
+dm_facts() {
+    python3 -I - "$RUNDIR/receipt.json" "$T/dm-argv.log" "$OUT" <<'PY'
+import json, os, re, sys
+rec = json.load(open(sys.argv[1])); argv = open(sys.argv[2]).read().splitlines() if os.path.exists(sys.argv[2]) else []
+impl = [l for l in argv if l.startswith("implement")]
+m = re.search(r"--model (\S+)", impl[0]) if impl else None
+start = next((l for l in sys.argv[3].splitlines() if l.startswith("Loki 10 engine")), "")
+c = re.search(r", model (.*?)(?:; |$)", start)
+print("~".join([str(rec.get("model")), rec.get("model_source", "absent"), m.group(1) if m else "none", c.group(1) if c else "noclause"]))
+PY
+}
+for leg in "default||" "flag|--session-model haiku|" "env||LOKI_MODEL_DEVELOPMENT=haiku" "provider||LOKI_DEFAULT_SESSION_MODEL=provider" "pinned||LOKI_DEFAULT_SESSION_MODEL=haiku"; do
+    IFS='|' read -r dm_name dm_flag dm_env <<< "$leg"; rm -f "$T/dm-argv.log"
+    unset LOKI_SESSION_MODEL LOKI_SESSION_MODEL_SOURCE LOKI_MODEL_DEVELOPMENT LOKI_CLAUDE_MODEL_DEVELOPMENT LOKI_DEFAULT_SESSION_MODEL
+    export E2E_STUB_ARGV_LOG="$T/dm-argv.log"; if [ -n "$dm_env" ]; then export "${dm_env?}"; fi
+    # shellcheck disable=SC2086 # dm_flag is a flag and its value
+    if [ -n "$dm_flag" ]; then E2E_VERB=start run_engine done $dm_flag; else run_engine done; fi
+    unset E2E_STUB_ARGV_LOG; if [ -n "$dm_env" ]; then unset "${dm_env%%=*}"; fi
+    DM="$( [ -n "$RUNDIR" ] && dm_facts 2>&1)"
+    case "$dm_name:$DM" in
+        "default:sonnet~default~sonnet~sonnet (Loki default, "*) ok "default model: a bare run pins sonnet (implement --model sonnet), the start line says Loki default, receipt model_source default" ;;
+        "flag:haiku~explicit~haiku~haiku (--session-model"*) ok "default model: --session-model haiku wins over the default (receipt explicit)" ;;
+        "env:haiku~explicit~haiku~haiku (LOKI_MODEL_DEVELOPMENT)") ok "default model: LOKI_MODEL_DEVELOPMENT wins over the default (receipt explicit)" ;;
+        "provider:claude (provider default)~provider~none~claude (provider default) (LOKI_DEFAULT_SESSION_MODEL=provider"*) ok "default model: LOKI_DEFAULT_SESSION_MODEL=provider restores the CLI default (no --model passed)" ;;
+        "pinned:haiku~default~haiku~haiku (LOKI_DEFAULT_SESSION_MODEL=haiku)") ok "default model: LOKI_DEFAULT_SESSION_MODEL=haiku changes the default (receipt default)" ;;
+        *) bad "default model leg $dm_name: facts '$DM' (rc $RC)"; printf '%s\n' "$OUT" | grep -m3 "^Loki 10 engine\|engine10:\|rror" | sed 's/^/    | /' ;;
+    esac
+done
+unset dm_name dm_flag dm_env DM
+
 E2E_STUB_USAGE=10 run_engine done
 cat > "$T/cap.py" <<'PY'
 import json, sys

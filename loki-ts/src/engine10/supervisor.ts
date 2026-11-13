@@ -292,6 +292,15 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   let localReason: import("../util/one_line_goal.ts").LocalReason | null = null, origBranch: string | null = null; try { origBranch = safeGit(repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]).trim() || null; } catch { /* detached HEAD: landNext falls back to main */ }
   if (!noPr && sealPatch === null) { const pp = await olg.publishPlan(readOriginUrl(repoDir), () => import("./preflight.ts").then((m) => m.ghReady(process.env as Record<string, string>))); localReason = pp.reason; noPr = pp.noPr; const note = olg.publishNote(pp.reason); if (note) process.stderr.write(`${note}\n`); }
   { const rec = await (await import("../util/run_outputs.ts")).startRecovery(repoDir, task, noPr, { fresh }); if (rec !== null) return rec; } // RECOVERY: an interrupted publish for this same task resumes (a TTY is offered the choice) instead of starting over
+  // acc-156: a claude run whose user named no model starts on DEFAULT_SESSION_MODEL (util/claude_model.ts) as a session pin, exactly as `--session-model <it>` would,
+  // instead of the Claude CLI's own account default (Opus on many plans). The choice and why go on the start line and the receipt (LOKI_SESSION_MODEL_SOURCE).
+  let modelWhy: string | null = null;
+  if (provider === "claude") {
+    let ch: import("../util/claude_model.ts").SessionModelChoice;
+    try { ch = (await import("../util/claude_model.ts")).chooseSessionModel(process.env); } catch (err) { process.stderr.write(`engine10: ${err instanceof Error ? err.message : String(err)}\n`); return 2; }
+    if (ch.pin) process.env.LOKI_SESSION_MODEL = ch.pin;
+    process.env.LOKI_SESSION_MODEL_SOURCE = ch.source; modelWhy = ch.why;
+  }
   const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
   const runDir = join(repoDir, ".loki", "runs", runId);
   const cap = resolveCap(maxCost, repoDir); if ("error" in cap) { process.stderr.write(`engine10: ${cap.error}\n`); return 2; }
@@ -324,7 +333,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const routeStart = routeStartLine(process.env, provider); // FC-35: printed before any stage, so it states the pre-plan state only (route.json does not exist yet). R1-15: null unless LOKI_ROUTER is on, so the start line is byte-identical otherwise
   const costEst = encodeEstimate(process.env, repoDir, undefined, model); if (costEst) env.LOKI_E10_COST_ESTIMATE = costEst; // 11.3.0 T1: null under LOKI_COST_PREVIEW=0
   const downgrades = modelDowngrades(provider); // D86 L1: any downgrade is printed here and recorded on run.started (key only when non-empty, receipt hashes stay stable)
-  if (!json) process.stdout.write(`${START_LINE}, ${baseLine(repoDir)}, ${capNote(cap.usd, cap.source)}${downgrades.length ? `; downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : ""}${routeStart ? `; ${routeStart}` : ""}${costEst ? `; ${startText(JSON.parse(costEst), cap.usd)}` : ""}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
+  if (!json) process.stdout.write(`${START_LINE}, ${baseLine(repoDir)}, ${capNote(cap.usd, cap.source)}${modelWhy ? `, model ${model} (${modelWhy})` : ""}${downgrades.length ? `; downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : ""}${routeStart ? `; ${routeStart}` : ""}${costEst ? `; ${startText(JSON.parse(costEst), cap.usd)}` : ""}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
   if (costEst && process.env.LOKI_COST_CONFIRM === "1" && process.stdin.isTTY && !json && !(await (await import("../commands/issues_run.ts")).askYesNo("Proceed with this run? [y/N] "))) { process.stdout.write("Run cancelled before start (LOKI_COST_CONFIRM).\n"); return 1; }
   const capLine = !json ? [disclosureLine(provider), unenforceableNote(provider, cap.usd)].filter(Boolean).join("\n") : null; if (capLine) process.stdout.write(`${capLine}\n`); // LM-004: one line when the provider lacks a guarantee claude has; claude prints nothing extra
   const t0 = Date.now();
