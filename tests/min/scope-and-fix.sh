@@ -300,6 +300,7 @@
 # 262. sizing.ts namedFiles: drop the spelled-path filter (fl24 named-exact reads login/page.ts+issues/page.ts for the spelled task; the fl24 monorepo after reads STALLED).
 # 263. verify.ts ownTests: drop the changed-file condition (fl24 own-by-path reads a/page.test.ts own for an unedited a/x/page.ts).
 # 264. repo_profile.ts touchedRedOnBase: drop the editedTitles check (fl24 touched-base-red's failing edited case reads true; the newly-failing fl24 monorepo run reads PARTIAL).
+# 265. repo_profile.ts collateralOnBaseline: drop the paired-source check (fl24 collateral-baseline's changed web/src/app/x/page.ts reads true).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1869,6 +1870,19 @@ const same = { [A]: ["AssertionError: x"], [B]: ["AssertionError: y"] }, tr = (i
 const r = [tr([A, B], same, ["new case"]), tr([A, F + " > c"], { [A]: ["AssertionError: x"], [F + " > c"]: ["AssertionError: z"] }, []), tr([A], { [A]: ["TypeError: q"] }, []), tr([A, B], same, ["b"])];
 process.env.LOKI_E10_TOUCHED_BASE_RED = "0"; r.push(tr([A, B], same, [])); console.log(r.join(","));' 2>&1)"
 [ "$FC" = "true,false,false,false,false" ] && ok "fl24 touched-base-red: an edited test file is excused only by same-error base red with no failing added or edited case; a new green-to-red id, another error and =0 are not" || bad "fl24 touched-base-red gave: $FC"
+# FL24-COLLATERAL-BASELINE (acc-154; FireLater#24): a collateral test is pre-existing at once (no COLLATERAL_RED cap, no fix round) only when it is unedited, its
+# path-paired source is unchanged, and every failing id with its error equals this base commit's intake profile. Each guard stays capped: the paired source
+# changed, the test file itself edited, a new failing id versus the baseline, the same id with another error; LOKI_E10_COLLATERAL_BASELINE=0 never excuses.
+FD="$(cd "$ROOT/loki-ts" && G="$T/fld" bun -e '
+const rp = await import("./src/runner/repo_profile.ts"), { mkdirSync, writeFileSync } = require("node:fs"), { join } = require("node:path"), g = process.env.G;
+mkdirSync(join(g, ".loki/state"), { recursive: true }); for (const a of [["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "b"]]) Bun.spawnSync(["git", "-C", g, ...a]);
+const sha = Bun.spawnSync(["git", "-C", g, "rev-parse", "HEAD"]).stdout.toString().trim(), T1 = "web/src/app/x/__tests__/page.test.ts", id = "src/app/x/__tests__/page.test.ts > renders", E = (x) => new Map(Object.entries(x));
+writeFileSync(join(g, ".loki/state/repo-profile.json"), JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: false, command: null, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false }, suites: [{ name: "full suite: web", ran: true, command: "(cd web && npm test)", exit_code: 1, duration_s: 1, timed_out: false, attributable: true, failing_ids: [id], failing_errors: { [id]: ["AssertionError: x"] } }] }));
+const cb = (ids, errs, changed) => rp.collateralOnBaseline(g, sha, T1, { ids, errors: E(errs) }, changed, "page");
+const same = { [id]: ["AssertionError: x"] }, nid = "src/app/x/__tests__/page.test.ts > other";
+const r = [cb([id], same, ["web/src/lib/api.ts"]), cb([id], same, ["web/src/app/x/page.ts"]), cb([id], same, [T1]), cb([id, nid], { ...same, [nid]: ["AssertionError: y"] }, []), cb([id], { [id]: ["TypeError: z"] }, [])];
+process.env.LOKI_E10_COLLATERAL_BASELINE = "0"; r.push(cb([id], same, [])); console.log(r.join(","));' 2>&1)"
+[ "$FD" = "true,false,false,false,false,false" ] && ok "fl24 collateral-baseline: excused only when unedited, the paired source unchanged and ids and errors equal the baseline; a changed paired source, an edited test, a new id, another error and =0 keep the cap" || bad "fl24 collateral-baseline gave: $FD"
 # FL24-MONOREPO (acc-154; FireLater#24 slices s3 and s4 FAILED on 11.140.0 with 0 failures introduced). A backend plus frontend monorepo whose frontend page
 # tests under (group) and [id] routes are red on base (stale assertions) and import the lib/api.ts the slice edits; the task spells new paths, names one page
 # "is not modified" and one chart as "the pattern in"; the slice edits api.ts and adds one passing case to the base-red Sidebar.test.ts. Real vitest.

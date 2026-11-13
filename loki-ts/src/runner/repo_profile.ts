@@ -776,10 +776,26 @@ export function touchedRedOnBase(repoDir: string, baseSha: string, c: { ids?: st
   const p = loadProfile(repoDir); if (!p || p.revision !== baseSha) return false;
   const ids = comparableIds(c.ids ?? []); if (ids.length === 0 || !c.errors) return false;
   if (ids.some((i) => editedTitles.some((t) => t.length > 0 && (i === t || i.endsWith(` > ${t}`))))) return false;
+  return redOnBaseProfile(p, ids, c.errors);
+}
+/** Every comparable id is red in an attributable, complete run of the profile with the same error lines (sameErrors). */
+function redOnBaseProfile(p: CommandProfile, ids: readonly string[], errors: Map<string, string[]>): boolean {
   const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran && b.attributable && !b.timed_out && b.reason !== "baseline budget used up");
   const baseIds = new Set(runs.flatMap((b) => b.failing_ids)), baseErr = new Map<string, string[]>();
   for (const b of runs) for (const [k, v] of Object.entries(b.failing_errors ?? {})) if (!baseErr.has(k)) baseErr.set(k, v);
-  return ids.every((i) => baseIds.has(i) || [...baseIds].some((b) => b.endsWith(` > ${i}`))) && sameErrors(c.errors, baseErr, ids);
+  return ids.length > 0 && ids.every((i) => baseIds.has(i) || [...baseIds].some((b) => b.endsWith(` > ${i}`))) && sameErrors(errors, baseErr, [...ids]);
+}
+/** COLLATERAL-BASELINE (LOKI_E10_COLLATERAL_BASELINE, default on, =0 opts out): a collateral check (a relevant test that is not the task's own) is pre-existing at once,
+ *  with no COLLATERAL_RED cap and no fix round, only when its test file is unedited, no changed file is its path-paired source (the same stem in the test's
+ *  directory, or in the parent of its __tests__, tests or test directory), and every comparable failing id with its error lines equals this base commit's
+ *  intake profile (redOnBaseProfile). A paired source the diff changed, a new failing id, or the same id with another error keeps the cap. */
+export const collateralBaselineOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_COLLATERAL_BASELINE"] ?? "").trim());
+export function collateralOnBaseline(repoDir: string, baseSha: string, test: string, c: { ids?: string[]; errors?: Map<string, string[]> }, changed: readonly string[], stem: string): boolean {
+  if (!collateralBaselineOn() || changed.includes(test)) return false;
+  const td = test.includes("/") ? test.slice(0, test.lastIndexOf("/")) : ".", sd = /(?:^|\/)(?:__tests__|tests|test)$/.test(td) ? (td.includes("/") ? td.slice(0, td.lastIndexOf("/")) : ".") : td;
+  if (changed.some((f) => { const fd = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "."; return (fd === sd || fd === td) && f.slice(f.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "") === stem; })) return false;
+  const p = loadProfile(repoDir); if (!p || p.revision !== baseSha || !c.errors) return false;
+  return redOnBaseProfile(p, comparableIds(c.ids ?? []), c.errors);
 }
 export const TOUCHED_RED = "edited test file red on base by every failing id with the same errors; the cases the change added or edited pass (excused, not blocking)";
 export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: FullCheck[], changed: string[], excused: string[], blocked: readonly string[] = []): string[] {
@@ -793,7 +809,7 @@ export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: F
     if (!b.attributable) { why(`the base run is not attributable (${b.reason ?? "no failing ids parsed"})${baseRedShapeOn() ? `; BASE-RED-SHAPE: exit base ${b.exit_code} head ${c.exit ?? "unknown"}, shape ${!b.failing_shape ? "not recorded on base" : !c.shape ? "absent on head (ids parsed)" : b.failing_shape === c.shape ? "same" : "differs"}` : ""}`); continue; } // BASE-RED-SHAPE marker: why the identical-kind rule did not excuse it
     if (!c.ids?.length) { why("its failing ids could not be parsed from the output, so nothing can be compared"); continue; }
     if (cargoTouched(changed)) { why("the diff edits Rust source or a manifest and cargo ids carry no crate path"); continue; }
-    const known = new Set([...b.failing_ids, ...(b.flaky_ids ?? [])]), fresh = comparableIds(c.ids).filter((i) => !known.has(i)), inChanged = c.ids.filter((i) => changed.some((f) => i.includes(f)) || goIdTouched(repoDir, i, changed));
+    const known = new Set([...b.failing_ids, ...(b.flaky_ids ?? [])]), fresh = comparableIds(c.ids).filter((i) => !known.has(i)), inChanged = c.ids.filter((i) => changed.some((f) => i.includes(f)) || goIdTouched(repoDir, i, changed)); // ID-PKG-RELATIVE: the same rule attributeFullSuite uses
     if (inChanged.length) { why(`${inChanged.length} failing id(s) name a changed file (first: ${inChanged[0]})`); continue; }
     if (fresh.length) { why(`${fresh.length} failing id(s) were not red on base (first: ${fresh[0]})`); continue; }
     // fl24: FireLater#24 read "error text differs" when the text was identical: 146 of its ids also failed in 22 targeted checks that were not excused.
