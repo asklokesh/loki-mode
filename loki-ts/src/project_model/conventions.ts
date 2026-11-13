@@ -163,6 +163,10 @@ function ownerPackage(repoDir: string, file: string): { dir: string; name: strin
 }
 /** The closest manifest "name" above a file (empty when none within the repo). */
 const packageNameFor = (repoDir: string, file: string): string => ownerPackage(repoDir, file)?.name ?? "";
+/** TX LOKI_E10_TOWNCRIER_EXAMPLE (default on, =0 opts out): the towncrier brief line names a real fragment (towncrierExample: `<issue>.<type>[.<ext>]` with a declared
+ *  type) as its example, or none. The failure: a fresh checkout ties every mtime, so the name tie-break picked the repo's towncrier template (template.rst,
+ *  towncrier_template.md.jinja) as the "newest example", and the model wrote no fragment. Off: the newest file of the directory, as before. */
+export const towncrierExampleOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_TOWNCRIER_EXAMPLE);
 /** The per-run brief line for a release-note fragment convention, placed after the cache-stable prefix; "" when the repo declares none. A changeset line names the package of the first relevant file. */
 export function releaseNoteBrief(repoDir: string, files: string[] = []): string {
   const c = releaseNoteConvention(repoDir);
@@ -172,6 +176,7 @@ export function releaseNoteBrief(repoDir: string, files: string[] = []): string 
     const pkg = files.map((f) => packageNameFor(repoDir, f)).find(Boolean) || packageNameFor(repoDir, "package.json");
     return `Release-note convention (changeset, ${c.dir}/): a user-visible change ships with a new ${c.dir}/<short-kebab-name>.md fragment: front matter with "${pkg || "<package name>"}": patch (minor or major when the task says so), then one line describing the change${ex}.`;
   }
+  if (c.kind === "towncrier" && towncrierExampleOn()) { const tx = towncrierExample(repoDir, c.dir); return `Release-note convention (${c.kind}, ${c.dir}/): a user-visible change ships with a new fragment file in ${c.dir}/ named and formatted like the existing ones${tx ? `; newest example: ${tx}` : ""}.`; }
   if (c.kind === "changelog") return `Release-note convention (changelog file, ${c.dir}): the repository's contribution guide asks each user-visible change to add an entry to ${c.dir}; add one entry under its "${c.heading ?? "Unreleased"}" section (in the matching subsection when it has them), formatted and worded like the entries already there${c.example ? `; newest entry: ${c.example}` : ""}.`;
   return `Release-note convention (${c.kind}, ${c.dir}/): a user-visible change ships with a new fragment file in ${c.dir}/ named and formatted like the existing ones${ex}.`;
 }

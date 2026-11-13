@@ -41,6 +41,7 @@
 #   7. loki-ts/src/project_model/conventions.ts releaseNoteConvention: `return null;` in place of the changelogFileConvention fallback; the
 #      CL cl_required, cl_named, cl_rst and cl_on_again legs fail (CL: a changelog file the contribution guide asks entries for).
 #   8. conventions.ts guideRequiresChangelog: delete the LOG_FORBID line; cl_forbid fails (a guide saying not to update the CHANGELOG got a line).
+#   9. conventions.ts releaseNoteBrief: `if (false) {` in place of the towncrier example branch (TX); tx_example and tx_template_only fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need() { command -v "$1" >/dev/null 2>&1 || { echo "context-pack: needs $1" >&2; exit 2; }; }
@@ -205,6 +206,12 @@ const clOffRepo = mk("cl-off", { "CONTRIBUTING.md": "Please add an entry to CHAN
 process.env.LOKI_E10_CHANGELOG_CONVENTION = "0"; out.cl_off = releaseNoteBrief(clOffRepo, []) === "" ? "empty" : "present"; delete process.env.LOKI_E10_CHANGELOG_CONVENTION;
 out.cl_on_again = releaseNoteBrief(clOffRepo, []) === "" ? "empty" : "present";
 out.cl_precedence = releaseNoteBrief(mk("cl-cs", { ".changeset/config.json": "{}", "package.json": '{"name":"p"}', "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG }), []);
+// TX LOKI_E10_TOWNCRIER_EXAMPLE: the example is a real fragment, never the towncrier template, even when every mtime ties (a fresh checkout).
+const txRepo = mk("tx", { "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\ntemplate = "changes/template.rst"\n', "changes/12.bugfix.rst": "Fixed a thing.\n", "changes/template.rst": "{{ text }}\n" });
+utimesSync(join(txRepo, "changes/12.bugfix.rst"), 5000, 5000); utimesSync(join(txRepo, "changes/template.rst"), 5000, 5000);
+out.tx_example = releaseNoteBrief(txRepo, []);
+process.env.LOKI_E10_TOWNCRIER_EXAMPLE = "0"; out.tx_off = releaseNoteBrief(txRepo, []); delete process.env.LOKI_E10_TOWNCRIER_EXAMPLE;
+out.tx_template_only = releaseNoteBrief(mk("tx2", { "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\n', "changes/template.rst": "{{ text }}\n" }), []).includes("newest example") ? "example" : "none";
 const bp = (rm: string, task: string) => buildImplementBrief(task, null, [], rm);
 const b1 = bp(out.rn_changeset as string, "task one"), b2 = bp("", "a different task entirely");
 const cut = (b: string) => b.slice(0, b.indexOf(FIXED_RULES) + FIXED_RULES.length);
@@ -375,6 +382,9 @@ eqv cl_no_guide empty "CL an unreleased section with no guide asking for entries
 eqv cl_off empty "CL LOKI_E10_CHANGELOG_CONVENTION=0 turns the changelog-file line off"
 eqv cl_on_again present "CL the changelog-file line is on by default"
 rn cl_precedence 'changeset, .changeset/' "CL a fragment convention (changesets) still wins over a changelog file"
+rn tx_example 'newest example: changes/12.bugfix.rst' "TX the towncrier example is a real fragment when every mtime ties"
+eqv tx_template_only none "TX a towncrier directory holding only its template names no example"
+rn tx_off 'newest example: changes/template.rst' "TX LOKI_E10_TOWNCRIER_EXAMPLE=0 restores the newest-file example"
 eqv prefix_stable yes "L3/L5 the rule prefix is byte-identical across two runs; the convention line sits after it, never inside it"
 eqv rules yyyyy "L5 FIXED_RULES carries the read-whole-function, preferred-fix, targeted-tests and release-note rules"
 eqv fw_path ".changeset/fix-wrong-total-when-the-invoice.md" "FW changeset: a fragment is written next to the repo's own, named from the title"
