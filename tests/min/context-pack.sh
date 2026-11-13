@@ -20,7 +20,8 @@
 #                   context_pack, and the seal stage.completed event and receipt carry context_recall 1; the same
 #                   run on the default model sends no pack but still records brief_files and the coverage.
 #   loki stats --outcomes --json reports the median context recall of those runs.
-#   L3/L5 rules:    release-note fragment line (changeset, towncrier, changelog.d, newsfragments, changie, none) and the
+#   L3/L5 rules:    release-note fragment line (changeset, towncrier, changelog.d, newsfragments, changie, a changelog file the
+#                   contribution guide asks entries for (CL), none) and the
 #                   byte-stable FIXED_RULES prefix (extra planted defects 5 and 6 below).
 #
 #   E6 diet:        LOKI_E10_PACK_DIET (default on, =0 opts out): one named definition keeps its span and loses the fill, the
@@ -37,6 +38,14 @@
 #   4. loki-ts/src/engine10/repomap.ts: SOURCE_EXT back to ts|tsx|js|jsx|mjs|cjs|py; the L020 ranking legs fail.
 #   5. loki-ts/src/project_model/conventions.ts releaseNoteConvention: drop the .changeset/config.json branch; the changeset legs fail.
 #   6. loki-ts/src/e10ext/context.ts: interpolate the convention line into FIXED_RULES; prefix_stable fails.
+#   7. loki-ts/src/project_model/conventions.ts releaseNoteConvention: `return null;` in place of the changelogFileConvention fallback; the
+#      CL cl_required, cl_named, cl_rst and cl_on_again legs fail (CL: a changelog file the contribution guide asks entries for).
+#   8. conventions.ts guideRequiresChangelog: delete the LOG_FORBID line; cl_forbid fails (a guide saying not to update the CHANGELOG got a line).
+#   9. conventions.ts releaseNoteBrief: `if (false) {` in place of the towncrier example branch (TX); tx_example and tx_template_only fail.
+#  11. conventions.ts logFrozen: always use LOG_FROZEN_LOOSE (FS); fs_deprecated_section fails.
+#  12. conventions.ts writeReleaseNoteFragment: `op = null` (TO); to_older_orphan and to_cfg_prefix fail.
+#  13. conventions.ts scaffoldRecord: `return null` for a skip (TR); tr_skip fails.
+#  10. loki-ts/src/e10ext/scope.ts flagOutsideScope: `mine = (f: string): boolean => false` (CS); cs_on fails (the asked-for changelog edit is flagged).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need() { command -v "$1" >/dev/null 2>&1 || { echo "context-pack: needs $1" >&2; exit 2; }; }
@@ -185,6 +194,38 @@ out.rn_changelogd = releaseNoteBrief(mk("cd", { "changelog.d/20240101_fix.md": "
 out.rn_newsfrag = releaseNoteBrief(mk("nf", { "newsfragments/7.feature.rst": "z" }), []);
 out.rn_changie = releaseNoteBrief(mk("ch", { ".changes/unreleased/Fixed-1.yaml": "z" }), []);
 out.rn_none = releaseNoteBrief(mk("no", { "package.json": '{"name":"p"}', "CHANGELOG.md": "# c" }), []) === "" ? "empty" : "present";
+// CL LOKI_E10_CHANGELOG_CONVENTION: a single changelog file the contribution guide asks entries for.
+const LOG = "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- Fixed a crash on empty input.\n\n## 1.0.0\n\n- First release.\n";
+let clN = 0; const clEmpty = (files: Record<string, string>) => (releaseNoteBrief(mk(`cl-neg-${++clN}`, files), []) === "" ? "empty" : "present");
+out.cl_required = releaseNoteBrief(mk("cl1", { "CONTRIBUTING.md": "# Contributing\n\nPlease add an entry to CHANGELOG.md for every\nuser-visible change.\n", "CHANGELOG.md": LOG, "a.py": "x = 1\n" }), []);
+out.cl_named = releaseNoteBrief(mk("cl2", { ".github/PULL_REQUEST_TEMPLATE.md": "## Checklist\n\n- [ ] `docs/changelog.md` has been updated if applicable.\n", "docs/changelog.md": "Change Log\n==========\n\n## Unreleased\n\n * Fix: a thing. (#12)\n", "CHANGELOG.md": LOG }), []);
+out.cl_rst = releaseNoteBrief(mk("cl3", { "CONTRIBUTING.rst": "Each pull request must include an entry in the changelog.\n", "CHANGES.rst": "Changes\n=======\n\n1.2.0 (unreleased)\n------------------\n\n- Bug fix in the parser.\n\n1.1.0\n-----\n\n- Older.\n" }), []);
+out.cl_forbid = clEmpty({ "CONTRIBUTING.md": "Don't update the CHANGELOG or the version number. That gets done by maintainers when preparing the release.\n", "CHANGELOG.md": LOG });
+out.cl_soft = clEmpty({ ".github/pull_request_template.md": "## ChangeLog\n\nOptional. Suggest a line for adding to the CHANGELOG to summarise your change.\n", "CHANGELOG.md": LOG });
+out.cl_pr_section = clEmpty({ ".github/pull_request_template.md": "## Release Notes\n\nInclude anything here that you didn't include in *Release Notes* above.\n", "CHANGELOG.md": LOG });
+out.cl_no_unreleased = clEmpty({ "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": "# Changelog\n\n## 1.0.0\n\n- First release.\n" });
+out.cl_frozen = clEmpty({ "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": "> This document is no longer being actively maintained. See the releases page.\n\n# Changelog\n\n## Unreleased\n\n- x\n" });
+// FS LOKI_E10_CHANGELOG_FROZEN_STRICT: a "### Deprecated" subsection under Unreleased is not a frozen log; a head that says the file is deprecated is.
+const fsRepo = mk("fs-dep", { "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": "# Changelog\n\n## Unreleased\n\n### Deprecated\n\n- The old parser API.\n" });
+out.fs_deprecated_section = releaseNoteBrief(fsRepo, []) === "" ? "empty" : "present";
+process.env.LOKI_E10_CHANGELOG_FROZEN_STRICT = "0"; out.fs_off = releaseNoteBrief(fsRepo, []) === "" ? "empty" : "present"; delete process.env.LOKI_E10_CHANGELOG_FROZEN_STRICT;
+out.fs_file_deprecated = clEmpty({ "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": "As of 3.0.0 this file has been deprecated.\n\n## Unreleased\n\n- x\n" });
+out.cl_no_guide =clEmpty({ "CHANGELOG.md": LOG, "README.md": "# p\n" });
+const clOffRepo = mk("cl-off", { "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG });
+process.env.LOKI_E10_CHANGELOG_CONVENTION = "0"; out.cl_off = releaseNoteBrief(clOffRepo, []) === "" ? "empty" : "present"; delete process.env.LOKI_E10_CHANGELOG_CONVENTION;
+out.cl_on_again = releaseNoteBrief(clOffRepo, []) === "" ? "empty" : "present";
+// CS LOKI_E10_CHANGELOG_SCOPE: the changelog the brief's line names is in scope for the advisory scope notes; any other unplanned file still is not.
+{ const sc = await import(join(SRC, "e10ext/scope.ts")); const csr = mk("cs-scope", { "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG, "src/a.py": "x = 1\n", "README.md": "# r\n" });
+  const so = { plan: { relevant_files: ["src/a.py"], plan: "Change src/a.py." }, intake: { task: "Fix the parser" } }, st = [{ st: "M", f: "CHANGELOG.md" }, { st: "M", f: "src/a.py" }, { st: "M", f: "README.md" }];
+  const notes = (): string => sc.flagOutsideScope(so, st, undefined, csr).join("|");
+  out.cs_on = notes(); process.env.LOKI_E10_CHANGELOG_SCOPE = "0"; out.cs_off = notes(); delete process.env.LOKI_E10_CHANGELOG_SCOPE; }
+out.cl_precedence =releaseNoteBrief(mk("cl-cs", { ".changeset/config.json": "{}", "package.json": '{"name":"p"}', "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG }), []);
+// TX LOKI_E10_TOWNCRIER_EXAMPLE: the example is a real fragment, never the towncrier template, even when every mtime ties (a fresh checkout).
+const txRepo = mk("tx", { "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\ntemplate = "changes/template.rst"\n', "changes/12.bugfix.rst": "Fixed a thing.\n", "changes/template.rst": "{{ text }}\n" });
+utimesSync(join(txRepo, "changes/12.bugfix.rst"), 5000, 5000); utimesSync(join(txRepo, "changes/template.rst"), 5000, 5000);
+out.tx_example = releaseNoteBrief(txRepo, []);
+process.env.LOKI_E10_TOWNCRIER_EXAMPLE = "0"; out.tx_off = releaseNoteBrief(txRepo, []); delete process.env.LOKI_E10_TOWNCRIER_EXAMPLE;
+out.tx_template_only = releaseNoteBrief(mk("tx2", { "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\n', "changes/template.rst": "{{ text }}\n" }), []).includes("newest example") ? "example" : "none";
 const bp = (rm: string, task: string) => buildImplementBrief(task, null, [], rm);
 const b1 = bp(out.rn_changeset as string, "task one"), b2 = bp("", "a different task entirely");
 const cut = (b: string) => b.slice(0, b.indexOf(FIXED_RULES) + FIXED_RULES.length);
@@ -254,6 +295,21 @@ out.fw_ignore_glob = skip("p", mk("wg", csFiles({ ".changeset/config.json": '{"i
 // towncrier
 const tcFiles = (extra: Record<string, string> = {}) => ({ "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\n', "changes/7.feature.rst": "Added a thing.\n", "changes/_template.rst": "{{ text }}\n", "changes/README.rst": "notes\n", "pkg/mod.py": "x = 1\n", ...extra });
 const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, files, task, "", { tools: false }) as { path?: string; skipped?: string };
+// TO LOKI_E10_TOWNCRIER_ORPHAN and TR LOKI_E10_SCAFFOLD_TRACE: an orphan in use anywhere (or orphan_prefix in config) names a fragment without an issue; a skip is recorded.
+{ const cv = await import(join(SRC, "project_model/conventions.ts"));
+  const older = () => { const d = mk(`to-old-${++clN}`, tcFiles({ "changes/+old.feature.rst": "Added.\n", "changes/99.bugfix.rst": "Fixed.\n" })); utimesSync(join(d, "changes/+old.feature.rst"), 1000, 1000); utimesSync(join(d, "changes/99.bugfix.rst"), 9000, 9000); utimesSync(join(d, "changes/7.feature.rst"), 1000, 1000); return d; };
+  out.to_older_orphan = tw(older(), "Fix crash when the cache is empty").path ?? "skipped";
+  out.to_cfg_prefix = tw(mk("to-cfg", tcFiles({ "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\norphan_prefix = "~"\n' })), "Fix crash when the cache is empty").path ?? "skipped";
+  process.env.LOKI_E10_TOWNCRIER_ORPHAN = "0"; out.to_off = tw(older(), "Fix crash when the cache is empty").path ?? "skipped"; delete process.env.LOKI_E10_TOWNCRIER_ORPHAN;
+  out.tr_skip = JSON.stringify(cv.scaffoldRecord(tw(mk("tr1", tcFiles()), "Fix crash when the cache is empty")));
+  const trCl = mk("tr-cl", { "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG, "a.py": "x = 1\n" });
+  out.tr_entry_written = JSON.stringify(cv.scaffoldRecord(wf(trCl, ["a.py", "CHANGELOG.md"], "Fix the parser", "", { tools: false })));
+  out.tr_entry_missing = JSON.stringify(cv.scaffoldRecord(wf(trCl, ["a.py"], "Fix the parser", "", { tools: false })));
+  out.tr_no_conv =JSON.stringify(cv.scaffoldRecord({ skipped: "the repo has no release-note convention" }));
+  process.env.LOKI_E10_SCAFFOLD_TRACE = "0"; out.tr_off = JSON.stringify(cv.scaffoldRecord({ skipped: "towncrier: the change type is not clear from the task" })); delete process.env.LOKI_E10_SCAFFOLD_TRACE;
+  out.tr_block = JSON.stringify([cv.releaseNoteSkipBlock({ scaffold_skipped: "why" }), cv.releaseNoteSkipBlock({ scaffold: { path: "x" } }), cv.releaseNoteSkipBlock(undefined)]);
+  const src = (f: string) => rf(join(SRC, f), "utf8");
+  out.tr_wired = src("engine10/machine.ts").includes("scaffold_skipped: sc.skipped") && src("engine10/stages/seal.ts").includes("...releaseNoteSkipBlock(o.implement)") && src("contrib/index.ts").includes("return scaffoldRecord(r);") ? "yes" : "no"; }
 const w17 = mk("w17", tcFiles()); const r17 = tw(w17, "Fix crash when the cache is empty (#42)");
 out.tc_path = r17.path ?? `skipped:${r17.skipped}`; out.tc_text = r17.path ? rf(join(w17, r17.path), "utf8") : "";
 out.tc_no_issue = tw(mk("w18", tcFiles()), "Fix crash when the cache is empty").skipped ? "skipped" : "wrote";
@@ -340,6 +396,29 @@ rn rn_changelogd 'changelog.d/20240101_fix.md' "L3 changelog.d detected"
 rn rn_newsfrag 'newsfragments/7.feature.rst' "L3 newsfragments detected"
 rn rn_changie '.changes/unreleased/Fixed-1.yaml' "L3 changie .changes/unreleased detected"
 eqv rn_none empty "L3 a repo with only CHANGELOG.md gets no fragment line"
+rn cl_required 'Release-note convention (changelog file, CHANGELOG.md)' "CL a contribution guide asking for a CHANGELOG.md entry names the changelog file"
+rn cl_required 'under its "Unreleased" section' "CL the line names the unreleased heading"
+rn cl_required 'newest entry: - Fixed a crash on empty input.' "CL the line quotes the first entry under it as the format example"
+rn cl_named 'changelog file, docs/changelog.md' "CL a PR-template checkbox naming docs/changelog.md picks that file over a root CHANGELOG.md"
+rn cl_named 'newest entry: * Fix: a thing. (#12)' "CL setext title plus markdown Unreleased heading: entry found"
+rn cl_rst 'under its "1.2.0 (unreleased)" section' "CL an rst changelog with an underlined '(unreleased)' title is recognised"
+eqv cl_forbid empty "CL a guide that says not to update the CHANGELOG gets no line"
+eqv cl_soft empty "CL an optional or suggested changelog line is not a requirement"
+eqv cl_pr_section empty "CL a PR-body 'Release Notes' section is not a changelog-file convention"
+eqv cl_no_unreleased empty "CL a changelog with no unreleased section gets no line"
+eqv cl_frozen empty "CL a changelog marked no longer maintained gets no line"
+eqv fs_deprecated_section present "FS a '### Deprecated' subsection under Unreleased does not make the log frozen"
+eqv fs_off empty "FS LOKI_E10_CHANGELOG_FROZEN_STRICT=0 restores the loose rule (a bare 'Deprecated' read as frozen)"
+eqv fs_file_deprecated empty "FS a head saying the file has been deprecated is still frozen"
+eqv cl_no_guide empty "CL an unreleased section with no guide asking for entries gets no line"
+eqv cl_off empty "CL LOKI_E10_CHANGELOG_CONVENTION=0 turns the changelog-file line off"
+eqv cl_on_again present "CL the changelog-file line is on by default"
+eqv cs_on "outside stated scope: README.md" "CS the changelog the brief asked for is in scope; an unplanned README edit is still flagged"
+eqv cs_off "outside stated scope: CHANGELOG.md|outside stated scope: README.md" "CS LOKI_E10_CHANGELOG_SCOPE=0 flags the changelog edit again"
+rn cl_precedence 'changeset, .changeset/' "CL a fragment convention (changesets) still wins over a changelog file"
+rn tx_example 'newest example: changes/12.bugfix.rst' "TX the towncrier example is a real fragment when every mtime ties"
+eqv tx_template_only none "TX a towncrier directory holding only its template names no example"
+rn tx_off 'newest example: changes/template.rst' "TX LOKI_E10_TOWNCRIER_EXAMPLE=0 restores the newest-file example"
 eqv prefix_stable yes "L3/L5 the rule prefix is byte-identical across two runs; the convention line sits after it, never inside it"
 eqv rules yyyyy "L5 FIXED_RULES carries the read-whole-function, preferred-fix, targeted-tests and release-note rules"
 eqv fw_path ".changeset/fix-wrong-total-when-the-invoice.md" "FW changeset: a fragment is written next to the repo's own, named from the title"
@@ -380,6 +459,16 @@ eqv tc_unclear skipped "FW towncrier: an unclear change type writes nothing"
 eqv tc_dup skipped "FW towncrier: a fragment for the same issue and type already exists"
 eqv tc_no_example skipped "FW towncrier: no example fragment to take the naming from writes nothing"
 eqv tc_orphan ok "FW towncrier: an orphan-style example gives a +slug fragment without an issue"
+eqv to_older_orphan "changes/+fix-crash-when-the-cache-is.bugfix.rst" "TO an orphan fragment older than the newest numbered one still makes the repo an orphan user"
+eqv to_cfg_prefix "changes/~fix-crash-when-the-cache-is.bugfix.rst" "TO orphan_prefix in the towncrier config names the fragment with that prefix (type from the task)"
+eqv to_off skipped "TO LOKI_E10_TOWNCRIER_ORPHAN=0 only trusts a newest orphan example (old rule)"
+eqv tr_skip '{"skipped":"towncrier: the task names no issue number and the repo does not use orphan fragments"}' "TR the writer's skip reason comes back for the receipt"
+eqv tr_entry_written null "TR a diff that already carries the changelog entry records no skip"
+eqv tr_entry_missing '{"skipped":"the changelog convention is not written automatically"}' "TR a changelog-file convention with no entry in the diff records why nothing was written"
+eqv tr_no_conv null "TR a repo with no release-note convention records nothing"
+eqv tr_off null "TR LOKI_E10_SCAFFOLD_TRACE=0 records no skip reason"
+eqv tr_block '[{"release_note_skipped":"why"},{},{}]' "TR the receipt carries release_note_skipped only when the writer skipped"
+eqv tr_wired yes "TR wiring: the scaffold hook returns the record, the machine keeps the skip, seal puts it on the receipt"
 eqv sn_pick "The loader now skips unreadable files instead of aborting the whole scan" "FW summary: the maintainer-style sentence is picked over narration and markers"
 eqv sn_chatter empty "FW summary: test-status and sign-off chatter yields nothing"
 eqv sn_restate empty "FW summary: a sentence that restates the title yields nothing"
