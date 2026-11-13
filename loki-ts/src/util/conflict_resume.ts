@@ -143,7 +143,10 @@ export const resumeAfterEmptyDone = (ctx: RunContext, first: SessionRunOptions, 
 /** LOKI_E10_OPUS_CONSULT never-stop: one resume (suffix "-n") that implements the most likely intent instead of stopping. A resume that errors, is killed, ends without a marker or restates the conflict leaves the conflict standing (BLOCKED). */
 export const resumeNeverStop = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, reason: string, advice: string | null): Promise<{ session: SessionResult; iterationId: string }> =>
   (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S ? Promise.resolve({ session: firstSession, iterationId: first.iterationId }) : resumeWith(ctx, first, firstSession, neverStopBrief(reason, advice), "-n");
-export const resumeAfterAlreadyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, ALREADY_DONE_CHALLENGE, "-a");
+/** SR LOKI_E10_SELF_REVIEW: the one bounded pre-delivery review resume (suffix "-rv", turn cap `maxTurns`); too little implement time starts nothing (null). */
+export const resumeForSelfReview = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, brief: string, maxTurns: number): Promise<{ session: SessionResult; iterationId: string } | null> =>
+  (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S ? Promise.resolve(null) : resumeWith(ctx, { ...first, maxTurns }, firstSession, brief, "-rv");
+export const resumeAfterAlreadyDone =(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, ALREADY_DONE_CHALLENGE, "-a");
 
 // LOKI_E10_COVERAGE_RESUME, lean path only (plan skipped). Three modes (coverageMode):
 //   fold (the default under LOKI_E10_LEAN_CALLS): the implement brief carries COVERAGE_FOLD, a fixed line right after FIXED_RULES (cache-stable prefix), so the first

@@ -12,6 +12,7 @@ import { RealBaseTestRunner, loadTaskText } from "./wall.ts"; import { defectPin
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
 import { discardIfSatisfied } from "../../e10ext/discard.ts";
 import { buildArtifactNotes, dropSet, formatChangedRecord, parseStaged } from "../../e10ext/commit_filter.ts";
+import { selfReviewReceiptBlock } from "../../features/self_review.ts";
 import { crossPackageTestEdits, crossPackageTestNote, flagOutsideScope, scopeTestDropEnabled } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts"; import { getVersion } from "../../version.ts";
@@ -451,7 +452,7 @@ export const sealStage: Stage = {
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
-      ...pinnedUpdatesBlock(o.implement), ...releaseNoteSkipBlock(o.implement),...(namedOpen.length ? { named_unchanged: namedOpen.map((s) => ({ symbol: s.symbol, path: s.path, line: s.line, reason: s.why })) } : {}), ...specReceiptBlock(process.env), ...triageReceiptBlock(o.intake), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(), ...sealAccuracyBlock(rawDiff.filter((_, i) => i % 2 === 1), checks, ctx.model), ...contextCoverageBlock(o.implement, rawDiff, ctx.repoDir), ...tournamentReceiptBlock(o.implement), ...attemptsReceiptBlock(o.implement), ...nrdReceiptBlock(o.implement), // GAME10-03; L022 context recall and precision
+      ...pinnedUpdatesBlock(o.implement), ...releaseNoteSkipBlock(o.implement), ...selfReviewReceiptBlock(o.implement), ...(namedOpen.length ? { named_unchanged: namedOpen.map((s) => ({ symbol: s.symbol, path: s.path, line: s.line, reason: s.why })) } : {}), ...specReceiptBlock(process.env), ...triageReceiptBlock(o.intake), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(), ...sealAccuracyBlock(rawDiff.filter((_, i) => i % 2 === 1), checks, ctx.model), ...contextCoverageBlock(o.implement, rawDiff, ctx.repoDir), ...tournamentReceiptBlock(o.implement), ...attemptsReceiptBlock(o.implement), ...nrdReceiptBlock(o.implement), // GAME10-03; L022 context recall and precision
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only

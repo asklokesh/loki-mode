@@ -118,7 +118,7 @@ const LOG_FROZEN_STRICT = /no\s+longer\s+(?:being\s+)?(?:actively\s+)?(?:maintai
 const logFrozen = (head: string, env: NodeJS.ProcessEnv = process.env): boolean => (changelogFrozenStrictOn(env) ? LOG_FROZEN_STRICT : LOG_FROZEN_LOOSE).test(head);
 const LOG_ASK = /\[\s?\]|\b(?:must|should|please|required?|requires|include[sd]?|add(?:ed|s)?|update[sd]?|record(?:ed)?|entry|entries|row)\b/i;
 /** The text of the repo's contribution guides and PR templates (root, .github/, docs/), one string; "" when there are none. */
-function contributionGuides(repoDir: string): string {
+export function contributionGuides(repoDir: string): string {
   const out: string[] = [];
   for (const d of GUIDE_DIRS) { try { for (const n of readdirSync(join(repoDir, d)).sort()) if (GUIDE_NAME.test(n)) { try { out.push(readFileSync(join(repoDir, d, n), "utf8").slice(0, 60_000)); } catch { /* unreadable */ } } } catch { /* no such dir */ } }
   return out.join("\n\n");

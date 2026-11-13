@@ -182,6 +182,7 @@ export interface Receipt {
   route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on.
   named_unchanged?: { symbol: string; path: string; line: number; reason: string | null }[]; // R2 LOKI_E10_NAMED_SITES: each named site the diff left unchanged, with the run's reason (null: none given, which caps VERIFIED); omitted (hash unchanged) when none
   pinned_test_updates?: import("../util/test_guard.ts").PinnedTestUpdate[]; // Z2 LOKI_E10_PINNED_TEST_UPDATE: each existing test updated to the issue's stated behavior; omitted (hash unchanged) when none
+  self_review?: { mode: string; turn: string | null; items: { item: string; status: string; detail: string }[] }; // SR LOKI_E10_SELF_REVIEW: each pre-delivery check and how it was resolved; omitted when off or the implement stage did not end done
   release_note_skipped?: string; // TR LOKI_E10_SCAFFOLD_TRACE: why the release-note fragment writer wrote nothing on a repo with a convention; omitted (hash unchanged) otherwise
   no_regression?: string[]; // LOKI_E10_NRD: keep-case differential lines; omitted (hash unchanged) when none ran
   tournament?: string[]; // LOKI_E10_TOURNAMENT: one line per candidate, per probe disagreement, and the decision; omitted (hash unchanged) when no tournament ran

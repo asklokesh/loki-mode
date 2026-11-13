@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- A pre-delivery review self-check. Before verify, Loki checks the implemented diff for a missing release note the repo requires, stray files, a source change with no test, formatter conformance and edits outside the planned scope. When something is flagged, one short review turn fixes it or states why not, and the receipt records each item (`self_review`). A clean diff gets no extra turn. LOKI_E10_SELF_REVIEW=0 turns it off; LOKI_E10_SELF_REVIEW_MAX_TURNS caps the turn (default 12).
+
 ### Fixed
 - A regression test that imports the changed code is no longer dropped as "outside the change's packages" when the repo keeps its tests in their own package (a JS tests workspace, a Go package testing a subpackage), so the delivered diff keeps its test. LOKI_E10_TEST_REACH=0 restores the old drop.
 - Build output the run created (byte-compiled files, *.tsbuildinfo, untracked dist/, build/, coverage/ or target/ output, files the repo's .gitignore matches) is left out of the delivered diff and named on the receipt. A dist/ the repo commits, and a file the task names, are kept. LOKI_E10_BUILD_ARTIFACT_DROP=0 turns it off.
