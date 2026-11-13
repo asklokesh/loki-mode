@@ -1776,6 +1776,8 @@ export function reportedErrors(task: string): ReportedErrors {
   for (const m of task.matchAll(/\bpanic: (?:runtime error: )?([^\n`\[]{8,200})/g)) { const msg = m[1]!.trim().replace(/[\s.]+$/, ""); panics.set(msg, (panics.get(msg) ?? true) && !cue(m.index!)); }
   return { observed: [...seen].filter(([, ok]) => ok).map(([k]) => k), wanted: [...wanted], observedTypes: [...types].filter(([t, ok]) => ok && !wanted.has(t) && ![...seen.keys()].some((k) => k.startsWith(`${t}: `))).map(([t]) => t), /* a type the issue quotes with an exact message keeps the exact-message rule */ panics: [...panics].filter(([, ok]) => ok).map(([p]) => p) };
 }
+/** REPORTED-KIND: whether assertionFailure needs the failed test file's source to judge a reported error (an exact observed error, or an observed type). */
+export const reportedNeedsSource = (r: ReportedErrors): boolean => r.observed.length > 0 || (r.observedTypes?.length ?? 0) > 0;
 /** REPORTED-KIND (LOKI_E10_REPORTED_KIND, default on, =0 opts out): see reportedErrors and assertionFailure. */
 export const reportedKindOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_REPORTED_KIND"] ?? "").trim());
 /** REPORTED-KIND, go: a test that failed on the base by panicking with a message the issue shows (panics, at least 8 characters; "runtime error: " and bracketed values
