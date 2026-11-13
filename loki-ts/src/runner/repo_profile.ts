@@ -761,7 +761,7 @@ function attributeFullSuiteById(repoDir: string, baseSha: string, full: FullChec
 
 /** One line per failing full-suite check that attributeFullSuite did not excuse, saying which rule kept it blocking (so a receipt never shows an unexplained red suite).
  *  Same inputs and the same profile as attributeFullSuite; `excused` is its preExistingChecks. */
-export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], changed: string[], excused: string[], blocked: readonly string[] = []): string[] {
+export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: FullCheck[], changed: string[], excused: string[], blocked: readonly string[] = []): string[] {
   const p = loadProfile(repoDir), out: string[] = [];
   for (const c of full.filter((x) => x.result === "fail" && !excused.includes(x.name))) {
     const why = (r: string): void => { out.push(`not excused: ${c.name} (\`${c.cmd}\`): ${r}`); }, b = p ? baseFor(repoDir, p, c.cmd, true) : undefined, b0 = p ? baseFor(repoDir, p, c.cmd, false) : undefined, cutB = b0 && (b0.timed_out || b0.reason === "baseline budget used up") ? b0 : undefined;
@@ -769,7 +769,7 @@ export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: {
     if (p.revision !== baseSha) { why("the baseline was measured on another commit"); continue; }
     if (cutB) { why("base run incomplete (cut off on the original code)"); continue; }
     if (!b) { why("the baseline did not run this command"); continue; }
-    if (!b.attributable) { why(`the base run is not attributable (${b.reason ?? "no failing ids parsed"})`); continue; }
+    if (!b.attributable) { why(`the base run is not attributable (${b.reason ?? "no failing ids parsed"})${baseRedShapeOn() ? `; BASE-RED-SHAPE: exit base ${b.exit_code} head ${c.exit ?? "unknown"}, shape ${!b.failing_shape ? "not recorded on base" : !c.shape ? "absent on head (ids parsed)" : b.failing_shape === c.shape ? "same" : "differs"}` : ""}`); continue; } // BASE-RED-SHAPE marker: why the identical-kind rule did not excuse it
     if (!c.ids?.length) { why("its failing ids could not be parsed from the output, so nothing can be compared"); continue; }
     if (cargoTouched(changed)) { why("the diff edits Rust source or a manifest and cargo ids carry no crate path"); continue; }
     const known = new Set([...b.failing_ids, ...(b.flaky_ids ?? [])]), fresh = comparableIds(c.ids).filter((i) => !known.has(i)), inChanged = c.ids.filter((i) => changed.some((f) => i.includes(f)) || goIdTouched(repoDir, i, changed));

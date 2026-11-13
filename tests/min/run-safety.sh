@@ -729,9 +729,10 @@ const at = (out, exit, ids) => { const a = rp.attributeFullSuite(g, sha, chk(out
 const r = [rec, at(baseOut.replace("07_48_51_883Z", "07_49_10_001Z").replace("0.2s", "0.4s"), 254), at(baseOut + "FAIL tests/test_fields.py::test_pluck_new\n", 254), at(baseOut, 1), at(baseOut, 254, ["tests/test_fields.py::test_pluck_new"])];
 process.env.LOKI_E10_BASE_RED_SHAPE = "0"; r.push(at(baseOut, 254));
 delete process.env.LOKI_E10_BASE_RED_SHAPE; const a = rp.attributeFullSuite(g, sha, chk(baseOut, 254), [], []); r.push(/identical kind/.test(a.line ?? "") ? "noted" : "silent");
+const why = rp.whyFullSuiteNotExcused(g, sha, chk(baseOut + "FAIL x\n", 254), [], []).join(" "); r.push(/BASE-RED-SHAPE: exit base 254 head 254, shape differs/.test(why) ? "marker" : "nomarker:" + why);
 console.log(r.join(" | "));
 ' 2>&1)"
-X5="shape:false | pre | introduced | introduced | introduced | introduced | noted"
+X5="shape:false | pre | introduced | introduced | introduced | introduced | noted | marker"
 [ "$A5" = "$X5" ] && ok "unit: a suite red on base with unparseable ids is excused only when head fails in the identical kind (same exit, same output shape up to timings); a newly broken test, another exit code, parseable head ids or LOKI_E10_BASE_RED_SHAPE=0 stay introduced, and the excuse is disclosed" \
     || bad "base-red-shape unit gave: $A5 (want: $X5)"
 
