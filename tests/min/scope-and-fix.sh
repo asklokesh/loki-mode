@@ -292,6 +292,7 @@
 # 254. testmap.ts buildTestMap: ignore pyCfg (the pytest-fallback leg's conftest.py case reads unittest).
 # 255. package_suite.ts runPackageSuites: drop the cwd !== "." guard (the empty-subsuite-na leg's root package reads not applicable).
 # 256. check_result.ts assertionFailure REPORTED-KIND type path: drop the MISSING_API guard (the reported-kind unit's ImportError case reads true).
+# 257. repo_profile.ts intakeCapS: default back to 180 (the R3 leg reads 180,,90,180), or baselineSuites stops calling intakeBudgetNote (it reads silent).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -2142,7 +2143,8 @@ grep -q 'const r = await resumeForNamedSites(ctx, { ...unchained(), iterationId:
 
 # acc-145 R3 intake guard. (a) LOKI_E10_PLAN_SCOPE_ANCHOR (default on, =0 opts out): a plan-scope list holding none of the files or symbols the task names is discarded, so
 # the fix file named only by its class is never "outside stated scope". Synthetic repo: a VERSION file the prose word "version" matches, and the class in pkg/fetch.py.
-# (b) LOKI_E10_INTAKE_CAP_S (default 180, =0 off): the root baseline and the suite baselines share one budget; a suite the budget has no room for is not run.
+# (b) LOKI_E10_INTAKE_CAP_S (opt-in since acc-148: unset, 0 or a non-number is off; a positive number of seconds turns it on): the root baseline and the suite baselines
+# share one budget; a suite the budget has no room for is not run, and intake prints one "loki: intake budget spent after N s" line for it.
 R3D="$T/r3"; rm -rf "$R3D"; mkdir -p "$R3D/pkg" "$R3D/run"; git init -q -b main "$R3D"
 printf '1.0\n' > "$R3D/VERSION"; printf 'class Fetcher:\n    def rules(self, url):\n        return url.host\n' > "$R3D/pkg/fetch.py"; printf '{"scripts":{"test":"sleep 3"}}\n' > "$R3D/package.json"
 git -C "$R3D" add -- . && git -C "$R3D" -c user.name=f -c user.email=f@x commit -q -m base
@@ -2158,10 +2160,11 @@ process.env.LOKI_E10_PLAN_SCOPE_ANCHOR = "0"; out.push(j(sc.flagOutsideScope(o, 
 out.push([rp.intakeCapS({}), rp.intakeCapS({ LOKI_E10_INTAKE_CAP_S: "0" }), rp.intakeCapS({ LOKI_E10_INTAKE_CAP_S: "90" }), rp.intakeCapS({ LOKI_E10_INTAKE_CAP_S: "x" })].join(","));
 rp.ensureProfile(d, { timeoutS: 1 });
 const spec = [{ name: "full suite: other", cmd: "suite-cmd", cwd: ".", run: "sleep 3; true" }], t0 = Date.now();
-const p1 = rp.baselineSuites(d, spec, { timeoutS: 300, budgetS: 300, deadlineMs: Date.now() }), ms = Date.now() - t0;
-out.push(`${p1?.suites?.[0]?.reason ?? "ran"},${ms < 2500}`);
+const errs = [], w0 = process.stderr.write.bind(process.stderr); process.stderr.write = (x) => { errs.push(String(x)); return true; };
+const p1 = rp.baselineSuites(d, spec, { timeoutS: 300, budgetS: 300, deadlineMs: Date.now() }), ms = Date.now() - t0; process.stderr.write = w0;
+out.push(`${p1?.suites?.[0]?.reason ?? "ran"},${ms < 2500},${errs.some((e) => e.startsWith(rp.INTAKE_BUDGET_LINE) && /full suite: other not measured on base/.test(e)) ? "noted" : "silent"}`);
 console.log(out.join(" | "));' 2>&1)"
-[ "$R3R" = '[] | ["VERSION","pkg/fetch.py"] | ["VERSION"] | ["VERSION"] | ["scope not determined; all edits committed"] | ["outside stated scope: pkg/fetch.py"] | 180,,90,180 | baseline budget used up,true' ] && ok "R3 intake guard: a plan scope holding only a file the prose matched is discarded (the class file is never outside stated scope), a scope holding the defining file is kept, a task naming nothing and =0 keep the list; the intake cap defaults to 180 s (=0 off), and a suite the shared budget has no room for is not run" || bad "R3 intake guard gave: $R3R"
+[ "$R3R" = '[] | ["VERSION","pkg/fetch.py"] | ["VERSION"] | ["VERSION"] | ["scope not determined; all edits committed"] | ["outside stated scope: pkg/fetch.py"] | ,,90, | baseline budget used up,true,noted' ] && ok "R3 intake guard: a plan scope holding only a file the prose matched is discarded (the class file is never outside stated scope), a scope holding the defining file is kept, a task naming nothing and =0 keep the list; the intake cap is off unless a positive number of seconds is set, and a suite the shared budget has no room for is not run" || bad "R3 intake guard gave: $R3R"
 grep -q 'icap = intakeCapS(), built = baselineOn ? ensureProfile(ctx.repoDir, { timeoutS: icap === null ? baselineCmdS(ctx.capS) : Math.min(baselineCmdS(ctx.capS), icap) })' "$ROOT/loki-ts/src/engine10/stages/intake.ts" && grep -q 'baselineLeftS: Math.max(0, icap - Math.ceil(baselineMs / 1000))' "$ROOT/loki-ts/src/engine10/stages/intake.ts" && grep -q 'deadlineMs: tb + ctx.baselineLeftS \* 1000' "$ROOT/loki-ts/src/project_model/install.ts" && grep -q 'flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir)' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'outsideScope(a.outputs(), staged, anchoredPlanScope(readPlanScope(a.runDir)' "$ROOT/loki-ts/src/features/attempts.ts" && ok "R3 wiring: intake passes one baseline budget to the root and suite baselines; seal and the attempts ranking read the anchored plan scope" || bad "R3 wiring missing in intake.ts, install.ts, seal.ts or attempts.ts"
 
 # acc-145 R5 mocha targeted tests (LOKI_E10_MOCHA_TARGETED, default on, =0 opts out). Synthetic package declaring mocha in devDependencies, its test files without a .test or

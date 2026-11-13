@@ -293,11 +293,14 @@ export const commandProfilePath = (repoDir: string): string => join(repoDir, ".l
 export const BASELINE_CMD_TIMEOUT_S = 300;
 /** A cut entry measured with a shorter budget than the current one is measured again; one cut at the current budget is kept (a hanging suite is not re-run for 5 minutes every time). */
 /** A baseline command never gets more than a third of the run's overall cap. */
-/** R3 LOKI_E10_INTAKE_CAP_S (default 180; =0/off restores the per-command caps alone): one budget, in seconds, for all of intake's baseline test runs together (the root
+/** R3 LOKI_E10_INTAKE_CAP_S (opt-in since acc-148: unset, 0 or off keeps the per-command caps alone; a positive number of seconds enables it): one budget for all of intake's baseline test runs together (the root
  *  baseline, its rerun after an install, and the per-suite baselines). Before it, a suite that ran past the 300 s per-command cap was measured twice under two names, so
  *  intake spent 600 s on two cut-off runs that excuse nothing. A run cut by the budget is recorded as cut off, as before. The dependency install keeps its own cap. */
-export const INTAKE_CAP_DEFAULT_S = 180;
-export const intakeCapS = (env: NodeJS.ProcessEnv = process.env): number | null => { const v = (env.LOKI_E10_INTAKE_CAP_S ?? "").trim(); if (/^(0|off|false|no)$/i.test(v)) return null; const n = Number(v); return v !== "" && Number.isFinite(n) && n > 0 ? Math.floor(n) : INTAKE_CAP_DEFAULT_S; };
+/** acc-148: off by default. The shared budget had no measured accuracy benefit and cut 6 of 65 past baselines (a complete 196 s gitea suite among them); a cut
+ *  baseline is unattributable base red. When it is on and cuts a baseline, intakeBudgetNote prints one line ("loki: intake budget spent after N s ...") so runs can be counted. */
+export const intakeCapS = (env: NodeJS.ProcessEnv = process.env): number | null => { const v = (env.LOKI_E10_INTAKE_CAP_S ?? "").trim(); const n = Number(v); return v !== "" && Number.isFinite(n) && n > 0 ? Math.floor(n) : null; };
+export const INTAKE_BUDGET_LINE = "loki: intake budget spent after";
+export function intakeBudgetNote(spentS: number, what: string): void { try { process.stderr.write(`${INTAKE_BUDGET_LINE} ${Math.round(spentS)} s (LOKI_E10_INTAKE_CAP_S): ${what}\n`); } catch { /* a note, never a reason to stop */ } }
 export const baselineCmdS = (capS: number | undefined): number => Math.max(1, Math.min(BASELINE_CMD_TIMEOUT_S, Math.floor((capS ?? Infinity) / 3)));
 const cutShort = (b: { timed_out: boolean; duration_s: number | null } | undefined, tmoS: number): boolean => !!b?.timed_out && (b.duration_s ?? 0) < tmoS - 1;
 export const MANIFESTS = ["requirements.txt", "package.json", "Makefile", "makefile", "GNUmakefile", "pyproject.toml", "tox.ini", "pytest.ini", "setup.cfg", "go.mod", "Cargo.toml", "tsconfig.json"];
@@ -573,7 +576,7 @@ export const SUITE_BASELINE_BUDGET_S = 300;
  *  profile ensureProfile wrote for this HEAD. An entry for the same command is reused unless `rerun` (a dependency install succeeded
  *  since, so a baseline measured before it is stale: the main baseline and every entry are re-run, attributable or not). A root command the main baseline already ran is not run twice. One shared
  *  budget; a suite past it is recorded not run, so nothing it fails is excused (fail-closed). Never throws: null when there is no current profile. */
-export function baselineSuites(repoDir: string, specs: { name: string; cmd: string; cwd: string; run: string }[], opts: BuildOpts & { rerun?: boolean; budgetS?: number; deadlineMs?: number } = {}): CommandProfile | null {
+export function baselineSuites(repoDir: string, specs: { name: string; cmd: string; cwd: string; run: string }[], opts: BuildOpts & { rerun?: boolean; budgetS?: number; deadlineMs?: number; budgetSpentS?: number } = {}): CommandProfile | null {
   try {
     const p = loadProfile(repoDir);
     if (!p || p.revision !== headOf(repoDir)) return null;
@@ -586,8 +589,9 @@ export function baselineSuites(repoDir: string, specs: { name: string; cmd: stri
       const prev = old.find((o) => o.command === s.cmd);
       if (prev?.ran && !opts.rerun && !cutShort(prev, Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, Math.floor(left))) && (prev.failing_ids.length === 0 || (prev.failing_errors && prev.flaky_probe !== undefined))) return prev; // an entry recorded before failing_errors existed is measured again
       const tmo = Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, Math.floor(left)), t0 = Date.now();
-      if (tmo < 1) return { name: s.name, ran: false, command: s.cmd, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: "baseline budget used up" };
+      if (tmo < 1) { if (opts.deadlineMs !== undefined) intakeBudgetNote((opts.budgetSpentS ?? 0) + (opts.budgetS ?? SUITE_BASELINE_BUDGET_S) - left, `${s.name} not measured on base`); return { name: s.name, ran: false, command: s.cmd, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: "baseline budget used up" }; }
       const { b } = runProbed(repoDir, s.run, join(repoDir, s.cwd), tmo, opts);
+      if (b.timed_out && opts.deadlineMs !== undefined && tmo < (opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S)) intakeBudgetNote((opts.budgetSpentS ?? 0) + (opts.budgetS ?? SUITE_BASELINE_BUDGET_S) - left + tmo, `${s.name} cut off on base after ${tmo} s`);
       left -= (Date.now() - t0) / 1000;
       return { name: s.name, ...b, command: s.cmd };
     });
