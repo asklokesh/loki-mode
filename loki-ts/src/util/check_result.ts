@@ -1189,6 +1189,10 @@ export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process
 
 /** FC-WALL-LOCATION-BLIND: a loki_wall_* file in the tree that this run's Wall did not install (an earlier run left it untracked, or this run discarded it) is not a change of this run: verifying it would credit an exogenous pass for a test the receipt lists as discarded. `own` holds the paths this run installed (absolute or repo-relative). */
 export const withoutStaleWall = <T extends string | { path: string }>(items: T[], own: string[], repoDir: string): T[] => { const mine = new Set(own.map((p) => (isAbsolute(p) ? relative(repoDir, p) : p))); return items.filter((it) => { const f = typeof it === "string" ? it : it.path; return !/(^|\/)loki_wall_[^/]*$/.test(f) || mine.has(f); }); };
+/** J2 LOKI_COMMIT_WALL (off by default; =1 publishes): whether a VERIFIED seal adds the sealed Wall files to the delivered branch as a child commit, and whether the WIP commit of an
+ *  unsealed end keeps them. On the tuning bench every published Wall file whose run passed hidden failed the judge (3 of 3); Loki's own acceptance test belongs to the proof, which
+ *  the run dir (the sealed copy) and the receipt (its sha256 and the check's rerun command) keep either way. =0 also drops the copy-integrity notes, as before. */
+export const commitWallEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_COMMIT_WALL"] ?? "").trim());
 /** FC-VERIFIED-PR-WITHOUT-ITS-TEST: the Wall files verify ran and passed (target_checks + executed proof), as their SEALED bytes: the runDir/wall copy must hash to wall.files[].sha256, else a NOT PROVEN note and no file. LOKI_COMMIT_WALL=0: none published. clauseGap (FALSEVER-CLAUSE) is read from the same passing sealed copies whatever that switch says: the spec clauses none of them proves, empty when no task text is given or no Wall file ran. */
 export function publishableWall(repoDir: string, runDir: string, o: Partial<Record<string, Record<string, unknown>>>, env: NodeJS.ProcessEnv = process.env, task?: string): { files: { rel: string; bytes: Buffer; cmd: string; runner: string }[]; notes: string[]; clauseGap: string[]; weak: string[] } {
   const out = { files: [] as { rel: string; bytes: Buffer; cmd: string; runner: string }[], notes: [] as string[], clauseGap: [] as string[], weak: [] as string[] }, arr = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []), tgt = new Set(Array.isArray(o.verify?.["target_checks"]) ? (o.verify["target_checks"] as unknown[]).map(String) : []);
@@ -1853,6 +1857,7 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
     }
     case "vitest": return ["npx", ["--no-install", "vitest", "run", t.path]];
     case "jest": return ["npx", ["--no-install", "jest", t.path]];
+    case "mocha": return ["npx", ["--no-install", "mocha", t.path]];
     case "bun": return ["bun", ["test", t.path]];
     case "node": return ["node", ["--test", `./${t.path}`]];
     case "npm": return ["npm", ["test", "--silent"]];
@@ -1877,6 +1882,7 @@ const FULL_SUITE_STATIC: Record<Exclude<RunnerName, "pytest" | "unittest">, { cm
   gradle: { cmd: "gradle", args: ["cleanTest", "test", "-i", "--console=plain"] },
   javac: { cmd: "bash", args: ["-c", JAVAC_WRAPPER, "loki-javac", ".", "-"] },
   dotnet: { cmd: "dotnet", args: ["test"] }, // the real target comes from fullSuiteCmd (dotnetFullCmd)
+  mocha: { cmd: "npx", args: ["mocha"] }, // never a detected runner (R5 makes mocha refs only), listed for the exhaustive table
 };
 const BUILD_TOOL_RUNNERS: ReadonlySet<RunnerName> = new Set(["maven", "gradle", "javac", "dotnet"]);
 /** FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER: the one full-suite command per runner. pytest resolves its interpreter exactly as a per-test run does (resolveTool: project .venv, else python3), never a bare `python` that python3-only hosts lack. */

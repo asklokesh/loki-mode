@@ -99,7 +99,7 @@ export interface SessionResult {
   stderrTail?: string;
 }
 export interface SessionRunner { run(opts: SessionRunOptions): Promise<SessionResult> } // implemented by session.ts (E-07)
-export type RunnerName = "pytest" | "unittest" | "vitest" | "jest" | "npm" | "bun" | "node" | "go" | "cargo" | "maven" | "gradle" | "javac" | "dotnet";
+export type RunnerName = "pytest" | "unittest" | "vitest" | "jest" | "npm" | "bun" | "node" | "go" | "cargo" | "maven" | "gradle" | "javac" | "dotnet" | "mocha"; // mocha: only verify's targeted fallback (R5) makes a mocha ref; runner detection never lists it
 /** A test file and the runner that executes it (mixed repos run each runner separately). */
 export interface TestRef { runner: RunnerName; path: string /* relative to repoDir */ }
 export interface TestMap { runners: RunnerName[]; tests: TestRef[]; }
@@ -180,8 +180,11 @@ export interface Receipt {
   seeded_corpus?: import("../util/run_outputs.ts").SeededCorpus; /* TEN-GATES-15 */ supply?: import("../supply/supply_guard.ts").SupplyBlock; // T10: present only when the guard found newly added dependencies
   context?: import("../util/context_pack.ts").ContextCoverage; seal_accuracy?: string; // L022: brief coverage of the changed files. GAME10-03: signed line read from the measured wrong-pass results, or "Seal accuracy: not measured"
   route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on.
+  named_unchanged?: { symbol: string; path: string; line: number; reason: string | null }[]; // R2 LOKI_E10_NAMED_SITES: each named site the diff left unchanged, with the run's reason (null: none given, which caps VERIFIED); omitted (hash unchanged) when none
+  pinned_test_updates?: import("../util/test_guard.ts").PinnedTestUpdate[]; // Z2 LOKI_E10_PINNED_TEST_UPDATE: each existing test updated to the issue's stated behavior; omitted (hash unchanged) when none
   no_regression?: string[]; // LOKI_E10_NRD: keep-case differential lines; omitted (hash unchanged) when none ran
   tournament?: string[]; // LOKI_E10_TOURNAMENT: one line per candidate, per probe disagreement, and the decision; omitted (hash unchanged) when no tournament ran
+  attempts?: string[]; // LOKI_E10_ATTEMPTS: one line per implement attempt and the selection reason; omitted (hash unchanged) when no extra attempt ran
   cost_preview?: Record<string, unknown>; // 11.3.0 T1: absent under LOKI_COST_PREVIEW=0
   verdict: Verdict;
   toolchain?: import("../util/receipt_signer.ts").Toolchain; loki_version?: string; // TEN-GATES-22: absent on receipts sealed before it existed, which still verify; loki_version (VERSION at seal) likewise

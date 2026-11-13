@@ -28,6 +28,7 @@ export interface LedgerRecord {
   prompt_tokens_source?: "measured" | "estimated"; // measured = count_tokens endpoint; estimated = calibrated chars/4, never a measurement
   token_ratio?: number; // judge calls: measured/estimated for this prompt (only when measured)
   thinking_tokens?: number; // tool-less calls: output tokens spent on thinking (the Agent SDK route reads them from modelUsage)
+  error?: { class: string; message: string; status?: number; stderr?: string; elapsed_ms: number; timed_out: boolean; attempt: number }; // T201: a tool-less Agent SDK call that failed: what failed, so a transport outcome is diagnosable
   thinking_clamp?: string; // judge calls only: "<from>-><to>@<effort> (max <level>)" when the thinking type was clamped for the effort
 }
 

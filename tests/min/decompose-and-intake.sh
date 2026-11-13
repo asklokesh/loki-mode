@@ -78,6 +78,11 @@
 #  26. manifestModel: drop the SKIP_PKG_DIR filter on other manifests; the diet check fails (test/fixtures/app and docs listed).
 #  27. project_model/discover.ts: drop effort "low" from the discovery session; the diet check fails (effort=undefined).
 #  28. project_model/gather.ts: maxTotalBytes back to 96 KiB; the diet check fails (inlined over 24 KiB).
+#  29. issues_epic.ts makeSessionDecompose: drop `outputs: [outPath]` (rebuild dist); the split session outcome check fails (source log: the stub's
+#      Write is denied by the whole-.loki/ rule, as FireLater#24's was on v11.139.0).
+#  30. issues_epic.ts decomposeReply: skip the iteration log (file, then the 4096-character tail); the split reply check fails.
+#  31. issues_run.ts splitWithReask: re-ask a reply with no JSON object like any refusal; the split reply check fails (2 calls).
+#  32. util/base_guard.ts envChangedSince: drop the TOOL_OUTPUT_FILE skip; the lazy zero guard (tool output) check fails.
 #  29. manifestModel: drop the fansOut check; the diet check fails (fan: an nx root test answered as a manifest model, status ok).
 #  29b. discover.ts: drop the fanOut early return (fall through to the session); the diet check fails (fan 1 session instead of 0).
 #  29c. discover.ts fanOutSessionEnabled: always false; the diet check fails (fan-on false).
@@ -233,6 +238,10 @@ impl_budget="$(grep '^implement ' "$T/epic-budget.log" 2>/dev/null | sed 's/^imp
     && ok "--max-cost 5 is one cap for the whole issue: every slice sees limit 5 and one shared ledger" || bad "slices do not share one cap and ledger: $(tr '\n' ';' < "$T/epic-budget.log" 2>/dev/null)"
 has "epic sizes large by structure at start" "$OUT" "acme/search#24 sizes large (structure: 8 solution part(s), 5 acceptance criteria, backend and frontend"
 has "epic takes the decompose path (model split used)" "$OUT" "#24 split into 2 slices: s1, s2<-s1"
+# fl24: the split session may write the file its brief names (HARNESS-OUTPUTS); the stub refuses the Write as the real CLI does when a deny covers it.
+dec_src="$(cat "$E"/.loki/issues-run/decompose/issue-24-*.json.outcome.json 2>/dev/null | python3 -I -c 'import json,sys; print(",".join(json.loads(l)["source"] for l in sys.stdin if l.strip()))')"
+[ "$dec_src" = "file" ] && ok "split session: one session, its JSON written to the file the brief names (the .loki/ deny lets that file through), outcome recorded" \
+    || bad "split session outcome sources: '${dec_src}' (want: file; 'log' means the Write was denied)"
 s1_line="$(printf '%s\n' "$OUT" | grep -n '^#24 s1 running' | head -1 | cut -d: -f1)"
 s2_line="$(printf '%s\n' "$OUT" | grep -n '^#24 s2 running (stacked on loki/e10-' | head -1 | cut -d: -f1)"
 [ -n "$s1_line" ] && [ -n "$s2_line" ] && [ "$s1_line" -lt "$s2_line" ] && ok "slices run in order, s2 stacked on s1's run branch" || bad "slices did not run s1 then s2 stacked (s1 line '${s1_line}', s2 line '${s2_line}')"
@@ -268,6 +277,27 @@ console.log(out.join(" "));
 ' 2>&1)"
 [ "$SPLITR" = "true 20 520 true s1 src/a.ts 1 50+3 true true true 2 true" ] && ok "split repair: a 520-char criterion is kept whole, empties dropped, 25 criteria merged to 20 with no text lost, a 600-char path dropped, duplicate deps dropped, dropped paths counted and named in the slice task; an empty acceptance list is re-asked once with the exact error" \
     || bad "split repair gave: $SPLITR (want: true 20 520 true s1 src/a.ts 1 50+3 true true true 2 true)"
+
+# --- split reply (fl24, FireLater#24 on v11.139.0): the Write was denied, the 11 KB split rode a reply whose 4096-character tail cut it, and the same
+# refusal ("no JSON object in the reply") was paid twice ($1.70). Synthetic reply: a fenced split, then prose past 4096 characters.
+SPLITF="$(ROOT="$ROOT" D="$T/splitreply" bun --no-env-file --config=/dev/null -e '
+const m = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts"), r = await import(process.env.ROOT + "/loki-ts/src/commands/issues_run.ts"), fs = await import("node:fs");
+const d = process.env.D; fs.mkdirSync(d, { recursive: true });
+const split = JSON.stringify({ slices: [{ id: "s1", title: "backend", acceptance: ["a".repeat(5000)] }, { id: "s2", title: "ui", acceptance: ["b"], depends_on: ["s1"] }] });
+const reply = "Planning.\n\n```json\n" + split + "\n```\n\nI checked it twice:\n\n```json\n" + split + "\n```\n\n" + "Cleanup: nothing started.\n".repeat(200);
+fs.writeFileSync(d + "/log.txt", reply);
+const out = [];
+out.push(m.parseDecomposition(reply.slice(-4096)).ok, m.parseDecomposition(reply).ok); // the tail alone has no JSON; the whole reply has the split
+fs.writeFileSync(d + "/out.json", split);
+const src = (o, l, s) => m.decomposeReply(o, l, s).source;
+out.push(src(d + "/out.json", d + "/log.txt", "tail"), src(d + "/none.json", d + "/log.txt", "tail"), src(d + "/none.json", d + "/nolog.txt", "tail"), src(d + "/none.json", d + "/nolog.txt", ""));
+out.push(m.parseDecomposition(m.decomposeReply(d + "/none.json", d + "/log.txt", reply.slice(-4096)).text).ok);
+let calls = 0; const q = await r.splitWithReask({ out: () => {}, decompose: async () => { calls++; return "A hook blocked the file write."; } }, "acme/x", { number: 1, title: "t", body: "b", labels: [] }, "large");
+out.push(q.ok, calls, !q.ok && /not re-asked/.test(q.reason));
+console.log(out.join(" "));
+' 2>&1)"
+[ "$SPLITF" = "false true file log summary none true false 1 true" ] && ok "split reply: a split past the 4096-character tail is read from the whole session log (file, then log, then tail); a reply with no JSON at all is refused once, not re-asked" \
+    || bad "split reply gave: $SPLITF (want: false true file log summary none true false 1 true)"
 
 # --- split brief: a criterion that replaces behavior an existing test asserts must name that test (FireLater#24 s1, v11.127.0) ---------
 # s1 said "use ranked full-text search instead of ILIKE" and "existing issues tests still pass" without naming issues.test.ts:191, which asserts ILIKE;
@@ -493,7 +523,7 @@ E2E_STUB_MODE=done run_loki "$L" "$T/labels-stub.log" start acme/search#25 --no-
 LEV="$(ls "$L"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
 lsize="$(python3 -I -c 'import json,sys; print(next((json.loads(l)["data"].get("size") for l in open(sys.argv[1]) if "\"variant\"" in l and json.loads(l)["type"] == "variant"), "none"))' "$LEV" 2>/dev/null)"
 case "$OUT" in *"running the issue as one run"*) [ "$lsize" = "large" ] && ok "labels: the epic-label issue sizes large in engine10's own plan stage, as in triage" || bad "labels: engine10 sized the epic-label issue '${lsize:-none}' (rc $RC)" ;; *) bad "labels: the issue did not fall back to one run" ;; esac
-printf '%s\n' "$OUT" | grep -Eq '^Split planning: .*\(0 slice runs \+ 2 planning sessions\)$' && ok "refused split: both planning sessions (the refusal is re-asked once) are reported on a Split planning line backlog adds" || bad "refused split: no Split planning line for 2 sessions: $(printf '%s\n' "$OUT" | grep -i 'split' | head -6 | tr '\n' ';')"
+printf '%s\n' "$OUT" | grep -Eq '^Split planning: .*\(0 slice runs \+ 1 planning session\)$' && ok "refused split: a reply with no JSON object is not re-asked (fl24), and its one planning session is reported on a Split planning line backlog adds" || bad "refused split: no Split planning line for 1 session: $(printf '%s\n' "$OUT" | grep -i 'split' | head -6 | tr '\n' ';')"
 
 # --- lean + intake speed: a one-line fix on a 1246-file repo with 20 stale run branches --------------------------------
 R="$T/big"
@@ -549,6 +579,21 @@ r.push(envChangedSince(g, g, Date.now() + 1000, null));
 console.log(r.join(" "));
 ' 2>&1)"
 [ "$GUARD" = "false true false true true" ] && ok "lazy zero guard: untouched trusted; dependency edit, deleted ignored file, unknown list withheld" || bad "lazy zero guard gave: $GUARD (want: false true false true true)"
+# fl24 (FireLater#24 on v11.139.0): the implement session's own `tsc --noEmit` rewrote the ignored frontend/tsconfig.tsbuildinfo, the guard withheld the
+# dependencies from every base rerun, 22 page tests red on base parsed no base ids, and their ids blocked the full suite. A tool's own output file is
+# not the environment; a real ignored file (.env) changing still withholds.
+G2="$T/guard2"
+mkdir -p "$G2/web/node_modules/dep" && echo 'module.exports = 1;' > "$G2/web/node_modules/dep/index.js" && echo '{}' > "$G2/web/tsconfig.tsbuildinfo" && echo '{}' > "$G2/web/.eslintcache" && echo 'X=1' > "$G2/.env"
+GUARD2="$(ROOT="$ROOT" G="$G2" bun --no-env-file --config=/dev/null -e '
+const { envChangedSince } = await import(process.env.ROOT + "/loki-ts/src/util/base_guard.ts");
+const { writeFileSync } = await import("node:fs");
+const g = process.env.G, ign = [".env", "web/node_modules", "web/tsconfig.tsbuildinfo", "web/.eslintcache"]; await Bun.sleep(30); const since = Date.now(); await Bun.sleep(30);
+writeFileSync(g + "/web/tsconfig.tsbuildinfo", "{\"v\":2}"); writeFileSync(g + "/web/.eslintcache", "[]");
+const r = [envChangedSince(g, g + "/web", since, ign)];
+writeFileSync(g + "/.env", "X=2"); r.push(envChangedSince(g, g + "/web", since, ign));
+console.log(r.join(" "));
+' 2>&1)"
+[ "$GUARD2" = "false true" ] && ok "lazy zero guard: a rewritten tsconfig.tsbuildinfo or .eslintcache (a tool's own output) keeps the base dependencies; a changed .env still withholds" || bad "lazy zero guard (tool output) gave: $GUARD2 (want: false true)"
 
 
 # --- brief: the Project Model discovery brief keeps per-run text last so same-repo sessions share a cacheable prefix ------------------

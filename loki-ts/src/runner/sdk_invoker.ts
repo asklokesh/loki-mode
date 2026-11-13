@@ -513,8 +513,48 @@ function toolLessThinking(mode: "off" | "low"): { thinking: Anthropic.ThinkingCo
   return { thinking: { type: "adaptive" }, effort: "low" };
 }
 
-async function toolLessViaAgentSdk(p: ToolLessParams, ledger: ToolLessParams["ledger"], remaining: number | null): Promise<ToolLessResult> {
-  const fail = (): ToolLessResult => { if (ledger) appendChildLedger(ledger.lokiDir, { ...unmeasuredRecord(ledger.phase, p.model, "sdk-toolless"), outcome: "transport" }); return { outcome: { kind: "transport" }, route: "agent-sdk", usd: null, thinkingTokens: null }; };
+/** T201: what a failed tool-less Agent SDK call left: the exception (class, message, HTTP status when it carries one), the CLI's stderr tail, the elapsed time and whether our own timeout fired. */
+export interface ToolLessFailure { class: string; message: string; status?: number; stderr?: string; elapsed_ms: number; timed_out: boolean; attempt: number }
+export function toolLessFailure(e: unknown, stderr: string, startedMs: number, timedOut: boolean, attempt: number): ToolLessFailure {
+  const err = e as { name?: unknown; message?: unknown; status?: unknown; statusCode?: unknown; constructor?: { name?: string } } | null;
+  const cls = err ? (typeof err.name === "string" && err.name !== "Error" ? err.name : err.constructor?.name ?? "Error") : "NoResult";
+  const status = err ? (typeof err.status === "number" ? err.status : typeof err.statusCode === "number" ? err.statusCode : undefined) : undefined;
+  const msg = err ? String(err.message ?? err).replace(/\s+/g, " ").slice(0, 500) : "the stream ended without a result message";
+  const tail = stderr.trim().slice(-2000);
+  return { class: cls, message: msg, ...(status !== undefined ? { status } : {}), ...(tail ? { stderr: tail } : {}), elapsed_ms: Date.now() - startedMs, timed_out: timedOut, attempt };
+}
+/** T201: how a failed tool-less call is treated. "output_cap": the CLI refused a reply longer than CLAUDE_CODE_MAX_OUTPUT_TOKENS ("response exceeded the N output token maximum");
+ *  that is the cap, not the network, so it is reported as truncated and never retried. "transient": HTTP 408/409/429/5xx, overloaded, rate limited, a reset or refused connection,
+ *  a socket hang-up or a DNS failure; retried with backoff. Anything else (auth, our own timeout, an unknown error) is "fatal": no retry, recorded. Measured (fix-t201, load average
+ *  30 to 40): 9 of 12 concurrent remedy checks at a 50-token cap failed with the output-cap error, 0 of 12 at 256; none failed for a network or auth reason. */
+export type ToolLessFailureKind = "output_cap" | "transient" | "fatal";
+export function classifyToolLessFailure(f: Pick<ToolLessFailure, "message" | "status" | "stderr" | "timed_out">): ToolLessFailureKind {
+  const t = `${f.message} ${f.stderr ?? ""}`;
+  if (/exceeded the \d+ output token maximum|CLAUDE_CODE_MAX_OUTPUT_TOKENS/i.test(t)) return "output_cap";
+  if (f.timed_out) return "fatal"; // our own deadline: the time is spent, a retry would double it
+  if (f.status !== undefined && (f.status === 408 || f.status === 409 || f.status === 429 || f.status >= 500)) return "transient";
+  if (/\b(?:429|500|502|503|504|529)\b|overloaded|rate.?limit|too many requests|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|network error|fetch failed|connection (?:reset|closed|error)/i.test(t)) return "transient";
+  return "fatal";
+}
+export const TOOLLESS_MAX_ATTEMPTS = 3;
+let backoffOverride: ((attempt: number) => number) | null = null;
+/** TEST SEAM: replace the retry backoff (ms per attempt). Production code must never call this. */
+export function __setToolLessBackoffForTests(fn: ((attempt: number) => number) | null): void { backoffOverride = fn; }
+const backoffMs = (attempt: number): number => backoffOverride ? backoffOverride(attempt) : Math.round(1000 * 3 ** (attempt - 1) * (0.75 + Math.random() * 0.5)); // about 1 s, then 3 s
+/** The Agent SDK route with the T201 retry: a transient failure is retried up to TOOLLESS_MAX_ATTEMPTS calls in all with backoff; an output-cap failure is truncated; anything else stops. */
+async function toolLessViaAgentSdkRetrying(p: ToolLessParams, ledger: ToolLessParams["ledger"], remaining: number | null): Promise<ToolLessResult & { failure?: ToolLessFailure }> {
+  for (let attempt = 1; ; attempt++) {
+    const r = await toolLessViaAgentSdk(p, ledger, remaining, attempt);
+    if (!r.failure) return r;
+    const kind = classifyToolLessFailure(r.failure);
+    if (kind === "output_cap") return { ...r, outcome: { kind: "truncated" } };
+    if (kind !== "transient" || attempt >= TOOLLESS_MAX_ATTEMPTS) return r;
+    await new Promise((res) => setTimeout(res, backoffMs(attempt)));
+  }
+}
+async function toolLessViaAgentSdk(p: ToolLessParams, ledger: ToolLessParams["ledger"], remaining: number | null, attempt = 1): Promise<ToolLessResult & { failure?: ToolLessFailure }> {
+  const started = Date.now(); let stderr = "", timedOut = false;
+  const fail = (e: unknown): ToolLessResult & { failure: ToolLessFailure } => { const failure = toolLessFailure(e, stderr, started, timedOut, attempt); if (ledger) appendChildLedger(ledger.lokiDir, { ...unmeasuredRecord(ledger.phase, p.model, "sdk-toolless"), outcome: classifyToolLessFailure(failure) === "output_cap" ? "truncated" : "transport", error: failure }); return { outcome: { kind: "transport" }, route: "agent-sdk", usd: null, thinkingTokens: null, failure }; };
   try {
     const q = queryOverride ?? ((await import("@anthropic-ai/claude-agent-sdk")).query as unknown as ToolLessQuery);
     const { thinking, effort } = toolLessThinking(p.thinking);
@@ -522,20 +562,20 @@ async function toolLessViaAgentSdk(p: ToolLessParams, ledger: ToolLessParams["le
     for (const k of Object.keys(env)) if (k.startsWith("LOKI_E10_")) delete env[k];
     env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = String(p.maxTokens); // the Agent SDK has no max-tokens option; the CLI reads this env
     if (p.noCache) env["DISABLE_PROMPT_CACHING"] = "1";
-    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), p.timeoutMs ?? 120_000);
+    const ac = new AbortController(), timer = setTimeout(() => { timedOut = true; ac.abort(); }, p.timeoutMs ?? 120_000);
     let text = "", result: Record<string, unknown> | null = null;
     try {
       for await (const m of q({ prompt: p.prompt, options: {
         model: p.model, cwd: p.cwd ?? tmpdir(), tools: [], maxTurns: 1, settingSources: [], persistSession: false,
         systemPrompt: p.system ?? "", title: "loki-toolless", // a fixed title: the SDK otherwise spends a second Haiku call naming the session
-        thinking, ...(effort ? { effort } : {}), env, abortController: ac,
+        thinking, ...(effort ? { effort } : {}), env, abortController: ac, stderr: (d: string) => { stderr = (stderr + d).slice(-8000); }, // T201: keep the CLI's stderr tail for the failure record
         ...(remaining !== null ? { maxBudgetUsd: Math.max(remaining, 1e-6) } : {}),
       } })) {
         if (m["type"] === "assistant") for (const b of ((m["message"] as { content?: Array<{ type: string; text?: string }> } | undefined)?.content ?? [])) if (b.type === "text" && typeof b.text === "string") text += b.text;
         if (m["type"] === "result") result = m;
       }
     } finally { clearTimeout(timer); }
-    if (!result) return fail();
+    if (!result) return fail(null);
     const rec = recordFromClaudeResult(ledger?.phase ?? "toolless", result, "sdk-toolless");
     const mu = result["modelUsage"] as Record<string, { thinkingTokens?: number }> | undefined;
     const thinkingTokens = mu ? Object.values(mu).reduce((t, u) => t + (typeof u?.thinkingTokens === "number" ? u.thinkingTokens : 0), 0) : null;
@@ -545,7 +585,7 @@ async function toolLessViaAgentSdk(p: ToolLessParams, ledger: ToolLessParams["le
       : sub === "error_max_budget_usd" ? { kind: "budget" } : { kind: "transport" };
     if (rec && ledger) appendChildLedger(ledger.lokiDir, { ...rec, outcome: describeJudgeOutcome(outcome), max_tokens: p.maxTokens, ...(thinkingTokens !== null ? { thinking_tokens: thinkingTokens } : {}) });
     return { outcome, route: "agent-sdk", usd: rec && typeof rec.usd === "number" ? rec.usd : null, thinkingTokens };
-  } catch { return fail(); }
+  } catch (e) { return fail(e); }
 }
 
 /** One tool-less completion: no tools, no agent loop, thinking off or low, priced into the child ledger (so the receipt and the run's dollar cap count it). Never throws. */
@@ -555,7 +595,7 @@ export async function toolLessCall(p: ToolLessParams): Promise<ToolLessResult> {
   const remaining = toolLessRemainingUsd(process.env, lokiDir);
   await loadSdk();
   if (remaining !== null && remaining <= 0) return { outcome: { kind: "budget" }, route: client() ? "api" : "agent-sdk", usd: null, thinkingTokens: null };
-  if (client() === null) return toolLessViaAgentSdk(p, ledger, remaining);
+  if (client() === null) return toolLessViaAgentSdkRetrying(p, ledger, remaining);
   const { thinking, effort } = toolLessThinking(p.thinking);
   const before = ledger ? sumChildLedger(ledger.lokiDir, process.env["LOKI_E10_RUN_ID"] ?? "").partialUsd : 0;
   const outcome = await runJudge({ prompt: p.prompt, model: p.model, maxTokens: p.maxTokens, thinking, ...(effort ? { effort } : {}), ...(p.system ? { system: p.system } : {}), ...(p.timeoutMs ? { timeoutMs: p.timeoutMs } : {}), ...(ledger ? { ledger } : {}) }, null);

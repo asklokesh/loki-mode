@@ -27,9 +27,9 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
-import { comparableIds, errorsById, failIds, idNamesFile, sameErrors, unhandledBlock } from "../engine10/failures.ts";
-import { classifyCheck, emptyDiscovery, exitCodedId, goRunner, isExitCodedScript, plainTestEnv, stripAnsi, type Classified } from "../util/check_result.ts";
-import { safeGit } from "../util/safe_git.ts";
+import { comparableIds, errorsById, failIds, idNamesFile, lineNamesChange, noiseOnlyErrors, sameErrors, unhandledBlock } from "../engine10/failures.ts";
+import { classifyCheck, emptyDiscovery, exitCodedId, goRunner, isExitCodedScript, plainTestEnv, resolveTool, stripAnsi, type Classified } from "../util/check_result.ts";
+import { safeGit, safeGitSpawn } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
 import { atomicWriteFileSync } from "./state.ts";
 import { inWorkspace, pkgWorkspaces, pnpmWorkspaces } from "../util/lock_ecosystems.ts";
@@ -293,6 +293,11 @@ export const commandProfilePath = (repoDir: string): string => join(repoDir, ".l
 export const BASELINE_CMD_TIMEOUT_S = 300;
 /** A cut entry measured with a shorter budget than the current one is measured again; one cut at the current budget is kept (a hanging suite is not re-run for 5 minutes every time). */
 /** A baseline command never gets more than a third of the run's overall cap. */
+/** R3 LOKI_E10_INTAKE_CAP_S (default 180; =0/off restores the per-command caps alone): one budget, in seconds, for all of intake's baseline test runs together (the root
+ *  baseline, its rerun after an install, and the per-suite baselines). Before it, a suite that ran past the 300 s per-command cap was measured twice under two names, so
+ *  intake spent 600 s on two cut-off runs that excuse nothing. A run cut by the budget is recorded as cut off, as before. The dependency install keeps its own cap. */
+export const INTAKE_CAP_DEFAULT_S = 180;
+export const intakeCapS = (env: NodeJS.ProcessEnv = process.env): number | null => { const v = (env.LOKI_E10_INTAKE_CAP_S ?? "").trim(); if (/^(0|off|false|no)$/i.test(v)) return null; const n = Number(v); return v !== "" && Number.isFinite(n) && n > 0 ? Math.floor(n) : INTAKE_CAP_DEFAULT_S; };
 export const baselineCmdS = (capS: number | undefined): number => Math.max(1, Math.min(BASELINE_CMD_TIMEOUT_S, Math.floor((capS ?? Infinity) / 3)));
 const cutShort = (b: { timed_out: boolean; duration_s: number | null } | undefined, tmoS: number): boolean => !!b?.timed_out && (b.duration_s ?? 0) < tmoS - 1;
 export const MANIFESTS = ["requirements.txt", "package.json", "Makefile", "makefile", "GNUmakefile", "pyproject.toml", "tox.ini", "pytest.ini", "setup.cfg", "go.mod", "Cargo.toml", "tsconfig.json"];
@@ -440,37 +445,64 @@ function pyInstall(repoDir: string, d: string, tracked: Set<string>, at: (dir: s
   return { cmd: `${py} -m pip install -e ${extra ? `'.[${extra}]'` : "."}`, cwd: d, cite: [at(d, /^\[project\]/m.test(pp) ? "pyproject.toml" : "setup.py")] };
 }
 
-/** TEN-QUALITY-16: a formatter the repo ITSELF configures. `argv` is the command before the file list; `exts` selects the files it owns. Config detection only, never an install. */
-export interface RepoFormatter { tool: string; argv: string[]; exts: RegExp }
-export function detectFormatters(repoDir: string): RepoFormatter[] {
+/** TEN-QUALITY-16: a formatter the repo ITSELF configures. `argv` is the command before the file list; `exts` selects the files it owns; `stdin` is the same formatter reading one
+ *  file's text on stdin and printing the formatted text (the base-clean check). Config detection only, never an install. */
+export interface RepoFormatter { tool: string; argv: string[]; exts: RegExp; stdin?: (file: string) => string[] }
+/** J1 LOKI_E10_FORMAT_RESOLVE (default on, =0 opts out): the formatter binary is resolved the way verify resolves its linter (util/check_result.ts resolveTool: the project venv, then
+ *  `uv run`, then PATH), and a file the change modified is formatted only when its BASE blob is already formatter-clean, so the run never reformats lines it did not write.
+ *  On the tuning bench the bare `ruff` argv found no binary (the repo's ruff is .venv/bin/ruff, not on PATH), spawnSync failed and nothing was formatted: 11 judge fails were
+ *  formatting. =0 restores the bare argv and no base check. */
+export const formatResolveEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_FORMAT_RESOLVE"] ?? "").trim());
+export function detectFormatters(repoDir: string, env: NodeJS.ProcessEnv = process.env): RepoFormatter[] {
   const out: RepoFormatter[] = [];
   const has = (...fs: string[]): boolean => fs.some((f) => existsSync(join(repoDir, f)));
   const pp = read(join(repoDir, "pyproject.toml")), pj = read(join(repoDir, "package.json"));
-  if (/\[tool\.ruff/.test(pp) || has("ruff.toml", ".ruff.toml")) out.push({ tool: "ruff", argv: ["ruff", "format"], exts: /\.pyi?$/ });
+  if (/\[tool\.ruff/.test(pp) || has("ruff.toml", ".ruff.toml")) {
+    const [cmd, , pre] = formatResolveEnabled(env) ? resolveTool(repoDir, "ruff", "ruff") : ["ruff", "system", [] as string[]];
+    out.push({ tool: "ruff", argv: [cmd, ...pre, "format"], exts: /\.pyi?$/, stdin: (f) => [cmd, ...pre, "format", "--stdin-filename", f, "-"] });
+  }
   let prettierKey = false;
   try { prettierKey = pj !== "" && "prettier" in (JSON.parse(pj) as object); } catch { /* malformed manifest: no formatter */ }
   const local = join(repoDir, "node_modules", ".bin", "prettier"); // a repo-local binary only: nothing is fetched
-  if ((prettierKey || readdirSync(repoDir).some((f) => /^(\.prettierrc(\.[a-z0-9]+)?|prettier\.config\.[cm]?[jt]s)$/.test(f))) && existsSync(local)) out.push({ tool: "prettier", argv: [local, "--write"], exts: /\.(?:[cm]?[jt]sx?|json|css|scss|md|ya?ml|html)$/ });
+  if ((prettierKey || readdirSync(repoDir).some((f) => /^(\.prettierrc(\.[a-z0-9]+)?|prettier\.config\.[cm]?[jt]s)$/.test(f))) && existsSync(local)) out.push({ tool: "prettier", argv: [local, "--write"], exts: /\.(?:[cm]?[jt]sx?|json|css|scss|md|ya?ml|html)$/, stdin: (f) => [local, "--stdin-filepath", f] });
   const biome = join(repoDir, "node_modules", ".bin", "biome"); // same rule: repo-local binary only
-  if (has("biome.json", "biome.jsonc") && existsSync(biome)) out.push({ tool: "biome", argv: [biome, "format", "--write"], exts: /\.(?:[cm]?[jt]sx?|json|jsonc|css)$/ });
-  if (has("go.mod")) out.push({ tool: "gofmt", argv: ["gofmt", "-w"], exts: /\.go$/ });
+  if (has("biome.json", "biome.jsonc") && existsSync(biome)) out.push({ tool: "biome", argv: [biome, "format", "--write"], exts: /\.(?:[cm]?[jt]sx?|json|jsonc|css)$/, stdin: (f) => [biome, "format", `--stdin-file-path=${f}`] });
+  if (has("go.mod")) out.push({ tool: "gofmt", argv: ["gofmt", "-w"], exts: /\.go$/, stdin: () => ["gofmt"] });
   if (has("rustfmt.toml", ".rustfmt.toml")) {
     const ed = /^\s*edition\s*=\s*"(\d+)"/m.exec(read(join(repoDir, "Cargo.toml")))?.[1];
-    out.push({ tool: "rustfmt", argv: ["rustfmt", ...(ed ? ["--edition", ed] : [])], exts: /\.rs$/ });
+    out.push({ tool: "rustfmt", argv: ["rustfmt", ...(ed ? ["--edition", ed] : [])], exts: /\.rs$/, stdin: () => ["rustfmt", ...(ed ? ["--edition", ed] : []), "--emit", "stdout"] });
   }
   return out;
 }
 
-/** Runs each detected formatter once over the regular files (no symlinks) it owns. A missing binary or nonzero exit is a no-op; returns the files a formatter exited 0 on. env must already be token-free. */
-export function runFormatters(repoDir: string, files: string[], env: NodeJS.ProcessEnv): string[] {
-  const fmts = detectFormatters(repoDir);
+/** What the commit stage's formatter pass did, recorded on the commit data so a silent no-op cannot recur unseen: per formatter, the files it formatted and the files it left alone with why. */
+export interface FormatRecord { tool: string; cmd: string; formatted: string[]; skipped: { file: string; why: string }[]; error?: string }
+/** Runs each detected formatter once over the regular files (no symlinks) it owns. With LOKI_E10_FORMAT_RESOLVE on and a base commit, a file present on base whose base text is not
+ *  formatter-clean (the formatter's stdin mode prints something else, or fails) is left alone. A missing binary or nonzero exit formats nothing and is recorded. env must already be token-free. */
+export function runFormattersRecord(repoDir: string, files: string[], env: NodeJS.ProcessEnv, baseSha?: string): { formatted: string[]; records: FormatRecord[] } {
+  const fmts = detectFormatters(repoDir, env), check = formatResolveEnabled(env) && !!baseSha;
   const mine = fmts.length ? files.filter((f) => { try { return lstatSync(join(repoDir, f)).isFile(); } catch { return false; } }) : [];
-  return fmts.flatMap((fm) => {
-    const own = mine.filter((f) => fm.exts.test(f));
-    const r = own.length ? spawnSync(fm.argv[0]!, [...fm.argv.slice(1), ...own.map((f) => `./${f}`)], { cwd: repoDir, env, stdio: "ignore", timeout: 30000 }) : null;
-    return r && !r.error && r.status === 0 ? own : [];
-  });
+  const records: FormatRecord[] = [], formatted: string[] = [];
+  for (const fm of fmts) {
+    const own = mine.filter((f) => fm.exts.test(f)); if (!own.length) continue;
+    const rec: FormatRecord = { tool: fm.tool, cmd: fm.argv.join(" "), formatted: [], skipped: [] };
+    const ok = check && fm.stdin ? own.filter((f) => {
+      const b = safeGitSpawn(repoDir, ["show", `${baseSha}:${f}`], { encoding: "utf8" }); if (b.status !== 0) return true; // new on this run: nothing on base to protect
+      const [c, ...a] = fm.stdin!(f), r = spawnSync(c!, a, { cwd: repoDir, env, input: b.stdout, encoding: "utf8", timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
+      if (r.error || r.status !== 0) { rec.skipped.push({ file: f, why: r.error ? `formatter not runnable (${(r.error as NodeJS.ErrnoException).code ?? "error"})` : `formatter check exited ${r.status} on the base text` }); return false; }
+      if (r.stdout !== b.stdout) { rec.skipped.push({ file: f, why: "base text is not formatter-clean" }); return false; }
+      return true;
+    }) : own;
+    if (ok.length) {
+      const r = spawnSync(fm.argv[0]!, [...fm.argv.slice(1), ...ok.map((f) => `./${f}`)], { cwd: repoDir, env, stdio: "ignore", timeout: 30000 });
+      if (!r.error && r.status === 0) { rec.formatted = ok; formatted.push(...ok); } else rec.error = r.error ? `formatter not runnable: ${fm.argv[0]} (${(r.error as NodeJS.ErrnoException).code ?? "error"})` : `formatter exited ${r.status}`;
+    }
+    records.push(rec);
+  }
+  return { formatted, records };
 }
+/** The formatted files only (the commit stage re-stages them). */
+export function runFormatters(repoDir: string, files: string[], env: NodeJS.ProcessEnv, baseSha?: string): string[] { return runFormattersRecord(repoDir, files, env, baseSha).formatted; }
 
 /** Default runner: `sh -c` in repoDir, an explicit scoped env (token-free, no color, no bytecode litter), SIGKILL on timeout. */
 export const shellRunner: BaselineRunner = (cmd, cwd, timeoutMs) => {
@@ -541,12 +573,13 @@ export const SUITE_BASELINE_BUDGET_S = 300;
  *  profile ensureProfile wrote for this HEAD. An entry for the same command is reused unless `rerun` (a dependency install succeeded
  *  since, so a baseline measured before it is stale: the main baseline and every entry are re-run, attributable or not). A root command the main baseline already ran is not run twice. One shared
  *  budget; a suite past it is recorded not run, so nothing it fails is excused (fail-closed). Never throws: null when there is no current profile. */
-export function baselineSuites(repoDir: string, specs: { name: string; cmd: string; cwd: string; run: string }[], opts: BuildOpts & { rerun?: boolean; budgetS?: number } = {}): CommandProfile | null {
+export function baselineSuites(repoDir: string, specs: { name: string; cmd: string; cwd: string; run: string }[], opts: BuildOpts & { rerun?: boolean; budgetS?: number; deadlineMs?: number } = {}): CommandProfile | null {
   try {
     const p = loadProfile(repoDir);
     if (!p || p.revision !== headOf(repoDir)) return null;
-    if (opts.rerun && p.baseline.ran) p.baseline = runBaseline(repoDir, p.commands, opts);
-    let left = opts.budgetS ?? SUITE_BASELINE_BUDGET_S;
+    const dl = (): number => (opts.deadlineMs === undefined ? Infinity : Math.floor((opts.deadlineMs - Date.now()) / 1000)); // R3 intake cap: what is left of intake's baseline budget
+    if (opts.rerun && p.baseline.ran && dl() >= 1) p.baseline = runBaseline(repoDir, p.commands, opts.deadlineMs === undefined ? opts : { ...opts, timeoutS: Math.max(1, Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, dl())) });
+    let left = Math.min(opts.budgetS ?? SUITE_BASELINE_BUDGET_S, dl());
     const old = p.suites ?? [];
     const rootSpeaks = (run: string): boolean => normCmd(run) === normCmd(p.baseline.command ?? "") || (p.baseline.ran && p.baseline.attributable && !p.baseline.timed_out && sameRootScript(repoDir, p.baseline.command ?? "", run)); // an alias is reused only when its base run is complete and attributable; otherwise the suite is measured under its own command
     p.suites = specs.filter((s) => s.cwd !== "." || !rootSpeaks(s.run)).map((s) => {
@@ -677,7 +710,7 @@ function cargoTouched(changed: string[]): boolean {
  *  already failed (`blocked`) or one naming a changed file is never excused. */
 /** FireLater#21 (review): ids alone never excuse a full suite. Each failing id must fail on base with the same error lines (sameErrors against the baseline's
  *  failing_errors); a suite whose output or baseline has no error lines for an id (a baseline recorded before failing_errors, go, cargo) is not excused. */
-export function attributeFullSuite(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], blocked: string[], changed: string[]): Attribution {
+export function attributeFullSuite(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], blocked: string[], changed: string[], symbols: readonly string[] = []): Attribution {
   const bad = full.filter((c) => c.result === "fail"), none: Attribution = { preExistingChecks: [], preExistingIds: [], introducedChecks: bad.map((c) => c.name), line: null }, p = loadProfile(repoDir);
   if (!bad.length || !p || p.revision !== baseSha) return none;
   const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran), of = (cmd: string) => baseFor(repoDir, p, cmd, true);
@@ -687,15 +720,18 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: { nam
   const ids = (cmd: string): string[] => { const b = of(cmd); return b?.attributable ? [...b.failing_ids, ...(b.flaky_ids ?? [])] : []; }, miss = bad.find((c) => !of(c.cmd));
   if (miss) return { ...none, line: `baseline: ran ${runs.map((b) => `"${b.command}"`).join(", ") || "nothing"}, not the full suite command "${miss.cmd}", ids not comparable, full suite failures not excused` };
   const massive = (cmd: string): boolean => (of(cmd)?.failing_ids.length ?? 0) >= MASSIVE_RED_IDS, known = new Set(bad.flatMap((c) => ids(c.cmd))), block = new Set(blocked), sameAsBase = (c: (typeof bad)[number]): boolean => { const b = of(c.cmd), be = b?.failing_errors, hu = c.unhandled ?? [], bu = b?.failing_unhandled ?? []; /* every id, flaky or not, must repeat its stored base error (a flaky id keeps the error of the pass it failed on), at the same multiplicity, whatever the suite size */ return !!be && !!c.errors && hu.length === bu.length && hu.every((x, n) => x === bu[n]) /* an unhandled-errors block names no id: it must repeat on base */ && sameErrors(new Map(Object.entries(c.errors)), be, comparableIds(c.ids ?? [])); },
+    /* fl24: the second chance when the text differs: the same unhandled block, the same error shapes (noise only) and no head error line naming a changed file or symbol (noiseOnlyErrors); listed NOT PROVEN below */ quietAsBase = (c: (typeof bad)[number]): boolean => { const be = of(c.cmd)?.failing_errors, hu = c.unhandled ?? [], bu = of(c.cmd)?.failing_unhandled ?? []; return !!be && !!c.errors && hu.length === bu.length && hu.every((x, n) => x === bu[n]) && noiseOnlyErrors(c.errors, be, comparableIds(c.ids ?? []), changed, symbols); },
     /* a flaky id, or any id of a suite red at base, whose head error text names a file the change edited is the change's own failure, whatever the id */ errNamesChanged = (c: (typeof bad)[number]): boolean => { const fl = new Set(of(c.cmd)?.flaky_ids ?? []), all = massive(c.cmd), keys = Object.keys(c.errors ?? {}).filter((k) => all || [...fl].some((i) => k === i || k.endsWith(` > ${i}`))); return keys.some((k) => (c.errors?.[k] ?? []).some((l) => changed.some((f) => l.includes(f)))); };
   if (known.size === 0) return none;
   const unproven = [...new Set(bad.flatMap((c) => c.ids ?? []).filter((i) => !i.includes("::") && goIdTouched(repoDir, i, changed)))];
-  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && sameAsBase(c) && !errNamesChanged(c) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => idNamesFile(i, f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
+  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && (sameAsBase(c) || quietAsBase(c)) && !errNamesChanged(c) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => idNamesFile(i, f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
   const rust = (cargoTouched(changed) ? bad : []).map((c) => `NOT PROVEN: ${c.name} may run cargo tests and the diff edits Rust source or a manifest; cargo test ids carry no crate path, so a failure cannot be shown pre-existing`);
   const red = res.preExistingChecks.length ? bad.filter((c) => res.preExistingChecks.includes(c.name) && massive(c.cmd)) : [], redLine = red.map((c) => `NOT PROVEN: suite red at base (${of(c.cmd)!.failing_ids.length} failing ids) for "${c.cmd}": it is compared per id, never blocks and proves nothing about this change`).join("; ");
   if (redLine) res.line = [res.line, redLine].filter(Boolean).join("; ");
   const flakyOnly = bad.filter((c) => res.preExistingChecks.includes(c.name)).flatMap((c) => { const b = of(c.cmd), base = new Set(b?.failing_ids ?? []), hit = comparableIds(c.ids ?? []).filter((i) => (b?.flaky_ids ?? []).includes(i) && !base.has(i)); return hit.length ? [`NOT PROVEN: "${c.cmd}" was excused with ${hit.length} id(s) that fail on only some base passes (flaky), e.g. ${hit[0]}; the change was not shown to leave them alone`] : []; }).join("; ");
   if (flakyOnly) res.line = [res.line, flakyOnly].filter(Boolean).join("; ");
+  const quiet = bad.filter((c) => res.preExistingChecks.includes(c.name) && !sameAsBase(c)).map((c) => `NOT PROVEN: "${c.cmd}" was excused as red on base although its error text differs from base (by noise only: the same error shapes); no changed file or symbol appears in any failure`).join("; ");
+  if (quiet) res.line = [res.line, quiet].filter(Boolean).join("; ");
   if (!unproven.length && !rust.length) return res;
   const np = [...unproven.map((u) => `NOT PROVEN: package ${u} did not build on base or head; its tests ran on neither`), ...rust].join("; ");
   return { ...res, line: [res.line, np].filter(Boolean).join("; ") };
@@ -703,7 +739,7 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: { nam
 
 /** One line per failing full-suite check that attributeFullSuite did not excuse, saying which rule kept it blocking (so a receipt never shows an unexplained red suite).
  *  Same inputs and the same profile as attributeFullSuite; `excused` is its preExistingChecks. */
-export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], changed: string[], excused: string[]): string[] {
+export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[] }[], changed: string[], excused: string[], blocked: readonly string[] = []): string[] {
   const p = loadProfile(repoDir), out: string[] = [];
   for (const c of full.filter((x) => x.result === "fail" && !excused.includes(x.name))) {
     const why = (r: string): void => { out.push(`not excused: ${c.name} (\`${c.cmd}\`): ${r}`); }, b = p ? baseFor(repoDir, p, c.cmd, true) : undefined, b0 = p ? baseFor(repoDir, p, c.cmd, false) : undefined, cutB = b0 && (b0.timed_out || b0.reason === "baseline budget used up") ? b0 : undefined;
@@ -717,9 +753,35 @@ export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: {
     const known = new Set([...b.failing_ids, ...(b.flaky_ids ?? [])]), fresh = comparableIds(c.ids).filter((i) => !known.has(i)), inChanged = c.ids.filter((i) => changed.some((f) => i.includes(f)) || goIdTouched(repoDir, i, changed));
     if (inChanged.length) { why(`${inChanged.length} failing id(s) name a changed file (first: ${inChanged[0]})`); continue; }
     if (fresh.length) { why(`${fresh.length} failing id(s) were not red on base (first: ${fresh[0]})`); continue; }
-    why("every failing id is red on base but the error text differs from base (or an unhandled-errors block differs)");
+    // fl24: FireLater#24 read "error text differs" when the text was identical: 146 of its ids also failed in 22 targeted checks that were not excused.
+    const held = new Set(blocked), inBlocked = c.ids.filter((i) => held.has(i));
+    if (inBlocked.length) { why(`${inBlocked.length} failing id(s) also fail in a targeted check that was not excused (first: ${inBlocked[0]})`); continue; }
+    why("every failing id is red on base but the error text differs from base and a failure names a changed file or symbol (or an unhandled-errors block differs)");
   }
   return out;
+}
+
+/** fl24: the still-failing checks whose every comparable id is red on base by id alone, the harness's evidence for a fix round that stops with
+ *  "these failures pre-exist on base" (machine.ts). An id counts red on base when this run's own base rerun showed it (`knownRed`, verify's
+ *  subtractBase) or the intake profile on this exact base commit lists it: the check's package suite (`suite`), the root baseline, or the
+ *  baseline of the check's own command (`cmd`, a full suite). A check is left out when the caller marks it ineligible (a target, Wall or
+ *  holdout check, or a test file the run touched), when an id names a changed file, when the diff edits Rust source or a manifest, or when any
+ *  of its head error lines names a changed file or symbol, or when this run's base rerun printed errors of another shape (`shapeDiffers`: the change
+ *  altered the failure). Text is otherwise not compared (a profile suite's reporter wording differs from a per-file run's): evidence for the claim only. */
+export function baseRedById(repoDir: string, baseSha: string, failing: { name: string; cmd?: string; ids?: string[]; errors?: Map<string, string[]> | Record<string, string[]>; suite?: string; eligible: boolean }[], knownRed: readonly string[], changed: string[], symbols: readonly string[] = [], shapeDiffers: readonly string[] = []): string[] {
+  const p = loadProfile(repoDir), names = lineNamesChange(changed, symbols);
+  if (cargoTouched(changed)) return [];
+  const idsOf = (b: CommandProfile["baseline"] | undefined): string[] => (b && b.ran && b.attributable && !b.timed_out && b.reason !== "baseline budget used up" ? [...b.failing_ids, ...(b.flaky_ids ?? [])] : []);
+  return failing.filter((f) => {
+    const ids = comparableIds(f.ids ?? []);
+    if (!f.eligible || shapeDiffers.includes(f.name) || ids.length === 0 || ids.some((i) => changed.some((c) => idNamesFile(i, c)) || goIdTouched(repoDir, i, changed))) return false;
+    const lines = f.errors instanceof Map ? [...f.errors.values()].flat() : Object.values(f.errors ?? {}).flat();
+    if (lines.some(names)) return false;
+    if (knownRed.includes(f.name)) return true;
+    if (!p || p.revision !== baseSha) return false;
+    const base = new Set([...idsOf(p.baseline), ...idsOf(f.suite ? p.suites?.find((s) => s.name === f.suite) : undefined), ...idsOf(f.cmd ? baseFor(repoDir, p, f.cmd, true) : undefined)]);
+    return ids.every((i) => base.has(i));
+  }).map((f) => f.name);
 }
 
 /** Static-diagnostic attribution (TEN-QUALITY-02): lint output of head vs base as multisets keyed path/code/message, line and column dropped so shifts do not count.

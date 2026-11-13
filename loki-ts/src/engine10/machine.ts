@@ -6,7 +6,7 @@ import { treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { assumptionOf, consultAvailable, neverStopActive, readConsults, type NeverStopRecord } from "../features/opus_consult.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./failures.ts";
-import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, MIN_ATTEMPT_WINDOW_S, runExtraAttempts } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
+import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, isClean, MIN_ATTEMPT_WINDOW_S, runExtraAttempts, signalNotProven, type AttemptSignal } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
 import { stallSame, stallSignature } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
 
@@ -57,6 +57,16 @@ const harnessOnlyFail = (d: Obj | undefined): boolean => { const f = (Array.isAr
 /** FireLater#21: verify's blocking checks are all collateral checks failing the same way on base (collateral_same_error), plus any full suite (which repeats them); a
  *  re-verify after the fix round decides, so a full-suite failure the change caused still blocks there. */
 export const onlyCollateralRed = (d: Obj | undefined): boolean => { const col = Array.isArray(d?.collateral_same_error) ? (d.collateral_same_error as unknown[]).map(String) : [], b = Array.isArray(d?.blocking_checks) ? (d.blocking_checks as unknown[]).map(String) : []; return col.length > 0 && b.length > 0 && b.every((n) => col.includes(n) || n.startsWith("full suite")); };
+/** fl24 (FireLater#24): every failing check verify did not excuse is red on base by every id with no failure naming the change (verify's base_red_checks,
+ *  repo_profile.ts baseRedById). Only then is a fix round's "these failures pre-exist on base" stop believed; any other failing check keeps SPEC_CONFLICT. */
+export const onlyBaseRed = (d: Obj | undefined): boolean => {
+  const red = new Set(Array.isArray(d?.base_red_checks) ? (d.base_red_checks as unknown[]).map(String) : []), pre = new Set(Array.isArray(d?.pre_red_checks) ? (d.pre_red_checks as unknown[]).map(String) : []);
+  const live = (Array.isArray(d?.checks) ? (d.checks as Obj[]) : []).filter((c) => c?.result === "fail" && !pre.has(String(c.name)));
+  return red.size > 0 && live.length > 0 && live.every((c) => red.has(String(c.name)));
+};
+/** The words a fix round uses when it stops because the failures were already there before the change (FireLater#24: "exist identically on clean HEAD"). */
+export const PRE_EXISTING_CLAIM = /\bpre-?exist|\balready (?:fail|red|broken)|\bidentical(?:ly)?\b|\bon (?:the )?(?:clean |unmodified |original )?(?:base|HEAD|main|master)\b|\bbefore (?:this|the|my|any) change|\bnot caused by\b|\bunrelated to (?:this|the) (?:change|task)/i;
+export const BASE_RED_CONFLICT = "a fix round stopped saying the remaining failures pre-exist on base; every failing id is red on base and no failure names a changed file or symbol, so they are excused as pre-existing (error text not compared, not proven unrelated to this change)";
 /** Cost step b: every blocking group is a full-suite failure or a startup failure: a second fix round rarely fixes a suite the change did not touch or a runner that never started (failures.ts environmentShaped), so one round is the cap there. */
 export const onlyFullSuiteRed = (d: Obj | undefined): boolean => Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0 && (d.failures_grouped as { signature?: unknown; sample?: unknown }[]).every((g) => String(g.signature ?? "").startsWith("full suite") || environmentShaped([{ signature: String(g.signature ?? ""), sample: String(g.sample ?? "") }]));
 /** LOKI_E10_SUITE_FIX_SKIP (default on; =0/off/false opts out): no fix round at all when every blocking group is a full-suite or startup failure (onlyFullSuiteRed),
@@ -70,6 +80,8 @@ export const suiteOnlyRed = (d: Obj | undefined): boolean => {
   return onlyFullSuiteRed(d) && !namesChanged && !(Number(d?.holdout_failed ?? 0) > 0) && checks.some((c) => c?.result === "pass" && typeof c.n === "number" && c.n > 0 && !/^(full suite|lint:|security scan|select-tests|holdout)/.test(String(c.name ?? "")));
 };
 export const hasFailures = (d: Obj | undefined): boolean => (Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0 && !harnessOnlyFail(d)) || (typeof d?.holdout_failed === "number" && d.holdout_failed > 0); // C-C4b: a held-out failure is only an opaque count
+/** EXP-0010: an attempt's user-visible outcome before seal (verify red, a spec conflict, verify's and the fix rounds' NOT PROVEN lines), the rank input of features/attempts.ts. */
+export const attemptSignalOf = (o: Partial<Record<string, Obj>>, conflict: boolean): AttemptSignal => ({ red: hasFailures(o.verify), conflict, notProven: signalNotProven([...(Array.isArray(o.verify?.not_proven) ? o.verify.not_proven : []), ...(Array.isArray(o.fix?.not_proven) ? o.fix.not_proven : [])]) });
 /** The fix loop's input after a verify stopped at its limit: the earlier failure groups minus those whose check the stopped verify saw pass
  *  (FireLater#24: fix round 2 was fed a Wall failure the stopped verify had already seen pass, 27 of 27). A group belongs to the check whose
  *  name is its signature or prefixes it (verify.ts: `${name} ${first_error}`). */
@@ -203,15 +215,13 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     timeline.push({ stage: name, startMs: t0, endMs: ctx.clock.now() });
     return res;
   };
-  /** EXP-0010: the first implement attempt ended with the repo's checks red (fix rounds included). Run k more attempts in parallel on the same model and keep the best by features/attempts.ts.
+  /** EXP-0010: the first implement attempt ended with the repo's checks red (fix rounds included). Run k more attempts in parallel (on the session model, or one LOKI_E10_ATTEMPT_MODELS entry each) and keep the best by features/attempts.ts.
    *  `changed`: another attempt's tree is now in the primary (the caller re-verifies it); `ran`: extra sessions started. Never throws: any failure keeps the incumbent tree and says why in implement.attempts. */
   const scaffoldNow = (): void => { if (!hooks.scaffold || outputs.implement?.exit !== "done") return; try { const sc = hooks.scaffold(ctx.repoDir, ctx.baseSha, String(outputs.intake?.task ?? ""), String(outputs.implement.summary_tail ?? "")); if (sc) { outputs.implement = { ...outputs.implement, scaffold: sc }; ctx.emit("scaffold.applied", "implement", sc); } } catch { /* best-effort: a scaffold failure never stops the run */ } }; // idempotent: a tree that already carries the fragment writes nothing
   const extraAttempts = async (): Promise<{ changed: boolean; ran: boolean }> => {
     const impl = outputs.implement, model = typeof impl?.model === "string" ? impl.model : ctx.model, k = attemptsK(model), none = { changed: false, ran: false };
-    if (k === 0 || !impl || impl.exit !== "done") return none;
+    if (k === 0 || !impl || (impl.exit !== "done" && impl.exit !== "spec_conflict")) return none;
     const note = (why: string): typeof none => { outputs.implement = { ...impl, attempts: { skipped: why } }; return none; };
-    const blocking = outputs.verify?.blocking_checks, pre = Array.isArray(outputs.verify?.pre_red_checks) ? (outputs.verify!.pre_red_checks as unknown[]).map(String) : [];
-    if (Array.isArray(blocking) && !blocking.map(String).some((n) => !n.startsWith("full suite") && !pre.includes(n))) return note("no check the change introduced is failing (full-suite or pre-red only)"); // fresh attempts cannot fix a failure the change did not cause
     const brief = savedImplementBrief(ctx);
     if (!brief) return note("the implement brief was not saved");
     const room = Math.floor(softCapS(ctx.capS) - elapsedS() - ATTEMPTS_TAIL_S), limitS = Math.min(STAGE_BUDGETS.implement.limitS, room);
@@ -220,9 +230,20 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     implementBudgetS = limitS; implementStartMs = ctx.clock.now(); // the session wrapper clamps an implement session to the window left since implementStartMs
     const t0 = ctx.clock.now();
     try {
-      const r = await runExtraAttempts(sctx, capCtl.signal, attemptDeps(sctx, k, brief, limitS, model));
-      if (!r) return note("no impacted test to score against");
-      outputs.implement = { ...impl, attempts: r.summary, iteration_ids: [...(Array.isArray(impl.iteration_ids) ? impl.iteration_ids as string[] : []), ...r.ids] };
+      // Each extra attempt gets Loki's normal verify on its tree; the first attempt's own verify (fix rounds included) is its score. The winner's verify and fix outputs are what seal reads.
+      const saved = new Map<number, { verify?: Obj; fix?: Obj }>([[0, { verify: outputs.verify, fix: outputs.fix }]]), first = attemptSignalOf(outputs, impl.exit === "spec_conflict");
+      const score = async (i: number): Promise<AttemptSignal> => {
+        if (i === 0) return first;
+        delete outputs.fix; // a fresh attempt gets the complete verify, never a fix round's quick one
+        const v = await runStage("verify", true);
+        saved.set(i, { verify: outputs.verify });
+        return v?.status === "completed" ? attemptSignalOf(outputs, false) : { red: true, conflict: false, notProven: ["verify did not complete"] };
+      };
+      const r = await runExtraAttempts(sctx, capCtl.signal, attemptDeps(sctx, k, brief, limitS, model), score);
+      const w = saved.get(r.winner) ?? saved.get(0)!;
+      outputs.verify = w.verify; if (w.fix) outputs.fix = w.fix; else delete outputs.fix;
+      const { spec_conflict_reason: _c, ...rest } = impl; // an extra attempt that won was never in the first attempt's conflict
+      outputs.implement = { ...(r.tookExtra ? { ...rest, exit: "done" } : impl), attempts: r.summary, iteration_ids: [...(Array.isArray(impl.iteration_ids) ? impl.iteration_ids as string[] : []), ...r.ids] };
       ctx.emit("attempts.selected", "implement", r.summary);
       return { changed: r.tookExtra, ran: r.launched > 0 };
     } catch (err) {
@@ -351,7 +372,19 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
           { const ns = (outputs.implement?.never_stop as (NeverStopRecord & { pending?: boolean })[] | undefined) ?? [], last = ns[ns.length - 1]; if (last?.pending && fx.status === "completed") { delete last.pending; last.assumption = assumptionOf(String(outputs.fix?.diagnosis ?? "")); last.consulted = readConsults(ctx.runDir).some((c) => c.stage.startsWith("fix") && c.advice !== null); } } // LOKI_E10_OPUS_CONSULT: the round after a settled fix conflict names the choice it made
           // FireLater#21: a fix-round conflict over failures verify showed failing the same way on base, in tests that only import a named file, is checked by one
           // re-verify (no model session): after this round those failures are pre-existing, so a run with nothing else failing is delivered capped, never SPEC_CONFLICT.
-          if (fx.status === "completed" && outputs.fix?.exit === "spec_conflict" && onlyCollateralRed(outputs.verify)) { const v = await runStage("verify", true); if (mustJump("verify", v)) break; if (!hasFailures(outputs.verify)) break; }
+          // fl24 (FireLater#24): the same re-verify when the round's conflict says the failures pre-exist on base and verify's own evidence agrees (onlyBaseRed). If the
+          // re-verify still shows only such failures they are pre-existing red, never the run's SPEC_CONFLICT: excused with a NOT PROVEN line (caps VERIFIED),
+          // delivered as the PR policy allows. The claim alone excuses nothing: a failing check outside base_red_checks keeps the conflict (fail-safe).
+          const baseRedClaim = fx.status === "completed" && outputs.fix?.exit === "spec_conflict" && PRE_EXISTING_CLAIM.test(String(outputs.fix?.spec_conflict_reason ?? "")) && onlyBaseRed(outputs.verify);
+          if (fx.status === "completed" && outputs.fix?.exit === "spec_conflict" && (onlyCollateralRed(outputs.verify) || baseRedClaim)) {
+            const v = await runStage("verify", true); if (mustJump("verify", v)) break; if (!hasFailures(outputs.verify)) break;
+            if (baseRedClaim && onlyBaseRed(outputs.verify)) {
+              const vo = outputs.verify!, pre = Array.isArray(vo.pre_red_checks) ? (vo.pre_red_checks as unknown[]).map(String) : [], names = ((vo.checks as Obj[] | undefined) ?? []).filter((c) => c?.result === "fail" && !pre.includes(String(c.name))).map((c) => String(c.name));
+              outputs.verify = { ...vo, pre_red_checks: [...pre, ...names], failures_grouped: [], blocking_checks: [], not_proven: [...(Array.isArray(vo.not_proven) ? vo.not_proven : []), `${BASE_RED_CONFLICT}: ${names.join(", ")}`] };
+              ctx.emit("spec.conflict", "fix", { delivered: true, round, pre_existing: names, reason: String(outputs.fix?.spec_conflict_reason ?? "").slice(0, 300) });
+              break;
+            }
+          }
           if (fx.status === "completed" && outputs.fix?.exit === "spec_conflict" && neverStopActive()) { // LOKI_E10_OPUS_CONSULT never-stop: never pinned as the run's conflict; a round left gets the never-stop brief (and the consult), the last round delivers the tree as it is to seal (capped at PARTIAL, FAILED while red)
             const more = round < MAX_FIX_ROUNDS + extraRounds;
             outputs.implement = { ...outputs.implement, never_stop: [...((outputs.implement?.never_stop as unknown[] | undefined) ?? []), { stage: "fix", conflict: String(outputs.fix.spec_conflict_reason ?? "unspecified"), assumption: null, consulted: false, ...(more ? { pending: true } : {}) }] };
@@ -383,7 +416,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
             stopped = "stalled"; break;
           }
         }
-        if (!fatal && !capHit && (stopped === null || stopped === "stalled") && !attemptsRan && hasFailures(outputs.verify)) { // EXP-0010: a red first attempt gets k more in parallel (not again when the early switch already ran them)
+        if (!fatal && !capHit && (stopped === null || stopped === "stalled") && !attemptsRan && !isClean(attemptSignalOf(outputs, outputs.implement?.exit === "spec_conflict"))) { // EXP-0010: a first attempt that is not clean (red, a conflict, or NOT PROVEN lines) gets N-1 more in parallel (not again when the early switch already ran them)
           const x = await extraAttempts();
           if (x.ran) stopped = null; // the fix rounds' stall was answered by fresh attempts: the best tree is delivered as PARTIAL when still red, never reported as a stall
           if (x.changed) { scaffoldNow(); const v = await runStage("verify", true); sigs.push(sigOf(outputs.verify, v)); } // verify judges the winner's tree
