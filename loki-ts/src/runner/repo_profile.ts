@@ -765,6 +765,23 @@ function attributeFullSuiteById(repoDir: string, baseSha: string, full: FullChec
 
 /** One line per failing full-suite check that attributeFullSuite did not excuse, saying which rule kept it blocking (so a receipt never shows an unexplained red suite).
  *  Same inputs and the same profile as attributeFullSuite; `excused` is its preExistingChecks. */
+/** TOUCHED-BASE-RED (LOKI_E10_TOUCHED_BASE_RED, default on, =0 opts out): a test file the diff edited is red on base by every failing id when each comparable
+ *  failing id is red in the intake profile of exactly this base commit (any attributable, complete run) with the same error lines (sameErrors), and no
+ *  failing id is a case the diff added or whose body it edited (`editedTitles`). FireLater#24: one assertion was added to Sidebar.test.tsx, whose 19 tests
+ *  were already red; after the edit the same 19 failed and the added case passed. A previously green id that now fails, a new error under an old id, a
+ *  failing added or edited case, a missing or other-commit profile, or a check with no parsed ids or errors is never excused. */
+export const touchedBaseRedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TOUCHED_BASE_RED"] ?? "").trim());
+export function touchedRedOnBase(repoDir: string, baseSha: string, c: { ids?: string[]; errors?: Map<string, string[]> }, editedTitles: readonly string[]): boolean {
+  if (!touchedBaseRedOn()) return false;
+  const p = loadProfile(repoDir); if (!p || p.revision !== baseSha) return false;
+  const ids = comparableIds(c.ids ?? []); if (ids.length === 0 || !c.errors) return false;
+  if (ids.some((i) => editedTitles.some((t) => t.length > 0 && (i === t || i.endsWith(` > ${t}`))))) return false;
+  const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran && b.attributable && !b.timed_out && b.reason !== "baseline budget used up");
+  const baseIds = new Set(runs.flatMap((b) => b.failing_ids)), baseErr = new Map<string, string[]>();
+  for (const b of runs) for (const [k, v] of Object.entries(b.failing_errors ?? {})) if (!baseErr.has(k)) baseErr.set(k, v);
+  return ids.every((i) => baseIds.has(i) || [...baseIds].some((b) => b.endsWith(` > ${i}`))) && sameErrors(c.errors, baseErr, ids);
+}
+export const TOUCHED_RED = "edited test file red on base by every failing id with the same errors; the cases the change added or edited pass (excused, not blocking)";
 export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: FullCheck[], changed: string[], excused: string[], blocked: readonly string[] = []): string[] {
   const p = loadProfile(repoDir), out: string[] = [];
   for (const c of full.filter((x) => x.result === "fail" && !excused.includes(x.name))) {

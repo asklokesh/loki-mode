@@ -299,6 +299,7 @@
 # 261. mutation_proof.ts proofBudgetS: drop the compiled-stack branch (the proof-compiled-budget leg reads 30 for go).
 # 262. sizing.ts namedFiles: drop the spelled-path filter (fl24 named-exact reads login/page.ts+issues/page.ts for the spelled task; the fl24 monorepo after reads STALLED).
 # 263. verify.ts ownTests: drop the changed-file condition (fl24 own-by-path reads a/page.test.ts own for an unedited a/x/page.ts).
+# 264. repo_profile.ts touchedRedOnBase: drop the editedTitles check (fl24 touched-base-red's failing edited case reads true; the newly-failing fl24 monorepo run reads PARTIAL).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1857,6 +1858,67 @@ const v = await import("./src/engine10/stages/verify.ts"), rel = [{ runner: "vit
 const own = (n, ch) => v.ownTests(rel, n, ch).map((t) => t.path.split("/")[0] + "/" + t.path.split("/").pop()).join("+") || "-";
 console.log([own(["a/x/page.ts"], ["a/x/page.ts"]), own(["a/x/page.ts"], []), own(["c/named.test.ts"], []), String(v.ownByPathOn({ LOKI_E10_OWN_BY_PATH: "0" }))].join(","));' 2>&1)"
 [ "$FA" = "a/page.test.ts,-,c/named.test.ts,false" ] && ok "fl24 own-by-path: own tests are path-paired with changed named files only (another dir's same-stem test is not; an unedited named file owns nothing); =0 is off" || bad "fl24 own-by-path gave: $FA"
+# FL24-TOUCHED-BASE-RED (acc-154; FireLater#24): an edited test file is excused only when every failing id is red on base (intake profile, this base commit) with the
+# same error and no added or edited case fails. A previously green id, another error, a failing added or edited case and LOKI_E10_TOUCHED_BASE_RED=0 are not.
+FC="$(cd "$ROOT/loki-ts" && G="$T/flu" bun -e '
+const rp = await import("./src/runner/repo_profile.ts"), { mkdirSync, writeFileSync } = require("node:fs"), { join } = require("node:path"), g = process.env.G;
+mkdirSync(join(g, ".loki/state"), { recursive: true }); for (const a of [["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "b"]]) Bun.spawnSync(["git", "-C", g, ...a]);
+const sha = Bun.spawnSync(["git", "-C", g, "rev-parse", "HEAD"]).stdout.toString().trim(), F = "src/S.test.ts", A = F + " > a", B = F + " > b", E = (x) => new Map(Object.entries(x));
+writeFileSync(join(g, ".loki/state/repo-profile.json"), JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: false, command: null, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false }, suites: [{ name: "full suite: web", ran: true, command: "(cd web && npm test)", exit_code: 1, duration_s: 1, timed_out: false, attributable: true, failing_ids: [A, B], failing_errors: { [A]: ["AssertionError: x"], [B]: ["AssertionError: y"] } }] }));
+const same = { [A]: ["AssertionError: x"], [B]: ["AssertionError: y"] }, tr = (ids, errs, titles) => rp.touchedRedOnBase(g, sha, { ids, errors: E(errs) }, titles);
+const r = [tr([A, B], same, ["new case"]), tr([A, F + " > c"], { [A]: ["AssertionError: x"], [F + " > c"]: ["AssertionError: z"] }, []), tr([A], { [A]: ["TypeError: q"] }, []), tr([A, B], same, ["b"])];
+process.env.LOKI_E10_TOUCHED_BASE_RED = "0"; r.push(tr([A, B], same, [])); console.log(r.join(","));' 2>&1)"
+[ "$FC" = "true,false,false,false,false" ] && ok "fl24 touched-base-red: an edited test file is excused only by same-error base red with no failing added or edited case; a new green-to-red id, another error and =0 are not" || bad "fl24 touched-base-red gave: $FC"
+# FL24-MONOREPO (acc-154; FireLater#24 slices s3 and s4 FAILED on 11.140.0 with 0 failures introduced). A backend plus frontend monorepo whose frontend page
+# tests under (group) and [id] routes are red on base (stale assertions) and import the lib/api.ts the slice edits; the task spells new paths, names one page
+# "is not modified" and one chart as "the pattern in"; the slice edits api.ts and adds one passing case to the base-red Sidebar.test.ts. Real vitest.
+make_fl_repo() {
+    local r="$1" f="$1/frontend/src"
+    mkdir -p "$r/backend/src" "$f/lib" "$f/app/(auth)/login/__tests__" "$f/app/(dashboard)/reports/[id]/__tests__" "$f/app/(dashboard)/issues/__tests__" "$f/components/charts/__tests__" "$f/components/layout/__tests__"
+    for d in backend frontend; do printf '{"name":"%s","private":true,"type":"module","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"*"}}\n' "$d" > "$r/$d/package.json"; ln -s "$VT_NM" "$r/$d/node_modules"; done
+    printf 'node_modules\n' > "$r/.gitignore"
+    printf 'export const health = (): string => "ok";\n' > "$r/backend/src/health.ts"
+    printf 'import { expect, test } from "vitest";\nimport { health } from "../src/health";\n\ntest("health", () => {\n  expect(health()).toBe("ok");\n});\n' > "$r/backend/src/health.test.ts"
+    printf 'export function listIssues(): string[] {\n  return ["a"];\n}\n\n// LOKI_STUB_INSERT\n' > "$f/lib/api.ts"
+    for pg in "app/(auth)/login:Login:Sign in:renders flame icon" "app/(dashboard)/reports/[id]:Report:Report detail:renders report header" "app/(dashboard)/issues:Issues:All issues:renders issues title"; do
+        IFS=: read -r dir title want tname <<< "$pg"
+        printf 'import { listIssues } from "%s/lib/api";\n\nexport const title = (): string => "%s";\nexport const count = (): number => listIssues().length;\n' "$(printf '%s' "$dir" | sed 's#[^/]*#..#g')" "$title" > "$f/$dir/page.ts"
+        printf 'import { expect, test } from "vitest";\nimport { title } from "../page";\n\ntest("%s", () => {\n  expect(title()).toBe("%s");\n});\n' "$tname" "$want" > "$f/$dir/__tests__/page.test.ts"
+    done
+    printf 'export const chartTitle = (): string => "Trends";\n' > "$f/components/charts/issue-trends-chart.ts"
+    printf 'import { expect, test } from "vitest";\nimport { chartTitle } from "../issue-trends-chart";\n\ntest("applies white background to container", () => {\n  expect(chartTitle()).toBe("Issue trends");\n});\n' > "$f/components/charts/__tests__/issue-trends-chart.test.ts"
+    printf 'export const navItems = (): string[] => ["Issues", "Reports"];\nexport const logoutLabel = (): string => "Sign out";\n' > "$f/components/layout/sidebar.ts"
+    printf 'import { expect, test } from "vitest";\nimport { logoutLabel, navItems } from "../sidebar";\n\ntest("renders logout button", () => {\n  expect(logoutLabel()).toBe("Log out");\n});\n\ntest("has dark background", () => {\n  expect(navItems()[0]).toBe("Dashboard");\n});\n' > "$f/components/layout/__tests__/Sidebar.test.ts"
+}
+FL_TASK=$'Add issue search to the frontend.\n\n- Add `searchIssues(q)` to `frontend/src/lib/api.ts`.\n- Add the page `frontend/src/app/(dashboard)/search/page.ts` and its test `frontend/src/app/(dashboard)/search/__tests__/page.test.ts`.\n- Add one assertion to `frontend/src/components/layout/__tests__/Sidebar.test.ts` that the navigation items render.\n\n`frontend/src/app/(dashboard)/issues/page.ts` is not modified. Follow the pattern in `frontend/src/components/charts/issue-trends-chart.ts`.'
+fl_run() { MAKE_REPO=make_fl_repo run_engine "$FL_TASK" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=frontend/src/lib/api.ts \
+    E2E_STUB_SNIPPET=$'export function searchIssues(q: string): string[] {\n  return listIssues().filter((i) => i.includes(q));\n}\n' \
+    E2E_STUB_TEST_FILE=frontend/src/components/layout/__tests__/Sidebar.test.ts E2E_STUB_TEST_APPEND=$'\ntest("renders all main navigation items", () => {\n  expect(navItems().length).toBe(2);\n});' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 "$@"; }
+fl_sig() { printf '%s|%s|fix=%s|%s' "$(outcome)" "$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(";".join(sorted(c["name"].split(":",1)[1].split("/")[-3]+"/"+c["name"].rsplit("/",1)[-1] for c in r["checks"] if c["result"]=="fail" and c["name"].startswith("vitest:"))))' "$RUNDIR/receipt.json" 2>/dev/null)" "$(fix_sessions)" "$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print("quick" if any(n.startswith("quick re-verify only") for n in r["not_proven"]) else "complete")' "$RUNDIR/receipt.json" 2>/dev/null)"; }
+FL_VT_NM="$T/vt-fl/node_modules"
+if [ ! -x "$FL_VT_NM/.bin/vitest" ]; then mkdir -p "$T/vt-fl"; printf '{"name":"c","private":true,"type":"module"}\n' > "$T/vt-fl/package.json"; (cd "$T/vt-fl" && timeout 300 npm install --no-audit --no-fund --silent vitest@2 >/dev/null 2>&1); fi
+if [ -x "$FL_VT_NM/.bin/vitest" ]; then
+    VT_NM="$FL_VT_NM"; export VT_NM
+    FL_ALL='[id]/page.test.ts;charts/issue-trends-chart.test.ts;issues/page.test.ts;layout/Sidebar.test.ts;login/page.test.ts'
+    fl_run LOKI_E10_NAMED_EXACT=0 LOKI_E10_OWN_BY_PATH=0 LOKI_E10_TOUCHED_BASE_RED=0; FL_BEFORE="$(fl_sig)"
+    [ "$FL_BEFORE" = "STALLED|$FL_ALL|fix=1|quick" ] && ok "fl24 monorepo before (NAMED_EXACT, OWN_BY_PATH, TOUCHED_BASE_RED off): reproduces FireLater#24: every base-red page, chart and edited test blocks, a fix round chases them, the verify stays quick, STALLED ($FL_BEFORE)" || { bad "fl24 monorepo before: $FL_BEFORE"; dump; }
+    fl_run; FL_AFTER="$(fl_sig)"; FL_NOTES="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+    FL_BLOCK="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(";".join(c["name"] for c in r["checks"] if c["result"]=="fail" and not c.get("pre_red")))' "$RUNDIR/receipt.json" 2>/dev/null)"
+    [ "$(outcome)" = "PARTIAL" ] && [ -z "$FL_BLOCK" ] && ok "fl24 monorepo after (defaults): no base-red check blocks and the run is PARTIAL, not FAILED or STALLED ($FL_AFTER)" || { bad "fl24 monorepo after: $FL_AFTER blocking='$FL_BLOCK'"; dump; }
+    has "fl24 monorepo after: the edited base-red Sidebar test is excused and disclosed" "$FL_NOTES" "edited test file red on base by every failing id with the same errors; the cases the change added or edited pass (excused, not blocking): vitest:frontend/src/components/layout/__tests__/Sidebar.test.ts"
+    has "fl24 monorepo after: the unedited reference page's base-red test is collateral (capped, not blocking), not the task's own" "$FL_NOTES" "capped, not blocking): vitest:frontend/src/app/(dashboard)/issues/__tests__/page.test.ts"
+    for m in "LOKI_E10_OWN_BY_PATH=0 LOKI_E10_TOUCHED_BASE_RED=0" "LOKI_E10_NAMED_EXACT=0 LOKI_E10_TOUCHED_BASE_RED=0" "LOKI_E10_NAMED_EXACT=0 LOKI_E10_OWN_BY_PATH=0"; do
+        # shellcheck disable=SC2086
+        fl_run $m; echo "  fl24 matrix (only the knob not listed is on: $m): $(fl_sig)"
+    done
+    # A touched test file whose change newly fails a case is never excused: the added case fails, so the file is the change's own failure.
+    MAKE_REPO=make_fl_repo run_engine "$FL_TASK" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=frontend/src/lib/api.ts E2E_STUB_SNIPPET=$'export function searchIssues(q: string): string[] {\n  return listIssues().filter((i) => i.includes(q));\n}\n' \
+        E2E_STUB_TEST_FILE=frontend/src/components/layout/__tests__/Sidebar.test.ts E2E_STUB_TEST_APPEND=$'\ntest("renders all main navigation items", () => {\n  expect(navItems().length).toBe(3);\n});' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+    FL_NEW="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(";".join(c["name"].rsplit("/",1)[-1] for c in r["checks"] if c["result"]=="fail" and not c.get("pre_red")))' "$RUNDIR/receipt.json" 2>/dev/null)"
+    case "$(outcome)" in VERIFIED|PARTIAL) bad "fl24 monorepo: an edited test file whose added case fails was excused ($(outcome), blocking '$FL_NEW')"; dump ;; *) [ "$FL_NEW" = "Sidebar.test.ts" ] && ok "fl24 monorepo: an edited base-red test file whose added case fails stays blocking and the run is not PARTIAL or VERIFIED ($(outcome))" || { bad "fl24 monorepo newly-failing case: outcome $(outcome), blocking '$FL_NEW'"; dump; } ;; esac
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "fl24 monorepo: vitest@2 could not be installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: fl24 monorepo: vitest@2 could not be installed (offline?)"; fi
+fi
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
 if command -v go >/dev/null 2>&1; then
