@@ -287,6 +287,16 @@
 # 249. testmap.ts mochaTargets: ignore devDependencies (the R5 leg maps a mocha package to nothing).
 # 250. attempts.ts attemptModel: always entry 1 (the cascade leg runs the extra attempt on Haiku).
 # 251. testmap.ts buildTestMap: stop passing `marks` to scopeRunnersByPackage (the multi-module go map leg reads no tests).
+# 252. check_result.ts jsAssertionFailure: drop JS_MISSING_API (the assert-js unit's missing-function case reads true).
+# 253. check_result.ts spawnFailedTool: drop the 6-line bound (the spawn-not-run leg's long ENOENT output reads missing).
+# 254. testmap.ts buildTestMap: ignore pyCfg (the pytest-fallback leg's conftest.py case reads unittest).
+# 255. package_suite.ts runPackageSuites: drop the cwd !== "." guard (the empty-subsuite-na leg's root package reads not applicable).
+# 256. check_result.ts assertionFailure REPORTED-KIND type path: drop the MISSING_API guard (the reported-kind unit's ImportError case reads true).
+# 257. repo_profile.ts intakeCapS: default back to 180 (the R3 leg reads 180,,90,180), or baselineSuites stops calling intakeBudgetNote (it reads silent).
+# 258. check_result.ts unittestAssertionFailure: drop the ERROR: guard (the assert-unittest leg's assertion-beside-an-error case reads true).
+# 259. wall.ts RealBaseTestRunner: read the test source only when reported.observed is non-empty (the reported-kind wiring leg reads true,0,0).
+# 260. seal.ts missingLintChecks: drop the lint: prefix filter (the lint-missing-disclose leg's missing test runner reads disclosed).
+# 261. mutation_proof.ts proofBudgetS: drop the compiled-stack branch (the proof-compiled-budget leg reads 30 for go).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1702,6 +1712,135 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "issue-reported exception: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: issue-reported exception: pytest is not installed"; fi
 fi
+# ASSERT-JS (verify-dev 2026-11-13, commander.js: "test fails without the fix: yes" never counted, because assertionFailure read only pytest, vitest and go):
+# node:test, jest and mocha failures count as red by assertion when the output carries an assertion (ERR_ASSERTION, AssertionError, expect(received).x)
+# and no missing-API or load failure (not a function, ReferenceError, SyntaxError, a module or export that does not exist, a suite that failed to run).
+AJ="$(cd "$ROOT/loki-ts" && bun -e '
+const { assertionFailure } = await import("./src/util/check_result.ts");
+const node = "not ok 1 - source\n  failureType: \x27testCodeFailure\x27\n  code: \x27ERR_ASSERTION\x27\n  name: \x27AssertionError\x27\n", jest = "  ● opts > source\n\n    expect(received).toBe(expected)\n";
+const r = [assertionFailure("node", node), assertionFailure("jest", jest), assertionFailure("mocha", "AssertionError: expected [] to have keys"),
+  assertionFailure("node", "TypeError: cmd.sourceWithGlobals is not a function\nAssertionError\n"), assertionFailure("mocha", "Error: Cannot find module \x27../lib/x.js\x27\nAssertionError"),
+  assertionFailure("jest", "Test suite failed to run\n expect(received).toBe"), assertionFailure("node", "not ok 1\n  error: \x27boom\x27\n  TypeError: Cannot read properties of undefined\n")];
+process.env.LOKI_E10_ASSERT_JS = "0"; r.push(assertionFailure("node", node)); console.log(r.join(","));' 2>&1)"
+[ "$AJ" = "true,true,true,false,false,false,false,false" ] && ok "assert-js unit: node:test, jest and mocha assertions are red by assertion; a missing function, a missing module, a suite that failed to run, a bare TypeError and LOKI_E10_ASSERT_JS=0 are not" || bad "assert-js unit gave: $AJ"
+# ASSERT-UNITTEST (verify-dev 2026-11-13, Python-Markdown under unittest: "test fails without the fix: yes" never counted, assertionFailure had no unittest branch).
+# Real python3 -m unittest: an assertEqual failure is red by assertion; an import that failed (unittest.loader._FailedTest), a raised ValueError (an ERROR:
+# block) and LOKI_E10_ASSERT_UNITTEST=0 are not.
+UT="$T/ut"; mkdir -p "$UT/tests"
+printf 'import unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(1, 2)\n    def test_ok(self):\n        self.assertTrue(True)\n' > "$UT/tests/test_a.py"
+printf 'import unittest\nfrom missing_mod_loki import x\n\nclass T(unittest.TestCase):\n    def test_b(self):\n        self.assertEqual(x, 2)\n' > "$UT/tests/test_b.py"
+printf 'import unittest\n\nclass T(unittest.TestCase):\n    def test_c(self):\n        raise ValueError("boom")\n' > "$UT/tests/test_c.py"
+printf 'import unittest\n\nclass T(unittest.TestCase):\n    def test_d1(self):\n        self.assertEqual(1, 2)\n    def test_d2(self):\n        raise ValueError("boom")\n' > "$UT/tests/test_d.py"
+for f in a b c d; do (cd "$UT" && python3 -m unittest "tests/test_$f.py" > "$UT/$f.out" 2>&1); done
+AU="$(cd "$ROOT/loki-ts" && UT="$UT" bun -e 'const c = await import("./src/util/check_result.ts"), r = (f) => require("node:fs").readFileSync(process.env.UT + "/" + f + ".out", "utf8");
+const x = [c.assertionFailure("unittest", r("a")), c.assertionFailure("unittest", r("b")), c.assertionFailure("unittest", r("c")), c.assertionFailure("unittest", r("d"))]; process.env.LOKI_E10_ASSERT_UNITTEST = "0"; x.push(c.assertionFailure("unittest", r("a"))); console.log(x.join(","));' 2>&1)"
+[ "$AU" = "true,false,false,false,false" ] && ok "assert-unittest: a real unittest assertEqual failure is red by assertion; an import failure, a raised ValueError, an assertion beside a raised error, and LOKI_E10_ASSERT_UNITTEST=0 are not" || bad "assert-unittest gave: $AU"
+# REPORTED-KIND wiring (acc-150; pyjwt: reportedErrors gave only an observed type, IncompleteRead, and RealBaseTestRunner read the test source only when an exact
+# observed error existed, so assertsResult saw "" and the base run read assertFail 0). Through the real RealBaseTestRunner and real pytest: a base failure
+# raising the issue-reported type in a test that expects the wanted type is red by assertion; the same file under an issue that reports nothing is not.
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+RW="$T/rkwire"; mkdir -p "$RW/tests"
+printf 'import http.client\n\nclass ConnectionFailedError(Exception):\n    pass\n\ndef fetch():\n    raise http.client.IncompleteRead(b"x", 5)\n' > "$RW/client.py"
+printf 'import http.client\nimport pytest\nimport client\n\ndef test_fetch_wraps():\n    with pytest.raises(client.ConnectionFailedError):\n        client.fetch()\n' > "$RW/tests/test_client.py"
+RWO="$(cd "$ROOT/loki-ts" && RW="$RW" bun -e '
+const w = await import("./src/engine10/stages/wall.ts"), c = await import("./src/util/check_result.ts");
+const task = "fetch() raises a raw `http.client.IncompleteRead`:\n\n    http.client.IncompleteRead: IncompleteRead(...)\n\nExpected: it is reported as `ConnectionFailedError`.\n";
+const run = (t) => new w.RealBaseTestRunner(undefined, 60000, { PYTHONPATH: process.env.RW }, true, c.reportedErrors(t)).run(process.env.RW, [{ runner: "pytest", path: "tests/test_client.py" }]).assertFail;
+console.log(`${c.reportedNeedsSource(c.reportedErrors(task))},${run(task)},${run("fetch is slow")}`);' 2>&1 | tail -1)"
+[ "$RWO" = "true,1,0" ] && ok "reported-kind wiring: an issue-reported type alone makes the base runner read the test source, so a real pytest failure raising it in a test expecting the wanted type is red by assertion; with nothing reported it is not" || bad "reported-kind wiring gave: $RWO"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "reported-kind wiring: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: reported-kind wiring: pytest is not installed"; fi
+fi
+# LINT-MISSING-DISCLOSE (acc-150; marshmallow, Python-Markdown, pyjwt: `uv run -- ruff` could not start ruff, and "not run: lint:ruff" capped VERIFIED). verify first
+# retries the ways the repo's tooling runs a linter without a global install (uvx ruff, the venv's python -m ruff); a lint check whose tool still could not be
+# started is disclosed and leaves the verdict inputs. A linter that ran and reported violations still caps (FAILED), a missing test runner is not
+# disclosed, and LOKI_E10_LINT_MISSING_DISCLOSE=0 restores the cap.
+LM="$T/lintmiss"; mkdir -p "$LM/repo/.venv/bin" "$LM/bin"; printf '#!/bin/sh\nexit 0\n' > "$LM/repo/.venv/bin/python"; printf '#!/bin/sh\nexit 0\n' > "$LM/bin/uvx"; chmod +x "$LM/repo/.venv/bin/python" "$LM/bin/uvx"
+LMO="$(cd "$ROOT/loki-ts" && LM="$LM" bun -e '
+const sl = await import("./src/engine10/stages/seal.ts"), v = await import("./src/engine10/stages/verify.ts"), d = process.env.LM;
+const miss = { name: "lint:ruff", cmd: "uv run -- ruff check", result: "not_run", skip_code: "tool_not_on_path", duration_s: 0 }, viol = { name: "lint:ruff", cmd: "uv run -- ruff check", result: "fail", duration_s: 1 }, runner = { name: "pytest:tests/test_a.py", cmd: "pytest", result: "not_run", skip_code: "tool_not_on_path", duration_s: 0 };
+const pass = { name: "pytest:tests/test_a.py", cmd: "pytest", result: "pass", duration_s: 1, n: 3, provenance: "exogenous" };
+const r = [sl.missingLintChecks([miss]).join("+") || "-", sl.missingLintChecks([viol]).join("+") || "-", sl.missingLintChecks([runner]).join("+") || "-", sl.missingLintChecks([miss], { LOKI_E10_LINT_MISSING_DISCLOSE: "0" }).join("+") || "-"];
+const o = { implement: { exit: "done" }, commit: {} }; r.push(sl.verdictOf(o, [pass, { ...viol, provenance: "exogenous" }], false, false, false, true));
+r.push(v.lintFallbacks(d + "/repo", "ruff", { PATH: d + "/bin" }).map(([c, a]) => (c.endsWith("/python") ? "venv-python" : c) + " " + a.join(" ")).join("|"));
+r.push(v.lintFallbacks(d + "/repo", "ruff", { PATH: d + "/bin", LOKI_E10_LINT_MISSING_DISCLOSE: "0" }).length);
+console.log(r.join(","));' 2>&1)"
+grep -q 'c.repo_skipped !== true && !lintGone.includes(c.name)),' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'lintGone.includes(c.name) ? `${LINT_MISSING_NOTE}: ${c.name}`' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "lint-missing-disclose wiring: seal drops a disclosed linter from the verdict inputs and writes the disclosure line instead of not run" || bad "lint-missing-disclose wiring: seal no longer excludes lintGone from live or no longer writes the disclosure"
+[ "$LMO" = "lint:ruff,-,-,-,FAILED,uvx ruff|venv-python -m ruff,0" ] && ok "lint-missing-disclose: a linter that could not be started is disclosed (not a cap) after trying uvx and the venv's python -m; a linter that reports violations still makes the run FAILED, a missing test runner is not disclosed, =0 restores the cap" || bad "lint-missing-disclose gave: $LMO"
+# SPAWN-NOT-RUN (verify-dev 2026-11-13, marshmallow and Python-Markdown: `uv run -- ruff check` printed "error: Failed to spawn: `ruff`" and read as a lint
+# failure that fix rounds chased): a check whose tool could not start is not_run with the tool named, through the real runOnce. A shell exit 127, uv's spawn
+# error and node's ENOENT count; a long test output that only mentions ENOENT stays a failure, and LOKI_E10_SPAWN_NOT_RUN=0 restores the failure.
+SN="$T/spawn"; mkdir -p "$SN/bin"
+printf '#!/bin/sh\necho "error: Failed to spawn: \\`ruff\\`"\necho "  Caused by: No such file or directory (os error 2)"\nexit 2\n' > "$SN/bin/uvx"; printf '#!/bin/sh\necho "sh: line 1: ruff: command not found" >&2\nexit 127\n' > "$SN/bin/sh127"
+printf '#!/bin/sh\nfor i in 1 2 3 4 5 6 7 8; do echo "test $i ok"; done\necho "Error: spawn helper ENOENT"\necho "FAIL test 9"\nexit 1\n' > "$SN/bin/longtest"; chmod +x "$SN/bin/"*
+SR="$(cd "$ROOT/loki-ts" && SN="$SN" bun -e '
+const v = await import("./src/engine10/stages/verify.ts"), d = process.env.SN, sig = new AbortController().signal, opts = { path: d + "/bin:" + process.env.PATH };
+const one = async (c) => { const r = await v.runOnce(d + "/bin/" + c, [], d, sig, opts); return `${r.missing}:${r.spawnTool ?? "-"}`; };
+const r = [await one("uvx"), await one("sh127"), await one("longtest")]; process.env.LOKI_E10_SPAWN_NOT_RUN = "0"; r.push(await one("uvx")); console.log(r.join(","));' 2>&1)"
+[ "$SR" = "true:ruff,true:ruff,false:-,false:-" ] && ok "spawn-not-run: a tool that could not start (uv spawn error, shell exit 127) is a missing tool, not a failure; a long test output naming ENOENT and LOKI_E10_SPAWN_NOT_RUN=0 stay failures" || bad "spawn-not-run gave: $SR"
+# PYTEST-FALLBACK (verify-dev 2026-11-13, Python-Markdown: a unittest repo whose venv has no pytest; every test_*.py ran as pytest and "failed" in 0.05 s with no ids):
+# tests marked pytest only by their test_*.py names run under unittest when the repo's .venv cannot import pytest. A venv that has pytest, a conftest.py,
+# a test file importing pytest, and LOKI_E10_PYTEST_FALLBACK=0 keep pytest. (The .venv python here is a stand-in that answers only `-c "import pytest"`.)
+PF="$(cd "$ROOT/loki-ts" && bun -e '
+const tm = await import("./src/engine10/testmap.ts"), { mkdtempSync, writeFileSync, mkdirSync, chmodSync } = require("node:fs"), { join } = require("node:path");
+const mk = (pytestOk, extra) => { const r = mkdtempSync(join(process.argv[1], "pyfb-")); mkdirSync(join(r, ".venv/bin"), { recursive: true }); mkdirSync(join(r, "tests"));
+  writeFileSync(join(r, ".venv/bin/python"), `#!/bin/sh\nexit ${pytestOk ? 0 : 1}\n`); chmodSync(join(r, ".venv/bin/python"), 0o755);
+  writeFileSync(join(r, "pyproject.toml"), "[project]\nname = \"m\"\n"); writeFileSync(join(r, "tests/test_core.py"), "import unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(1, 1)\n");
+  for (const [f, t] of extra) writeFileSync(join(r, f), t); for (const a of [["init", "-q"], ["add", "-A"]]) Bun.spawnSync(["git", "-C", r, ...a]); return r; };
+const run = (r) => { const m = tm.buildTestMap(r); return [...new Set(m.tests.map((t) => t.runner))].join("+") + "/" + m.runners.join("+"); };
+const r = [run(mk(false, [])), run(mk(true, [])), run(mk(false, [["tests/conftest.py", "\n"]])), run(mk(false, [["tests/test_p.py", "import pytest\n"]]))];
+process.env.LOKI_E10_PYTEST_FALLBACK = "0"; r.push(run(mk(false, []))); console.log(r.join(","));' "$T" 2>&1)"
+[ "$PF" = "unittest/unittest,pytest/pytest,pytest/pytest,pytest/pytest,pytest/pytest" ] && ok "pytest-fallback: name-only pytest tests run under unittest when the repo venv cannot import pytest; a venv with pytest, a conftest.py, a pytest import and LOKI_E10_PYTEST_FALLBACK=0 keep pytest" || bad "pytest-fallback gave: $PF"
+# EMPTY-SUBSUITE-NA (verify-dev 2026-11-13, go-chi/chi: two _examples/* modules with no test files read "not run: full suite: _examples/rest" and capped the run,
+# because the 0-tests-on-both-sides rule also wanted a passed Wall or task-named check). A package below the root that executed exactly 0 tests on base and
+# head is not applicable; the root package, a sub-module that ran tests on base, and LOKI_E10_EMPTY_SUBSUITE_NA=0 keep the cap. Real go test.
+if command -v go >/dev/null 2>&1; then
+ES="$(cd "$ROOT/loki-ts" && G="$T/emptysub" bun -e '
+const { mkdirSync, writeFileSync } = require("node:fs"), { join } = require("node:path"), g = process.env.G;
+for (const d of ["sub", ".loki/state"]) mkdirSync(join(g, d), { recursive: true });
+writeFileSync(join(g, "go.mod"), "module example.com/app\n\ngo 1.20\n"); writeFileSync(join(g, "a.go"), "package app\n\nfunc A() int { return 1 }\n");
+writeFileSync(join(g, "sub/go.mod"), "module example.com/sub\n\ngo 1.20\n"); writeFileSync(join(g, "sub/main.go"), "package main\n\nfunc main() {}\n");
+for (const a of [["init", "-q", "-b", "main"], ["add", "-A", "--", ".", ":!.loki"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "b"]]) Bun.spawnSync(["git", "-C", g, ...a]);
+const sha = Bun.spawnSync(["git", "-C", g, "rev-parse", "HEAD"]).stdout.toString().trim();
+const pkg = (name, root) => ({ name, root, runner: null, commands: { test: { cmd: "go test ./...", cwd: root, cite: [root === "." ? "go.mod" : root + "/go.mod"] }, lint: null, build: null, start: null }, ui: { present: false, boot: null, cite: [] }, cite: [root === "." ? "go.mod" : root + "/go.mod"], install: null });
+writeFileSync(join(g, ".loki/project.json"), JSON.stringify({ schema: "loki.v10.project/1", key: "k", status: "ok", workspaceKind: "multi-root", workspaceCite: ["go.mod"], fingerprintFiles: ["go.mod", "sub/go.mod"], packages: [pkg("app", "."), pkg("sub", "sub")] }));
+const suite = (cmd, zero) => ({ name: cmd, ran: true, command: cmd, exit_code: 0, duration_s: 1, timed_out: false, failing_ids: [], attributable: true, zero_tests: zero });
+const prof = (subZero) => writeFileSync(join(g, ".loki/state/repo-profile.json"), JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: suite("go test ./...", true), suites: [suite("(cd . && go test -json ./...)", true), suite("(cd sub && go test -json ./...)", subZero)] }));
+const ps = await import("./src/project_model/package_suite.ts");
+const go = async () => { const checks = [], np = new Set(); await ps.runPackageSuites(g, new AbortController().signal, { timeoutMs: 120000, baseSha: sha, targetPassed: false }, checks, np); const na = [...np].filter((n) => /ran 0 tests on base and head/.test(n)).map((n) => n.includes("full suite: sub") ? "subNA" : "otherNA"); return `${na.join("+") || "noNA"}/${checks.map((c) => c.name.replace("full suite: ", "") + "=" + c.result).join("+")}`; };
+prof(true); const r = [await go()]; prof(false); r.push(await go()); prof(true); process.env.LOKI_E10_EMPTY_SUBSUITE_NA = "0"; r.push(await go()); console.log(r.join(","));' 2>&1)"
+[ "$ES" = "subNA/app=not_run,noNA/app=not_run+sub=not_run,noNA/app=not_run+sub=not_run" ] && ok "empty-subsuite-na: a sub-module with 0 tests on base and head is not applicable without a target check; the root package, a sub-module that ran tests on base, and LOKI_E10_EMPTY_SUBSUITE_NA=0 keep the cap" || bad "empty-subsuite-na gave: $ES"
+fi
+# REPORTED-KIND (verify-dev 2026-11-13: pyjwt's new test failed on the base with the raw `http.client.IncompleteRead` the issue reports, and samber/lo's with the
+# "panic: index out of range" its issue shows; neither counted, because reported errors had to end in Error/Exception with an exact message and go read no
+# reported errors at all). A base failure counts only when its exception type, or its panic message, is one the issue shows happening, in a test that
+# asserts a result or expects a wanted type. An ImportError or SyntaxError base failure is never credited even when the issue quotes it; an unreported
+# panic and LOKI_E10_REPORTED_KIND=0 are not credited either.
+RK="$(cd "$ROOT/loki-ts" && bun -e '
+const c = await import("./src/util/check_result.ts"), ev = (o) => JSON.stringify(o);
+const pj = "PyJWKClient.fetch_data raises a raw `http.client.IncompleteRead`:\n\n```\nhttp.client.IncompleteRead: IncompleteRead(...)\n```\n\nExpected: it is reported as `PyJWKClientConnectionError`.\n";
+const src = "def test_t():\n    with pytest.raises(PyJWKClientConnectionError):\n        client.fetch_data()\n", py = (e) => "E       " + e + "\n\nFAILED tests/test_c.py::test_t - " + e + "\n";
+const gout = [ev({ Action: "run", Test: "TestNth" }), ev({ Action: "output", Test: "TestNth", Output: "panic: runtime error: index out of range [-9] [recovered]\n" }), ev({ Action: "fail", Test: "TestNth" }), ev({ Action: "fail" })].join("\n");
+const lo = "lo.Nth(c, math.MinInt) // panic: index out of range\n";
+const r = [c.assertionFailure("pytest", py("http.client.IncompleteRead: IncompleteRead(0 bytes read)"), c.reportedErrors(pj), src), c.assertionFailure("go", gout, c.reportedErrors(lo)),
+  c.assertionFailure("pytest", py("ImportError: cannot import name x"), c.reportedErrors("loading fails with\n\n    ImportError: cannot import name x\n"), "def test_t():\n    assert f() == 2\n"),
+  c.assertionFailure("pytest", py("SyntaxError: invalid syntax"), c.reportedErrors("it raises SyntaxError: invalid syntax"), "def test_t():\n    assert f() == 2\n"),
+  c.assertionFailure("go", gout, c.reportedErrors("Nth returns the wrong value")), c.assertionFailure("pytest", py("http.client.IncompleteRead: IncompleteRead(0 bytes read)"), c.reportedErrors("fetch_data is slow"), src),
+  c.assertionFailure("pytest", py("http.client.IncompleteRead: other"), c.reportedErrors("fails with\n\n    http.client.IncompleteRead: IncompleteRead(0 bytes read)\n\nExpected: reported as `PyJWKClientConnectionError`.\n"), src)];
+process.env.LOKI_E10_REPORTED_KIND = "0"; r.push(c.assertionFailure("go", gout, c.reportedErrors(lo)), c.assertionFailure("pytest", py("http.client.IncompleteRead: IncompleteRead(0 bytes read)"), c.reportedErrors(pj), src)); console.log(r.join(","));' 2>&1)"
+[ "$RK" = "true,true,false,false,false,false,false,false,false" ] && ok "reported-kind unit: an issue-shown exception type (IncompleteRead) or Go panic message counts as the base failure; ImportError, SyntaxError, an unreported exception or panic, and LOKI_E10_REPORTED_KIND=0 do not; a type the issue quotes with an exact message still needs that message" || bad "reported-kind unit gave: $RK"
+# PROOF-COMPILED-BUDGET (acc-152; go-chi/chi: a cold go build of the base worktree took 32 s of the proof's 30 s and read "inconclusive (timeout)", so a real
+# fail-then-pass did not count and the run fell from VERIFIED to PARTIAL). A compiled stack (go, cargo, maven, gradle, javac, dotnet) gets the 40 s cap by default,
+# anything else keeps 30 s, an explicit LOKI_MUTATION_PROOF_TIMEOUT_S or caller budget still wins, and LOKI_E10_PROOF_COMPILED_BUDGET=0 restores 30 s. The go
+# warm-up compiles each test package once (real go) and is skipped when the deadline leaves no room. It grants time only; what counts as proof is unchanged.
+PB="$(cd "$ROOT/loki-ts" && G="$T/pbgo" bun -e '
+const mp = await import("./src/util/mutation_proof.ts"), { mkdirSync, writeFileSync } = require("node:fs"), { join } = require("node:path"), g = process.env.G;
+const go = [{ runner: "go" }], py = [{ runner: "pytest" }], mix = [{ runner: "vitest" }, { runner: "cargo" }];
+const r = [mp.proofBudgetS(go, {}), mp.proofBudgetS(py, {}), mp.proofBudgetS(mix, {}), mp.proofBudgetS(go, { LOKI_MUTATION_PROOF_TIMEOUT_S: "12" }), mp.proofBudgetS(go, {}, 20), mp.proofBudgetS(go, { LOKI_E10_PROOF_COMPILED_BUDGET: "0" }), mp.proofBudgetS(go, { LOKI_MUTATION_PROOF_TIMEOUT_S: "90" })];
+let warm = "skip"; if (Bun.which("go")) { mkdirSync(join(g, "pkg"), { recursive: true }); writeFileSync(join(g, "go.mod"), "module example.com/w\n\ngo 1.20\n"); writeFileSync(join(g, "pkg/a.go"), "package pkg\n\nfunc A() int { return 1 }\n"); writeFileSync(join(g, "pkg/a_test.go"), "package pkg\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) { if A() != 1 { t.Fatal() } }\n");
+  const end = Date.now() + 60000; warm = `${mp.warmGoBuild(g, [{ runner: "go", path: "pkg/a_test.go" }], () => end - Date.now())}/${mp.warmGoBuild(g, [{ runner: "go", path: "pkg/a_test.go" }], () => 5000)}`; }
+console.log(r.join(",") + " " + warm);' 2>&1)"
+case "$PB" in "40,30,40,12,20,30,40 1/0"|"40,30,40,12,20,30,40 skip") ok "proof-compiled-budget: a compiled stack's proof gets 40 s (python keeps 30), an explicit or caller budget wins, =0 restores 30, the cap holds at 40; the go warm-up compiles a package and is skipped without room ($PB)" ;; *) bad "proof-compiled-budget gave: $PB" ;; esac
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
 if command -v go >/dev/null 2>&1; then
@@ -2064,7 +2203,8 @@ grep -q 'const r = await resumeForNamedSites(ctx, { ...unchained(), iterationId:
 
 # acc-145 R3 intake guard. (a) LOKI_E10_PLAN_SCOPE_ANCHOR (default on, =0 opts out): a plan-scope list holding none of the files or symbols the task names is discarded, so
 # the fix file named only by its class is never "outside stated scope". Synthetic repo: a VERSION file the prose word "version" matches, and the class in pkg/fetch.py.
-# (b) LOKI_E10_INTAKE_CAP_S (default 180, =0 off): the root baseline and the suite baselines share one budget; a suite the budget has no room for is not run.
+# (b) LOKI_E10_INTAKE_CAP_S (opt-in since acc-148: unset, 0 or a non-number is off; a positive number of seconds turns it on): the root baseline and the suite baselines
+# share one budget; a suite the budget has no room for is not run, and intake prints one "loki: intake budget spent after N s" line for it.
 R3D="$T/r3"; rm -rf "$R3D"; mkdir -p "$R3D/pkg" "$R3D/run"; git init -q -b main "$R3D"
 printf '1.0\n' > "$R3D/VERSION"; printf 'class Fetcher:\n    def rules(self, url):\n        return url.host\n' > "$R3D/pkg/fetch.py"; printf '{"scripts":{"test":"sleep 3"}}\n' > "$R3D/package.json"
 git -C "$R3D" add -- . && git -C "$R3D" -c user.name=f -c user.email=f@x commit -q -m base
@@ -2080,10 +2220,11 @@ process.env.LOKI_E10_PLAN_SCOPE_ANCHOR = "0"; out.push(j(sc.flagOutsideScope(o, 
 out.push([rp.intakeCapS({}), rp.intakeCapS({ LOKI_E10_INTAKE_CAP_S: "0" }), rp.intakeCapS({ LOKI_E10_INTAKE_CAP_S: "90" }), rp.intakeCapS({ LOKI_E10_INTAKE_CAP_S: "x" })].join(","));
 rp.ensureProfile(d, { timeoutS: 1 });
 const spec = [{ name: "full suite: other", cmd: "suite-cmd", cwd: ".", run: "sleep 3; true" }], t0 = Date.now();
-const p1 = rp.baselineSuites(d, spec, { timeoutS: 300, budgetS: 300, deadlineMs: Date.now() }), ms = Date.now() - t0;
-out.push(`${p1?.suites?.[0]?.reason ?? "ran"},${ms < 2500}`);
+const errs = [], w0 = process.stderr.write.bind(process.stderr); process.stderr.write = (x) => { errs.push(String(x)); return true; };
+const p1 = rp.baselineSuites(d, spec, { timeoutS: 300, budgetS: 300, deadlineMs: Date.now() }), ms = Date.now() - t0; process.stderr.write = w0;
+out.push(`${p1?.suites?.[0]?.reason ?? "ran"},${ms < 2500},${errs.some((e) => e.startsWith(rp.INTAKE_BUDGET_LINE) && /full suite: other not measured on base/.test(e)) ? "noted" : "silent"}`);
 console.log(out.join(" | "));' 2>&1)"
-[ "$R3R" = '[] | ["VERSION","pkg/fetch.py"] | ["VERSION"] | ["VERSION"] | ["scope not determined; all edits committed"] | ["outside stated scope: pkg/fetch.py"] | 180,,90,180 | baseline budget used up,true' ] && ok "R3 intake guard: a plan scope holding only a file the prose matched is discarded (the class file is never outside stated scope), a scope holding the defining file is kept, a task naming nothing and =0 keep the list; the intake cap defaults to 180 s (=0 off), and a suite the shared budget has no room for is not run" || bad "R3 intake guard gave: $R3R"
+[ "$R3R" = '[] | ["VERSION","pkg/fetch.py"] | ["VERSION"] | ["VERSION"] | ["scope not determined; all edits committed"] | ["outside stated scope: pkg/fetch.py"] | ,,90, | baseline budget used up,true,noted' ] && ok "R3 intake guard: a plan scope holding only a file the prose matched is discarded (the class file is never outside stated scope), a scope holding the defining file is kept, a task naming nothing and =0 keep the list; the intake cap is off unless a positive number of seconds is set, and a suite the shared budget has no room for is not run" || bad "R3 intake guard gave: $R3R"
 grep -q 'icap = intakeCapS(), built = baselineOn ? ensureProfile(ctx.repoDir, { timeoutS: icap === null ? baselineCmdS(ctx.capS) : Math.min(baselineCmdS(ctx.capS), icap) })' "$ROOT/loki-ts/src/engine10/stages/intake.ts" && grep -q 'baselineLeftS: Math.max(0, icap - Math.ceil(baselineMs / 1000))' "$ROOT/loki-ts/src/engine10/stages/intake.ts" && grep -q 'deadlineMs: tb + ctx.baselineLeftS \* 1000' "$ROOT/loki-ts/src/project_model/install.ts" && grep -q 'flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir)' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'outsideScope(a.outputs(), staged, anchoredPlanScope(readPlanScope(a.runDir)' "$ROOT/loki-ts/src/features/attempts.ts" && ok "R3 wiring: intake passes one baseline budget to the root and suite baselines; seal and the attempts ranking read the anchored plan scope" || bad "R3 wiring missing in intake.ts, install.ts, seal.ts or attempts.ts"
 
 # acc-145 R5 mocha targeted tests (LOKI_E10_MOCHA_TARGETED, default on, =0 opts out). Synthetic package declaring mocha in devDependencies, its test files without a .test or

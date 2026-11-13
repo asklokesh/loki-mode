@@ -1,5 +1,5 @@
 // engine10/testmap.ts -- runner detection and the impacted-test map (E-05). Runners come from real files only (ENGINE.md section 8). Each changed file maps to tests that import/reference it, unioned with a same-stem floor so Go or import-free tests never drop to zero (under-selecting is unsafe). Pure read. EngineTestMap extends types.ts TestMap without editing it.
-import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs"; import { spawnSync } from "node:child_process";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { listProjectFiles } from "../util/safe_git.ts";
 import { loadProjectApi } from "../project_model/resolve.ts"; import { languageBytes } from "../project_model/linguist.ts"; 
@@ -40,6 +40,13 @@ const readText = (p: string): string => { try { return readFileSync(p, "utf8"); 
 const normalizeRel = (raw: string): string => raw.split(sep).join("/").replace(/^\.\//, "");
 /** EVIDENCE-PER-PACKAGE (LOKI_E10_EVIDENCE_PER_PACKAGE, default on, =0 opts out): package scoping reads every file that proves a runner, not only the first one listed. */
 export const evidencePerPackageOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_EVIDENCE_PER_PACKAGE"] ?? "").trim());
+/** PYTEST-FALLBACK (LOKI_E10_PYTEST_FALLBACK, default on, =0 opts out): Python tests that only test_*.py file names marked as pytest (no pytest config, no test
+ *  file importing pytest) run under the stdlib unittest when the repo's own virtualenv cannot import pytest. A system interpreter is never probed (that case keeps pytest). */
+export const pytestFallbackOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PYTEST_FALLBACK"] ?? "").trim());
+export function pytestImportable(root: string): boolean {
+  const py = pytestPython(root); if (py === "python") return true;
+  try { return spawnSync(py, ["-c", "import pytest"], { cwd: root, timeout: 15_000, stdio: "ignore" }).status === 0; } catch { return true; }
+}
 /** Synchronous core: scans `root`, returns the full detected map. `detect()` on TestMapProviderImpl just wraps this in a Promise per the interface. */
 export function buildTestMap(root: string): EngineTestMap {
   const files = listProjectFiles(root);
@@ -48,6 +55,7 @@ export function buildTestMap(root: string): EngineTestMap {
   const mark = (r: RunnerName, file: string): void => { marks.push([r, file]); if (!(r in evidence)) evidence[r] = file; };
   const jsText = new Map<string, string>();
   const api = loadProjectApi(root);
+  let pyCfg = false; // PYTEST-FALLBACK: pytest declared by config, or imported by a test file (not only inferred from test_*.py names)
   for (const rel of files) {
     const name = basename(rel);
     const full = join(root, rel);
@@ -56,11 +64,11 @@ export function buildTestMap(root: string): EngineTestMap {
       for (const r of importedRunners(text)) mark(r, rel);
     } else if (name === "package.json") detectFromPackageJson(readText(full), rel, mark);
     else if (name === "bunfig.toml") mark("bun", rel);
-    else if (name === "pytest.ini" || name === "conftest.py") mark("pytest", rel);
-    else if (name === "pyproject.toml" && /\[tool\.pytest/.test(readText(full))) mark("pytest", rel);
-    else if (name === "setup.cfg" && /\[tool:pytest]/.test(readText(full))) mark("pytest", rel);
-    else if (name === "tox.ini" && /\[pytest]/.test(readText(full))) mark("pytest", rel);
-    else if (PY_TEST_RE.test(name)) mark("pytest", rel);
+    else if (name === "pytest.ini" || name === "conftest.py") { mark("pytest", rel); pyCfg = true; }
+    else if (name === "pyproject.toml" && /\[tool\.pytest/.test(readText(full))) { mark("pytest", rel); pyCfg = true; }
+    else if (name === "setup.cfg" && /\[tool:pytest]/.test(readText(full))) { mark("pytest", rel); pyCfg = true; }
+    else if (name === "tox.ini" && /\[pytest]/.test(readText(full))) { mark("pytest", rel); pyCfg = true; }
+    else if (PY_TEST_RE.test(name)) { mark("pytest", rel); if (PYTEST_IMPORT_RE.test(readText(full))) pyCfg = true; }
     else if (/^vitest\.config\.[cm]?[jt]s$/.test(name)) mark("vitest", rel);
     else if (/^jest\.config\.[cm]?[jt]s(on)?$/.test(name)) mark("jest", rel);
     else if (name === "go.mod" || GO_TEST_RE.test(name)) mark("go", rel);
@@ -69,6 +77,8 @@ export function buildTestMap(root: string): EngineTestMap {
     else if (DOTNET_MANIFEST_RE.test(name)) mark("dotnet", rel);
     else if (/^(?:build|settings)\.gradle(?:\.kts)?$/.test(name) || name === "gradlew") mark("gradle", rel);
   }
+  const pyUnittest = "pytest" in evidence && !pyCfg && pytestFallbackOn() && !pytestImportable(root); // PYTEST-FALLBACK
+  if (pyUnittest) { delete evidence.pytest; for (let k = marks.length - 1; k >= 0; k--) if (marks[k]![0] === "pytest") marks.splice(k, 1); }
   const { ownerRoot, packageRunners } = scopeRunnersByPackage(files, evidence, jsText, api, RUNNER_ORDER, (rel) => readText(join(root, rel)), evidencePerPackageOn() ? marks : undefined); // #233: runners per owning package
   const tests: TestRef[] = [];
   const testPackages: Record<string, string> = Object.create(null);
@@ -77,6 +87,7 @@ export function buildTestMap(root: string): EngineTestMap {
     const scope = packageRunners.get(pkgRoot) ?? packageRunners.get(".") ?? [];
     let jr: RunnerName | undefined; const jsRunner = JS_TEST_RE.test(name) ? (importedRunners(jsText.get(rel) ?? "")[0] ?? (["vitest", "jest", "bun", "node"] as const).find((r) => scope.includes(r))) : undefined;
     if (jsRunner) { tests.push({ runner: jsRunner, path: rel }); testPackages[rel] = pkgRoot; }
+    else if (pyUnittest && PY_TEST_RE.test(name)) { tests.push({ runner: "unittest", path: rel }); testPackages[rel] = pkgRoot; } // PYTEST-FALLBACK: the stdlib runner the repo's own tests use
     else if (PY_TEST_RE.test(name) && (scope.includes("pytest") || PYTEST_IMPORT_RE.test(readText(join(root, rel))))) { tests.push({ runner: "pytest", path: rel }); testPackages[rel] = pkgRoot; }
     else if (GO_TEST_RE.test(name) && scope.includes("go")) { tests.push({ runner: "go", path: rel }); testPackages[rel] = pkgRoot; }
     else if ((JAVA_TEST_RE.test(rel) || CS_TEST_RE.test(rel)) && (jr = (rel.endsWith(".cs") ? (["dotnet"] as const) : (["maven", "gradle", "javac"] as const)).find((r) => scope.includes(r)))) { tests.push({ runner: jr, path: rel }); testPackages[rel] = pkgRoot; } // R02: JUnit under the repo's build tool, C# under `dotnet test`
@@ -95,7 +106,7 @@ export function buildTestMap(root: string): EngineTestMap {
     if (t.runner === "go") for (const m of text.matchAll(/"([\w.\-~]+(?:\/[\w.\-~]+)*)"/g)) { const d = goImportDir(m[1]!); if (d !== null) names.add(`godir:${d}`); } // a Go test exercises the module packages it imports: keyed by the imported package's repo directory, resolved through the repo's go.mod module paths (never by the last path segment, so internal/json is not encoding/json)
     for (const n of names) { (sourceRefs[n] ??= []).push(t.path); }
   }
-  const runners = RUNNER_ORDER.filter((r) => r in evidence);
+  const runners: RunnerName[] = [...RUNNER_ORDER.filter((r) => r in evidence), ...(pyUnittest ? ["unittest" as const] : [])];
   const commands: Partial<Record<RunnerName, CommandSpec>> = {};
   for (const r of runners) commands[r] = r === "pytest" ? { ...COMMANDS.pytest, cmd: `${pytestPython(root)} -m pytest -q <files>` } : COMMANDS[r];
   const map: EngineTestMap = { runners, tests, evidence, commands, sourceRefs, testPackages, packageRunners: Object.fromEntries(packageRunners) };
