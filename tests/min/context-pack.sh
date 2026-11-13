@@ -42,6 +42,7 @@
 #      CL cl_required, cl_named, cl_rst and cl_on_again legs fail (CL: a changelog file the contribution guide asks entries for).
 #   8. conventions.ts guideRequiresChangelog: delete the LOG_FORBID line; cl_forbid fails (a guide saying not to update the CHANGELOG got a line).
 #   9. conventions.ts releaseNoteBrief: `if (false) {` in place of the towncrier example branch (TX); tx_example and tx_template_only fail.
+#  10. loki-ts/src/e10ext/scope.ts flagOutsideScope: `mine = (f: string): boolean => false` (CS); cs_on fails (the asked-for changelog edit is flagged).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need() { command -v "$1" >/dev/null 2>&1 || { echo "context-pack: needs $1" >&2; exit 2; }; }
@@ -205,7 +206,12 @@ out.cl_no_guide = clEmpty({ "CHANGELOG.md": LOG, "README.md": "# p\n" });
 const clOffRepo = mk("cl-off", { "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG });
 process.env.LOKI_E10_CHANGELOG_CONVENTION = "0"; out.cl_off = releaseNoteBrief(clOffRepo, []) === "" ? "empty" : "present"; delete process.env.LOKI_E10_CHANGELOG_CONVENTION;
 out.cl_on_again = releaseNoteBrief(clOffRepo, []) === "" ? "empty" : "present";
-out.cl_precedence = releaseNoteBrief(mk("cl-cs", { ".changeset/config.json": "{}", "package.json": '{"name":"p"}', "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG }), []);
+// CS LOKI_E10_CHANGELOG_SCOPE: the changelog the brief's line names is in scope for the advisory scope notes; any other unplanned file still is not.
+{ const sc = await import(join(SRC, "e10ext/scope.ts")); const csr = mk("cs-scope", { "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG, "src/a.py": "x = 1\n", "README.md": "# r\n" });
+  const so = { plan: { relevant_files: ["src/a.py"], plan: "Change src/a.py." }, intake: { task: "Fix the parser" } }, st = [{ st: "M", f: "CHANGELOG.md" }, { st: "M", f: "src/a.py" }, { st: "M", f: "README.md" }];
+  const notes = (): string => sc.flagOutsideScope(so, st, undefined, csr).join("|");
+  out.cs_on = notes(); process.env.LOKI_E10_CHANGELOG_SCOPE = "0"; out.cs_off = notes(); delete process.env.LOKI_E10_CHANGELOG_SCOPE; }
+out.cl_precedence =releaseNoteBrief(mk("cl-cs", { ".changeset/config.json": "{}", "package.json": '{"name":"p"}', "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG }), []);
 // TX LOKI_E10_TOWNCRIER_EXAMPLE: the example is a real fragment, never the towncrier template, even when every mtime ties (a fresh checkout).
 const txRepo = mk("tx", { "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\ntemplate = "changes/template.rst"\n', "changes/12.bugfix.rst": "Fixed a thing.\n", "changes/template.rst": "{{ text }}\n" });
 utimesSync(join(txRepo, "changes/12.bugfix.rst"), 5000, 5000); utimesSync(join(txRepo, "changes/template.rst"), 5000, 5000);
@@ -381,6 +387,8 @@ eqv cl_frozen empty "CL a changelog marked no longer maintained gets no line"
 eqv cl_no_guide empty "CL an unreleased section with no guide asking for entries gets no line"
 eqv cl_off empty "CL LOKI_E10_CHANGELOG_CONVENTION=0 turns the changelog-file line off"
 eqv cl_on_again present "CL the changelog-file line is on by default"
+eqv cs_on "outside stated scope: README.md" "CS the changelog the brief asked for is in scope; an unplanned README edit is still flagged"
+eqv cs_off "outside stated scope: CHANGELOG.md|outside stated scope: README.md" "CS LOKI_E10_CHANGELOG_SCOPE=0 flags the changelog edit again"
 rn cl_precedence 'changeset, .changeset/' "CL a fragment convention (changesets) still wins over a changelog file"
 rn tx_example 'newest example: changes/12.bugfix.rst' "TX the towncrier example is a real fragment when every mtime ties"
 eqv tx_template_only none "TX a towncrier directory holding only its template names no example"

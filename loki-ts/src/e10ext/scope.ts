@@ -10,6 +10,7 @@ import { readPlanScope } from "../util/run_cap.ts";
 import type { Staged } from "./commit_filter.ts";
 import { escapeRegex } from "../util/regex_escape.ts";
 import { defRe, extractSpecAtoms } from "../features/exec_spec.ts";
+import { releaseNoteConvention } from "../project_model/conventions.ts";
 
 export const SCOPE_UNDETERMINED = "scope not determined; all edits committed";
 export const outsideNote = (f: string): string => `outside stated scope: ${f}`;
@@ -60,8 +61,19 @@ export function anchoredPlanScope(files: string[], task: string, repoDir: string
 /** Advisory scope pass: returns the NOT PROVEN notes for edits outside the stated scope (runDir holds plan-scope.json). Nothing is reverted or unstaged. */
 export function flagOutsideScope(o: Partial<Record<string, Obj>>, staged: Staged[], runDir?: string, repoDir?: string): string[] {
   const unit = unitFlags(staged, process.env, (o.intake?.preexisting_dirty ?? {}) as Record<string, string>); // D61-11: null unless a unit spec is active
+  const asked = repoDir ? briefChangelog(repoDir) : null, mine = (f: string): boolean => f === asked; // CS: the changelog file the brief's release-note line asked the run to edit
   const un = outsideScope(o, staged, runDir ? anchoredPlanScope(readPlanScope(runDir), typeof o.intake?.task === "string" ? o.intake.task : "", repoDir) : []), seen = new Set((unit ?? []).map(outsideNote));
-  return [...(unit ?? []).map(outsideNote), ...(un ? un.map(outsideNote).filter((n) => !seen.has(n)) : staged.length > 0 ? [SCOPE_UNDETERMINED] : [])];
+  return [...(unit ?? []).filter((f) => !mine(f)).map(outsideNote), ...(un ? un.filter((f) => !mine(f)).map(outsideNote).filter((n) => !seen.has(n)) : staged.length > 0 ? [SCOPE_UNDETERMINED] : [])];
+}
+
+/** CS LOKI_E10_CHANGELOG_SCOPE (default on, =0 opts out): the changelog file the implement brief's release-note line names (the CL changelog-file convention of
+ *  project_model/conventions.ts) is in scope, so the entry the brief asked for is never flagged "outside stated scope". The failure: a run that added the entry the
+ *  repo's contribution guide requires got an advisory note calling that edit out of scope, which pr_lessons then reads as a scope slip. Null when off or no such line. */
+export const changelogScopeEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_CHANGELOG_SCOPE"] ?? "").trim());
+export function briefChangelog(repoDir: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (!changelogScopeEnabled(env)) return null;
+  const c = releaseNoteConvention(repoDir, env);
+  return c?.kind === "changelog" ? c.dir : null;
 }
 
 /** J3 LOKI_E10_SCOPE_TEST_DROP (default on, =0 opts out): the one non-advisory scope rule. A test file the run added or modified in an owner package (a Go directory, a JS/TS
