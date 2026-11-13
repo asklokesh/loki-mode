@@ -288,6 +288,7 @@
 # 250. attempts.ts attemptModel: always entry 1 (the cascade leg runs the extra attempt on Haiku).
 # 251. testmap.ts buildTestMap: stop passing `marks` to scopeRunnersByPackage (the multi-module go map leg reads no tests).
 # 252. check_result.ts jsAssertionFailure: drop JS_MISSING_API (the assert-js unit's missing-function case reads true).
+# 253. check_result.ts spawnFailedTool: drop the 6-line bound (the spawn-not-run leg's long ENOENT output reads missing).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1714,6 +1715,17 @@ const r = [assertionFailure("node", node), assertionFailure("jest", jest), asser
   assertionFailure("jest", "Test suite failed to run\n expect(received).toBe"), assertionFailure("node", "not ok 1\n  error: \x27boom\x27\n  TypeError: Cannot read properties of undefined\n")];
 process.env.LOKI_E10_ASSERT_JS = "0"; r.push(assertionFailure("node", node)); console.log(r.join(","));' 2>&1)"
 [ "$AJ" = "true,true,true,false,false,false,false,false" ] && ok "assert-js unit: node:test, jest and mocha assertions are red by assertion; a missing function, a missing module, a suite that failed to run, a bare TypeError and LOKI_E10_ASSERT_JS=0 are not" || bad "assert-js unit gave: $AJ"
+# SPAWN-NOT-RUN (verify-dev 2026-11-13, marshmallow and Python-Markdown: `uv run -- ruff check` printed "error: Failed to spawn: `ruff`" and read as a lint
+# failure that fix rounds chased): a check whose tool could not start is not_run with the tool named, through the real runOnce. A shell exit 127, uv's spawn
+# error and node's ENOENT count; a long test output that only mentions ENOENT stays a failure, and LOKI_E10_SPAWN_NOT_RUN=0 restores the failure.
+SN="$T/spawn"; mkdir -p "$SN/bin"
+printf '#!/bin/sh\necho "error: Failed to spawn: \\`ruff\\`"\necho "  Caused by: No such file or directory (os error 2)"\nexit 2\n' > "$SN/bin/uvx"; printf '#!/bin/sh\necho "sh: line 1: ruff: command not found" >&2\nexit 127\n' > "$SN/bin/sh127"
+printf '#!/bin/sh\nfor i in 1 2 3 4 5 6 7 8; do echo "test $i ok"; done\necho "Error: spawn helper ENOENT"\necho "FAIL test 9"\nexit 1\n' > "$SN/bin/longtest"; chmod +x "$SN/bin/"*
+SR="$(cd "$ROOT/loki-ts" && SN="$SN" bun -e '
+const v = await import("./src/engine10/stages/verify.ts"), d = process.env.SN, sig = new AbortController().signal, opts = { path: d + "/bin:" + process.env.PATH };
+const one = async (c) => { const r = await v.runOnce(d + "/bin/" + c, [], d, sig, opts); return `${r.missing}:${r.spawnTool ?? "-"}`; };
+const r = [await one("uvx"), await one("sh127"), await one("longtest")]; process.env.LOKI_E10_SPAWN_NOT_RUN = "0"; r.push(await one("uvx")); console.log(r.join(","));' 2>&1)"
+[ "$SR" = "true:ruff,true:ruff,false:-,false:-" ] && ok "spawn-not-run: a tool that could not start (uv spawn error, shell exit 127) is a missing tool, not a failure; a long test output naming ENOENT and LOKI_E10_SPAWN_NOT_RUN=0 stay failures" || bad "spawn-not-run gave: $SR"
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
 if command -v go >/dev/null 2>&1; then

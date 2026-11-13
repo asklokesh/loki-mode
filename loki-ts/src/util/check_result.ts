@@ -1804,6 +1804,18 @@ export function assertionFailure(runner: string, output: string, reported: Repor
   if ((runner === "node" || runner === "jest" || runner === "mocha") && assertJsOn()) return jsAssertionFailure(out);
   return false;
 }
+/** SPAWN-NOT-RUN (LOKI_E10_SPAWN_NOT_RUN, default on, =0 opts out): the tool a failed check could not start, or null. A wrapper that could not spawn its tool
+ *  (`uv run -- ruff`: "error: Failed to spawn: `ruff`"), a shell that could not find it (exit 127, "ruff: command not found"), or node's "spawn ruff ENOENT",
+ *  and only when that is essentially all the output (at most 6 non-empty lines), so a test that itself spawns a missing program still reads as its own failure. */
+export const spawnNotRunOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SPAWN_NOT_RUN"] ?? "").trim());
+export function spawnFailedTool(out: string, exitCode: number | null): string | null {
+  if (!spawnNotRunOn() || exitCode === 0) return null;
+  const t = stripAnsi(out), lines = t.split("\n").filter((l) => l.trim() !== "");
+  if (lines.length > 6) return null;
+  const uv = /^\s*error: Failed to spawn: `([^`]+)`/m.exec(t); if (uv) return uv[1]!;
+  const sh = exitCode === 127 ? /^(?:\S*sh: (?:line \d+: )?)?([\w.+-]+): (?:command )?not found\s*$/m.exec(t) : null; if (sh) return sh[1]!;
+  const en = /\bspawn ([\w./+-]+) ENOENT\b/.exec(t); return en ? en[1]! : null;
+}
 /** ASSERT-JS (LOKI_E10_ASSERT_JS, default on, =0 opts out): node:test, jest and mocha red by assertion. At least one failure is an assertion (node:assert's
  *  AssertionError / ERR_ASSERTION, chai's AssertionError, jest's `expect(received).<matcher>` report), and none is a missing-API or load failure: a value that is
  *  not a function or constructor, a ReferenceError, a SyntaxError, a module that cannot be found, an export that does not exist, or a suite that failed to load. */
