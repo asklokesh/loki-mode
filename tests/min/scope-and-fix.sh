@@ -289,6 +289,7 @@
 # 251. commit_filter.ts hygieneProbe: ignore a failing re-run (the hygiene unit leg drops on red; the needed leg drops bunfig.toml).
 # 252. verify.ts: skip the hygiene probe (the needed leg drops bunfig.toml; the root leg keeps the verify label).
 # 253. commit_filter.ts hygieneCandidates: drop the named() check (the hygiene unit leg makes the task-named config a candidate).
+# 254. verify.ts: drop the carried hygiene record (the fix-round leg loses the dropped line on the receipt).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -462,9 +463,21 @@ run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_RUNNER_CFG=needed
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
 git -C "$REPO" show HEAD:bunfig.toml 2>/dev/null | grep -q 'preload' && ok "diff hygiene needed: the bunfig.toml preload a passing test needs is kept" || { bad "diff hygiene needed: the needed bunfig.toml edit was dropped"; dump; }
 has "diff hygiene needed: the receipt says why it was kept" "$notes" "runner or CI config edit kept: bunfig.toml (test-runner config the task does not ask for, kept because bun:ready.test.ts fails without it)"
+# A red first verify, one fix round, a second verify: the first verify's drop stays on the receipt. A CI workflow the user left untracked before the run is never a candidate.
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit E2E_STUB_RUNNER_CFG=root LOKI_CONFIG_FENCE=0
+notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+git -C "$REPO" cat-file -e HEAD:vitest.config.js 2>/dev/null && { bad "diff hygiene fix round: the created config reached the commit"; dump; } || ok "diff hygiene fix round: the created config is not in the commit after a fix round"
+has "diff hygiene fix round: the receipt still names the dropped config" "$notes" "runner or CI config edit dropped from the delivered diff: vitest.config.js"
+HYU="$T/hyg-user"; rm -rf "$HYU"; mkdir -p "$HYU"; (cd "$HYU" && git init -q -b main && printf 'x\n' > a.ts && git add a.ts && git -c user.name=e -c user.email=e@e.invalid commit -q -m base && mkdir -p .github/workflows && printf 'on: push\n' > .github/workflows/x.yml && printf 'y\n' >> a.ts)
+HYUR="$(cd "$ROOT/loki-ts" && HYU="$HYU" bun -e '
+const cf = await import("./src/e10ext/commit_filter.ts"), d = process.env.HYU;
+const users = cf.intakeUserPaths({ preexisting_untracked: [".github/workflows/x.yml"], preexisting_dirty: { "b.ts": "h" }, preexisting_untracked_blobs: { "c.ts": "h" } });
+const staged = [{ st: "A", f: ".github/workflows/x.yml" }, { st: "M", f: "a.ts" }].filter(({ f }) => !users.has(f));
+console.log([[...users].sort().join("+"), cf.hygieneCandidates(staged, cf.gitBaseText(d, "HEAD"), cf.treeText(d), () => false).length].join(" | "));' 2>&1)"
+[ "$HYUR" = ".github/workflows/x.yml+b.ts+c.ts | 0" ] && [ -f "$HYU/.github/workflows/x.yml" ] && ok "diff hygiene user files: a config dirty or untracked at intake is never a candidate ($HYUR)" || bad "diff hygiene user files gave: $HYUR"
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_RUNNER_CFG=root LOKI_CONFIG_FENCE=0 LOKI_E10_DIFF_HYGIENE=0
 git -C "$REPO" cat-file -e HEAD:vitest.config.js 2>/dev/null && ok "diff hygiene =0: the created config is committed as before" || { bad "diff hygiene =0: the config was dropped with the knob off"; dump; }
-grep -q 'const hyg = diffHygieneEnabled() ? hygieneCandidates(staged.filter' "$SJ3" && grep -q 'for (const { st, f } of hyg) { if ((await git(ctx, \["--literal-pathspecs", "reset", "-q", ctx.baseSha, "--", f\]))' "$SJ3" && grep -q 'const notes = \[...xpkg.map(crossPackageTestNote), ...hygNotes,' "$SJ3" && grep -q 'revertToBase(repoDir, g, base, hygieneCandidates(rest' "$ROOT/loki-ts/src/e10ext/commit_filter.ts" && ok "diff hygiene wiring: the commit stage (a candidate verify did not probe) and a stopped run's WIP commit also leave unasked runner or CI config out, and the commit names each one" || bad "diff hygiene wiring: the commit stage or the WIP commit does not drop and name the candidates"
+grep -q 'hyg = diffHygieneEnabled() ? hygieneCandidates(staged.filter' "$SJ3" && grep -q 'for (const { st, f } of hyg) { if ((await git(ctx, \["--literal-pathspecs", "reset", "-q", ctx.baseSha, "--", f\]))' "$SJ3" && grep -q 'const notes = \[...xpkg.map(crossPackageTestNote), ...hygNotes,' "$SJ3" && grep -q 'revertToBase(repoDir, g, base, hygieneCandidates(rest' "$ROOT/loki-ts/src/e10ext/commit_filter.ts" && ok "diff hygiene wiring: the commit stage (a candidate verify did not probe) and a stopped run's WIP commit also leave unasked runner or CI config out, and the commit names each one" || bad "diff hygiene wiring: the commit stage or the WIP commit does not drop and name the candidates"
 
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=delete LOKI_EXOGENOUS_PROOF=0 # proof opt-out: the deleted assertion alone must cap, not the agent-only-proof rule
 git -C "$REPO" show HEAD:calc.test.ts 2>/dev/null | grep -q 'calc.add(2, 3)' && bad "delete: the deleted assertion came back" || ok "delete: the session's deletion of an assertion is kept, not restored"

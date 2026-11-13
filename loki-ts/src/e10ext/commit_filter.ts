@@ -54,6 +54,8 @@ export function hygieneCandidates(staged: Staged[], base: (f: string) => string 
   const out = live.flatMap(({ st, f }) => { const why = hygieneKind(f, base(f) ?? "", head(f) ?? "", task); return why && !named(f) ? [{ st, f, why }] : []; });
   return out.length > 0 && live.some(({ f }) => !out.some((d) => d.f === f)) ? out : []; // nothing else changed: the config edit is the deliverable
 }
+/** The user's own paths from the intake record (dirty or untracked at intake): never a hygiene candidate, edited or not. */
+export const intakeUserPaths = (intake: unknown): Set<string> => { const i = (intake ?? {}) as Record<string, unknown>, keys = (o: unknown): string[] => (o && typeof o === "object" && !Array.isArray(o) ? Object.keys(o) : []); return new Set([...keys(i["preexisting_dirty"]), ...keys(i["preexisting_untracked_blobs"]), ...(Array.isArray(i["preexisting_untracked"]) ? (i["preexisting_untracked"] as unknown[]).map(String) : [])]); };
 export const gitBaseText = (repoDir: string, baseSha: string) => (f: string): string | null => { try { return safeGit(repoDir, ["show", `${baseSha}:./${f}`], { timeout: 20000, maxBuffer: 64 << 20, stdio: ["ignore", "pipe", "ignore"] }); } catch { return null; } };
 export const treeText = (repoDir: string) => (f: string): string | null => { try { return readFileSync(join(repoDir, f), "utf8"); } catch { return null; } };
 export type HygieneRecord = { dropped: { path: string; why: string; proof: string }[]; kept: { path: string; why: string; proof: string }[] };
