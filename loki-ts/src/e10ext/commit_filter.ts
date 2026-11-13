@@ -25,6 +25,7 @@ export const taskWantsLockChange = (task: string | undefined, lock: string): boo
 export function dropSet(repoDir: string, staged: Staged[], preexistingDirty: unknown, env: NodeJS.ProcessEnv = process.env, installCreated?: unknown, untrackedBlobs?: unknown, baseSha?: string, task?: string): Staged[] {
   const owned = installOwned(repoDir, installCreated, env), made: object = (installCreated as { files?: object } | null | undefined)?.files ?? {}, tc = toolchainOutputs(repoDir, staged.filter(({ st }) => st === "A").map(({ f }) => f), baseSha); // FC-DEPS-NOT-INSTALLED: what the install made and the run left alone is dropped; an edited one is the run's change, lockfile rule included
   const art = buildArtifactDropEnabled(env) ? buildArtifacts(repoDir, staged.filter(({ st }) => st === "A").map(({ f }) => f), baseSha, task) : new Set<string>(); // GB
+  if (runOutputDropEnabled(env)) for (const f of runOutputs(repoDir, staged.filter(({ st }) => st === "A").map(({ f }) => f), baseSha, task)) art.add(f); // RO
   return staged.concat(untouchedSinceIntake(repoDir, preexistingDirty, env).map((f) => ({ st: "L", f })), untouchedUntracked(repoDir, untrackedBlobs, env).map((f) => ({ st: "L", f })), staged.filter(({ f }) => owned(f)).map(({ f }) => ({ st: "L", f }))).filter(({ st, f }) => f.startsWith(".loki/") || st === "L" || WALL_FILE.test(f) || (st === "A" && (tc.has(f) || art.has(f))) || ((st === "A" || st === "M") && !Object.hasOwn(made, f) && LOCKFILE.test(f) && !manifestChanged(staged, f) && !taskWantsLockChange(task, f)));
 }
 
@@ -62,8 +63,30 @@ export function buildArtifacts(repoDir: string, added: string[], baseSha?: strin
   }
   return out;
 }
-/** One receipt line per build artifact the commit left out. */
-export const buildArtifactNotes = (repoDir: string, droppedAdded: string[], baseSha?: string, task?: string): string[] => buildArtifactDropEnabled() ? [...buildArtifacts(repoDir, droppedAdded, baseSha, task)].map((f) => `generated or build file left out of the commit: ${f}`) : [];
+/** RO LOKI_E10_RUN_OUTPUT_DROP (default on, =0 opts out): output the run's own commands write never reaches the delivered diff. An ADDED file under a .loki/ or .loki-*
+ *  directory at any depth (the root one is always dropped), or under test-results/, playwright-report/, blob-report/, coverage/, htmlcov/, .nyc_output/, .pytest_cache/,
+ *  .mypy_cache/, .ruff_cache/, .tox/ or .hypothesis/ anywhere, or a JUnit report, *.log, .coverage, lcov.info, coverage.xml or nohup.out file, is left out. Kept: the task
+ *  names the file, or that directory already holds a file tracked at base. A deterministic filter, not a model judgment: on held-out repos the top review-fail class was
+ *  stray committed run artifacts (test-results output and nested .loki logs). */
+export const runOutputDropEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_RUN_OUTPUT_DROP"] ?? "").trim());
+const RUN_DIR = /^(.*?(?:^|\/)(?:\.loki(?:-[^/]*)?|test-results|playwright-report|blob-report|coverage|htmlcov|\.nyc_output|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.tox|\.hypothesis))\//;
+const RUN_FILE = /(?:^|\/)(?:junit[^/]*\.xml|[^/]+\.junit\.xml|[^/]+\.log|\.coverage(?:\.[^/]*)?|lcov\.info|coverage\.xml|nohup\.out)$/;
+export function runOutputs(repoDir: string, added: string[], baseSha?: string, task = ""): Set<string> {
+  const out = new Set<string>(), named = (f: string): boolean => task.includes(f) || new RegExp(`(?<![\\w./-])${escapeRegex(basename(f))}(?![\\w-])`).test(task);
+  const tracked = new Map<string, boolean>(), dirTracked = (d: string): boolean => { if (!tracked.has(d)) { try { tracked.set(d, !!baseSha && safeGit(repoDir, ["ls-tree", "-r", "--name-only", baseSha, "--", `${d}/`], { stdio: ["ignore", "pipe", "ignore"] }).trim() !== ""); } catch { tracked.set(d, false); } } return tracked.get(d)!; };
+  for (const f of added) {
+    if (f.startsWith(".loki/") || named(f)) continue;
+    const d = RUN_DIR.exec(f)?.[1];
+    if (d !== undefined) { if (!dirTracked(d)) out.add(f); continue; }
+    if (RUN_FILE.test(f)) out.add(f);
+  }
+  return out;
+}
+/** One receipt line per build artifact or run output the commit left out. */
+export const buildArtifactNotes = (repoDir: string, droppedAdded: string[], baseSha?: string, task?: string): string[] => {
+  const s = new Set<string>([...(buildArtifactDropEnabled() ? buildArtifacts(repoDir, droppedAdded, baseSha, task) : []), ...(runOutputDropEnabled() ? runOutputs(repoDir, droppedAdded, baseSha, task) : [])]);
+  return [...s].map((f) => `generated or build file left out of the commit: ${f}`);
+};
 
 /** TEN-QUALITY-16: format only the files the run added or modified and kept (not dropped, deleted or under .loki/) with the repo's own configured formatter; returns them for re-staging. */
 export const formatChanged = (repoDir: string, staged: Staged[], dropped: Set<string>, env: NodeJS.ProcessEnv = process.env, baseSha?: string): string[] => formatChangedRecord(repoDir, staged, dropped, env, baseSha).formatted;

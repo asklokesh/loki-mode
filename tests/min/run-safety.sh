@@ -63,6 +63,7 @@
 #  NRM3. commit_filter.ts dropSet: ignore the task (drop the taskWantsLockChange clause); the task-aware lockfile check fails.
 #  GB1. commit_filter.ts dropSet: drop `|| art.has(f)`; the build-artifact check fails (web/dist, build/, *.pyc, *.tsbuildinfo and the ignored log ship).
 #  GB2. commit_filter.ts buildArtifacts: skip the dirTracked check (always drop under an output dir); the tracked dist/ case fails.
+#  RO1. commit_filter.ts dropSet: `if (false) for (const f of runOutputs(` ; the RO check fails (nested .loki, test-results, JUnit reports ship) and so does GB's =0 leg.
 #  SG4. commit_filter.ts commitUnsealedWork: remove the churn block; the WIP commit carries pnpm-lock.yaml again.
 #  SG5. check_result.ts commandFor: drop the rootProjectsBreakSite null; the workspace command runs from packages/a and fails (No projects were found).
 #  SG6. failures.ts idNamesFile: return id.includes(f) only; the root-run failure leg fails (the project-prefixed id names no file).
@@ -480,7 +481,18 @@ const all = [...A("src/a.pyc", "web/tsconfig.tsbuildinfo", "build/lib/a.py", "we
 const off = () => { process.env.LOKI_E10_BUILD_ARTIFACT_DROP = "0"; try { return d(all, "fix the parser"); } finally { delete process.env.LOKI_E10_BUILD_ARTIFACT_DROP; } };
 console.log([d(all, "fix the parser"), d(A("web/dist/index.js", "src/b.py"), "regenerate web/dist/index.js"), off(), buildArtifactNotes(process.env.GB, ["run.log"], process.env.BASE, "fix").join()].join(" | "));
 ' 2>&1)"
-[ "$GBR" = "build/lib/a.py,run.log,src/__pycache__/a.cpython-312.pyc,src/a.pyc,web/dist/index.js,web/tsconfig.tsbuildinfo | - | src/__pycache__/a.cpython-312.pyc | generated or build file left out of the commit: run.log" ] && ok "GB commit filter: bytecode, a tsbuildinfo, an ignored log and untracked build/ or dist/ output beside a manifest are left out; a committed dist/ (new and modified) or egg-info/, docs/build without a manifest, tests and source ship; a task naming the file keeps it; =0 opts out; the drop is noted ($GBR)" || bad "GB build-artifact drop gave: $GBR"
+[ "$GBR" = "build/lib/a.py,run.log,src/__pycache__/a.cpython-312.pyc,src/a.pyc,web/dist/index.js,web/tsconfig.tsbuildinfo | - | run.log,src/__pycache__/a.cpython-312.pyc | generated or build file left out of the commit: run.log" ] && ok "GB commit filter: bytecode, a tsbuildinfo, an ignored log and untracked build/ or dist/ output beside a manifest are left out; a committed dist/ (new and modified) or egg-info/, docs/build without a manifest, tests and source ship; a task naming the file keeps it; =0 opts out (the log is still left out by RO); the drop is noted ($GBR)" || bad "GB build-artifact drop gave: $GBR"
+# RO LOKI_E10_RUN_OUTPUT_DROP: output the run's own commands write (nested .loki/, test-results/, coverage/ anywhere, caches, JUnit reports, logs) never ships;
+# a tracked output dir and a task naming the file keep it.
+mkdir -p "$GB/fixtures/coverage" && printf '{}\n' > "$GB/fixtures/coverage/data.json" && git -C "$GB" add -A . && git -C "$GB" commit -q -m fixtures
+ROR="$(GB="$GB" ROOT="$ROOT" BASE="$(git -C "$GB" rev-parse HEAD)" bun --no-env-file --config=/dev/null -e '
+const { dropSet } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
+const A = (...fs) => fs.map((f) => ({ st: "A", f })), d = (staged, task) => dropSet(process.env.GB, staged, null, process.env, undefined, undefined, process.env.BASE, task).filter((x) => x.st !== "L").map((x) => x.f).sort().join(",") || "-";
+const all = A("web/.loki/logs/run.txt", "test-results/.last-run.json", "docs/coverage/x.json", "junit.xml", "src/report.junit.xml", ".pytest_cache/v/cache", "fixtures/coverage/new.json", "src/c.py", "tests/test_c.py");
+const off = () => { process.env.LOKI_E10_RUN_OUTPUT_DROP = "0"; try { return d(all, "fix the parser"); } finally { delete process.env.LOKI_E10_RUN_OUTPUT_DROP; } };
+console.log([d(all, "fix the parser"), d(A("junit.xml", "src/c.py"), "write the junit.xml report"), off()].join(" | "));
+' 2>&1)"
+[ "$ROR" = ".pytest_cache/v/cache,docs/coverage/x.json,junit.xml,src/report.junit.xml,test-results/.last-run.json,web/.loki/logs/run.txt | - | -" ] && ok "RO commit filter: nested .loki/, test-results/, coverage/ anywhere, caches and JUnit reports the run created are left out; a tracked coverage dir, source and tests ship; a task naming the file keeps it; =0 opts out ($ROR)" || bad "RO run-output drop gave: $ROR"
 printf '#!/bin/sh\nfor f in "$@"; do printf "formatted\\n" >> "$f"; done\n' > "$LK/node_modules-biome.sh"; mkdir -p "$LK/node_modules/.bin"; cp "$LK/node_modules-biome.sh" "$LK/node_modules/.bin/biome"; rm "$LK/node_modules-biome.sh"; chmod +x "$LK/node_modules/.bin/biome"
 printf '{}\n' > "$LK/biome.json"
 FMT="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
