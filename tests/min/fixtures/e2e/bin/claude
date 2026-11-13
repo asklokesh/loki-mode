@@ -25,7 +25,8 @@
 # =update only appends a test case to calc.test.ts (assertions kept), plus the same new file; =mock adds a vi.mock call and =beforeeach a beforeEach hook (no case, no assertion lost); =delete only drops the add(2, 3) assertion (no case added back, which the count heuristic would offset).
 # E2E_STUB_SCOPE_EDIT=1: the implement session also edits util.ts (when the repo has one).
 # E2E_STUB_BREAK_CFG=1: it also writes {"ok": false} to cfg.json (when the repo has one); E2E_STUB_LINTBAD=1: it also writes a tool.sh
-# that fails bash -n. Fix modes: cfgfirst fixes cfg.json first, multiply() next; linttwice leaves tool.sh broken in a new way once, then fixes it.
+# that fails bash -n. E2E_STUB_RUNNER_CFG (implement): root writes a vitest.config.js the bun tests never read; testdir writes tests/vitest.config.js (the
+# fence keeps a new config under a test directory); needed rewrites bunfig.toml to preload setup.ts and adds ready.test.ts, which passes only with that preload. Fix modes: cfgfirst fixes cfg.json first, multiply() next; linttwice leaves tool.sh broken in a new way once, then fixes it.
 # E2E_STUB_FIX (fix sessions, told apart by LOKI_E10_STAGE=fix): conflict answers LOKI_SPEC_CONFLICT and edits
 # nothing; wallconflict does the same citing loki_wall_multiply.test.ts; noprogress edits calc.ts without fixing multiply();
 # fixit turns the wrong multiply() right; twostep needs two rounds. E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
@@ -276,6 +277,12 @@ if [ "$stage" = "implement" ]; then
     fi
     if [ "${E2E_STUB_SCOPE_EDIT:-}" = "1" ] && [ -f util.ts ]; then printf 'export const MODE = 2;\n' >> util.ts; fi
     if [ "${E2E_STUB_BREAK_CFG:-}" = "1" ] && [ -f cfg.json ]; then printf '{"ok": false}\n' > cfg.json; fi
+    case "${E2E_STUB_RUNNER_CFG:-}" in
+      root) printf 'export default { test: { include: ["**/*.test.ts"] } };\n' > vitest.config.js ;;
+      testdir) mkdir -p tests && printf 'export default { test: { include: ["**/*.test.ts"] } };\n' > tests/vitest.config.js ;;
+      needed) printf '[test]\npreload = ["./setup.ts"]\n' > bunfig.toml; printf '(globalThis as { LOKI_E2E_READY?: boolean }).LOKI_E2E_READY = true;\n' > setup.ts
+        printf 'import { expect, test } from "bun:test";\n\ntest("ready", () => {\n  expect((globalThis as { LOKI_E2E_READY?: boolean }).LOKI_E2E_READY).toBe(true);\n});\n' > ready.test.ts ;;
+    esac
     if [ "${E2E_STUB_LINTBAD:-}" = "1" ]; then printf '#!/usr/bin/env bash\nif true; then\n  echo BROKEN_A\n' > tool.sh; fi
     if [ "${E2E_STUB_MODE:-}" = "attempts" ]; then # EXP-0010: the session in attempts/B<E2E_STUB_RIGHT> is right, every other one wrong
       n=0; case "$(pwd -P)" in */loki-attempts-*/B[0-9]*) n="$(pwd -P)"; n="${n##*/B}" ;; esac

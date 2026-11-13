@@ -286,6 +286,9 @@
 # 248. repo_profile.ts baselineSuites: drop the deadline from left (the R3 leg runs a suite the intake budget has no room for).
 # 249. testmap.ts mochaTargets: ignore devDependencies (the R5 leg maps a mocha package to nothing).
 # 250. attempts.ts attemptModel: always entry 1 (the cascade leg runs the extra attempt on Haiku).
+# 251. commit_filter.ts hygieneProbe: ignore a failing re-run (the hygiene unit leg drops on red; the needed leg drops bunfig.toml).
+# 252. verify.ts: skip the hygiene probe (the needed leg drops bunfig.toml; the root leg keeps the verify label).
+# 253. commit_filter.ts hygieneCandidates: drop the named() check (the hygiene unit leg makes the task-named config a candidate).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -417,7 +420,51 @@ console.log([
 ].join(" | "));' 2>&1)"
 [ "$XPR" = "packages/b/src/b.test.ts | - | - | - | - | pkg/y/y_test.go | - | - | packages/b/src/new.test.ts | true,false" ] && ok "J3 scope: a test edit or new test in a package (JS workspace or Go directory) the change does not touch is dropped; the task naming the path or package, a test in the changed package, a test-only change, a Go tests-only directory and Python stay; =0 opts out ($XPR)" || bad "J3 scope gave: $XPR"
 SJ3="$ROOT/loki-ts/src/engine10/stages/seal.ts"
-grep -q 'const xpkg = scopeTestDropEnabled() ? crossPackageTestEdits(ctx.repoDir, staged.filter' "$SJ3" && grep -q 'const dropped = new Set(\[...drop.map(({ f }) => f), ...xpkg\])' "$SJ3" && grep -q 'const notes = \[...xpkg.map(crossPackageTestNote),' "$SJ3" && ok "J3 wiring: the commit stage resets the cross-package test edits before commit, keeps them out of the formatter pass and names each one" || bad "J3 wiring: the commit stage does not reset and name the cross-package test edits"
+grep -q 'const xpkg = scopeTestDropEnabled() ? crossPackageTestEdits(ctx.repoDir, staged.filter' "$SJ3" && grep -q 'const dropped = new Set(\[...drop.map(({ f }) => f), ...xpkg, ...hyg.map(({ f }) => f)\])' "$SJ3" && grep -q 'const notes = \[...xpkg.map(crossPackageTestNote),' "$SJ3" && ok "J3 wiring: the commit stage resets the cross-package test edits before commit, keeps them out of the formatter pass and names each one" || bad "J3 wiring: the commit stage does not reset and name the cross-package test edits"
+
+# acc-146 LOKI_E10_DIFF_HYGIENE (default on, =0 opts out): runner or CI config the task does not ask for leaves the delivered diff unless a check that passed fails without it.
+# Unit: which staged paths are candidates (a new runner config, a CI workflow, a package.json whose only change is a test script), what never is (the task names it, a config-only change,
+# conftest.py, a fixture copy, a lockfile, a package.json with a dependency change), and the necessity probe (a re-run that passes drops, one that fails or cannot run keeps the bytes).
+HY="$T/hygiene"; rm -rf "$HY"; mkdir -p "$HY"; printf 'export default { test: {} };\n' > "$HY/vitest.config.js"; printf 'x\n' > "$HY/keep.txt"
+HYR="$(cd "$ROOT/loki-ts" && HY="$HY" bun -e '
+const cf = await import("./src/e10ext/commit_filter.ts"), cp = await import("./src/util/config_paths.ts"), fs = require("node:fs"), d = process.env.HY;
+const pj = (o) => JSON.stringify(o), base = { "package.json": pj({ name: "a", scripts: { test: "vitest" }, dependencies: { x: "1" } }), "calc.ts": "x", ".github/workflows/ci.yml": "on: push" };
+const head = { ...base, "vitest.config.js": "export default {}", "conftest.py": "import pytest", "fixtures/vitest.config.js": "x", "pnpm-lock.yaml": "y" };
+const c = (staged, task = "add multiply to calc.ts", h = head) => cf.hygieneCandidates(staged.map(([st, f]) => ({ st, f })), (f) => base[f] ?? null, (f) => h[f] ?? null, (f) => cp.taskNamesFenced(task, f), task).map((x) => x.f + "=" + x.why).join("+") || "-";
+const scripts = { ...head, "package.json": pj({ name: "a", scripts: { test: "vitest --run" }, dependencies: { x: "1" } }) }, deps = { ...head, "package.json": pj({ name: "a", scripts: { test: "vitest --run" }, dependencies: { x: "2" } }) };
+const out = [
+  c([["A", "vitest.config.js"], ["M", "calc.ts"]]),
+  c([["A", "vitest.config.js"], ["M", "calc.ts"]], "add multiply to calc.ts and register it in vitest.config.js"),
+  c([["A", "vitest.config.js"]]),
+  c([["M", ".github/workflows/ci.yml"], ["M", "calc.ts"]]),
+  c([["M", "package.json"], ["M", "calc.ts"]], "add multiply to calc.ts", scripts),
+  c([["M", "package.json"], ["M", "calc.ts"]], "add multiply to calc.ts", deps),
+  c([["M", "package.json"], ["M", "calc.ts"]], "add multiply and a test script", scripts),
+  c([["A", "conftest.py"], ["A", "fixtures/vitest.config.js"], ["A", "pnpm-lock.yaml"], ["M", "calc.ts"]]),
+  [cf.diffHygieneEnabled({}), cf.diffHygieneEnabled({ LOKI_E10_DIFF_HYGIENE: "0" })].join(),
+];
+const cand = [{ st: "A", f: "vitest.config.js", why: "test-runner config" }], probe = async (res) => { fs.writeFileSync(d + "/vitest.config.js", "export default { test: {} };\n"); const r = await cf.hygieneProbe(d, cand, () => null, async () => res); return `${r.dropped.length}/${r.kept.length}/${fs.existsSync(d + "/vitest.config.js")}/${(r.dropped[0] ?? r.kept[0]).proof}`; };
+out.push(await probe([{ name: "bun:calc.test.ts", result: "pass" }]), await probe([{ name: "bun:calc.test.ts", result: "fail" }]), await probe([{ name: "bun:calc.test.ts", result: "not_run" }]));
+console.log(out.join(" | "));' 2>&1)"
+[ "$HYR" = "vitest.config.js=test-runner config | - | - | .github/workflows/ci.yml=CI config | package.json=test script or runner key in package.json | - | - | - | true,false | 1/0/false/1 check(s) that passed still pass without it | 0/1/true/bun:calc.test.ts fails without it | 0/1/true/bun:calc.test.ts did not run without it, so the need is unproven" ] && ok "diff hygiene unit: a new runner config, a CI workflow and a test-script-only package.json are candidates; a task naming the file, a config-only change, a dependency change, a script task, conftest.py, a fixture copy and a lockfile are not; the probe drops on a green re-run and keeps the bytes on a red or unrun one; =0 opts out" || bad "diff hygiene unit gave: $HYR"
+
+# Engine: the implement session creates a runner config the bun tests never read, at the root with the fence off (any route past it) and under tests/ with the fence on (kept there
+# as scaffolding). Verify re-runs the passing checks without it, the commit leaves it out, and the receipt names it with the proof. A bunfig.toml preload a new test needs is kept.
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_RUNNER_CFG=root LOKI_CONFIG_FENCE=0
+notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+git -C "$REPO" cat-file -e HEAD:vitest.config.js 2>/dev/null && { bad "diff hygiene root: the created vitest.config.js reached the commit"; dump; } || ok "diff hygiene root: the created vitest.config.js is not in the commit"
+git -C "$REPO" show HEAD:calc.ts 2>/dev/null | grep -q 'export function multiply' && ok "diff hygiene root: the change itself is committed" || { bad "diff hygiene root: multiply() is not committed"; dump; }
+has "diff hygiene root: the receipt names the dropped config and its proof" "$notes" "runner or CI config edit dropped from the delivered diff: vitest.config.js (test-runner config the task does not ask for; "
+case "$notes" in *"runner config changed: vitest.config.js"*|*"test configuration changed: vitest.config.js"*) bad "diff hygiene root: seal or verify still labels the dropped config: $notes" ;; *) ok "diff hygiene root: neither seal nor verify labels a config the diff does not carry (outcome $(outcome))" ;; esac
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_RUNNER_CFG=testdir
+git -C "$REPO" cat-file -e HEAD:tests/vitest.config.js 2>/dev/null && { bad "diff hygiene testdir: tests/vitest.config.js reached the commit"; dump; } || ok "diff hygiene testdir: a config the fence keeps as test scaffolding is not in the commit"
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_RUNNER_CFG=needed
+notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+git -C "$REPO" show HEAD:bunfig.toml 2>/dev/null | grep -q 'preload' && ok "diff hygiene needed: the bunfig.toml preload a passing test needs is kept" || { bad "diff hygiene needed: the needed bunfig.toml edit was dropped"; dump; }
+has "diff hygiene needed: the receipt says why it was kept" "$notes" "runner or CI config edit kept: bunfig.toml (test-runner config the task does not ask for, kept because bun:ready.test.ts fails without it)"
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_RUNNER_CFG=root LOKI_CONFIG_FENCE=0 LOKI_E10_DIFF_HYGIENE=0
+git -C "$REPO" cat-file -e HEAD:vitest.config.js 2>/dev/null && ok "diff hygiene =0: the created config is committed as before" || { bad "diff hygiene =0: the config was dropped with the knob off"; dump; }
+grep -q 'const hyg = diffHygieneEnabled() ? hygieneCandidates(staged.filter' "$SJ3" && grep -q 'for (const { st, f } of hyg) { if ((await git(ctx, \["--literal-pathspecs", "reset", "-q", ctx.baseSha, "--", f\]))' "$SJ3" && grep -q 'const notes = \[...xpkg.map(crossPackageTestNote), ...hygNotes,' "$SJ3" && grep -q 'revertToBase(repoDir, g, base, hygieneCandidates(rest' "$ROOT/loki-ts/src/e10ext/commit_filter.ts" && ok "diff hygiene wiring: the commit stage (a candidate verify did not probe) and a stopped run's WIP commit also leave unasked runner or CI config out, and the commit names each one" || bad "diff hygiene wiring: the commit stage or the WIP commit does not drop and name the candidates"
 
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=delete LOKI_EXOGENOUS_PROOF=0 # proof opt-out: the deleted assertion alone must cap, not the agent-only-proof rule
 git -C "$REPO" show HEAD:calc.test.ts 2>/dev/null | grep -q 'calc.add(2, 3)' && bad "delete: the deleted assertion came back" || ok "delete: the session's deletion of an assertion is kept, not restored"

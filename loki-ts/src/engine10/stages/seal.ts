@@ -11,7 +11,7 @@ import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutat
 import { RealBaseTestRunner, loadTaskText } from "./wall.ts"; import { defectPinEdits, defectPinNote, pinDroppedNotes, pinnedUpdateNotes, type PinnedTestUpdate } from "../../util/test_guard.ts";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
 import { discardIfSatisfied } from "../../e10ext/discard.ts";
-import { dropSet, formatChangedRecord, parseStaged } from "../../e10ext/commit_filter.ts";
+import { diffHygieneEnabled, dropSet, formatChangedRecord, gitBaseText, hygieneCandidates, hygieneDropNote, hygieneKeptNote, parseStaged, treeText, type HygieneRecord } from "../../e10ext/commit_filter.ts"; import { taskNamesFenced } from "../../util/config_paths.ts";
 import { crossPackageTestEdits, crossPackageTestNote, flagOutsideScope, scopeTestDropEnabled } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts"; import { getVersion } from "../../version.ts";
@@ -166,9 +166,15 @@ export const commitStage: Stage = {
       const mod = xpkg.filter((f) => staged.find((x) => x.f === f)?.st === "M"); if (mod.length > 0) await git(ctx, ["--literal-pathspecs", "checkout", "-q", ctx.baseSha, "--", ...mod]);
       for (const f of xpkg) if (staged.find((x) => x.f === f)?.st === "A") { try { rmSync(join(ctx.repoDir, f)); } catch { /* already gone */ } }
     }
-    const dropped = new Set([...drop.map(({ f }) => f), ...xpkg]), fmtRec = formatChangedRecord(ctx.repoDir, staged, dropped, process.env, ctx.baseSha), fmt = fmtRec.formatted; // TEN-QUALITY-16: only the run's own kept files; J1: the resolved binary, base-clean files only, recorded
+    // acc-146 LOKI_E10_DIFF_HYGIENE: runner or CI config the task does not ask for leaves the delivered diff, unless verify's necessity check kept it (a passing check fails without it)
+    const hv = (ctx.outputs().verify?.hygiene ?? null) as HygieneRecord | null, hvKept = new Set((hv?.kept ?? []).map((k) => k.path)), task0 = str(ctx.outputs().intake?.task) ?? "";
+    const hyg = diffHygieneEnabled() ? hygieneCandidates(staged.filter(({ f }) => !drop.some((d) => d.f === f) && !xpkg.includes(f)), gitBaseText(ctx.repoDir, ctx.baseSha), treeText(ctx.repoDir), (f) => taskNamesFenced(task0, f), task0).filter(({ f }) => !hvKept.has(f)) : [];
+    for (const { st, f } of hyg) { if ((await git(ctx, ["--literal-pathspecs", "reset", "-q", ctx.baseSha, "--", f])).code !== 0) return { status: "failed", data: {}, reason: "git reset failed" }; if (st === "A") { try { rmSync(join(ctx.repoDir, f), { force: true }); } catch { /* already gone */ } } else await git(ctx, ["--literal-pathspecs", "checkout", "-q", ctx.baseSha, "--", f]); }
+    const hvDropped = (hv?.dropped ?? []).filter((d) => !staged.some((s) => s.f === d.path && s.st !== "L") || hyg.some((h) => h.f === d.path)); // verify already put these back to base, so most never reach the staged list
+    const hygNotes = [...hvDropped.map(hygieneDropNote), ...hyg.filter((d) => !hvDropped.some((x) => x.path === d.f)).map((d) => hygieneDropNote({ path: d.f, why: d.why, proof: "verify did not re-run checks without it" })), ...(hv?.kept ?? []).map(hygieneKeptNote)];
+    const dropped = new Set([...drop.map(({ f }) => f), ...xpkg, ...hyg.map(({ f }) => f)]), fmtRec = formatChangedRecord(ctx.repoDir, staged, dropped, process.env, ctx.baseSha), fmt = fmtRec.formatted; // TEN-QUALITY-16: only the run's own kept files; J1: the resolved binary, base-clean files only, recorded
     if (fmt.length > 0) await git(ctx, ["--literal-pathspecs", "add", "--", ...fmt], { repoDrivers: true }); // re-stage what the repo's formatter rewrote
-    const notes = [...xpkg.map(crossPackageTestNote), ...flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir), ...toolchainDropNotes(ctx.repoDir, drop.filter(({ st }) => st === "A").map(({ f }) => f), ctx.baseSha)]; // D76: advisory, nothing is reverted
+    const notes = [...xpkg.map(crossPackageTestNote), ...hygNotes, ...flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir), ...toolchainDropNotes(ctx.repoDir, drop.filter(({ st }) => st === "A").map(({ f }) => f), ctx.baseSha)]; // D76: advisory, nothing is reverted
     const format = fmtRec.records.length ? { format: fmtRec.records } : {};
     if ((await git(ctx, ["diff", "--cached", "--quiet"])).code === 0) return { status: "completed", data: { committed: false, scope_notes: notes, ...format } };
     const title = (str(ctx.outputs().intake?.title) ?? `run ${ctx.runId}`).split("\n")[0]!.slice(0, 72);
