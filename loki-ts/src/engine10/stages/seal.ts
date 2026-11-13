@@ -44,6 +44,13 @@ export const sha256 = (s: string | Buffer): string => createHash("sha256").updat
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 export const EXTERNAL_MODEL_LABEL = "external (no Loki implement session)", EXTERNAL_DIFF_NOT_ISOLATED = "Wall author not filesystem-isolated from the external diff", EXTERNAL_NO_WALL = "external diff sealed with no Wall file that ran; the only checks are the repo's existing tests"; // CW-12 B2/B3
 const externalRun = (o: Partial<Record<StageName, Record<string, unknown>>>): boolean => o.implement?.exit === "external";
+/** LINT-MISSING-DISCLOSE: lint checks (lint:*) that read not_run because their tool could not be started by any means verify tried (skip_code tool_not_on_path). Off with
+ *  LOKI_E10_LINT_MISSING_DISCLOSE=0. A linter that ran and reported violations is a failed check and is never in this list; neither is a test runner that is missing. */
+export const LINT_MISSING_NOTE = "linter not installed, not run (disclosed, does not cap)";
+export function missingLintChecks(vraw: readonly Obj[], env: NodeJS.ProcessEnv = process.env): string[] {
+  if (/^(0|off|false|no)$/i.test((env["LOKI_E10_LINT_MISSING_DISCLOSE"] ?? "").trim())) return [];
+  return vraw.filter((c) => String(c.name ?? "").startsWith("lint:") && c.result === "not_run" && c.skip_code === "tool_not_on_path").map((c) => String(c.name));
+}
 export const LEAN_NO_SYMBOL = "no passing check references a changed symbol and no Wall file ran";
 export const NO_FAIL_THEN_PASS = "no test shown to fail on the base commit and pass on the change";
 /** Wall-off verdict (EVAL-2026-11-05-3): an agent-authored or edited test is proof only when the HARNESS shows it fails on the base commit with the head's test bytes and passes on the change (util/mutation_proof.ts, the same base-worktree run T2 uses). An edited file's own base version must be green on the base first, so a pre-existing red file never reads as discriminating. */
@@ -293,7 +300,8 @@ export const sealStage: Stage = {
     const sysInfo = verifyNotProven.includes(SYSTEM_INTERP) && !declaresPythonEnv(ctx.repoDir, head) ? SYSTEM_INTERP : null; // HONEST-VERIFIED: no dependency manifest means the system interpreter is the project's own, so a pass on it is a pass (informational, never a cap)
     const disclosedSet = new Set(decl.disclosed), capRc = rcNotes.filter((n) => !disclosedSet.has(n)), capVerify = verifyNotProven.filter((n) => !disclosedSet.has(n) && n !== sysInfo); const DECLARED_SUFFIX = " (declared by the plan or required by the passing Wall; disclosed, does not cap)";
     const grp = sealGroup(ctx.runDir, receiptSha256 as never); // D61-13: inert without group/manifest.json
-    const live = checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name)) && c.repo_skipped !== true), executed = hasExecutedProof(vraw), strictProof = process.env["LOKI_EXOGENOUS_PROOF"] !== "0", noWall = !(Array.isArray(o.wall?.files) && o.wall.files.length > 0);
+    const lintGone = missingLintChecks(Array.isArray(o.verify?.checks) ? (o.verify.checks as Obj[]) : []); // LINT-MISSING-DISCLOSE: a linter that could not be started by any means is disclosed, never a cap
+    const live = checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name)) && c.repo_skipped !== true && !lintGone.includes(c.name)), executed = hasExecutedProof(vraw), strictProof = process.env["LOKI_EXOGENOUS_PROOF"] !== "0", noWall = !(Array.isArray(o.wall?.files) && o.wall.files.length > 0);
     const ftpGate = strictProof && noWall && diffOk && !externalRun(o) && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done" && weakTests.length === 0 && !live.some((c) => c.result === "fail") && mutationEnabled(); // only a run that could still read VERIFIED pays for the base-tree runs; a check red on the base too (pre_red) is not this change failing, exactly as verdictOf reads it (FireLater#24 s1: a red frontend suite on base shut this gate, so the new backend tests never earned their fail-then-pass proof and a clean slice read PARTIAL)
     // E4 defect pin: a pure value replacement of an existing assertion that pins the wrong value the issue reports is listed as "value change (defect pin)", not weakened. It never counts as proof (an edited pre-existing test is agent-authored).
     const pinEdits = diffOk ? rawDiff.flatMap((m, i) => { const st = m.trim().split(" ").pop() ?? ""; const f = rawDiff[i + 1]; return i % 2 === 0 && st === "M" && f && isTestFile(f) && !weakTests.includes(f) ? defectPinEdits(ctx.repoDir, ctx.baseSha, head, f, loadTaskText(ctx, str(o.intake?.task) ?? undefined)) : []; }) : [];
@@ -358,7 +366,7 @@ export const sealStage: Stage = {
     for (const e of pinEdits) notProven.add(defectPinNote(e));
     for (const v of pinDropped) dropped.add(v);
     if (verdict !== "VERIFIED") for (const f of uncoveredAfterLimit) notProven.add(`changed, untested after limit: ${f}`);
-    for (const c of checks) if (c.result === "not_run" && c.repo_skipped !== true) notProven.add(`not run: ${c.name}`); for (const n of repoSkipped) notProven.add(`${SKIPPED_BY_REPO}: ${n}`); // FC-ZERO-ON-BASE: zero on the pristine base too, file untouched: one informational line
+    for (const c of checks) if (c.result === "not_run" && c.repo_skipped !== true) notProven.add(lintGone.includes(c.name) ? `${LINT_MISSING_NOTE}: ${c.name}` : `not run: ${c.name}`); for (const n of repoSkipped) notProven.add(`${SKIPPED_BY_REPO}: ${n}`); // FC-ZERO-ON-BASE: zero on the pristine base too, file untouched: one informational line
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
     for (const n of verifyNotProven) if (!dropped.has(n)) notProven.add(disclosedSet.has(n) ? n + DECLARED_SUFFIX : n === sysInfo ? n + SYSTEM_INTERP_SUFFIX : n);
     for (const n of rcNotes) notProven.add(disclosedSet.has(n) ? n + DECLARED_SUFFIX : n); for (const n of decl.extra ?? []) notProven.add(n);

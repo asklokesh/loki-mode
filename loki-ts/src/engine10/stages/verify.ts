@@ -427,6 +427,16 @@ async function tscOnBase(ctx: RunContext, groupCwd: string, signal: AbortSignal,
     try { git(["worktree", "prune"]); } catch { /* best effort */ }
   }
 }
+/** LINT-MISSING-DISCLOSE (LOKI_E10_LINT_MISSING_DISCLOSE, default on, =0 opts out): the other ways to start a linter the first command could not start, in order:
+ *  `uvx <tool>` (uv's tool runner, no global install) and the repo's own virtualenv `python -m <tool>`. [] when off or none applies. */
+export const lintMissingDiscloseOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_LINT_MISSING_DISCLOSE"] ?? "").trim());
+export function lintFallbacks(repoDir: string, tool: string, env: NodeJS.ProcessEnv = process.env): [string, string[]][] {
+  if (!lintMissingDiscloseOn(env)) return [];
+  const out: [string, string[]][] = [];
+  if (Bun.which("uvx", { PATH: env["PATH"] ?? "" })) out.push(["uvx", [tool]]);
+  for (const v of [".venv", "venv"]) { const py = join(repoDir, v, "bin", "python"); if (existsSync(py)) { out.push([py, ["-m", tool]]); break; } }
+  return out;
+}
 export async function runLintChecks(
   ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts & { api?: ProjectApi | null; keep?: ReadonlySet<string> } = {},
 ): Promise<string[]> {
@@ -434,8 +444,13 @@ export async function runLintChecks(
   const py = changed.filter((f) => f.endsWith(".py"));
   const [ruffCmd, interpreter, uvPre] = py.length ? resolveTool(ctx.repoDir, "ruff", "ruff") : ["ruff", "system", []] as ReturnType<typeof resolveTool>; // E-98a: same project-first resolution as pytest
   if (py.length && (interpreter !== "system" || Bun.which("ruff", { PATH: process.env["PATH"] ?? "" }) || projectDeclaresRuff(ctx.repoDir))) { // FC-LINT-TOOL-NEVER-USED-BY-PROJECT: a repo that neither declares ruff nor has one installed has no lint to run
-    const c = await runCheck(ctx, "lint:ruff", ruffCmd, [...uvPre, "check", "--output-format=concise", ...py], signal, checks, { ...opts, interpreter, kind: "static" });
-    if (await excuseLint(ctx, signal, c, "ruff", ruffCmd, [...uvPre, "check"], ctx.repoDir, py, opts)) pre.push(c.name);
+    const first: VerifyCheck[] = []; let c = await runCheck(ctx, "lint:ruff", ruffCmd, [...uvPre, "check", "--output-format=concise", ...py], signal, first, { ...opts, interpreter, kind: "static" }), lintCmd = ruffCmd, lintPre: string[] = uvPre;
+    for (const [cmd, pre0] of c.result === "not_run" && c.skip_code === "tool_not_on_path" ? lintFallbacks(ctx.repoDir, "ruff") : []) { // LINT-MISSING-DISCLOSE: the ways the repo's own tooling runs ruff without a global install
+      const alt: VerifyCheck[] = [], a = await runCheck(ctx, "lint:ruff", cmd, [...pre0, "check", "--output-format=concise", ...py], signal, alt, { ...opts, kind: "static" });
+      if (!(a.result === "not_run" && a.skip_code === "tool_not_on_path")) { c = a; first.splice(0, first.length, ...alt); lintCmd = cmd; lintPre = pre0; break; }
+    }
+    checks.push(...first);
+    if (await excuseLint(ctx, signal, c, "ruff", lintCmd, [...lintPre, "check"], ctx.repoDir, py, opts)) pre.push(c.name);
   }
   const sh = changed.filter((f) => f.endsWith(".sh"));
   if (sh.length) {

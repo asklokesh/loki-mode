@@ -295,6 +295,7 @@
 # 257. repo_profile.ts intakeCapS: default back to 180 (the R3 leg reads 180,,90,180), or baselineSuites stops calling intakeBudgetNote (it reads silent).
 # 258. check_result.ts unittestAssertionFailure: drop the ERROR: guard (the assert-unittest leg's assertion-beside-an-error case reads true).
 # 259. wall.ts RealBaseTestRunner: read the test source only when reported.observed is non-empty (the reported-kind wiring leg reads true,0,0).
+# 260. seal.ts missingLintChecks: drop the lint: prefix filter (the lint-missing-disclose leg's missing test runner reads disclosed).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1749,6 +1750,22 @@ console.log(`${c.reportedNeedsSource(c.reportedErrors(task))},${run(task)},${run
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "reported-kind wiring: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: reported-kind wiring: pytest is not installed"; fi
 fi
+# LINT-MISSING-DISCLOSE (acc-150; marshmallow, Python-Markdown, pyjwt: `uv run -- ruff` could not start ruff, and "not run: lint:ruff" capped VERIFIED). verify first
+# retries the ways the repo's tooling runs a linter without a global install (uvx ruff, the venv's python -m ruff); a lint check whose tool still could not be
+# started is disclosed and leaves the verdict inputs. A linter that ran and reported violations still caps (FAILED), a missing test runner is not
+# disclosed, and LOKI_E10_LINT_MISSING_DISCLOSE=0 restores the cap.
+LM="$T/lintmiss"; mkdir -p "$LM/repo/.venv/bin" "$LM/bin"; printf '#!/bin/sh\nexit 0\n' > "$LM/repo/.venv/bin/python"; printf '#!/bin/sh\nexit 0\n' > "$LM/bin/uvx"; chmod +x "$LM/repo/.venv/bin/python" "$LM/bin/uvx"
+LMO="$(cd "$ROOT/loki-ts" && LM="$LM" bun -e '
+const sl = await import("./src/engine10/stages/seal.ts"), v = await import("./src/engine10/stages/verify.ts"), d = process.env.LM;
+const miss = { name: "lint:ruff", cmd: "uv run -- ruff check", result: "not_run", skip_code: "tool_not_on_path", duration_s: 0 }, viol = { name: "lint:ruff", cmd: "uv run -- ruff check", result: "fail", duration_s: 1 }, runner = { name: "pytest:tests/test_a.py", cmd: "pytest", result: "not_run", skip_code: "tool_not_on_path", duration_s: 0 };
+const pass = { name: "pytest:tests/test_a.py", cmd: "pytest", result: "pass", duration_s: 1, n: 3, provenance: "exogenous" };
+const r = [sl.missingLintChecks([miss]).join("+") || "-", sl.missingLintChecks([viol]).join("+") || "-", sl.missingLintChecks([runner]).join("+") || "-", sl.missingLintChecks([miss], { LOKI_E10_LINT_MISSING_DISCLOSE: "0" }).join("+") || "-"];
+const o = { implement: { exit: "done" }, commit: {} }; r.push(sl.verdictOf(o, [pass, { ...viol, provenance: "exogenous" }], false, false, false, true));
+r.push(v.lintFallbacks(d + "/repo", "ruff", { PATH: d + "/bin" }).map(([c, a]) => (c.endsWith("/python") ? "venv-python" : c) + " " + a.join(" ")).join("|"));
+r.push(v.lintFallbacks(d + "/repo", "ruff", { PATH: d + "/bin", LOKI_E10_LINT_MISSING_DISCLOSE: "0" }).length);
+console.log(r.join(","));' 2>&1)"
+grep -q 'c.repo_skipped !== true && !lintGone.includes(c.name)),' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'lintGone.includes(c.name) ? `${LINT_MISSING_NOTE}: ${c.name}`' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "lint-missing-disclose wiring: seal drops a disclosed linter from the verdict inputs and writes the disclosure line instead of not run" || bad "lint-missing-disclose wiring: seal no longer excludes lintGone from live or no longer writes the disclosure"
+[ "$LMO" = "lint:ruff,-,-,-,FAILED,uvx ruff|venv-python -m ruff,0" ] && ok "lint-missing-disclose: a linter that could not be started is disclosed (not a cap) after trying uvx and the venv's python -m; a linter that reports violations still makes the run FAILED, a missing test runner is not disclosed, =0 restores the cap" || bad "lint-missing-disclose gave: $LMO"
 # SPAWN-NOT-RUN (verify-dev 2026-11-13, marshmallow and Python-Markdown: `uv run -- ruff check` printed "error: Failed to spawn: `ruff`" and read as a lint
 # failure that fix rounds chased): a check whose tool could not start is not_run with the tool named, through the real runOnce. A shell exit 127, uv's spawn
 # error and node's ENOENT count; a long test output that only mentions ENOENT stays a failure, and LOKI_E10_SPAWN_NOT_RUN=0 restores the failure.
