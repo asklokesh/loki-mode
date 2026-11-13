@@ -1838,6 +1838,7 @@ export function assertionFailure(runner: string, output: string, reported: Repor
   if (runner === "vitest") return vitestErrorsAreAssertion(out);
   if (runner === "go") return goAssertionFailure(out) || (reportedKindOn() && goReportedPanic(out, reported.panics ?? []));
   if ((runner === "node" || runner === "jest" || runner === "mocha") && assertJsOn()) return jsAssertionFailure(out);
+  if (runner === "unittest" && assertUnittestOn()) return unittestAssertionFailure(out);
   return false;
 }
 /** SPAWN-NOT-RUN (LOKI_E10_SPAWN_NOT_RUN, default on, =0 opts out): the tool a failed check could not start, or null. A wrapper that could not spawn its tool
@@ -1851,6 +1852,15 @@ export function spawnFailedTool(out: string, exitCode: number | null): string | 
   const uv = /^\s*error: Failed to spawn: `([^`]+)`/m.exec(t); if (uv) return uv[1]!;
   const sh = exitCode === 127 ? /^(?:\S*sh: (?:line \d+: )?)?([\w.+-]+): (?:command )?not found\s*$/m.exec(t) : null; if (sh) return sh[1]!;
   const en = /\bspawn ([\w./+-]+) ENOENT\b/.exec(t); return en ? en[1]! : null;
+}
+/** ASSERT-UNITTEST (LOKI_E10_ASSERT_UNITTEST, default on, =0 opts out): python -m unittest red by assertion. At least one FAIL: block, every FAIL: block ends in an
+ *  AssertionError (what every TestCase.assert* raises), and no ERROR: block at all (a raised exception, including an import that failed: unittest.loader._FailedTest). */
+export const assertUnittestOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_ASSERT_UNITTEST"] ?? "").trim());
+export function unittestAssertionFailure(out: string): boolean {
+  const t = stripAnsi(out);
+  if (/^ERROR: /m.test(t) || /unittest\.loader\._FailedTest|Failed to import test module/.test(t)) return false;
+  const blocks = t.split(/^={20,}\s*$/m).filter((b) => /^\s*FAIL: /.test(b));
+  return blocks.length > 0 && blocks.every((b) => /^AssertionError\b/m.test(b));
 }
 /** ASSERT-JS (LOKI_E10_ASSERT_JS, default on, =0 opts out): node:test, jest and mocha red by assertion. At least one failure is an assertion (node:assert's
  *  AssertionError / ERR_ASSERTION, chai's AssertionError, jest's `expect(received).<matcher>` report), and none is a missing-API or load failure: a value that is
