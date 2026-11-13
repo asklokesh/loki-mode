@@ -297,6 +297,7 @@
 # 259. wall.ts RealBaseTestRunner: read the test source only when reported.observed is non-empty (the reported-kind wiring leg reads true,0,0).
 # 260. seal.ts missingLintChecks: drop the lint: prefix filter (the lint-missing-disclose leg's missing test runner reads disclosed).
 # 261. mutation_proof.ts proofBudgetS: drop the compiled-stack branch (the proof-compiled-budget leg reads 30 for go).
+# 262. sizing.ts namedFiles: drop the spelled-path filter (fl24 named-exact reads login/page.ts+issues/page.ts for the spelled task; the fl24 monorepo after reads STALLED).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1841,6 +1842,13 @@ let warm = "skip"; if (Bun.which("go")) { mkdirSync(join(g, "pkg"), { recursive:
   const end = Date.now() + 60000; warm = `${mp.warmGoBuild(g, [{ runner: "go", path: "pkg/a_test.go" }], () => end - Date.now())}/${mp.warmGoBuild(g, [{ runner: "go", path: "pkg/a_test.go" }], () => 5000)}`; }
 console.log(r.join(",") + " " + warm);' 2>&1)"
 case "$PB" in "40,30,40,12,20,30,40 1/0"|"40,30,40,12,20,30,40 skip") ok "proof-compiled-budget: a compiled stack's proof gets 40 s (python keeps 30), an explicit or caller budget wins, =0 restores 30, the cap holds at 40; the go warm-up compiles a package and is skipped without room ($PB)" ;; *) bad "proof-compiled-budget gave: $PB" ;; esac
+# FL24-NAMED-EXACT (acc-154; FireLater#24): a basename every mention of which sits in a spelled path names only those paths, even ones not in the repo yet;
+# a bare mention keeps naming every match, and LOKI_E10_NAMED_EXACT=0 restores the basename match.
+FB="$(cd "$ROOT/loki-ts" && bun -e '
+const sz = await import("./src/engine10/sizing.ts"), files = ["web/src/app/(auth)/login/page.ts", "web/src/app/(dash)/issues/page.ts", "web/src/app/(dash)/issues/__tests__/page.test.ts", "web/src/lib/api.ts", "web/src/components/Sidebar.test.ts"];
+const n = (t) => sz.namedFiles(t, { files }).map((f) => f.split("/").slice(-2).join("/")).join("+"), t1 = "add `web/src/app/(dash)/search/page.ts`; `web/src/app/(dash)/issues/page.ts` is not modified";
+const r = [n(t1), n("fix page.ts everywhere"), n("edit Sidebar.test.ts and api.ts")]; process.env.LOKI_E10_NAMED_EXACT = "0"; r.push(n(t1)); console.log(r.join(","));' 2>&1)"
+[ "$FB" = "issues/page.ts,login/page.ts+issues/page.ts,lib/api.ts+components/Sidebar.test.ts,login/page.ts+issues/page.ts" ] && ok "fl24 named-exact: spelled paths name only their files; a bare mention keeps every match; =0 restores basenames" || bad "fl24 named-exact gave: $FB"
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
 if command -v go >/dev/null 2>&1; then

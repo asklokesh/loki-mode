@@ -10,8 +10,20 @@ import { escapeRegex } from "../util/regex_escape.ts";
 /** Repo-map files whose basename appears in the task as an exact token (not inside a longer name like myindex.ts or index.tsx; a trailing sentence period is fine); no keyword scoring, tune from eval data. */
 export function namedFiles(task: string, map: RepoMap | null): string[] {
   const text = task.toLowerCase();
-  return (map?.files ?? []).filter((f) => new RegExp(`(?<![\\w.-])${escapeRegex(basename(f).toLowerCase())}(?![\\w-]|\\.\\w)`).test(text));
+  const hit = (map?.files ?? []).filter((f) => new RegExp(`(?<![\\w.-])${escapeRegex(basename(f).toLowerCase())}(?![\\w-]|\\.\\w)`).test(text));
+  if (!namedExactOn()) return hit;
+  // NAMED-EXACT: a basename every mention of which sits inside a spelled path ("frontend/src/app/(dashboard)/search/page.tsx") names only the files those paths
+  // spell, whether or not they exist yet; a bare mention ("fix page.tsx") keeps naming every file with that basename. FireLater#24: "page.tsx" named 54 files.
+  const spelled = [...text.matchAll(/(?:\.\/)?((?:[\w@.()[\]-]+\/)+[\w@.()[\]-]+\.\w+)/g)].map((m) => m[1]!);
+  return hit.filter((f) => {
+    const b = basename(f).toLowerCase();
+    if (new RegExp(`(?<![\\w./-])${escapeRegex(b)}(?![\\w-]|\\.\\w)`).test(text)) return true; // a bare mention
+    const lf = f.toLowerCase();
+    return spelled.some((t) => basename(t) === b && (lf === t || lf.endsWith(`/${t}`) || t.endsWith(`/${lf}`)));
+  });
 }
+/** NAMED-EXACT (LOKI_E10_NAMED_EXACT, default on, =0 opts out): see namedFiles. */
+export const namedExactOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_NAMED_EXACT"] ?? "").trim());
 
 /** P12-46: "large" = names more than LARGE_NAMED_FILES distinct non-test files (namedDistinct: "fix index.ts" in a monorepo of nine index.ts is one), or several independent deliverables by structure (features/decompose.ts deliverables); never lean, and an issue ref goes to the MASS-2 split (commands/issues_run.ts startIssueEpic). A large unit never runs in parallel. */
 export type TaskSize = "small" | "normal" | "large"; export const LARGE_NAMED_FILES = 8;
