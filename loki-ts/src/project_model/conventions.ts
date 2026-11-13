@@ -109,7 +109,13 @@ const LOG_NAME = /^(?:change_?log|changes|history|news|release[-_]?notes)(?:\.(?
 const LOG_WORD = /change\s?-?log|\b(?:changes|history|news)\.(?:md|rst|txt)\b/i; // a file the contributor edits; "release notes" alone is usually a PR-body section
 const LOG_FORBID = /\b(?:don'?t|do\s+not|never|must\s+not|should\s+not|shouldn'?t)\b[^.]{0,40}\b(?:update|add|edit|modify|touch|change|write)\b/i;
 const LOG_SOFT = /\b(?:optional(?:ly)?|not\s+(?:necessary|needed|required)|no\s+need|suggest(?:ed|s)?|consider|maintainers?|copied|generated|automatic(?:ally)?)\b/i;
-const LOG_FROZEN = /no\s+longer\s+(?:being\s+)?(?:actively\s+)?(?:maintained|updated)|\bdeprecated\b|\bnot\s+(?:being\s+)?(?:maintained|updated)\b|releases?\s+page/i; // a log that points elsewhere
+const LOG_FROZEN_LOOSE = /no\s+longer\s+(?:being\s+)?(?:actively\s+)?(?:maintained|updated)|\bdeprecated\b|\bnot\s+(?:being\s+)?(?:maintained|updated)\b|releases?\s+page/i; // FS=0: the first CL rule
+/** FS LOKI_E10_CHANGELOG_FROZEN_STRICT (default on, =0 opts out): a changelog is frozen only when its head says so in words (no longer maintained or updated, this file
+ *  has been or is deprecated, not maintained) or it has no unreleased section (unreleasedSection). The failure: the loose rule matched a bare "Deprecated", so a Keep a
+ *  Changelog file with a "### Deprecated" subsection under Unreleased read as frozen and the brief named no convention. */
+export const changelogFrozenStrictOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_CHANGELOG_FROZEN_STRICT);
+const LOG_FROZEN_STRICT = /no\s+longer\s+(?:being\s+)?(?:actively\s+)?(?:maintained|updated|used)|\b(?:has\s+been|is|was)\s+(?:now\s+)?deprecated\b|\bnot\s+(?:being\s+)?(?:actively\s+)?(?:maintained|updated)\b/i;
+const logFrozen = (head: string, env: NodeJS.ProcessEnv = process.env): boolean => (changelogFrozenStrictOn(env) ? LOG_FROZEN_STRICT : LOG_FROZEN_LOOSE).test(head);
 const LOG_ASK = /\[\s?\]|\b(?:must|should|please|required?|requires|include[sd]?|add(?:ed|s)?|update[sd]?|record(?:ed)?|entry|entries|row)\b/i;
 /** The text of the repo's contribution guides and PR templates (root, .github/, docs/), one string; "" when there are none. */
 function contributionGuides(repoDir: string): string {
@@ -146,7 +152,7 @@ export function changelogFileConvention(repoDir: string): ReleaseNoteConvention 
   const g = guide.toLowerCase(), rank = (f: string): number => (f.includes("/") && g.includes(f.toLowerCase()) ? 0 : g.includes(basename(f).toLowerCase()) ? 1 : 2); // a path the guide writes out, then a bare name it mentions
   for (const f of [...files].sort((a, b) => rank(a) - rank(b))) {
     let t = ""; try { if (!statSync(join(repoDir, f)).isFile()) continue; t = readFileSync(join(repoDir, f), "utf8"); } catch { continue; }
-    if (LOG_FROZEN.test(t.split("\n").slice(0, 15).join("\n"))) continue;
+    if (logFrozen(t.split("\n").slice(0, 15).join("\n"))) continue;
     const s = unreleasedSection(t);
     if (s) return { kind: "changelog", dir: f, example: s.entry, heading: s.heading };
   }

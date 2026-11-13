@@ -42,6 +42,7 @@
 #      CL cl_required, cl_named, cl_rst and cl_on_again legs fail (CL: a changelog file the contribution guide asks entries for).
 #   8. conventions.ts guideRequiresChangelog: delete the LOG_FORBID line; cl_forbid fails (a guide saying not to update the CHANGELOG got a line).
 #   9. conventions.ts releaseNoteBrief: `if (false) {` in place of the towncrier example branch (TX); tx_example and tx_template_only fail.
+#  11. conventions.ts logFrozen: always use LOG_FROZEN_LOOSE (FS); fs_deprecated_section fails.
 #  10. loki-ts/src/e10ext/scope.ts flagOutsideScope: `mine = (f: string): boolean => false` (CS); cs_on fails (the asked-for changelog edit is flagged).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -202,7 +203,12 @@ out.cl_soft = clEmpty({ ".github/pull_request_template.md": "## ChangeLog\n\nOpt
 out.cl_pr_section = clEmpty({ ".github/pull_request_template.md": "## Release Notes\n\nInclude anything here that you didn't include in *Release Notes* above.\n", "CHANGELOG.md": LOG });
 out.cl_no_unreleased = clEmpty({ "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": "# Changelog\n\n## 1.0.0\n\n- First release.\n" });
 out.cl_frozen = clEmpty({ "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": "> This document is no longer being actively maintained. See the releases page.\n\n# Changelog\n\n## Unreleased\n\n- x\n" });
-out.cl_no_guide = clEmpty({ "CHANGELOG.md": LOG, "README.md": "# p\n" });
+// FS LOKI_E10_CHANGELOG_FROZEN_STRICT: a "### Deprecated" subsection under Unreleased is not a frozen log; a head that says the file is deprecated is.
+const fsRepo = mk("fs-dep", { "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": "# Changelog\n\n## Unreleased\n\n### Deprecated\n\n- The old parser API.\n" });
+out.fs_deprecated_section = releaseNoteBrief(fsRepo, []) === "" ? "empty" : "present";
+process.env.LOKI_E10_CHANGELOG_FROZEN_STRICT = "0"; out.fs_off = releaseNoteBrief(fsRepo, []) === "" ? "empty" : "present"; delete process.env.LOKI_E10_CHANGELOG_FROZEN_STRICT;
+out.fs_file_deprecated = clEmpty({ "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": "As of 3.0.0 this file has been deprecated.\n\n## Unreleased\n\n- x\n" });
+out.cl_no_guide =clEmpty({ "CHANGELOG.md": LOG, "README.md": "# p\n" });
 const clOffRepo = mk("cl-off", { "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG });
 process.env.LOKI_E10_CHANGELOG_CONVENTION = "0"; out.cl_off = releaseNoteBrief(clOffRepo, []) === "" ? "empty" : "present"; delete process.env.LOKI_E10_CHANGELOG_CONVENTION;
 out.cl_on_again = releaseNoteBrief(clOffRepo, []) === "" ? "empty" : "present";
@@ -384,6 +390,9 @@ eqv cl_soft empty "CL an optional or suggested changelog line is not a requireme
 eqv cl_pr_section empty "CL a PR-body 'Release Notes' section is not a changelog-file convention"
 eqv cl_no_unreleased empty "CL a changelog with no unreleased section gets no line"
 eqv cl_frozen empty "CL a changelog marked no longer maintained gets no line"
+eqv fs_deprecated_section present "FS a '### Deprecated' subsection under Unreleased does not make the log frozen"
+eqv fs_off empty "FS LOKI_E10_CHANGELOG_FROZEN_STRICT=0 restores the loose rule (a bare 'Deprecated' read as frozen)"
+eqv fs_file_deprecated empty "FS a head saying the file has been deprecated is still frozen"
 eqv cl_no_guide empty "CL an unreleased section with no guide asking for entries gets no line"
 eqv cl_off empty "CL LOKI_E10_CHANGELOG_CONVENTION=0 turns the changelog-file line off"
 eqv cl_on_again present "CL the changelog-file line is on by default"
