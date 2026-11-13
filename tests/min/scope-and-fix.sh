@@ -293,6 +293,9 @@
 # 255. package_suite.ts runPackageSuites: drop the cwd !== "." guard (the empty-subsuite-na leg's root package reads not applicable).
 # 256. check_result.ts assertionFailure REPORTED-KIND type path: drop the MISSING_API guard (the reported-kind unit's ImportError case reads true).
 # 257. repo_profile.ts intakeCapS: default back to 180 (the R3 leg reads 180,,90,180), or baselineSuites stops calling intakeBudgetNote (it reads silent).
+# 258. check_result.ts unittestAssertionFailure: drop the ERROR: guard (the assert-unittest leg's assertion-beside-an-error case reads true).
+# 259. wall.ts RealBaseTestRunner: read the test source only when reported.observed is non-empty (the reported-kind wiring leg reads true,0,0).
+# 260. seal.ts missingLintChecks: drop the lint: prefix filter (the lint-missing-disclose leg's missing test runner reads disclosed).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1719,6 +1722,50 @@ const r = [assertionFailure("node", node), assertionFailure("jest", jest), asser
   assertionFailure("jest", "Test suite failed to run\n expect(received).toBe"), assertionFailure("node", "not ok 1\n  error: \x27boom\x27\n  TypeError: Cannot read properties of undefined\n")];
 process.env.LOKI_E10_ASSERT_JS = "0"; r.push(assertionFailure("node", node)); console.log(r.join(","));' 2>&1)"
 [ "$AJ" = "true,true,true,false,false,false,false,false" ] && ok "assert-js unit: node:test, jest and mocha assertions are red by assertion; a missing function, a missing module, a suite that failed to run, a bare TypeError and LOKI_E10_ASSERT_JS=0 are not" || bad "assert-js unit gave: $AJ"
+# ASSERT-UNITTEST (verify-dev 2026-11-13, Python-Markdown under unittest: "test fails without the fix: yes" never counted, assertionFailure had no unittest branch).
+# Real python3 -m unittest: an assertEqual failure is red by assertion; an import that failed (unittest.loader._FailedTest), a raised ValueError (an ERROR:
+# block) and LOKI_E10_ASSERT_UNITTEST=0 are not.
+UT="$T/ut"; mkdir -p "$UT/tests"
+printf 'import unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(1, 2)\n    def test_ok(self):\n        self.assertTrue(True)\n' > "$UT/tests/test_a.py"
+printf 'import unittest\nfrom missing_mod_loki import x\n\nclass T(unittest.TestCase):\n    def test_b(self):\n        self.assertEqual(x, 2)\n' > "$UT/tests/test_b.py"
+printf 'import unittest\n\nclass T(unittest.TestCase):\n    def test_c(self):\n        raise ValueError("boom")\n' > "$UT/tests/test_c.py"
+printf 'import unittest\n\nclass T(unittest.TestCase):\n    def test_d1(self):\n        self.assertEqual(1, 2)\n    def test_d2(self):\n        raise ValueError("boom")\n' > "$UT/tests/test_d.py"
+for f in a b c d; do (cd "$UT" && python3 -m unittest "tests/test_$f.py" > "$UT/$f.out" 2>&1); done
+AU="$(cd "$ROOT/loki-ts" && UT="$UT" bun -e 'const c = await import("./src/util/check_result.ts"), r = (f) => require("node:fs").readFileSync(process.env.UT + "/" + f + ".out", "utf8");
+const x = [c.assertionFailure("unittest", r("a")), c.assertionFailure("unittest", r("b")), c.assertionFailure("unittest", r("c")), c.assertionFailure("unittest", r("d"))]; process.env.LOKI_E10_ASSERT_UNITTEST = "0"; x.push(c.assertionFailure("unittest", r("a"))); console.log(x.join(","));' 2>&1)"
+[ "$AU" = "true,false,false,false,false" ] && ok "assert-unittest: a real unittest assertEqual failure is red by assertion; an import failure, a raised ValueError, an assertion beside a raised error, and LOKI_E10_ASSERT_UNITTEST=0 are not" || bad "assert-unittest gave: $AU"
+# REPORTED-KIND wiring (acc-150; pyjwt: reportedErrors gave only an observed type, IncompleteRead, and RealBaseTestRunner read the test source only when an exact
+# observed error existed, so assertsResult saw "" and the base run read assertFail 0). Through the real RealBaseTestRunner and real pytest: a base failure
+# raising the issue-reported type in a test that expects the wanted type is red by assertion; the same file under an issue that reports nothing is not.
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+RW="$T/rkwire"; mkdir -p "$RW/tests"
+printf 'import http.client\n\nclass ConnectionFailedError(Exception):\n    pass\n\ndef fetch():\n    raise http.client.IncompleteRead(b"x", 5)\n' > "$RW/client.py"
+printf 'import http.client\nimport pytest\nimport client\n\ndef test_fetch_wraps():\n    with pytest.raises(client.ConnectionFailedError):\n        client.fetch()\n' > "$RW/tests/test_client.py"
+RWO="$(cd "$ROOT/loki-ts" && RW="$RW" bun -e '
+const w = await import("./src/engine10/stages/wall.ts"), c = await import("./src/util/check_result.ts");
+const task = "fetch() raises a raw `http.client.IncompleteRead`:\n\n    http.client.IncompleteRead: IncompleteRead(...)\n\nExpected: it is reported as `ConnectionFailedError`.\n";
+const run = (t) => new w.RealBaseTestRunner(undefined, 60000, { PYTHONPATH: process.env.RW }, true, c.reportedErrors(t)).run(process.env.RW, [{ runner: "pytest", path: "tests/test_client.py" }]).assertFail;
+console.log(`${c.reportedNeedsSource(c.reportedErrors(task))},${run(task)},${run("fetch is slow")}`);' 2>&1 | tail -1)"
+[ "$RWO" = "true,1,0" ] && ok "reported-kind wiring: an issue-reported type alone makes the base runner read the test source, so a real pytest failure raising it in a test expecting the wanted type is red by assertion; with nothing reported it is not" || bad "reported-kind wiring gave: $RWO"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "reported-kind wiring: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: reported-kind wiring: pytest is not installed"; fi
+fi
+# LINT-MISSING-DISCLOSE (acc-150; marshmallow, Python-Markdown, pyjwt: `uv run -- ruff` could not start ruff, and "not run: lint:ruff" capped VERIFIED). verify first
+# retries the ways the repo's tooling runs a linter without a global install (uvx ruff, the venv's python -m ruff); a lint check whose tool still could not be
+# started is disclosed and leaves the verdict inputs. A linter that ran and reported violations still caps (FAILED), a missing test runner is not
+# disclosed, and LOKI_E10_LINT_MISSING_DISCLOSE=0 restores the cap.
+LM="$T/lintmiss"; mkdir -p "$LM/repo/.venv/bin" "$LM/bin"; printf '#!/bin/sh\nexit 0\n' > "$LM/repo/.venv/bin/python"; printf '#!/bin/sh\nexit 0\n' > "$LM/bin/uvx"; chmod +x "$LM/repo/.venv/bin/python" "$LM/bin/uvx"
+LMO="$(cd "$ROOT/loki-ts" && LM="$LM" bun -e '
+const sl = await import("./src/engine10/stages/seal.ts"), v = await import("./src/engine10/stages/verify.ts"), d = process.env.LM;
+const miss = { name: "lint:ruff", cmd: "uv run -- ruff check", result: "not_run", skip_code: "tool_not_on_path", duration_s: 0 }, viol = { name: "lint:ruff", cmd: "uv run -- ruff check", result: "fail", duration_s: 1 }, runner = { name: "pytest:tests/test_a.py", cmd: "pytest", result: "not_run", skip_code: "tool_not_on_path", duration_s: 0 };
+const pass = { name: "pytest:tests/test_a.py", cmd: "pytest", result: "pass", duration_s: 1, n: 3, provenance: "exogenous" };
+const r = [sl.missingLintChecks([miss]).join("+") || "-", sl.missingLintChecks([viol]).join("+") || "-", sl.missingLintChecks([runner]).join("+") || "-", sl.missingLintChecks([miss], { LOKI_E10_LINT_MISSING_DISCLOSE: "0" }).join("+") || "-"];
+const o = { implement: { exit: "done" }, commit: {} }; r.push(sl.verdictOf(o, [pass, { ...viol, provenance: "exogenous" }], false, false, false, true));
+r.push(v.lintFallbacks(d + "/repo", "ruff", { PATH: d + "/bin" }).map(([c, a]) => (c.endsWith("/python") ? "venv-python" : c) + " " + a.join(" ")).join("|"));
+r.push(v.lintFallbacks(d + "/repo", "ruff", { PATH: d + "/bin", LOKI_E10_LINT_MISSING_DISCLOSE: "0" }).length);
+console.log(r.join(","));' 2>&1)"
+grep -q 'c.repo_skipped !== true && !lintGone.includes(c.name)),' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'lintGone.includes(c.name) ? `${LINT_MISSING_NOTE}: ${c.name}`' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "lint-missing-disclose wiring: seal drops a disclosed linter from the verdict inputs and writes the disclosure line instead of not run" || bad "lint-missing-disclose wiring: seal no longer excludes lintGone from live or no longer writes the disclosure"
+[ "$LMO" = "lint:ruff,-,-,-,FAILED,uvx ruff|venv-python -m ruff,0" ] && ok "lint-missing-disclose: a linter that could not be started is disclosed (not a cap) after trying uvx and the venv's python -m; a linter that reports violations still makes the run FAILED, a missing test runner is not disclosed, =0 restores the cap" || bad "lint-missing-disclose gave: $LMO"
 # SPAWN-NOT-RUN (verify-dev 2026-11-13, marshmallow and Python-Markdown: `uv run -- ruff check` printed "error: Failed to spawn: `ruff`" and read as a lint
 # failure that fix rounds chased): a check whose tool could not start is not_run with the tool named, through the real runOnce. A shell exit 127, uv's spawn
 # error and node's ENOENT count; a long test output that only mentions ENOENT stays a failure, and LOKI_E10_SPAWN_NOT_RUN=0 restores the failure.
