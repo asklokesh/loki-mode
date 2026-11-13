@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+- On a repo whose contribution guide or PR checklist asks for a CHANGELOG entry, the implement brief now names the changelog file, its unreleased section and an example entry, instead of telling the model to write no documentation. A guide that says not to touch the changelog, or a changelog with no unreleased section, gets nothing. LOKI_E10_CHANGELOG_CONVENTION=0 turns it off.
+
 ### Changed
 - LOKI_E10_ATTEMPTS now counts TOTAL implement attempts, not extra ones: LOKI_E10_ATTEMPTS=3 used to mean 3 extra attempts after a red verify and now means 3 attempts in all (2 extra). Unset, 0 and 1 stay off (one attempt, as before); `on` is 2 in all.
 - With LOKI_E10_ATTEMPTS=N, a first attempt that is not clean (a red check, a spec conflict, or any NOT PROVEN line from verify or a fix round) gets N-1 more independent attempts. Each one runs Loki's full verify; the first clean one stops the others. Otherwise the run keeps the attempt with a green verify, then no spec conflict, then the fewest NOT PROVEN lines. A tie goes to one review of the tied diffs, shown in both orders and counted only when both agree, against the issue, the repo's CONTRIBUTING, PR template and style configs, and the pre-fix code (Sonnet by default, LOKI_E10_ATTEMPTS_REVIEW_MODEL to change it, LOKI_E10_ATTEMPTS_REVIEW=0 to keep the first attempt on a tie). A clean first attempt costs nothing extra.

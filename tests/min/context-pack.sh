@@ -20,7 +20,8 @@
 #                   context_pack, and the seal stage.completed event and receipt carry context_recall 1; the same
 #                   run on the default model sends no pack but still records brief_files and the coverage.
 #   loki stats --outcomes --json reports the median context recall of those runs.
-#   L3/L5 rules:    release-note fragment line (changeset, towncrier, changelog.d, newsfragments, changie, none) and the
+#   L3/L5 rules:    release-note fragment line (changeset, towncrier, changelog.d, newsfragments, changie, a changelog file the
+#                   contribution guide asks entries for (CL), none) and the
 #                   byte-stable FIXED_RULES prefix (extra planted defects 5 and 6 below).
 #
 #   E6 diet:        LOKI_E10_PACK_DIET (default on, =0 opts out): one named definition keeps its span and loses the fill, the
@@ -37,6 +38,9 @@
 #   4. loki-ts/src/engine10/repomap.ts: SOURCE_EXT back to ts|tsx|js|jsx|mjs|cjs|py; the L020 ranking legs fail.
 #   5. loki-ts/src/project_model/conventions.ts releaseNoteConvention: drop the .changeset/config.json branch; the changeset legs fail.
 #   6. loki-ts/src/e10ext/context.ts: interpolate the convention line into FIXED_RULES; prefix_stable fails.
+#   7. loki-ts/src/project_model/conventions.ts releaseNoteConvention: `return null;` in place of the changelogFileConvention fallback; the
+#      CL cl_required, cl_named, cl_rst and cl_on_again legs fail (CL: a changelog file the contribution guide asks entries for).
+#   8. conventions.ts guideRequiresChangelog: delete the LOG_FORBID line; cl_forbid fails (a guide saying not to update the CHANGELOG got a line).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need() { command -v "$1" >/dev/null 2>&1 || { echo "context-pack: needs $1" >&2; exit 2; }; }
@@ -185,6 +189,22 @@ out.rn_changelogd = releaseNoteBrief(mk("cd", { "changelog.d/20240101_fix.md": "
 out.rn_newsfrag = releaseNoteBrief(mk("nf", { "newsfragments/7.feature.rst": "z" }), []);
 out.rn_changie = releaseNoteBrief(mk("ch", { ".changes/unreleased/Fixed-1.yaml": "z" }), []);
 out.rn_none = releaseNoteBrief(mk("no", { "package.json": '{"name":"p"}', "CHANGELOG.md": "# c" }), []) === "" ? "empty" : "present";
+// CL LOKI_E10_CHANGELOG_CONVENTION: a single changelog file the contribution guide asks entries for.
+const LOG = "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- Fixed a crash on empty input.\n\n## 1.0.0\n\n- First release.\n";
+let clN = 0; const clEmpty = (files: Record<string, string>) => (releaseNoteBrief(mk(`cl-neg-${++clN}`, files), []) === "" ? "empty" : "present");
+out.cl_required = releaseNoteBrief(mk("cl1", { "CONTRIBUTING.md": "# Contributing\n\nPlease add an entry to CHANGELOG.md for every\nuser-visible change.\n", "CHANGELOG.md": LOG, "a.py": "x = 1\n" }), []);
+out.cl_named = releaseNoteBrief(mk("cl2", { ".github/PULL_REQUEST_TEMPLATE.md": "## Checklist\n\n- [ ] `docs/changelog.md` has been updated if applicable.\n", "docs/changelog.md": "Change Log\n==========\n\n## Unreleased\n\n * Fix: a thing. (#12)\n", "CHANGELOG.md": LOG }), []);
+out.cl_rst = releaseNoteBrief(mk("cl3", { "CONTRIBUTING.rst": "Each pull request must include an entry in the changelog.\n", "CHANGES.rst": "Changes\n=======\n\n1.2.0 (unreleased)\n------------------\n\n- Bug fix in the parser.\n\n1.1.0\n-----\n\n- Older.\n" }), []);
+out.cl_forbid = clEmpty({ "CONTRIBUTING.md": "Don't update the CHANGELOG or the version number. That gets done by maintainers when preparing the release.\n", "CHANGELOG.md": LOG });
+out.cl_soft = clEmpty({ ".github/pull_request_template.md": "## ChangeLog\n\nOptional. Suggest a line for adding to the CHANGELOG to summarise your change.\n", "CHANGELOG.md": LOG });
+out.cl_pr_section = clEmpty({ ".github/pull_request_template.md": "## Release Notes\n\nInclude anything here that you didn't include in *Release Notes* above.\n", "CHANGELOG.md": LOG });
+out.cl_no_unreleased = clEmpty({ "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": "# Changelog\n\n## 1.0.0\n\n- First release.\n" });
+out.cl_frozen = clEmpty({ "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": "> This document is no longer being actively maintained. See the releases page.\n\n# Changelog\n\n## Unreleased\n\n- x\n" });
+out.cl_no_guide = clEmpty({ "CHANGELOG.md": LOG, "README.md": "# p\n" });
+const clOffRepo = mk("cl-off", { "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG });
+process.env.LOKI_E10_CHANGELOG_CONVENTION = "0"; out.cl_off = releaseNoteBrief(clOffRepo, []) === "" ? "empty" : "present"; delete process.env.LOKI_E10_CHANGELOG_CONVENTION;
+out.cl_on_again = releaseNoteBrief(clOffRepo, []) === "" ? "empty" : "present";
+out.cl_precedence = releaseNoteBrief(mk("cl-cs", { ".changeset/config.json": "{}", "package.json": '{"name":"p"}', "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG }), []);
 const bp = (rm: string, task: string) => buildImplementBrief(task, null, [], rm);
 const b1 = bp(out.rn_changeset as string, "task one"), b2 = bp("", "a different task entirely");
 const cut = (b: string) => b.slice(0, b.indexOf(FIXED_RULES) + FIXED_RULES.length);
@@ -340,6 +360,21 @@ rn rn_changelogd 'changelog.d/20240101_fix.md' "L3 changelog.d detected"
 rn rn_newsfrag 'newsfragments/7.feature.rst' "L3 newsfragments detected"
 rn rn_changie '.changes/unreleased/Fixed-1.yaml' "L3 changie .changes/unreleased detected"
 eqv rn_none empty "L3 a repo with only CHANGELOG.md gets no fragment line"
+rn cl_required 'Release-note convention (changelog file, CHANGELOG.md)' "CL a contribution guide asking for a CHANGELOG.md entry names the changelog file"
+rn cl_required 'under its "Unreleased" section' "CL the line names the unreleased heading"
+rn cl_required 'newest entry: - Fixed a crash on empty input.' "CL the line quotes the first entry under it as the format example"
+rn cl_named 'changelog file, docs/changelog.md' "CL a PR-template checkbox naming docs/changelog.md picks that file over a root CHANGELOG.md"
+rn cl_named 'newest entry: * Fix: a thing. (#12)' "CL setext title plus markdown Unreleased heading: entry found"
+rn cl_rst 'under its "1.2.0 (unreleased)" section' "CL an rst changelog with an underlined '(unreleased)' title is recognised"
+eqv cl_forbid empty "CL a guide that says not to update the CHANGELOG gets no line"
+eqv cl_soft empty "CL an optional or suggested changelog line is not a requirement"
+eqv cl_pr_section empty "CL a PR-body 'Release Notes' section is not a changelog-file convention"
+eqv cl_no_unreleased empty "CL a changelog with no unreleased section gets no line"
+eqv cl_frozen empty "CL a changelog marked no longer maintained gets no line"
+eqv cl_no_guide empty "CL an unreleased section with no guide asking for entries gets no line"
+eqv cl_off empty "CL LOKI_E10_CHANGELOG_CONVENTION=0 turns the changelog-file line off"
+eqv cl_on_again present "CL the changelog-file line is on by default"
+rn cl_precedence 'changeset, .changeset/' "CL a fragment convention (changesets) still wins over a changelog file"
 eqv prefix_stable yes "L3/L5 the rule prefix is byte-identical across two runs; the convention line sits after it, never inside it"
 eqv rules yyyyy "L5 FIXED_RULES carries the read-whole-function, preferred-fix, targeted-tests and release-note rules"
 eqv fw_path ".changeset/fix-wrong-total-when-the-invoice.md" "FW changeset: a fragment is written next to the repo's own, named from the title"
