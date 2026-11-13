@@ -302,6 +302,7 @@
 # 264. repo_profile.ts touchedRedOnBase: drop the editedTitles check (fl24 touched-base-red's failing edited case reads true; the newly-failing fl24 monorepo run reads PARTIAL).
 # 265. repo_profile.ts collateralOnBaseline: drop the paired-source check (fl24 collateral-baseline's changed web/src/app/x/page.ts reads true).
 # 266. failures.ts idNamesFile: drop the package-relative branch (fl24 id-pkg-relative reads false for frontend/src/components/S.test.ts).
+# 267. seal.ts baseProofRunner: ignore repoDir (the fl24 monorepo after reads PARTIAL: the frontend test's proof runs from the repo root).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1914,29 +1915,33 @@ make_fl_repo() {
 FL_TASK=$'Add issue search to the frontend.\n\n- Add `searchIssues(q)` to `frontend/src/lib/api.ts`.\n- Add the page `frontend/src/app/(dashboard)/search/page.ts` and its test `frontend/src/app/(dashboard)/search/__tests__/page.test.ts`.\n- Add one assertion to `frontend/src/components/layout/__tests__/Sidebar.test.ts` that the navigation items render.\n\n`frontend/src/app/(dashboard)/issues/page.ts` is not modified. Follow the pattern in `frontend/src/components/charts/issue-trends-chart.ts`.'
 fl_run() { MAKE_REPO=make_fl_repo run_engine "$FL_TASK" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=frontend/src/lib/api.ts \
     E2E_STUB_SNIPPET=$'export function searchIssues(q: string): string[] {\n  return listIssues().filter((i) => i.includes(q));\n}\n' \
-    E2E_STUB_TEST_FILE=frontend/src/components/layout/__tests__/Sidebar.test.ts E2E_STUB_TEST_APPEND=$'\ntest("renders all main navigation items", () => {\n  expect(navItems().length).toBe(2);\n});' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 "$@"; }
+    E2E_STUB_TEST_FILE=frontend/src/components/layout/__tests__/Sidebar.test.ts E2E_STUB_TEST_APPEND=$'\ntest("renders all main navigation items", () => {\n  expect(navItems().length).toBe(2);\n});' \
+    E2E_STUB_TEST_FILE2='frontend/src/app/(dashboard)/search/__tests__/page.test.ts' E2E_STUB_TEST_APPEND2=$'import { expect, test } from "vitest";\nimport * as api from "../../../../lib/api";\n\ntest("searchIssues filters the issue list", () => {\n  const search = (api as { searchIssues?: (q: string) => string[] }).searchIssues;\n  expect(search ? search("a").length : -1).toBe(1);\n});' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 "$@"; }
 fl_sig() { printf '%s|%s|fix=%s|%s' "$(outcome)" "$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(";".join(sorted(c["name"].split(":",1)[1].split("/")[-3]+"/"+c["name"].rsplit("/",1)[-1] for c in r["checks"] if c["result"]=="fail" and c["name"].startswith("vitest:"))))' "$RUNDIR/receipt.json" 2>/dev/null)" "$(fix_sessions)" "$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print("quick" if any(n.startswith("quick re-verify only") for n in r["not_proven"]) else "complete")' "$RUNDIR/receipt.json" 2>/dev/null)"; }
 FL_VT_NM="$T/vt-fl/node_modules"
 if [ ! -x "$FL_VT_NM/.bin/vitest" ]; then mkdir -p "$T/vt-fl"; printf '{"name":"c","private":true,"type":"module"}\n' > "$T/vt-fl/package.json"; (cd "$T/vt-fl" && timeout 300 npm install --no-audit --no-fund --silent vitest@2 >/dev/null 2>&1); fi
 if [ -x "$FL_VT_NM/.bin/vitest" ]; then
     VT_NM="$FL_VT_NM"; export VT_NM
     FL_ALL='[id]/page.test.ts;charts/issue-trends-chart.test.ts;issues/page.test.ts;layout/Sidebar.test.ts;login/page.test.ts'
-    fl_run LOKI_E10_NAMED_EXACT=0 LOKI_E10_OWN_BY_PATH=0 LOKI_E10_TOUCHED_BASE_RED=0; FL_BEFORE="$(fl_sig)"
-    [ "$FL_BEFORE" = "STALLED|$FL_ALL|fix=1|quick" ] && ok "fl24 monorepo before (NAMED_EXACT, OWN_BY_PATH, TOUCHED_BASE_RED off): reproduces FireLater#24: every base-red page, chart and edited test blocks, a fix round chases them, the verify stays quick, STALLED ($FL_BEFORE)" || { bad "fl24 monorepo before: $FL_BEFORE"; dump; }
+    FL_OFF="LOKI_E10_NAMED_EXACT=0 LOKI_E10_OWN_BY_PATH=0 LOKI_E10_TOUCHED_BASE_RED=0 LOKI_E10_COLLATERAL_BASELINE=0 LOKI_E10_ID_PKG_RELATIVE=0 LOKI_E10_PROOF_PROJECT_API=0"
+    # shellcheck disable=SC2086
+    fl_run $FL_OFF; FL_BEFORE="$(fl_sig)"
+    case "$FL_BEFORE" in STALLED*"|fix=1|quick"|FAILED*"|quick") ok "fl24 monorepo before (every acc-154 knob off): reproduces FireLater#24: base-red page, chart and edited tests block, a fix round chases them, the verify stays quick ($FL_BEFORE)" ;; *) bad "fl24 monorepo before: $FL_BEFORE"; dump ;; esac
     fl_run; FL_AFTER="$(fl_sig)"; FL_NOTES="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
     FL_BLOCK="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(";".join(c["name"] for c in r["checks"] if c["result"]=="fail" and not c.get("pre_red")))' "$RUNDIR/receipt.json" 2>/dev/null)"
-    [ "$(outcome)" = "PARTIAL" ] && [ -z "$FL_BLOCK" ] && ok "fl24 monorepo after (defaults): no base-red check blocks and the run is PARTIAL, not FAILED or STALLED ($FL_AFTER)" || { bad "fl24 monorepo after: $FL_AFTER blocking='$FL_BLOCK'"; dump; }
-    has "fl24 monorepo after: the edited base-red Sidebar test is excused and disclosed" "$FL_NOTES" "edited test file red on base by every failing id with the same errors; the cases the change added or edited pass (excused, not blocking): vitest:frontend/src/components/layout/__tests__/Sidebar.test.ts"
-    has "fl24 monorepo after: the unedited reference page's base-red test is collateral (capped, not blocking), not the task's own" "$FL_NOTES" "capped, not blocking): vitest:frontend/src/app/(dashboard)/issues/__tests__/page.test.ts"
-    for m in "LOKI_E10_OWN_BY_PATH=0 LOKI_E10_TOUCHED_BASE_RED=0" "LOKI_E10_NAMED_EXACT=0 LOKI_E10_TOUCHED_BASE_RED=0" "LOKI_E10_NAMED_EXACT=0 LOKI_E10_OWN_BY_PATH=0"; do
+    [ "$(outcome)" = "VERIFIED" ] && [ -z "$FL_BLOCK" ] && [ "${FL_AFTER##*|}" = "complete" ] && [ "$(fix_sessions)" = 0 ] && ok "fl24 monorepo after (defaults): VERIFIED with no fix round and a complete verify; no base-red check blocks ($FL_AFTER)" || { bad "fl24 monorepo after: $FL_AFTER blocking='$FL_BLOCK'"; dump; }
+    has "fl24 monorepo after: the edited base-red Sidebar test is excused and disclosed on the baseline line" "$FL_NOTES" "edited test file red on base by every failing id with the same errors; the cases the change added or edited pass (excused, not blocking): vitest:frontend/src/components/layout/__tests__/Sidebar.test.ts"
+    case "$FL_NOTES" in *"capped, not blocking"*) bad "fl24 monorepo after: a collateral test equal to the baseline still carries the COLLATERAL_RED cap" ;; *) ok "fl24 monorepo after: collateral tests equal to the intake baseline carry no COLLATERAL_RED cap" ;; esac
+    fl_run LOKI_E10_PROOF_PROJECT_API=0; [ "$(outcome)" != "VERIFIED" ] && ok "fl24 monorepo: with LOKI_E10_PROOF_PROJECT_API=0 the new frontend test's fail-then-pass runs from the repo root and the run is not VERIFIED ($(outcome))" || { bad "fl24 monorepo: PROOF_PROJECT_API=0 still VERIFIED"; dump; }
+    for m in "LOKI_E10_NAMED_EXACT=0" "LOKI_E10_OWN_BY_PATH=0" "LOKI_E10_TOUCHED_BASE_RED=0" "LOKI_E10_COLLATERAL_BASELINE=0"; do
         # shellcheck disable=SC2086
-        fl_run $m; echo "  fl24 matrix (only the knob not listed is on: $m): $(fl_sig)"
+        fl_run $m; echo "  fl24 matrix (all on except $m): $(fl_sig)"
     done
     # A touched test file whose change newly fails a case is never excused: the added case fails, so the file is the change's own failure.
     MAKE_REPO=make_fl_repo run_engine "$FL_TASK" E2E_WALL= E2E_STUB_MODE=stack E2E_STUB_TARGET=frontend/src/lib/api.ts E2E_STUB_SNIPPET=$'export function searchIssues(q: string): string[] {\n  return listIssues().filter((i) => i.includes(q));\n}\n' \
         E2E_STUB_TEST_FILE=frontend/src/components/layout/__tests__/Sidebar.test.ts E2E_STUB_TEST_APPEND=$'\ntest("renders all main navigation items", () => {\n  expect(navItems().length).toBe(3);\n});' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
     FL_NEW="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(";".join(c["name"].rsplit("/",1)[-1] for c in r["checks"] if c["result"]=="fail" and not c.get("pre_red")))' "$RUNDIR/receipt.json" 2>/dev/null)"
-    case "$(outcome)" in VERIFIED|PARTIAL) bad "fl24 monorepo: an edited test file whose added case fails was excused ($(outcome), blocking '$FL_NEW')"; dump ;; *) [ "$FL_NEW" = "Sidebar.test.ts" ] && ok "fl24 monorepo: an edited base-red test file whose added case fails stays blocking and the run is not PARTIAL or VERIFIED ($(outcome))" || { bad "fl24 monorepo newly-failing case: outcome $(outcome), blocking '$FL_NEW'"; dump; } ;; esac
+    case "$(outcome)" in VERIFIED|PARTIAL) bad "fl24 monorepo: an edited test file whose added case fails was excused ($(outcome), blocking '$FL_NEW')"; dump ;; *) case ";$FL_NEW;" in *";Sidebar.test.ts;"*) ok "fl24 monorepo: an edited base-red test file whose added case fails stays blocking (with the full suite whose new id names it) and the run is not PARTIAL or VERIFIED ($(outcome), blocking $FL_NEW)" ;; *) false ;; esac || { bad "fl24 monorepo newly-failing case: outcome $(outcome), blocking '$FL_NEW'"; dump; } ;; esac
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "fl24 monorepo: vitest@2 could not be installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: fl24 monorepo: vitest@2 could not be installed (offline?)"; fi
 fi
