@@ -48,11 +48,28 @@
 #       for high (it reads high=0).
 #   12. loki-ts/src/engine10/stages/xreview.ts: drop the run-model pin for the default review (the high-tier leg reads no --model haiku).
 #   13. loki-ts/src/engine10/machine.ts capReached: return false always (the capped run completes and reads VERIFIED, exit 0).
+#   14. loki-ts/src/util/check_result.ts changedSymbols: drop the ENCLOSING-DECL fallback (the enclosing-declaration unit line reads method=[]).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
 need git
 cd "$ROOT" || exit 2
+
+# Unit: ENCLOSING-DECL. An edit inside an indented method whose @@ context is a template-literal line (git's default funcname for .js) names the
+# enclosing method from the head file; a context that names something keeps that name only; column-0 code names nothing (commander.js run).
+U="$(cd "$ROOT/loki-ts" && bun -e '
+const c = await import("./src/util/check_result.ts");
+const file = ["class Command {", "  help() {", "    return `", "Expecting one of", "`;", "  }", "  sourceWithGlobals(key) {", "    let source;", "    this.all().forEach((cmd) => {", "      if (cmd.has(key)) {", "        source = cmd.get(key);", "      }", "    });", "  }", "}", "const top = 1;", "run(top);"].join("\n");
+const read = (p) => (p === "lib/command.js" ? file : null), hdr = "diff --git a/lib/command.js b/lib/command.js\n--- a/lib/command.js\n+++ b/lib/command.js\n";
+const method = c.changedSymbols(hdr + "@@ -10 +10 @@ Expecting one of\n-      if (cmd.get(key) !== undefined) {\n+      if (cmd.has(key)) {\n", read);
+const kept = c.changedSymbols(hdr + "@@ -10 +10 @@ function other() {\n-      if (cmd.get(key) !== undefined) {\n+      if (cmd.has(key)) {\n", read);
+const col0 = c.changedSymbols(hdr + "@@ -17 +17 @@ }\n-run(1);\n+run(top);\n", read);
+const noReader = c.changedSymbols(hdr + "@@ -10 +10 @@ Expecting one of\n-      if (cmd.get(key) !== undefined) {\n+      if (cmd.has(key)) {\n");
+process.env.LOKI_E10_ENCLOSING_DECL = "0"; const off = c.changedSymbols(hdr + "@@ -10 +10 @@ Expecting one of\n-      if (cmd.get(key) !== undefined) {\n+      if (cmd.has(key)) {\n", read);
+console.log(`method=${JSON.stringify(method)} kept=${JSON.stringify(kept)} col0=${JSON.stringify(col0)} noreader=${JSON.stringify(noReader)} off=${JSON.stringify(off)}`);
+' 2>&1)"
+[ "$U" = 'method=["sourceWithGlobals"] kept=["other"] col0=[] noreader=[] off=[]' ] \
+    && ok "unit: an edit inside an indented method names the enclosing method; a naming @@ context is kept as is; column-0 code names nothing" || bad "unit: enclosing-declaration gave: $U"
 
 echo "TEST: engine10 end to end on the stub provider"
 

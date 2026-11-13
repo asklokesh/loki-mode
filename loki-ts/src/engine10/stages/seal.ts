@@ -54,7 +54,7 @@ async function codeSymbols(ctx: RunContext, rawDiff: string[], head: string): Pr
   const onBase = new Set<string>(); if (code.length === 0) return { all: [], onBase };
   for (let i = 0; i + 1 < rawDiff.length; i += 2) { const f = rawDiff[i + 1]!; if (code.includes(f) && (rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A") { const b = await safeGitRun(ctx.repoDir, ["show", `${ctx.baseSha}:${f}`], { timeoutMs: 20000 }); if (b.exitCode === 0) for (const id of identifierSet(b.stdout)) onBase.add(id); } }
   const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...code], { timeoutMs: 20000 });
-  return { all: d.exitCode === 0 ? changedSymbols(d.stdout) : [], onBase };
+  return { all: d.exitCode === 0 ? changedSymbols(d.stdout, (p) => readFileSync(join(ctx.repoDir, p), "utf8")) : [], onBase }; // ENCLOSING-DECL: the committed head is the worktree here
 }
 /** The fail-then-pass base runner. Every file it runs already passed on the head under this same interpreter, so a base assertion failure under it is a like-for-like difference: trustSystem is on even when the repo declares a Python environment (4 of 4 more-itertools runs read inconclusive without it). */
 export const baseProofRunner = (ms: number, reported: ReportedErrors = { observed: [], wanted: [] }): RealBaseTestRunner => new RealBaseTestRunner(undefined, ms, {}, true, reported); // reported: the errors the issue quotes (reportedErrors), a base failure raising exactly one counts like an assertion
@@ -103,7 +103,7 @@ async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, r
   const allSources = (wallOff ? executed.filter((c) => checkProvenance(String(c.name ?? ""), wallOff.pctx) !== "agent_authored") : executed).map(testOf).filter((p): p is string => p !== null).map(read); // Wall off: a test the run wrote or edited names the symbol trivially, so it counts only through the fail-then-pass proof below
   const ranWall = Array.isArray(o.wall?.files) && o.wall.files.length > 0, leanFiles = code.filter((f) => CODE_FILE_EXT.test(f));
   let lean: string[] = [];
-  if (!ranWall && leanFiles.length) { const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...leanFiles], { timeoutMs: 20000 }); if (d.exitCode === 0) lean = symbolGap(changedSymbols(d.stdout), allSources); if (lean.length > 0 && wallOff && await wallOff.ftp()) lean = []; }
+  if (!ranWall && leanFiles.length) { const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...leanFiles], { timeoutMs: 20000 }); if (d.exitCode === 0) lean = symbolGap(changedSymbols(d.stdout, read), allSources); if (lean.length > 0 && wallOff && await wallOff.ftp()) lean = []; }
   if (process.env["LOKI_E10_PUBLIC_GAP"] !== "1") return { lean, pub: [] }; // off by default: the span lines of a file with multi-line docstrings or template literals shift against the stripped text (follow-up task)
   const files = code.filter((f) => API_FILE_EXT.test(f)).map((path) => ({ path, src: read(path) }));
   const fns: string[] = [];
