@@ -15,7 +15,7 @@ import { goJsonStream, GO_JSON_KEEP, withoutStaleWall, failureExcerpt, EXCERPT_T
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { attribute, attributeFullSuite, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, envChangedSince, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
 interface ImplementOutput { exit?: ImplementExit; }
@@ -35,7 +35,7 @@ export interface VerifyCheck {
   owner?: "harness"; skip_code?: SkipCode; /* machine-readable twin of the "<cmd> not found on PATH" reason */ // FC-02: the runner could not load or collect; not_run, never a code failure
 }
 export { runnerCmd, commandFor, firstError } from "../../util/check_result.ts"; // one owner: check_result.ts (test invocation resolver and failure-line normalizer)
-import { type SkipCode, changedSymbols, firstFileLineAnchor, runnerCmd, commandFor, firstError, resolveTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
+import { type SkipCode, changedSymbols, firstFileLineAnchor, runnerCmd, commandFor, firstError, resolveTool, spawnFailedTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
 /** TEN-QUALITY-01: stage-local failure excerpts keyed by check object; never on VerifyCheck, never emitted, never set for a held-out check. */
 const excerpts = new WeakMap<object, string>();
 export const checkExcerpt = (c: VerifyCheck): string => excerpts.get(c) ?? ""; // the patch protocol's repair digest (features/patch_protocol.ts)
@@ -73,6 +73,36 @@ export function collateralTests(relevant: TestRef[], named: string[]): TestRef[]
   const stems = new Set(named.flatMap((f) => { const s = basename(f).replace(/\.[^.]+$/, ""); return /^(index|__init__|mod)$/.test(s) && f.includes("/") ? [s, basename(f.slice(0, f.lastIndexOf("/")))] : [s]; }));
   return relevant.filter((t) => !named.includes(t.path) && !stems.has(coveredStem(t.path)));
 }
+/** OWN-BY-PATH (LOKI_E10_OWN_BY_PATH, default on, =0 restores collateralTests' stem rule): the relevant tests that are the task's own, never excused as red on base.
+ *  A test is own only when it is a test file the task names, or it is path-paired with a named non-test file the diff CHANGED: the same covered stem, and it sits in
+ *  that file's directory or its __tests__, tests or test subdirectory. A named file the diff did not edit is a reference ("is not modified", "following the
+ *  pattern in"), so its tests are collateral, as is every same-stem test elsewhere (FireLater#24: a named X/page.tsx made all 46 page.test.tsx own). */
+export const ownByPathOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_OWN_BY_PATH"] ?? "").trim());
+export function ownTests(relevant: TestRef[], named: string[], changed: readonly string[]): TestRef[] {
+  const src = named.filter((f) => !isTestFile(f) && changed.includes(f)).map((f) => { const d = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "."; const s = basename(f).replace(/\.[^.]+$/, ""); return { d, s }; });
+  const inDir = (t: string, d: string): boolean => { const td = t.includes("/") ? t.slice(0, t.lastIndexOf("/")) : "."; return [d, ...["__tests__", "tests", "test"].map((x) => (d === "." ? x : `${d}/${x}`))].includes(td); };
+  return relevant.filter((t) => named.includes(t.path) || src.some(({ d, s }) => coveredStem(t.path) === s && inDir(t.path, d)));
+}
+/** TOUCHED-BASE-RED: the titles of the test cases a change added or edited in one test file: a test/it title on an added line, and for each changed line the
+ *  nearest test/it title above it in the head file (the case whose body it edits). Read from `git diff -U0 <base> -- <file>` and the working tree. */
+const TEST_TITLE_RE = /\b(?:it|test)(?:\.\w+)*\(\s*(['"`])((?:(?!\1).)+)\1/;
+export function editedTestTitles(repoDir: string, baseSha: string, rel: string): string[] {
+  let d = ""; try { d = safeGit(repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", baseSha, "--", rel], { timeout: 20000 }); } catch { return []; }
+  let lines: string[] = []; try { lines = readFileSync(join(repoDir, rel), "utf8").split("\n"); } catch { /* deleted: added lines only */ }
+  const out = new Set<string>(); let at = -1;
+  for (const l of d.split("\n")) {
+    const h = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(l);
+    if (h) { // lines of the hunk before its first test title belong to the case above them; a blank line edits nothing; after a title, lines belong to that (new) case
+      at = Math.max(0, Number(h[1]) - 1); const n = h[2] === undefined ? 1 : Number(h[2]);
+      const ind = (x: string): number => /^[ \t]*/.exec(x)![0].replace(/\t/g, "  ").length; // a line edits a case only when it sits deeper than that case's title (a top-level import or helper edits none)
+      for (let k = at; k <= at + Math.max(0, n - 1) && k < lines.length; k++) { const own = TEST_TITLE_RE.exec(lines[k]!); if (own) break; if (lines[k]!.trim() === "") continue; for (let j = k - 1; j >= 0; j--) { const m = TEST_TITLE_RE.exec(lines[j]!); if (m) { if (ind(lines[k]!) > ind(lines[j]!)) out.add(m[2]!); break; } } }
+      if (n === 0) for (let j = Math.min(at, lines.length - 1); j >= 0; j--) { const m = TEST_TITLE_RE.exec(lines[j]!); if (m) { out.add(m[2]!); break; } } // a pure deletion edits the case it sat in
+      continue;
+    }
+    if (l.startsWith("+") && !l.startsWith("+++")) { const m = TEST_TITLE_RE.exec(l.slice(1)); if (m) out.add(m[2]!); }
+  }
+  return [...out];
+}
 const dedupeTests = (tests: TestRef[]): TestRef[] => [...new Map(tests.map((t) => [`${t.runner}:${t.path}`, t] as const)).values()];
 export { changedFiles } from "../../util/check_result.ts"; // one owner: check_result.ts (diffFiles builds on it)
 interface RunOpts {
@@ -90,7 +120,7 @@ export { ran, skipped } from "../../util/check_result.ts"; // FC-16: the one sha
 export { testConfigChanged } from "../../features/runner_config.ts"; // D86 FC-09r: the one runner-config registry lives in features/
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
  *  never retried (a hung check must not burn 2x its timeout). `out` is a 64 KB tail, unread when cut. The result comes from exit + timeout, never pipe EOF (an orphaned grandchild may hold the pipes). */
-export async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string }> {
+export async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string; spawnTool?: string }> {
   if (!Bun.which(cmd, { PATH: opts.path ?? process.env["PATH"] ?? "" })) return { ok: false, missing: true, cut: false, out: "" };
   const timeout = AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS);
   const proc = Bun.spawn([cmd, ...args], {
@@ -106,7 +136,8 @@ export async function runOnce(cmd: string, args: string[], cwd: string, signal: 
   const exitCode = await proc.exited;
   await Promise.race([Promise.all(pumps), new Promise((r) => setTimeout(r, 300))]); rs.forEach((r) => r.cancel().catch(() => {}));
   if (opts.group) killGroup(); const cut = timeout.aborted || signal.aborted;
-  return { ok: exitCode === 0 && !cut, missing: false, cut, out: cut ? "" : stripAnsi(tail.slice(-keep)) }; // FC-69
+  const out = cut ? "" : stripAnsi(tail.slice(-keep)), spawnTool = exitCode !== 0 && !cut ? spawnFailedTool(out, exitCode) : null; // SPAWN-NOT-RUN: a tool that could not start is a missing tool, never a code failure
+  return { ok: exitCode === 0 && !cut, missing: spawnTool !== null, cut, out, ...(spawnTool ? { spawnTool } : {}) }; // FC-69
 }
 /** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, a  timed-out/aborted run, or a run that executed 0 tests is recorded once as not_run and never retried. */
 export async function runCheck(
@@ -122,7 +153,7 @@ export async function runCheck(
     const lr = kind === "test" && !a.ok && !a.cut && !a.missing ? await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs?.().intake?.install_created), out: a.out, cmd, args, signal, cwd, protect: opts.protect, ...(opts.path ? { env: { PATH: opts.path } } : {}) }) : undefined; // FC-02: only kind "test"; lint/tsc/selector (kind "static") never reach it
     if (lr) c = { result: "not_run", reason: lr, owner: "harness" };
     if (!lr && kind === "static" && !a.ok && !a.cut && !a.missing && opts.wall?.size && wallOwnedFailure(a.out, cwd, ctx.repoDir, opts.wall)) c = { result: "not_run", reason: WALL_COMPILE_REASON, owner: "harness" }; // FC-23: never a fix round on a read-only Wall file // harness-owned load error: never retried, never a fix round
-    const reason = a.missing ? `${cmd} not found on PATH${installHint(cmd)}` : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`) : c.reason;
+    const reason = a.missing ? (a.spawnTool ? `${a.spawnTool} could not be started (not installed)${installHint(a.spawnTool)}` : `${cmd} not found on PATH${installHint(cmd)}`) : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`) : c.reason;
     return { ...c, ...(reason ? { reason } : {}) };
   };
   let attempt = await runOnce(cmd, args, cwd, signal, opts);
@@ -426,6 +457,16 @@ async function tscOnBase(ctx: RunContext, groupCwd: string, signal: AbortSignal,
     try { git(["worktree", "prune"]); } catch { /* best effort */ }
   }
 }
+/** LINT-MISSING-DISCLOSE (LOKI_E10_LINT_MISSING_DISCLOSE, default on, =0 opts out): the other ways to start a linter the first command could not start, in order:
+ *  `uvx <tool>` (uv's tool runner, no global install) and the repo's own virtualenv `python -m <tool>`. [] when off or none applies. */
+export const lintMissingDiscloseOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_LINT_MISSING_DISCLOSE"] ?? "").trim());
+export function lintFallbacks(repoDir: string, tool: string, env: NodeJS.ProcessEnv = process.env): [string, string[]][] {
+  if (!lintMissingDiscloseOn(env)) return [];
+  const out: [string, string[]][] = [];
+  if (Bun.which("uvx", { PATH: env["PATH"] ?? "" })) out.push(["uvx", [tool]]);
+  for (const v of [".venv", "venv"]) { const py = join(repoDir, v, "bin", "python"); if (existsSync(py)) { out.push([py, ["-m", tool]]); break; } }
+  return out;
+}
 export async function runLintChecks(
   ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts & { api?: ProjectApi | null; keep?: ReadonlySet<string> } = {},
 ): Promise<string[]> {
@@ -433,8 +474,13 @@ export async function runLintChecks(
   const py = changed.filter((f) => f.endsWith(".py"));
   const [ruffCmd, interpreter, uvPre] = py.length ? resolveTool(ctx.repoDir, "ruff", "ruff") : ["ruff", "system", []] as ReturnType<typeof resolveTool>; // E-98a: same project-first resolution as pytest
   if (py.length && (interpreter !== "system" || Bun.which("ruff", { PATH: process.env["PATH"] ?? "" }) || projectDeclaresRuff(ctx.repoDir))) { // FC-LINT-TOOL-NEVER-USED-BY-PROJECT: a repo that neither declares ruff nor has one installed has no lint to run
-    const c = await runCheck(ctx, "lint:ruff", ruffCmd, [...uvPre, "check", "--output-format=concise", ...py], signal, checks, { ...opts, interpreter, kind: "static" });
-    if (await excuseLint(ctx, signal, c, "ruff", ruffCmd, [...uvPre, "check"], ctx.repoDir, py, opts)) pre.push(c.name);
+    const first: VerifyCheck[] = []; let c = await runCheck(ctx, "lint:ruff", ruffCmd, [...uvPre, "check", "--output-format=concise", ...py], signal, first, { ...opts, interpreter, kind: "static" }), lintCmd = ruffCmd, lintPre: string[] = uvPre;
+    for (const [cmd, pre0] of c.result === "not_run" && c.skip_code === "tool_not_on_path" ? lintFallbacks(ctx.repoDir, "ruff") : []) { // LINT-MISSING-DISCLOSE: the ways the repo's own tooling runs ruff without a global install
+      const alt: VerifyCheck[] = [], a = await runCheck(ctx, "lint:ruff", cmd, [...pre0, "check", "--output-format=concise", ...py], signal, alt, { ...opts, kind: "static" });
+      if (!(a.result === "not_run" && a.skip_code === "tool_not_on_path")) { c = a; first.splice(0, first.length, ...alt); lintCmd = cmd; lintPre = pre0; break; }
+    }
+    checks.push(...first);
+    if (await excuseLint(ctx, signal, c, "ruff", lintCmd, [...lintPre, "check"], ctx.repoDir, py, opts)) pre.push(c.name);
   }
   const sh = changed.filter((f) => f.endsWith(".sh"));
   if (sh.length) {
@@ -485,10 +531,11 @@ export const verifyStage: Stage = {
     const dep = dependentTests(ctx.repoDir, map, changed, [...impacted, ...changedTestFiles, ...wallTests, ...relevant]), depNames = new Set(dep.tests.map(testCheckName)); // RX-3
     const tests0 = failedFirst(dedupeTests([...wallTests, ...relevant, ...changedTestFiles, ...changedSymbolsFirst(ctx, impacted, changed), ...dep.tests]),(ctx.outputs().verify as { checks?: Array<{ name?: unknown; result?: unknown }> } | undefined)?.checks); // TEN-SPEED-07; the Wall and task-named tests that prove the task run first, so a stage stopped at its limit has already run them
     const tests = tests0.length === 0 ? mochaTargets(ctx.repoDir, changed) : tests0; // R5 LOKI_E10_MOCHA_TARGETED: nothing selected in a repo that declares mocha: each changed file's own mocha test file (testmap.ts mochaTargets)
-    const hashes = fileHashes(ctx.repoDir, changed), qs = quickScope(ctx.outputs(), hashes), keep = new Set([...(qs?.blocking ?? []), ...[...wallTests, ...relevant].map(testCheckName)]);
+    const own = ownByPathOn() ? ownTests(relevant, named, changed) : relevant; // OWN-BY-PATH: the relevant tests that are the task's own; the rest stay selected (A-114) but are excusable like any untouched test
+    const hashes = fileHashes(ctx.repoDir, changed), qs = quickScope(ctx.outputs(), hashes), keep = new Set([...(qs?.blocking ?? []), ...[...wallTests, ...own].map(testCheckName)]);
     const sinceTests = qs ? [...ctx.tests.impacted(map, qs.since), ...map.tests.filter((t) => qs.since.includes(t.path))] : [], split = qs ? quickSplit(tests, keep, sinceTests) : { first: tests, rest: [] };
     // The evidence so far, published after every check: a verify stopped at its limit or the cap keeps the checks that ran (machine.ts), never "no tests executed". wall_passed follows the final rule below: false on any failure, true only when every Wall and holdout check ran and passed.
-    const done: VerifyCheck[] = [], wallNames0 = new Set(wallTests.map(testCheckName)), targets0 = new Set([...wallTests, ...relevant].map(testCheckName)), wallDropped0 = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p));
+    const done: VerifyCheck[] = [], wallNames0 = new Set(wallTests.map(testCheckName)), targets0 = new Set([...wallTests, ...own].map(testCheckName)), wallDropped0 = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p));
     let holdN: number | null = wall.holdout_dir ? null : 0; // held-out Wall checks to run; null until they are staged
     const publish = (): void => {
       if (!ctx.partial) return;
@@ -517,7 +564,12 @@ export const verifyStage: Stage = {
       checks.push(...list.flatMap((t) => byName.get(testCheckName(t)) ?? [])); // the selected order, whichever way each check ran
     };
     await runTests(split.first);
-    const decisive = qs !== null && checks.some((c) => c.result === "fail" && (keep.has(c.name) || changed.includes(c.name.slice(c.name.indexOf(":") + 1)))); // a blocking, Wall, task-named or touched test is never excused as pre-existing red
+    const zgEnv = zeroGate((ctx.outputs().intake as { zero_baseline?: unknown } | undefined)?.zero_baseline), envAsIntake = (rel: string): boolean => { // C and D read the intake profile, which stands for base only while the environment is as intake left it (a deleted or added package changes what runs): fail closed otherwise
+      if (zgEnv.sinceMs === undefined) return false; const root = api?.packageRootOf(rel) ?? ".";
+      return [...new Set([root, "."])].every((d) => !envChangedSince(ctx.repoDir, d === "." ? ctx.repoDir : join(ctx.repoDir, d), zgEnv.sinceMs!, zgEnv.ignored ?? null, zgEnv.deps));
+    };
+    const touchedRed = new Set(checks.filter((c) => { const rel = c.name.slice(c.name.indexOf(":") + 1); return c.result === "fail" && changed.includes(rel) && !wallNames0.has(c.name) && !isHold(c) && envAsIntake(rel) && touchedRedOnBase(ctx.repoDir, ctx.baseSha, { ids: c.ids, errors: headErrors.get(c) }, editedTestTitles(ctx.repoDir, ctx.baseSha, rel)); }).map((c) => c.name)); // TOUCHED-BASE-RED: before decisive, so an edited base-red file does not force a quick verify
+    const decisive = qs !== null && checks.some((c) => c.result === "fail" && !touchedRed.has(c.name) && (keep.has(c.name) || changed.includes(c.name.slice(c.name.indexOf(":") + 1)))); // a blocking, Wall, task-named or touched test is never excused as pre-existing red
     if (!decisive) await runTests(split.rest);
     const complete = !decisive; // L025: the full suite and the secret scan run in every complete verify, never in a quick one
     const pg = ((ctx.outputs().verify?.failures_grouped ?? []) as { signature: string }[]).map((g) => g.signature), fs = (x: string): boolean => x.startsWith("full suite") || x.startsWith("lint:"), failSigs = (l: { name: string; result: string; first_error?: string; ids?: string[] }[]): string[] => [...new Set(l.filter((c) => c.result === "fail" && !fs(c.name) && !isHoldoutCheck(c.name)).map((c) => failureSignature(c)))].sort(), same = (a: string[], b: string[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
@@ -525,17 +577,21 @@ export const verifyStage: Stage = {
     const hold = wall.holdout_dir ? stageHoldout(wall.holdout_dir, ctx.repoDir) : null; if (hold && !hold.missing.length) holdN = hold.tests.length; // P12-05: held-out Wall tests, copied in under neutral names for this run only, blocking (protect), named holdout:N internally and "holdout" in every record that leaves this stage
     try { for (const [i, h] of (hold?.tests ?? []).entries()) { if (signal.aborted) break; const t = h as TestRef, tc = commandFor(t, ctx.repoDir, api); await runCheck(ctx, `holdout:${i + 1}`, tc.cmd, tc.args, signal, checks, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: true, opaque: true, ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); publish(); } } finally { hold?.cleanup(); }
     if (hold?.missing.length) { for (const m of hold.missing) recordHoldoutTriage(ctx.runDir, { check: "holdout:store", result: "not_run", reason: m }); const k: VerifyCheck = { name: "holdout:store", cmd: "holdout", result: "not_run", duration_s: 0, reason: "holdout store unavailable", owner: "harness" }; checks.push(k); ctx.emit("test.result", "verify", { ...pubHold(k) }); } // C-C4b-c: a store failure is a harness/infrastructure failure (not_run, no fix round), never a test failure the fixer sees; the missing-file text stays out of the log
-    const targetNames = new Set([...[...wallTests, ...relevant].map(testCheckName), ...checks.filter(isHold).map((c) => c.name)]); // FC-21b: Wall and task-named tests, the proof a limit-stopped run needs
+    const targetNames = new Set([...[...wallTests, ...own].map(testCheckName), ...checks.filter(isHold).map((c) => c.name)]); // FC-21b: Wall and task-named tests, the proof a limit-stopped run needs
     const cfgChanged = [...new Set([...testConfigChanged(ctx.repoDir, ctx.baseSha, changed), ...hiddenConfigChanged(ctx.repoDir, ctx.outputs().intake?.hidden_cfg)])]; // FC-21b: also feeds uncovered_changed; SEAL-CONFTEST-01: ignored configs added or changed since intake count too
     // FireLater#21: a relevant test that is not the task's own (collateral: it only imports or mocks a named file) gets the base comparison any untouched test gets (known red, same error).
-    const collateral = new Set(collateralTests(relevant, named).map(testCheckName)), ownRel = new Set([...relevant.map(testCheckName)].filter((n) => !collateral.has(n)));
+    const collateral = new Set((ownByPathOn() ? relevant.filter((t) => !own.includes(t)) : collateralTests(relevant, named)).map(testCheckName)), ownRel = new Set([...relevant.map(testCheckName)].filter((n) => !collateral.has(n)));
     const symbols = checks.some((c) => c.result === "fail") ? diffSymbols(ctx, changed) : []; // fl24: a failure naming one of these is never excused on differing text
     const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map(testCheckName)), new Set(relevant.map(testCheckName)), signal, cfgChanged.length === 0, zeroGate((ctx.outputs().intake as { zero_baseline?: unknown } | undefined)?.zero_baseline), depNames, ownRel, symbols);
     // A collateral check red on base failing the same way feeds the first fix round (it could be the bug the task describes); after a fix round left it failing
     // the same way it is pre-existing: not blocking, and named with COLLATERAL_RED, which caps VERIFIED.
     const fixRounds = Number((ctx.outputs().fix as { round?: unknown } | undefined)?.round ?? 0) || 0, collateralSame = preRed.sameError.filter((n) => collateral.has(n) && !preRed.names.includes(n));
-    const collateralRed = fixRounds >= 1 ? collateralSame : [];
+    const collateralBase = checks.filter((c) => c.result === "fail" && collateral.has(c.name) && !preRed.names.includes(c.name) && envAsIntake(c.name.slice(c.name.indexOf(":") + 1)) && collateralOnBaseline(ctx.repoDir, ctx.baseSha, c.name.slice(c.name.indexOf(":") + 1), { ids: c.ids, errors: headErrors.get(c) }, changed, coveredStem(c.name.slice(c.name.indexOf(":") + 1)))).map((c) => c.name); // COLLATERAL-BASELINE: unedited, paired source unchanged, ids and errors equal the intake baseline: pre-existing now, no cap, no fix round
+    if (collateralBase.length) { preRed.names.push(...collateralBase); preRed.ids.push(...checks.filter((c) => collateralBase.includes(c.name)).flatMap((c) => c.ids ?? [])); }
+    const collateralRed = fixRounds >= 1 ? collateralSame.filter((n) => !collateralBase.includes(n)) : [];
     if (collateralRed.length) { preRed.names.push(...collateralRed); preRed.ids.push(...checks.filter((c) => collateralRed.includes(c.name)).flatMap((c) => c.ids ?? [])); }
+    const touchedExcused = [...touchedRed].filter((n) => !preRed.names.includes(n) && checks.some((c) => c.name === n && c.result === "fail")); // TOUCHED-BASE-RED: excused like any base-red check, and disclosed on the baseline line (never a cap: every failing id and error equals base)
+    if (touchedExcused.length) { preRed.names.push(...touchedExcused); preRed.ids.push(...checks.filter((c) => touchedExcused.includes(c.name)).flatMap((c) => c.ids ?? [])); }
     // REPOMEM: a failing, untouched, non-target test whose every id was already red in the intake baseline (same base commit) is pre-existing: never blocks. Anything else that fails is introduced and always blocks.
     // A package's own suite baseline is consulted only for a check the base run showed failing the same way (sameErrors): matching ids alone never excuse a changed error.
     const suiteOf = (name: string): string | undefined => { const t = tests.find((x) => testCheckName(x) === name), pkg = t ? api?.packageOf(t.path) : null; return pkg?.commands.test ? `full suite: ${pkg.name}` : undefined; };
@@ -564,7 +620,7 @@ export const verifyStage: Stage = {
       for (const c of full) { const k: VerifyCheck = { name: c.name, cmd: c.cmd, result: c.result as VerifyCheck["result"], duration_s: c.duration_s, ...(c.reason ? { reason: c.reason } : {}), ...(c.count ? { count: c.count } : {}), ...(c.result === "fail" ? { ...(c.ids ? { ids: c.ids } : {}), ...(c.first_error ? { first_error: c.first_error } : {}) } : {}) }; suites.add(k); checks.push(k); ctx.emit("test.result", "verify", { ...k }); if (c.excerpt) excerpts.set(k, c.excerpt); } // P12-01: full-suite checks leave the same test.result evidence per-file checks do
       for (const c of full) if (c.errors) fullErr.set(c.name, c.errors);
       const blockedIds = checks.filter((c) => c.result === "fail" && !suites.has(c) && !preRed.names.includes(c.name)).flatMap((c) => c.ids ?? []);
-      const fa = attributeFullSuite(ctx.repoDir, ctx.baseSha, full, blockedIds, changed, symbols); preRed.names.push(...fa.preExistingChecks); preRed.ids.push(...fa.preExistingIds); attr.introducedChecks.push(...fa.introducedChecks); attr.line = [attr.line, fa.line].filter(Boolean).join("; ") || null; notExcused.push(...whyFullSuiteNotExcused(ctx.repoDir, ctx.baseSha, full, changed, fa.preExistingChecks, blockedIds)); // REPOMEM: same attribution for the full suite
+      const shown = new Set(checks.filter((c) => touchedExcused.includes(c.name)).flatMap((c) => c.ids ?? [])), fa = attributeFullSuite(ctx.repoDir, ctx.baseSha, full, blockedIds, changed, symbols, shown); preRed.names.push(...fa.preExistingChecks); preRed.ids.push(...fa.preExistingIds); attr.introducedChecks.push(...fa.introducedChecks); attr.line = [attr.line, fa.line].filter(Boolean).join("; ") || null; notExcused.push(...whyFullSuiteNotExcused(ctx.repoDir, ctx.baseSha, full, changed, fa.preExistingChecks, blockedIds, shown)); // REPOMEM: same attribution for the full suite
       if (full.some((c) => c.result === "pass" || c.result === "fail")) { ranDeeper.push("full test command", "full suite"); risk = markExecuted(risk, ranDeeper); recordRisk(ctx.repoDir, risk); }
       // A full-suite failure whose every failing id is one a same-error base-red check or a Wall check already reports adds nothing a fix round could act on.
       const known = new Set(checks.filter((c) => c.result === "fail" && (preRed.sameError.includes(c.name) || wallNames0.has(c.name))).flatMap((c) => c.ids ?? []));
@@ -584,7 +640,7 @@ export const verifyStage: Stage = {
     const uncoveredChanged = changed.filter((f) => CODE_EXT.test(f) && !isTestFile(f) && !wallPaths.has(f) && !cfgChanged.includes(f) && !covered(f)); // FC-21b: changed code no passing impacted check ran; seal denies VERIFIED after a limit
     const flaky = checks.filter((c) => c.result === "flaky").map((c) => (isHold(c) ? "holdout" : c.name));
     // ponytail: real clustering is failures.ts, which depends on this stage; a naive 1:1 placeholder keeps the section-4 output key populated until that slice lands.
-    const { groups: failuresGrouped, names: blockingNames } = briefGroups(checks.filter((c) => feedsFixRound(c, preRed) || (fixRounds === 0 && collateralSame.includes(c.name))), (c) => excerpts.get(c) ?? "", (c) => suites.has(c), EXCERPT_TOTAL_CAP, qs && !complete ? { prev: ctx.outputs().verify, ran: new Set(checks.map((c) => c.name)) } : undefined); // known red failing the same way as on base (or a full suite repeating those and Wall ids) never feeds a fix round; a different error does; TEN-QUALITY-01: sample = rerun cmd + redacted excerpt, 6 KB across all groups
+    const { groups: failuresGrouped, names: blockingNames } = briefGroups(checks.filter((c) => feedsFixRound(c, preRed) || (fixRounds === 0 && collateralSame.includes(c.name) && !collateralBase.includes(c.name))), (c) => excerpts.get(c) ?? "", (c) => suites.has(c), EXCERPT_TOTAL_CAP, qs && !complete ? { prev: ctx.outputs().verify, ran: new Set(checks.map((c) => c.name)) } : undefined); // known red failing the same way as on base (or a full suite repeating those and Wall ids) never feeds a fix round; a different error does; TEN-QUALITY-01: sample = rerun cmd + redacted excerpt, 6 KB across all groups
     const pub = checks.map((c) => (isHold(c) ? pubHold(c) : c)), holdoutFailed = checks.filter((c) => c.result === "fail" && isHold(c) && !preRed.names.includes(c.name)).length; // C-C4b-c: pub leaves this stage, holdoutFailed (C-C4b) is the only form in which a held-out failure reaches the fix stage
     // E-98a/E-115: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter/ruff. A-115: test configuration edits and relevant checks with more skips than base are listed, which makes the verdict PARTIAL at seal.
     const inBase = (f: string): boolean => { try { safeGit(ctx.repoDir, ["cat-file", "-e", `${ctx.baseSha}:${f}`], { stdio: "ignore" }); return true; } catch { return false; } };
@@ -596,6 +652,7 @@ export const verifyStage: Stage = {
     notProven.push(...wallDropped.map((p) => `Wall test not executed: ${p}: ${NO_RUNNER_REASON}`));
     const wallNames = new Set(wallTests.map(testCheckName)), wallRun = checks.filter((c) => wallNames.has(c.name) || isHold(c)), wallFailTail = writeWallFailureTail(ctx.runDir, checks.filter((c) => wallNames.has(c.name) && c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, out: failTails.get(c) ?? "" }))), wallPassed = wallRun.some((c) => c.result === "fail") ? false : wallRun.length > 0 && wallDropped.length === 0 && wallRun.every((c) => c.result === "pass") ? true : undefined; // the receipt's wall.passed: false on any failure, true only when every Wall and holdout check ran and passed, unset otherwise
     await settleNrd(ctx); // SPEED-NRD-OVERLAP: the differential implement started has run beside these checks; its group joins this verify's
+    if (touchedExcused.length) attr.line = [attr.line, ...touchedExcused.map((n) => `${TOUCHED_RED}: ${n}`)].filter(Boolean).join("; ") || null; // TOUCHED-BASE-RED disclosure (the receipt's baseline line)
     return { status: "completed", data: { checks: pub, flaky, verify_scope: complete ? "complete" : "quick", file_hashes: hashes, blocking_checks: blockingNames, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: [...failuresGrouped, ...nrdGroupsFor(ctx.outputs().implement, fixRounds)], holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size || depsNotes.na.length ? { not_applicable: [...[...fullNotProven].filter(naNote).map(naText), ...depsNotes.na] } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(notExcused.length ? { not_excused: notExcused } : {}), ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}), ...(preRed.sameError.length ? { known_red_same_error: preRed.sameError } : {}), ...(baseRed.length ? { base_red_checks: baseRed } : {}), skipped_on_base: preRed.zero, ...(collateralSame.length && fixRounds === 0 ? { collateral_same_error: collateralSame } : {}), ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
   },
 };

@@ -756,9 +756,13 @@ export function exitCodedId(cmd: string, out: string, repoDir = ""): string | nu
 export interface ClassifyInput { kind: "test" | "static"; ok: boolean; cut?: boolean; missing?: boolean; out: string; path?: string; runner?: "go"; exitCoded?: boolean /* FC-FULL-SUITE-EXIT-CODED-SCRIPT: the command is a plain script (isExitCodedScript), decided by exit code like a static check */ }
 export interface Classified { result: "pass" | "fail" | "not_run"; n?: number; reason?: string; count?: string }
 /** A suite that discovered nothing: a parsed 0-test count with no skip, pending or todo wording left once explicit zero counts are removed. Skipped tests are not empty discovery (a change that skips the whole suite must never read as "nothing to run"). */
+/** A go test -json line that only says a package has no test files: its "[no test files]" output event, or its package-level skip event (no "Test" key). */
+const GO_PKG_NO_TESTS = /^\{(?![^\n]*"Test":)[^\n]*"Action":"(?:skip|output)","Package":"[^"]*"(?:,"Output":"\?\s*\\t[^"]*\\t\[no test files\]\\n")?(?:,"Elapsed":[\d.]+)?\}$|^\?\s+\S+\s+\[no test files\]$/;
+const emptySubsuiteNaOnCr = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_EMPTY_SUBSUITE_NA"] ?? "").trim());
 export function emptyDiscovery(cls: Classified, out: string): boolean {
   if (cls.result !== "not_run" || cls.n !== 0 || !/\bran 0 tests\b/.test(cls.reason ?? "")) return false;
-  return !/skip|pending|todo/i.test(stripAnsi(out).replace(/\b0 (?:skipped|pending|todo)\b|\b(?:skipped|pending|todo)\W{1,3}0\b/gi, ""));
+  const text = emptySubsuiteNaOnCr() ? stripAnsi(out).split("\n").filter((l) => !GO_PKG_NO_TESTS.test(l)).join("\n") : out; // EMPTY-SUBSUITE-NA: go test -json marks a package with no test files with a package-level "skip" event, which is not a skipped test
+  return !/skip|pending|todo/i.test(stripAnsi(text).replace(/\b0 (?:skipped|pending|todo)\b|\b(?:skipped|pending|todo)\W{1,3}0\b/gi, ""));
 }
 /** classifyCheck result plus the rerun-only "flaky" verdict (TEN-QUALITY-17); kept separate so existing classifyCheck callers keep the narrow type. */
 export interface ClassifiedRerun extends Omit<Classified, "result"> { result: Classified["result"] | "flaky"; rerun?: { first: "fail"; second: "pass"; n?: number } }
@@ -1749,7 +1753,7 @@ function goAssertionFailure(out: string): boolean {
 }
 /** The errors an issue reports. observed: "Type: message" errors the issue shows as what happens now (`RuntimeError: input already opened`, also `RuntimeError('input already opened')`); an error any of whose
  *  mentions sits after should, must, expected, want, instead or the like on its line or the non-empty line above is what the issue asks for, not what it saw, and is left out. wanted: the exception types the issue asks to be raised. */
-export interface ReportedErrors { observed: string[]; wanted: string[] }
+export interface ReportedErrors { observed: string[]; wanted: string[]; observedTypes?: string[]; panics?: string[] } // observedTypes, panics: REPORTED-KIND (exception types the issue shows happening, by type alone; Go panic messages it shows)
 const WANTED_CUE = /\b(?:should|must|shall|expect(?:s|ed)?|want(?:s|ed)?|ought|needs? to|instead|would like|supposed to|to raise|will raise|rather)\b/i;
 export function reportedErrors(task: string): ReportedErrors {
   const seen = new Map<string, boolean>(), wanted = new Set<string>();
@@ -1759,7 +1763,37 @@ export function reportedErrors(task: string): ReportedErrors {
     if (msg.length < 3) continue;
     const k = `${m[1]}: ${msg}`; seen.set(k, (seen.get(k) ?? true) && !want);
   }
-  return { observed: [...seen].filter(([, ok]) => ok).map(([k]) => k), wanted: [...wanted] };
+  if (!reportedKindOn()) return { observed: [...seen].filter(([, ok]) => ok).map(([k]) => k), wanted: [...wanted] };
+  // REPORTED-KIND: an exception shown by its qualified name (`http.client.IncompleteRead`, a traceback's last line) is observed by type even when its name
+  // does not end in Error or Exception and the issue gives no exact message; a Go "panic: <message>" the issue shows is an observed panic. Neither counts after a want cue.
+  const cue = (at: number): boolean => { const ls = task.slice(0, at).split("\n"), prev = ls.slice(0, -1).reverse().find((l) => l.trim() !== "") ?? ""; return WANTED_CUE.test(`${prev}\n${ls[ls.length - 1]!}`); };
+  const types = new Map<string, boolean>(), panics = new Map<string, boolean>();
+  for (const m of task.matchAll(/(?<![\w.])((?:[a-z_][a-z0-9_]*\.)+([A-Z][A-Za-z0-9_]*))(?::[ \t]*([^\n`]{3,200}))?(?=[`:\s(]|$)/g)) {
+    const t = m[2]!, msg = (m[3] ?? "").trim().replace(/[\s.]+$/, ""), c = cue(m.index!);
+    if (msg.length >= 3 && !/\.\.\.|\u2026/.test(msg)) { const k = `${t}: ${msg}`; seen.set(k, (seen.get(k) ?? true) && !c); continue; } // a quoted, non-elided message: the exact-message rule
+    types.set(t, (types.get(t) ?? true) && !c);
+  }
+  for (const m of task.matchAll(/\bpanic: (?:runtime error: )?([^\n`\[]{8,200})/g)) { const msg = m[1]!.trim().replace(/[\s.]+$/, ""); panics.set(msg, (panics.get(msg) ?? true) && !cue(m.index!)); }
+  return { observed: [...seen].filter(([, ok]) => ok).map(([k]) => k), wanted: [...wanted], observedTypes: [...types].filter(([t, ok]) => ok && !wanted.has(t) && ![...seen.keys()].some((k) => k.startsWith(`${t}: `))).map(([t]) => t), /* a type the issue quotes with an exact message keeps the exact-message rule */ panics: [...panics].filter(([, ok]) => ok).map(([p]) => p) };
+}
+/** REPORTED-KIND: whether assertionFailure needs the failed test file's source to judge a reported error (an exact observed error, or an observed type). */
+export const reportedNeedsSource = (r: ReportedErrors): boolean => r.observed.length > 0 || (r.observedTypes?.length ?? 0) > 0;
+/** REPORTED-KIND (LOKI_E10_REPORTED_KIND, default on, =0 opts out): see reportedErrors and assertionFailure. */
+export const reportedKindOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_REPORTED_KIND"] ?? "").trim());
+/** REPORTED-KIND, go: a test that failed on the base by panicking with a message the issue shows (panics, at least 8 characters; "runtime error: " and bracketed values
+ *  ignored) and with no build or setup failure counts like an assertion. Any other panic, a build failure or a timeout still never counts. */
+export function goReportedPanic(out: string, panics: readonly string[]): boolean {
+  if (!panics.length || !goJson(out)) return false;
+  let failedTest = false, hit = false;
+  for (const x of out.split("\n")) {
+    if (!x.trim() || /^go: /.test(x)) continue;
+    let e: { Action?: string; Test?: string; Output?: string }; try { e = JSON.parse(x); } catch { return false; }
+    const o = e.Output ?? "";
+    if (/^build-/.test(e.Action ?? "") || /\[build failed\]|\[setup failed\]|test timed out|fatal error:|^# \S|\.go:\d+:\d+: (?!.*panic)/m.test(o)) return false;
+    if (e.Action === "fail" && e.Test) failedTest = true;
+    const pm = /\bpanic: (?:runtime error: )?([^\n]*)/.exec(o); if (pm) { const got = pm[1]!.replace(/\[[^\]]*\]/g, "").replace(/\s+/g, " ").trim(); if (panics.some((p) => p.length >= 8 && got.includes(p.replace(/\s+/g, " ").trim()))) hit = true; }
+  }
+  return failedTest && hit;
 }
 /** pytest: the body of each test function the base run names as failed (FAILED/SUBFAILED node ids) asserts a result against a non-trivial expected value (assertEqual and kin, or `assert a == b`
  *  with two different sides and no bare None/True/False), or expects an issue-requested exception type other than the observed one (pytest.raises / assertRaises). A bare call, a re-raise,
@@ -1794,15 +1828,49 @@ export function assertionFailure(runner: string, output: string, reported: Repor
     if (f.length === 0) return false;
     const kinds = f.every((r) => r !== "" && !r.endsWith("...")) ? f : [...out.matchAll(/^E\s+((?:assert\b|[A-Za-z_.]*(?:Error|Exception))\S*)/gm)].map((m) => m[1]!); // a narrow terminal cuts the " - reason" from the summary line, or ends it in "..." ("AssertionEr..."): read the traceback's E lines instead
     const asserted = pytestKindsAreAssertion(kinds);
-    if (asserted || reported.observed.length === 0 || !assertsResult(src, out, reported)) return asserted; // the reported-error path needs a test that asserts a result (review of #545: a bare call, a re-raise or `is not None` passed with a wrong fix)
+    const oTypes = reportedKindOn() ? reported.observedTypes ?? [] : [];
+    if (asserted || (reported.observed.length === 0 && oTypes.length === 0) || !assertsResult(src, out, reported)) return asserted; // the reported-error path needs a test that asserts a result (review of #545: a bare call, a re-raise or `is not None` passed with a wrong fix)
     const norm = (x: string): string => x.replace(/\s+/g, " ").trim().replace(/[\s.]+$/, ""), want = new Set(reported.observed.map(norm));
-    const raised = [...out.matchAll(/^E\s+((?:[A-Za-z_][\w]*\.)*[A-Za-z_]\w*(?:Error|Exception))(?::[ \t]*(.*))?$/gm)].map((m) => norm(`${m[1]!.split(".").pop()!}: ${m[2] ?? ""}`)); // E lines carry the exception and its message; a dotted module prefix is dropped
-    return raised.length > 0 && raised.some((r) => want.has(r)) && raised.every((r) => want.has(r) || /^AssertionError\b/.test(r)) && !raised.some((r) => MISSING_API.test(r)) && !kinds.some((k) => MISSING_API.test(k));
+    const raised = [...out.matchAll(reportedKindOn() ? /^E\s+((?:[A-Za-z_][\w]*\.)*[A-Za-z_]\w*(?:Error|Exception)|(?:[a-z_]\w*\.)+[A-Z]\w*)(?::[ \t]*(.*))?$/gm : /^E\s+((?:[A-Za-z_][\w]*\.)*[A-Za-z_]\w*(?:Error|Exception))(?::[ \t]*(.*))?$/gm)].map((m) => norm(`${m[1]!.split(".").pop()!}: ${m[2] ?? ""}`)); // REPORTED-KIND: a qualified exception name not ending in Error (http.client.IncompleteRead) is read too // E lines carry the exception and its message; a dotted module prefix is dropped
+    if (raised.length > 0 && raised.some((r) => want.has(r)) && raised.every((r) => want.has(r) || /^AssertionError\b/.test(r)) && !raised.some((r) => MISSING_API.test(r)) && !kinds.some((k) => MISSING_API.test(k))) return true;
+    if (!oTypes.length) return false;
+    const types = [...out.matchAll(/^E\s+((?:[A-Za-z_]\w*\.)*([A-Z]\w*))(?::|\s*$)/gm)].map((m) => m[2]!), ot = new Set(oTypes); // REPORTED-KIND: by type alone, the qualified name's last segment
+    return types.some((t) => ot.has(t)) && types.every((t) => ot.has(t) || t === "AssertionError") && !types.some((t) => MISSING_API.test(`${t}: `)) && !kinds.some((k) => MISSING_API.test(k) || MISSING_API.test(k.replace(/^(?:[a-z_]\w*\.)+/, "")));
   }
   if (runner === "vitest") return vitestErrorsAreAssertion(out);
-  if (runner === "go") return goAssertionFailure(out);
+  if (runner === "go") return goAssertionFailure(out) || (reportedKindOn() && goReportedPanic(out, reported.panics ?? []));
+  if ((runner === "node" || runner === "jest" || runner === "mocha") && assertJsOn()) return jsAssertionFailure(out);
+  if (runner === "unittest" && assertUnittestOn()) return unittestAssertionFailure(out);
   return false;
 }
+/** SPAWN-NOT-RUN (LOKI_E10_SPAWN_NOT_RUN, default on, =0 opts out): the tool a failed check could not start, or null. A wrapper that could not spawn its tool
+ *  (`uv run -- ruff`: "error: Failed to spawn: `ruff`"), a shell that could not find it (exit 127, "ruff: command not found"), or node's "spawn ruff ENOENT",
+ *  and only when that is essentially all the output (at most 6 non-empty lines), so a test that itself spawns a missing program still reads as its own failure. */
+export const spawnNotRunOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SPAWN_NOT_RUN"] ?? "").trim());
+export function spawnFailedTool(out: string, exitCode: number | null): string | null {
+  if (!spawnNotRunOn() || exitCode === 0) return null;
+  const t = stripAnsi(out), lines = t.split("\n").filter((l) => l.trim() !== "");
+  if (lines.length > 6) return null;
+  const uv = /^\s*error: Failed to spawn: `([^`]+)`/m.exec(t); if (uv) return uv[1]!;
+  const sh = exitCode === 127 ? /^(?:\S*sh: (?:line \d+: )?)?([\w.+-]+): (?:command )?not found\s*$/m.exec(t) : null; if (sh) return sh[1]!;
+  const en = /\bspawn ([\w./+-]+) ENOENT\b/.exec(t); return en ? en[1]! : null;
+}
+/** ASSERT-UNITTEST (LOKI_E10_ASSERT_UNITTEST, default on, =0 opts out): python -m unittest red by assertion. At least one FAIL: block, every FAIL: block ends in an
+ *  AssertionError (what every TestCase.assert* raises), and no ERROR: block at all (a raised exception, including an import that failed: unittest.loader._FailedTest). */
+export const assertUnittestOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_ASSERT_UNITTEST"] ?? "").trim());
+export function unittestAssertionFailure(out: string): boolean {
+  const t = stripAnsi(out);
+  if (/^ERROR: /m.test(t) || /unittest\.loader\._FailedTest|Failed to import test module/.test(t)) return false;
+  const blocks = t.split(/^={20,}\s*$/m).filter((b) => /^\s*FAIL: /.test(b));
+  return blocks.length > 0 && blocks.every((b) => /^AssertionError\b/m.test(b));
+}
+/** ASSERT-JS (LOKI_E10_ASSERT_JS, default on, =0 opts out): node:test, jest and mocha red by assertion. At least one failure is an assertion (node:assert's
+ *  AssertionError / ERR_ASSERTION, chai's AssertionError, jest's `expect(received).<matcher>` report), and none is a missing-API or load failure: a value that is
+ *  not a function or constructor, a ReferenceError, a SyntaxError, a module that cannot be found, an export that does not exist, or a suite that failed to load. */
+export const assertJsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_ASSERT_JS"] ?? "").trim());
+const JS_ASSERTED = /\bAssertionError\b|\bERR_ASSERTION\b|\bexpect\((?:received|value)\)\.\w+/;
+const JS_MISSING_API = /\bTypeError: [^\n]*\bis not a (?:function|constructor)\b|\bReferenceError: |\bSyntaxError: |Cannot find module|ERR_MODULE_NOT_FOUND|does not provide an export named|is not exported|Test suite failed to run|failureType: '(?:hookFailed|cancelledByParent)'|test failed to load/;
+export function jsAssertionFailure(out: string): boolean { const t = stripAnsi(out); return JS_ASSERTED.test(t) && !JS_MISSING_API.test(t); }
 /** The one pytest red-by-assertion rule (assertionFailure per file, features/exec_spec.ts per case): at least one failure kind is an assertion and none is a missing-API error. */
 export const pytestKindsAreAssertion = (kinds: string[]): boolean => kinds.some((k) => /^(?:assert\b|AssertionError\b)/.test(k)) && !kinds.some((k) => /^(?:Import|ModuleNotFound|Attribute|Name|UnboundLocal|Type|Syntax|Indentation)Error\b/.test(k));
 /** The one vitest red-by-assertion rule (assertionFailure per file, features/exec_spec.ts per case): every reported error is an AssertionError. */

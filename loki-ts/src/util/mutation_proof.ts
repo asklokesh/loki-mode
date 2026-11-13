@@ -1,7 +1,7 @@
 // T2 mutation proof v1: after a VERIFIED verdict, re-run the recorded Wall tests on a temporary worktree of the base
 // (pre-fix) tree. The Wall test files are applied, the fix's source changes are not. Data-only helper (D42, lives in util/ to stay out of the e10ext and features line caps): the test
 // runner is injected by seal.ts, so this file imports nothing from stages/. A "no" downgrades only under LOKI_MUTATION_STRICT=1 with a declared behavior change (seal.ts).
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
@@ -37,6 +37,22 @@ const envTimeoutS = (raw: string | undefined): number => { const n = Number(raw 
 export const DEP_DIRS = ["node_modules", ".venv", "venv"];
 const git = (cwd: string, args: string[], timeout = 30_000): { status: number } => { try { safeGit(cwd, args, { timeout }); return { status: 0 }; } catch { return { status: 1 }; } };
 
+/** PROOF-COMPILED-BUDGET (LOKI_E10_PROOF_COMPILED_BUDGET, default on, =0 opts out): a proof whose tests run on a compiled stack (go, cargo, maven, gradle, javac,
+ *  dotnet) gets MAX_TOTAL_S (40 s) by default instead of 30 s, still inside seal's 60 s limit; for go, the base worktree's test packages are compiled once
+ *  (`go test -run ^$ -count=1 ./<pkg>`, no test runs) inside that same deadline before the timed runs. It only grants time: what counts as proof is unchanged. */
+export const compiledBudgetOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PROOF_COMPILED_BUDGET"] ?? "").trim());
+const COMPILED_RUNNERS = new Set(["go", "cargo", "maven", "gradle", "javac", "dotnet"]);
+/** The proof's whole budget in seconds: the caller's timeoutS, else LOKI_MUTATION_PROOF_TIMEOUT_S, else 40 s for a compiled stack (knob on) or 30 s; never above MAX_TOTAL_S. */
+export function proofBudgetS(tests: readonly { runner: string }[], env: NodeJS.ProcessEnv = process.env, timeoutS?: number): number {
+  const explicit = timeoutS ?? (env["LOKI_MUTATION_PROOF_TIMEOUT_S"] !== undefined ? envTimeoutS(env["LOKI_MUTATION_PROOF_TIMEOUT_S"]) : undefined);
+  return Math.min(explicit ?? (compiledBudgetOn(env) && tests.some((t) => COMPILED_RUNNERS.has(t.runner)) ? MAX_TOTAL_S : envTimeoutS(undefined)), MAX_TOTAL_S);
+}
+export function warmGoBuild(wt: string, tests: readonly { runner: string; path: string }[], remaining: () => number): number {
+  const dirs = [...new Set(tests.filter((t) => t.runner === "go").map((t) => { const d = dirname(t.path); return d === "." ? "./" : `./${d}`; }))];
+  let n = 0;
+  for (const d of dirs) { const ms = remaining() - 10_000; if (ms < 2_000) break; try { spawnSync("go", ["test", "-run", "^$", "-count=1", d], { cwd: wt, timeout: ms, stdio: "ignore" }); n++; } catch { /* warming is best effort; the timed run decides */ } }
+  return n;
+}
 /** Runs the proof. Never throws; the temp worktree is removed on every path with `git worktree remove --force <exact path>`. */
 export async function mutationProof(i: MutationInput): Promise<MutationProof> {
   const rels = i.wallFiles.map((f) => (isAbsolute(f.path) ? relative(i.repoDir, f.path) : f.path));
@@ -44,7 +60,8 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
   const tests = rels.flatMap((rel) => { const c = i.checks.find((k) => k.name.endsWith(`:${rel}`)); const idx = c ? c.name.indexOf(":") : -1; return c && idx > 0 ? [{ runner: c.name.slice(0, idx), path: rel }] : []; });
   if (tests.length === 0) return np("no recorded Wall test command");
   if (tests.length !== rels.length) return np("a Wall file has no recorded test command"); // N1
-  const budgetS = Math.min(i.timeoutS ?? envTimeoutS((i.env ?? process.env)["LOKI_MUTATION_PROOF_TIMEOUT_S"]), MAX_TOTAL_S);
+  const env0 = i.env ?? process.env, compiled = compiledBudgetOn(env0) && tests.some((t) => COMPILED_RUNNERS.has(t.runner));
+  const budgetS = proofBudgetS(tests, env0, i.timeoutS); // PROOF-COMPILED-BUDGET: a compiled stack gets the whole cap by default (a cold go build of the base worktree took 32 s of a 30 s budget on go-chi/chi); an explicit budget still wins
   const deadline = Date.now() + budgetS * 1000, remaining = (): number => deadline - Date.now();
   let parent: string | null = null, wt: string | null = null, added = false;
   try {
@@ -57,6 +74,7 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
       for (const [rel, src] of srcs) { mkdirSync(dirname(join(wt as string, rel)), { recursive: true }); writeFileSync(join(wt as string, rel), typeof src === "string" ? readFileSync(src) : src); } return true; };
     // B1: the bare worktree has no installed dependencies; link each one that exists in the repo (root and every test file ancestor) so a missing package is never read as a failing test.
     for (const rel of rels) { const parts = rel.split("/").slice(0, -1); for (let n = 0; n <= parts.length; n++) { const anc = parts.slice(0, n).join("/"); for (const d of DEP_DIRS) { const src = join(i.repoDir, anc, d), dst = join(wt, anc, d); if (existsSync(src) && !existsSync(dst)) { try { symlinkSync(src, dst); } catch { /* the run decides */ } } } } }
+    if (compiled) warmGoBuild(wt, tests, remaining); // PROOF-COMPILED-BUDGET: compile the base worktree's go packages once, inside the same deadline, so the timed per-file runs reuse the build cache
     let active = tests; // the base version of an edited file runs on the pristine base before any overlay
     const bmp = new Set(i.baseMustPass ?? []);
     if (bmp.size > 0) {

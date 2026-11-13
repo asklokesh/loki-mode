@@ -82,7 +82,8 @@
 #  18. verify.ts errorsById: keep one error line per id (last wins) instead of the sorted multiset; or let a FAIL line take the
 #      next FAIL line as its error; the delivery check fails (the test.each regression reads as the same error).
 #  19. verify.ts attribute call: pass `suite` without the preRed.sameError gate (ids only); mono3 unnamed is delivered with p1 excused.
-#  20. verify.ts: excuse collateral same-error checks at once (no fix round first); mono3 same runs 0 fix rounds.
+#  20. verify.ts: with LOKI_E10_COLLATERAL_BASELINE=0, excuse collateral same-error checks at once (no fix round first); mono3 same0 runs 0 fix rounds.
+#  20f. repo_profile.ts collateralOnBaseline: return true whenever the test file is unedited (no baseline comparison); mono3 changed is delivered with p1 excused.
 #  20b. machine.ts: drop the onlyCollateralRed re-verify; mono3 conflict ends SPEC_CONFLICT.
 #  20c. verify.ts collateralSame: take preRed.knownRed (ids only) instead of sameError; mono3 changed is delivered with p1 excused.
 #  20d. repo_profile.ts attributeFullSuite: drop sameAsBase (ids only); real vitest p8 is delivered (both versions).
@@ -596,7 +597,7 @@ for i in 1 2 3 4; do
 done
 git -C "$M3" init -q -b main && git -C "$M3" config user.name rs && git -C "$M3" config user.email rs@example.invalid
 git -C "$M3" add -A . && git -C "$M3" commit -q -m base
-for leg in same conflict changed unnamed; do cp -R "$M3" "$T/mono3-$leg"; done
+for leg in same same0 conflict changed unnamed; do cp -R "$M3" "$T/mono3-$leg"; done
 m3() { # m3 <leg> <task> <snippet> [VAR=value...]: one run, then one summary line per fact
     local leg="$1" task="$2" snip="$3"; shift 3
     local d="$T/mono3-$leg"
@@ -621,9 +622,13 @@ PY
 }
 got() { printf '%s\n' "$M3S" | grep -qx "$1"; }
 m3 same "$NAMED" 'export const del = (p: string): string => `DELETE ${p}`;'
-got 'fix_rounds 1' && got 'pre_red p1,p2' && got 'capped p1,p2' && got 'verdict PARTIAL' && printf '%s\n' "$M3OUT" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' \
-    && ok "mono3 same: base-red page tests that import the named api.ts feed one fix round, then are pre-existing; delivered PARTIAL naming them (rc $M3RC)" \
+got 'fix_rounds 0' && got 'pre_red p1,p2' && got 'capped ' && got 'verdict PARTIAL' && printf '%s\n' "$M3OUT" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' \
+    && ok "mono3 same (COLLATERAL-BASELINE on): base-red page tests that import the named api.ts, unedited with their paired pages unchanged and equal to the intake baseline, are pre-existing at once: no fix round, no COLLATERAL_RED cap (rc $M3RC)" \
     || { bad "mono3 same: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
+m3 same0 "$NAMED" 'export const del = (p: string): string => `DELETE ${p}`;' LOKI_E10_COLLATERAL_BASELINE=0
+got 'fix_rounds 1' && got 'pre_red p1,p2' && got 'capped p1,p2' && got 'verdict PARTIAL' && printf '%s\n' "$M3OUT" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' \
+    && ok "mono3 same0 (LOKI_E10_COLLATERAL_BASELINE=0): the same tests feed one fix round, then are pre-existing; delivered PARTIAL naming them as capped (rc $M3RC)" \
+    || { bad "mono3 same0: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
 m3 conflict "$NAMED" 'export const del = (p: string): string => `DELETE ${p}`;' E2E_STUB_FIX=conflict
 got 'pre_red p1,p2' && got 'verdict PARTIAL' && ok "mono3 conflict: a fix-round conflict over those same failures is re-verified and delivered PARTIAL, not SPEC_CONFLICT (rc $M3RC)" \
     || { bad "mono3 conflict: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }

@@ -293,11 +293,14 @@ export const commandProfilePath = (repoDir: string): string => join(repoDir, ".l
 export const BASELINE_CMD_TIMEOUT_S = 300;
 /** A cut entry measured with a shorter budget than the current one is measured again; one cut at the current budget is kept (a hanging suite is not re-run for 5 minutes every time). */
 /** A baseline command never gets more than a third of the run's overall cap. */
-/** R3 LOKI_E10_INTAKE_CAP_S (default 180; =0/off restores the per-command caps alone): one budget, in seconds, for all of intake's baseline test runs together (the root
+/** R3 LOKI_E10_INTAKE_CAP_S (opt-in since acc-148: unset, 0 or off keeps the per-command caps alone; a positive number of seconds enables it): one budget for all of intake's baseline test runs together (the root
  *  baseline, its rerun after an install, and the per-suite baselines). Before it, a suite that ran past the 300 s per-command cap was measured twice under two names, so
  *  intake spent 600 s on two cut-off runs that excuse nothing. A run cut by the budget is recorded as cut off, as before. The dependency install keeps its own cap. */
-export const INTAKE_CAP_DEFAULT_S = 180;
-export const intakeCapS = (env: NodeJS.ProcessEnv = process.env): number | null => { const v = (env.LOKI_E10_INTAKE_CAP_S ?? "").trim(); if (/^(0|off|false|no)$/i.test(v)) return null; const n = Number(v); return v !== "" && Number.isFinite(n) && n > 0 ? Math.floor(n) : INTAKE_CAP_DEFAULT_S; };
+/** acc-148: off by default. The shared budget had no measured accuracy benefit and cut 6 of 65 past baselines (a complete 196 s gitea suite among them); a cut
+ *  baseline is unattributable base red. When it is on and cuts a baseline, intakeBudgetNote prints one line ("loki: intake budget spent after N s ...") so runs can be counted. */
+export const intakeCapS = (env: NodeJS.ProcessEnv = process.env): number | null => { const v = (env.LOKI_E10_INTAKE_CAP_S ?? "").trim(); const n = Number(v); return v !== "" && Number.isFinite(n) && n > 0 ? Math.floor(n) : null; };
+export const INTAKE_BUDGET_LINE = "loki: intake budget spent after";
+export function intakeBudgetNote(spentS: number, what: string): void { try { process.stderr.write(`${INTAKE_BUDGET_LINE} ${Math.round(spentS)} s (LOKI_E10_INTAKE_CAP_S): ${what}\n`); } catch { /* a note, never a reason to stop */ } }
 export const baselineCmdS = (capS: number | undefined): number => Math.max(1, Math.min(BASELINE_CMD_TIMEOUT_S, Math.floor((capS ?? Infinity) / 3)));
 const cutShort = (b: { timed_out: boolean; duration_s: number | null } | undefined, tmoS: number): boolean => !!b?.timed_out && (b.duration_s ?? 0) < tmoS - 1;
 export const MANIFESTS = ["requirements.txt", "package.json", "Makefile", "makefile", "GNUmakefile", "pyproject.toml", "tox.ini", "pytest.ini", "setup.cfg", "go.mod", "Cargo.toml", "tsconfig.json"];
@@ -573,7 +576,7 @@ export const SUITE_BASELINE_BUDGET_S = 300;
  *  profile ensureProfile wrote for this HEAD. An entry for the same command is reused unless `rerun` (a dependency install succeeded
  *  since, so a baseline measured before it is stale: the main baseline and every entry are re-run, attributable or not). A root command the main baseline already ran is not run twice. One shared
  *  budget; a suite past it is recorded not run, so nothing it fails is excused (fail-closed). Never throws: null when there is no current profile. */
-export function baselineSuites(repoDir: string, specs: { name: string; cmd: string; cwd: string; run: string }[], opts: BuildOpts & { rerun?: boolean; budgetS?: number; deadlineMs?: number } = {}): CommandProfile | null {
+export function baselineSuites(repoDir: string, specs: { name: string; cmd: string; cwd: string; run: string }[], opts: BuildOpts & { rerun?: boolean; budgetS?: number; deadlineMs?: number; budgetSpentS?: number } = {}): CommandProfile | null {
   try {
     const p = loadProfile(repoDir);
     if (!p || p.revision !== headOf(repoDir)) return null;
@@ -586,8 +589,9 @@ export function baselineSuites(repoDir: string, specs: { name: string; cmd: stri
       const prev = old.find((o) => o.command === s.cmd);
       if (prev?.ran && !opts.rerun && !cutShort(prev, Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, Math.floor(left))) && (prev.failing_ids.length === 0 || (prev.failing_errors && prev.flaky_probe !== undefined))) return prev; // an entry recorded before failing_errors existed is measured again
       const tmo = Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, Math.floor(left)), t0 = Date.now();
-      if (tmo < 1) return { name: s.name, ran: false, command: s.cmd, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: "baseline budget used up" };
+      if (tmo < 1) { if (opts.deadlineMs !== undefined) intakeBudgetNote((opts.budgetSpentS ?? 0) + (opts.budgetS ?? SUITE_BASELINE_BUDGET_S) - left, `${s.name} not measured on base`); return { name: s.name, ran: false, command: s.cmd, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: "baseline budget used up" }; }
       const { b } = runProbed(repoDir, s.run, join(repoDir, s.cwd), tmo, opts);
+      if (b.timed_out && opts.deadlineMs !== undefined && tmo < (opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S)) intakeBudgetNote((opts.budgetSpentS ?? 0) + (opts.budgetS ?? SUITE_BASELINE_BUDGET_S) - left + tmo, `${s.name} cut off on base after ${tmo} s`);
       left -= (Date.now() - t0) / 1000;
       return { name: s.name, ...b, command: s.cmd };
     });
@@ -725,14 +729,14 @@ export function sameUnattributableRed(repoDir: string, baseSha: string, full: Fu
   }).map((c) => c.name);
 }
 export const SAME_RED_NOTE = "excused as red on base in the identical kind (same command, same exit code, the same unparseable output shape; no failing id could be compared)";
-export function attributeFullSuite(repoDir: string, baseSha: string, full: FullCheck[], blocked: string[], changed: string[], symbols: readonly string[] = []): Attribution {
+export function attributeFullSuite(repoDir: string, baseSha: string, full: FullCheck[], blocked: string[], changed: string[], symbols: readonly string[] = [], shownIds: ReadonlySet<string> = new Set()): Attribution {
   const same = sameUnattributableRed(repoDir, baseSha, full);
-  const res = attributeFullSuiteById(repoDir, baseSha, same.length ? full.filter((c) => !same.includes(c.name)) : full, blocked, changed, symbols);
+  const res = attributeFullSuiteById(repoDir, baseSha, same.length ? full.filter((c) => !same.includes(c.name)) : full, blocked, changed, symbols, shownIds);
   if (!same.length) return res;
   const note = full.filter((c) => same.includes(c.name)).map((c) => `NOT PROVEN: "${c.cmd}" was ${SAME_RED_NOTE}`).join("; ");
   return { ...res, preExistingChecks: [...res.preExistingChecks, ...same], introducedChecks: res.introducedChecks.filter((n) => !same.includes(n)), line: [res.line, note].filter(Boolean).join("; ") };
 }
-function attributeFullSuiteById(repoDir: string, baseSha: string, full: FullCheck[], blocked: string[], changed: string[], symbols: readonly string[] = []): Attribution {
+function attributeFullSuiteById(repoDir: string, baseSha: string, full: FullCheck[], blocked: string[], changed: string[], symbols: readonly string[] = [], shownIds: ReadonlySet<string> = new Set()): Attribution { // shownIds: TOUCHED-BASE-RED ids an edited file's own run showed red on base with the same error; only they may name that changed file here
   const bad = full.filter((c) => c.result === "fail"), none: Attribution = { preExistingChecks: [], preExistingIds: [], introducedChecks: bad.map((c) => c.name), line: null }, p = loadProfile(repoDir);
   if (!bad.length || !p || p.revision !== baseSha) return none;
   const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran), of = (cmd: string) => baseFor(repoDir, p, cmd, true);
@@ -746,7 +750,7 @@ function attributeFullSuiteById(repoDir: string, baseSha: string, full: FullChec
     /* a flaky id, or any id of a suite red at base, whose head error text names a file the change edited is the change's own failure, whatever the id */ errNamesChanged = (c: (typeof bad)[number]): boolean => { const fl = new Set(of(c.cmd)?.flaky_ids ?? []), all = massive(c.cmd), keys = Object.keys(c.errors ?? {}).filter((k) => all || [...fl].some((i) => k === i || k.endsWith(` > ${i}`))); return keys.some((k) => (c.errors?.[k] ?? []).some((l) => changed.some((f) => l.includes(f)))); };
   if (known.size === 0) return none;
   const unproven = [...new Set(bad.flatMap((c) => c.ids ?? []).filter((i) => !i.includes("::") && goIdTouched(repoDir, i, changed)))];
-  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && (sameAsBase(c) || quietAsBase(c)) && !errNamesChanged(c) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => idNamesFile(i, f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
+  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && (sameAsBase(c) || quietAsBase(c)) && !errNamesChanged(c) && (c.ids ?? []).every((i) => !block.has(i) && (shownIds.has(i) || !changed.some((f) => idNamesFile(i, f))) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
   const rust = (cargoTouched(changed) ? bad : []).map((c) => `NOT PROVEN: ${c.name} may run cargo tests and the diff edits Rust source or a manifest; cargo test ids carry no crate path, so a failure cannot be shown pre-existing`);
   const red = res.preExistingChecks.length ? bad.filter((c) => res.preExistingChecks.includes(c.name) && massive(c.cmd)) : [], redLine = red.map((c) => `NOT PROVEN: suite red at base (${of(c.cmd)!.failing_ids.length} failing ids) for "${c.cmd}": it is compared per id, never blocks and proves nothing about this change`).join("; ");
   if (redLine) res.line = [res.line, redLine].filter(Boolean).join("; ");
@@ -761,7 +765,40 @@ function attributeFullSuiteById(repoDir: string, baseSha: string, full: FullChec
 
 /** One line per failing full-suite check that attributeFullSuite did not excuse, saying which rule kept it blocking (so a receipt never shows an unexplained red suite).
  *  Same inputs and the same profile as attributeFullSuite; `excused` is its preExistingChecks. */
-export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: FullCheck[], changed: string[], excused: string[], blocked: readonly string[] = []): string[] {
+/** TOUCHED-BASE-RED (LOKI_E10_TOUCHED_BASE_RED, default on, =0 opts out): a test file the diff edited is red on base by every failing id when each comparable
+ *  failing id is red in the intake profile of exactly this base commit (any attributable, complete run) with the same error lines (sameErrors), and no
+ *  failing id is a case the diff added or whose body it edited (`editedTitles`). FireLater#24: one assertion was added to Sidebar.test.tsx, whose 19 tests
+ *  were already red; after the edit the same 19 failed and the added case passed. A previously green id that now fails, a new error under an old id, a
+ *  failing added or edited case, a missing or other-commit profile, or a check with no parsed ids or errors is never excused. */
+export const touchedBaseRedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TOUCHED_BASE_RED"] ?? "").trim());
+export function touchedRedOnBase(repoDir: string, baseSha: string, c: { ids?: string[]; errors?: Map<string, string[]> }, editedTitles: readonly string[]): boolean {
+  if (!touchedBaseRedOn()) return false;
+  const p = loadProfile(repoDir); if (!p || p.revision !== baseSha) return false;
+  const ids = comparableIds(c.ids ?? []); if (ids.length === 0 || !c.errors) return false;
+  if (ids.some((i) => editedTitles.some((t) => t.length > 0 && (i === t || i.endsWith(` > ${t}`))))) return false;
+  return redOnBaseProfile(p, ids, c.errors);
+}
+/** Every comparable id is red in an attributable, complete run of the profile with the same error lines (sameErrors). */
+function redOnBaseProfile(p: CommandProfile, ids: readonly string[], errors: Map<string, string[]>): boolean {
+  const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran && b.attributable && !b.timed_out && b.reason !== "baseline budget used up");
+  const baseIds = new Set(runs.flatMap((b) => b.failing_ids)), baseErr = new Map<string, string[]>();
+  for (const b of runs) for (const [k, v] of Object.entries(b.failing_errors ?? {})) if (!baseErr.has(k)) baseErr.set(k, v);
+  return ids.length > 0 && ids.every((i) => baseIds.has(i) || [...baseIds].some((b) => b.endsWith(` > ${i}`))) && sameErrors(errors, baseErr, [...ids]);
+}
+/** COLLATERAL-BASELINE (LOKI_E10_COLLATERAL_BASELINE, default on, =0 opts out): a collateral check (a relevant test that is not the task's own) is pre-existing at once,
+ *  with no COLLATERAL_RED cap and no fix round, only when its test file is unedited, no changed file is its path-paired source (the same stem in the test's
+ *  directory, or in the parent of its __tests__, tests or test directory), and every comparable failing id with its error lines equals this base commit's
+ *  intake profile (redOnBaseProfile). A paired source the diff changed, a new failing id, or the same id with another error keeps the cap. */
+export const collateralBaselineOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_COLLATERAL_BASELINE"] ?? "").trim());
+export function collateralOnBaseline(repoDir: string, baseSha: string, test: string, c: { ids?: string[]; errors?: Map<string, string[]> }, changed: readonly string[], stem: string): boolean {
+  if (!collateralBaselineOn() || changed.includes(test)) return false;
+  const td = test.includes("/") ? test.slice(0, test.lastIndexOf("/")) : ".", sd = /(?:^|\/)(?:__tests__|tests|test)$/.test(td) ? (td.includes("/") ? td.slice(0, td.lastIndexOf("/")) : ".") : td;
+  if (changed.some((f) => { const fd = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "."; return (fd === sd || fd === td) && f.slice(f.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "") === stem; })) return false;
+  const p = loadProfile(repoDir); if (!p || p.revision !== baseSha || !c.errors) return false;
+  return redOnBaseProfile(p, comparableIds(c.ids ?? []), c.errors);
+}
+export const TOUCHED_RED = "edited test file red on base by every failing id with the same errors; the cases the change added or edited pass (excused, not blocking)";
+export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: FullCheck[], changed: string[], excused: string[], blocked: readonly string[] = [], shownIds: ReadonlySet<string> = new Set()): string[] {
   const p = loadProfile(repoDir), out: string[] = [];
   for (const c of full.filter((x) => x.result === "fail" && !excused.includes(x.name))) {
     const why = (r: string): void => { out.push(`not excused: ${c.name} (\`${c.cmd}\`): ${r}`); }, b = p ? baseFor(repoDir, p, c.cmd, true) : undefined, b0 = p ? baseFor(repoDir, p, c.cmd, false) : undefined, cutB = b0 && (b0.timed_out || b0.reason === "baseline budget used up") ? b0 : undefined;
@@ -772,7 +809,7 @@ export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: F
     if (!b.attributable) { why(`the base run is not attributable (${b.reason ?? "no failing ids parsed"})${baseRedShapeOn() ? `; BASE-RED-SHAPE: exit base ${b.exit_code} head ${c.exit ?? "unknown"}, shape ${!b.failing_shape ? "not recorded on base" : !c.shape ? "absent on head (ids parsed)" : b.failing_shape === c.shape ? "same" : "differs"}` : ""}`); continue; } // BASE-RED-SHAPE marker: why the identical-kind rule did not excuse it
     if (!c.ids?.length) { why("its failing ids could not be parsed from the output, so nothing can be compared"); continue; }
     if (cargoTouched(changed)) { why("the diff edits Rust source or a manifest and cargo ids carry no crate path"); continue; }
-    const known = new Set([...b.failing_ids, ...(b.flaky_ids ?? [])]), fresh = comparableIds(c.ids).filter((i) => !known.has(i)), inChanged = c.ids.filter((i) => changed.some((f) => i.includes(f)) || goIdTouched(repoDir, i, changed));
+    const known = new Set([...b.failing_ids, ...(b.flaky_ids ?? [])]), fresh = comparableIds(c.ids).filter((i) => !known.has(i)), inChanged = c.ids.filter((i) => (!shownIds.has(i) && changed.some((f) => idNamesFile(i, f))) || goIdTouched(repoDir, i, changed)); // ID-PKG-RELATIVE: the same rule attributeFullSuite uses
     if (inChanged.length) { why(`${inChanged.length} failing id(s) name a changed file (first: ${inChanged[0]})`); continue; }
     if (fresh.length) { why(`${fresh.length} failing id(s) were not red on base (first: ${fresh[0]})`); continue; }
     // fl24: FireLater#24 read "error text differs" when the text was identical: 146 of its ids also failed in 22 targeted checks that were not excused.
