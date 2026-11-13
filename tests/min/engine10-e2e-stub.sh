@@ -53,6 +53,7 @@
 #   16. supervisor.ts: do not export the default pin (the default leg reads the provider default and no --model).
 #   17. seal.ts: drop model_source (every default-model leg reads absent).
 #   18. claude_model.ts chooseSessionModel: ignore LOKI_DEFAULT_SESSION_MODEL=provider (the provider leg reads sonnet).
+#   20. claude_model.ts chooseSessionModel: drop the LOKI_ROUTER check (the router leg reads source default; auto-route.sh's small, hard, wall legs run on sonnet).
 #   19. claude_model.ts DEFAULT_SESSION_MODEL changed to haiku without autonomy/route.sh (the newcomer-path acc-156 route leg reads ts haiku, route sonnet).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -163,9 +164,9 @@ c = re.search(r", model (.*?)(?:; |$)", start)
 print("~".join([str(rec.get("model")), rec.get("model_source", "absent"), m.group(1) if m else "none", c.group(1) if c else "noclause"]))
 PY
 }
-for leg in "default||" "flag|--session-model haiku|" "env||LOKI_MODEL_DEVELOPMENT=haiku" "provider||LOKI_DEFAULT_SESSION_MODEL=provider" "pinned||LOKI_DEFAULT_SESSION_MODEL=haiku"; do
+for leg in "default||" "flag|--session-model haiku|" "env||LOKI_MODEL_DEVELOPMENT=haiku" "provider||LOKI_DEFAULT_SESSION_MODEL=provider" "pinned||LOKI_DEFAULT_SESSION_MODEL=haiku" "router||LOKI_ROUTER=auto"; do
     IFS='|' read -r dm_name dm_flag dm_env <<< "$leg"; rm -f "$T/dm-argv.log"
-    unset LOKI_SESSION_MODEL LOKI_SESSION_MODEL_SOURCE LOKI_MODEL_DEVELOPMENT LOKI_CLAUDE_MODEL_DEVELOPMENT LOKI_DEFAULT_SESSION_MODEL
+    unset LOKI_SESSION_MODEL LOKI_SESSION_MODEL_SOURCE LOKI_MODEL_DEVELOPMENT LOKI_CLAUDE_MODEL_DEVELOPMENT LOKI_DEFAULT_SESSION_MODEL LOKI_ROUTER
     export E2E_STUB_ARGV_LOG="$T/dm-argv.log"; if [ -n "$dm_env" ]; then export "${dm_env?}"; fi
     # shellcheck disable=SC2086 # dm_flag is a flag and its value
     if [ -n "$dm_flag" ]; then E2E_VERB=start run_engine done $dm_flag; else run_engine done; fi
@@ -177,6 +178,7 @@ for leg in "default||" "flag|--session-model haiku|" "env||LOKI_MODEL_DEVELOPMEN
         "env:haiku~explicit~haiku~haiku (LOKI_MODEL_DEVELOPMENT)") ok "default model: LOKI_MODEL_DEVELOPMENT wins over the default (receipt explicit)" ;;
         "provider:claude (provider default)~provider~none~claude (provider default) (LOKI_DEFAULT_SESSION_MODEL=provider"*) ok "default model: LOKI_DEFAULT_SESSION_MODEL=provider restores the CLI default (no --model passed)" ;;
         "pinned:haiku~default~haiku~haiku (LOKI_DEFAULT_SESSION_MODEL=haiku)") ok "default model: LOKI_DEFAULT_SESSION_MODEL=haiku changes the default (receipt default)" ;;
+        "router:"*"~explicit~"*"(LOKI_ROUTER=auto)") ok "default model: the model router (LOKI_ROUTER=auto) is a model choice, so no default pin overrides its per-unit models" ;;
         *) bad "default model leg $dm_name: facts '$DM' (rc $RC)"; printf '%s\n' "$OUT" | grep -m3 "^Loki 10 engine\|engine10:\|rror" | sed 's/^/    | /' ;;
     esac
 done

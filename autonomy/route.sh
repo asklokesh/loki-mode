@@ -338,6 +338,7 @@ $(loki_removed_saved_provider_hint "$R_PROVIDER")"
     elif [ "$R_PROVIDER" = "claude" ]; then
         # acc-156: no model named, so engine10 pins its default (DEFAULT_SESSION_MODEL in loki-ts/src/util/claude_model.ts; tests/min/newcomer-path.sh checks the two agree)
         local _dsm; _dsm="$(printf '%s' "${LOKI_DEFAULT_SESSION_MODEL:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+        case "$(printf '%s' "${LOKI_ROUTER:-}" | tr '[:upper:]' '[:lower:]')" in 1|true|on|auto) _dsm=provider ;; esac # the router picks per unit (claude_model.ts chooseSessionModel)
         case "$_dsm" in
             provider) R_MODEL="claude (provider default)" ;;
             "") R_MODEL="sonnet (Loki default)" ;;

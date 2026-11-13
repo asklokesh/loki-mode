@@ -153,7 +153,7 @@ export const DEFAULT_SESSION_MODEL = "sonnet";
 export const EXPLICIT_MODEL_ENV = ["LOKI_SESSION_MODEL", "LOKI_MODEL_OVERRIDE", "LOKI_MODEL_ROUTE", "LOKI_MODEL_DEVELOPMENT", "LOKI_MODEL_PLANNING", "LOKI_MODEL_FAST", "LOKI_CLAUDE_MODEL_DEVELOPMENT", "LOKI_CLAUDE_MODEL_PLANNING", "LOKI_CLAUDE_MODEL_FAST"] as const;
 export interface SessionModelChoice { source: "explicit" | "default" | "provider"; pin: string | null; why: string }
 /**
- * Which model a claude run starts with, and why. An explicit --session-model (bin/loki exports it as LOKI_SESSION_MODEL) or any EXPLICIT_MODEL_ENV var wins;
+ * Which model a claude run starts with, and why. An explicit --session-model (bin/loki exports it as LOKI_SESSION_MODEL), any EXPLICIT_MODEL_ENV var, or the model router being on wins;
  * else LOKI_DEFAULT_SESSION_MODEL (a session pin value, or "provider" for the CLI's own default, the pre-acc-156 behavior), else DEFAULT_SESSION_MODEL.
  * pin is the LOKI_SESSION_MODEL value to export when source is "default", so the default run is exactly a `--session-model <pin>` run. Throws on an unknown value.
  */
@@ -162,6 +162,8 @@ export function chooseSessionModel(e: NodeJS.ProcessEnv = process.env): SessionM
   if (e["LOKI_SESSION_MODEL_SOURCE"] === "default" && carried && EXPLICIT_MODEL_ENV.every((k) => k === "LOKI_SESSION_MODEL" || (e[k] ?? "").trim() === "")) return { source: "default", pin: carried, why: "Loki default, carried from the parent run" };
   const named = EXPLICIT_MODEL_ENV.find((k) => (e[k] ?? "").trim() !== "");
   if (named) return { source: "explicit", pin: null, why: named === "LOKI_SESSION_MODEL" ? "--session-model or LOKI_SESSION_MODEL" : named };
+  const router = (e["LOKI_ROUTER"] ?? "").trim().toLowerCase(); // the model router (LOKI_ROUTER=on|auto, also --haiku and --cost lean) picks each unit's model itself; a pin would switch it off
+  if (["1", "true", "on", "auto"].includes(router)) return { source: "explicit", pin: null, why: `LOKI_ROUTER=${router}` };
   const raw = (e["LOKI_DEFAULT_SESSION_MODEL"] ?? "").trim().toLowerCase();
   if (raw === "provider") return { source: "provider", pin: null, why: "LOKI_DEFAULT_SESSION_MODEL=provider (the Claude CLI's own default)" };
   const pin = canonicalSessionPin(raw || DEFAULT_SESSION_MODEL)!;
