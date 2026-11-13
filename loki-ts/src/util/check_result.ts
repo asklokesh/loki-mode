@@ -849,23 +849,51 @@ const declNames = (line: string): string[] => {
 };
 /** Names a `git diff -U0` declares or modifies: declarations on added lines, plus the hunk's enclosing declaration (the @@ context) when the hunk removes code or declares nothing itself.
  *  HONEST-VERIFIED: a removed line that is blank, comment-only, or re-added verbatim (a trailing-newline fix) removes no code, so it never credits the enclosing declaration; otherwise a test of the neighbouring function would hide an unexercised new one. */
-export function changedSymbols(diffU0: string): string[] {
+export function changedSymbols(diffU0: string, readNew?: (path: string) => string | null): string[] {
   const out = new Set<string>();
-  let ctx = "", added: string[] = [], removed: string[] = [];
+  let ctx = "", added: string[] = [], removed: string[] = [], path = "", at = -1;
+  const lines = new Map<string, string[] | null>(), fileLines = (p: string): string[] | null => { if (!lines.has(p)) { let t: string | null = null; try { t = readNew?.(p) ?? null; } catch { t = null; } lines.set(p, t === null ? null : t.split("\n")); } return lines.get(p)!; };
   const flush = (): void => {
     const own = stripComments(added.join("\n")).split("\n").flatMap(declNames); // strip over the whole hunk: a block comment can span added lines
     for (const n of own) out.add(n);
     const kept = new Set(added.map((l) => l.trim())), removedCode = stripComments(removed.filter((l) => !kept.has(l.trim())).join("\n")).trim() !== "";
-    if (removedCode || own.length === 0) for (const n of declNames(ctx)) out.add(n);
+    if (removedCode || own.length === 0) { const names = declNames(ctx); for (const n of names) out.add(n); if (names.length === 0 && (added.length > 0 || removed.length > 0) && readNew && enclosingDeclOn() && path && at >= 0) { const fl = fileLines(path); if (fl) for (const n of enclosingDecl(fl, at)) out.add(n); } } // ENCLOSING-DECL: git's @@ context is the last unindented line, so an edit inside an indented method (JS/TS has no built-in git driver) gets a template-literal or blank context and named nothing; the head file's enclosing declaration names it instead
     added = []; removed = [];
   };
   for (const line of diffU0.split("\n")) {
-    if (line.startsWith("@@")) { flush(); ctx = line.replace(/^@@[^@]*@@\s?/, ""); }
+    if (line.startsWith("+++ ")) { flush(); path = line.startsWith("+++ b/") ? line.slice(6) : ""; at = -1; }
+    else if (line.startsWith("@@")) { flush(); ctx = line.replace(/^@@[^@]*@@\s?/, ""); const h = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line); at = h ? Math.max(0, Number(h[1]) - 1) : -1; } // the hunk's first new line, or for a pure deletion (+c,0) the line before it
     else if (line.startsWith("+") && !line.startsWith("+++")) added.push(line.slice(1));
     else if (line.startsWith("-") && !line.startsWith("---")) removed.push(line.slice(1));
   }
   flush();
   return [...out];
+}
+/** BASE-RED-SHAPE (LOKI_E10_BASE_RED_SHAPE, default on, =0 off): a red suite whose failing ids cannot be parsed is compared by the shape of its whole
+ *  output instead: ANSI already stripped, trailing space and blank lines dropped, and only time-like tokens (durations, clock times, timestamps, hex
+ *  addresses) normalized. Counts, names and messages stay, so a new failing test, a changed message or a new count gives a different shape. */
+export const baseRedShapeOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BASE_RED_SHAPE"] ?? "").trim());
+export function failureShape(out: string): string {
+  const norm = out.split("\n").map((l) => l.replace(/\s+$/, "").replace(/\b\d{4}-\d{2}-\d{2}[T ][\d:._,]+Z?/g, "<ts>").replace(/\b\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?\b/g, "<clock>").replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|sec|secs|seconds|m|min)\b/g, "<t>").replace(/\b0x[0-9a-f]{4,}\b/gi, "<hex>")).filter((l) => l !== "");
+  return createHash("sha256").update(norm.join("\n")).digest("hex");
+}
+/** ENCLOSING-DECL knob: LOKI_E10_ENCLOSING_DECL (default on, =0 opts out) turns the head-file fallback in changedSymbols off. */
+export const enclosingDeclOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_ENCLOSING_DECL"] ?? "").trim());
+/** ENCLOSING-DECL: the names declared by the nearest line above `at` (0-based, in the new file) that is less indented than the code at `at` and
+ *  declares something (a method, function, class, def, fn...). Lines indented at or beyond the current level are skipped; a less-indented line
+ *  that declares nothing (an if or a loop) lowers the level and the walk continues. [] at column 0 or when nothing encloses the line. */
+export function enclosingDecl(lines: readonly string[], at: number): string[] {
+  const indent = (l: string): number => /^[ \t]*/.exec(l)![0].replace(/\t/g, "    ").length;
+  let i = Math.min(at, lines.length - 1);
+  while (i >= 0 && lines[i]!.trim() === "") i--;
+  if (i < 0) return [];
+  let level = indent(lines[i]!);
+  for (let j = i - 1; j >= 0 && level > 0; j--) {
+    const l = lines[j]!; if (l.trim() === "" || indent(l) >= level) continue;
+    const names = declNames(l); if (names.length > 0) return names;
+    level = indent(l);
+  }
+  return [];
 }
 /** Go methods that satisfy a standard interface and are called by the library, rarely by name in a test: Error/String/GoString/Format always; Unwrap/Is/As only
  *  on a type that also has Error (an error type); Len/Less/Swap only on a type that has all three (sort.Interface); Push/Pop only on a sort.Interface type

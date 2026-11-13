@@ -38,11 +38,14 @@ const TOOLCHAINS: readonly (readonly [RegExp, RunnerName, RegExp])[] = [[/(?:^|\
 const toolchainRunner = (files: readonly string[], focus: readonly string[] = []): RunnerName[] => { const el = TOOLCHAINS.filter(([m]) => files.some((f) => m.test(f))), votes = (t: (typeof TOOLCHAINS)[number]): number => focus.filter((f) => t[2].test(f)).length; return el.length ? [el.reduce((b, t) => (votes(t) > votes(b) ? t : b))[1]] : []; };
 const readText = (p: string): string => { try { return readFileSync(p, "utf8"); } catch { return ""; } };
 const normalizeRel = (raw: string): string => raw.split(sep).join("/").replace(/^\.\//, "");
+/** EVIDENCE-PER-PACKAGE (LOKI_E10_EVIDENCE_PER_PACKAGE, default on, =0 opts out): package scoping reads every file that proves a runner, not only the first one listed. */
+export const evidencePerPackageOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_EVIDENCE_PER_PACKAGE"] ?? "").trim());
 /** Synchronous core: scans `root`, returns the full detected map. `detect()` on TestMapProviderImpl just wraps this in a Promise per the interface. */
 export function buildTestMap(root: string): EngineTestMap {
   const files = listProjectFiles(root);
   const evidence: Partial<Record<RunnerName, string>> = {};
-  const mark = (r: RunnerName, file: string): void => { if (!(r in evidence)) evidence[r] = file; };
+  const marks: [RunnerName, string][] = []; // every proving file, per runner: package scoping reads all of them (EVIDENCE-PER-PACKAGE)
+  const mark = (r: RunnerName, file: string): void => { marks.push([r, file]); if (!(r in evidence)) evidence[r] = file; };
   const jsText = new Map<string, string>();
   const api = loadProjectApi(root);
   for (const rel of files) {
@@ -66,7 +69,7 @@ export function buildTestMap(root: string): EngineTestMap {
     else if (DOTNET_MANIFEST_RE.test(name)) mark("dotnet", rel);
     else if (/^(?:build|settings)\.gradle(?:\.kts)?$/.test(name) || name === "gradlew") mark("gradle", rel);
   }
-  const { ownerRoot, packageRunners } = scopeRunnersByPackage(files, evidence, jsText, api, RUNNER_ORDER, (rel) => readText(join(root, rel))); // #233: runners per owning package
+  const { ownerRoot, packageRunners } = scopeRunnersByPackage(files, evidence, jsText, api, RUNNER_ORDER, (rel) => readText(join(root, rel)), evidencePerPackageOn() ? marks : undefined); // #233: runners per owning package
   const tests: TestRef[] = [];
   const testPackages: Record<string, string> = Object.create(null);
   for (const rel of files) {

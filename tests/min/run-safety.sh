@@ -102,6 +102,7 @@
 #  24b. (fl24) machine.ts: drop baseRedClaim from the fix-conflict re-verify (rebuild dist); mono3 envlocal ends SPEC_CONFLICT.
 #  24c. (fl24) repo_profile.ts attributeFullSuite: drop quietAsBase, or failures.ts errorShape keeps :line:col; the fl24 unit's noise case fails. errorShape masking quoted values makes real vitest pathnorm deliver.
 #  24d. (fl24) repo_profile.ts whyFullSuiteNotExcused: drop the blocked branch; the fl24 unit's blocked case fails.
+#  24e. repo_profile.ts sameUnattributableRed: drop the failing_shape comparison (the base-red-shape unit's new-failure case reads pre), or runOnce stops recording failing_shape (it reads noshape).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -710,6 +711,30 @@ console.log(r.join(" | "));
 X3="full suite: w | full suite: w | full suite: w | full suite: w | none | vitest.config.ts"
 [ "$A3" = "$X3" ] && ok "unit: a root package suite '(cd . && X)' matches the baseline's plain X (pre-existing excused, introduced ids still block, other cwd not excused); build output vite.config.d.ts and .nx/cache are not test configuration, a real vitest.config.ts is" \
     || bad "attribution unit gave: $A3 (want: $X3)"
+
+# BASE-RED-SHAPE (verify-dev 2026-11-13: marshmallow, markdown, pino, valibot ended FAILED on a suite already red on base whose failing ids no parser
+# reads, "the base run is not attributable"). The same command failing in the identical kind on head (same exit code, no ids, the same output shape
+# up to timings) is pre-existing; a head that also breaks a new test, a changed exit code, parseable head ids, or LOKI_E10_BASE_RED_SHAPE=0 stays
+# introduced. The base run itself records the shape (runBaseline over a fake runner).
+G5="$T/samered"; mkdir -p "$G5/.loki/state" && git -C "$G5" init -q -b main && printf 'x\n' > "$G5/a.txt" && git -C "$G5" add a.txt && git -C "$G5" -c user.name=t -c user.email=t@t commit -qm init
+A5="$(G="$G5" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), cr = await import(process.env.ROOT + "/loki-ts/src/util/check_result.ts"), { writeFileSync, execFileSync } = await import("node:fs").then(async (f) => ({ ...f, execFileSync: (await import("node:child_process")).execFileSync }));
+const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const baseOut = "npm error code ENOENT\nnpm error path " + g + "/package.json\nnpm error A complete log of this run can be found in: /x/_logs/2026-11-13T07_48_51_883Z-debug-0.log\nTook 0.2s\n";
+const b = rp.runBaseline(g, [{ kind: "test", cmd: "npm test --silent" }], { run: () => ({ code: 254, timedOut: false, out: baseOut, missing: false }) });
+const rec = (b.failing_shape ? "shape" : "noshape") + ":" + b.attributable;
+writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: b }));
+const chk = (out, exit, ids = []) => [{ name: "full suite: npm", cmd: "npm test --silent", result: "fail", ids, exit, ...(ids.length ? {} : { shape: cr.failureShape(out) }) }];
+const at = (out, exit, ids) => { const a = rp.attributeFullSuite(g, sha, chk(out, exit, ids), [], ["src/marshmallow/fields.py"]); return a.preExistingChecks.length ? "pre" : "introduced"; };
+const r = [rec, at(baseOut.replace("07_48_51_883Z", "07_49_10_001Z").replace("0.2s", "0.4s"), 254), at(baseOut + "FAIL tests/test_fields.py::test_pluck_new\n", 254), at(baseOut, 1), at(baseOut, 254, ["tests/test_fields.py::test_pluck_new"])];
+process.env.LOKI_E10_BASE_RED_SHAPE = "0"; r.push(at(baseOut, 254));
+delete process.env.LOKI_E10_BASE_RED_SHAPE; const a = rp.attributeFullSuite(g, sha, chk(baseOut, 254), [], []); r.push(/identical kind/.test(a.line ?? "") ? "noted" : "silent");
+const why = rp.whyFullSuiteNotExcused(g, sha, chk(baseOut + "FAIL x\n", 254), [], []).join(" "); r.push(/BASE-RED-SHAPE: exit base 254 head 254, shape differs/.test(why) ? "marker" : "nomarker:" + why);
+console.log(r.join(" | "));
+' 2>&1)"
+X5="shape:false | pre | introduced | introduced | introduced | introduced | noted | marker"
+[ "$A5" = "$X5" ] && ok "unit: a suite red on base with unparseable ids is excused only when head fails in the identical kind (same exit, same output shape up to timings); a newly broken test, another exit code, parseable head ids or LOKI_E10_BASE_RED_SHAPE=0 stay introduced, and the excuse is disclosed" \
+    || bad "base-red-shape unit gave: $A5 (want: $X5)"
 
 # Base run budget (v131 STALLED tq runs): a suite that takes ~250 s on the change got 60 s on base, timed out, and its pre-existing red was blamed on the change.
 # A base run now gets the same 300 s its own run gets (bounded by a third of the run cap); a cut base run is recorded on the receipt line as "base run

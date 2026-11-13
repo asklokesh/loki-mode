@@ -262,7 +262,7 @@ export async function runGoBatches(ctx: RunContext, tests: TestRef[], api: Proje
 function diffSymbols(ctx: RunContext, changed: string[]): string[] {
   const code = changed.filter((f) => CODE_EXT.test(f) && !isTestFile(f));
   if (code.length === 0) return [];
-  try { return changedSymbols(safeGit(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, "--", ...code], { timeout: 20000 })).filter((n) => n.length >= 3); } catch { return []; }
+  try { return changedSymbols(safeGit(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, "--", ...code], { timeout: 20000 }), (p) => readFileSync(join(ctx.repoDir, p), "utf8")).filter((n) => n.length >= 3); } catch { return []; }
 }
 function changedSymbolsFirst(ctx: RunContext, tests: TestRef[], changed: string[]): TestRef[] {
   if (tests.length < 2) return tests;

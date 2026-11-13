@@ -90,7 +90,7 @@ export const PYTEST_IMPORT_RE = /^\s*(?:import pytest|from pytest import)/m;
  * #233: runner evidence scoped to the package that owns each test. A framework import in the test itself is stronger
  * evidence than a manifest, and a nested package never owns its siblings. `read` supplies file text (this module does no I/O).
  */
-export function scopeRunnersByPackage(files: readonly string[], evidence: Partial<Record<RunnerName, string>>, jsText: ReadonlyMap<string, string>, api: ProjectApi | null | undefined, order: readonly RunnerName[], read: (rel: string) => string): { ownerRoot: (file: string) => string; packageRunners: Map<string, RunnerName[]> } {
+export function scopeRunnersByPackage(files: readonly string[], evidence: Partial<Record<RunnerName, string>>, jsText: ReadonlyMap<string, string>, api: ProjectApi | null | undefined, order: readonly RunnerName[], read: (rel: string) => string, marks?: readonly (readonly [RunnerName, string])[]): { ownerRoot: (file: string) => string; packageRunners: Map<string, RunnerName[]> } {
   const roots = [...new Set([".", ...(api?.packages().map((p) => p.root) ?? []), ...files.filter((f) => basename(f) === "package.json").map((f) => dirname(f))])];
   const ownerRoot = (file: string): string => api?.packageRootOf(file) ?? roots.filter((p) => p === "." || file.startsWith(`${p}/`)).sort((a, b) => b.length - a.length)[0] ?? ".";
   const packageRunners = new Map<string, RunnerName[]>();
@@ -101,7 +101,7 @@ export function scopeRunnersByPackage(files: readonly string[], evidence: Partia
     if (modelRunner && order.includes(modelRunner)) found.add(modelRunner);
     if (modelTest) detectFromPackageJson(JSON.stringify({ scripts: { test: modelTest } }), manifest, add);
     for (const [path, text] of jsText) if (ownerRoot(path) === pkgRoot) importedRunners(text).forEach(add);
-    for (const [r, path] of Object.entries(evidence) as [RunnerName, string][]) if (ownerRoot(path) === pkgRoot) found.add(r);
+    for (const [r, path] of marks ?? (Object.entries(evidence) as [RunnerName, string][])) if (ownerRoot(path) === pkgRoot) found.add(r); // EVIDENCE-PER-PACKAGE: every file that proves a runner (go.mod, Cargo.toml, a *_test.go...) grants it to its own package, not only the first one listed (a nested _examples/x/go.mod sorted first left the root module with no go runner and 0 tests)
     packageRunners.set(pkgRoot, order.filter((r) => found.has(r)));
   }
   return { ownerRoot, packageRunners };
