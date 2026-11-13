@@ -106,6 +106,33 @@ export function crossPackageTestEdits(repoDir: string, staged: Staged[], task: s
     if (!isTestFile(f)) return false;
     const o = ownerOf(repoDir, f); if (!o || srcOwners.has(o.dir)) return false;
     if (mentions(task, f) || mentions(task, basename(f)) || (o.dir !== "." && (mentions(task, o.dir) || mentions(task, basename(o.dir)))) || mentions(task, o.name)) return false;
+    if (testReachEnabled() && exercisesChange(repoDir, f, src.map(({ f: s }) => s))) return false; // TK: it imports the changed code, so it is the change's own test
     return hasSource(o, f.endsWith(".go"));
   }).map(({ f }) => f);
+}
+
+/** TK LOKI_E10_TEST_REACH (default on, =0 opts out): J3 never drops a test that imports the changed code: a JS/TS import or require whose relative specifier resolves to a
+ *  changed source file (extension and /index optional) or names the changed file's package (its package.json name, or a subpath of it), or a Go import of a changed file's
+ *  package path (go.mod module + directory). The failure: a repo whose tests live in their own package (a JS e2e or tests workspace, a Go root package testing a
+ *  subpackage) had the run's only regression test dropped as "outside the change's packages", and the delivered diff carried no test at all. */
+export const testReachEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TEST_REACH"] ?? "").trim());
+export function exercisesChange(repoDir: string, testFile: string, changed: readonly string[]): boolean {
+  let text = ""; try { text = readFileSync(join(repoDir, testFile), "utf8"); } catch { return false; }
+  const goSpecs = testFile.endsWith(".go") ? [...text.matchAll(/^\s*import\s*\(([\s\S]*?)\)/gm)].flatMap((b) => [...b[1]!.matchAll(/"([^"\n]+)"/g)].map((m) => m[1]!)).concat([...text.matchAll(/^\s*import\s+(?:[\w.]+\s+)?"([^"\n]+)"/gm)].map((m) => m[1]!)) : [];
+  const specs = [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*|\bimport\s+)["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!).concat(goSpecs);
+  if (specs.length === 0) return false;
+  const noExt = (p: string): string => p.replace(/\.(?:[cm]?[jt]sx?)$/, "").replace(/\/index$/, "");
+  let goMod: string | null | undefined;
+  return changed.some((s) => {
+    if (s.endsWith(".go")) {
+      if (goMod === undefined) { try { goMod = /^module\s+(\S+)/m.exec(readFileSync(join(repoDir, "go.mod"), "utf8"))?.[1] ?? null; } catch { goMod = null; } }
+      const d = dirname(s); return goMod !== null && specs.includes(d === "." ? goMod : `${goMod}/${d}`);
+    }
+    if (!JS_EXT.test(s)) return false;
+    const target = noExt(s), own = ownerOf(repoDir, s);
+    return specs.some((sp) => {
+      if (sp.startsWith(".")) return noExt(join(dirname(testFile), sp)) === target;
+      return own !== null && own.name !== "" && (sp === own.name || sp.startsWith(`${own.name}/`));
+    });
+  });
 }

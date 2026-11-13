@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Fixed
+- A regression test that imports the changed code is no longer dropped as "outside the change's packages" when the repo keeps its tests in their own package (a JS tests workspace, a Go package testing a subpackage), so the delivered diff keeps its test. LOKI_E10_TEST_REACH=0 restores the old drop.
 - Build output the run created (byte-compiled files, *.tsbuildinfo, untracked dist/, build/, coverage/ or target/ output, files the repo's .gitignore matches) is left out of the delivered diff and named on the receipt. A dist/ the repo commits, and a file the task names, are kept. LOKI_E10_BUILD_ARTIFACT_DROP=0 turns it off.
 - On a repo whose contribution guide or PR checklist asks for a CHANGELOG entry, the implement brief now names the changelog file, its unreleased section and an example entry, instead of telling the model to write no documentation. A guide that says not to touch the changelog, or a changelog with no unreleased section, gets nothing. LOKI_E10_CHANGELOG_CONVENTION=0 turns it off.
 - On a towncrier repo, the brief's example fragment is now a real fragment, not the repo's towncrier template, which a fresh checkout used to pick. LOKI_E10_TOWNCRIER_EXAMPLE=0 restores the old pick.
