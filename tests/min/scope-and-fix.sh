@@ -290,6 +290,7 @@
 # 252. check_result.ts jsAssertionFailure: drop JS_MISSING_API (the assert-js unit's missing-function case reads true).
 # 253. check_result.ts spawnFailedTool: drop the 6-line bound (the spawn-not-run leg's long ENOENT output reads missing).
 # 254. testmap.ts buildTestMap: ignore pyCfg (the pytest-fallback leg's conftest.py case reads unittest).
+# 255. package_suite.ts runPackageSuites: drop the cwd !== "." guard (the empty-subsuite-na leg's root package reads not applicable).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1740,6 +1741,26 @@ const run = (r) => { const m = tm.buildTestMap(r); return [...new Set(m.tests.ma
 const r = [run(mk(false, [])), run(mk(true, [])), run(mk(false, [["tests/conftest.py", "\n"]])), run(mk(false, [["tests/test_p.py", "import pytest\n"]]))];
 process.env.LOKI_E10_PYTEST_FALLBACK = "0"; r.push(run(mk(false, []))); console.log(r.join(","));' "$T" 2>&1)"
 [ "$PF" = "unittest/unittest,pytest/pytest,pytest/pytest,pytest/pytest,pytest/pytest" ] && ok "pytest-fallback: name-only pytest tests run under unittest when the repo venv cannot import pytest; a venv with pytest, a conftest.py, a pytest import and LOKI_E10_PYTEST_FALLBACK=0 keep pytest" || bad "pytest-fallback gave: $PF"
+# EMPTY-SUBSUITE-NA (verify-dev 2026-11-13, go-chi/chi: two _examples/* modules with no test files read "not run: full suite: _examples/rest" and capped the run,
+# because the 0-tests-on-both-sides rule also wanted a passed Wall or task-named check). A package below the root that executed exactly 0 tests on base and
+# head is not applicable; the root package, a sub-module that ran tests on base, and LOKI_E10_EMPTY_SUBSUITE_NA=0 keep the cap. Real go test.
+if command -v go >/dev/null 2>&1; then
+ES="$(cd "$ROOT/loki-ts" && G="$T/emptysub" bun -e '
+const { mkdirSync, writeFileSync } = require("node:fs"), { join } = require("node:path"), g = process.env.G;
+for (const d of ["sub", ".loki/state"]) mkdirSync(join(g, d), { recursive: true });
+writeFileSync(join(g, "go.mod"), "module example.com/app\n\ngo 1.20\n"); writeFileSync(join(g, "a.go"), "package app\n\nfunc A() int { return 1 }\n");
+writeFileSync(join(g, "sub/go.mod"), "module example.com/sub\n\ngo 1.20\n"); writeFileSync(join(g, "sub/main.go"), "package main\n\nfunc main() {}\n");
+for (const a of [["init", "-q", "-b", "main"], ["add", "-A", "--", ".", ":!.loki"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "b"]]) Bun.spawnSync(["git", "-C", g, ...a]);
+const sha = Bun.spawnSync(["git", "-C", g, "rev-parse", "HEAD"]).stdout.toString().trim();
+const pkg = (name, root) => ({ name, root, runner: null, commands: { test: { cmd: "go test ./...", cwd: root, cite: [root === "." ? "go.mod" : root + "/go.mod"] }, lint: null, build: null, start: null }, ui: { present: false, boot: null, cite: [] }, cite: [root === "." ? "go.mod" : root + "/go.mod"], install: null });
+writeFileSync(join(g, ".loki/project.json"), JSON.stringify({ schema: "loki.v10.project/1", key: "k", status: "ok", workspaceKind: "multi-root", workspaceCite: ["go.mod"], fingerprintFiles: ["go.mod", "sub/go.mod"], packages: [pkg("app", "."), pkg("sub", "sub")] }));
+const suite = (cmd, zero) => ({ name: cmd, ran: true, command: cmd, exit_code: 0, duration_s: 1, timed_out: false, failing_ids: [], attributable: true, zero_tests: zero });
+const prof = (subZero) => writeFileSync(join(g, ".loki/state/repo-profile.json"), JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: suite("go test ./...", true), suites: [suite("(cd . && go test -json ./...)", true), suite("(cd sub && go test -json ./...)", subZero)] }));
+const ps = await import("./src/project_model/package_suite.ts");
+const go = async () => { const checks = [], np = new Set(); await ps.runPackageSuites(g, new AbortController().signal, { timeoutMs: 120000, baseSha: sha, targetPassed: false }, checks, np); const na = [...np].filter((n) => /ran 0 tests on base and head/.test(n)).map((n) => n.includes("full suite: sub") ? "subNA" : "otherNA"); return `${na.join("+") || "noNA"}/${checks.map((c) => c.name.replace("full suite: ", "") + "=" + c.result).join("+")}`; };
+prof(true); const r = [await go()]; prof(false); r.push(await go()); prof(true); process.env.LOKI_E10_EMPTY_SUBSUITE_NA = "0"; r.push(await go()); console.log(r.join(","));' 2>&1)"
+[ "$ES" = "subNA/app=not_run,noNA/app=not_run+sub=not_run,noNA/app=not_run+sub=not_run" ] && ok "empty-subsuite-na: a sub-module with 0 tests on base and head is not applicable without a target check; the root package, a sub-module that ran tests on base, and LOKI_E10_EMPTY_SUBSUITE_NA=0 keep the cap" || bad "empty-subsuite-na gave: $ES"
+fi
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
 if command -v go >/dev/null 2>&1; then

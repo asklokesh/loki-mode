@@ -756,9 +756,13 @@ export function exitCodedId(cmd: string, out: string, repoDir = ""): string | nu
 export interface ClassifyInput { kind: "test" | "static"; ok: boolean; cut?: boolean; missing?: boolean; out: string; path?: string; runner?: "go"; exitCoded?: boolean /* FC-FULL-SUITE-EXIT-CODED-SCRIPT: the command is a plain script (isExitCodedScript), decided by exit code like a static check */ }
 export interface Classified { result: "pass" | "fail" | "not_run"; n?: number; reason?: string; count?: string }
 /** A suite that discovered nothing: a parsed 0-test count with no skip, pending or todo wording left once explicit zero counts are removed. Skipped tests are not empty discovery (a change that skips the whole suite must never read as "nothing to run"). */
+/** A go test -json line that only says a package has no test files: its "[no test files]" output event, or its package-level skip event (no "Test" key). */
+const GO_PKG_NO_TESTS = /^\{(?![^\n]*"Test":)[^\n]*"Action":"(?:skip|output)","Package":"[^"]*"(?:,"Output":"\?\s*\\t[^"]*\\t\[no test files\]\\n")?(?:,"Elapsed":[\d.]+)?\}$|^\?\s+\S+\s+\[no test files\]$/;
+const emptySubsuiteNaOnCr = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_EMPTY_SUBSUITE_NA"] ?? "").trim());
 export function emptyDiscovery(cls: Classified, out: string): boolean {
   if (cls.result !== "not_run" || cls.n !== 0 || !/\bran 0 tests\b/.test(cls.reason ?? "")) return false;
-  return !/skip|pending|todo/i.test(stripAnsi(out).replace(/\b0 (?:skipped|pending|todo)\b|\b(?:skipped|pending|todo)\W{1,3}0\b/gi, ""));
+  const text = emptySubsuiteNaOnCr() ? stripAnsi(out).split("\n").filter((l) => !GO_PKG_NO_TESTS.test(l)).join("\n") : out; // EMPTY-SUBSUITE-NA: go test -json marks a package with no test files with a package-level "skip" event, which is not a skipped test
+  return !/skip|pending|todo/i.test(stripAnsi(text).replace(/\b0 (?:skipped|pending|todo)\b|\b(?:skipped|pending|todo)\W{1,3}0\b/gi, ""));
 }
 /** classifyCheck result plus the rerun-only "flaky" verdict (TEN-QUALITY-17); kept separate so existing classifyCheck callers keep the narrow type. */
 export interface ClassifiedRerun extends Omit<Classified, "result"> { result: Classified["result"] | "flaky"; rerun?: { first: "fail"; second: "pass"; n?: number } }
