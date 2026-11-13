@@ -19,7 +19,6 @@ import { FINISH_LINE, type Obj, type RunContext, type SessionResult, type Sessio
 import { rankAttempts, type AttemptCandidate, type AttemptCheck, type AttemptSignal } from "../e10ext/select.ts";
 import { consultCallFor } from "./opus_consult.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
-import { namedSitesEnabled, unchangedReasons } from "../util/conflict_resume.ts";
 import { anchoredPlanScope, outsideScope } from "../e10ext/scope.ts";
 import { parseStaged, type Staged } from "../e10ext/commit_filter.ts";
 import { DEFAULT_EXCLUDES, applyDiff, resetToBase, snapshotDiff, swapAttemptIntoWorkingTree } from "../e10ext/treeswap.ts";
@@ -324,6 +323,6 @@ export async function runExtraAttempts(ctx: RunContext, signal: AbortSignal, dep
   try {
     const r = await runAttempts({ ...ops, ...(review ? { review } : {}) }, deps.k, signal);
     const total = deps.k + 1, models = attemptModels().length ? Array.from({ length: total }, (_, i) => attemptModel(i, deps.model) ?? "session model") : [];
-    return { winner: r.winner, launched: r.launched, ids: ids.slice(0, r.launched), tookExtra: r.winner > 0, summary: { total, launched: r.launched, winner: r.winner === 0 ? "incumbent" : `x${r.winner}`, reason: r.reason, early_accept: r.early, scored: r.scored, receipt: attemptsReceiptLines(r, total, models), ...(models.length ? { models, winner_model: models[r.winner] } : {}), ...(r.winner > 0 && namedSitesEnabled() ? { winner_site_reasons: unchangedReasons(r.sessions[r.winner]?.summary ?? "") } : {}) } }; // R2: seal reads the winner's own SITE reasons
+    return { winner: r.winner, launched: r.launched, ids: ids.slice(0, r.launched), tookExtra: r.winner > 0, summary: { total, launched: r.launched, winner: r.winner === 0 ? "incumbent" : `x${r.winner}`, reason: r.reason, early_accept: r.early, scored: r.scored, receipt: attemptsReceiptLines(r, total, models), ...(models.length ? { models, winner_model: models[r.winner] } : {}), ...(r.winner > 0 ? { winner_site_lines: (r.sessions[r.winner]?.summary ?? "").match(/^\W*SITE\s.*$/gim) ?? [] } : {}) } }; // R2: seal reads the winner's own SITE lines (util/conflict_resume.ts namedUnchangedOf; not imported here, it would close an import cycle)
   } finally { ops.dispose(); }
 }

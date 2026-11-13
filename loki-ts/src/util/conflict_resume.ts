@@ -222,8 +222,8 @@ export async function resumeForNamedSites(ctx: RunContext, first: SessionRunOpti
 export function namedUnchangedOf(repoDir: string, baseSha: string, implement: Record<string, unknown> | undefined): (NamedSite & { why: string | null })[] {
   const rec = implement?.named_sites as NamedSitesRecord | undefined;
   if (!rec || !Array.isArray(rec.sites) || !namedSitesEnabled()) return [];
-  const att = implement?.attempts as { winner?: unknown; winner_site_reasons?: Record<string, string> } | undefined, extraWon = typeof att?.winner === "string" && att.winner !== "incumbent";
-  return namedUnchanged(repoDir, baseSha, rec.sites, extraWon ? att?.winner_site_reasons ?? {} : rec.reasons ?? {});
+  const att = implement?.attempts as { winner?: unknown; winner_site_lines?: unknown } | undefined, extraWon = typeof att?.winner === "string" && att.winner !== "incumbent";
+  return namedUnchanged(repoDir, baseSha, rec.sites, extraWon ? unchangedReasons(Array.isArray(att?.winner_site_lines) ? att!.winner_site_lines.map(String).join("\n") : "") : rec.reasons ?? {});
 }
 export const namedUnchangedNote = (s: NamedSite & { why: string | null }): string => `named site unchanged without a reason: ${s.symbol} (${s.path}:${s.line})`;
 // LOKI_E10_COVERAGE_MAX_TURNS (default 10; =0/off opts out to the stage budget's cap): the coverage turn ("-c", "-c2") ends at this many turns.
