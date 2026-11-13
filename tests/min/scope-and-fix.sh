@@ -296,6 +296,7 @@
 # 258. check_result.ts unittestAssertionFailure: drop the ERROR: guard (the assert-unittest leg's assertion-beside-an-error case reads true).
 # 259. wall.ts RealBaseTestRunner: read the test source only when reported.observed is non-empty (the reported-kind wiring leg reads true,0,0).
 # 260. seal.ts missingLintChecks: drop the lint: prefix filter (the lint-missing-disclose leg's missing test runner reads disclosed).
+# 261. mutation_proof.ts proofBudgetS: drop the compiled-stack branch (the proof-compiled-budget leg reads 30 for go).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1828,6 +1829,18 @@ const r = [c.assertionFailure("pytest", py("http.client.IncompleteRead: Incomple
   c.assertionFailure("pytest", py("http.client.IncompleteRead: other"), c.reportedErrors("fails with\n\n    http.client.IncompleteRead: IncompleteRead(0 bytes read)\n\nExpected: reported as `PyJWKClientConnectionError`.\n"), src)];
 process.env.LOKI_E10_REPORTED_KIND = "0"; r.push(c.assertionFailure("go", gout, c.reportedErrors(lo)), c.assertionFailure("pytest", py("http.client.IncompleteRead: IncompleteRead(0 bytes read)"), c.reportedErrors(pj), src)); console.log(r.join(","));' 2>&1)"
 [ "$RK" = "true,true,false,false,false,false,false,false,false" ] && ok "reported-kind unit: an issue-shown exception type (IncompleteRead) or Go panic message counts as the base failure; ImportError, SyntaxError, an unreported exception or panic, and LOKI_E10_REPORTED_KIND=0 do not; a type the issue quotes with an exact message still needs that message" || bad "reported-kind unit gave: $RK"
+# PROOF-COMPILED-BUDGET (acc-152; go-chi/chi: a cold go build of the base worktree took 32 s of the proof's 30 s and read "inconclusive (timeout)", so a real
+# fail-then-pass did not count and the run fell from VERIFIED to PARTIAL). A compiled stack (go, cargo, maven, gradle, javac, dotnet) gets the 40 s cap by default,
+# anything else keeps 30 s, an explicit LOKI_MUTATION_PROOF_TIMEOUT_S or caller budget still wins, and LOKI_E10_PROOF_COMPILED_BUDGET=0 restores 30 s. The go
+# warm-up compiles each test package once (real go) and is skipped when the deadline leaves no room. It grants time only; what counts as proof is unchanged.
+PB="$(cd "$ROOT/loki-ts" && G="$T/pbgo" bun -e '
+const mp = await import("./src/util/mutation_proof.ts"), { mkdirSync, writeFileSync } = require("node:fs"), { join } = require("node:path"), g = process.env.G;
+const go = [{ runner: "go" }], py = [{ runner: "pytest" }], mix = [{ runner: "vitest" }, { runner: "cargo" }];
+const r = [mp.proofBudgetS(go, {}), mp.proofBudgetS(py, {}), mp.proofBudgetS(mix, {}), mp.proofBudgetS(go, { LOKI_MUTATION_PROOF_TIMEOUT_S: "12" }), mp.proofBudgetS(go, {}, 20), mp.proofBudgetS(go, { LOKI_E10_PROOF_COMPILED_BUDGET: "0" }), mp.proofBudgetS(go, { LOKI_MUTATION_PROOF_TIMEOUT_S: "90" })];
+let warm = "skip"; if (Bun.which("go")) { mkdirSync(join(g, "pkg"), { recursive: true }); writeFileSync(join(g, "go.mod"), "module example.com/w\n\ngo 1.20\n"); writeFileSync(join(g, "pkg/a.go"), "package pkg\n\nfunc A() int { return 1 }\n"); writeFileSync(join(g, "pkg/a_test.go"), "package pkg\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) { if A() != 1 { t.Fatal() } }\n");
+  const end = Date.now() + 60000; warm = `${mp.warmGoBuild(g, [{ runner: "go", path: "pkg/a_test.go" }], () => end - Date.now())}/${mp.warmGoBuild(g, [{ runner: "go", path: "pkg/a_test.go" }], () => 5000)}`; }
+console.log(r.join(",") + " " + warm);' 2>&1)"
+case "$PB" in "40,30,40,12,20,30,40 1/0"|"40,30,40,12,20,30,40 skip") ok "proof-compiled-budget: a compiled stack's proof gets 40 s (python keeps 30), an explicit or caller budget wins, =0 restores 30, the cap holds at 40; the go warm-up compiles a package and is skipped without room ($PB)" ;; *) bad "proof-compiled-budget gave: $PB" ;; esac
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
 if command -v go >/dev/null 2>&1; then
