@@ -215,7 +215,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     timeline.push({ stage: name, startMs: t0, endMs: ctx.clock.now() });
     return res;
   };
-  /** EXP-0010: the first implement attempt ended with the repo's checks red (fix rounds included). Run k more attempts in parallel on the same model and keep the best by features/attempts.ts.
+  /** EXP-0010: the first implement attempt ended with the repo's checks red (fix rounds included). Run k more attempts in parallel (on the session model, or one LOKI_E10_ATTEMPT_MODELS entry each) and keep the best by features/attempts.ts.
    *  `changed`: another attempt's tree is now in the primary (the caller re-verifies it); `ran`: extra sessions started. Never throws: any failure keeps the incumbent tree and says why in implement.attempts. */
   const scaffoldNow = (): void => { if (!hooks.scaffold || outputs.implement?.exit !== "done") return; try { const sc = hooks.scaffold(ctx.repoDir, ctx.baseSha, String(outputs.intake?.task ?? ""), String(outputs.implement.summary_tail ?? "")); if (sc) { outputs.implement = { ...outputs.implement, scaffold: sc }; ctx.emit("scaffold.applied", "implement", sc); } } catch { /* best-effort: a scaffold failure never stops the run */ } }; // idempotent: a tree that already carries the fragment writes nothing
   const extraAttempts = async (): Promise<{ changed: boolean; ran: boolean }> => {

@@ -20,6 +20,7 @@ import { vacuousCheck } from "../project_model/conventions.ts";
 import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
 import { editShapeBrief, editShapeSites, precedenceBrief, precedenceCheckEnabled } from "./edit_shape.ts";
 import { isTestFile } from "./test_file_text.ts";
+import { extractSpecAtoms, resolveSites } from "../features/exec_spec.ts";
 import { FINISH_LINE, taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
 import type { ReadOnlyFile } from "../engine10/stages/implement.ts";
 
@@ -169,7 +170,62 @@ export const coverageResumeEnabled = (env = process.env): boolean => coverageMod
 export const COVERAGE_FOLD = "Before you finish, go over every site, symbol, example or case the task names and map each one to the hunk and the test that cover it. Fix any that is not covered, and add a test for any that has none.";
 export const COVERAGE_FOLD_CLAIM = COVERAGE_FOLD + " Before the last line, write one line per site in the current file: `SITE <path>:<line>: changed` or `SITE <path>:<line>: unchanged - <why>`.";
 /** The fixed lines a plan-skipped implement brief adds right after FOLD_PLAN_INSTRUCTION: one line in fold mode (the claim variant when LOKI_E10_CLAIM_CHECK is on), none otherwise. */
-export const coverageFoldLines = (env = process.env): string[] => coverageMode(env) === "fold" ? [claimCheckEnabled(env) ? COVERAGE_FOLD_CLAIM : COVERAGE_FOLD] : [];
+export const coverageFoldLines = (env = process.env): string[] => coverageMode(env) === "fold" ? [claimCheckEnabled(env) ? COVERAGE_FOLD_CLAIM : COVERAGE_FOLD, ...(namedSitesEnabled(env) ? [NAMED_SITE_LINE] : [])] : [];
+
+// R2 LOKI_E10_NAMED_SITES (default on, =0/off opts out): named-site accountability, an extension of the coverage map above. Every symbol the task names (a site atom of
+// features/exec_spec.ts, resolved to its definition in the repo; a callee it was not named for is left out) is either changed by the diff (its file is) or written by the
+// model as `SITE <path>:<line>: unchanged - <why>` with a reason about the code. A hedge in the task ("may need", "might also") is not a reason. One "-ns" resume asks
+// for each unaccounted site; seal reads the final diff and caps VERIFIED at PARTIAL for any that is still unaccounted (receipt key named_unchanged). The failure it targets:
+// an issue said one more class "may need the same change", the run read the hedge as out of scope, and left the half a reviewer and the grading test both checked.
+// Off: the fold brief is byte-identical to the coverage map alone, no resume runs and the receipt carries no named_unchanged key.
+export const namedSitesEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff((env["LOKI_E10_NAMED_SITES"] ?? "").trim().toLowerCase());
+export const NAMED_SITE_LINE = "A site the task names stays in scope even where the task only says it may need the change: change it, or, before the last line, write `SITE <path>:<line>: unchanged - <why>` for it, where the reason is about the code (a hedge in the task is not a reason).";
+export interface NamedSite { symbol: string; path: string; line: number }
+/** The named sites: the task's site atoms that resolve to a definition in the repo (resolveSites' one-hop callees are not named, so they are dropped). */
+export function namedSites(task: string, repoDir: string): NamedSite[] {
+  try {
+    const atoms = extractSpecAtoms(task).filter((a) => a.kind === "site"), names = new Set(atoms.map((a) => a.text));
+    return resolveSites(atoms, repoDir).filter((s) => names.has(s.symbol)).map((s) => ({ symbol: s.symbol, path: s.file, line: s.line }));
+  } catch { return []; }
+}
+const HEDGE_REASON = /\b(?:may|might|could)\s+(?:also\s+)?need\b|\bout of (?:the )?scope\b|\bnot (?:explicitly |strictly )?required\b|\boptional\b|\bhedg/i;
+/** `SITE <path>:<line>: unchanged - <why>` lines of a reply, by path; a reason that only restates the task's hedge is not kept. */
+export function unchangedReasons(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of text.matchAll(/^\W*SITE\s+`?([^\s`:]+)(?::\d+)?`?:\s*unchanged\s*[-:]+\s*(.+)$/gim)) { const why = m[2]!.trim().slice(0, 200); if (why.length >= 8 && !HEDGE_REASON.test(why)) out[m[1]!] = why; }
+  return out;
+}
+/** Named sites whose file the tree's diff against base leaves alone, each with the reply's reason for it (null: unaccounted). */
+export function namedUnchanged(repoDir: string, baseSha: string, sites: NamedSite[], reasons: Record<string, string>): (NamedSite & { why: string | null })[] {
+  if (!sites.length) return [];
+  const g = safeGitSpawn(repoDir, ["diff", "--name-only", "--no-renames", baseSha, "--", ".", ":(exclude).loki", ":(exclude).loki/**"], { encoding: "utf8" });
+  if (g.status !== 0) return [];
+  const changed = new Set(g.stdout.split("\n").filter(Boolean)), why = (p: string): string | null => reasons[p] ?? Object.entries(reasons).find(([k]) => p.endsWith(`/${k}`) || k.endsWith(`/${p}`))?.[1] ?? null;
+  const seen = new Set<string>();
+  return sites.filter((s) => !changed.has(s.path) && !seen.has(s.symbol) && (seen.add(s.symbol), true)).map((s) => ({ ...s, why: why(s.path) }));
+}
+export const namedSitesBrief = (open: NamedSite[]): string => `The task names these sites and your change leaves each one as it was on the base: ${open.map((s) => `${s.symbol} (${s.path}:${s.line})`).join(", ")}. Make the change each one needs. If one truly needs none, write \`SITE <path>:<line>: unchanged - <why>\` for it with a reason about the code; that the task says it "may need" the change is not a reason. ` + FINISH_LINE;
+export interface NamedSitesRecord { sites: NamedSite[]; reasons: Record<string, string>; resumed: boolean }
+/** One "-ns" resume when a named site is unchanged and unexplained. Only a clean LOKI_DONE reply replaces the first result; the reasons kept are the final reply's. */
+export async function resumeForNamedSites(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, task: string, env: NodeJS.ProcessEnv = process.env): Promise<{ session: SessionResult; iterationIds: string[]; record: NamedSitesRecord | null }> {
+  if (!namedSitesEnabled(env)) return { session: firstSession, iterationIds: [], record: null };
+  const sites = namedSites(task, ctx.repoDir);
+  if (!sites.length) return { session: firstSession, iterationIds: [], record: null };
+  const reasons = unchangedReasons(firstSession.summary ?? ""), open = namedUnchanged(ctx.repoDir, ctx.baseSha, sites, reasons).filter((s) => s.why === null);
+  if (!open.length || (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationIds: [], record: { sites, reasons, resumed: false } };
+  const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
+  const r = await resumeWith(ctx, first, firstSession, namedSitesBrief(open), "-ns");
+  const s = clean(r.session) ? r.session : { ...firstSession, durationS: r.session.durationS };
+  return { session: s, iterationIds: [r.iterationId], record: { sites, reasons: { ...reasons, ...unchangedReasons(r.session.summary ?? "") }, resumed: true } };
+}
+/** Seal: the named sites the final diff leaves unchanged, from the implement record (the winning attempt's own SITE reasons replace the first attempt's). */
+export function namedUnchangedOf(repoDir: string, baseSha: string, implement: Record<string, unknown> | undefined): (NamedSite & { why: string | null })[] {
+  const rec = implement?.named_sites as NamedSitesRecord | undefined;
+  if (!rec || !Array.isArray(rec.sites) || !namedSitesEnabled()) return [];
+  const att = implement?.attempts as { winner?: unknown; winner_site_reasons?: Record<string, string> } | undefined, extraWon = typeof att?.winner === "string" && att.winner !== "incumbent";
+  return namedUnchanged(repoDir, baseSha, rec.sites, extraWon ? att?.winner_site_reasons ?? {} : rec.reasons ?? {});
+}
+export const namedUnchangedNote = (s: NamedSite & { why: string | null }): string => `named site unchanged without a reason: ${s.symbol} (${s.path}:${s.line})`;
 // LOKI_E10_COVERAGE_MAX_TURNS (default 10; =0/off opts out to the stage budget's cap): the coverage turn ("-c", "-c2") ends at this many turns.
 // On the v11.137 Haiku bench arms, 31 of 36 coverage turns took 2 to 8 turns; the other 5 took 13 to 33 (up to $0.031, more than the implement session), and
 // each of those tasks was merge-ready in another arm whose coverage turn took 8 or fewer. A capped turn ends like a reply without LOKI_DONE: the first result stands.

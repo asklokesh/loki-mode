@@ -1857,6 +1857,7 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
     }
     case "vitest": return ["npx", ["--no-install", "vitest", "run", t.path]];
     case "jest": return ["npx", ["--no-install", "jest", t.path]];
+    case "mocha": return ["npx", ["--no-install", "mocha", t.path]];
     case "bun": return ["bun", ["test", t.path]];
     case "node": return ["node", ["--test", `./${t.path}`]];
     case "npm": return ["npm", ["test", "--silent"]];
@@ -1881,6 +1882,7 @@ const FULL_SUITE_STATIC: Record<Exclude<RunnerName, "pytest" | "unittest">, { cm
   gradle: { cmd: "gradle", args: ["cleanTest", "test", "-i", "--console=plain"] },
   javac: { cmd: "bash", args: ["-c", JAVAC_WRAPPER, "loki-javac", ".", "-"] },
   dotnet: { cmd: "dotnet", args: ["test"] }, // the real target comes from fullSuiteCmd (dotnetFullCmd)
+  mocha: { cmd: "npx", args: ["mocha"] }, // never a detected runner (R5 makes mocha refs only), listed for the exhaustive table
 };
 const BUILD_TOOL_RUNNERS: ReadonlySet<RunnerName> = new Set(["maven", "gradle", "javac", "dotnet"]);
 /** FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER: the one full-suite command per runner. pytest resolves its interpreter exactly as a per-test run does (resolveTool: project .venv, else python3), never a bare `python` that python3-only hosts lack. */

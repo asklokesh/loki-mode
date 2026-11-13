@@ -9,6 +9,7 @@ import { unitFlags } from "../features/speed/unit_mode.ts";
 import { readPlanScope } from "../util/run_cap.ts";
 import type { Staged } from "./commit_filter.ts";
 import { escapeRegex } from "../util/regex_escape.ts";
+import { defRe, extractSpecAtoms } from "../features/exec_spec.ts";
 
 export const SCOPE_UNDETERMINED = "scope not determined; all edits committed";
 export const outsideNote = (f: string): string => `outside stated scope: ${f}`;
@@ -41,10 +42,25 @@ export function outsideScope(o: Partial<Record<string, Obj>>, staged: Staged[], 
   return staged.filter(({ st, f }) => st !== "A" && !kept(f) && !rel.includes(f) && !plannedDirs.has(dirname(f)) && !dirSegs(f).some((d) => toks.has(d))).map(({ f }) => f);
 }
 
+/** R3 LOKI_E10_PLAN_SCOPE_ANCHOR (default on, =0 opts out): plan-scope.json's list is the scope only when it holds something the task names. When the task names a
+ *  file (its path, or its basename in the same case) or a symbol (a site atom of features/exec_spec.ts) and no listed file is one of those files or defines one of those
+ *  symbols, the list is discarded ([]) and the other scope signals decide. The failure: a task's prose word "version" matched a VERSION file case-insensitively, that one
+ *  file became the scope, and the real fix file, named only by its class, was flagged outside stated scope. A task that names nothing keeps the list. */
+export const planScopeAnchorEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PLAN_SCOPE_ANCHOR"] ?? "").trim());
+export function anchoredPlanScope(files: string[], task: string, repoDir: string | undefined, env: NodeJS.ProcessEnv = process.env): string[] {
+  if (!files.length || !planScopeAnchorEnabled(env) || !task.trim()) return files;
+  const syms = [...new Set(extractSpecAtoms(task).filter((a) => a.kind === "site").map((a) => a.text.split(".").pop()!).filter(Boolean))];
+  const namesFile = (f: string): boolean => mentions(task, f) || mentions(task, basename(f));
+  const defines = (f: string): boolean => { if (!repoDir || !syms.length) return false; let lines: string[]; try { lines = readFileSync(join(repoDir, f), "utf8").split("\n"); } catch { return false; } return syms.some((n) => { const re = defRe(n); return lines.some((l) => re.test(l)); }); };
+  if (files.some((f) => namesFile(f) || defines(f))) return files;
+  const namedSomething = syms.length > 0 || /[\w-]+\/[\w.-]+\.\w+|\b[\w-]+\.(?:[cm]?[jt]sx?|py|go|rs|java|rb|php|cs|kt|swift|c|h|cpp)\b/.test(task); // a path or a source file name the task writes out
+  return namedSomething ? [] : files;
+}
+
 /** Advisory scope pass: returns the NOT PROVEN notes for edits outside the stated scope (runDir holds plan-scope.json). Nothing is reverted or unstaged. */
-export function flagOutsideScope(o: Partial<Record<string, Obj>>, staged: Staged[], runDir?: string): string[] {
+export function flagOutsideScope(o: Partial<Record<string, Obj>>, staged: Staged[], runDir?: string, repoDir?: string): string[] {
   const unit = unitFlags(staged, process.env, (o.intake?.preexisting_dirty ?? {}) as Record<string, string>); // D61-11: null unless a unit spec is active
-  const un = outsideScope(o, staged, runDir ? readPlanScope(runDir) : []), seen = new Set((unit ?? []).map(outsideNote));
+  const un = outsideScope(o, staged, runDir ? anchoredPlanScope(readPlanScope(runDir), typeof o.intake?.task === "string" ? o.intake.task : "", repoDir) : []), seen = new Set((unit ?? []).map(outsideNote));
   return [...(unit ?? []).map(outsideNote), ...(un ? un.map(outsideNote).filter((n) => !seen.has(n)) : staged.length > 0 ? [SCOPE_UNDETERMINED] : [])];
 }
 

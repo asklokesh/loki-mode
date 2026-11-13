@@ -293,6 +293,11 @@ export const commandProfilePath = (repoDir: string): string => join(repoDir, ".l
 export const BASELINE_CMD_TIMEOUT_S = 300;
 /** A cut entry measured with a shorter budget than the current one is measured again; one cut at the current budget is kept (a hanging suite is not re-run for 5 minutes every time). */
 /** A baseline command never gets more than a third of the run's overall cap. */
+/** R3 LOKI_E10_INTAKE_CAP_S (default 180; =0/off restores the per-command caps alone): one budget, in seconds, for all of intake's baseline test runs together (the root
+ *  baseline, its rerun after an install, and the per-suite baselines). Before it, a suite that ran past the 300 s per-command cap was measured twice under two names, so
+ *  intake spent 600 s on two cut-off runs that excuse nothing. A run cut by the budget is recorded as cut off, as before. The dependency install keeps its own cap. */
+export const INTAKE_CAP_DEFAULT_S = 180;
+export const intakeCapS = (env: NodeJS.ProcessEnv = process.env): number | null => { const v = (env.LOKI_E10_INTAKE_CAP_S ?? "").trim(); if (/^(0|off|false|no)$/i.test(v)) return null; const n = Number(v); return v !== "" && Number.isFinite(n) && n > 0 ? Math.floor(n) : INTAKE_CAP_DEFAULT_S; };
 export const baselineCmdS = (capS: number | undefined): number => Math.max(1, Math.min(BASELINE_CMD_TIMEOUT_S, Math.floor((capS ?? Infinity) / 3)));
 const cutShort = (b: { timed_out: boolean; duration_s: number | null } | undefined, tmoS: number): boolean => !!b?.timed_out && (b.duration_s ?? 0) < tmoS - 1;
 export const MANIFESTS = ["requirements.txt", "package.json", "Makefile", "makefile", "GNUmakefile", "pyproject.toml", "tox.ini", "pytest.ini", "setup.cfg", "go.mod", "Cargo.toml", "tsconfig.json"];
@@ -568,12 +573,13 @@ export const SUITE_BASELINE_BUDGET_S = 300;
  *  profile ensureProfile wrote for this HEAD. An entry for the same command is reused unless `rerun` (a dependency install succeeded
  *  since, so a baseline measured before it is stale: the main baseline and every entry are re-run, attributable or not). A root command the main baseline already ran is not run twice. One shared
  *  budget; a suite past it is recorded not run, so nothing it fails is excused (fail-closed). Never throws: null when there is no current profile. */
-export function baselineSuites(repoDir: string, specs: { name: string; cmd: string; cwd: string; run: string }[], opts: BuildOpts & { rerun?: boolean; budgetS?: number } = {}): CommandProfile | null {
+export function baselineSuites(repoDir: string, specs: { name: string; cmd: string; cwd: string; run: string }[], opts: BuildOpts & { rerun?: boolean; budgetS?: number; deadlineMs?: number } = {}): CommandProfile | null {
   try {
     const p = loadProfile(repoDir);
     if (!p || p.revision !== headOf(repoDir)) return null;
-    if (opts.rerun && p.baseline.ran) p.baseline = runBaseline(repoDir, p.commands, opts);
-    let left = opts.budgetS ?? SUITE_BASELINE_BUDGET_S;
+    const dl = (): number => (opts.deadlineMs === undefined ? Infinity : Math.floor((opts.deadlineMs - Date.now()) / 1000)); // R3 intake cap: what is left of intake's baseline budget
+    if (opts.rerun && p.baseline.ran && dl() >= 1) p.baseline = runBaseline(repoDir, p.commands, opts.deadlineMs === undefined ? opts : { ...opts, timeoutS: Math.max(1, Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, dl())) });
+    let left = Math.min(opts.budgetS ?? SUITE_BASELINE_BUDGET_S, dl());
     const old = p.suites ?? [];
     const rootSpeaks = (run: string): boolean => normCmd(run) === normCmd(p.baseline.command ?? "") || (p.baseline.ran && p.baseline.attributable && !p.baseline.timed_out && sameRootScript(repoDir, p.baseline.command ?? "", run)); // an alias is reused only when its base run is complete and attributable; otherwise the suite is measured under its own command
     p.suites = specs.filter((s) => s.cwd !== "." || !rootSpeaks(s.run)).map((s) => {

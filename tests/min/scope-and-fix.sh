@@ -281,6 +281,11 @@
 # 243. edit_shape.ts precedenceSites: drop otherChecks (the F3 precedence leg reads 7:- for the Go site and the follow-up is null).
 # 244. conflict_resume.ts pinnedTestCite: drop the literal-in-task check (the Z1 leg cites tests/temp.test.ts:6 and the unrelated task).
 # 245. context.ts fixedRules: return LEGACY_FIXED_RULES by default (the Z2 leg reads false for the knob and the brief).
+# 246. conflict_resume.ts unchangedReasons: drop the HEDGE_REASON check (the R2 leg keeps a reason that restates the task's hedge).
+# 247. scope.ts anchoredPlanScope: keep an unanchored list (the R3 leg flags the class file outside stated scope).
+# 248. repo_profile.ts baselineSuites: drop the deadline from left (the R3 leg runs a suite the intake budget has no room for).
+# 249. testmap.ts mochaTargets: ignore devDependencies (the R5 leg maps a mocha package to nothing).
+# 250. attempts.ts attemptModel: always entry 1 (the cascade leg runs the extra attempt on Haiku).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -751,7 +756,7 @@ res("patch receipt: green, error and every other status map to green, error and 
   const claim = withEnv({ LOKI_E10_CLAIM_CHECK: "1" }, () => impl.buildImplementBrief(TASK, null, [])), planned = withEnv({}, () => impl.buildImplementBrief(TASK, "1. edit calc.ts", []));
   res("coverage fold: the plan-skipped brief carries the folded line once, right after FOLD_PLAN_INSTRUCTION and before the task text (cache-stable prefix)", fold.split(cr.COVERAGE_FOLD).length === 2 && fold.includes(`${impl.FOLD_PLAN_INSTRUCTION}\n\n${cr.COVERAGE_FOLD}`) && fold.indexOf(cr.COVERAGE_FOLD) < fold.indexOf(TASK));
   res("coverage fold: the folded line maps every named site to its hunk and test, asks for a test where none exists, carries no FINISH_LINE, and does not match the separate turn's wording", /map each one to the hunk and the test that cover it/.test(cr.COVERAGE_FOLD) && /Fix any that is not covered, and add a test for any that has none/.test(cr.COVERAGE_FOLD) && !cr.COVERAGE_FOLD.includes("LOKI_DONE") && !cr.COVERAGE_FOLD.includes("List each site"));
-  res("coverage fold: opt-outs (=1, =0, LOKI_E10_LEAN_CALLS=0) give a brief byte-identical to the fold brief minus the folded line (main's brief)", turn === fold.replace(`\n\n${cr.COVERAGE_FOLD}`, "") && off === turn && lean0 === turn && !turn.includes("go over every site"));
+  res("coverage fold: opt-outs (=1, =0, LOKI_E10_LEAN_CALLS=0) give a brief byte-identical to the fold brief minus the folded line (main's brief)", turn === fold.replace(`\n\n${cr.COVERAGE_FOLD}\n\n${cr.NAMED_SITE_LINE}`, "") && off === turn && lean0 === turn && !turn.includes("go over every site"));
   res("coverage fold: LOKI_E10_CLAIM_CHECK=1 folds the claim variant (SITE lines); a brief with a plan has no folded line", claim.includes(cr.COVERAGE_FOLD_CLAIM) && claim.includes("SITE <path>:<line>: changed") && !planned.includes("go over every site"));
   const t1 = withEnv({}, () => impl.buildImplementBrief("first task text", null, [])), t2 = withEnv({}, () => impl.buildImplementBrief("a very different second task", null, []));
   const head = (b: string) => b.slice(0, b.indexOf(cr.COVERAGE_FOLD) + cr.COVERAGE_FOLD.length);
@@ -2015,6 +2020,80 @@ out.push(`${seen.join(",")}|${a.sites},${b.sites},${c.sites}`);
 console.log(out.join(" | "));' 2>&1)"
 [ "$F3R" = "7:Bundle | 7:- | 6:Group | none | none | 2:Object | true | true | true,false | it-pr:true|1,0,0" ] && ok "F3 precedence: Go errors.As ahead of an assertion branch, a Python isinstance moved to an ancestor the file declares (class Leaf(Node)) beside another isinstance branch and a TS === widened to includes each name the other branch's input; a lone widening carries no input, a check left strict and a move to a type the code does not make an ancestor give none; the follow-up names the input and asks for a test; one -pr resume on a real repo, none with =0 or for a change that widens nothing ($F3R)" || bad "F3 precedence gave: $F3R"
 grep -q 'const r = await resumeForPrecedence(ctx, { ...unchained(), iterationId: ids\[ids.length - 1\]! }, session);' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'precedence_check: precedenceRec' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && ok "F3 wiring: implement runs resumeForPrecedence after a clean done with a non-empty diff and records precedence_check" || bad "F3 wiring: implement does not run or record resumeForPrecedence"
+# acc-145 R2 named-site accountability (LOKI_E10_NAMED_SITES, default on, =0 opts out). Synthetic repo: the task names two classes in two files and says the second one
+# "may need" the change; the diff changes only the first. The unchanged named site is unaccounted until a reply gives a reason about the code (a reason that restates the
+# hedge does not count); one "-ns" resume asks for it; seal reads the final diff, caps VERIFIED for an unaccounted site and lists every unchanged one as named_unchanged.
+R2D="$T/r2"; rm -rf "$R2D"; mkdir -p "$R2D/svc"; git init -q -b main "$R2D"
+printf 'class Router:\n    def key(self, url):\n        return url.host\n' > "$R2D/svc/router.py"; printf 'class Mirror:\n    def key(self, url):\n        return url.host\n' > "$R2D/svc/mirror.py"
+git -C "$R2D" add -- . && git -C "$R2D" -c user.name=f -c user.email=f@x commit -q -m base; R2B="$(git -C "$R2D" rev-parse HEAD)"
+printf 'class Router:\n    def key(self, url):\n        return (url.scheme, url.host)\n' > "$R2D/svc/router.py"
+R2R="$(cd "$ROOT/loki-ts" && R2D="$R2D" R2B="$R2B" bun -e '
+const cr = await import("./src/util/conflict_resume.ts"), d = process.env.R2D, b = process.env.R2B;
+const task = "`Router` keys its cache by host only, so http and https share one entry.\n\nThe `Mirror` bookkeeping also keys on host and may need the same distinction.";
+const sites = cr.namedSites(task, d), out = [sites.map((s) => `${s.symbol}@${s.path}:${s.line}`).join(",")];
+out.push(cr.namedUnchanged(d, b, sites, {}).map((s) => `${s.symbol}:${s.why === null ? "open" : "why"}`).join(","));
+const hedge = cr.unchangedReasons("SITE svc/mirror.py:1: unchanged - the task says it may need the same change\nLOKI_DONE"), real = cr.unchangedReasons("SITE svc/mirror.py:1: unchanged - Mirror reads its key through Router, so it already gets the fix\nLOKI_DONE");
+out.push(`${Object.keys(hedge).length},${Object.keys(real).join("")}`);
+const seen = [], done = (summary) => ({ exit: 0, markers: { done: true, specConflict: null, alreadyDone: null }, durationS: 1, killed: false, summary });
+const sctx = { provider: "stub", repoDir: d, baseSha: b, sessions: { run: async (o) => { seen.push(o.iterationId + ":" + o.brief.includes("Mirror (svc/mirror.py:1)") + ":" + o.brief.includes("is not a reason")); return done("SITE svc/mirror.py:1: unchanged - Mirror reads its key through Router, so it already gets the fix\nLOKI_DONE"); } } };
+const opts = { stage: "implement", brief: "b", tier: "development", iterationId: "it", limitS: 600, signal: new AbortController().signal };
+const a = await cr.resumeForNamedSites(sctx, opts, done("LOKI_DONE"), task, {}), off = await cr.resumeForNamedSites(sctx, opts, done("LOKI_DONE"), task, { LOKI_E10_NAMED_SITES: "0" });
+out.push(`${seen.join(",")}|${a.record?.resumed}|${Object.keys(a.record?.reasons ?? {}).join("")}|${off.record === null && off.iterationIds.length === 0}`);
+const seal = (impl) => cr.namedUnchangedOf(d, b, impl).map((s) => `${s.symbol}:${s.why === null ? "open" : "why"}`).join(",") || "none";
+out.push([seal({ named_sites: a.record }), seal({ named_sites: { ...a.record, reasons: {} } }), seal({ named_sites: a.record, attempts: { winner: "x1", winner_site_reasons: {} } }), seal({})].join(";"));
+out.push(cr.namedUnchangedNote({ symbol: "Mirror", path: "svc/mirror.py", line: 1, why: null }));
+const fold = cr.coverageFoldLines({}), fold0 = cr.coverageFoldLines({ LOKI_E10_NAMED_SITES: "0" });
+out.push(`${fold.length},${fold[1] === cr.NAMED_SITE_LINE},${fold0.length === 1 && fold0[0] === cr.COVERAGE_FOLD},${cr.coverageFoldLines({ LOKI_E10_COVERAGE_RESUME: "0" }).length}`);
+console.log(out.join(" | "));' 2>&1)"
+[ "$R2R" = "Router@svc/router.py:1,Mirror@svc/mirror.py:1 | Mirror:open | 0,svc/mirror.py | it-ns:true:true|true|svc/mirror.py|true | Mirror:why;Mirror:open;Mirror:open;none | named site unchanged without a reason: Mirror (svc/mirror.py:1) | 2,true,true,0" ] && ok "R2 named sites: both named classes resolve; the hedged one the diff left alone is open, a reason restating the hedge does not close it and a reason about the code does; one -ns resume names it and records the reason; =0 runs nothing; seal reads the final diff (open without a reason, and for a winning extra attempt with no reason of its own); the fold carries the named-site line only while on" || bad "R2 named sites gave: $R2R"
+grep -q 'const r = await resumeForNamedSites(ctx, { ...unchained(), iterationId: ids\[ids.length - 1\]! }, session, task);' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'named_sites: namedRec' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q '\.\.\.namedOpen.filter((s) => s.why === null).map(namedUnchangedNote)\], verdict3: Verdict = openNotes.length > 0' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'named_unchanged: namedOpen.map' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'winner_site_reasons: unchangedReasons(r.sessions\[r.winner\]' "$ROOT/loki-ts/src/features/attempts.ts" && ok "R2 wiring: implement resumes for named sites and records them, seal caps VERIFIED on an unaccounted one and writes named_unchanged, a winning extra attempt carries its own reasons" || bad "R2 wiring missing in implement.ts, seal.ts or attempts.ts"
+
+# acc-145 R3 intake guard. (a) LOKI_E10_PLAN_SCOPE_ANCHOR (default on, =0 opts out): a plan-scope list holding none of the files or symbols the task names is discarded, so
+# the fix file named only by its class is never "outside stated scope". Synthetic repo: a VERSION file the prose word "version" matches, and the class in pkg/fetch.py.
+# (b) LOKI_E10_INTAKE_CAP_S (default 180, =0 off): the root baseline and the suite baselines share one budget; a suite the budget has no room for is not run.
+R3D="$T/r3"; rm -rf "$R3D"; mkdir -p "$R3D/pkg" "$R3D/run"; git init -q -b main "$R3D"
+printf '1.0\n' > "$R3D/VERSION"; printf 'class Fetcher:\n    def rules(self, url):\n        return url.host\n' > "$R3D/pkg/fetch.py"; printf '{"scripts":{"test":"sleep 3"}}\n' > "$R3D/package.json"
+git -C "$R3D" add -- . && git -C "$R3D" -c user.name=f -c user.email=f@x commit -q -m base
+printf '{"files":["VERSION"]}\n' > "$R3D/run/plan-scope.json"
+R3R="$(cd "$ROOT/loki-ts" && R3D="$R3D" bun -e '
+const sc = await import("./src/e10ext/scope.ts"), rp = await import("./src/runner/repo_profile.ts"), d = process.env.R3D;
+const task = "`Fetcher` caches the parsed rules by host only, so the HTTP version and the HTTPS version share one parser.";
+const j = (x) => JSON.stringify(x);
+const out = [j(sc.anchoredPlanScope(["VERSION"], task, d)), j(sc.anchoredPlanScope(["VERSION", "pkg/fetch.py"], task, d)), j(sc.anchoredPlanScope(["VERSION"], "fix the version bump", d)), j(sc.anchoredPlanScope(["VERSION"], task, d, { LOKI_E10_PLAN_SCOPE_ANCHOR: "0" }))];
+const o = { intake: { task } }, staged = [{ st: "M", f: "pkg/fetch.py" }];
+out.push(j(sc.flagOutsideScope(o, staged, d + "/run", d)));
+process.env.LOKI_E10_PLAN_SCOPE_ANCHOR = "0"; out.push(j(sc.flagOutsideScope(o, staged, d + "/run", d))); delete process.env.LOKI_E10_PLAN_SCOPE_ANCHOR;
+out.push([rp.intakeCapS({}), rp.intakeCapS({ LOKI_E10_INTAKE_CAP_S: "0" }), rp.intakeCapS({ LOKI_E10_INTAKE_CAP_S: "90" }), rp.intakeCapS({ LOKI_E10_INTAKE_CAP_S: "x" })].join(","));
+rp.ensureProfile(d, { timeoutS: 1 });
+const spec = [{ name: "full suite: other", cmd: "suite-cmd", cwd: ".", run: "sleep 3; true" }], t0 = Date.now();
+const p1 = rp.baselineSuites(d, spec, { timeoutS: 300, budgetS: 300, deadlineMs: Date.now() }), ms = Date.now() - t0;
+out.push(`${p1?.suites?.[0]?.reason ?? "ran"},${ms < 2500}`);
+console.log(out.join(" | "));' 2>&1)"
+[ "$R3R" = '[] | ["VERSION","pkg/fetch.py"] | ["VERSION"] | ["VERSION"] | ["scope not determined; all edits committed"] | ["outside stated scope: pkg/fetch.py"] | 180,,90,180 | baseline budget used up,true' ] && ok "R3 intake guard: a plan scope holding only a file the prose matched is discarded (the class file is never outside stated scope), a scope holding the defining file is kept, a task naming nothing and =0 keep the list; the intake cap defaults to 180 s (=0 off), and a suite the shared budget has no room for is not run" || bad "R3 intake guard gave: $R3R"
+grep -q 'icap = intakeCapS(), built = baselineOn ? ensureProfile(ctx.repoDir, { timeoutS: icap === null ? baselineCmdS(ctx.capS) : Math.min(baselineCmdS(ctx.capS), icap) })' "$ROOT/loki-ts/src/engine10/stages/intake.ts" && grep -q 'baselineLeftS: Math.max(0, icap - Math.ceil(baselineMs / 1000))' "$ROOT/loki-ts/src/engine10/stages/intake.ts" && grep -q 'deadlineMs: tb + ctx.baselineLeftS \* 1000' "$ROOT/loki-ts/src/project_model/install.ts" && grep -q 'flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir)' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'outsideScope(a.outputs(), staged, anchoredPlanScope(readPlanScope(a.runDir)' "$ROOT/loki-ts/src/features/attempts.ts" && ok "R3 wiring: intake passes one baseline budget to the root and suite baselines; seal and the attempts ranking read the anchored plan scope" || bad "R3 wiring missing in intake.ts, install.ts, seal.ts or attempts.ts"
+
+# acc-145 R5 mocha targeted tests (LOKI_E10_MOCHA_TARGETED, default on, =0 opts out). Synthetic package declaring mocha in devDependencies, its test files without a .test or
+# .spec suffix: a changed source maps to the test at its mirrored path, a changed test file to itself; fixtures, a package without mocha and =0 map to nothing.
+R5D="$T/r5"; rm -rf "$R5D"; mkdir -p "$R5D/a/lib/rules" "$R5D/a/tests/lib/rules" "$R5D/a/tests/fixtures" "$R5D/b/lib"; printf '{"devDependencies":{"mocha":"^10.0.0"}}\n' > "$R5D/a/package.json"; printf '{"name":"b"}\n' > "$R5D/b/package.json"
+printf 'module.exports = 1;\n' | tee "$R5D/a/lib/rules/no-thing.js" "$R5D/a/tests/lib/rules/no-thing.js" "$R5D/a/tests/fixtures/x.js" "$R5D/a/lib/other.js" "$R5D/b/lib/no-thing.js" > /dev/null; mkdir -p "$R5D/b/tests/lib"; cp "$R5D/b/lib/no-thing.js" "$R5D/b/tests/lib/no-thing.js"
+R5R="$(cd "$ROOT/loki-ts" && R5D="$R5D" bun -e '
+const tm = await import("./src/engine10/testmap.ts"), cs = await import("./src/util/check_result.ts"), d = process.env.R5D;
+const m = (ch, env = {}) => tm.mochaTargets(d, ch, env).map((t) => `${t.runner}:${t.path}`).join(",") || "none";
+const c = cs.commandFor({ runner: "mocha", path: "a/tests/lib/rules/no-thing.js" }, d, null);
+console.log([m(["a/lib/rules/no-thing.js"]), m(["a/tests/lib/rules/no-thing.js"]), m(["a/tests/fixtures/x.js", "a/lib/other.js"]), m(["b/lib/no-thing.js"]), m(["a/lib/rules/no-thing.js"], { LOKI_E10_MOCHA_TARGETED: "0" }), c.argv.join(" ")].join(" | "));' 2>&1)"
+[ "$R5R" = "mocha:a/tests/lib/rules/no-thing.js | mocha:a/tests/lib/rules/no-thing.js | none | none | none | npx --no-install mocha a/tests/lib/rules/no-thing.js" ] && ok "R5 mocha: a changed source maps to its mirrored mocha test and a changed test to itself in a package that declares mocha; fixtures, a file with no mirror, a package without mocha and =0 map to nothing; the ref runs npx --no-install mocha <file>" || bad "R5 mocha gave: $R5R"
+grep -q 'const tests = tests0.length === 0 ? mochaTargets(ctx.repoDir, changed) : tests0;' "$ROOT/loki-ts/src/engine10/stages/verify.ts" && grep -q '\.\.\.(tests === tests0 ? \[\] : mochaTargets(ctx.repoDir, \[f\]))' "$ROOT/loki-ts/src/engine10/stages/verify.ts" && ok "R5 wiring: verify runs the mocha refs only when nothing else is selected, through the normal test path (base subtraction, flaky rerun), and counts them as covering their source" || bad "R5 wiring missing in verify.ts"
+
+# acc-145 best-of-N cascade (LOKI_E10_ATTEMPT_MODELS, unset by default) and the tie reviewer model (LOKI_E10_SELECT_REVIEW_MODEL, default Sonnet; LOKI_E10_ATTEMPTS_REVIEW_MODEL
+# is the older name). Aliases resolve through the model catalog; the receipt names each attempt's model only when the list is set.
+CAS="$(cd "$ROOT/loki-ts" && bun -e '
+const at = await import("./src/features/attempts.ts");
+const e = { LOKI_E10_ATTEMPT_MODELS: "haiku, sonnet" }, r = { winner: 1, reason: "r", early: false, launched: 1, sessions: [], scored: [{ index: 0, red: true, conflict: false, not_proven: 0, diff_lines: 3, outside_files: 0, disqualified: false }, { index: 1, red: false, conflict: false, not_proven: 0, diff_lines: 4, outside_files: 0, disqualified: false }] };
+console.log([[0, 1, 2].map((i) => at.attemptModel(i, "sess", e)).join(","), at.attemptModel(1, "sess", {}), at.attemptModels({}).length,
+  at.attemptsReviewModel({}), at.attemptsReviewModel({ LOKI_E10_SELECT_REVIEW_MODEL: "opus" }), at.attemptsReviewModel({ LOKI_E10_ATTEMPTS_REVIEW_MODEL: "opus" }), at.attemptsReviewModel({ LOKI_E10_SELECT_REVIEW_MODEL: "sonnet", LOKI_E10_ATTEMPTS_REVIEW_MODEL: "opus" }),
+  at.attemptsReceiptLines(r, 2, ["claude-haiku-5-5", "claude-sonnet-5-5"])[1], at.attemptsReceiptLines(r, 2)[1]].join(" | "));' 2>&1)"
+[ "$CAS" = "claude-haiku-5-5,claude-sonnet-5-5,claude-sonnet-5-5 | sess | 0 | claude-sonnet-5-5 | claude-opus-5-5 | claude-opus-5-5 | claude-sonnet-5-5 | attempt 2 (x1) on claude-sonnet-5-5: verify green, 0 NOT PROVEN, 4 changed lines | attempt 2 (x1): verify green, 0 NOT PROVEN, 4 changed lines" ] && ok "cascade: LOKI_E10_ATTEMPT_MODELS gives attempt i its entry (the last reused past the list, aliases resolved), unset keeps the session model; the tie reviewer defaults to Sonnet, LOKI_E10_SELECT_REVIEW_MODEL=opus picks Opus and wins over the older name; the receipt names the model only with the list set" || bad "cascade gave: $CAS"
+grep -q 'firstAttemptModel = attemptsK(ctx.model) > 0 ? attemptModels()\[0\] : undefined' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'model: downgrade.to } : firstAttemptModel ? { model: firstAttemptModel }' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q '(attemptModel(i, deps.model) ? { model: attemptModel(i, deps.model) } : {})' "$ROOT/loki-ts/src/features/attempts.ts" && ok "cascade wiring: the first attempt's implement session runs on entry 1 when attempts are on, each extra attempt on its own entry" || bad "cascade wiring missing in implement.ts or attempts.ts"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

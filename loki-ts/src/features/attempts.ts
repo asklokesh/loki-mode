@@ -1,6 +1,6 @@
 // EXP-0010 best-of-N implement attempts, in features/ because e10ext is at its cap. LOKI_E10_ATTEMPTS=N is N TOTAL attempts (unset, 0 and 1 are off; `on` is 2; before 11.140 it meant N EXTRA
 // attempts after a red verify). When the first attempt (the incumbent, in the primary tree, fix rounds included) is not clean (verify red, a spec conflict, or a NOT PROVEN line from verify or a fix
-// round), N-1 more independent attempts run IN PARALLEL on the same model, each in a detached worktree in its own temp directory (never inside the repo: a test runner run in the primary would
+// round), N-1 more independent attempts run IN PARALLEL on the same model (LOKI_E10_ATTEMPT_MODELS sets one per attempt), each in a detached worktree in its own temp directory (never inside the repo: a test runner run in the primary would
 // discover the attempts' copies) with a different instruction. Each finished attempt is swapped into the primary and gets Loki's normal verify (the caller's score); the first clean one stops the
 // others. Otherwise select.ts rankAttempts ranks on what a real user can see (verify green, no spec conflict, fewer NOT PROVEN lines) and a tie at the top goes to one order-swapped review of the
 // tied diffs against the issue, the repo's CONTRIBUTING, PR template and style configs and the pre-fix text of the touched files (reviewTie). No hidden test or benchmark file is ever read.
@@ -18,7 +18,9 @@ import { isTestFile } from "../engine10/testmap.ts";
 import { FINISH_LINE, type Obj, type RunContext, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
 import { rankAttempts, type AttemptCandidate, type AttemptCheck, type AttemptSignal } from "../e10ext/select.ts";
 import { consultCallFor } from "./opus_consult.ts";
-import { outsideScope } from "../e10ext/scope.ts";
+import { resolveClaudeModel } from "../util/claude_model.ts";
+import { namedSitesEnabled, unchangedReasons } from "../util/conflict_resume.ts";
+import { anchoredPlanScope, outsideScope } from "../e10ext/scope.ts";
 import { parseStaged, type Staged } from "../e10ext/commit_filter.ts";
 import { DEFAULT_EXCLUDES, applyDiff, resetToBase, snapshotDiff, swapAttemptIntoWorkingTree } from "../e10ext/treeswap.ts";
 
@@ -38,6 +40,12 @@ export function attemptsTotal(model: string | undefined, env: NodeJS.ProcessEnv 
 }
 /** The extra sessions, N - 1 (0 is off). */
 export const attemptsK = (model: string | undefined, env: NodeJS.ProcessEnv = process.env): number => attemptsTotal(model, env) - 1;
+/** LOKI_E10_ATTEMPT_MODELS (unset by default: every attempt runs on the session model): a comma list naming one model per attempt in order, so `haiku,sonnet` runs
+ *  attempt 1 (the first, in the primary tree) on Haiku and the extra attempt on Sonnet. An attempt past the end of the list reuses its last entry. Family aliases go
+ *  through the model catalog (a bare alias is rejected on the API route). */
+export const attemptModels = (env: NodeJS.ProcessEnv = process.env): string[] => (env.LOKI_E10_ATTEMPT_MODELS ?? "").split(",").map((m) => m.trim()).filter((m) => m !== "").map(resolveClaudeModel);
+/** The model attempt `i` (0 is the first attempt) runs on: its LOKI_E10_ATTEMPT_MODELS entry, else `fallback` (the session model). */
+export const attemptModel = (i: number, fallback: string | undefined, env: NodeJS.ProcessEnv = process.env): string | undefined => { const l = attemptModels(env); return l.length ? l[Math.min(i, l.length - 1)] : fallback; };
 
 /** An attempt's NOT PROVEN lines for ranking. `pre red:` lines name checks that also fail on base; they are the same for every attempt, so they never rank one over another. */
 export const signalNotProven = (lines: unknown[]): string[] => [...new Set(lines.map(String).filter((l) => l !== "" && !l.startsWith("pre red:")))];
@@ -200,7 +208,7 @@ export function treeswapOps(a: {
       const touched = new Set(snapshotDiff(root, a.base, EX).map((e) => e.path).filter((p) => !pre.has(p)));
       const staged: Staged[] = parseStaged(safeGit(root, ["diff", "--name-status", "--no-renames", "-z", a.base, "--", ".", ...ex]));
       const editedTests = staged.filter(({ st, f }) => st !== "A" && isTestFile(f) && testFileWeakened(root, a.base, null, f, st)); // seal's weakened-test rule: an attempt that loosens an existing test never wins by passing it
-      const out = outsideScope(a.outputs(), staged, readPlanScope(a.runDir));
+      const out = outsideScope(a.outputs(), staged, anchoredPlanScope(readPlanScope(a.runDir), String(a.outputs().intake?.task ?? ""), root)); // R3: the same plan-scope anchor seal applies
       return { diff: tracked + added, reviewDiff: tracked + fresh.map((p) => newFileDiff(root, p)).join(""), weakensTest: editedTests.length > 0 || [...a.wallPaths].some((p) => wallWeakened(root, i === 0, p, touched)), outsideFiles: out?.length ?? 0 };
     },
     score: (i) => a.score ? a.score(i) : Promise.reject(new Error("attempts: no verify bound to score an attempt")),
@@ -216,8 +224,9 @@ export interface ExtraAttemptsDeps {
 export interface ExtraAttemptsOutcome { winner: number; launched: number; summary: Record<string, unknown>; ids: string[]; tookExtra: boolean }
 
 // ---- the tie review --------------------------------------------------------
-/** Sonnet by default (cost is secondary to picking the mergeable attempt); LOKI_E10_ATTEMPTS_REVIEW_MODEL overrides, LOKI_E10_ATTEMPTS_REVIEW=0 turns the review off (lowest index wins a tie). */
-export const attemptsReviewModel = (env: NodeJS.ProcessEnv = process.env): string => env.LOKI_E10_ATTEMPTS_REVIEW_MODEL || "claude-sonnet-5-5";
+/** Sonnet by default (cost is secondary to picking the mergeable attempt); LOKI_E10_SELECT_REVIEW_MODEL overrides (`opus` gives a reviewer independent of a Sonnet
+ *  judge), LOKI_E10_ATTEMPTS_REVIEW_MODEL is its older name, LOKI_E10_ATTEMPTS_REVIEW=0 turns the review off (lowest index wins a tie). Aliases go through the model catalog. */
+export const attemptsReviewModel = (env: NodeJS.ProcessEnv = process.env): string => { const m = (env.LOKI_E10_SELECT_REVIEW_MODEL || env.LOKI_E10_ATTEMPTS_REVIEW_MODEL || "").trim(); return m ? resolveClaudeModel(m) : "claude-sonnet-5-5"; };
 export const attemptsReviewOn = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_ATTEMPTS_REVIEW !== "0";
 /** The repo's own statements of how a change should look: contribution guide and PR template first, then style configs. Read at the base commit, so no attempt can write them. */
 export const CONVENTION_FILES = ["CONTRIBUTING.md", ".github/CONTRIBUTING.md", "docs/CONTRIBUTING.md", "CONTRIBUTING.rst", "CONTRIBUTING", ".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md"];
@@ -285,9 +294,9 @@ export async function reviewTie(call: ReviewCall, c: ReviewContext, tied: { inde
 }
 
 /** The receipt's `attempts` lines (seal.ts): one per attempt and the selection. Omitted (hash unchanged) when no extra attempt ran. */
-export function attemptsReceiptLines(r: AttemptsResult, total: number): string[] {
+export function attemptsReceiptLines(r: AttemptsResult, total: number, models: (string | undefined)[] = []): string[] {
   if (r.launched === 0) return [];
-  const name = (i: number): string => (i === 0 ? "attempt 1 (first)" : `attempt ${i + 1} (x${i})`);
+  const name = (i: number): string => `${i === 0 ? "attempt 1 (first)" : `attempt ${i + 1} (x${i})`}${models[i] ? ` on ${models[i]}` : ""}`; // models: only with LOKI_E10_ATTEMPT_MODELS set, so the default receipt is unchanged
   return [
     ...r.scored.map((s) => `${name(s.index)}: ${s.disqualified ? "disqualified (killed, errored, empty diff or a weakened test)" : s.red === null ? "not verified" : `verify ${s.red ? "red" : "green"}${s.conflict ? ", spec conflict" : ""}, ${s.not_proven} NOT PROVEN`}, ${s.diff_lines} changed lines`),
     `selected ${name(r.winner)} of ${r.scored.length} scored (${total} requested): ${r.reason}`,
@@ -307,14 +316,14 @@ export async function runExtraAttempts(ctx: RunContext, signal: AbortSignal, dep
   const ops = treeswapOps({
     primary: ctx.repoDir, runDir: ctx.runDir, base: ctx.baseSha, k: deps.k, wallPaths: new Set(deps.wallPaths), ...(deps.wallContent ? { wallContent: new Map(Object.entries(deps.wallContent)) } : {}), outputs: () => ctx.outputs(),
     keep: (p) => userUntracked.has(p) || deps.wallPaths.includes(p) || owned(p),
-    runSession: (i, cwd, sig): Promise<SessionResult> => { const o: SessionRunOptions = { stage: "implement", brief: variantBrief(deps.brief, i), tier: "development", iterationId: ids[i - 1]!, limitS: deps.limitS, signal: sig, cwd, ...(deps.model ? { model: deps.model } : {}) }; return ctx.sessions.run(o); },
+    runSession: (i, cwd, sig): Promise<SessionResult> => { const o: SessionRunOptions = { stage: "implement", brief: variantBrief(deps.brief, i), tier: "development", iterationId: ids[i - 1]!, limitS: deps.limitS, signal: sig, cwd, ...(attemptModel(i, deps.model) ? { model: attemptModel(i, deps.model) } : {}) }; return ctx.sessions.run(o); }, // LOKI_E10_ATTEMPT_MODELS: entry i+1, else the session model
     score,
   });
   const reviewCall = call ?? (attemptsReviewOn() ? consultCallFor(attemptsReviewModel(), process.env.LOKI_DIR ?? join(ctx.repoDir, ".loki"), process.env, 180_000, { maxTokens: 1500, thinking: "off" }) : undefined);
   const review = reviewCall ? (tied: { index: number; diff: string }[]) => reviewTie(reviewCall, reviewContext(ctx.repoDir, ctx.baseSha, String(ctx.outputs().intake?.task ?? ""), tied.map((t) => t.diff)), tied) : undefined;
   try {
     const r = await runAttempts({ ...ops, ...(review ? { review } : {}) }, deps.k, signal);
-    const total = deps.k + 1;
-    return { winner: r.winner, launched: r.launched, ids: ids.slice(0, r.launched), tookExtra: r.winner > 0, summary: { total, launched: r.launched, winner: r.winner === 0 ? "incumbent" : `x${r.winner}`, reason: r.reason, early_accept: r.early, scored: r.scored, receipt: attemptsReceiptLines(r, total) } };
+    const total = deps.k + 1, models = attemptModels().length ? Array.from({ length: total }, (_, i) => attemptModel(i, deps.model) ?? "session model") : [];
+    return { winner: r.winner, launched: r.launched, ids: ids.slice(0, r.launched), tookExtra: r.winner > 0, summary: { total, launched: r.launched, winner: r.winner === 0 ? "incumbent" : `x${r.winner}`, reason: r.reason, early_accept: r.early, scored: r.scored, receipt: attemptsReceiptLines(r, total, models), ...(models.length ? { models, winner_model: models[r.winner] } : {}), ...(r.winner > 0 && namedSitesEnabled() ? { winner_site_reasons: unchangedReasons(r.sessions[r.winner]?.summary ?? "") } : {}) } }; // R2: seal reads the winner's own SITE reasons
   } finally { ops.dispose(); }
 }
