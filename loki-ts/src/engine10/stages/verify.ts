@@ -35,7 +35,7 @@ export interface VerifyCheck {
   owner?: "harness"; skip_code?: SkipCode; /* machine-readable twin of the "<cmd> not found on PATH" reason */ // FC-02: the runner could not load or collect; not_run, never a code failure
 }
 export { runnerCmd, commandFor, firstError } from "../../util/check_result.ts"; // one owner: check_result.ts (test invocation resolver and failure-line normalizer)
-import { type SkipCode, changedSymbols, firstFileLineAnchor, runnerCmd, commandFor, firstError, resolveTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
+import { type SkipCode, changedSymbols, firstFileLineAnchor, runnerCmd, commandFor, firstError, resolveTool, spawnFailedTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
 /** TEN-QUALITY-01: stage-local failure excerpts keyed by check object; never on VerifyCheck, never emitted, never set for a held-out check. */
 const excerpts = new WeakMap<object, string>();
 export const checkExcerpt = (c: VerifyCheck): string => excerpts.get(c) ?? ""; // the patch protocol's repair digest (features/patch_protocol.ts)
@@ -90,7 +90,7 @@ export { ran, skipped } from "../../util/check_result.ts"; // FC-16: the one sha
 export { testConfigChanged } from "../../features/runner_config.ts"; // D86 FC-09r: the one runner-config registry lives in features/
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
  *  never retried (a hung check must not burn 2x its timeout). `out` is a 64 KB tail, unread when cut. The result comes from exit + timeout, never pipe EOF (an orphaned grandchild may hold the pipes). */
-export async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string }> {
+export async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string; spawnTool?: string }> {
   if (!Bun.which(cmd, { PATH: opts.path ?? process.env["PATH"] ?? "" })) return { ok: false, missing: true, cut: false, out: "" };
   const timeout = AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS);
   const proc = Bun.spawn([cmd, ...args], {
@@ -106,7 +106,8 @@ export async function runOnce(cmd: string, args: string[], cwd: string, signal: 
   const exitCode = await proc.exited;
   await Promise.race([Promise.all(pumps), new Promise((r) => setTimeout(r, 300))]); rs.forEach((r) => r.cancel().catch(() => {}));
   if (opts.group) killGroup(); const cut = timeout.aborted || signal.aborted;
-  return { ok: exitCode === 0 && !cut, missing: false, cut, out: cut ? "" : stripAnsi(tail.slice(-keep)) }; // FC-69
+  const out = cut ? "" : stripAnsi(tail.slice(-keep)), spawnTool = exitCode !== 0 && !cut ? spawnFailedTool(out, exitCode) : null; // SPAWN-NOT-RUN: a tool that could not start is a missing tool, never a code failure
+  return { ok: exitCode === 0 && !cut, missing: spawnTool !== null, cut, out, ...(spawnTool ? { spawnTool } : {}) }; // FC-69
 }
 /** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, a  timed-out/aborted run, or a run that executed 0 tests is recorded once as not_run and never retried. */
 export async function runCheck(
@@ -122,7 +123,7 @@ export async function runCheck(
     const lr = kind === "test" && !a.ok && !a.cut && !a.missing ? await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs?.().intake?.install_created), out: a.out, cmd, args, signal, cwd, protect: opts.protect, ...(opts.path ? { env: { PATH: opts.path } } : {}) }) : undefined; // FC-02: only kind "test"; lint/tsc/selector (kind "static") never reach it
     if (lr) c = { result: "not_run", reason: lr, owner: "harness" };
     if (!lr && kind === "static" && !a.ok && !a.cut && !a.missing && opts.wall?.size && wallOwnedFailure(a.out, cwd, ctx.repoDir, opts.wall)) c = { result: "not_run", reason: WALL_COMPILE_REASON, owner: "harness" }; // FC-23: never a fix round on a read-only Wall file // harness-owned load error: never retried, never a fix round
-    const reason = a.missing ? `${cmd} not found on PATH${installHint(cmd)}` : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`) : c.reason;
+    const reason = a.missing ? (a.spawnTool ? `${a.spawnTool} could not be started (not installed)${installHint(a.spawnTool)}` : `${cmd} not found on PATH${installHint(cmd)}`) : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`) : c.reason;
     return { ...c, ...(reason ? { reason } : {}) };
   };
   let attempt = await runOnce(cmd, args, cwd, signal, opts);
