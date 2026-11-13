@@ -11,7 +11,7 @@ import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutat
 import { RealBaseTestRunner, loadTaskText } from "./wall.ts"; import { defectPinEdits, defectPinNote, pinDroppedNotes, pinnedUpdateNotes, type PinnedTestUpdate } from "../../util/test_guard.ts";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
 import { discardIfSatisfied } from "../../e10ext/discard.ts";
-import { dropSet, formatChangedRecord, parseStaged } from "../../e10ext/commit_filter.ts";
+import { buildArtifactNotes, dropSet, formatChangedRecord, parseStaged } from "../../e10ext/commit_filter.ts";
 import { crossPackageTestEdits, crossPackageTestNote, flagOutsideScope, scopeTestDropEnabled } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts"; import { getVersion } from "../../version.ts";
@@ -34,7 +34,7 @@ import { patchReceipt } from "../../features/patch_protocol.ts";
 import { collapseNotProven } from "../../util/term_width.ts";
 import { consultNotes, neverStopNotes } from "../../features/opus_consult.ts"; import { namedUnchangedNote, namedUnchangedOf } from "../../util/conflict_resume.ts";
 import { tournamentReceiptBlock } from "../../features/tournament.ts"; import { attemptsReceiptBlock } from "../../features/attempts.ts"; import { nrdReceiptBlock, settleNrd } from "../../features/no_regression.ts";
-import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, splitDeclaredAdvisories } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { fragmentNoticeLine, misplacedNamedNotes } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
+import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, splitDeclaredAdvisories } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { fragmentNoticeLine, misplacedNamedNotes, releaseNoteSkipBlock } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
 const SYSTEM_INTERP = "tests ran on the system interpreter", SYSTEM_INTERP_SUFFIX = " (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)"; // verify.ts writes the note
 
 export const SIGNING_UNAVAILABLE = "receipt signing unavailable (no usable signing key: invalid key or unwritable ~/.loki/keys)", AGENT_ONLY_REASON = "only agent-authored tests executed (no agent-independent proof)", WALL_GREEN_ON_BASE_REASON = "Wall green on base: no Wall test discriminates the change"; // TEN-GATES-02
@@ -168,7 +168,7 @@ export const commitStage: Stage = {
     }
     const dropped = new Set([...drop.map(({ f }) => f), ...xpkg]), fmtRec = formatChangedRecord(ctx.repoDir, staged, dropped, process.env, ctx.baseSha), fmt = fmtRec.formatted; // TEN-QUALITY-16: only the run's own kept files; J1: the resolved binary, base-clean files only, recorded
     if (fmt.length > 0) await git(ctx, ["--literal-pathspecs", "add", "--", ...fmt], { repoDrivers: true }); // re-stage what the repo's formatter rewrote
-    const notes = [...xpkg.map(crossPackageTestNote), ...flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir), ...toolchainDropNotes(ctx.repoDir, drop.filter(({ st }) => st === "A").map(({ f }) => f), ctx.baseSha)]; // D76: advisory, nothing is reverted
+    const notes = [...xpkg.map(crossPackageTestNote), ...flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir), ...toolchainDropNotes(ctx.repoDir, drop.filter(({ st }) => st === "A").map(({ f }) => f), ctx.baseSha), ...buildArtifactNotes(ctx.repoDir, drop.filter(({ st }) => st === "A").map(({ f }) => f), ctx.baseSha, str(ctx.outputs().intake?.task) ?? undefined)]; // D76: advisory, nothing is reverted
     const format = fmtRec.records.length ? { format: fmtRec.records } : {};
     if ((await git(ctx, ["diff", "--cached", "--quiet"])).code === 0) return { status: "completed", data: { committed: false, scope_notes: notes, ...format } };
     const title = (str(ctx.outputs().intake?.title) ?? `run ${ctx.runId}`).split("\n")[0]!.slice(0, 72);
@@ -443,7 +443,7 @@ export const sealStage: Stage = {
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
-      ...pinnedUpdatesBlock(o.implement), ...(namedOpen.length ? { named_unchanged: namedOpen.map((s) => ({ symbol: s.symbol, path: s.path, line: s.line, reason: s.why })) } : {}), ...specReceiptBlock(process.env), ...triageReceiptBlock(o.intake), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(), ...sealAccuracyBlock(rawDiff.filter((_, i) => i % 2 === 1), checks, ctx.model), ...contextCoverageBlock(o.implement, rawDiff, ctx.repoDir), ...tournamentReceiptBlock(o.implement), ...attemptsReceiptBlock(o.implement), ...nrdReceiptBlock(o.implement), // GAME10-03; L022 context recall and precision
+      ...pinnedUpdatesBlock(o.implement), ...releaseNoteSkipBlock(o.implement),...(namedOpen.length ? { named_unchanged: namedOpen.map((s) => ({ symbol: s.symbol, path: s.path, line: s.line, reason: s.why })) } : {}), ...specReceiptBlock(process.env), ...triageReceiptBlock(o.intake), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(), ...sealAccuracyBlock(rawDiff.filter((_, i) => i % 2 === 1), checks, ctx.model), ...contextCoverageBlock(o.implement, rawDiff, ctx.repoDir), ...tournamentReceiptBlock(o.implement), ...attemptsReceiptBlock(o.implement), ...nrdReceiptBlock(o.implement), // GAME10-03; L022 context recall and precision
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only
