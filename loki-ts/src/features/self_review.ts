@@ -1,11 +1,11 @@
 // SR LOKI_E10_SELF_REVIEW: the pre-delivery review self-check. New file: no module owns a review that may EDIT the diff before delivery (stages/xreview.ts is a
 // read-only reviewer that can only lower the verdict, after verify). Deterministic checks first, then at most one bounded resume of the implement session.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { buildArtifacts, type Staged } from "../e10ext/commit_filter.ts";
+import { buildArtifacts, runOutputs, type Staged } from "../e10ext/commit_filter.ts";
 import { outsideScope } from "../e10ext/scope.ts";
 import type { Obj } from "../engine10/types.ts";
-import { contributionGuides, releaseNoteConvention, taskForbidsReleaseNote } from "../project_model/conventions.ts";
+import { contributionGuides, releaseNoteConvention, releaseNoteProblems, taskForbidsReleaseNote } from "../project_model/conventions.ts";
 import { detectFormatters } from "../runner/repo_profile.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { isTestFile } from "../util/test_file_text.ts";
@@ -31,12 +31,14 @@ export function selfReviewChecks(repoDir: string, baseSha: string, staged: Stage
   // (a) release note the repo's rules require
   const conv = (() => { try { return releaseNoteConvention(repoDir, env); } catch { return null; } })();
   const carried = conv ? files.some((f) => f === conv.dir || f.startsWith(`${conv.dir}/`)) : false;
+  const refProblems = conv && carried && src.length > 0 ? (() => { try { return releaseNoteProblems(repoDir, conv, addedLines(repoDir, baseSha, live.filter(({ f }) => f === conv.dir || f.startsWith(`${conv.dir}/`))), files, task, env); } catch { return []; } })() : [];
+  if (refProblems.length) items.push({ item: "release_note", status: "flagged", detail: refProblems.slice(0, 4).join("; ") }); else
   items.push(!conv || src.length === 0 || taskForbidsReleaseNote(task) ? { item: "release_note", status: "ok", detail: conv ? (src.length === 0 ? "no source change" : "the task says no release note") : "the repo states no release-note rule" }
     : carried ? { item: "release_note", status: "ok", detail: `the diff carries ${conv.kind === "changelog" ? `an entry in ${conv.dir}` : `a ${conv.kind} fragment in ${conv.dir}/`}` }
     : { item: "release_note", status: "flagged", detail: conv.kind === "changelog" ? `the contribution guide asks for an entry in ${conv.dir} (under "${conv.heading ?? "Unreleased"}") and the diff has none` : `the repo keeps ${conv.kind} release notes in ${conv.dir}/ and the diff has no fragment` });
   // (b) stray, generated or unrelated files: build output (the commit filter drops it) and added files in a directory the repo has never tracked
   const added = live.filter(({ st }) => st === "A").map(({ f }) => f);
-  const art = (() => { try { return [...buildArtifacts(repoDir, added, baseSha, task)]; } catch { return []; } })();
+  const art = (() => { try { return [...new Set([...buildArtifacts(repoDir, added, baseSha, task), ...runOutputs(repoDir, added, baseSha, task)])]; } catch { return []; } })(); // the commit filter drops these (GB, RO)
   const trackedDirs = (() => { try { return new Set(safeGit(repoDir, ["ls-tree", "-r", "--name-only", baseSha], { maxBuffer: 256 << 20 }).split("\n").filter(Boolean).map((f) => dirname(f))); } catch { return null; } })();
   const fragDir = conv && conv.kind !== "changelog" ? `${conv.dir}/` : null;
   const stray = trackedDirs ? added.filter((f) => !art.includes(f) && !isTestFile(f) && !(fragDir && f.startsWith(fragDir)) && !trackedDirs.has(dirname(f)) && !task.includes(f) && !task.includes(basename(f))) : [];
@@ -97,6 +99,15 @@ export function settleItems(before: ReviewItem[], after: ReviewItem[] | null, re
 /** The receipt block; {} when the knob is off or nothing was recorded. */
 export type SelfReviewRecord = { mode: string; turn: string | null; items: ReviewItem[] };
 export const selfReviewReceiptBlock = (implement: Record<string, unknown> | undefined): { self_review?: SelfReviewRecord } => (implement && implement["self_review"] ? { self_review: implement["self_review"] as SelfReviewRecord } : {});
+/** The lines each path adds against base: a diff of the working tree for a tracked path, the whole file for a new one. */
+export function addedLines(repoDir: string, baseSha: string, paths: Staged[]): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const { st, f } of paths) {
+    if (st === "A") { try { m.set(f, readFileSync(join(repoDir, f), "utf8").split("\n")); } catch { /* gone */ } continue; }
+    try { m.set(f, safeGit(repoDir, ["diff", "--no-color", "-U0", baseSha, "--", f]).split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1))); } catch { /* unreadable */ }
+  }
+  return m;
+}
 /** The staged list against base for an uncommitted tree (index untouched: diff of the working tree plus untracked files). */
 export function treeStaged(repoDir: string, baseSha: string): Staged[] {
   const out: Staged[] = [];

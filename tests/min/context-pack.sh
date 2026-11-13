@@ -44,6 +44,7 @@
 #   9. conventions.ts releaseNoteBrief: `if (false) {` in place of the towncrier example branch (TX); tx_example and tx_template_only fail.
 #  11. conventions.ts logFrozen: always use LOG_FROZEN_LOOSE (FS); fs_deprecated_section fails.
 #  14. loki-ts/src/features/self_review.ts selfReviewWanted: `mode !== "off"` (SR); sr_clean_turn fails (a clean minimal diff would get a review turn: churn and cost).
+#  16. conventions.ts changelogRefOn: `false &&` (CR); cr_brief, cr_checks, cr_changeset and cr_towncrier fail.
 #  15. self_review.ts settleItems: never trust the after-turn check (`if (false && a)`); sr_settled fails (fixed items read unresolved).
 #  12. conventions.ts writeReleaseNoteFragment: `op = null` (TO); to_older_orphan and to_cfg_prefix fail.
 #  13. conventions.ts scaffoldRecord: `return null` for a skip (TR); tr_skip fails.
@@ -340,6 +341,18 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
   out.sr_receipt = JSON.stringify([sr.selfReviewReceiptBlock({ self_review: { mode: "on", turn: null, items: [] } }), sr.selfReviewReceiptBlock({}), sr.selfReviewReceiptBlock(undefined)]);
   const src = (f: string) => rf(join(SRC, f), "utf8");
   out.sr_wired = src("engine10/stages/implement.ts").includes("if (selfReviewWanted(before, mode)) { const r = await resumeForSelfReview(") && src("engine10/stages/implement.ts").includes("...(selfReview ? { self_review: selfReview } : {}),") && src("util/conflict_resume.ts").includes('resumeWith(ctx, { ...first, maxTurns }, firstSession, brief, "-rv")') && src("engine10/stages/seal.ts").includes("...selfReviewReceiptBlock(o.implement)") ? "yes" : "no"; }
+// CR LOKI_E10_CHANGELOG_REF: the reference form of existing entries, in the brief line and checked on the entry the diff adds.
+{ const cv = await import(join(SRC, "project_model/conventions.ts"));
+  const REF_LOG = "Change Log\n==========\n\n## Unreleased\n\n * Fix: Carriage returns are kept. (#2380)\n * Fix: The package slot is kept. (#2382)\n\n## Version 2.4.0\n\n * New: A thing. (#2300)\n * Fix: Another. (#2301)\n";
+  out.cr_style = JSON.stringify([cv.changelogRefStyle(REF_LOG), cv.changelogRefStyle("## Unreleased\n\n- a\n- b\n- c\n- d (#1)\n"), cv.changelogRefStyle("- x ([#650](https://github.com/o/r/pull/650))\n- y ([#651](https://github.com/o/r/pull/651))\n- z ([#652](https://github.com/o/r/issues/652))\n")?.cls]);
+  const crRepo = mk("cr", { "CONTRIBUTING.md": "Please add a row to CHANGELOG.md.\n", "CHANGELOG.md": REF_LOG, "src/a.kt": "x\n", "package.json": '{"name":"root"}', "packages/a/package.json": '{"name":"@acme/a"}', "packages/a/src/a.ts": "x\n" });
+  out.cr_brief = cv.releaseNoteBrief(crRepo, []).includes("entries reference the issue or PR like (#2380): use the number the task gives in that form, and never invent a number") ? "yes" : "no";
+  const conv = cv.releaseNoteConvention(crRepo)!, P = (lines: string[], task: string, env = {}) => cv.releaseNoteProblems(crRepo, conv, new Map([["CHANGELOG.md", lines]]), ["src/a.kt", "CHANGELOG.md"], task, env).join(" || ") || "-";
+  out.cr_checks = [P([" * Fix: Tabs are kept. (#12)"], "Tabs are lost (#12)"), P([" * Fix: Tabs are kept. (#999)"], "Tabs are lost (#12)"), P([" * Fix: Tabs are kept."], "Tabs are lost (#12)"), P([" * Fix: Tabs are kept."], "Tabs are lost"), P([" * Fix: Tabs are kept. (#999)"], "Tabs are lost"), P([" * Fix: Tabs are kept. (#999)"], "Tabs are lost (#12)", { LOKI_E10_CHANGELOG_REF: "0" })].join(" | ");
+  const csConv = { kind: "changeset", dir: ".changeset", example: null }, CS = (pkg: string) => cv.releaseNoteProblems(crRepo, csConv, new Map([[".changeset/x.md", ["---", `"${pkg}": patch`, "---", "", "Fixed."]]]), ["packages/a/src/a.ts", ".changeset/x.md"], "Fix a").join(" || ") || "-";
+  out.cr_changeset = [CS("@acme/a"), CS("@acme/b")].join(" | ");
+  const tcConv = { kind: "towncrier", dir: "changes", example: null }, TC = (f: string, task: string) => cv.releaseNoteProblems(crRepo, tcConv, new Map([[f, ["Fixed."]]]), ["src/a.kt", f], task).join(" || ") || "-";
+  out.cr_towncrier = [TC("changes/12.bugfix.rst", "Fix it (#12)"), TC("changes/99.bugfix.rst", "Fix it (#12)"), TC("changes/+fix.bugfix.rst", "Fix it")].join(" | "); }
 const w17 = mk("w17", tcFiles()); const r17 = tw(w17, "Fix crash when the cache is empty (#42)");
 out.tc_path = r17.path ?? `skipped:${r17.skipped}`; out.tc_text = r17.path ? rf(join(w17, r17.path), "utf8") : "";
 out.tc_no_issue = tw(mk("w18", tcFiles()), "Fix crash when the cache is empty").skipped ? "skipped" : "wrote";
@@ -498,6 +511,11 @@ eqv tr_entry_missing '{"skipped":"the changelog convention is not written automa
 eqv tr_no_conv null "TR a repo with no release-note convention records nothing"
 eqv tr_off null "TR LOKI_E10_SCAFFOLD_TRACE=0 records no skip reason"
 eqv tr_block '[{"release_note_skipped":"why"},{},{}]' "TR the receipt carries release_note_skipped only when the writer skipped"
+eqv cr_style '[{"cls":"paren","example":"(#2380)"},null,"link"]' "CR the reference form most existing entries use is found (paren, markdown link); a log whose entries mostly carry none has no form"
+eqv cr_brief yes "CR the changelog brief line names the entries' reference form and forbids an invented number"
+eqv cr_checks "- | the entry cites #999, which the task does not give || the entry has no reference to #12 in the form the existing entries use ((#2380)) | the entry has no reference to #12 in the form the existing entries use ((#2380)) | - | the entry cites #999, which the task does not give | -" "CR an entry with the task's number passes; a number the task does not give and a missing reference are flagged; with no task number a plain entry passes; =0 checks nothing"
+eqv cr_changeset "- | .changeset/x.md names package @acme/b, which the change does not touch (changed: @acme/a)" "CR a changeset for a package the change does not touch is flagged"
+eqv cr_towncrier "- | changes/99.bugfix.rst is numbered 99, but the task gives #12 | -" "CR a towncrier fragment numbered differently from the task's issue is flagged; an orphan fragment passes"
 eqv sr_clean "release_note=ok,stray_files=ok,test=ok,format=ok,scope=ok" "SR a correct minimal diff (source plus its test, no rule broken) passes every item"
 eqv sr_clean_turn no-turn "SR no churn: a correct minimal diff starts no review turn, so the tree is left untouched and the check costs nothing"
 eqv sr_clean_always turn "SR LOKI_E10_SELF_REVIEW=always runs the turn even on a clean diff"
