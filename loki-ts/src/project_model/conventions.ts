@@ -268,7 +268,31 @@ function towncrierExample(repoDir: string, dir: string): string | null {
   } catch { return null; }
 }
 
-export type FragmentOutcome = { path: string; kind: string; body: string; validated: "ok" | "unavailable" } | { skipped: string };
+/** TO LOKI_E10_TOWNCRIER_ORPHAN (default on, =0 opts out): a task with no issue number gets an orphan fragment (`<prefix><slug>.<type>[.<ext>]`) when the repo itself
+ *  uses orphans: its towncrier config sets `orphan_prefix`, or any fragment in its directory already starts with the prefix (default "+"). Before, only a newest
+ *  example that was itself an orphan counted, so a repo with orphans older than its newest numbered fragment got nothing. A repo with no orphan in use still gets
+ *  nothing (the skip reason goes on the receipt, see fragmentTraceOn). */
+export const towncrierOrphanOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_TOWNCRIER_ORPHAN);
+export function towncrierOrphanPrefix(repoDir: string, dir: string): string | null {
+  const cfg = ["towncrier.toml", ".towncrier.toml", "pyproject.toml"].map((c) => { try { return readFileSync(join(repoDir, c), "utf8"); } catch { return ""; } }).join("\n");
+  const set = /^\s*orphan_prefix\s*=\s*["']([^"'\s/]+)["']/m.exec(cfg)?.[1];
+  if (set) return set;
+  const types = towncrierTypes(repoDir);
+  try { return readdirSync(join(repoDir, dir)).some((n) => n.startsWith("+") && types.includes(n.split(".")[1] ?? "")) ? "+" : null; } catch { return null; }
+}
+/** TR LOKI_E10_SCAFFOLD_TRACE (default on, =0 opts out): when the repo has a release-note convention but the writer wrote nothing, its reason goes on the receipt
+ *  (`release_note_skipped`), so a missing fragment is never silent. The failure: a towncrier repo whose task named no issue number lost its fragment with no record. */
+export const fragmentTraceOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_SCAFFOLD_TRACE);
+/** What the scaffold hook records: the written fragment, the skip reason (TR on, a convention exists), or null. */
+export function scaffoldRecord(r: FragmentOutcome, env: NodeJS.ProcessEnv = process.env): Record<string, unknown> | null {
+  if ("path" in r) return { ...r };
+  return fragmentTraceOn(env) && r.skipped !== NO_CONVENTION && r.skipped !== ALREADY_CARRIES ? { skipped: r.skipped } : null; // nothing missing, nothing to record
+}
+const NO_CONVENTION = "the repo has no release-note convention", ALREADY_CARRIES = "the change already carries a fragment";
+/** The receipt block for a skipped fragment; {} when nothing was skipped or a fragment was written. */
+export const releaseNoteSkipBlock = (implement: Record<string, unknown> | undefined): { release_note_skipped?: string } => (typeof implement?.scaffold_skipped === "string" ? { release_note_skipped: implement.scaffold_skipped } : {});
+
+export type FragmentOutcome ={ path: string; kind: string; body: string; validated: "ok" | "unavailable" } | { skipped: string };
 /** Which changed files count as code for a fragment: a file that exists at `ref` (the run base, else HEAD) always counts, being a tracked change; a file the run created counts
  *  only when it is not git-ignored and not generated (generated marker or path, or linguist vendored/generated). Untracked generated output never triggers a fragment. */
 export function runCode(repoDir: string, files: string[], ref = "HEAD"): string[] {
@@ -282,11 +306,11 @@ export function runCode(repoDir: string, files: string[], ref = "HEAD"): string[
  *  (changesets, towncrier) and only from a real example or config; every other case returns the reason it did not. A fragment the repo's own tool rejects is removed again. */
 export function writeReleaseNoteFragment(repoDir: string, files: string[], task: string, summary = "", opts: { tools?: boolean; base?: string } = {}): FragmentOutcome {
   const conv = releaseNoteConvention(repoDir);
-  if (!conv) return { skipped: "the repo has no release-note convention" };
+  if (!conv) return { skipped: NO_CONVENTION };
+  const live = files.filter((f) => existsSync(join(repoDir, f)));
+  if (live.some((f) => f === conv.dir || (f.startsWith(`${conv.dir}/`) && !/readme|config\.json$|\.toml$/i.test(basename(f))))) return { skipped: ALREADY_CARRIES }; // a changelog-file entry counts too
   if (conv.kind !== "changeset" && conv.kind !== "towncrier") return { skipped: `the ${conv.kind} convention is not written automatically` };
   if (taskForbidsReleaseNote(task)) return { skipped: "the task says no release note" };
-  const live = files.filter((f) => existsSync(join(repoDir, f)));
-  if (live.some((f) => f.startsWith(`${conv.dir}/`) && !/readme|config\.json$|\.toml$/i.test(basename(f)))) return { skipped: "the change already carries a fragment" };
   const code = runCode(repoDir, live, opts.base).filter((f) => FRAGMENT_CODE.test(f) && !isTestFile(f) && !f.startsWith(`${conv.dir}/`));
   if (code.length === 0) return { skipped: "no non-test code changed" };
   const example = conv.kind === "towncrier" ? towncrierExample(repoDir, conv.dir) : conv.example;
@@ -312,14 +336,15 @@ export function writeReleaseNoteFragment(repoDir: string, files: string[], task:
     rel = `${conv.dir}/${n}`; text = `---\n${[...names].sort().map((p) => `${q}${p}${q}: ${bump}`).join("\n")}\n---\n\n${sentence(body, exText.replace(/^---[\s\S]*?\n---\s*/, ""))}\n`;
   } else {
     if (!example) return { skipped: "towncrier: no existing fragment to take the naming from" };
-    const parts = basename(example).split("."), orphan = parts[0]!.startsWith("+");
+    const parts = basename(example).split("."), op = towncrierOrphanOn() ? towncrierOrphanPrefix(repoDir, conv.dir) : null, orphan = parts[0]!.startsWith("+") || op !== null;
     const issue = /(?:^|[\s(])#(\d+)\b/.exec(task)?.[1];
     if (!issue && !orphan) return { skipped: "towncrier: the task names no issue number and the repo does not use orphan fragments" };
+    const prefix = op ?? "+";
     const known = towncrierTypes(repoDir);
     const kind = FEAT.test(raw) ? known.find((t) => /feat/.test(t)) : FIX.test(raw) ? known.find((t) => /bug|fix/.test(t)) : undefined;
     if (!kind) return { skipped: "towncrier: the change type is not clear from the task" };
     const ext = parts.length >= 3 ? `.${parts[parts.length - 1]}` : "";
-    const n = `${issue ?? `+${slug}`}.${kind}${ext}`;
+    const n = `${issue ?? `${prefix}${slug}`}.${kind}${ext}`;
     if (existsSync(join(dir, n))) return { skipped: "towncrier: a fragment with this name exists" };
     rel = `${conv.dir}/${n}`; text = `${sentence(body, exText)}\n`;
   }

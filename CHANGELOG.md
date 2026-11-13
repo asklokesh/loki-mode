@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On a towncrier repo, the brief's example fragment is now a real fragment, not the repo's towncrier template, which a fresh checkout used to pick. LOKI_E10_TOWNCRIER_EXAMPLE=0 restores the old pick.
 - The changelog entry the brief asks for is no longer flagged "outside stated scope" on the receipt. LOKI_E10_CHANGELOG_SCOPE=0 restores the old note.
 - A changelog with a "Deprecated" subsection under Unreleased is no longer mistaken for a frozen log; only a log that says it is no longer maintained or deprecated, or has no unreleased section, is. LOKI_E10_CHANGELOG_FROZEN_STRICT=0 restores the old rule.
+- When Loki's release-note writer skips a fragment on a repo that keeps them, the receipt now says why (`release_note_skipped`; LOKI_E10_SCAFFOLD_TRACE=0 turns it off). A task with no issue number now gets an orphan towncrier fragment whenever the repo already uses orphans or sets `orphan_prefix` (LOKI_E10_TOWNCRIER_ORPHAN=0 restores the old rule).
 
 ### Changed
 - LOKI_E10_ATTEMPTS now counts TOTAL implement attempts, not extra ones: LOKI_E10_ATTEMPTS=3 used to mean 3 extra attempts after a red verify and now means 3 attempts in all (2 extra). Unset, 0 and 1 stay off (one attempt, as before); `on` is 2 in all.

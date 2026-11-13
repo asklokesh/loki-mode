@@ -43,6 +43,8 @@
 #   8. conventions.ts guideRequiresChangelog: delete the LOG_FORBID line; cl_forbid fails (a guide saying not to update the CHANGELOG got a line).
 #   9. conventions.ts releaseNoteBrief: `if (false) {` in place of the towncrier example branch (TX); tx_example and tx_template_only fail.
 #  11. conventions.ts logFrozen: always use LOG_FROZEN_LOOSE (FS); fs_deprecated_section fails.
+#  12. conventions.ts writeReleaseNoteFragment: `op = null` (TO); to_older_orphan and to_cfg_prefix fail.
+#  13. conventions.ts scaffoldRecord: `return null` for a skip (TR); tr_skip fails.
 #  10. loki-ts/src/e10ext/scope.ts flagOutsideScope: `mine = (f: string): boolean => false` (CS); cs_on fails (the asked-for changelog edit is flagged).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -293,6 +295,21 @@ out.fw_ignore_glob = skip("p", mk("wg", csFiles({ ".changeset/config.json": '{"i
 // towncrier
 const tcFiles = (extra: Record<string, string> = {}) => ({ "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\n', "changes/7.feature.rst": "Added a thing.\n", "changes/_template.rst": "{{ text }}\n", "changes/README.rst": "notes\n", "pkg/mod.py": "x = 1\n", ...extra });
 const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, files, task, "", { tools: false }) as { path?: string; skipped?: string };
+// TO LOKI_E10_TOWNCRIER_ORPHAN and TR LOKI_E10_SCAFFOLD_TRACE: an orphan in use anywhere (or orphan_prefix in config) names a fragment without an issue; a skip is recorded.
+{ const cv = await import(join(SRC, "project_model/conventions.ts"));
+  const older = () => { const d = mk(`to-old-${++clN}`, tcFiles({ "changes/+old.feature.rst": "Added.\n", "changes/99.bugfix.rst": "Fixed.\n" })); utimesSync(join(d, "changes/+old.feature.rst"), 1000, 1000); utimesSync(join(d, "changes/99.bugfix.rst"), 9000, 9000); utimesSync(join(d, "changes/7.feature.rst"), 1000, 1000); return d; };
+  out.to_older_orphan = tw(older(), "Fix crash when the cache is empty").path ?? "skipped";
+  out.to_cfg_prefix = tw(mk("to-cfg", tcFiles({ "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\norphan_prefix = "~"\n' })), "Fix crash when the cache is empty").path ?? "skipped";
+  process.env.LOKI_E10_TOWNCRIER_ORPHAN = "0"; out.to_off = tw(older(), "Fix crash when the cache is empty").path ?? "skipped"; delete process.env.LOKI_E10_TOWNCRIER_ORPHAN;
+  out.tr_skip = JSON.stringify(cv.scaffoldRecord(tw(mk("tr1", tcFiles()), "Fix crash when the cache is empty")));
+  const trCl = mk("tr-cl", { "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG, "a.py": "x = 1\n" });
+  out.tr_entry_written = JSON.stringify(cv.scaffoldRecord(wf(trCl, ["a.py", "CHANGELOG.md"], "Fix the parser", "", { tools: false })));
+  out.tr_entry_missing = JSON.stringify(cv.scaffoldRecord(wf(trCl, ["a.py"], "Fix the parser", "", { tools: false })));
+  out.tr_no_conv =JSON.stringify(cv.scaffoldRecord({ skipped: "the repo has no release-note convention" }));
+  process.env.LOKI_E10_SCAFFOLD_TRACE = "0"; out.tr_off = JSON.stringify(cv.scaffoldRecord({ skipped: "towncrier: the change type is not clear from the task" })); delete process.env.LOKI_E10_SCAFFOLD_TRACE;
+  out.tr_block = JSON.stringify([cv.releaseNoteSkipBlock({ scaffold_skipped: "why" }), cv.releaseNoteSkipBlock({ scaffold: { path: "x" } }), cv.releaseNoteSkipBlock(undefined)]);
+  const src = (f: string) => rf(join(SRC, f), "utf8");
+  out.tr_wired = src("engine10/machine.ts").includes("scaffold_skipped: sc.skipped") && src("engine10/stages/seal.ts").includes("...releaseNoteSkipBlock(o.implement)") && src("contrib/index.ts").includes("return scaffoldRecord(r);") ? "yes" : "no"; }
 const w17 = mk("w17", tcFiles()); const r17 = tw(w17, "Fix crash when the cache is empty (#42)");
 out.tc_path = r17.path ?? `skipped:${r17.skipped}`; out.tc_text = r17.path ? rf(join(w17, r17.path), "utf8") : "";
 out.tc_no_issue = tw(mk("w18", tcFiles()), "Fix crash when the cache is empty").skipped ? "skipped" : "wrote";
@@ -442,6 +459,16 @@ eqv tc_unclear skipped "FW towncrier: an unclear change type writes nothing"
 eqv tc_dup skipped "FW towncrier: a fragment for the same issue and type already exists"
 eqv tc_no_example skipped "FW towncrier: no example fragment to take the naming from writes nothing"
 eqv tc_orphan ok "FW towncrier: an orphan-style example gives a +slug fragment without an issue"
+eqv to_older_orphan "changes/+fix-crash-when-the-cache-is.bugfix.rst" "TO an orphan fragment older than the newest numbered one still makes the repo an orphan user"
+eqv to_cfg_prefix "changes/~fix-crash-when-the-cache-is.bugfix.rst" "TO orphan_prefix in the towncrier config names the fragment with that prefix (type from the task)"
+eqv to_off skipped "TO LOKI_E10_TOWNCRIER_ORPHAN=0 only trusts a newest orphan example (old rule)"
+eqv tr_skip '{"skipped":"towncrier: the task names no issue number and the repo does not use orphan fragments"}' "TR the writer's skip reason comes back for the receipt"
+eqv tr_entry_written null "TR a diff that already carries the changelog entry records no skip"
+eqv tr_entry_missing '{"skipped":"the changelog convention is not written automatically"}' "TR a changelog-file convention with no entry in the diff records why nothing was written"
+eqv tr_no_conv null "TR a repo with no release-note convention records nothing"
+eqv tr_off null "TR LOKI_E10_SCAFFOLD_TRACE=0 records no skip reason"
+eqv tr_block '[{"release_note_skipped":"why"},{},{}]' "TR the receipt carries release_note_skipped only when the writer skipped"
+eqv tr_wired yes "TR wiring: the scaffold hook returns the record, the machine keeps the skip, seal puts it on the receipt"
 eqv sn_pick "The loader now skips unreadable files instead of aborting the whole scan" "FW summary: the maintainer-style sentence is picked over narration and markers"
 eqv sn_chatter empty "FW summary: test-status and sign-off chatter yields nothing"
 eqv sn_restate empty "FW summary: a sentence that restates the title yields nothing"
