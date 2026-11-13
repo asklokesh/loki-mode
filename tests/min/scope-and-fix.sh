@@ -298,6 +298,7 @@
 # 260. seal.ts missingLintChecks: drop the lint: prefix filter (the lint-missing-disclose leg's missing test runner reads disclosed).
 # 261. mutation_proof.ts proofBudgetS: drop the compiled-stack branch (the proof-compiled-budget leg reads 30 for go).
 # 262. sizing.ts namedFiles: drop the spelled-path filter (fl24 named-exact reads login/page.ts+issues/page.ts for the spelled task; the fl24 monorepo after reads STALLED).
+# 263. verify.ts ownTests: drop the changed-file condition (fl24 own-by-path reads a/page.test.ts own for an unedited a/x/page.ts).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1849,6 +1850,13 @@ const sz = await import("./src/engine10/sizing.ts"), files = ["web/src/app/(auth
 const n = (t) => sz.namedFiles(t, { files }).map((f) => f.split("/").slice(-2).join("/")).join("+"), t1 = "add `web/src/app/(dash)/search/page.ts`; `web/src/app/(dash)/issues/page.ts` is not modified";
 const r = [n(t1), n("fix page.ts everywhere"), n("edit Sidebar.test.ts and api.ts")]; process.env.LOKI_E10_NAMED_EXACT = "0"; r.push(n(t1)); console.log(r.join(","));' 2>&1)"
 [ "$FB" = "issues/page.ts,login/page.ts+issues/page.ts,lib/api.ts+components/Sidebar.test.ts,login/page.ts+issues/page.ts" ] && ok "fl24 named-exact: spelled paths name only their files; a bare mention keeps every match; =0 restores basenames" || bad "fl24 named-exact gave: $FB"
+# FL24-OWN-BY-PATH (acc-154; FireLater#24): a relevant test is the task's own only when it is a named test file or path-paired (same stem, same dir or its
+# __tests__/tests/test) with a named file the diff changed. A named a/x/page.ts never makes b/y/__tests__/page.test.ts own, and an unedited named file owns nothing.
+FA="$(cd "$ROOT/loki-ts" && bun -e '
+const v = await import("./src/engine10/stages/verify.ts"), rel = [{ runner: "vitest", path: "a/x/__tests__/page.test.ts" }, { runner: "vitest", path: "b/y/__tests__/page.test.ts" }, { runner: "vitest", path: "a/x/other.test.ts" }, { runner: "vitest", path: "c/named.test.ts" }];
+const own = (n, ch) => v.ownTests(rel, n, ch).map((t) => t.path.split("/")[0] + "/" + t.path.split("/").pop()).join("+") || "-";
+console.log([own(["a/x/page.ts"], ["a/x/page.ts"]), own(["a/x/page.ts"], []), own(["c/named.test.ts"], []), String(v.ownByPathOn({ LOKI_E10_OWN_BY_PATH: "0" }))].join(","));' 2>&1)"
+[ "$FA" = "a/page.test.ts,-,c/named.test.ts,false" ] && ok "fl24 own-by-path: own tests are path-paired with changed named files only (another dir's same-stem test is not; an unedited named file owns nothing); =0 is off" || bad "fl24 own-by-path gave: $FA"
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
 if command -v go >/dev/null 2>&1; then

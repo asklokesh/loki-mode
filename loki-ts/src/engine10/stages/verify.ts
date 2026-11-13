@@ -73,6 +73,16 @@ export function collateralTests(relevant: TestRef[], named: string[]): TestRef[]
   const stems = new Set(named.flatMap((f) => { const s = basename(f).replace(/\.[^.]+$/, ""); return /^(index|__init__|mod)$/.test(s) && f.includes("/") ? [s, basename(f.slice(0, f.lastIndexOf("/")))] : [s]; }));
   return relevant.filter((t) => !named.includes(t.path) && !stems.has(coveredStem(t.path)));
 }
+/** OWN-BY-PATH (LOKI_E10_OWN_BY_PATH, default on, =0 restores collateralTests' stem rule): the relevant tests that are the task's own, never excused as red on base.
+ *  A test is own only when it is a test file the task names, or it is path-paired with a named non-test file the diff CHANGED: the same covered stem, and it sits in
+ *  that file's directory or its __tests__, tests or test subdirectory. A named file the diff did not edit is a reference ("is not modified", "following the
+ *  pattern in"), so its tests are collateral, as is every same-stem test elsewhere (FireLater#24: a named X/page.tsx made all 46 page.test.tsx own). */
+export const ownByPathOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_OWN_BY_PATH"] ?? "").trim());
+export function ownTests(relevant: TestRef[], named: string[], changed: readonly string[]): TestRef[] {
+  const src = named.filter((f) => !isTestFile(f) && changed.includes(f)).map((f) => { const d = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "."; const s = basename(f).replace(/\.[^.]+$/, ""); return { d, s }; });
+  const inDir = (t: string, d: string): boolean => { const td = t.includes("/") ? t.slice(0, t.lastIndexOf("/")) : "."; return [d, ...["__tests__", "tests", "test"].map((x) => (d === "." ? x : `${d}/${x}`))].includes(td); };
+  return relevant.filter((t) => named.includes(t.path) || src.some(({ d, s }) => coveredStem(t.path) === s && inDir(t.path, d)));
+}
 const dedupeTests = (tests: TestRef[]): TestRef[] => [...new Map(tests.map((t) => [`${t.runner}:${t.path}`, t] as const)).values()];
 export { changedFiles } from "../../util/check_result.ts"; // one owner: check_result.ts (diffFiles builds on it)
 interface RunOpts {
@@ -501,10 +511,11 @@ export const verifyStage: Stage = {
     const dep = dependentTests(ctx.repoDir, map, changed, [...impacted, ...changedTestFiles, ...wallTests, ...relevant]), depNames = new Set(dep.tests.map(testCheckName)); // RX-3
     const tests0 = failedFirst(dedupeTests([...wallTests, ...relevant, ...changedTestFiles, ...changedSymbolsFirst(ctx, impacted, changed), ...dep.tests]),(ctx.outputs().verify as { checks?: Array<{ name?: unknown; result?: unknown }> } | undefined)?.checks); // TEN-SPEED-07; the Wall and task-named tests that prove the task run first, so a stage stopped at its limit has already run them
     const tests = tests0.length === 0 ? mochaTargets(ctx.repoDir, changed) : tests0; // R5 LOKI_E10_MOCHA_TARGETED: nothing selected in a repo that declares mocha: each changed file's own mocha test file (testmap.ts mochaTargets)
-    const hashes = fileHashes(ctx.repoDir, changed), qs = quickScope(ctx.outputs(), hashes), keep = new Set([...(qs?.blocking ?? []), ...[...wallTests, ...relevant].map(testCheckName)]);
+    const own = ownByPathOn() ? ownTests(relevant, named, changed) : relevant; // OWN-BY-PATH: the relevant tests that are the task's own; the rest stay selected (A-114) but are excusable like any untouched test
+    const hashes = fileHashes(ctx.repoDir, changed), qs = quickScope(ctx.outputs(), hashes), keep = new Set([...(qs?.blocking ?? []), ...[...wallTests, ...own].map(testCheckName)]);
     const sinceTests = qs ? [...ctx.tests.impacted(map, qs.since), ...map.tests.filter((t) => qs.since.includes(t.path))] : [], split = qs ? quickSplit(tests, keep, sinceTests) : { first: tests, rest: [] };
     // The evidence so far, published after every check: a verify stopped at its limit or the cap keeps the checks that ran (machine.ts), never "no tests executed". wall_passed follows the final rule below: false on any failure, true only when every Wall and holdout check ran and passed.
-    const done: VerifyCheck[] = [], wallNames0 = new Set(wallTests.map(testCheckName)), targets0 = new Set([...wallTests, ...relevant].map(testCheckName)), wallDropped0 = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p));
+    const done: VerifyCheck[] = [], wallNames0 = new Set(wallTests.map(testCheckName)), targets0 = new Set([...wallTests, ...own].map(testCheckName)), wallDropped0 = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p));
     let holdN: number | null = wall.holdout_dir ? null : 0; // held-out Wall checks to run; null until they are staged
     const publish = (): void => {
       if (!ctx.partial) return;
@@ -541,10 +552,10 @@ export const verifyStage: Stage = {
     const hold = wall.holdout_dir ? stageHoldout(wall.holdout_dir, ctx.repoDir) : null; if (hold && !hold.missing.length) holdN = hold.tests.length; // P12-05: held-out Wall tests, copied in under neutral names for this run only, blocking (protect), named holdout:N internally and "holdout" in every record that leaves this stage
     try { for (const [i, h] of (hold?.tests ?? []).entries()) { if (signal.aborted) break; const t = h as TestRef, tc = commandFor(t, ctx.repoDir, api); await runCheck(ctx, `holdout:${i + 1}`, tc.cmd, tc.args, signal, checks, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: true, opaque: true, ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); publish(); } } finally { hold?.cleanup(); }
     if (hold?.missing.length) { for (const m of hold.missing) recordHoldoutTriage(ctx.runDir, { check: "holdout:store", result: "not_run", reason: m }); const k: VerifyCheck = { name: "holdout:store", cmd: "holdout", result: "not_run", duration_s: 0, reason: "holdout store unavailable", owner: "harness" }; checks.push(k); ctx.emit("test.result", "verify", { ...pubHold(k) }); } // C-C4b-c: a store failure is a harness/infrastructure failure (not_run, no fix round), never a test failure the fixer sees; the missing-file text stays out of the log
-    const targetNames = new Set([...[...wallTests, ...relevant].map(testCheckName), ...checks.filter(isHold).map((c) => c.name)]); // FC-21b: Wall and task-named tests, the proof a limit-stopped run needs
+    const targetNames = new Set([...[...wallTests, ...own].map(testCheckName), ...checks.filter(isHold).map((c) => c.name)]); // FC-21b: Wall and task-named tests, the proof a limit-stopped run needs
     const cfgChanged = [...new Set([...testConfigChanged(ctx.repoDir, ctx.baseSha, changed), ...hiddenConfigChanged(ctx.repoDir, ctx.outputs().intake?.hidden_cfg)])]; // FC-21b: also feeds uncovered_changed; SEAL-CONFTEST-01: ignored configs added or changed since intake count too
     // FireLater#21: a relevant test that is not the task's own (collateral: it only imports or mocks a named file) gets the base comparison any untouched test gets (known red, same error).
-    const collateral = new Set(collateralTests(relevant, named).map(testCheckName)), ownRel = new Set([...relevant.map(testCheckName)].filter((n) => !collateral.has(n)));
+    const collateral = new Set((ownByPathOn() ? relevant.filter((t) => !own.includes(t)) : collateralTests(relevant, named)).map(testCheckName)), ownRel = new Set([...relevant.map(testCheckName)].filter((n) => !collateral.has(n)));
     const symbols = checks.some((c) => c.result === "fail") ? diffSymbols(ctx, changed) : []; // fl24: a failure naming one of these is never excused on differing text
     const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map(testCheckName)), new Set(relevant.map(testCheckName)), signal, cfgChanged.length === 0, zeroGate((ctx.outputs().intake as { zero_baseline?: unknown } | undefined)?.zero_baseline), depNames, ownRel, symbols);
     // A collateral check red on base failing the same way feeds the first fix round (it could be the bug the task describes); after a fix round left it failing
