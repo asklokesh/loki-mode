@@ -296,6 +296,7 @@
 # 258. check_result.ts unittestAssertionFailure: drop the ERROR: guard (the assert-unittest leg's assertion-beside-an-error case reads true).
 # 259. wall.ts RealBaseTestRunner: read the test source only when reported.observed is non-empty (the reported-kind wiring leg reads true,0,0).
 # 260. seal.ts missingLintChecks: drop the lint: prefix filter (the lint-missing-disclose leg's missing test runner reads disclosed).
+# 261. scope.ts crossPackageTestEdits: `if (false) return false;` in place of the TK exercisesChange line (the TK leg drops the e2e, relative-import and Go reach tests).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -426,6 +427,35 @@ console.log([
   [sc.scopeTestDropEnabled({}), sc.scopeTestDropEnabled({ LOKI_E10_SCOPE_TEST_DROP: "0" })].join(),
 ].join(" | "));' 2>&1)"
 [ "$XPR" = "packages/b/src/b.test.ts | - | - | - | - | pkg/y/y_test.go | - | - | packages/b/src/new.test.ts | true,false" ] && ok "J3 scope: a test edit or new test in a package (JS workspace or Go directory) the change does not touch is dropped; the task naming the path or package, a test in the changed package, a test-only change, a Go tests-only directory and Python stay; =0 opts out ($XPR)" || bad "J3 scope gave: $XPR"
+# TK LOKI_E10_TEST_REACH: layouts unlike the tuning set. A test that imports the changed code is never dropped by J3: a JS tests workspace importing the changed package by
+# name, a relative import into the changed file, a Go package importing the changed package path. Python src-layout and a Rust tests/ dir are never J3 candidates.
+TK="$T/reach"; rm -rf "$TK"; mkdir -p "$TK/packages/a/src" "$TK/packages/e2e/src" "$TK/packages/b/src" "$TK/pkg/x" "$TK/pkg/y" "$TK/src/pkg" "$TK/tests" "$TK/rs/src" "$TK/rs/tests"
+printf '{"name":"root","private":true,"workspaces":["packages/*"]}\n' > "$TK/package.json"; printf '{"name":"@acme/a"}\n' > "$TK/packages/a/package.json"; printf '{"name":"@acme/e2e"}\n' > "$TK/packages/e2e/package.json"; printf '{"name":"@acme/b"}\n' > "$TK/packages/b/package.json"
+printf 'module example.com/m\n\ngo 1.22\n' > "$TK/go.mod"
+for f in packages/a/src/a.ts packages/e2e/src/util.ts packages/b/src/b.ts pkg/x/x.go pkg/y/y.go src/pkg/mod.py rs/src/lib.rs; do printf 'x\n' > "$TK/$f"; done
+printf 'import { a } from "@acme/a";\ntest("a", () => {});\n' > "$TK/packages/e2e/src/a.test.ts"
+printf 'import { a } from "../../a/src/a";\ntest("a", () => {});\n' > "$TK/packages/b/src/rel.test.ts"
+printf 'import { b } from "./b";\ntest("b", () => {});\n' > "$TK/packages/b/src/b.test.ts"
+printf 'package y\n\nimport (\n\t"testing"\n\t"example.com/m/pkg/x"\n)\n\nfunc TestX(t *testing.T) { _ = x.X }\n' > "$TK/pkg/y/x_reach_test.go"
+printf 'package y\n\nimport "testing"\n\nfunc TestY(t *testing.T) {}\n' > "$TK/pkg/y/y_test.go"
+printf 'from pkg.mod import f\n' > "$TK/tests/test_mod.py"; printf 'use rs::x;\n' > "$TK/rs/tests/it.rs"
+TKR="$(cd "$ROOT/loki-ts" && TK="$TK" bun -e '
+const sc = await import("./src/e10ext/scope.ts"), d = process.env.TK;
+const tracked = ["packages/a/src/a.ts", "packages/e2e/src/util.ts", "packages/b/src/b.ts", "pkg/x/x.go", "pkg/y/y.go", "src/pkg/mod.py", "rs/src/lib.rs", "package.json", "packages/a/package.json", "packages/e2e/package.json", "packages/b/package.json", "go.mod"];
+const S = (src, test) => [{ st: "M", f: src }, { st: "A", f: test }], x = (staged) => sc.crossPackageTestEdits(d, staged, "fix the parser bug", tracked).join("+") || "-";
+const off = (f) => { process.env.LOKI_E10_TEST_REACH = "0"; try { return f(); } finally { delete process.env.LOKI_E10_TEST_REACH; } };
+console.log([
+  x(S("packages/a/src/a.ts", "packages/e2e/src/a.test.ts")),
+  x(S("packages/a/src/a.ts", "packages/b/src/rel.test.ts")),
+  x(S("packages/a/src/a.ts", "packages/b/src/b.test.ts")),
+  x(S("pkg/x/x.go", "pkg/y/x_reach_test.go")),
+  x(S("pkg/x/x.go", "pkg/y/y_test.go")),
+  x(S("src/pkg/mod.py", "tests/test_mod.py")),
+  x(S("rs/src/lib.rs", "rs/tests/it.rs")),
+  off(() => x(S("packages/a/src/a.ts", "packages/e2e/src/a.test.ts"))),
+  off(() => x(S("pkg/x/x.go", "pkg/y/x_reach_test.go"))),
+].join(" | "));' 2>&1)"
+[ "$TKR" = "- | - | packages/b/src/b.test.ts | - | pkg/y/y_test.go | - | - | packages/e2e/src/a.test.ts | pkg/y/x_reach_test.go" ] && ok "TK J3 keeps a test that imports the changed code (package name, relative path, Go import path), still drops one that does not; Python src-layout and Rust tests/ are never candidates; =0 restores the drop ($TKR)" || bad "TK J3 reach gave: $TKR"
 SJ3="$ROOT/loki-ts/src/engine10/stages/seal.ts"
 grep -q 'const xpkg = scopeTestDropEnabled() ? crossPackageTestEdits(ctx.repoDir, staged.filter' "$SJ3" && grep -q 'const dropped = new Set(\[...drop.map(({ f }) => f), ...xpkg\])' "$SJ3" && grep -q 'const notes = \[...xpkg.map(crossPackageTestNote),' "$SJ3" && ok "J3 wiring: the commit stage resets the cross-package test edits before commit, keeps them out of the formatter pass and names each one" || bad "J3 wiring: the commit stage does not reset and name the cross-package test edits"
 

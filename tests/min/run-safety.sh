@@ -61,6 +61,8 @@
 #      compare dirname equality only (drop the descendant clause); the workspace-member case fails.
 #  NRM4. commit_filter.ts taskWantsLockChange: delete the lockfile-conflict and reinstall-fix clauses; 'resolve the lockfile merge conflict' drops. Loosen the conflict clause to bare `conflict`; 'resolve the merge conflict in the parser' ships.
 #  NRM3. commit_filter.ts dropSet: ignore the task (drop the taskWantsLockChange clause); the task-aware lockfile check fails.
+#  GB1. commit_filter.ts dropSet: drop `|| art.has(f)`; the build-artifact check fails (web/dist, build/, *.pyc, *.tsbuildinfo and the ignored log ship).
+#  GB2. commit_filter.ts buildArtifacts: skip the dirTracked check (always drop under an output dir); the tracked dist/ case fails.
 #  SG4. commit_filter.ts commitUnsealedWork: remove the churn block; the WIP commit carries pnpm-lock.yaml again.
 #  SG5. check_result.ts commandFor: drop the rootProjectsBreakSite null; the workspace command runs from packages/a and fails (No projects were found).
 #  SG6. failures.ts idNamesFile: return id.includes(f) only; the root-run failure leg fails (the project-prefixed id names no file).
@@ -466,6 +468,19 @@ const d = (task) => dropSet(process.env.LK, [{ st: "M", f: "pnpm-lock.yaml" }], 
 console.log(["bump lodash to 4.17.21", "refresh the lock file", "pin lodash to 4.17.20", "regenerate the lockfile", "fix CVE-2024-4067 by updating the lockfile", "update the dependencies of the api", "upgrade the express package", "regenerate pnpm-lock.yaml", "resolve the lockfile merge conflict", "reinstall to fix the lockfile", "add a login button", "update the readme", "refresh the page when the lock icon is clicked", "sync the lock screen timer", "resolve the merge conflict in the parser", "reinstall the app to fix the login", "fix the lockfile-unrelated parser bug", undefined].map(d).join(","));
 ' 2>&1)"
 [ "$LKT" = "ship,ship,ship,ship,ship,ship,ship,ship,ship,ship,drop,drop,drop,drop,drop,drop,drop,drop" ] && ok "commit filter: a lockfile-only change ships when the task bumps or updates a dependency, names a CVE or the lockfile, or fixes a lockfile conflict; unrelated tasks drop it" || bad "task-aware lockfile drop gave: $LKT"
+# GB LOKI_E10_BUILD_ARTIFACT_DROP: a generated or build file the run added is left out (ignored path, bytecode, a dist/build/target dir at the root or beside a
+# manifest), unless the task names it or the repo tracks that output dir at base (a committed dist/ is kept).
+GB="$T/gbdrop"; mkdir -p "$GB/src" "$GB/dist" "$GB/web" "$GB/docs" && git -C "$GB" init -q -b main && git -C "$GB" config user.name rs && git -C "$GB" config user.email rs@example.invalid
+printf '*.log\n' > "$GB/.gitignore"; printf '[project]\nname = "g"\n' > "$GB/pyproject.toml"; printf 'x = 1\n' > "$GB/src/a.py"; printf 'kept\n' > "$GB/dist/keep.js"; printf '{"name":"web"}\n' > "$GB/web/package.json"; printf 'd\n' > "$GB/docs/index.md"; mkdir -p "$GB/lib.egg-info"; printf 'Name: lib\n' > "$GB/lib.egg-info/PKG-INFO"
+git -C "$GB" add -A . && git -C "$GB" commit -q -m base
+GBR="$(GB="$GB" ROOT="$ROOT" BASE="$(git -C "$GB" rev-parse HEAD)" bun --no-env-file --config=/dev/null -e '
+const { dropSet, buildArtifactNotes } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
+const A = (...fs) => fs.map((f) => ({ st: "A", f })), d = (staged, task) => dropSet(process.env.GB, staged, null, process.env, undefined, undefined, process.env.BASE, task).filter((x) => x.st !== "L").map((x) => x.f).sort().join(",") || "-";
+const all = [...A("src/a.pyc", "web/tsconfig.tsbuildinfo", "build/lib/a.py", "web/dist/index.js", "dist/new.js", "run.log", "docs/build/notes.md", "tests/test_a.py", "src/b.py", "lib.egg-info/new.txt", "src/__pycache__/a.cpython-312.pyc"), { st: "M", f: "dist/keep.js" }];
+const off = () => { process.env.LOKI_E10_BUILD_ARTIFACT_DROP = "0"; try { return d(all, "fix the parser"); } finally { delete process.env.LOKI_E10_BUILD_ARTIFACT_DROP; } };
+console.log([d(all, "fix the parser"), d(A("web/dist/index.js", "src/b.py"), "regenerate web/dist/index.js"), off(), buildArtifactNotes(process.env.GB, ["run.log"], process.env.BASE, "fix").join()].join(" | "));
+' 2>&1)"
+[ "$GBR" = "build/lib/a.py,run.log,src/__pycache__/a.cpython-312.pyc,src/a.pyc,web/dist/index.js,web/tsconfig.tsbuildinfo | - | src/__pycache__/a.cpython-312.pyc | generated or build file left out of the commit: run.log" ] && ok "GB commit filter: bytecode, a tsbuildinfo, an ignored log and untracked build/ or dist/ output beside a manifest are left out; a committed dist/ (new and modified) or egg-info/, docs/build without a manifest, tests and source ship; a task naming the file keeps it; =0 opts out; the drop is noted ($GBR)" || bad "GB build-artifact drop gave: $GBR"
 printf '#!/bin/sh\nfor f in "$@"; do printf "formatted\\n" >> "$f"; done\n' > "$LK/node_modules-biome.sh"; mkdir -p "$LK/node_modules/.bin"; cp "$LK/node_modules-biome.sh" "$LK/node_modules/.bin/biome"; rm "$LK/node_modules-biome.sh"; chmod +x "$LK/node_modules/.bin/biome"
 printf '{}\n' > "$LK/biome.json"
 FMT="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '

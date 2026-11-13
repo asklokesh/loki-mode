@@ -1,11 +1,12 @@
 // Shared by the commit stage and the supervisor backstop: which staged paths a run must never publish.
-import { lstatSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { untouchedSinceIntake } from "./preexisting_dirty.ts"; import { untouchedUntracked } from "../features/untouched_untracked.ts";
 import { installOwned } from "../project_model/install.ts"; import { LOCKFILE_RE as LOCKFILE, toolchainOutputs } from "../util/lock_ecosystems.ts"; export { LOCKFILE };
 import { runFormattersRecord, type FormatRecord } from "../runner/repo_profile.ts";
-import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
+import { safeGit, safeGitSpawn, tokenFreeEnv } from "../util/safe_git.ts";
 import { commitWallEnabled } from "../util/check_result.ts";
+import { escapeRegex } from "../util/regex_escape.ts";
 
 export const WALL_FILE = /(^|\/)loki_wall_[^/]*$/; // a Wall test file: the commit stage never publishes it
 export type Staged = { st: string; f: string };
@@ -23,8 +24,46 @@ export const taskWantsLockChange = (task: string | undefined, lock: string): boo
 /** .loki/, intake-time dirt the run left untouched ("L"), Wall files, and a NEW or MODIFIED lockfile with no manifest change at or under its directory (install churn), unless the task is a dependency change */
 export function dropSet(repoDir: string, staged: Staged[], preexistingDirty: unknown, env: NodeJS.ProcessEnv = process.env, installCreated?: unknown, untrackedBlobs?: unknown, baseSha?: string, task?: string): Staged[] {
   const owned = installOwned(repoDir, installCreated, env), made: object = (installCreated as { files?: object } | null | undefined)?.files ?? {}, tc = toolchainOutputs(repoDir, staged.filter(({ st }) => st === "A").map(({ f }) => f), baseSha); // FC-DEPS-NOT-INSTALLED: what the install made and the run left alone is dropped; an edited one is the run's change, lockfile rule included
-  return staged.concat(untouchedSinceIntake(repoDir, preexistingDirty, env).map((f) => ({ st: "L", f })), untouchedUntracked(repoDir, untrackedBlobs, env).map((f) => ({ st: "L", f })), staged.filter(({ f }) => owned(f)).map(({ f }) => ({ st: "L", f }))).filter(({ st, f }) => f.startsWith(".loki/") || st === "L" || WALL_FILE.test(f) || (st === "A" && tc.has(f)) || ((st === "A" || st === "M") && !Object.hasOwn(made, f) && LOCKFILE.test(f) && !manifestChanged(staged, f) && !taskWantsLockChange(task, f)));
+  const art = buildArtifactDropEnabled(env) ? buildArtifacts(repoDir, staged.filter(({ st }) => st === "A").map(({ f }) => f), baseSha, task) : new Set<string>(); // GB
+  return staged.concat(untouchedSinceIntake(repoDir, preexistingDirty, env).map((f) => ({ st: "L", f })), untouchedUntracked(repoDir, untrackedBlobs, env).map((f) => ({ st: "L", f })), staged.filter(({ f }) => owned(f)).map(({ f }) => ({ st: "L", f }))).filter(({ st, f }) => f.startsWith(".loki/") || st === "L" || WALL_FILE.test(f) || (st === "A" && (tc.has(f) || art.has(f))) || ((st === "A" || st === "M") && !Object.hasOwn(made, f) && LOCKFILE.test(f) && !manifestChanged(staged, f) && !taskWantsLockChange(task, f)));
 }
+
+/** GB LOKI_E10_BUILD_ARTIFACT_DROP (default on, =0 opts out): a file the run ADDED is never delivered when it is a generated or build artifact: a path the repo's ignore
+ *  rules match (`git check-ignore --no-index`, so a force-added file counts), a byte-compiled or incremental-build file anywhere (*.pyc, *.pyo, *.tsbuildinfo, __pycache__/,
+ *  <name>.egg-info/), or a file under dist/, build/, coverage/, .nyc_output/ or target/ at the repo root or beside a package manifest. Kept: the task names the file, or the
+ *  output directory already holds a file tracked at the run's base (the repo commits it). The failure: on new repos two delivered diffs carried build output a reviewer
+ *  failed as unrelated edits. The ignore rules are the tree's at commit time; they equal the base's unless the run edited a .gitignore. */
+export const buildArtifactDropEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BUILD_ARTIFACT_DROP"] ?? "").trim());
+const BYTECODE = /\.py[co]$|\.tsbuildinfo$/, CACHE_DIR = /^(?:.*\/)?(?:__pycache__|[^/]+\.egg-info)\//;
+const OUT_DIR = /^(?:dist|build|coverage|\.nyc_output|target)$/;
+const PKG_MANIFEST = ["package.json", "pyproject.toml", "setup.py", "setup.cfg", "Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts", "go.mod", "tsconfig.json"];
+/** The build output directory a path sits in (repo root or beside a manifest), or null. */
+function outDirOf(repoDir: string, f: string): string | null {
+  const parts = f.split("/");
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!OUT_DIR.test(parts[i]!)) continue;
+    const parent = parts.slice(0, i).join("/");
+    if (parent === "" || PKG_MANIFEST.some((m) => existsSync(join(repoDir, parent, m)))) return parts.slice(0, i + 1).join("/");
+  }
+  return null;
+}
+export function buildArtifacts(repoDir: string, added: string[], baseSha?: string, task = ""): Set<string> {
+  const out = new Set<string>(); if (added.length === 0) return out;
+  const named = (f: string): boolean => task.includes(f) || new RegExp(`(?<![\\w./-])${escapeRegex(basename(f))}(?![\\w-])`).test(task);
+  let ignored = new Set<string>();
+  try { const r = safeGitSpawn(repoDir, ["check-ignore", "--no-index", "--stdin", "-z"], { input: added.join("\0") + "\0", encoding: "utf8", timeout: 20_000 }); if (r.status === 0 || r.status === 1) ignored = new Set(String(r.stdout ?? "").split("\0").filter(Boolean)); } catch { /* no ignore check: patterns only */ }
+  const trackedDir = new Map<string, boolean>();
+  const dirTracked = (d: string): boolean => { if (!trackedDir.has(d)) { try { trackedDir.set(d, !baseSha || safeGit(repoDir, ["ls-tree", "-r", "--name-only", baseSha, "--", `${d}/`], { stdio: ["ignore", "pipe", "ignore"] }).trim() !== ""); } catch { trackedDir.set(d, true); } } return trackedDir.get(d)!; };
+  for (const f of added) {
+    if (f.startsWith(".loki/") || named(f)) continue;
+    const od = outDirOf(repoDir, f) ?? CACHE_DIR.exec(f)?.[0]?.replace(/\/$/, "") ?? null;
+    if (od !== null) { if (!dirTracked(od)) out.add(f); continue; } // a dist/, build/, __pycache__/ or egg-info/ the repo commits is the repo's
+    if (BYTECODE.test(f) || ignored.has(f)) out.add(f);
+  }
+  return out;
+}
+/** One receipt line per build artifact the commit left out. */
+export const buildArtifactNotes = (repoDir: string, droppedAdded: string[], baseSha?: string, task?: string): string[] => buildArtifactDropEnabled() ? [...buildArtifacts(repoDir, droppedAdded, baseSha, task)].map((f) => `generated or build file left out of the commit: ${f}`) : [];
 
 /** TEN-QUALITY-16: format only the files the run added or modified and kept (not dropped, deleted or under .loki/) with the repo's own configured formatter; returns them for re-staging. */
 export const formatChanged = (repoDir: string, staged: Staged[], dropped: Set<string>, env: NodeJS.ProcessEnv = process.env, baseSha?: string): string[] => formatChangedRecord(repoDir, staged, dropped, env, baseSha).formatted;
