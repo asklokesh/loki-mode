@@ -291,6 +291,7 @@
 # 253. check_result.ts spawnFailedTool: drop the 6-line bound (the spawn-not-run leg's long ENOENT output reads missing).
 # 254. testmap.ts buildTestMap: ignore pyCfg (the pytest-fallback leg's conftest.py case reads unittest).
 # 255. package_suite.ts runPackageSuites: drop the cwd !== "." guard (the empty-subsuite-na leg's root package reads not applicable).
+# 256. check_result.ts assertionFailure REPORTED-KIND type path: drop the MISSING_API guard (the reported-kind unit's ImportError case reads true).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1761,6 +1762,24 @@ const go = async () => { const checks = [], np = new Set(); await ps.runPackageS
 prof(true); const r = [await go()]; prof(false); r.push(await go()); prof(true); process.env.LOKI_E10_EMPTY_SUBSUITE_NA = "0"; r.push(await go()); console.log(r.join(","));' 2>&1)"
 [ "$ES" = "subNA/app=not_run,noNA/app=not_run+sub=not_run,noNA/app=not_run+sub=not_run" ] && ok "empty-subsuite-na: a sub-module with 0 tests on base and head is not applicable without a target check; the root package, a sub-module that ran tests on base, and LOKI_E10_EMPTY_SUBSUITE_NA=0 keep the cap" || bad "empty-subsuite-na gave: $ES"
 fi
+# REPORTED-KIND (verify-dev 2026-11-13: pyjwt's new test failed on the base with the raw `http.client.IncompleteRead` the issue reports, and samber/lo's with the
+# "panic: index out of range" its issue shows; neither counted, because reported errors had to end in Error/Exception with an exact message and go read no
+# reported errors at all). A base failure counts only when its exception type, or its panic message, is one the issue shows happening, in a test that
+# asserts a result or expects a wanted type. An ImportError or SyntaxError base failure is never credited even when the issue quotes it; an unreported
+# panic and LOKI_E10_REPORTED_KIND=0 are not credited either.
+RK="$(cd "$ROOT/loki-ts" && bun -e '
+const c = await import("./src/util/check_result.ts"), ev = (o) => JSON.stringify(o);
+const pj = "PyJWKClient.fetch_data raises a raw `http.client.IncompleteRead`:\n\n```\nhttp.client.IncompleteRead: IncompleteRead(...)\n```\n\nExpected: it is reported as `PyJWKClientConnectionError`.\n";
+const src = "def test_t():\n    with pytest.raises(PyJWKClientConnectionError):\n        client.fetch_data()\n", py = (e) => "E       " + e + "\n\nFAILED tests/test_c.py::test_t - " + e + "\n";
+const gout = [ev({ Action: "run", Test: "TestNth" }), ev({ Action: "output", Test: "TestNth", Output: "panic: runtime error: index out of range [-9] [recovered]\n" }), ev({ Action: "fail", Test: "TestNth" }), ev({ Action: "fail" })].join("\n");
+const lo = "lo.Nth(c, math.MinInt) // panic: index out of range\n";
+const r = [c.assertionFailure("pytest", py("http.client.IncompleteRead: IncompleteRead(0 bytes read)"), c.reportedErrors(pj), src), c.assertionFailure("go", gout, c.reportedErrors(lo)),
+  c.assertionFailure("pytest", py("ImportError: cannot import name x"), c.reportedErrors("loading fails with\n\n    ImportError: cannot import name x\n"), "def test_t():\n    assert f() == 2\n"),
+  c.assertionFailure("pytest", py("SyntaxError: invalid syntax"), c.reportedErrors("it raises SyntaxError: invalid syntax"), "def test_t():\n    assert f() == 2\n"),
+  c.assertionFailure("go", gout, c.reportedErrors("Nth returns the wrong value")), c.assertionFailure("pytest", py("http.client.IncompleteRead: IncompleteRead(0 bytes read)"), c.reportedErrors("fetch_data is slow"), src),
+  c.assertionFailure("pytest", py("http.client.IncompleteRead: other"), c.reportedErrors("fails with\n\n    http.client.IncompleteRead: IncompleteRead(0 bytes read)\n\nExpected: reported as `PyJWKClientConnectionError`.\n"), src)];
+process.env.LOKI_E10_REPORTED_KIND = "0"; r.push(c.assertionFailure("go", gout, c.reportedErrors(lo)), c.assertionFailure("pytest", py("http.client.IncompleteRead: IncompleteRead(0 bytes read)"), c.reportedErrors(pj), src)); console.log(r.join(","));' 2>&1)"
+[ "$RK" = "true,true,false,false,false,false,false,false,false" ] && ok "reported-kind unit: an issue-shown exception type (IncompleteRead) or Go panic message counts as the base failure; ImportError, SyntaxError, an unreported exception or panic, and LOKI_E10_REPORTED_KIND=0 do not; a type the issue quotes with an exact message still needs that message" || bad "reported-kind unit gave: $RK"
 # Go base proof (rule 22, real go test -json through the real mutationProof and RealBaseTestRunner): a test red by assertion on the base and green on the head is a proof naming the file;
 # a test calling a function the base lacks (build failure), a panic on the base, a base version already red, and a file with no tests are not.
 if command -v go >/dev/null 2>&1; then

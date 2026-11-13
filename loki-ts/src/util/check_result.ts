@@ -1753,7 +1753,7 @@ function goAssertionFailure(out: string): boolean {
 }
 /** The errors an issue reports. observed: "Type: message" errors the issue shows as what happens now (`RuntimeError: input already opened`, also `RuntimeError('input already opened')`); an error any of whose
  *  mentions sits after should, must, expected, want, instead or the like on its line or the non-empty line above is what the issue asks for, not what it saw, and is left out. wanted: the exception types the issue asks to be raised. */
-export interface ReportedErrors { observed: string[]; wanted: string[] }
+export interface ReportedErrors { observed: string[]; wanted: string[]; observedTypes?: string[]; panics?: string[] } // observedTypes, panics: REPORTED-KIND (exception types the issue shows happening, by type alone; Go panic messages it shows)
 const WANTED_CUE = /\b(?:should|must|shall|expect(?:s|ed)?|want(?:s|ed)?|ought|needs? to|instead|would like|supposed to|to raise|will raise|rather)\b/i;
 export function reportedErrors(task: string): ReportedErrors {
   const seen = new Map<string, boolean>(), wanted = new Set<string>();
@@ -1763,7 +1763,35 @@ export function reportedErrors(task: string): ReportedErrors {
     if (msg.length < 3) continue;
     const k = `${m[1]}: ${msg}`; seen.set(k, (seen.get(k) ?? true) && !want);
   }
-  return { observed: [...seen].filter(([, ok]) => ok).map(([k]) => k), wanted: [...wanted] };
+  if (!reportedKindOn()) return { observed: [...seen].filter(([, ok]) => ok).map(([k]) => k), wanted: [...wanted] };
+  // REPORTED-KIND: an exception shown by its qualified name (`http.client.IncompleteRead`, a traceback's last line) is observed by type even when its name
+  // does not end in Error or Exception and the issue gives no exact message; a Go "panic: <message>" the issue shows is an observed panic. Neither counts after a want cue.
+  const cue = (at: number): boolean => { const ls = task.slice(0, at).split("\n"), prev = ls.slice(0, -1).reverse().find((l) => l.trim() !== "") ?? ""; return WANTED_CUE.test(`${prev}\n${ls[ls.length - 1]!}`); };
+  const types = new Map<string, boolean>(), panics = new Map<string, boolean>();
+  for (const m of task.matchAll(/(?<![\w.])((?:[a-z_][a-z0-9_]*\.)+([A-Z][A-Za-z0-9_]*))(?::[ \t]*([^\n`]{3,200}))?(?=[`:\s(]|$)/g)) {
+    const t = m[2]!, msg = (m[3] ?? "").trim().replace(/[\s.]+$/, ""), c = cue(m.index!);
+    if (msg.length >= 3 && !/\.\.\.|\u2026/.test(msg)) { const k = `${t}: ${msg}`; seen.set(k, (seen.get(k) ?? true) && !c); continue; } // a quoted, non-elided message: the exact-message rule
+    types.set(t, (types.get(t) ?? true) && !c);
+  }
+  for (const m of task.matchAll(/\bpanic: (?:runtime error: )?([^\n`\[]{8,200})/g)) { const msg = m[1]!.trim().replace(/[\s.]+$/, ""); panics.set(msg, (panics.get(msg) ?? true) && !cue(m.index!)); }
+  return { observed: [...seen].filter(([, ok]) => ok).map(([k]) => k), wanted: [...wanted], observedTypes: [...types].filter(([t, ok]) => ok && !wanted.has(t) && ![...seen.keys()].some((k) => k.startsWith(`${t}: `))).map(([t]) => t), /* a type the issue quotes with an exact message keeps the exact-message rule */ panics: [...panics].filter(([, ok]) => ok).map(([p]) => p) };
+}
+/** REPORTED-KIND (LOKI_E10_REPORTED_KIND, default on, =0 opts out): see reportedErrors and assertionFailure. */
+export const reportedKindOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_REPORTED_KIND"] ?? "").trim());
+/** REPORTED-KIND, go: a test that failed on the base by panicking with a message the issue shows (panics, at least 8 characters; "runtime error: " and bracketed values
+ *  ignored) and with no build or setup failure counts like an assertion. Any other panic, a build failure or a timeout still never counts. */
+export function goReportedPanic(out: string, panics: readonly string[]): boolean {
+  if (!panics.length || !goJson(out)) return false;
+  let failedTest = false, hit = false;
+  for (const x of out.split("\n")) {
+    if (!x.trim() || /^go: /.test(x)) continue;
+    let e: { Action?: string; Test?: string; Output?: string }; try { e = JSON.parse(x); } catch { return false; }
+    const o = e.Output ?? "";
+    if (/^build-/.test(e.Action ?? "") || /\[build failed\]|\[setup failed\]|test timed out|fatal error:|^# \S|\.go:\d+:\d+: (?!.*panic)/m.test(o)) return false;
+    if (e.Action === "fail" && e.Test) failedTest = true;
+    const pm = /\bpanic: (?:runtime error: )?([^\n]*)/.exec(o); if (pm) { const got = pm[1]!.replace(/\[[^\]]*\]/g, "").replace(/\s+/g, " ").trim(); if (panics.some((p) => p.length >= 8 && got.includes(p.replace(/\s+/g, " ").trim()))) hit = true; }
+  }
+  return failedTest && hit;
 }
 /** pytest: the body of each test function the base run names as failed (FAILED/SUBFAILED node ids) asserts a result against a non-trivial expected value (assertEqual and kin, or `assert a == b`
  *  with two different sides and no bare None/True/False), or expects an issue-requested exception type other than the observed one (pytest.raises / assertRaises). A bare call, a re-raise,
@@ -1798,13 +1826,17 @@ export function assertionFailure(runner: string, output: string, reported: Repor
     if (f.length === 0) return false;
     const kinds = f.every((r) => r !== "" && !r.endsWith("...")) ? f : [...out.matchAll(/^E\s+((?:assert\b|[A-Za-z_.]*(?:Error|Exception))\S*)/gm)].map((m) => m[1]!); // a narrow terminal cuts the " - reason" from the summary line, or ends it in "..." ("AssertionEr..."): read the traceback's E lines instead
     const asserted = pytestKindsAreAssertion(kinds);
-    if (asserted || reported.observed.length === 0 || !assertsResult(src, out, reported)) return asserted; // the reported-error path needs a test that asserts a result (review of #545: a bare call, a re-raise or `is not None` passed with a wrong fix)
+    const oTypes = reportedKindOn() ? reported.observedTypes ?? [] : [];
+    if (asserted || (reported.observed.length === 0 && oTypes.length === 0) || !assertsResult(src, out, reported)) return asserted; // the reported-error path needs a test that asserts a result (review of #545: a bare call, a re-raise or `is not None` passed with a wrong fix)
     const norm = (x: string): string => x.replace(/\s+/g, " ").trim().replace(/[\s.]+$/, ""), want = new Set(reported.observed.map(norm));
-    const raised = [...out.matchAll(/^E\s+((?:[A-Za-z_][\w]*\.)*[A-Za-z_]\w*(?:Error|Exception))(?::[ \t]*(.*))?$/gm)].map((m) => norm(`${m[1]!.split(".").pop()!}: ${m[2] ?? ""}`)); // E lines carry the exception and its message; a dotted module prefix is dropped
-    return raised.length > 0 && raised.some((r) => want.has(r)) && raised.every((r) => want.has(r) || /^AssertionError\b/.test(r)) && !raised.some((r) => MISSING_API.test(r)) && !kinds.some((k) => MISSING_API.test(k));
+    const raised = [...out.matchAll(reportedKindOn() ? /^E\s+((?:[A-Za-z_][\w]*\.)*[A-Za-z_]\w*(?:Error|Exception)|(?:[a-z_]\w*\.)+[A-Z]\w*)(?::[ \t]*(.*))?$/gm : /^E\s+((?:[A-Za-z_][\w]*\.)*[A-Za-z_]\w*(?:Error|Exception))(?::[ \t]*(.*))?$/gm)].map((m) => norm(`${m[1]!.split(".").pop()!}: ${m[2] ?? ""}`)); // REPORTED-KIND: a qualified exception name not ending in Error (http.client.IncompleteRead) is read too // E lines carry the exception and its message; a dotted module prefix is dropped
+    if (raised.length > 0 && raised.some((r) => want.has(r)) && raised.every((r) => want.has(r) || /^AssertionError\b/.test(r)) && !raised.some((r) => MISSING_API.test(r)) && !kinds.some((k) => MISSING_API.test(k))) return true;
+    if (!oTypes.length) return false;
+    const types = [...out.matchAll(/^E\s+((?:[A-Za-z_]\w*\.)*([A-Z]\w*))(?::|\s*$)/gm)].map((m) => m[2]!), ot = new Set(oTypes); // REPORTED-KIND: by type alone, the qualified name's last segment
+    return types.some((t) => ot.has(t)) && types.every((t) => ot.has(t) || t === "AssertionError") && !types.some((t) => MISSING_API.test(`${t}: `)) && !kinds.some((k) => MISSING_API.test(k) || MISSING_API.test(k.replace(/^(?:[a-z_]\w*\.)+/, "")));
   }
   if (runner === "vitest") return vitestErrorsAreAssertion(out);
-  if (runner === "go") return goAssertionFailure(out);
+  if (runner === "go") return goAssertionFailure(out) || (reportedKindOn() && goReportedPanic(out, reported.panics ?? []));
   if ((runner === "node" || runner === "jest" || runner === "mocha") && assertJsOn()) return jsAssertionFailure(out);
   return false;
 }
