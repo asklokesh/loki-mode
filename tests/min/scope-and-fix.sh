@@ -286,6 +286,7 @@
 # 248. repo_profile.ts baselineSuites: drop the deadline from left (the R3 leg runs a suite the intake budget has no room for).
 # 249. testmap.ts mochaTargets: ignore devDependencies (the R5 leg maps a mocha package to nothing).
 # 250. attempts.ts attemptModel: always entry 1 (the cascade leg runs the extra attempt on Haiku).
+# 251. testmap.ts buildTestMap: stop passing `marks` to scopeRunnersByPackage (the multi-module go map leg reads no tests).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1283,6 +1284,19 @@ writeFileSync(join(r, "go.mod"), "module example.com/app\n\ngo 1.21\n"); writeFi
 writeFileSync(join(r, "api/api_test.go"), "package api\n\nimport (\n\t\"encoding/json\"\n\t\"testing\"\n)\n"); writeFileSync(join(r, "tests/x_test.go"), "package tests\n\nimport \"example.com/app/pkg/util\"\n");
 const m = await tm.buildTestMap(r); console.log(["internal/json/enc.go", "pkg/util/u.go"].map((f) => f + "=" + (tm.impactedRefs(m, [f]).map((t) => t.path).join(",") || "-")).join(" "));' "$T" 2>&1)"
 [ "$GJ" = "internal/json/enc.go=- pkg/util/u.go=tests/x_test.go" ] && ok "go map: imports are keyed on the module import path (internal/json is not encoding/json)" || bad "go map (module path) gave: $GJ"
+# EVIDENCE-PER-PACKAGE: a multi-module repo whose nested _examples/rest/go.mod sorts before every root file, with a Project Model naming both
+# packages (runner null, as discovery writes it): the root module keeps its go runner and its tests (go-chi/chi: the map read 0 tests).
+GE="$(cd "$ROOT/loki-ts" && bun -e '
+const tm = await import("./src/engine10/testmap.ts"), { mkdtempSync, writeFileSync, mkdirSync } = require("node:fs"), { join } = require("node:path");
+const r = mkdtempSync(join(process.argv[1], "gomulti-")); for (const d of ["_examples/rest", "middleware", ".loki"]) mkdirSync(join(r, d), { recursive: true });
+writeFileSync(join(r, "go.mod"), "module example.com/app\n\ngo 1.21\n"); writeFileSync(join(r, "_examples/rest/go.mod"), "module example.com/rest\n\ngo 1.21\n"); writeFileSync(join(r, "_examples/rest/main.go"), "package main\n");
+writeFileSync(join(r, "middleware/charset.go"), "package middleware\n"); writeFileSync(join(r, "middleware/charset_test.go"), "package middleware\n");
+const pkg = (name, root) => ({ name, root, runner: null, commands: { test: { cmd: "go test ./...", cwd: root, cite: [root === "." ? "go.mod" : `${root}/go.mod`] }, lint: null, build: null, start: null }, ui: { present: false, boot: null, cite: [] }, cite: [root === "." ? "go.mod" : `${root}/go.mod`], install: null });
+writeFileSync(join(r, ".loki/project.json"), JSON.stringify({ schema: "loki.v10.project/1", key: "k", status: "ok", workspaceKind: "multi-root", workspaceCite: ["go.mod"], fingerprintFiles: ["go.mod", "_examples/rest/go.mod"], packages: [pkg("app", "."), pkg("_examples/rest", "_examples/rest")] }));
+for (const a of [["init", "-q"], ["add", "-A", "--", ".", ":!.loki"]]) Bun.spawnSync(["git", "-C", r, ...a]); // git order lists _examples/rest/go.mod before go.mod, as in the real repo
+const m = await tm.buildTestMap(r); process.env.LOKI_E10_EVIDENCE_PER_PACKAGE = "0"; const off = tm.buildTestMap(r).tests.length;
+console.log(m.tests.map((t) => t.runner + ":" + t.path).join(",") + " | " + tm.impactedRefs(m, ["middleware/charset.go"]).map((t) => t.path).join(",") + " | off=" + off);' "$T" 2>&1)"
+[ "$GE" = "go:middleware/charset_test.go | middleware/charset_test.go | off=0" ] && ok "go map: in a multi-module repo every module that holds Go evidence keeps the go runner (a nested go.mod listed first does not empty the root's tests)" || bad "go map (multi-module) gave: $GE"
 
 # deliver: the delivery over a Wall conflict decides on the re-verify, so a Go Wall file that breaks its package's build
 # (the full suite fails, no targeted check of the repo's own ran) no longer keeps correct code out.
