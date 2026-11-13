@@ -867,6 +867,14 @@ export function changedSymbols(diffU0: string): string[] {
   flush();
   return [...out];
 }
+/** BASE-RED-SHAPE (LOKI_E10_BASE_RED_SHAPE, default on, =0 off): a red suite whose failing ids cannot be parsed is compared by the shape of its whole
+ *  output instead: ANSI already stripped, trailing space and blank lines dropped, and only time-like tokens (durations, clock times, timestamps, hex
+ *  addresses) normalized. Counts, names and messages stay, so a new failing test, a changed message or a new count gives a different shape. */
+export const baseRedShapeOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BASE_RED_SHAPE"] ?? "").trim());
+export function failureShape(out: string): string {
+  const norm = out.split("\n").map((l) => l.replace(/\s+$/, "").replace(/\b\d{4}-\d{2}-\d{2}[T ][\d:._,]+Z?/g, "<ts>").replace(/\b\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?\b/g, "<clock>").replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|sec|secs|seconds|m|min)\b/g, "<t>").replace(/\b0x[0-9a-f]{4,}\b/gi, "<hex>")).filter((l) => l !== "");
+  return createHash("sha256").update(norm.join("\n")).digest("hex");
+}
 /** Go methods that satisfy a standard interface and are called by the library, rarely by name in a test: Error/String/GoString/Format always; Unwrap/Is/As only
  *  on a type that also has Error (an error type); Len/Less/Swap only on a type that has all three (sort.Interface); Push/Pop only on a sort.Interface type
  *  (heap.Interface). An exported Push or Is on any other type is ordinary API and is owed a test. `methods` is the receiver type's method names in the file. */
