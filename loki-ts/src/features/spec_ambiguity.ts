@@ -322,3 +322,33 @@ export function assumptionsBlock(assumptions: unknown): string[] {
   return [...(plain.length ? [`The task text is ambiguous and nobody could be asked. Work on these recorded assumptions, no extra scope, and say in your final message where one mattered:\n${num(plain)}`] : []),
     ...(choices.length ? [`The task leaves a choice open. Each line gives the option to implement and the evidence from the task and the repo (or the rule to follow when none decides it); follow it, no extra scope, and name the option you implemented in your final message:\n${num(choices)}`] : [])];
 }
+
+// F1 ranked-remedy enforcement (LOKI_E10_RANKED_REMEDY, default on, =0 opts out). The failure it targets: an issue lists its remedies in order of preference and the change
+// implements only a lower-ranked one (a fallback) in place of the first, while the correct fixes implement remedy 1. The rule
+// "implement the fix the issue prefers" (FIXED_RULES) already existed and did not hold, so intake records remedy 1, the implement brief names it as the first site of the
+// coverage check, and one tool-less check of the diff gates one targeted resume (util/conflict_resume.ts resumeForRemedy). Stored as intake.ranked_remedy, never in
+// assumptions (those feed the open-decision cap and the consult trigger).
+export const rankedRemedyEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_RANKED_REMEDY"] ?? "").trim());
+const REMEDY_HEAD = /\b(?:possible|proposed|suggested|potential)\s+(?:solutions?|fix(?:es)?|approach(?:es)?|resolutions?|remed(?:y|ies))\b|\bin order of preference\b|\bpreferred\b/i;
+/** The issue's first-ranked remedy: a numbered list of at least two items starting at 1 whose intro (up to 3 lines above) or nearest heading (up to 12 lines above) names a
+ *  remedy list or a preference order. The item the text marks as preferred (and not as a fallback) wins over item 1. Deterministic; null when there is no ranked list. */
+export function rankedRemedy(issue: string): { first: string; count: number } | null {
+  const lines = issue.replace(/```[\s\S]*?```/g, (m) => m.replace(/[^\n]/g, " ")).split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const m0 = /^\s*1[.)]\s+(\S.*)$/.exec(lines[i]!); if (!m0) continue;
+    const items: string[] = [m0[1]!]; let j = i + 1;
+    for (; j < lines.length; j++) {
+      const m = /^\s*(\d+)[.)]\s+(\S.*)$/.exec(lines[j]!);
+      if (m && Number(m[1]) === items.length + 1) items.push(m[2]!); else if (/^\s{2,}\S/.test(lines[j]!) && !/^\s*\d+[.)]\s/.test(lines[j]!)) items[items.length - 1] += ` ${lines[j]!.trim()}`; else break;
+    }
+    const intro = lines.slice(Math.max(0, i - 3), i).join(" "), head = lines.slice(Math.max(0, i - 12), i).reverse().find((l) => /^\s*#{1,6}\s/.test(l)) ?? "";
+    if (items.length >= 2 && (REMEDY_HEAD.test(intro) || REMEDY_HEAD.test(head))) {
+      const pf = items.findIndex((t) => PREF.test(t) && !FALLBACK.test(t)), pick = items[pf >= 0 ? pf : 0]!;
+      return { first: trunc(pick.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1"), 300), count: items.length };
+    }
+    i = j - 1;
+  }
+  return null;
+}
+/** The per-task brief line (after the task block, never in the cache-stable prefix); [] when there is no ranked remedy. */
+export const rankedRemedyBlock = (remedy: unknown): string[] => (typeof remedy === "string" && remedy ? [`The issue ranks its remedies, and its first choice is: "${remedy}". Treat it as the first named site of the coverage check: implement it, and add any other remedy only on top of it, never in its place.`] : []);

@@ -66,6 +66,8 @@
 #  SG6. failures.ts idNamesFile: return id.includes(f) only; the root-run failure leg fails (the project-prefixed id names no file).
 #  SG7. commit_filter.ts commitUnsealedWork: drop the rmSync loop; the run-created lockfile stays untracked after the checkout. taskWantsLockChange: re-add the bare `lock` noun; 'refresh the page when the lock icon is clicked' ships its lockfile.
 #  NRM2. repo_profile.ts detectFormatters: drop the biome entry; the formatter check fails.
+#  J1. repo_profile.ts runFormattersRecord: drop the base-clean comparison; the J1 formatter leg formats b.py and fails.
+#  J2. commit_filter.ts commitUnsealedWork: exempt Wall files from the churn reset again; the J2 WIP commit leg commits loki_wall_w.test.ts by default.
 #  10. verify.ts sameErrors: excuse every known-red id whatever its first error; the delivery check fails.
 #  11. loki-ts/src/engine10/machine.ts: break after one Wall-only round whatever wallSignature says; the
 #      mono2 two-round check fails.
@@ -96,6 +98,10 @@
 #  23. repo_profile.ts BASELINE_CMD_TIMEOUT_S back to 60, or attributeFullSuite without the base-run-incomplete line, or baselineSuites reusing a short-cut entry; the base budget unit check fails.
 #  23b. repo_profile.ts: drop flaky_ids from the compared ids, skip the second base pass (runProbed), or drop the suite-red-at-base line, compare flaky ids by id only, skip the error compare in a suite red at base, drop errNamesChanged or the flaky NOT PROVEN line; the same unit check fails.
 #  23c. repo_profile.ts whyFullSuiteNotExcused (or verify.ts not_excused, or seal.ts listing it): return [] or drop the changed-file / new-id / cut / error-text branch; the same unit check fails.
+#  24. (fl24) util/base_guard.ts envChangedSince: drop the TOOL_OUTPUT_FILE skip (rebuild dist); mono3 buildinfo takes a fix round.
+#  24b. (fl24) machine.ts: drop baseRedClaim from the fix-conflict re-verify (rebuild dist); mono3 envlocal ends SPEC_CONFLICT.
+#  24c. (fl24) repo_profile.ts attributeFullSuite: drop quietAsBase, or failures.ts errorShape keeps :line:col; the fl24 unit's noise case fails. errorShape masking quoted values makes real vitest pathnorm deliver.
+#  24d. (fl24) repo_profile.ts whyFullSuiteNotExcused: drop the blocked branch; the fl24 unit's blocked case fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -415,6 +421,23 @@ commitUnsealedWork(true, process.env.W, process.env, "e10-wipn", { base_sha: pro
 rm -f "$WC/yarn.lock"; git -C "$WC" checkout -q loki/e10-wipn 2>/dev/null
 WC2="$(wip_churn "regenerate pnpm-lock.yaml")"
 [ "$WC2" = "app.ts pnpm-lock.yaml  | " ] && ok "WIP commit: a lockfile the task names is committed" || bad "WIP named: [$WC2]"
+# J2 LOKI_COMMIT_WALL (off by default, =1 publishes): the WIP commit of an unsealed end leaves the run's loki_wall_* file out and removes it from the tree (the sealed copy stays
+# in the run dir), like a run-created lockfile; =1 keeps the old exemption and commits it. A VERIFIED seal publishes no Wall child by default and records the kept files, hashes and rerun commands instead.
+WJ="$T/wipwall"; rm -rf "$WJ"; mkdir -p "$WJ" && git -C "$WJ" init -q -b main && git -C "$WJ" config user.name rs && git -C "$WJ" config user.email rs@example.invalid
+printf 'a\n' > "$WJ/app.ts"; git -C "$WJ" add -A . && git -C "$WJ" commit -q -m base; BASE_J="$(git -C "$WJ" rev-parse HEAD)"
+wip_wall() { # wip_wall <LOKI_COMMIT_WALL value>: committed paths | porcelain
+    git -C "$WJ" reset -q --hard "$BASE_J"; git -C "$WJ" clean -qfd; git -C "$WJ" checkout -q -B loki/e10-wipw "$BASE_J"; printf 'b\n' > "$WJ/app.ts"; printf 'test("w", () => {});\n' > "$WJ/loki_wall_w.test.ts"
+    W="$WJ" B="$BASE_J" CW="$1" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { commitUnsealedWork } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
+if (process.env.CW === "") delete process.env.LOKI_COMMIT_WALL; else process.env.LOKI_COMMIT_WALL = process.env.CW;
+commitUnsealedWork(true, process.env.W, process.env, "e10-wipw", { base_sha: process.env.B, task: "fix app" });' >/dev/null 2>&1
+    printf '%s | %s' "$(git -C "$WJ" diff --name-only "$BASE_J" HEAD | tr '\n' ' ')" "$(git -C "$WJ" status --porcelain | tr '\n' ' ')"
+}
+WJ0="$(wip_wall "")"; WJ1="$(wip_wall 1)"
+[ "$WJ0" = "app.ts  | " ] && [ "$WJ1" = "app.ts loki_wall_w.test.ts  | " ] && ok "J2 WIP commit: a loki_wall_* file stays out of the run branch by default and leaves the tree (the sealed copy is in the run dir), so the checkout back is clean; LOKI_COMMIT_WALL=1 commits it as before" || bad "J2 WIP commit: default [$WJ0], =1 [$WJ1]"
+CWE="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e 'const r = await import(process.env.ROOT + "/loki-ts/src/util/check_result.ts"); console.log([{}, { LOKI_COMMIT_WALL: "1" }, { LOKI_COMMIT_WALL: "on" }, { LOKI_COMMIT_WALL: "0" }, { LOKI_COMMIT_WALL: "" }].map((e) => (r.commitWallEnabled(e) ? 1 : 0)).join(""))' 2>&1)"
+SEALJ="$ROOT/loki-ts/src/engine10/stages/seal.ts"
+[ "$CWE" = "01100" ] && grep -q 'const wp = verdict3 === "VERIFIED" && commitWallEnabled() ? wpAll : { files: \[\], notes: wpAll.notes }, wallKept = verdict3 === "VERIFIED" && !commitWallEnabled() ? wpAll.files : \[\];' "$SEALJ" && grep -q 'wall_kept: { files: wallKept.map((f) => f.rel), sha256:' "$SEALJ" && ok "J2 seal: Wall publishing is off unless LOKI_COMMIT_WALL=1; a VERIFIED seal records the kept files, their sha256, rerun commands and sealed dir ($CWE)" || bad "J2 seal: commitWallEnabled gave '$CWE' or seal.ts is not wired"
 
 # Acceptance normalizer (EXP-0009): the commit filter drops a NEW or MODIFIED lockfile whose manifest did not change (install churn), keeps one
 # whose manifest changed in its directory or beneath it (workspace root), and the repo's own formatter pass never fails the run.
@@ -455,6 +478,26 @@ const c = formatChanged(process.env.LK, [{ st: "M", f: "pkg/b.json" }], new Set(
 console.log(JSON.stringify([a, touched, b, c]));
 ' 2>&1)"
 [ "$FMT" = '[["pkg/b.json"],true,[],[]]' ] && ok "formatter pass: a repo-local biome rewrites the changed file; a failing or missing formatter is a silent no-op" || bad "formatter pass gave: $FMT"
+# J1 LOKI_E10_FORMAT_RESOLVE (default on, =0 opts out): the formatter binary is resolved like verify's linter. A fake ruff lives only in the repo's .venv (PATH has none), "formats" by
+# rewriting BAD to ok, and prints the formatted stdin in --stdin-filename mode. Base-clean a.py and new c.py are formatted; b.py, already unformatted on base, is left alone and recorded;
+# the commit record names the venv binary. =0 spawns the bare `ruff`, which is not on PATH, and formats nothing.
+FV="$T/fmtvenv"; rm -rf "$FV"; mkdir -p "$FV/.venv/bin"; git init -q -b main "$FV"
+printf '[tool.ruff]\nline-length = 88\n' > "$FV/pyproject.toml"; printf 'x = 1\n' > "$FV/a.py"; printf 'y = BAD\n' > "$FV/b.py"
+printf '#!/bin/sh\n[ "$1" = format ] || exit 2; shift\nif [ "$1" = --stdin-filename ]; then perl -pe "s/BAD/ok/g"; exit 0; fi\nfor f in "$@"; do perl -pi -e "s/BAD/ok/g" "$f"; done\n' > "$FV/.venv/bin/ruff"; chmod +x "$FV/.venv/bin/ruff"
+git -C "$FV" add -- . && git -C "$FV" -c user.name=f -c user.email=f@x commit -q -m base
+FVB="$(git -C "$FV" rev-parse HEAD)"
+printf 'x = BAD\n' > "$FV/a.py"; printf 'y = BAD\nz = BAD\n' > "$FV/b.py"; printf 'c = BAD\n' > "$FV/c.py"
+FVR="$(FV="$FV" FVB="$FVB" ROOT="$ROOT" PATH="/usr/bin:/bin" "$(command -v bun)" --no-env-file --config=/dev/null -e '
+const { formatChangedRecord } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts"), fs = await import("node:fs"), d = process.env.FV;
+const st = [{ st: "M", f: "a.py" }, { st: "M", f: "b.py" }, { st: "A", f: "c.py" }], rd = (f) => fs.readFileSync(d + "/" + f, "utf8");
+const r = formatChangedRecord(d, st, new Set(), { ...process.env }, process.env.FVB), rec = r.records[0] ?? {};
+const out = [r.formatted.join("+"), rd("a.py").trim(), rd("b.py").includes("BAD"), rd("c.py").trim(), rec.tool, String(rec.cmd).endsWith(".venv/bin/ruff format"), JSON.stringify(rec.skipped)];
+fs.writeFileSync(d + "/a.py", "x = BAD\n");
+const off = formatChangedRecord(d, [{ st: "M", f: "a.py" }], new Set(), { ...process.env, LOKI_E10_FORMAT_RESOLVE: "0" }, process.env.FVB);
+out.push(off.formatted.length, rd("a.py").includes("BAD"), String(off.records[0]?.error ?? "").startsWith("formatter not runnable: ruff"));
+console.log(out.join(" | "));' 2>&1)"
+[ "$FVR" = 'a.py+c.py | x = ok | true | c = ok | ruff | true | [{"file":"b.py","why":"base text is not formatter-clean"}] | 0 | true | true' ] && ok "J1 formatter: the repo venv's ruff formats the base-clean modified file and the new file, leaves a file already unformatted on base alone with the reason, and the record names the venv binary; =0 spawns the bare ruff (not on PATH), formats nothing and records why" || bad "J1 formatter gave: $FVR"
+grep -q 'fmtRec = formatChangedRecord(ctx.repoDir, staged, dropped, process.env, ctx.baseSha), fmt = fmtRec.formatted;' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'const format = fmtRec.records.length ? { format: fmtRec.records } : {};' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "J1 wiring: the commit stage formats with the base commit and records the formatter pass on its data" || bad "J1 wiring: the commit stage does not pass the base or record the formatter pass"
 
 # A workspace whose package vitest config merges the root config, and the root config sets `projects` (zod): `cd packages/a && npx vitest run <file>` never starts
 # ("No projects were found"; it drove four zod implementers to edit vitest.config.ts). The generated command runs from the root instead and passes on real vitest;
@@ -570,6 +613,7 @@ print("fix_rounds %d" % sum(1 for e in ev if e["type"] == "fix.round"))
 print("pre_red %s" % ",".join(pages(v.get("pre_red_checks", []))))
 print("capped %s" % ",".join(pages(n.split(": ", 1)[1] for n in done.get("not_proven", []) if n.startswith("relevant test already failing on base"))))
 print("verdict %s" % done.get("verdict"))
+print("base_red_conflict %s" % any(n.startswith("a fix round stopped saying the remaining failures pre-exist on base") for n in done.get("not_proven", [])))
 PY
 )"
     printf '%s\n' "$M3S" | sed "s/^/    mono3 $leg: /"
@@ -590,6 +634,29 @@ m3 unnamed "add a del(p) helper to the frontend client" 'export const del = (p: 
 ! printf '%s\n' "$M3S" | grep -q '^pre_red .*p1' && ! got 'verdict VERIFIED' \
     && ok "mono3 unnamed: the same broken change from a task naming no file is never VERIFIED and p1 is never excused ($(printf '%s\n' "$M3S" | grep verdict))" \
     || { bad "mono3 unnamed: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
+
+# fl24 (FireLater#24 on v11.139.0), the same monorepo with its vitest resolvable only from frontend/node_modules (FAKE_VITEST_NEEDS_DEPS) and a task naming
+# no file. A base rerun gets the head's node_modules only while the environment is as intake left it (base_guard.ts envChangedSince).
+#   buildinfo: the change session rewrites the ignored frontend/tsconfig.tsbuildinfo, as `tsc --noEmit` does. That is a tool's output, not the environment:
+#              the base rerun keeps its dependencies, p1 and p2 fail the same way there, and they are pre-existing with no fix round. On v11.139.0 the base
+#              ran without node_modules, parsed no ids, and the red page tests blocked the run.
+#   envlocal:  the session rewrites the ignored frontend/.env.local, a real environment change, so the base rerun stays without dependencies (fail closed)
+#              and the page tests feed a fix round, which stops with LOKI_SPEC_CONFLICT saying they pre-exist on base. Every failing id is red in the
+#              intake baseline and no failure names the change, so the stop is pre-existing red: PARTIAL with a NOT PROVEN line, never SPEC_CONFLICT.
+M4="$T/mono4"; cp -R "$M3" "$M4"
+printf 'node_modules\n.next/\n.env.local\ntsconfig.tsbuildinfo\n' > "$M4/.gitignore"
+mkdir -p "$M4/frontend/node_modules" "$M4/backend/node_modules" && printf '{"v":1}\n' > "$M4/frontend/tsconfig.tsbuildinfo" && printf 'API=1\n' > "$M4/frontend/.env.local"
+git -C "$M4" add -A . && git -C "$M4" commit -q -m "ignore local files"
+for leg in buildinfo envlocal; do cp -R "$M4" "$T/mono3-$leg"; done
+UNNAMED_OK='export const del = (p: string): string => `DELETE ${p}`;'
+m3 buildinfo "add a del(p) helper to the frontend client" "$UNNAMED_OK" FAKE_VITEST_NEEDS_DEPS=1 E2E_STUB_EDIT_FILE=frontend/tsconfig.tsbuildinfo E2E_STUB_EDIT_FROM='"v":1' E2E_STUB_EDIT_TO='"v":2'
+got 'fix_rounds 0' && got 'pre_red p1,p2' && ! got 'verdict SPEC_CONFLICT' && ! got 'verdict FAILED' \
+    && ok "mono3 buildinfo: a rewritten tsconfig.tsbuildinfo keeps the base rerun's dependencies; the base-red page tests are pre-existing with no fix round ($(printf '%s\n' "$M3S" | grep verdict))" \
+    || { bad "mono3 buildinfo: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
+m3 envlocal "add a del(p) helper to the frontend client" "$UNNAMED_OK" FAKE_VITEST_NEEDS_DEPS=1 E2E_STUB_EDIT_FILE=frontend/.env.local E2E_STUB_EDIT_FROM='API=1' E2E_STUB_EDIT_TO='API=2' E2E_STUB_FIX=prered
+got 'fix_rounds 1' && got 'verdict PARTIAL' && got 'base_red_conflict True' \
+    && ok "mono3 envlocal: a fix round that stops saying the base-red failures pre-exist on base, with the baseline agreeing, is delivered PARTIAL with a NOT PROVEN line, not SPEC_CONFLICT (rc $M3RC)" \
+    || { bad "mono3 envlocal: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
 
 # Real vitest 5.0.5 output for the changed case (tests/min/fixtures/failures/vitest-same-id-*.txt): the same failing id with an AssertionError on base and
 # a TypeError on head is a different error to sameErrors (the matcher every base comparison above uses), and base against itself is the same.
@@ -707,6 +774,41 @@ console.log(r.join(" | "));
 Y4="full suite: npm:false | full suite: npm:true | true | short-cut rerun 300000 | full-cut kept 0 | fresh 300000 | 300 | 300 | 40 | 1 | flaky 1,1,1 | changed-file flaky 1 | no-flaky-record 1 | massive 1,true,1 | flaky-new-error 1,1,true | flaky-stack-changed-file 1 | massive-new-error 1,1 | massive-stack-changed-file 1 | massive-duplicate-title 1 | small-red-no-line false | probe 2;done;b.test.ts > t2+c.test.ts > t3;a.test.ts > t1+b.test.ts > t2 | record 2,false,2,true | why true,true,true,true,true | why-cut true | why-unattributable true | why-none-when-excused 0"
 [ "$B4" = "$Y4" ] && ok "unit: a base suite that completes is excused (no cut line); a cut base run is introduced with a base-run-incomplete line, also when the shared budget ran out; a base run gets 300 s (a third of the run cap at most); a short-cut entry is measured again, a fully-cut one is kept; a red base suite gets a second pass whose one-pass-only ids are flaky and not blamed on the change (a new id, or one in a changed file, still is); a suite red at base (500+ ids) is excused per id with a suite-red-at-base line; the baseline is written to the run directory; a failing full-suite check that is not excused is named with the rule that kept it blocking" \
     || bad "base budget unit gave: $B4 (want: $Y4)"
+
+# fl24 (FireLater#24 on v11.139.0), synthetic and modeled on its shape: a frontend suite red on base, a full-suite run whose ids are all red on base.
+#   noise:   an id failing with the same error up to noise (a line number, a quoted value, a path) is excused, with a NOT PROVEN line; another error
+#            shape (TypeError for an AssertionError), or a failure that names a changed file or a changed symbol, still blocks (a change that broke it).
+#   blocked: a suite whose ids also fail in a targeted check that was not excused says so, not "the error text differs" (FireLater's text was identical).
+#   basered: the evidence for a fix round's "pre-exists on base" stop: ids red in a baseline, nothing naming the change, never an ineligible check.
+B6="$(G="$G4" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), m = await import(process.env.ROOT + "/loki-ts/src/engine10/machine.ts"), { writeFileSync, execFileSync } = await import("node:fs").then(async (f) => ({ ...f, execFileSync: (await import("node:child_process")).execFileSync }));
+const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), r = [];
+const A = ["src/app/admin/__tests__/page.test.tsx > Admin > has gray background", "src/app/sla/__tests__/page.test.tsx > SLA > shows red badge"];
+const be0 = { [A[0]]: ["Error: expect(element).toHaveClass(\"bg-gray-50\") at src/app/admin/__tests__/page.test.tsx:41:7"], [A[1]]: ["AssertionError: expected 3 to be 2 at sla/page.test.tsx:12:5"] };
+const put = (be) => writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: "npm test", exit_code: 1, duration_s: 20, timed_out: false, failing_ids: [], attributable: false, reason: "no ids" }, suites: [{ name: "full suite: web", ran: true, command: "(cd web && npm test)", exit_code: 1, duration_s: 9, timed_out: false, attributable: true, failing_ids: A, failing_errors: be }] }));
+const full = (errors) => [{ name: "full suite: web", cmd: "(cd web && npm test)", result: "fail", ids: A, errors }];
+const changed = ["web/src/lib/api.ts", "web/src/components/search/SearchBar.tsx"], syms = ["searchApi", "SearchBar"];
+const att = (errors, blocked = []) => rp.attributeFullSuite(g, sha, full(errors), blocked, changed, syms);
+/* one id: its base line, its head line; the other id repeats its base line */
+const one = (b1, h1) => { put({ ...be0, [A[1]]: [b1] }); return att({ ...be0, [A[1]]: [h1] }).introducedChecks.length; };
+put(be0); const same = att(be0), noise = att({ [A[0]]: ["Error: expect(element).toHaveClass(\"bg-gray-50\") at /tmp/base-wt/src/app/admin/__tests__/page.test.tsx:44:9"], [A[1]]: ["AssertionError: expected 3 to be 2 at other/dir/sla/page.test.tsx:14:3"] });
+r.push("same " + same.preExistingChecks.length + ":" + /error text differs/.test(same.line ?? ""), "noise " + noise.preExistingChecks.length + ":" + /error text differs from base \(by noise only/.test(noise.line ?? ""));
+r.push("value " + one("AssertionError: expected 3 to be 2", "AssertionError: expected 5 to be 2") + "," + one("AssertionError: expected \"GET /p\" to be \"GET /x\"", "AssertionError: expected \"GET /admin/p\" to be \"GET /x\""));
+r.push("shape " + one("AssertionError: expected 3 to be 2", "TypeError: Cannot read properties of undefined (reading \"map\")"));
+r.push("names-file " + one("AssertionError: expected 3 to be 2 at api.ts:12:5", "AssertionError: expected 3 to be 2 at api.ts:14:3"), "names-symbol " + one("AssertionError: SearchBar at x.tsx:1:1", "AssertionError: SearchBar at x.tsx:2:1"), "noise-alone " + one("AssertionError: expected 3 to be 2 at x.tsx:1:1", "AssertionError: expected 3 to be 2 at x.tsx:2:1"));
+put(be0); const be = be0;
+const why = rp.whyFullSuiteNotExcused(g, sha, full(be), changed, [], [A[1]]).join("|");
+r.push("blocked " + att(be, [A[1]]).introducedChecks.length + ":" + /1 failing id\(s\) also fail in a targeted check that was not excused/.test(why) + ":" + !/error text differs/.test(why));
+const per = (o) => ({ name: "vitest:web/src/app/sla/__tests__/page.test.tsx", ids: [A[1]], suite: "full suite: web", eligible: true, ...o });
+r.push("basered " + [rp.baseRedById(g, sha, [per({})], [], changed, syms).length, rp.baseRedById(g, sha, [per({ eligible: false })], [], changed, syms).length, rp.baseRedById(g, sha, [per({ ids: [A[1], "src/new.test.tsx > fresh"] })], [], changed, syms).length, rp.baseRedById(g, sha, [per({ errors: { [A[1]]: ["Error in SearchBar"] } })], [], changed, syms).length, rp.baseRedById(g, sha, [per({})], [], changed, syms, [per({}).name]).length, rp.baseRedById(g, sha, [{ name: "full suite: web", cmd: "(cd web && npm test)", ids: A, eligible: true }], [], changed, syms).length].join(","));
+const v = (o) => ({ checks: [{ name: "vitest:a", result: "fail" }, { name: "full suite: web", result: "fail" }, { name: "lint:x", result: "pass" }], base_red_checks: ["vitest:a", "full suite: web"], ...o });
+r.push("onlyBaseRed " + [m.onlyBaseRed(v({})), m.onlyBaseRed(v({ base_red_checks: ["vitest:a"] })), m.onlyBaseRed(v({ base_red_checks: ["vitest:a"], pre_red_checks: ["full suite: web"] })), m.onlyBaseRed(v({ base_red_checks: [] })), m.onlyBaseRed(undefined)].join(","));
+r.push("claim " + [m.PRE_EXISTING_CLAIM.test("the named failures exist identically on clean HEAD (73 failing tests in both trees)"), m.PRE_EXISTING_CLAIM.test("these tests already fail before this change"), m.PRE_EXISTING_CLAIM.test("calc.test.ts:7 expects multiply(3, 4) to be 12")].join(","));
+console.log(r.join(" | "));
+' 2>&1)"
+Y6="same 1:false | noise 1:true | value 1,1 | shape 1 | names-file 1 | names-symbol 1 | noise-alone 0 | blocked 1:true:true | basered 1,0,0,0,0,1 | onlyBaseRed true,false,true,false,false | claim true,true,false"
+[ "$B6" = "$Y6" ] && ok "unit: a base-red id whose error differs only by noise (a stack path, a :line:col) is excused with a NOT PROVEN line; a changed number or quoted value, another error shape or a failure naming a changed file or symbol still blocks; a suite held by an unexcused targeted check says so; a fix round's pre-existing stop needs every live failure red in a baseline" \
+    || bad "fl24 attribution unit gave: $B6 (want: $Y6)"
 
 # SPEED-BASE-ALIAS (tanstack-query, L-Haiku-v1371-nopatch tq-11327: the baseline ran `pnpm test` and then the full-suite command `npm test --silent`, twice
 # each, 51 s for one package.json script). npm, pnpm and yarn running the same root script with no pre/post hook share one base run: the suite is not

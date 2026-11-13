@@ -1,10 +1,10 @@
 // FC-19: a LOKI_SPEC_CONFLICT from implement gets exactly one resume with a correction before it is believed. No wording of the model's reason is
 // inspected (L0): the model itself says whether its conflict was only about Loki's own rules or about the task.
 import { isOff } from "../council/role_agents.ts";
-import { neverStopBrief } from "../features/opus_consult.ts";
+import { consultCallFor, neverStopBrief } from "../features/opus_consult.ts";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { readSessionId } from "../runner/session_resume.ts";
@@ -18,7 +18,9 @@ import { sealedWallCopy, sealedWallDir, WALL_FAILURE_TAIL_FILE } from "./check_r
 import { killedTailIndexes } from "./seal_drift.ts";
 import { vacuousCheck } from "../project_model/conventions.ts";
 import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
-import { editShapeBrief, editShapeSites } from "./edit_shape.ts";
+import { editShapeBrief, editShapeSites, precedenceBrief, precedenceCheckEnabled } from "./edit_shape.ts";
+import { isTestFile } from "./test_file_text.ts";
+import { extractSpecAtoms, resolveSites } from "../features/exec_spec.ts";
 import { FINISH_LINE, taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
 import type { ReadOnlyFile } from "../engine10/stages/implement.ts";
 
@@ -63,18 +65,56 @@ export const CONFLICT_CORRECTION =
   "If the task itself conflicts, restate the conflict. " +
   FINISH_LINE;
 
+// Z1, part of Z2 LOKI_E10_PINNED_TEST_UPDATE (default on, =0 opts out): an implement LOKI_SPEC_CONFLICT that cites an existing test (path:line) whose cited lines assert a literal the task text
+// itself quotes is the case where the test pins the very behavior the issue reports as wrong. The one FC-19 correction then says to update that expected value to the issue's
+// stated behavior instead of the generic "base failures are not a conflict" text. On the tuning bench one run ended BLOCKED with an empty diff this way after the generic
+// correction repeated the conflict. Deterministic: the cite, the file tracked on base, a literal of at least 4 characters with a digit or a symbol found in the task.
+export const pinConflictEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PINNED_TEST_UPDATE"] ?? "").trim()); // the Z2 knob (e10ext/context.ts pinnedTestUpdateEnabled)
+const CITE_RE = /((?:[\w.@-]+\/)*[\w.@-]+\.[A-Za-z]{1,5}):(\d+)(?:\s*-\s*(\d+))?/g;
+const norm = (t: string): string => t.replace(/[\s`]+/g, "").replace(/'/g, "\"");
+/** The literal fragments of some source lines: quoted strings, [..] and {..} groups; each normalized (no whitespace, one quote style), at least 4 chars with a digit or a symbol. */
+export function literalFragments(text: string): string[] {
+  const out = new Set<string>(), add = (x: string): void => { const n = norm(x); if (n.length >= 4 && /[\d[\]{}:,]/.test(n)) out.add(n); };
+  for (const m of text.matchAll(/(["'])((?:\\.|(?!\1)[^\\\n])*)\1/g)) add(m[2]!);
+  for (const m of text.matchAll(/\[[^[\]\n]{1,80}\]/g)) add(m[0]);
+  for (const m of text.matchAll(/\{[^{}\n]{1,120}\}/g)) add(m[0]);
+  return [...out];
+}
+/** The cited test (as path:line) when the conflict names an existing test file whose cited lines (at most 40; one line widens to the next 5) assert a literal the task quotes; null otherwise. */
+export function pinnedTestCite(repoDir: string, baseSha: string, reason: string, task: string): string | null {
+  if (!reason || !task) return null;
+  let tracked: string[] | null = null;
+  const nt = norm(task);
+  for (const m of reason.matchAll(CITE_RE)) {
+    const cited = m[1]!, from = Number(m[2]), to = Math.min(m[3] ? Number(m[3]) : from + 5, from + 40);
+    if (/(^|\/)loki_wall_/.test(cited) || cited.split("/").includes("..")) continue; // a Wall file goes to the referee
+    tracked ??= (safeGitSpawn(repoDir, ["ls-tree", "-r", "--name-only", baseSha], { encoding: "utf8" }).stdout ?? "").split("\n").filter(Boolean);
+    const hits = tracked.filter((f) => f === cited || f.endsWith(`/${cited}`));
+    if (hits.length !== 1 || !isTestFile(hits[0]!)) continue;
+    const blob = safeGitSpawn(repoDir, ["show", `${baseSha}:${hits[0]}`], { encoding: "utf8" });
+    if (blob.status !== 0) continue;
+    const lines = blob.stdout.split("\n").slice(Math.max(0, from - 1), Math.max(from, to));
+    if (literalFragments(lines.join("\n")).some((f) => nt.includes(f))) return `${hits[0]}:${from}`;
+  }
+  return null;
+}
+export const pinConflictBrief = (cite: string): string =>
+  `The test you cited (${cite}) asserts the behavior the issue reports as wrong. That is not a conflict: update that expected value to the behavior the issue states (change only that assertion and keep every other one), make sure the new value fails on the unfixed code, then implement the fix. Before the last line write \`UPDATED TEST <path>:<line>: <old expectation> -> <new expectation>; issue: "<the issue sentence that asks for it>"\`. ` + FINISH_LINE;
+
 // FC-19b: under this much of the implement window the resume would only die at the limit; the first conflict stands and the run ends BLOCKED with its question.
 export const RESUME_MIN_LEFT_S = 60;
 
 /** Re-runs the implement session once after a spec conflict, with the first call's options: resumes the provider session when one was recorded, else starts fresh with the original brief plus the correction. */
-export async function resumeAfterConflict(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> {
+export async function resumeAfterConflict(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string; pinnedTest?: string }> {
   if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationId: first.iterationId };
+  const task = String(ctx.outputs?.().intake?.task ?? ""), pin = pinConflictEnabled() && ctx.baseSha ? pinnedTestCite(ctx.repoDir, ctx.baseSha, firstSession.markers.specConflict ?? "", task) : null; // Z1: a conflict on a test that pins the reported behavior gets the update-the-value correction
+  const correction = pin ? pinConflictBrief(pin) : CONFLICT_CORRECTION;
   const iterationId = `${first.iterationId}-r`, sid = ctx.provider === "claude" ? readSessionId(ctx.repoDir, first.iterationId) : null;
-  const session = await ctx.sessions.run({ ...first, iterationId, brief: sid ? CONFLICT_CORRECTION : `${first.brief}\n\n${CONFLICT_CORRECTION}`, ...(sid ? { resumeSessionId: sid } : {}) });
+  const session = await ctx.sessions.run({ ...first, iterationId, brief: sid ? correction : `${first.brief}\n\n${correction}`, ...(sid ? { resumeSessionId: sid } : {}) });
   const terminal = !session.killed && (session.markers.done || session.markers.alreadyDone !== null || session.markers.specConflict !== null);
   const durationS = firstSession.durationS + session.durationS;
   // A resume that errors, is killed or ends without a marker must not erase the question: the first session's conflict stands.
-  return { session: { ...(terminal ? session : firstSession), durationS }, iterationId };
+  return { session: { ...(terminal ? session : firstSession), durationS }, iterationId, ...(pin ? { pinnedTest: pin } : {}) };
 }
 
 // FC-43: a LOKI_DONE exit whose tree has no change gets one correction before verify fails it. The model says which it was: forgot to edit, already satisfied, or a real conflict.
@@ -130,7 +170,62 @@ export const coverageResumeEnabled = (env = process.env): boolean => coverageMod
 export const COVERAGE_FOLD = "Before you finish, go over every site, symbol, example or case the task names and map each one to the hunk and the test that cover it. Fix any that is not covered, and add a test for any that has none.";
 export const COVERAGE_FOLD_CLAIM = COVERAGE_FOLD + " Before the last line, write one line per site in the current file: `SITE <path>:<line>: changed` or `SITE <path>:<line>: unchanged - <why>`.";
 /** The fixed lines a plan-skipped implement brief adds right after FOLD_PLAN_INSTRUCTION: one line in fold mode (the claim variant when LOKI_E10_CLAIM_CHECK is on), none otherwise. */
-export const coverageFoldLines = (env = process.env): string[] => coverageMode(env) === "fold" ? [claimCheckEnabled(env) ? COVERAGE_FOLD_CLAIM : COVERAGE_FOLD] : [];
+export const coverageFoldLines = (env = process.env): string[] => coverageMode(env) === "fold" ? [claimCheckEnabled(env) ? COVERAGE_FOLD_CLAIM : COVERAGE_FOLD, ...(namedSitesEnabled(env) ? [NAMED_SITE_LINE] : [])] : [];
+
+// R2 LOKI_E10_NAMED_SITES (default on, =0/off opts out): named-site accountability, an extension of the coverage map above. Every symbol the task names (a site atom of
+// features/exec_spec.ts, resolved to its definition in the repo; a callee it was not named for is left out) is either changed by the diff (its file is) or written by the
+// model as `SITE <path>:<line>: unchanged - <why>` with a reason about the code. A hedge in the task ("may need", "might also") is not a reason. One "-ns" resume asks
+// for each unaccounted site; seal reads the final diff and caps VERIFIED at PARTIAL for any that is still unaccounted (receipt key named_unchanged). The failure it targets:
+// an issue said one more class "may need the same change", the run read the hedge as out of scope, and left the half a reviewer and the grading test both checked.
+// Off: the fold brief is byte-identical to the coverage map alone, no resume runs and the receipt carries no named_unchanged key.
+export const namedSitesEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff((env["LOKI_E10_NAMED_SITES"] ?? "").trim().toLowerCase());
+export const NAMED_SITE_LINE = "A site the task names stays in scope even where the task only says it may need the change: change it, or, before the last line, write `SITE <path>:<line>: unchanged - <why>` for it, where the reason is about the code (a hedge in the task is not a reason).";
+export interface NamedSite { symbol: string; path: string; line: number }
+/** The named sites: the task's site atoms that resolve to a definition in the repo (resolveSites' one-hop callees are not named, so they are dropped). */
+export function namedSites(task: string, repoDir: string): NamedSite[] {
+  try {
+    const atoms = extractSpecAtoms(task).filter((a) => a.kind === "site"), names = new Set(atoms.map((a) => a.text));
+    return resolveSites(atoms, repoDir).filter((s) => names.has(s.symbol)).map((s) => ({ symbol: s.symbol, path: s.file, line: s.line }));
+  } catch { return []; }
+}
+const HEDGE_REASON = /\b(?:may|might|could)\s+(?:also\s+)?need\b|\bout of (?:the )?scope\b|\bnot (?:explicitly |strictly )?required\b|\boptional\b|\bhedg/i;
+/** `SITE <path>:<line>: unchanged - <why>` lines of a reply, by path; a reason that only restates the task's hedge is not kept. */
+export function unchangedReasons(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of text.matchAll(/^\W*SITE\s+`?([^\s`:]+)(?::\d+)?`?:\s*unchanged\s*[-:]+\s*(.+)$/gim)) { const why = m[2]!.trim().slice(0, 200); if (why.length >= 8 && !HEDGE_REASON.test(why)) out[m[1]!] = why; }
+  return out;
+}
+/** Named sites whose file the tree's diff against base leaves alone, each with the reply's reason for it (null: unaccounted). */
+export function namedUnchanged(repoDir: string, baseSha: string, sites: NamedSite[], reasons: Record<string, string>): (NamedSite & { why: string | null })[] {
+  if (!sites.length) return [];
+  const g = safeGitSpawn(repoDir, ["diff", "--name-only", "--no-renames", baseSha, "--", ".", ":(exclude).loki", ":(exclude).loki/**"], { encoding: "utf8" });
+  if (g.status !== 0) return [];
+  const changed = new Set(g.stdout.split("\n").filter(Boolean)), why = (p: string): string | null => reasons[p] ?? Object.entries(reasons).find(([k]) => p.endsWith(`/${k}`) || k.endsWith(`/${p}`))?.[1] ?? null;
+  const seen = new Set<string>();
+  return sites.filter((s) => !changed.has(s.path) && !seen.has(s.symbol) && (seen.add(s.symbol), true)).map((s) => ({ ...s, why: why(s.path) }));
+}
+export const namedSitesBrief = (open: NamedSite[]): string => `The task names these sites and your change leaves each one as it was on the base: ${open.map((s) => `${s.symbol} (${s.path}:${s.line})`).join(", ")}. Make the change each one needs. If one truly needs none, write \`SITE <path>:<line>: unchanged - <why>\` for it with a reason about the code; that the task says it "may need" the change is not a reason. ` + FINISH_LINE;
+export interface NamedSitesRecord { sites: NamedSite[]; reasons: Record<string, string>; resumed: boolean }
+/** One "-ns" resume when a named site is unchanged and unexplained. Only a clean LOKI_DONE reply replaces the first result; the reasons kept are the final reply's. */
+export async function resumeForNamedSites(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, task: string, env: NodeJS.ProcessEnv = process.env): Promise<{ session: SessionResult; iterationIds: string[]; record: NamedSitesRecord | null }> {
+  if (!namedSitesEnabled(env)) return { session: firstSession, iterationIds: [], record: null };
+  const sites = namedSites(task, ctx.repoDir);
+  if (!sites.length) return { session: firstSession, iterationIds: [], record: null };
+  const reasons = unchangedReasons(firstSession.summary ?? ""), open = namedUnchanged(ctx.repoDir, ctx.baseSha, sites, reasons).filter((s) => s.why === null);
+  if (!open.length || (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationIds: [], record: { sites, reasons, resumed: false } };
+  const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
+  const r = await resumeWith(ctx, first, firstSession, namedSitesBrief(open), "-ns");
+  const s = clean(r.session) ? r.session : { ...firstSession, durationS: r.session.durationS };
+  return { session: s, iterationIds: [r.iterationId], record: { sites, reasons: { ...reasons, ...unchangedReasons(r.session.summary ?? "") }, resumed: true } };
+}
+/** Seal: the named sites the final diff leaves unchanged, from the implement record (the winning attempt's own SITE reasons replace the first attempt's). */
+export function namedUnchangedOf(repoDir: string, baseSha: string, implement: Record<string, unknown> | undefined): (NamedSite & { why: string | null })[] {
+  const rec = implement?.named_sites as NamedSitesRecord | undefined;
+  if (!rec || !Array.isArray(rec.sites) || !namedSitesEnabled()) return [];
+  const att = implement?.attempts as { winner?: unknown; winner_site_lines?: unknown } | undefined, extraWon = typeof att?.winner === "string" && att.winner !== "incumbent";
+  return namedUnchanged(repoDir, baseSha, rec.sites, extraWon ? unchangedReasons(Array.isArray(att?.winner_site_lines) ? att!.winner_site_lines.map(String).join("\n") : "") : rec.reasons ?? {});
+}
+export const namedUnchangedNote = (s: NamedSite & { why: string | null }): string => `named site unchanged without a reason: ${s.symbol} (${s.path}:${s.line})`;
 // LOKI_E10_COVERAGE_MAX_TURNS (default 10; =0/off opts out to the stage budget's cap): the coverage turn ("-c", "-c2") ends at this many turns.
 // On the v11.137 Haiku bench arms, 31 of 36 coverage turns took 2 to 8 turns; the other 5 took 13 to 33 (up to $0.031, more than the implement session), and
 // each of those tasks was merge-ready in another arm whose coverage turn took 8 or fewer. A capped turn ends like a reply without LOKI_DONE: the first result stands.
@@ -447,4 +542,57 @@ export async function deliverOverWallConflict(o: Outs, repoDir: string, reverify
   if (kr.length) { v.pre_red_checks = [...pre, ...kr]; v.pre_red = [...strList(v.pre_red), ...checks.filter((c) => kr.includes(String(c.name))).flatMap((c) => strList(c.ids))]; }
   o.implement = { ...o.implement, exit: "done", conflict_delivered: files };
   return files;
+}
+
+// F1 LOKI_E10_RANKED_REMEDY (features/spec_ambiguity.ts rankedRemedy): one tool-less Haiku check (input capped near 4k tokens, at most 50 output tokens, thinking off) of the diff against
+// the issue's first-ranked remedy, after a clean LOKI_DONE with a non-empty diff. Only a parsed MISSING starts one targeted resume ("-rr"); a failed or unparsed reply starts nothing,
+// and only a clean LOKI_DONE reply replaces the first result. It fires only when intake recorded a ranked remedy.
+export const REMEDY_CHECK_SYSTEM = "You check whether one code change implements one stated remedy. You have no tools. Reply with exactly one word: IMPLEMENTED or MISSING.";
+const REMEDY_DIFF_CAP = 12_000;
+/** T201: the CLI turns a reply longer than CLAUDE_CODE_MAX_OUTPUT_TOKENS into an error, and Haiku answers this one-word check with 6 to 700 tokens: at 50, 9 of 12 concurrent checks failed; at 256, 0 of 12. Output is billed by the tokens actually written. */
+export const REMEDY_MAX_TOKENS = 256;
+export const remedyCheckPrompt = (remedy: string, diff: string): string => `Loki remedy check.\nRemedy (the issue's first choice): ${remedy}\n\nDiff:\n${diff.length > REMEDY_DIFF_CAP ? `${diff.slice(0, REMEDY_DIFF_CAP)}\n[... truncated]` : diff}`;
+/** The verdict of one reply. The first verdict word decides, after markdown and punctuation are stripped: MISSING, NOT IMPLEMENTED, NOT PRESENT, ABSENT or NO give
+ *  "missing"; IMPLEMENTED, PRESENT or YES give "implemented". A reply with no verdict word, or with both verdicts on its first line (MISSING or IMPLEMENTED), is null and starts
+ *  no resume. Shapes seen or expected from Haiku: "MISSING", "**MISSING**", "Missing.", "MISSING: the diff keeps the bare name", "Answer: IMPLEMENTED", "NOT IMPLEMENTED". */
+export const parseRemedyCheck = (text: string | null): "missing" | "implemented" | null => {
+  const first = (text ?? "").split("\n").map((l) => l.replace(/[*_`#>"'.,:;!()[\]]+/g, " ").trim().toUpperCase()).find((l) => l !== "") ?? "";
+  const miss = /\b(?:MISSING|NOT\s+IMPLEMENTED|NOT\s+PRESENT|ABSENT)\b/.test(first) || /^(?:ANSWER\s+|VERDICT\s+)?NO\b/.test(first), impl = /\b(?:IMPLEMENTED|PRESENT)\b/.test(first.replace(/\bNOT\s+(?:IMPLEMENTED|PRESENT)\b/g, " ")) || /^(?:ANSWER\s+|VERDICT\s+)?YES\b/.test(first);
+  return miss && !impl ? "missing" : impl && !miss ? "implemented" : null;
+};
+export const remedyResumeBrief = (remedy: string): string => `The issue's first-choice remedy is not in your change: "${remedy}". Implement that remedy now, keep any other fix only on top of it, run the targeted tests, then finish. ` + FINISH_LINE;
+let remedyCallOverride: ((system: string, prompt: string) => Promise<{ text: string | null; usd: number | null; outcome: string }>) | null = null;
+/** TEST SEAM: replace the remedy check call. Production code must never call this. */
+export function __setRemedyCheckForTests(c: typeof remedyCallOverride): void { remedyCallOverride = c; }
+/** check: "unparsed" when an answer arrived without a verdict, "failed" when no answer arrived (call: the call outcome, retries already done by the shared tool-less path). */
+export interface RemedyRecord { check: "implemented" | "missing" | "unparsed" | "failed"; usd: number | null; resumed: boolean; call?: string }
+export async function resumeForRemedy(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, remedy: string, diff: string, env: NodeJS.ProcessEnv = process.env): Promise<{ session: SessionResult; iterationIds: string[]; record: RemedyRecord }> {
+  const call = remedyCallOverride ?? ((s: string, p: string) => consultCallFor(env.LOKI_E10_RANKED_REMEDY_MODEL || "claude-haiku-5-5", join(ctx.repoDir, ".loki"), env, 60_000, { maxTokens: REMEDY_MAX_TOKENS, thinking: "off" })(s, p, "ranked-remedy-check"));
+  // T201: the shared tool-less path (runner/sdk_invoker.ts) retries only transient failures, with backoff; a reply over the output cap comes back truncated (no text).
+  let r: { text: string | null; usd: number | null; outcome: string };
+  try { r = await call(REMEDY_CHECK_SYSTEM, remedyCheckPrompt(remedy, diff)); } catch { r = { text: null, usd: null, outcome: "transport" }; }
+  const verdict = parseRemedyCheck(r.text), record: RemedyRecord = { check: verdict ?? (r.text === null ? "failed" : "unparsed"), usd: r.usd, resumed: false, call: r.outcome };
+  if (verdict !== "missing" || (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationIds: [], record };
+  const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
+  const s = await resumeWith(ctx, first, firstSession, remedyResumeBrief(remedy), "-rr");
+  return { session: clean(s.session) ? s.session : { ...firstSession, durationS: s.session.durationS }, iterationIds: [s.iterationId], record: { ...record, resumed: true } };
+}
+
+/** F3 LOKI_E10_PRECEDENCE_CHECK (util/edit_shape.ts precedenceBrief): after a clean LOKI_DONE with a non-empty diff, a widened check whose function still holds other type or
+ *  value checks gets one follow-up resume ("-pr") naming each of those inputs. Nothing fires (no session, $0) without such a site; only a clean LOKI_DONE replaces the first result. */
+export async function resumeForPrecedence(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, env: NodeJS.ProcessEnv = process.env): Promise<{ session: SessionResult; iterationIds: string[]; sites: number }> {
+  const none = { session: firstSession, iterationIds: [] as string[], sites: 0 };
+  if (!precedenceCheckEnabled(env) || (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return none;
+  let brief: string | null = null, n = 0;
+  try {
+    const g = safeGitSpawn(ctx.repoDir, ["diff", "-U0", ctx.baseSha, "--", ".", ":(exclude).loki", ":(exclude).loki/**"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    if (g.status !== 0 || !g.stdout) return none;
+    const sameDir = (p: string): string[] => { try { const d = dirname(p); return readdirSync(join(ctx.repoDir, d)).slice(0, 60).map((f) => (d === "." ? f : `${d}/${f}`)); } catch { return []; } }; // class declarations beside the edited file (the ancestor check)
+    const sites = editShapeSites(g.stdout, (p) => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return null; } }, { packageFiles: sameDir }).filter((x) => x.rule === "precedence" && x.others?.length);
+    n = sites.length; brief = precedenceBrief(sites);
+  } catch { return none; }
+  if (!brief) return none;
+  const clean = (x: SessionResult): boolean => x.markers.done && !x.markers.specConflict && !x.markers.alreadyDone && x.exit === 0;
+  const r = await resumeWith(ctx, first, firstSession, `${brief}\n\n${FINISH_LINE}`, "-pr");
+  return { session: clean(r.session) ? r.session : { ...firstSession, durationS: r.session.durationS }, iterationIds: [r.iterationId], sites: n };
 }

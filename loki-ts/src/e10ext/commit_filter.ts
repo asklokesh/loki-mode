@@ -3,8 +3,9 @@ import { lstatSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { untouchedSinceIntake } from "./preexisting_dirty.ts"; import { untouchedUntracked } from "../features/untouched_untracked.ts";
 import { installOwned } from "../project_model/install.ts"; import { LOCKFILE_RE as LOCKFILE, toolchainOutputs } from "../util/lock_ecosystems.ts"; export { LOCKFILE };
-import { runFormatters } from "../runner/repo_profile.ts";
+import { runFormattersRecord, type FormatRecord } from "../runner/repo_profile.ts";
 import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
+import { commitWallEnabled } from "../util/check_result.ts";
 
 export const WALL_FILE = /(^|\/)loki_wall_[^/]*$/; // a Wall test file: the commit stage never publishes it
 export type Staged = { st: string; f: string };
@@ -26,8 +27,10 @@ export function dropSet(repoDir: string, staged: Staged[], preexistingDirty: unk
 }
 
 /** TEN-QUALITY-16: format only the files the run added or modified and kept (not dropped, deleted or under .loki/) with the repo's own configured formatter; returns them for re-staging. */
-export const formatChanged = (repoDir: string, staged: Staged[], dropped: Set<string>, env: NodeJS.ProcessEnv = process.env): string[] =>
-  runFormatters(repoDir, staged.filter(({ st, f }) => (st === "A" || st === "M") && !dropped.has(f) && !f.startsWith(".loki/")).map(({ f }) => f), tokenFreeEnv(env));
+export const formatChanged = (repoDir: string, staged: Staged[], dropped: Set<string>, env: NodeJS.ProcessEnv = process.env, baseSha?: string): string[] => formatChangedRecord(repoDir, staged, dropped, env, baseSha).formatted;
+/** The same pass with its per-formatter record (J1 LOKI_E10_FORMAT_RESOLVE: which formatter ran on which files, and why a file or a formatter was skipped); baseSha enables the base-clean check. */
+export const formatChangedRecord = (repoDir: string, staged: Staged[], dropped: Set<string>, env: NodeJS.ProcessEnv = process.env, baseSha?: string): { formatted: string[]; records: FormatRecord[] } =>
+  runFormattersRecord(repoDir, staged.filter(({ st, f }) => (st === "A" || st === "M") && !dropped.has(f) && !f.startsWith(".loki/")).map(({ f }) => f), tokenFreeEnv(env), baseSha);
 
 /** Commits whatever a killed or crashed worker left uncommitted or untracked (minus .loki), so it
  *  reaches the pushed branch: `git diff` alone misses untracked files, and nothing pushes a tree
@@ -80,11 +83,11 @@ export function commitUnsealedWork(intact: boolean, repoDir: string, workerEnv: 
     // The commit stage's filter applies here too: a lockfile that pnpm, Nx or verify rewrote after the commit stage is install churn, not run work. Dropped paths go back to base in the index and the tree (a modified tracked file only; never a path in `keep`: .loki and anything dirty or untracked at intake), so the checkout back to the user's branch carries no churn.
     const base = intake["base_sha"] as string, task = typeof intake["task"] === "string" ? intake["task"] : undefined;
     const staged = parseStaged(g(["diff", "--cached", "--name-status", "--no-renames", "-z", base])), mine = new Set(keep);
-    const churn = dropSet(repoDir, staged, intake["preexisting_dirty"], workerEnv, intake["install_created"], intake["preexisting_untracked_blobs"], base, task).filter(({ st, f }) => st !== "L" && !f.startsWith(".loki/") && !WALL_FILE.test(f) && !mine.has(f) && staged.some((s) => s.f === f && (s.st === "M" || s.st === "A")));
+    const churn = dropSet(repoDir, staged, intake["preexisting_dirty"], workerEnv, intake["install_created"], intake["preexisting_untracked_blobs"], base, task).filter(({ st, f }) => st !== "L" && !f.startsWith(".loki/") && (!commitWallEnabled() || !WALL_FILE.test(f)) && !mine.has(f) && staged.some((s) => s.f === f && (s.st === "M" || s.st === "A")));
     if (churn.length > 0) g(["--literal-pathspecs", "reset", "-q", base, "--", ...churn.map(({ f }) => f)]);
     const modified = churn.filter(({ f }) => staged.find((x) => x.f === f)?.st === "M").map(({ f }) => f);
     if (modified.length > 0) g(["--literal-pathspecs", "checkout", "-q", base, "--", ...modified]);
-    for (const { f } of churn) { if (staged.find((x) => x.f === f)?.st === "A" && LOCKFILE.test(f)) { try { const p = join(repoDir, f); if (lstatSync(p).isFile()) rmSync(p); } catch { /* already gone */ } } } // a lockfile the run created (absent at intake: none of `keep`) must not stay untracked on the user's branch
+    for (const { f } of churn) { if (staged.find((x) => x.f === f)?.st === "A" && (LOCKFILE.test(f) || WALL_FILE.test(f))) { try { const p = join(repoDir, f); if (lstatSync(p).isFile()) rmSync(p); } catch { /* already gone */ } } } // a lockfile the run created (absent at intake: none of `keep`) must not stay untracked on the user's branch
     try { g(["diff", "--cached", "--quiet"]); return false; } catch (e) { if ((e as { status?: number }).status !== 1) return false; }
     g(["commit", "-q", "-m", `loki: work in progress, not verified (${runId})`, "-m", `Loki-Run: ${runId}`]);
     return true;

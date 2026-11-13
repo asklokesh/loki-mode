@@ -350,13 +350,13 @@ export function absentDepRoots(repoDir: string, model: ProjectApi | null | undef
 export type PhaseTiming = { ms: number; at?: number; cached?: boolean } | { skipped: string }; // at: start offset in ms after intake began
 export type IntakeTiming = Partial<Record<"setup" | "repo_walk" | "exec_spec_prefetch" | "already_done" | "project_model" | "deps_install" | "suite_baseline" | "zero_baseline" | "zero_probe", PhaseTiming>>;
 export interface DepsTiming { install?: PhaseTiming; baseline_ms?: number }
-export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit"> & { capS?: number }, signal: AbortSignal, runners: RunnerName[], timing?: DepsTiming): Promise<Record<string, unknown>> {
+export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit"> & { capS?: number; baselineLeftS?: number }, signal: AbortSignal, runners: RunnerName[], timing?: DepsTiming): Promise<Record<string, unknown>> {
   const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model), before = untrackedTops(ctx.repoDir), t0 = Date.now();
   const r = await prepareDeps({ repoDir: ctx.repoDir, model, failed: roots.map((root) => ({ root, harnessOwned: true })), signal, timeoutMs: INSTALL_CAP_MS, opts: { runId: ctx.runId } });
   for (const c of r.checks) ctx.emit("deps.install", "intake", { ...c });
   const created = r.checks.some((c) => c.result === "pass") ? installCreatedSince(ctx.repoDir, before) : null; // a failed install records nothing, so nothing is hidden
   const installMs = Date.now() - t0, tb = Date.now();
-  baselineSuites(ctx.repoDir, fullSuiteSpecs(ctx.repoDir, runners), { rerun: r.checks.some((c) => c.result === "pass"), timeoutS: baselineCmdS(ctx.capS), budgetS: Math.min(SUITE_BASELINE_BUDGET_S, baselineCmdS(ctx.capS)) });
+  baselineSuites(ctx.repoDir, fullSuiteSpecs(ctx.repoDir, runners), { rerun: r.checks.some((c) => c.result === "pass"), timeoutS: baselineCmdS(ctx.capS), budgetS: Math.min(SUITE_BASELINE_BUDGET_S, baselineCmdS(ctx.capS)), ...(ctx.baselineLeftS !== undefined ? { deadlineMs: tb + ctx.baselineLeftS * 1000 } : {}) }); // baselineLeftS: what the root baseline left of intake's baseline budget (R3, counted after the install)
   const install: PhaseTiming = r.checks.length ? { ms: installMs } : { skipped: r.notProven.length ? "install not attempted" : "no dependencies to install" };
   if (timing) { timing.install = install; timing.baseline_ms = Date.now() - tb; }
   return { ...(r.checks.length || r.notProven.length ? { deps_install: r.checks, deps_not_proven: r.notProven } : {}), ...(created ? { install_created: created } : {}) };

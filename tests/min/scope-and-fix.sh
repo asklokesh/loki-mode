@@ -32,6 +32,8 @@
 #                session runs; =1: exactly one "-c" session with the fixed brief writes negate(); a first turn that claims already-done, or a run
 #                that has a plan, gets no coverage turn. Unit: the folded line sits after FOLD_PLAN_INSTRUCTION, asks for a test per named site,
 #                and every opt-out gives main's brief byte for byte; the claim variant re-asks once ("-c2") on an absent claim.
+#   ranked remedy: (F1, LOKI_E10_RANKED_REMEDY, default on) intake records an issue's first-ranked remedy; a MISSING check starts one -rr resume, IMPLEMENTED,
+#                =0 and a task with no ranked list start none (no check call at all for the last two).
 #   exec spec:   (off by default under LOKI_E10_LEAN_CALLS, LOKI_E10_EXEC_SPEC=1 turns it on; lean, Wall off) deterministic atoms, the parity atom from the whole function body, the pair atom,
 #                the binding rule; real go test, pytest and vitest (2 and latest) per-case base runs seal only the binding red case; on the
 #                engine the right fix is VERIFIED, a change that leaves it red is not, and the knob unset runs no generator session.
@@ -273,6 +275,17 @@
 # 233. conflict_resume.ts coverageMode: unset returns "turn" (the coverage mode, fold and e2e default legs fail).
 # 234. implement.ts buildImplementBrief: drop coverageFoldLines (the fold brief and wiring legs fail).
 # 237. opus_consult.ts consultEnabled: back to on by default (the consult default unit leg and the unset consult-off engine leg fail).
+# 239. conflict_resume.ts parseRemedyCheck: accept MISSING even beside IMPLEMENTED (the ranked remedy check unit leg reads missing for MISSING or IMPLEMENTED).
+# 241. conflict_resume.ts parseRemedyCheck: drop the NOT IMPLEMENTED rule (the ranked remedy check unit leg reads implemented for NOT IMPLEMENTED).
+# 242. scope.ts crossPackageTestEdits: drop the source-change-in-package check (the J3 scope leg also drops packages/a/src/a.test.ts beside a.ts).
+# 243. edit_shape.ts precedenceSites: drop otherChecks (the F3 precedence leg reads 7:- for the Go site and the follow-up is null).
+# 244. conflict_resume.ts pinnedTestCite: drop the literal-in-task check (the Z1 leg cites tests/temp.test.ts:6 and the unrelated task).
+# 245. context.ts fixedRules: return LEGACY_FIXED_RULES by default (the Z2 leg reads false for the knob and the brief).
+# 246. conflict_resume.ts unchangedReasons: drop the HEDGE_REASON check (the R2 leg keeps a reason that restates the task's hedge).
+# 247. scope.ts anchoredPlanScope: keep an unanchored list (the R3 leg flags the class file outside stated scope).
+# 248. repo_profile.ts baselineSuites: drop the deadline from left (the R3 leg runs a suite the intake budget has no room for).
+# 249. testmap.ts mochaTargets: ignore devDependencies (the R5 leg maps a mocha package to nothing).
+# 250. attempts.ts attemptModel: always entry 1 (the cascade leg runs the extra attempt on Haiku).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -380,6 +393,31 @@ notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(ope
 has "weaken: the receipt names the weakened test" "$notes" "weakened test: calc.test.ts"
 has "scope: the receipt lists the out-of-scope edit" "$notes" "outside stated scope: util.ts"
 grep -q 'MODE = 2' "$REPO/util.ts" && ok "scope: the out-of-scope edit is kept, not reverted" || bad "scope: the util.ts edit was dropped"
+# J3 LOKI_E10_SCOPE_TEST_DROP (default on, =0 opts out): a test-only edit in a package the change does not touch is reset before commit. A JS workspace (packages/a, packages/b),
+# Go directories and a Python file: the cross-package test is dropped; one the task names, one in the changed package, a test-only change, a Go tests-only directory and Python stay.
+XP="$T/xpkg"; rm -rf "$XP"; mkdir -p "$XP/packages/a/src" "$XP/packages/b/src" "$XP/pkg/x" "$XP/pkg/y" "$XP/tests" "$XP/py"
+printf '{"name":"root","private":true,"workspaces":["packages/*"]}\n' > "$XP/package.json"; printf '{"name":"@acme/a"}\n' > "$XP/packages/a/package.json"; printf '{"name":"@acme/b"}\n' > "$XP/packages/b/package.json"
+for f in packages/a/src/a.ts packages/b/src/b.ts pkg/x/x.go pkg/y/y.go py/m.py; do printf 'x\n' > "$XP/$f"; done
+for f in packages/a/src/a.test.ts packages/b/src/b.test.ts pkg/y/y_test.go tests/t_test.go py/test_m.py; do printf 't\n' > "$XP/$f"; done
+XPR="$(cd "$ROOT/loki-ts" && XP="$XP" bun -e '
+const sc = await import("./src/e10ext/scope.ts"), d = process.env.XP;
+const tracked = ["packages/a/src/a.ts", "packages/b/src/b.ts", "pkg/x/x.go", "pkg/y/y.go", "py/m.py", "packages/a/src/a.test.ts", "packages/b/src/b.test.ts", "pkg/y/y_test.go", "tests/t_test.go", "py/test_m.py", "package.json", "packages/a/package.json", "packages/b/package.json"];
+const M = (...fs) => fs.map((f) => ({ st: "M", f })), x = (staged, task = "fix the parser bug") => sc.crossPackageTestEdits(d, staged, task, tracked).join("+") || "-";
+console.log([
+  x(M("packages/a/src/a.ts", "packages/b/src/b.test.ts")),
+  x(M("packages/a/src/a.ts", "packages/b/src/b.test.ts"), "fix the parser bug and cover packages/b"),
+  x(M("packages/a/src/a.ts", "packages/b/src/b.test.ts"), "fix the parser bug; @acme/b needs a test too"),
+  x(M("packages/a/src/a.ts", "packages/a/src/a.test.ts")),
+  x(M("packages/b/src/b.test.ts")),
+  x(M("pkg/x/x.go", "pkg/y/y_test.go")),
+  x(M("pkg/x/x.go", "tests/t_test.go")),
+  x(M("py/m.py", "py/test_m.py", "packages/a/src/a.ts")),
+  x([{ st: "M", f: "packages/a/src/a.ts" }, { st: "A", f: "packages/b/src/new.test.ts" }]),
+  [sc.scopeTestDropEnabled({}), sc.scopeTestDropEnabled({ LOKI_E10_SCOPE_TEST_DROP: "0" })].join(),
+].join(" | "));' 2>&1)"
+[ "$XPR" = "packages/b/src/b.test.ts | - | - | - | - | pkg/y/y_test.go | - | - | packages/b/src/new.test.ts | true,false" ] && ok "J3 scope: a test edit or new test in a package (JS workspace or Go directory) the change does not touch is dropped; the task naming the path or package, a test in the changed package, a test-only change, a Go tests-only directory and Python stay; =0 opts out ($XPR)" || bad "J3 scope gave: $XPR"
+SJ3="$ROOT/loki-ts/src/engine10/stages/seal.ts"
+grep -q 'const xpkg = scopeTestDropEnabled() ? crossPackageTestEdits(ctx.repoDir, staged.filter' "$SJ3" && grep -q 'const dropped = new Set(\[...drop.map(({ f }) => f), ...xpkg\])' "$SJ3" && grep -q 'const notes = \[...xpkg.map(crossPackageTestNote),' "$SJ3" && ok "J3 wiring: the commit stage resets the cross-package test edits before commit, keeps them out of the formatter pass and names each one" || bad "J3 wiring: the commit stage does not reset and name the cross-package test edits"
 
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=delete LOKI_EXOGENOUS_PROOF=0 # proof opt-out: the deleted assertion alone must cap, not the agent-only-proof rule
 git -C "$REPO" show HEAD:calc.test.ts 2>/dev/null | grep -q 'calc.add(2, 3)' && bad "delete: the deleted assertion came back" || ok "delete: the session's deletion of an assertion is kept, not restored"
@@ -406,6 +444,49 @@ done
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_BASE_RED_CONFLICT=1
 [ "$(outcome)" = "VERIFIED" ] && ok "base-red conflict: the correction resume delivered (VERIFIED, not SPEC_CONFLICT)" || { bad "base-red conflict: outcome is '$(outcome)'"; dump; }
 grep -q 'export function multiply' "$REPO/calc.ts" && ok "base-red conflict: the resumed session made the change" || bad "base-red conflict: the change is missing"
+# Z1, part of Z2 (LOKI_E10_PINNED_TEST_UPDATE, default on, =0 opts out): the pinned-test conflict correction. A synthetic repo (no bench task text, names or files): an existing test asserts the exact output
+# the task reports as wrong. A conflict citing it (by path or basename) gets the update-the-value correction; a cited test sharing no literal with the task, a cited source file, a
+# Wall file, no cite and =0 keep the generic correction. The literal filter ignores plain words.
+Z1D="$T/z1"; rm -rf "$Z1D"; mkdir -p "$Z1D/src" "$Z1D/tests"; git init -q -b main "$Z1D"
+printf 'export function convert(c: number) {\n  return { unit: "F", value: c * 9 / 5 + 32 };\n}\n' > "$Z1D/src/temp.ts"
+printf 'import { convert } from "../src/temp";\ntest("zero", () => {\n  expect(convert(0)).toEqual({ unit: "F", value: 32 });\n});\ntest("other", () => {\n  expect(convert(5).unit).toBe("F");\n});\n' > "$Z1D/tests/temp.test.ts"
+git -C "$Z1D" add -- . && git -C "$Z1D" -c user.name=z -c user.email=z@x commit -q -m base; Z1B="$(git -C "$Z1D" rev-parse HEAD)"
+Z1R="$(cd "$ROOT/loki-ts" && Z1D="$Z1D" Z1B="$Z1B" bun -e '
+const cr = await import("./src/util/conflict_resume.ts"), d = process.env.Z1D, b = process.env.Z1B;
+const task = "convert(0) returns `{ unit: \"F\", value: 32 }` but the unit should stay Celsius: `{ unit: \"C\", value: 0 }`.";
+const c = (reason, t = task) => cr.pinnedTestCite(d, b, reason, t) ?? "null";
+const out = [c("tests/temp.test.ts:3 asserts the current output, so the change conflicts"), c("temp.test.ts:3 pins it"), c("tests/temp.test.ts:6 expects F"), c("src/temp.ts:2 already returns F"), c("tests/loki_wall_temp.test.ts:3 pins it"), c("the existing tests disagree"), c("tests/temp.test.ts:3 pins it", "make the converter configurable")];
+out.push(cr.literalFragments("expect(x).toBe(\"number\"); toEqual([0, 1]); { a: 1 }").join(";"));
+const seen = [], conflict = { exit: 0, markers: { done: false, specConflict: "tests/temp.test.ts:3 asserts the current output", alreadyDone: null }, durationS: 1, killed: false, summary: "" };
+const sctx = { provider: "stub", repoDir: d, baseSha: b, outputs: () => ({ intake: { task } }), sessions: { run: async (o) => { seen.push(o.brief.includes("asserts the behavior the issue reports as wrong") ? "pin" : o.brief.includes("already fails on the base commit is not a conflict") ? "generic" : "other"); return { ...conflict, markers: { done: true, specConflict: null, alreadyDone: null } }; } } };
+const opts = { stage: "implement", brief: "b", tier: "development", iterationId: "it", limitS: 600, signal: new AbortController().signal };
+const r1 = await cr.resumeAfterConflict(sctx, opts, conflict); process.env.LOKI_E10_PINNED_TEST_UPDATE = "0"; const r2 = await cr.resumeAfterConflict(sctx, opts, conflict); delete process.env.LOKI_E10_PINNED_TEST_UPDATE;
+out.push(`${seen.join(",")}|${r1.pinnedTest ?? "-"}|${r2.pinnedTest ?? "-"}|${r1.iterationId}`);
+console.log(out.join(" | "));' 2>&1)"
+[ "$Z1R" = 'tests/temp.test.ts:3 | tests/temp.test.ts:3 | null | null | null | null | null | [0,1];{a:1} | pin,generic|tests/temp.test.ts:3|-|it-r' ] && ok "Z1 pinned conflict: a conflict citing (by path or basename) an existing test whose assertion is a literal the task quotes gets the update-the-value correction in the one -r resume; a test sharing no literal, a source file, a Wall file, no cite, an unrelated task and =0 keep the generic correction; plain words are no literal ($Z1R)" || bad "Z1 pinned conflict gave: $Z1R"
+grep -q 'pinConflict = r.pinnedTest;' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'pin_conflict: pinConflict' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && ok "Z1 wiring: implement records the pinned test the correction named (pin_conflict)" || bad "Z1 wiring: implement does not record pin_conflict"
+# Z2 pinned-test update (LOKI_E10_PINNED_TEST_UPDATE, default on, =0 opts out), same synthetic repo: the Rules block lets an existing assertion that pins the OLD behavior the issue
+# asks to change be updated (every other protection named), =0 gives the v11.139.0 text and both stay cache-stable constants; the implement and fix briefs lead with it. A reported
+# UPDATED TEST line is verified only when the old value is on base at that line, the new one is in the edited file and the quoted sentence is in the task; each failure names why.
+Z2R="$(cd "$ROOT/loki-ts" && Z1D="$Z1D" Z1B="$Z1B" bun -e '
+const c = await import("./src/e10ext/context.ts"), tg = await import("./src/util/test_guard.ts"), impl = await import("./src/engine10/stages/implement.ts"), fx = await import("./src/engine10/stages/fix.ts"), seal = await import("./src/engine10/stages/seal.ts"), fs = await import("node:fs"), d = process.env.Z1D, b = process.env.Z1B;
+const R = c.FIXED_RULES, L = c.LEGACY_FIXED_RULES, out = [];
+out.push(String(R.includes("An existing assertion that pins the OLD behavior the issue explicitly asks to change is not a spec conflict") && R.includes("Never delete a test, add skip, xfail or only, widen a tolerance, or touch a test unrelated to the behavior the issue names") && R.includes("UPDATED TEST <path>:<line>") && !R.includes("An existing test that contradicts the task otherwise is a spec conflict: cite it.")));
+out.push(String(L.includes("never remove, skip or loosen any other assertion. An existing test that contradicts the task otherwise is a spec conflict: cite it.") && c.fixedRules({}) === R && c.fixedRules({ LOKI_E10_PINNED_TEST_UPDATE: "0" }) === L));
+const b1 = impl.buildImplementBrief("first task", null, []), b2 = impl.buildImplementBrief("another task entirely", null, []);
+process.env.LOKI_E10_PINNED_TEST_UPDATE = "0"; const b0 = impl.buildImplementBrief("first task", null, []); delete process.env.LOKI_E10_PINNED_TEST_UPDATE;
+out.push(String(b1.indexOf(R) >= 0 && b2.indexOf(R) >= 0 && b1.slice(0, b1.indexOf(R) + R.length) === b2.slice(0, b2.indexOf(R) + R.length) && b0.includes(L) && !b0.includes(R)));
+fs.writeFileSync(d + "/tests/temp.test.ts", fs.readFileSync(d + "/tests/temp.test.ts", "utf8").replace("{ unit: \"F\", value: 32 }", "{ unit: \"C\", value: 0 }"));
+const task = "convert(0) returns `{ unit: \"F\", value: 32 }` but the unit should stay Celsius: `{ unit: \"C\", value: 0 }`.";
+const line = (old, nw, iss, p = "tests/temp.test.ts", n = 3) => `UPDATED TEST ${p}:${n}: ${old} -> ${nw}; issue: "${iss}"`;
+const ok = line("{ unit: \"F\", value: 32 }", "{ unit: \"C\", value: 0 }", "the unit should stay Celsius");
+const reply = [ok, line("{ unit: \"K\" }", "{ unit: \"C\", value: 0 }", "the unit should stay Celsius"), line("{ unit: \"F\", value: 32 }", "{ unit: \"X\" }", "the unit should stay Celsius"), line("{ unit: \"F\", value: 32 }", "{ unit: \"C\", value: 0 }", "please make it faster than before"), line("x", "y", "the unit should stay Celsius", "src/temp.ts", 2), "LOKI_DONE"].join("\n");
+const ups = tg.pinnedTestUpdates(d, b, reply, task);
+out.push(ups.map((u) => u.verified ? "ok" : u.why).join(";"));
+out.push(tg.pinnedUpdateNotes(ups).length, JSON.stringify(Object.keys(seal.pinnedUpdatesBlock({ pinned_test_updates: ups }))), JSON.stringify(seal.pinnedUpdatesBlock({})));
+console.log(out.join(" | "));' 2>&1)"
+[ "$Z2R" = 'true | true | true | ok;the old expectation is not at that line on base;the new expectation is not in the edited file;the quoted sentence is not in the task;not a test file | 4 | ["pinned_test_updates"] | {}' ] && ok "Z2 pinned test update: the Rules block updates a test that pins the old behavior the issue asks to change and names every other protection; =0 restores the v11.139.0 text; both briefs lead with a cache-stable rules block; a reported update is verified against base, head and the task, each failure named, and the receipt lists them ($Z2R)" || bad "Z2 pinned test update gave: $Z2R"
+grep -q 'fixedRules(), // Z2: the pinned-test rule' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'fixedRules(), // Z2: same rules block as implement' "$ROOT/loki-ts/src/engine10/stages/fix.ts" && grep -q 'pinned_test_updates: pinnedUpdates' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q '...pinnedUpdatesBlock(o.implement),' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'for (const n of pinnedUpdateNotes(pinnedUpdatesOf(o.implement))) notProven.add(n);' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "Z2 wiring: implement and fix lead with fixedRules(); implement records the checked updates; seal lists them in the receipt and names each unverified one" || bad "Z2 wiring: the rules block, the update record or the receipt block is not wired"
 
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict # the default (consult and never-stop off) keeps the legacy stop; the opted-in never-stop legs follow this block
 n="$(fix_sessions)"
@@ -504,6 +585,20 @@ run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=1
 grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: a run with a plan got a coverage turn"; dump; } || ok "coverage on: a run with a plan stage gets no coverage turn (lean path only)"
 run_engine "$CTASK" E2E_STUB_MODE=already LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
 grep -q '^implement .*-c ' "$ITERS" && { bad "coverage on: an already-done first turn got a coverage turn"; dump; } || ok "coverage on: an already-done first turn gets no coverage turn"
+# ---------------------------------------------------------------- F1 ranked remedy (LOKI_E10_RANKED_REMEDY, default on, =0 opts out; stub tool-less check through the CLI invoker)
+RTASK=$'add a multiply(a, b) function to calc.ts\n\n### Possible solution\n\nIn order of preference:\n\n1. Add multiply(a, b) to calc.ts returning a * b.\n2. Inline the product at each call site.'
+remedies() { grep -c '^remedy$' "$(dirname "$ITERS")/stub.log" 2>/dev/null || true; }
+rrec() { ev 'next((json.dumps(e["data"].get("ranked_remedy")) for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), "none")'; }
+run_engine "$RTASK" E2E_STUB_MODE=done E2E_STUB_REMEDY=missing LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+[ "$(remedies)" = 1 ] && [ "$(grep -c '^implement .*-rr ' "$ITERS")" = 1 ] && ok "ranked remedy: a ranked list gets one check, and MISSING starts exactly one -rr resume" || { bad "ranked remedy missing: $(remedies) checks, $(grep -c '^implement .*-rr ' "$ITERS") -rr sessions (want 1 and 1)"; dump; }
+case "$(rrec)" in *'"check": "missing"'*'"resumed": true'*) ok "ranked remedy: the implement stage records the check and the resume ($(rrec))" ;; *) bad "ranked remedy: implement record '$(rrec)'" ;; esac
+[ "$(ev 'next((e["data"].get("ranked_remedy","")[:30] for e in E if e["type"]=="stage.completed" and e["stage"]=="intake"), "none")')" = "Add multiply(a, b) to calc.ts " ] && ok "ranked remedy: intake records remedy 1 as ranked_remedy" || bad "ranked remedy: intake ranked_remedy missing"
+run_engine "$RTASK" E2E_STUB_MODE=done LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+[ "$(remedies)" = 1 ] && [ "$(grep -c '^implement .*-rr ' "$ITERS")" = 0 ] && ok "ranked remedy: IMPLEMENTED starts no resume" || { bad "ranked remedy implemented: $(remedies) checks, $(grep -c '^implement .*-rr ' "$ITERS") -rr sessions (want 1 and 0)"; dump; }
+run_engine "$RTASK" E2E_STUB_MODE=done E2E_STUB_REMEDY=missing LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_RANKED_REMEDY=0
+[ "$(remedies)" = 0 ] && [ "$(grep -c '^implement .*-rr ' "$ITERS")" = 0 ] && ok "ranked remedy =0: no check and no resume" || { bad "ranked remedy =0: $(remedies) checks"; dump; }
+run_engine "add a multiply(a, b) function to calc.ts" E2E_STUB_MODE=done E2E_STUB_REMEDY=missing LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10
+[ "$(remedies)" = 0 ] && ok "ranked remedy: a task with no ranked list makes no check call (\$0)" || { bad "ranked remedy: $(remedies) checks on a plain task"; dump; }
 
 # ---------------------------------------------------------------- patch protocol on the engine (LOKI_E10_PATCH, default off; stub tool-less call through the CLI invoker)
 PTASK="add a multiply(a, b) function to calc.ts"
@@ -661,7 +756,7 @@ res("patch receipt: green, error and every other status map to green, error and 
   const claim = withEnv({ LOKI_E10_CLAIM_CHECK: "1" }, () => impl.buildImplementBrief(TASK, null, [])), planned = withEnv({}, () => impl.buildImplementBrief(TASK, "1. edit calc.ts", []));
   res("coverage fold: the plan-skipped brief carries the folded line once, right after FOLD_PLAN_INSTRUCTION and before the task text (cache-stable prefix)", fold.split(cr.COVERAGE_FOLD).length === 2 && fold.includes(`${impl.FOLD_PLAN_INSTRUCTION}\n\n${cr.COVERAGE_FOLD}`) && fold.indexOf(cr.COVERAGE_FOLD) < fold.indexOf(TASK));
   res("coverage fold: the folded line maps every named site to its hunk and test, asks for a test where none exists, carries no FINISH_LINE, and does not match the separate turn's wording", /map each one to the hunk and the test that cover it/.test(cr.COVERAGE_FOLD) && /Fix any that is not covered, and add a test for any that has none/.test(cr.COVERAGE_FOLD) && !cr.COVERAGE_FOLD.includes("LOKI_DONE") && !cr.COVERAGE_FOLD.includes("List each site"));
-  res("coverage fold: opt-outs (=1, =0, LOKI_E10_LEAN_CALLS=0) give a brief byte-identical to the fold brief minus the folded line (main's brief)", turn === fold.replace(`\n\n${cr.COVERAGE_FOLD}`, "") && off === turn && lean0 === turn && !turn.includes("go over every site"));
+  res("coverage fold: opt-outs (=1, =0, LOKI_E10_LEAN_CALLS=0) give a brief byte-identical to the fold brief minus the folded line (main's brief)", turn === fold.replace(`\n\n${cr.COVERAGE_FOLD}\n\n${cr.NAMED_SITE_LINE}`, "") && off === turn && lean0 === turn && !turn.includes("go over every site"));
   res("coverage fold: LOKI_E10_CLAIM_CHECK=1 folds the claim variant (SITE lines); a brief with a plan has no folded line", claim.includes(cr.COVERAGE_FOLD_CLAIM) && claim.includes("SITE <path>:<line>: changed") && !planned.includes("go over every site"));
   const t1 = withEnv({}, () => impl.buildImplementBrief("first task text", null, [])), t2 = withEnv({}, () => impl.buildImplementBrief("a very different second task", null, []));
   const head = (b: string) => b.slice(0, b.indexOf(cr.COVERAGE_FOLD) + cr.COVERAGE_FOLD.length);
@@ -676,6 +771,24 @@ res("patch receipt: green, error and every other status map to green, error and 
   delete process.env.LOKI_E10_CLAIM_CHECK; const b = await cr.reaskFoldedClaims(sctx, opts, done("SITE src/parse.js:2: changed\nLOKI_DONE"));
   if (prevCc === undefined) delete process.env.LOKI_E10_CLAIM_CHECK; else process.env.LOKI_E10_CLAIM_CHECK = prevCc;
   res("coverage fold claim: with LOKI_E10_CLAIM_CHECK=1 an absent claim gets one -c2 re-ask, a changed claim none; the default (off under LOKI_E10_LEAN_CALLS) asks nothing", seen.join() === "it-c2" && a.claimAbsent?.join() === "src/parse.js:2" && a.iterationIds.join() === "it-c2" && a2.iterationIds.length === 0 && b.iterationIds.length === 0 && b.claimAbsent === undefined, `${seen.join()}|${JSON.stringify([a.iterationIds, a2.iterationIds, b.iterationIds])}`); }
+// F1 ranked remedy (LOKI_E10_RANKED_REMEDY, default on): deterministic extraction, the per-task brief line, the one-word check parser and the one targeted resume
+{ const sa = await import(ROOT + "/loki-ts/src/features/spec_ambiguity.ts");
+  const LH = "### Possible solution\n\nAny of these would fix it, roughly in order of preference:\n\n1. Resolve the fallback against the remote-tracking ref (`origin/main`) rather than the bare local name.\n2. Fall through to the existing `git ls-tree` branch.\n3. At minimum, do not fail the hook.\n";
+  const r1 = sa.rankedRemedy(LH), r2 = sa.rankedRemedy("### Possible solution\n\nIgnore a single trailing NUL in `parseFilesFromString`.\n"), r3 = sa.rankedRemedy("### Steps to reproduce\n\n1. run it\n2. see the error\n");
+  const r4 = sa.rankedRemedy("Suggested fix:\n\n1. Wrap the error as a workaround.\n2. The preferred fix is to return early.\n"), r5 = sa.rankedRemedy("### Proposed fix\n\n1. Only one item.\n");
+  res("ranked remedy: a numbered list under a remedy heading or a preference order gives remedy 1; a single remedy, numbered steps elsewhere and a one-item list give none; the item marked preferred (and not a fallback) wins", r1?.first.startsWith("Resolve the fallback against the remote-tracking ref (`origin/main`)") === true && r1?.count === 3 && r2 === null && r3 === null && r4?.first === "The preferred fix is to return early." && r5 === null, JSON.stringify([r1, r2, r3, r4, r5]));
+  res("ranked remedy: the knob is on by default and =0 opts out", sa.rankedRemedyEnabled({}) && !sa.rankedRemedyEnabled({ LOKI_E10_RANKED_REMEDY: "0" }));
+  const T1 = "fix the push fallback\n\n" + LH, plain = impl.buildImplementBrief(T1, null, []), withR = impl.buildImplementBrief(T1, null, [], "", null, undefined, r1!.first), line = sa.rankedRemedyBlock(r1!.first)[0]!;
+  res("ranked remedy: the brief names remedy 1 once, after the task text and outside the cache-stable prefix; no remedy gives today's brief byte for byte; COVERAGE_FOLD is unchanged", withR.split(line).length === 2 && withR.indexOf(line) > withR.indexOf("fix the push fallback") && withR.replace(`\n\n${line}`, "") === plain && impl.buildImplementBrief(T1, null, [], "", null, undefined, undefined) === plain && !cr.COVERAGE_FOLD.includes("remed"));
+  const RS = ["MISSING", "**MISSING**", "Missing.", "MISSING: the diff keeps the bare local name", "NOT IMPLEMENTED", "The remedy is NOT implemented.", "No", "IMPLEMENTED", "implemented.", "`IMPLEMENTED`", "Answer: IMPLEMENTED", "Yes, it is implemented", "IMPLEMENTED\nbut MISSING tests", "MISSING or IMPLEMENTED", "not sure", "", null];
+  const pr = RS.map((x) => String(cr.parseRemedyCheck(x))).join(",");
+  res("ranked remedy check: real-shaped Haiku answers parse by their first verdict word (markdown, punctuation, case, a trailing reason and NOT IMPLEMENTED included); both verdicts on one line, no verdict or no reply give null", pr === "missing,missing,missing,missing,missing,missing,missing,implemented,implemented,implemented,implemented,implemented,implemented,null,null,null,null", pr);
+  const d = repo(), base = git(d, "rev-parse", "HEAD").trim(), seen: string[] = [], prompts: string[] = [], ok1 = { exit: 0, markers: { done: true, specConflict: null, alreadyDone: null }, durationS: 1, killed: false, summary: "LOKI_DONE" };
+  const sctx = { provider: "stub", repoDir: d, baseSha: base, sessions: { run: async (o: { iterationId: string; brief: string }) => { seen.push(o.iterationId); prompts.push(o.brief); return ok1; } } };
+  const opts = { stage: "implement", brief: "b", tier: "development", iterationId: "it", limitS: 600, signal: new AbortController().signal };
+  const runWith = async (reply: string | null) => { cr.__setRemedyCheckForTests(async (system: string, prompt: string) => { prompts.push(prompt); return { text: reply, usd: 0.0004, outcome: reply ? "ok" : "failed" }; }); try { return await cr.resumeForRemedy(sctx, opts, ok1, "use origin/main", "diff --git a/x b/x\n+x"); } finally { cr.__setRemedyCheckForTests(null); } };
+  const m = await runWith("MISSING"), i = await runWith("IMPLEMENTED"), u = await runWith(null);
+  res("ranked remedy resume: MISSING starts one -rr resume naming the remedy; IMPLEMENTED starts none; a call with no answer is recorded as failed (never unparsed), starting none, and is not retried here (the shared tool-less path retries transient failures)", seen.join() === "it-rr" && m.record.check === "missing" && m.record.resumed && i.record.check === "implemented" && !i.record.resumed && u.record.check === "failed" && !u.record.resumed && m.record.call === "ok" && prompts.filter((p) => p.startsWith("Loki remedy check.")).length === 3 && prompts.some((p) => p.includes("Loki remedy check.") && p.includes("use origin/main")) && prompts.some((p) => p.includes('first-choice remedy is not in your change: "use origin/main"')), `${seen.join()}|${JSON.stringify([m.record, i.record, u.record])}`); }
 TS
 out="$(cd "$ROOT/loki-ts" && timeout 300 bun "$PP/unit.ts" "$ROOT" "$PP" 2>&1)"
 while IFS= read -r line; do
@@ -1874,6 +1987,113 @@ mkdir -p "$T/es"
 out="$(cd "$ROOT/loki-ts" && bun "$T/edit-shape.ts" "$ROOT" "$T/es" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "edit-shape unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 25 ] || bad "edit-shape unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 25"
+# F3 widened-check precedence (LOKI_E10_PRECEDENCE_CHECK, default on, =0 opts out). Synthetic repos only (no bench task text, names or files): Go `x.(T)` widened to errors.As ahead of
+# another assertion branch, Python isinstance moved to another class beside a second isinstance branch, TS === widened to includes beside an instanceof branch. Each site names
+# the other branch's input; a widening with no other check in its function, a pure rename and a strict check left strict give no site. One "-pr" resume on a real git repo,
+# none with =0 or without a site.
+F3D="$T/f3"; rm -rf "$F3D"; mkdir -p "$F3D/relay"; git init -q -b main "$F3D"
+printf 'package relay\n\nfunc route(err error) int {\n\tif n, ok := err.(Notifier); ok {\n\t\treturn n.Code()\n\t}\n\tif b, ok := err.(Bundle); ok {\n\t\treturn len(b.Items())\n\t}\n\treturn 0\n}\n' > "$F3D/relay/route.go"
+git -C "$F3D" add -- . && git -C "$F3D" -c user.name=f -c user.email=f@x commit -q -m base; F3B="$(git -C "$F3D" rev-parse HEAD)"
+F3R="$(cd "$ROOT/loki-ts" && F3D="$F3D" F3B="$F3B" bun -e '
+const es = await import("./src/util/edit_shape.ts"), cr = await import("./src/util/conflict_resume.ts"), fs = await import("node:fs"), d = process.env.F3D;
+const sites = (diff, file, src) => es.editShapeSites(diff, (p) => (p === file ? src : null)).filter((s) => s.rule === "precedence").map((s) => `${s.line}:${(s.others ?? []).map((o) => o.kind).join("+") || "-"}`).join(",") || "none";
+const goAfter = "package relay\n\nimport \"errors\"\n\nfunc route(err error) int {\n\tvar n Notifier\n\tif errors.As(err, &n) {\n\t\treturn n.Code()\n\t}\n\tif b, ok := err.(Bundle); ok {\n\t\treturn len(b.Items())\n\t}\n\treturn 0\n}\n";
+const goDiff = "diff --git a/relay/route.go b/relay/route.go\n--- a/relay/route.go\n+++ b/relay/route.go\n@@ -4 +6,2 @@ func route(err error) int {\n-\tif n, ok := err.(Notifier); ok {\n+\tvar n Notifier\n+\tif errors.As(err, &n) {\n";
+const goAlone = "package relay\n\nimport \"errors\"\n\nfunc one(err error) int {\n\tvar n Notifier\n\tif errors.As(err, &n) {\n\t\treturn n.Code()\n\t}\n\treturn 0\n}\n";
+const goAloneDiff = goDiff.replace("func route", "func one").replace("@@ -4 +6,2 @@", "@@ -4 +6,2 @@");
+const py = "class Leaf(Node):\n    pass\n\n\ndef size(x):\n    if isinstance(x, Node):\n        return 1\n    if isinstance(x, Group):\n        return len(x.items)\n    return 0\n", pyNoRel = py.replace("class Leaf(Node):", "class Leaf(Base):");
+const pyDiff = "diff --git a/t/size.py b/t/size.py\n--- a/t/size.py\n+++ b/t/size.py\n@@ -6 +6 @@ def size(x):\n-    if isinstance(x, Leaf):\n+    if isinstance(x, Node):\n";
+const pySame = pyDiff.replace("+    if isinstance(x, Node):", "+    if isinstance(x, Leaf) and x:");
+const ts = "export function pick(kind: string): number {\n  if ([\"a\", \"b\"].includes(kind)) return 1;\n  if (kind instanceof Object) return 2;\n  return 0;\n}\n";
+const tsDiff = "diff --git a/src/pick.ts b/src/pick.ts\n--- a/src/pick.ts\n+++ b/src/pick.ts\n@@ -2 +2 @@ export function pick(kind: string): number {\n-  if (kind === \"a\") return 1;\n+  if ([\"a\", \"b\"].includes(kind)) return 1;\n";
+const out = [sites(goDiff, "relay/route.go", goAfter), sites(goAloneDiff, "relay/route.go", goAlone), sites(pyDiff, "t/size.py", py), sites(pySame, "t/size.py", py.replace("isinstance(x, Node):\n        return 1", "isinstance(x, Leaf) and x:\n        return 1")), sites(pyDiff, "t/size.py", pyNoRel), sites(tsDiff, "src/pick.ts", ts)];
+const brief = es.precedenceBrief(es.editShapeSites(goDiff, (p) => (p === "relay/route.go" ? goAfter : null)));
+out.push(String(!!brief && brief.includes("Bundle (line 10)") && brief.includes("add a test case for each")), String(es.precedenceBrief([]) === null), [es.precedenceCheckEnabled({}), es.precedenceCheckEnabled({ LOKI_E10_PRECEDENCE_CHECK: "0" })].join());
+fs.writeFileSync(d + "/relay/route.go", goAfter);
+const seen = [], ok1 = { exit: 0, markers: { done: true, specConflict: null, alreadyDone: null }, durationS: 1, killed: false, summary: "LOKI_DONE" };
+const sctx = { provider: "stub", repoDir: d, baseSha: process.env.F3B, sessions: { run: async (o) => { seen.push(o.iterationId + ":" + o.brief.includes("Bundle (line 10)")); return ok1; } } };
+const opts = { stage: "implement", brief: "b", tier: "development", iterationId: "it", limitS: 600, signal: new AbortController().signal };
+const a = await cr.resumeForPrecedence(sctx, opts, ok1, {}), b = await cr.resumeForPrecedence(sctx, opts, ok1, { LOKI_E10_PRECEDENCE_CHECK: "0" });
+fs.writeFileSync(d + "/relay/route.go", "package relay\n\nfunc route(err error) int {\n\tif n, ok := err.(Notifier); ok {\n\t\treturn n.Code()\n\t}\n\tif b, ok := err.(Bundle); ok {\n\t\treturn len(b.Items())\n\t}\n\treturn 1\n}\n");
+const c = await cr.resumeForPrecedence({ ...sctx, baseSha: process.env.F3B }, opts, ok1, {});
+out.push(`${seen.join(",")}|${a.sites},${b.sites},${c.sites}`);
+console.log(out.join(" | "));' 2>&1)"
+[ "$F3R" = "7:Bundle | 7:- | 6:Group | none | none | 2:Object | true | true | true,false | it-pr:true|1,0,0" ] && ok "F3 precedence: Go errors.As ahead of an assertion branch, a Python isinstance moved to an ancestor the file declares (class Leaf(Node)) beside another isinstance branch and a TS === widened to includes each name the other branch's input; a lone widening carries no input, a check left strict and a move to a type the code does not make an ancestor give none; the follow-up names the input and asks for a test; one -pr resume on a real repo, none with =0 or for a change that widens nothing ($F3R)" || bad "F3 precedence gave: $F3R"
+grep -q 'const r = await resumeForPrecedence(ctx, { ...unchained(), iterationId: ids\[ids.length - 1\]! }, session);' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'precedence_check: precedenceRec' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && ok "F3 wiring: implement runs resumeForPrecedence after a clean done with a non-empty diff and records precedence_check" || bad "F3 wiring: implement does not run or record resumeForPrecedence"
+# acc-145 R2 named-site accountability (LOKI_E10_NAMED_SITES, default on, =0 opts out). Synthetic repo: the task names two classes in two files and says the second one
+# "may need" the change; the diff changes only the first. The unchanged named site is unaccounted until a reply gives a reason about the code (a reason that restates the
+# hedge does not count); one "-ns" resume asks for it; seal reads the final diff, caps VERIFIED for an unaccounted site and lists every unchanged one as named_unchanged.
+R2D="$T/r2"; rm -rf "$R2D"; mkdir -p "$R2D/svc"; git init -q -b main "$R2D"
+printf 'class Router:\n    def key(self, url):\n        return url.host\n' > "$R2D/svc/router.py"; printf 'class Mirror:\n    def key(self, url):\n        return url.host\n' > "$R2D/svc/mirror.py"
+git -C "$R2D" add -- . && git -C "$R2D" -c user.name=f -c user.email=f@x commit -q -m base; R2B="$(git -C "$R2D" rev-parse HEAD)"
+printf 'class Router:\n    def key(self, url):\n        return (url.scheme, url.host)\n' > "$R2D/svc/router.py"
+R2R="$(cd "$ROOT/loki-ts" && R2D="$R2D" R2B="$R2B" bun -e '
+const cr = await import("./src/util/conflict_resume.ts"), d = process.env.R2D, b = process.env.R2B;
+const task = "`Router` keys its cache by host only, so http and https share one entry.\n\nThe `Mirror` bookkeeping also keys on host and may need the same distinction.";
+const sites = cr.namedSites(task, d), out = [sites.map((s) => `${s.symbol}@${s.path}:${s.line}`).join(",")];
+out.push(cr.namedUnchanged(d, b, sites, {}).map((s) => `${s.symbol}:${s.why === null ? "open" : "why"}`).join(","));
+const hedge = cr.unchangedReasons("SITE svc/mirror.py:1: unchanged - the task says it may need the same change\nLOKI_DONE"), real = cr.unchangedReasons("SITE svc/mirror.py:1: unchanged - Mirror reads its key through Router, so it already gets the fix\nLOKI_DONE");
+out.push(`${Object.keys(hedge).length},${Object.keys(real).join("")}`);
+const seen = [], done = (summary) => ({ exit: 0, markers: { done: true, specConflict: null, alreadyDone: null }, durationS: 1, killed: false, summary });
+const sctx = { provider: "stub", repoDir: d, baseSha: b, sessions: { run: async (o) => { seen.push(o.iterationId + ":" + o.brief.includes("Mirror (svc/mirror.py:1)") + ":" + o.brief.includes("is not a reason")); return done("SITE svc/mirror.py:1: unchanged - Mirror reads its key through Router, so it already gets the fix\nLOKI_DONE"); } } };
+const opts = { stage: "implement", brief: "b", tier: "development", iterationId: "it", limitS: 600, signal: new AbortController().signal };
+const a = await cr.resumeForNamedSites(sctx, opts, done("LOKI_DONE"), task, {}), off = await cr.resumeForNamedSites(sctx, opts, done("LOKI_DONE"), task, { LOKI_E10_NAMED_SITES: "0" });
+out.push(`${seen.join(",")}|${a.record?.resumed}|${Object.keys(a.record?.reasons ?? {}).join("")}|${off.record === null && off.iterationIds.length === 0}`);
+const seal = (impl) => cr.namedUnchangedOf(d, b, impl).map((s) => `${s.symbol}:${s.why === null ? "open" : "why"}`).join(",") || "none";
+out.push([seal({ named_sites: a.record }), seal({ named_sites: { ...a.record, reasons: {} } }), seal({ named_sites: a.record, attempts: { winner: "x1", winner_site_lines: [] } }), seal({ named_sites: { ...a.record, reasons: {} }, attempts: { winner: "x1", winner_site_lines: ["SITE svc/mirror.py:1: unchanged - Mirror reads its key through Router, so it already gets the fix"] } }), seal({})].join(";"));
+out.push(cr.namedUnchangedNote({ symbol: "Mirror", path: "svc/mirror.py", line: 1, why: null }));
+const fold = cr.coverageFoldLines({}), fold0 = cr.coverageFoldLines({ LOKI_E10_NAMED_SITES: "0" });
+out.push(`${fold.length},${fold[1] === cr.NAMED_SITE_LINE},${fold0.length === 1 && fold0[0] === cr.COVERAGE_FOLD},${cr.coverageFoldLines({ LOKI_E10_COVERAGE_RESUME: "0" }).length}`);
+console.log(out.join(" | "));' 2>&1)"
+[ "$R2R" = "Router@svc/router.py:1,Mirror@svc/mirror.py:1 | Mirror:open | 0,svc/mirror.py | it-ns:true:true|true|svc/mirror.py|true | Mirror:why;Mirror:open;Mirror:open;Mirror:why;none | named site unchanged without a reason: Mirror (svc/mirror.py:1) | 2,true,true,0" ] && ok "R2 named sites: both named classes resolve; the hedged one the diff left alone is open, a reason restating the hedge does not close it and a reason about the code does; one -ns resume names it and records the reason; =0 runs nothing; seal reads the final diff (open without a reason, and for a winning extra attempt with no reason of its own); the fold carries the named-site line only while on" || bad "R2 named sites gave: $R2R"
+grep -q 'const r = await resumeForNamedSites(ctx, { ...unchained(), iterationId: ids\[ids.length - 1\]! }, session, task);' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'named_sites: namedRec' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q '\.\.\.namedOpen.filter((s) => s.why === null).map(namedUnchangedNote)\], verdict3: Verdict = openNotes.length > 0' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'named_unchanged: namedOpen.map' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'winner_site_lines: (r.sessions\[r.winner\]?.summary' "$ROOT/loki-ts/src/features/attempts.ts" && ok "R2 wiring: implement resumes for named sites and records them, seal caps VERIFIED on an unaccounted one and writes named_unchanged, a winning extra attempt carries its own reasons" || bad "R2 wiring missing in implement.ts, seal.ts or attempts.ts"
+
+# acc-145 R3 intake guard. (a) LOKI_E10_PLAN_SCOPE_ANCHOR (default on, =0 opts out): a plan-scope list holding none of the files or symbols the task names is discarded, so
+# the fix file named only by its class is never "outside stated scope". Synthetic repo: a VERSION file the prose word "version" matches, and the class in pkg/fetch.py.
+# (b) LOKI_E10_INTAKE_CAP_S (default 180, =0 off): the root baseline and the suite baselines share one budget; a suite the budget has no room for is not run.
+R3D="$T/r3"; rm -rf "$R3D"; mkdir -p "$R3D/pkg" "$R3D/run"; git init -q -b main "$R3D"
+printf '1.0\n' > "$R3D/VERSION"; printf 'class Fetcher:\n    def rules(self, url):\n        return url.host\n' > "$R3D/pkg/fetch.py"; printf '{"scripts":{"test":"sleep 3"}}\n' > "$R3D/package.json"
+git -C "$R3D" add -- . && git -C "$R3D" -c user.name=f -c user.email=f@x commit -q -m base
+printf '{"files":["VERSION"]}\n' > "$R3D/run/plan-scope.json"
+R3R="$(cd "$ROOT/loki-ts" && R3D="$R3D" bun -e '
+const sc = await import("./src/e10ext/scope.ts"), rp = await import("./src/runner/repo_profile.ts"), d = process.env.R3D;
+const task = "`Fetcher` caches the parsed rules by host only, so the HTTP version and the HTTPS version share one parser.";
+const j = (x) => JSON.stringify(x);
+const out = [j(sc.anchoredPlanScope(["VERSION"], task, d)), j(sc.anchoredPlanScope(["VERSION", "pkg/fetch.py"], task, d)), j(sc.anchoredPlanScope(["VERSION"], "fix the version bump", d)), j(sc.anchoredPlanScope(["VERSION"], task, d, { LOKI_E10_PLAN_SCOPE_ANCHOR: "0" }))];
+const o = { intake: { task } }, staged = [{ st: "M", f: "pkg/fetch.py" }];
+out.push(j(sc.flagOutsideScope(o, staged, d + "/run", d)));
+process.env.LOKI_E10_PLAN_SCOPE_ANCHOR = "0"; out.push(j(sc.flagOutsideScope(o, staged, d + "/run", d))); delete process.env.LOKI_E10_PLAN_SCOPE_ANCHOR;
+out.push([rp.intakeCapS({}), rp.intakeCapS({ LOKI_E10_INTAKE_CAP_S: "0" }), rp.intakeCapS({ LOKI_E10_INTAKE_CAP_S: "90" }), rp.intakeCapS({ LOKI_E10_INTAKE_CAP_S: "x" })].join(","));
+rp.ensureProfile(d, { timeoutS: 1 });
+const spec = [{ name: "full suite: other", cmd: "suite-cmd", cwd: ".", run: "sleep 3; true" }], t0 = Date.now();
+const p1 = rp.baselineSuites(d, spec, { timeoutS: 300, budgetS: 300, deadlineMs: Date.now() }), ms = Date.now() - t0;
+out.push(`${p1?.suites?.[0]?.reason ?? "ran"},${ms < 2500}`);
+console.log(out.join(" | "));' 2>&1)"
+[ "$R3R" = '[] | ["VERSION","pkg/fetch.py"] | ["VERSION"] | ["VERSION"] | ["scope not determined; all edits committed"] | ["outside stated scope: pkg/fetch.py"] | 180,,90,180 | baseline budget used up,true' ] && ok "R3 intake guard: a plan scope holding only a file the prose matched is discarded (the class file is never outside stated scope), a scope holding the defining file is kept, a task naming nothing and =0 keep the list; the intake cap defaults to 180 s (=0 off), and a suite the shared budget has no room for is not run" || bad "R3 intake guard gave: $R3R"
+grep -q 'icap = intakeCapS(), built = baselineOn ? ensureProfile(ctx.repoDir, { timeoutS: icap === null ? baselineCmdS(ctx.capS) : Math.min(baselineCmdS(ctx.capS), icap) })' "$ROOT/loki-ts/src/engine10/stages/intake.ts" && grep -q 'baselineLeftS: Math.max(0, icap - Math.ceil(baselineMs / 1000))' "$ROOT/loki-ts/src/engine10/stages/intake.ts" && grep -q 'deadlineMs: tb + ctx.baselineLeftS \* 1000' "$ROOT/loki-ts/src/project_model/install.ts" && grep -q 'flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir)' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'outsideScope(a.outputs(), staged, anchoredPlanScope(readPlanScope(a.runDir)' "$ROOT/loki-ts/src/features/attempts.ts" && ok "R3 wiring: intake passes one baseline budget to the root and suite baselines; seal and the attempts ranking read the anchored plan scope" || bad "R3 wiring missing in intake.ts, install.ts, seal.ts or attempts.ts"
+
+# acc-145 R5 mocha targeted tests (LOKI_E10_MOCHA_TARGETED, default on, =0 opts out). Synthetic package declaring mocha in devDependencies, its test files without a .test or
+# .spec suffix: a changed source maps to the test at its mirrored path, a changed test file to itself; fixtures, a package without mocha and =0 map to nothing.
+R5D="$T/r5"; rm -rf "$R5D"; mkdir -p "$R5D/a/lib/rules" "$R5D/a/tests/lib/rules" "$R5D/a/tests/fixtures" "$R5D/b/lib"; printf '{"devDependencies":{"mocha":"^10.0.0"}}\n' > "$R5D/a/package.json"; printf '{"name":"b"}\n' > "$R5D/b/package.json"
+printf 'module.exports = 1;\n' | tee "$R5D/a/lib/rules/no-thing.js" "$R5D/a/tests/lib/rules/no-thing.js" "$R5D/a/tests/fixtures/x.js" "$R5D/a/lib/other.js" "$R5D/b/lib/no-thing.js" > /dev/null; mkdir -p "$R5D/b/tests/lib"; cp "$R5D/b/lib/no-thing.js" "$R5D/b/tests/lib/no-thing.js"
+R5R="$(cd "$ROOT/loki-ts" && R5D="$R5D" bun -e '
+const tm = await import("./src/engine10/testmap.ts"), cs = await import("./src/util/check_result.ts"), d = process.env.R5D;
+const m = (ch, env = {}) => tm.mochaTargets(d, ch, env).map((t) => `${t.runner}:${t.path}`).join(",") || "none";
+const c = cs.commandFor({ runner: "mocha", path: "a/tests/lib/rules/no-thing.js" }, d, null);
+console.log([m(["a/lib/rules/no-thing.js"]), m(["a/tests/lib/rules/no-thing.js"]), m(["a/tests/fixtures/x.js", "a/lib/other.js"]), m(["b/lib/no-thing.js"]), m(["a/lib/rules/no-thing.js"], { LOKI_E10_MOCHA_TARGETED: "0" }), c.argv.join(" ")].join(" | "));' 2>&1)"
+[ "$R5R" = "mocha:a/tests/lib/rules/no-thing.js | mocha:a/tests/lib/rules/no-thing.js | none | none | none | npx --no-install mocha a/tests/lib/rules/no-thing.js" ] && ok "R5 mocha: a changed source maps to its mirrored mocha test and a changed test to itself in a package that declares mocha; fixtures, a file with no mirror, a package without mocha and =0 map to nothing; the ref runs npx --no-install mocha <file>" || bad "R5 mocha gave: $R5R"
+grep -q 'const tests = tests0.length === 0 ? mochaTargets(ctx.repoDir, changed) : tests0;' "$ROOT/loki-ts/src/engine10/stages/verify.ts" && grep -q '\.\.\.(tests === tests0 ? \[\] : mochaTargets(ctx.repoDir, \[f\]))' "$ROOT/loki-ts/src/engine10/stages/verify.ts" && ok "R5 wiring: verify runs the mocha refs only when nothing else is selected, through the normal test path (base subtraction, flaky rerun), and counts them as covering their source" || bad "R5 wiring missing in verify.ts"
+
+# acc-145 best-of-N cascade (LOKI_E10_ATTEMPT_MODELS, unset by default) and the tie reviewer model (LOKI_E10_SELECT_REVIEW_MODEL, default Sonnet; LOKI_E10_ATTEMPTS_REVIEW_MODEL
+# is the older name). Aliases resolve through the model catalog; the receipt names each attempt's model only when the list is set.
+CAS="$(cd "$ROOT/loki-ts" && bun -e '
+const at = await import("./src/features/attempts.ts");
+const e = { LOKI_E10_ATTEMPT_MODELS: "haiku, sonnet" }, r = { winner: 1, reason: "r", early: false, launched: 1, sessions: [], scored: [{ index: 0, red: true, conflict: false, not_proven: 0, diff_lines: 3, outside_files: 0, disqualified: false }, { index: 1, red: false, conflict: false, not_proven: 0, diff_lines: 4, outside_files: 0, disqualified: false }] };
+console.log([[0, 1, 2].map((i) => at.attemptModel(i, "sess", e)).join(","), at.attemptModel(1, "sess", {}), at.attemptModels({}).length,
+  at.attemptsReviewModel({}), at.attemptsReviewModel({ LOKI_E10_SELECT_REVIEW_MODEL: "opus" }), at.attemptsReviewModel({ LOKI_E10_ATTEMPTS_REVIEW_MODEL: "opus" }), at.attemptsReviewModel({ LOKI_E10_SELECT_REVIEW_MODEL: "sonnet", LOKI_E10_ATTEMPTS_REVIEW_MODEL: "opus" }),
+  at.attemptsReceiptLines(r, 2, ["claude-haiku-5-5", "claude-sonnet-5-5"])[1], at.attemptsReceiptLines(r, 2)[1]].join(" | "));' 2>&1)"
+[ "$CAS" = "claude-haiku-5-5,claude-sonnet-5-5,claude-sonnet-5-5 | sess | 0 | claude-sonnet-5-5 | claude-opus-5-5 | claude-opus-5-5 | claude-sonnet-5-5 | attempt 2 (x1) on claude-sonnet-5-5: verify green, 0 NOT PROVEN, 4 changed lines | attempt 2 (x1): verify green, 0 NOT PROVEN, 4 changed lines" ] && ok "cascade: LOKI_E10_ATTEMPT_MODELS gives attempt i its entry (the last reused past the list, aliases resolved), unset keeps the session model; the tie reviewer defaults to Sonnet, LOKI_E10_SELECT_REVIEW_MODEL=opus picks Opus and wins over the older name; the receipt names the model only with the list set" || bad "cascade gave: $CAS"
+grep -q 'firstAttemptModel = attemptsK(ctx.model) > 0 ? attemptModels()\[0\] : undefined' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'model: downgrade.to } : firstAttemptModel ? { model: firstAttemptModel }' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q '(attemptModel(i, deps.model) ? { model: attemptModel(i, deps.model) } : {})' "$ROOT/loki-ts/src/features/attempts.ts" && ok "cascade wiring: the first attempt's implement session runs on entry 1 when attempts are on, each extra attempt on its own entry" || bad "cascade wiring missing in implement.ts or attempts.ts"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
@@ -2967,10 +3187,12 @@ const cr = readFileSync(root + "/loki-ts/src/util/conflict_resume.ts", "utf8"), 
 res("wiring: resumeForCoverage appends siteHints to the coverage brief (claim or plain) and fix.ts passes siteHints to both briefs", /const hints = siteHints\(ctx\), base = claims \? COVERAGE_CLAIM_BRIEF : COVERAGE_BRIEF, r = await resumeWith\(ctx, capped, firstSession, hints \? `\$\{base\}/.test(cr) && /const hints = siteHints\(ctx\);/.test(fx) && /holdoutFailed, hintsPlus\)/.test(fx) && /\), hintsPlus\)\); \/\/ one session/.test(fx) && /const hintsPlus = \[hints, /.test(fx));
 const im = readFileSync(root + "/loki-ts/src/engine10/stages/implement.ts", "utf8");
 res("wiring: the plan-skipped implement brief adds coverageFoldLines right after FOLD_PLAN_INSTRUCTION, and fold mode runs only the claim check on the implement session (no -c turn)", /\.\.\.\(plan \? \[\] : \[FOLD_PLAN_INSTRUCTION, \.\.\.coverageFoldLines\(\)\]\)/.test(im) && /else if \(coverageMode\(\) === "fold" && !plan\) \{/.test(im) && /const r = await reaskFoldedClaims\(ctx, /.test(im) && /if \(coverageResumeEnabled\(\) && !plan\)/.test(im));
+const inF1 = readFileSync(root + "/loki-ts/src/engine10/stages/intake.ts", "utf8");
+res("wiring: intake records rankedRemedy as ranked_remedy under its knob; implement passes it to the brief and runs resumeForRemedy only after a clean done with a non-empty diff", /const remedy = rankedRemedyEnabled\(\) \? rankedRemedy\(task\) : null;/.test(inF1) && /\.\.\.\(remedy \? \{ ranked_remedy: remedy\.first \} : \{\}\)/.test(inF1) && /prior\.intake\?\.assumptions, rankedRemedyEnabled\(\) \? prior\.intake\?\.ranked_remedy : undefined\)/.test(im) && /if \(remedy && patch\?\.status !== "green" && !signal\.aborted && !session\.killed && session\.exit === 0 && session\.markers\.done && !session\.markers\.specConflict && !session\.markers\.alreadyDone && !treeIsEmpty\(ctx\)\) \{ const r = await resumeForRemedy\(/.test(im));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/site-hints.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "site-hints unit script crashed or exited non-zero"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 10 ] || bad "site-hints unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 10"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 11 ] || bad "site-hints unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 11"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

@@ -124,6 +124,7 @@ export const COMMANDS: Record<RunnerName, CommandSpec> = {
   gradle: { cmd: "gradle cleanTest test --tests <class>", coarse: false },
   javac: { cmd: "javac + java <test class>", coarse: false },
   dotnet: { cmd: "dotnet test <project> --filter FullyQualifiedName~<Class>", coarse: false },
+  mocha: { cmd: "npx mocha <files>", coarse: false },
 };
 /** Runners that can write a machine pass/fail report file: the invocation to find in a check command and the flags that name the report (`<report>` is replaced by the caller's path), `boot` (wraps the check in a sandbox script that records what the runner loads before it collects tests), `inline` (a text pattern for a pytest section or key in a shared ini, cfg or toml file), and `config`, the basenames that configure or preload that runner (a .json match counts only when it holds the entry's `key`). Go and cargo have no stable file reporter and are absent. verify-pr reads its verdict from that file, never from an exit code or printed totals. */
 export const REPORT_RUNNERS: readonly { runner: RunnerName; find: RegExp; flags: string; config: RegExp; key?: string; boot?: (cmd: string) => string; inline?: RegExp }[] = [

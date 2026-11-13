@@ -8,6 +8,7 @@
 import type { GhIssue } from "./issues_run.ts";
 import { exitCodeOf, labelCol, partialCostText } from "../engine10/output.ts";
 import { sliceHeadLine } from "../util/run_outputs.ts";
+import { existsSync, readFileSync } from "node:fs";
 
 export interface Slice {
   id: string;
@@ -42,11 +43,11 @@ const MAX_SLICES = 4;
 
 const oneLine = (s: string): string => s.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/\s+/g, " ").trim();
 
-/** The JSON object in the reply: the whole text, else the last fenced block, else first "{" to last "}". */
+/** The JSON object in the reply: the whole text, else each fenced block from the last one back (a reply log can repeat the split, fl24), else first "{" to last "}". */
 function extractJson(text: string): unknown {
   const tries = [text.trim()];
   const fences = [...text.matchAll(/```(?:json)?\s*\n([\s\S]*?)```/g)];
-  if (fences.length) tries.push(fences[fences.length - 1]![1]!.trim());
+  for (const f of fences.reverse()) tries.push(f[1]!.trim());
   const a = text.indexOf("{"), b = text.lastIndexOf("}");
   if (a >= 0 && b > a) tries.push(text.slice(a, b + 1));
   for (const t of tries) {
@@ -71,10 +72,11 @@ const strList = (v: unknown, max: number, merge = false): string[] | null => {
   return items.slice(0, max);
 };
 
+export const NO_JSON_REASON = "no JSON object in the reply";
 /** Validate the model's split and order it. List fields are repaired (strList); a slice is never invented, merged or renamed. */
 export function parseDecomposition(text: string): Decomposition {
   const j = extractJson(text);
-  if (j === undefined || j === null || typeof j !== "object" || Array.isArray(j)) return { ok: false, reason: "no JSON object in the reply" };
+  if (j === undefined || j === null || typeof j !== "object" || Array.isArray(j)) return { ok: false, reason: NO_JSON_REASON };
   const raw = (j as { slices?: unknown }).slices;
   if (!Array.isArray(raw)) return { ok: false, reason: 'the JSON has no "slices" array' };
   if (raw.length < MIN_SLICES) return { ok: false, reason: `a split needs at least ${MIN_SLICES} slices, got ${raw.length}` };
@@ -247,33 +249,54 @@ export function renderEpicTree(n: number, title: string, rows: readonly SliceRes
   return L.join("\n") + "\n";
 }
 
+/** fl24 (FireLater#24 on v11.139.0): where one decompose session's reply came from. "file": the JSON file the brief names. "log": no file, so the
+ *  session's whole iteration log (the 4096-character summary tail had cut an 11 KB split in two, which read as "no JSON object in the reply").
+ *  "summary": only that tail. "none": no file and no text at all (a transport failure, or a denied write with nothing printed). */
+export type DecomposeSource = "file" | "log" | "summary" | "none";
+export interface DecomposeOutcome { source: DecomposeSource; exit: number | null; killed: boolean; bytes: number; usd: number | null }
+/** The reply text of one decompose session: the output file when it holds text, else the full iteration log, else the summary tail. */
+export function decomposeReply(outPath: string, logPath: string, summary: string | undefined): { text: string; source: DecomposeSource } {
+  const read = (p: string): string => { try { return existsSync(p) ? readFileSync(p, "utf8") : ""; } catch { return ""; } };
+  const file = read(outPath); if (file.trim()) return { text: file, source: "file" };
+  const log = read(logPath); if (log.trim()) return { text: log, source: "log" };
+  return summary?.trim() ? { text: summary, source: "summary" } : { text: "", source: "none" };
+}
+/** The raw outcome of the last decompose session, recorded beside its output file as <out>.outcome.json; splitWithReask reads it through `lastOutcome`. */
+let lastDecompose: DecomposeOutcome | null = null;
+export const lastOutcome = (): DecomposeOutcome | null => lastDecompose;
+export const clearOutcome = (): void => { lastDecompose = null; };
+
 /** One Opus planning session through the engine's own session runner; returns the JSON text it wrote (or its reply). */
 /** `onCost` gets each decompose session's cost (null when unmeasured), so the split's cost line counts the planning sessions too. */
 export function makeSessionDecompose(repoDir: string, lokiDir: string, provider: string, onCost?: (usd: number | null) => void): (slug: string, issue: GhIssue, triageReason: string, note?: string) => Promise<string> {
   return async (slug, issue, triageReason, note) => {
-    const { mkdirSync, readFileSync, existsSync } = await import("node:fs");
+    const { mkdirSync, writeFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const { createSessionRunner } = await import("../engine10/session.ts");
     const { envOverride } = await import("../runner/router/decision.ts");
     const dir = join(lokiDir, "issues-run", "decompose");
     mkdirSync(dir, { recursive: true });
-    const outPath = join(dir, `issue-${issue.number}-${Date.now()}.json`);
+    const stamp = Date.now(), outPath = join(dir, `issue-${issue.number}-${stamp}.json`), iterationId = `issues-decompose-${issue.number}-${stamp}`;
     let usd: number | null = null;
     const runner = createSessionRunner({ provider, lokiRoot: lokiDir, emit: (type, _stage, data) => { if (type === "cost" && typeof data.usd === "number") usd = (usd ?? 0) + data.usd; } });
     const r = (await runner.run({
       stage: "plan",
       brief: decomposeBrief(slug, issue, triageReason, outPath, note),
       tier: "planning",
-      iterationId: `issues-decompose-${issue.number}-${Date.now()}`,
+      iterationId,
       limitS: 600,
       signal: new AbortController().signal,
       cwd: repoDir,
+      // fl24: the brief names this one file under .loki/; unnamed, the engine10 .loki/ run-state deny (v11.137.0) refused the Write and every split since fell back to the reply.
+      outputs: [outPath],
       // Opus decides the split (claude only, never over the user's own model override), like the routed plan stage.
       ...(provider === "claude" && envOverride(process.env) === null ? { model: "opus" } : {}),
-    })) as { exit: number | null; summary?: string };
+    })) as { exit: number | null; killed?: boolean; summary?: string };
     onCost?.(usd);
-    if (existsSync(outPath)) return readFileSync(outPath, "utf8");
-    return r.summary ?? "";
+    const got = decomposeReply(outPath, join(repoDir, ".loki", `iteration-${iterationId}.log`), r.summary); // session.ts writes the log under its cwd's .loki/
+    lastDecompose = { source: got.source, exit: r.exit, killed: r.killed === true, bytes: got.text.length, usd };
+    try { writeFileSync(`${outPath}.outcome.json`, JSON.stringify(lastDecompose) + "\n"); } catch { /* evidence only */ }
+    return got.text;
   };
 }
 

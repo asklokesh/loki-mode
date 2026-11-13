@@ -17,7 +17,7 @@ import { createInterface } from "node:readline";
 import { MAX_PARALLEL, makeDefaultRunner, queueAdd, queueRun, type ItemResult, type QueueDeps, type RunOpts, type RunResult } from "./queue.ts";
 import { partialCostText } from "../engine10/output.ts";
 import { estimateFor, startText, type EstimateResult } from "../runner/router/cost_preview.ts";
-import { epicOutcome, invalidSplitNote, makeSessionDecompose, splitCost, splitCostText, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
+import { clearOutcome, epicOutcome, invalidSplitNote, lastOutcome, makeSessionDecompose, NO_JSON_REASON, splitCost, splitCostText, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
 import { safeGit } from "../util/safe_git.ts"; import { deepPid } from "../util/base_guard.ts"; import { spawnDetached } from "../runner/worker_proc.ts";
 import { resolveModel } from "../engine10/session.ts";
@@ -407,10 +407,16 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
 }
 
 // One decompose call, re-asked once when the split is refused: with the cap and count when it came back over the cap, else with the exact
-// validation error. A thrown call is a refused split.
+// validation error. A thrown call is a refused split. fl24: a reply with no JSON object at all is never re-asked: the same brief meets the same
+// cause (a denied write, a transport failure, an empty reply), and FireLater#24 paid $1.70 for two identical refusals. The refusal names the raw outcome.
 export async function splitWithReask(d: Pick<IssuesRunDeps, "decompose" | "out">, slug: string, i: GhIssue, reason: string): Promise<Decomposition> {
   try {
+    clearOutcome();
     let p = parseDecomposition(await d.decompose(slug, i, reason));
+    if (!p.ok && p.reason === NO_JSON_REASON) {
+      const o = lastOutcome();
+      return { ok: false, reason: `${p.reason}${o ? ` (reply from ${o.source}, ${o.bytes} chars, exit ${o.exit ?? "killed"}); not re-asked, the same brief would fail the same way` : "; not re-asked"}` };
+    }
     if (!p.ok) {
       d.out(p.over !== undefined ? `#${i.number} split had ${p.over} slices, over the cap; asking once more\n` : `#${i.number} split refused (${clip(p.reason, 160)}); asking once more\n`);
       p = parseDecomposition(await d.decompose(slug, i, reason, p.over !== undefined ? overCapNote(p.over) : invalidSplitNote(p.reason)));

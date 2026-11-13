@@ -58,6 +58,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 case "$prompt" in
+  "Loki attempts review"*) stage=attemptsreview ;; # LOKI_E10_ATTEMPTS: the tool-less tie review (features/attempts.ts reviewTie); before every other match, the diffs it quotes can hold any text
+  *"Loki remedy check"*) stage=remedy ;; # F1 LOKI_E10_RANKED_REMEDY: the tool-less check of the diff against the first-ranked remedy (util/conflict_resume.ts)
   *"Loki Opus consult"*) stage=consult ;; # LOKI_E10_OPUS_CONSULT: the tool-less consult call (features/opus_consult.ts)
   *"implement stage in patch mode"*) stage=patch ;; # LOKI_E10_PATCH: the tool-less patch call (features/patch_protocol.ts), before the implement match
   *"code reviewer"*) stage=review ;; # any model review session: the seal cross-review, or a post-PR reviewer
@@ -95,6 +97,15 @@ if [ -n "${E2E_STUB_USAGE:-}" ] && [ -n "${LOKI_ITERATION:-}" ]; then
   printf '{"total_cost_usd":0.01,"input_tokens":%s,"output_tokens":%s,"cache_read_tokens":0,"cache_creation_tokens":0,"model":"stub","source":"e2e-stub"}\n' "$(( ${#prompt} / 4 ))" "$E2E_STUB_USAGE" > ".loki/metrics/result-cost-$LOKI_ITERATION.json"
 fi
 if [ -n "${E2E_STUB_SPEC_REPLY:-}" ]; then case "$prompt" in *"to the file spec_reply.md in the current directory"*) printf '%s\n' "$E2E_STUB_SPEC_REPLY" > spec_reply.md; echo "LOKI_DONE"; exit 0 ;; esac; fi
+if [ "$stage" = attemptsreview ]; then # E2E_STUB_PICK=<letter>: the review picks that candidate (default: no PICK line, so the tie keeps the lowest index)
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"stub review%s","total_cost_usd":0.001,"usage":{"input_tokens":100,"output_tokens":5}}\n' "${E2E_STUB_PICK:+\\nPICK: $E2E_STUB_PICK}"
+  exit 0
+fi
+if [ "$stage" = remedy ]; then # E2E_STUB_REMEDY=missing: the check says the remedy is not in the diff; else IMPLEMENTED
+  word=IMPLEMENTED; [ "${E2E_STUB_REMEDY:-}" = missing ] && word=MISSING
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"%s","total_cost_usd":0.0004,"usage":{"input_tokens":900,"output_tokens":2}}\n' "$word"
+  exit 0
+fi
 if [ "$stage" = consult ]; then # E2E_STUB_CONSULT=fail: an error reply (no advice); else a priced diagnosis naming the intended behavior
   if [ "${E2E_STUB_CONSULT:-}" = "fail" ]; then echo '{"type":"result","subtype":"error_during_execution","is_error":true,"total_cost_usd":0.002,"usage":{"input_tokens":10,"output_tokens":0}}'; exit 0; fi
   echo '{"type":"result","subtype":"success","is_error":false,"result":"DIAGNOSIS: multiply adds instead of multiplying.\nINTENDED: STUB_ADVICE multiply(a, b) returns a * b.","total_cost_usd":0.002,"usage":{"input_tokens":100,"output_tokens":20}}'
@@ -126,6 +137,7 @@ fi
 if [ "${LOKI_E10_STAGE:-}" = "fix" ]; then # before the implement branch: a fix brief also carries the implement rules text
   case "${E2E_STUB_FIX:-}" in
     conflict) echo "LOKI_SPEC_CONFLICT: calc.test.ts:7 expects multiply(3, 4) to be 12"; exit 0 ;;
+    prered) echo "LOKI_SPEC_CONFLICT: the named failures exist identically on clean HEAD (2 failing tests in both trees); they pre-exist on base and come from tests asserting old classes"; exit 0 ;; # fl24: FireLater#24's fix-round stop
     wallconflict) echo "LOKI_SPEC_CONFLICT: loki_wall_multiply.test.ts:5 calls multiplyAll, which the task never asks for"; exit 0 ;;
     consultfix) if printf '%s' "$prompt" | grep -q "STUB_ADVICE"; then python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; echo "ASSUMPTION: the reviewer says multiply means a * b"; else printf '// stub fix pass\n' >> calc.ts; fi; echo "LOKI_DONE"; exit 0 ;; # LOKI_E10_OPUS_CONSULT: only the consult advice fixes multiply()
     nsconflict) if printf '%s' "$prompt" | grep -q "Do not stop on this conflict"; then python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; echo "ASSUMPTION: multiply means a * b"; echo "LOKI_DONE"; else echo "LOKI_SPEC_CONFLICT: calc.test.ts:7 expects multiply(3, 4) to be 12"; fi; exit 0 ;; # never-stop: a conflict until the never-stop brief
@@ -180,7 +192,12 @@ case "$prompt" in # `loki plan --spec` (tests/min/triage-router.sh): write the s
   *"PR-sized slices"*) # the MASS-2 split session (tests/min/decompose-and-intake.sh)
     if [ -n "${E2E_STUB_SPLIT:-}" ]; then
       out="$(printf '%s\n' "$prompt" | sed -n 's/^Write exactly one JSON object to the file \(.*\) and nothing else to that file, in this form:$/\1/p' | head -1)"
-      [ -n "$out" ] && printf '%s\n' "$E2E_STUB_SPLIT" > "$out"
+      # fl24: the real CLI refuses a Write its --settings deny covers. With the whole-.loki/ run-state rule (no HARNESS-OUTPUTS entry for the file) the
+      # session prints the split in a fence followed by more than 4096 characters of prose, as Opus did on FireLater#24 (v11.139.0).
+      case "$flags" in
+        *"Edit(/${out%%/.loki/*}/.loki/**)"*) printf 'A hook blocked the file write. Here is the JSON instead.\n\n```json\n%s\n```\n\n' "$E2E_STUB_SPLIT"; for _ in $(seq 1 60); do echo "Cleanup: I started no processes and created no temp files; the check found no stray loki or test processes."; done ;;
+        *) [ -n "$out" ] && printf '%s\n' "$E2E_STUB_SPLIT" > "$out" ;;
+      esac
     fi ;;
 esac
 case "$flags" in *"--model claude (provider default)"*) echo "There's an issue with the selected model (claude (provider default)). It may not exist or you may not have access to it." >&2; exit 1 ;; esac # the real CLI rejects the recorded label as a model id (FireLater#24 s2: every default-model review exited 1)
@@ -211,6 +228,9 @@ fi
 if [ "$stage" = "plan" ] && [ "${E2E_STUB_MODE:-}" = "coverage" ]; then # a non-empty plan: the coverage leg with a plan stage must not resume
   out="$(printf '%s\n' "$prompt" | sed -n 's/.*to this exact file path: //p' | head -1)"
   [ -n "$out" ] && printf '1. edit calc.ts\n2. run calc.test.ts\n' > "$out"
+fi
+if [ "$stage" = "implement" ] && printf '%s' "$prompt" | grep -q "first-choice remedy is not in your change"; then
+  printf '// remedy resume\n' >> calc.ts; echo "LOKI_DONE"; exit 0 # F1: the targeted "-rr" resume; a marker edit, never a second copy of the first turn's change
 fi
 if [ "$stage" = "implement" ] && [ "${E2E_STUB_MODE:-done}" != "coverage" ] && printf '%s' "$prompt" | grep -q "List each site, symbol, example or case"; then
   echo "LOKI_DONE"; exit 0 # the coverage turn (LOKI_E10_COVERAGE_RESUME=1) on a change the first turn completed: a real model edits nothing; replaying the first turn's edit would duplicate it
