@@ -6,7 +6,7 @@ import { isTestFile } from "../util/test_file_text.ts";
 import { symbolSpans } from "../util/context_pack.ts";
 import { loadProjectApi, siteFor } from "./resolve.ts";
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { escapeRegex } from "../util/regex_escape.ts";
 import { isGeneratedSource } from "../util/check_result.ts";
@@ -248,8 +248,12 @@ export function releaseNoteProblems(repoDir: string, conv: ReleaseNoteConvention
       if (!f.startsWith(`${conv.dir}/`) || !f.endsWith(".md")) continue;
       for (const m of ls.join("\n").matchAll(/^\s*["']?(@?[\w./-]+)["']?\s*:\s*(?:patch|minor|major)\b/gm)) if (owners.size && !owners.has(m[1]!)) out.push(`${f} names package ${m[1]}, which the change does not touch (changed: ${[...owners].join(", ")})`);
     }
-  } else if (conv.kind === "towncrier" && nums.length) {
-    for (const f of added.keys()) { if (!f.startsWith(`${conv.dir}/`)) continue; const n = /^(\d+)\./.exec(basename(f))?.[1]; if (n && !nums.includes(n)) out.push(`${f} is numbered ${n}, but the task gives #${nums.join(", #")}`); }
+  } else if (conv.kind === "towncrier") {
+    const p = nums.length ? null : towncrierNoNumberPrefix(repoDir, conv.dir, env);
+    for (const f of added.keys()) {
+      if (!f.startsWith(`${conv.dir}/`)) continue; const n = /^(\d+)\./.exec(basename(f))?.[1]; if (!n || nums.includes(n)) continue;
+      out.push(nums.length ? `${f} is numbered ${n}, but the task gives #${nums.join(", #")}` : `${f} is numbered ${n}, a number the task never gives${p ? `; rename it to the orphan form ${conv.dir}/${p}<short-slug>${basename(f).slice(n.length)}` : ""}`); // ON: an invented fragment number
+    }
   }
   return out;
 }
@@ -262,7 +266,7 @@ export function releaseNoteBrief(repoDir: string, files: string[] = []): string 
     const pkg = files.map((f) => packageNameFor(repoDir, f)).find(Boolean) || packageNameFor(repoDir, "package.json");
     return `Release-note convention (changeset, ${c.dir}/): a user-visible change ships with a new ${c.dir}/<short-kebab-name>.md fragment: front matter with "${pkg || "<package name>"}": patch (minor or major when the task says so), then one line describing the change${ex}.`;
   }
-  if (c.kind === "towncrier" && towncrierExampleOn()) { const tx = towncrierExample(repoDir, c.dir); return `Release-note convention (${c.kind}, ${c.dir}/): a user-visible change ships with a new fragment file in ${c.dir}/ named and formatted like the existing ones${tx ? `; newest example: ${tx}` : ""}.`; }
+  if (c.kind === "towncrier" && towncrierExampleOn()) { const tx = towncrierExample(repoDir, c.dir); return `Release-note convention (${c.kind}, ${c.dir}/): a user-visible change ships with a new fragment file in ${c.dir}/ named and formatted like the existing ones${tx ? `; newest example: ${tx}` : ""}${orphanBriefClause(repoDir, c.dir)}.`; }
   if (c.kind === "changelog") return `Release-note convention (changelog file, ${c.dir}): the repository's contribution guide asks each user-visible change to add an entry to ${c.dir}; add one entry under its "${c.heading ?? "Unreleased"}" section (in the matching subsection when it has them), formatted and worded like the entries already there${c.example ? `; newest entry: ${c.example}` : ""}${refBriefClause(repoDir, c)}.`;
   return `Release-note convention (${c.kind}, ${c.dir}/): a user-visible change ships with a new fragment file in ${c.dir}/ named and formatted like the existing ones${ex}.`;
 }
@@ -360,6 +364,38 @@ export function towncrierOrphanPrefix(repoDir: string, dir: string): string | nu
   const types = towncrierTypes(repoDir);
   try { return readdirSync(join(repoDir, dir)).some((n) => n.startsWith("+") && types.includes(n.split(".")[1] ?? "")) ? "+" : null; } catch { return null; }
 }
+/** TN LOKI_E10_TOWNCRIER_NEW_ORPHAN (default on, =0 opts out): a fix whose task gives no issue or PR number still ships the towncrier fragment the repo requires, in
+ *  towncrier's orphan form (`+<slug>.<type>[.<ext>]`, which towncrier renders without an issue link), even when the repo has no orphan fragment yet; only a config that
+ *  disables orphans (`orphan_prefix = ""`) keeps the old skip. The brief's towncrier line and the self-check name that form. The failure: on a repo whose CONTRIBUTING
+ *  requires a news fragment named by the PR number, the writer skipped (no number), the model declined to invent one, and review failed the diff for the missing fragment. */
+export const towncrierNewOrphanOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_TOWNCRIER_NEW_ORPHAN);
+export function towncrierOrphansAllowed(repoDir: string): boolean {
+  const cfg = ["towncrier.toml", ".towncrier.toml", "pyproject.toml"].map((c) => { try { return readFileSync(join(repoDir, c), "utf8"); } catch { return ""; } }).join("\n");
+  return !/^\s*orphan_prefix\s*=\s*(?:""|'')/m.test(cfg);
+}
+/** The orphan prefix a towncrier fragment without a number takes: the repo's own (TO), else "+" when TN allows a first orphan; null when neither applies. */
+export const towncrierNoNumberPrefix = (repoDir: string, dir: string, env: NodeJS.ProcessEnv = process.env): string | null =>
+  (towncrierOrphanOn(env) ? towncrierOrphanPrefix(repoDir, dir) : null) ?? (towncrierNewOrphanOn(env) && towncrierOrphansAllowed(repoDir) ? "+" : null);
+/** ON LOKI_E10_ORPHAN_RENAME (default on, =0 opts out): a towncrier fragment the run created under a number the task never gives (the task gives none) is renamed to the
+ *  orphan form `<prefix><slug>.<type>[.<ext>]` when the repo already has orphan fragments or sets orphan_prefix; slug from the task title. Otherwise nothing moves and the
+ *  self-check flags it for the review turn (releaseNoteProblems). Returns "<old> -> <new>" or null. The failure: a run named its fragment changelog.d/1604.change.md
+ *  although no input carried 1604. */
+export const orphanRenameOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_ORPHAN_RENAME);
+export function renameInventedFragment(repoDir: string, conv: ReleaseNoteConvention, f: string, task: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (!orphanRenameOn(env) || conv.kind !== "towncrier" || !f.startsWith(`${conv.dir}/`) || taskNumbers(task).length) return null;
+  const n = /^(\d+)\./.exec(basename(f))?.[1], p = towncrierOrphanPrefix(repoDir, conv.dir); // the repo's own orphans only
+  if (!n || !p) return null;
+  const slug = fragmentTitle(task).toLowerCase().replace(/[`'"]/g, "").split(/[^a-z0-9]+/).filter(Boolean).slice(0, 6).join("-") || "change";
+  let to = `${conv.dir}/${p}${slug}${basename(f).slice(n.length)}`;
+  for (let i = 2; existsSync(join(repoDir, to)); i++) to = `${conv.dir}/${p}${slug}-${i}${basename(f).slice(n.length)}`;
+  try { renameSync(join(repoDir, f), join(repoDir, to)); } catch { return null; }
+  return `${f} -> ${to}`;
+}
+/** The towncrier brief clause for a task with no number (TN/TO): the orphan name to use instead of an invented number; "" when neither knob allows one. */
+export function orphanBriefClause(repoDir: string, dir: string): string {
+  const p = towncrierNoNumberPrefix(repoDir, dir);
+  return p ? `; name it with the issue or PR number the task gives; when the task gives none, use towncrier's orphan form ${dir}/${p}<short-slug>.<type> with the same type and extension, and never invent a number` : "";
+}
 /** TR LOKI_E10_SCAFFOLD_TRACE (default on, =0 opts out): when the repo has a release-note convention but the writer wrote nothing, its reason goes on the receipt
  *  (`release_note_skipped`), so a missing fragment is never silent. The failure: a towncrier repo whose task named no issue number lost its fragment with no record. */
 export const fragmentTraceOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_SCAFFOLD_TRACE);
@@ -416,7 +452,7 @@ export function writeReleaseNoteFragment(repoDir: string, files: string[], task:
     rel = `${conv.dir}/${n}`; text = `---\n${[...names].sort().map((p) => `${q}${p}${q}: ${bump}`).join("\n")}\n---\n\n${sentence(body, exText.replace(/^---[\s\S]*?\n---\s*/, ""))}\n`;
   } else {
     if (!example) return { skipped: "towncrier: no existing fragment to take the naming from" };
-    const parts = basename(example).split("."), op = towncrierOrphanOn() ? towncrierOrphanPrefix(repoDir, conv.dir) : null, orphan = parts[0]!.startsWith("+") || op !== null;
+    const parts = basename(example).split("."), op = towncrierNoNumberPrefix(repoDir, conv.dir), orphan = parts[0]!.startsWith("+") || op !== null; // TO, then TN
     const issue = /(?:^|[\s(])#(\d+)\b/.exec(task)?.[1];
     if (!issue && !orphan) return { skipped: "towncrier: the task names no issue number and the repo does not use orphan fragments" };
     const prefix = op ?? "+";

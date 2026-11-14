@@ -45,6 +45,8 @@
 #  11. conventions.ts logFrozen: always use LOG_FROZEN_LOOSE (FS); fs_deprecated_section fails.
 #  14. loki-ts/src/features/self_review.ts selfReviewWanted: `mode !== "off"` (SR); sr_clean_turn fails (a clean minimal diff would get a review turn: churn and cost).
 #  16. conventions.ts changelogRefOn: `false &&` (CR); cr_brief, cr_checks, cr_changeset and cr_towncrier fail.
+#  18. conventions.ts towncrierNewOrphanOn: `false &&` (TN); tn_first_orphan and tn_brief fail (a fix with no number ships no fragment).
+#  19. conventions.ts renameInventedFragment: `if (true || ...)` (ON); on_rename fails (the invented 1604 fragment ships under its number).
 #  17. conventions.ts stripInventedRefsInFile: `if (base.has(l) || true) return l;` (CR strip); cr_strip_file fails (the invented #2383 ships).
 #  15. self_review.ts settleItems: never trust the after-turn check (`if (false && a)`); sr_settled fails (fixed items read unresolved).
 #  12. conventions.ts writeReleaseNoteFragment: `op = null` (TO); to_older_orphan and to_cfg_prefix fail.
@@ -304,8 +306,8 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
   const older = () => { const d = mk(`to-old-${++clN}`, tcFiles({ "changes/+old.feature.rst": "Added.\n", "changes/99.bugfix.rst": "Fixed.\n" })); utimesSync(join(d, "changes/+old.feature.rst"), 1000, 1000); utimesSync(join(d, "changes/99.bugfix.rst"), 9000, 9000); utimesSync(join(d, "changes/7.feature.rst"), 1000, 1000); return d; };
   out.to_older_orphan = tw(older(), "Fix crash when the cache is empty").path ?? "skipped";
   out.to_cfg_prefix = tw(mk("to-cfg", tcFiles({ "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\norphan_prefix = "~"\n' })), "Fix crash when the cache is empty").path ?? "skipped";
-  process.env.LOKI_E10_TOWNCRIER_ORPHAN = "0"; out.to_off = tw(older(), "Fix crash when the cache is empty").path ?? "skipped"; delete process.env.LOKI_E10_TOWNCRIER_ORPHAN;
-  out.tr_skip = JSON.stringify(cv.scaffoldRecord(tw(mk("tr1", tcFiles()), "Fix crash when the cache is empty")));
+  process.env.LOKI_E10_TOWNCRIER_ORPHAN = "0"; process.env.LOKI_E10_TOWNCRIER_NEW_ORPHAN = "0"; out.to_off = tw(older(), "Fix crash when the cache is empty").path ?? "skipped"; delete process.env.LOKI_E10_TOWNCRIER_ORPHAN; delete process.env.LOKI_E10_TOWNCRIER_NEW_ORPHAN;
+  process.env.LOKI_E10_TOWNCRIER_NEW_ORPHAN = "0"; out.tr_skip = JSON.stringify(cv.scaffoldRecord(tw(mk("tr1", tcFiles()), "Fix crash when the cache is empty"))); delete process.env.LOKI_E10_TOWNCRIER_NEW_ORPHAN;
   const trCl = mk("tr-cl", { "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG, "a.py": "x = 1\n" });
   out.tr_entry_written = JSON.stringify(cv.scaffoldRecord(wf(trCl, ["a.py", "CHANGELOG.md"], "Fix the parser", "", { tools: false })));
   out.tr_entry_missing = JSON.stringify(cv.scaffoldRecord(wf(trCl, ["a.py"], "Fix the parser", "", { tools: false })));
@@ -363,9 +365,23 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
   const isrc = rf(join(SRC, "engine10/stages/implement.ts"), "utf8"), ssrc = rf(join(SRC, "engine10/stages/seal.ts"), "utf8");
   out.cr_strip_wired = isrc.includes("stripInventedReleaseRefs(ctx.repoDir, ctx.baseSha, treeStaged(ctx.repoDir, ctx.baseSha), task)") && isrc.includes("{ changelog_refs_removed: refsRemoved }") && ssrc.includes("...releaseRefsReceiptBlock(o.implement)") ? "yes" : "no";
   out.cr_towncrier = [TC("changes/12.bugfix.rst", "Fix it (#12)"), TC("changes/99.bugfix.rst", "Fix it (#12)"), TC("changes/+fix.bugfix.rst", "Fix it")].join(" | "); }
+// ON LOKI_E10_ORPHAN_RENAME and TN: a fragment numbered with a number no input gives is renamed to the repo's orphan form, or flagged with the orphan name to use.
+{ const cv = await import(join(SRC, "project_model/conventions.ts")), { existsSync: ex3 } = await import("node:fs");
+  const T0 = "Fix crash when the cache is empty", conv = { kind: "towncrier", dir: "changes", example: null };
+  const withOrphans = mk("on-1", tcFiles({ "changes/+old.feature.rst": "Added.\n", "changes/1604.bugfix.rst": "Fixed the crash.\n" }));
+  const r1 = cv.renameInventedFragment(withOrphans, conv, "changes/1604.bugfix.rst", T0);
+  out.on_rename = `${r1} | ${ex3(join(withOrphans, "changes/1604.bugfix.rst")) ? "old-kept" : "old-gone"} | ${ex3(join(withOrphans, "changes/+fix-crash-when-the-cache-is.bugfix.rst")) ? "new" : "no-new"}`;
+  const noOrphans = mk("on-2", tcFiles({ "changes/1604.bugfix.rst": "Fixed the crash.\n" }));
+  out.on_no_orphans = `${cv.renameInventedFragment(noOrphans, conv, "changes/1604.bugfix.rst", T0)} | ${ex3(join(noOrphans, "changes/1604.bugfix.rst")) ? "kept" : "gone"}`;
+  out.on_numbered_task = String(cv.renameInventedFragment(withOrphans, conv, "changes/7.feature.rst", "Fix it (#12)"));
+  process.env.LOKI_E10_ORPHAN_RENAME = "0"; const offRepo = mk("on-3", tcFiles({ "changes/+old.feature.rst": "Added.\n", "changes/1604.bugfix.rst": "x\n" })); out.on_off = String(cv.renameInventedFragment(offRepo, conv, "changes/1604.bugfix.rst", T0)); delete process.env.LOKI_E10_ORPHAN_RENAME;
+  out.on_flag = cv.releaseNoteProblems(noOrphans, conv, new Map([["changes/1604.bugfix.rst", ["Fixed the crash."]]]), ["pkg/mod.py", "changes/1604.bugfix.rst"], T0).join(" || ") || "-";
+  out.tn_brief = cv.releaseNoteBrief(noOrphans, []).includes("when the task gives none, use towncrier's orphan form changes/+<short-slug>.<type> with the same type and extension, and never invent a number") ? "yes" : "no"; }
 const w17 = mk("w17", tcFiles()); const r17 = tw(w17, "Fix crash when the cache is empty (#42)");
 out.tc_path = r17.path ?? `skipped:${r17.skipped}`; out.tc_text = r17.path ? rf(join(w17, r17.path), "utf8") : "";
-out.tc_no_issue = tw(mk("w18", tcFiles()), "Fix crash when the cache is empty").skipped ? "skipped" : "wrote";
+process.env.LOKI_E10_TOWNCRIER_NEW_ORPHAN = "0"; out.tc_no_issue = tw(mk("w18", tcFiles()), "Fix crash when the cache is empty").skipped ? "skipped" : "wrote"; delete process.env.LOKI_E10_TOWNCRIER_NEW_ORPHAN;
+out.tn_first_orphan = tw(mk("w18n", tcFiles()), "Fix crash when the cache is empty").path ?? "skipped";
+out.tn_disabled = tw(mk("w18d", tcFiles({ "pyproject.toml": "[tool.towncrier]\ndirectory = \"changes\"\norphan_prefix = \"\"\n" })), "Fix crash when the cache is empty").path ?? "skipped";
 out.tc_unclear = tw(mk("w19", tcFiles()), "Rework the cache layout for clarity (#43)").skipped ? "skipped" : "wrote";
 out.tc_dup = tw(mk("w20", tcFiles({ "changes/42.bugfix.rst": "Old.\n" })), "Fix crash when the cache is empty (#42)").skipped ? "skipped" : "wrote";
 out.tc_no_example = tw(mk("w21", { "pyproject.toml": '[tool.towncrier]\ndirectory = "changes"\n', "changes/.gitkeep": "", "pkg/mod.py": "x" }), "Fix crash when the cache is empty (#42)").skipped ? "skipped" : "wrote";
@@ -507,7 +523,9 @@ eqv fw_env_error kept "FW tool: an environmental changeset error (no main branch
 eqv fw_tool_ok ok "FW tool: changeset status exit 0 marks the fragment validated"
 eqv tc_path "changes/42.bugfix.rst" "FW towncrier: <issue>.<type><ext> taken from the task number and the example's extension"
 eqv tc_text "Fix crash when the cache is empty." "FW towncrier: one-line body"
-eqv tc_no_issue skipped "FW towncrier: no issue number and no orphan convention writes nothing"
+eqv tc_no_issue skipped "FW towncrier: with LOKI_E10_TOWNCRIER_NEW_ORPHAN=0, no issue number and no orphan convention writes nothing (old rule)"
+eqv tn_first_orphan "changes/+fix-crash-when-the-cache-is.bugfix.rst" "TN a fix with no issue number gets towncrier's orphan fragment even when the repo has none yet"
+eqv tn_disabled skipped "TN a towncrier config that disables orphans (orphan_prefix = \"\") still gets no fragment"
 eqv tc_unclear skipped "FW towncrier: an unclear change type writes nothing"
 eqv tc_dup skipped "FW towncrier: a fragment for the same issue and type already exists"
 eqv tc_no_example skipped "FW towncrier: no example fragment to take the naming from writes nothing"
@@ -529,6 +547,12 @@ eqv cr_towncrier "- | changes/99.bugfix.rst is numbered 99, but the task gives #
 eqv cr_strip ' * Fix: `%S` args are kept.{2383} | - Fixed x{650} | - Fixed x ([#650](https://github.com/o/r/pull/650)){} | - Simplify x.{3024} | - See for details{77} | - Fix and, keep &#39;{7,5} | * Fix: tabs (#12){} | * Fix: `trim()` keeps it.{99}' "CR strip: every reference form whose number the task never gives is removed ((#N), markdown link, rst role, URL, GH-N, bare #N); a given number, an HTML entity and a code call's () stay"
 eqv cr_strip_file '[] | ["2383"] | rewritten' "CR strip in file: only the line the run added loses its invented #2383; the base entry keeps (#2380); =0 changes nothing"
 eqv cr_strip_wired yes "CR strip wiring: implement strips invented references after the review turn and records changelog_refs_removed; seal puts it on the receipt"
+eqv on_rename "changes/1604.bugfix.rst -> changes/+fix-crash-when-the-cache-is.bugfix.rst | old-gone | new" "ON a fragment numbered 1604 with no number in the task is renamed to the repo's orphan form"
+eqv on_no_orphans "null | kept" "ON a repo with no orphan fragment of its own: nothing is renamed"
+eqv on_numbered_task null "ON a task that gives a number: no rename (the mis-number check flags it instead)"
+eqv on_off null "ON LOKI_E10_ORPHAN_RENAME=0 renames nothing"
+eqv on_flag "changes/1604.bugfix.rst is numbered 1604, a number the task never gives; rename it to the orphan form changes/+<short-slug>.bugfix.rst" "ON the self-check flags an invented fragment number with the orphan name for the review turn"
+eqv tn_brief yes "TN the towncrier brief line names the orphan form for a task with no number and forbids an invented number"
 eqv sr_clean "release_note=ok,stray_files=ok,test=ok,format=ok,scope=ok" "SR a correct minimal diff (source plus its test, no rule broken) passes every item"
 eqv sr_clean_turn no-turn "SR no churn: a correct minimal diff starts no review turn, so the tree is left untouched and the check costs nothing"
 eqv sr_clean_always turn "SR LOKI_E10_SELF_REVIEW=always runs the turn even on a clean diff"
