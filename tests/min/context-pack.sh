@@ -595,15 +595,24 @@ else
     bad "e2e haiku: no run events"; printf '%s\n' "$OUT" | tail -30 | sed 's/^/    | /'
 fi
 
-run_e2e default
+# acc-156: the CLI-default model (LOKI_DEFAULT_SESSION_MODEL=provider) is not a small executor, so it gets no pack
+run_e2e default LOKI_DEFAULT_SESSION_MODEL=provider
 if [ -f "$RUNDIR/events.jsonl" ]; then
-    case "$(cat "$T/default.prompt.implement0" 2>/dev/null)" in *"Code that matters"*) bad "e2e default model: the prompt carries a pack" ;; "") bad "e2e default model: no implement prompt captured" ;; *) ok "e2e default model: no pack in the implement prompt" ;; esac
-    v="$(ev implement '"src/invoice.ts" in d.get("brief_files", []) and "context_pack" not in d')"; [ "$v" = True ] && ok "e2e default model: brief_files recorded, no context_pack" || bad "e2e default model: record wrong ($v)"
-    v="$(ev seal 'd.get("context", {}).get("context_recall")')"; [ "$v" = 1 ] && ok "e2e default model: seal event carries context_recall 1" || bad "e2e default model: seal context_recall was $v"
+    case "$(cat "$T/default.prompt.implement0" 2>/dev/null)" in *"Code that matters"*) bad "e2e provider default model: the prompt carries a pack" ;; "") bad "e2e provider default model: no implement prompt captured" ;; *) ok "e2e provider default model: no pack in the implement prompt" ;; esac
+    v="$(ev implement '"src/invoice.ts" in d.get("brief_files", []) and "context_pack" not in d')"; [ "$v" = True ] && ok "e2e provider default model: brief_files recorded, no context_pack" || bad "e2e provider default model: record wrong ($v)"
+    v="$(ev seal 'd.get("context", {}).get("context_recall")')"; [ "$v" = 1 ] && ok "e2e provider default model: seal event carries context_recall 1" || bad "e2e provider default model: seal context_recall was $v"
     st="$(cd "$REPO" && bash "$ROOT/bin/loki" stats --outcomes --json 2>/dev/null)"
     v="$(python3 -I -c 'import json,sys; c=json.loads(sys.argv[1])["context_recall"]; print(c["median"], c["n"])' "$st" 2>&1)"; [ "$v" = "1 1" ] && ok "loki stats --outcomes --json reports median context recall ($v)" || bad "loki stats --outcomes --json context_recall: $v"
 else
-    bad "e2e default model: no run events"; printf '%s\n' "$OUT" | tail -30 | sed 's/^/    | /'
+    bad "e2e provider default model: no run events"; printf '%s\n' "$OUT" | tail -30 | sed 's/^/    | /'
+fi
+# acc-156: a bare run now starts on Loki's default session model (sonnet), a small executor, so it gets the pack like --session-model sonnet
+run_e2e lokidefault
+if [ -f "$RUNDIR/events.jsonl" ]; then
+    has "e2e Loki default model: the implement prompt carries the context pack" "$(cat "$T/lokidefault.prompt.implement0" 2>/dev/null)" "Code that matters"
+    v="$(ev implement '"src/invoice.ts" in d.get("brief_files", []) and "context_pack" in d')"; [ "$v" = True ] && ok "e2e Loki default model: brief_files and context_pack recorded" || bad "e2e Loki default model: record wrong ($v)"
+else
+    bad "e2e Loki default model: no run events"; printf '%s\n' "$OUT" | tail -30 | sed 's/^/    | /'
 fi
 
 prep_changeset() { # a public package that keeps changesets (the fixture's own manifest is private)

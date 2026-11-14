@@ -166,9 +166,12 @@ run_engine() {
 outcome() { printf '%s\n' "$OUT" | sed -n 's/^Outcome:[[:space:]]*\([A-Z_]*\).*/\1/p' | head -1; }
 dump() { printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; sed 's/^/    route | /' "$ROUTES"; }
 fam() { sed 's/^claude-\([a-z]*\)-.*/\1/'; }
-model_of() { awk -v s="$1" '$1 == s { sub(/^model=/, "", $3); print $3 }' "$ROUTES" | fam | tr '\n' ' ' | sed 's/ $//'; } # models of one engine stage, in order
-win_of() { awk -v s="$1" '$1 == s { sub(/^window=/, "", $6); print $6 }' "$ROUTES" | tr '\n' ' ' | sed 's/ $//'; } # T036: autoCompactWindow per session
-adv_of() { awk -v s="$1" '$1 == s { sub(/^advisor=/, "", $4); print $4 }' "$ROUTES" | tr '\n' ' ' | sed 's/ $//'; }
+# The SR pre-delivery review (LOKI_E10_SELF_REVIEW, iteration suffix -rv) resumes the implement session it reviews, so it is left out of a stage's
+# session list; rv_of lists those resumes, and the routing contract (the review runs on the model it resumes) is checked on its own.
+model_of() { awk -v s="$1" '$1 == s && $2 !~ /-rv$/ { sub(/^model=/, "", $3); print $3 }' "$ROUTES" | fam | tr '\n' ' ' | sed 's/ $//'; } # models of one engine stage, in order
+rv_of() { awk -v s="$1" '$1 == s && $2 ~ /-rv$/ { sub(/^model=/, "", $3); print $3 }' "$ROUTES" | fam | tr '\n' ' ' | sed 's/ $//'; } # models of the SR review resumes of that stage
+win_of() { awk -v s="$1" '$1 == s && $2 !~ /-rv$/ { sub(/^window=/, "", $6); print $6 }' "$ROUTES" | tr '\n' ' ' | sed 's/ $//'; } # T036: autoCompactWindow per session
+adv_of() { awk -v s="$1" '$1 == s && $2 !~ /-rv$/ { sub(/^advisor=/, "", $4); print $4 }' "$ROUTES" | tr '\n' ' ' | sed 's/ $//'; }
 route_block() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys
 r=json.load(open(sys.argv[1])).get("route")
 print("none" if r is None else str(r.get("executor")) + "|" + str(r.get("source")))' "$RUNDIR/receipt.json" 2>/dev/null; }
@@ -176,6 +179,7 @@ TASK="add a multiply(a, b) function to calc.ts"
 
 run_engine "$TASK" E2E_STUB_MODE=done
 [ "$(model_of implement)" = "haiku" ] && ok "small: implement ran on haiku" || { bad "small: implement on '$(model_of implement)'"; dump; }
+case "$(rv_of implement)" in "") ok "small: no SR review resume ran" ;; haiku) ok "small: the SR review resume ran on the routed implement model (haiku)" ;; *) bad "small: SR review resume on '$(rv_of implement)', not the routed haiku" ;; esac
 [ -z "$(model_of plan)" ] && ok "small: no plan session (the task is not hard)" || { bad "small: a plan session ran"; dump; }
 [ "$(adv_of implement)" = "none" ] && ok "small: implement carried no advisor" || bad "small: implement advisor '$(adv_of implement)'"
 [ "$(win_of implement)" = "100000" ] && ok "small: the haiku implement with no advisor still carries the 100K compact window (T036)" || { bad "small: implement window '$(win_of implement)'"; dump; }

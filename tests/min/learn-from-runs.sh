@@ -372,7 +372,8 @@ cp -R "$REPO" "$T/repo-example-off"
 cp -R "$REPO" "$T/repo-example-default"
 run_engine 21 "$TASK_S"
 B21="$(impl_bytes)"; P21="$PROMPTS.implement0"
-n_ex="$(grep -c "^Worked example from run " "$P21" 2>/dev/null)"
+# the first implement call only: the prompt log appends every implement call, and a resume with no session id (the SR review "-rv", the stub's case) re-sends the brief
+n_ex="$(head -c "${B21:-0}" "$P21" 2>/dev/null | grep -c "^Worked example from run ")"
 [ "$n_ex" = "1" ] && grep -q "^Worked example from run $RIDV " "$P21" && ok "example: the similar task's brief has exactly one worked example, from run V" || bad "example: worked example blocks in the similar task's brief: $n_ex"
 exblk="$(python3 -I -c 'import sys
 s=open(sys.argv[1]).read(); a=s.find("\n\nWorked example from run "); t="</untrusted-worked-example>\n"; b=s.find(t, a)
