@@ -28,7 +28,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { comparableIds, errorsById, failIds, idNamesFile, lineNamesChange, noiseOnlyErrors, sameErrors, unhandledBlock } from "../engine10/failures.ts";
-import { baseRedShapeOn, classifyCheck, emptyDiscovery, exitCodedId, failureShape, goRunner, isExitCodedScript, plainTestEnv, resolveTool, stripAnsi, type Classified } from "../util/check_result.ts";
+import { baseRedShapeOn, classifyCheck, emptyDiscovery, exitCodedId, failureShape, goRunner, isExitCodedScript, plainTestEnv, resolveTool, stripAnsi, toolFallbacks, type Classified } from "../util/check_result.ts";
 import { safeGit, safeGitSpawn } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
 import { atomicWriteFileSync } from "./state.ts";
@@ -450,7 +450,12 @@ function pyInstall(repoDir: string, d: string, tracked: Set<string>, at: (dir: s
 
 /** TEN-QUALITY-16: a formatter the repo ITSELF configures. `argv` is the command before the file list; `exts` selects the files it owns; `stdin` is the same formatter reading one
  *  file's text on stdin and printing the formatted text (the base-clean check). Config detection only, never an install. */
-export interface RepoFormatter { tool: string; argv: string[]; exts: RegExp; stdin?: (file: string) => string[] }
+export interface RepoFormatter { tool: string; argv: string[]; exts: RegExp; stdin?: (file: string) => string[]; alts?: { argv: string[]; stdin: (file: string) => string[] }[] }
+/** FF LOKI_E10_FORMAT_FALLBACK (default on, =0 opts out): when the resolved formatter cannot start (spawn error, or a non-zero exit on the base text such as `uv run` with
+ *  no ruff in the task venv), the commit stage tries the same fallbacks verify's linter uses (util/check_result.ts toolFallbacks: `uvx ruff`, then the repo venv's
+ *  `python -m ruff`, unpinned like the linter) and keeps the first that runs. The base-clean rule is unchanged: a file whose base text the chosen formatter would change is
+ *  never formatted. The failure (dev marsh, packaging): lint passed through `uvx ruff` while the formatter, with no fallback, skipped every file and the judge failed style. */
+export const formatFallbackEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_FORMAT_FALLBACK"] ?? "").trim());
 /** J1 LOKI_E10_FORMAT_RESOLVE (default on, =0 opts out): the formatter binary is resolved the way verify resolves its linter (util/check_result.ts resolveTool: the project venv, then
  *  `uv run`, then PATH), and a file the change modified is formatted only when its BASE blob is already formatter-clean, so the run never reformats lines it did not write.
  *  On the tuning bench the bare `ruff` argv found no binary (the repo's ruff is .venv/bin/ruff, not on PATH), spawnSync failed and nothing was formatted: 11 judge fails were
@@ -462,7 +467,8 @@ export function detectFormatters(repoDir: string, env: NodeJS.ProcessEnv = proce
   const pp = read(join(repoDir, "pyproject.toml")), pj = read(join(repoDir, "package.json"));
   if (/\[tool\.ruff/.test(pp) || has("ruff.toml", ".ruff.toml")) {
     const [cmd, , pre] = formatResolveEnabled(env) ? resolveTool(repoDir, "ruff", "ruff") : ["ruff", "system", [] as string[]];
-    out.push({ tool: "ruff", argv: [cmd, ...pre, "format"], exts: /\.pyi?$/, stdin: (f) => [cmd, ...pre, "format", "--stdin-filename", f, "-"] });
+    const alts = formatResolveEnabled(env) && formatFallbackEnabled(env) ? toolFallbacks(repoDir, "ruff", env).map(([c, p]) => ({ argv: [c, ...p, "format"], stdin: (f: string) => [c, ...p, "format", "--stdin-filename", f, "-"] })) : [];
+    out.push({ tool: "ruff", argv: [cmd, ...pre, "format"], exts: /\.pyi?$/, stdin: (f) => [cmd, ...pre, "format", "--stdin-filename", f, "-"], ...(alts.length ? { alts } : {}) });
   }
   let prettierKey = false;
   try { prettierKey = pj !== "" && "prettier" in (JSON.parse(pj) as object); } catch { /* malformed manifest: no formatter */ }
@@ -479,16 +485,17 @@ export function detectFormatters(repoDir: string, env: NodeJS.ProcessEnv = proce
 }
 
 /** What the commit stage's formatter pass did, recorded on the commit data so a silent no-op cannot recur unseen: per formatter, the files it formatted and the files it left alone with why. */
-export interface FormatRecord { tool: string; cmd: string; formatted: string[]; skipped: { file: string; why: string }[]; error?: string }
+export interface FormatRecord { tool: string; cmd: string; formatted: string[]; skipped: { file: string; why: string }[]; error?: string; fallback?: string }
 /** Runs each detected formatter once over the regular files (no symlinks) it owns. With LOKI_E10_FORMAT_RESOLVE on and a base commit, a file present on base whose base text is not
  *  formatter-clean (the formatter's stdin mode prints something else, or fails) is left alone. A missing binary or nonzero exit formats nothing and is recorded. env must already be token-free. */
 export function runFormattersRecord(repoDir: string, files: string[], env: NodeJS.ProcessEnv, baseSha?: string): { formatted: string[]; records: FormatRecord[] } {
   const fmts = detectFormatters(repoDir, env), check = formatResolveEnabled(env) && !!baseSha;
   const mine = fmts.length ? files.filter((f) => { try { return lstatSync(join(repoDir, f)).isFile(); } catch { return false; } }) : [];
   const records: FormatRecord[] = [], formatted: string[] = [];
-  for (const fm of fmts) {
-    const own = mine.filter((f) => fm.exts.test(f)); if (!own.length) continue;
-    const rec: FormatRecord = { tool: fm.tool, cmd: fm.argv.join(" "), formatted: [], skipped: [] };
+  for (const fm0 of fmts) {
+    const own = mine.filter((f) => fm0.exts.test(f)); if (!own.length) continue;
+    const fm = pickRunnable(repoDir, fm0, own[0]!, env, baseSha); // FF: the first variant that starts, else the resolved one (its failure is recorded below)
+    const rec: FormatRecord = { tool: fm.tool, cmd: fm.argv.join(" "), formatted: [], skipped: [], ...(fm !== fm0 ? { fallback: `${fm0.argv.join(" ")} could not start; used ${fm.argv.join(" ")}` } : {}) };
     const ok = check && fm.stdin ? own.filter((f) => {
       const b = safeGitSpawn(repoDir, ["show", `${baseSha}:${f}`], { encoding: "utf8" }); if (b.status !== 0) return true; // new on this run: nothing on base to protect
       const [c, ...a] = fm.stdin!(f), r = spawnSync(c!, a, { cwd: repoDir, env, input: b.stdout, encoding: "utf8", timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
@@ -503,6 +510,20 @@ export function runFormattersRecord(repoDir: string, files: string[], env: NodeJ
     records.push(rec);
   }
   return { formatted, records };
+}
+/** FF: whether a formatter variant starts: its stdin form run on one file's base text (or its current text when it is new) exits 0. */
+function startsOn(repoDir: string, stdin: (f: string) => string[], f: string, env: NodeJS.ProcessEnv, baseSha?: string): boolean {
+  let text: string | null = null;
+  if (baseSha) { const b = safeGitSpawn(repoDir, ["show", `${baseSha}:${f}`], { encoding: "utf8" }); if (b.status === 0) text = b.stdout; }
+  if (text === null) { try { text = readFileSync(join(repoDir, f), "utf8"); } catch { return false; } }
+  const [c, ...a] = stdin(f), r = spawnSync(c!, a, { cwd: repoDir, env, input: text, encoding: "utf8", timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
+  return !r.error && r.status === 0;
+}
+/** FF: the resolved formatter when it starts or has no fallback; else the first fallback that starts; else the resolved one (so its failure is what gets recorded). */
+export function pickRunnable(repoDir: string, fm: RepoFormatter, probeFile: string, env: NodeJS.ProcessEnv, baseSha?: string): RepoFormatter {
+  if (!fm.alts?.length || !fm.stdin || startsOn(repoDir, fm.stdin, probeFile, env, baseSha)) return fm;
+  for (const alt of fm.alts) if (startsOn(repoDir, alt.stdin, probeFile, env, baseSha)) return { tool: fm.tool, exts: fm.exts, argv: alt.argv, stdin: alt.stdin };
+  return fm;
 }
 /** The formatted files only (the commit stage re-stages them). */
 export function runFormatters(repoDir: string, files: string[], env: NodeJS.ProcessEnv, baseSha?: string): string[] { return runFormattersRecord(repoDir, files, env, baseSha).formatted; }
