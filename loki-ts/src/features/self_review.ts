@@ -20,7 +20,7 @@ export const selfReviewMode = (env: NodeJS.ProcessEnv = process.env): SelfReview
 export const SELF_REVIEW_MAX_TURNS = 12;
 export const selfReviewMaxTurns = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_SELF_REVIEW_MAX_TURNS"] ?? "").trim()); return Number.isInteger(n) && n > 0 ? n : SELF_REVIEW_MAX_TURNS; };
 
-export type ItemKey = "release_note" | "stray_files" | "test" | "format" | "scope";
+export type ItemKey = "release_note" | "stray_files" | "test" | "format" | "scope" | "cases" | "siblings";
 export type ItemStatus = "ok" | "flagged" | "fixed" | "justified" | "unresolved" | "auto";
 export interface ReviewItem { item: ItemKey; status: ItemStatus; detail: string }
 const SRC_EXT = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|rb|php|cs|swift|scala|c|cc|cpp|h|hpp|ex|exs|clj|dart|lua)$/;
@@ -56,11 +56,91 @@ export function selfReviewChecks(repoDir: string, baseSha: string, staged: Stage
   const out = (() => { try { return outsideScope(outputs, live); } catch { return null; } })() ?? [];
   const outside = out.filter((f) => !(conv && (f === conv.dir || f.startsWith(`${conv.dir}/`))));
   items.push(outside.length ? { item: "scope", status: "flagged", detail: `edits outside the planned scope: ${outside.slice(0, 8).join(", ")}` } : { item: "scope", status: "ok", detail: "no edit outside the planned scope" });
+  if (srCoverageOn(env) && src.length > 0) {
+    // (f) stated cases: every case the issue states has an added test that exercises it
+    const testText = (() => { try { return [...addedLines(repoDir, baseSha, live.filter(({ f }) => isTestFile(f))).values()].flat().join("\n"); } catch { return ""; } })();
+    const missing = statedCases(task).filter((c) => !caseCovered(c, testText));
+    items.push(missing.length ? { item: "cases", status: "flagged", detail: `stated cases with no added test that exercises them: ${missing.slice(0, 5).map((c) => `[${c.kind}] ${c.text}`).join(" | ")}` } : { item: "cases", status: "ok", detail: "every stated case has an added test, or the issue states none" });
+    // (g) sibling definitions: other definitions of a changed function or method that the diff leaves untouched
+    const sibs = (() => { try { return siblingDefinitions(repoDir, baseSha, live); } catch { return []; } })();
+    items.push(sibs.length ? { item: "siblings", status: "flagged", detail: `other definitions of a changed function the diff does not touch (check each has the same bug): ${sibs.slice(0, 6).join(", ")}` } : { item: "siblings", status: "ok", detail: "no other definition of a changed function" });
+  }
   return items;
 }
 
+/** SC LOKI_E10_SR_COVERAGE (default on, =0 opts out): two more self-check items. (f) Stated cases: the cases the issue states, kept to code blocks that show a
+ *  result or an error and four sentence forms ("similar error when ...", "... has the same effect", "both `x` and `y`", "gets neither treatment"); a case is
+ *  covered when an added test line carries one of its code tokens, and a sentence with no code token is always flagged for the review turn to cover or justify.
+ *  (g) Sibling definitions: other definitions, by name, of a function or method the diff changes (an override in a subclass, a twin parser path), outside the
+ *  changed files and tests. Either flag starts the self-check's one review turn. The failure: Loki fixed the headline case and missed a stated one
+ *  (a "similar error when wrapping it in ..." edge, a "... has the same effect" sentence, the issue's own error reproduction)
+ *  or a sibling override of the changed method in a subclass, while a stronger raw model covered them. */
+export const srCoverageOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SR_COVERAGE"] ?? "").trim());
+export interface StatedCase { kind: "block" | "sentence"; text: string; tokens: string[] }
+const COMMON_CALLS = new Set(["print", "println", "printf", "log", "console", "assert", "expect", "test", "it", "describe", "require", "import", "from", "def", "class", "function", "return", "new", "len", "str", "int", "list", "dict", "set", "range", "if", "for", "while", "fmt", "main", "echo", "cd", "python", "node", "npm", "pip", "cargo", "go", "use", "let", "const", "var", "self", "this"]);
+const RESULT_AFTER = /^\s*(?:\S+\s+){0,3}(?:expected|actual|output|prints?|returns?|gives?|result|error|raises?|throws?)\b/i;
+const ERROR_IN = /\b\w*(?:Error|Exception)\b|\bTraceback\b|\bpanicked\b|\bfailed\b|\b(?:expected|actual|output)\s*:|(?:\/\/|#)\s*(?:=>|->|→)/i;
+/** The cases an issue states (see srCoverageOn), in order, at most 8. */
+export function statedCases(task: string): StatedCase[] {
+  const out: StatedCase[] = [];
+  const re = /```[^\n]*\n([\s\S]*?)```/g; let m: RegExpExecArray | null;
+  while ((m = re.exec(task)) !== null) {
+    const body = m[1]!, after = task.slice(m.index + m[0].length, m.index + m[0].length + 200);
+    if (!ERROR_IN.test(body) && !RESULT_AFTER.test(after)) continue;
+    const tokens = [...new Set([...body.matchAll(/\b([A-Za-z_][\w]*)\s*\(/g)].map((x) => x[1]!).filter((n) => n.length > 2 && !COMMON_CALLS.has(n)))].slice(0, 6);
+    if (tokens.length) out.push({ kind: "block", text: (body.split("\n").find((l) => tokens.some((t) => l.includes(t))) ?? body).trim().slice(0, 120), tokens });
+  }
+  const prose = task.replace(/```[\s\S]*?```/g, " ");
+  for (const s of prose.split(/(?<=[.!?])\s+|\n{2,}/)) {
+    const t = s.replace(/\s+/g, " ").trim();
+    if (!(/\bsimilar\s+(?:error|issue|problem|failure|behaviou?r)\b[^.]*\bwhen\b/i.test(t) || /\bha(?:s|ve) the same effect\b/i.test(t) || (/\bboth\b[^.]{0,120}\band\b/i.test(t) && /`[^`]+`/.test(t)) || /\bgets?\s+neither\s+(?:treatment|fix|handling)\b/i.test(t))) continue;
+    out.push({ kind: "sentence", text: t.slice(0, 160), tokens: [...new Set([...t.matchAll(/`([^`]+)`/g)].map((x) => x[1]!.trim()).filter((x) => x.length > 1))].slice(0, 6) });
+  }
+  return out.slice(0, 8);
+}
+/** A case is covered when an added test line carries one of its tokens (whitespace-insensitive); a sentence with no code token never counts as covered. */
+export function caseCovered(c: StatedCase, testText: string): boolean {
+  if (!c.tokens.length) return false;
+  const norm = (x: string): string => x.replace(/\s+/g, "");
+  const tt = norm(testText);
+  return c.tokens.some((t) => tt.includes(norm(t)));
+}
+const SIB_SKIP = new Set(["__init__", "__repr__", "__str__", "__eq__", "__hash__", "__lt__", "constructor", "toString", "main", "new", "default", "fmt", "setUp", "tearDown", "init", "render", "run", "get", "set", "update", "handle", "String", "Error"]);
+const S = "[[:space:]]"; // POSIX classes: `git grep -E` uses the platform's ERE, where \s and \b are not portable (macOS regcomp has neither)
+const DEF_RE: [RegExp, (n: string) => string][] = [
+  [/\.py$/, (n) => `^${S}*(async${S}+)?def${S}+${n}${S}*\\(`],
+  [/\.[cm]?[jt]sx?$/, (n) => `(function${S}+${n}([^[:alnum:]_$]|$)|^${S}*(async${S}+)?(static${S}+)?${n}${S}*\\([^)]*\\)${S}*[:{])`],
+  [/\.go$/, (n) => `^func${S}+(\\([^)]*\\)${S}*)?${n}${S}*\\(`],
+  [/\.rs$/, (n) => `^${S}*(pub(\\([^)]*\\))?${S}+)?(async${S}+)?fn${S}+${n}([^[:alnum:]_]|$)`],
+];
+/** The function or method a source line defines, or null (Python def, JS/TS function or method, Go func, Rust fn). */
+function enclosingName(line: string): string | null {
+  const m = /^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/.exec(line) ?? /\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/.exec(line) ?? /^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*\(/.exec(line) ?? /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)/.exec(line)
+    ?? /^\s*(?:(?:public|private|protected|static|async|override)\s+)*([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::\s*[^{]+)?\{\s*$/.exec(line);
+  return m && !["if", "for", "while", "switch", "catch", "return"].includes(m[1]!) ? m[1]! : null;
+}
+/** Other definitions (file:line) of the functions the diff changes, by name, in files of the same language that the diff does not touch; tests and vendored or built
+ *  paths excluded; a name with more than 5 such definitions is too common to mean anything and is dropped. */
+export function siblingDefinitions(repoDir: string, baseSha: string, live: Staged[]): string[] {
+  const changed = new Set(live.map(({ f }) => f)), out: string[] = [];
+  for (const { st, f } of live) {
+    const lang = DEF_RE.find(([re]) => re.test(f)); if (!lang || st !== "M" || isTestFile(f)) continue;
+    const starts = safeGit(repoDir, ["diff", "--no-color", "-U0", baseSha, "--", f]).split("\n").map((l) => /^@@ -\d+(?:,\d+)? \+(\d+)/.exec(l)?.[1]).filter((x): x is string => !!x).map(Number);
+    let head: string[] = []; try { head = readFileSync(join(repoDir, f), "utf8").split("\n"); } catch { continue; }
+    const names = new Set<string>();
+    for (const s of starts) for (let i = Math.min(s, head.length) - 1; i >= 0; i--) { const n = enclosingName(head[i]!); if (n !== null) { if (!SIB_SKIP.has(n)) names.add(n); break; } } // the nearest definition at or above the change
+    for (const n of names) {
+      let hits: string[] = [];
+      try { hits = safeGit(repoDir, ["grep", "-n", "-E", lang[1](n), baseSha, "--"]).split("\n").filter(Boolean).map((l) => l.replace(`${baseSha}:`, "")); } catch { hits = []; }
+      const others = hits.map((l) => { const [p, ln] = l.split(":"); return { p: p!, ln: ln! }; }).filter(({ p }) => lang[0].test(p) && !changed.has(p) && !isTestFile(p) && !/(^|\/)(node_modules|vendor|dist|build|target|third_party)\//.test(p));
+      if (others.length > 0 && others.length <= 5) for (const o of others) out.push(`${o.p}:${o.ln} (${n})`);
+    }
+  }
+  return [...new Set(out)].slice(0, 10);
+}
+
 export const selfReviewWanted = (items: ReviewItem[], mode: SelfReviewMode): boolean => mode === "always" || (mode === "on" && items.some((i) => i.status === "flagged"));
-const LABEL: Record<ItemKey, string> = { release_note: "release note", stray_files: "stray files", test: "test", format: "format", scope: "scope" };
+const LABEL: Record<ItemKey, string> = { release_note: "release note", stray_files: "stray files", test: "test", format: "format", scope: "scope", cases: "stated cases", siblings: "sibling definitions" };
 
 /** The review turn's brief: the flagged items, the rules text (capped) and the style configs. Asks for edits only where a rule is concretely broken. */
 export function selfReviewBrief(repoDir: string, items: ReviewItem[]): string {
@@ -73,19 +153,23 @@ export function selfReviewBrief(repoDir: string, items: ReviewItem[]): string {
     "(c) test: a regression test that exercises the change, in the repository's own test location and style;",
     "(d) format: the changed lines follow the formatter and lint config and the surrounding code style;",
     "(e) scope: undo any edit the task does not need (drive-by refactors, unrelated files, changed public API it did not ask for).",
+    ...(items.some((i) => i.item === "cases" || i.item === "siblings") ? [
+      "(f) stated cases: every case the issue states (each shown reproduction and its result or error, each \"similar ... when\", \"same effect\", \"both ... and ...\" or \"neither\" sentence) is fixed by the change and has a test that exercises it;",
+      "(g) sibling definitions: each other definition of a function you changed (an override, a subclass method, a twin code path) either gets the same fix or is left alone for a reason you state.",
+    ] : []),
     "Deterministic checks found:", ...lines,
     "Change nothing that already follows the rules: no rewording, no reformatting of lines you did not change, no new edits beyond fixing a broken rule. If an item cannot or should not be changed, keep it and justify it.",
-    "End your reply with one line per item, exactly: `REVIEW <a|b|c|d|e>: ok|fixed|justified: <short reason>`, then LOKI_DONE.",
+    `End your reply with one line per item, exactly: \`REVIEW <a|b|c|d|e${items.some((i) => i.item === "cases" || i.item === "siblings") ? "|f|g" : ""}>: ok|fixed|justified: <short reason>\`, then LOKI_DONE.`,
     style.length ? `Style and lint config in this repository: ${style.join(", ")}.` : "",
     guide ? `Contribution rules (CONTRIBUTING and PR template, as written):\n${guide}` : "The repository has no contribution guide or PR template.",
   ].filter(Boolean).join("\n");
 }
 
-const KEY_OF: Record<string, ItemKey> = { a: "release_note", b: "stray_files", c: "test", d: "format", e: "scope" };
+const KEY_OF: Record<string, ItemKey> = { a: "release_note", b: "stray_files", c: "test", d: "format", e: "scope", f: "cases", g: "siblings" };
 /** The REVIEW lines of the review turn's reply, by item. */
 export function parseReviewLines(reply: string): Map<ItemKey, { verdict: string; reason: string }> {
   const m = new Map<ItemKey, { verdict: string; reason: string }>();
-  for (const x of reply.matchAll(/^[ \t]*`?REVIEW[ \t]+([a-e])[ \t]*:[ \t]*(ok|fixed|justified)[ \t]*:?[ \t]*(.*?)`?[ \t]*$/gim)) m.set(KEY_OF[x[1]!.toLowerCase()]!, { verdict: x[2]!.toLowerCase(), reason: x[3]!.trim().slice(0, 200) });
+  for (const x of reply.matchAll(/^[ \t]*`?REVIEW[ \t]+([a-g])[ \t]*:[ \t]*(ok|fixed|justified)[ \t]*:?[ \t]*(.*?)`?[ \t]*$/gim)) m.set(KEY_OF[x[1]!.toLowerCase()]!, { verdict: x[2]!.toLowerCase(), reason: x[3]!.trim().slice(0, 200) });
   return m;
 }
 /** Final status per item: the after-turn deterministic check wins (a flag it no longer finds is fixed); a flag that persists is justified only with a stated reason. */

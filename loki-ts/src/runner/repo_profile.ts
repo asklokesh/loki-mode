@@ -454,7 +454,7 @@ export interface RepoFormatter { tool: string; argv: string[]; exts: RegExp; std
 /** FF LOKI_E10_FORMAT_FALLBACK (default on, =0 opts out): when the resolved formatter cannot start (spawn error, or a non-zero exit on the base text such as `uv run` with
  *  no ruff in the task venv), the commit stage tries the same fallbacks verify's linter uses (util/check_result.ts toolFallbacks: `uvx ruff`, then the repo venv's
  *  `python -m ruff`, unpinned like the linter) and keeps the first that runs. The base-clean rule is unchanged: a file whose base text the chosen formatter would change is
- *  never formatted. The failure (dev marsh, packaging): lint passed through `uvx ruff` while the formatter, with no fallback, skipped every file and the judge failed style. */
+ *  never formatted. The failure: lint passed through `uvx ruff` while the formatter, with no fallback, skipped every file and the judge failed style. */
 export const formatFallbackEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_FORMAT_FALLBACK"] ?? "").trim());
 /** J1 LOKI_E10_FORMAT_RESOLVE (default on, =0 opts out): the formatter binary is resolved the way verify resolves its linter (util/check_result.ts resolveTool: the project venv, then
  *  `uv run`, then PATH), and a file the change modified is formatted only when its BASE blob is already formatter-clean, so the run never reformats lines it did not write.

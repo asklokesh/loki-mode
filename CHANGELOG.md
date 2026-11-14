@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Added
+- The pre-delivery self-check now also checks that every case the issue states (a shown reproduction and its result or error, and "similar error when", "same effect", "both ... and", "neither" sentences) has a test, and lists other definitions of a changed function (an override or twin path) the diff leaves untouched. Either flag starts the same single review turn. LOKI_E10_SR_COVERAGE=0 turns it off.
 - A pre-delivery review self-check. Before verify, Loki checks the implemented diff for a missing release note the repo requires, stray files, a source change with no test, formatter conformance and edits outside the planned scope. When something is flagged, one short review turn fixes it or states why not, and the receipt records each item (`self_review`). A clean diff gets no extra turn. LOKI_E10_SELF_REVIEW=0 turns it off; LOKI_E10_SELF_REVIEW_MAX_TURNS caps the turn (default 12).
 - Output the run's own commands write (nested .loki/ logs, test-results/, coverage/, tool caches, JUnit reports, logs) is now left out of the delivered diff by a deterministic filter. LOKI_E10_RUN_OUTPUT_DROP=0 turns it off.
 - A changelog entry is now checked for the issue or PR reference in the form the repo's entries use, with the task's own number and the right package; the brief names that form, and any issue or PR number the task never gives is removed from the entry before delivery. LOKI_E10_CHANGELOG_REF=0 turns it off.
