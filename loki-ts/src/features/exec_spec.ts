@@ -122,7 +122,7 @@ export function declarationAt(lines: string[], i: number): string[] {
 /** SRC-SITES LOKI_E10_SOURCE_SITES (default on, =0 opts out): a named symbol resolves to a source file before a test-area file (test/, tests/, benchmark/, examples/,
  *  docs/) and before build output or a type declaration (build/, out/, lib/ beside a src/ twin, *.d.ts, *.min.js). The derived copy is a site only when no source
  *  declares the symbol. dev2: ink's useFocus resolved to build/hooks/use-focus.js and axios's AxiosHeaders to index.d.ts, so the fix went to the wrong file. */
-export const sourceSitesOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_SOURCE_SITES"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const sourceSitesOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SOURCE_SITES"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 export function siteRank(f: string, srcStems: ReadonlySet<string> = new Set()): number {
   if (/\.d\.[cm]?ts$|\.min\.js$|(^|\/)(build|out)\//.test(f) || (/^lib\//.test(f) && srcStems.has(f.slice(4).replace(/\.[^./]+$/, "")))) return 2; // lib/x.js is build output only beside a src/x.* twin
   return /(^|\/)(tests?|__tests__|benchmarks?|bench|examples?|fixtures|docs?)\//.test(f) ? 1 : 0;

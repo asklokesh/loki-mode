@@ -87,7 +87,7 @@ export function runOutputs(repoDir: string, added: string[], baseSha?: string, t
  *  commit, a staged path still in that set is left out unless the task names it or one of its changed lines carries a task keyword (a backticked span, or an
  *  identifier of 5 or more characters the task uses), so a doc a test run regenerated in step with the change stays. The failure: a test run regenerated an
  *  unrelated doc page with a machine-specific path, the commit shipped it, and review failed the diff as an unrelated edit on a run that read VERIFIED. */
-export const regenDropOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_REGEN_DROP"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const regenDropOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_REGEN_DROP"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 const REGEN_FILE = "regenerated.json";
 export function noteRegenerated(runDir: string, stage: string, paths: string[]): void {
   if (!paths.length || !["verify", "wall", "implement", "fix"].includes(stage)) return;
@@ -122,7 +122,7 @@ export const regenDropNote = (f: string): string => `rewritten only by Loki's ow
  *  pylint: disable, rubocop:disable, #[allow(..)], @SuppressWarnings) in a file outside the change's stated scope, unless the task is about lint or warnings.
  *  The failures: a 177 KB delivered diff of reformatted generated route trees and schema files (the raw run's was 4.5 KB), and a drive-by suppression removal in
  *  an unrelated file. `scopeOutside` lists the staged paths outside the stated scope, or null when no scope signal exists (treated as outside). */
-export const diffNeedOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_DIFF_NEED"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const diffNeedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DIFF_NEED"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 const WS_SIGNIFICANT = /\.(?:py|pyi|ya?ml|haml|pug|coffee|nim|mk)$|(^|\/)Makefile$/;
 export function formattingOnly(f: string, base: string, head: string): boolean {
   if (base === head) return false;

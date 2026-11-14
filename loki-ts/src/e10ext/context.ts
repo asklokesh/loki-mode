@@ -8,7 +8,7 @@ import type { RepoMap } from "../engine10/repomap.ts";
 /** PLAN-HINTS LOKI_E10_PLAN_HINTS (default on, =0 opts out): the plan's steps and files are a hint, never the scope. The task states the cases; the plan can miss one
  *  (dev2 tera: the plan covered a top-level -1 and left `[-1]` and `{a: -1}`, which the issue states). The brief says so where "Follow this plan" used to stand, including
  *  that any file the fix needs may be edited. Fire marker: implement records plan_hints: true when a plan was given. */
-export const planHintsOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_PLAN_HINTS"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const planHintsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PLAN_HINTS"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 export const PLAN_HINT_LEAD = "A plan from an earlier session (a hint, not the scope: the task decides what to change; cover every case the task states even where the plan leaves it out, and edit any file the fix needs):";
 import { loadRepoMap } from "../engine10/sizing.ts";
 import { FINISH_LINE, type RunContext, type TestMap, type TestRef } from "../engine10/types.ts";
@@ -57,7 +57,7 @@ export const FIXED_RULES = [
 ].join("\n");
 /** FIXED_RULES with the v11.139.0 documentation rule (LOKI_E10_DOC_UPDATE_RULE=0). */
 export const FIXED_RULES_DOC_V139 = FIXED_RULES.replace(DOC_RULE_UPDATE, DOC_RULE_V139);
-export const docUpdateRuleOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_DOC_UPDATE_RULE"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const docUpdateRuleOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DOC_UPDATE_RULE"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 /** The old rules text (LOKI_E10_PINNED_TEST_UPDATE=0): byte-identical to v11.139.0. */
 export const LEGACY_FIXED_RULES = [
   "You are the Loki 10 implement stage, doing the complete task described below in this repository. Do whatever a senior engineer would do to finish it correctly: read, change and test as needed across any files the task requires.",

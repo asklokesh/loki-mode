@@ -314,7 +314,7 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
 /** UVR LOKI_E10_UV_REQUIRED (default on, =0 opts out): a repo that pins `required-version` for uv (pydantic: ">=0.13.0") makes an older host uv refuse every
  *  `uv sync`, so the env verify ran in was not the one the repo's CI builds and its tests crashed on base and head alike. The install is retried once, unchanged, through
  *  `uvx --from "uv<spec>" uv ...`, so it runs on a uv the repo accepts. Only a command whose first word is uv is rewritten, and only after uv itself named the requirement. */
-export const uvRequiredOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_UV_REQUIRED"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const uvRequiredOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_UV_REQUIRED"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 const UV_REQUIRED = /Required uv version `([<>=!~^0-9.,* ]+)` does not match the running version/;
 /** The nearest directory at or above `cwd`, inside `repo`, whose pyproject.toml declares a [tool.uv.workspace] that is not `cwd` itself; null when there is none. */
 export function uvWorkspaceRoot(repo: string, cwd: string): string | null {

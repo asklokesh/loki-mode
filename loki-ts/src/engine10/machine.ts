@@ -85,7 +85,7 @@ export function freshBaseCheckout(repoDir: string, baseSha: string): string | nu
     return dir;
   } catch { if (dir) rmSync(dir, { recursive: true, force: true }); return null; }
 }
-export const haikuIndepFixOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_HAIKU_INDEP_FIX"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const haikuIndepFixOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_HAIKU_INDEP_FIX"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 export const suiteFixSkipEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SUITE_FIX_SKIP"] ?? "").trim());
 export const SUITE_FIX_SKIP_NOTE = "fix round skipped: only full-suite failures remained while the change's own targeted tests passed, so those failures are NOT PROVEN unrelated to the change (LOKI_E10_SUITE_FIX_SKIP=0 runs the round)";
 export const suiteOnlyRed = (d: Obj | undefined): boolean => {
