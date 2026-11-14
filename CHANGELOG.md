@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+- The proof that a test fails without the fix no longer runs the fixed code. On a repo whose virtualenv holds an editable install, the base checkout imported the already changed sources through the linked environment, so a real fail-then-pass test read as passing on the old code and the run lost its proof. The base run now puts the base checkout's own sources first. The Wall's base copy had the same leak through the copied editable install and absolute links (for example a monorepo's dev dist/ links); those now point at the copy, so the Wall's base run matches a fresh base.
+
 ## v11.141.0 (2026-11-14)
 
 Verify runs the repo's real tests on repos it has never seen, and Loki does less harm on the way.

@@ -2,9 +2,9 @@
 // (pre-fix) tree. The Wall test files are applied, the fix's source changes are not. Data-only helper (D42, lives in util/ to stay out of the e10ext and features line caps): the test
 // runner is injected by seal.ts, so this file imports nothing from stages/. A "no" downgrades only under LOKI_MUTATION_STRICT=1 with a declared behavior change (seal.ts).
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative } from "node:path";
 import { safeGit } from "./safe_git.ts";
 import { readScopeText } from "./run_cap.ts";
 import { sealedWallCopy, sealedWallDir } from "./check_result.ts";
@@ -12,7 +12,7 @@ import { sealedWallCopy, sealedWallDir } from "./check_result.ts";
 export type MutationOutcome = "yes" | "no" | "inconclusive";
 export interface MutationProof { outcome: MutationOutcome; line: string; failed?: string[]; } // failed: the files whose run failed on the base (serially confirmed), for a caller that must know WHICH test discriminates
 export interface MutationTest { runner: string; path: string; }
-export interface MutationRunner { run(dir: string, files: MutationTest[]): { pass: number; fail: number; not_run?: number; assertFail?: number }; runEach?(dir: string, files: MutationTest[], jobs: number, corroborate: boolean, remaining?: () => number): Promise<({ pass: number; fail: number; not_run?: number } | undefined)[]>; } // runEach: same per-file result, a few files at once
+export interface MutationRunner { run(dir: string, files: MutationTest[]): { pass: number; fail: number; not_run?: number; assertFail?: number }; withEnv?(env: Record<string, string>): MutationRunner; /* BASE-SEES-HEAD: the same runner with extra env (editableBaseEnv) */ runEach?(dir: string, files: MutationTest[], jobs: number, corroborate: boolean, remaining?: () => number): Promise<({ pass: number; fail: number; not_run?: number } | undefined)[]>; } // runEach: same per-file result, a few files at once
 const envJobs = (raw: string | undefined): number => { const n = Number.parseInt(raw ?? "", 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 8) : 1; }; // LOKI_MUTATION_PROOF_JOBS: default 1 = serial (as LOKI_E10_BASE_JOBS / LOKI_E10_VERIFY_JOBS). Opt-in >1 is faster but can give a false "yes" on a Wall test with side effects outside the worktree.
 export interface MutationInput {
   repoDir: string; baseSha: string; runDir: string;
@@ -35,6 +35,29 @@ const MAX_TOTAL_S = 40; // B2: seal stage limit is 60s; the whole proof (worktre
 /** Only a positive finite number of seconds is accepted from the env; anything else (negative, zero, NaN, Infinity, junk) falls back to 30. */
 const envTimeoutS = (raw: string | undefined): number => { const n = Number(raw ?? 30); return Number.isFinite(n) && n > 0 ? n : 30; };
 export const DEP_DIRS = ["node_modules", ".venv", "venv"];
+/** BASE-SEES-HEAD: a linked .venv whose editable install (a .pth path line, or a path in a setuptools __editable__ finder) points into the live repo
+ *  makes the base worktree import the HEAD sources, so a test that fails on the real base passes there and reads "no". The worktree's own copy of each
+ *  such source dir goes first on PYTHONPATH, so the base run imports base code. {} when no linked venv names the repo. */
+export function editableBaseEnv(repoDir: string, wt: string, venvs: string[], env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const roots = new Set<string>([repoDir]); try { roots.add(realpathSync(repoDir)); } catch { /* as given */ }
+  for (const r of [...roots]) roots.add(r.startsWith("/private/") ? r.slice("/private".length) : `/private${r}`);
+  const mapped: string[] = [], add = (p: string): void => { for (const r of roots) if (p === r || p.startsWith(`${r}/`)) { const m = join(wt, relative(r, p)); if (existsSync(m) && !mapped.includes(m)) mapped.push(m); return; } };
+  for (const v of venvs) {
+    let libs: string[] = []; try { libs = readdirSync(join(v, "lib")).filter((n) => n.startsWith("python")).map((n) => join(v, "lib", n, "site-packages")); } catch { /* Windows layout or none */ }
+    for (const sp of [...libs, join(v, "Lib", "site-packages")]) {
+      let names: string[] = []; try { names = readdirSync(sp); } catch { continue; }
+      for (const n of names) {
+        const pth = n.endsWith(".pth"), finder = /^__editable__.*\.py$/.test(n); if (!pth && !finder) continue;
+        let text = ""; try { text = readFileSync(join(sp, n), "utf8"); } catch { continue; }
+        if (pth) for (const l of text.split("\n")) { const t = l.trim(); if (isAbsolute(t)) add(t); }
+        else for (const m of text.matchAll(/["']((?:\/|[A-Za-z]:\\)[^"'\n]+)["']/g)) add(dirname(m[1]!)); // MAPPING = {"pkg": "<repo>/src/pkg"}: the dir that holds the package
+      }
+    }
+  }
+  if (!mapped.length) return {};
+  const prev = (env["PYTHONPATH"] ?? "").trim();
+  return { PYTHONPATH: [...mapped, ...(prev ? [prev] : [])].join(delimiter) };
+}
 const git = (cwd: string, args: string[], timeout = 30_000): { status: number } => { try { safeGit(cwd, args, { timeout }); return { status: 0 }; } catch { return { status: 1 }; } };
 
 /** PROOF-COMPILED-BUDGET (LOKI_E10_PROOF_COMPILED_BUDGET, default on, =0 opts out): a proof whose tests run on a compiled stack (go, cargo, maven, gradle, javac,
@@ -73,12 +96,14 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
       if (git(wt as string, ["reset", "-q", "--hard", i.baseSha]).status !== 0 || git(wt as string, ["clean", "-fdxq", ...DEP_DIRS.flatMap((d) => ["-e", d])]).status !== 0) return false;
       for (const [rel, src] of srcs) { mkdirSync(dirname(join(wt as string, rel)), { recursive: true }); writeFileSync(join(wt as string, rel), typeof src === "string" ? readFileSync(src) : src); } return true; };
     // B1: the bare worktree has no installed dependencies; link each one that exists in the repo (root and every test file ancestor) so a missing package is never read as a failing test.
-    for (const rel of rels) { const parts = rel.split("/").slice(0, -1); for (let n = 0; n <= parts.length; n++) { const anc = parts.slice(0, n).join("/"); for (const d of DEP_DIRS) { const src = join(i.repoDir, anc, d), dst = join(wt, anc, d); if (existsSync(src) && !existsSync(dst)) { try { symlinkSync(src, dst); } catch { /* the run decides */ } } } } }
+    const venvs: string[] = [];
+    for (const rel of rels) { const parts = rel.split("/").slice(0, -1); for (let n = 0; n <= parts.length; n++) { const anc = parts.slice(0, n).join("/"); for (const d of DEP_DIRS) { const src = join(i.repoDir, anc, d), dst = join(wt, anc, d); if (existsSync(src) && !existsSync(dst)) { try { symlinkSync(src, dst); if (d !== "node_modules") venvs.push(src); } catch { /* the run decides */ } } } } }
+    const baseEnv = editableBaseEnv(i.repoDir, wt, venvs, i.env ?? process.env), envd = (r: MutationRunner): MutationRunner => (r.withEnv && Object.keys(baseEnv).length ? r.withEnv(baseEnv) : r); // BASE-SEES-HEAD
     if (compiled) warmGoBuild(wt, tests, remaining); // PROOF-COMPILED-BUDGET: compile the base worktree's go packages once, inside the same deadline, so the timed per-file runs reuse the build cache
     let active = tests; // the base version of an edited file runs on the pristine base before any overlay
     const bmp = new Set(i.baseMustPass ?? []);
     if (bmp.size > 0) {
-      const pre = active.filter((t) => bmp.has(t.path)); if (pre.length > 0) { if (remaining() <= 0) return np("timeout"); const pr = pre.map((t) => (remaining() <= 0 ? null : (typeof i.runner === "function" ? i.runner(remaining()) : i.runner).run(wt as string, [t]))); if (pr.some((r) => !r)) return np("timeout"); const red = new Set(pre.filter((_, k) => !(pr[k]!.pass > 0 && pr[k]!.fail === 0 && (pr[k]!.not_run ?? 0) === 0)).map((t) => t.path)); active = active.filter((t) => !red.has(t.path)); if (active.length === 0) return np("the base version of each edited test file is not green on the base"); }
+      const pre = active.filter((t) => bmp.has(t.path)); if (pre.length > 0) { if (remaining() <= 0) return np("timeout"); const pr = pre.map((t) => (remaining() <= 0 ? null : envd(typeof i.runner === "function" ? i.runner(remaining()) : i.runner).run(wt as string, [t]))); if (pr.some((r) => !r)) return np("timeout"); const red = new Set(pre.filter((_, k) => !(pr[k]!.pass > 0 && pr[k]!.fail === 0 && (pr[k]!.not_run ?? 0) === 0)).map((t) => t.path)); active = active.filter((t) => !red.has(t.path)); if (active.length === 0) return np("the base version of each edited test file is not green on the base"); }
     }
     for (const rel of rels) { // sealed copy first (byte-exact what the run sealed), else the file in the working tree; headSha: the committed bytes
       if (i.headSha) { try { const buf = execFileSync("git", ["-C", i.repoDir, "show", `${i.headSha}:${rel}`], { maxBuffer: 16 << 20, timeout: 20_000 }); mkdirSync(dirname(join(wt, rel)), { recursive: true }); writeFileSync(join(wt, rel), buf); srcs.push([rel, buf]); continue; } catch { return np(`could not read ${rel} at the head commit`); } }
@@ -90,7 +115,7 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
     }
     let pass = 0, fail = 0, notRun = 0;
     if (remaining() <= 0) return np("timeout");
-    const mk = (): MutationRunner => (typeof i.runner === "function" ? i.runner(remaining()) : i.runner), jobs = envJobs((i.env ?? process.env)["LOKI_MUTATION_PROOF_JOBS"]), first = mk();
+    const mk = (): MutationRunner => envd(typeof i.runner === "function" ? i.runner(remaining()) : i.runner), jobs = envJobs((i.env ?? process.env)["LOKI_MUTATION_PROOF_JOBS"]), first = mk();
     const par = jobs > 1 && active.length > 1 && first.runEach !== undefined;
     const rs = par ? await first.runEach!(wt, active, jobs, false, remaining) : active.map((t) => (remaining() <= 0 ? null : mk().run(wt as string, [t])));
     if (rs.some((r) => !r)) return np("timeout");

@@ -312,6 +312,8 @@
 # 274. machine.ts: drop indepSkip from the fix loop (the indep gate leg reads 2 fix sessions on Haiku).
 # 275. check_result.ts testCount: drop the PRETTY block (the PRETTY leg reads null).
 # 268. scope.ts crossPackageTestEdits: `if (false) return false;` in place of the TK exercisesChange line (the TK leg drops the e2e, relative-import and Go reach tests).
+# 281. mutation_proof.ts editableBaseEnv: `if (true || !mapped.length) return {};` (BASE-SEES-HEAD); the leg reads no with no file named.
+# 282. wall_snapshot.ts snapshotTree: drop the rebaseSnapshot call (BASE-SEES-HEAD); the leg reads link-into-live|pth-into-live.
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1653,6 +1655,23 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     [ "$mpd" = "yes|tests/unit_tests_for_long_nodeids_package/test_calc_long_name_here.py" ] && ok "pytest declared-env base proof: a declared env with no venv still yields a fail-then-pass proof naming the file ($mpd)" || bad "pytest declared-env base proof: got '$mpd'"
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest declared-env base proof: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest declared-env base proof: pytest is not installed"; fi
+fi
+# BASE-SEES-HEAD (base-snapshot-check): a repo whose .venv holds an editable install (a .pth naming <repo>/src) let the base worktree of the fail-then-pass
+# proof import the HEAD sources through the linked .venv, so a test red on the real base passed there and read "no (also passes on the old code)". With the
+# worktree's own src first on PYTHONPATH the base run imports base code: "yes", naming the file. The Wall's base snapshot copy had the same leak (the
+# copied .pth and an absolute dist/ link still named the live repo); rebaseSnapshot points both at the copy.
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    BS="$T/bse"; rm -rf "$BS"; mkdir -p "$BS/src/calc" "$BS/tests" && cd "$BS" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
+    printf '.venv/\ndist/\n' > .gitignore; printf 'def half(a):\n    return a // 2\n' > src/calc/__init__.py; printf 'import calc\n\n\ndef test_ok():\n    assert calc.half(4) == 2\n' > tests/test_calc.py
+    python3 -m venv --system-site-packages .venv >/dev/null 2>&1; SP="$(./.venv/bin/python -c 'import os, sysconfig; print(os.path.relpath(sysconfig.get_paths()["purelib"]))')"; printf '%s\n' "$BS/src" > "$SP/_editable_impl_calc.pth"
+    mkdir -p dist && ln -s "$BS/src/calc/__init__.py" dist/calc.py
+    git add -- . && git commit -q -m base && BASE="$(git rev-parse HEAD)"
+    printf 'def half(a):\n    return a / 2\n' > src/calc/__init__.py; printf '\n\ndef test_half_exact():\n    assert calc.half(3) == 1.5\n' >> tests/test_calc.py
+    git add -- . && git commit -q -m head && HEADSHA="$(git rev-parse HEAD)"; cd "$ROOT"
+    bse="$(cd "$ROOT/loki-ts" && bun -e 'const { mutationProof } = await import("./src/util/mutation_proof.ts"); const { baseProofRunner } = await import("./src/engine10/stages/seal.ts"); const ws = await import("./src/contrib/wall_snapshot.ts"); const { readlinkSync, readFileSync, readdirSync, rmSync } = await import("node:fs"); const { join } = await import("node:path"); const [repo, base, head, sp] = process.argv.slice(1); const f = "tests/test_calc.py"; const r = await mutationProof({ repoDir: repo, baseSha: base, runDir: repo + "/.loki", wallFiles: [{ path: f }], checks: [{ name: "pytest:" + f }], runner: baseProofRunner, headSha: head, requireAssertion: true, baseMustPass: [f], timeoutS: 40 }); const dir = await ws.snapshotTree(repo, new AbortController().signal); const pth = join(dir, sp, "_editable_impl_calc.pth"); console.log([r.outcome, (r.failed ?? []).join(","), readlinkSync(join(dir, "dist/calc.py")).startsWith(dir) ? "link-in-copy" : "link-into-live", readFileSync(pth, "utf8").trim() === join(dir, "src") ? "pth-in-copy" : "pth-into-live"].join("|")); rmSync(dir, { recursive: true, force: true });' "$BS" "$BASE" "$HEADSHA" "$SP" 2>&1 | tail -1)"
+    [ "$bse" = "yes|tests/test_calc.py|link-in-copy|pth-in-copy" ] && ok "BASE-SEES-HEAD: an editable .venv no longer lets the base proof import the head sources (a red-on-base test is a proof naming its file), and the Wall snapshot's dist link and .pth point at the copy ($bse)" || bad "BASE-SEES-HEAD: got '$bse'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "BASE-SEES-HEAD: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: BASE-SEES-HEAD: pytest is not installed"; fi
 fi
 # Go module whose test command is a Makefile target (rule 22, real go and real make through the real engine; the receipt shape of L-Haiku-v132 lh-1471/1474/1562/1573, lefthook): the
 # repo is multi-root (an npm packaging dir beside the Go module), so the full suite is the model's `make test`, whose recipe is a plain `go test -cpu 24 -race -count=1 -timeout=30s ./...`.
