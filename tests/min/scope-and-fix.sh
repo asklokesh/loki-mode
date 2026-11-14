@@ -311,6 +311,7 @@
 # 273. verify.ts uncausedRed: always false (the UNCAUSED axios-shape leg reads caused).
 # 274. machine.ts: drop indepSkip from the fix loop (the indep gate leg reads 2 fix sessions on Haiku).
 # 275. check_result.ts testCount: drop the PRETTY block (the PRETTY leg reads null).
+# 276. implement.ts: `guard = false && preTurn && ...` in the SR block (rebuild dist): the TG revert leg keeps the review turn's breaking test (TG).
 # 268. scope.ts crossPackageTestEdits: `if (false) return false;` in place of the TK exercisesChange line (the TK leg drops the e2e, relative-import and Go reach tests).
 # 281. mutation_proof.ts editableBaseEnv: `if (true || !mapped.length) return {};` (BASE-SEES-HEAD); the leg reads no with no file named.
 # 282. wall_snapshot.ts snapshotTree: drop the rebaseSnapshot call (BASE-SEES-HEAD); the leg reads link-into-live|pth-into-live.
@@ -632,6 +633,15 @@ run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_
 SRR="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])).get("self_review") or {}; it=r.get("items",[]); print(len(it), "flagged" if any(i["status"]!="ok" and i["status"]!="auto" for i in it) else "clean", "turn" if r.get("turn") else "no-turn")' "$RUNDIR/receipt.json" 2>/dev/null)"
 RVN="$(grep -c -- '-rv' "$ITERS")"
 case "$SRR" in "8 flagged turn") [ "$RVN" -ge 1 ] ;; "8 clean no-turn") [ "$RVN" = 0 ] ;; *) false ;; esac && [ "$(outcome)" != "BLOCKED" ] && [ "$(outcome)" != "SPEC_CONFLICT" ] && ok "SR e2e: the receipt records 8 self_review items (5 plus the DE docs, SC stated-case and sibling items), the -rv turn ran exactly when one was flagged, outcome $(outcome) ($SRR, -rv sessions $RVN)" || { bad "SR e2e: self_review '$SRR', -rv sessions $RVN, outcome '$(outcome)'"; dump; }
+# TG LOKI_E10_REVIEW_TURN_GUARD (acc-167, off by default until measured; =1 on): the -rv review turn adds a test whose beforeEach hook turns the existing add test red. The guard reruns
+# calc.test.ts, sees it pass without the turn, takes back only the turn's edit (the implement diff stays) and the receipt names the test. Unset (the default) keeps the turn.
+tgrec() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); g=(r.get("self_review") or {}).get("turn_guard") or {}; print(g.get("reverted"), ",".join(g.get("broke") or []), any(str(n).startswith("review turn reverted: calc.test.ts") for n in r.get("not_proven") or []))' "$RUNDIR/receipt.json" 2>/dev/null; }
+run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=always E2E_STUB_RV=breaktest LOKI_E10_REVIEW_TURN_GUARD=1
+[ "$(tgrec)" = "True calc.test.ts True" ] && ! grep -q 'add twice' "$REPO/calc.test.ts" && grep -q 'export function multiply' "$REPO/calc.ts" && [ "$(outcome)" != "BLOCKED" ] && ok "TG revert: the review turn's added test broke calc.test.ts, which passed before the turn; only the turn's edit was taken back, the implement fix stays and the receipt names it ($(tgrec), outcome $(outcome))" || { bad "TG revert: turn_guard '$(tgrec)', plant $(grep -c 'add twice' "$REPO/calc.test.ts"), implement fix $(grep -c 'export function multiply' "$REPO/calc.ts"), outcome '$(outcome)'"; dump; }
+run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=always E2E_STUB_RV=goodtest LOKI_E10_REVIEW_TURN_GUARD=1
+case "$(tgrec)" in "False  False") grep -q 'add twice' "$REPO/calc.test.ts" && ok "TG keep: a review turn whose added test passes is kept, nothing reverted" || { bad "TG keep: the passing added test is gone"; dump; } ;; *) bad "TG keep: turn_guard '$(tgrec)'"; dump ;; esac
+run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=always E2E_STUB_RV=breaktest
+grep -q 'add twice' "$REPO/calc.test.ts" && [ "$(tgrec)" = "None  False" ] && ok "TG default (off): no guard, the review turn's edit stays" || { bad "TG default (off): turn_guard '$(tgrec)', plant $(grep -c 'add twice' "$REPO/calc.test.ts")"; dump; }
 CTASK="add multiply(a, b), subtract(a, b) and negate(a) to calc.ts"
 covrec() { ev 'next((e["data"].get("coverage_resume") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), None)'; }
 run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_COVERAGE_RESUME=0

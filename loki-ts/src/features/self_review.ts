@@ -7,6 +7,7 @@ import { outsideScope } from "../e10ext/scope.ts";
 import type { Obj } from "../engine10/types.ts";
 import { contributionGuides, releaseNoteConvention, releaseNoteProblems, renameInventedFragment, stripInventedRefsInFile, taskForbidsReleaseNote, taskNumbers, towncrierNoNumberPrefix } from "../project_model/conventions.ts";
 import { detectFormatters } from "../runner/repo_profile.ts";
+import { applyDiff, type DiffEntry, snapshotDiff } from "../e10ext/treeswap.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { isTestFile as narrowTestFile } from "../util/test_file_text.ts";
 /** A test file by name or location in any common layout (the shared helper misses Rust tests.rs, a top-level test/ dir, __tests__/, JVM *Test sources). */
@@ -231,8 +232,43 @@ export function settleItems(before: ReviewItem[], after: ReviewItem[] | null, re
   });
 }
 /** The receipt block; {} when the knob is off or nothing was recorded. */
-export type SelfReviewRecord = { mode: string; turn: string | null; items: ReviewItem[] };
+export type SelfReviewRecord = { mode: string; turn: string | null; items: ReviewItem[]; turn_guard?: TurnGuardRecord };
 export const selfReviewReceiptBlock = (implement: Record<string, unknown> | undefined): { self_review?: SelfReviewRecord } => (implement && implement["self_review"] ? { self_review: implement["self_review"] as SelfReviewRecord } : {});
+/** TG LOKI_E10_REVIEW_TURN_GUARD (acc-167, off by default until measured, =1 on): a finish or review turn that edits anything gets the tests of its edits rerun. A test
+ * that fails after the turn and passed with the turn's edits taken back marks the turn as a regression: only that turn's paths go back to the pre-turn
+ * tree (the implement diff stays), and the record names the test for the receipt. A test that also fails without the turn keeps the turn. */
+export const reviewTurnGuardOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_REVIEW_TURN_GUARD"] ?? "").trim());
+export type TurnTestResult = "pass" | "fail" | "not_run";
+export type TurnGuardRecord = { paths: string[]; ran: string[]; broke: string[]; reverted: boolean };
+const sameEntry = (a: DiffEntry | undefined, b: DiffEntry | undefined): boolean => !a || !b ? a === b : a.kind === b.kind && a.mode === b.mode && a.symlinkTarget === b.symlinkTarget && (a.content && b.content ? a.content.equals(b.content) : a.content === b.content);
+/** The paths whose content differs between two snapshots of the same base (a path absent from both equals base in both). */
+export function turnChangedPaths(pre: DiffEntry[], post: DiffEntry[]): string[] {
+  const a = new Map(pre.map((e) => [e.path, e])), b = new Map(post.map((e) => [e.path, e]));
+  return [...new Set([...a.keys(), ...b.keys()])].filter((p) => !sameEntry(a.get(p), b.get(p))).sort();
+}
+/** Puts exactly `paths` back to how `snap` had them: a snapshot entry is written, a path the snapshot lacks returns to base (or is removed when base lacks it). */
+export function restoreTurnPaths(root: string, base: string, snap: DiffEntry[], paths: string[]): void {
+  const by = new Map(snap.map((e) => [e.path, e])), write: DiffEntry[] = [], fromBase: string[] = [];
+  for (const p of paths) { const e = by.get(p); if (e) write.push(e); else { let inBase = false; try { safeGit(root, ["cat-file", "-e", `${base}:${p}`]); inBase = true; } catch { /* absent on base */ } if (inBase) fromBase.push(p); else write.push({ path: p, kind: "delete" }); } }
+  applyDiff(root, write);
+  if (fromBase.length) safeGit(root, ["--literal-pathspecs", "checkout", base, "--", ...fromBase]);
+}
+/** Runs the guard after the turn. `pick` names the tests of the turn's paths; `run` runs one. Null when the turn changed nothing. */
+export async function guardReviewTurn<T extends { path: string }>(root: string, base: string, pre: DiffEntry[], pick: (paths: string[]) => T[], run: (t: T) => Promise<TurnTestResult> | TurnTestResult): Promise<TurnGuardRecord | null> {
+  const post = snapshotDiff(root, base), paths = turnChangedPaths(pre, post);
+  if (!paths.length) return null;
+  const ran: string[] = [], failing: T[] = [];
+  for (const t of pick(paths)) { const r = await run(t); ran.push(`${t.path}=${r}`); if (r === "fail") failing.push(t); }
+  if (!failing.length) return { paths, ran, broke: [], reverted: false };
+  restoreTurnPaths(root, base, pre, paths);
+  const broke: string[] = [];
+  for (const t of failing) { if (!existsSync(join(root, t.path))) continue; const r = await run(t); ran.push(`${t.path}=${r} without the turn`); if (r === "pass") broke.push(t.path); }
+  if (broke.length) return { paths, ran, broke, reverted: true };
+  restoreTurnPaths(root, base, post, paths);
+  return { paths, ran, broke: [], reverted: false };
+}
+/** The receipt line for a reverted turn. */
+export const turnGuardNote = (g: TurnGuardRecord | undefined): string[] => (g?.reverted ? [`review turn reverted: ${g.broke.join(", ")} passed before the turn and failed after it; the turn's edits to ${g.paths.join(", ")} were taken back and the pre-turn diff kept`] : []);
 /** CR, deterministic: removes every issue or PR reference the task never gives from the release note the run added (changelog entry lines, changeset or towncrier
  *  fragment text). Runs after the review turn so a reference the model invented never ships. Returns `<path>: #N` per removal; [] when none or CR is off. */
 export function stripInventedReleaseRefs(repoDir: string, baseSha: string, staged: Staged[], task: string, env: NodeJS.ProcessEnv = process.env): string[] {
