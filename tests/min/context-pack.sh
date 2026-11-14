@@ -43,6 +43,10 @@
 #   8. conventions.ts guideRequiresChangelog: delete the LOG_FORBID line; cl_forbid fails (a guide saying not to update the CHANGELOG got a line).
 #   9. conventions.ts releaseNoteBrief: `if (false) {` in place of the towncrier example branch (TX); tx_example and tx_template_only fail.
 #  11. conventions.ts logFrozen: always use LOG_FROZEN_LOOSE (FS); fs_deprecated_section fails.
+#  14. loki-ts/src/features/self_review.ts selfReviewWanted: `mode !== "off"` (SR); sr_clean_turn fails (a clean minimal diff would get a review turn: churn and cost).
+#  16. conventions.ts changelogRefOn: `false &&` (CR); cr_brief, cr_checks, cr_changeset and cr_towncrier fail.
+#  17. conventions.ts stripInventedRefsInFile: `if (base.has(l) || true) return l;` (CR strip); cr_strip_file fails (the invented #2383 ships).
+#  15. self_review.ts settleItems: never trust the after-turn check (`if (false && a)`); sr_settled fails (fixed items read unresolved).
 #  12. conventions.ts writeReleaseNoteFragment: `op = null` (TO); to_older_orphan and to_cfg_prefix fail.
 #  13. conventions.ts scaffoldRecord: `return null` for a skip (TR); tr_skip fails.
 #  10. loki-ts/src/e10ext/scope.ts flagOutsideScope: `mine = (f: string): boolean => false` (CS); cs_on fails (the asked-for changelog edit is flagged).
@@ -310,6 +314,55 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
   out.tr_block = JSON.stringify([cv.releaseNoteSkipBlock({ scaffold_skipped: "why" }), cv.releaseNoteSkipBlock({ scaffold: { path: "x" } }), cv.releaseNoteSkipBlock(undefined)]);
   const src = (f: string) => rf(join(SRC, f), "utf8");
   out.tr_wired = src("engine10/machine.ts").includes("scaffold_skipped: sc.skipped") && src("engine10/stages/seal.ts").includes("...releaseNoteSkipBlock(o.implement)") && src("contrib/index.ts").includes("return scaffoldRecord(r);") ? "yes" : "no"; }
+// SR LOKI_E10_SELF_REVIEW: the pre-delivery review self-check (deterministic items, then at most one bounded "-rv" resume).
+{ const sr = await import(join(SRC, "features/self_review.ts")), { execFileSync: ex2 } = await import("node:child_process"), { rmSync } = await import("node:fs");
+  const repo = (name: string, files: Record<string, string>) => { const d = mk(name, files); const g = (...a: string[]) => ex2("git", ["-C", d, ...a], { stdio: "pipe" }).toString().trim(); g("init", "-q", "-b", "main"); g("config", "user.name", "sr"); g("config", "user.email", "sr@example.invalid"); g("add", "-A"); g("commit", "-q", "-m", "base"); return { d, base: g("rev-parse", "HEAD") }; };
+  const st = (o: Record<string, string>) => Object.entries(o).map(([f, s]) => ({ st: s, f }));
+  const sum = (items: { item: string; status: string }[]) => items.map((i) => `${i.item}=${i.status}`).join(",");
+  const plan = { plan: { relevant_files: ["src/calc.py"], plan: "Change src/calc.py and tests/test_calc.py." } };
+  const clean = repo("sr-clean", { "src/calc.py": "x = 1\n", "tests/test_calc.py": "def test(): pass\n" });
+  writeFileSync(join(clean.d, "src/calc.py"), "x = 2\n"); writeFileSync(join(clean.d, "tests/test_calc.py"), "def test(): assert True\n");
+  const cleanItems = sr.selfReviewChecks(clean.d, clean.base, sr.treeStaged(clean.d, clean.base), "Fix calc", plan);
+  out.sr_clean = sum(cleanItems); out.sr_clean_turn = sr.selfReviewWanted(cleanItems, "on") ? "turn" : "no-turn";
+  out.sr_clean_always = sr.selfReviewWanted(cleanItems, "always") ? "turn" : "no-turn";
+  const cl = repo("sr-cl", { "CONTRIBUTING.md": "Please add an entry to CHANGELOG.md.\n", "CHANGELOG.md": LOG, "src/calc.py": "x = 1\n", "tests/test_calc.py": "t\n", "README.md": "# r\n" });
+  writeFileSync(join(cl.d, "src/calc.py"), "x = 2\n"); writeFileSync(join(cl.d, "README.md"), "# r2\n"); mkdirSync(join(cl.d, "scratch"), { recursive: true }); writeFileSync(join(cl.d, "scratch/debug.py"), "print(1)\n");
+  const clBefore = sr.selfReviewChecks(cl.d, cl.base, sr.treeStaged(cl.d, cl.base), "Fix calc", plan);
+  out.sr_flags = sum(clBefore); out.sr_flag_turn = sr.selfReviewWanted(clBefore, "on") ? "turn" : "no-turn";
+  const brief = sr.selfReviewBrief(cl.d, clBefore);
+  out.sr_brief = ["Please add an entry to CHANGELOG.md.", "FLAGGED: the contribution guide asks for an entry in CHANGELOG.md", "REVIEW <a|b|c|d|e>", "Change nothing that already follows the rules"].every((k) => brief.includes(k)) ? "yes" : "no";
+  // the review turn: the entry added and the scratch file removed; the test and the README edit stay, the README one justified
+  writeFileSync(join(cl.d, "CHANGELOG.md"), LOG.replace("### Fixed\n\n", "### Fixed\n\n- Fixed calc.\n")); rmSync(join(cl.d, "scratch"), { recursive: true, force: true });
+  const clAfter = sr.selfReviewChecks(cl.d, cl.base, sr.treeStaged(cl.d, cl.base), "Fix calc", plan);
+  const reply = "Done.\nREVIEW a: fixed: entry added\nREVIEW b: fixed: removed scratch\nREVIEW c: justified: \nREVIEW e: justified: the README names the changed option\nLOKI_DONE";
+  out.sr_settled = sum(sr.settleItems(clBefore, clAfter, reply));
+  out.sr_no_turn_settle = sum(sr.settleItems(clBefore, null, null));
+  out.sr_parse = JSON.stringify([...sr.parseReviewLines("REVIEW a: ok: fine\n`REVIEW d: justified: matches style`\nREVIEW z: ok\nreview b: FIXED: x").entries()]);
+  out.sr_testfiles = ["src/de/tests.rs", "test/expect.js", "test/main.ts", "kotlinpoet/src/jvmTest/kotlin/a/CodeBlockTest.kt", "__tests__/base.js", "tests/test_x.py", "pkg/x_test.go", "src/a.spec.ts", "src/lib.rs", "lib/a.js", "src/contest.py", "docs/testing.md"].map((f) => sr.isTestFile(f) ? "t" : "s").join("");
+  out.sr_mode = [sr.selfReviewMode({}), sr.selfReviewMode({ LOKI_E10_SELF_REVIEW: "0" }), sr.selfReviewMode({ LOKI_E10_SELF_REVIEW: "always" }), sr.selfReviewMaxTurns({}), sr.selfReviewMaxTurns({ LOKI_E10_SELF_REVIEW_MAX_TURNS: "4" }), sr.selfReviewMaxTurns({ LOKI_E10_SELF_REVIEW_MAX_TURNS: "x" })].join(",");
+  out.sr_receipt = JSON.stringify([sr.selfReviewReceiptBlock({ self_review: { mode: "on", turn: null, items: [] } }), sr.selfReviewReceiptBlock({}), sr.selfReviewReceiptBlock(undefined)]);
+  const src = (f: string) => rf(join(SRC, f), "utf8");
+  out.sr_wired = src("engine10/stages/implement.ts").includes("if (selfReviewWanted(before, mode)) { const r = await resumeForSelfReview(") && src("engine10/stages/implement.ts").includes("...(selfReview ? { self_review: selfReview } : {}),") && src("util/conflict_resume.ts").includes('resumeWith(ctx, { ...first, maxTurns }, firstSession, brief, "-rv")') && src("engine10/stages/seal.ts").includes("...selfReviewReceiptBlock(o.implement)") ? "yes" : "no"; }
+// CR LOKI_E10_CHANGELOG_REF: the reference form of existing entries, in the brief line and checked on the entry the diff adds.
+{ const cv = await import(join(SRC, "project_model/conventions.ts"));
+  const REF_LOG = "Change Log\n==========\n\n## Unreleased\n\n * Fix: Carriage returns are kept. (#2380)\n * Fix: The package slot is kept. (#2382)\n\n## Version 2.4.0\n\n * New: A thing. (#2300)\n * Fix: Another. (#2301)\n";
+  out.cr_style = JSON.stringify([cv.changelogRefStyle(REF_LOG), cv.changelogRefStyle("## Unreleased\n\n- a\n- b\n- c\n- d (#1)\n"), cv.changelogRefStyle("- x ([#650](https://github.com/o/r/pull/650))\n- y ([#651](https://github.com/o/r/pull/651))\n- z ([#652](https://github.com/o/r/issues/652))\n")?.cls]);
+  const crRepo = mk("cr", { "CONTRIBUTING.md": "Please add a row to CHANGELOG.md.\n", "CHANGELOG.md": REF_LOG, "src/a.kt": "x\n", "package.json": '{"name":"root"}', "packages/a/package.json": '{"name":"@acme/a"}', "packages/a/src/a.ts": "x\n" });
+  out.cr_brief = cv.releaseNoteBrief(crRepo, []).includes("entries reference the issue or PR like (#2380): use the number the task gives in that form, and never invent a number") ? "yes" : "no";
+  const conv = cv.releaseNoteConvention(crRepo)!, P = (lines: string[], task: string, env = {}) => cv.releaseNoteProblems(crRepo, conv, new Map([["CHANGELOG.md", lines]]), ["src/a.kt", "CHANGELOG.md"], task, env).join(" || ") || "-";
+  out.cr_checks = [P([" * Fix: Tabs are kept. (#12)"], "Tabs are lost (#12)"), P([" * Fix: Tabs are kept. (#999)"], "Tabs are lost (#12)"), P([" * Fix: Tabs are kept."], "Tabs are lost (#12)"), P([" * Fix: Tabs are kept."], "Tabs are lost"), P([" * Fix: Tabs are kept. (#999)"], "Tabs are lost"), P([" * Fix: Tabs are kept. (#999)"], "Tabs are lost (#12)", { LOKI_E10_CHANGELOG_REF: "0" }), P([" * Fix: Tabs are kept."], "Tabs are lost\n\n#1827 changed the test to expect it.")].join(" | ");
+  const csConv = { kind: "changeset", dir: ".changeset", example: null }, CS = (pkg: string) => cv.releaseNoteProblems(crRepo, csConv, new Map([[".changeset/x.md", ["---", `"${pkg}": patch`, "---", "", "Fixed."]]]), ["packages/a/src/a.ts", ".changeset/x.md"], "Fix a").join(" || ") || "-";
+  out.cr_changeset = [CS("@acme/a"), CS("@acme/b")].join(" | ");
+  const tcConv = { kind: "towncrier", dir: "changes", example: null }, TC = (f: string, task: string) => cv.releaseNoteProblems(crRepo, tcConv, new Map([[f, ["Fixed."]]]), ["src/a.kt", f], task).join(" || ") || "-";
+  const S = (l: string, allowed: string[] = []) => { const r = cv.stripInventedRefs(l, allowed); return `${r.line}{${r.removed.join(",")}}`; };
+  out.cr_strip = [S(" * Fix: `%S` args are kept. (#2383)"), S("- Fixed x ([#650](https://github.com/o/r/pull/650))"), S("- Fixed x ([#650](https://github.com/o/r/pull/650))", ["650"]), S("- Simplify x (:pr:`3024`)."), S("- See https://github.com/o/r/issues/77 for details"), S("- Fix GH-7 and #5, keep &#39;"), S("* Fix: tabs (#12)", ["12"]), S("* Fix: `trim()` keeps it. (#99)")].join(" | ");
+  const sf = join(crRepo, "CHANGELOG.md"), baseText = rf(sf, "utf8"); writeFileSync(sf, baseText.replace(" * Fix: Carriage returns are kept. (#2380)\n", " * Fix: Tabs are kept. (#2383)\n * Fix: Carriage returns are kept. (#2380)\n"));
+  process.env.LOKI_E10_CHANGELOG_REF = "0"; const offRm = cv.stripInventedRefsInFile(sf, baseText, "Tabs are lost (#12)"); delete process.env.LOKI_E10_CHANGELOG_REF;
+  const onRm = cv.stripInventedRefsInFile(sf, baseText, "Tabs are lost (#12)"), after = rf(sf, "utf8");
+  out.cr_strip_file = [JSON.stringify(offRm), JSON.stringify(onRm), after.includes(" * Fix: Tabs are kept.\n") && after.includes("(#2380)") && !after.includes("2383") ? "rewritten" : "bad"].join(" | ");
+  const isrc = rf(join(SRC, "engine10/stages/implement.ts"), "utf8"), ssrc = rf(join(SRC, "engine10/stages/seal.ts"), "utf8");
+  out.cr_strip_wired = isrc.includes("stripInventedReleaseRefs(ctx.repoDir, ctx.baseSha, treeStaged(ctx.repoDir, ctx.baseSha), task)") && isrc.includes("{ changelog_refs_removed: refsRemoved }") && ssrc.includes("...releaseRefsReceiptBlock(o.implement)") ? "yes" : "no";
+  out.cr_towncrier = [TC("changes/12.bugfix.rst", "Fix it (#12)"), TC("changes/99.bugfix.rst", "Fix it (#12)"), TC("changes/+fix.bugfix.rst", "Fix it")].join(" | "); }
 const w17 = mk("w17", tcFiles()); const r17 = tw(w17, "Fix crash when the cache is empty (#42)");
 out.tc_path = r17.path ?? `skipped:${r17.skipped}`; out.tc_text = r17.path ? rf(join(w17, r17.path), "utf8") : "";
 out.tc_no_issue = tw(mk("w18", tcFiles()), "Fix crash when the cache is empty").skipped ? "skipped" : "wrote";
@@ -468,6 +521,27 @@ eqv tr_entry_missing '{"skipped":"the changelog convention is not written automa
 eqv tr_no_conv null "TR a repo with no release-note convention records nothing"
 eqv tr_off null "TR LOKI_E10_SCAFFOLD_TRACE=0 records no skip reason"
 eqv tr_block '[{"release_note_skipped":"why"},{},{}]' "TR the receipt carries release_note_skipped only when the writer skipped"
+eqv cr_style '[{"cls":"paren","example":"(#2380)"},null,"link"]' "CR the reference form most existing entries use is found (paren, markdown link); a log whose entries mostly carry none has no form"
+eqv cr_brief yes "CR the changelog brief line names the entries' reference form and forbids an invented number"
+eqv cr_checks "- | the entry cites #999, which the task does not give || the entry has no reference to #12 in the form the existing entries use ((#2380)) | the entry has no reference to #12 in the form the existing entries use ((#2380)) | - | the entry cites #999, which the task does not give | - | -" "CR an entry with the task's number passes; a number the task does not give and a missing reference are flagged; with no task number a plain entry passes; a number the body only mentions is not required; =0 checks nothing"
+eqv cr_changeset "- | .changeset/x.md names package @acme/b, which the change does not touch (changed: @acme/a)" "CR a changeset for a package the change does not touch is flagged"
+eqv cr_towncrier "- | changes/99.bugfix.rst is numbered 99, but the task gives #12 | -" "CR a towncrier fragment numbered differently from the task's issue is flagged; an orphan fragment passes"
+eqv cr_strip ' * Fix: `%S` args are kept.{2383} | - Fixed x{650} | - Fixed x ([#650](https://github.com/o/r/pull/650)){} | - Simplify x.{3024} | - See for details{77} | - Fix and, keep &#39;{7,5} | * Fix: tabs (#12){} | * Fix: `trim()` keeps it.{99}' "CR strip: every reference form whose number the task never gives is removed ((#N), markdown link, rst role, URL, GH-N, bare #N); a given number, an HTML entity and a code call's () stay"
+eqv cr_strip_file '[] | ["2383"] | rewritten' "CR strip in file: only the line the run added loses its invented #2383; the base entry keeps (#2380); =0 changes nothing"
+eqv cr_strip_wired yes "CR strip wiring: implement strips invented references after the review turn and records changelog_refs_removed; seal puts it on the receipt"
+eqv sr_clean "release_note=ok,stray_files=ok,test=ok,format=ok,scope=ok" "SR a correct minimal diff (source plus its test, no rule broken) passes every item"
+eqv sr_clean_turn no-turn "SR no churn: a correct minimal diff starts no review turn, so the tree is left untouched and the check costs nothing"
+eqv sr_clean_always turn "SR LOKI_E10_SELF_REVIEW=always runs the turn even on a clean diff"
+eqv sr_flags "release_note=flagged,stray_files=flagged,test=flagged,format=ok,scope=flagged" "SR flags a missing required changelog entry, a stray file in a new directory, a source change with no test and an edit outside the planned scope"
+eqv sr_flag_turn turn "SR a flagged item starts the one review turn"
+eqv sr_brief yes "SR the review brief carries the contribution rules, the flagged items, the REVIEW reply format and the no-churn rule"
+eqv sr_settled "release_note=fixed,stray_files=fixed,test=unresolved,format=ok,scope=justified" "SR settling: a flag the after-turn check no longer finds is fixed; a persisting flag is justified only with a stated reason, else unresolved"
+eqv sr_no_turn_settle "release_note=flagged,stray_files=flagged,test=flagged,format=ok,scope=flagged" "SR with no turn (too little time) the flags stay flagged on the receipt"
+eqv sr_parse '[["release_note",{"verdict":"ok","reason":"fine"}],["format",{"verdict":"justified","reason":"matches style"}],["stray_files",{"verdict":"fixed","reason":"x"}]]' "SR REVIEW reply lines parse by item (backticks and case tolerated, unknown items ignored)"
+eqv sr_testfiles "ttttttttssss" "SR the test detector covers Rust tests.rs, a top-level test/ dir, __tests__/, JVM *Test sources, Python, Go and JS layouts, and not source or docs"
+eqv sr_mode "on,off,always,12,4,12" "SR knob: on by default, =0 off, always; the turn cap (cost cap) is 12 unless LOKI_E10_SELF_REVIEW_MAX_TURNS sets a positive integer"
+eqv sr_receipt '[{"self_review":{"mode":"on","turn":null,"items":[]}},{},{}]' "SR the receipt carries self_review only when the stage recorded it"
+eqv sr_wired yes "SR wiring: implement runs the bounded -rv resume only when wanted and records self_review; seal puts it on the receipt"
 eqv tr_wired yes "TR wiring: the scaffold hook returns the record, the machine keeps the skip, seal puts it on the receipt"
 eqv sn_pick "The loader now skips unreadable files instead of aborting the whole scan" "FW summary: the maintainer-style sentence is picked over narration and markers"
 eqv sn_chatter empty "FW summary: test-status and sign-off chatter yields nothing"

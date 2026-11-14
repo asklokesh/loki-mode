@@ -369,7 +369,7 @@ run_engine() {
     git -C "$REPO" commit -q -m base
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY \
         LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" LOKI_NO_COMPLETIONS=1 \
-        E2E_STUB_LOG="$d/stub.log" E2E_STUB_ITER_LOG="$ITERS" LOKI_E10_PLAN=1 LOKI_E10_WALL="${E2E_WALL-1}" LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" \
+        E2E_STUB_LOG="$d/stub.log" E2E_STUB_ITER_LOG="$ITERS" LOKI_E10_PLAN=1 LOKI_E10_WALL="${E2E_WALL-1}" LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" LOKI_E10_SELF_REVIEW=0 \
         "$@" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$task" --no-pr 2>&1)"
     RC=$?
     RUNDIR=""
@@ -609,6 +609,12 @@ run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHAR
 grep -q '^wall ' "$ITERS" && { bad "lean normal: a Wall session ran despite a relevant visible test"; dump; } || ok "lean normal: no Wall session"
 [ "$(outcome)" = "VERIFIED" ] && ok "lean normal: run is VERIFIED" || { bad "lean normal: outcome is '$(outcome)'"; dump; }
 # ---------------------------------------------------------------- coverage (L4, LOKI_E10_COVERAGE_RESUME: default fold, =1 the separate turn, =0 neither)
+# SR LOKI_E10_SELF_REVIEW end to end on the stub (run_engine pins it off for the session-count legs; unit legs live in tests/min/context-pack.sh):
+# the receipt records all five items; the -rv review turn runs exactly when an item was flagged; the run is never turned into a conflict by it.
+run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=on
+SRR="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])).get("self_review") or {}; it=r.get("items",[]); print(len(it), "flagged" if any(i["status"]!="ok" and i["status"]!="auto" for i in it) else "clean", "turn" if r.get("turn") else "no-turn")' "$RUNDIR/receipt.json" 2>/dev/null)"
+RVN="$(grep -c -- '-rv' "$ITERS")"
+case "$SRR" in "5 flagged turn") [ "$RVN" -ge 1 ] ;; "5 clean no-turn") [ "$RVN" = 0 ] ;; *) false ;; esac && [ "$(outcome)" != "BLOCKED" ] && [ "$(outcome)" != "SPEC_CONFLICT" ] && ok "SR e2e: the receipt records 5 self_review items, the -rv turn ran exactly when one was flagged, outcome $(outcome) ($SRR, -rv sessions $RVN)" || { bad "SR e2e: self_review '$SRR', -rv sessions $RVN, outcome '$(outcome)'"; dump; }
 CTASK="add multiply(a, b), subtract(a, b) and negate(a) to calc.ts"
 covrec() { ev 'next((e["data"].get("coverage_resume") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), None)'; }
 run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_COVERAGE_RESUME=0
