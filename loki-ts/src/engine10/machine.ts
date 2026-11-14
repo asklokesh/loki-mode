@@ -1,7 +1,7 @@
 // Loki 10 state machine (ENGINE.md section 4): stage table, Plan || Wall, optional() loader, stage limits, global cap, stop reasons (stalled, fatal). Siblings arrive only through RunContext; stages come from ./stages/<name>.ts.
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
-import { hooks } from "./hooks.ts"; import { wallConcurrent } from "../util/wall_knobs.ts"; import { wallEnabled } from "./sizing.ts";
+import { hooks } from "./hooks.ts"; import { cascadeV0On, wallConcurrent } from "../util/wall_knobs.ts"; import { attemptModel, CASCADE_LEAD, cascadeWallTail, wallFailedOf } from "../features/attempts.ts"; import { wallEnabled } from "./sizing.ts";
 import { commitHookBypassOn, treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { assumptionOf, consultAvailable, neverStopActive, readConsults, type NeverStopRecord } from "../features/opus_consult.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
@@ -223,8 +223,10 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     const impl = outputs.implement, model = typeof impl?.model === "string" ? impl.model : ctx.model, k = attemptsK(model), none = { changed: false, ran: false };
     if (k === 0 || !impl || (impl.exit !== "done" && impl.exit !== "spec_conflict")) return none;
     const note = (why: string): typeof none => { outputs.implement = { ...impl, attempts: { skipped: why } }; return none; };
-    const brief = savedImplementBrief(ctx);
-    if (!brief) return note("the implement brief was not saved");
+    const brief0 = savedImplementBrief(ctx);
+    if (!brief0) return note("the implement brief was not saved");
+    const wallTail = cascadeV0On() ? cascadeWallTail(ctx.runDir, outputs.verify) : null; // CASCADE-V0: the retry sees the oracle's own failing output
+    const brief = wallTail ? `${brief0}\n\n${CASCADE_LEAD}\n${wallTail}` : brief0;
     const room = Math.floor(softCapS(ctx.capS) - elapsedS() - ATTEMPTS_TAIL_S), limitS = Math.min(STAGE_BUDGETS.implement.limitS, room);
     if (limitS < MIN_ATTEMPT_WINDOW_S) return note(`not enough run time left (${Math.max(room, 0)}s)`);
     if (capReached()) return note("cost or time cap reached");
@@ -244,8 +246,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       const w = saved.get(r.winner) ?? saved.get(0)!;
       outputs.verify = w.verify; if (w.fix) outputs.fix = w.fix; else delete outputs.fix;
       const { spec_conflict_reason: _c, ...rest } = impl; // an extra attempt that won was never in the first attempt's conflict
-      outputs.implement = { ...(r.tookExtra ? { ...rest, exit: "done" } : impl), attempts: r.summary, iteration_ids: [...(Array.isArray(impl.iteration_ids) ? impl.iteration_ids as string[] : []), ...r.ids] };
-      ctx.emit("attempts.selected", "implement", r.summary);
+      outputs.implement = { ...(r.tookExtra ? { ...rest, exit: "done" } : impl), attempts: { ...r.summary, ...(wallTail ? { cascade: { trigger: "wall", from: String(impl.model ?? ctx.model), to: attemptModel(1, model) ?? "session model" } } : {}) }, iteration_ids: [...(Array.isArray(impl.iteration_ids) ? impl.iteration_ids as string[] : []), ...r.ids] };
+      ctx.emit("attempts.selected", "implement", (outputs.implement as Obj).attempts as Obj); // CASCADE-V0: the cascade marker rides on the same event
       return { changed: r.tookExtra, ran: r.launched > 0 };
     } catch (err) {
       if (err instanceof AttemptsRestoreError) { outputs.implement = { ...impl, exit: "killed", attempts: { error: err.message } }; process.stderr.write(`loki: ${err.message}; the run cannot be sealed as delivered work\n`); return { changed: false, ran: true }; } // exit=killed: seal never reads this as VERIFIED (FC-21 (a))
@@ -362,7 +364,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (todo[0] === "verify") {
         sigs.push(sigOf(outputs.verify, results[0]));
         let attemptsRan = false;
-        if (attemptsEarly() && !fatal && !capHit && hasFailures(outputs.verify) && /haiku/i.test(String(outputs.implement?.model ?? ctx.model))) { // EXP-0010 early: a red first attempt on Haiku gets its parallel attempts BEFORE any fix round; a green winner leaves nothing for the fix loop below
+        const cascadeNow = cascadeV0On() && !fatal && !capHit && wallFailedOf(outputs.verify); // CASCADE-V0: only the Wall's own failing tests start the next model, before any fix round
+        if (cascadeNow || (!cascadeV0On() && attemptsEarly() && !fatal && !capHit && hasFailures(outputs.verify) && /haiku/i.test(String(outputs.implement?.model ?? ctx.model)))) { // EXP-0010 early: a red first attempt on Haiku gets its parallel attempts BEFORE any fix round; a green winner leaves nothing for the fix loop below
           const x = await extraAttempts(); attemptsRan = x.ran;
           if (x.changed) { scaffoldNow(); const v = await runStage("verify", true); sigs.push(sigOf(outputs.verify, v)); }
         }
@@ -425,7 +428,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
             stopped = "stalled"; break;
           }
         }
-        if (!fatal && !capHit && (stopped === null || stopped === "stalled") && !attemptsRan && !isClean(attemptSignalOf(outputs, outputs.implement?.exit === "spec_conflict"))) { // EXP-0010: a first attempt that is not clean (red, a conflict, or NOT PROVEN lines) gets N-1 more in parallel (not again when the early switch already ran them)
+        if (!fatal && !capHit && (stopped === null || stopped === "stalled") && !attemptsRan && !cascadeV0On() && !isClean(attemptSignalOf(outputs, outputs.implement?.exit === "spec_conflict"))) { // EXP-0010: a first attempt that is not clean (red, a conflict, or NOT PROVEN lines) gets N-1 more in parallel (not again when the early switch already ran them)
           const x = await extraAttempts();
           if (x.ran) stopped = null; // the fix rounds' stall was answered by fresh attempts: the best tree is delivered as PARTIAL when still red, never reported as a stall
           if (x.changed) { scaffoldNow(); const v = await runStage("verify", true); sigs.push(sigOf(outputs.verify, v)); } // verify judges the winner's tree

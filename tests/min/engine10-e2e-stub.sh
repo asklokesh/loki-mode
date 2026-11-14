@@ -49,6 +49,8 @@
 #   12. loki-ts/src/engine10/stages/xreview.ts: drop the run-model pin for the default review (the high-tier leg reads no --model haiku).
 #   13. loki-ts/src/engine10/machine.ts capReached: return false always (the capped run completes and reads VERIFIED, exit 0).
 #   14. loki-ts/src/util/check_result.ts changedSymbols: drop the ENCLOSING-DECL fallback (the enclosing-declaration unit line reads method=[]).
+#   30. machine.ts: cascadeNow ignores wallFailedOf (the lint-only leg cascades).
+#   31. machine.ts: drop the Wall tail from the cascade brief (the brief leg finds no Wall failure).
 #   15. claude_model.ts chooseSessionModel: ignore EXPLICIT_MODEL_ENV (the env leg reads sonnet, source default).
 #   16. supervisor.ts: do not export the default pin (the default leg reads the provider default and no --model).
 #   17. seal.ts: drop model_source (every default-model leg reads absent).
@@ -429,6 +431,27 @@ case "$U" in "low=0 medium=0 high=1 "*) ok "unit: with no reviewer configured an
 
 # EXP-0010: parallel attempts after a red first attempt. The stub (mode attempts) writes a wrong multiply() in every session except the one in
 # the attempt worktree B<E2E_STUB_RIGHT>; E2E_STUB_FIX=noprogress keeps the primary's fix round red so the extra attempts run. Real bun test, real pytest, real vitest.
+# CASCADE-V0 (LOKI_E10_CASCADE_V0, default off): the Wall is the oracle. A Wall test that fails on the first candidate (Haiku) starts ONE more attempt on the next
+# LOKI_E10_ATTEMPT_MODELS entry (haiku,sonnet by default), before any fix round, and its brief carries the Wall's failing output. No other red cascades.
+cas_ev() { python3 -I -c '
+import json, sys
+for l in open(sys.argv[1]):
+    e = json.loads(l)
+    if e["type"] == "attempts.selected": d = e["data"]; c = d.get("cascade") or {}; print("winner=%s total=%s trigger=%s to=%s" % (d.get("winner"), d.get("total"), c.get("trigger"), c.get("to"))); break
+else: print("none")
+' "$RUNDIR/events.jsonl" 2>/dev/null; }
+cas_brief() { grep -l "The previous attempt at this task failed these acceptance tests" "$T"/cas.prompt.* 2>/dev/null | head -1; }
+E2E_STUB_RIGHT=1 E2E_STUB_WALL=multiply E2E_STUB_PROMPT_LOG="$T/cas.prompt" LOKI_SESSION_MODEL=haiku LOKI_E10_CASCADE_V0=1 run_engine attempts
+c="$(cas_ev)"
+case "$c" in "winner=x1 total=2 trigger=wall to=claude-sonnet"*) ok "cascade: a failing Wall test on the Haiku candidate starts one Sonnet attempt, which wins ($c)" ;; *) bad "cascade: attempts.selected '$c' (outcome $(outcome))"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /' ;; esac
+[ "$(outcome)" = "VERIFIED" ] && ok "cascade: the winning attempt's tree seals VERIFIED" || bad "cascade: outcome '$(outcome)'"
+[ -n "$(cas_brief)" ] && grep -q "loki_wall_multiply" "$(cas_brief)" && ok "cascade: the retry brief carries the Wall's failing output" || bad "cascade: no implement prompt carried the Wall failure"
+rm -f "$T"/cas.prompt*
+E2E_STUB_WALL=multiply E2E_STUB_LINTBAD=1 LOKI_SESSION_MODEL=haiku LOKI_E10_CASCADE_V0=1 run_engine done
+[ "$(cas_ev)" = "none" ] && ok "cascade: a red that is not the Wall (a lint error) never cascades" || bad "cascade: a lint-only red cascaded ($(cas_ev))"
+E2E_STUB_RIGHT=1 E2E_STUB_WALL=multiply E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku run_engine attempts
+[ "$(cas_ev)" = "none" ] && ok "cascade: off by default (no LOKI_E10_CASCADE_V0): no extra attempt" || bad "cascade: ran with the flag unset ($(cas_ev))"
+
 att_ev() { python3 -I -c '
 import json, sys
 for l in open(sys.argv[1]):
