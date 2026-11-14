@@ -10,9 +10,10 @@ import { readScopeText } from "./run_cap.ts";
 import { sealedWallCopy, sealedWallDir } from "./check_result.ts";
 
 export type MutationOutcome = "yes" | "no" | "inconclusive";
-export interface MutationProof { outcome: MutationOutcome; line: string; failed?: string[]; } // failed: the files whose run failed on the base (serially confirmed), for a caller that must know WHICH test discriminates
+export interface MutationProof { outcome: MutationOutcome; line: string; failed?: string[]; before?: ProofBefore[]; } // before (AWE-2): each failed file's own base-run output lines, for the proof card; display only, never a verdict input
+export interface ProofBefore { file: string; lines: string[]; } // failed: the files whose run failed on the base (serially confirmed), for a caller that must know WHICH test discriminates
 export interface MutationTest { runner: string; path: string; }
-export interface MutationRunner { run(dir: string, files: MutationTest[]): { pass: number; fail: number; not_run?: number; assertFail?: number }; withEnv?(env: Record<string, string>): MutationRunner; /* BASE-SEES-HEAD: the same runner with extra env (editableBaseEnv) */ runEach?(dir: string, files: MutationTest[], jobs: number, corroborate: boolean, remaining?: () => number): Promise<({ pass: number; fail: number; not_run?: number } | undefined)[]>; } // runEach: same per-file result, a few files at once
+export interface MutationRunner { lastFailLines?: Record<string, string[]>; run(dir: string, files: MutationTest[]): { pass: number; fail: number; not_run?: number; assertFail?: number }; withEnv?(env: Record<string, string>): MutationRunner; /* BASE-SEES-HEAD: the same runner with extra env (editableBaseEnv) */ runEach?(dir: string, files: MutationTest[], jobs: number, corroborate: boolean, remaining?: () => number): Promise<({ pass: number; fail: number; not_run?: number } | undefined)[]>; } // runEach: same per-file result, a few files at once
 const envJobs = (raw: string | undefined): number => { const n = Number.parseInt(raw ?? "", 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 8) : 1; }; // LOKI_MUTATION_PROOF_JOBS: default 1 = serial (as LOKI_E10_BASE_JOBS / LOKI_E10_VERIFY_JOBS). Opt-in >1 is faster but can give a false "yes" on a Wall test with side effects outside the worktree.
 export interface MutationInput {
   repoDir: string; baseSha: string; runDir: string;
@@ -117,16 +118,18 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
     if (remaining() <= 0) return np("timeout");
     const mk = (): MutationRunner => envd(typeof i.runner === "function" ? i.runner(remaining()) : i.runner), jobs = envJobs((i.env ?? process.env)["LOKI_MUTATION_PROOF_JOBS"]), first = mk();
     const par = jobs > 1 && active.length > 1 && first.runEach !== undefined;
-    const rs = par ? await first.runEach!(wt, active, jobs, false, remaining) : active.map((t) => (remaining() <= 0 ? null : mk().run(wt as string, [t])));
+    const lines: Record<string, string[]> = {}, runOne = (t: MutationTest): ReturnType<MutationRunner["run"]> => { const r = mk(), x = r.run(wt as string, [t]); const l = r.lastFailLines?.[t.path]; if (x.fail > 0 && l?.length) lines[t.path] = l; return x; }; // AWE-2: a serial run's failing output lines
+    const rs = par ? await first.runEach!(wt, active, jobs, false, remaining) : active.map((t) => (remaining() <= 0 ? null : runOne(t)));
     if (rs.some((r) => !r)) return np("timeout");
     if (par && remaining() <= 0) return np("timeout"); // concurrent path: a passed deadline is a timeout before any verdict
     // A concurrent fail is not authoritative (children share the temp worktree): it counts only if it reproduces serially.
     let sure = rs.length; // results at index >= sure are concurrent and not confirmed
-    if (par) for (let k = 0; k < rs.length; k++) if (rs[k]!.fail > 0) { if (remaining() <= 0) return np("timeout"); if (!reset()) return np("could not reset the base worktree"); rs[k] = mk().run(wt, [active[k]!]); if (rs[k]!.fail > 0) { sure = k + 1; break; } }
+    if (par) for (let k = 0; k < rs.length; k++) if (rs[k]!.fail > 0) { if (remaining() <= 0) return np("timeout"); if (!reset()) return np("could not reset the base worktree"); rs[k] = runOne(active[k]!); if (rs[k]!.fail > 0) { sure = k + 1; break; } }
     for (const r of rs) { pass += r!.pass; fail += r!.fail; notRun += r!.not_run ?? 0; }
     if (remaining() <= 0 && fail === 0) return np("timeout");
     const failed = active.filter((_, k) => k < sure && rs[k]!.fail > 0 && (!i.requireAssertion || ((rs[k] as { assertFail?: number }).assertFail ?? 0) > 0)).map((t) => t.path);
-    if (fail > 0) return { outcome: "yes", line: `${LABEL}yes`, failed };
+    const before = failed.map((file) => ({ file, lines: lines[file] ?? [] })); // [] lines: the card says "not recorded", never a paraphrase
+    if (fail > 0) return { outcome: "yes", line: `${LABEL}yes`, failed, ...(before.length ? { before } : {}) };
     if (pass > 0 && notRun === 0) return { outcome: "no", line: `${LABEL}no (warning: the Wall tests also pass on the old code)` };
     return np("the Wall command did not execute to a result");
   } catch (e) {

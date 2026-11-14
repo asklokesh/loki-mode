@@ -2066,6 +2066,17 @@ export function firstError(out: string): string { // the line naming the failing
   return l.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\b\d+(?:\.\d+)? ?(?:ms|s)\b\]?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
 }
 
+/** AWE-2 proof card: the base run's own failing output, at most `max` raw lines (ANSI and control characters stripped, secrets redacted, every `roots` prefix removed and any other
+ *  absolute path cut to its file name, so a temp worktree or home path never reaches a receipt or PR). [] when no failing line is found: the card then says "not recorded", never a paraphrase. */
+export function proofExcerpt(out: string, roots: string[] = [], max = 2): string[] {
+  let text = stripAnsi(out.slice(-65536));
+  for (const r of [...new Set(roots.filter((x) => x.length > 1))].sort((a, b) => b.length - a.length)) text = text.split(`${r}/`).join("").split(r).join(".");
+  const goOut = (l: string): string => { if (!l.startsWith("{")) return l; try { const e = JSON.parse(l) as { Action?: string; Output?: string }; return typeof e.Action === "string" ? (e.Action === "output" ? (e.Output ?? "") : "") : l; } catch { return l; } };
+  const lines = text.split("\n").map((l) => goOut(l.trim()).replace(UNSAFE_TERMINAL_CHARS_RE, " ").replace(/(^|[\s("'=])\/(?:[^\s/"')]+\/)+([^\s/"')]+)/g, "$1$2").replace(/\s+/g, " ").trim()).filter(Boolean);
+  const failing = /\b(?:\w*Error|\w*Exception|assert\w*|Assert\w*|expected|Expected|panic|FAIL|FAILED|not ok)\b/;
+  const picked: string[] = []; for (const l of lines) { if (picked.length >= max) break; if (failing.test(l) && !picked.includes(l)) picked.push(l); }
+  return picked.map((l) => redactSecrets(l).slice(0, 200));
+}
 /** L005: the stall and brief signature of one failing check: its name, its first failing line, and for a suite check (one name, many tests) the failing ids,
  *  so two different failing sets inside one suite never read as the same stall. Ids are sorted; a long list keeps 3 plus a digest of the whole set. */
 export function failureSignature(c: { name: string; first_error?: string; ids?: string[] }, suite = false): string {

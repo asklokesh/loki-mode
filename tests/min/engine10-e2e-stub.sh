@@ -64,6 +64,9 @@
 #   21. seal.ts commitStage: drop the hooks-off retry (the commit hook leg reads FAILED, git commit failed).
 #   22. seal.ts commitStage: skip the read-tree/checkout-index restore (the delivered commit holds "hook was here").
 #   23. machine.ts: return before seal on a failed commit (the signing leg reads no-receipt).
+#   34. loki-ts/src/util/receipt_surface.ts proofCardOf: go green on verdict VERIFIED instead of mutation_outcome "yes" (the never-green and states proof card unit lines fail).
+#   35. loki-ts/src/e10ext/liveline.ts CandidateView: clear the pending flag on the first test.result instead of on verify's stage.completed (the diff-early, label-until-verify and stopped-verify unit lines fail).
+#   36. loki-ts/src/e10ext/liveline.ts CandidateView: clear the pending flag on a failed verify too (the stopped-verify unit line fails).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -85,6 +88,85 @@ console.log(`method=${JSON.stringify(method)} kept=${JSON.stringify(kept)} col0=
 ' 2>&1)"
 [ "$U" = 'method=["sourceWithGlobals"] kept=["other"] col0=[] noreader=[] off=[]' ] \
     && ok "unit: an edit inside an indented method names the enclosing method; a naming @@ context is kept as is; column-0 code names nothing" || bad "unit: enclosing-declaration gave: $U"
+
+# Unit: AWE (presentation only, from source, no model). A fixture repo whose tree adds multiply() to calc.ts and a new file new.ts is fed the events a run emits:
+#   LOKI_AWE_DIFF_EARLY: implement's stage.completed prints the real candidate diff (the new file included) under "Candidate diff (candidate, not yet checked)", each verify test.result
+#     ticks in under it with the label, and the status line keeps the label until verify completes; a stopped verify never reads as checked; =0 prints none of it; on a TTY the status line is erased first.
+#   LOKI_AWE_LIVE_COST: the status line carries run elapsed and the spend so far from cost events; =0 is the old line byte for byte.
+#   LOKI_AWE_PROOF_CARD: from receipt.json only, a "yes" proof shows Before (the recorded output line) and After: passes in green; "no", inconclusive, no proof and no receipt are never green and
+#     never say "After: passes"; a "yes" whose proving test did not pass is not green either.
+#   PR body from the receipt: the proof, conventions followed and Loki's own total cost (partial, unmetered and null read as such, never $0.00, no model comparison); LOKI_AWE_LIVE_COST=0 is the old body.
+cat > "$T/awe.ts" <<'TS'
+const SRC = process.env.AWE_SRC!;
+const { LiveLine, CANDIDATE_LABEL } = await import(`${SRC}/e10ext/liveline.ts`);
+const { proofCardOf, renderAweProofCard } = await import(`${SRC}/util/receipt_surface.ts`);
+const { renderReviewerBody } = await import(`${SRC}/e10ext/reviewer_body.ts`);
+const [repo, base] = process.argv.slice(2);
+const out: Record<string, unknown> = {};
+const ev = (type: string, stage: string | null, data: Record<string, unknown> = {}) => ({ v: 1, seq: 0, ts: new Date().toISOString(), run: "r1", type, stage, data });
+const implDone = ev("stage.completed", "implement", { duration_s: 40, diff_stat: { files: 2, added: 2, removed: 0, paths: [{ path: "calc.ts", added: 1, removed: 0 }, { path: "new.ts", added: 1, removed: 0 }] } });
+const feed = (env: Record<string, string>, tty: boolean, verifyEnd: "completed" | "failed") => {
+  let buf = "", t = 1000; const ll = new LiveLine({ tty, write: (s: string) => { buf += s; }, now: () => t, columns: 200, graceS: 0, repoDir: repo, env });
+  const mid: Record<string, string | null> = {};
+  ll.onEvent(ev("stage.completed", "intake", { base_sha: base, duration_s: 1 }));
+  ll.onEvent(ev("stage.started", "implement")); t += 65_000; ll.onEvent(ev("cost", "implement", { usd: 0.04, input_tokens: 10, output_tokens: 5 }));
+  mid.impl = ll.text();
+  ll.onEvent(implDone); ll.onEvent(ev("stage.started", "verify"));
+  ll.onEvent(ev("test.result", "verify", { name: "vitest:calc.test.ts", result: "pass" }));
+  mid.verifying = ll.text();
+  if (verifyEnd === "completed") ll.onEvent(ev("stage.completed", "verify", { duration_s: 5, checks: [{ name: "vitest:calc.test.ts", result: "pass" }] }));
+  else ll.onEvent(ev("stage.failed", "verify", { duration_s: 5, reason: "limit" }));
+  ll.onEvent(ev("stage.started", "seal")); mid.after = ll.text(); ll.clear();
+  return { buf, ...mid };
+};
+const on = feed({}, false, "completed"), off = feed({ LOKI_AWE_DIFF_EARLY: "0", LOKI_AWE_LIVE_COST: "0" }, false, "completed");
+const failed = feed({}, false, "failed"), tty = feed({}, true, "completed");
+out.diff_on = [on.buf.includes(`Candidate diff (${CANDIDATE_LABEL}): 2 files, +2 -0`), on.buf.includes("+export const multiply"), on.buf.includes("+export const fresh"), on.buf.indexOf("Candidate diff") < on.buf.indexOf("check vitest:calc.test.ts: pass (candidate, not yet checked)"), on.buf.includes("Candidate checked by verify: 1 passed, 0 failed")].join(",");
+out.label_until_verify = [String(on.verifying).includes(CANDIDATE_LABEL), String(on.after).includes(CANDIDATE_LABEL)].join(",");
+out.label_failed_verify = [failed.buf.includes("Candidate checked"), failed.buf.includes("the candidate is still not checked"), String(failed.after).includes(CANDIDATE_LABEL)].join(",");
+out.diff_off = [off.buf.includes("Candidate"), off.buf.includes("check vitest"), String(off.verifying).includes(CANDIDATE_LABEL)].join(",");
+out.tty_clears = tty.buf.includes("\r\x1b[2KCandidate diff");
+out.cost_on = String(on.impl);
+out.cost_off = String(off.impl);
+const checks = [{ name: "vitest:calc.test.ts", result: "pass" }];
+const yes = { verdict: "VERIFIED", mutation_outcome: "yes", mutation_proof: "test fails without the fix: yes", mutation_before: [{ file: "calc.test.ts", lines: ["AssertionError: expected 6 to be 7"] }], checks, not_proven: ["no browser check ran"], cost: { usd: 0.3141 }, conventions: { formatted: [{ tool: "prettier", files: ["calc.ts"] }], release_note: ".changeset/x.md" } };
+const no = { verdict: "VERIFIED", mutation_outcome: "no", mutation_proof: "test fails without the fix: no (warning: the Wall tests also pass on the old code)", checks, not_proven: ["Wall tests passed without the fix (mutation proof)"], cost: { usd: null, partial_usd: 0.1, measured_sessions: 1, total_sessions: 3 } };
+const inc = { verdict: "VERIFIED", mutation_outcome: "inconclusive", mutation_proof: "test fails without the fix: inconclusive (timeout)", checks, not_proven: [], cost: { usd: 0, source: "cli-invoker-unmetered" } };
+const none = { verdict: "PARTIAL", checks, not_proven: ["a check failed"] };
+const card = (r: Record<string, unknown> | null) => renderAweProofCard(proofCardOf(r), true);
+const GREEN = "\x1b[32m";
+out.card_yes = [card(yes).includes(`${GREEN}fail-then-pass shown`), card(yes).includes("Before: calc.test.ts fails on your code with:\n    AssertionError: expected 6 to be 7\n  After: passes"), card(yes).includes("  - no browser check ran")].join(",");
+out.card_never_green = [no, inc, none, null].map((r) => { const c = card(r); return c.includes(GREEN) || c.includes("After: passes") || proofCardOf(r).green; }).join(",");
+out.card_states = [no, inc, none, null].map((r) => proofCardOf(r).state).join(",");
+out.card_after_red = proofCardOf({ ...yes, checks: [{ name: "vitest:calc.test.ts", result: "fail" }] }).green;
+const body = (receipt: Record<string, unknown> | null, env: Record<string, string> = {}) => renderReviewerBody({ verdict: "VERIFIED", draftReason: null, notProven: [], receiptPath: null, receiptSha256: null, signed: null, runId: "r", outputs: {}, receipt }, env, "0.0.0");
+const by = body(yes);
+out.pr_yes = [by.includes("## The proof\n- Before: `calc.test.ts` fails on the base code with:\n  ```text\n  AssertionError: expected 6 to be 7\n  ```\n- After: passes"), by.includes("## Conventions followed\n- Formatted with the repo's prettier: calc.ts\n- Release note added: .changeset/x.md"), by.includes("## Cost\n- Total: $0.31 (this run's own spend, from the receipt)"), /opus|cheaper|times/i.test(by.slice(by.indexOf("## Cost"), by.indexOf("## Receipt")))].join(",");
+out.pr_never_green = [no, inc, none].map((r) => { const b = body(r); return b.includes("- After: passes") || b.includes("- Before:"); }).join(",");
+out.pr_cost = [body(no).includes("- Total: partial: $0.10 for 1 of 3 sessions"), body(inc).includes("- Total: not measured (this invoker records no cost)"), body(none).includes("- Total: not measured (this run's"), body(inc).includes("$0.00")].join(",");
+out.pr_off = [body(yes, { LOKI_AWE_LIVE_COST: "0" }) === body(null), body(yes, { LOKI_AWE_PROOF_CARD: "0" }).includes("## The proof"), body(yes, { LOKI_AWE_PROOF_CARD: "0" }).includes("## Cost")].join(",");
+console.log(JSON.stringify(out));
+TS
+AWR="$T/awe-repo"; mkdir -p "$AWR"; git -C "$AWR" init -q -b main; git -C "$AWR" config user.name e2e; git -C "$AWR" config user.email e2e@example.invalid
+printf 'export const add = (a: number, b: number) => a + b;\n' > "$AWR/calc.ts"; git -C "$AWR" add calc.ts; git -C "$AWR" commit -q -m base; AWB="$(git -C "$AWR" rev-parse HEAD)"
+printf 'export const multiply = (a: number, b: number) => a * b;\n' >> "$AWR/calc.ts"; printf 'export const fresh = 1;\n' > "$AWR/new.ts"
+AW="$(cd "$ROOT/loki-ts" && AWE_SRC="$ROOT/loki-ts/src" bun "$T/awe.ts" "$AWR" "$AWB" 2>&1 | tail -1)"
+awe() { python3 -I -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2]))' "$AW" "$1" 2>/dev/null; }
+[ "$(awe diff_on)" = "true,true,true,true,true" ] && ok "awe diff early: the candidate diff (new file included) prints when implement ends, checks tick in under it, then the checked line" || bad "awe diff early: got $(awe diff_on) ($AW)"
+[ "$(awe label_until_verify)" = "true,false" ] && ok "awe honesty: the status line says 'candidate, not yet checked' until verify completes, and not after" || bad "awe label until verify: got $(awe label_until_verify)"
+[ "$(awe label_failed_verify)" = "false,true,true" ] && ok "awe honesty: a stopped verify never reads as checked and the label stays" || bad "awe stopped verify: got $(awe label_failed_verify)"
+[ "$(awe diff_off)" = "false,false,false" ] && ok "awe diff early off (LOKI_AWE_DIFF_EARLY=0): no candidate block, no ticks, no label" || bad "awe diff early off: got $(awe diff_off)"
+[ "$(awe tty_clears)" = "True" ] && ok "awe diff early on a TTY: the status line is erased before the candidate block" || bad "awe tty: got $(awe tty_clears)"
+[ "$(awe cost_on)" = '[implement] implementing  1m05s  run 1m05s  $0.04 so far  (intake done 1s)' ] && ok "awe live cost: the status line carries stage, run elapsed and the spend so far" || bad "awe live cost: got '$(awe cost_on)'"
+[ "$(awe cost_off)" = '[implement] implementing  1m05s  (intake done 1s)' ] && ok "awe live cost off (LOKI_AWE_LIVE_COST=0): the old status line" || bad "awe live cost off: got '$(awe cost_off)'"
+[ "$(awe card_yes)" = "true,true,true" ] && ok "awe proof card: a yes proof shows Before with the recorded output line, After: passes, in green, and the not-proven list" || bad "awe proof card yes: got $(awe card_yes)"
+[ "$(awe card_never_green)" = "false,false,false,false" ] && ok "awe honesty: a no, inconclusive, absent or unsealed proof never renders green or says After: passes" || bad "awe proof card never green: got $(awe card_never_green)"
+[ "$(awe card_states)" = "not shown,not run,not run,not run" ] && ok "awe proof card: no reads 'not shown', inconclusive and absent read 'not run'" || bad "awe proof card states: got $(awe card_states)"
+[ "$(awe card_after_red)" = "False" ] && ok "awe honesty: a yes proof whose proving test did not pass after the change is not green" || bad "awe proof card after red: got $(awe card_after_red)"
+[ "$(awe pr_yes)" = "true,true,true,false" ] && ok "awe PR body from the receipt: the proof, conventions followed and Loki's own total cost, with no model comparison" || bad "awe PR body: got $(awe pr_yes)"
+[ "$(awe pr_never_green)" = "false,false,false" ] && ok "awe honesty: a no, inconclusive or absent proof never writes Before/After into the PR body" || bad "awe PR body never green: got $(awe pr_never_green)"
+[ "$(awe pr_cost)" = "true,true,true,false" ] && ok "awe PR cost: partial, unmetered and null read as such, never \$0.00" || bad "awe PR cost: got $(awe pr_cost)"
+[ "$(awe pr_off)" = "true,false,true" ] && ok "awe PR body off: LOKI_AWE_LIVE_COST=0 is the old body; LOKI_AWE_PROOF_CARD=0 drops only the proof section" || bad "awe PR body off: got $(awe pr_off)"
 
 echo "TEST: engine10 end to end on the stub provider"
 

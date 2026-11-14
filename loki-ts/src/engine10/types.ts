@@ -200,6 +200,10 @@ export interface Receipt {
   review?: { provider: string | null; vendor_differs: boolean };
   /** T2: the counted outcome for METRICS: "yes" | "no" | "inconclusive". */
   mutation_outcome?: "yes" | "no" | "inconclusive";
+  /** AWE-2: on a "yes" proof only, each proving test file's own base-run output lines (redacted, local paths cut); omitted otherwise. Display only (proof card, PR body). */
+  mutation_before?: { file: string; lines: string[] }[];
+  /** AWE-3: repo conventions the run followed (the repo's formatter on rewritten files, the release note added); omitted when none. Display only. */
+  conventions?: { formatted?: { tool: string; files: string[] }[]; release_note?: string };
   /** FC-21b: set only when implement was stopped at its time limit; omitted otherwise so other receipts stay byte-stable. */
   /** E5: each implement or fix session the harness stopped at its Haiku turn or token cap, or a fix with no product edit by turn 8 ("fix round 1: no_product_edit limit 8 at turn 8, 31000 new tokens"). Omitted when none fired. */
   session_caps?: string[];

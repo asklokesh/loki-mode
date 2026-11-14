@@ -1,7 +1,7 @@
 // GitHub receipt comment. The PR body already carries the same facts (e10ext/reviewer_body.ts).
 // This is the short comment a reviewer sees without opening the body. No new receipt format.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pushArgv } from "../engine10/types.ts";
 import { run } from "./shell.ts";
@@ -37,6 +37,40 @@ export function renderProofCard(i: {
   const proof = i.mutationProof ?? "fail-to-pass: no proof line on the receipt";
   const sha = i.sha ? `sha256:${i.sha}` : "receipt not sealed";
   return [`LOKI ${verdict}`, `${cost} in ${secs}s, ${n} checks run outside the model`, proof, sha].join("\n");
+}
+
+/** AWE knobs (LOKI_AWE_DIFF_EARLY, LOKI_AWE_PROOF_CARD, LOKI_AWE_LIVE_COST): presentation only, on by default, "0" turns one off. */
+export const aweOn = (name: "LOKI_AWE_DIFF_EARLY" | "LOKI_AWE_PROOF_CARD" | "LOKI_AWE_LIVE_COST", env: NodeJS.ProcessEnv = process.env): boolean => (env[name] ?? "").trim() !== "0";
+
+/** AWE-2: what the proof card says, read from receipt.json alone. `green` is true only for a "yes" fail-then-pass proof whose every proving file also passed in verify;
+ *  a "no", an inconclusive proof or a receipt with no proof line ("not run") is never green. */
+export interface ProofCard { green: boolean; state: "shown" | "not shown" | "not run"; why: string; before: { file: string; lines: string[]; after: string }[]; notProven: string[]; notProvenMore: number }
+const MAX_CARD_NOT_PROVEN = 8;
+export function proofCardOf(receipt: Record<string, unknown> | null | undefined): ProofCard {
+  const r = receipt ?? {}, outcome = r["mutation_outcome"], line = typeof r["mutation_proof"] === "string" ? (r["mutation_proof"] as string) : "";
+  const checks = Array.isArray(r["checks"]) ? (r["checks"] as { name?: unknown; result?: unknown }[]) : [];
+  const np = (Array.isArray(r["not_proven"]) ? (r["not_proven"] as unknown[]) : []).filter((x): x is string => typeof x === "string").map((x) => x.replace(/[\x00-\x1f\x7f]+/g, " ").trim()).filter(Boolean);
+  const notProven = np.slice(0, MAX_CARD_NOT_PROVEN), notProvenMore = Math.max(0, np.length - MAX_CARD_NOT_PROVEN);
+  const afterOf = (file: string): string => { const c = checks.find((k) => typeof k.name === "string" && k.name.endsWith(`:${file}`)); return typeof c?.result === "string" ? c.result : "not recorded"; };
+  const rows = (Array.isArray(r["mutation_before"]) ? (r["mutation_before"] as { file?: unknown; lines?: unknown }[]) : []).filter((b) => typeof b.file === "string").map((b) => ({ file: b.file as string, lines: (Array.isArray(b.lines) ? b.lines : []).filter((l): l is string => typeof l === "string"), after: afterOf(b.file as string) }));
+  const reason = /\(([^()]*)\)\s*$/.exec(line)?.[1];
+  if (outcome === "yes" && rows.length > 0 && rows.every((b) => b.after === "pass")) return { green: true, state: "shown", why: "", before: rows, notProven, notProvenMore };
+  if (outcome === "yes") return { green: false, state: "not run", why: rows.length === 0 ? "the receipt names no test file for the proof" : "a proving test did not pass after the change", before: [], notProven, notProvenMore };
+  if (outcome === "no") return { green: false, state: "not shown", why: "the new tests also pass on your old code, so they do not show the fix", before: [], notProven, notProvenMore };
+  return { green: false, state: "not run", why: receipt == null ? "no trusted receipt was sealed" : outcome === "inconclusive" ? `inconclusive${reason ? `: ${reason}` : ""}` : "the fail-then-pass proof runs only on a VERIFIED run", before: [], notProven, notProvenMore };
+}
+/** receipt.json at a sealed path, or null when absent or unreadable (the card then reads "not run"). */
+export function readReceiptAt(path: unknown): Record<string, unknown> | null {
+  if (typeof path !== "string" || !path) return null;
+  try { const r: unknown = JSON.parse(readFileSync(path, "utf8")); return typeof r === "object" && r !== null && !Array.isArray(r) ? (r as Record<string, unknown>) : null; } catch { return null; }
+}
+/** Terminal proof card, printed after the summary. Green (when color is on) only for a shown proof. */
+export function renderAweProofCard(c: ProofCard, color = false): string {
+  const g = (s: string): string => (color && c.green ? `\x1b[32m${s}\x1b[0m` : s);
+  const L = [c.green ? `Proof: ${g("fail-then-pass shown")}` : `Proof: ${c.state} (${c.why})`];
+  for (const b of c.before) { L.push(b.lines.length ? `  Before: ${b.file} fails on your code with:` : `  Before: ${b.file} fails on your code (output line not recorded)`, ...b.lines.map((l) => `    ${l}`), `  After: passes`); }
+  L.push(c.notProven.length ? "Not proven:" : "Not proven: none listed on the receipt", ...c.notProven.map((n) => `  - ${n}`), ...(c.notProvenMore ? [`  - (+${c.notProvenMore} more in receipt.json)`] : []));
+  return L.join("\n");
 }
 
 /** Structured PR comment: outcome, receipt hash, verify command, PROVEN vs NOT PROVEN. */

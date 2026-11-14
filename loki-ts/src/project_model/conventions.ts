@@ -333,6 +333,14 @@ const FEAT = /^(?:feat|feature|add|adds|added|support|allow|introduce|implement)
 export const fragmentWriterOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_SCAFFOLD);
 /** The one line the receipt and the PR body carry whenever the writer added a fragment, so the write is never silent. */
 export const fragmentNoticeLine = (path: string): string => `Loki added ${path} as the release note for this change; delete it if this change needs no release note (LOKI_E10_SCAFFOLD=0 turns this off).`;
+/** AWE-3: the repo conventions this run followed, for the receipt and the PR body: the repo's own formatter on the files it rewrote (commit stage format records) and the release note the
+ *  fragment writer added. {} when neither ran, so a receipt without them stays byte-stable. Display only: no verdict reads it. */
+export function conventionsBlock(o: Partial<Record<string, Record<string, unknown>>>): { conventions?: { formatted?: { tool: string; files: string[] }[]; release_note?: string } } {
+  const recs = Array.isArray(o.commit?.["format"]) ? (o.commit!["format"] as { tool?: unknown; formatted?: unknown }[]) : [];
+  const formatted = recs.flatMap((r) => (typeof r.tool === "string" && Array.isArray(r.formatted) && r.formatted.length > 0 ? [{ tool: r.tool, files: r.formatted.filter((f): f is string => typeof f === "string") }] : []));
+  const note = (o.implement?.["scaffold"] as { path?: unknown } | undefined)?.path;
+  return formatted.length || typeof note === "string" ? { conventions: { ...(formatted.length ? { formatted } : {}), ...(typeof note === "string" ? { release_note: note } : {}) } } : {};
+}
 
 /** The towncrier types a repo declares ([[tool.towncrier.type]] directory keys), else towncrier's defaults. */
 function towncrierTypes(repoDir: string): string[] {
