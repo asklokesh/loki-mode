@@ -1928,6 +1928,14 @@ export function spawnCollect(cmd: string, args: string[], o: { cwd?: string; env
 // E-98a B2: .venv, then venv, then an in-repo (realpath under repoDir) VIRTUAL_ENV are "project";
 // else <fallback> on PATH, or <lastResort> literal, is "system" -- never proven against repo sources.
 type Interpreter = "project" | "system";
+/** The other ways to start a Python tool the resolved command could not start, in order: `uvx <tool>` (uv's tool runner, no global install; unpinned, the newest
+ *  release) and the repo's own virtualenv `python -m <tool>`. Shared by verify's linter (lintFallbacks) and the commit-stage formatter (FF), so both resolve alike. */
+export function toolFallbacks(repoDir: string, tool: string, env: NodeJS.ProcessEnv = process.env): [string, string[]][] {
+  const out: [string, string[]][] = [];
+  if (Bun.which("uvx", { PATH: env["PATH"] ?? "" })) out.push(["uvx", [tool]]);
+  for (const v of [".venv", "venv"]) { const py = join(repoDir, v, "bin", "python"); if (existsSync(py)) { out.push([py, ["-m", tool]]); break; } }
+  return out;
+}
 export function resolveTool(repoDir: string, bin: string, fallback: string, lastResort = fallback): [string, Interpreter, string[]] {
   const inRepo = (p: string): boolean => { try { const r = relative(realpathSync(repoDir), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
   const venvEnv = process.env["VIRTUAL_ENV"], onPath = (b: string): string | null => Bun.which(b, { PATH: process.env["PATH"] ?? "" }); // Bun.which caches the startup PATH unless given the live one

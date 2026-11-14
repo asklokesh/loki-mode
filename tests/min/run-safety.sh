@@ -70,6 +70,7 @@
 #  SG7. commit_filter.ts commitUnsealedWork: drop the rmSync loop; the run-created lockfile stays untracked after the checkout. taskWantsLockChange: re-add the bare `lock` noun; 'refresh the page when the lock icon is clicked' ships its lockfile.
 #  NRM2. repo_profile.ts detectFormatters: drop the biome entry; the formatter check fails.
 #  J1. repo_profile.ts runFormattersRecord: drop the base-clean comparison; the J1 formatter leg formats b.py and fails.
+#  FF1. repo_profile.ts pickRunnable: `return fm;` first (never try a fallback); the FF leg formats nothing in both repos and fails.
 #  J2. commit_filter.ts commitUnsealedWork: exempt Wall files from the churn reset again; the J2 WIP commit leg commits loki_wall_w.test.ts by default.
 #  10. verify.ts sameErrors: excuse every known-red id whatever its first error; the delivery check fails.
 #  11. loki-ts/src/engine10/machine.ts: break after one Wall-only round whatever wallSignature says; the
@@ -526,6 +527,33 @@ const off = formatChangedRecord(d, [{ st: "M", f: "a.py" }], new Set(), { ...pro
 out.push(off.formatted.length, rd("a.py").includes("BAD"), String(off.records[0]?.error ?? "").startsWith("formatter not runnable: ruff"));
 console.log(out.join(" | "));' 2>&1)"
 [ "$FVR" = 'a.py+c.py | x = ok | true | c = ok | ruff | true | [{"file":"b.py","why":"base text is not formatter-clean"}] | 0 | true | true' ] && ok "J1 formatter: the repo venv's ruff formats the base-clean modified file and the new file, leaves a file already unformatted on base alone with the reason, and the record names the venv binary; =0 spawns the bare ruff (not on PATH), formats nothing and records why" || bad "J1 formatter gave: $FVR"
+# FF LOKI_E10_FORMAT_FALLBACK (default on, =0 opts out): the formatter resolves like verify's linter, fallbacks included. Neither repo has a ruff the resolved command can start:
+# (uvrun) uv.lock plus a `uv` whose `uv run -- ruff` exits 2 (ruff not in the task venv); (bare) no venv, no uv, no ruff on PATH. A fake `uvx` runs ruff. Both use `uvx ruff format`,
+# format the base-clean file and the new file, leave the file unformatted on base alone, and record the fallback; =0 formats nothing.
+FF="$T/fmtfb"; rm -rf "$FF"; mkdir -p "$FF/bin"
+printf '#!/bin/sh\n[ "$1" = ruff ] || exit 3; shift\n[ "$1" = format ] || exit 2; shift\nif [ "$1" = --stdin-filename ]; then perl -pe "s/BAD/ok/g"; exit 0; fi\nfor f in "$@"; do perl -pi -e "s/BAD/ok/g" "$f"; done\n' > "$FF/bin/uvx"; chmod +x "$FF/bin/uvx"
+for kind in uvrun bare; do
+    R="$FF/$kind"; mkdir -p "$R"; git init -q -b main "$R"
+    printf '[tool.ruff]\nline-length = 88\n' > "$R/pyproject.toml"; printf 'x = 1\n' > "$R/a.py"; printf 'y = BAD\n' > "$R/b.py"
+    [ "$kind" = uvrun ] && { printf 'version = 1\n' > "$R/uv.lock"; mkdir -p "$FF/uvbin"; printf '#!/bin/sh\necho "error: Failed to spawn: ruff" >&2\nexit 2\n' > "$FF/uvbin/uv"; chmod +x "$FF/uvbin/uv"; }
+    git -C "$R" add -- . && git -C "$R" -c user.name=f -c user.email=f@x commit -q -m base
+    printf 'x = BAD\n' > "$R/a.py"; printf 'y = BAD\nz = BAD\n' > "$R/b.py"; printf 'c = BAD\n' > "$R/c.py"
+done
+FFP="$FF/bin:$FF/uvbin:/usr/bin:/bin"
+FFR="$(FF="$FF" ROOT="$ROOT" PATH="$FFP" "$(command -v bun)" --no-env-file --config=/dev/null -e '
+const { formatChangedRecord } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts"), fs = await import("node:fs"), cp = await import("node:child_process");
+const st = [{ st: "M", f: "a.py" }, { st: "M", f: "b.py" }, { st: "A", f: "c.py" }], out = [];
+for (const kind of ["uvrun", "bare"]) {
+  const d = process.env.FF + "/" + kind, base = cp.execFileSync("git", ["-C", d, "rev-parse", "HEAD"]).toString().trim(), rd = (f) => fs.readFileSync(d + "/" + f, "utf8");
+  const r = formatChangedRecord(d, st, new Set(), { ...process.env }, base), rec = r.records[0] ?? {};
+  out.push(`${kind}: ${r.formatted.join("+")} ${rd("b.py").includes("BAD")} ${rec.cmd} ${rec.fallback ? "fallback" : "none"} ${JSON.stringify(rec.skipped)}`);
+  fs.writeFileSync(d + "/a.py", "x = BAD\n");
+  const off = formatChangedRecord(d, [{ st: "M", f: "a.py" }], new Set(), { ...process.env, LOKI_E10_FORMAT_FALLBACK: "0" }, base);
+  out.push(`${kind} off: ${off.formatted.length} ${rd("a.py").includes("BAD")}`);
+}
+console.log(out.join(" | "));' 2>&1)"
+[ "$FFR" = 'uvrun: a.py+c.py true uvx ruff format fallback [{"file":"b.py","why":"base text is not formatter-clean"}] | uvrun off: 0 true | bare: a.py+c.py true uvx ruff format fallback [{"file":"b.py","why":"base text is not formatter-clean"}] | bare off: 0 true' ] && ok "FF formatter: when uv run (no ruff in the venv) or a bare ruff cannot start, the linter's uvx fallback formats the base-clean and new files, the file unformatted on base stays untouched, the fallback is recorded; =0 formats nothing ($FFR)" || bad "FF formatter fallback gave: $FFR"
+grep -q 'return lintMissingDiscloseOn(env) ? toolFallbacks(repoDir, tool, env) : \[\];' "$ROOT/loki-ts/src/engine10/stages/verify.ts" && grep -q 'toolFallbacks(repoDir, "ruff", env).map' "$ROOT/loki-ts/src/runner/repo_profile.ts" && ok "FF wiring: verify's linter and the commit-stage formatter share util/check_result.ts toolFallbacks" || bad "FF wiring: the linter and the formatter do not share toolFallbacks"
 grep -q 'fmtRec = formatChangedRecord(ctx.repoDir, staged, dropped, process.env, ctx.baseSha), fmt = fmtRec.formatted;' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'const format = fmtRec.records.length ? { format: fmtRec.records } : {};' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "J1 wiring: the commit stage formats with the base commit and records the formatter pass on its data" || bad "J1 wiring: the commit stage does not pass the base or record the formatter pass"
 
 # A workspace whose package vitest config merges the root config, and the root config sets `projects` (zod): `cd packages/a && npx vitest run <file>` never starts

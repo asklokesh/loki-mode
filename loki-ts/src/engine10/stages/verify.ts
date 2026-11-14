@@ -35,7 +35,7 @@ export interface VerifyCheck {
   owner?: "harness"; skip_code?: SkipCode; /* machine-readable twin of the "<cmd> not found on PATH" reason */ // FC-02: the runner could not load or collect; not_run, never a code failure
 }
 export { runnerCmd, commandFor, firstError } from "../../util/check_result.ts"; // one owner: check_result.ts (test invocation resolver and failure-line normalizer)
-import { type SkipCode, changedSymbols, firstFileLineAnchor, runnerCmd, commandFor, firstError, resolveTool, spawnFailedTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
+import { toolFallbacks, type SkipCode, changedSymbols, firstFileLineAnchor, runnerCmd, commandFor, firstError, resolveTool, spawnFailedTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
 /** TEN-QUALITY-01: stage-local failure excerpts keyed by check object; never on VerifyCheck, never emitted, never set for a held-out check. */
 const excerpts = new WeakMap<object, string>();
 export const checkExcerpt = (c: VerifyCheck): string => excerpts.get(c) ?? ""; // the patch protocol's repair digest (features/patch_protocol.ts)
@@ -461,11 +461,7 @@ async function tscOnBase(ctx: RunContext, groupCwd: string, signal: AbortSignal,
  *  `uvx <tool>` (uv's tool runner, no global install) and the repo's own virtualenv `python -m <tool>`. [] when off or none applies. */
 export const lintMissingDiscloseOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_LINT_MISSING_DISCLOSE"] ?? "").trim());
 export function lintFallbacks(repoDir: string, tool: string, env: NodeJS.ProcessEnv = process.env): [string, string[]][] {
-  if (!lintMissingDiscloseOn(env)) return [];
-  const out: [string, string[]][] = [];
-  if (Bun.which("uvx", { PATH: env["PATH"] ?? "" })) out.push(["uvx", [tool]]);
-  for (const v of [".venv", "venv"]) { const py = join(repoDir, v, "bin", "python"); if (existsSync(py)) { out.push([py, ["-m", tool]]); break; } }
-  return out;
+  return lintMissingDiscloseOn(env) ? toolFallbacks(repoDir, tool, env) : []; // util/check_result.ts: the one fallback list, shared with the commit-stage formatter
 }
 export async function runLintChecks(
   ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts & { api?: ProjectApi | null; keep?: ReadonlySet<string> } = {},
