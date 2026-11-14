@@ -72,6 +72,7 @@ export const onlyFullSuiteRed = (d: Obj | undefined): boolean => Array.isArray(d
 /** LOKI_E10_SUITE_FIX_SKIP (default on; =0/off/false opts out): no fix round at all when every blocking group is a full-suite or startup failure (onlyFullSuiteRed),
  *  no failing full-suite id names a file the change edited, no held-out check failed, and a targeted test of the change ran and passed. On the v11.137 Haiku bench arms, 21 such first rounds turned none of their runs
  *  green (18 made no edit). The skip is a NOT PROVEN line on the receipt and the verify stays red, so such a run is never VERIFIED. */
+export const haikuIndepFixOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_HAIKU_INDEP_FIX"] ?? "").trim());
 export const suiteFixSkipEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SUITE_FIX_SKIP"] ?? "").trim());
 export const SUITE_FIX_SKIP_NOTE = "fix round skipped: only full-suite failures remained while the change's own targeted tests passed, so those failures are NOT PROVEN unrelated to the change (LOKI_E10_SUITE_FIX_SKIP=0 runs the round)";
 export const suiteOnlyRed = (d: Obj | undefined): boolean => {
@@ -368,8 +369,12 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
         let noopSig: string | null = null; // anti-loop: the verify signature that fed the last fix round that left the tree unchanged
         const suiteSkip = suiteFixSkipEnabled() && !fatal && !capHit && outputs.implement?.exit === "done" && hasFailures(outputs.verify) && suiteOnlyRed(outputs.verify);
+        // INDEP-GATE LOKI_E10_HAIKU_INDEP_FIX (default on, =0 opts out): a Haiku run gets no fix round at all unless an independent check failed (verify.ts independent_fail:
+        // the Wall, a targeted test the diff touches, or a base-green test now red). dev2: rounds ran on 11 of 20 Loki-Haiku runs and flipped none of the losses. Fire marker: verify.fix_gate.
+        const indepSkip = haikuIndepFixOn() && !fatal && !capHit && hasFailures(outputs.verify) && outputs.verify?.independent_fail === false && /haiku/i.test(`${String(outputs.implement?.model ?? "")} ${ctx.model}`);
+        if (indepSkip) { outputs.verify = { ...outputs.verify, fix_gate: "haiku: no independent check failed, no fix round" }; ctx.emit("loop.repeat", "fix", { reason: "haiku: no independent check failed (LOKI_E10_HAIKU_INDEP_FIX)", round: 0, skipped: true }); }
         if (suiteSkip) { outputs.verify = { ...outputs.verify, not_proven: [...(Array.isArray(outputs.verify?.not_proven) ? outputs.verify.not_proven : []), SUITE_FIX_SKIP_NOTE] }; ctx.emit("loop.repeat", "fix", { reason: SUITE_FIX_SKIP_NOTE, round: 0, skipped: true }); }
-        for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && !((round > 1 || suiteSkip) && onlyFullSuiteRed(outputs.verify)) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
+        for (let round = 1; !indepSkip && round <= MAX_FIX_ROUNDS + extraRounds && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && !((round > 1 || suiteSkip) && onlyFullSuiteRed(outputs.verify)) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
           const wallBefore = wallSignature(outputs, ctx.repoDir);
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;

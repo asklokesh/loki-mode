@@ -183,12 +183,12 @@ export const coverageFoldLines = (env = process.env): string[] => coverageMode(e
 // Off: the fold brief is byte-identical to the coverage map alone, no resume runs and the receipt carries no named_unchanged key.
 export const namedSitesEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff((env["LOKI_E10_NAMED_SITES"] ?? "").trim().toLowerCase());
 export const NAMED_SITE_LINE = "A site the task names stays in scope even where the task only says it may need the change: change it, or, before the last line, write `SITE <path>:<line>: unchanged - <why>` for it, where the reason is about the code (a hedge in the task is not a reason).";
-export interface NamedSite { symbol: string; path: string; line: number }
+export interface NamedSite { symbol: string; path: string; line: number; instead_of?: string /* SRC-SITES fire marker */ }
 /** The named sites: the task's site atoms that resolve to a definition in the repo (resolveSites' one-hop callees are not named, so they are dropped). */
 export function namedSites(task: string, repoDir: string): NamedSite[] {
   try {
     const atoms = extractSpecAtoms(task).filter((a) => a.kind === "site"), names = new Set(atoms.map((a) => a.text));
-    return resolveSites(atoms, repoDir).filter((s) => names.has(s.symbol)).map((s) => ({ symbol: s.symbol, path: s.file, line: s.line }));
+    return resolveSites(atoms, repoDir).filter((s) => names.has(s.symbol)).map((s) => ({ symbol: s.symbol, path: s.file, line: s.line, ...(s.instead_of ? { instead_of: s.instead_of } : {}) }));
   } catch { return []; }
 }
 const HEDGE_REASON = /\b(?:may|might|could)\s+(?:also\s+)?need\b|\bout of (?:the )?scope\b|\bnot (?:explicitly |strictly )?required\b|\boptional\b|\bhedg/i;

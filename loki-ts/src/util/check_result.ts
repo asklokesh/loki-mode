@@ -50,6 +50,9 @@ const FAIL_EVIDENCE = /\[(?:build|setup) failed\]|^--- FAIL|^[\w./-]+\.go:\d+:\d
 const GO_FAIL_EVIDENCE = /^FAIL\t\S+\t[\d.]+s$|^panic: /m;
 export const UNMEASURED_REASON = "executed count unmeasured (Loki could not parse the runner summary, harness-owned)";
 
+/** PRETTY LOKI_E10_PYTEST_PRETTY (default on, =0 opts out): a repo that loads pytest-pretty (pydantic) prints "Results (0.66s):" then "   271 passed", "    25 skipped"
+ *  and no "N passed in Xs" line, so every pytest check read "executed count unmeasured". The block counts only when it ends the output and every line in it is a count. */
+export const pytestPrettyOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PYTEST_PRETTY"] ?? "").trim());
 /** Executed-test count from the runner's FINAL summary only (node TAP/spec trailer, pytest last line, jest/vitest "Tests"
  *  line, cargo "test result:", go "[no test"), never test names or captured stdout above it; null = no summary. 0 = empty or
  *  all skipped, never a pass (A-111). Node counts a testless file as one pseudo-test named after the file: discounted only when its name is the path under test (A-111b). */
@@ -64,6 +67,10 @@ export function ran(raw: string, path?: string, ok?: boolean): number | null {
   const g = goCount(out, ok);
   if (g !== undefined) return g;
   const tail = tailLines(out);
+  if (pytestPrettyOn()) { // PRETTY: pytest-pretty replaces pytest's own "N passed in Xs" with a "Results (Xs):" block of one count per line, read from the last lines only
+    const k = tail.map((x) => x.trim()).lastIndexOf(tail.map((x) => x.trim()).filter((x) => /^Results \([\d.]+m?s\):$/.test(x)).pop() ?? "\u0000");
+    if (k >= 0) { const body = tail.slice(k + 1).map((x) => /^\s+(\d+) (passed|failed|errors?|skipped|xfailed|xpassed|deselected|warnings?)$/.exec(x)); if (body.length && body.every(Boolean)) return body.reduce((t, m) => t + (/^(?:passed|failed|errors?)$/.test(m![2]!) ? +m![1]! : 0), 0); }
+  }
   const l = tail.filter((x) => /^(?:=+ )?(?:\d+ \w+.*|no tests ran) in [\d.]+s|^\s*Tests?:?\s+\d|^No tests found/.test(x) && (!/^\s*Tests?:?\s+\d/.test(x) || tail.some((y) => /^\s*Test (?:Files|Suites):?\s+\d/.test(y)))).pop(); // forge guard: a bare "Tests: 5 passed" needs its "Test Files|Suites" sibling in the trailer
   if (!l) return null;
   return /^(?:=+ )?no tests (?:ran|found)|^No tests found|skipped/i.test(l) || /\d+ (?:passed|failed|errors?)/.test(l) ? n(l, /(\d+) passed/) + n(l, /(\d+) failed/) + n(l, /(\d+) errors?/) : null;
