@@ -53,8 +53,11 @@
 #   16. supervisor.ts: do not export the default pin (the default leg reads the provider default and no --model).
 #   17. seal.ts: drop model_source (every default-model leg reads absent).
 #   18. claude_model.ts chooseSessionModel: ignore LOKI_DEFAULT_SESSION_MODEL=provider (the provider leg reads sonnet).
-#   20. claude_model.ts chooseSessionModel: drop the LOKI_ROUTER check (the router leg reads source default; auto-route.sh's small, hard, wall legs run on sonnet).
 #   19. claude_model.ts DEFAULT_SESSION_MODEL changed to haiku without autonomy/route.sh (the newcomer-path acc-156 route leg reads ts haiku, route sonnet).
+#   20. claude_model.ts chooseSessionModel: drop the LOKI_ROUTER check (the router leg reads source default; auto-route.sh's small, hard, wall legs run on sonnet).
+#   21. seal.ts commitStage: drop the hooks-off retry (the commit hook leg reads FAILED, git commit failed).
+#   22. seal.ts commitStage: skip the read-tree/checkout-index restore (the delivered commit holds "hook was here").
+#   23. machine.ts: return before seal on a failed commit (the signing leg reads no-receipt).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -96,6 +99,7 @@ run_engine() {
     git -C "$REPO" config user.email e2e@example.invalid
     git -C "$REPO" add calc.ts calc.test.ts bunfig.toml
     git -C "$REPO" commit -q -m base
+    if [ -n "${E2E_PREP:-}" ]; then "$E2E_PREP" "$REPO"; fi # a leg's extra repo setup (hooks, config) after the base commit
     KEY="$d/k.pem"
     STUBENV="$d/stub-env.log"
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY \
@@ -183,6 +187,28 @@ for leg in "default||" "flag|--session-model haiku|" "env||LOKI_MODEL_DEVELOPMEN
     esac
 done
 unset dm_name dm_flag dm_env DM
+
+# acc-160 COMMIT-HOOK-BYPASS: a repo's own commit hooks never fail Loki's delivery. msw: the session's `pnpm run build` installed simple-git-hooks,
+# whose commit-msg commitlint rejected "loki: ..." and ended the run "git commit failed" with no receipt. The prep installs a pre-commit hook that
+# rewrites and restages calc.ts (lint-staged style) and a commit-msg hook that rejects a "loki:" subject.
+hook_prep() {
+    printf '#!/bin/sh\nprintf "// hook was here\\n" >> calc.ts && git add calc.ts\n' > "$1/.git/hooks/pre-commit"
+    printf '#!/bin/sh\nif head -1 "$1" | grep -q "^loki:"; then echo "commitlint: type must be one of [feat, fix]" >&2; exit 1; fi\n' > "$1/.git/hooks/commit-msg"
+    chmod +x "$1/.git/hooks/pre-commit" "$1/.git/hooks/commit-msg"
+}
+sign_prep() { git -C "$1" config commit.gpgSign true; git -C "$1" config gpg.program false; } # a signing setup that cannot sign: not a hook, so no bypass
+hk_np() { python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r.get("verdict"), "|", " ".join(n for n in r.get("not_proven", []) if "commit" in n)[:300])' "$RUNDIR/receipt.json" 2>/dev/null || echo "no-receipt"; }
+E2E_PREP=hook_prep run_engine done
+HK="$(hk_np)"
+case "$HK" in "VERIFIED | "*"the repo's own commit hook rejected Loki's commit (commitlint: type must be one of [feat, fix])"*) ok "commit hook: a hook that rejects the message is bypassed for Loki's commit, VERIFIED, and the receipt says so" ;; *) bad "commit hook: rejecting hook gave '$HK' (rc $RC)" ;; esac
+grep -q "hook was here" "$REPO/calc.ts" && bad "commit hook: the pre-commit hook's restaged edit reached the delivered commit" || ok "commit hook: the delivered commit holds the verified tree, not the hook's restaged edit"
+git -C "$REPO" log -1 --format=%s | grep -q "^loki: " && ok "commit hook: the delivered commit keeps Loki's own message" || bad "commit hook: delivered message '$(git -C "$REPO" log -1 --format=%s)'"
+E2E_PREP=hook_prep LOKI_E10_COMMIT_HOOK_BYPASS=0 run_engine done
+[ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -q "git commit failed" && [ ! -f "${RUNDIR:-/nonexistent}/receipt.json" ] && ok "commit hook: LOKI_E10_COMMIT_HOOK_BYPASS=0 keeps the old stop (git commit failed, no receipt)" || bad "commit hook: knob off gave rc $RC, receipt $( [ -f "${RUNDIR:-/x}/receipt.json" ] && echo yes || echo no)"
+E2E_PREP=sign_prep run_engine done
+HK="$(hk_np)"
+case "$HK" in "FAILED | git commit failed: "*) ok "commit hook: a failure no hook caused (signing) is not bypassed, and the run still writes a FAILED receipt naming the git error" ;; *) bad "commit hook: signing failure gave '$HK' (rc $RC)" ;; esac
+unset -f hook_prep sign_prep
 
 E2E_STUB_USAGE=10 run_engine done
 cat > "$T/cap.py" <<'PY'

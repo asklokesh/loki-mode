@@ -36,7 +36,7 @@ import { patchReceipt } from "../../features/patch_protocol.ts";
 import { collapseNotProven } from "../../util/term_width.ts";
 import { consultNotes, neverStopNotes } from "../../features/opus_consult.ts"; import { namedUnchangedNote, namedUnchangedOf } from "../../util/conflict_resume.ts";
 import { tournamentReceiptBlock } from "../../features/tournament.ts"; import { attemptsReceiptBlock } from "../../features/attempts.ts"; import { nrdReceiptBlock, settleNrd } from "../../features/no_regression.ts";
-import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, splitDeclaredAdvisories } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { fragmentNoticeLine, misplacedNamedNotes, releaseNoteSkipBlock } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
+import { commitHookBypassOn, type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, splitDeclaredAdvisories } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { fragmentNoticeLine, misplacedNamedNotes, releaseNoteSkipBlock } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
 const SYSTEM_INTERP = "tests ran on the system interpreter", SYSTEM_INTERP_SUFFIX = " (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)"; // verify.ts writes the note
 
 export const SIGNING_UNAVAILABLE = "receipt signing unavailable (no usable signing key: invalid key or unwritable ~/.loki/keys)", AGENT_ONLY_REASON = "only agent-authored tests executed (no agent-independent proof)", WALL_GREEN_ON_BASE_REASON = "Wall green on base: no Wall test discriminates the change"; // TEN-GATES-02
@@ -148,10 +148,17 @@ export { canonicalJson, kidOf, loadSigningKey, signReceipt }; // moved to util/r
 // Worker side (token withheld, the agent already has exec): the seal add keeps the repo's content drivers, and the seal commit also keeps the user's hooks and commit signing, so pre-commit scanners
 // and "require signed commits" still apply. safeGitRun strips the token from the env either way.
 const g = (ctx: RunContext) => (a: string[]): Promise<{ out: string; code: number }> => git(ctx, a);
-async function git(ctx: RunContext, args: string[], keep: SafeGitKeep = {}): Promise<{ out: string; code: number }> {
-  const r = await safeGitRun(ctx.repoDir, args, { timeoutMs: 20000, ...keep });
-  return { out: r.stdout, code: r.exitCode };
+async function git(ctx: RunContext, args: string[], keep: SafeGitKeep = {}, timeoutMs = 20000): Promise<{ out: string; code: number; err: string }> {
+  const r = await safeGitRun(ctx.repoDir, args, { timeoutMs, ...keep });
+  return { out: r.stdout, code: r.exitCode, err: String(r.stderr ?? "") };
 }
+/** COMMIT-HOOK-BYPASS (LOKI_E10_COMMIT_HOOK_BYPASS, default on, =0 opts out): a repo's own commit hooks (commitlint on the message, lint-staged, a
+ *  prepare-commit-msg prompt) are written for people, and one a run's build installed (msw: `pnpm run build` ran simple-git-hooks, then commitlint
+ *  rejected "loki: ...") must never fail the delivery. When the commit with the user's hooks fails, the index and the staged files go back to the
+ *  verified tree and the commit is retried once with hooks off (signing kept). A pass on that retry proves a hook was the cause, and the receipt says so. */
+/** The last few non-empty lines of a git error, for the receipt (bounded, one line). */
+export const gitErrorLine = (err: string): string => err.split("\n").map((l) => l.trim()).filter(Boolean).slice(-4).join(" | ").slice(0, 400) || "no error output";
+export const hookBypassNote = (err: string): string => `the repo's own commit hook rejected Loki's commit (${gitErrorLine(err)}); committed with hooks off, signing kept (LOKI_E10_COMMIT_HOOK_BYPASS)`;
 
 /** MARK-1: the receipt path relative to the repo, for the Loki-Receipt trailer; falls back to the standard run location. */
 const receiptRel = (ctx: RunContext): string => { const r = relative(ctx.repoDir, join(ctx.runDir, "receipt.json")); return r.startsWith("..") || isAbsolute(r) ? `.loki/runs/${ctx.runId}/receipt.json` : r; };
@@ -185,9 +192,18 @@ export const commitStage: Stage = {
     const format = fmtRec.records.length ? { format: fmtRec.records } : {};
     if ((await git(ctx, ["diff", "--cached", "--quiet"])).code === 0) return { status: "completed", data: { committed: false, scope_notes: notes, ...format } };
     const title = (str(ctx.outputs().intake?.title) ?? `run ${ctx.runId}`).split("\n")[0]!.slice(0, 72);
-    const c = await git(ctx, ["commit", "-q", "-m", `loki: ${title}`, "-m", [`Loki-Run: ${ctx.runId}`, ...aiTrailers({ runId: ctx.runId, provider: ctx.provider, model: externalRun(ctx.outputs()) ? EXTERNAL_MODEL_LABEL : ctx.model, receiptRel: receiptRel(ctx) })].join("\n")], { repoDrivers: true, userHooks: true });
-    if (c.code !== 0) return { status: "failed", data: {}, reason: "git commit failed" };
-    return { status: "completed", data: { committed: true, head_sha: (await git(ctx, ["rev-parse", "HEAD"])).out.trim(), scope_notes: notes, ...format } };
+    const msg = ["-m", `loki: ${title}`, "-m", [`Loki-Run: ${ctx.runId}`, ...aiTrailers({ runId: ctx.runId, provider: ctx.provider, model: externalRun(ctx.outputs()) ? EXTERNAL_MODEL_LABEL : ctx.model, receiptRel: receiptRel(ctx) })].join("\n")];
+    const verified = (await git(ctx, ["write-tree"])).out.trim(), kept = staged.filter(({ f, st }) => !dropped.has(f) && st !== "D").map(({ f }) => f); // the tree verify judged, before any hook can restage it
+    const c = await git(ctx, ["commit", "-q", ...msg], { repoDrivers: true, userHooks: true }, 120000); // a repo pre-commit hook (lint-staged) can take longer than 20 s
+    let hookNote: string[] = [];
+    if (c.code !== 0 && commitHookBypassOn() && /^[0-9a-f]{40,64}$/.test(verified)) {
+      await git(ctx, ["read-tree", verified]); // a hook that ran a formatter and restaged leaves the index changed: put the verified tree back
+      for (let i = 0; i < kept.length; i += 200) await git(ctx, ["checkout-index", "-f", "--", ...kept.slice(i, i + 200)], { repoDrivers: true }); // and the run's own files in the tree, never a dropped (user) file
+      const c2 = await git(ctx, ["-c", "core.hooksPath=/dev/null", "commit", "-q", ...msg], { repoDrivers: true, userHooks: true });
+      if (c2.code !== 0) return { status: "failed", data: { commit_error: gitErrorLine(c2.err || c.err) }, reason: "git commit failed" };
+      hookNote = [hookBypassNote(c.err)];
+    } else if (c.code !== 0) return { status: "failed", data: { commit_error: gitErrorLine(c.err) }, reason: "git commit failed" };
+    return { status: "completed", data: { committed: true, head_sha: (await git(ctx, ["rev-parse", "HEAD"])).out.trim(), scope_notes: [...notes, ...hookNote], ...(hookNote.length ? { hooks_bypassed: true } : {}), ...format } };
   },
 };
 
@@ -378,7 +394,7 @@ export const sealStage: Stage = {
     for (const n of rcNotes) notProven.add(disclosedSet.has(n) ? n + DECLARED_SUFFIX : n); for (const n of decl.extra ?? []) notProven.add(n);
     for (const n of fenceRec.notProven) notProven.add(n);
     for (const n of pinnedUpdateNotes(pinnedUpdatesOf(o.implement))) notProven.add(n); // Z2: a reported test update the harness could not check
-    for (const n of [...strs(o.commit?.not_proven), ...strs(o.commit?.scope_notes)]) notProven.add(n); // D58: scope_notes = edits flagged outside stated scope (never reverted) or scope undetermined; separate key so they never force FAILED
+    for (const n of [...strs(o.commit?.not_proven), ...strs(o.commit?.scope_notes), ...(o.commit?.failed === true ? [`git commit failed: ${str(o.commit?.commit_error) ?? "no error recorded"}`] : [])]) notProven.add(n); // D58: scope_notes = edits flagged outside stated scope (never reverted) or scope undetermined; separate key so they never force FAILED
     for (const id of strs(o.verify?.pre_red)) notProven.add(`pre red: ${id}`); // A-112: listed, never downgrades (not via verifyNotProven)
     if (typeof o.verify?.baseline_line === "string" && strs(o.verify?.pre_red).length) notProven.add(o.verify.baseline_line); // REPOMEM: the one-line pre-existing vs introduced split; listed only when a baseline failure was excused, never downgrades
     for (const n of strs(o.verify?.not_excused)) notProven.add(n); // why a failing full-suite check was not excused as pre-existing; the check already blocks, this only names the rule

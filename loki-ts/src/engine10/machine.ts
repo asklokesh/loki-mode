@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { hooks } from "./hooks.ts"; import { wallConcurrent } from "../util/wall_knobs.ts"; import { wallEnabled } from "./sizing.ts";
-import { treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
+import { commitHookBypassOn, treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { assumptionOf, consultAvailable, neverStopActive, readConsults, type NeverStopRecord } from "../features/opus_consult.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./failures.ts";
@@ -332,7 +332,11 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (todo[0] === "intake" && results[0]?.status === "failed" && !capHit) {
         return { outputs, capHit, stopped: "intake failed" };
       }
-      if (results[todo.indexOf("commit")]?.status === "failed") return { outputs: { ...outputs, commit: { failed: true } }, capHit, stopped: "commit failed" }; // A-104b r2: a failed commit never advances to seal
+      if (results[todo.indexOf("commit")]?.status === "failed") { // A-104b r2: a failed commit never advances to pr; COMMIT-HOOK-BYPASS: seal still writes the receipt (verdictOf reads commit.failed: FAILED, with the git error on NOT PROVEN)
+        outputs.commit = { ...(results[todo.indexOf("commit")]?.data ?? {}), failed: true };
+        if (commitHookBypassOn()) await runStage("seal", false);
+        return { outputs, capHit, stopped: "commit failed" };
+      }
       if (opts.resize && !resized && (todo.includes("plan") || todo.includes("wall"))) { resized = true; try { applyResize(opts.resize()); } catch { /* an unreadable plan scope keeps the current cap */ } }
       if (fatal) { stopped = fatal; jumped = true; continue; }
       if (outputs.plan?.out_of_repo === true && !jumped) { // FC-OUT-OF-REPO: seal reads implement.exit, so BLOCKED reuses the spec-conflict path
