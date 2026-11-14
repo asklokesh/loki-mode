@@ -198,6 +198,11 @@ function refBriefClause(repoDir: string, c: ReleaseNoteConvention): string {
 }
 /** The issue or PR numbers a task names (#123, issues/123, pull/123). */
 export const taskNumbers = (task: string): string[] => [...new Set([...task.matchAll(/(?:(?<![\w&])#|\/(?:issues|pull)\/)(\d+)\b/g)].map((m) => m[1]!))];
+/** The task's own issue or PR number: one in its first line (the title), or one it introduces as fixes, closes, resolves, issue or PR #N. */
+export const taskOwnNumbers = (task: string): string[] => {
+  const title = task.split("\n").map((l) => l.trim()).find((l) => l && !/^(<<<|TASK$|Task \(untrusted)/.test(l)) ?? "";
+  return [...new Set([...taskNumbers(title), ...[...task.matchAll(/\b(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?|issue|pr|pull request)\s*:?\s*#(\d+)\b/gi)].map((m) => m[1]!)])];
+};
 /** What is wrong with the release note the diff carries (CR): `added` maps each added or changed path to its added lines. Empty when nothing is wrong or CR is off. */
 export function releaseNoteProblems(repoDir: string, conv: ReleaseNoteConvention, added: Map<string, string[]>, changed: string[], task: string, env: NodeJS.ProcessEnv = process.env): string[] {
   if (!changelogRefOn(env)) return [];
@@ -209,7 +214,8 @@ export function releaseNoteProblems(repoDir: string, conv: ReleaseNoteConvention
     const text = lines.join("\n"), bad = wrongNums(text);
     if (bad.length) out.push(`the entry cites #${bad.join(", #")}, which the task does not give`);
     let style: { cls: string; example: string } | null = null; try { style = changelogRefStyle(readFileSync(join(repoDir, conv.dir), "utf8")); } catch { /* unreadable */ }
-    if (style && nums.length && !nums.some((n) => text.includes(n))) out.push(`the entry has no reference to #${nums.join(", #")} in the form the existing entries use (${style.example})`);
+    const own = taskOwnNumbers(task); // a number the body only mentions (an older PR) is not this change's reference
+    if (style && own.length && !own.some((n) => text.includes(n))) out.push(`the entry has no reference to #${own.join(", #")} in the form the existing entries use (${style.example})`);
   } else if (conv.kind === "changeset") {
     const owners = new Set(changed.filter((f) => !f.startsWith(`${conv.dir}/`)).map((f) => ownerPackage(repoDir, f)?.name).filter((n): n is string => !!n));
     for (const [f, ls] of added) {
