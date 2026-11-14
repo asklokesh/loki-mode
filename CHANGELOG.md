@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- New, off by default until measured: the pre-delivery review turn can be kept from breaking a test. With `LOKI_E10_REVIEW_TURN_GUARD=1`, when the turn edits anything, Loki reruns the tests of what it changed; if a test that passed before the turn fails after it, only that turn's edits are taken back, the implemented change is kept, and the receipt says which test it broke.
+
+### Fixed
+- The proof that a test fails without the fix no longer runs the fixed code. On a repo whose virtualenv holds an editable install, the base checkout imported the already changed sources through the linked environment, so a real fail-then-pass test read as passing on the old code and the run lost its proof. The base run now puts the base checkout's own sources first. The Wall's base copy had the same leak through the copied editable install and absolute links (for example a monorepo's dev dist/ links); those now point at the copy, so the Wall's base run matches a fresh base.
+
+## v11.141.1 (2026-11-14)
+
+Faster runs on long tasks, a correct fail-then-pass proof on editable installs, and safer releases.
+
+On our 22-task dev set, Loki on Sonnet reached 19.5 merge-ready tasks against 16.5 for raw Opus, at 4.6x lower cost per merge-ready task (2 seeds; tuned on this set; not a blind result).
+
+### Fixed
+- Long task descriptions no longer slow a run down: the check for file paths named in the task took about 7.6 s per call on a 99 KB task and ran several times per run. It now takes a few milliseconds.
+- The proof that a test fails without the fix no longer runs the fixed code. On a repo whose virtualenv holds an editable install, the base checkout used to import the already-changed sources, so a real fail-then-pass test read as passing on the old code. The Wall's base copy had the same leak through linked dependencies, and now points at the copy.
+
+### Added
+- Off by default, opt in with LOKI_E10_REVIEW_TURN_GUARD=1: when the pre-delivery review turn edits anything, Loki reruns the tests of what it changed, and takes back only that turn's edits if a test that passed before now fails. The receipt names the test.
+- Releases refuse to ship while the repo's GitHub CI is red on the commit being released (`scripts/release.sh --ship`, exit 6; `--check-ci` runs the check alone).
+
 ## v11.141.0 (2026-11-14)
 
 Verify runs the repo's real tests on repos it has never seen, and Loki does less harm on the way.

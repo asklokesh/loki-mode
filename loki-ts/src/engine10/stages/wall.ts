@@ -37,6 +37,8 @@ export { classify, notRunReason, pytestCollectionIsRed } from "../../util/check_
 export class RealBaseTestRunner implements BaseTestRunner {
   lastNotRunFiles: NotRunRow[] = []; lastFailLines: Record<string, string[]> = {}; // AWE-2: each failing file's own output lines (proofExcerpt), read by the proof card; never a verdict input
   constructor(private readonly api?: ProjectApi | null, private readonly timeoutMs: number = BASE_RUN_TIMEOUT_MS, private readonly extraEnv: Record<string, string> = {}, private readonly trustSystem = false, private readonly reported: ReportedErrors = { observed: [], wanted: [] }) {} // trustSystem: the repo declares no Python environment, so the system interpreter IS its interpreter and its base result counts (seal.ts failThenPass; the Wall path never sets it). FC-01: undefined = load the repo's cached Project Model per run
+  /** The same runner with `env` added to its extra env (mutation_proof.ts editableBaseEnv). */
+  withEnv(env: Record<string, string>): RealBaseTestRunner { return new RealBaseTestRunner(this.api, this.timeoutMs, { ...this.extraEnv, ...env }, this.trustSystem, this.reported); }
   run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run: number; assertFail: number } {
     this.lastNotRunFiles = []; this.lastFailLines = {};
     let pass = 0, fail = 0, not_run = 0, assertFail = 0; const not_run_files: NotRunRow[] = []; const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; for (const f of files) {

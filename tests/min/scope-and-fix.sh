@@ -297,6 +297,7 @@
 # 259. wall.ts RealBaseTestRunner: read the test source only when reported.observed is non-empty (the reported-kind wiring leg reads true,0,0).
 # 260. seal.ts missingLintChecks: drop the lint: prefix filter (the lint-missing-disclose leg's missing test runner reads disclosed).
 # 261. mutation_proof.ts proofBudgetS: drop the compiled-stack branch (the proof-compiled-budget leg reads 30 for go).
+# 276. sizing.ts namedFiles: restore the global spelled-path matchAll (the named-exact leg reads slow on the 99 KB task).
 # 262. sizing.ts namedFiles: drop the spelled-path filter (fl24 named-exact reads login/page.ts+issues/page.ts for the spelled task; the fl24 monorepo after reads STALLED).
 # 263. verify.ts ownTests: drop the changed-file condition (fl24 own-by-path reads a/page.test.ts own for an unedited a/x/page.ts).
 # 264. repo_profile.ts touchedRedOnBase: drop the editedTitles check (fl24 touched-base-red's failing edited case reads true; the newly-failing fl24 monorepo run reads PARTIAL).
@@ -310,7 +311,10 @@
 # 273. verify.ts uncausedRed: always false (the UNCAUSED axios-shape leg reads caused).
 # 274. machine.ts: drop indepSkip from the fix loop (the indep gate leg reads 2 fix sessions on Haiku).
 # 275. check_result.ts testCount: drop the PRETTY block (the PRETTY leg reads null).
+# 276. implement.ts: `guard = false && preTurn && ...` in the SR block (rebuild dist): the TG revert leg keeps the review turn's breaking test (TG).
 # 268. scope.ts crossPackageTestEdits: `if (false) return false;` in place of the TK exercisesChange line (the TK leg drops the e2e, relative-import and Go reach tests).
+# 281. mutation_proof.ts editableBaseEnv: `if (true || !mapped.length) return {};` (BASE-SEES-HEAD); the leg reads no with no file named.
+# 282. wall_snapshot.ts snapshotTree: drop the rebaseSnapshot call (BASE-SEES-HEAD); the leg reads link-into-live|pth-into-live.
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -629,6 +633,15 @@ run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_
 SRR="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])).get("self_review") or {}; it=r.get("items",[]); print(len(it), "flagged" if any(i["status"]!="ok" and i["status"]!="auto" for i in it) else "clean", "turn" if r.get("turn") else "no-turn")' "$RUNDIR/receipt.json" 2>/dev/null)"
 RVN="$(grep -c -- '-rv' "$ITERS")"
 case "$SRR" in "8 flagged turn") [ "$RVN" -ge 1 ] ;; "8 clean no-turn") [ "$RVN" = 0 ] ;; *) false ;; esac && [ "$(outcome)" != "BLOCKED" ] && [ "$(outcome)" != "SPEC_CONFLICT" ] && ok "SR e2e: the receipt records 8 self_review items (5 plus the DE docs, SC stated-case and sibling items), the -rv turn ran exactly when one was flagged, outcome $(outcome) ($SRR, -rv sessions $RVN)" || { bad "SR e2e: self_review '$SRR', -rv sessions $RVN, outcome '$(outcome)'"; dump; }
+# TG LOKI_E10_REVIEW_TURN_GUARD (acc-167, off by default until measured; =1 on): the -rv review turn adds a test whose beforeEach hook turns the existing add test red. The guard reruns
+# calc.test.ts, sees it pass without the turn, takes back only the turn's edit (the implement diff stays) and the receipt names the test. Unset (the default) keeps the turn.
+tgrec() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); g=(r.get("self_review") or {}).get("turn_guard") or {}; print(g.get("reverted"), ",".join(g.get("broke") or []), any(str(n).startswith("review turn reverted: calc.test.ts") for n in r.get("not_proven") or []))' "$RUNDIR/receipt.json" 2>/dev/null; }
+run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=always E2E_STUB_RV=breaktest LOKI_E10_REVIEW_TURN_GUARD=1
+[ "$(tgrec)" = "True calc.test.ts True" ] && ! grep -q 'add twice' "$REPO/calc.test.ts" && grep -q 'export function multiply' "$REPO/calc.ts" && [ "$(outcome)" != "BLOCKED" ] && ok "TG revert: the review turn's added test broke calc.test.ts, which passed before the turn; only the turn's edit was taken back, the implement fix stays and the receipt names it ($(tgrec), outcome $(outcome))" || { bad "TG revert: turn_guard '$(tgrec)', plant $(grep -c 'add twice' "$REPO/calc.test.ts"), implement fix $(grep -c 'export function multiply' "$REPO/calc.ts"), outcome '$(outcome)'"; dump; }
+run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=always E2E_STUB_RV=goodtest LOKI_E10_REVIEW_TURN_GUARD=1
+case "$(tgrec)" in "False  False") grep -q 'add twice' "$REPO/calc.test.ts" && ok "TG keep: a review turn whose added test passes is kept, nothing reverted" || { bad "TG keep: the passing added test is gone"; dump; } ;; *) bad "TG keep: turn_guard '$(tgrec)'"; dump ;; esac
+run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=always E2E_STUB_RV=breaktest
+grep -q 'add twice' "$REPO/calc.test.ts" && [ "$(tgrec)" = "None  False" ] && ok "TG default (off): no guard, the review turn's edit stays" || { bad "TG default (off): turn_guard '$(tgrec)', plant $(grep -c 'add twice' "$REPO/calc.test.ts")"; dump; }
 CTASK="add multiply(a, b), subtract(a, b) and negate(a) to calc.ts"
 covrec() { ev 'next((e["data"].get("coverage_resume") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), None)'; }
 run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_COVERAGE_RESUME=0
@@ -1658,6 +1671,23 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest declared-env base proof: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest declared-env base proof: pytest is not installed"; fi
 fi
+# BASE-SEES-HEAD (base-snapshot-check): a repo whose .venv holds an editable install (a .pth naming <repo>/src) let the base worktree of the fail-then-pass
+# proof import the HEAD sources through the linked .venv, so a test red on the real base passed there and read "no (also passes on the old code)". With the
+# worktree's own src first on PYTHONPATH the base run imports base code: "yes", naming the file. The Wall's base snapshot copy had the same leak (the
+# copied .pth and an absolute dist/ link still named the live repo); rebaseSnapshot points both at the copy.
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    BS="$T/bse"; rm -rf "$BS"; mkdir -p "$BS/src/calc" "$BS/tests" && cd "$BS" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
+    printf '.venv/\ndist/\n' > .gitignore; printf 'def half(a):\n    return a // 2\n' > src/calc/__init__.py; printf 'import calc\n\n\ndef test_ok():\n    assert calc.half(4) == 2\n' > tests/test_calc.py
+    python3 -m venv --system-site-packages .venv >/dev/null 2>&1; SP="$(./.venv/bin/python -c 'import os, sysconfig; print(os.path.relpath(sysconfig.get_paths()["purelib"]))')"; printf '%s\n' "$BS/src" > "$SP/_editable_impl_calc.pth"
+    mkdir -p dist && ln -s "$BS/src/calc/__init__.py" dist/calc.py
+    git add -- . && git commit -q -m base && BASE="$(git rev-parse HEAD)"
+    printf 'def half(a):\n    return a / 2\n' > src/calc/__init__.py; printf '\n\ndef test_half_exact():\n    assert calc.half(3) == 1.5\n' >> tests/test_calc.py
+    git add -- . && git commit -q -m head && HEADSHA="$(git rev-parse HEAD)"; cd "$ROOT"
+    bse="$(cd "$ROOT/loki-ts" && bun -e 'const { mutationProof } = await import("./src/util/mutation_proof.ts"); const { baseProofRunner } = await import("./src/engine10/stages/seal.ts"); const ws = await import("./src/contrib/wall_snapshot.ts"); const { readlinkSync, readFileSync, readdirSync, rmSync } = await import("node:fs"); const { join } = await import("node:path"); const [repo, base, head, sp] = process.argv.slice(1); const f = "tests/test_calc.py"; const r = await mutationProof({ repoDir: repo, baseSha: base, runDir: repo + "/.loki", wallFiles: [{ path: f }], checks: [{ name: "pytest:" + f }], runner: baseProofRunner, headSha: head, requireAssertion: true, baseMustPass: [f], timeoutS: 40 }); const dir = await ws.snapshotTree(repo, new AbortController().signal); const pth = join(dir, sp, "_editable_impl_calc.pth"); console.log([r.outcome, (r.failed ?? []).join(","), readlinkSync(join(dir, "dist/calc.py")).startsWith(dir) ? "link-in-copy" : "link-into-live", readFileSync(pth, "utf8").trim() === join(dir, "src") ? "pth-in-copy" : "pth-into-live"].join("|")); rmSync(dir, { recursive: true, force: true });' "$BS" "$BASE" "$HEADSHA" "$SP" 2>&1 | tail -1)"
+    [ "$bse" = "yes|tests/test_calc.py|link-in-copy|pth-in-copy" ] && ok "BASE-SEES-HEAD: an editable .venv no longer lets the base proof import the head sources (a red-on-base test is a proof naming its file), and the Wall snapshot's dist link and .pth point at the copy ($bse)" || bad "BASE-SEES-HEAD: got '$bse'"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "BASE-SEES-HEAD: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: BASE-SEES-HEAD: pytest is not installed"; fi
+fi
 # Go module whose test command is a Makefile target (rule 22, real go and real make through the real engine; the receipt shape of L-Haiku-v132 lh-1471/1474/1562/1573, lefthook): the
 # repo is multi-root (an npm packaging dir beside the Go module), so the full suite is the model's `make test`, whose recipe is a plain `go test -cpu 24 -race -count=1 -timeout=30s ./...`.
 # Plain go test output is never counted, so before the fix every run read "not run: full suite: <root>" and, with no full suite that ran, every test-less package line capped too.
@@ -1903,12 +1933,13 @@ let warm = "skip"; if (Bun.which("go")) { mkdirSync(join(g, "pkg"), { recursive:
 console.log(r.join(",") + " " + warm);' 2>&1)"
 case "$PB" in "40,30,40,12,20,30,40 1/0"|"40,30,40,12,20,30,40 skip") ok "proof-compiled-budget: a compiled stack's proof gets 40 s (python keeps 30), an explicit or caller budget wins, =0 restores 30, the cap holds at 40; the go warm-up compiles a package and is skipped without room ($PB)" ;; *) bad "proof-compiled-budget gave: $PB" ;; esac
 # FL24-NAMED-EXACT (acc-154; FireLater#24): a basename every mention of which sits in a spelled path names only those paths, even ones not in the repo yet;
-# a bare mention keeps naming every match, and LOKI_E10_NAMED_EXACT=0 restores the basename match.
+# a bare mention keeps naming every match, and LOKI_E10_NAMED_EXACT=0 restores the basename match. A 99 KB task with a long slash-free run is scanned in linear time.
 FB="$(cd "$ROOT/loki-ts" && bun -e '
 const sz = await import("./src/engine10/sizing.ts"), files = ["web/src/app/(auth)/login/page.ts", "web/src/app/(dash)/issues/page.ts", "web/src/app/(dash)/issues/__tests__/page.test.ts", "web/src/lib/api.ts", "web/src/components/Sidebar.test.ts"];
 const n = (t) => sz.namedFiles(t, { files }).map((f) => f.split("/").slice(-2).join("/")).join("+"), t1 = "add `web/src/app/(dash)/search/page.ts`; `web/src/app/(dash)/issues/page.ts` is not modified";
-const r = [n(t1), n("fix page.ts everywhere"), n("edit Sidebar.test.ts and api.ts")]; process.env.LOKI_E10_NAMED_EXACT = "0"; r.push(n(t1)); console.log(r.join(","));' 2>&1)"
-[ "$FB" = "issues/page.ts,login/page.ts+issues/page.ts,lib/api.ts+components/Sidebar.test.ts,login/page.ts+issues/page.ts" ] && ok "fl24 named-exact: spelled paths name only their files; a bare mention keeps every match; =0 restores basenames" || bad "fl24 named-exact gave: $FB"
+const big = "add `web/src/app/(dash)/search/page.ts`\n<!-- " + "x".repeat(99000) + " -->", t0 = Date.now(), nb = n(big), ms = Date.now() - t0; // L009: the 99 KB PRD shape timed out in CI while the scan was quadratic
+const r = [n(t1), n("fix page.ts everywhere"), n("edit Sidebar.test.ts and api.ts"), `${nb}:${ms < 500 ? "fast" : `slow ${ms}ms`}`]; process.env.LOKI_E10_NAMED_EXACT = "0"; r.push(n(t1)); console.log(r.join(","));' 2>&1)"
+[ "$FB" = "issues/page.ts,login/page.ts+issues/page.ts,lib/api.ts+components/Sidebar.test.ts,:fast,login/page.ts+issues/page.ts" ] && ok "fl24 named-exact: spelled paths name only their files; a bare mention keeps every match; =0 restores basenames" || bad "fl24 named-exact gave: $FB"
 # FL24-OWN-BY-PATH (acc-154; FireLater#24): a relevant test is the task's own only when it is a named test file or path-paired (same stem, same dir or its
 # __tests__/tests/test) with a named file the diff changed. A named a/x/page.ts never makes b/y/__tests__/page.test.ts own, and an unedited named file owns nothing.
 FA="$(cd "$ROOT/loki-ts" && bun -e '

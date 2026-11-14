@@ -67,6 +67,7 @@ log_step() { echo -e "${CYAN}[STEP]${NC} $*"; }
 DRY_RUN="false"
 BUMP_ONLY="false"
 CHECK_CLEAN="false"
+CHECK_CI="false"
 SHIP="false"
 SHIP_NOTES=""
 BUMP_TYPE=""
@@ -89,6 +90,9 @@ parse_args() {
                 ;;
             --check-clean)
                 CHECK_CLEAN="true"
+                ;;
+            --check-ci)
+                CHECK_CI="true"
                 ;;
             --ship)
                 SHIP="true"
@@ -130,7 +134,7 @@ parse_args() {
         exit 1
     fi
 
-    if [[ -z "$BUMP_TYPE" && "$CHECK_CLEAN" != "true" ]]; then
+    if [[ -z "$BUMP_TYPE" && "$CHECK_CLEAN" != "true" && "$CHECK_CI" != "true" ]]; then
         log_error "Bump type required: patch, minor, or major"
         usage
         exit 1
@@ -149,6 +153,9 @@ Arguments:
 Options:
   --dry-run    Show what would be done without making changes
   --bump-only  Bump version files and prove the loki-ts build embeds it, then exit. No commit, no push.
+  --check-ci     Exit 0 only when the latest completed GitHub CI run (PR fast tier,
+                 required-ci) on HEAD, or on its parent when HEAD has none, succeeded;
+                 exit 6 (SHIP_CI_NOT_GREEN) otherwise. --ship runs the same check.
   --check-clean  Run after the release commit: exit 1 naming any tracked file
                still modified (E-151: a version file left out of the commit).
   --ship --notes FILE
@@ -550,6 +557,51 @@ ship_refuse() {
     exit 4
 }
 
+# CI-GREEN (exit 6, SHIP_CI_NOT_GREEN): never ship over a red GitHub CI. Main's PR fast tier was red
+# from acc-154 through v11.141.0 (a CI-only timeout local gates never saw), so the release
+# refuses unless the latest COMPLETED run of each listed workflow on HEAD (the commit being
+# released) succeeded. When HEAD has no completed run of any listed workflow, its parent's
+# runs decide. A run that is not success, no completed run on either commit, or a gh call that
+# fails or exceeds LOKI_RELEASE_CI_TIMEOUT_S (default 30) refuses: no evidence is never green.
+# LOKI_RELEASE_CI_WORKFLOWS (comma list, default "PR fast tier,required-ci") names the
+# workflows; a listed workflow the repo does not have simply has no runs.
+ship_ci_tmo() { if command -v timeout >/dev/null 2>&1; then timeout "$@"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout "$@"; else shift; "$@"; fi; }
+ship_ci_refuse() {
+    log_error "SHIP_CI_NOT_GREEN: $1"
+    exit 6
+}
+ship_ci_conclusions() { # ship_ci_conclusions <sha>: one "<workflow>\t<conclusion>\t<run id>" line per listed workflow with a completed run on <sha>; exit 1 when gh fails
+    local sha="$1" wf out t="${LOKI_RELEASE_CI_TIMEOUT_S:-30}" IFS=','
+    case "$t" in '' | *[!0-9]*) t=30 ;; esac
+    for wf in ${LOKI_RELEASE_CI_WORKFLOWS:-PR fast tier,required-ci}; do
+        wf="$(printf '%s' "$wf" | sed 's/^ *//; s/ *$//')"
+        [ -n "$wf" ] || continue
+        out="$(cd "$ROOT_DIR" && ship_ci_tmo "$t" gh run list --workflow "$wf" --commit "$sha" --status completed --limit 1 --json conclusion,databaseId --jq '.[] | "\(.conclusion)\t\(.databaseId)"' 2>/dev/null)"
+        case $? in
+            0) ;;
+            *) gh_err="$(cd "$ROOT_DIR" && ship_ci_tmo "$t" gh workflow view "$wf" >/dev/null 2>&1; echo $?)"
+               [ "$gh_err" = 0 ] && return 1 # the workflow exists, so the run listing itself failed or timed out
+               continue ;; # no such workflow in this repo: no runs, not a failure
+        esac
+        [ -n "$out" ] && printf '%s\t%s\n' "$wf" "$out"
+    done
+    return 0
+}
+ship_require_ci_green() {
+    local head parent lines bad
+    head="$(git -C "$ROOT_DIR" rev-parse HEAD)" || ship_ci_refuse "cannot resolve HEAD"
+    lines="$(ship_ci_conclusions "$head")" || ship_ci_refuse "gh run list failed or timed out for $head (LOKI_RELEASE_CI_TIMEOUT_S=${LOKI_RELEASE_CI_TIMEOUT_S:-30})"
+    if [ -z "$lines" ]; then
+        parent="$(git -C "$ROOT_DIR" rev-parse -q --verify HEAD^ 2>/dev/null)" || ship_ci_refuse "no completed CI run on $head and it has no parent"
+        lines="$(ship_ci_conclusions "$parent")" || ship_ci_refuse "gh run list failed or timed out for $parent"
+        [ -n "$lines" ] || ship_ci_refuse "no completed CI run on $head or its parent $parent (workflows: ${LOKI_RELEASE_CI_WORKFLOWS:-PR fast tier,required-ci}); push it and wait for CI"
+        head="$parent"
+    fi
+    bad="$(printf '%s\n' "$lines" | awk -F'\t' '$2 != "success"')"
+    [ -z "$bad" ] || ship_ci_refuse "CI is not green on $head: $(printf '%s' "$bad" | awk -F'\t' '{printf "%s=%s (run %s) ", $1, $2, $3}')"
+    log_info "CI green on $head: $(printf '%s\n' "$lines" | awk -F'\t' '{printf "%s run %s ", $1, $3}')"
+}
+
 # A linked worktree has a git-dir distinct from the common dir. --ship pushes,
 # and the pre-push hook refuses pushes from linked worktrees, so refuse up
 # front, before any VERSION edit or commit, and name the main checkout.
@@ -686,6 +738,7 @@ run_ship() {
     dirty="$(git -C "$ROOT_DIR" diff --name-only HEAD -- $RELEASE_COMMIT_FILES $SHIP_BUILD_INPUTS)"
     [ -z "$dirty" ] || ship_refuse SHIP_DIRTY_RELEASE_FILES "differ from HEAD: $(printf '%s' "$dirty" | tr '\n' ' ') (commit them through review or git restore them)"
     ship_require_ancestor
+    ship_require_ci_green
 
     ship_phase "bump version files"
     # Tracked generator outputs already dirty before the bump are the user's own
@@ -822,6 +875,10 @@ main() {
 
     if [ "$CHECK_CLEAN" = "true" ]; then
         release_commit_clean
+        return
+    fi
+    if [ "$CHECK_CI" = "true" ]; then
+        ship_require_ci_green
         return
     fi
 

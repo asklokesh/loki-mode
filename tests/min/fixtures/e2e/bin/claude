@@ -235,6 +235,13 @@ fi
 if [ "$stage" = "implement" ] && printf '%s' "$prompt" | grep -q "first-choice remedy is not in your change"; then
   printf '// remedy resume\n' >> calc.ts; echo "LOKI_DONE"; exit 0 # F1: the targeted "-rr" resume; a marker edit, never a second copy of the first turn's change
 fi
+if [ "$stage" = "implement" ] && [ -n "${E2E_STUB_RV:-}" ] && printf '%s' "$prompt" | grep -q "Pre-delivery review\. Before this change"; then # TG legs: the -rv review turn adds a test to calc.test.ts
+  case "$E2E_STUB_RV" in # breaktest: the added test comes with a beforeEach hook that turns the existing add test red; goodtest: a plain passing test
+    breaktest) printf '%s\n' '' 'import { beforeEach } from "bun:test";' 'beforeEach(() => { expect(calc.add(2, 3)).toBe(6); });' 'test("add twice", () => { expect(calc.add(calc.add(1, 1), 1)).toBe(3); });' >> calc.test.ts ;;
+    goodtest) printf '%s\n' '' 'test("add twice", () => { expect(calc.add(calc.add(1, 1), 1)).toBe(3); });' >> calc.test.ts ;;
+  esac
+  echo "LOKI_DONE"; exit 0
+fi
 if [ "$stage" = "implement" ] && [ "${E2E_STUB_MODE:-done}" != "coverage" ] && printf '%s' "$prompt" | grep -q "List each site, symbol, example or case"; then
   echo "LOKI_DONE"; exit 0 # the coverage turn (LOKI_E10_COVERAGE_RESUME=1) on a change the first turn completed: a real model edits nothing; replaying the first turn's edit would duplicate it
 fi

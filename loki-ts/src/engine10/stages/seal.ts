@@ -13,7 +13,7 @@ import { RealBaseTestRunner, loadTaskText } from "./wall.ts"; import { defectPin
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
 import { discardIfSatisfied } from "../../e10ext/discard.ts";
 import { buildArtifactNotes, dropSet, formatChangedRecord, needDropNote, needDrops, parseStaged, regenDropNote, regenDrops } from "../../e10ext/commit_filter.ts";
-import { releaseRefsReceiptBlock, selfReviewReceiptBlock } from "../../features/self_review.ts";
+import { releaseRefsReceiptBlock, type SelfReviewRecord, selfReviewReceiptBlock, turnGuardNote } from "../../features/self_review.ts";
 import { crossPackageTestEdits, crossPackageTestNote, flagOutsideScope, outsideScope, scopeTestDropEnabled } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts"; import { getVersion } from "../../version.ts";
@@ -410,6 +410,7 @@ export const sealStage: Stage = {
     if (externalRun(o) && !(Array.isArray(o.wall?.files) && o.wall.files.length > 0)) notProven.add(EXTERNAL_NO_WALL); // FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED
     if (externalRun(o)) notProven.add(EXTERNAL_DIFF_NOT_ISOLATED); // CW-12 B2: the Wall author runs on disk beside the external diff until cw01 confinement covers it
     for (const t of strs(o.implement?.tests_reverted)) notProven.add(`reverted test edit: ${t}`);
+    for (const n of turnGuardNote((o.implement?.self_review as SelfReviewRecord | undefined)?.turn_guard)) notProven.add(n); // TG: a review turn taken back for breaking a test that passed before it
     { const sc = o.implement?.scaffold as { path?: unknown } | undefined; if (typeof sc?.path === "string") notProven.add(fragmentNoticeLine(sc.path)); } // L3 fragment writer: a disclosure, never a verdict input
     if (ctx.provider !== "claude") notProven.add("kill blocking not enforced");
     // Section 7: model_override_applied lives on run.started, which outputs() never carries.
