@@ -111,7 +111,7 @@ run_engine() {
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY \
         LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" \
         E2E_STUB_MODE="$mode" E2E_STUB_LOG="$d/stub.log" E2E_STUB_ENV_LOG="$STUBENV" \
-        LOKI_E10_PLAN=1 GH_TOKEN="$CANARY" LOKI_RECEIPT_SIGNING_KEY_FILE="$KEY" \
+        LOKI_E10_PLAN="${E2E_PLAN:-1}" GH_TOKEN="$CANARY" LOKI_RECEIPT_SIGNING_KEY_FILE="$KEY" \
         ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" ${E2E_VERB:+"$E2E_VERB"} "$TASK" --no-pr "$@" 2>&1)"
     RC=$?
     RUNDIR=""
@@ -468,10 +468,10 @@ np = " ".join(rec.get("not_proven", []))
 print(w[-1]["type"] if w else "none", len(d.get("files") or []), d.get("base_checkout", "-"), "fresh-note" if "fresh checkout of the base commit" in np else "no-note", p[0] if p else "none", "oracle" if "wall_oracle" in rec else "no-oracle")
 PY
 }
-E2E_STUB_WALL=multiply LOKI_E10_WALL=1 LOKI_E10_PLAN=auto run_engine done
+E2E_STUB_WALL=multiply LOKI_E10_WALL=1 E2E_PLAN=auto run_engine done
 f="$(wall_facts)"; set -- $f
 [ "$1" = stage.completed ] && [ "$2" -ge 1 ] && [ "$5" = stage.skipped ] && [ "$6" = oracle ] && ok "lean path: LOKI_E10_WALL=1 runs the Wall on a lean task without forcing plan, and the receipt prices it ($f)" || bad "lean path wall facts: $f"
-E2E_STUB_WALL=multiply LOKI_E10_PLAN=auto run_engine done
+E2E_STUB_WALL=multiply E2E_PLAN=auto run_engine done
 f="$(wall_facts)"; set -- $f
 [ "$1" != stage.completed ] || [ "$2" = 0 ] && ok "lean path: with no Wall switch the lean task still skips the Wall ($f)" || bad "lean path default: the Wall ran ($f)"
 E2E_STUB_WALL=multiply LOKI_E10_CASCADE_V0=1 LOKI_E10_WALL_SNAPSHOT_MAX_MB=0.000001 run_engine done
