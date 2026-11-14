@@ -47,6 +47,8 @@
 #  16. conventions.ts changelogRefOn: `false &&` (CR); cr_brief, cr_checks, cr_changeset and cr_towncrier fail.
 #  18. conventions.ts towncrierNewOrphanOn: `false &&` (TN); tn_first_orphan and tn_brief fail (a fix with no number ships no fragment).
 #  19. conventions.ts renameInventedFragment: `if (true || ...)` (ON); on_rename fails (the invented 1604 fragment ships under its number).
+#  20. self_review.ts caseCovered: `return true;` first (SC); sc_edge, sc_same and sc_repro fail (a stated case with no test reads covered).
+#  21. self_review.ts siblingDefinitions: `return out;` right after `const changed` (SC); sc_sib and sc_sib_detail fail (the sibling override goes unflagged).
 #  17. conventions.ts stripInventedRefsInFile: `if (base.has(l) || true) return l;` (CR strip); cr_strip_file fails (the invented #2383 ships).
 #  15. self_review.ts settleItems: never trust the after-turn check (`if (false && a)`); sr_settled fails (fixed items read unresolved).
 #  12. conventions.ts writeReleaseNoteFragment: `op = null` (TO); to_older_orphan and to_cfg_prefix fail.
@@ -332,7 +334,7 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
   const clBefore = sr.selfReviewChecks(cl.d, cl.base, sr.treeStaged(cl.d, cl.base), "Fix calc", plan);
   out.sr_flags = sum(clBefore); out.sr_flag_turn = sr.selfReviewWanted(clBefore, "on") ? "turn" : "no-turn";
   const brief = sr.selfReviewBrief(cl.d, clBefore);
-  out.sr_brief = ["Please add an entry to CHANGELOG.md.", "FLAGGED: the contribution guide asks for an entry in CHANGELOG.md", "REVIEW <a|b|c|d|e>", "Change nothing that already follows the rules"].every((k) => brief.includes(k)) ? "yes" : "no";
+  out.sr_brief = ["Please add an entry to CHANGELOG.md.", "FLAGGED: the contribution guide asks for an entry in CHANGELOG.md", "REVIEW <a|b|c|d|e|f|g>", "Change nothing that already follows the rules"].every((k) => brief.includes(k)) ? "yes" : "no";
   // the review turn: the entry added and the scratch file removed; the test and the README edit stay, the README one justified
   writeFileSync(join(cl.d, "CHANGELOG.md"), LOG.replace("### Fixed\n\n", "### Fixed\n\n- Fixed calc.\n")); rmSync(join(cl.d, "scratch"), { recursive: true, force: true });
   const clAfter = sr.selfReviewChecks(cl.d, cl.base, sr.treeStaged(cl.d, cl.base), "Fix calc", plan);
@@ -345,6 +347,37 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
   out.sr_receipt = JSON.stringify([sr.selfReviewReceiptBlock({ self_review: { mode: "on", turn: null, items: [] } }), sr.selfReviewReceiptBlock({}), sr.selfReviewReceiptBlock(undefined)]);
   const src = (f: string) => rf(join(SRC, f), "utf8");
   out.sr_wired = src("engine10/stages/implement.ts").includes("if (selfReviewWanted(before, mode)) { const r = await resumeForSelfReview(") && src("engine10/stages/implement.ts").includes("...(selfReview ? { self_review: selfReview } : {}),") && src("util/conflict_resume.ts").includes('resumeWith(ctx, { ...first, maxTurns }, firstSession, brief, "-rv")') && src("engine10/stages/seal.ts").includes("...selfReviewReceiptBlock(o.implement)") ? "yes" : "no"; }
+// SC LOKI_E10_SR_COVERAGE: stated-case and sibling-definition items, on synthetic fixtures for four loss shapes (a stated edge, a "same effect" sentence, an error reproduction, a sibling override), plus a clean minimal diff.
+{ const sr = await import(join(SRC, "features/self_review.ts")), { execFileSync: ex4 } = await import("node:child_process");
+  const repo = (name: string, files: Record<string, string>) => { const d = mk(name, files); const g = (...a: string[]) => ex4("git", ["-C", d, ...a], { stdio: "pipe" }).toString().trim(); g("init", "-q", "-b", "main"); g("config", "user.name", "sc"); g("config", "user.email", "sc@example.invalid"); g("add", "-A"); g("commit", "-q", "-m", "base"); return { d, base: g("rev-parse", "HEAD") }; };
+  const items = (r: { d: string; base: string }, task: string, env = {}) => sr.selfReviewChecks(r.d, r.base, sr.treeStaged(r.d, r.base), task, {}, env).filter((i: { item: string }) => i.item === "cases" || i.item === "siblings").map((i: { item: string; status: string }) => `${i.item}=${i.status}`).join(",") || "none";
+  const PY = { "src/parse.py": "def parse_default(tok):\n    return int(tok)\n", "tests/test_parse.py": "def test_parse():\n    assert True\n" };
+  // 1. a stated "{-1}"-style edge: the reproduction block is covered, the "similar error when ... `{-1}`" sentence is not, until a test carries `{-1}`
+  const T1 = "# Negative defaults fail\n\n```\nparse_default('-1')\n```\n\nError: Found `-` but only numbers are allowed.\n\nSimilar error when wrapping it in `{-1}`.\n";
+  const e1 = repo("sc-edge", PY); writeFileSync(join(e1.d, "src/parse.py"), "def parse_default(tok):\n    return int(tok.strip())\n"); writeFileSync(join(e1.d, "tests/test_parse.py"), "def test_parse():\n    assert parse_default('-1') == -1\n");
+  out.sc_edge_cases = JSON.stringify(sr.statedCases(T1).map((c: { kind: string; tokens: string[] }) => `${c.kind}:${c.tokens.join("+")}`));
+  out.sc_edge = items(e1, T1); writeFileSync(join(e1.d, "tests/test_parse.py"), "def test_parse():\n    assert parse_default('-1') == -1\n    assert parse_default('{-1}') == -1\n"); out.sc_edge_after = items(e1, T1);
+  // 2. "same effect": a sentence with no code token is always flagged for the review turn, even when the test mentions HOME
+  const T2 = "# Relative HOME\n\nWith `HOME` set to a relative path the directories resolve against the working directory.\n\nA relative home from the password database, with HOME unset, has the same effect.\n";
+  const e2 = repo("sc-same", PY); writeFileSync(join(e2.d, "src/parse.py"), "def parse_default(tok):\n    return int(tok) or 0\n"); writeFileSync(join(e2.d, "tests/test_parse.py"), "def test_parse(monkeypatch):\n    monkeypatch.setenv('HOME', 'rel')\n");
+  out.sc_same = items(e2, T2);
+  // 3. a reproduction block with a TypeError: flagged until an added test calls the reproduced function
+  const T3 = "# Shortcut missing\n\n```js\nconst headers = new AxiosHeaders({'content-encoding': 'gzip'});\nheaders.getContentEncoding();\n// TypeError: headers.getContentEncoding is not a function\n```\n";
+  const JS = { "lib/headers.js": "function shortcuts(list) {\n  return list;\n}\nmodule.exports = { shortcuts };\n", "test/headers.test.js": "test('x', () => {});\n" };
+  const e3 = repo("sc-repro", JS); writeFileSync(join(e3.d, "lib/headers.js"), "function shortcuts(list) {\n  return list.concat(['Content-Encoding']);\n}\nmodule.exports = { shortcuts };\n"); writeFileSync(join(e3.d, "test/headers.test.js"), "test('x', () => { expect(1).toBe(1); });\n");
+  out.sc_repro = items(e3, T3); writeFileSync(join(e3.d, "test/headers.test.js"), "test('x', () => { expect(new AxiosHeaders({}).getContentEncoding()).toBe(undefined); });\n"); out.sc_repro_after = items(e3, T3);
+  // 4. a sibling override: the diff fixes Base.__deepcopy__, Root.__deepcopy__ (same name, another file) is flagged with file:line
+  const SIB = { "pkg/main.py": "class Base:\n    def __deepcopy__(self, memo):\n        return Base()\n", "pkg/root.py": "from .main import Base\n\n\nclass Root(Base):\n    def __deepcopy__(self, memo):\n        return Root()\n", "tests/test_copy.py": "def test_copy():\n    pass\n" };
+  const e4 = repo("sc-sib", SIB); writeFileSync(join(e4.d, "pkg/main.py"), "class Base:\n    def __deepcopy__(self, memo):\n        memo[id(self)] = new = Base()\n        return new\n"); writeFileSync(join(e4.d, "tests/test_copy.py"), "def test_copy():\n    assert True\n");
+  out.sc_sib = items(e4, "Deep-copying a self-referential model changes its graph.");
+  out.sc_sib_detail = (sr.selfReviewChecks(e4.d, e4.base, sr.treeStaged(e4.d, e4.base), "x", {}).find((i: { item: string }) => i.item === "siblings") as { detail: string }).detail;
+  // 5. a clean minimal diff: no stated case form, no sibling definition: both items ok, so no review turn starts
+  const e5 = repo("sc-clean", PY); writeFileSync(join(e5.d, "src/parse.py"), "def parse_default(tok):\n    return int(tok.strip())\n"); writeFileSync(join(e5.d, "tests/test_parse.py"), "def test_parse():\n    assert parse_default(' 1') == 1\n");
+  const cleanAll = sr.selfReviewChecks(e5.d, e5.base, sr.treeStaged(e5.d, e5.base), "Strip spaces before parsing a default.", {});
+  out.sc_clean = `${items(e5, "Strip spaces before parsing a default.")} | ${sr.selfReviewWanted(cleanAll, "on") ? "turn" : "no-turn"}`;
+  out.sc_off = items(e1, T1, { LOKI_E10_SR_COVERAGE: "0" });
+  out.sc_brief = sr.selfReviewBrief(e1.d, sr.selfReviewChecks(e1.d, e1.base, sr.treeStaged(e1.d, e1.base), T1, {})).includes("(f) stated cases:") ? "yes" : "no";
+  out.sc_parse = JSON.stringify([...sr.parseReviewLines("REVIEW f: fixed: added the {-1} case\nREVIEW g: justified: Root copies differently").entries()]); }
 // CR LOKI_E10_CHANGELOG_REF: the reference form of existing entries, in the brief line and checked on the entry the diff adds.
 { const cv = await import(join(SRC, "project_model/conventions.ts"));
   const REF_LOG = "Change Log\n==========\n\n## Unreleased\n\n * Fix: Carriage returns are kept. (#2380)\n * Fix: The package slot is kept. (#2382)\n\n## Version 2.4.0\n\n * New: A thing. (#2300)\n * Fix: Another. (#2301)\n";
@@ -539,6 +572,18 @@ eqv tr_entry_missing '{"skipped":"the changelog convention is not written automa
 eqv tr_no_conv null "TR a repo with no release-note convention records nothing"
 eqv tr_off null "TR LOKI_E10_SCAFFOLD_TRACE=0 records no skip reason"
 eqv tr_block '[{"release_note_skipped":"why"},{},{}]' "TR the receipt carries release_note_skipped only when the writer skipped"
+eqv sc_edge_cases '["block:parse_default","sentence:{-1}"]' "SC the extractor keeps a code block followed by its error and a 'similar error when' sentence with its code token"
+eqv sc_edge "cases=flagged,siblings=ok" "SC a stated '{-1}' edge with no test carrying it is flagged"
+eqv sc_edge_after "cases=ok,siblings=ok" "SC once an added test carries the stated '{-1}' edge, the item is ok"
+eqv sc_same "cases=flagged,siblings=ok" "SC a 'has the same effect' sentence with no code token is always flagged for the review turn"
+eqv sc_repro "cases=flagged,siblings=ok" "SC a reproduction block with a TypeError is flagged until an added test calls the reproduced function"
+eqv sc_repro_after "cases=ok,siblings=ok" "SC an added test calling getContentEncoding covers the reproduction"
+eqv sc_sib "cases=ok,siblings=flagged" "SC a sibling override of the changed method in another file is flagged"
+rn sc_sib_detail 'pkg/root.py:5 (__deepcopy__)' "SC the sibling flag names the other definition by file:line and name"
+eqv sc_clean "cases=ok,siblings=ok | no-turn" "SC a clean minimal diff: both items ok and no review turn"
+eqv sc_off none "SC LOKI_E10_SR_COVERAGE=0 adds neither item"
+eqv sc_brief yes "SC the review brief names the stated-case and sibling items when they are present"
+eqv sc_parse '[["cases",{"verdict":"fixed","reason":"added the {-1} case"}],["siblings",{"verdict":"justified","reason":"Root copies differently"}]]' "SC REVIEW f and g reply lines parse into the new items"
 eqv cr_style '[{"cls":"paren","example":"(#2380)"},null,"link"]' "CR the reference form most existing entries use is found (paren, markdown link); a log whose entries mostly carry none has no form"
 eqv cr_brief yes "CR the changelog brief line names the entries' reference form and forbids an invented number"
 eqv cr_checks "- | the entry cites #999, which the task does not give || the entry has no reference to #12 in the form the existing entries use ((#2380)) | the entry has no reference to #12 in the form the existing entries use ((#2380)) | - | the entry cites #999, which the task does not give | - | -" "CR an entry with the task's number passes; a number the task does not give and a missing reference are flagged; with no task number a plain entry passes; a number the body only mentions is not required; =0 checks nothing"
@@ -553,14 +598,14 @@ eqv on_numbered_task null "ON a task that gives a number: no rename (the mis-num
 eqv on_off null "ON LOKI_E10_ORPHAN_RENAME=0 renames nothing"
 eqv on_flag "changes/1604.bugfix.rst is numbered 1604, a number the task never gives; rename it to the orphan form changes/+<short-slug>.bugfix.rst" "ON the self-check flags an invented fragment number with the orphan name for the review turn"
 eqv tn_brief yes "TN the towncrier brief line names the orphan form for a task with no number and forbids an invented number"
-eqv sr_clean "release_note=ok,stray_files=ok,test=ok,format=ok,scope=ok" "SR a correct minimal diff (source plus its test, no rule broken) passes every item"
+eqv sr_clean "release_note=ok,stray_files=ok,test=ok,format=ok,scope=ok,cases=ok,siblings=ok" "SR a correct minimal diff (source plus its test, no rule broken) passes every item"
 eqv sr_clean_turn no-turn "SR no churn: a correct minimal diff starts no review turn, so the tree is left untouched and the check costs nothing"
 eqv sr_clean_always turn "SR LOKI_E10_SELF_REVIEW=always runs the turn even on a clean diff"
-eqv sr_flags "release_note=flagged,stray_files=flagged,test=flagged,format=ok,scope=flagged" "SR flags a missing required changelog entry, a stray file in a new directory, a source change with no test and an edit outside the planned scope"
+eqv sr_flags "release_note=flagged,stray_files=flagged,test=flagged,format=ok,scope=flagged,cases=ok,siblings=ok" "SR flags a missing required changelog entry, a stray file in a new directory, a source change with no test and an edit outside the planned scope"
 eqv sr_flag_turn turn "SR a flagged item starts the one review turn"
 eqv sr_brief yes "SR the review brief carries the contribution rules, the flagged items, the REVIEW reply format and the no-churn rule"
-eqv sr_settled "release_note=fixed,stray_files=fixed,test=unresolved,format=ok,scope=justified" "SR settling: a flag the after-turn check no longer finds is fixed; a persisting flag is justified only with a stated reason, else unresolved"
-eqv sr_no_turn_settle "release_note=flagged,stray_files=flagged,test=flagged,format=ok,scope=flagged" "SR with no turn (too little time) the flags stay flagged on the receipt"
+eqv sr_settled "release_note=fixed,stray_files=fixed,test=unresolved,format=ok,scope=justified,cases=ok,siblings=ok" "SR settling: a flag the after-turn check no longer finds is fixed; a persisting flag is justified only with a stated reason, else unresolved"
+eqv sr_no_turn_settle "release_note=flagged,stray_files=flagged,test=flagged,format=ok,scope=flagged,cases=ok,siblings=ok" "SR with no turn (too little time) the flags stay flagged on the receipt"
 eqv sr_parse '[["release_note",{"verdict":"ok","reason":"fine"}],["format",{"verdict":"justified","reason":"matches style"}],["stray_files",{"verdict":"fixed","reason":"x"}]]' "SR REVIEW reply lines parse by item (backticks and case tolerated, unknown items ignored)"
 eqv sr_testfiles "ttttttttssss" "SR the test detector covers Rust tests.rs, a top-level test/ dir, __tests__/, JVM *Test sources, Python, Go and JS layouts, and not source or docs"
 eqv sr_mode "on,off,always,12,4,12" "SR knob: on by default, =0 off, always; the turn cap (cost cap) is 12 unless LOKI_E10_SELF_REVIEW_MAX_TURNS sets a positive integer"
