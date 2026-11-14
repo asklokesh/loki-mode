@@ -56,6 +56,7 @@
 #  15. self_review.ts settleItems: never trust the after-turn check (`if (false && a)`); sr_settled fails (fixed items read unresolved).
 #  12. conventions.ts writeReleaseNoteFragment: `op = null` (TO); to_older_orphan and to_cfg_prefix fail.
 #  13. conventions.ts scaffoldRecord: `return null` for a skip (TR); tr_skip fails.
+#  25. self_review.ts guardReviewTurn: `if (false && broke.length)` (TG); tg_revert fails (the turn that broke a passing test is kept).
 #  10. loki-ts/src/e10ext/scope.ts flagOutsideScope: `mine = (f: string): boolean => false` (CS); cs_on fails (the asked-for changelog edit is flagged).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -350,8 +351,24 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
   out.sr_testfiles = ["src/de/tests.rs", "test/expect.js", "test/main.ts", "kotlinpoet/src/jvmTest/kotlin/a/CodeBlockTest.kt", "__tests__/base.js", "tests/test_x.py", "pkg/x_test.go", "src/a.spec.ts", "src/lib.rs", "lib/a.js", "src/contest.py", "docs/testing.md"].map((f) => sr.isTestFile(f) ? "t" : "s").join("");
   out.sr_mode = [sr.selfReviewMode({}), sr.selfReviewMode({ LOKI_E10_SELF_REVIEW: "0" }), sr.selfReviewMode({ LOKI_E10_SELF_REVIEW: "always" }), sr.selfReviewMaxTurns({}), sr.selfReviewMaxTurns({ LOKI_E10_SELF_REVIEW_MAX_TURNS: "4" }), sr.selfReviewMaxTurns({ LOKI_E10_SELF_REVIEW_MAX_TURNS: "x" })].join(",");
   out.sr_receipt = JSON.stringify([sr.selfReviewReceiptBlock({ self_review: { mode: "on", turn: null, items: [] } }), sr.selfReviewReceiptBlock({}), sr.selfReviewReceiptBlock(undefined)]);
+  // TG LOKI_E10_REVIEW_TURN_GUARD: the turn's edits are taken back only when a test that passes without them fails with them; the implement diff stays.
+  { const ts = await import(join(SRC, "e10ext/treeswap.ts")), rd = (d: string, f: string) => { try { return rf(join(d, f), "utf8"); } catch { return "<gone>"; } };
+    const runT = (d: string) => (t: { path: string }) => (rd(d, t.path).includes("bad") ? "fail" : "pass") as "pass" | "fail";
+    const tg = repo("tg-revert", { "lib.txt": "1\n", "tests/t_a.txt": "ok\n", "other.txt": "o\n" });
+    writeFileSync(join(tg.d, "lib.txt"), "2\n"); const pre = ts.snapshotDiff(tg.d, tg.base);
+    writeFileSync(join(tg.d, "tests/t_a.txt"), "ok\nbad hook\n"); writeFileSync(join(tg.d, "tests/t_new.txt"), "new\n"); rmSync(join(tg.d, "other.txt"));
+    const g1 = await sr.guardReviewTurn(tg.d, tg.base, pre, () => [{ path: "tests/t_a.txt" }], runT(tg.d));
+    out.tg_revert = `${g1?.reverted}|${g1?.broke.join(",")}|${g1?.paths.join(",")}|${rd(tg.d, "lib.txt").trim()}|${rd(tg.d, "tests/t_a.txt").trim()}|${rd(tg.d, "tests/t_new.txt").trim()}|${rd(tg.d, "other.txt").trim()}`;
+    const tb = repo("tg-both", { "lib.txt": "1\n", "tests/t_a.txt": "ok\n" });
+    writeFileSync(join(tb.d, "tests/t_a.txt"), "bad before\n"); const preB = ts.snapshotDiff(tb.d, tb.base); writeFileSync(join(tb.d, "tests/t_a.txt"), "bad after\n");
+    const g2 = await sr.guardReviewTurn(tb.d, tb.base, preB, () => [{ path: "tests/t_a.txt" }], runT(tb.d));
+    out.tg_both = `${g2?.reverted}|${rd(tb.d, "tests/t_a.txt").trim()}`;
+    out.tg_none = String(await sr.guardReviewTurn(tb.d, tb.base, ts.snapshotDiff(tb.d, tb.base), () => [{ path: "tests/t_a.txt" }], runT(tb.d)));
+    out.tg_note = sr.turnGuardNote(g1 ?? undefined).join("").startsWith("review turn reverted: tests/t_a.txt passed before the turn and failed after it") && sr.turnGuardNote(g2 ?? undefined).length === 0 ? "yes" : "no";
+    out.tg_knob = [sr.reviewTurnGuardOn({}), sr.reviewTurnGuardOn({ LOKI_E10_REVIEW_TURN_GUARD: "1" })].join(",");
+  }
   const src = (f: string) => rf(join(SRC, f), "utf8");
-  out.sr_wired = src("engine10/stages/implement.ts").includes("if (selfReviewWanted(before, mode)) { const r = await resumeForSelfReview(") && src("engine10/stages/implement.ts").includes("...(selfReview ? { self_review: selfReview } : {}),") && src("util/conflict_resume.ts").includes('resumeWith(ctx, { ...first, maxTurns }, firstSession, brief, "-rv")') && src("engine10/stages/seal.ts").includes("...selfReviewReceiptBlock(o.implement)") ? "yes" : "no"; }
+  out.sr_wired = src("engine10/stages/implement.ts").includes("if (selfReviewWanted(before, mode)) { const preTurn = reviewTurnGuardOn() ? snapshotDiff(ctx.repoDir, ctx.baseSha) : null; const r = await resumeForSelfReview(") && src("engine10/stages/implement.ts").includes("guard = preTurn && !signal.aborted ? await reviewTurnGuard(ctx, preTurn,") && src("engine10/stages/implement.ts").includes("if (!guard?.reverted && !r.session.killed") && src("engine10/stages/seal.ts").includes("for (const n of turnGuardNote(") && src("engine10/stages/implement.ts").includes("...(selfReview ? { self_review: selfReview } : {}),") && src("util/conflict_resume.ts").includes('resumeWith(ctx, { ...first, maxTurns }, firstSession, brief, "-rv")') && src("engine10/stages/seal.ts").includes("...selfReviewReceiptBlock(o.implement)") ? "yes" : "no"; }
 // SC LOKI_E10_SR_COVERAGE: stated-case and sibling-definition items, on synthetic fixtures for four loss shapes (a stated edge, a "same effect" sentence, an error reproduction, a sibling override), plus a clean minimal diff.
 { const sr = await import(join(SRC, "features/self_review.ts")), { execFileSync: ex4 } = await import("node:child_process");
   const repo = (name: string, files: Record<string, string>) => { const d = mk(name, files); const g = (...a: string[]) => ex4("git", ["-C", d, ...a], { stdio: "pipe" }).toString().trim(); g("init", "-q", "-b", "main"); g("config", "user.name", "sc"); g("config", "user.email", "sc@example.invalid"); g("add", "-A"); g("commit", "-q", "-m", "base"); return { d, base: g("rev-parse", "HEAD") }; };
@@ -650,7 +667,12 @@ eqv sr_parse '[["release_note",{"verdict":"ok","reason":"fine"}],["format",{"ver
 eqv sr_testfiles "ttttttttssss" "SR the test detector covers Rust tests.rs, a top-level test/ dir, __tests__/, JVM *Test sources, Python, Go and JS layouts, and not source or docs"
 eqv sr_mode "on,off,always,12,4,12" "SR knob: on by default, =0 off, always; the turn cap (cost cap) is 12 unless LOKI_E10_SELF_REVIEW_MAX_TURNS sets a positive integer"
 eqv sr_receipt '[{"self_review":{"mode":"on","turn":null,"items":[]}},{},{}]' "SR the receipt carries self_review only when the stage recorded it"
-eqv sr_wired yes "SR wiring: implement runs the bounded -rv resume only when wanted and records self_review; seal puts it on the receipt"
+eqv tg_revert "true|tests/t_a.txt|other.txt,tests/t_a.txt,tests/t_new.txt|2|ok|<gone>|o" "TG a review turn that breaks a test passing without it is taken back on its own paths only (edit restored, added file removed, deleted file back); the implement edit stays"
+eqv tg_both "false|bad after" "TG a test that also fails without the turn keeps the turn"
+eqv tg_none null "TG a turn that changed nothing runs no test"
+eqv tg_note yes "TG the receipt line names the test and that the pre-turn diff was kept; a kept turn adds no line"
+eqv tg_knob "false,true" "TG knob: off by default until measured, LOKI_E10_REVIEW_TURN_GUARD=1 on"
+eqv sr_wired yes "SR wiring: implement runs the bounded -rv resume only when wanted and records self_review; seal puts it on the receipt; TG snapshots before the turn, guards it, keeps the pre-turn result on a revert and names it on the receipt"
 eqv tr_wired yes "TR wiring: the scaffold hook returns the record, the machine keeps the skip, seal puts it on the receipt"
 eqv sn_pick "The loader now skips unreadable files instead of aborting the whole scan" "FW summary: the maintainer-style sentence is picked over narration and markers"
 eqv sn_chatter empty "FW summary: test-status and sign-off chatter yields nothing"

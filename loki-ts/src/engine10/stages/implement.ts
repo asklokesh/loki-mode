@@ -22,7 +22,8 @@ import { assumptionsBlock, rankedRemedyBlock, rankedRemedyEnabled } from "../../
 import { loadSpecFile, specBriefBlock, type LoadedSpec } from "../../util/spec_file.ts";
 import { appliedTests, buildPatchBrief, patchCallFor, patchEnabled, runPatchProtocol, testConventions, type PatchCall, type PatchCheck, type PatchOutcome } from "../../features/patch_protocol.ts";
 import { isTestFile } from "../../util/test_file_text.ts";
-import { type ReviewItem, selfReviewBrief, selfReviewChecks, selfReviewMaxTurns, selfReviewMode, selfReviewWanted, settleItems, stripInventedReleaseRefs, treeStaged } from "../../features/self_review.ts";
+import { guardReviewTurn, type ReviewItem, reviewTurnGuardOn, selfReviewBrief, selfReviewChecks, selfReviewMaxTurns, selfReviewMode, selfReviewWanted, settleItems, stripInventedReleaseRefs, treeStaged, type TurnGuardRecord } from "../../features/self_review.ts";
+import { type DiffEntry, snapshotDiff } from "../../e10ext/treeswap.ts";
 
 /** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
 export interface ReadOnlyFile { path: string; content: string; }
@@ -121,6 +122,16 @@ export function patchCheck(ctx: RunContext, impacted: string[], wall: string[], 
     const ran = out.filter((c) => c.result === "pass" || c.result === "fail" || c.result === "flaky");
     return { ok: ran.length > 0 && ran.length === out.length && out.every((c) => c.result === "pass"), ran: ran.length, names: out.map((c) => `${c.name}=${c.result}`), digest: out.filter((c) => c.result !== "pass").map((c) => `${c.name}: ${c.result}${c.reason ? ` (${c.reason})` : ""}\n${checkExcerpt(c) || c.first_error || ""}`).join("\n").slice(0, 1500) };
   };
+}
+/** TG: reruns the tests of the review turn's edits (patchCheckRefs: the impacted tests of its paths plus its test files, capped) and takes the turn back when one
+ * that passes without it fails with it. Runs quietly through verify's own runner. */
+export async function reviewTurnGuard(ctx: RunContext, pre: DiffEntry[], wall: string[], signal: AbortSignal): Promise<TurnGuardRecord | null> {
+  const quiet = Object.assign(Object.create(ctx) as RunContext, { emit: () => undefined });
+  return guardReviewTurn(ctx.repoDir, ctx.baseSha!, pre, (paths) => patchCheckRefs(ctx, paths, impactedTests(ctx)), async (t) => {
+    const tc = commandFor(t, ctx.repoDir, loadProjectApi(ctx.repoDir)), out: VerifyCheck[] = [];
+    await runCheck(quiet, `turn:${t.runner}:${t.path}`, tc.cmd, tc.args, signal, out, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}), wall: new Set(wall) });
+    const res = out[out.length - 1]?.result; return res === "fail" ? "fail" : res === "pass" || res === "flaky" ? "pass" : "not_run";
+  });
 }
 /** The patch brief: the context pack's code (the haiku pack), the impacted tests' heads and the exact check commands. */
 export function patchBrief(ctx: RunContext, task: string, impacted: string[]): string {
@@ -239,8 +250,9 @@ export const implementStage: Stage = {
     { const mode = selfReviewMode(); if (mode !== "off" && ctx.baseSha && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) {
       const before = selfReviewChecks(ctx.repoDir, ctx.baseSha, treeStaged(ctx.repoDir, ctx.baseSha), task, ctx.outputs(), process.env, ctx.runDir);
       let after: ReviewItem[] | null = null, reply: string | null = null, turn: string | null = null;
-      if (selfReviewWanted(before, mode)) { const r = await resumeForSelfReview(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, selfReviewBrief(ctx.repoDir, before), selfReviewMaxTurns()); if (r) { turn = r.iterationId; if (!ids.includes(r.iterationId)) ids.push(r.iterationId); if (r.session !== session) { reply = r.session.summary ?? ""; if (!r.session.killed && r.session.exit === 0 && r.session.markers.done && !r.session.markers.specConflict && !r.session.markers.alreadyDone) session = r.session; else session = { ...session, durationS: r.session.durationS }; } after = selfReviewChecks(ctx.repoDir, ctx.baseSha, treeStaged(ctx.repoDir, ctx.baseSha), task, ctx.outputs(), process.env, ctx.runDir); } } // only a clean LOKI_DONE review reply replaces the implement result: a review turn never turns a done run into a conflict
-      selfReview = { mode, turn, items: settleItems(before, after, reply) };
+      let guard: TurnGuardRecord | null = null;
+      if (selfReviewWanted(before, mode)) { const preTurn = reviewTurnGuardOn() ? snapshotDiff(ctx.repoDir, ctx.baseSha) : null; const r = await resumeForSelfReview(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, selfReviewBrief(ctx.repoDir, before), selfReviewMaxTurns()); if (r) { turn = r.iterationId; if (!ids.includes(r.iterationId)) ids.push(r.iterationId); if (r.session !== session) { reply = r.session.summary ?? ""; guard = preTurn && !signal.aborted ? await reviewTurnGuard(ctx, preTurn, readOnly.map((f) => relative(ctx.repoDir, f.path)), signal) : null; if (!guard?.reverted && !r.session.killed && r.session.exit === 0 && r.session.markers.done && !r.session.markers.specConflict && !r.session.markers.alreadyDone) session = r.session; else session = { ...session, durationS: r.session.durationS }; } after = selfReviewChecks(ctx.repoDir, ctx.baseSha, treeStaged(ctx.repoDir, ctx.baseSha), task, ctx.outputs(), process.env, ctx.runDir); } } // only a clean LOKI_DONE review reply replaces the implement result: a review turn never turns a done run into a conflict; TG: a reverted turn keeps the pre-turn result
+      selfReview = { mode, turn, items: settleItems(before, after, guard?.reverted ? null : reply), ...(guard ? { turn_guard: guard } : {}) };
     } }
     const refsRemoved = ctx.baseSha && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done ? stripInventedReleaseRefs(ctx.repoDir, ctx.baseSha, treeStaged(ctx.repoDir, ctx.baseSha), task) : []; // CR: a reference the task never gives never ships, whatever the model wrote
     const pinnedUpdates = pinnedTestUpdateEnabled() && ctx.baseSha ? pinnedTestUpdates(ctx.repoDir, ctx.baseSha, session.summary ?? "", task) : []; // Z2: the UPDATED TEST lines of the final reply, each checked against base, head and the task
