@@ -1,8 +1,8 @@
 // Loki 10 state machine (ENGINE.md section 4): stage table, Plan || Wall, optional() loader, stage limits, global cap, stop reasons (stalled, fatal). Siblings arrive only through RunContext; stages come from ./stages/<name>.ts.
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"; import { tmpdir } from "node:os"; import { baseDepsLinker } from "../util/base_guard.ts";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { hooks } from "./hooks.ts"; import { cascadeV0On, wallConcurrent } from "../util/wall_knobs.ts"; import { attemptModel, CASCADE_LEAD, cascadeWallTail, wallFailedOf } from "../features/attempts.ts"; import { wallEnabled } from "./sizing.ts";
-import { commitHookBypassOn, treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
+import { safeGit, commitHookBypassOn, treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { assumptionOf, consultAvailable, neverStopActive, readConsults, type NeverStopRecord } from "../features/opus_consult.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./failures.ts";
@@ -72,6 +72,18 @@ export const onlyFullSuiteRed = (d: Obj | undefined): boolean => Array.isArray(d
 /** LOKI_E10_SUITE_FIX_SKIP (default on; =0/off/false opts out): no fix round at all when every blocking group is a full-suite or startup failure (onlyFullSuiteRed),
  *  no failing full-suite id names a file the change edited, no held-out check failed, and a targeted test of the change ran and passed. On the v11.137 Haiku bench arms, 21 such first rounds turned none of their runs
  *  green (18 made no edit). The skip is a NOT PROVEN line on the receipt and the verify stays red, so such a run is never VERIFIED. */
+/** CASCADE-V0: the concurrent Wall's pre-implement snapshot was unavailable (too big, too slow: dev2-coreutils). The base run uses a fresh checkout of the base commit instead,
+ *  with the head's dependency dirs linked where they are safe to share, so the oracle still runs. Tracked files only: what the snapshot would have held untracked is missing. */
+export const FRESH_BASE_NOTE = "Wall base run used a fresh checkout of the base commit (the pre-implement snapshot was unavailable): untracked and ignored files, such as built artifacts, were not there";
+export function freshBaseCheckout(repoDir: string, baseSha: string): string | null {
+  let dir: string | null = null;
+  try {
+    dir = mkdtempSync(join(tmpdir(), "e10-wallbase-fresh-"));
+    safeGit(repoDir, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", "--force", dir, baseSha], { stdio: "ignore", repoDrivers: true });
+    baseDepsLinker(dir, repoDir)(dir);
+    return dir;
+  } catch { if (dir) rmSync(dir, { recursive: true, force: true }); return null; }
+}
 export const haikuIndepFixOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_HAIKU_INDEP_FIX"] ?? "").trim());
 export const suiteFixSkipEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SUITE_FIX_SKIP"] ?? "").trim());
 export const SUITE_FIX_SKIP_NOTE = "fix round skipped: only full-suite failures remained while the change's own targeted tests passed, so those failures are NOT PROVEN unrelated to the change (LOKI_E10_SUITE_FIX_SKIP=0 runs the round)";
@@ -262,7 +274,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     return r.status === "completed" && (earlyExit(r.data) || outputs.intake?.already_satisfied === true); // D61-04: a deferred already-done hit lands on intake's data mid-implement
   };
   // WC-01b: by default (LOKI_E10_WALL_CONCURRENT=0 restores sequential) the Wall is authored alongside plan and implement, then installed once before verify.
-  interface WallJob { snap: Promise<string | null>; split: WallSplit; promise: Promise<{ kind: string } & Record<string, unknown>>; ctl: AbortController; aborted: Promise<null>; t0: number; timer: ReturnType<typeof setTimeout>; why: () => "limit" | "cap" | null; onCap: () => void; }
+  interface WallJob { fresh?: boolean; /* CASCADE-V0: the snapshot failed, the base run uses a fresh base checkout */ snap: Promise<string | null>; split: WallSplit; promise: Promise<{ kind: string } & Record<string, unknown>>; ctl: AbortController; aborted: Promise<null>; t0: number; timer: ReturnType<typeof setTimeout>; why: () => "limit" | "cap" | null; onCap: () => void; }
   let wallJob: WallJob | null = null;
   const closeWallJob = (j: WallJob): void => { clearTimeout(j.timer); capCtl.signal.removeEventListener("abort", j.onCap); };
   const dropSnap = (j: WallJob): void => { j.snap.then((d) => { if (d) rmSync(d, { recursive: true, force: true }); }, () => {}); };
@@ -291,13 +303,14 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (!a) { dropSnap(j); r = { status: "failed", data: {}, reason: j.why() ?? "aborted", killed: true }; }
       else if (a.kind === "done") { dropSnap(j); r = a.result as StageResult; }
       else {
-        const base = await j.snap; // unproven base run is never trusted: no snapshot, no install (nothing is dropped silently)
+        const snap = await j.snap, fresh = !snap && j.fresh ? freshBaseCheckout(ctx.repoDir, ctx.baseSha) : null, base = snap ?? fresh; // unproven base run is never trusted: no snapshot and no fresh checkout, no install (nothing is dropped silently)
         if (!base) r = { status: "failed", data: {}, reason: "wall base snapshot unavailable: nothing installed" };
         else try {
           const w = a as unknown as { contents: Map<string, string>; targetDir: string };
           mkdirSync(join(base, relative(ctx.repoDir, w.targetDir)), { recursive: true });
           for (const [n, c] of w.contents) writeFileSync(join(base, relative(ctx.repoDir, w.targetDir), n), c, "utf8");
           r = j.split.install(sctx, a as never, base);
+          if (fresh) r = { ...r, data: { ...r.data, base_checkout: "fresh", not_proven: [...(Array.isArray(r.data.not_proven) ? r.data.not_proven as string[] : []), FRESH_BASE_NOTE] } };
           const changed = hooks.wall!.changedSinceBase(ctx.repoDir, ctx.baseSha);
           if (r.status === "completed") {
             const touched = (changed ?? []).filter((f) => !f.startsWith(".loki/") && !f.startsWith(`${relative(ctx.repoDir, w.targetDir)}/loki_wall_`));
@@ -307,7 +320,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
             const d1 = unsure && green && d.reproduction_green_on_base !== true ? distrustGreenBase(d) : d; // shared fail-closed mechanism (wall.ts distrustGreenBase)
             r = { ...r, data: { ...d1, base_run: { ...(d1.base_run as Obj), ...(changed === null || changed.some((f) => hooks.wall!.manifests.test(f)) ? { deps: "head" } : {}) } } };
           }
-        } finally { rmSync(base, { recursive: true, force: true }); }
+        } finally { rmSync(base, { recursive: true, force: true }); if (fresh) { try { safeGit(ctx.repoDir, ["worktree", "prune"]); } catch { /* best effort */ } } }
       }
     } catch (err) { r = { status: "failed", data: {}, reason: err instanceof Error ? err.message : String(err) }; }
     if (r.status === "completed") { outputs.wall = r.data; ctx.emit("stage.completed", "wall", { ...r.data, duration_s: dur() }); }
@@ -328,7 +341,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (!isTail && capReached()) markCap(todo[0] as StageName);
       if (capHit && !isTail) { jumped = true; continue; }
       if (wallConcurrent() && wallEnabled() && todo.includes("plan") && todo.includes("wall") && !wallJob && await startWallAuthor()) todo = todo.filter((n) => n !== "wall"); // the Wall is now a background job, joined before verify
-      if (wallJob && todo.includes("implement") && !(await (wallJob as WallJob).snap)) { const j = wallJob as WallJob, t0 = j.t0; abortWall(); ctx.emit("stage.failed", "wall", { duration_s: (ctx.clock.now() - t0) / 1000, reason: "wall base snapshot unavailable: nothing installed" }); } // the base copy must be complete before implement edits the tree; no copy means no Wall
+      if (wallJob && todo.includes("implement") && !(await (wallJob as WallJob).snap) && cascadeV0On()) (wallJob as WallJob).fresh = true; // CASCADE-V0: the oracle still runs, on a fresh base checkout at install
+      else if (wallJob && todo.includes("implement") && !(await (wallJob as WallJob).snap)) { const j = wallJob as WallJob, t0 = j.t0; abortWall(); ctx.emit("stage.failed", "wall", { duration_s: (ctx.clock.now() - t0) / 1000, reason: "wall base snapshot unavailable: nothing installed" }); } // the base copy must be complete before implement edits the tree; no copy means no Wall
       if (wallJob && todo[0] === "verify") await installWallJob(); // FC-VACUOUS-WALL-GREEN: a Wall green on base no longer ends the run here
       if (todo[0] === "verify" && !outputs.verify && !jumped) scaffoldNow(); // LOKI_E10_SCAFFOLD: the deterministic release-note fragment, before the first verify so verify and the commit see it
       const results = await Promise.all(todo.map((n) => runStage(n, !isTail)));

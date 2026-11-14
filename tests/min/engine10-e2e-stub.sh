@@ -51,6 +51,8 @@
 #   14. loki-ts/src/util/check_result.ts changedSymbols: drop the ENCLOSING-DECL fallback (the enclosing-declaration unit line reads method=[]).
 #   30. machine.ts: cascadeNow ignores wallFailedOf (the lint-only leg cascades).
 #   31. machine.ts: drop the Wall tail from the cascade brief (the brief leg finds no Wall failure).
+#   32. wall.ts wallRoute: drop the !wallEnabled() lean override (the lean-path leg reads the Wall skipped).
+#   33. machine.ts: never set fresh (the snapshot fallback leg reads stage.failed).
 #   15. claude_model.ts chooseSessionModel: ignore EXPLICIT_MODEL_ENV (the env leg reads sonnet, source default).
 #   16. supervisor.ts: do not export the default pin (the default leg reads the provider default and no --model).
 #   17. seal.ts: drop model_source (every default-model leg reads absent).
@@ -451,6 +453,33 @@ E2E_STUB_WALL=multiply E2E_STUB_LINTBAD=1 LOKI_SESSION_MODEL=haiku LOKI_E10_CASC
 [ "$(cas_ev)" = "none" ] && ok "cascade: a red that is not the Wall (a lint error) never cascades" || bad "cascade: a lint-only red cascaded ($(cas_ev))"
 E2E_STUB_RIGHT=1 E2E_STUB_WALL=multiply E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku run_engine attempts
 [ "$(cas_ev)" = "none" ] && ok "cascade: off by default (no LOKI_E10_CASCADE_V0): no extra attempt" || bad "cascade: ran with the flag unset ($(cas_ev))"
+
+# CASCADE-V0 must-haves. (1) The calc fixture is a lean task (small, a relevant visible test): the Wall still runs with LOKI_E10_WALL=1, and plan is not forced.
+# (2) A pre-implement snapshot that fails (a 1 KB size ceiling) no longer drops the oracle under the flag: the Wall runs on a fresh base checkout, said on NOT PROVEN.
+wall_facts() { python3 -I - "$RUNDIR/events.jsonl" "$RUNDIR/receipt.json" <<'PY'
+import json, sys
+ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]
+w = [e for e in ev if e.get("stage") == "wall" and e["type"] in ("stage.completed", "stage.failed", "stage.skipped")]
+p = [e["type"] for e in ev if e.get("stage") == "plan" and e["type"] in ("stage.completed", "stage.skipped")]
+d = (w[-1].get("data") or {}) if w else {}
+try: rec = json.load(open(sys.argv[2]))
+except Exception: rec = {}
+np = " ".join(rec.get("not_proven", []))
+print(w[-1]["type"] if w else "none", len(d.get("files") or []), d.get("base_checkout", "-"), "fresh-note" if "fresh checkout of the base commit" in np else "no-note", p[0] if p else "none", "oracle" if "wall_oracle" in rec else "no-oracle")
+PY
+}
+E2E_STUB_WALL=multiply LOKI_E10_WALL=1 LOKI_E10_PLAN=auto run_engine done
+f="$(wall_facts)"; set -- $f
+[ "$1" = stage.completed ] && [ "$2" -ge 1 ] && [ "$5" = stage.skipped ] && [ "$6" = oracle ] && ok "lean path: LOKI_E10_WALL=1 runs the Wall on a lean task without forcing plan, and the receipt prices it ($f)" || bad "lean path wall facts: $f"
+E2E_STUB_WALL=multiply LOKI_E10_PLAN=auto run_engine done
+f="$(wall_facts)"; set -- $f
+[ "$1" != stage.completed ] || [ "$2" = 0 ] && ok "lean path: with no Wall switch the lean task still skips the Wall ($f)" || bad "lean path default: the Wall ran ($f)"
+E2E_STUB_WALL=multiply LOKI_E10_CASCADE_V0=1 LOKI_E10_WALL_SNAPSHOT_MAX_MB=0.000001 run_engine done
+f="$(wall_facts)"; set -- $f
+[ "$1" = stage.completed ] && [ "$3" = fresh ] && [ "$4" = fresh-note ] && ok "snapshot fallback: with the flag, a failed snapshot runs the Wall on a fresh base checkout, named on NOT PROVEN ($f)" || bad "snapshot fallback facts: $f"
+E2E_STUB_WALL=multiply LOKI_E10_WALL=1 LOKI_E10_WALL_SNAPSHOT_MAX_MB=0.000001 run_engine done
+f="$(wall_facts)"; set -- $f
+[ "$1" = stage.failed ] && ok "snapshot fallback: without the cascade flag a failed snapshot still fails the Wall stage, as before ($f)" || bad "snapshot no-flag facts: $f"
 
 att_ev() { python3 -I -c '
 import json, sys

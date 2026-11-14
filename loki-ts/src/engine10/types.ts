@@ -173,6 +173,7 @@ export interface Receipt {
   diff_sha256: string;
   wall: { files: { path: string; sha256: string }[]; passed: boolean | null };
   checks: ReceiptCheck[];
+  wall_oracle?: { cost_usd: number | null; duration_s: number | null }; cascade?: { fired: boolean; from?: string | null; to?: string | null }; // CASCADE-V0 receipt facts
   model_source?: "explicit" | "default" | "provider"; // acc-156: who chose `model` (a flag or env, Loki's DEFAULT_SESSION_MODEL, or the Claude CLI's own default)
   implement?: { exit: "external"; patch_sha256: string }; // CW-12 B3: present only when no Loki session wrote the code; the receipt names no implementing model
   not_proven: string[]; not_applicable?: string[]; // FC-SEAL-NA-AS-UNPROVEN: informational notes (package without tests, no app to boot, not selected by risk tier); never part of any verdict
