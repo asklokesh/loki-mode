@@ -63,6 +63,8 @@
 #  NRM3. commit_filter.ts dropSet: ignore the task (drop the taskWantsLockChange clause); the task-aware lockfile check fails.
 #  GB1. commit_filter.ts dropSet: drop `|| art.has(f)`; the build-artifact check fails (web/dist, build/, *.pyc, *.tsbuildinfo and the ignored log ship).
 #  GB2. commit_filter.ts buildArtifacts: skip the dirTracked check (always drop under an output dir); the tracked dist/ case fails.
+#  RD1. commit_filter.ts regenDrops: `return [];` first; the RD check fails (the doc only a check run rewrote ships).
+#  DN1. commit_filter.ts needDrops: `return [];` first; the DN check fails (the reformatted generated file and the drive-by suppression edit ship).
 #  RO1. commit_filter.ts dropSet: `if (false) for (const f of runOutputs(` ; the RO check fails (nested .loki, test-results, JUnit reports ship) and so does GB's =0 leg.
 #  SG4. commit_filter.ts commitUnsealedWork: remove the churn block; the WIP commit carries pnpm-lock.yaml again.
 #  SG5. check_result.ts commandFor: drop the rootProjectsBreakSite null; the workspace command runs from packages/a and fails (No projects were found).
@@ -495,6 +497,38 @@ const off = () => { process.env.LOKI_E10_RUN_OUTPUT_DROP = "0"; try { return d(a
 console.log([d(all, "fix the parser"), d(A("junit.xml", "src/c.py"), "write the junit.xml report"), off()].join(" | "));
 ' 2>&1)"
 [ "$ROR" = ".pytest_cache/v/cache,docs/coverage/x.json,junit.xml,src/report.junit.xml,test-results/.last-run.json,web/.loki/logs/run.txt | - | -" ] && ok "RO commit filter: nested .loki/, test-results/, coverage/ anywhere, caches and JUnit reports the run created are left out; a tracked coverage dir, source and tests ship; a task naming the file keeps it; =0 opts out ($ROR)" || bad "RO run-output drop gave: $ROR"
+# DN LOKI_E10_DIFF_NEED: deliver only what the fix needs. A formatting-only change (generated route tree reformatted, quotes and trailing commas) and a lint-suppression-only
+# edit in a file outside the fix are left out; a real change, Python indentation (meaningful), an in-scope suppression edit, a task asking to reformat, and a task-named file stay.
+DNR="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const cf = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
+const F = {
+  "src/routeTree.gen.ts": { base: "export const routes = {a: \"x\", b: \"y\"}\n", head: "export const routes = {\n  a: '\''x'\'',\n  b: '\''y'\'',\n};\n" },
+  "src/fix.ts": { base: "export const n = 1\n", head: "export const n = 2\n" },
+  "pkg/block.py": { base: "if a:\n    x = 1\ny = 2\n", head: "if a:\n    x = 1\n    y = 2\n" },
+  "pkg/quotes.py": { base: "x = '\''a'\''\n", head: "x = \"a\"\n" },
+  "tools/other.py": { base: "import os  # noqa: F401\n", head: "import os\n" },
+  "pkg/inscope.py": { base: "import sys  # noqa: F401\n", head: "import sys\n" },
+};
+const st = Object.keys(F).map((f) => ({ st: "M", f })), rd = (f) => F[f], outside = ["tools/other.py", "src/routeTree.gen.ts", "pkg/quotes.py", "pkg/block.py"];
+const d = (task, env = {}) => cf.needDrops(st, task, rd, outside, env).map((x) => `${x.f}=${x.why === "formatting-only change" ? "fmt" : "supp"}`).join(",") || "-";
+console.log([d("Fix the count"), d("Please reformat the routes"), d("Fix the count", { LOKI_E10_DIFF_NEED: "0" }), d("Fix the count in src/routeTree.gen.ts"), cf.needDropNote({ f: "tools/other.py", why: "lint-suppression-only change outside the fix" })].join(" | "));
+' 2>&1)"
+[ "$DNR" = 'src/routeTree.gen.ts=fmt,pkg/quotes.py=fmt,tools/other.py=supp | tools/other.py=supp | - | pkg/quotes.py=fmt,tools/other.py=supp | lint-suppression-only change outside the fix left out of the delivered diff: tools/other.py' ] && ok "DN commit filter: a formatting-only change and a suppression-only edit outside the fix are left out; a real change, Python indentation, an in-scope suppression edit, a reformat task and a task-named file stay; =0 drops nothing ($DNR)" || bad "DN diff-need drop gave: $DNR"
+grep -q 'const drop = \[...drop0, ...regen, ...need\];' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q '...need.map(needDropNote)' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "DN wiring: the commit stage drops and names what the fix does not need" || bad "DN wiring missing in seal.ts"
+# RD LOKI_E10_REGEN_DROP: a file only a verify run rewrote leaves the delivered diff; one a model stage also wrote, one the task names, and a regenerated doc whose
+# changed lines carry a task keyword (regenerated in step with the change) stay; =0 drops nothing.
+RDR="$(RD="$T/regen-run" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const cf = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts"), rd = process.env.RD;
+cf.noteRegenerated(rd, "verify", ["docs/system.md", "src/enc.go", "docs/encode.md", "docs/named.md"]);
+cf.noteRegenerated(rd, "implement", ["src/enc.go"]);
+const lines = { "docs/system.md": ["-run(\"/usr/bin/echo\")", "+run(\"/bin/echo\")"], "docs/encode.md": ["+  base64url_encode the value"], "docs/named.md": ["+x"], "src/other.go": ["+y"] };
+const st = ["docs/system.md", "docs/encode.md", "docs/named.md", "src/enc.go", "src/other.go"].map((f) => ({ st: "M", f }));
+const task = "Add a `base64url_encode` operator; also refresh docs/named.md";
+const d = (env = {}) => cf.regenDrops(rd, st, task, (f) => lines[f] ?? [], env).map((x) => x.f).join(",") || "-";
+console.log([JSON.stringify(cf.regeneratedPaths(rd)), d(), d({ LOKI_E10_REGEN_DROP: "0" }), cf.regenDropNote("docs/system.md")].join(" | "));
+' 2>&1)"
+[ "$RDR" = '["docs/encode.md","docs/named.md","docs/system.md"] | docs/system.md | - | rewritten only by Loki'"'"'s own check run, not by the change, and left out of the commit: docs/system.md' ] && ok "RD commit filter: a file only a verify run rewrote (a machine-specific doc) is left out; a file a model stage also wrote, a task-named file and a doc regenerated in step with the change stay; =0 drops nothing; the drop is noted ($RDR)" || bad "RD regenerated-file drop gave: $RDR"
+grep -q '(name === "verify" && regenDropOn()) ? treeSnapshot(ctx.repoDir) : null' "$ROOT/loki-ts/src/engine10/machine.ts" && grep -q 'if (regenDropOn()) noteRegenerated(ctx.runDir, name,' "$ROOT/loki-ts/src/engine10/machine.ts" && grep -q 'const drop = \[...drop0, ...regen, ...need\];' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q '...regen.map(({ f }) => regenDropNote(f))' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "RD wiring: the machine snapshots verify runs and records their writes; the commit stage drops and names the regenerated files" || bad "RD wiring missing in machine.ts or seal.ts"
 printf '#!/bin/sh\nfor f in "$@"; do printf "formatted\\n" >> "$f"; done\n' > "$LK/node_modules-biome.sh"; mkdir -p "$LK/node_modules/.bin"; cp "$LK/node_modules-biome.sh" "$LK/node_modules/.bin/biome"; rm "$LK/node_modules-biome.sh"; chmod +x "$LK/node_modules/.bin/biome"
 printf '{}\n' > "$LK/biome.json"
 FMT="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '

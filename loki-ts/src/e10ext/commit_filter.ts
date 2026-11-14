@@ -1,5 +1,5 @@
 // Shared by the commit stage and the supervisor backstop: which staged paths a run must never publish.
-import { existsSync, lstatSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { untouchedSinceIntake } from "./preexisting_dirty.ts"; import { untouchedUntracked } from "../features/untouched_untracked.ts";
 import { installOwned } from "../project_model/install.ts"; import { LOCKFILE_RE as LOCKFILE, toolchainOutputs } from "../util/lock_ecosystems.ts"; export { LOCKFILE };
@@ -82,6 +82,71 @@ export function runOutputs(repoDir: string, added: string[], baseSha?: string, t
   }
   return out;
 }
+/** RD LOKI_E10_REGEN_DROP (default on, =0 opts out): a file only Loki's own checks rewrote is left out of the delivered diff. The machine snapshots the tree around
+ *  every verify run; a path a verify run changed joins <runDir>/regenerated.json, and a path a model stage (wall, implement, fix) later writes leaves it again. At
+ *  commit, a staged path still in that set is left out unless the task names it or one of its changed lines carries a task keyword (a backticked span, or an
+ *  identifier of 5 or more characters the task uses), so a doc a test run regenerated in step with the change stays. The failure: a test run regenerated an
+ *  unrelated doc page with a machine-specific path, the commit shipped it, and review failed the diff as an unrelated edit on a run that read VERIFIED. */
+export const regenDropOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_REGEN_DROP"] ?? "").trim());
+const REGEN_FILE = "regenerated.json";
+export function noteRegenerated(runDir: string, stage: string, paths: string[]): void {
+  if (!paths.length || !["verify", "wall", "implement", "fix"].includes(stage)) return;
+  const p = join(runDir, REGEN_FILE); let set = new Set<string>();
+  try { set = new Set((JSON.parse(readFileSync(p, "utf8")) as { paths?: string[] }).paths ?? []); } catch { /* none yet */ }
+  for (const f of paths) { if (stage === "verify") set.add(f); else set.delete(f); }
+  try { mkdirSync(runDir, { recursive: true }); writeFileSync(p, JSON.stringify({ paths: [...set].sort() })); } catch { /* best effort: no record, nothing dropped */ }
+}
+export const regeneratedPaths = (runDir: string): string[] => { try { return (JSON.parse(readFileSync(join(runDir, REGEN_FILE), "utf8")) as { paths?: string[] }).paths ?? []; } catch { return []; } };
+/** Task keywords a regenerated file's change must carry to stay (see regenDropOn). */
+export function taskKeywords(task: string): Set<string> {
+  const k = new Set<string>([...task.matchAll(/`([^`\n]{2,60})`/g)].map((m) => m[1]!.trim()));
+  for (const m of task.matchAll(/[A-Za-z_][A-Za-z0-9_]{4,}/g)) if (/[_0-9]|[a-z][A-Z]/.test(m[0]) || m[0].length >= 8) k.add(m[0]);
+  return k;
+}
+/** The staged paths to leave out as check-regenerated (RD). `changedLines(f)` gives the added and removed lines of f against base. */
+export function regenDrops(runDir: string, staged: Staged[], task: string, changedLines: (f: string) => string[], env: NodeJS.ProcessEnv = process.env): Staged[] {
+  if (!regenDropOn(env)) return [];
+  const regen = new Set(regeneratedPaths(runDir)); if (!regen.size) return [];
+  const kw = [...taskKeywords(task)];
+  return staged.filter(({ st, f }) => {
+    if (!(st === "A" || st === "M") || !regen.has(f) || f.startsWith(".loki/") || task.includes(f) || task.includes(basename(f))) return false;
+    const lines = changedLines(f).join("\n");
+    return !kw.some((w) => lines.includes(w));
+  });
+}
+export const regenDropNote = (f: string): string => `rewritten only by Loki's own check run, not by the change, and left out of the commit: ${f}`;
+/** DN LOKI_E10_DIFF_NEED (default on, =0 opts out): deliver only what the fix needs, deterministically and with no model call. A staged non-test file the task does not
+ *  name is left out when (1) its change is formatting only: base and head are equal once whitespace, quote style, semicolons and trailing commas are normalized
+ *  (Python, YAML and other whitespace-significant files keep their indentation, so only trailing space, blank lines and quotes are normalized), unless the task asks
+ *  for formatting; or (2) its change only adds or removes lint-suppression comments (noqa, type: ignore, eslint-disable, @ts-ignore, @ts-expect-error, nolint,
+ *  pylint: disable, rubocop:disable, #[allow(..)], @SuppressWarnings) in a file outside the change's stated scope, unless the task is about lint or warnings.
+ *  The failures: a 177 KB delivered diff of reformatted generated route trees and schema files (the raw run's was 4.5 KB), and a drive-by suppression removal in
+ *  an unrelated file. `scopeOutside` lists the staged paths outside the stated scope, or null when no scope signal exists (treated as outside). */
+export const diffNeedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DIFF_NEED"] ?? "").trim());
+const WS_SIGNIFICANT = /\.(?:py|pyi|ya?ml|haml|pug|coffee|nim|mk)$|(^|\/)Makefile$/;
+export function formattingOnly(f: string, base: string, head: string): boolean {
+  if (base === head) return false;
+  const quotes = (t: string): string => t.replace(/["'`]/g, "'");
+  const norm = WS_SIGNIFICANT.test(f)
+    ? (t: string): string => quotes(t).split("\n").map((l) => l.replace(/[ \t]+$/, "")).filter((l) => l.trim() !== "").join("\n")
+    : (t: string): string => quotes(t).replace(/[\s;]+/g, "").replace(/,([\]})])/g, "$1");
+  return norm(base) === norm(head);
+}
+const SUPPRESS = /\s*(?:#\s*(?:noqa\b[^\n]*|type:\s*ignore\b[^\n]*|pylint:\s*disable[^\n]*|rubocop:disable[^\n]*)|\/\/\s*(?:eslint-disable[^\n]*|@ts-(?:ignore|expect-error|nocheck)[^\n]*|nolint\b[^\n]*|NOLINT[^\n]*)|\/\*\s*eslint-disable[^*]*\*\/|#\[allow\([^)]*\)\]|@SuppressWarnings\([^)]*\))/g;
+export const suppressionOnly = (base: string, head: string): boolean => base !== head && base.replace(SUPPRESS, "").replace(/[ \t]+$/gm, "").replace(/\n{2,}/g, "\n") === head.replace(SUPPRESS, "").replace(/[ \t]+$/gm, "").replace(/\n{2,}/g, "\n");
+export function needDrops(staged: Staged[], task: string, read: (f: string) => { base: string | null; head: string | null }, scopeOutside: string[] | null, env: NodeJS.ProcessEnv = process.env): { st: string; f: string; why: string }[] {
+  if (!diffNeedOn(env)) return [];
+  const asksFormat = /\b(?:format(?:ting|ter)?|re-?format|prettier|black|ruff format|gofmt|rustfmt|whitespace|indent(?:ation)?)\b/i.test(task), asksLint = /\b(?:lint(?:er|ing)?|noqa|eslint|suppress(?:ion)?|warnings?|type:\s*ignore|ts-ignore)\b/i.test(task);
+  const out: { st: string; f: string; why: string }[] = [];
+  for (const { st, f } of staged) {
+    if (st !== "M" || f.startsWith(".loki/") || task.includes(f) || task.includes(basename(f))) continue;
+    const { base, head } = read(f); if (base === null || head === null) continue;
+    if (!asksFormat && formattingOnly(f, base, head)) { out.push({ st, f, why: "formatting-only change" }); continue; }
+    if (!asksLint && (scopeOutside === null || scopeOutside.includes(f)) && suppressionOnly(base, head)) out.push({ st, f, why: "lint-suppression-only change outside the fix" });
+  }
+  return out;
+}
+export const needDropNote = (d: { f: string; why: string }): string => `${d.why} left out of the delivered diff: ${d.f}`;
 /** One receipt line per build artifact or run output the commit left out. */
 export const buildArtifactNotes = (repoDir: string, droppedAdded: string[], baseSha?: string, task?: string): string[] => {
   const s = new Set<string>([...(buildArtifactDropEnabled() ? buildArtifacts(repoDir, droppedAdded, baseSha, task) : []), ...(runOutputDropEnabled() ? runOutputs(repoDir, droppedAdded, baseSha, task) : [])]);

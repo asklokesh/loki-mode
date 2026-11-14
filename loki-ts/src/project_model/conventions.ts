@@ -378,8 +378,8 @@ export const towncrierNoNumberPrefix = (repoDir: string, dir: string, env: NodeJ
   (towncrierOrphanOn(env) ? towncrierOrphanPrefix(repoDir, dir) : null) ?? (towncrierNewOrphanOn(env) && towncrierOrphansAllowed(repoDir) ? "+" : null);
 /** ON LOKI_E10_ORPHAN_RENAME (default on, =0 opts out): a towncrier fragment the run created under a number the task never gives (the task gives none) is renamed to the
  *  orphan form `<prefix><slug>.<type>[.<ext>]` when the repo already has orphan fragments or sets orphan_prefix; slug from the task title. Otherwise nothing moves and the
- *  self-check flags it for the review turn (releaseNoteProblems). Returns "<old> -> <new>" or null. The failure: a run named its fragment changelog.d/1604.change.md
- *  although no input carried 1604. */
+ *  self-check flags it for the review turn (releaseNoteProblems). Returns "<old> -> <new>" or null. The failure: a run named its fragment with a number
+ *   no input carried. */
 export const orphanRenameOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_ORPHAN_RENAME);
 export function renameInventedFragment(repoDir: string, conv: ReleaseNoteConvention, f: string, task: string, env: NodeJS.ProcessEnv = process.env): string | null {
   if (!orphanRenameOn(env) || conv.kind !== "towncrier" || !f.startsWith(`${conv.dir}/`) || taskNumbers(task).length) return null;

@@ -1,6 +1,7 @@
 // Loki 10 state machine (ENGINE.md section 4): stage table, Plan || Wall, optional() loader, stage limits, global cap, stop reasons (stalled, fatal). Siblings arrive only through RunContext; stages come from ./stages/<name>.ts.
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
+import { noteRegenerated, regenDropOn } from "../e10ext/commit_filter.ts";
 import { hooks } from "./hooks.ts"; import { wallConcurrent } from "../util/wall_knobs.ts"; import { wallEnabled } from "./sizing.ts";
 import { commitHookBypassOn, treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { assumptionOf, consultAvailable, neverStopActive, readConsults, type NeverStopRecord } from "../features/opus_consult.ts";
@@ -158,7 +159,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     ctx.emit("stage.started", name, { target_s: st.targetS, limit_s: limitS, ...(name === "wall" ? { start_ms: ctx.clock.now() } : {}) });
     const t0 = ctx.clock.now();
     const dur = (): number => (ctx.clock.now() - t0) / 1000;
-    const snapBefore = TREE_STAGES.has(name) ? treeSnapshot(ctx.repoDir) : null;
+    const snapBefore = TREE_STAGES.has(name) || (name === "verify" && regenDropOn()) ? treeSnapshot(ctx.repoDir) : null; // RD: verify too, so a file only a check rewrote is known
     const ctl = new AbortController();
     let why: "limit" | "cap" | null = null;
     const kill = (w: "limit" | "cap"): void => { if (!why) { why = w; ctl.abort(); } };
@@ -205,6 +206,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       const durationS = dur();
       res.data.duration_s = durationS; outputs[name] = res.data; // RECEIPT-TRUTH: seal sums time.stages from outputs, so every stage records its own duration_s here; same object (not a copy) because intake mutates its own data after the stage ends (D61-04)
       const diff_stat = snapBefore ? treeDiffStat(ctx.repoDir, snapBefore, treeSnapshot(ctx.repoDir)) : null; // absent = unmeasured or no change, never a fabricated zero
+      if (regenDropOn()) noteRegenerated(ctx.runDir, name, ((diff_stat?.paths as { path: string }[] | undefined) ?? []).map((p) => p.path)); // RD: a check's writes join the set, a model stage's writes leave it
       ctx.emit("stage.completed", name, { ...res.data, duration_s: durationS, ...(diff_stat ? { diff_stat } : {}) });
     } else if (res.status === "skipped") {
       if (Array.isArray(res.data.not_proven)) outputs[name] = res.data; // TEN-COST-09: a skip that disclosed what it left unproven reaches seal

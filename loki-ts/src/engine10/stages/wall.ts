@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { goPackagePath } from "../../runner/repo_profile.ts";
+import { wallRequiredCases } from "../../features/self_review.ts";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { type RunContext, type RunnerName, type Stage, type StageResult, type TestMap, type TestRef, taskBlock } from "../types.ts";
 import { clauseDroppedNote, extractClauses, untaggedClauses, type ClauseSet } from "../../util/spec_file.ts";
@@ -173,7 +174,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const model = retry?.model ?? wallFirstModel(sz.size), iterationId = `${ctx.runId}-wall${retry?.suffix ?? ""}`; // COST-11
   const session = await ctx.sessions.run({
     stage: "wall",
-    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? [], relative(ctx.repoDir, targetDir), clauseSet, evidence, isTinyGreenfield(sz.size, task, testMap)) + wallCasesBrief(runners) + goPackageBrief(ctx.repoDir, targetDir, runners, srcTexts, (d) => goPackagePath(readText, ctx.repoDir, d)) + (retry?.note ? `\n\n${retry.note}` : ""), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
+    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), [...(unitSpec()?.acceptance ?? []), ...wallRequiredCases(ctx.runDir, task)], relative(ctx.repoDir, targetDir), clauseSet, evidence, isTinyGreenfield(sz.size, task, testMap)) + wallCasesBrief(runners) + goPackageBrief(ctx.repoDir, targetDir, runners, srcTexts, (d) => goPackagePath(readText, ctx.repoDir, d)) + (retry?.note ? `\n\n${retry.note}` : ""), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
     tier: "development",
     model,

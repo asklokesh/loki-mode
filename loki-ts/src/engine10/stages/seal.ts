@@ -12,9 +12,9 @@ import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutat
 import { RealBaseTestRunner, loadTaskText } from "./wall.ts"; import { defectPinEdits, defectPinNote, pinDroppedNotes, pinnedUpdateNotes, type PinnedTestUpdate } from "../../util/test_guard.ts";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
 import { discardIfSatisfied } from "../../e10ext/discard.ts";
-import { buildArtifactNotes, dropSet, formatChangedRecord, parseStaged } from "../../e10ext/commit_filter.ts";
+import { buildArtifactNotes, dropSet, formatChangedRecord, needDropNote, needDrops, parseStaged, regenDropNote, regenDrops } from "../../e10ext/commit_filter.ts";
 import { releaseRefsReceiptBlock, selfReviewReceiptBlock } from "../../features/self_review.ts";
-import { crossPackageTestEdits, crossPackageTestNote, flagOutsideScope, scopeTestDropEnabled } from "../../e10ext/scope.ts";
+import { crossPackageTestEdits, crossPackageTestNote, flagOutsideScope, outsideScope, scopeTestDropEnabled } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts"; import { getVersion } from "../../version.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
@@ -36,7 +36,7 @@ import { patchReceipt } from "../../features/patch_protocol.ts";
 import { collapseNotProven } from "../../util/term_width.ts";
 import { consultNotes, neverStopNotes } from "../../features/opus_consult.ts"; import { namedUnchangedNote, namedUnchangedOf } from "../../util/conflict_resume.ts";
 import { tournamentReceiptBlock } from "../../features/tournament.ts"; import { attemptsReceiptBlock } from "../../features/attempts.ts"; import { nrdReceiptBlock, settleNrd } from "../../features/no_regression.ts";
-import { commitHookBypassOn, type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, splitDeclaredAdvisories } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { fragmentNoticeLine, misplacedNamedNotes, releaseNoteSkipBlock } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
+import { commitHookBypassOn, type SafeGitKeep, safeGit, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, splitDeclaredAdvisories } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { fragmentNoticeLine, misplacedNamedNotes, releaseNoteSkipBlock } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
 const SYSTEM_INTERP = "tests ran on the system interpreter", SYSTEM_INTERP_SUFFIX = " (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)"; // verify.ts writes the note
 
 export const SIGNING_UNAVAILABLE = "receipt signing unavailable (no usable signing key: invalid key or unwritable ~/.loki/keys)", AGENT_ONLY_REASON = "only agent-authored tests executed (no agent-independent proof)", WALL_GREEN_ON_BASE_REASON = "Wall green on base: no Wall test discriminates the change"; // TEN-GATES-02
@@ -176,7 +176,11 @@ export const commitStage: Stage = {
     if ((await git(ctx, ["add", "-A", "--", "."], { repoDrivers: true })).code !== 0) return { status: "failed", data: {}, reason: "git add failed" };
     const sd = await git(ctx, ["diff", "--cached", "--name-status", "--no-renames", "-z", ctx.baseSha]); if (sd.code !== 0) return { status: "failed", data: {}, reason: "git diff against base failed" };
     const staged = parseStaged(sd.out);
-    const drop = dropSet(ctx.repoDir, staged, ctx.outputs().intake?.preexisting_dirty, process.env, ctx.outputs().intake?.install_created, ctx.outputs().intake?.preexisting_untracked_blobs, ctx.baseSha, str(ctx.outputs().intake?.task) ?? undefined);
+    const drop0 = dropSet(ctx.repoDir, staged, ctx.outputs().intake?.preexisting_dirty, process.env, ctx.outputs().intake?.install_created, ctx.outputs().intake?.preexisting_untracked_blobs, ctx.baseSha, str(ctx.outputs().intake?.task) ?? undefined);
+    const regen = regenDrops(ctx.runDir, staged.filter(({ f }) => !drop0.some((d) => d.f === f)), str(ctx.outputs().intake?.task) ?? "", (f) => { try { return safeGit(ctx.repoDir, ["diff", "--no-color", "-U0", ctx.baseSha!, "--", f]).split("\n").filter((l) => /^[+-](?![+-]{2})/.test(l)); } catch { return []; } }); // RD
+    const rest = staged.filter(({ f }) => !drop0.some((d) => d.f === f) && !regen.some((d) => d.f === f));
+    const need = needDrops(rest, str(ctx.outputs().intake?.task) ?? "", (f) => { let base: string | null = null, head: string | null = null; try { base = safeGit(ctx.repoDir, ["show", `${ctx.baseSha}:./${f}`], { maxBuffer: 64 << 20 }); } catch { /* new on this run */ } try { head = readFileSync(join(ctx.repoDir, f), "utf8"); } catch { /* gone */ } return { base, head }; }, (() => { try { return outsideScope(ctx.outputs(), rest); } catch { return null; } })()); // DN
+    const drop = [...drop0, ...regen, ...need];
     const sat = await discardIfSatisfied((a) => git(ctx, a), ctx.baseSha, ctx.outputs(), staged, new Set(drop.filter(({ st }) => st === "L").map(({ f }) => f)), ctx.repoDir); if (sat) return sat; // D50-F1
     if (drop.length > 0 && (await git(ctx, ["--literal-pathspecs", "reset", "-q", ctx.baseSha, "--", ...drop.map(({ f }) => f)])).code !== 0) return { status: "failed", data: {}, reason: "git reset failed" }; // A-104b: reset to the run base (not HEAD) so a path committed in implement leaves the diff too; literal, so ":(top)x" is a filename
     // J3 LOKI_E10_SCOPE_TEST_DROP: a test-only edit in a package the change does not touch goes back to base (index and tree), with a NOT PROVEN note; source files are never touched
@@ -188,7 +192,7 @@ export const commitStage: Stage = {
     }
     const dropped = new Set([...drop.map(({ f }) => f), ...xpkg]), fmtRec = formatChangedRecord(ctx.repoDir, staged, dropped, process.env, ctx.baseSha), fmt = fmtRec.formatted; // TEN-QUALITY-16: only the run's own kept files; J1: the resolved binary, base-clean files only, recorded
     if (fmt.length > 0) await git(ctx, ["--literal-pathspecs", "add", "--", ...fmt], { repoDrivers: true }); // re-stage what the repo's formatter rewrote
-    const notes = [...xpkg.map(crossPackageTestNote), ...flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir), ...toolchainDropNotes(ctx.repoDir, drop.filter(({ st }) => st === "A").map(({ f }) => f), ctx.baseSha), ...buildArtifactNotes(ctx.repoDir, drop.filter(({ st }) => st === "A").map(({ f }) => f), ctx.baseSha, str(ctx.outputs().intake?.task) ?? undefined)]; // D76: advisory, nothing is reverted
+    const notes = [...xpkg.map(crossPackageTestNote), ...flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir), ...toolchainDropNotes(ctx.repoDir, drop.filter(({ st }) => st === "A").map(({ f }) => f), ctx.baseSha), ...buildArtifactNotes(ctx.repoDir, drop.filter(({ st }) => st === "A").map(({ f }) => f), ctx.baseSha, str(ctx.outputs().intake?.task) ?? undefined), ...regen.map(({ f }) => regenDropNote(f)), ...need.map(needDropNote)]; // D76: advisory, nothing is reverted
     const format = fmtRec.records.length ? { format: fmtRec.records } : {};
     if ((await git(ctx, ["diff", "--cached", "--quiet"])).code === 0) return { status: "completed", data: { committed: false, scope_notes: notes, ...format } };
     const title = (str(ctx.outputs().intake?.title) ?? `run ${ctx.runId}`).split("\n")[0]!.slice(0, 72);
