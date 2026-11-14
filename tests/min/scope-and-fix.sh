@@ -303,6 +303,7 @@
 # 265. repo_profile.ts collateralOnBaseline: drop the paired-source check (fl24 collateral-baseline's changed web/src/app/x/page.ts reads true).
 # 266. failures.ts idNamesFile: drop the package-relative branch (fl24 id-pkg-relative reads false for frontend/src/components/S.test.ts).
 # 267. seal.ts baseProofRunner: ignore repoDir (the fl24 monorepo after reads PARTIAL: the frontend test's proof runs from the repo root).
+# 268. scope.ts crossPackageTestEdits: `if (false) return false;` in place of the TK exercisesChange line (the TK leg drops the e2e, relative-import and Go reach tests).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -375,7 +376,7 @@ run_engine() {
     git -C "$REPO" commit -q -m base
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY \
         LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" LOKI_NO_COMPLETIONS=1 \
-        E2E_STUB_LOG="$d/stub.log" E2E_STUB_ITER_LOG="$ITERS" LOKI_E10_PLAN=1 LOKI_E10_WALL="${E2E_WALL-1}" LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" \
+        E2E_STUB_LOG="$d/stub.log" E2E_STUB_ITER_LOG="$ITERS" LOKI_E10_PLAN=1 LOKI_E10_WALL="${E2E_WALL-1}" LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" LOKI_E10_SELF_REVIEW=0 \
         "$@" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$task" --no-pr 2>&1)"
     RC=$?
     RUNDIR=""
@@ -433,6 +434,35 @@ console.log([
   [sc.scopeTestDropEnabled({}), sc.scopeTestDropEnabled({ LOKI_E10_SCOPE_TEST_DROP: "0" })].join(),
 ].join(" | "));' 2>&1)"
 [ "$XPR" = "packages/b/src/b.test.ts | - | - | - | - | pkg/y/y_test.go | - | - | packages/b/src/new.test.ts | true,false" ] && ok "J3 scope: a test edit or new test in a package (JS workspace or Go directory) the change does not touch is dropped; the task naming the path or package, a test in the changed package, a test-only change, a Go tests-only directory and Python stay; =0 opts out ($XPR)" || bad "J3 scope gave: $XPR"
+# TK LOKI_E10_TEST_REACH: layouts unlike the tuning set. A test that imports the changed code is never dropped by J3: a JS tests workspace importing the changed package by
+# name, a relative import into the changed file, a Go package importing the changed package path. Python src-layout and a Rust tests/ dir are never J3 candidates.
+TK="$T/reach"; rm -rf "$TK"; mkdir -p "$TK/packages/a/src" "$TK/packages/e2e/src" "$TK/packages/b/src" "$TK/pkg/x" "$TK/pkg/y" "$TK/src/pkg" "$TK/tests" "$TK/rs/src" "$TK/rs/tests"
+printf '{"name":"root","private":true,"workspaces":["packages/*"]}\n' > "$TK/package.json"; printf '{"name":"@acme/a"}\n' > "$TK/packages/a/package.json"; printf '{"name":"@acme/e2e"}\n' > "$TK/packages/e2e/package.json"; printf '{"name":"@acme/b"}\n' > "$TK/packages/b/package.json"
+printf 'module example.com/m\n\ngo 1.22\n' > "$TK/go.mod"
+for f in packages/a/src/a.ts packages/e2e/src/util.ts packages/b/src/b.ts pkg/x/x.go pkg/y/y.go src/pkg/mod.py rs/src/lib.rs; do printf 'x\n' > "$TK/$f"; done
+printf 'import { a } from "@acme/a";\ntest("a", () => {});\n' > "$TK/packages/e2e/src/a.test.ts"
+printf 'import { a } from "../../a/src/a";\ntest("a", () => {});\n' > "$TK/packages/b/src/rel.test.ts"
+printf 'import { b } from "./b";\ntest("b", () => {});\n' > "$TK/packages/b/src/b.test.ts"
+printf 'package y\n\nimport (\n\t"testing"\n\t"example.com/m/pkg/x"\n)\n\nfunc TestX(t *testing.T) { _ = x.X }\n' > "$TK/pkg/y/x_reach_test.go"
+printf 'package y\n\nimport "testing"\n\nfunc TestY(t *testing.T) {}\n' > "$TK/pkg/y/y_test.go"
+printf 'from pkg.mod import f\n' > "$TK/tests/test_mod.py"; printf 'use rs::x;\n' > "$TK/rs/tests/it.rs"
+TKR="$(cd "$ROOT/loki-ts" && TK="$TK" bun -e '
+const sc = await import("./src/e10ext/scope.ts"), d = process.env.TK;
+const tracked = ["packages/a/src/a.ts", "packages/e2e/src/util.ts", "packages/b/src/b.ts", "pkg/x/x.go", "pkg/y/y.go", "src/pkg/mod.py", "rs/src/lib.rs", "package.json", "packages/a/package.json", "packages/e2e/package.json", "packages/b/package.json", "go.mod"];
+const S = (src, test) => [{ st: "M", f: src }, { st: "A", f: test }], x = (staged) => sc.crossPackageTestEdits(d, staged, "fix the parser bug", tracked).join("+") || "-";
+const off = (f) => { process.env.LOKI_E10_TEST_REACH = "0"; try { return f(); } finally { delete process.env.LOKI_E10_TEST_REACH; } };
+console.log([
+  x(S("packages/a/src/a.ts", "packages/e2e/src/a.test.ts")),
+  x(S("packages/a/src/a.ts", "packages/b/src/rel.test.ts")),
+  x(S("packages/a/src/a.ts", "packages/b/src/b.test.ts")),
+  x(S("pkg/x/x.go", "pkg/y/x_reach_test.go")),
+  x(S("pkg/x/x.go", "pkg/y/y_test.go")),
+  x(S("src/pkg/mod.py", "tests/test_mod.py")),
+  x(S("rs/src/lib.rs", "rs/tests/it.rs")),
+  off(() => x(S("packages/a/src/a.ts", "packages/e2e/src/a.test.ts"))),
+  off(() => x(S("pkg/x/x.go", "pkg/y/x_reach_test.go"))),
+].join(" | "));' 2>&1)"
+[ "$TKR" = "- | - | packages/b/src/b.test.ts | - | pkg/y/y_test.go | - | - | packages/e2e/src/a.test.ts | pkg/y/x_reach_test.go" ] && ok "TK J3 keeps a test that imports the changed code (package name, relative path, Go import path), still drops one that does not; Python src-layout and Rust tests/ are never candidates; =0 restores the drop ($TKR)" || bad "TK J3 reach gave: $TKR"
 SJ3="$ROOT/loki-ts/src/engine10/stages/seal.ts"
 grep -q 'const xpkg = scopeTestDropEnabled() ? crossPackageTestEdits(ctx.repoDir, staged.filter' "$SJ3" && grep -q 'const dropped = new Set(\[...drop.map(({ f }) => f), ...xpkg\])' "$SJ3" && grep -q 'const notes = \[...xpkg.map(crossPackageTestNote),' "$SJ3" && ok "J3 wiring: the commit stage resets the cross-package test edits before commit, keeps them out of the formatter pass and names each one" || bad "J3 wiring: the commit stage does not reset and name the cross-package test edits"
 
@@ -586,6 +616,12 @@ run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHAR
 grep -q '^wall ' "$ITERS" && { bad "lean normal: a Wall session ran despite a relevant visible test"; dump; } || ok "lean normal: no Wall session"
 [ "$(outcome)" = "VERIFIED" ] && ok "lean normal: run is VERIFIED" || { bad "lean normal: outcome is '$(outcome)'"; dump; }
 # ---------------------------------------------------------------- coverage (L4, LOKI_E10_COVERAGE_RESUME: default fold, =1 the separate turn, =0 neither)
+# SR LOKI_E10_SELF_REVIEW end to end on the stub (run_engine pins it off for the session-count legs; unit legs live in tests/min/context-pack.sh):
+# the receipt records all five items; the -rv review turn runs exactly when an item was flagged; the run is never turned into a conflict by it.
+run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=on
+SRR="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])).get("self_review") or {}; it=r.get("items",[]); print(len(it), "flagged" if any(i["status"]!="ok" and i["status"]!="auto" for i in it) else "clean", "turn" if r.get("turn") else "no-turn")' "$RUNDIR/receipt.json" 2>/dev/null)"
+RVN="$(grep -c -- '-rv' "$ITERS")"
+case "$SRR" in "5 flagged turn") [ "$RVN" -ge 1 ] ;; "5 clean no-turn") [ "$RVN" = 0 ] ;; *) false ;; esac && [ "$(outcome)" != "BLOCKED" ] && [ "$(outcome)" != "SPEC_CONFLICT" ] && ok "SR e2e: the receipt records 5 self_review items, the -rv turn ran exactly when one was flagged, outcome $(outcome) ($SRR, -rv sessions $RVN)" || { bad "SR e2e: self_review '$SRR', -rv sessions $RVN, outcome '$(outcome)'"; dump; }
 CTASK="add multiply(a, b), subtract(a, b) and negate(a) to calc.ts"
 covrec() { ev 'next((e["data"].get("coverage_resume") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), None)'; }
 run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_COVERAGE_RESUME=0

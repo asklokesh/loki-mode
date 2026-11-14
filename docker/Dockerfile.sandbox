@@ -95,8 +95,8 @@ RUN npm install -g opencode-ai --ignore-scripts 2>/dev/null || \
 FROM debian:bookworm-slim AS runtime
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="11.139.0"
-LABEL org.opencontainers.image.version="11.139.0"
+LABEL version="11.140.0"
+LABEL org.opencontainers.image.version="11.140.0"
 LABEL description="Security-hardened sandbox for Loki Mode by Autonomi"
 LABEL url="https://www.autonomi.dev/"
 LABEL org.opencontainers.image.source="https://github.com/asklokesh/loki-mode"

@@ -74,15 +74,15 @@ export function conventionsBrief(c: PackageConventions | null): string {
     : `Package conventions (${decl}): this package is ES modules. Use import syntax; use import.meta.url for file locations; never use require(), __dirname or __filename.`;
 }
 
-export interface ReleaseNoteConvention { kind: string; dir: string; example: string | null }
+export interface ReleaseNoteConvention { kind: string; dir: string; example: string | null; heading?: string }
 const newestIn = (abs: string, rel: string, pat: RegExp): string | null => {
   try {
     const f = readdirSync(abs).filter((n) => pat.test(n) && !/^readme/i.test(n)).map((n) => ({ n, t: statSync(join(abs, n)).mtimeMs })).sort((a, b) => b.t - a.t || b.n.localeCompare(a.n))[0];
     return f ? `${rel}/${f.n}` : null;
   } catch { return null; }
 };
-/** L3: the release-note fragment convention a repo declares, by its own marker and never by guess: changesets (.changeset/config.json), towncrier ([tool.towncrier] or towncrier.toml, its directory key, default newsfragments), scriv-style changelog.d/, newsfragments/, changie (.changes/unreleased). null when none. */
-export function releaseNoteConvention(repoDir: string): ReleaseNoteConvention | null {
+/** L3: the release-note fragment convention a repo declares, by its own marker and never by guess: changesets (.changeset/config.json), towncrier ([tool.towncrier] or towncrier.toml, its directory key, default newsfragments), scriv-style changelog.d/, newsfragments/, changie (.changes/unreleased), else (CL) a changelog file the contribution guide asks entries for. null when none. */
+export function releaseNoteConvention(repoDir: string, env: NodeJS.ProcessEnv = process.env): ReleaseNoteConvention | null {
   const has = (p: string): boolean => existsSync(join(repoDir, p));
   if (has(".changeset/config.json")) return { kind: "changeset", dir: ".changeset", example: newestIn(join(repoDir, ".changeset"), ".changeset", /\.md$/i) };
   for (const cfg of ["towncrier.toml", ".towncrier.toml", "pyproject.toml"]) {
@@ -95,6 +95,67 @@ export function releaseNoteConvention(repoDir: string): ReleaseNoteConvention | 
   }
   for (const [dir, kind] of [[".changes/unreleased", "changie"], ["changelog.d", "changelog.d"], ["newsfragments", "towncrier"]] as const)
     if (has(dir)) return { kind, dir, example: newestIn(join(repoDir, dir), dir, /^[^.]/) };
+  return changelogConventionOn(env) ? changelogFileConvention(repoDir) : null;
+}
+
+/** CL LOKI_E10_CHANGELOG_CONVENTION (default on, =0 opts out): a single changelog file is a release-note convention when the repo's contribution guide or PR
+ *  template asks contributors for an entry and the file has an unreleased section to add it to. The failure: on fresh repos whose CONTRIBUTING or PR checklist
+ *  requires "an entry in CHANGELOG.md", the brief named no convention, its fixed rule says to write no documentation, and a reviewer failed the diff for the missing
+ *  entry. Nothing fires when the guide says not to touch the changelog, only suggests or leaves it to maintainers, or the file has no unreleased section (a frozen log). */
+export const changelogConventionOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_CHANGELOG_CONVENTION);
+const GUIDE_DIRS = [".", ".github", "docs", ".github/PULL_REQUEST_TEMPLATE"];
+const GUIDE_NAME = /^(?:contributing|pull_request_template)(?:\.(?:md|rst|txt|markdown))?$/i;
+const LOG_NAME = /^(?:change_?log|changes|history|news|release[-_]?notes)(?:\.(?:md|rst|txt|markdown))?$/i;
+const LOG_WORD = /change\s?-?log|\b(?:changes|history|news)\.(?:md|rst|txt)\b/i; // a file the contributor edits; "release notes" alone is usually a PR-body section
+const LOG_FORBID = /\b(?:don'?t|do\s+not|never|must\s+not|should\s+not|shouldn'?t)\b[^.]{0,40}\b(?:update|add|edit|modify|touch|change|write)\b/i;
+const LOG_SOFT = /\b(?:optional(?:ly)?|not\s+(?:necessary|needed|required)|no\s+need|suggest(?:ed|s)?|consider|maintainers?|copied|generated|automatic(?:ally)?)\b/i;
+const LOG_FROZEN_LOOSE = /no\s+longer\s+(?:being\s+)?(?:actively\s+)?(?:maintained|updated)|\bdeprecated\b|\bnot\s+(?:being\s+)?(?:maintained|updated)\b|releases?\s+page/i; // FS=0: the first CL rule
+/** FS LOKI_E10_CHANGELOG_FROZEN_STRICT (default on, =0 opts out): a changelog is frozen only when its head says so in words (no longer maintained or updated, this file
+ *  has been or is deprecated, not maintained) or it has no unreleased section (unreleasedSection). The failure: the loose rule matched a bare "Deprecated", so a Keep a
+ *  Changelog file with a "### Deprecated" subsection under Unreleased read as frozen and the brief named no convention. */
+export const changelogFrozenStrictOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_CHANGELOG_FROZEN_STRICT);
+const LOG_FROZEN_STRICT = /no\s+longer\s+(?:being\s+)?(?:actively\s+)?(?:maintained|updated|used)|\b(?:has\s+been|is|was)\s+(?:now\s+)?deprecated\b|\bnot\s+(?:being\s+)?(?:actively\s+)?(?:maintained|updated)\b/i;
+const logFrozen = (head: string, env: NodeJS.ProcessEnv = process.env): boolean => (changelogFrozenStrictOn(env) ? LOG_FROZEN_STRICT : LOG_FROZEN_LOOSE).test(head);
+const LOG_ASK = /\[\s?\]|\b(?:must|should|please|required?|requires|include[sd]?|add(?:ed|s)?|update[sd]?|record(?:ed)?|entry|entries|row)\b/i;
+/** The text of the repo's contribution guides and PR templates (root, .github/, docs/), one string; "" when there are none. */
+export function contributionGuides(repoDir: string): string {
+  const out: string[] = [];
+  for (const d of GUIDE_DIRS) { try { for (const n of readdirSync(join(repoDir, d)).sort()) if (GUIDE_NAME.test(n)) { try { out.push(readFileSync(join(repoDir, d, n), "utf8").slice(0, 60_000)); } catch { /* unreadable */ } } } catch { /* no such dir */ } }
+  return out.join("\n\n");
+}
+/** True when the guide asks for a changelog entry: a clause naming the changelog that asks for it (a checklist box, must, please, add, update, entry ...) and no clause forbidding it. */
+export function guideRequiresChangelog(guide: string): boolean {
+  const clauses = guide.replace(/\r/g, "").replace(/\n(?!\s*(?:[-*+]\s|\d+[.)]\s|\n|#))/g, " ").split(/(?<=[.!?])\s+|\n+/).filter((c) => LOG_WORD.test(c));
+  if (clauses.some((c) => LOG_FORBID.test(c))) return false;
+  return clauses.some((c) => !LOG_SOFT.test(c) && LOG_ASK.test(c));
+}
+/** The unreleased heading of a changelog (markdown heading, underlined rst/setext title, or a bare or linked "Unreleased" title line) and the first entry under it. */
+export function unreleasedSection(text: string): { heading: string; entry: string | null } | null {
+  const lines = text.split("\n").slice(0, 400);
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]!.trim();
+    if (l.length === 0 || l.length > 120 || !/\b(?:unreleased|upcoming)\b/i.test(l)) continue;
+    const underlined = /^([=\-~^*+#`])\1{2,}$/.test((lines[i + 1] ?? "").trim());
+    if (!/^#{1,6}\s/.test(l) && !underlined && !/^[*_`[(]*(?:unreleased|upcoming)\b/i.test(l)) continue;
+    let entry: string | null = null;
+    for (let j = i + 1; j < Math.min(lines.length, i + 40) && entry === null; j++) { if (/^#{1,2}\s/.test(lines[j]!.trim())) break; if (/^\s*[-*+]\s+\S/.test(lines[j]!)) entry = lines[j]!.trim().slice(0, 160); }
+    return { heading: l.replace(/^#+\s*/, ""), entry };
+  }
+  return null;
+}
+/** The changelog-file convention (see changelogConventionOn): the changelog the guide names, else the first root or docs/ changelog with an unreleased section. */
+export function changelogFileConvention(repoDir: string): ReleaseNoteConvention | null {
+  const guide = contributionGuides(repoDir);
+  if (!guide || !guideRequiresChangelog(guide)) return null;
+  const files: string[] = [];
+  for (const d of [".", "docs"]) { try { for (const n of readdirSync(join(repoDir, d)).sort()) if (LOG_NAME.test(n)) files.push(d === "." ? n : `${d}/${n}`); } catch { /* no such dir */ } }
+  const g = guide.toLowerCase(), rank = (f: string): number => (f.includes("/") && g.includes(f.toLowerCase()) ? 0 : g.includes(basename(f).toLowerCase()) ? 1 : 2); // a path the guide writes out, then a bare name it mentions
+  for (const f of [...files].sort((a, b) => rank(a) - rank(b))) {
+    let t = ""; try { if (!statSync(join(repoDir, f)).isFile()) continue; t = readFileSync(join(repoDir, f), "utf8"); } catch { continue; }
+    if (logFrozen(t.split("\n").slice(0, 15).join("\n"))) continue;
+    const s = unreleasedSection(t);
+    if (s) return { kind: "changelog", dir: f, example: s.entry, heading: s.heading };
+  }
   return null;
 }
 /** The closest named manifest above a file: its directory (repo-relative, "." for the root), name and private flag; null when none within the repo. */
@@ -108,6 +169,90 @@ function ownerPackage(repoDir: string, file: string): { dir: string; name: strin
 }
 /** The closest manifest "name" above a file (empty when none within the repo). */
 const packageNameFor = (repoDir: string, file: string): string => ownerPackage(repoDir, file)?.name ?? "";
+/** TX LOKI_E10_TOWNCRIER_EXAMPLE (default on, =0 opts out): the towncrier brief line names a real fragment (towncrierExample: `<issue>.<type>[.<ext>]` with a declared
+ *  type) as its example, or none. The failure: a fresh checkout ties every mtime, so the name tie-break picked the repo's towncrier template (template.rst,
+ *  towncrier_template.md.jinja) as the "newest example", and the model wrote no fragment. Off: the newest file of the directory, as before. */
+export const towncrierExampleOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_TOWNCRIER_EXAMPLE);
+/** CR LOKI_E10_CHANGELOG_REF (default on, =0 opts out): a changelog entry carries the issue or PR reference in the form the repo's existing entries use, with a number the
+ *  task gives (never an invented one), and a changeset names the package of the changed files. The brief's changelog line names the form; the pre-delivery self-check
+ *  (features/self_review.ts) flags an entry with no reference, a number the task does not give, or a changeset for a package the change does not touch. The failure: on
+ *  held-out repos the second review-fail class was changelog entries with no PR or issue reference, or with the wrong package or issue number. */
+export const changelogRefOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_CHANGELOG_REF);
+const REF_CLASSES: [string, RegExp][] = [
+  ["link", /\[#\d+\]\(https?:\/\/[^)\s]+\/(?:pull|issues)\/\d+\)/], ["role", /:(?:pr|pull|issue|gh|ghissue|ghpull|bug):`\d+`/], ["gh", /\bGH-\d+\b/], ["paren", /\(#\d+\)/], ["bare", /(?<![\w/])#\d+\b/],
+];
+/** The reference form most of a changelog's entries use (at least 3 of the first 40 bullets, and at least half of them), with one example; null when entries carry none. */
+export function changelogRefStyle(text: string): { cls: string; example: string } | null {
+  const bullets = text.split("\n").filter((l) => /^\s*[-*+]\s+\S/.test(l)).slice(0, 40);
+  const hits = bullets.map((b) => { const c = REF_CLASSES.find(([, re]) => re.test(b)); return c ? { cls: c[0], ex: c[1].exec(b)![0] } : null; }).filter((x): x is { cls: string; ex: string } => x !== null);
+  if (bullets.length < 3 || hits.length < 3 || hits.length * 2 < bullets.length) return null;
+  const n = new Map<string, number>(); for (const h of hits) n.set(h.cls, (n.get(h.cls) ?? 0) + 1);
+  const cls = [...n.entries()].sort((a, b) => b[1] - a[1])[0]![0];
+  return { cls, example: hits.find((h) => h.cls === cls)!.ex };
+}
+function refBriefClause(repoDir: string, c: ReleaseNoteConvention): string {
+  if (!changelogRefOn()) return "";
+  let t = ""; try { t = readFileSync(join(repoDir, c.dir), "utf8"); } catch { return ""; }
+  const s = changelogRefStyle(t);
+  return s ? `; entries reference the issue or PR like ${s.example}: use the number the task gives in that form, and never invent a number` : "";
+}
+/** The issue or PR numbers a task names (#123, issues/123, pull/123). */
+export const taskNumbers = (task: string): string[] => [...new Set([...task.matchAll(/(?:(?<![\w&])#|\/(?:issues|pull)\/)(\d+)\b/g)].map((m) => m[1]!))];
+/** The task's own issue or PR number: one in its first line (the title), or one it introduces as fixes, closes, resolves, issue or PR #N. */
+export const taskOwnNumbers = (task: string): string[] => {
+  const title = task.split("\n").map((l) => l.trim()).find((l) => l && !/^(<<<|TASK$|Task \(untrusted)/.test(l)) ?? "";
+  return [...new Set([...taskNumbers(title), ...[...task.matchAll(/\b(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?|issue|pr|pull request)\s*:?\s*#(\d+)\b/gi)].map((m) => m[1]!)])];
+};
+/** What is wrong with the release note the diff carries (CR): `added` maps each added or changed path to its added lines. Empty when nothing is wrong or CR is off. */
+/** CR, deterministic half: removes from `line` every issue or PR reference whose number the task never gives: a markdown link `[#N](url)` (with its parentheses), an
+ *  issue or pull URL, `(#N)`, an rst `:pr:`N`` role, `GH-N` and a bare `#N`; then tidies the spaces and empty brackets left behind. Returns the line and the numbers removed. */
+export function stripInventedRefs(line: string, allowed: readonly string[]): { line: string; removed: string[] } {
+  const removed: string[] = [], keep = (n: string): boolean => allowed.includes(n);
+  const drop = (re: RegExp, s: string): string => s.replace(re, (m, n: string) => (keep(n) ? m : (removed.push(n), "")));
+  let s = line;
+  s = drop(/\s*\(\s*\[#(\d+)\]\([^)\s]*\)\s*\)/g, s);
+  s = drop(/\s*\[#(\d+)\]\([^)\s]*\)/g, s);
+  s = drop(/\s*\(?\s*https?:\/\/\S+?\/(?:issues|pull)\/(\d+)\b\/?\)?/g, s);
+  s = drop(/\s*\(\s*#(\d+)\s*\)/g, s);
+  s = drop(/\s*:(?:pr|pull|issue|gh|ghissue|ghpull|bug):`(\d+)`/g, s);
+  s = drop(/\s*\bGH-(\d+)\b/g, s);
+  s = drop(/\s*(?<![\w/&])#(\d+)\b/g, s);
+  if (removed.length) s = s.replace(/\s*(?<![\w\]>])\(\s*[,;]?\s*\)/g, "").replace(/[ \t]+$/, "");
+  return { line: s, removed: [...new Set(removed)] };
+}
+/** CR: rewrites the release note the run added so it cites only numbers the task gives. Only lines absent from the base file (`baseText`, "" for a new fragment) are touched;
+ *  the file is rewritten only when something was removed. Returns the numbers removed. No-op with LOKI_E10_CHANGELOG_REF=0. */
+export function stripInventedRefsInFile(path: string, baseText: string, task: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  if (!changelogRefOn(env)) return [];
+  let text: string; try { text = readFileSync(path, "utf8"); } catch { return []; }
+  const base = new Set(baseText.split("\n")), allowed = taskNumbers(task), removed: string[] = [];
+  const out = text.split("\n").map((l) => { if (base.has(l)) return l; const r = stripInventedRefs(l, allowed); removed.push(...r.removed); return r.line; });
+  if (removed.length) writeFileSync(path, out.join("\n"));
+  return [...new Set(removed)];
+}
+export function releaseNoteProblems(repoDir: string, conv: ReleaseNoteConvention, added: Map<string, string[]>, changed: string[], task: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  if (!changelogRefOn(env)) return [];
+  const nums = taskNumbers(task), out: string[] = [];
+  const wrongNums = (text: string): string[] => [...text.matchAll(/(?:(?<![\w&])#|GH-|:`|\/(?:issues|pull)\/)(\d+)\b/g)].map((m) => m[1]!).filter((n) => !nums.includes(n));
+  if (conv.kind === "changelog") {
+    const lines = (added.get(conv.dir) ?? []).filter((l) => /^\s*[-*+]\s+\S/.test(l) || l.trim().length > 0);
+    if (lines.length === 0) return out;
+    const text = lines.join("\n"), bad = wrongNums(text);
+    if (bad.length) out.push(`the entry cites #${bad.join(", #")}, which the task does not give`);
+    let style: { cls: string; example: string } | null = null; try { style = changelogRefStyle(readFileSync(join(repoDir, conv.dir), "utf8")); } catch { /* unreadable */ }
+    const own = taskOwnNumbers(task); // a number the body only mentions (an older PR) is not this change's reference
+    if (style && own.length && !own.some((n) => text.includes(n))) out.push(`the entry has no reference to #${own.join(", #")} in the form the existing entries use (${style.example})`);
+  } else if (conv.kind === "changeset") {
+    const owners = new Set(changed.filter((f) => !f.startsWith(`${conv.dir}/`)).map((f) => ownerPackage(repoDir, f)?.name).filter((n): n is string => !!n));
+    for (const [f, ls] of added) {
+      if (!f.startsWith(`${conv.dir}/`) || !f.endsWith(".md")) continue;
+      for (const m of ls.join("\n").matchAll(/^\s*["']?(@?[\w./-]+)["']?\s*:\s*(?:patch|minor|major)\b/gm)) if (owners.size && !owners.has(m[1]!)) out.push(`${f} names package ${m[1]}, which the change does not touch (changed: ${[...owners].join(", ")})`);
+    }
+  } else if (conv.kind === "towncrier" && nums.length) {
+    for (const f of added.keys()) { if (!f.startsWith(`${conv.dir}/`)) continue; const n = /^(\d+)\./.exec(basename(f))?.[1]; if (n && !nums.includes(n)) out.push(`${f} is numbered ${n}, but the task gives #${nums.join(", #")}`); }
+  }
+  return out;
+}
 /** The per-run brief line for a release-note fragment convention, placed after the cache-stable prefix; "" when the repo declares none. A changeset line names the package of the first relevant file. */
 export function releaseNoteBrief(repoDir: string, files: string[] = []): string {
   const c = releaseNoteConvention(repoDir);
@@ -117,6 +262,8 @@ export function releaseNoteBrief(repoDir: string, files: string[] = []): string 
     const pkg = files.map((f) => packageNameFor(repoDir, f)).find(Boolean) || packageNameFor(repoDir, "package.json");
     return `Release-note convention (changeset, ${c.dir}/): a user-visible change ships with a new ${c.dir}/<short-kebab-name>.md fragment: front matter with "${pkg || "<package name>"}": patch (minor or major when the task says so), then one line describing the change${ex}.`;
   }
+  if (c.kind === "towncrier" && towncrierExampleOn()) { const tx = towncrierExample(repoDir, c.dir); return `Release-note convention (${c.kind}, ${c.dir}/): a user-visible change ships with a new fragment file in ${c.dir}/ named and formatted like the existing ones${tx ? `; newest example: ${tx}` : ""}.`; }
+  if (c.kind === "changelog") return `Release-note convention (changelog file, ${c.dir}): the repository's contribution guide asks each user-visible change to add an entry to ${c.dir}; add one entry under its "${c.heading ?? "Unreleased"}" section (in the matching subsection when it has them), formatted and worded like the entries already there${c.example ? `; newest entry: ${c.example}` : ""}${refBriefClause(repoDir, c)}.`;
   return `Release-note convention (${c.kind}, ${c.dir}/): a user-visible change ships with a new fragment file in ${c.dir}/ named and formatted like the existing ones${ex}.`;
 }
 
@@ -201,7 +348,31 @@ function towncrierExample(repoDir: string, dir: string): string | null {
   } catch { return null; }
 }
 
-export type FragmentOutcome = { path: string; kind: string; body: string; validated: "ok" | "unavailable" } | { skipped: string };
+/** TO LOKI_E10_TOWNCRIER_ORPHAN (default on, =0 opts out): a task with no issue number gets an orphan fragment (`<prefix><slug>.<type>[.<ext>]`) when the repo itself
+ *  uses orphans: its towncrier config sets `orphan_prefix`, or any fragment in its directory already starts with the prefix (default "+"). Before, only a newest
+ *  example that was itself an orphan counted, so a repo with orphans older than its newest numbered fragment got nothing. A repo with no orphan in use still gets
+ *  nothing (the skip reason goes on the receipt, see fragmentTraceOn). */
+export const towncrierOrphanOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_TOWNCRIER_ORPHAN);
+export function towncrierOrphanPrefix(repoDir: string, dir: string): string | null {
+  const cfg = ["towncrier.toml", ".towncrier.toml", "pyproject.toml"].map((c) => { try { return readFileSync(join(repoDir, c), "utf8"); } catch { return ""; } }).join("\n");
+  const set = /^\s*orphan_prefix\s*=\s*["']([^"'\s/]+)["']/m.exec(cfg)?.[1];
+  if (set) return set;
+  const types = towncrierTypes(repoDir);
+  try { return readdirSync(join(repoDir, dir)).some((n) => n.startsWith("+") && types.includes(n.split(".")[1] ?? "")) ? "+" : null; } catch { return null; }
+}
+/** TR LOKI_E10_SCAFFOLD_TRACE (default on, =0 opts out): when the repo has a release-note convention but the writer wrote nothing, its reason goes on the receipt
+ *  (`release_note_skipped`), so a missing fragment is never silent. The failure: a towncrier repo whose task named no issue number lost its fragment with no record. */
+export const fragmentTraceOn = (env: NodeJS.ProcessEnv = process.env): boolean => !isOff(env.LOKI_E10_SCAFFOLD_TRACE);
+/** What the scaffold hook records: the written fragment, the skip reason (TR on, a convention exists), or null. */
+export function scaffoldRecord(r: FragmentOutcome, env: NodeJS.ProcessEnv = process.env): Record<string, unknown> | null {
+  if ("path" in r) return { ...r };
+  return fragmentTraceOn(env) && r.skipped !== NO_CONVENTION && r.skipped !== ALREADY_CARRIES ? { skipped: r.skipped } : null; // nothing missing, nothing to record
+}
+const NO_CONVENTION = "the repo has no release-note convention", ALREADY_CARRIES = "the change already carries a fragment";
+/** The receipt block for a skipped fragment; {} when nothing was skipped or a fragment was written. */
+export const releaseNoteSkipBlock = (implement: Record<string, unknown> | undefined): { release_note_skipped?: string } => (typeof implement?.scaffold_skipped === "string" ? { release_note_skipped: implement.scaffold_skipped } : {});
+
+export type FragmentOutcome ={ path: string; kind: string; body: string; validated: "ok" | "unavailable" } | { skipped: string };
 /** Which changed files count as code for a fragment: a file that exists at `ref` (the run base, else HEAD) always counts, being a tracked change; a file the run created counts
  *  only when it is not git-ignored and not generated (generated marker or path, or linguist vendored/generated). Untracked generated output never triggers a fragment. */
 export function runCode(repoDir: string, files: string[], ref = "HEAD"): string[] {
@@ -215,11 +386,11 @@ export function runCode(repoDir: string, files: string[], ref = "HEAD"): string[
  *  (changesets, towncrier) and only from a real example or config; every other case returns the reason it did not. A fragment the repo's own tool rejects is removed again. */
 export function writeReleaseNoteFragment(repoDir: string, files: string[], task: string, summary = "", opts: { tools?: boolean; base?: string } = {}): FragmentOutcome {
   const conv = releaseNoteConvention(repoDir);
-  if (!conv) return { skipped: "the repo has no release-note convention" };
+  if (!conv) return { skipped: NO_CONVENTION };
+  const live = files.filter((f) => existsSync(join(repoDir, f)));
+  if (live.some((f) => f === conv.dir || (f.startsWith(`${conv.dir}/`) && !/readme|config\.json$|\.toml$/i.test(basename(f))))) return { skipped: ALREADY_CARRIES }; // a changelog-file entry counts too
   if (conv.kind !== "changeset" && conv.kind !== "towncrier") return { skipped: `the ${conv.kind} convention is not written automatically` };
   if (taskForbidsReleaseNote(task)) return { skipped: "the task says no release note" };
-  const live = files.filter((f) => existsSync(join(repoDir, f)));
-  if (live.some((f) => f.startsWith(`${conv.dir}/`) && !/readme|config\.json$|\.toml$/i.test(basename(f)))) return { skipped: "the change already carries a fragment" };
   const code = runCode(repoDir, live, opts.base).filter((f) => FRAGMENT_CODE.test(f) && !isTestFile(f) && !f.startsWith(`${conv.dir}/`));
   if (code.length === 0) return { skipped: "no non-test code changed" };
   const example = conv.kind === "towncrier" ? towncrierExample(repoDir, conv.dir) : conv.example;
@@ -245,14 +416,15 @@ export function writeReleaseNoteFragment(repoDir: string, files: string[], task:
     rel = `${conv.dir}/${n}`; text = `---\n${[...names].sort().map((p) => `${q}${p}${q}: ${bump}`).join("\n")}\n---\n\n${sentence(body, exText.replace(/^---[\s\S]*?\n---\s*/, ""))}\n`;
   } else {
     if (!example) return { skipped: "towncrier: no existing fragment to take the naming from" };
-    const parts = basename(example).split("."), orphan = parts[0]!.startsWith("+");
+    const parts = basename(example).split("."), op = towncrierOrphanOn() ? towncrierOrphanPrefix(repoDir, conv.dir) : null, orphan = parts[0]!.startsWith("+") || op !== null;
     const issue = /(?:^|[\s(])#(\d+)\b/.exec(task)?.[1];
     if (!issue && !orphan) return { skipped: "towncrier: the task names no issue number and the repo does not use orphan fragments" };
+    const prefix = op ?? "+";
     const known = towncrierTypes(repoDir);
     const kind = FEAT.test(raw) ? known.find((t) => /feat/.test(t)) : FIX.test(raw) ? known.find((t) => /bug|fix/.test(t)) : undefined;
     if (!kind) return { skipped: "towncrier: the change type is not clear from the task" };
     const ext = parts.length >= 3 ? `.${parts[parts.length - 1]}` : "";
-    const n = `${issue ?? `+${slug}`}.${kind}${ext}`;
+    const n = `${issue ?? `${prefix}${slug}`}.${kind}${ext}`;
     if (existsSync(join(dir, n))) return { skipped: "towncrier: a fragment with this name exists" };
     rel = `${conv.dir}/${n}`; text = `${sentence(body, exText)}\n`;
   }

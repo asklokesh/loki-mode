@@ -7,12 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- A pre-delivery review self-check. Before verify, Loki checks the implemented diff for a missing release note the repo requires, stray files, a source change with no test, formatter conformance and edits outside the planned scope. When something is flagged, one short review turn fixes it or states why not, and the receipt records each item (`self_review`). A clean diff gets no extra turn. LOKI_E10_SELF_REVIEW=0 turns it off; LOKI_E10_SELF_REVIEW_MAX_TURNS caps the turn (default 12).
+- Output the run's own commands write (nested .loki/ logs, test-results/, coverage/, tool caches, JUnit reports, logs) is now left out of the delivered diff by a deterministic filter. LOKI_E10_RUN_OUTPUT_DROP=0 turns it off.
+- A changelog entry is now checked for the issue or PR reference in the form the repo's entries use, with the task's own number and the right package; the brief names that form, and any issue or PR number the task never gives is removed from the entry before delivery. LOKI_E10_CHANGELOG_REF=0 turns it off.
+
+### Fixed
+- A regression test that imports the changed code is no longer dropped as "outside the change's packages" when the repo keeps its tests in their own package (a JS tests workspace, a Go package testing a subpackage), so the delivered diff keeps its test. LOKI_E10_TEST_REACH=0 restores the old drop.
+- Build output the run created (byte-compiled files, *.tsbuildinfo, untracked dist/, build/, coverage/ or target/ output, files the repo's .gitignore matches) is left out of the delivered diff and named on the receipt. A dist/ the repo commits, and a file the task names, are kept. LOKI_E10_BUILD_ARTIFACT_DROP=0 turns it off.
+- On a repo whose contribution guide or PR checklist asks for a CHANGELOG entry, the implement brief now names the changelog file, its unreleased section and an example entry, instead of telling the model to write no documentation. A guide that says not to touch the changelog, or a changelog with no unreleased section, gets nothing. LOKI_E10_CHANGELOG_CONVENTION=0 turns it off.
+- On a towncrier repo, the brief's example fragment is now a real fragment, not the repo's towncrier template, which a fresh checkout used to pick. LOKI_E10_TOWNCRIER_EXAMPLE=0 restores the old pick.
+- The changelog entry the brief asks for is no longer flagged "outside stated scope" on the receipt. LOKI_E10_CHANGELOG_SCOPE=0 restores the old note.
+- A changelog with a "Deprecated" subsection under Unreleased is no longer mistaken for a frozen log; only a log that says it is no longer maintained or deprecated, or has no unreleased section, is. LOKI_E10_CHANGELOG_FROZEN_STRICT=0 restores the old rule.
+- When Loki's release-note writer skips a fragment on a repo that keeps them, the receipt now says why (`release_note_skipped`; LOKI_E10_SCAFFOLD_TRACE=0 turns it off). A task with no issue number now gets an orphan towncrier fragment whenever the repo already uses orphans or sets `orphan_prefix` (LOKI_E10_TOWNCRIER_ORPHAN=0 restores the old rule).
+
 ### Changed
 - A `loki start` (or any Loki 10 run on Claude) that names no model now runs on Sonnet instead of the Claude CLI's own account default, which is Opus on many plans. `--session-model`, LOKI_SESSION_MODEL, any LOKI_MODEL_* or LOKI_CLAUDE_MODEL_* model variable, and the model router (LOKI_ROUTER, --haiku, --cost lean) still win. LOKI_DEFAULT_SESSION_MODEL sets another default, and LOKI_DEFAULT_SESSION_MODEL=provider restores the CLI default. The run's first status line names the model and why, and the receipt records who chose it in `model_source` (explicit, default or provider).
 - The shared intake baseline budget (LOKI_E10_INTAKE_CAP_S, 180 s since 11.140.0) is off by default again; set it to a number of seconds to opt in. It saved time but cut 6 of 65 measured baselines short, and a baseline cut short cannot show which failures were already there, so those runs could not excuse a suite that was red before the change. When it is on and cuts a baseline, intake prints a line starting "loki: intake budget spent after".
 - LOKI_E10_ATTEMPTS now counts TOTAL implement attempts, not extra ones: LOKI_E10_ATTEMPTS=3 used to mean 3 extra attempts after a red verify and now means 3 attempts in all (2 extra). Unset, 0 and 1 stay off (one attempt, as before); `on` is 2 in all.
 - With LOKI_E10_ATTEMPTS=N, a first attempt that is not clean (a red check, a spec conflict, or any NOT PROVEN line from verify or a fix round) gets N-1 more independent attempts. Each one runs Loki's full verify; the first clean one stops the others. Otherwise the run keeps the attempt with a green verify, then no spec conflict, then the fewest NOT PROVEN lines. A tie goes to one review of the tied diffs, shown in both orders and counted only when both agree, against the issue, the repo's CONTRIBUTING, PR template and style configs, and the pre-fix code (Sonnet by default, LOKI_E10_ATTEMPTS_REVIEW_MODEL to change it, LOKI_E10_ATTEMPTS_REVIEW=0 to keep the first attempt on a tie). A clean first attempt costs nothing extra.
 - Only the chosen attempt is sealed. The receipt's new `attempts` lines name every attempt's outcome and the selection reason. The field is left out when no extra attempt ran, so a one-attempt receipt is unchanged.
+
+## v11.140.0 (2026-11-13)
+
+Verify reads unfamiliar repos more correctly.
+
+Verify now handles suites already red on base, runners in multi-module repos and edits inside methods. This is the base for more work on new repos, where Loki does not yet beat raw Opus.
+
+### Changed
+- Verify recognizes a suite that was already red on base with no parseable test ids, and excuses it only when the head run fails in the identical kind: same exit code, no parseable ids, and the same output once durations, clock times, timestamps and hex addresses are normalized. A new failure, a different message or count, or another exit code still counts as introduced, and the excuse is disclosed on NOT PROVEN (LOKI_E10_BASE_RED_SHAPE=0 opts out).
+- Every package that holds a file proving a test runner (go.mod, Cargo.toml, a test file) now gets that runner, not only the package of the first such file, so a multi-module repo whose nested module sorts first no longer leaves the root module with no tests (LOKI_E10_EVIDENCE_PER_PACKAGE=0 opts out).
+- An edit inside an indented method now names its enclosing method, so the lean gate and the fail-then-pass proof see the changed symbol instead of "(no declared symbol)" (LOKI_E10_ENCLOSING_DECL=0 opts out).
+- Every symbol the task names is either changed by the diff or written up by the model as unchanged with a reason about the code; a reason that only restates the task's hedge does not count (LOKI_E10_NAMED_SITES=0 opts out).
+- Intake guard: a plan scope that holds none of the files or symbols the task names is discarded instead of capping the run (LOKI_E10_PLAN_SCOPE_ANCHOR=0 opts out), and all of intake's baseline test runs share one 180 second budget (LOKI_E10_INTAKE_CAP_S sets it, 0 opts out to the per-command caps alone).
+- When verify selects no test in a mocha package, each changed file maps to its own mocha test file, at most 8, run through the normal test path (LOKI_E10_MOCHA_TARGETED=0 opts out).
+- A test assertion that pins the old behavior the issue explicitly asks to change gets its expected value updated instead of being treated as a spec conflict; every other test protection stays (LOKI_E10_PINNED_TEST_UPDATE=0 opts out).
+- A fix that widens a type or value check gets one follow-up turn to keep the inputs that took their own branch before (LOKI_E10_PRECEDENCE_CHECK=0 opts out).
+- A test-only edit in a package the change does not otherwise touch, and the task does not name, is reset to base before commit with a NOT PROVEN line naming it (LOKI_E10_SCOPE_TEST_DROP=0 opts out).
+- The run's own added or modified files are formatted with the repo's real formatter, resolved the way verify resolves its linter, and never a file whose base text was not already formatter-clean (LOKI_E10_FORMAT_RESOLVE=0 opts out).
+- When an issue ranks its possible fixes, Loki implements the first-ranked remedy, checked by one small Haiku call after the implement (LOKI_E10_RANKED_REMEDY=0 opts out; LOKI_E10_RANKED_REMEDY_MODEL sets the model).
+- A run whose failures were already red on base is delivered instead of BLOCKED, and the split planner writes its plan.
+- LOKI_E10_ATTEMPTS now counts total attempts, not extra attempts: LOKI_E10_ATTEMPTS=3 used to mean 3 extra and now means 3 in all. It stays off by default (one attempt). LOKI_E10_ATTEMPT_MODELS (for example haiku,sonnet) sets one model per attempt, and LOKI_E10_SELECT_REVIEW_MODEL sets the model of the review that picks between attempts (default Sonnet; LOKI_E10_ATTEMPTS_REVIEW_MODEL is its older name).
+
+### Fixed
+- Loki's own Wall test files no longer ship in the delivered branch: LOKI_COMMIT_WALL now defaults to off (=1 publishes them as before), and the sealed copy and its hash stay in the run directory and the receipt. On the tuning bench, every published Wall file whose run passed the hidden tests failed the judge (3 of 3).
+- The small tool-less checks (such as the ranked-remedy check) no longer fail empty under load: they were capped at 50 output tokens, which the CLI turned into an error. A failed tool-less call now records its error class, message, status and timing in the ledger.
+- When verify compares a failure to base, it treats only stack paths, line:col, hex ids and durations as noise, never an assertion value.
+
+### Measured
+- Tuning bench, 19 fair tasks across 5 repos, seed 1: Loki on Haiku merge-ready 18/19 on this build against 17/19 for the earlier acc-143 candidate build (whose changes also ship here) and 16/19 for raw Opus, at $0.0159 per task against $0.4824 for raw Opus. The paired gain over the acc-143 build is one task net (95% CI -0.11 to +0.21), so it is not significant, and this build had 1 false VERIFIED among its 7 exit-0 runs against 0 of 7 before. The test-gaming check flagged nothing.
+- Best-of-2 implement attempts were measured on the tuning bench and on held-out repos and added cost with no lift, so one attempt stays the default.
+- On repos never used for tuning, the tuning gain does not yet hold: Loki on Haiku does not beat raw Opus there, and this release does not claim it does. This release is the base for the verify work on new repos that comes next.
+- No blind-set result is claimed for this release: it ships on the founder's release order, not on the blind gate, and the blind set stays sealed.
 
 ## v11.139.0 (2026-11-12)
 
