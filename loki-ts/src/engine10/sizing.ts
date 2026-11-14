@@ -15,7 +15,9 @@ export function namedFiles(task: string, map: RepoMap | null): string[] {
   if (!namedExactOn()) return hit;
   // NAMED-EXACT: a basename every mention of which sits inside a spelled path ("frontend/src/app/(dashboard)/search/page.tsx") names only the files those paths
   // spell, whether or not they exist yet; a bare mention ("fix page.tsx") keeps naming every file with that basename. FireLater#24: "page.tsx" named 54 files.
-  const spelled = [...text.matchAll(/(?:\.\/)?((?:[\w@.()[\]-]+\/)+[\w@.()[\]-]+\.\w+)/g)].map((m) => m[1]!);
+  // One anchored match per whitespace-separated token that holds a slash: the old global scan restarted at every offset, which made a long slash-free run (a 99 KB PRD's
+  // comment block) quadratic (CI timed the L009 99 KB PRD legs out from acc-154 on). Tokens are cut at characters a path never holds, so every spelled path is still found.
+  const spelled = text.split(/[^\w@.()[\]\/-]+/).filter((t) => t.includes("/")).flatMap((t) => { const m = /^(?:\.\/)?((?:[\w@.()[\]-]+\/)+[\w@.()[\]-]+\.\w+)$/.exec(t.replace(/[.,;:)\]]+$/, "")); return m ? [m[1]!] : []; });
   return hit.filter((f) => {
     const b = basename(f).toLowerCase();
     if (new RegExp(`(?<![\\w./-])${escapeRegex(b)}(?![\\w-]|\\.\\w)`).test(text)) return true; // a bare mention

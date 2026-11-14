@@ -297,6 +297,7 @@
 # 259. wall.ts RealBaseTestRunner: read the test source only when reported.observed is non-empty (the reported-kind wiring leg reads true,0,0).
 # 260. seal.ts missingLintChecks: drop the lint: prefix filter (the lint-missing-disclose leg's missing test runner reads disclosed).
 # 261. mutation_proof.ts proofBudgetS: drop the compiled-stack branch (the proof-compiled-budget leg reads 30 for go).
+# 276. sizing.ts namedFiles: restore the global spelled-path matchAll (the named-exact leg reads slow on the 99 KB task).
 # 262. sizing.ts namedFiles: drop the spelled-path filter (fl24 named-exact reads login/page.ts+issues/page.ts for the spelled task; the fl24 monorepo after reads STALLED).
 # 263. verify.ts ownTests: drop the changed-file condition (fl24 own-by-path reads a/page.test.ts own for an unedited a/x/page.ts).
 # 264. repo_profile.ts touchedRedOnBase: drop the editedTitles check (fl24 touched-base-red's failing edited case reads true; the newly-failing fl24 monorepo run reads PARTIAL).
@@ -1898,12 +1899,13 @@ let warm = "skip"; if (Bun.which("go")) { mkdirSync(join(g, "pkg"), { recursive:
 console.log(r.join(",") + " " + warm);' 2>&1)"
 case "$PB" in "40,30,40,12,20,30,40 1/0"|"40,30,40,12,20,30,40 skip") ok "proof-compiled-budget: a compiled stack's proof gets 40 s (python keeps 30), an explicit or caller budget wins, =0 restores 30, the cap holds at 40; the go warm-up compiles a package and is skipped without room ($PB)" ;; *) bad "proof-compiled-budget gave: $PB" ;; esac
 # FL24-NAMED-EXACT (acc-154; FireLater#24): a basename every mention of which sits in a spelled path names only those paths, even ones not in the repo yet;
-# a bare mention keeps naming every match, and LOKI_E10_NAMED_EXACT=0 restores the basename match.
+# a bare mention keeps naming every match, and LOKI_E10_NAMED_EXACT=0 restores the basename match. A 99 KB task with a long slash-free run is scanned in linear time.
 FB="$(cd "$ROOT/loki-ts" && bun -e '
 const sz = await import("./src/engine10/sizing.ts"), files = ["web/src/app/(auth)/login/page.ts", "web/src/app/(dash)/issues/page.ts", "web/src/app/(dash)/issues/__tests__/page.test.ts", "web/src/lib/api.ts", "web/src/components/Sidebar.test.ts"];
 const n = (t) => sz.namedFiles(t, { files }).map((f) => f.split("/").slice(-2).join("/")).join("+"), t1 = "add `web/src/app/(dash)/search/page.ts`; `web/src/app/(dash)/issues/page.ts` is not modified";
-const r = [n(t1), n("fix page.ts everywhere"), n("edit Sidebar.test.ts and api.ts")]; process.env.LOKI_E10_NAMED_EXACT = "0"; r.push(n(t1)); console.log(r.join(","));' 2>&1)"
-[ "$FB" = "issues/page.ts,login/page.ts+issues/page.ts,lib/api.ts+components/Sidebar.test.ts,login/page.ts+issues/page.ts" ] && ok "fl24 named-exact: spelled paths name only their files; a bare mention keeps every match; =0 restores basenames" || bad "fl24 named-exact gave: $FB"
+const big = "add `web/src/app/(dash)/search/page.ts`\n<!-- " + "x".repeat(99000) + " -->", t0 = Date.now(), nb = n(big), ms = Date.now() - t0; // L009: the 99 KB PRD shape timed out in CI while the scan was quadratic
+const r = [n(t1), n("fix page.ts everywhere"), n("edit Sidebar.test.ts and api.ts"), `${nb}:${ms < 500 ? "fast" : `slow ${ms}ms`}`]; process.env.LOKI_E10_NAMED_EXACT = "0"; r.push(n(t1)); console.log(r.join(","));' 2>&1)"
+[ "$FB" = "issues/page.ts,login/page.ts+issues/page.ts,lib/api.ts+components/Sidebar.test.ts,:fast,login/page.ts+issues/page.ts" ] && ok "fl24 named-exact: spelled paths name only their files; a bare mention keeps every match; =0 restores basenames" || bad "fl24 named-exact gave: $FB"
 # FL24-OWN-BY-PATH (acc-154; FireLater#24): a relevant test is the task's own only when it is a named test file or path-paired (same stem, same dir or its
 # __tests__/tests/test) with a named file the diff changed. A named a/x/page.ts never makes b/y/__tests__/page.test.ts own, and an unedited named file owns nothing.
 FA="$(cd "$ROOT/loki-ts" && bun -e '
