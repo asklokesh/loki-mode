@@ -113,6 +113,8 @@ create tags.
 
 Run the engine end-to-end check alone with `cd loki-ts && bun run test:engine10` (it runs `tests/min/engine10-e2e-stub.sh` through `scripts/local-ci.sh`).
 
+`release.sh --ship` refuses with exit 6 (SHIP_CI_NOT_GREEN) unless the latest completed GitHub CI run (`PR fast tier`, `required-ci`; LOKI_RELEASE_CI_WORKFLOWS) on HEAD, or on its parent when HEAD has none, succeeded. A gh error or a timeout (LOKI_RELEASE_CI_TIMEOUT_S, default 30) also refuses. Push the release candidate and wait for its CI first. `bash scripts/release.sh --check-ci` runs the same check alone. Main's PR fast tier was red from acc-154 through v11.141.0, a CI-only timeout that local gates never saw.
+
 Before pushing the release commit, run `bash scripts/release.sh --check-clean`: it exits 1 naming any tracked file (for example a stamped `loki-ts/dist/loki.js.map`) the commit left modified; `--bump-only` prints the "stage these files:" list.
 
 ### 5. Verify ALL Distribution Channels
