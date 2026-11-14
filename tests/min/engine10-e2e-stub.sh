@@ -232,7 +232,7 @@ full = [c["result"] for c in d.get("checks", []) if c["name"].startswith("full s
 print(d.get("no_test_fallback", False), "pass" in full, ",".join(sorted({c["name"].split(":")[0] for c in d.get("checks", [])})))
 PY
 }
-E2E_PREP=ntf_prep run_engine done
+E2E_PREP=ntf_prep LOKI_E10_NO_TEST_FALLBACK=1 run_engine done
 f="$(ntf_facts)"; set -- $f
 [ "$1" = True ] && [ "$2" = True ] && ok "no-test fallback: a low-tier verify that ran no test runs the repo's own test command, and it passed ($3)" || bad "no-test fallback facts: $f (rc $RC)"
 E2E_PREP=ntf_prep LOKI_E10_NO_TEST_FALLBACK=0 run_engine done
@@ -312,7 +312,7 @@ if python3 -m pytest --version >/dev/null 2>&1; then
     printf '%s\n' "$NOTES" | grep -q "no passing check references a changed symbol.*multiply" && ok "python, unexercised change: the receipt names multiply as unexercised" || bad "python, unexercised change: no changed-symbol note"
     # acc-162 BCE: a test whose conftest cannot import on base and head alike is the environment, not the change: not_run on NOT PROVEN, never FAILED.
     bce_prep() { printf 'import loki_missing_module_bce\n' > "$REPO/tests/conftest.py"; }
-    PY_PREP=bce_prep py_engine calc.py
+    PY_PREP=bce_prep LOKI_E10_BASE_CRASH_ENV=1 py_engine calc.py
     case "$(outcome)" in FAILED|STALLED|"") bad "base crash: a conftest that fails on base too ended '$(outcome)'" ;; *) printf '%s\n' "$NOTES" | grep -q "fails the same way on base, so its result cannot be read" && ok "base crash: the same ImportError on base makes the check environment ($(outcome)), named on NOT PROVEN" || bad "base crash: NOT PROVEN lacks the base-crash line ($(outcome))" ;; esac
     PY_PREP=bce_prep LOKI_E10_BASE_CRASH_ENV=0 py_engine calc.py
     printf '%s\n' "$NOTES" | grep -q "fails the same way on base" && bad "base crash: LOKI_E10_BASE_CRASH_ENV=0 still wrote the base-crash line" || ok "base crash: LOKI_E10_BASE_CRASH_ENV=0 keeps the crash a failure ($(outcome))"
@@ -468,7 +468,7 @@ np = " ".join(rec.get("not_proven", []))
 print(w[-1]["type"] if w else "none", len(d.get("files") or []), d.get("base_checkout", "-"), "fresh-note" if "fresh checkout of the base commit" in np else "no-note", p[0] if p else "none", "oracle" if "wall_oracle" in rec else "no-oracle")
 PY
 }
-E2E_STUB_WALL=multiply LOKI_E10_WALL=1 E2E_PLAN=auto run_engine done
+E2E_STUB_WALL=multiply LOKI_E10_WALL=1 LOKI_E10_WALL_ON_LEAN=1 E2E_PLAN=auto run_engine done
 f="$(wall_facts)"; set -- $f
 [ "$1" = stage.completed ] && [ "$2" -ge 1 ] && [ "$5" = stage.skipped ] && [ "$6" = oracle ] && ok "lean path: LOKI_E10_WALL=1 runs the Wall on a lean task without forcing plan, and the receipt prices it ($f)" || bad "lean path wall facts: $f"
 E2E_STUB_WALL=multiply E2E_PLAN=auto run_engine done
@@ -477,7 +477,7 @@ f="$(wall_facts)"; set -- $f
 E2E_STUB_WALL=multiply LOKI_E10_CASCADE_V0=1 LOKI_E10_WALL_SNAPSHOT_MAX_MB=0.000001 run_engine done
 f="$(wall_facts)"; set -- $f
 [ "$1" = stage.completed ] && [ "$3" = fresh ] && [ "$4" = fresh-note ] && ok "snapshot fallback: with the flag, a failed snapshot runs the Wall on a fresh base checkout, named on NOT PROVEN ($f)" || bad "snapshot fallback facts: $f"
-E2E_STUB_WALL=multiply LOKI_E10_WALL=1 LOKI_E10_WALL_SNAPSHOT_MAX_MB=0.000001 run_engine done
+E2E_STUB_WALL=multiply LOKI_E10_WALL=1 LOKI_E10_WALL_ON_LEAN=1 LOKI_E10_WALL_SNAPSHOT_MAX_MB=0.000001 run_engine done
 f="$(wall_facts)"; set -- $f
 [ "$1" = stage.failed ] && ok "snapshot fallback: without the cascade flag a failed snapshot still fails the Wall stage, as before ($f)" || bad "snapshot no-flag facts: $f"
 

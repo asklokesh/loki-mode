@@ -242,7 +242,7 @@ const b1 = bp(out.rn_changeset as string, "task one"), b2 = bp("", "a different 
 const cut = (b: string) => b.slice(0, b.indexOf(FIXED_RULES) + FIXED_RULES.length);
 out.prefix_stable = b1.includes(FIXED_RULES) && b2.includes(FIXED_RULES) && cut(b1) === cut(b2) && !FIXED_RULES.includes("Release-note convention") && b1.indexOf("Release-note convention") > FIXED_RULES.length ? "yes" : "no";
 { const cx = await import(join(SRC, "e10ext/context.ts")); // UD LOKI_E10_DOC_UPDATE_RULE
-  out.ud_rule = [FIXED_RULES.includes("Do update existing docs that list what you changed"), !FIXED_RULES.includes("Write no documentation unless the task explicitly asks for it"), cx.fixedRules({}) === FIXED_RULES, cx.fixedRules({ LOKI_E10_DOC_UPDATE_RULE: "0" }) === cx.FIXED_RULES_DOC_V139, cx.FIXED_RULES_DOC_V139.includes(cx.DOC_RULE_V139), cx.LEGACY_FIXED_RULES.includes(cx.DOC_RULE_V139)].map((b) => (b ? "y" : "n")).join(""); }
+  out.ud_rule = [FIXED_RULES.includes("Do update existing docs that list what you changed"), !FIXED_RULES.includes("Write no documentation unless the task explicitly asks for it"), cx.fixedRules(process.env) === FIXED_RULES, cx.fixedRules({ LOKI_E10_DOC_UPDATE_RULE: "0" }) === cx.FIXED_RULES_DOC_V139, cx.FIXED_RULES_DOC_V139.includes(cx.DOC_RULE_V139), cx.LEGACY_FIXED_RULES.includes(cx.DOC_RULE_V139)].map((b) => (b ? "y" : "n")).join(""); }
 out.rules = ["read the whole function", "sibling branches", "fix the issue prefers", "never npm test", "release-note fragment a repository convention"].map((k) => FIXED_RULES.includes(k) ? "y" : "n").join("");
 // L3 fragment writer: deterministic release-note fragment from the repo's own convention (LOKI_E10_SCAFFOLD).
 const { writeReleaseNoteFragment: wf, summaryNote, taskForbidsReleaseNote, fragmentWriterOn, fragmentNoticeLine } = await import(join(SRC, "project_model/conventions.ts"));
@@ -355,7 +355,7 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
 // SC LOKI_E10_SR_COVERAGE: stated-case and sibling-definition items, on synthetic fixtures for four loss shapes (a stated edge, a "same effect" sentence, an error reproduction, a sibling override), plus a clean minimal diff.
 { const sr = await import(join(SRC, "features/self_review.ts")), { execFileSync: ex4 } = await import("node:child_process");
   const repo = (name: string, files: Record<string, string>) => { const d = mk(name, files); const g = (...a: string[]) => ex4("git", ["-C", d, ...a], { stdio: "pipe" }).toString().trim(); g("init", "-q", "-b", "main"); g("config", "user.name", "sc"); g("config", "user.email", "sc@example.invalid"); g("add", "-A"); g("commit", "-q", "-m", "base"); return { d, base: g("rev-parse", "HEAD") }; };
-  const items = (r: { d: string; base: string }, task: string, env = {}) => sr.selfReviewChecks(r.d, r.base, sr.treeStaged(r.d, r.base), task, {}, env).filter((i: { item: string }) => i.item === "cases" || i.item === "siblings").map((i: { item: string; status: string }) => `${i.item}=${i.status}`).join(",") || "none";
+  const items = (r: { d: string; base: string }, task: string, env: Record<string, string | undefined> = process.env) => sr.selfReviewChecks(r.d, r.base, sr.treeStaged(r.d, r.base), task, {}, env).filter((i: { item: string }) => i.item === "cases" || i.item === "siblings").map((i: { item: string; status: string }) => `${i.item}=${i.status}`).join(",") || "none";
   const PY = { "src/parse.py": "def parse_default(tok):\n    return int(tok)\n", "tests/test_parse.py": "def test_parse():\n    assert True\n" };
   // 1. a stated "{-1}"-style edge: the reproduction block is covered, the "similar error when ... `{-1}`" sentence is not, until a test carries `{-1}`
   const T1 = "# Negative defaults fail\n\n```\nparse_default('-1')\n```\n\nError: Found `-` but only numbers are allowed.\n\nSimilar error when wrapping it in `{-1}`.\n";
@@ -386,7 +386,7 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
 // DE LOKI_E10_DOC_ENUM and WC LOKI_E10_WALL_CASES, on synthetic fixtures.
 { const sr = await import(join(SRC, "features/self_review.ts")), { execFileSync: ex5 } = await import("node:child_process");
   const repo = (name: string, files: Record<string, string>) => { const d = mk(name, files); const g = (...a: string[]) => ex5("git", ["-C", d, ...a], { stdio: "pipe" }).toString().trim(); g("init", "-q", "-b", "main"); g("config", "user.name", "de"); g("config", "user.email", "de@example.invalid"); g("add", "-A"); g("commit", "-q", "-m", "base"); return { d, base: g("rev-parse", "HEAD") }; };
-  const one = (r: { d: string; base: string }, key: string, task = "Add an option", env = {}, outputs = {}, runDir?: string) => { const i = sr.selfReviewChecks(r.d, r.base, sr.treeStaged(r.d, r.base), task, outputs, env, runDir).find((x: { item: string }) => x.item === key) as { status: string; detail: string } | undefined; return i ? `${i.status}: ${i.detail}` : "none"; };
+  const one = (r: { d: string; base: string }, key: string, task = "Add an option", env: Record<string, string | undefined> = process.env, outputs = {}, runDir?: string) => { const i = sr.selfReviewChecks(r.d, r.base, sr.treeStaged(r.d, r.base), task, outputs, env, runDir).find((x: { item: string }) => x.item === key) as { status: string; detail: string } | undefined; return i ? `${i.status}: ${i.detail}` : "none"; };
   const RULE = { "lib/rules/color/index.mjs": "export const secondary = { ignore: ['inside-function'], ignoreProperties: [] };\nexport function check(o) { return optionsMatches(o, 'ignoreProperties'); }\n", "lib/rules/color/README.md": "# color\n\n## Optional secondary options\n\n### ignore: [\"inside-function\"]\n\n### ignoreProperties: []\n", "lib/rules/color/__tests__/index.mjs": "test('x', () => {});\n" };
   const d1 = repo("de-1", RULE); writeFileSync(join(d1.d, "lib/rules/color/index.mjs"), "export const secondary = { ignore: ['inside-function'], ignoreProperties: [], ignoreFunctions: [] };\nexport function check(o) { return optionsMatches(o, 'ignoreProperties') || optionsMatches(o, 'ignoreFunctions'); }\n"); writeFileSync(join(d1.d, "lib/rules/color/__tests__/index.mjs"), "test('x', () => { expect(1).toBe(1); });\n");
   out.de_flag = one(d1, "docs");
@@ -403,8 +403,8 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
   out.wc_off = String(sr.wallRequiredCases(join(T, "wc-off"), TT, { LOKI_E10_WALL_CASES: "0" }).length);
   const PY = { "src/parse.py": "def parse_default(tok):\n    return int(tok)\n", "tests/test_parse.py": "def test_parse():\n    assert True\n" };
   const w1 = repo("wc-1", PY); writeFileSync(join(w1.d, "src/parse.py"), "def parse_default(tok):\n    return int(tok.strip())\n"); writeFileSync(join(w1.d, "tests/test_parse.py"), "def test_parse():\n    assert parse_default('-1') == -1\n");
-  out.wc_wall = one(w1, "cases", TT, {}, { wall: { files: ["tests/loki_wall_parse_test.py"] } }, rd).split(":")[0];
-  out.wc_no_wall = one(w1, "cases", TT, {}, {}, rd).split(":")[0];
+  out.wc_wall = one(w1, "cases", TT, process.env, { wall: { files: ["tests/loki_wall_parse_test.py"] } }, rd).split(":")[0];
+  out.wc_no_wall = one(w1, "cases", TT, process.env, {}, rd).split(":")[0];
   out.wc_wired = rf(join(SRC, "engine10/stages/wall.ts"), "utf8").includes("[...(unitSpec()?.acceptance ?? []), ...wallRequiredCases(ctx.runDir, task)]") && rf(join(SRC, "engine10/stages/implement.ts"), "utf8").includes("ctx.outputs(), process.env, ctx.runDir)") ? "yes" : "no"; }
 // CR LOKI_E10_CHANGELOG_REF: the reference form of existing entries, in the brief line and checked on the entry the diff adds.
 { const cv = await import(join(SRC, "project_model/conventions.ts"));
@@ -484,7 +484,7 @@ if command -v python3 >/dev/null 2>&1 && timeout 60 python3 -I -m venv "$T/tc-ve
     FW_REAL_TC="$T/real-tc"
 fi
 
-probe="$(bun "$T/probe.ts" "$SRC" "$T" "$CTX" 2>"$T/probe.err")"
+probe="$(LOKI_E10_SR_COVERAGE=1 LOKI_E10_DOC_ENUM=1 LOKI_E10_WALL_CASES=1 LOKI_E10_DOC_UPDATE_RULE=1 bun "$T/probe.ts" "$SRC" "$T" "$CTX" 2>"$T/probe.err")" # 11.141.0: these knobs ship off (A3.2); the probe tests them opted in
 [ -n "$probe" ] || { bad "probe produced no output: $(tail -5 "$T/probe.err")"; finish; exit $?; }
 get() { python3 -I -c 'import json,sys; v=json.loads(sys.argv[1]).get(sys.argv[2]); print(v)' "$probe" "$1"; }
 eqv() { local v; v="$(get "$1")"; [ "$v" = "$2" ] && ok "$3 ($1=$v)" || bad "$3 ($1: got '$v', want '$2')"; }

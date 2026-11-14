@@ -180,7 +180,7 @@ const avaDeclared = (dir: string): boolean => {
   try { const p = JSON.parse(readText(join(dir, "package.json"))) as { dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown>; ava?: unknown }; return "ava" in { ...(p.dependencies ?? {}), ...(p.devDependencies ?? {}) } || p.ava !== undefined; } catch { return false; }
 };
 export function avaTargets(root: string, changed: readonly string[], env: NodeJS.ProcessEnv = process.env): TestRef[] {
-  if (/^(0|off|false|no)$/i.test((env["LOKI_E10_AVA_TARGETED"] ?? "").trim())) return [];
+  if (!/^(1|on|true|yes)$/i.test((env["LOKI_E10_AVA_TARGETED"] ?? "").trim())) return []; // off by default (A3.2: unmeasured), =1 opts in
   const out: string[] = [];
   for (const raw of changed) {
     const rel = normalizeRel(raw);

@@ -1,4 +1,5 @@
 // E-16: Plan (ENGINE.md 4). A fast-tier session sees up to 8 relevant files (keyword overlap with the repo map) and writes at most 10 lines to <runDir>/plan-output.txt; the engine reads and truncates it (missing/unreadable is an empty plan, never a crash).
+import { wallOnLeanOn } from "../../util/wall_knobs.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RepoMap } from "../repomap.ts";
@@ -74,7 +75,7 @@ export const planStage: Stage = {
     const hard = pr.preset ? hardReason(sz.size, loaded, task) : null, routedPlan = pr.routed && (!pr.preset || hard !== null); // LOKI_ROUTER=auto: Opus plans only a hard task
     const skip = mode === "never" || (mode === "auto" && sz.size !== "large" && !routedPlan && !keepsPlanForConsentOrCap(process.env, process.stderr.isTTY === true, sz.size, () => namedFiles(task, loaded).length, () => loadProjectApi(ctx.repoDir)?.packages().length ?? 0));
     // E-64: wall.ts makes this same check to skip itself; a forced plan (LOKI_E10_PLAN=always) also forces "wall", since it still gets its own Wall.
-    const path = mode === "always" || wallEnabled() ? "wall" : smallTaskPath(sz.size, hasRelevantTests(task, loaded, testMap, ctx.tests.impacted));
+    const path = mode === "always" || (wallEnabled() && wallOnLeanOn()) ? "wall" : smallTaskPath(sz.size, hasRelevantTests(task, loaded, testMap, ctx.tests.impacted));
     ctx.emit("variant", null, { size: sz.size, reasons: sz.reasons, plan_mode: mode, plan_skipped: skip, wall_model: wallEnabled() ? wallFirstModel(sz.size) : null, wall_model_reauthor: wallEnabled() ? wallModel() : null, small_task_path: path, cascade: cascadeEnabled() });
     if (skip) pr.record({ planModel: "none", skipReason: mode === "never" || !pr.preset ? "plan stage skipped (LOKI_E10_PLAN=0)" : `no plan session: task sized ${sz.size} and not hard` });
     if (skip && mode === "auto") seedPlanScope(ctx.runDir, namedFiles(task, loaded)); // the scope guard reads plan-scope.json

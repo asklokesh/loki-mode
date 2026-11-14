@@ -510,7 +510,7 @@ const F = {
   "pkg/inscope.py": { base: "import sys  # noqa: F401\n", head: "import sys\n" },
 };
 const st = Object.keys(F).map((f) => ({ st: "M", f })), rd = (f) => F[f], outside = ["tools/other.py", "src/routeTree.gen.ts", "pkg/quotes.py", "pkg/block.py"];
-const d = (task, env = {}) => cf.needDrops(st, task, rd, outside, env).map((x) => `${x.f}=${x.why === "formatting-only change" ? "fmt" : "supp"}`).join(",") || "-";
+const d = (task, env = { LOKI_E10_DIFF_NEED: "1" }) => cf.needDrops(st, task, rd, outside, env).map((x) => `${x.f}=${x.why === "formatting-only change" ? "fmt" : "supp"}`).join(",") || "-";
 console.log([d("Fix the count"), d("Please reformat the routes"), d("Fix the count", { LOKI_E10_DIFF_NEED: "0" }), d("Fix the count in src/routeTree.gen.ts"), cf.needDropNote({ f: "tools/other.py", why: "lint-suppression-only change outside the fix" })].join(" | "));
 ' 2>&1)"
 [ "$DNR" = 'src/routeTree.gen.ts=fmt,pkg/quotes.py=fmt,tools/other.py=supp | tools/other.py=supp | - | pkg/quotes.py=fmt,tools/other.py=supp | lint-suppression-only change outside the fix left out of the delivered diff: tools/other.py' ] && ok "DN commit filter: a formatting-only change and a suppression-only edit outside the fix are left out; a real change, Python indentation, an in-scope suppression edit, a reformat task and a task-named file stay; =0 drops nothing ($DNR)" || bad "DN diff-need drop gave: $DNR"
@@ -524,7 +524,7 @@ cf.noteRegenerated(rd, "implement", ["src/enc.go"]);
 const lines = { "docs/system.md": ["-run(\"/usr/bin/echo\")", "+run(\"/bin/echo\")"], "docs/encode.md": ["+  base64url_encode the value"], "docs/named.md": ["+x"], "src/other.go": ["+y"] };
 const st = ["docs/system.md", "docs/encode.md", "docs/named.md", "src/enc.go", "src/other.go"].map((f) => ({ st: "M", f }));
 const task = "Add a `base64url_encode` operator; also refresh docs/named.md";
-const d = (env = {}) => cf.regenDrops(rd, st, task, (f) => lines[f] ?? [], env).map((x) => x.f).join(",") || "-";
+const d = (env = { LOKI_E10_REGEN_DROP: "1" }) => cf.regenDrops(rd, st, task, (f) => lines[f] ?? [], env).map((x) => x.f).join(",") || "-";
 console.log([JSON.stringify(cf.regeneratedPaths(rd)), d(), d({ LOKI_E10_REGEN_DROP: "0" }), cf.regenDropNote("docs/system.md")].join(" | "));
 ' 2>&1)"
 [ "$RDR" = '["docs/encode.md","docs/named.md","docs/system.md"] | docs/system.md | - | rewritten only by Loki'"'"'s own check run, not by the change, and left out of the commit: docs/system.md' ] && ok "RD commit filter: a file only a verify run rewrote (a machine-specific doc) is left out; a file a model stage also wrote, a task-named file and a doc regenerated in step with the change stay; =0 drops nothing; the drop is noted ($RDR)" || bad "RD regenerated-file drop gave: $RDR"

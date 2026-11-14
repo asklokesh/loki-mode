@@ -1,5 +1,6 @@
 // E-15: Wall author (ENGINE.md 4). One provider session, cwd a fresh temp dir holding only task.md and repomap.txt (never sees the code), writes loki_wall_* tests, copied into the repo (never on abort/kill/timeout, E-54) and
 // sealed under <runDir>/wall/ (sha256 each); wall.sealed before Implement; clean base-tree pass short-circuits to already_satisfied. E-64: skipped outright on the small-task lean path (plan.ts logs the same decision).
+import { wallOnLeanOn } from "../../util/wall_knobs.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { goPackagePath } from "../../runner/repo_profile.ts";
@@ -122,7 +123,7 @@ export function wallRoute(ctx: Pick<RunContext, "repoDir" | "externalPatch" | "t
   const packageTests = existingTests.filter((t) => (api?.packageRootOf(t.path) ?? engineMap?.testPackages?.[t.path] ?? ".") === targetRoot);
   const focus = namedFiles(task, repoMap);
   const runners: RunnerName[] = testMap ? harnessRunners(engineMap?.packageRunners?.[targetRoot] ?? (packageTests.length ? [...new Set(packageTests.map((t) => t.runner))] : testMap.runners), repoMap?.files ?? [], process.env, ctx.repoDir, focus) : [];
-  return { sz, runners, api, targetRoot, lean: !ctx.externalPatch && planMode() !== "always" && !wallEnabled() && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean" };
+  return { sz, runners, api, targetRoot, lean: !ctx.externalPatch && planMode() !== "always" && !(wallEnabled() && wallOnLeanOn()) && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean" };
 }
 /** The exec-spec call execSpecWall makes, built from the same inputs; intake passes it to prefetchExecSpec so the generator call overlaps the baseline run. */
 export const execSpecCall = (ctx: Pick<RunContext, "repoDir" | "runId" | "sessions">, task: string, runners: RunnerName[], existingTests: string[], signal: AbortSignal): Parameters<typeof execSpecAuthor>[0] =>

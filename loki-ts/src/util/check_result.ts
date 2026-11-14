@@ -52,7 +52,7 @@ export const UNMEASURED_REASON = "executed count unmeasured (Loki could not pars
 
 /** PRETTY LOKI_E10_PYTEST_PRETTY (default on, =0 opts out): a repo that loads pytest-pretty (pydantic) prints "Results (0.66s):" then "   271 passed", "    25 skipped"
  *  and no "N passed in Xs" line, so every pytest check read "executed count unmeasured". The block counts only when it ends the output and every line in it is a count. */
-export const pytestPrettyOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PYTEST_PRETTY"] ?? "").trim());
+export const pytestPrettyOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_PYTEST_PRETTY"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
 /** Executed-test count from the runner's FINAL summary only (node TAP/spec trailer, pytest last line, jest/vitest "Tests"
  *  line, cargo "test result:", go "[no test"), never test names or captured stdout above it; null = no summary. 0 = empty or
  *  all skipped, never a pass (A-111). Node counts a testless file as one pseudo-test named after the file: discounted only when its name is the path under test (A-111b). */
@@ -86,7 +86,7 @@ const CARGO_NOISE = /^\s*(?:Compiling|Finished|Running|Doc-tests|Fresh|Blocking|
 /** CMD LOKI_E10_CARGO_MERGED_DOCTEST (default on, =0 opts out): rustdoc's merged-doctests note (Rust 2024 edition), "all doctests ran in Xs; merged doctests compilation
  *  took Ys", prints after a doctest segment's own "test result:" trailer. It is cargo's note, not test output: dropped from segment bodies and from the stream's tail, so the
  *  segment and the run read measured. And a green `cargo test` with no test target at all (a fuzz or bin-only crate prints only "Finished") ran 0 tests, never an unparsed summary. */
-export const cargoMergedDoctestOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_CARGO_MERGED_DOCTEST"] ?? "").trim());
+export const cargoMergedDoctestOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_CARGO_MERGED_DOCTEST"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
 const DOCTEST_NOTE = /^all doctests ran in [\d.]+s\b/;
 const cargoNoise = (l: string): boolean => CARGO_NOISE.test(l) || (cargoMergedDoctestOn() && DOCTEST_NOTE.test(l));
 function cargoLines(out: string): string[] {
@@ -721,7 +721,7 @@ const wrapperOr = (repoDir: string, w: string, bare: string): string => (existsS
 
 /** AVA LOKI_E10_AVA_TARGETED (default on, =0 opts out): an ava package (ink: test/*.tsx with no .test suffix, `npm test` = typecheck && lint && ava) maps no test file,
  *  so a low-tier run verified with lint alone. engine10/testmap.ts avaTargets makes each changed file's own ava test a ref run as `npx --no-install ava <file>`, counted here. */
-export const avaTargetedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_AVA_TARGETED"] ?? "").trim());
+export const avaTargetedOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_AVA_TARGETED"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
 /** Count for the runners we support: vitest, jest, bun test ("N pass"), pytest, go test (-v; non-verbose is unmeasured), unittest, playwright, cargo test, node --test, mocha.
  *  null = unknown (never a pass). A vitest run with no files and no "Tests" summary is a real 0. */
 export function testCount(raw: string, path?: string, ok?: boolean): number | null {

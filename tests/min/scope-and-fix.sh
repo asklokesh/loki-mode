@@ -1249,7 +1249,7 @@ suites="$(ev 'sum(1 for e in E if e["type"]=="test.result" and str(e["data"].get
 [ "$(outcome)" = "VERIFIED" ] && ok "lint twice: run is VERIFIED" || { bad "lint twice: outcome is '$(outcome)', not VERIFIED"; dump; }
 
 # acc-162 INDEP-GATE: the same lint-only red on a Haiku run gets no fix round (lint is the model's own check, not an independent one); =0 restores the rounds.
-run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_LINTBAD=1 E2E_STUB_FIX=linttwice LOKI_RISK_TIER=medium LOKI_SESSION_MODEL=haiku PATH="$T/fakelint:$FIX/bin:$PATH"
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_LINTBAD=1 E2E_STUB_FIX=linttwice LOKI_RISK_TIER=medium LOKI_SESSION_MODEL=haiku LOKI_E10_HAIKU_INDEP_FIX=1 PATH="$T/fakelint:$FIX/bin:$PATH"
 gate="$(ev 'sum(1 for e in E if e["type"]=="loop.repeat" and "LOKI_E10_HAIKU_INDEP_FIX" in str(e["data"].get("reason","")))')"
 [ "$(fix_sessions)" = "0" ] && [ "$gate" = "1" ] && ok "indep gate: a Haiku run with only a lint red runs no fix round, and says why" || { bad "indep gate: $(fix_sessions) fix sessions, gate events $gate (want 0 and 1)"; dump; }
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_LINTBAD=1 E2E_STUB_FIX=linttwice LOKI_RISK_TIER=medium LOKI_SESSION_MODEL=haiku LOKI_E10_HAIKU_INDEP_FIX=0 PATH="$T/fakelint:$FIX/bin:$PATH"
@@ -2391,7 +2391,7 @@ const m = (ch, env = {}) => tm.mochaTargets(d, ch, env).map((t) => `${t.runner}:
 const c = cs.commandFor({ runner: "mocha", path: "a/tests/lib/rules/no-thing.js" }, d, null);
 console.log([m(["a/lib/rules/no-thing.js"]), m(["a/tests/lib/rules/no-thing.js"]), m(["a/tests/fixtures/x.js", "a/lib/other.js"]), m(["b/lib/no-thing.js"]), m(["a/lib/rules/no-thing.js"], { LOKI_E10_MOCHA_TARGETED: "0" }), c.argv.join(" ")].join(" | "));' 2>&1)"
 [ "$R5R" = "mocha:a/tests/lib/rules/no-thing.js | mocha:a/tests/lib/rules/no-thing.js | none | none | none | npx --no-install mocha a/tests/lib/rules/no-thing.js" ] && ok "R5 mocha: a changed source maps to its mirrored mocha test and a changed test to itself in a package that declares mocha; fixtures, a file with no mirror, a package without mocha and =0 map to nothing; the ref runs npx --no-install mocha <file>" || bad "R5 mocha gave: $R5R"
-grep -q 'const tests = tests0.length === 0 ? mochaTargets(ctx.repoDir, changed) : tests0;' "$ROOT/loki-ts/src/engine10/stages/verify.ts" && grep -q '\.\.\.(tests === tests0 ? \[\] : mochaTargets(ctx.repoDir, \[f\]))' "$ROOT/loki-ts/src/engine10/stages/verify.ts" && ok "R5 wiring: verify runs the mocha refs only when nothing else is selected, through the normal test path (base subtraction, flaky rerun), and counts them as covering their source" || bad "R5 wiring missing in verify.ts"
+grep -qF 'const tests = tests0.length === 0 ? [...mochaTargets(ctx.repoDir, changed), ...avaTargets(ctx.repoDir, changed)] : tests0;' "$ROOT/loki-ts/src/engine10/stages/verify.ts" && grep -qF '...(tests === tests0 ? [] : [...mochaTargets(ctx.repoDir, [f]), ...avaTargets(ctx.repoDir, [f])])' "$ROOT/loki-ts/src/engine10/stages/verify.ts" && ok "R5 wiring: verify runs the mocha refs only when nothing else is selected, through the normal test path (base subtraction, flaky rerun), and counts them as covering their source" || bad "R5 wiring missing in verify.ts"
 
 # acc-145 best-of-N cascade (LOKI_E10_ATTEMPT_MODELS, unset by default) and the tie reviewer model (LOKI_E10_SELECT_REVIEW_MODEL, default Sonnet; LOKI_E10_ATTEMPTS_REVIEW_MODEL
 # is the older name). Aliases resolve through the model catalog; the receipt names each attempt's model only when the list is set.
@@ -3519,6 +3519,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 const root = process.argv[2]!;
+for (const k of ["CARGO_MERGED_DOCTEST", "AVA_TARGETED", "PYTEST_PRETTY", "SOURCE_SITES", "PLAN_HINTS", "UNCAUSED_NO_FIX", "UV_REQUIRED", "BASE_CRASH_ENV", "NO_TEST_FALLBACK"]) process.env[`LOKI_E10_${k}`] = "1"; // 11.141.0: these ship off (A3.2); the unit tests them opted in
 const cr = await import(root + "/loki-ts/src/util/check_result.ts");
 const tm = await import(root + "/loki-ts/src/engine10/testmap.ts");
 const ps = await import(root + "/loki-ts/src/project_model/package_suite.ts");
@@ -3535,7 +3536,7 @@ res("CMD merged-doctests note at the end: 3 tests counted", cr.ran(tail, undefin
 res("CMD a green cargo test with no test target reads 0 tests, a red one stays unparsed", cr.ran(empty, undefined, true) === 0 && cr.ran(empty, undefined, false) === null);
 process.env.LOKI_E10_CARGO_MERGED_DOCTEST = "0";
 res("CMD =0: the trailing note leaves the run unparsed, as before", cr.ran(tail, undefined, true) === null && cr.ran(empty, undefined, true) === null);
-delete process.env.LOKI_E10_CARGO_MERGED_DOCTEST;
+process.env.LOKI_E10_CARGO_MERGED_DOCTEST = "1";
 const d = mkdtempSync(join(tmpdir(), "acc162-"));
 try {
   mkdirSync(join(d, "test/helpers"), { recursive: true }); mkdirSync(join(d, "src/components"), { recursive: true });
@@ -3550,7 +3551,7 @@ try {
   writeFileSync(join(d, "package.json"), JSON.stringify({ name: "x", ava: { files: ["test/**/*"] } }));
   process.env.LOKI_E10_AVA_TARGETED = "0";
   res("AVA =0 maps nothing even where ava is declared", tm.avaTargets(d, ["test/focus.tsx"]).length === 0);
-  delete process.env.LOKI_E10_AVA_TARGETED;
+  process.env.LOKI_E10_AVA_TARGETED = "1";
 } finally { rmSync(d, { recursive: true, force: true }); }
 const avaOut = ["  ✔ focus works", "  ✔ focus order", "  ─", "", "  47 tests passed", ...Array.from({ length: 40 }, () => "The current testing environment is not configured to support act(...)")].join("\n");
 res("AVA the summary block after ava's rule counts past 40 lines of stderr noise", cr.testCount(avaOut, "test/focus.tsx", true) === 47);
@@ -3577,7 +3578,7 @@ try {
   res("SRC-SITES a symbol only a benchmark declares still resolves there, with no marker", oh?.file === "benchmark/b.tsx" && oh?.instead_of === undefined);
   process.env.LOKI_E10_SOURCE_SITES = "0";
   res("SRC-SITES =0 keeps the old first-match order (build output first)", at("useFocus")?.file === "build/hooks/use-focus.js");
-  delete process.env.LOKI_E10_SOURCE_SITES;
+  process.env.LOKI_E10_SOURCE_SITES = "1";
 } finally { rmSync(r, { recursive: true, force: true }); }
 res("UNCAUSED a suite red after a change to docs, .d.ts files and a test file only is uncaused", vf.uncausedRed({ name: "full suite: npm", ids: ["tests/unit/adapters/http.test.js > supports http"] }, ["README.md", "index.d.ts", "index.d.cts", "tests/unit/axiosHeaders.test.js"], ["AxiosHeaders"], "EADDRINUSE"));
 res("UNCAUSED a suite red after a runtime source change is never uncaused", !vf.uncausedRed({ name: "full suite: npm", ids: ["a.test.js > x"] }, ["lib/core/AxiosHeaders.js"], [], ""));
@@ -3587,8 +3588,8 @@ res("UNCAUSED a lint diagnostic inside a changed file is never uncaused", !vf.un
 const pretty = "........ [100%]\nResults (0.66s):\n       271 passed\n        25 skipped\n         1 xfailed\n";
 res("PRETTY a pytest-pretty Results block counts its passed tests", cr.testCount(pretty, "tests/test_main.py", true) === 271 && cr.testCount("Results (1.2s):\n         3 passed\n         2 failed\n", "t.py", false) === 5);
 res("PRETTY a Results block that does not end the output, or holds a non-count line, is never counted", cr.testCount("Results (0.5s):\n       9 passed\nprinted by a test\n", "t.py", true) === null);
-process.env.LOKI_E10_PYTEST_PRETTY = "0"; res("PRETTY =0 reads the block as unmeasured, as before", cr.testCount(pretty, "t.py", true) === null); delete process.env.LOKI_E10_PYTEST_PRETTY;
-res("PLAN-HINTS the plan and the relevant-file list are hints when on, the old wording when off", cx.planHintsOn() && /a hint, not the scope/.test(cx.PLAN_HINT_LEAD) && !cx.planHintsOn({ LOKI_E10_PLAN_HINTS: "0" }));
+process.env.LOKI_E10_PYTEST_PRETTY = "0"; res("PRETTY =0 reads the block as unmeasured, as before", cr.testCount(pretty, "t.py", true) === null); process.env.LOKI_E10_PYTEST_PRETTY = "1";
+res("PLAN-HINTS the plan and the relevant-file list are hints when on, the old wording when off", cx.planHintsOn() && /a hint, not the scope/.test(cx.PLAN_HINT_LEAD) && !cx.planHintsOn({ LOKI_E10_PLAN_HINTS: "0" }) && !cx.planHintsOn({}));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/acc162.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "acc-162 unit script crashed or exited non-zero"
