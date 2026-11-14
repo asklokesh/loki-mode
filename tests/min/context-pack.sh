@@ -50,6 +50,7 @@
 #  20. self_review.ts caseCovered: `return true;` first (SC); sc_edge, sc_same and sc_repro fail (a stated case with no test reads covered).
 #  21. self_review.ts siblingDefinitions: `return out;` right after `const changed` (SC); sc_sib and sc_sib_detail fail (the sibling override goes unflagged).
 #  22. self_review.ts docEnumerations: `return out;` right after `const touched` (DE); de_flag fails (the README that lists every other option is not flagged).
+#  24. loki-ts/src/e10ext/context.ts: `const DOC_RULE = DOC_RULE_V139;` (UD); ud_rule fails (the rules still say write no documentation).
 #  23. self_review.ts wallRequiredCases: `if (wallCasesOn(env)) return [];` (WC); wc_lines, wc_marker, wc_off and wc_wall fail.
 #  17. conventions.ts stripInventedRefsInFile: `if (base.has(l) || true) return l;` (CR strip); cr_strip_file fails (the invented #2383 ships).
 #  15. self_review.ts settleItems: never trust the after-turn check (`if (false && a)`); sr_settled fails (fixed items read unresolved).
@@ -240,6 +241,8 @@ const bp = (rm: string, task: string) => buildImplementBrief(task, null, [], rm)
 const b1 = bp(out.rn_changeset as string, "task one"), b2 = bp("", "a different task entirely");
 const cut = (b: string) => b.slice(0, b.indexOf(FIXED_RULES) + FIXED_RULES.length);
 out.prefix_stable = b1.includes(FIXED_RULES) && b2.includes(FIXED_RULES) && cut(b1) === cut(b2) && !FIXED_RULES.includes("Release-note convention") && b1.indexOf("Release-note convention") > FIXED_RULES.length ? "yes" : "no";
+{ const cx = await import(join(SRC, "e10ext/context.ts")); // UD LOKI_E10_DOC_UPDATE_RULE
+  out.ud_rule = [FIXED_RULES.includes("Do update existing docs that list what you changed"), !FIXED_RULES.includes("Write no documentation unless the task explicitly asks for it"), cx.fixedRules({}) === FIXED_RULES, cx.fixedRules({ LOKI_E10_DOC_UPDATE_RULE: "0" }) === cx.FIXED_RULES_DOC_V139, cx.FIXED_RULES_DOC_V139.includes(cx.DOC_RULE_V139), cx.LEGACY_FIXED_RULES.includes(cx.DOC_RULE_V139)].map((b) => (b ? "y" : "n")).join(""); }
 out.rules = ["read the whole function", "sibling branches", "fix the issue prefers", "never npm test", "release-note fragment a repository convention"].map((k) => FIXED_RULES.includes(k) ? "y" : "n").join("");
 // L3 fragment writer: deterministic release-note fragment from the repo's own convention (LOKI_E10_SCAFFOLD).
 const { writeReleaseNoteFragment: wf, summaryNote, taskForbidsReleaseNote, fragmentWriterOn, fragmentNoticeLine } = await import(join(SRC, "project_model/conventions.ts"));
@@ -547,6 +550,7 @@ rn tx_example 'newest example: changes/12.bugfix.rst' "TX the towncrier example 
 eqv tx_template_only none "TX a towncrier directory holding only its template names no example"
 rn tx_off 'newest example: changes/template.rst' "TX LOKI_E10_TOWNCRIER_EXAMPLE=0 restores the newest-file example"
 eqv prefix_stable yes "L3/L5 the rule prefix is byte-identical across two runs; the convention line sits after it, never inside it"
+eqv ud_rule yyyyyy "UD the rules ask to update existing docs that list what changed; =0 restores the v11.139.0 documentation line byte for byte; the legacy block is unchanged"
 eqv rules yyyyy "L5 FIXED_RULES carries the read-whole-function, preferred-fix, targeted-tests and release-note rules"
 eqv fw_path ".changeset/fix-wrong-total-when-the-invoice.md" "FW changeset: a fragment is written next to the repo's own, named from the title"
 eqv fw_front ok "FW changeset: front matter names the workspace package of the changed file (not the private root), double quotes as in the newest example"

@@ -28,6 +28,12 @@ export { FINISH_LINE }; // defined in engine10/types.ts, a leaf module, so confl
 // checks against base, head and the task and seal lists in the receipt (pinned_test_updates). Every other protection stays.
 export const PINNED_UPDATE_LINE = "UPDATED TEST";
 const PINNED_RULE = "- Exception: when the task names an existing test file or asks to change tests, change only what it asks. An existing assertion that pins the OLD behavior the issue explicitly asks to change is not a spec conflict: change its expected value to the behavior the issue states, change nothing else in that test, and before the last line of your reply write one line per such change: `UPDATED TEST <path>:<line>: <old expectation> -> <new expectation>; issue: \"<the issue sentence that asks for the new behavior>\"`. Never delete a test, add skip, xfail or only, widen a tolerance, or touch a test unrelated to the behavior the issue names; any other existing test that contradicts the task is a spec conflict: cite it.";
+// UD LOKI_E10_DOC_UPDATE_RULE (default on, =0 opts out): the documentation rule asks the model to keep existing docs that enumerate what it changed in step, instead
+// of "write no documentation". The failure: both Loki arms left a rule's README, which lists every option, without the option the change added, while every raw arm
+// updated it. =0 restores DOC_RULE_V139 byte for byte; either text is a constant, so the rules prefix stays cache-stable.
+export const DOC_RULE_V139 = "- Write no documentation unless the task explicitly asks for it, except the release-note fragment a repository convention listed below requires. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.";
+export const DOC_RULE_UPDATE = "- Write no new documentation pages unless the task asks for them, except the release-note fragment a repository convention listed below requires. Do update existing docs that list what you changed: when you add or change an option, flag, method, rule or name that a README or doc page in the repository already lists, add or fix its entry there, written like the entries around it. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.";
+const DOC_RULE = DOC_RULE_UPDATE;
 export const FIXED_RULES = [
   "You are the Loki 10 implement stage, doing the complete task described below in this repository. Do whatever a senior engineer would do to finish it correctly: read, change and test as needed across any files the task requires.",
   "Rules:",
@@ -39,11 +45,14 @@ export const FIXED_RULES = [
   "- Do not edit test, build, lint or type-check config (vitest, jest, vite, tsconfig, eslint) or a lockfile unless the task asks for it. If a listed command cannot start because of that config, leave the config alone, say so in your reply, and continue without that check.",
   "- Never leave a long-lived server running.",
   "- Never kill processes.",
-  "- Write no documentation unless the task explicitly asks for it, except the release-note fragment a repository convention listed below requires. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.",
+  DOC_RULE,
   "- Do not commit or push.",
   "- If you add a new third-party registry dependency, list it in .loki/supply-declared.json as a JSON array of {ecosystem,name,version_spec,registry}, leaving out workspace, path, git and local packages.",
   FINISH_LINE,
 ].join("\n");
+/** FIXED_RULES with the v11.139.0 documentation rule (LOKI_E10_DOC_UPDATE_RULE=0). */
+export const FIXED_RULES_DOC_V139 = FIXED_RULES.replace(DOC_RULE_UPDATE, DOC_RULE_V139);
+export const docUpdateRuleOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DOC_UPDATE_RULE"] ?? "").trim());
 /** The old rules text (LOKI_E10_PINNED_TEST_UPDATE=0): byte-identical to v11.139.0. */
 export const LEGACY_FIXED_RULES = [
   "You are the Loki 10 implement stage, doing the complete task described below in this repository. Do whatever a senior engineer would do to finish it correctly: read, change and test as needed across any files the task requires.",
@@ -63,7 +72,7 @@ export const LEGACY_FIXED_RULES = [
 ].join("\n");
 export const pinnedTestUpdateEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PINNED_TEST_UPDATE"] ?? "").trim());
 /** The rules block the implement and fix briefs lead with: FIXED_RULES by default, the v11.139.0 text with the knob off. Either way a constant, so the prefix stays cache-stable. */
-export const fixedRules = (env: NodeJS.ProcessEnv = process.env): string => (pinnedTestUpdateEnabled(env) ? FIXED_RULES : LEGACY_FIXED_RULES);
+export const fixedRules = (env: NodeJS.ProcessEnv = process.env): string => (pinnedTestUpdateEnabled(env) ? (docUpdateRuleOn(env) ? FIXED_RULES : FIXED_RULES_DOC_V139) : LEGACY_FIXED_RULES);
 
 const MAX_FILES = 20;
 const MAX_TESTS = 10;

@@ -115,6 +115,38 @@ export function regenDrops(runDir: string, staged: Staged[], task: string, chang
   });
 }
 export const regenDropNote = (f: string): string => `rewritten only by Loki's own check run, not by the change, and left out of the commit: ${f}`;
+/** DN LOKI_E10_DIFF_NEED (default on, =0 opts out): deliver only what the fix needs, deterministically and with no model call. A staged non-test file the task does not
+ *  name is left out when (1) its change is formatting only: base and head are equal once whitespace, quote style, semicolons and trailing commas are normalized
+ *  (Python, YAML and other whitespace-significant files keep their indentation, so only trailing space, blank lines and quotes are normalized), unless the task asks
+ *  for formatting; or (2) its change only adds or removes lint-suppression comments (noqa, type: ignore, eslint-disable, @ts-ignore, @ts-expect-error, nolint,
+ *  pylint: disable, rubocop:disable, #[allow(..)], @SuppressWarnings) in a file outside the change's stated scope, unless the task is about lint or warnings.
+ *  The failures: a 177 KB delivered diff of reformatted generated route trees and schema files (the raw run's was 4.5 KB), and a drive-by suppression removal in
+ *  an unrelated file. `scopeOutside` lists the staged paths outside the stated scope, or null when no scope signal exists (treated as outside). */
+export const diffNeedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DIFF_NEED"] ?? "").trim());
+const WS_SIGNIFICANT = /\.(?:py|pyi|ya?ml|haml|pug|coffee|nim|mk)$|(^|\/)Makefile$/;
+export function formattingOnly(f: string, base: string, head: string): boolean {
+  if (base === head) return false;
+  const quotes = (t: string): string => t.replace(/["'`]/g, "'");
+  const norm = WS_SIGNIFICANT.test(f)
+    ? (t: string): string => quotes(t).split("\n").map((l) => l.replace(/[ \t]+$/, "")).filter((l) => l.trim() !== "").join("\n")
+    : (t: string): string => quotes(t).replace(/[\s;]+/g, "").replace(/,([\]})])/g, "$1");
+  return norm(base) === norm(head);
+}
+const SUPPRESS = /\s*(?:#\s*(?:noqa\b[^\n]*|type:\s*ignore\b[^\n]*|pylint:\s*disable[^\n]*|rubocop:disable[^\n]*)|\/\/\s*(?:eslint-disable[^\n]*|@ts-(?:ignore|expect-error|nocheck)[^\n]*|nolint\b[^\n]*|NOLINT[^\n]*)|\/\*\s*eslint-disable[^*]*\*\/|#\[allow\([^)]*\)\]|@SuppressWarnings\([^)]*\))/g;
+export const suppressionOnly = (base: string, head: string): boolean => base !== head && base.replace(SUPPRESS, "").replace(/[ \t]+$/gm, "").replace(/\n{2,}/g, "\n") === head.replace(SUPPRESS, "").replace(/[ \t]+$/gm, "").replace(/\n{2,}/g, "\n");
+export function needDrops(staged: Staged[], task: string, read: (f: string) => { base: string | null; head: string | null }, scopeOutside: string[] | null, env: NodeJS.ProcessEnv = process.env): { st: string; f: string; why: string }[] {
+  if (!diffNeedOn(env)) return [];
+  const asksFormat = /\b(?:format(?:ting|ter)?|re-?format|prettier|black|ruff format|gofmt|rustfmt|whitespace|indent(?:ation)?)\b/i.test(task), asksLint = /\b(?:lint(?:er|ing)?|noqa|eslint|suppress(?:ion)?|warnings?|type:\s*ignore|ts-ignore)\b/i.test(task);
+  const out: { st: string; f: string; why: string }[] = [];
+  for (const { st, f } of staged) {
+    if (st !== "M" || f.startsWith(".loki/") || task.includes(f) || task.includes(basename(f))) continue;
+    const { base, head } = read(f); if (base === null || head === null) continue;
+    if (!asksFormat && formattingOnly(f, base, head)) { out.push({ st, f, why: "formatting-only change" }); continue; }
+    if (!asksLint && (scopeOutside === null || scopeOutside.includes(f)) && suppressionOnly(base, head)) out.push({ st, f, why: "lint-suppression-only change outside the fix" });
+  }
+  return out;
+}
+export const needDropNote = (d: { f: string; why: string }): string => `${d.why} left out of the delivered diff: ${d.f}`;
 /** One receipt line per build artifact or run output the commit left out. */
 export const buildArtifactNotes = (repoDir: string, droppedAdded: string[], baseSha?: string, task?: string): string[] => {
   const s = new Set<string>([...(buildArtifactDropEnabled() ? buildArtifacts(repoDir, droppedAdded, baseSha, task) : []), ...(runOutputDropEnabled() ? runOutputs(repoDir, droppedAdded, baseSha, task) : [])]);

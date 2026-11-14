@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Added
+- The delivered diff now carries only what the fix needs: a file whose change is formatting only, or only adds or removes lint-suppression comments in a file outside the fix, is left out and named on the receipt (LOKI_E10_DIFF_NEED=0 turns it off). The implement rules now ask to update existing docs that list what changed instead of "write no documentation" (LOKI_E10_DOC_UPDATE_RULE=0 restores the old line).
 - A file only Loki's own check runs rewrote (for example a doc page a test run regenerates with a machine-specific path) is left out of the delivered diff and named on the receipt, unless the task names it or its change carries a task keyword (LOKI_E10_REGEN_DROP=0 turns it off). The self-check also flags a doc that lists every option or name of what the change extends but not the new one (LOKI_E10_DOC_ENUM=0).
 - The cases an issue states are handed to the Wall test writer as required cases, so a Wall run checks them with sealed tests instead of the self-check matching the model's own tests (LOKI_E10_WALL_CASES=0 turns it off).
 - The pre-delivery self-check now also checks that every case the issue states (a shown reproduction and its result or error, and "similar error when", "same effect", "both ... and", "neither" sentences) has a test, and lists other definitions of a changed function (an override or twin path) the diff leaves untouched. Either flag starts the same single review turn. LOKI_E10_SR_COVERAGE=0 turns it off.
