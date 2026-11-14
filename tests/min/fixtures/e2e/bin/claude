@@ -176,6 +176,9 @@ if [ "$is_wall" = 1 ] && [ "${E2E_STUB_WALL:-}" = "vitestred" ]; then # a vitest
     'test("C2 results are ranked with ts_rank", () => { expect(src).toMatch(/ts_rank/); });' \
     'test("C3 queries use websearch_to_tsquery", () => { expect(src).toMatch(/websearch_to_tsquery/); });' > loki_wall_search.test.ts
 fi
+if [ "$is_wall" = 1 ] && [ "${E2E_STUB_WALL:-}" = "multiply" ]; then # CASCADE-V0 legs: in any mode, the Wall author writes the multiply(3, 4) = 12 acceptance test
+  printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n' > loki_wall_multiply.test.ts
+fi
 if [ "$is_wall" = 1 ] && [ "${E2E_STUB_MODE:-}" = "wallcolor" ]; then # FC-69: the Wall author writes one red-on-base test for multiply()
   printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n' > loki_wall_multiply.test.ts
 fi

@@ -20,6 +20,7 @@ import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts"; 
 import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts"; import { EXEC_SPEC_TELEMETRY_FILE } from "../../features/exec_spec.ts";
 import { crossReview, minVerdict, modelReviewRan, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
+import { cascadeV0On } from "../../util/wall_knobs.ts";
 import { STAGE_BUDGETS, type RunnerName, type Obj, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type Verdict } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
 import { loadRouteRecord } from "../../runner/router/route_record.ts";
@@ -467,6 +468,8 @@ export const sealStage: Stage = {
       time,
       provider: ctx.provider,
       model: externalRun(o) ? EXTERNAL_MODEL_LABEL : ctx.model, // CW-12 B3: no Loki session wrote this code, so no implementing model is named
+      ...(strs(o.wall?.iteration_ids).length ? { wall_oracle: { cost_usd: ctx.cost.read(ctx.repoDir, strs(o.wall?.iteration_ids)).usd, duration_s: typeof o.wall?.duration_s === "number" ? o.wall.duration_s : null } } : {}), // CASCADE-V0: the oracle's own price and time, per run
+      ...(cascadeV0On() ? { cascade: (() => { const c = ((o.implement?.attempts ?? {}) as Obj).cascade as Obj | undefined; return c ? { fired: true, from: str(c.from) ?? null, to: str(c.to) ?? null } : { fired: false }; })() } : {}), // CASCADE-V0: whether it escalated, from which model to which
       ...(!externalRun(o) && /^(explicit|default|provider)$/.test(process.env.LOKI_SESSION_MODEL_SOURCE ?? "") ? { model_source: process.env.LOKI_SESSION_MODEL_SOURCE as "explicit" | "default" | "provider" } : {}), // acc-156: who chose the model (explicit flag or env, Loki's default, or the CLI's own default)
       ...(externalRun(o) ? { implement: { exit: "external" as const, patch_sha256: str(o.implement?.patch_sha256) ?? "" } } : {}),
       resumed: o.intake?.resumed === true,

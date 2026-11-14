@@ -19,6 +19,7 @@ import { FINISH_LINE, type Obj, type RunContext, type SessionResult, type Sessio
 import { rankAttempts, type AttemptCandidate, type AttemptCheck, type AttemptSignal } from "../e10ext/select.ts";
 import { consultCallFor } from "./opus_consult.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
+import { CASCADE_DEFAULT_MODELS, cascadeV0On } from "../util/wall_knobs.ts";
 import { anchoredPlanScope, outsideScope } from "../e10ext/scope.ts";
 import { parseStaged, type Staged } from "../e10ext/commit_filter.ts";
 import { DEFAULT_EXCLUDES, applyDiff, resetToBase, snapshotDiff, swapAttemptIntoWorkingTree } from "../e10ext/treeswap.ts";
@@ -37,12 +38,20 @@ export function attemptsTotal(model: string | undefined, env: NodeJS.ProcessEnv 
   const n = Number(raw);
   return raw !== "" && Number.isInteger(n) && n > 0 ? Math.min(n, MAX_ATTEMPTS) : 1;
 }
+/** CASCADE-V0: verify's record says a Wall check failed (verify.ts writes wall_failure_tail only for failed Wall checks). */
+export const wallFailedOf = (v: Obj | undefined): boolean => typeof v?.wall_failure_tail === "string" && v.wall_failure_tail !== "";
+export const CASCADE_LEAD = "The previous attempt at this task failed these acceptance tests (sealed, read-only; make them pass by fixing the code, never by editing them). Their failing output:";
+/** The Wall's failing output for the cascade retry, at most 6000 characters from its end; null when verify recorded none. */
+export function cascadeWallTail(runDir: string, v: Obj | undefined): string | null {
+  if (!wallFailedOf(v)) return null;
+  try { const t = readFileSync(join(runDir, basename(String(v!.wall_failure_tail))), "utf8").trim(); return t ? t.slice(-6000) : null; } catch { return null; }
+}
 /** The extra sessions, N - 1 (0 is off). */
-export const attemptsK = (model: string | undefined, env: NodeJS.ProcessEnv = process.env): number => attemptsTotal(model, env) - 1;
+export const attemptsK = (model: string | undefined, env: NodeJS.ProcessEnv = process.env): number => Math.max(attemptsTotal(model, env) - 1, cascadeV0On(env) ? 1 : 0); // CASCADE-V0: one more attempt at least
 /** LOKI_E10_ATTEMPT_MODELS (unset by default: every attempt runs on the session model): a comma list naming one model per attempt in order, so `haiku,sonnet` runs
  *  attempt 1 (the first, in the primary tree) on Haiku and the extra attempt on Sonnet. An attempt past the end of the list reuses its last entry. Family aliases go
  *  through the model catalog (a bare alias is rejected on the API route). */
-export const attemptModels = (env: NodeJS.ProcessEnv = process.env): string[] => (env.LOKI_E10_ATTEMPT_MODELS ?? "").split(",").map((m) => m.trim()).filter((m) => m !== "").map(resolveClaudeModel);
+export const attemptModels = (env: NodeJS.ProcessEnv = process.env): string[] => ((env.LOKI_E10_ATTEMPT_MODELS ?? "").trim() || (cascadeV0On(env) ? CASCADE_DEFAULT_MODELS : "")).split(",").map((m) => m.trim()).filter((m) => m !== "").map(resolveClaudeModel);
 /** The model attempt `i` (0 is the first attempt) runs on: its LOKI_E10_ATTEMPT_MODELS entry, else `fallback` (the session model). */
 export const attemptModel = (i: number, fallback: string | undefined, env: NodeJS.ProcessEnv = process.env): string | undefined => { const l = attemptModels(env); return l.length ? l[Math.min(i, l.length - 1)] : fallback; };
 

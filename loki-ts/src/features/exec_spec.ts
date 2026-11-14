@@ -30,7 +30,7 @@ export const EXEC_SPEC_TELEMETRY_FILE = "exec-spec.json"; // <runDir>/, read by 
 
 export type AtomKind = "example" | "claim" | "site" | "option" | "location" | "parity" | "pair";
 export interface SpecAtom { id: string; kind: AtomKind; text: string; lang?: string; section?: string }
-export interface ResolvedSite { symbol: string; file: string; line: number; source: string; /** whole declaration up to MAX_BODY_LINES, for deterministic scans only */ body?: string }
+export interface ResolvedSite { symbol: string; file: string; line: number; source: string; /** SRC-SITES fire marker: the build-output, declaration or test-area file the old first-match order would have picked */ instead_of?: string; /** whole declaration up to MAX_BODY_LINES, for deterministic scans only */ body?: string }
 
 const CODE_LANG = /^(go|golang|ts|typescript|js|javascript|tsx|jsx|py|python|rs|rust|java|console|bash|sh|shell)$/i;
 const LOCATION_SECTION = /\b(location|relevant code|current code|source|where)\b/i;
@@ -119,8 +119,16 @@ export function declarationAt(lines: string[], i: number): string[] {
 
 /** Resolve site atoms to their definitions in the repo; external symbols (fmt.Errorf) resolve to nothing and stay prose.
  *  Then one hop: a same-file function a resolved site calls is shown too (the issue names Report; the bug may sit in its helper). */
+/** SRC-SITES LOKI_E10_SOURCE_SITES (default on, =0 opts out): a named symbol resolves to a source file before a test-area file (test/, tests/, benchmark/, examples/,
+ *  docs/) and before build output or a type declaration (build/, out/, lib/ beside a src/ twin, *.d.ts, *.min.js). The derived copy is a site only when no source
+ *  declares the symbol. dev2: ink's useFocus resolved to build/hooks/use-focus.js and axios's AxiosHeaders to index.d.ts, so the fix went to the wrong file. */
+export const sourceSitesOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SOURCE_SITES"] ?? "").trim());
+export function siteRank(f: string, srcStems: ReadonlySet<string> = new Set()): number {
+  if (/\.d\.[cm]?ts$|\.min\.js$|(^|\/)(build|out)\//.test(f) || (/^lib\//.test(f) && srcStems.has(f.slice(4).replace(/\.[^./]+$/, "")))) return 2; // lib/x.js is build output only beside a src/x.* twin
+  return /(^|\/)(tests?|__tests__|benchmarks?|bench|examples?|fixtures|docs?)\//.test(f) ? 1 : 0;
+}
 export function resolveSites(atoms: SpecAtom[], repoDir: string): ResolvedSite[] {
-  const files = sourceFiles(repoDir), out: ResolvedSite[] = [], cache = new Map<string, string[]>();
+  const all = sourceFiles(repoDir), src = new Set(all.filter((f) => f.startsWith("src/")).map((f) => f.slice(4).replace(/\.[^./]+$/, ""))), files = sourceSitesOn() ? [...all].sort((a, b) => siteRank(a, src) - siteRank(b, src)) : all, out: ResolvedSite[] = [], cache = new Map<string, string[]>();
   const linesOf = (f: string): string[] => { let l = cache.get(f); if (!l) { try { l = readFileSync(join(repoDir, f), "utf8").split("\n"); } catch { l = []; } cache.set(f, l); } return l; };
   // distinctive lines of the code the report quotes; a long site shows its head plus a window around the first anchor hit
   const anchors = atoms.filter((a) => a.kind === "location").flatMap((a) => a.text.split("\n").map((l) => l.trim()).filter((l) => l.length >= 12 && !l.startsWith("//") && !l.startsWith("#")));
@@ -136,7 +144,8 @@ export function resolveSites(atoms: SpecAtom[], repoDir: string): ResolvedSite[]
         if (hit >= 0) source += `\n\t// ... (lines ${i + MAX_SITE_LINES + 1}-${i + Math.max(MAX_SITE_LINES, hit - ANCHOR_PAD)} omitted)\n` + body.slice(Math.max(MAX_SITE_LINES, hit - ANCHOR_PAD), hit + ANCHOR_PAD).join("\n");
         source += "\n\t// ... (rest omitted)";
       }
-      out.push({ symbol, file: f, line: i + 1, source, body: body.join("\n") });
+      const was = !only && files !== all ? all.find((g) => re.test(linesOf(g).find((l) => re.test(l)) ?? "")) : undefined; // SRC-SITES: what the old order would have chosen
+      out.push({ symbol, file: f, line: i + 1, source, body: body.join("\n"), ...(was && was !== f ? { instead_of: was } : {}) });
       break;
     }
   };

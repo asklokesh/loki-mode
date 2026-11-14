@@ -122,7 +122,7 @@ export function wallRoute(ctx: Pick<RunContext, "repoDir" | "externalPatch" | "t
   const packageTests = existingTests.filter((t) => (api?.packageRootOf(t.path) ?? engineMap?.testPackages?.[t.path] ?? ".") === targetRoot);
   const focus = namedFiles(task, repoMap);
   const runners: RunnerName[] = testMap ? harnessRunners(engineMap?.packageRunners?.[targetRoot] ?? (packageTests.length ? [...new Set(packageTests.map((t) => t.runner))] : testMap.runners), repoMap?.files ?? [], process.env, ctx.repoDir, focus) : [];
-  return { sz, runners, api, targetRoot, lean: !ctx.externalPatch && planMode() !== "always" && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean" };
+  return { sz, runners, api, targetRoot, lean: !ctx.externalPatch && planMode() !== "always" && !wallEnabled() && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean" };
 }
 /** The exec-spec call execSpecWall makes, built from the same inputs; intake passes it to prefetchExecSpec so the generator call overlaps the baseline run. */
 export const execSpecCall = (ctx: Pick<RunContext, "repoDir" | "runId" | "sessions">, task: string, runners: RunnerName[], existingTests: string[], signal: AbortSignal): Parameters<typeof execSpecAuthor>[0] =>

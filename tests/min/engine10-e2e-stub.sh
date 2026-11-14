@@ -49,10 +49,16 @@
 #   12. loki-ts/src/engine10/stages/xreview.ts: drop the run-model pin for the default review (the high-tier leg reads no --model haiku).
 #   13. loki-ts/src/engine10/machine.ts capReached: return false always (the capped run completes and reads VERIFIED, exit 0).
 #   14. loki-ts/src/util/check_result.ts changedSymbols: drop the ENCLOSING-DECL fallback (the enclosing-declaration unit line reads method=[]).
+#   30. machine.ts: cascadeNow ignores wallFailedOf (the lint-only leg cascades).
+#   31. machine.ts: drop the Wall tail from the cascade brief (the brief leg finds no Wall failure).
+#   32. wall.ts wallRoute: drop the !wallEnabled() lean override (the lean-path leg reads the Wall skipped).
+#   33. machine.ts: never set fresh (the snapshot fallback leg reads stage.failed).
 #   15. claude_model.ts chooseSessionModel: ignore EXPLICIT_MODEL_ENV (the env leg reads sonnet, source default).
 #   16. supervisor.ts: do not export the default pin (the default leg reads the provider default and no --model).
 #   17. seal.ts: drop model_source (every default-model leg reads absent).
 #   18. claude_model.ts chooseSessionModel: ignore LOKI_DEFAULT_SESSION_MODEL=provider (the provider leg reads sonnet).
+#   24. verify.ts: drop the ntf condition (the no-test fallback leg reads no full suite).
+#   25. verify.ts: skip the envCrash conversion (the base crash leg reads STALLED, no base-crash line).
 #   19. claude_model.ts DEFAULT_SESSION_MODEL changed to haiku without autonomy/route.sh (the newcomer-path acc-156 route leg reads ts haiku, route sonnet).
 #   20. claude_model.ts chooseSessionModel: drop the LOKI_ROUTER check (the router leg reads source default; auto-route.sh's small, hard, wall legs run on sonnet).
 #   21. seal.ts commitStage: drop the hooks-off retry (the commit hook leg reads FAILED, git commit failed).
@@ -210,6 +216,30 @@ HK="$(hk_np)"
 case "$HK" in "FAILED | git commit failed: "*) ok "commit hook: a failure no hook caused (signing) is not bypassed, and the run still writes a FAILED receipt naming the git error" ;; *) bad "commit hook: signing failure gave '$HK' (rc $RC)" ;; esac
 unset -f hook_prep sign_prep
 
+# acc-162 NTF: a low-tier change whose repo maps no test file (an npm package whose tests have no .test name) still runs the repo's own test command.
+ntf_prep() {
+    git -C "$1" rm -q calc.test.ts bunfig.toml
+    printf '{"name":"calc","private":true,"scripts":{"test":"node t.cjs"}}\n' > "$1/package.json"
+    printf 'const s = require("fs").readFileSync(__dirname + "/calc.ts", "utf8");\nconst ok = s.includes("export function add");\nconsole.log("TAP version 13\\n" + (ok ? "ok" : "not ok") + " 1 - add is exported\\n1..1\\n# tests 1\\n# suites 0\\n# pass " + (ok ? 1 : 0) + "\\n# fail " + (ok ? 0 : 1) + "\\n# cancelled 0\\n# skipped 0\\n# todo 0");\nprocess.exit(ok ? 0 : 1);\n' > "$1/t.cjs"
+    git -C "$1" add package.json t.cjs && git -C "$1" commit -q --amend -m base
+}
+ntf_facts() { python3 -I - "$RUNDIR/events.jsonl" <<'PY'
+import json, sys
+v = [json.loads(l)["data"] for l in open(sys.argv[1]) if '"stage.completed"' in l and '"verify"' in l]
+v = [d for d in v if "checks" in d]
+d = v[-1] if v else {}
+full = [c["result"] for c in d.get("checks", []) if c["name"].startswith("full suite")]
+print(d.get("no_test_fallback", False), "pass" in full, ",".join(sorted({c["name"].split(":")[0] for c in d.get("checks", [])})))
+PY
+}
+E2E_PREP=ntf_prep run_engine done
+f="$(ntf_facts)"; set -- $f
+[ "$1" = True ] && [ "$2" = True ] && ok "no-test fallback: a low-tier verify that ran no test runs the repo's own test command, and it passed ($3)" || bad "no-test fallback facts: $f (rc $RC)"
+E2E_PREP=ntf_prep LOKI_E10_NO_TEST_FALLBACK=0 run_engine done
+f="$(ntf_facts)"; set -- $f
+[ "$1" = False ] && [ "$2" = False ] && ok "no-test fallback: LOKI_E10_NO_TEST_FALLBACK=0 keeps the low tier's deferred test command" || bad "no-test fallback off facts: $f"
+unset -f ntf_prep
+
 E2E_STUB_USAGE=10 run_engine done
 cat > "$T/cap.py" <<'PY'
 import json, sys
@@ -247,6 +277,7 @@ py_engine() {
     [ "${PY_UNTESTED:-0}" = 1 ] || printf '    if hasattr(calc, "multiply"):\n        assert calc.multiply(3, 4) == 12\n' >> "$REPO/tests/test_calc.py"
     printf '[pytest]\npythonpath = .\n' > "$REPO/pytest.ini"
     for f in "$@"; do printf 'pytest\n' > "$REPO/$f"; done
+    if [ -n "${PY_PREP:-}" ]; then "$PY_PREP"; fi # a leg's extra base files
     git -C "$REPO" init -q -b main; git -C "$REPO" config user.name e2e; git -C "$REPO" config user.email e2e@example.invalid
     git -C "$REPO" add -A .; git -C "$REPO" commit -q -m base
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u VIRTUAL_ENV \
@@ -279,6 +310,13 @@ if python3 -m pytest --version >/dev/null 2>&1; then
     PY_UNTESTED=1 py_engine calc.py
     [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "python, impacted test passes but never calls multiply(): not VERIFIED ($(outcome))" || { bad "python, unexercised change: outcome '$(outcome)'"; printf '%s\n' "$NOTES" | sed 's/^/    np | /'; }
     printf '%s\n' "$NOTES" | grep -q "no passing check references a changed symbol.*multiply" && ok "python, unexercised change: the receipt names multiply as unexercised" || bad "python, unexercised change: no changed-symbol note"
+    # acc-162 BCE: a test whose conftest cannot import on base and head alike is the environment, not the change: not_run on NOT PROVEN, never FAILED.
+    bce_prep() { printf 'import loki_missing_module_bce\n' > "$REPO/tests/conftest.py"; }
+    PY_PREP=bce_prep py_engine calc.py
+    case "$(outcome)" in FAILED|STALLED|"") bad "base crash: a conftest that fails on base too ended '$(outcome)'" ;; *) printf '%s\n' "$NOTES" | grep -q "fails the same way on base, so its result cannot be read" && ok "base crash: the same ImportError on base makes the check environment ($(outcome)), named on NOT PROVEN" || bad "base crash: NOT PROVEN lacks the base-crash line ($(outcome))" ;; esac
+    PY_PREP=bce_prep LOKI_E10_BASE_CRASH_ENV=0 py_engine calc.py
+    printf '%s\n' "$NOTES" | grep -q "fails the same way on base" && bad "base crash: LOKI_E10_BASE_CRASH_ENV=0 still wrote the base-crash line" || ok "base crash: LOKI_E10_BASE_CRASH_ENV=0 keeps the crash a failure ($(outcome))"
+    unset -f bce_prep
 elif [ "${CI:-}" = "true" ]; then
     bad "python legs: pytest is not installed on the CI runner"
 else
@@ -395,6 +433,54 @@ case "$U" in "low=0 medium=0 high=1 "*) ok "unit: with no reviewer configured an
 
 # EXP-0010: parallel attempts after a red first attempt. The stub (mode attempts) writes a wrong multiply() in every session except the one in
 # the attempt worktree B<E2E_STUB_RIGHT>; E2E_STUB_FIX=noprogress keeps the primary's fix round red so the extra attempts run. Real bun test, real pytest, real vitest.
+# CASCADE-V0 (LOKI_E10_CASCADE_V0, default off): the Wall is the oracle. A Wall test that fails on the first candidate (Haiku) starts ONE more attempt on the next
+# LOKI_E10_ATTEMPT_MODELS entry (haiku,sonnet by default), before any fix round, and its brief carries the Wall's failing output. No other red cascades.
+cas_ev() { python3 -I -c '
+import json, sys
+for l in open(sys.argv[1]):
+    e = json.loads(l)
+    if e["type"] == "attempts.selected": d = e["data"]; c = d.get("cascade") or {}; print("winner=%s total=%s trigger=%s to=%s" % (d.get("winner"), d.get("total"), c.get("trigger"), c.get("to"))); break
+else: print("none")
+' "$RUNDIR/events.jsonl" 2>/dev/null; }
+cas_brief() { grep -l "The previous attempt at this task failed these acceptance tests" "$T"/cas.prompt.* 2>/dev/null | head -1; }
+E2E_STUB_RIGHT=1 E2E_STUB_WALL=multiply E2E_STUB_PROMPT_LOG="$T/cas.prompt" LOKI_SESSION_MODEL=haiku LOKI_E10_CASCADE_V0=1 run_engine attempts
+c="$(cas_ev)"
+case "$c" in "winner=x1 total=2 trigger=wall to=claude-sonnet"*) ok "cascade: a failing Wall test on the Haiku candidate starts one Sonnet attempt, which wins ($c)" ;; *) bad "cascade: attempts.selected '$c' (outcome $(outcome))"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /' ;; esac
+[ "$(outcome)" = "VERIFIED" ] && ok "cascade: the winning attempt's tree seals VERIFIED" || bad "cascade: outcome '$(outcome)'"
+[ -n "$(cas_brief)" ] && grep -q "loki_wall_multiply" "$(cas_brief)" && ok "cascade: the retry brief carries the Wall's failing output" || bad "cascade: no implement prompt carried the Wall failure"
+rm -f "$T"/cas.prompt*
+E2E_STUB_WALL=multiply E2E_STUB_LINTBAD=1 LOKI_SESSION_MODEL=haiku LOKI_E10_CASCADE_V0=1 run_engine done
+[ "$(cas_ev)" = "none" ] && ok "cascade: a red that is not the Wall (a lint error) never cascades" || bad "cascade: a lint-only red cascaded ($(cas_ev))"
+E2E_STUB_RIGHT=1 E2E_STUB_WALL=multiply E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku run_engine attempts
+[ "$(cas_ev)" = "none" ] && ok "cascade: off by default (no LOKI_E10_CASCADE_V0): no extra attempt" || bad "cascade: ran with the flag unset ($(cas_ev))"
+
+# CASCADE-V0 must-haves. (1) The calc fixture is a lean task (small, a relevant visible test): the Wall still runs with LOKI_E10_WALL=1, and plan is not forced.
+# (2) A pre-implement snapshot that fails (a 1 KB size ceiling) no longer drops the oracle under the flag: the Wall runs on a fresh base checkout, said on NOT PROVEN.
+wall_facts() { python3 -I - "$RUNDIR/events.jsonl" "$RUNDIR/receipt.json" <<'PY'
+import json, sys
+ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]
+w = [e for e in ev if e.get("stage") == "wall" and e["type"] in ("stage.completed", "stage.failed", "stage.skipped")]
+p = [e["type"] for e in ev if e.get("stage") == "plan" and e["type"] in ("stage.completed", "stage.skipped")]
+d = (w[-1].get("data") or {}) if w else {}
+try: rec = json.load(open(sys.argv[2]))
+except Exception: rec = {}
+np = " ".join(rec.get("not_proven", []))
+print(w[-1]["type"] if w else "none", len(d.get("files") or []), d.get("base_checkout", "-"), "fresh-note" if "fresh checkout of the base commit" in np else "no-note", p[0] if p else "none", "oracle" if "wall_oracle" in rec else "no-oracle")
+PY
+}
+E2E_STUB_WALL=multiply LOKI_E10_WALL=1 LOKI_E10_PLAN=auto run_engine done
+f="$(wall_facts)"; set -- $f
+[ "$1" = stage.completed ] && [ "$2" -ge 1 ] && [ "$5" = stage.skipped ] && [ "$6" = oracle ] && ok "lean path: LOKI_E10_WALL=1 runs the Wall on a lean task without forcing plan, and the receipt prices it ($f)" || bad "lean path wall facts: $f"
+E2E_STUB_WALL=multiply LOKI_E10_PLAN=auto run_engine done
+f="$(wall_facts)"; set -- $f
+[ "$1" != stage.completed ] || [ "$2" = 0 ] && ok "lean path: with no Wall switch the lean task still skips the Wall ($f)" || bad "lean path default: the Wall ran ($f)"
+E2E_STUB_WALL=multiply LOKI_E10_CASCADE_V0=1 LOKI_E10_WALL_SNAPSHOT_MAX_MB=0.000001 run_engine done
+f="$(wall_facts)"; set -- $f
+[ "$1" = stage.completed ] && [ "$3" = fresh ] && [ "$4" = fresh-note ] && ok "snapshot fallback: with the flag, a failed snapshot runs the Wall on a fresh base checkout, named on NOT PROVEN ($f)" || bad "snapshot fallback facts: $f"
+E2E_STUB_WALL=multiply LOKI_E10_WALL=1 LOKI_E10_WALL_SNAPSHOT_MAX_MB=0.000001 run_engine done
+f="$(wall_facts)"; set -- $f
+[ "$1" = stage.failed ] && ok "snapshot fallback: without the cascade flag a failed snapshot still fails the Wall stage, as before ($f)" || bad "snapshot no-flag facts: $f"
+
 att_ev() { python3 -I -c '
 import json, sys
 for l in open(sys.argv[1]):

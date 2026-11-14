@@ -4,6 +4,11 @@ const off = (v: string | undefined): boolean => ["0", "off", "false"].includes((
 
 /** Concurrent Wall authoring, the default: the Wall author never sees code, so it runs beside implement and its tests are installed once before verify, never ahead of implement. Explicit LOKI_E10_WALL_CONCURRENT=0/off/false restores the sequential Wall (authored before implement, with the haiku-first re-author). */
 export const wallConcurrent = (env = process.env): boolean => !off(env.LOKI_E10_WALL_CONCURRENT);
+/** CASCADE-V0 LOKI_E10_CASCADE_V0 (default OFF, =1 turns it on): the Wall is the oracle and the model cascade is LOKI_E10_ATTEMPT_MODELS (haiku,sonnet when unset).
+ *  It turns the Wall on for the run. Only a Wall check that fails on the first candidate starts one more attempt, on the next model, before any fix round, and that
+ *  attempt's brief carries the Wall's failing output. Any other red (lint, a collateral test, a NOT PROVEN line) never cascades. machine.ts extraAttempts, features/attempts.ts. */
+export const cascadeV0On = (env = process.env): boolean => /^(1|on|true|yes)$/i.test((env.LOKI_E10_CASCADE_V0 ?? "").trim());
+export const CASCADE_DEFAULT_MODELS = "haiku,sonnet";
 
 export const WALL_MAX_TOKENS_DEFAULT = 16000;
 /** LOKI_E10_WALL_MAX_TOKENS: the output-token ceiling of each Wall author response (default 16000). Handed to the session as the provider's own output limit, so the model stops there; nothing is cut afterwards. Only a plain decimal integer from 1 to Number.MAX_SAFE_INTEGER counts: garbage, zero, signs, fractions, exponents (1e3), hex (0x10), surrounding spaces and larger values fall back with one warning. */

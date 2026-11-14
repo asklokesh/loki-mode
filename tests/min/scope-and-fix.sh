@@ -303,6 +303,13 @@
 # 265. repo_profile.ts collateralOnBaseline: drop the paired-source check (fl24 collateral-baseline's changed web/src/app/x/page.ts reads true).
 # 266. failures.ts idNamesFile: drop the package-relative branch (fl24 id-pkg-relative reads false for frontend/src/components/S.test.ts).
 # 267. seal.ts baseProofRunner: ignore repoDir (the fl24 monorepo after reads PARTIAL: the frontend test's proof runs from the repo root).
+# 269. check_result.ts cargoSegs: keep the merged-doctests note in a segment body (the between-segments CMD leg reads unparsed).
+# 270. check_result.ts testCount: drop the ava rule requirement (the AVA bare-summary leg counts 5).
+# 271. install.ts uvWorkspaceRoot: always null (the UVR workspace leg fails).
+# 272. exec_spec.ts resolveSites: keep the first-match order (the SRC-SITES build/src leg reads build/hooks/use-focus.js).
+# 273. verify.ts uncausedRed: always false (the UNCAUSED axios-shape leg reads caused).
+# 274. machine.ts: drop indepSkip from the fix loop (the indep gate leg reads 2 fix sessions on Haiku).
+# 275. check_result.ts testCount: drop the PRETTY block (the PRETTY leg reads null).
 # 268. scope.ts crossPackageTestEdits: `if (false) return false;` in place of the TK exercisesChange line (the TK leg drops the e2e, relative-import and Go reach tests).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
@@ -1240,6 +1247,13 @@ suites="$(ev 'sum(1 for e in E if e["type"]=="test.result" and str(e["data"].get
 [ "$(fix_sessions)" = "2" ] && ok "lint twice: two fix rounds" || { bad "lint twice: $(fix_sessions) fix sessions (want 2)"; dump; }
 [ "$suites" = "3" ] && ok "lint twice: the full suite ran in each complete verify (3)" || bad "lint twice: full suite ran $suites times (want 3)"
 [ "$(outcome)" = "VERIFIED" ] && ok "lint twice: run is VERIFIED" || { bad "lint twice: outcome is '$(outcome)', not VERIFIED"; dump; }
+
+# acc-162 INDEP-GATE: the same lint-only red on a Haiku run gets no fix round (lint is the model's own check, not an independent one); =0 restores the rounds.
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_LINTBAD=1 E2E_STUB_FIX=linttwice LOKI_RISK_TIER=medium LOKI_SESSION_MODEL=haiku PATH="$T/fakelint:$FIX/bin:$PATH"
+gate="$(ev 'sum(1 for e in E if e["type"]=="loop.repeat" and "LOKI_E10_HAIKU_INDEP_FIX" in str(e["data"].get("reason","")))')"
+[ "$(fix_sessions)" = "0" ] && [ "$gate" = "1" ] && ok "indep gate: a Haiku run with only a lint red runs no fix round, and says why" || { bad "indep gate: $(fix_sessions) fix sessions, gate events $gate (want 0 and 1)"; dump; }
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_LINTBAD=1 E2E_STUB_FIX=linttwice LOKI_RISK_TIER=medium LOKI_SESSION_MODEL=haiku LOKI_E10_HAIKU_INDEP_FIX=0 PATH="$T/fakelint:$FIX/bin:$PATH"
+[ "$(fix_sessions)" = "2" ] && ok "indep gate: LOKI_E10_HAIKU_INDEP_FIX=0 restores the two lint fix rounds on Haiku" || { bad "indep gate off: $(fix_sessions) fix sessions (want 2)"; dump; }
 
 run_engine "$TASK" E2E_STUB_MODE=agentonly LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=1
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
@@ -3488,6 +3502,97 @@ TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/site-hints.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "site-hints unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 11 ] || bad "site-hints unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 11"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+printf '%s\n' "$out" | grep -q '^NO ' && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
+
+
+# acc-162: verify finds and runs the repo's real test command on a new repo (synthetic shapes, not the dev2 tasks).
+#   CMD  cargo: rustdoc's merged-doctests note after a doctest trailer, mid-stream and at the end, still counts; a green crate with no test target is 0 tests; =0 restores unparsed.
+#   AVA  an ava package maps a changed test/x.tsx (and a source with a same-stem test) to `npx --no-install ava <file>`; ava's summary block counts past stderr noise; =0 maps nothing.
+#   NTF  ownedSuites picks the deepest package suite per changed file.
+#   BCE  crashSignature reads a segfault and a conftest ImportError, ignores an assertion failure.
+#   UVR  uvRequiredCmd rewrites only a uv command; uvWorkspaceRoot finds the [tool.uv.workspace] root above a member.
+cat > "$T/acc162.ts" <<'TS'
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+const root = process.argv[2]!;
+const cr = await import(root + "/loki-ts/src/util/check_result.ts");
+const tm = await import(root + "/loki-ts/src/engine10/testmap.ts");
+const ps = await import(root + "/loki-ts/src/project_model/package_suite.ts");
+const vf = await import(root + "/loki-ts/src/engine10/stages/verify.ts");
+const inst = await import(root + "/loki-ts/src/project_model/install.ts");
+const res = (n: string, okk: boolean) => console.log((okk ? "OK " : "NO ") + n);
+const seg = (n: number, names: string[]) => [`running ${n} test${n === 1 ? "" : "s"}`, ...names.map((x) => `test ${x} ... ok`), "", `test result: ok. ${n} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s`, ""];
+const note = "all doctests ran in 0.42s; merged doctests compilation took 0.29s";
+const mid = ["   Compiling w v0.1.0", "     Running unittests src/lib.rs (target/debug/deps/w-1)", ...seg(2, ["a", "b"]), "   Doc-tests w", ...seg(1, ["src/lib.rs - f (line 3)"]), note, "   Doc-tests w_contrib", ...seg(0, [])].join("\n");
+const tail = ["     Running unittests src/lib.rs (target/debug/deps/w-1)", ...seg(2, ["a", "b"]), "   Doc-tests w", ...seg(1, ["src/lib.rs - f (line 3)"]), note].join("\n");
+const empty = "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s\n";
+res("CMD merged-doctests note between segments: 3 tests counted", cr.ran(mid, undefined, true) === 3);
+res("CMD merged-doctests note at the end: 3 tests counted", cr.ran(tail, undefined, true) === 3);
+res("CMD a green cargo test with no test target reads 0 tests, a red one stays unparsed", cr.ran(empty, undefined, true) === 0 && cr.ran(empty, undefined, false) === null);
+process.env.LOKI_E10_CARGO_MERGED_DOCTEST = "0";
+res("CMD =0: the trailing note leaves the run unparsed, as before", cr.ran(tail, undefined, true) === null && cr.ran(empty, undefined, true) === null);
+delete process.env.LOKI_E10_CARGO_MERGED_DOCTEST;
+const d = mkdtempSync(join(tmpdir(), "acc162-"));
+try {
+  mkdirSync(join(d, "test/helpers"), { recursive: true }); mkdirSync(join(d, "src/components"), { recursive: true });
+  writeFileSync(join(d, "package.json"), JSON.stringify({ name: "x", devDependencies: { ava: "^6" }, scripts: { test: "npm run lint && ava" } }));
+  for (const f of ["test/focus.tsx", "test/text.ts", "test/helpers/render.ts", "src/components/App.tsx", "src/text.ts"]) writeFileSync(join(d, f), "x\n");
+  const refs = tm.avaTargets(d, ["src/components/App.tsx", "test/focus.tsx", "src/text.ts", "test/helpers/render.ts"]);
+  res("AVA a changed ava test and a source with a same-stem test map to ava refs; a helper never does", JSON.stringify(refs) === JSON.stringify([{ runner: "ava", path: "test/focus.tsx" }, { runner: "ava", path: "test/text.ts" }]));
+  const c = cr.commandFor({ runner: "ava", path: "test/focus.tsx" }, d);
+  res("AVA the ref runs as npx --no-install ava <file>", c.cmd === "npx" && c.args.join(" ") === "--no-install ava test/focus.tsx");
+  writeFileSync(join(d, "package.json"), JSON.stringify({ name: "x", devDependencies: { mocha: "^10" } }));
+  res("AVA a package that does not declare ava maps nothing", tm.avaTargets(d, ["test/focus.tsx"]).length === 0);
+  writeFileSync(join(d, "package.json"), JSON.stringify({ name: "x", ava: { files: ["test/**/*"] } }));
+  process.env.LOKI_E10_AVA_TARGETED = "0";
+  res("AVA =0 maps nothing even where ava is declared", tm.avaTargets(d, ["test/focus.tsx"]).length === 0);
+  delete process.env.LOKI_E10_AVA_TARGETED;
+} finally { rmSync(d, { recursive: true, force: true }); }
+const avaOut = ["  ✔ focus works", "  ✔ focus order", "  ─", "", "  47 tests passed", ...Array.from({ length: 40 }, () => "The current testing environment is not configured to support act(...)")].join("\n");
+res("AVA the summary block after ava's rule counts past 40 lines of stderr noise", cr.testCount(avaOut, "test/focus.tsx", true) === 47);
+res("AVA a failed and a passed line add up", cr.testCount("  ✘ a\n  ─\n\n  1 test failed\n  2 tests passed\n", "x", false) === 3);
+res("AVA a bare 'N tests passed' with no ava rule is never counted", cr.testCount("5 tests passed\n", "x", true) === null);
+const sp = [{ name: "full suite: w", cwd: "." }, { name: "full suite: tera", cwd: "tera" }, { name: "full suite: tera/fuzz", cwd: "tera/fuzz" }];
+res("NTF ownedSuites: the deepest owning package per changed file", JSON.stringify(ps.ownedSuites(sp, ["tera/src/parser.rs", "tera/fuzz/src/main.rs"]).map((x) => x.cwd)) === JSON.stringify(["tera", "tera/fuzz"]) && JSON.stringify(ps.ownedSuites(sp, ["README.md"]).map((x) => x.cwd)) === JSON.stringify(["."]));
+res("BCE crash signatures: a segfault and a conftest ImportError are read, an assertion failure is not", vf.crashSignature("....x...Fatal Python error: Segmentation fault\n\nCurrent thread") === "Fatal Python error: Segmentation fault" && /^ImportError while loading conftest/.test(vf.crashSignature("ImportError while loading conftest '/t/x/tests/conftest.py'.\n") ?? "") && vf.crashSignature("E   assert 1 == 2\nFAILED t.py::x") === null);
+res("UVR uvRequiredCmd: a uv command runs through uvx with the repo's spec; any other command is left alone", inst.uvRequiredCmd("uv sync --locked", ">=0.13.0") === "uvx --from 'uv>=0.13.0' uv sync --locked" && inst.uvRequiredCmd("pip install -e .", ">=0.13.0") === null && inst.uvRequiredCmd("uv sync", ">=0.13; rm -rf /") === null);
+const w = mkdtempSync(join(tmpdir(), "acc162w-"));
+try {
+  mkdirSync(join(w, "core"), { recursive: true }); writeFileSync(join(w, "pyproject.toml"), "[project]\nname='x'\n\n[tool.uv.workspace]\nmembers = ['core']\n"); writeFileSync(join(w, "core/pyproject.toml"), "[project]\nname='core'\n");
+  res("UVR uvWorkspaceRoot: a member's sync runs at the workspace root; the root itself has no root above it", inst.uvWorkspaceRoot(w, join(w, "core")) === w && inst.uvWorkspaceRoot(w, w) === null);
+} finally { rmSync(w, { recursive: true, force: true }); }
+const es = await import(root + "/loki-ts/src/features/exec_spec.ts");
+const cx = await import(root + "/loki-ts/src/e10ext/context.ts");
+const r = mkdtempSync(join(tmpdir(), "acc162s-"));
+try {
+  for (const [f, body] of [["build/hooks/use-focus.js", "export default function useFocus() {}\n"], ["src/hooks/use-focus.ts", "export default function useFocus(): void {}\n"], ["index.d.ts", "export class AxiosHeaders {}\n"], ["lib/core/AxiosHeaders.js", "class AxiosHeaders {}\n"], ["benchmark/b.tsx", "export function onlyHere() {}\n"]] as const) { mkdirSync(join(r, f, ".."), { recursive: true }); writeFileSync(join(r, f), body); }
+  const at = (sym: string) => es.resolveSites([{ kind: "site", text: sym }], r).find((x: { symbol: string }) => x.symbol === sym);
+  const uf = at("useFocus"), ah = at("AxiosHeaders"), oh = at("onlyHere");
+  res("SRC-SITES a symbol in build output and in src resolves to src, and records the build file it was picked over", uf?.file === "src/hooks/use-focus.ts" && uf?.instead_of === "build/hooks/use-focus.js");
+  res("SRC-SITES a class declared in index.d.ts and defined in lib/ resolves to the lib source (no src/ twin rule needed)", ah?.file === "lib/core/AxiosHeaders.js" && ah?.instead_of === "index.d.ts");
+  res("SRC-SITES a symbol only a benchmark declares still resolves there, with no marker", oh?.file === "benchmark/b.tsx" && oh?.instead_of === undefined);
+  process.env.LOKI_E10_SOURCE_SITES = "0";
+  res("SRC-SITES =0 keeps the old first-match order (build output first)", at("useFocus")?.file === "build/hooks/use-focus.js");
+  delete process.env.LOKI_E10_SOURCE_SITES;
+} finally { rmSync(r, { recursive: true, force: true }); }
+res("UNCAUSED a suite red after a change to docs, .d.ts files and a test file only is uncaused", vf.uncausedRed({ name: "full suite: npm", ids: ["tests/unit/adapters/http.test.js > supports http"] }, ["README.md", "index.d.ts", "index.d.cts", "tests/unit/axiosHeaders.test.js"], ["AxiosHeaders"], "EADDRINUSE"));
+res("UNCAUSED a suite red after a runtime source change is never uncaused", !vf.uncausedRed({ name: "full suite: npm", ids: ["a.test.js > x"] }, ["lib/core/AxiosHeaders.js"], [], ""));
+res("UNCAUSED a red whose failing id names a changed test file is never uncaused", !vf.uncausedRed({ name: "full suite: npm", ids: ["tests/unit/axiosHeaders.test.js > set"] }, ["README.md", "tests/unit/axiosHeaders.test.js"], [], ""));
+res("UNCAUSED a lint diagnostic in an unchanged file naming no changed symbol is uncaused; one naming a changed symbol is not", vf.uncausedRed({ name: "lint:tsc" }, ["index.d.ts"], ["getContentEncoding"], "docs/blog/posts.data.ts(22,37): error TS2307: Cannot find module 'vitepress'") && !vf.uncausedRed({ name: "lint:tsc" }, ["index.d.ts"], ["getContentEncoding"], "lib/x.ts(3,1): error TS2339: Property 'getContentEncoding' does not exist"));
+res("UNCAUSED a lint diagnostic inside a changed file is never uncaused", !vf.uncausedRed({ name: "lint:ruff" }, ["tests/test_script.py"], [], "tests/test_script.py:157:121: line-too-long"));
+const pretty = "........ [100%]\nResults (0.66s):\n       271 passed\n        25 skipped\n         1 xfailed\n";
+res("PRETTY a pytest-pretty Results block counts its passed tests", cr.testCount(pretty, "tests/test_main.py", true) === 271 && cr.testCount("Results (1.2s):\n         3 passed\n         2 failed\n", "t.py", false) === 5);
+res("PRETTY a Results block that does not end the output, or holds a non-count line, is never counted", cr.testCount("Results (0.5s):\n       9 passed\nprinted by a test\n", "t.py", true) === null);
+process.env.LOKI_E10_PYTEST_PRETTY = "0"; res("PRETTY =0 reads the block as unmeasured, as before", cr.testCount(pretty, "t.py", true) === null); delete process.env.LOKI_E10_PYTEST_PRETTY;
+res("PLAN-HINTS the plan and the relevant-file list are hints when on, the old wording when off", cx.planHintsOn() && /a hint, not the scope/.test(cx.PLAN_HINT_LEAD) && !cx.planHintsOn({ LOKI_E10_PLAN_HINTS: "0" }));
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/acc162.ts" "$ROOT" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "acc-162 unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 28 ] || bad "acc-162 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 28"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

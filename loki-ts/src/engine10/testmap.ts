@@ -171,6 +171,29 @@ export function mochaTargets(root: string, changed: readonly string[], env: Node
   }
   return out.slice(0, MOCHA_MAX).map((path) => ({ runner: "mocha" as const, path }));
 }
+/** AVA LOKI_E10_AVA_TARGETED (default on, =0 opts out; util/check_result.ts avaTargetedOn): verify's fallback beside R5. A changed JS/TS file whose nearest package.json declares
+ *  ava (a dependency or an "ava" key, or an ava.config file beside it) maps to its own ava test: itself when it sits under the package's test/ or tests/ directory (helpers and
+ *  fixtures excluded), else the file with the same stem there (any JS/TS extension). At most 8 refs. */
+const AVA_TEST_DIRS = ["test", "tests"], AVA_EXT = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"];
+const avaDeclared = (dir: string): boolean => {
+  if (readdirSafe(dir).some((f) => /^ava\.config\.(?:js|cjs|mjs)$/.test(f))) return true;
+  try { const p = JSON.parse(readText(join(dir, "package.json"))) as { dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown>; ava?: unknown }; return "ava" in { ...(p.dependencies ?? {}), ...(p.devDependencies ?? {}) } || p.ava !== undefined; } catch { return false; }
+};
+export function avaTargets(root: string, changed: readonly string[], env: NodeJS.ProcessEnv = process.env): TestRef[] {
+  if (/^(0|off|false|no)$/i.test((env["LOKI_E10_AVA_TARGETED"] ?? "").trim())) return [];
+  const out: string[] = [];
+  for (const raw of changed) {
+    const rel = normalizeRel(raw);
+    if (!MOCHA_EXT.test(rel) || rel.split("/").some((s) => s === "node_modules" || s === "fixtures" || s === "helpers")) continue;
+    let dir = dirname(rel); while (dir !== "." && !existsSync(join(root, dir, "package.json"))) dir = dirname(dir);
+    if (!existsSync(join(root, dir, "package.json")) || !avaDeclared(join(root, dir))) continue;
+    const inPkg = dir === "." ? rel : rel.slice(dir.length + 1), at = (p: string): string => (dir === "." ? p : `${dir}/${p}`);
+    const stem = basename(inPkg).replace(/\.[^.]+$/, "").replace(/\.(?:test|spec)$/, "");
+    const cands = AVA_TEST_DIRS.includes(inPkg.split("/")[0]!) ? [inPkg] : AVA_TEST_DIRS.flatMap((d) => AVA_EXT.map((e) => `${d}/${stem}${e}`));
+    for (const c of cands) if (isFile(join(root, at(c))) && !out.includes(at(c))) out.push(at(c));
+  }
+  return out.slice(0, MOCHA_MAX).map((path) => ({ runner: "ava" as const, path }));
+}
 /** Implements the E-01 contract so RunContext can inject this as `tests`. */
 export class RealTestMapProvider implements TestMapProvider {
   async detect(repoDir: string): Promise<TestMap> { return buildTestMap(repoDir); }
