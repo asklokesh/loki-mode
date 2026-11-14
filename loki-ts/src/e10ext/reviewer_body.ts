@@ -3,11 +3,12 @@
 import { fragmentNoticeLine } from "../project_model/conventions.ts";
 import { noteOf } from "../util/base_guard.ts";
 import { getVersion } from "../version.ts"; import { parseSliceHead, SEAL_ACCURACY_NOT_MEASURED } from "../util/run_outputs.ts";
-import { ALREADY_FAILING_ON_BASE, checkResultLabel } from "../util/check_result.ts"; import { intentLine, stripTemplate } from "../util/intent_card.ts"; import { WALL_FILE } from "./commit_filter.ts";
+import { ALREADY_FAILING_ON_BASE, checkResultLabel } from "../util/check_result.ts"; import { aweOn, proofCardOf } from "../util/receipt_surface.ts"; import { intentLine, stripTemplate } from "../util/intent_card.ts"; import { WALL_FILE } from "./commit_filter.ts";
 export interface ReviewerBodyInput {
   verdict: string; draftReason: string | null; notProven: string[];
   receiptPath: string | null; receiptSha256: string | null; signed: boolean | null; runId: string;
   outputs: Partial<Record<string, Record<string, unknown>>>; sealAccuracy?: string; // the receipt's signed accuracy line (GAME10-03c)
+  receipt?: Record<string, unknown> | null; // AWE-3: the sealed receipt.json; adds the proof, conventions and cost sections (LOKI_AWE_LIVE_COST=0 or no receipt: byte-identical body)
 }
 const MAX_CRITERIA = 8, MAX_FILES = 10, MAX_CMDS = 5, W = 160;
 const clip = (s: string): string => (s.length > W ? `${s.slice(0, W - 3)}...` : s);
@@ -48,6 +49,27 @@ function tested(o: ReviewerBodyInput["outputs"]): string[] {
   }
   return out;
 }
+const fence = (l: string): string => l.replace(/`{3,}/g, "'''");
+/** AWE-2 in the PR: the same facts as the terminal proof card, from receipt.json; a "no" or "not run" proof is never written as shown. */
+export function proofSection(receipt: Record<string, unknown>): string[] {
+  const c = proofCardOf(receipt), L = ["## The proof"];
+  if (!c.green) L.push(`- Fail-then-pass proof: ${c.state} (${c.why})`);
+  else for (const b of c.before) L.push(b.lines.length ? `- Before: \`${clip(b.file)}\` fails on the base code with:` : `- Before: \`${clip(b.file)}\` fails on the base code (output line not recorded)`, ...(b.lines.length ? ["  ```text", ...b.lines.map((l) => `  ${fence(l)}`), "  ```"] : []), "- After: passes");
+  return [...L, ""];
+}
+/** AWE-3: the repo conventions the run followed, from receipt.json. */
+export function conventionsSection(receipt: Record<string, unknown>): string[] {
+  const cv = receipt["conventions"] as { formatted?: { tool?: unknown; files?: unknown }[]; release_note?: unknown } | undefined, L = ["## Conventions followed"];
+  for (const f of Array.isArray(cv?.formatted) ? cv!.formatted : []) if (typeof f.tool === "string" && Array.isArray(f.files)) L.push(`- Formatted with the repo's ${clip(f.tool)}: ${more(f.files.filter((x): x is string => typeof x === "string").map(clip), MAX_FILES).join(", ")}`);
+  if (typeof cv?.release_note === "string") L.push(`- Release note added: ${clip(cv.release_note)}`);
+  return [...L, ...(L.length === 1 ? ["- none recorded on the receipt"] : []), ""];
+}
+/** AWE-3: this run's own total cost, from receipt.json. A null cost reads "not measured", a partly priced run says so, an unmetered zero is never a real $0.00. */
+export function costSection(receipt: Record<string, unknown>): string[] {
+  const c = (receipt["cost"] ?? {}) as { usd?: unknown; source?: unknown; partial_usd?: unknown; measured_sessions?: unknown; total_sessions?: unknown };
+  const t = c.source === "cli-invoker-unmetered" ? "not measured (this invoker records no cost)" : typeof c.usd === "number" && Number.isFinite(c.usd) ? `$${c.usd.toFixed(2)}` : typeof c.measured_sessions === "number" && c.measured_sessions > 0 && typeof c.partial_usd === "number" ? `partial: $${c.partial_usd.toFixed(2)} for ${c.measured_sessions} of ${typeof c.total_sessions === "number" ? c.total_sessions : c.measured_sessions} sessions` : "not measured";
+  return ["## Cost", `- Total: ${t} (this run's own spend, from the receipt)`, ""];
+}
 export function renderReviewerBody(i: ReviewerBodyInput, env: NodeJS.ProcessEnv = process.env, version: string = getVersion()): string {
   const task = typeof i.outputs.intake?.["task"] === "string" ? (i.outputs.intake["task"] as string) : "", title = typeof i.outputs.intake?.["title"] === "string" ? (i.outputs.intake["title"] as string) : "";
   const changed = arr<string>(i.outputs.verify?.["changed_files"]).filter((f) => !WALL_FILE.test(f)), /* the commit stage drops Wall files, so they are not in the diff */ planned = arr<string>(i.outputs.plan?.["relevant_files"]);
@@ -55,8 +77,10 @@ export function renderReviewerBody(i: ReviewerBodyInput, env: NodeJS.ProcessEnv 
   const line1 = (task.split("\n")[0] ?? "").trim(), why = parseSliceHead(line1)?.title || line1 || title || (typeof planText === "string" ? (planText.split("\n").find((l) => l.trim()) ?? "") : ""); // the whole first line (intake's title is a 72-character cut); a slice's own title without its "Slice s2 of 4 for" header
   const il = intentLine(i.outputs.plan?.["intent_card"]), cr = task ? criteria(task).map((c) => `- ${c}`) : [], asked = cr.length > 0 ? cr : il ? [`- ${clip(il)}`] : []; // the intent line stands in only when the issue left nothing but template text
   const L = ["## What the issue asked", ...(asked.length > 0 ? asked : ["- not recorded"]), "", "## What changed and why", `- Why: ${why ? clip(why) : "not recorded"}`, ...(files.length > 0 ? more(files, MAX_FILES) : ["- Files in scope: not recorded"]), ...(typeof (i.outputs.implement?.["scaffold"] as { path?: unknown } | undefined)?.path === "string" ? [`- ${fragmentNoticeLine((i.outputs.implement!["scaffold"] as { path: string }).path)}`] : []), ""];
-  L.push("## How it was tested", `- Verdict: ${i.verdict}${i.draftReason ? ` (DRAFT: ${i.draftReason})` : ""}`, ...(noteOf(i.outputs.intake) ? [`- Note: ${noteOf(i.outputs.intake)}`] : []), ...tested(i.outputs), ""); // FC-15: unclipped, the evidence paths are the point
+  const rc = i.receipt && aweOn("LOKI_AWE_LIVE_COST", env) ? i.receipt : null; if (rc) L.push(...conventionsSection(rc));
+  L.push("## How it was tested", `- Verdict: ${i.verdict}${i.draftReason ? ` (DRAFT: ${i.draftReason})` : ""}`, ...(noteOf(i.outputs.intake) ? [`- Note: ${noteOf(i.outputs.intake)}`] : []), ...tested(i.outputs), "", ...(rc && aweOn("LOKI_AWE_PROOF_CARD", env) ? proofSection(rc) : [])); // FC-15: unclipped, the evidence paths are the point
   const wp = i.outputs.seal?.["wall_published"] as { files?: unknown; cmds?: unknown } | undefined; if (arr<string>(wp?.files).length > 0) L.push("## Acceptance tests", "Published in this branch: the Wall tests that ran and passed in verify.", ...arr<string>(wp?.files).map((f) => `- ${clip(f)}`), ...arr<string>(wp?.cmds).map((c) => `- Run: \`${clip(c)}\``), ""); /* FC-VERIFIED-PR-WITHOUT-ITS-TEST */ L.push("## NOT PROVEN", ...(i.notProven.length > 0 ? i.notProven.map((p) => `- ${p}`) : ["- none"]), "");
+  if (rc) L.push(...costSection(rc));
   L.push("## Receipt", `- Digest: ${i.receiptSha256 ? `sha256:${i.receiptSha256}` : "not recorded"}${i.signed === null ? "" : i.signed ? " (signed)" : " (UNSIGNED)"}`, `- ${i.sealAccuracy ?? SEAL_ACCURACY_NOT_MEASURED}`);
   const rel = /(?:^|\/)(\.loki\/runs\/[^/]+\/receipt\.json)$/.exec(i.receiptPath ?? "")?.[1]; if (rel) L.push(`- File: ${rel}`); // repo-relative only: an absolute local path never goes into a public PR
   L.push(`- Verify: \`loki verify ${i.runId}\``);

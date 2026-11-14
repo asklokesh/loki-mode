@@ -21,7 +21,7 @@ import { budgetNext, capNote, groupEnv, parseCapUsd, priorSpend, resolveCap, SUB
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
 import { formatHeartbeatLine, formatStageLine, spendSoFar, formatSummary, preModelTiming, EXIT, exitCodeOf, outcomeOf, reasonOf, type Outcome } from "./output.ts";
-import { LiveLine } from "../e10ext/liveline.ts";
+import { CandidateView, LiveLine } from "../e10ext/liveline.ts";
 import { SAFE_BUN_FLAGS, envWithPwd, killGroup, spawnDetached, spawnWorker, ulimitArgv } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts"; import { noteRefusal, noteRefusalFromEvents, type PreflightBlocker } from "../util/funnel.ts";
@@ -338,7 +338,8 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const capLine = !json ? [disclosureLine(provider), unenforceableNote(provider, cap.usd)].filter(Boolean).join("\n") : null; if (capLine) process.stdout.write(`${capLine}\n`); // LM-004: one line when the provider lacks a guarantee claude has; claude prints nothing extra
   const t0 = Date.now();
   const eventsPath = join(repoDir, eventsRelPath(runId));
-  const liveSeen: EventEnvelope[] = [], live = (e: EventEnvelope): void => { liveSeen.push(e); // stage lines carry the run spend so far (same summaryCost as the final Cost line)
+  const cand = new CandidateView({ repoDir, columns: terminalWidth() }); // AWE-1: verbose mode shows the candidate diff and check ticks too
+  const liveSeen: EventEnvelope[] = [], live = (e: EventEnvelope): void => { liveSeen.push(e); cand.onEvent(e, (l) => { process.stdout.write(`${l.join("\n")}\n`); }); // stage lines carry the run spend so far (same summaryCost as the final Cost line)
     const clockS = (Date.parse(e.ts) - t0) / 1000;
     const d = e.data;
     if (e.type.startsWith("stage.") && e.type !== "stage.started") {
@@ -354,7 +355,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     if (verbose && !json && existsSync(eventsPath)) { clearInterval(tailTimer); stopTail = tail(eventsPath, live, { intervalMs: 250 }); }
   }, 100);
   let liveStop = (): void => {}; // D82: quiet-mode progress (verbose already prints stage lines)
-  const liveLine = !verbose && !json ? new LiveLine({ tty: !!process.stdout.isTTY, write: (x) => { process.stdout.write(x); }, columns: terminalWidth(), graceS: 3 }) : null;
+  const liveLine = !verbose && !json ? new LiveLine({ tty: !!process.stdout.isTTY, write: (x) => { process.stdout.write(x); }, columns: terminalWidth(), graceS: 3, repoDir }) : null;
   if (liveLine) {
     if (process.env.LOKI_CONTROL_PLANE_URL) liveLine.setUrl(process.env.LOKI_CONTROL_PLANE_URL);
     let stopLiveTail = (): void => {}; const tick = setInterval(() => liveLine.tick(), 1000);
@@ -431,6 +432,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const rdy = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.readiness, foldTail = [handoffRef, typeof rdy === "string" ? rdy : ""].filter(Boolean).join("; "); // FV-readiness-env-3: D48 default mode folds readiness into the last line
   const riskLine = readRiskSummary(repoDir, t0); // RISKTIER: this run's recorded tier, deferred checks stated as not run
   process.stdout.write(json ? `${JSON.stringify({ ...JSON.parse(out), summary: { ...summaryObject(ui), ...(riskLine ? { risk: riskLine } : {}) } })}\n` : quiet ? withRiskLine(formatRunSummary(ui, { color: useColor() }), riskLine, 99) + (handoffRef ? `${handoffRef}\n` : "") : verbose ? `${out}\n${withRiskLine(formatRunSummary(ui, { color: useColor() }), riskLine, 99)}${handoffRef ? `${handoffRef}\n` : ""}` : withRiskLine(foldTail ? withNextLine(out, ui).replace(/\n$/, `; ${foldTail}\n`) : withNextLine(out, ui), riskLine, 7, capLine ? 1 : 0)); // D48: default output stays within 8 lines, so the summary collapses to one line
+  if (!json && !quiet) { const rs = await import("../util/receipt_surface.ts"); if (rs.aweOn("LOKI_AWE_PROOF_CARD")) process.stdout.write(`\n${rs.renderAweProofCard(rs.proofCardOf(res.tampered ? null : rs.readReceiptAt(events.findLast((e) => e.type === "receipt.sealed")?.data.path)), useColor())}\n`); } // AWE-2: proof card from receipt.json, after the summary; a tampered run reads "not run"
   if (!json && res.outcome === "VERIFIED") await import("../util/satisfaction.ts").then((m) => m.maybeAsk({ runId, env: process.env, isTTY: process.stdin.isTTY === true && process.stdout.isTTY === true })).catch(() => {});
   return res.outcome === "CANCELLED" && res.notProven.some((n) => n.endsWith("SIGTERM")) ? 143 : exitCodeOf(res.outcome); // a SIGTERM cancel keeps the conventional 128+15
 }
