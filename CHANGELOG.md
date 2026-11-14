@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.141.0 (2026-11-14)
+
+Verify runs the repo's real tests on repos it has never seen, and Loki does less harm on the way.
+
+This release runs more of a new repo's own tests, reads more runners' results, keeps the delivered diff to what the fix needs, and stops spending fix rounds on failures the change cannot have caused. Changes measured on the bench ship on by default with their own opt-out. Changes not yet measured on the bench ship off by default: each says so and names the switch that turns it on.
+
+### Added
+- A pre-delivery self-check runs before verify. It checks the diff for a missing release note the repo requires, stray files, a source change with no test, formatter conformance, edits outside the planned scope, and a test for every case the issue states, and it may fix the diff in one bounded review turn (LOKI_E10_SELF_REVIEW=0 opts out). Its stated-case and sibling-definition items are off by default; opt in with LOKI_E10_SR_COVERAGE=1.
+- Changed ava tests (test files with no .test name) run as `npx --no-install ava <file>`, counted from ava's own summary. Off by default; opt in with LOKI_E10_AVA_TARGETED=1.
+- A low-risk change for which verify selected no test runs the test command of the package that owns the changed files. Off by default; opt in with LOKI_E10_NO_TEST_FALLBACK=1.
+- The cases an issue states are handed to the Wall test writer as required cases. Off by default; opt in with LOKI_E10_WALL_CASES=1.
+- New and off by default: LOKI_E10_CASCADE_V0=1 turns the Wall on and, only when a Wall test fails on the first candidate, runs one more attempt on the next model of LOKI_E10_ATTEMPT_MODELS (haiku then sonnet by default), with the Wall's failing output in its brief, before any fix round. The receipt records the Wall's cost and time and whether the cascade fired.
+- New and off by default: LOKI_E10_WALL_ON_LEAN=1 (implied by LOKI_E10_CASCADE_V0=1) also runs a Wall that is on for a small task that has a relevant visible test, without forcing a plan.
+- The receipt records which model a run used and who chose it (`model_source`: explicit, default or provider).
+
+### Changed
+- A `loki start`, or any Loki 10 run on Claude, that names no model now runs on Sonnet instead of the Claude CLI's own account default, which is Opus on many plans. `--session-model`, LOKI_SESSION_MODEL, any LOKI_MODEL_* or LOKI_CLAUDE_MODEL_* variable and the model router still win. LOKI_DEFAULT_SESSION_MODEL sets another default, and LOKI_DEFAULT_SESSION_MODEL=provider restores the CLI default. The first status line names the model and why.
+- A symbol the task names resolves to its source file, not to build output, a type declaration or a benchmark copy. Off by default; opt in with LOKI_E10_SOURCE_SITES=1.
+- The plan is a hint in the implement brief, never the scope: every case the task states is covered even where the plan leaves it out. Off by default; opt in with LOKI_E10_PLAN_HINTS=1.
+- A failing check the diff cannot have caused (no failing id or diagnostic names a changed file, and the change touches only docs, type declarations, tests or changelog fragments) gets no fix round; the verdict is unchanged. Off by default; opt in with LOKI_E10_UNCAUSED_NO_FIX=1.
+- A Haiku run gets no fix round unless an independent check failed: the Wall, a targeted test the diff touches, or a test that passed on the base commit. Off by default; opt in with LOKI_E10_HAIKU_INDEP_FIX=1.
+- The shared intake baseline budget (LOKI_E10_INTAKE_CAP_S) is opt-in again, and intake says so when it cuts a baseline short.
+- A relevant test is the task's own only when it is paired by path with a file the diff changed (LOKI_E10_OWN_BY_PATH=0 opts out).
+- A file name mentioned only inside spelled paths names only the files those paths spell (LOKI_E10_NAMED_EXACT=0 opts out).
+- Output the run's own commands wrote and build output the run created are left out of the delivered diff and named on the receipt.
+- Off by default: a formatting-only or suppression-only change to a file outside the fix (opt in with LOKI_E10_DIFF_NEED=1) and a file only Loki's own check rewrote (opt in with LOKI_E10_REGEN_DROP=1) are left out of the delivered diff.
+- Off by default: the implement rules ask to update existing docs that list what changed (opt in with LOKI_E10_DOC_UPDATE_RULE=1), and the self-check flags a doc that enumerates the changed thing (opt in with LOKI_E10_DOC_ENUM=1).
+
+### Fixed
+- Rust suites on the 2024 edition (merged doctests) and crates with no test target are read correctly instead of as unparsed. Off by default; opt in with LOKI_E10_CARGO_MERGED_DOCTEST=1.
+- pytest output from repos that load pytest-pretty is counted. Off by default; opt in with LOKI_E10_PYTEST_PRETTY=1.
+- A repo that requires a newer uv than the host has installs with that uv through uvx, at the uv workspace root for a member package. Off by default; opt in with LOKI_E10_UV_REQUIRED=1.
+- A test that crashes or cannot import in the same way on the base commit is reported as the environment on NOT PROVEN instead of failing the run. Off by default; opt in with LOKI_E10_BASE_CRASH_ENV=1.
+- A repo's own commit hook (commitlint, lint-staged) no longer fails a run: Loki restores the verified files and commits once more with hooks off, keeping signing, and says so on the receipt. A commit that still fails ends with a FAILED receipt naming the git error instead of no receipt (LOKI_E10_COMMIT_HOOK_BYPASS=0 restores the old stop).
+- A base failure that is the error the issue reports, by exception type or Go panic, counts as fail-then-pass proof, and node:test, jest, mocha and python -m unittest assertion failures on the base count too.
+- A check whose tool could not be started is not run, not failed; a linter that cannot start is retried by its other launchers, then disclosed instead of capping.
+- A sub-module suite with no tests on the base or the change no longer caps the run, and a unittest repo whose venv has no pytest runs its tests under unittest.
+- An edited test file red on the base by every failing id, with its added cases passing, is excused as a disclosure, guarded by the environment; a collateral test equal to the intake baseline costs no fix round and no cap.
+- A package-relative test id names its changed repo file, and the fail-then-pass proof runs a package's test in its package; a compiled stack's proof gets a 40 s cap and a pre-built base.
+- A regression test that imports the changed code is never dropped as outside the change's packages.
+- Changelog and release-note handling: the brief names the changelog file a contribution guide asks for, a real towncrier fragment is the example, a changelog is frozen only when it says so, an entry carries only the task's own issue or PR number, and a towncrier fix with no number ships an orphan fragment.
+- The commit-stage formatter resolves exactly like verify's linter.
+
 ## v11.140.0 (2026-11-13)
 
 Verify reads unfamiliar repos more correctly.
