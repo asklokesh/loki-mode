@@ -339,6 +339,8 @@ export async function ignoredPaths(repoDir: string, paths: string[], timeoutMs =
   } catch { return null; }
   return out;
 }
+/** COMMIT-HOOK-BYPASS (LOKI_E10_COMMIT_HOOK_BYPASS, default on, =0 opts out): Loki's internal commit is retried with hooks off when the repo's own hook rejects it, and a failed commit still gets a receipt (engine10/stages/seal.ts commitStage, machine.ts). */
+export const commitHookBypassOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_COMMIT_HOOK_BYPASS"] ?? "").trim());
 /** Tree hash of the working tree (tracked, modified and untracked, minus .loki) through a throwaway index, so the repo index is never touched. Null when unreadable. */
 export function treeSnapshot(repoDir: string): string | null {
   let dir: string | null = null;
