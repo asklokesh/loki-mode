@@ -446,6 +446,7 @@ export const sealStage: Stage = {
       time,
       provider: ctx.provider,
       model: externalRun(o) ? EXTERNAL_MODEL_LABEL : ctx.model, // CW-12 B3: no Loki session wrote this code, so no implementing model is named
+      ...(!externalRun(o) && /^(explicit|default|provider)$/.test(process.env.LOKI_SESSION_MODEL_SOURCE ?? "") ? { model_source: process.env.LOKI_SESSION_MODEL_SOURCE as "explicit" | "default" | "provider" } : {}), // acc-156: who chose the model (explicit flag or env, Loki's default, or the CLI's own default)
       ...(externalRun(o) ? { implement: { exit: "external" as const, patch_sha256: str(o.implement?.patch_sha256) ?? "" } } : {}),
       resumed: o.intake?.resumed === true,
       events_sha256: sha256(existsSync(eventsPath) ? readFileSync(eventsPath) : ""),

@@ -369,6 +369,11 @@ route_is() { # route_is "<description>" "<expected output, lines joined by ~>" [
 route_is "FR01 a bare PR URL is verify-pr" "BUN: verify-pr https://github.com/o/r/pull/5~" -- https://github.com/o/r/pull/5
 route_is "FR01 a one-word #N reaches engine10" "BUN: engine10 #12~" -- "#12"
 route_is "FR01 #12x stays on the legacy CLI" "BASH: #12x~" -- "#12x"
+# acc-156: route.sh shows the model engine10 will pin when none is named; its literal must equal DEFAULT_SESSION_MODEL in the TS source
+dsm_ts="$(sed -n 's/^export const DEFAULT_SESSION_MODEL = "\(.*\)";$/\1/p' "$ROOT/loki-ts/src/util/claude_model.ts")"
+dsm_rt="$(env -u LOKI_SESSION_MODEL -u LOKI_MODEL_OVERRIDE -u LOKI_MODEL_ROUTE -u LOKI_MODEL_DEVELOPMENT -u LOKI_CLAUDE_MODEL_DEVELOPMENT -u LOKI_DEFAULT_SESSION_MODEL -u LOKI_PROVIDER bash "$ROOT/bin/loki" route --json "add a function" 2>/dev/null | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("model",""))' 2>/dev/null)"
+dsm_pv="$(env -u LOKI_SESSION_MODEL -u LOKI_MODEL_OVERRIDE -u LOKI_PROVIDER LOKI_DEFAULT_SESSION_MODEL=provider bash "$ROOT/bin/loki" route --json "add a function" 2>/dev/null | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("model",""))' 2>/dev/null)"
+[ -n "$dsm_ts" ] && [ "$dsm_rt" = "$dsm_ts (Loki default)" ] && [ "$dsm_pv" = "claude (provider default)" ] && ok "acc-156 route shows the Loki default model ($dsm_rt) and =provider shows the CLI default" || bad "acc-156 route model: ts '$dsm_ts' route '$dsm_rt' provider '$dsm_pv'"
 route_is "FR01 a plain one-word stays on the legacy CLI" "BASH: fixit~" -- fixit
 route_is "start --attempts 1 <prd> runs engine10 like a plain start" "BUN: engine10 Add x.~" -- start --attempts 1 prd.md
 route_is "start --attempts 1 flag-first brief runs engine10" "BUN: engine10 fix x --no-pr~" -- start --attempts 1 --no-pr "fix x"
