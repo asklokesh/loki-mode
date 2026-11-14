@@ -45,6 +45,7 @@
 #  11. conventions.ts logFrozen: always use LOG_FROZEN_LOOSE (FS); fs_deprecated_section fails.
 #  14. loki-ts/src/features/self_review.ts selfReviewWanted: `mode !== "off"` (SR); sr_clean_turn fails (a clean minimal diff would get a review turn: churn and cost).
 #  16. conventions.ts changelogRefOn: `false &&` (CR); cr_brief, cr_checks, cr_changeset and cr_towncrier fail.
+#  17. conventions.ts stripInventedRefsInFile: `if (base.has(l) || true) return l;` (CR strip); cr_strip_file fails (the invented #2383 ships).
 #  15. self_review.ts settleItems: never trust the after-turn check (`if (false && a)`); sr_settled fails (fixed items read unresolved).
 #  12. conventions.ts writeReleaseNoteFragment: `op = null` (TO); to_older_orphan and to_cfg_prefix fail.
 #  13. conventions.ts scaffoldRecord: `return null` for a skip (TR); tr_skip fails.
@@ -353,6 +354,14 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
   const csConv = { kind: "changeset", dir: ".changeset", example: null }, CS = (pkg: string) => cv.releaseNoteProblems(crRepo, csConv, new Map([[".changeset/x.md", ["---", `"${pkg}": patch`, "---", "", "Fixed."]]]), ["packages/a/src/a.ts", ".changeset/x.md"], "Fix a").join(" || ") || "-";
   out.cr_changeset = [CS("@acme/a"), CS("@acme/b")].join(" | ");
   const tcConv = { kind: "towncrier", dir: "changes", example: null }, TC = (f: string, task: string) => cv.releaseNoteProblems(crRepo, tcConv, new Map([[f, ["Fixed."]]]), ["src/a.kt", f], task).join(" || ") || "-";
+  const S = (l: string, allowed: string[] = []) => { const r = cv.stripInventedRefs(l, allowed); return `${r.line}{${r.removed.join(",")}}`; };
+  out.cr_strip = [S(" * Fix: `%S` args are kept. (#2383)"), S("- Fixed x ([#650](https://github.com/o/r/pull/650))"), S("- Fixed x ([#650](https://github.com/o/r/pull/650))", ["650"]), S("- Simplify x (:pr:`3024`)."), S("- See https://github.com/o/r/issues/77 for details"), S("- Fix GH-7 and #5, keep &#39;"), S("* Fix: tabs (#12)", ["12"]), S("* Fix: `trim()` keeps it. (#99)")].join(" | ");
+  const sf = join(crRepo, "CHANGELOG.md"), baseText = rf(sf, "utf8"); writeFileSync(sf, baseText.replace(" * Fix: Carriage returns are kept. (#2380)\n", " * Fix: Tabs are kept. (#2383)\n * Fix: Carriage returns are kept. (#2380)\n"));
+  process.env.LOKI_E10_CHANGELOG_REF = "0"; const offRm = cv.stripInventedRefsInFile(sf, baseText, "Tabs are lost (#12)"); delete process.env.LOKI_E10_CHANGELOG_REF;
+  const onRm = cv.stripInventedRefsInFile(sf, baseText, "Tabs are lost (#12)"), after = rf(sf, "utf8");
+  out.cr_strip_file = [JSON.stringify(offRm), JSON.stringify(onRm), after.includes(" * Fix: Tabs are kept.\n") && after.includes("(#2380)") && !after.includes("2383") ? "rewritten" : "bad"].join(" | ");
+  const isrc = rf(join(SRC, "engine10/stages/implement.ts"), "utf8"), ssrc = rf(join(SRC, "engine10/stages/seal.ts"), "utf8");
+  out.cr_strip_wired = isrc.includes("stripInventedReleaseRefs(ctx.repoDir, ctx.baseSha, treeStaged(ctx.repoDir, ctx.baseSha), task)") && isrc.includes("{ changelog_refs_removed: refsRemoved }") && ssrc.includes("...releaseRefsReceiptBlock(o.implement)") ? "yes" : "no";
   out.cr_towncrier = [TC("changes/12.bugfix.rst", "Fix it (#12)"), TC("changes/99.bugfix.rst", "Fix it (#12)"), TC("changes/+fix.bugfix.rst", "Fix it")].join(" | "); }
 const w17 = mk("w17", tcFiles()); const r17 = tw(w17, "Fix crash when the cache is empty (#42)");
 out.tc_path = r17.path ?? `skipped:${r17.skipped}`; out.tc_text = r17.path ? rf(join(w17, r17.path), "utf8") : "";
@@ -517,6 +526,9 @@ eqv cr_brief yes "CR the changelog brief line names the entries' reference form 
 eqv cr_checks "- | the entry cites #999, which the task does not give || the entry has no reference to #12 in the form the existing entries use ((#2380)) | the entry has no reference to #12 in the form the existing entries use ((#2380)) | - | the entry cites #999, which the task does not give | - | -" "CR an entry with the task's number passes; a number the task does not give and a missing reference are flagged; with no task number a plain entry passes; a number the body only mentions is not required; =0 checks nothing"
 eqv cr_changeset "- | .changeset/x.md names package @acme/b, which the change does not touch (changed: @acme/a)" "CR a changeset for a package the change does not touch is flagged"
 eqv cr_towncrier "- | changes/99.bugfix.rst is numbered 99, but the task gives #12 | -" "CR a towncrier fragment numbered differently from the task's issue is flagged; an orphan fragment passes"
+eqv cr_strip ' * Fix: `%S` args are kept.{2383} | - Fixed x{650} | - Fixed x ([#650](https://github.com/o/r/pull/650)){} | - Simplify x.{3024} | - See for details{77} | - Fix and, keep &#39;{7,5} | * Fix: tabs (#12){} | * Fix: `trim()` keeps it.{99}' "CR strip: every reference form whose number the task never gives is removed ((#N), markdown link, rst role, URL, GH-N, bare #N); a given number, an HTML entity and a code call's () stay"
+eqv cr_strip_file '[] | ["2383"] | rewritten' "CR strip in file: only the line the run added loses its invented #2383; the base entry keeps (#2380); =0 changes nothing"
+eqv cr_strip_wired yes "CR strip wiring: implement strips invented references after the review turn and records changelog_refs_removed; seal puts it on the receipt"
 eqv sr_clean "release_note=ok,stray_files=ok,test=ok,format=ok,scope=ok" "SR a correct minimal diff (source plus its test, no rule broken) passes every item"
 eqv sr_clean_turn no-turn "SR no churn: a correct minimal diff starts no review turn, so the tree is left untouched and the check costs nothing"
 eqv sr_clean_always turn "SR LOKI_E10_SELF_REVIEW=always runs the turn even on a clean diff"

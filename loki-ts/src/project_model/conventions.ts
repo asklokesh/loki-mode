@@ -204,6 +204,32 @@ export const taskOwnNumbers = (task: string): string[] => {
   return [...new Set([...taskNumbers(title), ...[...task.matchAll(/\b(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?|issue|pr|pull request)\s*:?\s*#(\d+)\b/gi)].map((m) => m[1]!)])];
 };
 /** What is wrong with the release note the diff carries (CR): `added` maps each added or changed path to its added lines. Empty when nothing is wrong or CR is off. */
+/** CR, deterministic half: removes from `line` every issue or PR reference whose number the task never gives: a markdown link `[#N](url)` (with its parentheses), an
+ *  issue or pull URL, `(#N)`, an rst `:pr:`N`` role, `GH-N` and a bare `#N`; then tidies the spaces and empty brackets left behind. Returns the line and the numbers removed. */
+export function stripInventedRefs(line: string, allowed: readonly string[]): { line: string; removed: string[] } {
+  const removed: string[] = [], keep = (n: string): boolean => allowed.includes(n);
+  const drop = (re: RegExp, s: string): string => s.replace(re, (m, n: string) => (keep(n) ? m : (removed.push(n), "")));
+  let s = line;
+  s = drop(/\s*\(\s*\[#(\d+)\]\([^)\s]*\)\s*\)/g, s);
+  s = drop(/\s*\[#(\d+)\]\([^)\s]*\)/g, s);
+  s = drop(/\s*\(?\s*https?:\/\/\S+?\/(?:issues|pull)\/(\d+)\b\/?\)?/g, s);
+  s = drop(/\s*\(\s*#(\d+)\s*\)/g, s);
+  s = drop(/\s*:(?:pr|pull|issue|gh|ghissue|ghpull|bug):`(\d+)`/g, s);
+  s = drop(/\s*\bGH-(\d+)\b/g, s);
+  s = drop(/\s*(?<![\w/&])#(\d+)\b/g, s);
+  if (removed.length) s = s.replace(/\s*(?<![\w\]>])\(\s*[,;]?\s*\)/g, "").replace(/[ \t]+$/, "");
+  return { line: s, removed: [...new Set(removed)] };
+}
+/** CR: rewrites the release note the run added so it cites only numbers the task gives. Only lines absent from the base file (`baseText`, "" for a new fragment) are touched;
+ *  the file is rewritten only when something was removed. Returns the numbers removed. No-op with LOKI_E10_CHANGELOG_REF=0. */
+export function stripInventedRefsInFile(path: string, baseText: string, task: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  if (!changelogRefOn(env)) return [];
+  let text: string; try { text = readFileSync(path, "utf8"); } catch { return []; }
+  const base = new Set(baseText.split("\n")), allowed = taskNumbers(task), removed: string[] = [];
+  const out = text.split("\n").map((l) => { if (base.has(l)) return l; const r = stripInventedRefs(l, allowed); removed.push(...r.removed); return r.line; });
+  if (removed.length) writeFileSync(path, out.join("\n"));
+  return [...new Set(removed)];
+}
 export function releaseNoteProblems(repoDir: string, conv: ReleaseNoteConvention, added: Map<string, string[]>, changed: string[], task: string, env: NodeJS.ProcessEnv = process.env): string[] {
   if (!changelogRefOn(env)) return [];
   const nums = taskNumbers(task), out: string[] = [];

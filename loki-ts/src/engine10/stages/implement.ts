@@ -22,7 +22,7 @@ import { assumptionsBlock, rankedRemedyBlock, rankedRemedyEnabled } from "../../
 import { loadSpecFile, specBriefBlock, type LoadedSpec } from "../../util/spec_file.ts";
 import { appliedTests, buildPatchBrief, patchCallFor, patchEnabled, runPatchProtocol, testConventions, type PatchCall, type PatchCheck, type PatchOutcome } from "../../features/patch_protocol.ts";
 import { isTestFile } from "../../util/test_file_text.ts";
-import { type ReviewItem, selfReviewBrief, selfReviewChecks, selfReviewMaxTurns, selfReviewMode, selfReviewWanted, settleItems, treeStaged } from "../../features/self_review.ts";
+import { type ReviewItem, selfReviewBrief, selfReviewChecks, selfReviewMaxTurns, selfReviewMode, selfReviewWanted, settleItems, stripInventedReleaseRefs, treeStaged } from "../../features/self_review.ts";
 
 /** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
 export interface ReadOnlyFile { path: string; content: string; }
@@ -242,6 +242,7 @@ export const implementStage: Stage = {
       if (selfReviewWanted(before, mode)) { const r = await resumeForSelfReview(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, selfReviewBrief(ctx.repoDir, before), selfReviewMaxTurns()); if (r) { turn = r.iterationId; if (!ids.includes(r.iterationId)) ids.push(r.iterationId); if (r.session !== session) { reply = r.session.summary ?? ""; if (!r.session.killed && r.session.exit === 0 && r.session.markers.done && !r.session.markers.specConflict && !r.session.markers.alreadyDone) session = r.session; else session = { ...session, durationS: r.session.durationS }; } after = selfReviewChecks(ctx.repoDir, ctx.baseSha, treeStaged(ctx.repoDir, ctx.baseSha), task, ctx.outputs()); } } // only a clean LOKI_DONE review reply replaces the implement result: a review turn never turns a done run into a conflict
       selfReview = { mode, turn, items: settleItems(before, after, reply) };
     } }
+    const refsRemoved = ctx.baseSha && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done ? stripInventedReleaseRefs(ctx.repoDir, ctx.baseSha, treeStaged(ctx.repoDir, ctx.baseSha), task) : []; // CR: a reference the task never gives never ships, whatever the model wrote
     const pinnedUpdates = pinnedTestUpdateEnabled() && ctx.baseSha ? pinnedTestUpdates(ctx.repoDir, ctx.baseSha, session.summary ?? "", task) : []; // Z2: the UPDATED TEST lines of the final reply, each checked against base, head and the task
     if (process.env.LOKI_E10_REPRO === "1" && !plan && !signal.aborted && !session.killed && session.exit === 0) { let bad: { name: string; why: string }[] = []; try { bad = outOfRepoTests(ctx.repoDir, changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); } catch { /* unreadable tree: no re-ask */ } if (bad.length) { const redo = `${first.iterationId}-oor`; ids.push(redo); session = await ctx.sessions.run({ ...unchained(), brief: withStagePrefix(outOfRepoReask("Rewrite these new test files in place, keeping the same names and what they reproduce.", bad)), iterationId: redo }); } } // TEN-QUALITY-44: the repro test gets the Wall's out-of-repo check and one re-ask
     const testsReverted = restoreReadOnly(readOnly);
@@ -282,7 +283,7 @@ export const implementStage: Stage = {
       ...(tournament ? { tournament } : {}),
       ...(noRegression ? { no_regression: noRegression } : {}),
       ...(neverStop ? { never_stop: [neverStop] } : {}),
-      ...(selfReview ? { self_review: selfReview } : {}),
+      ...(selfReview ? { self_review: selfReview } : {}), ...(refsRemoved.length ? { changelog_refs_removed: refsRemoved } : {}),
       ...(fragmentWriterOn() && session.summary ? { summary_tail: session.summary.slice(-1500) } : {}), // the release-note writer reads the final message
     };
 

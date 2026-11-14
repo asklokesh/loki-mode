@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 import { buildArtifacts, runOutputs, type Staged } from "../e10ext/commit_filter.ts";
 import { outsideScope } from "../e10ext/scope.ts";
 import type { Obj } from "../engine10/types.ts";
-import { contributionGuides, releaseNoteConvention, releaseNoteProblems, taskForbidsReleaseNote } from "../project_model/conventions.ts";
+import { contributionGuides, releaseNoteConvention, releaseNoteProblems, stripInventedRefsInFile, taskForbidsReleaseNote } from "../project_model/conventions.ts";
 import { detectFormatters } from "../runner/repo_profile.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { isTestFile as narrowTestFile } from "../util/test_file_text.ts";
@@ -102,6 +102,20 @@ export function settleItems(before: ReviewItem[], after: ReviewItem[] | null, re
 /** The receipt block; {} when the knob is off or nothing was recorded. */
 export type SelfReviewRecord = { mode: string; turn: string | null; items: ReviewItem[] };
 export const selfReviewReceiptBlock = (implement: Record<string, unknown> | undefined): { self_review?: SelfReviewRecord } => (implement && implement["self_review"] ? { self_review: implement["self_review"] as SelfReviewRecord } : {});
+/** CR, deterministic: removes every issue or PR reference the task never gives from the release note the run added (changelog entry lines, changeset or towncrier
+ *  fragment text). Runs after the review turn so a reference the model invented never ships. Returns `<path>: #N` per removal; [] when none or CR is off. */
+export function stripInventedReleaseRefs(repoDir: string, baseSha: string, staged: Staged[], task: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const conv = (() => { try { return releaseNoteConvention(repoDir, env); } catch { return null; } })();
+  if (!conv) return [];
+  const out: string[] = [];
+  for (const { st, f } of staged) {
+    if (!(st === "A" || st === "M") || !(f === conv.dir || f.startsWith(`${conv.dir}/`))) continue;
+    let base = ""; if (st === "M") { try { base = safeGit(repoDir, ["show", `${baseSha}:./${f}`], { maxBuffer: 64 << 20 }); } catch { base = ""; } }
+    for (const n of stripInventedRefsInFile(join(repoDir, f), base, task, env)) out.push(`${f}: #${n}`);
+  }
+  return out;
+}
+export const releaseRefsReceiptBlock = (implement: Record<string, unknown> | undefined): { changelog_refs_removed?: string[] } => (Array.isArray(implement?.["changelog_refs_removed"]) && (implement!["changelog_refs_removed"] as unknown[]).length ? { changelog_refs_removed: implement!["changelog_refs_removed"] as string[] } : {});
 /** The lines each path adds against base: a diff of the working tree for a tracked path, the whole file for a new one. */
 export function addedLines(repoDir: string, baseSha: string, paths: Staged[]): Map<string, string[]> {
   const m = new Map<string, string[]>();
