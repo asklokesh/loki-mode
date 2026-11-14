@@ -6,8 +6,8 @@ import { isOff } from "../council/role_agents.ts";
 import { readRepoMapCache, repoCacheDir, repoKey } from "../engine10/cache.ts";
 import type { RepoMap } from "../engine10/repomap.ts";
 /** PLAN-HINTS LOKI_E10_PLAN_HINTS (default on, =0 opts out): the plan's steps and files are a hint, never the scope. The task states the cases; the plan can miss one
- *  (dev2 tera: the plan covered a top-level -1 and left `[-1]` and `{a: -1}`, which the issue states). The brief says so where "Follow this plan" used to stand, and the
- *  context pack's "Relevant files" list is introduced the same way (e10ext/context.ts). Fire marker: implement records plan_hints: true when a plan was given. */
+ *  (dev2 tera: the plan covered a top-level -1 and left `[-1]` and `{a: -1}`, which the issue states). The brief says so where "Follow this plan" used to stand, including
+ *  that any file the fix needs may be edited. Fire marker: implement records plan_hints: true when a plan was given. */
 export const planHintsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PLAN_HINTS"] ?? "").trim());
 export const PLAN_HINT_LEAD = "A plan from an earlier session (a hint, not the scope: the task decides what to change; cover every case the task states even where the plan leaves it out, and edit any file the fix needs):";
 import { loadRepoMap } from "../engine10/sizing.ts";
@@ -103,7 +103,7 @@ export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): Br
   // E4: existing assertions whose expected value is the wrong value the issue reports. On by default; LOKI_E10_DEFECT_PIN=0 opts out.
   const pins = !isOff(process.env["LOKI_E10_DEFECT_PIN"]) ? findDefectPins(ctx.repoDir, task).slice(0, 5) : [];
   const text = [
-    files.length ? `${planHintsOn() ? "Files that may matter (hints, not the scope; edit any file the fix needs):" : "Relevant files:"}\n${files.join("\n")}` : "",
+    files.length ? `Relevant files:\n${files.join("\n")}` : "", // kept byte-identical (the L021 Opus golden and the exemplar lookup read it); PLAN-HINTS says "edit any file the fix needs" in the plan lead
     sigs ? `Key signatures (read the files for bodies):\n${sigs}` : "",
     pack ? pack.text : "",
     interps.length ? `Detected test interpreter (no test file to run yet; use exactly this executable, never a guessed one): ${interps.join(", ")}` : "",
