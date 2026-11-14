@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Added
+- New, off by default until measured: `LOKI_E10_VERIFIED_FINISH=1` runs the pre-delivery review as a fresh finish session that sees only the diff, the changed files' pre-fix text and the repository's contribution rules, instead of resuming the whole implement session, and always reruns the touched tests afterwards, taking the finish back if it broke one. The receipt says when it fired.
 - New, off by default until measured: the pre-delivery review turn can be kept from breaking a test. With `LOKI_E10_REVIEW_TURN_GUARD=1`, when the turn edits anything, Loki reruns the tests of what it changed; if a test that passed before the turn fails after it, only that turn's edits are taken back, the implemented change is kept, and the receipt says which test it broke.
 
 ### Fixed

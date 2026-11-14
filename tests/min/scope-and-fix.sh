@@ -287,6 +287,7 @@
 # 249. testmap.ts mochaTargets: ignore devDependencies (the R5 leg maps a mocha package to nothing).
 # 250. attempts.ts attemptModel: always entry 1 (the cascade leg runs the extra attempt on Haiku).
 # 251. testmap.ts buildTestMap: stop passing `marks` to scopeRunnersByPackage (the multi-module go map leg reads no tests).
+# 283. implement.ts: `verifiedFinishOn() && false` in the SR block (rebuild dist): the VF cut-context and revert legs read a -rv resume and no finish.
 # 252. check_result.ts jsAssertionFailure: drop JS_MISSING_API (the assert-js unit's missing-function case reads true).
 # 253. check_result.ts spawnFailedTool: drop the 6-line bound (the spawn-not-run leg's long ENOENT output reads missing).
 # 254. testmap.ts buildTestMap: ignore pyCfg (the pytest-fallback leg's conftest.py case reads unittest).
@@ -642,6 +643,18 @@ run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_
 case "$(tgrec)" in "False  False") grep -q 'add twice' "$REPO/calc.test.ts" && ok "TG keep: a review turn whose added test passes is kept, nothing reverted" || { bad "TG keep: the passing added test is gone"; dump; } ;; *) bad "TG keep: turn_guard '$(tgrec)'"; dump ;; esac
 run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=always E2E_STUB_RV=breaktest
 grep -q 'add twice' "$REPO/calc.test.ts" && [ "$(tgrec)" = "None  False" ] && ok "TG default (off): no guard, the review turn's edit stays" || { bad "TG default (off): turn_guard '$(tgrec)', plant $(grep -c 'add twice' "$REPO/calc.test.ts")"; dump; }
+# VF LOKI_E10_VERIFIED_FINISH (acc-168, off by default until measured; =1 on): the review turn becomes a fresh "-fin" session (no resume of the implement
+# transcript) whose prompt is only the review items, the diff, the touched files' pre-fix text and the repo's rules (never the task text); the turn
+# guard always runs on it, so a finish that breaks a passing test is taken back. Unset keeps the -rv resume and records no finish.
+finrec() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); s=r.get("self_review") or {}; f=s.get("finish") or {}; g=s.get("turn_guard") or {}; print(f.get("fired"), "calc.ts" in (f.get("diff_files") or []), g.get("reverted"))' "$RUNDIR/receipt.json" 2>/dev/null; }
+FL="$T/fin.prompt"; rm -f "$FL" "$FL.flags"
+run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=always LOKI_E10_VERIFIED_FINISH=1 E2E_STUB_RV=goodtest E2E_STUB_RV_LOG="$FL"
+fincut="$(python3 -I -c 'import sys; p=open(sys.argv[1]).read(); print(",".join(k for k, v in [("lead", p.startswith("Finish pass.")), ("diff", "=== DIFF (against the base commit) ===" in p and "calc.ts" in p), ("prefix", "=== PRE-FIX FILE: calc.ts" in p), ("rules", "contribution guide" in p or "Contribution rules" in p), ("no-task", "off-by-one" not in p)] if v))' "$FL" 2>/dev/null)"
+[ "$fincut" = "lead,diff,prefix,rules,no-task" ] && ! grep -q -- '--resume' "$FL.flags" && grep -q '^implement .*-fin ' "$ITERS" && ! grep -q -- '-rv ' "$ITERS" && [ "$(finrec)" = "True True False" ] && grep -q 'add twice' "$REPO/calc.test.ts" && ok "VF cut context: one fresh -fin session (no --resume, no -rv), its prompt holds the diff, the pre-fix calc.ts and the rules but not the task text; the receipt marks the finish as fired; the guard ran and kept the passing finish ($(finrec))" || { bad "VF cut context: prompt parts '$fincut', resume $(grep -c -- '--resume' "$FL.flags" 2>/dev/null), record '$(finrec)'"; dump; }
+run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=always LOKI_E10_VERIFIED_FINISH=1 E2E_STUB_RV=breaktest
+[ "$(finrec)" = "True True True" ] && ! grep -q 'add twice' "$REPO/calc.test.ts" && grep -q 'export function multiply' "$REPO/calc.ts" && [ "$(outcome)" != "BLOCKED" ] && ok "VF revert: a finish that breaks the passing calc.test.ts is taken back with LOKI_E10_REVIEW_TURN_GUARD unset; the implement fix stays (outcome $(outcome))" || { bad "VF revert: record '$(finrec)', plant $(grep -c 'add twice' "$REPO/calc.test.ts"), outcome '$(outcome)'"; dump; }
+run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=always E2E_STUB_RV=goodtest
+grep -q -- '-rv ' "$ITERS" && ! grep -q -- '-fin ' "$ITERS" && [ "$(finrec)" = "None False None" ] && ok "VF default (off): the review turn stays the -rv resume and the receipt records no finish" || { bad "VF default: record '$(finrec)'"; dump; }
 CTASK="add multiply(a, b), subtract(a, b) and negate(a) to calc.ts"
 covrec() { ev 'next((e["data"].get("coverage_resume") for e in E if e["type"]=="stage.completed" and e["stage"]=="implement"), None)'; }
 run_engine "$CTASK" E2E_STUB_MODE=coverage LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_COVERAGE_RESUME=0
