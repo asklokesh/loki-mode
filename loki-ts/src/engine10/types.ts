@@ -99,7 +99,7 @@ export interface SessionResult {
   stderrTail?: string;
 }
 export interface SessionRunner { run(opts: SessionRunOptions): Promise<SessionResult> } // implemented by session.ts (E-07)
-export type RunnerName = "pytest" | "unittest" | "vitest" | "jest" | "npm" | "bun" | "node" | "go" | "cargo" | "maven" | "gradle" | "javac" | "dotnet" | "mocha"; // mocha: only verify's targeted fallback (R5) makes a mocha ref; runner detection never lists it
+export type RunnerName = "pytest" | "unittest" | "vitest" | "jest" | "npm" | "bun" | "node" | "go" | "cargo" | "maven" | "gradle" | "javac" | "dotnet" | "mocha" | "ava"; // mocha, ava: only verify's targeted fallbacks (R5, AVA) make such a ref; runner detection never lists it
 /** A test file and the runner that executes it (mixed repos run each runner separately). */
 export interface TestRef { runner: RunnerName; path: string /* relative to repoDir */ }
 export interface TestMap { runners: RunnerName[]; tests: TestRef[]; }

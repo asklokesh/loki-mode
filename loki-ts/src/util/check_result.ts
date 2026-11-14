@@ -60,6 +60,7 @@ export function ran(raw: string, path?: string, ok?: boolean): number | null {
   if (blk) { const c = n(blk, /(?:#|\u2139) pass (\d+)/) + n(blk, /(?:#|\u2139) fail (\d+)/); const nm = out.match(/^(?:ok \d+ - |\u2714 )(\S+\.[cm]?[jt]s)(?: \(|$)/m)?.[1]; return c === 1 && nm && (!path || basename(nm) === basename(path)) ? 0 : c; }
   const cg = cargoTrailer(out);
   if (cg.length) return cg.reduce((t, l) => t + n(l, /(\d+) passed/) + n(l, /(\d+) failed/), 0);
+  if (ok === true && cargoMergedDoctestOn() && /^\s*Finished `test` profile\b/m.test(out) && !/^running \d+ tests?\b|^test result: /m.test(out)) return 0; // CMD: a green cargo test with no test target at all ran 0 tests
   const g = goCount(out, ok);
   if (g !== undefined) return g;
   const tail = tailLines(out);
@@ -75,9 +76,15 @@ const tailLines = (out: string): string[] => out.split("\n").filter((x) => x.tri
  *  trailer). A "test result:" printed by a test (--nocapture) is followed by "test x ... ok" lines, so it never counts. The final
  *  segment must qualify, else nothing does. */
 const CARGO_NOISE = /^\s*(?:Compiling|Finished|Running|Doc-tests|Fresh|Blocking|Downloaded|Downloading|Updating|Locking|Adding|Packaging|Building)\b|^(?:warning|error|note|help)\b|^\s*(?:-->|=\s|\||\d+\s*\||\^|~)|^(?:Some errors have detailed|For more information about)/;
+/** CMD LOKI_E10_CARGO_MERGED_DOCTEST (default on, =0 opts out): rustdoc's merged-doctests note (Rust 2024 edition), "all doctests ran in Xs; merged doctests compilation
+ *  took Ys", prints after a doctest segment's own "test result:" trailer. It is cargo's note, not test output: dropped from segment bodies and from the stream's tail, so the
+ *  segment and the run read measured. And a green `cargo test` with no test target at all (a fuzz or bin-only crate prints only "Finished") ran 0 tests, never an unparsed summary. */
+export const cargoMergedDoctestOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_CARGO_MERGED_DOCTEST"] ?? "").trim());
+const DOCTEST_NOTE = /^all doctests ran in [\d.]+s\b/;
+const cargoNoise = (l: string): boolean => CARGO_NOISE.test(l) || (cargoMergedDoctestOn() && DOCTEST_NOTE.test(l));
 function cargoLines(out: string): string[] {
   const ls = out.split("\n").filter((x) => x.trim());
-  while (ls.length && CARGO_NOISE.test(ls[ls.length - 1]!)) ls.pop(); // cargo's own stderr (Finished, Running, warnings, "error: test failed") lands AFTER the stdout trailer when the streams are joined stdout-then-stderr
+  while (ls.length && cargoNoise(ls[ls.length - 1]!)) ls.pop(); // cargo's own stderr (Finished, Running, warnings, "error: test failed") lands AFTER the stdout trailer when the streams are joined stdout-then-stderr
   return ls;
 }
 function cargoTrailer(out: string): string[] {
@@ -108,7 +115,7 @@ function cargoSegs(ls: readonly string[]): { n: number; body: string[] }[] {
   for (const l of ls) {
     const h = /^running (\d+) tests?\b/.exec(l);
     if (h) segs.push({ n: +h[1]!, body: [] });
-    else if (segs.length && !/^\s*(?:Running |Doc-tests |Doctest)/.test(l)) segs[segs.length - 1]!.body.push(l);
+    else if (segs.length && !/^\s*(?:Running |Doc-tests |Doctest)/.test(l) && !(cargoMergedDoctestOn() && DOCTEST_NOTE.test(l))) segs[segs.length - 1]!.body.push(l); // CMD: the merged-doctests note follows a doctest segment's trailer
   }
   return segs;
 }
@@ -705,6 +712,9 @@ export function javaTestClass(path: string): { root: string; cls: string; rel: s
 }
 const wrapperOr = (repoDir: string, w: string, bare: string): string => (existsSync(join(repoDir, w)) ? `./${w}` : bare);
 
+/** AVA LOKI_E10_AVA_TARGETED (default on, =0 opts out): an ava package (ink: test/*.tsx with no .test suffix, `npm test` = typecheck && lint && ava) maps no test file,
+ *  so a low-tier run verified with lint alone. engine10/testmap.ts avaTargets makes each changed file's own ava test a ref run as `npx --no-install ava <file>`, counted here. */
+export const avaTargetedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_AVA_TARGETED"] ?? "").trim());
 /** Count for the runners we support: vitest, jest, bun test ("N pass"), pytest, go test (-v; non-verbose is unmeasured), unittest, playwright, cargo test, node --test, mocha.
  *  null = unknown (never a pass). A vitest run with no files and no "Tests" summary is a real 0. */
 export function testCount(raw: string, path?: string, ok?: boolean): number | null {
@@ -723,6 +733,10 @@ export function testCount(raw: string, path?: string, ok?: boolean): number | nu
   const lastNum = (re: RegExp): number | null => { const m = [...out.matchAll(re)].pop(); return m ? +m[1]! : null; };
   const mp = lastNum(/^\s*(\d+) passing\b/gm), mf = lastNum(/^\s*(\d+) failing\b/gm); // mocha: the LAST summary, never an earlier stdout line
   if (mp !== null || mf !== null) return (mp ?? 0) + (mf ?? 0);
+  if (avaTargetedOn()) { // AVA: ava's own summary block, the lines after its LAST "─" rule (as mocha reads its LAST summary): "N tests passed" plus "N tests failed"; known failures and skips are not executed passes
+    const blk = out.split(/^\s*\u2500\s*$/m).pop() ?? "", ap = /^\s*(\d+) tests? passed\s*$/m.exec(blk), af = /^\s*(\d+) tests? failed\s*$/m.exec(blk);
+    if (out.includes("\u2500") && (ap || af)) return +(ap?.[1] ?? 0) + +(af?.[1] ?? 0);
+  }
   return null;
 }
 
@@ -1962,6 +1976,7 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
     case "vitest": return ["npx", ["--no-install", "vitest", "run", t.path]];
     case "jest": return ["npx", ["--no-install", "jest", t.path]];
     case "mocha": return ["npx", ["--no-install", "mocha", t.path]];
+    case "ava": return ["npx", ["--no-install", "ava", t.path]];
     case "bun": return ["bun", ["test", t.path]];
     case "node": return ["node", ["--test", `./${t.path}`]];
     case "npm": return ["npm", ["test", "--silent"]];
@@ -1987,6 +2002,7 @@ const FULL_SUITE_STATIC: Record<Exclude<RunnerName, "pytest" | "unittest">, { cm
   javac: { cmd: "bash", args: ["-c", JAVAC_WRAPPER, "loki-javac", ".", "-"] },
   dotnet: { cmd: "dotnet", args: ["test"] }, // the real target comes from fullSuiteCmd (dotnetFullCmd)
   mocha: { cmd: "npx", args: ["mocha"] }, // never a detected runner (R5 makes mocha refs only), listed for the exhaustive table
+  ava: { cmd: "npx", args: ["ava"] }, // never a detected runner (AVA makes ava refs only), listed for the exhaustive table
 };
 const BUILD_TOOL_RUNNERS: ReadonlySet<RunnerName> = new Set(["maven", "gradle", "javac", "dotnet"]);
 /** FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER: the one full-suite command per runner. pytest resolves its interpreter exactly as a per-test run does (resolveTool: project .venv, else python3), never a bare `python` that python3-only hosts lack. */

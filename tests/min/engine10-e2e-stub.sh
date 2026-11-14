@@ -53,6 +53,8 @@
 #   16. supervisor.ts: do not export the default pin (the default leg reads the provider default and no --model).
 #   17. seal.ts: drop model_source (every default-model leg reads absent).
 #   18. claude_model.ts chooseSessionModel: ignore LOKI_DEFAULT_SESSION_MODEL=provider (the provider leg reads sonnet).
+#   24. verify.ts: drop the ntf condition (the no-test fallback leg reads no full suite).
+#   25. verify.ts: skip the envCrash conversion (the base crash leg reads STALLED, no base-crash line).
 #   19. claude_model.ts DEFAULT_SESSION_MODEL changed to haiku without autonomy/route.sh (the newcomer-path acc-156 route leg reads ts haiku, route sonnet).
 #   20. claude_model.ts chooseSessionModel: drop the LOKI_ROUTER check (the router leg reads source default; auto-route.sh's small, hard, wall legs run on sonnet).
 #   21. seal.ts commitStage: drop the hooks-off retry (the commit hook leg reads FAILED, git commit failed).
@@ -210,6 +212,30 @@ HK="$(hk_np)"
 case "$HK" in "FAILED | git commit failed: "*) ok "commit hook: a failure no hook caused (signing) is not bypassed, and the run still writes a FAILED receipt naming the git error" ;; *) bad "commit hook: signing failure gave '$HK' (rc $RC)" ;; esac
 unset -f hook_prep sign_prep
 
+# acc-162 NTF: a low-tier change whose repo maps no test file (an npm package whose tests have no .test name) still runs the repo's own test command.
+ntf_prep() {
+    git -C "$1" rm -q calc.test.ts bunfig.toml
+    printf '{"name":"calc","private":true,"scripts":{"test":"node t.cjs"}}\n' > "$1/package.json"
+    printf 'const s = require("fs").readFileSync(__dirname + "/calc.ts", "utf8");\nconst ok = s.includes("export function add");\nconsole.log("TAP version 13\\n" + (ok ? "ok" : "not ok") + " 1 - add is exported\\n1..1\\n# tests 1\\n# suites 0\\n# pass " + (ok ? 1 : 0) + "\\n# fail " + (ok ? 0 : 1) + "\\n# cancelled 0\\n# skipped 0\\n# todo 0");\nprocess.exit(ok ? 0 : 1);\n' > "$1/t.cjs"
+    git -C "$1" add package.json t.cjs && git -C "$1" commit -q --amend -m base
+}
+ntf_facts() { python3 -I - "$RUNDIR/events.jsonl" <<'PY'
+import json, sys
+v = [json.loads(l)["data"] for l in open(sys.argv[1]) if '"stage.completed"' in l and '"verify"' in l]
+v = [d for d in v if "checks" in d]
+d = v[-1] if v else {}
+full = [c["result"] for c in d.get("checks", []) if c["name"].startswith("full suite")]
+print(d.get("no_test_fallback", False), "pass" in full, ",".join(sorted({c["name"].split(":")[0] for c in d.get("checks", [])})))
+PY
+}
+E2E_PREP=ntf_prep run_engine done
+f="$(ntf_facts)"; set -- $f
+[ "$1" = True ] && [ "$2" = True ] && ok "no-test fallback: a low-tier verify that ran no test runs the repo's own test command, and it passed ($3)" || bad "no-test fallback facts: $f (rc $RC)"
+E2E_PREP=ntf_prep LOKI_E10_NO_TEST_FALLBACK=0 run_engine done
+f="$(ntf_facts)"; set -- $f
+[ "$1" = False ] && [ "$2" = False ] && ok "no-test fallback: LOKI_E10_NO_TEST_FALLBACK=0 keeps the low tier's deferred test command" || bad "no-test fallback off facts: $f"
+unset -f ntf_prep
+
 E2E_STUB_USAGE=10 run_engine done
 cat > "$T/cap.py" <<'PY'
 import json, sys
@@ -247,6 +273,7 @@ py_engine() {
     [ "${PY_UNTESTED:-0}" = 1 ] || printf '    if hasattr(calc, "multiply"):\n        assert calc.multiply(3, 4) == 12\n' >> "$REPO/tests/test_calc.py"
     printf '[pytest]\npythonpath = .\n' > "$REPO/pytest.ini"
     for f in "$@"; do printf 'pytest\n' > "$REPO/$f"; done
+    if [ -n "${PY_PREP:-}" ]; then "$PY_PREP"; fi # a leg's extra base files
     git -C "$REPO" init -q -b main; git -C "$REPO" config user.name e2e; git -C "$REPO" config user.email e2e@example.invalid
     git -C "$REPO" add -A .; git -C "$REPO" commit -q -m base
     OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u VIRTUAL_ENV \
@@ -279,6 +306,13 @@ if python3 -m pytest --version >/dev/null 2>&1; then
     PY_UNTESTED=1 py_engine calc.py
     [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "python, impacted test passes but never calls multiply(): not VERIFIED ($(outcome))" || { bad "python, unexercised change: outcome '$(outcome)'"; printf '%s\n' "$NOTES" | sed 's/^/    np | /'; }
     printf '%s\n' "$NOTES" | grep -q "no passing check references a changed symbol.*multiply" && ok "python, unexercised change: the receipt names multiply as unexercised" || bad "python, unexercised change: no changed-symbol note"
+    # acc-162 BCE: a test whose conftest cannot import on base and head alike is the environment, not the change: not_run on NOT PROVEN, never FAILED.
+    bce_prep() { printf 'import loki_missing_module_bce\n' > "$REPO/tests/conftest.py"; }
+    PY_PREP=bce_prep py_engine calc.py
+    case "$(outcome)" in FAILED|STALLED|"") bad "base crash: a conftest that fails on base too ended '$(outcome)'" ;; *) printf '%s\n' "$NOTES" | grep -q "fails the same way on base, so its result cannot be read" && ok "base crash: the same ImportError on base makes the check environment ($(outcome)), named on NOT PROVEN" || bad "base crash: NOT PROVEN lacks the base-crash line ($(outcome))" ;; esac
+    PY_PREP=bce_prep LOKI_E10_BASE_CRASH_ENV=0 py_engine calc.py
+    printf '%s\n' "$NOTES" | grep -q "fails the same way on base" && bad "base crash: LOKI_E10_BASE_CRASH_ENV=0 still wrote the base-crash line" || ok "base crash: LOKI_E10_BASE_CRASH_ENV=0 keeps the crash a failure ($(outcome))"
+    unset -f bce_prep
 elif [ "${CI:-}" = "true" ]; then
     bad "python legs: pytest is not installed on the CI runner"
 else

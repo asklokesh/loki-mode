@@ -293,6 +293,12 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
     let r = await runDetached(li.cmd, cwd, env, input.signal, budget);
     const venv = r.code !== 0 && !r.cut && PEP668.test(r.tail) ? venvInstallCmd(li.cmd, cwd) : null;
     if (venv) { li = { ...li, cmd: venv, locked: false, rewritten: false }; r = await runDetached(venv, cwd, env, input.signal, Math.max(1, budget - (Date.now() - t0))); if (r.code === 0 && !r.cut) li = { ...li, note: "system python is externally managed (PEP 668): installed into .venv" }; }
+    const uvNeed = r.code !== 0 && !r.cut && uvRequiredOn() ? UV_REQUIRED.exec(r.tail) : null, uvCmd = uvNeed ? uvRequiredCmd(li.cmd, uvNeed[1]!) : null; // UVR: the repo's own required uv version, not the host's
+    if (uvCmd) { // a workspace member's sync runs at the workspace root, as the repo's CI does: a member-only sync of the shared .venv would drop the root's own test dependencies
+      const ws = uvWorkspaceRoot(realpathSync(input.repoDir), cwd), at = ws ?? cwd;
+      r = await runDetached(uvCmd, at, env, input.signal, Math.max(1, budget - (Date.now() - t0)));
+      li = { ...li, cmd: uvCmd, note: `${li.note ? `${li.note}; ` : ""}the repo requires uv ${uvNeed![1]} and the host has an older uv: ran it with uvx${ws && ws !== cwd ? ` at the uv workspace root (${relative(realpathSync(input.repoDir), ws) || "."})` : ""}` };
+    }
     const dt = (Date.now() - t0) / 1000;
     left -= Date.now() - t0;
     if (!guardTree(input.repoDir, env, before, res)) res.notProven.push(`${name} tree guard not run (git status failed)`);
@@ -305,6 +311,23 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
   return res;
 }
 
+/** UVR LOKI_E10_UV_REQUIRED (default on, =0 opts out): a repo that pins `required-version` for uv (pydantic: ">=0.13.0") makes an older host uv refuse every
+ *  `uv sync`, so the env verify ran in was not the one the repo's CI builds and its tests crashed on base and head alike. The install is retried once, unchanged, through
+ *  `uvx --from "uv<spec>" uv ...`, so it runs on a uv the repo accepts. Only a command whose first word is uv is rewritten, and only after uv itself named the requirement. */
+export const uvRequiredOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_UV_REQUIRED"] ?? "").trim());
+const UV_REQUIRED = /Required uv version `([<>=!~^0-9.,* ]+)` does not match the running version/;
+/** The nearest directory at or above `cwd`, inside `repo`, whose pyproject.toml declares a [tool.uv.workspace] that is not `cwd` itself; null when there is none. */
+export function uvWorkspaceRoot(repo: string, cwd: string): string | null {
+  for (let d = dirname(cwd); d.length >= repo.length && (d === repo || d.startsWith(`${repo}/`)); d = dirname(d)) {
+    try { if (/^\s*\[tool\.uv\.workspace\]/m.test(readFileSync(join(d, "pyproject.toml"), "utf8"))) return d; } catch { /* no pyproject here */ }
+    if (d === repo) break;
+  }
+  return null;
+}
+export function uvRequiredCmd(cmd: string, spec: string): string | null {
+  const t = cmd.trim(); if (!/^uv\s/.test(t) || !/^[<>=!~^0-9.,* ]+$/.test(spec)) return null;
+  return `uvx --from 'uv${spec.replace(/\s+/g, "")}' uv ${t.slice(2).trim()}`;
+}
 /** Intake installs every package whose dependencies were never installed (absentDepRoots), whether or not any check needs it. A failed install of a package nothing depends on is disclosed, never a cap:
  *  a package below the root with no test command, owning none of the changed files, holding no check verify ran, and whose ecosystem no check uses (lefthook's packaging/registries/pypi wrapper
  *  needs release binaries to install, while the change and every check are Go). A check of the same ecosystem anywhere in the repo could import what the install provides (a root pytest that
@@ -312,7 +335,7 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
  *  keeps capping. `checkNames` are verify's check names. */
 const ecoOfCmd = (cmd: string): string | null => /\b(?:pip3?|python3?|uv|poetry|pdm|pipenv|hatch|tox|pytest)\b/.test(cmd) ? "py" : /\b(?:npm|pnpm|yarn|bun|npx|node)\b/.test(cmd) ? "js" : /\bcargo\b/.test(cmd) ? "rust" : /\b(?:mvn|mvnw|gradle|gradlew)\b/.test(cmd) ? "jvm" : /\bdotnet\b/.test(cmd) ? "dotnet" : /\bgo\b/.test(cmd) ? "go" : null;
 const ecoOfDir = (repoDir: string | undefined, root: string): string | null => { if (!repoDir) return null; const has = (f: string): boolean => existsSync(join(repoDir, root, f)); return has("go.mod") ? "go" : has("pyproject.toml") || has("setup.py") || has("setup.cfg") ? "py" : has("package.json") ? "js" : has("Cargo.toml") ? "rust" : null; };
-const ECO_PREFIX: [RegExp, string][] = [[/^go:/, "go"], [/^(?:pytest|unittest|lint:ruff|lint:mypy|lint:pyright)\b/, "py"], [/^(?:vitest|jest|bun|node|mocha|lint:eslint|lint:tsc|tsc)\b/, "js"], [/^cargo:/, "rust"], [/^(?:maven|gradle|javac):/, "jvm"], [/^dotnet:/, "dotnet"]];
+const ECO_PREFIX: [RegExp, string][] = [[/^go:/, "go"], [/^(?:pytest|unittest|lint:ruff|lint:mypy|lint:pyright)\b/, "py"], [/^(?:vitest|jest|bun|node|mocha|ava|lint:eslint|lint:tsc|tsc)\b/, "js"], [/^cargo:/, "rust"], [/^(?:maven|gradle|javac):/, "jvm"], [/^dotnet:/, "dotnet"]];
 export function unusedInstallNotes(lines: readonly string[], model: ProjectApi | null | undefined, changed: readonly string[], checkNames: readonly string[], repoDir?: string): { cap: string[]; na: string[] } {
   const cap: string[] = [], na: string[] = [];
   const checkEco = (n: string): string | null => { for (const [re, e] of ECO_PREFIX) if (re.test(n)) return e; const pk = n.startsWith("full suite: ") ? model?.packages().find((p) => `full suite: ${p.name}` === n) : undefined; return pk ? ecoOfDir(repoDir, pk.root) ?? (pk.commands.test ? ecoOfCmd(pk.commands.test.cmd) : null) : null; };

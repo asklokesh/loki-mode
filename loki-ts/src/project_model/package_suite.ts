@@ -21,6 +21,15 @@ interface SuiteCheck { name: string; cmd: string; result: "pass" | "fail" | "not
 export interface SuiteSpec { name: string; cmd: string; cwd: string; run: string; go?: string } // go: the plain `go test -json <pkgs>` a Go full suite is read and corroborated as (goMakeSuite)
 
 /** One spec per multi-root package with a test command; null when the model is absent, single-root or defines none. With `repoDir`, a Go package whose test command is a plain `go test`, or a Makefile target that only runs one, runs as `go test -json` (goMakeSuite). */
+/** NTF: for each changed file the deepest package suite whose cwd holds it (the root "." only when no deeper package does). */
+export function ownedSuites<T extends { cwd: string }>(specs: T[], changed: readonly string[]): T[] {
+  const out = new Set<T>();
+  for (const f of changed) {
+    const own = specs.filter((s) => s.cwd === "." || f === s.cwd || f.startsWith(`${s.cwd.replace(/\/$/, "")}/`)).sort((a, b) => b.cwd.length - a.cwd.length)[0];
+    if (own) out.add(own);
+  }
+  return specs.filter((s) => out.has(s));
+}
 export function packageSuiteSpecs(api: ProjectApi | null | undefined, repoDir?: string): SuiteSpec[] | null {
   if (!isMultiRoot(api)) return null;
   const specs = api.packages().filter((p) => p.commands.test).map((p): SuiteSpec => { const tc = p.commands.test!, g = repoDir !== undefined ? goMakeSuite(repoDir, tc.cwd, tc.cmd) : null, line = g?.run ?? tc.cmd; return { name: `full suite: ${p.name}`, cmd: `(cd ${tc.cwd} && ${line})`, cwd: tc.cwd, run: line, ...(g ? { go: g.go } : {}) }; });
@@ -100,12 +109,14 @@ export const emptySubsuiteNaOn = (env: NodeJS.ProcessEnv = process.env): boolean
 export async function runPackageSuites(
   repoDir: string,
   signal: AbortSignal,
-  opts: { path?: string | undefined; timeoutMs: number; baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; proofFiles?: string[] | undefined; wallBaseRed?: boolean | undefined; targetPassed?: boolean | undefined },
+  opts: { path?: string | undefined; timeoutMs: number; baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; proofFiles?: string[] | undefined; wallBaseRed?: boolean | undefined; targetPassed?: boolean | undefined; ownedOnly?: boolean },
   checks: SuiteCheck[],
   notProven: Set<string>,
 ): Promise<boolean> {
-  const api = loadProjectApi(repoDir), specs = packageSuiteSpecs(api, repoDir);
-  if (!api || !specs) return false;
+  const api = loadProjectApi(repoDir), all = packageSuiteSpecs(api, repoDir);
+  if (!api || !all) return false;
+  const specs = opts.ownedOnly ? ownedSuites(all, opts.changed ?? []) : all; // NTF: the suites of the packages that own the changed files, never the whole workspace
+  if (!specs.length) return false;
   for (const { name, cmd, cwd, run: line, go } of specs) {
     const started = Date.now();
     const r = await run(["bash", "-c", line], { cwd: join(repoDir, cwd), timeoutMs: opts.timeoutMs, env: suiteEnv(opts.path) });
