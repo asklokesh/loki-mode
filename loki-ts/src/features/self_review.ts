@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 import { buildArtifacts, runOutputs, type Staged } from "../e10ext/commit_filter.ts";
 import { outsideScope } from "../e10ext/scope.ts";
 import type { Obj } from "../engine10/types.ts";
-import { contributionGuides, releaseNoteConvention, releaseNoteProblems, stripInventedRefsInFile, taskForbidsReleaseNote } from "../project_model/conventions.ts";
+import { contributionGuides, releaseNoteConvention, releaseNoteProblems, renameInventedFragment, stripInventedRefsInFile, taskForbidsReleaseNote, taskNumbers, towncrierNoNumberPrefix } from "../project_model/conventions.ts";
 import { detectFormatters } from "../runner/repo_profile.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { isTestFile as narrowTestFile } from "../util/test_file_text.ts";
@@ -38,7 +38,7 @@ export function selfReviewChecks(repoDir: string, baseSha: string, staged: Stage
   if (refProblems.length) items.push({ item: "release_note", status: "flagged", detail: refProblems.slice(0, 4).join("; ") }); else
   items.push(!conv || src.length === 0 || taskForbidsReleaseNote(task) ? { item: "release_note", status: "ok", detail: conv ? (src.length === 0 ? "no source change" : "the task says no release note") : "the repo states no release-note rule" }
     : carried ? { item: "release_note", status: "ok", detail: `the diff carries ${conv.kind === "changelog" ? `an entry in ${conv.dir}` : `a ${conv.kind} fragment in ${conv.dir}/`}` }
-    : { item: "release_note", status: "flagged", detail: conv.kind === "changelog" ? `the contribution guide asks for an entry in ${conv.dir} (under "${conv.heading ?? "Unreleased"}") and the diff has none` : `the repo keeps ${conv.kind} release notes in ${conv.dir}/ and the diff has no fragment` });
+    : { item: "release_note", status: "flagged", detail: conv.kind === "changelog" ? `the contribution guide asks for an entry in ${conv.dir} (under "${conv.heading ?? "Unreleased"}") and the diff has none` : `the repo keeps ${conv.kind} release notes in ${conv.dir}/ and the diff has no fragment${conv.kind === "towncrier" && taskNumbers(task).length === 0 && towncrierNoNumberPrefix(repoDir, conv.dir, env) ? `; the task gives no issue or PR number, so add it in towncrier's orphan form ${conv.dir}/${towncrierNoNumberPrefix(repoDir, conv.dir, env)}<short-slug>.<type> (the same type and extension as the existing fragments) rather than skipping it or inventing a number` : ""}` }); // TN: a missing number is never a reason to ship no fragment
   // (b) stray, generated or unrelated files: build output (the commit filter drops it) and added files in a directory the repo has never tracked
   const added = live.filter(({ st }) => st === "A").map(({ f }) => f);
   const art = (() => { try { return [...new Set([...buildArtifacts(repoDir, added, baseSha, task), ...runOutputs(repoDir, added, baseSha, task)])]; } catch { return []; } })(); // the commit filter drops these (GB, RO)
@@ -112,6 +112,7 @@ export function stripInventedReleaseRefs(repoDir: string, baseSha: string, stage
     if (!(st === "A" || st === "M") || !(f === conv.dir || f.startsWith(`${conv.dir}/`))) continue;
     let base = ""; if (st === "M") { try { base = safeGit(repoDir, ["show", `${baseSha}:./${f}`], { maxBuffer: 64 << 20 }); } catch { base = ""; } }
     for (const n of stripInventedRefsInFile(join(repoDir, f), base, task, env)) out.push(`${f}: #${n}`);
+    if (st === "A") { const r = renameInventedFragment(repoDir, conv, f, task, env); if (r) out.push(`renamed ${r}`); } // ON: an invented fragment number becomes the repo's orphan form
   }
   return out;
 }
