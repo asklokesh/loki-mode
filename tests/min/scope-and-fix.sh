@@ -522,11 +522,11 @@ grep -q 'pinConflict = r.pinnedTest;' "$ROOT/loki-ts/src/engine10/stages/impleme
 # Z2 pinned-test update (LOKI_E10_PINNED_TEST_UPDATE, default on, =0 opts out), same synthetic repo: the Rules block lets an existing assertion that pins the OLD behavior the issue
 # asks to change be updated (every other protection named), =0 gives the v11.139.0 text and both stay cache-stable constants; the implement and fix briefs lead with it. A reported
 # UPDATED TEST line is verified only when the old value is on base at that line, the new one is in the edited file and the quoted sentence is in the task; each failure names why.
-Z2R="$(cd "$ROOT/loki-ts" && Z1D="$Z1D" Z1B="$Z1B" bun -e '
+Z2R="$(cd "$ROOT/loki-ts" && Z1D="$Z1D" Z1B="$Z1B" LOKI_E10_DOC_UPDATE_RULE=1 bun -e '
 const c = await import("./src/e10ext/context.ts"), tg = await import("./src/util/test_guard.ts"), impl = await import("./src/engine10/stages/implement.ts"), fx = await import("./src/engine10/stages/fix.ts"), seal = await import("./src/engine10/stages/seal.ts"), fs = await import("node:fs"), d = process.env.Z1D, b = process.env.Z1B;
 const R = c.FIXED_RULES, L = c.LEGACY_FIXED_RULES, out = [];
 out.push(String(R.includes("An existing assertion that pins the OLD behavior the issue explicitly asks to change is not a spec conflict") && R.includes("Never delete a test, add skip, xfail or only, widen a tolerance, or touch a test unrelated to the behavior the issue names") && R.includes("UPDATED TEST <path>:<line>") && !R.includes("An existing test that contradicts the task otherwise is a spec conflict: cite it.")));
-out.push(String(L.includes("never remove, skip or loosen any other assertion. An existing test that contradicts the task otherwise is a spec conflict: cite it.") && c.fixedRules({}) === R && c.fixedRules({ LOKI_E10_PINNED_TEST_UPDATE: "0" }) === L));
+out.push(String(L.includes("never remove, skip or loosen any other assertion. An existing test that contradicts the task otherwise is a spec conflict: cite it.") && c.fixedRules({ LOKI_E10_DOC_UPDATE_RULE: "1" }) === R && c.fixedRules({ LOKI_E10_PINNED_TEST_UPDATE: "0" }) === L));
 const b1 = impl.buildImplementBrief("first task", null, []), b2 = impl.buildImplementBrief("another task entirely", null, []);
 process.env.LOKI_E10_PINNED_TEST_UPDATE = "0"; const b0 = impl.buildImplementBrief("first task", null, []); delete process.env.LOKI_E10_PINNED_TEST_UPDATE;
 out.push(String(b1.indexOf(R) >= 0 && b2.indexOf(R) >= 0 && b1.slice(0, b1.indexOf(R) + R.length) === b2.slice(0, b2.indexOf(R) + R.length) && b0.includes(L) && !b0.includes(R)));
@@ -625,7 +625,7 @@ grep -q '^wall ' "$ITERS" && { bad "lean normal: a Wall session ran despite a re
 # ---------------------------------------------------------------- coverage (L4, LOKI_E10_COVERAGE_RESUME: default fold, =1 the separate turn, =0 neither)
 # SR LOKI_E10_SELF_REVIEW end to end on the stub (run_engine pins it off for the session-count legs; unit legs live in tests/min/context-pack.sh):
 # the receipt records all eight items (five plus DE docs, SC stated cases and sibling definitions); the -rv review turn runs exactly when an item was flagged; the run is never turned into a conflict by it.
-run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=on
+run_engine "fix the off-by-one in calc.ts add" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=on LOKI_E10_SR_COVERAGE=1 LOKI_E10_DOC_ENUM=1 # the eight items need SC and DE, which ship off in 11.141.0
 SRR="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])).get("self_review") or {}; it=r.get("items",[]); print(len(it), "flagged" if any(i["status"]!="ok" and i["status"]!="auto" for i in it) else "clean", "turn" if r.get("turn") else "no-turn")' "$RUNDIR/receipt.json" 2>/dev/null)"
 RVN="$(grep -c -- '-rv' "$ITERS")"
 case "$SRR" in "8 flagged turn") [ "$RVN" -ge 1 ] ;; "8 clean no-turn") [ "$RVN" = 0 ] ;; *) false ;; esac && [ "$(outcome)" != "BLOCKED" ] && [ "$(outcome)" != "SPEC_CONFLICT" ] && ok "SR e2e: the receipt records 8 self_review items (5 plus the DE docs, SC stated-case and sibling items), the -rv turn ran exactly when one was flagged, outcome $(outcome) ($SRR, -rv sessions $RVN)" || { bad "SR e2e: self_review '$SRR', -rv sessions $RVN, outcome '$(outcome)'"; dump; }
@@ -1186,7 +1186,7 @@ res("brief: the choice block is per-run, after the task, and the bytes before th
 res("brief: plain assumptions keep their own header beside the choice block", brief.includes("recorded assumptions") && brief.includes("leaves a choice open"));
 res("brief: no assumptions adds nothing", !buildImplementBrief("t", null, []).includes("choice open") && assumptionsBlock([]).length === 0);
 TS
-out="$(cd "$ROOT/loki-ts" && ROOT="$ROOT" T="$T" bun "$T/spec-choice.ts" 2>&1)"
+out="$(cd "$ROOT/loki-ts" && ROOT="$ROOT" T="$T" LOKI_E10_DOC_UPDATE_RULE=1 bun "$T/spec-choice.ts" 2>&1)" # its brief legs compare against FIXED_RULES, the doc-update text, which ships off in 11.141.0
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "spec choice: ${line#OK }" ;; "NO "*) bad "spec choice: ${line#NO }" ;; esac
 done <<< "$out"
@@ -3589,11 +3589,17 @@ const pretty = "........ [100%]\nResults (0.66s):\n       271 passed\n        25
 res("PRETTY a pytest-pretty Results block counts its passed tests", cr.testCount(pretty, "tests/test_main.py", true) === 271 && cr.testCount("Results (1.2s):\n         3 passed\n         2 failed\n", "t.py", false) === 5);
 res("PRETTY a Results block that does not end the output, or holds a non-count line, is never counted", cr.testCount("Results (0.5s):\n       9 passed\nprinted by a test\n", "t.py", true) === null);
 process.env.LOKI_E10_PYTEST_PRETTY = "0"; res("PRETTY =0 reads the block as unmeasured, as before", cr.testCount(pretty, "t.py", true) === null); process.env.LOKI_E10_PYTEST_PRETTY = "1";
+// 11.141.0 (GOALS A3.2): every mechanism with no bench measurement ships OFF: its accessor reads false with nothing set and true with =1.
+{ const sr = await import(root + "/loki-ts/src/features/self_review.ts"), cf = await import(root + "/loki-ts/src/e10ext/commit_filter.ts"), mc = await import(root + "/loki-ts/src/engine10/machine.ts"), wk = await import(root + "/loki-ts/src/util/wall_knobs.ts");
+  const acc: [string, (e: NodeJS.ProcessEnv) => boolean][] = [["SR_COVERAGE", sr.srCoverageOn], ["DOC_ENUM", sr.docEnumOn], ["WALL_CASES", sr.wallCasesOn], ["REGEN_DROP", cf.regenDropOn], ["DIFF_NEED", cf.diffNeedOn], ["DOC_UPDATE_RULE", cx.docUpdateRuleOn], ["PLAN_HINTS", cx.planHintsOn], ["CARGO_MERGED_DOCTEST", cr.cargoMergedDoctestOn], ["AVA_TARGETED", cr.avaTargetedOn], ["PYTEST_PRETTY", cr.pytestPrettyOn], ["NO_TEST_FALLBACK", vf.noTestFallbackOn], ["BASE_CRASH_ENV", vf.baseCrashEnvOn], ["UNCAUSED_NO_FIX", vf.uncausedOn], ["UV_REQUIRED", inst.uvRequiredOn], ["SOURCE_SITES", es.sourceSitesOn], ["HAIKU_INDEP_FIX", mc.haikuIndepFixOn], ["WALL_ON_LEAN", wk.wallOnLeanOn], ["CASCADE_V0", wk.cascadeV0On]];
+  const wrong = acc.filter(([k, f]) => f({}) !== false || f({ [`LOKI_E10_${k}`]: "1" }) !== true).map(([k]) => k);
+  res(`DEFAULT-OFF all ${acc.length} unmeasured knobs read off with nothing set and on with =1${wrong.length ? `; wrong: ${wrong.join(",")}` : ""}`, wrong.length === 0 && acc.length === 18);
+  res("DEFAULT-OFF with nothing set, briefs carry the v11.139.0 documentation line, and an ava package maps nothing", cx.fixedRules({}) === cx.FIXED_RULES_DOC_V139 && (() => { const a = mkdtempSync(join(tmpdir(), "acc162o-")); try { mkdirSync(join(a, "test"), { recursive: true }); writeFileSync(join(a, "package.json"), JSON.stringify({ devDependencies: { ava: "6" } })); writeFileSync(join(a, "test/x.ts"), "x\n"); return tm.avaTargets(a, ["test/x.ts"], {}).length === 0 && tm.avaTargets(a, ["test/x.ts"], { LOKI_E10_AVA_TARGETED: "1" }).length === 1; } finally { rmSync(a, { recursive: true, force: true }); } })()); }
 res("PLAN-HINTS the plan and the relevant-file list are hints when on, the old wording when off", cx.planHintsOn() && /a hint, not the scope/.test(cx.PLAN_HINT_LEAD) && !cx.planHintsOn({ LOKI_E10_PLAN_HINTS: "0" }) && !cx.planHintsOn({}));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/acc162.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "acc-162 unit script crashed or exited non-zero"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 28 ] || bad "acc-162 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 28"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 30 ] || bad "acc-162 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 30"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
