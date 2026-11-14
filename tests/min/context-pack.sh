@@ -49,6 +49,8 @@
 #  19. conventions.ts renameInventedFragment: `if (true || ...)` (ON); on_rename fails (the invented 1604 fragment ships under its number).
 #  20. self_review.ts caseCovered: `return true;` first (SC); sc_edge, sc_same and sc_repro fail (a stated case with no test reads covered).
 #  21. self_review.ts siblingDefinitions: `return out;` right after `const changed` (SC); sc_sib and sc_sib_detail fail (the sibling override goes unflagged).
+#  22. self_review.ts docEnumerations: `return out;` right after `const touched` (DE); de_flag fails (the README that lists every other option is not flagged).
+#  23. self_review.ts wallRequiredCases: `if (wallCasesOn(env)) return [];` (WC); wc_lines, wc_marker, wc_off and wc_wall fail.
 #  17. conventions.ts stripInventedRefsInFile: `if (base.has(l) || true) return l;` (CR strip); cr_strip_file fails (the invented #2383 ships).
 #  15. self_review.ts settleItems: never trust the after-turn check (`if (false && a)`); sr_settled fails (fixed items read unresolved).
 #  12. conventions.ts writeReleaseNoteFragment: `op = null` (TO); to_older_orphan and to_cfg_prefix fail.
@@ -334,7 +336,7 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
   const clBefore = sr.selfReviewChecks(cl.d, cl.base, sr.treeStaged(cl.d, cl.base), "Fix calc", plan);
   out.sr_flags = sum(clBefore); out.sr_flag_turn = sr.selfReviewWanted(clBefore, "on") ? "turn" : "no-turn";
   const brief = sr.selfReviewBrief(cl.d, clBefore);
-  out.sr_brief = ["Please add an entry to CHANGELOG.md.", "FLAGGED: the contribution guide asks for an entry in CHANGELOG.md", "REVIEW <a|b|c|d|e|f|g>", "Change nothing that already follows the rules"].every((k) => brief.includes(k)) ? "yes" : "no";
+  out.sr_brief = ["Please add an entry to CHANGELOG.md.", "FLAGGED: the contribution guide asks for an entry in CHANGELOG.md", "REVIEW <a|b|c|d|e|f|g|h>", "Change nothing that already follows the rules"].every((k) => brief.includes(k)) ? "yes" : "no";
   // the review turn: the entry added and the scratch file removed; the test and the README edit stay, the README one justified
   writeFileSync(join(cl.d, "CHANGELOG.md"), LOG.replace("### Fixed\n\n", "### Fixed\n\n- Fixed calc.\n")); rmSync(join(cl.d, "scratch"), { recursive: true, force: true });
   const clAfter = sr.selfReviewChecks(cl.d, cl.base, sr.treeStaged(cl.d, cl.base), "Fix calc", plan);
@@ -378,6 +380,29 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
   out.sc_off = items(e1, T1, { LOKI_E10_SR_COVERAGE: "0" });
   out.sc_brief = sr.selfReviewBrief(e1.d, sr.selfReviewChecks(e1.d, e1.base, sr.treeStaged(e1.d, e1.base), T1, {})).includes("(f) stated cases:") ? "yes" : "no";
   out.sc_parse = JSON.stringify([...sr.parseReviewLines("REVIEW f: fixed: added the {-1} case\nREVIEW g: justified: Root copies differently").entries()]); }
+// DE LOKI_E10_DOC_ENUM and WC LOKI_E10_WALL_CASES, on synthetic fixtures.
+{ const sr = await import(join(SRC, "features/self_review.ts")), { execFileSync: ex5 } = await import("node:child_process");
+  const repo = (name: string, files: Record<string, string>) => { const d = mk(name, files); const g = (...a: string[]) => ex5("git", ["-C", d, ...a], { stdio: "pipe" }).toString().trim(); g("init", "-q", "-b", "main"); g("config", "user.name", "de"); g("config", "user.email", "de@example.invalid"); g("add", "-A"); g("commit", "-q", "-m", "base"); return { d, base: g("rev-parse", "HEAD") }; };
+  const one = (r: { d: string; base: string }, key: string, task = "Add an option", env = {}, outputs = {}, runDir?: string) => { const i = sr.selfReviewChecks(r.d, r.base, sr.treeStaged(r.d, r.base), task, outputs, env, runDir).find((x: { item: string }) => x.item === key) as { status: string; detail: string } | undefined; return i ? `${i.status}: ${i.detail}` : "none"; };
+  const RULE = { "lib/rules/color/index.mjs": "export const secondary = { ignore: ['inside-function'], ignoreProperties: [] };\nexport function check(o) { return optionsMatches(o, 'ignoreProperties'); }\n", "lib/rules/color/README.md": "# color\n\n## Optional secondary options\n\n### ignore: [\"inside-function\"]\n\n### ignoreProperties: []\n", "lib/rules/color/__tests__/index.mjs": "test('x', () => {});\n" };
+  const d1 = repo("de-1", RULE); writeFileSync(join(d1.d, "lib/rules/color/index.mjs"), "export const secondary = { ignore: ['inside-function'], ignoreProperties: [], ignoreFunctions: [] };\nexport function check(o) { return optionsMatches(o, 'ignoreProperties') || optionsMatches(o, 'ignoreFunctions'); }\n"); writeFileSync(join(d1.d, "lib/rules/color/__tests__/index.mjs"), "test('x', () => { expect(1).toBe(1); });\n");
+  out.de_flag = one(d1, "docs");
+  writeFileSync(join(d1.d, "lib/rules/color/README.md"), "# color\n\n## Optional secondary options\n\n### ignore: [\"inside-function\"]\n\n### ignoreProperties: []\n\n### ignoreFunctions: []\n"); out.de_after = one(d1, "docs");
+  const d2 = repo("de-2", { ...RULE, "lib/rules/color/README.md": "# color\n\nFlags named colors.\n" }); writeFileSync(join(d2.d, "lib/rules/color/index.mjs"), "export const secondary = { ignore: ['inside-function'], ignoreProperties: [], ignoreFunctions: [] };\nexport function check(o) { return optionsMatches(o, 'ignoreFunctions'); }\n");
+  out.de_not_enumerating = one(d2, "docs");
+  out.de_off = one(d1, "docs", "Add an option", { LOKI_E10_DOC_ENUM: "0" });
+  // WC: the stated cases go to the Wall as required cases, with a fire-marker file; once the Wall wrote tests, the cases item reads auto, not a token match
+  const TT = "# Negative defaults fail\n\n```\nparse_default('-1')\n```\n\nError: Found `-`.\n\nSimilar error when wrapping it in `{-1}`.\n";
+  const rd = join(T, "wc-run"); mkdirSync(rd, { recursive: true });
+  const req = sr.wallRequiredCases(rd, TT);
+  out.wc_lines = `${req.length} | ${req[1] ?? ""}`;
+  out.wc_marker = (() => { try { return rf(join(rd, "wall-required-cases.json"), "utf8"); } catch { return ""; } })().includes("REQUIRED CASE 2") ? "written" : "missing";
+  out.wc_off = String(sr.wallRequiredCases(join(T, "wc-off"), TT, { LOKI_E10_WALL_CASES: "0" }).length);
+  const PY = { "src/parse.py": "def parse_default(tok):\n    return int(tok)\n", "tests/test_parse.py": "def test_parse():\n    assert True\n" };
+  const w1 = repo("wc-1", PY); writeFileSync(join(w1.d, "src/parse.py"), "def parse_default(tok):\n    return int(tok.strip())\n"); writeFileSync(join(w1.d, "tests/test_parse.py"), "def test_parse():\n    assert parse_default('-1') == -1\n");
+  out.wc_wall = one(w1, "cases", TT, {}, { wall: { files: ["tests/loki_wall_parse_test.py"] } }, rd).split(":")[0];
+  out.wc_no_wall = one(w1, "cases", TT, {}, {}, rd).split(":")[0];
+  out.wc_wired = rf(join(SRC, "engine10/stages/wall.ts"), "utf8").includes("[...(unitSpec()?.acceptance ?? []), ...wallRequiredCases(ctx.runDir, task)]") && rf(join(SRC, "engine10/stages/implement.ts"), "utf8").includes("ctx.outputs(), process.env, ctx.runDir)") ? "yes" : "no"; }
 // CR LOKI_E10_CHANGELOG_REF: the reference form of existing entries, in the brief line and checked on the entry the diff adds.
 { const cv = await import(join(SRC, "project_model/conventions.ts"));
   const REF_LOG = "Change Log\n==========\n\n## Unreleased\n\n * Fix: Carriage returns are kept. (#2380)\n * Fix: The package slot is kept. (#2382)\n\n## Version 2.4.0\n\n * New: A thing. (#2300)\n * Fix: Another. (#2301)\n";
@@ -572,6 +597,17 @@ eqv tr_entry_missing '{"skipped":"the changelog convention is not written automa
 eqv tr_no_conv null "TR a repo with no release-note convention records nothing"
 eqv tr_off null "TR LOKI_E10_SCAFFOLD_TRACE=0 records no skip reason"
 eqv tr_block '[{"release_note_skipped":"why"},{},{}]' "TR the receipt carries release_note_skipped only when the writer skipped"
+rn de_flag 'flagged: docs that list what the change extends but not the new entry: lib/rules/color/README.md lists' "DE a rule README that lists the rule's options but not the new one is flagged"
+rn de_flag 'but not the new `ignoreFunctions`' "DE the flag names the new option the README lacks"
+rn de_after 'ok:' "DE once the README lists the new option the item is ok"
+rn de_not_enumerating 'ok:' "DE a doc that does not enumerate the options is never flagged"
+eqv de_off none "DE LOKI_E10_DOC_ENUM=0 adds no docs item"
+rn wc_lines '2 | REQUIRED CASE 2 (stated in the issue; write a test that fails before the fix and passes after it): Similar error when wrapping it in `{-1}`.' "WC the stated cases become REQUIRED acceptance lines for the Wall writer"
+eqv wc_marker written "WC the handoff writes the fire-marker file in the run dir"
+eqv wc_off 0 "WC LOKI_E10_WALL_CASES=0 hands nothing to the Wall"
+eqv wc_wall auto "WC with the cases handed and Wall tests written, the cases item reads auto (the Wall checks them, not a token match on the model's tests)"
+eqv wc_no_wall flagged "WC with no Wall run, the token match stays the fallback (the {-1} sentence is not covered)"
+eqv wc_wired yes "WC wiring: the Wall brief carries the required cases; implement passes the run dir to the self-check"
 eqv sc_edge_cases '["block:parse_default","sentence:{-1}"]' "SC the extractor keeps a code block followed by its error and a 'similar error when' sentence with its code token"
 eqv sc_edge "cases=flagged,siblings=ok" "SC a stated '{-1}' edge with no test carrying it is flagged"
 eqv sc_edge_after "cases=ok,siblings=ok" "SC once an added test carries the stated '{-1}' edge, the item is ok"
@@ -598,14 +634,14 @@ eqv on_numbered_task null "ON a task that gives a number: no rename (the mis-num
 eqv on_off null "ON LOKI_E10_ORPHAN_RENAME=0 renames nothing"
 eqv on_flag "changes/1604.bugfix.rst is numbered 1604, a number the task never gives; rename it to the orphan form changes/+<short-slug>.bugfix.rst" "ON the self-check flags an invented fragment number with the orphan name for the review turn"
 eqv tn_brief yes "TN the towncrier brief line names the orphan form for a task with no number and forbids an invented number"
-eqv sr_clean "release_note=ok,stray_files=ok,test=ok,format=ok,scope=ok,cases=ok,siblings=ok" "SR a correct minimal diff (source plus its test, no rule broken) passes every item"
+eqv sr_clean "release_note=ok,stray_files=ok,test=ok,format=ok,scope=ok,docs=ok,cases=ok,siblings=ok" "SR a correct minimal diff (source plus its test, no rule broken) passes every item"
 eqv sr_clean_turn no-turn "SR no churn: a correct minimal diff starts no review turn, so the tree is left untouched and the check costs nothing"
 eqv sr_clean_always turn "SR LOKI_E10_SELF_REVIEW=always runs the turn even on a clean diff"
-eqv sr_flags "release_note=flagged,stray_files=flagged,test=flagged,format=ok,scope=flagged,cases=ok,siblings=ok" "SR flags a missing required changelog entry, a stray file in a new directory, a source change with no test and an edit outside the planned scope"
+eqv sr_flags "release_note=flagged,stray_files=flagged,test=flagged,format=ok,scope=flagged,docs=ok,cases=ok,siblings=ok" "SR flags a missing required changelog entry, a stray file in a new directory, a source change with no test and an edit outside the planned scope"
 eqv sr_flag_turn turn "SR a flagged item starts the one review turn"
 eqv sr_brief yes "SR the review brief carries the contribution rules, the flagged items, the REVIEW reply format and the no-churn rule"
-eqv sr_settled "release_note=fixed,stray_files=fixed,test=unresolved,format=ok,scope=justified,cases=ok,siblings=ok" "SR settling: a flag the after-turn check no longer finds is fixed; a persisting flag is justified only with a stated reason, else unresolved"
-eqv sr_no_turn_settle "release_note=flagged,stray_files=flagged,test=flagged,format=ok,scope=flagged,cases=ok,siblings=ok" "SR with no turn (too little time) the flags stay flagged on the receipt"
+eqv sr_settled "release_note=fixed,stray_files=fixed,test=unresolved,format=ok,scope=justified,docs=ok,cases=ok,siblings=ok" "SR settling: a flag the after-turn check no longer finds is fixed; a persisting flag is justified only with a stated reason, else unresolved"
+eqv sr_no_turn_settle "release_note=flagged,stray_files=flagged,test=flagged,format=ok,scope=flagged,docs=ok,cases=ok,siblings=ok" "SR with no turn (too little time) the flags stay flagged on the receipt"
 eqv sr_parse '[["release_note",{"verdict":"ok","reason":"fine"}],["format",{"verdict":"justified","reason":"matches style"}],["stray_files",{"verdict":"fixed","reason":"x"}]]' "SR REVIEW reply lines parse by item (backticks and case tolerated, unknown items ignored)"
 eqv sr_testfiles "ttttttttssss" "SR the test detector covers Rust tests.rs, a top-level test/ dir, __tests__/, JVM *Test sources, Python, Go and JS layouts, and not source or docs"
 eqv sr_mode "on,off,always,12,4,12" "SR knob: on by default, =0 off, always; the turn cap (cost cap) is 12 unless LOKI_E10_SELF_REVIEW_MAX_TURNS sets a positive integer"

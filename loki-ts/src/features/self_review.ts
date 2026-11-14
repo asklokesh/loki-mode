@@ -1,6 +1,6 @@
 // SR LOKI_E10_SELF_REVIEW: the pre-delivery review self-check. New file: no module owns a review that may EDIT the diff before delivery (stages/xreview.ts is a
 // read-only reviewer that can only lower the verdict, after verify). Deterministic checks first, then at most one bounded resume of the implement session.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { buildArtifacts, runOutputs, type Staged } from "../e10ext/commit_filter.ts";
 import { outsideScope } from "../e10ext/scope.ts";
@@ -20,14 +20,14 @@ export const selfReviewMode = (env: NodeJS.ProcessEnv = process.env): SelfReview
 export const SELF_REVIEW_MAX_TURNS = 12;
 export const selfReviewMaxTurns = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_SELF_REVIEW_MAX_TURNS"] ?? "").trim()); return Number.isInteger(n) && n > 0 ? n : SELF_REVIEW_MAX_TURNS; };
 
-export type ItemKey = "release_note" | "stray_files" | "test" | "format" | "scope" | "cases" | "siblings";
+export type ItemKey = "release_note" | "stray_files" | "test" | "format" | "scope" | "cases" | "siblings" | "docs";
 export type ItemStatus = "ok" | "flagged" | "fixed" | "justified" | "unresolved" | "auto";
 export interface ReviewItem { item: ItemKey; status: ItemStatus; detail: string }
 const SRC_EXT = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|rb|php|cs|swift|scala|c|cc|cpp|h|hpp|ex|exs|clj|dart|lua)$/;
 const STYLE_FILES = [".editorconfig", ".prettierrc", ".prettierrc.json", "prettier.config.js", "biome.json", "rustfmt.toml", ".rustfmt.toml", "ruff.toml", ".ruff.toml", ".flake8", "setup.cfg", "tox.ini", ".golangci.yml", ".golangci.yaml", ".eslintrc", ".eslintrc.json", ".eslintrc.js", "eslint.config.js", "eslint.config.mjs", ".clang-format", ".pre-commit-config.yaml", "checkstyle.xml", ".scalafmt.conf"];
 
 /** The deterministic half: one item per rule, from the staged diff against base. No model call, never throws. */
-export function selfReviewChecks(repoDir: string, baseSha: string, staged: Staged[], task: string, outputs: Partial<Record<string, Obj>>, env: NodeJS.ProcessEnv = process.env): ReviewItem[] {
+export function selfReviewChecks(repoDir: string, baseSha: string, staged: Staged[], task: string, outputs: Partial<Record<string, Obj>>, env: NodeJS.ProcessEnv = process.env, runDir?: string): ReviewItem[] {
   const live = staged.filter(({ st, f }) => (st === "A" || st === "M") && !f.startsWith(".loki/"));
   const files = live.map(({ f }) => f), src = files.filter((f) => SRC_EXT.test(f) && !isTestFile(f)), tests = files.filter((f) => isTestFile(f));
   const items: ReviewItem[] = [];
@@ -56,10 +56,16 @@ export function selfReviewChecks(repoDir: string, baseSha: string, staged: Stage
   const out = (() => { try { return outsideScope(outputs, live); } catch { return null; } })() ?? [];
   const outside = out.filter((f) => !(conv && (f === conv.dir || f.startsWith(`${conv.dir}/`))));
   items.push(outside.length ? { item: "scope", status: "flagged", detail: `edits outside the planned scope: ${outside.slice(0, 8).join(", ")}` } : { item: "scope", status: "ok", detail: "no edit outside the planned scope" });
+  if (docEnumOn(env) && src.length > 0) { // (h) docs that enumerate what the change extends
+    const stale = (() => { try { return docEnumerations(repoDir, baseSha, live); } catch { return []; } })();
+    items.push(stale.length ? { item: "docs", status: "flagged", detail: `docs that list what the change extends but not the new entry: ${stale.slice(0, 4).join("; ")}` } : { item: "docs", status: "ok", detail: "no doc lists what the change extends without the new entry" });
+  }
   if (srCoverageOn(env) && src.length > 0) {
     // (f) stated cases: every case the issue states has an added test that exercises it
     const testText = (() => { try { return [...addedLines(repoDir, baseSha, live.filter(({ f }) => isTestFile(f))).values()].flat().join("\n"); } catch { return ""; } })();
-    const missing = statedCases(task).filter((c) => !caseCovered(c, testText));
+    const handed = wallCasesHanded(runDir), wallRan = Array.isArray(outputs.wall?.files) && (outputs.wall!.files as unknown[]).length > 0;
+    const missing = handed && wallRan ? [] : statedCases(task).filter((c) => !caseCovered(c, testText)); // WC: the Wall's sealed tests, not a token match on the model's own tests
+    if (handed && wallRan) items.push({ item: "cases", status: "auto", detail: `${handed} stated case(s) were handed to the Wall as required cases; its sealed tests check them` }); else
     items.push(missing.length ? { item: "cases", status: "flagged", detail: `stated cases with no added test that exercises them: ${missing.slice(0, 5).map((c) => `[${c.kind}] ${c.text}`).join(" | ")}` } : { item: "cases", status: "ok", detail: "every stated case has an added test, or the issue states none" });
     // (g) sibling definitions: other definitions of a changed function or method that the diff leaves untouched
     const sibs = (() => { try { return siblingDefinitions(repoDir, baseSha, live); } catch { return []; } })();
@@ -68,6 +74,31 @@ export function selfReviewChecks(repoDir: string, baseSha: string, staged: Stage
   return items;
 }
 
+/** DE LOKI_E10_DOC_ENUM (default on, =0 opts out): self-check item (h). A doc beside a changed source file (a Markdown file in its directory, or a docs/ page named
+ *  after its directory or file) that the diff leaves untouched and that already names at least 2 of the option keys or quoted names the source file holds on base,
+ *  while the change adds a new one the doc does not name, is flagged for the review turn. The failure: a change added a secondary option to two rules and left
+ *  each rule's README, which lists every other option, without it; review failed the diff on the missing docs. */
+export const docEnumOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DOC_ENUM"] ?? "").trim());
+const NAME_TOKENS = (text: string): Set<string> => new Set([...text.matchAll(/['"`]([A-Za-z][\w-]{2,39})['"`]|\b([A-Za-z_][\w]{2,39})\s*:/g)].map((m) => (m[1] ?? m[2])!).filter((t) => !/^(?:true|false|null|undefined|this|type|name|value|string|number|default|function|return|const|let|var|import|export|from|https?)$/i.test(t)));
+export function docEnumerations(repoDir: string, baseSha: string, live: Staged[]): string[] {
+  const touched = new Set(live.map(({ f }) => f)), out: string[] = [];
+  let tracked: string[] = []; try { tracked = safeGit(repoDir, ["ls-tree", "-r", "--name-only", baseSha], { maxBuffer: 256 << 20 }).split("\n").filter(Boolean); } catch { return []; }
+  for (const { st, f } of live) {
+    if (st !== "M" || !SRC_EXT.test(f) || isTestFile(f)) continue;
+    let base = ""; try { base = safeGit(repoDir, ["show", `${baseSha}:./${f}`], { maxBuffer: 64 << 20 }); } catch { continue; }
+    const baseTok = NAME_TOKENS(base), added = [...NAME_TOKENS([...addedLines(repoDir, baseSha, [{ st, f }]).values()].flat().join("\n"))].filter((t) => !baseTok.has(t));
+    if (!added.length) continue;
+    const dir = dirname(f), stems = new Set([basename(dir), basename(f).replace(/\.[^.]+$/, "")].filter((s) => s && s !== "." && s !== "index" && s !== "src" && s !== "lib"));
+    const docs = tracked.filter((d) => /\.mdx?$/i.test(d) && !touched.has(d) && (dirname(d) === dir || (/(^|\/)docs?\//.test(d) && stems.has(basename(d).replace(/\.mdx?$/i, "")))));
+    for (const d of docs) {
+      let text = ""; try { text = readFileSync(join(repoDir, d), "utf8"); } catch { continue; }
+      const listed = [...baseTok].filter((t) => text.includes(t));
+      const missing = added.filter((t) => !text.includes(t));
+      if (listed.length >= 2 && missing.length) out.push(`${d} lists ${listed.slice(0, 3).map((t) => `\`${t}\``).join(", ")} from ${f} but not the new ${missing.slice(0, 3).map((t) => `\`${t}\``).join(", ")}`);
+    }
+  }
+  return [...new Set(out)].slice(0, 6);
+}
 /** SC LOKI_E10_SR_COVERAGE (default on, =0 opts out): two more self-check items. (f) Stated cases: the cases the issue states, kept to code blocks that show a
  *  result or an error and four sentence forms ("similar error when ...", "... has the same effect", "both `x` and `y`", "gets neither treatment"); a case is
  *  covered when an added test line carries one of its code tokens, and a sentence with no code token is always flagged for the review turn to cover or justify.
@@ -98,6 +129,21 @@ export function statedCases(task: string): StatedCase[] {
   }
   return out.slice(0, 8);
 }
+/** WC LOKI_E10_WALL_CASES (default on, =0 opts out): the stated cases (statedCases) go to the Wall test writer as REQUIRED acceptance lines, one sealed test each,
+ *  and the handoff is recorded in <runDir>/wall-required-cases.json (the fire marker). When the Wall then wrote tests, the self-check's stated-cases item no longer
+ *  token-matches the model's own tests (which pass when they encode the model's wrong reading) and reads `auto`: the Wall's sealed tests check the cases. With no
+ *  Wall run the token match stays as the fallback. */
+export const wallCasesOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_WALL_CASES"] ?? "").trim());
+const WALL_CASES_FILE = "wall-required-cases.json";
+export function wallRequiredCases(runDir: string, task: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  if (!wallCasesOn(env)) return [];
+  const cases = statedCases(task);
+  if (!cases.length) return [];
+  const lines = cases.map((c, i) => `REQUIRED CASE ${i + 1} (stated in the issue; write a test that fails before the fix and passes after it): ${c.text}`);
+  try { mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, WALL_CASES_FILE), JSON.stringify({ cases: lines })); } catch { /* best effort: the brief still carries them */ }
+  return lines;
+}
+export const wallCasesHanded = (runDir: string | undefined): number => { if (!runDir) return 0; try { return ((JSON.parse(readFileSync(join(runDir, WALL_CASES_FILE), "utf8")) as { cases?: unknown[] }).cases ?? []).length; } catch { return 0; } };
 /** A case is covered when an added test line carries one of its tokens (whitespace-insensitive); a sentence with no code token never counts as covered. */
 export function caseCovered(c: StatedCase, testText: string): boolean {
   if (!c.tokens.length) return false;
@@ -140,7 +186,7 @@ export function siblingDefinitions(repoDir: string, baseSha: string, live: Stage
 }
 
 export const selfReviewWanted = (items: ReviewItem[], mode: SelfReviewMode): boolean => mode === "always" || (mode === "on" && items.some((i) => i.status === "flagged"));
-const LABEL: Record<ItemKey, string> = { release_note: "release note", stray_files: "stray files", test: "test", format: "format", scope: "scope", cases: "stated cases", siblings: "sibling definitions" };
+const LABEL: Record<ItemKey, string> = { release_note: "release note", stray_files: "stray files", test: "test", format: "format", scope: "scope", cases: "stated cases", siblings: "sibling definitions", docs: "docs" };
 
 /** The review turn's brief: the flagged items, the rules text (capped) and the style configs. Asks for edits only where a rule is concretely broken. */
 export function selfReviewBrief(repoDir: string, items: ReviewItem[]): string {
@@ -157,19 +203,20 @@ export function selfReviewBrief(repoDir: string, items: ReviewItem[]): string {
       "(f) stated cases: every case the issue states (each shown reproduction and its result or error, each \"similar ... when\", \"same effect\", \"both ... and ...\" or \"neither\" sentence) is fixed by the change and has a test that exercises it;",
       "(g) sibling definitions: each other definition of a function you changed (an override, a subclass method, a twin code path) either gets the same fix or is left alone for a reason you state.",
     ] : []),
+    ...(items.some((i) => i.item === "docs") ? ["(h) docs: a doc that lists every option, method or name of what you extended also lists the new one, written like its other entries;"] : []),
     "Deterministic checks found:", ...lines,
     "Change nothing that already follows the rules: no rewording, no reformatting of lines you did not change, no new edits beyond fixing a broken rule. If an item cannot or should not be changed, keep it and justify it.",
-    `End your reply with one line per item, exactly: \`REVIEW <a|b|c|d|e${items.some((i) => i.item === "cases" || i.item === "siblings") ? "|f|g" : ""}>: ok|fixed|justified: <short reason>\`, then LOKI_DONE.`,
+    `End your reply with one line per item, exactly: \`REVIEW <a|b|c|d|e${items.some((i) => i.item === "cases" || i.item === "siblings") ? "|f|g" : ""}${items.some((i) => i.item === "docs") ? "|h" : ""}>: ok|fixed|justified: <short reason>\`, then LOKI_DONE.`,
     style.length ? `Style and lint config in this repository: ${style.join(", ")}.` : "",
     guide ? `Contribution rules (CONTRIBUTING and PR template, as written):\n${guide}` : "The repository has no contribution guide or PR template.",
   ].filter(Boolean).join("\n");
 }
 
-const KEY_OF: Record<string, ItemKey> = { a: "release_note", b: "stray_files", c: "test", d: "format", e: "scope", f: "cases", g: "siblings" };
+const KEY_OF: Record<string, ItemKey> = { a: "release_note", b: "stray_files", c: "test", d: "format", e: "scope", f: "cases", g: "siblings", h: "docs" };
 /** The REVIEW lines of the review turn's reply, by item. */
 export function parseReviewLines(reply: string): Map<ItemKey, { verdict: string; reason: string }> {
   const m = new Map<ItemKey, { verdict: string; reason: string }>();
-  for (const x of reply.matchAll(/^[ \t]*`?REVIEW[ \t]+([a-g])[ \t]*:[ \t]*(ok|fixed|justified)[ \t]*:?[ \t]*(.*?)`?[ \t]*$/gim)) m.set(KEY_OF[x[1]!.toLowerCase()]!, { verdict: x[2]!.toLowerCase(), reason: x[3]!.trim().slice(0, 200) });
+  for (const x of reply.matchAll(/^[ \t]*`?REVIEW[ \t]+([a-h])[ \t]*:[ \t]*(ok|fixed|justified)[ \t]*:?[ \t]*(.*?)`?[ \t]*$/gim)) m.set(KEY_OF[x[1]!.toLowerCase()]!, { verdict: x[2]!.toLowerCase(), reason: x[3]!.trim().slice(0, 200) });
   return m;
 }
 /** Final status per item: the after-turn deterministic check wins (a flag it no longer finds is fixed); a flag that persists is justified only with a stated reason. */

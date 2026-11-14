@@ -1,5 +1,5 @@
 // Shared by the commit stage and the supervisor backstop: which staged paths a run must never publish.
-import { existsSync, lstatSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { untouchedSinceIntake } from "./preexisting_dirty.ts"; import { untouchedUntracked } from "../features/untouched_untracked.ts";
 import { installOwned } from "../project_model/install.ts"; import { LOCKFILE_RE as LOCKFILE, toolchainOutputs } from "../util/lock_ecosystems.ts"; export { LOCKFILE };
@@ -82,6 +82,39 @@ export function runOutputs(repoDir: string, added: string[], baseSha?: string, t
   }
   return out;
 }
+/** RD LOKI_E10_REGEN_DROP (default on, =0 opts out): a file only Loki's own checks rewrote is left out of the delivered diff. The machine snapshots the tree around
+ *  every verify run; a path a verify run changed joins <runDir>/regenerated.json, and a path a model stage (wall, implement, fix) later writes leaves it again. At
+ *  commit, a staged path still in that set is left out unless the task names it or one of its changed lines carries a task keyword (a backticked span, or an
+ *  identifier of 5 or more characters the task uses), so a doc a test run regenerated in step with the change stays. The failure: a test run regenerated an
+ *  unrelated doc page with a machine-specific path, the commit shipped it, and review failed the diff as an unrelated edit on a run that read VERIFIED. */
+export const regenDropOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_REGEN_DROP"] ?? "").trim());
+const REGEN_FILE = "regenerated.json";
+export function noteRegenerated(runDir: string, stage: string, paths: string[]): void {
+  if (!paths.length || !["verify", "wall", "implement", "fix"].includes(stage)) return;
+  const p = join(runDir, REGEN_FILE); let set = new Set<string>();
+  try { set = new Set((JSON.parse(readFileSync(p, "utf8")) as { paths?: string[] }).paths ?? []); } catch { /* none yet */ }
+  for (const f of paths) { if (stage === "verify") set.add(f); else set.delete(f); }
+  try { mkdirSync(runDir, { recursive: true }); writeFileSync(p, JSON.stringify({ paths: [...set].sort() })); } catch { /* best effort: no record, nothing dropped */ }
+}
+export const regeneratedPaths = (runDir: string): string[] => { try { return (JSON.parse(readFileSync(join(runDir, REGEN_FILE), "utf8")) as { paths?: string[] }).paths ?? []; } catch { return []; } };
+/** Task keywords a regenerated file's change must carry to stay (see regenDropOn). */
+export function taskKeywords(task: string): Set<string> {
+  const k = new Set<string>([...task.matchAll(/`([^`\n]{2,60})`/g)].map((m) => m[1]!.trim()));
+  for (const m of task.matchAll(/[A-Za-z_][A-Za-z0-9_]{4,}/g)) if (/[_0-9]|[a-z][A-Z]/.test(m[0]) || m[0].length >= 8) k.add(m[0]);
+  return k;
+}
+/** The staged paths to leave out as check-regenerated (RD). `changedLines(f)` gives the added and removed lines of f against base. */
+export function regenDrops(runDir: string, staged: Staged[], task: string, changedLines: (f: string) => string[], env: NodeJS.ProcessEnv = process.env): Staged[] {
+  if (!regenDropOn(env)) return [];
+  const regen = new Set(regeneratedPaths(runDir)); if (!regen.size) return [];
+  const kw = [...taskKeywords(task)];
+  return staged.filter(({ st, f }) => {
+    if (!(st === "A" || st === "M") || !regen.has(f) || f.startsWith(".loki/") || task.includes(f) || task.includes(basename(f))) return false;
+    const lines = changedLines(f).join("\n");
+    return !kw.some((w) => lines.includes(w));
+  });
+}
+export const regenDropNote = (f: string): string => `rewritten only by Loki's own check run, not by the change, and left out of the commit: ${f}`;
 /** One receipt line per build artifact or run output the commit left out. */
 export const buildArtifactNotes = (repoDir: string, droppedAdded: string[], baseSha?: string, task?: string): string[] => {
   const s = new Set<string>([...(buildArtifactDropEnabled() ? buildArtifacts(repoDir, droppedAdded, baseSha, task) : []), ...(runOutputDropEnabled() ? runOutputs(repoDir, droppedAdded, baseSha, task) : [])]);
