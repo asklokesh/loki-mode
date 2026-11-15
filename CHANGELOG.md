@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.141.5 (2026-11-15)
+
+A split issue ends in one pull request, a run can finish inside an outer time limit, a silent run leaves a trace, and a timed-out untouched test is not rerun.
+
+### Added
+- Loki can finish inside an outer time limit. Set `LOKI_RUN_DEADLINE_S` to the seconds your CI job or wrapper allows. The run budgets every stage to that limit, and with about a minute left it seals the current change as "time ran out" (PARTIAL, with a receipt) instead of being killed with nothing. `loki start --max-duration` already sets a fixed run cap; the deadline variable also counts time already spent and leaves a margin. On dev4, 4 runs with a 3600 s budget were killed by a 1200 s bench limit and left no receipt.
+- A run that goes quiet now leaves a trace. After 120 s with no event from the engine, the supervisor records a `watchdog.silent` event naming the last stage and the programs running then (names only, never their arguments). It repeats for each further 120 s. On dev4, gitoxide sat 854 s inside implement with no event at all, so its cause could not be found. `LOKI_E10_WATCHDOG_SILENT_S` sets the interval; `0` turns it off.
+- Off by default until measured (in the code since v11.141.1, first listed here): the pre-delivery review turn can be kept from breaking a test. With `LOKI_E10_REVIEW_TURN_GUARD=1`, when the turn edits anything, Loki reruns the tests of what it changed; if a test that passed before the turn fails after it, only that turn's edits are taken back, the implemented change is kept, and the receipt says which test it broke.
+
+### Changed
+- A split issue now ends in one pull request for the issue, not one per slice. Each slice still runs and verifies on its own branch with its own receipt; Loki then combines them in dependency order on `loki/<issue>-combined`, reruns every slice's sealed Wall and the impacted tests on the combined tree, and opens one PR with a section per slice and one combined receipt whose verdict is the weakest slice's. A conflict gets one bounded resolve session; if it stays unresolved, that slice and those stacked on it open their own PRs and the PR says why. `LOKI_SPLIT_ONE_PR=0` restores one PR per slice, a combined diff over `LOKI_SPLIT_ONE_PR_MAX_FILES` (default 150) falls back to per-slice PRs, and `LOKI_SPLIT_MAX_SLICES` (default 8, at most 32) replaces the fixed cap of 4. Only `loki start owner/repo#N` is wired; `loki issues run` epics still open per-slice PRs.
+
+### Fixed
+- A test file that timed out is not run again in later verifies of the same run when the change does not touch it. Its earlier result is carried, with the reason. A test that ignores the stop signal is now killed a few seconds after its time limit, instead of running minutes past it (dev4 aiohttp: a 60 s limit cost about 160 s in every verify). `LOKI_E10_TIMEOUT_CARRY=0` reruns such tests.
+- Removed claims we no longer make; CLI hints and tour spend notice fixed. Shipped text no longer says "tamper-evident" (the receipt is checked by `loki proof verify` and `loki verify`; the audit logs are hash-chained), the agent docs make no SOC 2 or GDPR compliance claim and give no agent-type count, and the architecture map names no HumanEval figure. The Control Plane hints now say `loki dashboard` (there is no `loki ui`). `loki tour --live` and `loki wow` say they make real model calls and the most they can cost, and ask y/N before spending; `--yes` skips the question, and with no terminal they spend nothing.
+
+### Measured
+- The v11.141.1 note's 19.5 against 16.5 for raw Opus (Loki on Sonnet) was on the tuned 22-task dev set. On fresh sets it measured: dev3 13.0 vs raw Opus 13.0 at 3.7x lower cost; dev4 15.5 vs 16.5 at 4.1x lower cost.
+
 ## v11.141.4 (2026-11-15)
 
 Fixes from a real multi-PR issue run (FireLater#24) and cleaner delivered diffs.
