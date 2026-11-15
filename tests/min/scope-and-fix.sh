@@ -3769,4 +3769,30 @@ while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
 
+# ---------------------------------------------------------------- TIMEOUT-CARRY and TIMEOUT-WAIT (dev4 aiohttp): a timed-out untouched test is not rerun; a timeout costs its limit
+cat > "$T/tcarry.ts" <<'TS'
+const root = process.argv[2]!;
+const vf = await import(root + "/loki-ts/src/engine10/stages/verify.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const t = (path: string) => ({ runner: "pytest", path });
+const prev = [{ name: "pytest:tests/test_proxy_functional.py", cmd: "python -m pytest -q tests/test_proxy_functional.py", result: "not_run", duration_s: 160, reason: "timed out after 60s" }, { name: "pytest:tests/test_client.py", cmd: "x", result: "fail", duration_s: 3 }];
+const c = vf.carriedTimeouts(prev, [t("tests/test_proxy_functional.py"), t("tests/test_client.py")], ["aiohttp/client.py"], new Set());
+res("TIMEOUT-CARRY an untouched test that timed out last verify is carried as not_run, not rerun", c.length === 1 && c[0].name === "pytest:tests/test_proxy_functional.py" && c[0].result === "not_run" && /timed out after 60s; carried from an earlier verify/.test(c[0].reason));
+res("TIMEOUT-CARRY a failing (not timed-out) check is rerun", !c.some((x: { name: string }) => x.name === "pytest:tests/test_client.py"));
+res("TIMEOUT-CARRY a test file the change touched is rerun", vf.carriedTimeouts(prev, [t("tests/test_proxy_functional.py")], ["tests/test_proxy_functional.py"], new Set()).length === 0);
+res("TIMEOUT-CARRY a Wall or task-named test is rerun", vf.carriedTimeouts(prev, [t("tests/test_proxy_functional.py")], [], new Set(["pytest:tests/test_proxy_functional.py"])).length === 0);
+const again = vf.carriedTimeouts(c, [t("tests/test_proxy_functional.py")], [], new Set());
+res("TIMEOUT-CARRY a carried result carries again without repeating the note", again.length === 1 && again[0].reason.split("carried from").length === 2);
+res("TIMEOUT-CARRY =0 reruns everything", vf.carriedTimeouts(prev, [t("tests/test_proxy_functional.py")], [], new Set(), { LOKI_E10_TIMEOUT_CARRY: "0" }).length === 0);
+const t0 = Date.now(), r = await vf.runOnce("bash", ["-c", 'trap "" TERM; sleep 30'], "/tmp", new AbortController().signal, { timeoutMs: 1000 });
+const secs = (Date.now() - t0) / 1000;
+res(`TIMEOUT-WAIT a test that ignores SIGTERM returns soon after its limit (${secs.toFixed(1)} s for a 1 s limit), recorded cut`, r.cut && secs < 15);
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/tcarry.ts" "$ROOT" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "tcarry unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 7 ] || bad "tcarry unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 7"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+
 finish
