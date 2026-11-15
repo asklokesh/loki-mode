@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.141.6 (2026-11-15)
+
+A run stopped by its time limit now always leaves a receipt.
+
+### Fixed
+- A run stopped by its time limit always leaves a receipt. When the engine is stuck and the supervisor's backstop has to stop it, a short seal pass now commits and seals the current tree as PARTIAL with "time ran out", still inside the run's deadline; before, nothing was sealed. `LOKI_E10_BACKSTOP_SEAL=0` restores the old ending.
+
 ## v11.141.5 (2026-11-15)
 
 A split issue ends in one pull request, a run can finish inside an outer time limit, a silent run leaves a trace, and a timed-out untouched test is not rerun.
