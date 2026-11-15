@@ -41,6 +41,13 @@ export const START_LINE = "Loki 10 engine";
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 async function slackEvent(...a: Parameters<typeof import("../util/slack_events.ts").notifyEvent>): Promise<void> { try { await (await import("../util/slack_events.ts")).notifyEvent(...a); } catch { /* best-effort */ } }
 const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "run.resumed", "pr.opened", "log.sealed", "deep.started", "already.attested", "capability.recorded"]); // types only the supervisor may write; same types from the worker are dropped
+/** DEEP-POST (LOKI_E10_DEEP_POST, default on; =0 restores the worker posting its own result, which cannot authenticate): see stages/deep.ts deepPost. */
+export const deepPostOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DEEP_POST"] ?? "").trim());
+/** The poster's argv from the deep worker's: the same runtime and CLI, subcommand deep-post, then run id, the worker pid and the pinned origin. Null when the worker argv has no deep-worker subcommand. */
+export function deepPostArgv(deepArgv: readonly string[], origin: string, pid: number): string[] | null {
+  const k = deepArgv.indexOf("deep-worker"), runId = k >= 0 ? deepArgv[k + 1] : undefined;
+  return k > 0 && runId ? [...deepArgv.slice(0, k), "deep-post", runId, String(pid), origin] : null;
+}
 const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "SPEC_CONFLICT", "FAILED"]);
 const ALIVE_BEAT_MS = 15_000;
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
@@ -208,7 +215,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
       log.append("pr.opened", "pr", { url: out.url, draft: out.draft, existing: out.existing });
       await opts.status?.({ prUrl: out.url }); await slackEvent(env, "pr_opened", { repo: githubRepoFromUrl(origin) ?? undefined, issue: String(opts.started?.["issue_ref"] ?? ""), prUrl: out.url, outcome: verdict }); // D51-A4
       // E-48: deep verify (stages/deep.ts) runs detached, never keeping the supervisor alive; deep.started records the pid so it is never orphaned untracked.
-      if (opts.deepArgv) { let argv: string[] | null = null; try { argv = ulimitArgv([...opts.deepArgv, origin], workerEnv); } catch (e) { notProven.push(`deep verify not spawned: ${(e as Error).message}`); } const [cmd, ...dArgs] = argv ?? [], pid = argv && cmd ? spawnDetached(cmd, dArgs, { cwd: opts.repoDir, env: workerEnv }) : null; if (pid) { log.append("capability.recorded", "deep", { stages: [stageCapability("deep", workerEnv, argv ?? [])] }); log.append("deep.started", "deep", { pid }); } else if (argv) notProven.push("deep verify not spawned"); }
+      if (opts.deepArgv) { let argv: string[] | null = null; try { argv = ulimitArgv([...opts.deepArgv, origin], workerEnv); } catch (e) { notProven.push(`deep verify not spawned: ${(e as Error).message}`); } const poster = deepPostOn(env), deepEnv = poster ? { ...workerEnv, LOKI_E10_DEEP_POSTER: "1" } : workerEnv, [cmd, ...dArgs] = argv ?? [], pid = argv && cmd ? spawnDetached(cmd, dArgs, { cwd: opts.repoDir, env: deepEnv }) : null; if (pid) { log.append("capability.recorded", "deep", { stages: [stageCapability("deep", deepEnv, argv ?? [])] }); log.append("deep.started", "deep", { pid }); /* DEEP-POST: the poster holds the push env and runs no repo code; it outlives the worker, so recording its pid last keeps the run live (deepPid) until the status is posted */ const pArgv = poster ? deepPostArgv(opts.deepArgv, origin, pid) : null, ppid = pArgv ? spawnDetached(pArgv[0]!, pArgv.slice(1), { cwd: opts.repoDir, env }) : null; if (ppid) log.append("deep.started", "deep", { pid: ppid, poster: true }); else if (poster) notProven.push("deep verify result poster not spawned: loki/deep-verify stays pending"); } else if (argv) notProven.push("deep verify not spawned"); }
     }
   }
   const allEvents = readEvents(log.path), folded = fold(allEvents), lokiRoot = join(opts.repoDir, ".loki"), costUsd = runCostUsd(allEvents, log.tampered, lokiRoot), wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null

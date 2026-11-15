@@ -248,7 +248,7 @@ export interface Receipt {
 export type PushArgs =
   | { cmd: "push-pr"; repoDir: string; branch: string; title: string; bodyFile: string; draft: boolean }
   | { cmd: "comment"; runId: string; prUrl: string; file: string }
-  | { cmd: "status"; sha: string; state: "pending" | "success" | "failure"; description: string }
+  | { cmd: "status"; sha: string; state: "pending" | "success" | "failure" | "error"; description: string }
   | { cmd: "issue-comment"; issueRef: string; bodyFile: string; update?: boolean };
 export interface PushEnv { _LOKI_ORIGIN_PINNED: "1"; _LOKI_PINNED_ORIGIN: string; }
 export function pushArgv(a: PushArgs): string[] {

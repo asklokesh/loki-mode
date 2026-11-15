@@ -18,6 +18,7 @@ const TABLE: Record<string, { module: string; fn: string }> = {
   worker: { module: "worker.ts", fn: "main" },
   session: { module: "session.ts", fn: "main" },
   "deep-worker": { module: "stages/deep.ts", fn: "deepWorker" },
+  "deep-post": { module: "stages/deep.ts", fn: "deepPost" },
 };
 export const USAGE = `Usage:
   loki "<task>"                   run the engine on a free-text task
