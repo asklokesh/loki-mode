@@ -2,8 +2,7 @@
 # Anonymous usage telemetry for Loki Mode
 # Collection is ON BY DEFAULT for individual interactive installs, but AUTO-OFF
 # in enterprise / CI / air-gapped contexts (see _loki_telemetry_auto_off), so
-# enterprise + air-gapped deployments stay silent out of the box (GDPR / FedRAMP
-# safe). Only anonymous diagnostics are ever sent (os, arch, version, error type,
+# enterprise + air-gapped deployments stay silent out of the box. Only anonymous diagnostics are ever sent (os, arch, version, error type,
 # sanitized stack signatures); never code, prompts, paths, keys, or repo names.
 # Opt-out (always wins): LOKI_TELEMETRY=off / LOKI_TELEMETRY_DISABLED=true /
 #                        DO_NOT_TRACK=1 / ~/.loki/config: TELEMETRY_DISABLED=true

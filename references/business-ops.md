@@ -257,7 +257,7 @@ Critical: < 6 months
 12. Contact Information
 ```
 
-### Privacy Policy Requirements (GDPR)
+### Privacy Policy Requirements (EU data-protection law)
 ```
 Required Disclosures:
 - [ ] Data controller identity
@@ -273,7 +273,7 @@ Required Disclosures:
 - [ ] DPO contact (if applicable)
 ```
 
-### GDPR Compliance Checklist
+### Data-Protection Checklist (EU law; have counsel review)
 ```
 Data Collection:
 - [ ] Consent mechanism implemented

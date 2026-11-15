@@ -762,7 +762,7 @@ Each role lists its capabilities (the domain tables above are the summary), then
 **Task Types:**
 - `tos`: Generate Terms of Service
 - `privacy-policy`: Create privacy policy
-- `gdpr`: Draft data-protection notices and data-handling docs for legal review
+- `data-protection`: Draft data-protection notices and data-handling docs for legal review
 - `contract`: Create contract template
 - `compliance`: Verify legal compliance
 

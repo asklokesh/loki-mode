@@ -5,7 +5,7 @@ var path = require('path');
 var { AuditLog } = require('./log');
 
 /**
- * SOC 2 Type II control mappings.
+ * Audit-event control mapping A (internal id soc2). Report output names no framework.
  */
 var SOC2_CONTROLS = {
   CC6_1: { name: 'Logical Access', description: 'Access to data and systems is restricted to authorized users' },
@@ -17,7 +17,7 @@ var SOC2_CONTROLS = {
 };
 
 /**
- * ISO 27001 Annex A control mappings.
+ * Audit-event control mapping B (internal id iso27001). Report output names no framework.
  */
 var ISO27001_CONTROLS = {
   'A.9.2': { name: 'User Access Management', description: 'Formal access provisioning and de-provisioning' },
@@ -29,7 +29,7 @@ var ISO27001_CONTROLS = {
 };
 
 /**
- * Map audit actions to SOC 2 controls.
+ * Map audit actions to mapping A controls.
  */
 var ACTION_TO_SOC2 = {
   'agent_start': ['CC6_1', 'CC6_2'],
@@ -45,7 +45,7 @@ var ACTION_TO_SOC2 = {
 };
 
 /**
- * Map audit actions to ISO 27001 controls.
+ * Map audit actions to mapping B controls.
  */
 var ACTION_TO_ISO = {
   'agent_start': ['A.9.2', 'A.12.4'],
@@ -61,13 +61,13 @@ var ACTION_TO_ISO = {
 };
 
 /**
- * Generate a SOC 2 Type II evidence report from audit log entries.
+ * Generate an audit evidence report (mapping A) from audit log entries.
  *
  * @param {object[]} entries - Audit log entries
  * @param {object} [opts]
  * @param {string} [opts.projectName] - Project name for the report
  * @param {string} [opts.period] - Reporting period description
- * @returns {object} Structured SOC 2 report
+ * @returns {object} Structured audit evidence report
  */
 function generateSoc2Report(entries, opts) {
   opts = opts || {};
@@ -103,7 +103,7 @@ function generateSoc2Report(entries, opts) {
   }
 
   return {
-    reportType: 'SOC2_TYPE_II',
+    reportType: 'AUDIT_EVIDENCE_REPORT',
     generatedAt: new Date().toISOString(),
     projectName: opts.projectName || 'Loki Mode',
     period: opts.period || 'Current',
@@ -114,7 +114,7 @@ function generateSoc2Report(entries, opts) {
 }
 
 /**
- * Generate an ISO 27001 mapping report.
+ * Generate an audit evidence report (mapping B) from audit log entries.
  */
 function generateIso27001Report(entries, opts) {
   opts = opts || {};
@@ -148,7 +148,7 @@ function generateIso27001Report(entries, opts) {
   }
 
   return {
-    reportType: 'ISO27001',
+    reportType: 'AUDIT_EVIDENCE_REPORT',
     generatedAt: new Date().toISOString(),
     projectName: opts.projectName || 'Loki Mode',
     period: opts.period || 'Current',
@@ -158,7 +158,7 @@ function generateIso27001Report(entries, opts) {
 }
 
 /**
- * Generate a GDPR data processing record.
+ * Generate a data processing record (mapping C) from audit log entries.
  */
 function generateGdprReport(entries, opts) {
   opts = opts || {};
@@ -185,7 +185,7 @@ function generateGdprReport(entries, opts) {
   }
 
   return {
-    reportType: 'GDPR_DATA_PROCESSING_RECORD',
+    reportType: 'DATA_PROCESSING_RECORD',
     generatedAt: new Date().toISOString(),
     projectName: opts.projectName || 'Loki Mode',
     controller: opts.controller || 'Organization',

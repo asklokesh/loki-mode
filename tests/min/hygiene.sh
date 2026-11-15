@@ -24,10 +24,13 @@
 #
 # Sixth check: claims Loki no longer makes never come back in shipped text (CHANGELOG.md keeps
 # history verbatim; .gitignore names a generated directory): "tamper-evident" (the receipt is
-# signed and `loki verify` re-checks it offline; the audit logs are hash-chained), "SOC 2" (no
-# compliance claim; src/audit/compliance.js maps audit events to SOC 2 control ids and is the one
-# allowed file) and "HumanEval" (no benchmark figure). Planted defect: add "tamper-evident" to
-# README.md, then "SOC 2" to references/agent-types.md; each must be reported by file and line.
+# signed and `loki verify` re-checks it offline; the audit logs are hash-chained) and "HumanEval"
+# (no benchmark figure) in any tracked text; and no compliance claim ("SOC 2", "SOC2", "GDPR", any
+# case) in user-facing text: every markdown file, agents/*.json, and the echo/printf lines of the
+# bash CLI. No file is allowed. Code identifiers (the soc2/iso27001/gdpr report ids in src/audit,
+# dashboard/server.py and swarm/) are not user-facing and are not scanned; the report output itself
+# names no framework. Planted defects: add "tamper-evident" to README.md, then "SOC2" to
+# agents/types.json, then echo "GDPR ready" to autonomy/loki; each must be reported by file and line.
 #
 # Fifth check: every loki-ts/src path named in any tracked text file (code comments included, not
 # only docs) exists, so a deleted module cannot live on as a pointer or a mirror note.
@@ -235,7 +238,12 @@ esac
 
 claims_out="$(python3 -I - <<'PY'
 import re, subprocess
-CLAIMS = [(re.compile(r"tamper-evident", re.I), ()), (re.compile(r"SOC 2"), ("src/audit/compliance.js",)), (re.compile(r"HumanEval"), (".gitignore",))]
+CLAIMS = [(re.compile(r"tamper-evident", re.I), ()), (re.compile(r"HumanEval"), (".gitignore",))]
+COMPLIANCE = re.compile(r"SOC ?2|GDPR", re.I)
+def user_facing(f, line):
+    if f.endswith(".md") or (f.startswith("agents/") and f.endswith(".json")):
+        return True
+    return f == "autonomy/loki" and re.match(r"\s*(echo|printf)\b", line) is not None
 files = [f for f in subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"]).decode().split("\0")
          if f and f not in ("CHANGELOG.md", "tests/min/hygiene.sh")]
 hits, scanned = [], 0
@@ -252,7 +260,9 @@ for f in files:
         for rx, allowed in CLAIMS:
             if f not in allowed and rx.search(line):
                 hits.append("%s:%d (%s)" % (f, n, rx.pattern))
-print(("OK no shipped text claims tamper-evident, SOC 2 or a HumanEval figure (%d files)" % scanned) if not hits
+        if COMPLIANCE.search(line) and user_facing(f, line):
+            hits.append("%s:%d (compliance claim)" % (f, n))
+print(("OK no shipped text claims tamper-evident or a HumanEval figure, and no user-facing text makes a SOC 2, SOC2 or GDPR claim (%d files)" % scanned) if not hits
       else "NO %d line(s) bring back a dropped claim: %s" % (len(hits), " ".join(hits[:15])))
 PY
 )"

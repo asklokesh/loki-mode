@@ -5609,7 +5609,7 @@ async def get_audit_summary(days: int = 7):
 # it always reflects live state -- never a stale cached snapshot.
 #
 # The report is produced by the authoritative Node compliance engine
-# (src/audit/index.js, the single source of truth for SOC2/ISO/GDPR control
+# (src/audit/index.js, the single source of truth for the audit control
 # mappings) via its `report` CLI shim, so the Python surface never
 # reimplements (and never drifts from) the mapping logic. The chain it reads
 # is the JS AGENT chain at <project>/.loki/audit/audit.jsonl -- a different
@@ -5631,7 +5631,9 @@ def get_compliance_status(request: Request, report_type: str = Query("soc2", ali
     .loki-backed read endpoints; there is no DB tenant_id on a JSONL file
     to enforce against.
 
-    Query: ?type=soc2|iso27001|gdpr (default soc2).
+    Query: ?type=<control set id> (one of _COMPLIANCE_TYPES; default the first).
+    The ids are internal names for three audit-event control mappings; the report
+    is an audit evidence report and makes no compliance claim.
 
     Returns the compliance report JSON regenerated from CURRENT audit
     state on every call. If no audit data has been recorded the report is

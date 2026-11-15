@@ -25209,7 +25209,7 @@ if (res.valid) {
     return $?
 }
 
-# loki compliance - periodic compliance snapshot (SOC2 / ISO27001 / GDPR).
+# loki compliance - periodic audit evidence snapshot (three audit-event control mappings).
 # The scheduler is default-disabled (LOKI_COMPLIANCE_SNAPSHOT_INTERVAL_HOURS
 # unset or 0). `loki compliance snapshot` runs the self-rate-limiting check;
 # `--force` generates a snapshot now regardless of interval/elapsed gate.
@@ -25307,7 +25307,8 @@ process.exit(0);
             echo "  help                       Show this help"
             echo ""
             echo "The compliance scheduler is default-disabled. A snapshot bundles the"
-            echo "SOC2, ISO27001 and GDPR reports plus the audit chain-integrity verdict"
+            echo "audit evidence reports (three audit-event control mappings, no compliance"
+            echo "claim) plus the audit chain-integrity verdict"
             echo "into .loki/audit/compliance-snapshots/. Enable periodic generation by setting"
             echo "LOKI_COMPLIANCE_SNAPSHOT_INTERVAL_HOURS, or run with --force on demand."
             ;;
