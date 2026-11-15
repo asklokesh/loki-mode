@@ -374,6 +374,20 @@ PRSTATUS="$(printf '%s' "$OUT" | python3 -I -c 'import sys; sys.path.insert(0, s
 echo "    pr mode: backlog reads: $PRSTATUS"
 case "$PRSTATUS" in "True PARTIAL, PR local:///"*"#loki/25-combined") ok "pr mode: backlog counts the PARTIAL split with its combined PR as done" ;; *) bad "pr mode: backlog reads the PR-mode split as: $PRSTATUS" ;; esac
 
+# --- backlog, PR mode: `loki backlog` with its real launcher on a local bare origin (LOKI_BACKLOG_LOCAL_ORIGIN=1) ends the split issue in ONE PR ---
+BP="$T/backlog-pr"
+make_repo "$BP" 0
+git init -q --bare "$T/backlog-pr-origin.git"
+git -C "$BP" remote add origin "$T/backlog-pr-origin.git"
+git -C "$BP" push -q origin main
+LOKI_BACKLOG_LOCAL_ORIGIN=1 E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" run_loki "$BP" "$T/backlog-pr-stub.log" backlog acme/search --issues 25 --concurrency 1
+printf '%s\n' "$OUT" | grep -E '^(backlog: #25 [A-Z]|#25 |Total:)' | sed 's/^/    backlog pr: /'
+[ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -Eq '^#25 +(\$[0-9.]+|unmeasured) +[0-9]+[sm] +PARTIAL, PR local:///.+#loki/25-combined$' && printf '%s\n' "$OUT" | grep -Eq '^Total: 1 done, 0 not done; 1 PR\(s\); ' \
+    && [ "$(git --git-dir="$T/backlog-pr-origin.git" log --format=%s main..loki/25-combined 2>/dev/null | wc -l | tr -d ' ')" = 2 ] \
+    && ok "backlog pr mode: the issue ends as one row with ONE PR (loki/25-combined, 2 slice commits, on the local bare origin) and the Total counts 1 PR" || { bad "backlog pr mode: exit $RC"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; tail -12 "$BP-backlog/logs/issue-25.log" 2>/dev/null | sed 's/^/    log| /'; }
+[ -n "$(find "$BP-backlog/receipts/issue-25" -name epic.json 2>/dev/null | head -1)" ] && [ ! -d "$BP-backlog/issue-25" ] \
+    && ok "backlog pr mode: the split's epic record and receipts are kept under <checkout>-backlog/receipts after the worktree is removed" || bad "backlog pr mode: no epic.json kept under $BP-backlog/receipts/issue-25"
+
 # --- PR mode, one slice stops on its own SPEC_CONFLICT while the others open PRs: the split is PARTIAL (exit 6), not FAILED ---------
 # LOKI_SPLIT_ONE_PR=0: the per-slice PR path stays covered end to end (the one-PR default is the pr mode leg above).
 C2="$T/conflict-split"

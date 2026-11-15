@@ -13,6 +13,9 @@
 #   backlog run:     only implement issues launch (each child gets LOKI_TRIAGE_CLASS/REASON), every
 #                    spec issue gets .loki/specs/<slug>.md plus the exact `loki start --spec` command,
 #                    human issues are listed with the reason; --issues fetches bodies with gh issue view.
+#   many at once:    one row per issue (cost, time, result, its one PR or its PR count and why), one Total line (done,
+#                    not done, PRs, cost, time), child output only in the per-issue log, receipts kept, --slots shared
+#                    with a split's slices, SIGTERM still prints the rows (exit 130), a local bare origin only by opt-in.
 #                    The large epic launches like any implement issue (the engine splits it: see
 #                    tests/min/decompose-and-intake.sh); only the vague issues get a drafted spec.
 #   jira:            `loki backlog jira:PROJ` (or jira:proj) lists a project's open items from an offline Jira stand-in
@@ -42,6 +45,10 @@
 #      checks fail (checklist4 is large to triage but not to deliverables).
 #   5. loki-ts/src/features/triage.ts triageItem: route large to class "spec" again: issue 8 is drafted
 #      instead of launched and the classifier, dry run and backlog run checks fail.
+#   6. autonomy/lib/backlog.py pr_urls: return only the first PR url and no count (the old first-PR-line read): the
+#      8 PRs row and the Total PR count fail.
+#   7. autonomy/lib/backlog.py main: put sys.exit(130) back in the signal handler: the interrupt rows and Total fail.
+#   8. autonomy/lib/backlog.py finish: drop keep_receipts: the receipts check fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -153,11 +160,84 @@ for n in 4 5; do
     [ -n "$f" ] && [ -f "$REPO/$f" ] && head -1 "$REPO/$f" | grep -q 'loki-spec v1' && ok "backlog run: #$n prints the exact command for its drafted spec" || bad "backlog run: #$n has no runnable spec command: $line"
 done
 for n in 7; do
-    printf '%s\n' "$run" | grep -Eq "^#$n +- +HUMAN: .+" && ok "backlog run: #$n listed as HUMAN with its reason" || bad "backlog run: #$n not listed as HUMAN"
+    printf '%s\n' "$run" | grep -Eq "^#$n +- +- +HUMAN: .+" && ok "backlog run: #$n listed as HUMAN with its reason" || bad "backlog run: #$n not listed as HUMAN"
 done
 sel="$(cd "$REPO" && TRIAGE_GH_LOG="$T/gh.log" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 4,7 --dry-run 2>&1)"
 grep -q 'gh issue view 4' "$T/gh.log" 2>/dev/null && printf '%s\n' "$sel" | grep -q '^backlog: #4 spec ' && printf '%s\n' "$sel" | grep -q '^backlog: #7 human ' \
     && ok "backlog --issues: bodies fetched with gh issue view and triaged" || bad "backlog --issues: not triaged from fetched bodies"
+
+# 4a. many issues at once: one row per issue (cost, time, result, its PR or PR count), one Total line, quiet output,
+#     receipts kept, --slots shared with a split's slices, an interrupt still prints the rows, a local bare origin by opt-in
+mkrepo many
+cat > "$T/many-launcher" <<'EOF'
+#!/usr/bin/env bash
+n="${1##*#}"
+echo "$n epic_parallel=${LOKI_EPIC_PARALLEL:-unset}" >> "$LAUNCH_LOG"
+echo "NOISE from run $n"
+mkdir -p ".loki/runs/r$n" && echo '{"verdict":"x"}' > ".loki/runs/r$n/receipt.json"
+case "$n" in
+  1) printf 'Outcome:    VERIFIED\nPR:         local:///o.git#loki/1\nCost:       $0.50 (claude)\n' ;;
+  2) printf 'Outcome:    PARTIAL\n'; for k in 1 2 3 4 5; do printf 'PR:         https://github.com/example/calc/pull/%s\n' "$k"; done
+     printf 'PR:         (+3 more, one per slice; listed in the epic tree above)\nCombined:   no combined PR: combined PR not opened (push refused); opened one PR per slice\nCost:       $1.00 (claude)\n'; exit 6 ;;
+  3) printf 'Outcome:    FAILED\nReason:     boom\n'; exit 1 ;;
+  *) printf 'Outcome:    VERIFIED\n' ;;
+esac
+EOF
+chmod +x "$T/many-launcher"
+many="$(cd "$REPO" && LOKI_BACKLOG_LAUNCHER="$T/many-launcher" LAUNCH_LOG="$T/many.log" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 1,2,3,6 --concurrency 2 2>&1)"; rc=$?
+printf '%s\n' "$many" | sed -n '/^Summary:/,$p' | sed 's/^/    many: /'
+[ "$rc" -eq 1 ] && ok "many: exit 1 when one of four issues failed" || bad "many: exit $rc, want 1"
+printf '%s\n' "$many" | grep -Eq '^#1 +\$0\.50 +[0-9]+s +PR local:///o\.git#loki/1$' && ok "many: an issue that ended in one PR prints one row: cost, time and that PR" || bad "many: #1 row: $(printf '%s\n' "$many" | grep '^#1 ')"
+printf '%s\n' "$many" | grep -Eq '^#2 +\$1\.00 +[0-9]+s +PARTIAL, 8 PRs \(no combined PR: combined PR not opened \(push refused\); opened one PR per slice\), first https://github.com/example/calc/pull/1$' \
+    && ok "many: an issue that fell back to one PR per slice says 8 PRs and why, never one PR" || bad "many: #2 row: $(printf '%s\n' "$many" | grep '^#2 ')"
+printf '%s\n' "$many" | grep -Eq '^#3 +unmeasured +[0-9]+s +FAILED: boom$' && printf '%s\n' "$many" | grep -Eq '^#6 +unmeasured +[0-9]+s +VERIFIED$' && ok "many: a failed and a PR-less row each print their result" || bad "many: #3 or #6 row wrong"
+printf '%s\n' "$many" | grep -Eq '^Total: 3 done, 1 not done; 9 PR\(s\); cost \$1\.50 \(2 run\(s\) unmeasured, not counted as \$0\); time [0-9]+s$' \
+    && ok "many: one Total line: done, not done, PRs, cost, time" || bad "many: total: $(printf '%s\n' "$many" | grep '^Total')"
+[ "$(printf '%s\n' "$many" | grep -c NOISE)" = 0 ] && grep -q 'NOISE from run 2' "$REPO-backlog/logs/issue-2.log" && printf '%s\n' "$many" | grep -Fq "backlog: #2 running (log: $REPO-backlog/logs/issue-2.log)" \
+    && ok "many: child output stays in the per-issue log, and the running line names that log" || bad "many: child output leaked or the log path is not printed"
+[ -f "$REPO-backlog/receipts/issue-1/r1/receipt.json" ] && [ ! -d "$REPO-backlog/issue-1" ] && [ -f "$REPO-backlog/receipts/issue-3/r3/receipt.json" ] && [ -d "$REPO-backlog/issue-3" ] \
+    && ok "many: a finished run's receipts are kept after its worktree is removed (a failed run keeps both)" || bad "many: receipts not kept under $REPO-backlog/receipts"
+[ "$(grep -c 'epic_parallel=unset' "$T/many.log")" = 4 ] && ok "many: without --slots a child keeps the engine's slice parallelism" || bad "many: LOKI_EPIC_PARALLEL set without --slots: $(tr '\n' ';' < "$T/many.log")"
+: > "$T/many.log"
+(cd "$REPO" && LOKI_BACKLOG_LAUNCHER="$T/many-launcher" LAUNCH_LOG="$T/many.log" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 1,6 --concurrency 2 --slots 4 >/dev/null 2>&1)
+(cd "$REPO" && LOKI_EPIC_PARALLEL=3 LOKI_BACKLOG_LAUNCHER="$T/many-launcher" LAUNCH_LOG="$T/many.log" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 1 --concurrency 2 --slots 4 >/dev/null 2>&1)
+[ "$(sort "$T/many.log" | tr '\n' ';')" = "1 epic_parallel=2;1 epic_parallel=3;6 epic_parallel=2;" ] && ok "many: --slots 4 at concurrency 2 gives each split 2 slices at once; an exported LOKI_EPIC_PARALLEL wins" || bad "many: --slots not shared: $(sort "$T/many.log" | tr '\n' ';')"
+# interrupt: SIGTERM stops the running child, never starts the queued one, and still prints the rows and the Total
+cat > "$T/slow-launcher" <<'EOF'
+#!/usr/bin/env bash
+echo $$ > "$SLOW_PID"
+printf 'PR:         local:///o.git#loki/early\n'
+exec sleep 300
+EOF
+chmod +x "$T/slow-launcher"
+(cd "$REPO" && LOKI_BACKLOG_LAUNCHER="$T/slow-launcher" SLOW_PID="$T/slow.pid" LOKI_BACKLOG_HEARTBEAT_S=1 LOKI_BACKLOG_STOP_GRACE_S=5 exec python3 -I "$ROOT/autonomy/lib/backlog.py" example/calc --issues 1,2 --concurrency 1 > "$T/stop.out" 2>&1) & BPID=$!
+for _ in $(seq 1 100); do grep -q '^backlog: 1 running' "$T/stop.out" 2>/dev/null && break; python3 -I -c 'import time; time.sleep(0.1)'; done
+kill -TERM "$BPID" 2>/dev/null; wait "$BPID"; rc=$?
+sed -n '/interrupted (signal/,$p' "$T/stop.out" | sed 's/^/    stop: /'
+grep -Eq '^backlog: 1 running \(#1 [0-9]+s\), 1 queued, 0 finished, [0-9]+s elapsed$' "$T/stop.out" && ok "many: a heartbeat line names what still runs, what is queued and the time" || bad "many: no heartbeat line"
+[ "$rc" -eq 130 ] && grep -Eq '^#1 +unmeasured +[0-9]+s +STOPPED: interrupted, PR local:///o\.git#loki/early; worktree kept at ' "$T/stop.out" && grep -Eq '^#2 +- +- +NOT STARTED: interrupted$' "$T/stop.out" \
+    && grep -Eq '^Total: 0 done, 2 not done; 1 PR\(s\); cost \$0\.00 \(1 run\(s\) unmeasured, not counted as \$0\); time [0-9]+s$' "$T/stop.out" \
+    && ok "many: an interrupted backlog exits 130 and still prints every row and the Total" || bad "many: interrupt: exit $rc: $(tail -4 "$T/stop.out" | tr '\n' ';')"
+spid="$(cat "$T/slow.pid" 2>/dev/null)"
+[ -n "$spid" ] && ! kill -0 "$spid" 2>/dev/null && ok "many: the interrupted child is stopped, not orphaned" || { bad "many: child ${spid:-unknown} still runs after the interrupt"; kill "$spid" 2>/dev/null; }
+# local bare origin: refused by default, accepted with LOKI_BACKLOG_LOCAL_ORIGIN=1, and only when origin really is a bare repo
+git init -q --bare "$T/many-origin.git"
+git -C "$REPO" remote set-url origin "$T/many-origin.git"
+lo="$(cd "$REPO" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 1 --dry-run 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && has "many: a local bare origin is refused by default" "$lo" "this checkout's origin is 'unknown', not example/calc" || bad "many: local origin without the opt-in: exit $rc: $lo"
+lo="$(cd "$REPO" && LOKI_BACKLOG_LOCAL_ORIGIN=1 ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 1 --dry-run 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && has "many: LOKI_BACKLOG_LOCAL_ORIGIN=1 accepts a checkout whose origin is a local bare repository" "$lo" "backlog: #1 implement" || bad "many: local origin with the opt-in: exit $rc: $lo"
+git -C "$REPO" remote set-url origin "$T/base"
+lo="$(cd "$REPO" && LOKI_BACKLOG_LOCAL_ORIGIN=1 ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 1 --dry-run 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && ok "many: the opt-in still refuses an origin that is not a bare repository" || bad "many: a non-bare local origin was accepted (exit $rc)"
+for u in "file://$T/many-origin.git" "https://github.com/other/calc.git" "git@github.com:other/calc.git" "many-origin.git" "localhost:$T/many-origin.git"; do
+    git -C "$REPO" remote set-url origin "$u"
+    lo="$(cd "$REPO" && LOKI_BACKLOG_LOCAL_ORIGIN=1 ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 1 --dry-run 2>&1)"; rc=$?
+    [ "$rc" -eq 2 ] && has "many: the opt-in refuses origin ${u%%"$T"*}... (only an absolute path to a bare repository is accepted)" "$lo" "not example/calc; cd into a checkout of example/calc" || bad "many: origin $u was accepted with the opt-in (exit $rc)"
+done
+git -C "$REPO" remote set-url origin https://github.com/example/calc.git
+lo="$(cd "$REPO" && LOKI_BACKLOG_LOCAL_ORIGIN=1 ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 1 --dry-run 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "many: with the opt-in a GitHub origin of the named repo still works as before" || bad "many: GitHub origin with the opt-in: exit $rc"
 
 # 4b. Jira: list, triage and run a project's items from an offline Jira stand-in (no real credentials)
 mkrepo jira

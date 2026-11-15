@@ -214,6 +214,12 @@ LOKI_GITHUB_IMPORT=true loki start        # drains .loki/queue sequentially
 
 ### Concurrent (one isolated run PER issue)
 
+The one-command way: `loki backlog owner/repo --issues 101,102,103 --concurrency 2`
+gives each issue its own worktree and branch, keeps each run's output in its own
+log, and ends with one row per issue (cost, time, result, pull request) and one
+`Total:` line (done, not done, pull requests, cost, time). `--dry-run` shows what
+would run. The manual loop below does the same by hand.
+
 To run N issues at the SAME time, each run needs its OWN git worktree AND its
 OWN state dir. `--pr`/`--worktree` isolates the git branch, but two runs in the
 same checkout still share one `.loki/` unless you also set a distinct `LOKI_DIR`.
