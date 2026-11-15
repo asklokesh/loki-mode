@@ -3798,18 +3798,26 @@ const vf = await import(root + "/loki-ts/src/engine10/stages/verify.ts");
 const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
 const touched = new Set(["packages/router-core/src/router.ts", "packages/router-core/tests/x.test.ts"]);
 const out = "scripts/benchmarks/bundle-size/analyze.mjs(27,46): error TS7006: Parameter 'item' implicitly has an 'any' type.\nFound 1 error.\n";
-res("LINT-UNTOUCHED a tsc error only in a file the change did not touch is disclosed, not blocking", vf.tscUntouchedOnly(out, ".", touched, ["matchRoutes"]));
-res("LINT-UNTOUCHED a tsc error in a touched file still caps", !vf.tscUntouchedOnly("packages/router-core/src/router.ts(10,3): error TS2322: Type 'x' is not assignable.\n", ".", touched, []));
-res("LINT-UNTOUCHED a package-relative path is joined with the package dir before the touched check", !vf.tscUntouchedOnly("src/router.ts(10,3): error TS2322: bad.\n", "packages/router-core", touched, []));
-res("LINT-UNTOUCHED an error naming a changed symbol still caps (the change can break an importer)", !vf.tscUntouchedOnly("src/other.ts(4,1): error TS2339: Property 'matchRoutes' does not exist on type 'Router'.\n", ".", touched, ["matchRoutes"]));
-res("LINT-UNTOUCHED a changed tsconfig or linter config still caps", !vf.tscUntouchedOnly(out, ".", new Set([...touched, "tsconfig.json"]), []));
-res("LINT-UNTOUCHED an error line that does not parse still caps (fail-closed)", !vf.tscUntouchedOnly(out + "weird.ts: error TS1005: ';' expected.\n", ".", touched, []));
-res("LINT-UNTOUCHED a tail cut at its cap still caps", !vf.tscUntouchedOnly(out + "x".repeat(60000), ".", touched, []));
+// Every refusing leg passes a base output equal to the head output, so only the rule under test can refuse.
+const same = (o: string, pkg: string, t: Set<string>, syms: string[]) => vf.tscUntouchedOnly(o, pkg, t, syms, o);
+res("LINT-UNTOUCHED a tsc error only in a file the change did not touch, and already on base, is disclosed, not blocking", same(out, ".", touched, ["matchRoutes"]));
+res("LINT-UNTOUCHED a tsc error in a touched file still caps", !same("packages/router-core/src/router.ts(10,3): error TS2322: Type 'x' is not assignable.\n", ".", touched, []));
+res("LINT-UNTOUCHED a package-relative path is joined with the package dir before the touched check", !same("src/router.ts(10,3): error TS2322: bad.\n", "packages/router-core", touched, []));
+res("LINT-UNTOUCHED an error naming a changed symbol still caps (the change can break an importer)", !same("src/other.ts(4,1): error TS2339: Property 'matchRoutes' does not exist on type 'Router'.\n", ".", touched, ["matchRoutes"]));
+res("LINT-UNTOUCHED a changed tsconfig or linter config still caps", !same(out, ".", new Set([...touched, "tsconfig.json"]), []));
+res("LINT-UNTOUCHED an error line that does not parse still caps (fail-closed)", !same(out + "weird.ts: error TS1005: ';' expected.\n", ".", touched, []));
+res("LINT-UNTOUCHED a tail cut at its cap still caps", !same(out + "x".repeat(60000), ".", touched, []));
 res("LINT-UNTOUCHED on by default, =0 opts out", vf.lintUntouchedOn({}) && !vf.lintUntouchedOn({ LOKI_E10_LINT_UNTOUCHED: "0" }));
+// A changed signature breaks an untouched importer; the message names only types, so the symbol rule cannot see it. Base is green for that line: it caps.
+const importer = "packages/other/src/caller.ts(12,9): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.\n";
+res("LINT-UNTOUCHED an untouched importer broken by the change (types-only message, not on base) still caps", !vf.tscUntouchedOnly(out + importer, ".", touched, ["matchRoutes"], out));
+res("LINT-UNTOUCHED base clean for the file still caps", !vf.tscUntouchedOnly(out, ".", touched, ["matchRoutes"], ""));
+res("LINT-UNTOUCHED no base output still caps (fail-closed)", !vf.tscUntouchedOnly(out, ".", touched, ["matchRoutes"], null));
+res("LINT-UNTOUCHED the same file and code on base with another message still caps", !vf.tscUntouchedOnly(out, ".", touched, [], out.replace("'item'", "'other'")));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/acc174.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "acc174 unit script crashed or exited non-zero"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 8 ] || bad "acc174 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 8"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 12 ] || bad "acc174 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 12"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

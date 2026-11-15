@@ -515,18 +515,26 @@ function tscLocalKeys(out: string, pkgRel: string, keep: ReadonlySet<string>, ch
   return found.every((m) => TSC_LOCAL.has(m[2]!) && !keep.has(join(pkgRel === "." ? "" : pkgRel, m[1]!.trim()))) ? found.map((m) => `${m[1]!.trim()}|${m[2]}`) : null;
 }
 /** LINT-UNTOUCHED (acc-174, LOKI_E10_LINT_UNTOUCHED default on, =0 opts out): a failed project-wide `tsc --noEmit` whose every diagnostic sits in a file the change
- *  neither touched nor the task named, with no compiler or linter config changed, and no changed symbol named anywhere in the output, cannot be the change's own error:
- *  it is disclosed, never a cap (dev2: router's lint:tsc red in scripts/benchmarks/bundle-size/analyze.mjs, immutable's TS8010 in type-definitions/flow-tests). It reads
- *  the whole output, so an unparsed error line or a tail cut at its cap keeps the check blocking (fail-closed). Only tsc lints the whole project; eslint, ruff and
- *  shellcheck run on the changed files, so their diagnostics are always in touched files and keep capping. */
+ *  neither touched nor the task named, with no compiler or linter config changed, no changed symbol named anywhere in the output, AND every diagnostic line present
+ *  verbatim in `baseOut` (the same tsc run on the base snapshot, tscOnBase) is not the change's own error: it is disclosed, never a cap (dev2: router's lint:tsc red in
+ *  scripts/benchmarks/bundle-size/analyze.mjs, immutable's TS8010 in type-definitions/flow-tests). The base comparison is what makes it sound: a changed signature can
+ *  break an untouched importer with a message that names only types (TS2345), and that line is not on base. Fail-closed: no base output, an unparsed error line or a
+ *  tail cut at its cap keeps the check blocking. Only tsc lints the whole project; eslint, ruff and shellcheck run on the changed files and keep capping. */
 export const LINT_UNTOUCHED_NOTE = "lint red only in files the change did not touch (disclosed, not blocking)";
 export const lintUntouchedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_LINT_UNTOUCHED"] ?? "").trim());
-export function tscUntouchedOnly(out: string, pkgRel: string, touched: ReadonlySet<string>, symbols: readonly string[]): boolean {
+const tscLines = (out: string): string[] => out.split("\n").map((l) => l.trim()).filter((l) => /error TS\d+/.test(l));
+/** The half of tscUntouchedOnly that needs no base run: the whole output parses, no config changed, no diagnostic in a touched file, no changed symbol named. */
+function tscUntouchedShape(out: string, pkgRel: string, touched: ReadonlySet<string>, symbols: readonly string[]): boolean {
   if (out.length >= 60000 || [...touched].some((f) => LINT_CONFIG.test(f))) return false;
   const found = [...out.matchAll(TSC_DIAG)];
   if (found.length === 0 || found.length !== (out.match(/error TS\d+/g) ?? []).length) return false;
   if (found.some((m) => touched.has(join(pkgRel === "." ? "" : pkgRel, m[1]!.trim())))) return false;
   return !symbols.some((sym) => sym.length > 2 && new RegExp(`\\b${escapeRegex(sym)}\\b`).test(out));
+}
+export function tscUntouchedOnly(out: string, pkgRel: string, touched: ReadonlySet<string>, symbols: readonly string[], baseOut: string | null): boolean {
+  if (baseOut === null || !tscUntouchedShape(out, pkgRel, touched, symbols)) return false;
+  const base = new Set(tscLines(baseOut));
+  return tscLines(out).every((l) => base.has(l));
 }
 /** The same `tsc --noEmit` on a pristine detached base worktree with the head's dependency dirs linked (the package's and the repo root's); null when base cannot be checked (fail closed). */
 async function tscOnBase(ctx: RunContext, groupCwd: string, signal: AbortSignal, opts: RunOpts): Promise<string | null> {
@@ -575,7 +583,7 @@ export async function runLintChecks(
   // FC-01: tsc and eslint belong to the package that owns the file: config lookup, cwd and file paths are per package.
   for (const g of groupByPackage(api, ctx.repoDir, changed.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f)))) {
     const sfx = g.root === "." ? "" : `:${g.root}`, co = g.root === "." ? opts : { ...opts, cwd: g.cwd };
-    if (existsSync(join(g.cwd, "tsconfig.json"))) { const c = await runCheck(ctx, `lint:tsc${sfx}`, "npx", ["--no-install", "tsc", "--noEmit", "-p", "."], signal, checks, { ...co, kind: "static" }); if (c.result === "fail" && keep && tscLocalKeys(tscOut.get(c) ?? "", g.root, keep, [...keep]) && tscUntouchedLocal(tscOut.get(c) ?? "", g.root, keep, [...keep], await tscOnBase(ctx, g.cwd, signal, co))) pre.push(c.name); else if (c.result === "fail" && keep && untouched && lintUntouchedOn() && tscUntouchedOnly(tscOut.get(c) ?? "", g.root, keep, diffSymbols(ctx, [...keep]))) untouched.push(c.name); }
+    if (existsSync(join(g.cwd, "tsconfig.json"))) { const c = await runCheck(ctx, `lint:tsc${sfx}`, "npx", ["--no-install", "tsc", "--noEmit", "-p", "."], signal, checks, { ...co, kind: "static" }); if (c.result === "fail" && keep && tscLocalKeys(tscOut.get(c) ?? "", g.root, keep, [...keep]) && tscUntouchedLocal(tscOut.get(c) ?? "", g.root, keep, [...keep], await tscOnBase(ctx, g.cwd, signal, co))) pre.push(c.name); else if (c.result === "fail" && keep && untouched && lintUntouchedOn()) { const syms = diffSymbols(ctx, [...keep]), o = tscOut.get(c) ?? ""; if (tscUntouchedShape(o, g.root, keep, syms) && tscUntouchedOnly(o, g.root, keep, syms, await tscOnBase(ctx, g.cwd, signal, co))) untouched.push(c.name); } }
     if (ESLINT_CONFIGS.some((f) => existsSync(join(g.cwd, f)))) { const c = await runCheck(ctx, `lint:eslint${sfx}`, "npx", ["--no-install", "eslint", ...g.rel], signal, checks, { ...co, kind: "static" }); if (await excuseLint(ctx, signal, c, "eslint", "npx", ["--no-install", "eslint"], g.cwd, g.rel, co)) pre.push(c.name); }
   }
   return pre;
