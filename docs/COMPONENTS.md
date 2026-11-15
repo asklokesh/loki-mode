@@ -319,7 +319,7 @@ The agent type registry and installation tooling.
 phase.
 
 **Key files:**
-- `agents/types.json` - Agent type definitions (41 agent types across 8 domains).
+- `agents/types.json` - Agent type definitions (agent types across 8 domains).
 - `hub_install.py` - Agent hub install.
 - `managed_registry.py` - Managed agent registry.
 

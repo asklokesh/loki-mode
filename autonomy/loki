@@ -2173,7 +2173,7 @@ cmd_ui() {
     # The classic server is API-only; the UI is the Control Plane.
     local url="http://127.0.0.1:${port}"
     echo "loki: the classic dashboard at $url serves the API only (the browser UI moved to the Control Plane)." >&2
-    echo "loki: start the Control Plane UI with: loki ui (needs bun)" >&2
+    echo "loki: open the Control Plane UI with: loki dashboard (needs bun)" >&2
     echo "$url"
 }
 
@@ -8361,7 +8361,7 @@ cmd_dashboard_start() {
         # a second port.
         echo -e "${DIM}Want to submit a spec in the browser? Open the 'Lab' tab in this dashboard.${NC}"
         echo ""
-        echo -e "Control Plane UI: ${CYAN}loki ui${NC}"
+        echo -e "Control Plane UI: ${CYAN}loki dashboard${NC}"
         echo -e "Check status:    ${CYAN}loki dashboard status${NC}"
         echo -e "Stop server:     ${CYAN}loki dashboard stop${NC}"
     else
@@ -8479,7 +8479,7 @@ cmd_dashboard_status() {
         fi
 
         echo ""
-        echo -e "Control Plane UI: ${CYAN}loki ui${NC}"
+        echo -e "Control Plane UI: ${CYAN}loki dashboard${NC}"
         echo -e "Stop server:     ${CYAN}loki dashboard stop${NC}"
     else
         echo -e "${YELLOW}Status: Not running (stale PID file)${NC}"
@@ -8615,7 +8615,7 @@ cmd_dashboard_open() {
     # The legacy browser UI was removed; this server is API-only. Never open a
     # browser here: point at the Control Plane instead.
     echo -e "${YELLOW}The dashboard server at $url serves the API only; the browser UI is now the Control Plane.${NC}"
-    echo -e "Open the Control Plane with: ${CYAN}loki ui${NC}"
+    echo -e "Open the Control Plane with: ${CYAN}loki dashboard${NC}"
 }
 
 # Welcome opener (the "magic opener"). Shows a branded welcome page in the
@@ -16913,7 +16913,8 @@ wow_cleanup_dir() {
 }
 
 cmd_wow() {
-    local offline=false dry_run=false keep=false provider="" max_cost="2"
+    local offline=false dry_run=false keep=false provider="" max_cost="2" assume_yes=false
+    case "${LOKI_ASSUME_YES:-}" in 1|true|yes) assume_yes=true ;; esac
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h)
@@ -16924,11 +16925,13 @@ cmd_wow() {
                 echo "With no provider key it runs the offline sample instead (loki tour)."
                 echo "A failed live run shows its own receipt and exit code, never the sample."
                 echo ""
-                echo "Usage: loki wow [--offline] [--dry-run] [--keep] [--provider P] [--max-cost N]"
+                echo "Usage: loki wow [--offline] [--dry-run] [--keep] [--yes] [--provider P] [--max-cost N]"
                 echo ""
                 echo "  --offline     Always show the offline sample"
                 echo "  --dry-run     Print the plan. No model call, no spend"
                 echo "  --keep        Keep the temp repo (default: removed after the receipt is printed)"
+                echo "  --yes, -y     Skip the spend question. Without it a live run asks y/N first, and a"
+                echo "                non-interactive run spends nothing (exit 2)"
                 echo "  --provider P  claude (default) or opencode"
                 echo "  --max-cost N  Hard per-run cap in USD, a positive number (default 2). budgets.per_run still applies"
                 echo ""
@@ -16939,6 +16942,7 @@ cmd_wow() {
             --offline) offline=true; shift ;;
             --dry-run) dry_run=true; shift ;;
             --keep) keep=true; shift ;;
+            --yes|-y) assume_yes=true; shift ;;
             --provider)
                 provider="${2:-}"
                 if [ -z "$provider" ]; then echo "loki wow: --provider requires a value" >&2; return 1; fi
@@ -16990,6 +16994,23 @@ cmd_wow() {
         echo "  loki start \"<task>\" --no-pr --provider $use_provider --max-cost $max_cost"
         echo "Then print the receipt, PROVEN vs NOT PROVEN, and: Ready for your repo? loki start"
         return 0
+    fi
+    # Ask before any spend: the live task makes real model calls. A TTY answers y/N (default no);
+    # a non-interactive run never spends without --yes or LOKI_ASSUME_YES=1.
+    echo "This makes real model calls through $use_provider and can cost up to \$$max_cost (the --max-cost cap)."
+    if [ "$assume_yes" != true ]; then
+        if [ -t 0 ] && [ -z "${CI:-}" ]; then
+            local wow_answer=""
+            echo -n "Run it now? [y/N] "
+            read -r wow_answer </dev/tty 2>/dev/null || wow_answer=""
+            case "$wow_answer" in
+                [Yy]*) ;;
+                *) echo "Cancelled. Nothing was spent. See a sample receipt with no spend: loki tour"; return 0 ;;
+            esac
+        else
+            echo "loki wow: not run, nothing was spent (no terminal to ask; re-run with --yes to spend)." >&2
+            return 2
+        fi
     fi
 
     local demo_dir temp_root
@@ -17099,7 +17120,7 @@ cmd_demo() {
         echo "Examples:"
         echo "  loki demo --offline              # Replay a sample receipt (no spend)"
         echo "  loki tour                        # Same as 'loki demo --offline'"
-        echo "  loki tour --live                 # Tiny real task (loki wow); offline sample if no provider"
+        echo "  loki tour --live                 # Tiny real task (loki wow), asks y/N before spending; offline sample if no provider"
         echo "  loki wow                         # Live mini-task, or the offline sample with no key"
         echo "  loki demo                        # Build todo app in temp dir"
         echo "  loki demo --dir ~/demo-project   # Build in specific directory"
@@ -19369,7 +19390,7 @@ print(json.dumps({'id': manifest.id, 'dir': str(pipeline.migration_dir)}))
 
                     sleep 2
                     if kill -0 "$migrate_dashboard_pid" 2>/dev/null; then
-                        echo -e "  Dashboard API: ${CYAN}${url_scheme}://127.0.0.1:${dashboard_port}/${NC} (UI: loki ui)"
+                        echo -e "  Dashboard API: ${CYAN}${url_scheme}://127.0.0.1:${dashboard_port}/${NC} (UI: loki dashboard)"
                         echo ""
                     else
                         echo -e "  ${YELLOW}Dashboard failed to start (check logs)${NC}"
@@ -23355,7 +23376,7 @@ main() {
             # otherwise inject --offline ahead of any user args.
             if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
                 cmd_demo --help
-                echo "  loki tour --live                 # Tiny real task (same as loki wow)"
+                echo "  loki tour --live                 # Tiny real task (same as loki wow), asks y/N before spending"
                 echo "  loki wow                         # Live mini-task, or this sample with no key"
             elif [ "${1:-}" = "--live" ]; then
                 shift
@@ -25595,7 +25616,7 @@ print()
 
         link-manifest)
             # Fold the run manifest (.loki/loki-run.json bill-of-materials) into
-            # the agent audit chain so it becomes tamper-evident and verifiable
+            # the agent audit chain so it becomes hash-chained and verifiable
             # against the evidence chain. Explicit, on-demand command: cmd_start
             # execs run.sh and replaces the loki process, so there is no
             # post-completion return point in this CLI wrapper to auto-invoke

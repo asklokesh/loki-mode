@@ -455,8 +455,8 @@ def _section_verified(proof, run_id):
     """6. 'What is verified' - the proof commands."""
     lines = ["## What is verified", ""]
     if run_id:
-        lines.append("Loki keeps a tamper-evident receipt of exactly what it did. "
-                     "Anyone can inspect or re-check it:")
+        lines.append("Loki keeps a receipt of exactly what it did, which "
+                     "`loki proof verify` re-checks offline against the repo:")
         lines.append("")
         lines.append("- `loki proof show %s` - read the full receipt." % run_id)
         lines.append("- `loki proof verify %s` - confirm the receipt has not been "

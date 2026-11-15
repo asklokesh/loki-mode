@@ -241,7 +241,7 @@ references/                Detailed documentation (~24 files): research patterns
 
 templates/                 21 PRD templates (saas, cli, discord-bot, ...)
 agents/                    Agent registry: types.json, hub install, managed registry
-benchmarks/                SWE-bench and HumanEval harnesses
+benchmarks/                benchmark harnesses
 plugins/                   Claude Code plugin packaging
 .github/workflows/         release.yml, converge-dist-tags.yml,
                            sdk-freshness.yml, pr-fast.yml (runs
