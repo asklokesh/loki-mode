@@ -1,6 +1,6 @@
 // loki-ts/src/engine10/stages/deep.ts -- E-23 Deep verify (ENGINE.md section 4). Runs after Seal + PR: full suite, app-boot probe, secret scan; reports via engine10-push.sh (comment + addendum + status). A refused or unavailable check is NOT PROVEN, never red; only a failing full suite (minus failures already red on base) or a secret match is failure. Rule of Two: assertWorkerEnv asserts no real GitHub token, since the deep worker runs repo code. L003: no model session here; the run's one review is seal's pre-seal xreview, whose verdict and cost reach the receipt.
 import { installOwned } from "../../project_model/install.ts";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { appProbe, type AppProbeResult } from "../../util/app_probe.ts";
@@ -36,6 +36,7 @@ export interface DeepOptions {
   path?: string; // PATH override, tests only, so "missing tool" never depends on the host
   env?: NodeJS.ProcessEnv; // for assertWorkerEnv; defaults to process.env
   pushExtraEnv?: Record<string, string>; // merged into the push child's env, tests only (e.g. a stub's own log path)
+  post?: boolean; // DEEP-POST: false when the detached deep-post poster (deepPost) posts the comment and status; the worker holds withheld credentials and could not
 }
 export const DEFAULT_SECRET_SCAN_SH = join(REPO_ROOT, "autonomy/lib/secret-scan.sh"); // HONEST-VERIFIED: a fixed depth from import.meta.url pointed outside the package in the dist bundle, so the security scan never ran there (NOT PROVEN on every high-risk run)
 const FULL_SUITE_TIMEOUT_MS = BASELINE_CMD_TIMEOUT_S * 1000; // 5 min per runner, the same budget its base run gets (repo_profile.ts); deep's own stage limit (2700s) is the outer bound
@@ -163,6 +164,7 @@ export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepO
   const addendum = { ...addendumBody, addendum_sha256: addendumSha256, verification: { jwt: sig.jwt, kid: sig.kid } };
   mkdirSync(ctx.runDir, { recursive: true });
   writeFileSync(join(ctx.runDir, "receipt-addendum-1.json"), JSON.stringify(addendum, null, 2) + "\n");
+  if (opts.post === false) { ctx.emit("deep.completed", "deep", { checks, status_state: statusState, addendum_sha256: addendumSha256 }); return { status: "completed", data: { checks, addendum_sha256: addendumSha256, status_state: statusState, not_proven: notProvenList, ...(notApplicable.length ? { not_applicable: notApplicable } : {}) } }; }
   const headSha = (await safeGitRun(ctx.repoDir, ["rev-parse", "HEAD"], { timeoutMs: 10_000 })).stdout.trim();
   const pushNotProven = await postDeepResults({
     scriptPath: opts.pushScriptPath ?? DEFAULT_PUSH_SH, extraEnv: opts.pushExtraEnv, pinnedOrigin: ctx.pinnedOrigin, prUrl: (ctx.outputs().pr as { pr_url?: string } | undefined)?.pr_url,
@@ -202,7 +204,32 @@ export async function deepWorker(args: string[], deps: { opts?: DeepOptions } = 
   };
   const ac = new AbortController();
   for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => ac.abort());
-  const r = await runDeep(ctx, ac.signal, { ...deps.opts }); process.stderr.write((await import("../../util/base_guard.ts")).finishDeferredRun(repoDir, runId)); // the run-end cleanup the supervisor deferred while this ran
+  const r = await runDeep(ctx, ac.signal, { ...(process.env.LOKI_E10_DEEP_POSTER === "1" ? { post: false } : {}), ...deps.opts }); process.stderr.write((await import("../../util/base_guard.ts")).finishDeferredRun(repoDir, runId)); // the run-end cleanup the supervisor deferred while this ran
   if (r.status !== "completed") { process.stderr.write(`engine10 deep-worker: ${r.reason ?? r.status}\n`); return 1; }
   return 0;
+}
+
+/** DEEP-POST (FireLater#24, PRs #40 to #43: loki/deep-verify sat at "pending" for hours on every PR). The deep worker runs the repo's own suites, so it holds the
+ *  withheld GitHub credentials (a sentinel token and an empty GH_CONFIG_DIR, assertWorkerEnv): its own status and comment posts could never authenticate, and
+ *  its outputs come from stage.completed events, which carry no PR url, so the comment never found a PR number. The supervisor therefore spawns this poster
+ *  beside it with the push env. It runs no repository code: it waits for the deep worker's pid, reads the signed addendum the worker wrote, and posts the comment
+ *  and the final status. When the worker died without an addendum it posts "error", so the status never stays pending.
+ *  `engine10 deep-post <run-id> <deep-pid> <origin>`; the PR url comes from the run's pr.opened event and the head sha from the sealed receipt. */
+export async function deepPost(args: string[], deps: { pushScriptPath?: string; pushExtraEnv?: Record<string, string>; pollMs?: number; waitCapMs?: number } = {}): Promise<number> {
+  const [runId, pidArg = "", origin = ""] = args, pid = Number(pidArg);
+  if (!runId || !/^e10-[A-Za-z0-9-]+$/.test(runId) || !Number.isInteger(pid) || pid <= 1) { process.stderr.write("engine10 deep-post: usage: deep-post <run-id> <deep-pid> <origin>\n"); return 2; }
+  const repoDir = process.cwd(), runDir = join(repoDir, ".loki", "runs", runId), pollMs = deps.pollMs ?? 2000, capMs = deps.waitCapMs ?? (DEEP_CAP_S + 300) * 1000;
+  const alive = (): boolean => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } };
+  for (const t0 = Date.now(); alive() && Date.now() - t0 < capMs; ) await new Promise((r) => setTimeout(r, pollMs));
+  const read = (f: string): Record<string, unknown> | null => { try { return JSON.parse(readFileSync(join(runDir, f), "utf8")) as Record<string, unknown>; } catch { return null; } };
+  const receipt = read("receipt.json"), headSha = typeof receipt?.head_sha === "string" && SHA_RE.test(receipt.head_sha) ? receipt.head_sha : "";
+  let prUrl: string | undefined;
+  try { for (const l of readFileSync(join(runDir, "events.jsonl"), "utf8").split("\n")) { if (!l.includes('"pr.opened"')) continue; const u = (JSON.parse(l) as { data?: { url?: unknown } }).data?.url; if (typeof u === "string") prUrl = u; } } catch { /* no events: no comment */ }
+  const add = read("receipt-addendum-1.json"), ok = add !== null && add.run_id === runId && (add.status_state === "success" || add.status_state === "failure");
+  const still = alive(), state: "success" | "failure" | "error" = ok ? (add!.status_state as "success" | "failure") : "error";
+  const checks = ok && Array.isArray(add!.checks) ? (add!.checks as { name: string; result: string; reason?: string }[]) : [];
+  const notProven = ok && Array.isArray(add!.not_proven) ? (add!.not_proven as unknown[]).map(String) : [still ? "deep verify still running after its time limit; no result recorded" : "deep verify ended without writing its addendum; no result recorded"];
+  const out = await postDeepResults({ scriptPath: deps.pushScriptPath ?? DEFAULT_PUSH_SH, extraEnv: deps.pushExtraEnv, pinnedOrigin: origin || undefined, prUrl, headSha, repoDir, runDir, checks, notProven, statusState: state });
+  for (const n of out) process.stderr.write(`engine10 deep-post: ${n}\n`);
+  return out.some((n) => n.startsWith("loki/deep-verify status not set") || n.startsWith("push refused")) ? 1 : 0;
 }

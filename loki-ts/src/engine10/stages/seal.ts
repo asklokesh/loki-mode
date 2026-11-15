@@ -9,7 +9,7 @@ import { createHash } from "node:crypto"; import { execFileSync } from "node:chi
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
 import { mutationEnabled, mutationProof, mutationStrict, type ProofBefore } from "../../util/mutation_proof.ts";
-import { RealBaseTestRunner, loadTaskText } from "./wall.ts"; import { defectPinEdits, defectPinNote, pinDroppedNotes, pinnedUpdateNotes, type PinnedTestUpdate } from "../../util/test_guard.ts";
+import { RealBaseTestRunner, loadTaskText } from "./wall.ts"; import { defectPinEdits, defectPinNote, pinDroppedNotes, pinnedUpdateNotes, weakenExcuse, type PinnedTestUpdate } from "../../util/test_guard.ts";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
 import { discardIfSatisfied } from "../../e10ext/discard.ts";
 import { buildArtifactNotes, dropSet, formatChangedRecord, guardRegenDrops, needDropNote, needDrops, parseStaged, regenDropNote, regenDrops, regenKeptNote } from "../../e10ext/commit_filter.ts";
@@ -333,7 +333,7 @@ export const sealStage: Stage = {
     // A-119 (EXP-0001): a delete, rename (--no-renames shows D plus A) or weakening edit of a pre-existing test file is NOT VERIFIED; an added case is not.
     const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [], pctx: ProvenanceCtx = { addedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() === "A" && rawDiff[i + 1] ? [rawDiff[i + 1]!] : [])), wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as Obj[]).map((f) => String(f.path)) : [], modifiedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() !== "A" && rawDiff[i + 1] && isTestFile(rawDiff[i + 1]!) ? [rawDiff[i + 1]!] : [])) }, checks = checksOf(o.verify?.checks, pctx, preRedChecks, repoSkipped); // TEN-GATES-02: A = added in this run
     const weakTests: string[] = [];
-    for (let i = 0; i + 1 < rawDiff.length; i += 2) { const st = rawDiff[i]!.trim().split(" ").pop() ?? ""; if (st !== "A" && isTestFile(rawDiff[i + 1]!) && testFileWeakened(ctx.repoDir, ctx.baseSha, head, rawDiff[i + 1]!, st)) weakTests.push(rawDiff[i + 1]!); } // an edit that only adds cases or tightens assertions is kept and uncapped (EXP-0001)
+    for (let i = 0; i + 1 < rawDiff.length; i += 2) { const st = rawDiff[i]!.trim().split(" ").pop() ?? ""; if (st !== "A" && isTestFile(rawDiff[i + 1]!) && testFileWeakened(ctx.repoDir, ctx.baseSha, head, rawDiff[i + 1]!, st, loadTaskText(ctx, str(o.intake?.task) ?? undefined))) weakTests.push(rawDiff[i + 1]!); } // an edit that only adds cases or tightens assertions is kept and uncapped (EXP-0001)
     const rcNotes = diffOk ? [...runnerConfigNotes(ctx.repoDir, ctx.baseSha, head, rawDiff.filter((_, i) => i % 2 === 1), signal), ...addedSymlinkNotes(rawDiff, str(o.plan?.plan)), ...misplacedNamedNotes(str(o.intake?.task) ?? "", rawDiff, ctx.repoDir, head)] : []; // D86 FC-09: runner config or a file it loads changed
     // Class C: an advisory for a change the plan declared, or a link a passing Wall requires, is disclosed (suffix below), never a cap; any undeclared change keeps capping.
     const vraw = Array.isArray(o.verify?.checks) ? (o.verify.checks as Obj[]) : []; const decl = splitDeclaredAdvisories([...rcNotes, ...verifyNotProven], { repoDir: ctx.repoDir, runDir: ctx.runDir, baseSha: ctx.baseSha, rawDiff, planFiles: readPlanScope(ctx.runDir), wallPaths: wallRel, task: str(o.intake?.task) ?? "", head, wallPassedN: o.verify?.wall_passed === true && vraw.some((c) => c.result === "pass" && typeof c.n === "number" && c.n > 0 && wallRel.some((w) => String(c.name).endsWith(`:${w}`) || String(c.name).includes(w))) });
@@ -403,6 +403,7 @@ export const sealStage: Stage = {
       const tc = tcs?.[t] as Obj | undefined; const mine = assertDeltaNotes(ctx.repoDir, ctx.baseSha, head, t, str(o.intake?.task) ?? "", cnt(tc?.b), cnt(tc?.h));
       if (!mine || mine.length !== vl.length || mine.some((n) => !vl.includes(n))) for (const v of vl) dropped.add(v);
     }
+    for (let i = 0; i + 1 < rawDiff.length; i += 2) { const st = rawDiff[i]!.trim().split(" ").pop() ?? "", f = rawDiff[i + 1]!; if (st === "M" && isTestFile(f) && !weakTests.includes(f)) { const why = weakenExcuse(ctx.repoDir, ctx.baseSha, head, f, loadTaskText(ctx, str(o.intake?.task) ?? undefined)); if (why) notProven.add(`edited test kept uncapped (${why}): ${f}`); } } // FL24-WEAK: an excuse is always on the receipt, never silent
     for (const e of pinEdits) notProven.add(defectPinNote(e));
     for (const v of pinDropped) dropped.add(v);
     if (verdict !== "VERIFIED") for (const f of uncoveredAfterLimit) notProven.add(`changed, untested after limit: ${f}`);

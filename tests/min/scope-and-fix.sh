@@ -3642,4 +3642,92 @@ while IFS= read -r line; do
 done <<< "$out"
 printf '%s\n' "$out" | grep -q '^NO ' && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
 
+# ---------------------------------------------------------------- FL24-WEAK (FireLater#24 s1, s2): a task-named case update and new-scope setup are not a weakened test
+cat > "$T/fl24-weak.ts" <<'TS'
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+const root = process.argv[2]!, T = process.argv[3]!;
+const { testFileWeakened, weakensTest, weakenExcuse } = await import(root + "/loki-ts/src/util/test_guard.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const sh = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@e.invalid", ...a], { encoding: "utf8" });
+const R = join(T, "weak-fx"); rmSync(R, { recursive: true, force: true }); mkdirSync(join(R, "tests/unit/routes"), { recursive: true }); mkdirSync(join(R, "src/services"), { recursive: true }); mkdirSync(join(R, "src/utils"), { recursive: true });
+sh(R, "init", "-q", "-b", "main");
+const issues = "import { describe, it, expect } from 'vitest';\ndescribe('Issue Service', () => {\n  it('should search across title, issue_number, description', async () => {\n    const query = run('server');\n    expect(query).toContain('i.title ILIKE $');\n    expect(query).toContain('i.issue_number ILIKE $');\n    expect(query).toContain('i.description ILIKE $');\n  });\n\n  it('should sort by allowed columns', async () => {\n    expect(sortOf('x')).toBe('created_at');\n    expect(sortOf('y')).toBe('created_at');\n  });\n});\n";
+const routes = "import { describe, it, expect, vi, beforeEach } from 'vitest';\nvi.mock('../../../src/services/search.js', () => ({ searchService: { search: vi.fn() } }));\ndescribe('POST /v1/search', () => {\n  beforeEach(() => {\n    vi.clearAllMocks();\n  });\n  it('returns results', async () => {\n    expect(await post()).toBe(200);\n  });\n});\n";
+writeFileSync(join(R, "tests/unit/services.test.ts"), issues); writeFileSync(join(R, "tests/unit/routes/search.test.ts"), routes);
+writeFileSync(join(R, "src/services/search.ts"), "export const searchService = {};\n"); writeFileSync(join(R, "src/utils/logger.ts"), "export const logger = {};\n"); writeFileSync(join(R, "src/utils/db.ts"), "export const db = {};\n");
+sh(R, "add", "--", "."); sh(R, "commit", "-q", "-m", "base"); const base = sh(R, "rev-parse", "HEAD").trim();
+const task = "Acceptance: the test 'should search across title, issue_number, description' in tests/unit/services.test.ts is updated to assert the full-text query instead.";
+const up = issues.replace("    expect(query).toContain('i.title ILIKE $');\n    expect(query).toContain('i.issue_number ILIKE $');\n    expect(query).toContain('i.description ILIKE $');\n", "    expect(query).toContain('i.search_vector @@ websearch_to_tsquery');\n    expect(query).not.toContain('ILIKE');\n");
+writeFileSync(join(R, "tests/unit/services.test.ts"), up);
+res("TASK-CASE the count rule alone reads the task-named update as weakened", weakensTest(issues, up));
+res("TASK-CASE fewer assertions only inside the case the task names by title is not weakened", !testFileWeakened(R, base, null, "tests/unit/services.test.ts", "M", task));
+res("TASK-CASE the same edit is weakened when the task does not name the case", testFileWeakened(R, base, null, "tests/unit/services.test.ts", "M", "Make search full-text."));
+res("TASK-CASE a task that quotes the title only as failing excuses nothing (the cap stays)", testFileWeakened(R, base, null, "tests/unit/services.test.ts", "M", "Bug: the test 'should search across title, issue_number, description' fails on CI with a timeout."));
+res("TASK-CASE a failing title plus update the code excuses nothing", testFileWeakened(R, base, null, "tests/unit/services.test.ts", "M", "The test 'should search across title, issue_number, description' fails; update the code so it passes."));
+res("TASK-CASE the excuse names its reason for the receipt", /test cases the task asks to update/.test(weakenExcuse(R, base, null, "tests/unit/services.test.ts", task) ?? ""));
+process.env.LOKI_E10_WEAK_EXCUSE = "0"; res("TASK-CASE =0 keeps the count rule (weakened)", testFileWeakened(R, base, null, "tests/unit/services.test.ts", "M", task)); delete process.env.LOKI_E10_WEAK_EXCUSE;
+writeFileSync(join(R, "tests/unit/services.test.ts"), up.replace("    expect(sortOf('y')).toBe('created_at');\n", ""));
+res("TASK-CASE an assertion dropped from another case still caps", testFileWeakened(R, base, null, "tests/unit/services.test.ts", "M", task));
+writeFileSync(join(R, "tests/unit/services.test.ts"), issues.replace("    expect(query).toContain('i.title ILIKE $');\n    expect(query).toContain('i.issue_number ILIKE $');\n    expect(query).toContain('i.description ILIKE $');\n", "    run('x');\n"));
+res("TASK-CASE emptying the named case of every assertion still caps", testFileWeakened(R, base, null, "tests/unit/services.test.ts", "M", task));
+sh(R, "checkout", "-q", "--", ".");
+// s2 shape: mocks of modules this change adds, a hook in an added describe, a logger stub
+for (const m of ["search-history", "saved-filter"]) writeFileSync(join(R, `src/services/${m}.ts`), "export const x = {};\n");
+const added = "vi.mock('../../../src/services/search-history.js', () => ({\n  searchHistoryService: { record: vi.fn() },\n}));\nvi.mock('../../../src/services/saved-filter.js', () => ({\n  savedFilterService: { list: vi.fn() },\n}));\nvi.mock('../../../src/utils/logger.js', () => ({\n  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },\n}));\n";
+const tail = "\ndescribe('search persistence routes', () => {\n  beforeEach(() => {\n    vi.clearAllMocks();\n  });\n  it('lists history', async () => {\n    expect(await get()).toBe(200);\n  });\n});\n";
+const s2 = routes.replace("describe('POST /v1/search'", added + "describe('POST /v1/search'") + tail;
+writeFileSync(join(R, "tests/unit/routes/search.test.ts"), s2);
+res("NEW-SCOPE the count rule alone reads added mocks and a hook as weakened", weakensTest(routes, s2));
+res("NEW-SCOPE by default a mock of a module the change adds still caps (it can reach existing tests when logic moved into it)", testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", ""));
+writeFileSync(join(R, "tests/unit/routes/search.test.ts"), routes + tail);
+res("NEW-SCOPE by default a hook inside a describe block the change added still caps; with =1 it is excused and named", testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", "") && (() => { process.env.LOKI_E10_WEAK_MOCK_NEW = "1"; try { return !testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", "") && /describe blocks the change added/.test(weakenExcuse(R, base, null, "tests/unit/routes/search.test.ts", "") ?? ""); } finally { delete process.env.LOKI_E10_WEAK_MOCK_NEW; } })());
+writeFileSync(join(R, "tests/unit/routes/search.test.ts"), s2);
+process.env.LOKI_E10_WEAK_MOCK_NEW = "1";
+res("NEW-SCOPE =1 mocks of modules the change adds, a hook in an added describe and a logger stub are not weakened", !testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", ""));
+writeFileSync(join(R, "tests/unit/routes/search.test.ts"), s2.replace("vi.mock('../../../src/utils/logger.js', () => ({\n  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },\n}));\n", "vi.mock('../../../src/utils/db.js', () => ({\n  db: { query: vi.fn() },\n}));\n"));
+res("NEW-SCOPE a mock of a module that exists on base and is not a logger still caps", testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", ""));
+writeFileSync(join(R, "tests/unit/routes/search.test.ts"), s2.replace("logger: { info: vi.fn(),", "logger: { info: vi.fn().mockReturnValue(1),"));
+res("NEW-SCOPE a logger mock with an implementation still caps", testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", ""));
+writeFileSync(join(R, "tests/unit/routes/search.test.ts"), routes.replace("  it('returns results'", "  beforeEach(() => {\n    vi.useFakeTimers();\n  });\n  it('returns results'"));
+res("NEW-SCOPE a hook added to an existing describe still caps", testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", ""));
+delete process.env.LOKI_E10_WEAK_MOCK_NEW;
+res("NEW-SCOPE the mock clauses are off by default and on with =1", (await import(root + "/loki-ts/src/util/test_guard.ts")).weakMockNewOn({}) === false);
+rmSync(R, { recursive: true, force: true });
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/fl24-weak.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "fl24-weak unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 17 ] || bad "fl24-weak unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 17"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+
+# ---------------------------------------------------------------- BASE-MEMO (FireLater#24 s3): base results are reused by later verifies of the same run
+cat > "$T/fl24-memo.ts" <<'TS'
+import { mkdirSync, rmSync, existsSync } from "node:fs";
+import { join } from "node:path";
+const root = process.argv[2]!, T = process.argv[3]!;
+const vf = await import(root + "/loki-ts/src/engine10/stages/verify.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const R = join(T, "memo"); rmSync(R, { recursive: true, force: true }); mkdirSync(R, { recursive: true });
+const b1 = "/tmp/e10-base-AAA", b2 = "/tmp/e10-base-BBB", sha = "a".repeat(40);
+const bc = (d: string) => ({ cmd: "npx", args: ["--no-install", "vitest", "run", "src/app/x.test.tsx"], cwd: `${d}/frontend` });
+const m1 = vf.baseMemo(R, sha, true); m1.put(m1.key(b1, bc(b1), true), { ok: false, out: "FAIL src/app/x.test.tsx > a" }); m1.save();
+const m2 = vf.baseMemo(R, sha, true);
+res("BASE-MEMO a later verify of the run reads the base result whatever its worktree path", m2.get(m2.key(b2, bc(b2), true))?.out === "FAIL src/app/x.test.tsx > a");
+res("BASE-MEMO a run with dependencies not linked never reads a linked result", m2.get(m2.key(b2, bc(b2), false)) === undefined);
+res("BASE-MEMO another base commit reads nothing", vf.baseMemo(R, "b".repeat(40), true).get(m2.key(b2, bc(b2), true)) === undefined);
+res("BASE-MEMO off (=0) reads and writes nothing", vf.baseMemo(R, sha, false).get(m2.key(b2, bc(b2), true)) === undefined && vf.baseMemoOn({ LOKI_E10_BASE_MEMO: "0" }) === false && vf.baseMemoOn({}) === true);
+const m3 = vf.baseMemo(join(R, "fresh"), sha, true); m3.save();
+res("BASE-MEMO nothing recorded writes no file", !existsSync(join(R, "fresh", "base-runs.json")));
+rmSync(R, { recursive: true, force: true });
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/fl24-memo.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "fl24-memo unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 5 ] || bad "fl24-memo unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 5"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+
 finish
