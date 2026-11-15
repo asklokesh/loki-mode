@@ -11679,7 +11679,7 @@ def _moved_page() -> str:
     where = (
         f'<p>Control Plane: <a href="{_html.escape(cp, quote=True)}">{_html.escape(cp)}</a></p>'
         if cp.startswith(("http://", "https://"))
-        else "<p>Run <code>loki ui</code> to open the Control Plane.</p>"
+        else "<p>Run <code>loki dashboard</code> to open the Control Plane.</p>"
     )
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
