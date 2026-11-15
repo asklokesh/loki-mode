@@ -8,14 +8,22 @@
 # clone with a stub gh that keeps pull requests and issue comments as files. No network, no model. Asserts:
 #   static:   the only trigger is workflow_call (this repository never runs it); no `${{ }}` inside a script; the agent
 #             job asks for no write permission; the example calls the workflow with the three permissions and the secret;
-#             the guide's copy-paste snippet names the same workflow and the repository setting.
+#             the guide's copy-paste snippet names the same workflow and the repository setting. Pinning: the workflow,
+#             the example and the guide name @v11.142.0 and never @main; the version input defaults to 11.142.0 and every
+#             npm install names an exact version. The workflow never sets LOKI_SPLIT_ONE_PR and holds no close, edit or
+#             delete call for a pull request or branch.
 #   small:    a VERIFIED run ends in ONE branch, ONE pull request and ONE comment carrying the label, the check counts,
 #             the cost line, the receipt digest and the link. The patch is cut from the receipt's head_sha: the engine
 #             leaves the checkout on the branch it started on, so HEAD holds no change.
-#   rerun:    the same issue again: the new pull request replaces the earlier one (closed "Superseded by #N."), a fork
-#             PR and another issue's PR are left alone, and the comment is edited in place (still one).
-#   large:    an issue that runs as slices exits 6 (PARTIAL) and still ends in ONE pull request holding every slice
-#             (LOKI_SPLIT_ONE_PR=local), titled with the label, "Refs" not "Resolves", and the comment counts slices.
+#   rerun:    the same issue again opens a new pull request on a new branch; its body and the comment link the earlier
+#             Loki pull requests of the issue (loki/issue-7-*, loki/7-combined*) for a person to close. No close, edit or
+#             delete call is made, every earlier pull request and branch stays as it was, and a fork PR, another issue's PR
+#             and a human branch are not named. The comment is edited in place (still one).
+#   attempt:  GitHub "Re-run jobs" keeps the run id and raises the attempt: the rerun after a refused PR pushes a new
+#             branch and opens the pull request. A push refused as a non-fast-forward, or for the token's permissions,
+#             names that cause in the comment.
+#   large:    an issue that runs as slices hands over no patch: no branch, no pull request, and the comment lists each
+#             slice with its label and says no single pull request was opened.
 #   no key:   no model key: nothing is installed or run, the comment names the secret and where to set it, exit 1.
 #   setting:  GitHub refuses the PR ("not permitted to create"): the comment names the repository setting and gives the
 #             compare link; a push refused for touching .github/workflows/ says so.
@@ -26,19 +34,16 @@
 #   action:   the composite action .github/actions/issue-to-pr (the building block for a hand-written agent job) hands
 #             over the same change in its patch output.
 #
-# Planted defects used to prove this test can fail (each planted on the committed workflow, run, restored):
-#   1. collect: cut the patch from HEAD instead of $TIP; small, rerun, no change, large and setting fail (11 checks).
-#   2. run: `exit "$RC"` instead of `exit 0`; large fails (a PARTIAL run fails the step).
-#   3. publish: skip the supersede loop (`for n in ""`); rerun fails.
-#   4. publish: always `gh issue comment` (CID=""); rerun and setting fail (a second comment).
-#   5. publish: word() accepts any string; data fails.
-#   6. key: always state=ok; both no key checks fail.
-#   7. run step env: drop LOKI_SPLIT_ONE_PR; large and setting fail (empty patch).
-#   8. publish: `grep -qi 'not permitted to create'` -> 'never'; setting fails.
-#   9. .github/actions/issue-to-pr/action.yml: TIP stays HEAD (drop the head_sha lookup); action fails.
-#   10. publish: the plain title for every result; large and no verdict fail.
-#   11. publish: never take the uncombined-split wording; the no change split check fails.
+# Planted defects measured on 6a44b64b8 (each planted on the committed workflow, run, restored); the checks they failed
+# then are named, and those checks are unchanged here unless noted:
+#   1. collect: cut the patch from HEAD instead of $TIP; small fails.   2. run: `exit "$RC"` instead of `exit 0`.
+#   4. publish: always `gh issue comment` (CID=""); rerun fails (a second comment).   5. publish: word() accepts any string; data fails.
+#   6. key: always state=ok; both no key checks fail.   8. publish: `grep -qi 'not permitted to create'` -> 'never'; setting fails.
+#   9. action.yml: TIP stays HEAD; action fails.   10. publish: the plain title for every result; no verdict fails.
 #   12. publish: drop the plain dollar Cost line; cost fails.
+# The workflow, example and guide of 6a44b64b8 itself (it closed earlier pull requests, named loki/issue-<n>-<run id>
+# without the attempt, called @main, defaulted to npm latest and set LOKI_SPLIT_ONE_PR=local) fail the pinning,
+# no-close, rerun, attempt and split checks below.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -138,6 +143,20 @@ case "$ex_job" in *"contents: write"*"pull-requests: write"*"issues: write"*"use
 G="$ROOT/docs/v10/GUIDE.md"
 grep -q '^    uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@' "$G" && grep -q 'Allow GitHub Actions to create and approve pull requests' "$G" && grep -q 'GUIDE.md#triggers-without-a-cloud' "$ROOT/README.md" \
     && ok "static: the guide's copy-paste workflow calls the same workflow and names the repository setting; the README links to it" || bad "static: the guide lacks the workflow snippet or the repository setting, or the README does not link to it"
+# Pinning: one release tag everywhere, an exact npm version, never main or latest.
+PIN=v11.142.0
+refs="$(grep -ho 'asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@[A-Za-z0-9._-]*' "$WF" "$EX" "$G" | sort | uniq -c | tr -s ' ')"
+installs="$(grep -hoE 'npm install -g "?loki-mode[^ ]*' "$WF" "$EX")"
+vdef="$(awk '/^      version:/{on=1} on && /default:/{print $2; exit}' "$WF")"
+if [ "$(printf '%s\n' "$refs" | wc -l | tr -d ' ')" = 1 ] && printf '%s\n' "$refs" | grep -q "loki-issue-to-pr.yml@${PIN}$" && ! grep -n '@main' "$WF" "$EX" "$G" | grep -q 'loki-issue-to-pr' \
+    && [ "$vdef" = "'11.142.0'" ] && ! printf '%s\n' "$installs" | grep -qvE '^npm install -g ("loki-mode@\$\{LOKI_VERSION\}"|loki-mode@11\.142\.0)$' \
+    && grep -q "version: '11.142.0'" "$EX" && grep -q "version: '11.142.0'" "$G"; then
+    ok "static: the workflow, the example and the guide call @${PIN} only (never @main), the version input defaults to 11.142.0 and every npm install names an exact version"
+else bad "static: pinning wrong: refs [$refs] installs [$(printf '%s' "$installs" | tr '\n' ';')] default [$vdef]"; fi
+# Never close, edit or delete: no such call anywhere in the workflow, and it never switches on a run-behaviour variable.
+if grep -nE 'gh pr (close|edit|merge)|gh (api|issue)[^#]*-X *DELETE|push[^#]*(--delete| -d | :refs/)|branch -[dD] |LOKI_SPLIT_ONE_PR' "$WF"; then
+    bad "static: the workflow holds a close, edit or delete call for a pull request or branch, or sets LOKI_SPLIT_ONE_PR"
+else ok "static: the workflow holds no close, edit or delete call for a pull request or branch, and does not set LOKI_SPLIT_ONE_PR"; fi
 
 # --- fixtures: the mirror, the stub gh, loki on the stub provider -----------------------------------------------------
 mkdir -p "$T/src"
@@ -182,15 +201,13 @@ if a[:2] == ["pr", "create"]:
     open(S + "/pr-%d.title" % n, "w").write(opt("--title")); open(S + "/pr-%d.body" % n, "w").write(open(opt("--body-file")).read())
     print("https://github.com/acme/calc/pull/%d" % n); sys.exit(0)
 if a[:2] == ["pr", "list"]:
-    m = re.search(r'startswith\(\\?"([^"\\]+)\\?"\)', opt("--jq"))
-    if not m or "isCrossRepository == false" not in opt("--jq") or opt("--state") != "open": sys.stderr.write("stub gh: unexpected pr list query\n"); sys.exit(1)
-    for n, head, cross, state in prs():
-        if state == "open" and cross == "false" and head.startswith(m.group(1)): print(n)
-    sys.exit(0)
-if a[:2] == ["pr", "close"]:
+    # every open PR, as GitHub returns them; the caller filters (a --jq filter here would not be modelled)
+    if opt("--state") != "open" or opt("--json") != "number,headRefName,isCrossRepository" or "--jq" in a: sys.stderr.write("stub gh: unexpected pr list query\n"); sys.exit(1)
+    print(json.dumps([{"number": int(n), "headRefName": head, "isCrossRepository": cross == "true"} for n, head, cross, state in prs() if state == "open"])); sys.exit(0)
+if a[:2] in (["pr", "close"], ["pr", "edit"], ["pr", "merge"]):
     rows = prs()
     for r in rows:
-        if r[0] == a[2]: r[3] = "closed:" + opt("--comment")
+        if r[0] == a[2]: r[3] = a[1] + ":" + opt("--comment")
     save(rows); sys.exit(0)
 if a[:1] == ["api"] and "-X" not in a and re.fullmatch(r"repos/acme/calc/issues/7/comments", a[1]):
     for c in comments():
@@ -236,7 +253,7 @@ publish_job() {
     git clone -q "$W/origin.git" "$W/publish"
     if [ -d "$W/runner-a/loki-out" ]; then cp -R "$W/runner-a/loki-out" "$W/runner-b/loki-out"; fi
     step publish "$W/publish" GH_TOKEN=canary-write ISSUE=7 BASE=main REPO=acme/calc LABEL=loki PREFLIGHT="${KEY_STATE:-}" RUN_URL=https://github.com/acme/calc/actions/runs/"$id" \
-        GITHUB_RUN_ID="$id" GITHUB_SERVER_URL=https://github.com RUNNER_TEMP="$W/runner-b" "$@"
+        GITHUB_RUN_ID="$id" GITHUB_RUN_ATTEMPT=1 GITHUB_SERVER_URL=https://github.com RUNNER_TEMP="$W/runner-b" "$@"
     PUB_RC=$RC; cp "$T/publish.out" "$W/publish-$id.out"
 }
 branches() { git --git-dir="$W/origin.git" for-each-ref --format='%(refname:short)' refs/heads | tr '\n' ' '; }
@@ -255,8 +272,8 @@ agent_job
 head -n 1 "$W/runner-a/loki-out/pr-body.md" 2>/dev/null | grep -qx 'Resolves #7\.' && grep -Eq '^Receipt digest \(sha256\): [0-9a-f]{64}$' "$W/runner-a/loki-out/pr-body.md" \
     && ok "small: the PR body resolves the issue (VERIFIED) and carries the receipt digest" || bad "small: PR body wrong: $(head -n 1 "$W/runner-a/loki-out/pr-body.md" 2>/dev/null)"
 publish_job 555
-[ "$PUB_RC" = 0 ] && [ "$(branches)" = "loki/issue-7-555 main " ] && [ "$(grep -c '^pr create ' "$GH_STATE/calls.log")" = 1 ] && [ "$(nopen .)" = 1 ] \
-    && git --git-dir="$W/origin.git" show loki/issue-7-555:calc.ts | grep -q 'export function multiply' && [ "$(git --git-dir="$W/origin.git" rev-list --count main..loki/issue-7-555)" = 1 ] \
+[ "$PUB_RC" = 0 ] && [ "$(branches)" = "loki/issue-7-555-1 main " ] && [ "$(grep -c '^pr create ' "$GH_STATE/calls.log")" = 1 ] && [ "$(nopen .)" = 1 ] \
+    && git --git-dir="$W/origin.git" show loki/issue-7-555-1:calc.ts | grep -q 'export function multiply' && [ "$(git --git-dir="$W/origin.git" rev-list --count main..loki/issue-7-555-1)" = 1 ] \
     && ok "small: the publish job pushes ONE branch (one commit on the starting commit) and opens ONE pull request" || { bad "small: publish exit $PUB_RC, branches: $(branches)"; dump "$W/publish-555.out"; }
 C="$(comment)"
 printf '%s\n' "$C" | sed 's/^/    small comment: /'
@@ -274,34 +291,56 @@ step action-run "$W/action" ISSUE_REF=acme/calc#7 PRD_FILE="$W/prd.md" GITHUB_AC
 [ "$RC" = 0 ] && grep -q '^+export function multiply' "$W/runner-c/loki-out/loki.patch" 2>/dev/null && grep -q "^patch=$W/runner-c/loki-out/loki.patch$" "$W/action.out" && grep -q "^receipt=" "$W/action.out" \
     && ok "action: the issue-to-pr action's patch output holds the change (cut from the receipt's head_sha, not HEAD)" || { bad "action: exit $RC, patch $(wc -c < "$W/runner-c/loki-out/loki.patch" 2>/dev/null | tr -d ' ') bytes"; dump "$T/action-run.out"; }
 
-# --- rerun: the new pull request replaces the earlier one; the comment is edited in place -----------------------------
-printf '%s\t%s\t%s\t%s\n' 90 loki/issue-7-111 true open 91 loki/issue-70-222 false open >> "$GH_STATE/prs.tsv"   # a fork PR with the same head name, another issue's PR
+# --- rerun: a new pull request names the earlier ones for a person to close; nothing is closed, edited or deleted ------
+# Planted: a fork PR with the same head name, another issue's PR, a human branch for this issue, and an earlier engine
+# combined PR of this issue (loki/7-combined), all open; PR 101 (run 555) is the earlier run's own.
+printf '%s\t%s\t%s\t%s\n' 90 loki/issue-7-111-1 true open 91 loki/issue-70-222-1 false open 92 loki/issue-7-manual false open 93 loki/7-combined false open >> "$GH_STATE/prs.tsv"
+cp "$GH_STATE/prs.tsv" "$W/prs-before.tsv"
 publish_job 556
-[ "$PUB_RC" = 0 ] && [ "$(branches)" = "loki/issue-7-555 loki/issue-7-556 main " ] && grep -q "^101	loki/issue-7-555	false	closed:Superseded by #104\.$" "$GH_STATE/prs.tsv" \
-    && grep -q "^104	loki/issue-7-556	false	open$" "$GH_STATE/prs.tsv" && grep -q "^90	.*	open$" "$GH_STATE/prs.tsv" && grep -q "^91	.*	open$" "$GH_STATE/prs.tsv" \
-    && [ "$(awk -F'\t' '$3 == "false" && $4 == "open" && $2 ~ /^loki\/issue-7-/' "$GH_STATE/prs.tsv" | wc -l | tr -d ' ')" = 1 ] \
-    && ok "rerun: one open pull request for the issue: the earlier one is closed as superseded; a fork PR and another issue's PR are left alone" || { bad "rerun: PR state wrong (exit $PUB_RC)"; sed 's/^/    | /' "$GH_STATE/prs.tsv"; dump "$W/publish-556.out"; }
-[ "$(ncomments)" = 1 ] && comment | grep -qx 'Pull request: https://github.com/acme/calc/pull/104' && ! comment | grep -q 'pull/101' \
+NB="$(awk -F'\t' '$2 == "loki/issue-7-556-1" {print $1}' "$GH_STATE/prs.tsv")"
+[ "$PUB_RC" = 0 ] && [ "$(branches)" = "loki/issue-7-555-1 loki/issue-7-556-1 main " ] && [ -n "$NB" ] && [ "$(grep -v "^$NB	" "$GH_STATE/prs.tsv")" = "$(cat "$W/prs-before.tsv")" ] \
+    && ! grep -Eq '^(pr (close|edit|merge)|api -X DELETE)' "$GH_STATE/calls.log" \
+    && ok "rerun: a new branch and pull request; every earlier pull request (the earlier run's, a human branch, a combined one) stays open and unchanged, and no close, edit or delete call is made" || { bad "rerun: PR state wrong (exit $PUB_RC)"; sed 's/^/    | /' "$GH_STATE/prs.tsv"; grep -E '^pr (close|edit|merge)' "$GH_STATE/calls.log" | sed 's/^/    call: /'; dump "$W/publish-556.out"; }
+EB="$(sed -n '/^## Earlier pull requests$/,$p' "$GH_STATE/pr-$NB.body" 2>/dev/null)"
+printf '%s\n' "$EB" | grep -q 'supersedes https://github.com/acme/calc/pull/101, https://github.com/acme/calc/pull/93, opened by an earlier Loki run' && printf '%s\n' "$EB" | grep -q 'please close them yourself' \
+    && ! printf '%s\n' "$EB" | grep -Eq 'pull/(90|91|92)([^0-9]|$)' \
+    && comment | grep -qx 'This pull request supersedes the earlier open Loki pull request(s) for this issue: https://github.com/acme/calc/pull/101 https://github.com/acme/calc/pull/93. Loki does not close or edit pull requests; please close them yourself.' \
+    && ok "rerun: the new body and the comment link the earlier Loki pull requests of this issue (101, 93) and ask a person to close them; the fork PR, the other issue's PR and the human branch are not named" || { bad "rerun: earlier PRs not named right"; printf '%s\n' "$EB" | sed 's/^/    body: /'; comment | sed 's/^/    | /'; }
+[ "$(ncomments)" = 1 ] && comment | grep -qx "Pull request: https://github.com/acme/calc/pull/$NB" && ! comment | grep -q '^Pull request: .*pull/101' \
     && ok "rerun: the issue still has ONE Loki comment, edited in place to the new pull request" || bad "rerun: $(ncomments) comments; $(comment | grep 'Pull request')"
 
 # --- no_change: a finished run with nothing committed opens nothing and says so ---------------------------------------
 : > "$W/runner-a/loki-out/loki.patch"
 publish_job 557
-[ "$PUB_RC" = 0 ] && [ "$(branches)" = "loki/issue-7-555 loki/issue-7-556 main " ] && comment | grep -qx '### Loki: VERIFIED, no pull request' \
+[ "$PUB_RC" = 0 ] && [ "$(branches)" = "loki/issue-7-555-1 loki/issue-7-556-1 main " ] && comment | grep -qx '### Loki: VERIFIED, no pull request' \
     && ok "no change: an empty patch pushes nothing, opens nothing and the comment says there is nothing to open" || { bad "no change: exit $PUB_RC, $(comment | sed -n 2p)"; dump "$W/publish-557.out"; }
 
-# --- split with nothing combined, and a change with no verdict, are each worded as what they are --------------------
-printf '%s' '{"verdict": "PARTIAL", "slices_in": 0, "slices_total": 3, "checks_total": 0, "checks_passed": 0, "not_proven": 0}' > "$W/runner-a/loki-out/result.json"
+# --- split: the slices and their labels, and that no single pull request was opened; a change with no verdict --------
+printf '%s' '{"split": true, "slices_total": 3, "slices": [["s1", "VERIFIED"], ["s2", "FAILED"], ["s3", "SKIPPED"]], "checks_total": 0, "checks_passed": 0, "not_proven": 0}' > "$W/runner-a/loki-out/result.json"
 publish_job 559
-[ "$PUB_RC" = 1 ] && comment | grep -qx 'The issue ran as 3 slices, but none of them could be combined into one change, so there is no pull request. The run log names each slice and why.' \
+[ "$PUB_RC" = 1 ] && comment | grep -qxF "The issue was large, so Loki ran it as 3 slices (s1 VERIFIED, s2 FAILED, s3 SKIPPED). This workflow does not combine slices into one change, so no single pull request was opened and the slices' changes were not published. The run log names each slice and its result." \
     && ! comment | grep -q 'without a committed change' \
-    && ok "no change: a split whose slices could not be combined says that, not that the run made no change" || { bad "no change: uncombined split worded wrong (exit $PUB_RC)"; comment | sed 's/^/    | /'; }
+    && ok "split: a split issue's comment lists each slice with its label and says no single pull request was opened" || { bad "split: worded wrong (exit $PUB_RC)"; comment | sed 's/^/    | /'; }
 (cd "$W/agent" && git diff --binary "$SHA" "$(git for-each-ref --format='%(refname)' 'refs/heads/loki/e10-*' | head -n 1)" -- . ':(exclude).loki') > "$W/runner-a/loki-out/loki.patch"
 printf '%s' '{"rc": 1}' > "$W/runner-a/loki-out/result.json"
 publish_job 560
-NV="$(awk -F'\t' '$2 == "loki/issue-7-560" {print $1}' "$GH_STATE/prs.tsv")"
+NV="$(awk -F'\t' '$2 == "loki/issue-7-560-1" {print $1}' "$GH_STATE/prs.tsv")"
 [ "$PUB_RC" = 0 ] && [ -n "$NV" ] && [ "$(cat "$GH_STATE/pr-$NV.title")" = "Loki (no verdict): resolve #7" ] && comment | grep -qx '### Loki: no verdict' && comment | grep -q '^This result is not VERIFIED' \
     && ok "no verdict: a change that arrives without a verdict is titled and labelled as that, never like a VERIFIED one" || { bad "no verdict: exit $PUB_RC, title $(cat "$GH_STATE/pr-$NV.title" 2>/dev/null)"; comment | sed 's/^/    | /'; }
+
+# --- attempt: GitHub "Re-run jobs" keeps the run id; the rerun still pushes a new branch ------------------------------
+publish_job 561 GH_STUB_PR_FAIL=setting
+publish_job 561 GITHUB_RUN_ATTEMPT=2
+NA="$(awk -F'\t' '$2 == "loki/issue-7-561-2" {print $1}' "$GH_STATE/prs.tsv")"
+[ "$PUB_RC" = 0 ] && [ -n "$NA" ] && git --git-dir="$W/origin.git" rev-parse -q --verify refs/heads/loki/issue-7-561-1 >/dev/null && comment | grep -qx "Pull request: https://github.com/acme/calc/pull/$NA" \
+    && ok "attempt: after a refused pull request, Re-run jobs (same run id, attempt 2) pushes loki/issue-7-561-2 and opens the pull request" || { bad "attempt: exit $PUB_RC"; comment | sed 's/^/    | /'; dump "$W/publish-561.out"; }
+# A push refused as a non-fast-forward (the branch already holds other commits) names that cause, not permissions.
+OTHER="$(git --git-dir="$W/origin.git" -c user.name=t -c user.email=t@t.invalid commit-tree -p "$SHA" -m other "$SHA^{tree}")"
+git --git-dir="$W/origin.git" update-ref refs/heads/loki/issue-7-562-1 "$OTHER"
+publish_job 562
+[ "$PUB_RC" = 1 ] && comment | grep -qF 'The run produced a change but publishing it failed (step: push_failed): the branch `loki/issue-7-562-1` already exists on GitHub with other commits (a non-fast-forward push is refused; Loki never forces a push).' \
+    && ! comment | grep -q 'contents: write' && [ "$(git --git-dir="$W/origin.git" rev-parse refs/heads/loki/issue-7-562-1)" = "$OTHER" ] \
+    && ok "attempt: a push refused as a non-fast-forward says so in the comment (not that permissions are missing) and the existing branch is untouched" || { bad "attempt: non-fast-forward cause wrong (exit $PUB_RC)"; comment | sed 's/^/    | /'; }
 
 # --- cost: a metered run prints its dollars ----------------------------------------------------------------------------
 world cost "add a multiply(a, b) function to calc.ts" "calc.ts needs multiply(a, b)."
@@ -313,7 +352,7 @@ echo "    cost: $(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1]))
 
 # --- data: a hostile artifact puts none of its text on the issue -------------------------------------------------------
 : > "$W/runner-a/loki-out/loki.patch"
-printf '%s' '{"verdict": "<img src=x> @everyone VERIFIED", "cost_usd": "$(touch pwned)", "checks_passed": "9; rm -rf", "checks_total": -3, "not_proven": 1e99, "receipt_sha256": "`id`", "slices_in": true, "slices_total": [1]}' > "$W/runner-a/loki-out/result.json"
+printf '%s' '{"verdict": "<img src=x> @everyone VERIFIED", "cost_usd": "$(touch pwned)", "checks_passed": "9; rm -rf", "checks_total": -3, "not_proven": 1e99, "receipt_sha256": "`id`", "split": true, "slices_total": [1], "slices": [["<img src=x>", "VERIFIED"], ["s1", "@everyone"], ["s2; rm -rf", "PARTIAL"]]}' > "$W/runner-a/loki-out/result.json"
 publish_job 558
 C="$(comment)"
 case "$C" in *'<img'*|*'@everyone'*|*'touch'*|*'rm -rf'*|*'`id`'*) bad "data: text from the artifact reached the comment"; printf '%s\n' "$C" | sed 's/^/    | /' ;;
@@ -331,39 +370,49 @@ C="$(comment)"
 [ "$PUB_RC" = 1 ] && [ "$(branches)" = "main " ] && ! grep -q '^pr create ' "$GH_STATE/calls.log" && [ "$(ncomments)" = 1 ] && printf '%s\n' "$C" | grep -qx '### Loki: did not run' \
     && printf '%s\n' "$C" | grep -q 'The `ANTHROPIC_API_KEY` secret did not reach the workflow' && printf '%s\n' "$C" | grep -q 'Settings > Secrets and variables > Actions' \
     && ok "no key: nothing is pushed or opened, the job fails, and ONE comment names the missing secret and where to add it" || { bad "no key: exit $PUB_RC, branches $(branches)"; printf '%s\n' "$C" | sed 's/^/    | /'; }
-step install "$W/agent" LOKI_VERSION='latest; echo pwned'
-[ "$RC" = 1 ] && [ ! -e "$T/npm.log" ] && ok "install: a version that is not a plain version string is refused before npm runs" || bad "install: bad version exit $RC"
+step install "$W/agent" LOKI_VERSION='latest; echo pwned'; r0=$RC
+step install "$W/agent" LOKI_VERSION=latest; r1=$RC; step install "$W/agent" LOKI_VERSION=11.142; r2=$RC
+[ "$r0" = 1 ] && [ "$r1" = 1 ] && [ "$r2" = 1 ] && [ ! -e "$T/npm.log" ] && ok "install: shell text, npm latest and a partial version are each refused before npm runs" || bad "install: bad version exits $r0 $r1 $r2"
+step install "$W/agent" LOKI_VERSION=11.142.0
+[ "$RC" = 0 ] && grep -qx 'npm install -g loki-mode@11.142.0' "$T/npm.log" 2>/dev/null && ok "install: an exact version installs exactly that release" || bad "install: 11.142.0 exit $RC, npm log $(cat "$T/npm.log" 2>/dev/null)"
 
-# --- large: an issue that runs as slices still ends in ONE pull request ------------------------------------------------
+# --- large: an issue that runs as slices hands over no patch and says so ----------------------------------------------
+# The workflow never sets LOKI_SPLIT_ONE_PR, so under --no-pr the slices are not combined (the engine's run is the same
+# as a plain `loki owner/repo#N --no-pr`): no branch, no pull request, and the comment lists the slices.
 world large "Implement Advanced Search and Filtering with Full-Text Search Support" "$EPIC_BODY"
 SPLIT='{"slices":[{"id":"s1","title":"search backend","acceptance":["full-text search returns ranked rows"],"depends_on":[],"files":["calc.ts"]},{"id":"s2","title":"search UI","acceptance":["the search box shows ranked results"],"depends_on":["s1"],"files":["calc.ts"]}]}'
 agent_job E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT"
 grep -E '^(#7 split|Outcome:|Combined:|Cost:)' "$W/run.out" | sed 's/^/    large: /'
-[ "$RUN_RC" = 0 ] && [ "$(cat "$W/runner-a/loki-out/rc" 2>/dev/null)" = 6 ] && grep -q '^#7 split into 2 slices' "$W/run.out" \
-    && ok "large: the issue runs as 2 slices and exits 6 (PARTIAL); the run step still succeeds so the result is handed over" || { bad "large: run step exit $RUN_RC, loki rc $(cat "$W/runner-a/loki-out/rc" 2>/dev/null)"; dump "$W/run.out"; }
 P="$W/runner-a/loki-out"
-grep -q '^+export function slice_s1' "$P/loki.patch" 2>/dev/null && grep -q '^+export function slice_s2' "$P/loki.patch" \
-    && [ "$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["verdict"], r["slices_in"], r["slices_total"])' "$P/result.json" 2>&1)" = "PARTIAL 2 2" ] \
-    && ok "large: the patch holds both slices (cut from the combined branch) and the result counts 2 of 2 slices, PARTIAL" || { bad "large: patch $(wc -c < "$P/loki.patch" 2>/dev/null | tr -d ' ') bytes, result $(cat "$P/result.json" 2>/dev/null)"; dump "$W/collect.out"; }
-head -n 1 "$P/pr-body.md" | grep -q '^Refs #7\. Loki result: PARTIAL' && grep -qx '## Combined proof' "$P/pr-body.md" && grep -q '^### s1: ' "$P/pr-body.md" && grep -q '^### s2: ' "$P/pr-body.md" \
-    && ok "large: the PR body only refers to the issue (PARTIAL never closes it) and has the combined proof and a section per slice" || bad "large: PR body wrong: $(head -n 1 "$P/pr-body.md" 2>/dev/null)"
+echo "    large: loki rc $(cat "$P/rc" 2>/dev/null); result $(cat "$P/result.json" 2>/dev/null)"
+[ "$RUN_RC" = 0 ] && [ "$COLLECT_RC" = 0 ] && grep -q '^#7 split into 2 slices' "$W/run.out" && ! grep -q '^Combined:' "$W/run.out" \
+    && ok "large: the issue runs as 2 slices with no combine step, and the run and collect steps still succeed so the result is handed over" || { bad "large: run step exit $RUN_RC, collect $COLLECT_RC"; dump "$W/run.out"; }
+[ -f "$P/loki.patch" ] && [ ! -s "$P/loki.patch" ] \
+    && [ "$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["split"], r["slices_total"], ",".join(x[0] for x in r["slices"]))' "$P/result.json" 2>&1)" = "True 2 s1,s2" ] \
+    && ok "large: no patch is handed over and the result names the split and its 2 slices" || { bad "large: patch $(wc -c < "$P/loki.patch" 2>/dev/null | tr -d ' ') bytes, result $(cat "$P/result.json" 2>/dev/null)"; dump "$W/collect.out"; }
 publish_job 700
 C="$(comment)"
-[ "$PUB_RC" = 0 ] && [ "$(branches)" = "loki/issue-7-700 main " ] && [ "$(grep -c '^pr create ' "$GH_STATE/calls.log")" = 1 ] && [ "$(cat "$GH_STATE/pr-101.title")" = "Loki (PARTIAL): resolve #7" ] \
-    && [ "$(ncomments)" = 1 ] && printf '%s\n' "$C" | grep -qx '### Loki: PARTIAL' && printf '%s\n' "$C" | grep -qx 'Slices: 2 of 2 are in the pull request; the pull request names the rest and why.' \
-    && printf '%s\n' "$C" | grep -q '^This result is not VERIFIED' \
-    && ok "large: ONE branch, ONE pull request titled with the label, ONE comment that counts the slices and says it is not VERIFIED" || { bad "large: publish exit $PUB_RC, branches $(branches)"; printf '%s\n' "$C" | sed 's/^/    | /'; dump "$W/publish-700.out"; }
+[ "$PUB_RC" = 1 ] && [ "$(branches)" = "main " ] && ! grep -q '^pr create ' "$GH_STATE/calls.log" && [ "$(ncomments)" = 1 ] \
+    && printf '%s\n' "$C" | grep -Eq '^The issue was large, so Loki ran it as 2 slices \(s1 [A-Z_]+, s2 [A-Z_]+\)\. This workflow does not combine slices into one change, so no single pull request was opened' \
+    && ok "large: no branch and no pull request; ONE comment lists both slices with their labels and says no single pull request was opened" || { bad "large: publish exit $PUB_RC, branches $(branches)"; printf '%s\n' "$C" | sed 's/^/    | /'; dump "$W/publish-700.out"; }
 
 # --- setting: GitHub refuses the pull request, or the push ------------------------------------------------------------
+world setting "add a multiply(a, b) function to calc.ts" "calc.ts needs multiply(a, b)."
+agent_job
 publish_job 701 GH_STUB_PR_FAIL=setting
 C="$(comment)"
 [ "$PUB_RC" = 1 ] && [ "$(ncomments)" = 1 ] && printf '%s\n' "$C" | grep -q 'Allow GitHub Actions to create and approve pull requests' \
-    && printf '%s\n' "$C" | grep -qx 'Until then, open it yourself: https://github.com/acme/calc/compare/main...loki/issue-7-701?expand=1' && git --git-dir="$W/origin.git" rev-parse -q --verify refs/heads/loki/issue-7-701 >/dev/null \
+    && printf '%s\n' "$C" | grep -qx 'Until then, open it yourself: https://github.com/acme/calc/compare/main...loki/issue-7-701-1?expand=1' && git --git-dir="$W/origin.git" rev-parse -q --verify refs/heads/loki/issue-7-701-1 >/dev/null \
     && ok "setting: when GitHub does not let the workflow open pull requests, the comment names the setting and links the pushed branch" || { bad "setting: exit $PUB_RC"; printf '%s\n' "$C" | sed 's/^/    | /'; }
 printf '#!/bin/sh\necho "refusing to allow a GitHub App to create or update workflow .github/workflows/ci.yml without workflows permission" >&2\nexit 1\n' > "$W/origin.git/hooks/pre-receive"
 chmod +x "$W/origin.git/hooks/pre-receive"
 publish_job 702
-[ "$PUB_RC" = 1 ] && comment | grep -q 'The change touches `.github/workflows/`, which the workflow token is not allowed to push' && ! git --git-dir="$W/origin.git" rev-parse -q --verify refs/heads/loki/issue-7-702 >/dev/null \
+[ "$PUB_RC" = 1 ] && comment | grep -q 'The change touches `.github/workflows/`, which the workflow token is not allowed to push' && ! git --git-dir="$W/origin.git" rev-parse -q --verify refs/heads/loki/issue-7-702-1 >/dev/null \
     && ok "setting: a push GitHub refuses for touching .github/workflows/ is reported as that on the issue" || { bad "setting: workflows push refusal: exit $PUB_RC"; comment | sed 's/^/    | /'; }
+printf '#!/bin/sh\necho "remote: Permission to acme/calc.git denied to github-actions[bot]." >&2\nexit 1\n' > "$W/origin.git/hooks/pre-receive"
+publish_job 703
+[ "$PUB_RC" = 1 ] && comment | grep -qF 'publishing it failed (step: push_failed): GitHub refused the workflow token'"'"'s permissions' && ! comment | grep -q 'denied to' \
+    && ok "setting: a push refused for the token's permissions names that cause, as a fixed phrase (none of git's text reaches the comment)" || { bad "setting: permission push refusal: exit $PUB_RC"; comment | sed 's/^/    | /'; }
+rm -f "$W/origin.git/hooks/pre-receive"
 
 finish

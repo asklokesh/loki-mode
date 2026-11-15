@@ -5,7 +5,10 @@
 # Label an issue `loki` (or comment `/loki` on it as a repository owner, member or collaborator). Loki
 # opens ONE pull request for the issue and writes ONE comment on the issue with the result label
 # (VERIFIED, PARTIAL, ...), the proof in numbers, the cost and the link. Adding the label again runs
-# it again: the new pull request replaces the earlier one and the comment is edited in place.
+# it again: the new run opens a new pull request on a new branch, links the earlier open one for you to
+# close (Loki never closes, edits or deletes a pull request or branch), and edits the comment in place.
+# A large issue that Loki splits into slices gets no pull request from this workflow; the comment lists
+# the slices and their results.
 #
 # Setup, once per repository:
 #   1. Settings > Secrets and variables > Actions: add ANTHROPIC_API_KEY.
@@ -21,7 +24,10 @@
 # pull request (Rule of Two: issue text is untrusted, so the agent never holds a write token). The
 # job must grant the three permissions below; a called workflow cannot raise them itself.
 # A patch that touches .github/workflows/ cannot be pushed with this token; the comment says so.
-# Pull requests opened by the workflow token wait for approval before your own CI runs on them.
+# GitHub documents that events made with the workflow token (GITHUB_TOKEN) do not start other workflows,
+# so a pull request this workflow opens does not start your pull_request CI by itself.
+# This workflow is checked offline (a local mirror, a stub model and a stub gh); it has not yet been run
+# on GitHub.
 #
 # The pr-* jobs are optional: PR comment commands (a collaborator with write access comments on a PR):
 #   /loki fix <text>   an agent applies the request on the PR branch as ONE new commit
@@ -64,10 +70,11 @@ jobs:
       contents: write        # push the branch
       pull-requests: write   # open the pull request
       issues: write          # comment the result on the issue
-    # Pin a release tag instead of main for reproducible runs.
-    uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@main
+    # A release tag, and the same loki-mode version: never main, never npm latest.
+    uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@v11.142.0
     with:
       issue: ${{ inputs.issue }}   # only set by workflow_dispatch; an issue event names its own issue
+      version: '11.142.0'
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -184,7 +191,7 @@ jobs:
           path: ${{ runner.temp }}/loki-cmd
 
       - name: Install Loki Mode
-        run: npm install -g loki-mode
+        run: npm install -g loki-mode@11.142.0
 
       - name: Apply the request (model key, no GitHub token)
         env:
@@ -282,7 +289,7 @@ jobs:
           node-version: '20'
 
       - name: Install Loki Mode
-        run: npm install -g loki-mode
+        run: npm install -g loki-mode@11.142.0
 
       - name: Prove the PR and report
         env:
