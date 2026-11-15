@@ -3729,5 +3729,44 @@ printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "fl24-memo unit script crashed 
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
+# ---------------------------------------------------------------- ONE-BASE (acc-171): intake runs a root suite once, not again under its absolute spelling
+cat > "$T/acc171.ts" <<'TS'
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, chmodSync } from "node:fs";
+import { join } from "node:path";
+const root = process.argv[2]!, T = process.argv[3]!;
+const rp = await import(root + "/loki-ts/src/runner/repo_profile.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const R = join(T, "onebase"); rmSync(R, { recursive: true, force: true }); mkdirSync(join(R, ".venv/bin"), { recursive: true });
+const g = (...a: string[]) => execFileSync("git", ["-C", R, "-c", "user.name=t", "-c", "user.email=t@e.invalid", ...a], { encoding: "utf8" }).trim();
+g("init", "-q", "-b", "main"); writeFileSync(join(R, "a.py"), "x = 1\n"); g("add", "a.py"); g("commit", "-q", "-m", "base"); const sha = g("rev-parse", "HEAD");
+const count = join(T, "onebase-runs.txt"), py = join(R, ".venv/bin/python");
+writeFileSync(py, `#!/bin/bash\necho run >> "${count}"\necho "FAILED tests/test_a.py::test_one - assert 1 == 2"\necho "1 failed, 3 passed in 0.10s"\nexit 1\n`); chmodSync(py, 0o755);
+const runs = () => (existsSync(count) ? readFileSync(count, "utf8").split("\n").filter(Boolean).length : 0);
+const base = (cut: boolean) => ({ command: ".venv/bin/python -m pytest -q", ran: true, exit_code: cut ? null : 1, duration_s: cut ? 300 : 1, timed_out: cut, ...(cut ? { reason: "timed out" } : {}), failing_ids: cut ? [] : ["tests/test_a.py::test_one"], failing_errors: cut ? {} : { "tests/test_a.py::test_one": ["assert 1 == 2"] }, attributable: !cut, flaky_probe: "done" });
+const prof = (cut: boolean) => { mkdirSync(join(R, ".loki/state"), { recursive: true }); writeFileSync(rp.commandProfilePath(R), JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: base(cut), suites: [] })); rmSync(count, { force: true }); };
+const abs = `${R}/.venv/bin/python -m pytest -q`, spec = [{ name: "full suite: pytest", cmd: abs, cwd: ".", run: abs }];
+prof(false); rp.baselineSuites(R, spec, {});
+res("ONE-BASE the root suite spelled with the repo's absolute path is not run again after the baseline ran it", runs() === 0 && (rp.loadProfile(R)?.suites ?? []).length === 0);
+const full = [{ name: "full suite: pytest", cmd: abs, result: "fail", ids: ["tests/test_a.py::test_one"], errors: { "tests/test_a.py::test_one": ["assert 1 == 2"] }, exit: 1 }];
+const fa = rp.attributeFullSuite(R, sha, full, [], []);
+res("ONE-BASE verify's full suite (absolute path) reads the root baseline: the same failing id is excused as pre-existing", fa.preExistingChecks.includes("full suite: pytest"));
+const head2 = [{ ...full[0]!, ids: ["tests/test_a.py::test_one", "tests/test_a.py::test_new"], errors: { "tests/test_a.py::test_one": ["assert 1 == 2"], "tests/test_a.py::test_new": ["boom"] } }];
+res("ONE-BASE a failing id not red on base is still introduced", rp.attributeFullSuite(R, sha, head2, [], []).introducedChecks.includes("full suite: pytest"));
+prof(true); rp.baselineSuites(R, spec, {});
+res("ONE-BASE a root baseline cut at its cap is not run again (verify's targeted base reruns cover the tests)", runs() === 0);
+const fc = rp.attributeFullSuite(R, sha, full, [], []);
+res("ONE-BASE a cut base never excuses the full suite (fail-closed)", fc.preExistingChecks.length === 0 && /base run incomplete/.test(fc.line ?? ""));
+prof(false); process.env.LOKI_E10_ONE_BASE_RUN = "0"; rp.baselineSuites(R, spec, {});
+res("ONE-BASE =0 runs the suite again under its own spelling (the old double run)", runs() >= 1); delete process.env.LOKI_E10_ONE_BASE_RUN;
+res("ONE-BASE repoRelCmd drops only the repo prefix of the first word", rp.repoRelCmd(R, abs) === ".venv/bin/python -m pytest -q" && rp.repoRelCmd(R, "/other/.venv/bin/python -m pytest -q") === "/other/.venv/bin/python -m pytest -q" && rp.oneBaseRunOn({}) === true);
+rmSync(R, { recursive: true, force: true });
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/acc171.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "acc171 unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 7 ] || bad "acc171 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 7"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
 
 finish
