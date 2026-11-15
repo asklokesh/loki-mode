@@ -3814,4 +3814,37 @@ while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
 
+# ---------------------------------------------------------------- SUITE-TIMEOUT (dev2 ink, pipx): a full suite killed at its limit is not_run, not a failed check
+cat > "$T/vh.ts" <<'TS'
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+const root = process.argv[2]!, T = process.argv[3]!;
+const dp = await import(root + "/loki-ts/src/engine10/stages/deep.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const R = join(T, "vh"); rmSync(R, { recursive: true, force: true }); mkdirSync(R, { recursive: true });
+const g = (...a: string[]) => execFileSync("git", ["-C", R, "-c", "user.name=t", "-c", "user.email=t@e.invalid", ...a], { encoding: "utf8" }).trim();
+g("init", "-q", "-b", "main"); writeFileSync(join(R, "package.json"), JSON.stringify({ name: "slow", scripts: { test: "sleep 30" } })); g("add", "-A"); g("commit", "-q", "-m", "base"); const sha = g("rev-parse", "HEAD");
+const setTest = (t: string) => writeFileSync(join(R, "package.json"), JSON.stringify({ name: "slow", scripts: { test: t } }));
+// (a) SUITE-TIMEOUT
+const ctx: any = { repoDir: R, baseSha: sha, outputs: () => ({ intake: {} }), tests: { detect: async () => ({ runners: ["npm"], tests: [] }) } };
+const run = async (env?: string) => { if (env) process.env.LOKI_E10_SUITE_TIMEOUT_NOT_RUN = env; else delete process.env.LOKI_E10_SUITE_TIMEOUT_NOT_RUN; const checks: any[] = [], np = new Set<string>(), t0 = Date.now(); await dp.runFullSuite(ctx, new AbortController().signal, { fullSuiteTimeoutMs: 1500 }, checks, np); return { checks, np, secs: (Date.now() - t0) / 1000 }; };
+const a = await run();
+const c = a.checks.find((x: any) => x.name.startsWith("full suite"));
+res("SUITE-TIMEOUT a full suite stopped by its timeout is not_run 'timed out', not a failed check", !!c && c.result === "not_run" && /timed out after/.test(c.reason ?? "") && [...a.np].some((n) => /timed out after/.test(n)));
+res(`SUITE-TIMEOUT the suite stops at its limit (${a.secs.toFixed(1)} s for a 1.5 s limit)`, a.secs < 8);
+const off = await run("0"); const c0 = off.checks.find((x: any) => x.name.startsWith("full suite"));
+res("SUITE-TIMEOUT =0 keeps the old reading (a failed check)", !!c0 && c0.result === "fail"); delete process.env.LOKI_E10_SUITE_TIMEOUT_NOT_RUN;
+setTest("echo boom; exit 1");
+const red = await run(); const cr = red.checks.find((x: any) => x.name.startsWith("full suite"));
+res("SUITE-TIMEOUT a suite that finishes red stays a failed check", !!cr && cr.result === "fail");
+rmSync(R, { recursive: true, force: true });
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/vh.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "vh unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 4 ] || bad "vh unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 4"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+
 finish
