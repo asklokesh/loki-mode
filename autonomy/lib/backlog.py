@@ -49,11 +49,6 @@ SIGINT or SIGTERM stops the children and still prints the rows and the Total
 (exit 130). A finished run's receipts are kept under
 <checkout>-backlog/receipts/<item> before its worktree is removed.
 
---slots N is a cap on provider sessions: a split issue's slices run at most
-N // concurrency at once (LOKI_EPIC_PARALLEL for the child, unless exported).
-Without --slots a split child keeps the engine's own slice parallelism, so the
-sessions in flight can reach concurrency x LOKI_EPIC_PARALLEL.
-
 LOKI_BACKLOG_LOCAL_ORIGIN=1 (off by default) accepts a checkout whose origin is
 a local bare repository (an absolute path, the rule engine10-push.sh uses):
 issues are still read from owner/repo, and each run publishes its branch to
@@ -524,9 +519,6 @@ def main(argv):
         except ValueError:
             group_cap = None
     day_cap = cfg.get("budgets", {}).get("per_day_usd")
-    # --slots caps provider sessions, and a split issue runs its slices at once: share the cap across the issues in flight.
-    # Issue children only: a DAG unit never splits, and its environment stays as it was.
-    slice_env = {"LOKI_EPIC_PARALLEL": str(max(1, a.slots // conc))} if a.slots is not None and not env.get("LOKI_EPIC_PARALLEL") else {}
 
     # Triage: only implement issues run; spec issues get a drafted spec, human issues are listed.
     routed = {}  # key -> (ok, status) for issues that do not run
@@ -549,7 +541,7 @@ def main(argv):
             continue
         spec[n] = {"label": i["label"], "branch": "loki/backlog-%s" % i["slug"], "wt": "issue-%s" % i["slug"],
                    "cmd": [launcher, i["ref"]], "deps": [], "unit": False,
-                   "env": dict(slice_env, LOKI_TRIAGE_CLASS=klass[n][0], LOKI_TRIAGE_REASON=klass[n][1]),
+                   "env": {"LOKI_TRIAGE_CLASS": klass[n][0], "LOKI_TRIAGE_REASON": klass[n][1]},
                    # a child keeps only its own tracker's token (intake and writeback need it); the other tracker's never reaches it
                    "drop": [k for src, keys in TRACKER_SECRETS.items() if src != i.get("source") for k in keys]}
     key_of = {u["id"]: "unit-%s-%d" % (group, u["n"]) for u in dag_units}

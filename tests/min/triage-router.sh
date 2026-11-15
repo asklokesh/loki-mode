@@ -14,8 +14,8 @@
 #                    spec issue gets .loki/specs/<slug>.md plus the exact `loki start --spec` command,
 #                    human issues are listed with the reason; --issues fetches bodies with gh issue view.
 #   many at once:    one row per issue (cost, time, result, its one PR or its PR count and why), one Total line (done,
-#                    not done, PRs, cost, time), child output only in the per-issue log, receipts kept, --slots shared
-#                    with a split's slices, SIGTERM still prints the rows (exit 130), a local bare origin only by opt-in.
+#                    not done, PRs, cost, time), child output only in the per-issue log, receipts kept, --slots never sets
+#                    a split's slice parallelism, SIGTERM still prints the rows (exit 130), a local bare origin only by opt-in.
 #                    The large epic launches like any implement issue (the engine splits it: see
 #                    tests/min/decompose-and-intake.sh); only the vague issues get a drafted spec.
 #   jira:            `loki backlog jira:PROJ` (or jira:proj) lists a project's open items from an offline Jira stand-in
@@ -167,7 +167,7 @@ grep -q 'gh issue view 4' "$T/gh.log" 2>/dev/null && printf '%s\n' "$sel" | grep
     && ok "backlog --issues: bodies fetched with gh issue view and triaged" || bad "backlog --issues: not triaged from fetched bodies"
 
 # 4a. many issues at once: one row per issue (cost, time, result, its PR or PR count), one Total line, quiet output,
-#     receipts kept, --slots shared with a split's slices, an interrupt still prints the rows, a local bare origin by opt-in
+#     receipts kept, --slots leaves a split's slices alone, an interrupt still prints the rows, a local bare origin by opt-in
 mkrepo many
 cat > "$T/many-launcher" <<'EOF'
 #!/usr/bin/env bash
@@ -202,8 +202,7 @@ gc="$(printf '%s\n' "$many" | bun --no-env-file --config=/dev/null -e 'const m =
 [ "$(grep -c 'epic_parallel=unset' "$T/many.log")" = 4 ] && ok "many: without --slots a child keeps the engine's slice parallelism" || bad "many: LOKI_EPIC_PARALLEL set without --slots: $(tr '\n' ';' < "$T/many.log")"
 : > "$T/many.log"
 (cd "$REPO" && LOKI_BACKLOG_LAUNCHER="$T/many-launcher" LAUNCH_LOG="$T/many.log" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 1,6 --concurrency 2 --slots 4 >/dev/null 2>&1)
-(cd "$REPO" && LOKI_EPIC_PARALLEL=3 LOKI_BACKLOG_LAUNCHER="$T/many-launcher" LAUNCH_LOG="$T/many.log" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 1 --concurrency 2 --slots 4 >/dev/null 2>&1)
-[ "$(sort "$T/many.log" | tr '\n' ';')" = "1 epic_parallel=2;1 epic_parallel=3;6 epic_parallel=2;" ] && ok "many: --slots 4 at concurrency 2 gives each split 2 slices at once; an exported LOKI_EPIC_PARALLEL wins" || bad "many: --slots not shared: $(sort "$T/many.log" | tr '\n' ';')"
+[ "$(sort "$T/many.log" | tr '\n' ';')" = "1 epic_parallel=unset;6 epic_parallel=unset;" ] && ok "many: --slots 4 at concurrency 2 leaves LOKI_EPIC_PARALLEL unset, so a split keeps the engine's slice parallelism" || bad "many: --slots set LOKI_EPIC_PARALLEL: $(sort "$T/many.log" | tr '\n' ';')"
 # interrupt: SIGTERM stops the running child, never starts the queued one, and still prints the rows and the Total
 cat > "$T/slow-launcher" <<'EOF'
 #!/usr/bin/env bash

@@ -14639,7 +14639,6 @@ cmd_backlog() {
             echo "  --label X         Open issues with label X"
             echo "  --issues 1,2,3    Exactly these issue numbers"
             echo "  --concurrency N   Max issues in flight (default: loki.yaml concurrency, else 2)"
-            echo "  --slots M         Cap on model sessions in flight: a split issue runs at most M/N slices at once"
             echo "  --dry-run         Print each issue's triage class (implement, spec, human) and reason; launch nothing"
             echo ""
             echo "Run from a checkout of owner/repo (for Jira or Linear, the checkout the work lands in)."
