@@ -53,7 +53,7 @@ LOKI_BACKLOG_LOCAL_ORIGIN=1 (off by default) accepts a checkout whose origin is
 a local bare repository (an absolute path, the rule engine10-push.sh uses):
 issues are still read from owner/repo, and each run publishes its branch to
 that bare repository and prints PR: local://<path>#<branch>. For rehearsals and
-tests; nothing is pushed to GitHub.
+tests: branches and PRs go to the local bare repository; the run still uses GitHub for the issue itself.
 
 Test seam: LOKI_BACKLOG_LAUNCHER replaces the real launcher (called with the
 issue ref, cwd = the issue worktree).
@@ -566,15 +566,20 @@ def main(argv):
     t_start = time.time()
     started = {}  # key -> launch time
     stop = []  # the signal that asked for a stop: the loop below ends, the children are stopped and the summary still prints
+    done_at_signal = set()  # children that had already exited when the first signal came: they keep their real result
 
     def term_children():
-        for p, _l, _w in list(running.values()):
+        for k, (p, _l, _w) in list(running.items()):
+            if k in done_at_signal:
+                continue
             try:
                 os.killpg(p.pid, signal.SIGTERM)
             except OSError:
                 pass
 
     def on_signal(signum, _f):  # the children are told at once, even while a launch is still preparing a worktree
+        if not stop:  # before any SIGTERM from us, an exited child finished on its own
+            done_at_signal.update(k for k, (p, _l, _w) in list(running.items()) if p.poll() is not None)
         stop.append(signum)
         term_children()
     signal.signal(signal.SIGTERM, on_signal)
@@ -605,7 +610,12 @@ def main(argv):
             return
         dst = os.path.join(wt_root, "receipts", spec[k]["wt"])
         try:
-            shutil.rmtree(dst, ignore_errors=True)
+            if os.path.lexists(dst):  # an earlier run's receipts move aside under a dated name, never deleted
+                base = "%s.%s" % (dst, time.strftime("%Y%m%d-%H%M%S", time.localtime(os.lstat(dst).st_mtime)))
+                aside, i = base, 1
+                while os.path.lexists(aside):
+                    aside, i = "%s-%d" % (base, i), i + 1
+                os.rename(dst, aside)
             shutil.copytree(src, dst, symlinks=True, ignore=shutil.ignore_patterns("worktrees", "node_modules"))
         except (OSError, shutil.Error):
             pass
@@ -768,7 +778,7 @@ def main(argv):
         say("backlog: interrupted (signal %d); stopping %d running, %d never started" % (stop[0], len(running), len(pending)))
         stop_children()
         for k in list(running):
-            finish(k, stopped=True)
+            finish(k, stopped=k not in done_at_signal)
         for k in pending:
             state[k].update(status="NOT STARTED: interrupted", ok=False)
         pending = []

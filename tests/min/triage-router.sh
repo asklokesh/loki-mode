@@ -14,8 +14,9 @@
 #                    spec issue gets .loki/specs/<slug>.md plus the exact `loki start --spec` command,
 #                    human issues are listed with the reason; --issues fetches bodies with gh issue view.
 #   many at once:    one row per issue (cost, time, result, its one PR or its PR count and why), one Total line (done,
-#                    not done, PRs, cost, time), child output only in the per-issue log, receipts kept, --slots never sets
-#                    a split's slice parallelism, SIGTERM still prints the rows (exit 130), a local bare origin only by opt-in.
+#                    not done, PRs, cost, time), child output only in the per-issue log, receipts kept (a rerun moves the
+#                    earlier ones aside), --slots never sets a split's slice parallelism, SIGTERM still prints the rows (exit 130)
+#                    and a child that finished before it keeps its result, a local bare origin only by opt-in.
 #                    The large epic launches like any implement issue (the engine splits it: see
 #                    tests/min/decompose-and-intake.sh); only the vague issues get a drafted spec.
 #   jira:            `loki backlog jira:PROJ` (or jira:proj) lists a project's open items from an offline Jira stand-in
@@ -49,6 +50,8 @@
 #      8 PRs row and the Total PR count fail.
 #   7. autonomy/lib/backlog.py main: make the SIGTERM handler sys.exit(130) (the old behavior): the interrupt rows and Total fail.
 #   8. autonomy/lib/backlog.py finish: drop keep_receipts: the receipts check fails.
+#   9. autonomy/lib/backlog.py keep_receipts: rmtree the earlier copy instead of moving it aside: the rerun receipts check fails.
+#  10. autonomy/lib/backlog.py stop path: finish every running child with stopped=True: the finished-before-the-signal check fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -201,7 +204,11 @@ gc="$(printf '%s\n' "$many" | bun --no-env-file --config=/dev/null -e 'const m =
     && ok "many: a finished run's receipts are kept after its worktree is removed (a failed run keeps both)" || bad "many: receipts not kept under $REPO-backlog/receipts"
 [ "$(grep -c 'epic_parallel=unset' "$T/many.log")" = 4 ] && ok "many: without --slots a child keeps the engine's slice parallelism" || bad "many: LOKI_EPIC_PARALLEL set without --slots: $(tr '\n' ';' < "$T/many.log")"
 : > "$T/many.log"
+echo first > "$REPO-backlog/receipts/issue-1/first-run.txt"
 (cd "$REPO" && LOKI_BACKLOG_LAUNCHER="$T/many-launcher" LAUNCH_LOG="$T/many.log" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 1,6 --concurrency 2 --slots 4 >/dev/null 2>&1)
+kept="$(find "$REPO-backlog/receipts" -maxdepth 2 -path "$REPO-backlog/receipts/issue-1.*/first-run.txt" 2>/dev/null | wc -l | tr -d ' ')"
+[ "$kept" = 1 ] && [ -f "$REPO-backlog/receipts/issue-1/r1/receipt.json" ] && [ ! -f "$REPO-backlog/receipts/issue-1/first-run.txt" ] \
+    && ok "many: a rerun of the same issue moves the earlier kept receipts aside under a dated name, never deletes them" || bad "many: earlier receipts of issue 1 not kept on a rerun ($kept dated copies): $(ls "$REPO-backlog/receipts" | tr '\n' ' ')"
 [ "$(sort "$T/many.log" | tr '\n' ';')" = "1 epic_parallel=unset;6 epic_parallel=unset;" ] && ok "many: --slots 4 at concurrency 2 leaves LOKI_EPIC_PARALLEL unset, so a split keeps the engine's slice parallelism" || bad "many: --slots set LOKI_EPIC_PARALLEL: $(sort "$T/many.log" | tr '\n' ';')"
 # interrupt: SIGTERM stops the running child, never starts the queued one, and still prints the rows and the Total
 cat > "$T/slow-launcher" <<'EOF'
@@ -221,6 +228,31 @@ grep -Eq '^backlog: 1 running \(#1 [0-9]+s\), 1 queued, 0 finished, [0-9]+s elap
     && ok "many: an interrupted backlog exits 130 and still prints every row and the Total" || bad "many: interrupt: exit $rc: $(tail -4 "$T/stop.out" | tr '\n' ';')"
 spid="$(cat "$T/slow.pid" 2>/dev/null)"
 [ -n "$spid" ] && ! kill -0 "$spid" 2>/dev/null && ok "many: the interrupted child is stopped, not orphaned" || { bad "many: child ${spid:-unknown} still runs after the interrupt"; kill "$spid" 2>/dev/null; }
+# a child that already exited before the signal keeps its real result: #1 exits VERIFIED with a PR, then #6 (still running)
+# sends SIGTERM to backlog before backlog's next 0.2 s poll could reap #1
+cat > "$T/race-launcher" <<'EOF'
+#!/usr/bin/env bash
+n="${1##*#}"
+if [ "$n" = 1 ]; then
+  printf 'Outcome:    VERIFIED\nPR:         local:///o.git#loki/race\nCost:       $0.25 (claude)\n'
+  echo $$ > "$RACE_DIR/1.pid"; exit 0
+fi
+echo $$ > "$SLOW_PID"
+for _ in $(seq 1 500); do
+  p1="$(cat "$RACE_DIR/1.pid" 2>/dev/null)"
+  if [ -n "$p1" ]; then st="$(ps -o stat= -p "$p1" 2>/dev/null)"; case "$st" in Z*|'') break ;; esac; fi
+  sleep 0.01
+done
+kill -TERM "$PPID"
+exec sleep 300
+EOF
+chmod +x "$T/race-launcher"; mkdir -p "$T/race"
+(cd "$REPO" && LOKI_BACKLOG_LAUNCHER="$T/race-launcher" RACE_DIR="$T/race" SLOW_PID="$T/race.pid" LOKI_BACKLOG_HEARTBEAT_S=0 LOKI_BACKLOG_STOP_GRACE_S=5 \
+    python3 -I "$ROOT/autonomy/lib/backlog.py" example/calc --issues 1,6 --concurrency 2 > "$T/race.out" 2>&1); rc=$?
+[ "$rc" -eq 130 ] && grep -Eq '^#1 +\$0\.25 +[0-9]+s +PR local:///o\.git#loki/race$' "$T/race.out" && grep -Eq '^#6 +unmeasured +[0-9]+s +STOPPED: interrupted; worktree kept at ' "$T/race.out" \
+    && grep -Eq '^Total: 1 done, 1 not done; 1 PR\(s\); cost \$0\.25' "$T/race.out" \
+    && ok "many: a child that finished before the interrupt keeps its real result; only the running one is STOPPED" || bad "many: race: exit $rc: $(sed -n '/^Summary:/,$p' "$T/race.out" | tr '\n' ';')"
+rpid="$(cat "$T/race.pid" 2>/dev/null)"; [ -n "$rpid" ] && kill "$rpid" 2>/dev/null
 # local bare origin: refused by default, accepted with LOKI_BACKLOG_LOCAL_ORIGIN=1, and only when origin really is a bare repo
 git init -q --bare "$T/many-origin.git"
 git -C "$REPO" remote set-url origin "$T/many-origin.git"
