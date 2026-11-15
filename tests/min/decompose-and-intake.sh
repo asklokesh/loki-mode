@@ -534,6 +534,10 @@ printf '%s\n' "$PAR" | grep -q '^W rc0 peak3 said$' && printf '%s\n' "$PAR" | gr
 # local bare origin; only the slice runs (a fake that commits one line per slice and seals a receipt), the resolve session, gh and the
 # test runner are fakes. Scenarios: A 2 independent slices, B a 3-deep chain plus an independent root, C a conflict the resolve fixes,
 # D a conflict it cannot fix, E LOKI_SPLIT_ONE_PR=0, F the file cap.
+# #605 was red on GitHub CI only: the runner has no git identity and cannot auto-detect one, so the combine's `git commit-tree`
+# (run without the slice author's identity) failed and every case fell back ("cannot stage s1's change"). macOS auto-detects
+# user@host, which hid it locally. user.useConfigOnly in the leg's throwaway HOME makes every machine behave like the runner.
+git config --global user.useConfigOnly true
 cat > "$T/one.mjs" <<'JS'
 const ir = await import(process.env.ROOT + "/loki-ts/src/commands/issues_run.ts");
 const { receiptSha256 } = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/seal.ts");

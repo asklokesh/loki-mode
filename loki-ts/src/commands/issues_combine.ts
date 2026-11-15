@@ -172,7 +172,7 @@ function applySlice(wt: string, s: CombineSlice, parentTip: string, env: NodeJS.
   const msg = `${s.id}: ${one(s.title)}`;
   const tree = out(wt, ["rev-parse", `${s.branch}^{tree}`]);
   if (!tree) return { kind: "error", reason: `cannot read ${s.branch}` };
-  const syn = out(wt, ["commit-tree", tree, "-p", parentTip, "-m", msg]);
+  const st = git(wt, ["commit-tree", tree, "-p", parentTip, "-m", msg], env), syn = st.status === 0 ? String(st.stdout).trim() : ""; // the slice author's identity: a runner with no git identity cannot auto-detect one (#605 CI)
   if (!syn) return { kind: "error", reason: `cannot stage ${s.id}'s change` };
   const cp = git(wt, ["cherry-pick", "--no-commit", syn], env);
   if (cp.status !== 0) {
