@@ -24,13 +24,13 @@
 #             over the same change in its patch output.
 #
 # Planted defects used to prove this test can fail (each planted on the committed workflow, run, restored):
-#   1. collect: cut the patch from HEAD instead of $TIP; small, rerun and large fail.
+#   1. collect: cut the patch from HEAD instead of $TIP; small, rerun, no change, large and setting fail (11 checks).
 #   2. run: `exit "$RC"` instead of `exit 0`; large fails (a PARTIAL run fails the step).
 #   3. publish: skip the supersede loop (`for n in ""`); rerun fails.
-#   4. publish: always `gh issue comment` (CID=""); rerun fails (two comments).
+#   4. publish: always `gh issue comment` (CID=""); rerun and setting fail (a second comment).
 #   5. publish: word() accepts any string; data fails.
-#   6. key: always state=ok; no key fails.
-#   7. run step env: drop LOKI_SPLIT_ONE_PR; large fails (empty patch).
+#   6. key: always state=ok; both no key checks fail.
+#   7. run step env: drop LOKI_SPLIT_ONE_PR; large and setting fail (empty patch).
 #   8. publish: `grep -qi 'not permitted to create'` -> 'never'; setting fails.
 #   9. .github/actions/issue-to-pr/action.yml: TIP stays HEAD (drop the head_sha lookup); action fails.
 
@@ -253,6 +253,7 @@ publish_job 555
     && git --git-dir="$W/origin.git" show loki/issue-7-555:calc.ts | grep -q 'export function multiply' && [ "$(git --git-dir="$W/origin.git" rev-list --count main..loki/issue-7-555)" = 1 ] \
     && ok "small: the publish job pushes ONE branch (one commit on the starting commit) and opens ONE pull request" || { bad "small: publish exit $PUB_RC, branches: $(branches)"; dump "$W/publish-555.out"; }
 C="$(comment)"
+printf '%s\n' "$C" | sed 's/^/    small comment: /'
 [ "$(ncomments)" = 1 ] && [ "$(printf '%s\n' "$C" | head -n 1)" = '<!-- loki-status -->' ] && printf '%s\n' "$C" | grep -qx '### Loki: VERIFIED' && printf '%s\n' "$C" | grep -qx 'Pull request: https://github.com/acme/calc/pull/101' \
     && printf '%s\n' "$C" | grep -Eq '^Proof: [1-9][0-9]* of [1-9][0-9]* checks passed outside the model; [0-9]+ not proven \(listed in the pull request\)\.$' \
     && printf '%s\n' "$C" | grep -qx 'Cost: not measured.' && printf '%s\n' "$C" | grep -Eq '^Receipt: sha256 [0-9a-f]{16} ' && printf '%s\n' "$C" | grep -qx 'Run log: https://github.com/acme/calc/actions/runs/555' \
