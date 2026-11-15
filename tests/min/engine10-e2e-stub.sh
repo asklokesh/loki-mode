@@ -806,4 +806,35 @@ while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
 
+# ---------------------------------------------------------------- RUN-DEADLINE (dev4 cap kills): an outer deadline becomes the fixed run cap, and the run seals before it
+cat > "$T/deadline.ts" <<'TS'
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const root = process.argv[2]!;
+const rc = await import(root + "/loki-ts/src/util/run_cap.ts"), mc = await import(root + "/loki-ts/src/engine10/machine.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const d = mkdtempSync(join(tmpdir(), "dl-"));
+try {
+  res("RUN-DEADLINE unset changes nothing (the sized default cap)", rc.deadlineCapS({}, 5) === undefined && rc.resolveRunCapS(d, true, {}).fixedS === undefined);
+  res("RUN-DEADLINE the cap is the time left of the deadline minus the margin", rc.deadlineCapS({ LOKI_RUN_DEADLINE_S: "1200" }, 5) === 1165);
+  const r = rc.resolveRunCapS(d, true, { LOKI_RUN_DEADLINE_S: "1200" });
+  res("RUN-DEADLINE it is a fixed cap and the ceiling (never resized past it)", r.fixedS !== undefined && r.fixedS <= 1170 && r.ceilingS === r.fixedS && r.capS === r.fixedS);
+  res("RUN-DEADLINE a smaller explicit cap wins; a larger one is held to the deadline", rc.resolveRunCapS(d, true, { LOKI_RUN_DEADLINE_S: "1200", LOKI_E10_CAP_S: "600" }).capS === 600 && rc.resolveRunCapS(d, true, { LOKI_RUN_DEADLINE_S: "1200", LOKI_E10_CAP_S: "3000" }).capS <= 1170);
+  res("RUN-DEADLINE the soft cap seals at least a minute before the deadline", mc.softCapS(1165) <= 1200 - 60);
+  res("RUN-DEADLINE a bad value is ignored (warned), a tiny one keeps the minimum cap", rc.deadlineCapS({ LOKI_RUN_DEADLINE_S: "soon" }, 0) === undefined && rc.deadlineCapS({ LOKI_RUN_DEADLINE_S: "20" }, 0) === rc.DEADLINE_MIN_CAP_S);
+} finally { rmSync(d, { recursive: true, force: true }); }
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/deadline.ts" "$ROOT" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "deadline unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 6 ] || bad "deadline unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 6"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+# End to end: a 95 s deadline with an implement session that would sleep 200 s. The run must seal a receipt (cap.hit) and exit before the deadline.
+DLTO=(${TO[@]+"${TO[@]}"}); DL0=$(date +%s); TO=(LOKI_RUN_DEADLINE_S=95 E2E_STUB_SLEEP=200 ${DLTO[@]+"${DLTO[@]}"}); run_engine done; TO=(${DLTO[@]+"${DLTO[@]}"}); DLW=$(( $(date +%s) - DL0 ))
+[ "$DLW" -lt 95 ] && ok "RUN-DEADLINE the run ended inside its 95 s deadline (${DLW}s)" || bad "RUN-DEADLINE the run took ${DLW}s against a 95 s deadline"
+[ -n "$RUNDIR" ] && [ -f "$RUNDIR/receipt.json" ] && ok "RUN-DEADLINE a receipt was sealed when time ran out" || { bad "RUN-DEADLINE no receipt at the deadline"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+[ -n "$RUNDIR" ] && grep -q '"cap.hit"' "$RUNDIR/events.jsonl" 2>/dev/null && ok "RUN-DEADLINE cap.hit recorded (time ran out, not a kill)" || bad "RUN-DEADLINE no cap.hit event"
+
 finish
