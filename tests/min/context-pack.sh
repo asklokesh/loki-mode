@@ -57,6 +57,10 @@
 #  12. conventions.ts writeReleaseNoteFragment: `op = null` (TO); to_older_orphan and to_cfg_prefix fail.
 #  13. conventions.ts scaffoldRecord: `return null` for a skip (TR); tr_skip fails.
 #  25. self_review.ts guardReviewTurn: `if (false && broke.length)` (TG); tg_revert fails (the turn that broke a passing test is kept).
+#  26. self_review.ts precommitFlags: `continue;` in place of the fail-hook push (RC); rc_hooks reads 0.
+#  27. self_review.ts banFlags: drop the base-usage exemption (RC); rc_bans flags DataKey<any>.
+#  28. self_review.ts banFlags: drop the exceptions loop (RC); rc_bans flags `as const`.
+#  29. self_review.ts selfReviewChecks: `if (false && repoConventionsOn(env)` (RC); rc_item reads no conventions item.
 #  10. loki-ts/src/e10ext/scope.ts flagOutsideScope: `mine = (f: string): boolean => false` (CS); cs_on fails (the asked-for changelog edit is flagged).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -351,6 +355,21 @@ const tw = (repo: string, task: string, files = ["pkg/mod.py"]) => wf(repo, file
   out.sr_testfiles = ["src/de/tests.rs", "test/expect.js", "test/main.ts", "kotlinpoet/src/jvmTest/kotlin/a/CodeBlockTest.kt", "__tests__/base.js", "tests/test_x.py", "pkg/x_test.go", "src/a.spec.ts", "src/lib.rs", "lib/a.js", "src/contest.py", "docs/testing.md"].map((f) => sr.isTestFile(f) ? "t" : "s").join("");
   out.sr_mode = [sr.selfReviewMode({}), sr.selfReviewMode({ LOKI_E10_SELF_REVIEW: "0" }), sr.selfReviewMode({ LOKI_E10_SELF_REVIEW: "always" }), sr.selfReviewMaxTurns({}), sr.selfReviewMaxTurns({ LOKI_E10_SELF_REVIEW_MAX_TURNS: "4" }), sr.selfReviewMaxTurns({ LOKI_E10_SELF_REVIEW_MAX_TURNS: "x" })].join(",");
   out.sr_receipt = JSON.stringify([sr.selfReviewReceiptBlock({ self_review: { mode: "on", turn: null, items: [] } }), sr.selfReviewReceiptBlock({}), sr.selfReviewReceiptBlock(undefined)]);
+  // RC LOKI_E10_REPO_CONVENTIONS (acc-173): the repo's own pre-commit local hooks and the guide's "never use" bans, as self-check item (i)
+  { const cfg = ["repos:", "- repo: local", "  hooks:", "  - id: changelogs-rst", "    name: changelog filenames", "    language: fail", "    entry: Changelog files must be named ####.(bugfix|feature)", "    exclude: >-", "      (?x)", "      ^", "        CHANGES/(", "          \\.gitignore", "          |(\\d+|[0-9a-f]{8})\\.(bugfix|feature)(\\.rst)?", "        )", "      $", "    files: ^CHANGES/", "  - id: no-print", "    name: no print calls", "    language: pygrep", "    entry: '\\bprint\\('", "    types: [python]", "  - id: needs-env", "    language: python", "    entry: tool", "    files: ."].join("\n");
+    const added = (o: Record<string, string[]>) => new Map(Object.entries(o));
+    out.rc_hooks = JSON.stringify([sr.precommitFlags(cfg, added({ "CHANGES/+retry.bugfix.rst": ["Fixed."], "CHANGES/1234.bugfix.rst": ["Fixed."], "src/a.py": ["x = 1"] })).length, sr.precommitFlags(cfg, added({ "src/a.py": ["    print(x)"] })).length, sr.precommitFlags(cfg, added({ "CHANGES/+retry.bugfix.rst": [] }))[0]?.startsWith("pre-commit hook changelogs-rst rejects CHANGES/+retry.bugfix.rst: Changelog files must be named")]);
+    const guide = "- Never use `any` type. Implicit or explicit.\n- Do not use `as` type assertions, ever. The only exception is `as const`.\n- Please don't use the issue tracker for questions.";
+    const bans = sr.guideBans(guide);
+    const base = (f: string) => (f === "src/B.tsx" ? "type K = DataKey<any>;\n" : "");
+    const flag = (lines: string[]) => sr.banFlags(bans, added({ "src/B.tsx": lines }), base).map((x: string) => x.split(":")[0]!.slice(19, 24)).join(",") || "-";
+    out.rc_bans = [bans.map((b: { token: string }) => b.token).join(","), flag(["const v = get(item as any, k);"]), flag(["const c = [1, 2] as const;"]), flag(["import * as path from \"node:path\";"]), flag(["dataKey: DataKey<any> | undefined,"]), flag(["// we never cast as anything here", "const s = \"as any\";"]), flag(["let v: any = 1;"])].join(" | ");
+    out.rc_knob = [sr.repoConventionsOn({}), sr.repoConventionsOn({ LOKI_E10_REPO_CONVENTIONS: "1" })].join(",");
+    const rc = repo("rc-item", { "CONTRIBUTING.md": "- Do not use `as` type assertions, ever.\n", "src/B.ts": "export const b = 1;\n" });
+    writeFileSync(join(rc.d, "src/B.ts"), "const b = (1 as number);\nexport { b };\n");
+    const rcOn = sr.selfReviewChecks(rc.d, rc.base, sr.treeStaged(rc.d, rc.base), "Fix b", plan, { LOKI_E10_REPO_CONVENTIONS: "1" }), rcOff = sr.selfReviewChecks(rc.d, rc.base, sr.treeStaged(rc.d, rc.base), "Fix b", plan, {});
+    const rcBrief = sr.selfReviewBrief(rc.d, rcOn);
+    out.rc_item = [rcOn.find((i: { item: string }) => i.item === "conventions")?.status, rcOff.some((i: { item: string }) => i.item === "conventions"), rcBrief.includes("(i) repo conventions:"), rcBrief.includes("|i>"), JSON.stringify([...sr.parseReviewLines("REVIEW i: fixed: renamed").entries()])].join(" | "); }
   // TG LOKI_E10_REVIEW_TURN_GUARD: the turn's edits are taken back only when a test that passes without them fails with them; the implement diff stays.
   { const ts = await import(join(SRC, "e10ext/treeswap.ts")), rd = (d: string, f: string) => { try { return rf(join(d, f), "utf8"); } catch { return "<gone>"; } };
     const runT = (d: string) => (t: { path: string }) => (rd(d, t.path).includes("bad") ? "fail" : "pass") as "pass" | "fail";
@@ -667,6 +686,10 @@ eqv sr_parse '[["release_note",{"verdict":"ok","reason":"fine"}],["format",{"ver
 eqv sr_testfiles "ttttttttssss" "SR the test detector covers Rust tests.rs, a top-level test/ dir, __tests__/, JVM *Test sources, Python, Go and JS layouts, and not source or docs"
 eqv sr_mode "on,off,always,12,4,12" "SR knob: on by default, =0 off, always; the turn cap (cost cap) is 12 unless LOKI_E10_SELF_REVIEW_MAX_TURNS sets a positive integer"
 eqv sr_receipt '[{"self_review":{"mode":"on","turn":null,"items":[]}},{},{}]' "SR the receipt carries self_review only when the stage recorded it"
+eqv rc_hooks '[1,1,true]' "RC pre-commit: a local fail hook rejects a changelog file its verbose exclude does not allow (a numbered one passes), a pygrep hook finds its regex in an added Python line, a hook that needs an environment is skipped"
+eqv rc_bans 'any,as | Never,Do no | - | - | - | - | Never' "RC guide bans: never/do not use \`X\` become bans; \`item as any\` is flagged; \`as const\` (the stated exception), an import alias, the repo's own DataKey<any>, comments and strings are not; \`let v: any\` is"
+eqv rc_knob "false,true" "RC knob: off by default until measured, LOKI_E10_REPO_CONVENTIONS=1 on"
+eqv rc_item 'flagged | false | true | true | [["conventions",{"verdict":"fixed","reason":"renamed"}]]' "RC item (i): with the knob on a guide ban the change breaks flags the conventions item, the review brief names it and its REVIEW i line parses; off adds no item"
 eqv tg_revert "true|tests/t_a.txt|other.txt,tests/t_a.txt,tests/t_new.txt|2|ok|<gone>|o" "TG a review turn that breaks a test passing without it is taken back on its own paths only (edit restored, added file removed, deleted file back); the implement edit stays"
 eqv tg_both "false|bad after" "TG a test that also fails without the turn keeps the turn"
 eqv tg_none null "TG a turn that changed nothing runs no test"

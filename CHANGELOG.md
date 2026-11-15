@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Added
+- New, off by default until measured: `LOKI_E10_REPO_CONVENTIONS=1` checks the change against the repository's own conventions before delivery. Its pre-commit hooks that need no install (file-name rules and regex greps) run on the changed files, and the contribution guide's explicit "never use" or "do not use" rules are checked against the added lines. A violation goes to the pre-delivery review with the hook's message or the rule.
 - New, off by default until measured: the pre-delivery review turn can be kept from breaking a test. With `LOKI_E10_REVIEW_TURN_GUARD=1`, when the turn edits anything, Loki reruns the tests of what it changed; if a test that passed before the turn fails after it, only that turn's edits are taken back, the implemented change is kept, and the receipt says which test it broke.
 
 ### Fixed
