@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - The proof that a test fails without the fix no longer runs the fixed code. On a repo whose virtualenv holds an editable install, the base checkout imported the already changed sources through the linked environment, so a real fail-then-pass test read as passing on the old code and the run lost its proof. The base run now puts the base checkout's own sources first. The Wall's base copy had the same leak through the copied editable install and absolute links (for example a monorepo's dev dist/ links); those now point at the copy, so the Wall's base run matches a fresh base.
 
+## v11.141.3 (2026-11-15)
+
+Sixteen improvements to how Loki plans, checks and fixes a change are on by default again.
+
+### Changed
+- 16 improvements now on by default (measured: +3.5 merge-ready on our 21-task dev2 set, 2 seeds, same engine, lower cost per merge-ready; each can be turned off with =0). The knobs are listed in docs/dev/architecture-reference.md; LOKI_E10_WALL_ON_LEAN and LOKI_E10_CASCADE_V0 stay off.
+- The terminal summary no longer compares models. It reports Loki's own cost only; the receipt still records the model.
+
 ## v11.141.2 (2026-11-14)
 
 See what Loki changed and why it believes the change works, while the run is still going.
