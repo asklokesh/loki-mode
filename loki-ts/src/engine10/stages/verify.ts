@@ -514,14 +514,14 @@ function tscLocalKeys(out: string, pkgRel: string, keep: ReadonlySet<string>, ch
   if (found.length === 0 || found.length !== (out.match(/error TS\d+/g) ?? []).length) return null;
   return found.every((m) => TSC_LOCAL.has(m[2]!) && !keep.has(join(pkgRel === "." ? "" : pkgRel, m[1]!.trim()))) ? found.map((m) => `${m[1]!.trim()}|${m[2]}`) : null;
 }
-/** LINT-UNTOUCHED (acc-174, LOKI_E10_LINT_UNTOUCHED default on, =0 opts out): a failed project-wide `tsc --noEmit` whose every diagnostic sits in a file the change
+/** LINT-UNTOUCHED (acc-174, LOKI_E10_LINT_UNTOUCHED default off, =1 opts in): a failed project-wide `tsc --noEmit` whose every diagnostic sits in a file the change
  *  neither touched nor the task named, with no compiler or linter config changed, no changed symbol named anywhere in the output, AND every diagnostic line present
  *  verbatim in `baseOut` (the same tsc run on the base snapshot, tscOnBase) is not the change's own error: it is disclosed, never a cap (dev2: router's lint:tsc red in
  *  scripts/benchmarks/bundle-size/analyze.mjs, immutable's TS8010 in type-definitions/flow-tests). The base comparison is what makes it sound: a changed signature can
  *  break an untouched importer with a message that names only types (TS2345), and that line is not on base. Fail-closed: no base output, an unparsed error line or a
  *  tail cut at its cap keeps the check blocking. Only tsc lints the whole project; eslint, ruff and shellcheck run on the changed files and keep capping. */
 export const LINT_UNTOUCHED_NOTE = "lint red only in files the change did not touch (disclosed, not blocking)";
-export const lintUntouchedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_LINT_UNTOUCHED"] ?? "").trim());
+export const lintUntouchedOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_LINT_UNTOUCHED"] ?? "").trim()); // off by default: it changed no label on 150 stored bench runs and has not fired on a real run
 const tscLines = (out: string): string[] => out.split("\n").map((l) => l.trim()).filter((l) => /error TS\d+/.test(l));
 /** The half of tscUntouchedOnly that needs no base run: the whole output parses, no config changed, no diagnostic in a touched file, no changed symbol named. */
 function tscUntouchedShape(out: string, pkgRel: string, touched: ReadonlySet<string>, symbols: readonly string[]): boolean {

@@ -3807,7 +3807,7 @@ res("LINT-UNTOUCHED an error naming a changed symbol still caps (the change can 
 res("LINT-UNTOUCHED a changed tsconfig or linter config still caps", !same(out, ".", new Set([...touched, "tsconfig.json"]), []));
 res("LINT-UNTOUCHED an error line that does not parse still caps (fail-closed)", !same(out + "weird.ts: error TS1005: ';' expected.\n", ".", touched, []));
 res("LINT-UNTOUCHED a tail cut at its cap still caps", !same(out + "x".repeat(60000), ".", touched, []));
-res("LINT-UNTOUCHED on by default, =0 opts out", vf.lintUntouchedOn({}) && !vf.lintUntouchedOn({ LOKI_E10_LINT_UNTOUCHED: "0" }));
+res("LINT-UNTOUCHED off by default, =1 opts in", !vf.lintUntouchedOn({}) && !vf.lintUntouchedOn({ LOKI_E10_LINT_UNTOUCHED: "0" }) && vf.lintUntouchedOn({ LOKI_E10_LINT_UNTOUCHED: "1" }));
 // A changed signature breaks an untouched importer; the message names only types, so the symbol rule cannot see it. Base is green for that line: it caps.
 const importer = "packages/other/src/caller.ts(12,9): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.\n";
 res("LINT-UNTOUCHED an untouched importer broken by the change (types-only message, not on base) still caps", !vf.tscUntouchedOnly(out + importer, ".", touched, ["matchRoutes"], out));
