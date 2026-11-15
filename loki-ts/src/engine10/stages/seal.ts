@@ -12,7 +12,7 @@ import { mutationEnabled, mutationProof, mutationStrict, type ProofBefore } from
 import { RealBaseTestRunner, loadTaskText } from "./wall.ts"; import { defectPinEdits, defectPinNote, pinDroppedNotes, pinnedUpdateNotes, type PinnedTestUpdate } from "../../util/test_guard.ts";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
 import { discardIfSatisfied } from "../../e10ext/discard.ts";
-import { buildArtifactNotes, dropSet, formatChangedRecord, needDropNote, needDrops, parseStaged, regenDropNote, regenDrops } from "../../e10ext/commit_filter.ts";
+import { buildArtifactNotes, dropSet, formatChangedRecord, guardRegenDrops, needDropNote, needDrops, parseStaged, regenDropNote, regenDrops, regenKeptNote } from "../../e10ext/commit_filter.ts";
 import { releaseRefsReceiptBlock, type SelfReviewRecord, selfReviewReceiptBlock, turnGuardNote } from "../../features/self_review.ts";
 import { crossPackageTestEdits, crossPackageTestNote, flagOutsideScope, outsideScope, scopeTestDropEnabled } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
@@ -21,7 +21,7 @@ import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts"; import { EXEC_SPEC_TELEMETRY_FILE } from "../../features/exec_spec.ts";
 import { crossReview, minVerdict, modelReviewRan, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
 import { cascadeV0On } from "../../util/wall_knobs.ts";
-import { STAGE_BUDGETS, type RunnerName, type Obj, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type Verdict } from "../types.ts";
+import { STAGE_BUDGETS, type RunnerName, type Obj, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type TestRef, type Verdict } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
 import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
@@ -165,6 +165,17 @@ export const hookBypassNote = (err: string): string => `the repo's own commit ho
 /** MARK-1: the receipt path relative to the repo, for the Loki-Receipt trailer; falls back to the standard run location. */
 const receiptRel = (ctx: RunContext): string => { const r = relative(ctx.repoDir, join(ctx.runDir, "receipt.json")); return r.startsWith("..") || isAbsolute(r) ? `.loki/runs/${ctx.runId}/receipt.json` : r; };
 
+/** acc-170 guard: reruns the targeted tests verify passed (never a full suite or lint; at most 6, about 20 s in all) on the current tree. True when one fails,
+ *  or when none of them could run to a result (fail safe: the caller then keeps what it was about to drop); false when none exist. */
+const REGEN_GUARD_MAX = 6, REGEN_GUARD_MS = 20_000;
+export function targetedBreak(ctx: RunContext, runner: (ms: number) => { run(dir: string, files: TestRef[]): { pass: number; fail: number } } = (ms) => new RealBaseTestRunner(undefined, ms)): boolean {
+  const checks = (Array.isArray(ctx.outputs().verify?.checks) ? (ctx.outputs().verify!.checks as Obj[]) : []).filter((c) => c.result === "pass" && typeof c.name === "string" && /^[a-z]+:[^ ]/.test(c.name as string) && !/^(?:lint|full suite|typecheck|build|holdout|patch|turn):/.test(c.name as string));
+  const refs = [...new Map(checks.map((c) => { const n = String(c.name), i = n.indexOf(":"); return [n.slice(i + 1), { runner: n.slice(0, i) as RunnerName, path: n.slice(i + 1) }] as const; })).values()].slice(0, REGEN_GUARD_MAX);
+  if (!refs.length) return false;
+  const t0 = Date.now(); let ran = 0;
+  for (const r of refs) { const left = REGEN_GUARD_MS - (Date.now() - t0); if (left < 1000) break; const x = runner(left).run(ctx.repoDir, [r]); if (x.fail > 0) return true; if (x.pass > 0) ran++; }
+  return ran === 0;
+}
 /** Section 4 Commit: `git add -A` minus .loki/, Wall files and stray lockfiles, commit `loki: <title>` with a Loki-Run trailer. An empty diff commits nothing (head stays at base). */
 /** Z2: the receipt block of the tests implement updated to the issue's stated behavior; {} (key omitted, hash unchanged) when none. */
 const pinnedUpdatesOf = (implement: Obj | undefined): PinnedTestUpdate[] => (Array.isArray(implement?.pinned_test_updates) ? (implement!.pinned_test_updates as PinnedTestUpdate[]) : []);
@@ -179,7 +190,8 @@ export const commitStage: Stage = {
     const sd = await git(ctx, ["diff", "--cached", "--name-status", "--no-renames", "-z", ctx.baseSha]); if (sd.code !== 0) return { status: "failed", data: {}, reason: "git diff against base failed" };
     const staged = parseStaged(sd.out);
     const drop0 = dropSet(ctx.repoDir, staged, ctx.outputs().intake?.preexisting_dirty, process.env, ctx.outputs().intake?.install_created, ctx.outputs().intake?.preexisting_untracked_blobs, ctx.baseSha, str(ctx.outputs().intake?.task) ?? undefined);
-    const regen = regenDrops(ctx.runDir, staged.filter(({ f }) => !drop0.some((d) => d.f === f)), str(ctx.outputs().intake?.task) ?? "", (f) => { try { return safeGit(ctx.repoDir, ["diff", "--no-color", "-U0", ctx.baseSha!, "--", f]).split("\n").filter((l) => /^[+-](?![+-]{2})/.test(l)); } catch { return []; } }); // RD
+    const regen0 = regenDrops(ctx.runDir, staged.filter(({ f }) => !drop0.some((d) => d.f === f)), str(ctx.outputs().intake?.task) ?? "", (f) => { try { return safeGit(ctx.repoDir, ["diff", "--no-color", "-U0", ctx.baseSha!, "--", f]).split("\n").filter((l) => /^[+-](?![+-]{2})/.test(l)); } catch { return []; } }); // RD
+    const regenG = guardRegenDrops(ctx.repoDir, ctx.baseSha, regen0, () => targetedBreak(ctx)), regen = regenG.dropped; // acc-170: the picked paths go to base on disk, the targeted tests rerun, and a path a test needs is restored and kept
     const rest = staged.filter(({ f }) => !drop0.some((d) => d.f === f) && !regen.some((d) => d.f === f));
     const need = needDrops(rest, str(ctx.outputs().intake?.task) ?? "", (f) => { let base: string | null = null, head: string | null = null; try { base = safeGit(ctx.repoDir, ["show", `${ctx.baseSha}:./${f}`], { maxBuffer: 64 << 20 }); } catch { /* new on this run */ } try { head = readFileSync(join(ctx.repoDir, f), "utf8"); } catch { /* gone */ } return { base, head }; }, (() => { try { return outsideScope(ctx.outputs(), rest); } catch { return null; } })()); // DN
     const drop = [...drop0, ...regen, ...need];
@@ -194,7 +206,7 @@ export const commitStage: Stage = {
     }
     const dropped = new Set([...drop.map(({ f }) => f), ...xpkg]), fmtRec = formatChangedRecord(ctx.repoDir, staged, dropped, process.env, ctx.baseSha), fmt = fmtRec.formatted; // TEN-QUALITY-16: only the run's own kept files; J1: the resolved binary, base-clean files only, recorded
     if (fmt.length > 0) await git(ctx, ["--literal-pathspecs", "add", "--", ...fmt], { repoDrivers: true }); // re-stage what the repo's formatter rewrote
-    const notes = [...xpkg.map(crossPackageTestNote), ...flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir), ...toolchainDropNotes(ctx.repoDir, drop.filter(({ st }) => st === "A").map(({ f }) => f), ctx.baseSha), ...buildArtifactNotes(ctx.repoDir, drop.filter(({ st }) => st === "A").map(({ f }) => f), ctx.baseSha, str(ctx.outputs().intake?.task) ?? undefined), ...regen.map(({ f }) => regenDropNote(f)), ...need.map(needDropNote)]; // D76: advisory, nothing is reverted
+    const notes = [...xpkg.map(crossPackageTestNote), ...flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir), ...toolchainDropNotes(ctx.repoDir, drop.filter(({ st }) => st === "A").map(({ f }) => f), ctx.baseSha), ...buildArtifactNotes(ctx.repoDir, drop.filter(({ st }) => st === "A").map(({ f }) => f), ctx.baseSha, str(ctx.outputs().intake?.task) ?? undefined), ...regen.map(({ f }) => regenDropNote(f)), ...regenG.kept.map(({ f }) => regenKeptNote(f)), ...need.map(needDropNote)]; // D76: advisory, nothing is reverted
     const format = fmtRec.records.length ? { format: fmtRec.records } : {};
     if ((await git(ctx, ["diff", "--cached", "--quiet"])).code === 0) return { status: "completed", data: { committed: false, scope_notes: notes, ...format } };
     const title = (str(ctx.outputs().intake?.title) ?? `run ${ctx.runId}`).split("\n")[0]!.slice(0, 72);

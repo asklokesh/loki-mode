@@ -64,6 +64,10 @@
 #  GB1. commit_filter.ts dropSet: drop `|| art.has(f)`; the build-artifact check fails (web/dist, build/, *.pyc, *.tsbuildinfo and the ignored log ship).
 #  GB2. commit_filter.ts buildArtifacts: skip the dirTracked check (always drop under an output dir); the tracked dist/ case fails.
 #  RD1. commit_filter.ts regenDrops: `return [];` first; the RD check fails (the doc only a check run rewrote ships).
+#  SD1. commit_filter.ts commitUnsealedWork: drop `...regenWip.filter(...)` from churn; the SD WIP commit leg commits the snapshot and the cache file.
+#  SD2. commit_filter.ts regenDrops: delete `if (st === "A") return true;`; the SD drop leg keeps the components cache file.
+#  SD3. commit_filter.ts guardRegenDrops: `if (true) return { dropped: picked, kept: [] };`; the SD guard leg drops the cache a test needs.
+#  SD4. seal.ts targetedBreak: `return false;` in place of `return ran === 0;`; the SD drop leg reads nothing-ran as no break.
 #  DN1. commit_filter.ts needDrops: `return [];` first; the DN check fails (the reformatted generated file and the drive-by suppression edit ship).
 #  RO1. commit_filter.ts dropSet: `if (false) for (const f of runOutputs(` ; the RO check fails (nested .loki, test-results, JUnit reports ship) and so does GB's =0 leg.
 #  SG4. commit_filter.ts commitUnsealedWork: remove the churn block; the WIP commit carries pnpm-lock.yaml again.
@@ -529,6 +533,46 @@ console.log([JSON.stringify(cf.regeneratedPaths(rd)), d(), d({ LOKI_E10_REGEN_DR
 ' 2>&1)"
 [ "$RDR" = '["docs/encode.md","docs/named.md","docs/system.md"] | docs/system.md | - | rewritten only by Loki'"'"'s own check run, not by the change, and left out of the commit: docs/system.md' ] && ok "RD commit filter: a file only a verify run rewrote (a machine-specific doc) is left out; a file a model stage also wrote, a task-named file and a doc regenerated in step with the change stay; =0 drops nothing; the drop is noted ($RDR)" || bad "RD regenerated-file drop gave: $RDR"
 grep -q '(name === "verify" && regenDropOn()) ? treeSnapshot(ctx.repoDir) : null' "$ROOT/loki-ts/src/engine10/machine.ts" && grep -q 'if (regenDropOn()) noteRegenerated(ctx.runDir, name,' "$ROOT/loki-ts/src/engine10/machine.ts" && grep -q 'const drop = \[...drop0, ...regen, ...need\];' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q '...regen.map(({ f }) => regenDropNote(f))' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "RD wiring: the machine snapshots verify runs and records their writes; the commit stage drops and names the regenerated files" || bad "RD wiring missing in machine.ts or seal.ts"
+# SD stray check-written files (acc-170, RD now on by default, =0 opts out). (a) A NEW file only a check run wrote leaves the diff unless the task names its
+# exact path or file name; a plain task word in it ("components") no longer keeps it. (b) The guard puts the picked paths back to base on disk, reruns the
+# targeted tests, and restores and keeps them byte for byte when a test needs one. (c) targetedBreak runs only targeted checks, and reads "breaks" when
+# none could run. (d) The run-end WIP commit honors the same drop set, so a path left out at commit cannot come back on a FAILED run.
+SDR="$(SD="$T/sd-run" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const cf = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts"), seal = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/seal.ts"), rd = process.env.SD;
+cf.noteRegenerated(rd, "verify", ["testdata/api_components__load", "testdata/named__load"]);
+const task = "Schema components with a nil Items panic; the fixture testdata/named__load shows it";
+const st = [{ st: "A", f: "testdata/api_components__load" }, { st: "A", f: "testdata/named__load" }];
+const lines = () => ["+components: {}"];
+const out = [cf.regenDrops(rd, st, task, lines, { LOKI_E10_REGEN_DROP: "1" }).map((x) => x.f).join(","), cf.regenDrops(rd, st, task, lines, {}).map((x) => x.f).join(","), cf.regenDrops(rd, st, task, lines, { LOKI_E10_REGEN_DROP: "0" }).map((x) => x.f).join(",") || "-"];
+const ctx = (checks) => ({ repoDir: rd, outputs: () => ({ verify: { checks } }) });
+const run = (pass, fail, seen) => (ms) => ({ run: (d, refs) => { seen.push(refs.map((r) => r.runner + ":" + r.path).join()); return { pass, fail }; } });
+const seen = []; const checks = [{ name: "vitest:test/a.test.ts", result: "pass" }, { name: "full suite: npm", result: "pass" }, { name: "lint:eslint", result: "pass" }, { name: "vitest:test/b.test.ts", result: "fail" }];
+out.push([seal.targetedBreak(ctx(checks), run(1, 0, seen)), seal.targetedBreak(ctx(checks), run(0, 1, [])), seal.targetedBreak(ctx(checks), run(0, 0, [])), seal.targetedBreak(ctx([]), run(0, 1, []))].join(","), seen.join(";"));
+console.log(out.join(" | "));
+' 2>&1)"
+[ "$SDR" = "testdata/api_components__load | testdata/api_components__load | - | false,true,true,false | vitest:test/a.test.ts" ] && ok "SD drop: a new file only a check run wrote leaves the diff even when a plain task word (components) is in it, a file the task names by path stays, on by default, =0 drops nothing; targetedBreak runs only the passing targeted test, reads a fail as breaks, reads nothing-ran as breaks (fail safe) and no targeted test as no break" || bad "SD drop/targetedBreak: $SDR"
+SG="$T/sd-guard"; mkdir -p "$SG/__snapshots__" "$SG/testdata" && git -C "$SG" init -q -b main && git -C "$SG" config user.name rs && git -C "$SG" config user.email rs@example.invalid
+printf 'exports[`a`] = 1;\n' > "$SG/__snapshots__/a.snap"; printf 'x\n' > "$SG/app.ts"; git -C "$SG" add -A . && git -C "$SG" commit -q -m base; BASE_G="$(git -C "$SG" rev-parse HEAD)"
+sd_guard() { # sd_guard <needs: none|cache>: dirty the snapshot, add a cache file, run the guard; print kept | dropped | snap | cache
+    git -C "$SG" checkout -q "$BASE_G" -- .; printf 'exports[`a`] = 1;\nexports[`b`] = 2;\n' > "$SG/__snapshots__/a.snap"; printf 'cache\n' > "$SG/testdata/c__load"
+    SGD="$SG" B="$BASE_G" NEED="$1" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const cf = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts"), fs = await import("node:fs"), d = process.env.SGD;
+const g = cf.guardRegenDrops(d, process.env.B, [{ st: "M", f: "__snapshots__/a.snap" }, { st: "A", f: "testdata/c__load" }], () => process.env.NEED === "cache" && !fs.existsSync(d + "/testdata/c__load"));
+const snap = fs.readFileSync(d + "/__snapshots__/a.snap", "utf8").includes("`b`") ? "snap-head" : "snap-base", cache = fs.existsSync(d + "/testdata/c__load") ? "cache-kept" : "cache-gone";
+console.log([g.kept.map((x) => x.f).join(",") || "-", g.dropped.map((x) => x.f).join(",") || "-", snap, cache].join(" | "));' 2>&1
+}
+SG1="$(sd_guard none)"; SG2="$(sd_guard cache)"
+[ "$SG1" = "- | __snapshots__/a.snap,testdata/c__load | snap-base | cache-gone" ] && [ "$SG2" = "__snapshots__/a.snap,testdata/c__load | - | snap-head | cache-kept" ] && ok "SD guard: with no targeted test broken the picked snapshot goes back to base and the cache file is removed on disk; when a test needs one of them, both are restored byte for byte and kept" || bad "SD guard: [$SG1] [$SG2]"
+WR="$T/sd-wip"; mkdir -p "$WR/__snapshots__" && git -C "$WR" init -q -b main && git -C "$WR" config user.name rs && git -C "$WR" config user.email rs@example.invalid
+printf 'exports[`a`] = 1;\n' > "$WR/__snapshots__/a.snap"; printf 'a\n' > "$WR/app.ts"; git -C "$WR" add -A . && git -C "$WR" commit -q -m base; BASE_R="$(git -C "$WR" rev-parse HEAD)"
+git -C "$WR" checkout -q -B loki/e10-wiprd "$BASE_R"; printf 'b\n' > "$WR/app.ts"; printf 'exports[`a`] = 1;\nexports[`z`] = 9;\n' > "$WR/__snapshots__/a.snap"; mkdir -p "$WR/testdata"; printf 'cache\n' > "$WR/testdata/c__load"
+mkdir -p "$WR/.loki/runs/e10-wiprd"; printf '{"paths":["__snapshots__/a.snap","testdata/c__load"]}\n' > "$WR/.loki/runs/e10-wiprd/regenerated.json"
+W="$WR" B="$BASE_R" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { commitUnsealedWork } = await import(process.env.ROOT + "/loki-ts/src/e10ext/commit_filter.ts");
+commitUnsealedWork(true, process.env.W, process.env, "e10-wiprd", { base_sha: process.env.B, task: "fix the parser bug" });' >/dev/null 2>&1
+SDW="$(git -C "$WR" diff --name-only "$BASE_R" HEAD | tr '\n' ' ')| $(git -C "$WR" status --porcelain -- . ':!.loki' | tr '\n' ' ')"
+[ "$SDW" = "app.ts | " ] && ok "SD WIP commit: on a FAILED run the WIP commit leaves out the check-rewritten snapshot and the check-written cache file, and the tree is clean for the checkout back" || bad "SD WIP commit: [$SDW]"
+grep -q 'const regenG = guardRegenDrops(ctx.repoDir, ctx.baseSha, regen0, () => targetedBreak(ctx)), regen = regenG.dropped;' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q '...regenG.kept.map(({ f }) => regenKeptNote(f))' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "SD wiring: the commit stage guards RD's picks and names the kept ones on the receipt" || bad "SD wiring missing in seal.ts"
 printf '#!/bin/sh\nfor f in "$@"; do printf "formatted\\n" >> "$f"; done\n' > "$LK/node_modules-biome.sh"; mkdir -p "$LK/node_modules/.bin"; cp "$LK/node_modules-biome.sh" "$LK/node_modules/.bin/biome"; rm "$LK/node_modules-biome.sh"; chmod +x "$LK/node_modules/.bin/biome"
 printf '{}\n' > "$LK/biome.json"
 FMT="$(LK="$LK" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
