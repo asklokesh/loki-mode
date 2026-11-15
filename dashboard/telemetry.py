@@ -2,7 +2,7 @@
 
 Collection is ON BY DEFAULT for an ordinary individual install, and AUTO-OFF in
 enterprise / CI / air-gapped / non-interactive contexts (see _auto_off), so those
-deployments stay silent out of the box (GDPR / FedRAMP safe). Only anonymous
+deployments stay silent out of the box. Only anonymous
 diagnostics are ever sent; never code, prompts, paths, keys, or repo names. The
 gate mirrors autonomy/telemetry.sh + autonomy/crash.sh exactly.
 

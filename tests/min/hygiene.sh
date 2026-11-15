@@ -24,10 +24,18 @@
 #
 # Sixth check: claims Loki no longer makes never come back in shipped text (CHANGELOG.md keeps
 # history verbatim; .gitignore names a generated directory): "tamper-evident" (the receipt is
-# signed and `loki verify` re-checks it offline; the audit logs are hash-chained), "SOC 2" (no
-# compliance claim; src/audit/compliance.js maps audit events to SOC 2 control ids and is the one
-# allowed file) and "HumanEval" (no benchmark figure). Planted defect: add "tamper-evident" to
-# README.md, then "SOC 2" to references/agent-types.md; each must be reported by file and line.
+# signed and `loki verify` re-checks it offline; the audit logs are hash-chained) and "HumanEval"
+# (no benchmark figure) or the "41 agent types" count in any tracked text; and no compliance claim ("SOC 2", "SOC2", "GDPR", any
+# case) in user-facing text: every markdown file, agents/*.json, and the echo/printf lines of the
+# bash CLI. No file is allowed. Code identifiers (the soc2/iso27001/gdpr report ids in src/audit,
+# dashboard/server.py and swarm/) are not user-facing and are not scanned, and neither is a markdown
+# line that is only a Python raw-string regex (r"..."), which matches a user's own task text. The
+# report output itself names no framework: the three src/audit/compliance.js generators run on a
+# small fixture and the JSON of each must not match SOC 2, GDPR, ISO 27001 or Type II. The
+# always-HIGH regex in skills/model-selection.md must still match GDPR, HIPAA, SOC2 and PCI task
+# text. Planted defects: add "tamper-evident" to README.md, then "SOC2" to agents/types.json, then
+# echo "GDPR ready" to autonomy/loki; each must be reported by file and line. Set reportType back
+# to 'SOC2_TYPE_II' in src/audit/compliance.js; drop hipaa from the model-selection regex.
 #
 # Fifth check: every loki-ts/src path named in any tracked text file (code comments included, not
 # only docs) exists, so a deleted module cannot live on as a pointer or a mirror note.
@@ -43,6 +51,7 @@
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
+need node
 cd "$ROOT" || exit 2
 
 echo "TEST: no emoji, no en or em dashes"
@@ -235,7 +244,15 @@ esac
 
 claims_out="$(python3 -I - <<'PY'
 import re, subprocess
-CLAIMS = [(re.compile(r"tamper-evident", re.I), ()), (re.compile(r"SOC 2"), ("src/audit/compliance.js",)), (re.compile(r"HumanEval"), (".gitignore",))]
+CLAIMS = [(re.compile(r"tamper-evident", re.I), ()), (re.compile(r"HumanEval"), (".gitignore",)), (re.compile(r"\b41 (specialized )?agent (types|roles)\b", re.I), ())]
+COMPLIANCE = re.compile(r"SOC ?2|GDPR", re.I)
+TASK_REGEX = re.compile(r'\s*r"[^"]*",?\s*$')
+def user_facing(f, line):
+    if f.endswith(".md") and TASK_REGEX.match(line):
+        return False
+    if f.endswith(".md") or (f.startswith("agents/") and f.endswith(".json")):
+        return True
+    return f == "autonomy/loki" and re.match(r"\s*(echo|printf)\b", line) is not None
 files = [f for f in subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"]).decode().split("\0")
          if f and f not in ("CHANGELOG.md", "tests/min/hygiene.sh")]
 hits, scanned = [], 0
@@ -252,13 +269,50 @@ for f in files:
         for rx, allowed in CLAIMS:
             if f not in allowed and rx.search(line):
                 hits.append("%s:%d (%s)" % (f, n, rx.pattern))
-print(("OK no shipped text claims tamper-evident, SOC 2 or a HumanEval figure (%d files)" % scanned) if not hits
+        if COMPLIANCE.search(line) and user_facing(f, line):
+            hits.append("%s:%d (compliance claim)" % (f, n))
+print(("OK no shipped text claims tamper-evident or a HumanEval figure, and no user-facing text makes a SOC 2, SOC2 or GDPR claim (%d files)" % scanned) if not hits
       else "NO %d line(s) bring back a dropped claim: %s" % (len(hits), " ".join(hits[:15])))
 PY
 )"
 case "$claims_out" in
     "OK "*) ok "${claims_out#OK }" ;;
     *) bad "${claims_out#NO }" ;;
+esac
+
+report_out="$(node -e '
+var c = require(process.argv[1]);
+var entries = [
+  { seq: 1, timestamp: "2026-01-01T00:00:00Z", who: "agent-a", what: "agent_start", metadata: { containsPii: true, dataType: "logs" } },
+  { seq: 2, timestamp: "2026-01-01T00:00:01Z", who: "agent-b", what: "test_run" },
+];
+var rx = /SOC ?2|GDPR|ISO ?27001|Type II/i;
+var hits = [];
+["generateSoc2Report", "generateIso27001Report", "generateGdprReport"].forEach(function (n) {
+  var m = JSON.stringify(c[n](entries, {})).match(rx);
+  if (m) hits.push(n + " (" + m[0] + ")");
+});
+console.log(hits.length ? "NO audit report output names a framework: " + hits.join(" ") : "OK the three audit report generators name no compliance framework in their output");
+' "$ROOT/src/audit/compliance.js" 2>&1)"
+case "$report_out" in
+    "OK "*) ok "${report_out#OK }" ;;
+    *) bad "${report_out#NO }" ;;
+esac
+
+tier_out="$(python3 -I - <<'PY'
+import re
+text = open("skills/model-selection.md", encoding="utf-8").read()
+block = re.search(r"ALWAYS_HIGH_PATTERNS = \[(.*?)\]\n", text, re.S)
+pats = re.findall(r'r"([^"]*)"', block.group(1)) if block else []
+tasks = ["add GDPR consent banner", "add HIPAA audit logging", "SOC2 evidence export", "PCI card storage"]
+miss = [t for t in tasks if not any(re.search(p, t, re.I) for p in pats)]
+print(("OK the always-HIGH regex in skills/model-selection.md matches GDPR, HIPAA, SOC2 and PCI task text (%d patterns)" % len(pats))
+      if pats and not miss else "NO always-HIGH regex misses: %s" % (", ".join(miss) or "no patterns found"))
+PY
+)"
+case "$tier_out" in
+    "OK "*) ok "${tier_out#OK }" ;;
+    *) bad "${tier_out#NO }" ;;
 esac
 
 finish

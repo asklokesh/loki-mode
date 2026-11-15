@@ -181,7 +181,7 @@ drift_prevention:
 
 1. **3-reviewer bottleneck** - May not scale past 50+ agents
 2. **Signal file coordination** - Similar to Cursor's failed file locking
-3. **Over-specification** - 41 agent types may be overkill
+3. **Over-specification** - this many agent types may be overkill
 
 ---
 

@@ -443,7 +443,7 @@ These tasks ALWAYS start at HIGH tier (Opus):
 | **Architecture** | System design, service boundaries, data models | Foundation decisions |
 | **Breaking Changes** | API versioning, schema migrations, deprecations | High blast radius |
 | **Production Incidents** | Outage response, data corruption, rollback | Critical impact |
-| **Compliance** | GDPR, HIPAA, SOC2 implementations | Regulatory requirements |
+| **Compliance** | Privacy, health-data and payment-data rules, audit evidence | Regulatory requirements |
 | **Cost Decisions** | Infrastructure scaling, vendor selection | Financial impact |
 
 ```python
@@ -452,7 +452,7 @@ ALWAYS_HIGH_PATTERNS = [
     r"(auth|security|encrypt|secret|credential|token|password)",
     r"(architecture|system.design|schema.migration)",
     r"(production|incident|outage|rollback)",
-    r"(compliance|gdpr|hipaa|soc2|pci)",
+    r"(compliance|regulatory|privacy.law|audit.evidence|gdpr|hipaa|soc2|pci|health.data|payment.data)",
 ]
 
 if any(re.search(p, task.description, re.I) for p in ALWAYS_HIGH_PATTERNS):

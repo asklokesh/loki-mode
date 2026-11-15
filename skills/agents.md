@@ -11,7 +11,7 @@
 - [Project AGENTS.md](#project-agentsmd)
 - [A2A-Inspired Communication (Google Protocol)](#a2a-inspired-communication-google-protocol)
 - [Agentic Patterns Reference (awesome-agentic-patterns)](#agentic-patterns-reference-awesome-agentic-patterns)
-- [The 41 Agent Roles (37 Domain + 4 Orchestration)](#the-41-agent-roles-37-domain--4-orchestration)
+- [The Agent Roles (Domain + Orchestration)](#the-agent-roles-domain--orchestration)
 <!-- TOC:END -->
 
 > **Full agent type definitions:** See `references/agent-types.md` for complete agent role specifications across 8 domains (Engineering, Operations, Business, Data, Product, Growth, Review, Orchestration). These are prompt-defined specifications the orchestrator adopts per phase; parallelism on Claude Code comes from the blind review council, the adversarial reviewer, and optional git-worktree streams, sequential on other providers.
@@ -260,7 +260,7 @@ Priority order for context:
 
 ---
 
-## The 41 Agent Roles (37 Domain + 4 Orchestration)
+## The Agent Roles (Domain + Orchestration)
 
 See `references/agent-types.md` for complete specifications. Summary:
 
