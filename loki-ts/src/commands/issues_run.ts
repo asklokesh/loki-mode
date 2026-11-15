@@ -18,7 +18,7 @@ import { MAX_PARALLEL, makeDefaultRunner, queueAdd, queueRun, type ItemResult, t
 import { partialCostText } from "../engine10/output.ts";
 import { estimateFor, startText, type EstimateResult } from "../runner/router/cost_preview.ts";
 import { clearOutcome, epicOutcome, invalidSplitNote, lastOutcome, makeSessionDecompose, NO_JSON_REASON, splitCost, splitCostText, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, stacksOn, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
-import { combineSlices, defaultCombineIo, onePrEnabled, type CombineIo, type CombineResult } from "./issues_combine.ts"; import { readOriginUrl } from "../util/engine_origin.ts";
+import { combineLocal, combineSlices, defaultCombineIo, onePrEnabled, type CombineIo, type CombineResult } from "./issues_combine.ts"; import { readOriginUrl } from "../util/engine_origin.ts";
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
 import { safeGit } from "../util/safe_git.ts"; import { deepPid } from "../util/base_guard.ts"; import { spawnDetached } from "../runner/worker_proc.ts";
 import { resolveModel } from "../engine10/session.ts";
@@ -530,7 +530,7 @@ export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr:
   };
   const why = size.reasons.join("; ");
   // ONE-PR: the base every root slice starts on and the origin, both read before any provider session runs (Rule of Two: a slice cannot redirect the push)
-  const one = !o.noPr && onePrEnabled(env), baseSha = one ? (() => { try { return safeGit(o.repoDir, ["rev-parse", "HEAD"]).trim(); } catch { return ""; } })() : "", pinnedOrigin = one ? readOriginUrl(o.repoDir) : null;
+  const one = onePrEnabled(env) && (!o.noPr || combineLocal(env)), baseSha = one ? (() => { try { return safeGit(o.repoDir, ["rev-parse", "HEAD"]).trim(); } catch { return ""; } })() : "", pinnedOrigin = one && !o.noPr ? readOriginUrl(o.repoDir) : null; // --no-pr with LOKI_SPLIT_ONE_PR=local: the combined branch and PR body are built, nothing is pushed
   d.out(`loki: ${raw.repo}#${issue.number} sizes large (${why}); asking for a split into slices that each run on their own\n`);
   const plan = await splitWithReask(d, raw.repo, issue, `deterministic sizing: ${why}`);
   if (!plan.ok) {

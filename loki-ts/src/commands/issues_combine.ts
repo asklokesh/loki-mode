@@ -14,6 +14,8 @@
 //      also fails on the base is excused); one combined receipt lists each slice's verdict and can only lower it;
 //   5. one PR for the issue with a per-slice section; per-slice PRs opened earlier are closed with "Combined into #N.";
 //   6. fallback to per-slice PRs only for a conflicting slice, or for all when the combined diff exceeds LOKI_SPLIT_ONE_PR_MAX_FILES.
+//   7. a rerun of the issue finds loki/<n>-combined already on the origin: it publishes on loki/<n>-combined-<run tag> (no forced push) and
+//      closes the earlier run's open combined PR with "Superseded by #N.", so the issue keeps one open PR.
 // LOKI_SPLIT_ONE_PR=0 restores one PR per slice. Every external effect is injectable (CombineIo) so tests never call a provider or GitHub.
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,6 +30,8 @@ import type { GhIssue } from "./issues_run.ts";
 
 /** LOKI_SPLIT_ONE_PR: on by default (a founder UX rule: improvements ship on); 0, off, false or no restores one PR per slice. */
 export const onePrEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_SPLIT_ONE_PR"] ?? "").trim());
+/** LOKI_SPLIT_ONE_PR=local: a --no-pr run of a split issue still builds the combined branch and its PR body, and pushes nothing (the issue-to-PR workflow publishes them from a job that runs no agent). */
+export const combineLocal = (env: NodeJS.ProcessEnv = process.env): boolean => (env["LOKI_SPLIT_ONE_PR"] ?? "").trim().toLowerCase() === "local";
 export const DEFAULT_MAX_FILES = 150;
 /** LOKI_SPLIT_ONE_PR_MAX_FILES: a combined diff over this many files is opened as per-slice PRs instead (default 150). */
 export function oneMaxFiles(env: NodeJS.ProcessEnv = process.env): number {
@@ -111,8 +115,20 @@ const out = (dir: string, args: string[]): string => { const r = git(dir, args);
 const lines = (s: string): string[] => s.split("\n").map((l) => l.trim()).filter(Boolean);
 const prNumber = (url: string): string => { const m = /\/pull\/(\d+)$/.exec(url); return m ? `#${m[1]}` : url; };
 
-/** The combined branch name for issue N. */
-export const combinedBranch = (n: number): string => `loki/${n}-combined`;
+/** The combined branch name for issue N. With a tag: this run's own name, used when an earlier run's branch already holds loki/<n>-combined on the origin. */
+export const combinedBranch = (n: number, tag = ""): string => `loki/${n}-combined${tag ? `-${tag}` : ""}`;
+/** This run's tag for a rerun branch: the epic run dir's name without "e10-", git-safe, at most 40 characters. */
+export const rerunTag = (runDir: string): string => (runDir.split("/").filter(Boolean).pop() ?? "").replace(/^e10-/, "").replace(/[^A-Za-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "rerun";
+const GH_PR_RE = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/;
+/** Open same-repo PRs of earlier runs of issue N (head loki/<n>-combined or loki/<n>-combined-<tag>), except `keep`. A gh failure or unreadable output lists none. */
+export function earlierCombinedPrs(gh: CombineIo["gh"], slug: string, n: number, keep: string): string[] {
+  const g = gh(["pr", "list", "--repo", slug, "--state", "open", "--limit", "200", "--json", "url,headRefName,isCrossRepository"]);
+  if (g.rc !== 0) return [];
+  let rows: unknown; try { rows = JSON.parse(g.stdout); } catch { return []; }
+  const head = new RegExp(`^loki/${n}-combined(-[A-Za-z0-9-]+)?$`);
+  return (Array.isArray(rows) ? rows : []).filter((r): r is { url: string; headRefName: string } => !!r && typeof r === "object" && typeof (r as { url?: unknown }).url === "string" && typeof (r as { headRefName?: unknown }).headRefName === "string" && (r as { isCrossRepository?: unknown }).isCrossRepository === false)
+    .filter((r) => head.test(r.headRefName) && r.url !== keep && GH_PR_RE.test(r.url)).map((r) => r.url);
+}
 
 /** Files the combined change touches: the union of every slice's diff from the base. */
 export function combinedFiles(repoDir: string, baseSha: string, slices: readonly CombineSlice[]): string[] {
@@ -302,7 +318,7 @@ export async function combineSlices(o: CombineInput): Promise<CombineResult> {
     // 5. ONE PR for the issue
     const receiptSha = res.receiptPath ? String(readReceipt(dirname(res.receiptPath))?.["receipt_sha256"] ?? "") : "";
     const sections = res.commits.map((c) => { const s = byId.get(c.id)!, rec = readReceipt(s.receiptDir); return sliceSection(s, { commit: c.sha, files: filesOf(s), wall: wallRes[c.id], resolved: c.resolved, notProven: receiptNotProven(rec), receiptSha: typeof rec?.["receipt_sha256"] === "string" ? rec["receipt_sha256"] as string : null }); });
-    const left = [...o.excluded.map((x) => `- ${x.id} ${one(x.title)}: not included, ${clip(one(x.outcome), 200)}`), ...[...dropped].map(([id, why]) => `- ${id} ${one(byId.get(id)?.title ?? "")}: opened as its own PR, ${clip(one(why), 240)}`)];
+    const left = [...o.excluded.map((x) => `- ${x.id} ${one(x.title)}: not included, ${clip(one(x.outcome), 200)}`), ...[...dropped].map(([id, why]) => `- ${id} ${one(byId.get(id)?.title ?? "")}: ${o.pinnedOrigin ? "opened as its own PR" : `not included (its change is on branch ${byId.get(id)?.branch ?? "unknown"})`}, ${clip(one(why), 240)}`)];
     const body = [
       `This pull request delivers ${o.slug}#${n} as one change. The issue was split into ${o.slices.length + o.excluded.length} slices; each ran and verified on its own branch, and ${res.commits.length} ${res.commits.length === 1 ? "is" : "are"} applied here in dependency order, one commit per slice.`,
       "",
@@ -317,10 +333,20 @@ export async function combineSlices(o: CombineInput): Promise<CombineResult> {
       ...sections,
       o.io.link(dropped.size > 0 || o.excluded.length > 0 ? "PARTIAL" : res.verdict).trim(), // "Closes" only when this PR holds every slice; otherwise "Refs", so merging it never closes a half-delivered issue
     ].join("\n") + "\n";
-    if (!o.pinnedOrigin) { res.reason = "no pinned origin: the combined branch was built but not pushed"; await publishFallback(o, dropped, res); return res; }
     const bodyFile = join(dir, "pr-body.md");
-    writeFileSync(bodyFile, body);
-    const pushed = io.push({ repoDir: o.repoDir, branch, title: io.title(res.verdict, ""), bodyFile, draft: o.draft || res.verdict !== "VERIFIED", pinnedOrigin: o.pinnedOrigin });
+    writeFileSync(bodyFile, body); // written before the origin check: a --no-pr run (the issue-to-PR workflow) publishes this body from another job
+    if (!o.pinnedOrigin) { res.reason = `not pushed (--no-pr, or the repository has no origin): ${res.commits.length} slice${res.commits.length === 1 ? " is" : "s are"} on ${branch}`; await publishFallback(o, dropped, res); return res; }
+    const pushArgs = { repoDir: o.repoDir, title: io.title(res.verdict, ""), bodyFile, draft: o.draft || res.verdict !== "VERIFIED", pinnedOrigin: o.pinnedOrigin };
+    let pushed = io.push({ ...pushArgs, branch });
+    // RERUN (FireLater#24 on 11.141.6): an earlier run of this issue left loki/<n>-combined on the origin, and this run's branch starts again at the base,
+    // so the push is refused as a non-fast-forward. Publish under this run's own name, never a forced push; the earlier PR is closed below.
+    if (!pushed.ok && /push refused or failed/.test(pushed.reason)) {
+      const alt = combinedBranch(n, rerunTag(o.runDir));
+      if (git(o.repoDir, ["branch", "-f", alt, head]).status === 0) {
+        const again = io.push({ ...pushArgs, branch: alt });
+        if (again.ok) { io.say(`#${n} ${branch} already exists on the origin from an earlier run; this run's change is on ${alt}\n`); pushed = again; res.branch = alt; }
+      }
+    }
     if (!pushed.ok) {
       for (const c of res.commits) dropped.set(c.id, "the combined PR could not be opened");
       res.reason = `combined PR not opened (${clip(one(pushed.reason), 200)}); opened one PR per slice`;
@@ -329,10 +355,15 @@ export async function combineSlices(o: CombineInput): Promise<CombineResult> {
       res.pr = pushed.url;
       for (const c of res.commits) { // per-slice PRs opened earlier in the run are superseded
         const url = byId.get(c.id)!.pr;
-        if (url && url !== pushed.url && /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/.test(url)) {
+        if (url && url !== pushed.url && GH_PR_RE.test(url)) {
           const g = io.gh(["pr", "close", url, "--comment", `Combined into ${prNumber(pushed.url)}.`]);
           if (g.rc !== 0) io.say(`#${n} could not close ${url} (gh exit ${g.rc})\n`);
         }
+      }
+      // one open PR per issue: the combined PR of an earlier run of this issue is superseded by this one
+      if (GH_PR_RE.test(pushed.url)) for (const old of earlierCombinedPrs(io.gh, o.slug, n, pushed.url)) {
+        const g = io.gh(["pr", "close", old, "--repo", o.slug, "--comment", `Superseded by ${prNumber(pushed.url)}.`]);
+        if (g.rc !== 0) io.say(`#${n} could not close ${old} (gh exit ${g.rc})\n`);
       }
     }
     await publishFallback(o, dropped, res);

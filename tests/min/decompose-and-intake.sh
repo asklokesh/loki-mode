@@ -15,6 +15,8 @@
 #            parser counts that PARTIAL split as done; under LOKI_SPLIT_ONE_PR=0 (conflict e2e) each slice opens its own PR.
 #   one pr:  source level, real git and the real push script: independent, stacked and 8-slice splits give one PR; a conflict is
 #            resolved once or that slice falls back with its reason; the file cap falls back; the block stays within 8 lines.
+#            A rerun whose combined branch is already on the origin still ends in one PR (its own branch name, no forced
+#            push) and closes the earlier run's combined PR; --no-pr with LOKI_SPLIT_ONE_PR=local combines without pushing.
 #   outcome: the split's aggregate (commands/issues_epic.ts epicOutcome): FAILED (exit 1) when a slice really failed, which
 #            outranks BUDGET_STOP (exit 3), then PARTIAL (exit 6), then VERIFIED; exit codes via exitCodeOf
 #            (LOKI_DURABLE_STATE=1 gives 20). The Cost line sums unrounded slice figures plus every planning session (a
@@ -97,6 +99,8 @@
 #  O8. never close an earlier slice PR; A fails.   O9. seal_group.ts composeGroupReceipt: ignore the combined misses; G fails.
 #  O10. prLines: no fold; I fails (11 lines).   O11. maxSlices: ignore LOKI_SPLIT_MAX_SLICES; the split cap check fails.
 #  O12. "Closes" on a partial combine; D fails.   O13. skip the combined impacted tests; G fails.
+#  O14. issues_combine.ts: never retry the refused push under the run's own branch name; J, K fail.   O15. earlierCombinedPrs returns []; K fails.
+#  O16. combineLocal: always false; L fails.   O17. combineLocal: always true; N fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -553,6 +557,8 @@ const scen = async (tag, slices, edit, opt = {}) => {
   writeFileSync(repo + "/calc.ts", "export const calc = 1;\n"); writeFileSync(repo + "/a.ts", "export const a = 1;\n"); writeFileSync(repo + "/b.ts", "export const b = 1;\n");
   writeFileSync(repo + "/.gitignore", ".loki/\n");
   g(repo, "add", "-A"); g(repo, "commit", "-q", "-m", "base"); g(repo, "remote", "add", "origin", origin); g(repo, "push", "-q", "origin", "main");
+  // J: an earlier run of the same issue already pushed loki/24-combined (other history), as FireLater PR #52 had before the 11.141.6 rerun
+  if (opt.prior) { g(repo, "checkout", "-q", "-b", "loki/24-combined"); writeFileSync(repo + "/prior.ts", "earlier\n"); g(repo, "add", "-A"); g(repo, "commit", "-q", "-m", "earlier run"); g(repo, "push", "-q", "origin", "loki/24-combined"); g(repo, "checkout", "-q", "main"); g(repo, "branch", "-q", "-D", "loki/24-combined"); }
   const runDir = repo + "/.loki/runs/e10-epic";
   mkdirSync(runDir, { recursive: true });
   writeFileSync(runDir + "/issue.json", JSON.stringify({ provider: "github", repo: "acme/search", number: 24, title: process.env.EPIC_TITLE, body: process.env.EPIC_BODY, labels: [] }));
@@ -568,13 +574,14 @@ const scen = async (tag, slices, edit, opt = {}) => {
     const pr = o.pr ? "PR: https://github.com/acme/search/pull/" + (40 + n) : opt.earlyPr === id ? "PR: https://github.com/acme/search/pull/39" : "";
     return { rc: 0, output: pr, verdict: "VERIFIED", costUsd: 0.1, runId };
   };
-  const rc = await ir.startIssueEpic({ repoDir: repo, runDir, noPr: false, provider: "claude", env: { LOKI_DIR: repo + "/.loki", LOKI_EPIC_PARALLEL: "1", ...(opt.env ?? {}) }, inject: {
+  const rc = await ir.startIssueEpic({ repoDir: repo, runDir, noPr: !!opt.noPr, provider: "claude", env: { LOKI_DIR: repo + "/.loki", LOKI_EPIC_PARALLEL: "1", ...(opt.env ?? {}) }, inject: {
     decompose: async () => JSON.stringify({ slices }),
     runner,
     out: (s) => { out += s; }, err: () => {},
     combineIo: {
       resolve: async ({ cwd, files }) => { if (opt.fix) for (const f of files) writeFileSync(cwd + "/" + f, readFileSync(cwd + "/" + f, "utf8").split("\n").filter((l) => !/^(<{7}|={7}|>{7})/.test(l)).join("\n")); return { usd: 0.05 }; },
-      gh: (a) => { gh.push(a.join(" ")); return { rc: 0, stdout: "", stderr: "" }; },
+      gh: (a) => { gh.push(a.join(" ")); return { rc: 0, stdout: opt.ghOut?.(a) ?? "", stderr: "" }; },
+      ...(opt.push ? { push: opt.push } : {}),
       runTests: async (d, refs) => refs.map(() => ({ pass: 1, fail: opt.red && !d.endsWith("/base") ? 1 : 0, not_run: 0 })), // G: red on the combined tree only
       impacted: () => (opt.red ? [{ runner: "bun", path: "calc.test.ts" }] : []),
     },
@@ -589,7 +596,8 @@ const scen = async (tag, slices, edit, opt = {}) => {
   try { const b = readFileSync(runDir + "/combined/pr-body.md", "utf8"); bodyS = [...b.matchAll(/^### (s\d+):/gm)].map((m) => m[1]).join(",") + (/^## Combined proof$/m.test(b) ? " proof" : "") + (/^Cost: /m.test(b) ? " cost" : "") + (/^Not proven: nothing\.$/m.test(b) ? " np" : "") + (/^Closes acme\/search#24$/m.test(b) ? " closes" : ""); } catch {}
   console.log(tag + "  receipt " + rec + " | body " + bodyS);
   for (const l of block) console.log(tag + "  " + l);
-  for (const l of L.filter((l) => /resolve session|opens its own PR/.test(l))) console.log(tag + "  say " + l);
+  for (const l of L.filter((l) => /resolve session|opens its own PR|already exists on the origin/.test(l))) console.log(tag + "  say " + l);
+  if (opt.refs) console.log(tag + "  refs origin[" + g(origin, "for-each-ref", "--format=%(refname:short)", "refs/heads").split("\n").join(",") + "] local[" + g(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/loki/24-combined*").split("\n").join(",") + "] head=" + g(repo, "rev-parse", "--abbrev-ref", "HEAD") + " subj[" + g(repo, "log", "--reverse", "--format=%s", "main..loki/24-combined").split("\n").join("|") + "]");
 };
 const add = (f) => (id, wt) => appendFileSync(wt + "/" + f, "export const slice_" + id + " = \"" + id + "\";\n");
 await scen("A", [sl("s1", [], ["a.ts"]), sl("s2", [], ["b.ts"])], (id, wt) => add(id === "s1" ? "a.ts" : "b.ts")(id, wt), { earlyPr: "s1" });
@@ -605,6 +613,26 @@ const eight = [sl("s1", [], []), sl("s2", ["s1"], []), sl("s3", ["s2"], []), sl(
 const own = (id, wt) => add("f_" + id + ".ts")(id, wt);
 await scen("H", eight, own);
 await scen("I", eight, own, { env: { LOKI_SPLIT_ONE_PR_MAX_FILES: "3" } });
+// J: a rerun. The origin already holds loki/24-combined from an earlier run, so the real engine10-push.sh refuses the push; the run publishes on its own
+// branch name instead of falling back to one PR per slice. K: on GitHub (push faked to return PR URLs) the earlier runs' open combined PRs are closed
+// as superseded; a fork PR, another issue's PR, another branch and the new PR itself are left alone. L: --no-pr with LOKI_SPLIT_ONE_PR=local builds
+// the combined branch and PR body and pushes nothing; N: plain --no-pr combines nothing (as before).
+const two = [sl("s1", [], ["a.ts"]), sl("s2", [], ["b.ts"])], ab = (id, wt) => add(id === "s1" ? "a.ts" : "b.ts")(id, wt);
+await scen("J", two, ab, { prior: true, refs: true });
+const pushes = [];
+await scen("K", two, ab, {
+  push: (a) => { pushes.push(a.branch); return a.branch === "loki/24-combined" ? { ok: false, reason: "engine10-push.sh push-pr failed (exit 2): engine10-push: push refused or failed (rc=1)" } : { ok: true, url: "https://github.com/acme/search/pull/61" }; },
+  ghOut: (a) => (a[0] === "pr" && a[1] === "list" ? JSON.stringify([
+    { url: "https://github.com/acme/search/pull/52", headRefName: "loki/24-combined", isCrossRepository: false },
+    { url: "https://github.com/acme/search/pull/57", headRefName: "loki/24-combined-older-run", isCrossRepository: false },
+    { url: "https://github.com/acme/search/pull/58", headRefName: "loki/24-combined", isCrossRepository: true },
+    { url: "https://github.com/acme/search/pull/59", headRefName: "loki/241-combined", isCrossRepository: false },
+    { url: "https://github.com/acme/search/pull/60", headRefName: "feature/24-combined", isCrossRepository: false },
+    { url: "https://github.com/acme/search/pull/61", headRefName: "loki/24-combined-epic", isCrossRepository: false }]) : ""),
+});
+console.log("K  pushes " + pushes.join(","));
+await scen("L", two, ab, { noPr: true, env: { LOKI_SPLIT_ONE_PR: "local" }, refs: true });
+await scen("N", two, ab, { noPr: true, refs: true });
 const ep = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
 const nine = JSON.stringify({ slices: Array.from({ length: 9 }, (_, i) => sl("s" + (i + 1), [], [])) });
 console.log("M " + [ep.maxSlices({}), ep.maxSlices({ LOKI_SPLIT_MAX_SLICES: "12" }), ep.maxSlices({ LOKI_SPLIT_MAX_SLICES: "1" }), ep.maxSlices({ LOKI_SPLIT_MAX_SLICES: "x" }), ep.maxSlices({ LOKI_SPLIT_MAX_SLICES: "99" })].join(" ")
@@ -642,6 +670,19 @@ oneh I | grep -q '^I rc0 prs5 lines8 ' && oneb I | grep -Eq '^I  PR: +\(\+4 more
     && ok "one pr: 8 slices all falling back print 4 PR URLs and a count line, so the block stays at 8 lines" || bad "one pr: case I wrong: $(oneh I)"
 printf '%s\n' "$ONE" | grep -q '^M 8 12 8 8 32 p9=false/true brief=true note=true$' \
     && ok "split cap: LOKI_SPLIT_MAX_SLICES defaults to 8 (12 honored, 1 and x ignored, 99 capped at 32); 9 slices are refused by default and accepted at 9; the brief and re-ask name 8" || bad "split cap wrong: $(printf '%s\n' "$ONE" | grep '^M ')"
+oneh J | grep -q '^J rc0 prs1 lines[1-8] commits\[earlier run\] ' && oneb J | grep -Eq '^J  PR: +local:///.+#loki/24-combined-epic$' && oneb J | grep -Eq '^J  Combined: +2 slices in one PR on loki/24-combined-epic$' \
+    && oneb J | grep -q '^J  say #24 loki/24-combined already exists on the origin from an earlier run; this run.s change is on loki/24-combined-epic$' \
+    && oneb J | grep -q '^J  refs origin\[loki/24-combined,loki/24-combined-epic,main\] ' \
+    && ok "one pr: a rerun whose combined branch is already on the origin from an earlier run still ends in 1 PR, on its own branch name, with the earlier branch untouched (no forced push, no per-slice fallback)" || bad "one pr: case J wrong: $(oneh J); $(oneb J | grep -E 'PR|Combined|refs|say')"
+oneh K | grep -q '^K rc0 prs1 lines[1-8] .* gh\[pr list --repo acme/search --state open --limit 200 --json url,headRefName,isCrossRepository|pr close https://github.com/acme/search/pull/52 --repo acme/search --comment Superseded by #61\.|pr close https://github.com/acme/search/pull/57 --repo acme/search --comment Superseded by #61\.\]$' \
+    && oneb K | grep -q '^K  pushes loki/24-combined,loki/24-combined-epic$' && oneb K | grep -Eq '^K  PR: +https://github.com/acme/search/pull/61$' \
+    && ok "one pr: on GitHub a rerun closes the earlier runs' open combined PRs of this issue as superseded (2 closed), and leaves a fork PR, another issue's PR, another branch and the new PR alone" || bad "one pr: case K wrong: $(oneh K); $(oneb K | grep -E 'pushes|PR')"
+oneh L | grep -q '^L rc0 prs0 ' && oneb L | grep -Eq '^L  Combined: +no combined PR: not pushed \(--no-pr, or the repository has no origin\): 2 slices are on loki/24-combined$' \
+    && oneb L | grep -q '^L  receipt VERIFIED s1=VERIFIED,s2=VERIFIED | body s1,s2 proof cost np closes$' \
+    && oneb L | grep -q '^L  refs origin\[main\] local\[loki/24-combined\] head=main subj\[s1: part s1|s2: part s2\]$' \
+    && ok "one pr: --no-pr with LOKI_SPLIT_ONE_PR=local builds the combined branch, receipt and PR body locally and pushes nothing" || bad "one pr: case L wrong: $(oneh L); $(oneb L | grep -E 'Combined|receipt|refs')"
+oneh N | grep -q '^N rc0 prs0 ' && ! oneb N | grep -q 'Combined:' && oneb N | grep -q '^N  refs origin\[main\] local\[\] ' \
+    && ok "one pr: plain --no-pr still combines nothing" || bad "one pr: case N wrong: $(oneh N); $(oneb N | grep -E 'Combined|refs')"
 [ "$(printf '%s\n' "$ONE" | grep -cE '^[A-F] rc0 prs[0-9] lines[1-8] ')" = 6 ] && oneh G | grep -q ' lines[1-8] ' \
     && ok "one pr: the final block (Outcome to Cost) stays at 8 lines or fewer in every case (D48)" || bad "one pr: a final block is over 8 lines or a case did not run"
 
