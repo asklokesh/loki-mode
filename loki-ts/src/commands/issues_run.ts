@@ -17,7 +17,8 @@ import { createInterface } from "node:readline";
 import { MAX_PARALLEL, makeDefaultRunner, queueAdd, queueRun, type ItemResult, type QueueDeps, type RunOpts, type RunResult } from "./queue.ts";
 import { partialCostText } from "../engine10/output.ts";
 import { estimateFor, startText, type EstimateResult } from "../runner/router/cost_preview.ts";
-import { clearOutcome, epicOutcome, invalidSplitNote, lastOutcome, makeSessionDecompose, NO_JSON_REASON, splitCost, splitCostText, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
+import { clearOutcome, epicOutcome, invalidSplitNote, lastOutcome, makeSessionDecompose, NO_JSON_REASON, splitCost, splitCostText, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, stacksOn, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
+import { combineSlices, defaultCombineIo, onePrEnabled, type CombineIo, type CombineResult } from "./issues_combine.ts"; import { readOriginUrl } from "../util/engine_origin.ts";
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
 import { safeGit } from "../util/safe_git.ts"; import { deepPid } from "../util/base_guard.ts"; import { spawnDetached } from "../runner/worker_proc.ts";
 import { resolveModel } from "../engine10/session.ts";
@@ -445,7 +446,9 @@ type EpicDeps = Pick<IssuesRunDeps, "runner" | "sleep" | "out" | "err" | "worktr
 /** MASS-2: one epic's slices, concurrently where dependencies allow (up to `parallel`), each a normal engine10 run in its own worktree. With `pr`
  *  each slice opens a draft PR stacked on its parent's; without, a dependent slice stacks on its parent's kept run branch. Shared by `loki issues run`
  *  and `loki start owner/repo#N` (startIssueEpic). */
-async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: Extract<Decomposition, { ok: true }> }, parallel: number, receiptsDir: string, pr: boolean): Promise<{ results: SliceResult[]; outcome: string; cost: string; time: string; tree: string }> {
+async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: Extract<Decomposition, { ok: true }> }, parallel: number, receiptsDir: string, pr: boolean, combine?: (results: SliceResult[]) => Promise<CombineResult>): Promise<{ results: SliceResult[]; outcome: string; cost: string; time: string; tree: string; combined?: CombineResult }> {
+  // ONE-PR: with `combine` the slices run PR-less on their kept run branches and the combine step opens the one PR for the issue
+  if (combine) pr = false;
   const n = e.issue.number;
   const t0 = Date.now();
   const runSlice = async (s: Slice, k: number, base: string | null): Promise<SliceResult> => {
@@ -459,9 +462,10 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
       return { id: s.id, title: s.title, parent, outcome: `FAILED (worktree: ${clip(err instanceof Error ? err.message : String(err), 100)})`, pr: null, cost: "-", branch: null };
     }
     let res: RunResult;
+    const task = sliceTask(slug, e.issue, s, k, e.plan.slices.length, parent);
     try {
       const opts: RunOpts = pr ? { pr: true, draft: true, prRefs: `${slug}#${n}`, logName: name, ...(base ? { prBase: base } : {}) } : { pr: false, logName: name };
-      res = await runWithRetry(d, receiptsDir, `#${n} ${s.id}`, sliceTask(slug, e.issue, s, k, e.plan.slices.length, parent), opts, wt);
+      res = await runWithRetry(d, receiptsDir, `#${n} ${s.id}`, task, opts, wt);
     } catch (err) {
       res = { rc: 1, output: `runner threw: ${err instanceof Error ? err.message : String(err)}` };
     } finally {
@@ -470,17 +474,23 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
     const prUrl = PR_URL_RE.exec(res.output)?.[0] ?? null;
     const budget = res.rc === 3 || /^Outcome:\s+BUDGET_STOP\b/m.test(res.output);
     const verdict = res.verdict || (res.rc === 0 ? "COMPLETED (no proof verdict)" : `FAILED (exit ${res.rc})`);
-    const r: SliceResult = { id: s.id, title: s.title, parent, outcome: verdict, pr: prUrl, cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : res.partial ? partialCostText(res.partial.usd, res.partial.measured, res.partial.total, 2) : "NOT RECORDED", branch: res.runId ? `loki/${res.runId}` : null, rc: res.rc, usd: typeof res.costUsd === "number" ? res.costUsd : null, ...(typeof res.costUsd !== "number" && res.partial ? { partial: res.partial } : {}), budget, ...(/^SPEC_CONFLICT\b/.test(verdict) && slicePrintedReason(res.output) ? { reason: slicePrintedReason(res.output) } : {}) };
+    const r: SliceResult = { id: s.id, title: s.title, parent, outcome: verdict, pr: prUrl, cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : res.partial ? partialCostText(res.partial.usd, res.partial.measured, res.partial.total, 2) : "NOT RECORDED", branch: res.runId ? `loki/${res.runId}` : null, rc: res.rc, usd: typeof res.costUsd === "number" ? res.costUsd : null, ...(typeof res.costUsd !== "number" && res.partial ? { partial: res.partial } : {}), budget, ...(/^SPEC_CONFLICT\b/.test(verdict) && slicePrintedReason(res.output) ? { reason: slicePrintedReason(res.output) } : {}), ...(res.runId ? { runId: res.runId } : {}), worktree: wt, task };
     d.out(`#${n} ${s.id} ${verdict}  pr ${prUrl ?? "none"}  cost ${r.cost}\n`);
     return r;
   };
   const results = await runEpicSlices(e.plan, runSlice, (r) => d.out(`#${n} ${r.id} ${r.title}: ${r.outcome}\n`), parallel, (p) => d.out(`${progressLine(n, p)}\n`), pr);
-  const prs = results.filter((r) => r.pr).length;
+  let combined: CombineResult | undefined;
+  if (combine) {
+    combined = await combine(results);
+    const own = new Map(combined.fallback.map((f) => [f.id, f.pr]));
+    for (const r of results) { if (combined.pr && combined.commits.some((c) => c.id === r.id)) r.pr = combined.pr; else if (own.has(r.id)) r.pr = own.get(r.id) ?? null; }
+  }
+  const prs = new Set(results.filter((r) => r.pr).map((r) => r.pr)).size;
   const failed = results.filter((r) => /^(FAILED|BLOCKED)/.test(r.outcome)).length;
   const skipped = results.filter((r) => r.outcome.startsWith("SKIPPED")).length;
   const c = splitCost(results); // the one sum (issues_epic.ts), unrounded slice figures
   const cost = c.slices === 0 ? "-" : c.measured < c.parts ? `NOT RECORDED${c.usd ? ` (at least $${c.usd.toFixed(2)})` : ""}` : `$${(c.usd ?? 0).toFixed(2)}`;
-  return { results, outcome: `split: ${results.length} slices, ${prs} PRs, ${failed} failed, ${skipped} skipped`, cost, time: secs((Date.now() - t0) / 1000), tree: renderEpicTree(n, e.issue.title, results) };
+  return { results, outcome: `split: ${results.length} slices, ${prs} PRs, ${failed} failed, ${skipped} skipped`, cost, time: secs((Date.now() - t0) / 1000), tree: renderEpicTree(n, e.issue.title, results), ...(combined ? { combined } : {}) };
 }
 
 /**
@@ -494,7 +504,7 @@ async function runOneEpic(d: EpicDeps, slug: string, e: { issue: GhIssue; plan: 
  * whole split's (issues_epic.ts epicOutcome): FAILED 1, BUDGET_STOP 3, PARTIAL 6 (a slice stopped on its own SPEC_CONFLICT while another opened a PR counts), VERIFIED 0. A refused split prints the planning cost as a
  * `Split planning:` line before the single run, so `loki backlog` still counts it.
  */
-export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr: boolean; provider: string; capUsd?: number; env?: NodeJS.ProcessEnv; inject?: Partial<EpicDeps & { decompose: IssuesRunDeps["decompose"] }> }): Promise<number | null> {
+export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr: boolean; provider: string; capUsd?: number; env?: NodeJS.ProcessEnv; inject?: Partial<EpicDeps & { decompose: IssuesRunDeps["decompose"]; combineIo: Partial<CombineIo> }> }): Promise<number | null> {
   const env = o.env ?? process.env;
   if (env["LOKI_SPEED"] === "0" || env["LOKI_UNIT_ID"]) return null;
   const parallel = epicParallel(env, o.provider);
@@ -519,6 +529,8 @@ export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr:
     ...o.inject,
   };
   const why = size.reasons.join("; ");
+  // ONE-PR: the base every root slice starts on and the origin, both read before any provider session runs (Rule of Two: a slice cannot redirect the push)
+  const one = !o.noPr && onePrEnabled(env), baseSha = one ? (() => { try { return safeGit(o.repoDir, ["rev-parse", "HEAD"]).trim(); } catch { return ""; } })() : "", pinnedOrigin = one ? readOriginUrl(o.repoDir) : null;
   d.out(`loki: ${raw.repo}#${issue.number} sizes large (${why}); asking for a split into slices that each run on their own\n`);
   const plan = await splitWithReask(d, raw.repo, issue, `deterministic sizing: ${why}`);
   if (!plan.ok) {
@@ -527,10 +539,22 @@ export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr:
     return null;
   }
   d.out(`#${issue.number} split into ${plan.slices.length} slices: ${plan.slices.map((s) => s.id + (plan.parent[s.id] ? `<-${plan.parent[s.id]}` : "")).join(", ")}; up to ${parallel} at once\n`);
-  const r = await runOneEpic(d, raw.repo, { issue, plan }, parallel, join(o.runDir, "slices"), !o.noPr);
-  try { writeFileSync(join(o.runDir, "epic.json"), JSON.stringify({ issue: `${raw.repo}#${issue.number}`, size: size.size, reasons: size.reasons, slices: plan.slices, results: r.results }, null, 2) + "\n"); } catch { /* the printed tree still reports every slice */ }
+  const slicesDir = join(o.runDir, "slices"), slug = raw.repo;
+  const combine = one && /^[0-9a-f]{40}$/.test(baseSha) ? async (results: SliceResult[]): Promise<CombineResult> => {
+    const io: CombineIo = { ...(await defaultCombineIo({ repoDir: o.repoDir, lokiDir, provider: o.provider, runDir: o.runDir, say: d.out, gh: (args) => { const g = spawnSync("gh", [...args], { cwd: o.repoDir, env: userEnv, encoding: "utf8", timeout: ghTimeoutMs(), killSignal: "SIGKILL" }); return { rc: g.status ?? 1, stdout: g.stdout ?? "", stderr: g.stderr ?? "" }; } })), ...o.inject?.combineIo };
+    const ok = results.filter((r) => stacksOn(r, false));
+    return combineSlices({
+      repoDir: o.repoDir, runDir: o.runDir, slug, issue, baseSha, pinnedOrigin, draft: env["LOKI_PR_DRAFT"] === "1", env, io,
+      slices: ok.map((r) => ({ id: r.id, title: r.title, parent: r.parent, branch: r.branch!, verdict: r.outcome.split(/[ ,(]/)[0]!, task: r.task ?? "", pr: r.pr, ...(r.runId ? { receiptDir: join(slicesDir, "receipts", r.runId) } : {}), ...(r.worktree ? { worktree: r.worktree } : {}) })),
+      excluded: results.filter((r) => !ok.includes(r)).map((r) => ({ id: r.id, title: r.title, outcome: r.outcome })),
+      costText: (resolveUsd) => splitCostText(splitCost(results, [...planUsd, ...resolveUsd])),
+    });
+  } : undefined;
+  const r = await runOneEpic(d, raw.repo, { issue, plan }, parallel, slicesDir, !o.noPr, combine);
+  if (r.combined) planUsd.push(...r.combined.resolveUsd); // the resolve sessions are part of the issue's one cost sum
+  try { writeFileSync(join(o.runDir, "epic.json"), JSON.stringify({ issue: `${raw.repo}#${issue.number}`, size: size.size, reasons: size.reasons, slices: plan.slices, results: r.results, ...(r.combined ? { combined: r.combined } : {}) }, null, 2) + "\n"); } catch { /* the printed tree still reports every slice */ }
   d.out(`\n${r.tree}${r.outcome}; ${r.time}\n`);
-  const agg = epicOutcome(r.results, planUsd); // the standard Outcome/Reason/PR/Cost lines (the one cost sum), so `loki backlog` reads the true verdict and cost
+  const agg = epicOutcome(r.results, planUsd, process.env, r.combined); // the standard Outcome/Reason/PR/Cost lines (the one cost sum), so `loki backlog` reads the true verdict and cost
   d.out(agg.lines);
   return agg.rc;
 }
