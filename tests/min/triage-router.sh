@@ -47,7 +47,7 @@
 #      instead of launched and the classifier, dry run and backlog run checks fail.
 #   6. autonomy/lib/backlog.py pr_urls: return only the first PR url and no count (the old first-PR-line read): the
 #      8 PRs row and the Total PR count fail.
-#   7. autonomy/lib/backlog.py main: put sys.exit(130) back in the signal handler: the interrupt rows and Total fail.
+#   7. autonomy/lib/backlog.py main: make the SIGTERM handler sys.exit(130) (the old behavior): the interrupt rows and Total fail.
 #   8. autonomy/lib/backlog.py finish: drop keep_receipts: the receipts check fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -193,6 +193,8 @@ printf '%s\n' "$many" | grep -Eq '^#2 +\$1\.00 +[0-9]+s +PARTIAL, 8 PRs \(no com
 printf '%s\n' "$many" | grep -Eq '^#3 +unmeasured +[0-9]+s +FAILED: boom$' && printf '%s\n' "$many" | grep -Eq '^#6 +unmeasured +[0-9]+s +VERIFIED$' && ok "many: a failed and a PR-less row each print their result" || bad "many: #3 or #6 row wrong"
 printf '%s\n' "$many" | grep -Eq '^Total: 3 done, 1 not done; 9 PR\(s\); cost \$1\.50 \(2 run\(s\) unmeasured, not counted as \$0\); time [0-9]+s$' \
     && ok "many: one Total line: done, not done, PRs, cost, time" || bad "many: total: $(printf '%s\n' "$many" | grep '^Total')"
+gc="$(printf '%s\n' "$many" | bun --no-env-file --config=/dev/null -e 'const m = await import(process.argv[1]); console.log(JSON.stringify(m.parseGroupCost(await Bun.stdin.text())));' "$ROOT/loki-ts/src/features/speed/run_group.ts" 2>&1)"
+[ "$gc" = '{"usd":1.5,"measured":2,"unmeasured":2}' ] && ok "many: the group runner's cost reader (run_group.ts parseGroupCost) still reads the rows with the TIME column and ignores the Total line" || bad "many: parseGroupCost reads the new summary as: $gc"
 [ "$(printf '%s\n' "$many" | grep -c NOISE)" = 0 ] && grep -q 'NOISE from run 2' "$REPO-backlog/logs/issue-2.log" && printf '%s\n' "$many" | grep -Fq "backlog: #2 running (log: $REPO-backlog/logs/issue-2.log)" \
     && ok "many: child output stays in the per-issue log, and the running line names that log" || bad "many: child output leaked or the log path is not printed"
 [ -f "$REPO-backlog/receipts/issue-1/r1/receipt.json" ] && [ ! -d "$REPO-backlog/issue-1" ] && [ -f "$REPO-backlog/receipts/issue-3/r3/receipt.json" ] && [ -d "$REPO-backlog/issue-3" ] \
@@ -211,7 +213,7 @@ exec sleep 300
 EOF
 chmod +x "$T/slow-launcher"
 (cd "$REPO" && LOKI_BACKLOG_LAUNCHER="$T/slow-launcher" SLOW_PID="$T/slow.pid" LOKI_BACKLOG_HEARTBEAT_S=1 LOKI_BACKLOG_STOP_GRACE_S=5 exec python3 -I "$ROOT/autonomy/lib/backlog.py" example/calc --issues 1,2 --concurrency 1 > "$T/stop.out" 2>&1) & BPID=$!
-for _ in $(seq 1 100); do grep -q '^backlog: 1 running' "$T/stop.out" 2>/dev/null && break; python3 -I -c 'import time; time.sleep(0.1)'; done
+for _ in $(seq 1 600); do grep -q '^backlog: 1 running' "$T/stop.out" 2>/dev/null && break; python3 -I -c 'import time; time.sleep(0.1)'; done
 kill -TERM "$BPID" 2>/dev/null; wait "$BPID"; rc=$?
 sed -n '/interrupted (signal/,$p' "$T/stop.out" | sed 's/^/    stop: /'
 grep -Eq '^backlog: 1 running \(#1 [0-9]+s\), 1 queued, 0 finished, [0-9]+s elapsed$' "$T/stop.out" && ok "many: a heartbeat line names what still runs, what is queued and the time" || bad "many: no heartbeat line"

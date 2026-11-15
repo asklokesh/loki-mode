@@ -525,8 +525,8 @@ def main(argv):
             group_cap = None
     day_cap = cfg.get("budgets", {}).get("per_day_usd")
     # --slots caps provider sessions, and a split issue runs its slices at once: share the cap across the issues in flight.
-    if a.slots is not None and not env.get("LOKI_EPIC_PARALLEL"):
-        child_env["LOKI_EPIC_PARALLEL"] = str(max(1, a.slots // conc))
+    # Issue children only: a DAG unit never splits, and its environment stays as it was.
+    slice_env = {"LOKI_EPIC_PARALLEL": str(max(1, a.slots // conc))} if a.slots is not None and not env.get("LOKI_EPIC_PARALLEL") else {}
 
     # Triage: only implement issues run; spec issues get a drafted spec, human issues are listed.
     routed = {}  # key -> (ok, status) for issues that do not run
@@ -549,7 +549,7 @@ def main(argv):
             continue
         spec[n] = {"label": i["label"], "branch": "loki/backlog-%s" % i["slug"], "wt": "issue-%s" % i["slug"],
                    "cmd": [launcher, i["ref"]], "deps": [], "unit": False,
-                   "env": {"LOKI_TRIAGE_CLASS": klass[n][0], "LOKI_TRIAGE_REASON": klass[n][1]},
+                   "env": dict(slice_env, LOKI_TRIAGE_CLASS=klass[n][0], LOKI_TRIAGE_REASON=klass[n][1]),
                    # a child keeps only its own tracker's token (intake and writeback need it); the other tracker's never reaches it
                    "drop": [k for src, keys in TRACKER_SECRETS.items() if src != i.get("source") for k in keys]}
     key_of = {u["id"]: "unit-%s-%d" % (group, u["n"]) for u in dag_units}
@@ -575,16 +575,22 @@ def main(argv):
     started = {}  # key -> launch time
     stop = []  # the signal that asked for a stop: the loop below ends, the children are stopped and the summary still prints
 
-    signal.signal(signal.SIGTERM, lambda signum, _f: stop.append(signum))
-    signal.signal(signal.SIGINT, lambda signum, _f: stop.append(signum))
-
-    def stop_children():
-        """SIGTERM every child's process group, give the engine its cancel grace, then SIGKILL what is left."""
-        for p, _l, _w in running.values():
+    def term_children():
+        for p, _l, _w in list(running.values()):
             try:
                 os.killpg(p.pid, signal.SIGTERM)
             except OSError:
                 pass
+
+    def on_signal(signum, _f):  # the children are told at once, even while a launch is still preparing a worktree
+        stop.append(signum)
+        term_children()
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+
+    def stop_children():
+        """SIGTERM every child's process group, give the engine its cancel grace, then SIGKILL what is left."""
+        term_children()
         try:
             grace = float(os.environ.get("LOKI_BACKLOG_STOP_GRACE_S") or 30)
         except ValueError:
