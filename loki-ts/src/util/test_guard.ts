@@ -41,12 +41,12 @@ export function weakenExcuse(repoDir: string, baseSha: string, headSha: string |
  *  (1) TASK-CASE: fewer assertions only inside test cases the task names by their exact title (FireLater#24 s1: the issue asked to update
  *  'should search across title, issue_number, description' from three ILIKE assertions to two full-text ones). Every changed line must sit
  *  inside one such case on base and on head, the case keeps an assertion, and no case is dropped or skipped.
- *  (2) NEW-SCOPE SETUP: a setup hook inside a describe block the change added (s2's beforeEach). With LOKI_E10_WEAK_MOCK_NEW=1 also a module mock
- *  whose target file is new in this change, or one whose factory only returns bare vi.fn()/jest.fn() stubs for a logging or metrics module
- *  (s2's search-history, saved-filter, search-analytics and logger mocks).
+ *  (2) NEW-SCOPE SETUP, only with LOKI_E10_WEAK_MOCK_NEW=1 (off by default, lead ruling 2026-11-14): a setup hook inside a describe block the change
+ *  added, a module mock whose target file is new in this change, or one whose factory only returns bare vi.fn()/jest.fn() stubs for a logging or
+ *  metrics module (s2's beforeEach and its search-history, saved-filter, search-analytics and logger mocks).
  *  The task must ask for the test itself to change near the title ("the test ... is updated", "update the test"): a title quoted only as failing, or with "update the code", excuses nothing.
- *  The mock clauses are OFF by default (LOKI_E10_WEAK_MOCK_NEW=1 turns them on): a mock of a new module can still reach an existing test when the change
- *  moved logic into that module, so only the hook clause is sound by construction. Anything else keeps the cap. Fail-safe: an unreadable diff excuses nothing. */
+ *  The NEW-SCOPE clauses are OFF by default (LOKI_E10_WEAK_MOCK_NEW=1 turns them on): a mock of a new module can still reach an existing test when the change
+ *  moved logic into that module. Anything else keeps the cap. Fail-safe: an unreadable diff excuses nothing. */
 export const weakenExcuseOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_WEAK_EXCUSE"] ?? "").trim());
 export const weakMockNewOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_WEAK_MOCK_NEW"] ?? "").trim());
 const UPDATE_ASK_RE = /\btests?\b(?:(?!\.\s)[^\n]){0,200}?\b(?:is|are|be|gets?|must be|should be)\s+(?:updated|changed|rewritten|replaced)\b|\b(?:update|change|rewrite|replace)\s+(?:the\s+|this\s+|that\s+|its\s+)?(?:existing\s+)?(?:test|assertion|expectation)s?\b/i;
@@ -122,13 +122,13 @@ function excusedEdit(repoDir: string, baseSha: string, headSha: string | null, r
       if (HOOK_RE.test(line)) {
         const ind = /^\s*/.exec(line)![0].length; let owner = -1;
         for (let i = n - 2; i >= 0; i--) { const l = hl[i]!; if (/\bdescribe\s*\(/.test(l) && /^\s*/.exec(l)![0].length < ind) { owner = i + 1; break; } }
-        if (owner > 0 && added.has(owner)) { excused += hits; continue; }
+        if (weakMockNewOn() && owner > 0 && added.has(owner)) { excused += hits; continue; }
         return null;
       }
       return null;
     }
     if (count(SETUP_RE, head) - excused > count(SETUP_RE, base)) return null;
-    why.push(weakMockNewOn() ? "added setup only in describe blocks the change added, or mocks of modules new in the change" : "added setup only in describe blocks the change added");
+    why.push("added setup only in describe blocks the change added, or mocks of modules new in the change");
   }
   return why.join("; ") || null;
 }

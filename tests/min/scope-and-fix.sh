@@ -3682,7 +3682,7 @@ writeFileSync(join(R, "tests/unit/routes/search.test.ts"), s2);
 res("NEW-SCOPE the count rule alone reads added mocks and a hook as weakened", weakensTest(routes, s2));
 res("NEW-SCOPE by default a mock of a module the change adds still caps (it can reach existing tests when logic moved into it)", testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", ""));
 writeFileSync(join(R, "tests/unit/routes/search.test.ts"), routes + tail);
-res("NEW-SCOPE a hook inside a describe block the change added is not weakened (default on)", !testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", "") && /describe blocks the change added/.test(weakenExcuse(R, base, null, "tests/unit/routes/search.test.ts", "") ?? ""));
+res("NEW-SCOPE by default a hook inside a describe block the change added still caps; with =1 it is excused and named", testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", "") && (() => { process.env.LOKI_E10_WEAK_MOCK_NEW = "1"; try { return !testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", "") && /describe blocks the change added/.test(weakenExcuse(R, base, null, "tests/unit/routes/search.test.ts", "") ?? ""); } finally { delete process.env.LOKI_E10_WEAK_MOCK_NEW; } })());
 writeFileSync(join(R, "tests/unit/routes/search.test.ts"), s2);
 process.env.LOKI_E10_WEAK_MOCK_NEW = "1";
 res("NEW-SCOPE =1 mocks of modules the change adds, a hook in an added describe and a logger stub are not weakened", !testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", ""));
