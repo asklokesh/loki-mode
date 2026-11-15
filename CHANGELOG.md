@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - The proof that a test fails without the fix no longer runs the fixed code. On a repo whose virtualenv holds an editable install, the base checkout imported the already changed sources through the linked environment, so a real fail-then-pass test read as passing on the old code and the run lost its proof. The base run now puts the base checkout's own sources first. The Wall's base copy had the same leak through the copied editable install and absolute links (for example a monorepo's dev dist/ links); those now point at the copy, so the Wall's base run matches a fresh base.
 
+## v11.141.2 (2026-11-14)
+
+See what Loki changed and why it believes the change works, while the run is still going.
+
+### Added
+- The candidate diff is shown as soon as implement finishes, labeled "candidate, not yet checked" until verify ends (LOKI_AWE_DIFF_EARLY=0 turns it off).
+- A one-line proof card in the run summary: whether the fail-then-pass proof held and which test shows it, inside the usual 8-line output. `--verbose` prints the full card: the test that fails on your code, the lines it failed with, that it passes after the change, and what is not proven. It is green only when the proof really held (LOKI_AWE_PROOF_CARD=0 turns it off).
+- The status line shows elapsed time and spend so far, and the pull request body gets "The proof", "Conventions followed" and "Cost" sections read from the sealed receipt (LOKI_AWE_LIVE_COST=0 turns it off).
+
+### Changed
+- The pull request body no longer has the model tier line. It reports Loki's own cost only; the receipt still records the model.
+
 ## v11.141.1 (2026-11-14)
 
 Faster runs on long tasks, a correct fail-then-pass proof on editable installs, and safer releases.
