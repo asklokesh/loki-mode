@@ -473,7 +473,7 @@ total = sum(json.load(open(f)).get("total_cost_usd") or 0 for f in costs)
 usd = rec.get("cost", {}).get("usd")
 add = os.path.join(rd, "receipt-addendum-1.json")
 state = json.load(open(add))["status_state"] if os.path.exists(add) else "none"
-print(len(pr), bool(pr and pr[0]["data"].get("draft")), sum(e.get("type") == "deep.started" for e in ev), reviews, council,
+print(len(pr), bool(pr and pr[0]["data"].get("draft")), sum(e.get("type") == "deep.started" and not (e.get("data") or {}).get("poster") for e in ev), reviews, council,
       rec.get("verdict"), usd is not None and round(total, 2) == round(usd, 2), state)
 PY
 }
@@ -746,5 +746,64 @@ console.log(out.join(" "));
 ' 2>&1)"
 [ "$U" = "clean=0/0/score0 early=1/1/score0,run1,enter1,score1 rank=2/2/score0,run1,run2,enter1,score1,enter2,score2 tie_review=1/1/score0,run1,enter1,score1,review0+1:true tie_null=0/1/score0,run1,enter1,score1,review0+1,enter0 receipt=3:true throws=0/2/score0,run1,run2 score_error=0/1/score0,run1,enter1,score1,enter0 restore_fail=AttemptsRestoreError aborted=0/0/score0 no_receipt_when_none=0" ] \
     && ok "unit: attempts over fake ops (clean first starts none, clean extra stops the rest, rank picks, a tie goes to the review, a null review keeps the first, errored and aborted keep it, receipt lines)" || bad "unit (attempts ops) gave: $U"
+
+# ---------------------------------------------------------------- DEEP-POST (FireLater#24 PRs #40 to #43): the poster, not the credential-less worker, posts the deep-verify status
+cat > "$T/fl24-deeppost.ts" <<'TS'
+import { spawn } from "node:child_process";
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { join } from "node:path";
+const root = process.argv[2]!, T = process.argv[3]!;
+const dp = await import(root + "/loki-ts/src/engine10/stages/deep.ts"), sup = await import(root + "/loki-ts/src/engine10/supervisor.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const R = join(T, "dpost"); rmSync(R, { recursive: true, force: true });
+const id = "e10-20261114T215737Z-c8f5", run = join(R, ".loki/runs", id); mkdirSync(run, { recursive: true });
+const stub = join(R, "push.sh"), log = join(R, "push.log");
+writeFileSync(stub, '#!/bin/bash\nprintf "%s|" "$@" >> "$STUB_LOG"; printf "pinned=%s\\n" "$_LOKI_PINNED_ORIGIN" >> "$STUB_LOG"\n');
+const sha = "c1be166dcccfd3cf1f425a54f8115599a837a24a";
+writeFileSync(join(run, "receipt.json"), JSON.stringify({ run_id: id, head_sha: sha }));
+writeFileSync(join(run, "events.jsonl"), JSON.stringify({ type: "pr.opened", data: { url: "https://github.com/o/r/pull/40" } }) + "\n");
+const cwd0 = process.cwd(); process.chdir(R);
+const sleeper = (s: number) => spawn("sleep", [String(s)], { stdio: "ignore" });
+try {
+  // the worker is still running: the poster waits for it, then reads the addendum it wrote
+  const w = sleeper(1); setTimeout(() => writeFileSync(join(run, "receipt-addendum-1.json"), JSON.stringify({ run_id: id, status_state: "success", checks: [{ name: "full suite: api", result: "pass" }], not_proven: [] })), 300);
+  const t0 = Date.now(), rc = await dp.deepPost([id, String(w.pid), "https://github.com/o/r.git"], { pushScriptPath: stub, pushExtraEnv: { STUB_LOG: log }, pollMs: 100 });
+  const l = readFileSync(log, "utf8");
+  res("DEEP-POST waits for the worker pid before posting", Date.now() - t0 >= 800);
+  res("DEEP-POST posts the comment to the PR from the pr.opened event", l.includes("comment|40|") && existsSync(join(run, "deep-comment.md")) && readFileSync(join(run, "deep-comment.md"), "utf8").includes("deep verify: success"));
+  res("DEEP-POST posts the final status for the sealed head sha with the addendum's state", l.includes(`status|${sha}|success|`) && rc === 0);
+  res("DEEP-POST passes the pinned origin to the push script", l.includes("pinned=https://github.com/o/r.git"));
+  // the worker died without an addendum: the status is error, never left pending
+  rmSync(join(run, "receipt-addendum-1.json")); writeFileSync(log, "");
+  const w2 = sleeper(0); await new Promise((r) => w2.on("exit", r));
+  await dp.deepPost([id, String(w2.pid), "https://github.com/o/r.git"], { pushScriptPath: stub, pushExtraEnv: { STUB_LOG: log }, pollMs: 50 });
+  res("DEEP-POST a worker that wrote no addendum gets status error, not pending", readFileSync(log, "utf8").includes(`status|${sha}|error|`));
+  writeFileSync(join(run, "receipt-addendum-1.json"), JSON.stringify({ run_id: "e10-other", status_state: "success", checks: [] })); writeFileSync(log, "");
+  await dp.deepPost([id, String(w2.pid), "https://github.com/o/r.git"], { pushScriptPath: stub, pushExtraEnv: { STUB_LOG: log }, pollMs: 50 });
+  res("DEEP-POST an addendum of another run is never trusted (error)", readFileSync(log, "utf8").includes(`status|${sha}|error|`));
+  res("DEEP-POST bad arguments exit 2 and post nothing", (await dp.deepPost(["../x", "1", ""], {})) === 2);
+} finally { process.chdir(cwd0); }
+const a = sup.deepPostArgv(["/bun", "--smol", "/cli.ts", "engine10", "deep-worker", id, "claude", "sonnet"], "https://github.com/o/r.git", 4242);
+res("DEEP-POST argv reuses the runtime and CLI with run id, worker pid and origin", JSON.stringify(a) === JSON.stringify(["/bun", "--smol", "/cli.ts", "engine10", "deep-post", id, "4242", "https://github.com/o/r.git"]));
+{ const calls: { cmd: string; args: string[]; env: NodeJS.ProcessEnv }[] = [], ev: { type: string; data: Record<string, unknown> }[] = [];
+  const fake = (cmd: string, args: string[], o: { env: NodeJS.ProcessEnv }) => { calls.push({ cmd, args, env: o.env }); return 100 + calls.length; };
+  const worker = { GH_TOKEN: "ghp_LOKIWITHHELDsentinelX", PATH: "/bin" }, real = { GH_TOKEN: "real-token", PATH: "/bin" };
+  const np = sup.spawnDeep(["/bun", "/cli.ts", "engine10", "deep-worker", id, "claude", "sonnet"], "https://github.com/o/r.git", { workerEnv: worker, env: real, repoDir: R, append: (e) => ev.push(e), spawn: fake as never });
+  const w = calls.find((c) => c.args.includes("deep-worker")), p = calls.find((c) => c.args.includes("deep-post"));
+  res("DEEP-POST the worker gets the withheld env plus LOKI_E10_DEEP_POSTER=1; the poster gets the supervisor env", !!w && w.env.GH_TOKEN === worker.GH_TOKEN && w.env.LOKI_E10_DEEP_POSTER === "1" && !!p && p.env.GH_TOKEN === "real-token" && p.args.includes(String(101)) && np.length === 0);
+  const ds = ev.filter((e) => e.type === "deep.started");
+  res("DEEP-POST deep.started is recorded for the worker, then for the poster last", ds.length === 2 && ds[0]!.data.pid === 101 && ds[1]!.data.pid === 102 && ds[1]!.data.poster === true);
+  calls.length = 0; ev.length = 0;
+  sup.spawnDeep(["/bun", "/cli.ts", "engine10", "deep-worker", id, "claude", "sonnet"], "o", { workerEnv: worker, env: { ...real, LOKI_E10_DEEP_POST: "0" }, repoDir: R, append: (e) => ev.push(e), spawn: fake as never });
+  res("DEEP-POST =0 spawns the worker alone without the poster flag", calls.length === 1 && calls[0]!.env.LOKI_E10_DEEP_POSTER === undefined && ev.filter((e) => e.type === "deep.started").length === 1); }
+res("DEEP-POST on by default, =0 opts out", sup.deepPostOn({}) && !sup.deepPostOn({ LOKI_E10_DEEP_POST: "0" }));
+rmSync(R, { recursive: true, force: true });
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/fl24-deeppost.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "fl24-deeppost unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 12 ] || bad "fl24-deeppost unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 12"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
 
 finish

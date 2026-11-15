@@ -372,6 +372,23 @@ async function baseGoBatch(items: { c: VerifyCheck; t: TestRef; bc: ReturnType<t
  *  no progress, and the caller lists it in  NOT PROVEN (a skipped target is not a fixed target). Weak also  means it ran FEWER tests than base (pytest.exit, xfail, a deleted test):  every relevant pass is compared with its base run, and xfailed counts as skipped,
  *  never passed.  FC-ZERO-ON-BASE + FC-REPO-SKIPPED-TEST-DOWNGRADES:  an untouched, non-Wall, non-holdout check  (relevant ones included) that ran zero tests and also runs zero on base (`zeroOk`: no test config edit; zeroOnBase withholds when the linked dependency
  *  dirs can see head,  depsSeeHead, and, for intake's lazy record, when envChangedSince finds the environment changed since intake) is  out.zero; seal keeps it in the receipt as repo_skipped and out of the verdict.  ponytail: bun/go/cargo/npm yield no ids and no skip count, so they are never subtracted or judged weak. */
+/** BASE-MEMO (FireLater#24 s3, LOKI_E10_BASE_MEMO default on, =0 reruns base every verify): the base commit never changes inside a run, so a base result for one
+ *  command (its cwd and args relative to the base worktree, and whether the head's dependency dirs were linked) is kept in the run dir and reused by every later
+ *  verify of the same run (FireLater#24 s3: a re-verify stopped at its 120 s limit after a 3-minute gap past its targeted tests; the cause of that gap is not measured,
+ *  the same 22 base files batched alone take 8 s, so this is a saving on repeated base runs, not the whole fix).
+ *  Only a finished run is kept (never a cut, aborted or missing-tool one); the file is bound to the base sha, so another base reads nothing. */
+export const baseMemoOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BASE_MEMO"] ?? "").trim());
+type BaseMemo = { get: (key: string) => FileRun | undefined; put: (key: string, r: FileRun) => void; save: () => void; key: (dir: string, bc: { cmd: string; args: string[]; cwd: string }, deps: boolean) => string };
+export function baseMemo(runDir: string, baseSha: string, on = baseMemoOn()): BaseMemo {
+  const file = join(runDir, "base-runs.json"); let runs: Record<string, FileRun> = {}, dirty = false;
+  if (on) try { const m = JSON.parse(readFileSync(file, "utf8")) as { base?: unknown; runs?: Record<string, FileRun> }; if (m.base === baseSha && m.runs && typeof m.runs === "object") runs = m.runs; } catch { /* first verify of the run */ }
+  return {
+    key: (dir, bc, deps) => JSON.stringify([bc.cmd, bc.args.map((a) => a.split(dir).join("<base>")), relative(dir, bc.cwd), deps]),
+    get: (k) => (on ? runs[k] : undefined),
+    put: (k, r) => { if (!on) return; runs[k] = { ok: r.ok, out: r.out.length > 65536 ? r.out.slice(-65536) : r.out }; dirty = true; },
+    save: () => { if (on && dirty) try { atomicWriteText(file, JSON.stringify({ base: baseSha, runs })); } catch { /* best effort: the next verify reruns base */ } },
+  };
+}
 export async function subtractBase(
   ctx: RunContext, api: ProjectApi | null, checks: VerifyCheck[], tests: TestRef[], changed: string[],
   wall: Set<string>, rel: Set<string>, signal: AbortSignal, zeroOk = true, zeroIntake: ZeroGate = zeroGate(null), dep: ReadonlySet<string> = new Set(), own: ReadonlySet<string> = rel, symbols: readonly string[] = [],
@@ -387,6 +404,11 @@ export async function subtractBase(
   const zc = zeroOk ? un.filter(({ c, t }) => c.result === "not_run" && !c.owner && (c.reason ?? "").startsWith(NO_TESTS_REASON) && !wall.has(c.name) && !isHoldoutCheck(c.name) && !changed.includes(t.path) && zeroIntake.has(c.name)) : []; if (!(un.some(({ c }) => c.result === "fail" && c.ids?.length) || sus.length || zc.length || crash.length) || signal.aborted) return out;
   const dir = mkdtempSync(join(tmpdir(), "e10-base-"));
   const git = (args: string[]): void => { safeGit(ctx.repoDir, args, { stdio: "ignore", repoDrivers: true }); }; // worktree add checks out base content
+  const memo = baseMemo(ctx.runDir ?? "", ctx.baseSha, !!ctx.runDir && baseMemoOn()); // a context with no run dir (unit callers) keeps no memo
+  const once = async (bc: { cmd: string; args: string[]; cwd: string }, deps: boolean): Promise<{ ok: boolean; cut?: boolean; out: string }> => {
+    const k = memo.key(dir, bc, deps), hit = memo.get(k); if (hit) return hit;
+    const r = await runOnce(bc.cmd, bc.args, bc.cwd, signal, {}); if (!r.cut && !r.missing && !signal.aborted) memo.put(k, r); return r;
+  };
   try {
     git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, ctx.baseSha]);
     const base = new Map<VerifyCheck, { red: string[]; n: number; sk: number; out: string }>();
@@ -394,7 +416,7 @@ export async function subtractBase(
     // Relevant passes first, on a base without dependencies (their counts are compared as before). Only failing untouched checks need a base run
     // after that: a passing one's base result is never read.
     await baseGoBatch(sus.map(({ c, t }) => ({ c, t, bc: commandFor(t, dir, api) })), signal, record);
-    for (const { c, t } of sus) { if (base.has(c)) continue; const bc = commandFor(t, dir, api); record(c, await runOnce(bc.cmd, bc.args, bc.cwd, signal, {})); }
+    for (const { c, t } of sus) { if (base.has(c)) continue; const bc = commandFor(t, dir, api); record(c, await once(bc, false)); }
     const red = un.filter(({ c }) => c.result === "fail" && c.ids?.length && !base.has(c));
     // A suite that needs its dependencies (a vitest package with its own node_modules) yields no ids on a bare base, so its pre-existing failures
     // could never be told apart from new ones (FireLater#24: 23 page tests red on base were fed to the fix rounds). The head's dependency dirs are
@@ -402,17 +424,19 @@ export async function subtractBase(
     const link = changed.some((f) => MANIFESTS.test(f)) ? null : baseDepsLinker(dir, ctx.repoDir, zeroIntake);
     const cmds = red.map((p) => ({ ...p, bc: commandFor(p.t, dir, api) }));
     for (const bc of new Set(cmds.map((x) => x.bc.cwd))) link?.(bc);
+    const linked = link !== null;
+    for (const x of cmds) { const hit = memo.get(memo.key(dir, x.bc, linked)); if (hit) record(x.c, hit); } // BASE-MEMO: an earlier verify of this run already ran it on this base
     if (verifyBatchOn() && !signal.aborted) {
       const byCwd = new Map<string, typeof cmds>();
-      for (const x of cmds) if (vitestFile(x.t, x.bc)) byCwd.set(x.bc.cwd, [...(byCwd.get(x.bc.cwd) ?? []), x]);
+      for (const x of cmds) if (!base.has(x.c) && vitestFile(x.t, x.bc)) byCwd.set(x.bc.cwd, [...(byCwd.get(x.bc.cwd) ?? []), x]);
       for (const [cwd, g] of byCwd) {
         if (g.length < BATCH_MIN || signal.aborted) continue;
         const res = await vitestBatch(cwd, g.map((x) => x.bc.args[3]!), signal);
-        for (const x of g) { const f = res?.get(x.bc.args[3]!); if (f) record(x.c, f); }
+        for (const x of g) { const f = res?.get(x.bc.args[3]!); if (f) { record(x.c, f); if (!signal.aborted) memo.put(memo.key(dir, x.bc, linked), f); } }
       }
     }
-    await baseGoBatch(cmds.map((x) => ({ c: x.c, t: x.t, bc: x.bc })), signal, record);
-    for (const { c, bc } of cmds) if (!base.has(c) && !signal.aborted) record(c, await runOnce(bc.cmd, bc.args, bc.cwd, signal, {}));
+    await baseGoBatch(cmds.filter((x) => !base.has(x.c)).map((x) => ({ c: x.c, t: x.t, bc: x.bc })), signal, record);
+    for (const { c, bc } of cmds) if (!base.has(c) && !signal.aborted) record(c, await once(bc, linked));
     for (const { c, t } of crash) { // BCE: the same command on base, deps linked as for a red check
       if (signal.aborted) break;
       link?.(dir); link?.(commandFor(t, dir, api).cwd); const bc = commandFor(t, dir, api); // deps (the head's .venv or node_modules) linked first, so the command resolves the same interpreter
@@ -443,6 +467,7 @@ export async function subtractBase(
       }
     }
   } catch { /* base unavailable: checks stay failing */ } finally {
+    memo.save();
     try { git(["worktree", "remove", "--force", dir]); } catch { /* pruned below */ }
     rmSync(dir, { recursive: true, force: true });
     try { git(["worktree", "prune"]); } catch { /* best effort */ }
@@ -686,7 +711,7 @@ export const verifyStage: Stage = {
     const pub = checks.map((c) => (isHold(c) ? pubHold(c) : c)), holdoutFailed = checks.filter((c) => c.result === "fail" && isHold(c) && !preRed.names.includes(c.name)).length; // C-C4b-c: pub leaves this stage, holdoutFailed (C-C4b) is the only form in which a held-out failure reaches the fix stage
     // E-98a/E-115: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter/ruff. A-115: test configuration edits and relevant checks with more skips than base are listed, which makes the verdict PARTIAL at seal.
     const inBase = (f: string): boolean => { try { safeGit(ctx.repoDir, ["cat-file", "-e", `${ctx.baseSha}:${f}`], { stdio: "ignore" }); return true; } catch { return false; } };
-    const testCounts: Record<string, unknown> = {}; const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).flatMap((t) => { const k = preRed.cnt[testCheckName(t)]; if (k) testCounts[t.path] = k; return [...(testFileWeakened(ctx.repoDir, ctx.baseSha, null, t.path, "M") ? [`weakened test: ${t.path}`] : []), ...(assertDeltaNotes(ctx.repoDir, ctx.baseSha, null, t.path, intake?.task ?? "", k?.b, k?.h) ?? [])]; }); // a relevant test file edited: listed as weakened only when it loses an assertion or case or gains a skip (EXP-0001: an added case is kept); a changed assertion value is always listed
+    const testCounts: Record<string, unknown> = {}; const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).flatMap((t) => { const k = preRed.cnt[testCheckName(t)]; if (k) testCounts[t.path] = k; return [...(testFileWeakened(ctx.repoDir, ctx.baseSha, null, t.path, "M", intake?.task ?? "") ? [`weakened test: ${t.path}`] : []), ...(assertDeltaNotes(ctx.repoDir, ctx.baseSha, null, t.path, intake?.task ?? "", k?.b, k?.h) ?? [])]; }); // a relevant test file edited: listed as weakened only when it loses an assertion or case or gains a skip (EXP-0001: an added case is kept); a changed assertion value is always listed
     const weakened = [...modifiedRel, ...cfgChanged.map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`), ...collateralRed.map((n) => `${COLLATERAL_RED}: ${n}`), ...preRed.quiet.filter((n) => preRed.names.includes(n)).map((n) => `${QUIET_RED}: ${n}`)];
     const depsNotes = unusedInstallNotes(intake?.deps_not_proven ?? [], api, changed, checks.map((c) => c.name), ctx.repoDir); // an install failure no check or changed file depends on is disclosed (n/a), never a cap
     const notProven = [...(complete ? [] : [QUICK_ONLY_NOTE]), ...preRed.envCrash.map((e) => `${e.name}: ${BCE_REASON} (${e.sig})`), ...weakened, ...hiddenEdits(ctx.repoDir), ...ignoreRuleChanges(ctx.repoDir, (intake as { ignore_snapshot?: unknown } | undefined)?.ignore_snapshot, ctx.baseSha), ...dependentNotes(dep), ...depsNotes.cap, ...pub.filter((c) => c.name === "holdout" && c.result !== "pass").map((c) => (c.result === "not_run" ? "holdout not executed" : "holdout check failed")), ...[...fullNotProven].filter((n) => !naNote(n)), ...pub.filter((c) => c.owner === "harness" && c.name !== "holdout").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];

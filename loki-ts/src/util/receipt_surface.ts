@@ -178,7 +178,7 @@ export function postReceiptComment(a: {
 const PR_NUMBER_RE = /\/pull\/(\d+)$/;
 type CommentCheck = { name: string; result: string; reason?: string };
 
-export function buildDeepCommentBody(checks: CommentCheck[], notProven: string[], statusState: "success" | "failure"): string {
+export function buildDeepCommentBody(checks: CommentCheck[], notProven: string[], statusState: "success" | "failure" | "error"): string {
   const lines = [`## Loki deep verify: ${statusState}`, "", "### Checks"];
   lines.push(...(checks.length ? checks.map((c) => `- ${c.result}: ${c.name}${c.reason ? ` (${c.reason})` : ""}`) : ["- none"]));
   lines.push("", "### NOT PROVEN", ...(notProven.length ? notProven.map((n) => `- ${n}`) : ["- none"]));
@@ -188,7 +188,7 @@ export function buildDeepCommentBody(checks: CommentCheck[], notProven: string[]
 /** Post the deep-verify comment and commit status through engine10-push.sh. headSha is "" when HEAD did not resolve to a full sha. Returns NOT PROVEN lines for each failed post. */
 export async function postDeepResults(a: {
   scriptPath: string; extraEnv?: Record<string, string>; pinnedOrigin?: string; prUrl?: string; headSha: string;
-  repoDir: string; runDir: string; checks: CommentCheck[]; notProven: string[]; statusState: "success" | "failure";
+  repoDir: string; runDir: string; checks: CommentCheck[]; notProven: string[]; statusState: "success" | "failure" | "error";
 }): Promise<string[]> {
   const out: string[] = [];
   if (!a.pinnedOrigin) {
