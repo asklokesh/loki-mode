@@ -404,7 +404,7 @@ export async function subtractBase(
   const zc = zeroOk ? un.filter(({ c, t }) => c.result === "not_run" && !c.owner && (c.reason ?? "").startsWith(NO_TESTS_REASON) && !wall.has(c.name) && !isHoldoutCheck(c.name) && !changed.includes(t.path) && zeroIntake.has(c.name)) : []; if (!(un.some(({ c }) => c.result === "fail" && c.ids?.length) || sus.length || zc.length || crash.length) || signal.aborted) return out;
   const dir = mkdtempSync(join(tmpdir(), "e10-base-"));
   const git = (args: string[]): void => { safeGit(ctx.repoDir, args, { stdio: "ignore", repoDrivers: true }); }; // worktree add checks out base content
-  const memo = baseMemo(ctx.runDir, ctx.baseSha);
+  const memo = baseMemo(ctx.runDir ?? "", ctx.baseSha, !!ctx.runDir && baseMemoOn()); // a context with no run dir (unit callers) keeps no memo
   const once = async (bc: { cmd: string; args: string[]; cwd: string }, deps: boolean): Promise<{ ok: boolean; cut?: boolean; out: string }> => {
     const k = memo.key(dir, bc, deps), hit = memo.get(k); if (hit) return hit;
     const r = await runOnce(bc.cmd, bc.args, bc.cwd, signal, {}); if (!r.cut && !r.missing && !signal.aborted) memo.put(k, r); return r;

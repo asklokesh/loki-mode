@@ -473,7 +473,7 @@ total = sum(json.load(open(f)).get("total_cost_usd") or 0 for f in costs)
 usd = rec.get("cost", {}).get("usd")
 add = os.path.join(rd, "receipt-addendum-1.json")
 state = json.load(open(add))["status_state"] if os.path.exists(add) else "none"
-print(len(pr), bool(pr and pr[0]["data"].get("draft")), sum(e.get("type") == "deep.started" for e in ev), reviews, council,
+print(len(pr), bool(pr and pr[0]["data"].get("draft")), sum(e.get("type") == "deep.started" and not (e.get("data") or {}).get("poster") for e in ev), reviews, council,
       rec.get("verdict"), usd is not None and round(total, 2) == round(usd, 2), state)
 PY
 }
