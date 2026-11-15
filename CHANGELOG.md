@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- Label an issue, get a pull request. A repository adds about 15 lines of workflow that call the new reusable workflow `asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml`, puts the `loki` label on an issue, and gets one pull request plus one comment on the issue with the result label, the check counts, the cost, the receipt digest and the link. The agent job holds a read-only token; a separate job that runs no agent opens the pull request. Setup is in the guide under "Triggers without a cloud". Checked offline against a local mirror with a stub model and a stub `gh`; not yet run on GitHub.
+- When the model key or the "Allow GitHub Actions to create and approve pull requests" repository setting is missing, the comment on the issue says which one and where to set it.
+- `LOKI_SPLIT_ONE_PR=local`: a `--no-pr` run of a split issue still builds the combined branch and its pull request body, and pushes nothing. `epic.json` now records the issue's total cost.
+
+### Fixed
+- A rerun of a split issue ends in one pull request again. The combined branch `loki/<issue>-combined` is rebuilt on every run, so when an earlier run's branch was still on GitHub the push was refused ("push refused or failed (rc=1)") and the run fell back to one pull request per slice. The rerun now publishes on `loki/<issue>-combined-<run id>`, with no forced push, and closes the earlier run's open combined pull request as superseded.
+- The issue-to-PR workflow opened no pull request. It cut the patch from `HEAD`, but the engine commits on its own branch and leaves the checkout where it started, so the patch was always empty; a PARTIAL run (exit 6) also failed the job before anything was handed over, and a large issue was never combined under `--no-pr`. The patch is now cut from the commit the receipt names (or the combined branch), a PARTIAL result still opens its pull request, marked as PARTIAL, and a rerun replaces the earlier pull request instead of adding a second one. The `issue-to-pr` action's `patch` output had the same empty-patch defect and is fixed the same way.
+
 ## v11.141.6 (2026-11-15)
 
 A run stopped by its time limit now always leaves a receipt.

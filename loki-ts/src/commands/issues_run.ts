@@ -552,7 +552,7 @@ export async function startIssueEpic(o: { repoDir: string; runDir: string; noPr:
   } : undefined;
   const r = await runOneEpic(d, raw.repo, { issue, plan }, parallel, slicesDir, !o.noPr, combine);
   if (r.combined) planUsd.push(...r.combined.resolveUsd); // the resolve sessions are part of the issue's one cost sum
-  try { writeFileSync(join(o.runDir, "epic.json"), JSON.stringify({ issue: `${raw.repo}#${issue.number}`, size: size.size, reasons: size.reasons, slices: plan.slices, results: r.results, ...(r.combined ? { combined: r.combined } : {}) }, null, 2) + "\n"); } catch { /* the printed tree still reports every slice */ }
+  try { writeFileSync(join(o.runDir, "epic.json"), JSON.stringify({ issue: `${raw.repo}#${issue.number}`, size: size.size, reasons: size.reasons, slices: plan.slices, results: r.results, cost: splitCost(r.results, planUsd), ...(r.combined ? { combined: r.combined } : {}) }, null, 2) + "\n"); } catch { /* the printed tree still reports every slice */ }
   d.out(`\n${r.tree}${r.outcome}; ${r.time}\n`);
   const agg = epicOutcome(r.results, planUsd, process.env, r.combined); // the standard Outcome/Reason/PR/Cost lines (the one cost sum), so `loki backlog` reads the true verdict and cost
   d.out(agg.lines);
