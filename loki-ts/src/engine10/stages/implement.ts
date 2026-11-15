@@ -207,6 +207,7 @@ export const implementStage: Stage = {
     }
     let session: SessionResult = patch?.status === "green" ? { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: patchS, killed: false, summary: patchNote || patch.log.join("\n") } : await ctx.sessions.run(first);
     const ids = patch?.status === "green" ? [`${ctx.runId}-impl-p`] : [first.iterationId];
+    { const blockMs = Number(process.env["LOKI_E10_TEST_BLOCK_AFTER_SESSION_MS"] ?? 0); if (blockMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, blockMs); } // tests only (tests/min/engine10-e2e-stub.sh BACKSTOP-SEAL): a worker whose event loop is blocked, as dev4 gitoxide's was
     if (patch?.status !== "green" && resumeId && !session.killed && session.exit !== 0 && session.exit !== MAX_TURNS_EXIT) { // a failed resume reruns fresh with the same full brief
       planChainMode = "fallback (resume failed)";
       if (ownId) { sessionResume = "fallback (resume failed)"; process.stderr.write(`implement: recorded session ${ownId} was not resumable, starting a fresh session\n`); }

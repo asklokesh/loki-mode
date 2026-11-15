@@ -94,6 +94,8 @@ export async function main(args: string[]): Promise<number> {
       const p = join(repoDir, eventsRelPath(runId)), r = (await import("../util/run_outputs.ts")).resumeMachineOpts(ctx as never, readEvents(p), readFileSync(p, "utf8"), flow);
       if (!r.ok) { emit("escalated", null, { stop: `resume refused: ${r.reason}` }); return; }
       flow = r.flow as typeof flow; const rs = r.restored as NonNullable<typeof restored>; restored = rs; const b = rs.intake?.["base_sha"]; if (typeof b === "string") ctx.baseSha = b;
+      // BACKSTOP-SEAL: the supervisor's seal pass after a backstop kill runs only commit and seal on the tree as it is; an implement the kill interrupted reads as limit-killed
+      if (process.env.LOKI_E10_SEAL_ONLY === "1") { flow = (["commit", "seal"] as const).filter((st) => (flow as readonly unknown[]).some((f) => f === st || (Array.isArray(f) && f.includes(st)))) as unknown as typeof flow; if (!rs.implement) rs.implement = { exit: "killed", limit_s: Number(process.env.LOKI_E10_CAP_S) || 0, summary_tail: "" }; }
     }
     const { stopped } = await runMachine(ctx, { flow, ...(restored ? { restored } : {}), ...(resize ? { resize } : {}) });
     if (stopped) emit("escalated", null, { stop: stopped }); // A-110: the supervisor maps the stop reason to an outcome

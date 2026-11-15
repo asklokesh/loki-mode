@@ -85,6 +85,9 @@ const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "S
 const ALIVE_BEAT_MS = 15_000;
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
 export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap minus grace)";
+export const BACKSTOP_SEALED_NOTE = "time ran out: the worker was stopped at its time limit and the current tree was sealed by a seal pass";
+export const backstopSealOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BACKSTOP_SEAL"] ?? "").trim());
+export const BACKSTOP_SEAL_MAX_MS = 45_000, BACKSTOP_SEAL_MIN_MS = 10_000, BACKSTOP_SEAL_MARGIN_S = 25; // the deadline margin is 30 s (util/run_cap.ts DEADLINE_MARGIN_S): stay 5 s inside it
 
 const isRev = (r: unknown): boolean => typeof r === "object" && r !== null && Number.isInteger((r as { rev?: unknown }).rev) && nonNegNum((r as { at?: unknown }).at);
 const nonNegNum = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && v >= 0;
@@ -213,19 +216,36 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const escalateMs = Math.max(0, Math.min(2000, ceilingS * 1000 - backstopMs)); // SIGTERM->SIGKILL clamped so a trapping worker cannot outlive the cap
   let spawnArgv: string[] = opts.workerArgv; try { spawnArgv = ulimitArgv(opts.workerArgv, workerEnv); } catch { /* spawnWorker refuses the same input */ } log.append("capability.recorded", null, { stages: workerStages().map((st) => stageCapability(st, envWithPwd(workerEnv, opts.repoDir), spawnArgv)) }); // GAME10-05a: worker stages are read from the env and argv spawnWorker is given; pr is recorded by recordSpawnEnv at its own spawn
   let sealed: Record<string, unknown> | null = null; const origBranch = opts.restoreBranch !== undefined ? opts.restoreBranch : currentBranch(opts.repoDir), sessionGroups = new Set<number>(); // session children are detached (own group), so the worker's group kill misses them
-  const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, (line) => {
+  const onWorkerLine = (line: string): void => {
     const e = log.ingest(line); if (e) { stuck.event(String(e.stage ?? "unknown"), Date.now()); quiet.event(e.stage ?? null, e.type, Date.now()); }
     if (e?.type === "session.started" && typeof e.data.pgid === "number") sessionGroups.add(e.data.pgid); if (e?.type === "receipt.sealed") { sealed = e.data; log.checkpoint(e.data["receipt_sha256"]); }
     if (e?.type === "variant" && e.data.intent_confirm === true && workerEnv.LOKI_INTENT_TTY === "1") {
       void askIntent(String(e.data.card ?? ""), join(opts.repoDir, ".loki", "runs", opts.runId));
     }
-  }, (stopped) => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); if (stopped) restoreBranch(opts.repoDir, origBranch); }).finally(() => clearInterval(beat)); // a rejected spawn also stops the beat
-  const workerExit = worker.killed ? null : worker.code;
+  };
+  let workerStopped = false;
+  let worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, onWorkerLine, (stopped) => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); workerStopped = stopped; if (stopped && !(backstopSealOn(env) && !sealed)) restoreBranch(opts.repoDir, origBranch); }).finally(() => clearInterval(beat)); // BACKSTOP-SEAL: a kill with no receipt keeps the tree on the run branch for the seal pass
+  // BACKSTOP-SEAL (dev4 gitoxide on 11.141.5: the worker's own soft cap never fired, the backstop killed it at 1141 s and no receipt existed): a worker killed by the
+  // backstop before it sealed gets one seal pass. A fresh worker resumes from the durable log with only commit and seal (LOKI_E10_SEAL_ONLY), seals the current tree as
+  // PARTIAL "time ran out", and is itself bounded so the whole run still ends inside the ceiling plus the deadline margin. Off with LOKI_E10_BACKSTOP_SEAL=0.
+  let sealPass = false;
+  if (worker.killed && !sealed && !worker.cancelled && backstopSealOn(env)) {
+    const leftMs = Math.min(BACKSTOP_SEAL_MAX_MS, t0 + (ceilingS + BACKSTOP_SEAL_MARGIN_S) * 1000 - Date.now());
+    if (leftMs >= BACKSTOP_SEAL_MIN_MS) {
+      sealPass = true; process.stderr.write(`engine10: the backstop stopped the worker before it sealed; sealing the current tree (up to ${Math.round(leftMs / 1000)} s)\n`);
+      try { const runBr = `loki/${opts.runId}`; if (currentBranch(opts.repoDir) !== runBr) safeGit(opts.repoDir, ["checkout", runBr], { stdio: "ignore" }); } catch { /* the seal pass seals whatever tree is checked out */ }
+      log.sealLog();
+      const sealed2 = await spawnWorker(opts.workerArgv, { ...workerEnv, LOKI_E10_RESUME: "1", LOKI_E10_SEAL_ONLY: "1" }, opts.repoDir, leftMs, escalateMs, onWorkerLine, () => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); });
+      if (sealed) worker = { ...sealed2, killed: true };
+    }
+  }
+  if (workerStopped && backstopSealOn(env)) restoreBranch(opts.repoDir, origBranch); // the restore the stop handler deferred for the seal pass; a rejected spawn also stops the beat
+  const workerExit = worker.killed && !(sealPass && sealed) ? null : worker.code;
   const sealedData = sealed as Record<string, unknown> | null;
   const v = sealedData?.verdict;
   const receiptVerdict = workerExit === 0 && typeof v === "string" && VERDICTS.has(v), verdict: Verdict = receiptVerdict ? (v as Verdict) : "FAILED"; // FC-21b (3): a sealed receipt is the one source of truth for the outcome
   const notProven = Array.isArray(sealedData?.not_proven) ? (sealedData.not_proven as unknown[]).map(String) : [];
-  if (worker.killed) notProven.push(BACKSTOP_NOT_PROVEN); const cancelled: string | null = worker.cancelled ?? (readEvents(log.path).some((e) => e.type === "cancel_effective") ? "request" : null); /* P12-10b: a loki cancel honoured at a stage boundary completes as cancelled too */ if (cancelled) notProven.push(`run cancelled by ${cancelled}`); // SIGINT/SIGTERM: usage so far is kept, no PR or backstop commit
+  if (worker.killed) notProven.push(sealPass && sealed ? BACKSTOP_SEALED_NOTE : BACKSTOP_NOT_PROVEN); const cancelled: string | null = worker.cancelled ?? (readEvents(log.path).some((e) => e.type === "cancel_effective") ? "request" : null); /* P12-10b: a loki cancel honoured at a stage boundary completes as cancelled too */ if (cancelled) notProven.push(`run cancelled by ${cancelled}`); // SIGINT/SIGTERM: usage so far is kept, no PR or backstop commit
   let prUrl: string | null = null;
   const intact = log.verify(); // unconditional re-check before the PR
   if (!intact) notProven.push(TAMPER_NOT_PROVEN);

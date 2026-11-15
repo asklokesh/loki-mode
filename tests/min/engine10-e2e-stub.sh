@@ -872,4 +872,16 @@ print(len(w), w[0]["stage"] if w else "-", len(w[0]["data"].get("processes") or 
 case "$wd" in 0*|"") bad "WATCHDOG no watchdog.silent event in a 20 s silent session: '$wd'" ;; *) set -- $wd; [ "$2" = implement ] && [ "$3" -gt 0 ] && ok "WATCHDOG the silent implement session is recorded ($1 event(s)) with the processes running" || bad "WATCHDOG event facts: $wd" ;; esac
 [ "$(outcome)" = VERIFIED ] && ok "WATCHDOG recording a silence changes nothing else (VERIFIED)" || { bad "WATCHDOG outcome is '$(outcome)'"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /'; }
 
+# ---------------------------------------------------------------- BACKSTOP-SEAL (dev4 gitoxide on 11.141.5): a worker the backstop kills before it seals still leaves a receipt
+# A 95 s deadline (cap about 64 s) and a worker whose event loop is blocked for 120 s after its implement session, so its own soft cap never fires: the supervisor's
+# backstop kills it, then one seal pass seals the current tree as PARTIAL "time ran out", inside the deadline. =0 keeps the old no-receipt ending.
+BSTO=(${TO[@]+"${TO[@]}"}); BS0=$(date +%s); TO=(LOKI_RUN_DEADLINE_S=95 LOKI_E10_TEST_BLOCK_AFTER_SESSION_MS=120000 ${BSTO[@]+"${BSTO[@]}"}); run_engine done; TO=(${BSTO[@]+"${BSTO[@]}"}); BSW=$(( $(date +%s) - BS0 ))
+[ "$BSW" -lt 95 ] && ok "BACKSTOP-SEAL the run ended inside its 95 s deadline (${BSW}s)" || bad "BACKSTOP-SEAL the run took ${BSW}s against a 95 s deadline"
+if [ -n "$RUNDIR" ] && [ -f "$RUNDIR/receipt.json" ]; then
+    ok "BACKSTOP-SEAL a receipt exists after the backstop kill"
+    bsv="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["verdict"], any(n.startswith("time ran out") for n in r.get("not_proven",[])))' "$RUNDIR/receipt.json")"
+    [ "$bsv" = "PARTIAL True" ] && ok "BACKSTOP-SEAL the receipt is PARTIAL with the time-ran-out reason" || bad "BACKSTOP-SEAL receipt facts: $bsv"
+    grep -q 'export function multiply' "$REPO/calc.ts" 2>/dev/null || git -C "$REPO" show HEAD:calc.ts 2>/dev/null | grep -q 'export function multiply' && ok "BACKSTOP-SEAL the sealed tree holds the session's change" || bad "BACKSTOP-SEAL the change is missing from the sealed tree"
+else bad "BACKSTOP-SEAL no receipt after the backstop kill"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; fi
+
 finish
