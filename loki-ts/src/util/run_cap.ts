@@ -62,12 +62,22 @@ export function yamlRunCapS(text: string): number | null {
   warnBadCap("budgets.run_cap_s", raw);
   return null;
 }
+/** RUN-DEADLINE (LOKI_RUN_DEADLINE_S, or `loki start --max-time <s>`): an outer wall-clock limit the run must finish inside (a CI job timeout, the bench's
+ *  20-minute kill). When set, the run cap is fixed at the time left of it minus DEADLINE_MARGIN_S, never more than any other fixed cap, so every stage is
+ *  budgeted inside it and the machine's soft cap seals the current diff (cap.hit, PARTIAL "time ran out") about a minute before the deadline instead of
+ *  being killed with no receipt (dev4: all 4 cap kills ran a 3600 s budget under a 1200 s kill). Measured from this process's start. Unset: unchanged. */
+export const DEADLINE_MARGIN_S = 30, DEADLINE_MIN_CAP_S = 60;
+export function deadlineCapS(env: NodeJS.ProcessEnv = process.env, uptimeS: number = process.uptime()): number | undefined {
+  const raw = env.LOKI_RUN_DEADLINE_S; if (raw === undefined || raw.trim() === "") return undefined;
+  const v = Number(raw); if (!Number.isFinite(v) || v <= 0) { warnBadCap("LOKI_RUN_DEADLINE_S", raw); return undefined; }
+  return Math.max(DEADLINE_MIN_CAP_S, Math.floor(v - uptimeS - DEADLINE_MARGIN_S));
+}
 /** The cap the run starts with: a fixed cap if one is set, else DEFAULT_CAP_S (no plan exists yet; the worker resizes once after plan). Best effort: unreadable yaml falls back to the default. */
 export function resolveRunCapS(repoDir: string, subscription: boolean, env: NodeJS.ProcessEnv = process.env): { capS: number; fixedS?: number; ceilingS: number } {
   const texts = lokiYamlTexts(repoDir);
   const first = texts.find((t) => yamlKey(t, "budgets", "run_cap_s") !== null); // the first file that sets the key wins, like resolveCap
   const yamlS = first !== undefined ? yamlRunCapS(first) : null;
-  const fixedS = fixedCapS(envCapS(env.LOKI_E10_CAP_S) ?? undefined, yamlS);
+  const set = fixedCapS(envCapS(env.LOKI_E10_CAP_S) ?? undefined, yamlS), dl = deadlineCapS(env), fixedS = dl === undefined ? set : Math.min(set ?? dl, dl);
   return { capS: fixedS ?? DEFAULT_CAP_S, fixedS, ceilingS: fixedS ?? capCeilingS(subscription) };
 }
 /** The line appended to the implement brief (after the cache-stable prefix) so the model can checkpoint. */
