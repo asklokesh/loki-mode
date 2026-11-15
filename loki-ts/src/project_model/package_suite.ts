@@ -123,7 +123,7 @@ export async function runPackageSuites(
   if (!specs.length) return false;
   for (const { name, cmd, cwd, run: line, go } of specs) {
     const started = Date.now();
-    const r = await run(["bash", "-c", line], { cwd: join(repoDir, cwd), timeoutMs: opts.timeoutMs, env: suiteEnv(opts.path), ...(suiteTimeoutOn() ? { group: true } : {}) }); // SUITE-TIMEOUT: the whole process tree stops at the limit
+    const r = await run(["bash", "-c", line], { cwd: join(repoDir, cwd), timeoutMs: opts.timeoutMs, env: suiteEnv(opts.path), ...(suiteTimeoutOn() ? { group: true, signal } : {}) }); // SUITE-TIMEOUT: the whole process tree stops at the limit, and at an abort (its own group is outside the worker's, so an abort must reach it here)
     const duration_s = (Date.now() - started) / 1000;
     if (signal.aborted) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`not run: ${name} (aborted)`); continue; }
     if (r.timedOut && suiteTimeoutOn()) { const why = `timed out after ${Math.round(opts.timeoutMs / 1000)}s`; checks.push({ name, cmd, result: "not_run", duration_s, reason: why }); notProven.add(`not run: ${name} (${why})`); continue; } // SUITE-TIMEOUT: a suite killed at its limit says nothing about the change: not_run (caps below VERIFIED), never FAILED

@@ -3843,6 +3843,10 @@ res("SUITE-TIMEOUT a full suite stopped by its timeout is not_run 'timed out', n
 res(`SUITE-TIMEOUT the suite stops at its limit (${a.secs.toFixed(1)} s for a 1.5 s limit)`, a.secs < 8);
 const off = await run("0"); const c0 = off.checks.find((x: any) => x.name.startsWith("full suite"));
 res("SUITE-TIMEOUT =0 keeps the old reading (a failed check)", !!c0 && c0.result === "fail"); delete process.env.LOKI_E10_SUITE_TIMEOUT_NOT_RUN;
+// The suite has its own process group, so an abort has to reach it through the signal: it stops then, and reads aborted, not timed out.
+const ac = new AbortController(); setTimeout(() => ac.abort(), 500);
+const abChecks: any[] = [], abNp = new Set<string>(), ab0 = Date.now(); await dp.runFullSuite(ctx, ac.signal, { fullSuiteTimeoutMs: 20000 }, abChecks, abNp); const abSecs = (Date.now() - ab0) / 1000;
+res(`SUITE-TIMEOUT an abort stops the suite (${abSecs.toFixed(1)} s of a 30 s suite) and reads not_run (aborted), not timed out`, abSecs < 8 && [...abNp].some((n) => /\(aborted\)/.test(n)) && ![...abNp].some((n) => /timed out/.test(n)));
 setTest("echo boom; exit 1");
 const red = await run(); const cr = red.checks.find((x: any) => x.name.startsWith("full suite"));
 res("SUITE-TIMEOUT a suite that finishes red stays a failed check", !!cr && cr.result === "fail");
@@ -3850,7 +3854,7 @@ rmSync(R, { recursive: true, force: true });
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/vh.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "vh unit script crashed or exited non-zero"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 4 ] || bad "vh unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 4"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 5 ] || bad "vh unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 5"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

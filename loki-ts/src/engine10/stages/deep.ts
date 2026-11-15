@@ -61,7 +61,7 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
       cwd: ctx.repoDir,
       timeoutMs: opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS,
       env: suiteEnv(opts.path),
-      ...(suiteTimeoutOn() ? { group: true } : {}), // SUITE-TIMEOUT: the whole process tree stops at the limit
+      ...(suiteTimeoutOn() ? { group: true, signal } : {}), // SUITE-TIMEOUT: the whole process tree stops at the limit, and at an abort (its own group is outside the worker's)
     });
     const durationS = (Date.now() - started) / 1000;
     if (signal.aborted) {
