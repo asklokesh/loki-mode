@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New, off by default until measured: the pre-delivery review turn can be kept from breaking a test. With `LOKI_E10_REVIEW_TURN_GUARD=1`, when the turn edits anything, Loki reruns the tests of what it changed; if a test that passed before the turn fails after it, only that turn's edits are taken back, the implemented change is kept, and the receipt says which test it broke.
 
 ### Fixed
+- Files Loki's own test runs wrote no longer ship in the delivered diff. A snapshot a verify run rewrote, or a fixture cache it created, is left out. That now includes the work-in-progress commit of a run that did not pass. A new file stays only when the task names its path. Before anything is left out, the targeted tests run without it, and a file a test needs is kept and named on the receipt. `LOKI_E10_REGEN_DROP=0` turns this off.
 - The proof that a test fails without the fix no longer runs the fixed code. On a repo whose virtualenv holds an editable install, the base checkout imported the already changed sources through the linked environment, so a real fail-then-pass test read as passing on the old code and the run lost its proof. The base run now puts the base checkout's own sources first. The Wall's base copy had the same leak through the copied editable install and absolute links (for example a monorepo's dev dist/ links); those now point at the copy, so the Wall's base run matches a fresh base.
 
 ## v11.141.2 (2026-11-14)

@@ -87,7 +87,7 @@ export function runOutputs(repoDir: string, added: string[], baseSha?: string, t
  *  commit, a staged path still in that set is left out unless the task names it or one of its changed lines carries a task keyword (a backticked span, or an
  *  identifier of 5 or more characters the task uses), so a doc a test run regenerated in step with the change stays. The failure: a test run regenerated an
  *  unrelated doc page with a machine-specific path, the commit shipped it, and review failed the diff as an unrelated edit on a run that read VERIFIED. */
-export const regenDropOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_REGEN_DROP"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const regenDropOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_REGEN_DROP"] ?? "").trim()) /* acc-170: on by default (a fix: stray test-run writes failed review), =0 opts out */;
 const REGEN_FILE = "regenerated.json";
 export function noteRegenerated(runDir: string, stage: string, paths: string[]): void {
   if (!paths.length || !["verify", "wall", "implement", "fix"].includes(stage)) return;
@@ -97,24 +97,42 @@ export function noteRegenerated(runDir: string, stage: string, paths: string[]):
   try { mkdirSync(runDir, { recursive: true }); writeFileSync(p, JSON.stringify({ paths: [...set].sort() })); } catch { /* best effort: no record, nothing dropped */ }
 }
 export const regeneratedPaths = (runDir: string): string[] => { try { return (JSON.parse(readFileSync(join(runDir, REGEN_FILE), "utf8")) as { paths?: string[] }).paths ?? []; } catch { return []; } };
-/** Task keywords a regenerated file's change must carry to stay (see regenDropOn). */
+/** Task keywords a MODIFIED regenerated file's change must carry to stay (see regenDropOn). A new check-written file never stays by keyword (acc-170):
+ *  only an exact path or file name in the task keeps it, since a plain word such as "components" matched a test-run cache file. */
 export function taskKeywords(task: string): Set<string> {
   const k = new Set<string>([...task.matchAll(/`([^`\n]{2,60})`/g)].map((m) => m[1]!.trim()));
   for (const m of task.matchAll(/[A-Za-z_][A-Za-z0-9_]{4,}/g)) if (/[_0-9]|[a-z][A-Z]/.test(m[0]) || m[0].length >= 8) k.add(m[0]);
   return k;
 }
+/** True when the task names the path exactly (as written, or by its file name). */
+export const taskNamesPath = (task: string, f: string): boolean => task.includes(f) || task.includes(basename(f));
 /** The staged paths to leave out as check-regenerated (RD). `changedLines(f)` gives the added and removed lines of f against base. */
 export function regenDrops(runDir: string, staged: Staged[], task: string, changedLines: (f: string) => string[], env: NodeJS.ProcessEnv = process.env): Staged[] {
   if (!regenDropOn(env)) return [];
   const regen = new Set(regeneratedPaths(runDir)); if (!regen.size) return [];
   const kw = [...taskKeywords(task)];
   return staged.filter(({ st, f }) => {
-    if (!(st === "A" || st === "M") || !regen.has(f) || f.startsWith(".loki/") || task.includes(f) || task.includes(basename(f))) return false;
+    if (!(st === "A" || st === "M") || !regen.has(f) || f.startsWith(".loki/") || taskNamesPath(task, f)) return false;
+    if (st === "A") return true; // acc-170: a NEW file only a check run wrote (a fixture cache, a snapshot file) stays only when the task names its path
     const lines = changedLines(f).join("\n");
     return !kw.some((w) => lines.includes(w));
   });
 }
 export const regenDropNote = (f: string): string => `rewritten only by Loki's own check run, not by the change, and left out of the commit: ${f}`;
+export const regenKeptNote = (f: string): string => `rewritten by Loki's own check run and kept: a targeted test fails without it: ${f}`;
+/** acc-170 guard: the check-written paths regenDrops picked go back to base ON DISK (a modified file is checked out from base, a new one removed), then `breaks`
+ *  reruns the targeted tests. When one turns red (or none could run), every picked path is restored byte for byte and kept: a snapshot or fixture the change
+ *  needs. The paths that stay dropped are at base in the tree too, so no later step (the run-end WIP commit) can bring them back. */
+export function guardRegenDrops(repoDir: string, baseSha: string, picked: Staged[], breaks: () => boolean): { dropped: Staged[]; kept: Staged[] } {
+  if (!picked.length) return { dropped: [], kept: [] };
+  const saved = picked.map(({ f }) => { try { return { f, b: readFileSync(join(repoDir, f)) }; } catch { return { f, b: null as Buffer | null }; } });
+  const toBase = (): void => { for (const { st, f } of picked) { try { if (st === "M") safeGit(repoDir, ["--literal-pathspecs", "checkout", "-q", baseSha, "--", f]); else rmSync(join(repoDir, f), { force: true }); } catch { /* left as is */ } } };
+  toBase();
+  let red = true; try { red = breaks(); } catch { red = true; }
+  if (!red) return { dropped: picked, kept: [] };
+  for (const { f, b } of saved) { if (b === null) continue; try { mkdirSync(dirname(join(repoDir, f)), { recursive: true }); writeFileSync(join(repoDir, f), b); } catch { /* best effort */ } }
+  return { dropped: [], kept: picked };
+}
 /** DN LOKI_E10_DIFF_NEED (default on, =0 opts out): deliver only what the fix needs, deterministically and with no model call. A staged non-test file the task does not
  *  name is left out when (1) its change is formatting only: base and head are equal once whitespace, quote style, semicolons and trailing commas are normalized
  *  (Python, YAML and other whitespace-significant files keep their indentation, so only trailing space, blank lines and quotes are normalized), unless the task asks
@@ -210,11 +228,12 @@ export function commitUnsealedWork(intact: boolean, repoDir: string, workerEnv: 
     // The commit stage's filter applies here too: a lockfile that pnpm, Nx or verify rewrote after the commit stage is install churn, not run work. Dropped paths go back to base in the index and the tree (a modified tracked file only; never a path in `keep`: .loki and anything dirty or untracked at intake), so the checkout back to the user's branch carries no churn.
     const base = intake["base_sha"] as string, task = typeof intake["task"] === "string" ? intake["task"] : undefined;
     const staged = parseStaged(g(["diff", "--cached", "--name-status", "--no-renames", "-z", base])), mine = new Set(keep);
-    const churn = dropSet(repoDir, staged, intake["preexisting_dirty"], workerEnv, intake["install_created"], intake["preexisting_untracked_blobs"], base, task).filter(({ st, f }) => st !== "L" && !f.startsWith(".loki/") && (!commitWallEnabled() || !WALL_FILE.test(f)) && !mine.has(f) && staged.some((s) => s.f === f && (s.st === "M" || s.st === "A")));
+    const runDir = join(repoDir, ".loki", "runs", runId), regenWip = regenDrops(runDir, staged.filter(({ f }) => !mine.has(f)), task ?? "", (f) => { try { return safeGit(repoDir, ["diff", "--no-color", "-U0", base, "--", f], { env: workerEnv }).split("\n").filter((l) => /^[+-](?![+-]{2})/.test(l)); } catch { return []; } }); // acc-170 F1: the WIP commit honors the RD drop set too
+    const churn = [...dropSet(repoDir, staged, intake["preexisting_dirty"], workerEnv, intake["install_created"], intake["preexisting_untracked_blobs"], base, task), ...regenWip.filter(({ f }) => !mine.has(f))].filter(({ st, f }) => st !== "L" && !f.startsWith(".loki/") && (!commitWallEnabled() || !WALL_FILE.test(f)) && !mine.has(f) && staged.some((s) => s.f === f && (s.st === "M" || s.st === "A")));
     if (churn.length > 0) g(["--literal-pathspecs", "reset", "-q", base, "--", ...churn.map(({ f }) => f)]);
     const modified = churn.filter(({ f }) => staged.find((x) => x.f === f)?.st === "M").map(({ f }) => f);
     if (modified.length > 0) g(["--literal-pathspecs", "checkout", "-q", base, "--", ...modified]);
-    for (const { f } of churn) { if (staged.find((x) => x.f === f)?.st === "A" && (LOCKFILE.test(f) || WALL_FILE.test(f))) { try { const p = join(repoDir, f); if (lstatSync(p).isFile()) rmSync(p); } catch { /* already gone */ } } } // a lockfile the run created (absent at intake: none of `keep`) must not stay untracked on the user's branch
+    for (const { f } of churn) { if (staged.find((x) => x.f === f)?.st === "A" && (LOCKFILE.test(f) || WALL_FILE.test(f) || regenWip.some((r) => r.f === f))) { try { const p = join(repoDir, f); if (lstatSync(p).isFile()) rmSync(p); } catch { /* already gone */ } } } // a lockfile the run created (absent at intake: none of `keep`) must not stay untracked on the user's branch
     try { g(["diff", "--cached", "--quiet"]); return false; } catch (e) { if ((e as { status?: number }).status !== 1) return false; }
     g(["commit", "-q", "-m", `loki: work in progress, not verified (${runId})`, "-m", `Loki-Run: ${runId}`]);
     return true;
