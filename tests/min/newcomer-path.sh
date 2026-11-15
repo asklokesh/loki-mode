@@ -166,8 +166,8 @@ out="$(cd "$T" && "${doc_env[@]}" bash "$ROOT/bin/loki" doctor --requirements 2>
 has "L034 doctor --requirements: API-key path ready" "$out" "Anthropic API-key path (Agent SDK, no claude CLI): ready"
 case "$out" in *LOKI_SDK_MODE*) bad "L034 doctor --requirements still asks for LOKI_SDK_MODE" ;; *) ok "L034 doctor --requirements has no LOKI_SDK_MODE item" ;; esac
 has "L050 doctor --requirements: All paths ready without python3 and jq" "$out" "All paths: ready"
-printf '%s\n' "$out" | grep -q '\[MISS\] optional *Python 3.8' && ok "L050 doctor lists Python 3.8 as optional" || bad "L050 doctor does not list Python as optional"
-printf '%s\n' "$out" | grep -q '\[MISS\] optional *jq' && ok "L050 doctor lists jq as optional" || bad "L050 doctor does not list jq as optional"
+grep -q '\[MISS\] optional *Python 3.8' <<< "$out" && ok "L050 doctor lists Python 3.8 as optional" || bad "L050 doctor does not list Python as optional"
+grep -q '\[MISS\] optional *jq' <<< "$out" && ok "L050 doctor lists jq as optional" || bad "L050 doctor does not list jq as optional"
 out="$(cd "$T" && "${doc_env[@]}" bash "$ROOT/bin/loki" doctor 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "L050 loki doctor exits 0 with only a key, no python3, no jq" || { bad "loki doctor exited $rc on a key-only host"; printf '%s\n' "$out" | grep -E 'FAIL|^  - ' | sed 's/^/    | /'; }
 has "L034 loki doctor names loki \"<goal>\" on the bundled SDK" "$out" 'loki "<goal>" needs no separate CLI'

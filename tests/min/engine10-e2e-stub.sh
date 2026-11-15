@@ -800,7 +800,7 @@ res("DEEP-POST on by default, =0 opts out", sup.deepPostOn({}) && !sup.deepPostO
 rmSync(R, { recursive: true, force: true });
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/fl24-deeppost.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
-printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "fl24-deeppost unit script crashed or exited non-zero"
+grep -q '^EXIT 0$' <<< "$out" || bad "fl24-deeppost unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 12 ] || bad "fl24-deeppost unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 12"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac

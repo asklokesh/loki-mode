@@ -867,7 +867,7 @@ out="$(cd "$ROOT/loki-ts" && timeout 300 bun "$PP/unit.ts" "$ROOT" "$PP" 2>&1)"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
-printf '%s\n' "$out" | grep -q '^OK ' || { bad "patch protocol unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+grep -q '^OK ' <<< "$out" || { bad "patch protocol unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
 
 # ---------------------------------------------------------------- lean fix loop, unit level (L005, L006, L025, L026)
 mkdir -p "$T/l006" "$T/l026"
@@ -987,7 +987,7 @@ out="$(cd "$ROOT/loki-ts" && bun "$T/lean-fix.ts" 2>&1)"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
-printf '%s\n' "$out" | grep -q '^OK ' || { bad "lean-fix unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+grep -q '^OK ' <<< "$out" || { bad "lean-fix unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
 
 # ---------------------------------------------------------------- spec choice evidence (features/spec_ambiguity.ts resolveChoices)
 cat > "$T/spec-choice.ts" <<'TS'
@@ -1203,7 +1203,7 @@ out="$(cd "$ROOT/loki-ts" && ROOT="$ROOT" T="$T" LOKI_E10_DOC_UPDATE_RULE=1 bun 
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "spec choice: ${line#OK }" ;; "NO "*) bad "spec choice: ${line#NO }" ;; esac
 done <<< "$out"
-printf '%s\n' "$out" | grep -q '^OK ' || { bad "spec-choice unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+grep -q '^OK ' <<< "$out" || { bad "spec-choice unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
 
 # ---------------------------------------------------------------- lean fix loop on the stub provider
 # jest: a committed jest test of util.ts (the stub's scope edit touches util.ts, so verify selects it) whose runner, a stand-in
@@ -2328,7 +2328,7 @@ res("brief: asks to decide per site and leave it if not, lists file:line and rul
 TS
 mkdir -p "$T/es"
 out="$(cd "$ROOT/loki-ts" && bun "$T/edit-shape.ts" "$ROOT" "$T/es" 2>&1; echo "EXIT $?")"
-printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "edit-shape unit script crashed or exited non-zero"
+grep -q '^EXIT 0$' <<< "$out" || bad "edit-shape unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 25 ] || bad "edit-shape unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 25"
 # F3 widened-check precedence (LOKI_E10_PRECEDENCE_CHECK, default on, =0 opts out). Synthetic repos only (no bench task text, names or files): Go `x.(T)` widened to errors.As ahead of
 # another assertion branch, Python isinstance moved to another class beside a second isinstance branch, TS === widened to includes beside an instanceof branch. Each site names
@@ -2442,8 +2442,8 @@ grep -q 'firstAttemptModel = attemptsK(ctx.model) > 0 ? attemptModels()\[0\] : u
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
-printf '%s\n' "$out" | grep -q '^OK ' || { bad "edit-shape unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
-printf '%s\n' "$out" | grep -q '^NO ' && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
+grep -q '^OK ' <<< "$out" || { bad "edit-shape unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+grep -q '^NO ' <<< "$out" && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
 # one regex-escape helper: util/regex_escape.ts owns it, no src file re-spells the escape class, and edit_shape has no dead branch
 RE_COPIES="$(cd "$ROOT" && grep -rlF '[.*+?^${}()|[\]\\]' loki-ts/src | grep -v 'util/regex_escape.ts' | tr '\n' ' ')"
 [ -z "$RE_COPIES" ] && ok "regex escape: every file imports escapeRegex from util/regex_escape.ts (no private copy)" || bad "regex escape: private copies remain in: $RE_COPIES"
@@ -2509,7 +2509,7 @@ out="$(cd "$ROOT/loki-ts" && bun "$T/defect-pin.ts" 2>&1)"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "defect pin unit: ${line#OK }" ;; "NO "*) bad "defect pin unit: ${line#NO }" ;; esac
 done <<< "$out"
-printf '%s\n' "$out" | grep -q '^OK ' || { bad "defect pin unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+grep -q '^OK ' <<< "$out" || { bad "defect pin unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
 make_pin_py_repo() {
     make_wo_py_repo "$1"
     printf 'import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n    assert calc.add(0, 0) == 0\n\n\ndef test_double():\n    assert calc.double(3) == 7\n' > "$1/test_calc.py"
@@ -3536,12 +3536,12 @@ const inF1 = readFileSync(root + "/loki-ts/src/engine10/stages/intake.ts", "utf8
 res("wiring: intake records rankedRemedy as ranked_remedy under its knob; implement passes it to the brief and runs resumeForRemedy only after a clean done with a non-empty diff", /const remedy = rankedRemedyEnabled\(\) \? rankedRemedy\(task\) : null;/.test(inF1) && /\.\.\.\(remedy \? \{ ranked_remedy: remedy\.first \} : \{\}\)/.test(inF1) && /prior\.intake\?\.assumptions, rankedRemedyEnabled\(\) \? prior\.intake\?\.ranked_remedy : undefined\)/.test(im) && /if \(remedy && patch\?\.status !== "green" && !signal\.aborted && !session\.killed && session\.exit === 0 && session\.markers\.done && !session\.markers\.specConflict && !session\.markers\.alreadyDone && !treeIsEmpty\(ctx\)\) \{ const r = await resumeForRemedy\(/.test(im));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/site-hints.ts" "$ROOT" 2>&1; echo "EXIT $?")"
-printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "site-hints unit script crashed or exited non-zero"
+grep -q '^EXIT 0$' <<< "$out" || bad "site-hints unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 11 ] || bad "site-hints unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 11"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
-printf '%s\n' "$out" | grep -q '^NO ' && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
+grep -q '^NO ' <<< "$out" && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
 
 
 # acc-162: verify finds and runs the repo's real test command on a new repo (synthetic shapes, not the dev2 tasks).
@@ -3635,12 +3635,12 @@ process.env.LOKI_E10_PYTEST_PRETTY = "0"; res("PRETTY =0 reads the block as unme
 res("PLAN-HINTS the plan and the relevant-file list are hints when on, the old wording when off", cx.planHintsOn() && /a hint, not the scope/.test(cx.PLAN_HINT_LEAD) && !cx.planHintsOn({ LOKI_E10_PLAN_HINTS: "0" }) && cx.planHintsOn({}));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/acc162.ts" "$ROOT" 2>&1; echo "EXIT $?")"
-printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "acc-162 unit script crashed or exited non-zero"
+grep -q '^EXIT 0$' <<< "$out" || bad "acc-162 unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 30 ] || bad "acc-162 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 30"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
-printf '%s\n' "$out" | grep -q '^NO ' && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
+grep -q '^NO ' <<< "$out" && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
 
 # ---------------------------------------------------------------- FL24-WEAK (FireLater#24 s1, s2): a task-named case update and new-scope setup are not a weakened test
 cat > "$T/fl24-weak.ts" <<'TS'
@@ -3697,7 +3697,7 @@ res("NEW-SCOPE the mock clauses are off by default and on with =1", (await impor
 rmSync(R, { recursive: true, force: true });
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/fl24-weak.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
-printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "fl24-weak unit script crashed or exited non-zero"
+grep -q '^EXIT 0$' <<< "$out" || bad "fl24-weak unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 17 ] || bad "fl24-weak unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 17"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
@@ -3724,7 +3724,7 @@ res("BASE-MEMO nothing recorded writes no file", !existsSync(join(R, "fresh", "b
 rmSync(R, { recursive: true, force: true });
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/fl24-memo.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
-printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "fl24-memo unit script crashed or exited non-zero"
+grep -q '^EXIT 0$' <<< "$out" || bad "fl24-memo unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 5 ] || bad "fl24-memo unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 5"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
@@ -3763,7 +3763,7 @@ res("ONE-BASE repoRelCmd drops only the repo prefix of the first word", rp.repoR
 rmSync(R, { recursive: true, force: true });
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/acc171.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
-printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "acc171 unit script crashed or exited non-zero"
+grep -q '^EXIT 0$' <<< "$out" || bad "acc171 unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 7 ] || bad "acc171 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 7"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
