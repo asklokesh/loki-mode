@@ -48,7 +48,7 @@ const crashSigs = new WeakMap<object, string>(); // BCE: a failing check's crash
  *  segfault, rc 139, and a conftest ImportError, from a stand-in env the repo's own install refused to build) is run once on base. When base crashes with the same
  *  signature, the check is environment: not_run with the signature on NOT PROVEN, never a failure of the change and never fix-round input. A different signature,
  *  a base that passes, or a check with ids stays a failure (fail-safe). */
-export const baseCrashEnvOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_BASE_CRASH_ENV"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const baseCrashEnvOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BASE_CRASH_ENV"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 export const BCE_REASON = "fails the same way on base, so its result cannot be read: the environment, not the change";
 export function crashSignature(out: string): string | null {
   const m = /^(?:[.sxXFE]*(?=Fatal Python error: )Fatal Python error: [^\n]+|Segmentation fault[^\n]*|E\s+ModuleNotFoundError: No module named '[^']+'|ModuleNotFoundError: No module named '[^']+'|ImportError while (?:loading conftest|importing test module)[^\n]*)$/m.exec(out);
@@ -89,7 +89,7 @@ export function collateralTests(relevant: TestRef[], named: string[]): TestRef[]
  *  A test is own only when it is a test file the task names, or it is path-paired with a named non-test file the diff CHANGED: the same covered stem, and it sits in
  *  that file's directory or its __tests__, tests or test subdirectory. A named file the diff did not edit is a reference ("is not modified", "following the
  *  pattern in"), so its tests are collateral, as is every same-stem test elsewhere (FireLater#24: a named X/page.tsx made all 46 page.test.tsx own). */
-export const noTestFallbackOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_NO_TEST_FALLBACK"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const noTestFallbackOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_NO_TEST_FALLBACK"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 export const ownByPathOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_OWN_BY_PATH"] ?? "").trim());
 export function ownTests(relevant: TestRef[], named: string[], changed: readonly string[]): TestRef[] {
   const src = named.filter((f) => !isTestFile(f) && changed.includes(f)).map((f) => { const d = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "."; const s = basename(f).replace(/\.[^.]+$/, ""); return { d, s }; });
@@ -323,7 +323,7 @@ function changedSymbolsFirst(ctx: RunContext, tests: TestRef[], changed: string[
  *  "Cannot have caused", fail-safe: no failing id or diagnostic names a changed file, and (a test or suite) the diff changes no file that runs (only docs, type declarations,
  *  test files and changelog fragments) or (a lint) every diagnostic sits in an unchanged file and names no symbol the diff changed. Wall, targeted and base-green-now-red
  *  checks are never uncaused (the caller's independent set). Fire marker: verify records uncaused_reds. */
-export const uncausedOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_UNCAUSED_NO_FIX"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const uncausedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_UNCAUSED_NO_FIX"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 const LINT_CONFIG = /(?:^|\/)(?:tsconfig[^/]*\.json|jsconfig\.json|\.eslintrc[^/]*|eslint\.config\.[cm]?[jt]s|biome\.jsonc?|\.?ruff\.toml|pyproject\.toml|setup\.cfg|mypy\.ini|\.flake8|tox\.ini|package\.json|\.golangci\.ya?ml|clippy\.toml|Cargo\.toml)$/;
 const INERT_FILE = /\.(?:md|mdx|rst|txt|adoc)$|\.d\.[cm]?ts$|(?:^|\/)(?:changelog\.d|changes|newsfragments|\.changeset)\/|(?:^|\/)(?:CHANGELOG|HISTORY|NEWS)[^/]*$/i;
 export function uncausedRed(c: { name: string; ids?: string[] }, changed: readonly string[], symbols: readonly string[], excerpt: string): boolean {

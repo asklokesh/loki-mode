@@ -79,7 +79,7 @@ export function selfReviewChecks(repoDir: string, baseSha: string, staged: Stage
  *  after its directory or file) that the diff leaves untouched and that already names at least 2 of the option keys or quoted names the source file holds on base,
  *  while the change adds a new one the doc does not name, is flagged for the review turn. The failure: a change added a secondary option to two rules and left
  *  each rule's README, which lists every other option, without it; review failed the diff on the missing docs. */
-export const docEnumOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_DOC_ENUM"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const docEnumOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DOC_ENUM"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 const NAME_TOKENS = (text: string): Set<string> => new Set([...text.matchAll(/['"`]([A-Za-z][\w-]{2,39})['"`]|\b([A-Za-z_][\w]{2,39})\s*:/g)].map((m) => (m[1] ?? m[2])!).filter((t) => !/^(?:true|false|null|undefined|this|type|name|value|string|number|default|function|return|const|let|var|import|export|from|https?)$/i.test(t)));
 export function docEnumerations(repoDir: string, baseSha: string, live: Staged[]): string[] {
   const touched = new Set(live.map(({ f }) => f)), out: string[] = [];
@@ -107,7 +107,7 @@ export function docEnumerations(repoDir: string, baseSha: string, live: Staged[]
  *  changed files and tests. Either flag starts the self-check's one review turn. The failure: Loki fixed the headline case and missed a stated one
  *  (a "similar error when wrapping it in ..." edge, a "... has the same effect" sentence, the issue's own error reproduction)
  *  or a sibling override of the changed method in a subclass, while a stronger raw model covered them. */
-export const srCoverageOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_SR_COVERAGE"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const srCoverageOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SR_COVERAGE"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 export interface StatedCase { kind: "block" | "sentence"; text: string; tokens: string[] }
 const COMMON_CALLS = new Set(["print", "println", "printf", "log", "console", "assert", "expect", "test", "it", "describe", "require", "import", "from", "def", "class", "function", "return", "new", "len", "str", "int", "list", "dict", "set", "range", "if", "for", "while", "fmt", "main", "echo", "cd", "python", "node", "npm", "pip", "cargo", "go", "use", "let", "const", "var", "self", "this"]);
 const RESULT_AFTER = /^\s*(?:\S+\s+){0,3}(?:expected|actual|output|prints?|returns?|gives?|result|error|raises?|throws?)\b/i;
@@ -134,7 +134,7 @@ export function statedCases(task: string): StatedCase[] {
  *  and the handoff is recorded in <runDir>/wall-required-cases.json (the fire marker). When the Wall then wrote tests, the self-check's stated-cases item no longer
  *  token-matches the model's own tests (which pass when they encode the model's wrong reading) and reads `auto`: the Wall's sealed tests check the cases. With no
  *  Wall run the token match stays as the fallback. */
-export const wallCasesOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_WALL_CASES"] ?? "").trim()) /* off by default (A3.2: unmeasured), =1 opts in */;
+export const wallCasesOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_WALL_CASES"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 const WALL_CASES_FILE = "wall-required-cases.json";
 export function wallRequiredCases(runDir: string, task: string, env: NodeJS.ProcessEnv = process.env): string[] {
   if (!wallCasesOn(env)) return [];
