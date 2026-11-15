@@ -25,7 +25,7 @@
 
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { comparableIds, errorsById, failIds, idNamesFile, lineNamesChange, noiseOnlyErrors, sameErrors, unhandledBlock } from "../engine10/failures.ts";
 import { baseRedShapeOn, classifyCheck, emptyDiscovery, exitCodedId, failureShape, goRunner, isExitCodedScript, plainTestEnv, resolveTool, stripAnsi, toolFallbacks, type Classified } from "../util/check_result.ts";
@@ -574,6 +574,18 @@ export function runBaseline(repoDir: string, commands: ProfileCommand[], opts: B
   return b;
 }
 const normCmd = (s: string): string => s.replace(/\s+--silent\b/, "").trim().replace(/^\(cd \.\s+&&\s+(.+)\)$/, "$1"); // a root package suite is spelled "(cd . && X)" by package_suite.ts but the baseline ran plain "X": same command, never "not the full suite command"
+/** ONE-BASE-RUN (acc-171, LOKI_E10_ONE_BASE_RUN default on, =0 opts out): package_suite.ts spells a root suite with the repo's absolute path
+ *  ("/repo/.venv/bin/python -m pytest -q") where the root baseline ran it relative (".venv/bin/python -m pytest -q"): the same command, so intake ran the
+ *  same suite twice (copier: a 300 s capped baseline, then 286 s again; 43 of 236 stored dev2/dev3 intakes ran a suite twice this way, 31 with identical
+ *  results). The repo dir prefix of the first word is dropped before comparing, so the baseline speaks for the suite (rootSpeaks) and verify finds it
+ *  (baseFor). A root baseline cut off at its cap is not run again: verify's per-file base reruns cover the targeted tests, and an incomplete base never excuses. */
+export const oneBaseRunOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_ONE_BASE_RUN"] ?? "").trim());
+export function repoRelCmd(repoDir: string, cmd: string, env: NodeJS.ProcessEnv = process.env): string {
+  const c = normCmd(cmd); if (!oneBaseRunOn(env) || !repoDir) return c;
+  const dirs = [repoDir.replace(/\/+$/, "")]; try { dirs.push(realpathSync(repoDir)); } catch { /* the spelled path only */ }
+  for (const d of [...new Set(dirs.flatMap((x) => [x, x.startsWith("/private/") ? x.slice("/private".length) : `/private${x}`]))]) if (c.startsWith(`${d}/`)) return normCmd(c.slice(d.length + 1));
+  return c;
+}
 /** SPEED-BASE-ALIAS (LOKI_BASELINE_SCRIPT_ALIAS=0 opts out): `npm test`, `pnpm test` and `yarn test` (with or without `run`) at the repo root run the same package.json script, so one base
  *  run of it speaks for the others. Only when the root package.json declares that script and no pre/post hook for it (npm runs pretest and posttest, pnpm and yarn berry do not), so the
  *  commands run exactly the same thing. A tanstack-query baseline ran `pnpm test` and then `npm test --silent`, twice each (51 s), for one script. */
@@ -590,7 +602,7 @@ export function sameRootScript(repoDir: string, a: string, b: string, env: NodeJ
 /** The base entry for `cmd`: the entry that ran exactly this command (normCmd) first, else the root baseline when it ran the same root script (sameRootScript). `ranOnly` skips entries that never ran. */
 function baseFor(repoDir: string, p: CommandProfile, cmd: string, ranOnly: boolean): CommandProfile["baseline"] | undefined {
   const all = [p.baseline, ...(p.suites ?? [])].filter((b) => !ranOnly || b.ran);
-  return all.find((b) => normCmd(b.command ?? "") === normCmd(cmd)) ?? ((!ranOnly || p.baseline.ran) && sameRootScript(repoDir, p.baseline.command ?? "", cmd) ? p.baseline : undefined);
+  return all.find((b) => normCmd(b.command ?? "") === normCmd(cmd)) ?? all.find((b) => repoRelCmd(repoDir, b.command ?? "") === repoRelCmd(repoDir, cmd)) ?? ((!ranOnly || p.baseline.ran) && sameRootScript(repoDir, p.baseline.command ?? "", cmd) ? p.baseline : undefined);
 }
 export const SUITE_BASELINE_BUDGET_S = 300;
 /** FC-BASELINE-PER-PACKAGE: a baseline per full-suite command verify will run (`specs`: package_suite.ts fullSuiteSpecs, the one source), added to the
@@ -605,7 +617,7 @@ export function baselineSuites(repoDir: string, specs: { name: string; cmd: stri
     if (opts.rerun && p.baseline.ran && dl() >= 1) p.baseline = runBaseline(repoDir, p.commands, opts.deadlineMs === undefined ? opts : { ...opts, timeoutS: Math.max(1, Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, dl())) });
     let left = Math.min(opts.budgetS ?? SUITE_BASELINE_BUDGET_S, dl());
     const old = p.suites ?? [];
-    const rootSpeaks = (run: string): boolean => normCmd(run) === normCmd(p.baseline.command ?? "") || (p.baseline.ran && p.baseline.attributable && !p.baseline.timed_out && sameRootScript(repoDir, p.baseline.command ?? "", run)); // an alias is reused only when its base run is complete and attributable; otherwise the suite is measured under its own command
+    const rootSpeaks = (run: string): boolean => repoRelCmd(repoDir, run) === repoRelCmd(repoDir, p.baseline.command ?? "") || (p.baseline.ran && p.baseline.attributable && !p.baseline.timed_out && sameRootScript(repoDir, p.baseline.command ?? "", run)); // an alias is reused only when its base run is complete and attributable; otherwise the suite is measured under its own command
     p.suites = specs.filter((s) => s.cwd !== "." || !rootSpeaks(s.run)).map((s) => {
       const prev = old.find((o) => o.command === s.cmd);
       if (prev?.ran && !opts.rerun && !cutShort(prev, Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, Math.floor(left))) && (prev.failing_ids.length === 0 || (prev.failing_errors && prev.flaky_probe !== undefined))) return prev; // an entry recorded before failing_errors existed is measured again
@@ -625,7 +637,7 @@ export function baselineSuites(repoDir: string, specs: { name: string; cmd: stri
 export function suiteEmptyOnBase(repoDir: string, baseSha: string | undefined, line: string, name: string, cls: Classified, out: string, cwd = "."): boolean {
   const p = baseSha ? loadProfile(repoDir) : null;
   if (!p || p.revision !== baseSha || !emptyDiscovery(cls, out)) return false;
-  const e = p.suites?.find((x) => x.command === name) ?? (cwd === "." && (normCmd(p.baseline.command ?? "") === normCmd(line) || sameRootScript(repoDir, p.baseline.command ?? "", line)) ? p.baseline : undefined); // the root baseline speaks only for the repo root, never for a package directory
+  const e = p.suites?.find((x) => x.command === name) ?? (cwd === "." && (repoRelCmd(repoDir, p.baseline.command ?? "") === repoRelCmd(repoDir, line) || sameRootScript(repoDir, p.baseline.command ?? "", line)) ? p.baseline : undefined); // the root baseline speaks only for the repo root, never for a package directory
   return e?.ran === true && e.exit_code === 0 && e.zero_tests === true;
 }
 
