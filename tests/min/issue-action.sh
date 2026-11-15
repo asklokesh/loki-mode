@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Label an issue, get a pull request: the reusable workflow .github/workflows/loki-issue-to-pr.yml, run without GitHub.
 # New file: no existing tests/min test runs a workflow's own scripts; the engine half (one PR for a split issue, a
-# rerun, --no-pr combining) is in decompose-and-intake.sh.
+# rerun on a non-fast-forward, never closing a found PR) is in decompose-and-intake.sh.
 # The workflow's own `run:` scripts are cut out of the YAML (no PyYAML: an indent-based reader) and run the way the
 # runner runs them (bash --noprofile --norc -eo pipefail) with the literal `env:` values of their step, against a local
 # bare mirror: the real bin/loki on the stub provider in the "agent job" clone, then the publish script in a second
@@ -356,8 +356,8 @@ printf '%s' '{"verdict": "<img src=x> @everyone VERIFIED", "cost_usd": "$(touch 
 publish_job 558
 C="$(comment)"
 case "$C" in *'<img'*|*'@everyone'*|*'touch'*|*'rm -rf'*|*'`id`'*) bad "data: text from the artifact reached the comment"; printf '%s\n' "$C" | sed 's/^/    | /' ;;
-    *) printf '%s\n' "$C" | grep -qx '### Loki: no verdict, no pull request' && [ ! -e "$W/publish/pwned" ] && [ "$PUB_RC" = 1 ] \
-        && ok "data: a hostile result.json puts none of its text in the comment (no verdict, exit 1)" || { bad "data: comment or exit wrong (exit $PUB_RC)"; printf '%s\n' "$C" | sed 's/^/    | /'; } ;;
+    *) printf '%s\n' "$C" | grep -qx '### Loki: split into several slices, no pull request' && [ ! -e "$W/publish/pwned" ] && [ "$PUB_RC" = 1 ] \
+        && ok "data: a hostile result.json (slice ids and labels included) puts none of its text in the comment (exit 1)" || { bad "data: comment or exit wrong (exit $PUB_RC)"; printf '%s\n' "$C" | sed 's/^/    | /'; } ;;
 esac
 
 # --- no key: nothing runs, the comment names the secret ---------------------------------------------------------------
@@ -392,8 +392,12 @@ echo "    large: loki rc $(cat "$P/rc" 2>/dev/null); result $(cat "$P/result.jso
     && ok "large: no patch is handed over and the result names the split and its 2 slices" || { bad "large: patch $(wc -c < "$P/loki.patch" 2>/dev/null | tr -d ' ') bytes, result $(cat "$P/result.json" 2>/dev/null)"; dump "$W/collect.out"; }
 publish_job 700
 C="$(comment)"
+printf '%s\n' "$C" | sed 's/^/    large comment: /'
+WANT="$(printf '%s\n' '<!-- loki-status -->' '### Loki: split into 2 slices, no pull request' '' \
+  "The issue was large, so Loki ran it as 2 slices (s1 PARTIAL, s2 PARTIAL). This workflow does not combine slices into one change, so no single pull request was opened and the slices' changes were not published. The run log names each slice and its result." \
+  'Cost: not reported by this workflow for a split issue (the run log has the Cost line).' 'Run log: https://github.com/acme/calc/actions/runs/700' '' 'To run again, remove the `loki` label and add it back.')"
 [ "$PUB_RC" = 1 ] && [ "$(branches)" = "main " ] && ! grep -q '^pr create ' "$GH_STATE/calls.log" && [ "$(ncomments)" = 1 ] \
-    && printf '%s\n' "$C" | grep -Eq '^The issue was large, so Loki ran it as 2 slices \(s1 [A-Z_]+, s2 [A-Z_]+\)\. This workflow does not combine slices into one change, so no single pull request was opened' \
+    && [ "$C" = "$WANT" ] \
     && ok "large: no branch and no pull request; ONE comment lists both slices with their labels and says no single pull request was opened" || { bad "large: publish exit $PUB_RC, branches $(branches)"; printf '%s\n' "$C" | sed 's/^/    | /'; dump "$W/publish-700.out"; }
 
 # --- setting: GitHub refuses the pull request, or the push ------------------------------------------------------------
@@ -414,5 +418,10 @@ publish_job 703
 [ "$PUB_RC" = 1 ] && comment | grep -qF 'publishing it failed (step: push_failed): GitHub refused the workflow token'"'"'s permissions' && ! comment | grep -q 'denied to' \
     && ok "setting: a push refused for the token's permissions names that cause, as a fixed phrase (none of git's text reaches the comment)" || { bad "setting: permission push refusal: exit $PUB_RC"; comment | sed 's/^/    | /'; }
 rm -f "$W/origin.git/hooks/pre-receive"
+# A patch that does not apply names that cause, even when its own paths hold words such as "permission".
+printf 'diff --git a/permissions-denied.ts b/permissions-denied.ts\n--- a/permissions-denied.ts\n+++ b/permissions-denied.ts\n@@ -1 +1 @@\n-403 forbidden\n+x\n' > "$W/runner-a/loki-out/loki.patch"
+publish_job 704
+[ "$PUB_RC" = 1 ] && comment | grep -qF 'publishing it failed (step: apply_failed): the patch does not apply to the commit the run started from.' && ! comment | grep -q 'permissions-denied' \
+    && ok "setting: a patch that does not apply names that cause, not one its file names suggest" || { bad "setting: apply cause wrong: exit $PUB_RC"; comment | sed 's/^/    | /'; }
 
 finish

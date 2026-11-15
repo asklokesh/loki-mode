@@ -133,12 +133,13 @@ export function earlierCombinedPrs(gh: CombineIo["gh"], slug: string, n: number,
 export const supersedesText = (urls: readonly string[]): string =>
   `\n## Earlier pull requests\nThis pull request supersedes ${urls.join(", ")}, opened by an earlier run of this issue and still open. Loki does not close or edit them; please close ${urls.length === 1 ? "it" : "them"} yourself.\n`;
 /** A refused push is a non-fast-forward only when the origin holds `branch` at a commit `head` does not contain. The remote tip comes from the GitHub API
- *  (gh, which holds the token) or, failing that, git ls-remote on the pinned origin. Unknown (no tip readable, or the tip is in `head`) is false. */
+ *  (gh, which holds the token) or, for a local absolute-path origin only, git ls-remote (a network origin is never asked without credentials, so
+ *  nothing can prompt). Unknown (no tip readable, or the tip is in `head`) is false. */
 export function nonFastForward(gh: CombineIo["gh"], slug: string, repoDir: string, origin: string, branch: string, head: string): boolean {
   const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
   const api = gh(["api", `repos/${slug}/git/ref/heads/${branch}`, "--jq", ".object.sha"]);
   let tip = api.rc === 0 ? api.stdout.trim() : "";
-  if (!SHA.test(tip)) { const r = git(repoDir, ["ls-remote", origin, `refs/heads/${branch}`]); tip = r.status === 0 ? (String(r.stdout).split(/\s/)[0] ?? "") : ""; }
+  if (!SHA.test(tip) && origin.startsWith("/") && !origin.includes(":")) { const r = git(repoDir, ["ls-remote", origin, `refs/heads/${branch}`]); tip = r.status === 0 ? (String(r.stdout).split(/\s/)[0] ?? "") : ""; }
   if (!SHA.test(tip) || !SHA.test(head) || tip === head) return false;
   return git(repoDir, ["merge-base", "--is-ancestor", tip, head]).status !== 0;
 }

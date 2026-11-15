@@ -386,20 +386,23 @@ jobs:
               fi
             fi
           fi
-          # The real cause of a failed step, as a fixed phrase chosen from git's or gh's own error text (never the text itself).
-          if [ -f "$ERR" ] && { [ "$STATE" = push_failed ] || [ "$STATE" = pr_failed ] || [ "$STATE" = apply_failed ]; }; then
-            if grep -qiE 'non-fast-forward|fetch first|\[rejected\]' "$ERR"; then CAUSE="the branch \`${BRANCH}\` already exists on GitHub with other commits (a non-fast-forward push is refused; Loki never forces a push)"
+          # The real cause of a failed step, as a fixed phrase chosen by the step and then from the error text of git or gh
+          # (never the text itself). A failed apply is always the patch: its error text holds patch paths, which must not pick another cause.
+          if [ "$STATE" = apply_failed ]; then
+            CAUSE="the patch does not apply to the commit the run started from"
+          elif [ -f "$ERR" ] && { [ "$STATE" = push_failed ] || [ "$STATE" = pr_failed ]; }; then
+            if [ "$STATE" = push_failed ] && grep -qiE 'non-fast-forward|fetch first|\[rejected\]' "$ERR"; then CAUSE="the branch \`${BRANCH}\` already exists on GitHub with other commits (a non-fast-forward push is refused; Loki never forces a push)"
+            elif [ "$STATE" = pr_failed ] && grep -qiE 'already exists' "$ERR"; then CAUSE="a pull request for the branch \`${BRANCH}\` already exists"
             elif grep -qiE 'permission|denied|403|not allowed|forbidden|Resource not accessible' "$ERR"; then CAUSE="GitHub refused the workflow token's permissions (the calling job needs \`contents: write\`, \`pull-requests: write\` and \`issues: write\`)"
             elif grep -qiE 'authentication|could not read Username|401' "$ERR"; then CAUSE="the workflow token was not accepted (authentication failed)"
-            elif grep -qiE 'already exists' "$ERR"; then CAUSE="a pull request for the branch \`${BRANCH}\` already exists"
-            elif grep -qiE 'patch does not apply|corrupt patch|while searching for' "$ERR"; then CAUSE="the patch does not apply to the commit the run started from"
             elif grep -qiE 'could not resolve host|timed out|connection' "$ERR"; then CAUSE="a network error reaching GitHub"
             else CAUSE="an error the run log shows"; fi
           fi
 
           # The one comment on the issue: the result label, the proof in numbers, the cost, the link.
           PROOF=""
-          if [ -n "$CHECKS_TOTAL" ]; then
+          # A split hands over no receipt and no pull request, so it has no proof line.
+          if [ -n "$CHECKS_TOTAL" ] && [ -z "$SPLIT" ]; then
             PROOF="Proof: ${CHECKS_PASSED:-0} of ${CHECKS_TOTAL} checks passed outside the model; ${NOT_PROVEN:-0} not proven (listed in the pull request)."
           fi
           EARLIERLINE=""
@@ -411,7 +414,9 @@ jobs:
           COSTLINE="Cost: not measured."
           if [ -n "$COST" ] && [ -n "$COST_PARTIAL" ]; then COSTLINE="Cost: at least \$${COST} (some sessions reported no cost)."
           elif [ -n "$COST" ]; then COSTLINE="Cost: \$${COST}."; fi
+          if [ -n "$SPLIT" ]; then COSTLINE="Cost: not reported by this workflow for a split issue (the run log has the Cost line)."; fi
           RERUN="To run again, remove the \`${LABEL}\` label and add it back; the new run opens a new pull request and names the earlier one for you to close."
+          if [ -n "$SPLIT" ]; then RERUN="To run again, remove the \`${LABEL}\` label and add it back."; fi
           {
             echo "<!-- loki-status -->"
             case "$STATE" in
@@ -432,7 +437,7 @@ jobs:
                 echo "Add it under Settings > Secrets and variables > Actions, and pass it in the \`secrets:\` block of the job that calls the Loki workflow."
                 ;;
               no_change)
-                echo "### Loki: ${VERDICT:-no verdict}, no pull request"
+                if [ -n "$SPLIT" ]; then echo "### Loki: split into ${SLICES_TOTAL:-several} slices, no pull request"; else echo "### Loki: ${VERDICT:-no verdict}, no pull request"; fi
                 echo ""
                 if [ -n "$SPLIT" ]; then
                   echo "The issue was large, so Loki ran it as ${SLICES_TOTAL:-several} slices${SLICE_LIST:+ (${SLICE_LIST})}. This workflow does not combine slices into one change, so no single pull request was opened and the slices' changes were not published. The run log names each slice and its result."

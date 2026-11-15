@@ -100,8 +100,9 @@
 #  O8. never close an earlier slice PR; A fails.   O9. seal_group.ts composeGroupReceipt: ignore the combined misses; G fails.
 #  O10. prLines: no fold; I fails (11 lines).   O11. maxSlices: ignore LOKI_SPLIT_MAX_SLICES; the split cap check fails.
 #  O12. "Closes" on a partial combine; D fails.   O13. skip the combined impacted tests; G fails.
-#  O14. issues_combine.ts: never retry the refused push under the run's own branch name; J, K fail.   O15. earlierCombinedPrs returns []; K fails.
-#  O16. nonFastForward: always true (retry on any push failure); P fails.   O17. the close loop of 6a44b64b8 (pr close each earlier PR); K fails.
+#  O14 (measured on 6a44b64b8). issues_combine.ts: never retry the refused push under the run's own branch name; J, K fail.   O15. earlierCombinedPrs returns []; K fails (rerun on ab9315e7c+).
+#  The engine of 6a44b64b8 (it closed earlier combined PRs and retried on any push failure), swapped in for issues_combine.ts, fails K and P.
+#  Q (the gh api tip) fails when nonFastForward reads only git ls-remote.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -619,7 +620,7 @@ await scen("I", eight, own, { env: { LOKI_SPLIT_ONE_PR_MAX_FILES: "3" } });
 // earlier runs' open combined PRs, one of which a person may have pushed to, are LINKED in the new PR's body and never closed, edited or deleted; a fork
 // PR, another issue's PR, another branch and the new PR itself are not listed. P: a push that fails for another reason (the origin has no such branch;
 // engine10-push.sh prints the same "push refused or failed" for every git push failure)
-// is not retried and its own cause is the reason. N: plain --no-pr combines nothing (as before).
+// is not retried and its own cause is the reason. Q: below. N: plain --no-pr combines nothing (as before).
 const two = [sl("s1", [], ["a.ts"]), sl("s2", [], ["b.ts"])], ab = (id, wt) => add(id === "s1" ? "a.ts" : "b.ts")(id, wt);
 await scen("J", two, ab, { prior: true, refs: true });
 const pushes = [];
@@ -639,6 +640,14 @@ await scen("P", two, ab, { refs: true,
   push: (a) => { pushesP.push(a.branch); return a.branch === "loki/24-combined" ? { ok: false, reason: "engine10-push.sh push-pr failed (exit 2): engine10-push: push refused or failed (rc=128)" } : { ok: true, url: "https://github.com/acme/search/pull/7" + pushesP.length }; },
 });
 console.log("P  pushes " + pushesP.join(","));
+// Q: the GitHub path. The origin here has no such branch, but the GitHub API (gh) reports one at a commit this run does not contain: the refused push
+// is a non-fast-forward and is published under the run's own name.
+const pushesQ = [];
+await scen("Q", two, ab, {
+  push: (a) => { pushesQ.push(a.branch); return a.branch === "loki/24-combined" ? { ok: false, reason: "engine10-push.sh push-pr failed (exit 2): engine10-push: push refused or failed (rc=1)" } : { ok: true, url: "https://github.com/acme/search/pull/81" }; },
+  ghOut: (a) => (a[0] === "api" && a[1] === "repos/acme/search/git/ref/heads/loki/24-combined" ? "0123456789abcdef0123456789abcdef01234567\n" : ""),
+});
+console.log("Q  pushes " + pushesQ.join(","));
 await scen("N", two, ab, { noPr: true, refs: true });
 const ep = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
 const nine = JSON.stringify({ slices: Array.from({ length: 9 }, (_, i) => sl("s" + (i + 1), [], [])) });
@@ -689,6 +698,8 @@ oneh K | grep -q '^K rc0 prs1 lines[1-8] .* gh\[api repos/acme/search/git/ref/he
 oneb P | grep -Eq '^P  pushes loki/24-combined(,loki/e10-[^,]*)*$' && ! oneb P | grep -q 'combined-' && oneb P | grep -q '^P  Combined: .*push refused or failed (rc=128)' \
     && ! oneh P | grep -q 'pr list' \
     && ok "one pr: a push that fails for another reason (no such branch on the origin) is not retried under a new name, and the Combined line carries its real cause" || bad "one pr: case P wrong: $(oneh P); $(oneb P | grep -E 'pushes|Combined|refs')"
+oneb Q | grep -q '^Q  pushes loki/24-combined,loki/24-combined-epic$' && oneb Q | grep -Eq '^Q  PR: +https://github.com/acme/search/pull/81$' \
+    && ok "one pr: on GitHub the remote tip read through the GitHub API (not in this run's history) makes the refused push a non-fast-forward, published under the run's own name" || bad "one pr: case Q wrong: $(oneh Q); $(oneb Q | grep -E 'pushes|PR|Combined')"
 oneh N | grep -q '^N rc0 prs0 ' && ! oneb N | grep -q 'Combined:' && oneb N | grep -q '^N  refs origin\[main\] local\[\] ' \
     && ok "one pr: plain --no-pr still combines nothing" || bad "one pr: case N wrong: $(oneh N); $(oneb N | grep -E 'Combined|refs')"
 [ "$(printf '%s\n' "$ONE" | grep -cE '^[A-F] rc0 prs[0-9] lines[1-8] ')" = 6 ] && oneh G | grep -q ' lines[1-8] ' \
