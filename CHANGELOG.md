@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+- A typecheck error only in files the change did not touch no longer fails the run. `tsc --noEmit` checks the whole project, so an old error in an untouched file (dev2: a benchmark script in router, a Flow test file in immutable) failed every run on that repo. It is now listed on the receipt as disclosed and not blocking. An error in a touched file, one naming a symbol the change edited, a changed tsconfig or linter config, or output that cannot be read in full still fails. `LOKI_E10_LINT_UNTOUCHED=0` restores the old behavior.
+
 ## v11.141.6 (2026-11-15)
 
 A run stopped by its time limit now always leaves a receipt.

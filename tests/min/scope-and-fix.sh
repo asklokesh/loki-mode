@@ -3791,6 +3791,25 @@ TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/tcarry.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "tcarry unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 7 ] || bad "tcarry unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 7"
+# ---------------------------------------------------------------- LINT-UNTOUCHED (acc-174): a tsc red only in files the change did not touch is disclosed, not a cap
+cat > "$T/acc174.ts" <<'TS'
+const root = process.argv[2]!;
+const vf = await import(root + "/loki-ts/src/engine10/stages/verify.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const touched = new Set(["packages/router-core/src/router.ts", "packages/router-core/tests/x.test.ts"]);
+const out = "scripts/benchmarks/bundle-size/analyze.mjs(27,46): error TS7006: Parameter 'item' implicitly has an 'any' type.\nFound 1 error.\n";
+res("LINT-UNTOUCHED a tsc error only in a file the change did not touch is disclosed, not blocking", vf.tscUntouchedOnly(out, ".", touched, ["matchRoutes"]));
+res("LINT-UNTOUCHED a tsc error in a touched file still caps", !vf.tscUntouchedOnly("packages/router-core/src/router.ts(10,3): error TS2322: Type 'x' is not assignable.\n", ".", touched, []));
+res("LINT-UNTOUCHED a package-relative path is joined with the package dir before the touched check", !vf.tscUntouchedOnly("src/router.ts(10,3): error TS2322: bad.\n", "packages/router-core", touched, []));
+res("LINT-UNTOUCHED an error naming a changed symbol still caps (the change can break an importer)", !vf.tscUntouchedOnly("src/other.ts(4,1): error TS2339: Property 'matchRoutes' does not exist on type 'Router'.\n", ".", touched, ["matchRoutes"]));
+res("LINT-UNTOUCHED a changed tsconfig or linter config still caps", !vf.tscUntouchedOnly(out, ".", new Set([...touched, "tsconfig.json"]), []));
+res("LINT-UNTOUCHED an error line that does not parse still caps (fail-closed)", !vf.tscUntouchedOnly(out + "weird.ts: error TS1005: ';' expected.\n", ".", touched, []));
+res("LINT-UNTOUCHED a tail cut at its cap still caps", !vf.tscUntouchedOnly(out + "x".repeat(60000), ".", touched, []));
+res("LINT-UNTOUCHED on by default, =0 opts out", vf.lintUntouchedOn({}) && !vf.lintUntouchedOn({ LOKI_E10_LINT_UNTOUCHED: "0" }));
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/acc174.ts" "$ROOT" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "acc174 unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 8 ] || bad "acc174 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 8"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
