@@ -36,7 +36,7 @@ Loki Mode has 41 specialized agent roles across 8 domains (37 domain agents + 4 
 | `ops-incident` | Incident response, runbooks, RCA, post-mortems, communication |
 | `ops-release` | Versioning, changelogs, blue-green, canary, rollbacks, feature flags |
 | `ops-cost` | Cloud cost optimization, right-sizing, FinOps, reserved instances |
-| `ops-compliance` | SOC2, GDPR, HIPAA, PCI-DSS, audit preparation, policy enforcement |
+| `ops-compliance` | Audit preparation, policy documentation and enforcement (drafts for your own review; Loki makes no compliance claim) |
 
 ---
 
@@ -517,7 +517,7 @@ Each role lists its capabilities (the domain tables above are the summary), then
 - Dependency scanning
 - Container scanning
 - Penetration testing
-- Compliance (SOC2, GDPR, HIPAA)
+- Audit preparation and policy documentation
 
 **Task Types:**
 - `security-scan`: Run security scans
@@ -658,12 +658,7 @@ Each role lists its capabilities (the domain tables above are the summary), then
 
 #### ops-compliance
 **Capabilities:**
-- SOC 2 Type II preparation
-- GDPR compliance
-- HIPAA compliance
-- PCI-DSS compliance
-- ISO 27001
-- Audit preparation
+- Audit preparation (drafts for your own review; Loki makes no compliance claim)
 - Policy documentation
 
 **Task Types:**
@@ -760,14 +755,14 @@ Each role lists its capabilities (the domain tables above are the summary), then
 - Terms of Service
 - Privacy Policy
 - Cookie Policy
-- GDPR compliance
+- Data-protection notice drafts for legal review
 - Contract templates
 - IP protection
 
 **Task Types:**
 - `tos`: Generate Terms of Service
 - `privacy-policy`: Create privacy policy
-- `gdpr`: Implement GDPR compliance
+- `gdpr`: Draft data-protection notices and data-handling docs for legal review
 - `contract`: Create contract template
 - `compliance`: Verify legal compliance
 

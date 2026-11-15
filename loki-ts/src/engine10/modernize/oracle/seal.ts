@@ -3,7 +3,7 @@
 // output, autonomy/lib/modernize/py_capture.py) into sealed.json: sha256 of both inputs, a
 // deterministic ~20% held-out split, and the 80% branch-coverage verdict.
 //
-// sealed.json alone is NOT tamper-evident: it sits beside the data it protects, so a session with
+// sealed.json alone is NOT hash-protected: it sits beside the data it protects, so a session with
 // filesystem access could delete it and re-seal over a rewritten coverage.json, laundering a
 // below-floor unit into PROVEN_ORACLE. The anchor is the modernize event log (log.ts): append-only,
 // single-writer by the M-01 contract (the coordinator, section 3.4), rooted above oracle/<unit>/.

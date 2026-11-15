@@ -140,7 +140,7 @@ function RecentActivityLog({ entries }: { entries: Read<AuditEntry[]> }) {
         <h4 className="text-sm font-medium text-[#36342E] dark:text-[#E8E6E3]">Recent Activity</h4>
       </div>
       <p className="text-[11px] text-[#939084] mb-3">
-        From this server&apos;s recent-activity log. It keeps the last 500 entries and is not tamper-evident.
+        From this server&apos;s recent-activity log. It keeps the last 500 entries and is not hash-chained.
       </p>
       {entries === undefined && <p className="text-sm text-[#939084]">Loading...</p>}
       {entries === null && (

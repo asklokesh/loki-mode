@@ -2,7 +2,7 @@
 """Annotate-before-act expected-outcome ledger for Loki Mode.
 
 Companion to proof-generator.py / proof-verify.py. Before running verification
-for a change or checklist item, the runtime writes a tamper-evident ledger of
+for a change or checklist item, the runtime writes a hashed ledger of
 EXPECTED observable outcomes (e.g. "GET /health -> 200 {status:ok}", "test X
 fails before the fix and passes after", "endpoint Y should now exist"). At
 verify time the actual results are compared to this PRE-COMMITTED prediction:
@@ -13,7 +13,7 @@ maps to INCONCLUSIVE, never VERIFIED.
 Why this is trustworthy:
   - The ledger is written BEFORE the act/verify, so it is a genuine prediction,
     not a post-hoc rationalization of whatever happened.
-  - It is TAMPER-EVIDENT: the whole ledger is canonicalized and hashed the SAME
+  - It is HASHED: the whole ledger is canonicalized and hashed the SAME
     way proof-generator.py hashes proof.json (sha256 over the compact, sorted
     JSON form). The hash is recorded in the ledger file AND embedded into
     evidence.json / proof.json, so an expectation edited after the fact breaks
@@ -47,7 +47,7 @@ import sys
 # ---------------------------------------------------------------------------
 
 def _canonical(obj):
-    """Canonical JSON form used for the tamper-evident hash.
+    """Canonical JSON form used for the ledger hash.
 
     Identical to proof-generator.py _canonical() and proof-verify.py
     _canonical(): json.dumps with sort_keys=True and compact separators, and no

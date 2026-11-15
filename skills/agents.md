@@ -14,7 +14,7 @@
 - [The 41 Agent Roles (37 Domain + 4 Orchestration)](#the-41-agent-roles-37-domain--4-orchestration)
 <!-- TOC:END -->
 
-> **Full agent type definitions:** See `references/agent-types.md` for complete 41 agent role specifications across 8 domains (Engineering, Operations, Business, Data, Product, Growth, Review, Orchestration). These are prompt-defined specifications the orchestrator adopts per phase; parallelism on Claude Code comes from the blind review council, the adversarial reviewer, and optional git-worktree streams, sequential on other providers.
+> **Full agent type definitions:** See `references/agent-types.md` for complete agent role specifications across 8 domains (Engineering, Operations, Business, Data, Product, Growth, Review, Orchestration). These are prompt-defined specifications the orchestrator adopts per phase; parallelism on Claude Code comes from the blind review council, the adversarial reviewer, and optional git-worktree streams, sequential on other providers.
 
 ---
 
@@ -27,7 +27,7 @@
 - `Bash` - Command execution
 - `platform-orchestrator` - Deployment and service management
 
-**The 41 agent types are ROLES defined through prompts.** Create specialized behavior:
+**The agent types are ROLES defined through prompts.** Create specialized behavior:
 
 ```python
 # Security reviewer = general-purpose + security-focused prompt

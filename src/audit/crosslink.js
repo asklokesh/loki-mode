@@ -3,7 +3,7 @@
 /**
  * Loki Mode Audit Cross-Link (P3-9 unification).
  *
- * The system has two independent tamper-evident audit chains:
+ * The system has two independent hash-chained audit chains:
  *
  *   1. Agent chain  -- src/audit/log.js  (Node)
  *      file:   <project>/.loki/audit/audit.jsonl
@@ -23,7 +23,7 @@
  * agent chain's hash linkage), and ships a single `verifyUnified()`
  * command that validates BOTH sub-chains AND reconciles every anchor
  * against the live dashboard chain -- treating the pair as one logical,
- * tamper-evident trail.
+ * hash-chained trail.
  *
  * It also provides an append-only / external-witness OPTION
  * (`writeWitness`) so an external party can timestamp the unified root.
@@ -448,14 +448,14 @@ function hashManifest(manifestPath) {
 
 /**
  * Link the run manifest (loki-run.json, the build bill-of-materials) into
- * the agent audit chain so the manifest becomes tamper-evident and
+ * the agent audit chain so the manifest becomes hash-chained and
  * verifiable against the evidence chain.
  *
  * The manifest already embeds sha256 hashes of the evidence files
  * (test_results, coverage, ...) computed by run.sh. By recording the
  * manifest's OWN byte-hash as an `audit_manifest_link` entry, the anchor
  * is protected by the agent chain's hash linkage, and the evidence hashes
- * inside the manifest become transitively tamper-evident (mutating the
+ * inside the manifest become transitively hash-chained (mutating the
  * manifest to point at different evidence changes its byte-hash, which no
  * longer matches the anchored hash; mutating the anchor breaks chain
  * verification). We hash the manifest itself only -- we do NOT re-hash the

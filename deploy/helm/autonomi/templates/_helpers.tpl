@@ -131,7 +131,7 @@ silently-corrupt audit log. Included once by the control-plane Deployment.
       HA pod-anti-affinity) is stuck Pending with a Multi-Attach error and the
       documented HA path never comes up.
 
-      Sharing the volume RWM is NOT a safe fix: the tamper-evident hash chain in
+      Sharing the volume RWM is NOT a safe fix: the hash chain in
       dashboard/audit.py keeps the chain head in a per-PROCESS module global
       (_last_hash). Each replica advances its own private head and appends to the
       shared file, so the interleaved on-disk entries do not verify -- a silently

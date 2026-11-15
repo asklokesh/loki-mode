@@ -7944,7 +7944,7 @@ def _audit(action: str, user: str = "", target: str = "", details: str = "",
     """Record an audit log entry.
 
     NOTE ON WHAT THIS LOG IS: _append_audit_log rewrites a 500-entry JSON array
-    in place on every call. It is a recent-activity view, NOT tamper-evident and
+    in place on every call. It is a recent-activity view, NOT hash-chained and
     NOT append-only, and it is a different thing from the hash-chained log in
     dashboard/audit.py. Do not cite it as audit evidence. See
     docs/AUDIT-CHAIN-THREAT-MODEL.md.

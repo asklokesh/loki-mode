@@ -88,6 +88,18 @@ t_line="$(printf '%s\n' "$out" | grep -n 'Result: TAMPERED' | head -1 | cut -d: 
 [ -n "$v_line" ] && [ -n "$t_line" ] && [ "$v_line" -lt "$t_line" ] && ok "VERIFIED comes before TAMPERED" || bad "tour verdict order is wrong"
 has "tour says it is a sample" "$out" "This is a SAMPLE"
 
+has_not() { printf '%s\n' "$2" | grep -qF "$3" && bad "$1" || ok "$1"; }
+has_not "the offline tour never mentions spending" "$out" "makes real model calls"
+# Live tour (loki tour --live = loki wow): a ready provider (a fake claude that logs every call) and no terminal.
+# It must say it makes model calls and what it can cost, then spend nothing: no provider call, exit 2.
+LV="$T/live-tour"; mkdir -p "$LV/bin" "$LV/home/.claude"
+printf '#!/bin/sh\necho "$*" >> "%s/calls.log"\nexit 1\n' "$LV" > "$LV/bin/claude"; chmod +x "$LV/bin/claude"
+lv_out="$(cd "$LV" && env -u LOKI_ASSUME_YES -u CI HOME="$LV/home" PATH="$LV/bin:$PATH" ANTHROPIC_API_KEY=sk-ant-test-not-a-real-key bash "$ROOT/bin/loki" tour --live </dev/null 2>&1)"; lv_rc=$?
+[ "$lv_rc" = 2 ] && ok "loki tour --live with no terminal spends nothing and exits 2" || bad "loki tour --live with no terminal exited $lv_rc: $(printf '%s' "$lv_out" | tail -3)"
+has "loki tour --live says it makes model calls and the most it can cost" "$lv_out" 'This makes real model calls through claude and can cost up to $2'
+has "loki tour --live says nothing was spent" "$lv_out" "nothing was spent"
+[ ! -s "$LV/calls.log" ] && ok "loki tour --live made no provider call before a yes" || bad "loki tour --live called the provider without a yes: $(head -2 "$LV/calls.log")"
+
 after="$(cat "$FX/receipt.json" "$FX/events.jsonl" "$FX/pubkey.jwk" | shasum -a 256 | cut -d' ' -f1)"
 [ "$before" = "$after" ] && ok "bundled fixture untouched by the tour" || bad "the tour modified the bundled fixture"
 

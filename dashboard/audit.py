@@ -24,7 +24,7 @@ import socket
 import sys
 import threading
 
-# POSIX-only. Used to serialize the tamper-evident chain append ACROSS PROCESSES
+# POSIX-only. Used to serialize the hash chain append ACROSS PROCESSES
 # (threading.Lock cannot). Imported defensively so this module still loads on a
 # platform without it; the writer degrades to thread-only serialization rather
 # than refusing to record an audit entry.
@@ -59,7 +59,7 @@ _SYSLOG_HOST = os.environ.get("LOKI_AUDIT_SYSLOG_HOST", "").strip()
 _SYSLOG_PORT = int(os.environ.get("LOKI_AUDIT_SYSLOG_PORT", "514"))
 _SYSLOG_PROTO = os.environ.get("LOKI_AUDIT_SYSLOG_PROTO", "udp").lower().strip()
 
-# Integrity chain hashing (tamper-evident logging)
+# Integrity chain hashing (hash-chained logging)
 # Disable with LOKI_AUDIT_NO_INTEGRITY=true
 INTEGRITY_ENABLED = os.environ.get("LOKI_AUDIT_NO_INTEGRITY", "").lower() not in ("true", "1", "yes")
 _last_hash: str = "0" * 64  # Genesis hash
@@ -68,7 +68,7 @@ _last_hash: str = "0" * 64  # Genesis hash
 # it, concurrent callers (the dashboard fans audit writes out across async
 # handlers / asyncio.to_thread workers) interleave the unsynchronized
 # _last_hash RMW with the file append: lines get written in a different order
-# than the hashes were chained, which breaks the tamper-evident chain so
+# than the hashes were chained, which breaks the hash chain so
 # verify_all_logs() reports valid:False even though no entry was tampered with.
 # Holding this lock makes "compute hash, update _last_hash, append the line" a
 # single atomic step so on-disk line order always matches chain order.
@@ -496,7 +496,7 @@ def log_event(
         "details": details or {},
     }
 
-    # Tamper-evident chain hash + file append, serialized as one atomic step.
+    # Chain hash + file append, serialized as one atomic step.
     #
     # The chain hash is a read-modify-write of the module-global _last_hash, and
     # the line must land in the file in the same order the hashes were chained.
@@ -926,7 +926,7 @@ def compute_chain_tip_in_dir(audit_dir) -> dict:
     an explicit directory, plus a verification verdict for that chain.
 
     Used by the unified cross-chain verifier to anchor the Python chain
-    state into the JS (``src/audit/log.js``) tamper-evident chain via a
+    state into the JS (``src/audit/log.js``) hash chain via a
     cross-link record, and to reconcile a previously recorded anchor
     against the live chain.
 
