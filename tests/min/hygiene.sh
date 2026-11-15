@@ -25,7 +25,7 @@
 # Sixth check: claims Loki no longer makes never come back in shipped text (CHANGELOG.md keeps
 # history verbatim; .gitignore names a generated directory): "tamper-evident" (the receipt is
 # signed and `loki verify` re-checks it offline; the audit logs are hash-chained) and "HumanEval"
-# (no benchmark figure) in any tracked text; and no compliance claim ("SOC 2", "SOC2", "GDPR", any
+# (no benchmark figure) or the "41 agent types" count in any tracked text; and no compliance claim ("SOC 2", "SOC2", "GDPR", any
 # case) in user-facing text: every markdown file, agents/*.json, and the echo/printf lines of the
 # bash CLI. No file is allowed. Code identifiers (the soc2/iso27001/gdpr report ids in src/audit,
 # dashboard/server.py and swarm/) are not user-facing and are not scanned; the report output itself
@@ -238,7 +238,7 @@ esac
 
 claims_out="$(python3 -I - <<'PY'
 import re, subprocess
-CLAIMS = [(re.compile(r"tamper-evident", re.I), ()), (re.compile(r"HumanEval"), (".gitignore",))]
+CLAIMS = [(re.compile(r"tamper-evident", re.I), ()), (re.compile(r"HumanEval"), (".gitignore",)), (re.compile(r"\b41 (specialized )?agent (types|roles)\b", re.I), ())]
 COMPLIANCE = re.compile(r"SOC ?2|GDPR", re.I)
 def user_facing(f, line):
     if f.endswith(".md") or (f.startswith("agents/") and f.endswith(".json")):

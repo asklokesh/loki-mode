@@ -1,12 +1,12 @@
 # Agent Types Reference
 
-Complete definitions and capabilities for all 41 specialized agent types.
+Complete definitions and capabilities for every specialized agent type.
 
 ---
 
 ## Overview
 
-Loki Mode has 41 specialized agent roles across 8 domains (37 domain agents + 4 orchestration agents) - prompt-defined specifications the orchestrator adopts per phase, not separate processes. Parallelism on Claude Code comes from the blind review council, the adversarial reviewer, and optional git-worktree streams; on other providers everything runs sequentially. The orchestrator activates only the roles needed for your project -- typically 5-10 for simple projects, more for complex ones.
+Loki Mode has specialized agent roles across 8 domains (domain agents plus orchestration agents) - prompt-defined specifications the orchestrator adopts per phase, not separate processes. Parallelism on Claude Code comes from the blind review council, the adversarial reviewer, and optional git-worktree streams; on other providers everything runs sequentially. The orchestrator activates only the roles needed for your project -- typically 5-10 for simple projects, more for complex ones.
 
 ---
 
