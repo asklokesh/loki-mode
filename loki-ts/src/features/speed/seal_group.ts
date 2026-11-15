@@ -122,12 +122,13 @@ export async function verifyGroup(receiptPath: string, receipt: Record<string, u
 /** Group receipt: one signed body over sealGroup's section, written to <groupDir>/receipt.json (tmp + rename). Reuses sealGroup and the cap rules; no second sealer.
  *  Throws (message names the problem) when group/manifest.json is missing or any unit sub-receipt fails to seal, so a bad group never gets a receipt. rh is seal.ts receiptSha256, injected. */
 export const GROUP_SCHEMA = "loki.v10.group/1";
-export function composeGroupReceipt(groupDir: string, rh: RecHash, o: { baseRef: string; head: string }): { path: string; receipt: Record<string, unknown> } {
+export function composeGroupReceipt(groupDir: string, rh: RecHash, o: { baseRef: string; head: string; notProven?: readonly string[] }): { path: string; receipt: Record<string, unknown> } {
   const seal = sealGroup(groupDir, rh);
   if (!seal.section) throw new Error(seal.notProven.length > 0 ? seal.notProven.join("; ") : "group/manifest.json missing");
-  const verdict = capGroupVerdict(compositeVerdict(seal.section.units.map((u) => u.verdict)), seal);
+  const extra = (o.notProven ?? []).filter((r) => r.trim() !== ""); // ONE-PR (commands/issues_combine.ts): what the combined tree did not prove; only ever lowers VERIFIED to PARTIAL
+  const v0 = capGroupVerdict(compositeVerdict(seal.section.units.map((u) => u.verdict)), seal), verdict = extra.length > 0 && (v0 === "VERIFIED" || v0 === "ALREADY_SATISFIED") ? "PARTIAL" : v0;
   const gid = seal.section.group_id;
-  const body = { schema: GROUP_SCHEMA, run_id: gid, verdict, base_sha: o.baseRef, head_sha: o.head, not_proven: seal.notProven, group: seal.section };
+  const body = { schema: GROUP_SCHEMA, run_id: gid, verdict, base_sha: o.baseRef, head_sha: o.head, not_proven: [...seal.notProven, ...extra], group: seal.section };
   const hash = rh(body as unknown as Record<string, unknown>), sig = signReceipt(gid, hash);
   const receipt = { ...body, receipt_sha256: hash, verification: { jwt: sig.jwt, kid: sig.kid } };
   const path = join(groupDir, "receipt.json"), tmp = `${path}.${process.pid}.tmp`;

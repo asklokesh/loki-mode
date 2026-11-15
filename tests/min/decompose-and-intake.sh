@@ -10,8 +10,11 @@
 #            through the same deliverables rule (no drafted spec), the child run takes the same MASS-2 split path,
 #            every slice runs, the split prints one standard Outcome (the true aggregate, PARTIAL here) and one Cost
 #            line, that cost lands in the backlog day ledger, and the day cap then stops #24 from launching.
-#   pr mode: `loki start acme/search#25` in the default PR mode (a local bare origin, so slice draft PRs publish offline as
-#            local:// URLs) prints one PR line per slice, and backlog's parser counts that PARTIAL split as done.
+#   pr mode: `loki start acme/search#25` in the default PR mode (a local bare origin, so PRs publish offline as local:// URLs)
+#            ends in ONE PR for the issue (LOKI_SPLIT_ONE_PR default on: loki/25-combined, one commit per slice), and backlog's
+#            parser counts that PARTIAL split as done; under LOKI_SPLIT_ONE_PR=0 (conflict e2e) each slice opens its own PR.
+#   one pr:  source level, real git and the real push script: independent, stacked and 8-slice splits give one PR; a conflict is
+#            resolved once or that slice falls back with its reason; the file cap falls back; the block stays within 8 lines.
 #   outcome: the split's aggregate (commands/issues_epic.ts epicOutcome): FAILED (exit 1) when a slice really failed, which
 #            outranks BUDGET_STOP (exit 3), then PARTIAL (exit 6), then VERIFIED; exit codes via exitCodeOf
 #            (LOKI_DURABLE_STATE=1 gives 20). The Cost line sums unrounded slice figures plus every planning session (a
@@ -87,6 +90,13 @@
 #  29b. discover.ts: drop the fanOut early return (fall through to the session); the diet check fails (fan 1 session instead of 0).
 #  29c. discover.ts fanOutSessionEnabled: always false; the diet check fails (fan-on false).
 #  30. manifestModel: members only from tracked package.json files; the diet check fails (packages/gen missing).
+# ONE-PR (issues_combine.ts; each planted on the committed tree, the one pr leg run, the file restored; all 13 caught):
+#  O1. commitStaged: amend every slice into one commit; cases A, B, C, H fail (one commit).   O2. onePrEnabled: always false; 9 checks fail.
+#  O3. onePrEnabled: ignore =0; case E fails.   O4. accept a resolve that left markers; case D fails.   O5. skip the resolve session; C, D fail.
+#  O6. oneMaxFiles: ignore LOKI_SPLIT_ONE_PR_MAX_FILES; F, I fail.   O7. issues_epic.ts epicOutcome: one PR line per slice row; A, B, C, D, G, H fail.
+#  O8. never close an earlier slice PR; A fails.   O9. seal_group.ts composeGroupReceipt: ignore the combined misses; G fails.
+#  O10. prLines: no fold; I fails (11 lines).   O11. maxSlices: ignore LOKI_SPLIT_MAX_SLICES; the split cap check fails.
+#  O12. "Closes" on a partial combine; D fails.   O13. skip the combined impacted tests; G fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -348,7 +358,7 @@ has "backlog child: the same rule sizes it large at start" "$BLOG" "acme/search#
 has "backlog child: takes the MASS-2 split path (model split used)" "$BLOG" "#25 split into 2 slices: s1, s2<-s1"
 printf '%s\n' "$BLOG" | grep -q '^#25 s2 running (stacked on loki/e10-' && ok "backlog child: s2 runs stacked on s1, each slice its own run" || bad "backlog child: slices did not run stacked"
 
-# --- PR mode: a split in the default PR mode prints a PR line per slice, and backlog counts its PARTIAL as done -------
+# --- PR mode: a split in the default PR mode ends in ONE PR for the issue, and backlog counts its PARTIAL as done -------
 P="$T/prmode"
 make_repo "$P" 0
 git init -q --bare "$T/prmode-origin.git"
@@ -357,19 +367,22 @@ git -C "$P" push -q origin main
 E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" run_loki "$P" "$T/prmode-stub.log" start acme/search#25 --max-cost 5
 printf '%s\n' "$OUT" | grep -E '^(#25 s[12] (PARTIAL|VERIFIED)|Outcome:|Reason:|PR:|Cost:)' | sed 's/^/    pr mode: /'
 npr="$(printf '%s\n' "$OUT" | grep -cE '^PR: +local:///.+#loki/')"
-[ "$npr" = 2 ] && ok "pr mode: the split prints one PR line per slice draft PR (2)" || { bad "pr mode: $npr PR line(s), want 2 (exit $RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
+[ "$npr" = 1 ] && printf '%s\n' "$OUT" | grep -Eq '^PR: +local:///.+#loki/25-combined$' && printf '%s\n' "$OUT" | grep -Eq '^Combined: +2 slices in one PR on loki/25-combined$' \
+    && [ "$(git --git-dir="$T/prmode-origin.git" log --reverse --format=%s main..loki/25-combined 2>/dev/null | tr '\n' '|')" = "s1: search backend|s2: search UI|" ] \
+    && ok "pr mode: the split ends in one PR for the issue (loki/25-combined, one commit per slice), not one per slice" || { bad "pr mode: $npr PR line(s), want 1 combined (exit $RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
 PRSTATUS="$(printf '%s' "$OUT" | python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import backlog; ok, st, usd = backlog.parse_result(int(sys.argv[2]), sys.stdin.read()); print("%s %s" % (ok, st))' "$ROOT/autonomy/lib" "$RC" 2>&1)"
 echo "    pr mode: backlog reads: $PRSTATUS"
-case "$PRSTATUS" in "True PARTIAL, PR local:///"*) ok "pr mode: backlog counts the PARTIAL split with its draft PRs as done" ;; *) bad "pr mode: backlog reads the PR-mode split as: $PRSTATUS" ;; esac
+case "$PRSTATUS" in "True PARTIAL, PR local:///"*"#loki/25-combined") ok "pr mode: backlog counts the PARTIAL split with its combined PR as done" ;; *) bad "pr mode: backlog reads the PR-mode split as: $PRSTATUS" ;; esac
 
 # --- PR mode, one slice stops on its own SPEC_CONFLICT while the others open PRs: the split is PARTIAL (exit 6), not FAILED ---------
+# LOKI_SPLIT_ONE_PR=0: the per-slice PR path stays covered end to end (the one-PR default is the pr mode leg above).
 C2="$T/conflict-split"
 make_repo "$C2" 0
 git init -q --bare "$T/conflict-origin.git"
 git -C "$C2" remote add origin "$T/conflict-origin.git"
 git -C "$C2" push -q origin main
 SPLIT3='{"slices":[{"id":"s1","title":"search backend","acceptance":["full-text search returns ranked rows"],"depends_on":[],"files":["calc.ts"]},{"id":"s2","title":"search index","acceptance":["the index is rebuilt nightly"],"depends_on":[],"files":["calc.ts"]},{"id":"s3","title":"search UI","acceptance":["the search box shows ranked results"],"depends_on":[],"files":["calc.ts"]}]}'
-E2E_STUB_MODE=slice E2E_STUB_CONFLICT_SLICE=s2 E2E_STUB_SPLIT="$SPLIT3" LOKI_EPIC_PARALLEL=1 LOKI_E10_OPUS_CONSULT=0 run_loki "$C2" "$T/conflict-stub.log" start acme/search#25 --max-cost 5
+LOKI_SPLIT_ONE_PR=0 E2E_STUB_MODE=slice E2E_STUB_CONFLICT_SLICE=s2 E2E_STUB_SPLIT="$SPLIT3" LOKI_EPIC_PARALLEL=1 LOKI_E10_OPUS_CONSULT=0 run_loki "$C2" "$T/conflict-stub.log" start acme/search#25 --max-cost 5
 printf '%s\n' "$OUT" | grep -E '^(#25 s[123] (PARTIAL|VERIFIED|SPEC_CONFLICT)|Outcome:|Reason:|PR:)' | sed 's/^/    conflict e2e: /'
 [ "$RC" -eq 6 ] && printf '%s\n' "$OUT" | grep -Eq '^Outcome: +PARTIAL$' && printf '%s\n' "$OUT" | grep -Eq '^Reason: +slice s2: SPEC_CONFLICT .*\(2 of 3 slices opened a PR' \
     && [ "$(printf '%s\n' "$OUT" | grep -cE '^PR: +local:///.+#loki/')" = 2 ] \
@@ -515,6 +528,122 @@ printf '%s\n' "$PAR" | grep -q '^PC rc0 | #24 s2 VERIFIED  pr none  cost partial
     && ok "parallel: startIssueEpic prints a partially priced slice as partial: \$0.39 for 1 of 2 sessions (never NOT RECORDED) and adds it to the Cost line" || bad "parallel: partial slice cost wiring wrong: $(printf '%s\n' "$PAR" | grep '^PC')"
 printf '%s\n' "$PAR" | grep -q '^W rc0 peak3 said$' && printf '%s\n' "$PAR" | grep -q '^W1 rc0 peak1 said$' \
     && ok "parallel: startIssueEpic runs 3 independent slices at once by default and one at a time under LOKI_EPIC_PARALLEL=1" || bad "parallel: startIssueEpic wiring wrong"
+
+# --- one PR: a split issue ends in ONE pull request (issues_combine.ts, LOKI_SPLIT_ONE_PR default on; source level) ---------------
+# Real git, real slice worktrees (makeWorktrees), the real combine, the real combined receipt and the real engine10-push.sh against a
+# local bare origin; only the slice runs (a fake that commits one line per slice and seals a receipt), the resolve session, gh and the
+# test runner are fakes. Scenarios: A 2 independent slices, B a 3-deep chain plus an independent root, C a conflict the resolve fixes,
+# D a conflict it cannot fix, E LOKI_SPLIT_ONE_PR=0, F the file cap.
+# #605 was red on GitHub CI only: the runner has no git identity and cannot auto-detect one, so the combine's `git commit-tree`
+# (run without the slice author's identity) failed and every case fell back ("cannot stage s1's change"). macOS auto-detects
+# user@host, which hid it locally. user.useConfigOnly in the leg's throwaway HOME makes every machine behave like the runner.
+git config --global user.useConfigOnly true
+cat > "$T/one.mjs" <<'JS'
+const ir = await import(process.env.ROOT + "/loki-ts/src/commands/issues_run.ts");
+const { receiptSha256 } = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/seal.ts");
+const { mkdirSync, writeFileSync, readFileSync, appendFileSync } = await import("node:fs");
+const { spawnSync } = await import("node:child_process");
+const g = (dir, ...a) => { const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t.invalid", "-c", "commit.gpgSign=false", ...a], { cwd: dir, encoding: "utf8" }); return r.stdout.trim(); };
+const sl = (id, dep, files) => ({ id, title: "part " + id, acceptance: ["ok " + id], depends_on: dep, files });
+const scen = async (tag, slices, edit, opt = {}) => {
+  const base = process.env.PT + "/" + tag, repo = base + "/repo", origin = base + "/origin.git";
+  mkdirSync(repo, { recursive: true });
+  spawnSync("git", ["init", "-q", "-b", "main", "--bare", origin]);
+  g(repo, "init", "-q", "-b", "main");
+  writeFileSync(repo + "/calc.ts", "export const calc = 1;\n"); writeFileSync(repo + "/a.ts", "export const a = 1;\n"); writeFileSync(repo + "/b.ts", "export const b = 1;\n");
+  writeFileSync(repo + "/.gitignore", ".loki/\n");
+  g(repo, "add", "-A"); g(repo, "commit", "-q", "-m", "base"); g(repo, "remote", "add", "origin", origin); g(repo, "push", "-q", "origin", "main");
+  const runDir = repo + "/.loki/runs/e10-epic";
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(runDir + "/issue.json", JSON.stringify({ provider: "github", repo: "acme/search", number: 24, title: process.env.EPIC_TITLE, body: process.env.EPIC_BODY, labels: [] }));
+  let out = "", k = 0; const gh = [];
+  const runner = async (task, o) => {
+    const id = /^Slice (\S+) of/.exec(task)[1], wt = o.cwd, runId = "e10-" + tag + "-" + id, n = ++k;
+    g(wt, "checkout", "-q", "-b", "loki/" + runId);
+    edit(id, wt);
+    g(wt, "add", "-A", "--", "."); g(wt, "commit", "-q", "-m", "slice " + id); // .loki/ is ignored by the fixture's .gitignore
+    const rd = wt + "/.loki/runs/" + runId; mkdirSync(rd, { recursive: true });
+    const body = { schema: "loki.v10.receipt/1", run_id: runId, verdict: "VERIFIED", not_proven: [] };
+    writeFileSync(rd + "/receipt.json", JSON.stringify({ ...body, receipt_sha256: receiptSha256(body) }, null, 2));
+    const pr = o.pr ? "PR: https://github.com/acme/search/pull/" + (40 + n) : opt.earlyPr === id ? "PR: https://github.com/acme/search/pull/39" : "";
+    return { rc: 0, output: pr, verdict: "VERIFIED", costUsd: 0.1, runId };
+  };
+  const rc = await ir.startIssueEpic({ repoDir: repo, runDir, noPr: false, provider: "claude", env: { LOKI_DIR: repo + "/.loki", LOKI_EPIC_PARALLEL: "1", ...(opt.env ?? {}) }, inject: {
+    decompose: async () => JSON.stringify({ slices }),
+    runner,
+    out: (s) => { out += s; }, err: () => {},
+    combineIo: {
+      resolve: async ({ cwd, files }) => { if (opt.fix) for (const f of files) writeFileSync(cwd + "/" + f, readFileSync(cwd + "/" + f, "utf8").split("\n").filter((l) => !/^(<{7}|={7}|>{7})/.test(l)).join("\n")); return { usd: 0.05 }; },
+      gh: (a) => { gh.push(a.join(" ")); return { rc: 0, stdout: "", stderr: "" }; },
+      runTests: async (d, refs) => refs.map(() => ({ pass: 1, fail: opt.red && !d.endsWith("/base") ? 1 : 0, not_run: 0 })), // G: red on the combined tree only
+      impacted: () => (opt.red ? [{ runner: "bun", path: "calc.test.ts" }] : []),
+    },
+  } });
+  const L = out.split("\n"), at = L.findIndex((l) => /^Outcome:/.test(l)), block = L.slice(at).filter((l) => l !== "");
+  const subj = g(origin, "log", "--reverse", "--format=%s", "main..loki/24-combined").split("\n").filter(Boolean);
+  const perCommit = g(origin, "rev-list", "--reverse", "main..loki/24-combined").split("\n").filter(Boolean).map((c) => (g(origin, "show", "--format=", c).match(/^\+.*slice_/gm) ?? []).length).join("");
+  const calc = g(origin, "show", "loki/24-combined:calc.ts");
+  console.log(tag + " rc" + rc + " prs" + block.filter((l) => /^PR:/.test(l)).length + " lines" + block.length + " commits[" + subj.join("|") + "] per" + perCommit + " markers" + (/^(<{7}|>{7})/m.test(calc) ? 1 : 0) + " gh[" + gh.join("|") + "]");
+  let rec = "none", bodyS = "none";
+  try { const r = JSON.parse(readFileSync(runDir + "/combined/seal/receipt.json", "utf8")); rec = r.verdict + " " + r.group.units.map((u) => u.unit_id + "=" + u.verdict).join(","); } catch {}
+  try { const b = readFileSync(runDir + "/combined/pr-body.md", "utf8"); bodyS = [...b.matchAll(/^### (s\d+):/gm)].map((m) => m[1]).join(",") + (/^## Combined proof$/m.test(b) ? " proof" : "") + (/^Cost: /m.test(b) ? " cost" : "") + (/^Not proven: nothing\.$/m.test(b) ? " np" : "") + (/^Closes acme\/search#24$/m.test(b) ? " closes" : ""); } catch {}
+  console.log(tag + "  receipt " + rec + " | body " + bodyS);
+  for (const l of block) console.log(tag + "  " + l);
+  for (const l of L.filter((l) => /resolve session|opens its own PR/.test(l))) console.log(tag + "  say " + l);
+};
+const add = (f) => (id, wt) => appendFileSync(wt + "/" + f, "export const slice_" + id + " = \"" + id + "\";\n");
+await scen("A", [sl("s1", [], ["a.ts"]), sl("s2", [], ["b.ts"])], (id, wt) => add(id === "s1" ? "a.ts" : "b.ts")(id, wt), { earlyPr: "s1" });
+await scen("B", [sl("s1", [], []), sl("s2", ["s1"], []), sl("s3", ["s2"], []), sl("s4", [], [])], (id, wt) => add(id === "s4" ? "b.ts" : "calc.ts")(id, wt));
+await scen("C", [sl("s1", [], []), sl("s2", [], [])], add("calc.ts"), { fix: true });
+await scen("D", [sl("s1", [], []), sl("s2", [], [])], add("calc.ts"));
+await scen("E", [sl("s1", [], []), sl("s2", [], [])], (id, wt) => add(id === "s1" ? "a.ts" : "b.ts")(id, wt), { env: { LOKI_SPLIT_ONE_PR: "0" } });
+await scen("F", [sl("s1", [], []), sl("s2", [], [])], (id, wt) => add(id === "s1" ? "a.ts" : "b.ts")(id, wt), { env: { LOKI_SPLIT_ONE_PR_MAX_FILES: "1" } });
+await scen("G", [sl("s1", [], []), sl("s2", [], [])], (id, wt) => add(id === "s1" ? "a.ts" : "b.ts")(id, wt), { red: true });
+// H, I: LOKI_SPLIT_MAX_SLICES default 8: an 8-slice split (two 3-deep chains and two roots, each slice its own file) runs and ends in one PR;
+// all 8 falling back (file cap) still fit the 8-line block.
+const eight = [sl("s1", [], []), sl("s2", ["s1"], []), sl("s3", ["s2"], []), sl("s4", [], []), sl("s5", ["s4"], []), sl("s6", ["s5"], []), sl("s7", [], []), sl("s8", [], [])];
+const own = (id, wt) => add("f_" + id + ".ts")(id, wt);
+await scen("H", eight, own);
+await scen("I", eight, own, { env: { LOKI_SPLIT_ONE_PR_MAX_FILES: "3" } });
+const ep = await import(process.env.ROOT + "/loki-ts/src/commands/issues_epic.ts");
+const nine = JSON.stringify({ slices: Array.from({ length: 9 }, (_, i) => sl("s" + (i + 1), [], [])) });
+console.log("M " + [ep.maxSlices({}), ep.maxSlices({ LOKI_SPLIT_MAX_SLICES: "12" }), ep.maxSlices({ LOKI_SPLIT_MAX_SLICES: "1" }), ep.maxSlices({ LOKI_SPLIT_MAX_SLICES: "x" }), ep.maxSlices({ LOKI_SPLIT_MAX_SLICES: "99" })].join(" ")
+  + " p9=" + ep.parseDecomposition(nine, {}).ok + "/" + ep.parseDecomposition(nine, { LOKI_SPLIT_MAX_SLICES: "9" }).ok
+  + " brief=" + ep.decomposeBrief("a/b", { number: 1, title: "t", body: "", labels: [] }, "big", "/o.json").includes("Use at most 8 slices")
+  + " note=" + ep.overCapNote(9).includes("the limit is 8"));
+JS
+ONE="$(ROOT="$ROOT" PT="$T/one" EPIC_TITLE="$EPIC_TITLE" EPIC_BODY="$EPIC_BODY" bun --no-env-file --config=/dev/null "$T/one.mjs" 2>&1)"
+printf '%s\n' "$ONE" | sed 's/^/    one pr: /'
+oneh() { printf '%s\n' "$ONE" | grep "^$1 rc"; }
+oneb() { printf '%s\n' "$ONE" | grep "^$1  "; }
+oneh A | grep -q '^A rc0 prs1 lines[1-8] commits\[s1: part s1|s2: part s2\] per11 markers0 gh\[pr close https://github.com/acme/search/pull/39 --comment Combined into local:///.*#loki/24-combined\.\]$' \
+    && oneb A | grep -Eq '^A  PR: +local:///.+#loki/24-combined$' && oneb A | grep -Eq '^A  Combined: +2 slices in one PR on loki/24-combined$' \
+    && ok "one pr: 2 independent slices give 1 PR with 2 commits titled by slice, and the earlier slice PR is closed as combined" || bad "one pr: case A wrong: $(oneh A)"
+oneb A | grep -q '^A  receipt VERIFIED s1=VERIFIED,s2=VERIFIED | body s1,s2 proof cost np closes$' \
+    && ok "one pr: one combined receipt lists each slice's verdict; the PR body has a section per slice, the combined proof, cost and the issue link" || bad "one pr: combined receipt or body wrong: $(oneb A | grep receipt)"
+oneh B | grep -q '^B rc0 prs1 lines[1-8] commits\[s1: part s1|s2: part s2|s3: part s3|s4: part s4\] per1111 markers0 ' \
+    && ok "one pr: a 3-deep stacked chain plus an independent root give 1 PR, one commit per slice holding only that slice's change" || bad "one pr: case B wrong: $(oneh B)"
+oneh C | grep -q '^C rc0 prs1 lines[1-8] commits\[s1: part s1|s2: part s2\] per11 markers0 ' && printf '%s\n' "$ONE" | grep -q '^C  say #24 s2 conflicts with an earlier slice in calc.ts; one resolve session$' \
+    && oneb C | grep -Eq '^C  Cost: +\$0\.25 \(2 slice runs \+ 1 planning session\)$' \
+    && ok "one pr: a conflict the resolve session settles gives 1 PR with both slices and no conflict marker; its cost is in the Cost line" || bad "one pr: case C wrong: $(oneh C); $(oneb C | grep Cost)"
+oneh D | grep -q '^D rc0 prs2 lines[1-8] commits\[s1: part s1\] per1 markers0 ' \
+    && oneb D | grep -Eq '^D  Combined: +1 slice in one PR on loki/24-combined; s2 opened its own PR: merge conflict in calc.ts with an earlier slice; the resolve session left conflict markers in calc.ts$' \
+    && oneb D | grep -Eq '^D  PR: +local:///.+#loki/e10-D-s2$' && oneb D | grep -q '^D  receipt VERIFIED s1=VERIFIED | body s1 proof cost np$' \
+    && ok "one pr: a conflict the resolve cannot settle falls back to a PR for that slice only, and says why" || bad "one pr: case D wrong: $(oneh D); $(oneb D | grep -E 'Combined|PR')"
+oneh E | grep -q '^E rc0 prs2 lines[1-8] commits\[\] ' && ! oneb E | grep -q 'Combined:' \
+    && ok "one pr: LOKI_SPLIT_ONE_PR=0 restores one PR per slice (2 PR lines, no combined branch)" || bad "one pr: case E wrong: $(oneh E)"
+oneh F | grep -q '^F rc0 prs2 lines[1-8] commits\[\] ' && oneb F | grep -Eq '^F  Combined: +no combined PR: the combined diff touches 2 files, over LOKI_SPLIT_ONE_PR_MAX_FILES=1; opened one PR per slice$' \
+    && ok "one pr: a combined diff over LOKI_SPLIT_ONE_PR_MAX_FILES falls back to one PR per slice and prints the reason" || bad "one pr: case F wrong: $(oneh F)"
+oneh G | grep -q '^G rc6 prs1 ' && oneb G | grep -Eq '^G  Reason: +combined: calc.test.ts fails on the combined tree and passes on the base$' && oneb G | grep -q '^G  receipt PARTIAL s1=VERIFIED,s2=VERIFIED ' \
+    && ok "one pr: a test the combined change breaks (green on the base) lowers the combined verdict to PARTIAL (exit 6) though every slice was VERIFIED" || bad "one pr: case G wrong: $(oneh G); $(oneb G | grep -E 'Reason|receipt')"
+oneh H | grep -q '^H rc0 prs1 lines[1-8] commits\[s1: part s1|s2: part s2|s3: part s3|s4: part s4|s5: part s5|s6: part s6|s7: part s7|s8: part s8\] per11111111 markers0 ' \
+    && ok "one pr: an 8-slice split (LOKI_SPLIT_MAX_SLICES default 8: two 3-deep chains and two roots) runs and ends in 1 PR with 8 commits" || bad "one pr: case H wrong: $(oneh H)"
+oneh I | grep -q '^I rc0 prs5 lines8 ' && oneb I | grep -Eq '^I  PR: +\(\+4 more, one per slice; listed in the epic tree above\)$' \
+    && ok "one pr: 8 slices all falling back print 4 PR URLs and a count line, so the block stays at 8 lines" || bad "one pr: case I wrong: $(oneh I)"
+printf '%s\n' "$ONE" | grep -q '^M 8 12 8 8 32 p9=false/true brief=true note=true$' \
+    && ok "split cap: LOKI_SPLIT_MAX_SLICES defaults to 8 (12 honored, 1 and x ignored, 99 capped at 32); 9 slices are refused by default and accepted at 9; the brief and re-ask name 8" || bad "split cap wrong: $(printf '%s\n' "$ONE" | grep '^M ')"
+[ "$(printf '%s\n' "$ONE" | grep -cE '^[A-F] rc0 prs[0-9] lines[1-8] ')" = 6 ] && oneh G | grep -q ' lines[1-8] ' \
+    && ok "one pr: the final block (Outcome to Cost) stays at 8 lines or fewer in every case (D48)" || bad "one pr: a final block is over 8 lines or a case did not run"
 
 # --- labels: engine10's own sizing sees the issue's epic label (split refused, so the issue runs as one run) ----------
 L="$T/labels"

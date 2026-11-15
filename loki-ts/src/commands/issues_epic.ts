@@ -1,7 +1,7 @@
 // MASS-2: `loki issues run` splits a too-large issue into stacked slices instead of skipping it.
 //   1. one Opus planning session returns a JSON split (Engine Law L0: the model decides the slices; the harness only
 //      checks the schema, refuses cycles and refuses a slice whose dependencies are not on one stack);
-//   2. a split has at most MAX_SLICES slices; slices run in dependency order, those with satisfied dependencies concurrently up to --parallel, each as a normal engine10 run in its own worktree started on its stack parent's
+//   2. a split has at most maxSlices() slices (LOKI_SPLIT_MAX_SLICES, default 8); slices run in dependency order, those with satisfied dependencies concurrently up to --parallel, each as a normal engine10 run in its own worktree started on its stack parent's
 //      run branch (roots on HEAD), with the PR base set to that parent branch. The PR itself is the run's own PR stage;
 //   3. a slice that is not VERIFIED or PARTIAL with a PR stops its dependents and only its dependents (independent slices still run), which are recorded SKIPPED with the reason;
 //   4. renderEpicTree prints the epic as a tree of slice, outcome, PR and cost.
@@ -35,11 +35,21 @@ export interface SliceResult {
   reason?: string; // the slice run's own Reason line (a SPEC_CONFLICT's question), when it printed one
   partial?: { usd: number; measured: number; total: number } | null; // usd is null but some sessions priced: the known dollars (splitCost adds them, the slice still counts unmeasured)
   budget?: boolean; // the slice hit its budget (exit 3, or an Outcome: BUDGET_STOP line when LOKI_DURABLE_STATE maps every failure to 20)
+  runId?: string; // ONE-PR (issues_combine.ts): the slice run's id (its receipt is kept under <receipts dir>/receipts/<id>), its worktree and task text
+  worktree?: string;
+  task?: string;
 }
+/** ONE-PR: what the combine step reports to epicOutcome (issues_combine.ts CombineResult, the fields read here). */
+export interface CombinedSummary { pr: string | null; branch: string; verdict: string; commits: { id: string }[]; fallback: { id: string; pr: string | null; reason: string }[]; notProven: string[]; reason?: string }
 
 const ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 const MIN_SLICES = 2;
-const MAX_SLICES = 4;
+/** LOKI_SPLIT_MAX_SLICES: the most slices one split may have (default 8; real issues span many services). An invalid or sub-minimum value keeps the default; capped at 32. */
+export const DEFAULT_MAX_SLICES = 8;
+export function maxSlices(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env["LOKI_SPLIT_MAX_SLICES"]);
+  return Number.isInteger(n) && n >= MIN_SLICES ? Math.min(n, 32) : DEFAULT_MAX_SLICES;
+}
 
 const oneLine = (s: string): string => s.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/\s+/g, " ").trim();
 
@@ -74,7 +84,8 @@ const strList = (v: unknown, max: number, merge = false): string[] | null => {
 
 export const NO_JSON_REASON = "no JSON object in the reply";
 /** Validate the model's split and order it. List fields are repaired (strList); a slice is never invented, merged or renamed. */
-export function parseDecomposition(text: string): Decomposition {
+export function parseDecomposition(text: string, env: NodeJS.ProcessEnv = process.env): Decomposition {
+  const MAX_SLICES = maxSlices(env);
   const j = extractJson(text);
   if (j === undefined || j === null || typeof j !== "object" || Array.isArray(j)) return { ok: false, reason: NO_JSON_REASON };
   const raw = (j as { slices?: unknown }).slices;
@@ -139,13 +150,14 @@ export function parseDecomposition(text: string): Decomposition {
 }
 
 /** The re-ask sent once when a split came back over the cap: names the cap and the count it got. */
-export const overCapNote = (got: number): string =>
-  `Your previous split had ${got} slices but the limit is ${MAX_SLICES}. Merge related slices so the plan has at most ${MAX_SLICES}, and write the corrected JSON object to the file.`;
+export const overCapNote = (got: number, env: NodeJS.ProcessEnv = process.env): string =>
+  `Your previous split had ${got} slices but the limit is ${maxSlices(env)}. Merge related slices so the plan has at most ${maxSlices(env)}, and write the corrected JSON object to the file.`;
 /** The re-ask sent once for any other refused split: the exact validation error, so the model corrects that one thing. */
 export const invalidSplitNote = (reason: string): string =>
   `Your previous split was refused: ${oneLine(reason)}. Fix that and write the corrected JSON object to the file, in the same form.`;
 
-export function decomposeBrief(slug: string, i: GhIssue, triageReason: string, outPath: string, note = ""): string {
+export function decomposeBrief(slug: string, i: GhIssue, triageReason: string, outPath: string, note = "", env: NodeJS.ProcessEnv = process.env): string {
+  const MAX_SLICES = maxSlices(env);
   return [
     "You are planning how an autonomous coding agent should deliver one GitHub issue that is too large for a single pull request.",
     `A triage pass judged it too large: ${oneLine(triageReason)}`,
@@ -319,16 +331,36 @@ export function splitCostText(c: ReturnType<typeof splitCost>): string {
  *  stays FAILED; else VERIFIED (0). Exit codes go through exitCodeOf, so LOKI_DURABLE_STATE applies as on any run. One PR line per slice PR, one
  *  Cost line (splitCost). Printed in the engine's summary wording, so `loki backlog` parses it like any run: it counts a PARTIAL with a PR as done
  *  and adds the cost to its day ledger. */
-export function epicOutcome(rows: readonly SliceResult[], planUsd: readonly (number | null)[] = [], env: NodeJS.ProcessEnv = process.env): { outcome: "VERIFIED" | "PARTIAL" | "FAILED" | "BUDGET_STOP"; rc: number; lines: string } {
+export function epicOutcome(rows: readonly SliceResult[], planUsd: readonly (number | null)[] = [], env: NodeJS.ProcessEnv = process.env, combined?: CombinedSummary): { outcome: "VERIFIED" | "PARTIAL" | "FAILED" | "BUDGET_STOP"; rc: number; lines: string } {
   const isBudget = (r: SliceResult): boolean => r.budget === true || /^BUDGET_STOP/.test(r.outcome), isConflict = (r: SliceResult): boolean => /^SPEC_CONFLICT\b/.test(r.outcome);
   const prs = rows.filter((r) => r.pr).length, failed = rows.find((r) => !isBudget(r) && !isConflict(r) && !/^(VERIFIED|PARTIAL|SKIPPED)/.test(r.outcome)), budget = rows.find(isBudget), stopped = rows.find(isConflict);
   // FireLater#24: a slice that stopped on its own SPEC_CONFLICT is waiting for an answer, not a crash; with a PR already open the split is PARTIAL. No PR at all keeps FAILED.
-  const outcome = failed ? "FAILED" : budget ? "BUDGET_STOP" : stopped ? (prs > 0 ? "PARTIAL" : "FAILED") : rows.some((r) => /^PARTIAL/.test(r.outcome)) ? "PARTIAL" : "VERIFIED";
+  const v0 = failed ? "FAILED" : budget ? "BUDGET_STOP" : stopped ? (prs > 0 ? "PARTIAL" : "FAILED") : rows.some((r) => /^PARTIAL/.test(r.outcome)) ? "PARTIAL" : "VERIFIED";
+  // ONE-PR: the combined tree can only lower the verdict (a sealed Wall red on the combined tree, or no combined receipt)
+  const lowered = v0 === "VERIFIED" && !!combined?.pr && combined.verdict !== "VERIFIED", outcome = lowered ? "PARTIAL" : v0;
   const why = failed ?? budget ?? stopped ?? rows.find((r) => /^PARTIAL/.test(r.outcome));
   // FireLater#21: a FAILED or budget-stopped split still says what it delivered, and where the stopped slice's change is, so 3 open PRs never read as nothing done.
   const kept = why && !why.pr && why.branch ? `; ${why.id}'s change is on branch ${why.branch}` : "", got = (outcome === "FAILED" || outcome === "BUDGET_STOP" || (outcome === "PARTIAL" && why === stopped)) && prs > 0 ? ` (${prs} of ${rows.length} slices opened a PR${kept})` : "";
   const answer = outcome === "PARTIAL" && why === stopped && why?.reason ? ` (needs an answer: ${oneLine(why.reason.replace(/^spec conflict:\s*/i, "")).slice(0, 160)})` : "";
-  const lines = [`${labelCol("Outcome")}${outcome}`, ...(why && outcome !== "VERIFIED" ? [`${labelCol("Reason")}slice ${why.id}: ${oneLine(why.outcome)}${answer}${got}`] : []),
-    ...rows.filter((r) => r.pr).map((r) => `${labelCol("PR")}${r.pr}`), `${labelCol("Cost")}${splitCostText(splitCost(rows, planUsd))}`];
+  // ONE-PR: one PR line per distinct PR (the combined one first), so a combined split prints one PR line for the issue, plus one per fallback slice
+  const urls = [...new Set([...(combined?.pr ? [combined.pr] : []), ...rows.filter((r) => r.pr).map((r) => r.pr!)])];
+  const reason = why && outcome !== "VERIFIED" ? `slice ${why.id}: ${oneLine(why.outcome)}${answer}${got}` : lowered ? oneLine(combined!.notProven[0] ?? `combined: verdict ${combined!.verdict}`) : null;
+  const lines = [`${labelCol("Outcome")}${outcome}`, ...(reason ? [`${labelCol("Reason")}${reason}`] : []),
+    ...prLines(urls, 8 - 2 - (reason ? 1 : 0) - (combined ? 1 : 0)), ...(combined ? [`${labelCol("Combined")}${combinedText(combined)}`] : []), `${labelCol("Cost")}${splitCostText(splitCost(rows, planUsd))}`];
   return { outcome, rc: exitCodeOf(outcome, env), lines: `${lines.join("\n")}\n` };
+}
+/** ONE-PR: the one Combined line: how many slices the issue's PR holds, and why any slice fell back to its own PR. */
+export function combinedText(c: CombinedSummary): string {
+  const k = c.commits.length, fb = c.fallback.length;
+  if (!c.pr) return `no combined PR: ${oneLine(c.reason ?? "nothing to combine").slice(0, 200)}`;
+  const head = `${k} slice${k === 1 ? "" : "s"} in one PR on ${c.branch}`;
+  if (fb === 0) return head;
+  const reasons = [...new Set(c.fallback.map((f) => oneLine(f.reason)))];
+  return `${head}; ${c.fallback.map((f) => f.id).join(", ")} opened ${fb === 1 ? "its own PR" : "their own PRs"}: ${reasons.join("; ").slice(0, 200)}`;
+}
+/** D48: at most `room` PR lines (the default output stays within 8 lines); past it the last line counts the rest, which the epic tree above lists. The first line is always a URL, so `loki backlog` still reads it. */
+export function prLines(urls: readonly string[], room: number): string[] {
+  const r = Math.max(1, room);
+  if (urls.length <= r) return urls.map((u) => `${labelCol("PR")}${u}`);
+  return [...urls.slice(0, r - 1).map((u) => `${labelCol("PR")}${u}`), `${labelCol("PR")}(+${urls.length - r + 1} more, one per slice; listed in the epic tree above)`];
 }
