@@ -96,6 +96,7 @@ console.log(`method=${JSON.stringify(method)} kept=${JSON.stringify(kept)} col0=
 #   LOKI_AWE_PROOF_CARD: from receipt.json only, a "yes" proof shows Before (the recorded output line) and After: passes in green; "no", inconclusive, no proof and no receipt are never green and
 #     never say "After: passes"; a "yes" whose proving test did not pass is not green either. The default output carries the card as one line (renderAweProofLine: yes/no plus the
 #     proving test file), the full card only under --verbose; the done run's default output holds the D48 8-line cap with the card on.
+#   The VERIFIED console summary (default and --verbose) has no model-tier or model-comparison text.
 #   PR body (runPr, the real stage, its push script faked to fail after the body is written): a VERIFIED body has no model-tier or model-comparison text (no "opus").
 #   PR body from the receipt: the proof, conventions followed and Loki's own total cost (partial, unmetered and null read as such, never $0.00, no model comparison); LOKI_AWE_LIVE_COST=0 is the old body.
 cat > "$T/awe.ts" <<'TS'
@@ -248,7 +249,9 @@ else
     bad "stub env log is empty (the stub never ran)"
 fi
 
+printf '%s\n' "$OUT" | grep -qiE 'opus|parity|top-tier|cost avoided|tier sealed' && { bad "VERIFIED console summary compares models"; printf '%s\n' "$OUT" | grep -iE 'opus|parity|top-tier|cost avoided|tier sealed' | sed 's/^/    | /'; } || ok "VERIFIED console summary (default): no opus, parity, top-tier or tier-sealed text (Loki's own cost only)"
 run_engine done --verbose
+printf '%s\n' "$OUT" | grep -qiE 'opus|parity|top-tier|cost avoided|tier sealed' && bad "VERIFIED console summary (--verbose) compares models" || ok "VERIFIED console summary (--verbose): no opus, parity, top-tier or tier-sealed text"
 printf '%s\n' "$OUT" | grep -qE '^Proof: ' && printf '%s\n' "$OUT" | grep -qE '^Not proven:' && ok "--verbose: the full proof card prints after the summary" || { bad "--verbose: no full proof card"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
 
 run_engine tamper
