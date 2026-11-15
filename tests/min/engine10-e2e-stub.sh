@@ -94,13 +94,17 @@ console.log(`method=${JSON.stringify(method)} kept=${JSON.stringify(kept)} col0=
 #     ticks in under it with the label, and the status line keeps the label until verify completes; a stopped verify never reads as checked; =0 prints none of it; on a TTY the status line is erased first.
 #   LOKI_AWE_LIVE_COST: the status line carries run elapsed and the spend so far from cost events; =0 is the old line byte for byte.
 #   LOKI_AWE_PROOF_CARD: from receipt.json only, a "yes" proof shows Before (the recorded output line) and After: passes in green; "no", inconclusive, no proof and no receipt are never green and
-#     never say "After: passes"; a "yes" whose proving test did not pass is not green either.
+#     never say "After: passes"; a "yes" whose proving test did not pass is not green either. The default output carries the card as one line (renderAweProofLine: yes/no plus the
+#     proving test file), the full card only under --verbose; the done run's default output holds the D48 8-line cap with the card on.
+#   PR body (runPr, the real stage, its push script faked to fail after the body is written): a VERIFIED body has no model-tier or model-comparison text (no "opus").
 #   PR body from the receipt: the proof, conventions followed and Loki's own total cost (partial, unmetered and null read as such, never $0.00, no model comparison); LOKI_AWE_LIVE_COST=0 is the old body.
 cat > "$T/awe.ts" <<'TS'
 const SRC = process.env.AWE_SRC!;
 const { LiveLine, CANDIDATE_LABEL } = await import(`${SRC}/e10ext/liveline.ts`);
 const { proofCardOf, renderAweProofCard } = await import(`${SRC}/util/receipt_surface.ts`);
 const { renderReviewerBody } = await import(`${SRC}/e10ext/reviewer_body.ts`);
+const { proofCardOf: _pc, renderAweProofLine } = await import(`${SRC}/util/receipt_surface.ts`);
+const { runPr } = await import(`${SRC}/engine10/stages/pr.ts`);
 const [repo, base] = process.argv.slice(2);
 const out: Record<string, unknown> = {};
 const ev = (type: string, stage: string | null, data: Record<string, unknown> = {}) => ({ v: 1, seq: 0, ts: new Date().toISOString(), run: "r1", type, stage, data });
@@ -144,6 +148,13 @@ const by = body(yes);
 out.pr_yes = [by.includes("## The proof\n- Before: `calc.test.ts` fails on the base code with:\n  ```text\n  AssertionError: expected 6 to be 7\n  ```\n- After: passes"), by.includes("## Conventions followed\n- Formatted with the repo's prettier: calc.ts\n- Release note added: .changeset/x.md"), by.includes("## Cost\n- Total: $0.31 (this run's own spend, from the receipt)"), /opus|cheaper|times/i.test(by.slice(by.indexOf("## Cost"), by.indexOf("## Receipt")))].join(",");
 out.pr_never_green = [no, inc, none].map((r) => { const b = body(r); return b.includes("- After: passes") || b.includes("- Before:"); }).join(",");
 out.pr_cost = [body(no).includes("- Total: partial: $0.10 for 1 of 3 sessions"), body(inc).includes("- Total: not measured (this invoker records no cost)"), body(none).includes("- Total: not measured (this run's"), body(inc).includes("$0.00")].join(",");
+out.card_line = [yes, no, inc, none, null].map((r) => renderAweProofLine(_pc(r))).join(" | ");
+const { mkdtempSync, writeFileSync: wf, readFileSync: rf, chmodSync } = await import("node:fs"), prd = mkdtempSync(`${repo}/../prbody.`), fakePush = `${prd}/push.sh`;
+wf(fakePush, "#!/bin/sh\nexit 1\n"); chmodSync(fakePush, 0o755);
+const prOut = { seal: { verdict: "VERIFIED", not_proven: [], receipt_path: null, receipt_sha256: null }, intake: { task: "add multiply", base_sha: base }, verify: { changed_files: [] } };
+await runPr({ runId: "e10-prbody", repoDir: repo, runDir: `${prd}/run`, baseSha: base, branch: "loki/e10-prbody", provider: "claude", model: "sonnet", deep: false, capS: 0, pinnedOrigin: "https://github.com/acme/calc.git", emit: () => {}, outputs: () => prOut } as never, new AbortController().signal, { pushScriptPath: fakePush, gitlabPushScriptPath: fakePush }).catch(() => null);
+let prBody = ""; try { prBody = rf(`${prd}/run/pr-body.md`, "utf8"); } catch { /* not written */ }
+out.pr_no_model_cmp = [prBody.length > 0, /opus|model tier|top-tier|cost avoided|parity|cheaper|\bvs\.? raw/i.test(prBody)].join(",");
 out.pr_off = [body(yes, { LOKI_AWE_LIVE_COST: "0" }) === body(null), body(yes, { LOKI_AWE_PROOF_CARD: "0" }).includes("## The proof"), body(yes, { LOKI_AWE_PROOF_CARD: "0" }).includes("## Cost")].join(",");
 console.log(JSON.stringify(out));
 TS
@@ -166,6 +177,8 @@ awe() { python3 -I -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.ar
 [ "$(awe pr_yes)" = "true,true,true,false" ] && ok "awe PR body from the receipt: the proof, conventions followed and Loki's own total cost, with no model comparison" || bad "awe PR body: got $(awe pr_yes)"
 [ "$(awe pr_never_green)" = "false,false,false" ] && ok "awe honesty: a no, inconclusive or absent proof never writes Before/After into the PR body" || bad "awe PR body never green: got $(awe pr_never_green)"
 [ "$(awe pr_cost)" = "true,true,true,false" ] && ok "awe PR cost: partial, unmetered and null read as such, never \$0.00" || bad "awe PR cost: got $(awe pr_cost)"
+[ "$(awe card_line)" = "Proof: yes, calc.test.ts fails on your code and passes after the change | Proof: no (the new tests also pass on your old code, so they do not show the fix) | Proof: not run (inconclusive: timeout) | Proof: not run (the fail-then-pass proof runs only on a VERIFIED run) | Proof: not run (no trusted receipt was sealed)" ] && ok "awe proof card, one line (D48 default): yes names the proving test; no and not run say why" || bad "awe proof card line: got $(awe card_line)"
+[ "$(awe pr_no_model_cmp)" = "true,false" ] && ok "PR body (runPr, VERIFIED): no model-tier or model-comparison text, no 'opus' (Loki's own cost only)" || bad "PR body model comparison: got $(awe pr_no_model_cmp)"
 [ "$(awe pr_off)" = "true,false,true" ] && ok "awe PR body off: LOKI_AWE_LIVE_COST=0 is the old body; LOKI_AWE_PROOF_CARD=0 drops only the proof section" || bad "awe PR body off: got $(awe pr_off)"
 
 echo "TEST: engine10 end to end on the stub provider"
@@ -216,6 +229,9 @@ run_engine done
 [ "$RC" -eq 0 ] && ok "done run exits 0" || { bad "done run exited $RC"; printf '%s\n' "$OUT" | tail -15 | sed 's/^/    | /'; }
 printf '%s\n' "$OUT" | grep -Eq '^Outcome:[[:space:]]+VERIFIED' && ok "done run prints Outcome: VERIFIED" || bad "done run did not print Outcome: VERIFIED"
 grep -q 'export function multiply' "$REPO/calc.ts" && ok "stub's change landed in calc.ts" || bad "calc.ts has no multiply()"
+# D48 counts the start line plus the summary block (Outcome: to the end); the live candidate diff and the branch note print while the run goes
+DSUM="$(printf '%s\n' "$OUT" | sed -n '/^Outcome:/,$p')"; DLN=$(( $(printf '%s\n' "$DSUM" | grep -c '') + 1 )); DPC="$(printf '%s\n' "$DSUM" | grep -ciE '(^|; )proof: (yes|no|not run)')"; DFULL="$(printf '%s\n' "$OUT" | grep -cE '^(  Before: |Not proven:)')"
+[ -n "$DSUM" ] && [ "$DLN" -le 8 ] && [ "$DPC" = 1 ] && [ "$DFULL" = 0 ] && ok "D48: the done run's default output is $DLN lines (cap 8) with the one-line proof card on, no full card" || { bad "D48 cap with the proof card: $DLN lines, $DPC proof lines, $DFULL full-card lines"; printf '%s\n' "$OUT" | sed 's/^/    | /'; }
 if [ -n "$RUNDIR" ] && [ -f "$RUNDIR/receipt.json" ]; then
     r="$(verify_run)"
     [ "$r" = "0 VERIFIED" ] && ok "loki verify on the run receipt: VERIFIED rc 0" || bad "loki verify gave: $r"
@@ -231,6 +247,9 @@ if [ -s "$STUBENV" ]; then
 else
     bad "stub env log is empty (the stub never ran)"
 fi
+
+run_engine done --verbose
+printf '%s\n' "$OUT" | grep -qE '^Proof: ' && printf '%s\n' "$OUT" | grep -qE '^Not proven:' && ok "--verbose: the full proof card prints after the summary" || { bad "--verbose: no full proof card"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
 
 run_engine tamper
 [ "$RC" -ne 0 ] && ok "tampered run exits non-zero" || bad "tampered run exited 0"

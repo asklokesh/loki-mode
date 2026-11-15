@@ -149,6 +149,14 @@ export function readRiskSummary(repoDir: string, sinceMs = 0): string | null {
   return typeof s === "string" && s ? s : null;
 }
 
+/** Adds one line within the default 8-line cap (D48, start line printed separately): its own line while it fits, else folded into the last line. */
+export function withFoldLine(out: string, line: string | null, maxLines = 7, extraLines = 0): string {
+  if (!line) return out;
+  const lines = out.replace(/\n+$/, "").split("\n");
+  if (lines.length + 1 + extraLines <= maxLines) return `${lines.join("\n")}\n${line}\n`;
+  lines[lines.length - 1] += `; ${line.charAt(0).toLowerCase()}${line.slice(1)}`;
+  return `${lines.join("\n")}\n`;
+}
 /** Appends the risk line to rendered output only while the default 8-line cap (D48, start line printed separately) still holds. */
 export function withRiskLine(out: string, line: string | null, maxLines = 7, extraLines = 0): string {
   if (!line) return out;

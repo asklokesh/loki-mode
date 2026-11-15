@@ -64,6 +64,11 @@ export function readReceiptAt(path: unknown): Record<string, unknown> | null {
   if (typeof path !== "string" || !path) return null;
   try { const r: unknown = JSON.parse(readFileSync(path, "utf8")); return typeof r === "object" && r !== null && !Array.isArray(r) ? (r as Record<string, unknown>) : null; } catch { return null; }
 }
+/** D48 default output: the proof card as one line (yes/no plus the proving test files); the full card prints under --verbose. */
+export function renderAweProofLine(c: ProofCard): string {
+  const files = c.before.map((b) => b.file), named = files.slice(0, 2).join(", ") + (files.length > 2 ? ` +${files.length - 2} more` : "");
+  return c.green ? `Proof: yes, ${named} fails on your code and passes after the change` : c.state === "not shown" ? `Proof: no (${c.why})` : `Proof: not run (${c.why})`;
+}
 /** Terminal proof card, printed after the summary. Green (when color is on) only for a shown proof. */
 export function renderAweProofCard(c: ProofCard, color = false): string {
   const g = (s: string): string => (color && c.green ? `\x1b[32m${s}\x1b[0m` : s);
