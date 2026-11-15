@@ -36,6 +36,9 @@
 #   7. run step env: drop LOKI_SPLIT_ONE_PR; large and setting fail (empty patch).
 #   8. publish: `grep -qi 'not permitted to create'` -> 'never'; setting fails.
 #   9. .github/actions/issue-to-pr/action.yml: TIP stays HEAD (drop the head_sha lookup); action fails.
+#   10. publish: the plain title for every result; large and no verdict fail.
+#   11. publish: never take the uncombined-split wording; the no change split check fails.
+#   12. publish: drop the plain dollar Cost line; cost fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
