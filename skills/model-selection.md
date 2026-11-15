@@ -452,7 +452,7 @@ ALWAYS_HIGH_PATTERNS = [
     r"(auth|security|encrypt|secret|credential|token|password)",
     r"(architecture|system.design|schema.migration)",
     r"(production|incident|outage|rollback)",
-    r"(compliance|regulatory|privacy.law|audit.evidence)",
+    r"(compliance|regulatory|privacy.law|audit.evidence|gdpr|hipaa|soc2|pci|health.data|payment.data)",
 ]
 
 if any(re.search(p, task.description, re.I) for p in ALWAYS_HIGH_PATTERNS):
