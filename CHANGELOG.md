@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed
+- `loki backlog` (many issues at once) now reports clearly. While it runs you see one line per state change with the path of each issue's log, and a short line every two minutes naming what is still running. At the end there is one row per issue (cost, time, result, pull request) and one `Total:` line: done, not done, pull requests, cost and time. An issue that ended in several pull requests says how many and why, where it used to show only the first.
+
+### Fixed
+- Stopping `loki backlog` with Ctrl-C or a job time limit used to exit with no summary. It now stops the runs, prints every row and the total, and exits 130.
+- `loki backlog` keeps the receipts of a finished run under `<checkout>-backlog/receipts`; they used to be deleted with the issue's worktree.
+
 ## v11.141.6 (2026-11-15)
 
 A run stopped by its time limit now always leaves a receipt.

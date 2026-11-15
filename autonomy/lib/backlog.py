@@ -40,6 +40,21 @@ each as `loki jira:PROJ-N` / `loki linear:TEAM-N` from the current checkout.
 --issues takes item numbers (12 means PROJ-12). A large Jira or Linear item runs
 as one run: the engine splits only GitHub issues today.
 
+What the user sees: one line per state change (queued, running with the log
+path, the result), a heartbeat line every LOKI_BACKLOG_HEARTBEAT_S seconds
+(default 120, 0 off) naming what still runs, and at the end one row per item
+(cost, time, result with its PR or PR count) plus one Total line (done, not
+done, PRs, cost, time). Child output goes only to <checkout>-backlog/logs. A
+SIGINT or SIGTERM stops the children and still prints the rows and the Total
+(exit 130). A finished run's receipts are kept under
+<checkout>-backlog/receipts/<item> before its worktree is removed.
+
+LOKI_BACKLOG_LOCAL_ORIGIN=1 (off by default) accepts a checkout whose origin is
+a local bare repository (an absolute path, the rule engine10-push.sh uses):
+issues are still read from owner/repo, and each run publishes its branch to
+that bare repository and prints PR: local://<path>#<branch>. For rehearsals and
+tests: branches and PRs go to the local bare repository; the run still uses GitHub for the issue itself.
+
 Test seam: LOKI_BACKLOG_LAUNCHER replaces the real launcher (called with the
 issue ref, cwd = the issue worktree).
 """
@@ -89,6 +104,17 @@ def origin_slug(cwd):
     url = git("remote", "get-url", "origin", cwd=cwd).stdout.strip()
     m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$", url)
     return m.group(1) if m else ""
+
+
+def local_bare_origin(cwd):
+    """The origin path when it is a local bare repository (absolute, colon-free, its own git dir), else ""."""
+    url = git("config", "--get", "remote.origin.url", cwd=cwd).stdout.strip()
+    if not url.startswith("/") or ":" in url or not os.path.isdir(url):
+        return ""
+    real = os.path.realpath(url)
+    if git("rev-parse", "--is-bare-repository", cwd=real).stdout.strip() != "true":
+        return ""
+    return url if os.path.realpath(git("rev-parse", "--absolute-git-dir", cwd=real).stdout.strip()) == real else ""
 
 
 def _issue(i, repo):
@@ -230,9 +256,41 @@ def add_spend(usd):
         json.dump(data, f)
 
 
+def pr_urls(text):
+    """-> (distinct PR urls a run printed, how many more it only counted). local://: published to a local bare origin (engine10-push.sh)."""
+    urls = list(dict.fromkeys(re.findall(r"^PR:\s+((?:https?|local)://\S+)", text, re.M)))
+    more = re.search(r"^PR:\s+\(\+(\d+) more", text, re.M)  # issues_epic.ts prLines folds the rest into a count
+    return urls, int(more.group(1)) if more else 0
+
+
+def pr_count(text):
+    urls, more = pr_urls(text)
+    return len(urls) + more
+
+
+def pr_text(text):
+    """"PR <url>" for the one PR an issue should end in; a run that opened several says how many and why (its Combined line)."""
+    urls, more = pr_urls(text)
+    if not urls:
+        return ""
+    if len(urls) + more == 1:
+        return "PR " + urls[0]
+    why = re.search(r"^Combined:\s+(.+)$", text, re.M)
+    note = " (%s)" % clip(why.group(1).strip(), 140) if why else ""
+    return "%d PRs%s, first %s" % (len(urls) + more, note, urls[0])
+
+
+def clip(s, n):
+    return s if len(s) <= n else s[:n - 3] + "..."
+
+
+def mins(seconds):
+    return "%ds" % round(seconds) if seconds < 90 else "%dm" % round(seconds / 60.0)
+
+
 def parse_result(rc, text):
     """-> (ok, status line text, cost_usd or None)."""
-    pr = re.search(r"^PR:\s+((?:https?|local)://\S+)", text, re.M)  # local://: published to a local bare origin (engine10-push.sh)
+    pr = pr_text(text)
     why = re.search(r"^Reason:\s+(.+)$", text, re.M)
     cost = re.search(r"^Cost:\s+(?:partial:\s+)?\$([0-9]+(?:\.[0-9]+)?)", text, re.M)
     usd = float(cost.group(1)) if cost else None
@@ -241,13 +299,13 @@ def parse_result(rc, text):
         usd = (usd or 0.0) + float(plan.group(1))
     reason = why.group(1).strip() if why else ""
     if rc == 0:
-        return True, ("PR " + pr.group(1)) if pr else "VERIFIED", usd
+        return True, pr or "VERIFIED", usd
     if rc == 4:
         return False, "BLOCKED: " + (reason or "see the run log"), usd
     if rc == 3:
         return False, "BUDGET_STOP: " + (reason or "run cost cap reached"), usd
     if rc == 6:  # PARTIAL: some proof missing; counts as done only with its (draft) PR
-        return bool(pr), ("PARTIAL, PR " + pr.group(1)) if pr else "PARTIAL: " + (reason or "not every check proven"), usd
+        return bool(pr), ("PARTIAL, " + pr) if pr else "PARTIAL: " + (reason or "not every check proven"), usd
     return False, "FAILED: " + (reason or "exit %d" % rc), usd
 
 
@@ -392,7 +450,8 @@ def main(argv):
     top = git("rev-parse", "--show-toplevel").stdout.strip()
     if not top:
         return die("run this from a checkout of %s" % a.repo)
-    if not tracker and origin_slug(top).lower() != a.repo.lower():
+    local_origin = local_bare_origin(top) if os.environ.get("LOKI_BACKLOG_LOCAL_ORIGIN") == "1" and not tracker else ""
+    if not tracker and not local_origin and origin_slug(top).lower() != a.repo.lower():
         return die("this checkout's origin is %r, not %s; cd into a checkout of %s"
                    % (origin_slug(top) or "unknown", a.repo, a.repo))
 
@@ -496,24 +555,70 @@ def main(argv):
                    "done": u["done"], "base": u["base"], "drop": sum(TRACKER_SECRETS.values(), ())}  # a unit is a text task: no tracker token
         if u["spec"]:  # frozen group acceptance for unit_mode (wall.ts)
             spec[k]["env"].update(LOKI_UNIT_SPEC=u["spec"], LOKI_SPEED="1")
-    state = {k: {"status": "queued", "ok": None, "cost": None, "ran": False} for k in spec}
+    state = {k: {"status": "queued", "ok": None, "cost": None, "ran": False, "prs": 0, "secs": None} for k in spec}
     for k in state:
         say("backlog: %s queued" % spec[k]["label"])
     for n, (ok, status) in routed.items():  # in the summary, never in the job queue
-        state[n] = {"status": status, "ok": ok, "cost": None, "ran": False}
+        state[n] = {"status": status, "ok": ok, "cost": None, "ran": False, "prs": 0, "secs": None}
     pending = list(spec)
     running = {}  # key -> (Popen, log path, worktree)
     unmeasured = 0
+    t_start = time.time()
+    started = {}  # key -> launch time
+    stop = []  # the signal that asked for a stop: the loop below ends, the children are stopped and the summary still prints
+    done_at_signal = set()  # children that had already exited when the first signal came: they keep their real result
 
-    def stop_children(*_):
-        for p, _l, _w in running.values():
+    def term_children():
+        for k, (p, _l, _w) in list(running.items()):
+            if k in done_at_signal:
+                continue
             try:
                 os.killpg(p.pid, signal.SIGTERM)
             except OSError:
                 pass
-        sys.exit(130)
-    signal.signal(signal.SIGTERM, stop_children)
-    signal.signal(signal.SIGINT, stop_children)
+
+    def on_signal(signum, _f):  # the children are told at once, even while a launch is still preparing a worktree
+        if not stop:  # before any SIGTERM from us, an exited child finished on its own
+            done_at_signal.update(k for k, (p, _l, _w) in list(running.items()) if p.poll() is not None)
+        stop.append(signum)
+        term_children()
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+
+    def stop_children():
+        """SIGTERM every child's process group, give the engine its cancel grace, then SIGKILL what is left."""
+        term_children()
+        try:
+            grace = float(os.environ.get("LOKI_BACKLOG_STOP_GRACE_S") or 30)
+        except ValueError:
+            grace = 30.0
+        deadline = time.time() + grace
+        for p, _l, _w in running.values():
+            try:
+                p.wait(timeout=max(0.1, deadline - time.time()))
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                p.wait()
+
+    def keep_receipts(k, wt):
+        """Copy the run dirs (receipt, events, epic.json, slice receipts) out before the worktree goes."""
+        src = os.path.join(wt, ".loki", "runs")
+        if spec[k]["unit"] or os.path.islink(src) or not os.path.isdir(src):
+            return
+        dst = os.path.join(wt_root, "receipts", spec[k]["wt"])
+        try:
+            if os.path.lexists(dst):  # an earlier run's receipts move aside under a dated name, never deleted
+                base = "%s.%s" % (dst, time.strftime("%Y%m%d-%H%M%S", time.localtime(os.lstat(dst).st_mtime)))
+                aside, i = base, 1
+                while os.path.lexists(aside):
+                    aside, i = "%s-%d" % (base, i), i + 1
+                os.rename(dst, aside)
+            shutil.copytree(src, dst, symlinks=True, ignore=shutil.ignore_patterns("worktrees", "node_modules"))
+        except (OSError, shutil.Error):
+            pass
 
     def harvest(k, wt):
         """Copy the newest unit receipt and events into the group dir before the worktree goes."""
@@ -550,9 +655,10 @@ def main(argv):
         except OSError:
             pass
 
-    def finish(k):
+    def finish(k, stopped=False):
         nonlocal unmeasured
         p, log, wt = running.pop(k)
+        state[k]["secs"] = time.time() - started[k]
         try:
             with open(log, errors="replace") as f:
                 text = redact(f.read(), token)
@@ -561,13 +667,16 @@ def main(argv):
         except OSError:
             text = ""
         ok, status, usd = parse_result(p.returncode, text)
+        if stopped:  # the child was killed mid-run: never read its exit code as the run's verdict
+            ok, status = False, "STOPPED: interrupted%s; worktree kept at %s" % (", " + pr_text(text) if pr_text(text) else "", wt)
         if usd is None:
             unmeasured += 1
         else:
             add_spend(usd)
-        state[k].update(status=status, ok=ok, cost=usd)
+        state[k].update(status=status, ok=ok, cost=usd, prs=pr_count(text))
         say("backlog: %s %s" % (spec[k]["label"], status))
         harvest(k, wt)
+        keep_receipts(k, wt)
         if ok:
             git("worktree", "remove", "--force", wt, cwd=top)
             if not spec[k]["unit"]:  # a passing unit branch is kept for the integrator
@@ -604,8 +713,9 @@ def main(argv):
             p = subprocess.Popen(s["cmd"], cwd=wt, env=without(dict(child_env, **s["env"]), s.get("drop", ())), stdout=lf,
                                  stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
         running[k] = (p, log, wt)
+        started[k] = time.time()
         state[k].update(status="running", ran=True)
-        say("backlog: %s running" % s["label"])
+        say("backlog: %s running (log: %s)" % (s["label"], log))
 
     def next_ready():
         """First pending job whose parents all passed; skip jobs whose parent did not."""
@@ -622,10 +732,20 @@ def main(argv):
                 return k
         return None
 
-    while pending or running:
+    try:
+        beat_s = float(os.environ.get("LOKI_BACKLOG_HEARTBEAT_S") or 120)
+    except ValueError:
+        beat_s = 120.0
+    last_beat = time.time()
+    while (pending or running) and not stop:
         for k in [k for k, (p, _l, _w) in running.items() if p.poll() is not None]:
             finish(k)
-        while pending and len(running) < conc:
+        if beat_s > 0 and running and time.time() - last_beat >= beat_s:
+            last_beat = time.time()
+            say("backlog: %d running (%s), %d queued, %d finished, %s elapsed" % (
+                len(running), ", ".join("%s %s" % (spec[k]["label"], mins(last_beat - started[k])) for k in running),
+                len(pending), sum(1 for k in spec if state[k]["ok"] is not None), mins(last_beat - t_start)))
+        while pending and len(running) < conc and not stop:
             group_spent = sum(st["cost"] or 0 for st in state.values())
             if group_cap and group_spent >= group_cap:
                 for k in pending:
@@ -654,14 +774,30 @@ def main(argv):
         if running:
             time.sleep(0.2)
 
+    if stop:
+        say("backlog: interrupted (signal %d); stopping %d running, %d never started" % (stop[0], len(running), len(pending)))
+        stop_children()
+        for k in list(running):
+            finish(k, stopped=k not in done_at_signal)
+        for k in pending:
+            state[k].update(status="NOT STARTED: interrupted", ok=False)
+        pending = []
+
     # ---- summary -----------------------------------------------------------
     say("")
     say("Summary: %s" % a.repo)
-    say("%-14s %-10s %s" % ("ITEM", "COST", "RESULT"))
+    say("%-14s %-10s %-6s %s" % ("ITEM", "COST", "TIME", "RESULT"))
     for n, s in state.items():
-        say("%-14s %-10s %s" % (spec[n]["label"] if n in spec else labels[n], ("$%.2f" % s["cost"] if s["cost"] is not None else "unmeasured" if s["ran"] else "-"), s["status"]))
+        say("%-14s %-10s %-6s %s" % (spec[n]["label"] if n in spec else labels[n], ("$%.2f" % s["cost"] if s["cost"] is not None else "unmeasured" if s["ran"] else "-"),
+                                     mins(s["secs"]) if s["secs"] is not None else "-", s["status"]))
     measured = sum(s["cost"] or 0 for s in state.values())
-    say("Total measured cost: $%.2f%s" % (measured, " (%d run(s) unmeasured, not counted as $0)" % unmeasured if unmeasured else ""))
+    jobs = [s for n, s in state.items() if n in spec]  # routed spec and human issues never run: they are counted apart
+    done = sum(1 for s in jobs if s["ok"])
+    say("Total: %d done, %d not done%s; %d PR(s); cost $%.2f%s; time %s" % (
+        done, len(jobs) - done, ", %d not run (spec or human)" % len(routed) if routed else "", sum(s["prs"] for s in jobs),
+        measured, " (%d run(s) unmeasured, not counted as $0)" % unmeasured if unmeasured else "", mins(time.time() - t_start)))
+    if stop:
+        return 130
     bad = [s for s in state.values() if not s["ok"]]
     if not bad:
         return 0

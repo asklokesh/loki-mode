@@ -14638,7 +14638,7 @@ cmd_backlog() {
             echo "  --all             Every open issue"
             echo "  --label X         Open issues with label X"
             echo "  --issues 1,2,3    Exactly these issue numbers"
-            echo "  --concurrency N   Max runs in parallel (default: loki.yaml concurrency, else 2)"
+            echo "  --concurrency N   Max issues in flight (default: loki.yaml concurrency, else 2)"
             echo "  --dry-run         Print each issue's triage class (implement, spec, human) and reason; launch nothing"
             echo ""
             echo "Run from a checkout of owner/repo (for Jira or Linear, the checkout the work lands in)."
@@ -14648,6 +14648,8 @@ cmd_backlog() {
             echo "human issues are listed with the reason. Label loki:implement|loki:spec|loki:human forces a class;"
             echo "LOKI_TRIAGE=0 runs every issue untriaged."
             echo "Config: loki.yaml (repo root, then ~/.loki/loki.yaml); see docs/loki.yaml.example."
+            echo "Output: one line per state change, each run's own output in <checkout>-backlog/logs, then one row per issue"
+            echo "(cost, time, result, PR) and one Total line (done, not done, PRs, cost, time). Ctrl-C still prints them (exit 130)."
             echo "Exit: 0 every run ended VERIFIED or with a PR (spec and human issues do not fail it); 3 only budget stops; 1 otherwise; 2 usage."
             return 0
             ;;
