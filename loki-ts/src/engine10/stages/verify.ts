@@ -374,7 +374,8 @@ async function baseGoBatch(items: { c: VerifyCheck; t: TestRef; bc: ReturnType<t
  *  dirs can see head,  depsSeeHead, and, for intake's lazy record, when envChangedSince finds the environment changed since intake) is  out.zero; seal keeps it in the receipt as repo_skipped and out of the verdict.  ponytail: bun/go/cargo/npm yield no ids and no skip count, so they are never subtracted or judged weak. */
 /** BASE-MEMO (FireLater#24 s3, LOKI_E10_BASE_MEMO default on, =0 reruns base every verify): the base commit never changes inside a run, so a base result for one
  *  command (its cwd and args relative to the base worktree, and whether the head's dependency dirs were linked) is kept in the run dir and reused by every later
- *  verify of the same run. s3's second verify spent about 3 of its 4 minutes rerunning the same 22 base-red page tests and stopped at its limit before lint ran.
+ *  verify of the same run (FireLater#24 s3: a re-verify stopped at its 120 s limit after a 3-minute gap past its targeted tests; the cause of that gap is not measured,
+ *  the same 22 base files batched alone take 8 s, so this is a saving on repeated base runs, not the whole fix).
  *  Only a finished run is kept (never a cut, aborted or missing-tool one); the file is bound to the base sha, so another base reads nothing. */
 export const baseMemoOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BASE_MEMO"] ?? "").trim());
 type BaseMemo = { get: (key: string) => FileRun | undefined; put: (key: string, r: FileRun) => void; save: () => void; key: (dir: string, bc: { cmd: string; args: string[]; cwd: string }, deps: boolean) => string };

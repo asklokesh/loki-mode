@@ -785,12 +785,23 @@ try {
 } finally { process.chdir(cwd0); }
 const a = sup.deepPostArgv(["/bun", "--smol", "/cli.ts", "engine10", "deep-worker", id, "claude", "sonnet"], "https://github.com/o/r.git", 4242);
 res("DEEP-POST argv reuses the runtime and CLI with run id, worker pid and origin", JSON.stringify(a) === JSON.stringify(["/bun", "--smol", "/cli.ts", "engine10", "deep-post", id, "4242", "https://github.com/o/r.git"]));
+{ const calls: { cmd: string; args: string[]; env: NodeJS.ProcessEnv }[] = [], ev: { type: string; data: Record<string, unknown> }[] = [];
+  const fake = (cmd: string, args: string[], o: { env: NodeJS.ProcessEnv }) => { calls.push({ cmd, args, env: o.env }); return 100 + calls.length; };
+  const worker = { GH_TOKEN: "ghp_LOKIWITHHELDsentinelX", PATH: "/bin" }, real = { GH_TOKEN: "real-token", PATH: "/bin" };
+  const np = sup.spawnDeep(["/bun", "/cli.ts", "engine10", "deep-worker", id, "claude", "sonnet"], "https://github.com/o/r.git", { workerEnv: worker, env: real, repoDir: R, append: (e) => ev.push(e), spawn: fake as never });
+  const w = calls.find((c) => c.args.includes("deep-worker")), p = calls.find((c) => c.args.includes("deep-post"));
+  res("DEEP-POST the worker gets the withheld env plus LOKI_E10_DEEP_POSTER=1; the poster gets the supervisor env", !!w && w.env.GH_TOKEN === worker.GH_TOKEN && w.env.LOKI_E10_DEEP_POSTER === "1" && !!p && p.env.GH_TOKEN === "real-token" && p.args.includes(String(101)) && np.length === 0);
+  const ds = ev.filter((e) => e.type === "deep.started");
+  res("DEEP-POST deep.started is recorded for the worker, then for the poster last", ds.length === 2 && ds[0]!.data.pid === 101 && ds[1]!.data.pid === 102 && ds[1]!.data.poster === true);
+  calls.length = 0; ev.length = 0;
+  sup.spawnDeep(["/bun", "/cli.ts", "engine10", "deep-worker", id, "claude", "sonnet"], "o", { workerEnv: worker, env: { ...real, LOKI_E10_DEEP_POST: "0" }, repoDir: R, append: (e) => ev.push(e), spawn: fake as never });
+  res("DEEP-POST =0 spawns the worker alone without the poster flag", calls.length === 1 && calls[0]!.env.LOKI_E10_DEEP_POSTER === undefined && ev.filter((e) => e.type === "deep.started").length === 1); }
 res("DEEP-POST on by default, =0 opts out", sup.deepPostOn({}) && !sup.deepPostOn({ LOKI_E10_DEEP_POST: "0" }));
 rmSync(R, { recursive: true, force: true });
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/fl24-deeppost.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "fl24-deeppost unit script crashed or exited non-zero"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 9 ] || bad "fl24-deeppost unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 9"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 12 ] || bad "fl24-deeppost unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 12"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

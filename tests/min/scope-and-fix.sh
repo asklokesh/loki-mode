@@ -3648,7 +3648,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 const root = process.argv[2]!, T = process.argv[3]!;
-const { testFileWeakened, weakensTest } = await import(root + "/loki-ts/src/util/test_guard.ts");
+const { testFileWeakened, weakensTest, weakenExcuse } = await import(root + "/loki-ts/src/util/test_guard.ts");
 const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
 const sh = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@e.invalid", ...a], { encoding: "utf8" });
 const R = join(T, "weak-fx"); rmSync(R, { recursive: true, force: true }); mkdirSync(join(R, "tests/unit/routes"), { recursive: true }); mkdirSync(join(R, "src/services"), { recursive: true }); mkdirSync(join(R, "src/utils"), { recursive: true });
@@ -3664,6 +3664,9 @@ writeFileSync(join(R, "tests/unit/services.test.ts"), up);
 res("TASK-CASE the count rule alone reads the task-named update as weakened", weakensTest(issues, up));
 res("TASK-CASE fewer assertions only inside the case the task names by title is not weakened", !testFileWeakened(R, base, null, "tests/unit/services.test.ts", "M", task));
 res("TASK-CASE the same edit is weakened when the task does not name the case", testFileWeakened(R, base, null, "tests/unit/services.test.ts", "M", "Make search full-text."));
+res("TASK-CASE a task that quotes the title only as failing excuses nothing (the cap stays)", testFileWeakened(R, base, null, "tests/unit/services.test.ts", "M", "Bug: the test 'should search across title, issue_number, description' fails on CI with a timeout."));
+res("TASK-CASE a failing title plus update the code excuses nothing", testFileWeakened(R, base, null, "tests/unit/services.test.ts", "M", "The test 'should search across title, issue_number, description' fails; update the code so it passes."));
+res("TASK-CASE the excuse names its reason for the receipt", /test cases the task asks to update/.test(weakenExcuse(R, base, null, "tests/unit/services.test.ts", task) ?? ""));
 process.env.LOKI_E10_WEAK_EXCUSE = "0"; res("TASK-CASE =0 keeps the count rule (weakened)", testFileWeakened(R, base, null, "tests/unit/services.test.ts", "M", task)); delete process.env.LOKI_E10_WEAK_EXCUSE;
 writeFileSync(join(R, "tests/unit/services.test.ts"), up.replace("    expect(sortOf('y')).toBe('created_at');\n", ""));
 res("TASK-CASE an assertion dropped from another case still caps", testFileWeakened(R, base, null, "tests/unit/services.test.ts", "M", task));
@@ -3677,18 +3680,25 @@ const tail = "\ndescribe('search persistence routes', () => {\n  beforeEach(() =
 const s2 = routes.replace("describe('POST /v1/search'", added + "describe('POST /v1/search'") + tail;
 writeFileSync(join(R, "tests/unit/routes/search.test.ts"), s2);
 res("NEW-SCOPE the count rule alone reads added mocks and a hook as weakened", weakensTest(routes, s2));
-res("NEW-SCOPE mocks of modules the change adds, a hook in an added describe and a logger stub are not weakened", !testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", ""));
+res("NEW-SCOPE by default a mock of a module the change adds still caps (it can reach existing tests when logic moved into it)", testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", ""));
+writeFileSync(join(R, "tests/unit/routes/search.test.ts"), routes + tail);
+res("NEW-SCOPE a hook inside a describe block the change added is not weakened (default on)", !testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", "") && /describe blocks the change added/.test(weakenExcuse(R, base, null, "tests/unit/routes/search.test.ts", "") ?? ""));
+writeFileSync(join(R, "tests/unit/routes/search.test.ts"), s2);
+process.env.LOKI_E10_WEAK_MOCK_NEW = "1";
+res("NEW-SCOPE =1 mocks of modules the change adds, a hook in an added describe and a logger stub are not weakened", !testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", ""));
 writeFileSync(join(R, "tests/unit/routes/search.test.ts"), s2.replace("vi.mock('../../../src/utils/logger.js', () => ({\n  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },\n}));\n", "vi.mock('../../../src/utils/db.js', () => ({\n  db: { query: vi.fn() },\n}));\n"));
 res("NEW-SCOPE a mock of a module that exists on base and is not a logger still caps", testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", ""));
 writeFileSync(join(R, "tests/unit/routes/search.test.ts"), s2.replace("logger: { info: vi.fn(),", "logger: { info: vi.fn().mockReturnValue(1),"));
 res("NEW-SCOPE a logger mock with an implementation still caps", testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", ""));
 writeFileSync(join(R, "tests/unit/routes/search.test.ts"), routes.replace("  it('returns results'", "  beforeEach(() => {\n    vi.useFakeTimers();\n  });\n  it('returns results'"));
 res("NEW-SCOPE a hook added to an existing describe still caps", testFileWeakened(R, base, null, "tests/unit/routes/search.test.ts", "M", ""));
+delete process.env.LOKI_E10_WEAK_MOCK_NEW;
+res("NEW-SCOPE the mock clauses are off by default and on with =1", (await import(root + "/loki-ts/src/util/test_guard.ts")).weakMockNewOn({}) === false);
 rmSync(R, { recursive: true, force: true });
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/fl24-weak.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
 printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "fl24-weak unit script crashed or exited non-zero"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 11 ] || bad "fl24-weak unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 11"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 17 ] || bad "fl24-weak unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 17"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

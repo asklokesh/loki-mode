@@ -25,19 +25,36 @@ export function testFileWeakened(repoDir: string, baseSha: string, headSha: stri
   try {
     const base = safeGit(repoDir, ["show", `${baseSha}:${rel}`]), head = headSha === null ? readFileSync(join(repoDir, rel), "utf8") : safeGit(repoDir, ["show", `${headSha}:${rel}`]);
     if (!weakensTest(base, head)) return false;
-    return !weakenExcuseOn() || !excusedEdit(repoDir, baseSha, headSha, rel, base, head, task);
+    return !weakenExcuseOn() || excusedEdit(repoDir, baseSha, headSha, rel, base, head, task) === null;
   } catch { return true; }
+}
+/** Why an edited test file the count rule reads as weakened is kept uncapped (FL24-WEAK), or null when it is not excused. Seal lists it on the receipt, so an excuse is never silent. */
+export function weakenExcuse(repoDir: string, baseSha: string, headSha: string | null, rel: string, task = ""): string | null {
+  if (!weakenExcuseOn()) return null;
+  try {
+    const base = safeGit(repoDir, ["show", `${baseSha}:${rel}`]), head = headSha === null ? readFileSync(join(repoDir, rel), "utf8") : safeGit(repoDir, ["show", `${headSha}:${rel}`]);
+    return weakensTest(base, head) ? excusedEdit(repoDir, baseSha, headSha, rel, base, head, task) : null;
+  } catch { return null; }
 }
 
 /** FL24-WEAK (LOKI_E10_WEAK_EXCUSE, default on, =0 restores the count rule alone). Two edits the count rule read as weakening are not:
  *  (1) TASK-CASE: fewer assertions only inside test cases the task names by their exact title (FireLater#24 s1: the issue asked to update
  *  'should search across title, issue_number, description' from three ILIKE assertions to two full-text ones). Every changed line must sit
  *  inside one such case on base and on head, the case keeps an assertion, and no case is dropped or skipped.
- *  (2) NEW-SCOPE SETUP: an added setup or mock that cannot reach an existing test: a module mock whose target file is new in this change,
- *  a hook inside a describe block the change added, or a module mock whose factory only returns bare vi.fn()/jest.fn() stubs for a logging
- *  or metrics module (s2: search-history, saved-filter and search-analytics mocks, a beforeEach in the added describe, a logger stub).
- *  Anything else keeps the cap. Fail-safe: an unreadable diff excuses nothing. */
+ *  (2) NEW-SCOPE SETUP: a setup hook inside a describe block the change added (s2's beforeEach). With LOKI_E10_WEAK_MOCK_NEW=1 also a module mock
+ *  whose target file is new in this change, or one whose factory only returns bare vi.fn()/jest.fn() stubs for a logging or metrics module
+ *  (s2's search-history, saved-filter, search-analytics and logger mocks).
+ *  The task must ask for the test itself to change near the title ("the test ... is updated", "update the test"): a title quoted only as failing, or with "update the code", excuses nothing.
+ *  The mock clauses are OFF by default (LOKI_E10_WEAK_MOCK_NEW=1 turns them on): a mock of a new module can still reach an existing test when the change
+ *  moved logic into that module, so only the hook clause is sound by construction. Anything else keeps the cap. Fail-safe: an unreadable diff excuses nothing. */
 export const weakenExcuseOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_WEAK_EXCUSE"] ?? "").trim());
+export const weakMockNewOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_WEAK_MOCK_NEW"] ?? "").trim());
+const UPDATE_ASK_RE = /\btests?\b(?:(?!\.\s)[^\n]){0,200}?\b(?:is|are|be|gets?|must be|should be)\s+(?:updated|changed|rewritten|replaced)\b|\b(?:update|change|rewrite|replace)\s+(?:the\s+|this\s+|that\s+|its\s+)?(?:existing\s+)?(?:test|assertion|expectation)s?\b/i;
+/** True when the task quotes `title` and asks, within the same stretch of text (200 characters either side), for that test to be updated. */
+function taskAsksUpdate(task: string, title: string): boolean {
+  for (let i = task.indexOf(title); i >= 0; i = task.indexOf(title, i + 1)) if (UPDATE_ASK_RE.test(task.slice(Math.max(0, i - 200), i + title.length + 200))) return true;
+  return false;
+}
 const CASE_START_RE = /^\s*(?:it|test)(?:\.\w+)?\s*\(\s*(['"`])((?:\\.|(?!\1).)*)\1/;
 const ANY_CASE_RE = /^\s*(?:it|test|describe|context)(?:\.\w+)?\s*\(/;
 const HOOK_RE = /\b(?:beforeEach|afterEach|beforeAll|afterAll)\s*\(/;
@@ -59,10 +76,11 @@ function caseHolding(lines: string[], from: number, to: number): { title: string
   for (let i = from - 1; i < Math.min(to, lines.length); i++) if (i !== start && ANY_CASE_RE.test(lines[i]!)) return null;
   return { title: CASE_START_RE.exec(lines[start]!)![2]!, start, end };
 }
-function excusedEdit(repoDir: string, baseSha: string, headSha: string | null, rel: string, base: string, head: string, task: string): boolean {
-  if (count(CASE_RE, head) < count(CASE_RE, base) || count(SKIP_RE, head) > count(SKIP_RE, base)) return false;
+function excusedEdit(repoDir: string, baseSha: string, headSha: string | null, rel: string, base: string, head: string, task: string): string | null {
+  if (count(CASE_RE, head) < count(CASE_RE, base) || count(SKIP_RE, head) > count(SKIP_RE, base)) return null;
+  const why: string[] = [];
   const patch = safeGit(repoDir, headSha ? ["diff", "-U0", "--no-color", `${baseSha}:${rel}`, `${headSha}:${rel}`] : ["diff", "-U0", "--no-color", baseSha, "--", rel]);
-  const hunks = hunksOf(patch); if (hunks.length === 0) return false;
+  const hunks = hunksOf(patch); if (hunks.length === 0) return null;
   const bl = base.split("\n"), hl = head.split("\n"), added = new Set<number>();
   for (const h of hunks) for (let i = 0; i < h.hn; i++) added.add(h.h0 + i);
   // (1) a dropped assertion count is excused only when every hunk that removes lines sits inside one task-named case on both sides
@@ -70,10 +88,11 @@ function excusedEdit(repoDir: string, baseSha: string, headSha: string | null, r
     const removing = hunks.filter((h) => h.bn > 0);
     const named = removing.length > 0 && removing.every((h) => {
       const b = caseHolding(bl, h.b0, h.b0 + h.bn - 1), n = h.hn > 0 ? caseHolding(hl, h.h0, h.h0 + h.hn - 1) : caseHolding(hl, Math.max(1, h.h0), Math.max(1, h.h0));
-      if (!b || !n || b.title !== n.title || b.title.length < 8 || !task.includes(b.title)) return false;
+      if (!b || !n || b.title !== n.title || b.title.length < 8 || !taskAsksUpdate(task, b.title)) return false;
       return count(ASSERT_RE, hl.slice(n.start, n.end).join("\n")) > 0;
     });
-    if (!named) return false;
+    if (!named) return null;
+    why.push("fewer assertions only inside test cases the task asks to update");
   }
   // (2) every added setup construct must be one that cannot reach an existing test
   if (count(SETUP_RE, head) > count(SETUP_RE, base)) {
@@ -97,20 +116,21 @@ function excusedEdit(repoDir: string, baseSha: string, headSha: string | null, r
         const allAdded = Array.from({ length: k - (n - 1) + 1 }, (_, j) => n + j).every((x) => added.has(x));
         const fresh = cs.length > 0 && !cs.some((c) => exists(baseSha, c)) && cs.some(onHead);
         const stub = OBSERVABILITY_RE.test((spec.split("/").pop() ?? "").replace(/\.\w+$/, "")) && STUB_FACTORY_RE.test(body.replace(/\n/g, " "));
-        if (allAdded && (fresh || stub)) { excused += hits; continue; }
-        return false;
+        if (weakMockNewOn() && allAdded && (fresh || stub)) { excused += hits; continue; }
+        return null;
       }
       if (HOOK_RE.test(line)) {
         const ind = /^\s*/.exec(line)![0].length; let owner = -1;
         for (let i = n - 2; i >= 0; i--) { const l = hl[i]!; if (/\bdescribe\s*\(/.test(l) && /^\s*/.exec(l)![0].length < ind) { owner = i + 1; break; } }
         if (owner > 0 && added.has(owner)) { excused += hits; continue; }
-        return false;
+        return null;
       }
-      return false;
+      return null;
     }
-    if (count(SETUP_RE, head) - excused > count(SETUP_RE, base)) return false;
+    if (count(SETUP_RE, head) - excused > count(SETUP_RE, base)) return null;
+    why.push(weakMockNewOn() ? "added setup only in describe blocks the change added, or mocks of modules new in the change" : "added setup only in describe blocks the change added");
   }
-  return true;
+  return why.join("; ") || null;
 }
 const normalizeRel = (p: string): string | null => { const out: string[] = []; for (const s of p.split("/")) { if (s === "" || s === ".") continue; if (s === "..") { if (!out.length) return null; out.pop(); } else out.push(s); } return out.join("/"); };
 
