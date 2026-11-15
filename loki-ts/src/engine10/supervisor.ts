@@ -40,7 +40,27 @@ import { encodeEstimate, startText } from "../runner/router/cost_preview.ts";
 export const START_LINE = "Loki 10 engine";
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 async function slackEvent(...a: Parameters<typeof import("../util/slack_events.ts").notifyEvent>): Promise<void> { try { await (await import("../util/slack_events.ts")).notifyEvent(...a); } catch { /* best-effort */ } }
-const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "run.resumed", "pr.opened", "log.sealed", "deep.started", "already.attested", "capability.recorded"]); // types only the supervisor may write; same types from the worker are dropped
+const SUPERVISOR_ONLY = new Set(["watchdog.silent", "run.started", "run.completed", "tamper.detected", "run.resumed", "pr.opened", "log.sealed", "deep.started", "already.attested", "capability.recorded"]); // types only the supervisor may write; same types from the worker are dropped
+/** WATCHDOG (LOKI_E10_WATCHDOG_SILENT_S, default 120; 0 turns it off): after this many seconds with no worker event, the supervisor records one watchdog.silent
+ *  event, and another each further interval of silence, with the last stage and event type and the names (executable basenames, never arguments) of every
+ *  process under the supervisor. A silence the worker's own heartbeats cannot report (a step outside any session, or a blocked event loop) then names its step. */
+export const watchdogSilentS = (env: NodeJS.ProcessEnv = process.env): number => { const raw = (env["LOKI_E10_WATCHDOG_SILENT_S"] ?? "").trim(); if (raw === "") return 120; const v = Number(raw); return Number.isFinite(v) && v >= 0 ? v : 120; };
+export function silenceWatch(intervalS: number, startMs: number): { event: (stage: string | null, type: string, nowMs: number) => void; due: (nowMs: number) => { stage: string | null; lastType: string; silentS: number } | null } {
+  let last = startMs, stage: string | null = null, lastType = "run.started", next = startMs + intervalS * 1000;
+  return {
+    event: (st, ty, now) => { last = now; next = now + intervalS * 1000; if (st) stage = st; lastType = ty; },
+    due: (now) => { if (intervalS <= 0 || now < next) return null; next = now + intervalS * 1000; return { stage, lastType, silentS: Math.round((now - last) / 1000) }; },
+  };
+}
+/** Executable basenames of every process under `rootPid` (ps pid, ppid and comm only: no argument ever leaves the process table), at most 40. Empty on any error. */
+export function descendantNames(rootPid: number): string[] {
+  try {
+    const rows = spawnSync("ps", ["-A", "-o", "pid=,ppid=,comm="], { encoding: "utf8", timeout: 5000 }).stdout.split("\n").map((l) => /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(l)).filter((m): m is RegExpExecArray => !!m).map((m) => ({ pid: Number(m[1]), ppid: Number(m[2]), name: m[3]!.trim().split("/").pop() ?? "" }));
+    const out: string[] = []; let frontier = [rootPid];
+    for (let depth = 0; frontier.length && depth < 12; depth++) { const kids = rows.filter((r) => frontier.includes(r.ppid)); out.push(...kids.map((k) => k.name)); frontier = kids.map((k) => k.pid); }
+    return out.slice(0, 40);
+  } catch { return []; }
+}
 /** DEEP-POST (LOKI_E10_DEEP_POST, default on; =0 restores the worker posting its own result, which cannot authenticate): see stages/deep.ts deepPost. */
 export const deepPostOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DEEP_POST"] ?? "").trim());
 /** The poster's argv from the deep worker's: the same runtime and CLI, subcommand deep-post, then run id, the worker pid and the pinned origin. Null when the worker argv has no deep-worker subcommand. */
@@ -181,7 +201,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   if (opts.resume) { log.verify(); log.sealLog(); } // resume checkpoint: signs the log up to and including run.resumed, so a hard kill of the resumed part stays resumable from here
   const stuck = createStuckWatch(stuckMinutes(env), Date.now(), (f) => { // PG-24: one alert per silence, stderr always, Slack when configured
     process.stderr.write(`engine10: no event for ${stuckMinutes(env)} min; last stage ${f.stage} at ${f.lastEventAt}; ${f.action}\n`); void slackEvent(env, "stuck", f); });
-  writeAliveBeat(aliveDir); const beat = setInterval(() => { writeAliveBeat(aliveDir); stuck.tick(Date.now()); }, ALIVE_BEAT_MS); beat.unref(); // cheap heartbeat for quiet stages (a long verify emits no events)
+  const quiet = silenceWatch(watchdogSilentS(env), Date.now()); // WATCHDOG (dev4 gitoxide: 854 s inside implement with no event at all): a recorded event per silence, naming the processes running then
+  writeAliveBeat(aliveDir); const beat = setInterval(() => { writeAliveBeat(aliveDir); stuck.tick(Date.now()); const w = quiet.due(Date.now()); if (w) log.append("watchdog.silent", w.stage as StageName, { silent_s: w.silentS, last_event: w.lastType, processes: descendantNames(process.pid) }); }, ALIVE_BEAT_MS); beat.unref(); // cheap heartbeat for quiet stages (a long verify emits no events)
   const workerEnv: NodeJS.ProcessEnv = { ...env }; // withholdGithubTokens mutates its argument: always a copy, never env itself
   withholdGithubTokens(workerEnv); if (opts.resume) workerEnv.LOKI_E10_RESUME = "1";
   // T3: the worker has no terminal; only the supervisor can ask the LOKI_CONFIRM question.
@@ -193,7 +214,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   let spawnArgv: string[] = opts.workerArgv; try { spawnArgv = ulimitArgv(opts.workerArgv, workerEnv); } catch { /* spawnWorker refuses the same input */ } log.append("capability.recorded", null, { stages: workerStages().map((st) => stageCapability(st, envWithPwd(workerEnv, opts.repoDir), spawnArgv)) }); // GAME10-05a: worker stages are read from the env and argv spawnWorker is given; pr is recorded by recordSpawnEnv at its own spawn
   let sealed: Record<string, unknown> | null = null; const origBranch = opts.restoreBranch !== undefined ? opts.restoreBranch : currentBranch(opts.repoDir), sessionGroups = new Set<number>(); // session children are detached (own group), so the worker's group kill misses them
   const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, (line) => {
-    const e = log.ingest(line); if (e) stuck.event(String(e.stage ?? "unknown"), Date.now());
+    const e = log.ingest(line); if (e) { stuck.event(String(e.stage ?? "unknown"), Date.now()); quiet.event(e.stage ?? null, e.type, Date.now()); }
     if (e?.type === "session.started" && typeof e.data.pgid === "number") sessionGroups.add(e.data.pgid); if (e?.type === "receipt.sealed") { sealed = e.data; log.checkpoint(e.data["receipt_sha256"]); }
     if (e?.type === "variant" && e.data.intent_confirm === true && workerEnv.LOKI_INTENT_TTY === "1") {
       void askIntent(String(e.data.card ?? ""), join(opts.repoDir, ".loki", "runs", opts.runId));

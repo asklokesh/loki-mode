@@ -836,5 +836,40 @@ DLTO=(${TO[@]+"${TO[@]}"}); DL0=$(date +%s); TO=(LOKI_RUN_DEADLINE_S=95 E2E_STUB
 [ "$DLW" -lt 95 ] && ok "RUN-DEADLINE the run ended inside its 95 s deadline (${DLW}s)" || bad "RUN-DEADLINE the run took ${DLW}s against a 95 s deadline"
 [ -n "$RUNDIR" ] && [ -f "$RUNDIR/receipt.json" ] && ok "RUN-DEADLINE a receipt was sealed when time ran out" || { bad "RUN-DEADLINE no receipt at the deadline"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
 [ -n "$RUNDIR" ] && grep -q '"cap.hit"' "$RUNDIR/events.jsonl" 2>/dev/null && ok "RUN-DEADLINE cap.hit recorded (time ran out, not a kill)" || bad "RUN-DEADLINE no cap.hit event"
+# ---------------------------------------------------------------- WATCHDOG (dev4 gitoxide): a silence with no worker event is recorded, naming the running processes
+cat > "$T/wd.ts" <<'TS'
+import { spawn } from "node:child_process";
+const root = process.argv[2]!;
+const sv = await import(root + "/loki-ts/src/engine10/supervisor.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const w = sv.silenceWatch(120, 0);
+w.event("implement", "session.ended", 10_000);
+res("WATCHDOG nothing is due before 120 s of silence", w.due(129_000) === null);
+const d = w.due(131_000);
+res("WATCHDOG one event is due at 120 s of silence, naming the last stage and event", !!d && d.stage === "implement" && d.lastType === "session.ended" && d.silentS === 121);
+res("WATCHDOG the next one is due one interval later, not every tick", w.due(140_000) === null && w.due(252_000) !== null);
+w.event("verify", "stage.started", 300_000);
+res("WATCHDOG a worker event resets the silence", w.due(400_000) === null);
+res("WATCHDOG 0 turns it off; the default is 120 s", sv.silenceWatch(0, 0).due(10_000_000) === null && sv.watchdogSilentS({}) === 120 && sv.watchdogSilentS({ LOKI_E10_WATCHDOG_SILENT_S: "0" }) === 0);
+const child = spawn("sleep", ["5"], { stdio: "ignore" });
+await new Promise((r) => setTimeout(r, 200));
+const names = sv.descendantNames(process.pid);
+child.kill();
+res("WATCHDOG it names the processes running under the supervisor, without arguments", names.includes("sleep") && !names.some((n: string) => n.includes(" ")));
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/wd.ts" "$ROOT" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "wd unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 6 ] || bad "wd unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 6"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+# End to end: a 20 s implement session with no heartbeat yet and a 2 s watchdog: the log carries watchdog.silent naming processes, and the run still delivers.
+WDTO=(${TO[@]+"${TO[@]}"}); TO=(LOKI_E10_WATCHDOG_SILENT_S=2 E2E_STUB_SLEEP=20 ${WDTO[@]+"${WDTO[@]}"}); run_engine done; TO=(${WDTO[@]+"${WDTO[@]}"})
+wd="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys
+ev=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+w=[e for e in ev if e.get("type")=="watchdog.silent"]
+print(len(w), w[0]["stage"] if w else "-", len(w[0]["data"].get("processes") or []) if w else 0)' "$RUNDIR/events.jsonl" 2>/dev/null)"
+case "$wd" in 0*|"") bad "WATCHDOG no watchdog.silent event in a 20 s silent session: '$wd'" ;; *) set -- $wd; [ "$2" = implement ] && [ "$3" -gt 0 ] && ok "WATCHDOG the silent implement session is recorded ($1 event(s)) with the processes running" || bad "WATCHDOG event facts: $wd" ;; esac
+[ "$(outcome)" = VERIFIED ] && ok "WATCHDOG recording a silence changes nothing else (VERIFIED)" || { bad "WATCHDOG outcome is '$(outcome)'"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /'; }
 
 finish
