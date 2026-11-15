@@ -2716,7 +2716,7 @@ print(json.dumps(event))
 # WHY THIS EXISTS: a tier resolution that quietly returns something other than the
 # pin is indistinguishable, in the receipt, from a run that got what it asked for.
 # The substitution itself is often legitimate; the SILENCE is the defect. This
-# emits both an event (machine-readable) and an audit line (the tamper-evident
+# emits both an event (machine-readable) and an audit line (the hash-chained
 # chain), so the swap and its stated reason can be audited and, if wrong,
 # refuted by whoever has the evidence to refute it.
 #

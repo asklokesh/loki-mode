@@ -18,7 +18,7 @@
 //
 // Bound to the oracle (r1's B4): sealPreSealedWall calls verifySeal before running anything and
 // carries the oracle's cases_sha256, coverage_sha256 and normalizers_sha256 into the Wall seal and
-// event. Tamper-evident like seal.ts (r1's B3): the sealed file's sha256 goes into the append-only
+// event. Hash-protected like seal.ts (r1's B3): the sealed file's sha256 goes into the append-only
 // wall.presealed.sealed event; verifyPreSealedWall recomputes the on-disk hash and compares.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

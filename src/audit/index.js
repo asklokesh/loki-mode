@@ -3,7 +3,7 @@
 /**
  * Loki Mode Audit Trail - Public API
  *
- * Enterprise audit logging with tamper-evident hash chains,
+ * Enterprise audit logging with hash chains,
  * compliance report generation, and data residency enforcement.
  *
  * Usage:
@@ -202,7 +202,7 @@ function flush() {
 
 /**
  * Cross-link the dashboard (Python) audit chain into the agent (JS)
- * audit chain, producing a single verifiable tamper-evident trail.
+ * audit chain, producing a single verifiable hash-chained trail.
  * See src/audit/crosslink.js.
  */
 function crossLink(opts) {
@@ -230,7 +230,7 @@ function writeWitness(opts) {
 
 /**
  * Link the run manifest (loki-run.json bill-of-materials) into the agent
- * audit chain so it becomes tamper-evident and verifiable against the
+ * audit chain so it becomes hash-chained and verifiable against the
  * evidence chain. No-op (honest) when the manifest is absent.
  * See src/audit/crosslink.js (linkManifest).
  */

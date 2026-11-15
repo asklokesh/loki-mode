@@ -120,6 +120,15 @@ oc_help="$(run bin/loki outcomes --help)"; oc_rc=$?
 run bin/loki outcomes canary --help >/dev/null; oc_rc=$?
 [ "$oc_rc" != "2" ] && [ "$oc_rc" = "0" ] && ok "loki outcomes canary --help is not a removed command (exit 0)" || bad "loki outcomes canary --help exit $oc_rc"
 
+# Control Plane hints: `loki ui` is not a command, so no hint may name it; the hints say `loki dashboard`, which opens the Control Plane.
+ui_out="$(run bin/loki ui)"; ui_rc=$?
+[ "$ui_rc" != "0" ] && printf '%s\n' "$ui_out" | grep -q 'Unknown command: ui' && ok "loki ui is not a command (exit $ui_rc, Unknown command)" || bad "loki ui answered exit $ui_rc: $ui_out"
+db_help="$(run bin/loki dashboard --help)"; db_rc=$?
+[ "$db_rc" = "0" ] && printf '%s\n' "$db_help" | grep -q "open the Control Plane" && ok "loki dashboard --help exits 0 and opens the Control Plane" || bad "loki dashboard --help exit $db_rc"
+ui_hits="$(grep -rn "loki ui\b" "$ROOT/autonomy/loki" "$ROOT/autonomy/lib" "$ROOT/bin/loki" "$ROOT/loki-ts/src" 2>/dev/null | head -5)"
+db_hint="$(grep -c 'Control Plane UI: ${CYAN}loki dashboard${NC}' "$ROOT/autonomy/loki")"
+[ -z "$ui_hits" ] && [ "$db_hint" -ge 2 ] && ok "CLI hints point at loki dashboard, never the unknown loki ui ($db_hint dashboard hints)" || bad "CLI still hints loki ui or lost the dashboard hint ($db_hint): $ui_hits"
+
 check "completions/loki.bash loads" bash -c "source '$ROOT/completions/loki.bash'"
 
 finish

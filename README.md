@@ -116,7 +116,7 @@ Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 | `loki control serve` | Start the Control Plane (see below) |
 | `loki dashboard` | Open the Control Plane UI, starting it if needed |
 | `loki tour` | Show a sample receipt offline. `loki start` does this when you are not in a git repo and did not pass a task |
-| `loki wow` | Same live mini-task as a normal start, in a temp repo. Offline sample when no provider is ready |
+| `loki wow` | Same live mini-task as a normal start, in a temp repo. It says it makes model calls and what it can cost, and asks y/N first (`--yes` skips; with no terminal it spends nothing). Offline sample when no provider is ready |
 | `loki factory "<task>"` | Same as `loki start`. The policy line is printed by start |
 | `loki --help` | Everything else; `loki help <command>` for one command |
 
