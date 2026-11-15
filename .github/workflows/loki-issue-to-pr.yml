@@ -358,8 +358,9 @@ jobs:
                 cat "$ERR" >&2
                 if grep -qi 'workflow' "$ERR"; then STATE="push_workflows"; else STATE="push_failed"; fi
               else
-                TITLE="Loki: resolve #${ISSUE}"
-                if [ -n "$VERDICT" ] && [ "$VERDICT" != "VERIFIED" ]; then TITLE="Loki (${VERDICT}): resolve #${ISSUE}"; fi
+                # The plain title is for a VERIFIED result only; anything else, a missing verdict included, says so.
+                TITLE="Loki (${VERDICT:-no verdict}): resolve #${ISSUE}"
+                if [ "$VERDICT" = "VERIFIED" ]; then TITLE="Loki: resolve #${ISSUE}"; fi
                 if PR_URL="$(gh pr create --repo "$REPO" --base "$BASE" --head "$BRANCH" --title "$TITLE" --body-file "$BODY" 2> "$ERR")"; then
                   PR_URL="$(printf '%s\n' "$PR_URL" | tail -n 1)"
                   STATE="opened"
@@ -421,7 +422,11 @@ jobs:
               no_change)
                 echo "### Loki: ${VERDICT:-no verdict}, no pull request"
                 echo ""
-                echo "The run finished without a committed change, so there is nothing to open."
+                if [ -n "$SLICES_TOTAL" ] && [ "$SLICES_TOTAL" != "0" ] && [ "${SLICES_IN:-0}" = "0" ]; then
+                  echo "The issue ran as ${SLICES_TOTAL} slices, but none of them could be combined into one change, so there is no pull request. The run log names each slice and why."
+                else
+                  echo "The run finished without a committed change, so there is nothing to open."
+                fi
                 if [ -n "$PROOF" ]; then echo "$PROOF"; fi
                 echo "$COSTLINE"
                 ;;

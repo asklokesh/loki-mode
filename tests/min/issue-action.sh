@@ -19,6 +19,9 @@
 #   no key:   no model key: nothing is installed or run, the comment names the secret and where to set it, exit 1.
 #   setting:  GitHub refuses the PR ("not permitted to create"): the comment names the repository setting and gives the
 #             compare link; a push refused for touching .github/workflows/ says so.
+#   cost:     a metered stub run (E2E_STUB_USAGE) puts its dollars in the comment; an unmetered one says "not measured".
+#   wording:  a split whose slices could not be combined, and a change that arrives with no verdict, are each reported
+#             as that (never as "no change", never titled like a VERIFIED result).
 #   data:     a hostile result.json (markup, a mention, shell text) puts none of its text in the comment.
 #   action:   the composite action .github/actions/issue-to-pr (the building block for a hand-written agent job) hands
 #             over the same change in its patch output.
@@ -284,7 +287,29 @@ publish_job 557
 [ "$PUB_RC" = 0 ] && [ "$(branches)" = "loki/issue-7-555 loki/issue-7-556 main " ] && comment | grep -qx '### Loki: VERIFIED, no pull request' \
     && ok "no change: an empty patch pushes nothing, opens nothing and the comment says there is nothing to open" || { bad "no change: exit $PUB_RC, $(comment | sed -n 2p)"; dump "$W/publish-557.out"; }
 
+# --- split with nothing combined, and a change with no verdict, are each worded as what they are --------------------
+printf '%s' '{"verdict": "PARTIAL", "slices_in": 0, "slices_total": 3, "checks_total": 0, "checks_passed": 0, "not_proven": 0}' > "$W/runner-a/loki-out/result.json"
+publish_job 559
+[ "$PUB_RC" = 1 ] && comment | grep -qx 'The issue ran as 3 slices, but none of them could be combined into one change, so there is no pull request. The run log names each slice and why.' \
+    && ! comment | grep -q 'without a committed change' \
+    && ok "no change: a split whose slices could not be combined says that, not that the run made no change" || { bad "no change: uncombined split worded wrong (exit $PUB_RC)"; comment | sed 's/^/    | /'; }
+(cd "$W/agent" && git diff --binary "$SHA" "$(git for-each-ref --format='%(refname)' 'refs/heads/loki/e10-*' | head -n 1)" -- . ':(exclude).loki') > "$W/runner-a/loki-out/loki.patch"
+printf '%s' '{"rc": 1}' > "$W/runner-a/loki-out/result.json"
+publish_job 560
+NV="$(awk -F'\t' '$2 == "loki/issue-7-560" {print $1}' "$GH_STATE/prs.tsv")"
+[ "$PUB_RC" = 0 ] && [ -n "$NV" ] && [ "$(cat "$GH_STATE/pr-$NV.title")" = "Loki (no verdict): resolve #7" ] && comment | grep -qx '### Loki: no verdict' && comment | grep -q '^This result is not VERIFIED' \
+    && ok "no verdict: a change that arrives without a verdict is titled and labelled as that, never like a VERIFIED one" || { bad "no verdict: exit $PUB_RC, title $(cat "$GH_STATE/pr-$NV.title" 2>/dev/null)"; comment | sed 's/^/    | /'; }
+
+# --- cost: a metered run prints its dollars ----------------------------------------------------------------------------
+world cost "add a multiply(a, b) function to calc.ts" "calc.ts needs multiply(a, b)."
+agent_job E2E_STUB_USAGE=2000
+publish_job 570
+echo "    cost: $(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r.get("cost_usd"), r.get("cost_partial"))' "$W/runner-a/loki-out/result.json" 2>&1) | $(comment | grep '^Cost')"
+[ "$PUB_RC" = 0 ] && comment | grep -Eq '^Cost: \$[0-9]+\.[0-9]{2}\.$' && ! comment | grep -q 'Cost: \$0\.00\.' \
+    && ok "cost: a metered run's comment carries its cost in dollars" || { bad "cost: comment cost line wrong (exit $PUB_RC)"; comment | sed 's/^/    | /'; dump "$W/run.out"; }
+
 # --- data: a hostile artifact puts none of its text on the issue -------------------------------------------------------
+: > "$W/runner-a/loki-out/loki.patch"
 printf '%s' '{"verdict": "<img src=x> @everyone VERIFIED", "cost_usd": "$(touch pwned)", "checks_passed": "9; rm -rf", "checks_total": -3, "not_proven": 1e99, "receipt_sha256": "`id`", "slices_in": true, "slices_total": [1]}' > "$W/runner-a/loki-out/result.json"
 publish_job 558
 C="$(comment)"
