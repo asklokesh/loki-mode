@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Added
+- A run that goes quiet now leaves a trace. After 120 s with no event from the engine, the supervisor records a `watchdog.silent` event naming the last stage and the programs running then (names only, never their arguments). It repeats for each further 120 s. On dev4, gitoxide sat 854 s inside implement with no event at all, so its cause could not be found. `LOKI_E10_WATCHDOG_SILENT_S` sets the interval; `0` turns it off.
 - New, off by default until measured: the pre-delivery review turn can be kept from breaking a test. With `LOKI_E10_REVIEW_TURN_GUARD=1`, when the turn edits anything, Loki reruns the tests of what it changed; if a test that passed before the turn fails after it, only that turn's edits are taken back, the implemented change is kept, and the receipt says which test it broke.
 
 ### Fixed
