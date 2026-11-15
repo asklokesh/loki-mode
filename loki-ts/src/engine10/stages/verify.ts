@@ -17,6 +17,17 @@ import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"
 import { type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, envChangedSince, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
+export const timeoutCarryOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TIMEOUT_CARRY"] ?? "").trim());
+export const TIMEOUT_CARRY_NOTE = "carried from an earlier verify of this run, not rerun (untouched file)";
+/** TIMEOUT-WAIT: after a check's timeout (or abort) fires, a process still alive this long later is SIGKILLed, so a test that ignores SIGTERM costs its limit, not minutes more. */
+export const KILL_AFTER_MS = 5_000;
+/** TIMEOUT-CARRY: the carried not_run checks for `tests`: each untouched test whose check timed out in the previous verify of this run, unless it is a Wall,
+ *  task-named or held-out check (`keep`), whose own result must come from a fresh run. */
+export function carriedTimeouts(prev: readonly VerifyCheck[], tests: readonly TestRef[], changed: readonly string[], keep: ReadonlySet<string>, env: NodeJS.ProcessEnv = process.env): VerifyCheck[] {
+  if (!timeoutCarryOn(env)) return [];
+  const timedOut = new Map(prev.filter((c) => c.result === "not_run" && /^timed out after /.test(c.reason ?? "")).map((c) => [c.name, c] as const));
+  return tests.flatMap((t) => { const n = testCheckName(t), p = timedOut.get(n); if (!p || changed.includes(t.path) || keep.has(n) || isHoldoutCheck(n)) return []; return [{ name: n, cmd: p.cmd, result: "not_run" as const, duration_s: 0, reason: `${String(p.reason).replace(/; carried from an earlier verify.*$/, "")}; ${TIMEOUT_CARRY_NOTE}` }]; });
+}
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
 interface ImplementOutput { exit?: ImplementExit; }
@@ -144,6 +155,7 @@ export async function runOnce(cmd: string, args: string[], cwd: string, signal: 
     signal: opts.group ? undefined : AbortSignal.any([signal, timeout]), ...(opts.group ? { detached: true } : {}),
     env: opts.path ? { ...plainTestEnv(), PATH: opts.path } : plainTestEnv(), // FC-69
   });
+  if (!opts.group) { const hard = (): void => { const t = setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* gone */ } }, KILL_AFTER_MS); void proc.exited.finally(() => clearTimeout(t)); }; const any = AbortSignal.any([signal, timeout]); if (any.aborted) hard(); else any.addEventListener("abort", hard, { once: true }); } // TIMEOUT-WAIT (dev4 aiohttp: a 60 s timeout cost 150 to 160 s)
   const killGroup = () => { try { process.kill(-proc.pid, "SIGKILL"); } catch { /* gone */ } }; if (opts.group) { AbortSignal.any([signal, timeout]).addEventListener("abort", killGroup, { once: true }); if (signal.aborted || timeout.aborted) killGroup(); } let tail = ""; const keep = goJsonStream(cmd, args) ? GO_JSON_KEEP : 65536, rs = [proc.stdout, proc.stderr].map((s) => s.getReader()); // a go test -json stream is parsed whole (a head-truncated stream reads as torn and never counts), so it keeps far more than the 64 KB tail
   const pumps = rs.map(async (r) => { const d = new TextDecoder(); for (;;) { const c = await r.read().catch(() => ({ done: true, value: undefined })); if (c.done) return; tail += d.decode(c.value, { stream: true }); if (tail.length > keep * 2) tail = tail.slice(-keep); } });
   const exitCode = await proc.exited;
@@ -607,8 +619,12 @@ export const verifyStage: Stage = {
     // L027: within each list, Wall tests and non-vitest tests run alone and first; then the task-named vitest files batched per package, then the other
     // vitest files batched per package (a stage stopped at its limit has run the Wall and task-named tests); a file a batch does not vouch for runs alone last.
     const batchable = (t: TestRef): boolean => verifyBatchOn() && t.runner === "vitest" && !wallNames0.has(testCheckName(t));
-    const runTests = async (list: TestRef[]): Promise<void> => {
+    // TIMEOUT-CARRY (dev4 aiohttp, LOKI_E10_TIMEOUT_CARRY default on, =0 reruns): an untouched, non-Wall, non-task test file that timed out in an earlier verify of
+    // this run is not run again; its not_run result is carried with the earlier reason (aiohttp's tests/test_proxy_functional.py cost about 160 s in every verify).
+    const runTests = async (all: TestRef[]): Promise<void> => {
       const byName = new Map<string, VerifyCheck[]>();
+      for (const c of carriedTimeouts((ctx.outputs().verify?.checks ?? []) as VerifyCheck[], all, changed, new Set([...wallNames0, ...targets0]))) { byName.set(c.name, [c]); done.push(c); ctx.emit("test.result", "verify", { ...c }); }
+      const list = all.filter((t) => !byName.has(testCheckName(t)));
       const alone = async (l: TestRef[]): Promise<void> => { (await mapPool(l, verifyJobs(), async (t) => { const tc = commandFor(t, ctx.repoDir, api), slot: VerifyCheck[] = []; await runCheck(ctx, testCheckName(t), tc.cmd, tc.args, signal, slot, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: [...wallTests, ...relevant].includes(t), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); done.push(...slot); publish(); return slot; }, () => signal.aborted)).forEach((sl, i) => { if (sl) byName.set(testCheckName(l[i]!), sl); }); };
       const goPart = (t: TestRef): boolean => goBatchable(t, targets0, changed); // Wall, task-named and edited go test files keep their own per-file run (the fail-then-pass proof); only untouched files batch
       await alone(list.filter((t) => !batchable(t) && !goPart(t)));
@@ -619,7 +635,7 @@ export const verifyStage: Stage = {
         for (const [n, c] of await runVitestBatches(ctx, part, api, signal, (c) => { done.push(c); publish(); })) byName.set(n, [c]);
       }
       await alone(list.filter((t) => batchable(t) && !byName.has(testCheckName(t))));
-      checks.push(...list.flatMap((t) => byName.get(testCheckName(t)) ?? [])); // the selected order, whichever way each check ran
+      checks.push(...all.flatMap((t) => byName.get(testCheckName(t)) ?? [])); // the selected order, whichever way each check ran
     };
     await runTests(split.first);
     const zgEnv = zeroGate((ctx.outputs().intake as { zero_baseline?: unknown } | undefined)?.zero_baseline), envAsIntake = (rel: string): boolean => { // C and D read the intake profile, which stands for base only while the environment is as intake left it (a deleted or added package changes what runs): fail closed otherwise

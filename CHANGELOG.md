@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+- A test file that timed out is not run again in later verifies of the same run when the change does not touch it. Its earlier result is carried, with the reason. A test that ignores the stop signal is now killed a few seconds after its time limit, instead of running minutes past it (dev4 aiohttp: a 60 s limit cost about 160 s in every verify). `LOKI_E10_TIMEOUT_CARRY=0` reruns such tests.
+
 ### Added
 - Loki can finish inside an outer time limit. Set `LOKI_RUN_DEADLINE_S` to the seconds your CI job or wrapper allows. The run budgets every stage to that limit, and with about a minute left it seals the current change as "time ran out" (PARTIAL, with a receipt) instead of being killed with nothing. `loki start --max-duration` already sets a fixed run cap; the deadline variable also counts time already spent and leaves a margin. On dev4, 4 runs with a 3600 s budget were killed by a 1200 s bench limit and left no receipt.
 - New, off by default until measured: the pre-delivery review turn can be kept from breaking a test. With `LOKI_E10_REVIEW_TURN_GUARD=1`, when the turn edits anything, Loki reruns the tests of what it changed; if a test that passed before the turn fails after it, only that turn's edits are taken back, the implemented change is kept, and the receipt says which test it broke.
