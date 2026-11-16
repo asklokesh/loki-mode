@@ -10,7 +10,7 @@ import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
 import { attemptModels, attemptsK, type ExtraAttemptsDeps } from "../../features/attempts.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, checkExcerpt, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
-import { treeFingerprint } from "../../util/anti_loop.ts"; import { envCard } from "../../util/stack_tools.ts"; import { capStopOf, classifyExitCause, resolveModel } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
+import { treeFingerprint } from "../../util/anti_loop.ts"; import { cleanupSessionScratch, createSessionScratch, scratchSessionEnv, type SessionScratch } from "../../runner/worker_proc.ts"; import { envCard } from "../../util/stack_tools.ts"; import { capStopOf, classifyExitCause, resolveModel } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
 import { type ContinueRecord, compactionsOf, lacksFinishLine, resumeToFinish, type NamedSitesRecord, type RemedyRecord, resumeForNamedSites, resumeForPrecedence, resumeForRemedy, adjudicateWallConflict, coverageFoldLines, coverageMode, coverageResumeEnabled, reaskFoldedClaims, resumeAfterAlreadyDone, resumeForSelfReview, resumeNeverStop, resumeAfterConflict, resumeAfterEmptyDone, resumeForCoverage } from "../../util/conflict_resume.ts";
 import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
@@ -176,6 +176,8 @@ export const implementStage: Stage = {
     const picked = (Array.isArray(prior.intake?.assumptions) ? (prior.intake!.assumptions as unknown[]) : []).filter((a): a is string => typeof a === "string" && runPickedChoice(a)); // LOKI_E10_OPUS_CONSULT trigger open-choice: an either/or the run would settle by itself
     const choiceAdvice = picked.length && consultEnabled() && !ownId && !signal.aborted ? await runConsult({ runDir: ctx.runDir, repoDir: ctx.repoDir, stage: "implement", trigger: "open-choice", task, evidence: picked.join("\n"), diff: null, code: bc.packText ?? bc.text }) : null;
     const issue = issueRunBrief(ctx.provider, prior.intake?.source); // candidate 1: issue-run rules, block, lines and card; a text goal and opencode keep today's brief
+    let scratch: SessionScratch | null = null; try { scratch = issue ? createSessionScratch(ctx.runDir) : null; } catch { scratch = null; } // Q1 RUN-SCRATCH: the session's own short scratch directory; any error means none
+    if (scratch) { const sc = scratch; process.once("exit", () => { if (existsSync(sc.dir)) cleanupSessionScratch(sc); }); } // safety net: an aborted stage still leaves nothing running or on disk
     const card = issue ? envCard(ctx) : null; // the small environment card (util/stack_tools.ts envCard): server binaries off PATH that the repository needs
     const fullBrief = buildImplementBrief(task, plan, impacted, repoMap, [specBriefBlock(spec), execSpecBriefOf(ctx.runDir), ...adviceBlock(choiceAdvice), proveByRunningBlock(ctx.provider, prior.intake?.source, process.env, card?.line ?? null)].filter(Boolean).join("\n\n") || null, prior.intake?.assumptions, rankedRemedyEnabled() ? prior.intake?.ranked_remedy : undefined, issue); // the advice joins the per-task part of the brief, never the cache-stable prefix // LOKI_E10_EXEC_SPEC: the binding and advisory spec cases the lean Wall stage left
     try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, ATTEMPT_BRIEF_FILE), fullBrief, "utf8"); } catch { /* best effort: without it the machine starts no extra attempt */ } // EXP-0010: the extra attempts after a red verify start from this exact brief
@@ -185,7 +187,8 @@ export const implementStage: Stage = {
       brief: ownId ? INTERRUPTED_BRIEF : fullBrief,
       tier: "development",
       iterationId: `${ctx.runId}-impl`,
-      ...(card?.pathAppend.length ? { pathAppend: card.pathAppend } : {}), // appended to this session's PATH and every resume's (resumeWith spreads first)
+      ...(card?.pathAppend.length ? { pathAppend: card.pathAppend } : {}),
+      ...(scratch ? { sessionEnv: scratchSessionEnv(scratch) } : {}), // RUN-SCRATCH: resumes inherit it (resumeWith spreads first) // appended to this session's PATH and every resume's (resumeWith spreads first)
       limitS: implementStage.limitS,
       signal,
       cwd: ctx.repoDir,
@@ -274,6 +277,7 @@ export const implementStage: Stage = {
     const noRegression = !plan && !overlap ? await runNrdGate(ctx, signal, session, readOnly.map((f) => relative(ctx.repoDir, f.path))) : null; // LOKI_E10_NRD (Go, lean path, default on, =0 opts out): features/no_regression.ts, after the tournament and the Wall restore; the first verify hands its finding to one fix round
     const iterationId = ids[ids.length - 1]!;
     // E-68 classifies exit codes; a non-killed, marker-less non-zero exit is an error, never "done".
+    const scratchRec = scratch ? cleanupSessionScratch(scratch) : null; // RUN-SCRATCH: implement and its resumes have ended; stop what is left and remove the directory
     let exit: ImplementExit | "error";
     if (session.killed || session.exit === MAX_TURNS_EXIT) { // a turn-cap stop is harness-owned and ends like a limit stop: PARTIAL, never BLOCKED
       exit = "killed";
@@ -303,7 +307,8 @@ export const implementStage: Stage = {
       duration_s: session.durationS, ...(session.exit === MAX_TURNS_EXIT && !session.killed ? { stop_cause: "max_turns", owner: "harness", limit_s: implementStage.limitS, elapsed_s: session.durationS, ...(capStopOf(session.summary) ? { session_cap: capStopOf(session.summary) } : {}) } : {}),
       ...(planChainMode ? { plan_chain: planChainMode } : {}),
       ...(sessionResume ? { session_resume: sessionResume } : {}),
-      ...(finish ? { finish: { ...finish, compactions: compactionsOf(ctx, ids) } } : {}), // S1b: only when it fired, so an unchanged run's receipt keys stay as they were; compactions are seen on the SDK route only (null on the CLI route)
+      ...(finish ? { finish: { ...finish, compactions: compactionsOf(ctx, ids) } } : {}),
+      ...(scratchRec && (scratchRec.stopped.length || scratchRec.left.length || !scratchRec.removed) ? { scratch_cleanup: scratchRec } : {}), // RUN-SCRATCH: recorded only when the harness had to stop something or could not remove the directory // S1b: only when it fired, so an unchanged run's receipt keys stay as they were; compactions are seen on the SDK route only (null on the CLI route)
       ...(coverage ? { coverage_resume: coverage } : {}), ...(rankedRemedyRec ? { ranked_remedy: rankedRemedyRec } : {}), ...(precedenceRec ? { precedence_check: precedenceRec } : {}), ...(namedRec ? { named_sites: namedRec } : {}), ...(pinConflict ? { pin_conflict: pinConflict } : {}), ...(pinnedUpdates.length ? { pinned_test_updates: pinnedUpdates } : {}), ...(claimAbsent ? { claim_absent: claimAbsent } : {}),
       ...(patch ? { patch: { status: patch.status, seconds: Math.round(patchS * 10) / 10, calls: patch.calls, applied: patch.applied, refused: patch.refused, restored: patch.restored, usd: patch.usd, log: patch.log, ...(patch.check ? { check: patch.check } : {}) } } : {}),
       ...(tournament ? { tournament } : {}),

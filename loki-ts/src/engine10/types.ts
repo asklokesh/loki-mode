@@ -42,7 +42,7 @@ export const EVENT_TYPES = [
   "tests.restored", "test.result", "test.scoped_out", "test.skipped_on_base", "fix.round", "already.satisfied", "spec.conflict",
   "session.group_reaped",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
-  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "watchdog.silent", "sysedit.kept", "sysedit.undone", "attempts.selected", "nrd.completed", "s1b.resumed", "env.card", "prove.started", "prove.ask", "prove.completed",
+  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "watchdog.silent", "sysedit.kept", "sysedit.undone", "attempts.selected", "nrd.completed", "s1b.resumed", "env.card", "scratch.cleanup", "prove.started", "prove.ask", "prove.completed",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */
@@ -79,6 +79,7 @@ export interface SessionMarkers {
 export const ROUTER_COST_FIELDS = ["requests_total", "requests_over_100k", "advisor_calls", "advisor_input_tokens", "advisor_output_tokens"] as const;
 export interface SessionRunOptions {
   pathAppend?: string[]; // candidate 1 env card: directories appended (never prepended) to this session's PATH; implement and its resumes only, and the prove stage's prover, scripts and repair resumes
+  sessionEnv?: Record<string, string>; // Q1 RUN-SCRATCH: LOKI_SCRATCH, LOKI_SCRATCH_SINCE and TMPDIR for the implement session and its resumes only // candidate 1 env card: directories appended (never prepended) to this session's PATH; implement and its resumes only
   stage: StageName;
   brief: string;
   tier: SessionTier;
