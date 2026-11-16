@@ -195,7 +195,7 @@ SDKF="$(python3 -I -c 'import json,sys,glob
 ev = glob.glob(sys.argv[1] + "/.loki/runs/*/events.jsonl")
 f = next((json.loads(l)["data"].get("finish") for l in open(ev[0]) if "\"stage.completed\"" in l and "\"implement\"" in l), None) if ev else None
 print("none" if f is None else "%s|%s|%s" % (f.get("continues"), f.get("ended"), f.get("compactions")))' "$REPO" 2>/dev/null)"
-case "$SDKF" in "4|count cap|"[1-9]*) printf '%s\n' "$OUT" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' \
+case "$SDKF" in "4|count cap|"[1-9]*) grep -Eq '^Outcome:[[:space:]]+PARTIAL' <<< "$OUT" \
     && ok "S1b SDK path: a reply with no finish line is resumed 4 times, the record counts the SDK's compactions (${SDKF##*|}), and the run is PARTIAL" \
     || bad "S1b SDK path: finish $SDKF but outcome $(printf '%s\n' "$OUT" | grep '^Outcome:')" ;;
   *) bad "S1b SDK path: finish record '$SDKF' (want 4|count cap|<compactions>)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /' ;; esac

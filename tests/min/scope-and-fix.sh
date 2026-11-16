@@ -637,7 +637,7 @@ f = d.get("finish"); print("none" if f is None else "%s|%s|%s" % (f.get("continu
 iexit() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(next((json.loads(l)["data"].get("exit") for l in open(sys.argv[1]) if "\"stage.completed\"" in l and "\"implement\"" in l), "none"))' "$RUNDIR/events.jsonl" 2>/dev/null; }
 s1bev() { grep -c '"type":"s1b.resumed"' "$RUNDIR/events.jsonl" 2>/dev/null || true; }
 unfin() { rnp | tr ',' '\n' | grep -c "implement ended without a finish line" || true; }
-committed_multiply() { git -C "$REPO" show HEAD:calc.ts 2>/dev/null | grep -A1 'function multiply' | grep -q 'a \* b'; }
+committed_multiply() { local c; c="$(git -C "$REPO" show HEAD:calc.ts 2>/dev/null)"; c="$(grep -A1 'function multiply' <<< "$c")"; grep -q 'a \* b' <<< "$c"; } # no early-exit reader on a pipe (SIGPIPE under pipefail)
 run_engine "$TASK" E2E_STUB_NOFINISH=once
 [ "$(kits)" = 1 ] && [ "$(s1bev)" = 1 ] && [ "$(fin)" = "1|finish line|None" ] && [ "$(iexit)" = done ] && [ "$(unfin)" = 0 ] && committed_multiply \
     && ok "S1b once: a session whose final text has no finish line is resumed once (one s1b.resumed event), finishes, exits done; multiply() committed ($(outcome))" || { bad "S1b once: resumes $(kits), events $(s1bev), finish '$(fin)', exit $(iexit), cap lines $(unfin), outcome $(outcome)"; dump; }
