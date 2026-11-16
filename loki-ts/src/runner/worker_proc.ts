@@ -226,7 +226,10 @@ export function ownedProcesses(s: SessionScratch): (Cand & { why: string })[] {
   for (let grew = true; grew;) { grew = false; for (const x of c) if (!owned.has(x.pid) && owned.has(x.ppid)) { owned.set(x.pid, { ...x, why: "child of an owned process" }); grew = true; } }
   return [...owned.values()];
 }
-export interface ScratchCleanup { dir: string; stopped: { pid: number; command: string; port: number | null; why: string }[]; left: { pid: number; command: string; why: string }[]; removed: boolean; kept?: string }
+/** One process in a cleanup record: the base name of its executable only, never its arguments (a command line can carry a password or a token). */
+export interface ScratchProc { pid: number; name: string; port: number | null; why: string }
+export const procName = (command: string): string => (command.trim().split(/\s+/)[0] ?? "").split("/").pop()!.slice(0, 60);
+export interface ScratchCleanup { dir: string; stopped: ScratchProc[]; left: ScratchProc[]; removed: boolean; kept?: string }
 /** Stops every process the run owns (start time rechecked before each signal; TERM, about 2 s, then KILL), scans again until nothing owned is alive, and
  *  only then removes the directory (its marker must hold its own path). A pid the session listed in <dir>/pids that is not provably the run's is left alone and
  *  reported. `signal` is a test seam. Never throws. */
@@ -242,12 +245,12 @@ export function cleanupSessionScratch(s: SessionScratch, o: { signal?: (pid: num
       for (let i = 0; i < Math.ceil((o.termWaitMs ?? 2000) / 100) && info.some((x) => alive(x.pid)); i++) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
       for (const x of info) if (alive(x.pid) && processStartEpoch(x.pid) === x.start) { try { send(x.pid, "SIGKILL"); } catch { /* gone */ } }
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-      for (const x of info) if (!stopped.some((y) => y.pid === x.pid)) stopped.push({ pid: x.pid, command: x.command.slice(0, 160), port: x.port, why: x.why });
+      for (const x of info) if (!stopped.some((y) => y.pid === x.pid)) stopped.push({ pid: x.pid, name: procName(x.command), port: x.port, why: x.why });
       still = info.filter((x) => alive(x.pid) && processStartEpoch(x.pid) === x.start);
     }
     try {
       const listed = [...new Set(readFileSync(join(s.dir, "pids"), "utf8").split(/\s+/).filter((x) => /^\d+$/.test(x)).map(Number))];
-      for (const pid of listed) if (alive(pid) && !stopped.some((y) => y.pid === pid)) left.push({ pid, command: psOut(["-o", "command=", "-p", String(pid)]).trim().slice(0, 160), why: "left running, not proven ours" });
+      for (const pid of listed) if (alive(pid) && !stopped.some((y) => y.pid === pid)) left.push({ pid, name: procName(psOut(["-o", "comm=", "-p", String(pid)])), port: portOf(pid), why: "left running, not proven ours" });
     } catch { /* no pids file: it is only a hint */ }
   } catch { /* never fails the run */ }
   const live = stopped.filter((x) => still.some((y) => y.pid === x.pid));

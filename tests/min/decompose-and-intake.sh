@@ -554,6 +554,23 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 console.log([r.length, r[0]?.stopped.some((x) => x.pid === d.pid), !fs.existsSync(s.dir), alive(e.pid), fs.existsSync(live.dir)].join(","));
 d.kill(); e.kill(); w.cleanupSessionScratch(live, { termWaitMs: 300 });' 2>&1)"
 [ "$SOS" = "1,true,true,true,true" ] && ok "scratch owned: the next run cleans up a record whose worker is gone (by ownership) and leaves a live run's record alone" || bad "scratch owned stale record: $SOS"
+# Q1 SCRATCH-FINAL: ps runs with TZ=UTC and lstartEpoch reads UTC, so a user TZ far from the system's (Kiritimati, UTC+14) still finds an owned daemon
+# and still leaves a process from before the session alone; the record holds each process's base name, pid, port and why, never its arguments.
+SOTZ="$(ROOT="$ROOT" TZ=Pacific/Kiritimati bun --no-env-file --config=/dev/null -e '
+const w = await import(process.env.ROOT + "/loki-ts/src/runner/worker_proc.ts");
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const mine = [], spawn = (cmd, o = {}) => { const p = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore", stdin: "ignore", ...o }); mine.push(p); return p; };
+try {
+  const A = w.createSessionScratch(), pre = spawn(["sleep", "288"], { cwd: A.dir }); await Bun.sleep(1200);
+  const S = { ...A, since: Math.floor(Date.now() / 1000) }; await Bun.sleep(1100);
+  const d = spawn(["/bin/sh", "-c", "sleep 287; :", "x", "--password=hunter2secretvalue"], { cwd: A.dir }); await Bun.sleep(400);
+  const r = w.cleanupSessionScratch(S, { termWaitMs: 1500 }); await Bun.sleep(300);
+  const rec = JSON.stringify(r), names = r.stopped.map((x) => Object.keys(x).sort().join("+") + "=" + x.name);
+  console.log([r.stopped.some((x) => x.pid === d.pid), !alive(d.pid), alive(pre.pid), !r.stopped.some((x) => x.pid === pre.pid), !rec.includes("hunter2secretvalue") && !rec.includes("--password"), names.includes("name+pid+port+why=sh")].join(","));
+  pre.kill(); await Bun.sleep(200); w.cleanupSessionScratch(A, { termWaitMs: 300 });
+} finally { for (const p of mine) { try { p.kill(); } catch {} } }' 2>&1)"
+[ "$SOTZ" = "true,true,true,true,true,true" ] && ok "scratch final: with TZ set 14 hours from UTC the cleanup still stops an owned daemon and leaves a pre-session process alone; the record names it by base name, pid, port and why, never its arguments" \
+    || bad "scratch final TZ and record: $SOTZ"
 # e2e: an unrelated process started in the work tree during the session survives; a SIGINT to the run still stops what the session left in scratch
 SOR="$T/so-intree"; make_repo "$SOR" 0
 (cd "$SOR" && exec env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" \
