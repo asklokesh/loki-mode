@@ -3,6 +3,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { proveTable } from "./prove.ts";
 import { type PushArgs, type RunContext, type Stage, type StageResult, type Verdict, pushArgv } from "../types.ts";
 import { renderBrief, reviewerBriefEnabled } from "../../util/reviewer_brief.ts";
 import { hooks } from "../hooks.ts";
@@ -115,12 +116,15 @@ export function prTitle(verdict: Verdict, runDir: string, task: string): string 
   const cps = Array.from(what), cut = cps.length <= room ? what : ((short) => `${short.replace(/\s+\S*$/, "") || short}...`)(cps.slice(0, room - 3).join("")); // code points: a surrogate pair is never split
   return `${head}${cut}${ref}`;
 }
-/** PR-FIRST-1: a PARTIAL PR leads with what is unproven (first 10 reasons plus the total), above the reviewer body. Empty for every other verdict. */
-export function partialHead(verdict: Verdict, notProven: string[]): string {
-  const np = verdict === "PARTIAL" ? notProven.filter((r) => r.trim() !== "") : [];
-  if (np.length === 0) return "";
+/** PR-FIRST-1: a PARTIAL PR leads with what is unproven (first 10 reasons plus the total), above the reviewer body. Empty for every other verdict.
+ *  Q1 PROVE: when the receipt carries a prove record (issue runs on claude), its table (ask, command, result) comes first in this same section, on a
+ *  VERIFIED PR too, where it is the section's only content. No prove record: the section is byte-identical to before. */
+export function partialHead(verdict: Verdict, notProven: string[], prove?: unknown): string {
+  const np = verdict === "PARTIAL" ? notProven.filter((r) => r.trim() !== "") : [], table = verdict === "PARTIAL" || verdict === "VERIFIED" ? proveTable(prove) : [];
+  if (np.length === 0 && table.length === 0) return "";
   const clip = (r: string): string => (r.length > 160 ? `${r.slice(0, 157)}...` : r);
-  return [`## Not proven`, `This run sealed PARTIAL: ${np.length} thing${np.length === 1 ? " is" : "s are"} not proven. Opened as a draft so the work is reviewable.`, ...np.slice(0, 10).map((r) => `- ${clip(r)}`), ...(np.length > 10 ? [`- (+${np.length - 10} more, total ${np.length}; the full list is in the receipt)`] : []), ""].join("\n") + "\n";
+  if (np.length === 0) return [`## Proven by running`, `Each ask the issue makes was run by a script a separate session wrote, against a fresh environment built by the repository's own setup path:`, ...table].join("\n") + "\n";
+  return [`## Not proven`, `This run sealed PARTIAL: ${np.length} thing${np.length === 1 ? " is" : "s are"} not proven. Opened as a draft so the work is reviewable.`, ...(table.length ? ["", ...table] : []), ...np.slice(0, 10).map((r) => `- ${clip(r)}`), ...(np.length > 10 ? [`- (+${np.length - 10} more, total ${np.length}; the full list is in the receipt)`] : []), ""].join("\n") + "\n";
 }
 export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions = {}): Promise<StageResult> {
   if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before pr started" };
@@ -137,7 +141,8 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const link = issueLink(ctx.runDir, verdict);
   const bodyFile = join(ctx.runDir, "pr-body.md");
   const beforeAfter = await beforeAfterBlock(ctx.repoDir, ctx.runDir, ((ctx.outputs().verify?.["changed_files"] ?? []) as unknown[]).map(String), ctx.baseSha, { signal });
-  const reviewerBody = partialHead(verdict, notProven) + renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs(), sealAccuracy: sealAccuracyOfFile(seal.receipt_path ?? null), receipt: (() => { try { return seal.receipt_path ? JSON.parse(readFileSync(seal.receipt_path, "utf8")) as Record<string, unknown> : null; } catch { return null; } })() }); // AWE-3: proof, conventions and cost sections read the sealed receipt
+  const sealedReceipt = (() => { try { return seal.receipt_path ? JSON.parse(readFileSync(seal.receipt_path, "utf8")) as Record<string, unknown> : null; } catch { return null; } })();
+  const reviewerBody = partialHead(verdict, notProven, sealedReceipt?.["prove"]) + renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs(), sealAccuracy: sealAccuracyOfFile(seal.receipt_path ?? null), receipt: sealedReceipt }); // AWE-3: proof, conventions and cost sections read the sealed receipt
   const tpl = readPrTemplate(ctx.repoDir), shaped = tpl === null ? reviewerBody : applyPrTemplate(reviewerBody, tpl, receiptProof(verdict, ctx.outputs(), seal.receipt_sha256 ?? null)); // no template: today's body, byte-identical
   writeFileSync(bodyFile, withAiMarker(withSealRoute(shaped, process.env, seal), aiMarkerLine({ runId: ctx.runId, provider: ctx.provider, model: ctx.model })) + intentSection(ctx.outputs().plan) + specPrLine(process.env) + triagePrLine(ctx.outputs().intake) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + link + stackSection(process.env, base, link !== "", ctx.repoDir) + (ctx.handoffMd ?? ""), "utf8");
   const title = prTitle(verdict, ctx.runDir, String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? "")); // PR-FIRST-1 prefix, FireLater#21 wording

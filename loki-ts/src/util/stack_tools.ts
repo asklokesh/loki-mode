@@ -157,3 +157,12 @@ export function envCard(ctx: Pick<RunContext, "repoDir" | "runDir" | "emit">, en
     return line ? { line, pathAppend } : null;
   } catch { return null; }
 }
+/** Q1 PROVE: the card envCard wrote, read back for the prover session and its scripts (the same PATH append and brief line) and for the receipt. Null when absent or unreadable. */
+export interface EnvCardFile { needed: ServiceName[]; found: ServiceFind[]; path_appended: string[]; line: string | null }
+export function readEnvCardFile(runDir: string): EnvCardFile | null {
+  try { const c = JSON.parse(readFileSync(join(runDir, "env-card.json"), "utf8")) as EnvCardFile; return c && Array.isArray(c.needed) && Array.isArray(c.found) ? { ...c, path_appended: Array.isArray(c.path_appended) ? c.path_appended : [] } : null; } catch { return null; }
+}
+/** Services the repository needs that the card found nowhere on this machine. */
+export const missingServices = (c: EnvCardFile | null): ServiceName[] => (c ? c.needed.filter((s) => !c.found.some((f) => f.service === s)) : []);
+/** The receipt's env_card: only when the card was built and the repository needs a service (needed, found, path appended). */
+export const envCardReceiptBlock = (runDir: string): { env_card?: { needed: ServiceName[]; found: ServiceFind[]; path_appended: string[] } } => { const c = readEnvCardFile(runDir); return c && c.needed.length ? { env_card: { needed: c.needed, found: c.found, path_appended: c.path_appended } } : {}; };

@@ -14,6 +14,7 @@ import { cancelSessions, createSessionRunner, resolveModel, type EmitFn } from "
 import { RealTestMapProvider } from "./testmap.ts";
 import { DEEP_CAP_S, DEFAULT_CAP_S, envCapS, type EventType, type RunContext, type StageName } from "./types.ts";
 import { safeGit } from "../util/safe_git.ts";
+import { cancelProve } from "./stages/prove.ts";
 export type WorkerEmit = (type: EventType, stage: StageName | null, data: Record<string, unknown>) => void;
 /** The stage driver; `main` below passes machine.ts. */
 export type WorkerDrive = (emit: WorkerEmit) => Promise<void>;
@@ -63,7 +64,7 @@ export async function main(args: string[]): Promise<number> {
   const deep = mode === "deep";
   // Supervisor cancel (SIGINT/SIGTERM): stop every live session so each records its partial usage, then exit.
   (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = true; // cli.ts's blanket exit(130/143) stands down: the handler below owns the stop
-  for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { void cancelSessions().finally(() => process.exit(sig === "SIGINT" ? 130 : 143)); });
+  for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { cancelProve(); void cancelSessions().finally(() => process.exit(sig === "SIGINT" ? 130 : 143)); }); // Q1 PROVE: a live prove pass gets its teardown, its group killed and its recorded ids stopped first
   await runWorker(async (rawEmit) => {
     emitObservedCapability(rawEmit); // GAME10-05a
     const { emit, over, remaining, cost } = workerEmits(rawEmit, runId, repoDir, lokiRoot, process.env, (b) => { void import("../util/slack_events.ts").then((m) => m.notifyEvent(process.env, "budget", { cost: `$${b.usd_so_far.toFixed(2)} of $${b.cap_usd.toFixed(2)} (${b.threshold_pct}% of cap)`, question: `$${b.cap_usd.toFixed(2)}`, summary: `Budget: ${b.threshold_pct}% of the $${b.cap_usd.toFixed(2)} cap reached ($${b.usd_so_far.toFixed(2)} spent)` })).catch(() => {}); });

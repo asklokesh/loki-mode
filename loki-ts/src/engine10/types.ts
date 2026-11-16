@@ -1,12 +1,13 @@
 // Loki 10 engine shared contract (docs/v10/ENGINE.md). Every engine module codes against these types; siblings are injected through RunContext so each module can be unit-tested with fakes.
 import type { SessionTier } from "../runner/types.ts";
 export type Obj = Record<string, unknown>;
-export type StageName = "intake" | "plan" | "wall" | "implement" | "verify" | "fix" | "commit" | "seal" | "pr" | "deep";
+export type StageName = "intake" | "plan" | "wall" | "implement" | "prove" | "verify" | "fix" | "commit" | "seal" | "pr" | "deep";
 export const STAGE_BUDGETS: Readonly<Record<StageName, { targetS: number | null; limitS: number }>> = {
   intake: { targetS: 15, limitS: 60 },
   plan: { targetS: 45, limitS: 90 },
   wall: { targetS: 45, limitS: 90 },
   implement: { targetS: 180, limitS: 480 }, // LOKI_E10_IMPLEMENT_KILL_S; 1800 when deep
+  prove: { targetS: 300, limitS: 3600 }, // Q1 PROVE (stages/prove.ts): issue runs on claude only, never in FLOW; the machine sizes it (LOKI_E10_PROVE_BUDGET_S, default 600, within the run time left)
   verify: { targetS: 60, limitS: 120 },
   fix: { targetS: 90, limitS: 180 },
   commit: { targetS: 5, limitS: 30 }, // not in the ENGINE.md table; engine-chosen placeholder
@@ -41,7 +42,7 @@ export const EVENT_TYPES = [
   "tests.restored", "test.result", "test.scoped_out", "test.skipped_on_base", "fix.round", "already.satisfied", "spec.conflict",
   "session.group_reaped",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
-  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "watchdog.silent", "sysedit.kept", "sysedit.undone", "attempts.selected", "nrd.completed", "s1b.resumed", "env.card",
+  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "watchdog.silent", "sysedit.kept", "sysedit.undone", "attempts.selected", "nrd.completed", "s1b.resumed", "env.card", "prove.started", "prove.ask", "prove.completed",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */
@@ -77,7 +78,7 @@ export interface SessionMarkers {
 /** ROUTER-1 R1-08/R1-09: optional per-session cost telemetry copied onto the cost event when the cost record carries it. */
 export const ROUTER_COST_FIELDS = ["requests_total", "requests_over_100k", "advisor_calls", "advisor_input_tokens", "advisor_output_tokens"] as const;
 export interface SessionRunOptions {
-  pathAppend?: string[]; // candidate 1 env card: directories appended (never prepended) to this session's PATH; implement and its resumes only
+  pathAppend?: string[]; // candidate 1 env card: directories appended (never prepended) to this session's PATH; implement and its resumes only, and the prove stage's prover, scripts and repair resumes
   stage: StageName;
   brief: string;
   tier: SessionTier;
@@ -187,6 +188,8 @@ export interface Receipt {
   route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on.
   named_unchanged?: { symbol: string; path: string; line: number; reason: string | null }[]; // R2 LOKI_E10_NAMED_SITES: each named site the diff left unchanged, with the run's reason (null: none given, which caps VERIFIED); omitted (hash unchanged) when none
   pinned_test_updates?: import("../util/test_guard.ts").PinnedTestUpdate[]; // Z2 LOKI_E10_PINNED_TEST_UPDATE: each existing test updated to the issue's stated behavior; omitted (hash unchanged) when none
+  env_card?: Record<string, unknown>; // Q1 ENV CARD (e10ext/env_card.ts): the services the repository needs and where they are on this machine; only when the card was built (issue runs on claude)
+  prove?: Record<string, unknown>; // Q1 PROVE (stages/prove.ts proveReceiptBlock): asks, command, result on head and base, repair rounds; written only when the stage left a record (issue runs on claude)
   self_review?: { mode: string; turn: string | null; items: { item: string; status: string; detail: string }[] }; // SR LOKI_E10_SELF_REVIEW: each pre-delivery check and how it was resolved; omitted when off or the implement stage did not end done
   changelog_refs_removed?: string[]; // CR LOKI_E10_CHANGELOG_REF: each issue or PR reference the task never gives, removed from the release note the run added ("<path>: #N"); omitted when none
   release_note_skipped?: string; // TR LOKI_E10_SCAFFOLD_TRACE: why the release-note fragment writer wrote nothing on a repo with a convention; omitted (hash unchanged) otherwise
