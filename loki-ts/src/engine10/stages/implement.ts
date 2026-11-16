@@ -318,7 +318,7 @@ export const implementStage: Stage = {
       ...(tournament ? { tournament } : {}),
       ...(noRegression ? { no_regression: noRegression } : {}),
       ...(neverStop ? { never_stop: [neverStop] } : {}),
-      ...(issueAcceptanceCapOn() && issueAcceptanceOf(prior.intake).length && session.summary ? { final_reply: session.summary.slice(-4000) } : {}), // Q1 ISSUE-ACCEPTANCE: the final reply the seal's line check reads
+      ...(issueAcceptanceCapOn() && issueAcceptanceOf(prior.intake).length && session.summary ? { final_reply: session.summary.slice(-16000) } : {}), // Q1 ISSUE-ACCEPTANCE: the final reply the seal's line check reads
       ...(selfReview ? { self_review: selfReview } : {}), ...(refsRemoved.length ? { changelog_refs_removed: refsRemoved } : {}),
       ...(fragmentWriterOn() && session.summary ? { summary_tail: session.summary.slice(-1500) } : {}), // the release-note writer reads the final message
     };

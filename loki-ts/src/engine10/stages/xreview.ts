@@ -6,7 +6,7 @@ export { reviewProvider, xvendorDefault, type ReviewProvider } from "../../counc
 import { run } from "../../util/shell.ts";
 import { withChildLedger } from "../../util/child_ledger.ts";
 import { claudeFlagSupported, ensureClaudeHelpCache, leanReviewerFlags, REVIEW_ALLOWLIST_NO_GIT, REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
-import { ignoredPaths, safeGitRun } from "../../util/safe_git.ts"; export { ignoredPaths }; import { acceptanceLines, acceptancePromptBlock } from "../../util/intent_card.ts";
+import { ignoredPaths, safeGitRun } from "../../util/safe_git.ts"; export { ignoredPaths }; import { acceptanceLines, acceptancePromptBlock, issueAcceptanceCapOn, issueAcceptanceOf } from "../../util/intent_card.ts";
 import { readRiskRecord } from "../../util/run_summary.ts"; import { capWhole, reviewFlagLines } from "../../util/reviewer_brief.ts";
 import { writeReviewerCost } from "../../providers/provider_cost.ts"; import { consultCallFor, type ConsultCall } from "../../features/opus_consult.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
@@ -85,7 +85,7 @@ export const reviewExtraLimitS = (ctx: RunContext): number => (pickReviewer(ctx,
 // session's final reply. Output per line: `MET <n>: <evidence>` or `UNMET <n>: <reason>`; anything else for a line is not addressed.
 export const LINE_CHECK_HEAD = "Loki acceptance line check.";
 export const LINE_CHECK_SYSTEM = "You check a code change against an issue's acceptance lines. You have no tools: read only what is below. Answer for every numbered line, one line each, nothing else.";
-export const LINE_CHECK_DIFF_MAX = 60_000;
+export const LINE_CHECK_DIFF_MAX = 240_000; // a 9-item feature diff ran to 127K characters; at 60K the check never saw the UI half
 const CUT_FIRST = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|poetry\.lock|Pipfile\.lock|go\.sum|composer\.lock|Gemfile\.lock)$|\.snap$|(^|\/)__snapshots__\/|(^|\/)(dist|build|generated)\/|\.min\.(js|css)$|\.generated\./;
 /** The diff for the check: whole file sections, the cut-first ones dropped before anything else, then the rest cut at `max` characters. */
 export function lineCheckDiff(diff: string, max = LINE_CHECK_DIFF_MAX): { text: string; cut: string[]; truncated: boolean } {
@@ -93,11 +93,13 @@ export function lineCheckDiff(diff: string, max = LINE_CHECK_DIFF_MAX): { text: 
   const kept = parts.filter((p) => { const m = /^diff --git a\/(\S+)/.exec(p); if (m && CUT_FIRST.test(m[1]!)) { cut.push(m[1]!); return false; } return true; }).join("");
   return { text: kept.slice(0, max), cut, truncated: kept.length > max };
 }
-export function lineCheckPrompt(asks: string[], diff: string, files: string[], checks: { name: string; result: string }[], reply: string): string {
+export function lineCheckPrompt(asks: string[], diff: string, files: string[], checks: { name: string; result: string }[], reply: string, facts: string[] = []): string {
   return [LINE_CHECK_HEAD, "The issue's acceptance lines (verbatim):", ...asks.map((a, i) => `${i + 1}. ${a}`),
-    "For every number write exactly one line: `MET <n>: <evidence>` when the change delivers that line, where the evidence is the file or the command output you relied on; or `UNMET <n>: <reason>` when it does not. A MET with no evidence counts as not delivered. The session's own claims are not evidence unless the diff or a check result backs them.",
+    "For every number write exactly one line: `MET <n>: <evidence>` when the change delivers that line, or `UNMET <n>: <reason>` when it does not. A MET with no evidence counts as not delivered.",
+    "What counts as evidence. A line that asks for behavior (a feature, an endpoint, a page, a fix, performance) is MET only when both hold: the diff contains the code for it, and it was exercised: either a check in the list below passes that covers it, or the session's reply shows the command or request it ran against the running product and what came back. Code that was written but never run is `UNMET <n>: not proved by running`. A line that asks only for documentation or for tests needs the file in the diff (and, for tests, a passing check that ran them). A claim in the reply with no command and result beside it is not evidence. If the diff changes how records are created or stored (a migration, a new column, a new table) and nothing shows a new record being created through the product's own code after the change, the lines that depend on it are UNMET.",
+    ...(facts.length ? [`Facts recorded by Loki itself (not by the session):\n${facts.join("\n")}`] : []),
     `Changed files:\n${files.join("\n") || "(none)"}`, `Checks run by verify (name: result):\n${checks.map((c) => `${c.name}: ${c.result}`).join("\n") || "(none)"}`,
-    `The implement session's final reply:\n${reply.slice(-4000) || "(none)"}`, "```diff", diff, "```"].join("\n\n");
+    `The implement session's final reply:\n${reply.slice(-16000) || "(none)"}`, "```diff", diff, "```"].join("\n\n");
 }
 /** The per-line answers, or null when no line parses. A MET with an empty evidence phrase is not counted as met. */
 export function parseLineCheck(text: string | null, n: number): { met: number[]; unmet: number[]; evidence: Record<string, string>; reasons: Record<string, string> } | null {
@@ -105,8 +107,8 @@ export function parseLineCheck(text: string | null, n: number): { met: number[];
   const met: number[] = [], unmet: number[] = [], evidence: Record<string, string> = {}, reasons: Record<string, string> = {};
   for (const l of text.split("\n")) {
     const x = /^\s*(?:[-*+]\s+)?\**(UNMET|MET)\**\s+(\d{1,3})\s*[:.-]?\s*(.*)$/i.exec(l); if (!x) continue;
-    const k = Number(x[2]), why = x[3]!.replace(/[\x00-\x1f\x7f`]+/g, " ").trim().slice(0, 300); if (k < 1 || k > n || met.includes(k) || unmet.includes(k)) continue;
-    if (x[1]!.toUpperCase() === "MET" && why) { met.push(k); evidence[String(k)] = why; } else { unmet.push(k); reasons[String(k)] = why || "MET with no evidence"; }
+    const k = Number(x[2]), why = x[3]!.replace(/[\x00-\x1f\x7f`]+/g, " ").trim().slice(0, 300); if (k < 1 || k > n || unmet.includes(k)) continue; // a number answered twice: an UNMET wins (the model corrected itself), so the label fails closed
+    if (x[1]!.toUpperCase() === "MET" && why) { if (!met.includes(k)) { met.push(k); evidence[String(k)] = why; } } else { const i = met.indexOf(k); if (i >= 0) { met.splice(i, 1); delete evidence[String(k)]; } unmet.push(k); reasons[String(k)] = why || "MET with no evidence"; }
   }
   return met.length + unmet.length ? { met: met.sort((a, b) => a - b), unmet: unmet.sort((a, b) => a - b), evidence, reasons } : null;
 }
@@ -116,13 +118,13 @@ let lineCheckOverride: ConsultCall | null = null;
 export function __setLineCheckCallForTests(c: ConsultCall | null): void { lineCheckOverride = c; }
 export const lineCheckModel = (ctxModel: string | undefined, env: NodeJS.ProcessEnv = process.env): string => (env["LOKI_E10_ISSUE_ACCEPTANCE_MODEL"] ?? "").trim() || (ctxModel && /^claude-/.test(ctxModel) ? ctxModel : "claude-haiku-5-5");
 /** Runs the check once, and once more when no line parses; a call that cannot run or still parses nothing records not_reviewed (the seal caps on it). */
-export async function issueLineCheck(ctx: RunContext, asks: string[], head: string, checks: { name: string; result: string }[], reply: string): Promise<LineCheckRecord> {
+export async function issueLineCheck(ctx: RunContext, asks: string[], head: string, checks: { name: string; result: string }[], reply: string, facts: string[] = []): Promise<LineCheckRecord> {
   const model = lineCheckModel(ctx.model);
   const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   const n = await safeGitRun(ctx.repoDir, ["diff", "--name-only", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return { model, outcome: "no_diff", usd: null, calls: 0, input_chars: 0, diff_cut: [], diff_truncated: false, not_reviewed: "the diff could not be read" };
-  const cd = lineCheckDiff(d.stdout), prompt = lineCheckPrompt(asks, cd.text, (n?.stdout ?? "").split("\n").filter(Boolean), checks, reply);
-  const call = lineCheckOverride ?? consultCallFor(model, join(ctx.repoDir, ".loki"), process.env, 120_000, { maxTokens: 1500, thinking: "off" });
+  const cd = lineCheckDiff(d.stdout), prompt = lineCheckPrompt(asks, cd.text, (n?.stdout ?? "").split("\n").filter(Boolean), checks, reply, facts);
+  const call = lineCheckOverride ?? consultCallFor(model, join(ctx.repoDir, ".loki"), process.env, 120_000, { maxTokens: 2500, thinking: "off" });
   let usd: number | null = null, calls = 0, outcome = "failed", parsed: ReturnType<typeof parseLineCheck> = null;
   for (let i = 0; i < 2 && !parsed; i++) {
     let r: { text: string | null; usd: number | null; outcome: string }; try { r = await call(LINE_CHECK_SYSTEM, prompt, "issue-acceptance"); } catch { r = { text: null, usd: null, outcome: "transport" }; }
@@ -131,6 +133,10 @@ export async function issueLineCheck(ctx: RunContext, asks: string[], head: stri
   const base = { model, outcome, usd, calls, input_chars: LINE_CHECK_SYSTEM.length + prompt.length, diff_cut: cd.cut, diff_truncated: cd.truncated };
   return parsed ? { ...base, marks: { met: parsed.met, unmet: parsed.unmet }, evidence: parsed.evidence, reasons: parsed.reasons } : { ...base, not_reviewed: outcome === "ok" ? "the check returned no answer for any line" : `the check call did not complete (${outcome})` };
 }
+/** One list for every judge: the issue's own acceptance lines when the issue has them (and the check is on), else the plan card's lines. */
+const reviewAcceptance = (ctx: RunContext): string[] => { const o = ctx.outputs?.() ?? {}, il = issueAcceptanceCapOn() ? issueAcceptanceOf(o.intake) : []; return il.length ? il : acceptanceLines(o.plan); };
+/** What verify already ran, so a reviewer with no tools never marks a line unmet only because it could not run the tests itself. */
+const reviewChecksBlock = (ctx: RunContext): string[] => { const cs = (ctx.outputs?.() ?? {}).verify?.checks; const rows = Array.isArray(cs) ? (cs as Record<string, unknown>[]).map((c) => `${String(c.name)}: ${String(c.result)}`).slice(0, 200) : []; return rows.length ? ["", "Checks the harness already ran on this change (name: result). Do not flag a line only because you could not run a test yourself; use these results:", ...rows] : []; };
 /** Runs the reviewer when enabled. Null when off. A missing CLI, a failure or a timeout is not_run with a NOT PROVEN note, never PASS. */
 export async function crossReview(ctx: RunContext, verdict: Verdict, head: string, signal?: AbortSignal): Promise<CrossReview | null> {
   const agent = configuredReviewer(ctx.repoDir), { p, dflt } = pickReviewer(ctx, agent); if (!p) return null; // a configured reviewer/council agent turns the default review on
@@ -149,7 +155,7 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   if (!d || d.exitCode !== 0) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] });
   const prompt = [agent ? `${agent.prompt}\nReview ONLY the diff below. Do not modify files.` : "You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
     REVIEW_TOOLS_NOTE,
-    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...acceptancePromptBlock(acceptanceLines((ctx.outputs?.() ?? {}).plan)), "", "```diff", d.stdout.slice(0, MAX_DIFF), "```"].join("\n");
+    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...acceptancePromptBlock(reviewAcceptance(ctx)), ...reviewChecksBlock(ctx), "", "```diff", d.stdout.slice(0, MAX_DIFF), "```"].join("\n");
   try {
     if (p === "claude") await ensureClaudeHelpCache();
     const r = await withChildLedger(run, join(ctx.repoDir, ".loki"), "xreview")(reviewArgv(p, prompt, process.env, p === "claude" ? agent?.model || pin : undefined), { cwd: ctx.repoDir, timeoutMs: boxFor(ctx) * 1000, group: true, signal });

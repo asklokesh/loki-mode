@@ -66,6 +66,8 @@ export function sessionEffortFor(opts: SessionRunOptions): { effort: string | un
   if (resolved && rr < 0) return { effort: resolved }; // unknown level: pass through untouched
   return { effort: prior };
 }
+/** Connection settings a session that runs the product must not inherit (it starts its own throwaway services under its scratch directory). */
+export const CONNECTION_ENV = /^(DATABASE_UR[LI]|DB_(URL|URI|HOST|PORT|USER|USERNAME|PASSWORD|PASS|NAME|DATABASE)|REDIS_(URL|URI|HOST|PORT|PASSWORD)|MONGO(DB)?_(URL|URI|HOST)|PG(HOST|HOSTADDR|PORT|USER|PASSWORD|DATABASE|SERVICE|SERVICEFILE|PASSFILE)|MYSQL_(HOST|TCP_PORT|PWD|USER|PASSWORD|DATABASE)|POSTGRES(QL)?_(URL|URI|HOST|PORT|USER|PASSWORD|DB|DATABASE)|ELASTICSEARCH_(URL|HOST)|AMQP_URL|RABBITMQ_URL)$/;
 export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env["LOKI_E10_SEAL_EXISTING_PATCH"]; // CW-12 B2: defense in depth, no session env ever carries the external diff path
@@ -74,6 +76,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   env["LOKI_E10_BRIEF"] = opts.brief;
   delete env["LOKI_SCRATCH"]; delete env["LOKI_SCRATCH_SINCE"]; // Q1 RUN-SCRATCH: never inherited, so a user's own value can never relax the host guard
   if (opts.sessionEnv) for (const [k, v] of Object.entries(opts.sessionEnv)) env[k] = v;
+  if (opts.sessionEnv?.["LOKI_SCRATCH"]) for (const k of Object.keys(env)) if (CONNECTION_ENV.test(k)) delete env[k]; // an issue run's implement session is told to start its own database and apply migrations: it must never inherit settings that point at the user's
   if (opts.pathAppend?.length) env["PATH"] = [...(env["PATH"] ?? "").split(":").filter(Boolean), ...opts.pathAppend].join(":"); // candidate 1 env card: append only
   const gap = cfg.lokiRoot ? stageMedianGapMs(cfg.lokiRoot, opts.stage) : null; // #244: the persisted median call gap of this stage picks the cache TTL in engine10CacheTtlEnv
   if (gap !== null) env["LOKI_E10_CACHE_GAP_MS"] = String(gap); else delete env["LOKI_E10_CACHE_GAP_MS"];

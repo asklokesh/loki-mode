@@ -122,6 +122,28 @@ export function prTitle(verdict: Verdict, runDir: string, task: string, failing:
   const cps = Array.from(what), cut = cps.length <= room ? what : ((short) => `${short.replace(/\s+\S*$/, "") || short}...`)(cps.slice(0, room - 3).join("")); // code points: a surrogate pair is never split
   return `${head}${cut}${ref}`;
 }
+/** The label a person can act on without reading the code, and its GitHub label name and color. */
+export const LOKI_LABELS = { safe: { name: "loki: safe to merge", color: "0E8A16", description: "Loki checked every acceptance line of the issue by running the change" }, needs: { name: "loki: needs you", color: "D93F0B", description: "Loki could not prove every acceptance line; the pull request says which" } } as const;
+/** The first thing in the pull request: Loki's label, then each of the issue's own acceptance lines as met or not, with the evidence. "" when the receipt has no acceptance record. */
+export function acceptanceHead(verdict: Verdict, receipt: Record<string, unknown> | null): string {
+  const rows = Array.isArray(receipt?.["issue_acceptance"]) ? (receipt!["issue_acceptance"] as { line?: unknown; status?: unknown; evidence?: unknown; reason?: unknown; optional?: unknown }[]) : [];
+  if (rows.length === 0) return "";
+  const clip = (s: unknown): string => { const t = String(s ?? "").replace(/[\r\n|]+/g, " ").trim(); return t.length > 220 ? `${t.slice(0, 217)}...` : t; };
+  const met = rows.filter((r) => r.status === "met").length, safe = verdict === "VERIFIED";
+  return [`## Loki: ${safe ? "safe to merge" : "needs you"}`, safe ? `Every acceptance line of the issue is met (${met} of ${rows.length}), each with what proved it.` : `${met} of ${rows.length} acceptance lines are met. The ones that are not say why.`, "", "| Acceptance line (the issue's own words) | Status | Evidence or reason |", "|---|---|---|",
+    ...rows.map((r) => `| ${clip(r.line)} | ${r.status === "met" ? "met" : r.optional === true ? "optional, not done" : r.status === "unmet" ? "NOT MET" : "not checked"} | ${clip(r.status === "met" ? r.evidence : r.reason ?? (r.status === "not_checked" ? "the check gave no answer for this line" : ""))} |`), ""].join("\n") + "\n";
+}
+/** Puts Loki's label on the pull request and on the issue it works (created if the repository lacks it; the other label removed). Best effort: a miss is returned as a note, never a failed stage. */
+export function applyLokiLabel(a: { verdict: Verdict; url: string; runDir: string; env: NodeJS.ProcessEnv; timeoutMs: number }): string | null {
+  const repo = /github\.com\/([^/]+\/[^/]+)\/pull\/\d+/.exec(a.url)?.[1]; if (!repo) return null; // GitHub pull requests only
+  const want = a.verdict === "VERIFIED" ? LOKI_LABELS.safe : LOKI_LABELS.needs, drop = a.verdict === "VERIFIED" ? LOKI_LABELS.needs : LOKI_LABELS.safe;
+  const gh = (args: string[]): boolean => { try { return spawnSync("gh", args, { env: a.env, encoding: "utf8", timeout: a.timeoutMs, killSignal: "SIGKILL" }).status === 0; } catch { return false; } };
+  for (const l of [LOKI_LABELS.safe, LOKI_LABELS.needs]) gh(["label", "create", l.name, "--repo", repo, "--color", l.color, "--description", l.description, "--force"]);
+  const onPr = gh(["pr", "edit", a.url, "--add-label", want.name]); gh(["pr", "edit", a.url, "--remove-label", drop.name]);
+  let issue: number | null = null; try { const i = JSON.parse(readFileSync(join(a.runDir, "issue.json"), "utf8")) as { repo?: unknown; number?: unknown }; if (i.repo === repo && Number.isInteger(i.number)) issue = i.number as number; } catch { /* a text goal has no issue */ }
+  if (issue !== null) { gh(["issue", "edit", String(issue), "--repo", repo, "--add-label", want.name]); gh(["issue", "edit", String(issue), "--repo", repo, "--remove-label", drop.name]); }
+  return onPr ? null : `label "${want.name}" not set on the pull request`;
+}
 /** PR-FIRST-1: a PARTIAL PR leads with what is unproven (first 10 reasons plus the total), above the reviewer body. Empty for every other verdict.
  *  Q1 PROVE: when the receipt carries a prove record (issue runs on claude), its table (ask, command, result) comes first in this same section, on a
  *  VERIFIED PR too, where it is the section's only content. No prove record: the section is byte-identical to before. */
@@ -157,7 +179,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const beforeAfter = await beforeAfterBlock(ctx.repoDir, ctx.runDir, ((ctx.outputs().verify?.["changed_files"] ?? []) as unknown[]).map(String), ctx.baseSha, { signal });
   const vo = ctx.outputs().verify as { checks?: unknown; pre_red_checks?: unknown } | undefined, failing = verdict === "FAILED" ? failedCheckNames(vo?.checks, Array.isArray(vo?.pre_red_checks) ? (vo.pre_red_checks as unknown[]).map(String) : []) : []; // FAILED-PR: the final verify's blocking failures
   const sealedReceipt = (() => { try { return seal.receipt_path ? JSON.parse(readFileSync(seal.receipt_path, "utf8")) as Record<string, unknown> : null; } catch { return null; } })();
-  const reviewerBody = partialHead(verdict, notProven, sealedReceipt?.["prove"]) + failedHead(verdict, failing, notProven) + renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs(), sealAccuracy: sealAccuracyOfFile(seal.receipt_path ?? null), receipt: sealedReceipt }); // AWE-3: proof, conventions and cost sections read the sealed receipt
+  const reviewerBody = acceptanceHead(verdict, sealedReceipt) + partialHead(verdict, notProven, sealedReceipt?.["prove"]) + failedHead(verdict, failing, notProven) + renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs(), sealAccuracy: sealAccuracyOfFile(seal.receipt_path ?? null), receipt: sealedReceipt }); // AWE-3: proof, conventions and cost sections read the sealed receipt
   const tpl = readPrTemplate(ctx.repoDir), shaped = tpl === null ? reviewerBody : applyPrTemplate(reviewerBody, tpl, receiptProof(verdict, ctx.outputs(), seal.receipt_sha256 ?? null)); // no template: today's body, byte-identical
   writeFileSync(bodyFile, withAiMarker(withSealRoute(shaped, process.env, seal), aiMarkerLine({ runId: ctx.runId, provider: ctx.provider, model: ctx.model })) + intentSection(ctx.outputs().plan) + specPrLine(process.env) + triagePrLine(ctx.outputs().intake) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + link + stackSection(process.env, base, link !== "", ctx.repoDir) + (ctx.handoffMd ?? ""), "utf8");
   const title = prTitle(verdict, ctx.runDir, String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? ""), failing); // PR-FIRST-1 prefix, FireLater#21 wording, FAILED-PR check label
@@ -187,6 +209,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
     receiptSha256: seal.receipt_sha256 ?? null, runId: ctx.runId, mutationProof: seal.mutation_line ?? null,
     passport: await buildPassport(ctx.runDir),
   }); // the same items as the PR body (no new exposure), plus this stage's own commit-status misses
+  if (!localOk && !isGitlabOrigin(pinnedOrigin) && process.env["LOKI_PR_LABEL"] !== "0") { const miss = applyLokiLabel({ verdict, url, runDir: ctx.runDir, env, timeoutMs: prChildTimeoutMs() }); if (miss) notProvenOut.push(miss); } // the green or red label on the pull request and the issue; LOKI_PR_LABEL=0 opts out
   const commentMiss = postReceiptComment({ scriptPath, env, runDir: ctx.runDir, url, timeoutMs: prChildTimeoutMs(), comment: receiptComment });
   if (commentMiss) notProvenOut.push(commentMiss);
   await (await import("../../integrations/writeback.ts")).writeBack({ phase: verdict === "FAILED" ? "failed" : "done", ...(verdict === "FAILED" ? { reason: `failing: ${failing.join(", ") || "see the receipt"}` } : {}), verdict, prUrl: url, receiptSha256: seal.receipt_sha256 ?? null, task: String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? "") }); // B6: opt-in, never throws

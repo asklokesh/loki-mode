@@ -157,8 +157,10 @@ export function issueAcceptanceStatus(lines: string[], marks: { met: number[]; u
 export const NOT_ADDRESSED = "not addressed: ";
 /** The seal's open notes: one "not addressed: <verbatim line>" per required issue line the review did not mark met. */
 export const notAddressedNotes = (st: { line: string; status: IssueAskStatus; optional?: true }[]): string[] => st.filter((s) => s.status !== "met" && !s.optional).map((s) => `${NOT_ADDRESSED}${s.line}`);
-/** LOKI_E10_ISSUE_ACCEPTANCE=1 turns on the line check call and the seal cap. Off by default: the check is new and unmeasured on real runs. */
-export const issueAcceptanceCapOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_ISSUE_ACCEPTANCE"] ?? "").trim());
+/** The line check call and the seal cap, on by default (the label is checked against the issue's own lines); LOKI_E10_ISSUE_ACCEPTANCE=0 turns both off. */
+export const issueAcceptanceCapOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_ISSUE_ACCEPTANCE"] ?? "").trim());
+/** The line Loki adds to the issue's own list when the repository needs a database or another service: the change must work on a fresh install, not only on data that already existed. */
+export const FRESH_INSTALL_ASK = "Fresh install (added by Loki): after this change, an empty database set up with the repository's own migrations or setup accepts a first account, tenant or record created through the product's own code path";
 /** The printed card: the issue's lines first, verbatim, as "Acceptance:" lines, then the card's own Acceptance lines that repeat none of them, then the rest. */
 export function cardWithIssueLines(card: string[] | null, issueLines: string[]): string[] | null {
   if (!issueLines.length) return card;
