@@ -59,8 +59,8 @@ QUESTION_RE='Enter skips|\[y/N\]|\[Y/n\]|\(y/n\)|Choose'
 mkrepo norem
 run_headless "$REPO"
 [ "$RC" -eq 0 ] && ok "no remote: bare goal exits 0 with zero flags" || { bad "no remote: exit $RC"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
-printf '%s\n' "$OUT" | grep -Eq '^Outcome:[[:space:]]+VERIFIED' && ok "no remote: Outcome VERIFIED" || bad "no remote: not VERIFIED"
-printf '%s\n' "$OUT" | grep -Eq "$QUESTION_RE" && bad "headless asked a question" || ok "headless: zero questions"
+grep -Eq '^Outcome:[[:space:]]+VERIFIED' <<< "$OUT" && ok "no remote: Outcome VERIFIED" || bad "no remote: not VERIFIED"
+grep -Eq "$QUESTION_RE" <<< "$OUT" && bad "headless asked a question" || ok "headless: zero questions"
 br="$(git -C "$REPO" branch --list 'loki/*' | tr -d ' *')"
 [ -n "$br" ] && ok "no remote: the result is on a local branch ($br)" || bad "no remote: no local loki/ branch"
 has "no remote: next command is checkout + merge of that branch" "$OUT" "git checkout main && git merge --no-ff $br"
@@ -72,7 +72,7 @@ mkrepo ghno https://github.com/example/nothing.git
 run_headless "$REPO"
 [ "$RC" -eq 0 ] && ok "github remote, no gh login: exit 0 without --no-pr" || { bad "github remote, no gh login: exit $RC"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /'; }
 has "github remote, no gh login: next command publishes after gh auth login" "$OUT" "gh auth login && git push -u origin loki/"
-printf '%s\n' "$OUT" | grep -Eq "$QUESTION_RE" && bad "gh scenario asked a question" || ok "gh scenario: zero questions"
+grep -Eq "$QUESTION_RE" <<< "$OUT" && bad "gh scenario asked a question" || ok "gh scenario: zero questions"
 
 # 3. dirty tracked tree: refuse, name the one safe option, stash nothing
 mkrepo dirty
@@ -112,8 +112,8 @@ sys.stdout.write("\nPTY_RC=%d\n" % (os.WEXITSTATUS(status) if os.WIFEXITED(statu
 PY
 )"
 qn="$(printf '%s\n' "$PTY_OUT" | grep -Ec "$QUESTION_RE" || true)"
-printf '%s\n' "$PTY_OUT" | grep -q 'PTY_RC=0' && ok "interactive: bare goal exits 0 with zero flags" || { bad "interactive: nonzero exit"; printf '%s\n' "$PTY_OUT" | tail -6 | sed 's/^/    | /'; }
-printf '%s\n' "$PTY_OUT" | grep -Eq 'Outcome:[[:space:]]+VERIFIED' && ok "interactive: Outcome VERIFIED" || bad "interactive: not VERIFIED"
+grep -q 'PTY_RC=0' <<< "$PTY_OUT" && ok "interactive: bare goal exits 0 with zero flags" || { bad "interactive: nonzero exit"; printf '%s\n' "$PTY_OUT" | tail -6 | sed 's/^/    | /'; }
+grep -Eq 'Outcome:[[:space:]]+VERIFIED' <<< "$PTY_OUT" && ok "interactive: Outcome VERIFIED" || bad "interactive: not VERIFIED"
 [ "${qn:-0}" -le 1 ] && ok "interactive: $qn question(s) asked (limit 1)" || bad "interactive: $qn questions asked (limit 1)"
 
 # 5. provider inference: claude absent, another supported CLI present

@@ -145,7 +145,7 @@ export LOKI_BACKLOG_LAUNCHER="$T/launcher" LAUNCH_LOG="$T/launch.log"
 dry="$(cd "$REPO" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --all --dry-run 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "dry run: exit 0" || bad "dry run: exit $rc"
 for want in $EXPECT; do
-    printf '%s\n' "$dry" | grep -Eq "^backlog: #${want%%:*} ${want#*:} +.+ \| .+" && ok "dry run: #${want%%:*} printed as ${want#*:} with a reason" || bad "dry run: #${want%%:*} not printed as ${want#*:}"
+    grep -Eq "^backlog: #${want%%:*} ${want#*:} +.+ \| .+" <<< "$dry" && ok "dry run: #${want%%:*} printed as ${want#*:} with a reason" || bad "dry run: #${want%%:*} not printed as ${want#*:}"
 done
 has "dry run: summary counts" "$dry" "dry run: 5 would run, 2 would get a drafted spec, 1 need a human; nothing launched"
 has "dry run: the large epic is shown running as one run" "$dry" "| large (label epic); runs as one run"
@@ -169,10 +169,10 @@ for n in 4 5; do
     [ -n "$f" ] && [ -f "$REPO/$f" ] && head -1 "$REPO/$f" | grep -q 'loki-spec v1' && ok "backlog run: #$n prints the exact command for its drafted spec" || bad "backlog run: #$n has no runnable spec command: $line"
 done
 for n in 7; do
-    printf '%s\n' "$run" | grep -Eq "^#$n +- +- +HUMAN: .+" && ok "backlog run: #$n listed as HUMAN with its reason" || bad "backlog run: #$n not listed as HUMAN"
+    grep -Eq "^#$n +- +- +HUMAN: .+" <<< "$run" && ok "backlog run: #$n listed as HUMAN with its reason" || bad "backlog run: #$n not listed as HUMAN"
 done
 sel="$(cd "$REPO" && TRIAGE_GH_LOG="$T/gh.log" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 4,7 --dry-run 2>&1)"
-grep -q 'gh issue view 4' "$T/gh.log" 2>/dev/null && printf '%s\n' "$sel" | grep -q '^backlog: #4 spec ' && printf '%s\n' "$sel" | grep -q '^backlog: #7 human ' \
+grep -q 'gh issue view 4' "$T/gh.log" 2>/dev/null && grep -q '^backlog: #4 spec ' <<< "$sel" && grep -q '^backlog: #7 human ' <<< "$sel" \
     && ok "backlog --issues: bodies fetched with gh issue view and triaged" || bad "backlog --issues: not triaged from fetched bodies"
 
 # 4a. many issues at once: one row per issue (cost, time, result, its PR or PR count), one Total line, quiet output,
@@ -196,15 +196,15 @@ chmod +x "$T/many-launcher"
 many="$(cd "$REPO" && LOKI_BACKLOG_LAUNCHER="$T/many-launcher" LAUNCH_LOG="$T/many.log" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --issues 1,2,3,6 --concurrency 2 2>&1)"; rc=$?
 printf '%s\n' "$many" | sed -n '/^Summary:/,$p' | sed 's/^/    many: /'
 [ "$rc" -eq 1 ] && ok "many: exit 1 when one of four issues failed" || bad "many: exit $rc, want 1"
-printf '%s\n' "$many" | grep -Eq '^#1 +\$0\.50 +[0-9]+s +PR local:///o\.git#loki/1$' && ok "many: an issue that ended in one PR prints one row: cost, time and that PR" || bad "many: #1 row: $(printf '%s\n' "$many" | grep '^#1 ')"
-printf '%s\n' "$many" | grep -Eq '^#2 +\$1\.00 +[0-9]+s +PARTIAL, 8 PRs \(no combined PR: combined PR not opened \(push refused\); opened one PR per slice\), first https://github.com/example/calc/pull/1$' \
+grep -Eq '^#1 +\$0\.50 +[0-9]+s +PR local:///o\.git#loki/1$' <<< "$many" && ok "many: an issue that ended in one PR prints one row: cost, time and that PR" || bad "many: #1 row: $(printf '%s\n' "$many" | grep '^#1 ')"
+grep -Eq '^#2 +\$1\.00 +[0-9]+s +PARTIAL, 8 PRs \(no combined PR: combined PR not opened \(push refused\); opened one PR per slice\), first https://github.com/example/calc/pull/1$' <<< "$many" \
     && ok "many: an issue that fell back to one PR per slice says 8 PRs and why, never one PR" || bad "many: #2 row: $(printf '%s\n' "$many" | grep '^#2 ')"
-printf '%s\n' "$many" | grep -Eq '^#3 +unmeasured +[0-9]+s +FAILED: boom$' && printf '%s\n' "$many" | grep -Eq '^#6 +unmeasured +[0-9]+s +VERIFIED$' && ok "many: a failed and a PR-less row each print their result" || bad "many: #3 or #6 row wrong"
-printf '%s\n' "$many" | grep -Eq '^Total: 3 done, 1 not done; 9 PR\(s\); cost \$1\.50 \(2 run\(s\) unmeasured, not counted as \$0\); time [0-9]+s$' \
+grep -Eq '^#3 +unmeasured +[0-9]+s +FAILED: boom$' <<< "$many" && grep -Eq '^#6 +unmeasured +[0-9]+s +VERIFIED$' <<< "$many" && ok "many: a failed and a PR-less row each print their result" || bad "many: #3 or #6 row wrong"
+grep -Eq '^Total: 3 done, 1 not done; 9 PR\(s\); cost \$1\.50 \(2 run\(s\) unmeasured, not counted as \$0\); time [0-9]+s$' <<< "$many" \
     && ok "many: one Total line: done, not done, PRs, cost, time" || bad "many: total: $(printf '%s\n' "$many" | grep '^Total')"
 gc="$(printf '%s\n' "$many" | bun --no-env-file --config=/dev/null -e 'const m = await import(process.argv[1]); console.log(JSON.stringify(m.parseGroupCost(await Bun.stdin.text())));' "$ROOT/loki-ts/src/features/speed/run_group.ts" 2>&1)"
 [ "$gc" = '{"usd":1.5,"measured":2,"unmeasured":2}' ] && ok "many: the group runner's cost reader (run_group.ts parseGroupCost) still reads the rows with the TIME column and ignores the Total line" || bad "many: parseGroupCost reads the new summary as: $gc"
-[ "$(printf '%s\n' "$many" | grep -c NOISE)" = 0 ] && grep -q 'NOISE from run 2' "$REPO-backlog/logs/issue-2.log" && printf '%s\n' "$many" | grep -Fq "backlog: #2 running (log: $REPO-backlog/logs/issue-2.log)" \
+[ "$(printf '%s\n' "$many" | grep -c NOISE)" = 0 ] && grep -q 'NOISE from run 2' "$REPO-backlog/logs/issue-2.log" && grep -Fq "backlog: #2 running (log: $REPO-backlog/logs/issue-2.log)" <<< "$many" \
     && ok "many: child output stays in the per-issue log, and the running line names that log" || bad "many: child output leaked or the log path is not printed"
 [ -f "$REPO-backlog/receipts/issue-1/r1/receipt.json" ] && [ ! -d "$REPO-backlog/issue-1" ] && [ -f "$REPO-backlog/receipts/issue-3/r3/receipt.json" ] && [ -d "$REPO-backlog/issue-3" ] \
     && ok "many: a finished run's receipts are kept after its worktree is removed (a failed run keeps both)" || bad "many: receipts not kept under $REPO-backlog/receipts"
@@ -287,8 +287,8 @@ export JIRA_BASE_URL="http://127.0.0.1:$(cat "$T/jira.port" 2>/dev/null)" JIRA_E
 jdry="$(cd "$REPO" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog jira:PROJ --all --dry-run 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "jira dry run: exit 0" || { bad "jira dry run: exit $rc"; printf '%s\n' "$jdry" | tail -5 | sed 's/^/    | /'; }
 grep -qF 'project = "PROJ" AND statusCategory != Done ORDER BY key ASC' "$T/jira.req" 2>/dev/null && ok "jira: listed the project's open items (JQL statusCategory != Done)" || bad "jira: no open-items search: $(head -2 "$T/jira.req" 2>/dev/null)"
-printf '%s\n' "$jdry" | grep -Eq '^backlog: PROJ-1 implement +Add multiply\(a, b\) to calc.ts \| concrete target' && ok "jira: PROJ-1 (concrete, ADF body) triaged implement" || bad "jira: PROJ-1 not implement"
-printf '%s\n' "$jdry" | grep -Eq '^backlog: PROJ-2 spec +.+ \| (vague|ambiguous)' && ok "jira: PROJ-2 (vague) triaged spec" || bad "jira: PROJ-2 not spec"
+grep -Eq '^backlog: PROJ-1 implement +Add multiply\(a, b\) to calc.ts \| concrete target' <<< "$jdry" && ok "jira: PROJ-1 (concrete, ADF body) triaged implement" || bad "jira: PROJ-1 not implement"
+grep -Eq '^backlog: PROJ-2 spec +.+ \| (vague|ambiguous)' <<< "$jdry" && ok "jira: PROJ-2 (vague) triaged spec" || bad "jira: PROJ-2 not spec"
 has "jira: PROJ-3 (epic label) is large and runs as one run" "$jdry" "backlog: PROJ-3 implement Calculator v2 umbrella | large (label epic); runs as one run, Jira and Linear items do not split yet"
 has "jira dry run: summary counts" "$jdry" "dry run: 2 would run, 1 would get a drafted spec, 0 need a human; nothing launched"
 jrun="$(cd "$REPO" && LAUNCH_LOG="$T/jira-launch.log" LINEAR_API_KEY=lin_other LOKI_LINEAR_TOKEN=l2 ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog jira:PROJ --all 2>&1)"; rc=$?
@@ -304,7 +304,7 @@ printf '{"group":"g1","units":[{"id":"u1","items":["add a multiply(a, b) functio
 dagout="$(cd "$REPO" && LAUNCH_LOG="$T/dag-launch.log" JIRA_API_TOKEN=x JIRA_TOKEN=x LOKI_JIRA_TOKEN=x LINEAR_API_KEY=x LOKI_LINEAR_TOKEN=x ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --dag "$T/dag.json" 2>&1)"
 [ "$(cat "$T/dag-launch.log.env" 2>/dev/null)" = "add a multiply(a, b) function to calc.ts jira_token= linear_key=" ] && ok "backlog --dag: a unit child gets no tracker token or alias" || bad "backlog --dag: unit child tokens: $(cat "$T/dag-launch.log.env" 2>/dev/null) $(printf '%s\n' "$dagout" | tail -2)"
 jlow="$(cd "$REPO" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog jira:proj --all --dry-run 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && printf '%s\n' "$jlow" | grep -q '^backlog: jira:PROJ concurrency' && printf '%s\n' "$jlow" | grep -q '^backlog: PROJ-1 implement' \
+[ "$rc" -eq 0 ] && grep -q '^backlog: jira:PROJ concurrency' <<< "$jlow" && grep -q '^backlog: PROJ-1 implement' <<< "$jlow" \
     && ok "jira: lowercase jira:proj is the PROJ project" || bad "jira: jira:proj gave exit $rc: $(printf '%s\n' "$jlow" | tail -1)"
 jbad="$(cd "$REPO" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog jira:PROJ --label badkey 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && has "jira: an item key that is not PROJ-<number> is refused before any path uses it" "$jbad" 'unexpected issue key "../PROJ-9"' || bad "jira: bad key accepted (exit $rc): $(printf '%s\n' "$jbad" | tail -1)"
@@ -327,7 +327,7 @@ for (const i of items) { const t = triageItem({ title: i.title, body: i.body, la
 printf '%s\n' "$LIN" | sed 's/^/    linear: /'
 has "linear: lists one team's open items" "$LIN" 'request https://api.linear.app/graphql auth=lin_fixture filter={"team":{"key":{"eq":"ENG"}},"state":{"type":{"nin":["completed","canceled"]}}}'
 [ "$(printf '%s\n' "$LIN" | grep -E '^ENG-[0-9]+ ' | cut -d' ' -f1-2 | tr '\n' ' ')" = "ENG-4 implement ENG-5 spec ENG-7 implement " ] && ok "linear: items ordered by number and triaged (ENG-4 implement, ENG-5 spec, ENG-7 implement)" || bad "linear: triage gave: $(printf '%s\n' "$LIN" | grep -E '^ENG-' | tr '\n' ';')"
-printf '%s\n' "$LIN" | grep -q '^ENG-7 implement | large (structure: 4 solution part(s), 4 acceptance criteria, backend and frontend); runs as one run, Jira and Linear items do not split yet$' \
+grep -q '^ENG-7 implement | large (structure: 4 solution part(s), 4 acceptance criteria, backend and frontend); runs as one run, Jira and Linear items do not split yet$' <<< "$LIN" \
     && ok "linear: the multi-part ENG-7 is large by the same rule and runs as one run" || bad "linear: ENG-7 not large by structure"
 lnokey="$(cd "$REPO" && env -u LINEAR_API_KEY ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog linear:ENG --all --dry-run 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && has "linear backlog without LINEAR_API_KEY: exit 1 naming the variable" "$lnokey" "LINEAR_API_KEY is not set" || bad "linear backlog without LINEAR_API_KEY: exit $rc: $lnokey"
@@ -342,7 +342,7 @@ receipt_key() { python3 -I -c 'import glob,json,sys; r=[json.load(open(f)) for f
 receipt_class() { python3 -I -c 'import glob,json,sys; r=[json.load(open(f)) for f in glob.glob(sys.argv[1] + "/.loki/runs/*/receipt.json")]; t=(r[0].get("triage") or {}) if r else {}; print("%s:%s" % (t.get("class"), "reason" if t.get("reason") else "noreason") if r else "NO_RECEIPT")' "$1"; }
 direct() { # direct <name> <class> <goal>: the direct run must not stop, must implement, and must record the class
     goal "$1" "$3"
-    [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -Eq '^Outcome:[[:space:]]+VERIFIED' && ok "direct $2 goal: runs to VERIFIED (exit 0), not stopped by triage" || { bad "direct $2 goal: exit $RC, not VERIFIED"; printf '%s\n' "$OUT" | grep -E '^(Outcome|Reason)' | sed 's/^/    | /'; }
+    [ "$RC" -eq 0 ] && grep -Eq '^Outcome:[[:space:]]+VERIFIED' <<< "$OUT" && ok "direct $2 goal: runs to VERIFIED (exit 0), not stopped by triage" || { bad "direct $2 goal: exit $RC, not VERIFIED"; printf '%s\n' "$OUT" | grep -E '^(Outcome|Reason)' | sed 's/^/    | /'; }
     grep -q implement "$T/stub-$1.log" 2>/dev/null && ok "direct $2 goal: the implement session ran" || bad "direct $2 goal: no implement session"
     [ -z "$(find "$REPO/.loki/specs" -name '*.md' 2>/dev/null)" ] && ok "direct $2 goal: no spec drafted" || bad "direct $2 goal: drafted a spec"
     [ "$(receipt_class "$REPO")" = "$2:reason" ] && ok "direct $2 goal: receipt carries triage class $2 with a reason" || bad "direct $2 goal: receipt triage is $(receipt_class "$REPO")"
