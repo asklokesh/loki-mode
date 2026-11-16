@@ -12,10 +12,9 @@ name: Release
 #   verify-sdk-registry          converges loki-mode-sdk dist-tags once the version resolves
 #   publish-python-sdk           PyPI loki-mode-sdk
 #   docker-build -> docker       Docker Hub asklokesh/loki-mode multi-arch, cosign keyless signature
-#   sanity                       seconds-long syntax/version check; nothing depends on it
 #   attach-sbom                  SPDX SBOMs (npm tarball, image) attached to the GitHub Release; provenance attested; all continue-on-error
-# Tests, nightly, security audit and smoke workflows were deleted: run
-# them locally (bash scripts/local-ci.sh). Every publish job is idempotent on
+# Tests, the PR fast tier, nightly, security audit, smoke and SDK-freshness
+# workflows were deleted: run them locally (bash scripts/local-ci.sh). Every publish job is idempotent on
 # rerun; npm is never unpublished (npm deprecate is allowed).
 
 on:
@@ -36,23 +35,6 @@ on:
           - 'true'
 
 jobs:
-  # Fix-forward signal only: no job needs this one.
-  sanity:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Bash syntax and version-file consistency
-        run: |
-          set -euo pipefail
-          bash -n autonomy/run.sh
-          bash -n autonomy/loki
-          python3 -m py_compile dashboard/__init__.py mcp/__init__.py
-          bash tests/test-server-json-current.sh
-          bash tests/test-plugin-json-current.sh
-
   # The tarball is built ONCE here, with no secret and no write token.
   # publish-npm recomputes its sha256 and publishes exactly those bytes.
   pack-npm:

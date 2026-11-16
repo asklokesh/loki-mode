@@ -29,9 +29,9 @@
 # no commit, no push -- run this instead of hand-editing
 # VERSION, then commits the result itself.
 #
-# RELEASE GATE: none runs here. The tests under tests/min/ run in CI
-# (.github/workflows/pr-fast.yml) and locally (bash scripts/local-ci.sh); run it
-# before cutting a release. Publishing never waits on a test job.
+# RELEASE GATE: none runs here. The tests under tests/min/ run locally
+# (bash scripts/local-ci.sh); run it before cutting a release. GitHub runs no
+# test workflow, and publishing never waits on a test job.
 #
 # Files intentionally NOT bumped by this script (left to the maintainer):
 #   - vscode-extension/package.json: CLAUDE.md marks this DEPRECATED since
@@ -153,9 +153,10 @@ Arguments:
 Options:
   --dry-run    Show what would be done without making changes
   --bump-only  Bump version files and prove the loki-ts build embeds it, then exit. No commit, no push.
-  --check-ci     Exit 0 only when the latest completed GitHub CI run (PR fast tier,
-                 required-ci) on HEAD, or on its parent when HEAD has none, succeeded;
-                 exit 6 (SHIP_CI_NOT_GREEN) otherwise. --ship runs the same check.
+  --check-ci     With LOKI_RELEASE_CI_WORKFLOWS set (comma list of workflow names), exit 0
+                 only when the latest completed run of each on HEAD, or on its parent when
+                 HEAD has none, succeeded; exit 6 (SHIP_CI_NOT_GREEN) otherwise. Unset or
+                 empty (the default): no CI run is required, exit 0. --ship runs the same check.
   --check-clean  Run after the release commit: exit 1 naming any tracked file
                still modified (E-151: a version file left out of the commit).
   --ship --notes FILE
@@ -417,9 +418,9 @@ bump_all_version_files() {
 RELEASE_COMMIT_FILES="VERSION package.json SKILL.md docker/Dockerfile docker/Dockerfile.sandbox plugins/loki-mode/.claude-plugin/plugin.json server.json CLAUDE.md dashboard/__init__.py mcp/__init__.py docs/INSTALLATION.md wiki/Home.md wiki/_Sidebar.md wiki/API-Reference.md web-app/src/components/Footer.tsx web-app/src/components/WhatsNew.tsx README.md helm/loki-mode/Chart.yaml deploy/helm/autonomi/Chart.yaml deploy/helm/control-plane/Chart.yaml docs/CLI-REFERENCE.md docs/CLI-INVENTORY.md CHANGELOG.md"
 
 # --- Release gate ---------------------------------------------------------
-# Workflow names whose failed run at the cut SHA refuses a release. Empty until
-# the PR fast tier refusal signal lands. Every name here must match a `name:` in
-# .github/workflows/*.yml.
+# Workflow names whose failed run at the cut SHA refuses a release. Empty: the
+# repository runs distribution workflows only. Every name here must match a
+# `name:` in .github/workflows/*.yml.
 # shellcheck disable=SC2034
 RELEASE_REQUIRED_WORKFLOWS=()
 
@@ -557,14 +558,14 @@ ship_refuse() {
     exit 4
 }
 
-# CI-GREEN (exit 6, SHIP_CI_NOT_GREEN): never ship over a red GitHub CI. Main's PR fast tier was red
-# from acc-154 through v11.141.0 (a CI-only timeout local gates never saw), so the release
-# refuses unless the latest COMPLETED run of each listed workflow on HEAD (the commit being
-# released) succeeded. When HEAD has no completed run of any listed workflow, its parent's
+# CI-GREEN (exit 6, SHIP_CI_NOT_GREEN), opt-in. GitHub runs distribution workflows only
+# (founder 2026-11-16), so by default no CI run is required and the check passes without
+# calling gh. With LOKI_RELEASE_CI_WORKFLOWS set, the release refuses unless the latest
+# COMPLETED run of each listed workflow on HEAD (the commit being released) succeeded. When HEAD has no completed run of any listed workflow, its parent's
 # runs decide. A run that is not success, no completed run on either commit, or a gh call that
 # fails or exceeds LOKI_RELEASE_CI_TIMEOUT_S (default 30) refuses: no evidence is never green.
-# LOKI_RELEASE_CI_WORKFLOWS (comma list, default "PR fast tier,required-ci") names the
-# workflows; a listed workflow the repo does not have simply has no runs.
+# LOKI_RELEASE_CI_WORKFLOWS (comma list, default empty) names the workflows; a listed
+# workflow the repo does not have simply has no runs.
 ship_ci_tmo() { if command -v timeout >/dev/null 2>&1; then timeout "$@"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout "$@"; else shift; "$@"; fi; }
 ship_ci_refuse() {
     log_error "SHIP_CI_NOT_GREEN: $1"
@@ -573,7 +574,7 @@ ship_ci_refuse() {
 ship_ci_conclusions() { # ship_ci_conclusions <sha>: one "<workflow>\t<conclusion>\t<run id>" line per listed workflow with a completed run on <sha>; exit 1 when gh fails
     local sha="$1" wf out t="${LOKI_RELEASE_CI_TIMEOUT_S:-30}" IFS=','
     case "$t" in '' | *[!0-9]*) t=30 ;; esac
-    for wf in ${LOKI_RELEASE_CI_WORKFLOWS:-PR fast tier,required-ci}; do
+    for wf in ${LOKI_RELEASE_CI_WORKFLOWS:-}; do
         wf="$(printf '%s' "$wf" | sed 's/^ *//; s/ *$//')"
         [ -n "$wf" ] || continue
         out="$(cd "$ROOT_DIR" && ship_ci_tmo "$t" gh run list --workflow "$wf" --commit "$sha" --status completed --limit 1 --json conclusion,databaseId --jq '.[] | "\(.conclusion)\t\(.databaseId)"' 2>/dev/null)"
@@ -589,12 +590,16 @@ ship_ci_conclusions() { # ship_ci_conclusions <sha>: one "<workflow>\t<conclusio
 }
 ship_require_ci_green() {
     local head parent lines bad
+    if [ -z "$(printf '%s' "${LOKI_RELEASE_CI_WORKFLOWS:-}" | tr -d ' ,')" ]; then
+        log_info "No CI run required (LOKI_RELEASE_CI_WORKFLOWS is empty)"
+        return 0
+    fi
     head="$(git -C "$ROOT_DIR" rev-parse HEAD)" || ship_ci_refuse "cannot resolve HEAD"
     lines="$(ship_ci_conclusions "$head")" || ship_ci_refuse "gh run list failed or timed out for $head (LOKI_RELEASE_CI_TIMEOUT_S=${LOKI_RELEASE_CI_TIMEOUT_S:-30})"
     if [ -z "$lines" ]; then
         parent="$(git -C "$ROOT_DIR" rev-parse -q --verify HEAD^ 2>/dev/null)" || ship_ci_refuse "no completed CI run on $head and it has no parent"
         lines="$(ship_ci_conclusions "$parent")" || ship_ci_refuse "gh run list failed or timed out for $parent"
-        [ -n "$lines" ] || ship_ci_refuse "no completed CI run on $head or its parent $parent (workflows: ${LOKI_RELEASE_CI_WORKFLOWS:-PR fast tier,required-ci}); push it and wait for CI"
+        [ -n "$lines" ] || ship_ci_refuse "no completed CI run on $head or its parent $parent (workflows: ${LOKI_RELEASE_CI_WORKFLOWS}); push it and wait for CI"
         head="$parent"
     fi
     bad="$(printf '%s\n' "$lines" | awk -F'\t' '$2 != "success"')"

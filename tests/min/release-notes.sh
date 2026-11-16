@@ -10,6 +10,7 @@
 #   2. scripts/release-notes.sh: delete the has_placeholder gate (the `if
 #      has_placeholder "$body"` block): the placeholder fixture case must fail.
 #   3. scripts/release.sh ship_require_ci_green: skip the awk "not success" filter (the CI-green leg reads 0 for a red HEAD).
+#   5. scripts/release.sh: restore a non-empty default workflow list (the default leg reads 6 with a failing gh).
 #   4. scripts/release.sh run_ship: drop the ship_require_ci_green call (the --ship wiring leg fails).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -65,8 +66,10 @@ mk "## v9.9.9 (2026-01-01)
 bash "$RN" 9.9.9 --file "$F" >/dev/null 2>&1 && ok "the word todo inside a real line is accepted" || bad "a real line containing 'todo' was refused"
 
 
-# CI-GREEN (scripts/release.sh --check-ci, run by --ship before any write): a red, missing or unreadable GitHub CI result on the commit being released refuses with exit 6.
-# A faked gh answers per commit: HEAD's result, else the parent's, for the "PR fast tier" workflow; "required-ci" does not exist in the fake (no runs, not a failure).
+# CI-GREEN (scripts/release.sh --check-ci, run by --ship before any write). Default: no workflow is listed, no CI run is
+# required, gh is never called. With LOKI_RELEASE_CI_WORKFLOWS set, a red, missing or unreadable result on the commit being
+# released refuses with exit 6. A faked gh answers per commit: HEAD's result, else the parent's, for the "PR fast tier"
+# workflow; "required-ci" does not exist in the fake (no runs, not a failure).
 FG="$(mktemp -d "$T/fakegh.XXXXXX")"
 cat > "$FG/gh" <<'GH'
 #!/usr/bin/env bash
@@ -78,7 +81,9 @@ if [ "$sha" = "$(git rev-parse HEAD)" ]; then r="$FAKE_HEAD"; else r="$FAKE_PARE
 case "$r" in none) exit 0 ;; hang) sleep 20; exit 0 ;; error) exit 1 ;; *) printf '%s\t4242\n' "$r" ;; esac
 GH
 chmod +x "$FG/gh"
-ci() { (cd "$ROOT" && PATH="$FG:$PATH" FAKE_HEAD="$1" FAKE_PARENT="$2" LOKI_RELEASE_CI_TIMEOUT_S="${3:-30}" bash scripts/release.sh --check-ci >/dev/null 2>&1; echo $?); }
+ci() { (cd "$ROOT" && PATH="$FG:$PATH" FAKE_HEAD="$1" FAKE_PARENT="$2" LOKI_RELEASE_CI_TIMEOUT_S="${3:-30}" LOKI_RELEASE_CI_WORKFLOWS="PR fast tier,required-ci" bash scripts/release.sh --check-ci >/dev/null 2>&1; echo $?); }
+r0="$(cd "$ROOT" && env -u LOKI_RELEASE_CI_WORKFLOWS PATH="$FG:$PATH" FAKE_HEAD=error FAKE_PARENT=error bash scripts/release.sh --check-ci >/dev/null 2>&1; echo $?)"
+[ "$r0" = 0 ] && ok "release CI-green: with no workflow listed (the default) no CI run is required, even when gh fails" || bad "release CI-green default: exit $r0 with no workflow listed (want 0)"
 r="$(ci success failure) $(ci failure success) $(ci none success) $(ci none failure) $(ci none none) $(ci error success) $(ci hang success 1) $(ci cancelled success)"
 [ "$r" = "0 6 0 6 6 6 6 6" ] && ok "release CI-green: success on HEAD ships; red on HEAD, a red parent when HEAD has no run, no run at all, a gh error, a gh timeout and a cancelled run each refuse with exit 6 ($r)" || bad "release CI-green exit codes: $r (want 0 6 0 6 6 6 6 6)"
 awk '/^run_ship\(\)/{f=1} f && /ship_require_ci_green/{c=NR} f && /ship_phase "bump version files"/{b=NR; exit} END{exit !(c && b && c < b)}' "$ROOT/scripts/release.sh" && ok "release CI-green: --ship runs the CI check before its first write (the version bump)" || bad "release CI-green: --ship does not run ship_require_ci_green before the bump"

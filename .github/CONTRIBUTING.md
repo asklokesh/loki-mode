@@ -46,7 +46,7 @@ bash scripts/local-ci.sh                      # every test under tests/min/, che
 LOCAL_CI_ONLY=hygiene,syntax bash scripts/local-ci.sh   # a subset
 ```
 
-The tests are hermetic and offline, call no model, and finish in under two minutes. The same command runs on every PR (`.github/workflows/pr-fast.yml`) and must be green before submitting. See [docs/TESTING.md](../docs/TESTING.md) for what each test guards.
+The tests are hermetic and offline, call no model, and finish in under two minutes. GitHub runs no test workflow, so run it yourself: it must be green before submitting. See [docs/TESTING.md](../docs/TESTING.md) for what each test guards.
 
 ## Adding a new ported command
 
@@ -70,7 +70,7 @@ PRs are reviewed for correctness, code style, and test coverage. Please keep PRs
 
 ### What to expect after submitting
 
-- The `fast-tier` check (`.github/workflows/pr-fast.yml`, which runs `bash scripts/local-ci.sh`) must pass.
+- `bash scripts/local-ci.sh` must pass on your branch; the maintainer runs it again before merging.
 - **Version bumps are not your responsibility.** The maintainer bumps the 14 version locations as part of the release commit. Do not include version bumps in your PR; they will create merge conflicts with the release flow.
 - **A maintainer may re-implement your fix in their own commit** rather than merging your PR directly. This is done to keep release cadence and version-bump rules consistent across one author -- it is not a rejection of your work. Whenever this happens, you are explicitly credited in the CHANGELOG entry for that release. Past examples: PR #151, #152, #153 -> v6.77.1.
 

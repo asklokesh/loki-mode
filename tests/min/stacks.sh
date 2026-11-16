@@ -5,8 +5,8 @@
 # names a stack or a command. Asserts, per stack:
 #   real tool on PATH:   the run reaches "Outcome: VERIFIED" through the real mvn / gradle / dotnet.
 #                        Needs the tool and its package registry; otherwise it prints SKIP, and
-#                        LOKI_STACKS_REQUIRE=1 (set by .github/workflows/pr-fast.yml) turns a SKIP
-#                        into a failure, because GitHub ubuntu runners have all three tools.
+#                        LOKI_STACKS_REQUIRE=1 (set it on a machine that has all three tools) turns a
+#                        SKIP into a failure.
 #   tool missing:        a PATH with no mvn / gradle / dotnet / javac: the outcome is not VERIFIED and
 #                        the output names the missing tool and how to install it. Always runs.
 #   repo wrapper:        no mvn / gradle on PATH but a repo mvnw / gradlew: VERIFIED through ./mvnw

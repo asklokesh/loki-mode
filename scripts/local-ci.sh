@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# scripts/local-ci.sh - the one pre-push and PR gate. Runs exactly the tests under
+# scripts/local-ci.sh - the one pre-push and release gate. Runs exactly the tests under
 # tests/min/ (hermetic, offline, no model calls; bash -n and the Python parse are
-# the first of them). Same command locally and in .github/workflows/pr-fast.yml.
+# the first of them). GitHub runs no test workflow; this is the only test gate.
 #
 #   bash scripts/local-ci.sh                     run everything, cheap tests first
 #   LOCAL_CI_ONLY=hygiene,pack-contents bash scripts/local-ci.sh    run a subset

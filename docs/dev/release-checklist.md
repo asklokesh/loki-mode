@@ -5,7 +5,7 @@ Release steps and local CI details for maintainers.
 ## Local CI Before Every Push
 
 `bash scripts/local-ci.sh` runs the hermetic tests under `tests/min/` (see `docs/TESTING.md`); it
-is the pre-push gate and the same command runs in `.github/workflows/pr-fast.yml`. `.githooks/pre-push`
+is the pre-push gate and the only test gate (GitHub runs distribution workflows only). `.githooks/pre-push`
 enforces the repo-identity check, `bash -n` on `autonomy/run.sh` and `autonomy/loki`, the secret scan,
 and the red-main warning; a push is not "done" until `git ls-remote origin refs/heads/main` matches
 the local HEAD. `scripts/release.sh` runs no test gate: run `bash scripts/local-ci.sh` before
@@ -113,7 +113,7 @@ create tags.
 
 Run the engine end-to-end check alone with `cd loki-ts && bun run test:engine10` (it runs `tests/min/engine10-e2e-stub.sh` through `scripts/local-ci.sh`).
 
-`release.sh --ship` refuses with exit 6 (SHIP_CI_NOT_GREEN) unless the latest completed GitHub CI run (`PR fast tier`, `required-ci`; LOKI_RELEASE_CI_WORKFLOWS) on HEAD, or on its parent when HEAD has none, succeeded. A gh error or a timeout (LOKI_RELEASE_CI_TIMEOUT_S, default 30) also refuses. Push the release candidate and wait for its CI first. `bash scripts/release.sh --check-ci` runs the same check alone. Main's PR fast tier was red from acc-154 through v11.141.0, a CI-only timeout that local gates never saw.
+`release.sh --ship` requires no GitHub CI run by default: the gate is one full `bash scripts/local-ci.sh` on the release SHA. To require one again, set LOKI_RELEASE_CI_WORKFLOWS to a comma list of workflow names; `--ship` then refuses with exit 6 (SHIP_CI_NOT_GREEN) unless the latest completed run of each on HEAD, or on its parent when HEAD has none, succeeded, and a gh error or a timeout (LOKI_RELEASE_CI_TIMEOUT_S, default 30) also refuses. `bash scripts/release.sh --check-ci` runs the same check alone.
 
 Before pushing the release commit, run `bash scripts/release.sh --check-clean`: it exits 1 naming any tracked file (for example a stamped `loki-ts/dist/loki.js.map`) the commit left modified; `--bump-only` prints the "stage these files:" list.
 
