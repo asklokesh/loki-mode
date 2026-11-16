@@ -173,8 +173,24 @@ export function continueBrief(outstanding: string, missing: readonly string[], f
 }
 export type ContinueEnd = "finish line" | "continue off" | "count cap" | "dollar line" | "time" | "tree unchanged" | "tree unknown" | "killed or error" | "aborted";
 export interface ContinueRecord { continues: number; ended: ContinueEnd; outstanding: string | null; spent_usd?: number | null; compactions: number | null }
+// H1 CONFLICT-NEEDS-TEST (LOKI_E10_CONFLICT_NEEDS_TEST, default on; 0/off/false/no opts out), implement replies of an issue run on claude only: a
+// LOKI_SPEC_CONFLICT line whose reason cites no test file is an unfinished reply, not a conflict. Stored evidence (verdicts/q1-haiku-stop.md): of 11 implement
+// conflict reasons, 7 cite a test and 4 cite none; all 4 say the work is unfinished, and one sealed SPEC_CONFLICT, printed BLOCKED and left 13 changed files
+// unpublished. A conflict that cites a test path, with or without a line, behaves exactly as today.
+export const conflictNeedsTestOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_CONFLICT_NEEDS_TEST"] ?? "").trim());
+/** True when the text names a test file: a file-like token whose path has a tests, test, __tests__, spec or specs directory, or whose name is a test or spec file. */
+export function citesTestFile(text: string): boolean {
+  for (const m of text.matchAll(/[\w.@()[\]\/-]+\.[A-Za-z]{1,5}\b/g)) {
+    const t = m[0];
+    if (/(?:^|\/)(?:tests?|__tests__|specs?)\//i.test(t) || /[._-](?:test|spec)s?\.[A-Za-z]+$/i.test(t) || /(?:^|\/)test_[^/]*$/i.test(t) || /Tests?\.(?:java|cs|kt)$/.test(t)) return true;
+  }
+  return false;
+}
+/** H1: a reply whose last line is a conflict citing no test reads as unfinished (no conflict, no finish line), so the conflict correction never runs on it and S1b resumes it. */
+export const asUnfinishedConflict = (s: SessionResult): SessionResult =>
+  s.markers.specConflict !== null && !citesTestFile(s.markers.specConflict) ? { ...s, markers: { ...s.markers, specConflict: null, finishLine: s.markers.finishLine === "spec_conflict" ? null : s.markers.finishLine } } : s;
 /** The loop. Returns the session the stage goes on with (the first resume whose final text has a finish line, else the last reply), the iteration ids it ran, and the record. */
-export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, session: SessionResult, o: { fingerprint: () => string | null; spentUsd: () => number | null; compactions: (ids: string[]) => number | null; signal: AbortSignal; env?: NodeJS.ProcessEnv }): Promise<{ session: SessionResult; iterationIds: string[]; record: Omit<ContinueRecord, "compactions"> }> {
+export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, session: SessionResult, o: { fingerprint: () => string | null; spentUsd: () => number | null; compactions: (ids: string[]) => number | null; signal: AbortSignal; env?: NodeJS.ProcessEnv; normalize?: (s: SessionResult) => SessionResult }): Promise<{ session: SessionResult; iterationIds: string[]; record: Omit<ContinueRecord, "compactions"> }> {
   const env = o.env ?? process.env, ids: string[] = [], max = continueMax(env), usdLine = continueMaxUsd(env);
   const missing = (): string[] => readPlanScope(ctx.runDir).filter((f) => !existsSync(join(ctx.repoDir, f)));
   let cur = session, outstanding = outstandingOf(session.summary), base = first, ended: ContinueEnd = max === 0 ? "continue off" : "count cap", spent: number | null = null;
@@ -184,7 +200,7 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
     spent = o.spentUsd(); if (spent !== null && spent >= usdLine) { ended = "dollar line"; break; }
     const before = o.fingerprint();
     const r = await resumeWith(ctx, base, cur, continueBrief(outstanding, missing(), issueRunBrief(ctx.provider, ctx.outputs?.()?.intake?.source, env) ? ISSUE_FINISH_LINE : FINISH_LINE), `-k${n}`);
-    ids.push(r.iterationId); base = { ...base, iterationId: r.iterationId };
+    ids.push(r.iterationId); base = { ...base, iterationId: r.iterationId }; if (o.normalize) r.reply = o.normalize(r.reply); // H1: a resume's own no-test conflict is unfinished too
     ctx.emit("s1b.resumed", "implement", { resume: n, iteration_id: r.iterationId, compactions: o.compactions([r.iterationId]), finish_line: r.reply.markers.finishLine ?? null });
     cur = { ...r.reply, durationS: cur.durationS + r.reply.durationS };
     if (!r.reply.killed && r.reply.exit === 0 && r.reply.markers.finishLine) return { session: cur, iterationIds: ids, record: { continues: n, ended: "finish line", outstanding: null, spent_usd: o.spentUsd() } };

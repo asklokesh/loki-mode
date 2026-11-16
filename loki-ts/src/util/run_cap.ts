@@ -81,6 +81,8 @@ export function resolveRunCapS(repoDir: string, subscription: boolean, env: Node
   return { capS: fixedS ?? DEFAULT_CAP_S, fixedS, ceilingS: fixedS ?? capCeilingS(subscription) };
 }
 /** The line appended to the implement brief (after the cache-stable prefix) so the model can checkpoint. */
+/** Haiku arm measurement knob (LOKI_E10_TIME_NOTE=0/off/false/no): no time-budget sentence on implement or its resumes; the stage limit is enforced as before. */
+export const timeNoteOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TIME_NOTE"] ?? "").trim());
 export const timeBudgetNote = (limitS: number): string => `Time budget: about ${Math.max(1, Math.round(limitS / 60))} minutes left for this session. Work in small steps, keep the test suite passing at every checkpoint, and leave the tree in a working state when time runs out.`;
 /** FC-OUT-OF-REPO: the plan session's own statement that the change has no in-repo target. Fires only when plan-scope.json parsed and names zero files; a missing or malformed scope is unknown, never out-of-repo. */
 export function planOutOfRepo(runDir: string): { reason: string } | null {

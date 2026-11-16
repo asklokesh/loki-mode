@@ -996,6 +996,14 @@ res("L026 parser: result-cost records full_suite_runs per session (2 of 3 Bash c
   await consumeSdkStream([am("c1"), { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "auto", pre_tokens: 67825 } }, am("c2"), fin] as never, { cwd: "$T/l026", iteration: "s1b-c", hookEventsEnabled: false, write: () => {} } as never);
   const cc = JSON.parse(readFileSync("$T/l026/.loki/metrics/result-cost-s1b-c.json", "utf8")), c0 = JSON.parse(readFileSync("$T/l026/.loki/metrics/result-cost-s1b-a-k1.json", "utf8"));
   res("S1b compactions: the SDK parser counts compact_boundary into the result-cost file (1), and writes no key for a session without one", cc.compactions === 1 && !("compactions" in c0));
+  // the resumed-session cost proof (contrib/cost_records.ts cumulativeDelta) on the stored sc-a1 -impl-r numbers: a call that compacted carries the summary's output in
+  // its cumulative model_usage but not in its own output_tokens, so equality fails by 7,241 tokens; with the call's compaction count it bills the delta, without it stays ambiguous
+  const cd = await import("$ROOT/loki-ts/src/contrib/cost_records.ts");
+  const prevRec = { total_cost_usd: 0.04, model_usage: { "claude-haiku-5-5": { output_tokens: 31535, cost_usd: 0.04 } } };
+  const resumed = (extra: Record<string, unknown>) => ({ total_cost_usd: 0.07, output_tokens: 10833, model_usage: { "claude-haiku-5-5": { output_tokens: 49609, cost_usd: 0.07 } }, ...extra });
+  const exact = { total_cost_usd: 0.06, output_tokens: 10833, model_usage: { "claude-haiku-5-5": { output_tokens: 42368, cost_usd: 0.06 } } };
+  const dC = cd.cumulativeDelta(prevRec, resumed({ compactions: 1 })), dN = cd.cumulativeDelta(prevRec, resumed({})), dE = cd.cumulativeDelta(prevRec, exact);
+  res("cost proof: a resumed call that compacted (compactions 1) bills its delta (0.03) although its cumulative output exceeds predecessor plus own; without a compaction count it stays ambiguous; the exact case is unchanged", dC !== null && Math.abs((dC.total_cost_usd as number) - 0.03) < 1e-9 && dN === null && dE !== null);
   // the run-level bounds, on a fake session runner: the dollar line stops before any resume, the count cap after LOKI_E10_CONTINUE_MAX resumes; a cap stop is never a finish
   const cr = await import("$ROOT/loki-ts/src/util/conflict_resume.ts");
   const runs: string[] = [], evs: string[] = []; let tree = 0;
