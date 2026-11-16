@@ -3,11 +3,43 @@
 // each requested item; after the session and every fix round, Loki runs that script itself in a new run-owned scratch directory and records the real
 // exit code and output. The acceptance line check reads that output, not the reply. (New file: no module owned a harness-run proof; stages/prove.ts is
 // the separate prover session, off by default.)
-import { copyFileSync, existsSync, readFileSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { cleanupSessionScratch, createSessionScratch, scratchSessionEnv } from "../runner/worker_proc.ts";
 import { run } from "../util/shell.ts";
 import { CONNECTION_ENV } from "./session.ts";
+import { acceptanceLines, FRESH_INSTALL_ASK, issueAcceptanceCapOn, issueAcceptanceOf, optionalAsk } from "../util/intent_card.ts";
+import { neededServices } from "../util/stack_tools.ts";
+import { issueRunBrief } from "./types.ts";
+
+/** The lines the label is checked against: the issue's own checklist, else (an issue in prose) the plan's acceptance lines; plus the fresh-install line when
+ *  the repository needs a database or another service. Empty when the check is off or nothing gives a line. */
+export function labelAsks(provider: string, intake: Record<string, unknown> | undefined, plan: unknown, repoDir: string, env: NodeJS.ProcessEnv = process.env): { asks: string[]; source: "issue" | "plan"; needs: string[] } {
+  if (!issueAcceptanceCapOn(env)) return { asks: [], source: "issue", needs: [] };
+  const listed = issueAcceptanceOf(intake), own = listed.length ? listed : issueRunBrief(provider, intake?.["source"], env) ? acceptanceLines(plan as never) : [];
+  let needs: string[] = []; if (own.length) { try { needs = neededServices(repoDir); } catch { needs = []; } }
+  return { asks: own.length && needs.length ? [...own, FRESH_INSTALL_ASK] : own, source: listed.length ? "issue" : "plan", needs };
+}
+/** A tree object of the working tree as it stands (tracked changes and new files, ignores respected), built in a throwaway index so the real index is
+ *  never touched. Lets the acceptance check read the uncommitted change with `git diff <base> <tree>`. Null when git cannot build it. */
+export async function worktreeTree(repoDir: string): Promise<string | null> {
+  const idx = join(repoDir, ".git", `loki-label-index-${process.pid}`);
+  try {
+    const real = join(repoDir, ".git", "index"); if (existsSync(real)) copyFileSync(real, idx);
+    const env = { GIT_INDEX_FILE: idx };
+    const a = await run(["git", "-C", repoDir, "add", "-A", "--", ".", ":(exclude).loki"], { env, timeoutMs: 60000 }); if (a.exitCode !== 0) return null;
+    const w = await run(["git", "-C", repoDir, "write-tree"], { env, timeoutMs: 60000 }), sha = w.stdout.trim();
+    return w.exitCode === 0 && /^[0-9a-f]{40,64}$/.test(sha) ? sha : null;
+  } catch { return null; } finally { try { rmSync(idx, { force: true }); } catch { /* a stale throwaway index is harmless */ } }
+}
+/** The brief that hands unmet lines back to the session: each line with the check's reason, and what closing it takes. */
+export function unmetBrief(unmet: { line: string; reason: string }[]): string {
+  return [`Loki checked your change against the acceptance lines, using its own run of your proof script. ${unmet.length} line${unmet.length === 1 ? " is" : "s are"} not met yet:`, "",
+    ...unmet.map((u, i) => `${i + 1}. ${u.line}\n   Why not: ${u.reason || "no evidence that it was exercised"}`), "",
+    "Close each one. If the product does not do it, make it do it. If it does but nothing proves it, add the proof to $LOKI_SCRATCH/loki-proof.sh: send the exact request the real caller sends (for a page, every path its client code calls, with the same method and parameters) and print a PROVED or FAILED line with the real response. Run the script yourself with a new empty directory until it exits 0, leave it in place, and end with the same finish line. Do not weaken a check to make it pass.",
+  ].join("\n");
+}
+export { optionalAsk };
 
 export const PROOF_SCRIPT = "loki-proof.sh";
 const MAX_SCRIPT_BYTES = 200_000, TAIL_CHARS = 8000;
