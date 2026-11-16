@@ -8,7 +8,7 @@ import { diffStat, runHead, formatRunSummary, handoffSection, readRiskSummary, w
 import { commitUnsealedWork, guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { ISSUE_LABELS_ENV } from "../features/decompose.ts";
+import { ISSUE_LABELS_ENV, issueWholeFirst } from "../features/decompose.ts";
 import { dirname, join, relative, resolve } from "node:path"; import { writeRunState } from "../util/seal_drift.ts";
 import { loadSpecFile, type LoadedSpec } from "../util/spec_file.ts";
 import { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker } from "../util/engine_origin.ts";
@@ -387,7 +387,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       process.stderr.write(`engine10: issue fetch failed: ${(err as Error).message.split("\n")[0]}\n`);
       return 2;
     }
-    if (!trackerRef && sealPatch === null && !deep && !json) { const ep = await (await import("../commands/issues_run.ts")).startIssueEpic({ repoDir, runDir, noPr, provider, capUsd: cap.usd }); if (ep !== null) return ep; } // P12-46: an issue whose text sizes large by structure goes down the MASS-2 split, each slice its own run; null runs the single path below
+    if (!trackerRef && sealPatch === null && !deep && !json && !issueWholeFirst(process.env)) { const ep = await (await import("../commands/issues_run.ts")).startIssueEpic({ repoDir, runDir, noPr, provider, capUsd: cap.usd }); if (ep !== null) return ep; } // P12-46: under LOKI_ISSUE_WHOLE_FIRST=0 an issue whose text sizes large by structure goes down the MASS-2 split, each slice its own run; by default (WHOLE-FIRST) and on null the single path below runs the whole issue
     try { const l = (JSON.parse(readFileSync(join(runDir, "issue.json"), "utf8")) as { labels?: unknown }).labels; for (const e of [env, process.env]) e[ISSUE_LABELS_ENV] = JSON.stringify(Array.isArray(l) ? l.filter((x) => typeof x === "string") : []); } catch { /* no labels: sizing uses the text alone */ } // one large rule (features/decompose.ts): the stages' sizeTask sees the issue's epic label, as triage and startIssueEpic do
   }
   if (!isIssue) for (const e of [env, process.env]) delete e[ISSUE_LABELS_ENV]; // a text goal never inherits an issue's labels

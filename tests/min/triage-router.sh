@@ -4,7 +4,8 @@
 # 2 vague, 1 UI-only, 1 production secret rotation, 1 epic) and the stub claude stands in for every
 # model call. Asserts, on throwaway repos:
 #   classifier:      `loki internal triage` gives the expected class for each fixture issue; the epic
-#                    (issue 8) is large and runs split into slices instead of getting a drafted spec.
+#                    (issue 8) is large and runs as one whole-issue run instead of getting a drafted spec
+#                    (LOKI_ISSUE_WHOLE_FIRST=0: it says it runs split into slices, and the dry run counts it).
 #   one large rule:  triage decides large only through features/decompose.ts deliverables, the rule
 #                    engine10/sizing.ts sizeTask uses: they agree on every case, and the old triage-only
 #                    rules (more than 3 checklist items, a body over 4000 characters) no longer exist.
@@ -90,7 +91,9 @@ for want in $EXPECT; do
 done
 printf '%s' "$got" | python3 -I -c 'import json,sys; sys.exit(0 if all(r["reason"] and "\n" not in r["reason"] for r in json.load(sys.stdin)) else 1)' 2>/dev/null \
     && ok "classifier: every item has a one-line reason" || bad "classifier: a reason is empty or multi-line"
-has "classifier: the epic (issue 8) is large and runs split into slices" "$got" '"id":8,"class":"implement","reason":"large (label epic); runs split into slices","rule":"large"'
+has "classifier: the epic (issue 8) is large and runs as one run (whole-issue first)" "$got" '"id":8,"class":"implement","reason":"large (label epic); runs as one run","rule":"large"'
+got0="$(printf '%s' "$items" | LOKI_ISSUE_WHOLE_FIRST=0 bash "$ROOT/bin/loki" internal triage --repo-dir "$REPO" 2>&1)"
+has "classifier: LOKI_ISSUE_WHOLE_FIRST=0: the epic (issue 8) is large and runs split into slices" "$got0" '"id":8,"class":"implement","reason":"large (label epic); runs split into slices","rule":"large"'
 
 # 1b. one large rule: triage, sizing and deliverables agree on every case
 LARGE="$(ROOT="$ROOT" FIXTURE="$FIX/triage/issues.json" bun --no-env-file --config=/dev/null -e '
@@ -144,8 +147,11 @@ dry="$(cd "$REPO" && ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/c
 for want in $EXPECT; do
     printf '%s\n' "$dry" | grep -Eq "^backlog: #${want%%:*} ${want#*:} +.+ \| .+" && ok "dry run: #${want%%:*} printed as ${want#*:} with a reason" || bad "dry run: #${want%%:*} not printed as ${want#*:}"
 done
-has "dry run: summary counts" "$dry" "dry run: 5 would run (1 split into slices), 2 would get a drafted spec, 1 need a human; nothing launched"
-has "dry run: the large epic is shown running split into slices" "$dry" "| large (label epic); runs split into slices"
+has "dry run: summary counts" "$dry" "dry run: 5 would run, 2 would get a drafted spec, 1 need a human; nothing launched"
+has "dry run: the large epic is shown running as one run" "$dry" "| large (label epic); runs as one run"
+dry0="$(cd "$REPO" && LOKI_ISSUE_WHOLE_FIRST=0 ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" backlog example/calc --all --dry-run 2>&1)"
+has "dry run: LOKI_ISSUE_WHOLE_FIRST=0: summary counts the split" "$dry0" "dry run: 5 would run (1 split into slices), 2 would get a drafted spec, 1 need a human; nothing launched"
+has "dry run: LOKI_ISSUE_WHOLE_FIRST=0: the large epic is shown running split into slices" "$dry0" "| large (label epic); runs split into slices"
 [ ! -e "$T/launch.log" ] && [ ! -d "$REPO/.loki/specs" ] && ok "dry run: nothing launched, no spec drafted" || bad "dry run: launched or drafted something"
 
 # 4. backlog run: implement runs, spec drafts, human is listed
@@ -154,7 +160,7 @@ run="$(cd "$REPO" && E2E_STUB_LOG="$T/stub-backlog.log" JIRA_API_TOKEN=jira_othe
 launched="$(sed 's/ .*//' "$T/launch.log" 2>/dev/null | sort | tr '\n' ' ')"
 [ "$launched" = "example/calc#1 example/calc#2 example/calc#3 example/calc#6 example/calc#8 " ] && ok "backlog run: only implement issues launched (#1 #2 #3 #6 and the large #8)" || bad "backlog run: launched: ${launched:-nothing}"
 [ "$(grep -c ' class=implement reason=concrete target' "$T/launch.log" 2>/dev/null)" = 4 ] && ok "backlog run: each child gets LOKI_TRIAGE_CLASS and LOKI_TRIAGE_REASON" || bad "backlog run: child env lacks the triage class or reason"
-grep -q '^example/calc#8 class=implement reason=large (label epic); runs split into slices$' "$T/launch.log" 2>/dev/null && ok "backlog run: the large epic runs (to the split path) instead of drafting a spec" || bad "backlog run: the large epic was not launched for the split path"
+grep -q '^example/calc#8 class=implement reason=large (label epic); runs as one run$' "$T/launch.log" 2>/dev/null && ok "backlog run: the large epic runs (as one whole-issue run) instead of drafting a spec" || bad "backlog run: the large epic was not launched as one run"
 nspec="$(find "$REPO/.loki/specs" -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
 [ "$nspec" = 2 ] && ok "backlog run: only the 2 vague issues drafted a spec under .loki/specs" || bad "backlog run: $nspec spec file(s) drafted, want 2"
 for n in 4 5; do

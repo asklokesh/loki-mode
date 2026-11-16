@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+- `loki start owner/repo#N` runs a large issue as one whole-issue run instead of splitting it into slices up front (LOKI_ISSUE_WHOLE_FIRST, default on; `0` restores the split). `loki backlog` and `loki issues run` children follow it, and backlog triage now says a large issue `runs as one run`. On FireLater#24 (Sonnet, n=1) the split route did 5 of 10 asks for $3.45 and the whole-issue route 8 of 10 for $0.66.
 
 ## v11.142.0 (2026-11-15)
 

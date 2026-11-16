@@ -63,6 +63,11 @@ export const EPIC_LABEL_RE = /^(?:epic|umbrella|tracking|meta)$/i;
 /** The labels of the issue this engine run works on: the supervisor puts issue.json's labels in LOKI_E10_ISSUE_LABELS (a JSON string array)
  *  for an issue run, so the stages' own sizeTask (plan, Wall, implement) applies the same epic-label signal as triage and startIssueEpic. */
 export const ISSUE_LABELS_ENV = "LOKI_E10_ISSUE_LABELS";
+/** WHOLE-FIRST (LOKI_ISSUE_WHOLE_FIRST, default on; 0/off/false/no opts out): `loki start owner/repo#N` runs the issue as ONE whole-issue run and never
+ *  asks for the up-front split (engine10/supervisor.ts), so `loki backlog` and `loki issues run` children run whole too; the split code stays for =0
+ *  and for `loki issues run`'s split after a whole run that did not finish (issues_run.ts wholeRunTooLarge). Sizing is unchanged. The one place a
+ *  per-model rule would go: this function, reading env.LOKI_SESSION_MODEL (the supervisor sets it before it calls this). */
+export const issueWholeFirst = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_ISSUE_WHOLE_FIRST"] ?? "").trim());
 export function issueLabelsFromEnv(env: NodeJS.ProcessEnv = process.env): string[] {
   try { const v = JSON.parse(env[ISSUE_LABELS_ENV] ?? "[]") as unknown; return Array.isArray(v) ? v.filter((l): l is string => typeof l === "string") : []; } catch { return []; }
 }

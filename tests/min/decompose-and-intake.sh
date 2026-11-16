@@ -3,7 +3,10 @@
 # bundle -> engine10 on the stub provider (tests/min/fixtures/e2e/bin/claude) and a stub gh, offline. Asserts:
 #   sizing:  a FireLater-like multi-part epic sizes large by structure; a one-line bug fix and a structured
 #            single-deliverable issue do not (features/decompose.ts deliverables via engine10/sizing.ts sizeTask).
-#   epic:    `loki start owner/repo#24` on that epic takes the existing MASS-2 decompose path
+#   whole:   by default (LOKI_ISSUE_WHOLE_FIRST on) `loki start owner/repo#24` on that epic runs ONE whole-issue engine run with
+#            no split session, on the measured whole-run path (sized large, plan kept, Wall off by default); sizing is unchanged.
+#   epic:    under LOKI_ISSUE_WHOLE_FIRST=0 (also the backlog, pr mode, conflict and labels legs below, which cover the split code)
+#            `loki start owner/repo#24` on that epic takes the existing MASS-2 decompose path
 #            (commands/issues_run.ts startIssueEpic): the model's split (stub) is used, slice s1 runs, then s2
 #            stacked on s1's run branch, each as its own engine10 run with its own receipt, and no whole-issue run.
 #   backlog: `loki backlog acme/search --issues 25,24` on #25, large only by its epic label: triage marks it large
@@ -213,6 +216,22 @@ printf '%s\n' "$SIZES" | grep -Eq '^epic large \| structure: 8 solution part\(s\
     && ok "multi-part epic sizes large by structure" || bad "multi-part epic did not size large by structure"
 printf '%s\n' "$SIZES" | grep -q '^bugfix small ' && ok "one-line bug fix sizes small" || bad "one-line bug fix did not size small"
 printf '%s\n' "$SIZES" | grep -Eq '^structured (small|normal) ' && ok "structured single-deliverable issue (3 parts, 3 criteria) is not large" || bad "structured single-deliverable issue sized large"
+# WHOLE-FIRST (LOKI_ISSUE_WHOLE_FIRST, default on) changes only whether `loki start owner/repo#N` asks for a split up front. Sizing is untouched:
+# the epic still sizes large inside an issue run (the measured whole run's plan stage did too), and triage still calls it large, saying it runs
+# as one run (=0: split into slices).
+WSIZES="$(cd "$ROOT" && ROOT="$ROOT" REPO="$S" bun --no-env-file --config=/dev/null -e '
+const { sizeTask } = await import(process.env.ROOT + "/loki-ts/src/engine10/sizing.ts");
+const { triageItem } = await import(process.env.ROOT + "/loki-ts/src/features/triage.ts");
+const { buildRepoMap } = await import(process.env.ROOT + "/loki-ts/src/engine10/repomap.ts");
+const map = buildRepoMap(process.env.REPO), tests = { runners: ["bun"], tests: [{ runner: "bun", path: "calc.test.ts" }, { runner: "bun", path: "paginate.test.ts" }] };
+const t = process.env.EPIC_TITLE + "\n\n" + process.env.EPIC_BODY, at = (env) => { delete process.env.LOKI_E10_ISSUE_LABELS; delete process.env.LOKI_ISSUE_WHOLE_FIRST; Object.assign(process.env, env); return sizeTask(t, map, tests).size; };
+const tri = (env) => { delete process.env.LOKI_ISSUE_WHOLE_FIRST; Object.assign(process.env, env); const r = triageItem({ title: process.env.EPIC_TITLE, body: process.env.EPIC_BODY, labels: [] }); return r.rule + ":" + r.reason.split("; ")[1]; };
+console.log([at({ LOKI_E10_ISSUE_LABELS: "[]" }), at({ LOKI_E10_ISSUE_LABELS: "[]", LOKI_ISSUE_WHOLE_FIRST: "0" }), tri({}), tri({ LOKI_ISSUE_WHOLE_FIRST: "0" })].join(" | "));
+' 2>&1)"
+printf '    sizing (issue run): %s\n' "$WSIZES"
+[ "$WSIZES" = "large | large | large:runs as one run | large:runs split into slices" ] \
+    && ok "whole-first: sizing is unchanged (the epic sizes large in an issue run either way); triage keeps it large and says it runs as one run (LOKI_ISSUE_WHOLE_FIRST=0: split into slices)" \
+    || bad "whole-first sizing/triage gave: $WSIZES (want: large | large | large:runs as one run | large:runs split into slices)"
 
 # --- epic: loki start owner/repo#24 goes down the MASS-2 decompose path, slice by slice --------------------------------
 cat > "$T/bin/gh" <<'GH'
@@ -236,7 +255,7 @@ chmod +x "$T/bin/gh"
 E="$T/epic"
 make_repo "$E" 0
 SPLIT='{"slices":[{"id":"s1","title":"search backend","acceptance":["full-text search returns ranked rows"],"depends_on":[],"files":["calc.ts"]},{"id":"s2","title":"search UI","acceptance":["the search box shows ranked results"],"depends_on":["s1"],"files":["calc.ts"]}]}'
-E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" E2E_STUB_BUDGET_LOG="$T/epic-budget.log" run_loki "$E" "$T/epic-stub.log" start acme/search#24 --no-pr --max-cost 5
+LOKI_ISSUE_WHOLE_FIRST=0 E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" E2E_STUB_BUDGET_LOG="$T/epic-budget.log" run_loki "$E" "$T/epic-stub.log" start acme/search#24 --no-pr --max-cost 5
 printf '%s\n' "$OUT" | grep -E '^(loki:|#24)' | sed 's/^/    epic: /'
 [ "$RC" -eq 6 ] && printf '%s\n' "$OUT" | grep -Eq '^Outcome: +PARTIAL$' && printf '%s\n' "$OUT" | grep -Eq '^Reason: +slice s1: PARTIAL' \
     && ok "epic run reports the true aggregate: PARTIAL slices give Outcome PARTIAL and exit 6, not VERIFIED" || { bad "epic run: exit $RC, outcome $(printf '%s\n' "$OUT" | grep '^Outcome:')"; printf '%s\n' "$OUT" | tail -15 | sed 's/^/    | /'; }
@@ -259,7 +278,7 @@ EPIC_DIR="$(dirname "$(ls "$E"/.loki/runs/*/epic.json 2>/dev/null | head -1)")"
 if [ -f "$EPIC_DIR/epic.json" ]; then
     n_rec="$(ls -d "$EPIC_DIR"/slices/receipts/*/ 2>/dev/null | wc -l | tr -d ' ')"
     [ "$n_rec" = "2" ] && ok "each slice is its own run with its own receipt (2 kept)" || bad "expected 2 slice receipts, found $n_rec"
-    [ ! -e "$EPIC_DIR/events.jsonl" ] && ok "no whole-issue run started for the epic" || bad "a whole-issue run started beside the slices"
+    [ ! -e "$EPIC_DIR/events.jsonl" ] && ok "LOKI_ISSUE_WHOLE_FIRST=0: no whole-issue run started for the epic" || bad "LOKI_ISSUE_WHOLE_FIRST=0: a whole-issue run started beside the slices"
     s2_branch="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1]))["results"]; print(r[1].get("branch") or "")' "$EPIC_DIR/epic.json")"
     if [ -n "$s2_branch" ] && git -C "$E" show "$s2_branch:calc.ts" > "$T/s2-calc.ts" 2>/dev/null; then
         grep -q 'slice_s1' "$T/s2-calc.ts" && grep -q 'slice_s2' "$T/s2-calc.ts" && ok "s2's branch holds s1's and s2's work (stacked)" || bad "s2's branch lacks a slice's work"
@@ -269,6 +288,22 @@ if [ -f "$EPIC_DIR/epic.json" ]; then
 else
     bad "no epic.json recorded for the epic run"
 fi
+
+# --- whole: by default (LOKI_ISSUE_WHOLE_FIRST on) the same structural epic runs as ONE whole-issue engine run: no split session, no slices -----------
+W="$T/whole"
+make_repo "$W" 0
+E2E_STUB_MODE=done E2E_STUB_SPLIT="$SPLIT" run_loki "$W" "$T/whole-stub.log" start acme/search#24 --no-pr --max-cost 5
+WEV="$(ls "$W"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
+wsize="$(python3 -I -c 'import json,sys; print(next((json.loads(l)["data"].get("size") for l in open(sys.argv[1]) if "\"variant\"" in l and json.loads(l)["type"] == "variant"), "none"))' "$WEV" 2>/dev/null)"
+case "$OUT" in *"sizes large"*|*"split into"*|*"Split planning"*) wsplit=yes ;; *) wsplit=no ;; esac
+[ "$wsplit" = no ] && [ -n "$WEV" ] && [ -z "$(ls "$W"/.loki/runs/*/epic.json 2>/dev/null)" ] && [ -z "$(ls "$W"/.loki/issues-run/decompose 2>/dev/null)" ] && printf '%s\n' "$OUT" | grep -Eq '^Outcome: ' \
+    && ok "whole-first: loki start owner/repo#24 on the structural epic runs one whole-issue engine run (no split session, no slices, one Outcome)" \
+    || { bad "whole-first: the epic did not run as one whole-issue run (split text: $wsplit, events: ${WEV:-none}, rc $RC)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+wstages="$(python3 -I -c 'import json,sys
+ev=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+print(" ".join("%s:%s" % (e["stage"], e["type"].split(".")[1]) for e in ev if e["type"] in ("stage.completed", "stage.skipped") and e["stage"] in ("plan", "wall")))' "$WEV" 2>/dev/null)"
+[ "$wsize" = large ] && [ "$wstages" = "wall:skipped plan:completed" ] && ok "whole-first: the whole-issue run takes the measured LOKI_UNIT_ID=whole path: sized large by structure, plan session kept, Wall off by default" \
+    || bad "whole-first: the whole-issue run sized '${wsize:-none}' with stages '${wstages:-none}' (want large, wall:skipped plan:completed)"
 
 # --- split repair: a list detail is repaired, any other refusal is re-asked once with the exact error ------------------------
 # FireLater#24 (v11.116.0): one 520-character acceptance criterion refused the whole split and the epic ran as one 413 s session.
@@ -338,7 +373,7 @@ cat > "$T/launch-start" <<EOF
 exec bash "$ROOT/bin/loki" start "\$1" --no-pr --max-cost 5
 EOF
 chmod +x "$T/launch-start"
-LOKI_BACKLOG_LAUNCHER="$T/launch-start" LOKI_BUDGET_PER_DAY_USD=0.001 E2E_STUB_USAGE=2000 E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" \
+LOKI_ISSUE_WHOLE_FIRST=0 LOKI_BACKLOG_LAUNCHER="$T/launch-start" LOKI_BUDGET_PER_DAY_USD=0.001 E2E_STUB_USAGE=2000 E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" \
     run_loki "$B" "$T/backlog-stub.log" backlog acme/search --issues 25,24 --concurrency 1
 BLOG="$(cat "$B-backlog/logs/issue-25.log" 2>/dev/null)"
 printf '%s\n' "$OUT" | grep -E '^backlog: #2[45]' | sed 's/^/    backlog: /'
@@ -358,13 +393,55 @@ has "backlog child: the same rule sizes it large at start" "$BLOG" "acme/search#
 has "backlog child: takes the MASS-2 split path (model split used)" "$BLOG" "#25 split into 2 slices: s1, s2<-s1"
 printf '%s\n' "$BLOG" | grep -q '^#25 s2 running (stacked on loki/e10-' && ok "backlog child: s2 runs stacked on s1, each slice its own run" || bad "backlog child: slices did not run stacked"
 
+# --- backlog, whole route (the default): the large #24 child is one whole-issue run, and triage says so ---------------------------------------
+B2="$T/backlog-whole"
+make_repo "$B2" 0
+git -C "$B2" remote add origin https://github.com/acme/search.git
+LOKI_BACKLOG_LAUNCHER="$T/launch-start" E2E_STUB_MODE=done run_loki "$B2" "$T/backlog-whole-stub.log" backlog acme/search --issues 24 --concurrency 1
+B2LOG="$(cat "$B2-backlog/logs/issue-24.log" 2>/dev/null)"
+printf '%s\n' "$B2LOG" | grep -E '^(loki:|Outcome:)' | sed 's/^/    backlog whole child: /'
+printf '%s\n' "$OUT" | grep -q 'backlog: #24 implement .*| large (structure: .*); runs as one run$' && printf '%s\n' "$B2LOG" | grep -Eq '^Outcome: ' \
+    && ! printf '%s\n' "$B2LOG" | grep -q 'sizes large' && [ -z "$(find "$B2" "$B2-backlog" -name epic.json 2>/dev/null)" ] \
+    && ok "backlog whole: the large #24 is triaged 'runs as one run' and its child is one whole-issue run (no split session, no slices)" \
+    || { bad "backlog whole: triage or child run split (rc $RC)"; printf '%s\n' "$OUT" | grep '^backlog: #24' | sed 's/^/    | /'; printf '%s\n' "$B2LOG" | tail -6 | sed 's/^/    | /'; }
+
+# --- loki issues run, whole route: its whole-issue child no longer splits on its own (supervisor.ts); =0 shows the split it did before -----------
+# A gh shim lists #24 and no open PRs; the origin is a local bare repo, so the child's PR publishes offline.
+mkdir -p "$T/bin-ir"
+cat > "$T/bin-ir/gh" <<GH
+#!/usr/bin/env bash
+case "\${1:-} \${2:-}" in
+  "issue list") python3 -I -c 'import json, os; print(json.dumps([{"number": 24, "title": os.environ["EPIC_TITLE"], "body": os.environ["EPIC_BODY"], "labels": [{"name": "enhancement"}]}]))'; exit 0 ;;
+  "pr list") echo '[]'; exit 0 ;;
+esac
+exec "$T/bin/gh" "\$@"
+GH
+chmod +x "$T/bin-ir/gh"
+ir_run() { # ir_run <dir> [VAR=value...]: `loki issues run acme/search --yes --parallel 1` on the stub provider; sets RC and OUT
+    local d="$1"; shift
+    make_repo "$d" 0; git init -q --bare "$d-origin.git"; git -C "$d" remote add origin "$d-origin.git"; git -C "$d" push -q origin main
+    OUT="$(cd "$d" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED \
+        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin-ir:$T/bin:$FIX/bin:$PATH" E2E_STUB_LOG="$d-stub.log" E2E_STUB_MODE=done E2E_STUB_SPLIT="$SPLIT" \
+        LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" "$@" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" issues run acme/search --yes --parallel 1 2>&1)"
+    RC=$?
+}
+ir_run "$T/issues-whole"
+IRW_EV="$(find "$T/issues-whole/.loki" -name events.jsonl 2>/dev/null | grep -c .)"; IRW_EP="$(find "$T/issues-whole/.loki" -name epic.json 2>/dev/null | grep -c .)"
+printf '%s\n' "$OUT" | grep -E '^#24 ' | sed 's/^/    issues run whole: /'
+ir_run "$T/issues-split" LOKI_ISSUE_WHOLE_FIRST=0
+IRS_EP="$(find "$T/issues-split/.loki" -name epic.json 2>/dev/null | grep -c .)"
+printf '%s\n' "$OUT" | grep -E '^#24 ' | sed 's/^/    issues run (=0): /'
+[ "$IRW_EV" = 1 ] && [ "$IRW_EP" = 0 ] && [ "$IRS_EP" -ge 1 ] \
+    && ok "issues run: by default its whole-issue child for the large #24 is one engine run (1 run, no split); under LOKI_ISSUE_WHOLE_FIRST=0 that same child splits on its own ($IRS_EP epic record)" \
+    || bad "issues run: default child runs $IRW_EV, epic records $IRW_EP (want 1 and 0); =0 epic records $IRS_EP (want >= 1)"
+
 # --- PR mode: a split in the default PR mode ends in ONE PR for the issue, and backlog counts its PARTIAL as done -------
 P="$T/prmode"
 make_repo "$P" 0
 git init -q --bare "$T/prmode-origin.git"
 git -C "$P" remote add origin "$T/prmode-origin.git"
 git -C "$P" push -q origin main
-E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" run_loki "$P" "$T/prmode-stub.log" start acme/search#25 --max-cost 5
+LOKI_ISSUE_WHOLE_FIRST=0 E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" run_loki "$P" "$T/prmode-stub.log" start acme/search#25 --max-cost 5
 printf '%s\n' "$OUT" | grep -E '^(#25 s[12] (PARTIAL|VERIFIED)|Outcome:|Reason:|PR:|Cost:)' | sed 's/^/    pr mode: /'
 npr="$(printf '%s\n' "$OUT" | grep -cE '^PR: +local:///.+#loki/')"
 [ "$npr" = 1 ] && printf '%s\n' "$OUT" | grep -Eq '^PR: +local:///.+#loki/25-combined$' && printf '%s\n' "$OUT" | grep -Eq '^Combined: +2 slices in one PR on loki/25-combined$' \
@@ -373,6 +450,45 @@ npr="$(printf '%s\n' "$OUT" | grep -cE '^PR: +local:///.+#loki/')"
 PRSTATUS="$(printf '%s' "$OUT" | python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import backlog; ok, st, usd = backlog.parse_result(int(sys.argv[2]), sys.stdin.read()); print("%s %s" % (ok, st))' "$ROOT/autonomy/lib" "$RC" 2>&1)"
 echo "    pr mode: backlog reads: $PRSTATUS"
 case "$PRSTATUS" in "True PARTIAL, PR local:///"*"#loki/25-combined") ok "pr mode: backlog counts the PARTIAL split with its combined PR as done" ;; *) bad "pr mode: backlog reads the PR-mode split as: $PRSTATUS" ;; esac
+# stranded <repo> <origin.git> <pr branch>: every loki/* branch (local or on the origin) with a line it changed against main that the PR branch lacks,
+# i.e. finished work outside the one PR (P8). The PR branch may rebuild commits (one commit per slice), so lines are compared, not commit ids.
+stranded() {
+    local repo="$1" origin="$2" pr="$3" b gd
+    for gd in "$repo/.git" "$origin"; do
+        for b in $(git --git-dir="$gd" for-each-ref --format='%(refname:short)' refs/heads/loki/); do
+            [ "$b" = "$pr" ] && continue
+            git --git-dir="$gd" cat-file -e "$pr" 2>/dev/null || git --git-dir="$gd" fetch -q "$origin" "$pr:refs/q1/pr" 2>/dev/null
+            local prref="$pr"; git --git-dir="$gd" cat-file -e "$pr" 2>/dev/null || prref=refs/q1/pr
+            [ -n "$(git --git-dir="$gd" log --format=%H "main..$b" 2>/dev/null)" ] || continue
+            python3 -I - "$gd" "$b" "$prref" <<'PY' || printf '%s ' "$(basename "$gd"):$b"
+import subprocess, sys
+gd, b, pr = sys.argv[1:4]
+g = lambda *a: subprocess.run(["git", "--git-dir=" + gd, *a], capture_output=True, text=True).stdout
+for f in g("diff", "--name-only", "main..." + b).split():
+    mine = [l[1:] for l in g("diff", "-U0", "main..." + b, "--", f).splitlines() if l.startswith("+") and not l.startswith("+++")]
+    have = g("show", pr + ":" + f).splitlines()
+    if any(l not in have for l in mine): sys.exit(1)
+PY
+        done
+    done
+}
+SPLITSTRAND="$(stranded "$P" "$T/prmode-origin.git" loki/25-combined)"
+[ -z "$SPLITSTRAND" ] && ok "pr mode (split route, LOKI_ISSUE_WHOLE_FIRST=0): no finished slice work is left on a branch outside the one combined PR" || bad "pr mode (split route): work outside the PR on: $SPLITSTRAND"
+
+# --- PR mode, whole route (the default): the structural epic #24 ends in exactly ONE PR and leaves no finished commit on any other branch (P8) ---
+PW="$T/prmode-whole"
+make_repo "$PW" 0
+git init -q --bare "$T/prmode-whole-origin.git"
+git -C "$PW" remote add origin "$T/prmode-whole-origin.git"
+git -C "$PW" push -q origin main
+E2E_STUB_MODE=done run_loki "$PW" "$T/prmode-whole-stub.log" start acme/search#24 --max-cost 5
+printf '%s\n' "$OUT" | grep -E '^(Outcome:|PR:|Cost:)' | sed 's/^/    pr mode whole: /'
+wpr="$(printf '%s\n' "$OUT" | grep -E '^PR: +local:///' | sed -E 's/.*#//')"
+WSTRAND="$( [ -n "$wpr" ] && stranded "$PW" "$T/prmode-whole-origin.git" "$wpr")"
+[ "$(printf '%s\n' "$OUT" | grep -cE '^PR: +local:///.+#loki/')" = 1 ] && [ -n "$wpr" ] && [ -z "$WSTRAND" ] && ! printf '%s\n' "$OUT" | grep -q 'sizes large' \
+    && [ "$(git --git-dir="$T/prmode-whole-origin.git" for-each-ref --format='%(refname:short)' refs/heads/loki/ | grep -c .)" = 1 ] \
+    && ok "pr mode whole: the default route ends the epic in exactly one PR ($wpr), one loki branch on the origin, and no finished commit outside it" \
+    || { bad "pr mode whole: PR '${wpr:-none}', stranded '${WSTRAND}', origin loki branches: $(git --git-dir="$T/prmode-whole-origin.git" for-each-ref --format='%(refname:short)' refs/heads/loki/ | tr '\n' ' ') (rc $RC)"; printf '%s\n' "$OUT" | tail -10 | sed 's/^/    | /'; }
 
 # --- backlog, PR mode: `loki backlog` with its real launcher on a local bare origin (LOKI_BACKLOG_LOCAL_ORIGIN=1) ends the split issue in ONE PR ---
 BP="$T/backlog-pr"
@@ -380,7 +496,7 @@ make_repo "$BP" 0
 git init -q --bare "$T/backlog-pr-origin.git"
 git -C "$BP" remote add origin "$T/backlog-pr-origin.git"
 git -C "$BP" push -q origin main
-LOKI_BACKLOG_LOCAL_ORIGIN=1 E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" run_loki "$BP" "$T/backlog-pr-stub.log" backlog acme/search --issues 25 --concurrency 1
+LOKI_ISSUE_WHOLE_FIRST=0 LOKI_BACKLOG_LOCAL_ORIGIN=1 E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" run_loki "$BP" "$T/backlog-pr-stub.log" backlog acme/search --issues 25 --concurrency 1
 printf '%s\n' "$OUT" | grep -E '^(backlog: #25 [A-Z]|#25 |Total:)' | sed 's/^/    backlog pr: /'
 [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -Eq '^#25 +(\$[0-9.]+|unmeasured) +[0-9]+[sm] +PARTIAL, PR local:///.+#loki/25-combined$' && printf '%s\n' "$OUT" | grep -Eq '^Total: 1 done, 0 not done; 1 PR\(s\); ' \
     && [ "$(git --git-dir="$T/backlog-pr-origin.git" log --format=%s main..loki/25-combined 2>/dev/null | wc -l | tr -d ' ')" = 2 ] \
@@ -396,7 +512,7 @@ git init -q --bare "$T/conflict-origin.git"
 git -C "$C2" remote add origin "$T/conflict-origin.git"
 git -C "$C2" push -q origin main
 SPLIT3='{"slices":[{"id":"s1","title":"search backend","acceptance":["full-text search returns ranked rows"],"depends_on":[],"files":["calc.ts"]},{"id":"s2","title":"search index","acceptance":["the index is rebuilt nightly"],"depends_on":[],"files":["calc.ts"]},{"id":"s3","title":"search UI","acceptance":["the search box shows ranked results"],"depends_on":[],"files":["calc.ts"]}]}'
-LOKI_SPLIT_ONE_PR=0 E2E_STUB_MODE=slice E2E_STUB_CONFLICT_SLICE=s2 E2E_STUB_SPLIT="$SPLIT3" LOKI_EPIC_PARALLEL=1 LOKI_E10_OPUS_CONSULT=0 run_loki "$C2" "$T/conflict-stub.log" start acme/search#25 --max-cost 5
+LOKI_ISSUE_WHOLE_FIRST=0 LOKI_SPLIT_ONE_PR=0 E2E_STUB_MODE=slice E2E_STUB_CONFLICT_SLICE=s2 E2E_STUB_SPLIT="$SPLIT3" LOKI_EPIC_PARALLEL=1 LOKI_E10_OPUS_CONSULT=0 run_loki "$C2" "$T/conflict-stub.log" start acme/search#25 --max-cost 5
 printf '%s\n' "$OUT" | grep -E '^(#25 s[123] (PARTIAL|VERIFIED|SPEC_CONFLICT)|Outcome:|Reason:|PR:)' | sed 's/^/    conflict e2e: /'
 [ "$RC" -eq 6 ] && printf '%s\n' "$OUT" | grep -Eq '^Outcome: +PARTIAL$' && printf '%s\n' "$OUT" | grep -Eq '^Reason: +slice s2: SPEC_CONFLICT .*\(2 of 3 slices opened a PR' \
     && [ "$(printf '%s\n' "$OUT" | grep -cE '^PR: +local:///.+#loki/')" = 2 ] \
@@ -662,7 +778,7 @@ printf '%s\n' "$ONE" | grep -q '^M 8 12 8 8 32 p9=false/true brief=true note=tru
 # --- labels: engine10's own sizing sees the issue's epic label (split refused, so the issue runs as one run) ----------
 L="$T/labels"
 make_repo "$L" 0
-E2E_STUB_MODE=done run_loki "$L" "$T/labels-stub.log" start acme/search#25 --no-pr --max-cost 5
+LOKI_ISSUE_WHOLE_FIRST=0 E2E_STUB_MODE=done run_loki "$L" "$T/labels-stub.log" start acme/search#25 --no-pr --max-cost 5
 LEV="$(ls "$L"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
 lsize="$(python3 -I -c 'import json,sys; print(next((json.loads(l)["data"].get("size") for l in open(sys.argv[1]) if "\"variant\"" in l and json.loads(l)["type"] == "variant"), "none"))' "$LEV" 2>/dev/null)"
 case "$OUT" in *"running the issue as one run"*) [ "$lsize" = "large" ] && ok "labels: the epic-label issue sizes large in engine10's own plan stage, as in triage" || bad "labels: engine10 sized the epic-label issue '${lsize:-none}' (rc $RC)" ;; *) bad "labels: the issue did not fall back to one run" ;; esac
