@@ -454,7 +454,7 @@ CARD_LINE="Available on this machine: postgres 15 (initdb, pg_ctl, postgres) in 
 c1_has "$ISSUE_P" "- You may start this repository's own services and throwaway dependencies to exercise your change. Bind anything you start to 127.0.0.1 or a unix socket, never to all interfaces. Create data directories, sockets and scratch files under \$TMPDIR. Leave what you started running; Loki stops it after the session. Never stop or signal a process you did not start. Use only a database, cache or server you started yourself under \$TMPDIR; never connect to one named in the repository's env files or in your environment, and never apply migrations to it." \
     && ! c1_has "$ISSUE_P" "Stop every process you started" && ! c1_has "$ISSUE_P" "stop each one by that id" \
     && ! c1_has "$ISSUE_P" "- Never leave a long-lived server running." && ! c1_has "$ISSUE_P" "- Never kill processes." \
-    && c1_has "$ISSUE_P" "or LOKI_UNFINISHED: <what is left> when something the issue lists is not delivered. Use LOKI_SPEC_CONFLICT only when a test in the repository contradicts the task." \
+    && c1_has "$ISSUE_P" "or LOKI_UNFINISHED: <what is left> when something the issue requires is not delivered. An item the issue marks optional is not required: do it or skip it, say which in your reply, and still finish with LOKI_DONE. Use LOKI_SPEC_CONFLICT only when a test in the repository contradicts the task." \
     && c1_has "$ISSUE_P" "- Run the impacted tests named below" \
     && ok "candidate 1: the issue run's rules allow starting the repository's own services (loopback or a unix socket, data under \$TMPDIR, left for Loki to stop), drop the two old process rules, keep the targeted-tests rule and add the LOKI_UNFINISHED ending" \
     || bad "candidate 1: issue-run rules wrong (prompt $(wc -c <<< "$ISSUE_P") bytes)"
@@ -462,7 +462,7 @@ c1_has "$ISSUE_P" "Never use a fixed port number: pick a port you have just chec
     && c1_has "$ISSUE_P" "You may say something cannot be run only after you have tried: list each command you tried to find or start it and what it printed. A missing program on PATH is not enough; look where this machine installs it." \
     && ! c1_has "$ISSUE_P" "If something cannot be run here, say what and why." && ! c1_has "$ISSUE_P" "For this proof the process rules above read as" \
     && c1_has "$ISSUE_P" "take the time the work needs and finish every item the issue asks for" \
-    && c1_has "$ISSUE_P" "This issue lists several things to deliver. Deliver each one. If one is left undone, finish with LOKI_UNFINISHED and say which." \
+    && c1_has "$ISSUE_P" "This issue lists several things to deliver. Deliver each one. If a required one is left undone, finish with LOKI_UNFINISHED and say which. An item the issue marks optional may be skipped: say so and finish with LOKI_DONE." \
     && ! c1_has "$ISSUE_P" "Time budget: about" \
     && ok "candidate 1: the issue brief has the port rule, the tried-first rule, the take-the-time and deliver-each lines, no reconciling sentences and no time-budget sentence" \
     || bad "candidate 1: issue-run block lines wrong"
@@ -1595,9 +1595,9 @@ IANE="$(ia_facts)"
 ia_run fail "$T/ia-missing.txt"
 IAF="$(ia_facts)"
 case "$IAF" in 'PARTIAL 9 0 0 1 check ["acceptance not reviewed: '*) ok "issue acceptance e2e: a line check that cannot answer (after one retry) caps PARTIAL with one 'acceptance not reviewed' line" ;; *) bad "issue acceptance failed check gave: $IAF" ;; esac
-IA_ON= ia_run off "$T/ia-seven.txt"
+IA_ON=0 ia_run off "$T/ia-seven.txt"
 IAOFF="$(ia_facts)"
-[ "$IAOFF" = 'VERIFIED 0 0 0 0 nocheck []' ] && [ ! -s "$IAD.linecheck" ] && ok "issue acceptance e2e: with LOKI_E10_ISSUE_ACCEPTANCE unset (the default) no check runs and the receipt keys and label are today's" || bad "issue acceptance default off gave: $IAOFF"
+[ "$IAOFF" = 'VERIFIED 0 0 0 0 nocheck []' ] && [ ! -s "$IAD.linecheck" ] && ok "issue acceptance e2e: with LOKI_E10_ISSUE_ACCEPTANCE=0 no check runs and the receipt keys and label are as before the check existed" || bad "issue acceptance default off gave: $IAOFF"
 IA_BODY='Fix the off-by-one in paginate(): the last item of every page is dropped.' ia_run nolist "$T/ia-seven.txt"
 IANL="$(ia_facts)"
 [ "$IANL" = 'VERIFIED 0 0 0 0 nocheck []' ] && [ ! -s "$IAD.linecheck" ] && ! grep -q '"issue_acceptance"' "$IARUN/events.jsonl" 2>/dev/null \
