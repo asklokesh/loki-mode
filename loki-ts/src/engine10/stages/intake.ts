@@ -11,7 +11,7 @@ import { hooks } from "../hooks.ts";
 import { snapshotContract } from "../../features/contract.ts";
 import { lazyZeroBaseline, stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
 import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps, type DepsTiming, type IntakeTiming, type PhaseTiming } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { baselineCmdS, BASELINE_CMD_TIMEOUT_S, ensureProfile, intakeBudgetNote, intakeCapS, readinessNotice, writeBaselineRecord, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
+import { issueAcceptance } from "../../util/intent_card.ts"; import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { baselineCmdS, BASELINE_CMD_TIMEOUT_S, ensureProfile, intakeBudgetNote, intakeCapS, readinessNotice, writeBaselineRecord, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 import { verifyCommandRows } from "../../project_model/package_suite.ts"; import { untestableReason } from "../testmap.ts";
 import { ambiguityGate, rankedRemedy, rankedRemedyEnabled, voteOpenChoices, type ChoiceCtx } from "../../features/spec_ambiguity.ts"; import { triageGate } from "../../features/triage.ts";
 import { execSpecPrefetchOn, prefetchExecSpec } from "../../features/exec_spec.ts"; import { wallEnabled } from "../sizing.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
@@ -100,7 +100,8 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   const origin = readOriginUrl(ctx.repoDir);
   // resumed is constant false: the engine has no resume.
   const evidence = hooks.runtimeEvidence?.(task) ?? null; // GAME10-08a: pasted traces, request/response pairs and tracker URLs, recorded with a content hash; data only, never run
-  const common = { ...(evidence ? { runtime_evidence: evidence } : {}), ...(stacked ? { stacked_loki_skip: stacked } : {}), task, title: task.split("\n")[0]!.slice(0, 72), repo: githubRepoFromUrl(origin) ?? origin, resumed: false, contract_snapshot: snapshotContract(ctx.repoDir), preexisting_untracked: untrackedAtIntake(ctx.repoDir), preexisting_untracked_blobs: snapshotUntracked(ctx.repoDir), ...(Object.keys(preexisting).length > 0 ? { preexisting_dirty: preexisting } : {}) };
+  const asks = source === "issue" ? issueAcceptance(task) : []; // Q1 ISSUE-ACCEPTANCE: the issue's own acceptance list, verbatim (util/intent_card.ts); absent when it has none, so other runs keep their keys
+  const common = { ...(asks.length ? { issue_acceptance: asks } : {}), ...(evidence ? { runtime_evidence: evidence } : {}), ...(stacked ? { stacked_loki_skip: stacked } : {}), task, title: task.split("\n")[0]!.slice(0, 72), repo: githubRepoFromUrl(origin) ?? origin, resumed: false, contract_snapshot: snapshotContract(ctx.repoDir), preexisting_untracked: untrackedAtIntake(ctx.repoDir), preexisting_untracked_blobs: snapshotUntracked(ctx.repoDir), ...(Object.keys(preexisting).length > 0 ? { preexisting_dirty: preexisting } : {}) };
   if (alreadySatisfied) {
     // Deterministic exit: no repo/test map needed, and never a session/LLM call.
     return { status: "completed", data: { ...common, ignore_snapshot: ignoreSnapshot(ctx.repoDir), task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true } };

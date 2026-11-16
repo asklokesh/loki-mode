@@ -10,7 +10,7 @@ import { STALE_S, STAGE_ORDER, controlRunLink, statusNextStep, workItemBlockers,
 import { readRunControl, writeRunControl, type RunControlAction } from "../util/run_control.ts";
 import { readRunPid, runOwnerAlive } from "../util/run_pid.ts";
 import { isRunId } from "./undo.ts";
-import { INTENT_ANSWER_FILE, renderIntent } from "../util/intent_card.ts";
+import { cardWithIssueLines, INTENT_ANSWER_FILE, issueAcceptanceOf, renderIntent } from "../util/intent_card.ts";
 
 export const NO_RUN_HINT = "No Loki 10 runs here yet. Start one with: loki \"<task>\" or loki owner/repo#N";
 const TERMINAL = new Set(["stage.completed", "stage.failed", "stage.skipped"]);
@@ -251,7 +251,8 @@ export async function runIntentShow(argv: readonly string[], env: NodeJS.Process
   const plan = [...events].reverse().find((e) => e.type === "stage.completed" && e.stage === "plan");
   const raw = plan?.data.intent_card;
   const card = Array.isArray(raw) ? raw.map(String) : null;
-  const lines = [renderIntent(card)];
+  const intake = [...events].reverse().find((e) => e.type === "stage.completed" && e.stage === "intake");
+  const lines = [renderIntent(cardWithIssueLines(card, issueAcceptanceOf(intake?.data)))]; // Q1 ISSUE-ACCEPTANCE: the issue's own lines, as the run printed them
   if (card) {
     try {
       const ans = readFileSync(join(root, id, INTENT_ANSWER_FILE), "utf8").trim();

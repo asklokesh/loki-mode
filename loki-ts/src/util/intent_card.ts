@@ -94,11 +94,12 @@ export async function workerConfirm(card: string[] | null, runDir: string, env: 
 }
 
 /** Plan-stage hook: parse and print the card (stderr, before implement), run the LOKI_CONFIRM gate. card off or an empty plan is silent and changes nothing. */
-export async function applyIntent(raw: string, on: boolean, runDir: string, emit: (data: Record<string, unknown>) => void): Promise<{ rest: string; data: Record<string, unknown> }> {
+export async function applyIntent(raw: string, on: boolean, runDir: string, emit: (data: Record<string, unknown>) => void, issueLines: string[] = []): Promise<{ rest: string; data: Record<string, unknown> }> {
+  if (on && raw.trim() === "" && issueLines.length) { process.stderr.write(`${process.stderr.isTTY ? "\r\x1b[2K" : ""}${renderIntent(issueLines.map((l) => `Acceptance: ${l}`))}\n`); return { rest: raw, data: {} }; } // Q1 ISSUE-ACCEPTANCE: no card, but the issue's own lines are still shown
   if (!on || raw.trim() === "") return { rest: raw, data: {} };
-  const { card, rest } = parseIntentCard(raw);
-  process.stderr.write(`${process.stderr.isTTY ? "\r\x1b[2K" : ""}${renderIntent(card)}\n`); // the supervisor's live line holds the cursor on this terminal; clear it first so the card starts its own line
-  const declined = await workerConfirm(card, runDir, process.env, emit, (l) => process.stderr.write(`${l}\n`));
+  const { card, rest } = parseIntentCard(raw), shown = cardWithIssueLines(card, issueLines); // Q1 ISSUE-ACCEPTANCE: the printed Acceptance lines are the issue's own, verbatim, then the card's additions
+  process.stderr.write(`${process.stderr.isTTY ? "\r\x1b[2K" : ""}${renderIntent(shown)}\n`); // the supervisor's live line holds the cursor on this terminal; clear it first so the card starts its own line
+  const declined = await workerConfirm(shown, runDir, process.env, emit, (l) => process.stderr.write(`${l}\n`));
   return { rest, data: { intent_enabled: true, intent_card: card, ...(declined ? { intent_declined: true } : {}) } };
 }
 
@@ -120,4 +121,51 @@ export function stripTemplate(lines: { filter(fn: (l: string) => boolean): strin
     return acc || !(CHECK_ITEM.test(l) && (tpl || ATTEST.test(l)));
   });
 }
+// Q1 ISSUE-ACCEPTANCE: the issue's own acceptance list, verbatim, with no model call. MARK, CHECKED and normAsk are the prove listing's
+// (stages/prove_list.ts on q1-prove-stage), moved here so both read an ask the same way.
+export const MARK = /^\s*(?:(?:[-*+]|\d+[.)])\s+)?(?:\[[ xX]\]\s*)?/;
+export const CHECKED = /^\s*(?:[-*+]|\d+[.)])\s+\[[xX]\]/;
+export const normAsk = (t: string): string => t.replace(MARK, "").replace(/\s+/g, " ").trim();
+const LIST_HEAD = /^\s*(?:#{1,6}\s*|\*\*|__)?\s*(?:acceptance criteria|acceptance|requirements|definition of done|specifications|things to cover)\s*(?:\*\*|__)?\s*:?\s*(?:\*\*|__)?\s*$/i;
+const ANY_HEAD = /^\s*(?:#{1,6}\s|(?:\*\*|__)[^*_]+(?:\*\*|__)\s*:?\s*$)/, LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+\S/, OPEN_BOX = /^\s*(?:[-*+]|\d+[.)])\s+\[ \]\s*\S/;
+export const ISSUE_ACCEPTANCE_MAX = 50;
+/** The issue's acceptance list: the list items under every heading named Acceptance criteria, Acceptance, Requirements, Definition of done,
+ *  Specifications or Things to cover (markdown, bold or "Name:" line), in order; with no such heading holding items, every open "- [ ] " line.
+ *  Each line is the issue's text without its list or checkbox marker. Checked boxes and template attestations are left out (as the prove listing
+ *  does). [] when the issue has no list, so such a run keeps today's behavior. */
+export function issueAcceptance(issue: string): string[] {
+  const lines = stripTemplate(issue.split("\n").map((l) => l.replace(/\s+$/, "")).filter((l) => l.trim() !== ""));
+  const keep = (l: string): boolean => !CHECKED.test(l) && !ATTEST.test(l);
+  const under: string[] = []; let inList = false;
+  for (const l of lines) {
+    if (LIST_HEAD.test(l)) { inList = true; continue; }
+    if (ANY_HEAD.test(l)) { inList = false; continue; }
+    if (inList && LIST_ITEM.test(l) && keep(l)) under.push(normAsk(l));
+  }
+  const picked = under.length > 0 ? under : lines.filter((l) => OPEN_BOX.test(l) && keep(l)).map(normAsk);
+  return [...new Set(picked.filter(Boolean))].slice(0, ISSUE_ACCEPTANCE_MAX);
+}
+/** An issue line the issue itself marks optional: listed and reviewed, but never a cap on the label. */
+export const optionalAsk = (line: string): boolean => /^\(?optional\b|\(optional\)/i.test(line);
+/** The intake record's issue acceptance lines (strings only), or [] when the issue had none. */
+export const issueAcceptanceOf = (intake: unknown): string[] => { const v = (intake as { issue_acceptance?: unknown } | undefined)?.issue_acceptance; return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []; };
+export type IssueAskStatus = "met" | "unmet" | "not_checked";
+/** Each issue line with what the line check recorded (xreview.ts issueLineCheck): met only with a MET and its evidence phrase; not_checked when it gave no answer for the line. */
+export function issueAcceptanceStatus(lines: string[], marks: { met: number[]; unmet: number[] } | undefined, evidence: Record<string, string> = {}, reasons: Record<string, string> = {}): { line: string; status: IssueAskStatus; evidence?: string; reason?: string; optional?: true }[] {
+  return lines.map((line, i) => { const k = i + 1, status: IssueAskStatus = !marks ? "not_checked" : marks.met.includes(k) ? "met" : marks.unmet.includes(k) ? "unmet" : "not_checked"; return { line, status, ...(status === "met" && evidence[String(k)] ? { evidence: evidence[String(k)] } : {}), ...(status === "unmet" && reasons[String(k)] ? { reason: reasons[String(k)] } : {}), ...(optionalAsk(line) ? { optional: true as const } : {}) }; });
+}
+export const NOT_ADDRESSED = "not addressed: ";
+/** The seal's open notes: one "not addressed: <verbatim line>" per required issue line the review did not mark met. */
+export const notAddressedNotes = (st: { line: string; status: IssueAskStatus; optional?: true }[]): string[] => st.filter((s) => s.status !== "met" && !s.optional).map((s) => `${NOT_ADDRESSED}${s.line}`);
+/** LOKI_E10_ISSUE_ACCEPTANCE=1 turns on the line check call and the seal cap. Off by default: the check is new and unmeasured on real runs. */
+export const issueAcceptanceCapOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_ISSUE_ACCEPTANCE"] ?? "").trim());
+/** The printed card: the issue's lines first, verbatim, as "Acceptance:" lines, then the card's own Acceptance lines that repeat none of them, then the rest. */
+export function cardWithIssueLines(card: string[] | null, issueLines: string[]): string[] | null {
+  if (!issueLines.length) return card;
+  const own = card ?? [], seen = new Set(issueLines.map((l) => l.toLowerCase()));
+  const head = own.filter((l) => /^\s*what i think you want\b/i.test(l)), acc = own.filter((l) => /^\s*acceptance\b/i.test(l) && !seen.has(l.replace(/^\s*acceptance\s*:\s*/i, "").trim().toLowerCase()));
+  const rest = own.filter((l) => !head.includes(l) && !/^\s*acceptance\b/i.test(l));
+  return [...head, ...issueLines.map((l) => `Acceptance: ${l}`), ...acc, ...rest];
+}
+
 export const intentLine = (card: unknown): string | null => { for (const l of Array.isArray(card) ? card : []) { const m = /^\s*what i think you want\s*:\s*(\S.*)$/i.exec(String(l)); if (m) return m[1]!.trim(); } return null; };
