@@ -263,6 +263,11 @@ export function cleanupSessionScratch(s: SessionScratch, o: { signal?: (pid: num
 export function readScratchRecord(runDir: string): (SessionScratch & { worker_pid?: number }) | null {
   try { const r = JSON.parse(readFileSync(join(runDir, SCRATCH_RECORD), "utf8")) as SessionScratch & { worker_pid?: number }; return typeof r.dir === "string" && typeof r.since === "number" && existsSync(r.dir) ? r : null; } catch { return null; }
 }
+/** Q1 SCRATCH-FINAL: what the worker's exit hook cleaned (a cancelled or aborted run ends before implement records anything), kept in the run directory
+ *  for the supervisor to turn into the scratch.cleanup event. */
+export const SCRATCH_EXIT_RECORD = "scratch-cleanup.json";
+export function writeExitCleanup(runDir: string, r: ScratchCleanup): void { try { writeFileSync(join(runDir, SCRATCH_EXIT_RECORD), JSON.stringify(r) + "\n", { mode: 0o600 }); } catch { /* the event is a record, never a reason to fail */ } }
+export function readExitCleanup(runDir: string): ScratchCleanup | null { try { const r = JSON.parse(readFileSync(join(runDir, SCRATCH_EXIT_RECORD), "utf8")) as ScratchCleanup; return Array.isArray(r.stopped) && Array.isArray(r.left) ? r : null; } catch { return null; } }
 /** The supervisor's pass after the worker exited, and the next run's pass over records whose worker is gone: the same ownership cleanup. */
 export function cleanupScratchRecord(runDir: string): ScratchCleanup | null { const r = readScratchRecord(runDir); return r ? cleanupSessionScratch({ dir: r.dir, since: r.since, nonce: r.nonce ?? "" }) : null; }
 export function cleanupStaleScratches(lokiRoot: string): ScratchCleanup[] {

@@ -1,5 +1,5 @@
 // Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6, 10): eval marker first, origin pinned once, worker spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal) id; post-PR: detached deep verify, then Slack notify.
-import { cleanupScratchRecord, cleanupStaleScratches } from "../runner/worker_proc.ts";
+import { cleanupScratchRecord, cleanupStaleScratches, readExitCleanup } from "../runner/worker_proc.ts";
 import { routeStartLine } from "../runner/router/route_block.ts";
 import { execFileSync, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
@@ -227,7 +227,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   };
   let workerStopped = false;
   let worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, onWorkerLine, (stopped) => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); workerStopped = stopped; if (stopped && !(backstopSealOn(env) && !sealed)) restoreBranch(opts.repoDir, origBranch); }).finally(() => clearInterval(beat)); // BACKSTOP-SEAL: a kill with no receipt keeps the tree on the run branch for the seal pass
-  { const sc = cleanupScratchRecord(join(opts.repoDir, ".loki", "runs", opts.runId)); if (sc && (sc.stopped.length || sc.left.length)) log.append("scratch.cleanup", null, { when: "after the worker exited", stopped: sc.stopped, left: sc.left, removed: sc.removed, ...(sc.kept ? { kept: sc.kept } : {}) }); } // Q1 SCRATCH-OWNED: a worker stopped by a signal or the backstop never ran its own cleanup
+  { const rdir = join(opts.repoDir, ".loki", "runs", opts.runId), own = cleanupScratchRecord(rdir), sc = own ?? readExitCleanup(rdir); if (sc && (sc.stopped.length || sc.left.length)) log.append("scratch.cleanup", null, { when: own ? "after the worker exited" : "at the worker's exit", stopped: sc.stopped, left: sc.left, removed: sc.removed, ...(sc.kept ? { kept: sc.kept } : {}) }); } // Q1 SCRATCH-OWNED: a worker stopped by a signal or the backstop never ran its own cleanup
   // BACKSTOP-SEAL (dev4 gitoxide on 11.141.5: the worker's own soft cap never fired, the backstop killed it at 1141 s and no receipt existed): a worker killed by the
   // backstop before it sealed gets one seal pass. A fresh worker resumes from the durable log with only commit and seal (LOKI_E10_SEAL_ONLY), seals the current tree as
   // PARTIAL "time ran out", and is itself bounded so the whole run still ends inside the ceiling plus the deadline margin. Off with LOKI_E10_BACKSTOP_SEAL=0.

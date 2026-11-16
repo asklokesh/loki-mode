@@ -482,7 +482,9 @@ console.log([errCard === null, onPath.length === 1 && onPath[0].on_path === true
 # line, and after implement the harness stops what the session left running there and removes the directory; a text goal and the opt-out get none of it.
 c1_run scratch none start acme/search#24 --no-pr --max-cost 5 -- E2E_STUB_SCRATCH=leave E2E_STUB_SCRATCH_PID_LOG="$T/c1-scratch.leftpid"
 SC_DIR="$(sed -n 's/^LOKI_SCRATCH=\([^ ]*\) TMPDIR=.*/\1/p' <<< "$C1ENV")"; SC_TMP="$(sed -n 's/.* TMPDIR=\(.*\)$/\1/p' <<< "$C1ENV")"; SC_LEFT="$(cat "$T/c1-scratch.leftpid" 2>/dev/null)"
-SC_REC="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])).get("scratch_cleanup") or {}; print("%s|%s|%s" % (r.get("removed"), ",".join(str(x["pid"]) for x in r.get("stopped", [])), r.get("dir")))' "$C1RUN/receipt.json" 2>/dev/null)"
+SC_REC="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])).get("scratch_cleanup") or {}; print("%s|%s|%s" % (r.get("removed"), sys.argv[2] if sys.argv[2] in [str(x["pid"]) for x in r.get("stopped", [])] else "missing", r.get("dir")))' "$C1RUN/receipt.json" "$SC_LEFT" 2>/dev/null)"
+SC_EV="$(python3 -I -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if l.strip() and json.loads(l).get("type") == "scratch.cleanup" and any(str(x.get("pid")) == sys.argv[2] for x in (json.loads(l).get("data") or {}).get("stopped", []))))' "$C1RUN/events.jsonl" "$SC_LEFT" 2>/dev/null)"
+SC_SECRET="$(grep -rl "e2escratchsecret" "$C1RUN" 2>/dev/null | wc -l | tr -d ' ')"
 SC_ALIVE=no; [ -n "$SC_LEFT" ] && kill -0 "$SC_LEFT" 2>/dev/null && SC_ALIVE=yes
 [ -n "$SC_DIR" ] && [ "$SC_TMP" = "$SC_DIR" ] && [ "${#SC_DIR}" -le 40 ] && ! grep -qF '$LOKI_SCRATCH/pids' <<< "$C1P" \
     && ! grep -q 'LOKI_SCRATCH=/' <<< "$C1PLANENV" \
@@ -491,6 +493,9 @@ SC_ALIVE=no; [ -n "$SC_LEFT" ] && kill -0 "$SC_LEFT" 2>/dev/null && SC_ALIVE=yes
 [ "$SC_REC" = "True|$SC_LEFT|$SC_DIR" ] && [ "$SC_ALIVE" = no ] && [ ! -e "$SC_DIR" ] \
     && ok "run scratch: the process the session left running in its scratch directory is stopped by the harness, named in the receipt, and the directory is removed" \
     || bad "run scratch cleanup: receipt '$SC_REC' (want True|$SC_LEFT|$SC_DIR), left process alive $SC_ALIVE, directory present $([ -e "$SC_DIR" ] && echo yes || echo no)"
+[ "$SC_EV" = 1 ] && [ "$SC_SECRET" = 0 ] && grep -q '"scratch_cleanup"' "$C1RUN/receipt.json" \
+    && ok "scratch final: a normal run writes the scratch.cleanup event and the receipt entry; the daemon's secret-looking argument is in neither, nor in scratch.json or any run log" \
+    || bad "scratch final normal path: events with the stopped pid $SC_EV, run files holding the secret $SC_SECRET"
 [ "$SC_ALIVE" = yes ] && kill "$SC_LEFT" 2>/dev/null # the test's own recorded pid, only if the harness failed to stop it
 c1_run scratch-text none "add a multiply(a, b) function to calc.ts" --no-pr -- E2E_STUB_SCRATCH=leave
 SCT="$C1ENV"; SCTP="$C1P"
@@ -594,6 +599,10 @@ sleep 1; python3 -I -c 'import os, signal, sys; os.kill(int(sys.argv[1]), signal
 for i in $(seq 1 300); do [ "$(so_alive "$SOP")" = no ] && break; sleep 0.1; done; wait "$SOP" 2>/dev/null
 SOL="$(cat "$T/so-intr.left" 2>/dev/null)"
 [ -n "$SOL" ] && [ "$(so_alive "$SOL")" = no ] && ok "scratch owned e2e: after SIGINT to the run the session's process in scratch is stopped" || bad "scratch owned e2e (interrupt): left '$SOL' alive $(so_alive "$SOL")"
+SOIRUN="$(dirname "$(ls "$SOI"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"
+SOIEV="$(python3 -I -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if l.strip() and json.loads(l).get("type") == "scratch.cleanup"))' "$SOIRUN/events.jsonl" 2>/dev/null)"
+[ "${SOIEV:-0}" -ge 1 ] && [ "$(grep -rl "e2escratchsecret" "$SOIRUN" 2>/dev/null | wc -l | tr -d ' ')" = 0 ] \
+    && ok "scratch final: a cancelled run writes the scratch.cleanup event, with no secret-looking argument in any run file" || bad "scratch final cancelled path: scratch.cleanup events $SOIEV"
 [ -n "$SOL" ] && [ "$(so_alive "$SOL")" = yes ] && python3 -I -c 'import os, signal, sys; os.kill(int(sys.argv[1]), signal.SIGTERM)' "$SOL"
 
 # --- split repair: a list detail is repaired, any other refusal is re-asked once with the exact error ------------------------

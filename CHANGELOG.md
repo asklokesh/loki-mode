@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+- The scratch.cleanup event is written on a normal run too (it was written only on a cancelled run, and the receipt entry only on a normal one); a cancelled run's exit-hook cleanup now reaches the event as well.
 - The scratch cleanup record (the scratch.cleanup event and scratch_cleanup in the receipt) names each process by the base name of its executable, pid, port and reason only, never its command line, which can carry a password or a token.
 - Scratch cleanup reads process start times in UTC on both sides (ps and the parser): with TZ exported, start times were shifted by the TZ offset and the cleanup silently found nothing to stop.
 - An issue run's implement session is told to use only a database, cache or server it started itself under $TMPDIR, never one named in the repository's env files or its environment, and never to apply migrations to one.
