@@ -111,6 +111,12 @@ An issue run now works on the whole issue and keeps unfinished work.
 - The printed cost leaves out retried attempts.
 - A failed slice whose output mentions a rate limit is retried even when no rate limit occurred.
 
+### Fixed
+- A full test suite stopped by its time limit is now recorded as not run (timed out), not as a failed check, and its whole process tree stops at the limit. Before, the kill read as a failure with exit 143, and the run sealed FAILED (dev2 ink and pipx; ink's suite ran 390 s and 677 s against a 300 s limit). The run now reads PARTIAL. `LOKI_E10_SUITE_TIMEOUT_NOT_RUN=0` restores the old reading.
+
+### Added
+- Opt-in, off by default (`LOKI_E10_LINT_UNTOUCHED=1`): a typecheck error that is only in files the change did not touch, and that the same typecheck already reports on the original code, does not count as a failed check. `tsc --noEmit` checks the whole project, so an old error in an untouched file (dev2: a benchmark script in router, a Flow test file in immutable) is a red check on every run of that repo. With the option on it is listed on the receipt as disclosed and not blocking. An error in a touched file, one naming a symbol the change edited, one the original code does not have, a changed tsconfig or linter config, or output that cannot be read in full still fails. It ships off because on the stored bench runs it changes no label (each of the 5 scored runs with a blocking red typecheck has another red check) and it has not fired on a real run.
+
 ## v11.141.6 (2026-11-15)
 
 A run stopped by its time limit now always leaves a receipt.

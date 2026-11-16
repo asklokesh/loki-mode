@@ -8,6 +8,7 @@ export type ShellResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
+  timedOut?: boolean; // SUITE-TIMEOUT: set only when the timeoutMs timer stopped the process
 };
 
 export type ShellOpts = {
@@ -127,7 +128,8 @@ export async function run(
       }
     }, 2000);
   };
-  if (opts.timeoutMs && opts.timeoutMs > 0) timer = setTimeout(stop, opts.timeoutMs);
+  let timedOut = false; // SUITE-TIMEOUT: the caller learns the kill was the timer, not the program's own exit
+  if (opts.timeoutMs && opts.timeoutMs > 0) timer = setTimeout(() => { timedOut = true; stop(); }, opts.timeoutMs);
   if (opts.signal) { if (opts.signal.aborted) stop(); else opts.signal.addEventListener("abort", stop, { once: true }); }
 
   try {
@@ -138,7 +140,7 @@ export async function run(
       new Response(proc.stderr).text(),
       proc.exited,
     ]);
-    return { stdout, stderr, exitCode };
+    return { stdout, stderr, exitCode, ...(timedOut ? { timedOut: true } : {}) };
   } finally {
     if (timer) clearTimeout(timer);
     if (killTimer) clearTimeout(killTimer);

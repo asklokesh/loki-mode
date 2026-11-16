@@ -3873,6 +3873,70 @@ TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/tcarry.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || bad "tcarry unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 7 ] || bad "tcarry unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 7"
+# ---------------------------------------------------------------- LINT-UNTOUCHED (acc-174): a tsc red only in files the change did not touch is disclosed, not a cap
+cat > "$T/acc174.ts" <<'TS'
+const root = process.argv[2]!;
+const vf = await import(root + "/loki-ts/src/engine10/stages/verify.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const touched = new Set(["packages/router-core/src/router.ts", "packages/router-core/tests/x.test.ts"]);
+const out = "scripts/benchmarks/bundle-size/analyze.mjs(27,46): error TS7006: Parameter 'item' implicitly has an 'any' type.\nFound 1 error.\n";
+// Every refusing leg passes a base output equal to the head output, so only the rule under test can refuse.
+const same = (o: string, pkg: string, t: Set<string>, syms: string[]) => vf.tscUntouchedOnly(o, pkg, t, syms, o);
+res("LINT-UNTOUCHED a tsc error only in a file the change did not touch, and already on base, is disclosed, not blocking", same(out, ".", touched, ["matchRoutes"]));
+res("LINT-UNTOUCHED a tsc error in a touched file still caps", !same("packages/router-core/src/router.ts(10,3): error TS2322: Type 'x' is not assignable.\n", ".", touched, []));
+res("LINT-UNTOUCHED a package-relative path is joined with the package dir before the touched check", !same("src/router.ts(10,3): error TS2322: bad.\n", "packages/router-core", touched, []));
+res("LINT-UNTOUCHED an error naming a changed symbol still caps (the change can break an importer)", !same("src/other.ts(4,1): error TS2339: Property 'matchRoutes' does not exist on type 'Router'.\n", ".", touched, ["matchRoutes"]));
+res("LINT-UNTOUCHED a changed tsconfig or linter config still caps", !same(out, ".", new Set([...touched, "tsconfig.json"]), []));
+res("LINT-UNTOUCHED an error line that does not parse still caps (fail-closed)", !same(out + "weird.ts: error TS1005: ';' expected.\n", ".", touched, []));
+res("LINT-UNTOUCHED a tail cut at its cap still caps", !same(out + "x".repeat(60000), ".", touched, []));
+res("LINT-UNTOUCHED off by default, =1 opts in", !vf.lintUntouchedOn({}) && !vf.lintUntouchedOn({ LOKI_E10_LINT_UNTOUCHED: "0" }) && vf.lintUntouchedOn({ LOKI_E10_LINT_UNTOUCHED: "1" }));
+// A changed signature breaks an untouched importer; the message names only types, so the symbol rule cannot see it. Base is green for that line: it caps.
+const importer = "packages/other/src/caller.ts(12,9): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.\n";
+res("LINT-UNTOUCHED an untouched importer broken by the change (types-only message, not on base) still caps", !vf.tscUntouchedOnly(out + importer, ".", touched, ["matchRoutes"], out));
+res("LINT-UNTOUCHED base clean for the file still caps", !vf.tscUntouchedOnly(out, ".", touched, ["matchRoutes"], ""));
+res("LINT-UNTOUCHED no base output still caps (fail-closed)", !vf.tscUntouchedOnly(out, ".", touched, ["matchRoutes"], null));
+res("LINT-UNTOUCHED the same file and code on base with another message still caps", !vf.tscUntouchedOnly(out, ".", touched, [], out.replace("'item'", "'other'")));
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/acc174.ts" "$ROOT" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "acc174 unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 12 ] || bad "acc174 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 12"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+
+# ---------------------------------------------------------------- SUITE-TIMEOUT (dev2 ink, pipx): a full suite killed at its limit is not_run, not a failed check
+cat > "$T/vh.ts" <<'TS'
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+const root = process.argv[2]!, T = process.argv[3]!;
+const dp = await import(root + "/loki-ts/src/engine10/stages/deep.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const R = join(T, "vh"); rmSync(R, { recursive: true, force: true }); mkdirSync(R, { recursive: true });
+const g = (...a: string[]) => execFileSync("git", ["-C", R, "-c", "user.name=t", "-c", "user.email=t@e.invalid", ...a], { encoding: "utf8" }).trim();
+g("init", "-q", "-b", "main"); writeFileSync(join(R, "package.json"), JSON.stringify({ name: "slow", scripts: { test: "sleep 30" } })); g("add", "-A"); g("commit", "-q", "-m", "base"); const sha = g("rev-parse", "HEAD");
+const setTest = (t: string) => writeFileSync(join(R, "package.json"), JSON.stringify({ name: "slow", scripts: { test: t } }));
+// (a) SUITE-TIMEOUT
+const ctx: any = { repoDir: R, baseSha: sha, outputs: () => ({ intake: {} }), tests: { detect: async () => ({ runners: ["npm"], tests: [] }) } };
+const run = async (env?: string) => { if (env) process.env.LOKI_E10_SUITE_TIMEOUT_NOT_RUN = env; else delete process.env.LOKI_E10_SUITE_TIMEOUT_NOT_RUN; const checks: any[] = [], np = new Set<string>(), t0 = Date.now(); await dp.runFullSuite(ctx, new AbortController().signal, { fullSuiteTimeoutMs: 1500 }, checks, np); return { checks, np, secs: (Date.now() - t0) / 1000 }; };
+const a = await run();
+const c = a.checks.find((x: any) => x.name.startsWith("full suite"));
+res("SUITE-TIMEOUT a full suite stopped by its timeout is not_run 'timed out', not a failed check", !!c && c.result === "not_run" && /timed out after/.test(c.reason ?? "") && [...a.np].some((n) => /timed out after/.test(n)));
+res(`SUITE-TIMEOUT the suite stops at its limit (${a.secs.toFixed(1)} s for a 1.5 s limit)`, a.secs < 8);
+const off = await run("0"); const c0 = off.checks.find((x: any) => x.name.startsWith("full suite"));
+res("SUITE-TIMEOUT =0 keeps the old reading (a failed check)", !!c0 && c0.result === "fail"); delete process.env.LOKI_E10_SUITE_TIMEOUT_NOT_RUN;
+// The suite has its own process group, so an abort has to reach it through the signal: it stops then, and reads aborted, not timed out.
+const ac = new AbortController(); setTimeout(() => ac.abort(), 500);
+const abChecks: any[] = [], abNp = new Set<string>(), ab0 = Date.now(); await dp.runFullSuite(ctx, ac.signal, { fullSuiteTimeoutMs: 20000 }, abChecks, abNp); const abSecs = (Date.now() - ab0) / 1000;
+res(`SUITE-TIMEOUT an abort stops the suite (${abSecs.toFixed(1)} s of a 30 s suite) and reads not_run (aborted), not timed out`, abSecs < 8 && [...abNp].some((n) => /\(aborted\)/.test(n)) && ![...abNp].some((n) => /timed out/.test(n)));
+setTest("echo boom; exit 1");
+const red = await run(); const cr = red.checks.find((x: any) => x.name.startsWith("full suite"));
+res("SUITE-TIMEOUT a suite that finishes red stays a failed check", !!cr && cr.result === "fail");
+rmSync(R, { recursive: true, force: true });
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/vh.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
+printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "vh unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 5 ] || bad "vh unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 5"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

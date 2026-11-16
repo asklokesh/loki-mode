@@ -11,7 +11,7 @@ import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
-import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv } from "../../project_model/package_suite.ts";
+import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv, suiteTimeoutOn } from "../../project_model/package_suite.ts";
 import { classifyCheck, corroboratePass, failureExcerpt, failureShape, firstError, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { errorsById, failIds, unhandledBlock } from "../failures.ts"; import { attributeFullSuite, BASELINE_CMD_TIMEOUT_S, suiteEmptyOnBase } from "../../runner/repo_profile.ts";
 import { DEEP_CAP_S, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, STAGE_BUDGETS } from "../types.ts";
 import { safeGitRun } from "../../util/safe_git.ts"; import { REPO_ROOT } from "../../util/paths.ts";
@@ -62,6 +62,7 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
       cwd: ctx.repoDir,
       timeoutMs: opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS,
       env: suiteEnv(opts.path),
+      ...(suiteTimeoutOn() ? { group: true, signal } : {}), // SUITE-TIMEOUT: the whole process tree stops at the limit, and at an abort (its own group is outside the worker's)
     });
     const durationS = (Date.now() - started) / 1000;
     if (signal.aborted) {
@@ -69,6 +70,7 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
       notProven.add(`not run: ${name} (aborted)`);
       continue;
     }
+    if (r.timedOut && suiteTimeoutOn()) { const why = `timed out after ${Math.round((opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS) / 1000)}s`; checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS, reason: why }); notProven.add(`not run: ${name} (${why})`); continue; } // SUITE-TIMEOUT (dev2 ink s1, pipx s2): a suite killed at its limit is not_run, never FAILED
     const out = stripAnsi(`${r.stdout}\n${r.stderr}`), lr = r.exitCode === 0 ? undefined : await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), out, cmd: spec.cmd, args: spec.args, signal, ...(opts.path ? { env: { PATH: opts.path } } : {}) });
     if (lr) { checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS }); notProven.add(`${lr} (${name}; harness-owned)`); continue; } // FC-02: harness-owned, never a code failure
     const cls = await corroboratePass(classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...goRunner(spec.cmd, spec.args) }), out, spec.cmd, spec.args, { cwd: ctx.repoDir, env: suiteEnv(opts.path), signal });

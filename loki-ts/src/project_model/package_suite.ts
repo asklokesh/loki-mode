@@ -15,7 +15,7 @@ import type { RunnerName } from "../engine10/types.ts";
 import type { ProjectApi } from "./api.ts";
 import { isMultiRoot, loadProjectApi } from "./resolve.ts";
 
-interface SuiteCheck { name: string; cmd: string; result: "pass" | "fail" | "not_run"; duration_s: number; exit?: number | null; shape?: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; first_error?: string; excerpt?: string; count?: string }
+interface SuiteCheck { name: string; cmd: string; result: "pass" | "fail" | "not_run"; duration_s: number; reason?: string; exit?: number | null; shape?: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; first_error?: string; excerpt?: string; count?: string }
 
 /** One full-suite command: `name` and `cmd` are the check's own fields, `run` is what executes in the repo-relative `cwd`. */
 export interface SuiteSpec { name: string; cmd: string; cwd: string; run: string; go?: string } // go: the plain `go test -json <pkgs>` a Go full suite is read and corroborated as (goMakeSuite)
@@ -106,6 +106,10 @@ export const wallProofOf = (checks: { name: string; result: string }[], wall: { 
 /** EMPTY-SUBSUITE-NA (LOKI_E10_EMPTY_SUBSUITE_NA, default on, =0 opts out): a package suite below the repo root that ran 0 tests on base and on head (exit 0, empty
  *  discovery, no skips on either side; suiteEmptyOnBase) is not applicable even when no Wall or task-named check passed. The root suite keeps that requirement. */
 export const emptySubsuiteNaOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_EMPTY_SUBSUITE_NA"] ?? "").trim());
+/** SUITE-TIMEOUT (LOKI_E10_SUITE_TIMEOUT_NOT_RUN, default on, =0 opts out): a full suite stopped by its own timeout is not_run "timed out after N s", never a
+ *  failed check (dev2 ink s1: exit 143 after 390 s against a 300 s limit read as FAILED; pipx s2 likewise at 302 s). Its whole process group is stopped, so
+ *  the limit is the limit. */
+export const suiteTimeoutOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SUITE_TIMEOUT_NOT_RUN"] ?? "").trim());
 export async function runPackageSuites(
   repoDir: string,
   signal: AbortSignal,
@@ -119,9 +123,10 @@ export async function runPackageSuites(
   if (!specs.length) return false;
   for (const { name, cmd, cwd, run: line, go } of specs) {
     const started = Date.now();
-    const r = await run(["bash", "-c", line], { cwd: join(repoDir, cwd), timeoutMs: opts.timeoutMs, env: suiteEnv(opts.path) });
+    const r = await run(["bash", "-c", line], { cwd: join(repoDir, cwd), timeoutMs: opts.timeoutMs, env: suiteEnv(opts.path), ...(suiteTimeoutOn() ? { group: true, signal } : {}) }); // SUITE-TIMEOUT: the whole process tree stops at the limit, and at an abort (its own group is outside the worker's, so an abort must reach it here)
     const duration_s = (Date.now() - started) / 1000;
     if (signal.aborted) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`not run: ${name} (aborted)`); continue; }
+    if (r.timedOut && suiteTimeoutOn()) { const why = `timed out after ${Math.round(opts.timeoutMs / 1000)}s`; checks.push({ name, cmd, result: "not_run", duration_s, reason: why }); notProven.add(`not run: ${name} (${why})`); continue; } // SUITE-TIMEOUT: a suite killed at its limit says nothing about the change: not_run (caps below VERIFIED), never FAILED
     // FC-16 C1 / FC-02: the same parser and load-error ownership as the legacy per-runner path, per package.
     const out = stripAnsi(`${r.stdout}\n${r.stderr}`).replace(go ? /^make(?:\[\d+\])?: .*$/gm : /(?!)/, ""); // FC-FULLSUITE-ANSI-IDS; a make-wrapped Go suite (goMakeSuite) drops make's own lines so the go test -json stream reads whole
     const lr = r.exitCode === 0 || !opts.baseSha ? undefined : await harnessLoadReason({ repoDir, baseSha: opts.baseSha, ...(opts.skip ? { skip: opts.skip } : {}), out, cmd: "bash", args: ["-c", line], signal, cwd: join(repoDir, cwd), env: suiteEnv(opts.path) });
