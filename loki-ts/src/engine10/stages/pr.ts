@@ -130,7 +130,7 @@ export function acceptanceHead(verdict: Verdict, receipt: Record<string, unknown
   if (rows.length === 0) return "";
   const clip = (s: unknown): string => { const t = String(s ?? "").replace(/[\r\n|]+/g, " ").trim(); return t.length > 220 ? `${t.slice(0, 217)}...` : t; };
   const met = rows.filter((r) => r.status === "met").length, safe = verdict === "VERIFIED";
-  return [`## Loki: ${safe ? "safe to merge" : "needs you"}`, safe ? `Every acceptance line of the issue is met (${met} of ${rows.length}), each with what proved it.` : `${met} of ${rows.length} acceptance lines are met. The ones that are not say why.`, "", "| Acceptance line (the issue's own words) | Status | Evidence or reason |", "|---|---|---|",
+  return [`## Loki: ${safe ? "safe to merge" : "needs you"}`, safe ? `Every acceptance line is met (${met} of ${rows.length}), each with what proved it.` : `${met} of ${rows.length} acceptance lines are met. The ones that are not say why.`, "", receipt?.["issue_acceptance_source"] === "plan" ? "| Acceptance line (written by Loki from the issue, which has no checklist) | Status | Evidence or reason |" : "| Acceptance line (the issue's own words) | Status | Evidence or reason |", "|---|---|---|",
     ...rows.map((r) => `| ${clip(r.line)} | ${r.status === "met" ? "met" : r.optional === true ? "optional, not done" : r.status === "unmet" ? "NOT MET" : "not checked"} | ${clip(r.status === "met" ? r.evidence : r.reason ?? (r.status === "not_checked" ? "the check gave no answer for this line" : ""))} |`), ""].join("\n") + "\n";
 }
 /** Puts Loki's label on the pull request and on the issue it works (created if the repository lacks it; the other label removed). Best effort: a miss is returned as a note, never a failed stage. */
