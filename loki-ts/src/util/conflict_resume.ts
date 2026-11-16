@@ -229,6 +229,15 @@ export const resumeAfterEmptyDone = (ctx: RunContext, first: SessionRunOptions, 
 /** LOKI_E10_OPUS_CONSULT never-stop: one resume (suffix "-n") that implements the most likely intent instead of stopping. A resume that errors, is killed, ends without a marker or restates the conflict leaves the conflict standing (BLOCKED). */
 export const resumeNeverStop = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, reason: string, advice: string | null): Promise<{ session: SessionResult; iterationId: string }> =>
   (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S ? Promise.resolve({ session: firstSession, iterationId: first.iterationId }) : resumeWith(ctx, first, firstSession, neverStopBrief(reason, advice), "-n");
+/** VF LOKI_E10_VERIFIED_FINISH: the review turn as a FRESH session (suffix "-fin", no resume of the implement transcript) whose brief is the cut finish
+ *  context; same result rule as a resume: only a terminal session replaces the first. Too little implement time starts nothing (null). */
+export const runVerifiedFinish = async (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, brief: string, maxTurns: number): Promise<{ session: SessionResult; iterationId: string } | null> => {
+  if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return null;
+  const { resumeSessionId: _r, ...rest } = first, iterationId = `${first.iterationId}-fin`;
+  const session = await ctx.sessions.run({ ...rest, iterationId, brief, maxTurns });
+  const terminal = !session.killed && (session.markers.done || session.markers.alreadyDone !== null || session.markers.specConflict !== null);
+  return { session: { ...(terminal ? session : firstSession), durationS: firstSession.durationS + session.durationS }, iterationId };
+};
 /** SR LOKI_E10_SELF_REVIEW: the one bounded pre-delivery review resume (suffix "-rv", turn cap `maxTurns`); too little implement time starts nothing (null). */
 export const resumeForSelfReview = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, brief: string, maxTurns: number): Promise<{ session: SessionResult; iterationId: string } | null> =>
   (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S ? Promise.resolve(null) : resumeWith(ctx, { ...first, maxTurns }, firstSession, brief, "-rv");

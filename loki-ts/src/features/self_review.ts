@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 import { buildArtifacts, runOutputs, type Staged } from "../e10ext/commit_filter.ts";
 import { outsideScope } from "../e10ext/scope.ts";
 import type { Obj } from "../engine10/types.ts";
-import { contributionGuides, releaseNoteConvention, releaseNoteProblems, renameInventedFragment, stripInventedRefsInFile, taskForbidsReleaseNote, taskNumbers, towncrierNoNumberPrefix } from "../project_model/conventions.ts";
+import { contributionGuides, releaseNoteBrief, releaseNoteConvention, releaseNoteProblems, renameInventedFragment, stripInventedRefsInFile, taskForbidsReleaseNote, taskNumbers, towncrierNoNumberPrefix } from "../project_model/conventions.ts";
 import { detectFormatters } from "../runner/repo_profile.ts";
 import { applyDiff, type DiffEntry, snapshotDiff } from "../e10ext/treeswap.ts";
 import { safeGit } from "../util/safe_git.ts";
@@ -307,8 +307,31 @@ export function settleItems(before: ReviewItem[], after: ReviewItem[] | null, re
   });
 }
 /** The receipt block; {} when the knob is off or nothing was recorded. */
-export type SelfReviewRecord = { mode: string; turn: string | null; items: ReviewItem[]; turn_guard?: TurnGuardRecord };
+export type SelfReviewRecord = { mode: string; turn: string | null; items: ReviewItem[]; turn_guard?: TurnGuardRecord; finish?: FinishRecord };
 export const selfReviewReceiptBlock = (implement: Record<string, unknown> | undefined): { self_review?: SelfReviewRecord } => (implement && implement["self_review"] ? { self_review: implement["self_review"] as SelfReviewRecord } : {});
+/** VF LOKI_E10_VERIFIED_FINISH (acc-168, off by default until measured, =1 on): the review turn becomes a fresh finish session on the delivered diff.
+ *  Its brief carries only the review instructions and items, the diff (stray build or run output the commit filter drops is left out), the pre-fix text of
+ *  each modified file, and the repo's contribution rules and release-note convention: no task text, no implement transcript. The turn guard always runs on it. */
+export const verifiedFinishOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_VERIFIED_FINISH"] ?? "").trim());
+export const VERIFIED_FINISH_MAX_TURNS = 8;
+export const verifiedFinishMaxTurns = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_VERIFIED_FINISH_MAX_TURNS"] ?? "").trim()); return Number.isInteger(n) && n > 0 ? n : VERIFIED_FINISH_MAX_TURNS; };
+export type FinishRecord = { fired: true; iteration: string | null; brief_chars: number; diff_files: string[]; left_out: string[] };
+export const FINISH_DIFF_MAX = 40_000, FINISH_FILE_MAX = 12_000, FINISH_FILES_MAX = 36_000;
+export const FINISH_LEAD = "Finish pass. The change below is already applied, uncommitted, in this checkout. Do not redo, rewrite or extend the fix itself; only bring the change up to the repository's rules.";
+/** The finish turn's whole brief and what went into it. */
+export function verifiedFinishBrief(repoDir: string, baseSha: string, items: ReviewItem[], task = ""): { brief: string; record: Omit<FinishRecord, "fired" | "iteration"> } {
+  const staged = treeStaged(repoDir, baseSha).filter((s) => !s.f.startsWith(".loki/") && !s.f.startsWith(".claude/"));
+  const added = staged.filter((s) => s.st === "A").map((s) => s.f);
+  const drop = (() => { try { return new Set([...buildArtifacts(repoDir, added, baseSha, task), ...runOutputs(repoDir, added, baseSha, task)]); } catch { return new Set<string>(); } })();
+  const kept = staged.filter((s) => !drop.has(s.f)), tracked = kept.filter((s) => { try { safeGit(repoDir, ["cat-file", "-e", `${baseSha}:${s.f}`]); return true; } catch { return false; } });
+  let diff = ""; try { diff = tracked.length ? safeGit(repoDir, ["diff", "--no-color", "--no-ext-diff", "--no-renames", baseSha, "--", ...tracked.map((s) => s.f)], { maxBuffer: 64 << 20 }) : ""; } catch { /* unreadable */ }
+  for (const s of kept.filter((x) => !tracked.includes(x))) { let t = ""; try { t = readFileSync(join(repoDir, s.f), "utf8"); } catch { continue; } diff += `\n--- /dev/null\n+++ b/${s.f} (new file)\n${t.split("\n").map((l) => `+${l}`).join("\n")}\n`; }
+  const pre: string[] = []; let budget = FINISH_FILES_MAX;
+  for (const s of tracked.filter((x) => x.st !== "D")) { if (budget <= 0) break; let t = ""; try { t = safeGit(repoDir, ["show", `${baseSha}:${s.f}`], { maxBuffer: 64 << 20 }); } catch { continue; } const cut = t.slice(0, Math.min(FINISH_FILE_MAX, budget)); budget -= cut.length; pre.push(`=== PRE-FIX FILE: ${s.f}${cut.length < t.length ? " (cut)" : ""} ===\n${cut}`); }
+  const rn = releaseNoteBrief(repoDir, kept.map((s) => s.f));
+  const brief = [FINISH_LEAD, selfReviewBrief(repoDir, items), rn, `=== DIFF (against the base commit) ===\n${diff.slice(0, FINISH_DIFF_MAX)}${diff.length > FINISH_DIFF_MAX ? "\n(diff cut)" : ""}`, ...pre].filter(Boolean).join("\n\n");
+  return { brief, record: { brief_chars: brief.length, diff_files: kept.map((s) => s.f), left_out: [...drop] } };
+}
 /** TG LOKI_E10_REVIEW_TURN_GUARD (acc-167, off by default until measured, =1 on): a finish or review turn that edits anything gets the tests of its edits rerun. A test
  * that fails after the turn and passed with the turn's edits taken back marks the turn as a regression: only that turn's paths go back to the pre-turn
  * tree (the implement diff stays), and the record names the test for the receipt. A test that also fails without the turn keeps the turn. */
