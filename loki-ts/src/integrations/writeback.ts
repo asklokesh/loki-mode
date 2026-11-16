@@ -24,7 +24,7 @@ export function commentText(i: WritebackInput): string {
   const reason = i.reason ? `Reason: ${i.reason}` : null;
   if (phase === "started") return "Loki started work on this issue.";
   if (phase === "blocked") return ["Loki is blocked and needs input.", reason].filter(Boolean).join("\n");
-  if (phase === "failed") return ["Loki run failed without a PR.", reason].filter(Boolean).join("\n");
+  if (phase === "failed") return [i.prUrl ? `Loki run failed; its committed work is in draft PR ${i.prUrl}.` : "Loki run failed without a PR.", reason].filter(Boolean).join("\n"); // FAILED-PR: a failed run with committed work opens a draft PR
   return [`Loki outcome: ${i.verdict}`, `PR: ${i.prUrl ?? "none"}`, `Receipt sha256: ${i.receiptSha256 ?? "unavailable"}`].join("\n");
 }
 async function post(url: string, init: RequestInit, label: string, what = "comment"): Promise<void> {

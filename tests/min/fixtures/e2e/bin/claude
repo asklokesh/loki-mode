@@ -32,6 +32,7 @@
 # nothing; wallconflict does the same citing loki_wall_multiply.test.ts; noprogress edits calc.ts without fixing multiply();
 # fixit turns the wrong multiply() right; twostep needs two rounds. E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
 # per call; E2E_STUB_USAGE=<n> records n output tokens per session (input = prompt bytes / 4) as the session's cost.
+# E2E_STUB_SECRET=1: the implement session also appends a searchConfig line to calc.ts that the security scan matches as a secret (tests/min/engine10-e2e-stub.sh).
 # E2E_STUB_LIMIT=<engine stage> with E2E_STUB_LIMIT_MARK=<file>: that stage's first session hits a weekly usage limit (stderr line, exit 1).
 # E2E_STUB_REVIEW=PASS|FLAG|BLOCK: the seal cross-review session replies with that verdict (tests/min/engine10-e2e-stub.sh).
 #   overlay: a plain `-p <task>` call copies E2E_STUB_OVERLAY over the cwd (h2h benchmark harness)
@@ -318,6 +319,7 @@ if [ "$stage" = "implement" ]; then
     if [ "${E2E_STUB_SCOPE_EDIT:-}" = "1" ] && [ -f util.ts ]; then printf 'export const MODE = 2;\n' >> util.ts; fi
     if [ "${E2E_STUB_BREAK_CFG:-}" = "1" ] && [ -f cfg.json ]; then printf '{"ok": false}\n' > cfg.json; fi
     if [ "${E2E_STUB_LINTBAD:-}" = "1" ]; then printf '#!/usr/bin/env bash\nif true; then\n  echo BROKEN_A\n' > tool.sh; fi
+    if [ "${E2E_STUB_SECRET:-}" = "1" ] && ! grep -q searchConfig calc.ts; then printf '\nexport const searchConfig = { apiKey: globalThis.ELASTICSEARCH_API_KEY_VALUE };\n' >> calc.ts; fi # SECRET-PUSH: a config key the security scan's tier 2 matches (calc.ts line 5)
     if [ "${E2E_STUB_MODE:-}" = "attempts" ]; then # EXP-0010: the session in attempts/B<E2E_STUB_RIGHT> is right, every other one wrong
       n=0; case "$(pwd -P)" in */loki-attempts-*/B[0-9]*) n="$(pwd -P)"; n="${n##*/B}" ;; esac
       op='+'; [ "$n" = "${E2E_STUB_RIGHT:-none}" ] && op='*'
