@@ -52,13 +52,18 @@ export function configuredReviewer(repoDir: string, env: NodeJS.ProcessEnv = pro
   return { prompt: a.prompt, model: a.provider === "claude" ? a.model : "", provider: asProvider(a.provider) };
 }
 const clean = (s: string): string => capWhole(s.replace(/[\x00-\x1f\x7f`]+/g, " "), 600); // FC-PR-BODY-PUBLIC-HYGIENE: whole up to 600 characters, then a word-boundary cut and an ellipsis
+/** F3 UNMET cap: a reviewer reason that says an asked-for line is unmet (intent_card.ts asks for `- UNMET: <line>`; markdown bold allowed), and the note it becomes.
+ *  seal.ts adds every such note to its open notes, which caps VERIFIED at PARTIAL. Levels, when the review runs and its prompt are unchanged. */
+const UNMET_REASON_RE = /^\s*\**UNMET\b/;
+export const isUnmetNote = (note: string): boolean => /^cross-review \w+ \([^)]*\):\s*\**UNMET\b/.test(note);
 /** First line `VERDICT: PASS|FLAG|BLOCK`, then `- reason` lines. Anything else is not_run (never PASS). */
 export function parseReview(p: ReviewProvider, out: string): CrossReview {
   if (p === "claude") { try { const j = JSON.parse(out) as { result?: unknown }; out = typeof j?.result === "string" ? j.result : ""; } catch { out = ""; } } // claude runs with --output-format json: the verdict is the result text; anything else is not_run
   const m = /^\s*VERDICT:\s*(PASS|FLAG|BLOCK)\b/im.exec(out);
   if (!m) return { provider: p, level: "not_run", notes: [`cross-review not run: ${p} returned no VERDICT line`] };
   const level = m[1]!.toLowerCase() as ReviewLevel;
-  const reasons = reviewFlagLines(out.slice(m.index + m[0].length)).map(clean).filter(Boolean).slice(0, MAX_NOTES);
+  const all = reviewFlagLines(out.slice(m.index + m[0].length)).map(clean).filter(Boolean), unmet = (r: string): boolean => UNMET_REASON_RE.test(r);
+  const reasons = [...all.filter(unmet), ...all.filter((r) => !unmet(r))].slice(0, MAX_NOTES); // F3: UNMET reasons first, so the cap of 5 never cuts one
   const notes = level === "pass" ? [] : (reasons.length ? reasons : ["no reason given"]).map((r) => `cross-review ${level} (${p}): ${r}`);
   return { provider: p, level, notes };
 }

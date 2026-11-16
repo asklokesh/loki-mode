@@ -501,11 +501,26 @@ f="$(pr_facts)"; set -- $f
 grep -q 'cross-review flag (claude): stub reviewer concern' "$RUNDIR/receipt.json" && ok "reviewer FLAG finding lands on the receipt as NOT PROVEN" || bad "FLAG finding missing from the receipt"
 [ "$2" = True ] && [ "$7" = True ] && ok "draft run 2: result-cost sum equals receipt cost to the cent" || bad "draft run 2 facts: $f"
 
+[ "$6" = VERIFIED ] && ok "F3: a FLAG review without an UNMET line leaves the run VERIFIED" || bad "F3: FLAG run without UNMET gave verdict $6"
+run_pr unmet none LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=FLAG "E2E_STUB_REVIEW_EXTRA=UNMET: Acceptance: a filter template and a history entry are saved" LOKI_PR_DRAFT=1
+f="$(pr_facts)"; set -- $f
+[ "$6" = PARTIAL ] && grep -q 'cross-review flag (claude): UNMET: Acceptance: a filter template and a history entry are saved' "$RUNDIR/receipt.json" \
+    && ok "F3: the same FLAG review with one UNMET line caps the verdict at PARTIAL, the line on the receipt" || bad "F3: FLAG run with UNMET gave verdict $6"
+U3="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/xreview.ts");
+const six = JSON.stringify({ result: "VERDICT: FLAG\n- one\n- two\n- three\n- four\n- five\n- UNMET: Acceptance: six is cut today" }), plain = JSON.stringify({ result: "VERDICT: FLAG\n- one\n- two" });
+const r6 = x.parseReview("claude", six), rp = x.parseReview("claude", plain);
+console.log([r6.notes.length, r6.notes[0], r6.notes.filter(x.isUnmetNote).length, JSON.stringify(rp.notes), x.isUnmetNote("cross-review flag (claude): **UNMET**: a"), x.isUnmetNote("cross-review flag (claude): the UNMET word inside")].join(" | "));
+' 2>&1)"
+[ "$U3" = '5 | cross-review flag (claude): UNMET: Acceptance: six is cut today | 1 | ["cross-review flag (claude): one","cross-review flag (claude): two"] | true | false' ] \
+    && ok "F3 unit: an UNMET reason written sixth is kept (sorted first, the cap stays 5); a review with no UNMET keeps its order; bold UNMET counts, the word inside a reason does not" || bad "F3 unit gave: $U3"
+
 run_pr stable stable LOKI_PR_DRAFT=1
 f="$(pr_facts)"; set -- $f
 [ "$8" = success ] && ok "deep full suite red only on base-red ids: status success" || bad "base-red full suite gave status $8 ($f)"
 grep -q '"base_red": true' "$RUNDIR/receipt-addendum-1.json" && ok "addendum marks the base-red suite" || bad "addendum lacks base_red"
 [ "$4" = 0 ] && [ "$5" = 0 ] && ok "low tier PR run: zero review sessions" || bad "low tier review sessions: $4, council $5"
+[ "$6" = VERIFIED ] && ok "F3: a run with no reviewer keeps its verdict (VERIFIED, as on the base commit)" || bad "F3: no-reviewer run verdict $6 (want VERIFIED, as on the base commit)"
 [ "$2" = True ] && [ "$7" = True ] && ok "draft run 3: result-cost sum equals receipt cost to the cent" || bad "draft run 3 facts: $f"
 
 run_pr new new

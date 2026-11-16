@@ -6,14 +6,15 @@
 #   headless, GitHub remote but no gh login: exit 0 (was a refusal that said "pass --no-pr"), VERIFIED,
 #                          next command is `gh auth login && git push ... && gh pr create`.
 #   dirty tracked tree:    refused, the message names the one safe option, nothing was stashed.
-#   interactive (pty):     at most 1 question (the optional rating), answered with Enter.
+#   interactive (pty):     no question at all, no rating line after VERIFIED, and the run exits within 5 s of its
+#                          Outcome line with nothing typed (a stdin read would hold it for 30 s).
 #   provider inference:    claude missing but another supported CLI on PATH picks that CLI.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/util/one_line_goal.ts publishPlan: return { noPr: false, reason: null } for the
 #      gh_unauthenticated case (the run refuses again; the gh scenario must fail).
-#   2. loki-ts/src/util/satisfaction.ts: print a second prompt line containing "[y/N]" (the
-#      interactive question count must exceed 1).
+#   2. loki-ts/src/engine10/supervisor.ts: put back the maybeAsk call after a VERIFIED run (the rating line
+#      appears and the run waits on stdin past the 5 s bound).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -82,7 +83,7 @@ run_headless "$REPO"
 has "dirty tree: message names the safe option" "$OUT" "git stash push -m wip yourself"
 [ -z "$(git -C "$REPO" stash list)" ] && grep -q '// wip' "$REPO/calc.ts" && ok "dirty tree: nothing stashed, the user's edit is intact" || bad "dirty tree: loki touched the user's edit or stash"
 
-# 4. interactive (pty): count questions, answer each with Enter
+# 4. interactive (pty): count questions and answer none; time from the Outcome line to exit
 mkrepo tty
 export REPO_TTY="$REPO" FIXDIR="$FIX" GOAL ROOT T
 PTY_OUT="$(env "${NOCI[@]}" -u LOKI_PROVIDER -u GH_TOKEN -u GITHUB_TOKEN python3 -I - <<'PY' 2>&1
@@ -95,7 +96,7 @@ os.chdir(repo)
 pid, fd = pty.fork()
 if pid == 0:
     os.execvpe("bash", ["bash", root + "/bin/loki", goal], env)
-buf, answered, end = b"", 0, time.time() + 100
+buf, end, seen = b"", time.time() + 100, None
 while time.time() < end:
     r, _, _ = select.select([fd], [], [], 1)
     if r:
@@ -103,18 +104,19 @@ while time.time() < end:
         except OSError: break
         if not chunk: break
         buf += chunk
-    pend = len(re.findall(rb"Enter skips|\[y/N\]|\[Y/n\]|\(y/n\)", buf))
-    if pend > answered:
-        os.write(fd, b"\n"); answered = pend
+    if seen is None and b"Outcome:" in buf: seen = time.time()
 _, status = os.waitpid(pid, 0)
+tail = time.time() - seen if seen is not None else -1
 sys.stdout.write(buf.decode("utf8", "replace"))
-sys.stdout.write("\nPTY_RC=%d\n" % (os.WEXITSTATUS(status) if os.WIFEXITED(status) else 99))
+sys.stdout.write("\nPTY_RC=%d\nPTY_TAIL_S=%.1f\n" % (os.WEXITSTATUS(status) if os.WIFEXITED(status) else 99, tail))
 PY
 )"
 qn="$(printf '%s\n' "$PTY_OUT" | grep -Ec "$QUESTION_RE" || true)"
 grep -q 'PTY_RC=0' <<< "$PTY_OUT" && ok "interactive: bare goal exits 0 with zero flags" || { bad "interactive: nonzero exit"; printf '%s\n' "$PTY_OUT" | tail -6 | sed 's/^/    | /'; }
 grep -Eq 'Outcome:[[:space:]]+VERIFIED' <<< "$PTY_OUT" && ok "interactive: Outcome VERIFIED" || bad "interactive: not VERIFIED"
-[ "${qn:-0}" -le 1 ] && ok "interactive: $qn question(s) asked (limit 1)" || bad "interactive: $qn questions asked (limit 1)"
+tail_s="$(sed -n 's/^PTY_TAIL_S=//p' <<< "$PTY_OUT")"
+[ "${qn:-0}" -eq 0 ] && ! grep -q 'Rate this verified run' <<< "$PTY_OUT" && ok "interactive: a VERIFIED run on a TTY asks nothing and prints no rating line" || bad "interactive: $qn question(s) asked or a rating line printed"
+python3 -I -c 'import sys; t = float(sys.argv[1]); sys.exit(0 if 0 <= t < 5 else 1)' "${tail_s:--1}" && ok "interactive: the run exits ${tail_s}s after its Outcome line with nothing typed (stdin is not read)" || bad "interactive: the run took ${tail_s:-?}s after its Outcome line (a stdin read?)"
 
 # 5. provider inference: claude absent, another supported CLI present
 mkdir -p "$T/pbin"

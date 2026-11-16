@@ -1,4 +1,5 @@
 // Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6, 10): eval marker first, origin pinned once, worker spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal) id; post-PR: detached deep verify, then Slack notify.
+import { cleanupScratchRecord, cleanupStaleScratches } from "../runner/worker_proc.ts";
 import { routeStartLine } from "../runner/router/route_block.ts";
 import { execFileSync, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
@@ -193,6 +194,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const t0 = Date.now();
   const startedProvider = opts.started?.["provider"]; // E-36: provider read off opts.started, not a dedicated field (main(), below, is the only populater)
   const env = opts.env ?? process.env;
+  try { for (const sc of cleanupStaleScratches(join(opts.repoDir, ".loki"))) if (sc.stopped.length) process.stderr.write(`loki: stopped ${sc.stopped.length} process(es) an earlier run left (${sc.stopped.map((x) => x.pid).join(", ")}), by ownership\n`); } catch { /* never blocks a run */ } // Q1 SCRATCH-OWNED: a record whose worker is gone
   await assertPreflight({ repoDir: opts.repoDir, provider: typeof startedProvider === "string" ? startedProvider : "claude", pr: opts.pr !== undefined, env, runDir: join(opts.repoDir, ".loki", "runs", opts.runId) });
   writeEngineMarker(opts.repoDir, opts.runId); // first: a failing run still leaves it
   const origin = readOriginUrl(opts.repoDir); const rmRunPid = writeRunPid(join(opts.repoDir, ".loki", "runs", opts.runId), opts.runId); process.once("exit", rmRunPid); // origin pinned once, before any provider runs; CPE-09 run.pid for Control Plane Stop, removed on every exit path
@@ -225,6 +227,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   };
   let workerStopped = false;
   let worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, onWorkerLine, (stopped) => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); workerStopped = stopped; if (stopped && !(backstopSealOn(env) && !sealed)) restoreBranch(opts.repoDir, origBranch); }).finally(() => clearInterval(beat)); // BACKSTOP-SEAL: a kill with no receipt keeps the tree on the run branch for the seal pass
+  { const sc = cleanupScratchRecord(join(opts.repoDir, ".loki", "runs", opts.runId)); if (sc && (sc.stopped.length || sc.left.length)) log.append("scratch.cleanup", null, { when: "after the worker exited", stopped: sc.stopped.map(({ pid, command, port, why }) => ({ pid, command, port, why })), left: sc.left, removed: sc.removed, ...(sc.kept ? { kept: sc.kept } : {}) }); } // Q1 SCRATCH-OWNED: a worker stopped by a signal or the backstop never ran its own cleanup
   // BACKSTOP-SEAL (dev4 gitoxide on 11.141.5: the worker's own soft cap never fired, the backstop killed it at 1141 s and no receipt existed): a worker killed by the
   // backstop before it sealed gets one seal pass. A fresh worker resumes from the durable log with only commit and seal (LOKI_E10_SEAL_ONLY), seals the current tree as
   // PARTIAL "time ran out", and is itself bounded so the whole run still ends inside the ceiling plus the deadline margin. Off with LOKI_E10_BACKSTOP_SEAL=0.
@@ -499,6 +502,5 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const rs = await import("../util/receipt_surface.ts"), card = !json && !quiet && rs.aweOn("LOKI_AWE_PROOF_CARD") ? rs.proofCardOf(res.tampered ? null : rs.readReceiptAt(events.findLast((e) => e.type === "receipt.sealed")?.data.path)) : null; // AWE-2: proof card from receipt.json; a tampered run reads "not run"
   process.stdout.write(json ? `${JSON.stringify({ ...JSON.parse(out), summary: { ...summaryObject(ui), ...(riskLine ? { risk: riskLine } : {}) } })}\n` : quiet ? withRiskLine(formatRunSummary(ui, { color: useColor() }), riskLine, 99) + (handoffRef ? `${handoffRef}\n` : "") : verbose ? `${out}\n${withRiskLine(formatRunSummary(ui, { color: useColor() }), riskLine, 99)}${handoffRef ? `${handoffRef}\n` : ""}` : withFoldLine(withRiskLine(foldTail ? withNextLine(out, ui).replace(/\n$/, `; ${foldTail}\n`) : withNextLine(out, ui), riskLine, 7, capLine ? 1 : 0), card ? rs.renderAweProofLine(card) : null, 7, capLine ? 1 : 0)); // D48: default output stays within 8 lines, so the summary collapses to one line and the proof card to one line
   if (card && verbose) process.stdout.write(`\n${rs.renderAweProofCard(card, useColor())}\n`); // AWE-2: the full proof card, after the summary, under --verbose
-  if (!json && res.outcome === "VERIFIED") await import("../util/satisfaction.ts").then((m) => m.maybeAsk({ runId, env: process.env, isTTY: process.stdin.isTTY === true && process.stdout.isTTY === true })).catch(() => {});
   return res.outcome === "CANCELLED" && res.notProven.some((n) => n.endsWith("SIGTERM")) ? 143 : exitCodeOf(res.outcome); // a SIGTERM cancel keeps the conventional 128+15
 }

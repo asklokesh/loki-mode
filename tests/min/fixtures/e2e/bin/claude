@@ -9,7 +9,7 @@
 #   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
 #   coverage: multiply() and subtract() on the first turn; negate() only when the prompt carries the coverage brief, or all three on a first turn whose brief carries the folded coverage line (tests/min/scope-and-fix.sh, LOKI_E10_COVERAGE_RESUME)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
-# E2E_STUB_NOFINISH=once|never|still: the first implement reply has no finish line (LOKI_BLOCKED summary); a continue then finishes (once), keeps editing
+# E2E_STUB_NOFINISH=once|never|still|unfinished (unfinished: every reply ends LOKI_UNFINISHED, the continue changes nothing): the first implement reply has no finish line (LOKI_BLOCKED summary); a continue then finishes (once), keeps editing
 #   without finishing (never) or changes nothing (still). once writes multiply() only on the continue; never and still write it on the first turn.
 #   attempts: EXP-0010 (tests/min/engine10-e2e-stub.sh). Every implement session writes a wrong multiply() (calc.ts, or calc.py when the repo has one) except
 #     the session running in <temp>/loki-attempts-<random>/B<n> where n is E2E_STUB_RIGHT (unset or none: every session is wrong; the primary is attempt 0);
@@ -90,6 +90,14 @@ if [ -n "${E2E_STUB_ROUTE_LOG:-}" ]; then # one line per session: engine stage, 
   echo "${LOKI_E10_STAGE:-none} ${LOKI_ITERATION:-none} model=${r_model:-none} advisor=${r_adv:-none} wall=$is_wall window=${r_win:-none}" >> "$E2E_STUB_ROUTE_LOG"
 fi
 if [ -n "${E2E_STUB_BUDGET_LOG:-}" ]; then echo "$stage limit=${LOKI_BUDGET_LIMIT:-} ledger=${LOKI_BUDGET_LEDGER:-}" >> "$E2E_STUB_BUDGET_LOG"; fi
+if [ -n "${E2E_STUB_ENV_LOG:-}" ]; then printf '%s LOKI_SCRATCH=%s TMPDIR=%s\n' "$stage" "${LOKI_SCRATCH:-}" "${TMPDIR:-}" >> "$E2E_STUB_ENV_LOG"; fi # Q1 RUN-SCRATCH: what each stage's session got
+if [ "$stage" = implement ] && [ "${E2E_STUB_SCRATCH:-}" = leave ] && [ -n "${LOKI_SCRATCH:-}" ] && [ ! -f "$LOKI_SCRATCH/pids" ]; then # RUN-SCRATCH: start a daemon-like process in the scratch directory and leave it running
+  # a daemon (pg_ctl, redis --daemonize) in its own session with no inherited std fds, so it survives a process-group kill and never holds the session's stdout pipe
+  perl -e 'setpgrp(0,0); open(STDIN,"</dev/null"); open(STDOUT,">/dev/null"); open(STDERR,">/dev/null"); chdir($ENV{LOKI_SCRATCH}); exec("sleep","300")' </dev/null >/dev/null 2>&1 &
+  _spid=$!; _n=0; while [ "$(ps -o pgid= -p "$_spid" 2>/dev/null | tr -d ' ')" != "$_spid" ] && [ "$_n" -lt 100 ]; do sleep 0.05; _n=$((_n + 1)); done # out of the session's group before the session ends: else session.ts reaps it with the group under load
+  echo "$_spid" > "$LOKI_SCRATCH/pids"; echo "$_spid" > "${E2E_STUB_SCRATCH_PID_LOG:-/dev/null}"
+fi
+if [ -n "${E2E_STUB_PATH_LOG:-}" ]; then printf '%s %s\n' "$stage" "$PATH" >> "$E2E_STUB_PATH_LOG"; fi # candidate 1 env card: the PATH each stage's session got
 if [ -n "${E2E_STUB_PROMPT_LOG:-}" ]; then printf '%s\n' "$prompt" >> "$E2E_STUB_PROMPT_LOG.$stage$is_wall"; fi # CW-12: the full prompt of every call, one file per stage (wall prompts land in .other1)
 # What the session can see: the canary test asserts no GitHub token and no LOKI_LEGACY_BASH.
 if [ -n "${E2E_STUB_ENV_LOG:-}" ]; then echo "$stage GH_TOKEN=${GH_TOKEN:-} LOKI_LEGACY_BASH=${LOKI_LEGACY_BASH:-} SEAL_PATCH=${LOKI_E10_SEAL_EXISTING_PATCH:-}" >> "$E2E_STUB_ENV_LOG"; fi
@@ -207,7 +215,7 @@ case "$prompt" in # `loki plan --spec` (tests/min/triage-router.sh): write the s
 esac
 case "$flags" in *"--model claude (provider default)"*) echo "There's an issue with the selected model (claude (provider default)). It may not exist or you may not have access to it." >&2; exit 1 ;; esac # the real CLI rejects the recorded label as a model id (FireLater#24 s2: every default-model review exited 1)
 if [ "$stage" = review ]; then # the seal cross-review (stages/xreview.ts): E2E_STUB_REVIEW=PASS|FLAG|BLOCK answers in claude's --output-format json shape, with a cost
-  if [ -n "${E2E_STUB_REVIEW:-}" ]; then printf '{"type":"result","result":"VERDICT: %s\\n- stub reviewer concern","total_cost_usd":0.01}\n' "$E2E_STUB_REVIEW"; fi
+  if [ -n "${E2E_STUB_REVIEW:-}" ]; then printf '{"type":"result","result":"VERDICT: %s\\n- stub reviewer concern%s","total_cost_usd":0.01}\n' "$E2E_STUB_REVIEW" "${E2E_STUB_REVIEW_EXTRA:+\\n- $E2E_STUB_REVIEW_EXTRA}"; fi # E2E_STUB_REVIEW_EXTRA: one more reason line (F3 UNMET legs)
   exit 0
 fi
 if [ "$stage" = "other" ] && [ "${E2E_STUB_MODE:-}" = "overlay" ]; then # tests/min/h2h-harness.sh: a raw `claude -p <task> --output-format json` contestant
@@ -250,9 +258,11 @@ if [ "$stage" = "implement" ] && [ -n "${E2E_STUB_NOFINISH:-}" ]; then # S1b (te
       once) printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts; echo "LOKI_DONE"; exit 0 ;; # finishes on the first continue
       never) printf '// continue pass %s\n' "$$-$RANDOM" >> calc.ts; echo "Progress made. Still outstanding: the docs for multiply."; exit 0 ;; # changes the tree, never finishes
       still) echo "Still outstanding: the docs for multiply."; exit 0 ;; # changes nothing, never finishes
+      unfinished) echo "I could not write the docs here."; echo "LOKI_UNFINISHED: the docs for multiply are not written"; exit 0 ;; # candidate 1: the named ending, again, with no change
     esac
   fi
   if [ "$E2E_STUB_NOFINISH" = once ]; then printf '\n// multiply() pending\n' >> calc.ts; else printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts; fi
+  if [ "$E2E_STUB_NOFINISH" = unfinished ]; then echo "multiply() is done."; echo "LOKI_UNFINISHED: the docs for multiply are not written"; exit 0; fi
   echo "Context was compacted. Summary of progress."; echo "**Result:** LOKI_BLOCKED: the docs for multiply and the impacted test runs are still outstanding."; exit 0
 fi
 if [ "$stage" = "implement" ] && [ "${E2E_STUB_MODE:-done}" != "coverage" ] && printf '%s' "$prompt" | grep -q "List each site, symbol, example or case"; then

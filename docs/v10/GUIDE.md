@@ -154,9 +154,8 @@ becomes owner/repo#123 from the checkout's origin ("#N" needs a GitHub origin;
 quote it, since an unquoted # starts a shell comment). Loki prints a `goal:`
 line when it read a ref. Extra words ("fix #123 and add a test") keep the goal
 as text, and LOKI_GOAL_REF=0 turns the reading off. The run itself asks
-nothing: headless intake records its assumptions in the receipt. The only
-terminal prompt is the optional rating after VERIFIED (LOKI_SATISFACTION=0
-turns it off). Models and --deep are not auto-picked yet.
+nothing: headless intake records its assumptions in the receipt, and no
+rating prompt follows a VERIFIED run. Models and --deep are not auto-picked yet.
 
 bin/loki routes GitHub, GitLab (`.../-/issues/N`) and Jira
 (`.../browse/KEY`) issue URLs to the v10 engine, and the issue-fetch step

@@ -307,8 +307,9 @@ print(" ".join("%s:%s" % (e["stage"], e["type"].split(".")[1]) for e in ev if e[
 
 # S1b no-loss (issue run): an issue run whose implement reply ends with a finish line has the same stage order, receipt key set, implement key set and
 # normalized implement brief as on the base commit (8c7ae842b, captured by this same leg there).
+# F5 adds one block to an issue run's brief, so this leg runs under LOKI_E10_PROVE_BY_RUNNING=0: the opt-out gives the base brief byte for byte.
 W3="$T/whole-sig"; make_repo "$W3" 0
-E2E_STUB_MODE=done run_loki "$W3" "$T/whole-sig-stub.log" start acme/search#24 --no-pr --max-cost 5
+LOKI_E10_PROVE_BY_RUNNING=0 E2E_STUB_MODE=done run_loki "$W3" "$T/whole-sig-stub.log" start acme/search#24 --no-pr --max-cost 5
 W3SIG="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$(dirname "$(ls "$W3"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")" "$W3" 2>&1)"
 [ "$W3SIG" = "stages=intake,{plan,wall},implement,verify,commit,seal; receipt=base_sha,checks,context,cost,cost_preview,diff_sha256,events_sha256,evidence,head_sha,log_seal,loki_version,model,model_source,mutation_outcome,mutation_proof,not_applicable,not_proven,provider,receipt_sha256,repo,resumed,run_id,schema,seal_accuracy,seeded_corpus,self_review,task,time,toolchain,tree,verdict,verification,wall; implement=already_done_evidence,brief_files,cascade,coverage_resume,diff_stat,duration_s,exit,impacted_tests,iteration_ids,model,self_review,session_id,session_resume,spec_conflict_reason,summary_tail,tests_reverted; brief=fa2041fa29ead36e" ] \
     && ok "S1b no-loss (issue run): stage order, receipt key set, implement key set and the normalized implement brief equal the base commit's" || bad "S1b no-loss (issue run) differs from the base commit: $W3SIG"
@@ -403,6 +404,180 @@ echo "    model scope e2e: haiku pin $HK1, sonnet pin $HK2, haiku pin with =1 $H
 [ "$HK1" = "yes/1" ] && ok "whole-first model scope e2e: --session-model haiku on the epic splits as before (one epic record)" || bad "whole-first: --session-model haiku gave split/epic $HK1 (want yes/1)"
 [ "$HK2" = "no/0" ] && ok "whole-first model scope e2e: --session-model sonnet runs the epic whole" || bad "whole-first: --session-model sonnet gave split/epic $HK2 (want no/0)"
 [ "$HK3" = "no/0" ] && ok "whole-first model scope e2e: LOKI_ISSUE_WHOLE_FIRST=1 runs the epic whole on Haiku" || bad "whole-first: =1 on Haiku gave split/epic $HK3 (want no/0)"
+
+# --- candidate 1: an issue run on claude gets its own rules constant, the prove-by-running block, the take-the-time and deliver-each lines, no time sentence,
+# and the small environment card; a text goal, opencode and LOKI_E10_PROVE_BY_RUNNING=0 keep today's brief. Prompts are what the stub session received.
+c1_run() { # c1_run <name> <repo setup: none|pg> <start args...> -- [VAR=value...]: one stub run; sets C1P (implement prompt), C1PATH (implement PATH), C1PLANPATH, C1RUN
+    local name="$1" setup="$2" d="$T/c1-$1"; shift 2; local args=(); while [ "$1" != "--" ]; do args+=("$1"); shift; done; shift
+    make_repo "$d" 0
+    if [ "$setup" = pg ]; then printf '{ "name": "svc", "dependencies": { "pg": "^8.11.0" } }\n' > "$d/package.json"; git -C "$d" add package.json; git -C "$d" commit -q -m "pg dependency"; fi
+    rm -f "$d.prompt".* "$d.path" "$d.env"
+    run_loki_env "$d" "$d.stub.log" E2E_STUB_MODE=done E2E_STUB_PROMPT_LOG="$d.prompt" E2E_STUB_PATH_LOG="$d.path" E2E_STUB_ENV_LOG="$d.env" LOKI_E10_ENV_CARD_ROOTS="$T/fake-opt" "$@" -- "${args[@]}"
+    C1ENV="$(sed -n 's/^implement //p' "$d.env" 2>/dev/null)"; C1ENV="${C1ENV%%$'\n'*}"; C1PLANENV="$(sed -n 's/^plan //p' "$d.env" 2>/dev/null)"; C1PLANENV="${C1PLANENV%%$'\n'*}"
+    C1P="$(cat "$d.prompt.implement0" 2>/dev/null)"; C1PATH="$(sed -n 's/^implement //p' "$d.path" 2>/dev/null | head -1)"; C1PLANPATH="$(sed -n 's/^plan //p' "$d.path" 2>/dev/null | head -1)"
+    C1RUN="$(dirname "$(ls "$d"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"
+}
+mkdir -p "$T/fake-opt/postgresql@14/bin" "$T/fake-opt/postgresql@15/bin" "$T/fake-opt/redis/bin"
+for b in initdb pg_ctl postgres; do printf '#!/bin/sh\nexit 0\n' > "$T/fake-opt/postgresql@15/bin/$b"; chmod +x "$T/fake-opt/postgresql@15/bin/$b"; done
+printf '#!/bin/sh\nexit 0\n' > "$T/fake-opt/postgresql@14/bin/pg_ctl"; chmod +x "$T/fake-opt/postgresql@14/bin/pg_ctl"
+printf '#!/bin/sh\nexit 0\n' > "$T/fake-opt/redis/bin/redis-server"; chmod +x "$T/fake-opt/redis/bin/redis-server"
+c1_run issue-pg pg start acme/search#24 --no-pr --max-cost 5 --
+ISSUE_P="$C1P" ISSUE_PATH="$C1PATH" ISSUE_PLANPATH="$C1PLANPATH" ISSUE_RUN="$C1RUN"
+c1_has() { grep -qF -- "$2" <<< "$1"; }
+CARD_LINE="Available on this machine: postgres 15 (initdb, pg_ctl, postgres) in $T/fake-opt/postgresql@15/bin. Their directories are on your PATH."
+c1_has "$ISSUE_P" "- You may start this repository's own services and throwaway dependencies to exercise your change. Bind anything you start to 127.0.0.1 or a unix socket, never to all interfaces. Create data directories, sockets and scratch files under \$TMPDIR. Leave what you started running; Loki stops it after the session. Never stop or signal a process you did not start. Use only a database, cache or server you started yourself under \$TMPDIR; never connect to one named in the repository's env files or in your environment, and never apply migrations to it." \
+    && ! c1_has "$ISSUE_P" "Stop every process you started" && ! c1_has "$ISSUE_P" "stop each one by that id" \
+    && ! c1_has "$ISSUE_P" "- Never leave a long-lived server running." && ! c1_has "$ISSUE_P" "- Never kill processes." \
+    && c1_has "$ISSUE_P" "or LOKI_UNFINISHED: <what is left> when something the issue lists is not delivered. Use LOKI_SPEC_CONFLICT only when a test in the repository contradicts the task." \
+    && c1_has "$ISSUE_P" "- Run the impacted tests named below" \
+    && ok "candidate 1: the issue run's rules allow starting the repository's own services (loopback or a unix socket, data under \$TMPDIR, left for Loki to stop), drop the two old process rules, keep the targeted-tests rule and add the LOKI_UNFINISHED ending" \
+    || bad "candidate 1: issue-run rules wrong (prompt $(wc -c <<< "$ISSUE_P") bytes)"
+c1_has "$ISSUE_P" "Never use a fixed port number: pick a port you have just checked is free, or a unix socket inside your temporary directory" \
+    && c1_has "$ISSUE_P" "You may say something cannot be run only after you have tried: list each command you tried to find or start it and what it printed. A missing program on PATH is not enough; look where this machine installs it." \
+    && ! c1_has "$ISSUE_P" "If something cannot be run here, say what and why." && ! c1_has "$ISSUE_P" "For this proof the process rules above read as" \
+    && c1_has "$ISSUE_P" "take the time the work needs and finish every item the issue asks for" \
+    && c1_has "$ISSUE_P" "This issue lists several things to deliver. Deliver each one. If one is left undone, finish with LOKI_UNFINISHED and say which." \
+    && ! c1_has "$ISSUE_P" "Time budget: about" \
+    && ok "candidate 1: the issue brief has the port rule, the tried-first rule, the take-the-time and deliver-each lines, no reconciling sentences and no time-budget sentence" \
+    || bad "candidate 1: issue-run block lines wrong"
+c1_has "$ISSUE_P" "$CARD_LINE" && [ "$ISSUE_PATH" = "$ISSUE_PLANPATH:$T/fake-opt/postgresql@15/bin" ] && [ -f "$ISSUE_RUN/env-card.json" ] && grep -q '"type":"env.card"' "$ISSUE_RUN/events.jsonl" \
+    && ok "candidate 1 card: a repo needing postgres with a keg off PATH gets the newest keg's line in the brief and its bin appended (not prepended) to the implement session's PATH only; env-card.json and one event" \
+    || bad "candidate 1 card: line $(grep -c 'Available on this machine' <<< "$ISSUE_P"), implement PATH tail '${ISSUE_PATH##*:}', plan PATH equal to implement head: $([ "${ISSUE_PATH%:*}" = "$ISSUE_PLANPATH" ] && echo yes || echo no)"
+c1_run issue-none none start acme/search#24 --no-pr --max-cost 5 --
+c1_has "$C1P" "This issue lists several things to deliver." && ! c1_has "$C1P" "Available on this machine" && [ "$C1PATH" = "$C1PLANPATH" ] \
+    && ok "candidate 1 card: an issue run on a repo that needs no service gets no card line and an unchanged PATH" || bad "candidate 1 card: repo needing nothing got a card or a PATH change"
+c1_run text-pg pg "add a multiply(a, b) function to calc.ts" --no-pr --
+c1_has "$C1P" "- Never kill processes." && c1_has "$C1P" "Time budget: about" && ! c1_has "$C1P" "LOKI_UNFINISHED" && ! c1_has "$C1P" "prove the change works by running it" && ! c1_has "$C1P" "Available on this machine" && [ -n "$C1PATH" ] && ! c1_has "$C1PATH" "$T/fake-opt" \
+    && ok "candidate 1: a text goal keeps today's rules, finish line and time sentence, gets no block and no card, and no keg directory reaches its PATH" \
+    || bad "candidate 1: the text goal changed: old rule $(grep -c 'Never kill processes' <<< "$C1P"), time $(grep -c 'Time budget' <<< "$C1P"), UNFINISHED $(grep -c LOKI_UNFINISHED <<< "$C1P"), block $(grep -c 'prove the change works' <<< "$C1P"), card $(grep -c 'Available on this' <<< "$C1P"), keg on PATH $(grep -c fake-opt <<< "$C1PATH"), PATH set $([ -n "$C1PATH" ] && echo yes || echo no)"
+c1_run issue-off pg start acme/search#24 --no-pr --max-cost 5 -- LOKI_E10_PROVE_BY_RUNNING=0
+c1_has "$C1P" "- Never kill processes." && c1_has "$C1P" "Time budget: about" && ! c1_has "$C1P" "LOKI_UNFINISHED" && ! c1_has "$C1P" "Available on this machine" && [ "$C1PATH" = "$C1PLANPATH" ] \
+    && ok "candidate 1: LOKI_E10_PROVE_BY_RUNNING=0 restores today's issue-run rules, time sentence and PATH, with no block and no card" || bad "candidate 1: the opt-out left a candidate-1 change"
+c1_run issue-cardoff pg start acme/search#24 --no-pr --max-cost 5 -- LOKI_E10_ENV_CARD=0
+c1_has "$C1P" "This issue lists several things to deliver." && ! c1_has "$C1P" "Available on this machine" && [ "$C1PATH" = "$C1PLANPATH" ] \
+    && ok "candidate 1 card: LOKI_E10_ENV_CARD=0 turns off only the card" || bad "candidate 1 card: LOKI_E10_ENV_CARD=0 did not turn the card off"
+# The path a real user hits most: the session cannot do an item, writes LOKI_UNFINISHED, is resumed once, changes nothing. One PR, PARTIAL, the diff committed,
+# and the session's own what-is-left text on the receipt and in the PR body.
+UF="$T/c1-unfinished"; make_repo "$UF" 0; git init -q --bare "$UF-origin.git"; git -C "$UF" remote add origin "$UF-origin.git"; git -C "$UF" push -q origin main
+run_loki_env "$UF" "$UF.stub.log" E2E_STUB_MODE=done E2E_STUB_NOFINISH=unfinished -- start acme/search#24 --max-cost 5
+UFRUN="$(dirname "$(ls "$UF"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"
+UFPR="$(grep -cE '^PR: +local:///.+#loki/' <<< "$OUT")"
+UFNP="$(python3 -I -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1])).get("not_proven") or []))' "$UFRUN/receipt.json" 2>/dev/null)"
+UFBODY="$(cat "$UFRUN/pr-body.md" 2>/dev/null)"
+[ "$UFPR" = 1 ] && grep -Eq '^Outcome: +PARTIAL' <<< "$OUT" && grep -qF "LOKI_UNFINISHED: the docs for multiply are not written" <<< "$UFNP" && grep -qF "LOKI_UNFINISHED: the docs for multiply are not written" <<< "$UFBODY" \
+    && [ -n "$(git --git-dir="$UF-origin.git" log --format=%H main..loki/"$(basename "$UFRUN")" 2>/dev/null)" ] \
+    && ok "candidate 1: an issue run whose session stays LOKI_UNFINISHED with an unchanged tree seals PARTIAL with one PR, the diff pushed, and its what-is-left text in the receipt and the PR body" \
+    || { bad "candidate 1 LOKI_UNFINISHED issue run: PR lines $UFPR, outcome $(grep '^Outcome:' <<< "$OUT"), receipt line $(grep -c LOKI_UNFINISHED <<< "$UFNP"), PR body line $(grep -c LOKI_UNFINISHED <<< "$UFBODY")"; tail -8 <<< "$OUT" | sed 's/^/    | /'; }
+C1U="$(ROOT="$ROOT" T="$T" bun --no-env-file --config=/dev/null -e '
+const st = await import(process.env.ROOT + "/loki-ts/src/util/stack_tools.ts"), c = await import(process.env.ROOT + "/loki-ts/src/e10ext/context.ts");
+const evs = [], ctx = (repoDir) => ({ repoDir, runDir: process.env.T + "/c1-unit-run", emit: (t) => evs.push(t) });
+const env = { PATH: "/usr/bin:/bin", LOKI_E10_ENV_CARD_ROOTS: process.env.T + "/fake-opt" };
+const errCard = st.envCard(ctx(process.env.T + "/no-such-repo"), env);
+const onPath = st.detectServiceBinaries(["redis"], { PATH: process.env.T + "/fake-opt/redis/bin" }, [process.env.T + "/fake-opt"]);
+console.log([errCard === null, onPath.length === 1 && onPath[0].on_path === true && st.envCardLine(onPath) === null, c.proveByRunningBlock("opencode", "issue") === "", c.proveByRunningBlock("claude", "text") === "", c.fixedRules({}, false) === c.FIXED_RULES].join(" "));
+' 2>&1)"
+[ "$C1U" = "true true true true true" ] && ok "candidate 1 unit: a detection error gives no card and never throws; a service already on PATH adds no line; opencode and a text goal get no block; non-issue rules are today's constant" || bad "candidate 1 unit gave: $C1U"
+
+# --- Q1 RUN-SCRATCH: an issue run's implement session gets its own short scratch directory as LOKI_SCRATCH and TMPDIR (plan and other stages do not), one brief
+# line, and after implement the harness stops what the session left running there and removes the directory; a text goal and the opt-out get none of it.
+c1_run scratch none start acme/search#24 --no-pr --max-cost 5 -- E2E_STUB_SCRATCH=leave E2E_STUB_SCRATCH_PID_LOG="$T/c1-scratch.leftpid"
+SC_DIR="$(sed -n 's/^LOKI_SCRATCH=\([^ ]*\) TMPDIR=.*/\1/p' <<< "$C1ENV")"; SC_TMP="$(sed -n 's/.* TMPDIR=\(.*\)$/\1/p' <<< "$C1ENV")"; SC_LEFT="$(cat "$T/c1-scratch.leftpid" 2>/dev/null)"
+SC_REC="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])).get("scratch_cleanup") or {}; print("%s|%s|%s" % (r.get("removed"), ",".join(str(x["pid"]) for x in r.get("stopped", [])), r.get("dir")))' "$C1RUN/receipt.json" 2>/dev/null)"
+SC_ALIVE=no; [ -n "$SC_LEFT" ] && kill -0 "$SC_LEFT" 2>/dev/null && SC_ALIVE=yes
+[ -n "$SC_DIR" ] && [ "$SC_TMP" = "$SC_DIR" ] && [ "${#SC_DIR}" -le 40 ] && ! grep -qF '$LOKI_SCRATCH/pids' <<< "$C1P" \
+    && ! grep -q 'LOKI_SCRATCH=/' <<< "$C1PLANENV" \
+    && ok "run scratch: the issue run's implement session gets a short scratch directory (${#SC_DIR} characters) as LOKI_SCRATCH and TMPDIR, and no pids-file instruction; the plan session does not" \
+    || bad "run scratch: implement env '$C1ENV', plan env '$C1PLANENV'"
+[ "$SC_REC" = "True|$SC_LEFT|$SC_DIR" ] && [ "$SC_ALIVE" = no ] && [ ! -e "$SC_DIR" ] \
+    && ok "run scratch: the process the session left running in its scratch directory is stopped by the harness, named in the receipt, and the directory is removed" \
+    || bad "run scratch cleanup: receipt '$SC_REC' (want True|$SC_LEFT|$SC_DIR), left process alive $SC_ALIVE, directory present $([ -e "$SC_DIR" ] && echo yes || echo no)"
+[ "$SC_ALIVE" = yes ] && kill "$SC_LEFT" 2>/dev/null # the test's own recorded pid, only if the harness failed to stop it
+c1_run scratch-text none "add a multiply(a, b) function to calc.ts" --no-pr -- E2E_STUB_SCRATCH=leave
+SCT="$C1ENV"; SCTP="$C1P"
+c1_run scratch-off none start acme/search#24 --no-pr --max-cost 5 -- LOKI_E10_PROVE_BY_RUNNING=0 E2E_STUB_SCRATCH=leave
+SCO="$C1ENV"; SCOP="$C1P"
+grep -q '^LOKI_SCRATCH= ' <<< "$SCT" && grep -q '^LOKI_SCRATCH= ' <<< "$SCO" && ! grep -qF 'Your scratch directory is' <<< "$SCTP$SCOP" && [ -z "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("scratch_cleanup") or "")' "$C1RUN/receipt.json" 2>/dev/null)" ] \
+    && ok "run scratch: a text goal and LOKI_E10_PROVE_BY_RUNNING=0 get no LOKI_SCRATCH, no brief line and no receipt key" \
+    || bad "run scratch: text goal env '$SCT', opt-out env '$SCO'"
+# Q1 SCRATCH-OWNED: the harness proves ownership itself (the run's nonce in the environment, a working directory or a command-line path inside the scratch
+# directory, or a parent that is the run's), never trusts the session's pids file, and never matches by the work tree. Every pid these legs start is stopped
+# by the leg that started it, from its own handle.
+SOU="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const w = await import(process.env.ROOT + "/loki-ts/src/runner/worker_proc.ts"), fs = await import("node:fs");
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const mine = [], spawn = (cmd, o = {}) => { const p = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore", stdin: "ignore", ...o }); mine.push(p); return p; };
+const out = [];
+try {
+  const A = w.createSessionScratch(), B = w.createSessionScratch(), envA = { ...process.env, ...w.scratchSessionEnv(A) }, envB = { ...process.env, ...w.scratchSessionEnv(B) };
+  // two-process backend: a launcher carrying the nonce and a child that dropped its environment (env -i), owned through its parent
+  const launcher = spawn(["bash", "-c", "env -i /bin/sleep 297 & wait"], { env: envA }); await Bun.sleep(400);
+  const kid = Number(Bun.spawnSync(["pgrep", "-P", String(launcher.pid)], { stdout: "pipe" }).stdout.toString().trim().split("\n")[0]);
+  // a cut-off session: a daemon in its own session that kept the nonce, and no pids file at all
+  spawn(["python3", "-I", "-c", "import os, sys, time\nif os.fork() == 0:\n    os.setsid()\n    open(sys.argv[1], \"w\").write(str(os.getpid())); time.sleep(296)\n", A.dir + "/daemon.pid"], { env: envA });
+  await Bun.sleep(500); const daemon = Number(fs.readFileSync(A.dir + "/daemon.pid", "utf8"));
+  // the second run: its daemon carries B s nonce and works in B s scratch
+  const other = spawn(["sleep", "295"], { env: envB, cwd: B.dir });
+  // a process the session listed in pids that is not provably the run s (no nonce, cwd elsewhere): left and reported
+  const foreign = spawn(["sleep", "294"]); fs.writeFileSync(A.dir + "/pids", foreign.pid + "\n");
+  await Bun.sleep(300);
+  const r = w.cleanupSessionScratch(A, { termWaitMs: 1500 });
+  const st = new Set(r.stopped.map((x) => x.pid)); await Bun.sleep(300); // Bun reaps the children of this test only once the event loop runs
+  out.push([st.has(launcher.pid), st.has(kid) && r.stopped.find((x) => x.pid === kid)?.why === "child of an owned process", st.has(daemon), !alive(launcher.pid) && !alive(kid) && !alive(daemon)].join(","));
+  out.push([alive(other.pid), !st.has(other.pid), alive(foreign.pid), r.left.some((x) => x.pid === foreign.pid && x.why === "left running, not proven ours"), r.removed, fs.existsSync(B.dir)].join(","));
+  // a process that started before the session (a pid the session could name, or a reused one) is never touched, even with its cwd in scratch
+  const old = spawn(["sleep", "293"], { cwd: B.dir }); await Bun.sleep(1200);
+  const late = { ...B, since: Math.floor(Date.now() / 1000) + 1 }; await Bun.sleep(1200);
+  const r2 = w.cleanupSessionScratch(late, { termWaitMs: 500 }); out.push([alive(old.pid), !r2.stopped.some((x) => x.pid === old.pid)].join(","));
+  // a process the run owns that will not die keeps the directory, and says so
+  const C = w.createSessionScratch(), stuck = spawn(["sleep", "292"], { cwd: C.dir }); await Bun.sleep(300);
+  const r3 = w.cleanupSessionScratch(C, { signal: () => {}, termWaitMs: 300 });
+  out.push([r3.removed, fs.existsSync(C.dir), /did not stop/.test(r3.kept ?? ""), alive(stuck.pid)].join(","));
+  stuck.kill(); await Bun.sleep(300); w.cleanupSessionScratch(C, { termWaitMs: 300 }); w.cleanupSessionScratch(B, { termWaitMs: 500 });
+  // the start-time parser: one or two spaces before a single-digit day
+  out.push([w.lstartEpoch("Mon Nov  6 01:02:03 2026") === Math.floor(new Date(2026, 10, 6, 1, 2, 3).getTime() / 1000), w.lstartEpoch("Mon Nov 6 01:02:03 2026") === w.lstartEpoch("Mon Nov  6 01:02:03 2026"), w.lstartEpoch("Mon Nov 16 01:02:03 2026") === Math.floor(new Date(2026, 10, 16, 1, 2, 3).getTime() / 1000), w.lstartEpoch("garbage") === null].join(","));
+} finally { for (const p of mine) { try { p.kill(); } catch {} } }
+console.log(out.join(" | "));' 2>&1)"
+[ "$SOU" = "true,true,true,true | true,true,true,true,true,true | true,true | false,true,true,true | true,true,true,true" ] \
+    && ok "scratch owned: a launcher and its env-less child, and a cut-off session's setsid daemon with no pids file, are stopped by proven ownership; a second run's daemon and a listed pid that is not provably ours survive (the latter reported); a process from before the session is untouched; a process that will not die keeps the directory; the start-time parser reads single-digit days" \
+    || bad "scratch owned units: $SOU"
+# the next run: a scratch record whose worker is gone is cleaned up by ownership at the start of the next run (supervisor, cleanupStaleScratches). The
+# stand-in daemon is python3, not /bin/sleep: macOS hides the environment of its own platform binaries from ps, so the nonce is never read there.
+SOS="$(ROOT="$ROOT" SOL="$T/so-stale" bun --no-env-file --config=/dev/null -e '
+const w = await import(process.env.ROOT + "/loki-ts/src/runner/worker_proc.ts"), fs = await import("node:fs"), path = await import("node:path");
+const runDir = path.join(process.env.SOL, ".loki", "runs", "e10-old"); const s = w.createSessionScratch(runDir);
+const dead = Bun.spawn(["true"]); await dead.exited; const rec = JSON.parse(fs.readFileSync(path.join(runDir, "scratch.json"), "utf8")); rec.worker_pid = dead.pid; fs.writeFileSync(path.join(runDir, "scratch.json"), JSON.stringify(rec));
+const live = w.createSessionScratch(path.join(process.env.SOL, ".loki", "runs", "e10-live")); // its worker (this process) is alive: not touched
+const d = Bun.spawn(["python3", "-I", "-c", "import time; time.sleep(291)"], { env: { ...process.env, ...w.scratchSessionEnv(s) }, stdout: "ignore", stderr: "ignore", stdin: "ignore" });
+const e = Bun.spawn(["sleep", "290"], { env: { ...process.env, ...w.scratchSessionEnv(live) }, stdout: "ignore", stderr: "ignore", stdin: "ignore" }); await Bun.sleep(300);
+const r = w.cleanupStaleScratches(path.join(process.env.SOL, ".loki")); await Bun.sleep(300);
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+console.log([r.length, r[0]?.stopped.some((x) => x.pid === d.pid), !fs.existsSync(s.dir), alive(e.pid), fs.existsSync(live.dir)].join(","));
+d.kill(); e.kill(); w.cleanupSessionScratch(live, { termWaitMs: 300 });' 2>&1)"
+[ "$SOS" = "1,true,true,true,true" ] && ok "scratch owned: the next run cleans up a record whose worker is gone (by ownership) and leaves a live run's record alone" || bad "scratch owned stale record: $SOS"
+# e2e: an unrelated process started in the work tree during the session survives; a SIGINT to the run still stops what the session left in scratch
+SOR="$T/so-intree"; make_repo "$SOR" 0
+(cd "$SOR" && exec env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" \
+    E2E_STUB_LOG="$T/so-intree-stub.log" E2E_STUB_MODE=done E2E_STUB_SCRATCH=leave E2E_STUB_SCRATCH_PID_LOG="$T/so-intree.left" E2E_STUB_SLEEP=3 LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" \
+    bash "$ROOT/bin/loki" start acme/search#24 --no-pr --max-cost 5 </dev/null >"$T/so-intree.out" 2>&1) & SOP=$!
+for i in $(seq 1 900); do [ -s "$T/so-intree.left" ] && break; sleep 0.1; done
+(cd "$SOR" && exec sleep 289 >/dev/null 2>&1 </dev/null) & SOT=$!
+wait "$SOP" 2>/dev/null; SOL="$(cat "$T/so-intree.left" 2>/dev/null)"
+so_alive() { python3 -I -c 'import os, sys
+try: os.kill(int(sys.argv[1]), 0); print("yes")
+except Exception: print("no")' "$1"; }
+[ -n "$SOL" ] && [ "$(so_alive "$SOL")" = no ] && [ "$(so_alive "$SOT")" = yes ] \
+    && ok "scratch owned e2e: the session's process in scratch is stopped; a process started in the work tree during the session (not the run's) survives" || bad "scratch owned e2e: left '$SOL' alive $(so_alive "$SOL"), in-tree '$SOT' alive $(so_alive "$SOT")"
+python3 -I -c 'import os, signal, sys; os.kill(int(sys.argv[1]), signal.SIGTERM)' "$SOT" 2>/dev/null
+SOI="$T/so-intr"; make_repo "$SOI" 0
+(cd "$SOI" && exec env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" \
+    E2E_STUB_LOG="$T/so-intr-stub.log" E2E_STUB_MODE=done E2E_STUB_SCRATCH=leave E2E_STUB_SCRATCH_PID_LOG="$T/so-intr.left" E2E_STUB_SLEEP=120 LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" \
+    bash "$ROOT/bin/loki" start acme/search#24 --no-pr --max-cost 5 </dev/null >"$T/so-intr.out" 2>&1) & SOP=$!
+for i in $(seq 1 900); do [ -s "$T/so-intr.left" ] && break; sleep 0.1; done
+sleep 1; python3 -I -c 'import os, signal, sys; os.kill(int(sys.argv[1]), signal.SIGINT)' "$SOP"
+for i in $(seq 1 300); do [ "$(so_alive "$SOP")" = no ] && break; sleep 0.1; done; wait "$SOP" 2>/dev/null
+SOL="$(cat "$T/so-intr.left" 2>/dev/null)"
+[ -n "$SOL" ] && [ "$(so_alive "$SOL")" = no ] && ok "scratch owned e2e: after SIGINT to the run the session's process in scratch is stopped" || bad "scratch owned e2e (interrupt): left '$SOL' alive $(so_alive "$SOL")"
+[ -n "$SOL" ] && [ "$(so_alive "$SOL")" = yes ] && python3 -I -c 'import os, signal, sys; os.kill(int(sys.argv[1]), signal.SIGTERM)' "$SOL"
 
 # --- split repair: a list detail is repaired, any other refusal is re-asked once with the exact error ------------------------
 # FireLater#24 (v11.116.0): one 520-character acceptance criterion refused the whole split and the epic ran as one 413 s session.
