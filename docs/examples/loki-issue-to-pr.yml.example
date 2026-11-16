@@ -1,25 +1,35 @@
 # Example workflow for users: copy it to .github/workflows/loki-issue-to-pr.yml in your own repository.
 # It is not run by this repository CI.
-# Hand Loki an issue, get a pull request.
+# Label an issue, get a pull request.
 #
-# Label an issue `loki` (or comment `/loki` as a repository owner, member or
-# collaborator) and this opens a PR with an evidence receipt. Copy this file
-# into .github/workflows/ of any repository.
+# Label an issue `loki` (or comment `/loki` on it as a repository owner, member or collaborator). Loki
+# opens ONE pull request for the issue and writes ONE comment on the issue with the result label
+# (VERIFIED, PARTIAL, ...), the proof in numbers, the cost and the link. Adding the label again runs
+# it again: the new run opens a new pull request on a new branch, links the earlier open one for you to
+# close (Loki never closes, edits or deletes a pull request or branch), and edits the comment in place.
+# A large issue that Loki splits into slices gets no pull request from this workflow; the comment lists
+# the slices and their results.
 #
-# REQUIRED: set ANTHROPIC_API_KEY in repository secrets. Without it the run
-# cannot call a model and fails fast rather than burning minutes.
+# Setup, once per repository:
+#   1. Settings > Secrets and variables > Actions: add ANTHROPIC_API_KEY.
+#   2. Settings > Actions > General > Workflow permissions: turn on
+#      "Allow GitHub Actions to create and approve pull requests" (off by default on a new repository).
+#   3. Create the label `loki` (Issues > Labels).
+# If step 1 or 2 is missing, the comment on the issue says which one.
 #
-# Rule of Two: issue text is untrusted, so the agent that reads it never holds
-# a write token. The work is split in two jobs on two fresh runners:
-#   agent    reads the issue and runs Loki with a read-only token. Its only
-#            output is an artifact: a patch and a PR body.
-#   publish  holds the write token and runs no agent. It applies the patch as
-#            data, pushes a branch and opens the PR.
-# A patch that touches .github/workflows/ cannot be pushed with this token
-# (GitHub requires the `workflows` permission), so the publish job fails
-# visibly rather than letting an agent rewrite CI.
+# The `loki` job below is the whole issue-to-PR path; the smallest working file is this header's `on:
+# issues` trigger plus that one job (see README "Label an issue, get a pull request"). The work happens
+# in the reusable workflow asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml: an agent job
+# with a read-only token produces a patch, and a separate publish job that runs no agent opens the
+# pull request (Rule of Two: issue text is untrusted, so the agent never holds a write token). The
+# job must grant the three permissions below; a called workflow cannot raise them itself.
+# A patch that touches .github/workflows/ cannot be pushed with this token; the comment says so.
+# GitHub documents that events made with the workflow token (GITHUB_TOKEN) do not start other workflows,
+# so a pull request this workflow opens does not start your pull_request CI by itself.
+# This workflow is checked offline (a local mirror, a stub model and a stub gh); it has not yet been run
+# on GitHub.
 #
-# PR comment commands (a collaborator with write access comments on a PR):
+# The pr-* jobs are optional: PR comment commands (a collaborator with write access comments on a PR):
 #   /loki fix <text>   an agent applies the request on the PR branch as ONE new commit
 #   /loki explain      replies with the clause matrix (verdict, criteria, checks), <= 60 lines
 #   /loki reseal       re-runs the proof and sets the loki/receipt commit status on the PR head
@@ -31,6 +41,7 @@
 # `explain` and `reseal` run the PR code only in the verify-pr container sandbox:
 # set the repository variable LOKI_VPR_IMAGE (see scripts/verify-pr-sandbox.sh).
 # /loki fix cannot push to a fork PR; it replies and stops.
+# Delete the pr-* jobs and the issue_comment trigger if you only want label-to-PR.
 name: Loki - Issue to PR
 
 on:
@@ -54,184 +65,18 @@ on:
 permissions: {}
 
 jobs:
-  agent:
-    concurrency:
-      group: loki-issue-${{ github.event.issue.number || inputs.issue }}
-      cancel-in-progress: false
-    # Gate on an explicit signal so the agent never fires on unrelated
-    # activity. A label needs triage access; a `/loki` comment must come from
-    # someone with write-level association, not any GitHub user.
-    if: >-
-      (github.event_name == 'issues' && github.event.label.name == 'loki') ||
-      (github.event_name == 'issue_comment' && !github.event.issue.pull_request && startsWith(github.event.comment.body, '/loki') &&
-       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
-      github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    permissions:
-      contents: read   # checkout
-      issues: read     # Loki reads the issue
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   # the agent branches and diffs; a shallow clone breaks both
-          persist-credentials: false   # leave no token in .git/config for the agent
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Fail fast without a model key
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-            echo "::error::ANTHROPIC_API_KEY is not set in repository secrets. Add it under Settings > Secrets and variables > Actions."
-            exit 1
-          fi
-
-      - name: Install Loki Mode
-        run: npm install -g loki-mode
-
-      - name: Resolve the issue (no write access)
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Read-only in this job (contents: read, issues: read). Loki uses it
-          # to fetch the issue and withholds it from the agent session.
-          GH_TOKEN: ${{ github.token }}
-          ISSUE: ${{ github.event.issue.number || inputs.issue }}
-          # engine10 reads no cost or iteration cap; its only cap is wall time.
-          LOKI_E10_CAP_S: '2400'
-          LOKI_BUDGET_LIMIT: '10.00'      # not read by engine10; kept for the legacy path
-          LOKI_MAX_ITERATIONS: '20'       # not read by engine10; kept for the legacy path
-          # Never push or open a PR from here; the publish job does that.
-          LOKI_DELEGATE_PR: '0'
-        run: |
-          set -uo pipefail
-          case "$ISSUE" in
-            ''|*[!0-9]*) echo "::error::Issue number must be digits, got '$ISSUE'."; exit 1 ;;
-          esac
-
-          # git identity: Loki commits the session's work on its own branch.
-          git config user.name  "${GITHUB_ACTOR:-loki-mode}"
-          git config user.email "${GITHUB_ACTOR:-loki-mode}@users.noreply.github.com"
-
-          RC=0
-          # Loki 10 issue entry. --no-pr is required: engine10 ignores
-          # LOKI_DELEGATE_PR, and this job's read-only token cannot push, open a
-          # PR or comment (supervisor.ts main: noPr drops opts.pr and opts.comment).
-          # The run commits on branch loki/<runId> checked out in this very
-          # checkout (stages/intake.ts ensureBranch), so HEAD carries the change.
-          loki "${GITHUB_REPOSITORY}#${ISSUE}" --no-pr || RC=$?
-
-          OUT="$RUNNER_TEMP/loki-out"
-          mkdir -p "$OUT"
-          # The deliverable is what the session committed on top of the commit
-          # this run started from. .loki/ is run state, never part of the change.
-          git diff --binary "$GITHUB_SHA" HEAD -- . ':(exclude).loki' > "$OUT/loki.patch"
-
-          # PR body: the Loki 10 receipt this run sealed under .loki/runs/e10-*/.
-          # Rendered from the run's own receipt.md; the digest comes from receipt.json.
-          RUN_DIR="$(ls -d .loki/runs/e10-* 2>/dev/null | sort | tail -n 1)"
-          {
-            echo "Resolves #${ISSUE}."
-            echo ""
-            if [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/receipt.md" ]; then
-              head -c 20000 "$RUN_DIR/receipt.md"
-              cp "$RUN_DIR/receipt.json" "$OUT/receipt.json" 2>/dev/null || true
-              SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("receipt_sha256",""))' "$RUN_DIR/receipt.json" 2>/dev/null || true)"
-              echo ""
-              echo "Receipt digest (sha256): ${SHA:-unavailable}"
-              echo "Check it: download the loki-patch artifact of this run and run \`loki verify receipt.json\`."
-            else
-              echo "Evidence Receipt: unavailable for this run (no receipt under .loki/runs/)."
-            fi
-          } > "$OUT/pr-body.md"
-
-          if [ -s "$OUT/loki.patch" ]; then
-            echo "Loki produced a change; the publish job opens the pull request."
-          else
-            echo "::warning::Loki produced no committed change, so no pull request will be opened."
-          fi
-          exit "$RC"
-
-      - name: Hand the patch to the publish job
-        uses: actions/upload-artifact@v4
-        with:
-          name: loki-patch
-          path: ${{ runner.temp }}/loki-out/
-          if-no-files-found: error
-          retention-days: 7
-
-  publish:
-    # Runs only after the agent job succeeded. Everything it reads from that
-    # job is attacker-controllable data: no job outputs, no `${{ }}` of agent
-    # values in a script, nothing from the artifact is executed.
-    needs: agent
-    # Own group: GitHub keeps one running and one pending run per group and a newer
-    # pending run replaces an older one, so sharing the agent group could drop a queued publish.
-    concurrency:
-      group: loki-issue-publish-${{ github.event.issue.number || inputs.issue }}
-      cancel-in-progress: false
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  loki:
     permissions:
       contents: write        # push the branch
-      pull-requests: write   # open the PR
-      issues: write          # report back on the issue
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}   # the commit the agent started from
-          persist-credentials: false
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: loki-patch
-          path: ${{ runner.temp }}/loki-out
-
-      - name: Open the pull request
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ISSUE: ${{ github.event.issue.number || inputs.issue }}
-          BASE: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          case "$ISSUE" in
-            ''|*[!0-9]*) echo "::error::Issue number must be digits, got '$ISSUE'."; exit 1 ;;
-          esac
-
-          PATCH="$RUNNER_TEMP/loki-out/loki.patch"
-          BODY="$RUNNER_TEMP/loki-out/pr-body.md"
-          if [ ! -s "$PATCH" ]; then
-            echo "The agent produced no change; nothing to open."
-            exit 0
-          fi
-          [ -s "$BODY" ] || echo "Resolves #${ISSUE}." > "$BODY"
-
-          BRANCH="loki/issue-${ISSUE}-${GITHUB_RUN_ID}"
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "$BRANCH"
-          git apply --index "$PATCH"
-          git commit -q -m "Loki: resolve #${ISSUE}"
-          gh auth setup-git
-          git push origin "HEAD:refs/heads/${BRANCH}"
-
-          PR_URL="$(gh pr create --base "$BASE" --head "$BRANCH" \
-            --title "Loki: resolve #${ISSUE}" --body-file "$BODY")"
-          echo "Pull request: $PR_URL"
-
-          # Build the comment in a file: a blank line inside an inline YAML
-          # string terminates the block scalar and breaks the workflow parse.
-          {
-            echo "Loki opened a pull request: $PR_URL"
-            echo ""
-            echo "The PR body carries an evidence receipt stating what was verified,"
-            echo "what was skipped, and what is degraded. Check it rather than taking"
-            echo "the result on trust."
-          } > "$RUNNER_TEMP/loki-issue-comment.md"
-          gh issue comment "$ISSUE" --body-file "$RUNNER_TEMP/loki-issue-comment.md" || true
+      pull-requests: write   # open the pull request
+      issues: write          # comment the result on the issue
+    # A release tag, and the same loki-mode version: never main, never npm latest.
+    uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@v11.142.0
+    with:
+      issue: ${{ inputs.issue }}   # only set by workflow_dispatch; an issue event names its own issue
+      version: '11.142.0'
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   pr-command:
     # Comments on a pull request. Runs for any `/loki` comment so a user without
@@ -346,7 +191,7 @@ jobs:
           path: ${{ runner.temp }}/loki-cmd
 
       - name: Install Loki Mode
-        run: npm install -g loki-mode
+        run: npm install -g loki-mode@11.142.0
 
       - name: Apply the request (model key, no GitHub token)
         env:
@@ -444,7 +289,7 @@ jobs:
           node-version: '20'
 
       - name: Install Loki Mode
-        run: npm install -g loki-mode
+        run: npm install -g loki-mode@11.142.0
 
       - name: Prove the PR and report
         env:

@@ -1,0 +1,495 @@
+# Reusable workflow: label an issue, get one pull request and one comment on the issue.
+# New file: a reusable workflow has to live in .github/workflows/; the two jobs below moved here from
+# docs/examples/loki-issue-to-pr.yml.example, which is now the short caller a repository owner copies.
+# This repository never runs it itself: the only trigger is workflow_call.
+#
+# The caller (docs/examples/loki-issue-to-pr.yml.example) is about 15 lines:
+#   on: { issues: { types: [labeled] } }
+#   jobs:
+#     loki:
+#       permissions: { contents: write, pull-requests: write, issues: write }
+#       uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@v11.142.0
+#       secrets: { ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}" }
+#
+# Rule of Two: issue text is untrusted, so the job that runs the agent never holds a write token.
+#   agent    reads the issue and runs Loki with a read-only token. Its only output is an artifact:
+#            a patch, a PR body and a few typed result fields.
+#   publish  holds the write token and runs no agent. It applies the patch as data, pushes one new
+#            branch, opens one pull request, and writes one comment on the issue (edited in place on a
+#            rerun). It never closes, edits or deletes a pull request or branch it finds: an earlier
+#            open Loki pull request for the issue is only named, as a link, for a person to close.
+#            Nothing from the artifact is executed, and only whitelisted, typed fields reach the comment.
+# A called workflow can only lower the caller's token permissions, never raise them, so the calling job
+# must grant contents: write, pull-requests: write and issues: write.
+# This workflow is checked offline (tests/min/issue-action.sh: its own scripts against a local mirror
+# with a stub model and a stub gh); it has not yet been run on GitHub.
+# The publish job does not use autonomy/lib/engine10-push.sh: that script looks up the gh user
+# (`gh api user`), which the Actions job token cannot do.
+name: Loki - Issue to PR (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      issue:
+        description: 'Issue number. Defaults to the issue that triggered the caller.'
+        type: string
+        required: false
+        default: ''
+      label:
+        description: 'The label that starts a run.'
+        type: string
+        required: false
+        default: 'loki'
+      version:
+        description: 'loki-mode npm version to install: an exact x.y.z release (never latest). Keep it equal to the tag this workflow is called at.'
+        type: string
+        required: false
+        default: '11.142.0'
+    secrets:
+      ANTHROPIC_API_KEY:
+        description: 'Model key. When it is missing the run stops before any model call and the issue gets a comment saying so.'
+        required: false
+
+# Nothing by default; each job asks for exactly what it needs.
+permissions: {}
+
+jobs:
+  agent:
+    # One run per issue at a time. On the job, not the workflow: a workflow-level group would let an
+    # unrelated event replace a queued run.
+    concurrency:
+      group: loki-issue-${{ github.event.issue.number || inputs.issue }}
+      cancel-in-progress: false
+    # Gate on an explicit signal so the agent never fires on unrelated activity. A label needs triage
+    # access; a `/loki` comment must come from an owner, member or collaborator, not any GitHub user.
+    if: >-
+      (github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == inputs.label) ||
+      (github.event_name == 'issue_comment' && !github.event.issue.pull_request && startsWith(github.event.comment.body, '/loki') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read   # checkout
+      issues: read     # Loki reads the issue
+    outputs:
+      preflight: ${{ steps.key.outputs.state }}
+    steps:
+      - name: Check the model key
+        id: key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Runs before the checkout and before any agent, so this output cannot be changed by one.
+          if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "state=ok" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::ANTHROPIC_API_KEY is not set. Add it under Settings > Secrets and variables > Actions, and pass it in the secrets: block of the job that calls this workflow."
+            echo "state=no_key" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.state == 'ok'
+        with:
+          fetch-depth: 0   # the agent branches and diffs; a shallow clone breaks both
+          persist-credentials: false   # leave no token in .git/config for the agent
+
+      - uses: actions/setup-node@v4
+        if: steps.key.outputs.state == 'ok'
+        with:
+          node-version: '20'
+
+      - name: Install Loki Mode
+        id: install
+        if: steps.key.outputs.state == 'ok'
+        env:
+          LOKI_VERSION: ${{ inputs.version }}
+        run: |
+          # An exact release only: a tag such as latest or next would install whatever npm serves today.
+          if ! [[ "$LOKI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::loki-mode version must be an exact x.y.z release, got '$LOKI_VERSION'."; exit 1; fi
+          npm install -g "loki-mode@${LOKI_VERSION}"
+
+      - name: Resolve the issue (no write access)
+        id: run
+        if: steps.key.outputs.state == 'ok'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Read-only in this job (contents: read, issues: read). Loki uses it to fetch the issue and
+          # withholds it from the agent session.
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+          LOKI_E10_CAP_S: '2400'
+          # Never push or open a PR from here; the publish job does that.
+          LOKI_DELEGATE_PR: '0'
+        run: |
+          set -uo pipefail
+          case "$ISSUE" in
+            ''|*[!0-9]*) echo "::error::Issue number must be digits, got '$ISSUE'."; exit 1 ;;
+          esac
+          # git identity: Loki commits the run's work on its own branch.
+          git config user.name  "${GITHUB_ACTOR:-loki-mode}"
+          git config user.email "${GITHUB_ACTOR:-loki-mode}@users.noreply.github.com"
+          OUT="$RUNNER_TEMP/loki-out"
+          mkdir -p "$OUT"
+          RC=0
+          # --no-pr is required: this job's token is read-only and cannot push, open a PR or comment.
+          loki "${GITHUB_REPOSITORY}#${ISSUE}" --no-pr || RC=$?
+          echo "$RC" > "$OUT/rc"
+          # A PARTIAL (6), FAILED (1) or BUDGET_STOP (3) run still hands over what it has: the publish
+          # job opens the pull request when there is a change and always reports on the issue.
+          echo "loki exited $RC"
+          exit 0
+
+      - name: Collect the patch, the PR body and the result
+        id: collect
+        if: steps.key.outputs.state == 'ok' && steps.run.outcome == 'success'
+        env:
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+        run: |
+          set -uo pipefail
+          OUT="$RUNNER_TEMP/loki-out"
+          mkdir -p "$OUT"
+          RC="$(cat "$OUT/rc" 2>/dev/null || echo 1)"
+          # Where the change is. Loki commits on its own branch and leaves this checkout on the branch
+          # it started on, so HEAD does not carry the change. A single run names its commit in the
+          # receipt (head_sha). A split issue (epic.json) is not combined under --no-pr, so it hands
+          # over no patch; the comment reports its slices and that no single pull request was opened.
+          TIP=""
+          BODY_SRC=""
+          RECEIPT=""
+          EPIC="$(ls -d .loki/runs/e10-*/epic.json 2>/dev/null | sort | tail -n 1 || true)"
+          if [ -z "$EPIC" ]; then
+            RUN_DIR="$(ls -d .loki/runs/e10-* 2>/dev/null | sort | tail -n 1 || true)"
+            if [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/receipt.json" ]; then
+              RECEIPT="$RUN_DIR/receipt.json"
+              BODY_SRC="$RUN_DIR/receipt.md"
+              HS="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("head_sha",""))' "$RECEIPT" 2>/dev/null || true)"
+              case "$HS" in
+                *[!0-9a-f]*|'') ;;
+                *) if git rev-parse -q --verify "${HS}^{commit}" >/dev/null 2>&1; then TIP="$HS"; fi ;;
+              esac
+            fi
+          fi
+          # The deliverable is what the run committed on top of the commit this job started from.
+          # .loki/ is run state, never part of the change.
+          if [ -n "$TIP" ]; then
+            git diff --binary "$GITHUB_SHA" "$TIP" -- . ':(exclude).loki' > "$OUT/loki.patch"
+          else
+            : > "$OUT/loki.patch"
+          fi
+          if [ -n "$RECEIPT" ] && [ -f "$RECEIPT" ]; then cp "$RECEIPT" "$OUT/receipt.json"; fi
+          # Typed result fields for the issue comment. The publish job checks each one again.
+          RC="$RC" python3 -I - "$OUT/receipt.json" "${EPIC:-}" "$OUT/result.json" <<'PY'
+          import json, os, sys
+          def load(p):
+              try:
+                  with open(p) as f: return json.load(f)
+              except Exception: return {}
+          r, e = load(sys.argv[1]), load(sys.argv[2]) if sys.argv[2] else {}
+          cost = r.get("cost") if isinstance(r.get("cost"), dict) else {}
+          checks = [c for c in (r.get("checks") or []) if isinstance(c, dict)]
+          res = {
+              "rc": int(os.environ.get("RC", "1") or 1),
+              "verdict": r.get("verdict") or "",
+              "receipt_sha256": r.get("receipt_sha256") or "",
+              "checks_passed": sum(1 for c in checks if c.get("result") == "pass"),
+              "checks_total": len(checks),
+              "not_proven": len(r.get("not_proven") or []),
+              "cost_usd": cost.get("usd") if cost.get("source") != "cli-invoker-unmetered" else None,
+              "cost_partial": cost.get("measured_sessions") != cost.get("total_sessions"),
+          }
+          if e:
+              # a split issue: each slice's own label (the first word of its outcome); the publish job checks each one again
+              rows = [x for x in (e.get("results") or []) if isinstance(x, dict)]
+              res["split"] = True
+              res["slices_total"] = len(rows)
+              res["slices"] = [[str(x.get("id", "")), (str(x.get("outcome", "")).split() or [""])[0]] for x in rows]
+          with open(sys.argv[3], "w") as f: json.dump(res, f)
+          PY
+          VERDICT="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verdict",""))' "$OUT/result.json" 2>/dev/null || true)"
+          # PR body: the receipt this run sealed. "Resolves" closes the issue on merge, so it is used
+          # only for a VERIFIED result; anything else only refers to the issue.
+          {
+            if [ "$VERDICT" = "VERIFIED" ]; then echo "Resolves #${ISSUE}."; else echo "Refs #${ISSUE}. Loki result: ${VERDICT:-no receipt}; read what is not proven below before merging."; fi
+            echo ""
+            if [ -n "$BODY_SRC" ] && [ -f "$BODY_SRC" ]; then
+              head -c 20000 "$BODY_SRC"
+              SHA="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("receipt_sha256",""))' "$OUT/result.json" 2>/dev/null || true)"
+              echo ""
+              echo "Receipt digest (sha256): ${SHA:-unavailable}"
+              echo "Check it: download the loki-patch artifact of this run and run \`loki verify receipt.json\`."
+            else
+              echo "Evidence receipt: unavailable for this run (no receipt under .loki/runs/)."
+            fi
+          } > "$OUT/pr-body.md"
+          if [ -s "$OUT/loki.patch" ]; then
+            echo "Loki produced a change (${VERDICT:-no verdict}); the publish job opens the pull request."
+          else
+            echo "::warning::Loki produced no committed change (${VERDICT:-no verdict}), so no pull request will be opened."
+          fi
+
+      - name: Hand the result to the publish job
+        if: always() && steps.collect.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: loki-patch
+          path: ${{ runner.temp }}/loki-out/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stop when the model key is missing
+        if: steps.key.outputs.state != 'ok'
+        run: exit 1
+
+  publish:
+    # Runs after the agent job whatever its result, so a missing key or a failed run still reaches
+    # the issue. Everything it reads from that job's artifact is attacker-controllable data: nothing
+    # from it is executed, and only typed, whitelisted fields reach the comment.
+    needs: agent
+    if: ${{ always() && needs.agent.result != 'skipped' && needs.agent.result != 'cancelled' }}
+    # Own group: GitHub keeps one running and one pending run per group and a newer pending run
+    # replaces an older one, so sharing the agent group could drop a queued publish.
+    concurrency:
+      group: loki-issue-publish-${{ github.event.issue.number || inputs.issue }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write        # push the branch
+      pull-requests: write   # open the PR (earlier ones are only listed, never closed or edited)
+      issues: write          # report back on the issue
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}   # the commit the agent started from
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        if: needs.agent.outputs.preflight == 'ok'
+        continue-on-error: true   # no artifact (the agent job died early) is reported on the issue below
+        with:
+          name: loki-patch
+          path: ${{ runner.temp }}/loki-out
+
+      - name: Open the pull request and report on the issue
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+          BASE: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          LABEL: ${{ inputs.label }}
+          PREFLIGHT: ${{ needs.agent.outputs.preflight }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          case "$ISSUE" in
+            ''|*[!0-9]*) echo "::error::Issue number must be digits, got '$ISSUE'."; exit 1 ;;
+          esac
+          case "$LABEL" in
+            ''|*[!A-Za-z0-9._:-]*) LABEL="loki" ;;
+          esac
+          OUT="$RUNNER_TEMP/loki-out"
+          PATCH="$OUT/loki.patch"
+          BODY="$OUT/pr-body.md"
+          NOTE="$RUNNER_TEMP/loki-issue-comment.md"
+          ERR="$RUNNER_TEMP/loki-publish.err"
+
+          # Result fields from the agent job's artifact. Each is checked here against a fixed shape
+          # (an uppercase word, a number, a hex digest); anything else is dropped, never printed.
+          VERDICT=""; COST=""; CHECKS_PASSED=""; CHECKS_TOTAL=""; NOT_PROVEN=""; DIGEST=""; SPLIT=""; SLICES_TOTAL=""; COST_PARTIAL=""; SLICE_LIST=""
+          if [ -f "$OUT/result.json" ]; then
+            {
+              read -r VERDICT; read -r COST; read -r CHECKS_PASSED; read -r CHECKS_TOTAL
+              read -r NOT_PROVEN; read -r DIGEST; read -r SPLIT; read -r SLICES_TOTAL; read -r COST_PARTIAL; read -r SLICE_LIST
+            } < <(python3 -I - "$OUT/result.json" <<'PY'
+          import json, re, sys
+          try:
+              with open(sys.argv[1]) as f: r = json.load(f)
+          except Exception: r = {}
+          if not isinstance(r, dict): r = {}
+          def word(v): return v if isinstance(v, str) and re.fullmatch(r"[A-Z_]{3,24}", v) else "-"
+          def count(v): return str(v) if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < 100000 else "-"
+          def money(v): return "%.2f" % v if isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 100000 else "-"
+          def digest(v): return v[:16] if isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v) else "-"
+          print(word(r.get("verdict"))); print(money(r.get("cost_usd")))
+          print(count(r.get("checks_passed"))); print(count(r.get("checks_total")))
+          print(count(r.get("not_proven"))); print(digest(r.get("receipt_sha256")))
+          print("yes" if r.get("split") is True else "-"); print(count(r.get("slices_total")))
+          print("yes" if r.get("cost_partial") is True else "-")
+          # each slice as "<id> <LABEL>": an id is a short plain token and the label an uppercase word, else the row is dropped
+          sl = r.get("slices") if isinstance(r.get("slices"), list) else []
+          ok = ["%s %s" % (x[0], x[1]) for x in sl[:32] if isinstance(x, list) and len(x) == 2 and isinstance(x[0], str) and re.fullmatch(r"[A-Za-z0-9_-]{1,16}", x[0]) and word(x[1]) != "-"]
+          print(", ".join(ok) or "-")
+          PY
+            ) || true
+          fi
+          for v in VERDICT COST CHECKS_PASSED CHECKS_TOTAL NOT_PROVEN DIGEST SPLIT SLICES_TOTAL COST_PARTIAL SLICE_LIST; do
+            if [ "${!v}" = "-" ]; then printf -v "$v" '%s' ""; fi
+          done
+
+          STATE=""
+          PR_URL=""
+          CAUSE=""
+          EARLIER=""
+          # A fresh branch name per run AND per attempt: GitHub "Re-run jobs" keeps the run id and raises the attempt.
+          ATTEMPT="${GITHUB_RUN_ATTEMPT:-1}"
+          case "$ATTEMPT" in ''|*[!0-9]*) ATTEMPT=1 ;; esac
+          BRANCH="loki/issue-${ISSUE}-${GITHUB_RUN_ID}-${ATTEMPT}"
+          if [ "$PREFLIGHT" = "no_key" ]; then
+            STATE="no_key"
+          elif [ "$PREFLIGHT" != "ok" ]; then
+            STATE="no_start"
+          elif [ ! -f "$OUT/result.json" ] || [ ! -f "$PATCH" ]; then
+            STATE="no_result"
+          elif [ ! -s "$PATCH" ]; then
+            STATE="no_change"
+          else
+            [ -s "$BODY" ] || echo "Refs #${ISSUE}." > "$BODY"
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            if ! git switch -q -c "$BRANCH" || ! git apply --index "$PATCH" 2> "$ERR" || ! git commit -q -m "Loki: resolve #${ISSUE}"; then
+              STATE="apply_failed"
+            else
+              gh auth setup-git
+              if ! git push -q origin "HEAD:refs/heads/${BRANCH}" 2> "$ERR"; then
+                cat "$ERR" >&2
+                if grep -qi 'workflow' "$ERR"; then STATE="push_workflows"; else STATE="push_failed"; fi
+              else
+                # Read-only: earlier open pull requests for this issue (same repository, a Loki branch name for
+                # issue N) are named in the new body and the comment for a person to close. Nothing is closed.
+                EARLIER="$(gh pr list --repo "$REPO" --state open --limit 200 --json number,headRefName,isCrossRepository 2>/dev/null \
+                  | python3 -I -c 'import json,re,sys
+          n, own = sys.argv[1], sys.argv[2]
+          try: rows = json.load(sys.stdin)
+          except Exception: rows = []
+          pat = re.compile(r"^loki/(issue-%s-[0-9]+(-[0-9]+)?|%s-combined(-[A-Za-z0-9-]+)?)$" % (n, n))
+          print(" ".join(str(r["number"]) for r in (rows if isinstance(rows, list) else []) if isinstance(r, dict) and r.get("isCrossRepository") is False
+                and isinstance(r.get("number"), int) and not isinstance(r.get("number"), bool) and isinstance(r.get("headRefName"), str)
+                and pat.match(r["headRefName"]) and r["headRefName"] != own))' "$ISSUE" "$BRANCH" 2>/dev/null || true)"
+                if [ -n "$EARLIER" ]; then
+                  LINKS=""
+                  for n in $EARLIER; do LINKS="${LINKS:+$LINKS, }${GITHUB_SERVER_URL:-https://github.com}/${REPO}/pull/${n}"; done
+                  printf '\n## Earlier pull requests\nThis pull request supersedes %s, opened by an earlier Loki run for this issue and still open. Loki does not close or edit pull requests; please close them yourself.\n' "$LINKS" >> "$BODY"
+                fi
+                # The plain title is for a VERIFIED result only; anything else, a missing verdict included, says so.
+                TITLE="Loki (${VERDICT:-no verdict}): resolve #${ISSUE}"
+                if [ "$VERDICT" = "VERIFIED" ]; then TITLE="Loki: resolve #${ISSUE}"; fi
+                if PR_URL="$(gh pr create --repo "$REPO" --base "$BASE" --head "$BRANCH" --title "$TITLE" --body-file "$BODY" 2> "$ERR")"; then
+                  PR_URL="$(printf '%s\n' "$PR_URL" | tail -n 1)"
+                  STATE="opened"
+                else
+                  cat "$ERR" >&2
+                  PR_URL=""
+                  if grep -qi 'not permitted to create' "$ERR"; then STATE="pr_setting"; else STATE="pr_failed"; fi
+                fi
+              fi
+            fi
+          fi
+          # The real cause of a failed step, as a fixed phrase chosen by the step and then from the error text of git or gh
+          # (never the text itself). A failed apply is always the patch: its error text holds patch paths, which must not pick another cause.
+          if [ "$STATE" = apply_failed ]; then
+            CAUSE="the patch does not apply to the commit the run started from"
+          elif [ -f "$ERR" ] && { [ "$STATE" = push_failed ] || [ "$STATE" = pr_failed ]; }; then
+            if [ "$STATE" = push_failed ] && grep -qiE 'non-fast-forward|fetch first|\[rejected\]' "$ERR"; then CAUSE="the branch \`${BRANCH}\` already exists on GitHub with other commits (a non-fast-forward push is refused; Loki never forces a push)"
+            elif [ "$STATE" = pr_failed ] && grep -qiE 'already exists' "$ERR"; then CAUSE="a pull request for the branch \`${BRANCH}\` already exists"
+            elif grep -qiE 'permission|denied|403|not allowed|forbidden|Resource not accessible' "$ERR"; then CAUSE="GitHub refused the workflow token's permissions (the calling job needs \`contents: write\`, \`pull-requests: write\` and \`issues: write\`)"
+            elif grep -qiE 'authentication|could not read Username|401' "$ERR"; then CAUSE="the workflow token was not accepted (authentication failed)"
+            elif grep -qiE 'could not resolve host|timed out|connection' "$ERR"; then CAUSE="a network error reaching GitHub"
+            else CAUSE="an error the run log shows"; fi
+          fi
+
+          # The one comment on the issue: the result label, the proof in numbers, the cost, the link.
+          PROOF=""
+          # A split hands over no receipt and no pull request, so it has no proof line.
+          if [ -n "$CHECKS_TOTAL" ] && [ -z "$SPLIT" ]; then
+            PROOF="Proof: ${CHECKS_PASSED:-0} of ${CHECKS_TOTAL} checks passed outside the model; ${NOT_PROVEN:-0} not proven (listed in the pull request)."
+          fi
+          EARLIERLINE=""
+          if [ -n "$EARLIER" ]; then
+            EARLIERLINE="This pull request supersedes the earlier open Loki pull request(s) for this issue:"
+            for n in $EARLIER; do EARLIERLINE="${EARLIERLINE} ${GITHUB_SERVER_URL:-https://github.com}/${REPO}/pull/${n}"; done
+            EARLIERLINE="${EARLIERLINE}. Loki does not close or edit pull requests; please close them yourself."
+          fi
+          COSTLINE="Cost: not measured."
+          if [ -n "$COST" ] && [ -n "$COST_PARTIAL" ]; then COSTLINE="Cost: at least \$${COST} (some sessions reported no cost)."
+          elif [ -n "$COST" ]; then COSTLINE="Cost: \$${COST}."; fi
+          if [ -n "$SPLIT" ]; then COSTLINE="Cost: not reported by this workflow for a split issue (the run log has the Cost line)."; fi
+          RERUN="To run again, remove the \`${LABEL}\` label and add it back; the new run opens a new pull request and names the earlier one for you to close."
+          if [ -n "$SPLIT" ]; then RERUN="To run again, remove the \`${LABEL}\` label and add it back."; fi
+          {
+            echo "<!-- loki-status -->"
+            case "$STATE" in
+              opened)
+                echo "### Loki: ${VERDICT:-no verdict}"
+                echo ""
+                echo "Pull request: ${PR_URL}"
+                if [ -n "$PROOF" ]; then echo "$PROOF"; fi
+                if [ -n "$EARLIERLINE" ]; then echo "$EARLIERLINE"; fi
+                echo "$COSTLINE"
+                if [ -n "$DIGEST" ]; then echo "Receipt: sha256 ${DIGEST} (full receipt in the pull request)."; fi
+                [ "${VERDICT:-}" = "VERIFIED" ] || echo "This result is not VERIFIED: read what is not proven in the pull request before merging."
+                ;;
+              no_key)
+                echo "### Loki: did not run"
+                echo ""
+                echo "The \`ANTHROPIC_API_KEY\` secret did not reach the workflow, so no model was called and nothing was charged."
+                echo "Add it under Settings > Secrets and variables > Actions, and pass it in the \`secrets:\` block of the job that calls the Loki workflow."
+                ;;
+              no_change)
+                if [ -n "$SPLIT" ]; then echo "### Loki: split into ${SLICES_TOTAL:-several} slices, no pull request"; else echo "### Loki: ${VERDICT:-no verdict}, no pull request"; fi
+                echo ""
+                if [ -n "$SPLIT" ]; then
+                  echo "The issue was large, so Loki ran it as ${SLICES_TOTAL:-several} slices${SLICE_LIST:+ (${SLICE_LIST})}. This workflow does not combine slices into one change, so no single pull request was opened and the slices' changes were not published. The run log names each slice and its result."
+                else
+                  echo "The run finished without a committed change, so there is nothing to open."
+                fi
+                if [ -n "$PROOF" ]; then echo "$PROOF"; fi
+                echo "$COSTLINE"
+                ;;
+              pr_setting)
+                echo "### Loki: ${VERDICT:-no verdict}, pull request not opened"
+                echo ""
+                echo "The change is pushed to the branch \`${BRANCH}\`, but GitHub refused to let the workflow open a pull request."
+                echo "Turn on Settings > Actions > General > Workflow permissions > \"Allow GitHub Actions to create and approve pull requests\"."
+                echo "Until then, open it yourself: ${GITHUB_SERVER_URL:-https://github.com}/${REPO}/compare/${BASE}...${BRANCH}?expand=1"
+                echo "$COSTLINE"
+                ;;
+              push_workflows)
+                echo "### Loki: ${VERDICT:-no verdict}, change not pushed"
+                echo ""
+                echo "The change touches \`.github/workflows/\`, which the workflow token is not allowed to push. The patch is in the \`loki-patch\` artifact of the run."
+                echo "$COSTLINE"
+                ;;
+              push_failed|pr_failed|apply_failed)
+                echo "### Loki: ${VERDICT:-no verdict}, pull request not opened"
+                echo ""
+                echo "The run produced a change but publishing it failed (step: ${STATE}): ${CAUSE:-an error the run log shows}. The patch is in the \`loki-patch\` artifact of the run."
+                echo "$COSTLINE"
+                ;;
+              *)
+                echo "### Loki: did not finish"
+                echo ""
+                echo "The run stopped before it produced a result (${STATE}). The run log has the reason."
+                ;;
+            esac
+            echo "Run log: ${RUN_URL}"
+            echo ""
+            echo "$RERUN"
+          } > "$NOTE"
+
+          # Edit the earlier Loki comment in place when there is one, so the issue carries one result.
+          IDS="$(gh api "repos/${REPO}/issues/${ISSUE}/comments" --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | startswith("<!-- loki-status -->")) | .id' 2>/dev/null || true)"
+          CID="${IDS%%$'\n'*}"
+          case "$CID" in
+            ''|*[!0-9]*) gh issue comment "$ISSUE" --repo "$REPO" --body-file "$NOTE" ;;
+            *) gh api -X PATCH "repos/${REPO}/issues/comments/${CID}" -F "body=@${NOTE}" > /dev/null ;;
+          esac || echo "::error::Could not comment on issue #${ISSUE}. The job that calls the Loki workflow needs permissions: issues: write."
+
+          echo "Result: ${STATE}${PR_URL:+ ${PR_URL}}"
+          case "$STATE" in
+            opened) exit 0 ;;
+            no_change) if [ "${VERDICT:-}" = "VERIFIED" ]; then exit 0; fi; exit 1 ;;
+            *) exit 1 ;;
+          esac

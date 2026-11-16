@@ -14,6 +14,9 @@
 //      also fails on the base is excused); one combined receipt lists each slice's verdict and can only lower it;
 //   5. one PR for the issue with a per-slice section; per-slice PRs opened earlier are closed with "Combined into #N.";
 //   6. fallback to per-slice PRs only for a conflicting slice, or for all when the combined diff exceeds LOKI_SPLIT_ONE_PR_MAX_FILES.
+//   7. a rerun of the issue whose push is refused as a non-fast-forward (the origin holds loki/<n>-combined at a commit this run does not
+//      contain) publishes on loki/<n>-combined-<run tag> (no forced push). Its PR body links the earlier open PRs on loki/<n>-combined*
+//      and asks a person to close them; Loki never closes, edits or deletes a PR or branch it finds.
 // LOKI_SPLIT_ONE_PR=0 restores one PR per slice. Every external effect is injectable (CombineIo) so tests never call a provider or GitHub.
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -111,8 +114,35 @@ const out = (dir: string, args: string[]): string => { const r = git(dir, args);
 const lines = (s: string): string[] => s.split("\n").map((l) => l.trim()).filter(Boolean);
 const prNumber = (url: string): string => { const m = /\/pull\/(\d+)$/.exec(url); return m ? `#${m[1]}` : url; };
 
-/** The combined branch name for issue N. */
-export const combinedBranch = (n: number): string => `loki/${n}-combined`;
+/** The combined branch name for issue N. With a tag: this run's own name, used when an earlier run's branch already holds loki/<n>-combined on the origin. */
+export const combinedBranch = (n: number, tag = ""): string => `loki/${n}-combined${tag ? `-${tag}` : ""}`;
+/** This run's tag for a rerun branch: the epic run dir's name without "e10-", git-safe, at most 40 characters. */
+export const rerunTag = (runDir: string): string => (runDir.split("/").filter(Boolean).pop() ?? "").replace(/^e10-/, "").replace(/[^A-Za-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "rerun";
+const GH_PR_RE = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/;
+/** Read-only: the URLs of open same-repo PRs of earlier runs of issue N (head loki/<n>-combined or loki/<n>-combined-<tag>), except the one on `ownHead`.
+ *  They are named in the new PR's body for a person to close; nothing here closes or edits them. A gh failure or unreadable output lists none. */
+export function earlierCombinedPrs(gh: CombineIo["gh"], slug: string, n: number, ownHead: string): string[] {
+  const g = gh(["pr", "list", "--repo", slug, "--state", "open", "--limit", "200", "--json", "url,headRefName,isCrossRepository"]);
+  if (g.rc !== 0) return [];
+  let rows: unknown; try { rows = JSON.parse(g.stdout); } catch { return []; }
+  const head = new RegExp(`^loki/${n}-combined(-[A-Za-z0-9-]+)?$`);
+  return (Array.isArray(rows) ? rows : []).filter((r): r is { url: string; headRefName: string } => !!r && typeof r === "object" && typeof (r as { url?: unknown }).url === "string" && typeof (r as { headRefName?: unknown }).headRefName === "string" && (r as { isCrossRepository?: unknown }).isCrossRepository === false)
+    .filter((r) => head.test(r.headRefName) && r.headRefName !== ownHead && GH_PR_RE.test(r.url)).map((r) => r.url);
+}
+/** The PR body paragraph that names the earlier open PRs this one supersedes, as links, for a person to close. */
+export const supersedesText = (urls: readonly string[]): string =>
+  `\n## Earlier pull requests\nThis pull request supersedes ${urls.join(", ")}, opened by an earlier run of this issue and still open. Loki does not close or edit them; please close ${urls.length === 1 ? "it" : "them"} yourself.\n`;
+/** A refused push is a non-fast-forward only when the origin holds `branch` at a commit `head` does not contain. The remote tip comes from the GitHub API
+ *  (gh, which holds the token) or, for a local absolute-path origin only, git ls-remote (a network origin is never asked without credentials, so
+ *  nothing can prompt). Unknown (no tip readable, or the tip is in `head`) is false. */
+export function nonFastForward(gh: CombineIo["gh"], slug: string, repoDir: string, origin: string, branch: string, head: string): boolean {
+  const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+  const api = gh(["api", `repos/${slug}/git/ref/heads/${branch}`, "--jq", ".object.sha"]);
+  let tip = api.rc === 0 ? api.stdout.trim() : "";
+  if (!SHA.test(tip) && origin.startsWith("/") && !origin.includes(":")) { const r = git(repoDir, ["ls-remote", origin, `refs/heads/${branch}`]); tip = r.status === 0 ? (String(r.stdout).split(/\s/)[0] ?? "") : ""; }
+  if (!SHA.test(tip) || !SHA.test(head) || tip === head) return false;
+  return git(repoDir, ["merge-base", "--is-ancestor", tip, head]).status !== 0;
+}
 
 /** Files the combined change touches: the union of every slice's diff from the base. */
 export function combinedFiles(repoDir: string, baseSha: string, slices: readonly CombineSlice[]): string[] {
@@ -320,7 +350,21 @@ export async function combineSlices(o: CombineInput): Promise<CombineResult> {
     if (!o.pinnedOrigin) { res.reason = "no pinned origin: the combined branch was built but not pushed"; await publishFallback(o, dropped, res); return res; }
     const bodyFile = join(dir, "pr-body.md");
     writeFileSync(bodyFile, body);
-    const pushed = io.push({ repoDir: o.repoDir, branch, title: io.title(res.verdict, ""), bodyFile, draft: o.draft || res.verdict !== "VERIFIED", pinnedOrigin: o.pinnedOrigin });
+    const pushArgs = { repoDir: o.repoDir, title: io.title(res.verdict, ""), bodyFile, draft: o.draft || res.verdict !== "VERIFIED", pinnedOrigin: o.pinnedOrigin };
+    let pushed = io.push({ ...pushArgs, branch });
+    // RERUN (FireLater#24 on 11.141.6): an earlier run of this issue left loki/<n>-combined on the origin, and this run's branch starts again at the base,
+    // so the push is refused as a non-fast-forward. Only then (the origin holds the branch at a commit this run's head does not contain) publish under
+    // this run's own name, never a forced push. Any other push failure keeps its own reason. Earlier PRs are listed in the body, never closed or edited.
+    if (!pushed.ok && nonFastForward(io.gh, o.slug, o.repoDir, o.pinnedOrigin, branch, head)) {
+      const alt = combinedBranch(n, rerunTag(o.runDir));
+      if (git(o.repoDir, ["branch", alt, head]).status === 0) { // no -f: a local branch of that name is never overwritten
+        const earlier = earlierCombinedPrs(io.gh, o.slug, n, alt);
+        if (earlier.length) writeFileSync(bodyFile, body + supersedesText(earlier));
+        const again = io.push({ ...pushArgs, branch: alt });
+        if (again.ok) { io.say(`#${n} ${branch} already exists on the origin from an earlier run; this run's change is on ${alt}\n`); pushed = again; res.branch = alt; }
+        else git(o.repoDir, ["branch", "-D", alt]); // only the branch this run just created
+      }
+    }
     if (!pushed.ok) {
       for (const c of res.commits) dropped.set(c.id, "the combined PR could not be opened");
       res.reason = `combined PR not opened (${clip(one(pushed.reason), 200)}); opened one PR per slice`;
@@ -329,7 +373,7 @@ export async function combineSlices(o: CombineInput): Promise<CombineResult> {
       res.pr = pushed.url;
       for (const c of res.commits) { // per-slice PRs opened earlier in the run are superseded
         const url = byId.get(c.id)!.pr;
-        if (url && url !== pushed.url && /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/.test(url)) {
+        if (url && url !== pushed.url && GH_PR_RE.test(url)) {
           const g = io.gh(["pr", "close", url, "--comment", `Combined into ${prNumber(pushed.url)}.`]);
           if (g.rc !== 0) io.say(`#${n} could not close ${url} (gh exit ${g.rc})\n`);
         }

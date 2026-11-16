@@ -10,9 +10,11 @@ branding:
 # must not hold a write token. Run it with `permissions: contents: read,
 # issues: read` and `actions/checkout` with `persist-credentials: false`, upload
 # `outputs.patch`, and push and open the PR from a second job that runs no
-# agent. docs/examples/loki-issue-to-pr.yml.example in asklokesh/loki-mode is the
-# reference. Earlier versions pushed and opened the PR from the same step that
-# ran the agent; this one does not.
+# agent. The reusable workflow .github/workflows/loki-issue-to-pr.yml in
+# asklokesh/loki-mode does both jobs and is what most repositories should call
+# (docs/examples/loki-issue-to-pr.yml.example is the caller); use this action only
+# to build your own agent job. Earlier versions pushed and opened the PR from the
+# same step that ran the agent; this one does not.
 #
 # Token co-location within THIS job: the fetch step below holds GH_TOKEN and
 # runs no agent; the agent step runs Loki 10 (`loki "<task>" --no-pr`) on the pre-fetched PRD text
@@ -227,16 +229,26 @@ runs:
         # "status" would otherwise run that subcommand). The task goes first and
         # --no-pr after it, because a flag-first call also stays on legacy.
         # --no-pr: engine10 ignores LOKI_DELEGATE_PR; this step holds no token.
-        # The run commits on loki/<runId> in this checkout, so HEAD has the change.
+        # The run commits on loki/<runId> and leaves this checkout on the branch it started on.
         TASK="Resolve ${ISSUE_REF}. Task spec follows. $(cat "$PRD_FILE")"
         loki "$TASK" --no-pr || RC=$?
 
         OUT="$RUNNER_TEMP/loki-out"
         mkdir -p "$OUT"
-        git diff --binary "$START_SHA" HEAD -- . ':(exclude).loki' > "$OUT/loki.patch"
+        RUN_DIR="$(ls -d .loki/runs/e10-* 2>/dev/null | sort | tail -n 1 || true)"
+        # The change is the commit the receipt names (head_sha), not HEAD: the engine commits on its
+        # own branch and puts the checkout back on the branch it started on.
+        TIP="HEAD"
+        if [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/receipt.json" ]; then
+          HS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("head_sha",""))' "$RUN_DIR/receipt.json" 2>/dev/null || true)"
+          case "$HS" in
+            *[!0-9a-f]*|'') ;;
+            *) if git rev-parse -q --verify "${HS}^{commit}" >/dev/null 2>&1; then TIP="$HS"; fi ;;
+          esac
+        fi
+        git diff --binary "$START_SHA" "$TIP" -- . ':(exclude).loki' > "$OUT/loki.patch"
         # PR body: the Loki 10 receipt this run sealed under .loki/runs/e10-*/.
         # Rendered from the run's own receipt.md; the digest comes from receipt.json.
-        RUN_DIR="$(ls -d .loki/runs/e10-* 2>/dev/null | sort | tail -n 1)"
         {
           echo "Resolves ${ISSUE_REF}."
           echo ""
