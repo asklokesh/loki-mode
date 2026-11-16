@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join, relative } from "node:path";
 import { withStagePrefix } from "../../features/lean_prefix.ts"; import { fragmentWriterOn, outOfRepoReask, outOfRepoTests } from "../../project_model/conventions.ts";
 import { learningsBlock, lessonsForBrief, orgKnowledgeBlock } from "../../util/pr_lessons.ts"; export { learningsBlock }; // learningsBlock lives with the other brief-note helpers
-import { FINISH_LINE, fixedRules, briefRecord, pinnedTestUpdateEnabled, PLAN_HINT_LEAD, planHintsOn, type BriefRecord } from "../../e10ext/context.ts"; import { pinnedTestUpdates } from "../../util/test_guard.ts";
+import { FINISH_LINE, fixedRules, briefRecord, pinnedTestUpdateEnabled, PLAN_HINT_LEAD, planHintsOn, proveByRunningBlock, type BriefRecord } from "../../e10ext/context.ts"; import { pinnedTestUpdates } from "../../util/test_guard.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
 import { attemptModels, attemptsK, type ExtraAttemptsDeps } from "../../features/attempts.ts";
@@ -175,7 +175,7 @@ export const implementStage: Stage = {
     let sessionResume: string | undefined = own ? (ownId ? "resumed" : `fresh (${(own as { why: string }).why})`) : undefined;
     const picked = (Array.isArray(prior.intake?.assumptions) ? (prior.intake!.assumptions as unknown[]) : []).filter((a): a is string => typeof a === "string" && runPickedChoice(a)); // LOKI_E10_OPUS_CONSULT trigger open-choice: an either/or the run would settle by itself
     const choiceAdvice = picked.length && consultEnabled() && !ownId && !signal.aborted ? await runConsult({ runDir: ctx.runDir, repoDir: ctx.repoDir, stage: "implement", trigger: "open-choice", task, evidence: picked.join("\n"), diff: null, code: bc.packText ?? bc.text }) : null;
-    const fullBrief = buildImplementBrief(task, plan, impacted, repoMap, [specBriefBlock(spec), execSpecBriefOf(ctx.runDir), ...adviceBlock(choiceAdvice)].filter(Boolean).join("\n\n") || null, prior.intake?.assumptions, rankedRemedyEnabled() ? prior.intake?.ranked_remedy : undefined); // the advice joins the per-task part of the brief, never the cache-stable prefix // LOKI_E10_EXEC_SPEC: the binding and advisory spec cases the lean Wall stage left
+    const fullBrief = buildImplementBrief(task, plan, impacted, repoMap, [specBriefBlock(spec), execSpecBriefOf(ctx.runDir), ...adviceBlock(choiceAdvice), proveByRunningBlock(ctx.provider, prior.intake?.source)].filter(Boolean).join("\n\n") || null, prior.intake?.assumptions, rankedRemedyEnabled() ? prior.intake?.ranked_remedy : undefined); // the advice joins the per-task part of the brief, never the cache-stable prefix // LOKI_E10_EXEC_SPEC: the binding and advisory spec cases the lean Wall stage left
     try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, ATTEMPT_BRIEF_FILE), fullBrief, "utf8"); } catch { /* best effort: without it the machine starts no extra attempt */ } // EXP-0010: the extra attempts after a red verify start from this exact brief
     const firstAttemptModel = attemptsK(ctx.model) > 0 ? attemptModels()[0] : undefined; // LOKI_E10_ATTEMPT_MODELS entry 1: the first of the best-of-N attempts (a downgrade still wins)
     const first: SessionRunOptions = {
