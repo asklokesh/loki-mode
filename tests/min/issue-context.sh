@@ -87,12 +87,12 @@ print("task_bytes %d" % len((i["title"] + "\n\n" + body).encode()))
 PY
 )"
     printf '%s\n' "$G" | sed 's/^/    github: /'
-    printf '%s\n' "$G" | grep -qx 'authors alice,owner' && printf '%s\n' "$G" | grep -qx 'assocs MEMBER,OWNER' \
+    grep -qx 'authors alice,owner' <<< "$G" && grep -qx 'assocs MEMBER,OWNER' <<< "$G" \
         && ok "issue.json comments hold only the MEMBER and OWNER comments, oldest first" || bad "issue.json comments are wrong: $(printf '%s\n' "$G" | grep -E '^(authors|assocs)' | tr '\n' ';')"
-    printf '%s\n' "$G" | grep -q '^leak .* True$' && bad "an untrusted, bot, Loki, minimized or CONTRIBUTOR comment reached issue.json" \
+    grep -q '^leak .* True$' <<< "$G" && bad "an untrusted, bot, Loki, minimized or CONTRIBUTOR comment reached issue.json" \
         || ok "untrusted (NONE, CONTRIBUTOR), bot, Loki-authored and minimized comments never reach issue.json"
-    printf '%s\n' "$G" | grep -qx 'untrusted_count 5' && ok "the 5 left-out comments are counted, not quoted" || bad "left-out count wrong: $(printf '%s\n' "$G" | grep untrusted_count)"
-    printf '%s\n' "$G" | grep -qx 'body_trusted True' && printf '%s\n' "$G" | grep -qx 'body_labels True' && printf '%s\n' "$G" | grep -qx 'body_original True' \
+    grep -qx 'untrusted_count 5' <<< "$G" && ok "the 5 left-out comments are counted, not quoted" || bad "left-out count wrong: $(printf '%s\n' "$G" | grep untrusted_count)"
+    grep -qx 'body_trusted True' <<< "$G" && grep -qx 'body_labels True' <<< "$G" && grep -qx 'body_original True' <<< "$G" \
         && ok "task text keeps the description and adds the labels and trusted comments" || bad "task text lacks the description, labels or trusted comments"
 else
     bad "fetch_issue wrote no issue.json"

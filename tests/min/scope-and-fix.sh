@@ -687,7 +687,7 @@ case "$(pev)" in *'"status": "green"'*'"calls": 2'*'calc.test.ts'*) ok "patch gr
 git -C "$REPO" show HEAD:calc.test.ts | grep -q 'multiply(2, 5)' && ok "patch green: the regression test is committed" || bad "patch green: no regression test committed"
 pr_green="$(python3 -I -c 'import json,sys; p=json.load(open(sys.argv[1])).get("patch") or {}; print(p.get("outcome"), p.get("calls"), p.get("usd"), isinstance(p.get("seconds"), (int, float)))' "$RUNDIR/receipt.json" 2>/dev/null)"
 [ "$pr_green" = "green 2 0.002 True" ] && ok "patch receipt: a green run's receipt names outcome green, 2 calls, \$0.002 and its seconds" || bad "patch receipt: green run's receipt patch line is '$pr_green'"
-[ "$(outcome)" = "PARTIAL" ] && printf '%s\n' "$OUT" | grep -q 'only agent-authored tests executed' && git -C "$REPO" show HEAD:calc.ts | grep -A1 'function multiply' | grep -q 'a \* b' && ok "patch green: verify and seal judge the patched tree as for any session: the right multiply() is committed and its agent-authored test alone reads PARTIAL" || { bad "patch green: outcome '$(outcome)'"; dump; }
+[ "$(outcome)" = "PARTIAL" ] && grep -q 'only agent-authored tests executed' <<< "$OUT" && git -C "$REPO" show HEAD:calc.ts | grep -A1 'function multiply' | grep -q 'a \* b' && ok "patch green: verify and seal judge the patched tree as for any session: the right multiply() is committed and its agent-authored test alone reads PARTIAL" || { bad "patch green: outcome '$(outcome)'"; dump; }
 run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=notest LOKI_E10_PATCH=1 "${PLEAN[@]}"
 case "$(pev)" in *'"status": "green"'*'"calls": 2'*) git -C "$REPO" diff --quiet main HEAD -- calc.test.ts && [ "$(outcome)" = "VERIFIED" ] && ok "patch no test: a test-only repair with no edit keeps the green tree (no agentic session), VERIFIED" || { bad "patch no test: calc.test.ts changed or outcome '$(outcome)'"; dump; } ;; *) bad "patch no test: patch record is '$(pev)'" ;; esac
 run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=repair LOKI_E10_PATCH=1 "${PLEAN[@]}"
@@ -2604,12 +2604,12 @@ TSEOF
     [ "$(printf '%s' "$H" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d["batched"]==[] and all(a.split("=")[1].startswith("not_run") for a in d["alone"]))' 2>&1)" = True ] \
         && ok "go batch: a package whose pass corroboration refuses (tests only, no module code) is never vouched by the batch; every file runs alone" || bad "go batch tests-only package gave: $H"
     for knob in 1 0; do : > "$GB/log"; eval "BR$knob=\"\$(gb MODE=base REPO=\"$GB/basered\" N=6 LOKI_E10_GO_BATCH=$knob)\""; eval "BC$knob=\$(grep -c -- '-json -run' \"$GB/log\")"; done
-    [ "$BR1" = "$BR0" ] && printf '%s' "$BR1" | grep -q 'go:pk/f2_test.go","go:pk/f4_test.go","go:pk/f5_test.go' \
+    [ "$BR1" = "$BR0" ] && grep -q 'go:pk/f2_test.go","go:pk/f4_test.go","go:pk/f5_test.go' <<< "$BR1" \
         && ok "go batch: red untouched files on base keep the per-file known-red verdict (red files rerun alone: $BC1 go calls vs $BC0)" || bad "go base batch: verdict '$BR1' vs '$BR0', go calls $BC1 vs $BC0"
     for fxn in global panic; do for knob in 1 0; do eval "G${fxn}$knob=\"\$(gb MODE=base REPO=\"$GB/$fxn\" N=3 LOKI_E10_GO_BATCH=$knob)\""; done; done
-    [ "$Gglobal1" = "$Gglobal0" ] && printf '%s' "$Gglobal1" | grep -q '"knownRed":\[\]' \
+    [ "$Gglobal1" = "$Gglobal0" ] && grep -q '"knownRed":\[\]' <<< "$Gglobal1" \
         && ok "go batch: a file red only beside a sibling's package state on base is rerun alone, so a change-introduced failure is never excused as pre-existing" || bad "go base batch with package state: '$Gglobal1' vs per-file '$Gglobal0'"
-    [ "$Gpanic1" = "$Gpanic0" ] && printf '%s' "$Gpanic1" | grep -q 'f2_test.go","go:pk/f3_test.go' \
+    [ "$Gpanic1" = "$Gpanic0" ] && grep -q 'f2_test.go","go:pk/f3_test.go' <<< "$Gpanic1" \
         && ok "go batch: a panic in one file on base leaves later files to rerun alone, each attributed correctly" || bad "go base batch with a panic: '$Gpanic1' vs per-file '$Gpanic0'"
     for knob in 1 0; do : > "$GB/log"; eval "SR$knob=\"\$(gb MODE=base REPO=\"$GB/green\" N=4 REL=1 LOKI_E10_GO_BATCH=$knob)\""; eval "SC$knob=\$(grep -c -- '-json -run' \"$GB/log\")"; done
     [ "$SR1" = "$SR0" ] && [ "${SC1:-0}" -lt "${SC0:-0}" ] && ok "go batch: relevant files rerun on base per package give the same counts and weak list ($SC1 go calls vs $SC0)" || bad "go base batch (relevant): '$SR1' vs '$SR0', go calls $SC1 vs $SC0"
@@ -3789,7 +3789,7 @@ const secs = (Date.now() - t0) / 1000;
 res(`TIMEOUT-WAIT a test that ignores SIGTERM returns soon after its limit (${secs.toFixed(1)} s for a 1 s limit), recorded cut`, r.cut && secs < 15);
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/tcarry.ts" "$ROOT" 2>&1; echo "EXIT $?")"
-printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "tcarry unit script crashed or exited non-zero"
+grep -q '^EXIT 0$' <<< "$out" || bad "tcarry unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 7 ] || bad "tcarry unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 7"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
