@@ -41,7 +41,7 @@ export const EVENT_TYPES = [
   "tests.restored", "test.result", "test.scoped_out", "test.skipped_on_base", "fix.round", "already.satisfied", "spec.conflict",
   "session.group_reaped",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
-  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "watchdog.silent", "sysedit.kept", "sysedit.undone", "attempts.selected", "nrd.completed",
+  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "watchdog.silent", "sysedit.kept", "sysedit.undone", "attempts.selected", "nrd.completed", "s1b.resumed",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */
@@ -52,7 +52,7 @@ export interface EventEnvelope<D extends Record<string, unknown> = Record<string
   data: D;
 }
 export type Verdict = "VERIFIED" | "PARTIAL" | "ALREADY_SATISFIED" | "SPEC_CONFLICT" | "FAILED";
-export type ImplementExit = "done" | "already_done" | "spec_conflict" | "killed" | "external";
+export type ImplementExit = "done" | "already_done" | "spec_conflict" | "killed" | "external" | "incomplete"; // incomplete: S1b, the final text had no finish line after the resumes
 export interface StageResult {
   status: "completed" | "failed" | "skipped";
   /** Becomes stage.completed.data (or stage.failed / stage.skipped data). */
@@ -71,6 +71,8 @@ export interface SessionMarkers {
   specConflict: string | null; // reason after LOKI_SPEC_CONFLICT:
   /** ROUTER-1 R1-09: reason after LOKI_ESCALATE: (the advisor recommended a stronger executor). Present only under LOKI_ROUTER=1 and a match. */
   escalate?: string | null;
+  /** S1b FINISH-LINE (session.ts finishLineOf): the finish line of the session's final text, null when it has none; absent on a synthetic result (patch green). Read only by S1b. */
+  finishLine?: "done" | "already_done" | "spec_conflict" | null;
 }
 /** ROUTER-1 R1-08/R1-09: optional per-session cost telemetry copied onto the cost event when the cost record carries it. */
 export const ROUTER_COST_FIELDS = ["requests_total", "requests_over_100k", "advisor_calls", "advisor_input_tokens", "advisor_output_tokens"] as const;

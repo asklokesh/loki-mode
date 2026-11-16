@@ -626,6 +626,49 @@ run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHAR
 [ "$(ev 'next((e["data"].get("size") for e in E if e["type"]=="variant" and "size" in e["data"]), None)')" = "normal" ] && ok "lean normal: the task sized normal" || bad "lean normal: the task did not size normal"
 grep -q '^wall ' "$ITERS" && { bad "lean normal: a Wall session ran despite a relevant visible test"; dump; } || ok "lean normal: no Wall session"
 [ "$(outcome)" = "VERIFIED" ] && ok "lean normal: run is VERIFIED" || { bad "lean normal: outcome is '$(outcome)'"; dump; }
+# ---------------------------------------------------------------- S1b FINISH-LINE resume (claude only; LOKI_E10_CONTINUE_MAX default 4, LOKI_E10_CONTINUE_MAX_USD default 1.00)
+# An implement session whose final text has no finish line (FireLater#24 Haiku: a compacted session ended "LOKI_BLOCKED: ... still outstanding", exit 0,
+# and sealed VERIFIED) is resumed ("-k<n>") while each resume changes the tree; still unfinished, implement exits "incomplete": PARTIAL, work kept.
+# kits: the "-k" resume iterations; fin: the implement record's finish block ("none" when S1b did not fire); iexit: implement exit; unfin: the NOT PROVEN line; s1bev: s1b.resumed events
+kits() { grep -cE '^implement [^ ]*-k[0-9]+ ' "$ITERS" 2>/dev/null || true; }
+fin() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys
+d = next((json.loads(l)["data"] for l in open(sys.argv[1]) if "\"stage.completed\"" in l and "\"implement\"" in l), {})
+f = d.get("finish"); print("none" if f is None else "%s|%s|%s" % (f.get("continues"), f.get("ended"), f.get("compactions")))' "$RUNDIR/events.jsonl" 2>/dev/null; }
+iexit() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(next((json.loads(l)["data"].get("exit") for l in open(sys.argv[1]) if "\"stage.completed\"" in l and "\"implement\"" in l), "none"))' "$RUNDIR/events.jsonl" 2>/dev/null; }
+s1bev() { grep -c '"type":"s1b.resumed"' "$RUNDIR/events.jsonl" 2>/dev/null || true; }
+unfin() { rnp | tr ',' '\n' | grep -c "implement ended without a finish line" || true; }
+committed_multiply() { git -C "$REPO" show HEAD:calc.ts 2>/dev/null | grep -A1 'function multiply' | grep -q 'a \* b'; }
+run_engine "$TASK" E2E_STUB_NOFINISH=once
+[ "$(kits)" = 1 ] && [ "$(s1bev)" = 1 ] && [ "$(fin)" = "1|finish line|None" ] && [ "$(iexit)" = done ] && [ "$(unfin)" = 0 ] && committed_multiply \
+    && ok "S1b once: a session whose final text has no finish line is resumed once (one s1b.resumed event), finishes, exits done; multiply() committed ($(outcome))" || { bad "S1b once: resumes $(kits), events $(s1bev), finish '$(fin)', exit $(iexit), cap lines $(unfin), outcome $(outcome)"; dump; }
+run_engine "$TASK" E2E_STUB_NOFINISH=never
+[ "$(kits)" = 4 ] && [ "$(s1bev)" = 4 ] && [ "$(fin)" = "4|count cap|None" ] && [ "$(iexit)" = incomplete ] && [ "$(unfin)" = 1 ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
+    && ok "S1b never: four resumes that each change the tree but never finish stop at the count cap; exit incomplete, PARTIAL with one NOT PROVEN line, the work committed" || { bad "S1b never: resumes $(kits), finish '$(fin)', exit $(iexit), cap lines $(unfin), outcome $(outcome)"; dump; }
+has "S1b never: the NOT PROVEN line names why and what the reply said was outstanding" "$(rnp)" "implement ended without a finish line (count cap after 4 resumes): Progress made. Still outstanding: the docs for multiply."
+run_engine "$TASK" E2E_STUB_NOFINISH=still
+[ "$(kits)" = 1 ] && [ "$(fin)" = "1|tree unchanged|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
+    && ok "S1b still: a resume that changes nothing ends the loop at once; exit incomplete, PARTIAL, the work committed" || { bad "S1b still: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
+run_engine "$TASK" E2E_STUB_NOFINISH=never LOKI_E10_CONTINUE_MAX=0
+[ "$(kits)" = 0 ] && [ "$(fin)" = "0|continue off|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] \
+    && ok "S1b LOKI_E10_CONTINUE_MAX=0: no resume, and the unfinished session still exits incomplete (PARTIAL)" || { bad "S1b resume off: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
+run_engine "$TASK" E2E_STUB_NOFINISH=never LOKI_E10_SELF_REVIEW=always
+rv_unfinished="$(grep -cE '^implement [^ ]*-rv ' "$ITERS" || true)"; out_unfinished="$(outcome)"
+run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=always
+rv_done="$(grep -cE '^implement [^ ]*-rv ' "$ITERS" || true)"
+[ "$rv_unfinished" = 0 ] && [ "$out_unfinished" = PARTIAL ] && [ "${rv_done:-0}" -ge 1 ] \
+    && ok "S1b: an unfinished session gets no -rv review turn (it cannot replace the result), while a finished one does ($rv_done)" || bad "S1b -rv: unfinished $rv_unfinished -rv turns ($out_unfinished), finished $rv_done"
+run_engine "$TASK" E2E_STUB_MODE=done
+S1B_DONE_ITERS="$(cut -d' ' -f1-3 "$ITERS" | sed -E 's/e10-[0-9TZ]+-[0-9a-f]+/RUN/' | tr '\n' ' ')"
+[ "$(kits)" = 0 ] && [ "$(s1bev)" = 0 ] && [ "$(fin)" = none ] && [ "$(iexit)" = done ] && [ "$(unfin)" = 0 ] \
+    && ok "S1b no-loss: a reply ending LOKI_DONE gets no resume, no event, no finish key and exit done (sessions and prompt bytes: $S1B_DONE_ITERS)" || { bad "S1b no-loss: resumes $(kits), finish '$(fin)', exit $(iexit)"; dump; }
+S1B_SIG="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$RUNDIR" "$REPO" 2>&1)"
+[ "$S1B_SIG" = "stages=intake,{plan,wall},implement,verify,commit,seal; receipt=base_sha,checks,context,cost,cost_preview,diff_sha256,events_sha256,evidence,head_sha,log_seal,loki_version,model,model_source,mutation_outcome,mutation_proof,not_applicable,not_proven,provider,receipt_sha256,repo,resumed,run_id,schema,seal_accuracy,seeded_corpus,task,time,toolchain,tree,verdict,verification,wall,wall_oracle; implement=already_done_evidence,brief_files,cascade,context_pack,coverage_resume,diff_stat,duration_s,exit,impacted_tests,iteration_ids,model,session_id,session_resume,spec_conflict_reason,summary_tail,tests_reverted; brief=b055d0660abb4bd7" ] \
+    && ok "S1b no-loss (text goal): stage order, receipt key set, implement key set and the normalized implement brief equal the base commit's (8c7ae842b)" || bad "S1b no-loss (text goal) differs from the base commit: $S1B_SIG"
+run_engine "$TASK" E2E_STUB_MODE=already
+[ "$(kits)" = 0 ] && [ "$(fin)" = none ] && ok "S1b already-done: an already-done reply gets no resume and no finish key ($(outcome))" || { bad "S1b already-done: resumes $(kits), finish '$(fin)'"; dump; }
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 # every implement turn answers LOKI_SPEC_CONFLICT (consult off, so no never-stop brief)
+[ "$(kits)" = 0 ] && [ "$(fin)" = none ] && [ "$(outcome)" = BLOCKED ] && ok "S1b spec conflict: a conflict reply gets no resume and still ends BLOCKED" || { bad "S1b spec conflict: resumes $(kits), finish '$(fin)', outcome $(outcome)"; dump; }
+
 # ---------------------------------------------------------------- coverage (L4, LOKI_E10_COVERAGE_RESUME: default fold, =1 the separate turn, =0 neither)
 # SR LOKI_E10_SELF_REVIEW end to end on the stub (run_engine pins it off for the session-count legs; unit legs live in tests/min/context-pack.sh):
 # the receipt records all eight items (five plus DE docs, SC stated cases and sibling definitions); the -rv review turn runs exactly when an item was flagged; the run is never turned into a conflict by it.
@@ -935,6 +978,33 @@ const tool = (id: string, command: string) => ({ type: "assistant", message: { i
 await consumeSdkStream([tool("1", "bun test"), tool("2", "bun test calc.test.ts"), tool("3", "cd . && bun test --bail"), { type: "result", subtype: "success", total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 1 }, session_id: "s" }] as never, { cwd: "$T/l026", iteration: "it1", hookEventsEnabled: false, write: () => {} });
 const rc = JSON.parse(readFileSync("$T/l026/.loki/metrics/result-cost-it1.json", "utf8"));
 res("L026 parser: result-cost records full_suite_runs per session (2 of 3 Bash calls)", rc.full_suite_runs === 2);
+// S1b FINISH-LINE: the finish line is read from the session's final text only (session.ts finishLineOf); markers.done keeps its meaning for every reader
+{ const { finishLineOf } = await import("$ROOT/loki-ts/src/engine10/session.ts");
+  const fx = (f: string) => readFileSync("$ROOT/tests/min/fixtures/e2e/s1b/" + f, "utf8"); // final lines of the stored FireLater#24 whole-issue implement logs (Haiku, Sonnet)
+  res("S1b finish line: the stored Haiku final text (LOKI_BLOCKED, no LOKI_DONE) reads as unfinished; the stored Sonnet final text as finished", finishLineOf(fx("haiku-final.txt")) === null && finishLineOf(fx("sonnet-final.txt")) === "done");
+  res("S1b finish line: a LOKI_DONE quoted in an earlier turn does not count; LOKI_BLOCKED, a brief line naming LOKI_DONE and prose are never one; the three finish lines are", finishLineOf("LOKI_DONE\nthen more work, still going") === null && finishLineOf("LOKI_BLOCKED: x") === null && finishLineOf("Finish with exactly one line: LOKI_DONE, or ...") === null && finishLineOf("did it\n\n**LOKI_DONE**\n") === "done" && finishLineOf("LOKI_ALREADY_DONE: a.ts:1") === "already_done" && finishLineOf("x\nLOKI_SPEC_CONFLICT: y") === "spec_conflict");
+  // effort_policy caps (LOKI_E10_STOP_RULES) are counted per consumeSdkStream call, and every resume is its own call, so a resume starts its turn and token count at zero
+  const am = (id: string) => ({ type: "assistant", message: { id, usage: { input_tokens: 10, output_tokens: 10 }, content: [{ type: "text", text: "working" }] } });
+  const fin = { type: "result", subtype: "success", total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 1 }, session_id: "s" };
+  const s1 = await consumeSdkStream([am("m1"), am("m2"), am("m3"), fin] as never, { cwd: "$T/l026", iteration: "s1b-a", hookEventsEnabled: false, write: () => {}, stop: { turns: 2 } } as never);
+  const s2 = await consumeSdkStream([am("n1"), fin] as never, { cwd: "$T/l026", iteration: "s1b-a-k1", hookEventsEnabled: false, write: () => {}, stop: { turns: 2 } } as never);
+  res("S1b caps: a session over its turn cap is stopped; the next call (a resume) counts its own turns from zero", s1.stopped?.rule === "turns" && s2.stopped === undefined);
+  await consumeSdkStream([am("c1"), { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "auto", pre_tokens: 67825 } }, am("c2"), fin] as never, { cwd: "$T/l026", iteration: "s1b-c", hookEventsEnabled: false, write: () => {} } as never);
+  const cc = JSON.parse(readFileSync("$T/l026/.loki/metrics/result-cost-s1b-c.json", "utf8")), c0 = JSON.parse(readFileSync("$T/l026/.loki/metrics/result-cost-s1b-a-k1.json", "utf8"));
+  res("S1b compactions: the SDK parser counts compact_boundary into the result-cost file (1), and writes no key for a session without one", cc.compactions === 1 && !("compactions" in c0));
+  // the run-level bounds, on a fake session runner: the dollar line stops before any resume, the count cap after LOKI_E10_CONTINUE_MAX resumes; a cap stop is never a finish
+  const cr = await import("$ROOT/loki-ts/src/util/conflict_resume.ts");
+  const runs: string[] = [], evs: string[] = []; let tree = 0;
+  const fctx = { provider: "claude", repoDir: "$T/l026", runDir: "$T/l026/run", runId: "e10-x", emit: (t: string) => evs.push(t), sessions: { run: async (o: { iterationId: string; brief: string }) => { runs.push(o.brief); tree++; return { exit: 0, killed: false, durationS: 1, markers: { done: true, alreadyDone: null, specConflict: null, finishLine: null }, summary: "still going: docs outstanding" }; } } } as never;
+  const unfinished = { exit: 0, killed: false, durationS: 1, markers: { done: true, alreadyDone: null, specConflict: null, finishLine: null }, summary: "Summary.\n**Result:** LOKI_BLOCKED: docs outstanding" } as never;
+  const opts = (usd: number | null, env: Record<string, string>) => ({ fingerprint: () => String(tree), spentUsd: () => usd, compactions: () => null, signal: new AbortController().signal, env });
+  const d1 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(1.5, {}));
+  const d2 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(0.2, { LOKI_E10_CONTINUE_MAX: "2" }));
+  const d3 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(0.2, { LOKI_E10_CONTINUE_MAX_USD: "0.1" }));
+  res("S1b bounds: spend at or past LOKI_E10_CONTINUE_MAX_USD (default 1.00) stops before any resume; LOKI_E10_CONTINUE_MAX=2 stops after 2; neither is a finish", d1.record.ended === "dollar line" && d1.iterationIds.length === 0 && d2.record.ended === "count cap" && d2.iterationIds.length === 2 && d2.session.markers.finishLine === null && d3.record.ended === "dollar line" && evs.length === 2);
+  res("S1b brief (no session id to resume, so the full brief goes first): it says the summary request is over and was not the task, quotes the outstanding lines, and ends with FINISH_LINE word for word", runs[0]!.includes("\\n\\nAny earlier request to stop and write a text-only summary is over; it was not the task.") && runs[0]!.includes("LOKI_BLOCKED: docs outstanding") && runs[0]!.endsWith((await import("$ROOT/loki-ts/src/engine10/types.ts")).FINISH_LINE) && runs[1]!.includes("still going: docs outstanding"));
+  res("S1b scope: claude only; a result whose final text was not read (finishLine absent, a patch-green result) is never resumed", cr.lacksFinishLine("claude", unfinished) && !cr.lacksFinishLine("opencode", unfinished) && !cr.lacksFinishLine("claude", { markers: { done: true, alreadyDone: null, specConflict: null } } as never));
+}
 // E5 fix-round economics on Haiku: effort, environment-shaped groups, session caps, the no-edit stop.
 const { fixEffort, sessionCaps } = await import("$ROOT/loki-ts/src/contrib/effort_policy.ts");
 const { environmentShaped } = await import("$ROOT/loki-ts/src/engine10/failures.ts");

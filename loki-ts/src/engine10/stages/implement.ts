@@ -10,8 +10,8 @@ import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
 import { attemptModels, attemptsK, type ExtraAttemptsDeps } from "../../features/attempts.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, checkExcerpt, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
-import { capStopOf, classifyExitCause, resolveModel } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
-import { type NamedSitesRecord, type RemedyRecord, resumeForNamedSites, resumeForPrecedence, resumeForRemedy, adjudicateWallConflict, coverageFoldLines, coverageMode, coverageResumeEnabled, reaskFoldedClaims, resumeAfterAlreadyDone, resumeForSelfReview, resumeNeverStop, resumeAfterConflict, resumeAfterEmptyDone, resumeForCoverage } from "../../util/conflict_resume.ts";
+import { treeFingerprint } from "../../util/anti_loop.ts"; import { capStopOf, classifyExitCause, resolveModel } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
+import { type ContinueRecord, compactionsOf, lacksFinishLine, resumeToFinish, type NamedSitesRecord, type RemedyRecord, resumeForNamedSites, resumeForPrecedence, resumeForRemedy, adjudicateWallConflict, coverageFoldLines, coverageMode, coverageResumeEnabled, reaskFoldedClaims, resumeAfterAlreadyDone, resumeForSelfReview, resumeNeverStop, resumeAfterConflict, resumeAfterEmptyDone, resumeForCoverage } from "../../util/conflict_resume.ts";
 import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
 import { routerActive } from "../../runner/router/unit_model.ts";
@@ -232,6 +232,13 @@ export const implementStage: Stage = {
     await challenge();
     if (!challenged && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && treeIsEmpty(ctx)) { const r = await resumeAfterEmptyDone(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, routerRedid); session = r.session; ids.push(r.iterationId); await challenge(); } // FC-43: one correction for a done exit with no change
 
+    let finish: Omit<ContinueRecord, "compactions"> | undefined; // S1b FINISH-LINE (claude only): a session whose final text has no finish line is resumed before every follow-up gate
+    if (patch?.status !== "green" && !session.killed && session.exit === 0 && !signal.aborted && lacksFinishLine(ctx.provider, session)) {
+      const r = await resumeToFinish(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, { fingerprint: () => treeFingerprint(ctx.repoDir, ctx.baseSha), spentUsd: () => ctx.cost.read(ctx.repoDir, ctx.sessionIds?.() ?? ids).usd, compactions: (xs) => compactionsOf(ctx, xs), signal });
+      session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); finish = r.record;
+    }
+    const incomplete = finish !== undefined && finish.ended !== "finish line";
+    if (incomplete) session = { ...session, markers: { ...session.markers, done: false } }; // S1b: an unfinished session is never built on or replaced by a follow-up resume (coverage, remedy, precedence, named sites, -rv all require markers.done)
     let coverage: string | undefined; // L4: lean path only; an attempts run owns its own sessions
     let claimAbsent: string[] | undefined; // site-ledger claimed_change_absent: SITE lines naming a line the coverage turn did not change, re-asked once
     if (coverageResumeEnabled() && !plan) { if (patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForCoverage(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); claimAbsent = r.claimAbsent; coverage = "resumed"; } else coverage = patch?.status === "green" ? "skipped (patch green)" : "skipped"; }
@@ -267,6 +274,8 @@ export const implementStage: Stage = {
     let exit: ImplementExit | "error";
     if (session.killed || session.exit === MAX_TURNS_EXIT) { // a turn-cap stop is harness-owned and ends like a limit stop: PARTIAL, never BLOCKED
       exit = "killed";
+    } else if (incomplete && session.exit === 0) { // S1b: the final text still has no finish line after the resumes: kept and sealed PARTIAL (seal unfinishedNotes), never VERIFIED
+      exit = "incomplete";
     } else if (session.markers.specConflict) {
       exit = "spec_conflict";
     } else if (session.markers.alreadyDone && treeIsEmpty(ctx)) { // an already-done claim over edits is a change, never "already satisfied": the edits are verified and kept, not discarded by commit
@@ -291,6 +300,7 @@ export const implementStage: Stage = {
       duration_s: session.durationS, ...(session.exit === MAX_TURNS_EXIT && !session.killed ? { stop_cause: "max_turns", owner: "harness", limit_s: implementStage.limitS, elapsed_s: session.durationS, ...(capStopOf(session.summary) ? { session_cap: capStopOf(session.summary) } : {}) } : {}),
       ...(planChainMode ? { plan_chain: planChainMode } : {}),
       ...(sessionResume ? { session_resume: sessionResume } : {}),
+      ...(finish ? { finish: { ...finish, compactions: compactionsOf(ctx, ids) } } : {}), // S1b: only when it fired, so an unchanged run's receipt keys stay as they were; compactions are seen on the SDK route only (null on the CLI route)
       ...(coverage ? { coverage_resume: coverage } : {}), ...(rankedRemedyRec ? { ranked_remedy: rankedRemedyRec } : {}), ...(precedenceRec ? { precedence_check: precedenceRec } : {}), ...(namedRec ? { named_sites: namedRec } : {}), ...(pinConflict ? { pin_conflict: pinConflict } : {}), ...(pinnedUpdates.length ? { pinned_test_updates: pinnedUpdates } : {}), ...(claimAbsent ? { claim_absent: claimAbsent } : {}),
       ...(patch ? { patch: { status: patch.status, seconds: Math.round(patchS * 10) / 10, calls: patch.calls, applied: patch.applied, refused: patch.refused, restored: patch.restored, usd: patch.usd, log: patch.log, ...(patch.check ? { check: patch.check } : {}) } } : {}),
       ...(tournament ? { tournament } : {}),

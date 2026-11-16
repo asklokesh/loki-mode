@@ -1,0 +1,6 @@
+- **Frontend:** `searchApi` is added to `lib/api.ts`, with hooks in a new `hooks/useSearch.ts`. There is a search bar with autocomplete, a facet panel, a `/search` page and a `/search/analytics` page. The plan listed the hooks under `useApi.ts`. I put them in the new file instead and left `useApi.ts` unchanged.
+- **Tests and docs:** `backend/tests/unit/services/search.test.ts` covers the query builder, ranking, history, templates and the injection guards. `docs/SEARCH.md` documents the query syntax and the endpoints.
+
+The saved-filter routes only require `issues:read`, so any user who can read issues can create and delete their own templates.
+
+LOKI_DONE

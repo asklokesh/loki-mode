@@ -210,6 +210,15 @@ fi
 grep -q 'export function multiply' "$REPO/calc.ts" && ok "opencode on the stub: the implement session's change landed" \
     || { bad "opencode on the stub: calc.ts has no multiply() (rc=$RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
 [ "$RC" -eq 0 ] && ok "opencode on the stub: exit 0" || bad "opencode on the stub exited $RC"
+# S1b FINISH-LINE is claude only: on opencode an implement reply with no finish line is not resumed, gets no finish key and exits done, as before S1b.
+run_engine opencode-nofinish PATH="$OCBIN:$FIX/bin:$PATH" OPENROUTER_API_KEY=sk-or-test-not-a-key E2E_OPENCODE_LOG="$T/opencode-nofinish/oc.log" E2E_STUB_NOFINISH=once \
+    -- --provider opencode --model openrouter/deepseek/deepseek-v3.2
+OCF="$(python3 -I -c 'import json,sys,glob
+ev = glob.glob(sys.argv[1] + "/.loki/runs/*/events.jsonl")
+d = next((json.loads(l)["data"] for l in open(ev[0]) if "\"stage.completed\"" in l and "\"implement\"" in l), None) if ev else None
+print("none" if d is None else "%s|%s|%s" % ("finish" in d, d.get("exit"), sum(1 for l in open(ev[0]) if "\"s1b.resumed\"" in l)))' "$REPO" 2>/dev/null)"
+[ "$OCF" = "False|done|0" ] && ok "opencode S1b: claude only, so an opencode reply with no finish line is not resumed and exits done as before (rc=$RC)" \
+    || { bad "opencode S1b: implement record '$OCF' (want False|done|0: no finish key, exit done, no s1b event), rc=$RC"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
 
 # The project's saved provider reaches the engine: every session (the stub opencode hands each to the stub claude, so the
 # claude log counts all sessions) went through opencode, on `loki start` and on a bare `loki "task"`.

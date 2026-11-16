@@ -185,6 +185,20 @@ run_goal "$REPO" "$BARE"; bare_rc=$RC; bare_out="$OUT"; bare_repo="$REPO"
 printf '%s\n' "$bare_out" | grep -Eq '^Outcome:[[:space:]]+VERIFIED' && ok "L034 key-only run prints Outcome: VERIFIED" || bad "L034 key-only run did not reach VERIFIED"
 [ -s "$bare_repo.sdk.log" ] && ok "L034 sessions ran through the SDK binary ($(wc -l < "$bare_repo.sdk.log" | tr -d ' ') calls)" || bad "L034 the SDK binary never ran"
 { grep -q 'export function multiply' "$bare_repo/calc.ts" || git -C "$bare_repo" for-each-ref --format='%(refname:short)' 'refs/heads/loki/' | while read -r b; do git -C "$bare_repo" show "$b:calc.ts"; done | grep -q 'export function multiply'; } && ok "L034 the session's change landed (checkout or run branch)" || bad "L034 calc.ts has no multiply()"
+# S1b FINISH-LINE on the bundled SDK (the default invoker): an implement session whose final text has no finish line is resumed; each turn here is auto-compacted
+# (E2E_SDK_STUB_COMPACT), so the implement record counts the compactions the SDK stream reported; never finishing, the run is PARTIAL, not VERIFIED.
+fixture_repo key-nofinish
+OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_E10_INVOKER ANTHROPIC_BASE_URL=http://127.0.0.1:9 \
+    PATH="$BARE" ANTHROPIC_API_KEY="$FAKEKEY" LOKI_SDK_NODE_MODULES="$SDKNM" E2E_STUB_MODE=done E2E_STUB_NOFINISH=never E2E_SDK_STUB_COMPACT=1 \
+    LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$REPO.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$GOAL" --no-pr 2>&1)"
+SDKF="$(python3 -I -c 'import json,sys,glob
+ev = glob.glob(sys.argv[1] + "/.loki/runs/*/events.jsonl")
+f = next((json.loads(l)["data"].get("finish") for l in open(ev[0]) if "\"stage.completed\"" in l and "\"implement\"" in l), None) if ev else None
+print("none" if f is None else "%s|%s|%s" % (f.get("continues"), f.get("ended"), f.get("compactions")))' "$REPO" 2>/dev/null)"
+case "$SDKF" in "4|count cap|"[1-9]*) printf '%s\n' "$OUT" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' \
+    && ok "S1b SDK path: a reply with no finish line is resumed 4 times, the record counts the SDK's compactions (${SDKF##*|}), and the run is PARTIAL" \
+    || bad "S1b SDK path: finish $SDKF but outcome $(printf '%s\n' "$OUT" | grep '^Outcome:')" ;;
+  *) bad "S1b SDK path: finish record '$SDKF' (want 4|count cap|<compactions>)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /' ;; esac
 fixture_repo key-full
 run_goal "$REPO" "$FULLPATH"; full_rc=$RC; full_out="$OUT"; full_repo="$REPO"
 bare_outcome="$(printf '%s\n' "$bare_out" | sed -n 's/^Outcome:[[:space:]]*//p' | head -1)"
