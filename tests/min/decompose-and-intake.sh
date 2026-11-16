@@ -534,7 +534,7 @@ try {
   out.push([r3.removed, fs.existsSync(C.dir), /did not stop/.test(r3.kept ?? ""), alive(stuck.pid)].join(","));
   stuck.kill(); await Bun.sleep(300); w.cleanupSessionScratch(C, { termWaitMs: 300 }); w.cleanupSessionScratch(B, { termWaitMs: 500 });
   // the start-time parser: one or two spaces before a single-digit day
-  out.push([w.lstartEpoch("Mon Nov  6 01:02:03 2026") === Math.floor(new Date(2026, 10, 6, 1, 2, 3).getTime() / 1000), w.lstartEpoch("Mon Nov 6 01:02:03 2026") === w.lstartEpoch("Mon Nov  6 01:02:03 2026"), w.lstartEpoch("Mon Nov 16 01:02:03 2026") === Math.floor(new Date(2026, 10, 16, 1, 2, 3).getTime() / 1000), w.lstartEpoch("garbage") === null].join(","));
+  out.push([w.lstartEpoch("Mon Nov  6 01:02:03 2026") === Math.floor(Date.UTC(2026, 10, 6, 1, 2, 3) / 1000), w.lstartEpoch("Mon Nov 6 01:02:03 2026") === w.lstartEpoch("Mon Nov  6 01:02:03 2026"), w.lstartEpoch("Mon Nov 16 01:02:03 2026") === Math.floor(Date.UTC(2026, 10, 16, 1, 2, 3) / 1000), w.lstartEpoch("garbage") === null].join(","));
 } finally { for (const p of mine) { try { p.kill(); } catch {} } }
 console.log(out.join(" | "));' 2>&1)"
 [ "$SOU" = "true,true,true,true | true,true,true,true,true,true | true,true | false,true,true,true | true,true,true,true" ] \

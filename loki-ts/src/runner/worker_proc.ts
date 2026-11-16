@@ -178,15 +178,16 @@ export function createSessionScratch(runDir?: string): SessionScratch {
 }
 /** The LOKI_RUN_OWNER value and the env a session of this scratch gets. */
 export const scratchSessionEnv = (s: SessionScratch): Record<string, string> => ({ LOKI_SCRATCH: s.dir, LOKI_SCRATCH_SINCE: String(s.since), TMPDIR: s.dir, [OWNER_ENV]: s.nonce });
-/** Epoch seconds of a `ps -o lstart=` text ("Mon Nov  6 01:02:03 2026"; one or two spaces before a single-digit day), or null. */
+/** Epoch seconds of a `ps -o lstart=` text ("Mon Nov  6 01:02:03 2026"; one or two spaces before a single-digit day), or null. The text is read as UTC:
+ *  psOut runs ps with TZ=UTC, so both sides use one zone whatever TZ the user exported (a local-time read shifted every start by the TZ offset). */
 export function lstartEpoch(t: string): number | null {
   const m = /^\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})$/.exec(t.trim());
   if (!m) return null;
   const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].indexOf(m[1]!);
-  return mon < 0 ? null : Math.floor(new Date(Number(m[6]), mon, Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5])).getTime() / 1000);
+  return mon < 0 ? null : Math.floor(Date.UTC(Number(m[6]), mon, Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5])) / 1000);
 }
-const psOut = (args: string[], timeout = 4000): string => (spawnSync("ps", args, { encoding: "utf8", env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin", LC_ALL: "C" }, timeout }).stdout ?? "");
-/** Epoch seconds a process started (ps lstart, local time), or null when it is gone or unreadable. */
+const psOut = (args: string[], timeout = 4000): string => (spawnSync("ps", args, { encoding: "utf8", env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin", LC_ALL: "C", TZ: "UTC" }, timeout }).stdout ?? "");
+/** Epoch seconds a process started (ps lstart, read in UTC), or null when it is gone or unreadable. */
 export function processStartEpoch(pid: number): number | null { return lstartEpoch(psOut(["-o", "lstart=", "-p", String(pid)])); }
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } };
 const inside = (p: string, dir: string): boolean => { let r = p; try { r = realpathSync(p); } catch { /* a path that no longer exists keeps its text */ } return r === dir || r.startsWith(`${dir}/`); };
