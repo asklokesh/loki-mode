@@ -578,6 +578,12 @@ pv_run norepair E2E_STUB_PROVE=onefail E2E_STUB_PROVE_REPAIR=fix LOKI_E10_PROVE_
 case "$PVS" in "verdict=PARTIAL; asks=1=proved,2=not proved; base=run; events=1/2/1; "*) [ "$(pvrep norepair)" = 0 ] && ok "prove repair: LOKI_E10_PROVE_REPAIR=0 sends nothing back; the failing ask keeps the run PARTIAL" || bad "prove repair opt-out resumed $(pvrep norepair) times" ;; *) bad "prove repair opt-out: $PVS" ;; esac
 pv_run editsrc E2E_STUB_PROVE=editsrc
 case "$PVS" in "verdict=PARTIAL; asks=1=proved,2=proved; "*"lines=not proved: the prover changed 1 file(s) in the tree (put back): calc.ts") ! grep -q 'prover was here' "$PVR/calc.ts" && ok "prove: a tracked file the prover edits is put back and caps the run at PARTIAL with a line naming it" || bad "prove (prover edit): calc.ts still holds the prover's line" ;; *) bad "prove (prover edit): $PVS" ;; esac
+pv_run proverdaemon E2E_STUB_PROVE=proverdaemon E2E_STUB_PROVER_PID_LOG="$T/pv-proverdaemon.pid"
+pvdp="$(cat "$T/pv-proverdaemon.pid" 2>/dev/null)"; pvda="$(python3 -I -c 'import os, sys
+try: os.kill(int(sys.argv[1]), 0); print("alive")
+except Exception: print("gone")' "${pvdp:-0}")"
+pvdn="$(python3 -I -c 'import json, sys; r = json.load(open(sys.argv[1])); print(sum(1 for n in r.get("not_proven", []) if "the prover\x27s own runs left 1 process" in n))' "$PVD/receipt.json" 2>&1)"
+[ -n "$pvdp" ] && [ "$pvda" = gone ] && [ "$pvdn" = 1 ] && ok "prove: a daemon the prover's own run left working in its TMPDIR is stopped by the harness after the session and named in the receipt" || { bad "prove (prover daemon): pid '$pvdp' $pvda, receipt lines $pvdn"; [ "$pvda" = alive ] && python3 -I -c 'import os, signal, sys; os.kill(int(sys.argv[1]), signal.SIGTERM)' "$pvdp"; }
 pv_run noscript pr E2E_STUB_PROVE=noscript
 case "$PVS" in "verdict=PARTIAL; asks=1=not proved,2=not proved; "*"lines=not proved: Implement PostgreSQL full-text search with ranking: script ask-1.sh missing || not proved: Create advanced filter query builder: script ask-2.sh missing") pvns=ok ;; *) pvns=bad ;; esac
 [ "$pvns" = ok ] && pv_kept && ok "prove: a prover that writes no ask script gives PARTIAL with the reason; the diff and the pull request are kept" || bad "prove (no script): $PVS; outcome $(grep '^Outcome:' <<< "$OUT")"
@@ -639,7 +645,7 @@ const q = await m.runPass(process.env.PVH + "/root", process.env.PVH + "/dir2", 
 const pid = Number(fs.readFileSync(process.env.PVH + "/dir2/pids", "utf8").trim());
 console.log([m.headVerdict(p, "1", 2).reason, m.headVerdict(p, "2", 2).result, Date.now() - t0 < 40000 ? "fast" : "slow", q.endpoints.map((e) => e.ok + ":" + e.why).join(";"), m.headVerdict(q, "1").result, q.leftovers.map((l) => l.pid === pid && l.stopped).join(","), m.alive(pid)].join(" | "));' 2>&1)"
 pvhp="$(cat "$PVH/hang.pid" 2>/dev/null)"
-[ "$pvh" = "timed out after 2s | proved | fast | true:a recorded process id listens on it | proved | true | false" ] && [ -n "$pvhp" ] && ! kill -0 "$pvhp" 2>/dev/null && [ "$(cat "$PVH/td.log" 2>/dev/null)" = teardown ] \
+[ "$pvh" = "timed out after 2s | proved | fast | true:a process proven the pass's listens on it | proved | true | false" ] && [ -n "$pvhp" ] && ! kill -0 "$pvhp" 2>/dev/null && [ "$(cat "$PVH/td.log" 2>/dev/null)" = teardown ] \
     && ok "prove harness: a hung script is killed at its limit, the next ask still runs, teardown runs and its child (by recorded id) is gone; a recorded listener in its own session is accepted, and the id teardown forgot is stopped by the harness" || { bad "prove harness: '$pvh'; hang child '${pvhp}' alive $(kill -0 "$pvhp" 2>/dev/null && echo yes || echo no); teardown '$(cat "$PVH/td.log" 2>/dev/null)'"; [ -n "$pvhp" ] && kill -TERM "$pvhp" 2>/dev/null; }
 # Scope: a text goal, opencode and LOKI_E10_PROVE=0 never meet the stage (the issue-run no-loss signature runs under the opt-out; the text-goal one is in scope-and-fix.sh).
 pvsc="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '

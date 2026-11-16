@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { killGroup } from "../../runner/worker_proc.ts";
+import { cleanupSessionScratch, createSessionScratch, killGroup, ownedProcesses, scratchSessionEnv, type ScratchCleanup, type SessionScratch } from "../../runner/worker_proc.ts";
 import { plainTestEnv } from "../../util/check_result.ts";
 import { treeFingerprint } from "../../util/anti_loop.ts";
 import { snapshotDiff } from "../../e10ext/treeswap.ts";
@@ -122,23 +122,13 @@ function startedSince(pid: number, sinceMs: number): boolean {
   const t = Date.parse(m[2]!); return Number.isFinite(t) && t >= sinceMs - 1500; // lstart has one-second resolution
 }
 const readPids = (dir: string): number[] => { try { return [...new Set(readFileSync(join(dir, "pids"), "utf8").split(/\s+/).filter((x) => /^\d+$/.test(x)).map(Number).filter((n) => n > 1))]; } catch { return []; } };
-/** Stops recorded ids still alive after teardown, but only one this pass started (start time and user); every other leftover is reported, never signalled. */
-function stopRecorded(dir: string, sinceMs: number): Leftover[] {
-  const out: Leftover[] = [];
-  for (const pid of readPids(dir)) {
-    if (!alive(pid)) continue;
-    if (!startedSince(pid, sinceMs)) { out.push({ pid, stopped: false, why: "recorded id alive after teardown but not started by this pass: left alone" }); continue; }
-    try { process.kill(pid, "SIGTERM"); } catch { /* gone */ }
-    const until = Date.now() + 2000; while (alive(pid) && Date.now() < until) Bun.sleepSync(50);
-    if (alive(pid)) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } Bun.sleepSync(100); }
-    out.push({ pid, stopped: !alive(pid), why: "recorded id alive after teardown: stopped by the harness" });
-  }
+/** The pass's leftovers for the record: each process the harness stopped after teardown, each id in prove/pids still alive that was not proven the pass's
+ *  (left running, never signalled), and a directory kept because an owned process would not stop. */
+function scratchLeftovers(cl: ScratchCleanup, dir: string): Leftover[] {
+  const out: Leftover[] = cl.stopped.map((x) => ({ pid: x.pid, stopped: true, why: `left running after teardown (${x.why}): stopped by the harness` }));
+  for (const pid of readPids(dir)) if (alive(pid) && !out.some((l) => l.pid === pid)) out.push({ pid, stopped: false, why: "listed in prove/pids, not proven the pass's: left running" });
+  if (cl.kept) out.push({ pid: 0, stopped: false, why: cl.kept });
   return out;
-}
-/** Processes of this user that still hold a file under `dir` (linux /proc, else `lsof +D`); reported, never signalled. */
-function holdersUnder(dir: string): number[] {
-  if (existsSync("/proc/self")) { const out: number[] = []; try { for (const p of readdirSync("/proc")) if (/^\d+$/.test(p) && Number(p) !== process.pid && pathsOf(Number(p)).some((f) => under(f, dir))) out.push(Number(p)); } catch { /* unreadable */ } return out; }
-  const o = sh(["lsof", "-nP", "+D", dir, "-Fp"], 5000); return o === null ? [] : [...new Set(o.split("\n").filter((x) => /^p\d+$/.test(x)).map((x) => Number(x.slice(1))))].filter((p) => p !== process.pid);
 }
 /** One endpoint is the run's own when its port was not listening before setup and it is owned by record: a recorded id listens on it, or the listener's
  *  working directory or an open file is inside the run's temporary directory, and that listener started during this pass; a unix socket is ours when it
@@ -154,7 +144,7 @@ export function endpointOwned(target: string, before: Set<number> | null, tmp: s
   if (pids.length === 0) return { ok: false, why: `${NOT_OURS} (nothing this user owns listens on port ${port} after setup)` };
   const fresh = pids.filter((p) => startedSince(p, sinceMs)); // a listener that existed before this pass is never ours, whatever the record says
   if (fresh.length === 0) return { ok: false, why: `${NOT_OURS} (port ${port}: listener ${pids.join(",")} started before this pass)` };
-  if (fresh.some((p) => recorded.includes(p))) return { ok: true, why: "a recorded process id listens on it" };
+  if (fresh.some((p) => recorded.includes(p))) return { ok: true, why: "a process proven the pass's listens on it" };
   if (fresh.some((p) => pathsOf(p).some((f) => under(f, tmp)))) return { ok: true, why: "its listener works inside the run's temporary directory" };
   return { ok: false, why: `${NOT_OURS} (port ${port}: listener ${pids.join(",")} is not recorded and works outside the run's temporary directory)` };
 }
@@ -184,15 +174,14 @@ fi
 run_one teardown
 printf 'done\\n' > "$OUT/driver.done"
 `;
-interface LivePass { pgid: number; dir: string; root: string; tmp: string; out: string; env: Record<string, string>; since: number }
+interface LivePass { pgid: number; dir: string; root: string; tmp: string; out: string; env: Record<string, string>; since: number; scratch: SessionScratch }
 const LIVE = new Set<LivePass>();
 /** Worker cancel (SIGINT/SIGTERM): every live pass gets its teardown, its group killed and its recorded ids stopped, before the worker exits. Never throws. */
 export function cancelProve(): void {
   for (const p of [...LIVE]) {
     try { Bun.spawnSync(["bash", "-c", DRIVER, "loki-prove-driver", "teardown", p.out, "10", p.dir], { cwd: p.root, env: p.env, stdin: "ignore", stdout: "ignore", stderr: "ignore", timeout: 15_000 }); } catch { /* best effort */ }
     killGroup(p.pgid, "SIGKILL");
-    try { stopRecorded(p.dir, p.since); } catch { /* best effort */ }
-    try { rmSync(p.tmp, { recursive: true, force: true }); } catch { /* best effort */ }
+    try { cleanupSessionScratch(p.scratch, { termWaitMs: 1500 }); } catch { /* best effort */ } // proven ownership, never the pids file (runner/worker_proc.ts)
     LIVE.delete(p);
   }
 }
@@ -209,11 +198,12 @@ export interface PassResult { setup: ScriptOutcome; asks: Record<string, ScriptO
 export async function runPass(root: string, dir: string, out: string, ids: string[], signal: AbortSignal, o: { scriptS?: number; passS?: number; teardownS?: number; pathAppend?: string[] } = {}): Promise<PassResult> {
   rmSync(out, { recursive: true, force: true }); mkdirSync(out, { recursive: true });
   for (const f of ["endpoints", "pids"]) rmSync(join(dir, f), { force: true });
-  const tmp = mkdtempSync(join(tmpdir(), "loki-prove-")), since = Date.now(), scriptS = o.scriptS ?? scriptLimitS(), passS = o.passS ?? 480, teardownS = o.teardownS ?? TEARDOWN_S;
-  const base = plainTestEnv(), env = { ...base, ...(o.pathAppend?.length ? { PATH: [...(base["PATH"] ?? "").split(":").filter(Boolean), ...o.pathAppend].join(":") } : {}), PROVE_ROOT: root, PROVE_TMP: tmp, PROVE_DIR: dir }; // the env card's directories, appended as the implement session had them
+  const scratch = createSessionScratch(join(dir, "..")), tmp = scratch.dir, since = Date.now(), // a harness scratch: short path, marker, the pass's nonce in every script's environment, recorded in the run dir
+    scriptS = o.scriptS ?? scriptLimitS(), passS = o.passS ?? 480, teardownS = o.teardownS ?? TEARDOWN_S;
+  const base = plainTestEnv(), env = { ...base, ...(o.pathAppend?.length ? { PATH: [...(base["PATH"] ?? "").split(":").filter(Boolean), ...o.pathAppend].join(":") } : {}), ...scratchSessionEnv(scratch), PROVE_ROOT: root, PROVE_TMP: tmp, PROVE_DIR: dir }; // the env card's directories, appended as the implement session had them
   const before = listeningPorts();
   const proc = Bun.spawn(["bash", "-c", DRIVER, "loki-prove-driver", "pass", out, String(scriptS), dir, ...ids.map((id) => `ask-${id}`)], { cwd: root, env, stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
-  const live: LivePass = { pgid: proc.pid, dir, root, tmp, out, env, since }; LIVE.add(live);
+  const live: LivePass = { pgid: proc.pid, dir, root, tmp, out, env, since, scratch }; LIVE.add(live);
   let cut = false, endpoints: PassResult["endpoints"] = [], skipped: string | null = null, done = false;
   const stop = (): void => { cut = true; killGroup(proc.pid, "SIGKILL"); };
   const timer = setTimeout(stop, Math.max(1, passS) * 1000);
@@ -222,7 +212,7 @@ export async function runPass(root: string, dir: string, out: string, ids: strin
   try {
     while (!done && !cut && !existsSync(join(out, "setup.exit"))) await Bun.sleep(100);
     if (!done && !cut && outcomeOf(out, "setup").exit === 0) {
-      const recorded = readPids(dir);
+      const recorded = ownedProcesses(scratch).map((x) => x.pid); // proven by the harness (nonce, directory, command line, parent), never the pids file
       try { for (const line of readFileSync(join(dir, "endpoints"), "utf8").split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 20)) { const [name = "", ...rest] = line.split(/\s+/); const target = rest.join(" "); endpoints.push({ name: clean(name, 40), target: clean(target, 200), ...endpointOwned(target, before, tmp, recorded, since) }); } } catch { /* no endpoints file: nothing to check */ }
       const bad = endpoints.filter((e) => !e.ok);
       skipped = bad.length ? bad.map((e) => `${e.name} ${e.target}: ${e.why}`).join("; ") : null;
@@ -235,9 +225,11 @@ export async function runPass(root: string, dir: string, out: string, ids: strin
     const tt = setTimeout(() => killGroup(t.pid, "SIGKILL"), (teardownS + 5) * 1000);
     try { await t.exited; } finally { clearTimeout(tt); killGroup(t.pid, "SIGKILL"); }
   }
-  const leftovers = stopRecorded(dir, since);
-  for (const pid of holdersUnder(tmp)) if (!leftovers.some((l) => l.pid === pid)) leftovers.push({ pid, stopped: false, why: "still holds a file under the run's temporary directory: reported, not signalled" });
-  LIVE.delete(live); rmSync(tmp, { recursive: true, force: true });
+  // After teardown: what the pass started is stopped by proven ownership (the nonce in its environment, its directory or a command-line path in $PROVE_TMP, or an
+  // owned parent; runner/worker_proc.ts), and $PROVE_TMP is removed only once nothing owned is alive. A pid in prove/pids that is not provably the pass's is
+  // reported, never signalled.
+  const cl = cleanupSessionScratch(scratch, { termWaitMs: 2000 }), leftovers = scratchLeftovers(cl, dir);
+  LIVE.delete(live);
   const asks: Record<string, ScriptOutcome> = {};
   for (const id of ids) asks[id] = skipped ? { exit: "skipped", tail: "" } : outcomeOf(out, `ask-${id}`);
   return { setup: outcomeOf(out, "setup"), asks, teardown: outcomeOf(out, "teardown"), cut, endpoints, skipped, leftovers };
@@ -298,7 +290,9 @@ export const proveStage: Stage = {
       // 2. The prover: a fresh session on the session model; the issue, the card, the fixed asks and the tree; never the implementer's reply.
       const pre = snapshotDiff(ctx.repoDir, ctx.baseSha), proverId = `${ctx.runId}-prove`; rec.iteration_ids.push(proverId);
       const proverS = Math.max(60, Math.min(PROVER_MAX_S, Math.floor(budgetS * 0.5)));
-      const ps = await ctx.sessions.run({ stage: "prove", brief: proverBrief(issue, fixed, dir, card?.line ?? "", scriptS), tier: "development", iterationId: proverId, limitS: proverS, signal, cwd: ctx.repoDir, outputs: proverOutputs(dir), ...(pathAppend.length ? { pathAppend } : {}) });
+      const proverScratch = createSessionScratch(ctx.runDir); // the prover runs its own scripts: its TMPDIR is a harness scratch, cleaned after the session
+      const ps = await ctx.sessions.run({ stage: "prove", brief: proverBrief(issue, fixed, dir, card?.line ?? "", scriptS), tier: "development", iterationId: proverId, limitS: proverS, signal, cwd: ctx.repoDir, outputs: proverOutputs(dir), ...(pathAppend.length ? { pathAppend } : {}), sessionEnv: scratchSessionEnv(proverScratch) });
+      { const c = cleanupSessionScratch(proverScratch); if (c.stopped.length) rec.notes.push(`prove: the prover's own runs left ${c.stopped.length} process(es) running; stopped by the harness: ${clean(c.stopped.map((x) => `${x.pid} (${x.why})`).join(", "), 200)}`); if (c.kept) rec.notes.push(`prove: ${c.kept}`); } // its self-run (setup, asks, teardown) may leave services behind; proven ownership, as for implement
       const put = guardTree(ctx.repoDir, ctx.baseSha, pre); rec.tree_restored.push(...put);
       const edited = put.filter((f) => existsSync(join(ctx.repoDir, f))), added = put.filter((f) => !edited.includes(f)); // after the put-back an edited or deleted file is there again; a file the prover's own run created is gone
       if (edited.length) rec.notes.push(`not proved: the prover changed ${edited.length} file(s) in the tree (put back): ${clean(edited.join(", "), 200)}`);
@@ -332,7 +326,9 @@ export const proveStage: Stage = {
       const done: SessionResult = { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false };
       for (let round = 1; first && round <= MAX_REPAIR_ROUNDS && repairable().length && !signal.aborted; round++) {
         if (leftS() < 90) { rec.notes.push(`prove: repair round ${round} not started (too little stage time left)`); break; }
-        const r = await resumeForProve(ctx, first, done, repairBrief(round, repairable(), dirRel), `-pv${round}`);
+        const repScratch = createSessionScratch(ctx.runDir);
+        const r = await resumeForProve(ctx, { ...first, sessionEnv: scratchSessionEnv(repScratch) }, done, repairBrief(round, repairable(), dirRel), `-pv${round}`);
+        { const c = cleanupSessionScratch(repScratch); if (c.stopped.length) rec.notes.push(`prove: repair round ${round} left ${c.stopped.length} process(es) running; stopped by the harness`); }
         if (!r) { rec.notes.push(`prove: repair round ${round} not started (too little implement time left)`); break; }
         rec.iteration_ids.push(r.iterationId); first = { ...first, iterationId: r.iterationId };
         restoreReadOnly(readOnly); // a resume started here skips implement's own restore of the sealed Wall files

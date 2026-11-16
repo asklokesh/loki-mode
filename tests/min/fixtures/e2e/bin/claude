@@ -41,7 +41,8 @@
 # The prover session ("Loki 10 prove stage", E2E_STUB_PROVE): pass (default) writes ask scripts that pass once multiply() exists (so they fail on base);
 #   notrun: ask 2 exits 3; setupfail: setup.sh fails; none writes nothing; noscript writes setup and teardown but no ask script; hang: ask 2 sleeps 60 s;
 #   basepass: ask 2 exits 0 on any tree; leftover: the prover's own runs leave a seed marker in its scratch dir, an untracked seed.db and stale
-#   endpoints and pids, which fail ask 2 unless the harness's run is clean; editsrc: the prover appends a line to the tracked calc.ts; foreign: setup.sh lists endpoint "web $E2E_STUB_FOREIGN_PORT"; abort: ask 1 starts a child that leaves the group
+#   endpoints and pids, which fail ask 2 unless the harness's run is clean; editsrc: the prover appends a line to the tracked calc.ts;
+#   proverdaemon: the prover's own run leaves a setsid daemon working in its TMPDIR, its pid in E2E_STUB_PROVER_PID_LOG; foreign: setup.sh lists endpoint "web $E2E_STUB_FOREIGN_PORT"; abort: ask 1 starts a child that leaves the group
 #   (its own session, id recorded in prove/pids) plus one that stays, writes $E2E_STUB_ABORT_MARK and waits, until prove/resumed exists.
 #   E2E_STUB_PROVE_LOG gets "teardown" each time teardown.sh runs; E2E_STUB_PROVE_BRIEF_LOG gets the prover's prompt.
 #   E2E_STUB_REPLY_MARK: the done-mode implement reply prints this line before LOKI_DONE.
@@ -165,6 +166,13 @@ if [ "$stage" = prove ]; then
       basepass) printf 'echo "always fine"; exit 0\n' > "$pdir/ask-2.sh" ;;
       onefail) printf 'grep -q PROVE_FIXED calc.ts || { echo "POST /v1/filters returned 404"; exit 1; }\n' > "$pdir/ask-2.sh" ;;
       editsrc) printf '// prover was here\n' >> calc.ts ;; # a tracked file the prover must not touch
+      proverdaemon) # the prover's own run leaves a daemon working in its TMPDIR (FireLater ps-1); it leaves the session's group before the session ends
+        python3 -I -c 'import os, sys, time
+if os.fork() == 0:
+    os.setsid(); os.chdir(os.environ["TMPDIR"])
+    open(sys.argv[1], "w").write(str(os.getpid())); time.sleep(300)
+os._exit(0)' "${E2E_STUB_PROVER_PID_LOG:-/dev/null}" > /dev/null 2>&1 < /dev/null
+        _n=0; while [ ! -s "${E2E_STUB_PROVER_PID_LOG:-/dev/null}" ] && [ "$_n" -lt 100 ]; do sleep 0.05; _n=$((_n + 1)); done ;;
       leftover) # the prover runs its own scripts twice in its own scratch dir and leaves data behind: a seed marker, an untracked seed.db, stale endpoints and pids
         printf 'if [ -f "$PROVE_TMP/seeded" ]; then echo dup > "$PROVE_TMP/dup"; fi\ntouch "$PROVE_TMP/seeded"\necho setup done\n' > "$pdir/setup.sh"
         printf 'echo "tmp=$PROVE_TMP"\n[ -f "$PROVE_TMP/dup" ] && { echo "duplicate key value violates unique constraint"; exit 1; }\n[ -f seed.db ] && { echo "leftover seed.db from an earlier run"; exit 1; }\ngrep -q "export function multiply" calc.ts\n' > "$pdir/ask-2.sh"
