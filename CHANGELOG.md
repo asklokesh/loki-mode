@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.142.0 (2026-11-15)
+
+`loki backlog` reports clearly while it runs and at the end, keeps receipts, and prints its summary when stopped. Shipped text makes no compliance claim.
+
+### Changed
+- `loki backlog` (many issues at once) now reports clearly. While it runs you see one line per state change with the path of each issue's log, and a short line every two minutes naming what is still running (`LOKI_BACKLOG_HEARTBEAT_S`, default 120, 0 turns it off). At the end there is one row per issue (cost, time, result, pull request) and one `Total:` line: done, not done, pull requests, cost and time. An issue that ended in several pull requests says how many and why, where it used to show only the first.
+- The audit evidence reports from `src/audit/compliance.js` no longer name a compliance framework. `reportType` is now `AUDIT_EVIDENCE_REPORT` for the two control mappings that were `SOC2_TYPE_II` and `ISO27001`, and `DATA_PROCESSING_RECORD` for the one that was `GDPR_DATA_PROCESSING_RECORD`. A consumer that matched the old `reportType` values needs updating. The `?type=` ids the dashboard accepts are unchanged.
+- The compliance engineer agent persona, the `loki compliance` help, the dashboard endpoint docs, the telemetry comments and the reference docs no longer name SOC 2, GDPR or similar frameworks as something Loki Mode provides. They describe audit evidence and drafts for the team's own review. The model-selection rule that routes compliance-related tasks to the high tier still matches those framework names in a task's own text. Shipped docs no longer state a fixed count of agent types.
+
+### Fixed
+- Stopping `loki backlog` with Ctrl-C or a job time limit used to exit with no summary. It now stops the runs (SIGTERM, then SIGKILL after `LOKI_BACKLOG_STOP_GRACE_S`, default 30 seconds), prints every row and the total, and exits 130. A run that had already finished before the stop keeps its real result.
+- `loki backlog` keeps the receipts of a finished run under `<checkout>-backlog/receipts`; they used to be deleted with the issue's worktree. A rerun moves earlier receipts aside under a dated name instead of replacing them.
+
+### Added
+- `LOKI_BACKLOG_LOCAL_ORIGIN=1` (off by default) lets `loki backlog` run from a checkout whose origin is a local bare repository, for rehearsals and tests: branches and pull requests go to that bare repository and the run still reads the issue from GitHub.
+
+### Known gaps
+- On the founder's test issue, plain Claude Code finished more of the issue for less cost than Loki 11.141.6.
+- In a 4-issue `loki backlog` run, no issue ended VERIFIED and one ended FAILED.
+- The printed cost leaves out retried attempts.
+- A failed slice whose output mentions a rate limit is retried even when no rate limit occurred.
+
 ## v11.141.6 (2026-11-15)
 
 A run stopped by its time limit now always leaves a receipt.
