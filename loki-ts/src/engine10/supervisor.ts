@@ -21,7 +21,7 @@ import { resolveRunProvider } from "../runner/state.ts";
 import { budgetNext, capNote, groupEnv, parseCapUsd, priorSpend, resolveCap, SUBSCRIPTION_NOTE, unenforceableNote, writeBudgetStop } from "../e10ext/budget_cap.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
-import { formatHeartbeatLine, formatStageLine, spendSoFar, formatSummary, preModelTiming, EXIT, exitCodeOf, outcomeOf, reasonOf, type Outcome } from "./output.ts";
+import { formatHeartbeatLine, formatStageLine, spendSoFar, formatSummary, preModelTiming, EXIT, exitCodeOf, outcomeOf, reasonOf, currentAttempt, usageLimitOfRun, type Outcome } from "./output.ts";
 import { CandidateView, LiveLine } from "../e10ext/liveline.ts";
 import { SAFE_BUN_FLAGS, envWithPwd, killGroup, spawnDetached, spawnWorker, ulimitArgv } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
@@ -248,7 +248,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const v = sealedData?.verdict;
   const receiptVerdict = workerExit === 0 && typeof v === "string" && VERDICTS.has(v), verdict: Verdict = receiptVerdict ? (v as Verdict) : "FAILED"; // FC-21b (3): a sealed receipt is the one source of truth for the outcome
   const notProven = Array.isArray(sealedData?.not_proven) ? (sealedData.not_proven as unknown[]).map(String) : [];
-  if (worker.killed) notProven.push(sealPass && sealed ? BACKSTOP_SEALED_NOTE : BACKSTOP_NOT_PROVEN); const cancelled: string | null = worker.cancelled ?? (readEvents(log.path).some((e) => e.type === "cancel_effective") ? "request" : null); /* P12-10b: a loki cancel honoured at a stage boundary completes as cancelled too */ if (cancelled) notProven.push(`run cancelled by ${cancelled}`); // SIGINT/SIGTERM: usage so far is kept, no PR or backstop commit
+  if (worker.killed) notProven.push(sealPass && sealed ? BACKSTOP_SEALED_NOTE : BACKSTOP_NOT_PROVEN); const ev0 = readEvents(log.path), usage = worker.cancelled ? null : usageLimitOfRun(ev0); // USAGE-LIMIT: a session hit a provider usage limit; the run closes as a resumable stop, never sealed FAILED
+  const cancelled: string | null = worker.cancelled ?? (ev0.some((e) => e.type === "cancel_effective") ? "request" : usage ? "usage limit" : null); /* P12-10b: a loki cancel honoured at a stage boundary completes as cancelled too */ if (cancelled) notProven.push(usage && cancelled === "usage limit" ? `not sealed: run paused by a provider usage limit at stage ${usage.stage}` : `run cancelled by ${cancelled}`); // the Reason line (output.ts usagePauseLine) is the one line naming the limit and its reset // SIGINT/SIGTERM: usage so far is kept, no PR or backstop commit
   let prUrl: string | null = null;
   const intact = log.verify(); // unconditional re-check before the PR
   if (!intact) notProven.push(TAMPER_NOT_PROVEN);
@@ -276,7 +277,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     }
   }
   const allEvents = readEvents(log.path), folded = fold(allEvents), lokiRoot = join(opts.repoDir, ".loki"), costUsd = runCostUsd(allEvents, log.tampered, lokiRoot), wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null
-  const stopRaw = folded.run.escalated?.data.stop, stop = typeof stopRaw === "string" ? stopRaw : null;
+  const stopRaw = currentAttempt(allEvents).findLast((e) => e.type === "escalated")?.data.stop, stop = typeof stopRaw === "string" ? stopRaw : null;
   const outcome: Outcome = cancelled ? "CANCELLED" : outcomeOf(verdict, allEvents.some((e) => e.type === "cap.hit"), stop, log.tampered, receiptVerdict), blocked = outcome === "BLOCKED"; let statusReason: string | undefined;
   if (blocked || (verdict === "FAILED" && prUrl === null && !cancelled)) { // E-67: never vanish silently -- an issue run gets a comment naming the reason, anything else is printed. A-110: BLOCKED always posts its one question
     const why = conflictReasonOf(allEvents);
@@ -289,7 +290,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     } else if (!blocked) process.stderr.write(`engine10: run ${opts.runId} ended FAILED with no PR: ${reason}\n`);
   }
   if (opts.status) { const st = await opts.status({ prUrl, outcome: String(outcome), reason: statusReason }); log.append("issue.commented", null, { argv: st?.argv ?? [], ok: st?.ok ?? false, ...(st?.skipped ? { skipped: true } : {}), reason: statusReason ?? String(outcome) }); }
-  log.append("run.completed", null, { verdict, ...(cancelled ? { cancelled: true, signal: cancelled, outcome: "CANCELLED" } : {}), pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: wallS, pre_model: preModelTiming(allEvents, t0) }); // D61-1
+  log.append("run.completed", null, { verdict, ...(cancelled ? { cancelled: true, signal: cancelled, outcome: "CANCELLED", ...(usage && cancelled === "usage limit" ? { paused: "usage_limit", usage_limit: usage } : {}) } : {}), pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: wallS, pre_model: preModelTiming(allEvents, t0) }); // D61-1
   log.sealLog(); log.state("closed", outcome); recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "failed", failedCheckNames(folded.stages["verify"]?.data.checks, folded.stages["verify"]?.data.pre_red_checks as string[] | undefined), cleanTreeId(opts.repoDir)); // Q17-03/FC-LINT-PRE-RED: real failing checks minus base-red, read by decideRecovery so a flaky check does not mask them
   try { const pl = await import("../util/pr_lessons.ts"); if (cancelled) pl.takeStopBlocks(opts.repoDir, opts.runId); else pl.learnFromRun(opts.repoDir, opts.runId, allEvents, verdict); } catch { /* memory is best-effort; a cancelled run learns nothing but still drops its stop-block lines */ } // learn from runs: every run's mistakes become categorized lessons the next brief can retrieve; here because only the supervisor holds the complete log, killed workers included
   const stages = allEvents.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number").map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })), // E-48 notify: Slack when configured, no-op otherwise

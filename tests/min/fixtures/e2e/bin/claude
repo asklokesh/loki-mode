@@ -32,6 +32,7 @@
 # nothing; wallconflict does the same citing loki_wall_multiply.test.ts; noprogress edits calc.ts without fixing multiply();
 # fixit turns the wrong multiply() right; twostep needs two rounds. E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
 # per call; E2E_STUB_USAGE=<n> records n output tokens per session (input = prompt bytes / 4) as the session's cost.
+# E2E_STUB_LIMIT=<engine stage> with E2E_STUB_LIMIT_MARK=<file>: that stage's first session hits a weekly usage limit (stderr line, exit 1).
 # E2E_STUB_REVIEW=PASS|FLAG|BLOCK: the seal cross-review session replies with that verdict (tests/min/engine10-e2e-stub.sh).
 #   overlay: a plain `-p <task>` call copies E2E_STUB_OVERLAY over the cwd (h2h benchmark harness)
 # E2E_STUB_SLEEP=<s>: the implement session sleeps after its edit, so a test can signal the run mid-session (tests/min/run-safety.sh).
@@ -101,6 +102,13 @@ if [ -n "${E2E_STUB_PROMPT_LOG:-}" ]; then printf '%s\n' "$prompt" >> "$E2E_STUB
 # What the session can see: the canary test asserts no GitHub token and no LOKI_LEGACY_BASH.
 if [ -n "${E2E_STUB_ENV_LOG:-}" ]; then echo "$stage GH_TOKEN=${GH_TOKEN:-} LOKI_LEGACY_BASH=${LOKI_LEGACY_BASH:-} SEAL_PATCH=${LOKI_E10_SEAL_EXISTING_PATCH:-}" >> "$E2E_STUB_ENV_LOG"; fi
 if [ -n "${E2E_STUB_ITER_LOG:-}" ]; then echo "${LOKI_E10_STAGE:-none} ${LOKI_ITERATION:-none} ${#prompt}" >> "$E2E_STUB_ITER_LOG"; fi
+# USAGE-LIMIT (tests/min/run-safety.sh): the first session of engine stage E2E_STUB_LIMIT ends the way the claude CLI does on a plan usage
+# limit: the provider's line on stderr, exit 1, no edit. E2E_STUB_LIMIT_MARK is the file that makes it once (the resumed run gets a normal session).
+if [ -n "${E2E_STUB_LIMIT:-}" ] && [ "${LOKI_E10_STAGE:-}" = "$E2E_STUB_LIMIT" ] && [ -n "${E2E_STUB_LIMIT_MARK:-}" ] && [ ! -f "$E2E_STUB_LIMIT_MARK" ]; then
+  : > "$E2E_STUB_LIMIT_MARK"
+  echo "You've hit your weekly limit · resets Nov 18 at 12pm (America/New_York)" >&2
+  exit 1
+fi
 if [ -n "${E2E_STUB_USAGE:-}" ] && [ -n "${LOKI_ITERATION:-}" ]; then
   mkdir -p .loki/metrics
   printf '{"total_cost_usd":0.01,"input_tokens":%s,"output_tokens":%s,"cache_read_tokens":0,"cache_creation_tokens":0,"model":"stub","source":"e2e-stub"}\n' "$(( ${#prompt} / 4 ))" "$E2E_STUB_USAGE" > ".loki/metrics/result-cost-$LOKI_ITERATION.json"

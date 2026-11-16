@@ -297,6 +297,10 @@ export async function consumeSdkStream(
       if (err === "rate_limit" || err === "overloaded") {
         rateLimit = rateLimit ?? {};
         captured += `\n[${err}]\n`; // so the file-based rate-limit scanner fires
+        if (err === "rate_limit") { // USAGE-LIMIT: the structural frame, never prose; retry_class usageLimitOf reads this exact line ("You've hit your weekly limit · resets ...")
+          const said = neutralizeEngineMarkers((data.message?.content ?? []).map((c) => (c["type"] === "text" ? String(c["text"] ?? "") : "")).join(" ")).replace(/\s+/g, " ").trim().slice(0, 200);
+          captured += `[sdk-loop error: usage limit${said ? `: ${said}` : ""}]\n`;
+        }
       }
       if (err === "authentication_failed") { // FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG: the structural frame, never prose; retry_class SDK_ERR classifies this exact wording
         const said = neutralizeEngineMarkers((data.message?.content ?? []).map((c) => (c["type"] === "text" ? String(c["text"] ?? "") : "")).join(" ")).replace(/\s+/g, " ").trim().slice(0, 200);
@@ -496,6 +500,8 @@ export async function consumeSdkStream(
       }
       rateLimit = { resetSeconds };
       captured += "\n[rate_limit]\n";
+      const resetIso = typeof resetsAt === "number" && resetsAt > 1_000_000 ? new Date(resetsAt * 1000).toISOString() : null; // USAGE-LIMIT: the window reset, when the event names one
+      captured += `[sdk-loop error: usage limit (rate_limit_event)${resetIso ? `: resets ${resetIso}` : ""}]\n`;
       continue;
     }
 

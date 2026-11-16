@@ -97,8 +97,8 @@ export async function main(args: string[]): Promise<number> {
       // BACKSTOP-SEAL: the supervisor's seal pass after a backstop kill runs only commit and seal on the tree as it is; an implement the kill interrupted reads as limit-killed
       if (process.env.LOKI_E10_SEAL_ONLY === "1") { flow = (["commit", "seal"] as const).filter((st) => (flow as readonly unknown[]).some((f) => f === st || (Array.isArray(f) && f.includes(st)))) as unknown as typeof flow; if (!rs.implement) rs.implement = { exit: "killed", limit_s: Number(process.env.LOKI_E10_CAP_S) || 0, summary_tail: "" }; }
     }
-    const { stopped } = await runMachine(ctx, { flow, ...(restored ? { restored } : {}), ...(resize ? { resize } : {}) });
-    if (stopped) emit("escalated", null, { stop: stopped }); // A-110: the supervisor maps the stop reason to an outcome
+    const { stopped, usageLimit } = await runMachine(ctx, { flow, ...(restored ? { restored } : {}), ...(resize ? { resize } : {}) });
+    if (stopped) emit("escalated", null, { stop: stopped, ...(usageLimit ? { usage_limit: { ...usageLimit } } : {}) }); // A-110: the supervisor maps the stop reason to an outcome; USAGE-LIMIT: the limit rides on the stop
   });
   return 0;
 }

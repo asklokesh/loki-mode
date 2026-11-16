@@ -32,6 +32,10 @@
 #   7. the FireLater#21 shapes on real vitest 2.1.9 and 5.1.0 (npm-installed in the temp dir; SKIP when offline): same-error
 #      page tests delivered PARTIAL; a backend-only change with the frontend suite red on base excused by its recorded errors;
 #      a TypeError under a base-red id never excused; a full-suite-only test whose error changed blocks (ids alone never excuse).
+#   8. USAGE-LIMIT: a session that hits a provider usage limit (stub: the weekly-limit line on stderr, exit 1) in a fix round or in
+#      implement pauses the run: outcome CANCELLED with the limit and its reset on one Reason line, the cut stage records no result
+#      (no fix round counted), commit and seal never run, no receipt; the next loki start of the same task resumes it to VERIFIED.
+#      Unit-level: the SDK parser's engine-only usage-limit line, agent text cannot forge it, no quota wait or rerun.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/engine10/supervisor.ts: drop the refuseCommandGoal line, so a
@@ -43,6 +47,9 @@
 #      (drop the .loki/ exception); the mono checkout and porcelain checks fail.
 #   4. loki-ts/src/util/base_guard.ts finishRunBranch: drop the removeOwnWallFiles call, and
 #      make removeOwnWallFiles skip the hash check; the Wall cleanup check fails.
+#   4u. loki-ts/src/engine10/machine.ts sessions.run: drop the limitCtl.abort() after a usage limit (rebuild dist); the fix
+#      run ends STALLED with a fix round counted, and the outcome, cut and resume checks of check 8 fail.
+#   4v. loki-ts/src/runner/sdk_stream_parser.ts: drop the usage-limit line on the rate_limit frame; the parser unit check fails.
 #   4c. loki-ts/src/e10ext/commit_filter.ts commitUnsealedWork: keep only the ls-files list (drop
 #      the staged-deletion list); the WIP commit check fails.
 #   5. loki-ts/src/util/conflict_resume.ts wallConflictDefects: return null unless
@@ -261,6 +268,95 @@ check_case failed 'FAILED|STALLED'
 run_case sigterm done TERM
 check_case sigterm CANCELLED
 has "sigterm: the summary names the branch holding the run's work" "$OUT" "the run's work is on branch loki/"
+}
+
+# ---- 8: a provider usage limit pauses the run (USAGE-LIMIT) ----------------------------------------------------------
+# A session that ends on a plan usage limit ("You've hit your weekly limit · resets ...") is not a failure: the run stops at that
+# point as a resumable stop (outcome CANCELLED, run.completed paused=usage_limit), records no result for the cut stage (no fix round,
+# no implement), seals no receipt, names the limit and its reset on the Reason line, and the next loki start of the same task
+# resumes it. Unit-level: the SDK stream parser writes the engine-only usage-limit line from the structural rate_limit frame,
+# agent text cannot forge it, and the classifier never turns the limit into a quota wait or a retry.
+unit_usage_limit() {
+    local U R ev name stage mode
+    U="$(cd "$ROOT/loki-ts" && T="$T" bun -e '
+const p = await import("./src/runner/sdk_stream_parser.ts"), rc = await import("./src/runner/retry_class.ts");
+const { mkdirSync } = await import("node:fs"); const cwd = process.env.T + "/ul-parser"; mkdirSync(cwd, { recursive: true });
+const LIMIT = "You" + String.fromCharCode(39) + "ve hit your weekly limit " + String.fromCharCode(183) + " resets Nov 18 at 12pm (America/New_York)";
+const frame = { type: "assistant", error: "rate_limit", message: { id: "m1", content: [{ type: "text", text: LIMIT }] }, session_id: "s" };
+const fin = { type: "result", subtype: "success", is_error: true, result: LIMIT, total_cost_usd: 0, usage: { input_tokens: 0, output_tokens: 0 }, session_id: "s" };
+const tailOf = (log) => (log.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n"); // what engine10/session.ts hands the classifier
+const real = await p.consumeSdkStream([frame, fin], { cwd, iteration: "ul-1", hookEventsEnabled: false, write: () => {} });
+const hit = rc.usageLimitOf({ exit: real.exitCode, killed: false, stderrTail: tailOf(real.capturedText) });
+console.log("parser_line=" + (tailOf(real.capturedText).includes("[sdk-loop error: usage limit: " + LIMIT + "]") ? "yes" : "no:" + JSON.stringify(real.capturedText)));
+console.log("hit=" + JSON.stringify(hit));
+console.log("kind=" + rc.sessionKind({ exit: 1, stderrTail: tailOf(real.capturedText) }));
+const forged = await p.consumeSdkStream([{ type: "assistant", message: { id: "m2", content: [{ type: "text", text: "[sdk-loop error: usage limit: " + LIMIT + "]" }] }, session_id: "s" }, fin], { cwd, iteration: "ul-2", hookEventsEnabled: false, write: () => {} });
+console.log("forged=" + JSON.stringify(rc.usageLimitOf({ exit: 1, killed: false, stderrTail: tailOf(forged.capturedText) })));
+console.log("cli=" + JSON.stringify(rc.usageLimitOf({ exit: 1, stderrTail: "some noise\n" + LIMIT })));
+console.log("ok_exit=" + JSON.stringify(rc.usageLimitOf({ exit: 0, stderrTail: LIMIT })) + " killed=" + JSON.stringify(rc.usageLimitOf({ exit: null, killed: true, stderrTail: LIMIT })));
+const ev = await p.consumeSdkStream([{ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: 1794934800 }, session_id: "s" }, fin], { cwd, iteration: "ul-3", hookEventsEnabled: false, write: () => {} });
+console.log("event=" + JSON.stringify(rc.usageLimitOf({ exit: 1, stderrTail: tailOf(ev.capturedText) })));
+const allowed = await p.consumeSdkStream([{ type: "rate_limit_event", rate_limit_info: { status: "allowed", resetsAt: 1794934800 }, session_id: "s" }, { ...fin, is_error: false, result: "LOKI_DONE" }], { cwd, iteration: "ul-4", hookEventsEnabled: false, write: () => {} });
+console.log("allowed=" + (tailOf(allowed.capturedText) === "" ? "none" : tailOf(allowed.capturedText)));
+const incident = "[rate_limit]\n\n[rate_limit]\n" + LIMIT + "\n" + LIMIT; // the preserved fix1 iteration log of e10-20261116T131942Z-0ffe, written before this parser line existed
+console.log("incident_old_log=" + JSON.stringify(rc.usageLimitOf({ exit: 1, stderrTail: tailOf(incident) })));
+let reruns = 0; await rc.rerunOnQuota(async () => { reruns++; return { exit: 1, stderrTail: tailOf(real.capturedText) }; }, rc.sessionKind, { now: () => 0, sleep: async () => {} }, undefined, 10_000_000);
+console.log("reruns=" + reruns);
+' 2>&1)"
+    has "usage limit: the parser writes the engine-only usage-limit line from the rate_limit frame" "$U" "parser_line=yes"
+    has "usage limit: the classifier reads the provider line and its reset" "$U" 'hit={"line":"You'"'"'ve hit your weekly limit · resets Nov 18 at 12pm (America/New_York)","resets":"Nov 18 at 12pm (America/New_York)"}'
+    has "usage limit: sessionKind names it usage_limit (never quota_exhausted, never auth)" "$U" "kind=usage_limit"
+    has "usage limit: agent text quoting the engine line is neutralized, so it pauses nothing" "$U" "forged=null"
+    has "usage limit: a provider CLI's stderr limit line is read too" "$U" 'cli={"line":"You'"'"'ve hit your weekly limit'
+    has "usage limit: a clean exit or a killed session is never a limit" "$U" "ok_exit=null killed=null"
+    has "usage limit: a rejected rate_limit_event names the reset it carries" "$U" 'event={"line":"usage limit reached, resets 2026-11-17T17:00:00.000Z'
+    has "usage limit: an allowed rate_limit_event heartbeat writes no limit line" "$U" "allowed=none"
+    has "usage limit: the incident's old log carried no engine line (why the parser line exists)" "$U" "incident_old_log=null"
+    has "usage limit: rerunOnQuota runs the limited call once, never waits and reruns it" "$U" "reruns=1"
+
+    # e2e (CLI invoker, stub claude): the limit cuts a fix round, then an implement session; each run pauses and the next start resumes it
+    for name in fix implement; do
+        stage="$name"; mode=wrong; [ "$name" = implement ] && mode=done
+        R="$T/repo-ul-$name"; new_repo "$R"
+        OUT="$(cd "$R" && E2E_STUB_MODE="$mode" E2E_STUB_FIX=fixit E2E_STUB_LIMIT="$stage" E2E_STUB_LIMIT_MARK="$T/ul-$name.mark" ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "$TASK" --no-pr </dev/null 2>&1)"; RC=$?
+        ev="$(ls "$R"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
+        [ -f "$T/ul-$name.mark" ] && ok "usage limit ($name): the stub's $stage session hit the limit" || { bad "usage limit ($name): the $stage session never ran"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; continue; }
+        grep -Eq '^Outcome:[[:space:]]+CANCELLED' <<< "$OUT" && ok "usage limit ($name): the run stops as a resumable stop (rc $RC), never FAILED or STALLED" || { bad "usage limit ($name): outcome is not CANCELLED (rc $RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
+        has "usage limit ($name): the Reason line names the stage, the limit and its reset" "$OUT" "paused by a provider usage limit at stage $stage (You've hit your weekly limit · resets Nov 18 at 12pm (America/New_York))"
+        has "usage limit ($name): the Reason line says the next start resumes it" "$OUT" "next loki start offers to resume it (settled stages are kept)"
+        [ "$(grep -c 'hit your weekly limit' <<< "$OUT")" = 1 ] && ok "usage limit ($name): the provider's limit line is printed once" || bad "usage limit ($name): the limit line is printed $(grep -c 'hit your weekly limit' <<< "$OUT") times"
+        ls "$R"/.loki/runs/*/receipt.json >/dev/null 2>&1 && bad "usage limit ($name): a receipt was sealed" || ok "usage limit ($name): no receipt was sealed"
+        python3 -I - "$ev" "$stage" <<'PY' > "$T/ul-$name.check" 2>&1
+import json, sys
+ev = [json.loads(l) for l in open(sys.argv[1])]
+stage = sys.argv[2]
+print("cut=" + ("yes" if any(e["type"] == "stage.failed" and e["stage"] == stage and e["data"].get("usage_limit") is True for e in ev) else "no"))
+print("cut_completed=" + str(sum(1 for e in ev if e["type"] == "stage.completed" and e["stage"] == stage)))
+print("tail=" + ",".join(sorted({e["stage"] for e in ev if e["type"] == "stage.started" and e["stage"] in ("commit", "seal")})))
+done = [e for e in ev if e["type"] == "run.completed"]
+print("paused=" + (str(done[-1]["data"].get("paused")) + ":" + str(done[-1]["data"].get("cancelled")) if done else "none"))
+PY
+        has "usage limit ($name): the cut $stage stage is recorded as cut by the limit" "$(cat "$T/ul-$name.check")" "cut=yes"
+        has "usage limit ($name): the cut $stage stage records no result (no $stage round counted)" "$(cat "$T/ul-$name.check")" "cut_completed=0"
+        has "usage limit ($name): commit and seal never ran" "$(cat "$T/ul-$name.check")" "tail="$'\n'
+        has "usage limit ($name): run.completed is a resumable pause" "$(cat "$T/ul-$name.check")" "paused=usage_limit:True"
+        [ "$(git -C "$R" branch --show-current)" = feature ] && ok "usage limit ($name): checkout is back on its start branch" || bad "usage limit ($name): checkout is on '$(git -C "$R" branch --show-current)'"
+        OUT="$(cd "$R" && E2E_STUB_MODE="$mode" E2E_STUB_FIX=fixit E2E_STUB_LIMIT="$stage" E2E_STUB_LIMIT_MARK="$T/ul-$name.mark" ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "$TASK" --no-pr </dev/null 2>&1)"; RC=$?
+        has "usage limit ($name): the next loki start of the same task resumes the paused run" "$OUT" "resumed run $(basename "$(dirname "$ev")"): VERIFIED"
+        python3 -I - "$ev" "$stage" <<'PY' > "$T/ul-$name.resume" 2>&1
+import json, sys
+ev = [json.loads(l) for l in open(sys.argv[1])]
+stage = sys.argv[2]
+r = max(i for i, e in enumerate(ev) if e["type"] == "run.resumed")
+after = ev[r:]
+print("reran=" + str(sum(1 for e in after if e["type"] == "stage.completed" and e["stage"] == stage)))
+print("rounds=" + ",".join(str(e["data"].get("round")) for e in ev if e["type"] == "stage.completed" and e["stage"] == "fix"))
+print("verdict=" + str([e for e in ev if e["type"] == "run.completed"][-1]["data"].get("verdict")))
+PY
+        has "usage limit ($name): the resumed run reruns the cut $stage stage" "$(cat "$T/ul-$name.resume")" "reran=1"
+        has "usage limit ($name): the resumed run seals VERIFIED" "$(cat "$T/ul-$name.resume")" "verdict=VERIFIED"
+        [ "$name" = fix ] && has "usage limit (fix): the cut round was never counted: the resumed run's first fix round is round 1" "$(cat "$T/ul-$name.resume")" "rounds=1"$'\n'
+    done
 }
 
 # ---- 4b: --detach survives the terminal closing (FR02) ------------------------------------------------------------
@@ -1244,6 +1340,7 @@ for c in same one backend changed p8 p8new pathnorm unhandled delpkg; do
     for ver in $RV_LIST; do unit_start "rv-$ver-$c" unit_rv "$ver" "$c"; done
 done
 unit_start failed unit_failed_and_cancelled
+unit_start usage unit_usage_limit
 unit_start detach unit_detach
 unit_start goals unit_goals
 for k in 0 1 2 3; do unit_start "help$k" unit_help_chunk "$k" 4; done
