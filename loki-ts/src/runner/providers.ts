@@ -720,6 +720,10 @@ const ENGINE10_TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep"];
  *  buildSdkLoopOptions applies exactly this, and session.ts hashes exactly this (prefixParts), so the cache-cause key cannot drift. */
 export function engine10StaticPrefix(env: Readonly<Record<string, string | undefined>>): { tools: string[]; systemPrompt?: string; excludeDynamic: boolean } {
   // excludeDynamicSections applies only to the claude_code preset; the lean string replaces the preset, so it is never set with it.
+  // FULL SESSION (LOKI_E10_FULL_SESSION=1, set by engine10/session.ts for the implement session of an issue run): Claude Code as it ships: its own
+  // system prompt and every tool it has (subagents, task list, background shells), not six tools under a replacement prompt. The session that does the
+  // work is the product's intelligence; Loki adds the brief, the safety and the independent check around it, and no longer narrows it.
+  if (env["LOKI_E10_FULL_SESSION"] === "1") return { tools: [], excludeDynamic: env["LOKI_E10_STABLE_PREFIX"] !== "0" };
   const lean = env["LOKI_E10_PREFIX"] === "lean";
   return { tools: ENGINE10_TOOLS, ...(lean ? { systemPrompt: LEAN_PREFIX } : {}), excludeDynamic: !lean && env["LOKI_E10_STABLE_PREFIX"] !== "0" };
 }
@@ -751,7 +755,7 @@ export function buildSdkLoopOptions(args: {
   const engine10 = Boolean(process.env["LOKI_E10_STAGE"]);
   if (engine10) {
     const sp = engine10StaticPrefix(process.env);
-    out.tools = sp.tools;
+    if (sp.tools.length) out.tools = sp.tools; // an empty list (full session) leaves the tool set at Claude Code's own default
     out.noAppend = true;
     out.strictMcpConfig = true; // no MCP servers at all, ambient .mcp.json included
     // S41-09: LOKI_E10_PREFIX=lean (session.ts default) replaces the claude_code preset with one fixed string, so every
@@ -859,7 +863,7 @@ export function sdkQueryProvider(): ProviderInvoker {
         // E-65: the session's own Bash tool inherits this env; a `loki start` run inside an engine session
         // must not pick up the lean engine10 shape. The host-guard hook runs in this process, so it is unaffected.
         for (const k of Object.keys(env)) if (k.startsWith("LOKI_E10_")) delete env[k];
-        if (process.env["LOKI_E10_STAGE"]) env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"; // engine10 stage: no auto-backgrounded Bash (the BASH_* timeout clamp arrives via session.ts childEnv)
+        if (process.env["LOKI_E10_STAGE"] && process.env["LOKI_E10_FULL_SESSION"] !== "1") env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"; // engine10 stage: no auto-backgrounded Bash (the BASH_* timeout clamp arrives via session.ts childEnv)
 
         // T3(b): compose the MCP/effort/budget/fallback options the loop was
         // missing vs the shell route (see buildSdkLoopOptions). Only fields that

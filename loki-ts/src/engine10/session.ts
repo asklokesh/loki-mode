@@ -66,6 +66,8 @@ export function sessionEffortFor(opts: SessionRunOptions): { effort: string | un
   if (resolved && rr < 0) return { effort: resolved }; // unknown level: pass through untouched
   return { effort: prior };
 }
+/** On by default; LOKI_E10_FULL_SESSION=0 puts the implement session back on the six-tool lean profile. */
+export const fullSessionOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_FULL_SESSION"] ?? "").trim());
 /** Connection settings a session that runs the product must not inherit (it starts its own throwaway services under its scratch directory). */
 export const CONNECTION_ENV = /^(DATABASE_UR[LI]|DB_(URL|URI|HOST|PORT|USER|USERNAME|PASSWORD|PASS|NAME|DATABASE)|REDIS_(URL|URI|HOST|PORT|PASSWORD)|MONGO(DB)?_(URL|URI|HOST)|PG(HOST|HOSTADDR|PORT|USER|PASSWORD|DATABASE|SERVICE|SERVICEFILE|PASSFILE)|MYSQL_(HOST|TCP_PORT|PWD|USER|PASSWORD|DATABASE)|POSTGRES(QL)?_(URL|URI|HOST|PORT|USER|PASSWORD|DB|DATABASE)|ELASTICSEARCH_(URL|HOST)|AMQP_URL|RABBITMQ_URL)$/;
 export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.ProcessEnv {
@@ -93,6 +95,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
     env["LOKI_HOST_GUARD"] = "1";
     env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"; // an engine stage never needs background work; a Bash at its timeout stops instead of auto-backgrounding and pinning a finished session
     if (process.env["LOKI_E10_STAGE"]) delete env["LOKI_E10_MAX_TURNS"]; clampBashTimeoutEnv(env, opts.limitS); if (opts.maxTurns && opts.maxTurns > 0) env["LOKI_E10_MAX_TURNS"] = String(Math.min(Number(env["LOKI_E10_MAX_TURNS"]) || opts.maxTurns, opts.maxTurns)); pinBashShellEnv(env); if (opts.maxOutputTokens) env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = String(opts.maxOutputTokens); // a nested run inside a stage session inherits the derived cap, never an explicit user value; Wall author output bound, other stages keep the inherited value
+    if (opts.sessionEnv?.["LOKI_SCRATCH"] && fullSessionOn(process.env)) { env["LOKI_E10_FULL_SESSION"] = "1"; delete env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"]; if (process.env["LOKI_E10_PREFIX"] === undefined) env["LOKI_E10_PREFIX"] = "off"; } else delete env["LOKI_E10_FULL_SESSION"]; // FULL SESSION: an issue run's implement session and its resumes run as plain Claude Code does (own system prompt, all tools, background shells); every other stage stays lean
     if (env["LOKI_E10_PREFIX"] === undefined) env["LOKI_E10_PREFIX"] = "lean"; // TEN-COST-13: lean cache-stable prefix by default; an explicit user value (including off) wins
     const forced = process.env["LOKI_MODEL_OVERRIDE"] || sessionPinModel(process.env); // the override, else the session pin (after the override, ahead of the per-tier vars; throws on an unrecognized pin)
     if (forced) for (const t of ["PLANNING", "DEVELOPMENT", "FAST"]) env[`LOKI_CLAUDE_MODEL_${t}`] = forced;
