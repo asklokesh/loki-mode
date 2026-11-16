@@ -103,7 +103,7 @@ CWD="${CWD:-${LOKI_TARGET_DIR:-$PWD}}"
 # separate container or microVM with no host Docker socket, restricted
 # credentials, and network policy. This parser only inspects text.
 if "$HOST_GUARD"; then
-    HOST_GUARD_REASON=$(_LOKI_GUARD_COMMAND="$COMMAND" python3 - <<'PY'
+    HOST_GUARD_REASON=$(_LOKI_GUARD_COMMAND="$COMMAND" _LOKI_GUARD_INPUT="$INPUT" python3 - <<'PY'
 import os
 import re
 import shlex
@@ -260,7 +260,127 @@ def classify(value, depth=0):
     return ""
 
 
-reason = classify(command)
+# Q1 HEREDOC-MASK: the body of a heredoc whose delimiter is quoted (<<'EOF', <<"EOF", <<-'EOF') is data: bash
+# expands nothing in it. Tokenizing it made a file write whose body holds one apostrophe or one double quote
+# unparseable, and the guard refused it ("command text could not be parsed safely"). The masker drops such a body
+# (and its terminator line) only when the body cannot become a command: the command reading it is cat or tee, its
+# output is not piped on, and no command line names a shell, eval, source, ., exec, xargs, ssh or coproc. Every
+# command line and every unquoted body (which expands $(...)) is kept and checked as before. It works on the
+# command as the tool sent it, before continuations are joined: inside a quoted body a backslash-newline is
+# literal, so a joined copy would end the body at a different line than bash does. On anything it does not model
+# (an unclosed quote, a backtick, $(, ((, <( or >( on a command line, another delimiter form, a body with no
+# terminator line) it gives up and the command is classified exactly as before.
+QUOTED_HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2(?=[\s;&|()<>]|$)")
+UNQUOTED_HEREDOC = re.compile(r"<<(-?)[ \t]*([A-Za-z_][A-Za-z0-9_]*)(?=[\s;&|()<>]|$)")
+DATA_READERS = {"cat", "tee"}
+RUNS_TEXT = re.compile(r"(?:^|[\s;&|()/])(?:bash|sh|zsh|dash|ksh|eval|source|exec|xargs|ssh|coproc)(?=$|[\s;&|()])|(?:^|[\s;&|()])\.(?=[ \t])")
+
+
+def mask_quoted_heredocs(raw):
+    n, i, out, pending = len(raw), 0, [], []
+    seg_start, no_pipe = 0, False
+    while i < n:
+        c = raw[i]
+        if c == "\\":
+            out.append(raw[i:i + 2])
+            i += 2
+            continue
+        if c == "`" or raw.startswith(("$(", "((", "<(", ">("), i):
+            return None
+        if c == "'":
+            j = raw.find("'", i + 1)
+            if j < 0:
+                return None
+            out.append(raw[i:j + 1])
+            i = j + 1
+            continue
+        if c == '"':
+            j = i + 1
+            while j < n and raw[j] != '"':
+                if raw[j] == "`" or raw.startswith("$(", j):
+                    return None
+                j += 2 if raw[j] == "\\" else 1
+            if j >= n:
+                return None
+            out.append(raw[i:j + 1])
+            i = j + 1
+            continue
+        if c == "#" and (i == 0 or raw[i - 1] in " \t\n;&|()<>"):
+            j = raw.find("\n", i)
+            j = n if j < 0 else j
+            out.append(raw[i:j])
+            i = j
+            continue
+        if raw.startswith("<<<", i):
+            out.append("<<<")
+            i += 3
+            continue
+        if raw.startswith("<<", i):
+            m = QUOTED_HEREDOC.match(raw, i)
+            if m:
+                try:
+                    head = words(raw[seg_start:i])
+                except ValueError:
+                    return None
+                while head and assignment.match(head[0]):
+                    head = head[1:]
+                if not head or basename(head[0]) not in DATA_READERS:
+                    return None
+                pending.append((m.group(3), m.group(1) == "-", False))
+                no_pipe = True
+            else:
+                m = UNQUOTED_HEREDOC.match(raw, i)
+                if not m:
+                    return None
+                pending.append((m.group(2), m.group(1) == "-", True))
+            out.append(m.group(0))
+            i = m.end()
+            continue
+        if c in ";&|()\n":
+            if c == "|" and no_pipe and not raw.startswith("||", i):
+                return None
+            if c == "|" and raw.startswith("||", i):
+                out.append("||")
+                i += 2
+                seg_start, no_pipe = i, False
+                continue
+            seg_start, no_pipe = i + 1, False
+        out.append(c)
+        i += 1
+        if c == "\n" and pending:
+            for delim, strip, keep in pending:
+                while True:
+                    if i >= n:
+                        return None
+                    nl = raw.find("\n", i)
+                    stop = n if nl < 0 else nl + 1
+                    line = raw[i:stop].rstrip("\n")
+                    if keep:
+                        out.append(raw[i:stop])
+                    i = stop
+                    if (line.lstrip("\t") if strip else line) == delim:
+                        break
+            pending = []
+            seg_start = i
+    if pending:
+        return None
+    masked = "".join(out)
+    return None if RUNS_TEXT.search(masked) else masked
+
+
+def to_classify():
+    try:
+        import json
+        raw = (json.loads(os.environ.get("_LOKI_GUARD_INPUT", "")).get("tool_input") or {}).get("command")
+    except Exception:
+        return command
+    masked = mask_quoted_heredocs(raw.replace("\0", "")) if isinstance(raw, str) else None  # bash drops NUL bytes from $COMMAND; so does this copy
+    if masked is None:
+        return command
+    return re.sub(r"(?<!\\)((?:\\\\)*)\\\r?\n", r"\1", masked)  # the continuation join the input step applies
+
+
+reason = classify(to_classify())
 if reason:
     print("LOKI_HOST_GUARD: refusing " + reason + ". Use the platform sandbox and lifecycle APIs instead.")
 PY

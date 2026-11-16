@@ -41,6 +41,15 @@
 #      heredoc takes minutes, the child is killed at 20 s and the adversarial check fails.
 #  15. drop `pos = end` in inOrder (steps no longer in order); the random-command comparison fails (186 of 4000).
 #  16. (providers.ts) drop onFailure "block" from the config fence matcher; the fail-closed count reads 1 of 2.
+# Q1 HEREDOC-MASK planted defects, all in validate-bash.sh mask_quoted_heredocs/to_classify (each reverted afterwards):
+#  17. never mask (the code before this change); 7 quoted-heredoc writes are refused again.
+#  18. accept any reader, not only cat or tee; the `while read l; do $l; done <<'EOF'` case is allowed.
+#  19. ignore a pipe after the operator; `cat <<'EOF' | at now` is allowed.
+#  20. drop the shell-word check; `cat > x.sh <<'EOF' ... bash x.sh` is allowed.
+#  21. mask the continuation-joined text instead of the raw command; the backslash-newline body case is allowed.
+#  22. drop comment handling; `cat a # <<'EOF'` masks real lines and is allowed.
+#  23. drop the delimiter lookahead; `<<'EOF'x` ends the body at EOF instead of EOFx and is allowed.
+#  24. mask unquoted bodies too; `cat > a.txt <<EOF\n$(docker ps)` is allowed.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -136,6 +145,33 @@ await compare("npm install left-pad", W, { LOKI_SUPERVISED_BUILD: "1", LOKI_BUIL
 await compare("ls", W, { LOKI_PERMISSION_POLICY: "compiled" }, false, "none");
 await compare("docker ps", W, { LOKI_PERMISSION_POLICY: "compiled" }, true, "deny");
 await compare("ls", W, { LOKI_PERMISSION_POLICY: "legacy" }, false, "allow");
+
+// Q1 HEREDOC-MASK: a quoted heredoc body read by cat or tee is data, so an apostrophe or a lone double quote in it no longer makes the
+// command unparseable (the shape from the runs: several `cat > file <<'EOF'` writes in one command). Every deny case below carries an
+// apostrophe, so it is denied only if the masker declined (unparsed) or the command line itself is refused: a body never hides a command.
+{
+  const heredocAllowed = [
+    "cat > src/a.ts <<'EOF'\n/** Search input with autocomplete from the user's history and popular searches. */\nexport const a = 1;\nEOF",
+    "cat > src/b.ts <<'EOF'\nconst tokens = raw.match(/-?\"[^\"]*\"|\\S+/g) ?? [];\nEOF", // a lone double quote
+    "mkdir -p src/x && cat > src/x/a.ts <<'EOF'\nit's a\nEOF\ncat > src/x/b.ts <<'EOF'\nsay \"hi\nEOF\ncat > src/x/c.ts <<'EOF'\nok\nEOF\nls src/x", // several in one command
+    "cat > a.txt <<\"EOF\"\nit's\nEOF", "cat > a.txt <<-'EOF'\n\tit's\n\tEOF", "cat <<'A' > a.txt; cat <<'B' > b.txt\nit's a\nA\nit's b\nB",
+    "tee a.txt <<'EOF' >/dev/null\nit's\nEOF", "cat > README.md <<'EOF'\nRun docker compose up, it's easy. $(kill 1)\nEOF", // a quoted body is never expanded
+  ];
+  const heredocDenied = [
+    "cat > a.txt <<EOF\n$(docker ps)\nEOF", // an unquoted delimiter expands its body: still checked
+    "cat > a.txt <<EOF\nit's\nEOF", // and still parsed as before
+    "cat > a.txt <<'EOF'\nit's\nEOF\ndocker ps", // the command after the body is checked
+    "cat > a <<'EOF' && kill 1\nit's\nEOF", // so is the operator's own line
+    "cat <<'EOF' | sh\nit's\ndocker ps\nEOF", "bash <<'EOF'\necho it's\ndocker ps\nEOF", "while read l; do $l; done <<'EOF'\nit's\ndocker ps\nEOF", // the body could run
+    "cat <<'EOF' | at now\nit's\ndocker ps\nEOF", "cat > x.sh <<'EOF'\nit's\nEOF\nbash x.sh",
+    "cat > a.txt <<'EOF'\nit's x\\\nEOF\ndocker ps\nEOF", // a backslash-newline is literal in a quoted body: bash ends the body at the first EOF
+    "cat a # <<'EOF'\nit's\ndocker ps\nEOF", "echo \"<<'EOF'\"\ndocker ps\nEOF\necho it's", // no heredoc in a comment or a quoted string
+    "cat > a <<'EOF'x\nit's\nEOFx\ndocker ps\nEOF", "cat > a <<'EOF'\nit's\ndocker ps", "cat > a <<'EOF'\nit's\nEOF \ndocker ps\nEOF ", // other delimiter or terminator forms
+    "cat > \"$(pwd)/a\" <<'EOF'\nit's\nEOF",
+  ];
+  for (const c of heredocAllowed) await compare(c, W, {}, null, "allow"); // whether the script runs is the in-process rules' call (balanced quotes need not); parity holds either way
+  for (const c of heredocDenied) await compare(c, W, {}, true, "deny");
+}
 
 // Audit line: same bytes as the script's except the timestamp.
 const audit = join(W, ".loki", "logs", "bash-audit.jsonl");
