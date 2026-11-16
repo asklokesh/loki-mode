@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.143.0 (2026-11-16)
+
+An issue run now works on the whole issue and keeps unfinished work.
+
+### What changes for `loki start owner/repo#N` on the Claude provider
+- A large issue runs as one run on Sonnet and stronger models. It is no longer split into slices up front. `LOKI_ISSUE_WHOLE_FIRST=0` restores the split; a run that implements on Haiku keeps the split. `loki backlog` and `loki issues run` start the same run and follow it.
+- A session that ends without a finish line is continued in the same session, up to 4 times; if it still does not finish, the work is kept and the result is PARTIAL with what was outstanding. Before this, such a reply was counted as done.
+- Before any model call, a rerun stops with the URL of an open Loki pull request that already covers the issue, and never writes to that pull request. `LOKI_RERUN_GUARD=0` runs anyway. This guard is tested against a stand-in for GitHub only.
+- Text goals, PRD runs and other providers are unchanged.
+
+### Measured on one real issue in one repository (asklokesh/FireLater#24, 9 acceptance items, Sonnet), on builds with this release's whole-issue route
+- Cost: seven whole-issue runs cost $0.38 to $1.00 each. The split route this release replaces cost $3.45 (one run).
+- Items working, counted by a scorer who did not know which tool made each result, with each result's backend started and its routes called: whole-issue runs 8, 2, 8, 2, 2, 2 and 8 of 9. The split route scored 3 of 9 (one run) with three reproduced defects.
+- For reference on the same issue: plain Claude Code on Sonnet scored 3 and 2 of 9; on Haiku 8 and 8; on Opus 9 (one run, $10.51).
+
+### Known gaps
+- Results vary from run to run: the same route scored 2 or 8 of 9. A result that breaks creating a new tenant counts as 2 here even when its routes answer for an existing tenant. Review a result before merging it.
+- VERIFIED is not a reliable signal on feature issues yet: of 7 results labelled VERIFIED in these measurements, 3 had 8 of 9 items working and 4 had 6 or fewer.
+- A session does not start the product it builds: the run's command guard refuses ports, stopping its own processes and working outside the repository. In these measurements no session of this route started a backend or called a route. The fix is the next release.
+- Haiku is unchanged for issue runs. On this issue Loki's Haiku routes scored 1 to 6 of 9 where plain Claude Code on Haiku scored 8 and 8.
+- Not run on this build: `loki backlog`, `loki issues run`, the GitHub Action, and issues in other repositories. No speed figure is claimed.
+- This release was not gated on a fresh blind set of issues; the founder ordered it released on the evidence above.
+
 ## v11.142.0 (2026-11-15)
 
 `loki backlog` reports clearly while it runs and at the end, keeps receipts, and prints its summary when stopped. Shipped text makes no compliance claim.
