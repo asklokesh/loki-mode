@@ -41,7 +41,7 @@ export type AgentVerdict = {
 // Resolve loki-ts/data relative to this module. The data dir is ../../data from src/council and ../data from the bundled dist/loki.js (the package
 // ships only loki-ts/data/), the same candidate pair runner/budget.ts uses; the first candidate holding finding-schema.json wins.
 const _moduleDir = dirname(fileURLToPath(import.meta.url));
-export const SCHEMA_DATA_DIR_CANDIDATES: readonly (readonly string[])[] = [["..", "..", "data"], ["..", "data"]];
+export const SCHEMA_DATA_DIR_CANDIDATES: readonly (readonly string[])[] = [["..", "..", "data"], ["..", "data"], ["..", "..", "..", "loki-ts", "data"]]; // third: the Control Plane bundle (packages/control-plane/dist/server.js) imports this module too; without it `loki dashboard` crashed at startup with ENOENT on finding-schema.json
 export function resolveSchemaDataDir(moduleDir: string = _moduleDir, candidates: readonly (readonly string[])[] = SCHEMA_DATA_DIR_CANDIDATES): string {
   for (const rel of candidates) {
     const dir = resolvePath(moduleDir, ...rel);
