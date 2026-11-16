@@ -108,7 +108,8 @@ if [ -n "${E2E_STUB_ENV_LOG:-}" ]; then printf '%s LOKI_SCRATCH=%s TMPDIR=%s\n' 
 if [ "$stage" = implement ] && [ "${E2E_STUB_SCRATCH:-}" = leave ] && [ -n "${LOKI_SCRATCH:-}" ] && [ ! -f "$LOKI_SCRATCH/pids" ]; then # RUN-SCRATCH: start a daemon-like process in the scratch directory and leave it running
   # a daemon (pg_ctl, redis --daemonize) in its own session with no inherited std fds, so it survives a process-group kill and never holds the session's stdout pipe
   perl -e 'setpgrp(0,0); open(STDIN,"</dev/null"); open(STDOUT,">/dev/null"); open(STDERR,">/dev/null"); chdir($ENV{LOKI_SCRATCH}); exec("sleep","300")' </dev/null >/dev/null 2>&1 &
-  _spid=$!; echo "$_spid" > "$LOKI_SCRATCH/pids"; echo "$_spid" > "${E2E_STUB_SCRATCH_PID_LOG:-/dev/null}"
+  _spid=$!; _n=0; while [ "$(ps -o pgid= -p "$_spid" 2>/dev/null | tr -d ' ')" != "$_spid" ] && [ "$_n" -lt 100 ]; do sleep 0.05; _n=$((_n + 1)); done # out of the session's group before the session ends: else session.ts reaps it with the group under load
+  echo "$_spid" > "$LOKI_SCRATCH/pids"; echo "$_spid" > "${E2E_STUB_SCRATCH_PID_LOG:-/dev/null}"
 fi
 if [ -n "${E2E_STUB_PATH_LOG:-}" ]; then printf '%s %s\n' "$stage" "$PATH" >> "$E2E_STUB_PATH_LOG"; fi # candidate 1 env card: the PATH each stage's session got
 if [ -n "${E2E_STUB_PROMPT_LOG:-}" ]; then printf '%s\n' "$prompt" >> "$E2E_STUB_PROMPT_LOG.$stage$is_wall"; fi # CW-12: the full prompt of every call, one file per stage (wall prompts land in .other1)
