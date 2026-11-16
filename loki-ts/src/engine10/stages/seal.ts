@@ -21,7 +21,7 @@ import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts"; import { EXEC_SPEC_TELEMETRY_FILE } from "../../features/exec_spec.ts";
 import { crossReview, issueLineCheck, isUnmetNote, minVerdict, modelReviewRan, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
 import { cascadeV0On } from "../../util/wall_knobs.ts";
-import { STAGE_BUDGETS, type RunnerName, type Obj, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type TestRef, type Verdict } from "../types.ts";
+import { STAGE_BUDGETS, type RunnerName, type Obj, type PushRefusal, type Receipt, type ReceiptCheck, type RunContext, type Stage, type StageName, type StageResult, type TestRef, type Verdict } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
 import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
@@ -230,6 +230,18 @@ export const wallGreenOnBaseOf = (o: Partial<Record<StageName, Obj>>): boolean =
 /** BACKSTOP-SEAL: set by the supervisor's seal pass after a backstop kill (supervisor.ts). */
 export const sealOnlyPass = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_E10_SEAL_ONLY"] === "1";
 export const TIME_RAN_OUT_NOTE = "time ran out: the run was stopped at its time limit before it finished; this receipt seals the tree as it was then";
+/** SECRET-PUSH: the push refusal when the final verify's security scan failed on a secret match (an added line, or a file named like a secret file):
+ *  that change must not leave the machine until a person reviewed it. Fail-safe: a failed scan that recorded no secret_matches refuses too;
+ *  a scan failed only by a secure-scan HIGH finding (secret_matches []) does not. Null when nothing refuses. */
+export function secretPushRefusal(verify: Obj | undefined, runId: string): PushRefusal | null {
+  const c = (Array.isArray(verify?.checks) ? (verify.checks as Obj[]) : []).find((x) => x?.name === "security scan" && x?.result === "fail");
+  if (!c) return null;
+  const m = Array.isArray(c.secret_matches) ? (c.secret_matches as unknown[]).filter((x): x is string => typeof x === "string" && x !== "") : null;
+  if (m !== null && m.length === 0 && (c.secret_matches as unknown[]).length === 0) return null;
+  return { check: "security scan", matches: m && m.length ? m : ["(where it matched was not recorded)"], command: `git push -u origin loki/${runId}` };
+}
+/** SECRET-PUSH: the one line a refused push prints (and the receipt's NOT PROVEN entry). */
+export const secretPushLine = (r: PushRefusal): string => `not pushed: the ${r.check} matched a secret at ${r.matches.join(", ")}; review it, then push by hand: ${r.command}`;
 export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean, proof: boolean, targetProof = false, uncovered: string[] = [], leanGap: string[] = [], copyGap: string[] = [], clauseGap: string[] = []): Verdict {
   const exit = o.implement?.exit;
   // FC-16: no success verdict without a Loki-executed check with n>0 and a pass; otherwise PARTIAL (NOT PROVEN, "no tests executed").
@@ -441,6 +453,7 @@ export const sealStage: Stage = {
     if (mp?.outcome === "no") notProven.add(`Wall tests passed without the fix (mutation proof)${mutCap ? "; verdict downgraded to PARTIAL (LOKI_MUTATION_STRICT=1, declared behavior change)" : ""}`);
     if (repo === null) notProven.add(o.intake && "repo" in o.intake ? "repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)" : "repo not recorded by intake"); // intake wrote repo:null for a repo with no origin; absent means intake never recorded it
     if (typeof o.intake?.resumed !== "boolean") notProven.add("resume state not recorded by intake");
+    const pushRefused = secretPushRefusal(o.verify, ctx.runId); if (pushRefused) notProven.add(secretPushLine(pushRefused)); // SECRET-PUSH: the receipt says why the branch stays local
 
     const stages: Partial<Record<StageName, number>> = {};
     for (const [s, d] of Object.entries(o)) if (typeof d?.duration_s === "number") stages[s as StageName] = d.duration_s;
@@ -500,7 +513,7 @@ export const sealStage: Stage = {
       ...receiptBlock(process.env, cost.usd, cost.unmetered === true, totalS),
       ...(reviewReceipt(ctx.provider, xr).review ? { review: reviewReceipt(ctx.provider, xr).review } : {}),
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome, ...(mp.outcome === "yes" && mp.before?.length ? { mutation_before: mp.before } : {}) } : {}), ...conventionsBlock(o), // AWE-2/AWE-3: display-only keys, omitted when absent so other receipts stay byte-stable; verdictOf never reads them
-      ...(routeBlock ? { route: routeBlock } : {}),
+      ...(routeBlock ? { route: routeBlock } : {}), ...(pushRefused ? { push_refused: pushRefused } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
       ...pinnedUpdatesBlock(o.implement), ...releaseNoteSkipBlock(o.implement), ...selfReviewReceiptBlock(o.implement), ...releaseRefsReceiptBlock(o.implement), ...(o.implement?.scratch_cleanup ? { scratch_cleanup: o.implement.scratch_cleanup } : {}), ...(issueSt ? { issue_acceptance: issueSt } : {}), ...(lineCheck ? { issue_acceptance_check: { model: lineCheck.model, outcome: lineCheck.outcome, usd: lineCheck.usd, calls: lineCheck.calls, input_chars: lineCheck.input_chars, diff_cut: lineCheck.diff_cut, diff_truncated: lineCheck.diff_truncated } } : {}), ...(namedOpen.length ? { named_unchanged: namedOpen.map((s) => ({ symbol: s.symbol, path: s.path, line: s.line, reason: s.why })) } : {}), ...specReceiptBlock(process.env), ...triageReceiptBlock(o.intake), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(), ...sealAccuracyBlock(rawDiff.filter((_, i) => i % 2 === 1), checks, ctx.model), ...contextCoverageBlock(o.implement, rawDiff, ctx.repoDir), ...tournamentReceiptBlock(o.implement), ...attemptsReceiptBlock(o.implement), ...nrdReceiptBlock(o.implement), // GAME10-03; L022 context recall and precision
     };

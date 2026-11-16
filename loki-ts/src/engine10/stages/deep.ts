@@ -22,6 +22,7 @@ export type DeepContext = RunContext & {
 };
 /** ReceiptCheck (types.ts) plus a `reason` field the contract does not carry,  the same disclosed-extra-field pattern testmap.ts's EngineTestMap and  verify.ts's VerifyCheck already use. */
 export interface DeepCheck extends ReceiptCheck {
+  secret_matches?: string[]; // SECRET-PUSH: set on every security scan fail: "<file>:<head line>" per secret hit ([] when only a secure-scan HIGH finding failed it); never the matched text
   reason?: string; exit?: number | null; shape?: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; first_error?: string; excerpt?: string; base_red?: boolean; // first_error: the suite's first failing line (L005 stall signature); base_red: a full-suite fail whose every failing id already failed on base (repo-profile suites), never a red status; excerpt: redacted failure text for the fix brief; ids: failing test ids of the real run (failIds), read by verify's baseline attribution
 }
 export interface DeepOptions {
@@ -83,6 +84,37 @@ async function runAppBoot(ctx: RunContext, opts: DeepOptions, checks: DeepCheck[
   if (!r.checks.some((c) => c.name === "app boot")) notProven.add("not run: app boot (app probe reported no result)");
   for (const c of r.checks) { if (c.result === "n/a") { notProven.add(`${NA_PREFIX}${c.name} (${c.reason ?? "not applicable"})`); continue; } checks.push(c as DeepCheck); if (c.result === "not_run") notProven.add(`not run: ${c.name} (${c.reason ?? "no reason given"})`); }
 }
+/** SECRET-PUSH: the 0-based line indexes of `rel` (under `root`) that secret-scan.sh's content matcher flags, at most `cap`, found by bisection:
+ *  the matcher is per line (grep and its deny filter read one line at a time), so a slice hits exactly when one of its lines does. Each probe
+ *  keeps the file's relative name, so the matcher's path exemptions apply as they did. Null when the file cannot be read or a probe fails. */
+export async function secretLines(scriptPath: string, root: string, rel: string, cap = 5): Promise<number[] | null> {
+  let lines: string[];
+  try { lines = readFileSync(join(root, rel), "utf8").split("\n"); } catch { return null; }
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  const dir = mkdtempSync(join(tmpdir(), "loki-secline-")), probe = join(dir, rel), found: number[] = [];
+  const hits = async (lo: number, hi: number): Promise<boolean> => {
+    writeFileSync(probe, lines.slice(lo, hi).join("\n") + "\n");
+    const r = await run(["bash", "-c", '. "$1" || exit 3; _commit_scan_secret_file "$2"', "_", scriptPath, probe], { timeoutMs: 10_000 });
+    if (r.exitCode !== 0 && r.exitCode !== 1) throw new Error(`probe exit ${r.exitCode}`);
+    return r.exitCode === 0;
+  };
+  const walk = async (lo: number, hi: number): Promise<void> => {
+    if (found.length >= cap || hi <= lo || !(await hits(lo, hi))) return;
+    if (hi - lo === 1) { found.push(lo); return; }
+    const mid = (lo + hi) >> 1; await walk(lo, mid); await walk(mid, hi);
+  };
+  try { mkdirSync(dirname(probe), { recursive: true }); await walk(0, lines.length); return found; } catch { return null; } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+/** The head line number of each added line of a `git diff -U0` (in diff order; the same "+" filter the added-lines copy uses). */
+export function addedLineNumbers(diff: string): number[] {
+  const out: number[] = []; let n = 0;
+  for (const l of diff.split("\n")) {
+    const h = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(l);
+    if (h) { n = Number(h[1]); continue; }
+    if (l.startsWith("+") && !l.startsWith("+++")) out.push(n++);
+  }
+  return out;
+}
 /** One "security scan" check over the changed files: secret-scan.sh's two matchers (sourced, never edited) plus secure-scan.py.  A secret hit or a HIGH secure-scan finding is fail; else a missing or broken scanner is not_run (NOT PROVEN), never pass. */
 export async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
   const scriptPath = opts.secretScanShPath ?? DEFAULT_SECRET_SCAN_SH, name = "security scan", cmd = "secret-scan.sh + secure-scan.py";
@@ -91,15 +123,23 @@ export async function runSecretScan(ctx: RunContext, changed: string[], opts: De
   const inline = 'script="$1"; mode="$2"; shift 2; . "$script" || exit 3; hit=0; for f in "$@"; do if { [ "$mode" != path ] && _commit_scan_secret_file "$f"; } || { [ "$mode" != content ] && _commit_path_looks_secret "$f"; }; then printf "%s\\n" "$f"; hit=1; fi; done; exit "$hit"';
   // Every scan runs on repo-relative names (from repoDir, or from the added-lines copy), so a parent directory such as
   // /home/u/credential-service/ never reaches the path heuristic.  A killed scan (null exit) is -1, never a clean 0 or 1.
-  const started = Date.now(), gaps: string[] = [], reasons: string[] = [], outs: { code: number; hits: string[] }[] = [];
+  const started = Date.now(), gaps: string[] = [], reasons: string[] = [], outs: { code: number; hits: string[]; mode: string }[] = [];
   const scan = async (mode: string, cwd: string, files: string[]): Promise<void> => {
     if (!files.length) return;
     const s = await run(["bash", "-c", inline, "_", scriptPath, mode, ...files], { cwd, timeoutMs: 30_000 });
-    outs.push({ code: s.exitCode ?? -1, hits: s.stdout.split("\n").map((l) => l.trim()).filter(Boolean) });
+    outs.push({ code: s.exitCode ?? -1, hits: s.stdout.split("\n").map((l) => l.trim()).filter(Boolean), mode });
+  };
+  // SECRET-PUSH: where each secret hit is, as "<file>:<head line>" (never the matched text). `lineOf` maps a scanned line index to its head line.
+  const located = new Map<string, string[]>();
+  const locate = async (cwd: string, lineOf: (f: string, i: number) => number | null): Promise<void> => {
+    for (const f of new Set(outs.filter((o) => o.mode !== "path" && o.code !== 3).flatMap((o) => o.hits))) {
+      const idx = await secretLines(scriptPath, cwd, f);
+      located.set(f, idx === null ? [`${f} (line not located)`] : idx.map((i) => { const n = lineOf(f, i); return n === null ? `${f} (line not located)` : `${f}:${n}`; }));
+    }
   };
   let sec: Awaited<ReturnType<typeof secureScanChanged>>;
   if (opts.scanAddedSince) {
-    const base = opts.scanAddedSince, root = mkdtempSync(join(tmpdir(), "loki-verify-secscan-")), fresh: string[] = [], copied: string[] = [], unread: string[] = [];
+    const base = opts.scanAddedSince, root = mkdtempSync(join(tmpdir(), "loki-verify-secscan-")), fresh: string[] = [], copied: string[] = [], unread: string[] = [], headLines = new Map<string, number[]>();
     try {
       for (const f of changed) {
         if (!existsSync(join(ctx.repoDir, f))) continue; // deleted: nothing added
@@ -111,6 +151,7 @@ export async function runSecretScan(ctx: RunContext, changed: string[], opts: De
           if (d.exitCode !== 0) { unread.push(f); continue; } // a failed or killed diff is unread, never an empty (clean) file
           added = d.stdout.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n");
           if (!added) continue; // nothing added to this file
+          headLines.set(f, addedLineNumbers(d.stdout));
         } else fresh.push(f);
         mkdirSync(dirname(join(root, f)), { recursive: true });
         if (added === null) copyFileSync(join(ctx.repoDir, f), join(root, f)); else writeFileSync(join(root, f), added + "\n");
@@ -119,10 +160,12 @@ export async function runSecretScan(ctx: RunContext, changed: string[], opts: De
       if (unread.length > 0) gaps.push(`added lines could not be read: ${unread.join(", ")}`);
       await scan("content", root, copied);
       await scan("path", ctx.repoDir, fresh);
+      await locate(root, (f, i) => { const m = headLines.get(f); return m ? (m[i] ?? null) : i + 1; }); // a fresh file was copied whole
       sec = await secureScanChanged(root, copied, opts.secureScanPath);
     } finally { rmSync(root, { recursive: true, force: true }); }
   } else {
     await scan("both", ctx.repoDir, changed);
+    await locate(ctx.repoDir, (_f, i) => i + 1);
     sec = await secureScanChanged(ctx.repoDir, changed, opts.secureScanPath);
   }
   // A hit printed before a scan died is still a hit; any exit outside 0 / 1-with-hits / 3 means the scan did not finish.
@@ -130,10 +173,11 @@ export async function runSecretScan(ctx: RunContext, changed: string[], opts: De
   if (outs.some((o) => o.code === 3)) gaps.push("secret-scan.sh failed to load");
   for (const o of outs) if (o.code !== 0 && o.code !== 3 && !(o.code === 1 && o.hits.length > 0)) gaps.push(`secret scan did not finish (exit ${o.code})`);
   if (!sec.ok) gaps.push(sec.error ?? "secure-scan failed");
-  if (hits.length > 0) reasons.push(`secret match: ${hits.join(", ")}`);
+  const matches = hits.flatMap((f) => { const l = located.get(f); return l && l.length > 0 ? l : [`${f} (file name looks like a secret file)`]; }); // a hit with no flagged line came from the path matcher
+  if (hits.length > 0) reasons.push(`secret match: ${matches.join(", ")}`);
   if (high.length > 0) reasons.push(`secure-scan: ${high.map((f) => `${f.rule}: ${f.file}:${f.line}`).join(", ")}`);
   const result = reasons.length > 0 ? "fail" : gaps.length > 0 ? "not_run" : "pass";
-  checks.push({ name, cmd, result, duration_s: (Date.now() - started) / 1000, ...(result === "pass" ? {} : { reason: (result === "fail" ? reasons : gaps).join("; ") }) });
+  checks.push({ name, cmd, result, duration_s: (Date.now() - started) / 1000, ...(result === "pass" ? {} : { reason: (result === "fail" ? reasons : gaps).join("; ") }), ...(result === "fail" ? { secret_matches: matches } : {}) });
   if (result === "not_run") notProven.add(`not run: ${name} (${gaps.join("; ")})`);
 }
 export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepOptions = {}): Promise<StageResult> {

@@ -71,6 +71,16 @@ Four measured-harness disciplines on the trust core. None can weaken a gate.
   load-bearing**: unrecognized failures stay TRANSIENT and retry as before; rate
   limits are explicitly excluded from the permanent set. Never invert this
   default. `LOKI_SMART_RETRY=0`.
+- **Usage-limit pause** (`usageLimitOf` in `loki-ts/src/runner/retry_class.ts`,
+  `USAGE_LIMIT_STOP` in `loki-ts/src/engine10/machine.ts`): an engine10 session
+  that ends on a plan usage limit (the SDK parser's `[sdk-loop error: usage
+  limit...]` line from the structural rate_limit frame, or the provider CLI's
+  own stderr line) is session kind `usage_limit`, never a quota wait, a retry or
+  a failure. The run stops at that session: the cut stage records no result, commit
+  and seal never run, and the supervisor closes the run through the cancel path
+  (outcome CANCELLED, `run.completed` `paused: "usage_limit"`), so the next
+  `loki start` of the same task offers to resume it. The Reason line names the
+  stage, the provider's limit line and its reset.
 
 Observability: SDK failures emit a structured `capability_degraded` record to
 `.loki/events.jsonl`; `.loki/app-runner/first-preview.json` records

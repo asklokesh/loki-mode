@@ -166,6 +166,8 @@ export interface ReceiptCheck {
   duration_s: number; provenance?: import("../util/check_result.ts").CheckProvenance; n?: number; count?: string /* FC-FULL-SUITE-EXIT-CODED-SCRIPT */; pre_red?: true; repo_skipped?: true; /* FC-REPO-SKIPPED-TEST-DOWNGRADES: not_run, zero tests on base and head, file untouched; additive */ // FC-PR-BODY-PUBLIC-HYGIENE pre_red: a fail that also fails on base, additive; TEN-GATES-02 provenance, TEN-GATES-03-F1 n (executed test count): additive; absent on older receipts, which still verify byte-stable
 }
 /** .loki/runs/<id>/receipt.json. receipt_sha256 = sha256 of canonical JSON without `verification`. */
+/** SECRET-PUSH: why the run's branch is not pushed: the check, where it matched ("<file>:<line>", never the matched text) and the command to push after review. */
+export interface PushRefusal { check: string; matches: string[]; command: string }
 export interface Receipt {
   schema: "loki.v10.receipt/1";
   run_id: string;
@@ -180,6 +182,7 @@ export interface Receipt {
   wall_oracle?: { cost_usd: number | null; duration_s: number | null }; cascade?: { fired: boolean; from?: string | null; to?: string | null }; // CASCADE-V0 receipt facts
   model_source?: "explicit" | "default" | "provider"; // acc-156: who chose `model` (a flag or env, Loki's DEFAULT_SESSION_MODEL, or the Claude CLI's own default)
   implement?: { exit: "external"; patch_sha256: string }; // CW-12 B3: present only when no Loki session wrote the code; the receipt names no implementing model
+  push_refused?: PushRefusal; // SECRET-PUSH: the security scan matched a secret in an added line, so the run's work must not leave the machine unreviewed
   not_proven: string[]; not_applicable?: string[]; // FC-SEAL-NA-AS-UNPROVEN: informational notes (package without tests, no app to boot, not selected by risk tier); never part of any verdict
   unit_spec?: { sha256: string }; // #317b: present only for a unit run; the sha256 of its canonical spec (id, items, acceptance, writeSet, base)
   spec?: { path: string; sha256: string }; triage?: { class: "implement" | "spec" | "human"; reason: string }; intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[]; // P12-02 (omitted when none); SPEC-FIRST-INTENT: present only when a user spec file drove the run

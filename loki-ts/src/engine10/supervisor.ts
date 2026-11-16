@@ -7,7 +7,7 @@ import { redactEventData } from "../util/redact.ts"; import { deadlineCapS, loca
 import { terminalWidth } from "../util/term_width.ts";
 import { diffStat, runHead, formatRunSummary, handoffSection, readRiskSummary, writeHandoff, withNextLine, withFoldLine, withRiskLine, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT, RISKTIER
 import { commitUnsealedWork, guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
-import { kidOf, loadSigningKey } from "./stages/seal.ts";
+import { kidOf, loadSigningKey, secretPushLine, secretPushRefusal } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ISSUE_LABELS_ENV, issueWholeFirst } from "../features/decompose.ts";
 import { dirname, join, relative, resolve } from "node:path"; import { writeRunState } from "../util/seal_drift.ts";
@@ -21,7 +21,7 @@ import { resolveRunProvider } from "../runner/state.ts";
 import { budgetNext, capNote, groupEnv, parseCapUsd, priorSpend, resolveCap, SUBSCRIPTION_NOTE, unenforceableNote, writeBudgetStop } from "../e10ext/budget_cap.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
-import { formatHeartbeatLine, formatStageLine, spendSoFar, formatSummary, preModelTiming, EXIT, exitCodeOf, outcomeOf, reasonOf, type Outcome } from "./output.ts";
+import { formatHeartbeatLine, formatStageLine, spendSoFar, formatSummary, preModelTiming, EXIT, exitCodeOf, outcomeOf, reasonOf, currentAttempt, usageLimitOfRun, type Outcome } from "./output.ts";
 import { CandidateView, LiveLine } from "../e10ext/liveline.ts";
 import { SAFE_BUN_FLAGS, envWithPwd, killGroup, spawnDetached, spawnWorker, ulimitArgv } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
@@ -248,7 +248,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const v = sealedData?.verdict;
   const receiptVerdict = workerExit === 0 && typeof v === "string" && VERDICTS.has(v), verdict: Verdict = receiptVerdict ? (v as Verdict) : "FAILED"; // FC-21b (3): a sealed receipt is the one source of truth for the outcome
   const notProven = Array.isArray(sealedData?.not_proven) ? (sealedData.not_proven as unknown[]).map(String) : [];
-  if (worker.killed) notProven.push(sealPass && sealed ? BACKSTOP_SEALED_NOTE : BACKSTOP_NOT_PROVEN); const cancelled: string | null = worker.cancelled ?? (readEvents(log.path).some((e) => e.type === "cancel_effective") ? "request" : null); /* P12-10b: a loki cancel honoured at a stage boundary completes as cancelled too */ if (cancelled) notProven.push(`run cancelled by ${cancelled}`); // SIGINT/SIGTERM: usage so far is kept, no PR or backstop commit
+  if (worker.killed) notProven.push(sealPass && sealed ? BACKSTOP_SEALED_NOTE : BACKSTOP_NOT_PROVEN); const ev0 = readEvents(log.path), usage = worker.cancelled ? null : usageLimitOfRun(ev0); // USAGE-LIMIT: a session hit a provider usage limit; the run closes as a resumable stop, never sealed FAILED
+  const cancelled: string | null = worker.cancelled ?? (ev0.some((e) => e.type === "cancel_effective") ? "request" : usage ? "usage limit" : null); /* P12-10b: a loki cancel honoured at a stage boundary completes as cancelled too */ if (cancelled) notProven.push(usage && cancelled === "usage limit" ? `not sealed: run paused by a provider usage limit at stage ${usage.stage}` : `run cancelled by ${cancelled}`); // the Reason line (output.ts usagePauseLine) is the one line naming the limit and its reset // SIGINT/SIGTERM: usage so far is kept, no PR or backstop commit
   let prUrl: string | null = null;
   const intact = log.verify(); // unconditional re-check before the PR
   if (!intact) notProven.push(TAMPER_NOT_PROVEN);
@@ -262,8 +263,13 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
       safeGit(opts.repoDir, ["diff", "--quiet", String(base), "HEAD", "--", ".", ":(exclude).loki"], { env: workerEnv, stdio: "ignore" });
     } catch { hasDiff = base !== null; }
   }
-  if (opts.pr && !cancelled && intact && origin && verdict !== "ALREADY_SATISFIED" && verdict !== "VERIFIED" && verdict !== "PARTIAL" && hasDiff) process.stderr.write(localBranchNote(opts.runId, verdict, opts.repoDir)); // FC-NO-PUSH-UNVERIFIED
-  if (opts.pr && !cancelled && intact && origin && (verdict === "VERIFIED" || verdict === "PARTIAL") && hasDiff) { // FC-NO-PUSH-UNVERIFIED: VERIFIED opens a ready PR, PARTIAL a labelled DRAFT PR ("[PARTIAL]" title, Not proven first; a PR beats no PR, 2026-10-31); FAILED, SPEC_CONFLICT and cancelled stay local; ALREADY_SATISFIED opens no PR (E-66)
+  // FAILED-PR: a FAILED run with a sealed receipt and committed work opens a labelled DRAFT PR ("[FAILED: <check>]", the failing checks first), so committed work is never kept silently local.
+  // SECRET-PUSH: the one exception is a security scan secret match (stages/seal.ts secretPushRefusal): that change must not leave the machine before a review, whatever the verdict.
+  const pushable = !!opts.pr && !cancelled && intact && !!origin && hasDiff, failedPr = verdict === "FAILED" && receiptVerdict;
+  const refusal = pushable ? secretPushRefusal(readEvents(log.path).findLast((e) => e.type === "stage.completed" && e.stage === "verify")?.data, opts.runId) : null;
+  if (pushable && refusal) process.stderr.write(`engine10: run ${opts.runId}: ${secretPushLine(refusal)}\n`);
+  else if (pushable && verdict !== "ALREADY_SATISFIED" && verdict !== "VERIFIED" && verdict !== "PARTIAL" && !failedPr) process.stderr.write(localBranchNote(opts.runId, verdict, opts.repoDir)); // FC-NO-PUSH-UNVERIFIED: SPEC_CONFLICT, and a FAILED run with no receipt
+  if (opts.pr && pushable && !refusal && origin && (verdict === "VERIFIED" || verdict === "PARTIAL" || failedPr)) { // FC-NO-PUSH-UNVERIFIED: VERIFIED opens a ready PR, PARTIAL and FAILED a labelled DRAFT PR ("[PARTIAL]" title, Not proven first; a PR beats no PR, 2026-10-31; a FAILED run with a receipt, 2026-11-16); SPEC_CONFLICT, a FAILED run with no receipt, a secret match and cancelled stay local; ALREADY_SATISFIED opens no PR (E-66)
     const pushEnv: PushEnv = { _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };
     const out = await opts.pr({ env, pushEnv, runId: opts.runId, repoDir: opts.repoDir, verdict, notProven, recordSpawnEnv: (spawnEnv) => { log.append("capability.recorded", "pr", { stages: [stageCapability("pr", spawnEnv)] }); } });
     notProven.push(...(out?.notProven ?? []));
@@ -272,11 +278,11 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
       log.append("pr.opened", "pr", { url: out.url, draft: out.draft, existing: out.existing });
       await opts.status?.({ prUrl: out.url }); await slackEvent(env, "pr_opened", { repo: githubRepoFromUrl(origin) ?? undefined, issue: String(opts.started?.["issue_ref"] ?? ""), prUrl: out.url, outcome: verdict }); // D51-A4
       // E-48: deep verify (stages/deep.ts) runs detached, never keeping the supervisor alive; deep.started records the pid so it is never orphaned untracked.
-      if (opts.deepArgv) notProven.push(...spawnDeep(opts.deepArgv, origin, { workerEnv, env, repoDir: opts.repoDir, append: (d) => log.append(d.type as never, "deep", d.data) }));
+      if (opts.deepArgv && verdict !== "FAILED") notProven.push(...spawnDeep(opts.deepArgv, origin, { workerEnv, env, repoDir: opts.repoDir, append: (d) => log.append(d.type as never, "deep", d.data) }));
     }
   }
   const allEvents = readEvents(log.path), folded = fold(allEvents), lokiRoot = join(opts.repoDir, ".loki"), costUsd = runCostUsd(allEvents, log.tampered, lokiRoot), wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null
-  const stopRaw = folded.run.escalated?.data.stop, stop = typeof stopRaw === "string" ? stopRaw : null;
+  const stopRaw = currentAttempt(allEvents).findLast((e) => e.type === "escalated")?.data.stop, stop = typeof stopRaw === "string" ? stopRaw : null;
   const outcome: Outcome = cancelled ? "CANCELLED" : outcomeOf(verdict, allEvents.some((e) => e.type === "cap.hit"), stop, log.tampered, receiptVerdict), blocked = outcome === "BLOCKED"; let statusReason: string | undefined;
   if (blocked || (verdict === "FAILED" && prUrl === null && !cancelled)) { // E-67: never vanish silently -- an issue run gets a comment naming the reason, anything else is printed. A-110: BLOCKED always posts its one question
     const why = conflictReasonOf(allEvents);
@@ -286,10 +292,10 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     if (isIssueWithRef && opts.comment && !opts.status) {
       const out = await opts.comment({ env, runId: opts.runId, issueRef: issueRef as string, reason, prUrl });
       log.append("issue.commented", null, { argv: out?.argv ?? [], ok: out?.ok ?? false, ...(out?.skipped ? { skipped: true } : {}), reason });
-    } else if (!blocked) process.stderr.write(`engine10: run ${opts.runId} ended FAILED with no PR: ${reason}\n`);
+    } else if (!blocked && !refusal) process.stderr.write(`engine10: run ${opts.runId} ended FAILED with no PR: ${reason}\n`); // SECRET-PUSH: the refusal line above already says why there is no PR
   }
   if (opts.status) { const st = await opts.status({ prUrl, outcome: String(outcome), reason: statusReason }); log.append("issue.commented", null, { argv: st?.argv ?? [], ok: st?.ok ?? false, ...(st?.skipped ? { skipped: true } : {}), reason: statusReason ?? String(outcome) }); }
-  log.append("run.completed", null, { verdict, ...(cancelled ? { cancelled: true, signal: cancelled, outcome: "CANCELLED" } : {}), pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: wallS, pre_model: preModelTiming(allEvents, t0) }); // D61-1
+  log.append("run.completed", null, { verdict, ...(cancelled ? { cancelled: true, signal: cancelled, outcome: "CANCELLED", ...(usage && cancelled === "usage limit" ? { paused: "usage_limit", usage_limit: usage } : {}) } : {}), pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: wallS, pre_model: preModelTiming(allEvents, t0) }); // D61-1
   log.sealLog(); log.state("closed", outcome); recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "failed", failedCheckNames(folded.stages["verify"]?.data.checks, folded.stages["verify"]?.data.pre_red_checks as string[] | undefined), cleanTreeId(opts.repoDir)); // Q17-03/FC-LINT-PRE-RED: real failing checks minus base-red, read by decideRecovery so a flaky check does not mask them
   try { const pl = await import("../util/pr_lessons.ts"); if (cancelled) pl.takeStopBlocks(opts.repoDir, opts.runId); else pl.learnFromRun(opts.repoDir, opts.runId, allEvents, verdict); } catch { /* memory is best-effort; a cancelled run learns nothing but still drops its stop-block lines */ } // learn from runs: every run's mistakes become categorized lessons the next brief can retrieve; here because only the supervisor holds the complete log, killed workers included
   const stages = allEvents.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number").map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })), // E-48 notify: Slack when configured, no-op otherwise

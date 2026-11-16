@@ -22,6 +22,11 @@
 #               BLOCK caps at PARTIAL, a FLAG lands on the receipt, result-cost sum
 #               equals receipt cost on 3 draft runs, a full suite red only on base
 #               ids is status success and a new failing id stays failure.
+#   FAILED-PR / SECRET-PUSH (local bare origin): a FAILED run with committed work opens a draft PR (branch pushed, body led by
+#               "## Failing checks", no deep verify, no pending deep-verify status); a run whose security scan matched a secret in an
+#               added line (stub E2E_STUB_SECRET, calc.ts:5) pushes nothing, keeps its branch, prints one line naming calc.ts:5 and the
+#               push command, never the matched text, and the receipt carries push_refused plus the NOT PROVEN line. Unit: the
+#               bisection line finder, -U0 hunk line numbers, the refusal's fail-safe rules, the FAILED title and body, the writeback text.
 #
 #   capped run (FR09): a metered stub run capped between implement's start and end exits 6 with Outcome: PARTIAL and Reason: cost/time
 #               cap reached, the start line carries "cap $X (--max-cost)" and "estimate: about", main is untouched and
@@ -67,6 +72,9 @@
 #   34. loki-ts/src/util/receipt_surface.ts proofCardOf: go green on verdict VERIFIED instead of mutation_outcome "yes" (the never-green and states proof card unit lines fail).
 #   35. loki-ts/src/e10ext/liveline.ts CandidateView: clear the pending flag on the first test.result instead of on verify's stage.completed (the diff-early, label-until-verify and stopped-verify unit lines fail).
 #   36. loki-ts/src/e10ext/liveline.ts CandidateView: clear the pending flag on a failed verify too (the stopped-verify unit line fails).
+#   37. loki-ts/src/engine10/supervisor.ts: drop failedPr from the push condition (rebuild dist); the FAILED-run legs read no PR, no pushed branch and no failing-checks body.
+#   38. loki-ts/src/engine10/supervisor.ts: drop !refusal from the push condition (rebuild dist); the secret-match legs read a PR and a pushed branch.
+#   39. loki-ts/src/engine10/stages/deep.ts runSecretScan: skip locate() (rebuild dist); every match reads "file name looks like a secret file", never calc.ts:5.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -526,6 +534,67 @@ grep -q '"base_red": true' "$RUNDIR/receipt-addendum-1.json" && ok "addendum mar
 run_pr new new
 f="$(pr_facts)"; set -- $f
 [ "$8" = failure ] && ok "a new failing id beyond the base-red ones keeps status failure" || bad "new full-suite failure gave status $8 ($f)"
+
+# FAILED-PR (2026-11-16, work-ps-1): a FAILED run with committed work opens a labelled draft PR instead of keeping its branch local,
+# with the failing checks first in the body and no pending deep-verify status. SECRET-PUSH: the one exception is a security scan
+# secret match (here calc.ts:5, a config key the scan's tier 2 matches): nothing is pushed, one line names the file:line and the push
+# command, and the receipt carries push_refused plus the same NOT PROVEN line.
+run_pr failed none LOKI_RISK_TIER=medium E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress
+f="$(python3 -I - "$RUNDIR" <<'PY'
+import json, os, sys
+rd = sys.argv[1]
+ev = [json.loads(l) for l in open(os.path.join(rd, "events.jsonl")) if l.strip().startswith("{")]
+pr = [e for e in ev if e.get("type") == "pr.opened"]
+rec = json.load(open(os.path.join(rd, "receipt.json")))
+print(rec.get("verdict"), len(pr), bool(pr and pr[0]["data"].get("draft")), sum(e.get("type") == "deep.started" for e in ev), "push_refused" in rec)
+PY
+)"
+[ "$f" = "FAILED 1 True 0 False" ] && ok "FAILED run: a draft PR opened (receipt FAILED, no deep verify, no push refusal)" || { bad "FAILED run facts: $f"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+[ -n "$(git -C "$D/origin.git" rev-parse --verify -q "loki/$(basename "$RUNDIR")")" ] && ok "FAILED run: the run branch was pushed" || bad "FAILED run: loki/<run> is not on the origin"
+head -4 "$RUNDIR/pr-body.md" 2>/dev/null | grep -qx '## Failing checks' && grep -qx -- '- bun:calc.test.ts' "$RUNDIR/pr-body.md" && ok "FAILED run: the PR body leads with the failing checks" || bad "FAILED run: pr-body.md does not lead with the failing checks"
+has "FAILED run: the receipt comment says no deep-verify status is set" "$OUT" "commit status loki/deep-verify not set (a FAILED run gets no deep verify)"
+case "$OUT" in *"stays local (not pushed)"*) bad "FAILED run: the branch-stays-local line printed" ;; *) ok "FAILED run: no branch-stays-local line" ;; esac
+
+run_pr secret none LOKI_RISK_TIER=high E2E_STUB_SECRET=1 E2E_STUB_FIX=noprogress
+f="$(python3 -I - "$RUNDIR" <<'PY'
+import json, os, sys
+rd = sys.argv[1]
+ev = [json.loads(l) for l in open(os.path.join(rd, "events.jsonl")) if l.strip().startswith("{")]
+rec = json.load(open(os.path.join(rd, "receipt.json")))
+print(rec.get("verdict"), sum(e.get("type") == "pr.opened" for e in ev), json.dumps(rec.get("push_refused", {}).get("matches")), any(n.startswith("not pushed: the security scan matched a secret at calc.ts:5") for n in rec.get("not_proven", [])))
+PY
+)"
+[ "$f" = 'FAILED 0 ["calc.ts:5"] True' ] && ok "secret match: no PR, the receipt names calc.ts:5 in push_refused and NOT PROVEN" || { bad "secret match facts: $f"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+[ -z "$(git -C "$D/origin.git" rev-parse --verify -q "loki/$(basename "$RUNDIR")")" ] && ok "secret match: nothing was pushed" || bad "secret match: loki/<run> reached the origin"
+[ -n "$(git -C "$REPO" rev-parse --verify -q "loki/$(basename "$RUNDIR")")" ] && ok "secret match: the run branch is kept locally" || bad "secret match: the run branch is gone"
+has "secret match: one line names the file:line and the push command" "$OUT" "engine10: run $(basename "$RUNDIR"): not pushed: the security scan matched a secret at calc.ts:5; review it, then push by hand: git push -u origin loki/$(basename "$RUNDIR")"
+case "$OUT" in *"ended FAILED with no PR"*) bad "secret match: the no-PR line repeats the refusal" ;; *) ok "secret match: the refusal is not repeated by the no-PR line" ;; esac
+grep -q 'globalThis.ELASTICSEARCH' <<< "$OUT" && bad "secret match: the matched text was printed" || ok "secret match: the matched text is never printed"
+
+# Unit: the scan's line location (git -U0 hunks to head lines, bisection over the matcher), the refusal's fail-safe rules, the FAILED title and body, the writeback text.
+U="$(cd "$ROOT/loki-ts" && T="$T" bun -e '
+const d = await import("./src/engine10/stages/deep.ts"), s = await import("./src/engine10/stages/seal.ts"), p = await import("./src/engine10/stages/pr.ts"), w = await import("./src/integrations/writeback.ts");
+const { mkdirSync, writeFileSync } = await import("node:fs"); const root = process.env.T + "/secline";
+mkdirSync(root + "/backend/src/config", { recursive: true });
+const cfg = ["import { z } from \"zod\";", "const schema = z.object({", "  ELASTICSEARCH_URL: z.string().optional(),", "  ELASTICSEARCH_API_KEY: z.string().optional(),", "});", "export const search = {", "  url: parsed.data.ELASTICSEARCH_URL,", "    apiKey: parsed.data.ELASTICSEARCH_API_KEY,", "};"];
+writeFileSync(root + "/backend/src/config/index.ts", cfg.join("\n") + "\n");
+console.log("lines=" + JSON.stringify(await d.secretLines(d.DEFAULT_SECRET_SCAN_SH, root, "backend/src/config/index.ts")));
+console.log("hunks=" + JSON.stringify(d.addedLineNumbers("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -3,0 +4,2 @@\n+a\n+b\n@@ -10 +12 @@\n-old\n+new\n")));
+const fail = (m) => ({ checks: [{ name: "security scan", result: "fail", ...(m === undefined ? {} : { secret_matches: m }) }] });
+console.log("refuse=" + JSON.stringify(s.secretPushRefusal(fail(["a.ts:3"]), "e10-x")) + " high_only=" + JSON.stringify(s.secretPushRefusal(fail([]), "e10-x")) + " unrecorded=" + JSON.stringify(s.secretPushRefusal(fail(undefined), "e10-x")?.matches) + " pass=" + JSON.stringify(s.secretPushRefusal({ checks: [{ name: "security scan", result: "pass" }] }, "e10-x")));
+console.log("title=" + p.prTitle("FAILED", root, "add search", ["security scan"]) + " | " + p.prTitle("FAILED", root, "add search", ["vitest:frontend/src/app/applications/page.test.tsx", "security scan", "lint"]) + " | " + p.prTitle("FAILED", root, "add search") + " | " + p.prTitle("PARTIAL", root, "add search", ["x"]));
+console.log("head=" + JSON.stringify(p.failedHead("FAILED", ["security scan"], ["one reviewer"]).split("\n").slice(0, 3)) + " other=" + JSON.stringify(p.failedHead("PARTIAL", ["x"], ["y"])));
+console.log("wb=" + JSON.stringify(w.commentText({ phase: "failed", verdict: "FAILED", prUrl: "https://github.com/o/r/pull/9", receiptSha256: null, task: "", reason: "failing: security scan" })));
+' 2>&1)"
+has "unit: bisection finds the incident's flagged config line (apiKey, line 8 here), not the schema lines" "$U" "lines=[7]"
+has "unit: -U0 hunks map added lines to head line numbers" "$U" "hunks=[4,5,12]"
+has "unit: a secret match refuses the push with the push command" "$U" 'refuse={"check":"security scan","matches":["a.ts:3"],"command":"git push -u origin loki/e10-x"}'
+has "unit: a scan failed only by a secure-scan HIGH finding does not refuse" "$U" "high_only=null"
+has "unit: a failed scan that recorded no matches refuses (fail-safe)" "$U" 'unrecorded=["(where it matched was not recorded)"]'
+has "unit: a passing scan never refuses" "$U" "pass=null"
+has "unit: the FAILED title names the failing check, then how many more" "$U" "title=[FAILED: security scan] add search | [FAILED: vitest:frontend/src/app/applications/... +2] add search | [FAILED] add search | [PARTIAL] add search"
+has "unit: the FAILED body leads with the failing checks; other verdicts get none" "$U" 'head=["## Failing checks","This run sealed FAILED: 1 blocking check still fails. Opened as a draft so the committed work is visible; it is not ready to merge until these pass.","- security scan"] other=""'
+has "unit: the failed writeback names the draft PR" "$U" 'wb="Loki run failed; its committed work is in draft PR https://github.com/o/r/pull/9.\nReason: failing: security scan"'
 
 # Unit: every risk tier plans at most the one pre-seal reviewer, and the receipt credits "one reviewer" only from it.
 # The unconfigured same-vendor review stays on for high risk and is opt-in for medium (LOKI_REVIEW_DEFAULT=1, xreview.ts reviewDefaultOn).

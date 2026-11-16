@@ -44,6 +44,7 @@ export interface VerifyCheck {
   duration_s: number;
   reason?: string; n?: number; count?: string; sk?: number; ids?: string[]; first_error?: string; anchor?: string; /* file:line of the first failure, council anchor grammar */ // A-112: failing test ids; A-113: first failing output line, normalized; feeds the stall signature
   interpreter?: Interpreter; // E-98a: which python/ruff this check actually ran on
+  secret_matches?: string[]; // SECRET-PUSH: the security scan's secret hits, "<file>:<head line>" (deep.ts runSecretScan); seal and the supervisor refuse the push on them
   owner?: "harness"; skip_code?: SkipCode; /* machine-readable twin of the "<cmd> not found on PATH" reason */ // FC-02: the runner could not load or collect; not_run, never a code failure
 }
 export { runnerCmd, commandFor, firstError } from "../../util/check_result.ts"; // one owner: check_result.ts (test invocation resolver and failure-line normalizer)
@@ -711,7 +712,7 @@ export const verifyStage: Stage = {
       const { runSecretScan } = await import("./deep.ts");
       const sec: Parameters<typeof runSecretScan>[3] = [];
       await runSecretScan(ctx, changed, { scanAddedSince: ctx.baseSha }, sec, fullNotProven); // added lines only: a match already on base (FireLater config/index.ts) never fails the run
-      for (const c of sec) { const k: VerifyCheck = { name: c.name, cmd: c.cmd, result: c.result as VerifyCheck["result"], duration_s: c.duration_s, ...(c.reason ? { reason: c.reason } : {}) }; checks.push(k); ctx.emit("test.result", "verify", { ...k }); }
+      for (const c of sec) { const k: VerifyCheck = { name: c.name, cmd: c.cmd, result: c.result as VerifyCheck["result"], duration_s: c.duration_s, ...(c.reason ? { reason: c.reason } : {}), ...(c.secret_matches ? { secret_matches: c.secret_matches } : {}) }; checks.push(k); ctx.emit("test.result", "verify", { ...k }); }
       if (sec.some((c) => c.result === "pass" || c.result === "fail")) { ranDeeper.push(SECURITY_SCAN); risk = markExecuted(risk, ranDeeper); recordRisk(ctx.repoDir, risk); }
     }
     const covered = (f: string): boolean => [...ctx.tests.impacted(map, [f]), ...(tests === tests0 ? [] : [...mochaTargets(ctx.repoDir, [f]), ...avaTargets(ctx.repoDir, [f])])].some((t) => checks.some((c) => c.name === testCheckName(t) && hasExecutedProof([c])));

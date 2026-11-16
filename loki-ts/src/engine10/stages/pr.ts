@@ -16,6 +16,7 @@ import { parseSliceHead, sealAccuracyOfFile, stackBase, stackSection } from "../
 import { postReceiptComment, renderReceiptComment } from "../../util/receipt_surface.ts";
 import { buildPassport } from "../../util/receipt_bundle.ts";
 import { lokiYamlTexts, yamlKey } from "../../util/yaml_key.ts"; import { idempotencyKey, runOnce } from "../../util/outbox.ts";
+import { failedCheckNames } from "../../util/failure_memory.ts";
 /** B7: who opens the PR. LOKI_PR_AUTHOR beats loki.yaml pr.author; anything but "bot" is "me". */
 export function resolvePrAuthor(repoDir: string, environ: NodeJS.ProcessEnv = process.env): "me" | "bot" {
   let v: string | null = (environ.LOKI_PR_AUTHOR ?? "").trim() || null;
@@ -99,10 +100,15 @@ export function issueLink(runDir: string, verdict: Verdict): string {
   } catch { return ""; }
 }
 /** FireLater#21: the PR title says what changed: the slice title with its epic reference "(#21 s2)", else the issue title "(#24)", else the task's
- *  first line; the outcome once, as a "[PARTIAL]" prefix (a VERIFIED PR carries none); never the run id (it is in the body and the branch). Clipped
+ *  first line; the outcome once, as a "[PARTIAL]" prefix, or "[FAILED: <first failing check> +N]" (a VERIFIED PR carries none); never the run id (it is in the body and the branch). Clipped
  *  at a word boundary to TITLE_MAX characters. Task and issue text are untrusted: one line, control characters dropped. */
 const TITLE_MAX = 100;
-export function prTitle(verdict: Verdict, runDir: string, task: string): string {
+/** FAILED-PR: the "[FAILED: ...]" title label: the first failing blocking check (clipped to 40 characters) and how many more fail. */
+export function failedLabel(failing: readonly string[]): string {
+  const first = (failing[0] ?? "").replace(/[\u0000-\u001f\u007f\[\]]+/g, " ").replace(/\s+/g, " ").trim(), cut = first.length > 40 ? `${first.slice(0, 37)}...` : first;
+  return cut ? `[FAILED: ${cut}${failing.length > 1 ? ` +${failing.length - 1}` : ""}] ` : "[FAILED] ";
+}
+export function prTitle(verdict: Verdict, runDir: string, task: string, failing: readonly string[] = []): string {
   const one = (t: string): string => t.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
   const first = one(task.split("\n").find((l) => l.trim() !== "") ?? "").replace(/^#+\s*/, ""), slice = parseSliceHead(first);
   let what = slice?.title ?? "", ref = slice ? ` (#${slice.n} ${slice.id})` : "";
@@ -110,7 +116,7 @@ export function prTitle(verdict: Verdict, runDir: string, task: string): string 
     try { const i = JSON.parse(readFileSync(join(runDir, "issue.json"), "utf8")) as { title?: unknown; number?: unknown }; if (typeof i.title === "string" && one(i.title)) { what = one(i.title); ref = Number.isInteger(i.number) && (i.number as number) > 0 ? ` (#${i.number as number})` : ""; } } catch { /* a text task has no issue.json */ }
     if (!what) what = first;
   }
-  const head = verdict === "PARTIAL" ? "[PARTIAL] " : "", room = TITLE_MAX - head.length - ref.length;
+  const head = verdict === "PARTIAL" ? "[PARTIAL] " : verdict === "FAILED" ? failedLabel(failing) : "", room = TITLE_MAX - head.length - ref.length;
   if (!what) return `${head}Loki change${ref}`;
   const cps = Array.from(what), cut = cps.length <= room ? what : ((short) => `${short.replace(/\s+\S*$/, "") || short}...`)(cps.slice(0, room - 3).join("")); // code points: a surrogate pair is never split
   return `${head}${cut}${ref}`;
@@ -121,6 +127,14 @@ export function partialHead(verdict: Verdict, notProven: string[]): string {
   if (np.length === 0) return "";
   const clip = (r: string): string => (r.length > 160 ? `${r.slice(0, 157)}...` : r);
   return [`## Not proven`, `This run sealed PARTIAL: ${np.length} thing${np.length === 1 ? " is" : "s are"} not proven. Opened as a draft so the work is reviewable.`, ...np.slice(0, 10).map((r) => `- ${clip(r)}`), ...(np.length > 10 ? [`- (+${np.length - 10} more, total ${np.length}; the full list is in the receipt)`] : []), ""].join("\n") + "\n";
+}
+/** FAILED-PR: a FAILED PR leads with the blocking checks that still fail and what is unproven, above the reviewer body. Empty for every other verdict. */
+export function failedHead(verdict: Verdict, failing: readonly string[], notProven: string[]): string {
+  if (verdict !== "FAILED") return "";
+  const clip = (r: string): string => (r.length > 160 ? `${r.slice(0, 157)}...` : r), np = notProven.filter((r) => r.trim() !== "");
+  const why = failing.length ? `${failing.length} blocking check${failing.length === 1 ? " still fails" : "s still fail"}` : "the run did not prove the change";
+  return [`## Failing checks`, `This run sealed FAILED: ${why}. Opened as a draft so the committed work is visible; it is not ready to merge until these pass.`, ...failing.slice(0, 10).map((c) => `- ${clip(c)}`), ...(failing.length > 10 ? [`- (+${failing.length - 10} more)`] : []), "",
+    ...(np.length ? [`## Not proven`, ...np.slice(0, 10).map((r) => `- ${clip(r)}`), ...(np.length > 10 ? [`- (+${np.length - 10} more, total ${np.length}; the full list is in the receipt)`] : []), ""] : [])].join("\n") + "\n";
 }
 export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions = {}): Promise<StageResult> {
   if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before pr started" };
@@ -137,10 +151,11 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const link = issueLink(ctx.runDir, verdict);
   const bodyFile = join(ctx.runDir, "pr-body.md");
   const beforeAfter = await beforeAfterBlock(ctx.repoDir, ctx.runDir, ((ctx.outputs().verify?.["changed_files"] ?? []) as unknown[]).map(String), ctx.baseSha, { signal });
-  const reviewerBody = partialHead(verdict, notProven) + renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs(), sealAccuracy: sealAccuracyOfFile(seal.receipt_path ?? null), receipt: (() => { try { return seal.receipt_path ? JSON.parse(readFileSync(seal.receipt_path, "utf8")) as Record<string, unknown> : null; } catch { return null; } })() }); // AWE-3: proof, conventions and cost sections read the sealed receipt
+  const vo = ctx.outputs().verify as { checks?: unknown; pre_red_checks?: unknown } | undefined, failing = verdict === "FAILED" ? failedCheckNames(vo?.checks, Array.isArray(vo?.pre_red_checks) ? (vo.pre_red_checks as unknown[]).map(String) : []) : []; // FAILED-PR: the final verify's blocking failures
+  const reviewerBody = partialHead(verdict, notProven) + failedHead(verdict, failing, notProven) + renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs(), sealAccuracy: sealAccuracyOfFile(seal.receipt_path ?? null), receipt: (() => { try { return seal.receipt_path ? JSON.parse(readFileSync(seal.receipt_path, "utf8")) as Record<string, unknown> : null; } catch { return null; } })() }); // AWE-3: proof, conventions and cost sections read the sealed receipt
   const tpl = readPrTemplate(ctx.repoDir), shaped = tpl === null ? reviewerBody : applyPrTemplate(reviewerBody, tpl, receiptProof(verdict, ctx.outputs(), seal.receipt_sha256 ?? null)); // no template: today's body, byte-identical
   writeFileSync(bodyFile, withAiMarker(withSealRoute(shaped, process.env, seal), aiMarkerLine({ runId: ctx.runId, provider: ctx.provider, model: ctx.model })) + intentSection(ctx.outputs().plan) + specPrLine(process.env) + triagePrLine(ctx.outputs().intake) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + link + stackSection(process.env, base, link !== "", ctx.repoDir) + (ctx.handoffMd ?? ""), "utf8");
-  const title = prTitle(verdict, ctx.runDir, String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? "")); // PR-FIRST-1 prefix, FireLater#21 wording
+  const title = prTitle(verdict, ctx.runDir, String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? ""), failing); // PR-FIRST-1 prefix, FireLater#21 wording, FAILED-PR check label
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
   const env = pushEnv(ctx.repoDir, pinnedOrigin); opts.onSpawnEnv?.(env);
   const pr = runOnce({ dir: ctx.runDir, key: idempotencyKey("pr", ctx.runId, ctx.branch), keep: (r) => r.ok, post: () => runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath, gitlabScriptPath: opts.gitlabPushScriptPath, env }) }); // P12-36: push-pr reuses an existing PR, so a pending replay is duplicate-safe
@@ -149,7 +164,9 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   ctx.emit("pr.opened", "pr", { url, draft, existing });
   const headSha = safeGit(ctx.repoDir, ["rev-parse", "HEAD"]).trim();
   const notProvenOut: string[] = [];
-  if (localOk) {
+  if (verdict === "FAILED") {
+    notProvenOut.push("commit status loki/deep-verify not set (a FAILED run gets no deep verify)"); // FAILED-PR: never a pending status nothing will ever resolve
+  } else if (localOk) {
     // A local bare origin (the eval harness) has no commit status API.
     notProvenOut.push("commit status loki/deep-verify not set (local origin)");
   } else if (isGitlabOrigin(pinnedOrigin)) { notProvenOut.push("commit status loki/deep-verify not set (gitlab origin)"); } else if (SHA_RE.test(headSha)) { // engine10-push-gitlab.sh has no status mode; a GitLab sha never reaches the GitHub status call
@@ -167,7 +184,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   }); // the same items as the PR body (no new exposure), plus this stage's own commit-status misses
   const commentMiss = postReceiptComment({ scriptPath, env, runDir: ctx.runDir, url, timeoutMs: prChildTimeoutMs(), comment: receiptComment });
   if (commentMiss) notProvenOut.push(commentMiss);
-  await (await import("../../integrations/writeback.ts")).writeBack({ phase: "done", verdict, prUrl: url, receiptSha256: seal.receipt_sha256 ?? null, task: String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? "") }); // B6: opt-in, never throws
+  await (await import("../../integrations/writeback.ts")).writeBack({ phase: verdict === "FAILED" ? "failed" : "done", ...(verdict === "FAILED" ? { reason: `failing: ${failing.join(", ") || "see the receipt"}` } : {}), verdict, prUrl: url, receiptSha256: seal.receipt_sha256 ?? null, task: String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? "") }); // B6: opt-in, never throws
   return { status: "completed", data: { pr_url: url, draft, existing, ...(notProvenOut.length ? { not_proven: notProvenOut } : {}) } };
 }
 export const stage: Stage = {

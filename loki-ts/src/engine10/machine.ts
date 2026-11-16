@@ -5,7 +5,7 @@ import { noteRegenerated, regenDropOn } from "../e10ext/commit_filter.ts";
 import { hooks } from "./hooks.ts"; import { cascadeV0On, wallConcurrent } from "../util/wall_knobs.ts"; import { attemptModel, CASCADE_LEAD, cascadeWallTail, wallFailedOf } from "../features/attempts.ts"; import { wallEnabled } from "./sizing.ts";
 import { safeGit, commitHookBypassOn, treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { assumptionOf, consultAvailable, neverStopActive, readConsults, type NeverStopRecord } from "../features/opus_consult.ts";
-import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
+import { rerunOnQuota, sessionKind, usageLimitOf } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./failures.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE, issueRunBrief } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, isClean, MIN_ATTEMPT_WINDOW_S, runExtraAttempts, signalNotProven, type AttemptSignal } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
@@ -37,9 +37,16 @@ export interface MachineOptions {
 export interface MachineResult {
   outputs: Partial<Record<StageName, Obj>>;
   capHit: boolean;
-  /** Why the run ended early: "intake failed", "stalled" (a fix round left the same failures), "fatal:<auth|quota_exhausted>". */
+  /** Why the run ended early: "intake failed", "stalled" (a fix round left the same failures), "fatal:<auth|quota_exhausted>", USAGE_LIMIT_STOP. */
   stopped: string | null;
+  /** USAGE-LIMIT: set with stopped = USAGE_LIMIT_STOP; the stage whose session hit the limit, the provider's line and the reset it named. */
+  usageLimit?: UsageLimitHit;
 }
+/** USAGE-LIMIT: a session ended on a plan or account usage limit. The run stops there: the cut stage records no result (stage.failed, never a
+ *  stage.completed, so no fix round or attempt is counted), commit and seal never run, and the supervisor closes the run as a resumable stop. */
+export const USAGE_LIMIT_STOP = "usage_limit";
+export interface UsageLimitHit { stage: string; line: string; resets: string | null }
+class UsageLimitCut extends Error { constructor() { super("usage limit"); } }
 /** Dynamically imports an optional module. Absent file: null. A present file that fails to load throws. */
 export async function optional<T = Record<string, unknown>>(path: string): Promise<T | null> {
   const abs = isAbsolute(path) ? path : join(import.meta.dir, path);
@@ -120,6 +127,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   const outputs: Partial<Record<StageName, Obj>> = {};
   const partials: Partial<Record<StageName, Obj>> = {}; // latest evidence a running stage published (verify), kept if the stage is stopped
   let capHit = false, fatal: string | null = null; if (opts.restored) Object.assign(outputs, opts.restored);
+  let limited: UsageLimitHit | null = null; const limitCtl = new AbortController(); // USAGE-LIMIT: the first limit hit; aborting limitCtl cuts every running stage
   const startMs = opts.startedAtMs ?? ctx.clock.now();
   if (ctx.startedAtMs === undefined) ctx.startedAtMs = startMs;
   const timeline: NonNullable<typeof ctx.timeline> = ctx.timeline ??= [], intentRevs = ctx.intentRevisions ??= [];
@@ -130,12 +138,15 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   const withTimeNote = (brief: string, limitS: number): string => brief.endsWith(FINISH_LINE) ? `${brief.slice(0, -FINISH_LINE.length)}${timeBudgetNote(limitS)}\n\n${FINISH_LINE}` : `${brief}\n\n${timeBudgetNote(limitS)}`;
   const startedIds = new Set<string>(); // TEN-COST-11 r3: every session this run started, whatever its stage later returned; seal unions these into the cost read so a killed or failed stage's spend is never lost
   const sessions = { run: async (o0: Parameters<typeof ctx.sessions.run>[0]) => {
+    if (limited) return { exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true }; // USAGE-LIMIT: no session starts after a limit
     startedIds.add(o0.iterationId);
     const n0 = intentRevs.length, o = withSteer(o0, ctx.repoDir, intentRevs); // operator steer (.loki/HUMAN_INPUT.md), consumed once
     if (intentRevs.length > n0) ctx.emit("intent.revised", o.stage, { revisions: intentRevs }); // P12-07h will seed ctx from these on re-entry; durable in events.jsonl
     const left = implementStartMs === null ? Infinity : Math.max(1, implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000), imp = o.stage === "implement" ? { ...o, limitS: Math.min(Math.max(o.limitS, implementBudgetS), left) } : o, r = await rerunOnQuota(() => ctx.sessions.run(imp.stage === "implement" && typeof imp.brief === "string" && imp.limitS > 0 && !issueRunBrief(ctx.provider, outputs.intake?.source) ? { ...imp, brief: withTimeNote(imp.brief, imp.limitS) } : imp), sessionKind, ctx.clock, imp.signal, capAtMs, () => ctx.overCap?.() === true); // FC-21 (c): the time note goes after the byte-stable prefix and body; FC-21b A2: a resumed session gets only the budget left, and the note sits BEFORE the closing FINISH_LINE
     const k = r.exit === 0 ? null : sessionKind(r as { exit: number; stderrTail?: string }); // P12-09: quota waits and reruns inside rerunOnQuota; it is fatal only if no cap ended the wait
     if (k === "auth" || (k === "quota_exhausted" && !capReached())) fatal ??= `fatal:${k}`; if (ctx.overCap?.() || (k === "quota_exhausted" && capReached())) capCtl.abort(); // D60-5: dollar cap reached, stop the running stage too
+    const lim = k === "usage_limit" ? usageLimitOf(r as { exit: number | null; killed?: boolean; stderrTail?: string }) : null;
+    if (lim && !limited) { limited = { stage: o.stage, ...lim }; limitCtl.abort(); } // USAGE-LIMIT: not a failure of the stage; the run stops here
     return r;
   } };
   const sctx: MachineRunContext = { ...ctx, sessions, implementLeftS: () => implementStartMs === null ? Infinity : implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000, outputs: () => ({ ...outputs }), capHit: () => capHit, sessionIds: () => [...startedIds], partial: (n, d) => { partials[n] = d; } };
@@ -162,6 +173,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   const verifyLimitS = (floorS: number): number => Math.max(floorS, Math.floor(softCapS(ctx.capS) - elapsedS() - VERIFY_RESERVE_S)); // verify gets the run budget left too, so the checks that prove the task are not cut at a fixed 120s; the soft cap still stops it
   /** Runs one stage; returns its result, or null when it was skipped. */
   const runStage = async (name: StageName, underCap: boolean): Promise<StageResult | null> => {
+    if (limited) throw new UsageLimitCut(); // USAGE-LIMIT: nothing runs after a limit, the tail (commit, seal) included
     const st = await load(name);
     if (!st) {
       ctx.emit("stage.skipped", name, { reason: "module not present" });
@@ -174,10 +186,11 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     const dur = (): number => (ctx.clock.now() - t0) / 1000;
     const snapBefore = TREE_STAGES.has(name) || (name === "verify" && regenDropOn()) ? treeSnapshot(ctx.repoDir) : null; // RD: verify too, so a file only a check rewrote is known
     const ctl = new AbortController();
-    let why: "limit" | "cap" | null = null;
-    const kill = (w: "limit" | "cap"): void => { if (!why) { why = w; ctl.abort(); } };
+    let why: "limit" | "cap" | "usage" | null = null;
+    const kill = (w: "limit" | "cap" | "usage"): void => { if (!why) { why = w; ctl.abort(); } };
     const limitTimer = setTimeout(() => kill("limit"), limitS * 1000);
-    const onCap = (): void => kill("cap");
+    const onCap = (): void => kill("cap"), onUsage = (): void => kill("usage");
+    limitCtl.signal.addEventListener("abort", onUsage);
     if (underCap) {
       if (capCtl.signal.aborted) onCap();
       else capCtl.signal.addEventListener("abort", onCap);
@@ -194,8 +207,9 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       r = { status: "failed", data: {}, reason: err instanceof Error ? err.message : String(err) };
     } finally {
       clearTimeout(limitTimer);
-      capCtl.signal.removeEventListener("abort", onCap);
+      capCtl.signal.removeEventListener("abort", onCap); limitCtl.signal.removeEventListener("abort", onUsage);
     }
+    if (limited) why = "usage" as "limit" | "cap" | "usage"; // a stage that settled after its session hit the limit is cut too: its result is never kept
     if (why) {
       // Bounded grace so a killed stage is not still running when commit starts.
       if (why === "cap") markCap(name);
@@ -208,6 +222,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         ]);
         clearTimeout(graceTimer);
       }
+      if (why === "usage") { const hit = limited as UsageLimitHit | null; ctx.emit("stage.failed", name, { duration_s: dur(), reason: `usage limit: ${hit?.line ?? "reached"}`, usage_limit: true }); timeline.push({ stage: name, startMs: t0, endMs: ctx.clock.now() }); throw new UsageLimitCut(); } // no outputs[name], no fix round, no killed-implement record: resume reruns this stage
       r = { status: "failed", data: {}, reason: why, killed: true };
       const kept = name === "verify" ? (settled?.status === "completed" ? settled.data : partials.verify) : undefined;
       if (kept) { const prev = outputs.verify; outputs.verify = { ...kept, failures_grouped: stillFailing(prev?.failures_grouped, kept.checks), holdout_failed: prev?.holdout_failed ?? 0, not_proven: [...(Array.isArray(kept.not_proven) ? kept.not_proven : []), VERIFY_STOPPED_NOTE[why]], stopped_at: why, duration_s: dur() }; } // the checks that ran stay in the receipt; the note keeps the verdict below VERIFIED; the fix loop reads the earlier groups minus those the stopped verify saw pass
@@ -347,7 +362,9 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       else if (wallJob && todo.includes("implement") && !(await (wallJob as WallJob).snap)) { const j = wallJob as WallJob, t0 = j.t0; abortWall(); ctx.emit("stage.failed", "wall", { duration_s: (ctx.clock.now() - t0) / 1000, reason: "wall base snapshot unavailable: nothing installed" }); } // the base copy must be complete before implement edits the tree; no copy means no Wall
       if (wallJob && todo[0] === "verify") await installWallJob(); // FC-VACUOUS-WALL-GREEN: a Wall green on base no longer ends the run here
       if (todo[0] === "verify" && !outputs.verify && !jumped) scaffoldNow(); // LOKI_E10_SCAFFOLD: the deterministic release-note fragment, before the first verify so verify and the commit see it
-      const results = await Promise.all(todo.map((n) => runStage(n, !isTail)));
+      const all = await Promise.allSettled(todo.map((n) => runStage(n, !isTail))), cut = all.find((x) => x.status === "rejected"); // allSettled: a parallel stage cut by a usage limit still settles before the run stops
+      if (cut) throw (cut as PromiseRejectedResult).reason;
+      const results = all.map((x) => (x as PromiseFulfilledResult<StageResult | null>).value);
       if (todo[0] === "intake" && results[0]?.status === "failed" && !capHit) {
         return { outputs, capHit, stopped: "intake failed" };
       }
@@ -456,6 +473,9 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       }
     }
     return { outputs, capHit, stopped };
+  } catch (err) {
+    if (err instanceof UsageLimitCut && limited) return { outputs, capHit, stopped: USAGE_LIMIT_STOP, usageLimit: limited };
+    throw err;
   } finally {
     abortWall();
     clearTimeout(capTimer); removeHoldout(ctx.runId, ctx.repoDir);

@@ -117,9 +117,27 @@ export function sdkAuthCause(text: string): string | null {
 export const QUOTA_WAIT_BASE_MS = 30_000;
 export const QUOTA_WAIT_MAX_MS = 300_000;
 
-/** "auth" | "quota_exhausted" | other classifyFailure reason for a failed session; null on success. */
+// USAGE-LIMIT: a plan or account usage limit (the weekly, daily or 5-hour window) ends a session with no work done and clears only at the reset
+// the provider names. Read from provider-written text only: the stream parser's own `[sdk-loop error: usage limit...]` line (written from the
+// structural rate_limit frame), or a provider CLI's stderr line in the provider's own wording. Never a retry: rerunOnQuota keys on quota_exhausted.
+const USAGE_MARK = /^\[sdk-loop error: usage limit(?: \([a-z_ ]+\))?(?:: ([^\n]*))?\]$/gm;
+const USAGE_TEXT = /\b(?:you(?:'|’)ve hit your (?:[a-z0-9-]+ )?limit|(?:claude )?(?:ai )?usage limit reached)\b/i;
+const RESETS = /\bresets?\s+(?:at\s+)?(.{1,80}?)\s*$/i;
+/** USAGE-LIMIT: the provider's limit line (redacted, at most 200 characters) and the reset it names ("Nov 18 at 12pm (America/New_York)", or null), for a failed session that hit a usage limit; null otherwise.
+ *  The marker carrying the provider's own wording wins over the rate_limit_event marker, which only carries the reset time. */
+export function usageLimitOf(r: { exit: number | null; killed?: boolean; stderrTail?: string }): { line: string; resets: string | null } | null {
+  if (r.exit === 0 || r.exit === null || r.killed) return null;
+  const t = r.stderrTail ?? "", marks = [...t.matchAll(USAGE_MARK)].map((m) => (m[1] ?? "").trim());
+  const raw = marks.length ? (marks.find((x) => USAGE_TEXT.test(x)) ?? marks.find((x) => x !== "") ?? "usage limit reached") : t.split("\n").find((l) => USAGE_TEXT.test(l));
+  if (raw === undefined) return null;
+  const clean = (s: string): string => redactSecrets(s.replace(/\s+/g, " ").trim()).slice(0, 200), line = clean(/^resets?\b/i.test(raw) ? `usage limit reached, ${raw}` : raw);
+  const reset = RESETS.exec(line) ?? marks.map((x) => RESETS.exec(clean(x))).find((x) => x !== null) ?? null;
+  return { line, resets: reset ? reset[1]! : null };
+}
+/** "auth" | "quota_exhausted" | "usage_limit" | other classifyFailure reason for a failed session; null on success. */
 export function sessionKind(r: { exit: number | null; stderrTail?: string }): string | null {
   if (r.exit === 0) return null;
+  if (usageLimitOf(r)) return "usage_limit"; // before SDK_ERR: a limit line quoting "credit balance" is still a limit, never a quota wait
   const t = r.stderrTail ?? "", sdk = SDK_ERR.exec(t);
   return sdk ? (sdk[1] ? "auth" : "quota_exhausted") : classifyFailure(t).reason;
 }
