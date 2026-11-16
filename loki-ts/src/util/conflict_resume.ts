@@ -21,7 +21,7 @@ import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
 import { editShapeBrief, editShapeSites, precedenceBrief, precedenceCheckEnabled } from "./edit_shape.ts";
 import { isTestFile } from "./test_file_text.ts";
 import { extractSpecAtoms, resolveSites } from "../features/exec_spec.ts";
-import { FINISH_LINE, taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
+import { FINISH_LINE, ISSUE_FINISH_LINE, issueRunBrief, taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
 import type { ReadOnlyFile } from "../engine10/stages/implement.ts";
 
 // In-place answer to a BLOCKED run (`loki answer <run-id> "<text>"`): the supervisor appends run.resumed with answered:true and the answer, and the
@@ -163,12 +163,12 @@ export function outstandingOf(summary: string | null | undefined): string {
   return lines.length > 400 ? `...${lines.slice(-397)}` : lines;
 }
 /** The resume brief: the summary request is over and was not the task, the reply's own outstanding list, plan-scope files not in the tree, the finish rule (FINISH_LINE, word for word). */
-export function continueBrief(outstanding: string, missing: readonly string[]): string {
+export function continueBrief(outstanding: string, missing: readonly string[], finish: string = FINISH_LINE): string {
   return [
     "Any earlier request to stop and write a text-only summary is over; it was not the task. The task is the one this session started with, and it is not finished: your last reply ended without a finish line.",
     `Your last reply ended with: "${outstanding || "(no text)"}". Do that outstanding work now, with tool calls.`,
     ...(missing.length ? [`These files from the plan scope are not in the tree yet: ${missing.slice(0, 20).join(", ")}.`] : []),
-    FINISH_LINE,
+    finish, // FINISH_LINE, or ISSUE_FINISH_LINE on an issue run on claude (the rule that session was given)
   ].join("\n\n");
 }
 export type ContinueEnd = "finish line" | "continue off" | "count cap" | "dollar line" | "time" | "tree unchanged" | "tree unknown" | "killed or error" | "aborted";
@@ -183,7 +183,7 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
     if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) { ended = "time"; break; }
     spent = o.spentUsd(); if (spent !== null && spent >= usdLine) { ended = "dollar line"; break; }
     const before = o.fingerprint();
-    const r = await resumeWith(ctx, base, cur, continueBrief(outstanding, missing()), `-k${n}`);
+    const r = await resumeWith(ctx, base, cur, continueBrief(outstanding, missing(), issueRunBrief(ctx.provider, ctx.outputs?.()?.intake?.source, env) ? ISSUE_FINISH_LINE : FINISH_LINE), `-k${n}`);
     ids.push(r.iterationId); base = { ...base, iterationId: r.iterationId };
     ctx.emit("s1b.resumed", "implement", { resume: n, iteration_id: r.iterationId, compactions: o.compactions([r.iterationId]), finish_line: r.reply.markers.finishLine ?? null });
     cur = { ...r.reply, durationS: cur.durationS + r.reply.durationS };

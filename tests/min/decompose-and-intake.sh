@@ -365,18 +365,6 @@ printf '%s\n' "$OUT" | grep '^loki: acme/search#24' | sed 's/^/    rerun e2e: /'
     && ok "rerun guard e2e: a rerun of #24 with an open Loki PR exits 2 naming it, starts no model session and no engine run, and never writes to the PR" \
     || { bad "rerun guard e2e: rc $RC, stub calls $(wc -l < "$T/rerun-e2e-stub.log" 2>/dev/null), gh writes $(cat "$T/rerun-gh-writes.log" 2>/dev/null)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
 
-# --- F5 prove by running: an issue run on claude carries the block in its implement brief (per-task part); the unit rule covers a text goal, opencode and the opt-out
-WBRIEF="$(cat "$(dirname "${WEV:-/nonexistent}")/implement-brief.txt" 2>/dev/null)"
-F5U="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
-const c = await import(process.env.ROOT + "/loki-ts/src/e10ext/context.ts");
-const b = (p, s, e = {}) => c.proveByRunningBlock(p, s, e) === c.PROVE_BY_RUNNING_BLOCK ? "block" : c.proveByRunningBlock(p, s, e) === "" ? "none" : "other";
-console.log([b("claude", "issue"), b("claude", "text"), b("opencode", "issue"), b("claude", "issue", { LOKI_E10_PROVE_BY_RUNNING: "0" }), c.FIXED_RULES.includes(c.PROVE_BY_RUNNING_BLOCK.slice(0, 40)) ? "in-prefix" : "not-in-prefix"].join(" "));
-' 2>&1)"
-grep -qF 'Before you finish, prove the change works by running it, not by reading it.' <<< "$WBRIEF" && grep -qF 'stop it by that recorded id before you finish; never stop or signal any process you did not start' <<< "$WBRIEF" \
-    && [ "$F5U" = "block none none none not-in-prefix" ] \
-    && ok "F5: the issue run's implement brief carries the prove-by-running block; a text goal, opencode and LOKI_E10_PROVE_BY_RUNNING=0 get none, and the fixed prefix does not hold it" \
-    || bad "F5: issue brief block $(grep -cF 'prove the change works by running it' <<< "$WBRIEF"), unit '$F5U' (want block none none none not-in-prefix)"
-
 # --- whole-first is for Sonnet and stronger models: a run that implements on Haiku keeps the split; LOKI_ISSUE_WHOLE_FIRST=1 forces whole on Haiku --
 HAIKU_M="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const { issueWholeFirst } = await import(process.env.ROOT + "/loki-ts/src/features/decompose.ts");
@@ -416,6 +404,77 @@ echo "    model scope e2e: haiku pin $HK1, sonnet pin $HK2, haiku pin with =1 $H
 [ "$HK1" = "yes/1" ] && ok "whole-first model scope e2e: --session-model haiku on the epic splits as before (one epic record)" || bad "whole-first: --session-model haiku gave split/epic $HK1 (want yes/1)"
 [ "$HK2" = "no/0" ] && ok "whole-first model scope e2e: --session-model sonnet runs the epic whole" || bad "whole-first: --session-model sonnet gave split/epic $HK2 (want no/0)"
 [ "$HK3" = "no/0" ] && ok "whole-first model scope e2e: LOKI_ISSUE_WHOLE_FIRST=1 runs the epic whole on Haiku" || bad "whole-first: =1 on Haiku gave split/epic $HK3 (want no/0)"
+
+# --- candidate 1: an issue run on claude gets its own rules constant, the prove-by-running block, the take-the-time and deliver-each lines, no time sentence,
+# and the small environment card; a text goal, opencode and LOKI_E10_PROVE_BY_RUNNING=0 keep today's brief. Prompts are what the stub session received.
+c1_run() { # c1_run <name> <repo setup: none|pg> <start args...> -- [VAR=value...]: one stub run; sets C1P (implement prompt), C1PATH (implement PATH), C1PLANPATH, C1RUN
+    local name="$1" setup="$2" d="$T/c1-$1"; shift 2; local args=(); while [ "$1" != "--" ]; do args+=("$1"); shift; done; shift
+    make_repo "$d" 0
+    if [ "$setup" = pg ]; then printf '{ "name": "svc", "dependencies": { "pg": "^8.11.0" } }\n' > "$d/package.json"; git -C "$d" add package.json; git -C "$d" commit -q -m "pg dependency"; fi
+    rm -f "$d.prompt".* "$d.path"
+    run_loki_env "$d" "$d.stub.log" E2E_STUB_MODE=done E2E_STUB_PROMPT_LOG="$d.prompt" E2E_STUB_PATH_LOG="$d.path" LOKI_E10_ENV_CARD_ROOTS="$T/fake-opt" "$@" -- "${args[@]}"
+    C1P="$(cat "$d.prompt.implement0" 2>/dev/null)"; C1PATH="$(sed -n 's/^implement //p' "$d.path" 2>/dev/null | head -1)"; C1PLANPATH="$(sed -n 's/^plan //p' "$d.path" 2>/dev/null | head -1)"
+    C1RUN="$(dirname "$(ls "$d"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"
+}
+mkdir -p "$T/fake-opt/postgresql@14/bin" "$T/fake-opt/postgresql@15/bin" "$T/fake-opt/redis/bin"
+for b in initdb pg_ctl postgres; do printf '#!/bin/sh\nexit 0\n' > "$T/fake-opt/postgresql@15/bin/$b"; chmod +x "$T/fake-opt/postgresql@15/bin/$b"; done
+printf '#!/bin/sh\nexit 0\n' > "$T/fake-opt/postgresql@14/bin/pg_ctl"; chmod +x "$T/fake-opt/postgresql@14/bin/pg_ctl"
+printf '#!/bin/sh\nexit 0\n' > "$T/fake-opt/redis/bin/redis-server"; chmod +x "$T/fake-opt/redis/bin/redis-server"
+c1_run issue-pg pg start acme/search#24 --no-pr --max-cost 5 --
+ISSUE_P="$C1P" ISSUE_PATH="$C1PATH" ISSUE_PLANPATH="$C1PLANPATH" ISSUE_RUN="$C1RUN"
+c1_has() { grep -qF -- "$2" <<< "$1"; }
+CARD_LINE="Available on this machine: postgres 15 (initdb, pg_ctl, postgres) in $T/fake-opt/postgresql@15/bin. Their directories are on your PATH."
+c1_has "$ISSUE_P" "- You may start this repository's own services and throwaway dependencies to exercise your change. Record the process id of everything you start and stop each one by that id before you finish. Never stop or signal a process you did not start." \
+    && ! c1_has "$ISSUE_P" "- Never leave a long-lived server running." && ! c1_has "$ISSUE_P" "- Never kill processes." \
+    && c1_has "$ISSUE_P" "or LOKI_UNFINISHED: <what is left> when something the issue lists is not delivered. Use LOKI_SPEC_CONFLICT only when a test in the repository contradicts the task." \
+    && c1_has "$ISSUE_P" "- Run the impacted tests named below" \
+    && ok "candidate 1: the issue run's rules allow starting the repository's own services (stopped by recorded id), drop the two old process rules, keep the targeted-tests rule and add the LOKI_UNFINISHED ending" \
+    || bad "candidate 1: issue-run rules wrong (prompt $(wc -c <<< "$ISSUE_P") bytes)"
+c1_has "$ISSUE_P" "Never use a fixed port number: pick a port you have just checked is free, or a unix socket inside your temporary directory" \
+    && c1_has "$ISSUE_P" "You may say something cannot be run only after you have tried: list each command you tried to find or start it and what it printed. A missing program on PATH is not enough; look where this machine installs it." \
+    && ! c1_has "$ISSUE_P" "If something cannot be run here, say what and why." && ! c1_has "$ISSUE_P" "For this proof the process rules above read as" \
+    && c1_has "$ISSUE_P" "take the time the work needs and finish every item the issue asks for" \
+    && c1_has "$ISSUE_P" "This issue lists several things to deliver. Deliver each one. If one is left undone, finish with LOKI_UNFINISHED and say which." \
+    && ! c1_has "$ISSUE_P" "Time budget: about" \
+    && ok "candidate 1: the issue brief has the port rule, the tried-first rule, the take-the-time and deliver-each lines, no reconciling sentences and no time-budget sentence" \
+    || bad "candidate 1: issue-run block lines wrong"
+c1_has "$ISSUE_P" "$CARD_LINE" && [ "$ISSUE_PATH" = "$ISSUE_PLANPATH:$T/fake-opt/postgresql@15/bin" ] && [ -f "$ISSUE_RUN/env-card.json" ] && grep -q '"type":"env.card"' "$ISSUE_RUN/events.jsonl" \
+    && ok "candidate 1 card: a repo needing postgres with a keg off PATH gets the newest keg's line in the brief and its bin appended (not prepended) to the implement session's PATH only; env-card.json and one event" \
+    || bad "candidate 1 card: line $(grep -c 'Available on this machine' <<< "$ISSUE_P"), implement PATH tail '${ISSUE_PATH##*:}', plan PATH equal to implement head: $([ "${ISSUE_PATH%:*}" = "$ISSUE_PLANPATH" ] && echo yes || echo no)"
+c1_run issue-none none start acme/search#24 --no-pr --max-cost 5 --
+c1_has "$C1P" "This issue lists several things to deliver." && ! c1_has "$C1P" "Available on this machine" && [ "$C1PATH" = "$C1PLANPATH" ] \
+    && ok "candidate 1 card: an issue run on a repo that needs no service gets no card line and an unchanged PATH" || bad "candidate 1 card: repo needing nothing got a card or a PATH change"
+c1_run text-pg pg "add a multiply(a, b) function to calc.ts" --no-pr --
+c1_has "$C1P" "- Never kill processes." && c1_has "$C1P" "Time budget: about" && ! c1_has "$C1P" "LOKI_UNFINISHED" && ! c1_has "$C1P" "prove the change works by running it" && ! c1_has "$C1P" "Available on this machine" && [ -n "$C1PATH" ] && ! c1_has "$C1PATH" "$T/fake-opt" \
+    && ok "candidate 1: a text goal keeps today's rules, finish line and time sentence, gets no block and no card, and no keg directory reaches its PATH" \
+    || bad "candidate 1: the text goal changed: old rule $(grep -c 'Never kill processes' <<< "$C1P"), time $(grep -c 'Time budget' <<< "$C1P"), UNFINISHED $(grep -c LOKI_UNFINISHED <<< "$C1P"), block $(grep -c 'prove the change works' <<< "$C1P"), card $(grep -c 'Available on this' <<< "$C1P"), keg on PATH $(grep -c fake-opt <<< "$C1PATH"), PATH set $([ -n "$C1PATH" ] && echo yes || echo no)"
+c1_run issue-off pg start acme/search#24 --no-pr --max-cost 5 -- LOKI_E10_PROVE_BY_RUNNING=0
+c1_has "$C1P" "- Never kill processes." && c1_has "$C1P" "Time budget: about" && ! c1_has "$C1P" "LOKI_UNFINISHED" && ! c1_has "$C1P" "Available on this machine" && [ "$C1PATH" = "$C1PLANPATH" ] \
+    && ok "candidate 1: LOKI_E10_PROVE_BY_RUNNING=0 restores today's issue-run rules, time sentence and PATH, with no block and no card" || bad "candidate 1: the opt-out left a candidate-1 change"
+c1_run issue-cardoff pg start acme/search#24 --no-pr --max-cost 5 -- LOKI_E10_ENV_CARD=0
+c1_has "$C1P" "This issue lists several things to deliver." && ! c1_has "$C1P" "Available on this machine" && [ "$C1PATH" = "$C1PLANPATH" ] \
+    && ok "candidate 1 card: LOKI_E10_ENV_CARD=0 turns off only the card" || bad "candidate 1 card: LOKI_E10_ENV_CARD=0 did not turn the card off"
+# The path a real user hits most: the session cannot do an item, writes LOKI_UNFINISHED, is resumed once, changes nothing. One PR, PARTIAL, the diff committed,
+# and the session's own what-is-left text on the receipt and in the PR body.
+UF="$T/c1-unfinished"; make_repo "$UF" 0; git init -q --bare "$UF-origin.git"; git -C "$UF" remote add origin "$UF-origin.git"; git -C "$UF" push -q origin main
+run_loki_env "$UF" "$UF.stub.log" E2E_STUB_MODE=done E2E_STUB_NOFINISH=unfinished -- start acme/search#24 --max-cost 5
+UFRUN="$(dirname "$(ls "$UF"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"
+UFPR="$(grep -cE '^PR: +local:///.+#loki/' <<< "$OUT")"
+UFNP="$(python3 -I -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1])).get("not_proven") or []))' "$UFRUN/receipt.json" 2>/dev/null)"
+UFBODY="$(cat "$UFRUN/pr-body.md" 2>/dev/null)"
+[ "$UFPR" = 1 ] && grep -Eq '^Outcome: +PARTIAL' <<< "$OUT" && grep -qF "LOKI_UNFINISHED: the docs for multiply are not written" <<< "$UFNP" && grep -qF "LOKI_UNFINISHED: the docs for multiply are not written" <<< "$UFBODY" \
+    && [ -n "$(git --git-dir="$UF-origin.git" log --format=%H main..loki/"$(basename "$UFRUN")" 2>/dev/null)" ] \
+    && ok "candidate 1: an issue run whose session stays LOKI_UNFINISHED with an unchanged tree seals PARTIAL with one PR, the diff pushed, and its what-is-left text in the receipt and the PR body" \
+    || { bad "candidate 1 LOKI_UNFINISHED issue run: PR lines $UFPR, outcome $(grep '^Outcome:' <<< "$OUT"), receipt line $(grep -c LOKI_UNFINISHED <<< "$UFNP"), PR body line $(grep -c LOKI_UNFINISHED <<< "$UFBODY")"; tail -8 <<< "$OUT" | sed 's/^/    | /'; }
+C1U="$(ROOT="$ROOT" T="$T" bun --no-env-file --config=/dev/null -e '
+const st = await import(process.env.ROOT + "/loki-ts/src/util/stack_tools.ts"), c = await import(process.env.ROOT + "/loki-ts/src/e10ext/context.ts");
+const evs = [], ctx = (repoDir) => ({ repoDir, runDir: process.env.T + "/c1-unit-run", emit: (t) => evs.push(t) });
+const env = { PATH: "/usr/bin:/bin", LOKI_E10_ENV_CARD_ROOTS: process.env.T + "/fake-opt" };
+const errCard = st.envCard(ctx(process.env.T + "/no-such-repo"), env);
+const onPath = st.detectServiceBinaries(["redis"], { PATH: process.env.T + "/fake-opt/redis/bin" }, [process.env.T + "/fake-opt"]);
+console.log([errCard === null, onPath.length === 1 && onPath[0].on_path === true && st.envCardLine(onPath) === null, c.proveByRunningBlock("opencode", "issue") === "", c.proveByRunningBlock("claude", "text") === "", c.fixedRules({}, false) === c.FIXED_RULES].join(" "));
+' 2>&1)"
+[ "$C1U" = "true true true true true" ] && ok "candidate 1 unit: a detection error gives no card and never throws; a service already on PATH adds no line; opencode and a text goal get no block; non-issue rules are today's constant" || bad "candidate 1 unit gave: $C1U"
 
 # --- split repair: a list detail is repaired, any other refusal is re-asked once with the exact error ------------------------
 # FireLater#24 (v11.116.0): one 520-character acceptance criterion refused the whole split and the epic ran as one 413 s session.

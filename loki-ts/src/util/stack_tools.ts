@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RunnerName } from "../engine10/types.ts";
+import type { RunContext, RunnerName } from "../engine10/types.ts";
 import { lokiYamlTexts, yamlKey } from "./yaml_key.ts";
 
 /** The tool each build-tool runner needs. A repo wrapper (mvnw, gradlew) counts for maven and gradle; dotnet has none. `install` is what the receipt tells the user. */
@@ -87,4 +87,73 @@ export function gradleInitScript(): string {
   const dir = join(tmpdir(), "loki-gradle-init"), p = join(dir, "test-logging.init.gradle");
   try { if (readFileSync(p, "utf8") !== GRADLE_INIT) throw new Error("stale"); } catch { try { mkdirSync(dir, { recursive: true }); writeFileSync(p, GRADLE_INIT); } catch { /* unwritable temp dir: gradle then runs without it and the count is unmeasured, never a pass */ } }
   return p;
+}
+
+// Candidate 1 small environment card (LOKI_E10_ENV_CARD, default on; 0/off/false/no opts out; issue runs on claude only, see e10ext/context.ts issueRunBrief).
+// FireLater#24: two sessions ran `which psql pg_ctl postgres redis-server`, found nothing, and never started the database although Postgres 15 was installed as a
+// Homebrew keg-only package (not on PATH). Deterministic, no model call, no network; any error gives no card. It never reads or stores env values.
+export type ServiceName = "postgres" | "redis" | "mysql" | "mongodb";
+const SERVICE_BINS: Record<ServiceName, string[]> = { postgres: ["initdb", "pg_ctl", "postgres"], redis: ["redis-server"], mysql: ["mysqld"], mongodb: ["mongod"] };
+const SERVICE_NEED: Record<ServiceName, RegExp> = { postgres: /\b(?:pg|postgres|postgresql|psycopg2?|asyncpg|pgx)\b/i, redis: /\b(?:redis|ioredis)\b/i, mysql: /\b(?:mysql2?|mariadb)\b/i, mongodb: /\b(?:mongodb|mongoose)\b/i };
+const KEG_PREFIX: Record<ServiceName, RegExp> = { postgres: /^postgresql/, redis: /^redis/, mysql: /^(?:mysql|mariadb)/, mongodb: /^mongodb/ };
+const NEED_FILES = /^(?:package\.json|requirements[\w.-]*\.txt|pyproject\.toml|go\.mod|docker-compose[\w.-]*\.ya?ml|compose\.ya?ml|\.env\.example)$/;
+export interface ServiceFind { service: ServiceName; version: string | null; dir: string; binaries: string[]; on_path: boolean }
+/** The services the repository appears to need, from dependency and config files at its root and up to two directories down (node_modules and dot dirs skipped). */
+export function neededServices(repoDir: string): ServiceName[] {
+  const texts: string[] = [];
+  const walk = (dir: string, depth: number): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.isFile() && NEED_FILES.test(e.name)) texts.push(readFileSync(join(dir, e.name), "utf8").slice(0, 200_000));
+      else if (e.isDirectory() && depth < 2 && !e.name.startsWith(".") && e.name !== "node_modules" && e.name !== "vendor") walk(join(dir, e.name), depth + 1);
+    }
+  };
+  walk(repoDir, 0);
+  const all = texts.join("\n");
+  return (Object.keys(SERVICE_NEED) as ServiceName[]).filter((s) => SERVICE_NEED[s].test(all));
+}
+/** The one detection function (exported for the prove stage too): where the server binaries of each needed service live on this machine. PATH first; then, off
+ *  PATH, Homebrew kegs <root>/opt/<keg>/bin for roots /opt/homebrew and /usr/local whose keg name starts with the service's name, /usr/lib/postgresql/<v>/bin and
+ *  /Applications/Postgres.app/Contents/Versions/<v>/bin. The highest version wins. `roots` replaces those off-PATH locations (tests: LOKI_E10_ENV_CARD_ROOTS). */
+export function detectServiceBinaries(services: readonly ServiceName[], env: NodeJS.ProcessEnv = process.env, roots?: string[]): ServiceFind[] {
+  const out: ServiceFind[] = [];
+  const pathDirs = (env["PATH"] ?? "").split(":").filter(Boolean);
+  const verKey = (v: string | null): number[] => (v ?? "").split(/[^0-9]+/).filter(Boolean).map(Number);
+  const newer = (a: string | null, b: string | null): boolean => { const x = verKey(a), y = verKey(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0); } return false; };
+  for (const s of services) {
+    const bins = SERVICE_BINS[s];
+    const onPath = pathDirs.find((d) => bins.some((b) => existsSync(join(d, b))));
+    if (onPath) { out.push({ service: s, version: null, dir: onPath, binaries: bins.filter((b) => existsSync(join(onPath, b))), on_path: true }); continue; }
+    const cands: { dir: string; version: string | null }[] = [];
+    const kegRoots = roots ?? ["/opt/homebrew/opt", "/usr/local/opt"];
+    for (const r of kegRoots) if (existsSync(r)) for (const k of readdirSync(r)) if (KEG_PREFIX[s].test(k)) cands.push({ dir: join(r, k, "bin"), version: /@([\d.]+)$/.exec(k)?.[1] ?? null });
+    if (s === "postgres" && !roots) {
+      for (const [base, sub] of [["/usr/lib/postgresql", "bin"], ["/Applications/Postgres.app/Contents/Versions", "bin"]] as const) if (existsSync(base)) for (const v of readdirSync(base)) cands.push({ dir: join(base, v, sub), version: /^[\d.]+$/.test(v) ? v : null });
+    }
+    let best: { dir: string; version: string | null; have: string[] } | null = null;
+    for (const c of cands) { const have = bins.filter((b) => existsSync(join(c.dir, b))); if (have.length && (!best || newer(c.version, best.version))) best = { ...c, have }; }
+    if (best) out.push({ service: s, version: best.version, dir: best.dir, binaries: best.have, on_path: false });
+  }
+  return out;
+}
+/** The brief line for the services found off PATH, or null. */
+export function envCardLine(found: readonly ServiceFind[]): string | null {
+  const off = found.filter((f) => !f.on_path);
+  if (!off.length) return null;
+  return `Available on this machine: ${off.map((f) => `${f.service}${f.version ? ` ${f.version}` : ""} (${f.binaries.join(", ")}) in ${f.dir}`).join("; ")}. Their directories are on your PATH.`;
+}
+export const envCardOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_ENV_CARD"] ?? "").trim());
+/** The implement stage's card: the brief line and the directories to append to the implement session's PATH. Writes <runDir>/env-card.json and one env.card
+ *  event. Null when off, when nothing is needed or found off PATH, or on any error (never fails the run). */
+export function envCard(ctx: Pick<RunContext, "repoDir" | "runDir" | "emit">, env: NodeJS.ProcessEnv = process.env): { line: string; pathAppend: string[] } | null {
+  try {
+    if (!envCardOn(env)) return null;
+    const needed = neededServices(ctx.repoDir);
+    const rootsRaw = (env["LOKI_E10_ENV_CARD_ROOTS"] ?? "").trim();
+    const found = needed.length ? detectServiceBinaries(needed, env, rootsRaw ? rootsRaw.split(":").filter(Boolean) : undefined) : [];
+    const line = envCardLine(found), pathAppend = [...new Set(found.filter((f) => !f.on_path).map((f) => f.dir))];
+    mkdirSync(ctx.runDir, { recursive: true });
+    writeFileSync(join(ctx.runDir, "env-card.json"), JSON.stringify({ needed, found, path_appended: pathAppend, line }, null, 2) + "\n");
+    ctx.emit("env.card", "implement", { needed, found: found.map((f) => ({ service: f.service, version: f.version, dir: f.dir, on_path: f.on_path })), path_appended: pathAppend });
+    return line ? { line, pathAppend } : null;
+  } catch { return null; }
 }
