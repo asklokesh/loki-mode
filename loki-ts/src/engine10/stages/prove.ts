@@ -21,7 +21,7 @@ import { ISSUE_FINISH_LINE, STAGE_BUDGETS, type Obj, type RunContext, type Sessi
 
 const off = (v: string | undefined): boolean => /^(0|off|false|no)$/i.test((v ?? "").trim());
 const num = (v: string | undefined, d: number): number => { const n = Number((v ?? "").trim()); return (v ?? "").trim() !== "" && Number.isFinite(n) && n > 0 ? n : d; };
-export const proveOn = (env: NodeJS.ProcessEnv = process.env): boolean => !off(env["LOKI_E10_PROVE"]);
+export const proveOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_PROVE"] ?? "").trim()); // off by default (2026-11-16 wrap-up); LOKI_E10_PROVE=1 turns the stage on
 /** The runs the prove stage owns. Every other run (a text goal, opencode, the opt-out) never sees this stage, its notes, its budget or its receipt key. */
 export const proveScope = (provider: string, o: Partial<Record<string, Obj>>, env: NodeJS.ProcessEnv = process.env): boolean => provider === "claude" && o.intake?.source === "issue" && proveOn(env);
 /** The stage runs, and seal requires its record, when implement ended done (any other exit is already below VERIFIED). */
@@ -237,7 +237,7 @@ export async function runPass(root: string, dir: string, out: string, ids: strin
 /** How one ask reads on head after a pass. */
 export function headVerdict(p: PassResult, id: string, scriptS = scriptLimitS()): { result: AskResult; reason: string } {
   const s = p.setup, h = p.asks[id] ?? { exit: "not run", tail: "" }, last = h.tail.split(" | ").pop() ?? "";
-  if (s.exit !== 0) return { result: "not proved", reason: `setup failed (${s.exit === "timeout" ? `timed out after ${scriptS}s` : s.exit === "missing" ? "setup.sh missing" : `exit ${s.exit}`})${s.tail ? `: ${s.tail}` : ""}` };
+  if (s.exit !== 0) return { result: "not proved", reason: `environment could not be built: setup failed (${s.exit === "timeout" ? `timed out after ${scriptS}s` : s.exit === "missing" ? "setup.sh missing" : `exit ${s.exit}`})${s.tail ? `: ${s.tail}` : ""}` };
   if (h.exit === "skipped") return { result: "not proved", reason: p.skipped ?? NOT_OURS };
   if (h.exit === 0) return { result: "proved", reason: "exit 0" };
   if (h.exit === NOT_RUN_HERE_EXIT) return { result: "not run here", reason: last || "no reason printed" };

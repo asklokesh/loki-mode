@@ -504,8 +504,8 @@ pv_run() { # pv_run <name> [pr] <VAR=value...>: start acme/search#24 on the stub
     local name="$1" d="$T/pv-$1" pr=""; shift; [ "${1:-}" = pr ] && { pr=1; shift; }
     make_repo "$d" 0; PVR="$d"
     if [ -n "$pr" ]; then git init -q --bare "$d-origin.git"; git -C "$d" remote add origin "$d-origin.git"; git -C "$d" push -q origin main
-        run_loki_env "$d" "$T/pv-$name-stub.log" E2E_STUB_MODE=done E2E_STUB_PROVE_LOG="$T/pv-$name.prove.log" "$@" -- start acme/search#24 --max-cost 5
-    else run_loki_env "$d" "$T/pv-$name-stub.log" E2E_STUB_MODE=done E2E_STUB_PROVE_LOG="$T/pv-$name.prove.log" "$@" -- start acme/search#24 --no-pr --max-cost 5; fi
+        run_loki_env "$d" "$T/pv-$name-stub.log" LOKI_E10_PROVE=1 E2E_STUB_MODE=done E2E_STUB_PROVE_LOG="$T/pv-$name.prove.log" "$@" -- start acme/search#24 --max-cost 5
+    else run_loki_env "$d" "$T/pv-$name-stub.log" LOKI_E10_PROVE=1 E2E_STUB_MODE=done E2E_STUB_PROVE_LOG="$T/pv-$name.prove.log" "$@" -- start acme/search#24 --no-pr --max-cost 5; fi
     PVD="$(dirname "$(ls "$d"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"
     PVS="$(python3 -I - "$PVD" "$d" <<'PY' 2>&1
 import glob, json, sys
@@ -552,7 +552,7 @@ case "$PVS" in "verdict=PARTIAL; asks=; "*"lines=not proved: asks could not be l
 pv_run notrun E2E_STUB_PROVE=notrun
 case "$PVS" in "verdict=PARTIAL; asks=1=proved,2=not run here; "*"lines=not proved: Create advanced filter query builder: not run here: tried: initdb --version: command not found; needs a GPU to run") ok "prove: an ask whose script exits 3 reads \"not run here\" with its printed reason and keeps the run PARTIAL, never VERIFIED" ;; *) bad "prove (exit 3): $PVS" ;; esac
 pv_run setupfail E2E_STUB_PROVE=setupfail
-case "$PVS" in "verdict=PARTIAL; asks=1=not proved,2=not proved; "*"lines=not proved: Implement PostgreSQL full-text search with ranking: setup failed (exit 1): migration 042 failed"*) pv4=ok ;; *) pv4=bad ;; esac
+case "$PVS" in "verdict=PARTIAL; asks=1=not proved,2=not proved; "*"lines=not proved: Implement PostgreSQL full-text search with ranking: environment could not be built: setup failed (exit 1): migration 042 failed"*) pv4=ok ;; *) pv4=bad ;; esac
 [ "$pv4" = ok ] && [ "$(grep -c '^teardown$' "$T/pv-setupfail.prove.log" 2>/dev/null)" -ge 1 ] \
     && ok "prove: a setup.sh that fails leaves every ask not proved, the run PARTIAL, and teardown.sh still runs" || bad "prove (setup fails): $PVS; teardown runs $(grep -c '^teardown$' "$T/pv-setupfail.prove.log" 2>/dev/null)"
 pv_run basepass E2E_STUB_PROVE=basepass
@@ -601,7 +601,7 @@ case "$PVS" in "verdict=PARTIAL; asks=1=not proved,2=not proved; "*"lines=not pr
 # recorded in prove/pids. Afterwards no recorded id is alive (checked by id). A resume reuses the prover's files: no second listing or prover session.
 PVA="$T/pv-abort"; make_repo "$PVA" 0; rm -f "$T/pv-abort.mark"
 (cd "$PVA" && exec env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" \
-    E2E_STUB_LOG="$T/pv-abort-stub.log" E2E_STUB_MODE=done E2E_STUB_PROVE=abort E2E_STUB_ABORT_MARK="$T/pv-abort.mark" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" \
+    E2E_STUB_LOG="$T/pv-abort-stub.log" LOKI_E10_PROVE=1 E2E_STUB_MODE=done E2E_STUB_PROVE=abort E2E_STUB_ABORT_MARK="$T/pv-abort.mark" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" \
     bash "$ROOT/bin/loki" start acme/search#24 --no-pr --max-cost 5 </dev/null >"$T/pv-abort.out" 2>&1) &
 PVAP=$!
 for i in $(seq 1 900); do [ -s "$T/pv-abort.mark" ] && [ "$(grep -c . "$T/pv-abort.mark")" -ge 2 ] && break; sleep 0.1; done
@@ -615,7 +615,7 @@ sleep 0.5; pvlive=""; for p in $pvids; do kill -0 "$p" 2>/dev/null && pvlive="$p
     && ok "prove interrupt: after SIGINT during an ask, no recorded process id is alive (one in the driver's group, one in its own session: $pvids)" || { bad "prove interrupt: recorded '$pvids', alive '$pvlive'"; for p in $pvlive; do kill -TERM "$p" 2>/dev/null; done; }
 PVAID="$(basename "$(dirname "$(ls "$PVA"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")")"
 pvcalls0="$(grep -c '^prove' "$T/pv-abort-stub.log" 2>/dev/null)"
-run_loki_env "$PVA" "$T/pv-abort-stub.log" E2E_STUB_MODE=done E2E_STUB_PROVE=abort -- start --resume "$PVAID" --no-pr --max-cost 5
+run_loki_env "$PVA" "$T/pv-abort-stub.log" LOKI_E10_PROVE=1 E2E_STUB_MODE=done E2E_STUB_PROVE=abort -- start --resume "$PVAID" --no-pr --max-cost 5
 PVD="$PVA/.loki/runs/$PVAID"
 pvres="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); p=r.get("prove",{}); print(r["verdict"], p.get("reused"), ",".join(a["result"] for a in p.get("asks",[])))' "$PVD/receipt.json" 2>&1)"
 [ "$pvcalls0" = 2 ] && [ "$(grep -c '^prove' "$T/pv-abort-stub.log" 2>/dev/null)" = 2 ] && [ "$pvres" = "VERIFIED True proved,proved" ] \
@@ -652,9 +652,9 @@ pvsc="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const m = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/prove.ts");
 const o = (source) => ({ intake: { source }, implement: { exit: "done" } });
 const at = (p, s, env = {}) => [m.proveApplies(p, o(s), env), m.proveNotes(p, o(s), env).length, Object.keys(m.proveReceiptBlock(o(s))).length].join("/");
-console.log([at("claude", "issue"), at("claude", "text"), at("opencode", "issue"), at("claude", "issue", { LOKI_E10_PROVE: "0" })].join(" "));' 2>&1)"
-[ "$pvsc" = "true/1/0 false/0/0 false/0/0 false/0/0" ] \
-    && ok "prove scope: an issue run on claude needs the stage's record (no record caps it); a text goal, opencode and LOKI_E10_PROVE=0 get no stage, no note and no receipt key" || bad "prove scope: $pvsc"
+console.log([at("claude", "issue", { LOKI_E10_PROVE: "1" }), at("claude", "text", { LOKI_E10_PROVE: "1" }), at("opencode", "issue", { LOKI_E10_PROVE: "1" }), at("claude", "issue", { LOKI_E10_PROVE: "0" }), at("claude", "issue", {})].join(" "));' 2>&1)"
+[ "$pvsc" = "true/1/0 false/0/0 false/0/0 false/0/0 false/0/0" ] \
+    && ok "prove scope: off by default; with LOKI_E10_PROVE=1 an issue run on claude needs the stage's record (no record caps it); a text goal, opencode, =0 and unset get no stage, no note and no receipt key" || bad "prove scope: $pvsc"
 # The pull request body: the existing partialHead section opens with the ask, command, result table; with no prove record it is byte-identical to before.
 pvpr="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const m = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/pr.ts");
