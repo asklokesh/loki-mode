@@ -26,6 +26,9 @@
 #            slice skips only its dependents (issues_epic.ts runEpicSlices, stacksOn allowlist); source level, no dist needed.
 #   labels:  engine10's own sizing sees the issue's labels: when the split is refused (the stub writes no split) and
 #            `loki start acme/search#25` runs the issue as one run, its plan stage still sizes the epic-label issue large.
+#   env card: Q1 ENV CARD (e10ext/env_card.ts, LOKI_E10_ENV_CARD): a compose file and a fake keg dir give the card with both paths and a not-found line;
+#            a repo needing nothing and a detection error give no card; the card reaches the issue run's brief, env-card.json and the receipt; the opt-out
+#            removes all three (the issue-run no-loss signature, card on, needs nothing and stays byte-identical).
 #   lean:    `loki start "fix the off-by-one in paginate()"` sizes small and takes the lean path (no plan, no Wall).
 #   intake:  that run, on a repo with 1246 files, 240 test files that each pay an 80 ms process startup (the cost
 #            shape of FireLater's vitest suite) and 20 stale loki/e10-* branches holding unpushed commits, reaches
@@ -376,6 +379,32 @@ grep -qF 'Before you finish, prove the change works by running it, not by readin
     && [ "$F5U" = "block none none none not-in-prefix" ] \
     && ok "F5: the issue run's implement brief carries the prove-by-running block; a text goal, opencode and LOKI_E10_PROVE_BY_RUNNING=0 get none, and the fixed prefix does not hold it" \
     || bad "F5: issue brief block $(grep -cF 'prove the change works by running it' <<< "$WBRIEF"), unit '$F5U' (want block none none none not-in-prefix)"
+
+# --- Q1 ENV CARD (e10ext/env_card.ts, LOKI_E10_ENV_CARD default on): before implement, an issue run on claude reads which local services the repository needs
+# and where they are on this machine, with no model call and no network. LOKI_E10_ENV_CARD_SEARCH (tests only) replaces every searched location with a fake keg dir.
+EC="$T/envcard"; mkdir -p "$EC/repo/backend" "$EC/kegs/postgresql@15/bin" "$EC/kegs/postgresql@14/bin" "$EC/kegs/redis/bin" "$EC/none"
+for b in initdb pg_ctl postgres; do printf '#!/bin/sh\n' > "$EC/kegs/postgresql@15/bin/$b"; printf '#!/bin/sh\n' > "$EC/kegs/postgresql@14/bin/$b"; done
+printf '#!/bin/sh\n' > "$EC/kegs/redis/bin/redis-server"; chmod +x "$EC"/kegs/*/bin/*
+printf 'services:\n  db:\n    image: postgres:15-alpine\n  cache:\n    image: "redis:7"\n' > "$EC/repo/docker-compose.yml"
+printf '{"dependencies":{"mysql2":"^3.9.0"}}\n' > "$EC/repo/backend/package.json"; printf 'DATABASE_URL=postgres://app:CARD_SECRET_VALUE@localhost/app\n' > "$EC/repo/.env.example"
+printf '{"dependencies":{"left-pad":"1"}}\n' > "$EC/none/package.json"
+ecu="$(ROOT="$ROOT" EC="$EC" LOKI_E10_ENV_CARD_SEARCH="$EC/kegs" bun --no-env-file --config=/dev/null -e '
+const m = await import(process.env.ROOT + "/loki-ts/src/e10ext/env_card.ts"), t0 = performance.now(), c = m.buildEnvCard(process.env.EC + "/repo"), ms = performance.now() - t0;
+const boom = m.buildEnvCard(process.env.EC + "/repo", new Proxy({}, { get() { throw new Error("planted detection error"); } }));
+console.log([c.found.postgres.dir.endsWith("/kegs/postgresql@15/bin") && c.text.includes("postgres (the repository names 15): initdb, pg_ctl, postgres in " + process.env.EC + "/kegs/postgresql@15/bin"), c.text.includes("redis-server at " + process.env.EC + "/kegs/redis/bin/redis-server"), c.text.includes("Not found: mysql"), !JSON.stringify(c).includes("CARD_SECRET_VALUE"), m.buildEnvCard(process.env.EC + "/none") === null, boom === null, ms < 500, [m.envCardScope("claude", "issue"), m.envCardScope("claude", "text"), m.envCardScope("opencode", "issue"), m.envCardScope("claude", "issue", { LOKI_E10_ENV_CARD: "0" })].join("/")].join(" "));' 2>&1)"
+[ "$ecu" = "true true true true true true true true/false/false/false" ] \
+    && ok "env card: a compose file naming postgres and redis and a fake keg dir give both paths (the keg matching the named version); mysql2 is listed not found; no value is stored; a repo needing nothing and a detection error give no card; under 500 ms; scope is issue runs on claude" || bad "env card units: $ecu"
+EW="$T/envcard-e2e"; make_repo "$EW" 0; cp "$EC/repo/docker-compose.yml" "$EW/"; git -C "$EW" add docker-compose.yml; git -C "$EW" commit -q -m compose
+LOKI_E10_ENV_CARD_SEARCH="$EC/kegs" E2E_STUB_MODE=done run_loki "$EW" "$T/envcard-e2e-stub.log" start acme/search#24 --no-pr --max-cost 5
+ECD="$(dirname "$(ls "$EW"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"
+ecb="$(cat "$ECD/implement-brief.txt" 2>/dev/null)"
+grep -qF "postgres (the repository names 15): initdb, pg_ctl, postgres in $EC/kegs/postgresql@15/bin" <<< "$ecb" && [ -s "$ECD/env-card.json" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r.get("env_card",{}).get("found",{}).get("redis") else 1)' "$ECD/receipt.json" \
+    && ok "env card e2e: the issue run's implement brief carries the card, env-card.json is written and the receipt has env_card" || bad "env card e2e: brief has card $(grep -c 'Local services' <<< "$ecb"), card file $( [ -s "$ECD/env-card.json" ] && echo yes || echo no), receipt key $(python3 -I -c 'import json,sys; print("env_card" in json.load(open(sys.argv[1])))' "$ECD/receipt.json" 2>&1)"
+EW0="$T/envcard-off"; make_repo "$EW0" 0; cp "$EC/repo/docker-compose.yml" "$EW0/"; git -C "$EW0" add docker-compose.yml; git -C "$EW0" commit -q -m compose
+LOKI_E10_ENV_CARD=0 LOKI_E10_ENV_CARD_SEARCH="$EC/kegs" E2E_STUB_MODE=done run_loki "$EW0" "$T/envcard-off-stub.log" start acme/search#24 --no-pr --max-cost 5
+ECD0="$(dirname "$(ls "$EW0"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"
+! grep -q 'Local services this repository needs' "$ECD0/implement-brief.txt" && [ ! -e "$ECD0/env-card.json" ] && python3 -I -c 'import json,sys; sys.exit(1 if "env_card" in json.load(open(sys.argv[1])) else 0)' "$ECD0/receipt.json" \
+    && ok "env card: LOKI_E10_ENV_CARD=0 gives no card in the brief, no env-card.json and no receipt key" || bad "env card opt-out: a card remained"
 
 # --- whole-first is for Sonnet and stronger models: a run that implements on Haiku keeps the split; LOKI_ISSUE_WHOLE_FIRST=1 forces whole on Haiku --
 HAIKU_M="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
