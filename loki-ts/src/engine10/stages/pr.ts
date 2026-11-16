@@ -126,12 +126,12 @@ export function prTitle(verdict: Verdict, runDir: string, task: string, failing:
 export const LOKI_LABELS = { safe: { name: "loki: safe to merge", color: "0E8A16", description: "Loki checked every acceptance line of the issue by running the change" }, needs: { name: "loki: needs you", color: "D93F0B", description: "Loki could not prove every acceptance line; the pull request says which" } } as const;
 /** The first thing in the pull request: Loki's label, then each of the issue's own acceptance lines as met or not, with the evidence. "" when the receipt has no acceptance record. */
 export function acceptanceHead(verdict: Verdict, receipt: Record<string, unknown> | null): string {
-  const rows = Array.isArray(receipt?.["issue_acceptance"]) ? (receipt!["issue_acceptance"] as { line?: unknown; status?: unknown; evidence?: unknown; reason?: unknown; optional?: unknown }[]) : [];
+  const rows = Array.isArray(receipt?.["issue_acceptance"]) ? (receipt!["issue_acceptance"] as { line?: unknown; status?: unknown; evidence?: unknown; reason?: unknown; optional?: unknown; note?: unknown }[]) : [];
   if (rows.length === 0) return "";
   const clip = (s: unknown): string => { const t = String(s ?? "").replace(/[\r\n|]+/g, " ").trim(); return t.length > 220 ? `${t.slice(0, 217)}...` : t; };
   const met = rows.filter((r) => r.status === "met").length, safe = verdict === "VERIFIED";
   return [`## Loki: ${safe ? "safe to merge" : "needs you"}`, safe ? `Every acceptance line is met (${met} of ${rows.length}), each with what proved it.` : `${met} of ${rows.length} acceptance lines are met. The ones that are not say why.`, "", receipt?.["issue_acceptance_source"] === "plan" ? "| Acceptance line (written by Loki from the issue, which has no checklist) | Status | Evidence or reason |" : "| Acceptance line (the issue's own words) | Status | Evidence or reason |", "|---|---|---|",
-    ...rows.map((r) => `| ${clip(r.line)} | ${r.status === "met" ? "met" : r.optional === true ? "optional, not done" : r.status === "unmet" ? "NOT MET" : "not checked"} | ${clip(r.status === "met" ? r.evidence : r.reason ?? (r.status === "not_checked" ? "the check gave no answer for this line" : ""))} |`), ""].join("\n") + "\n";
+    ...rows.map((r) => `| ${clip(r.line)} | ${r.status === "met" ? "met" : r.optional === true ? "optional, not done" : r.status === "unmet" ? "NOT MET" : "not checked"} | ${clip(r.status === "met" ? `${String(r.evidence ?? "")}${r.note ? ` (${String(r.note)})` : ""}` : r.reason ?? (r.status === "not_checked" ? "the check gave no answer for this line" : ""))} |`), ""].join("\n") + "\n";
 }
 /** Puts Loki's label on the pull request and on the issue it works (created if the repository lacks it; the other label removed). Best effort: a miss is returned as a note, never a failed stage. */
 export function applyLokiLabel(a: { verdict: Verdict; url: string; runDir: string; env: NodeJS.ProcessEnv; timeoutMs: number }): string | null {
