@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+- `loki start` on a terminal now opens a live console: one panel, redrawn in place, with the task, each stage and its time, each acceptance line of the issue turning from waiting to met as Loki's own proof run counts a passing check for it, what the session is doing now, the spend so far, and the final result of every line left on screen above the summary. `d` shows recent events; `q` or Ctrl-C stops the run the same way an interrupt does (the next `loki start` resumes it). Anything else the run prints appears above the panel. `LOKI_CONSOLE=0` keeps the old one-line status; pipes and CI are unchanged.
 
 ## v11.145.0 (2026-11-16)
 

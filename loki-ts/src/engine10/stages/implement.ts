@@ -274,13 +274,13 @@ export const implementStage: Stage = {
     for (let round = 0; round < proofLoopMax() && scratch && proofRerunOn() && existsSync(join(scratch.dir, PROOF_SCRIPT)) && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone; round++) {
       if (!keepProofScript(scratch.dir, ctx.runDir)) break;
       const pr = await rerunProof(ctx.repoDir, ctx.runDir, signal); if (!pr) break;
-      proofRounds.push({ exit: pr.exit, failed: pr.failed, seconds: pr.seconds });
+      proofRounds.push({ exit: pr.exit, failed: pr.failed, seconds: pr.seconds }); { const la0 = labelAsks(ctx.provider, prior.intake, prior.plan, ctx.repoDir); ctx.emit("proof.rerun", "implement", { round: round + 1, exit: pr.exit, proved: pr.proved, failed: pr.failed, seconds: pr.seconds, source: la0.source, statuses: ruleStatus(la0.asks, pr).map((s, i) => ({ line: s.line, status: s.status, checks: pr.lines[String(i + 1)]?.proved ?? 0, ...(s.reason ? { reason: s.reason } : {}) })) }); } // the live console turns each line green from this
       if (pr.exit === 0 && pr.failed === 0) { // the proof passes when Loki runs it: now check it against every acceptance line, and hand unmet lines back with the reason
         const la = labelAsks(ctx.provider, prior.intake, prior.plan, ctx.repoDir); if (!la.asks.length || round + 1 >= proofLoopMax()) break;
         const tree = await worktreeTree(ctx.repoDir); if (!tree) break;
         const lc = await issueLineCheck(ctx, la.asks, tree, [], session.summary ?? "", [...(la.needs.length ? [`This repository needs: ${la.needs.join(", ")}.`] : []), "Loki's verify stage has not run yet at this point, so the check list is empty: a line about tests is met when the output of Loki's own run shows those tests passing.", ...proofFacts(ctx.runDir, pr, true)]);
         const byRule = ruleStatus(la.asks, pr), unmet = la.asks.flatMap((line, i) => { if (optionalAsk(line)) return []; if (byRule[i]!.status !== "met") return [{ line: `${i + 1}. ${line}`, reason: byRule[i]!.reason ?? "" }]; return lc.marks && !lc.marks.met.includes(i + 1) ? [{ line: `${i + 1}. ${line}`, reason: `it has a passing check, but a reviewer found a gap: ${lc.reasons?.[String(i + 1)] ?? "not stated"}` }] : []; }); // the count decides; the reviewer's gaps are handed back too, as advice the session should close
-        lineRounds.push({ met: lc.marks?.met.length ?? 0, unmet: unmet.length, usd: lc.usd });
+        lineRounds.push({ met: lc.marks?.met.length ?? 0, unmet: unmet.length, usd: lc.usd }); ctx.emit("acceptance.round", "implement", { round: round + 1, met: la.asks.length - unmet.length, unmet: unmet.length });
         if (!unmet.length) break;
         const r2 = await resumeForProofScript(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, unmetBrief(unmet));
         if (r2.iterationId !== ids[ids.length - 1]) ids.push(r2.iterationId); else break;

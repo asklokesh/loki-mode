@@ -22,7 +22,7 @@ import { budgetNext, capNote, groupEnv, parseCapUsd, priorSpend, resolveCap, SUB
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
 import { formatHeartbeatLine, formatStageLine, spendSoFar, formatSummary, preModelTiming, EXIT, exitCodeOf, outcomeOf, reasonOf, currentAttempt, usageLimitOfRun, type Outcome } from "./output.ts";
-import { CandidateView, LiveLine } from "../e10ext/liveline.ts";
+import { CandidateView, LiveLine } from "../e10ext/liveline.ts"; import { consoleOn, LiveConsole } from "../e10ext/console.ts";
 import { SAFE_BUN_FLAGS, envWithPwd, killGroup, spawnDetached, spawnWorker, ulimitArgv } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts"; import { noteRefusal, noteRefusalFromEvents, type PreflightBlocker } from "../util/funnel.ts";
@@ -429,7 +429,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     if (verbose && !json && existsSync(eventsPath)) { clearInterval(tailTimer); stopTail = tail(eventsPath, live, { intervalMs: 250 }); }
   }, 100);
   let liveStop = (): void => {}; // D82: quiet-mode progress (verbose already prints stage lines)
-  const liveLine = !verbose && !json ? new LiveLine({ tty: !!process.stdout.isTTY, write: (x) => { process.stdout.write(x); }, columns: terminalWidth(), graceS: 3, repoDir }) : null;
+  const liveLine: { setUrl(u: string): void; tick(): void; onEvent(e: Parameters<LiveLine["onEvent"]>[0]): void; clear(): void } | null = verbose || json ? null : consoleOn() ? new LiveConsole({ write: (x) => { process.stdout.write(x); }, repoDir }) : new LiveLine({ tty: !!process.stdout.isTTY, write: (x) => { process.stdout.write(x); }, columns: terminalWidth(), graceS: 3, repoDir }); // a terminal gets the live console (LOKI_CONSOLE=0 keeps the one-line status); pipes and CI keep the plain lines
   if (liveLine) {
     if (process.env.LOKI_CONTROL_PLANE_URL) liveLine.setUrl(process.env.LOKI_CONTROL_PLANE_URL);
     let stopLiveTail = (): void => {}; const tick = setInterval(() => liveLine.tick(), 1000);
