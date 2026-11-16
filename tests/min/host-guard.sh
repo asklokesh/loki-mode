@@ -137,38 +137,6 @@ await compare("ls", W, { LOKI_PERMISSION_POLICY: "compiled" }, false, "none");
 await compare("docker ps", W, { LOKI_PERMISSION_POLICY: "compiled" }, true, "deny");
 await compare("ls", W, { LOKI_PERMISSION_POLICY: "legacy" }, false, "allow");
 
-// Q1 RUN-SCRATCH: with a harness-made scratch directory (absolute, owned, its marker holding its own path) the guard lets the session stop the processes it
-// started and delete inside the directory; everything else stays refused. Without LOKI_SCRATCH, or with a scratch that lacks the marker, nothing changes.
-{
-  const { mkdirSync, writeFileSync, realpathSync } = await import("node:fs");
-  const sc = realpathSync(outside) + "/scratch"; mkdirSync(sc + "/pg", { recursive: true }); writeFileSync(sc + "/.loki-scratch-owned", sc);
-  const bare = realpathSync(outside) + "/nomarker"; mkdirSync(bare, { recursive: true });
-  const since = String(Math.floor(Date.now() / 1000) - 1);
-  const recorded = Bun.spawn({ cmd: ["sleep", "60"], stdout: "ignore", stderr: "ignore" }), inScratch = Bun.spawn({ cmd: ["sleep", "61"], cwd: sc, stdout: "ignore", stderr: "ignore" }), other = Bun.spawn({ cmd: ["sleep", "62"], stdout: "ignore", stderr: "ignore" });
-  writeFileSync(sc + "/pids", recorded.pid + "\n");
-  const on = { LOKI_SCRATCH: sc, LOKI_SCRATCH_SINCE: since, TMPDIR: sc };
-  try {
-    await compare(`kill ${recorded.pid}`, W, on, true, "allow");
-    await compare(`kill -TERM ${recorded.pid}`, W, on, true, "allow");
-    await compare(`kill ${inScratch.pid}`, W, on, true, "allow"); // not listed, but its cwd is inside the scratch directory
-    await compare(`kill ${other.pid}`, W, on, true, "deny"); // neither listed nor inside
-    await compare(`kill -9 ${recorded.pid}`, W, on, true, "deny"); // only TERM
-    await compare(`kill ${recorded.pid}`, W, { ...on, LOKI_SCRATCH_SINCE: String(Math.floor(Date.now() / 1000) + 3600) }, true, "deny"); // started before the session
-    await compare("pkill sleep", W, on, true, "deny");
-    await compare("killall sleep", W, on, true, "deny");
-    await compare(`kill ${recorded.pid}`, W, {}, true, "deny"); // no scratch: today
-    await compare(`kill ${recorded.pid}`, W, { LOKI_SCRATCH: bare, LOKI_SCRATCH_SINCE: since }, true, "deny"); // no marker: not honoured
-    await compare('rm -rf "$LOKI_SCRATCH/pg"', W, on, true, "allow");
-    await compare("rm -rf $TMPDIR/pg 2>/dev/null", W, on, true, "allow");
-    await compare(`rm -rf ${sc}/pg`, W, on, true, "allow");
-    await compare('rm -rf "$LOKI_SCRATCH/../x"', W, on, true, "deny");
-    await compare('rm -rf "$LOKI_SCRATCH"/*', W, on, true, "allow");
-    await compare("rm -rf /var/x", W, on, true, "deny");
-    await compare('rm -rf "$HOME/x"', W, on, true, null); // outside the scratch: whatever today's rules say (parity only), unchanged by the scratch
-    await compare('rm -rf "$LOKI_SCRATCH/pg"', W, {}, true, null); // no scratch: today's verdict (parity only)
-  } finally { for (const p of [recorded, inScratch, other]) p.kill(); }
-}
-
 // Audit line: same bytes as the script's except the timestamp.
 const audit = join(W, ".loki", "logs", "bash-audit.jsonl");
 rmSync(join(W, ".loki"), { recursive: true, force: true });

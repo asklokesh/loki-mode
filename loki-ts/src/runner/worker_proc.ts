@@ -3,7 +3,8 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { join, resolve } from "node:path";
-import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { providerCause } from "./retry_class.ts";
 
@@ -154,46 +155,115 @@ export function spawnDetached(cmd: string, args: string[], opts: { cwd?: string;
 }
 
 // Q1 RUN-SCRATCH (issue runs on claude, LOKI_E10_PROVE_BY_RUNNING=0 opts out): the implement session's own scratch directory. Short path (a unix socket path is
-// limited to about 104 characters; a session's tsx failed with EINVAL on a 107-character TMPDIR), owner-marked so the host guard (autonomy/hooks/validate-bash.sh)
-// honours it only when this harness made it. The session gets it as LOKI_SCRATCH and TMPDIR; the guard then lets it stop the processes it started (listed in
-// $LOKI_SCRATCH/pids, or running inside the directory, and started after the session) and delete paths inside it. After implement the harness stops what is left.
-export const SCRATCH_MARKER = ".loki-scratch-owned";
-export interface SessionScratch { dir: string; since: number }
-export function createSessionScratch(): SessionScratch {
+// limited to about 104 characters; a session's tsx failed with EINVAL on a 107-character TMPDIR), owner-marked. The session gets it as LOKI_SCRATCH and TMPDIR
+// and the run's nonce as LOKI_RUN_OWNER. Its record (dir, nonce, since, worker pid) is written to <runDir>/scratch.json at creation, so the supervisor, an exit
+// hook or the next run can clean up after a stop the worker never saw.
+// Q1 SCRATCH-OWNED: the harness proves ownership itself and never trusts the session's own pids file. A process of this user that started at or after `since`
+// is the run's when its environment carries the run's nonce, its resolved working directory is inside the scratch directory, a path on its command line
+// resolves inside it, or its parent is the run's. Never by a path in the work tree, never by anything else under a shared temp root. A pid in
+// <dir>/pids that passes none of these is left alone and reported. Measured on macOS (2026-11-16, real binaries): a pg_ctl postmaster carries the nonce
+// and sits in its data directory; npm exec tsx and its node children carry it or descend from it; `redis-server --daemonize yes` loses it (its process
+// title overwrites the environment area) and is found only when its --dir is in scratch. macOS also hides the environment of its own platform binaries
+// (/bin/sleep and the like) from ps; such a process is found only by its directory, its command line or its parent.
+export const SCRATCH_MARKER = ".loki-scratch-owned", SCRATCH_RECORD = "scratch.json", OWNER_ENV = "LOKI_RUN_OWNER";
+export interface SessionScratch { dir: string; since: number; nonce: string }
+export function createSessionScratch(runDir?: string): SessionScratch {
   const base = existsSync("/tmp") ? realpathSync("/tmp") : realpathSync(tmpdir());
   const dir = realpathSync(mkdtempSync(join(base, "lk-")));
   chmodSync(dir, 0o700);
   writeFileSync(join(dir, SCRATCH_MARKER), dir, { mode: 0o600 });
-  return { dir, since: Math.floor(Date.now() / 1000) };
+  const s = { dir, since: Math.floor(Date.now() / 1000), nonce: `o${randomBytes(9).toString("hex")}` };
+  if (runDir) { try { mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, SCRATCH_RECORD), JSON.stringify({ ...s, worker_pid: process.pid }) + "\n", { mode: 0o600 }); } catch { /* the in-process hooks still clean up */ } }
+  return s;
 }
+/** The LOKI_RUN_OWNER value and the env a session of this scratch gets. */
+export const scratchSessionEnv = (s: SessionScratch): Record<string, string> => ({ LOKI_SCRATCH: s.dir, LOKI_SCRATCH_SINCE: String(s.since), TMPDIR: s.dir, [OWNER_ENV]: s.nonce });
+/** Epoch seconds of a `ps -o lstart=` text ("Mon Nov  6 01:02:03 2026"; one or two spaces before a single-digit day), or null. */
+export function lstartEpoch(t: string): number | null {
+  const m = /^\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})$/.exec(t.trim());
+  if (!m) return null;
+  const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].indexOf(m[1]!);
+  return mon < 0 ? null : Math.floor(new Date(Number(m[6]), mon, Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5])).getTime() / 1000);
+}
+const psOut = (args: string[], timeout = 4000): string => (spawnSync("ps", args, { encoding: "utf8", env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin", LC_ALL: "C" }, timeout }).stdout ?? "");
 /** Epoch seconds a process started (ps lstart, local time), or null when it is gone or unreadable. */
-export function processStartEpoch(pid: number): number | null {
-  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" }, timeout: 3000 });
-  const t = (r.stdout ?? "").trim();
-  if (r.status !== 0 || !t) return null;
-  const ms = Date.parse(t.replace(/^\w{3} /, "")); // "Nov 16 01:02:03 2026"
-  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+export function processStartEpoch(pid: number): number | null { return lstartEpoch(psOut(["-o", "lstart=", "-p", String(pid)])); }
+const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } };
+const inside = (p: string, dir: string): boolean => { let r = p; try { r = realpathSync(p); } catch { /* a path that no longer exists keeps its text */ } return r === dir || r.startsWith(`${dir}/`); };
+interface Cand { pid: number; ppid: number; start: number; command: string }
+/** This user's processes that started at or after `since`, never this process or its parent. */
+function candidates(since: number): Cand[] {
+  const uid = process.getuid?.() ?? -1, out: Cand[] = [];
+  for (const l of psOut(["-A", "-o", "pid=,ppid=,uid=,lstart=,command="], 8000).split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/.exec(l); if (!m) continue;
+    const pid = Number(m[1]), start = lstartEpoch(m[4]!);
+    if (pid > 1 && pid !== process.pid && pid !== process.ppid && Number(m[3]) === uid && start !== null && start >= since) out.push({ pid, ppid: Number(m[2]), start, command: m[5]!.slice(0, 400) });
+  }
+  return out;
 }
-const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
-/** Stops every process id in <dir>/pids that is still alive and started at or after `since` (TERM, then KILL after about 2 s), removes the directory, and says what it
- *  stopped. A pid that started before the session is never touched. Never throws. */
-export function cleanupSessionScratch(s: SessionScratch): { dir: string; stopped: { pid: number; command: string }[]; removed: boolean } {
-  const stopped: { pid: number; command: string }[] = [];
+/** Which of `pids` carry this nonce in their environment (linux /proc/PID/environ, else `ps eww`); nothing else of an environment is kept or printed. */
+function carriesNonce(pids: number[], nonce: string): Set<number> {
+  const out = new Set<number>(), needle = `${OWNER_ENV}=${nonce}`;
+  if (existsSync("/proc/self/environ")) { for (const pid of pids) { try { if (readFileSync(`/proc/${pid}/environ`, "latin1").split("\0").includes(needle)) out.add(pid); } catch { /* gone */ } } return out; }
+  for (let i = 0; i < pids.length; i += 40) for (const l of psOut(["eww", "-o", "pid=,command=", "-p", pids.slice(i, i + 40).join(",")], 8000).split("\n")) { const p = /^\s*(\d+)\s/.exec(l); if (p && (` ${l} `).includes(` ${needle} `)) out.add(Number(p[1])); }
+  return out;
+}
+/** A process's resolved working directory (linux /proc, else lsof), or "". */
+function cwdOf(pid: number): string {
+  try { return readlinkSync(`/proc/${pid}/cwd`); } catch { /* not linux, or gone */ }
+  const r = spawnSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], { encoding: "utf8", timeout: 3000 });
+  return (r.stdout ?? "").split("\n").find((l) => l.startsWith("n"))?.slice(1) ?? "";
+}
+const portOf = (pid: number): number | null => { const r = spawnSync("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"], { encoding: "utf8", timeout: 3000 }); const m = /\nn[^\n]*:(\d+)/.exec(`\n${r.stdout ?? ""}`); return m ? Number(m[1]) : null; };
+/** The processes this scratch's run owns, by the evidence above; `why` says which. */
+export function ownedProcesses(s: SessionScratch): (Cand & { why: string })[] {
+  const c = candidates(s.since), nonce = s.nonce ? carriesNonce(c.map((x) => x.pid), s.nonce) : new Set<number>(), owned = new Map<number, Cand & { why: string }>();
+  for (const x of c) {
+    const why = nonce.has(x.pid) ? "environment" : inside(cwdOf(x.pid), s.dir) ? "working directory" : x.command.split(/\s+/).some((w) => w.startsWith("/") && inside(w.replace(/[,;:]+$/, ""), s.dir)) ? "command line" : null;
+    if (why) owned.set(x.pid, { ...x, why });
+  }
+  for (let grew = true; grew;) { grew = false; for (const x of c) if (!owned.has(x.pid) && owned.has(x.ppid)) { owned.set(x.pid, { ...x, why: "child of an owned process" }); grew = true; } }
+  return [...owned.values()];
+}
+export interface ScratchCleanup { dir: string; stopped: { pid: number; command: string; port: number | null; why: string }[]; left: { pid: number; command: string; why: string }[]; removed: boolean; kept?: string }
+/** Stops every process the run owns (start time rechecked before each signal; TERM, about 2 s, then KILL), scans again until nothing owned is alive, and
+ *  only then removes the directory (its marker must hold its own path). A pid the session listed in <dir>/pids that is not provably the run's is left alone and
+ *  reported. `signal` is a test seam. Never throws. */
+export function cleanupSessionScratch(s: SessionScratch, o: { signal?: (pid: number, sig: NodeJS.Signals) => void; termWaitMs?: number } = {}): ScratchCleanup {
+  const send = o.signal ?? ((pid: number, sig: NodeJS.Signals) => { process.kill(pid, sig); }), stopped: ScratchCleanup["stopped"] = [], left: ScratchCleanup["left"] = [];
+  let still: (Cand & { why: string })[] = [];
   try {
-    const pids = [...new Set(readFileSync(join(s.dir, "pids"), "utf8").split(/\s+/).filter((x) => /^\d+$/.test(x)).map(Number))].filter((p) => p > 1 && p !== process.pid);
-    for (const pid of pids) {
-      const start = processStartEpoch(pid);
-      if (start === null || start < s.since || !alive(pid)) continue;
-      const command = (spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 3000 }).stdout ?? "").trim().slice(0, 160);
-      try { process.kill(pid, "SIGTERM"); } catch { continue; }
-      for (let i = 0; i < 20 && alive(pid); i++) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
-      if (alive(pid)) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
-      stopped.push({ pid, command });
+    for (let round = 0; round < 4; round++) {
+      const own = ownedProcesses(s).filter((x) => alive(x.pid));
+      if (own.length === 0) { still = []; break; }
+      const info = own.map((x) => ({ ...x, port: portOf(x.pid) }));
+      for (const x of info) { if (processStartEpoch(x.pid) === x.start) { try { send(x.pid, "SIGTERM"); } catch { /* gone */ } } }
+      for (let i = 0; i < Math.ceil((o.termWaitMs ?? 2000) / 100) && info.some((x) => alive(x.pid)); i++) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+      for (const x of info) if (alive(x.pid) && processStartEpoch(x.pid) === x.start) { try { send(x.pid, "SIGKILL"); } catch { /* gone */ } }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+      for (const x of info) if (!stopped.some((y) => y.pid === x.pid)) stopped.push({ pid: x.pid, command: x.command.slice(0, 160), port: x.port, why: x.why });
+      still = info.filter((x) => alive(x.pid) && processStartEpoch(x.pid) === x.start);
     }
-  } catch { /* no pids file: nothing recorded */ }
+    try {
+      const listed = [...new Set(readFileSync(join(s.dir, "pids"), "utf8").split(/\s+/).filter((x) => /^\d+$/.test(x)).map(Number))];
+      for (const pid of listed) if (alive(pid) && !stopped.some((y) => y.pid === pid)) left.push({ pid, command: psOut(["-o", "command=", "-p", String(pid)]).trim().slice(0, 160), why: "left running, not proven ours" });
+    } catch { /* no pids file: it is only a hint */ }
+  } catch { /* never fails the run */ }
+  const live = stopped.filter((x) => still.some((y) => y.pid === x.pid));
+  if (live.length) return { dir: s.dir, stopped, left, removed: false, kept: `kept: ${live.length} owned process(es) did not stop: ${live.map((x) => x.pid).join(", ")}` };
   let removed = false;
-  try {
-    if (readFileSync(join(s.dir, SCRATCH_MARKER), "utf8") === s.dir) { rmSync(s.dir, { recursive: true, force: true }); removed = !existsSync(s.dir); }
-  } catch { removed = !existsSync(s.dir); }
-  return { dir: s.dir, stopped, removed };
+  try { if (readFileSync(join(s.dir, SCRATCH_MARKER), "utf8") === s.dir) { rmSync(s.dir, { recursive: true, force: true }); removed = !existsSync(s.dir); } } catch { removed = !existsSync(s.dir); }
+  return { dir: s.dir, stopped, left, removed };
+}
+/** The record a run wrote at scratch creation, when its directory still exists. */
+export function readScratchRecord(runDir: string): (SessionScratch & { worker_pid?: number }) | null {
+  try { const r = JSON.parse(readFileSync(join(runDir, SCRATCH_RECORD), "utf8")) as SessionScratch & { worker_pid?: number }; return typeof r.dir === "string" && typeof r.since === "number" && existsSync(r.dir) ? r : null; } catch { return null; }
+}
+/** The supervisor's pass after the worker exited, and the next run's pass over records whose worker is gone: the same ownership cleanup. */
+export function cleanupScratchRecord(runDir: string): ScratchCleanup | null { const r = readScratchRecord(runDir); return r ? cleanupSessionScratch({ dir: r.dir, since: r.since, nonce: r.nonce ?? "" }) : null; }
+export function cleanupStaleScratches(lokiRoot: string): ScratchCleanup[] {
+  const out: ScratchCleanup[] = []; let runs: string[] = [];
+  try { runs = readdirSync(join(lokiRoot, "runs")); } catch { return out; }
+  for (const id of runs) { const d = join(lokiRoot, "runs", id), r = readScratchRecord(d); if (r && typeof r.worker_pid === "number" && !alive(r.worker_pid)) { const c = cleanupScratchRecord(d); if (c) out.push(c); } }
+  return out;
 }
