@@ -51,7 +51,7 @@ export async function rerunProof(repoDir: string, runDir: string, signal?: Abort
 }
 /** The facts for the acceptance line check: what Loki's own run of the script returned, and the script itself (so a script that checks nothing is visible). */
 export function proofFacts(runDir: string, r: ProofRerun | null, expected: boolean): string[] {
-  if (!r) return expected ? ["The session left no proof script ($TMPDIR/loki-proof.sh), so Loki could not re-run anything itself. Nothing in the reply counts as proof from running."] : [];
+  if (!r) return expected ? ["The session left no proof script ($LOKI_SCRATCH/loki-proof.sh), so Loki could not re-run anything itself. Nothing in the reply counts as proof from running."] : [];
   let script = ""; try { script = readFileSync(join(runDir, PROOF_SCRIPT), "utf8").slice(0, 12000); } catch { /* the facts still say what ran */ }
   return [
     `Loki re-ran the session's proof script by itself, after the session and every fix round, in a new empty directory: exit ${r.exit === null ? "none (it did not complete)" : r.exit} after ${r.seconds}s; ${r.proved} PROVED line(s), ${r.failed} FAILED line(s). Only this run counts as proof from running; what the reply says about earlier runs does not.`,

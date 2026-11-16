@@ -116,7 +116,7 @@ export interface LineCheckRecord { model: string; outcome: string; usd: number |
 let lineCheckOverride: ConsultCall | null = null;
 /** TEST SEAM: replace the line check call. Production code must never call this. */
 export function __setLineCheckCallForTests(c: ConsultCall | null): void { lineCheckOverride = c; }
-export const lineCheckModel = (ctxModel: string | undefined, env: NodeJS.ProcessEnv = process.env): string => (env["LOKI_E10_ISSUE_ACCEPTANCE_MODEL"] ?? "").trim() || (ctxModel && /^claude-/.test(ctxModel) ? ctxModel : "claude-haiku-5-5");
+export const lineCheckModel = (ctxModel: string | undefined, env: NodeJS.ProcessEnv = process.env): string => (env["LOKI_E10_ISSUE_ACCEPTANCE_MODEL"] ?? "").trim() || (ctxModel && /^claude-/.test(ctxModel) ? ctxModel : ctxModel && /^(opus|sonnet|haiku)$/.test(ctxModel) ? `claude-${ctxModel}-5-5` : "claude-sonnet-5-5"); // the label judge runs on the run's own model (an alias is mapped), never silently on a weaker one
 /** Runs the check once, and once more when no line parses; a call that cannot run or still parses nothing records not_reviewed (the seal caps on it). */
 export async function issueLineCheck(ctx: RunContext, asks: string[], head: string, checks: { name: string; result: string }[], reply: string, facts: string[] = []): Promise<LineCheckRecord> {
   const model = lineCheckModel(ctx.model);

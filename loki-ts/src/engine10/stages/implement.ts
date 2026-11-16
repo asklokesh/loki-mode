@@ -263,6 +263,7 @@ export const implementStage: Stage = {
     if (patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForPrecedence(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); if (r.sites > 0) { session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); precedenceRec = { sites: r.sites, resumed: r.iterationIds.length > 0 }; } }
     let namedRec: NamedSitesRecord | null = null; // R2 LOKI_E10_NAMED_SITES: every named site changed or explained; one "-ns" resume for any that is neither, seal judges the final diff
     if (patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForNamedSites(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, task); session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); namedRec = r.record; }
+    const preReviewReply = session.summary ?? ""; // the implement session's own last reply, with its per-item proof list; the review turn below replaces session.summary with its checklist answers
     let selfReview: Record<string, unknown> | null = null; // SR LOKI_E10_SELF_REVIEW: deterministic pre-delivery checks, then at most one bounded "-rv" review resume
     { const mode = selfReviewMode(); if (mode !== "off" && ctx.baseSha && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) {
       const before = selfReviewChecks(ctx.repoDir, ctx.baseSha, treeStaged(ctx.repoDir, ctx.baseSha), task, ctx.outputs(), process.env, ctx.runDir);
@@ -319,7 +320,7 @@ export const implementStage: Stage = {
       ...(tournament ? { tournament } : {}),
       ...(noRegression ? { no_regression: noRegression } : {}),
       ...(neverStop ? { never_stop: [neverStop] } : {}),
-      ...(issueAcceptanceCapOn() && issueAcceptanceOf(prior.intake).length && session.summary ? { final_reply: session.summary.slice(-16000) } : {}), // Q1 ISSUE-ACCEPTANCE: the final reply the seal's line check reads
+      ...(issueAcceptanceCapOn() && issueAcceptanceOf(prior.intake).length && session.summary ? { final_reply: (preReviewReply && preReviewReply !== session.summary ? `${preReviewReply.slice(-12000)}\n\n[then, after the review turn]\n${session.summary.slice(-4000)}` : session.summary.slice(-16000)) } : {}), // Q1 ISSUE-ACCEPTANCE: the final reply the seal's line check reads
       ...(selfReview ? { self_review: selfReview } : {}), ...(refsRemoved.length ? { changelog_refs_removed: refsRemoved } : {}),
       ...(fragmentWriterOn() && session.summary ? { summary_tail: session.summary.slice(-1500) } : {}), // the release-note writer reads the final message
     };
