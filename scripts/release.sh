@@ -748,7 +748,7 @@ run_ship() {
     ship_gen_changed=""
     while IFS= read -r f; do
         [ -n "$f" ] || continue
-        printf '%s\n' "$ship_gen_pre_dirty" | grep -qxF -- "$f" && continue
+        grep -qxF -- "$f" <<< "$ship_gen_pre_dirty" && continue
         case " $RELEASE_COMMIT_FILES " in *" $f "*) continue ;; esac
         ship_gen_changed="$ship_gen_changed $f"
     done <<<"$(ship_generator_dirty)"
@@ -777,7 +777,7 @@ run_ship() {
     staged="$(git -C "$ROOT_DIR" diff --cached --name-only)"
     hit=""
     for f in $SHIP_FORBIDDEN_STAGED; do
-        if printf '%s\n' "$staged" | grep -qxF -- "$f"; then hit="$hit $f"; fi
+        if grep -qxF -- "$f" <<< "$staged"; then hit="$hit $f"; fi
     done
     [ -z "$hit" ] || ship_refuse SHIP_FORBIDDEN_STAGED "refusing to commit:$hit (unstage with git restore --staged)"
     # Allowlist: every staged path must be a release file.
@@ -804,7 +804,7 @@ run_ship() {
     left=""
     while IFS= read -r f; do
         [ -n "$f" ] || continue
-        printf '%s\n' "$ship_gen_pre_dirty" | grep -qxF -- "$f" && continue
+        grep -qxF -- "$f" <<< "$ship_gen_pre_dirty" && continue
         left="$left $f"
     done <<<"$(ship_generator_dirty)"
     [ -z "$left" ] || ship_refuse SHIP_DIRTY_AFTER_COMMIT "release left generated files modified:$left"
