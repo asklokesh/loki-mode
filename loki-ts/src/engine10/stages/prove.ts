@@ -16,7 +16,8 @@ import { redactSecrets, sanitizeReason } from "../../util/redact.ts";
 import { safeGit } from "../../util/safe_git.ts";
 import { missingServices, readEnvCardFile } from "../../util/stack_tools.ts";
 import { checkAsks, listBrief } from "./prove_list.ts";
-import { STAGE_BUDGETS, type Obj, type RunContext, type Stage, type StageResult } from "../types.ts";
+import { resumeForProve } from "../../util/conflict_resume.ts";
+import { ISSUE_FINISH_LINE, STAGE_BUDGETS, type Obj, type RunContext, type SessionResult, type SessionRunOptions, type Stage, type StageResult } from "../types.ts";
 
 const off = (v: string | undefined): boolean => /^(0|off|false|no)$/i.test((v ?? "").trim());
 const num = (v: string | undefined, d: number): number => { const n = Number((v ?? "").trim()); return (v ?? "").trim() !== "" && Number.isFinite(n) && n > 0 ? n : d; };
@@ -28,6 +29,9 @@ export const proveApplies = (provider: string, o: Partial<Record<string, Obj>>, 
 /** The stage's own budget (listing, prover session, head pass, base pass), held back from implement and added to a sized run cap. */
 export const proveBudgetS = (env: NodeJS.ProcessEnv = process.env): number => num(env["LOKI_E10_PROVE_BUDGET_S"], 600);
 export const scriptLimitS = (env: NodeJS.ProcessEnv = process.env): number => num(env["LOKI_E10_PROVE_SCRIPT_S"], 120);
+/** Repair (default on; LOKI_E10_PROVE_REPAIR=0 opts out): unproved asks go back to the implement session by same-session resume, at most MAX_REPAIR_ROUNDS. */
+export const proveRepairOn = (env: NodeJS.ProcessEnv = process.env): boolean => !off(env["LOKI_E10_PROVE_REPAIR"]);
+export const MAX_REPAIR_ROUNDS = 2;
 
 export const MAX_ASKS = 12, NOT_RUN_HERE_EXIT = 3, TEARDOWN_S = 60, PROVER_MAX_S = 600, LIST_S = 90, PROVE_MIN_S = 120;
 const MARGIN_S = 10;
@@ -70,6 +74,16 @@ export function proverBrief(issue: string, asks: { id: string; text: string }[],
     "Rules: do not edit, add or delete any file tracked by git, or any file in the repository outside that directory. Do not fix the code; this stage only checks it. Never weaken a check to make it pass: a script that exits 0 without exercising its ask is wrong.",
     "Before you finish, run setup.sh and then every ask script yourself, with PROVE_ROOT, PROVE_TMP (a fresh temporary directory you make outside the repository) and PROVE_DIR set as the harness sets them, then teardown.sh, and leave nothing running. A script that fails because of the script itself is yours to fix: wrong quoting, a request body or header the real caller does not send, data left over from your own earlier run, a name or key that collides on a second run. Never change what a script checks to make it pass; a script that also passes on the base commit is not counted. Every ask script must be safe to run more than once against the same environment and against a new one. The harness then runs your final scripts in a clean environment of its own (a new temporary directory, and any database or service set up again inside it), so nothing your own runs left behind is there.",
     "Finish with exactly one line: LOKI_DONE.",
+  ].join("\n\n");
+}
+
+/** The repair brief: one line per unproved ask with its command and the end of its output. Stage-own text, after the resumed session's own context. */
+export function repairBrief(round: number, failing: ProveAsk[], dirRel: string): string {
+  return [
+    `Prove repair, round ${round}. A separate session that did not write your change wrote a script for each of the issue's asks that runs it against a fresh environment built by the repository's own setup path (${dirRel}: setup.sh, ask-<id>.sh, teardown.sh). The harness ran them, and these asks are not proved:`,
+    failing.map((a) => `- ask ${a.id} (${a.text}): bash ${dirRel}/${askFile(a.id)}: ${a.reason}`).join("\n"),
+    "Read each failing script and its output, find why the ask fails for a real user of the fresh environment, and fix the code. Do not edit the scripts and do not weaken any check. The harness runs the same scripts again when you finish.",
+    ISSUE_FINISH_LINE, // an issue run's own finish rule (LOKI_UNFINISHED included), as its implement brief has
   ].join("\n\n");
 }
 
@@ -306,6 +320,26 @@ export const proveStage: Stage = {
       rec.rounds.push({ round, ...(iterationId ? { iteration_id: iterationId } : {}), failing: rec.asks.filter((a) => a.result !== "proved").map((a) => a.id) });
     };
     await headPass(0);
+    // Repair (LOKI_E10_PROVE_REPAIR): unproved asks go back to the implement session by same-session resume (util/conflict_resume.ts resumeForProve over
+    // resumeWith, the mechanism session continue uses), inside the implement time left; then the same scripts run again. An ask its endpoint check skipped
+    // or that cannot run here is not the implementer's to fix and is not sent.
+    const repairable = (): ProveAsk[] => rec.asks.filter((a) => a.result === "not proved" && a.head.exit !== "skipped");
+    if (proveRepairOn() && repairable().length) {
+      const impl = o.implement ?? {}, implIds = Array.isArray(impl.iteration_ids) ? (impl.iteration_ids as unknown[]).map(String) : [];
+      const { savedImplementBrief, restoreReadOnly } = await import("./implement.ts");
+      const readOnly = (o.wall?.readOnlyFiles as { path: string; content: string }[] | undefined) ?? [];
+      let first: SessionRunOptions | null = implIds.length ? { stage: "implement", brief: savedImplementBrief(ctx) ?? "", tier: "development", iterationId: implIds[implIds.length - 1]!, limitS: STAGE_BUDGETS.implement.limitS, signal, cwd: ctx.repoDir, ...(typeof impl.model === "string" && impl.model !== ctx.model ? { model: impl.model } : {}), ...(pathAppend.length ? { pathAppend } : {}) } : null;
+      const done: SessionResult = { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false };
+      for (let round = 1; first && round <= MAX_REPAIR_ROUNDS && repairable().length && !signal.aborted; round++) {
+        if (leftS() < 90) { rec.notes.push(`prove: repair round ${round} not started (too little stage time left)`); break; }
+        const r = await resumeForProve(ctx, first, done, repairBrief(round, repairable(), dirRel), `-pv${round}`);
+        if (!r) { rec.notes.push(`prove: repair round ${round} not started (too little implement time left)`); break; }
+        rec.iteration_ids.push(r.iterationId); first = { ...first, iterationId: r.iterationId };
+        restoreReadOnly(readOnly); // a resume started here skips implement's own restore of the sealed Wall files
+        if (leftS() < 30) { rec.rounds.push({ round, iteration_id: r.iterationId, failing: repairable().map((a) => a.id) }); rec.notes.push(`not proved: no stage time was left to run the scripts again after repair round ${round}`); break; }
+        await headPass(round, r.iterationId);
+      }
+    }
     // 4. The base commit, last and only with time left: an ask that also passes there is not evidence of this change.
     const onHead = rec.asks.filter((a) => a.result === "proved").map((a) => a.id);
     if (!onHead.length) rec.base = "base not run: no ask passed on head";

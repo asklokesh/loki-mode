@@ -216,6 +216,9 @@ export const resumeNeverStop = (ctx: RunContext, first: SessionRunOptions, first
 /** SR LOKI_E10_SELF_REVIEW: the one bounded pre-delivery review resume (suffix "-rv", turn cap `maxTurns`); too little implement time starts nothing (null). */
 export const resumeForSelfReview = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, brief: string, maxTurns: number): Promise<{ session: SessionResult; iterationId: string } | null> =>
   (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S ? Promise.resolve(null) : resumeWith(ctx, { ...first, maxTurns }, firstSession, brief, "-rv");
+/** Q1 PROVE repair (stages/prove.ts, LOKI_E10_PROVE_REPAIR): one resume of the implement session with the asks its scripts did not prove (suffix "-pv<round>"); too little implement time starts nothing (null). */
+export const resumeForProve = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, brief: string, suffix: string): Promise<{ session: SessionResult; iterationId: string; reply: SessionResult } | null> =>
+  (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S ? Promise.resolve(null) : resumeWith(ctx, first, firstSession, brief, suffix);
 export const resumeAfterAlreadyDone =(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, ALREADY_DONE_CHALLENGE, "-a");
 
 // LOKI_E10_COVERAGE_RESUME, lean path only (plan skipped). Three modes (coverageMode):

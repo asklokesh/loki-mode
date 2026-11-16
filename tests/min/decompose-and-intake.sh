@@ -32,7 +32,8 @@
 #            PARTIAL with the PR kept; a port held before setup is "port was not ours"; SIGINT during an ask leaves no recorded id alive and a resume reuses
 #            the prover's files; the harness stops a recorded id teardown forgot; the prover's brief has the issue and the fixed list, not the implementer's
 #            reply; its cost is in run.completed; the PR table comes first; a text goal, opencode and the opt-out never meet the stage. Data the
-#            prover's own runs left never reaches the harness's clean pass.
+#            prover's own runs left never reaches the harness's clean pass. Repair (LOKI_E10_PROVE_REPAIR): two resumes that fix nothing leave
+#            PARTIAL; one that fixes the ask gives VERIFIED; =0 sends nothing back.
 #   lean:    `loki start "fix the off-by-one in paginate()"` sizes small and takes the lean path (no plan, no Wall).
 #   intake:  that run, on a repo with 1246 files, 240 test files that each pay an 80 ms process startup (the cost
 #            shape of FireLater's vitest suite) and 20 stale loki/e10-* branches holding unpushed commits, reaches
@@ -109,6 +110,8 @@
 #  P6. prove.ts endpointOwned: drop the before.has(port) refusal and the started-this-pass rule; the foreign port leg fails.
 #  P7. worker.ts: drop the cancelProve() call from the SIGINT handler; the interrupt leg fails (the recorded detached id is alive).
 #  P8. prove_list.ts checkAsks: accept any ask; the listing retry and the twice-bad legs fail.
+#  P9. prove.ts: skip the repair loop; the repair leg that fixes the ask fails (PARTIAL).
+#  P10. prove.ts: ignore LOKI_E10_PROVE_REPAIR; the opt-out leg fails (repairs ran).
 # ONE-PR (issues_combine.ts; each planted on the committed tree, the one pr leg run, the file restored; all 13 caught):
 #  O1. commitStaged: amend every slice into one commit; cases A, B, C, H fail (one commit).   O2. onePrEnabled: always false; 9 checks fail.
 #  O3. onePrEnabled: ignore =0; case E fails.   O4. accept a resolve that left markers; case D fails.   O5. skip the resolve session; C, D fail.
@@ -559,6 +562,18 @@ pvlt="$(sed -n 's/^tmp=//p' "$PVD/prove/run-0/ask-2.log" 2>/dev/null)"
 case "$PVS" in "verdict=VERIFIED; asks=1=proved,2=proved; base=run; "*) pvl=ok ;; *) pvl=bad ;; esac
 [ "$pvl" = ok ] && grep -q 'duplicate key' "$PVD/prove/prover-own-run.log" && [ -n "$pvlt" ] && case "$pvlt" in *prover-scratch*) false ;; *) true ;; esac && [ ! -e "$PVR/seed.db" ] && grep -q 'Before you finish, run setup.sh and then every ask script yourself' "$T/pv-leftover.brief" && grep -q 'safe to run more than once' "$T/pv-leftover.brief" \
     && ok "prove: data the prover's own runs left (a seed marker in its scratch dir, an untracked file, stale endpoints and pids) does not reach the harness's clean pass; the brief makes the prover run and fix its own scripts" || bad "prove (leftover): $PVS; harness tmp '$pvlt'; seed.db $( [ -e "$PVR/seed.db" ] && echo present || echo gone)"
+# Repair (LOKI_E10_PROVE_REPAIR, default on): an unproved ask goes back to the implement session by same-session resume, two rounds at most, and the same
+# scripts run again.
+pvrep() { grep -c '^repair$' "$T/pv-$1.prove.log" 2>/dev/null; }
+pv_run onefail E2E_STUB_PROVE=onefail
+case "$PVS" in "verdict=PARTIAL; asks=1=proved,2=not proved; base=run; events=1/6/1; "*"lines=not proved: Create advanced filter query builder: exit 1: POST /v1/filters returned 404") pvr1=ok ;; *) pvr1=bad ;; esac
+[ "$pvr1" = ok ] && [ "$(pvrep onefail)" = 2 ] && ok "prove repair: an ask that still fails after two repair resumes is named on the receipt and the run is PARTIAL (one prove.ask per ask per round)" || bad "prove repair (not fixed): $PVS; repairs $(pvrep onefail)"
+pv_run fixed E2E_STUB_PROVE=onefail E2E_STUB_PROVE_REPAIR=fix
+pvrid="$(python3 -I -c 'import json,sys; print(",".join(str(r.get("iteration_id","")).rsplit("-",1)[-1] for r in json.load(open(sys.argv[1]))["prove"]["rounds"]))' "$PVD/receipt.json" 2>&1)"
+case "$PVS" in "verdict=VERIFIED; asks=1=proved,2=proved; base=run; events=1/4/1; "*"; lines=") pvr2=ok ;; *) pvr2=bad ;; esac
+[ "$pvr2" = ok ] && [ "$(pvrep fixed)" = 1 ] && [ "$pvrid" = ",pv1" ] && ok "prove repair: after one repair resume (iteration -pv1) makes the failing ask pass, the same scripts pass and the run is VERIFIED" || bad "prove repair (fixed): $PVS; repairs $(pvrep fixed); rounds '$pvrid'"
+pv_run norepair E2E_STUB_PROVE=onefail E2E_STUB_PROVE_REPAIR=fix LOKI_E10_PROVE_REPAIR=0
+case "$PVS" in "verdict=PARTIAL; asks=1=proved,2=not proved; base=run; events=1/2/1; "*) [ "$(pvrep norepair)" = 0 ] && ok "prove repair: LOKI_E10_PROVE_REPAIR=0 sends nothing back; the failing ask keeps the run PARTIAL" || bad "prove repair opt-out resumed $(pvrep norepair) times" ;; *) bad "prove repair opt-out: $PVS" ;; esac
 pv_run editsrc E2E_STUB_PROVE=editsrc
 case "$PVS" in "verdict=PARTIAL; asks=1=proved,2=proved; "*"lines=not proved: the prover changed 1 file(s) in the tree (put back): calc.ts") ! grep -q 'prover was here' "$PVR/calc.ts" && ok "prove: a tracked file the prover edits is put back and caps the run at PARTIAL with a line naming it" || bad "prove (prover edit): calc.ts still holds the prover's line" ;; *) bad "prove (prover edit): $PVS" ;; esac
 pv_run noscript pr E2E_STUB_PROVE=noscript
