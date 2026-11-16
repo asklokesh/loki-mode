@@ -214,7 +214,7 @@ has "loki-opus-low: pins opus at LOKI_E10_EFFORT=low; raw-opus has no --effort; 
 has "loki-opus-low: an H2H_LOKI_ENV effort that contradicts the arm is refused; other arms still take it" "$low_out" "refused True"
 has "loki-opus: H2H_LOKI_ENV LOKI_E10_EFFORT still applies to a non-low arm" "$low_out" "other high"
 out="$(H2H_LOKI_ENV=LOKI_E10_EFFORT=high python3 -I benchmarks/h2h/h2h.py --configs loki-opus-low --tasks none 2>&1)"; rc=$?
-[ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'may not set LOKI_E10_EFFORT=high' && ok "loki-opus-low: contradicting effort refused at startup, before any run" || bad "startup refusal: rc=$rc out=$out"
+[ "$rc" -ne 0 ] && grep -q 'may not set LOKI_E10_EFFORT=high' <<< "$out" && ok "loki-opus-low: contradicting effort refused at startup, before any run" || bad "startup refusal: rc=$rc out=$out"
 # The env the arm sets is the effort every engine session runs at (contrib/effort_policy.ts resolveEffort, session.ts sessionEffortFor).
 every="$(cd loki-ts && env $(cd ../benchmarks/h2h && python3 -I -c 'import sys; sys.path.insert(0, "."); import h2h; print(" ".join(f"{k}={v}" for k, v in h2h.config_env("loki-opus-low", {}).items()))') bun -e '
 (await import("./src/contrib/index.ts")).registerContrib();
