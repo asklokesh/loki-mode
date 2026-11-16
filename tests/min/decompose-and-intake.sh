@@ -305,6 +305,46 @@ print(" ".join("%s:%s" % (e["stage"], e["type"].split(".")[1]) for e in ev if e[
 [ "$wsize" = large ] && [ "$wstages" = "wall:skipped plan:completed" ] && ok "whole-first: the whole-issue run takes the measured LOKI_UNIT_ID=whole path: sized large by structure, plan session kept, Wall off by default" \
     || bad "whole-first: the whole-issue run sized '${wsize:-none}' with stages '${wstages:-none}' (want large, wall:skipped plan:completed)"
 
+# --- whole-first is for Sonnet and stronger models: a run that implements on Haiku keeps the split; LOKI_ISSUE_WHOLE_FIRST=1 forces whole on Haiku --
+HAIKU_M="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const { issueWholeFirst } = await import(process.env.ROOT + "/loki-ts/src/features/decompose.ts");
+const { triageItem } = await import(process.env.ROOT + "/loki-ts/src/features/triage.ts");
+const cases = [["none", {}], ["sonnet pin", { LOKI_SESSION_MODEL: "sonnet" }], ["opus pin", { LOKI_SESSION_MODEL: "opus" }], ["haiku pin", { LOKI_SESSION_MODEL: "haiku" }], ["small pin", { LOKI_SESSION_MODEL: "small" }],
+  ["small pin, LOKI_ALLOW_HAIKU=false", { LOKI_SESSION_MODEL: "small", LOKI_ALLOW_HAIKU: "false" }], ["default haiku", { LOKI_DEFAULT_SESSION_MODEL: "haiku" }], ["--haiku (router auto)", { LOKI_ROUTER: "auto" }],
+  ["router auto, LOKI_ALLOW_HAIKU=false", { LOKI_ROUTER: "auto", LOKI_ALLOW_HAIKU: "false" }], ["router auto, sonnet pin", { LOKI_ROUTER: "auto", LOKI_SESSION_MODEL: "sonnet" }], ["override haiku", { LOKI_MODEL_OVERRIDE: "claude-haiku-5-5" }],
+  ["dev tier haiku", { LOKI_CLAUDE_MODEL_DEVELOPMENT: "haiku" }], ["LOKI_ALLOW_HAIKU=true alone", { LOKI_ALLOW_HAIKU: "true" }], ["opencode haiku", { LOKI_PROVIDER: "opencode", LOKI_OPENCODE_MODEL: "openrouter/anthropic/claude-haiku-4.5" }],
+  ["opencode deepseek", { LOKI_PROVIDER: "opencode", LOKI_OPENCODE_MODEL: "openrouter/deepseek/deepseek-v3.2" }], ["haiku pin, =1", { LOKI_SESSION_MODEL: "haiku", LOKI_ISSUE_WHOLE_FIRST: "1" }], ["sonnet pin, =0", { LOKI_SESSION_MODEL: "sonnet", LOKI_ISSUE_WHOLE_FIRST: "0" }]];
+const out = cases.map(([k, e]) => k + "=" + (issueWholeFirst(e) ? "whole" : "split"));
+for (const k of ["LOKI_SESSION_MODEL", "LOKI_ISSUE_WHOLE_FIRST"]) delete process.env[k]; process.env.LOKI_SESSION_MODEL = "haiku";
+out.push("triage haiku=" + triageItem({ title: process.env.EPIC_TITLE, body: process.env.EPIC_BODY, labels: [] }).reason.split("; ")[1]);
+console.log(out.join("; "));
+' 2>&1)"
+printf '    model scope: %s\n' "$HAIKU_M"
+[ "$HAIKU_M" = "none=whole; sonnet pin=whole; opus pin=whole; haiku pin=split; small pin=split; small pin, LOKI_ALLOW_HAIKU=false=whole; default haiku=split; --haiku (router auto)=split; router auto, LOKI_ALLOW_HAIKU=false=whole; router auto, sonnet pin=whole; override haiku=split; dev tier haiku=split; LOKI_ALLOW_HAIKU=true alone=whole; opencode haiku=split; opencode deepseek=whole; haiku pin, =1=whole; sonnet pin, =0=split; triage haiku=runs split into slices" ] \
+    && ok "whole-first model scope: every way a run implements on Haiku keeps the split (pin, small, default, --haiku, override, dev tier, opencode); Sonnet, Opus and no pin run whole; =1 forces whole on Haiku; triage says split on Haiku" \
+    || bad "whole-first model scope gave: $HAIKU_M"
+hk_leg() { # hk_leg <name> <VAR=value...> -- <start args...>: the structural epic #24 on the stub; sets HKSPLIT (yes/no) and HKEP (epic records)
+    local name="$1" d="$T/$1"; shift; local envs=(); while [ "$1" != "--" ]; do envs+=("$1"); shift; done; shift
+    make_repo "$d" 0
+    LOKI_ISSUE_WHOLE_FIRST="${HK_KNOB:-}" run_loki_env "$d" "$T/$name-stub.log" "${envs[@]}" -- start acme/search#24 --no-pr --max-cost 5 "$@"
+    case "$OUT" in *"sizes large"*) HKSPLIT=yes ;; *) HKSPLIT=no ;; esac
+    HKEP="$(find "$d/.loki" -name epic.json 2>/dev/null | grep -c .)"
+}
+run_loki_env() { # run_loki_env <repo> <log> <VAR=value...> -- <args...>: run_loki with extra env for this call only
+    local repo="$1" log="$2"; shift 2; local envs=(); while [ "$1" != "--" ]; do envs+=("$1"); shift; done; shift
+    OUT="$(cd "$repo" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED \
+        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" E2E_STUB_LOG="$log" E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" \
+        LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" "${envs[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$@" 2>&1)"
+    RC=$?
+}
+hk_leg hk-haiku -- --session-model haiku; HK1="$HKSPLIT/$HKEP"
+hk_leg hk-sonnet -- --session-model sonnet; HK2="$HKSPLIT/$HKEP"
+HK_KNOB=1 hk_leg hk-haiku-forced -- --session-model haiku; HK3="$HKSPLIT/$HKEP"
+echo "    model scope e2e: haiku pin $HK1, sonnet pin $HK2, haiku pin with =1 $HK3 (split/epic records)"
+[ "$HK1" = "yes/1" ] && ok "whole-first model scope e2e: --session-model haiku on the epic splits as before (one epic record)" || bad "whole-first: --session-model haiku gave split/epic $HK1 (want yes/1)"
+[ "$HK2" = "no/0" ] && ok "whole-first model scope e2e: --session-model sonnet runs the epic whole" || bad "whole-first: --session-model sonnet gave split/epic $HK2 (want no/0)"
+[ "$HK3" = "no/0" ] && ok "whole-first model scope e2e: LOKI_ISSUE_WHOLE_FIRST=1 runs the epic whole on Haiku" || bad "whole-first: =1 on Haiku gave split/epic $HK3 (want no/0)"
+
 # --- split repair: a list detail is repaired, any other refusal is re-asked once with the exact error ------------------------
 # FireLater#24 (v11.116.0): one 520-character acceptance criterion refused the whole split and the epic ran as one 413 s session.
 SPLITR="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
