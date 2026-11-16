@@ -296,7 +296,7 @@ E2E_STUB_MODE=done E2E_STUB_SPLIT="$SPLIT" run_loki "$W" "$T/whole-stub.log" sta
 WEV="$(ls "$W"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
 wsize="$(python3 -I -c 'import json,sys; print(next((json.loads(l)["data"].get("size") for l in open(sys.argv[1]) if "\"variant\"" in l and json.loads(l)["type"] == "variant"), "none"))' "$WEV" 2>/dev/null)"
 case "$OUT" in *"sizes large"*|*"split into"*|*"Split planning"*) wsplit=yes ;; *) wsplit=no ;; esac
-[ "$wsplit" = no ] && [ -n "$WEV" ] && [ -z "$(ls "$W"/.loki/runs/*/epic.json 2>/dev/null)" ] && [ -z "$(ls "$W"/.loki/issues-run/decompose 2>/dev/null)" ] && printf '%s\n' "$OUT" | grep -Eq '^Outcome: ' \
+[ "$wsplit" = no ] && [ -n "$WEV" ] && [ -z "$(ls "$W"/.loki/runs/*/epic.json 2>/dev/null)" ] && [ -z "$(ls "$W"/.loki/issues-run/decompose 2>/dev/null)" ] && grep -Eq '^Outcome: ' <<< "$OUT" \
     && ok "whole-first: loki start owner/repo#24 on the structural epic runs one whole-issue engine run (no split session, no slices, one Outcome)" \
     || { bad "whole-first: the epic did not run as one whole-issue run (split text: $wsplit, events: ${WEV:-none}, rc $RC)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
 wstages="$(python3 -I -c 'import json,sys
@@ -448,8 +448,8 @@ git -C "$B2" remote add origin https://github.com/acme/search.git
 LOKI_BACKLOG_LAUNCHER="$T/launch-start" E2E_STUB_MODE=done run_loki "$B2" "$T/backlog-whole-stub.log" backlog acme/search --issues 24 --concurrency 1
 B2LOG="$(cat "$B2-backlog/logs/issue-24.log" 2>/dev/null)"
 printf '%s\n' "$B2LOG" | grep -E '^(loki:|Outcome:)' | sed 's/^/    backlog whole child: /'
-printf '%s\n' "$OUT" | grep -q 'backlog: #24 implement .*| large (structure: .*); runs as one run$' && printf '%s\n' "$B2LOG" | grep -Eq '^Outcome: ' \
-    && ! printf '%s\n' "$B2LOG" | grep -q 'sizes large' && [ -z "$(find "$B2" "$B2-backlog" -name epic.json 2>/dev/null)" ] \
+grep -q 'backlog: #24 implement .*| large (structure: .*); runs as one run$' <<< "$OUT" && grep -Eq '^Outcome: ' <<< "$B2LOG" \
+    && ! grep -q 'sizes large' <<< "$B2LOG" && [ -z "$(find "$B2" "$B2-backlog" -name epic.json 2>/dev/null)" ] \
     && ok "backlog whole: the large #24 is triaged 'runs as one run' and its child is one whole-issue run (no split session, no slices)" \
     || { bad "backlog whole: triage or child run split (rc $RC)"; printf '%s\n' "$OUT" | grep '^backlog: #24' | sed 's/^/    | /'; printf '%s\n' "$B2LOG" | tail -6 | sed 's/^/    | /'; }
 
@@ -533,7 +533,7 @@ E2E_STUB_MODE=done run_loki "$PW" "$T/prmode-whole-stub.log" start acme/search#2
 printf '%s\n' "$OUT" | grep -E '^(Outcome:|PR:|Cost:)' | sed 's/^/    pr mode whole: /'
 wpr="$(printf '%s\n' "$OUT" | grep -E '^PR: +local:///' | sed -E 's/.*#//')"
 WSTRAND="$( [ -n "$wpr" ] && stranded "$PW" "$T/prmode-whole-origin.git" "$wpr")"
-[ "$(printf '%s\n' "$OUT" | grep -cE '^PR: +local:///.+#loki/')" = 1 ] && [ -n "$wpr" ] && [ -z "$WSTRAND" ] && ! printf '%s\n' "$OUT" | grep -q 'sizes large' \
+[ "$(printf '%s\n' "$OUT" | grep -cE '^PR: +local:///.+#loki/')" = 1 ] && [ -n "$wpr" ] && [ -z "$WSTRAND" ] && ! grep -q 'sizes large' <<< "$OUT" \
     && [ "$(git --git-dir="$T/prmode-whole-origin.git" for-each-ref --format='%(refname:short)' refs/heads/loki/ | grep -c .)" = 1 ] \
     && ok "pr mode whole: the default route ends the epic in exactly one PR ($wpr), one loki branch on the origin, and no finished commit outside it" \
     || { bad "pr mode whole: PR '${wpr:-none}', stranded '${WSTRAND}', origin loki branches: $(git --git-dir="$T/prmode-whole-origin.git" for-each-ref --format='%(refname:short)' refs/heads/loki/ | tr '\n' ' ') (rc $RC)"; printf '%s\n' "$OUT" | tail -10 | sed 's/^/    | /'; }
@@ -694,17 +694,17 @@ const wireRun = async (tag, runner) => {
 const pc = await wireRun("pcost", (k) => k === 2 ? { rc: 0, output: "", verdict: "VERIFIED", costUsd: null, partial: { usd: 0.3928382, measured: 1, total: 2 }, runId: "e10-" + k } : { rc: 0, output: "", verdict: "VERIFIED", costUsd: 0.1, runId: "e10-" + k });
 console.log("PC rc" + pc.rc + " | " + pc.out.split("\n").filter((l) => /^#24 s2 VERIFIED|^Cost:/.test(l)).join(" | "));' 2>&1)"
 printf '%s\n' "$PAR" | sed 's/^/    parallel: /'
-printf '%s\n' "$PAR" | grep -q '^A 3 s1=VERIFIED,s2=VERIFIED,s3=VERIFIED,s4=VERIFIED s1,s2,s3,s4@loki/e10-s1$' \
+grep -q '^A 3 s1=VERIFIED,s2=VERIFIED,s3=VERIFIED,s4=VERIFIED s1,s2,s3,s4@loki/e10-s1$' <<< "$PAR" \
     && ok "parallel: 3 independent slices run at once; the dependent starts after its parent, stacked on the parent's run branch" || bad "parallel: case A wrong"
-printf '%s\n' "$PAR" | grep -q '^B 3 s1=VERIFIED,s2=FAILED,s3=SPEC_CONFLICT,s4=VERIFIED ' \
+grep -q '^B 3 s1=VERIFIED,s2=FAILED,s3=SPEC_CONFLICT,s4=VERIFIED ' <<< "$PAR" \
     && ok "parallel: a FAILED and a SPEC_CONFLICT slice do not stop the independent slices or the dependent of a passing slice" || bad "parallel: case B wrong"
-printf '%s\n' "$PAR" | grep -q '^C [0-9] s1=SPEC_CONFLICT,s2=VERIFIED,s3=VERIFIED,s4=SKIPPED [^@]*$' \
+grep -q '^C [0-9] s1=SPEC_CONFLICT,s2=VERIFIED,s3=VERIFIED,s4=SKIPPED [^@]*$' <<< "$PAR" \
     && ok "parallel: a SPEC_CONFLICT slice with a kept branch (--no-pr) skips only its dependent, which never starts" || bad "parallel: case C wrong"
-printf '%s\n' "$PAR" | grep -q '^T 4 1 1 4 4$' && ok "parallel: epicParallel is claude 4, LOKI_EPIC_PARALLEL=1 gives 1, opencode 1, capped at 4, an invalid value ignored" || bad "parallel: epicParallel table wrong"
-printf '%s\n' "$PAR" | grep -qF '$0.39 for 1 of 2 sessions  ' || true
-printf '%s\n' "$PAR" | grep -q '^PC rc0 | #24 s2 VERIFIED  pr none  cost partial: \$0.39 for 1 of 2 sessions | Cost: *partial: \$0.59 for 2 of 3 (3 slice runs)$' \
+grep -q '^T 4 1 1 4 4$' <<< "$PAR" && ok "parallel: epicParallel is claude 4, LOKI_EPIC_PARALLEL=1 gives 1, opencode 1, capped at 4, an invalid value ignored" || bad "parallel: epicParallel table wrong"
+grep -qF '$0.39 for 1 of 2 sessions  ' <<< "$PAR" || true
+grep -q '^PC rc0 | #24 s2 VERIFIED  pr none  cost partial: \$0.39 for 1 of 2 sessions | Cost: *partial: \$0.59 for 2 of 3 (3 slice runs)$' <<< "$PAR" \
     && ok "parallel: startIssueEpic prints a partially priced slice as partial: \$0.39 for 1 of 2 sessions (never NOT RECORDED) and adds it to the Cost line" || bad "parallel: partial slice cost wiring wrong: $(printf '%s\n' "$PAR" | grep '^PC')"
-printf '%s\n' "$PAR" | grep -q '^W rc0 peak3 said$' && printf '%s\n' "$PAR" | grep -q '^W1 rc0 peak1 said$' \
+grep -q '^W rc0 peak3 said$' <<< "$PAR" && grep -q '^W1 rc0 peak1 said$' <<< "$PAR" \
     && ok "parallel: startIssueEpic runs 3 independent slices at once by default and one at a time under LOKI_EPIC_PARALLEL=1" || bad "parallel: startIssueEpic wiring wrong"
 
 # --- one PR: a split issue ends in ONE pull request (issues_combine.ts, LOKI_SPLIT_ONE_PR default on; source level) ---------------
