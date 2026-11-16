@@ -544,7 +544,7 @@ out.push(ups.map((u) => u.verified ? "ok" : u.why).join(";"));
 out.push(tg.pinnedUpdateNotes(ups).length, JSON.stringify(Object.keys(seal.pinnedUpdatesBlock({ pinned_test_updates: ups }))), JSON.stringify(seal.pinnedUpdatesBlock({})));
 console.log(out.join(" | "));' 2>&1)"
 [ "$Z2R" = 'true | true | true | ok;the old expectation is not at that line on base;the new expectation is not in the edited file;the quoted sentence is not in the task;not a test file | 4 | ["pinned_test_updates"] | {}' ] && ok "Z2 pinned test update: the Rules block updates a test that pins the old behavior the issue asks to change and names every other protection; =0 restores the v11.139.0 text; both briefs lead with a cache-stable rules block; a reported update is verified against base, head and the task, each failure named, and the receipt lists them ($Z2R)" || bad "Z2 pinned test update gave: $Z2R"
-grep -q 'fixedRules(), // Z2: the pinned-test rule' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'fixedRules(), // Z2: same rules block as implement' "$ROOT/loki-ts/src/engine10/stages/fix.ts" && grep -q 'pinned_test_updates: pinnedUpdates' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q '...pinnedUpdatesBlock(o.implement),' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'for (const n of pinnedUpdateNotes(pinnedUpdatesOf(o.implement))) notProven.add(n);' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "Z2 wiring: implement and fix lead with fixedRules(); implement records the checked updates; seal lists them in the receipt and names each unverified one" || bad "Z2 wiring: the rules block, the update record or the receipt block is not wired"
+grep -q 'fixedRules(process.env, issue), // Z2: the pinned-test rule' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q 'fixedRules(), // Z2: same rules block as implement' "$ROOT/loki-ts/src/engine10/stages/fix.ts" && grep -q 'pinned_test_updates: pinnedUpdates' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && grep -q '...pinnedUpdatesBlock(o.implement),' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'for (const n of pinnedUpdateNotes(pinnedUpdatesOf(o.implement))) notProven.add(n);' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "Z2 wiring: implement and fix lead with fixedRules(); implement records the checked updates; seal lists them in the receipt and names each unverified one" || bad "Z2 wiring: the rules block, the update record or the receipt block is not wired"
 
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict # the default (consult and never-stop off) keeps the legacy stop; the opted-in never-stop legs follow this block
 n="$(fix_sessions)"
@@ -648,6 +648,10 @@ has "S1b never: the NOT PROVEN line names why and what the reply said was outsta
 run_engine "$TASK" E2E_STUB_NOFINISH=still
 [ "$(kits)" = 1 ] && [ "$(fin)" = "1|tree unchanged|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
     && ok "S1b still: a resume that changes nothing ends the loop at once; exit incomplete, PARTIAL, the work committed" || { bad "S1b still: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
+run_engine "$TASK" E2E_STUB_NOFINISH=unfinished # candidate 1: the named ending LOKI_UNFINISHED is not a finish line (finishLineOf reads only the three)
+[ "$(kits)" = 1 ] && [ "$(fin)" = "1|tree unchanged|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
+    && has "S1b LOKI_UNFINISHED: a reply ending LOKI_UNFINISHED is resumed once; unchanged, it exits incomplete, PARTIAL (never VERIFIED), with its own what-is-left text on the receipt" "$(rnp)" "LOKI_UNFINISHED: the docs for multiply are not written" \
+    || { bad "S1b LOKI_UNFINISHED: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
 run_engine "$TASK" E2E_STUB_NOFINISH=never LOKI_E10_CONTINUE_MAX=0
 [ "$(kits)" = 0 ] && [ "$(fin)" = "0|continue off|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] \
     && ok "S1b LOKI_E10_CONTINUE_MAX=0: no resume, and the unfinished session still exits incomplete (PARTIAL)" || { bad "S1b resume off: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
@@ -730,7 +734,7 @@ case "$(pev)" in *'"status": "green"'*'"calls": 2'*'calc.test.ts'*) ok "patch gr
 git -C "$REPO" show HEAD:calc.test.ts | grep -q 'multiply(2, 5)' && ok "patch green: the regression test is committed" || bad "patch green: no regression test committed"
 pr_green="$(python3 -I -c 'import json,sys; p=json.load(open(sys.argv[1])).get("patch") or {}; print(p.get("outcome"), p.get("calls"), p.get("usd"), isinstance(p.get("seconds"), (int, float)))' "$RUNDIR/receipt.json" 2>/dev/null)"
 [ "$pr_green" = "green 2 0.002 True" ] && ok "patch receipt: a green run's receipt names outcome green, 2 calls, \$0.002 and its seconds" || bad "patch receipt: green run's receipt patch line is '$pr_green'"
-[ "$(outcome)" = "PARTIAL" ] && printf '%s\n' "$OUT" | grep -q 'only agent-authored tests executed' && git -C "$REPO" show HEAD:calc.ts | grep -A1 'function multiply' | grep -q 'a \* b' && ok "patch green: verify and seal judge the patched tree as for any session: the right multiply() is committed and its agent-authored test alone reads PARTIAL" || { bad "patch green: outcome '$(outcome)'"; dump; }
+[ "$(outcome)" = "PARTIAL" ] && grep -q 'only agent-authored tests executed' <<< "$OUT" && git -C "$REPO" show HEAD:calc.ts | grep -A1 'function multiply' | grep -q 'a \* b' && ok "patch green: verify and seal judge the patched tree as for any session: the right multiply() is committed and its agent-authored test alone reads PARTIAL" || { bad "patch green: outcome '$(outcome)'"; dump; }
 run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=notest LOKI_E10_PATCH=1 "${PLEAN[@]}"
 case "$(pev)" in *'"status": "green"'*'"calls": 2'*) git -C "$REPO" diff --quiet main HEAD -- calc.test.ts && [ "$(outcome)" = "VERIFIED" ] && ok "patch no test: a test-only repair with no edit keeps the green tree (no agentic session), VERIFIED" || { bad "patch no test: calc.test.ts changed or outcome '$(outcome)'"; dump; } ;; *) bad "patch no test: patch record is '$(pev)'" ;; esac
 run_engine "$PTASK" E2E_STUB_MODE=done E2E_STUB_PATCH=repair LOKI_E10_PATCH=1 "${PLEAN[@]}"
@@ -2674,12 +2678,12 @@ TSEOF
     [ "$(printf '%s' "$H" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d["batched"]==[] and all(a.split("=")[1].startswith("not_run") for a in d["alone"]))' 2>&1)" = True ] \
         && ok "go batch: a package whose pass corroboration refuses (tests only, no module code) is never vouched by the batch; every file runs alone" || bad "go batch tests-only package gave: $H"
     for knob in 1 0; do : > "$GB/log"; eval "BR$knob=\"\$(gb MODE=base REPO=\"$GB/basered\" N=6 LOKI_E10_GO_BATCH=$knob)\""; eval "BC$knob=\$(grep -c -- '-json -run' \"$GB/log\")"; done
-    [ "$BR1" = "$BR0" ] && printf '%s' "$BR1" | grep -q 'go:pk/f2_test.go","go:pk/f4_test.go","go:pk/f5_test.go' \
+    [ "$BR1" = "$BR0" ] && grep -q 'go:pk/f2_test.go","go:pk/f4_test.go","go:pk/f5_test.go' <<< "$BR1" \
         && ok "go batch: red untouched files on base keep the per-file known-red verdict (red files rerun alone: $BC1 go calls vs $BC0)" || bad "go base batch: verdict '$BR1' vs '$BR0', go calls $BC1 vs $BC0"
     for fxn in global panic; do for knob in 1 0; do eval "G${fxn}$knob=\"\$(gb MODE=base REPO=\"$GB/$fxn\" N=3 LOKI_E10_GO_BATCH=$knob)\""; done; done
-    [ "$Gglobal1" = "$Gglobal0" ] && printf '%s' "$Gglobal1" | grep -q '"knownRed":\[\]' \
+    [ "$Gglobal1" = "$Gglobal0" ] && grep -q '"knownRed":\[\]' <<< "$Gglobal1" \
         && ok "go batch: a file red only beside a sibling's package state on base is rerun alone, so a change-introduced failure is never excused as pre-existing" || bad "go base batch with package state: '$Gglobal1' vs per-file '$Gglobal0'"
-    [ "$Gpanic1" = "$Gpanic0" ] && printf '%s' "$Gpanic1" | grep -q 'f2_test.go","go:pk/f3_test.go' \
+    [ "$Gpanic1" = "$Gpanic0" ] && grep -q 'f2_test.go","go:pk/f3_test.go' <<< "$Gpanic1" \
         && ok "go batch: a panic in one file on base leaves later files to rerun alone, each attributed correctly" || bad "go base batch with a panic: '$Gpanic1' vs per-file '$Gpanic0'"
     for knob in 1 0; do : > "$GB/log"; eval "SR$knob=\"\$(gb MODE=base REPO=\"$GB/green\" N=4 REL=1 LOKI_E10_GO_BATCH=$knob)\""; eval "SC$knob=\$(grep -c -- '-json -run' \"$GB/log\")"; done
     [ "$SR1" = "$SR0" ] && [ "${SC1:-0}" -lt "${SC0:-0}" ] && ok "go batch: relevant files rerun on base per package give the same counts and weak list ($SC1 go calls vs $SC0)" || bad "go base batch (relevant): '$SR1' vs '$SR0', go calls $SC1 vs $SC0"
@@ -3603,7 +3607,7 @@ res("wiring: resumeForCoverage appends siteHints to the coverage brief (claim or
 const im = readFileSync(root + "/loki-ts/src/engine10/stages/implement.ts", "utf8");
 res("wiring: the plan-skipped implement brief adds coverageFoldLines right after FOLD_PLAN_INSTRUCTION, and fold mode runs only the claim check on the implement session (no -c turn)", /\.\.\.\(plan \? \[\] : \[FOLD_PLAN_INSTRUCTION, \.\.\.coverageFoldLines\(\)\]\)/.test(im) && /else if \(coverageMode\(\) === "fold" && !plan\) \{/.test(im) && /const r = await reaskFoldedClaims\(ctx, /.test(im) && /if \(coverageResumeEnabled\(\) && !plan\)/.test(im));
 const inF1 = readFileSync(root + "/loki-ts/src/engine10/stages/intake.ts", "utf8");
-res("wiring: intake records rankedRemedy as ranked_remedy under its knob; implement passes it to the brief and runs resumeForRemedy only after a clean done with a non-empty diff", /const remedy = rankedRemedyEnabled\(\) \? rankedRemedy\(task\) : null;/.test(inF1) && /\.\.\.\(remedy \? \{ ranked_remedy: remedy\.first \} : \{\}\)/.test(inF1) && /prior\.intake\?\.assumptions, rankedRemedyEnabled\(\) \? prior\.intake\?\.ranked_remedy : undefined\)/.test(im) && /if \(remedy && patch\?\.status !== "green" && !signal\.aborted && !session\.killed && session\.exit === 0 && session\.markers\.done && !session\.markers\.specConflict && !session\.markers\.alreadyDone && !treeIsEmpty\(ctx\)\) \{ const r = await resumeForRemedy\(/.test(im));
+res("wiring: intake records rankedRemedy as ranked_remedy under its knob; implement passes it to the brief and runs resumeForRemedy only after a clean done with a non-empty diff", /const remedy = rankedRemedyEnabled\(\) \? rankedRemedy\(task\) : null;/.test(inF1) && /\.\.\.\(remedy \? \{ ranked_remedy: remedy\.first \} : \{\}\)/.test(inF1) && /prior\.intake\?\.assumptions, rankedRemedyEnabled\(\) \? prior\.intake\?\.ranked_remedy : undefined, issue\)/.test(im) && /if \(remedy && patch\?\.status !== "green" && !signal\.aborted && !session\.killed && session\.exit === 0 && session\.markers\.done && !session\.markers\.specConflict && !session\.markers\.alreadyDone && !treeIsEmpty\(ctx\)\) \{ const r = await resumeForRemedy\(/.test(im));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/site-hints.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || bad "site-hints unit script crashed or exited non-zero"
@@ -3859,7 +3863,7 @@ const secs = (Date.now() - t0) / 1000;
 res(`TIMEOUT-WAIT a test that ignores SIGTERM returns soon after its limit (${secs.toFixed(1)} s for a 1 s limit), recorded cut`, r.cut && secs < 15);
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/tcarry.ts" "$ROOT" 2>&1; echo "EXIT $?")"
-printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "tcarry unit script crashed or exited non-zero"
+grep -q '^EXIT 0$' <<< "$out" || bad "tcarry unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 7 ] || bad "tcarry unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 7"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac

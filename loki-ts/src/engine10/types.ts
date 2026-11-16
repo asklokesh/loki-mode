@@ -41,7 +41,7 @@ export const EVENT_TYPES = [
   "tests.restored", "test.result", "test.scoped_out", "test.skipped_on_base", "fix.round", "already.satisfied", "spec.conflict",
   "session.group_reaped",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
-  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "watchdog.silent", "sysedit.kept", "sysedit.undone", "attempts.selected", "nrd.completed", "s1b.resumed",
+  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "watchdog.silent", "sysedit.kept", "sysedit.undone", "attempts.selected", "nrd.completed", "s1b.resumed", "env.card",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */
@@ -77,6 +77,7 @@ export interface SessionMarkers {
 /** ROUTER-1 R1-08/R1-09: optional per-session cost telemetry copied onto the cost event when the cost record carries it. */
 export const ROUTER_COST_FIELDS = ["requests_total", "requests_over_100k", "advisor_calls", "advisor_input_tokens", "advisor_output_tokens"] as const;
 export interface SessionRunOptions {
+  pathAppend?: string[]; // candidate 1 env card: directories appended (never prepended) to this session's PATH; implement and its resumes only
   stage: StageName;
   brief: string;
   tier: SessionTier;
@@ -186,7 +187,6 @@ export interface Receipt {
   route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on.
   named_unchanged?: { symbol: string; path: string; line: number; reason: string | null }[]; // R2 LOKI_E10_NAMED_SITES: each named site the diff left unchanged, with the run's reason (null: none given, which caps VERIFIED); omitted (hash unchanged) when none
   pinned_test_updates?: import("../util/test_guard.ts").PinnedTestUpdate[]; // Z2 LOKI_E10_PINNED_TEST_UPDATE: each existing test updated to the issue's stated behavior; omitted (hash unchanged) when none
-  env_card?: Record<string, unknown>; // Q1 ENV CARD (e10ext/env_card.ts): the services the repository needs and where they are on this machine; only when the card was built (issue runs on claude)
   self_review?: { mode: string; turn: string | null; items: { item: string; status: string; detail: string }[] }; // SR LOKI_E10_SELF_REVIEW: each pre-delivery check and how it was resolved; omitted when off or the implement stage did not end done
   changelog_refs_removed?: string[]; // CR LOKI_E10_CHANGELOG_REF: each issue or PR reference the task never gives, removed from the release note the run added ("<path>: #N"); omitted when none
   release_note_skipped?: string; // TR LOKI_E10_SCAFFOLD_TRACE: why the release-note fragment writer wrote nothing on a repo with a convention; omitted (hash unchanged) otherwise
@@ -264,6 +264,11 @@ export function pushArgv(a: PushArgs): string[] {
 }
 /** The untrusted-task-text wrapper every stage brief embeds verbatim (already_done.ts, plan/implement/wall.ts). */
 export const FINISH_LINE = "Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason; cite test as path:line>."; // E-150: the brief's last line, byte-identical every task (e10ext/context.ts re-exports it)
+/** Candidate 1 (e10ext/context.ts): the issue-run finish rule, the opt-out and the scope rule, here in the leaf so conflict_resume and machine import them without a cycle. */
+export const ISSUE_FINISH_LINE = "Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason; cite test as path:line>, or LOKI_UNFINISHED: <what is left> when something the issue lists is not delivered. Use LOKI_SPEC_CONFLICT only when a test in the repository contradicts the task.";
+export const proveByRunningOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PROVE_BY_RUNNING"] ?? "").trim());
+/** The one scope rule for everything above: an issue run on the claude provider with the opt-out unset. */
+export const issueRunBrief = (provider: string, source: unknown, env: NodeJS.ProcessEnv = process.env): boolean => provider === "claude" && source === "issue" && proveByRunningOn(env);
 export function taskBlock(task: string): string[] { return ["Task (untrusted, quoted verbatim):", "<<<TASK", task, "TASK"]; }
 
 // Shapes produced by extension modules (receipt time, cost records); defined here so core never imports them.

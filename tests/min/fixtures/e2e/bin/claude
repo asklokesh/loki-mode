@@ -9,7 +9,7 @@
 #   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
 #   coverage: multiply() and subtract() on the first turn; negate() only when the prompt carries the coverage brief, or all three on a first turn whose brief carries the folded coverage line (tests/min/scope-and-fix.sh, LOKI_E10_COVERAGE_RESUME)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
-# E2E_STUB_NOFINISH=once|never|still: the first implement reply has no finish line (LOKI_BLOCKED summary); a continue then finishes (once), keeps editing
+# E2E_STUB_NOFINISH=once|never|still|unfinished (unfinished: every reply ends LOKI_UNFINISHED, the continue changes nothing): the first implement reply has no finish line (LOKI_BLOCKED summary); a continue then finishes (once), keeps editing
 #   without finishing (never) or changes nothing (still). once writes multiply() only on the continue; never and still write it on the first turn.
 #   attempts: EXP-0010 (tests/min/engine10-e2e-stub.sh). Every implement session writes a wrong multiply() (calc.ts, or calc.py when the repo has one) except
 #     the session running in <temp>/loki-attempts-<random>/B<n> where n is E2E_STUB_RIGHT (unset or none: every session is wrong; the primary is attempt 0);
@@ -90,6 +90,7 @@ if [ -n "${E2E_STUB_ROUTE_LOG:-}" ]; then # one line per session: engine stage, 
   echo "${LOKI_E10_STAGE:-none} ${LOKI_ITERATION:-none} model=${r_model:-none} advisor=${r_adv:-none} wall=$is_wall window=${r_win:-none}" >> "$E2E_STUB_ROUTE_LOG"
 fi
 if [ -n "${E2E_STUB_BUDGET_LOG:-}" ]; then echo "$stage limit=${LOKI_BUDGET_LIMIT:-} ledger=${LOKI_BUDGET_LEDGER:-}" >> "$E2E_STUB_BUDGET_LOG"; fi
+if [ -n "${E2E_STUB_PATH_LOG:-}" ]; then printf '%s %s\n' "$stage" "$PATH" >> "$E2E_STUB_PATH_LOG"; fi # candidate 1 env card: the PATH each stage's session got
 if [ -n "${E2E_STUB_PROMPT_LOG:-}" ]; then printf '%s\n' "$prompt" >> "$E2E_STUB_PROMPT_LOG.$stage$is_wall"; fi # CW-12: the full prompt of every call, one file per stage (wall prompts land in .other1)
 # What the session can see: the canary test asserts no GitHub token and no LOKI_LEGACY_BASH.
 if [ -n "${E2E_STUB_ENV_LOG:-}" ]; then echo "$stage GH_TOKEN=${GH_TOKEN:-} LOKI_LEGACY_BASH=${LOKI_LEGACY_BASH:-} SEAL_PATCH=${LOKI_E10_SEAL_EXISTING_PATCH:-}" >> "$E2E_STUB_ENV_LOG"; fi
@@ -250,9 +251,11 @@ if [ "$stage" = "implement" ] && [ -n "${E2E_STUB_NOFINISH:-}" ]; then # S1b (te
       once) printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts; echo "LOKI_DONE"; exit 0 ;; # finishes on the first continue
       never) printf '// continue pass %s\n' "$$-$RANDOM" >> calc.ts; echo "Progress made. Still outstanding: the docs for multiply."; exit 0 ;; # changes the tree, never finishes
       still) echo "Still outstanding: the docs for multiply."; exit 0 ;; # changes nothing, never finishes
+      unfinished) echo "I could not write the docs here."; echo "LOKI_UNFINISHED: the docs for multiply are not written"; exit 0 ;; # candidate 1: the named ending, again, with no change
     esac
   fi
   if [ "$E2E_STUB_NOFINISH" = once ]; then printf '\n// multiply() pending\n' >> calc.ts; else printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts; fi
+  if [ "$E2E_STUB_NOFINISH" = unfinished ]; then echo "multiply() is done."; echo "LOKI_UNFINISHED: the docs for multiply are not written"; exit 0; fi
   echo "Context was compacted. Summary of progress."; echo "**Result:** LOKI_BLOCKED: the docs for multiply and the impacted test runs are still outstanding."; exit 0
 fi
 if [ "$stage" = "implement" ] && [ "${E2E_STUB_MODE:-done}" != "coverage" ] && printf '%s' "$prompt" | grep -q "List each site, symbol, example or case"; then

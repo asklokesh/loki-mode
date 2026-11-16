@@ -13,6 +13,6 @@ need bun
 echo "TEST: loki-ts type check"
 
 out="$(cd "$ROOT/loki-ts" && bunx tsc --noEmit 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && ok "bunx tsc --noEmit is clean" || bad "tsc reported errors: $(printf '%s\n' "$out" | head -5 | tr '\n' ' ')"
+[ "$rc" -eq 0 ] && ok "bunx tsc --noEmit is clean" || bad "tsc reported errors: $(head -5 <<< "$out" | tr '\n' ' ')"
 
 finish
