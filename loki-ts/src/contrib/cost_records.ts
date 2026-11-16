@@ -45,7 +45,8 @@ export function cumulativeDelta(prev: Rec, rec: Rec): Rec | null {
   const isMap = (m: unknown): m is Record<string, Record<string, unknown>> => typeof m === "object" && m !== null && !Array.isArray(m);
   if (!isMap(pm) || !isMap(rm) || typeof rec["output_tokens"] !== "number") return null;
   const outSum = (m: Record<string, Record<string, unknown>>): number => Object.values(m).reduce((t, v) => t + num(v?.["output_tokens"]), 0);
-  if (outSum(rm) !== outSum(pm) + num(rec["output_tokens"])) return null;
+  const want = outSum(pm) + num(rec["output_tokens"]), compacted = num(rec["compactions"]) > 0;
+  if (outSum(rm) !== want && !(compacted && outSum(rm) > want)) return null; // a call that compacted (the SDK route counts compact_boundary) also carries the summary's output in its cumulative model_usage but not in its own output_tokens; a total above predecessor plus own can only be cumulative
   const mu: Record<string, Record<string, unknown>> = {};
   for (const [k, v] of Object.entries(rm)) {
     const p0 = pm[k] ?? {}, d: Record<string, unknown> = { ...v };

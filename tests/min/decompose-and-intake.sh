@@ -792,6 +792,39 @@ SOIEV="$(python3 -I -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) 
     && ok "scratch final: a cancelled run writes the scratch.cleanup event, with no secret-looking argument in any run file" || bad "scratch final cancelled path: scratch.cleanup events $SOIEV"
 [ -n "$SOL" ] && [ "$(so_alive "$SOL")" = yes ] && python3 -I -c 'import os, signal, sys; os.kill(int(sys.argv[1]), signal.SIGTERM)' "$SOL"
 
+# --- Haiku arm: H1 (a LOKI_SPEC_CONFLICT citing no test is an unfinished implement reply on an issue run on claude; LOKI_E10_CONFLICT_NEEDS_TEST=0 opts out)
+# and the two measurement knobs (LOKI_E10_COMPACT_WINDOW=off, LOKI_E10_TIME_NOTE=0), default unchanged.
+H1U="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const cr = await import(process.env.ROOT + "/loki-ts/src/util/conflict_resume.ts"), pv = await import(process.env.ROOT + "/loki-ts/src/runner/providers.ts"), rc = await import(process.env.ROOT + "/loki-ts/src/util/run_cap.ts");
+const rows = (await Bun.file(process.env.ROOT + "/tests/min/fixtures/e2e/s1b/conflict-reasons.txt").text()).split("\n").filter((l) => l && !l.startsWith("#")).map((l) => l.split("\t"));
+const wrong = rows.filter(([want, reason]) => (want === "test") !== cr.citesTestFile(reason)).length;
+console.log([rows.length, rows.filter(([w]) => w === "test").length, wrong, JSON.stringify(pv.compactWindowSettings("claude-haiku-5-5", false, {})), JSON.stringify(pv.compactWindowSettings("claude-haiku-5-5", false, { LOKI_E10_COMPACT_WINDOW: "off" }) ?? null), JSON.stringify(pv.compactWindowSettings("claude-sonnet-5-5", false, { LOKI_E10_COMPACT_WINDOW: "off" }) ?? null), rc.timeNoteOn({}), rc.timeNoteOn({ LOKI_E10_TIME_NOTE: "0" }), cr.conflictNeedsTestOn({}), cr.conflictNeedsTestOn({ LOKI_E10_CONFLICT_NEEDS_TEST: "1" })].join(" "));
+' 2>&1)"
+[ "$H1U" = '11 7 0 {"autoCompactWindow":100000} null null true false false true' ] \
+    && ok "Haiku arm unit: the 7 stored conflict reasons that cite a test read as conflicts and the 4 that cite none as unfinished; LOKI_E10_COMPACT_WINDOW=off drops only the Haiku 100K window; LOKI_E10_TIME_NOTE=0 and LOKI_E10_CONFLICT_NEEDS_TEST=0 parse" \
+    || bad "Haiku arm unit gave: $H1U"
+h1_facts() { # resumes, -r sessions, implement exit, outcome
+    local ev="$C1RUN/events.jsonl" n_res n_r iex outc
+    n_res="$(grep -c '"type":"s1b.resumed"' "$ev" 2>/dev/null)"; n_r="$(grep -c 'impl-r"' "$ev" 2>/dev/null)"
+    iex="$(python3 -I -c 'import json,sys; print(next((json.loads(l)["data"].get("exit") for l in open(sys.argv[1]) if "\"stage.completed\"" in l and "\"implement\"" in l), "none"))' "$ev" 2>/dev/null)"
+    outc="$(sed -n 's/^Outcome: *//p' <<< "$OUT")"; outc="${outc%%$'\n'*}"
+    printf '%s|%s|%s|%s' "$n_res" "$n_r" "$iex" "$outc"
+}
+c1_run h1-issue none start acme/search#24 --no-pr --max-cost 5 -- E2E_STUB_NOFINISH=conflict LOKI_E10_CONFLICT_NEEDS_TEST=1; H1A="$(h1_facts)"
+c1_run h1-off none start acme/search#24 --no-pr --max-cost 5 -- E2E_STUB_NOFINISH=conflict; H1B="$(h1_facts)"
+c1_run h1-cited none start acme/search#24 --no-pr --max-cost 5 -- E2E_STUB_NOFINISH=conflictcited LOKI_E10_CONFLICT_NEEDS_TEST=1; H1C="$(h1_facts)"
+c1_run h1-text none "add a multiply(a, b) function to calc.ts" --no-pr -- E2E_STUB_NOFINISH=conflict LOKI_E10_CONFLICT_NEEDS_TEST=1; H1D="$(h1_facts)"
+echo "    H1 (resumes|-r sessions|implement exit|outcome): issue $H1A; opt-out $H1B; cited $H1C; text goal $H1D"
+case "$H1A" in "1|0|done|"*) ok "H1: on an issue run a conflict citing no test gets no conflict correction (-r) and exactly one S1b resume, which finishes; never SPEC_CONFLICT" ;; *) bad "H1 issue run gave $H1A (want 1|0|done|...)" ;; esac
+case "$H1B" in "0|"[1-9]*"|spec_conflict|"*) ok "H1: off by default (LOKI_E10_CONFLICT_NEEDS_TEST unset) keeps today's path (the -r correction, then the conflict is believed)" ;; *) bad "H1 opt-out gave $H1B (want 0|>0|spec_conflict|...)" ;; esac
+case "$H1C" in "0|"[1-9]*"|spec_conflict|"*) ok "H1: a conflict citing a test (calc.test.ts:3) behaves exactly as today" ;; *) bad "H1 cited conflict gave $H1C (want 0|>0|spec_conflict|...)" ;; esac
+case "$H1D" in "0|"[1-9]*"|spec_conflict|"*) ok "H1: a text goal keeps today's conflict path (issue runs only)" ;; *) bad "H1 text goal gave $H1D (want 0|>0|spec_conflict|...)" ;; esac
+c1_run tn-default none "add a multiply(a, b) function to calc.ts" --no-pr --; TN0="$C1P"; TNSIG0="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$C1RUN" "$T/c1-tn-default" 2>&1 | sed 's/; brief=.*//')"
+c1_run tn-off none "add a multiply(a, b) function to calc.ts" --no-pr -- LOKI_E10_TIME_NOTE=0; TN1="$C1P"; TNSIG1="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$C1RUN" "$T/c1-tn-off" 2>&1 | sed 's/; brief=.*//')"
+grep -qF "Time budget: about" <<< "$TN0" && ! grep -qF "Time budget: about" <<< "$TN1" && grep -qF -- "- Never kill processes." <<< "$TN1" && [ "$TNSIG0" = "$TNSIG1" ] \
+    && ok "Haiku arm: LOKI_E10_TIME_NOTE=0 drops only the time-budget sentence from the implement prompt; the rules, stage order and receipt keys are unchanged" \
+    || bad "Haiku arm: time-note knob: default has the sentence $(grep -c 'Time budget' <<< "$TN0"), knob has it $(grep -c 'Time budget' <<< "$TN1"), signatures equal $([ "$TNSIG0" = "$TNSIG1" ] && echo yes || echo no)"
+
 # --- split repair: a list detail is repaired, any other refusal is re-asked once with the exact error ------------------------
 # FireLater#24 (v11.116.0): one 520-character acceptance criterion refused the whole split and the epic ran as one 413 s session.
 SPLITR="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '

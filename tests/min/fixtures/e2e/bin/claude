@@ -9,7 +9,8 @@
 #   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
 #   coverage: multiply() and subtract() on the first turn; negate() only when the prompt carries the coverage brief, or all three on a first turn whose brief carries the folded coverage line (tests/min/scope-and-fix.sh, LOKI_E10_COVERAGE_RESUME)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
-# E2E_STUB_NOFINISH=once|never|still|unfinished (unfinished: every reply ends LOKI_UNFINISHED, the continue changes nothing): the first implement reply has no finish line (LOKI_BLOCKED summary); a continue then finishes (once), keeps editing
+# E2E_STUB_NOFINISH=once|never|still|unfinished|conflict|conflictcited (unfinished: every reply ends LOKI_UNFINISHED, the continue changes nothing; conflict: the first reply
+#   is a LOKI_SPEC_CONFLICT citing no test and a continue finishes; conflictcited: every non-continue reply is a conflict citing calc.test.ts:3): the first implement reply has no finish line (LOKI_BLOCKED summary); a continue then finishes (once), keeps editing
 #   without finishing (never) or changes nothing (still). once writes multiply() only on the continue; never and still write it on the first turn.
 #   attempts: EXP-0010 (tests/min/engine10-e2e-stub.sh). Every implement session writes a wrong multiply() (calc.ts, or calc.py when the repo has one) except
 #     the session running in <temp>/loki-attempts-<random>/B<n> where n is E2E_STUB_RIGHT (unset or none: every session is wrong; the primary is attempt 0);
@@ -357,10 +358,13 @@ if [ "$stage" = "implement" ] && [ -n "${E2E_STUB_NOFINISH:-}" ]; then # S1b (te
       never) printf '// continue pass %s\n' "$$-$RANDOM" >> calc.ts; echo "Progress made. Still outstanding: the docs for multiply."; exit 0 ;; # changes the tree, never finishes
       still) echo "Still outstanding: the docs for multiply."; exit 0 ;; # changes nothing, never finishes
       unfinished) echo "I could not write the docs here."; echo "LOKI_UNFINISHED: the docs for multiply are not written"; exit 0 ;; # candidate 1: the named ending, again, with no change
+      conflict|conflictcited) printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts; echo "LOKI_DONE"; exit 0 ;; # H1: the continue finishes the work
     esac
   fi
   if [ "$E2E_STUB_NOFINISH" = once ]; then printf '\n// multiply() pending\n' >> calc.ts; else printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts; fi
   if [ "$E2E_STUB_NOFINISH" = unfinished ]; then echo "multiply() is done."; echo "LOKI_UNFINISHED: the docs for multiply are not written"; exit 0; fi
+  if [ "$E2E_STUB_NOFINISH" = conflict ]; then echo "LOKI_SPEC_CONFLICT: stage incomplete. multiply() is not implemented yet; no conflicting test was found."; exit 0; fi # H1: a conflict that cites no test
+  if [ "$E2E_STUB_NOFINISH" = conflictcited ]; then echo "LOKI_SPEC_CONFLICT: calc.test.ts:3 asserts add(2, 2) is 5, which contradicts the task"; exit 0; fi # H1: a conflict that cites a test
   echo "Context was compacted. Summary of progress."; echo "**Result:** LOKI_BLOCKED: the docs for multiply and the impacted test runs are still outstanding."; exit 0
 fi
 if [ "$stage" = "implement" ] && [ "${E2E_STUB_MODE:-done}" != "coverage" ] && printf '%s' "$prompt" | grep -q "List each site, symbol, example or case"; then

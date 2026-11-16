@@ -378,7 +378,8 @@ const ROUTER_AUTO_COMPACT_WINDOW = 100000;
 const hasNoPriceCliff = (m: string): boolean => /sonnet|opus/i.test(m) && !/haiku/i.test(m);
 /** T036: the compact window a session carries. Every Haiku session gets it (router on or off, advisor or not); a routed
  *  session also gets it for an unknown model. Sonnet/Opus never do. The one definition both invokers and planRouterSession use. */
-export function compactWindowSettings(model: string, routed = false): { autoCompactWindow: number } | undefined {
+export function compactWindowSettings(model: string, routed = false, env: NodeJS.ProcessEnv = process.env): { autoCompactWindow: number } | undefined {
+  if (/^(0|off|false|no)$/i.test((env["LOKI_E10_COMPACT_WINDOW"] ?? "").trim())) return undefined; // Haiku arm measurement knob: no 100K window, the model's own default applies
   return isHaikuModel(model) || (routed && !hasNoPriceCliff(model)) ? { autoCompactWindow: ROUTER_AUTO_COMPACT_WINDOW } : undefined;
 }
 
