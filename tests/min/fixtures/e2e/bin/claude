@@ -37,6 +37,19 @@
 # E2E_STUB_REVIEW=PASS|FLAG|BLOCK: the seal cross-review session replies with that verdict (tests/min/engine10-e2e-stub.sh).
 #   overlay: a plain `-p <task>` call copies E2E_STUB_OVERLAY over the cwd (h2h benchmark harness)
 # E2E_STUB_SLEEP=<s>: the implement session sleeps after its edit, so a test can signal the run mid-session (tests/min/run-safety.sh).
+# Q1 PROVE. The listing call ("Loki 10 prove listing"): E2E_STUB_LIST unset writes two asks copied from issue #24's acceptance list (another issue: its
+#   title line, verbatim); para writes a
+#   paraphrased ask first and the verbatim list on the retry; bad paraphrases both times. E2E_STUB_LIST_LOG gets each listing prompt.
+# The prover session ("Loki 10 prove stage", E2E_STUB_PROVE): pass (default) writes ask scripts that pass once multiply() exists (so they fail on base);
+#   notrun: ask 2 exits 3; setupfail: setup.sh fails; none writes nothing; noscript writes setup and teardown but no ask script; hang: ask 2 sleeps 60 s;
+#   basepass: ask 2 exits 0 on any tree; leftover: the prover's own runs leave a seed marker in its scratch dir, an untracked seed.db and stale
+#   endpoints and pids, which fail ask 2 unless the harness's run is clean; editsrc: the prover appends a line to the tracked calc.ts;
+#   proverdaemon: the prover's own run leaves a setsid daemon working in its TMPDIR, its pid in E2E_STUB_PROVER_PID_LOG; foreign: setup.sh lists endpoint "web $E2E_STUB_FOREIGN_PORT"; abort: ask 1 starts a child that leaves the group
+#   (its own session, id recorded in prove/pids) plus one that stays, writes $E2E_STUB_ABORT_MARK and waits, until prove/resumed exists.
+#   E2E_STUB_PROVE_LOG gets "teardown" each time teardown.sh runs; E2E_STUB_PROVE_BRIEF_LOG gets the prover's prompt.
+#   E2E_STUB_REPLY_MARK: the done-mode implement reply prints this line before LOKI_DONE.
+#   onefail (repair legs): ask 2 fails until calc.ts carries PROVE_FIXED. A repair resume ("Prove repair, round") logs "repair" to E2E_STUB_PROVE_LOG and,
+#   with E2E_STUB_PROVE_REPAIR=fix, appends // PROVE_FIXED to calc.ts; it never replays the first turn's edit.
 # E2E_STUB_SPLIT (JSON text): the MASS-2 split planning session writes it to the file its brief names.
 # E2E_STUB_SPEC_REPLY (text): the exec-spec generator session (its brief names spec_reply.md, LOKI_E10_EXEC_SPEC) writes it there.
 # E2E_STUB_IMPL_CONFLICT=<text>: an implement session not on sonnet answers LOKI_SPEC_CONFLICT: <text>; on sonnet it implements.
@@ -64,12 +77,14 @@ done
 case "$prompt" in
   "Loki acceptance line check."*) stage=linecheck ;; # Q1 ISSUE-ACCEPTANCE: the seal's tool-less per-line check (stages/xreview.ts issueLineCheck); E2E_STUB_LINECHECK_FILE holds the reply
   "Loki attempts review"*) stage=attemptsreview ;; # LOKI_E10_ATTEMPTS: the tool-less tie review (features/attempts.ts reviewTie); before every other match, the diffs it quotes can hold any text
+  "Loki 10 prove stage"*) stage=prove ;; # Q1 PROVE: the prover session (engine10/stages/prove.ts proverBrief); before the issue text it quotes can match anything below
+  "Loki 10 prove listing"*) stage=provelist ;; # Q1 PROVE: the listing call (engine10/stages/prove_list.ts listBrief)
   *"Loki remedy check"*) stage=remedy ;; # F1 LOKI_E10_RANKED_REMEDY: the tool-less check of the diff against the first-ranked remedy (util/conflict_resume.ts)
   *"Loki Opus consult"*) stage=consult ;; # LOKI_E10_OPUS_CONSULT: the tool-less consult call (features/opus_consult.ts)
   *"implement stage in patch mode"*) stage=patch ;; # LOKI_E10_PATCH: the tool-less patch call (features/patch_protocol.ts), before the implement match
   *"code reviewer"*) stage=review ;; # any model review session: the seal cross-review, or a post-PR reviewer
   *"Loki 10 plan stage"*) stage=plan ;;
-  *"Loki 10 implement stage"*|"Any earlier request to stop and write a text-only summary is over"*) stage=implement ;; # S1b: a resumed continue (SDK invoker) carries only the continue brief
+  *"Loki 10 implement stage"*|"Any earlier request to stop and write a text-only summary is over"*|"Prove repair, round"*) stage=implement ;; # S1b: a resumed continue (SDK invoker) carries only the continue brief
   *) stage=other ;;
 esac
 is_wall=0; case "$prompt" in *"Loki 10 Wall author"*) is_wall=1 ;; esac
@@ -130,6 +145,70 @@ if [ "$stage" = consult ]; then # E2E_STUB_CONSULT=fail: an error reply (no advi
   if [ "${E2E_STUB_CONSULT:-}" = "fail" ]; then echo '{"type":"result","subtype":"error_during_execution","is_error":true,"total_cost_usd":0.002,"usage":{"input_tokens":10,"output_tokens":0}}'; exit 0; fi
   echo '{"type":"result","subtype":"success","is_error":false,"result":"DIAGNOSIS: multiply adds instead of multiplying.\nINTENDED: STUB_ADVICE multiply(a, b) returns a * b.","total_cost_usd":0.002,"usage":{"input_tokens":100,"output_tokens":20}}'
   exit 0
+fi
+if [ "$stage" = provelist ]; then
+  [ -n "${E2E_STUB_LIST_LOG:-}" ] && printf '%s\n=====\n' "$prompt" >> "$E2E_STUB_LIST_LOG"
+  out="$(sed -n 's/^Write only this JSON to the file \(.*\): {"asks".*$/\1/p' <<< "$prompt" | head -1)"
+  good='{"asks": ["Implement PostgreSQL full-text search with ranking", "Create advanced filter query builder"]}'
+  para='{"asks": ["Add full text search to the issues list", "Create advanced filter query builder"]}'
+  retry=no; case "$prompt" in *"Your last list was rejected"*) retry=yes ;; esac
+  case "$prompt" in *"Implement PostgreSQL full-text search with ranking"*) ;; *) good="$(python3 -I -c 'import json,sys; t=sys.argv[1].split("The issue:\n",1)[-1].strip().split("\n")[0]; print(json.dumps({"asks": [t]}))' "$prompt")" ;; esac # another issue: its title line, verbatim
+  case "${E2E_STUB_LIST:-}:$retry" in para:no|bad:*) body="$para" ;; *) body="$good" ;; esac
+  [ -n "$out" ] && printf '%s\n' "$body" > "$out"
+  echo "LOKI_DONE"; exit 0
+fi
+if [ "$stage" = prove ]; then
+  [ -n "${E2E_STUB_PROVE_BRIEF_LOG:-}" ] && printf '%s\n' "$prompt" > "$E2E_STUB_PROVE_BRIEF_LOG"
+  pdir="$(sed -n 's/^Write these files into \(.*\) and nowhere else:$/\1/p' <<< "$prompt" | head -1)"
+  mode="${E2E_STUB_PROVE:-pass}"
+  if [ -n "$pdir" ] && [ "$mode" != none ]; then
+    mkdir -p "$pdir"
+    printf 'echo teardown >> "%s"\nfor p in $(cat "$PROVE_DIR/pids" 2>/dev/null); do kill "$p" 2>/dev/null; done\n' "${E2E_STUB_PROVE_LOG:-/dev/null}" > "$pdir/teardown.sh"
+    printf 'echo setup done\n' > "$pdir/setup.sh"
+    if [ "$mode" != noscript ]; then
+      printf '# ask 1\ngrep -q "export function multiply" calc.ts || { echo "multiply is not exported"; exit 1; }\n' > "$pdir/ask-1.sh"
+      printf '# ask 2\ngrep -q "export function multiply" calc.ts || { echo "the filter builder is not reachable"; exit 1; }\n' > "$pdir/ask-2.sh"
+    fi
+    case "$mode" in
+      notrun) printf 'echo "tried: initdb --version: command not found; needs a GPU to run"; exit 3\n' > "$pdir/ask-2.sh" ;;
+      setupfail) printf 'echo "migration 042 failed"; exit 1\n' > "$pdir/setup.sh" ;;
+      hang) printf 'sleep 60\n' > "$pdir/ask-2.sh" ;;
+      basepass) printf 'echo "always fine"; exit 0\n' > "$pdir/ask-2.sh" ;;
+      onefail) printf 'grep -q PROVE_FIXED calc.ts || { echo "POST /v1/filters returned 404"; exit 1; }\n' > "$pdir/ask-2.sh" ;;
+      editsrc) printf '// prover was here\n' >> calc.ts ;; # a tracked file the prover must not touch
+      proverdaemon) # the prover's own run leaves a daemon working in its TMPDIR (FireLater ps-1); it leaves the session's group before the session ends
+        python3 -I -c 'import os, sys, time
+if os.fork() == 0:
+    os.setsid(); os.chdir(os.environ["TMPDIR"])
+    open(sys.argv[1], "w").write(str(os.getpid())); time.sleep(300)
+os._exit(0)' "${E2E_STUB_PROVER_PID_LOG:-/dev/null}" > /dev/null 2>&1 < /dev/null
+        _n=0; while [ ! -s "${E2E_STUB_PROVER_PID_LOG:-/dev/null}" ] && [ "$_n" -lt 100 ]; do sleep 0.05; _n=$((_n + 1)); done ;;
+      leftover) # the prover runs its own scripts twice in its own scratch dir and leaves data behind: a seed marker, an untracked seed.db, stale endpoints and pids
+        printf 'if [ -f "$PROVE_TMP/seeded" ]; then echo dup > "$PROVE_TMP/dup"; fi\ntouch "$PROVE_TMP/seeded"\necho setup done\n' > "$pdir/setup.sh"
+        printf 'echo "tmp=$PROVE_TMP"\n[ -f "$PROVE_TMP/dup" ] && { echo "duplicate key value violates unique constraint"; exit 1; }\n[ -f seed.db ] && { echo "leftover seed.db from an earlier run"; exit 1; }\ngrep -q "export function multiply" calc.ts\n' > "$pdir/ask-2.sh"
+        mkdir -p "$pdir/prover-scratch"
+        for _ in 1 2; do PROVE_TMP="$pdir/prover-scratch" PROVE_DIR="$pdir" PROVE_ROOT="$PWD" bash "$pdir/setup.sh" > /dev/null; done
+        PROVE_TMP="$pdir/prover-scratch" PROVE_DIR="$pdir" PROVE_ROOT="$PWD" bash "$pdir/ask-2.sh" > "$pdir/prover-own-run.log" 2>&1
+        touch seed.db; printf 'web 1\n' > "$pdir/endpoints"; printf '99999999\n' > "$pdir/pids" ;;
+      foreign) printf 'echo "web %s" > "$PROVE_DIR/endpoints"\n' "${E2E_STUB_FOREIGN_PORT:-1}" > "$pdir/setup.sh" ;;
+      abort) cat > "$pdir/ask-1.sh" <<'ASK'
+if [ -f "$PROVE_DIR/resumed" ]; then grep -q "export function multiply" calc.ts; exit $?; fi
+touch "$PROVE_DIR/resumed"
+python3 -I -c 'import os, time
+if os.fork() == 0:
+    os.setsid()
+    open(os.environ["PROVE_DIR"] + "/pids", "a").write("%d\n" % os.getpid())
+    time.sleep(300)' &
+sleep 300 &
+echo $! >> "$PROVE_DIR/pids"
+n=0; while [ "$(grep -c . "$PROVE_DIR/pids")" -lt 2 ] && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+cp "$PROVE_DIR/pids" "$E2E_STUB_ABORT_MARK"
+wait
+ASK
+      ;;
+    esac
+  fi
+  echo "LOKI_DONE"; exit 0
 fi
 if [ "$stage" = patch ]; then # E2E_STUB_PATCH: green appends a right multiply(); repair writes a wrong one first and fixes it in the repair call;
   # wrongtwice stays wrong (the agentic session then runs); cfg also edits bunfig.toml (refused), the repair call leaves it out;
@@ -260,6 +339,10 @@ fi
 if [ "$stage" = "implement" ] && printf '%s' "$prompt" | grep -q "first-choice remedy is not in your change"; then
   printf '// remedy resume\n' >> calc.ts; echo "LOKI_DONE"; exit 0 # F1: the targeted "-rr" resume; a marker edit, never a second copy of the first turn's change
 fi
+if [ "$stage" = "implement" ]; then case "$prompt" in *"Prove repair, round"*) # Q1 PROVE repair resume: never the first turn's edit again
+  [ -n "${E2E_STUB_PROVE_LOG:-}" ] && echo repair >> "$E2E_STUB_PROVE_LOG"
+  [ "${E2E_STUB_PROVE_REPAIR:-}" = fix ] && printf '// PROVE_FIXED\n' >> calc.ts
+  echo "LOKI_DONE"; exit 0 ;; esac; fi
 if [ "$stage" = "implement" ] && [ -n "${E2E_STUB_RV:-}" ] && printf '%s' "$prompt" | grep -q "Pre-delivery review\. Before this change"; then # TG legs: the -rv review turn adds a test to calc.test.ts
   case "$E2E_STUB_RV" in # breaktest: the added test comes with a beforeEach hook that turns the existing add test red; goodtest: a plain passing test
     breaktest) printf '%s\n' '' 'import { beforeEach } from "bun:test";' 'beforeEach(() => { expect(calc.add(2, 3)).toBe(6); });' 'test("add twice", () => { expect(calc.add(calc.add(1, 1), 1)).toBe(3); });' >> calc.test.ts ;;
@@ -350,6 +433,7 @@ if [ "$stage" = "implement" ]; then
     else
     printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts
     fi
+    [ -n "${E2E_STUB_REPLY_MARK:-}" ] && echo "$E2E_STUB_REPLY_MARK" # Q1 PROVE: a line only the implementer's reply carries (the prover's brief must not)
     echo "LOKI_DONE"
   fi
 fi

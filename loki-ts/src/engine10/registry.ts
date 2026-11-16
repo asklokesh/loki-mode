@@ -5,6 +5,7 @@ export const REGISTRY: Readonly<Record<string, () => Promise<Mod>>> = {
   "./stages/plan.ts": () => import("./stages/plan.ts"),
   "./stages/wall.ts": () => import("./stages/wall.ts"),
   "./stages/implement.ts": () => import("./stages/implement.ts"),
+  "./stages/prove.ts": () => import("./stages/prove.ts"),
   "./stages/verify.ts": () => import("./stages/verify.ts"),
   "./stages/commit.ts": () => import("./stages/commit.ts"),
   "./stages/fix.ts": () => import("./stages/fix.ts"),
