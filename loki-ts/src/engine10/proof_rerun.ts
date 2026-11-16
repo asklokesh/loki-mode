@@ -13,6 +13,8 @@ export const PROOF_SCRIPT = "loki-proof.sh";
 const MAX_SCRIPT_BYTES = 200_000, TAIL_CHARS = 8000;
 /** Seconds Loki gives its own re-run (LOKI_E10_PROOF_RERUN_S overrides). */
 export const proofRerunS = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_E10_PROOF_RERUN_S"]); return n > 0 ? n : 600; };
+/** How many times Loki hands a failing re-run back to the session before sealing (LOKI_E10_PROOF_LOOP_MAX, default 3; 0 only reports). */
+export const proofLoopMax = (env: NodeJS.ProcessEnv = process.env): number => { const v = (env["LOKI_E10_PROOF_LOOP_MAX"] ?? "").trim(), n = Number(v); return v !== "" && Number.isInteger(n) && n >= 0 ? n : 3; };
 /** On by default; LOKI_E10_PROOF_RERUN=0 opts out (the label then rests on the session's own description again). */
 export const proofRerunOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PROOF_RERUN"] ?? "").trim());
 
