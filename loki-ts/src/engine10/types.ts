@@ -77,7 +77,8 @@ export interface SessionMarkers {
 /** ROUTER-1 R1-08/R1-09: optional per-session cost telemetry copied onto the cost event when the cost record carries it. */
 export const ROUTER_COST_FIELDS = ["requests_total", "requests_over_100k", "advisor_calls", "advisor_input_tokens", "advisor_output_tokens"] as const;
 export interface SessionRunOptions {
-  pathAppend?: string[]; // candidate 1 env card: directories appended (never prepended) to this session's PATH; implement and its resumes only
+  pathAppend?: string[];
+  sessionEnv?: Record<string, string>; // Q1 RUN-SCRATCH: LOKI_SCRATCH, LOKI_SCRATCH_SINCE and TMPDIR for the implement session and its resumes only // candidate 1 env card: directories appended (never prepended) to this session's PATH; implement and its resumes only
   stage: StageName;
   brief: string;
   tier: SessionTier;

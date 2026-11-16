@@ -28,6 +28,38 @@ case "${LOKI_HOST_GUARD:-0}" in
     1|true|yes|on) HOST_GUARD=true ;;
 esac
 
+# Q1 RUN-SCRATCH: an implement session of an issue run gets a scratch directory the harness made (runner/worker_proc.ts createSessionScratch) as LOKI_SCRATCH,
+# with LOKI_SCRATCH_SINCE (epoch seconds the session began). It is honoured only under the host guard, only when it is an absolute, non-symlinked directory
+# owned by this user whose marker file holds its own path. Then, and only then: kill (or kill -TERM) of a process id listed in $LOKI_SCRATCH/pids or running
+# inside the directory, that started after the session began; and rm of paths that resolve inside it. Everything else stays as it is.
+_SCRATCH=""
+if "$HOST_GUARD" && [ -n "${LOKI_SCRATCH:-}" ]; then
+    case "$LOKI_SCRATCH" in
+        /*) if [ -d "$LOKI_SCRATCH" ] && [ ! -L "$LOKI_SCRATCH" ] && [ -O "$LOKI_SCRATCH" ] && [ -f "$LOKI_SCRATCH/.loki-scratch-owned" ] \
+                && [ "$(cat "$LOKI_SCRATCH/.loki-scratch-owned" 2>/dev/null)" = "$LOKI_SCRATCH" ]; then _SCRATCH="$LOKI_SCRATCH"; fi ;;
+    esac
+fi
+# _rm_seg_in_scratch <segment>: the segment is `rm [options] target...` and every target, with $LOKI_SCRATCH (and $TMPDIR when it is the scratch) expanded and
+# quotes dropped, lies strictly inside the scratch directory, with no other expansion and no `..`. A trailing 2>/dev/null is allowed.
+_rm_seg_in_scratch() {
+    [ -n "$_SCRATCH" ] || return 1
+    local seg="$1" tok n=0 seen_rm=false t
+    local -a words
+    read -r -a words <<< "$seg"
+    for tok in "${words[@]}"; do
+        if ! $seen_rm; then
+            [ "$tok" = rm ] || [ "$tok" = /bin/rm ] || return 1
+            seen_rm=true; continue
+        fi
+        case "$tok" in --|-[rRf]|-[rRf][rRf]|-[rRf][rRf][rRf]|--recursive|--force) continue ;; 2\>/dev/null|\>/dev/null) continue ;; -*) return 1 ;; esac
+        t="${tok//\"/}"; t="${t//\'/}"
+        t="${t//\$\{LOKI_SCRATCH\}/$_SCRATCH}"; t="${t//\$LOKI_SCRATCH/$_SCRATCH}"
+        if [ "${TMPDIR:-}" = "$_SCRATCH" ]; then t="${t//\$\{TMPDIR\}/$_SCRATCH}"; t="${t//\$TMPDIR/$_SCRATCH}"; fi
+        case "$t" in *'$'*|*'`'*|*..*|*'\'*) return 1 ;; "$_SCRATCH"/?*) n=$((n + 1)) ;; *) return 1 ;; esac
+    done
+    $seen_rm && [ "$n" -gt 0 ]
+}
+
 # P12-26d: when the resolved policy is compiled (explicit compiled, or unset with an
 # operator claude_permissions policy present) the compiled allow/deny list
 # and permission mode decide. An explicit hook "allow" skips the permission
@@ -103,7 +135,7 @@ CWD="${CWD:-${LOKI_TARGET_DIR:-$PWD}}"
 # separate container or microVM with no host Docker socket, restricted
 # credentials, and network policy. This parser only inspects text.
 if "$HOST_GUARD"; then
-    HOST_GUARD_REASON=$(_LOKI_GUARD_COMMAND="$COMMAND" python3 - <<'PY'
+    HOST_GUARD_REASON=$(_LOKI_GUARD_COMMAND="$COMMAND" _LOKI_GUARD_SCRATCH="$_SCRATCH" _LOKI_GUARD_SINCE="${LOKI_SCRATCH_SINCE:-}" python3 - <<'PY'
 import os
 import re
 import shlex
@@ -173,6 +205,81 @@ def first_command(segment):
     return "", index
 
 
+scratch = os.environ.get("_LOKI_GUARD_SCRATCH", "")
+since = os.environ.get("_LOKI_GUARD_SINCE", "")
+
+
+def inside_scratch(path):
+    try:
+        real = os.path.realpath(path)
+    except Exception:
+        return False
+    return bool(scratch) and (real == scratch or real.startswith(scratch + os.sep))
+
+
+def started_epoch(pid):
+    import subprocess, time
+    try:
+        out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=3,
+                             env=dict(os.environ, LC_ALL="C")).stdout.strip()
+        return int(time.mktime(time.strptime(" ".join(out.split()), "%a %b %d %H:%M:%S %Y"))) if out else None
+    except Exception:
+        return None
+
+
+def runs_in_scratch(pid):
+    import subprocess
+    try:
+        cwd = os.readlink("/proc/%d/cwd" % pid)
+    except Exception:
+        try:
+            out = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], capture_output=True, text=True, timeout=3).stdout
+            cwd = next((l[1:] for l in out.splitlines() if l.startswith("n")), "")
+        except Exception:
+            cwd = ""
+    if cwd and inside_scratch(cwd):
+        return True
+    try:
+        cmdline = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, timeout=3).stdout
+    except Exception:
+        return False
+    return any(inside_scratch(w) for w in cmdline.split() if w.startswith("/"))
+
+
+def scratch_kill_allowed(args):
+    # kill [-TERM|-15|-SIGTERM|-s TERM] PID...: every PID started at or after the session began and is listed in $LOKI_SCRATCH/pids or runs inside it.
+    if not scratch or not since.isdigit():
+        return False
+    pids, i = [], 0
+    while i < len(args):
+        a = args[i]
+        if a in ("-TERM", "-15", "-SIGTERM"):
+            i += 1
+            continue
+        if a == "-s" and i + 1 < len(args) and args[i + 1] in ("TERM", "SIGTERM", "15"):
+            i += 2
+            continue
+        if not a.isdigit():
+            return False
+        pids.append(int(a))
+        i += 1
+    if not pids:
+        return False
+    try:
+        recorded = {int(x) for x in open(os.path.join(scratch, "pids")).read().split() if x.isdigit()}
+    except Exception:
+        recorded = set()
+    for pid in pids:
+        if pid <= 1 or pid == os.getpid() or pid == os.getppid():
+            return False
+        start = started_epoch(pid)
+        if start is None or start < int(since):
+            return False
+        if pid not in recorded and not runs_in_scratch(pid):
+            return False
+    return True
+
+
 def classify(value, depth=0):
     if depth > 2:
         return "command nesting exceeds the safe inspection limit"
@@ -197,10 +304,12 @@ def classify(value, depth=0):
         name, index = first_command(part)
         if name == "__uninspectable_wrapper__":
             return "command wrapper cannot be inspected safely"
+        args = part[index + 1:]
+        if name == "kill" and scratch_kill_allowed(args):
+            continue
         if name in blocked:
             return blocked[name]
 
-        args = part[index + 1:]
         if name in shells:
             for pos, arg in enumerate(args[:-1]):
                 if arg.startswith("-") and "c" in arg:
@@ -424,6 +533,7 @@ _all_segments_allowlisted() {
 
 _segment_is_safe() {
     local seg="$1" safe
+    _rm_seg_in_scratch "$seg" && return 0 # Q1 RUN-SCRATCH
     [[ "$seg" == *".."* ]] && return 1
     _env_prefix_is_risky "$seg" && return 1
     [[ "$seg" =~ $_DOT_GLOB ]] && return 1
@@ -1112,6 +1222,7 @@ _is_rm_token() {
 _segment_rm_hits_temp_root() {
     local seg="$1" tok recursive=false seen_rm=false
     local -a words
+    _rm_seg_in_scratch "$seg" && return 1 # Q1 RUN-SCRATCH: a delete inside the session's own scratch directory
     # Command substitution and grouping open a new command word: split on them.
     [[ "$seg" == *'`'* ]] && seg="${seg//\`/ \$( }"
     seg="${seg//[()\`]/ }"

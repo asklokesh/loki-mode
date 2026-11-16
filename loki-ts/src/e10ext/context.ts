@@ -92,8 +92,9 @@ export const PROVE_BY_RUNNING_BLOCK = "Before you finish, prove the change works
 export const TAKE_THE_TIME_LINE = "This is an issue to deliver in full, not a quick fix: take the time the work needs and finish every item the issue asks for. Starting this repository's own services and their dependencies to prove the change is expected here, not discouraged.";
 export const DELIVER_EACH_LINE = "This issue lists several things to deliver. Deliver each one. If one is left undone, finish with LOKI_UNFINISHED and say which.";
 /** The per-task issue-run lines (block, take the time, deliver each, and the environment card line when one was made), or "" outside an issue run on claude. */
-export const proveByRunningBlock = (provider: string, source: unknown, env: NodeJS.ProcessEnv = process.env, cardLine: string | null = null): string =>
-  issueRunBrief(provider, source, env) ? [PROVE_BY_RUNNING_BLOCK, TAKE_THE_TIME_LINE, DELIVER_EACH_LINE, ...(cardLine ? [cardLine] : [])].join("\n\n") : "";
+export const SCRATCH_LINE = "Your scratch directory is $LOKI_SCRATCH: put every throwaway database, socket, log and process id file there, and write the process id of everything you start to $LOKI_SCRATCH/pids, one per line.";
+export const proveByRunningBlock = (provider: string, source: unknown, env: NodeJS.ProcessEnv = process.env, cardLine: string | null = null, scratch = false): string =>
+  issueRunBrief(provider, source, env) ? [PROVE_BY_RUNNING_BLOCK, TAKE_THE_TIME_LINE, DELIVER_EACH_LINE, ...(scratch ? [SCRATCH_LINE] : []), ...(cardLine ? [cardLine] : [])].join("\n\n") : "";
 export const pinnedTestUpdateEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PINNED_TEST_UPDATE"] ?? "").trim());
 /** The rules block the implement and fix briefs lead with: FIXED_RULES by default, the v11.139.0 text with the knob off. Either way a constant, so the prefix stays cache-stable. */
 export const fixedRules = (env: NodeJS.ProcessEnv = process.env, issue = false): string => { const r = pinnedTestUpdateEnabled(env) ? (docUpdateRuleOn(env) ? FIXED_RULES : FIXED_RULES_DOC_V139) : LEGACY_FIXED_RULES; return issue ? issueRules(r) : r; }; // issue: the caller's issueRunBrief(provider, source); each result is a constant, so the prefix stays cache-stable per route

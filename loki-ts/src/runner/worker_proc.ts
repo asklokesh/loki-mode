@@ -1,9 +1,10 @@
 // Worker process control for the Loki 10 supervisor (extracted verbatim from engine10/supervisor.ts, CAP-1131):
 // spawn the worker in its own process group, drain its stdout, and kill the group on a backstop or stop.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
-import { resolve } from "node:path";
-import { accessSync, constants as fsConstants, existsSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { providerCause } from "./retry_class.ts";
 
 const CANCEL_GRACE_MS = Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) > 0 ? Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) : 10000; // SIGINT/SIGTERM: time the worker gets to stop sessions and record usage before SIGKILL
@@ -150,4 +151,49 @@ export function classifyExitCause(exit: number | null, killed: boolean, killCaus
 /** A fire-and-forget child that outlives this process: its own process group, no stdio, unref'd. The pid, or null when it did not start. */
 export function spawnDetached(cmd: string, args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): number | null {
   try { const c = spawn(cmd, args, { ...opts, stdio: "ignore", detached: true }); c.on("error", () => {}); if (!c.pid) return null; c.unref(); return c.pid; } catch { return null; }
+}
+
+// Q1 RUN-SCRATCH (issue runs on claude, LOKI_E10_PROVE_BY_RUNNING=0 opts out): the implement session's own scratch directory. Short path (a unix socket path is
+// limited to about 104 characters; a session's tsx failed with EINVAL on a 107-character TMPDIR), owner-marked so the host guard (autonomy/hooks/validate-bash.sh)
+// honours it only when this harness made it. The session gets it as LOKI_SCRATCH and TMPDIR; the guard then lets it stop the processes it started (listed in
+// $LOKI_SCRATCH/pids, or running inside the directory, and started after the session) and delete paths inside it. After implement the harness stops what is left.
+export const SCRATCH_MARKER = ".loki-scratch-owned";
+export interface SessionScratch { dir: string; since: number }
+export function createSessionScratch(): SessionScratch {
+  const base = existsSync("/tmp") ? realpathSync("/tmp") : realpathSync(tmpdir());
+  const dir = realpathSync(mkdtempSync(join(base, "lk-")));
+  chmodSync(dir, 0o700);
+  writeFileSync(join(dir, SCRATCH_MARKER), dir, { mode: 0o600 });
+  return { dir, since: Math.floor(Date.now() / 1000) };
+}
+/** Epoch seconds a process started (ps lstart, local time), or null when it is gone or unreadable. */
+export function processStartEpoch(pid: number): number | null {
+  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" }, timeout: 3000 });
+  const t = (r.stdout ?? "").trim();
+  if (r.status !== 0 || !t) return null;
+  const ms = Date.parse(t.replace(/^\w{3} /, "")); // "Nov 16 01:02:03 2026"
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
+const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** Stops every process id in <dir>/pids that is still alive and started at or after `since` (TERM, then KILL after about 2 s), removes the directory, and says what it
+ *  stopped. A pid that started before the session is never touched. Never throws. */
+export function cleanupSessionScratch(s: SessionScratch): { dir: string; stopped: { pid: number; command: string }[]; removed: boolean } {
+  const stopped: { pid: number; command: string }[] = [];
+  try {
+    const pids = [...new Set(readFileSync(join(s.dir, "pids"), "utf8").split(/\s+/).filter((x) => /^\d+$/.test(x)).map(Number))].filter((p) => p > 1 && p !== process.pid);
+    for (const pid of pids) {
+      const start = processStartEpoch(pid);
+      if (start === null || start < s.since || !alive(pid)) continue;
+      const command = (spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 3000 }).stdout ?? "").trim().slice(0, 160);
+      try { process.kill(pid, "SIGTERM"); } catch { continue; }
+      for (let i = 0; i < 20 && alive(pid); i++) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+      if (alive(pid)) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
+      stopped.push({ pid, command });
+    }
+  } catch { /* no pids file: nothing recorded */ }
+  let removed = false;
+  try {
+    if (readFileSync(join(s.dir, SCRATCH_MARKER), "utf8") === s.dir) { rmSync(s.dir, { recursive: true, force: true }); removed = !existsSync(s.dir); }
+  } catch { removed = !existsSync(s.dir); }
+  return { dir: s.dir, stopped, removed };
 }

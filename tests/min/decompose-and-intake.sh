@@ -411,8 +411,9 @@ c1_run() { # c1_run <name> <repo setup: none|pg> <start args...> -- [VAR=value..
     local name="$1" setup="$2" d="$T/c1-$1"; shift 2; local args=(); while [ "$1" != "--" ]; do args+=("$1"); shift; done; shift
     make_repo "$d" 0
     if [ "$setup" = pg ]; then printf '{ "name": "svc", "dependencies": { "pg": "^8.11.0" } }\n' > "$d/package.json"; git -C "$d" add package.json; git -C "$d" commit -q -m "pg dependency"; fi
-    rm -f "$d.prompt".* "$d.path"
-    run_loki_env "$d" "$d.stub.log" E2E_STUB_MODE=done E2E_STUB_PROMPT_LOG="$d.prompt" E2E_STUB_PATH_LOG="$d.path" LOKI_E10_ENV_CARD_ROOTS="$T/fake-opt" "$@" -- "${args[@]}"
+    rm -f "$d.prompt".* "$d.path" "$d.env"
+    run_loki_env "$d" "$d.stub.log" E2E_STUB_MODE=done E2E_STUB_PROMPT_LOG="$d.prompt" E2E_STUB_PATH_LOG="$d.path" E2E_STUB_ENV_LOG="$d.env" LOKI_E10_ENV_CARD_ROOTS="$T/fake-opt" "$@" -- "${args[@]}"
+    C1ENV="$(sed -n 's/^implement //p' "$d.env" 2>/dev/null)"; C1ENV="${C1ENV%%$'\n'*}"; C1PLANENV="$(sed -n 's/^plan //p' "$d.env" 2>/dev/null)"; C1PLANENV="${C1PLANENV%%$'\n'*}"
     C1P="$(cat "$d.prompt.implement0" 2>/dev/null)"; C1PATH="$(sed -n 's/^implement //p' "$d.path" 2>/dev/null | head -1)"; C1PLANPATH="$(sed -n 's/^plan //p' "$d.path" 2>/dev/null | head -1)"
     C1RUN="$(dirname "$(ls "$d"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"
 }
@@ -475,6 +476,28 @@ const onPath = st.detectServiceBinaries(["redis"], { PATH: process.env.T + "/fak
 console.log([errCard === null, onPath.length === 1 && onPath[0].on_path === true && st.envCardLine(onPath) === null, c.proveByRunningBlock("opencode", "issue") === "", c.proveByRunningBlock("claude", "text") === "", c.fixedRules({}, false) === c.FIXED_RULES].join(" "));
 ' 2>&1)"
 [ "$C1U" = "true true true true true" ] && ok "candidate 1 unit: a detection error gives no card and never throws; a service already on PATH adds no line; opencode and a text goal get no block; non-issue rules are today's constant" || bad "candidate 1 unit gave: $C1U"
+
+# --- Q1 RUN-SCRATCH: an issue run's implement session gets its own short scratch directory as LOKI_SCRATCH and TMPDIR (plan and other stages do not), one brief
+# line, and after implement the harness stops what the session left running there and removes the directory; a text goal and the opt-out get none of it.
+c1_run scratch none start acme/search#24 --no-pr --max-cost 5 -- E2E_STUB_SCRATCH=leave E2E_STUB_SCRATCH_PID_LOG="$T/c1-scratch.leftpid"
+SC_DIR="$(sed -n 's/^LOKI_SCRATCH=\([^ ]*\) TMPDIR=.*/\1/p' <<< "$C1ENV")"; SC_TMP="$(sed -n 's/.* TMPDIR=\(.*\)$/\1/p' <<< "$C1ENV")"; SC_LEFT="$(cat "$T/c1-scratch.leftpid" 2>/dev/null)"
+SC_REC="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])).get("scratch_cleanup") or {}; print("%s|%s|%s" % (r.get("removed"), ",".join(str(x["pid"]) for x in r.get("stopped", [])), r.get("dir")))' "$C1RUN/receipt.json" 2>/dev/null)"
+SC_ALIVE=no; [ -n "$SC_LEFT" ] && kill -0 "$SC_LEFT" 2>/dev/null && SC_ALIVE=yes
+[ -n "$SC_DIR" ] && [ "$SC_TMP" = "$SC_DIR" ] && [ "${#SC_DIR}" -le 40 ] && grep -qF 'Your scratch directory is $LOKI_SCRATCH: put every throwaway database, socket, log and process id file there, and write the process id of everything you start to $LOKI_SCRATCH/pids, one per line.' <<< "$C1P" \
+    && ! grep -q 'LOKI_SCRATCH=/' <<< "$C1PLANENV" \
+    && ok "run scratch: the issue run's implement session gets a short scratch directory (${#SC_DIR} characters) as LOKI_SCRATCH and TMPDIR plus the brief line; the plan session does not" \
+    || bad "run scratch: implement env '$C1ENV', plan env '$C1PLANENV'"
+[ "$SC_REC" = "True|$SC_LEFT|$SC_DIR" ] && [ "$SC_ALIVE" = no ] && [ ! -e "$SC_DIR" ] \
+    && ok "run scratch: the process the session left running in its scratch directory is stopped by the harness, named in the receipt, and the directory is removed" \
+    || bad "run scratch cleanup: receipt '$SC_REC' (want True|$SC_LEFT|$SC_DIR), left process alive $SC_ALIVE, directory present $([ -e "$SC_DIR" ] && echo yes || echo no)"
+[ "$SC_ALIVE" = yes ] && kill "$SC_LEFT" 2>/dev/null # the test's own recorded pid, only if the harness failed to stop it
+c1_run scratch-text none "add a multiply(a, b) function to calc.ts" --no-pr -- E2E_STUB_SCRATCH=leave
+SCT="$C1ENV"; SCTP="$C1P"
+c1_run scratch-off none start acme/search#24 --no-pr --max-cost 5 -- LOKI_E10_PROVE_BY_RUNNING=0 E2E_STUB_SCRATCH=leave
+SCO="$C1ENV"; SCOP="$C1P"
+grep -q '^LOKI_SCRATCH= ' <<< "$SCT" && grep -q '^LOKI_SCRATCH= ' <<< "$SCO" && ! grep -qF 'Your scratch directory is' <<< "$SCTP$SCOP" && [ -z "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("scratch_cleanup") or "")' "$C1RUN/receipt.json" 2>/dev/null)" ] \
+    && ok "run scratch: a text goal and LOKI_E10_PROVE_BY_RUNNING=0 get no LOKI_SCRATCH, no brief line and no receipt key" \
+    || bad "run scratch: text goal env '$SCT', opt-out env '$SCO'"
 
 # --- split repair: a list detail is repaired, any other refusal is re-asked once with the exact error ------------------------
 # FireLater#24 (v11.116.0): one 520-character acceptance criterion refused the whole split and the epic ran as one 413 s session.
