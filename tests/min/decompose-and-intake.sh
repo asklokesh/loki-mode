@@ -1253,42 +1253,47 @@ console.log([fl.length, JSON.stringify(fl), JSON.stringify(heading), JSON.string
 WIA='9 | ["Implement PostgreSQL full-text search with ranking","Create advanced filter query builder","Add filter template save/load functionality","Implement search history tracking","Build faceted search UI","Create search analytics dashboard","Add comprehensive search tests","Document search query syntax","Optimize search performance for large datasets"] | ["results are ranked","an empty query returns nothing"] | ["one works","two works"] | [] | ["alpha works"]'
 [ "$IA" = "$WIA" ] && ok "issue acceptance: FireLater#24 gives its nine lines verbatim, in order; a bold or plain Acceptance criteria heading without checkboxes is read; no list gives none; checked boxes and attestations are left out" \
     || bad "issue acceptance gave: $IA"
-ia_run() { # ia_run <name> <review reply file or -> <VAR=value...>: the FireLater#24 body as acme/search#24 on the stub, high risk so the cross-review runs; sets IAD, IARUN
+ia_run() { # ia_run <name> <line-check reply file or -> <VAR=value...>: the FireLater#24 body (or IA_BODY) as acme/search#24 on the stub, the switch on unless IA_ON is set empty; sets IAD, IARUN, IAOUT
     local name="$1" reply="$2" d="$T/ia-$1"; shift 2
     make_repo "$d" 0
-    run_loki_env "$d" "$d.stub.log" E2E_STUB_MODE=done EPIC_BODY="${IA_BODY:-$FL24_BODY}" LOKI_RISK_TIER=high LOKI_E10_ISSUE_ACCEPTANCE="${IA_ON-1}" E2E_STUB_PROMPT_LOG="$d.prompt" ${reply:+E2E_STUB_REVIEW_FILE="$reply"} "$@" -- start acme/search#24 --no-pr --max-cost 5
-    IAD="$d"; IARUN="$(dirname "$(ls "$d"/.loki/runs/*/receipt.json 2>/dev/null | head -1)")"
+    run_loki_env "$d" "$d.stub.log" E2E_STUB_MODE=done EPIC_BODY="${IA_BODY:-$FL24_BODY}" LOKI_E10_ISSUE_ACCEPTANCE="${IA_ON-1}" E2E_STUB_LINECHECK_LOG="$d.linecheck" E2E_STUB_LINECHECK_FILE="$reply" "$@" -- start acme/search#24 --no-pr --max-cost 5
+    IAD="$d"; IAOUT="$OUT"; IARUN="$(dirname "$(ls "$d"/.loki/runs/*/receipt.json 2>/dev/null | head -1)")"
 }
 ia_facts() { python3 -I - "$IARUN/receipt.json" <<'PY2'
 import json, sys
 r = json.load(open(sys.argv[1]))
 ia = r.get("issue_acceptance") or []
-na = [n for n in r.get("not_proven", []) if n.startswith("not addressed: ")]
-print(r.get("verdict"), len(ia), sum(1 for x in ia if x.get("status") == "met"), len(na), json.dumps(na))
+na = [n for n in r.get("not_proven", []) if n.startswith(("not addressed: ", "acceptance not reviewed: "))]
+ev = sum(1 for x in ia if x.get("status") == "met" and x.get("evidence"))
+print(r.get("verdict"), len(ia), sum(1 for x in ia if x.get("status") == "met"), ev, len(na), "check" if r.get("issue_acceptance_check") else "nocheck", json.dumps(na))
 PY2
 }
-printf 'VERDICT: PASS\n- MET 1\n- MET 2\n- MET 3\n- MET 4\n- MET 5\n- MET 6\n- MET 7\n' > "$T/ia-seven.txt"
-printf 'VERDICT: PASS\n- MET 1\n- MET 2\n- MET 3\n- MET 4\n- MET 5\n- MET 6\n- MET 7\n- MET 8\n- MET 9\n' > "$T/ia-nine.txt"
+{ for i in 1 2 3 4 5 6 7; do printf 'MET %s: src/search.ts and its test cover it\n' "$i"; done; } > "$T/ia-seven.txt"
+{ for i in 1 2 3 4 5 6 7 8 9; do printf 'MET %s: verify check bun test passed\n' "$i"; done; } > "$T/ia-nine.txt"
+{ for i in 1 2 3 4 5 6 7 8; do printf 'MET %s: verify check bun test passed\n' "$i"; done; printf 'MET 9\n'; } > "$T/ia-noevidence.txt"
 ia_run seven "$T/ia-seven.txt"
-IA7="$(ia_facts)"; IA7P="$(cat "$IAD.prompt.review" 2>/dev/null)"
+IA7="$(ia_facts)"; IA7P="$(cat "$IAD.linecheck" 2>/dev/null)"; IA7OUT="$IAOUT"
 printf '    issue acceptance, seven of nine MET: %s\n' "$IA7"
-[ "$IA7" = 'PARTIAL 9 7 2 ["not addressed: Document search query syntax", "not addressed: Optimize search performance for large datasets"]' ] \
-    && ok "issue acceptance e2e: a review marking seven of FireLater#24's nine lines MET seals PARTIAL with the two others as not addressed, verbatim" || bad "issue acceptance seven of nine gave: $IA7"
-grep -qF "9. Optimize search performance for large datasets" <<< "$IA7P" && grep -qF "1. Implement PostgreSQL full-text search with ranking" <<< "$IA7P" \
-    && ok "issue acceptance e2e: the reviewer prompt numbers the issue's nine lines verbatim" || bad "issue acceptance: reviewer prompt lacks the numbered lines"
-grep -qF "Acceptance: Document search query syntax" <<< "$OUT" && grep -qF "Acceptance: Implement PostgreSQL full-text search with ranking" <<< "$OUT" \
-    && ok "issue acceptance e2e: the printed Acceptance lines are the issue's own" || bad "issue acceptance: printed Acceptance lines are not the issue's ($(grep -c 'Acceptance:' <<< "$OUT"))"
+[ "$IA7" = 'PARTIAL 9 7 7 2 check ["not addressed: Document search query syntax", "not addressed: Optimize search performance for large datasets"]' ] \
+    && ok "issue acceptance e2e: a line check marking seven of FireLater#24's nine lines MET (with evidence) seals PARTIAL with the two others not addressed, verbatim; the check is on the receipt" || bad "issue acceptance seven of nine gave: $IA7"
+grep -qF "9. Optimize search performance for large datasets" <<< "$IA7P" && grep -qF "1. Implement PostgreSQL full-text search with ranking" <<< "$IA7P" && grep -qF '```diff' <<< "$IA7P" \
+    && ok "issue acceptance e2e: the line check gets the issue's nine lines numbered verbatim and the diff" || bad "issue acceptance: line-check prompt lacks the numbered lines or the diff"
+grep -qF "Acceptance: Document search query syntax" <<< "$IA7OUT" && grep -qF "Acceptance: Implement PostgreSQL full-text search with ranking" <<< "$IA7OUT" \
+    && ok "issue acceptance e2e: the printed Acceptance lines are the issue's own" || bad "issue acceptance: printed Acceptance lines are not the issue's ($(grep -c 'Acceptance:' <<< "$IA7OUT"))"
 ia_run nine "$T/ia-nine.txt"
 IA9="$(ia_facts)"
-[ "$IA9" = 'VERIFIED 9 9 0 []' ] && ok "issue acceptance e2e: all nine MET keeps VERIFIED" || bad "issue acceptance nine of nine gave: $IA9"
+[ "$IA9" = 'VERIFIED 9 9 9 0 check []' ] && ok "issue acceptance e2e: all nine MET with evidence keeps VERIFIED" || bad "issue acceptance nine of nine gave: $IA9"
+ia_run noevidence "$T/ia-noevidence.txt"
+IANE="$(ia_facts)"
+[ "$IANE" = 'PARTIAL 9 8 8 1 check ["not addressed: Optimize search performance for large datasets"]' ] && ok "issue acceptance e2e: a MET with no evidence phrase counts as not addressed" || bad "issue acceptance MET without evidence gave: $IANE"
+ia_run fail "$T/ia-missing.txt"
+IAF="$(ia_facts)"
+case "$IAF" in 'PARTIAL 9 0 0 1 check ["acceptance not reviewed: '*) ok "issue acceptance e2e: a line check that cannot answer (after one retry) caps PARTIAL with one 'acceptance not reviewed' line" ;; *) bad "issue acceptance failed check gave: $IAF" ;; esac
 IA_ON= ia_run off "$T/ia-seven.txt"
-IAOFF="$(ia_facts)"; IAOFFP="$(cat "$IAD.prompt.review" 2>/dev/null)"
-[ "$IAOFF" = 'VERIFIED 0 0 0 []' ] && ! grep -qF "The issue lists these acceptance lines" <<< "$IAOFFP" && ok "issue acceptance e2e: with LOKI_E10_ISSUE_ACCEPTANCE unset (the default) the review prompt, the receipt keys and the label are today's" || bad "issue acceptance default off gave: $IAOFF"
-ia_run noreview "" LOKI_RISK_TIER=low
-IANR="$(ia_facts)"
-[ "${IANR%% *}" = PARTIAL ] && [ "$(cut -d' ' -f4 <<< "$IANR")" = 9 ] && ok "issue acceptance e2e: with no review nothing is marked met, so all nine are not addressed and the run is PARTIAL" || bad "issue acceptance with no review gave: $IANR"
-IA_BODY='Fix the off-by-one in paginate(): the last item of every page is dropped.' ia_run nolist ""
-IANL="$(ia_facts)"; IANLP="$(cat "$IAD.prompt.review" 2>/dev/null)"
-grep -q '"issue_acceptance"\|"intake":.*issue_acceptance' "$IARUN/receipt.json" "$IARUN/events.jsonl" 2>/dev/null && bad "issue acceptance: an issue with no list gained issue_acceptance keys" \
-    || { [ "$(cut -d' ' -f2,4 <<< "$IANL")" = "0 0" ] && ! grep -qF "The issue lists these acceptance lines" <<< "$IANLP" && ok "issue acceptance e2e: an issue with no list keeps today's keys, review prompt and label (no not-addressed line)" || bad "issue acceptance with no list gave: $IANL"; }
+IAOFF="$(ia_facts)"
+[ "$IAOFF" = 'VERIFIED 0 0 0 0 nocheck []' ] && [ ! -s "$IAD.linecheck" ] && ok "issue acceptance e2e: with LOKI_E10_ISSUE_ACCEPTANCE unset (the default) no check runs and the receipt keys and label are today's" || bad "issue acceptance default off gave: $IAOFF"
+IA_BODY='Fix the off-by-one in paginate(): the last item of every page is dropped.' ia_run nolist "$T/ia-seven.txt"
+IANL="$(ia_facts)"
+[ "$IANL" = 'VERIFIED 0 0 0 0 nocheck []' ] && [ ! -s "$IAD.linecheck" ] && ! grep -q '"issue_acceptance"' "$IARUN/events.jsonl" 2>/dev/null \
+    && ok "issue acceptance e2e: an issue with no list runs no check and keeps today's keys and label" || bad "issue acceptance with no list gave: $IANL"
 finish

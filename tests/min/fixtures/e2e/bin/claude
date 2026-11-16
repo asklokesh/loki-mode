@@ -60,6 +60,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 case "$prompt" in
+  "Loki acceptance line check."*) stage=linecheck ;; # Q1 ISSUE-ACCEPTANCE: the seal's tool-less per-line check (stages/xreview.ts issueLineCheck); E2E_STUB_LINECHECK_FILE holds the reply
   "Loki attempts review"*) stage=attemptsreview ;; # LOKI_E10_ATTEMPTS: the tool-less tie review (features/attempts.ts reviewTie); before every other match, the diffs it quotes can hold any text
   *"Loki remedy check"*) stage=remedy ;; # F1 LOKI_E10_RANKED_REMEDY: the tool-less check of the diff against the first-ranked remedy (util/conflict_resume.ts)
   *"Loki Opus consult"*) stage=consult ;; # LOKI_E10_OPUS_CONSULT: the tool-less consult call (features/opus_consult.ts)
@@ -213,8 +214,12 @@ case "$prompt" in # `loki plan --spec` (tests/min/triage-router.sh): write the s
     fi ;;
 esac
 case "$flags" in *"--model claude (provider default)"*) echo "There's an issue with the selected model (claude (provider default)). It may not exist or you may not have access to it." >&2; exit 1 ;; esac # the real CLI rejects the recorded label as a model id (FireLater#24 s2: every default-model review exited 1)
+if [ "$stage" = linecheck ]; then
+  if [ -n "${E2E_STUB_LINECHECK_LOG:-}" ]; then printf '%s\n' "$prompt" > "$E2E_STUB_LINECHECK_LOG"; fi
+  if [ -f "${E2E_STUB_LINECHECK_FILE:-}" ]; then python3 -I -c 'import json, sys; print(json.dumps({"type": "result", "result": open(sys.argv[1]).read(), "total_cost_usd": 0.002}))' "$E2E_STUB_LINECHECK_FILE"; else echo '{"type":"result","is_error":true,"result":"","total_cost_usd":0}'; fi
+  exit 0
+fi
 if [ "$stage" = review ]; then # the seal cross-review (stages/xreview.ts): E2E_STUB_REVIEW=PASS|FLAG|BLOCK answers in claude's --output-format json shape, with a cost
-  if [ -n "${E2E_STUB_REVIEW_FILE:-}" ]; then python3 -I -c 'import json, sys; print(json.dumps({"type": "result", "result": open(sys.argv[1]).read(), "total_cost_usd": 0.01}))' "$E2E_STUB_REVIEW_FILE"; exit 0; fi # Q1 ISSUE-ACCEPTANCE: the reviewer's whole reply, verbatim from a file (MET/UNMET <n> legs)
   if [ -n "${E2E_STUB_REVIEW:-}" ]; then printf '{"type":"result","result":"VERDICT: %s\\n- stub reviewer concern%s","total_cost_usd":0.01}\n' "$E2E_STUB_REVIEW" "${E2E_STUB_REVIEW_EXTRA:+\\n- $E2E_STUB_REVIEW_EXTRA}"; fi # E2E_STUB_REVIEW_EXTRA: one more reason line (F3 UNMET legs)
   exit 0
 fi
