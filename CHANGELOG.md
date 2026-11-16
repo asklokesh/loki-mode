@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+- A rerun of `loki start owner/repo#N` stops before any model call when an open Loki pull request from the same owner already covers the issue, and names it, instead of opening a second one (LOKI_RERUN_GUARD=0 starts the run anyway). The existing pull request is never touched.
+- An implement session whose final text ends without a finish line (for example a compacted session that writes `LOKI_BLOCKED: ... still outstanding`) is no longer sealed as done. On the claude provider it is resumed in the same session, up to 4 times while each resume changes the tree and the run has spent under $1.00 (LOKI_E10_CONTINUE_MAX, LOKI_E10_CONTINUE_MAX_USD). If it still has no finish line, implement exits `incomplete`: the work and the pull request are kept, the run is PARTIAL with the outstanding work named, and it is never VERIFIED. On FireLater#24 (Haiku, n=1) such a run had sealed VERIFIED.
+- `loki start owner/repo#N` runs a large issue as one whole-issue run instead of splitting it into slices up front, on Sonnet and stronger models (LOKI_ISSUE_WHOLE_FIRST; `0` restores the split, `1` forces the whole-issue run on Haiku too). A run that implements on Haiku keeps today's split. `loki backlog` and `loki issues run` children follow it, and backlog triage now says a large issue `runs as one run`. On FireLater#24 (Sonnet, n=1) the split route did 5 of 10 asks for $3.45 and the whole-issue route 8 of 10 for $0.66.
 
 ## v11.142.0 (2026-11-15)
 

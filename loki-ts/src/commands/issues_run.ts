@@ -170,6 +170,27 @@ function githubSlug(url: string): string | null {
   return m ? `${m[1]}/${m[2]}` : null;
 }
 
+/** F4 RERUN-GUARD (LOKI_RERUN_GUARD, default on; 0/off/false/no opts out): before any model call, `loki start owner/repo#N` asks GitHub for the open pull
+ *  requests (the same list and coveredIssues rule `loki issues run` dedupes by) and stops when an open Loki pull request whose head is owned by the origin's
+ *  owner already covers the issue. It never closes, edits or comments on that pull request. Skipped with --no-pr and when origin is not a GitHub remote
+ *  (a local mirror publishes local:// branches, so no GitHub pull request can be duplicated). A list that cannot be read fails closed, as `loki issues run` does.
+ *  Returns the line to print and the exit code, or null to go on. */
+export const rerunGuardOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_RERUN_GUARD"] ?? "").trim());
+export function openLokiPrGuard(o: { repoDir: string; slug: string; number: number; noPr: boolean; env?: NodeJS.ProcessEnv; gh?: (args: readonly string[]) => GhResult }): { code: number; line: string } | null {
+  const env = o.env ?? process.env;
+  if (o.noPr || !rerunGuardOn(env)) return null;
+  const origin = originSlug(o.repoDir);
+  if (!origin) return null;
+  const gh = o.gh ?? ((args: readonly string[]): GhResult => { const r = spawnSync("gh", [...args], { cwd: o.repoDir, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: ghTimeoutMs(), killSignal: "SIGKILL" }); return { rc: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" }; });
+  const r = gh(["pr", "list", "--repo", o.slug, "--state", "open", "--json", "number,headRefName,body,url,headRepositoryOwner", "--limit", "500"]);
+  const list = r.rc === 0 ? parseJson<{ headRefName?: string; body?: string; url?: string; headRepositoryOwner?: { login?: string } }[]>(r.stdout) : null;
+  const hint = "LOKI_RERUN_GUARD=0 starts the run anyway";
+  if (!Array.isArray(list)) return { code: 2, line: `loki: could not list the open pull requests of ${o.slug} (gh pr list rc ${r.rc}); not starting a run that could open a second pull request for #${o.number} (${hint})` };
+  const owner = origin.split("/")[0]!.toLowerCase();
+  const hit = list.find((pr) => (pr.headRepositoryOwner?.login ?? "").toLowerCase() === owner && coveredIssues(o.slug, [pr]).has(o.number));
+  return hit ? { code: 2, line: `loki: ${o.slug}#${o.number} already has an open Loki pull request: ${hit.url ?? hit.headRefName}; not starting a second one (${hint})` } : null;
+}
+
 function originSlug(repoDir: string): string | null {
   try {
     return githubSlug(safeGit(repoDir, ["config", "--get", "remote.origin.url"]).trim());

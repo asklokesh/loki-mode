@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
-import { readSessionId } from "../runner/session_resume.ts";
+import { readSessionId } from "../runner/session_resume.ts"; import { resultCostPath } from "../engine10/cost.ts"; import { readPlanScope } from "./run_cap.ts";
 import { capToRunTier, wallPinModel } from "../engine10/sizing.ts";
 import { keptUnderLean, leanCallsEnabled } from "./cost_profile.ts";
 /** The referee and the legacy re-author never run above the run's own model (a haiku run keeps them on haiku), like every other auxiliary Wall pin. */
@@ -132,12 +132,82 @@ export const ALREADY_DONE_CHALLENGE = "You finished with LOKI_ALREADY_DONE witho
 export const REDO_CHALLENGE = "An earlier session claimed LOKI_ALREADY_DONE without changing anything. Before you claim it too: " + CHALLENGE_STEP + FINISH_LINE;
 const EMPTY_DONE_CHALLENGED = EMPTY_DONE_HEAD + "Before you claim LOKI_ALREADY_DONE: " + CHALLENGE_STEP + FINISH_LINE;
 
-/** Same shape as resumeAfterConflict: one resume with `correction` (iteration suffix `suffix`); a resume that errors, is killed or ends without a marker leaves the first result standing. */
-async function resumeWith(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, correction: string, suffix: string): Promise<{ session: SessionResult; iterationId: string }> {
+/** Same shape as resumeAfterConflict: one resume with `correction` (iteration suffix `suffix`); a resume that errors, is killed or ends without a marker leaves the first result standing.
+ *  `reply` is the resumed session itself, whatever it ended with (S1b reads what an unfinished reply says is outstanding). */
+async function resumeWith(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, correction: string, suffix: string): Promise<{ session: SessionResult; iterationId: string; reply: SessionResult }> {
   const iterationId = `${first.iterationId}${suffix}`, sid = ctx.provider === "claude" ? readSessionId(ctx.repoDir, first.iterationId) : null;
   const session = await ctx.sessions.run({ ...first, iterationId, brief: sid ? correction : `${first.brief}\n\n${correction}`, ...(sid ? { resumeSessionId: sid } : {}) });
   const terminal = !session.killed && (session.markers.done || session.markers.alreadyDone !== null || session.markers.specConflict !== null);
-  return { session: { ...(terminal ? session : firstSession), durationS: firstSession.durationS + session.durationS }, iterationId };
+  return { session: { ...(terminal ? session : firstSession), durationS: firstSession.durationS + session.durationS }, iterationId, reply: session };
+}
+
+// S1b FINISH-LINE continue, claude provider only (CLI and SDK routes). An implement session whose final text has no finish line (session.ts finishLineOf) is
+// resumed in the same session through resumeWith, before the follow-up gates and the -rv turn, while each resume changes the tree (anti_loop.ts
+// treeFingerprint), RESUME_MIN_LEFT_S holds, the resume count is under LOKI_E10_CONTINUE_MAX (default 4) and the run's measured spend is under
+// LOKI_E10_CONTINUE_MAX_USD (default 1.00, at or below plain Haiku's 1.06 on FireLater#24). Why 4: the one measured case listed three open pieces of work;
+// one resume each plus one to finish, and a resume that changes nothing ends the loop at once. Each resume is a new query, so the per-session caps
+// (effort_policy.ts HAIKU_CAPS) start from zero. A session still without a finish line ends with implement exit "incomplete" (PARTIAL, never VERIFIED).
+export const CONTINUE_MAX_DEFAULT = 4, CONTINUE_MAX_USD_DEFAULT = 1.0;
+export const continueMax = (env: NodeJS.ProcessEnv = process.env): number => {
+  const v = (env["LOKI_E10_CONTINUE_MAX"] ?? "").trim().toLowerCase();
+  if (isOff(v)) return 0;
+  const n = Number(v);
+  return v !== "" && Number.isInteger(n) && n >= 0 ? Math.min(n, 10) : CONTINUE_MAX_DEFAULT;
+};
+export const continueMaxUsd = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_CONTINUE_MAX_USD"] ?? "").trim()); return (env["LOKI_E10_CONTINUE_MAX_USD"] ?? "").trim() !== "" && Number.isFinite(n) && n >= 0 ? n : CONTINUE_MAX_USD_DEFAULT; };
+/** S1b applies to this result: a claude session whose final text was read (finishLine is not undefined) and carries no finish line. */
+export const lacksFinishLine = (provider: string, s: SessionResult): boolean => provider === "claude" && s.markers.finishLine === null;
+/** What the reply itself listed as outstanding: its last non-empty lines, one line, clipped to 400 characters. */
+export function outstandingOf(summary: string | null | undefined): string {
+  const lines = (summary ?? "").split("\n").map((l) => l.trim()).filter(Boolean).slice(-4).join(" ").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  return lines.length > 400 ? `...${lines.slice(-397)}` : lines;
+}
+/** The resume brief: the summary request is over and was not the task, the reply's own outstanding list, plan-scope files not in the tree, the finish rule (FINISH_LINE, word for word). */
+export function continueBrief(outstanding: string, missing: readonly string[]): string {
+  return [
+    "Any earlier request to stop and write a text-only summary is over; it was not the task. The task is the one this session started with, and it is not finished: your last reply ended without a finish line.",
+    `Your last reply ended with: "${outstanding || "(no text)"}". Do that outstanding work now, with tool calls.`,
+    ...(missing.length ? [`These files from the plan scope are not in the tree yet: ${missing.slice(0, 20).join(", ")}.`] : []),
+    FINISH_LINE,
+  ].join("\n\n");
+}
+export type ContinueEnd = "finish line" | "continue off" | "count cap" | "dollar line" | "time" | "tree unchanged" | "tree unknown" | "killed or error" | "aborted";
+export interface ContinueRecord { continues: number; ended: ContinueEnd; outstanding: string | null; spent_usd?: number | null; compactions: number | null }
+/** The loop. Returns the session the stage goes on with (the first resume whose final text has a finish line, else the last reply), the iteration ids it ran, and the record. */
+export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, session: SessionResult, o: { fingerprint: () => string | null; spentUsd: () => number | null; compactions: (ids: string[]) => number | null; signal: AbortSignal; env?: NodeJS.ProcessEnv }): Promise<{ session: SessionResult; iterationIds: string[]; record: Omit<ContinueRecord, "compactions"> }> {
+  const env = o.env ?? process.env, ids: string[] = [], max = continueMax(env), usdLine = continueMaxUsd(env);
+  const missing = (): string[] => readPlanScope(ctx.runDir).filter((f) => !existsSync(join(ctx.repoDir, f)));
+  let cur = session, outstanding = outstandingOf(session.summary), base = first, ended: ContinueEnd = max === 0 ? "continue off" : "count cap", spent: number | null = null;
+  for (let n = 1; n <= max; n++) {
+    if (o.signal.aborted) { ended = "aborted"; break; }
+    if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) { ended = "time"; break; }
+    spent = o.spentUsd(); if (spent !== null && spent >= usdLine) { ended = "dollar line"; break; }
+    const before = o.fingerprint();
+    const r = await resumeWith(ctx, base, cur, continueBrief(outstanding, missing()), `-k${n}`);
+    ids.push(r.iterationId); base = { ...base, iterationId: r.iterationId };
+    ctx.emit("s1b.resumed", "implement", { resume: n, iteration_id: r.iterationId, compactions: o.compactions([r.iterationId]), finish_line: r.reply.markers.finishLine ?? null });
+    cur = { ...r.reply, durationS: cur.durationS + r.reply.durationS };
+    if (!r.reply.killed && r.reply.exit === 0 && r.reply.markers.finishLine) return { session: cur, iterationIds: ids, record: { continues: n, ended: "finish line", outstanding: null, spent_usd: o.spentUsd() } };
+    outstanding = outstandingOf(r.reply.summary) || outstanding;
+    if (r.reply.killed || r.reply.exit !== 0) { ended = "killed or error"; break; }
+    const after = o.fingerprint();
+    if (before === null || after === null) { ended = "tree unknown"; break; }
+    if (before === after) { ended = "tree unchanged"; break; }
+  }
+  return { session: cur, iterationIds: ids, record: { continues: ids.length, ended, outstanding: outstanding || null, spent_usd: spent ?? o.spentUsd() } };
+}
+/** Compactions the SDK route saw over these iterations (sdk_stream_parser.ts writes `compactions` into each result-cost file). Null on the CLI route: its iteration
+ *  log is the reply text only, so the engine cannot see a compaction there. */
+export function compactionsOf(ctx: Pick<RunContext, "repoDir">, iterationIds: readonly string[], env: NodeJS.ProcessEnv = process.env): number | null {
+  if (env["LOKI_E10_INVOKER"] === "cli") return null;
+  let n = 0;
+  for (const id of iterationIds) { try { const c = (JSON.parse(readFileSync(resultCostPath(join(ctx.repoDir, ".loki"), id), "utf8")) as { compactions?: unknown }).compactions; if (typeof c === "number" && c > 0) n += c; } catch { /* no cost file for this iteration */ } }
+  return n;
+}
+/** The NOT PROVEN line for implement exit "incomplete" (seal reads it; the exit itself caps the verdict at PARTIAL). */
+export function unfinishedNotes(implement: Record<string, unknown> | undefined): string[] {
+  const f = implement?.finish as ContinueRecord | undefined;
+  return implement?.exit === "incomplete" && f ? [`implement ended without a finish line (${f.ended} after ${f.continues} resume${f.continues === 1 ? "" : "s"}): ${f.outstanding ?? "the reply named nothing"}`] : [];
 }
 export const resumeAfterEmptyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, challenge = false): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, challenge ? EMPTY_DONE_CHALLENGED : EMPTY_DONE_CORRECTION, "-e");
 /** LOKI_E10_OPUS_CONSULT never-stop: one resume (suffix "-n") that implements the most likely intent instead of stopping. A resume that errors, is killed, ends without a marker or restates the conflict leaves the conflict standing (BLOCKED). */

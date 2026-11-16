@@ -39,7 +39,7 @@ done
 [ -n "$CMD" ] || die "--cmd is required"
 [ -n "$IMAGE" ] || die "--image or LOKI_VPR_IMAGE is required (no implicit pull)"
 case "$IMAGE" in -*|*[!A-Za-z0-9._/:@-]*) die "invalid image name" ;; esac
-[ -z "$REPORT" ] || printf '%s\n' "$REPORT" | grep -Eq '^/work/\.?[A-Za-z0-9_][A-Za-z0-9._-]*$' || die "--report must be /work/NAME"
+[ -z "$REPORT" ] || grep -Eq '^/work/\.?[A-Za-z0-9_][A-Za-z0-9._-]*$' <<< "$REPORT" || die "--report must be /work/NAME"
 case "$TIMEOUT" in ''|*[!0-9]*) die "--timeout must be an integer" ;; esac
 case "$MAX_OUT" in ''|*[!0-9]*) die "--max-output must be an integer" ;; esac
 [ "${#TIMEOUT}" -le 7 ] && [ "${#MAX_OUT}" -le 9 ] || die "numeric argument too long"

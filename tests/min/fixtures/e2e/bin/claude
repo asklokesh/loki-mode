@@ -9,6 +9,8 @@
 #   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
 #   coverage: multiply() and subtract() on the first turn; negate() only when the prompt carries the coverage brief, or all three on a first turn whose brief carries the folded coverage line (tests/min/scope-and-fix.sh, LOKI_E10_COVERAGE_RESUME)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
+# E2E_STUB_NOFINISH=once|never|still: the first implement reply has no finish line (LOKI_BLOCKED summary); a continue then finishes (once), keeps editing
+#   without finishing (never) or changes nothing (still). once writes multiply() only on the continue; never and still write it on the first turn.
 #   attempts: EXP-0010 (tests/min/engine10-e2e-stub.sh). Every implement session writes a wrong multiply() (calc.ts, or calc.py when the repo has one) except
 #     the session running in <temp>/loki-attempts-<random>/B<n> where n is E2E_STUB_RIGHT (unset or none: every session is wrong; the primary is attempt 0);
 #     E2E_STUB_NEWFILE=1: every session also creates new_<n>.<ext> and shared_new.<ext> (a file only that attempt owns, and one every attempt creates);
@@ -64,7 +66,7 @@ case "$prompt" in
   *"implement stage in patch mode"*) stage=patch ;; # LOKI_E10_PATCH: the tool-less patch call (features/patch_protocol.ts), before the implement match
   *"code reviewer"*) stage=review ;; # any model review session: the seal cross-review, or a post-PR reviewer
   *"Loki 10 plan stage"*) stage=plan ;;
-  *"Loki 10 implement stage"*) stage=implement ;;
+  *"Loki 10 implement stage"*|"Any earlier request to stop and write a text-only summary is over"*) stage=implement ;; # S1b: a resumed continue (SDK invoker) carries only the continue brief
   *) stage=other ;;
 esac
 is_wall=0; case "$prompt" in *"Loki 10 Wall author"*) is_wall=1 ;; esac
@@ -241,6 +243,17 @@ if [ "$stage" = "implement" ] && [ -n "${E2E_STUB_RV:-}" ] && printf '%s' "$prom
     goodtest) printf '%s\n' '' 'test("add twice", () => { expect(calc.add(calc.add(1, 1), 1)).toBe(3); });' >> calc.test.ts ;;
   esac
   echo "LOKI_DONE"; exit 0
+fi
+if [ "$stage" = "implement" ] && [ -n "${E2E_STUB_NOFINISH:-}" ]; then # S1b (tests/min/scope-and-fix.sh): the implement reply has no finish line, as FireLater#24 Haiku's compacted session did
+  if printf '%s' "$prompt" | grep -q "Any earlier request to stop and write a text-only summary is over"; then # a continue (util/conflict_resume.ts continueBrief)
+    case "$E2E_STUB_NOFINISH" in
+      once) printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts; echo "LOKI_DONE"; exit 0 ;; # finishes on the first continue
+      never) printf '// continue pass %s\n' "$$-$RANDOM" >> calc.ts; echo "Progress made. Still outstanding: the docs for multiply."; exit 0 ;; # changes the tree, never finishes
+      still) echo "Still outstanding: the docs for multiply."; exit 0 ;; # changes nothing, never finishes
+    esac
+  fi
+  if [ "$E2E_STUB_NOFINISH" = once ]; then printf '\n// multiply() pending\n' >> calc.ts; else printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts; fi
+  echo "Context was compacted. Summary of progress."; echo "**Result:** LOKI_BLOCKED: the docs for multiply and the impacted test runs are still outstanding."; exit 0
 fi
 if [ "$stage" = "implement" ] && [ "${E2E_STUB_MODE:-done}" != "coverage" ] && printf '%s' "$prompt" | grep -q "List each site, symbol, example or case"; then
   echo "LOKI_DONE"; exit 0 # the coverage turn (LOKI_E10_COVERAGE_RESUME=1) on a change the first turn completed: a real model edits nothing; replaying the first turn's edit would duplicate it

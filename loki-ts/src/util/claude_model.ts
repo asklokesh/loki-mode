@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { REPO_ROOT } from "./paths.ts";
+import { presetExecutor, routerPreset } from "../runner/router/flag.ts";
 
 /** Recorded when a claude run has no configured model: the provider CLI runs its own default, exactly like raw `claude -p` (L1). */
 export const PROVIDER_DEFAULT_MODEL = "claude (provider default)";
@@ -168,4 +169,22 @@ export function chooseSessionModel(e: NodeJS.ProcessEnv = process.env): SessionM
   if (raw === "provider") return { source: "provider", pin: null, why: "LOKI_DEFAULT_SESSION_MODEL=provider (the Claude CLI's own default)" };
   const pin = canonicalSessionPin(raw || DEFAULT_SESSION_MODEL)!;
   return { source: "default", pin, why: raw ? `LOKI_DEFAULT_SESSION_MODEL=${raw}` : "Loki default, set another with --session-model or LOKI_DEFAULT_SESSION_MODEL=provider" };
+}
+
+/** Q1 HAIKU-SCOPE: true when this run will implement on Haiku, as far as the environment decides it before any session. Covered, in the order the
+ *  engine resolves the implement model (engine10/session.ts resolveModel, runner/router): opencode with a Haiku LOKI_OPENCODE_MODEL; LOKI_MODEL_OVERRIDE,
+ *  LOKI_MODEL_ROUTE, LOKI_CLAUDE_MODEL_DEVELOPMENT or LOKI_MODEL_DEVELOPMENT naming Haiku; a session pin (--session-model, LOKI_SESSION_MODEL, or the default
+ *  chooseSessionModel applies, LOKI_DEFAULT_SESSION_MODEL) of haiku, or of small/fast whose fast tier is Haiku; LOKI_ROUTER=auto (also --haiku and
+ *  --cost lean) with no pin, whose executor is Haiku unless LOKI_ALLOW_HAIKU=false or LOKI_ROUTER_EXECUTOR names another. Not covered: LOKI_ROUTER=1, where
+ *  the plan session's route record may send implement to Haiku after this decision. LOKI_ALLOW_HAIKU=true alone moves only the fast tier (plan), not implement. */
+export function haikuRun(e: NodeJS.ProcessEnv = process.env): boolean {
+  const H = /haiku/i, val = (k: string): string => (e[k] ?? "").trim();
+  if (val("LOKI_PROVIDER").toLowerCase() === "opencode") return H.test(val("LOKI_OPENCODE_MODEL"));
+  for (const k of ["LOKI_MODEL_OVERRIDE", "LOKI_MODEL_ROUTE", "LOKI_CLAUDE_MODEL_DEVELOPMENT", "LOKI_MODEL_DEVELOPMENT"]) if (val(k)) return H.test(val(k));
+  let pin: string | undefined;
+  try { pin = canonicalSessionPin(e["LOKI_SESSION_MODEL"]) ?? chooseSessionModel(e).pin ?? undefined; } catch { return false; } // an unknown pin is refused by the engine before any run
+  if (pin === "haiku") return true;
+  if (pin === "fast") return H.test(explicitSetupModel("fast", e) ?? (val("LOKI_CLAUDE_MODEL_FAST") || val("LOKI_MODEL_FAST") || (e["LOKI_ALLOW_HAIKU"] === "true" ? "haiku" : "sonnet")));
+  if (pin) return false;
+  return routerPreset(e) && H.test(presetExecutor(e).model);
 }

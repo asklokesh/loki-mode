@@ -1,6 +1,6 @@
 // Triage router: implement, spec or human for one work item before a run is spent. New file: spec_ambiguity.ts only scores text, and issues_run.ts triage is an opt-in model call for `loki issues run`; nothing owned per-item routing for `loki backlog` (the only caller that skips work) or recording a class on a direct run.
 import { buildTestMap } from "../engine10/testmap.ts";
-import { deliverables } from "./decompose.ts";
+import { deliverables, issueWholeFirst } from "./decompose.ts";
 import { ambiguityThreshold, scoreAmbiguity } from "./spec_ambiguity.ts";
 
 export type TriageClass = "implement" | "spec" | "human";
@@ -40,7 +40,7 @@ export function triageItem(item: TriageItem, repo?: RepoSignals): TriageResult {
   const prod = hit(PROD_RE, text) ?? hit(DESTRUCTIVE_RE, text);
   if (prod) return { class: "human", reason: `production or destructive operation ("${clip(prod, 40)}")`, rule: "prod" };
   const size = deliverables(text, labels);
-  if (size.large) return { class: "implement", reason: `large (${size.reason}); ${item.split === false ? "runs as one run, Jira and Linear items do not split yet" : "runs split into slices"}`, rule: "large" };
+  if (size.large) return { class: "implement", reason: `large (${size.reason}); ${item.split === false ? "runs as one run, Jira and Linear items do not split yet" : issueWholeFirst() ? "runs as one run" : "runs split into slices"}`, rule: "large" }; // WHOLE-FIRST: the child `loki start` does not split up front
   const amb = scoreAmbiguity(text), threshold = ambiguityThreshold();
   if (amb.score >= threshold) return { class: "spec", reason: `ambiguous: score ${amb.score} (threshold ${threshold}), e.g. "${clip(amb.hits[0]?.excerpt ?? "", 50)}"`, rule: "ambiguous" };
   const anchor = ANCHORS.find(([, re]) => re.test(text));

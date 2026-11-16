@@ -483,7 +483,7 @@ def main(argv):
         say("backlog: %s %-9s %s | %s" % (i["label"], c, i["title"], why))
     if a.dry_run:
         n_of = lambda c: sum(1 for i in issues if klass[i["key"]][0] == c)  # noqa: E731
-        n_large = sum(1 for i in issues if i["split"] and klass[i["key"]][0] == "implement" and klass[i["key"]][1].startswith("large ("))
+        n_large = sum(1 for i in issues if i["split"] and klass[i["key"]][0] == "implement" and klass[i["key"]][1].endswith("runs split into slices"))  # WHOLE-FIRST: only a reason that says so counts
         if issues:
             say("backlog: dry run: %d would run%s, %d would get a drafted spec, %d need a human; nothing launched"
                 % (n_of("implement"), " (%d split into slices)" % n_large if n_large else "", n_of("spec"), n_of("human")))

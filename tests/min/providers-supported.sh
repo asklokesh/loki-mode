@@ -88,7 +88,7 @@ for p in codex cline aider gemini; do
             estimate) out="$(cd "$T/empty" && bash "$ROOT/bin/loki" estimate --provider "$p" </dev/null 2>&1)"; rc=$? ;;
         esac
         if [ "$rc" -eq 2 ] && [ "$out" = "$want" ]; then ok "$p ($form): exit 2, one migration line"
-        else bad "$p ($form): rc=$rc out=$(printf '%s' "$out" | head -3)"; fi
+        else bad "$p ($form): rc=$rc out=$(head -3 <<< "$out")"; fi
     done
 done
 # A removed name saved in the project: the same line plus how to clear it, on every start route and `provider show`.
@@ -109,7 +109,7 @@ $(hint "$p")"
             bashshow) out="$(cd "$SD" && bash "$ROOT/autonomy/loki" provider show </dev/null 2>&1)"; rc=$? ;;
         esac
         if [ "$rc" -eq 2 ] && [ "$out" = "$want" ]; then ok "saved $p ($form): exit 2, migration line and the provider set hint"
-        else bad "saved $p ($form): rc=$rc out=$(printf '%s' "$out" | head -3)"; fi
+        else bad "saved $p ($form): rc=$rc out=$(head -3 <<< "$out")"; fi
     done
 done
 ts="$(cd "$ROOT/loki-ts" && bun -e 'const t = await import("./src/runner/types.ts"); process.stdout.write(t.removedSavedProviderHint("codex"))' 2>&1)"
@@ -117,8 +117,8 @@ sh="$(bash -c '. "$1/providers/loader.sh"; loki_removed_saved_provider_hint code
 [ "$ts" = "$sh" ] && [ "$sh" = "$(hint codex)" ] && ok "Bun and bash saved-provider hints are byte-identical" || bad "hints differ: ts=[$ts] sh=[$sh]"
 SD="$T/saved-codex"
 out="$(cd "$SD" && bash "$ROOT/bin/loki" provider set claude </dev/null 2>&1 && bash "$ROOT/bin/loki" provider show </dev/null 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && [ "$(cat "$SD/.loki/state/provider")" = "claude" ] && printf '%s' "$out" | grep -q 'Provider:.* claude' \
-    && ok "loki provider set claude clears the saved removed provider (show exits 0, claude)" || bad "provider set claude: rc=$rc out=$(printf '%s' "$out" | head -3)"
+[ "$rc" -eq 0 ] && [ "$(cat "$SD/.loki/state/provider")" = "claude" ] && grep -q 'Provider:.* claude' <<< "$out" \
+    && ok "loki provider set claude clears the saved removed provider (show exits 0, claude)" || bad "provider set claude: rc=$rc out=$(head -3 <<< "$out")"
 # The Bun entry on its own (no bin/loki guard in front) refuses with the same line.
 out="$(cd "$T/empty" && bun "$LOKI_TS_ENTRY" start --provider codex "add a function" </dev/null 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && [ "$out" = "$(expect_msg codex)" ] && ok "Bun start --provider codex (no wrapper): exit 2, migration line" || bad "Bun start --provider codex: rc=$rc out=$out"
@@ -161,7 +161,7 @@ PY
 )"
 [ "$(printf '%s\n' "$rest" | grep -c 'list=ok msg=ok')" -eq 3 ] && ok "api/ and web-app/ restate the same lists and byte-identical message" || { bad "restated provider lists or message drifted:"; printf '%s\n' "$rest" | sed 's/^/    | /'; }
 out="$(cd "$T/empty" && bash "$ROOT/bin/loki" estimate --provider foo </dev/null 2>&1)"; rc=$?
-[ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "use one of: claude, opencode" && ok "unknown provider: the supported list (estimate exit 1)" || bad "unknown provider: rc=$rc out=$out"
+[ "$rc" -eq 1 ] && grep -q "use one of: claude, opencode" <<< "$out" && ok "unknown provider: the supported list (estimate exit 1)" || bad "unknown provider: rc=$rc out=$out"
 
 # --- claude and opencode on stubs ------------------------------------------
 # run_engine <name> [env...] -- [loki args...] -> REPO, RC, OUT, D
@@ -194,7 +194,7 @@ run_engine() {
 }
 
 run_engine claude PATH="$FIX/bin:$PATH" --
-[ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -Eq '^Outcome:[[:space:]]+VERIFIED' && ok "claude on the stub: exit 0, Outcome VERIFIED" \
+[ "$RC" -eq 0 ] && grep -Eq '^Outcome:[[:space:]]+VERIFIED' <<< "$OUT" && ok "claude on the stub: exit 0, Outcome VERIFIED" \
     || { bad "claude on the stub: rc=$RC"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
 
 run_engine opencode PATH="$OCBIN:$FIX/bin:$PATH" OPENROUTER_API_KEY=sk-or-test-not-a-key E2E_OPENCODE_LOG="$T/opencode/oc.log" \
@@ -210,6 +210,15 @@ fi
 grep -q 'export function multiply' "$REPO/calc.ts" && ok "opencode on the stub: the implement session's change landed" \
     || { bad "opencode on the stub: calc.ts has no multiply() (rc=$RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
 [ "$RC" -eq 0 ] && ok "opencode on the stub: exit 0" || bad "opencode on the stub exited $RC"
+# S1b FINISH-LINE is claude only: on opencode an implement reply with no finish line is not resumed, gets no finish key and exits done, as before S1b.
+run_engine opencode-nofinish PATH="$OCBIN:$FIX/bin:$PATH" OPENROUTER_API_KEY=sk-or-test-not-a-key E2E_OPENCODE_LOG="$T/opencode-nofinish/oc.log" E2E_STUB_NOFINISH=once \
+    -- --provider opencode --model openrouter/deepseek/deepseek-v3.2
+OCF="$(python3 -I -c 'import json,sys,glob
+ev = glob.glob(sys.argv[1] + "/.loki/runs/*/events.jsonl")
+d = next((json.loads(l)["data"] for l in open(ev[0]) if "\"stage.completed\"" in l and "\"implement\"" in l), None) if ev else None
+print("none" if d is None else "%s|%s|%s" % ("finish" in d, d.get("exit"), sum(1 for l in open(ev[0]) if "\"s1b.resumed\"" in l)))' "$REPO" 2>/dev/null)"
+[ "$OCF" = "False|done|0" ] && ok "opencode S1b: claude only, so an opencode reply with no finish line is not resumed and exits done as before (rc=$RC)" \
+    || { bad "opencode S1b: implement record '$OCF' (want False|done|0: no finish key, exit done, no s1b event), rc=$RC"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
 
 # The project's saved provider reaches the engine: every session (the stub opencode hands each to the stub claude, so the
 # claude log counts all sessions) went through opencode, on `loki start` and on a bare `loki "task"`.
@@ -224,22 +233,22 @@ G="$T/saved-git"; mkdir -p "$G" && git -C "$G" init -q -b main && git -C "$G" co
     && printf 'x\n' > "$G/a.txt" && git -C "$G" add a.txt && git -C "$G" commit -q -m base && mkdir -p "$G/.loki/state"
 printf 'opencode\n' > "$G/.loki/state/provider"
 out="$(cd "$G" && env -u LOKI_PROVIDER OPENROUTER_API_KEY=sk-or-test-not-a-key PATH="$OCBIN:$PATH" bash "$ROOT/bin/loki" start --dry-run "add a function" </dev/null 2>&1)"
-printf '%s' "$out" | grep -q 'dry-run: provider opencode,' && ok "start --dry-run names the saved provider (opencode)" || bad "dry-run saved: $(printf '%s' "$out" | tail -2)"
+grep -q 'dry-run: provider opencode,' <<< "$out" && ok "start --dry-run names the saved provider (opencode)" || bad "dry-run saved: $(printf '%s' "$out" | tail -2)"
 out="$(cd "$G" && LOKI_PROVIDER=claude PATH="$FIX/bin:$PATH" bash "$ROOT/bin/loki" start --dry-run "add a function" </dev/null 2>&1)"
-printf '%s' "$out" | grep -q 'dry-run: provider claude,' && ok "LOKI_PROVIDER wins over the saved provider (dry-run claude)" || bad "dry-run env over saved: $(printf '%s' "$out" | tail -2)"
+grep -q 'dry-run: provider claude,' <<< "$out" && ok "LOKI_PROVIDER wins over the saved provider (dry-run claude)" || bad "dry-run env over saved: $(printf '%s' "$out" | tail -2)"
 printf 'codex\n' > "$G/.loki/state/provider"
 out="$(cd "$G" && env -u LOKI_PROVIDER bash "$ROOT/bin/loki" "add a function" --no-pr </dev/null 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && [ "$out" = "$(expect_msg codex)
-$(hint codex)" ] && ok "bare loki \"task\" with codex saved: exit 2, migration line and hint" || bad "bare saved codex: rc=$rc out=$(printf '%s' "$out" | head -3)"
+$(hint codex)" ] && ok "bare loki \"task\" with codex saved: exit 2, migration line and hint" || bad "bare saved codex: rc=$rc out=$(head -3 <<< "$out")"
 out="$(cd "$G" && env -u LOKI_PROVIDER bash "$ROOT/bin/loki" start --dry-run "add a function" </dev/null 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && [ "$out" = "$(expect_msg codex)
-$(hint codex)" ] && ok "start --dry-run with codex saved: exit 2, migration line and hint" || bad "dry-run saved codex: rc=$rc out=$(printf '%s' "$out" | head -3)"
+$(hint codex)" ] && ok "start --dry-run with codex saved: exit 2, migration line and hint" || bad "dry-run saved codex: rc=$rc out=$(head -3 <<< "$out")"
 printf 'codex\r\n' > "$G/.loki/state/provider"
 out="$(cd "$G" && env -u LOKI_PROVIDER bash "$ROOT/bin/loki" start "add a function" </dev/null 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && [ "$out" = "$(expect_msg codex)
 $(hint codex)" ] && ok "a CRLF-saved codex reads as codex (start: migration line and hint)" || bad "CRLF saved: rc=$rc out=$(printf '%s' "$out" | od -c | head -3)"
 out="$(cd "$T/empty" && bash "$ROOT/bin/loki" failover --chain claude,bogus </dev/null 2>&1)"; rc=$?
-[ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "invalid provider 'bogus' in chain" && ok "failover --chain claude,bogus names bogus" || bad "failover chain: rc=$rc out=$out"
+[ "$rc" -ne 0 ] && grep -q "invalid provider 'bogus' in chain" <<< "$out" && ok "failover --chain claude,bogus names bogus" || bad "failover chain: rc=$rc out=$out"
 
 # Every entry point reads the order flag > LOKI_PROVIDER > saved > claude: show, list and status name the env value, and
 # `loki plan` and `loki estimate` use the saved project choice instead of claude.
@@ -253,25 +262,25 @@ for form in bashshow bunshow bashlist bunlist bashstatus; do
         bashstatus) out="$(cd "$G" && LOKI_PROVIDER=claude bash "$ROOT/autonomy/loki" status </dev/null 2>&1)"; want='Provider:.* claude \(' ;;
     esac
     clean="$(printf '%s' "$out" | sed $'s/\x1b\\[[0-9;]*m//g')"
-    if printf '%s\n' "$clean" | grep -qE "$want" && ! printf '%s\n' "$clean" | grep -E '^ *opencode .*\(current\)' >/dev/null; then ok "LOKI_PROVIDER=claude over saved opencode ($form): shows claude"
-    else bad "env over saved ($form): $(printf '%s' "$clean" | head -4)"; fi
+    if grep -qE "$want" <<< "$clean" && ! printf '%s\n' "$clean" | grep -E '^ *opencode .*\(current\)' >/dev/null; then ok "LOKI_PROVIDER=claude over saved opencode ($form): shows claude"
+    else bad "env over saved ($form): $(head -4 <<< "$clean")"; fi
 done
 out="$(cd "$G" && env -u LOKI_PROVIDER bash "$ROOT/autonomy/loki" provider show </dev/null 2>&1)"
-printf '%s' "$out" | grep -q 'Provider:.* opencode' && ok "saved opencode with no LOKI_PROVIDER: provider show names opencode" || bad "show saved: $(printf '%s' "$out" | head -3)"
+grep -q 'Provider:.* opencode' <<< "$out" && ok "saved opencode with no LOKI_PROVIDER: provider show names opencode" || bad "show saved: $(head -3 <<< "$out")"
 mkdir -p "$T/plan"; rm -f "$T/plan/oc.log"
 out="$(cd "$G" && rm -rf .loki/specs && env -u LOKI_PROVIDER OPENROUTER_API_KEY=sk-or-test-not-a-key PATH="$OCBIN:$FIX/bin:$PATH" E2E_OPENCODE_LOG="$T/plan/oc.log" "${TO[@]}" bash "$ROOT/bin/loki" plan "add a function" --spec </dev/null 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ -s "$T/plan/oc.log" ] && ok "loki plan --spec with opencode saved runs its session on opencode" || bad "plan saved opencode: rc=$rc sessions=$(wc -l < "$T/plan/oc.log" 2>/dev/null || echo 0) out=$(printf '%s' "$out" | tail -2)"
 printf 'codex\n' > "$G/.loki/state/provider"
 out="$(cd "$G" && env -u LOKI_PROVIDER bun "$LOKI_TS_ENTRY" estimate </dev/null 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && [ "$out" = "$(expect_msg codex)
-$(hint codex)" ] && ok "loki estimate with codex saved: exit 2, migration line and hint" || bad "estimate saved codex: rc=$rc out=$(printf '%s' "$out" | head -3)"
+$(hint codex)" ] && ok "loki estimate with codex saved: exit 2, migration line and hint" || bad "estimate saved codex: rc=$rc out=$(head -3 <<< "$out")"
 printf 'bogus\n' > "$G/.loki/state/provider"
 out="$(cd "$G" && env -u LOKI_PROVIDER bash "$ROOT/bin/loki" route start "add a function" </dev/null 2>&1)"; rc=$?
-[ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "saved provider 'bogus' in .loki/state/provider" && ok "route: an unknown saved provider says it is the saved one and how to clear it" || bad "route unknown saved: rc=$rc out=$(printf '%s' "$out" | head -3)"
+[ "$rc" -ne 0 ] && grep -q "saved provider 'bogus' in .loki/state/provider" <<< "$out" && ok "route: an unknown saved provider says it is the saved one and how to clear it" || bad "route unknown saved: rc=$rc out=$(head -3 <<< "$out")"
 printf 'opencode\n' > "$G/.loki/state/provider"
 
 run_engine nokey PATH="$OCBIN:$FIX/bin:$PATH" E2E_OPENCODE_LOG="$T/nokey/oc.log" -- --provider opencode --model openrouter/deepseek/deepseek-v3.2
-[ "$RC" -ne 0 ] && [ ! -s "$T/nokey/oc.log" ] && printf '%s\n' "$OUT" | grep -q 'export OPENROUTER_API_KEY' \
+[ "$RC" -ne 0 ] && [ ! -s "$T/nokey/oc.log" ] && grep -q 'export OPENROUTER_API_KEY' <<< "$OUT" \
     && ok "opencode openrouter model with no key: refused before any session, names OPENROUTER_API_KEY" \
     || { bad "no-key run: rc=$RC sessions=$(wc -l < "$T/nokey/oc.log" 2>/dev/null || echo 0)"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /'; }
 
@@ -280,7 +289,7 @@ run_engine nokey PATH="$OCBIN:$FIX/bin:$PATH" E2E_OPENCODE_LOG="$T/nokey/oc.log"
 mkdir -p "$T/cfg/opencode"
 printf '{\n  // OpenRouter via config, key from another env var\n  "provider": { "openrouter": { "options": { "apiKey": "{env:MY_OR_KEY}" } } },\n}\n' > "$T/cfg/opencode/opencode.jsonc"
 run_engine cfgkey PATH="$OCBIN:$FIX/bin:$PATH" XDG_CONFIG_HOME="$T/cfg" E2E_OPENCODE_LOG="$T/cfgkey/oc.log" -- --provider opencode --model openrouter/deepseek/deepseek-v3.2
-[ -s "$T/cfgkey/oc.log" ] && ! printf '%s\n' "$OUT" | grep -q 'needs OpenRouter credentials' \
+[ -s "$T/cfgkey/oc.log" ] && ! grep -q 'needs OpenRouter credentials' <<< "$OUT" \
     && ok "opencode openrouter key in opencode.jsonc (provider.openrouter): the run starts" \
     || { bad "config-file key: refused or no session (rc=$RC)"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /'; }
 # Every other source, straight against the preflight check: only "no source at all" refuses; an unreadable config warns.
@@ -437,6 +446,6 @@ SHIPPED=(action.yml bin providers autonomy loki-ts/src loki-ts/data/child-env.js
 hits="$( { grep -rnIiwE 'codex|cline|aider|gemini' "${SHIPPED[@]}"; grep -rnIE 'LOKI_(CODEX|CLINE|AIDER|GEMINI)_' "${SHIPPED[@]}"; } 2>/dev/null \
     | grep -vE '^[^:]*(/dist/|/node_modules/|\.md:|dashboard/static/|__pycache__)' \
     | grep -vE 'REMOVED_PROVIDERS|loki_removed_provider|is no longer supported|GEMINI\.md|GEMINI_API_KEY|"GEMINI_"|gemini": \{ input|removed_provider|_check_provider' || true)"
-[ -z "$hits" ] && ok "no removed provider name in shipped code paths" || { bad "removed provider names remain:"; printf '%s\n' "$hits" | head -20 | sed 's/^/    | /'; }
+[ -z "$hits" ] && ok "no removed provider name in shipped code paths" || { bad "removed provider names remain:"; head -20 <<< "$hits" | sed 's/^/    | /'; }
 
 finish

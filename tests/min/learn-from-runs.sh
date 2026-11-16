@@ -381,7 +381,7 @@ print(len(s[a:b+len(t)].encode()) if a>=0 and b>=0 else -1)' "$P21")"
 [ "$exblk" -gt 0 ] && [ "$exblk" -le 1200 ] && ok "example: the worked example block is $exblk bytes (<= 1200)" || bad "example: worked example block bytes $exblk"
 relf="$(python3 -I -c 'import sys
 s=open(sys.argv[1]).read(); a=s.find("Relevant files:\n"); print(s[a:s.find("\n\n", a)] if a>=0 else "")' "$P21")"
-for f in $EXFILES; do printf '%s\n' "$relf" | grep -qx "$f" && ok "example: exemplar file $f is in Relevant files" || bad "example: exemplar file $f missing from Relevant files"; done
+for f in $EXFILES; do grep -qx "$f" <<< "$relf" && ok "example: exemplar file $f is in Relevant files" || bad "example: exemplar file $f missing from Relevant files"; done
 REPO="$T/repo-example-off"; LESSONS="$REPO/.loki/memory/semantic/pr-lessons.json"
 run_engine 22 "$TASK_S" LOKI_WORKED_EXAMPLE=0
 B22="$(impl_bytes)"
