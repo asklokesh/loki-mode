@@ -313,6 +313,57 @@ W3SIG="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$(dirname "$(ls "
 [ "$W3SIG" = "stages=intake,{plan,wall},implement,verify,commit,seal; receipt=base_sha,checks,context,cost,cost_preview,diff_sha256,events_sha256,evidence,head_sha,log_seal,loki_version,model,model_source,mutation_outcome,mutation_proof,not_applicable,not_proven,provider,receipt_sha256,repo,resumed,run_id,schema,seal_accuracy,seeded_corpus,self_review,task,time,toolchain,tree,verdict,verification,wall; implement=already_done_evidence,brief_files,cascade,coverage_resume,diff_stat,duration_s,exit,impacted_tests,iteration_ids,model,self_review,session_id,session_resume,spec_conflict_reason,summary_tail,tests_reverted; brief=fa2041fa29ead36e" ] \
     && ok "S1b no-loss (issue run): stage order, receipt key set, implement key set and the normalized implement brief equal the base commit's" || bad "S1b no-loss (issue run) differs from the base commit: $W3SIG"
 
+# --- F4 rerun guard: before any model call, an open Loki pull request from the origin's owner that covers the issue stops `loki start owner/repo#N` --------
+RG="$T/rerun-unit"; make_repo "$RG" 0; git -C "$RG" remote add origin https://github.com/acme/search.git
+RGL="$T/rerun-local"; make_repo "$RGL" 0; git init -q --bare "$T/rerun-local-origin.git"; git -C "$RGL" remote add origin "$T/rerun-local-origin.git"
+RGU="$(ROOT="$ROOT" RG="$RG" RGL="$RGL" bun --no-env-file --config=/dev/null -e '
+const m = await import(process.env.ROOT + "/loki-ts/src/commands/issues_run.ts");
+const calls = []; const gh = (list, rc = 0) => (args) => { calls.push(args.join(" ")); return { rc, stdout: rc === 0 ? JSON.stringify(list) : "", stderr: rc ? "HTTP 502" : "" }; };
+const pr = (owner, head, body, url) => ({ number: 7, headRefName: head, body, url, headRepositoryOwner: { login: owner } });
+const at = (list, extra = {}, rc = 0) => { const g = m.openLokiPrGuard({ repoDir: process.env.RG, slug: "acme/search", number: 24, noPr: false, env: {}, gh: gh(list, rc), ...extra }); return g ? g.code + ":" + g.line : "go"; };
+const out = [
+  at([pr("acme", "loki/e10-20261115T000000Z-ab12", "Closes acme/search#24", "https://github.com/acme/search/pull/7")]),
+  at([pr("someone", "loki/e10-x", "Closes acme/search#24", "https://github.com/acme/search/pull/8")]),
+  at([pr("acme", "feature/search", "Closes #24", "https://github.com/acme/search/pull/9")]),
+  at([pr("acme", "loki/e10-y", "Closes acme/search#25", "https://github.com/acme/search/pull/10")]),
+  at([], {}, 1),
+];
+const before = calls.length;
+out.push(at([pr("acme", "loki/e10-z", "#24", "u")], { repoDir: process.env.RGL }), at([pr("acme", "loki/e10-z", "#24", "u")], { noPr: true }), at([pr("acme", "loki/e10-z", "#24", "u")], { env: { LOKI_RERUN_GUARD: "0" } }), "gh calls after skips: " + (calls.length - before));
+console.log(out.join("\n"));
+' 2>&1)"
+printf '%s\n' "$RGU" | sed 's/^/    rerun guard: /'
+[ "$RGU" = "2:loki: acme/search#24 already has an open Loki pull request: https://github.com/acme/search/pull/7; not starting a second one (LOKI_RERUN_GUARD=0 starts the run anyway)
+go
+go
+go
+2:loki: could not list the open pull requests of acme/search (gh pr list rc 1); not starting a run that could open a second pull request for #24 (LOKI_RERUN_GUARD=0 starts the run anyway)
+go
+go
+go
+gh calls after skips: 0" ] \
+    && ok "rerun guard: an open Loki PR from the origin's owner covering the issue stops with its URL; a fork's PR, a non-Loki branch and another issue's PR do not; an unreadable list fails closed; a local origin, --no-pr and LOKI_RERUN_GUARD=0 make no gh call" \
+    || bad "rerun guard unit gave: $(printf '%s' "$RGU" | tr '\n' '|')"
+mkdir -p "$T/bin-rg"
+cat > "$T/bin-rg/gh" <<GH
+#!/usr/bin/env bash
+[ "\${1:-}" = "--version" ] && { echo "gh version 2.80.0 (stub)"; exit 0; } # preflight ghReady: PR mode stays on
+case "\${1:-} \${2:-}" in
+  "pr list") echo '[{"number":7,"headRefName":"loki/e10-20261115T000000Z-ab12","body":"Closes acme/search#24","url":"https://github.com/acme/search/pull/7","headRepositoryOwner":{"login":"acme"}}]'; exit 0 ;;
+  "pr create"|"pr edit"|"pr close"|"pr comment"|"issue comment") echo "\$*" >> "$T/rerun-gh-writes.log"; exit 1 ;;
+esac
+exec "$T/bin/gh" "\$@"
+GH
+chmod +x "$T/bin-rg/gh"
+RGE="$T/rerun-e2e"; make_repo "$RGE" 0; git -C "$RGE" remote add origin https://github.com/acme/search.git
+OUT="$(cd "$RGE" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" \
+    PATH="$T/bin-rg:$T/bin:$FIX/bin:$PATH" E2E_STUB_LOG="$T/rerun-e2e-stub.log" E2E_STUB_MODE=done LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start acme/search#24 --max-cost 5 2>&1)"; RC=$?
+printf '%s\n' "$OUT" | grep '^loki: acme/search#24' | sed 's/^/    rerun e2e: /'
+[ "$RC" = 2 ] && grep -q 'already has an open Loki pull request: https://github.com/acme/search/pull/7' <<< "$OUT" && [ ! -s "$T/rerun-e2e-stub.log" ] && [ ! -s "$T/rerun-gh-writes.log" ] \
+    && [ -z "$(find "$RGE/.loki/runs" -name events.jsonl 2>/dev/null)" ] \
+    && ok "rerun guard e2e: a rerun of #24 with an open Loki PR exits 2 naming it, starts no model session and no engine run, and never writes to the PR" \
+    || { bad "rerun guard e2e: rc $RC, stub calls $(wc -l < "$T/rerun-e2e-stub.log" 2>/dev/null), gh writes $(cat "$T/rerun-gh-writes.log" 2>/dev/null)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+
 # --- whole-first is for Sonnet and stronger models: a run that implements on Haiku keeps the split; LOKI_ISSUE_WHOLE_FIRST=1 forces whole on Haiku --
 HAIKU_M="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const { issueWholeFirst } = await import(process.env.ROOT + "/loki-ts/src/features/decompose.ts");
