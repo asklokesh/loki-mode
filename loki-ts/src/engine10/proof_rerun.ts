@@ -28,7 +28,7 @@ export async function worktreeTree(repoDir: string): Promise<string | null> {
   try {
     const real = join(repoDir, ".git", "index"); if (existsSync(real)) copyFileSync(real, idx);
     const env = { GIT_INDEX_FILE: idx };
-    const a = await run(["git", "-C", repoDir, "add", "-A", "--", ".", ":(exclude).loki"], { env, timeoutMs: 60000 }); if (a.exitCode !== 0) return null;
+    const a = await run(["git", "-C", repoDir, "add", "-A", "--", "."], { env, timeoutMs: 60000 }); if (a.exitCode !== 0) return null;
     const w = await run(["git", "-C", repoDir, "write-tree"], { env, timeoutMs: 60000 }), sha = w.stdout.trim();
     return w.exitCode === 0 && /^[0-9a-f]{40,64}$/.test(sha) ? sha : null;
   } catch { return null; } finally { try { rmSync(idx, { force: true }); } catch { /* a stale throwaway index is harmless */ } }
