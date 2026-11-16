@@ -40,7 +40,8 @@
 #   paraphrased ask first and the verbatim list on the retry; bad paraphrases both times. E2E_STUB_LIST_LOG gets each listing prompt.
 # The prover session ("Loki 10 prove stage", E2E_STUB_PROVE): pass (default) writes ask scripts that pass once multiply() exists (so they fail on base);
 #   notrun: ask 2 exits 3; setupfail: setup.sh fails; none writes nothing; noscript writes setup and teardown but no ask script; hang: ask 2 sleeps 60 s;
-#   basepass: ask 2 exits 0 on any tree; foreign: setup.sh lists endpoint "web $E2E_STUB_FOREIGN_PORT"; abort: ask 1 starts a child that leaves the group
+#   basepass: ask 2 exits 0 on any tree; leftover: the prover's own runs leave a seed marker in its scratch dir, an untracked seed.db and stale
+#   endpoints and pids, which fail ask 2 unless the harness's run is clean; editsrc: the prover appends a line to the tracked calc.ts; foreign: setup.sh lists endpoint "web $E2E_STUB_FOREIGN_PORT"; abort: ask 1 starts a child that leaves the group
 #   (its own session, id recorded in prove/pids) plus one that stays, writes $E2E_STUB_ABORT_MARK and waits, until prove/resumed exists.
 #   E2E_STUB_PROVE_LOG gets "teardown" each time teardown.sh runs; E2E_STUB_PROVE_BRIEF_LOG gets the prover's prompt.
 #   E2E_STUB_REPLY_MARK: the done-mode implement reply prints this line before LOKI_DONE.
@@ -153,6 +154,14 @@ if [ "$stage" = prove ]; then
       setupfail) printf 'echo "migration 042 failed"; exit 1\n' > "$pdir/setup.sh" ;;
       hang) printf 'sleep 60\n' > "$pdir/ask-2.sh" ;;
       basepass) printf 'echo "always fine"; exit 0\n' > "$pdir/ask-2.sh" ;;
+      editsrc) printf '// prover was here\n' >> calc.ts ;; # a tracked file the prover must not touch
+      leftover) # the prover runs its own scripts twice in its own scratch dir and leaves data behind: a seed marker, an untracked seed.db, stale endpoints and pids
+        printf 'if [ -f "$PROVE_TMP/seeded" ]; then echo dup > "$PROVE_TMP/dup"; fi\ntouch "$PROVE_TMP/seeded"\necho setup done\n' > "$pdir/setup.sh"
+        printf 'echo "tmp=$PROVE_TMP"\n[ -f "$PROVE_TMP/dup" ] && { echo "duplicate key value violates unique constraint"; exit 1; }\n[ -f seed.db ] && { echo "leftover seed.db from an earlier run"; exit 1; }\ngrep -q "export function multiply" calc.ts\n' > "$pdir/ask-2.sh"
+        mkdir -p "$pdir/prover-scratch"
+        for _ in 1 2; do PROVE_TMP="$pdir/prover-scratch" PROVE_DIR="$pdir" PROVE_ROOT="$PWD" bash "$pdir/setup.sh" > /dev/null; done
+        PROVE_TMP="$pdir/prover-scratch" PROVE_DIR="$pdir" PROVE_ROOT="$PWD" bash "$pdir/ask-2.sh" > "$pdir/prover-own-run.log" 2>&1
+        touch seed.db; printf 'web 1\n' > "$pdir/endpoints"; printf '99999999\n' > "$pdir/pids" ;;
       foreign) printf 'echo "web %s" > "$PROVE_DIR/endpoints"\n' "${E2E_STUB_FOREIGN_PORT:-1}" > "$pdir/setup.sh" ;;
       abort) cat > "$pdir/ask-1.sh" <<'ASK'
 if [ -f "$PROVE_DIR/resumed" ]; then grep -q "export function multiply" calc.ts; exit $?; fi

@@ -31,7 +31,8 @@
 #            "not run here"; a failing setup is PARTIAL and teardown runs; a script that passes on base is not evidence; no script and a timeout are
 #            PARTIAL with the PR kept; a port held before setup is "port was not ours"; SIGINT during an ask leaves no recorded id alive and a resume reuses
 #            the prover's files; the harness stops a recorded id teardown forgot; the prover's brief has the issue and the fixed list, not the implementer's
-#            reply; its cost is in run.completed; the PR table comes first; a text goal, opencode and the opt-out never meet the stage.
+#            reply; its cost is in run.completed; the PR table comes first; a text goal, opencode and the opt-out never meet the stage. Data the
+#            prover's own runs left never reaches the harness's clean pass.
 #   lean:    `loki start "fix the off-by-one in paginate()"` sizes small and takes the lean path (no plan, no Wall).
 #   intake:  that run, on a repo with 1246 files, 240 test files that each pay an 80 ms process startup (the cost
 #            shape of FireLater's vitest suite) and 20 stale loki/e10-* branches holding unpushed commits, reaches
@@ -551,6 +552,15 @@ case "$PVS" in "verdict=PARTIAL; asks=1=not proved,2=not proved; "*"lines=not pr
     && ok "prove: a setup.sh that fails leaves every ask not proved, the run PARTIAL, and teardown.sh still runs" || bad "prove (setup fails): $PVS; teardown runs $(grep -c '^teardown$' "$T/pv-setupfail.prove.log" 2>/dev/null)"
 pv_run basepass E2E_STUB_PROVE=basepass
 case "$PVS" in "verdict=PARTIAL; asks=1=proved,2=not proved; base=run; "*"lines=not proved: Create advanced filter query builder: check also passes without the change") ok "prove: a script that also passes on the base commit is dropped as evidence; its ask is not proved and the run PARTIAL" ;; *) bad "prove (passes on base): $PVS" ;; esac
+# The prover runs its own scripts (its brief says so) and may leave data behind. The harness's pass gets a clean environment of its own: a fresh mkdtemp
+# $PROVE_TMP, prove/endpoints and prove/pids cleared, and the tree put back (the untracked seed.db the prover's run made is removed).
+pv_run leftover E2E_STUB_PROVE=leftover E2E_STUB_PROVE_BRIEF_LOG="$T/pv-leftover.brief"
+pvlt="$(sed -n 's/^tmp=//p' "$PVD/prove/run-0/ask-2.log" 2>/dev/null)"
+case "$PVS" in "verdict=VERIFIED; asks=1=proved,2=proved; base=run; "*) pvl=ok ;; *) pvl=bad ;; esac
+[ "$pvl" = ok ] && grep -q 'duplicate key' "$PVD/prove/prover-own-run.log" && [ -n "$pvlt" ] && case "$pvlt" in *prover-scratch*) false ;; *) true ;; esac && [ ! -e "$PVR/seed.db" ] && grep -q 'Before you finish, run setup.sh and then every ask script yourself' "$T/pv-leftover.brief" && grep -q 'safe to run more than once' "$T/pv-leftover.brief" \
+    && ok "prove: data the prover's own runs left (a seed marker in its scratch dir, an untracked file, stale endpoints and pids) does not reach the harness's clean pass; the brief makes the prover run and fix its own scripts" || bad "prove (leftover): $PVS; harness tmp '$pvlt'; seed.db $( [ -e "$PVR/seed.db" ] && echo present || echo gone)"
+pv_run editsrc E2E_STUB_PROVE=editsrc
+case "$PVS" in "verdict=PARTIAL; asks=1=proved,2=proved; "*"lines=not proved: the prover changed 1 file(s) in the tree (put back): calc.ts") ! grep -q 'prover was here' "$PVR/calc.ts" && ok "prove: a tracked file the prover edits is put back and caps the run at PARTIAL with a line naming it" || bad "prove (prover edit): calc.ts still holds the prover's line" ;; *) bad "prove (prover edit): $PVS" ;; esac
 pv_run noscript pr E2E_STUB_PROVE=noscript
 case "$PVS" in "verdict=PARTIAL; asks=1=not proved,2=not proved; "*"lines=not proved: Implement PostgreSQL full-text search with ranking: script ask-1.sh missing || not proved: Create advanced filter query builder: script ask-2.sh missing") pvns=ok ;; *) pvns=bad ;; esac
 [ "$pvns" = ok ] && pv_kept && ok "prove: a prover that writes no ask script gives PARTIAL with the reason; the diff and the pull request are kept" || bad "prove (no script): $PVS; outcome $(grep '^Outcome:' <<< "$OUT")"

@@ -67,7 +67,8 @@ export function proverBrief(issue: string, asks: { id: string; text: string }[],
       `- ask-<id>.sh for each ask: exits 0 only if that ask works for a user of the fresh environment. Call each entry point the way its real caller does: for anything a client uses, the exact path and method the client code sends; for a page or component, that a page the app routes to renders it and the requests it makes succeed; for a library or command-line tool, one real invocation. ${ESCAPE}`,
     ].join("\n"),
     `The harness runs setup.sh, then every ask script in id order, then teardown.sh, each with bash, from the repository root, which is also $PROVE_ROOT. Use paths relative to it and never an absolute path to this checkout: the same scripts also run on a checkout of the base commit, where an ask this change delivers should fail. Each script gets ${scriptS} seconds.`,
-    "Rules: do not edit, add or delete any file tracked by git, or any file in the repository outside that directory. Do not fix the code; this stage only checks it. Never weaken a check to make it pass: a script that exits 0 without exercising its ask is wrong. You may run the scripts to check them; run teardown.sh afterwards and leave nothing running.",
+    "Rules: do not edit, add or delete any file tracked by git, or any file in the repository outside that directory. Do not fix the code; this stage only checks it. Never weaken a check to make it pass: a script that exits 0 without exercising its ask is wrong.",
+    "Before you finish, run setup.sh and then every ask script yourself, with PROVE_ROOT, PROVE_TMP (a fresh temporary directory you make outside the repository) and PROVE_DIR set as the harness sets them, then teardown.sh, and leave nothing running. A script that fails because of the script itself is yours to fix: wrong quoting, a request body or header the real caller does not send, data left over from your own earlier run, a name or key that collides on a second run. Never change what a script checks to make it pass; a script that also passes on the base commit is not counted. Every ask script must be safe to run more than once against the same environment and against a new one. The harness then runs your final scripts in a clean environment of its own (a new temporary directory, and any database or service set up again inside it), so nothing your own runs left behind is there.",
     "Finish with exactly one line: LOKI_DONE.",
   ].join("\n\n");
 }
@@ -285,7 +286,9 @@ export const proveStage: Stage = {
       const proverS = Math.max(60, Math.min(PROVER_MAX_S, Math.floor(budgetS * 0.5)));
       const ps = await ctx.sessions.run({ stage: "prove", brief: proverBrief(issue, fixed, dir, card?.line ?? "", scriptS), tier: "development", iterationId: proverId, limitS: proverS, signal, cwd: ctx.repoDir, outputs: proverOutputs(dir), ...(pathAppend.length ? { pathAppend } : {}) });
       const put = guardTree(ctx.repoDir, ctx.baseSha, pre); rec.tree_restored.push(...put);
-      if (put.length) rec.notes.push(`not proved: the prover changed ${put.length} file(s) in the tree (put back): ${clean(put.join(", "), 200)}`);
+      const edited = put.filter((f) => existsSync(join(ctx.repoDir, f))), added = put.filter((f) => !edited.includes(f)); // after the put-back an edited or deleted file is there again; a file the prover's own run created is gone
+      if (edited.length) rec.notes.push(`not proved: the prover changed ${edited.length} file(s) in the tree (put back): ${clean(edited.join(", "), 200)}`);
+      if (added.length) rec.notes.push(`prove: the prover's own run left ${added.length} new file(s) in the tree; they were removed: ${clean(added.join(", "), 200)}`);
       if (ps.killed && !existsSync(join(dir, "setup.sh"))) rec.notes.push(`not proved: the prover session was stopped at its limit (${proverS}s) before it wrote setup.sh`);
       if (!signal.aborted) writeFileSync(join(dir, "prover.done"), JSON.stringify({ asks: fixed }) + "\n");
     }
