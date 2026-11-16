@@ -148,8 +148,8 @@ PIN=v11.142.0
 refs="$(grep -ho 'asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@[A-Za-z0-9._-]*' "$WF" "$EX" "$G" | sort | uniq -c | tr -s ' ')"
 installs="$(grep -hoE 'npm install -g "?loki-mode[^ ]*' "$WF" "$EX")"
 vdef="$(awk '/^      version:/{on=1} on && /default:/{print $2; exit}' "$WF")"
-if [ "$(printf '%s\n' "$refs" | wc -l | tr -d ' ')" = 1 ] && printf '%s\n' "$refs" | grep -q "loki-issue-to-pr.yml@${PIN}$" && ! grep -n '@main' "$WF" "$EX" "$G" | grep -q 'loki-issue-to-pr' \
-    && [ "$vdef" = "'11.142.0'" ] && ! printf '%s\n' "$installs" | grep -qvE '^npm install -g ("loki-mode@\$\{LOKI_VERSION\}"|loki-mode@11\.142\.0)$' \
+if [ "$(printf '%s\n' "$refs" | wc -l | tr -d ' ')" = 1 ] && grep -q "loki-issue-to-pr.yml@${PIN}$" <<< "$refs" && ! grep -n '@main' "$WF" "$EX" "$G" | grep -q 'loki-issue-to-pr' \
+    && [ "$vdef" = "'11.142.0'" ] && ! grep -qvE '^npm install -g ("loki-mode@\$\{LOKI_VERSION\}"|loki-mode@11\.142\.0)$' <<< "$installs" \
     && grep -q "version: '11.142.0'" "$EX" && grep -q "version: '11.142.0'" "$G"; then
     ok "static: the workflow, the example and the guide call @${PIN} only (never @main), the version input defaults to 11.142.0 and every npm install names an exact version"
 else bad "static: pinning wrong: refs [$refs] installs [$(printf '%s' "$installs" | tr '\n' ';')] default [$vdef]"; fi
@@ -277,9 +277,9 @@ publish_job 555
     && ok "small: the publish job pushes ONE branch (one commit on the starting commit) and opens ONE pull request" || { bad "small: publish exit $PUB_RC, branches: $(branches)"; dump "$W/publish-555.out"; }
 C="$(comment)"
 printf '%s\n' "$C" | sed 's/^/    small comment: /'
-[ "$(ncomments)" = 1 ] && [ "$(printf '%s\n' "$C" | head -n 1)" = '<!-- loki-status -->' ] && printf '%s\n' "$C" | grep -qx '### Loki: VERIFIED' && printf '%s\n' "$C" | grep -qx 'Pull request: https://github.com/acme/calc/pull/101' \
-    && printf '%s\n' "$C" | grep -Eq '^Proof: [1-9][0-9]* of [1-9][0-9]* checks passed outside the model; [0-9]+ not proven \(listed in the pull request\)\.$' \
-    && printf '%s\n' "$C" | grep -qx 'Cost: not measured.' && printf '%s\n' "$C" | grep -Eq '^Receipt: sha256 [0-9a-f]{16} ' && printf '%s\n' "$C" | grep -qx 'Run log: https://github.com/acme/calc/actions/runs/555' \
+[ "$(ncomments)" = 1 ] && [ "$(head -n 1 <<< "$C")" = '<!-- loki-status -->' ] && grep -qx '### Loki: VERIFIED' <<< "$C" && grep -qx 'Pull request: https://github.com/acme/calc/pull/101' <<< "$C" \
+    && grep -Eq '^Proof: [1-9][0-9]* of [1-9][0-9]* checks passed outside the model; [0-9]+ not proven \(listed in the pull request\)\.$' <<< "$C" \
+    && grep -qx 'Cost: not measured.' <<< "$C" && grep -Eq '^Receipt: sha256 [0-9a-f]{16} ' <<< "$C" && grep -qx 'Run log: https://github.com/acme/calc/actions/runs/555' <<< "$C" \
     && ok "small: ONE comment on the issue carries the label, the check counts, the cost line, the receipt digest and the link" || { bad "small: comment wrong ($(ncomments) comments)"; printf '%s\n' "$C" | sed 's/^/    | /'; }
 [ "$(cat "$GH_STATE/pr-101.title")" = "Loki: resolve #7" ] && ok "small: a VERIFIED pull request is titled plainly" || bad "small: title is $(cat "$GH_STATE/pr-101.title" 2>/dev/null)"
 
@@ -302,8 +302,8 @@ NB="$(awk -F'\t' '$2 == "loki/issue-7-556-1" {print $1}' "$GH_STATE/prs.tsv")"
     && ! grep -Eq '^(pr (close|edit|merge)|api -X DELETE)' "$GH_STATE/calls.log" \
     && ok "rerun: a new branch and pull request; every earlier pull request (the earlier run's, a human branch, a combined one) stays open and unchanged, and no close, edit or delete call is made" || { bad "rerun: PR state wrong (exit $PUB_RC)"; sed 's/^/    | /' "$GH_STATE/prs.tsv"; grep -E '^pr (close|edit|merge)' "$GH_STATE/calls.log" | sed 's/^/    call: /'; dump "$W/publish-556.out"; }
 EB="$(sed -n '/^## Earlier pull requests$/,$p' "$GH_STATE/pr-$NB.body" 2>/dev/null)"
-printf '%s\n' "$EB" | grep -q 'supersedes https://github.com/acme/calc/pull/101, https://github.com/acme/calc/pull/93, opened by an earlier Loki run' && printf '%s\n' "$EB" | grep -q 'please close them yourself' \
-    && ! printf '%s\n' "$EB" | grep -Eq 'pull/(90|91|92)([^0-9]|$)' \
+grep -q 'supersedes https://github.com/acme/calc/pull/101, https://github.com/acme/calc/pull/93, opened by an earlier Loki run' <<< "$EB" && grep -q 'please close them yourself' <<< "$EB" \
+    && ! grep -Eq 'pull/(90|91|92)([^0-9]|$)' <<< "$EB" \
     && comment | grep -qx 'This pull request supersedes the earlier open Loki pull request(s) for this issue: https://github.com/acme/calc/pull/101 https://github.com/acme/calc/pull/93. Loki does not close or edit pull requests; please close them yourself.' \
     && ok "rerun: the new body and the comment link the earlier Loki pull requests of this issue (101, 93) and ask a person to close them; the fork PR, the other issue's PR and the human branch are not named" || { bad "rerun: earlier PRs not named right"; printf '%s\n' "$EB" | sed 's/^/    body: /'; comment | sed 's/^/    | /'; }
 [ "$(ncomments)" = 1 ] && comment | grep -qx "Pull request: https://github.com/acme/calc/pull/$NB" && ! comment | grep -q '^Pull request: .*pull/101' \
@@ -356,7 +356,7 @@ printf '%s' '{"verdict": "<img src=x> @everyone VERIFIED", "cost_usd": "$(touch 
 publish_job 558
 C="$(comment)"
 case "$C" in *'<img'*|*'@everyone'*|*'touch'*|*'rm -rf'*|*'`id`'*) bad "data: text from the artifact reached the comment"; printf '%s\n' "$C" | sed 's/^/    | /' ;;
-    *) printf '%s\n' "$C" | grep -qx '### Loki: split into several slices, no pull request' && [ ! -e "$W/publish/pwned" ] && [ "$PUB_RC" = 1 ] \
+    *) grep -qx '### Loki: split into several slices, no pull request' <<< "$C" && [ ! -e "$W/publish/pwned" ] && [ "$PUB_RC" = 1 ] \
         && ok "data: a hostile result.json (slice ids and labels included) puts none of its text in the comment (exit 1)" || { bad "data: comment or exit wrong (exit $PUB_RC)"; printf '%s\n' "$C" | sed 's/^/    | /'; } ;;
 esac
 
@@ -367,8 +367,8 @@ step key "$W/agent" ANTHROPIC_API_KEY= GITHUB_OUTPUT="$W/key.out"; KEY_STATE="$(
     && ok "no key: the key step reports no_key and names the secret and where to set it" || bad "no key: key step exit $RC, state '$KEY_STATE'"
 publish_job 600
 C="$(comment)"
-[ "$PUB_RC" = 1 ] && [ "$(branches)" = "main " ] && ! grep -q '^pr create ' "$GH_STATE/calls.log" && [ "$(ncomments)" = 1 ] && printf '%s\n' "$C" | grep -qx '### Loki: did not run' \
-    && printf '%s\n' "$C" | grep -q 'The `ANTHROPIC_API_KEY` secret did not reach the workflow' && printf '%s\n' "$C" | grep -q 'Settings > Secrets and variables > Actions' \
+[ "$PUB_RC" = 1 ] && [ "$(branches)" = "main " ] && ! grep -q '^pr create ' "$GH_STATE/calls.log" && [ "$(ncomments)" = 1 ] && grep -qx '### Loki: did not run' <<< "$C" \
+    && grep -q 'The `ANTHROPIC_API_KEY` secret did not reach the workflow' <<< "$C" && grep -q 'Settings > Secrets and variables > Actions' <<< "$C" \
     && ok "no key: nothing is pushed or opened, the job fails, and ONE comment names the missing secret and where to add it" || { bad "no key: exit $PUB_RC, branches $(branches)"; printf '%s\n' "$C" | sed 's/^/    | /'; }
 step install "$W/agent" LOKI_VERSION='latest; echo pwned'; r0=$RC
 step install "$W/agent" LOKI_VERSION=latest; r1=$RC; step install "$W/agent" LOKI_VERSION=11.142; r2=$RC
@@ -381,7 +381,7 @@ step install "$W/agent" LOKI_VERSION=11.142.0
 # as a plain `loki owner/repo#N --no-pr`): no branch, no pull request, and the comment lists the slices.
 world large "Implement Advanced Search and Filtering with Full-Text Search Support" "$EPIC_BODY"
 SPLIT='{"slices":[{"id":"s1","title":"search backend","acceptance":["full-text search returns ranked rows"],"depends_on":[],"files":["calc.ts"]},{"id":"s2","title":"search UI","acceptance":["the search box shows ranked results"],"depends_on":["s1"],"files":["calc.ts"]}]}'
-agent_job E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT"
+agent_job E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" LOKI_ISSUE_WHOLE_FIRST=0  # this leg tests the split path; a large issue runs whole by default since 11.143.0
 grep -E '^(#7 split|Outcome:|Combined:|Cost:)' "$W/run.out" | sed 's/^/    large: /'
 P="$W/runner-a/loki-out"
 echo "    large: loki rc $(cat "$P/rc" 2>/dev/null); result $(cat "$P/result.json" 2>/dev/null)"
@@ -405,8 +405,8 @@ world setting "add a multiply(a, b) function to calc.ts" "calc.ts needs multiply
 agent_job
 publish_job 701 GH_STUB_PR_FAIL=setting
 C="$(comment)"
-[ "$PUB_RC" = 1 ] && [ "$(ncomments)" = 1 ] && printf '%s\n' "$C" | grep -q 'Allow GitHub Actions to create and approve pull requests' \
-    && printf '%s\n' "$C" | grep -qx 'Until then, open it yourself: https://github.com/acme/calc/compare/main...loki/issue-7-701-1?expand=1' && git --git-dir="$W/origin.git" rev-parse -q --verify refs/heads/loki/issue-7-701-1 >/dev/null \
+[ "$PUB_RC" = 1 ] && [ "$(ncomments)" = 1 ] && grep -q 'Allow GitHub Actions to create and approve pull requests' <<< "$C" \
+    && grep -qx 'Until then, open it yourself: https://github.com/acme/calc/compare/main...loki/issue-7-701-1?expand=1' <<< "$C" && git --git-dir="$W/origin.git" rev-parse -q --verify refs/heads/loki/issue-7-701-1 >/dev/null \
     && ok "setting: when GitHub does not let the workflow open pull requests, the comment names the setting and links the pushed branch" || { bad "setting: exit $PUB_RC"; printf '%s\n' "$C" | sed 's/^/    | /'; }
 printf '#!/bin/sh\necho "refusing to allow a GitHub App to create or update workflow .github/workflows/ci.yml without workflows permission" >&2\nexit 1\n' > "$W/origin.git/hooks/pre-receive"
 chmod +x "$W/origin.git/hooks/pre-receive"

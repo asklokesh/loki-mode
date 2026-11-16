@@ -3911,7 +3911,7 @@ res("LINT-UNTOUCHED no base output still caps (fail-closed)", !vf.tscUntouchedOn
 res("LINT-UNTOUCHED the same file and code on base with another message still caps", !vf.tscUntouchedOnly(out, ".", touched, [], out.replace("'item'", "'other'")));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/acc174.ts" "$ROOT" 2>&1; echo "EXIT $?")"
-printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "acc174 unit script crashed or exited non-zero"
+grep -q '^EXIT 0$' <<< "$out" || bad "acc174 unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 12 ] || bad "acc174 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 12"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
@@ -3948,7 +3948,7 @@ res("SUITE-TIMEOUT a suite that finishes red stays a failed check", !!cr && cr.r
 rmSync(R, { recursive: true, force: true });
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/vh.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
-printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "vh unit script crashed or exited non-zero"
+grep -q '^EXIT 0$' <<< "$out" || bad "vh unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 5 ] || bad "vh unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 5"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
