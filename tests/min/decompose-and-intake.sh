@@ -425,7 +425,7 @@ c1_run issue-pg pg start acme/search#24 --no-pr --max-cost 5 --
 ISSUE_P="$C1P" ISSUE_PATH="$C1PATH" ISSUE_PLANPATH="$C1PLANPATH" ISSUE_RUN="$C1RUN"
 c1_has() { grep -qF -- "$2" <<< "$1"; }
 CARD_LINE="Available on this machine: postgres 15 (initdb, pg_ctl, postgres) in $T/fake-opt/postgresql@15/bin. Their directories are on your PATH."
-c1_has "$ISSUE_P" "- You may start this repository's own services and throwaway dependencies to exercise your change. Bind anything you start to 127.0.0.1 or a unix socket, never to all interfaces. Create data directories, sockets and scratch files under \$TMPDIR. Leave what you started running; Loki stops it after the session. Never stop or signal a process you did not start." \
+c1_has "$ISSUE_P" "- You may start this repository's own services and throwaway dependencies to exercise your change. Bind anything you start to 127.0.0.1 or a unix socket, never to all interfaces. Create data directories, sockets and scratch files under \$TMPDIR. Leave what you started running; Loki stops it after the session. Never stop or signal a process you did not start. Use only a database, cache or server you started yourself under \$TMPDIR; never connect to one named in the repository's env files or in your environment, and never apply migrations to it." \
     && ! c1_has "$ISSUE_P" "Stop every process you started" && ! c1_has "$ISSUE_P" "stop each one by that id" \
     && ! c1_has "$ISSUE_P" "- Never leave a long-lived server running." && ! c1_has "$ISSUE_P" "- Never kill processes." \
     && c1_has "$ISSUE_P" "or LOKI_UNFINISHED: <what is left> when something the issue lists is not delivered. Use LOKI_SPEC_CONFLICT only when a test in the repository contradicts the task." \

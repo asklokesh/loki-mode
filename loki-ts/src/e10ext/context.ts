@@ -81,7 +81,7 @@ export const LEGACY_FIXED_RULES = [
  *  time-budget sentence (engine10/machine.ts). A text goal, opencode and every other stage keep today's constants and briefs byte for byte. FireLater#24: 27 Loki
  *  implement sessions never started the product; plain sessions did, unprompted, and scored 8 and 9; the rehearsal with permission inside the block and the
  *  broad "never" in the rules ran nothing. */
-export const ISSUE_RULE_LINE = "- You may start this repository's own services and throwaway dependencies to exercise your change. Bind anything you start to 127.0.0.1 or a unix socket, never to all interfaces. Create data directories, sockets and scratch files under $TMPDIR. Leave what you started running; Loki stops it after the session. Never stop or signal a process you did not start.";
+export const ISSUE_RULE_LINE = "- You may start this repository's own services and throwaway dependencies to exercise your change. Bind anything you start to 127.0.0.1 or a unix socket, never to all interfaces. Create data directories, sockets and scratch files under $TMPDIR. Leave what you started running; Loki stops it after the session. Never stop or signal a process you did not start. Use only a database, cache or server you started yourself under $TMPDIR; never connect to one named in the repository's env files or in your environment, and never apply migrations to it.";
 const SERVER_RULES = "- Never leave a long-lived server running.\n- Never kill processes.";
 /** An issue run's rules: the given rules constant with the two process rules and the finish rule replaced, everything else word for word. */
 export function issueRules(rules: string): string {
