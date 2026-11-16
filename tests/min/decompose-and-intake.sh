@@ -482,7 +482,9 @@ console.log([errCard === null, onPath.length === 1 && onPath[0].on_path === true
 # line, and after implement the harness stops what the session left running there and removes the directory; a text goal and the opt-out get none of it.
 c1_run scratch none start acme/search#24 --no-pr --max-cost 5 -- E2E_STUB_SCRATCH=leave E2E_STUB_SCRATCH_PID_LOG="$T/c1-scratch.leftpid"
 SC_DIR="$(sed -n 's/^LOKI_SCRATCH=\([^ ]*\) TMPDIR=.*/\1/p' <<< "$C1ENV")"; SC_TMP="$(sed -n 's/.* TMPDIR=\(.*\)$/\1/p' <<< "$C1ENV")"; SC_LEFT="$(cat "$T/c1-scratch.leftpid" 2>/dev/null)"
-SC_REC="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])).get("scratch_cleanup") or {}; print("%s|%s|%s" % (r.get("removed"), ",".join(str(x["pid"]) for x in r.get("stopped", [])), r.get("dir")))' "$C1RUN/receipt.json" 2>/dev/null)"
+SC_REC="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])).get("scratch_cleanup") or {}; print("%s|%s|%s" % (r.get("removed"), sys.argv[2] if sys.argv[2] in [str(x["pid"]) for x in r.get("stopped", [])] else "missing", r.get("dir")))' "$C1RUN/receipt.json" "$SC_LEFT" 2>/dev/null)"
+SC_EV="$(python3 -I -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if l.strip() and json.loads(l).get("type") == "scratch.cleanup" and any(str(x.get("pid")) == sys.argv[2] for x in (json.loads(l).get("data") or {}).get("stopped", []))))' "$C1RUN/events.jsonl" "$SC_LEFT" 2>/dev/null)"
+SC_SECRET="$(grep -rl "e2escratchsecret" "$C1RUN" 2>/dev/null | wc -l | tr -d ' ')"
 SC_ALIVE=no; [ -n "$SC_LEFT" ] && kill -0 "$SC_LEFT" 2>/dev/null && SC_ALIVE=yes
 [ -n "$SC_DIR" ] && [ "$SC_TMP" = "$SC_DIR" ] && [ "${#SC_DIR}" -le 40 ] && ! grep -qF '$LOKI_SCRATCH/pids' <<< "$C1P" \
     && ! grep -q 'LOKI_SCRATCH=/' <<< "$C1PLANENV" \
@@ -491,6 +493,9 @@ SC_ALIVE=no; [ -n "$SC_LEFT" ] && kill -0 "$SC_LEFT" 2>/dev/null && SC_ALIVE=yes
 [ "$SC_REC" = "True|$SC_LEFT|$SC_DIR" ] && [ "$SC_ALIVE" = no ] && [ ! -e "$SC_DIR" ] \
     && ok "run scratch: the process the session left running in its scratch directory is stopped by the harness, named in the receipt, and the directory is removed" \
     || bad "run scratch cleanup: receipt '$SC_REC' (want True|$SC_LEFT|$SC_DIR), left process alive $SC_ALIVE, directory present $([ -e "$SC_DIR" ] && echo yes || echo no)"
+[ "$SC_EV" = 1 ] && [ "$SC_SECRET" = 0 ] && grep -q '"scratch_cleanup"' "$C1RUN/receipt.json" \
+    && ok "scratch final: a normal run writes the scratch.cleanup event and the receipt entry; the daemon's secret-looking argument is in neither, nor in scratch.json or any run log" \
+    || bad "scratch final normal path: events with the stopped pid $SC_EV, run files holding the secret $SC_SECRET"
 [ "$SC_ALIVE" = yes ] && kill "$SC_LEFT" 2>/dev/null # the test's own recorded pid, only if the harness failed to stop it
 c1_run scratch-text none "add a multiply(a, b) function to calc.ts" --no-pr -- E2E_STUB_SCRATCH=leave
 SCT="$C1ENV"; SCTP="$C1P"
@@ -534,7 +539,7 @@ try {
   out.push([r3.removed, fs.existsSync(C.dir), /did not stop/.test(r3.kept ?? ""), alive(stuck.pid)].join(","));
   stuck.kill(); await Bun.sleep(300); w.cleanupSessionScratch(C, { termWaitMs: 300 }); w.cleanupSessionScratch(B, { termWaitMs: 500 });
   // the start-time parser: one or two spaces before a single-digit day
-  out.push([w.lstartEpoch("Mon Nov  6 01:02:03 2026") === Math.floor(new Date(2026, 10, 6, 1, 2, 3).getTime() / 1000), w.lstartEpoch("Mon Nov 6 01:02:03 2026") === w.lstartEpoch("Mon Nov  6 01:02:03 2026"), w.lstartEpoch("Mon Nov 16 01:02:03 2026") === Math.floor(new Date(2026, 10, 16, 1, 2, 3).getTime() / 1000), w.lstartEpoch("garbage") === null].join(","));
+  out.push([w.lstartEpoch("Mon Nov  6 01:02:03 2026") === Math.floor(Date.UTC(2026, 10, 6, 1, 2, 3) / 1000), w.lstartEpoch("Mon Nov 6 01:02:03 2026") === w.lstartEpoch("Mon Nov  6 01:02:03 2026"), w.lstartEpoch("Mon Nov 16 01:02:03 2026") === Math.floor(Date.UTC(2026, 10, 16, 1, 2, 3) / 1000), w.lstartEpoch("garbage") === null].join(","));
 } finally { for (const p of mine) { try { p.kill(); } catch {} } }
 console.log(out.join(" | "));' 2>&1)"
 [ "$SOU" = "true,true,true,true | true,true,true,true,true,true | true,true | false,true,true,true | true,true,true,true" ] \
@@ -554,6 +559,23 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 console.log([r.length, r[0]?.stopped.some((x) => x.pid === d.pid), !fs.existsSync(s.dir), alive(e.pid), fs.existsSync(live.dir)].join(","));
 d.kill(); e.kill(); w.cleanupSessionScratch(live, { termWaitMs: 300 });' 2>&1)"
 [ "$SOS" = "1,true,true,true,true" ] && ok "scratch owned: the next run cleans up a record whose worker is gone (by ownership) and leaves a live run's record alone" || bad "scratch owned stale record: $SOS"
+# Q1 SCRATCH-FINAL: ps runs with TZ=UTC and lstartEpoch reads UTC, so a user TZ far from the system's (Kiritimati, UTC+14) still finds an owned daemon
+# and still leaves a process from before the session alone; the record holds each process's base name, pid, port and why, never its arguments.
+SOTZ="$(ROOT="$ROOT" TZ=Pacific/Kiritimati bun --no-env-file --config=/dev/null -e '
+const w = await import(process.env.ROOT + "/loki-ts/src/runner/worker_proc.ts");
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const mine = [], spawn = (cmd, o = {}) => { const p = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore", stdin: "ignore", ...o }); mine.push(p); return p; };
+try {
+  const A = w.createSessionScratch(), pre = spawn(["sleep", "288"], { cwd: A.dir }); await Bun.sleep(1200);
+  const S = { ...A, since: Math.floor(Date.now() / 1000) }; await Bun.sleep(1100);
+  const d = spawn(["/bin/sh", "-c", "sleep 287; :", "x", "--password=hunter2secretvalue"], { cwd: A.dir }); await Bun.sleep(400);
+  const r = w.cleanupSessionScratch(S, { termWaitMs: 1500 }); await Bun.sleep(300);
+  const rec = JSON.stringify(r), names = r.stopped.map((x) => Object.keys(x).sort().join("+") + "=" + x.name);
+  console.log([r.stopped.some((x) => x.pid === d.pid), !alive(d.pid), alive(pre.pid), !r.stopped.some((x) => x.pid === pre.pid), !rec.includes("hunter2secretvalue") && !rec.includes("--password"), names.includes("name+pid+port+why=sh")].join(","));
+  pre.kill(); await Bun.sleep(200); w.cleanupSessionScratch(A, { termWaitMs: 300 });
+} finally { for (const p of mine) { try { p.kill(); } catch {} } }' 2>&1)"
+[ "$SOTZ" = "true,true,true,true,true,true" ] && ok "scratch final: with TZ set 14 hours from UTC the cleanup still stops an owned daemon and leaves a pre-session process alone; the record names it by base name, pid, port and why, never its arguments" \
+    || bad "scratch final TZ and record: $SOTZ"
 # e2e: an unrelated process started in the work tree during the session survives; a SIGINT to the run still stops what the session left in scratch
 SOR="$T/so-intree"; make_repo "$SOR" 0
 (cd "$SOR" && exec env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" \
@@ -577,6 +599,10 @@ sleep 1; python3 -I -c 'import os, signal, sys; os.kill(int(sys.argv[1]), signal
 for i in $(seq 1 300); do [ "$(so_alive "$SOP")" = no ] && break; sleep 0.1; done; wait "$SOP" 2>/dev/null
 SOL="$(cat "$T/so-intr.left" 2>/dev/null)"
 [ -n "$SOL" ] && [ "$(so_alive "$SOL")" = no ] && ok "scratch owned e2e: after SIGINT to the run the session's process in scratch is stopped" || bad "scratch owned e2e (interrupt): left '$SOL' alive $(so_alive "$SOL")"
+SOIRUN="$(dirname "$(ls "$SOI"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"
+SOIEV="$(python3 -I -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if l.strip() and json.loads(l).get("type") == "scratch.cleanup"))' "$SOIRUN/events.jsonl" 2>/dev/null)"
+[ "${SOIEV:-0}" -ge 1 ] && [ "$(grep -rl "e2escratchsecret" "$SOIRUN" 2>/dev/null | wc -l | tr -d ' ')" = 0 ] \
+    && ok "scratch final: a cancelled run writes the scratch.cleanup event, with no secret-looking argument in any run file" || bad "scratch final cancelled path: scratch.cleanup events $SOIEV"
 [ -n "$SOL" ] && [ "$(so_alive "$SOL")" = yes ] && python3 -I -c 'import os, signal, sys; os.kill(int(sys.argv[1]), signal.SIGTERM)' "$SOL"
 
 # --- split repair: a list detail is repaired, any other refusal is re-asked once with the exact error ------------------------
