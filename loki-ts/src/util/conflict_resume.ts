@@ -147,7 +147,7 @@ async function resumeWith(ctx: RunContext, first: SessionRunOptions, firstSessio
 // LOKI_E10_CONTINUE_MAX_USD (default 1.00, at or below plain Haiku's 1.06 on FireLater#24). Why 4: the one measured case listed three open pieces of work;
 // one resume each plus one to finish, and a resume that changes nothing ends the loop at once. Each resume is a new query, so the per-session caps
 // (effort_policy.ts HAIKU_CAPS) start from zero. A session still without a finish line ends with implement exit "incomplete" (PARTIAL, never VERIFIED).
-export const CONTINUE_MAX_DEFAULT = 4, CONTINUE_MAX_USD_DEFAULT = 1.0;
+export const CONTINUE_MAX_DEFAULT = 4, CONTINUE_MAX_USD_DEFAULT = 5.0; // was 1.00: a whole-issue Sonnet run spends 1.2 to 2.5 dollars before its first continue, so the line was crossed at once and an unfinished session got 0 resumes
 export const continueMax = (env: NodeJS.ProcessEnv = process.env): number => {
   const v = (env["LOKI_E10_CONTINUE_MAX"] ?? "").trim().toLowerCase();
   if (isOff(v)) return 0;
@@ -225,6 +225,9 @@ export function unfinishedNotes(implement: Record<string, unknown> | undefined):
   const f = implement?.finish as ContinueRecord | undefined;
   return implement?.exit === "incomplete" && f ? [`implement ended without a finish line (${f.ended} after ${f.continues} resume${f.continues === 1 ? "" : "s"}): ${f.outstanding ?? "the reply named nothing"}`] : [];
 }
+/** PROOF SCRIPT: one resume (suffix "-pf") when the session finished without leaving the script Loki re-runs (engine10/proof_rerun.ts). */
+export const resumeForProofScript = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, brief: string): Promise<{ session: SessionResult; iterationId: string }> =>
+  (ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S ? Promise.resolve({ session: firstSession, iterationId: first.iterationId }) : resumeWith(ctx, first, firstSession, brief, "-pf");
 export const resumeAfterEmptyDone = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, challenge = false): Promise<{ session: SessionResult; iterationId: string }> => resumeWith(ctx, first, firstSession, challenge ? EMPTY_DONE_CHALLENGED : EMPTY_DONE_CORRECTION, "-e");
 /** LOKI_E10_OPUS_CONSULT never-stop: one resume (suffix "-n") that implements the most likely intent instead of stopping. A resume that errors, is killed, ends without a marker or restates the conflict leaves the conflict standing (BLOCKED). */
 export const resumeNeverStop = (ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult, reason: string, advice: string | null): Promise<{ session: SessionResult; iterationId: string }> =>
