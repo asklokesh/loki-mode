@@ -194,7 +194,7 @@ process.stdout.write(await new Response(p.stdout).text()); await p.exited; clear
 printf '%s\n' "$adv" | sed 's/^/    /'
 slow="$(printf '%s\n' "$adv" | awk '$1 == "ADV" && $2 + 0 >= 500' | wc -l | tr -d ' ')"
 nadv="$(printf '%s\n' "$adv" | grep -c '^ADV [0-9]')"
-if printf '%s\n' "$adv" | grep -q '^ADV-DONE' && [ "$nadv" -ge 14 ] && [ "$slow" = "0" ]; then
+if grep -q '^ADV-DONE' <<< "$adv" && [ "$nadv" -ge 14 ] && [ "$slow" = "0" ]; then
     ok "every 32 KB adversarial input decided in under 500 ms ($nadv cases)"
 else
     bad "adversarial inputs: $nadv decided, $slow at 500 ms or more, finished: $(printf '%s\n' "$adv" | grep -c '^ADV-DONE') (killed at 20 s if 0)"
@@ -374,7 +374,7 @@ const ng = join(T, "nogit"); mkdirSync(ng, { recursive: true }); writeFileSync(j
 console.log(out.join("\n"));
 TS
 fo="$(cd "$ROOT/loki-ts" && timeout 120 bun "$T/fence.ts" "$ROOT/loki-ts/src" "$T" 2>&1)"
-fchk() { printf '%s\n' "$fo" | grep -qxF -- "$2" && ok "fence: $1" || bad "fence: $1 (wanted: $2)"; }
+fchk() { grep -qxF -- "$2" <<< "$fo" && ok "fence: $1" || bad "fence: $1 (wanted: $2)"; }
 fchk "Edit vitest.config.ts denied" "deny:Edit:vitest.config.ts deny"
 fchk "Write tsconfig.json denied" "deny:Write:tsconfig.json deny"
 fchk "MultiEdit lockfile denied" "deny:MultiEdit:pnpm-lock.yaml deny"

@@ -240,7 +240,7 @@ run_case() { # run_case <name> <stub mode> <signal or ""> -> sets R, OUT, RC
 
 check_case() { # check_case <name> <expected outcome regex>
     local name="$1" want="$2" b bundle reach=""
-    printf '%s\n' "$OUT" | grep -Eq "^Outcome:[[:space:]]+($want)" && ok "$name: outcome is $want (rc $RC)" || { bad "$name: outcome is not $want (rc $RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
+    grep -Eq "^Outcome:[[:space:]]+($want)" <<< "$OUT" && ok "$name: outcome is $want (rc $RC)" || { bad "$name: outcome is not $want (rc $RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
     [ "$(git -C "$R" branch --show-current)" = feature ] && ok "$name: checkout is back on its start branch" || bad "$name: checkout is on '$(git -C "$R" branch --show-current)', not feature"
     [ "$(git -C "$R" status --porcelain)" = "$BEFORE" ] && ok "$name: git status --porcelain is unchanged" || bad "$name: porcelain was [$BEFORE], now [$(git -C "$R" status --porcelain)]"
     [ "$(cat "$R/notes.txt" 2>/dev/null)" = 'my own notes, not part of the run' ] && ok "$name: the user's untracked file is untouched" || bad "$name: notes.txt changed or vanished"
@@ -299,7 +299,7 @@ case "$DLOG" in "$DR"/.loki/logs/detached-*.log) ok "detach: the log path is und
 kill -HUP -- "-$WRAP_PID" 2>/dev/null
 for i in $(seq 1 900); do grep -q '^Outcome:' "$DLOG" 2>/dev/null && break; sleep 0.1; done
 DLOGTXT="$(cat "$DLOG" 2>/dev/null)"
-printf '%s\n' "$DLOGTXT" | grep -Eq "^Outcome:[[:space:]]+VERIFIED" && ok "detach: the run finished VERIFIED after the terminal got SIGHUP" || { bad "detach: no VERIFIED outcome in the log after SIGHUP"; printf '%s\n' "$DLOGTXT" | tail -8 | sed 's/^/    | /'; }
+grep -Eq "^Outcome:[[:space:]]+VERIFIED" <<< "$DLOGTXT" && ok "detach: the run finished VERIFIED after the terminal got SIGHUP" || { bad "detach: no VERIFIED outcome in the log after SIGHUP"; printf '%s\n' "$DLOGTXT" | tail -8 | sed 's/^/    | /'; }
 for i in $(seq 1 100); do kill -0 "$DPID" 2>/dev/null || break; sleep 0.1; done
 if [ -n "$DPID" ] && kill -0 "$DPID" 2>/dev/null; then bad "detach: pid $DPID is still alive after the outcome"; kill -TERM "$DPID" 2>/dev/null; else ok "detach: the detached pid exited after the outcome"; fi
 [ "$(git -C "$DR" branch --show-current)" = feature ] && ok "detach: checkout is back on its start branch" || bad "detach: checkout is on '$(git -C "$DR" branch --show-current)'"
@@ -383,11 +383,11 @@ PY
 )"
 printf '%s\n' "$SUM" | sed 's/^/    mono: /'
 has "mono: the start line names main as the base, not the cancelled run's branch" "$OUT" "PR target: main, base: main,"
-printf '%s\n' "$OUT" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' && ok "mono: only the Wall fails after one fix round, the repo's own tests pass: delivered PARTIAL (rc $RC)" || { bad "mono: outcome is not PARTIAL (rc $RC)"; printf '%s\n' "$OUT" | tail -15 | sed 's/^/    | /'; }
-printf '%s\n' "$SUM" | grep -qx 'fix_rounds 1' && ok "mono: exactly one fix round on a Wall-only failure" || bad "mono: fix rounds: $(printf '%s\n' "$SUM" | grep fix_rounds)"
-printf '%s\n' "$SUM" | grep -qx 'known_red 3' && ok "mono: the 3 page tests red on base are known red (base run with the head's dependencies linked)" || bad "mono: known red page tests: $(printf '%s\n' "$SUM" | grep known_red)"
-printf '%s\n' "$SUM" | grep -qx 'groups loki_wall_search.test.ts' && ok "mono: the fix round is fed only the Wall failure, never the base-red page tests" || bad "mono: fix input: $(printf '%s\n' "$SUM" | grep groups)"
-printf '%s\n' "$SUM" | grep -qx 'wall_set_aside True' && ok "mono: the receipt names the Wall test set aside" || bad "mono: no set-aside note in the run's NOT PROVEN"
+grep -Eq '^Outcome:[[:space:]]+PARTIAL' <<< "$OUT" && ok "mono: only the Wall fails after one fix round, the repo's own tests pass: delivered PARTIAL (rc $RC)" || { bad "mono: outcome is not PARTIAL (rc $RC)"; printf '%s\n' "$OUT" | tail -15 | sed 's/^/    | /'; }
+grep -qx 'fix_rounds 1' <<< "$SUM" && ok "mono: exactly one fix round on a Wall-only failure" || bad "mono: fix rounds: $(printf '%s\n' "$SUM" | grep fix_rounds)"
+grep -qx 'known_red 3' <<< "$SUM" && ok "mono: the 3 page tests red on base are known red (base run with the head's dependencies linked)" || bad "mono: known red page tests: $(printf '%s\n' "$SUM" | grep known_red)"
+grep -qx 'groups loki_wall_search.test.ts' <<< "$SUM" && ok "mono: the fix round is fed only the Wall failure, never the base-red page tests" || bad "mono: fix input: $(printf '%s\n' "$SUM" | grep groups)"
+grep -qx 'wall_set_aside True' <<< "$SUM" && ok "mono: the receipt names the Wall test set aside" || bad "mono: no set-aside note in the run's NOT PROVEN"
 per_file="$(grep -c '/frontend json=0 files=1$' "$T/vitest.log" 2>/dev/null)"; batch="$(grep -c '/frontend json=1 files=6$' "$T/vitest.log" 2>/dev/null)"
 [ "${per_file:-0}" = 0 ] && [ "${batch:-0}" -ge 1 ] && ok "mono: the 6 page tests run in one vitest process per verify, never one process per file" || bad "mono: frontend per-file runs ${per_file:-?}, 6-file batches ${batch:-?}: $(tr '\n' ';' < "$T/vitest.log" 2>/dev/null)"
 [ "$(git -C "$M" branch --show-current)" = loki/e10-20261101T000000Z-dead ] && ok "mono: checkout is back on its start branch although four tracked .loki files are deleted" || bad "mono: checkout is on '$(git -C "$M" branch --show-current)'"
@@ -706,7 +706,7 @@ OUT2="$(cd "$M2" && PATH="$FIX/vitest-bin:$PATH" E2E_STUB_MODE=stack E2E_STUB_TA
     LOKI_E10_PLAN=1 LOKI_E10_NO_FETCH=1 ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "add a useSearch(q) hook that calls GET /search through the api client" --no-pr </dev/null 2>&1)"; RC2=$?
 EV2="$(ls "$M2"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
 R2="$( [ -n "$EV2" ] && python3 -I -c 'import json,sys; ev=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]; print(sum(1 for e in ev if e["type"]=="fix.round"))' "$EV2")"
-[ "$R2" = 2 ] && printf '%s\n' "$OUT2" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' && ok "mono: a fix round that moves the Wall earns the next round; delivered PARTIAL after the round that does not (rc $RC2)" \
+[ "$R2" = 2 ] && grep -Eq '^Outcome:[[:space:]]+PARTIAL' <<< "$OUT2" && ok "mono: a fix round that moves the Wall earns the next round; delivered PARTIAL after the round that does not (rc $RC2)" \
     || { bad "mono: Wall moved by round 1: fix rounds ${R2:-?}, outcome $(printf '%s\n' "$OUT2" | sed -n 's/^Outcome:[[:space:]]*//p') (rc $RC2)"; printf '%s\n' "$OUT2" | tail -8 | sed 's/^/    | /'; }
 
 # FireLater#21-shaped: backend/ and frontend/ vitest packages, the root runs no tests; frontend/src/lib/api.ts has its own green test, and 4 page tests
@@ -753,24 +753,24 @@ PY
 )"
     printf '%s\n' "$M3S" | sed "s/^/    mono3 $leg: /"
 }
-got() { printf '%s\n' "$M3S" | grep -qx "$1"; }
+got() { grep -qx "$1" <<< "$M3S"; }
 m3 same "$NAMED" 'export const del = (p: string): string => `DELETE ${p}`;'
-got 'fix_rounds 0' && got 'pre_red p1,p2' && got 'capped ' && got 'verdict PARTIAL' && printf '%s\n' "$M3OUT" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' \
+got 'fix_rounds 0' && got 'pre_red p1,p2' && got 'capped ' && got 'verdict PARTIAL' && grep -Eq '^Outcome:[[:space:]]+PARTIAL' <<< "$M3OUT" \
     && ok "mono3 same (COLLATERAL-BASELINE on): base-red page tests that import the named api.ts, unedited with their paired pages unchanged and equal to the intake baseline, are pre-existing at once: no fix round, no COLLATERAL_RED cap (rc $M3RC)" \
     || { bad "mono3 same: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
 m3 same0 "$NAMED" 'export const del = (p: string): string => `DELETE ${p}`;' LOKI_E10_COLLATERAL_BASELINE=0
-got 'fix_rounds 1' && got 'pre_red p1,p2' && got 'capped p1,p2' && got 'verdict PARTIAL' && printf '%s\n' "$M3OUT" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' \
+got 'fix_rounds 1' && got 'pre_red p1,p2' && got 'capped p1,p2' && got 'verdict PARTIAL' && grep -Eq '^Outcome:[[:space:]]+PARTIAL' <<< "$M3OUT" \
     && ok "mono3 same0 (LOKI_E10_COLLATERAL_BASELINE=0): the same tests feed one fix round, then are pre-existing; delivered PARTIAL naming them as capped (rc $M3RC)" \
     || { bad "mono3 same0: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
 m3 conflict "$NAMED" 'export const del = (p: string): string => `DELETE ${p}`;' E2E_STUB_FIX=conflict
 got 'pre_red p1,p2' && got 'verdict PARTIAL' && ok "mono3 conflict: a fix-round conflict over those same failures is re-verified and delivered PARTIAL, not SPEC_CONFLICT (rc $M3RC)" \
     || { bad "mono3 conflict: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
 m3 changed "$NAMED" 'export const del = (p: string): string => `DELETE ${p}`; // BROKEN'
-! printf '%s\n' "$M3S" | grep -q '^pre_red .*p1' && ! got 'verdict PARTIAL' && ! got 'verdict VERIFIED' && ! printf '%s\n' "$M3S" | grep -qx 'fix_rounds 0' \
+! grep -q '^pre_red .*p1' <<< "$M3S" && ! got 'verdict PARTIAL' && ! got 'verdict VERIFIED' && ! grep -qx 'fix_rounds 0' <<< "$M3S" \
     && ok "mono3 changed: a base-red test the change breaks with a new error is never pre-existing; fix round, no delivery ($(printf '%s\n' "$M3S" | grep verdict))" \
     || { bad "mono3 changed: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
 m3 unnamed "add a del(p) helper to the frontend client" 'export const del = (p: string): string => `DELETE ${p}`; // BROKEN'
-! printf '%s\n' "$M3S" | grep -q '^pre_red .*p1' && ! got 'verdict VERIFIED' \
+! grep -q '^pre_red .*p1' <<< "$M3S" && ! got 'verdict VERIFIED' \
     && ok "mono3 unnamed: the same broken change from a task naming no file is never VERIFIED and p1 is never excused ($(printf '%s\n' "$M3S" | grep verdict))" \
     || { bad "mono3 unnamed: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
 
@@ -1166,63 +1166,63 @@ unit_rv() { # unit_rv <version> <case>
     same)
     rv_fixture "$T/rv-$ver-same" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-same" "" 'export const del = (p: string): string => `DELETE ${p}`;'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver same: /"
-    printf '%s\n' "$RVS" | grep -qx 'pre_red p1,p2' && printf '%s\n' "$RVS" | grep -qx 'verdict PARTIAL' \
+    grep -qx 'pre_red p1,p2' <<< "$RVS" && grep -qx 'verdict PARTIAL' <<< "$RVS" \
         && ok "real vitest $ver same: base-red page tests failing the same way are pre-existing after one round; PARTIAL (rc $RVRC)" \
         || { bad "real vitest $ver same: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
     ;;
     one)
     rv_fixture "$T/rv-$ver-one" 2 "$RVROOT/$ver"; rv_run "$T/rv-$ver-one" "" 'export const del = (p: string): string => `DELETE ${p}`;'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver one: /"
-    printf '%s\n' "$RVS" | grep -qx 'pre_red p1' && printf '%s\n' "$RVS" | grep -qx 'verdict PARTIAL' \
+    grep -qx 'pre_red p1' <<< "$RVS" && grep -qx 'verdict PARTIAL' <<< "$RVS" \
         && ok "real vitest $ver one: a lone base-red page test (base run alone, head batched) is known red by its full id; PARTIAL (rc $RVRC)" \
         || { bad "real vitest $ver one: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
     ;;
     backend)
     rv_fixture "$T/rv-$ver-backend" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-backend" "" 'export const sub = (a: number, b: number): number => a - b;' backend/src/util.ts "add a sub(a, b) helper next to add in backend/src/util.ts"
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver backend: /"
-    printf '%s\n' "$RVS" | grep -qx 'suite_excused True' && printf '%s\n' "$RVS" | grep -qx 'fix_rounds 0' && printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' \
+    grep -qx 'suite_excused True' <<< "$RVS" && grep -qx 'fix_rounds 0' <<< "$RVS" && grep -qE '^verdict (PARTIAL|VERIFIED)$' <<< "$RVS" \
         && ok "real vitest $ver backend: the untouched frontend suite failing with exactly its base errors is excused by them; delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver backend: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
     ;;
     changed)
     rv_fixture "$T/rv-$ver-changed" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-changed" "$REP_LABEL" '  label: undefined as unknown as (p: string) => string,'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver changed: /"
-    ! printf '%s\n' "$RVS" | grep -q '^pre_red .*p1' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
+    ! grep -q '^pre_red .*p1' <<< "$RVS" && ! grep -qE '^verdict (PARTIAL|VERIFIED)$' <<< "$RVS" && [ -n "$RVS" ] \
         && ok "real vitest $ver changed: a base-red test the change breaks with a TypeError is never excused; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver changed: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
     ;;
     p8)
     rv_fixture "$T/rv-$ver-p8" 1 "$RVROOT/$ver"; rv_run "$T/rv-$ver-p8" "$REP_EXTRA" '  extra: undefined as unknown as (p: string) => string,'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver p8: /"
-    printf '%s\n' "$RVS" | grep -qx 'suite_excused False' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] && printf '%s\n' "$RVS" | grep -qE '^not_excused not excused: full suite.*error text differs' \
+    grep -qx 'suite_excused False' <<< "$RVS" && ! grep -qE '^verdict (PARTIAL|VERIFIED)$' <<< "$RVS" && [ -n "$RVS" ] && grep -qE '^not_excused not excused: full suite.*error text differs' <<< "$RVS" \
         && ok "real vitest $ver p8: a full-suite-only test red on base, now failing with a new error, is not excused by its id; not delivered, and the receipt says the error text differs ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver p8: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
     ;;
     p8new)
     rv_fixture "$T/rv-$ver-p8new" 2 "$RVROOT/$ver"; rv_run "$T/rv-$ver-p8new" "$REP_EXTRA" '  extra: undefined as unknown as (p: string) => string,'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver p8new: /"
-    printf '%s\n' "$RVS" | grep -qx 'suite_excused False' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
+    grep -qx 'suite_excused False' <<< "$RVS" && ! grep -qE '^verdict (PARTIAL|VERIFIED)$' <<< "$RVS" && [ -n "$RVS" ] \
         && ok "real vitest $ver p8new: a test passing on base that the change breaks with a new error, reached only by dynamic import, is never excused; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver p8new: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
     ;;
     pathnorm)
     rv_fixture "$T/rv-$ver-pathnorm" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-pathnorm" "$REP_LABEL" '  label: (p: string): string => `GET /admin${p}`,'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver pathnorm: /"
-    ! printf '%s\n' "$RVS" | grep -q '^pre_red .*p1' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
+    ! grep -q '^pre_red .*p1' <<< "$RVS" && ! grep -qE '^verdict (PARTIAL|VERIFIED)$' <<< "$RVS" && [ -n "$RVS" ] \
         && ok "real vitest $ver pathnorm: a base-red test whose asserted URL changed from GET /p to GET /admin/p is not the same error; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver pathnorm: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
     ;;
     unhandled)
     rv_fixture "$T/rv-$ver-unhandled" 2 "$RVROOT/$ver" side; rv_run "$T/rv-$ver-unhandled" "" 'Promise.reject(new Error("boom"));' frontend/src/lib/side.ts "add a side effect to frontend/src/lib/side.ts"
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver unhandled: /"
-    printf '%s\n' "$RVS" | grep -qx 'suite_excused False' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
+    grep -qx 'suite_excused False' <<< "$RVS" && ! grep -qE '^verdict (PARTIAL|VERIFIED)$' <<< "$RVS" && [ -n "$RVS" ] \
         && ok "real vitest $ver unhandled: a full suite with a new Unhandled Errors block (all tests pass, the base-red p1 same error) is not excused; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver unhandled: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
     ;;
     delpkg)
     rv_fixture "$T/rv-$ver-delpkg" 0 "$RVROOT/$ver" dep; RVRM=frontend/node_modules/dep-x rv_run "$T/rv-$ver-delpkg" "" 'export const del = (p: string): string => `DELETE ${p}`;'
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver delpkg: /"
-    ! printf '%s\n' "$RVS" | grep -q '^pre_red .*p9' && ! printf '%s\n' "$RVS" | grep -qE '^verdict (PARTIAL|VERIFIED)$' && [ -n "$RVS" ] \
+    ! grep -q '^pre_red .*p9' <<< "$RVS" && ! grep -qE '^verdict (PARTIAL|VERIFIED)$' <<< "$RVS" && [ -n "$RVS" ] \
         && ok "real vitest $ver delpkg: a test that fails because the change deleted an installed package is not excused by a base run that sees the same deleted package; not delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver delpkg: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
     ;;
