@@ -1,0 +1,6 @@
+**Caveats to carry forward**
+
+- Issue search results are not invalidated when issues change, because `services/issues.ts` is out of scope. Results can be stale for up to 60 seconds. This must be stated in the docs and the final report.
+- Route registration is in `index.ts` under `/v1/search`, not `app.ts`, to match the existing `/v1/...` pattern. The CLAUDE.md reference to `lib/cache` does not match the repo, which uses `utils/cache.ts`.
+
+**Result:** LOKI_BLOCKED: the frontend facet and analytics pages, the search docs, the typecheck, lint, and impacted test runs are still outstanding. No commit or push has been made.

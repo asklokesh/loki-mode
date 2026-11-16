@@ -14643,7 +14643,7 @@ cmd_backlog() {
             echo ""
             echo "Run from a checkout of owner/repo (for Jira or Linear, the checkout the work lands in)."
             echo "Each issue runs in its own worktree on loki/backlog-N. Jira and Linear use the credentials in docs/trackers.md."
-            echo "Triage: implement issues run, and a large one is split into slices that each run on their own;"
+            echo "Triage: implement issues run; a large one runs as one whole-issue run on Sonnet and stronger models, split into slices on Haiku;"
             echo "vague or ambiguous (spec) issues get .loki/specs/<slug>.md and the command to run it;"
             echo "human issues are listed with the reason. Label loki:implement|loki:spec|loki:human forces a class;"
             echo "LOKI_TRIAGE=0 runs every issue untriaged."

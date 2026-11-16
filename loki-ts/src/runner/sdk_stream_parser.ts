@@ -256,6 +256,7 @@ export async function consumeSdkStream(
   const suiteCmds = parseSuiteCmds(process.env["LOKI_E10_SUITE_CMDS"]); let suiteRuns = 0; // L026: in-session runs of the repo's full-suite command, recorded only when the commands are known
   let productEditSeen = false, stopped: StopFired | undefined; // E5: an edit is any edit tool call (a fix round may repair its own test), or a Bash that writes (sed -i, redirect, tee, patch, git apply)
   let readsBeforeEdit = 0, firstEditSeen = false; // L022: Read/Grep/Glob/LS calls before the first file edit (how much exploring the brief left to do)
+  let compactions = 0; // S1b: system/compact_boundary messages seen in this session
   const toolTelemetry = (): Record<string, unknown> => {
     const perTurn = [...toolsByTurn.values()].map((t) => t.size);
     return {
@@ -426,6 +427,9 @@ export async function consumeSdkStream(
       continue;
     }
 
+    // S1b: an auto-compaction of the session's context (system/compact_boundary), counted into the result-cost file so implement's receipt can name it.
+    if (msgType === "system" && data.subtype === "compact_boundary") { compactions++; continue; }
+
     // --- system/init: the provider's own model report (E-59), captured for writeResultCost below.
     if (msgType === "system" && data.subtype === "init" && typeof data.model === "string" && data.model) {
       sessionModel = data.model;
@@ -516,7 +520,7 @@ export async function consumeSdkStream(
       totalCostUsd = data.total_cost_usd ?? null;
       sessionId = data.session_id;
       if (advisorById.size === 0) recordRouterUsage(new Map(), advisorById, "#result", data.usage ?? {}); // advisor seen only on the result
-      writeResultCost(lokiRoot, ctx.iteration, data, data.model ?? sessionModel, firstTurnPromptTokens, { ...routerTelemetry(reqById, advisorById, advisorFaults), ...toolTelemetry() }, ctx.requestedModel);
+      writeResultCost(lokiRoot, ctx.iteration, data, data.model ?? sessionModel, firstTurnPromptTokens, { ...routerTelemetry(reqById, advisorById, advisorFaults), ...toolTelemetry(), ...(compactions > 0 ? { compactions } : {}) }, ctx.requestedModel);
 
       maxTurns = data.subtype === "error_max_turns";
       exitCode = data.is_error || maxTurns ? 1 : 0;

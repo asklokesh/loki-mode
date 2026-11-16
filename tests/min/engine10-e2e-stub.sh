@@ -228,7 +228,7 @@ verify_run() { # verify_run -> "<rc> <verdict>"
 
 run_engine done
 [ "$RC" -eq 0 ] && ok "done run exits 0" || { bad "done run exited $RC"; printf '%s\n' "$OUT" | tail -15 | sed 's/^/    | /'; }
-printf '%s\n' "$OUT" | grep -Eq '^Outcome:[[:space:]]+VERIFIED' && ok "done run prints Outcome: VERIFIED" || bad "done run did not print Outcome: VERIFIED"
+grep -Eq '^Outcome:[[:space:]]+VERIFIED' <<< "$OUT" && ok "done run prints Outcome: VERIFIED" || bad "done run did not print Outcome: VERIFIED"
 grep -q 'export function multiply' "$REPO/calc.ts" && ok "stub's change landed in calc.ts" || bad "calc.ts has no multiply()"
 # D48 counts the start line plus the summary block (Outcome: to the end); the live candidate diff and the branch note print while the run goes
 DSUM="$(printf '%s\n' "$OUT" | sed -n '/^Outcome:/,$p')"; DLN=$(( $(printf '%s\n' "$DSUM" | grep -c '') + 1 )); DPC="$(printf '%s\n' "$DSUM" | grep -ciE '(^|; )proof: (yes|no|not run)')"; DFULL="$(printf '%s\n' "$OUT" | grep -cE '^(  Before: |Not proven:)')"
@@ -249,15 +249,15 @@ else
     bad "stub env log is empty (the stub never ran)"
 fi
 
-printf '%s\n' "$OUT" | grep -qiE 'opus|parity|top-tier|cost avoided|tier sealed' && { bad "VERIFIED console summary compares models"; printf '%s\n' "$OUT" | grep -iE 'opus|parity|top-tier|cost avoided|tier sealed' | sed 's/^/    | /'; } || ok "VERIFIED console summary (default): no opus, parity, top-tier or tier-sealed text (Loki's own cost only)"
+grep -qiE 'opus|parity|top-tier|cost avoided|tier sealed' <<< "$OUT" && { bad "VERIFIED console summary compares models"; printf '%s\n' "$OUT" | grep -iE 'opus|parity|top-tier|cost avoided|tier sealed' | sed 's/^/    | /'; } || ok "VERIFIED console summary (default): no opus, parity, top-tier or tier-sealed text (Loki's own cost only)"
 run_engine done --verbose
-printf '%s\n' "$OUT" | grep -qiE 'opus|parity|top-tier|cost avoided|tier sealed' && bad "VERIFIED console summary (--verbose) compares models" || ok "VERIFIED console summary (--verbose): no opus, parity, top-tier or tier-sealed text"
-printf '%s\n' "$OUT" | grep -qE '^Proof: ' && printf '%s\n' "$OUT" | grep -qE '^Not proven:' && ok "--verbose: the full proof card prints after the summary" || { bad "--verbose: no full proof card"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
+grep -qiE 'opus|parity|top-tier|cost avoided|tier sealed' <<< "$OUT" && bad "VERIFIED console summary (--verbose) compares models" || ok "VERIFIED console summary (--verbose): no opus, parity, top-tier or tier-sealed text"
+grep -qE '^Proof: ' <<< "$OUT" && grep -qE '^Not proven:' <<< "$OUT" && ok "--verbose: the full proof card prints after the summary" || { bad "--verbose: no full proof card"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
 
 run_engine tamper
 [ "$RC" -ne 0 ] && ok "tampered run exits non-zero" || bad "tampered run exited 0"
-printf '%s\n' "$OUT" | grep -Eq '^Receipt:[[:space:]]+TAMPERED' && ok "tampered run prints Receipt: TAMPERED" || bad "tampered run did not print Receipt: TAMPERED"
-printf '%s\n' "$OUT" | grep -q 'Outcome:    VERIFIED' && bad "tampered run claimed Outcome: VERIFIED" || ok "tampered run never claims Outcome: VERIFIED"
+grep -Eq '^Receipt:[[:space:]]+TAMPERED' <<< "$OUT" && ok "tampered run prints Receipt: TAMPERED" || bad "tampered run did not print Receipt: TAMPERED"
+grep -q 'Outcome:    VERIFIED' <<< "$OUT" && bad "tampered run claimed Outcome: VERIFIED" || ok "tampered run never claims Outcome: VERIFIED"
 
 # FR09 hard cap: a metered stub (E2E_STUB_USAGE gives every session a $0.01 cost) first runs uncapped; the cap is then set from
 # that run's own events (the cost before implement's first cost event, plus half of implement's cost), measured here and
@@ -293,7 +293,7 @@ for leg in "default||" "flag|--session-model haiku|" "env||LOKI_MODEL_DEVELOPMEN
         "provider:claude (provider default)~provider~none~claude (provider default) (LOKI_DEFAULT_SESSION_MODEL=provider"*) ok "default model: LOKI_DEFAULT_SESSION_MODEL=provider restores the CLI default (no --model passed)" ;;
         "pinned:haiku~default~haiku~haiku (LOKI_DEFAULT_SESSION_MODEL=haiku)") ok "default model: LOKI_DEFAULT_SESSION_MODEL=haiku changes the default (receipt default)" ;;
         "router:"*"~explicit~"*"(LOKI_ROUTER=auto)") ok "default model: the model router (LOKI_ROUTER=auto) is a model choice, so no default pin overrides its per-unit models" ;;
-        *) bad "default model leg $dm_name: facts '$DM' (rc $RC)"; printf '%s\n' "$OUT" | grep -m3 "^Loki 10 engine\|engine10:\|rror" | sed 's/^/    | /' ;;
+        *) bad "default model leg $dm_name: facts '$DM' (rc $RC)"; grep -m3 "^Loki 10 engine\|engine10:\|rror" <<< "$OUT" | sed 's/^/    | /' ;;
     esac
 done
 unset dm_name dm_flag dm_env DM
@@ -314,7 +314,7 @@ case "$HK" in "VERIFIED | "*"the repo's own commit hook rejected Loki's commit (
 grep -q "hook was here" "$REPO/calc.ts" && bad "commit hook: the pre-commit hook's restaged edit reached the delivered commit" || ok "commit hook: the delivered commit holds the verified tree, not the hook's restaged edit"
 git -C "$REPO" log -1 --format=%s | grep -q "^loki: " && ok "commit hook: the delivered commit keeps Loki's own message" || bad "commit hook: delivered message '$(git -C "$REPO" log -1 --format=%s)'"
 E2E_PREP=hook_prep LOKI_E10_COMMIT_HOOK_BYPASS=0 run_engine done
-[ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -q "git commit failed" && [ ! -f "${RUNDIR:-/nonexistent}/receipt.json" ] && ok "commit hook: LOKI_E10_COMMIT_HOOK_BYPASS=0 keeps the old stop (git commit failed, no receipt)" || bad "commit hook: knob off gave rc $RC, receipt $( [ -f "${RUNDIR:-/x}/receipt.json" ] && echo yes || echo no)"
+[ "$RC" -ne 0 ] && grep -q "git commit failed" <<< "$OUT" && [ ! -f "${RUNDIR:-/nonexistent}/receipt.json" ] && ok "commit hook: LOKI_E10_COMMIT_HOOK_BYPASS=0 keeps the old stop (git commit failed, no receipt)" || bad "commit hook: knob off gave rc $RC, receipt $( [ -f "${RUNDIR:-/x}/receipt.json" ] && echo yes || echo no)"
 E2E_PREP=sign_prep run_engine done
 HK="$(hk_np)"
 case "$HK" in "FAILED | git commit failed: "*) ok "commit hook: a failure no hook caused (signing) is not bypassed, and the run still writes a FAILED receipt naming the git error" ;; *) bad "commit hook: signing failure gave '$HK' (rc $RC)" ;; esac
@@ -360,10 +360,10 @@ CAP=""; [ -n "$RUNDIR" ] && CAP="$(python3 -I "$T/cap.py" "$RUNDIR/events.jsonl"
 if [ -n "$CAP" ]; then
     E2E_STUB_USAGE=10 run_engine done --max-cost "$CAP"
     [ "$RC" -eq 6 ] && ok "capped run: cap \$$CAP, exit 6" || { bad "capped run: exit $RC (want 6) with cap $CAP"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
-    printf '%s\n' "$OUT" | grep -Eq '^Outcome:[[:space:]]+PARTIAL' && ok "capped run prints Outcome: PARTIAL, never VERIFIED" || bad "capped run did not print Outcome: PARTIAL"
-    printf '%s\n' "$OUT" | grep -Eq '^Reason:[[:space:]]+cost/time cap reached' && ok "capped run names the cap as the reason" || bad "capped run does not name the cap as the reason"
+    grep -Eq '^Outcome:[[:space:]]+PARTIAL' <<< "$OUT" && ok "capped run prints Outcome: PARTIAL, never VERIFIED" || bad "capped run did not print Outcome: PARTIAL"
+    grep -Eq '^Reason:[[:space:]]+cost/time cap reached' <<< "$OUT" && ok "capped run names the cap as the reason" || bad "capped run does not name the cap as the reason"
     CAPTXT="$(python3 -I -c 'import sys; print("%.2f" % float(sys.argv[1]))' "$CAP")"
-    printf '%s\n' "$OUT" | grep -F "cap \$$CAPTXT (--max-cost)" | grep -q 'estimate: about ' && ok "start line states the cap and quotes cost and time before spending" || bad "start line lacks 'cap \$$CAPTXT (--max-cost)' and 'estimate: about': $(printf '%s\n' "$OUT" | head -1)"
+    grep -q 'estimate: about ' <<< "$(grep -F "cap \$$CAPTXT (--max-cost)" <<< "$OUT")" && ok "start line states the cap and quotes cost and time before spending" || bad "start line lacks 'cap \$$CAPTXT (--max-cost)' and 'estimate: about': $(head -1 <<< "$OUT")"
     git -C "$REPO" show main:calc.ts | grep -q multiply && bad "capped run changed main" || ok "capped run leaves main untouched"
     capid="$(basename "$RUNDIR")"
     git -C "$REPO" show "loki/$capid:calc.ts" 2>/dev/null | grep -q multiply && ok "the partial is kept: implement's multiply() is committed on loki/<run>" || bad "loki/<run> has no multiply() after the capped run"
@@ -401,25 +401,25 @@ rv="$(grep '^review ' "$T/high-argv.log" 2>/dev/null | grep -o -- '--model [^ ]*
 [ "$rv" = "--model haiku " ] && ok "high tier: the default review runs (on by default for high risk), on the run's own Haiku pin" || bad "high tier: review --model arguments '$rv' (want one review on haiku)"
 scan="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(" ".join(c["result"] for c in json.load(open(sys.argv[1]))["checks"] if c["name"]=="security scan"))' "$RUNDIR/receipt.json" 2>/dev/null)"
 [ "$scan" = "pass" ] && ok "high tier through the bundle: the security scan ran and passed" || { bad "high tier through the bundle: security scan result '$scan'"; printf '%s\n' "$OUT" | grep -E '^(Outcome|NOT PROVEN)' | sed 's/^/    | /'; }
-printf '%s\n' "$OUT" | grep -Eq '^Outcome:[[:space:]]+VERIFIED' && ok "high tier through the bundle: VERIFIED" || bad "high tier through the bundle: not VERIFIED"
+grep -Eq '^Outcome:[[:space:]]+VERIFIED' <<< "$OUT" && ok "high tier through the bundle: VERIFIED" || bad "high tier through the bundle: not VERIFIED"
 if python3 -m pytest --version >/dev/null 2>&1; then
     py_engine calc.py
     [ "$(outcome)" = "VERIFIED" ] && ok "python, no dependency manifest: impacted pytest passed, VERIFIED" || { bad "python, no dependency manifest: outcome '$(outcome)', not VERIFIED"; printf '%s\n' "$NOTES" | sed 's/^/    np | /'; }
-    printf '%s\n' "$NOTES" | grep -q "^$SYS (.*informational, does not cap)$" && ok "python, no dependency manifest: system-interpreter note kept as informational" || bad "python, no dependency manifest: informational note missing"
+    grep -q "^$SYS (.*informational, does not cap)$" <<< "$NOTES" && ok "python, no dependency manifest: system-interpreter note kept as informational" || bad "python, no dependency manifest: informational note missing"
     py_engine calc.py requirements.txt
     [ "$(outcome)" = "PARTIAL" ] && ok "python, requirements.txt declared: still capped at PARTIAL" || bad "python, requirements.txt declared: outcome '$(outcome)', not PARTIAL"
-    printf '%s\n' "$NOTES" | grep -qx "$SYS" && ok "python, requirements.txt declared: system-interpreter note caps (no suffix)" || bad "python, requirements.txt declared: note missing or marked informational"
+    grep -qx "$SYS" <<< "$NOTES" && ok "python, requirements.txt declared: system-interpreter note caps (no suffix)" || bad "python, requirements.txt declared: note missing or marked informational"
     py_engine extra.py
     [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "python, change no test imports: not VERIFIED ($(outcome))" || { bad "python, change no test imports: outcome '$(outcome)'"; printf '%s\n' "$NOTES" | sed 's/^/    np | /'; }
     PY_UNTESTED=1 py_engine calc.py
     [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "python, impacted test passes but never calls multiply(): not VERIFIED ($(outcome))" || { bad "python, unexercised change: outcome '$(outcome)'"; printf '%s\n' "$NOTES" | sed 's/^/    np | /'; }
-    printf '%s\n' "$NOTES" | grep -q "no passing check references a changed symbol.*multiply" && ok "python, unexercised change: the receipt names multiply as unexercised" || bad "python, unexercised change: no changed-symbol note"
+    grep -q "no passing check references a changed symbol.*multiply" <<< "$NOTES" && ok "python, unexercised change: the receipt names multiply as unexercised" || bad "python, unexercised change: no changed-symbol note"
     # acc-162 BCE: a test whose conftest cannot import on base and head alike is the environment, not the change: not_run on NOT PROVEN, never FAILED.
     bce_prep() { printf 'import loki_missing_module_bce\n' > "$REPO/tests/conftest.py"; }
     PY_PREP=bce_prep LOKI_E10_BASE_CRASH_ENV=1 py_engine calc.py
-    case "$(outcome)" in FAILED|STALLED|"") bad "base crash: a conftest that fails on base too ended '$(outcome)'" ;; *) printf '%s\n' "$NOTES" | grep -q "fails the same way on base, so its result cannot be read" && ok "base crash: the same ImportError on base makes the check environment ($(outcome)), named on NOT PROVEN" || bad "base crash: NOT PROVEN lacks the base-crash line ($(outcome))" ;; esac
+    case "$(outcome)" in FAILED|STALLED|"") bad "base crash: a conftest that fails on base too ended '$(outcome)'" ;; *) grep -q "fails the same way on base, so its result cannot be read" <<< "$NOTES" && ok "base crash: the same ImportError on base makes the check environment ($(outcome)), named on NOT PROVEN" || bad "base crash: NOT PROVEN lacks the base-crash line ($(outcome))" ;; esac
     PY_PREP=bce_prep LOKI_E10_BASE_CRASH_ENV=0 py_engine calc.py
-    printf '%s\n' "$NOTES" | grep -q "fails the same way on base" && bad "base crash: LOKI_E10_BASE_CRASH_ENV=0 still wrote the base-crash line" || ok "base crash: LOKI_E10_BASE_CRASH_ENV=0 keeps the crash a failure ($(outcome))"
+    grep -q "fails the same way on base" <<< "$NOTES" && bad "base crash: LOKI_E10_BASE_CRASH_ENV=0 still wrote the base-crash line" || ok "base crash: LOKI_E10_BASE_CRASH_ENV=0 keeps the crash a failure ($(outcome))"
     unset -f bce_prep
 elif [ "${CI:-}" = "true" ]; then
     bad "python legs: pytest is not installed on the CI runner"
@@ -501,11 +501,26 @@ f="$(pr_facts)"; set -- $f
 grep -q 'cross-review flag (claude): stub reviewer concern' "$RUNDIR/receipt.json" && ok "reviewer FLAG finding lands on the receipt as NOT PROVEN" || bad "FLAG finding missing from the receipt"
 [ "$2" = True ] && [ "$7" = True ] && ok "draft run 2: result-cost sum equals receipt cost to the cent" || bad "draft run 2 facts: $f"
 
+[ "$6" = VERIFIED ] && ok "F3: a FLAG review without an UNMET line leaves the run VERIFIED" || bad "F3: FLAG run without UNMET gave verdict $6"
+run_pr unmet none LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=FLAG "E2E_STUB_REVIEW_EXTRA=UNMET: Acceptance: a filter template and a history entry are saved" LOKI_PR_DRAFT=1
+f="$(pr_facts)"; set -- $f
+[ "$6" = PARTIAL ] && grep -q 'cross-review flag (claude): UNMET: Acceptance: a filter template and a history entry are saved' "$RUNDIR/receipt.json" \
+    && ok "F3: the same FLAG review with one UNMET line caps the verdict at PARTIAL, the line on the receipt" || bad "F3: FLAG run with UNMET gave verdict $6"
+U3="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/xreview.ts");
+const six = JSON.stringify({ result: "VERDICT: FLAG\n- one\n- two\n- three\n- four\n- five\n- UNMET: Acceptance: six is cut today" }), plain = JSON.stringify({ result: "VERDICT: FLAG\n- one\n- two" });
+const r6 = x.parseReview("claude", six), rp = x.parseReview("claude", plain);
+console.log([r6.notes.length, r6.notes[0], r6.notes.filter(x.isUnmetNote).length, JSON.stringify(rp.notes), x.isUnmetNote("cross-review flag (claude): **UNMET**: a"), x.isUnmetNote("cross-review flag (claude): the UNMET word inside")].join(" | "));
+' 2>&1)"
+[ "$U3" = '5 | cross-review flag (claude): UNMET: Acceptance: six is cut today | 1 | ["cross-review flag (claude): one","cross-review flag (claude): two"] | true | false' ] \
+    && ok "F3 unit: an UNMET reason written sixth is kept (sorted first, the cap stays 5); a review with no UNMET keeps its order; bold UNMET counts, the word inside a reason does not" || bad "F3 unit gave: $U3"
+
 run_pr stable stable LOKI_PR_DRAFT=1
 f="$(pr_facts)"; set -- $f
 [ "$8" = success ] && ok "deep full suite red only on base-red ids: status success" || bad "base-red full suite gave status $8 ($f)"
 grep -q '"base_red": true' "$RUNDIR/receipt-addendum-1.json" && ok "addendum marks the base-red suite" || bad "addendum lacks base_red"
 [ "$4" = 0 ] && [ "$5" = 0 ] && ok "low tier PR run: zero review sessions" || bad "low tier review sessions: $4, council $5"
+[ "$6" = VERIFIED ] && ok "F3: a run with no reviewer keeps its verdict (VERIFIED, as on the base commit)" || bad "F3: no-reviewer run verdict $6 (want VERIFIED, as on the base commit)"
 [ "$2" = True ] && [ "$7" = True ] && ok "draft run 3: result-cost sum equals receipt cost to the cent" || bad "draft run 3 facts: $f"
 
 run_pr new new
@@ -826,7 +841,7 @@ try {
 } finally { rmSync(d, { recursive: true, force: true }); }
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/deadline.ts" "$ROOT" 2>&1; echo "EXIT $?")"
-printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "deadline unit script crashed or exited non-zero"
+grep -q '^EXIT 0$' <<< "$out" || bad "deadline unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 6 ] || bad "deadline unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 6"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
@@ -858,7 +873,7 @@ child.kill();
 res("WATCHDOG it names the processes running under the supervisor, without arguments", names.includes("sleep") && !names.some((n: string) => n.includes(" ")));
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/wd.ts" "$ROOT" 2>&1; echo "EXIT $?")"
-printf '%s\n' "$out" | grep -q '^EXIT 0$' || bad "wd unit script crashed or exited non-zero"
+grep -q '^EXIT 0$' <<< "$out" || bad "wd unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 6 ] || bad "wd unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 6"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac

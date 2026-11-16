@@ -72,6 +72,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   env["LOKI_ITERATION"] = opts.iterationId;
   env["LOKI_E10_STAGE"] = opts.stage;
   env["LOKI_E10_BRIEF"] = opts.brief;
+  if (opts.pathAppend?.length) env["PATH"] = [...(env["PATH"] ?? "").split(":").filter(Boolean), ...opts.pathAppend].join(":"); // candidate 1 env card: append only
   const gap = cfg.lokiRoot ? stageMedianGapMs(cfg.lokiRoot, opts.stage) : null; // #244: the persisted median call gap of this stage picks the cache TTL in engine10CacheTtlEnv
   if (gap !== null) env["LOKI_E10_CACHE_GAP_MS"] = String(gap); else delete env["LOKI_E10_CACHE_GAP_MS"];
   env["LOKI_E10_TIER"] = opts.tier; if (cfg.provider === "claude" && opts.stopChecks?.checks.length) env["LOKI_E10_STOP_CHECKS"] = JSON.stringify(opts.stopChecks); else delete env["LOKI_E10_STOP_CHECKS"]; // in-session fix rounds: only the per-call option sets it
@@ -106,11 +107,21 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   if (caps) env["LOKI_E10_STOP_RULES"] = JSON.stringify(caps); else delete env["LOKI_E10_STOP_RULES"];
   return env;
 }
+/** S1b FINISH-LINE: the finish line of the session's final text: the last non-empty line, when it is a literal LOKI_DONE, LOKI_ALREADY_DONE: or
+ *  LOKI_SPEC_CONFLICT: line ("done", "already_done", "spec_conflict"); null otherwise. A finish line quoted earlier in the session, or any other LOKI_ token
+ *  (LOKI_BLOCKED), is never one. FireLater#24 Haiku: a compacted implement session ended "**Result:** LOKI_BLOCKED: ... still outstanding" and sealed VERIFIED. */
+export function finishLineOf(text: string): SessionMarkers["finishLine"] {
+  const last = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() ?? "";
+  if (/^\W*LOKI_DONE\W*$/.test(last)) return "done";
+  if (/^\W*LOKI_ALREADY_DONE:\s*\S/.test(last)) return "already_done";
+  if (/^\W*LOKI_SPEC_CONFLICT:\s*\S/.test(last)) return "spec_conflict";
+  return null;
+}
 function parseMarkers(stdout: string): SessionMarkers {
   // Line-anchored, so prose that merely names a marker (or an echoed brief) never counts.
   const doneMatch = /^\W*LOKI_ALREADY_DONE:\s*(.+)$/m.exec(stdout);
   const conflictMatch = /^\W*LOKI_SPEC_CONFLICT:\s*(.+)$/m.exec(stdout);
-  return routerMarkers(stdout, { done: !doneMatch && !conflictMatch, alreadyDone: doneMatch ? doneMatch[1]!.trim() : null, specConflict: conflictMatch ? conflictMatch[1]!.trim() : null });
+  return routerMarkers(stdout, { done: !doneMatch && !conflictMatch, alreadyDone: doneMatch ? doneMatch[1]!.trim() : null, specConflict: conflictMatch ? conflictMatch[1]!.trim() : null, finishLine: finishLineOf(stdout) });
 }
 const lastStageEnd = new WeakMap<SessionRunnerConfig, Map<string, number>>(); // per run: runner config -> stage -> last session end (epoch ms)
 /** Efficiency record plus cost event for one session; a run in another cwd (wall's temp dir) has its result-cost file copied into lokiRoot first, so seal can price it after that dir is gone. */
