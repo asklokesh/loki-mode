@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.144.0 (2026-11-16)
+
+An issue run on the Claude provider is told to run the product it builds end to end, works in a scratch directory of its own, and the harness stops only the processes it can prove the run started.
+
+### What changes for `loki start owner/repo#N` on the Claude provider
+- The implement session gets issue-run instructions: it may start the repository's own services and throwaway dependencies, is told to prove its change by running the product end to end, and is not given a time-budget sentence.
+- An environment card tells the session where Postgres, Redis, MySQL or MongoDB server binaries are on the machine when the repository needs them.
+- A fourth finish line, `LOKI_UNFINISHED`, ends a session that left listed work undone. The run is sealed PARTIAL with the session's own list of what is left.
+- A reviewer line that says an acceptance item is unmet (`UNMET: ...`) caps the label: such a run is never sealed VERIFIED.
+- The implement session and its resumes get a run-owned scratch directory as `TMPDIR` (also `LOKI_SCRATCH`).
+- After the session ends, on every exit path and on interrupt, the harness stops only the processes it can prove the run started (by a run marker in the environment, a working directory or command path inside the scratch directory, or an owned parent, with the start time rechecked), then removes the scratch directory.
+- When a run is interrupted (Ctrl-C), Loki stops the database, cache and server processes its session started and removes the run's scratch directory; a process you started yourself in the repository is left alone. Measured once on FireLater#24: 20 processes stopped, none left, the scratch directory removed. The interrupted run is resumable; its work is left uncommitted on the run branch.
+- The session is told to bind anything it starts to 127.0.0.1 or a unix socket.
+- Issue runs are told to use only a database, cache or server they started themselves.
+- The host command guard is unchanged.
+- Text goals, PRD runs and other providers are unchanged, except for the rating prompt below.
+
+### Every run
+- The CLI no longer asks for a rating at the end of a run.
+
+### Measured on one issue in one repository (asklokesh/FireLater#24, 9 acceptance items, Sonnet)
+- Four runs of this instruction set scored 9, 9, 8 and 9 of 9 on a blind live check (each result's backend started and its routes called), at $1.24 to $2.48 and 8.5 to 14.7 minutes per run. All four were labelled PARTIAL.
+- None of these runs is on the release commit.
+- The released 11.143.0 scored between 2 and 8 of 9 on the same issue.
+
+### Known gaps
+- All four measured runs were labelled PARTIAL, including the three that scored 9 of 9.
+- A session that wrote `LOKI_UNFINISHED` for an optional item it left out was sealed PARTIAL although everything required was delivered.
+- A daemon started outside the scratch directory with no other proof of ownership is left running and reported.
+- A process the user starts inside a run's scratch directory is treated as the run's.
+- A session stopped at its turn limit is not continued.
+- A usage limit reached mid-run seals the run instead of pausing it.
+- A run whose blocking check still fails opens no pull request.
+- The host guard refuses quoted heredocs that contain an apostrophe.
+- An interrupted run's reported cost leaves out the session that was cut off.
+- If your shell sets TZ to a zone different from the system's, the cleanup can fail to find the processes a run started and leave them running; unset TZ for the run until this is fixed.
+- The local cleanup record lists each stopped process's full command line; do not start services with a password on the command line.
+- The session is told to use only a database it started itself, but nothing enforces that: connection settings in your environment (DATABASE_URL, REDIS_URL, PG variables) are still passed to the session, and nothing refuses a port that was already in use. Do not run Loki on an issue in a shell or repository whose settings point at a database you care about.
+- Not gated on the blind set or on scored runs of this exact build; the founder ordered the release.
+
 ## v11.143.0 (2026-11-16)
 
 An issue run now works on the whole issue and keeps unfinished work.
