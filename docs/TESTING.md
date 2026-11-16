@@ -9,7 +9,7 @@ bash scripts/local-ci.sh                                   # all tests, cheap on
 LOCAL_CI_ONLY=hygiene,pack-contents bash scripts/local-ci.sh   # a subset
 ```
 
-`npm test` runs the same command. The same script runs in GitHub Actions (`.github/workflows/pr-fast.yml`). One-time setup for `dist-freshness`: `bun install --cwd loki-ts --frozen-lockfile`.
+`npm test` runs the same command. GitHub Actions runs no test workflow; this script is the only test gate. One-time setup for `dist-freshness`: `bun install --cwd loki-ts --frozen-lockfile`.
 
 ## What each test guards
 

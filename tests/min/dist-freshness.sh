@@ -6,7 +6,7 @@
 # and that web-app/dist/index.html references only assets that exist. The packed-tarball half
 # (dist is inside `npm pack`) lives in pack-contents.sh.
 # Needs `bun install --cwd loki-ts --frozen-lockfile` first and the pinned Bun (see
-# .github/workflows/pr-fast.yml).
+# bun-version in .github/workflows/release.yml).
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   1. loki-ts/src/cli.ts: add a syntax error, the build step must fail.

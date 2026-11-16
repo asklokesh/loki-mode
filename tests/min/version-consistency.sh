@@ -67,7 +67,7 @@ expect loki-ts/bun.lock "\"@anthropic-ai/sdk@$sdk_api\"" 1
 lock_pair="$(python3 -c 'import json,sys; p=json.load(open(sys.argv[1]))["packages"]; print(p["node_modules/@anthropic-ai/claude-agent-sdk"]["version"], p["node_modules/@anthropic-ai/sdk"]["version"])' package-lock.json)"
 [ "$lock_pair" = "$sdk_ts $sdk_api" ] && ok "package-lock.json resolves claude-agent-sdk $sdk_ts and sdk $sdk_api" || bad "package-lock.json resolves '$lock_pair', want '$sdk_ts $sdk_api'"
 
-# The freshness guard (scripts/dep-inventory.py --sdk-freshness, run daily by sdk-freshness.yml) is offline-testable:
+# The freshness guard (scripts/dep-inventory.py --sdk-freshness, run it locally; no workflow runs it) is offline-testable:
 # its self-test covers the grace, the dist-tag latest bound and the bundled Claude Code pin.
 python3 scripts/dep-inventory.py --self-test >"$T/di.out" 2>&1 && ok "scripts/dep-inventory.py --self-test" || bad "scripts/dep-inventory.py --self-test: $(grep -E 'FAIL' "$T/di.out" | head -3 | tr '\n' ' ')"
 
