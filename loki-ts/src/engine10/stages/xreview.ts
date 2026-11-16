@@ -6,7 +6,7 @@ export { reviewProvider, xvendorDefault, type ReviewProvider } from "../../counc
 import { run } from "../../util/shell.ts";
 import { withChildLedger } from "../../util/child_ledger.ts";
 import { claudeFlagSupported, ensureClaudeHelpCache, leanReviewerFlags, REVIEW_ALLOWLIST_NO_GIT, REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
-import { ignoredPaths, safeGitRun } from "../../util/safe_git.ts"; export { ignoredPaths }; import { acceptanceLines, acceptancePromptBlock } from "../../util/intent_card.ts";
+import { ignoredPaths, safeGitRun } from "../../util/safe_git.ts"; export { ignoredPaths }; import { acceptanceLines, acceptancePromptBlock, issueAcceptanceCapOn, issueAcceptanceOf, issueAcceptancePromptBlock } from "../../util/intent_card.ts";
 import { readRiskRecord } from "../../util/run_summary.ts"; import { capWhole, reviewFlagLines } from "../../util/reviewer_brief.ts";
 import { writeReviewerCost } from "../../providers/provider_cost.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
@@ -15,7 +15,7 @@ import { PROVIDER_DEFAULT_MODEL } from "../../util/claude_model.ts";
 import { backstopS, type RunContext, type Verdict } from "../types.ts";
 export type ReviewLevel = "pass" | "flag" | "block" | "not_run";
 export type ReviewedBy = "model" | "deterministic" | "none";
-export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; same_vendor_default?: boolean; hygiene?: string[]; reviewed_by?: ReviewedBy; reviewer_model?: string; cost_iteration?: string; }
+export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; same_vendor_default?: boolean; hygiene?: string[]; reviewed_by?: ReviewedBy; reviewer_model?: string; cost_iteration?: string; acceptance?: { met: number[]; unmet: number[] }; } // acceptance: Q1 ISSUE-ACCEPTANCE, the numbers of the issue's own acceptance lines the reviewer marked MET or UNMET; present only when the prompt numbered them
 /** True only when a model reviewer really returned a verdict; a deterministic-only result never credits "one reviewer". */
 export const modelReviewRan = (xr: CrossReview | null | undefined): xr is CrossReview => !!xr && xr.level !== "not_run" && xr.reviewed_by !== "deterministic" && xr.reviewed_by !== "none"; // a hygiene flag can lift level off not_run with no model call (reviewed_by none)
 // Compiled or bytecode cache files by extension or dir (generic across stacks). Any other run-added path counts only when the repo's own ignore rules ignore it (it was force-added); legit source such as src/build/index.ts never counts.
@@ -57,15 +57,22 @@ const clean = (s: string): string => capWhole(s.replace(/[\x00-\x1f\x7f`]+/g, " 
 const UNMET_REASON_RE = /^\s*\**UNMET\b/;
 export const isUnmetNote = (note: string): boolean => /^cross-review \w+ \([^)]*\):\s*\**UNMET\b/.test(note);
 /** First line `VERDICT: PASS|FLAG|BLOCK`, then `- reason` lines. Anything else is not_run (never PASS). */
-export function parseReview(p: ReviewProvider, out: string): CrossReview {
+const MET_REASON_RE = /^\s*\**MET\**\s+\d+\b/;
+/** Q1 ISSUE-ACCEPTANCE: the line numbers the reviewer marked `- MET <n>` and `- UNMET <n>` (read from every line, never cut by MAX_NOTES). */
+export function acceptanceMarks(text: string): { met: number[]; unmet: number[] } {
+  const met = new Set<number>(), unmet = new Set<number>();
+  for (const l of text.split("\n")) { const x = /^\s*(?:[-*+]\s+)?\**(UNMET|MET)\**\s+(\d{1,3})\b/i.exec(l); if (x) (x[1]!.toUpperCase() === "MET" ? met : unmet).add(Number(x[2])); }
+  return { met: [...met].sort((a, b) => a - b), unmet: [...unmet].sort((a, b) => a - b) };
+}
+export function parseReview(p: ReviewProvider, out: string, numbered = false): CrossReview {
   if (p === "claude") { try { const j = JSON.parse(out) as { result?: unknown }; out = typeof j?.result === "string" ? j.result : ""; } catch { out = ""; } } // claude runs with --output-format json: the verdict is the result text; anything else is not_run
   const m = /^\s*VERDICT:\s*(PASS|FLAG|BLOCK)\b/im.exec(out);
   if (!m) return { provider: p, level: "not_run", notes: [`cross-review not run: ${p} returned no VERDICT line`] };
   const level = m[1]!.toLowerCase() as ReviewLevel;
-  const all = reviewFlagLines(out.slice(m.index + m[0].length)).map(clean).filter(Boolean), unmet = (r: string): boolean => UNMET_REASON_RE.test(r);
+  const all = reviewFlagLines(out.slice(m.index + m[0].length)).map(clean).filter(Boolean).filter((r) => !numbered || !MET_REASON_RE.test(r)), unmet = (r: string): boolean => UNMET_REASON_RE.test(r); // a "MET <n>" line is a record, never a concern
   const reasons = [...all.filter(unmet), ...all.filter((r) => !unmet(r))].slice(0, MAX_NOTES); // F3: UNMET reasons first, so the cap of 5 never cuts one
   const notes = level === "pass" ? [] : (reasons.length ? reasons : ["no reason given"]).map((r) => `cross-review ${level} (${p}): ${r}`);
-  return { provider: p, level, notes };
+  return { provider: p, level, notes, ...(numbered ? { acceptance: acceptanceMarks(out.slice(m.index + m[0].length)) } : {}) };
 }
 /** Rule 6 (h2h 2026-11-01, 115 Loki runs): the unconfigured same-vendor review changed no verdict and was 74% of Loki-on-Haiku spend. It stays on by default for the high tier (auth, crypto, payments, migrations, CI, public API: no ready PR there without a review) and is opt-in for medium (LOKI_REVIEW_DEFAULT=1). A configured reviewer (loki.yaml review:, LOKI_REVIEW_PROVIDER, a reviewer agent) always runs. */
 export const reviewDefaultOn = (tier: string, env: NodeJS.ProcessEnv = process.env): boolean => tier === "high" || (tier === "medium" && env["LOKI_REVIEW_DEFAULT"] === "1");
@@ -95,15 +102,16 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   if (roomS(ctx) < MIN_REVIEW_S) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: insufficient run time for ${p}`] });
   const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] });
+  const asks = issueAcceptanceCapOn() ? issueAcceptanceOf((ctx.outputs?.() ?? {}).intake) : []; // Q1 ISSUE-ACCEPTANCE: the issue's own lines, numbered; [] keeps today's prompt byte for byte
   const prompt = [agent ? `${agent.prompt}\nReview ONLY the diff below. Do not modify files.` : "You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
     REVIEW_TOOLS_NOTE,
-    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...acceptancePromptBlock(acceptanceLines((ctx.outputs?.() ?? {}).plan)), "", "```diff", d.stdout.slice(0, MAX_DIFF), "```"].join("\n");
+    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...issueAcceptancePromptBlock(asks), ...acceptancePromptBlock(acceptanceLines((ctx.outputs?.() ?? {}).plan)), "", "```diff", d.stdout.slice(0, MAX_DIFF), "```"].join("\n");
   try {
     if (p === "claude") await ensureClaudeHelpCache();
     const r = await withChildLedger(run, join(ctx.repoDir, ".loki"), "xreview")(reviewArgv(p, prompt, process.env, p === "claude" ? agent?.model || pin : undefined), { cwd: ctx.repoDir, timeoutMs: boxFor(ctx) * 1000, group: true, signal });
     const costId = `${ctx.runId}-xreview-${p}`; // the reviewer's own result-cost file, so seal's cost read includes it
     writeReviewerCost(join(ctx.repoDir, ".loki"), costId, { reviewer: `xreview-${p}`, provider: p, model: p === "claude" ? agent?.model || pin : undefined, stdout: r.stdout, stderr: r.stderr });
     if (r.exitCode !== 0) return { ...tag({ provider: p, level: "not_run", notes: [`cross-review not run: ${p} exited ${r.exitCode}`] }), cost_iteration: costId };
-    return { ...tag(parseReview(p, r.stdout)), cost_iteration: costId };
+    return { ...tag(parseReview(p, r.stdout, asks.length > 0)), cost_iteration: costId };
   } catch { return tag({ provider: p, level: "not_run", notes: [`cross-review not run: ${p} CLI unavailable`] }); }
 }

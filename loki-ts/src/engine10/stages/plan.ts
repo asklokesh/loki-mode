@@ -13,7 +13,7 @@ import { assumptionsBlock } from "../../features/spec_ambiguity.ts";
 import { loadTaskText } from "./wall.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { planFallbackModel, planRoute, PRESET_PLAN_INSTRUCTION, ROUTER_UNITS_INSTRUCTION } from "../../runner/router/plan_route.ts";
-import { applyIntent, confirmRequested, intentCardEnabled, INTENT_CARD_INSTRUCTION } from "../../util/intent_card.ts";
+import { applyIntent, confirmRequested, intentCardEnabled, INTENT_CARD_INSTRUCTION, issueAcceptanceOf } from "../../util/intent_card.ts";
 import { loadProjectApi } from "../../project_model/resolve.ts";
 import { behaviorChangeInstruction, mutationStrict, readBehaviorChange } from "../../util/mutation_proof.ts";
 import { reviewerBriefEnabled } from "../../util/reviewer_brief.ts";
@@ -116,7 +116,7 @@ export const planStage: Stage = {
 
     const rawPlan = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
     // T3: empty plan or LOKI_INTENT_CARD=0 is silent and changes nothing.
-    const ic = await applyIntent(rawPlan, cardOn, ctx.runDir, (d) => ctx.emit("variant", "plan", d));
+    const ic = await applyIntent(rawPlan, cardOn, ctx.runDir, (d) => ctx.emit("variant", "plan", d), issueAcceptanceOf(prior.intake));
     const plan = truncatePlan(ic.rest);
     const route_record = pr.record({ planModel, planModelNote }), oor = planOutOfRepo(ctx.runDir); // FC-OUT-OF-REPO: ends the run as BLOCKED before implement/fix spend anything
     return {
