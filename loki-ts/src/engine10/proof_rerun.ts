@@ -66,13 +66,14 @@ export function unmetBrief(unmet: { line: string; reason: string }[], note = "")
 }
 export { optionalAsk };
 
-export const PROOF_SCRIPT = "loki-proof.sh";
+export const PROOF_SCRIPT = "loki-proof.sh", SETUP_FILE = "loki-setup.sh";
 export const PROOF_HELPER = "loki-check.sh", ACCEPTANCE_FILE = "acceptance.txt";
 /** The check functions the proof script must use. Loki writes this file (the session never edits it) and writes it again, with a random token, into the
  *  directory of its own run: only lines these functions print with that token are counted, so the label is a tally of checks Loki executed, never a reading
  *  of free text. Each check names the acceptance line number it proves. */
 export const PROOF_HELPER_SH = `# Loki proof helpers. Source this file; never edit it. Only lines printed by these functions count toward the label.
-_lp() { printf 'LOKI-PROOF %s %s %s: %s\\n' "\${LOKI_PROOF_TOKEN:-session}" "$1" "$2" "$3"; }
+# Each result is printed, and also appended to the file Loki names in LOKI_PROOF_LOG, so a script that pipes or redirects its output loses nothing.
+_lp() { printf 'LOKI-PROOF %s %s %s: %s\\n' "\${LOKI_PROOF_TOKEN:-session}" "$1" "$2" "$3"; if [ -n "\${LOKI_PROOF_LOG:-}" ]; then printf 'LOKI-PROOF %s %s %s: %s\\n' "\${LOKI_PROOF_TOKEN:-session}" "$1" "$2" "$3" >> "$LOKI_PROOF_LOG" 2>/dev/null; fi; }
 # loki_http <item number> "<what is proved>" <expected status> <curl arguments...>
 #   <item number> is the number of the acceptance item in acceptance.txt (1, 2, 3 ...), never a line of this script.
 #   Sends the request with curl. Passes when the status equals the expected one (and, when LOKI_BODY_MATCH is set, the body matches that grep -E pattern).
@@ -191,6 +192,9 @@ export function keepProofScript(scratchDir: string, runDir: string): boolean {
     const real = (() => { try { return realpathSync(scratchDir); } catch { return scratchDir; } })(), names = [...new Set([real, scratchDir, real.replace(/^\/private\//, "/")])].filter((d) => d.length > 5).sort((a, b) => b.length - a.length);
     let text = readFileSync(src, "utf8"); for (const d of names) text = text.split(d).join("${LOKI_SCRATCH}");
     writeFileSync(join(runDir, PROOF_SCRIPT), text, { mode: 0o700 });
+    // The setup Loki handed the session from the repo card ($LOKI_SCRATCH/loki-setup.sh): a proof script may source it, so it is kept beside the script and
+    // put back in Loki's own scratch for the re-run. Without it a script built on that setup was "blocked" in every round of Loki's run.
+    try { const su = join(scratchDir, SETUP_FILE); if (existsSync(su) && statSync(su).size <= MAX_SCRIPT_BYTES) { let t = readFileSync(su, "utf8"); for (const d of names) t = t.split(d).join("${LOKI_SCRATCH}"); writeFileSync(join(runDir, SETUP_FILE), t, { mode: 0o700 }); } } catch { /* the re-run then reports the missing file */ }
     return true;
   } catch { return false; }
 }
@@ -217,24 +221,27 @@ export interface ProofRerun { refused?: string; exit: number | null; seconds: nu
 /** One run of a proof script by Loki: a new scratch directory, the helper with a token that exists only in this run, an empty directory as the argument,
  *  the user's own database settings blanked, and the ownership cleanup afterwards. `plan` gets the scratch directory and names the script and where it runs
  *  (null: nothing is run). Null when no scratch directory could be made. Never throws. */
-async function runProofScript(env: NodeJS.ProcessEnv, signal: AbortSignal | undefined, plan: (scratchDir: string) => Promise<{ script: string; cwd: string; extra?: Record<string, string>; limitS?: number; after?: () => void } | null>): Promise<{ ran: boolean; exit: number | null; timedOut: boolean; seconds: number; text: string; token: string; stopped: number; left: number } | null> {
+async function runProofScript(env: NodeJS.ProcessEnv, signal: AbortSignal | undefined, runDir: string, plan: (scratchDir: string) => Promise<{ script: string; cwd: string; extra?: Record<string, string>; limitS?: number; after?: () => void } | null>): Promise<{ ran: boolean; exit: number | null; timedOut: boolean; seconds: number; text: string; results: string; token: string; stopped: number; left: number } | null> {
   let scratch: ReturnType<typeof createSessionScratch>;
   try { scratch = createSessionScratch(); } catch { return null; }
   const blank: Record<string, string> = {}; for (const k of Object.keys(env)) if (CONNECTION_ENV.test(k)) blank[k] = ""; // the re-run never sees the user's own database settings either
   const token = randomBytes(8).toString("hex"); writeProofKit(scratch.dir, null); // Loki's own copy of the helper and a token that exists only in this run
-  let exit: number | null = null, out = "", ran = false, timedOut = false, seconds = 0, after: (() => void) | undefined;
+  let exit: number | null = null, out = "", ran = false, timedOut = false, seconds = 0, after: (() => void) | undefined; const resultLog = join(scratch.dir, "loki-proof-results.log"); // the helper appends every result to the file: a script that sent its checks' output to a log or to /dev/null (one did, and 16 passing checks counted as 0) is still counted
   try {
     const p = await plan(scratch.dir); after = p?.after;
     if (p) {
+      try { const su = join(runDir, SETUP_FILE); if (existsSync(su)) copyFileSync(su, join(scratch.dir, SETUP_FILE)); } catch { /* a script that needs it says so */ }
       const emptyDir = join(scratch.dir, "run"); mkdirSync(emptyDir, { mode: 0o700 }); // the script's argument is an EMPTY directory: the scratch itself holds Loki's helper, and a script that checks for emptiness refused it
       const t0 = Date.now(); ran = true;
-      try { const r = await run(["bash", p.script, emptyDir], { cwd: p.cwd, timeoutMs: (p.limitS ?? proofRerunS(env)) * 1000, group: true, signal, env: { ...blank, ...scratchSessionEnv(scratch), ...(p.extra ?? {}), LOKI_PROOF_TOKEN: token } }); exit = r.exitCode; timedOut = r.timedOut === true; out = `${r.stdout}\n${r.stderr}`; }
+      try { const r = await run(["bash", p.script, emptyDir], { cwd: p.cwd, timeoutMs: (p.limitS ?? proofRerunS(env)) * 1000, group: true, signal, env: { ...blank, ...scratchSessionEnv(scratch), ...(p.extra ?? {}), LOKI_PROOF_TOKEN: token, LOKI_PROOF_LOG: resultLog } }); exit = r.exitCode; timedOut = r.timedOut === true; out = `${r.stdout}\n${r.stderr}`; }
       finally { seconds = Math.round((Date.now() - t0) / 1000); }
     }
   } catch (e) { out = `Loki's re-run did not complete: ${(e as Error).message}`; }
+  let logged = ""; try { logged = readFileSync(resultLog, "utf8").replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, " "); } catch { /* no result file: the output alone is counted */ }
   try { after?.(); } catch { /* what the plan could not undo is left to the scratch cleanup */ }
   const clean = cleanupSessionScratch(scratch);
-  return { ran, exit, timedOut, seconds, text: out.replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, " "), token, stopped: clean.stopped.length, left: clean.left.length };
+  const text = out.replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, " ");
+  return { ran, exit, timedOut, seconds, text, results: proofLines(logged, token).length ? logged : text, token, stopped: clean.stopped.length, left: clean.left.length };
 }
 /** Runs the kept script once, from the repository root, in a new scratch directory that the same ownership cleanup stops and removes afterwards.
  *  Null when no script was kept or the re-run is off. Never throws. */
@@ -244,10 +251,10 @@ export async function rerunProof(repoDir: string, runDir: string, signal?: Abort
   let scriptChars = 0, refusal: string | null = null; try { const t = readFileSync(script, "utf8"); scriptChars = t.length; refusal = proofScriptRefusal(t); } catch { return null; }
   if (refusal) return { refused: refusal, exit: null, seconds: 0, proved: 0, failed: 0, tail: `Loki did not run this proof script: ${refusal}.`, script_chars: scriptChars, stopped: 0, left: 0, lines: {} };
   writeProofKit(runDir, null); // also beside the kept script: one stored script in fourteen sourced the helper from its own directory
-  const r = await runProofScript(env, signal, async () => ({ script, cwd: repoDir }));
+  const r = await runProofScript(env, signal, runDir, async () => ({ script, cwd: repoDir }));
   if (!r) return { exit: null, seconds: 0, proved: 0, failed: 0, tail: "Loki could not create a scratch directory for its own re-run", script_chars: scriptChars, stopped: 0, left: 0, lines: {} };
-  const lines = tallyProof(r.text, r.token), vals = Object.values(lines);
-  return { exit: r.exit, seconds: r.seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: r.stopped, left: r.left, lines, checks: proofChecks(r.text, r.token) };
+  const lines = tallyProof(r.results, r.token), vals = Object.values(lines); // from the result file when it has lines, else from the output
+  return { exit: r.exit, seconds: r.seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: r.stopped, left: r.left, lines, checks: proofChecks(r.results, r.token) };
 }
 
 // ---- PROVES THE CHANGE: the same proof script, run against the base commit ----
@@ -322,7 +329,7 @@ export async function proofOnBase(repoDir: string, runDir: string, baseSha: stri
   const keep = (rec: Record<string, unknown>): void => { try { writeFileSync(cacheFile, JSON.stringify({ key, base_sha: baseSha, ...rec }) + "\n", { mode: 0o600 }); } catch { /* the seal then runs it again */ } };
   try { const c = JSON.parse(readFileSync(cacheFile, "utf8")) as { key?: string; seconds?: number; checks?: ProofCheck[]; why?: string }; if (c.key === key && typeof c.why === "string") return { ...unavailable(c.why, c.seconds ?? 0), cached: true }; if (c.key === key && Array.isArray(c.checks)) return { ...compareWithBase(head.checks, c.checks), seconds: c.seconds ?? 0, cached: true }; } catch { /* no usable record: run it */ }
   let prepWhy = "", wt = "";
-  const r = await runProofScript(env, signal, async (scratchDir) => {
+  const r = await runProofScript(env, signal, runDir, async (scratchDir) => {
     wt = join(scratchDir, "base");
     try { safeGit(repoDir, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", "--force", wt, baseSha], { stdio: "ignore", repoDrivers: true, timeout: 120_000 }); } catch { prepWhy = "Loki could not check out the base commit into a throwaway directory"; return null; }
     const deps = depDirs(repoDir); // dependencies are not in the commit: without them every check fails on base for the wrong reason and the comparison says nothing
@@ -336,13 +343,14 @@ export async function proofOnBase(repoDir: string, runDir: string, baseSha: stri
     let baseText = text; for (const d of names) baseText = baseText.split(d).join(wt); // a session often writes the repository's path as a literal (17 of 19 stored scripts): the base copy must not run the changed tree
     const rel = relative(real, (() => { try { return realpathSync(runDir); } catch { return runDir; } })()), dir = rel && !rel.startsWith("..") && !rel.startsWith("/") ? join(wt, rel) : join(scratchDir, "base-proof"); // same place inside the base tree: a script that finds the repository from its own location lands in the base tree too
     mkdirSync(dir, { recursive: true }); writeProofKit(dir, null); writeFileSync(join(dir, PROOF_SCRIPT), baseText, { mode: 0o700 });
+    try { const su = join(runDir, SETUP_FILE); if (existsSync(su)) copyFileSync(su, join(dir, SETUP_FILE)); } catch { /* a script that needs it says so */ } // the repo card's setup, beside the base copy as it is beside the kept script
     return { script: join(dir, PROOF_SCRIPT), cwd: wt, extra: { LOKI_REPO: wt }, limitS: Math.min(proofRerunS(env), Math.max(120, head.seconds * 4)), after: () => { try { safeGit(repoDir, ["worktree", "remove", "--force", wt], { stdio: "ignore", repoDrivers: true, timeout: 120_000 }); } catch { /* the scratch cleanup removes the directory; the prune below drops the record */ } } };
   });
   if (wt) { try { rmSync(wt, { recursive: true, force: true }); safeGit(repoDir, ["worktree", "prune"], { stdio: "ignore", repoDrivers: true, timeout: 60_000 }); } catch { /* a stale worktree record is harmless and pruned by git later */ } }
   if (!r) return unavailable("Loki could not create a scratch directory for the base run");
   if (!r.ran) { const why = prepWhy || "the base run could not be prepared"; if (!signal?.aborted) keep({ why }); return unavailable(why); }
   if (r.exit === null || r.timedOut) { const why = "the base run did not finish in time"; if (!signal?.aborted) keep({ why, seconds: r.seconds }); return unavailable(why, r.seconds); } // a cut run printed only some of its checks: comparing them would call the rest absent
-  const checks = proofChecks(r.text, r.token);
+  const checks = proofChecks(r.results, r.token);
   keep({ seconds: r.seconds, exit: r.exit, checks, tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-2000) });
   return { ...compareWithBase(head.checks, checks), seconds: r.seconds };
 }
