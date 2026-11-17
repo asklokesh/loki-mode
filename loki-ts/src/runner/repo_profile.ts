@@ -676,13 +676,19 @@ export function ensureProfile(repoDir: string, opts: BuildOpts = {}): { profile:
  *  `eligible` (the caller: untouched, non-target test) and EVERY failing id of the check is in the baseline (one new id makes it introduced).
  *  A check without parsed ids is introduced: unknown never excuses a failure. FireLater#21: `suite` names the full-suite check of the package that
  *  owns the test (the caller's FC-BASELINE-PER-PACKAGE `suites` entry); its ids are that package's baseline, so a frontend page test in a repo whose
- *  root command runs nothing is compared with the frontend suite's base failures. No suite, or one that did not run attributably: the root baseline. */
+ *  root command runs nothing is compared with the frontend suite's base failures. No suite, or one that did not run attributably: the root baseline.
+ *  `rerun` is what this run's own base rerun of the check showed: "same" (every failing id red there, failing the same way), "differs" (it ran the check's
+ *  tests and they passed, failed by other ids or failed with another error), or absent (nothing to compare: it ran without its dependencies, was cut, or never ran).
+ *  The suite baseline is read for "same" and, by id (LOKI_E10_BASE_RED_BY_ID, default on), when the rerun is absent; never for "differs". The caller passes
+ *  `suite` for a check with no rerun only while the package's dependency dirs are as intake left them (verify.ts depsAsIntake). FireLater#24: the
+ *  ignored frontend/next-env.d.ts changed during the session, every base rerun lost its node_modules and parsed no id, and 22 untouched page tests whose 146
+ *  failing ids were all in the frontend suite's 307 base failures blocked the run (and held the full suite with them). */
 export interface Attribution { preExistingChecks: string[]; preExistingIds: string[]; introducedChecks: string[]; line: string | null }
-export function attribute(repoDir: string, baseSha: string, failing: { name: string; ids?: string[]; eligible: boolean; suite?: string }[]): Attribution {
+export function attribute(repoDir: string, baseSha: string, failing: { name: string; ids?: string[]; eligible: boolean; suite?: string; rerun?: "same" | "differs" }[]): Attribution {
   const p = loadProfile(repoDir), none: Attribution = { preExistingChecks: [], preExistingIds: [], introducedChecks: failing.map((f) => f.name), line: null };
   if (!p || p.revision !== baseSha || failing.length === 0) return none;
   const root = p.baseline.attributable ? p.baseline.failing_ids : [], own = (name?: string): string[] => { const s = name ? p.suites?.find((x) => x.name === name && x.ran && x.attributable) : undefined; return s ? s.failing_ids : root; };
-  const rows = failing.map((f) => ({ ...f, base: new Set(own(f.suite)) })), known = new Set(rows.flatMap((r) => [...r.base]));
+  const byId = baseRedByIdOn(), rows = failing.map((f) => ({ ...f, base: new Set(own(f.rerun === "same" || (byId && f.rerun !== "differs") ? f.suite : undefined)) })), known = new Set(rows.flatMap((r) => [...r.base]));
   if (known.size === 0) return none;
   return split(rows, known.size);
 }

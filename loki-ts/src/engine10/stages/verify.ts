@@ -350,7 +350,7 @@ export function uncausedRed(c: { name: string; ids?: string[] }, changed: readon
 }
 export const feedsFixRound = (c: { name: string; result: string }, pre: { names: string[]; knownRed: string[]; sameError: string[] }): boolean => c.result === "fail" && !pre.names.includes(c.name) && !pre.sameError.includes(c.name) && !isHoldoutCheck(c.name);
 type Counts = { run: number; skipped: number };
-type BaseSubtraction = { ids: string[]; names: string[]; knownRed: string[]; sameError: string[]; quiet: string[]; shapeDiffers: string[]; weak: string[]; zero: string[]; cnt: Record<string, { b: Counts; h: Counts }>; envCrash: { name: string; sig: string }[] }; // quiet: in sameError on the fl24 second chance (text differs by noise, names nothing changed); shapeDiffers: known red whose head error has another shape than its base rerun's (the change altered the failure)
+type BaseSubtraction = { ids: string[]; names: string[]; knownRed: string[]; sameError: string[]; quiet: string[]; shapeDiffers: string[]; compared: string[]; weak: string[]; zero: string[]; cnt: Record<string, { b: Counts; h: Counts }>; envCrash: { name: string; sig: string }[] }; // compared: failing untouched checks whose base rerun passed or parsed a failing id (it ran their tests; one that lost its dependencies, was cut or never ran is not in it); quiet: in sameError on the fl24 second chance (text differs by noise, names nothing changed); shapeDiffers: known red whose head error has another shape than its base rerun's (the change altered the failure)
 /** The go -json stream carries a package-level pass event and no package-level fail. */
 export function goPackagePassed(out: string): boolean {
   let pass = false;
@@ -406,7 +406,7 @@ export async function subtractBase(
   ctx: RunContext, api: ProjectApi | null, checks: VerifyCheck[], tests: TestRef[], changed: string[],
   wall: Set<string>, rel: Set<string>, signal: AbortSignal, zeroOk = true, zeroIntake: ZeroGate = zeroGate(null), dep: ReadonlySet<string> = new Set(), own: ReadonlySet<string> = rel, symbols: readonly string[] = [],
 ): Promise<BaseSubtraction> {
-  const out: BaseSubtraction = { ids: [], names: [], knownRed: [], sameError: [], quiet: [], shapeDiffers: [], weak: [], zero: [], cnt: {}, envCrash: [] };
+  const out: BaseSubtraction = { ids: [], names: [], knownRed: [], sameError: [], quiet: [], shapeDiffers: [], compared: [], weak: [], zero: [], cnt: {}, envCrash: [] };
   const pairs = checks.flatMap((c) => {
     const t = tests.find((x) => testCheckName(x) === c.name);
     return t ? [{ c, t }] : [];
@@ -424,8 +424,8 @@ export async function subtractBase(
   };
   try {
     git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, ctx.baseSha]);
-    const base = new Map<VerifyCheck, { red: string[]; n: number; sk: number; out: string }>();
-    const record = (c: VerifyCheck, b: { ok: boolean; cut?: boolean; out: string }): void => { base.set(c, { red: !b.ok && !b.cut ? failIds(b.out) : [], n: ran(b.out) ?? summaryPassFailCount(b.out), sk: skipped(b.out), out: b.cut ? "" : b.out }); };
+    const base = new Map<VerifyCheck, { red: string[]; n: number; sk: number; out: string; live: boolean }>();
+    const record = (c: VerifyCheck, b: { ok: boolean; cut?: boolean; out: string }): void => { const red = !b.ok && !b.cut ? failIds(b.out) : []; base.set(c, { red, n: ran(b.out) ?? summaryPassFailCount(b.out), sk: skipped(b.out), out: b.cut ? "" : b.out, live: (b.ok && !b.cut) || red.length > 0 }); };
     // Relevant passes first, on a base without dependencies (their counts are compared as before). Only failing untouched checks need a base run
     // after that: a passing one's base result is never read.
     await baseGoBatch(sus.map(({ c, t }) => ({ c, t, bc: commandFor(t, dir, api) })), signal, record);
@@ -468,6 +468,7 @@ export async function subtractBase(
       || sus.some(({ c }) => !out.weak.includes(c.name) && base.get(c)!.red.length > 0 && (c.n ?? 0) >= base.get(c)!.n);
     {
       for (const { c } of un) {
+        if (c.result === "fail" && c.ids?.length && base.get(c)?.live) out.compared.push(c.name); // the base rerun ran this check's tests: what it showed decides, never the intake profile's ids alone
         if (own.has(c.name) || c.result !== "fail" || !c.ids?.length || !comparableIds(c.ids).every((i) => base.get(c)?.red.includes(i))) continue;
         out.knownRed.push(c.name); // red on base by every failing id
         if (sameErrors(headErrors.get(c) ?? "", base.get(c)!.out, c.ids)) out.sameError.push(c.name); // and failing the same way: never fix-round input, and a delivery may excuse it as pre-existing; a different error feeds the fix round
@@ -682,6 +683,12 @@ export const verifyStage: Stage = {
       if (zgEnv.sinceMs === undefined) return false; const root = api?.packageRootOf(rel) ?? ".";
       return [...new Set([root, "."])].every((d) => !envChangedSince(ctx.repoDir, d === "." ? ctx.repoDir : join(ctx.repoDir, d), zgEnv.sinceMs!, zgEnv.ignored ?? null, zgEnv.deps));
     };
+    // The same question for the dependency dirs alone (node_modules, .venv and their package listing; no other ignored file), once per package root: the
+    // gate for reading a suite baseline by id when the base rerun gave nothing to compare. A deleted or added package can break a test that has no parsed id.
+    const depsSeen = new Map<string, boolean>(), depsAsIntake = (rel: string): boolean => {
+      if (zgEnv.sinceMs === undefined) return false;
+      return [...new Set([api?.packageRootOf(rel) ?? ".", "."])].every((d) => { if (!depsSeen.has(d)) depsSeen.set(d, !envChangedSince(ctx.repoDir, d === "." ? ctx.repoDir : join(ctx.repoDir, d), zgEnv.sinceMs!, [], zgEnv.deps)); return depsSeen.get(d)!; });
+    };
     const touchedRed = new Set(checks.filter((c) => { const rel = c.name.slice(c.name.indexOf(":") + 1); return c.result === "fail" && changed.includes(rel) && !wallNames0.has(c.name) && !isHold(c) && envAsIntake(rel) && touchedRedOnBase(ctx.repoDir, ctx.baseSha, { ids: c.ids, errors: headErrors.get(c) }, editedTestTitles(ctx.repoDir, ctx.baseSha, rel)); }).map((c) => c.name)); // TOUCHED-BASE-RED: before decisive, so an edited base-red file does not force a quick verify
     const decisive = qs !== null && checks.some((c) => c.result === "fail" && !touchedRed.has(c.name) && (keep.has(c.name) || changed.includes(c.name.slice(c.name.indexOf(":") + 1)))); // a blocking, Wall, task-named or touched test is never excused as pre-existing red
     if (!decisive) await runTests(split.rest);
@@ -708,9 +715,11 @@ export const verifyStage: Stage = {
     const touchedExcused = [...touchedRed].filter((n) => !preRed.names.includes(n) && checks.some((c) => c.name === n && c.result === "fail")); // TOUCHED-BASE-RED: excused like any base-red check, and disclosed on the baseline line (never a cap: every failing id and error equals base)
     if (touchedExcused.length) { preRed.names.push(...touchedExcused); preRed.ids.push(...checks.filter((c) => touchedExcused.includes(c.name)).flatMap((c) => c.ids ?? [])); }
     // REPOMEM: a failing, untouched, non-target test whose every id was already red in the intake baseline (same base commit) is pre-existing: never blocks. Anything else that fails is introduced and always blocks.
-    // A package's own suite baseline is consulted only for a check the base run showed failing the same way (sameErrors): matching ids alone never excuse a changed error.
+    // A package's own suite baseline is consulted for a check the base rerun showed failing the same way (sameErrors) and, by id, for one whose base rerun gave nothing to compare
+    // (it lost its dependencies: the environment gate; FireLater#24) while the dependency dirs themselves are as intake left them (depsAsIntake). A check the rerun did run, and
+    // showed passing, red by other ids or red with another error, is never excused by matching ids (attribute's `rerun`); with a dependency dir changed the suite is not read at all.
     const suiteOf = (name: string): string | undefined => { const t = tests.find((x) => testCheckName(x) === name), pkg = t ? api?.packageOf(t.path) : null; return pkg?.commands.test ? `full suite: ${pkg.name}` : undefined; };
-    const attr = attribute(ctx.repoDir, ctx.baseSha, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, ids: c.ids, eligible: !targetNames.has(c.name) && !changed.includes(c.name.slice(c.name.indexOf(":") + 1)), ...(suiteOf(c.name) && preRed.sameError.includes(c.name) ? { suite: suiteOf(c.name)! } : {}) })));
+    const attr = attribute(ctx.repoDir, ctx.baseSha, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, ids: c.ids, eligible: !targetNames.has(c.name) && !changed.includes(c.name.slice(c.name.indexOf(":") + 1)), ...(suiteOf(c.name) && (preRed.compared.includes(c.name) || depsAsIntake(c.name.slice(c.name.indexOf(":") + 1))) ? { suite: suiteOf(c.name)!, ...(preRed.sameError.includes(c.name) ? { rerun: "same" as const } : preRed.compared.includes(c.name) ? { rerun: "differs" as const } : {}) } : {}) })));
     attr.introducedChecks = [...new Set(attr.introducedChecks.map((n) => (isHoldoutCheck(n) ? "holdout" : n)))]; preRed.names.push(...attr.preExistingChecks); preRed.ids.push(...attr.preExistingIds);
     const lintUntouchedNames: string[] = []; // LINT-UNTOUCHED: filled by runLintChecks below
     if (!signal.aborted) {

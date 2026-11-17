@@ -98,7 +98,7 @@
 #  17. conflict_resume.ts wallFailures: excuse every known_red_checks entry again; the delivery check fails.
 #  18. verify.ts errorsById: keep one error line per id (last wins) instead of the sorted multiset; or let a FAIL line take the
 #      next FAIL line as its error; the delivery check fails (the test.each regression reads as the same error).
-#  19. verify.ts attribute call: pass `suite` without the preRed.sameError gate (ids only); mono3 unnamed is delivered with p1 excused.
+#  19. verify.ts attribute call: pass `suite` with no `rerun` marker, or subtractBase leaves `compared` empty (ids only, also when the base rerun showed another error); mono3 unnamed is delivered with p1 excused.
 #  20. verify.ts: with LOKI_E10_COLLATERAL_BASELINE=0, excuse collateral same-error checks at once (no fix round first); mono3 same0 runs 0 fix rounds.
 #  20f. repo_profile.ts collateralOnBaseline: return true whenever the test file is unedited (no baseline comparison); mono3 changed is delivered with p1 excused.
 #  20b. machine.ts: drop the onlyCollateralRed re-verify; mono3 conflict ends SPEC_CONFLICT.
@@ -117,9 +117,11 @@
 #  23b. repo_profile.ts: drop flaky_ids from the compared ids, skip the second base pass (runProbed), or drop the suite-red-at-base line, compare flaky ids by id only, skip the error compare in a suite red at base, drop errNamesChanged or the flaky NOT PROVEN line; the same unit check fails.
 #  23c. repo_profile.ts whyFullSuiteNotExcused (or verify.ts not_excused, or seal.ts listing it): return [] or drop the changed-file / new-id / cut / error-text branch; the same unit check fails.
 #  24. (fl24) util/base_guard.ts envChangedSince: drop the TOOL_OUTPUT_FILE skip (rebuild dist); mono3 buildinfo takes a fix round.
-#  24b. (fl24) machine.ts: drop baseRedClaim from the fix-conflict re-verify (rebuild dist); mono3 envlocal ends SPEC_CONFLICT.
+#  24b. (fl24) machine.ts: drop baseRedClaim from the fix-conflict re-verify (rebuild dist); mono3 envlocal0 ends SPEC_CONFLICT.
 #  24c. (fl24) repo_profile.ts attributeFullSuite: drop quietAsBase, or failures.ts errorShape keeps :line:col; the fl24 unit's noise case fails. errorShape masking quoted values makes real vitest pathnorm deliver.
 #  24d. (fl24) repo_profile.ts whyFullSuiteNotExcused: drop the blocked branch; the fl24 unit's blocked case fails.
+#  24f. (fl24) repo_profile.ts attribute: read the suite baseline only for rerun "same" (rebuild dist); mono3 envlocal takes a fix round and the fl24 targeted unit's norerun case reads 0:2.
+#  24g. (fl24) verify.ts attribute call: drop the depsAsIntake condition (rebuild dist); real vitest delpkg is delivered PARTIAL (p9, broken by the deleted package, has no parsed id and is suite-only).
 #  24e. repo_profile.ts sameUnattributableRed: drop the failing_shape comparison (the base-red-shape unit's new-failure case reads pre), or runOnce stops recording failing_shape (it reads noshape).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -876,22 +878,29 @@ m3 unnamed "add a del(p) helper to the frontend client" 'export const del = (p: 
 #              the base rerun keeps its dependencies, p1 and p2 fail the same way there, and they are pre-existing with no fix round. On v11.139.0 the base
 #              ran without node_modules, parsed no ids, and the red page tests blocked the run.
 #   envlocal:  the session rewrites the ignored frontend/.env.local, a real environment change, so the base rerun stays without dependencies (fail closed)
-#              and the page tests feed a fix round, which stops with LOKI_SPEC_CONFLICT saying they pre-exist on base. Every failing id is red in the
-#              intake baseline and no failure names the change, so the stop is pre-existing red: PARTIAL with a NOT PROVEN line, never SPEC_CONFLICT.
+#              and parses no id. The page tests are untouched, node_modules is as intake left it, and every failing id is in the frontend suite's intake
+#              baseline on this base commit, so they are pre-existing by id with no fix round (FireLater#24, 2026-11-17: 22 such page tests blocked a run after next-env.d.ts changed).
+#   envlocal0: the same with LOKI_E10_BASE_RED_BY_ID=0: the page tests feed a fix round, which stops with LOKI_SPEC_CONFLICT saying they pre-exist on
+#              base. Every failing id is red in the intake baseline and no failure names the change, so the stop is pre-existing red: PARTIAL with a
+#              NOT PROVEN line, never SPEC_CONFLICT.
 M4="$T/mono4"; cp -R "$M3" "$M4"
 printf 'node_modules\n.next/\n.env.local\ntsconfig.tsbuildinfo\n' > "$M4/.gitignore"
 mkdir -p "$M4/frontend/node_modules" "$M4/backend/node_modules" && printf '{"v":1}\n' > "$M4/frontend/tsconfig.tsbuildinfo" && printf 'API=1\n' > "$M4/frontend/.env.local"
 git -C "$M4" add -A . && git -C "$M4" commit -q -m "ignore local files"
-for leg in buildinfo envlocal; do cp -R "$M4" "$T/mono3-$leg"; done
+for leg in buildinfo envlocal envlocal0; do cp -R "$M4" "$T/mono3-$leg"; done
 UNNAMED_OK='export const del = (p: string): string => `DELETE ${p}`;'
 m3 buildinfo "add a del(p) helper to the frontend client" "$UNNAMED_OK" FAKE_VITEST_NEEDS_DEPS=1 E2E_STUB_EDIT_FILE=frontend/tsconfig.tsbuildinfo E2E_STUB_EDIT_FROM='"v":1' E2E_STUB_EDIT_TO='"v":2'
 got 'fix_rounds 0' && got 'pre_red p1,p2' && ! got 'verdict SPEC_CONFLICT' && ! got 'verdict FAILED' \
     && ok "mono3 buildinfo: a rewritten tsconfig.tsbuildinfo keeps the base rerun's dependencies; the base-red page tests are pre-existing with no fix round ($(printf '%s\n' "$M3S" | grep verdict))" \
     || { bad "mono3 buildinfo: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
 m3 envlocal "add a del(p) helper to the frontend client" "$UNNAMED_OK" FAKE_VITEST_NEEDS_DEPS=1 E2E_STUB_EDIT_FILE=frontend/.env.local E2E_STUB_EDIT_FROM='API=1' E2E_STUB_EDIT_TO='API=2' E2E_STUB_FIX=prered
-got 'fix_rounds 1' && got 'verdict PARTIAL' && got 'base_red_conflict True' \
-    && ok "mono3 envlocal: a fix round that stops saying the base-red failures pre-exist on base, with the baseline agreeing, is delivered PARTIAL with a NOT PROVEN line, not SPEC_CONFLICT (rc $M3RC)" \
+got 'fix_rounds 0' && got 'pre_red p1,p2' && ! got 'verdict SPEC_CONFLICT' && ! got 'verdict FAILED' \
+    && ok "mono3 envlocal: with the base rerun left without dependencies, untouched page tests whose every failing id is in the suite's intake baseline are pre-existing by id with no fix round ($(printf '%s\n' "$M3S" | grep verdict))" \
     || { bad "mono3 envlocal: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
+m3 envlocal0 "add a del(p) helper to the frontend client" "$UNNAMED_OK" FAKE_VITEST_NEEDS_DEPS=1 E2E_STUB_EDIT_FILE=frontend/.env.local E2E_STUB_EDIT_FROM='API=1' E2E_STUB_EDIT_TO='API=2' E2E_STUB_FIX=prered LOKI_E10_BASE_RED_BY_ID=0
+got 'fix_rounds 1' && got 'verdict PARTIAL' && got 'base_red_conflict True' \
+    && ok "mono3 envlocal0 (LOKI_E10_BASE_RED_BY_ID=0): a fix round that stops saying the base-red failures pre-exist on base, with the baseline agreeing, is delivered PARTIAL with a NOT PROVEN line, not SPEC_CONFLICT (rc $M3RC)" \
+    || { bad "mono3 envlocal0: $(printf '%s\n' "$M3S" | tr '\n' ' ') (rc $M3RC)"; printf '%s\n' "$M3OUT" | tail -8 | sed 's/^/    | /'; }
 
 # Real vitest 5.0.5 output for the changed case (tests/min/fixtures/failures/vitest-same-id-*.txt): the same failing id with an AssertionError on base and
 # a TypeError on head is a different error to sameErrors (the matcher every base comparison above uses), and base against itself is the same.
@@ -1068,6 +1077,32 @@ console.log(r.join(" | "));
 Y6="same 1:false | noise 1:true | value 1,1 | shape 1 | names-file 1 | names-symbol 1 | noise-alone 0 | blocked 1:true:true | basered 1,0,0,0,0,1 | onlyBaseRed true,false,true,false,false | claim true,true,false"
 [ "$B6" = "$Y6" ] && ok "unit: a base-red id whose error differs only by noise (a stack path, a :line:col) is excused with a NOT PROVEN line; a changed number or quoted value, another error shape or a failure naming a changed file or symbol still blocks; a suite held by an unexcused targeted check says so; a fix round's pre-existing stop needs every live failure red in a baseline" \
     || bad "fl24 attribution unit gave: $B6 (want: $Y6)"
+
+# FireLater#24 on 2026-11-17, synthetic and modeled on its verify record: untouched page tests (a bare title and a full id per failure) whose every failing
+# id is in the package suite's base failures, a root baseline with no ids, and a base rerun that parsed no id (the environment gate left it without its
+# dependencies). attribute() reads the suite baseline by id for them, so they are pre-existing and the full suite is no longer held by their ids. A file
+# the run edited (ineligible), one new failing id, a rerun that showed another error ("differs"), no suite baseline to read, or
+# LOKI_E10_BASE_RED_BY_ID=0 (only a rerun failing the same way reads the suite) still blocks.
+B6T="$(G="$G4" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), { writeFileSync } = await import("node:fs"), { execFileSync } = await import("node:child_process");
+const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), r = [];
+const A = ["src/app/admin/__tests__/page.test.tsx > Admin > has gray background", "src/app/sla/__tests__/page.test.tsx > SLA > shows red badge"], T = ["has gray background", "shows red badge"];
+writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: "npm test", exit_code: 254, duration_s: 0.1, timed_out: false, failing_ids: [], attributable: false, reason: "no ids" }, suites: [{ name: "full suite: web", ran: true, command: "(cd web && npm test)", exit_code: 1, duration_s: 9, timed_out: false, attributable: true, failing_ids: [...T, ...A] }] }));
+const changed = ["web/src/components/layout/sidebar.tsx", "web/src/lib/api.ts"];
+const P = (o) => [{ name: "vitest:web/src/app/admin/__tests__/page.test.tsx", ids: [T[0], A[0]], suite: "full suite: web", eligible: true, ...o }, { name: "vitest:web/src/app/sla/__tests__/page.test.tsx", ids: [T[1], A[1]], suite: "full suite: web", eligible: true, ...o }];
+const at = (rows) => rp.attribute(g, sha, rows), n = (a) => a.preExistingChecks.length + ":" + a.introducedChecks.length, one = (o) => [P({})[0], { ...P({})[1], ...o }];
+const dead = at(P({})), held = at(P({ suite: undefined }));
+r.push("norerun " + n(dead) + ":" + /^baseline: 2 pre-existing failing check\(s\) \(not blocking\), 0 introduced$/.test(dead.line ?? ""), "same " + n(at(P({ rerun: "same" }))), "differs " + n(at(P({ rerun: "differs" }))));
+r.push("edited " + n(at(one({ eligible: false }))), "newid " + n(at(one({ ids: [T[1], A[1], "src/app/sla/__tests__/page.test.tsx > SLA > fresh"] }))), "nosuite " + n(held) + ":" + (held.line === null));
+const full = [{ name: "full suite: web", cmd: "(cd web && npm test)", result: "fail", ids: [...T, ...A] }], ids = (rows, a) => rows.filter((x) => !a.preExistingChecks.includes(x.name)).flatMap((x) => x.ids);
+const fs = (blocked) => rp.attributeFullSuite(g, sha, full, blocked, changed).preExistingChecks.length;
+r.push("suite " + fs(ids(P({}), held)) + "," + fs(ids(P({}), dead)) + ":" + /4 failing id\(s\) also fail in a targeted check that was not excused/.test(rp.whyFullSuiteNotExcused(g, sha, full, changed, [], ids(P({}), held)).join("|")));
+process.env.LOKI_E10_BASE_RED_BY_ID = "0"; r.push("byid-off " + n(at(P({}))) + "," + n(at(P({ rerun: "same" }))));
+console.log(r.join(" | "));
+' 2>&1)"
+Y6T="norerun 2:0:true | same 2:0 | differs 0:2 | edited 1:1 | newid 1:1 | nosuite 0:2:true | suite 0,1:true | byid-off 0:2,2:0"
+[ "$B6T" = "$Y6T" ] && ok "unit: an untouched targeted check whose every failing id is in its package suite's base failures is pre-existing when the base rerun gave nothing to compare, and the full suite is no longer held by its ids; a file the run edited, one new failing id, a rerun showing another error, no suite baseline, or LOKI_E10_BASE_RED_BY_ID=0 still blocks" \
+    || bad "fl24 targeted attribution unit gave: $B6T (want: $Y6T)"
 
 # SPEED-BASE-ALIAS (tanstack-query, L-Haiku-v1371-nopatch tq-11327: the baseline ran `pnpm test` and then the full-suite command `npm test --silent`, twice
 # each, 51 s for one package.json script). npm, pnpm and yarn running the same root script with no pre/post hook share one base run: the suite is not
