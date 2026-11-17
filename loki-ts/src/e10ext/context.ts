@@ -1,6 +1,6 @@
 // S41-10: the implement/fix brief's repo context. Replaces the first 200 repo paths with up to 20
 // relevant files (plan relevant_files, else keyword selection over the tree-keyed cached map), their
-// impacted tests with one exact command each, and E-126 repo memory's verified command. Data only, no
+// impacted tests with one exact command each (the repo card, e10ext/repomemory.ts, is added by the implement stage). Data only, no
 // verdict logic (D42). plan.ts/verify.ts are stages, so core passes selectRelevantFiles and runnerCmd in.
 import { isOff } from "../council/role_agents.ts";
 import { readRepoMapCache, repoCacheDir, repoKey } from "../engine10/cache.ts";
@@ -17,7 +17,7 @@ import { signatureDigest } from "../util/ts_signatures.ts";
 import { contextPack, packEnabled, type ContextPack } from "../util/context_pack.ts";
 import { findDefectPins } from "../util/test_guard.ts";
 import { releaseNoteBrief } from "../project_model/conventions.ts";
-import { readVerifiedCommand } from "./repomemory.ts"; import { profileBrief } from "../runner/repo_profile.ts"; import { exampleFiles } from "../util/pr_lessons.ts";
+import { repoCardOn, SETUP_FIRST_LINE } from "./repomemory.ts"; import { profileBrief } from "../runner/repo_profile.ts"; import { exampleFiles } from "../util/pr_lessons.ts";
 
 export interface ContextDeps {
   select: (task: string, map: RepoMap, max: number) => string[];
@@ -95,7 +95,7 @@ export const TAKE_THE_TIME_LINE = "This is an issue to deliver in full, not a qu
 export const DELIVER_EACH_LINE = "This issue lists several things to deliver. Deliver each one. If a required one is left undone, finish with LOKI_UNFINISHED and say which. An item the issue marks optional may be skipped: say so and finish with LOKI_DONE.";
 /** The per-task issue-run lines (block, take the time, deliver each, and the environment card line when one was made), or "" outside an issue run on claude. */
 export const proveByRunningBlock = (provider: string, source: unknown, env: NodeJS.ProcessEnv = process.env, cardLine: string | null = null): string =>
-  issueRunBrief(provider, source, env) ? [PROVE_BY_RUNNING_BLOCK, PROOF_SCRIPT_LINE, TAKE_THE_TIME_LINE, DELIVER_EACH_LINE, ...(cardLine ? [cardLine] : [])].join("\n\n") : "";
+  issueRunBrief(provider, source, env) ? [PROVE_BY_RUNNING_BLOCK, PROOF_SCRIPT_LINE, ...(repoCardOn(env) ? [SETUP_FIRST_LINE] : []), TAKE_THE_TIME_LINE, DELIVER_EACH_LINE, ...(cardLine ? [cardLine] : [])].join("\n\n") : "";
 export const pinnedTestUpdateEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PINNED_TEST_UPDATE"] ?? "").trim());
 /** The rules block the implement and fix briefs lead with: FIXED_RULES by default, the v11.139.0 text with the knob off. Either way a constant, so the prefix stays cache-stable. */
 export const fixedRules = (env: NodeJS.ProcessEnv = process.env, issue = false): string => { const r = pinnedTestUpdateEnabled(env) ? (docUpdateRuleOn(env) ? FIXED_RULES : FIXED_RULES_DOC_V139) : LEGACY_FIXED_RULES; return issue ? issueRules(r) : r; }; // issue: the caller's issueRunBrief(provider, source); each result is a constant, so the prefix stays cache-stable per route
@@ -125,7 +125,6 @@ export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): Br
   const rel = (p: string): string => (p.startsWith(`${ctx.repoDir}/`) ? p.slice(ctx.repoDir.length + 1) : p);
   const cmds = refs.map((t) => { const [c, a, , dir] = d.cmd(t, ctx.repoDir); return `${dir && dir !== "." ? `cd ${shq(dir)} && ` : ""}${[rel(c), ...a].map(shq).join(" ")}`; });
   const interps = cmds.length ? [] : detectedInterpreters(tm, ctx.repoDir, d); // no impacted test: still name the interpreter intake detected
-  const verified = readVerifiedCommand(repoCacheDir(repoKey(null, ctx.repoDir)));
   // L020: no plan and no ranked file leaves the Relevant files block out (the head of `git ls-files` named files the task never touches)
   const pack = model !== undefined && packEnabled(model) && files.length ? contextPack(ctx.repoDir, task, files, map?.entries ?? []) : null; // L021: haiku and sonnet only; Opus keeps today's bytes
   const whole = new Set((pack?.spans ?? []).filter((s) => s.symbol === null).map((s) => s.path)); // a file the pack shows whole needs no signatures
@@ -139,7 +138,6 @@ export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): Br
     interps.length ? `Detected test interpreter (no test file to run yet; use exactly this executable, never a guessed one): ${interps.join(", ")}` : "",
     pins.length ? `Existing assertions that pin the behavior the task reports as wrong (the correct fix is expected to change these expected values; change only these, and make sure each new expected value fails on the unfixed code):\n${pins.map((p) => `${p.file}:${p.line}: ${p.text.slice(0, 140)}`).join("\n")}` : "",
     cmds.length ? `Impacted test commands:\n${cmds.join("\n")}` : "",
-    verified ? `Last verified test command: ${verified}` : "",
     releaseNoteBrief(ctx.repoDir, files), // L3: one per-run line after the cache prefix; "" when the repo has no fragment convention
     profileBrief(ctx.repoDir), // REPOMEM: validated repo commands + baseline-red tests; byte-stable for an unchanged profile
   ].filter(Boolean).join("\n\n");

@@ -11,7 +11,7 @@
  */
 import { runVersion } from "./commands/version.ts";
 import { runProvider } from "./commands/provider.ts";
-import { runMemory } from "./commands/memory.ts";
+import { runKnowledge, runMemory } from "./commands/memory.ts";
 import { installCrashHandlers } from "./runner/crash.ts";
 import { resolveSdkMode } from "./runner/sdk_mode.ts";
 
@@ -92,6 +92,8 @@ async function dispatch(argv: readonly string[]): Promise<number> {
 
     case "memory":
       return runMemory(rest);
+    case "knowledge":
+      return runKnowledge(rest);
 
     case "status": {
       // CLI-MODERN-2: `loki status` shows Loki 10 runs only; the legacy box is gone from this path.

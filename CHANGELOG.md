@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Loki remembers the repository
+- After an issue run, Loki keeps a repo card: the setup half of the proof script its own re-run got past (throwaway services, migrations, starting the product, the first record), the quirks that script marks with `# QUIRK:`, the environment it exports and the check commands that passed. Each fact records the commit and lockfile hash it was verified on. Nothing in it is written by a model. `LOKI_REPO_CARD=0` opts out.
+- The next issue run in the same repository, including a fresh clone of the same origin, gets the card in its brief and the setup as `$LOKI_SCRATCH/loki-setup.sh`, so the session starts its proof from a setup that already worked. A fact verified on other lockfiles is shown as "check before trusting"; a setup that breaks a later proof before any check runs is dropped.
+- `loki knowledge` shows what Loki knows about the repository (`loki doctor --repo` prints it too). `loki knowledge export` writes `.claude/rules/loki-repo-card.md` for a team to commit; Loki never commits it itself. The local copy lives in `~/.loki/repo-cards/`.
+- Removed from the brief: "Last verified test command", which was read on every run and never written. The unverified learnings block (`.loki/state/relevant-learnings.json`) now reaches a brief only with `LOKI_LEARNINGS_INJECT=1`.
+
 ## v11.147.0 (2026-11-16)
 
 ### One road for every model
