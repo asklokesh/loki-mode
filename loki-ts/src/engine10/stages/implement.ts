@@ -295,7 +295,7 @@ export const implementStage: Stage = {
           if (reviewedEarly || !reviewFixOn()) break;
           reviewedEarly = true;
           const xr = await crossReview(ctx, "VERIFIED", tree, signal, true); if (xr?.cost_iteration) earlyReviewCost = xr.cost_iteration;
-          const found = xr && (xr.level === "block" || xr.notes.some(isUnmetNote)) ? xr.notes.filter((n) => /^cross-review (block|flag) /.test(n) || isUnmetNote(n)).slice(0, 8) : [];
+          const found = xr && (xr.level === "block" || xr.level === "flag") ? xr.notes.filter((n) => /^cross-review (block|flag) /.test(n) || isUnmetNote(n)).slice(0, 8) : []; // flags too: a reviewer filed "the default search page fails with a 400 on first load" as a flag, and the session can fix or rebut a flag in one turn
           ctx.emit("review.early", "implement", { level: xr?.level ?? "not_run", findings: found.length });
           if (!found.length) break;
           const r3 = await resumeForProofScript(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, [`An independent reviewer read your whole change and found ${found.length} problem${found.length === 1 ? "" : "s"}:`, "", ...found.map((n, i) => `${i + 1}. ${n.replace(/^cross-review \w+ \([^)]*\):\s*/, "")}`), "", "Check each one against the code. Where the reviewer is right, fix the product (and the documentation when the two disagree), add a check for it to $LOKI_SCRATCH/loki-proof.sh under the acceptance item it belongs to, and run the proof again until it passes. Where the reviewer is wrong, say why in one line and change nothing for it. Do not remove or loosen an existing check. End with the same finish line as before."].join("\n"));

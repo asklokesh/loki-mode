@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+- Review, then fix now hands back the reviewer's concerns as well as its reproduced defects. A reviewer filed "the default search page fails with a 400 on first load" as a concern, not a defect, so the session never saw it and the run sealed VERIFIED with it listed under not proven. The session fixes each one or says in a line why the reviewer is wrong.
 
 ## v11.152.0 (2026-11-17)
 
