@@ -7,11 +7,11 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 ## Counts
 
 - KEEP: 12
-- HIDE: 42
+- HIDE: 43
 - FOLD: 61
 - REMOVED: 29
-- Total rows: 144
-- Registry paths (commands and nested subcommands): 215
+- Total rows: 145
+- Registry paths (commands and nested subcommands): 218
 
 ## Commands
 
@@ -23,6 +23,7 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 | doctor | bun route, bash fallthrough | KEEP | Core onboarding gate |  |
 | provider | bun route, bash fallthrough | FOLD | Provider-agnostic core | loki config set provider NAME |
 | memory | bun route, bash fallthrough | HIDE | Memory still carries legacy store paths |  |
+| knowledge | loki-ts/src/cli.ts | HIDE | Shown by doctor --repo; the visible command list stays at 11 |  |
 | rollback | bun route, bash fallthrough | FOLD | Checkpoint restore is engine-neutral | loki undo <run> |
 | backup | autonomy/loki | HIDE | Enterprise retention and backup (D99 item 7) |  |
 | restore | autonomy/loki | HIDE | Enterprise retention and backup (D99 item 7) |  |
