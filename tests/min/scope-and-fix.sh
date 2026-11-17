@@ -3994,6 +3994,7 @@ done <<< "$out"
 #        line rule, or accept a subset in place of the same set; the NO-ID base-passes, names-a-changed-file or new-line leg fails.
 #   RW6. machine.ts verifyLimitFor: subtract the fix round again (VERIFY_RESERVE_S), or drop the upper bound; the BUDGET legs fail.
 #   RW7. verify.ts suiteTimeoutFor: return the fixed 300 s; the BUDGET suite-timeout leg fails.
+#   RW9. check_result.ts resolveTool: drop the canImport probe (`project && module && false`); the three VENV-PROBE legs for the bare .venv fail.
 cat > "$T/rw01.ts" <<'TS'
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
@@ -4058,6 +4059,20 @@ res("NO-ID a base error line missing on head blocks too (the same set, not a sub
 res("NO-ID a line naming a file the change edited blocks", !cmp(outAt(H, "36.00ms"), { ok: false, out: outAt(B, "41.00ms") }, ["packages/app/test-browser/setup.ts"]));
 res("NO-ID a line naming a changed symbol blocks", !cmp(outAt(H, "1ms", "ReferenceError: installUpdate is not defined"), { ok: false, out: outAt(B, "2ms", "ReferenceError: installUpdate is not defined") }));
 res("NO-ID no base run, or no output on either side, excuses nothing", !cmp(outAt(H, "36.00ms"), null) && !cmp("", { ok: false, out: "" }));
+// ---- a virtualenv that cannot import the test runner is not used to run the tests (hermes-agent#147745: a .venv without pytest appeared mid-run)
+const cr = await import(root + "/loki-ts/src/util/check_result.ts");
+const venvRepo = (name: string, script: string): string => { const d = T + "/" + name; rmSync(d, { recursive: true, force: true }); mkdirSync(d + "/.venv/bin", { recursive: true }); mkdirSync(d + "/tests", { recursive: true }); writeFileSync(d + "/.venv/bin/python", script, { mode: 0o755 }); writeFileSync(d + "/tests/test_ok.py", "def test_ok():\n    assert 1 + 1 == 2\n"); return d; };
+const noPytest = venvRepo("rw01-venv-bare", '#!/bin/sh\ncase "$*" in *"import pytest"*) exit 1 ;; *"-m pytest"*) echo "$0: No module named pytest" >&2; exit 1 ;; esac\nexec python3 "$@"\n');
+const withPytest = venvRepo("rw01-venv-full", '#!/bin/sh\nexec python3 "$@"\n');
+const ref = { runner: "pytest", path: "tests/test_ok.py" };
+const bare = cr.runnerCmd(ref, noPytest), fullVenv = cr.runnerCmd(ref, withPytest);
+res("VENV-PROBE a .venv that cannot import pytest is not the interpreter the tests run on", bare[0] === "python3" && bare[2] === "system" && bare[1].join(" ") === "-m pytest -q tests/test_ok.py");
+res("VENV-PROBE the receipt line names the interpreter that ran the tests and why the virtualenv was skipped", cr.venvSkipNotes(noPytest).length === 1 && cr.venvSkipNotes(noPytest)[0] === "tests ran on python3, outside the project virtualenv: .venv/bin/python cannot import pytest" && cr.venvSkipNotes(withPytest).length === 0);
+res("VENV-PROBE a .venv that can import pytest is still the project interpreter", fullVenv[0] === withPytest + "/.venv/bin/python" && fullVenv[2] === "project");
+const sysPytest = (() => { try { execFileSync("python3", ["-c", "import pytest"], { stdio: "ignore" }); return true; } catch { return false; } })();
+const runIn = (d: string, c: [string, string[]]): number => { try { execFileSync(c[0], c[1], { cwd: d, stdio: "ignore", env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } }); return 0; } catch (x: any) { return typeof x.status === "number" ? x.status : 1; } };
+res("VENV-PROBE with it the test file runs and passes; on the bare .venv itself the same file fails at once" + (sysPytest ? "" : " (SKIP: this machine's python3 has no pytest)"), !sysPytest || (runIn(noPytest, bare) === 0 && runIn(noPytest, [noPytest + "/.venv/bin/python", bare[1]]) !== 0));
+rmSync(noPytest, { recursive: true, force: true }); rmSync(withPytest, { recursive: true, force: true });
 // ---- time: verify's limit is what is left before commit, seal and the PR, bounded above; a suite's timeout is what is left of the stage
 res("BUDGET the opencode record (cap 900 s, 355 s gone): verify's limit is 335 s, not 155 s", mc.verifyLimitFor(120, 840, 355, {}) === 335);
 res("BUDGET with intake at 5 s on the same cap verify gets 645 s", mc.verifyLimitFor(120, 840, 45, {}) === 645);
@@ -4066,8 +4081,8 @@ res("BUDGET the stage floor still holds when little is left", mc.verifyLimitFor(
 res("BUDGET a suite's timeout is the time left of the stage, at most 300 s; none left means it is not started", vf.suiteTimeoutFor(1_000_000, 0, {}) === 300_000 && vf.suiteTimeoutFor(100_000, 40_000, {}) === 55_000 && vf.suiteTimeoutFor(100_000, 97_000, {}) === 0 && vf.suiteTimeoutFor(undefined, 0, {}) === 300_000 && vf.suiteTimeoutFor(undefined, 0, { LOKI_E10_SUITE_TIMEOUT_S: "3" }) === 3000);
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/rw01.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
-grep -q '^EXIT 0$' <<< "$out" || bad "rw01 unit script crashed or exited non-zero: $(printf '%s\n' "$out" | tail -3)"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 27 ] || bad "rw01 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 27"
+grep -q '^EXIT 0$' <<< "$out" || bad "rw01 unit script crashed or exited non-zero: $(printf '%s\n' "$out" | tail -12 | tr "\n" "|")"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 31 ] || bad "rw01 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 31"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

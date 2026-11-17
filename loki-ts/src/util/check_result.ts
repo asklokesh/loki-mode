@@ -1960,10 +1960,25 @@ export function toolFallbacks(repoDir: string, tool: string, env: NodeJS.Process
   for (const v of [".venv", "venv"]) { const py = join(repoDir, v, "bin", "python"); if (existsSync(py)) { out.push([py, ["-m", tool]]); break; } }
   return out;
 }
-export function resolveTool(repoDir: string, bin: string, fallback: string, lastResort = fallback): [string, Interpreter, string[]] {
+/** RW-01 VENV-PROBE: a project virtualenv runs `<python> -m <module>` only when it can import that module (one `-c "import <module>"` probe per interpreter
+ *  and module, kept for the life of the process, which is one run's worker). hermes-agent#147745: the implement session's `uv run` created a .venv
+ *  without pytest (the repo keeps it in a dependency group uv does not install by default); verify then ran every test file on that .venv because it
+ *  existed, and 33 files failed in 0.06 s with "No module named pytest". With the probe red the tests run on the interpreter outside the virtualenv, as
+ *  they did before the .venv appeared (`uv run` is skipped too: it runs in that same .venv), and venvSkipNotes names the interpreter and the reason. */
+const importProbe = new Map<string, boolean>(), venvSkips = new Map<string, string>();
+export function canImport(py: string, module: string): boolean {
+  if (!/^[A-Za-z_][\w.]*$/.test(module)) return false;
+  const k = `${py}\0${module}`;
+  if (!importProbe.has(k)) { let ok = false; try { ok = spawnSync(py, ["-c", `import ${module}`], { stdio: "ignore", timeout: 15000, env: plainTestEnv() }).status === 0; } catch { ok = false; } importProbe.set(k, ok); }
+  return importProbe.get(k)!;
+}
+/** The receipt lines for the virtualenvs resolveTool skipped in `repoDir` during this run: which interpreter ran the tests, and why. */
+export const venvSkipNotes = (repoDir: string): string[] => [...venvSkips].filter(([k]) => k.startsWith(`${repoDir}\0`)).map(([, v]) => v);
+export function resolveTool(repoDir: string, bin: string, fallback: string, lastResort = fallback, module?: string): [string, Interpreter, string[]] {
   const inRepo = (p: string): boolean => { try { const r = relative(realpathSync(repoDir), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
   const venvEnv = process.env["VIRTUAL_ENV"], onPath = (b: string): string | null => Bun.which(b, { PATH: process.env["PATH"] ?? "" }); // Bun.which caches the startup PATH unless given the live one
   const project = [join(repoDir, ".venv", "bin", bin), join(repoDir, "venv", "bin", bin), ...(venvEnv && inRepo(venvEnv) ? [join(venvEnv, "bin", bin)] : [])].find(existsSync);
+  if (project && module && !canImport(project, module)) { const sys = onPath(fallback) ? fallback : lastResort; venvSkips.set(`${repoDir}\0${project}\0${module}`, `tests ran on ${sys}, outside the project virtualenv: ${relative(repoDir, project)} cannot import ${module}`); return [sys, "system", []]; }
   return project ? [project, "project", []] : existsSync(join(repoDir, "uv.lock")) && onPath("uv") ? ["uv", "project", ["run", "--", bin]] : [onPath(fallback) ? fallback : lastResort, "system", []]; // TEN-QUALITY-11: uv.lock, no venv: uv run is the project interpreter
 }
 /** FC-WALL-GO-FILE-RUNS-WHOLE-PACKAGE: the Test, Fuzz and Example function names of one Go file, matched by name only. Over-inclusion is harmless for -run (a name that is no test matches nothing); a signature check would drop valid tests (multi-line, unnamed or aliased *testing.T, non-ASCII names) and turn a red Wall into no run. TestMain is excluded; [] when unreadable or none. */
@@ -1976,7 +1991,7 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
   const own = BUILD_TOOL_RUNNERS.has(t.runner) ? repoTestCommand(repoDir) : null; if (own) return ["bash", ["-c", own]]; // R02: the repo's committed verify.test_command
   switch (t.runner) {
     case "pytest": {
-      const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python");
+      const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python", "pytest");
       return [cmd, [...pre, "-m", "pytest", "-q", t.path], interpreter];
     }
     case "unittest": { // stdlib: a file path is converted to a module name by unittest itself
@@ -2021,7 +2036,7 @@ export function fullSuiteCmd(runner: RunnerName, repoDir: string): { cmd: string
   if (runner === "maven" || runner === "gradle") { const s = FULL_SUITE_STATIC[runner]; return { ...s, cmd: wrapperOr(repoDir, runner === "maven" ? "mvnw" : "gradlew", s.cmd), ...(runner === "gradle" ? { args: [...s.args, "-I", gradleInitScript()] } : {}) }; }
   if (runner === "dotnet") return dotnetFullCmd(repoDir);
   if (runner !== "pytest" && runner !== "unittest") return FULL_SUITE_STATIC[runner];
-  const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python");
+  const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python", runner === "pytest" ? "pytest" : undefined);
   return { cmd, args: [...pre, ...(runner === "unittest" ? UNITTEST_DISCOVER_ARGS : ["-m", "pytest", "-q"])], ...(runner === "unittest" && interpreter === "system" ? {} : { interpreter }) };
 }
 /** FC-01: the one resolver for a test invocation: a package-owned file runs in its package dir with a package-relative path, else exactly runnerCmd at the root. */
