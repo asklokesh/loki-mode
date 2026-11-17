@@ -201,7 +201,7 @@ export function zeroGate(rec: unknown): ZeroGate {
 const RUNNER_CACHE_DIRS = [".vite", ".vite-temp", ".vitest", ".vitest-cache", ".cache", "__pycache__", ".pytest_cache"]; // FireLater#21: vitest 5.1 writes node_modules/.vitest-cache on every run
 // fl24 (FireLater#24, v11.139.0): an ignored file a typecheck, linter or Finder rewrites as its own output, never something a test imports. The implement
 // session's `tsc --noEmit` rewrote frontend/tsconfig.tsbuildinfo, so every base rerun ran without node_modules, parsed no ids, and 22 page tests red on base blocked.
-const TOOL_OUTPUT_FILE = /(?:^|\/)(?:[^/]*\.tsbuildinfo|\.eslintcache|\.stylelintcache|\.DS_Store)$/;
+const TOOL_OUTPUT_FILE = /(?:^|\/)(?:[^/]*\.tsbuildinfo|\.eslintcache|\.stylelintcache|\.DS_Store|next-env\.d\.ts)$/; // next-env.d.ts: Next rewrites this ignored file on every dev or build start; a proof script that started `next dev` changed it and the base rerun lost its node_modules (FireLater#24)
 /** The packages a dependency dir holds (names, "@scope/name" for scoped ones; a venv's site-packages entries as "py/<name>"), runner caches left out; null
  *  past the bound. A deleted or renamed package changes this list and nothing a files-only walk can see (the parent directory's ctime also moves when a
  *  runner adds its cache entry, so directories alone cannot tell the two apart). */
