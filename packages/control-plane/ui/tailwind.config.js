@@ -1,3 +1,2 @@
-import cpPreset from "./src/design/tailwind.preset.ts";
-
-export default { presets: [cpPreset], content: ["./index.html", "./src/**/*.{ts,tsx}"], darkMode: ["class", '[data-theme="dark"]'], theme: { extend: {} }, plugins: [] };
+// The UI styles itself with plain CSS variables (src/styles.css); Tailwind stays only so the existing PostCSS pipeline keeps working.
+export default { content: ["./index.html", "./src/**/*.{ts,tsx}"], theme: { extend: {} }, plugins: [] };

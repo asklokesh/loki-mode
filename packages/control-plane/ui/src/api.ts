@@ -204,3 +204,21 @@ export async function deleteRun(source: string, run: string): Promise<{ ok: true
 
 export interface DoctorCheck { name: string; status: "pass" | "warn" | "fail"; detail: string }
 export const getDoctor = (): Promise<{ checks: DoctorCheck[] }> => get("/v1/doctor");
+
+// ---- Loki UI v2: the account / project / repository levels, a repository's knowledge, and the acceptance table of a run ----
+export interface Project { id: string; name: string; repos: string[] }
+export interface Org { id: string; name: string; projects: Project[] }
+export interface Workspace { account: { name: string }; orgs: Org[]; repos: string[]; unassigned: string[] }
+export interface AcceptanceRow { line: string; status: "met" | "unmet" | "waiting"; checks: number; reason: string | null }
+export interface RunDetailV2 extends RunDetailResponse { acceptance?: AcceptanceRow[]; acceptance_source?: "issue" | "plan"; proof?: { round: number; exit: number | null; proved: number; failed: number; seconds: number } | null; stop_reason?: string | null }
+export interface RepoKnowledge { repo: string; instructions: { path: string; bytes: number; truncated: boolean; text: string }[]; notes: { path: string; bytes: number; preview: string }[] }
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${base()}${path}`, { method: "PUT", headers: authHeaders({ "content-type": "application/json" }), body: JSON.stringify(body) });
+  await failIfNotOk(res);
+  return (await res.json()) as T;
+}
+export const getWorkspace = (): Promise<Workspace> => get<Workspace>("/v1/workspace");
+export const saveWorkspace = (ws: Pick<Workspace, "account" | "orgs">): Promise<Workspace> => putJson<Workspace>("/v1/workspace", { account: ws.account, orgs: ws.orgs });
+export const getRunV2 = (source: string, run: string): Promise<RunDetailV2> => get<RunDetailV2>(`/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}`);
+export const getKnowledge = (repo: string): Promise<RepoKnowledge> => get<RepoKnowledge>(`/v1/repo/knowledge?repo=${encodeURIComponent(repo)}`);
+export const saveInstructions = (repo: string, content: string): Promise<RepoKnowledge> => putJson<RepoKnowledge>("/v1/repo/instructions", { repo, content });

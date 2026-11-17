@@ -26,6 +26,7 @@ import { mount as start } from "./start.ts";
 import { mount as stats } from "./stats.ts";
 import { mount as stream } from "./stream.ts";
 import { mount as verify } from "./verify.ts";
+import { mount as workspace } from "./workspace.ts";
 
 export interface RouteCtx {
   app: Hono;
@@ -47,7 +48,7 @@ export interface RouteCtx {
   ghImpl?: GhRunner;
 }
 
-export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, ask, stream, start, control, stats, cost, costLedger, doctor, fleet, metrics, checkpoints, memory, sessionControl, config, providers, verify, integrations, notify, audit, mergeRisk];
+export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, ask, stream, start, control, stats, cost, costLedger, doctor, fleet, metrics, checkpoints, memory, sessionControl, config, providers, verify, integrations, notify, audit, mergeRisk, workspace];
 
 export function registerRoutes(ctx: RouteCtx): void {
   mountRepos(ctx.act, ctx.db, ctx.peerIsLoopback, ctx.repoDir, ctx.ghImpl);

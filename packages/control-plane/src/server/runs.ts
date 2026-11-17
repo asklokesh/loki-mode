@@ -205,6 +205,13 @@ export function runDetail(db: Db, sourceId: string, runId: string) {
   const done = f.run.completed?.data;
   const sealed = evs.find((e) => e.type === "receipt.sealed")?.data;
   const stop = stopReason(evs, r.verdict);
+  // The acceptance lines and their state, newest first: the seal's final table, else the last proof run Loki did itself, else the lines as intake read them (all waiting).
+  const sealAcc = evs.findLast((e) => e.type === "stage.completed" && e.stage === "seal")?.data as Record<string, unknown> | undefined;
+  const proofEv = evs.findLast((e) => e.type === "proof.rerun")?.data as Record<string, unknown> | undefined;
+  const intakeAcc = evs.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data as Record<string, unknown> | undefined;
+  const accRows: Record<string, unknown>[] = Array.isArray(sealAcc?.issue_acceptance) ? (sealAcc!.issue_acceptance as Record<string, unknown>[]) : Array.isArray(proofEv?.statuses) ? (proofEv!.statuses as Record<string, unknown>[]) : Array.isArray(intakeAcc?.issue_acceptance) ? (intakeAcc!.issue_acceptance as unknown[]).map((l): Record<string, unknown> => ({ line: String(l), status: "waiting" })) : [];
+  const acceptance = accRows.map((x) => ({ line: String(x.line ?? ""), status: x.status === "met" ? "met" : x.status === "unmet" ? "unmet" : "waiting", checks: typeof x.checks === "number" ? x.checks : 0, reason: typeof x.reason === "string" ? x.reason : null }));
+  const proof = proofEv ? { round: Number(proofEv.round ?? 1), exit: typeof proofEv.exit === "number" ? proofEv.exit : null, proved: Number(proofEv.proved ?? 0), failed: Number(proofEv.failed ?? 0), seconds: Number(proofEv.seconds ?? 0) } : null;
   return {
     ...withLive(db, r),
     blocked_question: blockedQuestion(evs, r.verdict),
@@ -214,5 +221,6 @@ export function runDetail(db: Db, sourceId: string, runId: string) {
     stages_completed: f.completed,
     receipt: sealed ? { sha256: str(sealed.receipt_sha256), signed: sealed.signed === true, verdict: str(sealed.verdict), path: str(sealed.path) } : null,
     not_proven: Array.isArray(done?.not_proven) ? (done.not_proven as string[]) : [],
+    acceptance, acceptance_source: (sealAcc?.issue_acceptance_source ?? proofEv?.source) === "plan" ? "plan" : "issue", proof,
   };
 }
