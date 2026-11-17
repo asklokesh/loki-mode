@@ -11,11 +11,17 @@ const ASSERT_RE = /\b(?:expect|assert\w*|should|XCTAssert\w*|require\.\w+|self\.
 const CASE_RE = /\b(?:it|test|describe|context)\s*(?:\.each\b[^(]*)?\(|\bdef\s+test_\w+|@Test\b|\[(?:Fact|Theory|Test|TestMethod)\]|\bfunc\s+Test\w+/g;
 const SKIP_RE = /\.(?:skip|only|todo|fails)\s*\(|\b(?:xit|xdescribe|xtest|fit|fdescribe)\s*\(|@pytest\.mark\.(?:skip|skipif|xfail)\b|@(?:Disabled|Ignore)\b|\bt\.Skip\w*\(|\bpytest\.skip\(|\[Ignore\]/g;
 // Setup, teardown, mock and fixture constructs: one added to an existing test file can neuter its existing tests without deleting an assertion (PR 472 review).
-const SETUP_RE = /\b(?:beforeEach|afterEach|beforeAll|afterAll|vi\.(?:mock|doMock|spyOn|stubGlobal|stubEnv)|jest\.(?:mock|doMock|spyOn)|mock\.module|setUp|tearDown|setup_method|teardown_method|monkeypatch|autouse)\b|@pytest\.fixture\b|@(?:Before|After)(?:Each|All|Class)?\b|\[(?:SetUp|TearDown|OneTimeSetUp)\]/g;
+// Two kinds. FILE-WIDE constructs (hooks, module mocks, fixtures) reach every test in the file, so one added is always a possible weakening. PER-TEST
+// constructs (a spy, a stubbed global or env var, monkeypatch) act where they are written: one added together with a new test case is that new case's own
+// setup, not a change to the existing ones. A run that only ADDED a test case to an existing file, with a vi.spyOn inside it, was held at PARTIAL as
+// "weakened test" with every acceptance item met.
+const SETUP_RE = /\b(?:beforeEach|afterEach|beforeAll|afterAll|vi\.(?:mock|doMock)|jest\.(?:mock|doMock)|mock\.module|setUp|tearDown|setup_method|teardown_method|autouse)\b|@pytest\.fixture\b|@(?:Before|After)(?:Each|All|Class)?\b|\[(?:SetUp|TearDown|OneTimeSetUp)\]/g;
+const LOCAL_SETUP_RE = /\b(?:vi\.(?:spyOn|stubGlobal|stubEnv)|jest\.spyOn|monkeypatch)\b/g;
 const count = (re: RegExp, text: string): number => (text.match(re) ?? []).length;
 /** True when the new text drops an assertion or a test case, or adds a skip/only/xfail marker or a setup, teardown, mock or fixture construct, compared with the base text. Only added test blocks pass. */
 export function weakensTest(baseText: string, newText: string): boolean {
-  return count(ASSERT_RE, newText) < count(ASSERT_RE, baseText) || count(CASE_RE, newText) < count(CASE_RE, baseText) || count(SKIP_RE, newText) > count(SKIP_RE, baseText) || count(SETUP_RE, newText) > count(SETUP_RE, baseText);
+  const moreCases = count(CASE_RE, newText) > count(CASE_RE, baseText);
+  return count(ASSERT_RE, newText) < count(ASSERT_RE, baseText) || count(CASE_RE, newText) < count(CASE_RE, baseText) || count(SKIP_RE, newText) > count(SKIP_RE, baseText) || count(SETUP_RE, newText) > count(SETUP_RE, baseText) || (!moreCases && count(LOCAL_SETUP_RE, newText) > count(LOCAL_SETUP_RE, baseText));
 }
 
 /** True when an edited pre-existing test file must cap the verdict: it was deleted or retyped (status D or T), or its text at headSha (null: the file on disk)
