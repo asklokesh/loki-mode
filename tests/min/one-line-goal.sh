@@ -148,6 +148,7 @@ console.log(bad.length ? "BAD " + JSON.stringify(bad) : "OK " + rows.length);' 2
 # a terminal emulator (cursor-up, erase, newline, scrollback, reflow on resize) and after every step compares the whole terminal
 # with the console's current frame: nothing of an older frame may be left. Each leg failed on the code before the fix:
 #   other-output-during-a-run  a line printed by the process during a run (the console is built as `loki start` builds it)
+#   console-calls-during-a-run console.log and console.warn, which under Bun do not pass through process.stdout.write
 #   taller-than-the-window     more lines than the window has rows (the cursor cannot go up past the top row)
 #   resize                     the window made narrower, wider and shorter between two frames
 #   long-and-wide-lines        a line longer than the window, and two-cell characters
@@ -161,7 +162,7 @@ console.log(bad.length ? "BAD " + JSON.stringify(bad) : "OK " + rows.length);' 2
 # (--quiet on a terminal has the console, so it is the first case; --quiet with stderr elsewhere is the second.)
 LCD="$ROOT/tests/min/fixtures/live-console.js"; LCC="$ROOT/loki-ts/src/e10ext/console.ts"
 lc="$(bun --no-env-file --config=/dev/null "$LCD" "$LCC" 2>"$T/lc-all.err")"
-for leg in grow-and-shrink details-on-and-off long-and-wide-lines taller-than-the-window resize other-output-during-a-run worker-stderr-above-the-panel; do
+for leg in grow-and-shrink details-on-and-off long-and-wide-lines taller-than-the-window resize other-output-during-a-run console-calls-during-a-run worker-stderr-above-the-panel; do
     grep -qx "PASS $leg" <<< "$lc" && ok "live console, $leg: the terminal holds exactly one panel after every redraw" || bad "live console, $leg: $(grep -A12 "^FAIL $leg" <<< "$lc" | cut -c1-240)"
 done
 # The o key (this run's page in the dashboard) and the Dashboard: line of the final summary. The dashboard, the page choice and the

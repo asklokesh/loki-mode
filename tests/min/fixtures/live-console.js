@@ -150,6 +150,23 @@ const legs = {
     } finally { process.stdout.write = realWrite; if (cols) Object.defineProperty(process.stdout, "columns", cols); else delete process.stdout.columns; if (rows) Object.defineProperty(process.stdout, "rows", rows); else delete process.stdout.rows; }
     return bad;
   },
+  // console.log and console.warn from the loki start process: under Bun they do not call process.stdout.write, so they need their own
+  // route through the console. Each line once, above the panel; and console.log is given back when the console closes.
+  "console-calls-during-a-run": async () => {
+    const t = new Term(100, 40); t.write(`${PRE.join("\r\n")}\r\n`);
+    const before = console.log, std = swapStd((chunk) => { t.write(String(chunk).replace(/\n/g, "\r\n")); return true; }, true);
+    let bad = null; const lines = ["a console.log line with a number 42", "[budget] malformed budget state: a console.warn line"];
+    try {
+      const con = new LiveConsole({ write: (x) => { process.stdout.write(x); }, stdin: null, env: { NO_COLOR: "1" }, now: () => clock, spend: () => "$0.02 so far", repoDir: "/nonexistent-repo" });
+      start(con, 5);
+      console.log("a console.log line with a number %d", 42); console.warn(lines[1]);
+      await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+      con.tick(); bad = onePanel(t, con, "console.log and console.warn during the run", [...PRE, ...lines]);
+      con.clear();
+      if (!bad && console.log !== before) bad = "console.log was not given back when the console closed";
+    } finally { std.restore(); console.log = before; }
+    return bad;
+  },
   // The engine worker is a child process. While the console owns the terminal its stderr is piped and printed above the panel:
   // every line once, in order, the last one even with no newline and after a crash (exit 3), and the worker is told stderr is a terminal.
   "worker-stderr-above-the-panel": async () => {

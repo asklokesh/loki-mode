@@ -10,6 +10,7 @@ import { redactSecrets, UNSAFE_TERMINAL_CHARS_RE } from "../util/redact.ts";
 import { controlRunLink } from "../util/run_outputs.ts";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { format } from "node:util";
 
 type Ev = { type: string; stage: string | null; data: Record<string, unknown>; run?: string; ts?: string };
 type StageState = "waiting" | "running" | "done" | "failed" | "skipped";
@@ -67,6 +68,13 @@ export class LiveConsole {
     // through process.stderr.write here (runner/worker_proc.ts reads this mark).
     const mark = Symbol.for("loki.consoleOwnsTerminal"), g = globalThis as Record<symbol, unknown>; g[mark] = true; this.unhook.push(() => { g[mark] = false; });
     const onResize = (): void => { if (!this.closed) this.render(); }; process.stdout.on("resize", onResize); this.unhook.push(() => { process.stdout.off("resize", onResize); });
+    // Bun's console.log and console.warn write to the terminal without calling process.stdout.write or process.stderr.write, so they would get past the
+    // wrapper below too (measured: a wrapped write saw 0 calls for a console.log). While the console is up they go through the streams.
+    const con = console as unknown as Record<string, (...a: unknown[]) => void>;
+    for (const [name, to] of [["log", "stdout"], ["info", "stdout"], ["debug", "stdout"], ["warn", "stderr"], ["error", "stderr"]] as const) {
+      const was = con[name]; if (typeof was !== "function") continue;
+      con[name] = (...a: unknown[]): void => { process[to].write(`${format(...a)}\n`); }; this.unhook.push(() => { con[name] = was; });
+    }
     for (const st of [process.stdout, ...(process.stderr.isTTY ? [process.stderr] : [])] as NodeJS.WriteStream[]) {
       const orig = st.write.bind(st) as (...a: unknown[]) => boolean;
       this.unhook.push(() => { st.write = orig as typeof st.write; });
