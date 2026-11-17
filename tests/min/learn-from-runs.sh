@@ -40,6 +40,12 @@
 #              brief has no block and no graph.json is written.
 #   weakened:  a run whose existing test lost an assertion is PARTIAL and writes the edited-existing-test lesson; the next
 #              related run carries it in its brief and its use tag is marked recurred.
+#   setup:     (repo card, e10ext/repomemory.ts) a setup stored from a run whose change fixed something the setup needs: on the
+#              clean base Loki's own run of it stops; the one small edit that gets it through is found by trying each stored
+#              one-file edit alone, the tree is left exactly as it was, and the brief carries the checked fact and the patch
+#              file. A test edit, a large edit and a credential are never stored as an edit; the committed card never
+#              carries one. A checkout that already has the fix passes with no trial; two edits that only work together give
+#              no patch; LOKI_REPO_CARD=0 runs nothing. No services: the setup is plain bash.
 #   default:   with neither LOKI_PR_LESSONS nor LOKI_WORKED_EXAMPLE set (the default, rule 6), the same similar task gets
 #              no worked example and no run-lessons block, and the run still records its lesson. Every other leg opts in.
 #
@@ -531,5 +537,57 @@ npb="$(cd "$ORGCALC" && PATH="$NOPY:$PATH" LOKI_ORG_GRAPH=1 LOKI_NO_COMPLETIONS=
 [ "$nprc" = "0" ] && ok "org-nopython: a missing python3 leaves memory brief exit 0" || bad "org-nopython: exit $nprc"
 case "$npb" in *untrusted-org-knowledge*) bad "org-nopython: a block appeared without python3" ;; *) ok "org-nopython: no block without python3" ;; esac
 unset LOKI_KNOWLEDGE_DIR
+
+# setup: the stored setup is run on the clean checkout; the one-file edit it needs is found by trial and handed over as a checked fact
+SC="$(cd "$ROOT/loki-ts" && SRC="$ROOT/loki-ts/src" SR="$T/setuprepo" bun -e '
+const fs = await import("node:fs"), cp = await import("node:child_process"), path = await import("node:path");
+const rm = await import(process.env.SRC + "/e10ext/repomemory.ts"), pr = await import(process.env.SRC + "/engine10/proof_rerun.ts");
+const R = process.env.SR, out = {};
+const git = (...a) => cp.execFileSync("git", ["-C", R, "-c", "user.name=t", "-c", "user.email=t@example.com", ...a], { encoding: "utf8" }).trim();
+const w = (f, c) => { fs.mkdirSync(path.dirname(path.join(R, f)), { recursive: true }); fs.writeFileSync(path.join(R, f), c); };
+fs.mkdirSync(R, { recursive: true }); cp.execFileSync("git", ["init", "-q", "-b", "main", R]);
+w("flag.conf", "state=broken\n"); w("other.conf", "one\n"); w("tests/a.test.js", "old\n"); w("big.conf", Array.from({ length: 80 }, (_, i) => "l" + i).join("\n") + "\n"); w("key.conf", "none\n"); w("package.json", "{}\n");
+git("add", "-A"); git("commit", "-q", "-m", "base"); const base = git("rev-parse", "HEAD");
+w("flag.conf", "state=ok\n"); w("other.conf", "one\ntwo\n"); w("tests/a.test.js", "new\n"); w("big.conf", Array.from({ length: 80 }, (_, i) => "m" + i).join("\n") + "\n"); w("key.conf", "ghp_" + "a".repeat(30) + "\n"); w("feature.conf", "added\n");
+git("add", "-A"); git("commit", "-q", "-m", "change"); const head = git("rev-parse", "HEAD");
+const script = ["#!/bin/bash", "set -u", "D=\"$1\"", "mkdir -p \"$D/data\"", "grep -q state=ok flag.conf || { echo \"flag.conf is not ok\"; exit 1; }", "echo ready > \"$D/data/state\"", "loki_cmd 1 \"it runs\" true", ""].join("\n");
+const upd = rm.updateRepoCard({ repoDir: R, runId: "run-1", baseSha: base, headSha: head, script, proof: { exit: 0, proved: 1, failed: 0 }, checks: [], needs: [] });
+const card = rm.readLocalCard(R);
+out.stored = upd?.setup; out.patches = card.facts.filter((f) => f.kind === "patch").map((f) => f.key).sort();
+out.exported_has_patch = rm.renderCardFile(card).includes("+state=ok"); out.reads_back_patch = (rm.parseCardFile(rm.renderCardFile(card))?.facts ?? []).some((f) => f.kind === "patch");
+const run = (s) => pr.runSetupScript(R, s), st = () => git("status", "--porcelain", "--untracked-files=no"), rd = (n) => { const d = path.join(R, "..", n); fs.mkdirSync(d, { recursive: true }); return d; };
+git("checkout", "-q", "--detach", base);
+const c1 = await rm.settleSetupCheck(R, rd("rd1"), run); out.base = c1 && { result: c1.result, file: c1.file, trials: c1.trials, tail: /flag\.conf is not ok/.test(c1.tail ?? "") }; out.base_tree = st(); out.base_flag = fs.readFileSync(path.join(R, "flag.conf"), "utf8").trim();
+const b1 = rm.repoCardBrief(R, rd("sc1"), process.env, c1); out.brief = { check: b1?.record.check, fact: /Setup check: .*runs to its end with it/.test(b1?.text ?? ""), diff: (b1?.text ?? "").includes("+state=ok"), untried: /other\.conf/.test(b1?.text ?? ""), file: fs.existsSync(path.join(R, "..", "sc1", rm.SETUP_FIX_FILE)) };
+try { cp.execFileSync("git", ["-C", R, "apply", "--check", path.join(R, "..", "sc1", rm.SETUP_FIX_FILE)], { stdio: "ignore" }); out.patch_applies = true; } catch { out.patch_applies = false; }
+git("checkout", "-q", "--detach", head);
+const c2 = await rm.settleSetupCheck(R, rd("rd2"), run); out.fixed = c2 && { result: c2.result, trials: c2.trials }; out.fixed_brief = /ran to its end\. Use it as it is/.test(rm.repoCardBrief(R, rd("sc2"), process.env, c2)?.text ?? "");
+git("checkout", "-q", "--detach", base);
+const two = script.replace("grep -q state=ok flag.conf", "grep -q state=ok flag.conf && grep -q two other.conf"), kept = rm.readLocalCard(R);
+fs.writeFileSync(path.join(rm.cardDir(R), "card.json"), JSON.stringify({ ...kept, facts: kept.facts.map((f) => (f.kind === "setup" ? { ...f, text: rm.extractSetup(two, R).text } : f)) }));
+const c3 = await rm.settleSetupCheck(R, rd("rd3"), run); out.two = c3 && { result: c3.result, trials: c3.trials, patch: c3.patch ?? null }; out.two_tree = st();
+w("other.conf", "dirty\n"); const c4 = await rm.settleSetupCheck(R, rd("rd4"), run); out.dirty = c4; git("checkout", "-q", "--", "other.conf");
+let ran = 0; const c5 = await rm.settleSetupCheck(R, rd("rd5"), (s) => { ran++; return run(s); }, { ...process.env, LOKI_REPO_CARD: "0" }); out.off = { check: c5, ran };
+const wr = rm.extractSetup(["set -u", "D=\"$1\"", "mkdir -p \"$D\"", "chk() { loki_cmd \"$@\" || FAIL=1; }", "printf a > \"$D/x\"", "printf b > \"$D/y\"", "chk 1 \"it runs\" true", "chk 2 \"again\" true", ""].join("\n"), R); out.wrapped = "text" in wr ? { keeps_setup: wr.text.includes("printf b"), drops_checks: !wr.text.includes("it runs") } : wr.refused;
+const sd = rd("sd"), kd = rd("kd"); fs.writeFileSync(path.join(sd, "loki-setup.sh"), "true\n"); fs.writeFileSync(path.join(sd, rm.SETUP_FIX_FILE), c1.patch);
+fs.writeFileSync(path.join(sd, "loki-proof.sh"), ["#!/bin/bash", ". \"$LOKI_SCRATCH/loki-check.sh\"", ". \"$LOKI_SCRATCH/loki-setup.sh\" || exit 9", "loki_cmd 1 \"the handed fix is here and applies\" git apply --check \"$LOKI_SCRATCH/" + rm.SETUP_FIX_FILE + "\"", ""].join("\n"));
+pr.keepProofScript(sd, kd); const rr = await pr.rerunProof(R, kd); out.rerun = rr && { exit: rr.exit, proved: rr.proved, failed: rr.failed };
+console.log(JSON.stringify(out));' 2>&1)"
+sj() { printf '%s' "$SC" | tail -n 1 | python3 -I -c 'import json,sys
+d=json.load(sys.stdin)
+for k in sys.argv[1].split("."): d=d[k]
+print(json.dumps(d,sort_keys=True))' "$1" 2>/dev/null; }
+[ "$(sj stored)" = '"stored"' ] && ok "setup: the run stores the setup" || bad "setup: store was $(sj stored): $(printf '%s' "$SC" | tail -n 3 | cut -c1-400)"
+[ "$(sj patches)" = '["flag.conf", "other.conf"]' ] && ok "setup: the two small edits to existing files are kept; the test, the large edit, the credential and the added file are not" || bad "setup: kept edits were $(sj patches)"
+[ "$(sj exported_has_patch)" = "false" ] && [ "$(sj reads_back_patch)" = "false" ] && ok "setup: the committed card neither carries nor reads back an edit" || bad "setup: an edit reached the committed card"
+[ "$(sj base)" = '{"file": "flag.conf", "result": "patch", "tail": true, "trials": 2}' ] && ok "setup: on the clean base the setup stops; the smaller edit is tried and taken out, then flag.conf alone gets it to its end" || bad "setup: base check was $(sj base)"
+[ "$(sj base_tree)" = '""' ] && [ "$(sj base_flag)" = '"state=broken"' ] && ok "setup: the tree is exactly as it was after the trial" || bad "setup: tree after the trial: $(sj base_tree) $(sj base_flag)"
+[ "$(sj brief)" = '{"check": "patch", "diff": true, "fact": true, "file": true, "untried": false}' ] && [ "$(sj patch_applies)" = "true" ] && ok "setup: the brief carries the checked fact, the diff and an applicable patch file, and not the edit that did not help" || bad "setup: brief was $(sj brief)"
+[ "$(sj fixed)" = '{"result": "pass", "trials": 0}' ] && [ "$(sj fixed_brief)" = "true" ] && ok "setup: a checkout that already has the fix passes with no trial" || bad "setup: fixed checkout gave $(sj fixed)"
+[ "$(sj two)" = '{"patch": null, "result": "stopped", "trials": 2}' ] && [ "$(sj two_tree)" = '""' ] && ok "setup: two edits that only work together give no patch, and the tree is clean" || bad "setup: two-edit case gave $(sj two) tree $(sj two_tree)"
+[ "$(sj dirty)" = "null" ] && ok "setup: a checkout with uncommitted edits is not checked" || bad "setup: dirty checkout gave $(sj dirty)"
+[ "$(sj off)" = '{"check": null, "ran": 0}' ] && ok "setup: LOKI_REPO_CARD=0 runs nothing" || bad "setup: off gave $(sj off)"
+[ "$(sj wrapped)" = '{"drops_checks": true, "keeps_setup": true}' ] && ok "setup: a script that calls the checks only through its own one-line wrapper still gives a setup, cut at the first wrapped check" || bad "setup: wrapped checks gave $(sj wrapped)"
+[ "$(sj rerun)" = '{"exit": 0, "failed": 0, "proved": 1}' ] && ok "setup: a proof script that names the handed setup and fix files still runs in Loki's own re-run (both are put back in its new scratch)" || bad "setup: Loki's re-run of a script that names the handed files gave $(sj rerun)"
 
 finish
