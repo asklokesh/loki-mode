@@ -1623,7 +1623,7 @@ loki_cmd 1 "the feature file exists" test -f "$R/feature.txt"
 loki_cmd 2 "the app file is there" test -f "$R/app.txt"
 loki_cmd 3 "nothing at all" true
 loki_cmd 4 "dependencies are installed on port 4123" test -f "$R/node_modules/dep/index.js"
-[ -f "$R/feature.txt" ] || rm -rf "$R/node_modules"
+[ -f "$R/feature.txt" ] || rm -rf "$R/node_modules"/*
 EOF
 PB1="$(pb_run)"; printf '    proof on base, first run: %s\n' "$PB1"
 case "$PB1" in "4 0 available 4 3 ran mmuu mmmm 3,4 2") ok "proof on base: of four passing checks the three that also pass on the base commit are found (the literal repository path is redirected to the base tree, node_modules is carried over); lines 3 and 4, proved only by such checks, are named and are not met under the rule; line 1 stays met; a line that asks that something is still there is left alone; by default the label rule is unchanged" ;; *) bad "proof on base gave: $PB1" ;; esac
