@@ -91,6 +91,7 @@ export class LiveConsole {
     if (e.type === "proof.rerun") { this.proof = `Loki ran the proof itself, round ${Number(d["round"] ?? 1)}: ${d["exit"] === 0 ? "passed" : "did not pass"}, ${Number(d["proved"] ?? 0)} passing and ${Number(d["failed"] ?? 0)} failing checks in ${Number(d["seconds"] ?? 0)}s`; this.note(this.proof); if (Array.isArray(d["statuses"])) this.setLines(d["statuses"] as Record<string, unknown>[], d["source"]); }
     if (e.type === "pr.opened" && typeof d["url"] === "string") this.pr = String(d["url"]);
     if (e.type === "run.completed") { if (!this.outcome && typeof d["verdict"] === "string") this.outcome = String(d["verdict"]); if (!this.pr && typeof d["pr_url"] === "string") this.pr = String(d["pr_url"]); }
+    if (e.type === "proof.base" && !d["cached"]) this.note(d["available"] ? `proof run against the base commit too: ${Number(d["also_pass_on_base"] ?? 0)} of ${Number(d["passing"] ?? 0)} passing checks also pass without the change` : `proof not compared with the base commit: ${String(d["why"] ?? "not available").slice(0, 160)}`);
     if (e.type === "acceptance.round") this.note(`acceptance check, round ${Number(d["round"] ?? 1)}: ${Number(d["met"] ?? 0)} met, ${Number(d["unmet"] ?? 0)} handed back to the session`);
     this.render();
   }

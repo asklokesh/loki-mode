@@ -3,11 +3,12 @@
 // each requested item; after the session and every fix round, Loki runs that script itself in a new run-owned scratch directory and records the real
 // exit code and output. The acceptance line check reads that output, not the reply. (New file: no module owned a harness-run proof; stages/prove.ts is
 // the separate prover session, off by default.)
-import { randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash, randomBytes } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statfsSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { cleanupSessionScratch, createSessionScratch, scratchSessionEnv } from "../runner/worker_proc.ts";
 import { run } from "../util/shell.ts";
+import { safeGit } from "../util/safe_git.ts";
 import { CONNECTION_ENV } from "./session.ts";
 import { acceptanceLines, FRESH_INSTALL_ASK, issueAcceptanceCapOn, issueAcceptanceOf, optionalAsk } from "../util/intent_card.ts";
 import { neededServices } from "../util/stack_tools.ts";
@@ -141,19 +142,35 @@ loki_services_stop() {
 export function writeProofKit(dir: string, asks: string[] | null): void {
   try { writeFileSync(join(dir, PROOF_HELPER), PROOF_HELPER_SH, { mode: 0o600 }); if (asks?.length) writeFileSync(join(dir, ACCEPTANCE_FILE), asks.map((a, i) => `${i + 1}. ${a}`).join("\n") + "\n", { mode: 0o600 }); } catch { /* the proof then has no helper; the re-run reports it */ }
 }
-/** The tally of helper lines carrying this run's token: per acceptance line number, how many checks passed and failed, and the first text of each. */
-export function tallyProof(out: string, token: string): Record<string, { proved: number; failed: number; first_proved?: string; first_failed?: string }> {
-  const t: Record<string, { proved: number; failed: number; first_proved?: string; first_failed?: string }> = {};
+/** One check line of a run: the acceptance item it names, what it says it proves (run-specific values removed, see checkKey) and whether it passed. */
+export interface ProofCheck { item: string; what: string; ok: boolean }
+/** A check's description as a key that is the same in two runs of one script: the text before the helper's own result part, lower case, with ids, hashes
+ *  and every number replaced (a port, a row id or a duration differs between two runs of the same check). Two checks of one item that then read the same
+ *  are paired by count, never merged. */
+export const checkKey = (text: string): string => text.split(/ \| (?:status \d|exit \d|wanted )/)[0]!.toLowerCase().replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f-]{22,}\b|\b[0-9a-f]{12,}\b/g, "#").replace(/\d+/g, "#").replace(/\s+/g, " ").trim().slice(0, 200);
+/** Every helper line carrying this run's token, in order: the acceptance item it counts for, pass or fail, and its text. */
+function proofLines(out: string, token: string): { item: string; ok: boolean; text: string }[] {
+  const found: { item: string; ok: boolean; text: string }[] = [];
   for (const l of out.split("\n")) {
     const m = /^LOKI-PROOF (\S+) (PROVED|FAILED) (\d{1,3}): (.*)$/.exec(l.trim()); if (!m || m[1] !== token) continue;
     // The number is the acceptance item's number in acceptance.txt. A session read "line number" as the script's own line (loki_cmd ${LINENO} "item 9: ...")
     // and 37 passing checks counted for no item: a description that opens with "item N:" (or line, acceptance, ask, criterion, AC, #) names the item itself.
-    const tag = /^(?:item|line|acceptance(?: line| item)?|ask|criterion|ac|#)\s*#?(\d{1,2})\s*[:.)-]/i.exec(m[4]!.trim()), key = tag ? String(Number(tag[1])) : m[3]!;
-    const e = (t[key] ??= { proved: 0, failed: 0 }), txt = m[4]!.slice(0, 300);
-    if (m[2] === "PROVED") { e.proved++; e.first_proved ??= txt; } else { e.failed++; e.first_failed ??= txt; }
+    const tag = /^(?:item|line|acceptance(?: line| item)?|ask|criterion|ac|#)\s*#?(\d{1,2})\s*[:.)-]/i.exec(m[4]!.trim());
+    found.push({ item: tag ? String(Number(tag[1])) : m[3]!, ok: m[2] === "PROVED", text: m[4]! });
+  }
+  return found;
+}
+/** The tally of helper lines carrying this run's token: per acceptance line number, how many checks passed and failed, and the first text of each. */
+export function tallyProof(out: string, token: string): Record<string, { proved: number; failed: number; first_proved?: string; first_failed?: string }> {
+  const t: Record<string, { proved: number; failed: number; first_proved?: string; first_failed?: string }> = {};
+  for (const c of proofLines(out, token)) {
+    const e = (t[c.item] ??= { proved: 0, failed: 0 }), txt = c.text.slice(0, 300);
+    if (c.ok) { e.proved++; e.first_proved ??= txt; } else { e.failed++; e.first_failed ??= txt; }
   }
   return t;
 }
+/** The same lines as a list of checks, for the comparison with the base commit (proofOnBase). */
+export const proofChecks = (out: string, token: string): ProofCheck[] => proofLines(out, token).map((c) => ({ item: c.item, what: checkKey(c.text), ok: c.ok }));
 const MAX_SCRIPT_BYTES = 200_000, TAIL_CHARS = 8000;
 /** Seconds Loki gives its own re-run (LOKI_E10_PROOF_RERUN_S overrides). */
 export const proofRerunS = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_E10_PROOF_RERUN_S"]); return n > 0 ? n : 600; };
@@ -196,7 +213,29 @@ export function proofScriptRefusal(text: string): string | null {
   if (/(^|[\s;&|({])(function\s+)?(loki_http|loki_cmd|_lp)\s*\(\s*\)/.test(code)) return "the proof script redefines loki_http, loki_cmd or _lp; source loki-check.sh and use its functions unchanged";
   return null;
 }
-export interface ProofRerun { refused?: string; exit: number | null; seconds: number; proved: number; failed: number; tail: string; script_chars: number; stopped: number; left: number; lines: Record<string, { proved: number; failed: number; first_proved?: string; first_failed?: string }> }
+export interface ProofRerun { refused?: string; exit: number | null; seconds: number; proved: number; failed: number; tail: string; script_chars: number; stopped: number; left: number; lines: Record<string, { proved: number; failed: number; first_proved?: string; first_failed?: string }>; checks?: ProofCheck[] }
+/** One run of a proof script by Loki: a new scratch directory, the helper with a token that exists only in this run, an empty directory as the argument,
+ *  the user's own database settings blanked, and the ownership cleanup afterwards. `plan` gets the scratch directory and names the script and where it runs
+ *  (null: nothing is run). Null when no scratch directory could be made. Never throws. */
+async function runProofScript(env: NodeJS.ProcessEnv, signal: AbortSignal | undefined, plan: (scratchDir: string) => Promise<{ script: string; cwd: string; extra?: Record<string, string>; limitS?: number; after?: () => void } | null>): Promise<{ ran: boolean; exit: number | null; timedOut: boolean; seconds: number; text: string; token: string; stopped: number; left: number } | null> {
+  let scratch: ReturnType<typeof createSessionScratch>;
+  try { scratch = createSessionScratch(); } catch { return null; }
+  const blank: Record<string, string> = {}; for (const k of Object.keys(env)) if (CONNECTION_ENV.test(k)) blank[k] = ""; // the re-run never sees the user's own database settings either
+  const token = randomBytes(8).toString("hex"); writeProofKit(scratch.dir, null); // Loki's own copy of the helper and a token that exists only in this run
+  let exit: number | null = null, out = "", ran = false, timedOut = false, seconds = 0, after: (() => void) | undefined;
+  try {
+    const p = await plan(scratch.dir); after = p?.after;
+    if (p) {
+      const emptyDir = join(scratch.dir, "run"); mkdirSync(emptyDir, { mode: 0o700 }); // the script's argument is an EMPTY directory: the scratch itself holds Loki's helper, and a script that checks for emptiness refused it
+      const t0 = Date.now(); ran = true;
+      try { const r = await run(["bash", p.script, emptyDir], { cwd: p.cwd, timeoutMs: (p.limitS ?? proofRerunS(env)) * 1000, group: true, signal, env: { ...blank, ...scratchSessionEnv(scratch), ...(p.extra ?? {}), LOKI_PROOF_TOKEN: token } }); exit = r.exitCode; timedOut = r.timedOut === true; out = `${r.stdout}\n${r.stderr}`; }
+      finally { seconds = Math.round((Date.now() - t0) / 1000); }
+    }
+  } catch (e) { out = `Loki's re-run did not complete: ${(e as Error).message}`; }
+  try { after?.(); } catch { /* what the plan could not undo is left to the scratch cleanup */ }
+  const clean = cleanupSessionScratch(scratch);
+  return { ran, exit, timedOut, seconds, text: out.replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, " "), token, stopped: clean.stopped.length, left: clean.left.length };
+}
 /** Runs the kept script once, from the repository root, in a new scratch directory that the same ownership cleanup stops and removes afterwards.
  *  Null when no script was kept or the re-run is off. Never throws. */
 export async function rerunProof(repoDir: string, runDir: string, signal?: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<ProofRerun | null> {
@@ -204,22 +243,108 @@ export async function rerunProof(repoDir: string, runDir: string, signal?: Abort
   if (!proofRerunOn(env) || !existsSync(script)) return null;
   let scriptChars = 0, refusal: string | null = null; try { const t = readFileSync(script, "utf8"); scriptChars = t.length; refusal = proofScriptRefusal(t); } catch { return null; }
   if (refusal) return { refused: refusal, exit: null, seconds: 0, proved: 0, failed: 0, tail: `Loki did not run this proof script: ${refusal}.`, script_chars: scriptChars, stopped: 0, left: 0, lines: {} };
-  let scratch: ReturnType<typeof createSessionScratch>;
-  try { scratch = createSessionScratch(); } catch { return { exit: null, seconds: 0, proved: 0, failed: 0, tail: "Loki could not create a scratch directory for its own re-run", script_chars: scriptChars, stopped: 0, left: 0, lines: {} }; }
-  const blank: Record<string, string> = {}; for (const k of Object.keys(env)) if (CONNECTION_ENV.test(k)) blank[k] = ""; // the re-run never sees the user's own database settings either
-  const token = randomBytes(8).toString("hex"); writeProofKit(scratch.dir, null); writeProofKit(runDir, null); // Loki's own copy of the helper (also beside the kept script: one stored script in fourteen sourced it from its own directory) and a token that exists only in this run
-  const t0 = Date.now();
-  let exit: number | null = null, out = "";
-  try {
-    const emptyDir = join(scratch.dir, "run"); mkdirSync(emptyDir, { mode: 0o700 }); // the script's argument is an EMPTY directory: the scratch itself holds Loki's helper, and a script that checks for emptiness refused it
-    const r = await run(["bash", script, emptyDir], { cwd: repoDir, timeoutMs: proofRerunS(env) * 1000, group: true, signal, env: { ...blank, ...scratchSessionEnv(scratch), LOKI_PROOF_TOKEN: token } });
-    exit = r.exitCode; out = `${r.stdout}\n${r.stderr}`;
-  } catch (e) { out = `Loki's re-run did not complete: ${(e as Error).message}`; }
-  const seconds = Math.round((Date.now() - t0) / 1000);
-  const clean = cleanupSessionScratch(scratch);
-  const text = out.replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, " ");
-  const lines = tallyProof(text, token), vals = Object.values(lines);
-  return { exit, seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: text.replace(new RegExp(`LOKI-PROOF ${token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: clean.stopped.length, left: clean.left.length, lines };
+  writeProofKit(runDir, null); // also beside the kept script: one stored script in fourteen sourced the helper from its own directory
+  const r = await runProofScript(env, signal, async () => ({ script, cwd: repoDir }));
+  if (!r) return { exit: null, seconds: 0, proved: 0, failed: 0, tail: "Loki could not create a scratch directory for its own re-run", script_chars: scriptChars, stopped: 0, left: 0, lines: {} };
+  const lines = tallyProof(r.text, r.token), vals = Object.values(lines);
+  return { exit: r.exit, seconds: r.seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: r.stopped, left: r.left, lines, checks: proofChecks(r.text, r.token) };
+}
+
+// ---- PROVES THE CHANGE: the same proof script, run against the base commit ----
+// A passing check says the check passed, not that it tells the change from no change. "typecheck passes", a health endpoint, `true`, an install step: each
+// passes before the change too, so none of them shows the requested item was built (a stored run had "npm ci" counted for "full-text search with ranking").
+// Loki therefore runs the kept script a second time against the base commit and compares check by check. A check that also passes there proves nothing about
+// this change. An item whose every passing check also passes there is handed back to the session during the run, told to the acceptance reviewer, and
+// disclosed on the receipt. It is a cap (the item is not met) only with LOKI_E10_PROOF_BASE_CAP=1. Measured by replaying stored runs: against a base that
+// installs, no item of the two correct runs lost its mark (6 of 45 and 2 of 26 checks also pass on base), and a run whose items were counted on setup steps
+// lost six of them. But in the task lists of real issues 5 to 13 in 100 lines ask that something keeps working (the wording keepsWorkingAsk knows; others
+// exist), and an honest check of such a line passes before the change too, so the cap is not the default.
+/** On by default; LOKI_E10_PROOF_BASE=0 turns the base run off altogether (no hand-back, no disclosure, no cap). */
+export const proofBaseOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PROOF_BASE"] ?? "").trim());
+/** Off by default; LOKI_E10_PROOF_BASE_CAP=1 makes it a cap: an item whose passing checks all pass on the base commit is not met at the seal. */
+export const proofBaseCapOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_PROOF_BASE_CAP"] ?? "").trim());
+/** A line that asks that something keeps working (tests still pass, backward compatible, unchanged, a refactor). Its honest check passes on the base commit
+ *  as well, so the comparison says nothing about it and it is never listed. Wording only, and only ever used to stay quiet. */
+export const keepsWorkingAsk = (line: string): boolean => /\b(still|existing|remains?|unchanged|regress\w*|backwards?[- ]compatib\w*|compatib\w*|continues? to|keeps?|preserv\w*|no breaking|without breaking|(?:does|do|must|should) not break|not affect\w*|refactor\w*|clean ?up|renam\w*|upgrad\w*|bump\w*|tests? pass(?:es|ing)?|lint\w*|type ?checks?|ci (?:is |stays )?green|builds? (?:pass|succeed)\w*)\b/i.test(line);
+/** What the base run said. `available` is true only when the comparison can be trusted to strip a check: the base run printed check lines AND at least one
+ *  check that passes on the change did not pass there (so the run demonstrably saw a different tree). `same` is per acceptance item number: how many of its
+ *  passing checks also pass on the base commit, and the first such check. */
+export interface ProofBase { available: boolean; why?: string; all_same?: true; seconds: number; cached?: true; base_checks: number; base_proved: number; head_proved: number; same_total: number; same: Record<string, { passing: number; on_base: number; first?: string }> }
+/** The comparison itself, pure. A check of the change counts as "also passes on base" only on a positive match: the base run printed PROVED for the same
+ *  item and the same description (paired by count). A check the base run failed, never reached or described differently is never stripped. */
+export function compareWithBase(head: ProofCheck[], base: ProofCheck[]): Pick<ProofBase, "available" | "why" | "all_same" | "base_checks" | "base_proved" | "head_proved" | "same_total" | "same"> {
+  const left = new Map<string, number>(), k = (c: ProofCheck): string => `${c.item}\u0001${c.what}`;
+  for (const c of base) if (c.ok) left.set(k(c), (left.get(k(c)) ?? 0) + 1);
+  const same: ProofBase["same"] = {}; let headProved = 0, sameTotal = 0;
+  for (const c of head) {
+    if (!c.ok) continue;
+    const e = (same[c.item] ??= { passing: 0, on_base: 0 }), n = left.get(k(c)) ?? 0; e.passing++; headProved++;
+    if (n > 0) { left.set(k(c), n - 1); e.on_base++; sameTotal++; e.first ??= c.what; }
+  }
+  const counts = { base_checks: base.length, base_proved: base.filter((c) => c.ok).length, head_proved: headProved, same_total: sameTotal, same };
+  if (base.length === 0) return { available: false, why: "the proof script printed no check when run against the base commit (its setup did not get that far there), so there is nothing to compare", ...counts };
+  if (headProved > 0 && sameTotal === headProved) return { available: false, all_same: true, why: "every check that passes on the change also passes on the base commit, so the proof does not tell the change from no change (or the script found the changed tree by a path Loki could not redirect)", ...counts };
+  return { available: true, ...counts };
+}
+/** The acceptance item numbers (1-based) whose passing checks ALL also pass on the base commit, so none of them proves the change. Empty when the comparison
+ *  is not available. Never listed: the fresh-install line Loki adds (it asks that an install still works, true before the change as well: one of the two
+ *  correct stored runs proved it only with checks that pass on base) and a line that asks that something keeps working (keepsWorkingAsk). */
+export function provesNothing(asks: string[], r: ProofRerun | null, base: ProofBase | null | undefined): number[] {
+  if (!r || !base?.available) return [];
+  return asks.flatMap((line, i) => { const e = r.lines[String(i + 1)], s = base.same[String(i + 1)]; return line !== FRESH_INSTALL_ASK && !keepsWorkingAsk(line) && e && e.proved > 0 && e.failed === 0 && s && s.on_base >= e.proved ? [i + 1] : []; });
+}
+export const provesNothingReason = (base: ProofBase, n: number): string => `every passing check for this line also passes on the base commit, before the change, so none of them proves the change (for example: ${base.same[String(n)]?.first ?? ""})`.slice(0, 300);
+/** The same finding as facts for the acceptance reviewer, so its reading of a line knows which passing checks do not show the change. */
+export const baseFacts = (asks: string[], r: ProofRerun | null, base: ProofBase | null | undefined): string[] => provesNothing(asks, r, base).map((n) => `Line ${n}: every passing check for it in Loki's own run also passes when the same script runs against the base commit, before the change. Those checks do not show that the change delivered this line.`);
+/** What the session is told about such a line (the hand-back during the run). */
+export const PROVES_NOTHING_FIX = "Replace it with, or add, a check of what you built for this line: the request the new endpoint or page serves, the new output, the new row. A check that would also pass with your change removed proves nothing. If this line only asks that something keeps working, leave its check and say so in your reply";
+const BASE_CACHE = "proof-base.json", DEPS_COPY_MS = 180_000;
+/** The head checkout's installed node_modules directories (root and two levels down), as paths relative to the repository. */
+function depDirs(repoDir: string): string[] {
+  const found: string[] = [], walk = (rel: string, depth: number): void => {
+    let names: string[] = []; try { names = readdirSync(join(repoDir, rel), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name); } catch { return; }
+    if (names.includes("node_modules")) found.push(join(rel, "node_modules"));
+    if (depth < 2) for (const n of names) if (n !== "node_modules" && !n.startsWith(".")) walk(join(rel, n), depth + 1);
+  };
+  walk("", 0); return found.slice(0, 12);
+}
+/** Runs the kept proof script against the base commit and compares it with `head`, Loki's own run on the change. Null when the base run is off, there is
+ *  no base commit, or the run on the change has no passing check to compare. Never throws, never touches the working tree.
+ *  How: a throwaway detached worktree of the base commit inside the run's scratch directory; the head's node_modules COPIED in (copy-on-write where the
+ *  file system has it), never linked, because a proof script may run `npm ci`, which empties a linked directory's target (measured); a copy of the script
+ *  in which the repository's own path is replaced by the base worktree's, placed at the same path inside it, started from its root. The base checks are
+ *  kept in the run directory keyed by script and base commit, so the seal does not run the same script on the same commit again. */
+export async function proofOnBase(repoDir: string, runDir: string, baseSha: string | undefined, head: ProofRerun | null, signal?: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<ProofBase | null> {
+  if (!proofBaseOn(env) || !proofRerunOn(env) || !baseSha || !head || head.refused || !head.checks?.some((c) => c.ok)) return null;
+  let text = ""; try { text = readFileSync(join(runDir, PROOF_SCRIPT), "utf8"); } catch { return null; }
+  const key = createHash("sha256").update(`${baseSha}\0${text}`).digest("hex"), cacheFile = join(runDir, BASE_CACHE);
+  const unavailable = (why: string, seconds = 0): ProofBase => ({ available: false, why, seconds, base_checks: 0, base_proved: 0, head_proved: head.checks!.filter((c) => c.ok).length, same_total: 0, same: {} });
+  const keep = (rec: Record<string, unknown>): void => { try { writeFileSync(cacheFile, JSON.stringify({ key, base_sha: baseSha, ...rec }) + "\n", { mode: 0o600 }); } catch { /* the seal then runs it again */ } };
+  try { const c = JSON.parse(readFileSync(cacheFile, "utf8")) as { key?: string; seconds?: number; checks?: ProofCheck[]; why?: string }; if (c.key === key && typeof c.why === "string") return { ...unavailable(c.why, c.seconds ?? 0), cached: true }; if (c.key === key && Array.isArray(c.checks)) return { ...compareWithBase(head.checks, c.checks), seconds: c.seconds ?? 0, cached: true }; } catch { /* no usable record: run it */ }
+  let prepWhy = "", wt = "";
+  const r = await runProofScript(env, signal, async (scratchDir) => {
+    wt = join(scratchDir, "base");
+    try { safeGit(repoDir, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", "--force", wt, baseSha], { stdio: "ignore", repoDrivers: true, timeout: 120_000 }); } catch { prepWhy = "Loki could not check out the base commit into a throwaway directory"; return null; }
+    const deps = depDirs(repoDir); // dependencies are not in the commit: without them every check fails on base for the wrong reason and the comparison says nothing
+    if (deps.length && process.platform !== "darwin") { try { const f = statfsSync(scratchDir); if (Number(f.bavail) * Number(f.bsize) < 5 * 2 ** 30) { prepWhy = "less than 5 GiB of disk is free, and off macOS the copy of node_modules for the base run may be a full copy"; return null; } } catch { /* unknown free space: the copy's own time limit still holds */ } }
+    for (const d of deps) {
+      if (!existsSync(dirname(join(wt, d))) || existsSync(join(wt, d))) continue;
+      const cp = await run(process.platform === "darwin" ? ["cp", "-cR", join(repoDir, d), join(wt, d)] : ["cp", "-R", "--reflink=auto", join(repoDir, d), join(wt, d)], { timeoutMs: DEPS_COPY_MS, signal });
+      if (cp.exitCode !== 0) { prepWhy = `Loki could not copy ${d} for the base run`; return null; }
+    }
+    const real = (() => { try { return realpathSync(repoDir); } catch { return repoDir; } })(), names = [...new Set([real, repoDir, real.replace(/^\/private\//, "/")])].filter((d) => d.length > 5).sort((a, b) => b.length - a.length);
+    let baseText = text; for (const d of names) baseText = baseText.split(d).join(wt); // a session often writes the repository's path as a literal (17 of 19 stored scripts): the base copy must not run the changed tree
+    const rel = relative(real, (() => { try { return realpathSync(runDir); } catch { return runDir; } })()), dir = rel && !rel.startsWith("..") && !rel.startsWith("/") ? join(wt, rel) : join(scratchDir, "base-proof"); // same place inside the base tree: a script that finds the repository from its own location lands in the base tree too
+    mkdirSync(dir, { recursive: true }); writeProofKit(dir, null); writeFileSync(join(dir, PROOF_SCRIPT), baseText, { mode: 0o700 });
+    return { script: join(dir, PROOF_SCRIPT), cwd: wt, extra: { LOKI_REPO: wt }, limitS: Math.min(proofRerunS(env), Math.max(120, head.seconds * 4)), after: () => { try { safeGit(repoDir, ["worktree", "remove", "--force", wt], { stdio: "ignore", repoDrivers: true, timeout: 120_000 }); } catch { /* the scratch cleanup removes the directory; the prune below drops the record */ } } };
+  });
+  if (wt) { try { rmSync(wt, { recursive: true, force: true }); safeGit(repoDir, ["worktree", "prune"], { stdio: "ignore", repoDrivers: true, timeout: 60_000 }); } catch { /* a stale worktree record is harmless and pruned by git later */ } }
+  if (!r) return unavailable("Loki could not create a scratch directory for the base run");
+  if (!r.ran) { const why = prepWhy || "the base run could not be prepared"; if (!signal?.aborted) keep({ why }); return unavailable(why); }
+  if (r.exit === null || r.timedOut) { const why = "the base run did not finish in time"; if (!signal?.aborted) keep({ why, seconds: r.seconds }); return unavailable(why, r.seconds); } // a cut run printed only some of its checks: comparing them would call the rest absent
+  const checks = proofChecks(r.text, r.token);
+  keep({ seconds: r.seconds, exit: r.exit, checks, tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-2000) });
+  return { ...compareWithBase(head.checks, checks), seconds: r.seconds };
 }
 /** The facts for the acceptance line check: what Loki's own run of the script returned, and the script itself (so a script that checks nothing is visible). */
 export function proofFacts(runDir: string, r: ProofRerun | null, expected: boolean): string[] {
@@ -232,10 +357,13 @@ export function proofFacts(runDir: string, r: ProofRerun | null, expected: boole
   ];
 }
 
-/** The fixed rule: an acceptance line is met when Loki's own run has at least one passing check for its number and no failing one. No model is asked. */
-export function ruleStatus(asks: string[], r: ProofRerun | null): { line: string; status: "met" | "unmet"; evidence?: string; reason?: string; optional?: true }[] {
+/** The fixed rule: an acceptance line is met when Loki's own run has at least one passing check for its number and no failing one, and (when `base` is
+ *  given and its comparison is available) at least one of those checks does not also pass on the base commit. No model is asked. */
+export function ruleStatus(asks: string[], r: ProofRerun | null, base?: ProofBase | null): { line: string; status: "met" | "unmet"; evidence?: string; reason?: string; optional?: true }[] {
+  const empty = new Set(provesNothing(asks, r, base));
   return asks.map((line, i) => {
     const e = r?.lines[String(i + 1)], opt = optionalAsk(line) ? { optional: true as const } : {};
+    if (e && e.proved > 0 && e.failed === 0 && empty.has(i + 1)) return { line, status: "unmet" as const, reason: provesNothingReason(base!, i + 1), ...opt };
     if (e && e.proved > 0 && e.failed === 0) return { line, status: "met" as const, evidence: `Loki's own run: ${e.proved} passing check${e.proved === 1 ? "" : "s"}; first: ${e.first_proved ?? ""}`.slice(0, 300), ...opt };
     return { line, status: "unmet" as const, reason: (!r ? "there is no proof script for Loki to run" : r.refused ? `Loki did not run the proof script: ${r.refused}` : r.exit === null ? "Loki's own run of the proof did not finish" : e && e.failed > 0 ? `a check failed in Loki's own run: ${e.first_failed ?? ""}` : "Loki's own run has no passing check for this line").slice(0, 300), ...opt };
   });
