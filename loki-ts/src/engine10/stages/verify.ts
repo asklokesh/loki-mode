@@ -523,6 +523,15 @@ function tscLocalKeys(out: string, pkgRel: string, keep: ReadonlySet<string>, ch
  *  tail cut at its cap keeps the check blocking. Only tsc lints the whole project; eslint, ruff and shellcheck run on the changed files and keep capping. */
 export const LINT_UNTOUCHED_NOTE = "lint red only in files the change did not touch (disclosed, not blocking)";
 export const lintUntouchedOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_LINT_UNTOUCHED"] ?? "").trim()); // off by default: it changed no label on 150 stored bench runs and has not fired on a real run
+/** GENERATED-ONLY: a failed `tsc --noEmit` whose every diagnostic sits in a file git ignores (a build output such as .next/types, left stale by a build the
+ *  session ran before it moved a page) is not an error in the change's source: disclosed, never blocking. Fail-closed: an unparsed error line, a cut tail,
+ *  no diagnostics, or one diagnostic in a tracked or untracked-but-not-ignored file keeps the check blocking. */
+function tscOnlyIgnored(repoDir: string, cwd: string, out: string): boolean {
+  if (!out || out.length >= 60000) return false;
+  const found = [...out.matchAll(TSC_DIAG)], files = [...new Set(found.map((m) => m[1]!.trim()))];
+  if (files.length === 0 || found.length !== out.split("\n").filter((l) => /error TS\d+/.test(l)).length) return false;
+  try { return files.every((f) => { try { safeGit(repoDir, ["check-ignore", "-q", "--", join(cwd, f)]); return true; } catch { return false; } }); } catch { return false; }
+}
 const tscLines = (out: string): string[] => out.split("\n").map((l) => l.trim()).filter((l) => /error TS\d+/.test(l));
 /** The half of tscUntouchedOnly that needs no base run: the whole output parses, no config changed, no diagnostic in a touched file, no changed symbol named. */
 function tscUntouchedShape(out: string, pkgRel: string, touched: ReadonlySet<string>, symbols: readonly string[]): boolean {
@@ -584,7 +593,7 @@ export async function runLintChecks(
   // FC-01: tsc and eslint belong to the package that owns the file: config lookup, cwd and file paths are per package.
   for (const g of groupByPackage(api, ctx.repoDir, changed.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f)))) {
     const sfx = g.root === "." ? "" : `:${g.root}`, co = g.root === "." ? opts : { ...opts, cwd: g.cwd };
-    if (existsSync(join(g.cwd, "tsconfig.json"))) { const c = await runCheck(ctx, `lint:tsc${sfx}`, "npx", ["--no-install", "tsc", "--noEmit", "-p", "."], signal, checks, { ...co, kind: "static" }); if (c.result === "fail" && keep && tscLocalKeys(tscOut.get(c) ?? "", g.root, keep, [...keep]) && tscUntouchedLocal(tscOut.get(c) ?? "", g.root, keep, [...keep], await tscOnBase(ctx, g.cwd, signal, co))) pre.push(c.name); else if (c.result === "fail" && keep && untouched && lintUntouchedOn()) { const syms = diffSymbols(ctx, [...keep]), o = tscOut.get(c) ?? ""; if (tscUntouchedShape(o, g.root, keep, syms) && tscUntouchedOnly(o, g.root, keep, syms, await tscOnBase(ctx, g.cwd, signal, co))) untouched.push(c.name); } }
+    if (existsSync(join(g.cwd, "tsconfig.json"))) { const c = await runCheck(ctx, `lint:tsc${sfx}`, "npx", ["--no-install", "tsc", "--noEmit", "-p", "."], signal, checks, { ...co, kind: "static" }); if (c.result === "fail" && tscOnlyIgnored(ctx.repoDir, g.cwd, tscOut.get(c) ?? "")) pre.push(c.name); else if (c.result === "fail" && keep && tscLocalKeys(tscOut.get(c) ?? "", g.root, keep, [...keep]) && tscUntouchedLocal(tscOut.get(c) ?? "", g.root, keep, [...keep], await tscOnBase(ctx, g.cwd, signal, co))) pre.push(c.name); else if (c.result === "fail" && keep && untouched && lintUntouchedOn()) { const syms = diffSymbols(ctx, [...keep]), o = tscOut.get(c) ?? ""; if (tscUntouchedShape(o, g.root, keep, syms) && tscUntouchedOnly(o, g.root, keep, syms, await tscOnBase(ctx, g.cwd, signal, co))) untouched.push(c.name); } }
     if (ESLINT_CONFIGS.some((f) => existsSync(join(g.cwd, f)))) { const c = await runCheck(ctx, `lint:eslint${sfx}`, "npx", ["--no-install", "eslint", ...g.rel], signal, checks, { ...co, kind: "static" }); if (await excuseLint(ctx, signal, c, "eslint", "npx", ["--no-install", "eslint"], g.cwd, g.rel, co)) pre.push(c.name); }
   }
   return pre;

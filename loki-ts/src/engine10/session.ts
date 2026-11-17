@@ -111,7 +111,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
     env[`LOKI_CLAUDE_MODEL_${t}`] = pin;
     env[`LOKI_MODEL_${t}`] = pin;
   }
-  const caps = cfg.provider === "claude" ? hooks.effort?.caps?.(opts.stage, process.env["LOKI_MODEL_OVERRIDE"] || sessionPinModel(process.env) || (pin && pin !== PROVIDER_DEFAULT_MODEL ? pin : "") || opts.model || cfg.model || resolveModel(cfg.provider)) : undefined; // E5: the model the call really runs on (override, session pin, router pin, then the run model); Haiku implement and fix sessions stop at a turn and token cap, and a fix with no product edit
+  const caps = cfg.provider === "claude" && env["LOKI_E10_FULL_SESSION"] !== "1" ? hooks.effort?.caps?.(opts.stage, process.env["LOKI_MODEL_OVERRIDE"] || sessionPinModel(process.env) || (pin && pin !== PROVIDER_DEFAULT_MODEL ? pin : "") || opts.model || cfg.model || resolveModel(cfg.provider)) : undefined; // A whole-issue session (LOKI_E10_FULL_SESSION, set above) has no turn or token cap on any model: the 45-turn Haiku cap was sized from small bench tasks and cut every Haiku issue run off mid-work. E5: the model the call really runs on (override, session pin, router pin, then the run model); Haiku implement and fix sessions stop at a turn and token cap, and a fix with no product edit
   if (caps) env["LOKI_E10_STOP_RULES"] = JSON.stringify(caps); else delete env["LOKI_E10_STOP_RULES"];
   return env;
 }

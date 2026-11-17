@@ -193,6 +193,7 @@ export const asUnfinishedConflict = (s: SessionResult): SessionResult =>
 export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, session: SessionResult, o: { fingerprint: () => string | null; spentUsd: () => number | null; compactions: (ids: string[]) => number | null; signal: AbortSignal; env?: NodeJS.ProcessEnv; normalize?: (s: SessionResult) => SessionResult }): Promise<{ session: SessionResult; iterationIds: string[]; record: Omit<ContinueRecord, "compactions"> }> {
   const env = o.env ?? process.env, ids: string[] = [], max = continueMax(env), usdLine = continueMaxUsd(env);
   const missing = (): string[] => readPlanScope(ctx.runDir).filter((f) => !existsSync(join(ctx.repoDir, f)));
+  let unchanged = 0; // a reply that only waits on a subagent leaves the tree as it was: one such resume is allowed, a second ends the loop
   let cur = session, outstanding = outstandingOf(session.summary), base = first, ended: ContinueEnd = max === 0 ? "continue off" : "count cap", spent: number | null = null;
   for (let n = 1; n <= max; n++) {
     if (o.signal.aborted) { ended = "aborted"; break; }
@@ -208,7 +209,7 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
     if (r.reply.killed || r.reply.exit !== 0) { ended = "killed or error"; break; }
     const after = o.fingerprint();
     if (before === null || after === null) { ended = "tree unknown"; break; }
-    if (before === after) { ended = "tree unchanged"; break; }
+    if (before === after) { if (++unchanged >= 2) { ended = "tree unchanged"; break; } } else unchanged = 0;
   }
   return { session: cur, iterationIds: ids, record: { continues: ids.length, ended, outstanding: outstanding || null, spent_usd: spent ?? o.spentUsd() } };
 }

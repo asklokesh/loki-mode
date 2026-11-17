@@ -821,7 +821,7 @@ function redOnBaseProfile(p: CommandProfile, ids: readonly string[], errors: Map
   const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran && b.attributable && !b.timed_out && b.reason !== "baseline budget used up");
   const baseIds = new Set(runs.flatMap((b) => b.failing_ids)), baseErr = new Map<string, string[]>();
   for (const b of runs) for (const [k, v] of Object.entries(b.failing_errors ?? {})) if (!baseErr.has(k)) baseErr.set(k, v);
-  return ids.length > 0 && ids.every((i) => baseIds.has(i) || [...baseIds].some((b) => b.endsWith(` > ${i}`))) && sameErrors(errors, baseErr, [...ids]);
+  return ids.length > 0 && ids.every((i) => baseIds.has(i) || [...baseIds].some((b) => b.endsWith(` > ${i}`))) && (baseRedByIdOn() || sameErrors(errors, baseErr, [...ids])); // by id, as the full suite is judged (LOKI_E10_BASE_RED_BY_ID): a test already failing on base stays pre-existing when its stack trace differs by a line number. A Haiku run with 10 of 10 lines proved was sealed BLOCKED because 143 base-red ids failed again in targeted checks with other text
 }
 /** COLLATERAL-BASELINE (LOKI_E10_COLLATERAL_BASELINE, default on, =0 opts out): a collateral check (a relevant test that is not the task's own) is pre-existing at once,
  *  with no COLLATERAL_RED cap and no fix round, only when its test file is unedited, no changed file is its path-paired source (the same stem in the test's

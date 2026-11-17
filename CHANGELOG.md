@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+- A whole-issue session has no turn or token cap on any model. The 45-turn cap on Haiku sessions was sized from small tasks and cut every Haiku issue run off in the middle of the work.
+- A targeted test that already fails on the base commit is now judged by test id, as the full suite is, whatever its error text says (`LOKI_E10_BASE_RED_BY_ID=0` restores the old rule). A Haiku run whose 10 acceptance lines were all met in Loki's own proof run was sealed BLOCKED with no pull request because 143 tests that fail on the base commit failed again with a different stack trace.
+- A type check that fails only in files git ignores (a build output such as `.next/types`, left stale by a build the session ran) no longer fails the run; it is disclosed. Any error in a tracked or new source file still blocks.
+- The session is told that its reply ends the session, so it must wait for a subagent or background command before replying, and a reply that only waits is resumed once more before Loki gives up (it used to stop at the first resume that changed no file).
 - Loki now refuses a proof script that could count a result no check produced: one that reads `LOKI_PROOF_TOKEN`, prints or handles a `LOKI-PROOF` result line itself, or redefines `loki_http`, `loki_cmd` or `_lp`. The script is not run, every acceptance line is reported not met with that reason, and the session is handed the reason to rewrite it. The result marker has to reach the script because the check functions run inside it, so this guard covers the plain forms only; the count is still a count of the script's own checks as Loki ran them.
 
 ## v11.146.0 (2026-11-16)
