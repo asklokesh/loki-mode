@@ -1122,7 +1122,7 @@ Y6T="norerun 2:0:true | same 2:0 | differs 0:2 | edited 1:1 | newid 1:1 | nosuit
 # run again and its failures are attributed against that run. A pre/post hook, another script, a package directory, a cut or unattributable root run,
 # or LOKI_BASELINE_SCRIPT_ALIAS=0 keeps the suite's own run; a cut root run never excuses, an exact-command entry always wins over the alias.
 G5="$T/basealias"; mkdir -p "$G5/.loki/state" && git -C "$G5" init -q -b main && printf '{"name":"w","scripts":{"test":"vitest run"}}\n' > "$G5/package.json" && git -C "$G5" add package.json && git -C "$G5" -c user.name=t -c user.email=t@t commit -qm init
-B5="$(G="$G5" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+B5="$(G="$G5" ROOT="$ROOT" LOKI_E10_BASE_ON_DEMAND=0 bun --no-env-file --config=/dev/null -e '
 const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), { writeFileSync, execFileSync } = await import("node:fs").then(async (f) => ({ ...f, execFileSync: (await import("node:child_process")).execFileSync }));
 const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), r = [];
 const A = ["a.test.ts > t1"], errs = (ids) => Object.fromEntries(ids.map((i) => [i, ["Error: " + i]]));
@@ -1293,6 +1293,7 @@ pages = lambda xs: sorted(n.split("/app/")[1].split("/")[0] for n in xs if "/app
 print("fix_rounds %d" % sum(1 for e in ev if e["type"] == "fix.round"))
 print("pre_red %s" % ",".join(pages(v.get("pre_red_checks", []))))
 print("suite_excused %s" % ("full suite: mono-web" in v.get("pre_red_checks", [])))
+print("suite_ran %s" % any(c.get("name") == "full suite: mono-web" and c.get("result") in ("pass", "fail") for c in v.get("checks", [])))
 print("verdict %s" % done.get("verdict"))
 print("not_excused %s" % " ;; ".join(n for n in done.get("not_proven", []) if n.startswith("not excused: full suite")))
 PY
@@ -1324,8 +1325,8 @@ unit_rv() { # unit_rv <version> <case>
     backend)
     rv_fixture "$T/rv-$ver-backend" 0 "$RVROOT/$ver"; rv_run "$T/rv-$ver-backend" "" 'export const sub = (a: number, b: number): number => a - b;' backend/src/util.ts "add a sub(a, b) helper next to add in backend/src/util.ts"
     printf '%s\n' "$RVS" | sed "s/^/    real vitest $ver backend: /"
-    grep -qx 'suite_excused True' <<< "$RVS" && grep -qx 'fix_rounds 0' <<< "$RVS" && grep -qE '^verdict (PARTIAL|VERIFIED)$' <<< "$RVS" \
-        && ok "real vitest $ver backend: the untouched frontend suite failing with exactly its base errors is excused by them; delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
+    grep -qx 'suite_ran False' <<< "$RVS" && grep -qx 'suite_excused False' <<< "$RVS" && grep -qx 'fix_rounds 0' <<< "$RVS" && grep -qE '^verdict (PARTIAL|VERIFIED)$' <<< "$RVS" \
+        && ok "real vitest $ver backend: the frontend suite, in a package the change did not touch and that does not depend on backend, is not run (rw-01; it used to run and be excused by its base errors); delivered ($(printf '%s\n' "$RVS" | grep verdict))" \
         || { bad "real vitest $ver backend: $(printf '%s\n' "$RVS" | tr '\n' ' ') (rc $RVRC)"; printf '%s\n' "$RVOUT" | tail -6 | sed 's/^/    | /'; }
     ;;
     changed)

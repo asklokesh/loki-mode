@@ -647,6 +647,9 @@ function baseTree(ctx: RunContext): BaseTree {
     get(changed, gate) {
       if (dir !== undefined) return dir;
       const d = mkdtempSync(join(tmpdir(), "e10-base-"));
+      // The gate here asks about the dependency dirs alone (as depsAsIntake does), not every ignored file: this worktree holds the base commit's tracked files and
+      // nothing ignored, whatever happened to an ignored file in the checkout since intake, so only a changed node_modules or .venv can make its run not a base run.
+      gate = gate.ignored ? { ...gate, ignored: [] } : gate;
       try { git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", d, ctx.baseSha]); dir = d; linker = changed.some((f) => MANIFESTS.test(f)) ? null : baseDepsLinker(d, ctx.repoDir, gate); view = linker ? baseDepsView(d, ctx.repoDir, gate) : null; } catch { rmSync(d, { recursive: true, force: true }); dir = null; }
       return dir;
     },
