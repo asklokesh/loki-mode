@@ -1,7 +1,7 @@
 // D76: scope control is ADVISORY. It flags edits outside every scope signal and never reverts or drops them. Signals (no model call): the files
 // plan-scope.json names (when present, that list is the scope), plan's relevant_files, any path or basename the plan, task or contract names,
 // directories matching a noun of the issue, and planned directories. No plan signal = undetermined.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { isTestFile } from "../engine10/testmap.ts";
 import type { Obj } from "../engine10/types.ts";
@@ -116,7 +116,33 @@ export function crossPackageTestEdits(repoDir: string, staged: Staged[], task: s
  *  package path (go.mod module + directory). The failure: a repo whose tests live in their own package (a JS e2e or tests workspace, a Go root package testing a
  *  subpackage) had the run's only regression test dropped as "outside the change's packages", and the delivered diff carried no test at all. */
 export const testReachEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TEST_REACH"] ?? "").trim());
-export function exercisesChange(repoDir: string, testFile: string, changed: readonly string[]): boolean {
+/** RW-02 TEST-REACH-HELPERS (LOKI_E10_TEST_REACH_HELPERS, default on; 0/off/false/no opts out): the test also reaches the change when one of the helper files it
+ *  imports by a relative path (one hop: its own fixtures or utilities, at most HELPER_MAX of them) imports the changed code by the TK rule above. The failure
+ *  (playwright 44124, Haiku, 2026-11-17): the session extended tests/page/page-aria-snapshot.spec.ts for its change to packages/playwright-core; that file imports
+ *  only '@playwright/test', './pageTest' and '../config/utils', and J3 reset it, while the Sonnet run's edit to the sibling page-aria-snapshot-ai.spec.ts was kept
+ *  because that file happens to carry `import type { Page } from 'playwright-core'`. tests/config/utils.ts imports 'playwright-core'. One hop only: a test that
+ *  reaches the changed package through a chain of other packages is still not the change's own test. */
+export const testReachHelpersEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TEST_REACH_HELPERS"] ?? "").trim());
+const HELPER_MAX = 20, HELPER_EXTS = ["", ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"];
+const SPEC_RE = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*|\bimport\s+)["'`]([^"'`\n]+)["'`]/g;
+/** The repo files a JS/TS file imports by a relative path (resolved with the usual extensions; a path leaving the repository is dropped). */
+function relativeHelpers(repoDir: string, file: string): string[] {
+  let text = ""; try { text = readFileSync(join(repoDir, file), "utf8"); } catch { return []; }
+  const out: string[] = [];
+  for (const m of text.matchAll(SPEC_RE)) {
+    const sp = m[1]!; if (!sp.startsWith(".")) continue;
+    const base = join(dirname(file), sp); if (base.startsWith("..")) continue;
+    const hit = HELPER_EXTS.map((e) => `${base}${e}`).find((p) => { try { return JS_EXT.test(p) && statSync(join(repoDir, p)).isFile(); } catch { return false; } });
+    if (hit && !out.includes(hit)) out.push(hit);
+    if (out.length >= HELPER_MAX) break;
+  }
+  return out;
+}
+export function exercisesChange(repoDir: string, testFile: string, changed: readonly string[], env: NodeJS.ProcessEnv = process.env): boolean {
+  if (importsChange(repoDir, testFile, changed)) return true;
+  return testReachHelpersEnabled(env) && JS_EXT.test(testFile) && relativeHelpers(repoDir, testFile).some((h) => importsChange(repoDir, h, changed));
+}
+function importsChange(repoDir: string, testFile: string, changed: readonly string[]): boolean {
   let text = ""; try { text = readFileSync(join(repoDir, testFile), "utf8"); } catch { return false; }
   const goSpecs = testFile.endsWith(".go") ? [...text.matchAll(/^\s*import\s*\(([\s\S]*?)\)/gm)].flatMap((b) => [...b[1]!.matchAll(/"([^"\n]+)"/g)].map((m) => m[1]!)).concat([...text.matchAll(/^\s*import\s+(?:[\w.]+\s+)?"([^"\n]+)"/gm)].map((m) => m[1]!)) : [];
   const specs = [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*|\bimport\s+)["'`]([^"'`\n]+)["'`]/g)].map((m) => m[1]!).concat(goSpecs);

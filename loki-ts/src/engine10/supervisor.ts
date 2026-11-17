@@ -9,7 +9,7 @@ import { diffStat, runHead, formatRunSummary, handoffSection, readRiskSummary, w
 import { commitUnsealedWork, guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey, secretPushLine, secretPushRefusal } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { ISSUE_LABELS_ENV, issueWholeFirst } from "../features/decompose.ts";
+import { deliverables, ISSUE_LABELS_ENV, issueWholeFirst } from "../features/decompose.ts"; import { smallMaxChars } from "./sizing.ts";
 import { dirname, join, relative, resolve } from "node:path"; import { writeRunState } from "../util/seal_drift.ts";
 import { loadSpecFile, type LoadedSpec } from "../util/spec_file.ts";
 import { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker } from "../util/engine_origin.ts";
@@ -31,7 +31,7 @@ import { cleanTreeId, failedCheckNames, recordFingerprints } from "../util/failu
 import { modelDowngrades } from "../runner/model_downgrades.ts";
 import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
-import { type EventEnvelope, type PushEnv, type StageName, type Verdict, backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, pushArgv, STAGE_BUDGETS } from "./types.ts";
+import { type EventEnvelope, type PushEnv, type StageName, type Verdict, backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, proveByRunningOn, pushArgv, STAGE_BUDGETS, WORK_ROAD_ENV } from "./types.ts";
 import { baseLine, finishRunBranch } from "../util/base_guard.ts";
 import { alreadyDoneTextComment, policyGate, prGate, renderMainOutput, runIntent, summaryCache, summaryTokens, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
 
@@ -210,6 +210,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   writeAliveBeat(aliveDir); const beat = setInterval(() => { writeAliveBeat(aliveDir); stuck.tick(Date.now()); const w = quiet.due(Date.now()); if (w) log.append("watchdog.silent", w.stage as StageName, { silent_s: w.silentS, last_event: w.lastType, processes: descendantNames(process.pid) }); }, ALIVE_BEAT_MS); beat.unref(); // cheap heartbeat for quiet stages (a long verify emits no events)
   const workerEnv: NodeJS.ProcessEnv = { ...env }; // withholdGithubTokens mutates its argument: always a copy, never env itself
   withholdGithubTokens(workerEnv); if (opts.resume) workerEnv.LOKI_E10_RESUME = "1";
+  if (opts.started?.["road"] === "work") workerEnv[WORK_ROAD_ENV] = "1"; else delete workerEnv[WORK_ROAD_ENV]; // RW-02 ONE ROAD: every worker of a run, a resumed one included (its started data is the first run.started), reads the road the run was started on
   // T3: the worker has no terminal; only the supervisor can ask the LOKI_CONFIRM question.
   workerEnv.LOKI_INTENT_TTY = env.LOKI_CONFIRM === "1" && process.stdin.isTTY === true && process.stdout.isTTY === true ? "1" : "0";
   const capS = opts.capS ?? envCapS(env.LOKI_E10_CAP_S) ?? DEFAULT_CAP_S;
@@ -307,6 +308,25 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
 }
 export { alreadyDoneTextComment, policyGate, prGate, renderMainOutput, summaryCache, summaryTokens, unmergedLokiWorkNote, type PolicyGate }; // moved to util/run_outputs.ts (line budget); re-exported for existing callers
 const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
+/** RW-02 ONE ROAD: whether a text task takes the proof and acceptance road an issue takes (types.ts WORK_ROAD_ENV). Decided once per run, from the task alone:
+ *  - a spec run (--spec FILE), a --seal-existing run and a group unit (LOKI_UNIT_ID) keep their own road;
+ *  - a task no longer than the small bar (LOKI_E10_SMALL_MAX_CHARS, 600) keeps the fast road: only such a task can size small (sizing.ts sizeTask), and the small
+ *    path was measured to pay without a plan or a second session (E-45, E-64), so a one-line goal does not buy the proof loop's turns;
+ *  - a task that sizes large by structure (features/decompose.ts deliverables, the one definition of large) is a spec with several deliverables and keeps the road it
+ *    has: the group split entered before this is untouched, and so is what its sequential fallback gets.
+ *  There is no content test for "a PRD": any file given to `loki start` is read into the task text, so these rules are what tells a description of work from a
+ *  spec. LOKI_E10_ONE_ROAD=0 turns the road off for every text task. */
+export function workRoad(task: string, o: { spec: boolean; sealPatch: boolean; provider: string }, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (/^(0|off|false|no)$/i.test((env["LOKI_E10_ONE_ROAD"] ?? "").trim()) || o.spec || o.sealPatch || env["LOKI_UNIT_ID"]) return false;
+  if (o.provider !== "claude" || !proveByRunningOn(env)) return false; // the road's brief exists only there (types.ts issueRunBrief): a run that is never asked for a proof script must not get lines read at intake or be held for leaving none
+  return task.length > smallMaxChars(env) && !deliverables(task, []).large;
+}
+/** The road a run takes, for run.started: "issue" (an issue ref, or an issue supplied as a file in LOKI_E10_ISSUE_JSON, which intake reads as the task),
+ *  "spec" (--spec FILE), "work" (a text task on the issue's proof and acceptance road) or "text" (the plain road). */
+export function runRoad(task: string, o: { isIssue: boolean; spec: boolean; sealPatch: boolean; provider: string }, env: NodeJS.ProcessEnv = process.env): "issue" | "spec" | "work" | "text" {
+  const supplied = env["LOKI_E10_ISSUE_JSON"];
+  return o.isIssue || (!!supplied && existsSync(supplied)) ? "issue" : o.spec ? "spec" : workRoad(task, o, env) ? "work" : "text";
+}
 export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
 /** The end-of-run summary cost inputs, read with the run's .loki root so child sessions join. */
 export const runSummaryCost = (events: EventEnvelope[], tampered: boolean, repoDir: string): ReturnType<typeof summaryCost> => summaryCost(events, tampered, join(repoDir, ".loki"));
@@ -411,6 +431,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     try { const l = (JSON.parse(readFileSync(join(runDir, "issue.json"), "utf8")) as { labels?: unknown }).labels; for (const e of [env, process.env]) e[ISSUE_LABELS_ENV] = JSON.stringify(Array.isArray(l) ? l.filter((x) => typeof x === "string") : []); } catch { /* no labels: sizing uses the text alone */ } // one large rule (features/decompose.ts): the stages' sizeTask sees the issue's epic label, as triage and startIssueEpic do
   }
   if (!isIssue) for (const e of [env, process.env]) delete e[ISSUE_LABELS_ENV]; // a text goal never inherits an issue's labels
+  const road = runRoad(task, { isIssue, spec: spec !== null, sealPatch: sealPatch !== null, provider }); for (const e of [env, process.env]) { if (road === "work") e[WORK_ROAD_ENV] = "1"; else delete e[WORK_ROAD_ENV]; } // RW-02 ONE ROAD: decided once, after the group entry above, and carried to every worker of the run; an inherited value never decides
   const routeStart = routeStartLine(process.env, provider); // FC-35: printed before any stage, so it states the pre-plan state only (route.json does not exist yet). R1-15: null unless LOKI_ROUTER is on, so the start line is byte-identical otherwise
   const costEst = encodeEstimate(process.env, repoDir, undefined, model); if (costEst) env.LOKI_E10_COST_ESTIMATE = costEst; // 11.3.0 T1: null under LOKI_COST_PREVIEW=0
   const downgrades = modelDowngrades(provider); // D86 L1: any downgrade is printed here and recorded on run.started (key only when non-empty, receipt hashes stay stable)
@@ -453,7 +474,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     runId, repoDir, env, capS, capCeilingS: sized?.ceilingS,
     workerArgv: [process.execPath, ...SAFE_BUN_FLAGS, resolve(process.argv[1]!), "engine10", "worker", runId, provider, model, deep ? "deep" : "fast"], deepArgv: noPr ? undefined : [process.execPath, ...SAFE_BUN_FLAGS, resolve(process.argv[1]!), "engine10", "deep-worker", runId, provider, model], status: statusStep,
     started: {
-      task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, provider, model, deep, cap_s: capS, cap_ceiling_s: sized?.ceilingS ?? capS, max_cost_usd: cap.usd,
+      task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, road, provider, model, deep, cap_s: capS, cap_ceiling_s: sized?.ceilingS ?? capS, max_cost_usd: cap.usd,
       model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`, ...runIntent(repoDir),
       ...(downgrades.length ? { downgrades } : {}), ...runIdentity(repoDir, process.env, model),
     },
