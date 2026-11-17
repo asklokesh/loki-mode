@@ -57,8 +57,8 @@ export async function unusedNewFiles(repoDir: string, baseSha: string | undefine
 }
 export const unusedNewFileNote = (f: string): string => `new file nothing uses: ${f} is not imported or named by any other file (disclosed, does not cap: on merged history this check also flags files loaded by convention, 7 in about a thousand commits of two repositories)`;
 /** The brief that hands unmet lines back to the session: each line with the check's reason, and what closing it takes. */
-export function unmetBrief(unmet: { line: string; reason: string }[]): string {
-  return [`Loki checked your change against the acceptance lines, using its own run of your proof script. ${unmet.length} line${unmet.length === 1 ? " is" : "s are"} not met yet:`, "",
+export function unmetBrief(unmet: { line: string; reason: string }[], note = ""): string {
+  return [...(note ? [note, ""] : []), `Loki checked your change against the acceptance lines, using its own run of your proof script. ${unmet.length} line${unmet.length === 1 ? " is" : "s are"} not met yet:`, "",
     ...unmet.map((u, i) => `${i + 1}. ${u.line}\n   Why not: ${u.reason || "no evidence that it was exercised"}`), "",
     "Close each one. If the product does not do it, make it do it. If it does but nothing proves it, add the proof to $LOKI_SCRATCH/loki-proof.sh: send the exact request the real caller sends (for a page, every path its client code calls, with the same method and parameters) and print a PROVED or FAILED line with the real response. Run the script yourself with a new empty directory until it exits 0, leave it in place, and end with the same finish line. Do not weaken a check to make it pass.",
   ].join("\n");
@@ -72,7 +72,8 @@ export const PROOF_HELPER = "loki-check.sh", ACCEPTANCE_FILE = "acceptance.txt";
  *  of free text. Each check names the acceptance line number it proves. */
 export const PROOF_HELPER_SH = `# Loki proof helpers. Source this file; never edit it. Only lines printed by these functions count toward the label.
 _lp() { printf 'LOKI-PROOF %s %s %s: %s\\n' "\${LOKI_PROOF_TOKEN:-session}" "$1" "$2" "$3"; }
-# loki_http <line number> "<what is proved>" <expected status> <curl arguments...>
+# loki_http <item number> "<what is proved>" <expected status> <curl arguments...>
+#   <item number> is the number of the acceptance item in acceptance.txt (1, 2, 3 ...), never a line of this script.
 #   Sends the request with curl. Passes when the status equals the expected one (and, when LOKI_BODY_MATCH is set, the body matches that grep -E pattern).
 loki_http() {
   local n="$1" what="$2" want="$3"; shift 3
@@ -85,7 +86,7 @@ loki_http() {
   rm -f "$body"
   if [ "$ok" = 1 ]; then _lp PROVED "$n" "$what | status $code | $snip"; else _lp FAILED "$n" "$what | wanted $want\${LOKI_BODY_MATCH:+ and a body matching $LOKI_BODY_MATCH}, got $code | $snip"; return 1; fi
 }
-# loki_cmd <line number> "<what is proved>" <command...>
+# loki_cmd <item number> "<what is proved>" <command...>
 #   Runs the command. Passes when it exits 0. Use it for a test run, a query plan, a file that must exist, anything that is not one HTTP request.
 loki_cmd() {
   local n="$1" what="$2"; shift 2
@@ -145,7 +146,10 @@ export function tallyProof(out: string, token: string): Record<string, { proved:
   const t: Record<string, { proved: number; failed: number; first_proved?: string; first_failed?: string }> = {};
   for (const l of out.split("\n")) {
     const m = /^LOKI-PROOF (\S+) (PROVED|FAILED) (\d{1,3}): (.*)$/.exec(l.trim()); if (!m || m[1] !== token) continue;
-    const e = (t[m[3]!] ??= { proved: 0, failed: 0 }), txt = m[4]!.slice(0, 300);
+    // The number is the acceptance item's number in acceptance.txt. A session read "line number" as the script's own line (loki_cmd ${LINENO} "item 9: ...")
+    // and 37 passing checks counted for no item: a description that opens with "item N:" (or line, acceptance, ask, criterion, AC, #) names the item itself.
+    const tag = /^(?:item|line|acceptance(?: line| item)?|ask|criterion|ac|#)\s*#?(\d{1,2})\s*[:.)-]/i.exec(m[4]!.trim()), key = tag ? String(Number(tag[1])) : m[3]!;
+    const e = (t[key] ??= { proved: 0, failed: 0 }), txt = m[4]!.slice(0, 300);
     if (m[2] === "PROVED") { e.proved++; e.first_proved ??= txt; } else { e.failed++; e.first_failed ??= txt; }
   }
   return t;

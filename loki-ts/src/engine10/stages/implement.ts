@@ -285,7 +285,8 @@ export const implementStage: Stage = {
         for (const f of await unusedNewFiles(ctx.repoDir, ctx.baseSha, tree)) unmet.push({ line: `(not an acceptance line) ${f}`, reason: "no other file in the repository imports or names this new file, so a user cannot reach what it does. Mount it where it belongs (a page, a route, a registry, a menu) and prove that path, or remove it" });
         lineRounds.push({ met: lc.marks?.met.length ?? 0, unmet: unmet.length, usd: lc.usd }); ctx.emit("acceptance.round", "implement", { round: round + 1, met: la.asks.length - lineUnmet, unmet: lineUnmet, ...(unmet.length > lineUnmet ? { unused_new_files: unmet.length - lineUnmet } : {}) });
         if (!unmet.length) break;
-        const r2 = await resumeForProofScript(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, unmetBrief(unmet));
+        const stray = Object.keys(pr.lines).filter((k) => Number(k) > la.asks.length || Number(k) < 1); // checks filed under a number that is no acceptance item
+        const r2 = await resumeForProofScript(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, unmetBrief(unmet, stray.length ? `Your proof script passes, but ${stray.length} of its check numbers (${stray.slice(0, 6).join(", ")}) are not acceptance item numbers, so those checks count for no item. The first argument of loki_http and loki_cmd is the item's number in $LOKI_SCRATCH/acceptance.txt (1 to ${la.asks.length}), never a line number of the script. Renumber them.` : ""));
         if (r2.iterationId !== ids[ids.length - 1]) ids.push(r2.iterationId); else break;
         lineTurns++;
         if (r2.session.summary) session = { ...session, summary: `${session.summary ?? ""}\n\n[after Loki's acceptance check, round ${round + 1}]\n${r2.session.summary}` };
