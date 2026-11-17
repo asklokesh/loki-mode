@@ -144,4 +144,17 @@ const bad = rows.filter(([t, o, w, e]) => (m.goalRef(t, o, isRef, e ?? {})?.ref 
 console.log(bad.length ? "BAD " + JSON.stringify(bad) : "OK " + rows.length);' 2>&1)"
 [ "$gr" = "OK 18" ] && ok "goalRef: 18 rows (URL suffixes, #N, verb prefix, text stays text, off switch)" || bad "goalRef table: $gr"
 
+# 7. the live console of an interactive run (loki-ts/src/e10ext/console.ts) redraws ONE panel in place. The driver draws it into
+# a terminal emulator (cursor-up, erase, newline, scrollback, reflow on resize) and after every step compares the whole terminal
+# with the console's current frame: nothing of an older frame may be left. Each leg failed on the code before the fix:
+#   other-output-during-a-run  a line printed by the process during a run (the console is built as `loki start` builds it)
+#   taller-than-the-window     more lines than the window has rows (the cursor cannot go up past the top row)
+#   resize                     the window made narrower, wider and shorter between two frames
+#   long-and-wide-lines        a line longer than the window, and two-cell characters
+# grow-and-shrink and details-on-and-off (the list growing 7, 8, 9 then dropping to 3; the d key) hold the cases that already worked.
+lc="$(bun --no-env-file --config=/dev/null "$ROOT/tests/min/fixtures/live-console.js" "$ROOT/loki-ts/src/e10ext/console.ts" 2>&1)"
+for leg in grow-and-shrink details-on-and-off long-and-wide-lines taller-than-the-window resize other-output-during-a-run; do
+    grep -qx "PASS $leg" <<< "$lc" && ok "live console, $leg: the terminal holds exactly one panel after every redraw" || bad "live console, $leg: $(grep -A12 "^FAIL $leg" <<< "$lc" | cut -c1-240)"
+done
+
 finish
