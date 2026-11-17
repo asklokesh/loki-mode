@@ -6,11 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
-- Check results are now also written to a file Loki owns (`LOKI_PROOF_LOG`), and Loki counts from that file. A proof script that sent its checks' output to a log and printed its own summary had 16 passing checks in Loki's run and was counted as 0.
-- A source file is no longer treated as a secret file because of a word in its name: `backend/src/migrations/037_refresh_token_sessions.ts` stopped a finished run. Program files (`.ts`, `.py`, `.go`, `.sql` and the like) are judged by their content; `.env`, key material, `*.token`, `credentials.json` and the other secret file names are flagged as before.
-- A test that already fails on the base commit is no longer blamed on the change because the change edited the file that test covers. Judged by test id, a test whose every failing id already failed on base gained no failure. A run with 8 of 8 acceptance items met in Loki's own proof run ended in a spec conflict over `Header.test.tsx`, which was red before the run started.
-- A run is no longer blocked over its own tests. The rules now say that a test file the run itself added may be changed as the work needs, and that a mock pinning only the order or number of internal calls may be extended with a call the change adds (every assertion about results kept). A run whose 10 acceptance items were all met ended BLOCKED because its fix session treated the test it had just written as read-only.
-- The secret scan's generic pattern no longer applies to test files: a made-up credential in a test (`adminPassword: 'correct-horse-battery'`) stopped a finished run's push. Real key formats (AWS, GitHub, Slack and the others) are still caught in test files.
 
 ## v11.148.0 (2026-11-17)
 
