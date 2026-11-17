@@ -204,22 +204,42 @@ export async function rerunProof(repoDir: string, runDir: string, signal?: Abort
   if (!proofRerunOn(env) || !existsSync(script)) return null;
   let scriptChars = 0, refusal: string | null = null; try { const t = readFileSync(script, "utf8"); scriptChars = t.length; refusal = proofScriptRefusal(t); } catch { return null; }
   if (refusal) return { refused: refusal, exit: null, seconds: 0, proved: 0, failed: 0, tail: `Loki did not run this proof script: ${refusal}.`, script_chars: scriptChars, stopped: 0, left: 0, lines: {} };
+  const token = randomBytes(8).toString("hex"); writeProofKit(runDir, null); // a copy of the helper beside the kept script too (one stored script in fourteen sourced it from its own directory), and a token that exists only in this run
+  const r = await runOwned(repoDir, () => script, proofRerunS(env), signal, env, { LOKI_PROOF_TOKEN: token });
+  if (!r) return { exit: null, seconds: 0, proved: 0, failed: 0, tail: "Loki could not create a scratch directory for its own re-run", script_chars: scriptChars, stopped: 0, left: 0, lines: {} };
+  const lines = tallyProof(r.out, token), vals = Object.values(lines);
+  return { exit: r.exit, seconds: r.seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: r.out.replace(new RegExp(`LOKI-PROOF ${token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: r.stopped, left: r.left, lines };
+}
+/** One run of a bash script that Loki owns from start to end: a new scratch directory holding Loki's own copy of the helper, an EMPTY directory inside it as
+ *  the script's argument (a script that checks for emptiness refused the scratch itself), the user's own database settings blanked, a time cap, and the
+ *  ownership cleanup that stops what the script left and removes the directory. Null when no scratch directory could be made. Never throws. */
+async function runOwned(repoDir: string, script: (scratchDir: string) => string, timeoutS: number, signal: AbortSignal | undefined, env: NodeJS.ProcessEnv, extra: Record<string, string>): Promise<{ exit: number | null; out: string; seconds: number; stopped: number; left: number; dir: string } | null> {
   let scratch: ReturnType<typeof createSessionScratch>;
-  try { scratch = createSessionScratch(); } catch { return { exit: null, seconds: 0, proved: 0, failed: 0, tail: "Loki could not create a scratch directory for its own re-run", script_chars: scriptChars, stopped: 0, left: 0, lines: {} }; }
-  const blank: Record<string, string> = {}; for (const k of Object.keys(env)) if (CONNECTION_ENV.test(k)) blank[k] = ""; // the re-run never sees the user's own database settings either
-  const token = randomBytes(8).toString("hex"); writeProofKit(scratch.dir, null); writeProofKit(runDir, null); // Loki's own copy of the helper (also beside the kept script: one stored script in fourteen sourced it from its own directory) and a token that exists only in this run
+  try { scratch = createSessionScratch(); } catch { return null; }
+  const blank: Record<string, string> = {}; for (const k of Object.keys(env)) if (CONNECTION_ENV.test(k)) blank[k] = ""; // the run never sees the user's own database settings either
+  writeProofKit(scratch.dir, null);
   const t0 = Date.now();
   let exit: number | null = null, out = "";
   try {
-    const emptyDir = join(scratch.dir, "run"); mkdirSync(emptyDir, { mode: 0o700 }); // the script's argument is an EMPTY directory: the scratch itself holds Loki's helper, and a script that checks for emptiness refused it
-    const r = await run(["bash", script, emptyDir], { cwd: repoDir, timeoutMs: proofRerunS(env) * 1000, group: true, signal, env: { ...blank, ...scratchSessionEnv(scratch), LOKI_PROOF_TOKEN: token } });
+    const emptyDir = join(scratch.dir, "run"); mkdirSync(emptyDir, { mode: 0o700 });
+    const r = await run(["bash", script(scratch.dir), emptyDir], { cwd: repoDir, timeoutMs: timeoutS * 1000, group: true, signal, env: { ...blank, ...scratchSessionEnv(scratch), ...extra } });
     exit = r.exitCode; out = `${r.stdout}\n${r.stderr}`;
   } catch (e) { out = `Loki's re-run did not complete: ${(e as Error).message}`; }
   const seconds = Math.round((Date.now() - t0) / 1000);
   const clean = cleanupSessionScratch(scratch);
-  const text = out.replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, " ");
-  const lines = tallyProof(text, token), vals = Object.values(lines);
-  return { exit, seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: text.replace(new RegExp(`LOKI-PROOF ${token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: clean.stopped.length, left: clean.left.length, lines };
+  return { exit, out: out.replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, " "), seconds, stopped: clean.stopped.length, left: clean.left.length, dir: scratch.dir };
+}
+const SETUP_CHECK_S = 120, SETUP_TAIL_CHARS = 1000;
+/** SETUP CHECK (e10ext/repomemory.ts): runs a stored setup, the part of an earlier proof script before its first check, by itself on this checkout. A cut
+ *  script has no meaningful exit status, so Loki appends one line that prints a token made for this run: the setup reached its end only when that line printed.
+ *  The tail names the run's directory as $DIR and the repository root as `.`, so the same failure reads the same on every run and in every clone. */
+export async function runSetupScript(repoDir: string, setup: string, signal?: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<{ reached: boolean; exit: number | null; seconds: number; tail: string }> {
+  const token = randomBytes(8).toString("hex"), end = `LOKI-SETUP-END ${token}`;
+  const r = await runOwned(repoDir, (dir) => { const p = join(dir, "loki-setup-check.sh"); writeFileSync(p, `${setup}\nprintf '\\n%s\\n' '${end}'\n`, { mode: 0o700 }); return p; }, SETUP_CHECK_S, signal, env, {});
+  if (!r) return { reached: false, exit: null, seconds: 0, tail: "" };
+  const names = (d: string, as: string): [string, string][] => { const real = (() => { try { return realpathSync(d); } catch { return d; } })(); return [...new Set([real, d, real.replace(/^\/private\//, "/")])].filter((x) => x.length > 5).map((x): [string, string] => [x, as]); };
+  let text = r.out.split(end).join("").replace(/\[\d{1,3}(;\d{1,3})*m/g, ""); for (const [d, as] of [...names(r.dir, "$DIR"), ...names(repoDir, ".")].sort((a, b) => b[0].length - a[0].length)) text = text.split(d).join(as);
+  return { reached: r.out.includes(end), exit: r.exit, seconds: r.seconds, tail: text.replace(/\s+$/, "").slice(-SETUP_TAIL_CHARS) };
 }
 /** The facts for the acceptance line check: what Loki's own run of the script returned, and the script itself (so a script that checks nothing is visible). */
 export function proofFacts(runDir: string, r: ProofRerun | null, expected: boolean): string[] {

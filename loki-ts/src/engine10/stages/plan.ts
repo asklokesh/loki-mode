@@ -6,7 +6,7 @@ import type { RepoMap } from "../repomap.ts";
 import { selectRelevantFiles } from "../relevant_files.ts";
 import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import { cascadeEnabled, hardReason, hasRelevantTests, loadRepoMap, namedFiles, planMode, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallModel } from "../sizing.ts";
-import { type RunContext, type Stage, type StageResult, type TestMap, taskBlock } from "../types.ts";
+import { type RunContext, type Stage, type StageResult, type TestMap, issueRunBrief, taskBlock } from "../types.ts"; import { startSetupCheck } from "../../e10ext/repomemory.ts"; import { runSetupScript } from "../proof_rerun.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { PLAN_SCOPE_FILE, outOfRepoInstruction, planOutOfRepo, seedPlanScope } from "../../util/run_cap.ts";
 import { assumptionsBlock } from "../../features/spec_ambiguity.ts";
@@ -62,6 +62,7 @@ export const planStage: Stage = {
 
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     const prior = ctx.outputs();
+    if (issueRunBrief(ctx.provider, prior.intake?.source)) startSetupCheck(ctx.repoDir, ctx.runDir, (s) => runSetupScript(ctx.repoDir, s)); // SETUP CHECK (e10ext/repomemory.ts): Loki's own run of the stored setup starts beside this session and only reads the tree; implement waits for it
     const task = loadTaskText(ctx, prior.intake?.task as string | undefined);
     const repomapRef = prior.intake?.repomap_ref as string | undefined;
     const loaded = loadRepoMap(repomapRef);
