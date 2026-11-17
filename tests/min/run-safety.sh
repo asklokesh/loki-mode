@@ -1385,8 +1385,8 @@ unit_rv() { # unit_rv <version> <case>
 #   limit:     verify is stopped at its limit while app's suite still runs and nothing that ran failed: PARTIAL (never FAILED, never VERIFIED), app named.
 #   limitred:  the same stop with core's own test red: FAILED, not delivered as passing.
 #   links, linksnewerr: clean and newerr in an installed workspace (node_modules/@ws/<member> is a symlink to the member, and app and legacy import core
-#              through it). The base run reads the base copy of core, never the changed one: legacy is excused in links, and in linksnewerr (where a base
-#              run through the head's node_modules would throw the same new TypeError and excuse it) it is not.
+#              through it). The base run reads the base copy of core, never the changed one: legacy is excused in links, and in linksnewerr (the change makes
+#              legacy's assertion receive "5" where base received "2"; a base run through the head's node_modules would receive "5" too and excuse it) it is not.
 #   norunner:  the test command cannot start in this checkout (hermes-agent#147745: every per-file check failed in 0.06 s with no test id): each check fails
 #              the same way with the change removed, so none is a failure of the change or fix-round input; disclosed, PARTIAL, never FAILED or VERIFIED.
 # Planted defects (each reverted afterwards; run from source; the unit-level ones are in the RW-01 block of tests/min/scope-and-fix.sh):
@@ -1425,6 +1425,7 @@ SCOPE_OLD='(a: number, b: number): number => a + b;'
 SCOPE_OK='(a: number, b: number, c = 0): number => a + b + c;'
 SCOPE_BREAK='(a: number, b: number, c = 0): number => a - b + c;' # core's own test goes red
 SCOPE_THROW='(a: number, b: number, c = 0): number => { if (a === b) throw new TypeError("boom"); return a + b + c; };' # only legacy's base-red test calls add(1, 1): a new error under the same id
+SCOPE_SHIFT='(a: number, b: number, c = 0): number => (a === b ? 5 : a + b + c);' # only legacy's base-red test calls add(1, 1): its assertion now receives "5" where base received "2", and no failure line names core.ts
 scope_run() { # scope_run <dir> <the new text of add> [env assignments...]
     local d="$1" snip="$2" ev; shift 2
     SCOUT="$(cd "$d" && env E2E_STUB_MODE=stack E2E_STUB_TARGET=packages/core/src/core.ts E2E_STUB_SNIPPET="$snip" E2E_STUB_REPLACE="$SCOPE_OLD" \
@@ -1510,7 +1511,7 @@ SR="$T/scope-links"; scope_fixture "$SR" links; scope_run "$SR" "$SCOPE_OK"
 [ -z "$(git -C "$SR" status --porcelain)" ] && ok "scope links: the run leaves nothing behind in the checkout" || bad "scope links: left behind: $(git -C "$SR" status --porcelain | head -3)"
 fi
 if scope_want linksnewerr; then
-SR="$T/scope-linksnewerr"; scope_fixture "$SR" links; scope_run "$SR" "$SCOPE_THROW"
+SR="$T/scope-linksnewerr"; scope_fixture "$SR" links; scope_run "$SR" "$SCOPE_SHIFT"
 [ -n "${RS_SHOW:-}" ] && printf 'linksnewerr rc=%s\n%s\n' "$SCRC" "$SCS"
 [ "$(scope_get verdict)" = FAILED ] && [ -z "$(scope_get excused)" ] && ok "scope linksnewerr: the base run does not read the changed sibling package through node_modules: the new error is not excused (FAILED)" || bad "scope linksnewerr: verdict $(scope_get verdict), excused: $(scope_get excused) (want FAILED, none excused)"
 fi
