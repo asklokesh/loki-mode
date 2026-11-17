@@ -5,6 +5,7 @@
 // (New file: no existing fixture holds a terminal emulator, and a bash heredoc of this size would not be readable.)
 // Usage: bun live-console.js <path to console.ts> [leg ...]   prints "PASS <leg>" or "FAIL <leg>: <why>" per leg.
 const { LiveConsole } = await import(process.argv[2]);
+const { spawnWorker } = await import(new URL("../runner/worker_proc.ts", `file://${process.argv[2]}`).pathname);
 const only = process.argv.slice(3);
 
 class Term {
@@ -148,7 +149,52 @@ const legs = {
     } finally { process.stdout.write = realWrite; if (cols) Object.defineProperty(process.stdout, "columns", cols); else delete process.stdout.columns; if (rows) Object.defineProperty(process.stdout, "rows", rows); else delete process.stdout.rows; }
     return bad;
   },
+  // The engine worker is a child process. While the console owns the terminal its stderr is piped and printed above the panel:
+  // every line once, in order, the last one even with no newline and after a crash (exit 3), and the worker is told stderr is a terminal.
+  "worker-stderr-above-the-panel": async () => {
+    const t = new Term(100, 40); t.write(`${PRE.join("\r\n")}\r\n`);
+    const std = swapStd((chunk) => { t.write(String(chunk).replace(/\n/g, "\r\n")); return true; }, true);
+    let bad = null; const lines = ["Acceptance: the first line of the issue", "Acceptance: the second line of the issue", "worker sees tty=[1]", "Traceback: boom", "  at worker (no newline after this)"];
+    try {
+      const con = new LiveConsole({ write: (x) => { process.stdout.write(x); }, stdin: null, env: { NO_COLOR: "1" }, now: () => clock, spend: () => "$0.02 so far", repoDir: "/nonexistent-repo" });
+      start(con, 8);
+      const r = await spawnWorker(["sh", "-c", `printf '%s\\n' "${lines[0]}" "${lines[1]}" >&2; echo "worker sees tty=[$LOKI_E10_STDERR_TTY]" >&2; sleep 0.4; printf '%s\\n%s' "${lines[3]}" "${lines[4]}" >&2; exit 3`], { PATH: process.env.PATH }, process.cwd(), 20000, 1000, () => {});
+      await new Promise((res) => setImmediate(res)); await new Promise((res) => setImmediate(res));
+      con.tick();
+      if (r.code !== 3) bad = `the worker's exit code came back as ${r.code}, want 3`;
+      bad = bad ?? onePanel(t, con, "worker stderr during the run", [...PRE, ...lines]);
+      con.clear();
+    } finally { std.restore(); }
+    return bad;
+  },
+  // Every other case leaves the worker's stderr as the process's own stderr (the bytes never pass through this process): no console at all
+  // (--json, --verbose) even on a terminal, and a console whose stderr is not the terminal (a pipe, or 2>file). tests/min/one-line-goal.sh
+  // runs this leg with stderr to a file and to a pipe and compares the bytes that arrived.
+  "worker-stderr-inherited": async () => {
+    let handled = 0; const std = swapStd(() => true, true, () => { handled++; return true; });
+    let bad = null;
+    try {
+      const a = await spawnWorker(["sh", "-c", `echo "no console: tty=[$LOKI_E10_STDERR_TTY]" >&2; echo "no console: second line" >&2; exit 0`], { PATH: process.env.PATH }, process.cwd(), 20000, 1000, () => {});
+      std.tty(false);
+      const con = new LiveConsole({ write: (x) => { process.stdout.write(x); }, stdin: null, env: { NO_COLOR: "1" }, now: () => clock, repoDir: "/nonexistent-repo" });
+      start(con, 3);
+      const b = await spawnWorker(["sh", "-c", `echo "stderr is not the terminal: tty=[$LOKI_E10_STDERR_TTY]" >&2; printf 'Traceback: boom, no newline' >&2; exit 3`], { PATH: process.env.PATH }, process.cwd(), 20000, 1000, () => {});
+      con.clear();
+      if (a.code !== 0 || b.code !== 3) bad = `exit codes ${a.code} and ${b.code}, want 0 and 3`;
+      else if (handled !== 0) bad = `the supervisor wrote to stderr ${handled} time(s): the worker's stderr was not left alone`;
+    } finally { std.restore(); }
+    return bad;
+  },
 };
+/** Stands in for the terminal: process.stdout.write (and process.stderr.write) go to `sink`, with a size and, for stderr, a chosen isTTY. */
+function swapStd(sink, errTty, errSink = sink) {
+  const keep = { out: process.stdout.write, err: process.stderr.write, cols: Object.getOwnPropertyDescriptor(process.stdout, "columns"), rows: Object.getOwnPropertyDescriptor(process.stdout, "rows"), tty: Object.getOwnPropertyDescriptor(process.stderr, "isTTY") };
+  process.stdout.write = sink; process.stderr.write = errSink;
+  const def = (o, k, v) => Object.defineProperty(o, k, { value: v, configurable: true, writable: true });
+  def(process.stdout, "columns", 100); def(process.stdout, "rows", 40); def(process.stderr, "isTTY", errTty);
+  const back = (o, k, d) => { if (d) Object.defineProperty(o, k, d); else delete o[k]; };
+  return { tty: (v) => def(process.stderr, "isTTY", v), restore: () => { process.stdout.write = keep.out; process.stderr.write = keep.err; back(process.stdout, "columns", keep.cols); back(process.stdout, "rows", keep.rows); back(process.stderr, "isTTY", keep.tty); } };
+}
 const out = [];
 for (const [name, fn] of Object.entries(legs)) {
   if (only.length && !only.includes(name)) continue;

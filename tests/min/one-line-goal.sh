@@ -152,9 +152,22 @@ console.log(bad.length ? "BAD " + JSON.stringify(bad) : "OK " + rows.length);' 2
 #   resize                     the window made narrower, wider and shorter between two frames
 #   long-and-wide-lines        a line longer than the window, and two-cell characters
 # grow-and-shrink and details-on-and-off (the list growing 7, 8, 9 then dropping to 3; the d key) hold the cases that already worked.
-lc="$(bun --no-env-file --config=/dev/null "$ROOT/tests/min/fixtures/live-console.js" "$ROOT/loki-ts/src/e10ext/console.ts" 2>&1)"
-for leg in grow-and-shrink details-on-and-off long-and-wide-lines taller-than-the-window resize other-output-during-a-run; do
+#   worker-stderr-above-the-panel  the engine worker (a child process) writes to stderr while the console is up: its stderr is a
+#                              pipe then, and each line (the intent card, a warning, a crash trace with no final newline) is printed
+#                              once above the panel, in order, and the worker is told stderr is a terminal (LOKI_E10_STDERR_TTY=1)
+# In every other case the worker's stderr stays the process's own stderr, as before (worker-stderr-inherited): no console at all
+# (--json, --verbose) even on a terminal, and a console whose stderr is not the terminal. That leg runs twice below, with stderr
+# to a file (2>file) and to a pipe, and the bytes that arrived must be exactly the worker's, in order, crash trace included.
+# (--quiet on a terminal has the console, so it is the first case; --quiet with stderr elsewhere is the second.)
+LCD="$ROOT/tests/min/fixtures/live-console.js"; LCC="$ROOT/loki-ts/src/e10ext/console.ts"
+lc="$(bun --no-env-file --config=/dev/null "$LCD" "$LCC" 2>"$T/lc-all.err")"
+for leg in grow-and-shrink details-on-and-off long-and-wide-lines taller-than-the-window resize other-output-during-a-run worker-stderr-above-the-panel; do
     grep -qx "PASS $leg" <<< "$lc" && ok "live console, $leg: the terminal holds exactly one panel after every redraw" || bad "live console, $leg: $(grep -A12 "^FAIL $leg" <<< "$lc" | cut -c1-240)"
 done
+printf 'no console: tty=[]\nno console: second line\nstderr is not the terminal: tty=[]\nTraceback: boom, no newline' > "$T/lc-want.err"
+lcf="$(bun --no-env-file --config=/dev/null "$LCD" "$LCC" worker-stderr-inherited 2>"$T/lc-file.err")"
+[ "$lcf" = "PASS worker-stderr-inherited" ] && cmp -s "$T/lc-file.err" "$T/lc-want.err" && ok "worker stderr, no console (--json, --verbose) or stderr to a file: the worker's bytes arrive untouched, in order, crash trace included" || bad "worker stderr to a file: $lcf; got: $(head -c 400 "$T/lc-file.err")"
+bun --no-env-file --config=/dev/null "$LCD" "$LCC" worker-stderr-inherited 2>&1 >"$T/lc-pipe.out" | /bin/cat > "$T/lc-pipe.err"
+[ "$(/bin/cat "$T/lc-pipe.out")" = "PASS worker-stderr-inherited" ] && cmp -s "$T/lc-pipe.err" "$T/lc-want.err" && ok "worker stderr to a pipe (not a terminal): the worker's bytes arrive untouched, in order, crash trace included" || bad "worker stderr to a pipe: $(/bin/cat "$T/lc-pipe.out"); got: $(head -c 400 "$T/lc-pipe.err")"
 
 finish

@@ -6,6 +6,7 @@
 //   plan.plan / plan.relevant_files <- plan stage.completed, else plan-output.txt
 //   verify.changed_files / checks   <- verify stage.completed (the diff and the evidence)
 //   wall.files / wall.base_run      <- wall stage.completed
+import { stderrIsTty } from "./term_width.ts";
 import { execFile, spawnSync } from "node:child_process";
 import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { createHash } from "node:crypto";
@@ -572,7 +573,7 @@ export async function startRecovery(repoDir: string, task: string, noPr: boolean
   const sameTask = it.task !== null && (t === "" || it.task === t), publish = it.phase === "publish";
   const resumable = sameTask && (publish ? !noPr && hasBranch && readOriginUrl(repoDir) !== null && !("deny" in prGate(repoDir)) && publishStateOk(join(repoDir, ".loki", "runs", it.runId), it) : stagesResumable(repoDir, it.runId, it.events)); // offered only when the resume can proceed: publish needs branch, origin, policy and the supervisor's run-state record; earlier phases need branch, base commit, a verified log and a settled stage
   const kept = hasBranch ? `old work is kept on loki/${it.runId}` : "no run branch was created", was = it.cancelled ? "cancelled" : "interrupted";
-  const interactive = (deps.tty ?? (process.stdin.isTTY === true && process.stderr.isTTY === true)) && process.env["LOKI_NONINTERACTIVE"] !== "1";
+  const interactive = (deps.tty ?? (process.stdin.isTTY === true && stderrIsTty())) && process.env["LOKI_NONINTERACTIVE"] !== "1";
   let began = false;
   const go = async (): Promise<number> => publish ? resumePublish(repoDir, it, deps) : resumeFlag(it.runId, noPr, { ...deps, supervise: async (o) => { began = true; return (deps.supervise ?? (async (x) => (await import("../engine10/supervisor.ts")).runSupervisor(x)))(o); } });
   if (resumable && !interactive) { const rc = await go(); if (publish || began || rc === 0) return rc; note(`note: run ${it.runId} could not be resumed; starting a new run, ${kept}.\n`); return null; } // a refusal before the engine started (dirty tree, cap) never blocks a fresh start

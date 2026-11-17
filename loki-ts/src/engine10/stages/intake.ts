@@ -1,4 +1,5 @@
 // loki-ts/src/engine10/stages/intake.ts -- E-04 Intake (ENGINE.md section 4). Deterministic: dirty-tree refusal, branch creation, .git/info/exclude, the issue already-done check, repo map / test map build, plus one cached Project Model discovery session (EL-W1-01). No PRD. Task arrives as literal text (LOKI_E10_TASK_TEXT) or issue.json (LOKI_E10_ISSUE_JSON, default <runDir>/issue.json); outputs task text, title, repo, resumed for later stages.
+import { stderrIsTty } from "../../util/term_width.ts";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { STAGE_BUDGETS, type RunContext, type RunnerName, type Stage, type StageResult, type TestMap } from "../types.ts";
@@ -73,7 +74,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   if (dirty.length > 0) return { status: "failed", data: { blocker: "dirty_tracked_tree" }, reason: `dirty tracked tree: ${dirty.join(", ")}; loki never stashes or commits your edits: commit them or run git stash push -m wip yourself, then rerun the same command` }; // AN-08: the class travels in the stage.failed event
   let baseSha = git(ctx.repoDir, ["rev-parse", "HEAD"]); const startBranch = ((): string | null => { try { return git(ctx.repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]) || null; } catch { return null; } })(); // RW-01: a detached HEAD checkout has no branch (symbolic-ref -q exits 1); the run starts from that commit like any other
   // FC-STACKED-ON-LOKI-RUN (the success note is the start line plus the stacked_loki_skip event data, never raw stderr): HEAD is an earlier run's unaccepted output (every commit past the PR target is a Loki-Run commit): branch from the PR target tip, leave that branch untouched.
-  let stacked = stackedOnLokiRun(ctx.repoDir); if (stacked) { try { ensureBranch(ctx.repoDir, ctx.branch, stacked.base_sha); baseSha = stacked.base_sha; ctx.baseSha = baseSha; } catch { stacked = null; process.stderr.write(`${process.stderr.isTTY ? "\r\x1b[2K" : ""}engine10: skip not applied (checkout failed); base stays HEAD\n`); } } if (!stacked) ensureBranch(ctx.repoDir, ctx.branch);
+  let stacked = stackedOnLokiRun(ctx.repoDir); if (stacked) { try { ensureBranch(ctx.repoDir, ctx.branch, stacked.base_sha); baseSha = stacked.base_sha; ctx.baseSha = baseSha; } catch { stacked = null; process.stderr.write(`${stderrIsTty() ? "\r\x1b[2K" : ""}engine10: skip not applied (checkout failed); base stays HEAD\n`); } } if (!stacked) ensureBranch(ctx.repoDir, ctx.branch);
   // SEAL-ASSUME-02: ignore_snapshot is taken at each return below, after the baseline run (ensureProfile) and the dependency install (intakeDeps): the ignored files Loki itself produced are the start state, only the agent's changes are noted.
   const tree = git(ctx.repoDir, ["rev-parse", "HEAD^{tree}"]); excludeLokiDir(ctx.repoDir);
   const issueJsonPath = opts.issueJsonPath ?? process.env.LOKI_E10_ISSUE_JSON ?? join(ctx.runDir, "issue.json");
@@ -126,7 +127,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   if (readiness && process.env.LOKI_E10_READINESS_FOLD === "1") held.fold = readiness;
   else if (readiness) process.stderr.write(`${readiness}\n`); // FV-readiness-env-3; D48 default mode: the supervisor folds it into the last line instead
   const untestable = untestableReason(testmap.runners, repoMap.files, process.env, ctx.repoDir); // FR05: said before any session, on every run, never folded
-  if (untestable) process.stderr.write(`${process.stderr.isTTY ? "\r\x1b[2K" : ""}loki: cannot run this repo's tests on this machine: ${untestable}. The run continues, but it cannot end VERIFIED.\n`);
+  if (untestable) process.stderr.write(`${stderrIsTty() ? "\r\x1b[2K" : ""}loki: cannot run this repo's tests on this machine: ${untestable}. The run continues, but it cannot end VERIFIED.\n`);
   // E-66: "already implemented" as a first-class outcome. A deterministic evidence search over repoMap/testmap/CHANGELOG, confirmed by one short cheap-model session that must cite files; no candidate evidence means no session call (checkAlreadyDone's own gate).
   const adOn = alreadyDoneCheckOn(source), adAt = at(), adEnd = lap(), already = speedEnabled() || !adOn ? null : await checkAlreadyDone(ctx, signal, task, repoMap, testmap); tm.already_done = !adOn ? { skipped: "direct task: the implement session reports LOKI_ALREADY_DONE itself" } : speedEnabled() ? { skipped: "deferred past intake (LOKI_SPEED)" } : { ms: adEnd(), at: adAt }; // D61-04: LOKI_SPEED=1 defers it past intake
   const alreadyData = (already: AlreadyDoneResult): Record<string, unknown> => {

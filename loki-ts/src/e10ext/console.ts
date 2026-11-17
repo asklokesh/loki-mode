@@ -53,6 +53,9 @@ export class LiveConsole {
    *  the cursor down, the next redraw started that many rows too low, and the top of the old panel stayed on screen above the new one. */
   private hook(): void {
     const raw = process.stdout.write.bind(process.stdout); this.out = (x) => { raw(x); };
+    // A child that wrote straight to the terminal would get past this wrapper, so while it is installed the engine worker's stderr is piped and passed
+    // through process.stderr.write here (runner/worker_proc.ts reads this mark).
+    const mark = Symbol.for("loki.consoleOwnsTerminal"), g = globalThis as Record<symbol, unknown>; g[mark] = true; this.unhook.push(() => { g[mark] = false; });
     const onResize = (): void => { if (!this.closed) this.render(); }; process.stdout.on("resize", onResize); this.unhook.push(() => { process.stdout.off("resize", onResize); });
     for (const st of [process.stdout, ...(process.stderr.isTTY ? [process.stderr] : [])] as NodeJS.WriteStream[]) {
       const orig = st.write.bind(st) as (...a: unknown[]) => boolean;

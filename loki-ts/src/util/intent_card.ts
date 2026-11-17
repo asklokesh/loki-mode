@@ -1,5 +1,6 @@
 // T3 Intent card v1: the plan model states what it thinks the user wants plus the acceptance tests it will hold itself to.
 // The card is parsed from the plan output, never invented: no parseable card means "Intent: NOT STATED by plan".
+import { stderrIsTty } from "./term_width.ts";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -95,10 +96,10 @@ export async function workerConfirm(card: string[] | null, runDir: string, env: 
 
 /** Plan-stage hook: parse and print the card (stderr, before implement), run the LOKI_CONFIRM gate. card off or an empty plan is silent and changes nothing. */
 export async function applyIntent(raw: string, on: boolean, runDir: string, emit: (data: Record<string, unknown>) => void, issueLines: string[] = []): Promise<{ rest: string; data: Record<string, unknown> }> {
-  if (on && raw.trim() === "" && issueLines.length) { process.stderr.write(`${process.stderr.isTTY ? "\r\x1b[2K" : ""}${renderIntent(issueLines.map((l) => `Acceptance: ${l}`))}\n`); return { rest: raw, data: {} }; } // Q1 ISSUE-ACCEPTANCE: no card, but the issue's own lines are still shown
+  if (on && raw.trim() === "" && issueLines.length) { process.stderr.write(`${stderrIsTty() ? "\r\x1b[2K" : ""}${renderIntent(issueLines.map((l) => `Acceptance: ${l}`))}\n`); return { rest: raw, data: {} }; } // Q1 ISSUE-ACCEPTANCE: no card, but the issue's own lines are still shown
   if (!on || raw.trim() === "") return { rest: raw, data: {} };
   const { card, rest } = parseIntentCard(raw), shown = cardWithIssueLines(card, issueLines); // Q1 ISSUE-ACCEPTANCE: the printed Acceptance lines are the issue's own, verbatim, then the card's additions
-  process.stderr.write(`${process.stderr.isTTY ? "\r\x1b[2K" : ""}${renderIntent(shown)}\n`); // the supervisor's live line holds the cursor on this terminal; clear it first so the card starts its own line
+  process.stderr.write(`${stderrIsTty() ? "\r\x1b[2K" : ""}${renderIntent(shown)}\n`); // the supervisor's live line holds the cursor on this terminal; clear it first so the card starts its own line
   const declined = await workerConfirm(shown, runDir, process.env, emit, (l) => process.stderr.write(`${l}\n`));
   return { rest, data: { intent_enabled: true, intent_card: card, ...(declined ? { intent_declined: true } : {}) } };
 }

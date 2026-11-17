@@ -15,6 +15,11 @@ export function terminalWidth(
   return DEFAULT_TERM_WIDTH;
 }
 
+/** Whether this process's stderr is the user's terminal. The engine worker's stderr is the terminal itself, except while the supervisor's live console
+ *  owns the terminal: then it is a pipe the supervisor reads and prints above the panel (worker_proc.ts spawnWorker), and the supervisor says so with
+ *  LOKI_E10_STDERR_TTY=1, so the worker decides exactly as it would with the terminal in hand. The ONE place that reads this. */
+export const stderrIsTty = (env: Record<string, string | undefined> = process.env, stream: { isTTY?: boolean } = process.stderr): boolean => stream.isTTY === true || env["LOKI_E10_STDERR_TTY"] === "1";
+
 // Terminal display formatting shared by engine10 output and the run-summary views (moved out of engine10 core, TEN budget).
 export function formatClock(elapsedS: number): string {
   const s = Math.max(0, Math.round(elapsedS));
