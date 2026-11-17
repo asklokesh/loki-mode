@@ -3,7 +3,7 @@
 // commits that exist only in target..HEAD (Loki's own unmerged work or the user's own).
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -290,6 +290,44 @@ export function baseDepsLinker(baseDir: string, repoDir: string, gate: Pick<Zero
     for (const d of ["node_modules", ".venv"]) { try { if (existsSync(join(src, d)) && !existsSync(join(cwd, d))) symlinkSync(join(src, d), join(cwd, d)); } catch { /* no deps on base: stays fail-closed */ } }
     return true;
   };
+}
+
+/** RW-01: a base worktree's node_modules for a workspace whose packages link to each other (npm, yarn, bun and pnpm workspaces put a symlink to each
+ *  member in node_modules, so baseDepsLinker refuses the whole directory: a base run through it would import the head's copy of a sibling package).
+ *  Instead of linking the head's node_modules as one directory, this builds a node_modules directory in the base package dir whose entries (top level,
+ *  one level under an @scope, and .bin) are symlinks: an entry that is a symlink to a workspace member points at that member in the base worktree, every
+ *  other entry points at the head's. Nothing is copied. Refused (false, nothing built: fail closed) when the environment changed since intake (the same
+ *  gate as baseDepsLinker), the dir has a .venv, a node_modules already exists on base, or any symlink below those levels leaves the node_modules for
+ *  the checkout (it cannot be re-pointed), or the walk passes its entry or time bound. A dir with no dependency dir at all answers true. */
+const VIEW_WALK_BOUND = 1_500_000, VIEW_WALK_MS = 5000;
+export function baseDepsView(baseDir: string, repoDir: string, gate: Pick<ZeroGate, "sinceMs" | "ignored" | "deps"> = {}): (cwd: string) => boolean {
+  const seen = new Map<string, boolean>();
+  let roots: string[] = []; try { roots = [...new Set([resolve(repoDir), realpathSync(repoDir)])]; } catch { /* no roots: every call refuses */ }
+  const member = (rt: string): string | null => { for (const r of roots) if (rt.startsWith(r + sep) && !rt.slice(r.length).split(sep).includes("node_modules")) return relative(r, rt); return null; };
+  const levelDir = (name: string): boolean => name.startsWith("@") || name === ".bin";
+  const build = (src: string, cwd: string): boolean => {
+    const nm = join(src, "node_modules"), out = join(cwd, "node_modules");
+    if (existsSync(join(src, ".venv"))) return false;
+    if (!existsSync(nm)) return true;
+    if (roots.length === 0 || existsSync(out)) return false;
+    if (gate.sinceMs !== undefined && envChangedSince(repoDir, src, gate.sinceMs, gate.ignored ?? null, gate.deps)) return false;
+    const own = [...new Set([resolve(nm), realpathSync(nm)])], t0 = Date.now(); let n = 0;
+    const leaks = (dir: string, level: boolean): boolean => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (++n > VIEW_WALK_BOUND || Date.now() - t0 > VIEW_WALK_MS) return true;
+        const p = join(dir, e.name);
+        if (e.isSymbolicLink()) { if (level) continue; const t = resolve(dir, readlinkSync(p)); let rt = t; try { rt = realpathSync(t); } catch { /* dangling */ } if (insideAny(t, roots) && !own.some((r) => rt === r || rt.startsWith(r + sep))) return true; }
+        else if (e.isDirectory() && leaks(p, dir === nm && levelDir(e.name))) return true;
+      }
+      return false;
+    };
+    if (leaks(nm, true)) return false;
+    const one = (p: string, q: string): void => { let target = p; try { if (lstatSync(p).isSymbolicLink()) { const rt = realpathSync(p), m = member(rt); target = m !== null ? join(baseDir, m) : rt; } } catch { return; /* dangling: left out */ } symlinkSync(target, q); };
+    mkdirSync(out);
+    for (const e of readdirSync(nm, { withFileTypes: true })) { const p = join(nm, e.name), q = join(out, e.name); if (e.isDirectory() && levelDir(e.name)) { mkdirSync(q); for (const s of readdirSync(p)) one(join(p, s), join(q, s)); } else one(p, q); }
+    return true;
+  };
+  return (cwd) => { const src = join(repoDir, relative(baseDir, cwd)); if (!seen.has(src)) { let ok = false; try { ok = build(src, cwd); } catch { ok = false; } seen.set(src, ok); } return seen.get(src)!; };
 }
 
 /** True when one finished run of a test command executed zero tests (the shared mapping of 0 tests to not_run; a cut or missing run never counts). */

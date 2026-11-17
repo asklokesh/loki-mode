@@ -1384,6 +1384,9 @@ unit_rv() { # unit_rv <version> <case>
 #   newerr:    the change makes legacy's base-red test throw a new error under the same id: never excused, FAILED.
 #   limit:     verify is stopped at its limit while app's suite still runs and nothing that ran failed: PARTIAL (never FAILED, never VERIFIED), app named.
 #   limitred:  the same stop with core's own test red: FAILED, not delivered as passing.
+#   links, linksnewerr: clean and newerr in an installed workspace (node_modules/@ws/<member> is a symlink to the member, and app and legacy import core
+#              through it). The base run reads the base copy of core, never the changed one: legacy is excused in links, and in linksnewerr (where a base
+#              run through the head's node_modules would throw the same new TypeError and excuse it) it is not.
 #   norunner:  the test command cannot start in this checkout (hermes-agent#147745: every per-file check failed in 0.06 s with no test id): each check fails
 #              the same way with the change removed, so none is a failure of the change or fix-round input; disclosed, PARTIAL, never FAILED or VERIFIED.
 # Planted defects (each reverted afterwards; run from source; the unit-level ones are in the RW-01 block of tests/min/scope-and-fix.sh):
@@ -1394,8 +1397,9 @@ unit_rv() { # unit_rv <version> <case>
 #   RWe. intake.ts: let the branch lookup throw again; detached ends with no receipt.
 #   RWf. verify.ts no-id block: `cand = []`; norunner is FAILED after a fix round.
 #   RWg. LOKI_E10_BASE_ON_DEMAND=0 in the run: clean runs all five suites and intake measures them (the opt-out is the old behaviour).
-scope_fixture() { # scope_fixture <dir> [slowcore | slowapp | norunner]
-    local d="$1" v="${2:-}" p dep script
+scope_fixture() { # scope_fixture <dir> [slowcore | slowapp | norunner | links]
+    local d="$1" v="${2:-}" p dep script core="../../core/src/core"
+    [ "$v" = links ] && core="@ws/core/src/core" # the sibling package is imported through node_modules, where an installed workspace keeps a symlink to it
     for p in core app legacy slow other; do
         mkdir -p "$d/packages/$p/src" "$d/packages/$p/test"
         dep=""; case "$p" in app | legacy) dep=', "dependencies": { "@ws/core": "*" }' ;; esac
@@ -1406,13 +1410,15 @@ scope_fixture() { # scope_fixture <dir> [slowcore | slowapp | norunner]
     printf '{ "name": "ws", "private": true, "workspaces": ["packages/*"] }\n' > "$d/package.json"
     printf 'export const add = (a: number, b: number): number => a + b;\n' > "$d/packages/core/src/core.ts"
     printf 'import { test, expect } from "bun:test";\nimport { add } from "../src/core";\ntest("add", () => { expect(add(1, 2)).toBe(3); });\n' > "$d/packages/core/test/core.test.ts"
-    printf 'import { add } from "../../core/src/core";\nexport const inc = (n: number): number => add(n, 1);\n' > "$d/packages/app/src/app.ts"
+    printf 'import { add } from "%s";\nexport const inc = (n: number): number => add(n, 1);\n' "$core" > "$d/packages/app/src/app.ts"
     printf 'import { test, expect } from "bun:test";\nimport { inc } from "../src/app";\ntest("inc", () => { expect(inc(4)).toBe(5); });\n' > "$d/packages/app/test/app.test.ts"
-    printf 'import { test, expect } from "bun:test";\nimport { add } from "../../core/src/core";\ntest("old sum", () => { expect(String(add(1, 1))).toBe("3"); });\n' > "$d/packages/legacy/test/old.test.ts"
+    printf 'import { test, expect } from "bun:test";\nimport { add } from "%s";\ntest("old sum", () => { expect(String(add(1, 1))).toBe("3"); });\n' "$core" > "$d/packages/legacy/test/old.test.ts"
     printf 'import { test, expect } from "bun:test";\ntest("slow ok", () => { expect(1).toBe(1); });\n' > "$d/packages/slow/test/slow.test.ts"
     printf 'import { test, expect } from "bun:test";\ntest("other red", () => { expect(1).toBe(2); });\n' > "$d/packages/other/test/other.test.ts"
     git -C "$d" init -q -b main && git -C "$d" config user.name rs && git -C "$d" config user.email rs@example.invalid
+    printf 'node_modules\n' > "$d/.gitignore"
     git -C "$d" add -A . && git -C "$d" commit -q -m base
+    if [ "$v" = links ]; then mkdir -p "$d/node_modules/@ws"; for p in core app legacy slow other; do ln -s "../../packages/$p" "$d/node_modules/@ws/$p"; done; fi # what `npm install` leaves in a workspace: one symlink per member
 }
 SCOPE_TASK="let add in packages/core/src/core.ts take an optional third number c"
 SCOPE_OLD='(a: number, b: number): number => a + b;'
@@ -1450,7 +1456,7 @@ PY
 )"
 }
 scope_get() { printf '%s\n' "$SCS" | sed -n "s/^$1 //p"; }
-scope_want() { case " ${SCOPE_CASES:-clean detached ownerslow touched newerr limit norunner limitred} " in *" $1 "*) return 0 ;; esac; return 1; } # SCOPE_CASES="clean limit" runs a subset (planting a defect)
+scope_want() { case " ${SCOPE_CASES:-clean detached ownerslow touched newerr limit norunner limitred links linksnewerr} " in *" $1 "*) return 0 ;; esac; return 1; } # SCOPE_CASES="clean limit" runs a subset (planting a defect)
 unit_scope() {
 if scope_want clean; then
 SR="$T/scope-clean"; scope_fixture "$SR"; scope_run "$SR" "$SCOPE_OK"
@@ -1496,6 +1502,17 @@ SR="$T/scope-norunner"; scope_fixture "$SR" norunner; scope_run "$SR" "$SCOPE_OK
 [ "$(scope_get verdict)" = PARTIAL ] && ok "scope norunner: a test command that cannot start, on base as on head, is PARTIAL, never FAILED and never VERIFIED" || bad "scope norunner: verdict $(scope_get verdict), want PARTIAL (failed: $(scope_get failed))"
 [ "$(scope_get fix_rounds)" = 0 ] && [ -z "$(scope_get failed)" ] && ok "scope norunner: no check is a failure of the change and no fix round is spent" || bad "scope norunner: fix rounds $(scope_get fix_rounds), failed checks: $(scope_get failed)"
 case "$(scope_get not_proven)" in *"the test command does not run in this checkout"*"preload not found"*) ok "scope norunner: the receipt says the test command does not run in this checkout, with the error" ;; *) bad "scope norunner: not disclosed: $(scope_get not_proven)" ;; esac
+fi
+if scope_want links; then
+SR="$T/scope-links"; scope_fixture "$SR" links; scope_run "$SR" "$SCOPE_OK"
+[ -n "${RS_SHOW:-}" ] && printf 'links rc=%s\n%s\n%s\n' "$SCRC" "$SCS" "$(printf '%s\n' "$SCOUT" | tail -8)"
+[ "$(scope_get verdict)" = VERIFIED ] && [ "$(scope_get excused)" = legacy ] && ok "scope links: in a workspace whose packages are linked through node_modules the base-red dependent suite is measured on base and excused (VERIFIED)" || bad "scope links: verdict $(scope_get verdict), excused: $(scope_get excused) (want VERIFIED, legacy): $(scope_get not_proven)"
+[ -z "$(git -C "$SR" status --porcelain)" ] && ok "scope links: the run leaves nothing behind in the checkout" || bad "scope links: left behind: $(git -C "$SR" status --porcelain | head -3)"
+fi
+if scope_want linksnewerr; then
+SR="$T/scope-linksnewerr"; scope_fixture "$SR" links; scope_run "$SR" "$SCOPE_THROW"
+[ -n "${RS_SHOW:-}" ] && printf 'linksnewerr rc=%s\n%s\n' "$SCRC" "$SCS"
+[ "$(scope_get verdict)" = FAILED ] && [ -z "$(scope_get excused)" ] && ok "scope linksnewerr: the base run does not read the changed sibling package through node_modules: the new error is not excused (FAILED)" || bad "scope linksnewerr: verdict $(scope_get verdict), excused: $(scope_get excused) (want FAILED, none excused)"
 fi
 if scope_want limitred; then
 SR="$T/scope-limitred"; scope_fixture "$SR" slowapp; scope_run "$SR" "$SCOPE_BREAK" LOKI_E10_VERIFY_MAX_S=8

@@ -16,7 +16,7 @@ import { failureLines, goJsonStream, GO_JSON_KEEP, withoutStaleWall, failureExce
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, envChangedSince, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, envChangedSince, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
 export const timeoutCarryOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TIMEOUT_CARRY"] ?? "").trim());
 export const TIMEOUT_CARRY_NOTE = "carried from an earlier verify of this run, not rerun (untouched file)";
 /** TIMEOUT-WAIT: after a check's timeout (or abort) fires, a process still alive this long later is SIGKILLed, so a test that ignores SIGTERM costs its limit, not minutes more. */
@@ -637,20 +637,20 @@ export async function runLintChecks(
   return pre;
 }
 /** RW-01: one detached worktree of the base commit per verify, created on first use (the on-demand suite base runs and the no-id comparison share it)
- *  and always removed. `link` links the head's dependency dirs into a directory of it under baseDepsLinker's guards (false: nothing linked, fail closed);
+ *  and always removed. `link` links the head's dependency dirs into a directory of it under baseDepsLinker's guards, or builds baseDepsView's node_modules when the only objection is a workspace's own member links (false: nothing linked, fail closed);
  *  no link at all when the change edits a dependency manifest. */
 interface BaseTree { get(changed: readonly string[], gate: ZeroGate): string | null; link(cwd: string): boolean; dispose(): void }
 function baseTree(ctx: RunContext): BaseTree {
-  let dir: string | null | undefined, linker: ((cwd: string) => boolean) | null = null;
+  let dir: string | null | undefined, linker: ((cwd: string) => boolean) | null = null, view: ((cwd: string) => boolean) | null = null;
   const git = (args: string[]): void => { safeGit(ctx.repoDir, args, { stdio: "ignore", repoDrivers: true }); };
   return {
     get(changed, gate) {
       if (dir !== undefined) return dir;
       const d = mkdtempSync(join(tmpdir(), "e10-base-"));
-      try { git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", d, ctx.baseSha]); dir = d; linker = changed.some((f) => MANIFESTS.test(f)) ? null : baseDepsLinker(d, ctx.repoDir, gate); } catch { rmSync(d, { recursive: true, force: true }); dir = null; }
+      try { git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", d, ctx.baseSha]); dir = d; linker = changed.some((f) => MANIFESTS.test(f)) ? null : baseDepsLinker(d, ctx.repoDir, gate); view = linker ? baseDepsView(d, ctx.repoDir, gate) : null; } catch { rmSync(d, { recursive: true, force: true }); dir = null; }
       return dir;
     },
-    link: (cwd) => (linker ? linker(cwd) : false),
+    link: (cwd) => (linker && view ? linker(cwd) || view(cwd) : false), // a workspace whose packages link to each other gets a node_modules view whose member links point at base (baseDepsView)
     dispose() {
       if (!dir) return;
       try { git(["worktree", "remove", "--force", dir]); } catch { /* pruned below */ }
