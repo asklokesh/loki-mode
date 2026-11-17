@@ -31,7 +31,7 @@ import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publ
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
-import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts";
+import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts"; import { LOKI_OWN_LEAD } from "../closure.ts";
 import { atomicWriteText } from "../../util/atomic.ts";
 import { patchReceipt } from "../../features/patch_protocol.ts";
 import { collapseNotProven } from "../../util/term_width.ts";
@@ -437,7 +437,7 @@ export const sealStage: Stage = {
     if (wallNotRun > 0) { // A-103b: wall.ts keeps each sealed copy under runDir/wall; a copy absent from wall.files was discarded (class not_run: no real base result)
       try { const kept = new Set((Array.isArray(o.wall?.files) ? (o.wall!.files as Obj[]) : []).map((f) => basename(String(f.path)))); for (const n of readdirSync(sealedWallDir(ctx.runDir)).sort()) if (!kept.has(n)) notProven.add(`wall test discarded: ${n} (not_run)`); } catch { /* no sealed wall dir: count line only */ }
     }
-    if (!diffOk) notProven.add("diff not computed (git diff-tree failed)");
+    if (!diffOk) notProven.add(`${LOKI_OWN_LEAD}diff not computed (git diff-tree failed)`); // RW-03: wording only, the verdict rule is unchanged
     // E-55: any status other than A means the path existed at base_sha (M, D, or T typechange, e.g. a symlink).
     // D50-F2r3: re-run the classifier on the COMMITTED blob (clean filters run at commit) with verify's counts; any mismatch drops verify's labels, "weakened test" stays.
     const dropped = new Set<string>(); const tcs = (o.verify as Obj | undefined)?.["test_counts"] as Obj | undefined;
@@ -458,7 +458,7 @@ export const sealStage: Stage = {
     for (const n of rcNotes) notProven.add(disclosedSet.has(n) ? n + DECLARED_SUFFIX : n); for (const n of decl.extra ?? []) notProven.add(n);
     for (const n of fenceRec.notProven) notProven.add(n);
     for (const n of pinnedUpdateNotes(pinnedUpdatesOf(o.implement))) notProven.add(n); // Z2: a reported test update the harness could not check
-    for (const n of [...strs(o.commit?.not_proven), ...strs(o.commit?.scope_notes), ...(o.commit?.failed === true ? [`git commit failed: ${str(o.commit?.commit_error) ?? "no error recorded"}`] : [])]) notProven.add(n); // D58: scope_notes = edits flagged outside stated scope (never reverted) or scope undetermined; separate key so they never force FAILED
+    for (const n of [...strs(o.commit?.not_proven), ...strs(o.commit?.scope_notes), ...(o.commit?.failed === true ? [`${LOKI_OWN_LEAD}git commit failed: ${str(o.commit?.commit_error) ?? "no error recorded"}`] : [])]) notProven.add(n); // D58: scope_notes = edits flagged outside stated scope (never reverted) or scope undetermined; separate key so they never force FAILED
     for (const id of strs(o.verify?.pre_red)) notProven.add(`pre red: ${id}`); // A-112: listed, never downgrades (not via verifyNotProven)
     if (typeof o.verify?.baseline_line === "string" && strs(o.verify?.pre_red).length) notProven.add(o.verify.baseline_line); // REPOMEM: the one-line pre-existing vs introduced split; listed only when a baseline failure was excused, never downgrades
     for (const n of strs(o.verify?.lint_untouched)) notProven.add(`lint red only in files the change did not touch (disclosed, not blocking): ${n}`); // LINT-UNTOUCHED: never silent

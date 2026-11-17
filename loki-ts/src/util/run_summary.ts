@@ -31,7 +31,7 @@ import { join } from "node:path";
 import { safeGit } from "../util/safe_git.ts";
 import { redactSecrets } from "../util/redact.ts";
 import { formatDuration, type Outcome } from "../engine10/output.ts";
-import type { EventEnvelope } from "../engine10/types.ts";
+import type { EventEnvelope } from "../engine10/types.ts"; import { withoutOwnLead } from "../engine10/closure.ts";
 import { firstIncompleteStage } from "./run_outputs.ts";
 import { colorDisabled } from "./colors.ts";
 import { collapseNotProven } from "./term_width.ts";
@@ -64,7 +64,7 @@ export function resultOf(outcome: Outcome): RunResult {
 export function nextOf(result: RunResult, filesChanged: number | null, reason?: string, provider = "claude", runId?: string, landNext = ""): string {
   if (result === "verified") return filesChanged && landNext ? landNext : "loki status"; // the checkout is back on the start branch, so `loki diff` would show the user's own HEAD; the run-end line names the branch and how to see it
   if (result === "done-unverified") return "loki verify";
-  const r = reason ?? "", undo = filesChanged ? "; loki undo to revert" : "";
+  const r = withoutOwnLead(reason ?? ""), undo = filesChanged ? "; loki undo to revert" : ""; // RW-03: the lead names whose fault it is; the next step is picked from the cause
   if (result === "stopped" && r === "cost/time cap reached") return `if the cost cap was hit, loki start --max-cost <higher>${runId ? ` (stopped run ${runId})` : ""}, then rerun the same task; if the time cap, rerun with more time`;
   if (result === "stopped") return r.startsWith("spec conflict") ? 'loki answer --text "<your decision>"' : r.startsWith("stalled") ? "loki chat --attach" : "loki status";
   if (r === "provider authentication failed" || r.startsWith("provider authentication failed: ")) {

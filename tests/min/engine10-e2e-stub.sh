@@ -81,6 +81,47 @@ need bun
 need git
 cd "$ROOT" || exit 2
 
+# ---- RW-03 HONEST REASONS (wording only; no verdict, outcome word or exit code moves) ----
+# Unit, from source. A cause of Loki's own reads "Loki could not finish checking: <cause>" in the outcome line's reason: a failed checking or delivery
+# stage (commit here), a stage's time limit, a run that ended with no receipt. A failing check still wins the reason, the cap reason and a session
+# stage's own reason (implement) are unchanged, the next-step hint is picked from the cause as before, the outcome word and exit code for a FAILED and
+# a capped sealed run are what they were, and openItems names each item that held a receipt with its class.
+# Planted defects (each reverted): closure.ts ownReason returns the reason unchanged (commit and limit read without the lead); output.ts drops the
+# lead from the no-receipt reason; run_summary.ts nextOf matches the raw reason (the no-receipt hint is no longer "loki doctor"); closure.ts RULES:
+# class of "no fail-then-pass test" set to "a" (the items line reads a); seal.ts: drop the lead from either receipt line (the source pin fails).
+RW3="$(cd "$ROOT/loki-ts" && bun -e '
+const o = await import("./src/engine10/output.ts"), s = await import("./src/util/run_summary.ts"), c = await import("./src/engine10/closure.ts"), fs = await import("node:fs");
+const ev = (type, stage, data) => ({ v: 1, seq: 0, ts: "2026-01-01T00:00:00Z", run: "r", type, stage, data });
+const failChk = ev("stage.completed", "verify", { checks: [{ name: "bun:calc.test.ts", result: "fail", first_error: "expected 6" }] });
+const out = [
+  "commit=" + o.reasonOf([ev("stage.failed", "commit", { reason: "git commit failed" })], false, "commit failed", "FAILED"),
+  "limit=" + o.reasonOf([ev("stage.failed", "verify", { reason: "limit" })], false, null, "PARTIAL"),
+  "noreceipt=" + o.reasonOf([], false, null, "FAILED"),
+  "session=" + o.reasonOf([ev("stage.failed", "implement", { reason: "session exited 1" })], false, null, "FAILED"),
+  "check=" + o.reasonOf([failChk, ev("stage.failed", "commit", { reason: "git commit failed" })], false, null, "FAILED"),
+  "cap=" + o.reasonOf([ev("cap.hit", "implement", {}), ev("stage.failed", "verify", { reason: "cap" })], false, null, "PARTIAL"),
+  "words=" + [o.outcomeOf("FAILED", false, "commit failed", false, true), o.outcomeOf("PARTIAL", true, null, false, true), o.outcomeOf("FAILED", true, null, false, false)].join(","),
+  "exit=" + [o.EXIT.FAILED, o.EXIT.PARTIAL, o.EXIT.BUDGET_STOP, o.EXIT.VERIFIED].join(","),
+  "next=" + s.nextOf("failed", 0, c.LOKI_OWN_LEAD + "engine ended before sealing a receipt") + "|" + (s.nextOf("failed", 1, c.LOKI_OWN_LEAD + "git commit failed") === s.nextOf("failed", 1, "git commit failed")),
+  "items=" + c.openItems({ checks: [{ name: "bun:a.test.ts", result: "fail" }, { name: "bun:b.test.ts", result: "fail", pre_red: true }], cost: { fix_rounds: [{}, {}] }, not_proven: ["no test shown to fail on the base commit and pass on the change", "verify stopped at its time limit before all checks ran", c.LOKI_OWN_LEAD + "git commit failed: gpg failed", "pre red: x", "something new"] }).map((i) => `${i.class}:${i.kind}${i.tried ? `(${i.tried})` : ""}`).join(";"),
+  "seal=" + ["${LOKI_OWN_LEAD}diff not computed (git diff-tree failed)", "${LOKI_OWN_LEAD}git commit failed: "].map((t) => fs.readFileSync("./src/engine10/stages/seal.ts", "utf8").includes(t)).join(","),
+];
+console.log(out.join("\n"));
+' 2>&1)"
+RW3_WANT='commit=Loki could not finish checking: git commit failed
+limit=Loki could not finish checking: the verify stage reached its time limit
+noreceipt=Loki could not finish checking: engine ended before sealing a receipt
+session=session exited 1
+check=bun:calc.test.ts failed: expected 6
+cap=cost/time cap reached
+words=FAILED,PARTIAL,BUDGET_STOP
+exit=1,6,3,0
+next=loki doctor|true
+items=b:a check fails(2 fix round(s));b:no fail-then-pass test;a:verify stopped at its time limit;c:Loki could not finish checking;c:other: something new
+seal=true,true'
+[ "$RW3" = "$RW3_WANT" ] && ok "rw-03 unit: Loki's own causes read 'Loki could not finish checking', a failing check and the cap keep their reason, no outcome word or exit code moved, open items carry their class" || bad "rw-03 unit gave: $RW3"
+# ---- end RW-03 ----
+
 # Unit: ENCLOSING-DECL. An edit inside an indented method whose @@ context is a template-literal line (git's default funcname for .js) names the
 # enclosing method from the head file; a context that names something keeps that name only; column-0 code names nothing (commander.js run).
 U="$(cd "$ROOT/loki-ts" && bun -e '
@@ -325,7 +366,7 @@ E2E_PREP=hook_prep LOKI_E10_COMMIT_HOOK_BYPASS=0 run_engine done
 [ "$RC" -ne 0 ] && grep -q "git commit failed" <<< "$OUT" && [ ! -f "${RUNDIR:-/nonexistent}/receipt.json" ] && ok "commit hook: LOKI_E10_COMMIT_HOOK_BYPASS=0 keeps the old stop (git commit failed, no receipt)" || bad "commit hook: knob off gave rc $RC, receipt $( [ -f "${RUNDIR:-/x}/receipt.json" ] && echo yes || echo no)"
 E2E_PREP=sign_prep run_engine done
 HK="$(hk_np)"
-case "$HK" in "FAILED | git commit failed: "*) ok "commit hook: a failure no hook caused (signing) is not bypassed, and the run still writes a FAILED receipt naming the git error" ;; *) bad "commit hook: signing failure gave '$HK' (rc $RC)" ;; esac
+case "$HK" in "FAILED | Loki could not finish checking: git commit failed: "*) ok "commit hook: a failure no hook caused (signing) is not bypassed, and the run still writes a FAILED receipt naming the git error" ;; *) bad "commit hook: signing failure gave '$HK' (rc $RC)" ;; esac
 unset -f hook_prep sign_prep
 
 # acc-162 NTF: a low-tier change whose repo maps no test file (an npm package whose tests have no .test name) still runs the repo's own test command.
