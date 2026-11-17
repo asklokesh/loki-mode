@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeGit } from "./safe_git.ts";
+import { escapeRegex } from "./regex_escape.ts";
 import { literalSkeleton, pinnedLines } from "../e10ext/assert_delta.ts";
 import { isTestFile } from "./test_file_text.ts";
 
@@ -110,24 +111,32 @@ function excusedEdit(repoDir: string, baseSha: string, headSha: string | null, r
       const stem = p.replace(/\.(?:js|mjs|cjs|jsx)$/, "");
       return [...new Set([p, ...["ts", "tsx", "js", "mjs", "cjs", "jsx", "mts", "cts"].map((x) => `${stem}.${x}`), ...["ts", "tsx", "js"].map((x) => `${stem}/index.${x}`)])];
     };
-    // A package the change's own source starts importing (FireLater#24: header.tsx gained `useRouter` from 'next/navigation', and the header's test cannot
-    // render it without mocking that package). The mock can only stand in for a dependency no existing test exercised, since the source did not have it.
-    // Bare package names only, and only when a non-test file the change touched gains the import. LOKI_E10_WEAK_MOCK_PKG=0 turns it off.
+    // A package the test's own subject starts importing (FireLater#24: header.tsx gained `useRouter` from 'next/navigation', and Header.test.tsx cannot
+    // render it without mocking that package). The mock can only stand in for a dependency this file's tests never exercised, since their subject did not
+    // have it. The subject is a non-test file the test imported on base by a relative path, or one with the test's stem in its directory or the parent
+    // directory (names compared without case: Header.test.tsx imports '../Header', the file is header.tsx). An import gained by any other file excuses
+    // nothing: a file-wide mock of a package another module already used would silence this file's existing tests. Bare package names only.
+    // LOKI_E10_WEAK_MOCK_PKG=0 turns it off.
     let addedImports: string | null = null;
+    const subjectOf = (): ((file: string) => boolean) => {
+      const low = (x: string): string => x.toLowerCase(), up = dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : "", stem = (f: string): string => low(f.slice(f.lastIndexOf("/") + 1)).replace(/\.(?:test|spec)(?=\.[^.]+$)/, "").replace(/\.[^.]+$/, "");
+      const imported = new Set([...base.matchAll(/(?:\bfrom\s*|\brequire\(\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g)].flatMap((m) => candidates(m[1]!)).map(low));
+      return (file) => !isTestFile(file) && (imported.has(low(file)) || ((dir === "" ? [""] : [dir, up]).map(low).includes(low(file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "")) && stem(file) === stem(rel)));
+    };
     const newlyImported = (spec: string): boolean => {
       if (/^(0|off|false|no)$/i.test((process.env["LOKI_E10_WEAK_MOCK_PKG"] ?? "").trim()) || spec.startsWith(".") || spec.startsWith("/")) return false;
       if (addedImports === null) {
         try {
-          let file = ""; const keep: string[] = [];
-          for (const l of safeGit(repoDir, ["diff", "-U0", baseSha, ...(headSha ? [headSha] : [])]).split("\n")) {
-            if (l.startsWith("+++ ")) file = l.slice(6);
-            else if (l.startsWith("-") && !l.startsWith("---") && file && !isTestFile(file)) keep.push(`gone ${l.slice(1)}`);
-            else if (l.startsWith("+") && !l.startsWith("+++") && file && !isTestFile(file)) keep.push(`new ${l.slice(1)}`);
+          let file = ""; const keep: string[] = [], subject = subjectOf();
+          for (const l of safeGit(repoDir, ["diff", "-U0", "--no-color", baseSha, ...(headSha ? [headSha] : [])]).split("\n")) {
+            if (l.startsWith("+++ ")) file = l.startsWith("+++ b/") && subject(l.slice(6)) ? l.slice(6) : "";
+            else if (l.startsWith("-") && !l.startsWith("---") && file) keep.push(`gone ${l.slice(1)}`);
+            else if (l.startsWith("+") && !l.startsWith("+++") && file) keep.push(`new ${l.slice(1)}`);
           }
           addedImports = keep.join("\n");
         } catch { addedImports = ""; }
       }
-      const q = spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), imp = (kind: string): RegExp => new RegExp(`^${kind} .*(?:\\bfrom\\s*|\\brequire\\(\\s*|\\bimport\\s*\\(?\\s*)['"]${q}['"]`, "m");
+      const q = escapeRegex(spec), imp = (kind: string): RegExp => new RegExp(`^${kind} .*(?:\\bfrom\\s*|\\brequire\\(\\s*|\\bimport\\s*\\(?\\s*)['"]${q}['"]`, "m");
       return imp("new").test(addedImports) && !imp("gone").test(addedImports); // an import that only moved (removed and added) is not new
     };
     let excused = 0;
@@ -155,7 +164,7 @@ function excusedEdit(repoDir: string, baseSha: string, headSha: string | null, r
       return null;
     }
     if (count(SETUP_RE, head) - excused > count(SETUP_RE, base)) return null;
-    why.push("added setup only in describe blocks the change added, or mocks of modules new in the change or of a package its source starts importing");
+    why.push("added setup only in describe blocks the change added, or mocks of modules new in the change or of a package the test's own subject starts importing");
   }
   return why.join("; ") || null;
 }

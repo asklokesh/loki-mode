@@ -679,16 +679,23 @@ export function ensureProfile(repoDir: string, opts: BuildOpts = {}): { profile:
  *  root command runs nothing is compared with the frontend suite's base failures. No suite, or one that did not run attributably: the root baseline.
  *  `rerun` is what this run's own base rerun of the check showed: "same" (every failing id red there, failing the same way), "differs" (it ran the check's
  *  tests and they passed, failed by other ids or failed with another error), or absent (nothing to compare: it ran without its dependencies, was cut, or never ran).
- *  The suite baseline is read for "same" and, by id (LOKI_E10_BASE_RED_BY_ID, default on), when the rerun is absent; never for "differs". The caller passes
- *  `suite` for a check with no rerun only while the package's dependency dirs are as intake left them (verify.ts depsAsIntake). FireLater#24: the
- *  ignored frontend/next-env.d.ts changed during the session, every base rerun lost its node_modules and parsed no id, and 22 untouched page tests whose 146
- *  failing ids were all in the frontend suite's 307 base failures blocked the run (and held the full suite with them). */
+ *  The suite baseline is read for "same"; never for "differs"; and when the rerun is absent only if every comparable failing id repeats the error lines
+ *  the suite recorded for it on base (`errors` against failing_errors, sameErrors: no line on either side excuses nothing). An id match alone never
+ *  excuses: a test already red on base can be broken by the change in a new way (v11.145.0 to v11.153.0 read ids alone here and sealed such runs
+ *  VERIFIED). LOKI_E10_BASE_RED_BY_ID=0 never reads the suite for an absent rerun; =1 reads it by id alone (baseRedByIdOn, unsafe for the label). The
+ *  caller passes `suite` for a check with no rerun only while the package's dependency dirs are as intake left them (verify.ts depsAsIntake).
+ *  FireLater#24: the ignored frontend/next-env.d.ts changed during the session, every base rerun lost its node_modules and parsed no id, and 22 untouched
+ *  page tests whose 146 failing ids were all in the frontend suite's 307 base failures blocked the run (and held the full suite with them). Measured on
+ *  that run's tree: all 73 of their error lines equal the suite's recorded ones. */
 export interface Attribution { preExistingChecks: string[]; preExistingIds: string[]; introducedChecks: string[]; line: string | null }
-export function attribute(repoDir: string, baseSha: string, failing: { name: string; ids?: string[]; eligible: boolean; suite?: string; rerun?: "same" | "differs" }[]): Attribution {
+export function attribute(repoDir: string, baseSha: string, failing: { name: string; ids?: string[]; eligible: boolean; suite?: string; rerun?: "same" | "differs"; errors?: Map<string, string[]> | Record<string, string[]> }[]): Attribution {
   const p = loadProfile(repoDir), none: Attribution = { preExistingChecks: [], preExistingIds: [], introducedChecks: failing.map((f) => f.name), line: null };
   if (!p || p.revision !== baseSha || failing.length === 0) return none;
-  const root = p.baseline.attributable ? p.baseline.failing_ids : [], own = (name?: string): string[] => { const s = name ? p.suites?.find((x) => x.name === name && x.ran && x.attributable) : undefined; return s ? s.failing_ids : root; };
-  const byId = baseRedByIdOn(), rows = failing.map((f) => ({ ...f, base: new Set(own(f.rerun === "same" || (byId && f.rerun !== "differs") ? f.suite : undefined)) })), known = new Set(rows.flatMap((r) => [...r.base]));
+  const rec = (name?: string) => (name ? p.suites?.find((x) => x.name === name && x.ran && x.attributable) : undefined), root = p.baseline.attributable ? p.baseline.failing_ids : [], own = (name?: string): string[] => rec(name)?.failing_ids ?? root;
+  // the absent rerun: the same error lines as the suite recorded on base, or nothing (ids alone only under the explicit, unsafe =1)
+  const sameWay = (f: (typeof failing)[number]): boolean => { const be = rec(f.suite)?.failing_errors; return !!be && !!f.errors && sameErrors(f.errors instanceof Map ? f.errors : new Map(Object.entries(f.errors)), be, comparableIds(f.ids ?? [])); };
+  const absent = (f: (typeof failing)[number]): boolean => f.rerun === undefined && !!f.suite && (baseRedByIdOn() || (!baseRedSuiteOff() && sameWay(f)));
+  const rows = failing.map((f) => ({ ...f, base: new Set(own(f.rerun === "same" || absent(f) ? f.suite : undefined)) })), known = new Set(rows.flatMap((r) => [...r.base]));
   if (known.size === 0) return none;
   return split(rows, known.size);
 }
@@ -775,11 +782,16 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: FullC
   const note = full.filter((c) => same.includes(c.name)).map((c) => `NOT PROVEN: "${c.cmd}" was ${SAME_RED_NOTE}`).join("; ");
   return { ...res, preExistingChecks: [...res.preExistingChecks, ...same], introducedChecks: res.introducedChecks.filter((n) => !same.includes(n)), line: [res.line, note].filter(Boolean).join("; ") };
 }
-/** BASE-RED-BY-ID (default on, LOKI_E10_BASE_RED_BY_ID=0 opts out): a full-suite check whose every failing test was already failing on the base commit is
- *  pre-existing, whatever its error text says now. A test that was red before the change cannot be broken by it; requiring identical error text turned a
- *  finished FireLater#24 run into FAILED with no pull request because a stack trace of an already-red test named a file the change edited. A failing id
- *  that names a changed file, a new failing id, or an id that also fails in an unexcused targeted check still blocks. */
-export const baseRedByIdOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BASE_RED_BY_ID"] ?? "").trim());
+/** BASE-RED-BY-ID (default OFF; LOKI_E10_BASE_RED_BY_ID=1 opts in): UNSAFE for the label. With it on, a check whose every failing id was already failing on
+ *  the base commit is pre-existing whatever its error says now (full suite, an edited or collateral test file, an absent base rerun). That was the default
+ *  from v11.145.0 to v11.153.0 on the claim "a test that was red before the change cannot be broken by it". The claim is false: the change can break it
+ *  in a new way (an AssertionError on base, a TypeError on head; an asserted value that moved), and those runs were sealed VERIFIED. The default is the
+ *  rule the units specify: an id match excuses only with the same error lines, or lines that differ by noise alone and name no changed file or symbol.
+ *  The FireLater#24 run behind the switch (6d70) was re-measured: 150 of its 152 failing ids repeat their base error and 2 Header.test.tsx ids fail with
+ *  another message after header.tsx was edited, so it is not excused, by design. */
+export const baseRedByIdOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_BASE_RED_BY_ID"] ?? "").trim());
+/** LOKI_E10_BASE_RED_BY_ID=0: the strictest setting. attribute() never reads a package's suite baseline for a check whose base rerun gave nothing to compare. */
+const baseRedSuiteOff = (env: NodeJS.ProcessEnv = process.env): boolean => /^(0|off|false|no)$/i.test((env["LOKI_E10_BASE_RED_BY_ID"] ?? "").trim());
 function attributeFullSuiteById(repoDir: string, baseSha: string, full: FullCheck[], blocked: string[], changed: string[], symbols: readonly string[] = [], shownIds: ReadonlySet<string> = new Set()): Attribution { // shownIds: TOUCHED-BASE-RED ids an edited file's own run showed red on base with the same error; only they may name that changed file here
   const bad = full.filter((c) => c.result === "fail"), none: Attribution = { preExistingChecks: [], preExistingIds: [], introducedChecks: bad.map((c) => c.name), line: null }, p = loadProfile(repoDir);
   if (!bad.length || !p || p.revision !== baseSha) return none;
@@ -823,26 +835,26 @@ export function touchedRedOnBase(repoDir: string, baseSha: string, c: { ids?: st
   return redOnBaseProfile(p, ids, c.errors);
 }
 /** Every comparable id is red in an attributable, complete run of the profile with the same error lines (sameErrors). */
-function redOnBaseProfile(p: CommandProfile, ids: readonly string[], errors: Map<string, string[]>): boolean {
+function redOnBaseProfile(p: CommandProfile, ids: readonly string[], errors: Map<string, string[]>, textOnly = false): boolean {
   const runs = [p.baseline, ...(p.suites ?? [])].filter((b) => b.ran && b.attributable && !b.timed_out && b.reason !== "baseline budget used up");
   const baseIds = new Set(runs.flatMap((b) => b.failing_ids)), baseErr = new Map<string, string[]>();
   for (const b of runs) for (const [k, v] of Object.entries(b.failing_errors ?? {})) if (!baseErr.has(k)) baseErr.set(k, v);
-  return ids.length > 0 && ids.every((i) => baseIds.has(i) || [...baseIds].some((b) => b.endsWith(` > ${i}`))) && (baseRedByIdOn() || sameErrors(errors, baseErr, [...ids])); // by id, as the full suite is judged (LOKI_E10_BASE_RED_BY_ID): a test already failing on base stays pre-existing when its stack trace differs by a line number. A Haiku run with 10 of 10 lines proved was sealed BLOCKED because 143 base-red ids failed again in targeted checks with other text
+  return ids.length > 0 && ids.every((i) => baseIds.has(i) || [...baseIds].some((b) => b.endsWith(` > ${i}`))) && ((!textOnly && baseRedByIdOn()) || sameErrors(errors, baseErr, [...ids])); // the same error lines as base, never ids alone (ids alone only under the unsafe LOKI_E10_BASE_RED_BY_ID=1). errorsById keeps a failure's message line, so a stack frame whose line number moved is not a difference: on the recorded FireLater#24 run 1e48 the edited Header.test.tsx repeats all 24 base lines
 }
 /** COLLATERAL-BASELINE (LOKI_E10_COLLATERAL_BASELINE, default on, =0 opts out): a collateral check (a relevant test that is not the task's own) is pre-existing at once,
- *  with no COLLATERAL_RED cap and no fix round, only when its test file is unedited, no changed file is its path-paired source (the same stem in the test's
- *  directory, or in the parent of its __tests__, tests or test directory), and every comparable failing id with its error lines equals this base commit's
- *  intake profile (redOnBaseProfile). A paired source the diff changed, a new failing id, or the same id with another error keeps the cap. */
+ *  with no COLLATERAL_RED cap and no fix round, only when its test file is unedited and every comparable failing id with its error lines equals this base commit's
+ *  intake profile (redOnBaseProfile). A new failing id, or the same id with another error (with or without a changed paired source), keeps the cap. */
 export const collateralBaselineOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_COLLATERAL_BASELINE"] ?? "").trim());
 export function collateralOnBaseline(repoDir: string, baseSha: string, test: string, c: { ids?: string[]; errors?: Map<string, string[]> }, changed: readonly string[], stem: string): boolean {
   if (!collateralBaselineOn() || changed.includes(test)) return false;
   const td = test.includes("/") ? test.slice(0, test.lastIndexOf("/")) : ".", sd = /(?:^|\/)(?:__tests__|tests|test)$/.test(td) ? (td.includes("/") ? td.slice(0, td.lastIndexOf("/")) : ".") : td;
-  // The paired-source rule guards the text comparison (a change to header.tsx can alter Header.test.tsx's failure while the text looks alike). Judged by id
-  // (LOKI_E10_BASE_RED_BY_ID) it is not needed: a test whose every failing id already failed on base gained no failure from this change. A run with 8 of 8
-  // acceptance items met ended in a spec conflict because it touched header.tsx and Header.test.tsx was already red on base.
-  if (!baseRedByIdOn() && changed.some((f) => { const fd = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "."; return (fd === sd || fd === td) && f.slice(f.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "") === stem; })) return false;
+  // A changed paired source (x/page.ts beside x/__tests__/page.test.ts) is the likeliest way for the change to alter this test's failure, so with one the
+  // excuse is taken from the error text alone and never from ids (not even under LOKI_E10_BASE_RED_BY_ID=1): every failing id must repeat its base error
+  // lines. Until 2026-11-17 a changed paired source capped the test whatever its error; a run was reported to end in a spec conflict on it (its error
+  // lines were not kept, so that is not measured). The stem is compared with case: "Header" (Header.test.tsx) does not pair with header.tsx.
+  const paired = changed.some((f) => { const fd = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "."; return (fd === sd || fd === td) && f.slice(f.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "") === stem; });
   const p = loadProfile(repoDir); if (!p || p.revision !== baseSha || !c.errors) return false;
-  return redOnBaseProfile(p, comparableIds(c.ids ?? []), c.errors);
+  return redOnBaseProfile(p, comparableIds(c.ids ?? []), c.errors, paired);
 }
 export const TOUCHED_RED = "edited test file red on base by every failing id with the same errors; the cases the change added or edited pass (excused, not blocking)";
 export function whyFullSuiteNotExcused(repoDir: string, baseSha: string, full: FullCheck[], changed: string[], excused: string[], blocked: readonly string[] = [], shownIds: ReadonlySet<string> = new Set()): string[] {

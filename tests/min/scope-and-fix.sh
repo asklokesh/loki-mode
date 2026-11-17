@@ -302,7 +302,8 @@
 # 262. sizing.ts namedFiles: drop the spelled-path filter (fl24 named-exact reads login/page.ts+issues/page.ts for the spelled task; the fl24 monorepo after reads STALLED).
 # 263. verify.ts ownTests: drop the changed-file condition (fl24 own-by-path reads a/page.test.ts own for an unedited a/x/page.ts).
 # 264. repo_profile.ts touchedRedOnBase: drop the editedTitles check (fl24 touched-base-red's failing edited case reads true; the newly-failing fl24 monorepo run reads PARTIAL).
-# 265. repo_profile.ts collateralOnBaseline: drop the paired-source check (fl24 collateral-baseline's changed web/src/app/x/page.ts reads true).
+# 265. repo_profile.ts collateralOnBaseline: stop passing `paired` to redOnBaseProfile (fl24 collateral-baseline's last value, another error beside a changed
+#      paired source under LOKI_E10_BASE_RED_BY_ID=1, reads true); or baseRedByIdOn defaults on again (its unpaired another-error value, the fifth, reads true).
 # 266. failures.ts idNamesFile: drop the package-relative branch (fl24 id-pkg-relative reads false for frontend/src/components/S.test.ts).
 # 267. seal.ts baseProofRunner: ignore repoDir (the fl24 monorepo after reads PARTIAL: the frontend test's proof runs from the repo root).
 # 269. check_result.ts cargoSegs: keep the merged-doctests note in a segment body (the between-segments CMD leg reads unparsed).
@@ -316,6 +317,7 @@
 # 268. scope.ts crossPackageTestEdits: `if (false) return false;` in place of the TK exercisesChange line (the TK leg drops the e2e, relative-import and Go reach tests).
 # 281. mutation_proof.ts editableBaseEnv: `if (true || !mapped.length) return {};` (BASE-SEES-HEAD); the leg reads no with no file named.
 # 282. wall_snapshot.ts snapshotTree: drop the rebaseSnapshot call (BASE-SEES-HEAD); the leg reads link-into-live|pth-into-live.
+# 284. test_guard.ts excusedEdit: subjectOf returns `() => true` (any changed non-test file); the MOCK-PKG unrelated-file leg reads not weakened.
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -2053,9 +2055,12 @@ const same = { [A]: ["AssertionError: x"], [B]: ["AssertionError: y"] }, tr = (i
 const r = [tr([A, B], same, ["new case"]), tr([A, F + " > c"], { [A]: ["AssertionError: x"], [F + " > c"]: ["AssertionError: z"] }, []), tr([A], { [A]: ["TypeError: q"] }, []), tr([A, B], same, ["b"])];
 process.env.LOKI_E10_TOUCHED_BASE_RED = "0"; r.push(tr([A, B], same, [])); console.log(r.join(","));' 2>&1)"
 [ "$FC" = "true,false,false,false,false" ] && ok "fl24 touched-base-red: an edited test file is excused only by same-error base red with no failing added or edited case; a new green-to-red id, another error and =0 are not" || bad "fl24 touched-base-red gave: $FC"
-# FL24-COLLATERAL-BASELINE (acc-154; FireLater#24): a collateral test is pre-existing at once (no COLLATERAL_RED cap, no fix round) only when it is unedited, its
-# path-paired source is unchanged, and every failing id with its error equals this base commit's intake profile. Each guard stays capped: the paired source
-# changed, the test file itself edited, a new failing id versus the baseline, the same id with another error; LOKI_E10_COLLATERAL_BASELINE=0 never excuses.
+# FL24-COLLATERAL-BASELINE (acc-154; FireLater#24): a collateral test is pre-existing at once (no COLLATERAL_RED cap, no fix round) only when it is unedited and
+# every failing id with its error equals this base commit's intake profile. A changed path-paired source (x/page.ts beside x/__tests__/page.test.ts) no
+# longer caps by itself (team-lead ruling 2026-11-17; no recorded run exercises it, and the hard cap comes back by returning false when `paired`); with
+# one, the same error lines are required even under LOKI_E10_BASE_RED_BY_ID=1. Each guard stays capped: the test file itself edited, a new failing id versus the baseline, the same id
+# with another error (with or without a changed paired source); LOKI_E10_COLLATERAL_BASELINE=0 never excuses. The last two values: under the unsafe
+# LOKI_E10_BASE_RED_BY_ID=1 another error is excused by id for an unpaired test and still capped beside a changed paired source.
 FD="$(cd "$ROOT/loki-ts" && G="$T/fld" bun -e '
 const rp = await import("./src/runner/repo_profile.ts"), { mkdirSync, writeFileSync } = require("node:fs"), { join } = require("node:path"), g = process.env.G;
 mkdirSync(join(g, ".loki/state"), { recursive: true }); for (const a of [["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "b"]]) Bun.spawnSync(["git", "-C", g, ...a]);
@@ -2063,9 +2068,10 @@ const sha = Bun.spawnSync(["git", "-C", g, "rev-parse", "HEAD"]).stdout.toString
 writeFileSync(join(g, ".loki/state/repo-profile.json"), JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: false, command: null, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false }, suites: [{ name: "full suite: web", ran: true, command: "(cd web && npm test)", exit_code: 1, duration_s: 1, timed_out: false, attributable: true, failing_ids: [id], failing_errors: { [id]: ["AssertionError: x"] } }] }));
 const cb = (ids, errs, changed) => rp.collateralOnBaseline(g, sha, T1, { ids, errors: E(errs) }, changed, "page");
 const same = { [id]: ["AssertionError: x"] }, nid = "src/app/x/__tests__/page.test.ts > other";
-const r = [cb([id], same, ["web/src/lib/api.ts"]), cb([id], same, ["web/src/app/x/page.ts"]), cb([id], same, [T1]), cb([id, nid], { ...same, [nid]: ["AssertionError: y"] }, []), cb([id], { [id]: ["TypeError: z"] }, [])];
-process.env.LOKI_E10_COLLATERAL_BASELINE = "0"; r.push(cb([id], same, [])); console.log(r.join(","));' 2>&1)"
-[ "$FD" = "true,false,false,false,false,false" ] && ok "fl24 collateral-baseline: excused only when unedited, the paired source unchanged and ids and errors equal the baseline; a changed paired source, an edited test, a new id, another error and =0 keep the cap" || bad "fl24 collateral-baseline gave: $FD"
+const r = [cb([id], same, ["web/src/lib/api.ts"]), cb([id], same, ["web/src/app/x/page.ts"]), cb([id], same, [T1]), cb([id, nid], { ...same, [nid]: ["AssertionError: y"] }, []), cb([id], { [id]: ["TypeError: z"] }, []), cb([id], { [id]: ["TypeError: z"] }, ["web/src/app/x/page.ts"])];
+process.env.LOKI_E10_COLLATERAL_BASELINE = "0"; r.push(cb([id], same, [])); delete process.env.LOKI_E10_COLLATERAL_BASELINE;
+process.env.LOKI_E10_BASE_RED_BY_ID = "1"; r.push(cb([id], { [id]: ["TypeError: z"] }, []), cb([id], { [id]: ["TypeError: z"] }, ["web/src/app/x/page.ts"])); console.log(r.join(","));' 2>&1)"
+[ "$FD" = "true,true,false,false,false,false,false,true,false" ] && ok "fl24 collateral-baseline: excused only when unedited and ids and errors equal the baseline, also beside a changed paired source; an edited test, a new id, another error (with or without a changed paired source) and =0 keep the cap; the unsafe by-id opt-in never excuses another error beside a changed paired source" || bad "fl24 collateral-baseline gave: $FD"
 # FL24-ID-PKG-RELATIVE (acc-154; FireLater#24 side note): a package-relative vitest id ("src/x.test.ts > t", printed by a run in frontend/) names the repo file
 # frontend/src/x.test.ts. Before it such an id never named its changed file, so a failure in an edited file could be excused (fail open); =0 restores the old rule.
 FI="$(cd "$ROOT/loki-ts" && bun -e '
@@ -3790,10 +3796,31 @@ res("NEW-SCOPE a hook added to an existing describe still caps", testFileWeakene
 delete process.env.LOKI_E10_WEAK_MOCK_NEW;
 res("NEW-SCOPE the mock clauses are off by default and on with =1", (await import(root + "/loki-ts/src/util/test_guard.ts")).weakMockNewOn({}) === false);
 rmSync(R, { recursive: true, force: true });
+// MOCK-PKG (FireLater#24 run 1e48: header.tsx gained useRouter from 'next/navigation' and Header.test.tsx mocks that package). The excuse holds only when the
+// file that gains the import is the test's own subject (a base relative import, or the test's stem in its directory or the parent, names without case).
+const R2 = join(T, "weak-pkg"); rmSync(R2, { recursive: true, force: true }); mkdirSync(join(R2, "src/components/layout/__tests__"), { recursive: true }); mkdirSync(join(R2, "src/components/nav"), { recursive: true });
+sh(R2, "init", "-q", "-b", "main");
+const comp = (n: string) => `import Link from 'next/link';\nexport const ${n} = () => Link;\n`, HT = "src/components/layout/__tests__/Header.test.tsx", ST = "src/components/layout/__tests__/Sidebar.test.tsx";
+const tst = (n: string, from: string) => `import { describe, it, expect, vi } from 'vitest';\nimport { ${n} } from '${from}';\ndescribe('${n}', () => {\n  it('renders', () => {\n    expect(${n}()).toBeDefined();\n  });\n});\n`;
+writeFileSync(join(R2, "src/components/layout/header.tsx"), comp("Header")); writeFileSync(join(R2, "src/components/layout/sidebar.tsx"), comp("Sidebar")); writeFileSync(join(R2, "src/components/nav/menu.tsx"), comp("Menu"));
+writeFileSync(join(R2, HT), tst("Header", "../Header")); writeFileSync(join(R2, ST), tst("Sidebar", "@/components/layout/sidebar"));
+sh(R2, "add", "--", "."); sh(R2, "commit", "-q", "-m", "base"); const base2 = sh(R2, "rev-parse", "HEAD").trim();
+const gain = (f: string, n: string) => writeFileSync(join(R2, f), "import { useRouter } from 'next/navigation';\n" + comp(n)), back = () => sh(R2, "checkout", "-q", "--", ".");
+const mock = (pkg: string) => `vi.mock('${pkg}', () => ({\n  useRouter: () => ({ push: vi.fn() }),\n}));\n`, mocked = (t: string, pkg = "next/navigation") => t.replace("describe(", mock(pkg) + "describe(");
+gain("src/components/layout/header.tsx", "Header"); writeFileSync(join(R2, HT), mocked(tst("Header", "../Header")));
+res("MOCK-PKG header.tsx gains useRouter from next/navigation and Header.test.tsx mocks that package: not weakened, and the excuse names the subject", !testFileWeakened(R2, base2, null, HT, "M", "") && /package the test's own subject starts importing/.test(weakenExcuse(R2, base2, null, HT, "") ?? ""));
+process.env.LOKI_E10_WEAK_MOCK_PKG = "0"; res("MOCK-PKG =0 keeps the count rule (weakened)", testFileWeakened(R2, base2, null, HT, "M", "")); delete process.env.LOKI_E10_WEAK_MOCK_PKG;
+back(); gain("src/components/layout/sidebar.tsx", "Sidebar"); writeFileSync(join(R2, ST), mocked(tst("Sidebar", "@/components/layout/sidebar")));
+res("MOCK-PKG a subject found by its stem in the parent directory (the test imports it through an alias) is excused the same way", !testFileWeakened(R2, base2, null, ST, "M", ""));
+back(); gain("src/components/nav/menu.tsx", "Menu"); writeFileSync(join(R2, HT), mocked(tst("Header", "../Header"))); writeFileSync(join(R2, ST), mocked(tst("Sidebar", "@/components/layout/sidebar")));
+res("MOCK-PKG an unrelated file gains the import and existing tests of other modules mock the package: still weakened", testFileWeakened(R2, base2, null, HT, "M", "") && testFileWeakened(R2, base2, null, ST, "M", "") && weakenExcuse(R2, base2, null, HT, "") === null);
+back(); writeFileSync(join(R2, "src/components/layout/header.tsx"), comp("Header").replace("import Link from", "import NextLink from").replace("=> Link", "=> NextLink")); writeFileSync(join(R2, HT), mocked(tst("Header", "../Header"), "next/link"));
+res("MOCK-PKG a package the subject already imported on base (its import line only rewritten) still caps", testFileWeakened(R2, base2, null, HT, "M", ""));
+rmSync(R2, { recursive: true, force: true });
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/fl24-weak.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || bad "fl24-weak unit script crashed or exited non-zero"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 17 ] || bad "fl24-weak unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 17"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 22 ] || bad "fl24-weak unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 22"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
