@@ -1602,4 +1602,59 @@ IA_BODY='Fix the off-by-one in paginate(): the last item of every page is droppe
 IANL="$(ia_facts)"
 [ "$IANL" = 'VERIFIED 0 0 0 0 nocheck []' ] && [ ! -s "$IAD.linecheck" ] && ! grep -q '"issue_acceptance"' "$IARUN/events.jsonl" 2>/dev/null \
     && ok "issue acceptance e2e: an issue with no list runs no check and keeps today's keys and label" || bad "issue acceptance with no list gave: $IANL"
+# PROVES THE CHANGE (engine10/proof_rerun.ts proofOnBase, LOKI_E10_PROOF_BASE, LOKI_E10_PROOF_BASE_CAP): the kept proof script is run a second time against
+# the base commit. A check that also passes there proves nothing about the change; a line whose passing checks all pass there is named (and, under the cap,
+# not met). Real git, real bash, no model: a repository whose change adds one file, with installed node_modules that are not in the commit, and a script
+# that names the repository by its literal path (as 17 of 19 stored scripts did) and, on the base side, deletes node_modules (as a script running `npm ci`
+# does: it emptied a linked directory's target when measured).
+PBR="$T/pb-repo"; mkdir -p "$PBR/node_modules/dep" && (cd "$PBR" && git init -q && git config user.email t@example.invalid && git config user.name t \
+    && printf 'node_modules\n.loki\n' > .gitignore && echo old > app.txt && git add .gitignore app.txt && git commit -qm base \
+    && echo new > feature.txt && git add feature.txt && git commit -qm change) || bad "proof on base: fixture repository"
+echo installed > "$PBR/node_modules/dep/index.js"; PBBASE="$(git -C "$PBR" rev-parse HEAD~1)"; PBRUN="$PBR/.loki/runs/r1"; mkdir -p "$PBRUN"
+pb_script() { { printf '. "$LOKI_SCRATCH/loki-check.sh"\nR=%s\n' "$(cd "$PBR" && pwd -P)"; cat; printf 'exit 0\n'; } > "$PBRUN/loki-proof.sh"; }
+pb_run() { ROOT="$ROOT" PBR="$PBR" PBRUN="$PBRUN" PBBASE="${PB_BASE-$PBBASE}" bun --no-env-file --config=/dev/null -e '
+const p = await import(process.env.ROOT + "/loki-ts/src/engine10/proof_rerun.ts"), asks = ["Add the feature file", "The app file is still there", "Ship it", "Install the dependencies"];
+const env = { ...process.env, ...JSON.parse(process.env.PB_ENV ?? "{}") };
+const head = await p.rerunProof(process.env.PBR, process.env.PBRUN, undefined, env), base = await p.proofOnBase(process.env.PBR, process.env.PBRUN, process.env.PBBASE, head, undefined, env);
+const st = (b) => p.ruleStatus(asks, head, b).map((s) => s.status[0]).join("");
+console.log([head.proved, head.failed, base ? (base.available ? "available" : base.all_same ? "all-same" : "unavailable") : "off", base?.base_checks ?? "-", base?.same_total ?? "-", base?.cached ? "cached" : "ran", st(base), st(p.proofBaseCapOn(env) ? base : null), p.provesNothing(asks, head, base).join(","), p.baseFacts(asks, head, base).length].join(" "));' 2>&1 | tail -1; }
+pb_script <<'EOF'
+loki_cmd 1 "the feature file exists" test -f "$R/feature.txt"
+loki_cmd 2 "the app file is there" test -f "$R/app.txt"
+loki_cmd 3 "nothing at all" true >/dev/null
+loki_cmd 4 "dependencies are installed on port 4123" test -f "$R/node_modules/dep/index.js"
+[ -f "$R/feature.txt" ] || rm -rf "$R/node_modules"/*
+EOF
+PB1="$(pb_run)"; printf '    proof on base, first run: %s\n' "$PB1"
+case "$PB1" in "4 0 available 4 3 ran mmuu mmmm 3,4 2") ok "proof on base: of four passing checks the three that also pass on the base commit are found (the literal repository path is redirected to the base tree, node_modules is carried over); lines 3 and 4, proved only by such checks, are named and are not met under the rule; line 1 stays met; a line that asks that something is still there is left alone; a check whose output the script sent to /dev/null is counted on both sides from the result file; by default the label rule is unchanged" ;; *) bad "proof on base gave: $PB1" ;; esac
+[ "$(cat "$PBR/node_modules/dep/index.js" 2>/dev/null)" = installed ] && ok "proof on base: a script that deletes node_modules on the base side leaves the repository's own node_modules whole (copied, never linked)" || bad "proof on base: the base run reached the repository's own node_modules"
+[ -z "$(git -C "$PBR" status --porcelain)" ] && [ "$(git -C "$PBR" worktree list | wc -l | tr -d ' ')" = 1 ] && [ "$(git -C "$PBR" rev-parse --abbrev-ref HEAD)" != HEAD ] && [ "$(git -C "$PBR" rev-parse HEAD~1)" = "$PBBASE" ] \
+    && ok "proof on base: the working tree, its branch and the worktree list are as before the base run" || bad "proof on base left: $(git -C "$PBR" status --porcelain | head -3) / $(git -C "$PBR" worktree list | wc -l) worktrees"
+PB2="$(PB_ENV='{"LOKI_E10_PROOF_BASE_CAP":"1"}' pb_run)"
+case "$PB2" in "4 0 available 4 3 cached mmuu mmuu 3,4 2") ok "proof on base: LOKI_E10_PROOF_BASE_CAP=1 makes it a cap, and the base result kept in the run directory is reused, so the same script on the same base commit is not run twice" ;; *) bad "proof on base cap and cache gave: $PB2" ;; esac
+PB4="$(PB_ENV='{"LOKI_E10_PROOF_BASE":"0"}' pb_run)"
+case "$PB4" in "4 0 off - - ran mmmm mmmm  0") ok "proof on base: LOKI_E10_PROOF_BASE=0 runs nothing on the base commit" ;; *) bad "proof on base opt-out gave: $PB4" ;; esac
+pb_script <<'EOF'
+test -f "$R/feature.txt" || { echo "setup needs the feature"; exit 1; }
+loki_cmd 1 "the feature file exists" test -f "$R/feature.txt"
+loki_cmd 3 "nothing at all" true
+EOF
+PB5="$(PB_ENV='{"LOKI_E10_PROOF_BASE_CAP":"1"}' pb_run)"
+case "$PB5" in "2 0 unavailable 0 0 ran mumu mumu  0") ok "proof on base: a base run whose setup stops before any check is 'not available': no line loses its mark for it, even under the cap" ;; *) bad "proof on base with a base that cannot start gave: $PB5" ;; esac
+pb_script <<'EOF'
+loki_cmd 1 "the app file is there" test -f "$R/app.txt"
+loki_cmd 3 "nothing at all" true
+loki_cmd 4 "nothing either" true
+EOF
+PB6="$(PB_ENV='{"LOKI_E10_PROOF_BASE_CAP":"1"}' pb_run)"
+case "$PB6" in "3 0 all-same 3 3 ran mumm mumm  0") ok "proof on base: when every passing check also passes on the base commit the comparison says so and strips nothing (the base run cannot be told from the change)" ;; *) bad "proof on base, all checks the same, gave: $PB6" ;; esac
+PB7="$(PB_BASE=0000000000000000000000000000000000000000 PB_ENV='{"LOKI_E10_PROOF_BASE_CAP":"1"}' pb_run)"
+case "$PB7" in "3 0 unavailable 0 0 ran mumm mumm  0") ok "proof on base: a base commit that cannot be checked out is 'not available', never a cap" ;; *) bad "proof on base with no base commit gave: $PB7" ;; esac
+PBK="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const p = await import(process.env.ROOT + "/loki-ts/src/engine10/proof_rerun.ts"), k = p.checkKey;
+const c = (item, what, ok) => ({ item, what: k(what), ok });
+const same = k("GET /v1/items/3f2a9c1e-11aa-4b2c-9d3e-0123456789ab on port 51234 returns 12 rows | status 200 | {\"id\":7}") === k("GET /v1/items/77777777-11aa-4b2c-9d3e-0123456789ab on port 40001 returns 3 rows | status 200 | {\"id\":9}");
+const r = p.compareWithBase([c("1", "a", true), c("1", "a", true), c("2", "b", true), c("3", "c", false)], [c("1", "a", true), c("1", "a", false), c("2", "x", true), c("3", "c", true)]);
+console.log(same, r.available, r.same["1"].passing, r.same["1"].on_base, r.same["2"].on_base, r.same_total, r.head_proved, p.keepsWorkingAsk("Tests passing."), p.keepsWorkingAsk("Build faceted search UI"));' 2>&1 | tail -1)"
+[ "$PBK" = "true true 2 1 0 1 3 true false" ] && ok "proof on base: a check is matched by item and description with ids, ports and counts removed; two checks that read the same are paired by count; a check described differently on base is never stripped; 'Tests passing.' reads as a keep-working line and 'Build faceted search UI' does not" || bad "proof on base matching gave: $PBK"
 finish
