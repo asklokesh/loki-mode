@@ -144,8 +144,8 @@ async function resumeWith(ctx: RunContext, first: SessionRunOptions, firstSessio
 // S1b FINISH-LINE continue, claude provider only (CLI and SDK routes). An implement session whose final text has no finish line (session.ts finishLineOf) is
 // resumed in the same session through resumeWith, before the follow-up gates and the -rv turn, while each resume changes the tree (anti_loop.ts
 // treeFingerprint), RESUME_MIN_LEFT_S holds, the resume count is under LOKI_E10_CONTINUE_MAX (default 4) and the run's measured spend is under
-// LOKI_E10_CONTINUE_MAX_USD (default 1.00, at or below plain Haiku's 1.06 on FireLater#24). Why 4: the one measured case listed three open pieces of work;
-// one resume each plus one to finish, and a resume that changes nothing ends the loop at once. Each resume is a new query, so the per-session caps
+// LOKI_E10_CONTINUE_MAX_USD (default 5.00, see CONTINUE_MAX_USD_DEFAULT). Why 4: the one measured case listed three open pieces of work;
+// one resume each plus one to finish, and the second resume in a row that changes nothing ends the loop (one is allowed: a reply that only waits on a subagent). Each resume is a new query, so the per-session caps
 // (effort_policy.ts HAIKU_CAPS) start from zero. A session still without a finish line ends with implement exit "incomplete" (PARTIAL, never VERIFIED).
 export const CONTINUE_MAX_DEFAULT = 4, CONTINUE_MAX_USD_DEFAULT = 5.0; // was 1.00: a whole-issue Sonnet run spends 1.2 to 2.5 dollars before its first continue, so the line was crossed at once and an unfinished session got 0 resumes
 export const continueMax = (env: NodeJS.ProcessEnv = process.env): number => {

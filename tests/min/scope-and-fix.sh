@@ -629,9 +629,10 @@ run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHAR
 [ "$(ev 'next((e["data"].get("size") for e in E if e["type"]=="variant" and "size" in e["data"]), None)')" = "normal" ] && ok "lean normal: the task sized normal" || bad "lean normal: the task did not size normal"
 grep -q '^wall ' "$ITERS" && { bad "lean normal: a Wall session ran despite a relevant visible test"; dump; } || ok "lean normal: no Wall session"
 [ "$(outcome)" = "VERIFIED" ] && ok "lean normal: run is VERIFIED" || { bad "lean normal: outcome is '$(outcome)'"; dump; }
-# ---------------------------------------------------------------- S1b FINISH-LINE resume (claude only; LOKI_E10_CONTINUE_MAX default 4, LOKI_E10_CONTINUE_MAX_USD default 1.00)
+# ---------------------------------------------------------------- S1b FINISH-LINE resume (claude only; LOKI_E10_CONTINUE_MAX default 4, LOKI_E10_CONTINUE_MAX_USD default 5.00)
 # An implement session whose final text has no finish line (FireLater#24 Haiku: a compacted session ended "LOKI_BLOCKED: ... still outstanding", exit 0,
 # and sealed VERIFIED) is resumed ("-k<n>") while each resume changes the tree; still unfinished, implement exits "incomplete": PARTIAL, work kept.
+# One resume that leaves the tree as it was is allowed (63b21e6b7: a reply that only waits on a subagent); the second in a row ends the loop ("tree unchanged").
 # kits: the "-k" resume iterations; fin: the implement record's finish block ("none" when S1b did not fire); iexit: implement exit; unfin: the NOT PROVEN line; s1bev: s1b.resumed events
 kits() { grep -cE '^implement [^ ]*-k[0-9]+ ' "$ITERS" 2>/dev/null || true; }
 fin() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys
@@ -649,11 +650,11 @@ run_engine "$TASK" E2E_STUB_NOFINISH=never
     && ok "S1b never: four resumes that each change the tree but never finish stop at the count cap; exit incomplete, PARTIAL with one NOT PROVEN line, the work committed" || { bad "S1b never: resumes $(kits), finish '$(fin)', exit $(iexit), cap lines $(unfin), outcome $(outcome)"; dump; }
 has "S1b never: the NOT PROVEN line names why and what the reply said was outstanding" "$(rnp)" "implement ended without a finish line (count cap after 4 resumes): Progress made. Still outstanding: the docs for multiply."
 run_engine "$TASK" E2E_STUB_NOFINISH=still
-[ "$(kits)" = 1 ] && [ "$(fin)" = "1|tree unchanged|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
-    && ok "S1b still: a resume that changes nothing ends the loop at once; exit incomplete, PARTIAL, the work committed" || { bad "S1b still: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
+[ "$(kits)" = 2 ] && [ "$(fin)" = "2|tree unchanged|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
+    && ok "S1b still: resumes that change nothing end the loop at the second in a row (2 of the 4 allowed); exit incomplete, PARTIAL, the work committed" || { bad "S1b still: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
 run_engine "$TASK" E2E_STUB_NOFINISH=unfinished # candidate 1: the named ending LOKI_UNFINISHED is not a finish line (finishLineOf reads only the three)
-[ "$(kits)" = 1 ] && [ "$(fin)" = "1|tree unchanged|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
-    && has "S1b LOKI_UNFINISHED: a reply ending LOKI_UNFINISHED is resumed once; unchanged, it exits incomplete, PARTIAL (never VERIFIED), with its own what-is-left text on the receipt" "$(rnp)" "LOKI_UNFINISHED: the docs for multiply are not written" \
+[ "$(kits)" = 2 ] && [ "$(fin)" = "2|tree unchanged|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
+    && has "S1b LOKI_UNFINISHED: a reply ending LOKI_UNFINISHED is resumed; unchanged twice in a row, it exits incomplete, PARTIAL (never VERIFIED), with its own what-is-left text on the receipt" "$(rnp)" "LOKI_UNFINISHED: the docs for multiply are not written" \
     || { bad "S1b LOKI_UNFINISHED: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
 run_engine "$TASK" E2E_STUB_NOFINISH=never LOKI_E10_CONTINUE_MAX=0
 [ "$(kits)" = 0 ] && [ "$(fin)" = "0|continue off|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] \
@@ -668,9 +669,11 @@ run_engine "$TASK" E2E_STUB_MODE=done
 S1B_DONE_ITERS="$(cut -d' ' -f1-3 "$ITERS" | sed -E 's/e10-[0-9TZ]+-[0-9a-f]+/RUN/' | tr '\n' ' ')"
 [ "$(kits)" = 0 ] && [ "$(s1bev)" = 0 ] && [ "$(fin)" = none ] && [ "$(iexit)" = done ] && [ "$(unfin)" = 0 ] \
     && ok "S1b no-loss: a reply ending LOKI_DONE gets no resume, no event, no finish key and exit done (sessions and prompt bytes: $S1B_DONE_ITERS)" || { bad "S1b no-loss: resumes $(kits), finish '$(fin)', exit $(iexit)"; dump; }
+# The brief hash was b055d0660abb4bd7 on 8c7ae842b. 4fc499ebb (v11.149.0) appended "Two more cases are not spec conflicts either. ..." to the pinned-test rule of every
+# brief; with that one addition removed, today's normalized brief hashes to b055d0660abb4bd7 again. Any other change to a text goal's brief turns this leg red.
 S1B_SIG="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$RUNDIR" "$REPO" 2>&1)"
-[ "$S1B_SIG" = "stages=intake,{plan,wall},implement,verify,commit,seal; receipt=base_sha,checks,context,cost,cost_preview,diff_sha256,events_sha256,evidence,head_sha,log_seal,loki_version,model,model_source,mutation_outcome,mutation_proof,not_applicable,not_proven,provider,receipt_sha256,repo,resumed,run_id,schema,seal_accuracy,seeded_corpus,task,time,toolchain,tree,verdict,verification,wall,wall_oracle; implement=already_done_evidence,brief_files,cascade,context_pack,coverage_resume,diff_stat,duration_s,exit,impacted_tests,iteration_ids,model,session_id,session_resume,spec_conflict_reason,summary_tail,tests_reverted; brief=b055d0660abb4bd7" ] \
-    && ok "S1b no-loss (text goal): stage order, receipt key set, implement key set and the normalized implement brief equal the base commit's (8c7ae842b)" || bad "S1b no-loss (text goal) differs from the base commit: $S1B_SIG"
+[ "$S1B_SIG" = "stages=intake,{plan,wall},implement,verify,commit,seal; receipt=base_sha,checks,context,cost,cost_preview,diff_sha256,events_sha256,evidence,head_sha,log_seal,loki_version,model,model_source,mutation_outcome,mutation_proof,not_applicable,not_proven,provider,receipt_sha256,repo,resumed,run_id,schema,seal_accuracy,seeded_corpus,task,time,toolchain,tree,verdict,verification,wall,wall_oracle; implement=already_done_evidence,brief_files,cascade,context_pack,coverage_resume,diff_stat,duration_s,exit,impacted_tests,iteration_ids,model,session_id,session_resume,spec_conflict_reason,summary_tail,tests_reverted; brief=e7dc8ddd3cae1e07" ] \
+    && ok "S1b no-loss (text goal): stage order, receipt key set and implement key set equal the base commit's (8c7ae842b); the normalized implement brief is that commit's plus the two not-a-conflict sentences 4fc499ebb added to the pinned-test rule" || bad "S1b no-loss (text goal) differs from the pinned signature: $S1B_SIG"
 run_engine "$TASK" E2E_STUB_MODE=already
 [ "$(kits)" = 0 ] && [ "$(fin)" = none ] && ok "S1b already-done: an already-done reply gets no resume and no finish key ($(outcome))" || { bad "S1b already-done: resumes $(kits), finish '$(fin)'"; dump; }
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 # every implement turn answers LOKI_SPEC_CONFLICT (consult off, so no never-stop brief)
@@ -1019,16 +1022,16 @@ res("L026 parser: result-cost records full_suite_runs per session (2 of 3 Bash c
   const exact = { total_cost_usd: 0.06, output_tokens: 10833, model_usage: { "claude-haiku-5-5": { output_tokens: 42368, cost_usd: 0.06 } } };
   const dC = cd.cumulativeDelta(prevRec, resumed({ compactions: 1 })), dN = cd.cumulativeDelta(prevRec, resumed({})), dE = cd.cumulativeDelta(prevRec, exact);
   res("cost proof: a resumed call that compacted (compactions 1) bills its delta (0.03) although its cumulative output exceeds predecessor plus own; without a compaction count it stays ambiguous; the exact case is unchanged", dC !== null && Math.abs((dC.total_cost_usd as number) - 0.03) < 1e-9 && dN === null && dE !== null);
-  // the run-level bounds, on a fake session runner: the dollar line stops before any resume, the count cap after LOKI_E10_CONTINUE_MAX resumes; a cap stop is never a finish
+  // the run-level bounds, on a fake session runner: the dollar line (default 5.00 since b31322f73; spend exactly at the line stops) stops before any resume, the count cap after LOKI_E10_CONTINUE_MAX resumes; a cap stop is never a finish
   const cr = await import("$ROOT/loki-ts/src/util/conflict_resume.ts");
   const runs: string[] = [], evs: string[] = []; let tree = 0;
   const fctx = { provider: "claude", repoDir: "$T/l026", runDir: "$T/l026/run", runId: "e10-x", emit: (t: string) => evs.push(t), sessions: { run: async (o: { iterationId: string; brief: string }) => { runs.push(o.brief); tree++; return { exit: 0, killed: false, durationS: 1, markers: { done: true, alreadyDone: null, specConflict: null, finishLine: null }, summary: "still going: docs outstanding" }; } } } as never;
   const unfinished = { exit: 0, killed: false, durationS: 1, markers: { done: true, alreadyDone: null, specConflict: null, finishLine: null }, summary: "Summary.\n**Result:** LOKI_BLOCKED: docs outstanding" } as never;
   const opts = (usd: number | null, env: Record<string, string>) => ({ fingerprint: () => String(tree), spentUsd: () => usd, compactions: () => null, signal: new AbortController().signal, env });
-  const d1 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(1.5, {}));
+  const d1 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(5.0, {}));
   const d2 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(0.2, { LOKI_E10_CONTINUE_MAX: "2" }));
   const d3 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(0.2, { LOKI_E10_CONTINUE_MAX_USD: "0.1" }));
-  res("S1b bounds: spend at or past LOKI_E10_CONTINUE_MAX_USD (default 1.00) stops before any resume; LOKI_E10_CONTINUE_MAX=2 stops after 2; neither is a finish", d1.record.ended === "dollar line" && d1.iterationIds.length === 0 && d2.record.ended === "count cap" && d2.iterationIds.length === 2 && d2.session.markers.finishLine === null && d3.record.ended === "dollar line" && evs.length === 2);
+  res("S1b bounds: spend at or past LOKI_E10_CONTINUE_MAX_USD (default 5.00) stops before any resume; LOKI_E10_CONTINUE_MAX=2 stops after 2; neither is a finish", d1.record.ended === "dollar line" && d1.iterationIds.length === 0 && d2.record.ended === "count cap" && d2.iterationIds.length === 2 && d2.session.markers.finishLine === null && d3.record.ended === "dollar line" && evs.length === 2);
   res("S1b brief (no session id to resume, so the full brief goes first): it says the summary request is over and was not the task, quotes the outstanding lines, and ends with FINISH_LINE word for word", runs[0]!.includes("\\n\\nAny earlier request to stop and write a text-only summary is over; it was not the task.") && runs[0]!.includes("LOKI_BLOCKED: docs outstanding") && runs[0]!.endsWith((await import("$ROOT/loki-ts/src/engine10/types.ts")).FINISH_LINE) && runs[1]!.includes("still going: docs outstanding"));
   res("S1b scope: claude only; a result whose final text was not read (finishLine absent, a patch-green result) is never resumed", cr.lacksFinishLine("claude", unfinished) && !cr.lacksFinishLine("opencode", unfinished) && !cr.lacksFinishLine("claude", { markers: { done: true, alreadyDone: null, specConflict: null } } as never));
 }
@@ -1953,7 +1956,7 @@ const o = { implement: { exit: "done" }, commit: {} }; r.push(sl.verdictOf(o, [p
 r.push(v.lintFallbacks(d + "/repo", "ruff", { PATH: d + "/bin" }).map(([c, a]) => (c.endsWith("/python") ? "venv-python" : c) + " " + a.join(" ")).join("|"));
 r.push(v.lintFallbacks(d + "/repo", "ruff", { PATH: d + "/bin", LOKI_E10_LINT_MISSING_DISCLOSE: "0" }).length);
 console.log(r.join(","));' 2>&1)"
-grep -q 'c.repo_skipped !== true && !lintGone.includes(c.name)),' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'lintGone.includes(c.name) ? `${LINT_MISSING_NOTE}: ${c.name}`' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "lint-missing-disclose wiring: seal drops a disclosed linter from the verdict inputs and writes the disclosure line instead of not run" || bad "lint-missing-disclose wiring: seal no longer excludes lintGone from live or no longer writes the disclosure"
+grep -q 'const live = checks.filter(.*c.repo_skipped !== true && !lintGone.includes(c.name) && ' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'lintGone.includes(c.name) ? `${LINT_MISSING_NOTE}: ${c.name}`' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "lint-missing-disclose wiring: seal drops a disclosed linter from the verdict inputs and writes the disclosure line instead of not run" || bad "lint-missing-disclose wiring: seal no longer excludes lintGone from live or no longer writes the disclosure"
 [ "$LMO" = "lint:ruff,-,-,-,FAILED,uvx ruff|venv-python -m ruff,0" ] && ok "lint-missing-disclose: a linter that could not be started is disclosed (not a cap) after trying uvx and the venv's python -m; a linter that reports violations still makes the run FAILED, a missing test runner is not disclosed, =0 restores the cap" || bad "lint-missing-disclose gave: $LMO"
 # SPAWN-NOT-RUN (verify-dev 2026-11-13, marshmallow and Python-Markdown: `uv run -- ruff check` printed "error: Failed to spawn: `ruff`" and read as a lint
 # failure that fix rounds chased): a check whose tool could not start is not_run with the tool named, through the real runOnce. A shell exit 127, uv's spawn
