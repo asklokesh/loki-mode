@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+- Fixed a regression from the repo card (11.148.0): a proof script that sourced the setup Loki handed the session (`$LOKI_SCRATCH/loki-setup.sh`) could not run in Loki's own re-run, whose new directory did not hold that file, so every round reported the proof as blocked and no acceptance item counted. The setup file is now kept with the proof script and placed in the re-run's directory.
 
 ## v11.149.0 (2026-11-17)
 

@@ -65,7 +65,7 @@ export function unmetBrief(unmet: { line: string; reason: string }[], note = "")
 }
 export { optionalAsk };
 
-export const PROOF_SCRIPT = "loki-proof.sh";
+export const PROOF_SCRIPT = "loki-proof.sh", SETUP_FILE = "loki-setup.sh";
 export const PROOF_HELPER = "loki-check.sh", ACCEPTANCE_FILE = "acceptance.txt";
 /** The check functions the proof script must use. Loki writes this file (the session never edits it) and writes it again, with a random token, into the
  *  directory of its own run: only lines these functions print with that token are counted, so the label is a tally of checks Loki executed, never a reading
@@ -175,6 +175,9 @@ export function keepProofScript(scratchDir: string, runDir: string): boolean {
     const real = (() => { try { return realpathSync(scratchDir); } catch { return scratchDir; } })(), names = [...new Set([real, scratchDir, real.replace(/^\/private\//, "/")])].filter((d) => d.length > 5).sort((a, b) => b.length - a.length);
     let text = readFileSync(src, "utf8"); for (const d of names) text = text.split(d).join("${LOKI_SCRATCH}");
     writeFileSync(join(runDir, PROOF_SCRIPT), text, { mode: 0o700 });
+    // The setup Loki handed the session from the repo card ($LOKI_SCRATCH/loki-setup.sh): a proof script may source it, so it is kept beside the script and
+    // put back in Loki's own scratch for the re-run. Without it a script built on that setup was "blocked" in every round of Loki's run.
+    try { const su = join(scratchDir, SETUP_FILE); if (existsSync(su) && statSync(su).size <= MAX_SCRIPT_BYTES) { let t = readFileSync(su, "utf8"); for (const d of names) t = t.split(d).join("${LOKI_SCRATCH}"); writeFileSync(join(runDir, SETUP_FILE), t, { mode: 0o700 }); } } catch { /* the re-run then reports the missing file */ }
     return true;
   } catch { return false; }
 }
@@ -213,6 +216,7 @@ export async function rerunProof(repoDir: string, runDir: string, signal?: Abort
   let exit: number | null = null, out = "";
   try {
     const resultLog = join(scratch.dir, "loki-proof-results.log"); // the helper appends every result here: a script that sent its checks' output to a log or to /dev/null (one did, and 16 passing checks counted as 0) is still counted
+    try { const su = join(runDir, SETUP_FILE); if (existsSync(su)) copyFileSync(su, join(scratch.dir, SETUP_FILE)); } catch { /* a script that needs it says so */ }
     const emptyDir = join(scratch.dir, "run"); mkdirSync(emptyDir, { mode: 0o700 }); // the script's argument is an EMPTY directory: the scratch itself holds Loki's helper, and a script that checks for emptiness refused it
     const r = await run(["bash", script, emptyDir], { cwd: repoDir, timeoutMs: proofRerunS(env) * 1000, group: true, signal, env: { ...blank, ...scratchSessionEnv(scratch), LOKI_PROOF_TOKEN: token, LOKI_PROOF_LOG: resultLog } });
     exit = r.exitCode; out = `${r.stdout}\n${r.stderr}`;
