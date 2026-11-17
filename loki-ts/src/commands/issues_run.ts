@@ -283,7 +283,11 @@ export async function issuesRun(args: readonly string[] | IssuesRunArgs, d: Issu
   }
   const covered = coveredIssues(slug, prList);
   const dupes = issues.filter((i) => covered.has(i.number));
-  const todo = issues.filter((i) => !covered.has(i.number));
+  // LOKI_ISSUES_SKIP="12,15": numbers the caller holds back (loki issues watch sets it for an issue it already tried twice with no pull request, so an
+  // always-on loop never reruns a failing issue every few minutes).
+  const held = new Set((process.env["LOKI_ISSUES_SKIP"] ?? "").split(",").map((x) => Number(x.trim())).filter((n) => Number.isInteger(n) && n > 0));
+  for (const i of issues) if (held.has(i.number) && !covered.has(i.number)) d.out(`  skip #${i.number} (held: tried before with no pull request): ${clip(i.title, 70)}\n`);
+  const todo = issues.filter((i) => !covered.has(i.number) && !held.has(i.number));
   const par = Math.max(1, Math.min(a.parallel, todo.length));
 
   if (a.numbers) d.out(`${slug}: ${todo.length} issue${todo.length === 1 ? "" : "s"} to run, ${par} at once, each in its own worktree with its own pull request\n`);

@@ -55,6 +55,18 @@ export function prepareCheckout(a: Pick<WatchArgs, "slug" | "dir">, run: Sh = sh
   return { ok: true, dir };
 }
 
+/** How many passes may try one issue before it is held back (LOKI_WATCH_ATTEMPTS, default 2). An issue with a Loki pull request is skipped by the pass
+ *  itself; this stops the other case, an issue whose runs end with no pull request, from being rerun every interval. */
+export const maxAttempts = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_WATCH_ATTEMPTS"]); return Number.isInteger(n) && n >= 1 && n <= 20 ? n : 2; };
+const ledgerFile = (a: Pick<WatchArgs, "slug" | "dir">): string => join(a.dir, `${a.slug.replace("/", "__")}.attempts.json`);
+export function readAttempts(a: Pick<WatchArgs, "slug" | "dir">): Record<string, number> {
+  try { const j = JSON.parse(readFileSync(ledgerFile(a), "utf8")) as unknown; return j && typeof j === "object" ? Object.fromEntries(Object.entries(j as Record<string, unknown>).filter(([k, v]) => /^\d+$/.test(k) && Number.isInteger(v)).map(([k, v]) => [k, v as number])) : {}; } catch { return {}; }
+}
+/** The open issues carrying the label right now (numbers only), or null when gh could not list them. */
+export function labelled(a: Pick<WatchArgs, "slug" | "label">, run: Sh = sh): number[] | null {
+  const r = run("gh", ["issue", "list", "--repo", a.slug, "--label", a.label, "--state", "open", "--json", "number", "--limit", "200"]); if (r.code !== 0) return null;
+  try { const j = JSON.parse(r.out) as unknown; return Array.isArray(j) ? j.map((x) => (x as { number?: unknown }).number).filter((n): n is number => Number.isInteger(n)) : null; } catch { return null; }
+}
 /** The pass command: the same `loki issues run` a person types, non-interactive. */
 export function passArgv(a: WatchArgs): string[] {
   return ["issues", "run", a.slug, "--label", a.label, "--yes", ...(a.parallel !== null ? ["--parallel", String(a.parallel)] : []), ...(a.limit !== null ? ["--limit", String(a.limit)] : []), ...(a.draft ? ["--draft"] : [])];
@@ -75,11 +87,15 @@ export async function runIssuesWatch(args: readonly string[]): Promise<number> {
     const co = prepareCheckout(a);
     if (!co.ok) say(`pass ${pass} skipped: ${co.error}`);
     else {
+      const tries = readAttempts(a), cap = maxAttempts(), heldNow = Object.keys(tries).filter((k) => tries[k]! >= cap), open = labelled(a) ?? [];
+      const trying = open.filter((n) => !heldNow.includes(String(n)));
+      if (heldNow.length) say(`holding back ${heldNow.map((n) => `#${n}`).join(", ")} (tried ${cap} time${cap === 1 ? "" : "s"}; delete ${ledgerFile(a)} to try again)`);
       const code = await new Promise<number>((done) => {
-        child = spawn(process.argv[0]!, [process.argv[1]!, ...passArgv(a)], { cwd: co.dir, stdio: ["ignore", "inherit", "inherit"], env: { ...process.env, LOKI_NONINTERACTIVE: "1" } });
+        child = spawn(process.argv[0]!, [process.argv[1]!, ...passArgv(a)], { cwd: co.dir, stdio: ["ignore", "inherit", "inherit"], env: { ...process.env, LOKI_NONINTERACTIVE: "1", LOKI_ISSUES_SKIP: heldNow.join(",") } });
         child.on("error", () => done(1)); child.on("exit", (c) => done(c ?? 1));
       });
       child = null; say(`pass ${pass} ended with exit ${code}`);
+      if (trying.length) { for (const n of trying) tries[String(n)] = (tries[String(n)] ?? 0) + 1; try { writeFileSync(ledgerFile(a), JSON.stringify(tries) + "\n", { mode: 0o600 }); } catch { /* the next pass counts again */ } }
     }
     if (a.once || stopping) break;
     await new Promise<void>((res) => { const t = setTimeout(res, a.intervalS * 1000); wake = () => { clearTimeout(t); res(); }; });

@@ -482,5 +482,6 @@ docker run -d --name loki-watch \
 - Credentials come from the environment only: `GH_TOKEN` (a token that can read issues and push branches and open pull requests on that repository) and `ANTHROPIC_API_KEY`. `LOKI_WATCH_SETUP_GIT=1` lets git push over https with that token.
 - One container per repository. Two on the same repository would pick up the same issue.
 - Nothing on its disk needs to survive a restart: the checkout is rebuilt from GitHub, and an issue that already has a Loki pull request is skipped.
+- An issue whose runs end with no pull request is tried twice (`LOKI_WATCH_ATTEMPTS`), then held back; the log names it and the file to delete to try again. This keeps a failing issue from being rerun, and paid for, every interval.
 - Stop it with SIGTERM (docker stop): the pass in flight is interrupted and the loop ends.
 - Manifests: `deploy/kubernetes/loki-watch.yaml` (Deployment) and `deploy/ecs/loki-watch-task.json` (Fargate task). Options: `--label`, `--interval` (seconds, 30 or more), `--parallel`, `--limit`, `--draft`, `--once` (one pass, then exit), `--dir` (where checkouts live; `LOKI_WATCH_DIR`).
