@@ -201,7 +201,7 @@ function unknownFlag(sub: string, rest: readonly string[], allowed: readonly str
 
 /** `loki knowledge`: what Loki has verified about this repository (the repo card, e10ext/repomemory.ts). `export` writes the one file a team commits. */
 export function runKnowledge(argv: readonly string[]): number {
-  const usage = "Usage: loki knowledge [--json]   show what Loki has verified about this repository\n       loki knowledge export     write .claude/rules/loki-repo-card.md for your team to commit\n";
+  const usage = "Usage: loki knowledge [--json]   show what Loki has verified about this repository\n       loki knowledge export     write .github/loki-repo-card.md for your team to commit\n";
   const sub = argv.find((a) => !a.startsWith("-")), bad = argv.find((a) => a.startsWith("-") && a !== "--json");
   if (argv.includes("--help") || argv.includes("-h")) { process.stdout.write(usage); return 0; }
   if (bad || (sub !== undefined && sub !== "show" && sub !== "export")) { process.stderr.write(`Error: unknown ${bad ? `flag '${bad}'` : `subcommand '${sub}'`} for 'knowledge'\n${usage}`); return 2; }

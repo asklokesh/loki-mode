@@ -3,7 +3,7 @@
 // marks, the environment it exports, and the check commands verify ran green. Every fact carries the commit and the lockfile hash it was verified on.
 // Replaces the E-126 verified_command.json memory, which was read into every brief and written by nothing.
 //   local copy   ~/.loki/repo-cards/<sha256 of the origin URL, else the path>/card.json   written after every issue run, private, no setup (~/.loki/repos holds run locks)
-//   repo copy    .claude/rules/loki-repo-card.md   written only by `loki knowledge export`, for a team to commit; travels with every clone
+//   repo copy    .github/loki-repo-card.md   written only by `loki knowledge export`, for a team to commit; travels with every clone
 // When both exist the fact verified on the newer commit wins. A fact verified on other lockfiles is shown "check before trusting", never silently
 // trusted; a setup that breaks when a session uses it is dropped at the end of that run. LOKI_REPO_CARD=0 opts out (nothing read, nothing written).
 import { spawnSync } from "node:child_process";
@@ -19,7 +19,7 @@ import { safeGit } from "../util/safe_git.ts";
 export type CardKind = "setup" | "quirk" | "env" | "command";
 export interface CardFact { kind: CardKind; key: string; text: string; sha: string; lock: string; commit_time: number; run: string }
 export interface RepoCard { v: 1; repo: string; facts: CardFact[] }
-export const CARD_FILE = ".claude/rules/loki-repo-card.md", CARD_MIRROR = ".loki/memory/repo-card.md", SETUP_FILE = "loki-setup.sh";
+export const CARD_FILE = ".github/loki-repo-card.md", CARD_MIRROR = ".loki/memory/repo-card.md", SETUP_FILE = "loki-setup.sh";
 const KIND_ORDER: CardKind[] = ["setup", "quirk", "env", "command"], MAX_SETUP = 12000, MAX_INLINE = 6000, MAX_FACTS = 40;
 
 export const repoCardOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_REPO_CARD"] ?? "").trim());
@@ -154,6 +154,8 @@ export function updateRepoCard(a: { repoDir: string; runId: string; baseSha?: st
   } catch { return null; }
 }
 
+/** A command fact is keyed by its check name, "<runner>:<test path>". False only when that path is named and is not in this checkout. */
+const commandFileExists = (repoDir: string, key: string): boolean => { const i = key.indexOf(":"), rel = i > 0 ? key.slice(i + 1) : ""; return !rel || rel.startsWith("/") || rel.split("/").includes("..") || existsSync(join(repoDir, rel)); };
 /** The always-on sentence that makes a proof script's setup reusable (part of the issue brief only while the card is on). */
 export const SETUP_FIRST_LINE = "Lay the proof script out so its setup can be reused: everything that builds the environment (services, migrations, starting the product, the first account or record) comes first, at the top level of the script, before the first loki_http or loki_cmd line. Loki keeps that part as this repository's setup recipe for later runs. Above any setup step that needed a workaround, write one comment line starting `# QUIRK:` that says what fails and what fixes it.";
 export interface CardBrief { text: string; record: { facts: number; stale: number; bytes: number; setup_file: boolean; local: number; repo_file: number } }
@@ -162,7 +164,9 @@ export interface CardBrief { text: string; record: { facts: number; stale: numbe
 export function repoCardBrief(repoDir: string, scratchDir: string | null, env: NodeJS.ProcessEnv = process.env): CardBrief | null {
   if (!repoCardOn(env)) return null;
   try {
-    const { card, sources } = mergedCard(repoDir); if (!card.facts.length) return null;
+    const { card, sources } = mergedCard(repoDir);
+    card.facts = card.facts.filter((f) => f.kind !== "command" || commandFileExists(repoDir, f.key)); // a check of a test file this checkout does not have (the earlier run added it and it is not merged) is not shown
+    if (!card.facts.length) return null;
     const now = lockHash(repoDir), stale = (f: CardFact): boolean => f.lock !== now, tag = (f: CardFact): string => (stale(f) ? ` (last verified on ${f.sha.slice(0, 12) || "an unknown commit"} with other dependency files: check before trusting)` : ` (verified on ${f.sha.slice(0, 12) || "an earlier run"})`);
     const by = (k: CardKind): CardFact[] => card.facts.filter((f) => f.kind === k), setup = by("setup")[0];
     let setupFile = false;
@@ -172,7 +176,7 @@ export function repoCardBrief(repoDir: string, scratchDir: string | null, env: N
       ...(setup ? [`Setup${tag(setup)}: the setup half of a proof script that Loki's own run got past in this repository. It builds the environment from an empty directory.${setupFile ? ` It is saved at $LOKI_SCRATCH/${SETUP_FILE}.` : ""} Start your loki-proof.sh from it (copy it, then add this task's checks after it) instead of working the setup out again; by itself it stops what it started when it exits. If a step fails on this checkout, fix that step and carry on.${setup.text.length <= MAX_INLINE || !setupFile ? `\n<repo-setup>\n${setup.text}\n</repo-setup>` : ""}`] : []),
       ...(by("quirk").length ? [`Known quirks:\n${by("quirk").map((f) => `- ${f.text}${tag(f)}`).join("\n")}`] : []),
       ...by("env").map((f) => `Environment: ${f.text}${tag(f)}`),
-      ...(by("command").length ? [`Check commands that passed in Loki's own verify:\n${by("command").map((f) => `- ${f.text}${tag(f)}`).join("\n")}`] : []),
+      ...(by("command").length ? [`Check commands that passed in Loki's own verify:\n${by("command").map((f) => `- ${f.key}: ${f.text}${tag(f)}`).join("\n")}`] : []),
     ].join("\n");
     return { text, record: { facts: card.facts.length, stale: card.facts.filter(stale).length, bytes: Buffer.byteLength(text), setup_file: setupFile, ...sources } };
   } catch { return null; }
