@@ -157,7 +157,7 @@ export interface ManyRow { stage: string; met: number; lines: number; spent: str
 export const lokiLabelOf = (verdict: string): string => (verdict === "" ? "" : /^VERIFIED\b/.test(verdict) ? "safe to merge" : "needs you");
 export function manyLine(n: number, r: ManyRow, elapsedS: number, title = ""): string {
   const acc = r.lines ? `${r.met} of ${r.lines} lines met` : "lines not read yet";
-  return [`#${n}`.padEnd(6), (lokiLabelOf(r.verdict) || r.stage).padEnd(13), acc.padEnd(20), (r.spent || "-").padEnd(8), formatDuration(elapsedS).padEnd(7), r.pr || title].join(" ").trimEnd();
+  return [`#${n}`.padEnd(6), (lokiLabelOf(r.verdict) || r.stage).padEnd(13), acc.padEnd(20), (r.spent || "-").padEnd(14), formatDuration(elapsedS).padEnd(7), r.pr || title].join(" ").trimEnd();
 }
 export class ManyStatus {
   private readonly rows = new Map<number, { title: string; dir: string; t0: number; con: LiveConsole; file: string | null; offset: number; rest: string; last: string; final: string | null }>();

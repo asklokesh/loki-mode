@@ -490,9 +490,9 @@ async function runWithRetry(d: Pick<IssuesRunDeps, "runner" | "sleep" | "out" | 
   for (let attempt = 0; ; attempt++) {
     const res = await d.runner(ref, { ...opts, ...(wt ? { cwd: wt } : {}) });
     if (wt && res.runId) keepReceipt(wt, res.runId, receiptsDir, d.err);
-    // A run that sealed VERIFIED or PARTIAL, or opened a pull request, is finished: its log holds the repository's own test output, where the words
-    // "rate limit" are ordinary (FireLater#17 sealed PARTIAL with a pull request, exit 6, and was run a second time for $2.71 more).
-    if (res.rc === 0 || attempt >= RATE_LIMIT_RETRIES || /^(VERIFIED|PARTIAL)\b/.test(res.verdict ?? "") || PR_URL_RE.test(res.output) || !isRateLimited(res.output)) return res;
+    // A run that sealed a receipt (any verdict) or opened a pull request is finished: its log holds the repository's own test and review text, where
+    // the words "rate limit" are ordinary (FireLater#17 sealed PARTIAL with a pull request, then FAILED, and was run three times in all).
+    if (res.rc === 0 || attempt >= RATE_LIMIT_RETRIES || !!res.verdict || PR_URL_RE.test(res.output) || !isRateLimited(res.output)) return res;
     const wait = calculateRateLimitBackoff(parseRetryAfter(res.output));
     d.out(`${label} provider rate limit, retrying in ${wait}s\n`);
     await d.sleep(wait * 1000);
