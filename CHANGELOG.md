@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.150.0 (2026-11-17)
+
+### Fixed
+- Fixed a regression from the repo card (11.148.0): a proof script that sourced the setup Loki handed the session (`$LOKI_SCRATCH/loki-setup.sh`) could not run in Loki's own re-run, whose new directory did not hold that file, so every round reported the proof as blocked and no acceptance item counted. The setup file is now kept with the proof script and placed in the re-run's directory.
+
+## v11.149.0 (2026-11-17)
+
+### Checked on a real repository
+- Labels, the pull request and the issue comment were run against GitHub for the first time, on `asklokesh/FireLater`. `loki start owner/repo#15` with 11.148.0 opened a draft pull request with the acceptance table, put `loki: needs you` on the pull request and on the issue, and left one status comment on the issue; other pull requests were not touched. `loki issues watch` picked up an issue tagged `loki` and, with the fixes below, opened its pull request with the label and the comment. The `loki: safe to merge` label has not yet been seen on GitHub: both runs sealed PARTIAL.
+
+### Fixed
+- Check results are now also written to a file Loki owns (`LOKI_PROOF_LOG`), and Loki counts from that file. A proof script that sent its checks' output to a log and printed its own summary had 16 passing checks in Loki's run and was counted as 0.
+- A source file is no longer treated as a secret file because of a word in its name: `backend/src/migrations/037_refresh_token_sessions.ts` stopped a finished run. Program files (`.ts`, `.py`, `.go`, `.sql` and the like) are judged by their content; `.env`, key material, `*.token`, `credentials.json` and the other secret file names are flagged as before.
+- A test that already fails on the base commit is no longer blamed on the change because the change edited the file that test covers. Judged by test id, a test whose every failing id already failed on base gained no failure. A run with 8 of 8 acceptance items met in Loki's own proof run ended in a spec conflict over `Header.test.tsx`, which was red before the run started.
+- A run is no longer blocked over its own tests. The rules now say that a test file the run itself added may be changed as the work needs, and that a mock pinning only the order or number of internal calls may be extended with a call the change adds (every assertion about results kept). A run whose 10 acceptance items were all met ended BLOCKED because its fix session treated the test it had just written as read-only.
+- The secret scan's generic pattern no longer applies to test files: a made-up credential in a test (`adminPassword: 'correct-horse-battery'`) stopped a finished run's push. Real key formats (AWS, GitHub, Slack and the others) are still caught in test files.
+
 ## v11.148.0 (2026-11-17)
 
 ### Many issues at once

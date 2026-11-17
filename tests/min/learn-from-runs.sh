@@ -569,6 +569,9 @@ const c3 = await rm.settleSetupCheck(R, rd("rd3"), run); out.two = c3 && { resul
 w("other.conf", "dirty\n"); const c4 = await rm.settleSetupCheck(R, rd("rd4"), run); out.dirty = c4; git("checkout", "-q", "--", "other.conf");
 let ran = 0; const c5 = await rm.settleSetupCheck(R, rd("rd5"), (s) => { ran++; return run(s); }, { ...process.env, LOKI_REPO_CARD: "0" }); out.off = { check: c5, ran };
 const wr = rm.extractSetup(["set -u", "D=\"$1\"", "mkdir -p \"$D\"", "chk() { loki_cmd \"$@\" || FAIL=1; }", "printf a > \"$D/x\"", "printf b > \"$D/y\"", "chk 1 \"it runs\" true", "chk 2 \"again\" true", ""].join("\n"), R); out.wrapped = "text" in wr ? { keeps_setup: wr.text.includes("printf b"), drops_checks: !wr.text.includes("it runs") } : wr.refused;
+const sd = rd("sd"), kd = rd("kd"); fs.writeFileSync(path.join(sd, "loki-setup.sh"), "true\n"); fs.writeFileSync(path.join(sd, rm.SETUP_FIX_FILE), c1.patch);
+fs.writeFileSync(path.join(sd, "loki-proof.sh"), ["#!/bin/bash", ". \"$LOKI_SCRATCH/loki-check.sh\"", ". \"$LOKI_SCRATCH/loki-setup.sh\" || exit 9", "loki_cmd 1 \"the handed fix is here and applies\" git apply --check \"$LOKI_SCRATCH/" + rm.SETUP_FIX_FILE + "\"", ""].join("\n"));
+pr.keepProofScript(sd, kd); const rr = await pr.rerunProof(R, kd); out.rerun = rr && { exit: rr.exit, proved: rr.proved, failed: rr.failed };
 console.log(JSON.stringify(out));' 2>&1)"
 sj() { printf '%s' "$SC" | tail -n 1 | python3 -I -c 'import json,sys
 d=json.load(sys.stdin)
@@ -585,5 +588,6 @@ print(json.dumps(d,sort_keys=True))' "$1" 2>/dev/null; }
 [ "$(sj dirty)" = "null" ] && ok "setup: a checkout with uncommitted edits is not checked" || bad "setup: dirty checkout gave $(sj dirty)"
 [ "$(sj off)" = '{"check": null, "ran": 0}' ] && ok "setup: LOKI_REPO_CARD=0 runs nothing" || bad "setup: off gave $(sj off)"
 [ "$(sj wrapped)" = '{"drops_checks": true, "keeps_setup": true}' ] && ok "setup: a script that calls the checks only through its own one-line wrapper still gives a setup, cut at the first wrapped check" || bad "setup: wrapped checks gave $(sj wrapped)"
+[ "$(sj rerun)" = '{"exit": 0, "failed": 0, "proved": 1}' ] && ok "setup: a proof script that names the handed setup and fix files still runs in Loki's own re-run (both are put back in its new scratch)" || bad "setup: Loki's re-run of a script that names the handed files gave $(sj rerun)"
 
 finish

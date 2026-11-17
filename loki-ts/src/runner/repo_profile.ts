@@ -831,7 +831,10 @@ export const collateralBaselineOn = (env: NodeJS.ProcessEnv = process.env): bool
 export function collateralOnBaseline(repoDir: string, baseSha: string, test: string, c: { ids?: string[]; errors?: Map<string, string[]> }, changed: readonly string[], stem: string): boolean {
   if (!collateralBaselineOn() || changed.includes(test)) return false;
   const td = test.includes("/") ? test.slice(0, test.lastIndexOf("/")) : ".", sd = /(?:^|\/)(?:__tests__|tests|test)$/.test(td) ? (td.includes("/") ? td.slice(0, td.lastIndexOf("/")) : ".") : td;
-  if (changed.some((f) => { const fd = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "."; return (fd === sd || fd === td) && f.slice(f.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "") === stem; })) return false;
+  // The paired-source rule guards the text comparison (a change to header.tsx can alter Header.test.tsx's failure while the text looks alike). Judged by id
+  // (LOKI_E10_BASE_RED_BY_ID) it is not needed: a test whose every failing id already failed on base gained no failure from this change. A run with 8 of 8
+  // acceptance items met ended in a spec conflict because it touched header.tsx and Header.test.tsx was already red on base.
+  if (!baseRedByIdOn() && changed.some((f) => { const fd = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "."; return (fd === sd || fd === td) && f.slice(f.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "") === stem; })) return false;
   const p = loadProfile(repoDir); if (!p || p.revision !== baseSha || !c.errors) return false;
   return redOnBaseProfile(p, comparableIds(c.ids ?? []), c.errors);
 }
