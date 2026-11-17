@@ -66,11 +66,11 @@ export const knownRepos = (db: Db): string[] => [...new Set([...repoNames(db), .
 export const unassigned = (ws: Workspace, withRuns: string[]): string[] => { const held = new Set(ws.orgs.flatMap((o) => o.projects.flatMap((p) => p.repos))); return withRuns.filter((r) => !held.has(r)); };
 
 /** The local directory of a registered repository (by display name), or null. Only directories Loki itself discovered are ever read or written. */
-export function repoDirOf(db: Db, name: string): string | null {
+export function repoDirsOf(db: Db, name: string): string[] {
   const rows = db.select({ name: localRepos.name, realpath: localRepos.realpath }).from(localRepos).all().filter((r) => r.name === name);
-  for (const r of rows) { try { if (statSync(r.realpath).isDirectory()) return r.realpath; } catch { /* moved or deleted */ } }
-  return null;
+  return [...new Set(rows.map((r) => r.realpath))].filter((d) => { try { return statSync(d).isDirectory(); } catch { return false; /* moved or deleted */ } });
 }
+export const repoDirOf = (db: Db, name: string): string | null => repoDirsOf(db, name)[0] ?? null;
 const INSTRUCTION_FILES = ["CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md"] as const;
 const NOTE_DIRS = [".loki/memory", ".loki/learnings", ".claude/rules"] as const;
 const readCapped = (p: string): { text: string; bytes: number; truncated: boolean } | null => { try { const st = statSync(p); if (!st.isFile()) return null; const b = readFileSync(p); return { text: b.subarray(0, MAX_BYTES).toString("utf8"), bytes: st.size, truncated: st.size > MAX_BYTES }; } catch { return null; } };
@@ -117,7 +117,8 @@ export function mount(ctx: RouteCtx): void {
     const b = await body(c); if (!b.ok) return b.res;
     const name = text((b.json as { repo?: unknown } | null)?.repo, 200), content = (b.json as { content?: unknown } | null)?.content;
     if (!name || typeof content !== "string" || content.length > MAX_BYTES) return c.json({ error: `repo and content (at most ${MAX_BYTES} characters) are required` }, 400);
-    const dir = repoDirOf(db, name); if (!dir) return c.json({ error: "not a repository Loki has seen on this machine" }, 404);
+    const dirs = repoDirsOf(db, name), dir = dirs[0]; if (!dir) return c.json({ error: "not a repository Loki has seen on this machine" }, 404);
+    if (dirs.length > 1) { audit(db, { kind: "repo.instructions", target: name, result: "refused", detail: `${dirs.length} checkouts share this name` }); return c.json({ error: `${dirs.length} checkouts on this machine are named ${name}; edit CLAUDE.md in the one you mean` }, 409); } // a write must never land in a checkout the person did not mean
     try { writeInstructions(dir, content); } catch (e) { audit(db, { kind: "repo.instructions", target: name, result: "error", detail: (e as Error).message }); return c.json({ error: `could not write CLAUDE.md: ${(e as Error).message}` }, 500); }
     audit(db, { kind: "repo.instructions", target: name, result: "saved", detail: `${content.length} characters` });
     return c.json({ repo: name, ...repoKnowledge(dir) });

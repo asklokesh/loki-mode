@@ -465,11 +465,12 @@ function cliSettingsJson(hostGuard: boolean, router: Partial<NonNullable<RouterS
 // Edit and NotebookEdit in every permission mode; it does not cover Bash, MCP tools or hooks. Other stages are unchanged.
 // E1: implement and fix sessions on the CLI route also get a deny rule per existing config or lockfile the task does not name (Edit rules cover Edit, Write
 // and MultiEdit); a file the session creates is not covered here, the restore after the session (engine10/session.ts) removes it.
-type WriteFence = { permissions: { blockWritesOutsideWorkingDirectories?: true; deny?: string[] } };
+type WriteFence = { permissions: { blockWritesOutsideWorkingDirectories?: true; additionalDirectories?: string[]; deny?: string[] } };
 function implementWriteFence(cwd?: string): WriteFence | undefined { // cwd given: the CLI route, which has no in-process hook (the SDK route denies through createConfigFenceHook)
   const stage = process.env["LOKI_E10_STAGE"], deny = [...(cwd && stage ? stateDenyRules(cwd, harnessOutputs(cwd, process.env)) : []), ...(cwd && fenceEnabled(stage) ? fencedDenyRules(cwd, process.env) : [])]; // .loki/ run state in every engine10 stage, except the exact files the stage brief names (HARNESS-OUTPUTS)
   if (stage !== "implement" && deny.length === 0) return undefined;
-  return { permissions: { ...(stage === "implement" ? { blockWritesOutsideWorkingDirectories: true as const } : {}), ...(deny.length > 0 ? { deny } : {}) } };
+  const scratch = process.env["LOKI_SCRATCH"]; // the run-owned scratch directory is a working directory too (both routes): the brief asks for the proof script there, and a session that uses Write for it must not be refused
+  return { permissions: { ...(stage === "implement" ? { blockWritesOutsideWorkingDirectories: true as const, ...(scratch ? { additionalDirectories: [scratch] } : {}) } : {}), ...(deny.length > 0 ? { deny } : {}) } };
 }
 
 // Write captured output to disk. Used by every provider to honor the
