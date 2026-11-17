@@ -71,6 +71,47 @@ loki_cmd() {
   snip="$(printf '%s' "$out" | tail -n 3 | tr '\\n' ' ' | cut -c1-300)"
   if [ "$rc" = 0 ]; then _lp PROVED "$n" "$what | exit 0 | $snip"; else _lp FAILED "$n" "$what | exit $rc | $snip"; return 1; fi
 }
+
+# ---- Throwaway services. Use these; never use or expect a database or cache already running on this machine. ----
+# loki_free_port: prints a TCP port that is free on 127.0.0.1 right now.
+loki_free_port() {
+  python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()' 2>/dev/null \
+    || perl -MIO::Socket::INET -e '$s=IO::Socket::INET->new(Listen=>1,LocalAddr=>"127.0.0.1",LocalPort=>0) or exit 1; print $s->sockport(),"\n"'
+}
+# _loki_bin <name>: prints the path of a program from PATH or the usual install locations.
+_loki_bin() {
+  local n="$1" d p
+  p="$(command -v "$n" 2>/dev/null)" && [ -n "$p" ] && { printf '%s\n' "$p"; return 0; }
+  for d in /opt/homebrew/opt/postgresql@*/bin /opt/homebrew/opt/postgresql/bin /usr/local/opt/postgresql@*/bin /usr/local/opt/postgresql/bin /usr/lib/postgresql/*/bin /usr/pgsql-*/bin /opt/homebrew/bin /usr/local/bin /usr/bin; do
+    [ -x "$d/$n" ] && { printf '%s\n' "$d/$n"; return 0; }
+  done
+  return 1
+}
+# loki_pg_start <empty dir>: starts a new, empty PostgreSQL under <dir>/pg on a free 127.0.0.1 port (superuser "postgres", no password).
+#   Exports PGHOST PGPORT PGUSER PGDATABASE and DATABASE_URL, and LOKI_PG_BIN (the directory holding psql, createdb). Non-zero with the reason on failure.
+loki_pg_start() {
+  local dir="$1" initdb pgctl
+  initdb="$(_loki_bin initdb)" && pgctl="$(_loki_bin pg_ctl)" || { echo "loki_pg_start: PostgreSQL programs (initdb, pg_ctl) are not installed on this machine" >&2; return 1; }
+  export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+  LOKI_PG_DATA="$dir/pg"; LOKI_PG_CTL="$pgctl"; LOKI_PG_BIN="$(dirname "$pgctl")"; PGPORT="$(loki_free_port)" || return 1
+  "$initdb" -D "$LOKI_PG_DATA" -U postgres -A trust -E UTF8 >"$dir/pg-init.log" 2>&1 || { echo "loki_pg_start: initdb failed, see $dir/pg-init.log" >&2; return 1; }
+  "$pgctl" -D "$LOKI_PG_DATA" -l "$dir/pg.log" -w -t 60 -o "-p $PGPORT -c listen_addresses=127.0.0.1 -c unix_socket_directories=''" start >/dev/null 2>&1 || { echo "loki_pg_start: the server did not start, see $dir/pg.log" >&2; return 1; }
+  export LOKI_PG_DATA LOKI_PG_CTL LOKI_PG_BIN PGPORT PGHOST=127.0.0.1 PGUSER=postgres PGDATABASE=postgres DATABASE_URL="postgres://postgres@127.0.0.1:$PGPORT/postgres"
+}
+# loki_redis_start <empty dir>: starts a new, empty Redis on a free 127.0.0.1 port. Exports REDIS_HOST REDIS_PORT REDIS_URL.
+loki_redis_start() {
+  local dir="$1" rs
+  rs="$(_loki_bin redis-server)" || { echo "loki_redis_start: redis-server is not installed on this machine" >&2; return 1; }
+  REDIS_PORT="$(loki_free_port)" || return 1
+  mkdir -p "$dir/redis" && "$rs" --port "$REDIS_PORT" --bind 127.0.0.1 --dir "$dir/redis" --save "" --appendonly no --daemonize yes --pidfile "$dir/redis/redis.pid" --logfile "$dir/redis/redis.log" >/dev/null 2>&1 || { echo "loki_redis_start: redis-server did not start" >&2; return 1; }
+  export REDIS_PORT REDIS_HOST=127.0.0.1 REDIS_URL="redis://127.0.0.1:$REDIS_PORT"; LOKI_REDIS_PID="$dir/redis/redis.pid"
+}
+# loki_services_stop: stops what loki_pg_start and loki_redis_start started. Call it from your EXIT trap.
+loki_services_stop() {
+  [ -n "\${LOKI_PG_DATA:-}" ] && [ -n "\${LOKI_PG_CTL:-}" ] && "$LOKI_PG_CTL" -D "$LOKI_PG_DATA" -m fast stop >/dev/null 2>&1
+  [ -n "\${LOKI_REDIS_PID:-}" ] && [ -f "$LOKI_REDIS_PID" ] && kill "$(cat "$LOKI_REDIS_PID")" 2>/dev/null
+  return 0
+}
 `;
 /** Writes the helper (and, for the session, the numbered acceptance lines) into a scratch directory. Never throws. */
 export function writeProofKit(dir: string, asks: string[] | null): void {

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+- The proof kit now starts throwaway services for the session. `loki-check.sh` gains `loki_pg_start <dir>` and `loki_redis_start <dir>` (a new empty PostgreSQL or Redis on a free 127.0.0.1 port, connection settings exported), `loki_free_port` and `loki_services_stop`, and the brief says to use them and never to expect a database or cache already running on the machine. Each session used to write about fifty lines of this itself; one that did not, expected a server on port 5432, and its proof could never pass when Loki ran it.
+- The secret scan no longer reads a function call as a secret: `const tokens = tokenizeSearchQuery(input);` failed a whole run as a "secret match". A quoted or bare literal, a bearer token and credentials inside a URL are caught as before.
 - The count still decides the label, with one exception. A check can pass for a line it does not prove (an API response counted for "build the UI"). When the acceptance check and the independent review, two separate readings, both find the same line not delivered, the label is held at PARTIAL and both reasons are shown. One reader alone stays a note.
 - The acceptance check during the run has its own two turns. A session that used every proof turn getting its script to pass used to get no acceptance feedback at all, so gaps a reviewer could see were never handed back to it.
 - `loki start` on an issue now runs the whole issue in one session on every model. A run on Haiku used to be split into slices up front, on a road with no acceptance lines and no proof run (`LOKI_ISSUE_WHOLE_FIRST=0` restores the split).
