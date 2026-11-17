@@ -1,0 +1,36 @@
+# Loki, always running: one pod that works every open issue labelled "loki" in one repository and opens a pull request for each.
+# 1. kubectl create secret generic loki-watch --from-literal=GH_TOKEN=<token with repo scope> --from-literal=ANTHROPIC_API_KEY=<key>
+# 2. Set the repository below (args) and apply: kubectl apply -f loki-watch.yaml
+# 3. Tag an issue with the label "loki". Logs: kubectl logs deploy/loki-watch -f
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki-watch
+spec:
+  replicas: 1                # one worker per repository: two would pick up the same issue
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: loki-watch }
+  template:
+    metadata:
+      labels: { app: loki-watch }
+    spec:
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: loki
+          image: asklokesh/loki-mode:latest
+          args: ["issues", "watch", "OWNER/REPO", "--label", "loki", "--interval", "300", "--parallel", "2"]
+          env:
+            - { name: LOKI_WATCH_SETUP_GIT, value: "1" }
+            - { name: LOKI_WATCH_DIR, value: /work }
+          envFrom:
+            - secretRef: { name: loki-watch }
+          resources:
+            requests: { cpu: "1", memory: 2Gi }
+            limits: { memory: 6Gi }
+          volumeMounts:
+            - { name: work, mountPath: /work }
+      volumes:
+        - name: work
+          emptyDir: {}       # the checkout is rebuilt from GitHub when the pod restarts; nothing here needs to survive

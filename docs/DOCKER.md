@@ -468,3 +468,19 @@ Business Source License 1.1 (BUSL-1.1). Source-available, not open source. See [
 
 - [GitHub Issues](https://github.com/asklokesh/loki-mode/issues)
 - [Documentation Wiki](https://github.com/asklokesh/loki-mode/wiki)
+
+## Always running: one container that works tagged issues
+
+`loki issues watch owner/repo` is the always-on form of Loki. It keeps its own checkout of the repository current, and every interval it works each open issue that carries the label (default `loki`) and has no Loki pull request yet, one pull request per issue. The image's entrypoint is `loki`, so the container command is just the arguments:
+
+```bash
+docker run -d --name loki-watch \
+  -e GH_TOKEN -e ANTHROPIC_API_KEY -e LOKI_WATCH_SETUP_GIT=1 \
+  asklokesh/loki-mode:latest issues watch OWNER/REPO --label loki --interval 300 --parallel 2
+```
+
+- Credentials come from the environment only: `GH_TOKEN` (a token that can read issues and push branches and open pull requests on that repository) and `ANTHROPIC_API_KEY`. `LOKI_WATCH_SETUP_GIT=1` lets git push over https with that token.
+- One container per repository. Two on the same repository would pick up the same issue.
+- Nothing on its disk needs to survive a restart: the checkout is rebuilt from GitHub, and an issue that already has a Loki pull request is skipped.
+- Stop it with SIGTERM (docker stop): the pass in flight is interrupted and the loop ends.
+- Manifests: `deploy/kubernetes/loki-watch.yaml` (Deployment) and `deploy/ecs/loki-watch-task.json` (Fargate task). Options: `--label`, `--interval` (seconds, 30 or more), `--parallel`, `--limit`, `--draft`, `--once` (one pass, then exit), `--dir` (where checkouts live; `LOKI_WATCH_DIR`).

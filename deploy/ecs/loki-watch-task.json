@@ -1,0 +1,27 @@
+{
+  "family": "loki-watch",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "2048",
+  "memory": "8192",
+  "containerDefinitions": [
+    {
+      "name": "loki",
+      "image": "asklokesh/loki-mode:latest",
+      "essential": true,
+      "command": ["issues", "watch", "OWNER/REPO", "--label", "loki", "--interval", "300", "--parallel", "2"],
+      "environment": [
+        { "name": "LOKI_WATCH_SETUP_GIT", "value": "1" }
+      ],
+      "secrets": [
+        { "name": "GH_TOKEN", "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:loki/gh-token" },
+        { "name": "ANTHROPIC_API_KEY", "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:loki/anthropic-api-key" }
+      ],
+      "stopTimeout": 120,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": { "awslogs-group": "/loki/watch", "awslogs-region": "REGION", "awslogs-stream-prefix": "loki", "awslogs-create-group": "true" }
+      }
+    }
+  ]
+}

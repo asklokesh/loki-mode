@@ -411,6 +411,7 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     }
 
     case "issues": {
+      if (rest[0] === "watch") return (await import("./commands/issues_watch.ts")).runIssuesWatch(rest.slice(1)); // the always-on loop around `issues run`
       const { runIssues } = await import("./commands/issues_run.ts");
       (await import("./contrib/index.ts")).registerContrib();
       return runIssues(rest);
