@@ -49,7 +49,8 @@ Bun-native commands:
   verify-pr <url|o/r#N>  Verify a PR against its linked issue in a sandbox (LOKI_VERIFY_PR=1)
   answer [run] [text]    Answer a BLOCKED run; it continues under the same run id (text, --text, or the Control Plane answer file)
   control <subcmd>       Control plane (on by default; LOKI_CONTROL=0 turns it off)
-                         (subcmds: serve [--port N] [--db PATH] | backfill [DIR] | status)
+                         (subcmds: open [--no-open] | serve [--port N] [--db PATH] | backfill [DIR] | stop | status)
+  dashboard              Open the dashboard in your browser (same as: control open)
   estimate [--json]      Cost estimate for a run (the same estimate 'loki start' prints)
   kpis [--json]          KPI snapshot (alias of: report kpis)
   report kpis            Canonical KPI snapshot report
@@ -262,6 +263,13 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       // bash cmd_control (autonomy/loki) is the no-bun fallback.
       const { runControl } = await import("./commands/control.ts");
       return runControl(rest);
+    }
+
+    case "dashboard": {
+      // `loki dashboard` (also `dashboard open` and `dashboard start`) is `loki control open`. bin/loki sends `dashboard` to the bash CLI,
+      // whose cmd_dashboard calls the same `control open` and keeps the classic server's stop/status/url; this arm serves the Bun entry run directly.
+      const { runControl } = await import("./commands/control.ts");
+      return runControl(["open", ...rest.filter((a, i) => !(i === 0 && (a === "open" || a === "start")))]);
     }
 
     case "internal": {

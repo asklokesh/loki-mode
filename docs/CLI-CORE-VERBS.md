@@ -28,7 +28,7 @@ provider; other providers and model routes are additions selected with
 | `loki deploy` | Deploy a VERIFIED run |
 | `loki doctor [--fix] [--json]` | Check prerequisites, providers and login. `--fix` creates state dirs and a default config and prints exact commands for the rest; never runs sudo |
 | `loki config list\|get\|set\|path\|show\|validate` | Settings; `config list --json` for machines |
-| `loki control serve` | The local UI (Control Plane): `serve`, `stop`, `status`, `backfill`, `prune` |
+| `loki control open` | The dashboard (the local Control Plane UI) in your browser, started when needed; also `loki dashboard`. Others: `serve`, `stop`, `status`, `backfill`, `prune` |
 
 `start` flags: `--no-pr`, `--deep`, `--provider NAME`, `--model ID`, `--max-cost USD`
 (aliases `--budget`, `--budget-limit`), `--session-model TIER`, `-v` (verbose),
@@ -93,7 +93,7 @@ with the planned removal of commands that have no dependents, is the generated
 | `proof`, `keys` | `loki receipt` |
 | `verify-pr` | `loki verify <PR url>` |
 | `rollback` | `loki undo <run>` |
-| `dashboard` | `loki control serve` |
+| `dashboard` | `loki control open` |
 | `why`, `trust` | `loki status` |
 | `quickstart`, `tour`, `demo`, `wow`, `factory` | `loki start` (first run) |
 | `docs` | `loki help` |

@@ -129,6 +129,32 @@ ui_hits="$(grep -rn "loki ui\b" "$ROOT/autonomy/loki" "$ROOT/autonomy/lib" "$ROO
 db_hint="$(grep -c 'Control Plane UI: ${CYAN}loki dashboard${NC}' "$ROOT/autonomy/loki")"
 [ -z "$ui_hits" ] && [ "$db_hint" -ge 2 ] && ok "CLI hints point at loki dashboard, never the unknown loki ui ($db_hint dashboard hints)" || bad "CLI still hints loki ui or lost the dashboard hint ($db_hint): $ui_hits"
 
+# ---- The dashboard: `loki control open`, `loki dashboard` and the live console's o key share one path ----
+# Which running Control Plane may be reused, and what replaces a stale one (driver: tests/min/fixtures/control-open.js, stand-in
+# servers on free ports under this test's HOME, LOKI_CONTROL_PORT=0 so the default port 47821 is never probed, nothing real started):
+co="$(bun --no-env-file --config=/dev/null "$ROOT/tests/min/fixtures/control-open.js" "$ROOT" 2>&1)"
+for leg in stale-install-gone-is-replaced version-mismatch-is-replaced healthy-matching-is-reused missing-page-is-replaced explicit-url-and-off-switch-stop-nothing no-record-is-never-signalled server-answers-a-missing-install-in-plain-words none-running-so-one-is-started stale-one-is-stopped-and-a-new-one-started cannot-start-gives-one-short-reason browser-rules; do
+    grep -qx "PASS $leg" <<< "$co" && ok "dashboard, $leg" || bad "dashboard, $leg: $(grep "^FAIL $leg" <<< "$co" | cut -c1-300)"
+done
+# The commands themselves, against a real server from this checkout on a free port (never 47821), in this test's HOME.
+mkdir -p "$T/dash-cwd"
+dash() { (cd "$T/dash-cwd" && LOKI_CONTROL=1 LOKI_CONTROL_PORT=0 LOKI_CONTROL_AUTOINGEST=0 LOKI_CONTROL_START_WAIT_MS=30000 run bash "$ROOT/bin/loki" "$@" </dev/null); }
+dash_pid() { python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["pid"])' "$HOME/.loki/control/instance.json" 2>/dev/null; }
+coh="$(dash control open --help)"; coh_rc=$?
+dbh="$(dash dashboard --help)"; dbh_rc=$?
+[ "$coh_rc" = 0 ] && [ "$dbh_rc" = 0 ] && grep -q '^Usage: loki control open' <<< "$coh" && [ ! -e "$HOME/.loki/control/instance.json" ] && [ ! -e "$HOME/.loki/control/serve.pid" ] && [ ! -e "$T/dash-cwd/.loki" ] && ok "loki control open --help and loki dashboard --help print help and start nothing (no server, no run)" || bad "dashboard help: rc $coh_rc/$dbh_rc, control dir: $(ls "$HOME/.loki/control" 2>&1 | head -3)"
+co1="$(dash control open)"; co1_rc=$?
+co_url="$(sed -n 1p <<< "$co1")"; co_pid="$(dash_pid)"
+case "$co_url" in http://127.0.0.1:47821/*) bad "loki control open used the default port in a test" ;; http://127.0.0.1:*/) ok "loki control open starts the dashboard when none is running and prints its URL first" ;; *) bad "loki control open (rc $co1_rc) printed: $(head -c 400 <<< "$co1")" ;; esac
+[ "$co1_rc" = 0 ] && grep -q '^Started the dashboard' <<< "$co1" && ! grep -qi 'opened it in your browser' <<< "$co1" && [ -n "$co_pid" ] && kill -0 "$co_pid" 2>/dev/null && ok "it says it started one, opens no browser under LOKI_NO_BROWSER=1, and the server's record names a live process" || bad "first loki control open: rc $co1_rc, pid '$co_pid': $(head -c 300 <<< "$co1")"
+co2="$(dash control open)"
+[ "$(sed -n 1p <<< "$co2")" = "$co_url" ] && ! grep -q '^Started the dashboard' <<< "$co2" && [ "$(dash_pid)" = "$co_pid" ] && ok "a second loki control open reuses the running dashboard (same URL, same process)" || bad "second loki control open: $(head -c 300 <<< "$co2")"
+db1="$(dash dashboard)"
+[ "$(sed -n 1p <<< "$db1")" = "${co_url%/}" ] && grep -q '^Give it work:' <<< "$db1" && [ "$(dash_pid)" = "$co_pid" ] && ok "loki dashboard is the same path: it prints the same URL and starts no second server" || bad "loki dashboard printed: $(head -c 300 <<< "$db1")"
+dash control stop >/dev/null; cs_rc=$?
+for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$co_pid" 2>/dev/null || break; sleep 0.3; done
+[ "$cs_rc" = 0 ] && [ -n "$co_pid" ] && ! kill -0 "$co_pid" 2>/dev/null && ok "loki control stop stops it" || { bad "loki control stop: rc $cs_rc, pid $co_pid still running"; [ -n "$co_pid" ] && kill "$co_pid" 2>/dev/null; }
+
 check "completions/loki.bash loads" bash -c "source '$ROOT/completions/loki.bash'"
 
 finish

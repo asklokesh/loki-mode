@@ -11,7 +11,7 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 - FOLD: 61
 - REMOVED: 29
 - Total rows: 145
-- Registry paths (commands and nested subcommands): 218
+- Registry paths (commands and nested subcommands): 219
 
 ## Commands
 
@@ -62,7 +62,7 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 | verify | autonomy/loki | KEEP | Legacy proof vs v10 verify split |  |
 | keys | autonomy/loki | FOLD | Receipt signing | loki receipt key |
 | review | autonomy/loki | HIDE | Gates are legacy-shaped |  |
-| dashboard | autonomy/loki | FOLD | Overlaps Control Plane | loki control serve |
+| dashboard | autonomy/loki | FOLD | Overlaps Control Plane | loki control open |
 | config | autonomy/loki | KEEP | Mixed legacy keys |  |
 | mcp | autonomy/loki | HIDE | Engine-neutral |  |
 | acp | autonomy/loki | HIDE | Engine-neutral |  |

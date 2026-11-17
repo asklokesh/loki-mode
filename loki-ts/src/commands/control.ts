@@ -1,11 +1,12 @@
 // `loki control serve|backfill|status` (D56 Loki Control Plane, on by default, LOKI_CONTROL=0 turns it off).
 // serve runs the bundled service (packages/control-plane/dist/server.js, or the TypeScript source in a checkout) on
 // 127.0.0.1. backfill ships .loki/runs through the same shipper the live hook uses. status probes /health.
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn as nodeSpawn } from "node:child_process";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { instancePath } from "../../../packages/control-plane/src/shipper/discover.ts";
+import { discoverControlUrl, instancePath } from "../../../packages/control-plane/src/shipper/discover.ts";
 import { ingestAndWatch } from "../../../packages/control-plane/src/shipper/watch.ts";
 import { backfill } from "../../../packages/control-plane/src/shipper/backfill.ts";
 import { openDb } from "../../../packages/control-plane/src/db/migrate.ts";
@@ -13,7 +14,7 @@ import { openReadOnly, parseBefore, pruneRuns, type PruneFilter } from "../../..
 import { REPO_ROOT } from "../util/paths.ts";
 import { suggestWord } from "../cli/registry.ts";
 
-const CONTROL_SUBCOMMANDS = ["serve", "backfill", "prune", "stop", "status", "help"] as const;
+const CONTROL_SUBCOMMANDS = ["serve", "open", "backfill", "prune", "stop", "status", "help"] as const;
 
 export const DEFAULT_PORT = 47821;
 export const OFF_LINE = "loki control is off (LOKI_CONTROL=0). Unset it to turn the Control Plane back on.";
@@ -22,6 +23,7 @@ const HELP = `Usage: loki control <command> [options]   (on by default; LOKI_CON
 
 Commands:
   serve [--port N] [--db PATH]   Run the control plane + UI on 127.0.0.1 (default port ${DEFAULT_PORT}, 0 = any free port)
+  open [--no-open]               Open the dashboard in your browser and print its URL; starts it first when needed (also: loki dashboard)
   backfill [DIR]                 Ship DIR/.loki/runs (default: current directory) to the control plane
   prune --repo OWNER/NAME | --before ISO_DATE [--dry-run] [--db PATH]
                                  Delete matching runs, their events and orphaned sources (works with the server up or down)
@@ -58,28 +60,83 @@ const pidAlive = (pid: number): boolean => { try { process.kill(pid, 0); return 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const installedVersion = (): string => { try { return readFileSync(join(REPO_ROOT, "VERSION"), "utf8").trim() || "unknown"; } catch { return "unknown"; } };
 
-/** FC-26: a Control Plane left running across an upgrade keeps serving the old code. Reads the PID that CP recorded in instance.json
- *  (never a name or pattern match), and when its recorded version differs from the installed one and /health still answers as loki-control,
- *  SIGTERMs that one PID (the serve wrapper, which stops its child) and waits for it to exit. Returns the restarted PID or null. */
-export async function restartStaleControlPlane(env: NodeJS.ProcessEnv, current: string = installedVersion(), opts: { alive?: (pid: number) => boolean; waitMs?: number } = {}): Promise<number | null> {
+/** FC-26: a Control Plane left running across an upgrade keeps serving the old code, and one whose install was deleted keeps answering /health
+ *  while every page fails. Reads the PID that CP recorded in instance.json (never a name or pattern match), and when /health still answers as
+ *  loki-control and the server is stale (staleReason: install gone, dashboard page gone, or another version), SIGTERMs that one PID (the serve
+ *  wrapper, which stops its child) and waits for it to exit. Returns the stopped PID or null. */
+export async function restartStaleControlPlane(env: NodeJS.ProcessEnv, current: string = installedVersion(), opts: StaleOpts = {}): Promise<number | null> {
   const alive = opts.alive ?? pidAlive;
-  let inst: { pid?: unknown; url?: unknown; version?: unknown };
+  let inst: { pid?: unknown; url?: unknown; version?: unknown; install_path?: unknown };
   try { inst = JSON.parse(readFileSync(instancePath(env), "utf8")); } catch { return null; }
   if (!Number.isInteger(inst.pid) || (inst.pid as number) <= 1 || (inst.pid as number) === process.pid || typeof inst.url !== "string") return null;
   const pid = inst.pid as number;
   if (!alive(pid)) return null;
-  let running = typeof inst.version === "string" ? inst.version : "unknown";
-  try {
-    const h = (await (await fetch(`${inst.url}/health`, { signal: AbortSignal.timeout(3000) })).json()) as { service?: string; version?: string };
-    if (h.service !== "loki-control") return null; // the recorded pid now belongs to something else
-    if (typeof h.version === "string") running = h.version;
-  } catch { return null; }
-  if (running === current) return null;
-  process.stderr.write(`loki control: Control Plane is out of date (running ${running}, installed ${current}), restarting\n`);
-  try { process.kill(pid, "SIGTERM"); } catch { return null; }
-  const until = Date.now() + (opts.waitMs ?? 8000);
+  const h = await healthOf(inst.url, 3000, opts.fetchImpl);
+  if (!h) return null; // nothing answers as loki-control there: the recorded pid now belongs to something else
+  const why = staleReason(h, inst, current, opts);
+  if (!why) return null;
+  return (await stopStale(pid, why, opts)) ? pid : null;
+}
+
+export interface Health { service?: string; pid?: number; version?: string; install_path?: string; ui?: boolean }
+export interface StaleOpts { alive?: (pid: number) => boolean; waitMs?: number; fetchImpl?: typeof fetch; /** does this path exist (tests) */ exists?: (p: string) => boolean; /** this install has a built dashboard page (tests) */ ownUi?: boolean }
+const UI_INDEX = "packages/control-plane/ui/dist/index.html";
+
+/** /health of a Control Plane, or null when nothing answers there as one. */
+async function healthOf(url: string, ms: number, f: typeof fetch = fetch): Promise<Health | null> {
+  try { const h = (await (await f(`${url.replace(/\/+$/, "")}/health`, { signal: AbortSignal.timeout(ms) })).json()) as Health; return h && h.service === "loki-control" ? h : null; } catch { return null; }
+}
+
+/** Why a running Control Plane must not serve this install, or null when it may. A server answers /health from memory long after the install it was
+ *  started from is gone, so an answer alone proves nothing. Three checks: the install it runs from still exists; that install still holds the
+ *  dashboard page (unless this install has none either, a checkout with no UI build); and it runs this install's version, so a person who upgraded
+ *  is not served by the old server. `recorded` is its instance.json entry (the install root), when there is one. */
+export function staleReason(h: Health, recorded: { install_path?: unknown; version?: unknown } | null, current: string, o: StaleOpts = {}): string | null {
+  const exists = o.exists ?? existsSync;
+  const rootOf = (p: string): string => { const i = p.indexOf("/packages/control-plane/"); return i > 0 ? p.slice(0, i) : p; };
+  const root = typeof recorded?.install_path === "string" && recorded.install_path ? recorded.install_path : typeof h.install_path === "string" && h.install_path ? rootOf(h.install_path) : null;
+  if (root && !exists(root)) return `it was started from an install that no longer exists (${root})`;
+  const ui = typeof h.ui === "boolean" ? h.ui : root ? exists(join(root, UI_INDEX)) : true; // a server from before `ui` was reported is checked on disk
+  if (!ui && (o.ownUi ?? exists(join(REPO_ROOT, UI_INDEX)))) return `its install${root ? ` (${root})` : ""} no longer holds the dashboard page`;
+  const running = typeof h.version === "string" ? h.version : typeof recorded?.version === "string" ? recorded.version : "unknown";
+  return running === current ? null : `it is out of date (running ${running}, installed ${current})`;
+}
+
+/** SIGTERMs one PID (the one recorded in instance.json, never a name or pattern) and waits for it to exit. */
+async function stopStale(pid: number, why: string, o: StaleOpts): Promise<boolean> {
+  const alive = o.alive ?? pidAlive;
+  process.stderr.write(`loki control: replacing the running Control Plane: ${why}\n`);
+  try { process.kill(pid, "SIGTERM"); } catch { return false; }
+  const until = Date.now() + (o.waitMs ?? 8000);
   while (alive(pid) && Date.now() < until) await sleep(50);
-  return alive(pid) ? null : pid;
+  return !alive(pid);
+}
+
+/** The base URL of a running Control Plane this install may use, or null. The one "is a dashboard up" check for everything that opens or links to it:
+ *  a server that is stale (staleReason) is stopped here so the caller starts its own in its place. LOKI_CONTROL=0 finds none. An explicit
+ *  LOKI_CONTROL_URL is the operator's choice: used when it answers, never judged and never stopped. */
+export async function liveControlPlane(env: NodeJS.ProcessEnv, o: StaleOpts & { current?: string } = {}): Promise<string | null> {
+  if (env.LOKI_CONTROL === "0") return null;
+  if (env.LOKI_CONTROL_URL) { const u = env.LOKI_CONTROL_URL.replace(/\/+$/, ""); return (await healthOf(u, 1000, o.fetchImpl)) ? u : null; }
+  const current = o.current ?? installedVersion();
+  await restartStaleControlPlane(env, current, o);
+  const found = await discoverControlUrl(env, { fetchImpl: o.fetchImpl, alive: o.alive });
+  if (found) {
+    let inst: { install_path?: unknown; version?: unknown } | null = null;
+    try { inst = JSON.parse(readFileSync(instancePath(env), "utf8")); } catch { /* judged from /health alone */ }
+    const h = await healthOf(found, 1000, o.fetchImpl);
+    if (h && !staleReason(h, inst, current, o)) return found;
+  }
+  // No usable record: a server may still answer on the configured port (its record was removed, or it was started by hand).
+  const port = env.LOKI_CONTROL_PORT || String(DEFAULT_PORT);
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) return null;
+  const url = `http://127.0.0.1:${port}`;
+  if (url === found) return null;
+  const h = await healthOf(url, 300, o.fetchImpl);
+  if (!h) return null;
+  // A stale server with no record is not reused and not signalled (only a PID recorded in instance.json is ever stopped): the caller starts its
+  // own, and `control serve` takes another free port when the default one is still held.
+  return staleReason(h, null, current, o) ? null : url;
 }
 
 /** `loki control stop`: SIGTERMs only the PID recorded in instance.json, and only after that instance's /health answers as loki-control.
@@ -108,6 +165,97 @@ export async function stopControlPlane(env: NodeJS.ProcessEnv, opts: { alive?: (
   if (alive(pid)) { process.stderr.write(`loki control: pid ${pid} did not exit after SIGTERM\n`); return 1; }
   rmSync(file, { force: true });
   process.stdout.write(`loki control: stopped (pid ${pid})\n`);
+  return 0;
+}
+
+export interface EnsureOpts extends StaleOpts {
+  current?: string;
+  /** the directory the server is started in: it reads that repository's .loki/runs, so a run started there shows up without any setup */
+  cwd?: string;
+  waitMs?: number;
+  /** true: the wait never keeps the process alive on its own (the live console must not hold a finished run open) */
+  unref?: boolean;
+  /** starts `loki control serve` detached and returns its pid (tests record the call instead) */
+  startImpl?: (argv: string[], o: { cwd: string; env: NodeJS.ProcessEnv; log: string }) => number | undefined;
+}
+
+function startDetached(argv: string[], o: { cwd: string; env: NodeJS.ProcessEnv; log: string }): number | undefined {
+  const fd = openSync(o.log, "a", 0o600);
+  try {
+    const c = nodeSpawn(argv[0]!, argv.slice(1), { cwd: o.cwd, env: o.env, detached: true, stdio: ["ignore", fd, fd] });
+    c.on("error", () => { /* reported by the wait below: nothing answers */ });
+    c.unref();
+    return c.pid;
+  } finally { closeSync(fd); }
+}
+
+/** A Control Plane this install may use: the running one (liveControlPlane, which replaces a stale one), else one started here the way
+ *  `loki control serve` starts it, detached, with the user's own data directory, waited on for about 5 seconds. Throws an Error whose message is
+ *  the short reason when there is none to be had; it never throws anything else and never waits longer than waitMs plus the probes' timeouts. */
+export async function ensureControlPlane(env: NodeJS.ProcessEnv, o: EnsureOpts = {}): Promise<{ url: string; started: boolean }> {
+  const live = await liveControlPlane(env, o);
+  if (live) return { url: live, started: false };
+  if (env.LOKI_CONTROL === "0") throw new Error("the Control Plane is off (LOKI_CONTROL=0)");
+  if (env.LOKI_CONTROL_URL) throw new Error(`nothing answers at ${env.LOKI_CONTROL_URL}`);
+  const entry = [join(REPO_ROOT, "loki-ts/dist/loki.js"), join(REPO_ROOT, "loki-ts/src/cli.ts")].find((p) => existsSync(p));
+  if (!entry || !serverCmd()) throw new Error("this install has no Control Plane server");
+  const dir = join(env.HOME || homedir(), ".loki", "control"), log = join(dir, "serve.log"), alive = o.alive ?? pidAlive, wait = o.waitMs ?? (Number(env.LOKI_CONTROL_START_WAIT_MS) || 5000); // the env knob is for slow machines and CI
+  let pid: number | undefined;
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    pid = (o.startImpl ?? startDetached)(["bun", ...SAFE_BUN_FLAGS, entry, "control", "serve"], { cwd: o.cwd ?? process.cwd(), env: { ...env, LOKI_CONTROL: "1", LOKI_NO_BROWSER: "1" }, log });
+    if (pid) writeFileSync(join(dir, "serve.pid"), `${pid}\n`);
+  } catch (e) { throw new Error(`it could not be started (${(e as Error).message.split("\n")[0]!.slice(0, 80)})`); }
+  const nap = (ms: number): Promise<void> => new Promise((r) => { const t = setTimeout(r, ms); if (o.unref) (t as { unref?: () => void }).unref?.(); });
+  for (const until = Date.now() + wait; ;) {
+    const url = await discoverControlUrl(env, { fetchImpl: o.fetchImpl, alive: o.alive });
+    if (url) return { url, started: true };
+    if (pid && !alive(pid)) throw new Error("it stopped as it started (see ~/.loki/control/serve.log)");
+    if (Date.now() >= until) throw new Error(`it did not answer within ${Math.round(wait / 1000)} s (see ~/.loki/control/serve.log)`);
+    await nap(100);
+  }
+}
+
+/** The command that opens a URL in the person's browser, or null when none should be tried: an opt-out (LOKI_NO_BROWSER=1, and the two older
+ *  switches the bash opener honours), CI or a test runner, an SSH session, no terminal on stdout, no display on Linux, or no opener on PATH.
+ *  The same rules as autonomy/lib/browser-open.sh, plus SSH and the display. The URL is one argv element; no shell ever sees it. */
+export function browserArgv(url: string, env: NodeJS.ProcessEnv, o: { platform?: NodeJS.Platform; tty?: boolean; which?: (cmd: string) => string | null } = {}): string[] | null {
+  if (!/^https?:\/\/[A-Za-z0-9._~:/?#[\]@!$'()*+,;=%-]+$/.test(url)) return null;
+  const on = (k: string): boolean => env[k] === "1" || env[k] === "true";
+  if (on("LOKI_NO_BROWSER") || on("LOKI_NO_AUTO_OPEN") || on("LOKI_HEADLESS")) return null;
+  if (env.CI || env.LOKI_TEST || env.BATS_VERSION || env.BATS_TEST_FILENAME || env.PYTEST_CURRENT_TEST) return null;
+  if (env.SSH_CONNECTION || env.SSH_TTY || env.SSH_CLIENT) return null;
+  if (!(o.tty ?? !!process.stdout.isTTY)) return null;
+  const platform = o.platform ?? process.platform, which = o.which ?? ((c: string) => Bun.which(c, { PATH: env.PATH ?? "" }));
+  if (platform === "darwin") return which("open") ? ["open", url] : null;
+  if (platform === "win32") return ["cmd", "/c", "start", "", url];
+  if (!env.DISPLAY && !env.WAYLAND_DISPLAY) return null;
+  return which("xdg-open") ? ["xdg-open", url] : null;
+}
+
+/** Opens the URL in the browser when one should be tried (browserArgv). False means nothing was spawned: the caller prints the URL instead. */
+export function openBrowser(url: string, env: NodeJS.ProcessEnv, o: Parameters<typeof browserArgv>[2] & { spawnImpl?: (argv: string[]) => void } = {}): boolean {
+  const argv = browserArgv(url, env, o);
+  if (!argv) return false;
+  try {
+    (o.spawnImpl ?? ((a: string[]) => { const c = nodeSpawn(a[0]!, a.slice(1), { detached: true, stdio: "ignore" }); c.on("error", () => { /* no opener after all */ }); c.unref(); }))(argv);
+    return true;
+  } catch { return false; }
+}
+
+const OPEN_USAGE = "Usage: loki control open [--no-open]   (also: loki dashboard)\n\nOpens the dashboard (the Control Plane) in your browser and prints its URL. Starts it first when it is not running.\n  --no-open   print the URL only (LOKI_NO_BROWSER=1 does the same)\n";
+
+/** `loki control open` (and `loki dashboard`): the dashboard's home page, started first when needed. Always prints the URL. */
+async function open(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+  const bad = args.find((a) => a !== "--no-open");
+  if (bad !== undefined) { process.stderr.write(`loki control open: unexpected argument '${bad}'\n${OPEN_USAGE}`); return 2; }
+  let cp: { url: string; started: boolean };
+  try { cp = await ensureControlPlane(env, { cwd: process.cwd() }); } catch (e) {
+    process.stderr.write(`loki control: could not start the dashboard: ${(e as Error).message}; run \`loki control serve\`\n`);
+    return 1;
+  }
+  const url = `${cp.url}/`, opened = !args.includes("--no-open") && openBrowser(url, env);
+  process.stdout.write(`${url}\n${cp.started ? "Started the dashboard. " : ""}${opened ? "Opened it in your browser.\n" : cp.started ? "\n" : ""}Give it work:   loki start "<brief>"\nStop the UI:    loki control stop\n`);
   return 0;
 }
 
@@ -236,9 +384,11 @@ function rejectExtra(sub: "stop" | "status", rest: string[]): boolean {
 export async function runControl(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   const [sub, ...rest] = args;
   if (!sub || sub === "--help" || sub === "-h" || sub === "help") { process.stdout.write(HELP); return 0; }
+  if (sub === "open" && (rest.includes("--help") || rest.includes("-h"))) { process.stdout.write(OPEN_USAGE); return 0; }
   if (env.LOKI_CONTROL === "0") { process.stdout.write(`${OFF_LINE}\n`); return 0; }
   switch (sub) {
     case "serve": return serve(rest, env);
+    case "open": return open(rest, env);
     case "stop": return rejectExtra("stop", rest) ? 2 : stopControlPlane(env);
     case "status": return rejectExtra("status", rest) ? 2 : status(rest, env);
     case "prune": return prune(rest, env);

@@ -21,7 +21,7 @@ const MAX_BODY = 1_000_000;
 const defaultUiDir = () => [join(import.meta.dir, "../../ui/dist"), join(import.meta.dir, "../ui/dist")].find((d) => existsSync(join(d, "index.html")));
 
 /** dbPath ":memory:" for tests. Migrations run here, so /ready is true as soon as this returns. uiDir overrides the built-UI location. */
-export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: string; token?: string; loopbackOnly?: boolean; repoDir?: string; startBin?: string; spawnImpl?: typeof spawnStart; ghImpl?: GhRunner }) {
+export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: string; token?: string; loopbackOnly?: boolean; repoDir?: string; startBin?: string; spawnImpl?: typeof spawnStart; ghImpl?: GhRunner; /** this server's own install directory (serve.ts passes it): once it is gone the page says so and onInstallGone runs */ installDir?: string; onInstallGone?: () => void }) {
   const uiDir = opts.uiDir ?? defaultUiDir();
   const { db, sqlite } = openDb(opts.dbPath);
   cleanupLeakedFixtures(sqlite);
@@ -44,7 +44,8 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
   // version = what this process started as; installed_version = what is on disk now. They differ after an upgrade while the CP kept running.
   const readInstalled = (): string => { for (const f of [process.env.LOKI_VERSION_FILE, join(import.meta.dir, "../../../../VERSION")]) { try { if (f) return readFileSync(f, "utf8").trim() || "unknown"; } catch { /* next */ } } return "unknown"; };
   const startVersion = process.env.LOKI_CONTROL_VERSION || readInstalled();
-  app.get("/health", (c) => c.json({ service: "loki-control", pid: process.pid, install_path: import.meta.dir, version: startVersion, installed_version: readInstalled() }));
+  // ui: whether the dashboard page this server answers "/" with is on disk now (false once the install it was started from was removed).
+  app.get("/health", (c) => c.json({ service: "loki-control", pid: process.pid, install_path: import.meta.dir, version: startVersion, installed_version: readInstalled(), ui: !!uiDir && existsSync(join(uiDir, "index.html")) }));
   app.get("/ready", (c) => {
     try { sqlite.query("select 1").get(); } catch { ready = false; }
     return ready ? c.json({ ready: true }) : c.json({ ready: false }, 503);
@@ -135,6 +136,13 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
     const f = resolve(root, `.${p}`);
     if (f.startsWith(root + sep) && existsSync(f) && statSync(f).isFile()) return new Response(Bun.file(f));
     if (/\.[a-z0-9]+$/i.test(p)) return c.json({ error: "not found" }, 404); // a missing asset is a 404, not index.html
+    if (!existsSync(join(root, "index.html"))) {
+      // The page was there when this server started and is not now: the install was deleted (a test install in a temp directory, an uninstall) while
+      // the server kept running. Say so in plain words instead of a raw ENOENT error page, and let the server stop itself when the install is gone.
+      const gone = !!opts.installDir && !existsSync(opts.installDir);
+      if (gone) opts.onInstallGone?.();
+      return c.text(`This dashboard was started from an install that no longer exists${gone ? "" : " in full (its dashboard page is missing)"}; run \`loki dashboard\` to start the current one.\n`, 503);
+    }
     return new Response(Bun.file(join(root, "index.html")));
   });
 

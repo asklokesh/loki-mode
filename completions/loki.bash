@@ -287,7 +287,7 @@ _loki_completion() {
                 COMPREPLY=( $(compgen -W "--port --json --repo --help" -- "$cur") )
                 return 0
             fi
-            COMPREPLY=( $(compgen -W "serve status help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "open serve stop status help" -- "$cur") )
             ;;
 
         plan)

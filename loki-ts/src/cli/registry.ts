@@ -159,8 +159,9 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("ask", "Ask a question", { positionals: [{ name: "question", type: "string" }] }),
     ],
   }),
-  cmd("control", "KEEP", "both", "Control Plane (serve, backfill, prune, stop, status)", "D56 control plane, on by default", {
+  cmd("control", "KEEP", "both", "Dashboard and Control Plane (open, serve, backfill, prune, stop, status)", "D56 control plane, on by default", {
     subcommands: [
+      sub("open", "Open the dashboard in your browser (starts it when needed)", { flags: [bool("--no-open", "Print the URL only")] }),
       sub("serve", "Run the control plane and UI", { flags: [port, dbFlag] }),
       sub("backfill", "Ship DIR/.loki/runs to the control plane", { positionals: [{ name: "dir", type: "path" }] }),
       sub("prune", "Delete matching runs", { flags: [str("--repo", "<owner/name>", "Repository to prune"), str("--before", "<iso-date>", "Prune runs before this date"), bool("--dry-run", "Report only"), dbFlag] }),
@@ -222,7 +223,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("verify", "KEEP", "bash", "Deterministic PR verification", "Legacy proof vs v10 verify split", { flags: [bool("--fast", "PR-scoped fast verify"), bool("--pr", "PR mode"), json, dyn("--base", "branches", "Base branch")], positionals: [{ name: "base", type: "dynamic", dynamic: "branches" }] }),
   cmd("keys", "FOLD", "bash", "Receipt-signing keys", "Receipt signing", { migrate: "loki receipt key", subcommands: [sub("export", "Print the public signing key (JWK)")] }),
   cmd("review", "HIDE", "bash", "Standalone code review with quality gates", "Gates are legacy-shaped", { subcommands: [sub("queue", "Open Loki PRs ranked by risk; low-risk passport-verified PRs marked ready", { flags: [json, str("--repo", "<owner/repo>", "Repository"), { name: "--pubkey", type: "path", desc: "Trusted receipt public key" }, bool("--mark", "Apply the loki-ready label")] })] }),
-  cmd("dashboard", "FOLD", "bash", "Operations UI server", "Overlaps Control Plane", { migrate: "loki control serve", subcommands: [sub("start", "Start"), sub("stop", "Stop"), sub("status", "Status"), sub("url", "Print URL"), sub("open", "Open in browser")] }),
+  cmd("dashboard", "FOLD", "bash", "Operations UI server", "Overlaps Control Plane", { migrate: "loki control open", subcommands: [sub("start", "Start"), sub("stop", "Stop"), sub("status", "Status"), sub("url", "Print URL"), sub("open", "Open in browser")] }),
   cmd("config", "KEEP", "bash", "Manage configuration", "Mixed legacy keys", { subcommands: [sub("show", "Show config"), sub("list", "List config (alias of show)"), sub("init", "Create config"), sub("edit", "Edit config"), sub("path", "Print config path"), sub("set", "Set a value"), sub("get", "Get a value")] }),
   cmd("mcp", "HIDE", "bash", "Launch the MCP server (stdio)", "Engine-neutral", { subcommands: [sub("install", "Register loki-mode in an MCP client config", { flags: [str("--client", "<name>", "claude, cursor, vscode or windsurf"), bool("--project", "Project-level config"), bool("--global", "User-level config"), bool("--print", "Print, write nothing")] })] }),
   cmd("acp", "HIDE", "bash", "Run Loki as an ACP agent", "Engine-neutral"),

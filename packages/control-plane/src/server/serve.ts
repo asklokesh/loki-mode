@@ -1,6 +1,7 @@
 // Entry for `loki control serve` (bundled to dist/server.js). Config comes from env: PORT, LOKI_CONTROL_DB.
 // Binds loopback unless LOKI_CONTROL_HOST is set (the container image sets 0.0.0.0). LOKI_CONTROL_PORT_FALLBACK=1 (set for the default port, never for an explicit --port)
 // retries on any free port when PORT is taken; the URL printed below is always the real one.
+import { existsSync } from "node:fs";
 import { createApp } from "./app.ts";
 import { bindRefusal, insecureBindWarning, isLoopbackHost } from "./auth.ts";
 
@@ -13,7 +14,12 @@ if (refusal) {
 const warning = insecureBindWarning(process.env);
 if (warning) console.error(warning);
 const bindHost = process.env.LOKI_CONTROL_HOST || "127.0.0.1";
-const { app } = createApp({ dbPath: process.env.LOKI_CONTROL_DB ?? "control.db", token: process.env.LOKI_CONTROL_TOKEN || undefined, loopbackOnly: isLoopbackHost(bindHost.includes(":") && !bindHost.startsWith("[") ? `[${bindHost}]` : bindHost) });
+// A server whose install directory was deleted keeps answering /health from memory while every page fails, so nothing replaces it (one ran for 26 hours
+// after a test install was removed). It stops itself: on the first page request that finds the install gone, and on a timer.
+let leaving = false;
+const installGone = (): void => { if (leaving) return; leaving = true; console.error(`loki-control: the install this dashboard was started from (${import.meta.dir}) no longer exists; stopping`); setTimeout(() => process.exit(0), 250); };
+setInterval(() => { if (!existsSync(import.meta.dir)) installGone(); }, Number(process.env.LOKI_CONTROL_INSTALL_CHECK_MS) || 30_000).unref();
+const { app } = createApp({ installDir: import.meta.dir, onInstallGone: installGone, dbPath: process.env.LOKI_CONTROL_DB ?? "control.db", token: process.env.LOKI_CONTROL_TOKEN || undefined, loopbackOnly: isLoopbackHost(bindHost.includes(":") && !bindHost.startsWith("[") ? `[${bindHost}]` : bindHost) });
 const serve = (port: number) => Bun.serve({ port, hostname: process.env.LOKI_CONTROL_HOST || "127.0.0.1", fetch: app.fetch });
 let s: ReturnType<typeof serve>;
 try {

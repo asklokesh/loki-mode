@@ -54,7 +54,7 @@ function _loki {
                         '--port[Port for the control plane server]:port:' \
                         '--json[Output as JSON]' \
                         '--repo[Repository to backfill]:repo:_files -/' \
-                        '1:subcommand:(serve status help)'
+                        '1:subcommand:(open serve stop status help)'
                     ;;
                 config)
                     _loki_config

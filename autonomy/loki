@@ -2107,35 +2107,36 @@ PY
 
 _loki_control_ui() {
     [ "${LOKI_CONTROL_DEFAULT:-1}" = "0" ] && return 1
-    local url="" open_it=1 arg i
+    local url="" open_it=1 arg
     for arg in "$@"; do [ "$arg" = "--no-open" ] && open_it=0; done
     if [ "${LOKI_HEADLESS:-0}" = "1" ] || [ "${LOKI_NO_BROWSER:-0}" = "1" ]; then open_it=0; fi
     command -v python3 >/dev/null 2>&1 || return 1
-    url=$(_loki_control_live_url) || url=""
-    if [ -z "$url" ]; then
-        if ! command -v bun >/dev/null 2>&1; then
-            echo "loki: the Control Plane needs bun (https://bun.sh); using the classic dashboard." >&2
-            return 1
-        fi
-        # LOKI_CONTROL=0 is the test off switch (supervisor, run-all-tests, local-ci);
-        # it must never start a detached `control serve` that writes ~/.loki/control.
-        [ "${LOKI_CONTROL:-}" = "0" ] && return 1
-        local cli="$SKILL_DIR/loki-ts/dist/loki.js" cdir="${HOME}/.loki/control" spid
-        [ -f "$cli" ] || cli="$SKILL_DIR/loki-ts/src/cli.ts"
-        mkdir -p "$cdir" && chmod 700 "$cdir" 2>/dev/null || true
-        LOKI_CONTROL=1 LOKI_NO_BROWSER=1 nohup bun --no-env-file --config=/dev/null "$cli" control serve >"$cdir/serve.log" 2>&1 </dev/null &
-        spid=$!
-        echo "$spid" > "$cdir/serve.pid" 2>/dev/null || true
-        for i in $(seq 1 100); do
-            url=$(_loki_control_live_url) && break
-            url=""
-            kill -0 "$spid" 2>/dev/null || break
-            sleep 0.1
-        done
+    # LOKI_CONTROL=0 is the test off switch (supervisor, run-all-tests, local-ci);
+    # it must never start a detached `control serve` that writes ~/.loki/control.
+    # With it, or with no bun, only a Control Plane that is already running is used.
+    if [ "${LOKI_CONTROL:-}" = "0" ] || ! command -v bun >/dev/null 2>&1; then
+        url=$(_loki_control_live_url) || url=""
         if [ -z "$url" ]; then
-            echo "loki: the Control Plane did not start (see $cdir/serve.log); using the classic dashboard." >&2
+            command -v bun >/dev/null 2>&1 || echo "loki: the Control Plane needs bun (https://bun.sh); using the classic dashboard." >&2
             return 1
         fi
+    else
+        # One path with `loki control open` and the live console's o key
+        # (loki-ts/src/commands/control.ts ensureControlPlane): a running Control
+        # Plane is reused only when the install it was started from still exists,
+        # still holds the dashboard page and is this version; a stale one is
+        # stopped by its recorded PID and this install's own is started detached
+        # in its place. The first stdout line is the URL.
+        local cli="$SKILL_DIR/loki-ts/dist/loki.js"
+        [ -f "$cli" ] || cli="$SKILL_DIR/loki-ts/src/cli.ts"
+        url=$(LOKI_CONTROL=1 LOKI_NO_BROWSER=1 LOKI_CONTROL_START_WAIT_MS="${LOKI_CONTROL_START_WAIT_MS:-10000}" bun --no-env-file --config=/dev/null "$cli" control open --no-open </dev/null | sed -n 1p) || url=""
+        case "$url" in
+            http://*) url="${url%/}" ;;
+            *)
+                echo "loki: the Control Plane did not start (see ${HOME}/.loki/control/serve.log); using the classic dashboard." >&2
+                return 1
+                ;;
+        esac
     fi
     if [ "$open_it" = "1" ]; then
         loki_open_url "$url" || echo "$url"
