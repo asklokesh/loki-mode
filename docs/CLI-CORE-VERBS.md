@@ -18,6 +18,7 @@ provider; other providers and model routes are additions selected with
 | --- | --- |
 | `loki "<goal>"` | Build it: a goal, a PRD file or an issue (`owner/repo#N`). Shorthand for `loki start` |
 | `loki start [SPEC]` | The primary path. Build from a PRD file, an issue (`owner/repo#N`, issue URL, `PROJ-1`), a quoted task or a one-word brief. Alias: `run` |
+| `loki start owner/repo#12 owner/repo#15` | Several issues of one repository at once: each is a whole-issue run in its own worktree and ends with its own pull request and its own label (`safe to merge` or `needs you`). One status line per issue while they run, one summary line each at the end. `loki start owner/repo --label L` takes every open issue carrying the label. `LOKI_START_PARALLEL` sets how many run at once (default 3, at most 4); a dollar cap is one total shared by all of them |
 | `loki chat [--attach]` | Interactive alternative to `loki start`; `--attach` joins the running build |
 | `loki status [--json]` | What is running and where it stands |
 | `loki verify [base] [--fast] [--json] [--pubkey FILE]` | Deterministic verification with CI-gate exit codes |
