@@ -143,7 +143,7 @@ function resolveCandidate(dir: string, raw: string, ctx: { test: boolean; setup:
 /** Setup commands that name no checkout file but are the ecosystem's own install: told to the model as written. */
 const KNOWN_SETUP = /^(?:(?:npm|pnpm|yarn|bun)\s+(?:ci|install)(?:\s+--frozen-lockfile)?|uv\s+sync(?:\s+--[\w-]+(?:[ =][\w.-]+)?)*|poetry\s+install(?:\s+--[\w-]+(?:[ =][\w.,-]+)?)*|python3?\s+-m\s+pip\s+install\s+-(?:e|r)\s+[\w.\[\],/-]+|pip3?\s+install\s+-(?:e|r)\s+[\w.\[\],/-]+|just\s+setup|make\s+(?:setup|install|bootstrap|deps))$/;
 
-const BAN_RE = /\b(never|do not|don't|must not|avoid|rather than|instead of|not)\s+(?:to\s+)?(?:(?:use|run|call|invoke|running|calling|using)\s+)?(?:an?\s+|the\s+)?(?:(?:bare|raw|plain|direct|directly)\s+)?`([^`\n]+)`/gi;
+const BAN_RE = /(?:\b(?:never|do not|don't|must not|avoid|rather than|instead of)|,\s*not)\s+(?:to\s+)?(?:(?:use|run|call|invoke|running|calling|using)\s+)?(?:an?\s+|the\s+)?(?:(?:bare|raw|plain|direct|directly)\s+)?`([^`\n]+)`/gi;
 const GENERIC_RUNNER = /^(?:python3?\s+-m\s+)?(?:pytest|unittest|jest|vitest|mocha|tox|nose2?)\b|^(?:npm|pnpm|yarn|bun|go|cargo)\s+test\b/;
 const FULL_SUITE_BAN = /\b(?:never|do not|don't|must not|avoid)\s+(?:run(?:ning)?\s+)?the\s+(?:full|whole|entire)\s+(?:test\s+)?suite\b/i;
 
@@ -180,7 +180,7 @@ export function readGuides(dir: string): GuideFacts {
       if (/^#{1,6}\s/.test(l)) heading = l;
       for (const m of l.matchAll(/`([^`\n]+)`/g)) add(m[1]!, file, i + 1, l);
       for (const m of l.matchAll(BAN_RE)) {
-        const what = m[2]!.trim(), words = what.replace(/^python3?\s+-m\s+/, "").split(/\s+/);
+        const what = m[1]!.trim(), words = what.replace(/^python3?\s+-m\s+/, "").split(/\s+/);
         if (GENERIC_RUNNER.test(what) && facts.bans.length < MAX_BANS && !facts.bans.some((b) => b.what === what)) facts.bans.push({ what, words, source: `${file}:${i + 1}` });
       }
       if (FULL_SUITE_BAN.test(l) && facts.bans.length < MAX_BANS && !facts.bans.some((b) => b.what === "the full suite")) facts.bans.push({ what: "the full suite", words: [], source: `${file}:${i + 1}` });
@@ -204,7 +204,7 @@ export function bannedBy(facts: GuideFacts, cmdline: string): GuideBan | null {
 }
 
 // ---- the intake reading, kept for the run ------------------------------------------------------------------------------------------------------
-const snap = new Map<string, GuideFacts>(), roots = new Set<string>(), used = new Map<string, Set<string>>();
+const snap = new Map<string, GuideFacts>(), roots = new Set<string>(), used = new Map<string, Set<string>>(), noState = new Set<string>();
 const real = (d: string): string => { try { return realpathSync(d); } catch { return d; } };
 const statePath = (repoDir: string): string => join(repoDir, ".loki", "state", "repo-guides.json");
 const headOf = (repoDir: string): string => { try { const r = spawnSync("git", ["-C", repoDir, "rev-parse", "HEAD"], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] }); return r.status === 0 ? r.stdout.trim() : ""; } catch { return ""; } };
@@ -214,7 +214,7 @@ export function snapshotGuides(repoDir: string, dirs: readonly string[] = []): G
   const root = real(repoDir), rec: Record<string, GuideFacts> = {};
   try {
     for (const d of [...new Set([".", ...dirs])].slice(0, 200)) { const abs = d === "." ? root : real(join(root, d)); if (abs !== root && !abs.startsWith(`${root}/`)) continue; const f = guidesOn() ? readGuides(abs) : EMPTY; snap.set(abs, f); rec[relative(root, abs) || "."] = f; }
-    roots.add(root); used.delete(root);
+    roots.add(root); used.delete(root); noState.delete(root);
     mkdirSync(join(root, ".loki", "state"), { recursive: true });
     const tmp = `${statePath(root)}.${process.pid}.tmp`; writeFileSync(tmp, JSON.stringify({ version: 1, head: headOf(root), dirs: rec }, null, 2) + "\n"); renameSync(tmp, statePath(root));
   } catch { /* no record: a later process reads the tree as it is */ }
@@ -224,13 +224,15 @@ export function snapshotGuides(repoDir: string, dirs: readonly string[] = []): G
 function rootOf(abs: string, repoDir?: string): string | null {
   for (const r of roots) if (abs === r || abs.startsWith(`${r}/`)) return r;
   const cand = repoDir ? real(repoDir) : abs;
+  if (noState.has(cand)) return null;
+  if (!existsSync(statePath(cand))) return null; // the usual case for a base worktree: no record, read the tree
   try {
     const j = JSON.parse(readFileSync(statePath(cand), "utf8")) as { version?: number; head?: string; dirs?: Record<string, GuideFacts> };
-    if (j.version !== 1 || !j.dirs || !j.head || j.head !== headOf(cand)) return null;
+    if (j.version !== 1 || !j.dirs || !j.head || j.head !== headOf(cand)) { noState.add(cand); return null; }
     for (const [d, f] of Object.entries(j.dirs)) if (f && Array.isArray(f.tests) && Array.isArray(f.setup) && Array.isArray(f.bans) && Array.isArray(f.ignored)) snap.set(d === "." ? cand : join(cand, d), f);
     roots.add(cand);
     return abs === cand || abs.startsWith(`${cand}/`) ? cand : null;
-  } catch { return null; }
+  } catch { noState.add(cand); return null; }
 }
 /** The guide facts of one directory: the intake reading when its repository has one (a directory not read then has none: a guide that appeared
  *  during the run is not trusted), else the tree as it is (a base worktree, `loki doctor`, a unit test). `repoDir`: the repository root, when known. */
@@ -240,7 +242,7 @@ export function guidesFor(dir: string, repoDir?: string): GuideFacts {
   try { if (rootOf(abs, repoDir)) return snap.get(abs) ?? EMPTY; return readGuides(abs); } catch { return EMPTY; }
 }
 /** Test seam: forget every intake reading held by this process. */
-export function resetGuides(): void { snap.clear(); roots.clear(); used.clear(); }
+export function resetGuides(): void { snap.clear(); roots.clear(); used.clear(); noState.clear(); }
 
 const note = (repoDir: string | undefined, dir: string, line: string): void => { const k = real(repoDir ?? dir); used.set(k, (used.get(k) ?? new Set()).add(line)); };
 const shq = (w: string): string => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`);
@@ -260,9 +262,10 @@ export function guideSuite(dir: string, runners: readonly string[], generic: str
 }
 /** The documented way to run ONE test file (`file` relative to `dir`) of `runner`; null keeps the discovered per-file command. When a guide forbids the
  *  discovered form and names no way to select a file, the documented package command runs instead (and the receipt says so), never the forbidden form. */
-export function guideFile(dir: string, runner: string, file: string, generic: string, repoDir?: string): { line: string; source: string } | null {
+export function guideFile(dir: string, runner: string, file: string, generic: string, repoDir?: string, onlyIfBanned = false): { line: string; source: string } | null {
   if (!file) return null;
   const f = guidesFor(dir, repoDir), banned = bannedBy(f, generic);
+  if (onlyIfBanned && !banned) return null; // the root guide speaks for a package below the root only through an explicit prohibition
   const one = f.tests.find((t) => t.perFile !== null && replaces(t, [runner], banned !== null));
   if (one) {
     const line = one.perFile === "append" ? `${one.cmd} ${shq(file)}` : one.perFile === "npm" ? (one.cmd.startsWith("npm ") ? `${one.cmd} -- ${shq(file)}` : `${one.cmd} ${shq(file)}`) : `${one.cmd} ${one.perFile!.slice(5)}=${shq(file)}`;
@@ -286,7 +289,7 @@ export function guideNotes(repoDir: string): string[] {
 export function guideSentence(dir: string, repoDir?: string): string {
   const f = guidesFor(dir, repoDir), named = f.tests.filter((x) => x.fromGuide), t = named.find((x) => x.perFile !== null) ?? named[0], parts: string[] = [];
   if (t) parts.push(`run tests with \`${t.cmd}${t.perFile === "append" ? " <test file>" : t.perFile === "npm" ? (t.cmd.startsWith("npm ") ? " -- <test file>" : " <test file>") : t.perFile ? ` ${t.perFile.slice(5)}=<test file>` : ""}\` (from ${t.source})`);
-  for (const s of f.setup.slice(0, 2)) parts.push(`set up with \`${s.cmd}\` (from ${s.source})`);
+  for (const s of f.setup.slice(0, 2)) parts.push(`if the tests cannot start, set up with \`${s.cmd}\` (from ${s.source})`);
   for (const b of f.bans.slice(0, 3)) parts.push(b.words.length ? `do not run bare \`${b.what}\` (${b.source})` : `do not run ${b.what} (${b.source})`);
   return parts.length ? `${parts.join("; ")}.` : "";
 }

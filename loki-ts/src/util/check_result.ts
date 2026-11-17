@@ -45,7 +45,7 @@ export function plainTestEnv(base: NodeJS.ProcessEnv = process.env): Record<stri
  *  per-version user site on macOS (~/Library/Python/<version>): a system python3 would lose packages installed with `pip install --user`. */
 export type TestHomeMode = "off" | "xdg" | "home";
 export const testHomeMode = (env: NodeJS.ProcessEnv = process.env): TestHomeMode => { const v = (env["LOKI_E10_TEST_HOME_ISOLATION"] ?? "").trim().toLowerCase(); return /^(0|off|false|no)$/.test(v) ? "off" : v === "home" ? "home" : "xdg"; };
-let testHomeDir: string | null = null;
+let testHomeDir: string | null = null, testHomeReady = false;
 function testHomeRoot(env: Record<string, string>): string | null {
   if (testHomeDir && existsSync(testHomeDir)) return testHomeDir;
   try {
@@ -71,10 +71,11 @@ export function testHomeEnv(e: Record<string, string>): Record<string, string> {
     pin("HATCH_DATA_DIR", join(real.data, "hatch")); pin("HATCH_CACHE_DIR", join(real.cache, "hatch"));
   }
   const dirs = { XDG_CONFIG_HOME: join(root, "config"), XDG_DATA_HOME: join(root, "data"), XDG_CACHE_HOME: join(root, "cache"), XDG_STATE_HOME: join(root, "state") };
-  try {
+  if (!testHomeReady || !existsSync(dirs.XDG_CONFIG_HOME)) try { // once per process: this env is built for every spawned check
     for (const d of Object.values(dirs)) mkdirSync(d, { recursive: true, mode: 0o700 });
     const gitCfg = join(real.config, "git"), link = join(dirs.XDG_CONFIG_HOME, "git"); // the user's XDG git config (identity, global ignore) stays readable
     if (existsSync(gitCfg) && !existsSync(link)) { try { symlinkSync(gitCfg, link); } catch { /* git then reads ~/.gitconfig alone */ } }
+    testHomeReady = true;
   } catch { return e; }
   Object.assign(e, dirs);
   if (mode === "home") {
@@ -2139,8 +2140,12 @@ export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null)
   const base = site?.cwd ?? repoDir, rel = site?.file ?? t.path, mod = t.runner === "go" ? goModDir(base, rel) : base; // go resolves the module from the cwd: a go.mod below the base needs the run to start there
   const [cmd, args, interpreter] = runnerCmd(mod === base ? (site ? { runner: t.runner, path: site.file } : t) : { runner: t.runner, path: relative(mod, join(base, rel)) }, mod === base ? repoDir : mod);
   // REPO-GUIDES: the way this package's own guide says to run one test file (project_model/guides.ts); a build-tool stack keeps its committed verify.test_command.
-  const doc = mod === base && !BUILD_TOOL_RUNNERS.has(t.runner) ? guideFile(base, t.runner, rel, [cmd, ...args].join(" "), repoDir) : null;
+  const generic = [cmd, ...args].join(" "), guided = mod === base && !BUILD_TOOL_RUNNERS.has(t.runner);
+  const doc = guided ? guideFile(base, t.runner, rel, generic, repoDir) : null;
   if (doc) return { cwd: base, cmd: "bash", args: ["-c", doc.line], argv: ["bash", "-c", doc.line], pkgRoot: site?.root ?? "." };
+  // A package below the root with no documented command of its own: a root guide that forbids the discovered form still holds (run from the root, repo-relative path).
+  const rootDoc = guided && site && base !== repoDir ? guideFile(repoDir, t.runner, relative(repoDir, join(base, rel)), generic, repoDir, true) : null;
+  if (rootDoc) return { cwd: repoDir, cmd: "bash", args: ["-c", rootDoc.line], argv: ["bash", "-c", rootDoc.line], pkgRoot: "." };
   return { cwd: mod === base ? base : mod, cmd, args, argv: [cmd, ...args], ...(interpreter ? { interpreter } : {}), pkgRoot: mod === base ? site?.root ?? "." : relative(repoDir, mod) || "." };
 }
 /** The directory of the nearest go.mod at or above the test file, never above `base`; `base` itself when none is found below it (a root go.mod keeps the legacy run from the root). */

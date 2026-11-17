@@ -400,6 +400,8 @@ pj_eq "untestable: a JS repo with no tests is null (the Wall harness can still v
 #   RG8. util/check_result.ts plainTestEnv: drop the testHomeEnv call; G8 goes red (the stand-in real XDG dirs are written).
 #   RG9. util/check_result.ts testHomeEnv: drop `e["HOME"] = h`; G9 goes red (the opt-in home mode leaves HOME on the real home).
 #   RG10. util/check_result.ts testHomeEnv: drop the GOPATH and npm_config_cache pins; G9 goes red where go or npm is installed (they report another location).
+#   RG11. util/check_result.ts commandFor: drop the rootDoc branch; G11 goes red (a package below the root runs the form the root guide forbids).
+#   G11 a root guide that forbids the discovered form also holds for a test file of a package below the root.
 #   G9 the opt-in `home` mode (not the default: see testHomeEnv) moves HOME for test commands and keeps cargo, rustup, bun, npm, uv and Go on their real locations.
 guide_repo() { # guide_repo <name> -> GR (a python repo with a pytest config and one test file; commit it with guide_commit)
     GR="$T/guide-$1/repo"; mkdir -p "$GR/tests" "$GR/scripts"
@@ -430,6 +432,7 @@ guide_repo doc; G_DOC="$GR"; guide_script "$G_DOC" scripts/run_tests.sh yes
 printf '# Guide\n\n- **Imports:** module top.\n- **Tests:** always `scripts/run_tests.sh`, never bare `pytest`; behaviour contracts.\n- `scripts/lint.py` fails the test suite (not `scripts/check`) on new crossings.\n- A new key ships with its tests (`tests/test_a.py`).\n' > "$G_DOC/AGENTS.md"
 printf '# Contributing\n\n| Recipe | Runs |\n|---|---|\n| `just check` | `scripts/check`, every blocking lint check |\n| `just test <paths>` | `scripts/run_tests.sh <paths>`; refuses to start without a path |\n\n## Setup\n\nInstall the dependencies with `uv sync --group dev`.\n' > "$G_DOC/CONTRIBUTING.md"
 printf '#!/usr/bin/env python3\nprint("lint")\n' > "$G_DOC/scripts/lint.py"; printf '#!/usr/bin/env bash\necho check\n' > "$G_DOC/scripts/check"; chmod +x "$G_DOC/scripts/lint.py" "$G_DOC/scripts/check"
+mkdir -p "$G_DOC/pkg/tests"; printf 'def test_b():\n    assert True\n' > "$G_DOC/pkg/tests/test_b.py"; printf '[project]\nname = "p"\nversion = "0.1.0"\n' > "$G_DOC/pkg/pyproject.toml"
 mkdir -p "$G_DOC/web"; printf 'import { test } from "vitest";\ntest("x", () => {});\n' > "$G_DOC/web/a.test.ts"
 guide_commit "$G_DOC"
 guide_repo nofwd; G_NOFWD="$GR"; guide_script "$G_NOFWD" scripts/run_tests.sh no
@@ -459,6 +462,7 @@ guide_run() { # guide_run <extra env...> -> prints the JSON of the guide legs (r
 import { readGuides, snapshotGuides, guideNotes, guideSentence, resetGuides } from "./loki-ts/src/project_model/guides.ts";
 import { commandFor, fullSuiteCmd, spawnGroupSync, plainTestEnv } from "./loki-ts/src/util/check_result.ts";
 import { discoverCommands } from "./loki-ts/src/runner/repo_profile.ts";
+import { projectApi } from "./loki-ts/src/project_model/api.ts";
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 const E = process.env as Record<string, string>;
 const tests = (d: string) => discoverCommands(d).filter((c) => c.kind === "test").map((c) => ({ cmd: c.cmd, source: c.source, note: c.note ?? null }));
@@ -478,7 +482,9 @@ const pe = plainTestEnv(), ph = plainTestEnv({ ...process.env, LOKI_E10_TEST_HOM
 const { spawnSync } = await import("node:child_process");
 const report = (env: Record<string, string>, c: string, a: string[]) => { const r = spawnSync(c, a, { env, encoding: "utf8", timeout: 30000 }); return r.error ? "missing" : `${r.status}:${r.stdout.trim()}`; };
 const toolDiffers = ([["go", ["env", "GOCACHE", "GOMODCACHE", "GOPATH"]], ["npm", ["config", "get", "cache"]], ["uv", ["cache", "dir"]], ["cargo", ["--version"]]] as [string, string[]][]).filter(([c, a]) => report(po, c, a) !== report(ph, c, a)).map(([c]) => c);
+const api = projectApi({ status: "ok", packages: [{ root: ".", name: "g" }, { root: "pkg", name: "p" }] } as never), sub = commandFor({ runner: "pytest", path: "pkg/tests/test_b.py" } as never, E.G_DOC!, api);
 console.log(JSON.stringify({
+  subOne: sub.argv.join(" "), subCwdIsRoot: sub.cwd === E.G_DOC,
   homeMoved: ph["HOME"] !== H && ph["HOME"] !== undefined, homePins: ["CARGO_HOME", "RUSTUP_HOME", "BUN_INSTALL", "npm_config_cache", "GOPATH", "GOMODCACHE"].map((k) => (ph[k] ?? "").replace(H, "~")), homeUv: (ph["UV_CACHE_DIR"] ?? "") === (pe["UV_CACHE_DIR"] ?? "x"), toolDiffers,
   docTests: doc.tests.filter((t) => t.fromGuide).map((t) => [t.cmd, t.source, t.perFile, t.runners]), docBans: doc.bans.map((b) => [b.what, b.source]), docSetup: doc.setup.map((s) => [s.cmd, s.source]),
   docProfile: tests(E.G_DOC!), docOne: one(E.G_DOC!), docSuite: suite(E.G_DOC!), docRanOk: ran.status === 0, docLog: log(E.G_DOC!), docNotes: guideNotes(E.G_DOC!), docVitest: one(E.G_DOC!, "vitest", "web/a.test.ts"),
@@ -514,6 +520,7 @@ gj_eq "G3 each one is disclosed with its reason" '[d["unsafeIgnored"], d["unsafe
 gj_eq "G4 prose outside a code span is never a command or a prohibition" '[d["proseTests"], d["proseBans"], d["proseOne"].endswith("-m pytest -q tests/test_a.py")]' '[0, 0, true]'
 gj_eq "G5 a command naming a missing script falls back to the discovered command, and the receipt says the rule named no runnable command" '[d["missingTests"], d["missingOne"].endswith("-m pytest -q tests/test_a.py"), [c for c in d["missingProfile"] if "-m pytest" in c] != [], [n for n in d["missingNotes"] if "names no command Loki can run" in n] != []]' '[0, true, true, true]'
 gj_eq "G6 a vitest file never runs through the pytest script; a lint lane, a lint script and a test file are not test commands" '["run_tests" in d["docVitest"], len(d["docTests"])]' '[false, 1]'
+gj_eq "G11 a root guide that forbids the discovered form holds for a package below the root (run from the root)" '[d["subOne"], d["subCwdIsRoot"]]' '["bash -c ./scripts/run_tests.sh pkg/tests/test_b.py", true]'
 gj_eq "G7 a guide edited after intake changes nothing, in this process and in a later one" '[d["snapBefore"], d["snapAfter"], d["stateFile"], d["fromState"]]' '["bash -c ./scripts/run_tests.sh tests/test_a.py", "bash -c ./scripts/run_tests.sh tests/test_a.py", true, "bash -c ./scripts/run_tests.sh tests/test_a.py"]'
 gj_eq "G8 a test command cannot write the real XDG dirs" '[d["xdgRanOk"], d["xdgWroteReal"], d["xdgEnvMoved"], d["homeKept"]]' '[true, [], [true, true, true, true], true]'
 gj_eq "G8 uv keeps its real cache through its own variable" 'd["uvCache"]' "\"$REALX/cache/uv\""
