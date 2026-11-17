@@ -271,12 +271,13 @@ export const implementStage: Stage = {
     }
     const lineRounds: { met: number; unmet: number; usd: number | null }[] = [];
     const proofRounds: { exit: number | null; failed: number; seconds: number }[] = []; // PROOF LOOP: Loki runs the proof itself and hands a failure back with its real output, so a session that is wrong is corrected by evidence, not asked to try harder
-    for (let round = 0; round < proofLoopMax() && scratch && proofRerunOn() && existsSync(join(scratch.dir, PROOF_SCRIPT)) && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone; round++) {
+    let proofFails = 0, lineTurns = 0; const LINE_TURNS_MAX = 2; // the acceptance check has its own two turns: a session that used every proof turn to get the script passing (Haiku did) used to get no acceptance feedback at all
+    for (let round = 0; proofFails < proofLoopMax() && scratch && proofRerunOn() && existsSync(join(scratch.dir, PROOF_SCRIPT)) && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone; round++) {
       if (!keepProofScript(scratch.dir, ctx.runDir)) break;
       const pr = await rerunProof(ctx.repoDir, ctx.runDir, signal); if (!pr) break;
       proofRounds.push({ exit: pr.exit, failed: pr.failed, seconds: pr.seconds }); { const la0 = labelAsks(ctx.provider, prior.intake, prior.plan, ctx.repoDir); ctx.emit("proof.rerun", "implement", { round: round + 1, exit: pr.exit, proved: pr.proved, failed: pr.failed, seconds: pr.seconds, source: la0.source, statuses: ruleStatus(la0.asks, pr).map((s, i) => ({ line: s.line, status: s.status, checks: pr.lines[String(i + 1)]?.proved ?? 0, ...(s.reason ? { reason: s.reason } : {}) })) }); } // the live console turns each line green from this
       if (pr.exit === 0 && pr.failed === 0) { // the proof passes when Loki runs it: now check it against every acceptance line, and hand unmet lines back with the reason
-        const la = labelAsks(ctx.provider, prior.intake, prior.plan, ctx.repoDir); if (!la.asks.length || round + 1 >= proofLoopMax()) break;
+        const la = labelAsks(ctx.provider, prior.intake, prior.plan, ctx.repoDir); if (!la.asks.length || lineTurns >= LINE_TURNS_MAX) break;
         const tree = await worktreeTree(ctx.repoDir); if (!tree) break;
         const lc = await issueLineCheck(ctx, la.asks, tree, [], session.summary ?? "", [...(la.needs.length ? [`This repository needs: ${la.needs.join(", ")}.`] : []), "Loki's verify stage has not run yet at this point, so the check list is empty: a line about tests is met when the output of Loki's own run shows those tests passing.", ...proofFacts(ctx.runDir, pr, true)]);
         const byRule = ruleStatus(la.asks, pr), unmet = la.asks.flatMap((line, i) => { if (optionalAsk(line)) return []; if (byRule[i]!.status !== "met") return [{ line: `${i + 1}. ${line}`, reason: byRule[i]!.reason ?? "" }]; return lc.marks && !lc.marks.met.includes(i + 1) ? [{ line: `${i + 1}. ${line}`, reason: `it has a passing check, but a reviewer found a gap: ${lc.reasons?.[String(i + 1)] ?? "not stated"}` }] : []; }); // the count decides; the reviewer's gaps are handed back too, as advice the session should close
@@ -284,11 +285,13 @@ export const implementStage: Stage = {
         if (!unmet.length) break;
         const r2 = await resumeForProofScript(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, unmetBrief(unmet));
         if (r2.iterationId !== ids[ids.length - 1]) ids.push(r2.iterationId); else break;
+        lineTurns++;
         if (r2.session.summary) session = { ...session, summary: `${session.summary ?? ""}\n\n[after Loki's acceptance check, round ${round + 1}]\n${r2.session.summary}` };
         continue;
       }
       const r = await resumeForProofScript(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, `Loki ran your proof script ($LOKI_SCRATCH/loki-proof.sh) by itself, in a new empty directory, and it did not pass: exit ${pr.exit === null ? "none (it did not finish in time)" : pr.exit}, ${pr.proved} PROVED and ${pr.failed} FAILED line(s). This is the real end of its output:\n\n${pr.tail.slice(-4000)}\n\nFind out why it fails when it starts from nothing. A script that passed for you and fails for Loki usually depends on something your earlier commands left behind (a database, a file, a running server, an environment variable). Fix the product if the product is wrong, or the script if the script is wrong, run it yourself with a new empty directory as its argument until it exits 0, leave it in place, and end with the same finish line.`);
       if (r.iterationId !== ids[ids.length - 1]) ids.push(r.iterationId); else break; // no room left to resume
+      proofFails++;
       if (r.session.summary) session = { ...session, summary: `${session.summary ?? ""}\n\n[after Loki's own run of the proof failed, round ${round + 1}]\n${r.session.summary}` };
     }
     const preReviewReply = session.summary ?? ""; // the implement session's own last reply, with its per-item proof list; the review turn below replaces session.summary with its checklist answers
