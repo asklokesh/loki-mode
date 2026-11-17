@@ -867,7 +867,7 @@ export function sdkQueryProvider(): ProviderInvoker {
         // E-65: the session's own Bash tool inherits this env; a `loki start` run inside an engine session
         // must not pick up the lean engine10 shape. The host-guard hook runs in this process, so it is unaffected.
         for (const k of Object.keys(env)) if (k.startsWith("LOKI_E10_")) delete env[k];
-        if (process.env["LOKI_E10_STAGE"] && process.env["LOKI_E10_FULL_SESSION"] !== "1") env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"; // engine10 stage: no auto-backgrounded Bash (the BASH_* timeout clamp arrives via session.ts childEnv)
+        if (process.env["LOKI_E10_STAGE"]) env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"; // engine10 stage: no auto-backgrounded Bash (the BASH_* timeout clamp arrives via session.ts childEnv)
 
         // T3(b): compose the MCP/effort/budget/fallback options the loop was
         // missing vs the shell route (see buildSdkLoopOptions). Only fields that
