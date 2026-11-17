@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+- Loki now refuses a proof script that could count a result no check produced: one that reads `LOKI_PROOF_TOKEN`, prints or handles a `LOKI-PROOF` result line itself, or redefines `loki_http`, `loki_cmd` or `_lp`. The script is not run, every acceptance line is reported not met with that reason, and the session is handed the reason to rewrite it. The result marker has to reach the script because the check functions run inside it, so this guard covers the plain forms only; the count is still a count of the script's own checks as Loki ran them.
 
 ## v11.146.0 (2026-11-16)
 

@@ -106,13 +106,24 @@ export function keepProofScript(scratchDir: string, runDir: string): boolean {
   } catch { return false; }
 }
 
-export interface ProofRerun { exit: number | null; seconds: number; proved: number; failed: number; tail: string; script_chars: number; stopped: number; left: number; lines: Record<string, { proved: number; failed: number; first_proved?: string; first_failed?: string }> }
+/** Why a proof script is not run at all, or null. The result marker reaches the script (the check functions run inside it), so a script that reads the
+ *  marker, prints a result line by hand or redefines a check function could have a line counted that no check produced. Loki refuses such a script
+ *  before running it and says why, so the session rewrites it. This catches the plain forms only; it is a guard, not a proof that every check is meaningful. */
+export function proofScriptRefusal(text: string): string | null {
+  const code = text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+  if (/LOKI_PROOF_TOKEN/.test(code)) return "the proof script reads LOKI_PROOF_TOKEN; results count only when loki_http or loki_cmd print them";
+  if (/LOKI-PROOF/.test(code)) return "the proof script prints or handles a LOKI-PROOF result line itself; results count only when loki_http or loki_cmd print them";
+  if (/(^|[\s;&|({])(function\s+)?(loki_http|loki_cmd|_lp)\s*\(\s*\)/.test(code)) return "the proof script redefines loki_http, loki_cmd or _lp; source loki-check.sh and use its functions unchanged";
+  return null;
+}
+export interface ProofRerun { refused?: string; exit: number | null; seconds: number; proved: number; failed: number; tail: string; script_chars: number; stopped: number; left: number; lines: Record<string, { proved: number; failed: number; first_proved?: string; first_failed?: string }> }
 /** Runs the kept script once, from the repository root, in a new scratch directory that the same ownership cleanup stops and removes afterwards.
  *  Null when no script was kept or the re-run is off. Never throws. */
 export async function rerunProof(repoDir: string, runDir: string, signal?: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<ProofRerun | null> {
   const script = join(runDir, PROOF_SCRIPT);
   if (!proofRerunOn(env) || !existsSync(script)) return null;
-  let scriptChars = 0; try { scriptChars = readFileSync(script, "utf8").length; } catch { return null; }
+  let scriptChars = 0, refusal: string | null = null; try { const t = readFileSync(script, "utf8"); scriptChars = t.length; refusal = proofScriptRefusal(t); } catch { return null; }
+  if (refusal) return { refused: refusal, exit: null, seconds: 0, proved: 0, failed: 0, tail: `Loki did not run this proof script: ${refusal}.`, script_chars: scriptChars, stopped: 0, left: 0, lines: {} };
   let scratch: ReturnType<typeof createSessionScratch>;
   try { scratch = createSessionScratch(); } catch { return { exit: null, seconds: 0, proved: 0, failed: 0, tail: "Loki could not create a scratch directory for its own re-run", script_chars: scriptChars, stopped: 0, left: 0, lines: {} }; }
   const blank: Record<string, string> = {}; for (const k of Object.keys(env)) if (CONNECTION_ENV.test(k)) blank[k] = ""; // the re-run never sees the user's own database settings either
@@ -145,6 +156,6 @@ export function ruleStatus(asks: string[], r: ProofRerun | null): { line: string
   return asks.map((line, i) => {
     const e = r?.lines[String(i + 1)], opt = optionalAsk(line) ? { optional: true as const } : {};
     if (e && e.proved > 0 && e.failed === 0) return { line, status: "met" as const, evidence: `Loki's own run: ${e.proved} passing check${e.proved === 1 ? "" : "s"}; first: ${e.first_proved ?? ""}`.slice(0, 300), ...opt };
-    return { line, status: "unmet" as const, reason: (!r ? "there is no proof script for Loki to run" : r.exit === null ? "Loki's own run of the proof did not finish" : e && e.failed > 0 ? `a check failed in Loki's own run: ${e.first_failed ?? ""}` : "Loki's own run has no passing check for this line").slice(0, 300), ...opt };
+    return { line, status: "unmet" as const, reason: (!r ? "there is no proof script for Loki to run" : r.refused ? `Loki did not run the proof script: ${r.refused}` : r.exit === null ? "Loki's own run of the proof did not finish" : e && e.failed > 0 ? `a check failed in Loki's own run: ${e.first_failed ?? ""}` : "Loki's own run has no passing check for this line").slice(0, 300), ...opt };
   });
 }
