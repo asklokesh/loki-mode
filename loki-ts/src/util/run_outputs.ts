@@ -30,6 +30,7 @@ import { REPO_ROOT } from "./paths.ts";
 import { getVersion } from "../version.ts";
 import { resolveClaudeModel } from "./claude_model.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
+import { LOKI_LABELS, PR_URL_RE } from "../engine10/stages/pr.ts";
 
 /** Receipt field (A04): the operator intent revisions this run consumed. Omitted when none so other receipts stay byte-stable. */
 export function intentRevisionsBlock(revs: readonly IntentRevision[] | undefined): { intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[] } {
@@ -650,11 +651,12 @@ export function controlRunLink(base: string | null | undefined, repoDir: string,
   if (!base || !/^https?:\/\//.test(base) || !runId) return null;
   return `${base.replace(/\/+$/, "")}/#/runs/${encodeURIComponent(sourceId(repoDir))}/${encodeURIComponent(runId)}`;
 }
-export function issueStatusBody(events: readonly EventEnvelope[], o: { runId: string; steerRevs: number; prUrl?: string | null; outcome?: string | null; reason?: string | null; controlUrl?: string | null }): string {
+export function issueStatusBody(events: readonly EventEnvelope[], o: { runId: string; steerRevs: number; prUrl?: string | null; outcome?: string | null; reason?: string | null; controlUrl?: string | null; label?: boolean }): string {
   const planned = events.some((e) => e.type === "stage.completed" && e.stage === "plan");
   const lines = [STATUS_MARKER, `Loki run \`${o.runId.replace(/[^A-Za-z0-9._-]/g, "")}\``, "", `State: ${o.outcome ?? workItemState(events)}`, `Plan: ${planned ? "ready" : "pending"}`];
   if (o.steerRevs > 0) lines.push(`Operator steers applied: ${o.steerRevs}`);
   if (o.prUrl) lines.push(`Pull request: ${o.prUrl}`);
+  if (o.label && o.prUrl && o.outcome && PR_URL_RE.test(o.prUrl)) lines.push(`Label: ${(o.outcome === "VERIFIED" ? LOKI_LABELS.safe : LOKI_LABELS.needs).name}`); // the label the PR stage put on the pull request and on this issue (stages/pr.ts applyLokiLabel), stated where the issue's reader looks
   if (o.controlUrl) lines.push(`Control Plane: ${o.controlUrl}`);
   const last = events[events.length - 1]; // seq only: a relative age would change the body every call and defeat the unchanged-body skip
   if (last) lines.push(`Last event: seq ${last.seq}`);
@@ -671,7 +673,7 @@ export function issueStatusProjector(o: { pushSh: string; env: NodeJS.ProcessEnv
   const once = async (x: StatusExtra): Promise<{ argv: string[]; ok: boolean; skipped?: boolean } | null> => {
     const events = readEvents(o.eventsPath), since = Date.parse(events[0]?.ts ?? "") || 0;
     const revs = readIntentRevisions(o.repoDir, since).length;
-    const body = issueStatusBody(events, { runId: o.runId, steerRevs: revs, controlUrl: controlRunLink(o.env.LOKI_CONTROL_PLANE_URL || o.env.LOKI_CONTROL_URL, o.repoDir, o.runId), ...x }), bodyFile = join(o.runDir, "status-comment.md"), argv = argvOf(bodyFile);
+    const body = issueStatusBody(events, { runId: o.runId, steerRevs: revs, controlUrl: controlRunLink(o.env.LOKI_CONTROL_PLANE_URL || o.env.LOKI_CONTROL_URL, o.repoDir, o.runId), label: o.env.LOKI_PR_LABEL !== "0", ...x }), bodyFile = join(o.runDir, "status-comment.md"), argv = argvOf(bodyFile);
     if (body === last) return { argv, ok: true };
     mkdirSync(o.runDir, { recursive: true }); writeFileSync(bodyFile, body);
     const [ok, skipped] = await new Promise<[boolean, boolean]>((res) => { execFile("bash", [o.pushSh, ...argv], { env }, (err, out) => res([!err, /^skipped: /m.test(String(out))])); });

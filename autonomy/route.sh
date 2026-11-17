@@ -10,7 +10,7 @@
 # Bash 3.2 compatible (no associative arrays, no ${var,,}).
 
 # Flags that take a separate value token.
-_ROUTE_VALUE_FLAGS=" --provider --budget --budget-limit --max-cost --max-iterations --max-retries --session-model --completion-promise --base-wait --max-wait --prd --brief --attempts --spec --isolation --output --engine --mirofish-rounds --mirofish-timeout --max-duration --log-level --compliance --cost --remote --issue --bmad-project --openspec --mirofish-docker --destination --domain --env-file --health-url --health-match --workspace --config --vars --seal-existing "
+_ROUTE_VALUE_FLAGS=" --provider --budget --budget-limit --max-cost --max-iterations --max-retries --session-model --completion-promise --base-wait --max-wait --prd --brief --attempts --spec --isolation --output --engine --mirofish-rounds --mirofish-timeout --max-duration --log-level --compliance --cost --remote --issue --bmad-project --openspec --mirofish-docker --destination --domain --env-file --health-url --health-match --workspace --config --vars --seal-existing --label "
 # Flags whose value is optional (cmd_start reads one only when it is present): --mirofish takes a URL (a token that does not
 # start with --, as _loki_start_optval_consumes). Declared here so a refused one still consumes its value. --parallel is NOT
 # here: cmd_start treats it as a plain boolean (_loki_start_flag_kind), so "--parallel 3" leaves 3 as a positional.
@@ -206,6 +206,7 @@ loki_route_resolve() {
                     --attempts) passthru+=(--attempts "$val"); continue ;;
                     --spec) passthru+=(--spec "$val"); continue ;;
                     --seal-existing) passthru+=(--seal-existing "$val"); continue ;;
+                    --label) passthru+=(--label "$val"); continue ;; # several issues at once: loki start owner/repo --label L (issues_run.ts startMany)
                     --max-duration)
                         max_duration="$(_route_duration_s "$val")"
                         if [ -z "$max_duration" ] && [ -z "$cap_err" ]; then

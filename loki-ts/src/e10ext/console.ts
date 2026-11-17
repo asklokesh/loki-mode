@@ -7,6 +7,8 @@ import { formatDuration, spendSoFar } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
 import { terminalWidth } from "../util/term_width.ts";
 import { redactSecrets, UNSAFE_TERMINAL_CHARS_RE } from "../util/redact.ts";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 type Ev = { type: string; stage: string | null; data: Record<string, unknown>; run?: string; ts?: string };
 type StageState = "waiting" | "running" | "done" | "failed" | "skipped";
@@ -23,7 +25,7 @@ export class LiveConsole {
   private readonly stage = new Map<string, { state: StageState; at: number; s?: number }>();
   private lines: { text: string; state: LineState; checks: number; why?: string }[] = []; private lineSource = "the issue's own lines";
   private readonly seen: EventEnvelope[] = []; private readonly recent: string[] = [];
-  private diff = ""; private proof = ""; private tests = { pass: 0, fail: 0 }; private outcome = "";
+  private diff = ""; private proof = ""; private tests = { pass: 0, fail: 0 }; private outcome = ""; private pr = "";
   private out: (s: string) => void; private unhook: (() => void)[] = []; private midLine = false;
   constructor(private o: ConsoleOpts) { this.t0 = (o.now ?? Date.now)(); this.out = o.write ?? ((x) => { process.stdout.write(x); }); if (!o.write && o.hookStd !== false) this.hook(); this.keys(); }
   /** Anything else the run prints (a notice, a warning from a child) is written above the panel: the panel is wiped first and drawn again after, so a
@@ -87,8 +89,15 @@ export class LiveConsole {
     if (e.type === "heartbeat" && d["diff"] && typeof d["diff"] === "object") { const x = d["diff"] as Record<string, unknown>; this.diff = `${Number(x["files"] ?? 0)} files changed, +${Number(x["insertions"] ?? 0)} -${Number(x["deletions"] ?? 0)}`; }
     if (e.type === "test.result") { if (d["result"] === "pass") this.tests.pass++; else if (d["result"] === "fail") this.tests.fail++; }
     if (e.type === "proof.rerun") { this.proof = `Loki ran the proof itself, round ${Number(d["round"] ?? 1)}: ${d["exit"] === 0 ? "passed" : "did not pass"}, ${Number(d["proved"] ?? 0)} passing and ${Number(d["failed"] ?? 0)} failing checks in ${Number(d["seconds"] ?? 0)}s`; this.note(this.proof); if (Array.isArray(d["statuses"])) this.setLines(d["statuses"] as Record<string, unknown>[], d["source"]); }
+    if (e.type === "pr.opened" && typeof d["url"] === "string") this.pr = String(d["url"]);
+    if (e.type === "run.completed") { if (!this.outcome && typeof d["verdict"] === "string") this.outcome = String(d["verdict"]); if (!this.pr && typeof d["pr_url"] === "string") this.pr = String(d["pr_url"]); }
     if (e.type === "acceptance.round") this.note(`acceptance check, round ${Number(d["round"] ?? 1)}: ${Number(d["met"] ?? 0)} met, ${Number(d["unmet"] ?? 0)} handed back to the session`);
     this.render();
+  }
+  /** This run as one row of the many-issue status (ManyStatus below): the stage it is in, the acceptance lines met, the spend, the verdict and the pull request. */
+  row(): ManyRow {
+    const cur = [...this.stage.entries()].reverse().find(([, v]) => v.state === "running")?.[0] ?? [...this.stage.keys()].pop() ?? "";
+    return { stage: STAGES.find(([k]) => k === cur)?.[1] ?? (cur || "starting"), met: this.lines.filter((l) => l.state === "met").length, lines: this.lines.length, spent: (this.spent ?? "").replace(/ so far$/, ""), verdict: this.outcome, pr: this.pr };
   }
   private setLines(rows: Record<string, unknown>[], source: unknown): void {
     if (!rows.length) return;
@@ -138,4 +147,63 @@ export class LiveConsole {
   }
   /** Leaves the final panel on screen (every line with its result) above the summary, shows the cursor again and gives the terminal back. Idempotent. */
   clear(): void { if (this.closed) return; this.render(true); this.closed = true; this.out("\x1b[?25h"); for (const u of this.unhook) u(); this.unhook = []; this.restore(); }
+}
+
+/** Many issues at once (`loki start owner/repo#1 owner/repo#2`): one line per issue, built from each run's own events file in its own worktree, so the
+ *  runs share nothing with this view. A terminal gets the lines redrawn in place; a pipe gets a plain line each time an issue's stage, met count,
+ *  label or pull request changes. Each issue's row is a headless LiveConsole (the one fold of the events, not a second one). Presentation only. */
+export interface ManyRow { stage: string; met: number; lines: number; spent: string; verdict: string; pr: string }
+/** The label a person acts on: green only for a VERIFIED run. "" while the run has no verdict. */
+export const lokiLabelOf = (verdict: string): string => (verdict === "" ? "" : /^VERIFIED\b/.test(verdict) ? "safe to merge" : "needs you");
+export function manyLine(n: number, r: ManyRow, elapsedS: number, title = ""): string {
+  const acc = r.lines ? `${r.met} of ${r.lines} lines met` : "lines not read yet";
+  return [`#${n}`.padEnd(6), (lokiLabelOf(r.verdict) || r.stage).padEnd(13), acc.padEnd(20), (r.spent || "-").padEnd(14), formatDuration(elapsedS).padEnd(7), r.pr || title].join(" ").trimEnd();
+}
+export class ManyStatus {
+  private readonly rows = new Map<number, { title: string; dir: string; t0: number; con: LiveConsole; file: string | null; offset: number; rest: string; last: string; final: string | null }>();
+  private drawn = 0; private timer: ReturnType<typeof setInterval> | null = null;
+  constructor(private o: { write: (s: string) => void; tty: boolean; now?: () => number; columns?: number; intervalMs?: number; env?: NodeJS.ProcessEnv }) {}
+  private now(): number { return (this.o.now ?? Date.now)(); }
+  private headless(dir: string): LiveConsole { return new LiveConsole({ write: () => {}, stdin: null, repoDir: dir, columns: 200, env: { ...(this.o.env ?? process.env), NO_COLOR: "1" }, now: this.o.now }); }
+  /** An issue's run started in `dir` (its worktree); its events are read from <dir>/.loki/runs/<newest id>/events.jsonl. */
+  start(n: number, title: string, dir: string): void {
+    this.rows.set(n, { title, dir, t0: this.now(), con: this.headless(dir), file: null, offset: 0, rest: "", last: "", final: null });
+    if (!this.timer && this.o.intervalMs !== 0) { this.timer = setInterval(() => this.tick(), this.o.intervalMs ?? 1000); this.timer.unref?.(); }
+    this.tick();
+  }
+  /** The issue's run ended: `line` is its summary line, kept in place of the live row. */
+  done(n: number, line: string): void { const r = this.rows.get(n); this.poll(); if (r) r.final = line.trimEnd(); if (this.o.tty) this.draw(); else this.o.write(`${line.trimEnd()}\n`); }
+  /** Any other line (a notice, a retry) goes above the rows on a terminal. */
+  print(s: string): void { if (this.stopped) { this.o.write(s); return; } if (this.o.tty && this.drawn > 0) { this.o.write(`\x1b[${this.drawn}A\r\x1b[J`); this.drawn = 0; } this.o.write(s); if (this.o.tty) this.draw(); }
+  private stopped = false;
+  private poll(): void {
+    for (const r of this.rows.values()) {
+      if (r.final !== null) continue;
+      try {
+        const runs = join(r.dir, ".loki", "runs"), id = readdirSync(runs).filter((x) => existsSync(join(runs, x, "events.jsonl"))).sort().pop();
+        if (!id) continue;
+        const file = join(runs, id, "events.jsonl"); if (file !== r.file) { if (r.file !== null) r.con = this.headless(r.dir); r.file = file; r.offset = 0; r.rest = ""; } // a second run of the same issue (a retry) starts from an empty row, never the first run's label
+        const buf = readFileSync(file); if (buf.length <= r.offset) continue;
+        const text = r.rest + buf.subarray(r.offset).toString("utf8"), cut = text.lastIndexOf("\n"); r.offset = buf.length; r.rest = text.slice(cut + 1);
+        for (const l of text.slice(0, cut + 1).split("\n")) { if (!l.trim()) continue; try { r.con.onEvent(JSON.parse(l) as Ev); } catch { /* a torn or foreign line is skipped */ } }
+      } catch { /* the run has not written its first event yet */ }
+    }
+  }
+  /** The row of one issue as the run left it (its last events are read first). */
+  rowOf(n: number): ManyRow | null { this.poll(); return this.rows.get(n)?.con.row() ?? null; }
+  /** The rows as plain lines, in start order. */
+  frame(): string[] { return [...this.rows.entries()].map(([n, r]) => r.final ?? manyLine(n, r.con.row(), (this.now() - r.t0) / 1000, r.title)); }
+  tick(): void {
+    this.poll();
+    if (this.o.tty) { this.draw(); return; }
+    for (const [n, r] of this.rows) { if (r.final !== null) continue; const x = r.con.row(), key = `${x.stage}|${x.met}/${x.lines}|${x.verdict}|${x.pr}`; if (key !== r.last) { r.last = key; this.o.write(`${manyLine(n, x, (this.now() - r.t0) / 1000, r.title)}\n`); } }
+  }
+  private draw(): void {
+    const w = Math.max(50, terminalWidth({ columns: this.o.columns }) - 1), f = this.frame().map((l) => (l.length > w ? `${l.slice(0, w - 3)}...` : l));
+    let s = this.drawn > 0 ? `\x1b[${this.drawn}A` : "";
+    for (const l of f) s += `\r\x1b[2K${l}\n`;
+    this.o.write(s); this.drawn = f.length;
+  }
+  /** The rows stay on screen as they are; later lines are written below them. */
+  stop(): void { if (this.timer) clearInterval(this.timer); this.timer = null; this.drawn = 0; this.stopped = true; }
 }

@@ -312,7 +312,7 @@ export { partialCost }; // E-69: defined in events.ts, next to fold(); re-export
 export const runSummaryCost = (events: EventEnvelope[], tampered: boolean, repoDir: string): ReturnType<typeof summaryCost> => summaryCost(events, tampered, join(repoDir, ".loki"));
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
-  let eoo = false, resume = false, fresh = false, quiet = false, specFile: string | null = null, maxCost: string | null = null, noPr = false, sealPatch: string | null = null, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude", providerNamed = Boolean(process.env.LOKI_PROVIDER);
+  let eoo = false, resume = false, fresh = false, quiet = false, label: string | null = null, specFile: string | null = null, maxCost: string | null = null, noPr = false, sealPatch: string | null = null, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude", providerNamed = Boolean(process.env.LOKI_PROVIDER);
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--no-pr") noPr = true;
@@ -327,6 +327,8 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (a.startsWith("--spec=")) specFile = a.slice(7);
     else if (a === "--resume") resume = true;
     else if (a === "--fresh") fresh = true; // SB-12: skip the interrupted-run offer
+    else if (a === "--label") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --label needs a value\n"); noteRefusal("unsupported_flag"); return 2; } label = v; i++; } // MANY: `loki start owner/repo --label L` runs every open issue carrying the label
+    else if (a.startsWith("--label=")) label = a.slice(8);
     else if (a === "--seal-existing") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --seal-existing needs a patch file\n"); noteRefusal("unsupported_flag"); return 2; } sealPatch = resolve(v); noPr = true; i++; } // CW-12: the changes already exist as this patch; implement applies it instead of running a session, and no PR is ever opened
     else if (a === "--" && !eoo) eoo = true; // TEN-STABILITY-37: `--` ends options, the rest is task text
     else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--json] [--verbose] [--quiet] [--max-cost N] [--provider P] [--spec F] [--seal-existing PATCH] [--resume] [--fresh] [-- <task>]\n`); noteRefusal("unsupported_flag"); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
@@ -355,6 +357,11 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     const rp = resolveRunProvider(undefined, process.env, repoDir);
     if (rp.refusal) { process.stderr.write(rp.refusal); noteRefusal("no_provider"); return 2; }
     if (rp.source === "saved") { provider = rp.provider; providerNamed = true; process.env.LOKI_PROVIDER = rp.provider; }
+  }
+  if (spec === null && sealPatch === null && !process.env.LOKI_UNIT_ID) { // MANY: several issues of one repository (two or more refs, or owner/repo --label L) run at once, each a whole-issue run in its own worktree with its own pull request and label (commands/issues_run.ts startMany); one issue takes the single path below
+    const ir = await import("../commands/issues_run.ts"), many = ir.manyIssueRefs(task, label);
+    if (typeof many === "string") { process.stderr.write(`loki: ${many}\n`); noteRefusal("unsupported_flag"); return 2; }
+    if (many) { const cap = resolveCap(maxCost, repoDir); if ("error" in cap) { process.stderr.write(`engine10: ${cap.error}\n`); return 2; } return ir.startMany({ repoDir, slug: many.slug, numbers: many.numbers, label: many.label, noPr, capUsd: cap.usd, provider: providerNamed ? provider : null }); }
   }
   const olg = await import("../util/one_line_goal.ts"); // R01: infer provider and publish mode instead of refusing; the one-line note says what was assumed
   if (spec === null) { const g = olg.goalRef(task, readOriginUrl(repoDir), (s) => ISSUE_RE.test(s) || parseTrackerRef(s) !== null); if (g) { task = g.ref; process.stderr.write(`${g.note}\n`); } } // FR01: a pasted issue URL, "#N" or "fix #N" reaches the issue path

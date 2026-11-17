@@ -7,6 +7,7 @@
 //      run, so verify, seal, receipt and the PR push are the single-run path, unchanged;
 //   5. print one live line per issue, then a digest table, also written to .loki/issues-run/<ts>/digest.md.
 // MASS-2: a too-large issue is split by the model into stacked slices (commands/issues_epic.ts) unless --no-split.
+// MANY: `loki start owner/repo#12 owner/repo#15` and `loki start owner/repo --label L` (startMany) run several whole issues at once through steps 4 and 5.
 // Every external effect (gh, triage, runner, worktrees, prompt) is injectable so tests never call a provider.
 import { groupEnv } from "../e10ext/budget_cap.ts";
 import { spawnSync } from "node:child_process";
@@ -14,7 +15,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { MAX_PARALLEL, makeDefaultRunner, queueAdd, queueRun, type ItemResult, type QueueDeps, type RunOpts, type RunResult } from "./queue.ts";
+import { MAX_PARALLEL, makeDefaultRunner, normalizeRef, queueAdd, queueRun, type ItemResult, type QueueDeps, type RunOpts, type RunResult } from "./queue.ts";
 import { partialCostText } from "../engine10/output.ts";
 import { estimateFor, startText, type EstimateResult } from "../runner/router/cost_preview.ts";
 import { clearOutcome, epicOutcome, invalidSplitNote, lastOutcome, makeSessionDecompose, NO_JSON_REASON, splitCost, splitCostText, overCapNote, parseDecomposition, planComment, progressLine, renderEpicTree, runEpicSlices, sliceTask, stacksOn, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
@@ -61,6 +62,8 @@ export interface IssuesRunDeps {
   now: () => Date;
   out: (s: string) => void;
   err: (s: string) => void;
+  /** The one status view across the issues (e10ext/console.ts ManyStatus): told where each issue's run works and when it ends. */
+  status?: { start: (n: number, title: string, dir: string) => void; done: (n: number, line: string) => void; rowOf: (n: number) => { met: number; lines: number } | null };
 }
 
 export interface IssuesRunArgs {
@@ -76,6 +79,11 @@ export interface IssuesRunArgs {
   split: boolean;
   triage: boolean;
   json: boolean;
+  /** `loki start` with several issues (startMany): these issue numbers instead of the repository's open list. */
+  numbers?: number[];
+  /** Called from `loki start`: no y/n prompt (a single `loki start owner/repo#N` asks none), every issue in its own worktree, and the exit code says whether every issue is safe to merge. */
+  fromStart?: boolean;
+  noPr?: boolean;
 }
 
 const USAGE = "usage: loki issues run [owner/repo] [--label L] [--milestone M] [--limit N] [--parallel K] [--draft] [--dry-run] [--json] [--yes] [--comment] [--triage] [--no-split]\n";
@@ -219,51 +227,67 @@ export function renderIssuesDigest(slug: string, started: Date, finished: Date, 
 
 const secs = (s: number): string => (s < 90 ? `${Math.round(s)}s` : `${Math.round(s / 60)}m`);
 
-export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Promise<number> {
-  const a = parseIssuesArgs(args);
+export async function issuesRun(args: readonly string[] | IssuesRunArgs, d: IssuesRunDeps): Promise<number> {
+  const a = Array.isArray(args) ? parseIssuesArgs(args as readonly string[]) : (args as IssuesRunArgs);
+  const who = typeof a !== "string" && a.fromStart ? "loki start" : "loki issues run";
   if (typeof a === "string") {
     d.err(`loki issues run: ${a}\n${USAGE}`);
     return 2;
   }
   const slug = a.slug ?? originSlug(d.repoDir);
   if (!slug) {
-    d.err("loki issues run: no owner/repo given and origin is not a GitHub remote\n");
+    d.err(`${who}: no owner/repo given and origin is not a GitHub remote\n`);
     return 2;
   }
   if (slug.split("/").some((s) => s.includes("..") || s.startsWith("-"))) {
-    d.err(`loki issues run: invalid repo "${slug}"\n`);
+    d.err(`${who}: invalid repo "${slug}"\n`);
     return 2;
   }
   const started = d.now();
   const realOut = d.out;
   if (a.json) d = { ...d, out: () => {} };
 
-  // 1. list and dedupe (read-only gh calls, nothing billed)
-  const list = d.gh(["issue", "list", "--repo", slug, "--state", "open", "--json", "number,title,body,labels", "--limit", String(a.limit), ...(a.label ? ["--label", a.label] : []), ...(a.milestone ? ["--milestone", a.milestone] : [])]);
-  const raw = list.rc === 0 ? parseJson<unknown>(list.stdout) : null;
-  if (!Array.isArray(raw)) {
-    d.err(`loki issues run: gh issue list failed (rc ${list.rc}): ${clip(list.stderr || list.stdout, 300)}\n`);
-    return 1;
+  // 1. list and dedupe (read-only gh calls, nothing billed). Issues named one by one are read one by one, and each run's own rerun guard
+  // (openLokiPrGuard, before any model call) refuses a second pull request, so no repository-wide list is needed for them.
+  let raw: unknown[] | null;
+  if (a.numbers) {
+    raw = [];
+    for (const n of a.numbers) {
+      const v = d.gh(["issue", "view", String(n), "--repo", slug, "--json", "number,title,body,labels"]), row = v.rc === 0 ? parseJson<unknown>(v.stdout) : null;
+      if (!validIssueRow(row)) { d.err(`${who}: could not read ${slug}#${n} (gh issue view rc ${v.rc}): ${clip(v.stderr || v.stdout, 300)}\n`); return 2; }
+      raw.push(row);
+    }
+  } else {
+    const list = d.gh(["issue", "list", "--repo", slug, "--state", "open", "--json", "number,title,body,labels", "--limit", String(a.limit), ...(a.label ? ["--label", a.label] : []), ...(a.milestone ? ["--milestone", a.milestone] : [])]);
+    raw = list.rc === 0 ? parseJson<unknown[]>(list.stdout) : null;
+    if (!Array.isArray(raw)) {
+      d.err(`${who}: gh issue list failed (rc ${list.rc}): ${clip(list.stderr || list.stdout, 300)}\n`);
+      return 1;
+    }
   }
   const bad = raw.findIndex((r) => !validIssueRow(r));
   if (bad >= 0) {
-    d.err(`loki issues run: malformed issue at index ${bad} in gh output\n`);
+    d.err(`${who}: malformed issue at index ${bad} in gh output\n`);
     return 1;
   }
   const issues: GhIssue[] = (raw as RawIssue[]).map((i) => ({ number: i.number, title: i.title, body: i.body ?? "", labels: i.labels.map((l) => l.name) }));
-  const prs = d.gh(["pr", "list", "--repo", slug, "--state", "open", "--json", "number,headRefName,body,url", "--limit", "500"]);
-  const prList = prs.rc === 0 ? parseJson<{ headRefName?: string; body?: string }[]>(prs.stdout) : null;
-  if (!Array.isArray(prList)) {
-    // Fail closed: without the PR list a rerun could open a duplicate PR.
-    d.err(`loki issues run: gh pr list failed (rc ${prs.rc}); refusing to run without the dedupe check\n`);
-    return 1;
+  let prList: { headRefName?: string; body?: string }[] | null = [];
+  if (!a.numbers) {
+    const prs = d.gh(["pr", "list", "--repo", slug, "--state", "open", "--json", "number,headRefName,body,url", "--limit", "500"]);
+    prList = prs.rc === 0 ? parseJson<{ headRefName?: string; body?: string }[]>(prs.stdout) : null;
+    if (!Array.isArray(prList)) {
+      // Fail closed: without the PR list a rerun could open a duplicate PR.
+      d.err(`${who}: gh pr list failed (rc ${prs.rc}); refusing to run without the dedupe check\n`);
+      return 1;
+    }
   }
   const covered = coveredIssues(slug, prList);
   const dupes = issues.filter((i) => covered.has(i.number));
   const todo = issues.filter((i) => !covered.has(i.number));
   const par = Math.max(1, Math.min(a.parallel, todo.length));
 
-  d.out(`${slug}: ${issues.length} open issue${issues.length === 1 ? "" : "s"}${a.label ? ` labeled ${a.label}` : ""}${a.milestone ? ` in milestone ${a.milestone}` : ""}, ${dupes.length} already ha${dupes.length === 1 ? "s" : "ve"} an open Loki PR, ${todo.length} to ${a.triage ? "triage" : "run"}\n`);
+  if (a.numbers) d.out(`${slug}: ${todo.length} issue${todo.length === 1 ? "" : "s"} to run, ${par} at once, each in its own worktree with its own pull request\n`);
+  else d.out(`${slug}: ${issues.length} open issue${issues.length === 1 ? "" : "s"}${a.label ? ` labeled ${a.label}` : ""}${a.milestone ? ` in milestone ${a.milestone}` : ""}, ${dupes.length} already ha${dupes.length === 1 ? "s" : "ve"} an open Loki PR, ${todo.length} to ${a.triage ? "triage" : "run"}\n`);
   for (const i of dupes) d.out(`  skip #${i.number} (open Loki PR exists): ${clip(i.title, 70)}\n`);
   for (const i of todo) d.out(`  plan #${i.number}: ${clip(i.title, 70)}\n`);
   const est = d.estimate();
@@ -291,8 +315,8 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
     return 0;
   }
 
-  // 2. consent before anything billed
-  if (!a.yes) {
+  // 2. consent before anything billed (`loki start` on named issues asks none, as a single `loki start owner/repo#N` asks none)
+  if (!a.yes && !(a.fromStart && (a.numbers || !d.isTTY))) { // a label on a terminal still shows the count and asks once; unattended, the label is the consent
     if (!d.isTTY) {
       d.err("loki issues run: refusing to start billed runs without a terminal to confirm; pass --yes to run unattended\n");
       return 2;
@@ -368,27 +392,36 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
   mkdirSync(runDir, { recursive: true });
   const byRef = new Map(actionable.map((i) => [`${slug}#${i.number}`, i]));
   const sink = (): void => {};
+  let notSafe = 0, opened = 0;
   if (actionable.length > 0) {
     queueAdd([...byRef.keys()], { lokiDir: runDir, runner: d.runner, governor: noGovernor, now: d.now, out: sink, err: d.err });
     const runOne = async (ref: string, opts: RunOpts): Promise<RunResult> => {
-      const n = byRef.get(ref)!.number;
-      const wt = par > 1 ? d.worktree.create(`issue-${n}`, "HEAD") : null;
+      const i = byRef.get(ref)!, n = i.number;
+      // `loki start` on several issues: every issue gets its own worktree, also when they run one at a time, so no run ever starts on another's branch
+      const wt = par > 1 || a.fromStart ? d.worktree.create(`issue-${n}`, "HEAD") : null;
+      d.status?.start(n, clip(i.title, 60), wt ?? d.repoDir);
       try {
         return await runWithRetry(d, runDir, `#${n}`, ref, opts, wt);
       } finally {
-        if (wt) d.worktree.remove(`issue-${n}`, wt, runDir);
+        if (wt) { met.set(n, d.status?.rowOf(n) ?? null); d.worktree.remove(`issue-${n}`, wt, runDir); } // the acceptance count is read before the worktree (and its events) goes
       }
     };
-    const wholeFailed: GhIssue[] = [];
+    const wholeFailed: GhIssue[] = [], met = new Map<number, { met: number; lines: number } | null>();
     const onResult = (r: ItemResult): void => {
-      const i = byRef.get(r.ref)!;
-      if (a.split && wholeRunTooLarge(r.row.pr, r.res)) wholeFailed.push(i);
-      const outcome = r.row.pr ? r.row.verdict : `${r.row.verdict}, no PR: ${clip(lastLine(r.res.output) || "no output", 140)}`;
-      rows.set(i.number, { issue: i.number, title: i.title, triage: a.triage ? "actionable" : "not triaged", outcome, pr: r.row.pr ?? "none", cost: r.row.cost, time: secs(r.seconds) });
-      d.out(`#${i.number} ${r.row.verdict}  pr ${r.row.pr ?? "none"}  cost ${r.row.cost}  ${secs(r.seconds)}\n`);
+      const i = byRef.get(r.ref)!, pr = r.row.pr ?? PR_URL_RE.exec(r.res.output)?.[0] ?? null; // a local bare origin publishes local://<origin>#<branch>, which the queue's GitHub-only pattern does not read
+      if (a.split && wholeRunTooLarge(pr, r.res)) wholeFailed.push(i);
+      const outcome = pr ? r.row.verdict : `${r.row.verdict}, no PR: ${clip(lastLine(r.res.output) || "no output", 140)}`;
+      rows.set(i.number, { issue: i.number, title: i.title, triage: a.triage ? "actionable" : "not triaged", outcome, pr: pr ?? "none", cost: r.row.cost, time: secs(r.seconds) });
+      if (a.fromStart) {
+        const m = met.get(i.number), safe = /^VERIFIED\b/.test(r.row.verdict) && !!pr; if (!safe) notSafe++; if (pr) opened++;
+        const line = `#${i.number} ${safe ? "safe to merge" : "needs you"}  ${r.row.verdict}${m && m.lines ? `  ${m.met} of ${m.lines} lines met` : ""}  cost ${r.row.cost}  ${secs(r.seconds)}  pr ${pr ?? "none"}\n`;
+        if (d.status) d.status.done(i.number, line); else d.out(line);
+        return;
+      }
+      d.out(`#${i.number} ${r.row.verdict}  pr ${pr ?? "none"}  cost ${r.row.cost}  ${secs(r.seconds)}\n`);
     };
-    for (const i of actionable) d.out(`#${i.number} running\n`);
-    await queueRun([], { lokiDir: runDir, runner: runOne, governor: noGovernor, now: d.now, out: sink, err: d.err, parallel: par, draft: a.draft, onResult });
+    if (!a.fromStart) for (const i of actionable) d.out(`#${i.number} running\n`);
+    await queueRun(a.noPr ? ["--no-pr"] : [], { lokiDir: runDir, runner: runOne, governor: noGovernor, now: d.now, out: sink, err: d.err, parallel: par, draft: a.draft, onResult });
     // One split per issue, only after its whole-issue run failed or hit a cap
     const late: typeof epics = [];
     for (const i of wholeFailed) {
@@ -425,7 +458,8 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
     d.err(`loki issues run: could not write digest: ${e instanceof Error ? e.message : String(e)}\n`);
   }
   d.out(`\n${text}\ndigest: ${join(runDir, "digest.md")}\n`);
-  return 0;
+  // `loki start` on several issues: 0 only when every issue ended safe to merge, 6 (the PARTIAL code) when at least one pull request opened, else 1
+  return !a.fromStart || notSafe === 0 ? 0 : opened > 0 ? 6 : 1;
 }
 
 // One decompose call, re-asked once when the split is refused: with the cap and count when it came back over the cap, else with the exact
@@ -456,7 +490,9 @@ async function runWithRetry(d: Pick<IssuesRunDeps, "runner" | "sleep" | "out" | 
   for (let attempt = 0; ; attempt++) {
     const res = await d.runner(ref, { ...opts, ...(wt ? { cwd: wt } : {}) });
     if (wt && res.runId) keepReceipt(wt, res.runId, receiptsDir, d.err);
-    if (res.rc === 0 || attempt >= RATE_LIMIT_RETRIES || !isRateLimited(res.output)) return res;
+    // A run that sealed a receipt (any verdict) or opened a pull request is finished: its log holds the repository's own test and review text, where
+    // the words "rate limit" are ordinary (FireLater#17 sealed PARTIAL with a pull request, then FAILED, and was run three times in all).
+    if (res.rc === 0 || attempt >= RATE_LIMIT_RETRIES || !!res.verdict || PR_URL_RE.test(res.output) || !isRateLimited(res.output)) return res;
     const wait = calculateRateLimitBackoff(parseRetryAfter(res.output));
     d.out(`${label} provider rate limit, retrying in ${wait}s\n`);
     await d.sleep(wait * 1000);
@@ -709,21 +745,51 @@ export function askYesNo(question: string): Promise<boolean> {
   }));
 }
 
-export async function runIssues(args: readonly string[], inject?: Partial<IssuesRunDeps>): Promise<number> {
-  const sub = args[0];
-  if (sub !== "run") {
-    (inject?.err ?? ((s: string) => void process.stderr.write(s)))(USAGE);
-    return 2;
+/** `loki start` with several issues: the words of the task when every one is a GitHub issue of one repository (owner/repo#N or its issue URL, two or
+ *  more), or one owner/repo with --label. null: not a many-issue start (the single path runs). A string: why the words cannot be run. */
+export function manyIssueRefs(task: string, label: string | null): { slug: string; numbers: number[] | null; label: string | null } | string | null {
+  const words = task.trim().split(/\s+/).filter(Boolean);
+  if (label !== null) {
+    if (label.startsWith("-") || label.trim() === "") return `invalid --label "${label}"`;
+    return words.length === 1 && SLUG_RE.test(words[0]!) ? { slug: words[0]!, numbers: null, label } : "--label takes one repository: loki start owner/repo --label <label>";
   }
-  const repoDir = inject?.repoDir ?? process.cwd();
-  const lokiDir = inject?.lokiDir ?? process.env["LOKI_DIR"] ?? resolve(repoDir, ".loki");
-  // gh and each `loki start` supervisor get the user's env, exactly as a direct `loki start --pr` would (the supervisor
-  // withholds the token from its own worker). This process then withholds it, so the triage sessions never hold it.
-  const userEnv: NodeJS.ProcessEnv = { ...process.env };
-  if (!inject?.triage) (await import("../runner/github_token.ts")).withholdGithubTokens(process.env, () => {});
+  if (words.length < 2) return null;
+  const refs = words.map((w) => { const r = normalizeRef(w); return r && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+$/.test(r) ? r : null; });
+  if (refs.some((r) => r === null)) return null;
+  const slugs = new Set(refs.map((r) => r!.split("#")[0]!));
+  if (slugs.size > 1) return `several issues at once must be in one repository (got ${[...slugs].join(", ")}); start each repository's issues on their own`;
+  return { slug: [...slugs][0]!, numbers: [...new Set(refs.map((r) => Number(r!.split("#")[1])))], label: null };
+}
+/** LOKI_START_PARALLEL: whole-issue runs in flight at once for a many-issue `loki start` (default 3, 1 to MAX_PARALLEL). */
+export function startParallel(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env["LOKI_START_PARALLEL"]);
+  return Number.isInteger(n) && n >= 1 ? Math.min(n, MAX_PARALLEL) : Math.min(3, MAX_PARALLEL);
+}
+/**
+ * `loki start owner/repo#12 owner/repo#15` and `loki start owner/repo --label <label>`: several issues at once. Each issue is one whole-issue
+ * `loki start owner/repo#N` (never slices) in its own worktree with its own .loki, through the same queue, runner and receipt copy as `loki issues run`,
+ * so each ends with its own pull request and its own label. The runs share one thing: the spend ledger (groupEnv), so a dollar cap is one total for
+ * all of them. One status line per issue is drawn from each run's events (e10ext/console.ts ManyStatus). Exit 0 only when every issue is safe to merge.
+ */
+export async function startMany(o: { repoDir: string; slug: string; numbers: number[] | null; label: string | null; noPr: boolean; capUsd: number; provider?: string | null; env?: NodeJS.ProcessEnv; inject?: Partial<IssuesRunDeps> }): Promise<number> {
+  const env = o.env ?? process.env, { ManyStatus, consoleOn } = await import("../e10ext/console.ts");
+  const userEnv = groupEnv({ ...env, ...(o.provider ? { LOKI_PROVIDER: o.provider } : {}) }, o.capUsd, o.repoDir); // one cap and one ledger for all the issues, never a cap each
+  const tty = consoleOn(env), status = new ManyStatus({ write: (s) => void process.stdout.write(s), tty });
+  // on a terminal every other line (a notice, a queue position) goes through the status view, so nothing lands inside the redrawn rows
+  const d = issuesDeps(o.repoDir, env["LOKI_DIR"] ?? resolve(o.repoDir, ".loki"), userEnv, { out: (s) => status.print(s), ...(tty ? { err: (s: string) => status.print(s) } : {}), status, ...o.inject });
+  try {
+    return await issuesRun({ slug: o.slug, label: o.label, milestone: null, limit: DEFAULT_LIMIT, parallel: startParallel(env), draft: false, dryRun: false, yes: false, comment: false, split: false, triage: false, json: false, fromStart: true, noPr: o.noPr, ...(o.numbers ? { numbers: o.numbers } : {}) }, d);
+  } finally {
+    status.stop();
+    if (!o.inject?.runner) d.err((await import("../util/base_guard.ts")).sweepRunBranches(o.repoDir, userEnv));
+  }
+}
+
+/** The real effects behind `loki issues run` and a many-issue `loki start`; `inject` replaces any of them (tests). */
+function issuesDeps(repoDir: string, lokiDir: string, userEnv: NodeJS.ProcessEnv, inject?: Partial<IssuesRunDeps>): IssuesRunDeps {
   const base = inject?.runner ?? makeDefaultRunner(lokiDir);
-  const provider = resolveRunProvider(undefined, process.env, repoDir).provider; // env, then the saved project choice (an unrunnable one is refused by the `loki start` it spawns)
-  const d: IssuesRunDeps = {
+  const provider = resolveRunProvider(undefined, userEnv, repoDir).provider; // env, then the saved project choice (an unrunnable one is refused by the `loki start` it spawns)
+  return {
     repoDir,
     lokiDir,
     gh: inject?.gh ?? ((ghArgs) => {
@@ -745,7 +811,23 @@ export async function runIssues(args: readonly string[], inject?: Partial<Issues
     now: inject?.now ?? (() => new Date()),
     out: inject?.out ?? ((s) => void process.stdout.write(s)),
     err: inject?.err ?? ((s) => void process.stderr.write(s)),
+    ...(inject?.status ? { status: inject.status } : {}),
   };
+}
+
+export async function runIssues(args: readonly string[], inject?: Partial<IssuesRunDeps>): Promise<number> {
+  const sub = args[0];
+  if (sub !== "run") {
+    (inject?.err ?? ((s: string) => void process.stderr.write(s)))(USAGE);
+    return 2;
+  }
+  const repoDir = inject?.repoDir ?? process.cwd();
+  const lokiDir = inject?.lokiDir ?? process.env["LOKI_DIR"] ?? resolve(repoDir, ".loki");
+  // gh and each `loki start` supervisor get the user's env, exactly as a direct `loki start --pr` would (the supervisor
+  // withholds the token from its own worker). This process then withholds it, so the triage sessions never hold it.
+  const userEnv: NodeJS.ProcessEnv = { ...process.env };
+  if (!inject?.triage) (await import("../runner/github_token.ts")).withholdGithubTokens(process.env, () => {});
+  const d = issuesDeps(repoDir, lokiDir, userEnv, inject);
   const rc = await issuesRun(args.slice(1), d);
   if (!inject?.runner) d.err((await import("../util/base_guard.ts")).sweepRunBranches(repoDir, userEnv));
   return rc;
