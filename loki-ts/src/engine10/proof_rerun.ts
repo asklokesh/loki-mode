@@ -71,7 +71,8 @@ export const PROOF_HELPER = "loki-check.sh", ACCEPTANCE_FILE = "acceptance.txt";
  *  directory of its own run: only lines these functions print with that token are counted, so the label is a tally of checks Loki executed, never a reading
  *  of free text. Each check names the acceptance line number it proves. */
 export const PROOF_HELPER_SH = `# Loki proof helpers. Source this file; never edit it. Only lines printed by these functions count toward the label.
-_lp() { printf 'LOKI-PROOF %s %s %s: %s\\n' "\${LOKI_PROOF_TOKEN:-session}" "$1" "$2" "$3"; }
+# Each result is printed, and also appended to the file Loki names in LOKI_PROOF_LOG, so a script that pipes or redirects its output loses nothing.
+_lp() { printf 'LOKI-PROOF %s %s %s: %s\\n' "\${LOKI_PROOF_TOKEN:-session}" "$1" "$2" "$3"; if [ -n "\${LOKI_PROOF_LOG:-}" ]; then printf 'LOKI-PROOF %s %s %s: %s\\n' "\${LOKI_PROOF_TOKEN:-session}" "$1" "$2" "$3" >> "$LOKI_PROOF_LOG" 2>/dev/null; fi; }
 # loki_http <item number> "<what is proved>" <expected status> <curl arguments...>
 #   <item number> is the number of the acceptance item in acceptance.txt (1, 2, 3 ...), never a line of this script.
 #   Sends the request with curl. Passes when the status equals the expected one (and, when LOKI_BODY_MATCH is set, the body matches that grep -E pattern).
@@ -211,14 +212,16 @@ export async function rerunProof(repoDir: string, runDir: string, signal?: Abort
   const t0 = Date.now();
   let exit: number | null = null, out = "";
   try {
+    const resultLog = join(scratch.dir, "loki-proof-results.log"); // the helper appends every result here: a script that sent its checks' output to a log or to /dev/null (one did, and 16 passing checks counted as 0) is still counted
     const emptyDir = join(scratch.dir, "run"); mkdirSync(emptyDir, { mode: 0o700 }); // the script's argument is an EMPTY directory: the scratch itself holds Loki's helper, and a script that checks for emptiness refused it
-    const r = await run(["bash", script, emptyDir], { cwd: repoDir, timeoutMs: proofRerunS(env) * 1000, group: true, signal, env: { ...blank, ...scratchSessionEnv(scratch), LOKI_PROOF_TOKEN: token } });
+    const r = await run(["bash", script, emptyDir], { cwd: repoDir, timeoutMs: proofRerunS(env) * 1000, group: true, signal, env: { ...blank, ...scratchSessionEnv(scratch), LOKI_PROOF_TOKEN: token, LOKI_PROOF_LOG: resultLog } });
     exit = r.exitCode; out = `${r.stdout}\n${r.stderr}`;
   } catch (e) { out = `Loki's re-run did not complete: ${(e as Error).message}`; }
   const seconds = Math.round((Date.now() - t0) / 1000);
+  let logged = ""; try { logged = readFileSync(join(scratch.dir, "loki-proof-results.log"), "utf8"); } catch { /* no result file: the output alone is counted */ }
   const clean = cleanupSessionScratch(scratch);
   const text = out.replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, " ");
-  const lines = tallyProof(text, token), vals = Object.values(lines);
+  const fromLog = tallyProof(logged.replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, " "), token), lines = Object.keys(fromLog).length ? fromLog : tallyProof(text, token), vals = Object.values(lines);
   return { exit, seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: text.replace(new RegExp(`LOKI-PROOF ${token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: clean.stopped.length, left: clean.left.length, lines };
 }
 /** The facts for the acceptance line check: what Loki's own run of the script returned, and the script itself (so a script that checks nothing is visible). */
