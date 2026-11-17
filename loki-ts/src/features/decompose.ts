@@ -73,7 +73,7 @@ export const issueWholeFirst = (env: NodeJS.ProcessEnv = process.env): boolean =
   const v = (env["LOKI_ISSUE_WHOLE_FIRST"] ?? "").trim();
   if (/^(1|on|true|yes)$/i.test(v)) return true;
   if (/^(0|off|false|no)$/i.test(v)) return false;
-  return !haikuRun(env);
+  return true; // every model runs the issue whole. Haiku used to be split (measured before the proof loop: whole 3 of 10 asks, split 6 of 10). Measured again 2026-11-16 on FireLater#24 with the proof loop: split FAILED at $1.94 with no acceptance lines; whole met 10 of 10 lines in Loki's own proof run at $0.26 to $0.33
 };
 export function issueLabelsFromEnv(env: NodeJS.ProcessEnv = process.env): string[] {
   try { const v = JSON.parse(env[ISSUE_LABELS_ENV] ?? "[]") as unknown; return Array.isArray(v) ? v.filter((l): l is string => typeof l === "string") : []; } catch { return []; }

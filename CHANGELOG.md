@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+- `loki start` on an issue now runs the whole issue in one session on every model. A run on Haiku used to be split into slices up front, on a road with no acceptance lines and no proof run (`LOKI_ISSUE_WHOLE_FIRST=0` restores the split).
+- The note that some test files importing a changed file were left out by the 20-file limit no longer holds the label at PARTIAL when the full suite ran: those files ran in it, and its failures are compared with the base commit per test id.
 - A whole-issue session has no turn or token cap on any model. The 45-turn cap on Haiku sessions was sized from small tasks and cut every Haiku issue run off in the middle of the work.
 - A targeted test that already fails on the base commit is now judged by test id, as the full suite is, whatever its error text says (`LOKI_E10_BASE_RED_BY_ID=0` restores the old rule). A Haiku run whose 10 acceptance lines were all met in Loki's own proof run was sealed BLOCKED with no pull request because 143 tests that fail on the base commit failed again with a different stack trace.
 - A type check that fails only in files git ignores (a build output such as `.next/types`, left stale by a build the session ran) no longer fails the run; it is disclosed. Any error in a tracked or new source file still blocks.
