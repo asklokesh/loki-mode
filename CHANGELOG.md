@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.152.0 (2026-11-17)
+
+### Rules that held finished work back
+- A whole-issue run is never sized below 40 minutes (`LOKI_E10_ISSUE_MIN_CAP_S`, default 2400; 0 turns the floor off), within the ceiling. The size counts the files the plan names; a plan that named few sized a run on a different issue at about 22 minutes, the session was cut off at 1230 seconds before its proof had passed once, and 0 of 9 acceptance items counted. A ceiling: a run that finishes sooner ends sooner.
+- A test file the change adds that runs no test in verify, because it is gated on an environment the proof script sets (a live server), no longer holds the label at PARTIAL when the kept proof script names it: Loki's own proof run executes it, and that run must pass for any acceptance item to count. It is listed on the receipt. A run with every acceptance item met (25 checks) was held at PARTIAL on one such file.
+- Adding a test case to an existing test file is no longer read as weakening it because the new case has a spy in it. A spy, a stubbed global or environment variable, or `monkeypatch`, added together with a new test case, is that case's own setup. Still a weakening: a hook or a module mock added to the file, the same per-test construct added with no new case, a removed assertion or case, a skip. A run with every acceptance item met (30 checks) was held at PARTIAL on "weakened test" for one added case.
+
+### Measured
+- Measured on one repository with the smallest Claude model, one session per issue, on the build of this release: FireLater #24 (search) sealed VERIFIED with 10 of 10 acceptance items met, 26 checks in Loki's own proof run, $0.33, 27 minutes; FireLater #19 (bulk operations API), an issue no change in this release was tuned on, sealed VERIFIED with 9 of 9 items met, 33 checks, $0.53, 37 minutes. Both changes were read by hand: the new pages are linked from the sidebar, the new route and worker are registered, and no check result was printed by hand. Before these fixes the same two issues sealed PARTIAL with every item met (#24) and PARTIAL with 0 of 9 counted (#19). Two runs; other repositories are not measured.
+
 ## v11.151.0 (2026-11-17)
 
 ### Review, then fix
