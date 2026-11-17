@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+- A test file the change adds that runs no test in verify, because it is gated on an environment the proof script sets (a live server), no longer holds the label at PARTIAL when the kept proof script names it: Loki's own proof run executes it, and that run must pass for any acceptance item to count. It is listed on the receipt. A run with every acceptance item met (25 checks) was held at PARTIAL on one such file.
 - Adding a test case to an existing test file is no longer read as weakening it because the new case has a spy in it. A spy, a stubbed global or environment variable, or `monkeypatch`, added together with a new test case, is that case's own setup. Still a weakening: a hook or a module mock added to the file, the same per-test construct added with no new case, a removed assertion or case, a skip. A run with every acceptance item met (30 checks) was held at PARTIAL on "weakened test" for one added case.
 
 ## v11.151.0 (2026-11-17)
