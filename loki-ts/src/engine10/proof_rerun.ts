@@ -183,11 +183,12 @@ export function keepProofScript(scratchDir: string, runDir: string): boolean {
  *  before running it and says why, so the session rewrites it. This catches the plain forms only; it is a guard, not a proof that every check is meaningful. */
 export function proofScriptRefusal(text: string): string | null {
   const code = text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
-  // Printing is the forgery, reading is not: a script may grep its own output for LOKI-PROOF lines to count failures (two Haiku runs did, and the first form of
-  // this guard refused them in every round), so only a line that writes a result line, or uses the marker while writing, is refused.
-  const writes = code.split("\n").filter((l) => /(^|[\s;&|(])(echo|printf|print|tee|cat)\b/.test(l) && !/(^|[\s;&|(])(grep|egrep|awk|sed|rg)\b[^|]*LOKI-PROOF/.test(l));
-  if (writes.some((l) => /LOKI_PROOF_TOKEN/.test(l))) return "the proof script writes output using LOKI_PROOF_TOKEN; results count only when loki_http or loki_cmd print them";
-  if (writes.some((l) => /LOKI-PROOF/.test(l))) return "the proof script prints a LOKI-PROOF result line itself; results count only when loki_http or loki_cmd print them";
+  // The only forgery is a PROVED result line that no check produced. A script may read its own result lines, print a summary that carries the marker, set a
+  // default for LOKI_PROOF_TOKEN, or report a failure through _lp FAILED: three Haiku runs did one of those and earlier forms of this guard refused them in
+  // every round. Refused: a line that writes "LOKI-PROOF ... PROVED" itself, or calls _lp PROVED directly.
+  const lines = code.split("\n");
+  if (lines.some((l) => /(^|[\s;&|(])(echo|printf|print|tee|cat)\b/.test(l) && /LOKI-PROOF/.test(l) && /PROVED/.test(l) && !/(^|[\s;&|(])(grep|egrep|awk|sed|rg)\b[^|]*LOKI-PROOF/.test(l))) return "the proof script prints a LOKI-PROOF PROVED line itself; a line counts only when loki_http or loki_cmd print it";
+  if (lines.some((l) => /(^|[\s;&|({])_lp\s+["']?PROVED\b/.test(l))) return "the proof script calls _lp PROVED directly; a pass counts only when loki_http or loki_cmd made the check";
   if (/(^|[\s;&|({])(function\s+)?(loki_http|loki_cmd|_lp)\s*\(\s*\)/.test(code)) return "the proof script redefines loki_http, loki_cmd or _lp; source loki-check.sh and use its functions unchanged";
   return null;
 }
