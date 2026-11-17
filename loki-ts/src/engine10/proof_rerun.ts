@@ -14,13 +14,26 @@ import { acceptanceLines, FRESH_INSTALL_ASK, issueAcceptanceCapOn, issueAcceptan
 import { neededServices } from "../util/stack_tools.ts";
 import { issueRunBrief } from "./types.ts";
 
+/** RW-02 TITLE STAND-IN (LOKI_E10_TITLE_ACCEPTANCE, default on; 0/off/false/no opts out): the lines of a run on the proof road whose task has no acceptance
+ *  list of its own. The plan's intent-card "Acceptance:" lines when a plan session ran for its own reasons (a large or hard task, consent); otherwise the
+ *  task's title line, as intake recorded it, is the one item. No plan session is added to get lines: a plan makes the implement stage leave the coverage
+ *  fold, the patch path and the systematic-edit completion (they run only with no plan), and costs a session. Without a stand-in a prose issue had no line,
+ *  and passing checks of Loki's own run counted for nothing (playwright 44124 given as an issue file: 2 passing checks, proof.rerun statuses []). The title
+ *  is on intake's record before the implement session starts, so the session cannot change it. */
+export const titleAcceptanceOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TITLE_ACCEPTANCE"] ?? "").trim());
+export function fallbackLines(plan: unknown, intake: Record<string, unknown> | undefined, env: NodeJS.ProcessEnv = process.env): { lines: string[]; source: "plan" | "title" } {
+  const fromPlan = acceptanceLines(plan as never); if (fromPlan.length || !titleAcceptanceOn(env)) return { lines: fromPlan, source: "plan" };
+  const raw = typeof intake?.["title"] === "string" && intake["title"].trim() ? intake["title"] : String(intake?.["task"] ?? "").split("\n").find((l) => l.trim() !== "") ?? "";
+  const t = raw.replace(/^\s*#+\s*/, "").replace(/[\x00-\x1f\x7f`]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 500);
+  return t ? { lines: [t], source: "title" } : { lines: [], source: "plan" };
+}
 /** The lines the label is checked against: the issue's own checklist, else (an issue in prose) the plan's acceptance lines; plus the fresh-install line when
  *  the repository needs a database or another service. Empty when the check is off or nothing gives a line. */
-export function labelAsks(provider: string, intake: Record<string, unknown> | undefined, plan: unknown, repoDir: string, env: NodeJS.ProcessEnv = process.env): { asks: string[]; source: "issue" | "plan"; needs: string[] } {
+export function labelAsks(provider: string, intake: Record<string, unknown> | undefined, plan: unknown, repoDir: string, env: NodeJS.ProcessEnv = process.env): { asks: string[]; source: "issue" | "plan" | "title"; needs: string[] } {
   if (!issueAcceptanceCapOn(env)) return { asks: [], source: "issue", needs: [] };
-  const listed = issueAcceptanceOf(intake), own = listed.length ? listed : issueRunBrief(provider, intake?.["source"], env) ? acceptanceLines(plan as never) : [];
+  const listed = issueAcceptanceOf(intake), own = listed.length ? listed : issueRunBrief(provider, intake?.["source"], env) ? fallbackLines(plan, intake, env).lines : [];
   let needs: string[] = []; if (own.length) { try { needs = neededServices(repoDir); } catch { needs = []; } }
-  return { asks: own.length && needs.length ? [...own, FRESH_INSTALL_ASK] : own, source: listed.length ? "issue" : "plan", needs };
+  return { asks: own.length && needs.length ? [...own, FRESH_INSTALL_ASK] : own, source: listed.length ? "issue" : own.length ? fallbackLines(plan, intake, env).source : "plan", needs };
 }
 /** A tree object of the working tree as it stands (tracked changes and new files, ignores respected), built in a throwaway index so the real index is
  *  never touched. Lets the acceptance check read the uncommitted change with `git diff <base> <tree>`. Null when git cannot build it. */
@@ -391,6 +404,13 @@ export async function runSetupScript(repoDir: string, setup: string, signal?: Ab
   let text = r.out.split(end).join("").replace(/\[\d{1,3}(;\d{1,3})*m/g, ""); for (const [d, as] of [...names(r.dir, "$DIR"), ...names(repoDir, ".")].sort((a, b) => b[0].length - a[0].length)) text = text.split(d).join(as);
   return { reached: r.out.includes(end), exit: r.exit, seconds: r.seconds, tail: text.replace(/\s+$/, "").slice(-SETUP_TAIL_CHARS) };
 }
+/** RW-02 ONE ROAD: a text task that carries its own acceptance list is never VERIFIED on a reading alone. When Loki has no run of its own to count (the
+ *  session left no proof script, so rerunProof returned null), the label is held with this note: without it the acceptance check, a model reading the diff and
+ *  the session's reply, would decide every line by itself. Only for a text task (intake source "text") with a list of its own (`listed` > 0): it stated what
+ *  done means and was asked for the script. An issue run keeps its measured behavior, and a stand-in title line never holds a label. Off with the re-run
+ *  itself (LOKI_E10_PROOF_RERUN=0). */
+export const NO_OWN_PROOF_NOTE = "no proof script: the session left nothing Loki could run itself, so no acceptance line is proved by Loki's own run";
+export const noOwnProofNotes = (source: unknown, listed: number, r: ProofRerun | null, env: NodeJS.ProcessEnv = process.env): string[] => (source === "text" && listed > 0 && !r && proofRerunOn(env) ? [NO_OWN_PROOF_NOTE] : []);
 /** The facts for the acceptance line check: what Loki's own run of the script returned, and the script itself (so a script that checks nothing is visible). */
 export function proofFacts(runDir: string, r: ProofRerun | null, expected: boolean): string[] {
   if (!r) return expected ? ["The session left no proof script ($LOKI_SCRATCH/loki-proof.sh), so Loki could not re-run anything itself. Nothing in the reply counts as proof from running."] : [];

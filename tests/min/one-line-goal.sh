@@ -182,4 +182,37 @@ lcf="$(bun --no-env-file --config=/dev/null "$LCD" "$LCC" worker-stderr-inherite
 bun --no-env-file --config=/dev/null "$LCD" "$LCC" worker-stderr-inherited 2>&1 >"$T/lc-pipe.out" | /bin/cat > "$T/lc-pipe.err"
 [ "$(/bin/cat "$T/lc-pipe.out")" = "PASS worker-stderr-inherited" ] && cmp -s "$T/lc-pipe.err" "$T/lc-want.err" && ok "worker stderr to a pipe (not a terminal): the worker's bytes arrive untouched, in order, crash trace included" || bad "worker stderr to a pipe: $(/bin/cat "$T/lc-pipe.out"); got: $(head -c 400 "$T/lc-pipe.err")"
 
+# ---- RW-02 ONE ROAD: which road a goal takes (engine10/supervisor.ts workRoad, runRoad), the one gate the stages read (types.ts issueRunBrief) and the time
+# cap rule (util/run_cap.ts issueCapRule, resizeCap). No model, no run.
+#   road: a description of work longer than the small bar that carries its own acceptance list takes the work road; the same text in prose stays on the
+#         plain road unless LOKI_E10_ONE_ROAD=all; a goal at or under the bar, a spec that sizes large by structure, --spec,
+#         --seal-existing, a group unit, a provider other than claude and LOKI_E10_PROVE_BY_RUNNING=0 keep theirs; LOKI_E10_ONE_ROAD=0 turns the road off; an issue ref and an issue supplied as a file are "issue".
+#   gate: a text source is on the proof and acceptance road only with the run's flag, only on claude, and not under the prove-by-running opt-out; an issue
+#         source is as before.
+#   cap:  a text task on the road gets the issue floor (2400 s) exactly as a run directory with issue.json does; a plain text task keeps the sized cap (900 s);
+#         a fixed cap wins.
+# Plants: supervisor.ts workRoad: drop the small bar (road row 2 reads true); drop `deliverables(task, []).large` (row 3 reads true); drop the list test (row 11, prose, reads true);
+#         types.ts issueRunBrief drop `workRoadOn(env)` -> `true` (gate cell 1 reads true); run_cap.ts issueCapRule drop `workRoadOn(env)` (cap cell 2 reads 900).
+rw="$(cd "$ROOT/loki-ts" && RWT="$T" bun --no-env-file --config=/dev/null -e '
+const sv = await import("./src/engine10/supervisor.ts"), ty = await import("./src/engine10/types.ts"), rc = await import("./src/util/run_cap.ts"), fs = await import("node:fs");
+const T = process.env.RWT, o = { spec: false, sealPatch: false, provider: "claude" };
+const prose = "Fix the startup wait: " + "the server waits two seconds for a slow dependency and then gives up, although a longer timeout is configured. ".repeat(6);
+const work = prose + "\n\n## Acceptance criteria\n\n- the wait honours the configured timeout\n- with none configured it stays at two seconds\n";
+const spec = "# Product\n\n" + "It is a calculator people use from the command line. ".repeat(12) + "\n\n## Requirements\n\n- add\n- subtract\n- multiply\n- divide\n\n## Acceptance criteria\n\n- [ ] add works\n- [ ] subtract works\n- [ ] multiply works\n- [ ] divide works\n";
+fs.writeFileSync(T + "/rw-issue.json", JSON.stringify({ title: "t", body: "b" })); fs.mkdirSync(T + "/rw-run-plain", { recursive: true }); fs.mkdirSync(T + "/rw-run-issue", { recursive: true }); fs.writeFileSync(T + "/rw-run-issue/issue.json", "{}");
+const road = [
+  sv.workRoad(work, o, {}), sv.workRoad("add a multiply(a, b) function to calc.ts", o, {}), sv.workRoad(spec, o, {}), sv.workRoad(work, { ...o, spec: true }, {}), sv.workRoad(work, { ...o, sealPatch: true }, {}),
+  sv.workRoad(work, o, { LOKI_UNIT_ID: "u1" }), sv.workRoad(work, o, { LOKI_E10_ONE_ROAD: "0" }), sv.workRoad(work, o, { LOKI_E10_SMALL_MAX_CHARS: "5000" }), sv.workRoad(work, { ...o, provider: "opencode" }, {}), sv.workRoad(work, o, { LOKI_E10_PROVE_BY_RUNNING: "0" }), sv.workRoad(prose, o, {}), sv.workRoad(prose, o, { LOKI_E10_ONE_ROAD: "all" }), sv.workRoad("fix the typo", o, { LOKI_E10_ONE_ROAD: "all" }),
+  sv.runRoad(work, { isIssue: false, ...o }, {}), sv.runRoad("acme/x#1", { isIssue: true, ...o }, {}), sv.runRoad(work, { isIssue: false, ...o }, { LOKI_E10_ISSUE_JSON: T + "/rw-issue.json" }),
+  sv.runRoad(work, { isIssue: false, ...o }, { LOKI_E10_ISSUE_JSON: T + "/missing.json" }), sv.runRoad(work, { isIssue: false, ...o, spec: true }, {}), sv.runRoad("fix the typo", { isIssue: false, ...o }, {}),
+];
+const on = { LOKI_E10_WORK_ROAD: "1" };
+const gate = [ty.issueRunBrief("claude", "text", {}), ty.issueRunBrief("claude", "text", on), ty.issueRunBrief("opencode", "text", on), ty.issueRunBrief("claude", "text", { ...on, LOKI_E10_PROVE_BY_RUNNING: "0" }), ty.issueRunBrief("claude", "issue", {}), ty.issueRunBrief("claude", undefined, on)];
+const cap = [rc.resizeCap(T + "/rw-run-plain", null, true, undefined, {}), rc.resizeCap(T + "/rw-run-plain", null, true, undefined, on), rc.resizeCap(T + "/rw-run-issue", null, true, undefined, {}),
+  rc.resizeCap(T + "/rw-run-plain", null, true, undefined, { LOKI_E10_ISSUE_JSON: T + "/rw-issue.json" }), rc.resizeCap(T + "/rw-run-plain", null, true, 500, on), rc.resizeCap(T + "/rw-run-plain", null, false, undefined, on)];
+console.log([road.join(","), gate.join(","), cap.join(",")].join(" | "));' 2>&1 | tail -1)"
+[ "$rw" = "true,false,false,false,false,false,false,false,false,false,false,true,false,work,issue,issue,work,spec,text | false,true,false,false,true,false | 900,2400,2400,2400,500,2400" ] \
+    && ok "RW-02 road, gate and cap: a description of work with its own acceptance list takes the work road and the issue time cap rule; prose stays plain (=all opts it in); a short goal, a spec, --spec, --seal-existing, a group unit, another provider, the prove-by-running opt-out and the road opt-out keep theirs ($rw)" || bad "RW-02 road, gate and cap gave: $rw"
+# ---- end RW-02 ----
+
 finish

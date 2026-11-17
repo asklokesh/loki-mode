@@ -2,7 +2,7 @@
 import { stderrIsTty } from "../../util/term_width.ts";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { STAGE_BUDGETS, type RunContext, type RunnerName, type Stage, type StageResult, type TestMap } from "../types.ts";
+import { STAGE_BUDGETS, workRoadOn, type RunContext, type RunnerName, type Stage, type StageResult, type TestMap } from "../types.ts";
 import { buildRepoMap } from "../repomap.ts";
 import { cachedRepoMap, readTestMapCache, repoCacheDir, repoKey, writeTestMapCache } from "../cache.ts";
 import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
@@ -101,7 +101,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   const origin = readOriginUrl(ctx.repoDir);
   // resumed is constant false: the engine has no resume.
   const evidence = hooks.runtimeEvidence?.(task) ?? null; // GAME10-08a: pasted traces, request/response pairs and tracker URLs, recorded with a content hash; data only, never run
-  const asks = source === "issue" ? issueAcceptance(task) : []; // Q1 ISSUE-ACCEPTANCE: the issue's own acceptance list, verbatim (util/intent_card.ts); absent when it has none, so other runs keep their keys
+  const asks = source === "issue" || workRoadOn() ? issueAcceptance(task) : []; // RW-02 ONE ROAD: a text task on the work road has its own acceptance list read the same way // Q1 ISSUE-ACCEPTANCE: the issue's own acceptance list, verbatim (util/intent_card.ts); absent when it has none, so other runs keep their keys
   const common = { ...(asks.length ? { issue_acceptance: asks } : {}), ...(evidence ? { runtime_evidence: evidence } : {}), ...(stacked ? { stacked_loki_skip: stacked } : {}), task, title: task.split("\n")[0]!.slice(0, 72), repo: githubRepoFromUrl(origin) ?? origin, resumed: false, contract_snapshot: snapshotContract(ctx.repoDir), preexisting_untracked: untrackedAtIntake(ctx.repoDir), preexisting_untracked_blobs: snapshotUntracked(ctx.repoDir), ...(Object.keys(preexisting).length > 0 ? { preexisting_dirty: preexisting } : {}) };
   if (alreadySatisfied) {
     // Deterministic exit: no repo/test map needed, and never a session/LLM call.

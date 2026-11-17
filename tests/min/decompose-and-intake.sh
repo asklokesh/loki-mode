@@ -1598,10 +1598,17 @@ case "$IAF" in 'PARTIAL 9 0 0 1 check ["acceptance not reviewed: '*) ok "issue a
 IA_ON=0 ia_run off "$T/ia-seven.txt"
 IAOFF="$(ia_facts)"
 [ "$IAOFF" = 'VERIFIED 0 0 0 0 nocheck []' ] && [ ! -s "$IAD.linecheck" ] && ok "issue acceptance e2e: with LOKI_E10_ISSUE_ACCEPTANCE=0 no check runs and the receipt keys and label are as before the check existed" || bad "issue acceptance default off gave: $IAOFF"
+# RW-02 TITLE STAND-IN changed this leg's expectation (was 'VERIFIED 0 0 0 0 nocheck []' with no check call): an issue in prose has its title line as the
+# one acceptance line (no plan session is added), so the check runs against that line. The old expectation is the opt-out leg below.
 IA_BODY='Fix the off-by-one in paginate(): the last item of every page is dropped.' ia_run nolist "$T/ia-seven.txt"
 IANL="$(ia_facts)"
-[ "$IANL" = 'VERIFIED 0 0 0 0 nocheck []' ] && [ ! -s "$IAD.linecheck" ] && ! grep -q '"issue_acceptance"' "$IARUN/events.jsonl" 2>/dev/null \
-    && ok "issue acceptance e2e: an issue with no list runs no check and keeps today's keys and label" || bad "issue acceptance with no list gave: $IANL"
+IANLS="$(python3 -I -c 'import json, sys; r = json.load(open(sys.argv[1])); print(r.get("issue_acceptance_source"), r["issue_acceptance"][0]["line"])' "$IARUN/receipt.json" 2>&1)"
+[ "$IANL" = 'VERIFIED 1 1 1 0 check []' ] && [ -s "$IAD.linecheck" ] && [ "$IANLS" = "title Fix the off-by-one in paginate(): the last item of every page is dropped." ] && ! grep -q '^plan' "$IAD.stub.log" \
+    && ok "issue acceptance e2e: an issue with no list has its title as the one line (receipt source title), the check runs against it, and no plan session is added" || bad "issue acceptance with no list gave: $IANL; source and line '$IANLS'; plan sessions $(grep -c '^plan' "$IAD.stub.log" 2>/dev/null)"
+IA_BODY='Fix the off-by-one in paginate(): the last item of every page is dropped.' ia_run nolist-off "$T/ia-seven.txt" LOKI_E10_TITLE_ACCEPTANCE=0
+IANLO="$(ia_facts)"
+[ "$IANLO" = 'VERIFIED 0 0 0 0 nocheck []' ] && [ ! -s "$IAD.linecheck" ] && ! grep -q '"issue_acceptance"' "$IARUN/events.jsonl" 2>/dev/null \
+    && ok "issue acceptance e2e: with LOKI_E10_TITLE_ACCEPTANCE=0 an issue with no list runs no check and keeps the keys and label it had" || bad "issue acceptance with no list, title stand-in off, gave: $IANLO"
 # PROVES THE CHANGE (engine10/proof_rerun.ts proofOnBase, LOKI_E10_PROOF_BASE, LOKI_E10_PROOF_BASE_CAP): the kept proof script is run a second time against
 # the base commit. A check that also passes there proves nothing about the change; a line whose passing checks all pass there is named (and, under the cap,
 # not met). Real git, real bash, no model: a repository whose change adds one file, with installed node_modules that are not in the commit, and a script
@@ -1657,4 +1664,36 @@ const same = k("GET /v1/items/3f2a9c1e-11aa-4b2c-9d3e-0123456789ab on port 51234
 const r = p.compareWithBase([c("1", "a", true), c("1", "a", true), c("2", "b", true), c("3", "c", false)], [c("1", "a", true), c("1", "a", false), c("2", "x", true), c("3", "c", true)]);
 console.log(same, r.available, r.same["1"].passing, r.same["1"].on_base, r.same["2"].on_base, r.same_total, r.head_proved, p.keepsWorkingAsk("Tests passing."), p.keepsWorkingAsk("Build faceted search UI"));' 2>&1 | tail -1)"
 [ "$PBK" = "true true 2 1 0 1 3 true false" ] && ok "proof on base: a check is matched by item and description with ids, ports and counts removed; two checks that read the same are paired by count; a check described differently on base is never stripped; 'Tests passing.' reads as a keep-working line and 'Build faceted search UI' does not" || bad "proof on base matching gave: $PBK"
+
+# ---- RW-02 ONE ROAD: the lines of a run on the proof road whose task has no list, when they are fixed, and what a listed text task with no run of
+# Loki's own gets. No model, no run (the stub runs are in engine10-e2e-stub.sh).
+#   lines:     the plan's Acceptance lines when a plan gave any; otherwise the task's title line from intake's record (markdown heading mark removed), source
+#              "title"; LOKI_E10_TITLE_ACCEPTANCE=0 gives none; a task's own list always wins; off the road there are none.
+#   fixed:     the lines come from the intake and plan records. A session that rewrites its own copy ($LOKI_SCRATCH/acceptance.txt) to one line changes
+#              nothing: labelAsks still gives both, and the count rule leaves line 2 unmet.
+#   no script: a text task with its own list and no run of Loki's own gets the note; an issue source, a stand-in line (no list of its own), a run that
+#              exists, and LOKI_E10_PROOF_RERUN=0 do not.
+# Plants: proof_rerun.ts fallbackLines: return the plan lines only (lines cell 2 reads 0/plan); labelAsks: read the lines back from the session's copy when it
+#         exists (fixed reads 1 line; no real code path does this, the plant shows the leg would catch it); noOwnProofNotes: drop `source === "text"`
+#         (no script cell 2 reads 1) or drop `listed > 0` (cell 3 reads 1).
+RWU="$(cd "$ROOT/loki-ts" && RWT="$T" bun --no-env-file --config=/dev/null -e '
+const pr = await import("./src/engine10/proof_rerun.ts"), fs = await import("node:fs");
+const on = { LOKI_E10_WORK_ROAD: "1" }, T = process.env.RWT, R = T + "/rw-repo", d = R + "/rw-scratch"; fs.mkdirSync(d, { recursive: true }); // R: a repository directory of its own, so a fixture of another leg never reads as a service this one needs
+const card = ["Intent: wait for the configured time", "Acceptance: the wait honours timeout.startup", "Acceptance: with none set it stays at 2 s"];
+const la = (intake, plan, env) => { const x = pr.labelAsks("claude", intake, plan, R, env); return x.asks.length + "/" + x.source + (x.asks.length === 1 ? "/" + x.asks[0] : ""); };
+const lines = [la({ source: "issue", title: "Fix the startup wait" }, { intent_card: card }, {}), la({ source: "issue", title: "# Fix the `startup` wait" }, undefined, {}), la({ source: "text", title: "Fix it" }, undefined, on),
+  la({ source: "issue", title: "Fix it" }, undefined, { LOKI_E10_TITLE_ACCEPTANCE: "0" }), la({ source: "issue", title: "Fix it", issue_acceptance: ["a works", "b works"] }, { intent_card: card }, {}), la({ source: "text", title: "Fix it" }, undefined, {}),
+  la({ source: "issue", task: "\n## Fix from the task text\nbody" }, undefined, {})];
+const intake = { source: "text", title: "Fix the wait" }, plan = { intent_card: card };
+const before = pr.labelAsks("claude", intake, plan, R, on); pr.writeProofKit(d, before.asks);
+const handed = fs.readFileSync(d + "/acceptance.txt", "utf8").trim().split("\n").length; fs.writeFileSync(d + "/acceptance.txt", "1. the wait honours timeout.startup\n");
+const after = pr.labelAsks("claude", intake, plan, R, on);
+const run = { exit: 0, seconds: 1, proved: 1, failed: 0, tail: "", script_chars: 1, stopped: 0, left: 0, lines: { "1": { proved: 1, failed: 0, first_proved: "x" } } };
+const fixed = [before.asks.length, before.source, handed, after.asks.length, pr.ruleStatus(after.asks, run).map((s) => s.status).join("+")];
+const ns = [pr.noOwnProofNotes("text", 2, null, {}).length, pr.noOwnProofNotes("issue", 2, null, {}).length, pr.noOwnProofNotes("text", 0, null, {}).length, pr.noOwnProofNotes("text", 2, run, {}).length, pr.noOwnProofNotes("text", 2, null, { LOKI_E10_PROOF_RERUN: "0" }).length];
+console.log([lines.join(","), fixed.join(","), ns.join(",")].join(" | "));' 2>&1 | tail -1)"
+[ "$RWU" = '2/plan,1/title/Fix the startup wait,1/title/Fix it,0/plan,2/issue,0/plan,1/title/Fix from the task text | 2,plan,2,2,met+unmet | 1,0,0,0,0' ] \
+    && ok "RW-02 acceptance lines: with no list the plan lines stand, else the title line from intake; the lines are fixed in the run records (a session editing its own copy changes nothing); a listed text task with no run of Loki's own gets the note, a stand-in line does not" || bad "RW-02 acceptance lines gave: $RWU"
+# ---- end RW-02 ----
+
 finish

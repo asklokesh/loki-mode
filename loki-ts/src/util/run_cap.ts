@@ -2,7 +2,7 @@
 // An explicit cap (LOKI_E10_CAP_S or loki.yaml budgets.run_cap_s) is fixed: never shrunk or grown, and it wins over the ceiling.
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_CAP_S, envCapS, warnBadCap } from "../engine10/types.ts";
+import { DEFAULT_CAP_S, envCapS, warnBadCap, workRoadOn } from "../engine10/types.ts";
 import { dependentsOf } from "../project_model/graph.ts";
 import type { ProjectApi } from "../project_model/api.ts";
 import { lokiYamlTexts, yamlKey } from "./yaml_key.ts";
@@ -59,10 +59,14 @@ export const issueCapFactor = (env: NodeJS.ProcessEnv = process.env): number => 
  *  says. The size counts files the plan names, and a plan that names few (a new API in one service) sized a run at about 22 minutes; the session was cut
  *  off at 1230 s before its proof had passed once, and 0 of 9 items counted. A ceiling, not a wait. */
 export const issueMinCapS = (env: NodeJS.ProcessEnv = process.env): number => { const v = (env["LOKI_E10_ISSUE_MIN_CAP_S"] ?? "").trim(), n = Number(v); return v !== "" && Number.isFinite(n) && n >= 0 ? n : 2400; };
-export function resizeCap(runDir: string, api: ProjectApi | null, subscription: boolean, fixedS?: number): number {
+/** RW-02 ONE ROAD: the runs that get the issue room and floor: an issue (its issue.json in the run directory, or supplied as a file in LOKI_E10_ISSUE_JSON) and a
+ *  text task on the work road (types.ts WORK_ROAD_ENV). Such a task proves every acceptance item and closes what Loki hands back exactly as an issue run does; six
+ *  measured text runs on unfamiliar repositories sat at the 900 s single-fix cap. */
+export const issueCapRule = (runDir: string, env: NodeJS.ProcessEnv = process.env): boolean => existsSync(join(runDir, "issue.json")) || workRoadOn(env) || (!!env["LOKI_E10_ISSUE_JSON"] && existsSync(env["LOKI_E10_ISSUE_JSON"]));
+export function resizeCap(runDir: string, api: ProjectApi | null, subscription: boolean, fixedS?: number, env: NodeJS.ProcessEnv = process.env): number {
   if (fixedS && fixedS > 0) return fixedS;
   const sized = scopeCapS(readPlanScope(runDir), api, subscription);
-  return existsSync(join(runDir, "issue.json")) ? Math.min(capCeilingS(subscription), Math.max(issueMinCapS(), Math.round(sized * issueCapFactor()))) : sized;
+  return issueCapRule(runDir, env) ?Math.min(capCeilingS(subscription), Math.max(issueMinCapS(), Math.round(sized * issueCapFactor()))) : sized;
 }
 /** budgets.run_cap_s from loki.yaml text (a two-level read, like budgets.per_run). */
 export function yamlRunCapS(text: string): number | null {

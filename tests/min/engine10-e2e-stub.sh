@@ -1062,4 +1062,157 @@ RW3S="$RC $(rw3_vm) $(grep -c 'verified mode: ' <<< "$OUT")"
 unset -f rw3_vm
 # ---- end RW-03 step 2 ----
 
+# ---- RW-02 ONE ROAD: a text task that carries its own acceptance list takes the proof and acceptance road an issue takes ------------------------------
+# Stub runs, no model. The wrapper below is the fixture stub plus what a real session does on this road: it leaves $LOKI_SCRATCH/loki-proof.sh (a file named
+# proof.sh in the leg's config directory), and, for the guard leg, cuts its own copy of the acceptance lines down to one.
+#   no-script:  a text task with an acceptance list whose session leaves no proof script is never VERIFIED, even when the acceptance check, a model reading
+#               the diff and the reply, marks every line MET.
+#   proved:     the same task with a proof script whose checks pass in Loki's own run is VERIFIED, each line met by count.
+#   failing:    one failing check in Loki's own run, beside a passing check for the same line, keeps the label below VERIFIED and that line unmet.
+#   guard:      the lines are fixed before the session starts: a session that rewrites $LOKI_SCRATCH/acceptance.txt to one line and proves only that one
+#               still faces both lines, and is not VERIFIED.
+#   prose:      the same text with no list stays on the plain road exactly as before (no lines, no proof brief, no plan, the sessions it had). Only under
+#               LOKI_E10_ONE_ROAD=all does it take the road, with the title line as item 1 and no plan session; a stand-in line never holds a label.
+#   short:      a task at or under the small bar keeps the fast road.
+#   spec:       a file that sizes large by structure (a spec with several deliverables) keeps the road it had.
+#   issue json: LOKI_E10_ISSUE_JSON with a title and body (beside a positional file, and beside a short positional task) gives the issue's own lines and the
+#               issue time cap rule; with a prose body, the title line.
+#   cap:        a text task on the road is resized to the issue floor (2400 s); every other text task stays at 900 s.
+#   resume:     a road run cut in implement and started again is still on the road.
+# Sessions the road adds to a run (measured here on the stub, counted from its log): none when the session leaves its proof script; one implement resume
+# when it leaves none (the request for the script); one tool-less acceptance check call at the seal in both cases. The plain road is unchanged.
+# Plants (each makes the named leg fail):
+#   R1. proof_rerun.ts noOwnProofNotes: return [] always (no-script reads VERIFIED).
+#   R2. proof_rerun.ts ruleStatus: `e.proved > 0 && e.failed === 0` -> `e.proved > 0` in both tests (failing reads line 2 met). This is the count rule on
+#       main; the leg shows a listed text task is under it.
+#   R3. supervisor.ts workRoad: drop `deliverables(task, []).large` (spec reads road work); drop the small bar (short reads road work); drop the list test
+#       (prose reads road work).
+#   R4. run_cap.ts issueCapRule: drop `workRoadOn(env)` (cap reads none for the text task); drop the LOKI_E10_ISSUE_JSON test (issue json reads no cap).
+#   R5. intake.ts: `source === "issue" ? issueAcceptance(task) : []` as before (no-script and proved read 0 lines).
+#   R6. proof_rerun.ts fallbackLines: plan lines only (prose =all and issue json prose read no line).
+#   R8. types.ts issueRunBrief: `source === "text"` without the run's flag (short, spec, prose, off read the proof brief).
+#   R11. supervisor.ts runSupervisor: drop the line that sets the worker's flag from run.started's road (the resumed half reads no proof re-run).
+#   R13. supervisor.ts workRoad: drop the provider and prove-by-running test (prove-by-running off reads road work and PARTIAL).
+RWD="$T/rw02"; mkdir -p "$RWD/bin" "$RWD/cfg"
+cat > "$RWD/bin/claude" <<RWSTUB
+#!/bin/bash
+if [ "\${LOKI_E10_STAGE:-}" = implement ] && [ -n "\${LOKI_SCRATCH:-}" ] && [ -d "\$LOKI_SCRATCH" ]; then
+  [ -f "$RWD/cfg/proof.sh" ] && cp "$RWD/cfg/proof.sh" "\$LOKI_SCRATCH/loki-proof.sh"
+  if [ -f "$RWD/cfg/shrink" ] && [ -f "\$LOKI_SCRATCH/acceptance.txt" ]; then head -1 "\$LOKI_SCRATCH/acceptance.txt" > "\$LOKI_SCRATCH/acceptance.new" && mv "\$LOKI_SCRATCH/acceptance.new" "\$LOKI_SCRATCH/acceptance.txt"; fi
+fi
+exec "$FIX/bin/claude" "\$@"
+RWSTUB
+chmod +x "$RWD/bin/claude"
+RW_PAD="$(printf 'The function must live beside add() in calc.ts and follow the same style. %.0s' 1 2 3 4 5 6 7 8 9)"
+RW_HEAD="# Add a multiply(a, b) function to calc.ts"
+RW_PROBLEM="calc.ts has add() but no way to multiply two numbers, and callers loop over add() instead. $RW_PAD"
+printf '%s\n\n## Problem\n\n%s\n\n## Acceptance criteria\n\n- multiply(2, 3) returns 6\n- multiply(-2, 3) returns -6\n' "$RW_HEAD" "$RW_PROBLEM" > "$RWD/list.md"
+printf '%s\n\n## Problem\n\n%s\n' "$RW_HEAD" "$RW_PROBLEM" > "$RWD/prose.md"
+printf '# Calculator product\n\n%s\n\n## Requirements\n\n- a multiply function\n- a divide function\n- a subtract function\n- a power function\n\n## Acceptance criteria\n\n- [ ] multiply works\n- [ ] divide works\n- [ ] subtract works\n- [ ] power works\n' "$RW_PROBLEM" > "$RWD/spec.md"
+python3 -I -c 'import json, sys; json.dump({"title": "Add a multiply(a, b) function to calc.ts", "body": "## Problem\n\n" + sys.argv[2] + "\n\n## Acceptance criteria\n\n- multiply(2, 3) returns 6\n- multiply(-2, 3) returns -6\n"}, open(sys.argv[1], "w"))' "$RWD/issue.json" "$RW_PROBLEM"
+printf 'MET 1: the diff adds multiply to calc.ts\nMET 2: the diff adds multiply to calc.ts\n' > "$RWD/met.txt"
+rw_proof() { # rw_proof <check for item 1> <check for item 2 or -> [second check for item 2]: the session's proof script for the next run; rw_proof - removes it
+    rm -f "$RWD/cfg/proof.sh" "$RWD/cfg/shrink"; [ "$1" = "-" ] && return 0
+    { printf '#!/bin/bash\n. "$LOKI_SCRATCH/loki-check.sh"\nloki_cmd 1 "item one" %s\n' "$1"; [ "${2:--}" = "-" ] || printf 'loki_cmd 2 "item two" %s\n' "$2"; [ -z "${3:-}" ] || printf 'loki_cmd 2 "item two, second check" %s\n' "$3"; } > "$RWD/cfg/proof.sh"
+}
+rw_engine() { # rw_engine <name> <task or file> [VAR=value...] -> RWOUT, RWRUN (run dir), RWP (prompt log prefix)
+    local name="$1" task="$2" d; shift 2
+    if [ -n "${RW_REUSE:-}" ]; then d="$RW_REUSE"; else # RW_REUSE=<an earlier run's directory>: the same repository again (the resume leg)
+        d="$(mktemp -d "$T/rw.$name.XXXXXX")"; cp -R "$FIX/repo" "$d/repo"
+        git -C "$d/repo" init -q -b main; git -C "$d/repo" config user.name e2e; git -C "$d/repo" config user.email e2e@example.invalid
+        git -C "$d/repo" add calc.ts calc.test.ts bunfig.toml; git -C "$d/repo" commit -q -m base
+    fi
+    RWDIR="$d"; RWP="$d/prompt"
+    RWOUT="$(cd "$d/repo" && env -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_E10_ISSUE_JSON -u LOKI_E10_WORK_ROAD LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$RWD/bin/claude" PATH="$FIX/bin:$PATH" \
+        E2E_STUB_MODE=done E2E_STUB_LOG="$d/stub.log" E2E_STUB_PROMPT_LOG="$RWP" E2E_STUB_LINECHECK_FILE="$RWD/met.txt" LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" "$@" \
+        ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start "$task" --no-pr </dev/null 2>&1)"
+    RWRUN="$(dirname "$(ls "$d"/repo/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"; RWSTAGES="$(tr '\n' ' ' < "$d/stub.log" 2>/dev/null)"
+}
+rw_facts() { python3 -I - "$RWRUN" <<'RWPY'
+import json, os, sys
+rd = sys.argv[1]
+try: ev = [json.loads(l) for l in open(os.path.join(rd, "events.jsonl"))]
+except Exception: print("no events"); sys.exit(0)
+try: r = json.load(open(os.path.join(rd, "receipt.json")))
+except Exception: r = {}
+def first(t, st=None): return next((e["data"] for e in ev if e["type"] == t and (st is None or e.get("stage") == st)), {})
+started, intake, plan = first("run.started"), first("stage.completed", "intake"), first("stage.completed", "plan")
+ia = r.get("issue_acceptance") or []
+cap = [e["data"].get("cap_s") for e in ev if e["type"] == "cap.sized"]
+print(" ".join([
+    str(r.get("verdict")), "road=" + str(started.get("road")), "source=" + str(intake.get("source")), "lines=" + str(len(intake.get("issue_acceptance") or [])),
+    "receipt=" + ",".join(str(x.get("status")) for x in ia) if ia else "receipt=none", "own=" + str(sum(1 for x in ia if str(x.get("evidence", "")).startswith("Loki's own run"))),
+    "reruns=" + ("yes" if any(e["type"] == "proof.rerun" for e in ev) else "no"), "noscript=" + ("yes" if any(n.startswith("no proof script:") for n in r.get("not_proven", [])) else "no"),
+    "plan=" + ("ran" if plan else "skipped"), "src=" + str(r.get("issue_acceptance_source")), "cap=" + (str(cap[-1]) if cap else "none"),
+]))
+RWPY
+}
+rw_proof -
+rw_engine noscript "$RWD/list.md"; RWF="$(rw_facts)"
+[ "$RWF" = "PARTIAL road=work source=text lines=2 receipt=met,met own=0 reruns=no noscript=yes plan=skipped src=issue cap=2400" ] \
+    && ok "RW-02 no-script: a text task whose session leaves no proof script is PARTIAL with the reason, though the acceptance check marked both lines MET; it is on the road (2 lines from its own list, cap 2400)" || bad "RW-02 no-script gave: $RWF"
+grep -q 'loki-proof.sh' "$RWP.implement0" && grep -q 'acceptance.txt' "$RWP.implement0" && ok "RW-02 no-script: the implement brief carries the proof script instructions an issue run gets" || bad "RW-02 no-script: the implement brief lacks the proof script instructions"
+rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
+rw_engine proved "$RWD/list.md"; RWF="$(rw_facts)"
+[ "$RWF" = "VERIFIED road=work source=text lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
+    && ok "RW-02 proved: the same text task with a proof script that passes in Loki's own run is VERIFIED, both lines met by Loki's own count" || bad "RW-02 proved gave: $RWF ($(grep -E '^(Outcome|NOT PROVEN)' <<< "$RWOUT" | tr '\n' ' ' | cut -c1-600))"
+rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts' 'false' # line 2 has one passing and one failing check
+rw_engine failing "$RWD/list.md"; RWF="$(rw_facts)"
+[ "$RWF" = "PARTIAL road=work source=text lines=2 receipt=met,unmet own=1 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
+    && ok "RW-02 failing: one failing check in Loki's own run keeps a text task below VERIFIED and its line unmet" || bad "RW-02 failing gave: $RWF"
+rw_proof 'grep -q "export function multiply" calc.ts' -; : > "$RWD/cfg/shrink"
+rw_engine guard "$RWD/list.md"; RWF="$(rw_facts)"
+[ "$RWF" = "PARTIAL road=work source=text lines=2 receipt=met,unmet own=1 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
+    && ok "RW-02 guard: a session that cuts its copy of the acceptance lines to one and proves only that one still faces both lines and is not VERIFIED" || bad "RW-02 guard gave: $RWF"
+rw_proof 'grep -q "export function multiply" calc.ts' -
+rw_engine prose "$RWD/prose.md"; RWF="$(rw_facts)"
+[ "$RWF" = "VERIFIED road=text source=text lines=0 receipt=none own=0 reruns=no noscript=no plan=skipped src=None cap=none" ] && ! grep -q 'loki-proof.sh' "$RWP.implement0" && [ "$RWSTAGES" = "implement implement " ] \
+    && ok "RW-02 prose: a text task with no list stays on the plain road: no lines, no proof brief, no plan, cap unchanged, the two sessions it had ($RWSTAGES)" || bad "RW-02 prose gave: $RWF; sessions '$RWSTAGES'"
+rw_engine prose-all "$RWD/prose.md" LOKI_E10_ONE_ROAD=all; RWF="$(rw_facts)"
+[ "$RWF" = "VERIFIED road=work source=text lines=0 receipt=met own=1 reruns=yes noscript=no plan=skipped src=title cap=2400" ] && ! grep -q plan <<< "$RWSTAGES" \
+    && ok "RW-02 prose, LOKI_E10_ONE_ROAD=all: the title stands in as item 1 with no plan session, and Loki's own run proves it" || bad "RW-02 prose (=all) gave: $RWF; sessions '$RWSTAGES' ($(grep -E '^(Outcome|NOT PROVEN)' <<< "$RWOUT" | tr '\n' ' ' | cut -c1-600))"
+rw_engine prose-all-off "$RWD/prose.md" LOKI_E10_ONE_ROAD=all LOKI_E10_TITLE_ACCEPTANCE=0; RWF="$(rw_facts)"
+[ "$RWF" = "VERIFIED road=work source=text lines=0 receipt=none own=0 reruns=yes noscript=no plan=skipped src=None cap=2400" ] \
+    && ok "RW-02 prose, =all: LOKI_E10_TITLE_ACCEPTANCE=0 gives no stand-in line" || bad "RW-02 prose (=all, stand-in off) gave: $RWF"
+rw_proof -
+rw_engine prose-all-noscript "$RWD/prose.md" LOKI_E10_ONE_ROAD=all; RWF="$(rw_facts)"
+[ "$RWF" = "VERIFIED road=work source=text lines=0 receipt=met own=0 reruns=no noscript=no plan=skipped src=title cap=2400" ] \
+    && ok "RW-02 prose, =all, no proof script: a stand-in line never holds the label; the run keeps the label its checks gave it" || bad "RW-02 prose (=all, no script) gave: $RWF"
+rw_proof -
+rw_engine short "add a multiply(a, b) function to calc.ts"; RWF="$(rw_facts)"
+[ "$RWF" = "VERIFIED road=text source=text lines=0 receipt=none own=0 reruns=no noscript=no plan=skipped src=None cap=none" ] && ! grep -q 'loki-proof.sh' "$RWP.implement0" \
+    && ok "RW-02 short: a task under the small bar keeps the fast road: no lines, no proof brief, no plan, cap unchanged, VERIFIED as before" || bad "RW-02 short gave: $RWF"
+rw_engine spec "$RWD/spec.md"; RWF="$(rw_facts)"
+case "$RWF" in *" road=text source=text lines=0 receipt=none own=0 reruns=no noscript=no "*"src=None cap=none") ! grep -q 'loki-proof.sh' "$RWP.implement0" && ok "RW-02 spec: a file that sizes large by structure keeps the road it had (no lines, no proof brief, no issue cap)" || bad "RW-02 spec: the implement brief carries the proof instructions" ;; *) bad "RW-02 spec gave: $RWF" ;; esac
+rw_engine off "$RWD/list.md" LOKI_E10_ONE_ROAD=0; RWF="$(rw_facts)"
+[ "$RWF" = "VERIFIED road=text source=text lines=0 receipt=none own=0 reruns=no noscript=no plan=skipped src=None cap=none" ] && ok "RW-02 off: LOKI_E10_ONE_ROAD=0 keeps a text task on the plain road" || bad "RW-02 off gave: $RWF"
+rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
+rw_engine json-file "$RWD/prose.md" LOKI_E10_ISSUE_JSON="$RWD/issue.json"; RWF="$(rw_facts)"
+[ "$RWF" = "VERIFIED road=issue source=issue lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
+    && ok "RW-02 issue json: LOKI_E10_ISSUE_JSON beside a positional file gives the issue's two lines, the issue cap rule, and VERIFIED on Loki's own run" || bad "RW-02 issue json (file) gave: $RWF"
+rw_engine json-short "add multiply to calc.ts" LOKI_E10_ISSUE_JSON="$RWD/issue.json"; RWF="$(rw_facts)"
+[ "$RWF" = "VERIFIED road=issue source=issue lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
+    && ok "RW-02 issue json: the same with a short positional task" || bad "RW-02 issue json (short) gave: $RWF"
+# The shape of the recorded run playwright 44124 "loki-haiku-issue-road" (11.152.0): a positional file plus LOKI_E10_ISSUE_JSON holding only a title and a prose
+# body. There the plan was skipped, the run had no line, Loki's own proof run passed 2 checks that counted for nothing (proof.rerun statuses []), and the
+# receipt had no acceptance table. Now the title line from intake's record is the one item (no plan session is added), and the passing check is counted for it.
+python3 -I -c 'import json, sys; json.dump({"title": "Add a multiply(a, b) function to calc.ts", "body": "## Problem\n\n" + sys.argv[2]}, open(sys.argv[1], "w"))' "$RWD/issue-prose.json" "$RW_PROBLEM"
+rw_proof 'grep -q "export function multiply" calc.ts' -
+rw_engine json-prose "$RWD/prose.md" LOKI_E10_ISSUE_JSON="$RWD/issue-prose.json"; RWF="$(rw_facts)"
+[ "$RWF" = "VERIFIED road=issue source=issue lines=0 receipt=met own=1 reruns=yes noscript=no plan=skipped src=title cap=2400" ] && ! grep -q plan <<< "$RWSTAGES" \
+    && ok "RW-02 issue json, prose: an issue file with no list has its title as the one line, with no plan session added, and Loki's own passing check is counted for it" || bad "RW-02 issue json (prose) gave: $RWF"
+rw_proof -
+rw_engine prove-off "$RWD/list.md" LOKI_E10_PROVE_BY_RUNNING=0; RWF="$(rw_facts)"
+[ "$RWF" = "VERIFIED road=text source=text lines=0 receipt=none own=0 reruns=no noscript=no plan=skipped src=None cap=none" ] && ! grep -q 'loki-proof.sh' "$RWP.implement0" \
+    && ok "RW-02 prove-by-running off: a run that is never asked for a proof script is not on the road, gets no lines and is not held for leaving none" || bad "RW-02 prove-by-running off gave: $RWF"
+# resume: a road run cut by a usage limit in implement, then started again, is still on the road in the resumed worker (lines counted, cap rule, VERIFIED on
+# Loki's own run). Plant R11: supervisor.ts runSupervisor: drop the line that sets the worker's flag from run.started's road (the resumed half reads no lines).
+rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
+rw_engine resume "$RWD/list.md" E2E_STUB_LIMIT=implement E2E_STUB_LIMIT_MARK="$T/rw-resume.mark"; RWCUT="$(grep -E '^Outcome:' <<< "$RWOUT" | tr -s ' ')"
+RW_REUSE="$RWDIR" rw_engine resume2 "$RWD/list.md" E2E_STUB_LIMIT=implement E2E_STUB_LIMIT_MARK="$T/rw-resume.mark"; RWF="$(rw_facts)"
+[ "$RWCUT" = "Outcome: CANCELLED" ] && [ "$(ls "$RWDIR"/repo/.loki/runs | wc -l | tr -d ' ')" = 1 ] && [ "$RWF" = "VERIFIED road=work source=text lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
+    && ok "RW-02 resume: a road run cut in implement and started again resumes the same run on the road and is VERIFIED on Loki's own count" || bad "RW-02 resume gave: cut '$RWCUT', runs $(ls "$RWDIR"/repo/.loki/runs 2>/dev/null | wc -l | tr -d ' '), $RWF ($(grep -E '^(Outcome|Reason|engine10:)' <<< "$RWOUT" | tr '\n' ' ' | cut -c1-500))"
+rw_proof -
+# ---- end RW-02 ----
+
 finish

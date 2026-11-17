@@ -187,7 +187,10 @@ git -C "$R2" config user.email e2e@example.invalid
 git -C "$R2" add calc.ts calc.test.ts bunfig.toml
 git -C "$R2" commit -q -m base
 git -C "$R2" remote add origin https://github.com/acme/calc.git
-OUT2="$(cd "$R2" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED \
+# RW-02 TITLE STAND-IN: the stub issue is prose, so its title now stands in as the one acceptance line and the seal asks the acceptance check about it; the
+# stub answers MET from this file (without it the stub's check call fails and the run reads PARTIAL "acceptance not reviewed", exit 6).
+printf 'MET 1: the diff makes the change the issue asks for\n' > "$T/rw02-met.txt"
+OUT2="$(cd "$R2" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED E2E_STUB_LINECHECK_FILE="$T/rw02-met.txt" \
     LOKI_TS_ENTRY="${FR01_TS_ENTRY:-$LOKI_TS_ENTRY}" LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" E2E_STUB_PROMPT_LOG="$T/prompt2" \
     LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "fix #7" --no-pr 2>&1)"
 RC2=$?

@@ -240,8 +240,11 @@ world() {
 }
 # agent_job: the key, run and collect steps in the agent clone (a read-only token: the stub gh serves reads only there by use).
 agent_job() {
+    # RW-02 TITLE STAND-IN: issue #7 is prose, so its title now stands in as the one acceptance line and the seal asks the acceptance check about it; the stub
+    # answers MET from this file (without it the stub's check call fails and every run here reads PARTIAL "acceptance not reviewed").
+    printf 'MET 1: the diff makes the change the issue asks for\n' > "$T/rw02-met.txt"
     step key "$W/agent" ANTHROPIC_API_KEY=stub GITHUB_OUTPUT="$W/key.out"; KEY_STATE="$(sed -n 's/^state=//p' "$W/key.out")"
-    step run "$W/agent" ANTHROPIC_API_KEY=stub GH_TOKEN=canary-read ISSUE=7 GITHUB_REPOSITORY=acme/calc GITHUB_ACTOR=tester RUNNER_TEMP="$W/runner-a" "$@"; RUN_RC=$RC
+    step run "$W/agent" ANTHROPIC_API_KEY=stub GH_TOKEN=canary-read ISSUE=7 GITHUB_REPOSITORY=acme/calc GITHUB_ACTOR=tester RUNNER_TEMP="$W/runner-a" E2E_STUB_LINECHECK_FILE="$T/rw02-met.txt" "$@"; RUN_RC=$RC
     cp "$T/run.out" "$W/run.out"
     step collect "$W/agent" ISSUE=7 GITHUB_SHA="$SHA" RUNNER_TEMP="$W/runner-a"; COLLECT_RC=$RC
     cp "$T/collect.out" "$W/collect.out"
