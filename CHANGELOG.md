@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.147.0 (2026-11-16)
+
+### One road for every model
+- `loki start` on an issue now runs the whole issue in one session on every model. A run on Haiku used to be split into slices up front, on a road with no acceptance lines and no proof run (`LOKI_ISSUE_WHOLE_FIRST=0` restores the split).
+- A whole-issue session has no turn or token cap on any model. The 45-turn cap on Haiku sessions was sized from small tasks and cut every Haiku issue run off in the middle of the work.
+- The proof kit now starts throwaway services for the session. `loki-check.sh` gains `loki_pg_start <dir>` and `loki_redis_start <dir>` (a new empty PostgreSQL or Redis on a free 127.0.0.1 port, connection settings exported), `loki_free_port` and `loki_services_stop`, and the brief says to use them and never to expect a database or cache already running on the machine. Each session used to write about fifty lines of this itself; one that did not, expected a server on port 5432, and its proof could never pass when Loki ran it.
+- The session is told that its reply ends the session, so it must wait for a subagent or background command before replying, and a reply that only waits is resumed once more before Loki gives up (it used to stop at the first resume that changed no file).
+
+### The label
+- The count still decides the label, with one exception. A check can pass for a line it does not prove (an API response counted for "build the UI"). When the acceptance check and the independent review, two separate readings, both find the same line not delivered, the label is held at PARTIAL and both reasons are shown. One reader alone stays a note.
+- The acceptance check during the run has its own two turns. A session that used every proof turn getting its script to pass used to get no acceptance feedback at all, so gaps a reviewer could see were never handed back to it.
+- During the run, Loki hands back any new source file that no other file imports or names (a component no page mounts, a module nothing calls), for the session to mount or remove. Two runs had sealed "Build faceted search UI" green with a search component that no page imported; with the hand-back, the next run mounted it. At the end of the run a file still unused is listed on the receipt and does not change the label: on merged history the same check also flags files loaded by convention (7 in about a thousand commits of two repositories).
+- Loki refuses a proof script that could count a result no check produced: one that writes a `LOKI-PROOF` result line itself (or writes output using `LOKI_PROOF_TOKEN`), or redefines `loki_http`, `loki_cmd` or `_lp`. The script is not run, every acceptance line is reported not met with that reason, and the session is handed the reason to rewrite it. Reading its own result lines, for example to count failures, is allowed. The result marker has to reach the script because the check functions run inside it, so this guard covers the plain forms only; the count is still a count of the script's own checks as Loki ran them.
+
+### Fixed
+- A targeted test that already fails on the base commit is now judged by test id, as the full suite is, whatever its error text says (`LOKI_E10_BASE_RED_BY_ID=0` restores the old rule). A Haiku run whose 10 acceptance lines were all met in Loki's own proof run was sealed BLOCKED with no pull request because 143 tests that fail on the base commit failed again with a different stack trace.
+- The note that some test files importing a changed file were left out by the 20-file limit no longer holds the label at PARTIAL when the full suite ran: those files ran in it, and its failures are compared with the base commit per test id.
+- A type check that fails only on stale build output no longer fails the run: every error must be "cannot find module" (TS2307) in a file git ignores, naming a module that exists nowhere in the tree (a `.next/types` file still pointing at a page from another branch or an earlier build). It is disclosed. Any other error in an ignored file, and any error in a tracked or new source file, still blocks.
+- The secret scan no longer reads a function call as a secret: `const tokens = tokenizeSearchQuery(input);` failed a whole run as a "secret match". A quoted or bare literal, a bearer token and credentials inside a URL are caught as before.
+- The proof script's argument is now a truly empty directory, and the kept copy of the script names the scratch directory by its variable where the session wrote it as a literal path, so the same script runs when Loki runs it elsewhere.
+
 ## v11.146.0 (2026-11-16)
 
 ### A live console in the terminal
