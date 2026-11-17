@@ -186,9 +186,13 @@ export function proofScriptRefusal(text: string): string | null {
   // The only forgery is a PROVED result line that no check produced. A script may read its own result lines, print a summary that carries the marker, set a
   // default for LOKI_PROOF_TOKEN, or report a failure through _lp FAILED: three Haiku runs did one of those and earlier forms of this guard refused them in
   // every round. Refused: a line that writes "LOKI-PROOF ... PROVED" itself, or calls _lp PROVED directly.
-  const lines = code.split("\n");
-  if (lines.some((l) => /(^|[\s;&|(])(echo|printf|print|tee|cat)\b/.test(l) && /LOKI-PROOF/.test(l) && /PROVED/.test(l) && !/(^|[\s;&|(])(grep|egrep|awk|sed|rg)\b[^|]*LOKI-PROOF/.test(l))) return "the proof script prints a LOKI-PROOF PROVED line itself; a line counts only when loki_http or loki_cmd print it";
-  if (lines.some((l) => /(^|[\s;&|({])_lp\s+["']?PROVED\b/.test(l))) return "the proof script calls _lp PROVED directly; a pass counts only when loki_http or loki_cmd made the check";
+  // The countable shape is exactly "LOKI-PROOF <marker> PROVED <n>": PROVED as the third word. A summary such as "LOKI-PROOF SUMMARY: all items PROVED" is
+  // not that shape and is allowed (a fourth Haiku run was refused in every round for printing it). The refusal quotes the line so the session can fix it.
+  const lines = text.split("\n"), at = (re: RegExp): string | null => { const n = lines.findIndex((l) => !/^\s*#/.test(l) && re.test(l)); return n < 0 ? null : ` (line ${n + 1}: ${lines[n]!.trim().slice(0, 120)})`; };
+  const printed = at(/(^|[\s;&|(])(echo|printf|print|tee|cat)\b.*LOKI-PROOF\s+\S+\s+PROVED\s+\S/);
+  if (printed) return `the proof script prints a "LOKI-PROOF <marker> PROVED <n>" result line itself${printed}; a pass counts only when loki_http or loki_cmd print it. A summary line is fine if it does not have that shape`;
+  const direct = at(/(^|[\s;&|({])_lp\s+["']?PROVED\b/);
+  if (direct) return `the proof script calls _lp PROVED directly${direct}; a pass counts only when loki_http or loki_cmd made the check. Use loki_cmd with the command that shows it`;
   if (/(^|[\s;&|({])(function\s+)?(loki_http|loki_cmd|_lp)\s*\(\s*\)/.test(code)) return "the proof script redefines loki_http, loki_cmd or _lp; source loki-check.sh and use its functions unchanged";
   return null;
 }
