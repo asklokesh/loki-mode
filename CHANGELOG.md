@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.153.0 (2026-11-17)
+
+### Labels that match what was delivered
+
+Measured on one repository (FireLater issue 24, Haiku, one session). Exercised by a real run on this build: the two base-failure fixes and the Next type file fix (24 failing checks, all excused as already failing on the base, none blocking; the run met 10 of 10 lines with 18 passing checks at $0.24 in 14 minutes). The test-mock fix was replayed on that run's recorded tree. The three review fixes and the dashboard fix were not exercised by a real run.
+
+- A test that mocks a package its own source starts importing in the same change is no longer called weakened. A run that met 10 of 10 lines with 18 passing checks was held at PARTIAL because the header gained `useRouter` from `next/navigation` and the header's test added a mock of that package, without which it cannot render. Bare package names only, and only when a non-test file in the change gains the import; `LOKI_E10_WEAK_MOCK_PKG=0` turns it off.
+- `next-env.d.ts` no longer counts as a change to the environment. Next rewrites this ignored file whenever its dev server or build starts; a proof script that started `next dev` changed it, and Loki then refused to share the installed dependencies with its own run on the base commit, so that run found no test at all.
+- The dashboard's Start box now finds the repository by the name the dashboard shows. It sent the GitHub name; the start request only knew folder names, so a checkout whose folder is named differently from its repository (for example `loki-mode` in a folder called `lokimode-anthropic`) was refused as "not a known project". The name is now resolved through the checkouts Loki has seen and the origins their runs recorded; several matches are refused with a line saying so.
+- The independent review during the run now also happens when the acceptance check has used both of its turns; a run that spent them never reached the review, and sealed VERIFIED with two lines the end review called not delivered (saved-filter hooks no page uses; searches from the page never recorded in history).
+- When the acceptance check does not answer (its reply was cut short, or the call failed), nothing contradicts the independent review, so a line the review calls not delivered holds the label at PARTIAL. The acceptance check's reply limit is raised from 2,500 to 8,000 tokens; at 2,500 a ten-line answer was cut short twice in one run.
+- Review, then fix now hands back the reviewer's concerns as well as its reproduced defects. A reviewer filed "the default search page fails with a 400 on first load" as a concern, not a defect, so the session never saw it and the run sealed VERIFIED with it listed under not proven. The session fixes each one or says in a line why the reviewer is wrong.
+- A test file the change did not touch, whose every failing test is in its package suite's recorded failures on the base commit, no longer blocks when Loki's own rerun on the base commit gave nothing to compare and the installed dependencies are as they were at the start of the run. A run on FireLater issue 24 ended in a spec conflict with no pull request: the ignored `frontend/next-env.d.ts` changed during the session, every base rerun then ran without `node_modules` and parsed no test id, and 22 page tests whose 146 failing ids were all among the frontend suite's 307 recorded base failures were counted as introduced, holding the full suite with them (23 blocking checks). A test file the change edited, one new failing test, a base rerun that shows another error, or a dependency directory that changed during the run still blocks; no error text is compared on this path (`LOKI_E10_BASE_RED_BY_ID=0` restores the old rule).
+
 ## v11.152.0 (2026-11-17)
 
 ### Rules that held finished work back
