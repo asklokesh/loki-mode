@@ -1685,12 +1685,12 @@ const keep = [
 ];
 const card = ["Intent: wait for the configured time", "Acceptance: the wait honours timeout.startup", "Acceptance: with none set it stays at 2 s"];
 const stand = [JSON.stringify(pl.standInAcceptance(card, "t", "task")), JSON.stringify(pl.standInAcceptance(null, "# Fix the startup wait", "task")), JSON.stringify(pl.standInAcceptance(["Intent: fix it"], "", "\n## Fix `it`\nbody")), JSON.stringify(pl.standInAcceptance(null, "", "  \n"))];
-const intake = { source: "text" }, plan = { intent_card: card }, d = T + "/rw-scratch"; fs.mkdirSync(d, { recursive: true });
-const before = pr.labelAsks("claude", intake, plan, T, on); pr.writeProofKit(d, before.asks);
+const R = T + "/rw-repo", intake = { source: "text" }, plan = { intent_card: card }, d = R + "/rw-scratch"; fs.mkdirSync(d, { recursive: true }); // R: a repository directory of its own, so a fixture of another leg never reads as a service this one needs
+const before = pr.labelAsks("claude", intake, plan, R, on); pr.writeProofKit(d, before.asks);
 const handed = fs.readFileSync(d + "/acceptance.txt", "utf8").trim().split("\n").length; fs.writeFileSync(d + "/acceptance.txt", "1. the wait honours timeout.startup\n");
-const after = pr.labelAsks("claude", intake, plan, T, on);
+const after = pr.labelAsks("claude", intake, plan, R, on);
 const run = { exit: 0, seconds: 1, proved: 1, failed: 0, tail: "", script_chars: 1, stopped: 0, left: 0, lines: { "1": { proved: 1, failed: 0, first_proved: "x" } } };
-const fixed = [before.asks.length, before.source, handed, after.asks.length, pr.ruleStatus(after.asks, run).map((s) => s.status).join("+"), pr.labelAsks("claude", intake, plan, T, {}).asks.length];
+const fixed = [before.asks.length, before.source, handed, after.asks.length, pr.ruleStatus(after.asks, run).map((s) => s.status).join("+"), pr.labelAsks("claude", intake, plan, R, {}).asks.length];
 const asks = ["a works"], ns = [pr.noOwnProofNotes("text", asks, null, {}).length, pr.noOwnProofNotes("issue", asks, null, {}).length, pr.noOwnProofNotes("text", [], null, {}).length, pr.noOwnProofNotes("text", asks, run, {}).length, pr.noOwnProofNotes("text", asks, null, { LOKI_E10_PROOF_RERUN: "0" }).length];
 console.log([keep.join(","), stand.join(","), fixed.join(","), ns.join(",")].join(" | "));' 2>&1 | tail -1)"
 [ "$RWU" = 'true,true,false,false,false,false,false,false | null,["Acceptance: Fix the startup wait"],["Intent: fix it","Acceptance: Fix it"],null | 2,plan,2,2,met+unmet,0 | 1,0,0,0,0' ] \
