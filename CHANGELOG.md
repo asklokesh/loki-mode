@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- In a repository with several packages, Loki no longer runs every package's tests on the base commit before the model starts. Measured on a recorded run (opencode, 36 packages, 900 s limit): 308 of the first 311 seconds went to 4 of the 36 suites, and the other 32 were never measured. The base commit is now tested after the change exists, and only for the suites that fail on the change. On Loki's own five-package test workspace the start went from 7.9 s to 0.4 s. `LOKI_E10_BASE_ON_DEMAND=0` restores the old behaviour, including every point below. A repository with one package behaves as before.
+- Verify runs the tests of the packages a change touched and of the packages whose manifest depends on them, not every package. The same recorded run tried 36 suites for a change to one package and ran out of time on the fourth. Packages not run are listed in the receipt under "not applicable" with the reason; a touched package whose tests did not run is listed under NOT PROVEN and the run is never VERIFIED. A change to a workspace-level manifest, lockfile or compiler, linter or test-runner config still runs everything.
+- Verify sizes itself from the time left. It may now use the time held back for a fix round (155 s became 335 s on the recorded run), each package suite gets what is left of the stage rather than a fixed 300 s, and a suite with no time left is listed as not run instead of the stage being cut. One verify is bounded at 15 minutes (`LOKI_E10_VERIFY_MAX_S`); a recorded run on a one-hour limit spent 21 minutes in one.
+- A test command that cannot start is no longer reported as failed tests. Recorded on hermes-agent: 33 test files each "failed" in 0.06 s with `No module named pytest`, a fix round was spent on them, and a correct one-line change was labelled FAILED. A check that fails with no test id is now run once more with the change removed; when it fails with the same lines there too, and no line names a changed file or symbol, it is listed as "the test command does not run in this checkout", is not given to a fix round, and the run is PARTIAL. Anything else stays a failure.
+- A TypeScript check that is red only in files the change did not touch, with every diagnostic also present on the base commit, is disclosed and no longer blocks (it was opt-in as `LOKI_E10_LINT_UNTOUCHED=1`; `=0` turns it off). One new diagnostic, a diagnostic in a touched file, or a changed compiler config still blocks.
+- `loki start` works from a detached HEAD checkout. It failed at intake in 3 seconds; it now starts from that commit and leaves the checkout detached on it at the end.
+
 ## v11.154.0 (2026-11-17)
 
 ### A false VERIFIED, fixed

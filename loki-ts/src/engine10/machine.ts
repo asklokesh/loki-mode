@@ -21,7 +21,7 @@ export const FLOW: readonly (StageName | readonly StageName[])[] = [
 /** Stages that still run after the cap or an early exit. */
 const TAIL: readonly StageName[] = ["commit", "seal", "pr"];
 /** Local extension of RunContext (not in types.ts): lets seal and pr see that the cap fired. */
-export interface MachineRunContext extends RunContext { capHit(): boolean; proveBudgetS?: number /* Q1 PROVE: the stage budget the machine sized from the run time left */; }
+export interface MachineRunContext extends RunContext { capHit(): boolean; verifyDeadlineMs?: number /* RW-01: when the running verify stage will be stopped (its limit or the run cap, whichever is first), so it can size its suites to finish before that */; proveBudgetS?: number /* Q1 PROVE: the stage budget the machine sized from the run time left */; }
 export interface MachineOptions {
   /** Resolves a stage; default imports <stagesDir>/<name>.ts and takes its `stage` (or default) export. */
   load?: (name: StageName) => Promise<Stage | null>;
@@ -115,8 +115,16 @@ export function stillFailing(groups: unknown, kept: unknown): unknown[] {
 const earlyExit = (d: Obj): boolean => d.already_satisfied === true;
 /** After a cap or limit kill, how long the machine waits for the aborted stage to settle before moving on. */
 const KILL_GRACE_MS = 2000;
-/** What verify leaves of the soft cap for one fix round and the tail (commit, seal, pr) when it sizes itself from the budget left. */
-const VERIFY_RESERVE_S = STAGE_BUDGETS.fix.limitS + STAGE_BUDGETS.commit.limitS + STAGE_BUDGETS.seal.limitS + STAGE_BUDGETS.pr.limitS;
+/** RW-01: verify's limit is the run time left before the tail (commit, seal, pr), bounded above. It no longer holds back a fix round's 180 s: a verify cut
+ *  short has nothing reliable to hand a fix round, and a fix round is sized from what verify leaves anyway (fixLimitS). opencode#63152 (cap 900 s, 355 s
+ *  gone before verify): 155 s became 335 s. The upper bound (LOKI_E10_VERIFY_MAX_S, default 900) is for a long cap: opencode#63310 spent 21m26s in one verify
+ *  of a 3600 s run. A value under the stage floor is honoured (tests, and an operator who wants a short verify). */
+export const VERIFY_MAX_S = 900;
+const VERIFY_TAIL_S = STAGE_BUDGETS.commit.limitS + STAGE_BUDGETS.seal.limitS + STAGE_BUDGETS.pr.limitS;
+export function verifyLimitFor(floorS: number, softS: number, elapsedS: number, env: NodeJS.ProcessEnv = process.env): number {
+  const v = Number((env["LOKI_E10_VERIFY_MAX_S"] ?? "").trim()), max = Number.isFinite(v) && v >= 1 ? Math.floor(v) : VERIFY_MAX_S;
+  return Math.min(Math.max(floorS, Math.floor(softS - elapsedS - VERIFY_TAIL_S)), max);
+}
 /** What an extra-attempts window leaves for the re-verify and the tail (commit, seal, pr). */
 const ATTEMPTS_TAIL_S = STAGE_BUDGETS.verify.limitS + STAGE_BUDGETS.commit.limitS + STAGE_BUDGETS.seal.limitS + STAGE_BUDGETS.pr.limitS;
 export function softCapS(capS: number): number { const plain = (capS * 14) / 15, budget = backstopS(capS) - ((STAGE_BUDGETS.commit.targetS ?? 0) + (STAGE_BUDGETS.seal.targetS ?? 0) + KILL_GRACE_MS / 1000 + 2); return Math.max(0, Math.min(plain, budget)); } // tightens 14/15 of capS so commit+seal's tail (plus a 2s margin: this clock starts after worker boot, the backstop's starts at spawn) fits before the backstop; when the tail can never fit at all (budget < 0), 0 still maximizes the gap to the backstop instead of the old plain-point fallback, which left as little as 0.17s to seal (E-67 round 5 REJECT finding 1)
@@ -172,7 +180,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   // A fix round scales with the task the plan sized: the cap grows with the packages and files in scope (run_cap.ts), so a round on a 1490 s
   // FireLater-sized cap gets 298 s instead of being killed at 180 s; a default 900 s cap keeps 180 s, and a round never gets more than twice that.
   const fixLimitS = (baseS: number): number => Math.max(baseS, Math.min(2 * baseS, Math.round((baseS * ctx.capS) / DEFAULT_CAP_S)));
-  const verifyLimitS = (floorS: number): number => Math.max(floorS, Math.floor(softCapS(ctx.capS) - elapsedS() - VERIFY_RESERVE_S)); // verify gets the run budget left too, so the checks that prove the task are not cut at a fixed 120s; the soft cap still stops it
+  const verifyLimitS = (floorS: number): number => verifyLimitFor(floorS, softCapS(ctx.capS), elapsedS()); // verify gets the run budget left too, so the checks that prove the task are not cut at a fixed 120s; the soft cap still stops it
   /** Runs one stage; returns its result, or null when it was skipped. */
   const runStage = async (name: StageName, underCap: boolean): Promise<StageResult | null> => {
     if (limited) throw new UsageLimitCut(); // USAGE-LIMIT: nothing runs after a limit, the tail (commit, seal) included
@@ -185,6 +193,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     const limitS = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : (name === "verify" && st.limitS >= STAGE_BUDGETS.verify.limitS ? verifyLimitS(st.limitS) : name === "fix" ? fixLimitS(st.limitS) : name === "prove" ? (sctx.proveBudgetS ?? st.limitS) : st.limitS) + (st.extraLimitS?.(sctx) ?? 0); if (name === "implement") { implementBudgetS = limitS; implementStartMs = ctx.clock.now(); } // FC-19: implement gets the run budget left, not a fixed 480s
     ctx.emit("stage.started", name, { target_s: st.targetS, limit_s: limitS, ...(name === "wall" ? { start_ms: ctx.clock.now() } : {}) });
     const t0 = ctx.clock.now();
+    if (name === "verify") sctx.verifyDeadlineMs = Date.now() + Math.max(0, Math.min(limitS * 1000, underCap ? capAtMs - ctx.clock.now() : Infinity));
     const dur = (): number => (ctx.clock.now() - t0) / 1000;
     const snapBefore = TREE_STAGES.has(name) || (name === "verify" && regenDropOn()) ? treeSnapshot(ctx.repoDir) : null; // RD: verify too, so a file only a check rewrote is known
     const ctl = new AbortController();

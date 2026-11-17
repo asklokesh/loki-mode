@@ -415,14 +415,16 @@ function settleBranch(repoDir: string, branch: string, dir: string, stem: string
 /** Puts the checkout back on `orig` when it sits on the run branch and the tracked tree is clean apart from `.loki/` (Loki's own state dir, never
  *  committed by a run: FireLater tracks four legacy .loki files deleted from its tree long before any current run). Never discards an edit: a plain
  *  `git checkout` carries such changes along and refuses when one would be overwritten. */
-function returnCheckout(repoDir: string, branch: string, orig: string | null): string | null {
+function returnCheckout(repoDir: string, branch: string, orig: string | null, startSha: string | null = null): string | null {
   const cur = currentBranch(repoDir);
   if (cur !== branch) return null; // already back (a stop restores it) or the user moved on: left where it is
-  if (!orig || orig === branch) return `engine10: the checkout stays on ${branch}: the run did not record the branch it started from\n`;
+  const detached = !orig && !!startSha && /^[0-9a-f]{40}$/.test(startSha); // RW-01: the run started on a detached HEAD checkout (no branch to record): it returns to that commit, detached
+  if (!detached && (!orig || orig === branch)) return `engine10: the checkout stays on ${branch}: the run did not record the branch it started from\n`;
   let dirty: string | null; // raw, never trimmed: a porcelain entry starts with a status column that may be a space
   try { dirty = safeGit(repoDir, ["status", "--porcelain", "-z", "--untracked-files=no", "--no-renames"], { timeout: 20000 }); } catch { dirty = null; }
-  if (dirty === null || dirty.split("\0").filter(Boolean).some((l) => !l.slice(3).startsWith(".loki/"))) return `engine10: the checkout stays on ${branch}: it has uncommitted changes; return with: git checkout ${orig}\n`;
-  return git(repoDir, ["checkout", "-q", orig]) === null ? `engine10: the checkout stays on ${branch}: git checkout ${orig} failed; return with: git checkout ${orig}\n` : null;
+  if (dirty === null || dirty.split("\0").filter(Boolean).some((l) => !l.slice(3).startsWith(".loki/"))) return `engine10: the checkout stays on ${branch}: it has uncommitted changes; return with: git checkout ${detached ? `--detach ${startSha}` : orig}\n`;
+  if (detached) return git(repoDir, ["checkout", "-q", "--detach", startSha!]) === null ? `engine10: the checkout stays on ${branch}: git checkout --detach ${startSha} failed; return with: git checkout --detach ${startSha}\n` : null;
+  return git(repoDir, ["checkout", "-q", orig!]) === null ? `engine10: the checkout stays on ${branch}: git checkout ${orig} failed; return with: git checkout ${orig}\n` : null;
 }
 
 /** Removes this run's Wall test files that are still untracked in the user's tree at run end (a run that published no Wall commit leaves them
@@ -470,7 +472,7 @@ export function finishRunBranch(repoDir: string, runId: string, end: RunEnd, env
     const wallGone = removeOwnWallFiles(repoDir, runId); // the run's own untracked Wall files never stay behind in the user's tree
     if (wallGone.length) notes += `engine10: removed Loki's own acceptance test ${wallGone.join(", ")} from your tree; its sealed copy is under .loki/runs/${runId}/wall/\n`;
     const keepHere = end.keepWork === true && tip !== null && tipOf(repoDir, end.baseSha ?? "") !== tip;
-    const stay = tip ? returnCheckout(repoDir, branch, end.orig) : null; // run safety: every outcome returns the checkout to the start branch, a kept branch included
+    const stay = tip ? returnCheckout(repoDir, branch, end.orig, end.baseSha ?? null) : null; // run safety: every outcome returns the checkout to the start branch, a kept branch included
     if (stay) notes += stay;
     if (tip && !keepHere) {
       if (!stay && findInterrupted(repoDir, runId, true) === null) notes += settleBranch(repoDir, branch, runDir, "branch", end.pushed && tip !== null, { orig_branch: end.orig }).note; // a resumable run keeps its branch for `loki start`

@@ -1373,6 +1373,137 @@ unit_rv() { # unit_rv <version> <case>
     esac
 }
 
+# ---- 9: rw-01 scoped verify, base on demand, a limit is not FAILED, start anywhere --------------------------------------------------------------
+# An opencode-shaped bun workspace with no origin remote: packages/core (the change lands here), app and legacy (both depend on core in package.json;
+# legacy's one test is red on base), slow (its suite sleeps 6 s) and other (red on base), neither related to core. LOKI_RISK_TIER=medium so suites run.
+#   clean:     intake does not run the package suites on base; verify runs core, app and legacy only; legacy, failing the same way as on base, is excused by a
+#              base run made after implement; slow and other are named in the receipt as not run with the reason; the run is VERIFIED without an origin remote.
+#   detached:  the same run started from a detached HEAD checkout starts and ends the same way, and the checkout is left on the commit it started on.
+#   ownerslow: core's own suite cannot finish inside the suite timeout: named NOT PROVEN, never VERIFIED.
+#   touched:   the change breaks core's own test: FAILED.
+#   newerr:    the change makes legacy's base-red test throw a new error under the same id: never excused, FAILED.
+#   limit:     verify is stopped at its limit while app's suite still runs and nothing that ran failed: PARTIAL (never FAILED, never VERIFIED), app named.
+#   limitred:  the same stop with core's own test red: FAILED, not delivered as passing.
+#   norunner:  the test command cannot start in this checkout (hermes-agent#147745: every per-file check failed in 0.06 s with no test id): each check fails
+#              the same way with the change removed, so none is a failure of the change or fix-round input; disclosed, PARTIAL, never FAILED or VERIFIED.
+# Planted defects (each reverted afterwards; run from source; the unit-level ones are in the RW-01 block of tests/min/scope-and-fix.sh):
+#   RWa. package_suite.ts scopedOutNote without the "n/a: " prefix: clean is PARTIAL (every monorepo run would be capped).
+#   RWb. package_suite.ts runPackageSuites: a timed-out or not-started suite gets an "n/a: " note in place of "not run: "; ownerslow and limit are VERIFIED.
+#   RWc. verify.ts: drop the ensureBase loop after the head suites; clean is FAILED (legacy is never measured on base, so never excused).
+#   RWd. repo_profile.ts attributeFullSuite: ids only (drop the same-error comparison); newerr excuses legacy.
+#   RWe. intake.ts: let the branch lookup throw again; detached ends with no receipt.
+#   RWf. verify.ts no-id block: `cand = []`; norunner is FAILED after a fix round.
+#   RWg. LOKI_E10_BASE_ON_DEMAND=0 in the run: clean runs all five suites and intake measures them (the opt-out is the old behaviour).
+scope_fixture() { # scope_fixture <dir> [slowcore | slowapp | norunner]
+    local d="$1" v="${2:-}" p dep script
+    for p in core app legacy slow other; do
+        mkdir -p "$d/packages/$p/src" "$d/packages/$p/test"
+        dep=""; case "$p" in app | legacy) dep=', "dependencies": { "@ws/core": "*" }' ;; esac
+        script="bun test"; [ "$p" = slow ] && script="sleep 6 && bun test"; [ "$v" = "slow$p" ] && script="sleep 20 && bun test"
+        printf '{ "name": "@ws/%s", "private": true, "type": "module", "scripts": { "test": "%s" }%s }\n' "$p" "$script" "$dep" > "$d/packages/$p/package.json"
+        [ "$v" = norunner ] && printf '[test]\npreload = ["./nope.ts"]\n' > "$d/packages/$p/bunfig.toml" # bun stops before any test: "error: preload not found", no test id, on base and on head
+    done
+    printf '{ "name": "ws", "private": true, "workspaces": ["packages/*"] }\n' > "$d/package.json"
+    printf 'export const add = (a: number, b: number): number => a + b;\n' > "$d/packages/core/src/core.ts"
+    printf 'import { test, expect } from "bun:test";\nimport { add } from "../src/core";\ntest("add", () => { expect(add(1, 2)).toBe(3); });\n' > "$d/packages/core/test/core.test.ts"
+    printf 'import { add } from "../../core/src/core";\nexport const inc = (n: number): number => add(n, 1);\n' > "$d/packages/app/src/app.ts"
+    printf 'import { test, expect } from "bun:test";\nimport { inc } from "../src/app";\ntest("inc", () => { expect(inc(4)).toBe(5); });\n' > "$d/packages/app/test/app.test.ts"
+    printf 'import { test, expect } from "bun:test";\nimport { add } from "../../core/src/core";\ntest("old sum", () => { expect(String(add(1, 1))).toBe("3"); });\n' > "$d/packages/legacy/test/old.test.ts"
+    printf 'import { test, expect } from "bun:test";\ntest("slow ok", () => { expect(1).toBe(1); });\n' > "$d/packages/slow/test/slow.test.ts"
+    printf 'import { test, expect } from "bun:test";\ntest("other red", () => { expect(1).toBe(2); });\n' > "$d/packages/other/test/other.test.ts"
+    git -C "$d" init -q -b main && git -C "$d" config user.name rs && git -C "$d" config user.email rs@example.invalid
+    git -C "$d" add -A . && git -C "$d" commit -q -m base
+}
+SCOPE_TASK="let add in packages/core/src/core.ts take an optional third number c"
+SCOPE_OLD='(a: number, b: number): number => a + b;'
+SCOPE_OK='(a: number, b: number, c = 0): number => a + b + c;'
+SCOPE_BREAK='(a: number, b: number, c = 0): number => a - b + c;' # core's own test goes red
+SCOPE_THROW='(a: number, b: number, c = 0): number => { if (a === b) throw new TypeError("boom"); return a + b + c; };' # only legacy's base-red test calls add(1, 1): a new error under the same id
+scope_run() { # scope_run <dir> <the new text of add> [env assignments...]
+    local d="$1" snip="$2" ev; shift 2
+    SCOUT="$(cd "$d" && env E2E_STUB_MODE=stack E2E_STUB_TARGET=packages/core/src/core.ts E2E_STUB_SNIPPET="$snip" E2E_STUB_REPLACE="$SCOPE_OLD" \
+        LOKI_RISK_TIER=medium LOKI_E10_NO_FETCH=1 "$@" ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "$SCOPE_TASK" --no-pr </dev/null 2>&1)"; SCRC=$?
+    ev="$(ls "$d"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)"
+    SCS="$( [ -n "$ev" ] && python3 -I - "$ev" <<'PY'
+import json, os, sys
+ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+rec = json.load(open(os.path.join(os.path.dirname(sys.argv[1]), "receipt.json"))) if os.path.exists(os.path.join(os.path.dirname(sys.argv[1]), "receipt.json")) else {}
+intake = next((e["data"] for e in ev if e["type"] == "stage.completed" and e["stage"] == "intake"), {})
+vs = [e["data"] for e in ev if e["type"] == "stage.completed" and e["stage"] == "verify"]
+v = vs[-1] if vs else {}
+short = lambda n: n.replace("full suite: @ws/", "")
+suites = [c for c in rec.get("checks", []) if c["name"].startswith("full suite: ")]
+print("verdict %s" % rec.get("verdict"))
+print("intake_s %.1f" % intake.get("duration_s", -1))
+print("base_ms %s" % (intake.get("intake_timing", {}).get("suite_baseline", {}).get("ms")))
+print("ran %s" % ",".join(sorted(short(c["name"]) for c in suites if c["result"] in ("pass", "fail"))))
+print("red %s" % ",".join(sorted(short(c["name"]) for c in suites if c["result"] == "fail")))
+print("excused %s" % ",".join(sorted(short(n) for n in v.get("pre_red_checks", []) if n.startswith("full suite: "))))
+print("not_proven %s" % " ;; ".join(n for n in rec.get("not_proven", []) if "full suite" in n or "verify stopped" in n or "does not run in this checkout" in n))
+print("fix_rounds %d" % sum(1 for e in ev if e["type"] == "fix.round"))
+print("failed %s" % ",".join(sorted(c["name"] for c in rec.get("checks", []) if c["result"] == "fail" and not c.get("pre_red"))))
+print("not_applicable %s" % " ;; ".join(n for n in rec.get("not_applicable", []) if "full suite" in n))
+print("stopped %s" % ",".join(e["data"].get("reason", "") for e in ev if e["type"] == "stage.failed" and e["stage"] == "verify"))
+if os.environ.get("RS_SHOW"):
+    for i, x in enumerate(vs): print("dbg verify%d %s" % (i, json.dumps({k: x.get(k) for k in ("verify_scope", "pre_red_checks", "known_red_checks", "known_red_same_error", "baseline_line", "not_proven", "blocking_checks")} | {"checks": ["%s=%s" % (c["name"], c["result"]) for c in x.get("checks", [])]})))
+PY
+)"
+}
+scope_get() { printf '%s\n' "$SCS" | sed -n "s/^$1 //p"; }
+scope_want() { case " ${SCOPE_CASES:-clean detached ownerslow touched newerr limit norunner limitred} " in *" $1 "*) return 0 ;; esac; return 1; } # SCOPE_CASES="clean limit" runs a subset (planting a defect)
+unit_scope() {
+if scope_want clean; then
+SR="$T/scope-clean"; scope_fixture "$SR"; scope_run "$SR" "$SCOPE_OK"
+[ -n "${RS_SHOW:-}" ] && printf 'clean rc=%s\n%s\n%s\n' "$SCRC" "$SCS" "$(printf '%s\n' "$SCOUT" | tail -12)"
+[ "$(scope_get verdict)" = VERIFIED ] && ok "scope clean: a change to one package of a workspace with no origin remote is VERIFIED" || bad "scope clean: verdict $(scope_get verdict), want VERIFIED: $(printf '%s\n' "$SCOUT" | tail -6)"
+[ "$(scope_get ran)" = "app,core,legacy" ] && ok "scope clean: verify ran the suites of the package that owns the change and of the two that depend on it, no other" || bad "scope clean: suites that ran: $(scope_get ran) (want app,core,legacy)"
+[ "$(scope_get excused)" = legacy ] && ok "scope clean: the dependent suite already red on base with the same error is excused by a base run made after implement" || bad "scope clean: excused suites: $(scope_get excused) (want legacy); $(scope_get not_proven)"
+case "$(scope_get not_applicable)" in *"full suite: @ws/slow"*"not run"*) case "$(scope_get not_applicable)" in *"full suite: @ws/other"*) ok "scope clean: the two packages outside the change are named in the receipt as not run, with the reason" ;; *) bad "scope clean: other is not named as not run: $(scope_get not_applicable)" ;; esac ;; *) bad "scope clean: slow is not named as not run: $(scope_get not_applicable)" ;; esac
+SBM="$(scope_get base_ms)"; [ -n "$SBM" ] && [ "$SBM" != None ] && [ "$SBM" -lt 3000 ] && ok "scope clean: intake did not run the package suites on base (${SBM} ms; the slow suite alone sleeps 6 s)" || bad "scope clean: intake spent ${SBM} ms on base suites (want under 3000)"
+[ "$(git -C "$SR" symbolic-ref -q --short HEAD)" = main ] && ok "scope clean: the checkout is back on main" || bad "scope clean: the checkout is on $(git -C "$SR" symbolic-ref -q --short HEAD)"
+fi
+if scope_want detached; then
+SR="$T/scope-detached"; scope_fixture "$SR"; SBASE="$(git -C "$SR" rev-parse HEAD)"; git -C "$SR" checkout -q --detach; scope_run "$SR" "$SCOPE_OK"
+[ -n "${RS_SHOW:-}" ] && printf 'detached rc=%s\n%s\n%s\n' "$SCRC" "$SCS" "$(printf '%s\n' "$SCOUT" | tail -12)"
+[ "$(scope_get verdict)" = VERIFIED ] && ok "scope detached: a run started on a detached HEAD checkout ends VERIFIED" || bad "scope detached: verdict $(scope_get verdict), want VERIFIED: $(printf '%s\n' "$SCOUT" | tail -6)"
+[ "$(git -C "$SR" rev-parse HEAD)" = "$SBASE" ] && ! git -C "$SR" symbolic-ref -q HEAD >/dev/null && [ -z "$(git -C "$SR" status --porcelain --untracked-files=no)" ] && ok "scope detached: the checkout is left detached on the commit it started on, clean" || bad "scope detached: checkout ended on $(git -C "$SR" symbolic-ref -q --short HEAD || git -C "$SR" rev-parse --short HEAD) (started detached at ${SBASE:0:7}): $(git -C "$SR" status --porcelain --untracked-files=no | head -3)"
+fi
+if scope_want ownerslow; then
+SR="$T/scope-ownerslow"; scope_fixture "$SR" slowcore; scope_run "$SR" "$SCOPE_OK" LOKI_E10_SUITE_TIMEOUT_S=3
+[ -n "${RS_SHOW:-}" ] && printf 'ownerslow rc=%s\n%s\n' "$SCRC" "$SCS"
+[ "$(scope_get verdict)" = PARTIAL ] && ok "scope ownerslow: the suite of the package that owns the change did not finish: PARTIAL, never VERIFIED" || bad "scope ownerslow: verdict $(scope_get verdict), want PARTIAL"
+case "$(scope_get not_proven)" in *"not run: full suite: @ws/core"*) ok "scope ownerslow: the owner's suite is named NOT PROVEN" ;; *) bad "scope ownerslow: the owner's suite is not on NOT PROVEN: $(scope_get not_proven) / n/a: $(scope_get not_applicable)" ;; esac
+fi
+if scope_want touched; then
+SR="$T/scope-touched"; scope_fixture "$SR"; scope_run "$SR" "$SCOPE_BREAK"
+[ -n "${RS_SHOW:-}" ] && printf 'touched rc=%s\n%s\n' "$SCRC" "$SCS"
+[ "$(scope_get verdict)" = FAILED ] && ok "scope touched: a failing test in the package the change touched blocks (FAILED)" || bad "scope touched: verdict $(scope_get verdict), want FAILED"
+fi
+if scope_want newerr; then
+SR="$T/scope-newerr"; scope_fixture "$SR"; scope_run "$SR" "$SCOPE_THROW"
+[ -n "${RS_SHOW:-}" ] && printf 'newerr rc=%s\n%s\n' "$SCRC" "$SCS"
+[ "$(scope_get verdict)" = FAILED ] && [ -z "$(scope_get excused)" ] && ok "scope newerr: a test already red on base that the change makes fail with a new error is never excused (FAILED)" || bad "scope newerr: verdict $(scope_get verdict), excused: $(scope_get excused) (want FAILED, none excused)"
+fi
+if scope_want limit; then
+SR="$T/scope-limit"; scope_fixture "$SR" slowapp; scope_run "$SR" "$SCOPE_OK" LOKI_E10_VERIFY_MAX_S=8
+[ -n "${RS_SHOW:-}" ] && printf 'limit rc=%s\n%s\n' "$SCRC" "$SCS"
+[ "$(scope_get verdict)" = PARTIAL ] && ok "scope limit: verify stopped at its limit with nothing red: PARTIAL, never FAILED and never VERIFIED" || bad "scope limit: verdict $(scope_get verdict), want PARTIAL (stopped: $(scope_get stopped))"
+case "$(scope_get not_proven)" in *"full suite: @ws/app"*) ok "scope limit: the suite that did not finish is named NOT PROVEN" ;; *) bad "scope limit: the unfinished suite is not named: $(scope_get not_proven)" ;; esac
+fi
+if scope_want norunner; then
+SR="$T/scope-norunner"; scope_fixture "$SR" norunner; scope_run "$SR" "$SCOPE_OK"
+[ -n "${RS_SHOW:-}" ] && printf 'norunner rc=%s\n%s\n%s\n' "$SCRC" "$SCS" "$(printf '%s\n' "$SCOUT" | tail -8)"
+[ "$(scope_get verdict)" = PARTIAL ] && ok "scope norunner: a test command that cannot start, on base as on head, is PARTIAL, never FAILED and never VERIFIED" || bad "scope norunner: verdict $(scope_get verdict), want PARTIAL (failed: $(scope_get failed))"
+[ "$(scope_get fix_rounds)" = 0 ] && [ -z "$(scope_get failed)" ] && ok "scope norunner: no check is a failure of the change and no fix round is spent" || bad "scope norunner: fix rounds $(scope_get fix_rounds), failed checks: $(scope_get failed)"
+case "$(scope_get not_proven)" in *"the test command does not run in this checkout"*"preload not found"*) ok "scope norunner: the receipt says the test command does not run in this checkout, with the error" ;; *) bad "scope norunner: not disclosed: $(scope_get not_proven)" ;; esac
+fi
+if scope_want limitred; then
+SR="$T/scope-limitred"; scope_fixture "$SR" slowapp; scope_run "$SR" "$SCOPE_BREAK" LOKI_E10_VERIFY_MAX_S=8
+[ -n "${RS_SHOW:-}" ] && printf 'limitred rc=%s\n%s\n' "$SCRC" "$SCS"
+[ "$(scope_get verdict)" = FAILED ] && ok "scope limitred: a verify stopped at its limit with the owner's test red is FAILED, not delivered as passing" || bad "scope limitred: verdict $(scope_get verdict), want FAILED"
+fi
+}
+
 # ---- dispatch: the longest units first so the slowest one starts at once ----------------------------------------
 RV_LIST=""
 for ver in ${RV_VERSIONS:-2.1.9 5.1.0}; do
@@ -1383,6 +1514,7 @@ for ver in ${RV_VERSIONS:-2.1.9 5.1.0}; do
     if [ -x "$RVROOT/$ver/node_modules/.bin/vitest" ]; then RV_LIST="$RV_LIST $ver"; elif [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "real vitest $ver: npm could not install it (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else printf '  SKIP: real vitest %s: npm could not install it (offline?)\n' "$ver"; fi
 done
 unit_start monorepo unit_monorepo
+unit_start scope unit_scope
 unit_start envchg unit_envchg
 for c in same one backend changed p8 p8new pathnorm unhandled delpkg; do
     for ver in $RV_LIST; do unit_start "rv-$ver-$c" unit_rv "$ver" "$c"; done

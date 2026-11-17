@@ -34,6 +34,7 @@ export interface DeepOptions {
   scanAddedSince?: string; // PR-FIRST-4 (verify only): scan just the lines added since this commit, and the path of a file new since it, so a match already on base never fails the run
   fullSuiteTimeoutMs?: number;
   ownedOnly?: boolean; // NTF (verify only): run only the package suites that own a changed file
+  scope?: boolean; suiteTimeoutMs?: () => number; ensureBase?: (spec: { name: string; cmd: string; cwd: string; run: string }) => Promise<void>; // RW-01 (verify only, package suites): scopedSuites, the per-suite timeout from the stage time left, and the on-demand base run (package_suite.ts runPackageSuites)
   path?: string; // PATH override, tests only, so "missing tool" never depends on the host
   env?: NodeJS.ProcessEnv; // for assertWorkerEnv; defaults to process.env
   pushExtraEnv?: Record<string, string>; // merged into the push child's env, tests only (e.g. a stub's own log path)
@@ -43,7 +44,7 @@ export const DEFAULT_SECRET_SCAN_SH = join(REPO_ROOT, "autonomy/lib/secret-scan.
 const FULL_SUITE_TIMEOUT_MS = BASELINE_CMD_TIMEOUT_S * 1000; // 5 min per runner, the same budget its base run gets (repo_profile.ts); deep's own stage limit (2700s) is the outer bound
 /** One check per detected runner, run to completion (no retry: flaky-rerun  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
 export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
-  if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), changed: opts.changed, proofFiles: opts.proofFiles, wallBaseRed: opts.wallBaseRed, targetPassed: opts.targetPassed, ...(opts.ownedOnly ? { ownedOnly: true } : {}) }, checks, notProven)) return;
+  if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.suiteTimeoutMs ?? opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), changed: opts.changed, proofFiles: opts.proofFiles, wallBaseRed: opts.wallBaseRed, targetPassed: opts.targetPassed, ...(opts.ownedOnly ? { ownedOnly: true } : {}), ...(opts.scope ? { scope: true } : {}), ...(opts.ensureBase ? { ensureBase: opts.ensureBase } : {}) }, checks, notProven)) return;
   const map = await ctx.tests.detect(ctx.repoDir);
   if (map.runners.length === 0) {
     notProven.add("full suite (no test runner detected)");

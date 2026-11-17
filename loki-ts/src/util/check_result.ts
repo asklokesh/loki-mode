@@ -898,9 +898,12 @@ export function changedSymbols(diffU0: string, readNew?: (path: string) => strin
  *  output instead: ANSI already stripped, trailing space and blank lines dropped, and only time-like tokens (durations, clock times, timestamps, hex
  *  addresses) normalized. Counts, names and messages stay, so a new failing test, a changed message or a new count gives a different shape. */
 export const baseRedShapeOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BASE_RED_SHAPE"] ?? "").trim());
+/** The lines failureShape hashes (the one normalizer for an output with no parsed test id; verify's no-id base comparison reads the same lines). */
+export function failureLines(out: string): string[] {
+  return out.split("\n").map((l) => l.replace(/\s+$/, "").replace(/\b\d{4}-\d{2}-\d{2}[T ][\d:._,]+Z?/g, "<ts>").replace(/\b\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?\b/g, "<clock>").replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|sec|secs|seconds|m|min)\b/g, "<t>").replace(/\b0x[0-9a-f]{4,}\b/gi, "<hex>")).filter((l) => l !== "");
+}
 export function failureShape(out: string): string {
-  const norm = out.split("\n").map((l) => l.replace(/\s+$/, "").replace(/\b\d{4}-\d{2}-\d{2}[T ][\d:._,]+Z?/g, "<ts>").replace(/\b\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?\b/g, "<clock>").replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|sec|secs|seconds|m|min)\b/g, "<t>").replace(/\b0x[0-9a-f]{4,}\b/gi, "<hex>")).filter((l) => l !== "");
-  return createHash("sha256").update(norm.join("\n")).digest("hex");
+  return createHash("sha256").update(failureLines(out).join("\n")).digest("hex");
 }
 /** ENCLOSING-DECL knob: LOKI_E10_ENCLOSING_DECL (default on, =0 opts out) turns the head-file fallback in changedSymbols off. */
 export const enclosingDeclOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_ENCLOSING_DECL"] ?? "").trim());

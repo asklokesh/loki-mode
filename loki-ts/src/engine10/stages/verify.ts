@@ -11,12 +11,12 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { hiddenConfigChanged, testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst, QUICK_ONLY_NOTE, quickScope, quickSplit } from "../../e10ext/select.ts"; import { dependentNotes, dependentTests } from "../../features/dependents.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
-import { avaTargets, guessRunner, isTestFile, mochaTargets } from "../testmap.ts"; import { coveredStem } from "../../util/test_file_text.ts"; import { comparableIds, errorsById, noiseOnlyErrors, sameErrors } from "../failures.ts"; export { errorsById, sameErrors } from "../failures.ts";
-import { goJsonStream, GO_JSON_KEEP, withoutStaleWall, failureExcerpt, EXCERPT_TOTAL_CAP, changedFiles, hiddenEdits, ignoreRuleChanges, classifyCheck, corroboratePass, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount, SECURITY_SCAN, fileHashes, briefGroups, failureSignature } from "../../util/check_result.ts";
+import { avaTargets, guessRunner, isTestFile, mochaTargets } from "../testmap.ts"; import { coveredStem } from "../../util/test_file_text.ts"; import { comparableIds, errorsById, lineNamesChange, noiseOnlyErrors, sameErrors } from "../failures.ts"; export { errorsById, sameErrors } from "../failures.ts";
+import { failureLines, goJsonStream, GO_JSON_KEEP, withoutStaleWall, failureExcerpt, EXCERPT_TOTAL_CAP, changedFiles, hiddenEdits, ignoreRuleChanges, classifyCheck, corroboratePass, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount, SECURITY_SCAN, fileHashes, briefGroups, failureSignature } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, envChangedSince, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, envChangedSince, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
 export const timeoutCarryOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TIMEOUT_CARRY"] ?? "").trim());
 export const TIMEOUT_CARRY_NOTE = "carried from an earlier verify of this run, not rerun (untouched file)";
 /** TIMEOUT-WAIT: after a check's timeout (or abort) fires, a process still alive this long later is SIGKILLed, so a test that ignores SIGTERM costs its limit, not minutes more. */
@@ -27,6 +27,34 @@ export function carriedTimeouts(prev: readonly VerifyCheck[], tests: readonly Te
   if (!timeoutCarryOn(env)) return [];
   const timedOut = new Map(prev.filter((c) => c.result === "not_run" && /^timed out after /.test(c.reason ?? "")).map((c) => [c.name, c] as const));
   return tests.flatMap((t) => { const n = testCheckName(t), p = timedOut.get(n); if (!p || changed.includes(t.path) || keep.has(n) || isHoldoutCheck(n)) return []; return [{ name: n, cmd: p.cmd, result: "not_run" as const, duration_s: 0, reason: `${String(p.reason).replace(/; carried from an earlier verify.*$/, "")}; ${TIMEOUT_CARRY_NOTE}` }]; });
+}
+/** RW-01 NO-ID (LOKI_E10_BASE_ON_DEMAND, default on, =0 opts out): a test check that fails with no parsed test id (the command stops before it reports a
+ *  test: hermes-agent#147745, 33 files each failing in 0.06 s with ".venv/bin/python: No module named pytest"; opencode#63152 plugin-migrations) is run
+ *  once more with the change removed, on a base worktree. It is the environment, not the change, only when that run fails too and prints the same set of
+ *  lines (failureLines, the BASE-RED-SHAPE normalizer; checkout paths made relative) and no line names a file or symbol the change edited. Then the check
+ *  is not_run with NO_ID_BASE_REASON: never fix-round input, never a pass, so the label is capped at PARTIAL. A base that passes, one line more or fewer
+ *  on either side, no base run, or an empty output keeps it a failure. */
+export const NO_ID_BASE_REASON = "the test command does not run in this checkout: it fails the same way with the change removed";
+const rootless = (out: string, roots: string[]): string => {
+  const all = roots.flatMap((x) => { try { return [x, realpathSync(x)]; } catch { return [x]; } }).flatMap((x) => [x, x.startsWith("/private/") ? x.slice("/private".length) : `/private${x}`]);
+  let o = out; for (const r of [...new Set(all)].filter((x) => x.length > 1).sort((a, b) => b.length - a.length)) o = o.split(r).join("<repo>");
+  return o;
+};
+export function sameFailureLines(headOut: string, base: { ok: boolean; out: string } | null, changed: readonly string[], symbols: readonly string[], headRoot: string, baseRoot: string): boolean {
+  if (!base || base.ok) return false;
+  const h = new Set(failureLines(rootless(stripAnsi(headOut), [headRoot]))), b = new Set(failureLines(rootless(stripAnsi(base.out), [baseRoot])));
+  if (h.size === 0 || h.size !== b.size || [...h].some((l) => !b.has(l))) return false;
+  const names = lineNamesChange(changed, symbols);
+  return ![...h].some((l) => names(l));
+}
+/** RW-01: one package suite's timeout is the time left of the verify stage (less a margin for the attribution that follows), at most the 300 s its base run
+ *  gets (LOKI_E10_SUITE_TIMEOUT_S overrides that maximum). 0 means the suite is not started. No deadline (a caller outside the machine): the maximum. */
+export const SUITE_MARGIN_MS = 5000;
+export function suiteTimeoutFor(deadlineMs: number | undefined, nowMs: number, env: NodeJS.ProcessEnv = process.env): number {
+  const v = Number((env["LOKI_E10_SUITE_TIMEOUT_S"] ?? "").trim()), max = Number.isFinite(v) && v >= 1 ? Math.floor(v * 1000) : 300_000;
+  if (deadlineMs === undefined) return max;
+  const left = deadlineMs - nowMs - SUITE_MARGIN_MS;
+  return left < 1000 ? 0 : Math.min(max, left);
 }
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
@@ -66,6 +94,7 @@ export function crashSignature(out: string): string | null {
   const m = /^(?:[.sxXFE]*(?=Fatal Python error: )Fatal Python error: [^\n]+|Segmentation fault[^\n]*|E\s+ModuleNotFoundError: No module named '[^']+'|ModuleNotFoundError: No module named '[^']+'|ImportError while (?:loading conftest|importing test module)[^\n]*)$/m.exec(out);
   return m ? m[0].replace(/^[.sxXFE]+(?=Fatal Python error: )/, "").replace(/\s+/g, " ").replace(/'\/[^']*\//g, "'").trim() : null; // pytest's progress marks before the fatal line differ between base and head
 }
+const noIdOut = new WeakMap<object, string>(); // RW-01 NO-ID: the output of a failing test check that parsed no test id, read only by the no-id base comparison
 const headErrors = new WeakMap<object, Map<string, string[]>>(); // each failing id's error line, read from the whole output (never the cut tail), for sameErrors
 export { WALL_FAILURE_TAIL_FILE } from "../../util/check_result.ts"; import { WALL_FAILURE_TAIL_FILE } from "../../util/check_result.ts";
 export const WALL_FAILURE_TAIL_CAP = 16384;
@@ -193,7 +222,7 @@ export async function runCheck(
   const reason = c.reason;
   const anchor = result === "fail" ? firstFileLineAnchor(attempt.out.slice(-65536)) : null;
   const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out), ...(anchor ? { anchor } : {}) } : result === "pass" && kind === "test" ? { n: c.n ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(attempt.missing ? { skip_code: "tool_not_on_path" as const } : {}), ...(c.owner ? { owner: "harness" as const } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
-  if (result === "fail" && !opts.opaque && !isHold(check)) { { const cs = crashSignature(attempt.out); if (cs) crashSigs.set(check, cs); } excerpts.set(check, failureExcerpt(attempt.out, ctx.repoDir)); failTails.set(check, wallTailOf(attempt.out, ctx.repoDir)); headErrors.set(check, errorsById(attempt.out)); }
+  if (result === "fail" && !opts.opaque && !isHold(check)) { { const cs = crashSignature(attempt.out); if (cs) crashSigs.set(check, cs); } excerpts.set(check, failureExcerpt(attempt.out, ctx.repoDir)); failTails.set(check, wallTailOf(attempt.out, ctx.repoDir)); headErrors.set(check, errorsById(attempt.out)); if (kind === "test" && !check.ids?.length) noIdOut.set(check, attempt.out); }
   if (result === "fail" && kind === "static" && name.startsWith("lint:tsc")) tscOut.set(check, attempt.out);
   checks.push(check); if (opts.opaque && check.result !== "pass" && check.reason) recordHoldoutTriage(ctx.runDir, { check: name, result: check.result, reason: check.reason }); // C-C4b-c-b: real reason stays out of the event below
   ctx.emit("test.result", "verify", opts.opaque ? { ...pubHold(check) } : { ...check });
@@ -523,7 +552,7 @@ function tscLocalKeys(out: string, pkgRel: string, keep: ReadonlySet<string>, ch
  *  break an untouched importer with a message that names only types (TS2345), and that line is not on base. Fail-closed: no base output, an unparsed error line or a
  *  tail cut at its cap keeps the check blocking. Only tsc lints the whole project; eslint, ruff and shellcheck run on the changed files and keep capping. */
 export const LINT_UNTOUCHED_NOTE = "lint red only in files the change did not touch (disclosed, not blocking)";
-export const lintUntouchedOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_LINT_UNTOUCHED"] ?? "").trim()); // off by default: it changed no label on 150 stored bench runs and has not fired on a real run
+export const lintUntouchedOn = (env: NodeJS.ProcessEnv = process.env): boolean => { const v = (env["LOKI_E10_LINT_UNTOUCHED"] ?? "").trim(); return /^(1|on|true|yes)$/i.test(v) || (v === "" && baseOnDemandOn(env)); }; // RW-01: on by default (opencode#63152: lint:tsc:packages/cli red in files the change did not touch decided FAILED); =0 opts out, as does LOKI_E10_BASE_ON_DEMAND=0 unless =1 is set here
 /** STALE-GENERATED: a failed `tsc --noEmit` is not the change's error when every diagnostic is TS2307 (cannot find module) in a file git ignores, and the module it
  *  names exists nowhere in the tree: a build output such as .next/types that still points at a page from another branch or an earlier build. Disclosed, never
  *  blocking. Any other diagnostic in an ignored file (Next reports real page-props errors there), a module that does exist, an unparsed error line, a cut tail
@@ -607,11 +636,39 @@ export async function runLintChecks(
   }
   return pre;
 }
+/** RW-01: one detached worktree of the base commit per verify, created on first use (the on-demand suite base runs and the no-id comparison share it)
+ *  and always removed. `link` links the head's dependency dirs into a directory of it under baseDepsLinker's guards (false: nothing linked, fail closed);
+ *  no link at all when the change edits a dependency manifest. */
+interface BaseTree { get(changed: readonly string[], gate: ZeroGate): string | null; link(cwd: string): boolean; dispose(): void }
+function baseTree(ctx: RunContext): BaseTree {
+  let dir: string | null | undefined, linker: ((cwd: string) => boolean) | null = null;
+  const git = (args: string[]): void => { safeGit(ctx.repoDir, args, { stdio: "ignore", repoDrivers: true }); };
+  return {
+    get(changed, gate) {
+      if (dir !== undefined) return dir;
+      const d = mkdtempSync(join(tmpdir(), "e10-base-"));
+      try { git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", d, ctx.baseSha]); dir = d; linker = changed.some((f) => MANIFESTS.test(f)) ? null : baseDepsLinker(d, ctx.repoDir, gate); } catch { rmSync(d, { recursive: true, force: true }); dir = null; }
+      return dir;
+    },
+    link: (cwd) => (linker ? linker(cwd) : false),
+    dispose() {
+      if (!dir) return;
+      try { git(["worktree", "remove", "--force", dir]); } catch { /* pruned below */ }
+      rmSync(dir, { recursive: true, force: true });
+      try { git(["worktree", "prune"]); } catch { /* best effort */ }
+      dir = null;
+    },
+  };
+}
+export const BASE_NOT_MEASURED = "not measured on base (its dependency directories link into this checkout, a dependency manifest changed, or the environment changed since intake), so its failures cannot be compared";
 export const verifyStage: Stage = {
   name: "verify",
   targetS: STAGE_BUDGETS.verify.targetS,
   limitS: STAGE_BUDGETS.verify.limitS,
-  async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
+  async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> { const bt = baseTree(ctx); try { return await runVerify(ctx, signal, bt); } finally { bt.dispose(); } },
+};
+async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Promise<StageResult> {
+  {
     let changed: string[]; const ownWall = ((ctx.outputs().wall?.files as { path: string }[] | undefined) ?? []).map((f) => f.path), live = <T extends string | { path: string }>(l: T[]): T[] => withoutStaleWall(l, ownWall, ctx.repoDir); // FC-WALL-LOCATION-BLIND: a loki_wall_* file this run's Wall did not install is invisible to changed, risk and the test map
     try {
       changed = live(changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created)));
@@ -648,11 +705,13 @@ export const verifyStage: Stage = {
     // The evidence so far, published after every check: a verify stopped at its limit or the cap keeps the checks that ran (machine.ts), never "no tests executed". wall_passed follows the final rule below: false on any failure, true only when every Wall and holdout check ran and passed.
     const done: VerifyCheck[] = [], wallNames0 = new Set(wallTests.map(testCheckName)), targets0 = new Set([...wallTests, ...own].map(testCheckName)), wallDropped0 = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p));
     let holdN: number | null = wall.holdout_dir ? null : 0; // held-out Wall checks to run; null until they are staged
+    let partialPre: { names: string[]; ids: string[] } = { names: [], ids: [] }; // RW-01: the base attribution so far, so a verify stopped at its limit keeps it (a check excused before the stop is not read as a failure)
+    const deadline = (ctx as { verifyDeadlineMs?: number }).verifyDeadlineMs; // RW-01: when the machine stops this stage (limit or cap); absent for a caller outside the machine
     const publish = (): void => {
       if (!ctx.partial) return;
       const ran = checks.length ? checks : done, w = ran.filter((c) => wallNames0.has(c.name) || isHold(c)), allRan = holdN !== null && ran.filter(isHold).length >= holdN && wallTests.every((t) => ran.some((c) => c.name === testCheckName(t)));
       const wp = w.some((c) => c.result === "fail") ? false : w.length > 0 && allRan && wallDropped0.length === 0 && w.every((c) => c.result === "pass") ? true : undefined;
-      ctx.partial("verify", { checks: ran.map((c) => (isHold(c) ? pubHold(c) : c)), flaky: ran.filter((c) => c.result === "flaky").map((c) => (isHold(c) ? "holdout" : c.name)), ...(wp === undefined ? {} : { wall_passed: wp }), changed_files: changed, not_proven: wallDropped0.map((p) => `Wall test not executed: ${p}: ${NO_RUNNER_REASON}`), target_checks: ran.filter((c) => c.result === "pass" && (targets0.has(c.name) || isHold(c))).map((c) => (isHold(c) ? "holdout" : c.name)), risk });
+      ctx.partial("verify", { checks: ran.map((c) => (isHold(c) ? pubHold(c) : c)), flaky: ran.filter((c) => c.result === "flaky").map((c) => (isHold(c) ? "holdout" : c.name)), ...(wp === undefined ? {} : { wall_passed: wp }), changed_files: changed, ...(partialPre.names.length ? { pre_red_checks: partialPre.names, pre_red: partialPre.ids } : {}), not_proven: wallDropped0.map((p) => `Wall test not executed: ${p}: ${NO_RUNNER_REASON}`), target_checks: ran.filter((c) => c.result === "pass" && (targets0.has(c.name) || isHold(c))).map((c) => (isHold(c) ? "holdout" : c.name)), risk });
     };
     const scopedOut = scopedOutOf(map); // FC-22: audit trail for package-scoped selection (LOKI_E10_SCOPE=1)
     if (scopedOut.length) ctx.emit("test.scoped_out", "verify", { tests: scopedOut });
@@ -705,6 +764,42 @@ export const verifyStage: Stage = {
     const symbols = checks.some((c) => c.result === "fail") ? diffSymbols(ctx, changed) : []; // fl24: a failure naming one of these is never excused on differing text
     const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map(testCheckName)), new Set(relevant.map(testCheckName)), signal, cfgChanged.length === 0, zeroGate((ctx.outputs().intake as { zero_baseline?: unknown } | undefined)?.zero_baseline), depNames, ownRel, symbols);
     for (const e of preRed.envCrash) { const c = checks.find((x) => x.name === e.name && x.result === "fail"); if (c) { c.result = "not_run"; c.reason = `${BCE_REASON} (${e.sig})`; } } // BCE: environment, not the change
+    const zg0 = zeroGate((ctx.outputs().intake as { zero_baseline?: unknown } | undefined)?.zero_baseline), noIdNotes: string[] = [];
+    { // RW-01 NO-ID: a failing test check with no parsed id, compared with the identical command on base
+      const cand = baseOnDemandOn() ? checks.filter((c) => c.result === "fail" && !c.ids?.length && noIdOut.has(c) && !isHold(c) && tests.some((t) => testCheckName(t) === c.name)) : [];
+      const dir = cand.length && !signal.aborted ? bt.get(changed, zg0) : null, byLine = new Map<string, string[]>();
+      const sub = (x: string): string => (dir ? x.split(ctx.repoDir).join(dir) : x), frames = (o: string): boolean => /^\s*(?:File "|at \S|Traceback \()/m.test(o);
+      for (const c of cand) {
+        if (!dir || signal.aborted || (deadline !== undefined && Date.now() > deadline - SUITE_MARGIN_MS)) break;
+        const t = tests.find((x) => testCheckName(x) === c.name)!, tc = commandFor(t, ctx.repoDir, api), head = noIdOut.get(c)!;
+        const cwd = sub(tc.cwd); bt.link(cwd); if (cwd !== dir) bt.link(dir);
+        // the identical command: the same tool, with the checkout's paths mapped to the base worktree. An interpreter that lives in the checkout and is absent on base
+        // (a .venv the linker refused) is used as it is only when the head output has no stack frame: the command stopped before it loaded any code of the repository.
+        const mapped = sub(tc.cmd), cmd = !isAbsolute(mapped) || existsSync(mapped) ? mapped : frames(head) ? null : tc.cmd;
+        if (!cmd) continue;
+        const b = await runOnce(cmd, tc.args.map(sub), cwd, signal, {});
+        if (b.cut || b.missing || !sameFailureLines(head, b, changed, symbols, ctx.repoDir, dir)) continue;
+        const line = failureLines(rootless(stripAnsi(head), [ctx.repoDir])).find((l) => /error|No module named|not found|cannot|failed/i.test(l)) ?? failureLines(rootless(stripAnsi(head), [ctx.repoDir]))[0] ?? "";
+        c.result = "not_run"; c.reason = `${NO_ID_BASE_REASON} (${line.slice(0, 160)})`; delete c.first_error; delete c.ids; delete c.anchor;
+        byLine.set(line, [...(byLine.get(line) ?? []), c.name]);
+      }
+      for (const [line, names] of byLine) noIdNotes.push(`${NO_ID_BASE_REASON} (${line.slice(0, 160)}): ${names.length} check(s), first ${names[0]}`);
+    }
+    // RW-01 BASE-ON-DEMAND: the base record of one full-suite command, measured now on the base worktree (intake no longer measures a multi-package repository)
+    const suiteSpecs: SuiteSpec[] = (() => { try { return baseOnDemandOn() ? fullSuiteSpecs(ctx.repoDir, map.runners) : []; } catch { return []; } })(), baseUnmeasured = new Set<string>();
+    const ensureBase = async (spec: { name: string; cmd: string; cwd: string; run: string }): Promise<void> => {
+      if (!baseOnDemandOn() || signal.aborted) return;
+      const tmo = Math.floor(suiteTimeoutFor(deadline, Date.now()) / 1000); if (tmo < 1) return;
+      const dir = bt.get(changed, zg0); if (!dir) return;
+      const cwd = join(dir, spec.cwd), linked = bt.link(cwd) && (cwd === dir || bt.link(dir));
+      if (!linked && [spec.cwd, "."].some((d) => ["node_modules", ".venv"].some((x) => existsSync(join(ctx.repoDir, d, x))))) { baseUnmeasured.add(`${spec.name} (\`${spec.cmd}\`) ${BASE_NOT_MEASURED}`); return; } // a base run without the dependencies it needs measures nothing, and would leave a record a later run reads
+      await baselineSuiteOnDemand(ctx.repoDir, ctx.baseSha, spec, dir, asyncShellRunner(signal), tmo, () => signal.aborted);
+    };
+    for (const c of checks) { // RW-01: collateralOnBaseline and attribute (below) read the owning package's suite record for a check its base rerun showed failing the same way, or gave nothing to compare: measured now
+      if (c.result !== "fail" || preRed.names.includes(c.name) || targetNames.has(c.name) || changed.includes(c.name.slice(c.name.indexOf(":") + 1)) || (preRed.compared.includes(c.name) && !preRed.sameError.includes(c.name))) continue;
+      const t = tests.find((x) => testCheckName(x) === c.name), tcw = t ? api?.packageOf(t.path)?.commands.test?.cwd : undefined, spec = tcw === undefined ? undefined : suiteSpecs.find((sp) => sp.cwd === tcw);
+      if (spec) await ensureBase(spec);
+    }
     // A collateral check red on base failing the same way feeds the first fix round (it could be the bug the task describes); after a fix round left it failing
     // the same way it is pre-existing: not blocking, and named with COLLATERAL_RED, which caps VERIFIED.
     const fixRounds = Number((ctx.outputs().fix as { round?: unknown } | undefined)?.round ?? 0) || 0, collateralSame = preRed.sameError.filter((n) => collateral.has(n) && !preRed.names.includes(n));
@@ -722,6 +817,7 @@ export const verifyStage: Stage = {
     const suiteOf = (name: string): string | undefined => { const t = tests.find((x) => testCheckName(x) === name), pkg = t ? api?.packageOf(t.path) : null; return pkg?.commands.test ? `full suite: ${pkg.name}` : undefined; };
     const attr = attribute(ctx.repoDir, ctx.baseSha, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, ids: c.ids, eligible: !targetNames.has(c.name) && !changed.includes(c.name.slice(c.name.indexOf(":") + 1)), ...(suiteOf(c.name) && (preRed.compared.includes(c.name) || depsAsIntake(c.name.slice(c.name.indexOf(":") + 1))) ? { suite: suiteOf(c.name)!, ...(headErrors.get(c) ? { errors: headErrors.get(c)! } : {}), ...(preRed.sameError.includes(c.name) ? { rerun: "same" as const } : preRed.compared.includes(c.name) ? { rerun: "differs" as const } : {}) } : {}) })));
     attr.introducedChecks = [...new Set(attr.introducedChecks.map((n) => (isHoldoutCheck(n) ? "holdout" : n)))]; preRed.names.push(...attr.preExistingChecks); preRed.ids.push(...attr.preExistingIds);
+    partialPre = { names: [...preRed.names], ids: [...preRed.ids] }; publish();
     const lintUntouchedNames: string[] = []; // LINT-UNTOUCHED: filled by runLintChecks below
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
@@ -748,9 +844,12 @@ export const verifyStage: Stage = {
     if (risk && (risk.tier !== "low" || ntf) && !signal.aborted && (complete || settle)) { // RISKTIER: medium and high run the detected full test command (deep.ts runner table); the reviewer and council stay recorded as not run
       const { runFullSuite } = await import("./deep.ts"); // lazy: deep.ts imports this module
       const full: Parameters<typeof runFullSuite>[3] = [];
-      await runFullSuite(ctx, signal, { changed, ...(ntf && risk?.tier === "low" ? { ownedOnly: true } : {}), targetPassed: checks.some((c) => targetNames.has(c.name) && c.result === "pass" && hasExecutedProof([c])), wallBaseRed: wallRedOnBaseOf(ctx.outputs().wall?.base_run), proofFiles: wallProofOf(checks, [...wallTests.map((t) => ({ name: testCheckName(t), path: t.path })), ...(hold?.tests ?? []).map((h, i) => ({ name: `holdout:${i + 1}`, path: (h as TestRef).path }))]) }, full, fullNotProven);
+      await runFullSuite(ctx, signal, { changed, ...(ntf && risk?.tier === "low" ? { ownedOnly: true } : {}), ...(baseOnDemandOn() ? { scope: true, suiteTimeoutMs: () => suiteTimeoutFor(deadline, Date.now()), ensureBase } : {}), targetPassed: checks.some((c) => targetNames.has(c.name) && c.result === "pass" && hasExecutedProof([c])), wallBaseRed: wallRedOnBaseOf(ctx.outputs().wall?.base_run), proofFiles: wallProofOf(checks, [...wallTests.map((t) => ({ name: testCheckName(t), path: t.path })), ...(hold?.tests ?? []).map((h, i) => ({ name: `holdout:${i + 1}`, path: (h as TestRef).path }))]) }, full, fullNotProven);
       for (const c of full) { const k: VerifyCheck = { name: c.name, cmd: c.cmd, result: c.result as VerifyCheck["result"], duration_s: c.duration_s, ...(c.reason ? { reason: c.reason } : {}), ...(c.count ? { count: c.count } : {}), ...(c.result === "fail" ? { ...(c.ids ? { ids: c.ids } : {}), ...(c.first_error ? { first_error: c.first_error } : {}) } : {}) }; suites.add(k); checks.push(k); ctx.emit("test.result", "verify", { ...k }); if (c.excerpt) excerpts.set(k, c.excerpt); } // P12-01: full-suite checks leave the same test.result evidence per-file checks do
       for (const c of full) if (c.errors) fullErr.set(c.name, c.errors);
+      for (const c of full) { const spec = c.result === "fail" ? suiteSpecs.find((sp) => sp.name === c.name && sp.cmd === c.cmd) : undefined; if (spec) await ensureBase(spec); } // RW-01: only a suite red on head is measured on base
+      if (baseOnDemandOn() && ctx.runDir) writeBaselineRecord(ctx.repoDir, ctx.runDir); // baseline.json follows what was measured on demand
+      for (const n of baseUnmeasured) fullNotProven.add(n);
       const blockedIds = checks.filter((c) => c.result === "fail" && !suites.has(c) && !preRed.names.includes(c.name)).flatMap((c) => c.ids ?? []);
       const shown = new Set(checks.filter((c) => touchedExcused.includes(c.name)).flatMap((c) => c.ids ?? [])), fa = attributeFullSuite(ctx.repoDir, ctx.baseSha, full, blockedIds, changed, symbols, shown); preRed.names.push(...fa.preExistingChecks); preRed.ids.push(...fa.preExistingIds); attr.introducedChecks.push(...fa.introducedChecks); attr.line = [attr.line, fa.line].filter(Boolean).join("; ") || null; notExcused.push(...whyFullSuiteNotExcused(ctx.repoDir, ctx.baseSha, full, changed, fa.preExistingChecks, blockedIds, shown)); // REPOMEM: same attribution for the full suite
       if (full.some((c) => c.result === "pass" || c.result === "fail")) { ranDeeper.push("full test command", "full suite"); risk = markExecuted(risk, ranDeeper); recordRisk(ctx.repoDir, risk); }
@@ -783,15 +882,15 @@ export const verifyStage: Stage = {
     const inBase = (f: string): boolean => { try { safeGit(ctx.repoDir, ["cat-file", "-e", `${ctx.baseSha}:${f}`], { stdio: "ignore" }); return true; } catch { return false; } };
     const testCounts: Record<string, unknown> = {}; const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).flatMap((t) => { const k = preRed.cnt[testCheckName(t)]; if (k) testCounts[t.path] = k; return [...(testFileWeakened(ctx.repoDir, ctx.baseSha, null, t.path, "M", intake?.task ?? "") ? [`weakened test: ${t.path}`] : []), ...(assertDeltaNotes(ctx.repoDir, ctx.baseSha, null, t.path, intake?.task ?? "", k?.b, k?.h) ?? [])]; }); // a relevant test file edited: listed as weakened only when it loses an assertion or case or gains a skip (EXP-0001: an added case is kept); a changed assertion value is always listed
     const weakened = [...modifiedRel, ...cfgChanged.map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`), ...collateralRed.map((n) => `${COLLATERAL_RED}: ${n}`), ...preRed.quiet.filter((n) => preRed.names.includes(n)).map((n) => `${QUIET_RED}: ${n}`)];
-    const fullChecks = checks.filter((c) => c.name.startsWith("full suite")), fullSuiteRan = fullChecks.length > 0 && fullChecks.every((c) => c.result === "pass" || c.result === "fail"); // the importers of a changed file that the 20-file cap left out still ran when the whole suite ran: its failures are compared with base per id, so the dropped-files note no longer caps the label (a Haiku run with every acceptance line met was PARTIAL on it alone)
+    const fullChecks = checks.filter((c) => c.name.startsWith("full suite")), fullSuiteRan = fullChecks.length > 0 && fullChecks.every((c) => c.result === "pass" || c.result === "fail") && ![...fullNotProven].some((n) => n.includes(" not run: no changed file is in this package")); // the importers of a changed file that the 20-file cap left out still ran when the whole suite ran: its failures are compared with base per id, so the dropped-files note no longer caps the label (a Haiku run with every acceptance line met was PARTIAL on it alone)
     const depsNotes = unusedInstallNotes(intake?.deps_not_proven ?? [], api, changed, checks.map((c) => c.name), ctx.repoDir); // an install failure no check or changed file depends on is disclosed (n/a), never a cap
-    const notProven = [...(complete ? [] : [QUICK_ONLY_NOTE]), ...preRed.envCrash.map((e) => `${e.name}: ${BCE_REASON} (${e.sig})`), ...weakened, ...hiddenEdits(ctx.repoDir), ...ignoreRuleChanges(ctx.repoDir, (intake as { ignore_snapshot?: unknown } | undefined)?.ignore_snapshot, ctx.baseSha), ...dependentNotes(dep).filter((n) => !(fullSuiteRan && n.startsWith("reverse-dependent tests dropped"))), ...depsNotes.cap, ...pub.filter((c) => c.name === "holdout" && c.result !== "pass").map((c) => (c.result === "not_run" ? "holdout not executed" : "holdout check failed")), ...[...fullNotProven].filter((n) => !naNote(n)), ...pub.filter((c) => c.owner === "harness" && c.name !== "holdout").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
+    const notProven = [...(complete ? [] : [QUICK_ONLY_NOTE]), ...preRed.envCrash.map((e) => `${e.name}: ${BCE_REASON} (${e.sig})`), ...noIdNotes, ...weakened, ...hiddenEdits(ctx.repoDir), ...ignoreRuleChanges(ctx.repoDir, (intake as { ignore_snapshot?: unknown } | undefined)?.ignore_snapshot, ctx.baseSha), ...dependentNotes(dep).filter((n) => !(fullSuiteRan && n.startsWith("reverse-dependent tests dropped"))), ...depsNotes.cap, ...pub.filter((c) => c.name === "holdout" && c.result !== "pass").map((c) => (c.result === "not_run" ? "holdout not executed" : "holdout check failed")), ...[...fullNotProven].filter((n) => !naNote(n)), ...pub.filter((c) => c.owner === "harness" && c.name !== "holdout").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
     const wallDropped = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p)); // FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: sealed, but no runner of this repo can run it
     notProven.push(...wallDropped.map((p) => `Wall test not executed: ${p}: ${NO_RUNNER_REASON}`));
     const wallNames = new Set(wallTests.map(testCheckName)), wallRun = checks.filter((c) => wallNames.has(c.name) || isHold(c)), wallFailTail = writeWallFailureTail(ctx.runDir, checks.filter((c) => wallNames.has(c.name) && c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, out: failTails.get(c) ?? "" }))), wallPassed = wallRun.some((c) => c.result === "fail") ? false : wallRun.length > 0 && wallDropped.length === 0 && wallRun.every((c) => c.result === "pass") ? true : undefined; // the receipt's wall.passed: false on any failure, true only when every Wall and holdout check ran and passed, unset otherwise
     await settleNrd(ctx); // SPEED-NRD-OVERLAP: the differential implement started has run beside these checks; its group joins this verify's
     if (touchedExcused.length) attr.line = [attr.line, ...touchedExcused.map((n) => `${TOUCHED_RED}: ${n}`)].filter(Boolean).join("; ") || null; // TOUCHED-BASE-RED disclosure (the receipt's baseline line)
     return { status: "completed", data: { checks: pub, flaky, verify_scope: complete ? "complete" : "quick", ...(ntf ? { no_test_fallback: true } : {}), ...(uncaused.length ? { uncaused_reds: uncaused } : {}), ...(lintUntouchedNames.length ? { lint_untouched: lintUntouchedNames } : {}), independent_fail: independentFail, file_hashes: hashes, blocking_checks: blockingNames, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: [...failuresGrouped, ...nrdGroupsFor(ctx.outputs().implement, fixRounds)], holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size || depsNotes.na.length ? { not_applicable: [...[...fullNotProven].filter(naNote).map(naText), ...depsNotes.na] } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(notExcused.length ? { not_excused: notExcused } : {}), ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}), ...(preRed.sameError.length ? { known_red_same_error: preRed.sameError } : {}), ...(baseRed.length ? { base_red_checks: baseRed } : {}), skipped_on_base: preRed.zero, ...(collateralSame.length && fixRounds === 0 ? { collateral_same_error: collateralSame } : {}), ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
-  },
-};
+  }
+}
 export const stage = verifyStage;

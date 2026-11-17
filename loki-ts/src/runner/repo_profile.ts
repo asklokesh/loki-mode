@@ -545,6 +545,10 @@ function runOnce(repoDir: string, cmd: string, cwd: string, tmo: number, opts: B
   const r = (opts.run ?? shellRunner)(cmd, cwd, tmo * 1000);
   const dur = Math.round((Date.now() - started) / 100) / 10;
   rmNewUntracked(repoDir, before);
+  return measured(repoDir, cmd, r, dur);
+}
+/** One finished base run as a baseline record (shared by intake's blocking run and verify's on-demand run). */
+function measured(repoDir: string, cmd: string, r: BaselineRun, dur: number): { b: CommandProfile["baseline"]; missing: boolean } {
   const ids = r.code !== 0 && !r.timedOut ? (failIds(r.out).length ? failIds(r.out) : isExitCodedScript(cmd) && r.code !== null ? [exitCodedId(cmd, r.out, repoDir) ?? []].flat() as string[] : []) : [], missing = r.missing === true;
   const attributable = !r.timedOut && !missing && r.code !== null && (r.code === 0 || ids.length > 0);
   const reason = attributable ? undefined : r.timedOut ? "timed out" : missing ? "command not found" : "failing test ids not parseable, failures cannot be attributed";
@@ -559,10 +563,13 @@ function runProbed(repoDir: string, cmd: string, cwd: string, tmo: number, opts:
   const first = runOnce(repoDir, cmd, cwd, tmo, opts), b = first.b;
   if (!b.failing_ids.length) return { b: { ...b, flaky_probe: "done" }, missing: first.missing };
   if (b.timed_out || first.missing || (b.duration_s ?? 0) > FLAKE_PROBE_MAX_S) return { b: { ...b, flaky_probe: `skipped: first pass ${b.duration_s ?? "?"}s` }, missing: first.missing };
-  const second = runOnce(repoDir, cmd, cwd, tmo, opts).b;
-  if (second.timed_out || second.exit_code === null) return { b: { ...b, flaky_probe: "skipped: second pass did not finish" }, missing: first.missing };
+  return { b: probeMerge(b, runOnce(repoDir, cmd, cwd, tmo, opts).b), missing: first.missing };
+}
+/** The first base pass with what a second pass adds: the ids red on exactly one of the two are flaky. */
+function probeMerge(b: CommandProfile["baseline"], second: CommandProfile["baseline"]): CommandProfile["baseline"] {
+  if (second.timed_out || second.exit_code === null) return { ...b, flaky_probe: "skipped: second pass did not finish" };
   const one = new Set(b.failing_ids), two = new Set(second.failing_ids), flaky = [...one].filter((i) => !two.has(i)).concat([...two].filter((i) => !one.has(i)));
-  return { b: { ...b, flaky_probe: "done", ...(flaky.length ? { flaky_ids: flaky, failing_errors: { ...(second.failing_errors ?? {}), ...(b.failing_errors ?? {}) } } : {}) }, missing: first.missing };
+  return { ...b, flaky_probe: "done", ...(flaky.length ? { flaky_ids: flaky, failing_errors: { ...(second.failing_errors ?? {}), ...(b.failing_errors ?? {}) } } : {}) };
 }
 /** Runs the first test command once and records it on the command. */
 export function runBaseline(repoDir: string, commands: ProfileCommand[], opts: BuildOpts = {}): CommandProfile["baseline"] {
@@ -605,6 +612,24 @@ function baseFor(repoDir: string, p: CommandProfile, cmd: string, ranOnly: boole
   return all.find((b) => normCmd(b.command ?? "") === normCmd(cmd)) ?? all.find((b) => repoRelCmd(repoDir, b.command ?? "") === repoRelCmd(repoDir, cmd)) ?? ((!ranOnly || p.baseline.ran) && sameRootScript(repoDir, p.baseline.command ?? "", cmd) ? p.baseline : undefined);
 }
 export const SUITE_BASELINE_BUDGET_S = 300;
+/** RW-01 BASE-ON-DEMAND (LOKI_E10_BASE_ON_DEMAND, default on, =0 opts out): in a repository with a package suite below the root, intake no longer runs every
+ *  package's suite on base before the model starts (opencode#63152: 308 s of a 900 s run went to 4 of 36 suites, the other 32 were never measured). Each
+ *  suite is recorded not run (BASE_DEFERRED, attributable:false), so every reader fails closed, and verify measures on a base worktree only the suites
+ *  that are red on head (baselineSuiteOnDemand), into the same `suites` record. A repository whose only suite is the root's behaves as before. */
+export const baseOnDemandOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BASE_ON_DEMAND"] ?? "").trim());
+export const BASE_DEFERRED = "deferred: measured on base on demand, after implement";
+export type AsyncBaselineRunner = (cmd: string, cwd: string, timeoutMs: number) => Promise<ReturnType<BaselineRunner>>;
+/** shellRunner without blocking the event loop (a stage limit or the run cap must be able to stop it): the same `sh -c`, the same scoped env, its own
+ *  process group killed whole at the timeout or when `signal` aborts. A stopped run reads as timed out. */
+export const asyncShellRunner = (signal?: AbortSignal): AsyncBaselineRunner => async (cmd, cwd, timeoutMs) => {
+  const proc = Bun.spawn(["sh", "-c", cmd], { cwd, env: { ...plainTestEnv(), PYTHONDONTWRITEBYTECODE: "1", CI: "1" }, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
+  let stopped = false; const kill = (): void => { try { process.kill(-proc.pid, "SIGKILL"); } catch { /* gone */ } }, stop = (): void => { stopped = true; kill(); };
+  const timer = setTimeout(stop, timeoutMs); if (signal?.aborted) stop(); else signal?.addEventListener("abort", stop, { once: true });
+  try {
+    const [o, e, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    return { code: stopped ? null : code, timedOut: stopped, out: stripAnsi(`${o}\n${e}`).slice(-8 * 1024 * 1024), missing: code === 127 };
+  } finally { clearTimeout(timer); signal?.removeEventListener("abort", stop); kill(); }
+};
 /** FC-BASELINE-PER-PACKAGE: a baseline per full-suite command verify will run (`specs`: package_suite.ts fullSuiteSpecs, the one source), added to the
  *  profile ensureProfile wrote for this HEAD. An entry for the same command is reused unless `rerun` (a dependency install succeeded
  *  since, so a baseline measured before it is stale: the main baseline and every entry are re-run, attributable or not). A root command the main baseline already ran is not run twice. One shared
@@ -618,8 +643,10 @@ export function baselineSuites(repoDir: string, specs: { name: string; cmd: stri
     let left = Math.min(opts.budgetS ?? SUITE_BASELINE_BUDGET_S, dl());
     const old = p.suites ?? [];
     const rootSpeaks = (run: string): boolean => repoRelCmd(repoDir, run) === repoRelCmd(repoDir, p.baseline.command ?? "") || (p.baseline.ran && p.baseline.attributable && !p.baseline.timed_out && sameRootScript(repoDir, p.baseline.command ?? "", run)); // an alias is reused only when its base run is complete and attributable; otherwise the suite is measured under its own command
+    const lazy = baseOnDemandOn() && (specs.some((s) => s.cwd !== ".") || p.baseline.reason === BASE_DEFERRED); // RW-01: a repository with a package suite below the root measures its suites on demand (verify), never all of them here
     p.suites = specs.filter((s) => s.cwd !== "." || !rootSpeaks(s.run)).map((s) => {
       const prev = old.find((o) => o.command === s.cmd);
+      if (lazy) return prev?.ran && !opts.rerun && !prev.timed_out && (prev.failing_ids.length === 0 || (prev.failing_errors && prev.flaky_probe !== undefined)) ? prev : { name: s.name, ran: false, command: s.cmd, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: BASE_DEFERRED };
       if (prev?.ran && !opts.rerun && !cutShort(prev, Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, Math.floor(left))) && (prev.failing_ids.length === 0 || (prev.failing_errors && prev.flaky_probe !== undefined))) return prev; // an entry recorded before failing_errors existed is measured again
       const tmo = Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, Math.floor(left)), t0 = Date.now();
       if (tmo < 1) { if (opts.deadlineMs !== undefined) intakeBudgetNote((opts.budgetSpentS ?? 0) + (opts.budgetS ?? SUITE_BASELINE_BUDGET_S) - left, `${s.name} not measured on base`); return { name: s.name, ran: false, command: s.cmd, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: "baseline budget used up" }; }
@@ -631,6 +658,41 @@ export function baselineSuites(repoDir: string, specs: { name: string; cmd: stri
     save(repoDir, p);
     return p;
   } catch { return null; }
+}
+/** RW-01 BASE-ON-DEMAND: measures one full-suite command on base, after implement, and writes the record intake no longer writes. `baseDir` is a checkout of
+ *  the base commit (verify's detached base worktree, dependency dirs already linked by the caller); `spec.run` runs in `spec.cwd` under it, through
+ *  `runner` (asyncShellRunner with the stage's signal). The record goes into the profile only when the profile is for `baseSha` and the run was not
+ *  stopped by `stopped()` (a stage stop: a half-run base must not be read by a later run). A suite the root baseline speaks for is written as the root
+ *  baseline when that was deferred. True when a usable record exists afterwards (measured now, or already measured on this commit). Never throws. */
+export async function baselineSuiteOnDemand(repoDir: string, baseSha: string, spec: { name: string; cmd: string; cwd: string; run: string }, baseDir: string, runner: AsyncBaselineRunner, timeoutS: number, stopped: () => boolean = () => false): Promise<boolean> {
+  try {
+    const p = loadProfile(repoDir);
+    if (!p || !baseSha || p.revision !== baseSha || timeoutS < 1) return false;
+    const usable = (b: CommandProfile["baseline"] | undefined): boolean => !!b?.ran && !cutShort(b, timeoutS) && (b.failing_ids.length === 0 || (!!b.failing_errors && b.flaky_probe !== undefined));
+    const root = spec.cwd === "." && (repoRelCmd(repoDir, spec.run) === repoRelCmd(repoDir, p.baseline.command ?? "") || repoRelCmd(baseDir, spec.run) === repoRelCmd(repoDir, p.baseline.command ?? ""));
+    if (usable(root ? p.baseline : p.suites?.find((o) => o.command === spec.cmd))) return true;
+    if (root && p.baseline.ran && p.baseline.reason !== BASE_DEFERRED) return true; // intake measured the root command itself: that record stands, usable or not
+    // the base worktree's own path is rewritten to the checkout's, so an error line or an output shape that carries an absolute path reads as it would have from a run in the checkout
+    const dirs = [baseDir]; try { dirs.push(realpathSync(baseDir)); } catch { /* the spelled path only */ }
+    const home = (out: string): string => { let o = out; for (const d of [...new Set(dirs.flatMap((x) => [x, x.startsWith("/private/") ? x.slice("/private".length) : `/private${x}`]))].sort((a, b) => b.length - a.length)) o = o.split(d).join(repoDir.replace(/\/+$/, "")); return o; };
+    const one = async (): Promise<{ b: CommandProfile["baseline"]; missing: boolean }> => { const t0 = Date.now(), r = await runner(spec.run, join(baseDir, spec.cwd), timeoutS * 1000); return measured(repoDir, spec.run, { ...r, out: home(r.out) }, Math.round((Date.now() - t0) / 100) / 10); };
+    const first = await one(); let b = first.b;
+    if (stopped()) return false;
+    if (!b.failing_ids.length) b = { ...b, flaky_probe: "done" };
+    else if (b.timed_out || first.missing || (b.duration_s ?? 0) > FLAKE_PROBE_MAX_S) b = { ...b, flaky_probe: `skipped: first pass ${b.duration_s ?? "?"}s` };
+    else { b = probeMerge(b, (await one()).b); if (stopped()) return false; }
+    const cur = loadProfile(repoDir);
+    if (!cur || cur.revision !== baseSha) return false;
+    if (root) cur.baseline = { ...b, command: cur.baseline.command };
+    else cur.suites = [...(cur.suites ?? []).filter((o) => o.command !== spec.cmd), { name: spec.name, ...b, command: spec.cmd }];
+    save(repoDir, cur);
+    return true;
+  } catch { return false; }
+}
+/** RW-01: true when the manifests show a package with a test command below the repo root (manifestModel, no session): the repository whose root baseline
+ *  intake defers along with its package suites. A workspace whose root test script fans out over every package answers true too. */
+export function multiPackageRepo(repoDir: string): boolean {
+  try { const m = manifestModel(repoDir); if (!m) return false; if ("fanOut" in m) return true; return ((m["packages"] as { root: string; commands: { test: unknown } }[] | undefined) ?? []).some((x) => x.root !== "." && !!x.commands.test); } catch { return false; }
 }
 
 /** True only when the same full-suite command ran on exactly this base commit, exited 0 and discovered no tests (empty discovery, no skips), and `cls` is the head's empty discovery too: the suite was empty before the change as well, so it says nothing about the change. Anything else (no profile, a package directory with no suites entry, other revision, unmatched command, base executed or skipped tests) is false, so the head's 0-test result stays not_run. */
@@ -661,12 +723,13 @@ function save(repoDir: string, p: CommandProfile): void {
 const headOf = (repoDir: string): string => { try { return safeGit(repoDir, ["rev-parse", "HEAD"]).trim(); } catch { return ""; } };
 
 /** The one entry point (intake). Same manifest hash and HEAD: reuse. Same hash, new HEAD: keep the commands, re-run only the baseline. New hash: rediscover and re-baseline. */
-export function ensureProfile(repoDir: string, opts: BuildOpts = {}): { profile: CommandProfile; reused: boolean } | null {
+export function ensureProfile(repoDir: string, opts: BuildOpts & { defer?: boolean } = {}): { profile: CommandProfile; reused: boolean } | null {
   try {
     const hash = manifestHash(repoDir), rev = headOf(repoDir), old = loadProfile(repoDir);
-    if (old && old.manifest_hash === hash && old.revision === rev && !cutShort(old.baseline, opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S) && (old.baseline.failing_ids.length === 0 || (old.baseline.failing_errors && old.baseline.flaky_probe !== undefined))) return { profile: old, reused: true };
+    if (old && old.manifest_hash === hash && old.revision === rev && !(old.baseline.reason === BASE_DEFERRED && !opts.defer) && !cutShort(old.baseline, opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S) && (old.baseline.failing_ids.length === 0 || (old.baseline.failing_errors && old.baseline.flaky_probe !== undefined))) return { profile: old, reused: true };
     const commands = old && old.manifest_hash === hash ? old.commands.map((c) => ({ ...c, ...(c.kind === "test" ? { validated: null, exit_code: null, duration_s: null, failing_ids: [] } : {}) })) : discoverCommands(repoDir);
-    const profile: CommandProfile = { version: 1, revision: rev, manifest_hash: hash, created_at: (opts.now?.() ?? new Date()).toISOString(), commands, baseline: runBaseline(repoDir, commands, opts) };
+    const t = commands.find((c) => c.kind === "test"); // RW-01 `defer` (intake, a multi-package repository): the root command is recorded, not run; verify measures it on base only if it is red on head
+    const profile: CommandProfile = { version: 1, revision: rev, manifest_hash: hash, created_at: (opts.now?.() ?? new Date()).toISOString(), commands, baseline: opts.defer && t ? { ran: false, command: t.cmd, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: BASE_DEFERRED } : runBaseline(repoDir, commands, opts) };
     save(repoDir, profile);
     return { profile, reused: false };
   } catch { return null; }
@@ -983,6 +1046,7 @@ export function repoReadiness(p: CommandProfile, host?: ReadinessHost, verify: r
   const b = p.baseline;
   if (!has("test") && verify.length === 0) add(30, { id: "no-test-command", severity: "high", message: "No test command found in the repo manifests.", fix: "Add a test script (for example `npm run test`, `pytest`, `go test ./...`) so changes can be verified." });
   else if (!has("test")) { const miss = verify.find((c) => c.validated === false); if (miss) add(30, { id: "test-tool-missing", severity: "high", message: `Loki tests this repo with \`${miss.cmd}\` (from ${miss.source}), but ${miss.note}.`, fix: miss.fix ?? `Install the tool \`${miss.cmd.split(" ")[0]}\` needs.` }); } // FR05: verify's own full-suite command (computed at read time, never persisted)
+  else if (b.reason === BASE_DEFERRED) { /* RW-01: not measured yet by design (a multi-package repository), neither a gap nor a credit */ }
   else if (!b.ran || b.timed_out || !b.attributable) add(15, { id: "baseline-unattributable", severity: "medium", message: `Baseline test run is not usable${b.reason ? ` (${b.reason})` : b.ran ? "" : " (not run)"}.`, fix: "Make the test command runnable from the repo root and finish within the baseline timeout so failures can be attributed." });
   else if (b.failing_ids.length > 0) add(20, { id: "baseline-red", severity: "medium", message: `Baseline is red: ${b.failing_ids.length} test(s) already fail before any change.`, fix: "Fix or quarantine them; until then `loki start` will not blame these on your change." });
   if (!has("lint")) add(10, { id: "no-lint", severity: "low", message: "No lint command found.", fix: "Add a lint script to the manifest." });
