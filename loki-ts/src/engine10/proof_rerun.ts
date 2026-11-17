@@ -198,7 +198,7 @@ export async function rerunProof(repoDir: string, runDir: string, signal?: Abort
   let scratch: ReturnType<typeof createSessionScratch>;
   try { scratch = createSessionScratch(); } catch { return { exit: null, seconds: 0, proved: 0, failed: 0, tail: "Loki could not create a scratch directory for its own re-run", script_chars: scriptChars, stopped: 0, left: 0, lines: {} }; }
   const blank: Record<string, string> = {}; for (const k of Object.keys(env)) if (CONNECTION_ENV.test(k)) blank[k] = ""; // the re-run never sees the user's own database settings either
-  const token = randomBytes(8).toString("hex"); writeProofKit(scratch.dir, null); // Loki's own copy of the helper and a token that exists only in this run
+  const token = randomBytes(8).toString("hex"); writeProofKit(scratch.dir, null); writeProofKit(runDir, null); // Loki's own copy of the helper (also beside the kept script: one stored script in fourteen sourced it from its own directory) and a token that exists only in this run
   const t0 = Date.now();
   let exit: number | null = null, out = "";
   try {
