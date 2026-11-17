@@ -124,7 +124,7 @@ export async function issueLineCheck(ctx: RunContext, asks: string[], head: stri
   const n = await safeGitRun(ctx.repoDir, ["diff", "--name-only", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return { model, outcome: "no_diff", usd: null, calls: 0, input_chars: 0, diff_cut: [], diff_truncated: false, not_reviewed: "the diff could not be read" };
   const cd = lineCheckDiff(d.stdout), prompt = lineCheckPrompt(asks, cd.text, (n?.stdout ?? "").split("\n").filter(Boolean), checks, reply, facts);
-  const call = lineCheckOverride ?? consultCallFor(model, join(ctx.repoDir, ".loki"), process.env, 120_000, { maxTokens: 2500, thinking: "off" });
+  const call = lineCheckOverride ?? consultCallFor(model, join(ctx.repoDir, ".loki"), process.env, 120_000, { maxTokens: 8000, thinking: "off" }); // 2500 cut a ten-line answer short on the smallest model ("truncated", twice), which left the label with no second reader
   let usd: number | null = null, calls = 0, outcome = "failed", parsed: ReturnType<typeof parseLineCheck> = null;
   for (let i = 0; i < 2 && !parsed; i++) {
     let r: { text: string | null; usd: number | null; outcome: string }; try { r = await call(LINE_CHECK_SYSTEM, prompt, "issue-acceptance"); } catch { r = { text: null, usd: null, outcome: "transport" }; }
