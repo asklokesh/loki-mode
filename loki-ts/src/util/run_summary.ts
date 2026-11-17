@@ -26,13 +26,13 @@
 // added line.
 // OC-OUTPUT: one shared end-of-run summary, same format as autonomy/lib/run-summary.sh
 // (legacy engine). Pure formatting; callers supply already-measured facts. Null is never shown as 0.
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { safeGit } from "../util/safe_git.ts";
 import { redactSecrets } from "../util/redact.ts";
 import { formatDuration, type Outcome } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts"; import { withoutOwnLead } from "../engine10/closure.ts";
-import { firstIncompleteStage } from "./run_outputs.ts";
+import { controlRunLink, firstIncompleteStage } from "./run_outputs.ts";
 import { colorDisabled } from "./colors.ts";
 import { collapseNotProven } from "./term_width.ts";
 
@@ -50,6 +50,44 @@ export interface RunSummaryInput {
   next: string;
   /** REQTRACE: requirements with no passing check, from .loki/state/requirements-map.json; absent or 0 prints nothing. */
   uncovered?: number;
+  /** This run's page in the dashboard (the Control Plane), or its home page; set only when one is running (dashboardLink). */
+  dashboardUrl?: string | null;
+  /** Lines the caller will still add under this block (the cap line, the risk line): the dashboard link takes a line of its own only when one is left over. Default 1. */
+  reservedLines?: number;
+}
+
+/** Where the dashboard should take a person for one run: the run's own page when the Control Plane already holds the run, else the repository's page
+ *  when it knows the repository, else the home page, so the link is never a broken one. `waitMs` keeps asking for the run for that long (a Control Plane
+ *  started a moment ago is still reading the run in). Never throws; every request has a short timeout. */
+export async function dashboardTarget(base: string, repoDir: string, runId: string | null, o: { fetchImpl?: typeof fetch; waitMs?: number } = {}): Promise<{ url: string; what: "run" | "repository" | "home" }> {
+  const f = o.fetchImpl ?? fetch, b = base.replace(/\/+$/, ""), run = runId ? controlRunLink(b, repoDir, runId) : null;
+  const ok = async (u: string): Promise<Response | null> => { try { const r = await f(u, { signal: AbortSignal.timeout(400) }); return r.ok ? r : null; } catch { return null; } };
+  if (run) {
+    const api = `${b}/v1/runs/${run.slice(run.indexOf("/#/runs/") + 8)}`, until = Date.now() + (o.waitMs ?? 0);
+    for (;;) {
+      if (await ok(api)) return { url: run, what: "run" };
+      if (Date.now() >= until) break;
+      await new Promise<void>((r) => { const t = setTimeout(r, 250); (t as { unref?: () => void }).unref?.(); });
+    }
+  }
+  try {
+    const name = basename(realpathSync(repoDir)), r = await ok(`${b}/v1/repos`), j = r ? ((await r.json()) as { repos?: unknown }) : null;
+    if (name && Array.isArray(j?.repos) && j.repos.includes(name)) return { url: `${b}/#/repo/${encodeURIComponent(name)}`, what: "repository" };
+  } catch { /* the home page */ }
+  return { url: `${b}/`, what: "home" };
+}
+
+/** The `Dashboard:` link of the final summary: this run's page when a Control Plane is running and holds the run, else its home page; null when none
+ *  is running (or LOKI_CONTROL=0). It only finds a running one, it never starts one. Never throws. */
+export async function dashboardLink(repoDir: string, runId: string, env: NodeJS.ProcessEnv = process.env, o: { fetchImpl?: typeof fetch } = {}): Promise<string | null> {
+  try {
+    if (env["LOKI_CONTROL"] === "0") return null;
+    const { discoverControlUrl } = await import("../../../packages/control-plane/src/shipper/discover.ts");
+    const base = await discoverControlUrl(env, { fetchImpl: o.fetchImpl });
+    if (!base || !/^https?:\/\//.test(base)) return null;
+    const t = await dashboardTarget(base, repoDir, runId, o);
+    return t.what === "run" ? t.url : `${base.replace(/\/+$/, "")}/`;
+  } catch { return null; }
 }
 
 /** Map engine10's Outcome to the four user-facing results. */
@@ -83,7 +121,7 @@ export function useColor(env: NodeJS.ProcessEnv = process.env, isTty: boolean = 
 }
 
 export function summaryObject(i: RunSummaryInput): Record<string, unknown> {
-  return { result: i.result, files_changed: i.filesChanged, insertions: i.insertions ?? null, deletions: i.deletions ?? null, cost_usd: i.costUsd, cost_estimated: !!i.costEstimated, elapsed_s: Math.round(i.elapsedS), receipt: i.receiptPath ?? null, next: i.next, ...(i.uncovered ? { requirements_uncovered: i.uncovered } : {}) };
+  return { result: i.result, files_changed: i.filesChanged, insertions: i.insertions ?? null, deletions: i.deletions ?? null, cost_usd: i.costUsd, cost_estimated: !!i.costEstimated, elapsed_s: Math.round(i.elapsedS), receipt: i.receiptPath ?? null, ...(i.dashboardUrl ? { dashboard: i.dashboardUrl } : {}), next: i.next, ...(i.uncovered ? { requirements_uncovered: i.uncovered } : {}) };
 }
 
 /** The next-step suffix naming uncovered requirements; empty when there are none. */
@@ -101,6 +139,7 @@ export function formatRunSummary(i: RunSummaryInput, opts: { json?: boolean; col
     `Cost:     ${cost}`,
     `Elapsed:  ${formatDuration(i.elapsedS)}`,
     ...(i.receiptPath ? [`Receipt:  ${i.receiptPath}`] : []),
+    ...(i.dashboardUrl ? [`Dashboard: ${i.dashboardUrl}`] : []),
     `next:     ${i.next}  (or: loki chat --attach)${i.uncovered ? `; ${uncoveredNote(i.uncovered)}` : ""}`,
   ];
   return `${lines.join("\n")}\n`;
@@ -111,7 +150,15 @@ export function withNextLine(out: string, i: RunSummaryInput): string {
   const files = i.filesChanged == null ? "files unknown" : `${i.filesChanged} file${i.filesChanged === 1 ? "" : "s"} changed${i.insertions != null && i.deletions != null ? ` (+${i.insertions} -${i.deletions})` : ""}`;
   const lines = out.replace(/\n+$/, "").split("\n");
   const un = i.uncovered ? `; ${uncoveredNote(i.uncovered)}` : "";
-  if (lines.length < 7) return `${lines.join("\n")}\nNext:       ${i.next}  (${files})${un}\n`;
+  // The dashboard link always ends a line (nothing is folded after it, so a terminal's click target is the URL alone): a line of its own above
+  // "Next:" when a line is left over after the lines the caller still adds (reservedLines: the cap line, the risk line), else the tail of the line
+  // above. So it never pushes the risk line out, and the 8-line cap is unchanged.
+  const dash = i.dashboardUrl ?? "";
+  if (lines.length < 7) {
+    if (dash && lines.length + 2 + (i.reservedLines ?? 1) <= 7) lines.push(`Dashboard:  ${dash}`); else if (dash) lines[lines.length - 1] += `; Dashboard: ${dash}`;
+    return `${lines.join("\n")}\nNext:       ${i.next}  (${files})${un}\n`;
+  }
+  if (dash && lines.length > 1) lines[lines.length - 2] += `; Dashboard: ${dash}`;
   lines[lines.length - 1] += `; next: ${i.next}${un}`;
   return `${lines.join("\n")}\n`;
 }

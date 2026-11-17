@@ -7,6 +7,7 @@ import { formatDuration, spendSoFar } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
 import { terminalWidth } from "../util/term_width.ts";
 import { redactSecrets, UNSAFE_TERMINAL_CHARS_RE } from "../util/redact.ts";
+import { controlRunLink } from "../util/run_outputs.ts";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -17,7 +18,15 @@ const STAGES: readonly [string, string][] = [["intake", "read"], ["plan", "plan"
 const NOW: Record<string, string> = { intake: "reading the task", plan: "planning the change", implement: "the session is building and running the product", verify: "running the repository's tests", fix: "fixing what the tests found", commit: "committing", seal: "checking every line and writing the receipt", pr: "opening the pull request" };
 
 export const consoleOn = (env: NodeJS.ProcessEnv = process.env, tty = !!process.stdout.isTTY): boolean => tty && !/^(0|off|false|no)$/i.test((env["LOKI_CONSOLE"] ?? "").trim()) && env["TERM"] !== "dumb";
-export interface ConsoleOpts { write?: (s: string) => void; /** false: do not wrap process.stdout and process.stderr (tests, and the headless rows of ManyStatus) */ hookStd?: boolean; now?: () => number; columns?: number; /** the terminal's height; a live panel is kept one row shorter so it can always be redrawn in place */ rows?: number; /** the terminal's size, asked again on every draw (tests resize it) */ size?: () => { columns?: number; rows?: number }; repoDir?: string; env?: NodeJS.ProcessEnv; spend?: (events: EventEnvelope[]) => string; stdin?: NodeJS.ReadStream | null; onCancel?: () => void }
+export interface ConsoleOpts { write?: (s: string) => void; /** false: do not wrap process.stdout and process.stderr (tests, and the headless rows of ManyStatus) */ hookStd?: boolean; now?: () => number; columns?: number; /** the terminal's height; a live panel is kept one row shorter so it can always be redrawn in place */ rows?: number; /** the terminal's size, asked again on every draw (tests resize it) */ size?: () => { columns?: number; rows?: number }; repoDir?: string; env?: NodeJS.ProcessEnv; spend?: (events: EventEnvelope[]) => string; stdin?: NodeJS.ReadStream | null; onCancel?: () => void; /** what the o key uses to find or start the dashboard, pick the page and open the browser; the real ones (commands/control.ts, util/run_summary.ts) are loaded on the first press, tests pass stand-ins so no server starts and no browser opens */ dashboard?: DashboardDeps }
+export interface DashboardDeps {
+  ensure?: (env: NodeJS.ProcessEnv, o: { cwd: string; unref: boolean }) => Promise<{ url: string; started: boolean }>;
+  target?: (base: string, repoDir: string, runId: string | null, o: { waitMs: number }) => Promise<{ url: string; what: "run" | "repository" | "home" }>;
+  /** true when a browser was started; false when none should be (no display, SSH, CI, LOKI_NO_BROWSER=1): the link is shown instead */
+  open?: (url: string, env: NodeJS.ProcessEnv) => boolean | Promise<boolean>;
+}
+/** The line that names the keys, shortened by whole words for a narrow window (never cut inside a word). */
+const KEYS = ["d details   o dashboard   q or Ctrl-C stop (loki start resumes it)", "d details   o dashboard   q or Ctrl-C stop", "d details   o dashboard   q stop", "d  o  q"] as const;
 
 /** The terminal cells a string takes: color codes take none, East Asian wide characters, symbols and emoji are counted as two (a count that is too
  *  high only shortens a line; one that is too low would let it wrap and break the redraw). */
@@ -40,6 +49,7 @@ export function fit(line: string, w: number): string {
 export class LiveConsole {
   private readonly t0: number; private prev: number[] = []; private closed = false; private details = false; private rawOn = false;
   private title = "Loki"; private model = ""; private url: string | null = null; private spent: string | null = null;
+  private runId: string | null = null; private dashBusy = false; private dashNote = ""; private dashFail: string | null = null; private dashLink: string | null = null; private dashLinkNeeded = false;
   private readonly stage = new Map<string, { state: StageState; at: number; s?: number }>();
   private lines: { text: string; state: LineState; checks: number; why?: string }[] = []; private lineSource = "the issue's own lines";
   private readonly seen: EventEnvelope[] = []; private readonly recent: string[] = [];
@@ -96,17 +106,42 @@ export class LiveConsole {
       stdin.on("data", (b: Buffer) => {
         const k = b.toString("utf8");
         if (k === "d" || k === "D") { this.details = !this.details; this.render(); }
+        else if (k === "o" || k === "O") void this.openDashboard().catch(() => { /* openDashboard reports its own failures */ });
         else if (k === "\x03" || k === "q" || k === "Q") { restore(); (this.o.onCancel ?? (() => { process.kill(process.pid, "SIGINT"); }))(); }
       });
     } catch { this.rawOn = false; }
   }
   private restore: () => void = () => {};
 
+  /** The o key: this run's page in the dashboard (the Control Plane), in the browser. A running dashboard is used; none running, one is started the
+   *  way `loki control serve` starts it (in this repository, so it reads this run in) and waited on for about 5 seconds. The page is the run's own
+   *  when the dashboard holds the run, else the repository's or the home page, and the note says which. Where no browser should be opened (SSH, CI, no
+   *  display, LOKI_NO_BROWSER=1) the link is shown under the keys instead. Best effort and off the run's path: one press at a time, every step has
+   *  a timeout, and any failure becomes one line in the panel; nothing here can throw into the run or keep the process alive after it. */
+  private async openDashboard(): Promise<void> {
+    if (this.dashBusy || this.closed) return;
+    this.dashBusy = true;
+    const env = this.o.env ?? process.env, d = this.o.dashboard ?? {}, repoDir = this.o.repoDir ?? process.cwd();
+    try {
+      this.dashFail = null; this.dashNote = "opening the dashboard..."; this.render();
+      const cp = await (d.ensure ?? (async (e, o) => (await import("../commands/control.ts")).ensureControlPlane(e, o)))(env, { cwd: repoDir, unref: true });
+      const t = await (d.target ?? (async (b, r, id, o) => (await import("../util/run_summary.ts")).dashboardTarget(b, r, id, o)))(cp.url, repoDir, this.runId, { waitMs: cp.started ? 3000 : 0 });
+      const opened = await (d.open ?? (async (u, e) => (await import("../commands/control.ts")).openBrowser(u, e)))(t.url, env);
+      const where = t.what === "run" ? "this run" : `${t.what === "repository" ? "this repository's page" : "the dashboard's home page"} (the dashboard does not have this run yet)`;
+      this.dashLink = t.url; this.dashLinkNeeded = !opened;
+      this.dashNote = opened ? `opened ${where} in your browser` : `dashboard, ${where}: open the link below`;
+    } catch (e) {
+      const why = (e instanceof Error && e.message ? e.message : "it failed").split("\n")[0]!;
+      this.dashNote = ""; this.dashFail = why;
+    } finally { this.dashBusy = false; if (!this.closed) this.render(); }
+  }
+
   onEvent(e: Ev): void {
     if (this.closed) return;
     const d = e.data ?? {};
     if (e.type === "run.started" || e.type === "run.resumed") { const ref = d["issue_ref"] ?? d["task_title"]; if (typeof ref === "string" && ref) this.title = ref; if (typeof d["model"] === "string") this.model = String(d["model"]); }
     const cp = d["control_plane_url"]; if (typeof cp === "string" && cp) this.url = cp;
+    if (typeof e.run === "string" && e.run) this.runId = e.run;
     this.seen.push(e as EventEnvelope);
     if (e.type === "cost") { try { this.spent = (this.o.spend ?? ((ev) => spendSoFar(ev, this.o.repoDir ? `${this.o.repoDir}/.loki` : undefined)))(this.seen).replace(/^\((.*)\)$/, "$1"); } catch { /* spend stays as it was */ } }
     if (e.stage && e.type === "stage.started") { this.stage.set(e.stage, { state: "running", at: this.now() }); this.note(`${e.stage} started`); }
@@ -160,8 +195,19 @@ export class LiveConsole {
     const met = this.lines.filter((l) => l.state === "met").length, recent = this.details && !final ? this.recent.slice(-8).map((x) => this.c("2", `  ${this.safe(x, w - 2)}`)) : [];
     const cur = [...this.stage.entries()].reverse().find(([, v]) => v.state === "running")?.[0], low: string[] = [];
     if (!final && cur) low.push(`${this.c("1", "Now:")} ${this.safe(`${NOW[cur] ?? cur}${cur === "implement" && this.diff ? ` (${this.diff})` : ""}${cur === "verify" && this.tests.pass + this.tests.fail ? ` (${this.tests.pass} passed, ${this.tests.fail} failed so far)` : ""}`, w - 6)}`);
+    if (!final && this.dashFail !== null) { // one line; the reason gives way (first its "(see ...)" part, then its tail, then all of it) so the command to run is never cut
+      const head = "could not start the dashboard", tail = "; run `loki control serve`", room = w - head.length - 2 - tail.length, why = this.dashFail.length > room ? this.dashFail.replace(/ \(see [^)]*\)$/, "") : this.dashFail;
+      low.push(room >= 12 ? `${head}: ${this.safe(why, room)}${tail}` : head.length + tail.length <= w ? `${head}${tail}` : "run `loki control serve`");
+    }
+    else if (!final && this.dashNote) low.push(this.safe(this.dashNote, w));
     if (this.proof) low.push(this.safe(this.proof, w));
-    const hint = final ? [] : [this.c("2", this.safe(`d details   q or Ctrl-C stop (loki start resumes it)${this.url ? `   ${this.url}` : ""}`, w))];
+    // The keys, then the dashboard link when one is known: on the same line while both fit, else on a line of its own under the keys while it fits
+    // the width. On a narrower window the link goes first (the o key still opens it), then the keys line loses whole words. Only a link the person
+    // has to open by hand (no browser could be started) is kept whatever the width, on its own line and never cut: a cut link is no link.
+    const keys = KEYS.find((x) => x.length <= w) ?? KEYS[KEYS.length - 1]!;
+    const link = final ? null : this.dashLink ?? (this.url && this.runId ? controlRunLink(this.url, this.o.repoDir ?? process.cwd(), this.runId) : null) ?? this.url;
+    const sameLine = !!link && /^[\x21-\x7e]+$/.test(link) && keys.length + 3 + link.length <= w, ownLine = !!link && !sameLine && (this.dashLinkNeeded || link.length <= w) && /^[\x21-\x7e]+$/.test(link) ? link : null;
+    const hint = final ? [] : [this.c("2", sameLine ? `${keys}   ${link}` : keys), ...(ownLine ? [ownLine] : [])];
     // The panel is redrawn in place by moving the cursor up over it, and the cursor cannot go above the top row of the window: a panel taller than the
     // window could never be wiped (its top would stay behind at every redraw). So a live frame is kept to the window's height minus one row: the
     // details list gives up its oldest entries first, then the acceptance list its last lines, each with a line that says how many are not shown.
@@ -172,12 +218,12 @@ export class LiveConsole {
       ...hint];
     let k = items.length, r = recent.length, f = build(k, r);
     if (!final) {
-      const room = Math.max(1, rows - 1);
+      const room = Math.max(1, rows - 1 - (ownLine ? Math.ceil(ownLine.length / cols) - 1 : 0)); // a link longer than the window takes more than one row
       while (f.length > room && r > 0) f = build(k, --r);
       while (f.length > room && k > 0) f = build(--k, r);
-      if (f.length > room) f = [...f.slice(0, room - 1), ...f.slice(-1)]; // a window of a few rows: the top of the panel and the keys
+      if (f.length > room) f = [...f.slice(0, Math.max(0, room - hint.length)), ...f.slice(-Math.min(hint.length, room))]; // a window of a few rows: the top of the panel and the keys
     }
-    return f.map((l) => fit(l, w));
+    return f.map((l) => (l === ownLine ? l : fit(l, w)));
   }
   tick(): void { if (!this.closed) this.render(); }
   /** One redraw: up over every row the LAST frame takes on the terminal as it is now (not the new frame's height, and a line the window has since

@@ -164,6 +164,17 @@ lc="$(bun --no-env-file --config=/dev/null "$LCD" "$LCC" 2>"$T/lc-all.err")"
 for leg in grow-and-shrink details-on-and-off long-and-wide-lines taller-than-the-window resize other-output-during-a-run worker-stderr-above-the-panel; do
     grep -qx "PASS $leg" <<< "$lc" && ok "live console, $leg: the terminal holds exactly one panel after every redraw" || bad "live console, $leg: $(grep -A12 "^FAIL $leg" <<< "$lc" | cut -c1-240)"
 done
+# The o key (this run's page in the dashboard) and the Dashboard: line of the final summary. The dashboard, the page choice and the
+# browser are stand-ins passed through the console's options: no server is started, no browser is opened, port 47821 is never touched.
+#   keys-line                          `o dashboard` is always on the keys line; a narrow window drops the link, then whole words
+#   o-opens-this-run                   the browser gets this run's URL once (argv), the panel says so, the run goes on
+#   o-run-not-known-yet                the repository's page or the home page instead of a broken link, and the panel says which
+#   o-without-a-browser-shows-the-link LOKI_NO_BROWSER=1 or no terminal: nothing is spawned, the whole link is on the panel
+#   o-cannot-start-says-so-in-one-line one line ending in the command to run; the run goes on
+#   summary-dashboard-line             Dashboard: <url> in the final summary inside the line cap, absent when no dashboard runs
+for leg in keys-line o-opens-this-run o-run-not-known-yet o-without-a-browser-shows-the-link o-cannot-start-says-so-in-one-line summary-dashboard-line; do
+    grep -qx "PASS $leg" <<< "$lc" && ok "dashboard key, $leg" || bad "dashboard key, $leg: $(grep -A12 "^FAIL $leg" <<< "$lc" | cut -c1-300)"
+done
 printf 'no console: tty=[]\nno console: second line\nstderr is not the terminal: tty=[]\nTraceback: boom, no newline' > "$T/lc-want.err"
 lcf="$(bun --no-env-file --config=/dev/null "$LCD" "$LCC" worker-stderr-inherited 2>"$T/lc-file.err")"
 [ "$lcf" = "PASS worker-stderr-inherited" ] && cmp -s "$T/lc-file.err" "$T/lc-want.err" && ok "worker stderr, no console (--json, --verbose) or stderr to a file: the worker's bytes arrive untouched, in order, crash trace included" || bad "worker stderr to a file: $lcf; got: $(head -c 400 "$T/lc-file.err")"

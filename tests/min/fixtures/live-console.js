@@ -69,7 +69,8 @@ function start(con, n) {
 }
 /** The whole terminal (scrollback included) is the lines printed before the console plus exactly the console's current frame. */
 function onePanel(t, con, label, before = PRE) {
-  const want = [...before, ...con.frame()].map((l) => l.replace(/\s+$/, "")); while (want.length && want[want.length - 1] === "") want.pop();
+  // a frame line longer than the window (only a dashboard link that must be shown whole) wraps on the terminal
+  const want = [...before, ...con.frame()].flatMap((l) => (l.length > t.cols ? l.match(new RegExp(`.{1,${t.cols}}`, "g")) : [l])).map((l) => l.replace(/\s+$/, "")); while (want.length && want[want.length - 1] === "") want.pop();
   const got = t.lines(), heads = got.filter((l) => l.startsWith("LOKI  ")).length;
   if (heads !== 1) return `${label}: ${heads} panel headers on the terminal, want 1\n${got.map((l) => `      | ${l}`).join("\n")}`;
   if (got.join("\n") !== want.join("\n")) { const i = got.findIndex((l, k) => l !== want[k]); return `${label}: the terminal differs from the frame at row ${i}: got "${got[i] ?? "(none)"}" want "${want[i] ?? "(none)"}" (${got.length} rows on the terminal, ${want.length} wanted)`; }
@@ -185,7 +186,143 @@ const legs = {
     } finally { std.restore(); }
     return bad;
   },
+  // The line that names the keys always shows `o dashboard`. On a narrower window the dashboard link goes first, then whole words of the
+  // keys line: nothing wraps and no word is cut.
+  "keys-line": () => {
+    const full = "d details   o dashboard   q or Ctrl-C stop (loki start resumes it)", base = "http://127.0.0.1:5999";
+    const link = controlRunLink(base, "/nonexistent-repo", "e10-test-run"); // 59 characters
+    for (const [cols, want, where] of [[200, full, "under"], [100, full, "under"], [60, "d details   o dashboard   q or Ctrl-C stop", "under"], [50, "d details   o dashboard   q or Ctrl-C stop", "dropped"], [36, "d details   o dashboard   q stop", "dropped"], [21, "d  o  q", "dropped"]]) {
+      const { t, con } = setup(cols, 40); start(con, 3); con.setUrl(base);
+      const f = con.frame(), keys = f.find((l) => l.startsWith("d ")), last = f[f.length - 1];
+      if (keys !== want) return `${cols} columns: the keys line is "${keys}"`;
+      if (where === "under" ? last !== link : f.some((l) => l.includes("http://"))) return `${cols} columns: the link should be ${where}; the last line is "${last}"`;
+      const wide = f.find((l) => l.length > cols - 1); if (wide) return `${cols} columns: a line is ${wide.length} wide: ${wide}`;
+      const bad = onePanel(t, con, `${cols} columns`); if (bad) return bad;
+    }
+    const { t, con } = setup(100, 40); con.setUrl(base); con.onEvent({ type: "stage.started", stage: "intake", data: {} }); // no run id yet: the short home link fits beside the keys
+    const f = con.frame(); if (f[f.length - 1] !== `${full}   ${base}`) return `a short link is not beside the keys: "${f[f.length - 1]}"`;
+    return onePanel(t, con, "short link beside the keys");
+  },
+  // o with a dashboard running that holds this run: the browser is started once with this run's URL (argv, recorded here), the panel
+  // says so, a second press while the first is in flight does nothing more, and the run goes on untouched.
+  "o-opens-this-run": async () => {
+    const base = "http://127.0.0.1:5999", d = dash({ base, known: "run" }), { t, con, stdin } = setup(120, 40, { dashboard: d.deps, onCancel: () => { d.calls.cancel++; } });
+    start(con, 4); stdin.press("o"); stdin.press("o"); await settle();
+    const url = controlRunLink(base, "/nonexistent-repo", "e10-test-run");
+    if (d.opened.length !== 1 || d.opened[0].join(" ") !== `open ${url}`) return `the browser was started with ${JSON.stringify(d.opened)}, want one "open ${url}"`;
+    if (d.calls.ensure !== 1) return `the dashboard was looked for ${d.calls.ensure} times for two presses in a row, want 1`;
+    if (!con.frame().includes("opened this run in your browser")) return `the panel does not say what was opened:\n${con.frame().join("\n")}`;
+    let bad = onePanel(t, con, "after o"); if (bad) return bad;
+    con.onEvent(ev("proof.rerun", "implement", { round: 1, exit: 0, proved: 4, failed: 0, seconds: 2, statuses: statuses(4, 4) }));
+    if (!con.frame().some((l) => l.includes("4 of 4 met"))) return "the run's next event did not reach the panel after o";
+    if ((bad = onePanel(t, con, "the run goes on"))) return bad;
+    return d.calls.cancel === 0 ? null : "o stopped the run";
+  },
+  // The dashboard does not hold this run yet: the repository's page when it knows the repository, else its home page, and the panel says which.
+  "o-run-not-known-yet": async () => {
+    const base = "http://127.0.0.1:5999", here = process.cwd(), name = here.split("/").pop();
+    for (const [known, want, words] of [["repository", `${base}/#/repo/${encodeURIComponent(name)}`, "this repository's page (the dashboard does not have this run yet)"], ["nothing", `${base}/`, "the dashboard's home page (the dashboard does not have this run yet)"]]) {
+      const d = dash({ base, known, repo: name }), { t, con, stdin } = setup(150, 40, { dashboard: d.deps, repoDir: here });
+      start(con, 3); stdin.press("o"); await settle();
+      if (d.opened.length !== 1 || d.opened[0][1] !== want) return `${known}: the browser was started with ${JSON.stringify(d.opened)}, want ${want}`;
+      if (!con.frame().includes(`opened ${words} in your browser`)) return `${known}: the panel does not say which page:\n${con.frame().join("\n")}`;
+      const bad = onePanel(t, con, known); if (bad) return bad;
+    }
+    return null;
+  },
+  // No browser should be started (LOKI_NO_BROWSER=1; no terminal on stdout): nothing is spawned and the whole link is on the panel,
+  // on its own line when the keys line has no room for it, never cut.
+  "o-without-a-browser-shows-the-link": async () => {
+    const base = "http://127.0.0.1:5999", url = controlRunLink(base, "/nonexistent-repo", "e10-test-run");
+    for (const [label, env, tty, cols] of [["LOKI_NO_BROWSER=1, wide", { NO_COLOR: "1", LOKI_NO_BROWSER: "1" }, true, 200], ["LOKI_NO_BROWSER=1, 90 columns", { NO_COLOR: "1", LOKI_NO_BROWSER: "1" }, true, 90], ["no terminal", { NO_COLOR: "1" }, false, 90], ["link longer than the window", { NO_COLOR: "1", LOKI_NO_BROWSER: "1" }, true, 48]]) {
+      const d = dash({ base, known: "run", tty }), { t, con, stdin } = setup(cols, 40, { dashboard: d.deps, env });
+      start(con, 3); stdin.press("o"); await settle();
+      if (d.opened.length !== 0) return `${label}: a browser was started: ${JSON.stringify(d.opened)}`;
+      const f = con.frame(), line = f.find((l) => l.includes(url));
+      if (!line) return `${label}: the link is not on the panel:\n${f.join("\n")}`;
+      if (line !== url) return `${label}: the link is not on a line of its own: "${line}"`;
+      if (!f.some((l) => l.startsWith("d details   o dashboard"))) return `${label}: the keys line is gone`;
+      const bad = onePanel(t, con, label); if (bad) return bad;
+      con.tick(); con.tick(); const again = onePanel(t, con, `${label}, redrawn`); if (again) return again;
+    }
+    return null;
+  },
+  // The dashboard cannot be started: one plain line whose last words are the command to run, whatever the width, and the run goes on.
+  // The last case uses the real starter with LOKI_CONTROL=0, which starts nothing.
+  "o-cannot-start-says-so-in-one-line": async () => {
+    const tail = "; run `loki control serve`";
+    for (const [label, cols, deps, env, want] of [
+      ["no answer, wide", 140, dash({ fail: new Error("it did not answer within 5 s (see ~/.loki/control/serve.log)") }).deps, { NO_COLOR: "1" }, "could not start the dashboard: it did not answer within 5 s (see ~/.loki/control/serve.log); run `loki control serve`"],
+      ["no answer, 90 columns", 90, dash({ fail: new Error("it did not answer within 5 s (see ~/.loki/control/serve.log)") }).deps, { NO_COLOR: "1" }, "could not start the dashboard: it did not answer within 5 s; run `loki control serve`"],
+      ["something that is not an Error", 120, dash({ fail: "boom" }).deps, { NO_COLOR: "1" }, "could not start the dashboard: it failed; run `loki control serve`"],
+      ["LOKI_CONTROL=0, the real starter", 120, { open: () => { throw new Error("no browser in a test"); } }, { NO_COLOR: "1", LOKI_CONTROL: "0", HOME: process.env.HOME }, "could not start the dashboard: the Control Plane is off (LOKI_CONTROL=0); run `loki control serve`"],
+      ["60 columns", 60, dash({ fail: new Error("it did not answer within 5 s (see ~/.loki/control/serve.log)") }).deps, { NO_COLOR: "1" }, null],
+    ]) {
+      const { t, con, stdin } = setup(cols, 40, { dashboard: deps, env });
+      start(con, 3); stdin.press("o"); await settle(60);
+      const f = con.frame(), line = f.find((l) => l.startsWith("could not start the dashboard"));
+      if (!line || !line.endsWith(tail) || (want && line !== want) || line.length > cols - 1) return `${label}: the panel shows "${line ?? "(no such line)"}"`;
+      if (f.filter((l) => l.includes("could not start")).length !== 1) return `${label}: more than one line`;
+      let bad = onePanel(t, con, label); if (bad) return bad;
+      con.onEvent(ev("stage.completed", "implement", { duration_s: 9 })); con.onEvent(ev("stage.started", "verify"));
+      if (!con.frame().some((l) => l.includes("running the repository's tests"))) return `${label}: the run did not go on`;
+      if ((bad = onePanel(t, con, `${label}, the run goes on`))) return bad;
+    }
+    return null;
+  },
+  // The final summary carries `Dashboard: <url>` when a dashboard is running, inside the 8-line cap of the default output (7 lines here:
+  // the start line is printed separately), with the link always at the end of a line; with none running nothing changes.
+  "summary-dashboard-line": async () => {
+    const s = await import(new URL("../util/run_summary.ts", `file://${process.argv[2]}`).pathname);
+    const U = "http://127.0.0.1:5999/#/runs/abcdef0123456789/e10-test-run", i = { result: "verified", filesChanged: 2, insertions: 5, deletions: 1, costUsd: 0.12, elapsedS: 61, receiptPath: "/r/receipt.json", next: "loki status" };
+    const plain = s.formatRunSummary(i), full = s.formatRunSummary({ ...i, dashboardUrl: U }).split("\n");
+    if (full.filter((l) => l === `Dashboard: ${U}`).length !== 1 || full.indexOf(`Dashboard: ${U}`) !== full.findIndex((l) => l.startsWith("next:")) - 1) return `the summary block: ${full.join(" | ")}`;
+    if (s.formatRunSummary({ ...i, dashboardUrl: null }) !== plain || plain.includes("Dashboard")) return "the summary block changed with no dashboard running";
+    if (s.summaryObject({ ...i, dashboardUrl: U }).dashboard !== U || "dashboard" in s.summaryObject(i)) return "the JSON summary: dashboard key wrong";
+    for (const n of [3, 4, 5, 6, 7]) {
+      const out = `${Array.from({ length: n }, (_, k) => `Line${k}:   value ${k}`).join("\n")}\n`, was = s.withNextLine(out, i), now = s.withNextLine(out, { ...i, dashboardUrl: U }), lines = now.replace(/\n$/, "").split("\n");
+      if (lines.length > 7) return `${n} lines before: ${lines.length} lines with the dashboard link (cap 7)`;
+      const own = n + 2 + 1 <= 7, at = lines.filter((l) => l.endsWith(U));
+      if (at.length !== 1 || now.split(U).length !== 2) return `${n} lines before: the link is not at the end of exactly one line: ${lines.join(" | ")}`;
+      if (own ? at[0] !== `Dashboard:  ${U}` : !at[0].endsWith(`; Dashboard: ${U}`)) return `${n} lines before: the link's line is "${at[0]}"`;
+      if (!own && lines.length !== was.replace(/\n$/, "").split("\n").length) return `${n} lines before: the fold changed the line count`;
+      if (lines[lines.length - 1] !== was.replace(/\n$/, "").split("\n").pop()) return `${n} lines before: the last line changed: "${lines[lines.length - 1]}"`;
+    }
+    // The whole default chain as supervisor.ts composes it (next line, the folded handoff pointer, the risk line, the proof line, with and
+    // without the cap line printed above the block): the dashboard link never pushes the risk line out and never breaks the line cap.
+    const chain = (out, ui, risk, card, cap) => s.withFoldLine(s.withRiskLine(s.withNextLine(out, ui).replace(/\n$/, "; review: .loki/review/HANDOFF.md\n"), risk, 7, cap), card, 7, cap);
+    for (const n of [3, 4, 5, 6, 7]) for (const risk of [null, "Risk: low tier; 2 checks deferred (not run)"]) for (const card of [null, "Proof: yes"]) for (const cap of [0, 1]) {
+      const out = `${Array.from({ length: n }, (_, k) => `Line${k}:   value ${k}`).join("\n")}\n`, tag = `${n} lines, risk ${risk ? "on" : "off"}, proof ${card ? "on" : "off"}, cap line ${cap}`;
+      const was = chain(out, i, risk, card, cap).replace(/\n$/, "").split("\n"), now = chain(out, { ...i, dashboardUrl: U, reservedLines: cap + (risk ? 1 : 0) }, risk, card, cap).replace(/\n$/, "").split("\n");
+      const has = (ls) => !!risk && ls.some((l) => l.startsWith(risk)); // the proof line may be folded onto it
+      if (has(was) !== has(now)) return `${tag}: the risk line ${has(was) ? "was pushed out by" : "appeared with"} the dashboard link`;
+      if (was.length + cap <= 7 && now.length + cap > 7) return `${tag}: ${now.length} lines with the link, ${was.length} without (cap 7 with the cap line)`;
+      if (now.filter((l) => l.endsWith(U)).length !== 1 || now.join("\n").split(U).length !== 2) return `${tag}: the link is not at the end of exactly one line: ${now.join(" | ")}`;
+      if (card && !now.join("\n").toLowerCase().includes("proof: yes")) return `${tag}: the proof line was lost`;
+      if (!now.join("\n").includes("review: .loki/review/HANDOFF.md")) return `${tag}: the handoff pointer was lost`;
+    }
+    const known = async (u) => new Response("{}", { status: String(u).includes("/v1/runs/") ? 200 : 404 }), unknown = async () => new Response("{}", { status: 404 });
+    const base = "http://127.0.0.1:5999", env = { HOME: process.env.HOME, LOKI_CONTROL_URL: base };
+    if ((await s.dashboardLink("/nonexistent-repo", "e10-test-run", { ...env, LOKI_CONTROL: "0" }, { fetchImpl: known })) !== null) return "LOKI_CONTROL=0 still gives a link";
+    if ((await s.dashboardLink("/nonexistent-repo", "e10-test-run", { HOME: process.env.HOME }, { fetchImpl: known })) !== null) return "a link with no dashboard running";
+    const run = await s.dashboardLink("/nonexistent-repo", "e10-test-run", env, { fetchImpl: known }); if (run !== controlRunLink(base, "/nonexistent-repo", "e10-test-run")) return `a run the dashboard holds: ${run}`;
+    const home = await s.dashboardLink("/nonexistent-repo", "e10-test-run", env, { fetchImpl: unknown }); return home === `${base}/` ? null : `a run the dashboard does not hold: ${home}`;
+  },
 };
+const { controlRunLink } = await import(new URL("../util/run_outputs.ts", `file://${process.argv[2]}`).pathname);
+const settle = async (n = 12) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 5)); };
+/** Stand-ins for the o key: a dashboard at `base` that knows the run, only the repository, or nothing; the real page choice
+ *  (dashboardTarget) and the real browser rules (openBrowser, as macOS with `open` on PATH) run against them; what would be spawned is recorded. */
+function dash({ base = "http://127.0.0.1:5999", known = "run", repo = "", tty = true, fail = null } = {}) {
+  const calls = { ensure: 0, cancel: 0 }, opened = [];
+  const fetchImpl = async (u) => { const p = new URL(String(u)).pathname; if (p.startsWith("/v1/runs/")) return new Response("{}", { status: known === "run" ? 200 : 404 }); if (p === "/v1/repos") return Response.json({ repos: known === "repository" ? [repo] : [] }); return new Response("", { status: 404 }); };
+  const deps = {
+    ensure: async () => { calls.ensure++; await new Promise((r) => setTimeout(r, 10)); if (fail) throw fail; return { url: base, started: false }; },
+    target: async (b, r, id, o) => (await import(new URL("../util/run_summary.ts", `file://${process.argv[2]}`).pathname)).dashboardTarget(b, r, id, { ...o, fetchImpl }),
+    open: async (u, e) => (await import(new URL("../commands/control.ts", `file://${process.argv[2]}`).pathname)).openBrowser(u, e, { platform: "darwin", tty, which: () => "/usr/bin/open", spawnImpl: (argv) => opened.push(argv) }),
+  };
+  return { deps, calls, opened };
+}
 /** Stands in for the terminal: process.stdout.write (and process.stderr.write) go to `sink`, with a size and, for stderr, a chosen isTTY. */
 function swapStd(sink, errTty, errSink = sink) {
   const keep = { out: process.stdout.write, err: process.stderr.write, cols: Object.getOwnPropertyDescriptor(process.stdout, "columns"), rows: Object.getOwnPropertyDescriptor(process.stdout, "rows"), tty: Object.getOwnPropertyDescriptor(process.stderr, "isTTY") };
