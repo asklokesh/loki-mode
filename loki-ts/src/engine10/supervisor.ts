@@ -31,7 +31,7 @@ import { cleanTreeId, failedCheckNames, recordFingerprints } from "../util/failu
 import { modelDowngrades } from "../runner/model_downgrades.ts";
 import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
-import { type EventEnvelope, type PushEnv, type StageName, type Verdict, backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, pushArgv, STAGE_BUDGETS, WORK_ROAD_ENV } from "./types.ts";
+import { type EventEnvelope, type PushEnv, type StageName, type Verdict, backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, proveByRunningOn, pushArgv, STAGE_BUDGETS, WORK_ROAD_ENV } from "./types.ts";
 import { baseLine, finishRunBranch } from "../util/base_guard.ts";
 import { alreadyDoneTextComment, policyGate, prGate, renderMainOutput, runIntent, summaryCache, summaryTokens, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
 
@@ -316,13 +316,14 @@ const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$
  *    has: the group split entered before this is untouched, and so is what its sequential fallback gets.
  *  There is no content test for "a PRD": any file given to `loki start` is read into the task text, so these rules are what tells a description of work from a
  *  spec. LOKI_E10_ONE_ROAD=0 turns the road off for every text task. */
-export function workRoad(task: string, o: { spec: boolean; sealPatch: boolean }, env: NodeJS.ProcessEnv = process.env): boolean {
+export function workRoad(task: string, o: { spec: boolean; sealPatch: boolean; provider: string }, env: NodeJS.ProcessEnv = process.env): boolean {
   if (/^(0|off|false|no)$/i.test((env["LOKI_E10_ONE_ROAD"] ?? "").trim()) || o.spec || o.sealPatch || env["LOKI_UNIT_ID"]) return false;
+  if (o.provider !== "claude" || !proveByRunningOn(env)) return false; // the road's brief exists only there (types.ts issueRunBrief): a run that is never asked for a proof script must not get lines read at intake or be held for leaving none
   return task.length > smallMaxChars(env) && !deliverables(task, []).large;
 }
 /** The road a run takes, for run.started: "issue" (an issue ref, or an issue supplied as a file in LOKI_E10_ISSUE_JSON, which intake reads as the task),
  *  "spec" (--spec FILE), "work" (a text task on the issue's proof and acceptance road) or "text" (the plain road). */
-export function runRoad(task: string, o: { isIssue: boolean; spec: boolean; sealPatch: boolean }, env: NodeJS.ProcessEnv = process.env): "issue" | "spec" | "work" | "text" {
+export function runRoad(task: string, o: { isIssue: boolean; spec: boolean; sealPatch: boolean; provider: string }, env: NodeJS.ProcessEnv = process.env): "issue" | "spec" | "work" | "text" {
   const supplied = env["LOKI_E10_ISSUE_JSON"];
   return o.isIssue || (!!supplied && existsSync(supplied)) ? "issue" : o.spec ? "spec" : workRoad(task, o, env) ? "work" : "text";
 }
@@ -430,7 +431,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     try { const l = (JSON.parse(readFileSync(join(runDir, "issue.json"), "utf8")) as { labels?: unknown }).labels; for (const e of [env, process.env]) e[ISSUE_LABELS_ENV] = JSON.stringify(Array.isArray(l) ? l.filter((x) => typeof x === "string") : []); } catch { /* no labels: sizing uses the text alone */ } // one large rule (features/decompose.ts): the stages' sizeTask sees the issue's epic label, as triage and startIssueEpic do
   }
   if (!isIssue) for (const e of [env, process.env]) delete e[ISSUE_LABELS_ENV]; // a text goal never inherits an issue's labels
-  const road = runRoad(task, { isIssue, spec: spec !== null, sealPatch: sealPatch !== null }); for (const e of [env, process.env]) { if (road === "work") e[WORK_ROAD_ENV] = "1"; else delete e[WORK_ROAD_ENV]; } // RW-02 ONE ROAD: decided once, after the group entry above, and carried to every worker of the run; an inherited value never decides
+  const road = runRoad(task, { isIssue, spec: spec !== null, sealPatch: sealPatch !== null, provider }); for (const e of [env, process.env]) { if (road === "work") e[WORK_ROAD_ENV] = "1"; else delete e[WORK_ROAD_ENV]; } // RW-02 ONE ROAD: decided once, after the group entry above, and carried to every worker of the run; an inherited value never decides
   const routeStart = routeStartLine(process.env, provider); // FC-35: printed before any stage, so it states the pre-plan state only (route.json does not exist yet). R1-15: null unless LOKI_ROUTER is on, so the start line is byte-identical otherwise
   const costEst = encodeEstimate(process.env, repoDir, undefined, model); if (costEst) env.LOKI_E10_COST_ESTIMATE = costEst; // 11.3.0 T1: null under LOKI_COST_PREVIEW=0
   const downgrades = modelDowngrades(provider); // D86 L1: any downgrade is printed here and recorded on run.started (key only when non-empty, receipt hashes stay stable)

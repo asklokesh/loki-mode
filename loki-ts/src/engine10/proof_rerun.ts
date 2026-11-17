@@ -10,9 +10,9 @@ import { cleanupSessionScratch, createSessionScratch, scratchSessionEnv } from "
 import { run } from "../util/shell.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { CONNECTION_ENV } from "./session.ts";
-import { acceptanceLines, FRESH_INSTALL_ASK, issueAcceptanceCapOn, issueAcceptanceOf, optionalAsk } from "../util/intent_card.ts";
+import { acceptanceLines, FRESH_INSTALL_ASK, intentCardEnabled, issueAcceptanceCapOn, issueAcceptanceOf, optionalAsk } from "../util/intent_card.ts";
 import { neededServices } from "../util/stack_tools.ts";
-import { issueRunBrief } from "./types.ts";
+import { issueRunBrief, workRoadOn } from "./types.ts"; import { planMode } from "./sizing.ts";
 
 /** The lines the label is checked against: the issue's own checklist, else (an issue in prose) the plan's acceptance lines; plus the fresh-install line when
  *  the repository needs a database or another service. Empty when the check is off or nothing gives a line. */
@@ -396,7 +396,17 @@ export async function runSetupScript(repoDir: string, setup: string, signal?: Ab
  *  diff and the session's reply, would decide every line by itself. Text tasks only (intake source "text"): an issue run keeps its measured behavior, where that
  *  reading stands in. Off with the re-run itself (LOKI_E10_PROOF_RERUN=0). */
 export const NO_OWN_PROOF_NOTE = "no proof script: the session left nothing Loki could run itself, so no acceptance line is proved by Loki's own run";
-export const noOwnProofNotes = (source: unknown, asks: string[], r: ProofRerun | null, env: NodeJS.ProcessEnv = process.env): string[] => (source === "text" && asks.length > 0 && !r && proofRerunOn(env) ? [NO_OWN_PROOF_NOTE] : []);
+/** RW-02 PLAN-ACCEPTANCE switch (engine10/stages/plan.ts keepsPlanForAcceptance); here so the seal's note below and the plan stage read one definition. */
+export const planAcceptanceOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PLAN_ACCEPTANCE"] ?? "").trim());
+/** A text task on the road that reaches the seal with no line at all: the plan stage was to give the lines (or the title stand-in) and did not, which happens
+ *  when its session failed. Held below VERIFIED, because nothing was counted. Not when the user turned the lines off (LOKI_E10_PLAN_ACCEPTANCE=0,
+ *  LOKI_E10_ISSUE_ACCEPTANCE=0, LOKI_INTENT_CARD=0, LOKI_E10_PLAN=0): those runs keep the label they had before the road existed. */
+export const NO_LINES_NOTE = "no acceptance line: the plan stage gave none for this task, so Loki's own run had nothing to count";
+export const noOwnProofNotes = (source: unknown, asks: string[], r: ProofRerun | null, env: NodeJS.ProcessEnv = process.env): string[] => {
+  if (source !== "text") return [];
+  if (asks.length > 0) return !r && proofRerunOn(env) ? [NO_OWN_PROOF_NOTE] : [];
+  return workRoadOn(env) && planAcceptanceOn(env) && issueAcceptanceCapOn(env) && intentCardEnabled(env) && planMode(env) !== "never" ? [NO_LINES_NOTE] : [];
+};
 /** The facts for the acceptance line check: what Loki's own run of the script returned, and the script itself (so a script that checks nothing is visible). */
 export function proofFacts(runDir: string, r: ProofRerun | null, expected: boolean): string[] {
   if (!r) return expected ? ["The session left no proof script ($LOKI_SCRATCH/loki-proof.sh), so Loki could not re-run anything itself. Nothing in the reply counts as proof from running."] : [];

@@ -1671,7 +1671,9 @@ console.log(same, r.available, r.same["1"].passing, r.same["1"].on_base, r.same[
 #   stand-in:   a plan card with an Acceptance line is left as it is; with none, the title line (markdown heading mark removed) is added as the one line.
 #   fixed:      the lines the label is counted against come from the intake and plan records. A session that rewrites its own copy
 #               ($LOKI_SCRATCH/acceptance.txt) to one line changes nothing: labelAsks still gives both, and the count rule leaves line 2 unmet.
-#   no script:  a text task with lines and no run of Loki's own gets the note; an issue source, no lines, a run that exists, and LOKI_E10_PROOF_RERUN=0 do not.
+#   no script:  a text task with lines and no run of Loki's own gets the note; an issue source, no lines off the road, a run that exists, and
+#               LOKI_E10_PROOF_RERUN=0 do not. A text task on the road with no line at all (its plan session failed) gets the no-line note; not when
+#               the lines were turned off (LOKI_E10_PLAN_ACCEPTANCE=0, LOKI_E10_PLAN=0), and never an issue source.
 # Plants: plan.ts keepsPlanForAcceptance: drop `issueAcceptanceOf(intake).length === 0` (plan kept cell 3 reads true); standInAcceptance: `return null` first
 #         (stand-in cell 2 reads null); proof_rerun.ts labelAsks: read the lines back from the scratch copy when it exists (fixed reads 1 line);
 #         noOwnProofNotes: drop `source === "text"` (no script cell 2 reads 1).
@@ -1691,9 +1693,10 @@ const handed = fs.readFileSync(d + "/acceptance.txt", "utf8").trim().split("\n")
 const after = pr.labelAsks("claude", intake, plan, R, on);
 const run = { exit: 0, seconds: 1, proved: 1, failed: 0, tail: "", script_chars: 1, stopped: 0, left: 0, lines: { "1": { proved: 1, failed: 0, first_proved: "x" } } };
 const fixed = [before.asks.length, before.source, handed, after.asks.length, pr.ruleStatus(after.asks, run).map((s) => s.status).join("+"), pr.labelAsks("claude", intake, plan, R, {}).asks.length];
-const asks = ["a works"], ns = [pr.noOwnProofNotes("text", asks, null, {}).length, pr.noOwnProofNotes("issue", asks, null, {}).length, pr.noOwnProofNotes("text", [], null, {}).length, pr.noOwnProofNotes("text", asks, run, {}).length, pr.noOwnProofNotes("text", asks, null, { LOKI_E10_PROOF_RERUN: "0" }).length];
+const asks = ["a works"], ns = [pr.noOwnProofNotes("text", asks, null, {}).length, pr.noOwnProofNotes("issue", asks, null, {}).length, pr.noOwnProofNotes("text", [], null, {}).length, pr.noOwnProofNotes("text", asks, run, {}).length, pr.noOwnProofNotes("text", asks, null, { LOKI_E10_PROOF_RERUN: "0" }).length,
+  pr.noOwnProofNotes("text", [], null, on).join("").slice(0, 18), pr.noOwnProofNotes("text", [], null, { ...on, LOKI_E10_PLAN_ACCEPTANCE: "0" }).length, pr.noOwnProofNotes("text", [], null, { ...on, LOKI_E10_PLAN: "0" }).length, pr.noOwnProofNotes("issue", [], null, on).length];
 console.log([keep.join(","), stand.join(","), fixed.join(","), ns.join(",")].join(" | "));' 2>&1 | tail -1)"
-[ "$RWU" = 'true,true,false,false,false,false,false,false | null,["Acceptance: Fix the startup wait"],["Intent: fix it","Acceptance: Fix it"],null | 2,plan,2,2,met+unmet,0 | 1,0,0,0,0' ] \
+[ "$RWU" = 'true,true,false,false,false,false,false,false | null,["Acceptance: Fix the startup wait"],["Intent: fix it","Acceptance: Fix it"],null | 2,plan,2,2,met+unmet,0 | 1,0,0,0,0,no acceptance line,0,0,0' ] \
     && ok "RW-02 acceptance lines: a prose task on the proof road keeps the plan; the title stands in when the plan gives no line; the lines are fixed in the run's records (a session editing its own copy changes nothing); a text task with no run of Loki's own gets the note" || bad "RW-02 acceptance lines gave: $RWU"
 # ---- end RW-02 ----
 

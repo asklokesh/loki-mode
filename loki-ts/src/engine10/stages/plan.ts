@@ -6,7 +6,7 @@ import type { RepoMap } from "../repomap.ts";
 import { selectRelevantFiles } from "../relevant_files.ts";
 import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import { cascadeEnabled, hardReason, hasRelevantTests, loadRepoMap, namedFiles, planMode, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallModel } from "../sizing.ts";
-import { type RunContext, type Stage, type StageResult, type TestMap, issueRunBrief, taskBlock } from "../types.ts"; import { startSetupCheck } from "../../e10ext/repomemory.ts"; import { runSetupScript } from "../proof_rerun.ts";
+import { type RunContext, type Stage, type StageResult, type TestMap, issueRunBrief, taskBlock } from "../types.ts"; import { startSetupCheck } from "../../e10ext/repomemory.ts"; import { planAcceptanceOn, runSetupScript } from "../proof_rerun.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { PLAN_SCOPE_FILE, outOfRepoInstruction, planOutOfRepo, seedPlanScope } from "../../util/run_cap.ts";
 import { assumptionsBlock } from "../../features/spec_ambiguity.ts";
@@ -35,7 +35,7 @@ export function keepsPlanForConsentOrCap(env: NodeJS.ProcessEnv, tty: boolean, s
  *  "Acceptance:" lines are then the items Loki's own proof run is counted against (proof_rerun.ts labelAsks, seal.ts). Without it the plan was skipped for every
  *  small and normal task, a prose task had no line at all, and the proof loop and the count had nothing to count (two real issue texts, playwright 44124 and
  *  opencode 63310, give no list; the one text run whose plan did run printed two usable lines in 35 s). LOKI_E10_PLAN=0 still skips the stage. */
-export const planAcceptanceOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PLAN_ACCEPTANCE"] ?? "").trim());
+export { planAcceptanceOn }; // defined in engine10/proof_rerun.ts, beside the seal note that reads it
 export const keepsPlanForAcceptance = (provider: string, intake: Record<string, unknown> | undefined, env: NodeJS.ProcessEnv = process.env): boolean =>
   planAcceptanceOn(env) && issueAcceptanceCapOn(env) && intentCardEnabled(env) && issueRunBrief(provider, intake?.["source"], env) && issueAcceptanceOf(intake).length === 0;
 /** The stand-in when the plan gave no acceptance line either: the task's title line, verbatim, as the one item. Thin, but it is fixed before the implement
