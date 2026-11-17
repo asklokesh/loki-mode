@@ -144,4 +144,35 @@ const bad = rows.filter(([t, o, w, e]) => (m.goalRef(t, o, isRef, e ?? {})?.ref 
 console.log(bad.length ? "BAD " + JSON.stringify(bad) : "OK " + rows.length);' 2>&1)"
 [ "$gr" = "OK 18" ] && ok "goalRef: 18 rows (URL suffixes, #N, verb prefix, text stays text, off switch)" || bad "goalRef table: $gr"
 
+# ---- RW-02 ONE ROAD: which road a goal takes (engine10/supervisor.ts workRoad, runRoad), the one gate the stages read (types.ts issueRunBrief) and the time
+# cap rule (util/run_cap.ts issueCapRule, resizeCap). No model, no run.
+#   road: a description of work longer than the small bar takes the work road; a goal at or under the bar, a spec that sizes large by structure, --spec,
+#         --seal-existing and a group unit keep theirs; LOKI_E10_ONE_ROAD=0 turns the road off; an issue ref and an issue supplied as a file are "issue".
+#   gate: a text source is on the proof and acceptance road only with the run's flag, only on claude, and not under the prove-by-running opt-out; an issue
+#         source is as before.
+#   cap:  a text task on the road gets the issue floor (2400 s) exactly as a run directory with issue.json does; a plain text task keeps the sized cap (900 s);
+#         a fixed cap wins.
+# Plants: supervisor.ts workRoad `task.length > smallMaxChars(env)` -> `true` (road row 2 reads work); drop `!deliverables(task, []).large` (row 3 reads work);
+#         types.ts issueRunBrief drop `workRoadOn(env)` -> `true` (gate cell 1 reads true); run_cap.ts issueCapRule drop `workRoadOn(env)` (cap cell 2 reads 900).
+rw="$(cd "$ROOT/loki-ts" && RWT="$T" bun --no-env-file --config=/dev/null -e '
+const sv = await import("./src/engine10/supervisor.ts"), ty = await import("./src/engine10/types.ts"), rc = await import("./src/util/run_cap.ts"), fs = await import("node:fs");
+const T = process.env.RWT, o = { spec: false, sealPatch: false };
+const work = "Fix the startup wait: " + "the server waits two seconds for a slow dependency and then gives up, although a longer timeout is configured. ".repeat(6);
+const spec = "# Product\n\n" + "It is a calculator people use from the command line. ".repeat(12) + "\n\n## Requirements\n\n- add\n- subtract\n- multiply\n- divide\n\n## Acceptance criteria\n\n- [ ] add works\n- [ ] subtract works\n- [ ] multiply works\n- [ ] divide works\n";
+fs.writeFileSync(T + "/rw-issue.json", JSON.stringify({ title: "t", body: "b" })); fs.mkdirSync(T + "/rw-run-plain", { recursive: true }); fs.mkdirSync(T + "/rw-run-issue", { recursive: true }); fs.writeFileSync(T + "/rw-run-issue/issue.json", "{}");
+const road = [
+  sv.workRoad(work, o, {}), sv.workRoad("add a multiply(a, b) function to calc.ts", o, {}), sv.workRoad(spec, o, {}), sv.workRoad(work, { spec: true, sealPatch: false }, {}), sv.workRoad(work, { spec: false, sealPatch: true }, {}),
+  sv.workRoad(work, o, { LOKI_UNIT_ID: "u1" }), sv.workRoad(work, o, { LOKI_E10_ONE_ROAD: "0" }), sv.workRoad(work, o, { LOKI_E10_SMALL_MAX_CHARS: "5000" }),
+  sv.runRoad(work, { isIssue: false, ...o }, {}), sv.runRoad("acme/x#1", { isIssue: true, ...o }, {}), sv.runRoad(work, { isIssue: false, ...o }, { LOKI_E10_ISSUE_JSON: T + "/rw-issue.json" }),
+  sv.runRoad(work, { isIssue: false, ...o }, { LOKI_E10_ISSUE_JSON: T + "/missing.json" }), sv.runRoad(work, { isIssue: false, spec: true, sealPatch: false }, {}), sv.runRoad("fix the typo", { isIssue: false, ...o }, {}),
+];
+const on = { LOKI_E10_WORK_ROAD: "1" };
+const gate = [ty.issueRunBrief("claude", "text", {}), ty.issueRunBrief("claude", "text", on), ty.issueRunBrief("opencode", "text", on), ty.issueRunBrief("claude", "text", { ...on, LOKI_E10_PROVE_BY_RUNNING: "0" }), ty.issueRunBrief("claude", "issue", {}), ty.issueRunBrief("claude", undefined, on)];
+const cap = [rc.resizeCap(T + "/rw-run-plain", null, true, undefined, {}), rc.resizeCap(T + "/rw-run-plain", null, true, undefined, on), rc.resizeCap(T + "/rw-run-issue", null, true, undefined, {}),
+  rc.resizeCap(T + "/rw-run-plain", null, true, undefined, { LOKI_E10_ISSUE_JSON: T + "/rw-issue.json" }), rc.resizeCap(T + "/rw-run-plain", null, true, 500, on), rc.resizeCap(T + "/rw-run-plain", null, false, undefined, on)];
+console.log([road.join(","), gate.join(","), cap.join(",")].join(" | "));' 2>&1 | tail -1)"
+[ "$rw" = "true,false,false,false,false,false,false,false,work,issue,issue,work,spec,text | false,true,false,false,true,false | 900,2400,2400,2400,500,2400" ] \
+    && ok "RW-02 road, gate and cap: a description of work takes the work road and the issue time cap rule; a short goal, a spec, --spec, --seal-existing, a group unit and the opt-out keep theirs ($rw)" || bad "RW-02 road, gate and cap gave: $rw"
+# ---- end RW-02 ----
+
 finish

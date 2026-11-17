@@ -13,7 +13,7 @@ import { assumptionsBlock } from "../../features/spec_ambiguity.ts";
 import { loadTaskText } from "./wall.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { planFallbackModel, planRoute, PRESET_PLAN_INSTRUCTION, ROUTER_UNITS_INSTRUCTION } from "../../runner/router/plan_route.ts";
-import { applyIntent, confirmRequested, intentCardEnabled, INTENT_CARD_INSTRUCTION, issueAcceptanceOf } from "../../util/intent_card.ts";
+import { acceptanceLines, applyIntent, confirmRequested, intentCardEnabled, INTENT_CARD_INSTRUCTION, issueAcceptanceCapOn, issueAcceptanceOf } from "../../util/intent_card.ts";
 import { loadProjectApi } from "../../project_model/resolve.ts";
 import { behaviorChangeInstruction, mutationStrict, readBehaviorChange } from "../../util/mutation_proof.ts";
 import { reviewerBriefEnabled } from "../../util/reviewer_brief.ts";
@@ -29,6 +29,21 @@ export { selectRelevantFiles };
 export function keepsPlanForConsentOrCap(env: NodeJS.ProcessEnv, tty: boolean, size: string, named: () => number, packages: () => number): boolean {
   if (confirmRequested(env)) return true;
   return size === "normal" && ((intentCardEnabled(env) && tty) || (named() === 0 && packages() > 1));
+}
+/** RW-02 PLAN-ACCEPTANCE (LOKI_E10_PLAN_ACCEPTANCE, default on; 0/off/false/no opts out): a run on the proof and acceptance road (an issue, or a text task on the
+ *  work road; types.ts issueRunBrief) whose task has no acceptance list of its own keeps the plan session at every size, because the plan's intent-card
+ *  "Acceptance:" lines are then the items Loki's own proof run is counted against (proof_rerun.ts labelAsks, seal.ts). Without it the plan was skipped for every
+ *  small and normal task, a prose task had no line at all, and the proof loop and the count had nothing to count (two real issue texts, playwright 44124 and
+ *  opencode 63310, give no list; the one text run whose plan did run printed two usable lines in 35 s). LOKI_E10_PLAN=0 still skips the stage. */
+export const planAcceptanceOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PLAN_ACCEPTANCE"] ?? "").trim());
+export const keepsPlanForAcceptance = (provider: string, intake: Record<string, unknown> | undefined, env: NodeJS.ProcessEnv = process.env): boolean =>
+  planAcceptanceOn(env) && issueAcceptanceCapOn(env) && intentCardEnabled(env) && issueRunBrief(provider, intake?.["source"], env) && issueAcceptanceOf(intake).length === 0;
+/** The stand-in when the plan gave no acceptance line either: the task's title line, verbatim, as the one item. Thin, but it is fixed before the implement
+ *  session starts, so there is always an item 1 that only Loki's own run of the proof can count as met. Returns the card to record, or null to leave it as it is. */
+export function standInAcceptance(card: unknown, title: unknown, task: string): string[] | null {
+  if (acceptanceLines({ intent_card: card }).length) return null;
+  const t = String(typeof title === "string" && title.trim() ? title : task.split("\n").find((l) => l.trim() !== "") ?? "").replace(/^\s*#+\s*/, "").replace(/[\x00-\x1f\x7f`]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 500);
+  return t ? [...(Array.isArray(card) ? card.map(String) : []), `Acceptance: ${t}`] : null;
 }
 
 /** Truncates the planner's output to at most `max` non-empty lines: engine-side enforcement, since nothing stops a session from writing more. */
@@ -74,7 +89,8 @@ export const planStage: Stage = {
     const pr = await planRoute(ctx.runDir, ctx.provider, process.env, ctx.repoDir); // R1-10 (runner/router/plan_route.ts): flag off adds nothing
     // FC-35: with the router on a task still plans (Opus must route it); only an explicit LOKI_E10_PLAN=0 skips, and records why. A large task keeps the plan session; small and normal fold the plan into the implement brief.
     const hard = pr.preset ? hardReason(sz.size, loaded, task) : null, routedPlan = pr.routed && (!pr.preset || hard !== null); // LOKI_ROUTER=auto: Opus plans only a hard task
-    const skip = mode === "never" || (mode === "auto" && sz.size !== "large" && !routedPlan && !keepsPlanForConsentOrCap(process.env, process.stderr.isTTY === true, sz.size, () => namedFiles(task, loaded).length, () => loadProjectApi(ctx.repoDir)?.packages().length ?? 0));
+    const needAcc = keepsPlanForAcceptance(ctx.provider, prior.intake); // RW-02 PLAN-ACCEPTANCE: a prose task on the proof road gets its acceptance lines here
+    const skip = mode === "never" || (mode === "auto" && sz.size !== "large" && !routedPlan && !needAcc && !keepsPlanForConsentOrCap(process.env, process.stderr.isTTY === true, sz.size, () => namedFiles(task, loaded).length, () => loadProjectApi(ctx.repoDir)?.packages().length ?? 0));
     // E-64: wall.ts makes this same check to skip itself; a forced plan (LOKI_E10_PLAN=always) also forces "wall", since it still gets its own Wall.
     const path = mode === "always" || (wallEnabled() && wallOnLeanOn()) ? "wall" : smallTaskPath(sz.size, hasRelevantTests(task, loaded, testMap, ctx.tests.impacted));
     ctx.emit("variant", null, { size: sz.size, reasons: sz.reasons, plan_mode: mode, plan_skipped: skip, wall_model: wallEnabled() ? wallFirstModel(sz.size) : null, wall_model_reauthor: wallEnabled() ? wallModel() : null, small_task_path: path, cascade: cascadeEnabled() });
@@ -118,7 +134,7 @@ export const planStage: Stage = {
     const rawPlan = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
     // T3: empty plan or LOKI_INTENT_CARD=0 is silent and changes nothing.
     const ic = await applyIntent(rawPlan, cardOn, ctx.runDir, (d) => ctx.emit("variant", "plan", d), issueAcceptanceOf(prior.intake));
-    const plan = truncatePlan(ic.rest);
+    const plan = truncatePlan(ic.rest), standIn = needAcc ? standInAcceptance(ic.data["intent_card"], prior.intake?.title, task) : null; // RW-02: recorded in this stage's own event, before implement starts; nothing the session writes later changes it
     const route_record = pr.record({ planModel, planModelNote }), oor = planOutOfRepo(ctx.runDir); // FC-OUT-OF-REPO: ends the run as BLOCKED before implement/fix spend anything
     return {
       status: "completed",
@@ -127,7 +143,7 @@ export const planStage: Stage = {
         relevant_files: relevantFiles,
         iteration_ids: [iterationId],
         duration_s: session.durationS,
-        ...ic.data,
+        ...ic.data, ...(standIn ? { intent_card: standIn, acceptance_stand_in: "title" } : {}),
         ...pr.units(), ...(oor ? { out_of_repo: true, spec_conflict_reason: `out-of-repo: ${oor.reason}` } : {}),
         ...(route_record ? { route_record } : {}),
         ...readBehaviorChange(ctx.runDir), // T2: model-declared, strict only

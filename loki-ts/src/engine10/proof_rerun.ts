@@ -391,6 +391,12 @@ export async function runSetupScript(repoDir: string, setup: string, signal?: Ab
   let text = r.out.split(end).join("").replace(/\[\d{1,3}(;\d{1,3})*m/g, ""); for (const [d, as] of [...names(r.dir, "$DIR"), ...names(repoDir, ".")].sort((a, b) => b[0].length - a[0].length)) text = text.split(d).join(as);
   return { reached: r.out.includes(end), exit: r.exit, seconds: r.seconds, tail: text.replace(/\s+$/, "").slice(-SETUP_TAIL_CHARS) };
 }
+/** RW-02 ONE ROAD: a text task on the work road is never VERIFIED on a reading alone. When the run has acceptance lines and Loki has no run of its own to
+ *  count (the session left no proof script, so rerunProof returned null), the label is held with this note: without it the acceptance check, a model reading the
+ *  diff and the session's reply, would decide every line by itself. Text tasks only (intake source "text"): an issue run keeps its measured behavior, where that
+ *  reading stands in. Off with the re-run itself (LOKI_E10_PROOF_RERUN=0). */
+export const NO_OWN_PROOF_NOTE = "no proof script: the session left nothing Loki could run itself, so no acceptance line is proved by Loki's own run";
+export const noOwnProofNotes = (source: unknown, asks: string[], r: ProofRerun | null, env: NodeJS.ProcessEnv = process.env): string[] => (source === "text" && asks.length > 0 && !r && proofRerunOn(env) ? [NO_OWN_PROOF_NOTE] : []);
 /** The facts for the acceptance line check: what Loki's own run of the script returned, and the script itself (so a script that checks nothing is visible). */
 export function proofFacts(runDir: string, r: ProofRerun | null, expected: boolean): string[] {
   if (!r) return expected ? ["The session left no proof script ($LOKI_SCRATCH/loki-proof.sh), so Loki could not re-run anything itself. Nothing in the reply counts as proof from running."] : [];
