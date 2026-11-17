@@ -17,6 +17,8 @@ export function ownReason(stage: unknown, reason: unknown): string | undefined {
 /** A reason with the lead removed, for readers that match on the cause itself. */
 export const withoutOwnLead = (reason: string): string => (reason.startsWith(LOKI_OWN_LEAD) ? reason.slice(LOKI_OWN_LEAD.length) : reason);
 
+/** One structured reason seal's evaluation held the label below VERIFIED: the kind, and the check name or receipt line it came from. */
+export interface CapReason { kind: string; detail: string }
 export type ItemClass = "a" | "b" | "c";
 export interface OpenItem {
   kind: string;
