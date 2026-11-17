@@ -60,13 +60,13 @@ function writeLocalCard(repoDir: string, card: RepoCard): void {
 
 /** The card as a page a person can read; the last line carries the same facts for Loki to read back (the setup is taken from its code block). */
 export function renderCardFile(card: RepoCard): string {
-  const fs = sortFacts(card.facts), by = (k: CardKind): CardFact[] => fs.filter((f) => f.kind === k), on = (f: CardFact): string => `verified on ${f.sha.slice(0, 12)}, lockfiles ${f.lock.slice(0, 12) || "none"}`;
+  const fs = sortFacts(card.facts), by = (k: CardKind): CardFact[] => fs.filter((f) => f.kind === k), on = (f: CardFact): string => `verified on a change based on ${f.sha.slice(0, 12)}, lockfiles ${f.lock.slice(0, 12) || "none"}`;
   const setup = by("setup")[0];
   const data = JSON.stringify({ v: 1, repo: card.repo, facts: fs.map((f) => (f.kind === "setup" ? { ...f, text: "(the bash block above)" } : f)) }).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
   return [
     "# Repo card", "",
     `What Loki has verified about this repository (${card.repo}) by running it. Written by \`loki knowledge export\`; edit by re-running it, not by hand.`,
-    "Each fact names the commit and lockfile hash it was verified on. A fact from other lockfiles is a hint to check, not a rule.", "",
+    "Each fact names the commit its run started from and the lockfile hash it was verified on. A fact from other lockfiles is a hint to check, not a rule.", "",
     ...(setup ? ["## Setup from an empty directory", "", `The setup half of a proof script that Loki's own run got past (${on(setup)}). It takes one argument, an empty directory, and expects Loki's helper file \`loki-check.sh\` (throwaway PostgreSQL and Redis on free ports).`, "", "```bash", setup.text.replace(/```/g, "` ` `"), "```", ""] : []),
     ...(by("quirk").length ? ["## Known quirks", "", ...by("quirk").map((f) => `- ${f.text} (${on(f)})`), ""] : []),
     ...(by("env").length ? ["## Environment", "", ...by("env").map((f) => `- ${f.text} (${on(f)})`), ""] : []),
@@ -79,17 +79,18 @@ export function parseCardFile(text: string): RepoCard | null {
     const m = /<!-- loki-repo-card (\{.*\}) -->/.exec(text); if (!m) return null;
     const card = asCard(JSON.parse(m[1]!)); if (!card) return null;
     const code = /```bash\n([\s\S]*?)\n```/.exec(text)?.[1] ?? "";
-    card.facts = card.facts.flatMap((f) => (f.kind !== "setup" ? [f] : code ? [{ ...f, text: code }] : []));
+    card.facts = card.facts.flatMap((f) => (f.kind !== "setup" ? [{ ...f, text: f.text.slice(0, 400) }] : code && setupRefusal(code) === null ? [{ ...f, text: code }] : [])); // a committed setup passes the same test as a captured one, or is not read
     return card;
   } catch { return null; }
 }
 export function readRepoCardFile(repoDir: string): RepoCard | null { try { return parseCardFile(readFileSync(join(repoDir, CARD_FILE), "utf8").slice(0, 200_000)); } catch { return null; } }
 /** Local and committed copies as one card: per fact, the one verified on the newer commit wins (a tie keeps the local one). */
-export function mergedCard(repoDir: string): { card: RepoCard; sources: { local: number; repo_file: number } } {
+export function mergedCard(repoDir: string): { card: RepoCard; sources: { local: number; repo_file: number }; fromFile: Set<CardFact> } {
   const local = readLocalCard(repoDir), file = readRepoCardFile(repoDir), out = new Map<string, CardFact>();
   for (const f of file?.facts ?? []) out.set(`${f.kind}\0${f.key}`, f);
   for (const f of local?.facts ?? []) { const k = `${f.kind}\0${f.key}`, o = out.get(k); if (!o || f.commit_time >= o.commit_time) out.set(k, f); }
-  return { card: { v: 1, repo: repoName(repoDir), facts: sortFacts([...out.values()]) }, sources: { local: local?.facts.length ?? 0, repo_file: file?.facts.length ?? 0 } };
+  const facts = sortFacts([...out.values()]), fileFacts = new Set(file?.facts ?? []);
+  return { card: { v: 1, repo: repoName(repoDir), facts }, sources: { local: local?.facts.length ?? 0, repo_file: file?.facts.length ?? 0 }, fromFile: new Set(facts.filter((f) => fileFacts.has(f))) };
 }
 
 const REAL_TOKEN = /sk-ant-|github_pat_|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|(?:AKIA|ASIA)[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY|sk-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{35}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}|(?:sk|rk)_live_[A-Za-z0-9]{16,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/;
@@ -105,14 +106,18 @@ export function extractSetup(script: string, repoDir: string): { text: string } 
   const real = (() => { try { return realpathSync(repoDir); } catch { return resolve(repoDir); } })(), names = [...new Set([real, resolve(repoDir), real.replace(/^\/private\//, "/")])].filter((d) => d.length > 5).sort((a, b) => b.length - a.length);
   let swapped = false; for (const d of names) if (text.includes(d)) { text = text.split(d).join("${LOKI_REPO_ROOT}"); swapped = true; }
   if (swapped) { const i = text.startsWith("#!") ? text.indexOf("\n") + 1 : 0; text = `${text.slice(0, i)}LOKI_REPO_ROOT="\${LOKI_REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" # the repository root (Loki replaced the path the script was written with)\n${text.slice(i)}`; }
-  // The generic redactor is not used here: it blanks the throwaway password and signing secret the script invents for its own empty database, and the recipe
-  // then no longer runs. A setup that carries anything shaped like a real provider credential is not stored at all.
-  if (REAL_TOKEN.test(text)) return { refused: "it carries something shaped like a real credential" };
-  if (text.length > MAX_SETUP) return { refused: `more than ${MAX_SETUP} characters before the first check` };
-  if (text.includes(homedir()) || /(^|[\s"'=:])\/(Users|home|private\/var|var\/folders)\//.test(text)) return { refused: "it names a path of this machine" };
+  const why = setupRefusal(text);
+  return why ? { refused: why } : { text };
+}
+/** Why a setup text is not kept or not read back, or null. The same test guards what Loki captures and what it reads from a committed card, which a
+ *  person or another machine wrote. The generic redactor is not used: it blanks the throwaway password and signing secret a script invents for its own
+ *  empty database, and the recipe then no longer runs; a setup that carries anything shaped like a real provider credential is refused whole. */
+export function setupRefusal(text: string): string | null {
+  if (REAL_TOKEN.test(text)) return "it carries something shaped like a real credential";
+  if (text.length > MAX_SETUP) return `more than ${MAX_SETUP} characters before the first check`;
+  if (text.includes(homedir()) || /(^|[\s"'=:])\/(Users|home|private\/var|var\/folders)\//.test(text)) return "it names a path of this machine";
   const syn = spawnSync("bash", ["-n"], { input: text, encoding: "utf8", timeout: 10000 });
-  if (syn.status !== 0) return { refused: "bash cannot parse the part before the first check by itself" };
-  return { text };
+  return syn.status !== 0 ? "bash cannot parse the part before the first check by itself" : null;
 }
 const coreLines = (s: string): string[] => s.split("\n").map((l) => l.trim()).filter((l) => l.length >= 12 && !l.startsWith("#") && !l.startsWith("LOKI_REPO_ROOT="));
 /** True when a proof script carries the stored setup: at least 7 in 10 of its real lines, in the script as written. */
@@ -164,15 +169,15 @@ export interface CardBrief { text: string; record: { facts: number; stale: numbe
 export function repoCardBrief(repoDir: string, scratchDir: string | null, env: NodeJS.ProcessEnv = process.env): CardBrief | null {
   if (!repoCardOn(env)) return null;
   try {
-    const { card, sources } = mergedCard(repoDir);
+    const { card, sources, fromFile } = mergedCard(repoDir);
     card.facts = card.facts.filter((f) => f.kind !== "command" || commandFileExists(repoDir, f.key)); // a check of a test file this checkout does not have (the earlier run added it and it is not merged) is not shown
     if (!card.facts.length) return null;
-    const now = lockHash(repoDir), stale = (f: CardFact): boolean => f.lock !== now, tag = (f: CardFact): string => (stale(f) ? ` (last verified on ${f.sha.slice(0, 12) || "an unknown commit"} with other dependency files: check before trusting)` : ` (verified on ${f.sha.slice(0, 12) || "an earlier run"})`);
+    const now = lockHash(repoDir), stale = (f: CardFact): boolean => f.lock !== now, src = (f: CardFact): string => (fromFile.has(f) ? "; from the card committed in this repository, not run on this machine" : ""), tag = (f: CardFact): string => (stale(f) ? ` (last verified on a change based on ${f.sha.slice(0, 12) || "an unknown commit"}, with other dependency files: check before trusting${src(f)})` : ` (verified on a change based on ${f.sha.slice(0, 12) || "an unknown commit"}${src(f)})`);
     const by = (k: CardKind): CardFact[] => card.facts.filter((f) => f.kind === k), setup = by("setup")[0];
     let setupFile = false;
     if (setup && scratchDir) { try { writeFileSync(join(scratchDir, SETUP_FILE), setup.text + "\n", { mode: 0o600 }); setupFile = true; } catch { setupFile = false; } }
     const text = [
-      "What Loki already knows about this repository from earlier runs here (facts Loki verified by running them, not a guess; do not spend time rediscovering them):",
+      "What Loki already knows about this repository from earlier runs here (facts Loki verified by running them, not a guess; do not spend time rediscovering them). Each was verified on an earlier run's change, built on the commit it names, so a step can rely on something that change added and this checkout does not have:",
       ...(setup ? [`Setup${tag(setup)}: the setup half of a proof script that Loki's own run got past in this repository. It builds the environment from an empty directory.${setupFile ? ` It is saved at $LOKI_SCRATCH/${SETUP_FILE}.` : ""} Start your loki-proof.sh from it (copy it, then add this task's checks after it) instead of working the setup out again; by itself it stops what it started when it exits. If a step fails on this checkout, fix that step and carry on.${setup.text.length <= MAX_INLINE || !setupFile ? `\n<repo-setup>\n${setup.text}\n</repo-setup>` : ""}`] : []),
       ...(by("quirk").length ? [`Known quirks:\n${by("quirk").map((f) => `- ${f.text}${tag(f)}`).join("\n")}`] : []),
       ...by("env").map((f) => `Environment: ${f.text}${tag(f)}`),
@@ -195,5 +200,5 @@ export function renderCardText(repoDir: string): string {
   if (!card.facts.length) return `Loki knows nothing about ${card.repo} yet. The card is written after an issue run (loki start owner/repo#N) whose proof Loki re-ran itself.\n`;
   const mark = (f: CardFact): string => `[${f.sha.slice(0, 12) || "no commit"}${f.lock === now ? "" : ", lockfiles changed since: check before trusting"}]`;
   const rows = card.facts.map((f) => (f.kind === "setup" ? `  setup    ${mark(f)} ${f.text.split("\n").length} lines; first steps:\n${f.text.split("\n").filter((l) => l.trim() && !/^\s*#/.test(l)).slice(0, 12).map((l) => `             ${l.slice(0, 150)}`).join("\n")}` : `  ${f.kind.padEnd(8)} ${mark(f)} ${f.kind === "command" ? `${f.key}: ` : ""}${f.text.slice(0, 300)}`));
-  return [`Repo card for ${card.repo} (${card.facts.length} fact${card.facts.length === 1 ? "" : "s"}; ${sources.local} local, ${sources.repo_file} in ${CARD_FILE})`, ...rows, `  local copy: ${join(cardDir(repoDir), "card.json")}`, `  share it with your team: loki knowledge export (writes ${CARD_FILE} for you to commit)`].join("\n") + "\n";
+  return [`Repo card for ${card.repo}, each fact with the commit its run was based on (${card.facts.length} fact${card.facts.length === 1 ? "" : "s"}; ${sources.local} local, ${sources.repo_file} in ${CARD_FILE})`, ...rows, `  local copy: ${join(cardDir(repoDir), "card.json")}`, `  share it with your team: loki knowledge export (writes ${CARD_FILE} for you to commit)`].join("\n") + "\n";
 }
