@@ -22,6 +22,7 @@ import type { RunContext, RunnerName } from "../engine10/types.ts";
 import type { ProjectApi } from "./api.ts";
 import { fullSuiteSpecs } from "./package_suite.ts";
 import { loadProjectApi } from "./resolve.ts";
+import { guideNotes } from "./guides.ts";
 
 export const INSTALL_CAP_MS = 300_000;
 const memo = new Set<string>(); // `${runId}\0${root}`: once per package per run, across fix rounds
@@ -336,6 +337,8 @@ export function uvRequiredCmd(cmd: string, spec: string): string | null {
 const ecoOfCmd = (cmd: string): string | null => /\b(?:pip3?|python3?|uv|poetry|pdm|pipenv|hatch|tox|pytest)\b/.test(cmd) ? "py" : /\b(?:npm|pnpm|yarn|bun|npx|node)\b/.test(cmd) ? "js" : /\bcargo\b/.test(cmd) ? "rust" : /\b(?:mvn|mvnw|gradle|gradlew)\b/.test(cmd) ? "jvm" : /\bdotnet\b/.test(cmd) ? "dotnet" : /\bgo\b/.test(cmd) ? "go" : null;
 const ecoOfDir = (repoDir: string | undefined, root: string): string | null => { if (!repoDir) return null; const has = (f: string): boolean => existsSync(join(repoDir, root, f)); return has("go.mod") ? "go" : has("pyproject.toml") || has("setup.py") || has("setup.cfg") ? "py" : has("package.json") ? "js" : has("Cargo.toml") ? "rust" : null; };
 const ECO_PREFIX: [RegExp, string][] = [[/^go:/, "go"], [/^(?:pytest|unittest|lint:ruff|lint:mypy|lint:pyright)\b/, "py"], [/^(?:vitest|jest|bun|node|mocha|ava|lint:eslint|lint:tsc|tsc)\b/, "js"], [/^cargo:/, "rust"], [/^(?:maven|gradle|javac):/, "jvm"], [/^dotnet:/, "dotnet"]];
+/** REPO-GUIDES: the receipt's informational lines gain which documented test command ran and where it came from, and each guide command Loki ignored (guides.ts guideNotes). Never a cap. */
+export function withGuideNotes<T extends { na: string[] }>(notes: T, repoDir: string): T { try { const g = guideNotes(repoDir); return g.length ? { ...notes, na: [...notes.na, ...g] } : notes; } catch { return notes; } }
 export function unusedInstallNotes(lines: readonly string[], model: ProjectApi | null | undefined, changed: readonly string[], checkNames: readonly string[], repoDir?: string): { cap: string[]; na: string[] } {
   const cap: string[] = [], na: string[] = [];
   const checkEco = (n: string): string | null => { for (const [re, e] of ECO_PREFIX) if (re.test(n)) return e; const pk = n.startsWith("full suite: ") ? model?.packages().find((p) => `full suite: ${p.name}` === n) : undefined; return pk ? ecoOfDir(repoDir, pk.root) ?? (pk.commands.test ? ecoOfCmd(pk.commands.test.cmd) : null) : null; };

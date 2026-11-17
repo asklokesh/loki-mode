@@ -14,6 +14,7 @@ import { errorsById, failIds, unhandledBlock } from "../engine10/failures.ts";
 import type { RunnerName } from "../engine10/types.ts";
 import type { ProjectApi } from "./api.ts";
 import { isMultiRoot, loadProjectApi } from "./resolve.ts";
+import { cmdRunners, guideSuite } from "./guides.ts";
 
 interface SuiteCheck { name: string; cmd: string; result: "pass" | "fail" | "not_run"; duration_s: number; reason?: string; exit?: number | null; shape?: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; first_error?: string; excerpt?: string; count?: string }
 
@@ -52,7 +53,7 @@ export function scopedSuites<T extends { cwd: string }>(specs: T[], changed: rea
 export const scopedOutNote = (s: { name: string; cmd: string }): string => `n/a: ${s.name} (\`${s.cmd}\`) not run: no changed file is in this package and its manifest does not depend on a package the change touched`;
 export function packageSuiteSpecs(api: ProjectApi | null | undefined, repoDir?: string): SuiteSpec[] | null {
   if (!isMultiRoot(api)) return null;
-  const specs = api.packages().filter((p) => p.commands.test).map((p): SuiteSpec => { const tc = p.commands.test!, g = repoDir !== undefined ? goMakeSuite(repoDir, tc.cwd, tc.cmd) : null, line = g?.run ?? tc.cmd; return { name: `full suite: ${p.name}`, cmd: `(cd ${tc.cwd} && ${line})`, cwd: tc.cwd, run: line, ...(g ? { go: g.go } : {}) }; });
+  const specs = api.packages().filter((p) => p.commands.test).map((p): SuiteSpec => { const tc = p.commands.test!, doc = repoDir !== undefined ? guideSuite(join(repoDir, tc.cwd), cmdRunners(tc.cmd), tc.cmd, repoDir) : null /* REPO-GUIDES: a stored model may still hold the discovered command */, g = repoDir !== undefined && !doc ? goMakeSuite(repoDir, tc.cwd, tc.cmd) : null, line = doc?.line ?? g?.run ?? tc.cmd; return { name: `full suite: ${p.name}`, cmd: `(cd ${tc.cwd} && ${line})`, cwd: tc.cwd, run: line, ...(g ? { go: g.go } : {}) }; });
   return specs.length ? specs : null;
 }
 /** A Go module's (go.mod in `cwd`) full-suite command made countable WITHOUT changing what runs: plain go test output is never counted (GO_EXIT0_REASON), so a model command that is a plain

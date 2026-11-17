@@ -33,6 +33,7 @@ import { safeGit, safeGitSpawn } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
 import { atomicWriteFileSync } from "./state.ts";
 import { inWorkspace, pkgWorkspaces, pnpmWorkspaces } from "../util/lock_ecosystems.ts";
+import { bannedBy, guidesFor, GUIDE_HASH_FILES } from "../project_model/guides.ts";
 
 // Bumped when the record shape changes. An unrecognized version is treated as
 // ABSENT, never as an error -- an older binary reading a newer artifact must
@@ -313,7 +314,7 @@ function workflowFiles(repoDir: string): string[] {
 /** sha256 over the name and content of every manifest and CI workflow file present, sorted: any edit to how the repo builds or tests changes it. */
 export function manifestHash(repoDir: string): string {
   const h = createHash("sha256");
-  for (const f of [...MANIFESTS, ...workflowFiles(repoDir)].sort()) {
+  for (const f of [...MANIFESTS, ...GUIDE_HASH_FILES, ...workflowFiles(repoDir)].sort()) { // REPO-GUIDES: a guide edit changes the documented test command, so a stored profile is rebuilt
     const p = join(repoDir, f);
     if (existsSync(p)) h.update(`${f}\0${read(p)}\0`);
   }
@@ -369,7 +370,19 @@ export function discoverCommands(repoDir: string, pmDir: string = repoDir): Prof
       if (kind && !out.some((e) => e.kind === kind) && !/[$&|;`]/.test(c)) out.push(entry(kind, c, wf));
     }
   }
-  return out;
+  return withGuides(repoDir, out);
+}
+/** REPO-GUIDES (project_model/guides.ts, the one reader of the repository's guides): the test command a guide documents leads the list (it is the baseline
+ *  command), a discovered test command a guide forbids is dropped when a documented one stands in for it, and a test script found only in the script
+ *  table (justfile, scripts/) fills in when nothing else names a test command. `source` stays a file path (the Project Model cites it); the line is in `note`. */
+function withGuides(repoDir: string, out: ProfileCommand[]): ProfileCommand[] {
+  const f = guidesFor(repoDir), named = f.tests.filter((t) => !t.needsPath), doc = named.find((t) => t.fromGuide);
+  if (doc) {
+    const same = out.find((e) => e.kind === "test" && e.cmd === doc.cmd), kept = out.filter((e) => e !== same && !(e.kind === "test" && bannedBy(f, e.cmd)));
+    return [same ?? { ...entry("test", doc.cmd, doc.file), note: `from ${doc.source}` }, ...kept]; // a documented command the manifests already name keeps its manifest row, first
+  }
+  const fill = named[0];
+  return fill && !out.some((e) => e.kind === "test") ? [...out, { ...entry("test", fill.cmd, fill.file), note: `from ${fill.source}` }] : out;
 }
 
 /** Intake diet: the Project Model answer read straight from the manifests, so a repo whose packages, test and install commands are all

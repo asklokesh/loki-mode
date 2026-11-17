@@ -12,7 +12,7 @@ import { snapshotContract } from "../../features/contract.ts";
 import { lazyZeroBaseline, stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
 import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps, type DepsTiming, type IntakeTiming, type PhaseTiming } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 import { issueAcceptance } from "../../util/intent_card.ts"; import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { baseOnDemandOn, multiPackageRepo, baselineCmdS, BASELINE_CMD_TIMEOUT_S, ensureProfile, intakeBudgetNote, intakeCapS, readinessNotice, writeBaselineRecord, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
-import { verifyCommandRows } from "../../project_model/package_suite.ts"; import { untestableReason } from "../testmap.ts";
+import { snapshotGuides } from "../../project_model/guides.ts"; import { verifyCommandRows } from "../../project_model/package_suite.ts"; import { untestableReason } from "../testmap.ts";
 import { ambiguityGate, rankedRemedy, rankedRemedyEnabled, voteOpenChoices, type ChoiceCtx } from "../../features/spec_ambiguity.ts"; import { triageGate } from "../../features/triage.ts";
 import { execSpecPrefetchOn, prefetchExecSpec } from "../../features/exec_spec.ts"; import { wallEnabled } from "../sizing.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
 export interface IntakeOptions { taskText?: string; issueJsonPath?: string; }
@@ -118,6 +118,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   if (!testmap) { walkCached = false; testmap = await ctx.tests.detect(ctx.repoDir); try { writeTestMapCache(cacheDir, tree, testmap); } catch { /* an unwritable cache only costs the next run a rebuild */ } }
   tm.repo_walk = { ms: walkEnd(), at: walkAt, cached: walkCached };
   tm.exec_spec_prefetch = await prefetchLeanExecSpec(ctx, task, repoMap, testmap, signal); // SPEED-EXEC-SPEC-PREFETCH: the Wall stage's generator call starts now and runs while the baseline below does
+  const guides = snapshotGuides(ctx.repoDir, repoMap.files.filter((f) => /(?:^|\/)(?:AGENTS|CLAUDE|CONTRIBUTING|README)\.md$/.test(f) && f.includes("/") && f.split("/").length <= 4).map((f) => dirname(f))); // REPO-GUIDES: the repository's own test and setup instructions, read once here (no model call) and kept for the run
   const baselineAt = at(), baselineEnd = lap(), baselineOn = process.env.LOKI_REPO_BASELINE !== "0";
   const defer = baselineOn && baseOnDemandOn() && multiPackageRepo(ctx.repoDir); // RW-01: a multi-package repository runs no suite on base before the model starts; verify measures on base what is red on head
   const icap = intakeCapS(), built = baselineOn ? ensureProfile(ctx.repoDir, { timeoutS: icap === null ? baselineCmdS(ctx.capS) : Math.min(baselineCmdS(ctx.capS), icap), ...(defer ? { defer: true } : {}) }) : null, baselineMs = baselineEnd(); if (icap !== null && built && !built.reused && built.profile.baseline.timed_out && icap < baselineCmdS(ctx.capS)) intakeBudgetNote(baselineMs / 1000, "root baseline cut off on base"); // R3 LOKI_E10_INTAKE_CAP_S: the root baseline and the suite baselines below share one budget // REPOMEM: commands + a baseline test run on the untouched tree, reused while the manifests are unchanged; never throws
@@ -138,7 +139,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
     return { already_satisfied: true, evidence: already.evidence, iteration_ids: [`${ctx.runId}-already-done`], comment, ...(commentArgv ? { comment_argv: commentArgv } : {}) };
   };
   const remedy = rankedRemedyEnabled() ? rankedRemedy(task) : null; // F1 LOKI_E10_RANKED_REMEDY: the issue's first-ranked remedy (deterministic), read by implement
-  const base = { ...common, ...ambiguity, ...(remedy ? { ranked_remedy: remedy.first } : {}), task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...(readiness ? { readiness } : {}), ...(untestable ? { untestable } : {}) };
+  const base = { ...common, ...ambiguity, ...(remedy ? { ranked_remedy: remedy.first } : {}), task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...(readiness ? { readiness } : {}), ...(untestable ? { untestable } : {}), ...(guides.tests.length || guides.setup.length || guides.bans.length || guides.ignored.length ? { repo_guides: guides } : {}) };
   // FC-15: the claim rests on the PR target. Evidence only in target..HEAD means no claim; Loki's own work there is reported, never refused.
   const stale = already ? unmergedEvidence(ctx.repoDir, already.paths, startBranch) : null;
   if (already && !stale) return { status: "completed", data: { ...base, ignore_snapshot: ignoreSnapshot(ctx.repoDir), ...alreadyData(already) } };
