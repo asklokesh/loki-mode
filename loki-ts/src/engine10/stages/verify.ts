@@ -5,9 +5,9 @@ import { installHint } from "../../util/stack_tools.ts";
 import { atomicWriteText } from "../../util/atomic.ts"; import { redactSecrets } from "../../util/redact.ts";
 import { installOwned, projectDeclaresRuff, unusedInstallNotes } from "../../project_model/install.ts"; import { nrdGroupsFor, settleNrd } from "../../features/no_regression.ts";
 import { scopedOutOf } from "../../project_model/scope.ts";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve } from "node:path"; import { MANIFESTS } from "../../contrib/wall_snapshot.ts"; import { classifyRunnerOutput } from "../../runner/runner_errors.ts";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"; import { MANIFESTS } from "../../contrib/wall_snapshot.ts"; import { classifyRunnerOutput } from "../../runner/runner_errors.ts";
 import { hiddenConfigChanged, testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst, QUICK_ONLY_NOTE, quickScope, quickSplit } from "../../e10ext/select.ts"; import { dependentNotes, dependentTests } from "../../features/dependents.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
@@ -523,14 +523,22 @@ function tscLocalKeys(out: string, pkgRel: string, keep: ReadonlySet<string>, ch
  *  tail cut at its cap keeps the check blocking. Only tsc lints the whole project; eslint, ruff and shellcheck run on the changed files and keep capping. */
 export const LINT_UNTOUCHED_NOTE = "lint red only in files the change did not touch (disclosed, not blocking)";
 export const lintUntouchedOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_LINT_UNTOUCHED"] ?? "").trim()); // off by default: it changed no label on 150 stored bench runs and has not fired on a real run
-/** GENERATED-ONLY: a failed `tsc --noEmit` whose every diagnostic sits in a file git ignores (a build output such as .next/types, left stale by a build the
- *  session ran before it moved a page) is not an error in the change's source: disclosed, never blocking. Fail-closed: an unparsed error line, a cut tail,
- *  no diagnostics, or one diagnostic in a tracked or untracked-but-not-ignored file keeps the check blocking. */
+/** STALE-GENERATED: a failed `tsc --noEmit` is not the change's error when every diagnostic is TS2307 (cannot find module) in a file git ignores, and the module it
+ *  names exists nowhere in the tree: a build output such as .next/types that still points at a page from another branch or an earlier build. Disclosed, never
+ *  blocking. Any other diagnostic in an ignored file (Next reports real page-props errors there), a module that does exist, an unparsed error line, a cut tail
+ *  or one diagnostic in a tracked or new source file keeps the check blocking. */
 function tscOnlyIgnored(repoDir: string, cwd: string, out: string): boolean {
   if (!out || out.length >= 60000) return false;
-  const found = [...out.matchAll(TSC_DIAG)], files = [...new Set(found.map((m) => m[1]!.trim()))];
-  if (files.length === 0 || found.length !== out.split("\n").filter((l) => /error TS\d+/.test(l)).length) return false;
-  try { return files.every((f) => { try { safeGit(repoDir, ["check-ignore", "-q", "--", join(cwd, f)]); return true; } catch { return false; } }); } catch { return false; }
+  const lines = out.split("\n").filter((l) => /error TS\d+/.test(l)); if (lines.length === 0) return false;
+  try {
+    return lines.every((l) => {
+      const m = /^(\S.*?)(?:\(\d+,\d+\)|:\d+:\d+)\s*(?::|-)\s*error TS2307: Cannot find module '([^']+)'/.exec(l.trim()); if (!m) return false;
+      const file = join(cwd, m[1]!.trim()), mod = m[2]!; if (!mod.startsWith(".")) return false;
+      try { safeGit(repoDir, ["check-ignore", "-q", "--", file]); } catch { return false; }
+      const target = join(dirname(file), mod).replace(/\.(js|mjs|cjs|jsx)$/, "");
+      return ![target, ...[".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".d.ts"].map((e) => target + e), ...["index.ts", "index.tsx", "index.js"].map((e) => join(target, e))].some((t) => { try { return statSync(t).isFile(); } catch { return false; } });
+    });
+  } catch { return false; }
 }
 const tscLines = (out: string): string[] => out.split("\n").map((l) => l.trim()).filter((l) => /error TS\d+/.test(l));
 /** The half of tscUntouchedOnly that needs no base run: the whole output parses, no config changed, no diagnostic in a touched file, no changed symbol named. */
@@ -765,7 +773,7 @@ export const verifyStage: Stage = {
     const inBase = (f: string): boolean => { try { safeGit(ctx.repoDir, ["cat-file", "-e", `${ctx.baseSha}:${f}`], { stdio: "ignore" }); return true; } catch { return false; } };
     const testCounts: Record<string, unknown> = {}; const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).flatMap((t) => { const k = preRed.cnt[testCheckName(t)]; if (k) testCounts[t.path] = k; return [...(testFileWeakened(ctx.repoDir, ctx.baseSha, null, t.path, "M", intake?.task ?? "") ? [`weakened test: ${t.path}`] : []), ...(assertDeltaNotes(ctx.repoDir, ctx.baseSha, null, t.path, intake?.task ?? "", k?.b, k?.h) ?? [])]; }); // a relevant test file edited: listed as weakened only when it loses an assertion or case or gains a skip (EXP-0001: an added case is kept); a changed assertion value is always listed
     const weakened = [...modifiedRel, ...cfgChanged.map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`), ...collateralRed.map((n) => `${COLLATERAL_RED}: ${n}`), ...preRed.quiet.filter((n) => preRed.names.includes(n)).map((n) => `${QUIET_RED}: ${n}`)];
-    const fullSuiteRan = checks.some((c) => c.name.startsWith("full suite") && (c.result === "pass" || c.result === "fail")); // the importers of a changed file that the 20-file cap left out still ran when the whole suite ran: its failures are compared with base per id, so the dropped-files note no longer caps the label (a Haiku run with every acceptance line met was PARTIAL on it alone)
+    const fullChecks = checks.filter((c) => c.name.startsWith("full suite")), fullSuiteRan = fullChecks.length > 0 && fullChecks.every((c) => c.result === "pass" || c.result === "fail"); // the importers of a changed file that the 20-file cap left out still ran when the whole suite ran: its failures are compared with base per id, so the dropped-files note no longer caps the label (a Haiku run with every acceptance line met was PARTIAL on it alone)
     const depsNotes = unusedInstallNotes(intake?.deps_not_proven ?? [], api, changed, checks.map((c) => c.name), ctx.repoDir); // an install failure no check or changed file depends on is disclosed (n/a), never a cap
     const notProven = [...(complete ? [] : [QUICK_ONLY_NOTE]), ...preRed.envCrash.map((e) => `${e.name}: ${BCE_REASON} (${e.sig})`), ...weakened, ...hiddenEdits(ctx.repoDir), ...ignoreRuleChanges(ctx.repoDir, (intake as { ignore_snapshot?: unknown } | undefined)?.ignore_snapshot, ctx.baseSha), ...dependentNotes(dep).filter((n) => !(fullSuiteRan && n.startsWith("reverse-dependent tests dropped"))), ...depsNotes.cap, ...pub.filter((c) => c.name === "holdout" && c.result !== "pass").map((c) => (c.result === "not_run" ? "holdout not executed" : "holdout check failed")), ...[...fullNotProven].filter((n) => !naNote(n)), ...pub.filter((c) => c.owner === "harness" && c.name !== "holdout").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
     const wallDropped = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p)); // FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: sealed, but no runner of this repo can run it

@@ -37,7 +37,8 @@ export async function worktreeTree(repoDir: string): Promise<string | null> {
  *  its own tests and its API passes its checks, yet no user can reach it (two Haiku runs sealed "Build faceted search UI" green with a SearchBar.tsx that
  *  no page imports). Deterministic and cheap: one `git grep` per added file, on the given tree (a commit, or worktreeTree's tree of the uncommitted change).
  *  Skipped, to stay quiet: tests, framework entry files (page, layout, route, index, main, app ...), migrations, scripts, config and type declaration files,
- *  and names too short to search for. A name that appears anywhere else outside tests (an import, a registry, package.json) counts as used. Never throws. */
+ *  and names too short to search for. A name that appears anywhere else outside tests (an import, a registry, package.json) counts as used. Never throws.
+ *  Used as advice: handed back to the session during the run (it mounts the file or removes it), and disclosed on the receipt. It never caps the label. */
 const UNUSED_EXT = /\.(tsx?|jsx?|mjs|cjs|vue|svelte|py)$/, UNUSED_TEST = /(^|\/)(__tests__|tests?|spec|e2e|__mocks__|fixtures?|stories)\/|\.(test|spec|stories)\.[a-z]+$|(^|\/)(test_[^/]*|[^/]*_test)\.py$/;
 const UNUSED_ENTRY = /(^|\/)(page|layout|route|index|main|app|server|middleware|loading|error|not-found|template|default|global-error|instrumentation|conftest|setup|manage|__init__|__main__|cli|worker)\.[a-z]+$/, UNUSED_DIR = /(^|\/)(migrations?|scripts?|bin|tools|seeds?|config|\.github|docs?|pages|api|routes|commands|plugins|hooks\.server)\//;
 export async function unusedNewFiles(repoDir: string, baseSha: string | undefined, tree: string | null): Promise<string[]> {
@@ -54,7 +55,7 @@ export async function unusedNewFiles(repoDir: string, baseSha: string | undefine
     return out;
   } catch { return []; }
 }
-export const unusedNewFileNote = (f: string): string => `new file nothing uses: ${f} is not imported or named by any other file, so nothing reaches it`;
+export const unusedNewFileNote = (f: string): string => `new file nothing uses: ${f} is not imported or named by any other file (disclosed, does not cap: on merged history this check also flags files loaded by convention, 7 in about a thousand commits of two repositories)`;
 /** The brief that hands unmet lines back to the session: each line with the check's reason, and what closing it takes. */
 export function unmetBrief(unmet: { line: string; reason: string }[]): string {
   return [`Loki checked your change against the acceptance lines, using its own run of your proof script. ${unmet.length} line${unmet.length === 1 ? " is" : "s are"} not met yet:`, "",
