@@ -30,6 +30,26 @@ export function ownedSuites<T extends { cwd: string }>(specs: T[], changed: read
   }
   return specs.filter((s) => out.has(s));
 }
+/** RW-01 SCOPE (verify only): the package suites a change is checked by, and the ones left out. In scope: the suite of each package that owns a changed
+ *  file (ownedSuites: the deepest package dir holding it, the root package for a file no deeper package holds) and of every package whose manifest depends
+ *  on one of those, directly or through another (`dependsOn`: package dir to the dirs it depends on, ProjectApi.dependsOn). A changed file at workspace
+ *  level that every package reads (a manifest, lockfile or compiler, linter or runner config outside every package below the root) puts every suite in
+ *  scope. Suites are told apart by their directory, never by name (opencode has two packages named "opencode"). opencode#63152: verify tried 36 package
+ *  suites for a change to one package and ran out of time on the fourth. */
+const WORKSPACE_WIDE = /(?:^|\/)(?:package\.json|package-lock\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|yarn\.lock|bun\.lockb?|bunfig\.toml|turbo\.json|nx\.json|lerna\.json|tsconfig[^/]*\.json|jsconfig\.json|\.eslintrc[^/]*|eslint\.config\.[cm]?[jt]s|biome\.jsonc?|babel\.config\.[cm]?[jt]s|\.babelrc|(?:vitest|vite|jest)\.(?:config|workspace)\.[cm]?[jt]s|pyproject\.toml|setup\.py|setup\.cfg|requirements[^/]*\.txt|uv\.lock|poetry\.lock|tox\.ini|pytest\.ini|conftest\.py|go\.mod|go\.sum|go\.work|Cargo\.toml|Cargo\.lock|Makefile|\.npmrc|\.nvmrc|\.python-version|\.tool-versions)$/;
+export function scopedSuites<T extends { cwd: string }>(specs: T[], changed: readonly string[], dependsOn: (root: string) => readonly string[], roots: readonly string[] = []): { run: T[]; skipped: T[] } {
+  const clean = (d: string): string => d.replace(/\/+$/, "") || ".", dirs = [...new Set([...specs.map((s) => clean(s.cwd)), ...roots.map(clean)])], below = dirs.filter((d) => d !== "."); // `roots`: every package dir, so a package with no test command still owns its files and seeds its dependents
+  const inPkg = (f: string): boolean => below.some((d) => f === d || f.startsWith(`${d}/`));
+  const wide = changed.some((f) => f.startsWith('"') || (!inPkg(f) && WORKSPACE_WIDE.test(f))); // a quoted (unreadable) path is unknown: everything runs
+  if (wide) return { run: [...specs], skipped: [] };
+  const ownerOf = (f: string): string | undefined => dirs.filter((d) => d === "." || f === d || f.startsWith(`${d}/`)).sort((a, b) => b.length - a.length)[0];
+  const owned = new Set(changed.map(ownerOf).filter((d): d is string => d !== undefined)), inScope = new Set(owned);
+  for (let grew = true; grew;) { grew = false; for (const s of specs) { const d = clean(s.cwd); if (!inScope.has(d) && dependsOn(d).some((x) => inScope.has(clean(x)))) { inScope.add(d); grew = true; } } }
+  const run = specs.filter((s) => inScope.has(clean(s.cwd)));
+  return { run: [...run.filter((s) => owned.has(clean(s.cwd))), ...run.filter((s) => !owned.has(clean(s.cwd)))], skipped: specs.filter((s) => !inScope.has(clean(s.cwd))) }; // the owners' suites first: a verify that runs out of time has run the tests of the package the change is in
+}
+/** The receipt line for a suite scopedSuites left out: an n/a note (disclosed under "not applicable", never a cap), naming the package, its command and why. */
+export const scopedOutNote = (s: { name: string; cmd: string }): string => `n/a: ${s.name} (\`${s.cmd}\`) not run: no changed file is in this package and its manifest does not depend on a package the change touched`;
 export function packageSuiteSpecs(api: ProjectApi | null | undefined, repoDir?: string): SuiteSpec[] | null {
   if (!isMultiRoot(api)) return null;
   const specs = api.packages().filter((p) => p.commands.test).map((p): SuiteSpec => { const tc = p.commands.test!, g = repoDir !== undefined ? goMakeSuite(repoDir, tc.cwd, tc.cmd) : null, line = g?.run ?? tc.cmd; return { name: `full suite: ${p.name}`, cmd: `(cd ${tc.cwd} && ${line})`, cwd: tc.cwd, run: line, ...(g ? { go: g.go } : {}) }; });
@@ -113,25 +133,30 @@ export const suiteTimeoutOn = (env: NodeJS.ProcessEnv = process.env): boolean =>
 export async function runPackageSuites(
   repoDir: string,
   signal: AbortSignal,
-  opts: { path?: string | undefined; timeoutMs: number; baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; proofFiles?: string[] | undefined; wallBaseRed?: boolean | undefined; targetPassed?: boolean | undefined; ownedOnly?: boolean },
+  opts: { path?: string | undefined; timeoutMs: number | (() => number); baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; proofFiles?: string[] | undefined; wallBaseRed?: boolean | undefined; targetPassed?: boolean | undefined; ownedOnly?: boolean; scope?: boolean; ensureBase?: (spec: SuiteSpec) => Promise<void> }, // RW-01: timeoutMs as a function is asked before each suite (the time left of the stage; 0: the suite is not started); scope: scopedSuites; ensureBase: measure this suite on base now (the base record is no longer taken at intake)
   checks: SuiteCheck[],
   notProven: Set<string>,
 ): Promise<boolean> {
   const api = loadProjectApi(repoDir), all = packageSuiteSpecs(api, repoDir);
   if (!api || !all) return false;
-  const specs = opts.ownedOnly ? ownedSuites(all, opts.changed ?? []) : all; // NTF: the suites of the packages that own the changed files, never the whole workspace
-  if (!specs.length) return false;
-  for (const { name, cmd, cwd, run: line, go } of specs) {
+  const sc = opts.scope && opts.changed ? scopedSuites(all, opts.changed, (root) => api.dependsOn(root) ?? [], api.packages().map((p) => p.root)) : null; // RW-01 SCOPE: the suites of the packages the change touched and of those that depend on them
+  const specs = sc ? sc.run : opts.ownedOnly ? ownedSuites(all, opts.changed ?? []) : all; // NTF: the suites of the packages that own the changed files, never the whole workspace
+  if (!specs.length && !sc) return false;
+  for (const s of sc?.skipped ?? []) notProven.add(scopedOutNote(s));
+  for (const spec of specs) {
+    const { name, cmd, cwd, run: line, go } = spec, timeoutMs = typeof opts.timeoutMs === "function" ? opts.timeoutMs() : opts.timeoutMs;
+    if (timeoutMs <= 0 && !signal.aborted) { checks.push({ name, cmd, result: "not_run", duration_s: 0, reason: "no time left before the verify limit" }); notProven.add(`not run: ${name} (no time left before the verify limit)`); continue; }
     const started = Date.now();
-    const r = await run(["bash", "-c", line], { cwd: join(repoDir, cwd), timeoutMs: opts.timeoutMs, env: suiteEnv(opts.path), ...(suiteTimeoutOn() ? { group: true, signal } : {}) }); // SUITE-TIMEOUT: the whole process tree stops at the limit, and at an abort (its own group is outside the worker's, so an abort must reach it here)
+    const r = await run(["bash", "-c", line], { cwd: join(repoDir, cwd), timeoutMs, env: suiteEnv(opts.path), ...(suiteTimeoutOn() ? { group: true, signal } : {}) }); // SUITE-TIMEOUT: the whole process tree stops at the limit, and at an abort (its own group is outside the worker's, so an abort must reach it here)
     const duration_s = (Date.now() - started) / 1000;
     if (signal.aborted) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`not run: ${name} (aborted)`); continue; }
-    if (r.timedOut && suiteTimeoutOn()) { const why = `timed out after ${Math.round(opts.timeoutMs / 1000)}s`; checks.push({ name, cmd, result: "not_run", duration_s, reason: why }); notProven.add(`not run: ${name} (${why})`); continue; } // SUITE-TIMEOUT: a suite killed at its limit says nothing about the change: not_run (caps below VERIFIED), never FAILED
+    if (r.timedOut && suiteTimeoutOn()) { const why = `timed out after ${Math.round(timeoutMs / 1000)}s`; checks.push({ name, cmd, result: "not_run", duration_s, reason: why }); notProven.add(`not run: ${name} (${why})`); continue; } // SUITE-TIMEOUT: a suite killed at its limit says nothing about the change: not_run (caps below VERIFIED), never FAILED
     // FC-16 C1 / FC-02: the same parser and load-error ownership as the legacy per-runner path, per package.
     const out = stripAnsi(`${r.stdout}\n${r.stderr}`).replace(go ? /^make(?:\[\d+\])?: .*$/gm : /(?!)/, ""); // FC-FULLSUITE-ANSI-IDS; a make-wrapped Go suite (goMakeSuite) drops make's own lines so the go test -json stream reads whole
     const lr = r.exitCode === 0 || !opts.baseSha ? undefined : await harnessLoadReason({ repoDir, baseSha: opts.baseSha, ...(opts.skip ? { skip: opts.skip } : {}), out, cmd: "bash", args: ["-c", line], signal, cwd: join(repoDir, cwd), env: suiteEnv(opts.path) });
     if (lr) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`${lr} (${name}; harness-owned)`); continue; }
     const cls = await corroboratePass(classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...(go ? { runner: "go" as const } : goRunner(line)), exitCoded: !go && isExitCodedScript(line) }), out, go ?? line, undefined, { cwd: join(repoDir, cwd), env: suiteEnv(opts.path), signal }); // FC-FULL-SUITE-EXIT-CODED-SCRIPT
+    if (cls.result === "not_run" && r.exitCode === 0 && (opts.targetPassed === true || (cwd !== "." && emptySubsuiteNaOn())) && opts.ensureBase) await opts.ensureBase(spec); // RW-01: the base record suiteEmptyOnBase reads is measured now
     if (cls.result === "not_run" && r.exitCode === 0 && (opts.targetPassed === true || (cwd !== "." && emptySubsuiteNaOn())) && suiteEmptyOnBase(repoDir, opts.baseSha, line, cmd, cls, out, cwd)) { notProven.add(`${NA_PREFIX}${name} (ran 0 tests on base and head; ${opts.targetPassed === true ? "the Wall or a task-named check passed with executed tests" : "a sub-module package with no tests on either side"})`); continue; } // EMPTY-SUBSUITE-NA: a package below the root that executes exactly 0 tests on base and head is not applicable without a target check // a full suite that discovers nothing is a disclosed note, not a gate, once a target check proved the change
     checks.push({ name, cmd, result: cls.result, duration_s, ...(cls.count ? { count: cls.count } : {}), ...(cls.result === "fail" ? { exit: r.exitCode, ...(cls.count || failIds(out).length ? {} : { shape: failureShape(out) }), ids: cls.count ? [exitCodedId(line, out, repoDir) ?? []].flat() as string[] : failIds(out), errors: Object.fromEntries(errorsById(out)), ...(unhandledBlock(out).length ? { unhandled: unhandledBlock(out) } : {}), first_error: firstError(out), excerpt: failureExcerpt(out, repoDir) } : {}) });
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);

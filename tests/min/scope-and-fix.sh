@@ -2519,7 +2519,7 @@ const p1 = rp.baselineSuites(d, spec, { timeoutS: 300, budgetS: 300, deadlineMs:
 out.push(`${p1?.suites?.[0]?.reason ?? "ran"},${ms < 2500},${errs.some((e) => e.startsWith(rp.INTAKE_BUDGET_LINE) && /full suite: other not measured on base/.test(e)) ? "noted" : "silent"}`);
 console.log(out.join(" | "));' 2>&1)"
 [ "$R3R" = '[] | ["VERSION","pkg/fetch.py"] | ["VERSION"] | ["VERSION"] | ["scope not determined; all edits committed"] | ["outside stated scope: pkg/fetch.py"] | ,,90, | baseline budget used up,true,noted' ] && ok "R3 intake guard: a plan scope holding only a file the prose matched is discarded (the class file is never outside stated scope), a scope holding the defining file is kept, a task naming nothing and =0 keep the list; the intake cap is off unless a positive number of seconds is set, and a suite the shared budget has no room for is not run" || bad "R3 intake guard gave: $R3R"
-grep -q 'icap = intakeCapS(), built = baselineOn ? ensureProfile(ctx.repoDir, { timeoutS: icap === null ? baselineCmdS(ctx.capS) : Math.min(baselineCmdS(ctx.capS), icap) })' "$ROOT/loki-ts/src/engine10/stages/intake.ts" && grep -q 'baselineLeftS: Math.max(0, icap - Math.ceil(baselineMs / 1000))' "$ROOT/loki-ts/src/engine10/stages/intake.ts" && grep -q 'deadlineMs: tb + ctx.baselineLeftS \* 1000' "$ROOT/loki-ts/src/project_model/install.ts" && grep -q 'flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir)' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'outsideScope(a.outputs(), staged, anchoredPlanScope(readPlanScope(a.runDir)' "$ROOT/loki-ts/src/features/attempts.ts" && ok "R3 wiring: intake passes one baseline budget to the root and suite baselines; seal and the attempts ranking read the anchored plan scope" || bad "R3 wiring missing in intake.ts, install.ts, seal.ts or attempts.ts"
+grep -q 'icap = intakeCapS(), built = baselineOn ? ensureProfile(ctx.repoDir, { timeoutS: icap === null ? baselineCmdS(ctx.capS) : Math.min(baselineCmdS(ctx.capS), icap), ...(defer ? { defer: true } : {}) })' "$ROOT/loki-ts/src/engine10/stages/intake.ts" && grep -q 'baselineLeftS: Math.max(0, icap - Math.ceil(baselineMs / 1000))' "$ROOT/loki-ts/src/engine10/stages/intake.ts" && grep -q 'deadlineMs: tb + ctx.baselineLeftS \* 1000' "$ROOT/loki-ts/src/project_model/install.ts" && grep -q 'flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)), ctx.runDir, ctx.repoDir)' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && grep -q 'outsideScope(a.outputs(), staged, anchoredPlanScope(readPlanScope(a.runDir)' "$ROOT/loki-ts/src/features/attempts.ts" && ok "R3 wiring: intake passes one baseline budget to the root and suite baselines; seal and the attempts ranking read the anchored plan scope" || bad "R3 wiring missing in intake.ts, install.ts, seal.ts or attempts.ts"
 
 # acc-145 R5 mocha targeted tests (LOKI_E10_MOCHA_TARGETED, default on, =0 opts out). Synthetic package declaring mocha in devDependencies, its test files without a .test or
 # .spec suffix: a changed source maps to the test at its mirrored path, a changed test file to itself; fixtures, a package without mocha and =0 map to nothing.
@@ -3932,7 +3932,7 @@ res("LINT-UNTOUCHED an error naming a changed symbol still caps (the change can 
 res("LINT-UNTOUCHED a changed tsconfig or linter config still caps", !same(out, ".", new Set([...touched, "tsconfig.json"]), []));
 res("LINT-UNTOUCHED an error line that does not parse still caps (fail-closed)", !same(out + "weird.ts: error TS1005: ';' expected.\n", ".", touched, []));
 res("LINT-UNTOUCHED a tail cut at its cap still caps", !same(out + "x".repeat(60000), ".", touched, []));
-res("LINT-UNTOUCHED off by default, =1 opts in", !vf.lintUntouchedOn({}) && !vf.lintUntouchedOn({ LOKI_E10_LINT_UNTOUCHED: "0" }) && vf.lintUntouchedOn({ LOKI_E10_LINT_UNTOUCHED: "1" }));
+res("LINT-UNTOUCHED on by default (rw-01), =0 opts out, LOKI_E10_BASE_ON_DEMAND=0 turns it off unless =1 is set", vf.lintUntouchedOn({}) && !vf.lintUntouchedOn({ LOKI_E10_LINT_UNTOUCHED: "0" }) && vf.lintUntouchedOn({ LOKI_E10_LINT_UNTOUCHED: "1" }) && !vf.lintUntouchedOn({ LOKI_E10_BASE_ON_DEMAND: "0" }) && vf.lintUntouchedOn({ LOKI_E10_BASE_ON_DEMAND: "0", LOKI_E10_LINT_UNTOUCHED: "1" }));
 // A changed signature breaks an untouched importer; the message names only types, so the symbol rule cannot see it. Base is green for that line: it caps.
 const importer = "packages/other/src/caller.ts(12,9): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.\n";
 res("LINT-UNTOUCHED an untouched importer broken by the change (types-only message, not on base) still caps", !vf.tscUntouchedOnly(out + importer, ".", touched, ["matchRoutes"], out));
@@ -3980,6 +3980,112 @@ TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/vh.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || bad "vh unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 5 ] || bad "vh unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 5"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+
+# ---------------------------------------------------------------- RW-01 (opencode#63152, #63310): scoped package suites, the base measured on demand, a red check with no test id, verify's time
+# Planted defects (each reverted afterwards):
+#   RW1. package_suite.ts scopedSuites: drop the dependents loop; the SCOPE dependents legs fail.
+#   RW1b. package_suite.ts scopedSuites: ignore `roots` (owners from the suite dirs only); the SCOPE test-less package leg fails.
+#   RW2. package_suite.ts scopedSuites: drop the workspace-level file rule (`wide`); the SCOPE root-manifest leg fails.
+#   RW3. repo_profile.ts baselineSuites: record a deferred suite as ran:true, attributable:true; the deferred fail-closed leg fails (a red suite is excused with no base run).
+#   RW4. repo_profile.ts baselineSuiteOnDemand: drop the revision check; the other-commit leg fails.
+#   RW5. verify.ts sameFailureLines: compare with "every head line is on base" only when base is null too (drop the base.ok check), drop the changed-file
+#        line rule, or accept a subset in place of the same set; the NO-ID base-passes, names-a-changed-file or new-line leg fails.
+#   RW6. machine.ts verifyLimitFor: subtract the fix round again (VERIFY_RESERVE_S), or drop the upper bound; the BUDGET legs fail.
+#   RW7. verify.ts suiteTimeoutFor: return the fixed 300 s; the BUDGET suite-timeout leg fails.
+#   RW9. check_result.ts resolveTool: drop the canImport probe (`project && module && false`); the three VENV-PROBE legs for the bare .venv fail.
+cat > "$T/rw01.ts" <<'TS'
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+const root = process.argv[2]!, T = process.argv[3]!;
+const rp = await import(root + "/loki-ts/src/runner/repo_profile.ts");
+const ps = await import(root + "/loki-ts/src/project_model/package_suite.ts");
+const vf = await import(root + "/loki-ts/src/engine10/stages/verify.ts");
+const mc = await import(root + "/loki-ts/src/engine10/machine.ts");
+const fl = await import(root + "/loki-ts/src/engine10/failures.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+// ---- scope: owners, packages that depend on them, nothing else
+const spec = (n: string, cwd = `packages/${n}`) => ({ name: `full suite: ${n}`, cmd: `(cd ${cwd} && bun test)`, cwd, run: "bun test" });
+const specs = [spec("core"), spec("app"), spec("ui"), spec("legacy"), spec("slow"), spec("other")];
+const deps: Record<string, string[]> = { "packages/app": ["packages/core"], "packages/ui": ["packages/app"], "packages/legacy": ["packages/core"] };
+const dependsOn = (r: string): string[] => deps[r] ?? [];
+const names = (l: { cwd: string }[]) => l.map((s) => s.cwd.replace("packages/", "")).join(",");
+const a = ps.scopedSuites(specs, ["packages/core/src/core.ts"], dependsOn);
+res("SCOPE a change in one package runs its suite and the suites of the packages that depend on it, directly or through another", names(a.run) === "core,app,ui,legacy");
+res("SCOPE every other package is returned as not run", names(a.skipped) === "slow,other");
+const b = ps.scopedSuites(specs, ["packages/other/src/x.ts"], dependsOn);
+res("SCOPE a change in a package nothing depends on runs that suite alone", names(b.run) === "other" && b.skipped.length === 5);
+const c = ps.scopedSuites(specs, ["packages/other/src/x.ts", "package.json"], dependsOn);
+res("SCOPE a changed workspace-level manifest or config puts every package in scope", c.run.length === 6 && c.skipped.length === 0);
+const withRoot = [{ name: "full suite: ws", cmd: "(cd . && bun test)", cwd: ".", run: "bun test" }, ...specs];
+const d = ps.scopedSuites(withRoot, ["docs/guide.md"], dependsOn);
+res("SCOPE a file no package below the root owns is the root package's, and only its suite runs", d.run.length === 1 && d.run[0].cwd === "." && d.skipped.length === 6);
+const twins = [{ name: "full suite: opencode", cmd: "(cd . && bun test)", cwd: ".", run: "bun test" }, { name: "full suite: opencode", cmd: "(cd packages/cli && bun test)", cwd: "packages/cli", run: "bun test" }];
+const e = ps.scopedSuites(twins, ["packages/cli/src/a.ts"], () => []);
+res("SCOPE two packages with one name are told apart by their directory", e.run.length === 1 && e.run[0].cwd === "packages/cli" && e.skipped.length === 1 && e.skipped[0].cwd === ".");
+const f = ps.scopedSuites(specs, ["packages/types/src/t.ts"], (r: string) => (r === "packages/app" ? ["packages/types"] : dependsOn(r)), ["packages/types", ...specs.map((x) => x.cwd)]);
+res("SCOPE a change in a package with no test command still runs the suites of the packages that depend on it", names(f.run) === "app,ui" && f.skipped.length === 4);
+res("SCOPE the not-run note is an n/a note that names the package, its command and the reason", ps.naNote(ps.scopedOutNote(specs[4])) && ps.scopedOutNote(specs[4]).includes("full suite: slow") && ps.scopedOutNote(specs[4]).includes("(cd packages/slow && bun test)") && /not run: .*no changed file/.test(ps.scopedOutNote(specs[4])));
+// ---- base on demand: a deferred record excuses nothing; the same record measured on demand excuses only the same error
+const R = T + "/rw01-repo"; rmSync(R, { recursive: true, force: true }); mkdirSync(R + "/packages/a/test", { recursive: true });
+writeFileSync(R + "/packages/a/package.json", '{ "name": "a", "private": true, "type": "module", "scripts": { "test": "bun test" } }\n');
+writeFileSync(R + "/packages/a/test/a.test.ts", 'import { test, expect } from "bun:test";\ntest("old", () => { expect(1).toBe(2); });\n');
+const git = (...args: string[]) => execFileSync("git", ["-C", R, ...args], { encoding: "utf8" }).trim();
+git("init", "-q", "-b", "main"); git("config", "user.name", "t"); git("config", "user.email", "t@example.invalid"); git("add", "-A", "."); git("commit", "-q", "-m", "base");
+const sha = git("rev-parse", "HEAD"), sa = { name: "full suite: a", cmd: "(cd packages/a && bun test)", cwd: "packages/a", run: "bun test" };
+rp.ensureProfile(R, { timeoutS: 30 }); rp.baselineSuites(R, [sa], { timeoutS: 30 });
+const rec = () => rp.loadProfile(R)?.suites?.find((s: any) => s.command === sa.cmd);
+res("BASE-ON-DEMAND intake records a package suite as not run on base (deferred), never as measured", rec()?.ran === false && rec()?.attributable === false && rec()?.reason === rp.BASE_DEFERRED);
+const headOut = (() => { try { return execFileSync("bash", ["-c", "bun test 2>&1"], { cwd: R + "/packages/a", encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } }); } catch (x: any) { return String(x.stdout ?? ""); } })();
+const ids = fl.failIds(headOut), full = [{ name: sa.name, cmd: sa.cmd, result: "fail", ids, errors: Object.fromEntries(fl.errorsById(headOut)), exit: 1 }];
+res("BASE-ON-DEMAND (fixture) the red suite's failing id is parsed", ids.length === 1);
+const pre = (f = full) => rp.attributeFullSuite(R, sha, f, [], ["packages/b/src/x.ts"]).preExistingChecks.join(",");
+res("BASE-ON-DEMAND a red suite is not excused while its base run is deferred (unknown never excuses)", pre() === "");
+res("BASE-ON-DEMAND a base run for another commit than the run's base is refused", (await rp.baselineSuiteOnDemand(R, "0".repeat(40), sa, R, rp.asyncShellRunner(), 30)) === false && rec()?.ran === false);
+res("BASE-ON-DEMAND the suite measured on demand is recorded", (await rp.baselineSuiteOnDemand(R, sha, sa, R, rp.asyncShellRunner(), 30)) === true && rec()?.ran === true && rec()?.failing_ids?.length === 1);
+res("BASE-ON-DEMAND after the on-demand base run the suite failing the same way is pre-existing", pre() === sa.name);
+const other = [{ ...full[0], errors: Object.fromEntries(Object.keys(full[0]!.errors).map((k) => [k, ["TypeError: boom"]])) }];
+res("BASE-ON-DEMAND the same id failing with another error is still not excused", pre(other) === "");
+process.env.LOKI_E10_BASE_ON_DEMAND = "0"; rmSync(R + "/.loki", { recursive: true, force: true }); rp.ensureProfile(R, { timeoutS: 30 }); rp.baselineSuites(R, [sa], { timeoutS: 30 });
+res("BASE-ON-DEMAND =0 measures the suite at intake as before", rec()?.ran === true); delete process.env.LOKI_E10_BASE_ON_DEMAND;
+rmSync(R, { recursive: true, force: true });
+// ---- a red check with no parsed test id: pre-existing only when the identical command fails on base with the same normalized lines
+const H = "/tmp/head-repo", B = "/tmp/e10-base-x1";
+const outAt = (dir: string, ms: string, extra = "") => `bun test v1.2.0\n\nerror: Cannot find module '${dir}/packages/app/test-browser/setup.ts' from '${dir}/packages/app/test-browser/plugin-migrations.test.ts'\n${extra}\n 0 pass\n 1 fail\nRan 1 test across 1 file. [${ms}]\n`;
+const cmp = (head: string, base: { ok: boolean; out: string } | null, changed: string[] = ["packages/cli/src/updater.ts"], syms: string[] = ["installUpdate"]) => vf.sameFailureLines(head, base, changed, syms, H, B);
+res("NO-ID a check failing with no test id that fails on base with the same lines (other checkout path, other timing) is pre-existing", cmp(outAt(H, "36.00ms"), { ok: false, out: outAt(B, "41.00ms") }));
+res("NO-ID the same lines with base passing is not pre-existing", !cmp(outAt(H, "36.00ms"), { ok: true, out: outAt(B, "41.00ms") }));
+res("NO-ID one error line that is not on base blocks", !cmp(outAt(H, "36.00ms", "TypeError: undefined is not a function"), { ok: false, out: outAt(B, "41.00ms") }));
+res("NO-ID a base error line missing on head blocks too (the same set, not a subset)", !cmp(outAt(H, "36.00ms"), { ok: false, out: outAt(B, "41.00ms", "TypeError: undefined is not a function") }));
+res("NO-ID a line naming a file the change edited blocks", !cmp(outAt(H, "36.00ms"), { ok: false, out: outAt(B, "41.00ms") }, ["packages/app/test-browser/setup.ts"]));
+res("NO-ID a line naming a changed symbol blocks", !cmp(outAt(H, "1ms", "ReferenceError: installUpdate is not defined"), { ok: false, out: outAt(B, "2ms", "ReferenceError: installUpdate is not defined") }));
+res("NO-ID no base run, or no output on either side, excuses nothing", !cmp(outAt(H, "36.00ms"), null) && !cmp("", { ok: false, out: "" }));
+// ---- a virtualenv that cannot import the test runner is not used to run the tests (hermes-agent#147745: a .venv without pytest appeared mid-run)
+const cr = await import(root + "/loki-ts/src/util/check_result.ts");
+const venvRepo = (name: string, script: string): string => { const d = T + "/" + name; rmSync(d, { recursive: true, force: true }); mkdirSync(d + "/.venv/bin", { recursive: true }); mkdirSync(d + "/tests", { recursive: true }); writeFileSync(d + "/.venv/bin/python", script, { mode: 0o755 }); writeFileSync(d + "/tests/test_ok.py", "def test_ok():\n    assert 1 + 1 == 2\n"); return d; };
+const noPytest = venvRepo("rw01-venv-bare", '#!/bin/sh\ncase "$*" in *"import pytest"*) exit 1 ;; *"-m pytest"*) echo "$0: No module named pytest" >&2; exit 1 ;; esac\nexec python3 "$@"\n');
+const withPytest = venvRepo("rw01-venv-full", '#!/bin/sh\nexec python3 "$@"\n');
+const ref = { runner: "pytest", path: "tests/test_ok.py" };
+const bare = cr.runnerCmd(ref, noPytest), fullVenv = cr.runnerCmd(ref, withPytest);
+res("VENV-PROBE a .venv that cannot import pytest is not the interpreter the tests run on", bare[0] === "python3" && bare[2] === "system" && bare[1].join(" ") === "-m pytest -q tests/test_ok.py");
+res("VENV-PROBE the receipt line names the interpreter that ran the tests and why the virtualenv was skipped", cr.venvSkipNotes(noPytest).length === 1 && cr.venvSkipNotes(noPytest)[0] === "tests ran on python3, outside the project virtualenv: .venv/bin/python cannot import pytest" && cr.venvSkipNotes(withPytest).length === 0);
+res("VENV-PROBE a .venv that can import pytest is still the project interpreter", fullVenv[0] === withPytest + "/.venv/bin/python" && fullVenv[2] === "project");
+const sysPytest = (() => { try { execFileSync("python3", ["-c", "import pytest"], { stdio: "ignore" }); return true; } catch { return false; } })();
+const runIn = (d: string, c: [string, string[]]): number => { try { execFileSync(c[0], c[1], { cwd: d, stdio: "ignore", env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } }); return 0; } catch (x: any) { return typeof x.status === "number" ? x.status : 1; } };
+res("VENV-PROBE with it the test file runs and passes; on the bare .venv itself the same file fails at once" + (sysPytest ? "" : " (SKIP: this machine's python3 has no pytest)"), !sysPytest || (runIn(noPytest, bare) === 0 && runIn(noPytest, [noPytest + "/.venv/bin/python", bare[1]]) !== 0));
+rmSync(noPytest, { recursive: true, force: true }); rmSync(withPytest, { recursive: true, force: true });
+// ---- time: verify's limit is what is left before commit, seal and the PR, bounded above; a suite's timeout is what is left of the stage
+res("BUDGET the opencode record (cap 900 s, 355 s gone): verify's limit is 335 s, not 155 s", mc.verifyLimitFor(120, 840, 355, {}) === 335);
+res("BUDGET with intake at 5 s on the same cap verify gets 645 s", mc.verifyLimitFor(120, 840, 45, {}) === 645);
+res("BUDGET on a 3600 s cap verify is bounded at 900 s (LOKI_E10_VERIFY_MAX_S)", mc.verifyLimitFor(120, 3360, 560, {}) === 900 && mc.verifyLimitFor(120, 3360, 560, { LOKI_E10_VERIFY_MAX_S: "1500" }) === 1500);
+res("BUDGET the stage floor still holds when little is left", mc.verifyLimitFor(120, 840, 800, {}) === 120);
+res("BUDGET a suite's timeout is the time left of the stage, at most 300 s; none left means it is not started", vf.suiteTimeoutFor(1_000_000, 0, {}) === 300_000 && vf.suiteTimeoutFor(100_000, 40_000, {}) === 55_000 && vf.suiteTimeoutFor(100_000, 97_000, {}) === 0 && vf.suiteTimeoutFor(undefined, 0, {}) === 300_000 && vf.suiteTimeoutFor(undefined, 0, { LOKI_E10_SUITE_TIMEOUT_S: "3" }) === 3000);
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/rw01.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
+grep -q '^EXIT 0$' <<< "$out" || bad "rw01 unit script crashed or exited non-zero: $(printf '%s\n' "$out" | tail -3)"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 32 ] || bad "rw01 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 32"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
