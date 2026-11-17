@@ -4,7 +4,7 @@
 // exit code and output. The acceptance line check reads that output, not the reply. (New file: no module owned a harness-run proof; stages/prove.ts is
 // the separate prover session, off by default.)
 import { randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanupSessionScratch, createSessionScratch, scratchSessionEnv } from "../runner/worker_proc.ts";
 import { run } from "../util/shell.ts";
@@ -142,7 +142,11 @@ export function keepProofScript(scratchDir: string, runDir: string): boolean {
     if (!existsSync(src)) return false;
     const st = statSync(src);
     if (!st.isFile() || st.size === 0 || st.size > MAX_SCRIPT_BYTES) return false;
-    copyFileSync(src, join(runDir, PROOF_SCRIPT));
+    // A session often writes its own scratch path as a literal (". /private/tmp/lk-AbC/loki-check.sh"). That directory is gone when Loki runs the script in a
+    // new one, so the kept copy names the directory by its variable instead: the same script then runs anywhere.
+    const real = (() => { try { return realpathSync(scratchDir); } catch { return scratchDir; } })(), names = [...new Set([real, scratchDir, real.replace(/^\/private\//, "/")])].filter((d) => d.length > 5).sort((a, b) => b.length - a.length);
+    let text = readFileSync(src, "utf8"); for (const d of names) text = text.split(d).join("${LOKI_SCRATCH}");
+    writeFileSync(join(runDir, PROOF_SCRIPT), text, { mode: 0o700 });
     return true;
   } catch { return false; }
 }
@@ -152,8 +156,11 @@ export function keepProofScript(scratchDir: string, runDir: string): boolean {
  *  before running it and says why, so the session rewrites it. This catches the plain forms only; it is a guard, not a proof that every check is meaningful. */
 export function proofScriptRefusal(text: string): string | null {
   const code = text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
-  if (/LOKI_PROOF_TOKEN/.test(code)) return "the proof script reads LOKI_PROOF_TOKEN; results count only when loki_http or loki_cmd print them";
-  if (/LOKI-PROOF/.test(code)) return "the proof script prints or handles a LOKI-PROOF result line itself; results count only when loki_http or loki_cmd print them";
+  // Printing is the forgery, reading is not: a script may grep its own output for LOKI-PROOF lines to count failures (two Haiku runs did, and the first form of
+  // this guard refused them in every round), so only a line that writes a result line, or uses the marker while writing, is refused.
+  const writes = code.split("\n").filter((l) => /(^|[\s;&|(])(echo|printf|print|tee|cat)\b/.test(l) && !/(^|[\s;&|(])(grep|egrep|awk|sed|rg)\b[^|]*LOKI-PROOF/.test(l));
+  if (writes.some((l) => /LOKI_PROOF_TOKEN/.test(l))) return "the proof script writes output using LOKI_PROOF_TOKEN; results count only when loki_http or loki_cmd print them";
+  if (writes.some((l) => /LOKI-PROOF/.test(l))) return "the proof script prints a LOKI-PROOF result line itself; results count only when loki_http or loki_cmd print them";
   if (/(^|[\s;&|({])(function\s+)?(loki_http|loki_cmd|_lp)\s*\(\s*\)/.test(code)) return "the proof script redefines loki_http, loki_cmd or _lp; source loki-check.sh and use its functions unchanged";
   return null;
 }
@@ -172,7 +179,8 @@ export async function rerunProof(repoDir: string, runDir: string, signal?: Abort
   const t0 = Date.now();
   let exit: number | null = null, out = "";
   try {
-    const r = await run(["bash", script, scratch.dir], { cwd: repoDir, timeoutMs: proofRerunS(env) * 1000, group: true, signal, env: { ...blank, ...scratchSessionEnv(scratch), LOKI_PROOF_TOKEN: token } });
+    const emptyDir = join(scratch.dir, "run"); mkdirSync(emptyDir, { mode: 0o700 }); // the script's argument is an EMPTY directory: the scratch itself holds Loki's helper, and a script that checks for emptiness refused it
+    const r = await run(["bash", script, emptyDir], { cwd: repoDir, timeoutMs: proofRerunS(env) * 1000, group: true, signal, env: { ...blank, ...scratchSessionEnv(scratch), LOKI_PROOF_TOKEN: token } });
     exit = r.exitCode; out = `${r.stdout}\n${r.stderr}`;
   } catch (e) { out = `Loki's re-run did not complete: ${(e as Error).message}`; }
   const seconds = Math.round((Date.now() - t0) / 1000);
