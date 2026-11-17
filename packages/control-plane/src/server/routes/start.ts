@@ -2,7 +2,9 @@
 import type { Context } from "hono";
 import { isLoopbackHost } from "../auth.ts";
 import { audit } from "../audit.ts";
+import { basename, resolve } from "node:path";
 import { planStart, registryRepos, spawnStart } from "../spawn.ts";
+import { repoPathsByName } from "../repos.ts";
 import type { RouteCtx } from "./index.ts";
 
 /** A browser always sends Origin on a cross-site POST. Absent is a non-browser client (allowed, the peer check still applies); present must be a loopback http(s) origin. */
@@ -25,7 +27,15 @@ export function mount(ctx: RouteCtx): void {
     let body: unknown;
     try { body = JSON.parse(text); } catch { return c.json({ error: "invalid JSON" }, 400); }
     const target = typeof (body as { target?: unknown } | null)?.target === "string" ? (body as { target: string }).target : undefined;
-    const plan = planStart(body, [repoDir, ...registryRepos()], ctx.startBin);
+    // The dashboard sends the repository's name as it shows it (the GitHub name). When no known folder has that name, the name is resolved through the
+    // checkouts Loki has seen and the origins their runs recorded; one match becomes the path, several stay ambiguous, none is refused as before.
+    const b = body as { repo?: unknown } | null, known = [repoDir, ...registryRepos()];
+    if (b && typeof b.repo === "string" && b.repo !== "" && !b.repo.includes("/") && !known.some((k) => basename(resolve(k)) === b.repo)) {
+      const hits = repoPathsByName(db, b.repo);
+      if (hits.length === 1) { known.push(hits[0]!); b.repo = hits[0]!; }
+      else if (hits.length > 1) { audit(db, { kind: "run.start", target, result: "refused", detail: `${hits.length} checkouts match ${b.repo}` }); return c.json({ error: `${hits.length} checkouts on this machine belong to ${b.repo}; start the run from the one you mean with loki start` }, 400); }
+    }
+    const plan = planStart(body, known, ctx.startBin);
     if (!plan.ok) { audit(db, { kind: "run.start", target, result: "refused", detail: plan.error }); return c.json({ error: plan.error }, 400); }
     if (inflight.has(plan.cwd)) { audit(db, { kind: "run.start", target, result: "conflict", detail: "start already in flight" }); return c.json({ error: "a run is already starting or running in this repo" }, 409); }
     inflight.add(plan.cwd);

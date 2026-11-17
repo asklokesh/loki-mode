@@ -1,6 +1,7 @@
 // local_repos: the server-side map from source_id to a real repo path. Filled only by local discovery (never by /v1/ingest);
 // the path never leaves the server. The API exposes display names only.
 import { execFile } from "node:child_process";
+import { statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import type { Context, Hono } from "hono";
@@ -19,6 +20,13 @@ export function syncLocalRepos(db: Db, repoDir: string, env: NodeJS.ProcessEnv =
   return found.length;
 }
 
+/** The local directories a repository name can mean: a checkout whose folder has that name, or a checkout whose runs recorded an origin `owner/<name>`
+ *  (the dashboard names a repository by its GitHub name, and a checkout of asklokesh/FireLater may sit in a folder called `work`). Existing directories only. */
+export function repoPathsByName(db: Db, name: string): string[] {
+  const rows = db.select({ sourceId: localRepos.sourceId, realpath: localRepos.realpath, name: localRepos.name }).from(localRepos).all();
+  const byOrigin = new Set(db.selectDistinct({ s: runs.sourceId, r: runs.originRepo }).from(runs).all().filter((x) => x.r !== null && x.r.split("/").pop() === name).map((x) => x.s));
+  return [...new Set(rows.filter((r) => r.name === name || byOrigin.has(r.sourceId)).map((r) => r.realpath))].filter((d) => { try { return statSync(d).isDirectory(); } catch { return false; } });
+}
 /** Display names only, sorted and de-duplicated. */
 export function repoNames(db: Db): string[] {
   return [...new Set(db.select({ name: localRepos.name }).from(localRepos).all().map((r) => r.name))].sort();
