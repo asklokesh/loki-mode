@@ -138,10 +138,17 @@ const reviewAcceptance = (ctx: RunContext): string[] => { const o = ctx.outputs?
 /** What verify already ran, so a reviewer with no tools never marks a line unmet only because it could not run the tests itself. */
 const reviewChecksBlock = (ctx: RunContext): string[] => { const cs = (ctx.outputs?.() ?? {}).verify?.checks; const rows = Array.isArray(cs) ? (cs as Record<string, unknown>[]).map((c) => `${String(c.name)}: ${String(c.result)}`).slice(0, 200) : []; return rows.length ? ["", "Checks the harness already ran on this change (name: result). Do not flag a line only because you could not run a test yourself; use these results:", ...rows] : []; };
 /** Runs the reviewer when enabled. Null when off. A missing CLI, a failure or a timeout is not_run with a NOT PROVEN note, never PASS. */
-export async function crossReview(ctx: RunContext, verdict: Verdict, head: string, signal?: AbortSignal): Promise<CrossReview | null> {
-  const agent = configuredReviewer(ctx.repoDir), { p, dflt } = pickReviewer(ctx, agent); if (!p) return null; // a configured reviewer/council agent turns the default review on
+/** REVIEW-THEN-FIX (LOKI_E10_REVIEW_FIX, default on, =0 opts out): the same independent review, run once DURING an issue run's implement stage, so a
+ *  reproduced defect is handed back to the session while it can still fix it. At the seal the review can only downgrade: a run with every acceptance item
+ *  met was sealed PARTIAL on two defects the reviewer found (a documented quoted-phrase search rejected by input validation, a documented date filter that
+ *  did nothing) that the session would have fixed in minutes. */
+export const reviewFixOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_REVIEW_FIX"] ?? "").trim());
+export async function crossReview(ctx: RunContext, verdict: Verdict, head: string, signal?: AbortSignal, early = false): Promise<CrossReview | null> {
+  // early: no risk record exists yet (verify writes it), so the reviewer is the configured one, else the run's own CLI; `head` is a tree of the uncommitted change
+  const agent = configuredReviewer(ctx.repoDir), picked = pickReviewer(ctx, agent), earlyP = early && !picked.p && ctx.provider === "claude" && !isOff(process.env["LOKI_REVIEW_PROVIDER"]) ? (ctx.provider as ReviewProvider) : null;
+  const p = picked.p ?? earlyP, dflt = picked.p ? picked.dflt : earlyP !== null; if (!p) return null; // a configured reviewer/council agent turns the default review on
   if (verdict !== "VERIFIED" && verdict !== "ALREADY_SATISFIED") return null; // nothing a review could downgrade
-  const tier = readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier, medium = tier === "medium";
+  const tier = early ? "high" : readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier, medium = tier === "medium";
   let hy: string[] = [], hyOk = false, hyNote = ""; // medium: the deterministic hygiene scan of files the run added (no model call); it can only add a flag, never lift a verdict
   if (medium) { const a = await safeGitRun(ctx.repoDir, ["diff", "--no-color", "--name-only", "-z", "--diff-filter=A", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null); if (a && a.exitCode === 0) { hyOk = true; const added = a.stdout.split("\0").filter(Boolean); const box = Number(process.env["LOKI_E10_HYGIENE_BOX_MS"]), ig = await ignoredPaths(ctx.repoDir, added, box > 0 ? box : 20000); if (ig) hy = hygieneFindings(added, ig); else { hy = hygieneFindings(added, new Set()); hyOk = false; hyNote = "hygiene scan unavailable (git check-ignore did not complete): NOT PROVEN that run-added files are free of ignored or build artifacts"; } } }
   const pin = medium && p === "claude" ? fastTierModel(process.env) : dflt && p === "claude" && ctx.model && ctx.model !== PROVIDER_DEFAULT_MODEL ? capToSessionPin(ctx.model) : undefined; // medium reviews on the fast tier (same mapping as the plan session); the unconfigured high-tier default review runs on the run's own model, never above a LOKI_SESSION_MODEL pin (a Haiku run reviews on Haiku); the provider-default label is a record, never a --model value (the CLI rejects it and the review exited 1), so a default-model run omits --model; an agent-configured model wins (agent?.model || pin, so an empty one falls back to the pin)
@@ -159,7 +166,7 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   try {
     if (p === "claude") await ensureClaudeHelpCache();
     const r = await withChildLedger(run, join(ctx.repoDir, ".loki"), "xreview")(reviewArgv(p, prompt, process.env, p === "claude" ? agent?.model || pin : undefined), { cwd: ctx.repoDir, timeoutMs: boxFor(ctx) * 1000, group: true, signal });
-    const costId = `${ctx.runId}-xreview-${p}`; // the reviewer's own result-cost file, so seal's cost read includes it
+    const costId = `${ctx.runId}-xreview-${p}${early ? "-early" : ""}`; // the reviewer's own result-cost file, so seal's cost read includes it
     writeReviewerCost(join(ctx.repoDir, ".loki"), costId, { reviewer: `xreview-${p}`, provider: p, model: p === "claude" ? agent?.model || pin : undefined, stdout: r.stdout, stderr: r.stderr });
     if (r.exitCode !== 0) return { ...tag({ provider: p, level: "not_run", notes: [`cross-review not run: ${p} exited ${r.exitCode}`] }), cost_iteration: costId };
     return { ...tag(parseReview(p, r.stdout)), cost_iteration: costId };

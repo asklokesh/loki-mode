@@ -10,7 +10,7 @@ import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
 import { attemptModels, attemptsK, type ExtraAttemptsDeps } from "../../features/attempts.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, checkExcerpt, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts"; import { suiteCmdsOpt } from "../../project_model/package_suite.ts"; import { planStopChecks } from "../../runner/stop_checks.ts";
-import { treeFingerprint } from "../../util/anti_loop.ts"; import { baseFacts, keepProofScript, labelAsks, optionalAsk, ruleStatus, writeProofKit, PROOF_SCRIPT, PROVES_NOTHING_FIX, proofBaseCapOn, proofFacts, proofLoopMax, proofOnBase, proofRerunOn, provesNothing, provesNothingReason, rerunProof, unmetBrief, unusedNewFiles, worktreeTree, runSetupScript } from "../proof_rerun.ts"; import { issueLineCheck } from "./xreview.ts"; import { PROOF_SCRIPT_LINE } from "../../e10ext/context.ts"; import { writeExitCleanup, cleanupSessionScratch, createSessionScratch, scratchSessionEnv, type SessionScratch } from "../../runner/worker_proc.ts"; import { envCard } from "../../util/stack_tools.ts"; import { repoCardBrief, settleSetupCheck } from "../../e10ext/repomemory.ts"; import { capStopOf, classifyExitCause, resolveModel } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
+import { treeFingerprint } from "../../util/anti_loop.ts"; import { baseFacts, keepProofScript, labelAsks, optionalAsk, ruleStatus, writeProofKit, PROOF_SCRIPT, PROVES_NOTHING_FIX, proofBaseCapOn, proofFacts, proofLoopMax, proofOnBase, proofRerunOn, provesNothing, provesNothingReason, rerunProof, unmetBrief, unusedNewFiles, worktreeTree, runSetupScript } from "../proof_rerun.ts"; import { crossReview, isUnmetNote, issueLineCheck, reviewFixOn } from "./xreview.ts"; import { PROOF_SCRIPT_LINE } from "../../e10ext/context.ts"; import { writeExitCleanup, cleanupSessionScratch, createSessionScratch, scratchSessionEnv, type SessionScratch } from "../../runner/worker_proc.ts"; import { envCard } from "../../util/stack_tools.ts"; import { repoCardBrief, settleSetupCheck } from "../../e10ext/repomemory.ts"; import { capStopOf, classifyExitCause, resolveModel } from "../session.ts"; import { MAX_TURNS_EXIT } from "../../runner/worker_proc.ts"; // E-68 reuse: never re-classify exit codes here
 import { type ContinueRecord, asUnfinishedConflict, compactionsOf, conflictNeedsTestOn, lacksFinishLine, resumeToFinish, type NamedSitesRecord, type RemedyRecord, resumeForNamedSites, resumeForPrecedence, resumeForRemedy, adjudicateWallConflict, coverageFoldLines, coverageMode, coverageResumeEnabled, reaskFoldedClaims, resumeAfterAlreadyDone, resumeForProofScript, resumeForSelfReview, resumeNeverStop, resumeAfterConflict, resumeAfterEmptyDone, resumeForCoverage, runVerifiedFinish } from "../../util/conflict_resume.ts";
 import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts"; import { issueAcceptanceCapOn, issueAcceptanceOf } from "../../util/intent_card.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
@@ -275,7 +275,7 @@ export const implementStage: Stage = {
     }
     const lineRounds: { met: number; unmet: number; usd: number | null }[] = [];
     const proofRounds: { exit: number | null; failed: number; seconds: number; base_seconds?: number }[] = []; // PROOF LOOP: Loki runs the proof itself and hands a failure back with its real output, so a session that is wrong is corrected by evidence, not asked to try harder
-    let proofFails = 0, lineTurns = 0; const LINE_TURNS_MAX = 2; // the acceptance check has its own two turns: a session that used every proof turn to get the script passing (Haiku did) used to get no acceptance feedback at all
+    let reviewedEarly = false, earlyReviewCost: string | null = null; let proofFails = 0, lineTurns = 0; const LINE_TURNS_MAX = 2; // the acceptance check has its own two turns: a session that used every proof turn to get the script passing (Haiku did) used to get no acceptance feedback at all
     for (let round = 0; proofFails < proofLoopMax() && scratch && proofRerunOn() && existsSync(join(scratch.dir, PROOF_SCRIPT)) && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone; round++) {
       if (!keepProofScript(scratch.dir, ctx.runDir)) break;
       const pr = await rerunProof(ctx.repoDir, ctx.runDir, signal); if (!pr) break;
@@ -290,7 +290,19 @@ export const implementStage: Stage = {
         const lineUnmet = unmet.length; // the acceptance count is about the lines only
         for (const f of await unusedNewFiles(ctx.repoDir, ctx.baseSha, tree)) unmet.push({ line: `(not an acceptance line) ${f}`, reason: "no other file in the repository imports or names this new file, so a user cannot reach what it does. Mount it where it belongs (a page, a route, a registry, a menu) and prove that path, or remove it" });
         lineRounds.push({ met: lc.marks?.met.length ?? 0, unmet: unmet.length, usd: lc.usd }); ctx.emit("acceptance.round", "implement", { round: round + 1, met: la.asks.length - lineUnmet, unmet: lineUnmet, ...(empty.size ? { pass_on_base_too: empty.size } : {}), ...(unmet.length > lineUnmet ? { unused_new_files: unmet.length - lineUnmet } : {}) });
-        if (!unmet.length) break;
+        if (!unmet.length) {
+          // REVIEW-THEN-FIX: every item is met by count and by the acceptance check. One independent review now, while the session can still act on it.
+          if (reviewedEarly || !reviewFixOn()) break;
+          reviewedEarly = true;
+          const xr = await crossReview(ctx, "VERIFIED", tree, signal, true); if (xr?.cost_iteration) earlyReviewCost = xr.cost_iteration;
+          const found = xr && (xr.level === "block" || xr.notes.some(isUnmetNote)) ? xr.notes.filter((n) => /^cross-review (block|flag) /.test(n) || isUnmetNote(n)).slice(0, 8) : [];
+          ctx.emit("review.early", "implement", { level: xr?.level ?? "not_run", findings: found.length });
+          if (!found.length) break;
+          const r3 = await resumeForProofScript(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, [`An independent reviewer read your whole change and found ${found.length} problem${found.length === 1 ? "" : "s"}:`, "", ...found.map((n, i) => `${i + 1}. ${n.replace(/^cross-review \w+ \([^)]*\):\s*/, "")}`), "", "Check each one against the code. Where the reviewer is right, fix the product (and the documentation when the two disagree), add a check for it to $LOKI_SCRATCH/loki-proof.sh under the acceptance item it belongs to, and run the proof again until it passes. Where the reviewer is wrong, say why in one line and change nothing for it. Do not remove or loosen an existing check. End with the same finish line as before."].join("\n"));
+          if (r3.iterationId !== ids[ids.length - 1]) ids.push(r3.iterationId); else break;
+          if (r3.session.summary) session = { ...session, summary: `${session.summary ?? ""}\n\n[after the independent review]\n${r3.session.summary}` };
+          continue; // Loki runs the proof again on the fixed tree
+        }
         const stray = Object.keys(pr.lines).filter((k) => Number(k) > la.asks.length || Number(k) < 1); // checks filed under a number that is no acceptance item
         const r2 = await resumeForProofScript(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, unmetBrief(unmet, stray.length ? `Your proof script passes, but ${stray.length} of its check numbers (${stray.slice(0, 6).join(", ")}) are not acceptance item numbers, so those checks count for no item. The first argument of loki_http and loki_cmd is the item's number in $LOKI_SCRATCH/acceptance.txt (1 to ${la.asks.length}), never a line number of the script. Renumber them.` : ""));
         if (r2.iterationId !== ids[ids.length - 1]) ids.push(r2.iterationId); else break;
@@ -349,7 +361,7 @@ export const implementStage: Stage = {
       impacted_tests: impacted, ...(known ? { repo_card: known.record } : {}), ...(plan && planHintsOn() ? { plan_hints: true } : {}), brief_files: bc.files, ...(bc.pack ? { context_pack: bc.pack } : {}), // L022: the exact files the brief named; L021: pack paths and line ranges
       cascade,
       ...(downgrade ? { model_downgrade: downgrade.note } : {}),
-      iteration_ids: ids, model: rt ? rt.current : downgrade?.to ?? firstAttemptModel ?? ctx.model, ...(rt ? { route_model: rt.current, route_escalations: rt.escalations } : {}), session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
+      iteration_ids: earlyReviewCost ? [...ids, earlyReviewCost] : ids, model: rt ? rt.current : downgrade?.to ?? firstAttemptModel ?? ctx.model, ...(rt ? { route_model: rt.current, route_escalations: rt.escalations } : {}), session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
       duration_s: session.durationS, ...(session.exit === MAX_TURNS_EXIT && !session.killed ? { stop_cause: "max_turns", owner: "harness", limit_s: implementStage.limitS, elapsed_s: session.durationS, ...(capStopOf(session.summary) ? { session_cap: capStopOf(session.summary) } : {}) } : {}),
       ...(planChainMode ? { plan_chain: planChainMode } : {}),
       ...(sessionResume ? { session_resume: sessionResume } : {}),
