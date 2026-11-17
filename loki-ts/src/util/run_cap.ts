@@ -55,10 +55,14 @@ export function readPlanScope(runDir: string): string[] {
  *  with every item met in Loki's own proof run were cut off at the implement limit (about 1250 s) while closing a handed-back gap. It is a ceiling, not a
  *  wait: a run that finishes sooner ends sooner. */
 export const issueCapFactor = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_ISSUE_CAP_FACTOR"] ?? "").trim()); return (env["LOKI_E10_ISSUE_CAP_FACTOR"] ?? "").trim() !== "" && Number.isFinite(n) && n >= 1 && n <= 4 ? n : 1.5; };
+/** ISSUE-FLOOR (LOKI_E10_ISSUE_MIN_CAP_S, default 2400; 0 turns it off): a whole-issue run is never sized below 40 minutes, whatever the plan's file count
+ *  says. The size counts files the plan names, and a plan that names few (a new API in one service) sized a run at about 22 minutes; the session was cut
+ *  off at 1230 s before its proof had passed once, and 0 of 9 items counted. A ceiling, not a wait. */
+export const issueMinCapS = (env: NodeJS.ProcessEnv = process.env): number => { const v = (env["LOKI_E10_ISSUE_MIN_CAP_S"] ?? "").trim(), n = Number(v); return v !== "" && Number.isFinite(n) && n >= 0 ? n : 2400; };
 export function resizeCap(runDir: string, api: ProjectApi | null, subscription: boolean, fixedS?: number): number {
   if (fixedS && fixedS > 0) return fixedS;
   const sized = scopeCapS(readPlanScope(runDir), api, subscription);
-  return existsSync(join(runDir, "issue.json")) ? Math.min(capCeilingS(subscription), Math.round(sized * issueCapFactor())) : sized;
+  return existsSync(join(runDir, "issue.json")) ? Math.min(capCeilingS(subscription), Math.max(issueMinCapS(), Math.round(sized * issueCapFactor()))) : sized;
 }
 /** budgets.run_cap_s from loki.yaml text (a two-level read, like budgets.per_run). */
 export function yamlRunCapS(text: string): number | null {
