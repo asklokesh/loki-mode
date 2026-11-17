@@ -50,8 +50,15 @@ export function readPlanScope(runDir: string): string[] {
   } catch { return []; }
 }
 /** The one post-plan resize. S4 calls it after plan (or wall) with the worker's model; a fixed cap is returned untouched. */
+/** ISSUE-ROOM (LOKI_E10_ISSUE_CAP_FACTOR, default 1.5; 1 restores the old size): a whole-issue run gets half again the time the plan's scope sizes, never past
+ *  the ceiling. The scope cap was sized on single-fix tasks; an issue run also proves every acceptance item and closes what Loki hands back. Two Haiku runs
+ *  with every item met in Loki's own proof run were cut off at the implement limit (about 1250 s) while closing a handed-back gap. It is a ceiling, not a
+ *  wait: a run that finishes sooner ends sooner. */
+export const issueCapFactor = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_ISSUE_CAP_FACTOR"] ?? "").trim()); return (env["LOKI_E10_ISSUE_CAP_FACTOR"] ?? "").trim() !== "" && Number.isFinite(n) && n >= 1 && n <= 4 ? n : 1.5; };
 export function resizeCap(runDir: string, api: ProjectApi | null, subscription: boolean, fixedS?: number): number {
-  return fixedS && fixedS > 0 ? fixedS : scopeCapS(readPlanScope(runDir), api, subscription);
+  if (fixedS && fixedS > 0) return fixedS;
+  const sized = scopeCapS(readPlanScope(runDir), api, subscription);
+  return existsSync(join(runDir, "issue.json")) ? Math.min(capCeilingS(subscription), Math.round(sized * issueCapFactor())) : sized;
 }
 /** budgets.run_cap_s from loki.yaml text (a two-level read, like budgets.per_run). */
 export function yamlRunCapS(text: string): number | null {
