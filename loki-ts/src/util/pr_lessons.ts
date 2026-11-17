@@ -799,6 +799,7 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
 
 /** INJECT: top relevant learnings (.loki/state/relevant-learnings.json) as a fenced untrusted block. Missing or malformed file means "". Confidence is a fixed 0.50 because the writer records none: never claim more than ran. */
 export function learningsBlock(repoDir: string, limit = 5): string {
+  if (process.env["LOKI_LEARNINGS_INJECT"] !== "1") return ""; // opt-in like the lessons and the org graph (rule 6): these notes are model-written, marked unverified, and no run has shown a gain from them. The repo card (e10ext/repomemory.ts) is what a run is told by default.
   let items: unknown[] = [];
   try {
     const parsed = JSON.parse(readFileSync(join(repoDir, ".loki", "state", "relevant-learnings.json"), "utf-8")) as { learnings?: unknown };

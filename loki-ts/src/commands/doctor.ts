@@ -2375,7 +2375,7 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
       appendFileSync(join(dir, "readiness.jsonl"), JSON.stringify({ ts: new Date().toISOString(), checks, pass: ready, score: withReadiness?.readiness?.score ?? null, roundTrip: rt }) + "\n");
     } catch { /* history is best effort */ }
     if (json) process.stdout.write(JSON.stringify(reqs ? { repo: withReadiness, requirements: rep } : withReadiness, null, 2) + "\n");
-    else process.stdout.write(renderProfile(p, host, verify) + (reqs ? renderRequirementsText(rep) + "\n" : ""));
+    else process.stdout.write(renderProfile(p, host, verify) + (await import("../e10ext/repomemory.ts")).renderCardText(process.cwd()) + (reqs ? renderRequirementsText(rep) + "\n" : "")); // the repo card: what earlier runs here verified (also `loki knowledge`)
     return 0;
   }
   if (reqs && !json) {

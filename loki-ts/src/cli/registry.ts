@@ -126,6 +126,9 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("compound", "Compound learnings"),
     ],
   }),
+  cmd("knowledge", "HIDE", "bun", "What Loki has verified about this repository (the repo card); export writes it for a team to commit", "Shown by doctor --repo; the visible command list stays at 11", {
+    flags: [json], subcommands: [sub("show", "Print the repo card"), sub("export", "Write .github/loki-repo-card.md")], example: "loki knowledge export",
+  }),
   cmd("rollback", "FOLD", "both", "Restore .loki/ state from a checkpoint", "Checkpoint restore is engine-neutral", { migrate: "loki undo <run>",
     subcommands: [
       sub("list", "List checkpoints", { flags: [bool("--json", "Print the checkpoints as a JSON array")] }),

@@ -13,6 +13,7 @@ import { redactSecrets } from "../util/redact.ts";
 import { run } from "../util/shell.ts";
 import { GhError, orgKnowledgeBlock, type Lesson, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, MAX_RECENT, defaultGh, loadLessons, promoteLesson, removeLesson, retrieveLessons } from "../util/pr_lessons.ts";
 import { learningsBlock } from "../engine10/stages/implement.ts";
+import { exportRepoCard, mergedCard, renderCardText } from "../e10ext/repomemory.ts";
 
 const LEARNINGS_DIR = resolve(homeLokiDir(), "learnings");
 
@@ -196,6 +197,22 @@ function unknownFlag(sub: string, rest: readonly string[], allowed: readonly str
   if (bad === undefined) return false;
   process.stderr.write(`Error: unknown flag '${bad}' for 'memory ${sub}'\n${flagHint(bad, allowed)}${usage}\n`);
   return true;
+}
+
+/** `loki knowledge`: what Loki has verified about this repository (the repo card, e10ext/repomemory.ts). `export` writes the one file a team commits. */
+export function runKnowledge(argv: readonly string[]): number {
+  const usage = "Usage: loki knowledge [--json]   show what Loki has verified about this repository\n       loki knowledge export     write .github/loki-repo-card.md for your team to commit\n";
+  const sub = argv.find((a) => !a.startsWith("-")), bad = argv.find((a) => a.startsWith("-") && a !== "--json");
+  if (argv.includes("--help") || argv.includes("-h")) { process.stdout.write(usage); return 0; }
+  if (bad || (sub !== undefined && sub !== "show" && sub !== "export")) { process.stderr.write(`Error: unknown ${bad ? `flag '${bad}'` : `subcommand '${sub}'`} for 'knowledge'\n${usage}`); return 2; }
+  if (sub === "export") {
+    const r = exportRepoCard(process.cwd());
+    if (!r) { process.stderr.write("Nothing to export: Loki has no verified facts about this repository yet (the card is written after an issue run).\n"); return 1; }
+    process.stdout.write(`Wrote ${r.path} (${r.facts} fact${r.facts === 1 ? "" : "s"}). Loki does not commit it: review it and commit it yourself so every clone, teammate and CI job starts with it.\n${r.ignored ? `Warning: git ignores ${r.path} in this repository, so it will not travel with a clone until that ignore rule is changed.\n` : ""}`);
+    return 0;
+  }
+  if (argv.includes("--json")) process.stdout.write(JSON.stringify(mergedCard(process.cwd()), null, 2) + "\n"); else process.stdout.write(renderCardText(process.cwd()));
+  return 0;
 }
 
 export async function runMemory(argv: readonly string[]): Promise<number> {
