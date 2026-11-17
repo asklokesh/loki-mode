@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+- A run is no longer blocked over its own tests. The rules now say that a test file the run itself added may be changed as the work needs, and that a mock pinning only the order or number of internal calls may be extended with a call the change adds (every assertion about results kept). A run whose 10 acceptance items were all met ended BLOCKED because its fix session treated the test it had just written as read-only.
+- The secret scan's generic pattern no longer applies to test files: a made-up credential in a test (`adminPassword: 'correct-horse-battery'`) stopped a finished run's push. Real key formats (AWS, GitHub, Slack and the others) are still caught in test files.
 
 ## v11.148.0 (2026-11-17)
 

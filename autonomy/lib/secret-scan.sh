@@ -64,6 +64,14 @@ _commit_scan_secret_file() {
     # placeholder or an environment-variable reference rather than a literal.
     local deny='(\$\{|\$[A-Za-z_]|process\.env|os\.(environ|getenv)|%[A-Za-z_]+%|your[-_]|redacted|changeme|change[-_]me|placeholder|example|dummy|sample|fake|<[^>]*>|x{4,}|\*{4,})'
 
+    # TEST FILES: a test's made-up credential (adminPassword: 'correct-horse-battery') is test data, not a leak. Tier 1 above
+    # (real key formats) still applies to them; the generic tier below does not. A finished run was refused its push for
+    # exactly that line (FireLater#24, 2026-11-17).
+    case "$file" in
+        */__tests__/*|*/tests/*|*/test/*|*/spec/*|*/e2e/*|*.test.*|*.spec.*|*_test.py|*_test.go|*/test_*.py)
+            return 1 ;;
+    esac
+
     # TIER 2: generic assignments + bearer tokens + connection-string creds.
     local tier2='(api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret|auth)[A-Za-z0-9_]*[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9_/+.=-]{16,}'
     local bearer='[Bb]earer[[:space:]]+[A-Za-z0-9_.\-]{20,}'
