@@ -105,7 +105,7 @@ const CHECK_CALL = /(^|[\s;&|({])(loki_http|loki_cmd)\s/;
  *  when there is nothing reusable: no check to cut at, too little or too much before it, a part bash cannot parse by itself, or a path of this machine. */
 export function extractSetup(script: string, repoDir: string): { text: string } | { refused: string } {
   // A script often wraps the check functions in one-line helpers of its own (`chk_http() { loki_http "$@" || FAIL=1; }`) and calls only those: a call of such
-  // a helper is a check too. Without this, one stored script in five had "no check" and left no setup (FireLater #15, lane D of the setup-check measurement).
+  // a helper is a check too. Without this, two of the eight proof scripts sealed in the setup-check measurement had "no check" and left no setup (both FireLater #15).
   const lines = script.split("\n"), DEF = /^\s*(?:function\s+)?(\w+)\s*\(\s*\)/, wraps = lines.flatMap((l) => { const m = DEF.exec(l); return m && !/^(loki_http|loki_cmd)$/.test(m[1]!) && /\b(loki_http|loki_cmd)\b/.test(l.slice(m[0].length)) ? [m[1]!] : []; });
   const call = wraps.length ? new RegExp(`(^|[\\s;&|({])(loki_http|loki_cmd|${wraps.join("|")})\\s`) : CHECK_CALL, cut = lines.findIndex((l) => !/^\s*#/.test(l) && call.test(l) && !DEF.test(l));
   if (cut < 0) return { refused: "the script calls no check" };
