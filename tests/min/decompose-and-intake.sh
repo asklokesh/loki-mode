@@ -1614,7 +1614,7 @@ echo installed > "$PBR/node_modules/dep/index.js"; PBBASE="$(git -C "$PBR" rev-p
 pb_script() { { printf '. "$LOKI_SCRATCH/loki-check.sh"\nR=%s\n' "$(cd "$PBR" && pwd -P)"; cat; printf 'exit 0\n'; } > "$PBRUN/loki-proof.sh"; }
 pb_run() { ROOT="$ROOT" PBR="$PBR" PBRUN="$PBRUN" PBBASE="${PB_BASE-$PBBASE}" bun --no-env-file --config=/dev/null -e '
 const p = await import(process.env.ROOT + "/loki-ts/src/engine10/proof_rerun.ts"), asks = ["Add the feature file", "The app file is still there", "Ship it", "Install the dependencies"];
-const env = { ...process.env, ...JSON.parse(process.env.PB_ENV ?? "{}") };
+const env = { ...process.env, LOKI_E10_PROOF_BASE: "1", ...JSON.parse(process.env.PB_ENV ?? "{}") }; // the comparison is opt-in; this block tests it switched on
 const head = await p.rerunProof(process.env.PBR, process.env.PBRUN, undefined, env), base = await p.proofOnBase(process.env.PBR, process.env.PBRUN, process.env.PBBASE, head, undefined, env);
 const st = (b) => p.ruleStatus(asks, head, b).map((s) => s.status[0]).join("");
 console.log([head.proved, head.failed, base ? (base.available ? "available" : base.all_same ? "all-same" : "unavailable") : "off", base?.base_checks ?? "-", base?.same_total ?? "-", base?.cached ? "cached" : "ran", st(base), st(p.proofBaseCapOn(env) ? base : null), p.provesNothing(asks, head, base).join(","), p.baseFacts(asks, head, base).length].join(" "));' 2>&1 | tail -1; }

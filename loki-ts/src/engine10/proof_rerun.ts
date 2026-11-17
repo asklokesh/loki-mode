@@ -266,8 +266,11 @@ export async function rerunProof(repoDir: string, runDir: string, signal?: Abort
 // installs, no item of the two correct runs lost its mark (6 of 45 and 2 of 26 checks also pass on base), and a run whose items were counted on setup steps
 // lost six of them. But in the task lists of real issues 5 to 13 in 100 lines ask that something keeps working (the wording keepsWorkingAsk knows; others
 // exist), and an honest check of such a line passes before the change too, so the cap is not the default.
-/** On by default; LOKI_E10_PROOF_BASE=0 turns the base run off altogether (no hand-back, no disclosure, no cap). */
-export const proofBaseOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PROOF_BASE"] ?? "").trim());
+/** Off by default; LOKI_E10_PROOF_BASE=1 turns the base run on (hand-back and disclosure; the cap needs LOKI_E10_PROOF_BASE_CAP=1 as well). Off because the
+ *  replay on five stored runs changed no line, it does not catch the false green it was built for (a new API check fails on base like any check of new
+ *  code), and it adds 37 to 84 seconds and a copy of node_modules to every run. It is kept for repositories whose base installs cleanly, where it strips
+ *  checks that pass without the change (setup steps, a health endpoint, `true`). */
+export const proofBaseOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_PROOF_BASE"] ?? "").trim());
 /** Off by default; LOKI_E10_PROOF_BASE_CAP=1 makes it a cap: an item whose passing checks all pass on the base commit is not met at the seal. */
 export const proofBaseCapOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_PROOF_BASE_CAP"] ?? "").trim());
 /** A line that asks that something keeps working (tests still pass, backward compatible, unchanged, a refactor). Its honest check passes on the base commit
