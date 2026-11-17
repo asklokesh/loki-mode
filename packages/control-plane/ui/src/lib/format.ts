@@ -36,5 +36,8 @@ export function label(r: Labelled): { text: string; tone: Tone } {
 }
 
 /** The repository a run belongs to, as the short name the sidebar shows. */
-export const repoOf = (r: Pick<RunRow, "origin_repo">): string => (r.origin_repo ? r.origin_repo.split("/").pop() ?? r.origin_repo : "unknown");
+export const repoOf = (r: Pick<RunRow, "origin_repo"> & Partial<Pick<RunRow, "issue_ref">>): string => {
+  const full = r.origin_repo ?? (r.issue_ref && /^[^/\s]+\/[^#\s]+#\d+$/.test(r.issue_ref) ? r.issue_ref.split("#")[0]! : null); // a run on a local remote records no origin: the issue it was given names the repository
+  return full ? full.split("/").pop() ?? full : "unknown";
+};
 export const runTitle = (r: Pick<RunRow, "title" | "issue_ref" | "run_id">): string => r.title || r.issue_ref || r.run_id;

@@ -580,6 +580,9 @@ export function claudeProvider(): ProviderInvoker {
         ...modelArgv,
         ...autoFlags,
         ...sessionArgv,
+        // The run-owned scratch directory is a working directory of the session: the write fence above blocks Write and Edit outside the working
+        // directories, and a session that reaches for Write (not a shell heredoc) to leave its proof script there was refused and ended unfinished.
+        ...(process.env["LOKI_SCRATCH"] && claudeFlagSupported("--add-dir") ? ["--add-dir", process.env["LOKI_SCRATCH"]] : []),
         ...(hostGuard || sessionSettings || fence
           ? ["--settings", cliSettingsJson(hostGuard, sessionSettings, fence)]
           : []),

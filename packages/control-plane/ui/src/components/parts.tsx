@@ -88,7 +88,7 @@ export function AcceptanceTable({ rows, source }: { rows: AcceptanceRow[]; sourc
               {r.status === "unmet" && r.reason ? <div className="why">{r.reason}</div> : null}
             </div>
             <span className="muted" style={{ fontSize: 13, whiteSpace: "nowrap" }}>
-              {r.status === "met" ? `${r.checks} check${r.checks === 1 ? "" : "s"} passed` : r.status === "unmet" ? "not met" : "waiting"}
+              {r.status === "met" ? (r.checks > 0 ? `${r.checks} check${r.checks === 1 ? "" : "s"} passed` : "met") : r.status === "unmet" ? "not met" : "waiting"}
             </span>
           </div>
         ))}
