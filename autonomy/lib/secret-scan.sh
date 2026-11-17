@@ -117,6 +117,13 @@ _commit_path_looks_secret() {
     local lower base
     lower="$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')"
     base="${lower##*/}"
+    # SOURCE FILES: a file of program code is judged by its content (the content scan), not by a word in its name.
+    # backend/src/migrations/037_refresh_token_sessions.ts, auth_token_service.py and secret_rotation.go are code about
+    # tokens and secrets, not token or secret files; that migration's name alone stopped a finished run (FireLater#16).
+    case "$base" in
+        *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.py|*.go|*.rb|*.rs|*.java|*.kt|*.swift|*.cs|*.php|*.sql|*.vue|*.svelte|*.c|*.h|*.cpp|*.sh|*.md)
+            return 1 ;;
+    esac
     local cand
     for cand in "$lower" "$base"; do
         case "$cand" in
