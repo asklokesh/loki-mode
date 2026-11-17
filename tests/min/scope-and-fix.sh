@@ -3987,6 +3987,7 @@ done <<< "$out"
 # ---------------------------------------------------------------- RW-01 (opencode#63152, #63310): scoped package suites, the base measured on demand, a red check with no test id, verify's time
 # Planted defects (each reverted afterwards):
 #   RW1. package_suite.ts scopedSuites: drop the dependents loop; the SCOPE dependents legs fail.
+#   RW1b. package_suite.ts scopedSuites: ignore `roots` (owners from the suite dirs only); the SCOPE test-less package leg fails.
 #   RW2. package_suite.ts scopedSuites: drop the workspace-level file rule (`wide`); the SCOPE root-manifest leg fails.
 #   RW3. repo_profile.ts baselineSuites: record a deferred suite as ran:true, attributable:true; the deferred fail-closed leg fails (a red suite is excused with no base run).
 #   RW4. repo_profile.ts baselineSuiteOnDemand: drop the revision check; the other-commit leg fails.
@@ -4024,6 +4025,8 @@ res("SCOPE a file no package below the root owns is the root package's, and only
 const twins = [{ name: "full suite: opencode", cmd: "(cd . && bun test)", cwd: ".", run: "bun test" }, { name: "full suite: opencode", cmd: "(cd packages/cli && bun test)", cwd: "packages/cli", run: "bun test" }];
 const e = ps.scopedSuites(twins, ["packages/cli/src/a.ts"], () => []);
 res("SCOPE two packages with one name are told apart by their directory", e.run.length === 1 && e.run[0].cwd === "packages/cli" && e.skipped.length === 1 && e.skipped[0].cwd === ".");
+const f = ps.scopedSuites(specs, ["packages/types/src/t.ts"], (r: string) => (r === "packages/app" ? ["packages/types"] : dependsOn(r)), ["packages/types", ...specs.map((x) => x.cwd)]);
+res("SCOPE a change in a package with no test command still runs the suites of the packages that depend on it", names(f.run) === "app,ui" && f.skipped.length === 4);
 res("SCOPE the not-run note is an n/a note that names the package, its command and the reason", ps.naNote(ps.scopedOutNote(specs[4])) && ps.scopedOutNote(specs[4]).includes("full suite: slow") && ps.scopedOutNote(specs[4]).includes("(cd packages/slow && bun test)") && /not run: .*no changed file/.test(ps.scopedOutNote(specs[4])));
 // ---- base on demand: a deferred record excuses nothing; the same record measured on demand excuses only the same error
 const R = T + "/rw01-repo"; rmSync(R, { recursive: true, force: true }); mkdirSync(R + "/packages/a/test", { recursive: true });
@@ -4081,8 +4084,8 @@ res("BUDGET the stage floor still holds when little is left", mc.verifyLimitFor(
 res("BUDGET a suite's timeout is the time left of the stage, at most 300 s; none left means it is not started", vf.suiteTimeoutFor(1_000_000, 0, {}) === 300_000 && vf.suiteTimeoutFor(100_000, 40_000, {}) === 55_000 && vf.suiteTimeoutFor(100_000, 97_000, {}) === 0 && vf.suiteTimeoutFor(undefined, 0, {}) === 300_000 && vf.suiteTimeoutFor(undefined, 0, { LOKI_E10_SUITE_TIMEOUT_S: "3" }) === 3000);
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/rw01.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
-grep -q '^EXIT 0$' <<< "$out" || bad "rw01 unit script crashed or exited non-zero: $(printf '%s\n' "$out" | tail -12 | tr "\n" "|")"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 31 ] || bad "rw01 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 31"
+grep -q '^EXIT 0$' <<< "$out" || bad "rw01 unit script crashed or exited non-zero: $(printf '%s\n' "$out" | tail -3)"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 32 ] || bad "rw01 unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 32"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

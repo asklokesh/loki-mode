@@ -585,8 +585,18 @@ export function tscUntouchedOnly(out: string, pkgRel: string, touched: ReadonlyS
   return tscLines(out).every((l) => base.has(l));
 }
 /** The same `tsc --noEmit` on a pristine detached base worktree with the head's dependency dirs linked (the package's and the repo root's); null when base cannot be checked (fail closed). */
-async function tscOnBase(ctx: RunContext, groupCwd: string, signal: AbortSignal, opts: RunOpts): Promise<string | null> {
+async function tscOnBase(ctx: RunContext, groupCwd: string, signal: AbortSignal, opts: RunOpts, shared?: { dir: string; link: (cwd: string) => boolean } | null): Promise<string | null> {
   if (signal.aborted) return null;
+  if (shared !== undefined) { // RW-01: verify's one base worktree, whose link also serves an installed workspace (baseDepsView); null: no base tree, fail closed
+    if (!shared) return null;
+    try {
+      const cwd = join(shared.dir, relative(ctx.repoDir, groupCwd));
+      if (!existsSync(join(cwd, "tsconfig.json")) || !shared.link(cwd)) return null;
+      if (cwd !== shared.dir) shared.link(shared.dir);
+      const r = await runOnce("npx", ["--no-install", "tsc", "--noEmit", "-p", "."], cwd, AbortSignal.any([signal, AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS)]), { ...opts });
+      return r.missing || r.cut ? null : r.out;
+    } catch { return null; }
+  }
   const dir = mkdtempSync(join(tmpdir(), "e10-basetsc-")), git = (args: string[]): void => { safeGit(ctx.repoDir, args, { stdio: "ignore", repoDrivers: true }); };
   try {
     git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, ctx.baseSha]);
@@ -608,9 +618,9 @@ export function lintFallbacks(repoDir: string, tool: string, env: NodeJS.Process
   return lintMissingDiscloseOn(env) ? toolFallbacks(repoDir, tool, env) : []; // util/check_result.ts: the one fallback list, shared with the commit-stage formatter
 }
 export async function runLintChecks(
-  ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts & { api?: ProjectApi | null; keep?: ReadonlySet<string>; untouched?: string[] } = {},
+  ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts & { api?: ProjectApi | null; keep?: ReadonlySet<string>; untouched?: string[]; base?: () => { dir: string; link: (cwd: string) => boolean } | null } = {},
 ): Promise<string[]> {
-  const { api, keep, untouched, ...runOpts } = opts; opts = runOpts; const pre: string[] = []; // check names whose static diagnostics are all pre-existing
+  const { api, keep, untouched, base, ...runOpts } = opts; opts = runOpts; const pre: string[] = []; // check names whose static diagnostics are all pre-existing
   const py = changed.filter((f) => f.endsWith(".py"));
   const [ruffCmd, interpreter, uvPre] = py.length ? resolveTool(ctx.repoDir, "ruff", "ruff") : ["ruff", "system", []] as ReturnType<typeof resolveTool>; // E-98a: same project-first resolution as pytest
   if (py.length && (interpreter !== "system" || Bun.which("ruff", { PATH: process.env["PATH"] ?? "" }) || projectDeclaresRuff(ctx.repoDir))) { // FC-LINT-TOOL-NEVER-USED-BY-PROJECT: a repo that neither declares ruff nor has one installed has no lint to run
@@ -631,7 +641,7 @@ export async function runLintChecks(
   // FC-01: tsc and eslint belong to the package that owns the file: config lookup, cwd and file paths are per package.
   for (const g of groupByPackage(api, ctx.repoDir, changed.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f)))) {
     const sfx = g.root === "." ? "" : `:${g.root}`, co = g.root === "." ? opts : { ...opts, cwd: g.cwd };
-    if (existsSync(join(g.cwd, "tsconfig.json"))) { const c = await runCheck(ctx, `lint:tsc${sfx}`, "npx", ["--no-install", "tsc", "--noEmit", "-p", "."], signal, checks, { ...co, kind: "static" }); if (c.result === "fail" && tscOnlyIgnored(ctx.repoDir, g.cwd, tscOut.get(c) ?? "")) pre.push(c.name); else if (c.result === "fail" && keep && tscLocalKeys(tscOut.get(c) ?? "", g.root, keep, [...keep]) && tscUntouchedLocal(tscOut.get(c) ?? "", g.root, keep, [...keep], await tscOnBase(ctx, g.cwd, signal, co))) pre.push(c.name); else if (c.result === "fail" && keep && untouched && lintUntouchedOn()) { const syms = diffSymbols(ctx, [...keep]), o = tscOut.get(c) ?? ""; if (tscUntouchedShape(o, g.root, keep, syms) && tscUntouchedOnly(o, g.root, keep, syms, await tscOnBase(ctx, g.cwd, signal, co))) untouched.push(c.name); } }
+    if (existsSync(join(g.cwd, "tsconfig.json"))) { const c = await runCheck(ctx, `lint:tsc${sfx}`, "npx", ["--no-install", "tsc", "--noEmit", "-p", "."], signal, checks, { ...co, kind: "static" }); if (c.result === "fail" && tscOnlyIgnored(ctx.repoDir, g.cwd, tscOut.get(c) ?? "")) pre.push(c.name); else if (c.result === "fail" && keep && tscLocalKeys(tscOut.get(c) ?? "", g.root, keep, [...keep]) && tscUntouchedLocal(tscOut.get(c) ?? "", g.root, keep, [...keep], await tscOnBase(ctx, g.cwd, signal, co, base ? base() : undefined))) pre.push(c.name); else if (c.result === "fail" && keep && untouched && lintUntouchedOn()) { const syms = diffSymbols(ctx, [...keep]), o = tscOut.get(c) ?? ""; if (tscUntouchedShape(o, g.root, keep, syms) && tscUntouchedOnly(o, g.root, keep, syms, await tscOnBase(ctx, g.cwd, signal, co, base ? base() : undefined))) untouched.push(c.name); } }
     if (ESLINT_CONFIGS.some((f) => existsSync(join(g.cwd, f)))) { const c = await runCheck(ctx, `lint:eslint${sfx}`, "npx", ["--no-install", "eslint", ...g.rel], signal, checks, { ...co, kind: "static" }); if (await excuseLint(ctx, signal, c, "eslint", "npx", ["--no-install", "eslint"], g.cwd, g.rel, co)) pre.push(c.name); }
   }
   return pre;
@@ -751,6 +761,22 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
       if (zgEnv.sinceMs === undefined) return false;
       return [...new Set([api?.packageRootOf(rel) ?? ".", "."])].every((d) => { if (!depsSeen.has(d)) depsSeen.set(d, !envChangedSince(ctx.repoDir, d === "." ? ctx.repoDir : join(ctx.repoDir, d), zgEnv.sinceMs!, [], zgEnv.deps)); return depsSeen.get(d)!; });
     };
+    const zg0 = zeroGate((ctx.outputs().intake as { zero_baseline?: unknown } | undefined)?.zero_baseline);
+    // RW-01 BASE-ON-DEMAND: the base record of one full-suite command, measured now on the base worktree (intake no longer measures a multi-package repository)
+    const suiteSpecs: SuiteSpec[] = (() => { try { return baseOnDemandOn() ? fullSuiteSpecs(ctx.repoDir, map.runners) : []; } catch { return []; } })(), baseUnmeasured = new Set<string>();
+    const ensureBase = async (spec: { name: string; cmd: string; cwd: string; run: string }): Promise<void> => {
+      if (!baseOnDemandOn() || signal.aborted) return;
+      const tmo = Math.floor(suiteTimeoutFor(deadline, Date.now()) / 1000); if (tmo < 1) return;
+      const dir = bt.get(changed, zg0); if (!dir) return;
+      const cwd = join(dir, spec.cwd), linked = bt.link(cwd) && (cwd === dir || bt.link(dir));
+      if (!linked && [spec.cwd, "."].some((d) => ["node_modules", ".venv"].some((x) => existsSync(join(ctx.repoDir, d, x))))) { baseUnmeasured.add(`${spec.name} (\`${spec.cmd}\`) ${BASE_NOT_MEASURED}`); return; } // a base run without the dependencies it needs measures nothing, and would leave a record a later run reads
+      await baselineSuiteOnDemand(ctx.repoDir, ctx.baseSha, spec, dir, asyncShellRunner(signal), tmo, () => signal.aborted);
+    };
+    for (const c of checks) { // RW-01: touchedRedOnBase (below) reads the owning package's suite record for an edited test file that is red: measured now
+      const rel = c.name.slice(c.name.indexOf(":") + 1); if (c.result !== "fail" || !changed.includes(rel) || wallNames0.has(c.name) || isHold(c)) continue;
+      const tcw = api?.packageOf(rel)?.commands.test?.cwd, spec = tcw === undefined ? undefined : suiteSpecs.find((sp) => sp.cwd === tcw);
+      if (spec) await ensureBase(spec);
+    }
     const touchedRed = new Set(checks.filter((c) => { const rel = c.name.slice(c.name.indexOf(":") + 1); return c.result === "fail" && changed.includes(rel) && !wallNames0.has(c.name) && !isHold(c) && envAsIntake(rel) && touchedRedOnBase(ctx.repoDir, ctx.baseSha, { ids: c.ids, errors: headErrors.get(c) }, editedTestTitles(ctx.repoDir, ctx.baseSha, rel)); }).map((c) => c.name)); // TOUCHED-BASE-RED: before decisive, so an edited base-red file does not force a quick verify
     const decisive = qs !== null && checks.some((c) => c.result === "fail" && !touchedRed.has(c.name) && (keep.has(c.name) || changed.includes(c.name.slice(c.name.indexOf(":") + 1)))); // a blocking, Wall, task-named or touched test is never excused as pre-existing red
     if (!decisive) await runTests(split.rest);
@@ -767,19 +793,19 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
     const symbols = checks.some((c) => c.result === "fail") ? diffSymbols(ctx, changed) : []; // fl24: a failure naming one of these is never excused on differing text
     const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map(testCheckName)), new Set(relevant.map(testCheckName)), signal, cfgChanged.length === 0, zeroGate((ctx.outputs().intake as { zero_baseline?: unknown } | undefined)?.zero_baseline), depNames, ownRel, symbols);
     for (const e of preRed.envCrash) { const c = checks.find((x) => x.name === e.name && x.result === "fail"); if (c) { c.result = "not_run"; c.reason = `${BCE_REASON} (${e.sig})`; } } // BCE: environment, not the change
-    const zg0 = zeroGate((ctx.outputs().intake as { zero_baseline?: unknown } | undefined)?.zero_baseline), noIdNotes: string[] = [];
+    const noIdNotes: string[] = [];
     { // RW-01 NO-ID: a failing test check with no parsed id, compared with the identical command on base
       const cand = baseOnDemandOn() ? checks.filter((c) => c.result === "fail" && !c.ids?.length && noIdOut.has(c) && !isHold(c) && tests.some((t) => testCheckName(t) === c.name)) : [];
       const dir = cand.length && !signal.aborted ? bt.get(changed, zg0) : null, byLine = new Map<string, string[]>();
-      const sub = (x: string): string => (dir ? x.split(ctx.repoDir).join(dir) : x), frames = (o: string): boolean => /^\s*(?:File "|at \S|Traceback \()/m.test(o);
+      const sub = (x: string): string => (dir ? x.split(ctx.repoDir).join(dir) : x);
       for (const c of cand) {
         if (!dir || signal.aborted || (deadline !== undefined && Date.now() > deadline - SUITE_MARGIN_MS)) break;
         const t = tests.find((x) => testCheckName(x) === c.name)!, tc = commandFor(t, ctx.repoDir, api), head = noIdOut.get(c)!;
         const cwd = sub(tc.cwd); bt.link(cwd); if (cwd !== dir) bt.link(dir);
-        // the identical command: the same tool, with the checkout's paths mapped to the base worktree. An interpreter that lives in the checkout and is absent on base
-        // (a .venv the linker refused) is used as it is only when the head output has no stack frame: the command stopped before it loaded any code of the repository.
-        const mapped = sub(tc.cmd), cmd = !isAbsolute(mapped) || existsSync(mapped) ? mapped : frames(head) ? null : tc.cmd;
-        if (!cmd) continue;
+        // the identical command: the same tool, with the checkout's paths mapped to the base worktree. A tool that lives in the checkout and is absent on base (a .venv
+        // the linker refused) is never run from the checkout: its environment can import the changed sources, so the check stays a failure.
+        const cmd = sub(tc.cmd);
+        if (isAbsolute(cmd) && !existsSync(cmd)) continue;
         const b = await runOnce(cmd, tc.args.map(sub), cwd, signal, {});
         if (b.cut || b.missing || !sameFailureLines(head, b, changed, symbols, ctx.repoDir, dir)) continue;
         const line = failureLines(rootless(stripAnsi(head), [ctx.repoDir])).find((l) => /error|No module named|not found|cannot|failed/i.test(l)) ?? failureLines(rootless(stripAnsi(head), [ctx.repoDir]))[0] ?? "";
@@ -788,16 +814,6 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
       }
       for (const [line, names] of byLine) noIdNotes.push(`${NO_ID_BASE_REASON} (${line.slice(0, 160)}): ${names.length} check(s), first ${names[0]}`);
     }
-    // RW-01 BASE-ON-DEMAND: the base record of one full-suite command, measured now on the base worktree (intake no longer measures a multi-package repository)
-    const suiteSpecs: SuiteSpec[] = (() => { try { return baseOnDemandOn() ? fullSuiteSpecs(ctx.repoDir, map.runners) : []; } catch { return []; } })(), baseUnmeasured = new Set<string>();
-    const ensureBase = async (spec: { name: string; cmd: string; cwd: string; run: string }): Promise<void> => {
-      if (!baseOnDemandOn() || signal.aborted) return;
-      const tmo = Math.floor(suiteTimeoutFor(deadline, Date.now()) / 1000); if (tmo < 1) return;
-      const dir = bt.get(changed, zg0); if (!dir) return;
-      const cwd = join(dir, spec.cwd), linked = bt.link(cwd) && (cwd === dir || bt.link(dir));
-      if (!linked && [spec.cwd, "."].some((d) => ["node_modules", ".venv"].some((x) => existsSync(join(ctx.repoDir, d, x))))) { baseUnmeasured.add(`${spec.name} (\`${spec.cmd}\`) ${BASE_NOT_MEASURED}`); return; } // a base run without the dependencies it needs measures nothing, and would leave a record a later run reads
-      await baselineSuiteOnDemand(ctx.repoDir, ctx.baseSha, spec, dir, asyncShellRunner(signal), tmo, () => signal.aborted);
-    };
     for (const c of checks) { // RW-01: collateralOnBaseline and attribute (below) read the owning package's suite record for a check its base rerun showed failing the same way, or gave nothing to compare: measured now
       if (c.result !== "fail" || preRed.names.includes(c.name) || targetNames.has(c.name) || changed.includes(c.name.slice(c.name.indexOf(":") + 1)) || (preRed.compared.includes(c.name) && !preRed.sameError.includes(c.name))) continue;
       const t = tests.find((x) => testCheckName(x) === c.name), tcw = t ? api?.packageOf(t.path)?.commands.test?.cwd : undefined, spec = tcw === undefined ? undefined : suiteSpecs.find((sp) => sp.cwd === tcw);
@@ -825,7 +841,7 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
       const lintUntouched = lintUntouchedNames;
-      const lintPre = await runLintChecks(ctx, complete || [...(qs?.blocking ?? [])].some((n) => n.startsWith("lint:")) ? changed : changed.filter((f) => qs?.since.includes(f)), signal, checks, { api, wall: wallPaths, keep: new Set([...changed, ...named]), untouched: lintUntouched }); // L025: a quick verify lints only what changed since, unless a lint check blocked last time
+      const lintPre = await runLintChecks(ctx, complete || [...(qs?.blocking ?? [])].some((n) => n.startsWith("lint:")) ? changed : changed.filter((f) => qs?.since.includes(f)), signal, checks, { api, wall: wallPaths, keep: new Set([...changed, ...named]), untouched: lintUntouched, ...(baseOnDemandOn() ? { base: () => { const d = bt.get(changed, zg0); return d ? { dir: d, link: bt.link } : null; } } : {}) }); // L025: a quick verify lints only what changed since, unless a lint check blocked last time
       preRed.names.push(...lintPre); // TEN-QUALITY-03: the same pre-existing path tests use
       if (lintPre.length) attr.line = [attr.line, `baseline: ${lintPre.join(", ")} static diagnostics already on base (not blocking)`].filter(Boolean).join("; ");
       preRed.names.push(...lintUntouched); // LINT-UNTOUCHED: disclosed on the baseline line, never a cap or fix-round input

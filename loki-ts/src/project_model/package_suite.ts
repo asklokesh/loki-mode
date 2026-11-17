@@ -37,12 +37,13 @@ export function ownedSuites<T extends { cwd: string }>(specs: T[], changed: read
  *  scope. Suites are told apart by their directory, never by name (opencode has two packages named "opencode"). opencode#63152: verify tried 36 package
  *  suites for a change to one package and ran out of time on the fourth. */
 const WORKSPACE_WIDE = /(?:^|\/)(?:package\.json|package-lock\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|yarn\.lock|bun\.lockb?|bunfig\.toml|turbo\.json|nx\.json|lerna\.json|tsconfig[^/]*\.json|jsconfig\.json|\.eslintrc[^/]*|eslint\.config\.[cm]?[jt]s|biome\.jsonc?|babel\.config\.[cm]?[jt]s|\.babelrc|(?:vitest|vite|jest)\.(?:config|workspace)\.[cm]?[jt]s|pyproject\.toml|setup\.py|setup\.cfg|requirements[^/]*\.txt|uv\.lock|poetry\.lock|tox\.ini|pytest\.ini|conftest\.py|go\.mod|go\.sum|go\.work|Cargo\.toml|Cargo\.lock|Makefile|\.npmrc|\.nvmrc|\.python-version|\.tool-versions)$/;
-export function scopedSuites<T extends { cwd: string }>(specs: T[], changed: readonly string[], dependsOn: (root: string) => readonly string[]): { run: T[]; skipped: T[] } {
-  const clean = (d: string): string => d.replace(/\/+$/, "") || ".", below = specs.filter((s) => clean(s.cwd) !== ".").map((s) => clean(s.cwd));
+export function scopedSuites<T extends { cwd: string }>(specs: T[], changed: readonly string[], dependsOn: (root: string) => readonly string[], roots: readonly string[] = []): { run: T[]; skipped: T[] } {
+  const clean = (d: string): string => d.replace(/\/+$/, "") || ".", dirs = [...new Set([...specs.map((s) => clean(s.cwd)), ...roots.map(clean)])], below = dirs.filter((d) => d !== "."); // `roots`: every package dir, so a package with no test command still owns its files and seeds its dependents
   const inPkg = (f: string): boolean => below.some((d) => f === d || f.startsWith(`${d}/`));
   const wide = changed.some((f) => f.startsWith('"') || (!inPkg(f) && WORKSPACE_WIDE.test(f))); // a quoted (unreadable) path is unknown: everything runs
   if (wide) return { run: [...specs], skipped: [] };
-  const owned = new Set(ownedSuites(specs, changed).map((s) => clean(s.cwd))), inScope = new Set(owned);
+  const ownerOf = (f: string): string | undefined => dirs.filter((d) => d === "." || f === d || f.startsWith(`${d}/`)).sort((a, b) => b.length - a.length)[0];
+  const owned = new Set(changed.map(ownerOf).filter((d): d is string => d !== undefined)), inScope = new Set(owned);
   for (let grew = true; grew;) { grew = false; for (const s of specs) { const d = clean(s.cwd); if (!inScope.has(d) && dependsOn(d).some((x) => inScope.has(clean(x)))) { inScope.add(d); grew = true; } } }
   const run = specs.filter((s) => inScope.has(clean(s.cwd)));
   return { run: [...run.filter((s) => owned.has(clean(s.cwd))), ...run.filter((s) => !owned.has(clean(s.cwd)))], skipped: specs.filter((s) => !inScope.has(clean(s.cwd))) }; // the owners' suites first: a verify that runs out of time has run the tests of the package the change is in
@@ -138,7 +139,7 @@ export async function runPackageSuites(
 ): Promise<boolean> {
   const api = loadProjectApi(repoDir), all = packageSuiteSpecs(api, repoDir);
   if (!api || !all) return false;
-  const sc = opts.scope && opts.changed ? scopedSuites(all, opts.changed, (root) => api.dependsOn(root) ?? []) : null; // RW-01 SCOPE: the suites of the packages the change touched and of those that depend on them
+  const sc = opts.scope && opts.changed ? scopedSuites(all, opts.changed, (root) => api.dependsOn(root) ?? [], api.packages().map((p) => p.root)) : null; // RW-01 SCOPE: the suites of the packages the change touched and of those that depend on them
   const specs = sc ? sc.run : opts.ownedOnly ? ownedSuites(all, opts.changed ?? []) : all; // NTF: the suites of the packages that own the changed files, never the whole workspace
   if (!specs.length && !sc) return false;
   for (const s of sc?.skipped ?? []) notProven.add(scopedOutNote(s));
