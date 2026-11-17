@@ -477,6 +477,28 @@ console.log([
   off(() => x(S("pkg/x/x.go", "pkg/y/x_reach_test.go"))),
 ].join(" | "));' 2>&1)"
 [ "$TKR" = "- | - | packages/b/src/b.test.ts | - | pkg/y/y_test.go | - | - | packages/e2e/src/a.test.ts | pkg/y/x_reach_test.go" ] && ok "TK J3 keeps a test that imports the changed code (package name, relative path, Go import path), still drops one that does not; Python src-layout and Rust tests/ are never candidates; =0 restores the drop ($TKR)" || bad "TK J3 reach gave: $TKR"
+# ---- RW-02 TEST-REACH-HELPERS. J3 keeps a test that reaches the changed package through a helper file it imports by a relative path
+# (one hop), the shape of playwright 44124: tests/page/page-aria-snapshot.spec.ts imports only '@playwright/test', './pageTest' and '../config/utils', and
+# tests/config/utils.ts imports 'playwright-core', the package the change was in. A test whose helpers do not import the changed package is still dropped, a
+# reach two hops away is still dropped, and LOKI_E10_TEST_REACH_HELPERS=0 restores the drop.
+# Plant: scope.ts exercisesChange: `return false &&` in place of `return testReachHelpersEnabled(env) &&` (the first cell reads tests/page/a.spec.ts).
+RH="$T/rh"; mkdir -p "$RH/packages/core/src" "$RH/tests/page" "$RH/tests/config" "$RH/scripts"
+printf '{"name":"mono","private":true,"workspaces":["packages/*"]}\n' > "$RH/package.json"; printf '{"name":"core-pkg"}\n' > "$RH/packages/core/package.json"
+printf 'export const page = 1;\n' > "$RH/packages/core/src/page.ts"; printf 'export const tool = 1;\n' > "$RH/scripts/tool.ts"
+printf 'import type { Page } from "core-pkg";\nexport const u = 1;\n' > "$RH/tests/config/utils.ts"
+printf 'export const fx = 1;\n' > "$RH/tests/page/fixture.ts"
+printf 'import { d } from "./deeper";\nexport const deep = d;\n' > "$RH/tests/page/deep.ts"; printf 'import type { Page } from "core-pkg";\nexport const d = 1;\n' > "$RH/tests/page/deeper.ts"
+printf 'import { test } from "@playwright/test";\nimport { fx } from "./fixture";\nimport { u } from "../config/utils";\ntest("a", () => {});\n' > "$RH/tests/page/a.spec.ts"
+printf 'import { test } from "@playwright/test";\nimport { fx } from "./fixture";\ntest("b", () => {});\n' > "$RH/tests/page/b.spec.ts"
+printf 'import { deep } from "./deep";\ntest("c", () => {});\n' > "$RH/tests/page/c.spec.ts"
+RHR="$(cd "$ROOT/loki-ts" && RH="$RH" bun -e '
+const sc = await import("./src/e10ext/scope.ts"), d = process.env.RH;
+const tracked = ["package.json", "packages/core/package.json", "packages/core/src/page.ts", "scripts/tool.ts", "tests/config/utils.ts", "tests/page/fixture.ts", "tests/page/deep.ts", "tests/page/deeper.ts", "tests/page/a.spec.ts", "tests/page/b.spec.ts", "tests/page/c.spec.ts"];
+const x = (test) => sc.crossPackageTestEdits(d, [{ st: "M", f: "packages/core/src/page.ts" }, { st: "M", f: test }], "aria snapshots time out on svg documents", tracked).join("+") || "-";
+const off = (f) => { process.env.LOKI_E10_TEST_REACH_HELPERS = "0"; try { return f(); } finally { delete process.env.LOKI_E10_TEST_REACH_HELPERS; } };
+console.log([x("tests/page/a.spec.ts"), x("tests/page/b.spec.ts"), x("tests/page/c.spec.ts"), off(() => x("tests/page/a.spec.ts"))].join(" | "));' 2>&1)"
+[ "$RHR" = "- | tests/page/b.spec.ts | tests/page/c.spec.ts | tests/page/a.spec.ts" ] && ok "RW-02 J3 keeps an edited test whose own helper imports the changed package (one hop); a test with no such helper and a two-hop reach are still dropped; =0 restores the drop ($RHR)" || bad "RW-02 J3 helper reach gave: $RHR"
+# ---- end RW-02 ----
 SJ3="$ROOT/loki-ts/src/engine10/stages/seal.ts"
 grep -q 'const xpkg = scopeTestDropEnabled() ? crossPackageTestEdits(ctx.repoDir, staged.filter' "$SJ3" && grep -q 'const dropped = new Set(\[...drop.map(({ f }) => f), ...xpkg\])' "$SJ3" && grep -q 'const notes = \[...xpkg.map(crossPackageTestNote),' "$SJ3" && ok "J3 wiring: the commit stage resets the cross-package test edits before commit, keeps them out of the formatter pass and names each one" || bad "J3 wiring: the commit stage does not reset and name the cross-package test edits"
 
