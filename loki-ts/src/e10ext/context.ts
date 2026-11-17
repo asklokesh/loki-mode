@@ -39,6 +39,9 @@ const PINNED_RULE = "- Exception: when the task names an existing test file or a
 export const DOC_RULE_V139 = "- Write no documentation unless the task explicitly asks for it, except the release-note fragment a repository convention listed below requires. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.";
 export const DOC_RULE_UPDATE = "- Write no new documentation pages unless the task asks for them, except the release-note fragment a repository convention listed below requires. Do update existing docs that list what you changed: when you add or change an option, flag, method, rule or name that a README or doc page in the repository already lists, add or fix its entry there, written like the entries around it. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.";
 const DOC_RULE = DOC_RULE_UPDATE;
+/** STASH-GUARD: a session stopped between `git stash` and `git stash pop` left its whole finished change in the stash and the run delivered nothing (opencode 63310).
+ *  The command guard refuses the command (autonomy/hooks/validate-bash.sh git_stash); this line says so up front, with the reason and what to use instead. A constant: the prefix stays cache-stable. */
+export const STASH_RULE = "- Never run git stash, alone or inside a longer command: if this session is stopped between the stash and the pop, your whole change is left outside the work tree and nothing is delivered. To see the code without your change use git diff, git show HEAD:<file>, or a temporary copy of the file under $TMPDIR.";
 export const FIXED_RULES = [
   "You are the Loki 10 implement stage, doing the complete task described below in this repository. Do whatever a senior engineer would do to finish it correctly: read, change and test as needed across any files the task requires.",
   "Rules:",
@@ -52,6 +55,7 @@ export const FIXED_RULES = [
   "- Never kill processes.",
   DOC_RULE,
   "- Do not commit or push.",
+  STASH_RULE,
   "- If you add a new third-party registry dependency, list it in .loki/supply-declared.json as a JSON array of {ecosystem,name,version_spec,registry}, leaving out workspace, path, git and local packages.",
   FINISH_LINE,
 ].join("\n");

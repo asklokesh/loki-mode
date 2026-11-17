@@ -545,3 +545,148 @@ export function sweepRunBranches(repoDir: string, env: NodeJS.ProcessEnv = proce
   if (removed === 0) return kept.join("");
   return `engine10: removed ${removed} run branch(es) left by earlier runs${saved ? `; ${saved} with unpushed commits saved as bundles under .loki/runs/ (restore one with: git fetch <bundle> <branch>:<branch>)` : ""}\n${kept.join("")}`;
 }
+
+// ---- WORK-RECOVERY: finished work is never lost -----------------------------------------------------------------------------------
+// opencode 63310 (Loki 11.152.0): a fix session ran `git stash -q; <look at the base>; git stash pop -q` and was stopped between the two.
+// The whole correct change sat in stash@{0}; the commit stage saw a clean tree ("committed false") and the run delivered nothing.
+// The record is one file in the run directory (work-ledger.jsonl; its name matches config_fence.ts RUN_RECORD, so Edit and Write never
+// reach it). Line 1 is the stash list at run start. A stash entry is the run's own only when it is absent from that list AND was made
+// on the run branch (the stash stack is shared by every worktree of the repository, so "new" alone could be the user's own entry made
+// elsewhere during the run). No record, an unreadable record, or an entry that fails either test: nothing is applied and nothing is
+// dropped. Nothing here ever discards work: a restore that cannot be clean keeps the entry and names it.
+const WORK_LEDGER = "work-ledger.jsonl";
+export const workLedgerPath = (runDir: string): string => join(runDir, WORK_LEDGER);
+type LedgerLine = { k: string; sha?: string; stashes?: string[]; at?: number; files?: number; reason?: string; stage?: string; where?: string; subject?: string; note?: string };
+function readLedger(runDir: string): LedgerLine[] | null {
+  let text: string;
+  try { text = readFileSync(workLedgerPath(runDir), "utf8"); } catch { return null; }
+  const out: LedgerLine[] = [];
+  for (const l of text.split("\n")) { if (!l.trim()) continue; try { const o = JSON.parse(l) as LedgerLine; if (o && typeof o === "object" && typeof o.k === "string") out.push(o); else return null; } catch { return null; } }
+  return out;
+}
+const appendLedger = (runDir: string, line: LedgerLine): void => { try { mkdirSync(runDir, { recursive: true }); writeFileSync(workLedgerPath(runDir), `${JSON.stringify(line)}\n`, { flag: "a" }); } catch { /* the restore already happened or was skipped; a lost line only loses the note */ } };
+/** The record's first line when it is a well-formed baseline, else null (then nothing is ever touched). */
+function baselineOf(lines: LedgerLine[] | null): { stashes: Set<string>; at: number } | null {
+  const b = lines?.[0];
+  if (!b || b.k !== "baseline" || !Array.isArray(b.stashes) || !b.stashes.every((s) => typeof s === "string" && /^[0-9a-f]{40,64}$/.test(s)) || typeof b.at !== "number") return null;
+  return { stashes: new Set(b.stashes), at: b.at };
+}
+const stashList = (repoDir: string): { sha: string; subject: string }[] | null => {
+  const out = git(repoDir, ["stash", "list", "--format=%H %gs"]);
+  if (out === null) return null;
+  return out.split("\n").filter(Boolean).map((l) => ({ sha: l.slice(0, l.indexOf(" ")), subject: l.slice(l.indexOf(" ") + 1) })).filter((e) => /^[0-9a-f]{40,64}$/.test(e.sha));
+};
+/** Writes the stash list at run start, once per run directory. Called at the first session start of a run; a repository git cannot read writes nothing. */
+export function recordStashBaseline(repoDir: string, runDir: string): void {
+  if (existsSync(workLedgerPath(runDir))) return;
+  const list = stashList(repoDir);
+  if (list === null) return;
+  appendLedger(runDir, { k: "baseline", stashes: list.map((e) => e.sha), at: Date.now() });
+}
+export interface WorkRecovery { recovered: { sha: string; files: number }[]; kept: { sha: string; reason: string }[]; foreign: { sha: string; subject: string }[]; moved: string | null }
+const NO_RECOVERY = (): WorkRecovery => ({ recovered: [], kept: [], foreign: [], moved: null });
+/** True when `subject` is the reflog line `git stash` writes on `branch` ("WIP on <branch>: ..." or, with -m, "On <branch>: ..."). */
+export const stashMadeOn = (subject: string, branch: string): boolean => subject.startsWith(`WIP on ${branch}: `) || subject.startsWith(`On ${branch}: `);
+const chunks = <T>(xs: T[], n = 200): T[][] => { const out: T[][] = []; for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n)); return out; };
+/** One stash entry back onto the work tree. Returns the file count, or the reason it was kept. Applies only when the apply cannot conflict:
+ *  HEAD is the commit the stash was made on and none of its files has another change in the tree. Verified against the stash commit before the entry is dropped. */
+function restoreStash(repoDir: string, sha: string): { files: number } | { reason: string } {
+  const head = git(repoDir, ["rev-parse", "HEAD"]), base = git(repoDir, ["rev-parse", "--verify", "-q", `${sha}^1`]);
+  if (!head || !base) return { reason: "its base commit could not be read" };
+  if (head !== base) return { reason: `the checkout moved to ${head.slice(0, 12)} after the stash was made on ${base.slice(0, 12)}` };
+  const z = (args: string[]): string[] | null => { try { return safeGit(repoDir, args, { timeout: 20000 }).split("\0").filter(Boolean); } catch { return null; } };
+  const tracked = z(["diff", "--name-only", "--no-renames", "-z", base, sha]);
+  const hasUntracked = git(repoDir, ["rev-parse", "--verify", "-q", `${sha}^3`]) !== null, untracked = hasUntracked ? z(["ls-tree", "-r", "--name-only", "-z", `${sha}^3`]) : [];
+  if (tracked === null || untracked === null) return { reason: "its file list could not be read" };
+  if (tracked.length + untracked.length === 0) return { reason: "it holds no file change" };
+  for (const part of chunks(tracked)) { // a file of the stash with another change in the tree or the index: git would refuse or merge, so nothing is tried
+    const dirty = z(["--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=no", "--no-renames", "--", ...part]);
+    if (dirty === null) return { reason: "the work tree state could not be read" };
+    if (dirty.length > 0) return { reason: `the work tree has other changes to the same file(s): ${dirty.map((l) => l.slice(3)).slice(0, 5).join(", ")}` };
+  }
+  const there = untracked.filter((f) => { try { lstatSync(join(repoDir, f)); return true; } catch { return false; } });
+  if (there.length > 0) return { reason: `the work tree already has the untracked file(s) it would restore: ${there.slice(0, 5).join(", ")}` };
+  try { safeGit(repoDir, ["stash", "apply", "-q", sha], { timeout: 120000, repoDrivers: true, stdio: ["ignore", "pipe", "pipe"] }); } catch (e) {
+    return { reason: `git stash apply failed (${String((e as { stderr?: unknown }).stderr ?? (e as Error).message).split("\n").map((l) => l.trim()).filter(Boolean).slice(-1)[0]?.slice(0, 160) ?? "no error output"})` };
+  }
+  // applied: the tree must now hold exactly the stash's content for every file it names, with no unmerged entry, before the entry may go
+  if ((git(repoDir, ["ls-files", "-u"]) ?? "x") !== "") return { reason: "the apply left unmerged files" };
+  for (const part of chunks(tracked)) { try { safeGit(repoDir, ["--literal-pathspecs", "diff", "--quiet", sha, "--", ...part], { timeout: 60000, repoDrivers: true, stdio: "ignore" }); } catch { return { reason: "the restored files do not match the stash" }; } }
+  if (untracked.some((f) => { try { lstatSync(join(repoDir, f)); return false; } catch { return true; } })) return { reason: "an untracked file of the stash was not restored" };
+  // drop by SHA: the stack can shift under another worktree, so stash@{n} is resolved again right before the drop and the list is compared after it
+  const before = stashList(repoDir), idx = before?.findIndex((e) => e.sha === sha) ?? -1;
+  if (before === null || idx < 0) return { files: tracked.length + untracked.length }; // already gone: the work is in the tree either way
+  if (git(repoDir, ["rev-parse", "--verify", "-q", `stash@{${idx}}`]) !== sha) return { reason: "the stash list changed while restoring; the entry is applied to the work tree and kept on the stack" };
+  if (git(repoDir, ["stash", "drop", "-q", `stash@{${idx}}`]) === null) return { reason: "the entry is applied to the work tree but could not be dropped" };
+  const after = new Set((stashList(repoDir) ?? []).map((e) => e.sha));
+  for (const e of [...before].reverse()) if (e.sha !== sha && !after.has(e.sha)) git(repoDir, ["stash", "store", "-q", "-m", e.subject, e.sha]); // another entry vanished in the same instant: put it back (its commit still exists)
+  return { files: tracked.length + untracked.length };
+}
+/** Puts the checkout back on the run branch when a session left it elsewhere, without touching a file and without moving any other branch.
+ *  Same commit: HEAD is re-pointed. Commits made during the run on top of the run branch: the run branch is fast-forwarded to them. A plain
+ *  `git checkout` otherwise (it carries edits and refuses to overwrite one). Returns the line to disclose, or null when nothing was off. */
+export function returnToRunBranch(repoDir: string, branch: string, sinceMs: number): { moved: boolean; note: string } | null {
+  const tip = tipOf(repoDir, `refs/heads/${branch}`);
+  if (!tip) return null; // no run branch (a unit fixture, or intake never ran): today's behaviour
+  const cur = currentBranch(repoDir);
+  if (cur === branch) return null;
+  const head = git(repoDir, ["rev-parse", "HEAD"]);
+  if (!head) return null;
+  const where = cur ? `branch ${cur}` : `a detached HEAD at ${head.slice(0, 12)}`, repoint = (): boolean => git(repoDir, ["symbolic-ref", "-m", `loki: return to ${branch}`, "HEAD", `refs/heads/${branch}`]) !== null;
+  if (head === tip) return repoint() ? { moved: true, note: `a session left the checkout on ${where}; Loki put it back on ${branch} (same commit, every edit kept)` } : { moved: false, note: `a session left the checkout on ${where} and Loki could not return it to ${branch}; the run's work may be there` };
+  const isAncestor = (a: string, b: string): boolean => { try { safeGit(repoDir, ["merge-base", "--is-ancestor", a, b], { stdio: "ignore" }); return true; } catch { return false; } };
+  if (isAncestor(tip, head)) {
+    const times = (git(repoDir, ["log", "--format=%ct", `${tip}..${head}`]) ?? "").split("\n").filter(Boolean).map(Number);
+    const own = times.length > 0 && times.length <= 200 && times.every((t) => Number.isFinite(t) && t * 1000 >= sinceMs - 2000); // every stray commit was made during this run: the run's own, never the user's earlier work
+    if (own && git(repoDir, ["update-ref", "-m", `loki: commits a session made on ${where}`, `refs/heads/${branch}`, head, tip]) !== null && repoint()) return { moved: true, note: `a session made ${times.length} commit(s) on ${where}; Loki fast-forwarded ${branch} to ${head.slice(0, 12)} so they are part of this run (${cur ? `${cur} is unchanged` : "no other branch moved"})` };
+    return { moved: false, note: `a session left the checkout on ${where}, ${times.length} commit(s) ahead of ${branch}${own ? "" : " and not all made during this run"}: left untouched; see them with: git log ${branch}..${head.slice(0, 12)}` };
+  }
+  const ahead = Number(git(repoDir, ["rev-list", "--count", `${tip}..${head}`]) ?? NaN);
+  if (ahead === 0) { // HEAD is behind the run branch: a plain checkout carries the edits forward or refuses
+    try { safeGit(repoDir, ["checkout", "-q", branch], { repoDrivers: true, stdio: "ignore", timeout: 120000 }); return { moved: true, note: `a session left the checkout on ${where}; Loki put it back on ${branch} (edits carried over)` }; } catch { /* disclosed below */ }
+  }
+  return { moved: false, note: `a session left the checkout on ${where}${ahead > 0 ? `, with ${ahead} commit(s) that are not on ${branch}` : ""}: left untouched; the run's work may be there (git log ${branch}..${head.slice(0, 12)}; git diff ${branch} ${head.slice(0, 12)})` };
+}
+/**
+ * Restores the run's own set-aside work onto the work tree of `repoDir`: called at every session end (engine10/session.ts), at the top of the commit
+ * stage (stages/seal.ts) and before the run-end WIP and backstop commits (e10ext/commit_filter.ts). `branch` is the run branch; `moveBranch`
+ * also returns the checkout to it (never while a session may still be running). Never throws; returns what it did for the event and the receipt.
+ */
+export function recoverRunWork(o: { repoDir: string; runDir: string; branch: string; stage?: string; where: "session" | "commit" | "run-end"; moveBranch?: boolean }): WorkRecovery {
+  const res = NO_RECOVERY();
+  try {
+    const lines = readLedger(o.runDir), base = baselineOf(lines);
+    if (!base) return res; // no record of the start state: nothing is the run's for sure, so nothing is touched
+    if (o.moveBranch) { const m = returnToRunBranch(o.repoDir, o.branch, base.at); if (m) { res.moved = m.note; if (!lines!.some((l) => l.k === "branch" && l.note === m.note)) appendLedger(o.runDir, { k: "branch", note: m.note, where: o.where }); } }
+    const list = stashList(o.repoDir);
+    if (list === null) return res;
+    const said = (k: string, sha: string, reason?: string): boolean => lines!.some((l) => l.k === k && l.sha === sha && (reason === undefined || l.reason === reason));
+    for (const e of list) { // newest first, the order a repeated `git stash pop` would take
+      if (base.stashes.has(e.sha)) continue; // existed before the run: the user's, never read further
+      if (!stashMadeOn(e.subject, o.branch)) { res.foreign.push(e); if (!said("foreign", e.sha)) appendLedger(o.runDir, { k: "foreign", sha: e.sha, subject: e.subject.slice(0, 200), where: o.where }); continue; }
+      const r = restoreStash(o.repoDir, e.sha);
+      if ("files" in r) { res.recovered.push({ sha: e.sha, files: r.files }); appendLedger(o.runDir, { k: "recovered", sha: e.sha, files: r.files, where: o.where, ...(o.stage ? { stage: o.stage } : {}) }); }
+      else { res.kept.push({ sha: e.sha, reason: r.reason }); if (!said("kept", e.sha, r.reason)) appendLedger(o.runDir, { k: "kept", sha: e.sha, reason: r.reason, where: o.where }); }
+    }
+  } catch { /* a recovery bug never fails a session or a commit */ }
+  return res;
+}
+export const WORK_RECOVERED_NOTE = "work recovered";
+/** The receipt lines of this run's record: what was restored, what was kept and where it is, and a branch a session left the checkout on. `repoDir` drops a
+ *  kept or foreign line whose entry is no longer on the stash stack (restored by a later pass, or taken back by its owner). */
+export function workRecoveryNotes(runDir: string, repoDir: string): string[] {
+  const lines = readLedger(runDir);
+  if (!baselineOf(lines)) return [];
+  const live = new Set((stashList(repoDir) ?? []).map((e) => e.sha)), recovered = new Set(lines!.filter((l) => l.k === "recovered").map((l) => l.sha)), out: string[] = [];
+  const lastKept = new Map<string, LedgerLine>(); for (const l of lines!) if (l.k === "kept" && l.sha) lastKept.set(l.sha, l); // one line per entry: the latest reason
+  for (const l of lines!) {
+    const id = String(l.sha ?? "").slice(0, 12);
+    if (l.k === "recovered") out.push(l.where === "session"
+      ? `${WORK_RECOVERED_NOTE}: ${l.files} file(s) a ${l.stage ?? "stage"} session had set aside with git stash were put back on the work tree when that session ended (stash ${id}); every later check ran on the restored tree (disclosed, does not cap)`
+      : `${WORK_RECOVERED_NOTE}: ${l.files} file(s) set aside with git stash during the run were put back on the work tree at the end of the run (stash ${id}), after the checks ran: the checks did not see these files`);
+    else if (l.k === "kept" && l.sha && lastKept.get(l.sha) === l && live.has(l.sha) && !recovered.has(l.sha)) out.push(`work NOT restored: stash ${id} was made during this run on its branch and is kept, not dropped: ${l.reason}; it is not in the delivered change; restore it with: git stash apply ${l.sha}`);
+    else if (l.k === "foreign" && l.sha && live.has(l.sha)) out.push(`a stash entry made during the run was left untouched because it was not made on this run's branch: ${id} (${l.subject}); if it holds this run's work, restore it with: git stash apply ${l.sha}`);
+    else if (l.k === "branch" && l.note) out.push(l.note);
+  }
+  return [...new Set(out)];
+}

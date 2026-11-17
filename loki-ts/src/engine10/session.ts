@@ -5,7 +5,7 @@ import { neutralizeEngineMarkers, sdkAuthCause } from "../runner/retry_class.ts"
 import { spawn, type ChildProcess } from "node:child_process";
 import { diffShortstat, diffSignature, untrackedList } from "../util/anti_loop.ts"; export { diffShortstat, diffSignature, untrackedList }; // watchdog diff signature lives with the other tree-change detectors
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path"; import { tmpdir } from "node:os"; import { randomUUID } from "node:crypto";
 import { archivePriorCosts, writeProviderCost, stageMedianGapMs } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
@@ -19,6 +19,7 @@ import type { SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } 
 import { clampBashTimeoutEnv, envWithPwd, pinBashShellEnv, killGroupWithGrace, reapLiveGroup } from "../runner/worker_proc.ts"; import { engine10StaticPrefix, sessionPinModel } from "../runner/providers.ts"; export { sessionPinModel }; import { capToSessionPin } from "../runner/model_rank.ts"; import { idleGapMs, prefixParts, prefixSha } from "../util/cost_breakdown.ts";
 import { allowFor, appendFence, conflictNamed, createdOf, markCreated, fenceEnabled, fenceTask, HARNESS_OUTPUTS_ENV, healRecord, mergeDenials, restoreFenced, snapshotFenced } from "../util/config_fence.ts"; // E1: config and lockfile write fence
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
+import { recordStashBaseline, recoverRunWork } from "../util/base_guard.ts"; // WORK-RECOVERY: a session's set-aside work goes back on the tree when it ends
 import { calculateCostFromRecords, partialUsagePath, readEfficiencyDir, recordPartialStreamCost } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
 /** The harness stop a stage session reported on its output tail ("[sdk-loop stop: <rule> limit N at turn T, K new tokens]", written by providers.ts), or null. */
@@ -70,6 +71,11 @@ export function sessionEffortFor(opts: SessionRunOptions): { effort: string | un
 export const fullSessionOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_FULL_SESSION"] ?? "").trim());
 /** Connection settings a session that runs the product must not inherit (it starts its own throwaway services under its scratch directory). */
 export const CONNECTION_ENV = /^(DATABASE_UR[LI]|DB_(URL|URI|HOST|PORT|USER|USERNAME|PASSWORD|PASS|NAME|DATABASE)|REDIS_(URL|URI|HOST|PORT|PASSWORD)|MONGO(DB)?_(URL|URI|HOST)|PG(HOST|HOSTADDR|PORT|USER|PASSWORD|DATABASE|SERVICE|SERVICEFILE|PASSFILE)|MYSQL_(HOST|TCP_PORT|PWD|USER|PASSWORD|DATABASE)|POSTGRES(QL)?_(URL|URI|HOST|PORT|USER|PASSWORD|DB|DATABASE)|ELASTICSEARCH_(URL|HOST)|AMQP_URL|RABBITMQ_URL)$/;
+/** STASH-GUARD: the sessions that write code (implement, fix and prove, and every resume of one) carry a deny rule for `git stash` on top of whatever the stage denies.
+ *  A session stopped between the stash and the pop left its whole change in the stash (opencode 63310). The rule is the second layer: the command guard
+ *  (runner/host_guard.ts, validate-bash.sh git_stash) is the one that reads compound commands. Reviewer sessions already deny it (REVIEW_GUARD_DENYLIST). */
+export const WRITER_STAGES: ReadonlySet<string> = new Set(["implement", "fix", "prove"]), STASH_DENY_RULE = "Bash(git stash:*)";
+export const writerDenyList = (stage: string, stageDeny: string | undefined): string => [...new Set([...(stageDeny ?? "").split(",").filter(Boolean), ...(WRITER_STAGES.has(stage) ? [STASH_DENY_RULE] : [])])].join(",");
 export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env["LOKI_E10_SEAL_EXISTING_PATCH"]; // CW-12 B2: defense in depth, no session env ever carries the external diff path
@@ -84,7 +90,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   if (gap !== null) env["LOKI_E10_CACHE_GAP_MS"] = String(gap); else delete env["LOKI_E10_CACHE_GAP_MS"];
   env["LOKI_E10_TIER"] = opts.tier; if (cfg.provider === "claude" && opts.stopChecks?.checks.length) env["LOKI_E10_STOP_CHECKS"] = JSON.stringify(opts.stopChecks); else delete env["LOKI_E10_STOP_CHECKS"]; // in-session fix rounds: only the per-call option sets it
   env["LOKI_E10_PROVIDER"] = cfg.provider;
-  if (opts.disallowedTools) env["LOKI_E10_DISALLOWED_TOOLS"] = opts.disallowedTools; else delete env["LOKI_E10_DISALLOWED_TOOLS"];
+  const deny = writerDenyList(opts.stage, opts.disallowedTools); if (deny) env["LOKI_E10_DISALLOWED_TOOLS"] = deny; else delete env["LOKI_E10_DISALLOWED_TOOLS"];
   if (opts.outputs?.length) env[HARNESS_OUTPUTS_ENV] = JSON.stringify(opts.outputs.map((p) => resolve(opts.cwd ?? process.cwd(), p))); else delete env[HARNESS_OUTPUTS_ENV]; // HARNESS-OUTPUTS: only the per-call option sets it
   if (opts.suiteCmds?.length) env["LOKI_E10_SUITE_CMDS"] = JSON.stringify(opts.suiteCmds); else delete env["LOKI_E10_SUITE_CMDS"]; if (opts.resumeSessionId) env["LOKI_E10_RESUME_SESSION"] = opts.resumeSessionId; else delete env["LOKI_E10_RESUME_SESSION"]; // MW-2: only the per-call option sets it
   // Only ever ADD variables here; never blank an inherited var for a non-claude provider (LOKI_HOST_GUARD gates resolveProvider's fail-closed throw, providers.ts:63).
@@ -162,6 +168,22 @@ export function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, st
     cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens }), ...(pparts ? { prefix_sha: prefixSha(pparts), prefix_parts: pparts } : {}), source: c.unmetered ? UNMETERED : c.source || "not measured", ...(pcost?.estimated ? { estimated: true, cost_basis: pcost.cost_basis } : {}), ...(pcost?.unmeasured_reason ? { unmeasured_reason: pcost.unmeasured_reason, cost_basis: pcost.cost_basis } : {}), ...(effort ? { effort } : {}), ...routedCostFields(dest),
   });
 }
+const liveInRepo = new Map<string, number>(); // WORK-RECOVERY: sessions running in a run's repository right now; work is restored only when none is (a live session may be between its own stash and pop)
+const physical = (p: string): string => { try { return realpathSync(p); } catch { return resolve(p); } };
+/** WORK-RECOVERY: the run whose repository this session works in (its cwd is the run's repository, not a Wall or attempt directory), or null. */
+export function workRunOf(cfg: SessionRunnerConfig, cwd: string, env: NodeJS.ProcessEnv = process.env): { repoDir: string; runDir: string; branch: string } | null {
+  const runId = env["LOKI_E10_RUN_ID"];
+  if (!cfg.lokiRoot || !runId || !/^e10-[A-Za-z0-9-]+$/.test(runId)) return null;
+  const repoDir = dirname(cfg.lokiRoot);
+  return physical(cwd) === physical(repoDir) ? { repoDir, runDir: join(cfg.lokiRoot, "runs", runId), branch: `loki/${runId}` } : null;
+}
+/** WORK-RECOVERY: restores what the run's sessions set aside (util/base_guard.ts recoverRunWork) and emits work.recovered / work.kept. Skipped while another session runs in the repository. */
+export function recoverSessionWork(cfg: SessionRunnerConfig, run: { repoDir: string; runDir: string; branch: string } | null, stage: string, sessionId: string, when: "start" | "end"): void {
+  if (!run || (liveInRepo.get(run.runDir) ?? 0) > 0) return;
+  const r = recoverRunWork({ ...run, stage, where: "session" });
+  if (r.recovered.length > 0) cfg.emit?.("work.recovered", stage, { session_id: sessionId, files: r.recovered.reduce((n, x) => n + x.files, 0), stashes: r.recovered.map((x) => x.sha), from: "stash", when: `session ${when}` });
+  if (r.kept.length > 0) cfg.emit?.("work.kept", stage, { session_id: sessionId, stashes: r.kept.map((x) => ({ ref: x.sha, reason: x.reason })) });
+}
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
   let allowOnce: string[] = []; // E1: config paths a spec conflict named, editable by the very next session only (the resume)
   return {
@@ -178,6 +200,8 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       if (fenceOn) { env["LOKI_E10_FENCE_TASK"] = fenceTaskText; env["LOKI_E10_FENCE_ALLOW"] = JSON.stringify([...allowOnce, ...fenceCreated]); env["LOKI_E10_FENCE_DENYLOG"] = fenceDenyLog; } else { for (const k of ["LOKI_E10_FENCE_TASK", "LOKI_E10_FENCE_ALLOW", "LOKI_E10_FENCE_DENYLOG"]) delete env[k]; }
       if (fenceSnap?.error && fenceRunDir) appendFence(fenceRunDir, { k: "failure", text: `config fence inactive for this session: ${fenceSnap.error}` });
       archivePriorCosts(cfg.lokiRoot, opts.cwd, opts.iterationId);
+      const workRun = workRunOf(cfg, fenceCwd); // WORK-RECOVERY: the stash list at run start is recorded once; what an earlier, killed process of this run left set aside is restored before this session reads the tree
+      if (workRun) { recordStashBaseline(workRun.repoDir, workRun.runDir); recoverSessionWork(cfg, workRun, opts.stage, opts.iterationId, "start"); liveInRepo.set(workRun.runDir, (liveInRepo.get(workRun.runDir) ?? 0) + 1); }
       const [cmd, args] = cfg.childCommand ?? [
         process.execPath,
         // Through the cli `engine10 session` route: import.meta.path is dist/loki.js in a bundle, session.ts from source.
@@ -226,6 +250,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
           clearTimeout(limitTimer);
           clearInterval(heartbeatTimer);
           stopBudgetWatch();
+          if (workRun) { liveInRepo.set(workRun.runDir, Math.max(0, (liveInRepo.get(workRun.runDir) ?? 1) - 1)); recoverSessionWork(cfg, workRun, opts.stage, sessionId, "end"); } // WORK-RECOVERY: every way a session ends (its own exit, a stop rule, the stage limit, the run cap, the watchdog, a cancel) passes here; before the guard and the fence judge the tree
           const guard = finishGuard(guardSnap); // PARITY-ENFORCE: revert destructive changes, fail the iteration
           if (!guard.ok) cfg.emit?.("guard.violation", opts.stage, { provider: cfg.provider, violations: guard.violations, reverted: guard.reverted });
           opts.signal.removeEventListener("abort", onAbort);

@@ -6,6 +6,9 @@ import { installOwned } from "../project_model/install.ts"; import { LOCKFILE_RE
 import { runFormattersRecord, type FormatRecord } from "../runner/repo_profile.ts";
 import { safeGit, safeGitSpawn, tokenFreeEnv } from "../util/safe_git.ts";
 import { commitWallEnabled } from "../util/check_result.ts";
+import { recoverRunWork } from "../util/base_guard.ts";
+/** WORK-RECOVERY: before a run-end commit (backstop or WIP), the run's own set-aside work returns to the tree and the checkout to the run branch (util/base_guard.ts). */
+const rescueRunWork = (repoDir: string, runId: string): void => { if (/^e10-[A-Za-z0-9-]+$/.test(runId)) recoverRunWork({ repoDir, runDir: join(repoDir, ".loki", "runs", runId), branch: `loki/${runId}`, where: "run-end", moveBranch: true }); };
 import { escapeRegex } from "../util/regex_escape.ts";
 
 export const WALL_FILE = /(^|\/)loki_wall_[^/]*$/; // a Wall test file: the commit stage never publishes it
@@ -204,6 +207,7 @@ export function guardedBackstop(intact: boolean, repoDir: string, workerEnv: Nod
   if (!intact) return "backstop commit skipped: event log failed verification";
   const b = validBase(base);
   if (b === null) return base === null || base === undefined ? null : "backstop commit skipped: base is not a full object id";
+  rescueRunWork(repoDir, runId);
   backstopCommit(repoDir, workerEnv, runId, b, preexistingDirty, installCreated, untrackedBlobs, task);
   return null;
 }
@@ -216,6 +220,7 @@ export function guardedBackstop(intact: boolean, repoDir: string, workerEnv: Nod
 export function commitUnsealedWork(intact: boolean, repoDir: string, workerEnv: NodeJS.ProcessEnv, runId: string, intake: Record<string, unknown> | undefined): boolean {
   if (!intact || !intake || validBase(intake["base_sha"]) === null) return false;
   const g = (args: string[]) => safeGit(repoDir, args, { env: workerEnv });
+  rescueRunWork(repoDir, runId); // a paused or cancelled run's work in a stash or on a branch a session switched to is committed too
   try {
     if (g(["symbolic-ref", "-q", "--short", "HEAD"]).trim() !== `loki/${runId}`) return false;
     const keys = (o: unknown): string[] => (o && typeof o === "object" ? Object.keys(o) : []);

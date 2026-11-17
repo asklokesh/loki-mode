@@ -62,6 +62,7 @@ const HOST_WORD = word("docker|docker-compose|kill|killall|pkill|sudo|doas|launc
 const SHELL_WORD = word("bash|dash|ksh|sh|zsh");
 const DASH_C_ARG = /(?:^|[\s;&|()`])-[^\s;&|()`]*c/;
 const ENV_WORD = word("env");
+const GIT_WORD = /(?:^|[\s;&|()`/])git(?=$|[\s;&|()`])/; // no trailing-slash run: "git" is never a directory here, and word()'s `/*` would let "git/x" through unchanged anyway
 const ENV_SPLIT_ARG = /(?:^|[\s;&|()`])(?:-S|--split-string)(?=$|[\s;&|()`])/;
 // Raw-text rules: the explicit port claims and the BLOCKED_PATTERNS list, each widened (`.` spans lines, a
 // value check dropped, `$\(base64` read literally) so it matches whenever the script's pattern does. Every shape
@@ -117,6 +118,7 @@ export function scriptRuleMayApply(command: string, env: NodeJS.ProcessEnv = pro
     if (HOST_WORD.test(s)) return "host";
     if (SHELL_WORD.test(s) && DASH_C_ARG.test(s)) return "nested-shell";
     if (ENV_WORD.test(s) && ENV_SPLIT_ARG.test(s)) return "env-split";
+    if (env["LOKI_E10_STAGE"] && s.includes("stash") && GIT_WORD.test(s)) return "git-stash"; // STASH-GUARD: an engine session never runs `git stash` (the script's git_stash rule decides; a command that only names it is allowed)
   }
   return null;
 }

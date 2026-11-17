@@ -1523,6 +1523,209 @@ SR="$T/scope-limitred"; scope_fixture "$SR" slowapp; scope_run "$SR" "$SCOPE_BRE
 fi
 }
 
+# ---- 10: WORK-RECOVERY begin: finished work is never lost ---------------------------------------------------------------------------------------
+# opencode 63310 (Loki 11.152.0): a fix session ran `git stash -q; ...; git stash pop -q` and was stopped between the two; the whole correct change
+# sat in stash@{0}, the checkout was clean, "committed false", nothing delivered. Asserts:
+#   e2e stash:  a fix session that sets its work aside with the stash command and is then stopped (SIGKILL) still delivers the edit: the run's branch
+#               holds the fixed multiply(), a work.recovered event counts the files, the receipt carries the line, and the stash the user made before
+#               the run is still on the stack, same SHA, never applied; implement and fix sessions carry the Bash(git stash:*) deny rule.
+#   e2e edit:   the same stop after the session wrote another change to the stashed file: the stash is kept (not dropped), the receipt names it with
+#               the command that restores it, and nothing with a conflict marker is committed.
+#   e2e branch: a fix session that committed its work on a branch of its own and was stopped there: the run branch is fast-forwarded to that commit
+#               (the side branch is not moved) and the change is delivered.
+#   e2e killed: the engine worker itself is killed while the fix sits in a stash (no session-end handler, no commit stage): the run-end commit on the
+#               run's branch still holds the fix.
+#   unit:       util/base_guard.ts on fixture repositories: a stash made on the run branch during the run is applied, verified and dropped (tracked and
+#               untracked files); one in the start record is never read; one made on another branch is left and disclosed; one that would conflict, or
+#               whose base is no longer HEAD, is kept with the tree byte-identical; no record or an unreadable record touches nothing; a checkout a
+#               session left on another branch returns to the run branch (same commit: re-pointed; commits made during the run: fast-forward; commits
+#               older than the run: left and disclosed, the run branch unmoved).
+# Planted defects (each reverted afterwards; run from source):
+#   WRa. engine10/session.ts: drop the recoverSessionWork call in the close handler; e2e stash reads "session-start" (the next session restored it, after a
+#        verify that ran on a tree without the work). Drop the start call too: it reads "commit". Drop the commit stage's and the run-end calls as well:
+#        nothing is restored and e2e stash, edit and branch fail.
+#   WRb. base_guard.ts recoverRunWork: drop the `base.stashes.has` line; the unit's preexisting case applies and drops the user's entry.
+#   WRc. base_guard.ts recoverRunWork: drop the stashMadeOn test; the unit's foreign case applies and drops an entry made on another branch.
+#   WRd. base_guard.ts restoreStash: drop the dirty-file check; the unit's conflict case and e2e edit lose the kept line (git refuses or merges).
+#   WRe. base_guard.ts restoreStash: drop the head !== base check; the unit's moved case applies onto a moved checkout.
+#   WRf. base_guard.ts baselineOf: accept a missing record as an empty start list; the unit's norecord case applies and drops.
+#   WRg. base_guard.ts returnToRunBranch: drop the `own` (made during the run) test; the unit's oldcommits case fast-forwards the run branch onto the user's commits.
+#   WRh. seal.ts commit stage: drop moveBranch; e2e branch leaves the run branch at the base (nothing delivered on it).
+#   WRi. engine10/session.ts writerDenyList: return the stage list only; the deny-rule checks fail.
+#   WRj. base_guard.ts restoreStash: drop the entry without the verify (`git diff --quiet <stash>`) step, with the apply made to fail silently; the unit's verify case loses the entry.
+unit_work_recovery() {
+    local R OUT RC U USER_STASH f run
+    wr_run() { # wr_run <name> <env...> -> R, OUT, RC, run (run dir); the repo carries one stash of the user's own, made before the run
+        local name="$1"; shift
+        R="$T/repo-wr-$name"
+        new_repo "$R"
+        printf '// my own unfinished note\n' >> "$R/calc.ts"
+        git -C "$R" stash push -q -m "the user's own stash"
+        USER_STASH="$(git -C "$R" rev-parse 'stash@{0}')"
+        OUT="$(cd "$R" && env "$@" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit E2E_STUB_STASH=fix E2E_STUB_STASH_MARK="$T/wr-$name.mark" E2E_STUB_ARGV_LOG="$T/wr-$name.argv" ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "$TASK" --no-pr </dev/null 2>&1)"; RC=$?
+        run="$(ls -d "$R"/.loki/runs/e10-* 2>/dev/null | head -1)"
+    }
+    wr_facts() { # -> "<verdict> <work.recovered events> <files> <when> <receipt recovered lines> <receipt kept lines> <kept names apply cmd> <start record is the user's stash only>"
+        python3 -I - "$run" "$USER_STASH" <<'PY'
+import json, os, sys
+rd = sys.argv[1]
+ev = [json.loads(l) for l in open(os.path.join(rd, "events.jsonl")) if l.strip().startswith("{")]
+rec = [e for e in ev if e.get("type") == "work.recovered"]
+try: receipt = json.load(open(os.path.join(rd, "receipt.json")))
+except Exception: receipt = {}
+np = receipt.get("not_proven", [])
+led = [json.loads(l) for l in open(os.path.join(rd, "work-ledger.jsonl"))] if os.path.exists(os.path.join(rd, "work-ledger.jsonl")) else []
+kept = [n for n in np if n.startswith("work NOT restored: stash ")]
+print(receipt.get("verdict"), len(rec), sum(e["data"].get("files", 0) for e in rec), ",".join(sorted({str(e["data"].get("when", "")).replace(" ", "-") for e in rec})) or "-",
+      sum(n.startswith("work recovered: ") for n in np), len(kept), all("restore it with: git stash apply " in n for n in kept) and bool(kept),
+      bool(led) and led[0].get("k") == "baseline" and led[0].get("stashes") == [sys.argv[2]])
+PY
+    }
+    wr_branch_has() { git -C "$R" show "loki/$(basename "$run"):calc.ts" 2>/dev/null | grep -q 'return a \* b;'; }
+
+    wr_run stash
+    f="$(wr_facts)"
+    [ "$f" = "VERIFIED 1 1 session-end 1 0 False True" ] && ok "e2e stash: the fix session's stashed edit is restored when the session is stopped (work.recovered counts 1 file, receipt line, start record names only the user's stash)" || { bad "e2e stash facts: $f (rc $RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
+    wr_branch_has && ok "e2e stash: the run's branch holds the fixed multiply()" || bad "e2e stash: loki/$(basename "$run") does not hold the fix"
+    [ "$(git -C "$R" stash list --format=%H | tr '\n' ' ')" = "$USER_STASH " ] && ok "e2e stash: the stash the user made before the run is the only entry left, same SHA" || bad "e2e stash: stash list is [$(git -C "$R" stash list --format='%H %gs' | tr '\n' ';')], want only $USER_STASH"
+    git -C "$R" show "loki/$(basename "$run"):calc.ts" | grep -q 'my own unfinished note' && bad "e2e stash: the user's own stash was applied to the run" || ok "e2e stash: the user's own stash was never applied"
+    [ "$(git -C "$R" branch --show-current)" = feature ] && ok "e2e stash: the checkout is back on its start branch" || bad "e2e stash: checkout is on '$(git -C "$R" branch --show-current)'"
+    grep '^implement' "$T/wr-stash.argv" | grep -qF 'Bash(git stash:*)' && ! grep '^plan' "$T/wr-stash.argv" | grep -qF 'Bash(git stash:*)' \
+        && ok "e2e stash: writer sessions carry the Bash(git stash:*) deny rule, the plan session does not" || bad "e2e stash: deny rule: implement $(grep '^implement' "$T/wr-stash.argv" | grep -cF 'Bash(git stash:*)'), plan $(grep '^plan' "$T/wr-stash.argv" | grep -cF 'Bash(git stash:*)')"
+
+    wr_run edit E2E_STUB_STASH_THEN=edit
+    f="$(wr_facts)"
+    case "$f" in *" 0 0 - 0 1 True True") ok "e2e edit: a stash that cannot go back cleanly is kept, and the receipt names it with the restore command (${f%% *})" ;; *) bad "e2e edit facts: $f (rc $RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /' ;; esac
+    [ "$(git -C "$R" stash list --format=%H | wc -l | tr -d ' ')" = 2 ] && git -C "$R" stash list --format=%H | grep -qx "$USER_STASH" && ok "e2e edit: both stash entries are still on the stack" || bad "e2e edit: stash list is [$(git -C "$R" stash list --format='%H %gs' | tr '\n' ';')]"
+    for b in $(git -C "$R" for-each-ref --format='%(refname:short)' refs/heads/loki/); do git -C "$R" grep -q -e '^<<<<<<<' -e '^>>>>>>>' "$b" -- . 2>/dev/null && bad "e2e edit: a conflict marker was committed on $b"; done
+    ok "e2e edit: no conflict marker is committed on any run branch"
+
+    wr_run branch E2E_STUB_STASH_THEN=branch
+    f="$(wr_facts)"
+    wr_branch_has && ok "e2e branch: the run's branch holds the fix a session committed on a branch of its own (${f%% *})" || { bad "e2e branch: loki/$(basename "$run") does not hold the fix (facts: $f, rc $RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
+    [ -n "$(git -C "$R" rev-parse --verify -q stub-side)" ] && git -C "$R" merge-base --is-ancestor stub-side "loki/$(basename "$run")" && ok "e2e branch: the side branch is still there and the run branch contains it" || bad "e2e branch: stub-side is gone or not contained in the run branch"
+    python3 -I -c 'import json,sys; np=json.load(open(sys.argv[1])).get("not_proven",[]); sys.exit(0 if any("fast-forwarded" in n and "stub-side" in n for n in np) else 1)' "$run/receipt.json" 2>/dev/null && ok "e2e branch: the receipt says the run branch was fast-forwarded from stub-side" || { bad "e2e branch: the receipt does not name stub-side"; cat "$run/work-ledger.jsonl" 2>&1 | sed 's/^/    | ledger: /'; python3 -I -c 'import json,sys; [print("    | np: " + n) for n in json.load(open(sys.argv[1])).get("not_proven",[])]' "$run/receipt.json" 2>&1; }
+    [ "$(git -C "$R" branch --show-current)" = feature ] && ok "e2e branch: the checkout is back on its start branch" || bad "e2e branch: checkout is on '$(git -C "$R" branch --show-current)'"
+
+    wr_run killed E2E_STUB_STASH_THEN=killworker
+    wr_branch_has && ok "e2e killed: the engine worker died with the fix in a stash (no session-end handler ran); the run-end commit on the run's branch holds the fix" || { bad "e2e killed: loki/$(basename "$run") does not hold the fix (rc $RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; cat "$T/wr-killed.mark.err" 2>/dev/null | sed 's/^/    | stub: /'; }
+    grep -q '"k":"recovered".*"where":"run-end"' "$run/work-ledger.jsonl" 2>/dev/null && ok "e2e killed: the run's record says the stash was restored at the end of the run" || bad "e2e killed: no run-end recovery in $(cat "$run/work-ledger.jsonl" 2>&1 | tr '\n' ' ')"
+    [ "$(git -C "$R" stash list --format=%H | tr '\n' ' ')" = "$USER_STASH " ] && [ "$(git -C "$R" branch --show-current)" = feature ] && ok "e2e killed: only the user's own stash is left and the checkout is back on its start branch" || bad "e2e killed: stash list [$(git -C "$R" stash list --format='%H %gs' | tr '\n' ';')], branch $(git -C "$R" branch --show-current)"
+
+    cat > "$T/wr-unit.ts" <<'TS'
+import { execFileSync } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const [src, fixture, root] = process.argv.slice(2) as [string, string, string];
+const bg = await import(join(src, "util/base_guard.ts")), se = await import(join(src, "engine10/session.ts"));
+const BR = "loki/e10-wr", ENV = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+const g = (dir: string, ...a: string[]): string => execFileSync("git", a, { cwd: dir, env: ENV, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+const gd = (dir: string, date: string, ...a: string[]): string => execFileSync("git", a, { cwd: dir, env: { ...ENV, GIT_COMMITTER_DATE: date, GIT_AUTHOR_DATE: date }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+function repo(name: string): { dir: string; runDir: string } {
+  const dir = join(root, name); execFileSync("cp", ["-R", fixture, dir]);
+  g(dir, "init", "-q", "-b", "main"); g(dir, "config", "user.name", "wr"); g(dir, "config", "user.email", "wr@example.invalid");
+  g(dir, "add", "calc.ts", "calc.test.ts", "bunfig.toml"); g(dir, "commit", "-q", "-m", "base"); g(dir, "checkout", "-q", "-b", "feature");
+  const runDir = join(dir, ".loki", "runs", "e10-wr"); mkdirSync(runDir, { recursive: true });
+  appendFileSync(join(dir, ".git", "info", "exclude"), ".loki/\n"); // as intake does: Loki's own state is never untracked work
+  return { dir, runDir };
+}
+const start = (r: { dir: string; runDir: string }): void => { g(r.dir, "checkout", "-q", "-b", BR); bg.recordStashBaseline(r.dir, r.runDir); };
+const stashes = (dir: string): string[] => g(dir, "stash", "list", "--format=%H").split("\n").filter(Boolean);
+const calc = (dir: string): string => readFileSync(join(dir, "calc.ts"), "utf8");
+const rec = (r: { dir: string; runDir: string }, extra: Record<string, unknown> = {}) => bg.recoverRunWork({ repoDir: r.dir, runDir: r.runDir, branch: BR, stage: "fix", where: "session", ...extra });
+const out: Record<string, string> = {};
+const yn = (...b: boolean[]): string => b.map((x) => (x ? "y" : "n")).join("");
+
+{ // ok: tracked edit and an untracked file, stashed with -u on the run branch during the run, beside the user's earlier stash
+  const r = repo("ok"); appendFileSync(join(r.dir, "calc.ts"), "// the user's note\n"); g(r.dir, "stash", "push", "-q", "-m", "mine"); const user = stashes(r.dir)[0]!;
+  start(r); appendFileSync(join(r.dir, "calc.ts"), "export const fixed = 1;\n"); writeFileSync(join(r.dir, "new.ts"), "export const n = 2;\n"); g(r.dir, "stash", "push", "-q", "-u");
+  const x = rec(r), notes = bg.workRecoveryNotes(r.runDir, r.dir);
+  out.ok = yn(x.recovered.length === 1 && x.recovered[0].files === 2, x.kept.length === 0 && x.foreign.length === 0, calc(r.dir).includes("export const fixed = 1;") && !calc(r.dir).includes("the user's note"), existsSync(join(r.dir, "new.ts")),
+    JSON.stringify(stashes(r.dir)) === JSON.stringify([user]), notes.length === 1 && notes[0].startsWith("work recovered: 2 file(s) a fix session had set aside") && notes[0].endsWith("(disclosed, does not cap)"), rec(r).recovered.length === 0);
+}
+{ // preexisting: an entry made on the run branch that is in the start record (a resumed run) is never read
+  const r = repo("pre"); g(r.dir, "checkout", "-q", "-b", BR); appendFileSync(join(r.dir, "calc.ts"), "// before the record\n"); g(r.dir, "stash", "push", "-q"); const pre = stashes(r.dir);
+  bg.recordStashBaseline(r.dir, r.runDir); const before = calc(r.dir), x = rec(r);
+  out.preexisting = yn(x.recovered.length === 0 && x.kept.length === 0 && x.foreign.length === 0, JSON.stringify(stashes(r.dir)) === JSON.stringify(pre), calc(r.dir) === before, bg.workRecoveryNotes(r.runDir, r.dir).length === 0);
+}
+{ // foreign: made during the run, but on another branch (the stash stack is shared by every worktree): left, and disclosed with its ref
+  const r = repo("foreign"); start(r); g(r.dir, "checkout", "-q", "feature"); appendFileSync(join(r.dir, "calc.ts"), "// someone else's\n"); g(r.dir, "stash", "push", "-q"); g(r.dir, "checkout", "-q", BR);
+  const sha = stashes(r.dir)[0]!, before = calc(r.dir), x = rec(r), notes = bg.workRecoveryNotes(r.runDir, r.dir);
+  out.foreign = yn(x.recovered.length === 0 && x.foreign.length === 1, stashes(r.dir)[0] === sha, calc(r.dir) === before, notes.length === 1 && notes[0].includes("left untouched") && notes[0].includes(`git stash apply ${sha}`));
+}
+{ // conflict: the stashed file has another change in the tree: kept, named, the tree byte-identical, nothing unmerged
+  const r = repo("conflict"); start(r); appendFileSync(join(r.dir, "calc.ts"), "export const fixed = 1;\n"); g(r.dir, "stash", "push", "-q"); appendFileSync(join(r.dir, "calc.ts"), "// written after the stash\n");
+  const sha = stashes(r.dir)[0]!, before = calc(r.dir), x = rec(r), again = rec(r), notes = bg.workRecoveryNotes(r.runDir, r.dir);
+  out.conflict = yn(x.recovered.length === 0 && x.kept.length === 1 && x.kept[0].reason.includes("other changes to the same file"), stashes(r.dir)[0] === sha && stashes(r.dir).length === 1, calc(r.dir) === before && !before.includes("<<<<<<<"), g(r.dir, "ls-files", "-u") === "",
+    again.kept.length === 1 && notes.length === 1 && notes[0].startsWith(`work NOT restored: stash ${sha.slice(0, 12)}`) && notes[0].includes(`restore it with: git stash apply ${sha}`));
+}
+{ // moved: HEAD is no longer the commit the stash was made on (a three-way merge could conflict): kept
+  const r = repo("moved"); start(r); appendFileSync(join(r.dir, "calc.ts"), "export const fixed = 1;\n"); g(r.dir, "stash", "push", "-q"); writeFileSync(join(r.dir, "other.ts"), "export const o = 1;\n"); g(r.dir, "add", "other.ts"); g(r.dir, "commit", "-q", "-m", "moved on");
+  const sha = stashes(r.dir)[0]!, before = calc(r.dir), x = rec(r);
+  out.moved = yn(x.recovered.length === 0 && x.kept.length === 1 && x.kept[0].reason.includes("the checkout moved"), stashes(r.dir)[0] === sha, calc(r.dir) === before);
+}
+for (const kind of ["norecord", "badrecord"]) { // no start record, or one that cannot be read: nothing is the run's for sure, so nothing is touched
+  const r = repo(kind); g(r.dir, "checkout", "-q", "-b", BR); if (kind === "badrecord") writeFileSync(bg.workLedgerPath(r.runDir), "{not json\n");
+  appendFileSync(join(r.dir, "calc.ts"), "export const fixed = 1;\n"); g(r.dir, "stash", "push", "-q");
+  const sha = stashes(r.dir)[0]!, before = calc(r.dir), x = rec(r, { moveBranch: true });
+  out[kind] = yn(x.recovered.length === 0 && x.kept.length === 0 && x.foreign.length === 0, stashes(r.dir)[0] === sha, calc(r.dir) === before, bg.workRecoveryNotes(r.runDir, r.dir).length === 0);
+}
+{ // same commit on another branch, edit uncommitted: HEAD is re-pointed, the edit and the side branch stay
+  const r = repo("same"); start(r); g(r.dir, "checkout", "-q", "-b", "side"); appendFileSync(join(r.dir, "calc.ts"), "export const fixed = 1;\n");
+  const x = rec(r, { where: "commit", moveBranch: true });
+  out.same = yn(g(r.dir, "branch", "--show-current") === BR, calc(r.dir).includes("export const fixed = 1;"), g(r.dir, "rev-parse", "side") === g(r.dir, "rev-parse", BR), typeof x.moved === "string" && x.moved.includes("put it back on " + BR));
+}
+{ // commits made during the run on a side branch (and one on a detached HEAD): the run branch is fast-forwarded, the side branch is not moved
+  const r = repo("ff"); start(r); g(r.dir, "checkout", "-q", "-b", "side"); appendFileSync(join(r.dir, "calc.ts"), "export const fixed = 1;\n"); g(r.dir, "commit", "-q", "-am", "session commit"); const side = g(r.dir, "rev-parse", "side");
+  const x = rec(r, { where: "commit", moveBranch: true }), d = repo("ffdet"); start(d); g(d.dir, "checkout", "-q", "--detach"); appendFileSync(join(d.dir, "calc.ts"), "export const fixed = 1;\n"); g(d.dir, "commit", "-q", "-am", "detached commit"); const dh = g(d.dir, "rev-parse", "HEAD");
+  const y = rec(d, { where: "commit", moveBranch: true });
+  out.ff = yn(g(r.dir, "branch", "--show-current") === BR && g(r.dir, "rev-parse", BR) === side, g(r.dir, "rev-parse", "side") === side, typeof x.moved === "string" && x.moved.includes("fast-forwarded") && bg.workRecoveryNotes(r.runDir, r.dir).some((n: string) => n.includes("fast-forwarded")),
+    g(d.dir, "branch", "--show-current") === BR && g(d.dir, "rev-parse", BR) === dh && String(y.moved).includes("detached HEAD"));
+}
+{ // commits older than the run on the branch a session switched to (the user's own work): never pulled into the run branch; disclosed with the ref
+  const r = repo("old"); g(r.dir, "checkout", "-q", "-b", "userwork"); appendFileSync(join(r.dir, "calc.ts"), "// the user's own commit\n"); gd(r.dir, "2001-01-01T00:00:00Z", "commit", "-q", "-am", "user work"); g(r.dir, "checkout", "-q", "feature");
+  start(r); const tip = g(r.dir, "rev-parse", BR); g(r.dir, "checkout", "-q", "userwork"); const x = rec(r, { where: "commit", moveBranch: true });
+  out.oldcommits = yn(g(r.dir, "rev-parse", BR) === tip, g(r.dir, "branch", "--show-current") === "userwork", typeof x.moved === "string" && x.moved.includes("left untouched") && x.moved.includes("userwork"));
+}
+{ // the entry is dropped only after the restored files are compared with the stash: a clean filter that rewrites the file on the way in makes them differ
+  const r = repo("verify"); start(r); appendFileSync(join(r.dir, "calc.ts"), "export const fixed = 1;\n"); g(r.dir, "stash", "push", "-q"); const sha = stashes(r.dir)[0]!;
+  writeFileSync(join(r.dir, ".git", "info", "attributes"), "calc.ts filter=wr\n"); g(r.dir, "config", "filter.wr.smudge", "sed s/fixed/broken/"); g(r.dir, "config", "filter.wr.clean", "cat");
+  const x = rec(r);
+  out.verify = yn(x.recovered.length === 0 && x.kept.length === 1, stashes(r.dir)[0] === sha);
+  out.verify_reason = x.kept[0]?.reason ?? "";
+}
+{ // a paused or cancelled run (no commit stage, no receipt): the run-end WIP commit holds work left in a stash, and work a session committed on a side branch
+  const cf = await import(join(src, "e10ext/commit_filter.ts"));
+  const r = repo("wip"); const base = g(r.dir, "rev-parse", "HEAD"); start(r); appendFileSync(join(r.dir, "calc.ts"), "export const fixed = 1;\n"); g(r.dir, "stash", "push", "-q");
+  const did = cf.commitUnsealedWork(true, r.dir, ENV, "e10-wr", { base_sha: base });
+  const s = repo("wipside"); const sbase = g(s.dir, "rev-parse", "HEAD"); start(s); g(s.dir, "checkout", "-q", "-b", "side"); appendFileSync(join(s.dir, "calc.ts"), "export const fixed = 1;\n"); g(s.dir, "commit", "-q", "-am", "session commit"); appendFileSync(join(s.dir, "calc.ts"), "export const more = 2;\n");
+  const did2 = cf.commitUnsealedWork(true, s.dir, ENV, "e10-wr", { base_sha: sbase });
+  out.wip = yn(did === true, g(r.dir, "show", `${BR}:calc.ts`).includes("export const fixed = 1;"), stashes(r.dir).length === 0, g(r.dir, "status", "--porcelain", "--untracked-files=no") === "",
+    did2 === true && g(s.dir, "branch", "--show-current") === BR, g(s.dir, "show", `${BR}:calc.ts`).includes("export const fixed = 1;") && g(s.dir, "show", `${BR}:calc.ts`).includes("export const more = 2;"));
+}
+out.deny = yn(se.writerDenyList("implement", undefined) === "Bash(git stash:*)", se.writerDenyList("fix", "Edit,Write") === "Edit,Write,Bash(git stash:*)", se.writerDenyList("prove", "Bash(git stash:*)") === "Bash(git stash:*)", se.writerDenyList("plan", undefined) === "", se.writerDenyList("wall", "Edit") === "Edit");
+out.made_on = yn(bg.stashMadeOn("WIP on loki/e10-wr: abc1234 base", BR), bg.stashMadeOn("On loki/e10-wr: custom message", BR), !bg.stashMadeOn("WIP on loki/e10-wr2: abc base", BR), !bg.stashMadeOn("WIP on feature: abc mentions loki/e10-wr: x", BR), !bg.stashMadeOn("WIP on (no branch): abc base", BR));
+for (const [k, v] of Object.entries(out)) console.log(`${k}=${v}`);
+TS
+    U="$(cd "$ROOT/loki-ts" && bun "$T/wr-unit.ts" "$ROOT/loki-ts/src" "$FIX/repo" "$T" 2>&1)"
+    has "unit ok: a stash made on the run branch during the run is applied, verified and dropped (tracked and untracked), the user's earlier entry untouched, one receipt line, a second pass does nothing" "$U" "ok=yyyyyyy"
+    has "unit preexisting: an entry in the start record is never applied or dropped, even on the run branch" "$U" "preexisting=yyyy"
+    has "unit foreign: an entry made during the run on another branch is left and disclosed with its ref" "$U" "foreign=yyyy"
+    has "unit conflict: a stash whose file has another change is kept and named, the tree byte-identical, nothing unmerged" "$U" "conflict=yyyyy"
+    has "unit moved: a stash whose base is no longer HEAD is kept" "$U" "moved=yyy"
+    has "unit norecord: with no start record nothing is touched" "$U" "norecord=yyyy"
+    has "unit badrecord: with an unreadable start record nothing is touched" "$U" "badrecord=yyyy"
+    has "unit same: a checkout left on another branch at the same commit is re-pointed to the run branch, edit kept" "$U" "same=yyyy"
+    has "unit ff: commits a session made on a side branch or a detached HEAD are fast-forwarded into the run branch; the side branch is not moved" "$U" "ff=yyyy"
+    has "unit oldcommits: commits older than the run are never pulled into the run branch; disclosed with the ref" "$U" "oldcommits=yyy"
+    has "unit verify: an entry whose restored files do not match the stash is kept, not dropped" "$U" "verify=yy"
+    has "unit wip: a paused or cancelled run's WIP commit holds work left in a stash and work a session committed on a side branch" "$U" "wip=yyyyyy"
+    has "unit deny: implement, fix and prove sessions get Bash(git stash:*) on top of the stage's own deny list; plan and wall do not" "$U" "deny=yyyyy"
+    has "unit made_on: only the reflog line of the run branch itself counts" "$U" "made_on=yyyyy"
+    if grep -Eq '^[a-z_]+=[yn]*n[yn]*$' <<< "$U" || ! grep -q '^made_on=' <<< "$U"; then printf '%s\n' "$U" | sed 's/^/    | /'; fi
+}
+# ---- WORK-RECOVERY end ------------------------------------------------------------------------------------------------------------------------------
+
 # ---- dispatch: the longest units first so the slowest one starts at once ----------------------------------------
 RV_LIST=""
 for ver in ${RV_VERSIONS:-2.1.9 5.1.0}; do
@@ -1539,6 +1742,7 @@ for c in same one backend changed p8 p8new pathnorm unhandled delpkg; do
     for ver in $RV_LIST; do unit_start "rv-$ver-$c" unit_rv "$ver" "$c"; done
 done
 unit_start failed unit_failed_and_cancelled
+unit_start workrec unit_work_recovery
 unit_start usage unit_usage_limit
 unit_start detach unit_detach
 unit_start goals unit_goals

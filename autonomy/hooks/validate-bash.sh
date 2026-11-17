@@ -130,6 +130,38 @@ wrapper_value_options = {
 shells = {"bash", "dash", "ksh", "sh", "zsh"}
 separators = {";", "&", "&&", "|", "||", "(", ")"}
 assignment = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$", re.S)
+# STASH-GUARD: an engine session (LOKI_E10_STAGE is set only by engine10/session.ts) never runs `git stash`. A session
+# stopped between the stash and the pop left its whole change in the stash and the run delivered nothing.
+STASH_REASON = "__git_stash__"
+stash_guard = bool(os.environ.get("LOKI_E10_STAGE"))
+shell_keywords = {"{", "!", "then", "do", "else", "elif", "if", "while", "until"}
+git_value_options = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix", "--config-env", "--attr-source"}
+# a command substitution inside a quoted word is one token to shlex, so it is read from the text
+stash_substitution = re.compile(r"(?:\$\(|`)\s*(?:[^\s)`]*/)?git\s[^)`]*\bstash\b")
+
+
+def git_stash(part):
+    start = 0
+    while start < len(part) and part[start] in shell_keywords:
+        start += 1
+    rest = part[start:]
+    name, index = first_command(rest)
+    args = rest[index + 1:]
+    if name == "xargs":
+        while args and args[0].startswith("-"):
+            args = args[1:]
+        name, args = (basename(args[0]), args[1:]) if args else ("", [])
+    if name != "git":
+        return False
+    pos = 0
+    while pos < len(args):
+        if args[pos] in git_value_options:
+            pos += 2
+        elif args[pos].startswith("-"):
+            pos += 1
+        else:
+            break
+    return pos < len(args) and args[pos] == "stash"
 
 
 def basename(value):
@@ -180,6 +212,8 @@ def classify(value, depth=0):
         tokens = words(value)
     except ValueError:
         return "command text could not be parsed safely"
+    if stash_guard and stash_substitution.search(value):
+        return STASH_REASON
 
     segment = []
     segments = []
@@ -199,6 +233,8 @@ def classify(value, depth=0):
             return "command wrapper cannot be inspected safely"
         if name in blocked:
             return blocked[name]
+        if stash_guard and git_stash(part):
+            return STASH_REASON
 
         args = part[index + 1:]
         if name in shells:
@@ -381,7 +417,9 @@ def to_classify():
 
 
 reason = classify(to_classify())
-if reason:
+if reason == STASH_REASON:
+    print("LOKI_STASH_GUARD: git stash is refused in a Loki session: a session that is stopped between the stash and the pop leaves its whole change outside the work tree, and the run then delivers nothing. To see the code without your change use git diff, git show HEAD:<file>, or a temporary copy of the file under $TMPDIR.")
+elif reason:
     print("LOKI_HOST_GUARD: refusing " + reason + ". Use the platform sandbox and lifecycle APIs instead.")
 PY
     )

@@ -249,6 +249,10 @@ out.prefix_stable = b1.includes(FIXED_RULES) && b2.includes(FIXED_RULES) && cut(
 { const cx = await import(join(SRC, "e10ext/context.ts")); // UD LOKI_E10_DOC_UPDATE_RULE
   out.ud_rule = [FIXED_RULES.includes("Do update existing docs that list what you changed"), !FIXED_RULES.includes("Write no documentation unless the task explicitly asks for it"), cx.fixedRules(process.env) === FIXED_RULES, cx.fixedRules({ LOKI_E10_DOC_UPDATE_RULE: "0" }) === cx.FIXED_RULES_DOC_V139, cx.FIXED_RULES_DOC_V139.includes(cx.DOC_RULE_V139), cx.LEGACY_FIXED_RULES.includes(cx.DOC_RULE_V139)].map((b) => (b ? "y" : "n")).join(""); }
 out.rules = ["read the whole function", "sibling branches", "fix the issue prefers", "never npm test", "release-note fragment a repository convention"].map((k) => FIXED_RULES.includes(k) ? "y" : "n").join("");
+// STASH-GUARD begin: one rule line, its own constant, says never to set work aside with the stash command, why, and what to use instead; the v11.139.0 legacy block is unchanged
+{ const cx = await import(join(SRC, "e10ext/context.ts")), line = String(cx.STASH_RULE ?? ""), ty = cx;
+  out.stash_rule = [FIXED_RULES.split("\n").includes(line) && line.startsWith("- "), /never .*git stash/i.test(line), line.includes("stopped"), line.includes("git diff") && line.includes("git show HEAD:<file>") && line.includes("temporary copy"), cx.FIXED_RULES_DOC_V139.includes(line), !cx.LEGACY_FIXED_RULES.includes("stash"), ty.issueRules(FIXED_RULES).includes(line) && ty.issueRules(FIXED_RULES).endsWith(ty.ISSUE_FINISH_LINE), FIXED_RULES.endsWith(ty.FINISH_LINE)].map((b) => (b ? "y" : "n")).join(""); }
+// STASH-GUARD end
 // L3 fragment writer: deterministic release-note fragment from the repo's own convention (LOKI_E10_SCAFFOLD).
 const { writeReleaseNoteFragment: wf, summaryNote, taskForbidsReleaseNote, fragmentWriterOn, fragmentNoticeLine } = await import(join(SRC, "project_model/conventions.ts"));
 const { readFileSync: rf, existsSync: ex, readdirSync: rd } = await import("node:fs");
@@ -587,6 +591,7 @@ eqv tx_template_only none "TX a towncrier directory holding only its template na
 rn tx_off 'newest example: changes/template.rst' "TX LOKI_E10_TOWNCRIER_EXAMPLE=0 restores the newest-file example"
 eqv prefix_stable yes "L3/L5 the rule prefix is byte-identical across two runs; the convention line sits after it, never inside it"
 eqv ud_rule yyyyyy "UD the rules ask to update existing docs that list what changed; =0 restores the v11.139.0 documentation line byte for byte; the legacy block is unchanged"
+eqv stash_rule yyyyyyyy "STASH-GUARD the rules carry one line: never git stash, why (a stopped session loses the change), and git diff, git show HEAD:<file> or a temporary copy instead; issue rules keep it; the legacy block is unchanged"
 eqv rules yyyyy "L5 FIXED_RULES carries the read-whole-function, preferred-fix, targeted-tests and release-note rules"
 eqv fw_path ".changeset/fix-wrong-total-when-the-invoice.md" "FW changeset: a fragment is written next to the repo's own, named from the title"
 eqv fw_front ok "FW changeset: front matter names the workspace package of the changed file (not the private root), double quotes as in the newest example"

@@ -56,7 +56,31 @@
 # E2E_STUB_IMPL_CONFLICT=<text>: an implement session not on sonnet answers LOKI_SPEC_CONFLICT: <text>; on sonnet it implements.
 # E2E_STUB_ROUTE_LOG gets "<LOKI_E10_STAGE> <iteration> model=<--model> advisor=<advisorModel> wall=<0|1>" per call.
 # Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo); E2E_STUB_BUDGET_LOG gets its LOKI_BUDGET_LIMIT and LEDGER.
+# WORK-RECOVERY (tests/min/run-safety.sh): E2E_STUB_STASH=<engine stage> with E2E_STUB_STASH_MARK=<file>: that stage's first session, after its edit,
+#   sets the whole work tree aside with the stash command and is then stopped (SIGKILL) before any pop, as the opencode 63310 fix session was.
+#   E2E_STUB_STASH_THEN=edit: before it is stopped it also writes another change to calc.ts (the stash can then not go back cleanly);
+#   E2E_STUB_STASH_THEN=branch: it commits its work on a new branch stub-side instead of stashing, and is stopped there;
+#   E2E_STUB_STASH_THEN=killworker: after the stash it also kills the engine worker (found as the child of the pid in run.pid), as a crash would.
 set -u
+if [ -n "${E2E_STUB_STASH:-}" ] && [ "${LOKI_E10_STAGE:-}" = "$E2E_STUB_STASH" ] && [ -n "${E2E_STUB_STASH_MARK:-}" ] && [ ! -f "$E2E_STUB_STASH_MARK" ] && case " $* " in *" -p "*) true ;; *) false ;; esac; then
+  _stub_set_aside() {
+    : > "$E2E_STUB_STASH_MARK"
+    if [ "${E2E_STUB_STASH_THEN:-}" = branch ]; then
+      { git checkout -q -b stub-side && git -c user.name=stub -c user.email=stub@example.invalid commit -q -a -m "stub: work on a side branch"; } 2>> "$E2E_STUB_STASH_MARK.err"
+    else
+      git stash push -q 2>> "$E2E_STUB_STASH_MARK.err"
+      [ "${E2E_STUB_STASH_THEN:-}" = edit ] && printf '// written after the stash\n' >> calc.ts
+      if [ "${E2E_STUB_STASH_THEN:-}" = killworker ]; then # the engine worker (the supervisor's child) dies with the session, so no session-end handler runs
+        _sup="$(python3 -I -c 'import glob, json; print(json.load(open(sorted(glob.glob(".loki/runs/e10-*/run.pid"))[-1]))["pid"])' 2>/dev/null)"
+        _p="$PPID"; _pp=""
+        while [ -n "$_p" ] && [ "$_p" -gt 1 ]; do _pp="$(ps -o ppid= -p "$_p" 2>/dev/null | tr -d ' ')"; [ "$_pp" = "$_sup" ] && break; _p="$_pp"; done
+        [ -n "$_sup" ] && [ "$_pp" = "$_sup" ] && kill -9 "$_p" 2>> "$E2E_STUB_STASH_MARK.err"
+      fi
+    fi
+    kill -9 $$
+  }
+  trap _stub_set_aside EXIT
+fi
 if [ "${1:-}" = "--help" ]; then
   echo "Usage: claude [options] -p <prompt>"
   echo "  --dangerously-skip-permissions --model <m> --settings <json> -p, --print"

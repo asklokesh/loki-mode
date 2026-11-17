@@ -41,6 +41,11 @@
 #      heredoc takes minutes, the child is killed at 20 s and the adversarial check fails.
 #  15. drop `pos = end` in inOrder (steps no longer in order); the random-command comparison fails (186 of 4000).
 #  16. (providers.ts) drop onFailure "block" from the config fence matcher; the fail-closed count reads 1 of 2.
+# STASH-GUARD planted defects (each reverted afterwards):
+#  25. validate-bash.sh classify: drop the git_stash call; every `git stash` shape is allowed in an engine session.
+#  26. validate-bash.sh classify: check only the first segment; the compound shapes are allowed.
+#  27. host_guard.ts scriptRuleMayApply: drop the git-stash trigger; the script is never asked and every shape is allowed in-process.
+#  28. validate-bash.sh: ignore LOKI_E10_STAGE (rule always on); `git stash` outside an engine session is refused.
 # Q1 HEREDOC-MASK planted defects, all in validate-bash.sh mask_quoted_heredocs/to_classify (each reverted afterwards):
 #  17. never mask (the code before this change); 7 quoted-heredoc writes are refused again.
 #  18. accept any reader, not only cat or tee; the `while read l; do $l; done <<'EOF'` case is allowed.
@@ -173,6 +178,38 @@ await compare("ls", W, { LOKI_PERMISSION_POLICY: "legacy" }, false, "allow");
   for (const c of heredocDenied) await compare(c, W, {}, true, "deny");
 }
 
+// ---- STASH-GUARD (finished work is never lost) begin -------------------------------------------------------------
+// An engine session (LOKI_E10_STAGE set) never runs `git stash`, alone or inside a compound command: a session stopped
+// between the stash and the pop left its whole change in stash@{0} and the run delivered nothing (opencode 63310).
+// The rule lives in validate-bash.sh classify (git_stash); scriptRuleMayApply names it so the script is asked.
+{
+  const S = { LOKI_E10_STAGE: "fix" };
+  const stashDenied = [
+    "git stash", "git stash -q", "git stash push -u -m wip", "git stash pop", "git stash apply", "git stash drop", "git stash list",
+    "git diff --stat; git stash -q; bun test; git stash pop -q", // the shape from the run
+    "bun test && git stash", "bun test || git stash -q", "(git stash)", "git status\ngit stash", "git status | cat; git stash",
+    "echo \"$(git stash)\"", "x=$(git stash)", "echo `git stash`",
+    "git -C . stash", "git -c core.pager=cat stash", "git --no-pager stash list", "/usr/bin/git stash", "FOO=1 git stash",
+    "env GIT_PAGER=cat git stash", "command git stash", "bash -c \"git stash\"", "sh -c 'bun test; git stash -q'",
+    "{ git stash; }", "if true; then git stash; fi", "xargs git stash < /dev/null",
+  ];
+  const stashAllowed = [ // the read-only ways to see the code without the change stay open, and so does every other git command
+    "git status --short", "git diff", "git show HEAD:calc.ts", "git log --oneline -5", "git checkout -- calc.ts",
+    "cp calc.ts \"$TMPDIR/calc.ts.mine\"", "git diff HEAD -- calc.ts > \"$TMPDIR/mine.patch\"",
+  ];
+  const stashNamedOnly = ["grep -rn \"git stash\" docs", "git commit -m \"git stash is refused\"", "git checkout stash-fix", "git log --grep stash"]; // names stash without running it: the script is asked and allows
+  for (const c of stashDenied) await compare(c, W, S, true, "deny");
+  for (const c of stashAllowed) await compare(c, W, S, false, "allow");
+  for (const c of stashNamedOnly) await compare(c, W, S, true, "allow");
+  for (const c of ["git stash", "git diff --stat; git stash -q; bun test; git stash pop -q"]) await compare(c, W, {}, false, "allow"); // outside an engine session nothing changes
+  process.env["LOKI_E10_STAGE"] = "fix"; // the script reads the session process's own environment, as in a real session
+  const why = norm(await createHostGuardHook(W, process.env)({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "git stash -q" }, cwd: W, tool_use_id: "t" })).reason;
+  delete process.env["LOKI_E10_STAGE"];
+  ok(why.startsWith("LOKI_STASH_GUARD:") && why.includes("git diff") && why.includes("git show HEAD:<file>") && why.includes("temporary copy") && why.includes("stopped"), `stash refusal does not say why and what to use instead: ${JSON.stringify(why)}`);
+  console.log(`stash_denied=${stashDenied.length} stash_allowed=${stashAllowed.length + stashNamedOnly.length}`);
+}
+// ---- STASH-GUARD end -------------------------------------------------------------------------------------------------
+
 // Audit line: same bytes as the script's except the timestamp.
 const audit = join(W, ".loki", "logs", "bash-audit.jsonl");
 rmSync(join(W, ".loki"), { recursive: true, force: true });
@@ -200,6 +237,12 @@ out="$(cd "$ROOT/loki-ts" && bun "$T/drive.ts" "$ROOT/loki-ts/src/runner/host_gu
 printf '%s\n' "$out" | sed 's/^/    /'
 fails="$(printf '%s\n' "$out" | grep -c '^FAIL ' || true)"
 checks="$(printf '%s\n' "$out" | sed -n 's/^checks=\([0-9]*\).*/\1/p')"
+# STASH-GUARD: the block ran with its full corpus and none of its cases failed
+if grep -q '^stash_denied=28 stash_allowed=11$' <<< "$out" && ! grep -q '^FAIL .*stash' <<< "$out"; then
+    ok "STASH-GUARD: an engine session's git stash is refused alone and inside a compound command, with the reason and the alternatives (28 shapes); every other git command stays allowed (11)"
+else
+    bad "STASH-GUARD: $(printf '%s\n' "$out" | grep -c '^FAIL .*stash') stash case(s) failed, or the block did not run to its end"
+fi
 if [ -n "$checks" ] && [ "$checks" -ge 150 ] && [ "$fails" = "0" ]; then
     ok "in-process hook matches validate-bash.sh on every corpus command ($checks checks)"
 else
