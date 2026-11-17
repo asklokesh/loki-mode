@@ -402,6 +402,9 @@ pj_eq "untestable: a JS repo with no tests is null (the Wall harness can still v
 #   RG10. util/check_result.ts testHomeEnv: drop the GOPATH and npm_config_cache pins; G9 goes red where go or npm is installed (they report another location).
 #   RG11. util/check_result.ts commandFor: drop the rootDoc branch; G11 goes red (a package below the root runs the form the root guide forbids).
 #   G11 a root guide that forbids the discovered form also holds for a test file of a package below the root.
+#   RG12. e10ext/context.ts briefRecord: drop `guide,` from the brief text; G10 goes red (the implement brief the run sent has no instructions line).
+#   RG13. project_model/guides.ts guideArgv: join the tail into the last word; G12 goes red (an appended flag and the test file are no longer separate arguments).
+#   G12 the failure path: a red documented script reads as a failed check with its test id, a flag a caller appends reaches the script, and a base checkout resolves the same command.
 #   G9 the opt-in `home` mode (not the default: see testHomeEnv) moves HOME for test commands and keeps cargo, rustup, bun, npm, uv and Go on their real locations.
 guide_repo() { # guide_repo <name> -> GR (a python repo with a pytest config and one test file; commit it with guide_commit)
     GR="$T/guide-$1/repo"; mkdir -p "$GR/tests" "$GR/scripts"
@@ -455,14 +458,29 @@ echo "1 passed in 0.01s"
 EOF
 chmod +x "$G_XDG/scripts/run_tests.sh"
 printf '# Guide\n\n## Running the tests\n\n```bash\n# one file\nscripts/run_tests.sh tests/test_a.py\n```\n' > "$G_XDG/AGENTS.md"; guide_commit "$G_XDG"
+guide_repo fail; G_FAIL="$GR"
+cat > "$G_FAIL/scripts/run_tests.sh" <<EOF
+#!/usr/bin/env bash
+# stand-in for a red: python -m pytest "\$@"
+printf '%s\n' "args:\$*" >> "$T/guide-fail/ran.log"
+echo "FAILED tests/test_a.py::test_add - AssertionError: assert 1 == 2"
+echo "1 failed in 0.01s"
+exit 1
+EOF
+chmod +x "$G_FAIL/scripts/run_tests.sh"
+printf '# Guide\n\nTests: always `scripts/run_tests.sh`, never bare `pytest`.\n' > "$G_FAIL/AGENTS.md"; guide_commit "$G_FAIL"
+cp -R "$G_FAIL" "$T/guide-fail/base"
 REALX="$T/realxdg"; mkdir -p "$REALX/config" "$REALX/data" "$REALX/cache" "$REALX/state" "$T/realxdg-off/config" "$T/realxdg-off/data" "$T/realxdg-off/cache" "$T/realxdg-off/state"
 guide_run() { # guide_run <extra env...> -> prints the JSON of the guide legs (run it on fresh logs: G_DOC's script log is cleared first)
     rm -f "$G_DOC/scripts/run_tests.sh.log"; printf '# Guide\n\nTests: always `scripts/run_tests.sh`.\n' > "$G_SNAP/AGENTS.md"; rm -rf "$G_SNAP/.loki"
-    env -u CARGO_HOME -u RUSTUP_HOME -u BUN_INSTALL -u npm_config_cache -u GOPATH -u GOMODCACHE -u GOCACHE -u UV_CACHE_DIR G_DOC="$G_DOC" G_NOFWD="$G_NOFWD" G_UNSAFE="$G_UNSAFE" G_PROSE="$G_PROSE" G_MISSING="$G_MISSING" G_SNAP="$G_SNAP" G_XDG="$G_XDG" "$@" bun --no-env-file -e '
+    rm -f "$T/guide-fail/ran.log"
+    env -u CARGO_HOME -u RUSTUP_HOME -u BUN_INSTALL -u npm_config_cache -u GOPATH -u GOMODCACHE -u GOCACHE -u UV_CACHE_DIR G_FAIL="$G_FAIL" G_FAIL_BASE="$T/guide-fail/base" G_FAIL_LOG="$T/guide-fail/ran.log" G_DOC="$G_DOC" G_NOFWD="$G_NOFWD" G_UNSAFE="$G_UNSAFE" G_PROSE="$G_PROSE" G_MISSING="$G_MISSING" G_SNAP="$G_SNAP" G_XDG="$G_XDG" "$@" bun --no-env-file -e '
 import { readGuides, snapshotGuides, guideNotes, guideSentence, resetGuides } from "./loki-ts/src/project_model/guides.ts";
 import { commandFor, fullSuiteCmd, spawnGroupSync, plainTestEnv } from "./loki-ts/src/util/check_result.ts";
 import { discoverCommands } from "./loki-ts/src/runner/repo_profile.ts";
 import { projectApi } from "./loki-ts/src/project_model/api.ts";
+import { classifyCheck } from "./loki-ts/src/util/check_result.ts";
+import { failIds } from "./loki-ts/src/engine10/failures.ts";
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 const E = process.env as Record<string, string>;
 const tests = (d: string) => discoverCommands(d).filter((c) => c.kind === "test").map((c) => ({ cmd: c.cmd, source: c.source, note: c.note ?? null }));
@@ -483,7 +501,10 @@ const { spawnSync } = await import("node:child_process");
 const report = (env: Record<string, string>, c: string, a: string[]) => { const r = spawnSync(c, a, { env, encoding: "utf8", timeout: 30000 }); return r.error ? "missing" : `${r.status}:${r.stdout.trim()}`; };
 const toolDiffers = ([["go", ["env", "GOCACHE", "GOMODCACHE", "GOPATH"]], ["npm", ["config", "get", "cache"]], ["uv", ["cache", "dir"]], ["cargo", ["--version"]]] as [string, string[]][]).filter(([c, a]) => report(po, c, a) !== report(ph, c, a)).map(([c]) => c);
 const api = projectApi({ status: "ok", packages: [{ root: ".", name: "g" }, { root: "pkg", name: "p" }] } as never), sub = commandFor({ runner: "pytest", path: "pkg/tests/test_b.py" } as never, E.G_DOC!, api);
+const fc = cf(E.G_FAIL!), fr = spawnGroupSync(fc.cmd, [...fc.args, "-rfE"], { cwd: fc.cwd, timeoutMs: 20000 }), fcls = classifyCheck({ kind: "test", ok: fr.status === 0, out: fr.output });
+const fb = cf(E.G_FAIL_BASE!);
 console.log(JSON.stringify({
+  failResult: fcls.result, failIds: failIds(fr.output), failArgs: (() => { try { return readFileSync(E.G_FAIL_LOG!, "utf8").trim(); } catch { return ""; } })(), failFileIsArg: fc.args.includes("tests/test_a.py"), failBaseSame: JSON.stringify(fb.argv) === JSON.stringify(fc.argv) && fb.cwd === E.G_FAIL_BASE,
   subOne: sub.argv.join(" "), subCwdIsRoot: sub.cwd === E.G_DOC,
   homeMoved: ph["HOME"] !== H && ph["HOME"] !== undefined, homePins: ["CARGO_HOME", "RUSTUP_HOME", "BUN_INSTALL", "npm_config_cache", "GOPATH", "GOMODCACHE"].map((k) => (ph[k] ?? "").replace(H, "~")), homeUv: (ph["UV_CACHE_DIR"] ?? "") === (pe["UV_CACHE_DIR"] ?? "x"), toolDiffers,
   docTests: doc.tests.filter((t) => t.fromGuide).map((t) => [t.cmd, t.source, t.perFile, t.runners]), docBans: doc.bans.map((b) => [b.what, b.source]), docSetup: doc.setup.map((s) => [s.cmd, s.source]),
@@ -506,22 +527,24 @@ gj_eq() { # gj_eq <label> <python expr over d> <expected json> [json text]
 }
 gj_eq "G1 the documented script is extracted with its file and line, its runner and how to select a file" 'd["docTests"]' '[["./scripts/run_tests.sh", "AGENTS.md:4", "append", ["pytest"]]]'
 gj_eq "G1 it is the profile test command, with its source" 'd["docProfile"]' '[{"cmd": "./scripts/run_tests.sh", "note": "from AGENTS.md:4", "source": "AGENTS.md"}]'
-gj_eq "G1 it is the per-file command and the package command" '[d["docOne"], d["docSuite"]]' '["bash -c ./scripts/run_tests.sh tests/test_a.py", "bash -c ./scripts/run_tests.sh"]'
+gj_eq "G1 it is the per-file command and the package command" '[d["docOne"], d["docSuite"]]' '["env ./scripts/run_tests.sh tests/test_a.py", "env ./scripts/run_tests.sh"]'
 gj_eq "G1 the script really ran with the test file" '[d["docRanOk"], d["docLog"]]' '[true, ["args:tests/test_a.py"]]'
 gj_eq "G1 the receipt line names the command and where it came from" '[n for n in d["docNotes"] if n.startswith("test command from AGENTS.md:4: ./scripts/run_tests.sh")] != []' 'true'
-gj_eq "G1 a command in a fenced block under a test heading is taken too" 'd["xdgOne"]' '"bash -c ./scripts/run_tests.sh tests/test_a.py"'
+gj_eq "G1 a command in a fenced block under a test heading is taken too" 'd["xdgOne"]' '"env ./scripts/run_tests.sh tests/test_a.py"'
 gj_eq "G1 the setup command is extracted for the model" 'd["docSetup"]' '[["uv sync --group dev", "CONTRIBUTING.md:10"]]'
 gj_eq "G2 the forbidden form is extracted" 'd["docBans"]' '[["pytest", "AGENTS.md:4"]]'
 gj_eq "G2 no profile, per-file or suite command is the forbidden form" '[c for c in [x["cmd"] for x in d["docProfile"]] + [d["docOne"], d["docSuite"]] + [x["cmd"] for x in d["nfProfile"]] + [d["nfOne"]] if "-m pytest" in c]' '[]'
 gj_eq "G2 the brief names the command, the setup and the prohibition, never the forbidden form" '["run tests with `./scripts/run_tests.sh <test file>` (from AGENTS.md:4)" in d["docBrief"], "set up with `uv sync --group dev`" in d["docBrief"], "do not run bare `pytest` (AGENTS.md:4)" in d["docBrief"], "-m pytest" in d["docBrief"]]' '[true, true, true, false]'
-gj_eq "G2 no derivable file selection: the documented package command runs, and the receipt says so" '[d["nfOne"], [n for n in d["nfNotes"] if "ran for each test file" in n] != []]' '["bash -c ./scripts/run_tests.sh", true]'
+gj_eq "G2 no derivable file selection: the documented package command runs, and the receipt says so" '[d["nfOne"], [n for n in d["nfNotes"] if "ran for each test file" in n] != []]' '["env ./scripts/run_tests.sh", true]'
 gj_eq "G3 a sudo, delete, download-into-shell, push or out-of-checkout command is never taken" '[d["unsafeTests"], d["unsafeOne"].endswith("-m pytest -q tests/test_a.py"), [c for c in d["unsafeProfile"] if "run_tests" in c]]' '[0, true, []]'
 gj_eq "G3 each one is disclosed with its reason" '[d["unsafeIgnored"], d["unsafeNotes"]]' '[["deletes files", "names a path outside the checkout", "names a path outside the checkout", "pipes a download into a shell", "pushes", "uses sudo"], 6]'
 gj_eq "G4 prose outside a code span is never a command or a prohibition" '[d["proseTests"], d["proseBans"], d["proseOne"].endswith("-m pytest -q tests/test_a.py")]' '[0, 0, true]'
 gj_eq "G5 a command naming a missing script falls back to the discovered command, and the receipt says the rule named no runnable command" '[d["missingTests"], d["missingOne"].endswith("-m pytest -q tests/test_a.py"), [c for c in d["missingProfile"] if "-m pytest" in c] != [], [n for n in d["missingNotes"] if "names no command Loki can run" in n] != []]' '[0, true, true, true]'
 gj_eq "G6 a vitest file never runs through the pytest script; a lint lane, a lint script and a test file are not test commands" '["run_tests" in d["docVitest"], len(d["docTests"])]' '[false, 1]'
-gj_eq "G11 a root guide that forbids the discovered form holds for a package below the root (run from the root)" '[d["subOne"], d["subCwdIsRoot"]]' '["bash -c ./scripts/run_tests.sh pkg/tests/test_b.py", true]'
-gj_eq "G7 a guide edited after intake changes nothing, in this process and in a later one" '[d["snapBefore"], d["snapAfter"], d["stateFile"], d["fromState"]]' '["bash -c ./scripts/run_tests.sh tests/test_a.py", "bash -c ./scripts/run_tests.sh tests/test_a.py", true, "bash -c ./scripts/run_tests.sh tests/test_a.py"]'
+gj_eq "G11 a root guide that forbids the discovered form holds for a package below the root (run from the root)" '[d["subOne"], d["subCwdIsRoot"]]' '["env ./scripts/run_tests.sh pkg/tests/test_b.py", true]'
+gj_eq "G12 a red documented script is a failed check with its test id" '[d["failResult"], d["failIds"]]' '["fail", ["tests/test_a.py::test_add"]]'
+gj_eq "G12 the test file stays its own argument, an appended flag reaches the script, and a base checkout resolves the same command" '[d["failFileIsArg"], d["failArgs"], d["failBaseSame"]]' '[true, "args:tests/test_a.py -rfE", true]'
+gj_eq "G7 a guide edited after intake changes nothing, in this process and in a later one" '[d["snapBefore"], d["snapAfter"], d["stateFile"], d["fromState"]]' '["env ./scripts/run_tests.sh tests/test_a.py", "env ./scripts/run_tests.sh tests/test_a.py", true, "env ./scripts/run_tests.sh tests/test_a.py"]'
 gj_eq "G8 a test command cannot write the real XDG dirs" '[d["xdgRanOk"], d["xdgWroteReal"], d["xdgEnvMoved"], d["homeKept"]]' '[true, [], [true, true, true, true], true]'
 gj_eq "G8 uv keeps its real cache through its own variable" 'd["uvCache"]' "\"$REALX/cache/uv\""
 gj_eq "G9 home mode (opt-in) moves HOME for test commands and pins cargo, rustup, bun, npm and Go to the real locations" '[d["homeMoved"], d["homePins"], d["homeUv"]]' '[true, ["~/.cargo", "~/.rustup", "~/.bun", "~/.npm", "~/go", "~/go/pkg/mod"], true]'
@@ -548,6 +571,11 @@ if [ -n "$RECEIPT" ]; then
     gj_eq "G10 e2e: no check ran the forbidden form" 'd["pytest"]' '[]' "$E2E_GUIDE"
     gj_eq "G10 e2e: the receipt says which command ran and where it came from" 'd["source"]' 'true' "$E2E_GUIDE"
 else bad "guides e2e: no receipt"; fi
+E2E_BRIEF="$(dirname "${RECEIPT:-/nonexistent/x}")/implement-brief.txt"
+if [ -f "$E2E_BRIEF" ]; then
+    grep -qF 'This repository'"'"'s own instructions: run tests with `./scripts/run_tests.sh <test file>` (from AGENTS.md:3); do not run bare `pytest` (AGENTS.md:3).' "$E2E_BRIEF" && ok "G10 e2e: the implement brief the run sent carries the repository's own instructions" || { bad "G10 e2e: the implement brief has no instructions line"; grep -n "instructions\|pytest" "$E2E_BRIEF" | cut -c1-300 | sed 's/^/    | /'; }
+    if grep -q -- "-m pytest\|python3 (pytest)\|Detected test interpreter" "$E2E_BRIEF"; then bad "G10 e2e: the implement brief still names the forbidden form or a detected interpreter"; grep -n -- "-m pytest\|(pytest)" "$E2E_BRIEF" | cut -c1-300 | sed 's/^/    | /'; else ok "G10 e2e: the implement brief names neither the forbidden form nor a detected interpreter"; fi
+else bad "G10 e2e: no implement-brief.txt beside the receipt"; fi
 [ -s "$T/guide-e2e/ran.log" ] && ok "guides e2e: the documented script ran" || bad "guides e2e: the documented script never ran"
 gj_eq "LOKI_E10_REPO_GUIDES=0 restores the discovered commands" '[d["docOne"].endswith("-m pytest -q tests/test_a.py"), [c["cmd"] for c in d["docProfile"] if "run_tests" in c["cmd"]], d["docBrief"]]' '[true, [], ""]' "$GUIDE_NOG"
 

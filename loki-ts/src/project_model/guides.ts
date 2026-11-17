@@ -254,29 +254,34 @@ export const cmdRunners = (cmdline: string): string[] => runnersIn(cmdline.repla
 const replaces = (t: GuideCmd, runners: readonly string[], banned: boolean): boolean => t.fromGuide && (banned ? t.runners.length === 0 || t.runners.some((r) => runners.includes(r)) : t.kind === "script" && t.runners.some((r) => r !== "go" && runners.includes(r)));
 const noAlternative = (repoDir: string | undefined, dir: string, b: GuideBan): null => { note(repoDir, dir, `the guide forbids \`${b.what}\` (${b.source}) but names no command Loki can run in its place; the discovered command ran`); return null; };
 /** The documented command for the whole package in `dir`, when it replaces `generic` (the discovered command, run by `runners`); null keeps the discovered one. */
-export function guideSuite(dir: string, runners: readonly string[], generic: string, repoDir?: string): { line: string; source: string } | null {
+/** A documented command as an argv whose test file (and any flag a caller appends: the Wall's `-rfE`, the exec spec's `--junitxml`) stays a separate word, so
+ *  consumers that read or extend a check's arguments keep working. A script of the checkout starts through `env` (the runner resolves the first word on PATH). */
+function guideArgv(cmd: string, tail: string[]): string[] { const w = cmd.split(" "); return [...(w[0]!.startsWith("./") ? ["env"] : []), ...w, ...tail]; }
+export interface GuideRun { argv: string[]; line: string; source: string }
+export function guideSuite(dir: string, runners: readonly string[], generic: string, repoDir?: string): GuideRun | null {
   const f = guidesFor(dir, repoDir), banned = bannedBy(f, generic), doc = f.tests.find((t) => !t.needsPath && replaces(t, runners, banned !== null));
   if (!doc) return banned ? noAlternative(repoDir, dir, banned) : null;
   note(repoDir, dir, `test command from ${doc.source}: ${doc.cmd}`);
-  return { line: doc.cmd, source: doc.source };
+  return { argv: guideArgv(doc.cmd, []), line: doc.cmd, source: doc.source };
 }
 /** The documented way to run ONE test file (`file` relative to `dir`) of `runner`; null keeps the discovered per-file command. When a guide forbids the
  *  discovered form and names no way to select a file, the documented package command runs instead (and the receipt says so), never the forbidden form. */
-export function guideFile(dir: string, runner: string, file: string, generic: string, repoDir?: string, onlyIfBanned = false): { line: string; source: string } | null {
+export function guideFile(dir: string, runner: string, file: string, generic: string, repoDir?: string, onlyIfBanned = false): GuideRun | null {
   if (!file) return null;
   const f = guidesFor(dir, repoDir), banned = bannedBy(f, generic);
   if (onlyIfBanned && !banned) return null; // the root guide speaks for a package below the root only through an explicit prohibition
   const one = f.tests.find((t) => t.perFile !== null && replaces(t, [runner], banned !== null));
   if (one) {
-    const line = one.perFile === "append" ? `${one.cmd} ${shq(file)}` : one.perFile === "npm" ? (one.cmd.startsWith("npm ") ? `${one.cmd} -- ${shq(file)}` : `${one.cmd} ${shq(file)}`) : `${one.cmd} ${one.perFile!.slice(5)}=${shq(file)}`;
+    const mk = one.perFile !== "append" && one.perFile !== "npm" ? one.perFile!.slice(5) : null; // make: the file travels in a variable, so a flag a caller appends is not handed to make
+    const argv = mk ? ["bash", "-c", `${one.cmd} ${mk}="$1"`, "loki-guide-test", file] : guideArgv(one.cmd, one.perFile === "npm" && one.cmd.startsWith("npm ") ? ["--", file] : [file]);
     note(repoDir, dir, `test command from ${one.source}: ${one.cmd} <file>`);
-    return { line, source: one.source };
+    return { argv, line: mk ? `${one.cmd} ${mk}=${shq(file)}` : argv.filter((w) => w !== "env").map(shq).join(" "), source: one.source };
   }
   if (!banned) return null;
   const pkg = f.tests.find((t) => !t.needsPath && replaces(t, [runner], true));
   if (!pkg) return noAlternative(repoDir, dir, banned);
   note(repoDir, dir, `test command from ${pkg.source}: ${pkg.cmd} ran for each test file (the guide forbids \`${banned.what}\` and names no way to select one file)`);
-  return { line: pkg.cmd, source: pkg.source };
+  return { argv: guideArgv(pkg.cmd, []), line: pkg.cmd, source: pkg.source };
 }
 /** Receipt lines: which documented command ran and where it came from, and each guide command that was ignored and why. */
 export function guideNotes(repoDir: string): string[] {

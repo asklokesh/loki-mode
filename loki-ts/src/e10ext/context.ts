@@ -137,14 +137,15 @@ export function briefRecord(ctx: RunContext, d: ContextDeps, model?: string): Br
   const sigs = process.env["LOKI_E10_SIGS"] === "0" || !files.length ? "" : signatureDigest(ctx.repoDir, files.filter((f) => !whole.has(f)).slice(0, 5));
   // E4: existing assertions whose expected value is the wrong value the issue reports. On by default; LOKI_E10_DEFECT_PIN=0 opts out.
   const pins = !isOff(process.env["LOKI_E10_DEFECT_PIN"]) ? findDefectPins(ctx.repoDir, task).slice(0, 5) : [];
+  const guide = repoGuideBlock(ctx.repoDir), guideNamesCommand = guide.includes("run tests with"); // REPO-GUIDES: the repository's own command stands in for a detected interpreter, which could be the form the guide forbids
   const text = [
     files.length ? `Relevant files:\n${files.join("\n")}` : "", // kept byte-identical (the L021 Opus golden and the exemplar lookup read it); PLAN-HINTS says "edit any file the fix needs" in the plan lead
     sigs ? `Key signatures (read the files for bodies):\n${sigs}` : "",
     pack ? pack.text : "",
-    interps.length ? `Detected test interpreter (no test file to run yet; use exactly this executable, never a guessed one): ${interps.join(", ")}` : "",
+    interps.length && !guideNamesCommand ? `Detected test interpreter (no test file to run yet; use exactly this executable, never a guessed one): ${interps.join(", ")}` : "",
     pins.length ? `Existing assertions that pin the behavior the task reports as wrong (the correct fix is expected to change these expected values; change only these, and make sure each new expected value fails on the unfixed code):\n${pins.map((p) => `${p.file}:${p.line}: ${p.text.slice(0, 140)}`).join("\n")}` : "",
     cmds.length ? `Impacted test commands:\n${cmds.join("\n")}` : "",
-    repoGuideBlock(ctx.repoDir), // REPO-GUIDES: per repository, after the cache prefix; "" when the guides say nothing usable
+    guide, // REPO-GUIDES: per repository, after the cache prefix; "" when the guides say nothing usable
     releaseNoteBrief(ctx.repoDir, files), // L3: one per-run line after the cache prefix; "" when the repo has no fragment convention
     profileBrief(ctx.repoDir), // REPOMEM: validated repo commands + baseline-red tests; byte-stable for an unchanged profile
   ].filter(Boolean).join("\n\n");

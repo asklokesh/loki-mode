@@ -2097,7 +2097,7 @@ const BUILD_TOOL_RUNNERS: ReadonlySet<RunnerName> = new Set(["maven", "gradle", 
 /** FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER: the one full-suite command per runner. pytest resolves its interpreter exactly as a per-test run does (resolveTool: project .venv, else python3), never a bare `python` that python3-only hosts lack. */
 export function fullSuiteCmd(runner: RunnerName, repoDir: string): { cmd: string; args: string[]; interpreter?: Interpreter } {
   const own = BUILD_TOOL_RUNNERS.has(runner) ? repoTestCommand(repoDir) : null; if (own) return { cmd: "bash", args: ["-c", own] };
-  if (!BUILD_TOOL_RUNNERS.has(runner)) { const doc = guideSuite(repoDir, [runner], genericSuiteLine(runner, repoDir), repoDir); if (doc) return { cmd: "bash", args: ["-c", doc.line] }; } // REPO-GUIDES: the package command the repository's own guide documents
+  if (!BUILD_TOOL_RUNNERS.has(runner)) { const doc = guideSuite(repoDir, [runner], genericSuiteLine(runner, repoDir), repoDir); if (doc) return { cmd: doc.argv[0]!, args: doc.argv.slice(1) }; } // REPO-GUIDES: the package command the repository's own guide documents
   return discoveredSuiteCmd(runner, repoDir);
 }
 const genericSuiteLine = (runner: RunnerName, repoDir: string): string => { const f = discoveredSuiteCmd(runner, repoDir); return [f.cmd, ...f.args].join(" "); };
@@ -2142,10 +2142,10 @@ export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null)
   // REPO-GUIDES: the way this package's own guide says to run one test file (project_model/guides.ts); a build-tool stack keeps its committed verify.test_command.
   const generic = [cmd, ...args].join(" "), guided = mod === base && !BUILD_TOOL_RUNNERS.has(t.runner);
   const doc = guided ? guideFile(base, t.runner, rel, generic, repoDir) : null;
-  if (doc) return { cwd: base, cmd: "bash", args: ["-c", doc.line], argv: ["bash", "-c", doc.line], pkgRoot: site?.root ?? "." };
+  if (doc) return { cwd: base, cmd: doc.argv[0]!, args: doc.argv.slice(1), argv: doc.argv, pkgRoot: site?.root ?? "." };
   // A package below the root with no documented command of its own: a root guide that forbids the discovered form still holds (run from the root, repo-relative path).
   const rootDoc = guided && site && base !== repoDir ? guideFile(repoDir, t.runner, relative(repoDir, join(base, rel)), generic, repoDir, true) : null;
-  if (rootDoc) return { cwd: repoDir, cmd: "bash", args: ["-c", rootDoc.line], argv: ["bash", "-c", rootDoc.line], pkgRoot: "." };
+  if (rootDoc) return { cwd: repoDir, cmd: rootDoc.argv[0]!, args: rootDoc.argv.slice(1), argv: rootDoc.argv, pkgRoot: "." };
   return { cwd: mod === base ? base : mod, cmd, args, argv: [cmd, ...args], ...(interpreter ? { interpreter } : {}), pkgRoot: mod === base ? site?.root ?? "." : relative(repoDir, mod) || "." };
 }
 /** The directory of the nearest go.mod at or above the test file, never above `base`; `base` itself when none is found below it (a root go.mod keeps the legacy run from the root). */
