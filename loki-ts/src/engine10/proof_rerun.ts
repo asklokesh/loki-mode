@@ -33,6 +33,28 @@ export async function worktreeTree(repoDir: string): Promise<string | null> {
     return w.exitCode === 0 && /^[0-9a-f]{40,64}$/.test(sha) ? sha : null;
   } catch { return null; } finally { try { rmSync(idx, { force: true }); } catch { /* a stale throwaway index is harmless */ } }
 }
+/** NEW FILE NOTHING USES: source files the change added that no other file in the tree names. A component no page mounts, or a module nothing imports, passes
+ *  its own tests and its API passes its checks, yet no user can reach it (two Haiku runs sealed "Build faceted search UI" green with a SearchBar.tsx that
+ *  no page imports). Deterministic and cheap: one `git grep` per added file, on the given tree (a commit, or worktreeTree's tree of the uncommitted change).
+ *  Skipped, to stay quiet: tests, framework entry files (page, layout, route, index, main, app ...), migrations, scripts, config and type declaration files,
+ *  and names too short to search for. A name that appears anywhere else outside tests (an import, a registry, package.json) counts as used. Never throws. */
+const UNUSED_EXT = /\.(tsx?|jsx?|mjs|cjs|vue|svelte|py)$/, UNUSED_TEST = /(^|\/)(__tests__|tests?|spec|e2e|__mocks__|fixtures?|stories)\/|\.(test|spec|stories)\.[a-z]+$|(^|\/)(test_[^/]*|[^/]*_test)\.py$/;
+const UNUSED_ENTRY = /(^|\/)(page|layout|route|index|main|app|server|middleware|loading|error|not-found|template|default|global-error|instrumentation|conftest|setup|manage|__init__|__main__|cli|worker)\.[a-z]+$/, UNUSED_DIR = /(^|\/)(migrations?|scripts?|bin|tools|seeds?|config|\.github|docs?|pages|api|routes|commands|plugins|hooks\.server)\//;
+export async function unusedNewFiles(repoDir: string, baseSha: string | undefined, tree: string | null): Promise<string[]> {
+  if (!baseSha || !tree) return [];
+  try {
+    const a = await run(["git", "-C", repoDir, "diff", "--name-only", "--diff-filter=A", baseSha, tree, "--", ".", ":(exclude).loki"], { timeoutMs: 30000 }); if (a.exitCode !== 0) return [];
+    const added = a.stdout.split("\n").filter((f) => UNUSED_EXT.test(f) && !UNUSED_TEST.test(f) && !UNUSED_ENTRY.test(f) && !UNUSED_DIR.test(f) && !/\.d\.ts$|\.config\.[a-z]+$/.test(f)).slice(0, 60), out: string[] = [];
+    for (const f of added) {
+      const stem = f.slice(f.lastIndexOf("/") + 1).replace(/\.[^.]+$/, ""); if (stem.length < 4) continue;
+      const g = await run(["git", "-C", repoDir, "grep", "-l", "-F", "-w", "-e", stem, tree, "--", "."], { timeoutMs: 30000 }); if (g.exitCode > 1) continue; // grep itself failed: say nothing
+      const users = g.stdout.split("\n").map((l) => l.slice(l.indexOf(":") + 1)).filter((u) => u && u !== f && !UNUSED_TEST.test(u));
+      if (users.length === 0) out.push(f);
+    }
+    return out;
+  } catch { return []; }
+}
+export const unusedNewFileNote = (f: string): string => `new file nothing uses: ${f} is not imported or named by any other file, so nothing reaches it`;
 /** The brief that hands unmet lines back to the session: each line with the check's reason, and what closing it takes. */
 export function unmetBrief(unmet: { line: string; reason: string }[]): string {
   return [`Loki checked your change against the acceptance lines, using its own run of your proof script. ${unmet.length} line${unmet.length === 1 ? " is" : "s are"} not met yet:`, "",
