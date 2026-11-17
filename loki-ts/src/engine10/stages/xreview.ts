@@ -23,7 +23,7 @@ const COMPILED_PATHS: RegExp[] = [/(^|\/)__pycache__\//, /\.py[co]$/, /\.class$/
 /** Deterministic hygiene check over paths ADDED by the run (so artifacts already tracked never count). `ignored` = the subset the repo's ignore rules ignore. No model call. */
 export const hygieneFindings = (paths: string[], ignored: ReadonlySet<string> = new Set()): string[] => paths.filter((f) => !f.startsWith(".loki/") && (COMPILED_PATHS.some((re) => re.test(f)) || ignored.has(f)));
 const RANK: Record<Verdict, number> = { FAILED: 0, SPEC_CONFLICT: 0, PARTIAL: 1, ALREADY_SATISFIED: 2, VERIFIED: 2 };
-const MAX_DIFF = 60_000, MAX_NOTES = 5;
+const MAX_NOTES = 5; // the review reads the same diff the acceptance check does (lineCheckDiff, LINE_CHECK_DIFF_MAX): cut at 60,000 characters it never saw the frontend half of a 99,370-character change and reported "no frontend component or page is in the diff" for a UI that was there
 /** The never-upgrade rule: returns the lower of the verdict and the review's ceiling. A review can only lower a verdict. */
 export function minVerdict(verdict: Verdict, review: CrossReview | null): Verdict {
   const ceiling: Verdict = review?.level === "block" ? "PARTIAL" : verdict;
@@ -160,9 +160,10 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   if (roomS(ctx) < MIN_REVIEW_S) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: insufficient run time for ${p}`] });
   const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] });
+  const rd = lineCheckDiff(d.stdout), changedList = [...d.stdout.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]!).slice(0, 80).join(", ");
   const prompt = [agent ? `${agent.prompt}\nReview ONLY the diff below. Do not modify files.` : "You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
     REVIEW_TOOLS_NOTE,
-    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...acceptancePromptBlock(reviewAcceptance(ctx)), ...reviewChecksBlock(ctx), "", "```diff", d.stdout.slice(0, MAX_DIFF), "```"].join("\n");
+    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...acceptancePromptBlock(reviewAcceptance(ctx)), ...reviewChecksBlock(ctx), ...(rd.truncated || rd.cut.length ? [`The diff below is NOT the whole change: ${rd.truncated ? "it is cut at its end" : "it is complete except for the files named next"}${rd.cut.length ? `; lockfile, snapshot and generated files are left out (${rd.cut.slice(0, 8).join(", ")})` : ""}. Every changed file is listed here; read any you need with your tools before saying something is missing: ${changedList}`] : []), "", "```diff", rd.text, "```"].join("\n");
   try {
     if (p === "claude") await ensureClaudeHelpCache();
     const r = await withChildLedger(run, join(ctx.repoDir, ".loki"), "xreview")(reviewArgv(p, prompt, process.env, p === "claude" ? agent?.model || pin : undefined), { cwd: ctx.repoDir, timeoutMs: boxFor(ctx) * 1000, group: true, signal });
