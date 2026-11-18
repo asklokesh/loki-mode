@@ -1386,10 +1386,26 @@ suites="$(ev 'sum(1 for e in E if e["type"]=="test.result" and str(e["data"].get
 [ "$suites" = "3" ] && ok "lint twice: the full suite ran in each complete verify (3)" || bad "lint twice: full suite ran $suites times (want 3)"
 [ "$(outcome)" = "VERIFIED" ] && ok "lint twice: run is VERIFIED" || { bad "lint twice: outcome is '$(outcome)', not VERIFIED"; dump; }
 
-# acc-162 INDEP-GATE: the same lint-only red on a Haiku run gets no fix round (lint is the model's own check, not an independent one); =0 restores the rounds.
+# acc-162 INDEP-GATE, revised 2026-11-18 (LINT-OWN, playwright#44124): a Haiku run still gets no fix round when no independent check failed, but a syntax error
+# (bash -n), a type error (tsc) or a style lint error the run's own change put in a file it changed IS an independent check: it opens the round. The old rule
+# here (no round for this bash -n red) left a defect the change made unfixed. A bash -n or tsc error that survives the rounds stays FAILED (a style lint error is
+# held at PARTIAL: LINT-OWN below). FIX-GATE: verify's stage.completed event records the gate's reading as fix_gate, so a real run's record says why a round did or
+# did not open. Planted: LOf (bash-n dropped from OWN_TYPECHECK) gives this leg 0 rounds and a "closed" fix_gate; LOg (bash-n counted as style lint) makes the
+# stuck leg PARTIAL; LOh (fix_gate not recorded) and LOi (fixGateOf ignores independent_fail) fail the fix_gate checks.
+fg() { ev '[e["data"].get("fix_gate") for e in E if e["type"]=="stage.completed" and e["stage"]=="verify"][:1]'; }
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_LINTBAD=1 E2E_STUB_FIX=linttwice LOKI_RISK_TIER=medium LOKI_SESSION_MODEL=haiku LOKI_E10_HAIKU_INDEP_FIX=1 PATH="$T/fakelint:$FIX/bin:$PATH"
 gate="$(ev 'sum(1 for e in E if e["type"]=="loop.repeat" and "LOKI_E10_HAIKU_INDEP_FIX" in str(e["data"].get("reason","")))')"
-[ "$(fix_sessions)" = "0" ] && [ "$gate" = "1" ] && ok "indep gate: a Haiku run with only a lint red runs no fix round, and says why" || { bad "indep gate: $(fix_sessions) fix sessions, gate events $gate (want 0 and 1)"; dump; }
+[ "$(fix_sessions)" = "2" ] && [ "$gate" = "0" ] && [ "$(outcome)" = "VERIFIED" ] && ok "indep gate: a bash -n error the change put in tool.sh opens the fix rounds on Haiku (2), and the run is VERIFIED once fixed" || { bad "indep gate: $(fix_sessions) fix sessions, gate events $gate, outcome $(outcome) (want 2, 0, VERIFIED)"; dump; }
+has "fix gate: verify's stage.completed event says the gate is open and names the independent red" "$(fg)" "['open: independent check failed: lint:bash-n"
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_LINTBAD=1 E2E_STUB_FIX=noprogress LOKI_RISK_TIER=medium LOKI_SESSION_MODEL=haiku PATH="$T/fakelint:$FIX/bin:$PATH"
+f="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verdict"))' "$RUNDIR/receipt.json" 2>/dev/null)"
+[ "$(fix_sessions)" -ge 1 ] && [ "$f" = "FAILED" ] && ok "indep gate: a bash -n error that survives the rounds ($(fix_sessions)) stays FAILED, never held at PARTIAL" || { bad "indep gate stuck: $(fix_sessions) fix sessions, receipt $f (want at least 1, FAILED)"; dump; }
+U="$(cd "$ROOT/loki-ts" && bun -e '
+const v = await import("./src/engine10/stages/verify.ts");
+console.log([v.fixGateOf({ independent_fail: false }, "claude-haiku-4-5 haiku", true, {}), v.fixGateOf({ independent_fail: true, independent_reds: ["lint:eslint"] }, "haiku", true, {}), v.fixGateOf({ independent_fail: false }, "sonnet", true, {}),
+  v.fixGateOf({ independent_fail: false }, "haiku", true, { LOKI_E10_HAIKU_INDEP_FIX: "0" }), v.fixGateOf({ independent_fail: false }, "haiku", false, {})].join(" | "));' 2>&1)"
+[ "$U" = "closed: haiku: no independent check failed (LOKI_E10_HAIKU_INDEP_FIX) | open: independent check failed: lint:eslint | open: not a Haiku run | open: LOKI_E10_HAIKU_INDEP_FIX=0 | none: no failing check feeds a fix round" ] \
+    && ok "fix gate unit: closed only for a Haiku run with no independent red and the knob on; each reading says why" || bad "fix gate unit: $U"
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_LINTBAD=1 E2E_STUB_FIX=linttwice LOKI_RISK_TIER=medium LOKI_SESSION_MODEL=haiku LOKI_E10_HAIKU_INDEP_FIX=0 PATH="$T/fakelint:$FIX/bin:$PATH"
 [ "$(fix_sessions)" = "2" ] && ok "indep gate: LOKI_E10_HAIKU_INDEP_FIX=0 restores the two lint fix rounds on Haiku" || { bad "indep gate off: $(fix_sessions) fix sessions (want 2)"; dump; }
 

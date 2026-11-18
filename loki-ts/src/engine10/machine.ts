@@ -93,7 +93,7 @@ export function freshBaseCheckout(repoDir: string, baseSha: string): string | nu
     return dir;
   } catch { if (dir) rmSync(dir, { recursive: true, force: true }); return null; }
 }
-export const haikuIndepFixOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_HAIKU_INDEP_FIX"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
+export { haikuIndepFixOn } from "./stages/verify.ts"; import { fixGateOf } from "./stages/verify.ts"; // FIX-GATE: the gate predicate lives beside the independent set it reads, and verify records its reading
 export const suiteFixSkipEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SUITE_FIX_SKIP"] ?? "").trim());
 export const SUITE_FIX_SKIP_NOTE = "fix round skipped: only full-suite failures remained while the change's own targeted tests passed, so those failures are NOT PROVEN unrelated to the change (LOKI_E10_SUITE_FIX_SKIP=0 runs the round)";
 export const suiteOnlyRed = (d: Obj | undefined): boolean => {
@@ -428,7 +428,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         const suiteSkip = suiteFixSkipEnabled() && !fatal && !capHit && outputs.implement?.exit === "done" && hasFailures(outputs.verify) && suiteOnlyRed(outputs.verify);
         // INDEP-GATE LOKI_E10_HAIKU_INDEP_FIX (default on, =0 opts out): a Haiku run gets no fix round at all unless an independent check failed (verify.ts independent_fail:
         // the Wall, a targeted test the diff touches, or a base-green test now red). dev2: rounds ran on 11 of 20 Loki-Haiku runs and flipped none of the losses. Fire marker: verify.fix_gate.
-        const indepSkip = haikuIndepFixOn() && !fatal && !capHit && hasFailures(outputs.verify) && outputs.verify?.independent_fail === false && /haiku/i.test(`${String(outputs.implement?.model ?? "")} ${ctx.model}`);
+        const indepSkip = !fatal && !capHit && hasFailures(outputs.verify) && fixGateOf(outputs.verify, `${String(outputs.implement?.model ?? "")} ${ctx.model}`).startsWith("closed");
         if (indepSkip) { outputs.verify = { ...outputs.verify, fix_gate: "haiku: no independent check failed, no fix round" }; ctx.emit("loop.repeat", "fix", { reason: "haiku: no independent check failed (LOKI_E10_HAIKU_INDEP_FIX)", round: 0, skipped: true }); }
         if (suiteSkip) { outputs.verify = { ...outputs.verify, not_proven: [...(Array.isArray(outputs.verify?.not_proven) ? outputs.verify.not_proven : []), SUITE_FIX_SKIP_NOTE] }; ctx.emit("loop.repeat", "fix", { reason: SUITE_FIX_SKIP_NOTE, round: 0, skipped: true }); }
         for (let round = 1; !indepSkip && round <= MAX_FIX_ROUNDS + extraRounds && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && !((round > 1 || suiteSkip) && onlyFullSuiteRed(outputs.verify)) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
