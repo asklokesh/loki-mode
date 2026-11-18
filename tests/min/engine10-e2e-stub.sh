@@ -1098,8 +1098,8 @@ PRB_LINE="starting from origin/main, not from your branch feature/x, so the pull
 # leg a: a branch whose tip is not in the target, clean tree, no flag: the run starts from the target tip and the pull request holds only its own commits and files
 prb_run a tip
 f="$(prb_facts)"; set -- $f
-[ "$(grep -cxF "$PRB_LINE" <<< "$OUT")" = 1 ] && ok "PR-BASE a: the run says once, in one plain line, that it starts from origin/main and names --base-current" || { bad "PR-BASE a: the start sentence is printed $(grep -cxF "$PRB_LINE" <<< "$OUT") times"; printf '%s\n' "$OUT" | head -6 | sed 's/^/    | /'; }
-[ "$(grep -n '' <<< "$OUT" | grep -F "$PRB_LINE" | head -1 | cut -d: -f1)" -le 5 ] 2>/dev/null \
+[ "$(grep -cxF "$PRB_LINE" <<< "$OUT")" = 1 ] && ok "PR-BASE a: the run says once, in one plain line, that it starts from origin/main and names --base-current" || { bad "PR-BASE a: the start sentence is printed $(grep -cxF "$PRB_LINE" <<< "$OUT") times"; sed -n '1,6s/^/    | /p' <<< "$OUT"; }
+[ "$(awk -v l="$PRB_LINE" 'index($0, l) { print NR; exit }' <<< "$OUT")" -le 5 ] 2>/dev/null \
     && ok "PR-BASE a: the sentence is among the run's first lines, before any stage output" || bad "PR-BASE a: the sentence is not among the first five lines"
 has "PR-BASE a: the header names the target as the base" "$OUT" "Loki 10 engine, PR target: origin/main, base: origin/main"
 [ "$1 $2 $3" = "VERIFIED 1 False" ] && ok "PR-BASE a: the run is VERIFIED and its pull request opens ready" || { bad "PR-BASE a: facts $f (rc $RC)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }

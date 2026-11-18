@@ -29,8 +29,9 @@
 # no commit, no push -- run this instead of hand-editing
 # VERSION, then commits the result itself.
 #
-# RELEASE GATE: none runs here. The tests under tests/min/ run locally
-# (bash scripts/local-ci.sh); run it before cutting a release. GitHub runs no
+# RELEASE GATE: --ship runs the fast local checks (syntax, typecheck, version-consistency,
+# release-notes) and refuses on a failure. The full tests under tests/min/ run locally
+# (bash scripts/local-ci.sh); run them before cutting a release. GitHub runs no
 # test workflow, and publishing never waits on a test job.
 #
 # Files intentionally NOT bumped by this script (left to the maintainer):
@@ -728,6 +729,15 @@ run_ship() {
     # release. Run the same validator on the notes before any write. Not bypassable.
     ship_check_notes_format "$notes" "$new" \
         || ship_refuse SHIP_NOTES_FORMAT "release-notes.sh rejects the notes in $notes (needs '### ' subsections and '- ' bullets)"
+    # SHIP-PREFLIGHT-CI: 11.158.0 shipped while the syntax check had just failed, because the commands before
+    # this script were chained with ";" and nothing here ran a check. The fast local checks now run here,
+    # before any write, and a failure refuses the release. Not bypassable; dist-freshness is left out because
+    # this script rebuilds dist itself.
+    local pre_log
+    pre_log="$(mktemp "${TMPDIR:-/tmp}/loki-ship-preflight.XXXXXX")" || ship_refuse SHIP_PREFLIGHT_CI "could not create a log file for the fast local checks"
+    LOCAL_CI_ONLY=syntax,typecheck,version-consistency,release-notes bash "$ROOT_DIR/scripts/local-ci.sh" >"$pre_log" 2>&1 \
+        || ship_refuse SHIP_PREFLIGHT_CI "the fast local checks failed: $(grep -E 'FAIL' "$pre_log" | head -3 | tr '\n' ' ')(full log $pre_log)"
+    rm -f "$pre_log"
     cl_top="$(ship_changelog_top_line "$ROOT_DIR/CHANGELOG.md")" \
         || ship_refuse SHIP_CHANGELOG_NO_HEADER "CHANGELOG.md has no '## v' section header"
     ship_header_is "$ROOT_DIR/CHANGELOG.md" "$cl_top" "$current" \
