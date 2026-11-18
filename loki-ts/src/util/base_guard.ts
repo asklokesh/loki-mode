@@ -488,6 +488,14 @@ function workLine(repoDir: string, branch: string, orig: string | null): string 
   return `engine10: the run's work is on branch ${branch}; your checkout is back on ${orig ?? "the starting branch"}; see it with: git diff ${orig ?? "HEAD"}...${branch}\n`;
 }
 
+/** True when the run's last run.completed is SPEC_CONFLICT (outcome BLOCKED): `loki answer <run>` resumes it on its local run branch. */
+function answerable(runDir: string): boolean {
+  try {
+    const last = readFileSync(join(runDir, "events.jsonl"), "utf8").split("\n").filter((l) => l.includes('"run.completed"')).pop();
+    return !!last && (JSON.parse(last) as { data?: { verdict?: unknown } }).data?.verdict === "SPEC_CONFLICT";
+  } catch { return false; }
+}
+
 /**
  * The end of one run: return the checkout, remove leftover base worktrees, delete the run branch once its history is safe, migrate loose
  * session files and sweep earlier runs' branches. Returns the lines to print. `deferred`: a detached deep verify still runs on the branch,
@@ -509,7 +517,7 @@ export function finishRunBranch(repoDir: string, runId: string, end: RunEnd, env
     let notes = "";
     const wallGone = removeOwnWallFiles(repoDir, runId); // the run's own untracked Wall files never stay behind in the user's tree
     if (wallGone.length) notes += `engine10: removed Loki's own acceptance test ${wallGone.join(", ")} from your tree; its sealed copy is under .loki/runs/${runId}/wall/\n`;
-    const keepHere = end.keepWork === true && tip !== null && tipOf(repoDir, end.baseSha ?? "") !== tip;
+    const keepHere = (end.keepWork === true || answerable(runDir)) && tip !== null && tipOf(repoDir, end.baseSha ?? "") !== tip; // DELIVER-WHAT-EXISTS: a BLOCKED run with a draft pull request keeps its local branch, `loki answer` resumes on it
     const stay = tip ? returnCheckout(repoDir, branch, end.orig, end.baseSha ?? null) : null; // run safety: every outcome returns the checkout to the start branch, a kept branch included
     if (stay) notes += stay;
     if (tip && !keepHere) {

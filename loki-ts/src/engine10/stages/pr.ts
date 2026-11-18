@@ -18,6 +18,7 @@ import { postReceiptComment, renderReceiptComment } from "../../util/receipt_sur
 import { buildPassport } from "../../util/receipt_bundle.ts";
 import { lokiYamlTexts, yamlKey } from "../../util/yaml_key.ts"; import { idempotencyKey, runOnce } from "../../util/outbox.ts";
 import { failedCheckNames } from "../../util/failure_memory.ts";
+import { conflictReasonOf, readEvents } from "../events.ts"; import { eventsRelPath } from "../../util/engine_origin.ts"; import type { EventEnvelope } from "../types.ts";
 /** B7: who opens the PR. LOKI_PR_AUTHOR beats loki.yaml pr.author; anything but "bot" is "me". */
 export function resolvePrAuthor(repoDir: string, environ: NodeJS.ProcessEnv = process.env): "me" | "bot" {
   let v: string | null = (environ.LOKI_PR_AUTHOR ?? "").trim() || null;
@@ -117,13 +118,34 @@ export function prTitle(verdict: Verdict, runDir: string, task: string, failing:
     try { const i = JSON.parse(readFileSync(join(runDir, "issue.json"), "utf8")) as { title?: unknown; number?: unknown }; if (typeof i.title === "string" && one(i.title)) { what = one(i.title); ref = Number.isInteger(i.number) && (i.number as number) > 0 ? ` (#${i.number as number})` : ""; } } catch { /* a text task has no issue.json */ }
     if (!what) what = first;
   }
-  const head = verdict === "PARTIAL" ? "[PARTIAL] " : verdict === "FAILED" ? failedLabel(failing) : "", room = TITLE_MAX - head.length - ref.length;
+  const head = verdict === "PARTIAL" ? "[PARTIAL] " : verdict === "FAILED" ? failedLabel(failing) : verdict === "SPEC_CONFLICT" ? "[NEEDS ANSWER] " : "", room = TITLE_MAX - head.length - ref.length;
   if (!what) return `${head}Loki change${ref}`;
   const cps = Array.from(what), cut = cps.length <= room ? what : ((short) => `${short.replace(/\s+\S*$/, "") || short}...`)(cps.slice(0, room - 3).join("")); // code points: a surrogate pair is never split
   return `${head}${cut}${ref}`;
 }
 /** The label a person can act on without reading the code, and its GitHub label name and color. */
 export const LOKI_LABELS = { safe: { name: "loki: safe to merge", color: "0E8A16", description: "Loki checked every acceptance line of the issue by running the change" }, needs: { name: "loki: needs you", color: "D93F0B", description: "Loki could not prove every acceptance line; the pull request says which" } } as const;
+/** The label for a verdict: only a VERIFIED run is ever green; a failed, blocked, partial or unfinished run is "needs you". */
+export const lokiLabelFor = (verdict: string): (typeof LOKI_LABELS)["safe" | "needs"] => (verdict === "VERIFIED" ? LOKI_LABELS.safe : LOKI_LABELS.needs);
+/** DELIVER-WHAT-EXISTS: the honest state a draft leads with when the run did not finish. A blocked run: the one question and the command that answers it,
+ *  then what is done and what is open. A run with no sealed receipt: that it stopped, why, that nothing is proven, and the command to go on. "" for every other
+ *  run (a sealed FAILED or PARTIAL run keeps its own head; stopSection adds why it stopped). */
+export interface RunState { verdict: Verdict; sealed: boolean; runId: string; question: string | null; reason: string; next: string; done: string[]; open: string[] }
+export function stateHead(s: RunState): string {
+  const clip = (r: string, n = 160): string => { const t = r.replace(/[\r\n]+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 3)}...` : t; };
+  const list = (xs: string[], none: string): string[] => (xs.filter((x) => x.trim() !== "").length ? [...xs.filter((x) => x.trim() !== "").slice(0, 10).map((x) => `- ${clip(x)}`), ...(xs.length > 10 ? [`- (+${xs.length - 10} more)`] : [])] : [`- ${none}`]);
+  if (s.verdict === "SPEC_CONFLICT") return ["## Loki needs one answer", clip(s.question ?? (s.reason || "see the receipt"), 600), "", "Answer it with:", "", `loki answer ${s.runId} --text "<your decision>"`, "",
+    "The run then continues on this branch from where it stopped. Opened as a draft so the work that exists is visible; it is not ready to merge.", "",
+    "## What is done", ...list(s.done, "nothing is recorded"), "", "## What is open", "- the question above", ...list(s.open, "nothing else is recorded").filter((l) => l !== "- nothing else is recorded"), ""].join("\n") + "\n";
+  if (s.verdict === "FAILED" && !s.sealed) return ["## This run stopped before it finished", `Why it stopped: ${clip(s.reason || "the engine ended before sealing a receipt", 400)}.`,
+    "No receipt was sealed, so nothing in this change is proven. Opened as a draft so the work that exists is not lost; it is not ready to merge.", "", "To continue, run the task again (a stopped run without a receipt cannot be resumed; this branch keeps what it had written):", "", s.next, "",
+    "## What is done", ...list(s.done, "nothing is recorded"), "", "## What is open", ...list(s.open, "everything: no check result was sealed"), ""].join("\n") + "\n";
+  return "";
+}
+/** Why a sealed run that is not VERIFIED stopped at the cost or time cap, and how to go on; "" when no cap was hit. Placed after the run's own head. */
+export function stopSection(verdict: Verdict, sealed: boolean, capHit: boolean, next: string): string {
+  return sealed && capHit && verdict !== "VERIFIED" && verdict !== "ALREADY_SATISFIED" ? ["## Why the run stopped", "cost/time cap reached: the stages that had not run by then did not run.", "", `To continue: ${next}`, ""].join("\n") + "\n" : "";
+}
 /** The first thing in the pull request: Loki's label, then each of the issue's own acceptance lines as met or not, with the evidence. "" when the receipt has no acceptance record. */
 export function acceptanceHead(verdict: Verdict, receipt: Record<string, unknown> | null): string {
   const rows = Array.isArray(receipt?.["issue_acceptance"]) ? (receipt!["issue_acceptance"] as { line?: unknown; status?: unknown; evidence?: unknown; reason?: unknown; optional?: unknown; note?: unknown }[]) : [];
@@ -136,7 +158,7 @@ export function acceptanceHead(verdict: Verdict, receipt: Record<string, unknown
 /** Puts Loki's label on the pull request and on the issue it works (created if the repository lacks it; the other label removed). Best effort: a miss is returned as a note, never a failed stage. */
 export function applyLokiLabel(a: { verdict: Verdict; url: string; runDir: string; env: NodeJS.ProcessEnv; timeoutMs: number }): string | null {
   const repo = /github\.com\/([^/]+\/[^/]+)\/pull\/\d+/.exec(a.url)?.[1]; if (!repo) return null; // GitHub pull requests only
-  const want = a.verdict === "VERIFIED" ? LOKI_LABELS.safe : LOKI_LABELS.needs, drop = a.verdict === "VERIFIED" ? LOKI_LABELS.needs : LOKI_LABELS.safe;
+  const want = lokiLabelFor(a.verdict), drop = want === LOKI_LABELS.safe ? LOKI_LABELS.needs : LOKI_LABELS.safe;
   const gh = (args: string[]): boolean => { try { return spawnSync("gh", args, { env: a.env, encoding: "utf8", timeout: a.timeoutMs, killSignal: "SIGKILL" }).status === 0; } catch { return false; } };
   for (const l of [LOKI_LABELS.safe, LOKI_LABELS.needs]) gh(["label", "create", l.name, "--repo", repo, "--color", l.color, "--description", l.description, "--force"]);
   const onPr = gh(["pr", "edit", a.url, "--add-label", want.name]); gh(["pr", "edit", a.url, "--remove-label", drop.name]);
@@ -179,7 +201,19 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const beforeAfter = await beforeAfterBlock(ctx.repoDir, ctx.runDir, ((ctx.outputs().verify?.["changed_files"] ?? []) as unknown[]).map(String), ctx.baseSha, { signal });
   const vo = ctx.outputs().verify as { checks?: unknown; pre_red_checks?: unknown } | undefined, failing = verdict === "FAILED" ? failedCheckNames(vo?.checks, Array.isArray(vo?.pre_red_checks) ? (vo.pre_red_checks as unknown[]).map(String) : []) : []; // FAILED-PR: the final verify's blocking failures
   const sealedReceipt = (() => { try { return seal.receipt_path ? JSON.parse(readFileSync(seal.receipt_path, "utf8")) as Record<string, unknown> : null; } catch { return null; } })();
-  const reviewerBody = acceptanceHead(verdict, sealedReceipt) + partialHead(verdict, notProven, sealedReceipt?.["prove"]) + failedHead(verdict, failing, notProven) + renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs(), sealAccuracy: sealAccuracyOfFile(seal.receipt_path ?? null), receipt: sealedReceipt }); // AWE-3: proof, conventions and cost sections read the sealed receipt
+  // DELIVER-WHAT-EXISTS: a blocked run and a run with no sealed receipt lead with their state; a sealed run that hit the cap says why it stopped after its own head
+  const sealedOk = typeof seal.receipt_sha256 === "string" && seal.receipt_sha256 !== "", runEvents = ((): EventEnvelope[] => { try { return readEvents(join(ctx.repoDir, eventsRelPath(ctx.runId))); } catch { return []; } })();
+  const intakeOut = ctx.outputs().intake as { base_sha?: unknown } | undefined, baseOf = typeof intakeOut?.base_sha === "string" && SHA_RE.test(intakeOut.base_sha) ? intakeOut.base_sha : null;
+  const stat = ((): string => { try { return baseOf ? safeGit(ctx.repoDir, ["diff", "--shortstat", baseOf, "HEAD", "--", ".", ":(exclude).loki"]).trim() : ""; } catch { return ""; } })();
+  const vchecks = (Array.isArray(vo?.checks) ? (vo.checks as { result?: unknown }[]) : []), vpass = vchecks.filter((c) => c.result === "pass").length, vfail = vchecks.filter((c) => c.result === "fail").length;
+  const issueRef = ((): string | null => { try { const i = JSON.parse(readFileSync(join(ctx.runDir, "issue.json"), "utf8")) as { repo?: unknown; number?: unknown }; return typeof i.repo === "string" && Number.isInteger(i.number) ? `${i.repo}#${i.number as number}` : null; } catch { return null; } })();
+  const rerun = issueRef ? `loki start ${issueRef}` : 'loki start "<the same task>"';
+  const lead = stateHead({ verdict, sealed: sealedOk, runId: ctx.runId, question: conflictReasonOf(runEvents) ?? null,
+    reason: sealedOk ? "" : notProven.find((n) => /backstop|killed|no receipt|not sealed/i.test(n)) ?? "the engine ended before sealing a receipt", next: rerun,
+    done: [stat ? `${stat}, committed on ${ctx.branch}` : `the change is committed on ${ctx.branch}`, vchecks.length ? `checks Loki ran${sealedOk ? "" : " before the stop"}: ${vpass} passed, ${vfail} failed` : "no check result is recorded"],
+    open: [...(sealedOk ? [] : failedCheckNames(vo?.checks, Array.isArray(vo?.pre_red_checks) ? (vo.pre_red_checks as unknown[]).map(String) : []).map((c) => `failing when the run stopped: ${c}`)), ...notProven] });
+  const stopNote = stopSection(verdict, sealedOk, capHit, `if the cost cap was hit, loki start --max-cost <higher>, then ${rerun}; if the time cap, ${rerun} with more time`);
+  const reviewerBody = lead + acceptanceHead(verdict, sealedReceipt) + partialHead(verdict, notProven, sealedReceipt?.["prove"]) + (lead ? "" : failedHead(verdict, failing, notProven)) + stopNote + renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs(), sealAccuracy: sealAccuracyOfFile(seal.receipt_path ?? null), receipt: sealedReceipt }); // AWE-3: proof, conventions and cost sections read the sealed receipt
   const tpl = readPrTemplate(ctx.repoDir), shaped = tpl === null ? reviewerBody : applyPrTemplate(reviewerBody, tpl, receiptProof(verdict, ctx.outputs(), seal.receipt_sha256 ?? null)); // no template: today's body, byte-identical
   writeFileSync(bodyFile, withAiMarker(withSealRoute(shaped, process.env, seal), aiMarkerLine({ runId: ctx.runId, provider: ctx.provider, model: ctx.model })) + intentSection(ctx.outputs().plan) + specPrLine(process.env) + triagePrLine(ctx.outputs().intake) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + link + stackSection(process.env, base, link !== "", ctx.repoDir) + (ctx.handoffMd ?? ""), "utf8");
   const title = prTitle(verdict, ctx.runDir, String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? ""), failing); // PR-FIRST-1 prefix, FireLater#21 wording, FAILED-PR check label
@@ -191,8 +225,8 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   ctx.emit("pr.opened", "pr", { url, draft, existing });
   const headSha = safeGit(ctx.repoDir, ["rev-parse", "HEAD"]).trim();
   const notProvenOut: string[] = [];
-  if (verdict === "FAILED") {
-    notProvenOut.push("commit status loki/deep-verify not set (a FAILED run gets no deep verify)"); // FAILED-PR: never a pending status nothing will ever resolve
+  if (verdict === "FAILED" || verdict === "SPEC_CONFLICT") {
+    notProvenOut.push(`commit status loki/deep-verify not set (a ${verdict === "FAILED" ? "FAILED" : "blocked"} run gets no deep verify)`); // FAILED-PR: never a pending status nothing will ever resolve
   } else if (localOk) {
     // A local bare origin (the eval harness) has no commit status API.
     notProvenOut.push("commit status loki/deep-verify not set (local origin)");
@@ -212,7 +246,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   if (!localOk && !isGitlabOrigin(pinnedOrigin) && process.env["LOKI_PR_LABEL"] !== "0") { const miss = applyLokiLabel({ verdict, url, runDir: ctx.runDir, env, timeoutMs: prChildTimeoutMs() }); if (miss) notProvenOut.push(miss); } // the green or red label on the pull request and the issue; LOKI_PR_LABEL=0 opts out
   const commentMiss = postReceiptComment({ scriptPath, env, runDir: ctx.runDir, url, timeoutMs: prChildTimeoutMs(), comment: receiptComment });
   if (commentMiss) notProvenOut.push(commentMiss);
-  await (await import("../../integrations/writeback.ts")).writeBack({ phase: verdict === "FAILED" ? "failed" : "done", ...(verdict === "FAILED" ? { reason: `failing: ${failing.join(", ") || "see the receipt"}` } : {}), verdict, prUrl: url, receiptSha256: seal.receipt_sha256 ?? null, task: String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? "") }); // B6: opt-in, never throws
+  if (verdict !== "SPEC_CONFLICT") await (await import("../../integrations/writeback.ts")).writeBack({ phase: verdict === "FAILED" ? "failed" : "done", ...(verdict === "FAILED" ? { reason: `failing: ${failing.join(", ") || "see the receipt"}` } : {}), verdict, prUrl: url, receiptSha256: seal.receipt_sha256 ?? null, task: String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? "") }); // B6: opt-in, never throws
   return { status: "completed", data: { pr_url: url, draft, existing, ...(notProvenOut.length ? { not_proven: notProvenOut } : {}) } };
 }
 export const stage: Stage = {

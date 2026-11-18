@@ -670,6 +670,105 @@ has "unit: the FAILED title names the failing check, then how many more" "$U" "t
 has "unit: the FAILED body leads with the failing checks; other verdicts get none" "$U" 'head=["## Failing checks","This run sealed FAILED: 1 blocking check still fails. Opened as a draft so the committed work is visible; it is not ready to merge until these pass.","- security scan"] other=""'
 has "unit: the failed writeback names the draft PR" "$U" 'wb="Loki run failed; its committed work is in draft PR https://github.com/o/r/pull/9.\nReason: failing: security scan"'
 
+# ---- DELIVER-WHAT-EXISTS begin (2026-11-17): a run that produced a change never ends with "PR: none" -------------------------------------------
+# Every way a run ends other than the user cancelling it, a usage-limit pause (resumable by design) and a security-scan secret match (the one
+# deliberate exception, above) leaves the change committed on loki/<run> and, in pull request mode, a DRAFT pull request whose body leads with the
+# honest state: what is done, what is open, why the run stopped and the command to continue. Legs (local bare origin, stub provider):
+#   blocked:  the fix session answers LOKI_SPEC_CONFLICT with implement's change in the tree (outcome BLOCKED): a draft PR opens, the branch is pushed,
+#             the body leads with the one question and `loki answer <run> --text`, then what is done; no deep verify starts; the run branch stays
+#             local so the answer resumes on it.
+#   unsealed: the engine worker is killed while the fix sits in a stash (no commit stage, no receipt): the run-end commit holds the fix, a draft PR
+#             opens on it, and the body leads with "stopped before it finished", the reason and the command that runs the task again.
+#   costcap:  the cost cap is reached after implement: the sealed PARTIAL run opens a draft PR whose body says why the run stopped and how to go on.
+#   unit:     no draft for a failed, blocked or unfinished run is titled or labelled as mergeable: every title carries its bracket, the label is
+#             always "loki: needs you" (never the green one), and the rule is one function (LOKI_E10_DELIVER_UNSEALED=0 restores the old rule).
+# Planted defects (each reverted afterwards; run from source):
+#   DWa. e10ext/commit_filter.ts deliverAsDraft: return verdict === "FAILED" && sealed (the old rule); blocked and unsealed read no PR and no pushed branch.
+#   DWb. engine10/stages/pr.ts stateHead: return ""; the three bodies lose their leading state section.
+#   DWc. engine10/stages/pr.ts prTitle: no bracket for SPEC_CONFLICT; the unit's title check fails (a blocked draft would read as a plain title).
+#   DWd. engine10/stages/pr.ts lokiLabelFor: the green label for any verdict that is not FAILED; the unit's label check fails.
+#   DWe. util/base_guard.ts finishRunBranch: drop the answerable test; blocked loses its local run branch after the push.
+#   DWf. engine10/supervisor.ts: start the deep verify for a SPEC_CONFLICT draft again (drop deepAfterPr); blocked reads deep.started 1.
+run_dw() { # [DW_ARGS="<loki flags>"] run_dw <label> [env...] -> D, REPO, OUT, RC, RUNDIR: run_pr without the deep-verify waits (none of these runs starts one)
+    local label="$1"; shift
+    D="$T/dw-$label"; REPO="$D/repo"; mkdir -p "$D"
+    git init -q --bare -b main "$D/origin.git"
+    cp -R "$FIX/repo" "$REPO"
+    git -C "$REPO" init -q -b main
+    git -C "$REPO" config user.name e2e
+    git -C "$REPO" config user.email e2e@example.invalid
+    git -C "$REPO" add calc.ts calc.test.ts bunfig.toml
+    git -C "$REPO" commit -q -m base
+    git -C "$REPO" remote add origin "$D/origin.git"
+    git -C "$REPO" push -q origin main
+    OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u GH_TOKEN -u GITHUB_TOKEN \
+        -u LOKI_REVIEW_PROVIDER -u LOKI_REVIEW_DEFAULT -u LOKI_XVENDOR_DEFAULT -u LOKI_RISK_TIER -u LOKI_PR_DRAFT \
+        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" GH_CONFIG_DIR="$D/ghcfg" \
+        E2E_STUB_MODE=done E2E_STUB_LOG="$D/stub.log" E2E_STUB_USAGE=10 LOKI_RECEIPT_SIGNING_KEY_FILE="$D/k.pem" "$@" \
+        ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$TASK" ${DW_ARGS:-} 2>&1)"; RC=$?
+    RUNDIR="$(ls -d "$REPO"/.loki/runs/e10-* 2>/dev/null | head -1)"
+}
+dw_facts() { # -> "<run.completed verdict> <receipt sealed> <pr.opened> <draft> <deep.started> <branch on origin> <first heading of the PR body>"
+    python3 -I - "$RUNDIR" "$D/origin.git" <<'PY'
+import json, os, subprocess, sys
+rd, origin = sys.argv[1], sys.argv[2]
+ev = [json.loads(l) for l in open(os.path.join(rd, "events.jsonl")) if l.strip().startswith("{")]
+done = [e for e in ev if e.get("type") == "run.completed"]
+pr = [e for e in ev if e.get("type") == "pr.opened"]
+pushed = subprocess.run(["git", "-C", origin, "rev-parse", "--verify", "-q", "loki/" + os.path.basename(rd)], capture_output=True).returncode == 0
+try: head = next(l.strip() for l in open(os.path.join(rd, "pr-body.md")) if l.startswith("## "))
+except Exception: head = "(no body)"
+print(done[-1]["data"].get("verdict") if done else None, os.path.exists(os.path.join(rd, "receipt.json")), len(pr), bool(pr and pr[0]["data"].get("draft")),
+      sum(e.get("type") == "deep.started" for e in ev), pushed, "|", head)
+PY
+}
+dw_body_has() { grep -qF -- "$1" "$RUNDIR/pr-body.md" 2>/dev/null; }
+
+run_dw blocked LOKI_RISK_TIER=medium E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict
+f="$(dw_facts)"; rid="$(basename "$RUNDIR")"
+[ "$f" = "SPEC_CONFLICT True 1 True 0 True | ## Loki needs one answer" ] && ok "blocked run with a change: a draft PR opened on the pushed branch, its body leads with the question, no deep verify" || { bad "blocked run facts: $f (rc $RC)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+dw_body_has "calc.test.ts:7 expects multiply(3, 4) to be 12" && dw_body_has "loki answer $rid --text" && ok "blocked run: the body states the question and the command that answers it" || bad "blocked run: the body lacks the question or 'loki answer $rid --text'"
+dw_body_has "## What is done" && [ "$(grep -n '^## ' "$RUNDIR/pr-body.md" | sed -n '2p' | cut -d: -f2-)" = "## What is done" ] && ok "blocked run: what is done comes right after the question" || bad "blocked run: second heading is '$(grep '^## ' "$RUNDIR/pr-body.md" | sed -n '2p')'"
+[ -n "$(git -C "$REPO" rev-parse --verify -q "loki/$rid")" ] && [ "$(git -C "$REPO" rev-parse "loki/$rid")" = "$(git -C "$D/origin.git" rev-parse "loki/$rid")" ] && ok "blocked run: the run branch stays local (the answer resumes on it) and equals the pushed one" || bad "blocked run: local loki/$rid is gone or differs from the origin"
+grep -Eq '^PR:[[:space:]]+none' <<< "$OUT" && bad "blocked run: the summary says PR: none while a change exists" || ok "blocked run: the summary never says PR: none"
+[ "$RC" -eq 4 ] && grep -Eq '^Outcome:[[:space:]]+BLOCKED' <<< "$OUT" && ok "blocked run: outcome and exit code are unchanged (BLOCKED, 4)" || bad "blocked run: rc $RC, $(grep '^Outcome' <<< "$OUT")"
+
+run_dw unsealed E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit E2E_STUB_STASH=fix E2E_STUB_STASH_THEN=killworker E2E_STUB_STASH_MARK="$T/dw-unsealed.mark"
+f="$(dw_facts)"; rid="$(basename "$RUNDIR")"
+[ "$f" = "FAILED False 1 True 0 True | ## This run stopped before it finished" ] && ok "unsealed run (worker killed, no receipt): a draft PR opened on the pushed branch, its body leads with the stop" || { bad "unsealed run facts: $f (rc $RC)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+git -C "$D/origin.git" show "loki/$rid:calc.ts" 2>/dev/null | grep -q 'return a \* b;' && ok "unsealed run: the pushed branch holds the fix that sat in the stash" || bad "unsealed run: the pushed branch does not hold the fix"
+dw_body_has 'loki start "<the same task>"' && dw_body_has "No receipt was sealed" && dw_body_has "## What is done" && dw_body_has "## What is open" && ok "unsealed run: the body says nothing is proven, what is done, what is open and the command to continue" || bad "unsealed run: the body lacks the resume command, the no-receipt line or a state section"
+grep -Eq '^PR:[[:space:]]+none' <<< "$OUT" && bad "unsealed run: the summary says PR: none while a change exists" || ok "unsealed run: the summary never says PR: none"
+grep -Eq '^Outcome:[[:space:]]+FAILED' <<< "$OUT" && ok "unsealed run: the outcome is unchanged (FAILED)" || bad "unsealed run: $(grep '^Outcome' <<< "$OUT")"
+
+DW_ARGS="--max-cost 0.015" run_dw costcap LOKI_E10_PLAN=1 # the metered stub: plan costs $0.01, implement takes the run past the cap
+f="$(dw_facts)"
+case "$f" in "PARTIAL True 1 True "*) ok "cost cap reached after implement: the sealed PARTIAL run opened a draft PR" ;; *) bad "cost cap run facts: $f (rc $RC)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /' ;; esac
+dw_body_has "## Why the run stopped" && dw_body_has "cost/time cap reached" && dw_body_has "--max-cost" && ok "cost cap run: the body says why the run stopped and how to continue" || bad "cost cap run: the body lacks the stop section, the reason or the --max-cost command"
+git -C "$D/origin.git" show "loki/$(basename "$RUNDIR"):calc.ts" 2>/dev/null | grep -q multiply && ok "cost cap run: the pushed branch holds implement's change" || bad "cost cap run: the pushed branch has no multiply()"
+
+U="$(cd "$ROOT/loki-ts" && T="$T" bun -e '
+const p = await import("./src/engine10/stages/pr.ts"), cf = await import("./src/e10ext/commit_filter.ts");
+const root = process.env.T + "/dw-unit"; (await import("node:fs")).mkdirSync(root, { recursive: true });
+const V = ["FAILED", "SPEC_CONFLICT", "PARTIAL", "ALREADY_SATISFIED"];
+console.log("titles=" + [p.prTitle("SPEC_CONFLICT", root, "add search"), p.prTitle("FAILED", root, "add search"), p.prTitle("PARTIAL", root, "add search"), p.prTitle("VERIFIED", root, "add search")].join(" | "));
+console.log("labels=" + V.map((v) => p.lokiLabelFor(v).name).join(",") + " verified=" + p.lokiLabelFor("VERIFIED").name);
+console.log("rule=" + [cf.deliverAsDraft("FAILED", true), cf.deliverAsDraft("FAILED", false), cf.deliverAsDraft("SPEC_CONFLICT", true), cf.deliverAsDraft("VERIFIED", true), cf.deliverAsDraft("PARTIAL", true), cf.deliverAsDraft("ALREADY_SATISFIED", true)].join(",")
+  + " off=" + [cf.deliverAsDraft("FAILED", true, { LOKI_E10_DELIVER_UNSEALED: "0" }), cf.deliverAsDraft("FAILED", false, { LOKI_E10_DELIVER_UNSEALED: "0" }), cf.deliverAsDraft("SPEC_CONFLICT", true, { LOKI_E10_DELIVER_UNSEALED: "0" })].join(","));
+console.log("deep=" + ["VERIFIED", "PARTIAL", "FAILED", "SPEC_CONFLICT"].map((v) => cf.deepAfterPr(v)).join(","));
+const blocked = p.stateHead({ verdict: "SPEC_CONFLICT", sealed: true, runId: "e10-x", question: "which rounding mode?", reason: "spec conflict: which rounding mode?", next: "", done: ["2 files changed"], open: ["a"] }).split("\n");
+const unsealed = p.stateHead({ verdict: "FAILED", sealed: false, runId: "e10-x", question: null, reason: "engine ended before sealing a receipt", next: "loki start o/r#7", done: ["1 file changed"], open: [] }).split("\n");
+console.log("head=" + JSON.stringify([blocked[0], blocked.includes("loki answer e10-x --text \"<your decision>\""), unsealed[0], unsealed.includes("loki start o/r#7"), unsealed.some((l) => l.includes("not ready to merge")), blocked.some((l) => l.includes("not ready to merge"))]));
+console.log("none=" + JSON.stringify([p.stateHead({ verdict: "VERIFIED", sealed: true, runId: "e10-x", question: null, reason: "", next: "", done: [], open: [] }), p.stateHead({ verdict: "FAILED", sealed: true, runId: "e10-x", question: null, reason: "", next: "", done: [], open: [] })]));
+' 2>&1)"
+has "unit: every draft title of a failed, blocked or partial run carries its bracket; only a VERIFIED title is plain" "$U" "titles=[NEEDS ANSWER] add search | [FAILED] add search | [PARTIAL] add search | add search"
+has "unit: the green label is set for VERIFIED only; failed, blocked, partial and unfinished runs get loki: needs you" "$U" "labels=loki: needs you,loki: needs you,loki: needs you,loki: needs you verified=loki: safe to merge"
+has "unit: a FAILED run (sealed or not) and a SPEC_CONFLICT run are delivered as drafts; LOKI_E10_DELIVER_UNSEALED=0 restores the sealed-FAILED-only rule" "$U" "rule=true,true,true,false,false,false off=true,false,false"
+has "unit: a deep verify starts after a VERIFIED or PARTIAL pull request only" "$U" "deep=true,true,false,false"
+has "unit: the state section leads with the question and its answer command, or with the stop, and says the draft is not ready to merge" "$U" 'head=["## Loki needs one answer",true,"## This run stopped before it finished",true,true,true]'
+has "unit: a VERIFIED body and a sealed FAILED body with no stop get no state section (their existing heads lead)" "$U" 'none=["",""]'
+# ---- DELIVER-WHAT-EXISTS end ----------------------------------------------------------------------------------------------------------------------
+
 # Unit: every risk tier plans at most the one pre-seal reviewer, and the receipt credits "one reviewer" only from it.
 # The unconfigured same-vendor review stays on for high risk and is opt-in for medium (LOKI_REVIEW_DEFAULT=1, xreview.ts reviewDefaultOn).
 # The run start sits 60s back: readRiskRecord ignores a record older than the run, and a same-millisecond start raced it on Linux CI.

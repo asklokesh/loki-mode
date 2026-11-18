@@ -6,7 +6,7 @@ import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
 import { redactEventData } from "../util/redact.ts"; import { deadlineCapS, localBranchNote, resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
 import { terminalWidth } from "../util/term_width.ts";
 import { diffStat, runHead, formatRunSummary, handoffSection, readRiskSummary, writeHandoff, withNextLine, withFoldLine, withRiskLine, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT, RISKTIER
-import { commitUnsealedWork, guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
+import { commitUnsealedWork, deepAfterPr, deliverAsDraft, guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey, secretPushLine, secretPushRefusal } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { deliverables, ISSUE_LABELS_ENV, issueWholeFirst } from "../features/decompose.ts"; import { smallMaxChars } from "./sizing.ts";
@@ -266,7 +266,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   }
   // FAILED-PR: a FAILED run with a sealed receipt and committed work opens a labelled DRAFT PR ("[FAILED: <check>]", the failing checks first), so committed work is never kept silently local.
   // SECRET-PUSH: the one exception is a security scan secret match (stages/seal.ts secretPushRefusal): that change must not leave the machine before a review, whatever the verdict.
-  const pushable = !!opts.pr && !cancelled && intact && !!origin && hasDiff, failedPr = verdict === "FAILED" && receiptVerdict;
+  const pushable = !!opts.pr && !cancelled && intact && !!origin && hasDiff, failedPr = deliverAsDraft(verdict, receiptVerdict, env);
   const refusal = pushable ? secretPushRefusal(readEvents(log.path).findLast((e) => e.type === "stage.completed" && e.stage === "verify")?.data, opts.runId) : null;
   if (pushable && refusal) process.stderr.write(`engine10: run ${opts.runId}: ${secretPushLine(refusal)}\n`);
   else if (pushable && verdict !== "ALREADY_SATISFIED" && verdict !== "VERIFIED" && verdict !== "PARTIAL" && !failedPr) process.stderr.write(localBranchNote(opts.runId, verdict, opts.repoDir)); // FC-NO-PUSH-UNVERIFIED: SPEC_CONFLICT, and a FAILED run with no receipt
@@ -279,7 +279,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
       log.append("pr.opened", "pr", { url: out.url, draft: out.draft, existing: out.existing });
       await opts.status?.({ prUrl: out.url }); await slackEvent(env, "pr_opened", { repo: githubRepoFromUrl(origin) ?? undefined, issue: String(opts.started?.["issue_ref"] ?? ""), prUrl: out.url, outcome: verdict }); // D51-A4
       // E-48: deep verify (stages/deep.ts) runs detached, never keeping the supervisor alive; deep.started records the pid so it is never orphaned untracked.
-      if (opts.deepArgv && verdict !== "FAILED") notProven.push(...spawnDeep(opts.deepArgv, origin, { workerEnv, env, repoDir: opts.repoDir, append: (d) => log.append(d.type as never, "deep", d.data) }));
+      if (opts.deepArgv && deepAfterPr(verdict)) notProven.push(...spawnDeep(opts.deepArgv, origin, { workerEnv, env, repoDir: opts.repoDir, append: (d) => log.append(d.type as never, "deep", d.data) }));
     }
   }
   const allEvents = readEvents(log.path), folded = fold(allEvents), lokiRoot = join(opts.repoDir, ".loki"), costUsd = runCostUsd(allEvents, log.tampered, lokiRoot), wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null

@@ -212,6 +212,16 @@ export function guardedBackstop(intact: boolean, repoDir: string, workerEnv: Nod
   return null;
 }
 
+/** DELIVER-WHAT-EXISTS: which runs that are not VERIFIED or PARTIAL still open a DRAFT pull request for the change they produced (the supervisor's push
+ *  condition calls this). A FAILED run, sealed or not (a killed or crashed worker leaves no receipt; the backstop commit holds its work), and a
+ *  SPEC_CONFLICT run (the draft leads with the question and `loki answer`). Never a label rule: the verdict and the outcome are untouched, the pull
+ *  request is always a draft, and the security-scan secret match still refuses the push. LOKI_E10_DELIVER_UNSEALED=0 restores the rule before this
+ *  change (a FAILED run with a sealed receipt only). */
+export const deliverUnsealedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DELIVER_UNSEALED"] ?? "").trim());
+export const deliverAsDraft = (verdict: string, sealed: boolean, env: NodeJS.ProcessEnv = process.env): boolean => (deliverUnsealedOn(env) ? verdict === "FAILED" || verdict === "SPEC_CONFLICT" : verdict === "FAILED" && sealed);
+/** A deep verify follows a VERIFIED or PARTIAL pull request only: a FAILED or blocked draft has nothing to deep-verify and must not carry a pending status. */
+export const deepAfterPr = (verdict: string): boolean => verdict === "VERIFIED" || verdict === "PARTIAL";
+
 /** Run safety: before the checkout returns to the user's branch, whatever the run left uncommitted (any outcome without a PR: FAILED,
  *  STALLED, BLOCKED, BUDGET_STOP, a SIGINT/SIGTERM cancel) becomes one WIP commit on its own branch, so `git checkout <start>` neither
  *  refuses nor carries the run's edits onto the user's branch. Only on loki/<runId>, with an intact log and a valid intake base. Every
