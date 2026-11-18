@@ -312,9 +312,10 @@ run_engine done
 [ "$RC" -eq 0 ] && ok "done run exits 0" || { bad "done run exited $RC"; printf '%s\n' "$OUT" | tail -15 | sed 's/^/    | /'; }
 grep -Eq '^Outcome:[[:space:]]+VERIFIED' <<< "$OUT" && ok "done run prints Outcome: VERIFIED" || bad "done run did not print Outcome: VERIFIED"
 grep -q 'export function multiply' "$REPO/calc.ts" && ok "stub's change landed in calc.ts" || bad "calc.ts has no multiply()"
-# D48 counts the start line plus the summary block (Outcome: to the end); the live candidate diff and the branch note print while the run goes
-DSUM="$(printf '%s\n' "$OUT" | sed -n '/^Outcome:/,$p')"; DLN=$(( $(printf '%s\n' "$DSUM" | grep -c '') + 1 )); DPC="$(printf '%s\n' "$DSUM" | grep -ciE '(^|; )proof: (yes|no|not run)')"; DFULL="$(printf '%s\n' "$OUT" | grep -cE '^(  Before: |Not proven:)')"
-[ -n "$DSUM" ] && [ "$DLN" -le 8 ] && [ "$DPC" = 1 ] && [ "$DFULL" = 0 ] && ok "D48: the done run's default output is $DLN lines (cap 8) with the one-line proof card on, no full card" || { bad "D48 cap with the proof card: $DLN lines, $DPC proof lines, $DFULL full-card lines"; printf '%s\n' "$OUT" | sed 's/^/    | /'; }
+# D48 counts the start lines plus the summary block (Outcome: to the end); the live candidate diff and the branch note print while the run goes.
+# PR-BASE: the one long start line became at most three short ones (target and base; model; cap and estimate), so they are counted as printed and the cap is 10 (it was 1 line and 8).
+DSUM="$(printf '%s\n' "$OUT" | sed -n '/^Outcome:/,$p')"; DHEAD="$(awk '/^(Loki 10 engine|model |cap |estimate:)/ && !done { n++; next } { done = 1 } END { print n + 0 }' <<< "$OUT")"; DLN=$(( $(printf '%s\n' "$DSUM" | grep -c '') + DHEAD )); DPC="$(printf '%s\n' "$DSUM" | grep -ciE '(^|; )proof: (yes|no|not run)')"; DFULL="$(printf '%s\n' "$OUT" | grep -cE '^(  Before: |Not proven:)')"
+[ -n "$DSUM" ] && [ "$DHEAD" -ge 1 ] && [ "$DHEAD" -le 3 ] && [ "$DLN" -le 10 ] && [ "$DPC" = 1 ] && [ "$DFULL" = 0 ] && ok "D48: the done run's default output is $DLN lines (cap 10: at most 3 start lines) with the one-line proof card on, no full card" || { bad "D48 cap with the proof card: $DLN lines, $DPC proof lines, $DFULL full-card lines"; printf '%s\n' "$OUT" | sed 's/^/    | /'; }
 if [ -n "$RUNDIR" ] && [ -f "$RUNDIR/receipt.json" ]; then
     r="$(verify_run)"
     [ "$r" = "0 VERIFIED" ] && ok "loki verify on the run receipt: VERIFIED rc 0" || bad "loki verify gave: $r"
@@ -355,8 +356,8 @@ import json, os, re, sys
 rec = json.load(open(sys.argv[1])); argv = open(sys.argv[2]).read().splitlines() if os.path.exists(sys.argv[2]) else []
 impl = [l for l in argv if l.startswith("implement")]
 m = re.search(r"--model (\S+)", impl[0]) if impl else None
-start = next((l for l in sys.argv[3].splitlines() if l.startswith("Loki 10 engine")), "")
-c = re.search(r", model (.*?)(?:; |$)", start)
+lines = sys.argv[3].splitlines(); at = next((i for i, l in enumerate(lines) if l.startswith("Loki 10 engine")), -1)
+c = re.match(r"model (.*)$", lines[at + 1]) if 0 <= at < len(lines) - 1 else None # PR-BASE: the header is three short lines, the model clause is the whole second line (it was a clause of one long line)
 print("~".join([str(rec.get("model")), rec.get("model_source", "absent"), m.group(1) if m else "none", c.group(1) if c else "noclause"]))
 PY
 }
@@ -1004,6 +1005,194 @@ console.log(out.join(" "));
 [ "$U" = "clean=0/0/score0 early=1/1/score0,run1,enter1,score1 rank=2/2/score0,run1,run2,enter1,score1,enter2,score2 tie_review=1/1/score0,run1,enter1,score1,review0+1:true tie_null=0/1/score0,run1,enter1,score1,review0+1,enter0 receipt=3:true throws=0/2/score0,run1,run2 score_error=0/1/score0,run1,enter1,score1,enter0 restore_fail=AttemptsRestoreError aborted=0/0/score0 no_receipt_when_none=0" ] \
     && ok "unit: attempts over fake ops (clean first starts none, clean extra stops the rest, rank picks, a tie goes to the review, a null review keeps the first, errored and aborted keep it, receipt lines)" || bad "unit (attempts ops) gave: $U"
 
+# ---------------------------------------------------------------- PR-BASE begin (FireLater#19, pull request 70): the label describes exactly what the pull request merges
+# A run started on feature/issue-24 (tip not in main) measured 12 files against that tip and opened a pull request into main that merged 40.
+# Local bare origin, stub provider. Every leg compares the user's branch tip, main, the checked-out ref, the status and an untracked file
+# before and after. Mutations (each leg read red under its own):
+#   50. util/base_guard.ts prBasePlan: return keep(t.ref) in place of the target-tip plan (leg a: no "starting from" line, the receipt base is
+#       the feature tip, the label is PARTIAL and the pushed branch holds other.txt).
+#   51. util/base_guard.ts prBasePlan: drop the o.baseCurrent branch (leg b: the pull request targets main, no "Stacked on" line; leg c1 runs a session).
+#   52. util/base_guard.ts prBasePlan: hit = [] (leg c2: a session runs or the checkout fails inside the run, the stub log is not empty).
+#   53. stages/seal.ts: drop ...prScopeSeal.notes from openNotes (leg d: a detached start seals VERIFIED).
+#   54. stages/pr.ts prScopeGate: return verdict sealed and no notes on a mismatch (unit leg: gate=VERIFIED for a moved base).
+#   60. util/base_guard.ts finishDeferredRun: drop the start_sha baseSha (leg d: the checkout stays on loki/<run> after the deep verify).
+#   59. stages/pr.ts prScopeGate: after = capped (ignore sealMeasured) (unit leg: gate_unmeasured carries the sealed-before sentence).
+#   55. util/base_guard.ts prBasePlan: anc() always false (leg e: a run from main prints the start sentence and its header names origin/main as the base).
+#   56. supervisor.ts: join the header lines with ", " (leg e: the header is one line, longer than 130 characters).
+#   58. util/base_guard.ts prBasePlan: skip the dirty-tree branch (leg c3: the start sentence prints for a run intake then refuses).
+#   57. stages/intake.ts: ignore LOKI_E10_START_FROM (leg a: the receipt base is the feature tip, the label is PARTIAL, other.txt is pushed).
+# prb_run <label> <setup: tip|pushed|collide|detached|main> [flags...] -> D, REPO, OUT, RC, RUNDIR, PRB_BEFORE, PRB_AFTER
+prb_state() { # the user's side of the checkout: nothing here may differ after a run
+    printf 'head=%s ref=%s feature=%s main=%s note=%s collide=%s status=%s\n' \
+        "$(git -C "$1" rev-parse HEAD)" "$(git -C "$1" symbolic-ref -q --short HEAD || echo detached)" \
+        "$(git -C "$1" rev-parse -q --verify refs/heads/feature/x || echo none)" "$(git -C "$1" rev-parse refs/heads/main)" \
+        "$(git -C "$1" hash-object "$1/scratch-note.txt")" "$([ -f "$1/collide.txt" ] && git -C "$1" hash-object "$1/collide.txt" || echo none)" \
+        "$(git -C "$1" status --porcelain --untracked-files=all | grep -v '\.loki/' | tr '\n' '|')"
+}
+prb_run() {
+    local label="$1" setup="$2" i pid; shift 2
+    D="$T/prb-$label"; REPO="$D/repo"; mkdir -p "$D"
+    git init -q --bare -b main "$D/origin.git"
+    cp -R "$FIX/repo" "$REPO"
+    git -C "$REPO" init -q -b main
+    git -C "$REPO" config user.name e2e
+    git -C "$REPO" config user.email e2e@example.invalid
+    git -C "$REPO" add calc.ts calc.test.ts bunfig.toml
+    git -C "$REPO" commit -q -m base
+    git -C "$REPO" remote add origin "$D/origin.git"
+    git -C "$REPO" push -q origin main
+    if [ "$setup" != main ]; then # the other branch: one commit, two files, not in main (the head of somebody else's open pull request)
+        git -C "$REPO" checkout -q -b feature/x
+        mkdir -p "$REPO/extra"; echo "other work" > "$REPO/other.txt"; echo "notes" > "$REPO/extra/notes.md"
+        git -C "$REPO" add other.txt extra/notes.md
+        git -C "$REPO" commit -q -m "other work, not in main"
+    fi
+    case "$setup" in
+        pushed) git -C "$REPO" push -q origin feature/x ;;
+        collide) # origin/main moved on and tracks collide.txt; the user's tree holds an untracked file of that name
+            git -C "$REPO" checkout -q main; echo "tracked on main" > "$REPO/collide.txt"; git -C "$REPO" add collide.txt
+            git -C "$REPO" commit -q -m "main moves on"; git -C "$REPO" push -q origin main
+            git -C "$REPO" checkout -q feature/x; printf 'my own notes\n' > "$REPO/collide.txt" ;;
+        detached) git -C "$REPO" checkout -q --detach feature/x ;;
+        dirty) printf '// my uncommitted edit\n' >> "$REPO/calc.test.ts" ;;
+    esac
+    printf 'uncommitted and untracked, mine\n' > "$REPO/scratch-note.txt"
+    PRB_BEFORE="$(prb_state "$REPO")"
+    OUT="$(cd "$REPO" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u GH_TOKEN -u GITHUB_TOKEN \
+        -u LOKI_REVIEW_PROVIDER -u LOKI_REVIEW_DEFAULT -u LOKI_XVENDOR_DEFAULT -u LOKI_RISK_TIER -u LOKI_PR_DRAFT -u LOKI_PR_BASE -u LOKI_BASE_CURRENT -u LOKI_E10_BASE \
+        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" GH_CONFIG_DIR="$D/ghcfg" \
+        E2E_STUB_MODE=done E2E_STUB_LOG="$D/stub.log" LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$D/k.pem" \
+        ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" ${PRB_VERB:+"$PRB_VERB"} "$TASK" "$@" 2>&1)"
+    RC=$?
+    RUNDIR="$REPO/.loki/runs/$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_id"])' "$REPO/.loki/engine.json" 2>/dev/null)"
+    if [ -f "$RUNDIR/events.jsonl" ] && grep -q '"pr.opened"' "$RUNDIR/events.jsonl"; then # the detached deep verify holds the checkout until it ends
+        for i in $(seq 1 90); do [ -f "$RUNDIR/receipt-addendum-1.json" ] && break; sleep 1; done
+        pid="$(python3 -I -c 'import json,sys; print(next((json.loads(l)["data"]["pid"] for l in open(sys.argv[1]) if "\"deep.started\"" in l), ""))' "$RUNDIR/events.jsonl" 2>/dev/null)"
+        for i in $(seq 1 30); do [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+        for i in $(seq 1 20); do [ "$(git -C "$REPO" symbolic-ref -q --short HEAD)" = "loki/$(basename "$RUNDIR")" ] || break; sleep 1; done
+    fi
+    PRB_AFTER="$(prb_state "$REPO")"
+}
+# prb_facts -> "<receipt verdict> <pr.opened count> <draft> <receipt base is origin main: yes|no> <pr_base.mode> <pr_base.target> <pr_files>/<measured_files> <commits pushed past the target> <other.txt pushed: yes|no> <sessions>"
+prb_facts() {
+    python3 -I - "$REPO" "$RUNDIR" "$D" "${1:-main}" <<'PY'
+import json, os, subprocess, sys
+repo, rd, d, tgt = sys.argv[1:5]
+g = lambda *a: subprocess.run(["git", "-C", os.path.join(d, "origin.git"), *a], capture_output=True, text=True).stdout.strip()
+ev = [json.loads(l) for l in open(os.path.join(rd, "events.jsonl")) if l.strip().startswith("{")] if os.path.exists(os.path.join(rd, "events.jsonl")) else []
+rec = json.load(open(os.path.join(rd, "receipt.json"))) if os.path.exists(os.path.join(rd, "receipt.json")) else {}
+pr = [e for e in ev if e.get("type") == "pr.opened"]
+pb = rec.get("pr_base") or {}
+br = "loki/" + os.path.basename(rd)
+pushed = g("rev-list", "--count", "%s..%s" % (tgt, br)) or "none"
+files = g("diff", "--name-only", "%s...%s" % (tgt, br)).split()
+stub = os.path.join(d, "stub.log")
+print(rec.get("verdict", "none"), len(pr), bool(pr and pr[0]["data"].get("draft")), "yes" if rec.get("base_sha") == g("rev-parse", "main") else "no",
+      pb.get("mode", "none"), pb.get("target", "none"), "%s/%s" % (pb.get("pr_files"), pb.get("measured_files")), pushed,
+      "yes" if "other.txt" in files else "no", sum(1 for _ in open(stub)) if os.path.exists(stub) else 0)
+PY
+}
+prb_same() { [ "$PRB_BEFORE" = "$PRB_AFTER" ] && ok "$1: the user's branch, its commits, main, the checked-out ref and the untracked file are identical before and after" || { bad "$1: the user's checkout changed"; printf '    | before %s\n    | after  %s\n' "$PRB_BEFORE" "$PRB_AFTER"; }; }
+PRB_LINE="starting from origin/main, not from your branch feature/x, so the pull request holds only this change (use --base-current to build on your branch)"
+
+# leg a: a branch whose tip is not in the target, clean tree, no flag: the run starts from the target tip and the pull request holds only its own commits and files
+prb_run a tip
+f="$(prb_facts)"; set -- $f
+[ "$(grep -cxF "$PRB_LINE" <<< "$OUT")" = 1 ] && ok "PR-BASE a: the run says once, in one plain line, that it starts from origin/main and names --base-current" || { bad "PR-BASE a: the start sentence is printed $(grep -cxF "$PRB_LINE" <<< "$OUT") times"; printf '%s\n' "$OUT" | head -6 | sed 's/^/    | /'; }
+[ "$(grep -n '' <<< "$OUT" | grep -F "$PRB_LINE" | head -1 | cut -d: -f1)" -le 5 ] 2>/dev/null \
+    && ok "PR-BASE a: the sentence is among the run's first lines, before any stage output" || bad "PR-BASE a: the sentence is not among the first five lines"
+has "PR-BASE a: the header names the target as the base" "$OUT" "Loki 10 engine, PR target: origin/main, base: origin/main"
+[ "$1 $2 $3" = "VERIFIED 1 False" ] && ok "PR-BASE a: the run is VERIFIED and its pull request opens ready" || { bad "PR-BASE a: facts $f (rc $RC)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+[ "$4 $5 $6" = "yes target-tip origin/main" ] && ok "PR-BASE a: the receipt's base is the origin/main tip and it records the target and the mode" || bad "PR-BASE a: receipt base facts: $f"
+[ "$8" = 1 ] && [ "$9" = no ] && [ "$7" = "1/1" ] && ok "PR-BASE a: the pushed branch holds one commit past main and one file, the same count the receipt measured; other.txt is not in it" || bad "PR-BASE a: pushed $8 commit(s), other.txt pushed: $9, files pr/measured $7"
+grep -q '^Base and target: built from ' "$RUNDIR/pr-body.md" 2>/dev/null && ok "PR-BASE a: the pull request body states the base and the target in one line" || bad "PR-BASE a: no 'Base and target:' line in the pull request body"
+prb_same "PR-BASE a"
+
+# leg b: --base-current with the branch on the remote: the pull request targets that branch (a stacked pull request) and holds only the run's commits
+PRB_VERB=start prb_run b pushed --base-current # through `loki start`, the command the measured run used: the flag crosses route.sh and commands/start.ts
+f="$(prb_facts feature/x)"; set -- $f
+has "PR-BASE b: the run says it builds on the branch and targets it" "$OUT" "building on your branch feature/x: the pull request targets feature/x, not main (stacked pull request)"
+has "PR-BASE b: the header names the branch as target and base" "$OUT" "Loki 10 engine, PR target: origin/feature/x, base: feature/x"
+grep -qF 'Stacked on `feature/x`' "$RUNDIR/pr-body.md" 2>/dev/null && ok "PR-BASE b: the push is asked to open the pull request into feature/x (the body's stacked line)" || bad "PR-BASE b: the body has no 'Stacked on feature/x' line"
+[ "$1 $2 $3" = "VERIFIED 1 False" ] && [ "$5 $6" = "current-branch origin/feature/x" ] && [ "$8" = 1 ] && [ "$7" = "1/1" ] \
+    && ok "PR-BASE b: VERIFIED, and against feature/x the pushed branch holds one commit and one file, as measured" || { bad "PR-BASE b: facts $f (rc $RC)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+[ "$(grep -cF "$PRB_LINE" <<< "$OUT")" = 0 ] && ok "PR-BASE b: no start-from-main sentence with --base-current" || bad "PR-BASE b: the start-from-main sentence printed with --base-current"
+prb_same "PR-BASE b"
+
+# leg c1: --base-current with the branch not on the remote: nothing can be reconciled, so the run stops with the choice before any session
+prb_run c1 tip --base-current
+[ "$RC" -eq 2 ] && [ ! -s "$D/stub.log" ] && [ ! -d "$REPO/.loki/runs" ] && ok "PR-BASE c1: --base-current on a branch origin does not have exits 2 before any session or run record" || { bad "PR-BASE c1: rc $RC, stub log $(wc -l < "$D/stub.log" 2>/dev/null || echo 0) line(s), runs dir $([ -d "$REPO/.loki/runs" ] && echo present || echo absent)"; printf '%s\n' "$OUT" | tail -5 | sed 's/^/    | /'; }
+has "PR-BASE c1: the refusal counts the commits the pull request would carry" "$OUT" "your branch feature/x is not on origin, so the pull request would go into main and carry 1 other commit. Nothing was run."
+has "PR-BASE c1: the refusal gives the push command" "$OUT" "git push -u origin feature/x, then rerun with --base-current"
+[ -z "$(git -C "$D/origin.git" for-each-ref --format='%(refname)' refs/heads | grep -v '^refs/heads/main$')" ] && ok "PR-BASE c1: nothing was pushed" || bad "PR-BASE c1: origin has $(git -C "$D/origin.git" for-each-ref --format='%(refname)' refs/heads | tr '\n' ' ')"
+prb_same "PR-BASE c1"
+
+# leg c2: starting from the target would overwrite an untracked file: refused before any session, with the two commands that work
+prb_run c2 collide
+[ "$RC" -eq 2 ] && [ ! -s "$D/stub.log" ] && [ ! -d "$REPO/.loki/runs" ] && ok "PR-BASE c2: a base that cannot be reconciled exits 2 before any session or run record" || { bad "PR-BASE c2: rc $RC, stub log $(wc -l < "$D/stub.log" 2>/dev/null || echo 0) line(s), runs dir $([ -d "$REPO/.loki/runs" ] && echo present || echo absent)"; printf '%s\n' "$OUT" | tail -5 | sed 's/^/    | /'; }
+has "PR-BASE c2: the refusal names the file" "$OUT" "would overwrite 1 file in your working tree that feature/x does not track (collide.txt). Nothing was run."
+has "PR-BASE c2: first command" "$OUT" "Either: git push -u origin feature/x, then rerun with --base-current (pull request into feature/x)"
+has "PR-BASE c2: second command" "$OUT" "; or: git worktree add ../repo-main origin/main, then rerun there (pull request into main)"
+[ "$(cat "$REPO/collide.txt")" = "my own notes" ] && ok "PR-BASE c2: the untracked file keeps its bytes" || bad "PR-BASE c2: collide.txt now reads '$(cat "$REPO/collide.txt" 2>&1)'"
+prb_same "PR-BASE c2"
+
+# leg c3: a dirty tracked tree on the diverged branch keeps today's refusal: no start from the target, no session, the edit untouched
+prb_run c3 dirty
+PRB_EDIT="$(git -C "$REPO" hash-object "$REPO/calc.test.ts")"
+has "PR-BASE c3: the dirty tracked tree is refused as before" "$OUT" "dirty tracked tree: M calc.test.ts; loki never stashes or commits your edits"
+[ "$(grep -cF "$PRB_LINE" <<< "$OUT")" = 0 ] && [ ! -s "$D/stub.log" ] && [ "$RC" -ne 0 ] && ok "PR-BASE c3: no start from the target and no session on a dirty tree (rc $RC)" || { bad "PR-BASE c3: rc $RC, stub log $(wc -l < "$D/stub.log" 2>/dev/null || echo 0) line(s)"; printf '%s\n' "$OUT" | tail -5 | sed 's/^/    | /'; }
+[ "$(tail -1 "$REPO/calc.test.ts")" = "// my uncommitted edit" ] && [ "$PRB_EDIT" = "$(git -C "$REPO" hash-object "$REPO/calc.test.ts")" ] && ok "PR-BASE c3: the uncommitted edit keeps its bytes" || bad "PR-BASE c3: the uncommitted edit changed"
+prb_same "PR-BASE c3"
+
+# leg d: a base that stays outside the target (a detached HEAD keeps its start commit) is never sealed or opened green: the seal holds the label
+prb_run d detached
+f="$(prb_facts)"; set -- $f
+PRB_WHY="the pull request would merge 2 files the label did not measure"
+has "PR-BASE d: the run says before any session that the label will be held" "$OUT" "is not in origin/main: the pull request would carry 1 other commit, so the label is held at PARTIAL and the pull request opens as a draft"
+[ "$1" = PARTIAL ] && grep -qF "$PRB_WHY" "$RUNDIR/receipt.json" && ok "PR-BASE d: the receipt is sealed PARTIAL with the reason" || { bad "PR-BASE d: verdict $1, reason in receipt: $(grep -cF "$PRB_WHY" "$RUNDIR/receipt.json" 2>/dev/null)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+[ "$2 $3" = "1 True" ] && ok "PR-BASE d: the pull request opens as a draft" || bad "PR-BASE d: pr.opened $2, draft $3"
+[ "$7" = "3/1" ] && [ "$4" = no ] && ok "PR-BASE d: the receipt records 3 files in the pull request against 1 measured" || bad "PR-BASE d: files pr/measured $7, base is main: $4"
+grep -qF "$PRB_WHY" "$RUNDIR/pr-body.md" && grep -q '^## Not proven' "$RUNDIR/pr-body.md" && ok "PR-BASE d: the pull request body leads with the reason" || bad "PR-BASE d: the body does not carry the reason under Not proven"
+grep -Eq '^Outcome:[[:space:]]+PARTIAL' <<< "$OUT" && ok "PR-BASE d: the console outcome is PARTIAL, the same as the receipt" || bad "PR-BASE d: console outcome: $(grep -m1 '^Outcome:' <<< "$OUT")"
+prb_same "PR-BASE d" # a detached start returns to its commit, detached, after the background deep verify too (branch.json start_sha)
+
+# unit: the measurement and the pull request stage's own check (the backstop for a change between the seal and the push)
+U="$(cd "$ROOT/loki-ts" && PRB_T="$T/prb-unit" bun --no-env-file --config=/dev/null -e '
+import { execFileSync } from "node:child_process"; import { mkdirSync, writeFileSync } from "node:fs"; import { join } from "node:path";
+const bg = await import("./src/util/base_guard.ts"), pr = await import("./src/engine10/stages/pr.ts");
+const d = process.env.PRB_T!; mkdirSync(d, { recursive: true });
+const g = (...a: string[]) => execFileSync("git", ["-C", d, ...a], { stdio: "pipe" }).toString().trim();
+const put = (f: string, msg: string) => { writeFileSync(join(d, f), msg + "\n"); g("add", f); g("commit", "-q", "-m", msg); return g("rev-parse", "HEAD"); };
+g("init", "-q", "-b", "main"); g("config", "user.name", "u"); g("config", "user.email", "u@example.invalid");
+const m0 = put("a.txt", "base"); g("checkout", "-q", "-b", "feature"); put("f1.txt", "other one"); const f = put("f2.txt", "other two");
+g("checkout", "-q", "-b", "loki/from-main", m0); put("run.txt", "the run"); g("checkout", "-q", "-b", "loki/from-feature", f); put("run.txt", "the run");
+g("checkout", "-q", "main"); put("later.txt", "main moves forward");
+process.env.LOKI_E10_NO_FETCH = "1"; delete process.env.LOKI_PR_BASE;
+const s1 = bg.prScope(d, { target: "main", baseSha: m0, head: "loki/from-main" }), s2 = bg.prScope(d, { target: "main", baseSha: f, head: "loki/from-feature" }), s3 = bg.prScope(d, { target: "nope", baseSha: m0, head: "loki/from-main" });
+const ctx = (branch: string, base: string) => ({ repoDir: d, branch, baseSha: base, outputs: () => ({ intake: { base_sha: base } }) }) as never;
+const gOk = pr.prScopeGate(ctx("loki/from-main", m0), "VERIFIED", [], true), gBad = pr.prScopeGate(ctx("loki/from-feature", f), "VERIFIED", [], true), gSealed = pr.prScopeGate(ctx("loki/from-feature", f), "PARTIAL", [s2.reason!], true), gNoRec = pr.prScopeGate(ctx("loki/from-feature", f), "VERIFIED", [], false);
+console.log([`forward=${s1.ok}:${s1.pr_files}/${s1.measured_files}:${s1.pr_commits}/${s1.measured_commits}`, `other=${s2.ok}:${s2.pr_files}/${s2.measured_files}:${s2.pr_commits}/${s2.measured_commits}:${s2.reason!.startsWith("the pull request would merge 2 files the label did not measure")}`,
+  `unreadable=${s3.ok}`, `gate_ok=${gOk.verdict}:${gOk.notProven.length}:${gOk.line.trim().startsWith("Base and target: built from ")}`,
+  `gate=${gBad.verdict}:${gBad.notProven.length}:${/sealed before the target or the branch changed/.test(gBad.notProven[0] ?? "")}:${/The receipt was sealed before/.test(gBad.line)}`, `gate_sealed=${gSealed.verdict}:${gSealed.notProven.length}`, `gate_unmeasured=${gNoRec.verdict}:${gNoRec.notProven.length}:${/sealed before/.test(gNoRec.notProven.join(" ") + gNoRec.line)}`].join(" "));
+' 2>&1)"
+[ "$U" = "forward=true:1/1:1/1 other=false:3/1:3/1:true unreadable=false gate_ok=VERIFIED:0:true gate=PARTIAL:1:true:true gate_sealed=PARTIAL:0 gate_unmeasured=PARTIAL:1:false" ] \
+    && ok "PR-BASE unit: a target that only moved forward measures the same; a base outside the target is never green at the pull request stage (PARTIAL, the reason, the sealed-before line); an unreadable target is never green; a reason the seal already holds is not repeated; a receipt with no pr_base is capped without the sealed-before sentence" || bad "PR-BASE unit: $U"
+
+# leg e: a normal run from main is unchanged: no base sentence, the same stages, VERIFIED, a ready pull request; the header is at most three short lines
+prb_run e main
+f="$(prb_facts)"; set -- $f
+grep -qE 'starting from |building on your branch|is not in origin/main' <<< "$OUT" && bad "PR-BASE e: a run from main printed a base sentence" || ok "PR-BASE e: a run from main prints no base sentence"
+[ "$1 $2 $3" = "VERIFIED 1 False" ] && [ "$4 $5 $6" = "yes head origin/main" ] && [ "$7" = "1/1" ] && [ "$8" = 1 ] \
+    && ok "PR-BASE e: VERIFIED, a ready pull request of one commit and one file, the receipt records base and target with equal counts" || { bad "PR-BASE e: facts $f (rc $RC)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+PRB_STAGES="$(python3 -I -c 'import json,sys; print(",".join(json.loads(l)["stage"] for l in open(sys.argv[1]) if "\"stage.completed\"" in l))' "$RUNDIR/events.jsonl" 2>/dev/null)"
+[ "$PRB_STAGES" = "intake,plan,implement,verify,commit,seal" ] && ok "PR-BASE e: the stages are the ones a run from main always had ($PRB_STAGES)" || bad "PR-BASE e: stages: $PRB_STAGES"
+grep -q '^## Reviewer brief' "$RUNDIR/pr-body.md" && grep -q '^## What changed and why' "$RUNDIR/pr-body.md" && grep -q '^## Receipt' "$RUNDIR/pr-body.md" && ! grep -q 'Stacked on\|sealed before' "$RUNDIR/pr-body.md" && ok "PR-BASE e: the pull request body keeps its sections and gains no stacked or sealed-before line" || bad "PR-BASE e: pull request body changed shape"
+PRB_HEAD="$(awk '/^(Loki 10 engine|model |cap |estimate:)/ && !done { print; next } { done = 1 }' <<< "$OUT")"
+[ "$(grep -c '' <<< "$PRB_HEAD")" -le 3 ] && [ "$(head -1 <<< "$PRB_HEAD")" = "Loki 10 engine, PR target: origin/main, base: main" ] && [ "$(sed -n 2p <<< "$PRB_HEAD" | cut -c1-6)" = "model " ] && ! grep -q 'no dollar cap\|downgrade:' <<< "$PRB_HEAD" \
+    && ok "PR-BASE e: the header is at most three lines: target and base, then the model; the no-cap note and downgrades are not in it" || { bad "PR-BASE e: header:"; printf '%s\n' "$PRB_HEAD" | sed 's/^/    | /'; }
+[ "$(awk '{ if (length($0) > m) m = length($0) } END { print (m <= 130) ? "short" : m }' <<< "$PRB_HEAD")" = short ] && ok "PR-BASE e: no header line is longer than 130 characters" || bad "PR-BASE e: a header line is too long"
+prb_same "PR-BASE e"
+# ---------------------------------------------------------------- PR-BASE end
 # ---------------------------------------------------------------- DEEP-POST (FireLater#24 PRs #40 to #43): the poster, not the credential-less worker, posts the deep-verify status
 cat > "$T/fl24-deeppost.ts" <<'TS'
 import { spawn } from "node:child_process";

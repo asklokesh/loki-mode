@@ -64,6 +64,7 @@ const BOOL_ENV_FLAGS = new Map<string, [string, string]>([
   ["--fresh-prd", ["LOKI_PRD_REGEN", "1"]],
   ["--skip-memory", ["LOKI_SKIP_MEMORY", "true"]],
   ["--fresh", ["LOKI_NO_RESUME", "1"]], // SB-12: skip the interrupted-run offer; engine10 reads LOKI_NO_RESUME
+  ["--base-current", ["LOKI_BASE_CURRENT", "1"]], // PR-BASE: build on the current branch; the pull request targets that branch (util/base_guard.ts prBasePlan)
 ]);
 
 // Accept-and-ignore no-op booleans (documented no-op on the non-interactive Bun
@@ -153,6 +154,7 @@ export const START_USAGE =
   "  --haiku          opt in to Haiku for implement and fix (LOKI_ROUTER=auto, the lean levers, plus LOKI_COST_FIRST=1). A failed check climbs to Sonnet. Without it the model is the provider default, same as a raw session\n" +
   "  Proof            loki start sets LOKI_MUTATION_STRICT=1 and LOKI_E10_TRIM=1 unless you set them. A behavior change is VERIFIED only when a Wall test fails on the old code. Tool logs are trimmed before the next turn. Opt out with either var set to 0\n" +
   "  --fresh       skip the offer to resume an interrupted or cancelled run (also LOKI_NO_RESUME=1); without it, loki start offers to resume or start fresh itself\n" +
+  "  --base-current  build on the branch you are on and open the pull request into that branch (also LOKI_BASE_CURRENT=1); without it, a run started on a branch that is not in the pull request's target starts from the target, so the pull request holds only this change\n" +
   "  --dry-run     validate every flag, run the preflight and print the provider, model and cost cap this run would use, then exit 0 without spending a token\n" +
   "  --spec-first  write the acceptance criteria to .loki/specs/<slug>.md and stop, so you can edit them\n" +
   "  --spec FILE   run Loki 10 against an edited spec as the authoritative intent (a spec that does not parse exits 2 with the line)\n" +

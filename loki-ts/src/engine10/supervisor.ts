@@ -32,7 +32,7 @@ import { modelDowngrades } from "../runner/model_downgrades.ts";
 import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
 import { type EventEnvelope, type PushEnv, type StageName, type Verdict, backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, proveByRunningOn, pushArgv, STAGE_BUDGETS, WORK_ROAD_ENV } from "./types.ts";
-import { baseLine, finishRunBranch } from "../util/base_guard.ts";
+import { baseLine, finishRunBranch, prBasePlan } from "../util/base_guard.ts";
 import { alreadyDoneTextComment, policyGate, prGate, renderMainOutput, runIntent, summaryCache, summaryTokens, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
 
 export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
@@ -353,11 +353,12 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (a.startsWith("--spec=")) specFile = a.slice(7);
     else if (a === "--resume") resume = true;
     else if (a === "--fresh") fresh = true; // SB-12: skip the interrupted-run offer
+    else if (a === "--base-current") process.env.LOKI_BASE_CURRENT = "1"; // PR-BASE (1 of 2): build on the current branch; the pull request then targets that branch (util/base_guard.ts prBasePlan)
     else if (a === "--label") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --label needs a value\n"); noteRefusal("unsupported_flag"); return 2; } label = v; i++; } // MANY: `loki start owner/repo --label L` runs every open issue carrying the label
     else if (a.startsWith("--label=")) label = a.slice(8);
     else if (a === "--seal-existing") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --seal-existing needs a patch file\n"); noteRefusal("unsupported_flag"); return 2; } sealPatch = resolve(v); noPr = true; i++; } // CW-12: the changes already exist as this patch; implement applies it instead of running a session, and no PR is ever opened
     else if (a === "--" && !eoo) eoo = true; // TEN-STABILITY-37: `--` ends options, the rest is task text
-    else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--verified] [--json] [--verbose] [--quiet] [--max-cost N] [--provider P] [--spec F] [--seal-existing PATCH] [--resume] [--fresh] [-- <task>]\n`); noteRefusal("unsupported_flag"); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
+    else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--verified] [--json] [--verbose] [--quiet] [--max-cost N] [--provider P] [--spec F] [--seal-existing PATCH] [--resume] [--fresh] [--base-current] [-- <task>]\n`); noteRefusal("unsupported_flag"); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
     else words.push(a);
   }
   let task = words.join(" ").trim(); if (resume) return (await import("../util/run_outputs.ts")).resumeFlag(words[0], noPr);
@@ -441,7 +442,20 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const routeStart = routeStartLine(process.env, provider); // FC-35: printed before any stage, so it states the pre-plan state only (route.json does not exist yet). R1-15: null unless LOKI_ROUTER is on, so the start line is byte-identical otherwise
   const costEst = encodeEstimate(process.env, repoDir, undefined, model); if (costEst) env.LOKI_E10_COST_ESTIMATE = costEst; // 11.3.0 T1: null under LOKI_COST_PREVIEW=0
   const downgrades = modelDowngrades(provider); // D86 L1: any downgrade is printed here and recorded on run.started (key only when non-empty, receipt hashes stay stable)
-  if (!json) process.stdout.write(`${START_LINE}, ${baseLine(repoDir)}, ${capNote(cap.usd, cap.source)}${modelWhy ? `, model ${model} (${modelWhy})` : ""}${downgrades.length ? `; downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : ""}${routeStart ? `; ${routeStart}` : ""}${costEst ? `; ${startText(JSON.parse(costEst), cap.usd)}` : ""}${verifiedOn(env) ? `; ${verifiedHeader(env)}` : ""}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
+  // PR-BASE begin (2 of 2): where the run starts and what its pull request targets, decided before the header and before any model spend (util/base_guard.ts prBasePlan). A run with no pull request, and a run whose HEAD is already in the target, change nothing here.
+  for (const e of [env, process.env]) { delete e.LOKI_E10_START_FROM; delete e.LOKI_E10_PR_TARGET; } // never inherited: only this run's own plan sets them
+  const prPlan = noPr || sealPatch !== null ? null : prBasePlan(repoDir, { baseCurrent: process.env.LOKI_BASE_CURRENT === "1" });
+  if (prPlan?.action === "refuse") { process.stderr.write(`loki: ${prPlan.line}\n`); noteRefusal("other"); return 2; }
+  if (prPlan?.target) env.LOKI_E10_PR_TARGET = prPlan.target; // intake records it, the seal measures against it
+  if (prPlan?.start_sha) env.LOKI_E10_START_FROM = prPlan.start_sha;
+  if (prPlan?.pr_base) process.env.LOKI_PR_BASE = env.LOKI_PR_BASE = prPlan.pr_base; // the push opens the pull request into the user's branch (stages/pr.ts stackBase)
+  // The header is at most three short lines: target and base; the model and how to change it; the cap (when one is set), the estimate and, under --verified, the verified-mode bounds. The rest (no-cap note, downgrades) is behind --verbose. Only a run with LOKI_ROUTER on gets a fourth line: its route and the downgrades that route makes.
+  const downLine = downgrades.length ? `downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : "";
+  const headLines = [`${START_LINE}, ${prPlan?.header ?? baseLine(repoDir)}`, modelWhy ? `model ${model} (${modelWhy})` : "", [cap.usd > 0 ? capNote(cap.usd, cap.source) : "", costEst ? startText(JSON.parse(costEst), cap.usd) : "", verifiedOn(env) ? verifiedHeader(env) : ""].filter(Boolean).join("; "), routeStart ? [routeStart, downLine].filter(Boolean).join("; ") : "",
+    verbose ? [cap.usd > 0 ? "" : capNote(cap.usd, cap.source), routeStart ? "" : downLine].filter(Boolean).join("; ") : ""].filter(Boolean);
+  if (!json) process.stdout.write(`${headLines.join("\n")}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: the start lines name the engine; provider, model and run id are in the receipt
+  if (prPlan?.line) (json ? process.stderr : process.stdout).write(`${prPlan.line}\n`); // said once, in plain words, before any session
+  // PR-BASE end (2 of 2)
   if (costEst && process.env.LOKI_COST_CONFIRM === "1" && process.stdin.isTTY && !json && !(await (await import("../commands/issues_run.ts")).askYesNo("Proceed with this run? [y/N] "))) { process.stdout.write("Run cancelled before start (LOKI_COST_CONFIRM).\n"); return 1; }
   const capLine = !json ? [disclosureLine(provider), unenforceableNote(provider, cap.usd)].filter(Boolean).join("\n") : null; if (capLine) process.stdout.write(`${capLine}\n`); // LM-004: one line when the provider lacks a guarantee claude has; claude prints nothing extra
   const t0 = Date.now();

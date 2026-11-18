@@ -483,7 +483,7 @@ print("wall_set_aside %s" % any("Loki's own acceptance tests still failed after 
 PY
 )"
 printf '%s\n' "$SUM" | sed 's/^/    mono: /'
-has "mono: the start line names main as the base, not the cancelled run's branch" "$OUT" "PR target: main, base: main,"
+grep -qxF "Loki 10 engine, PR target: main, base: main" <<< "$OUT" && ok "mono: the start line names main as the base, not the cancelled run's branch" || bad "mono: the start line names main as the base (missing the line: Loki 10 engine, PR target: main, base: main)" # PR-BASE: target and base are now the whole first header line (the cap, model and estimate moved to their own lines), so the pin is the exact line
 grep -Eq '^Outcome:[[:space:]]+PARTIAL' <<< "$OUT" && ok "mono: only the Wall fails after one fix round, the repo's own tests pass: delivered PARTIAL (rc $RC)" || { bad "mono: outcome is not PARTIAL (rc $RC)"; printf '%s\n' "$OUT" | tail -15 | sed 's/^/    | /'; }
 grep -qx 'fix_rounds 1' <<< "$SUM" && ok "mono: exactly one fix round on a Wall-only failure" || bad "mono: fix rounds: $(printf '%s\n' "$SUM" | grep fix_rounds)"
 grep -qx 'known_red 3' <<< "$SUM" && ok "mono: the 3 page tests red on base are known red (base run with the head's dependencies linked)" || bad "mono: known red page tests: $(printf '%s\n' "$SUM" | grep known_red)"

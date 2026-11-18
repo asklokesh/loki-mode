@@ -17,6 +17,7 @@ import { addedManifestOk } from "./lock_ecosystems.ts";
 import { isTestFile } from "./test_file_text.ts";
 import { currentBranch } from "../e10ext/stop_restore.ts";
 import { escapeRegex } from "./regex_escape.ts";
+import { splitDirty } from "../e10ext/preexisting_dirty.ts";
 
 function git(repoDir: string, args: string[], timeout = 20000, extraEnv: Record<string, string> = {}): string | null {
   try {
@@ -118,6 +119,112 @@ export function baseLine(repoDir: string): string {
   const same = !sk && t && /^loki\//.test(b) && git(repoDir, ["rev-parse", "-q", "--verify", "HEAD^{commit}"]) === git(repoDir, ["rev-parse", "-q", "--verify", `${t.ref}^{commit}`]);
   return `PR target: ${t ? t.ref : "unresolved"}, base: ${sk ? `${sk.target} (${sk.message})` : same ? t!.ref : b}`;
 }
+
+// ---- PR-BASE begin: the label must describe exactly what the pull request merges (FireLater#19, pull request 70: a run started on a
+// feature branch whose tip was not in main measured 12 files against that tip and opened a pull request into main that merged 40).
+/** What the run starts from and what its pull request targets, decided once by the supervisor before any model spend (PR mode only). */
+export interface PrBasePlan {
+  action: "keep" | "target-tip" | "current-branch" | "refuse";
+  target: string | null; // the ref the pull request is compared against (origin/main)
+  start_sha: string | null; // target-tip: the commit intake creates the run branch from
+  pr_base: string | null; // current-branch: the branch the pull request targets (LOKI_PR_BASE)
+  line: string | null; // one plain line for the user (the refusal text when action is refuse)
+  header: string | null; // the start line's target and base fragment; null keeps baseLine()
+}
+const short = (sha: string | null): string => (sha ?? "").slice(0, 7);
+const trackedDirt = (repoDir: string): string[] | null => { const o = git(repoDir, ["status", "--porcelain", "--untracked-files=no"]); return o === null ? null : o.split("\n").filter((l) => l !== "" && !/^.{0,2} "?\.loki\//.test(l)); };
+/** Paths the checkout of `target` would create that already exist in the working tree (untracked or ignored there): git would refuse or overwrite them. */
+function checkoutCollisions(repoDir: string, target: string): string[] | null {
+  const added = git(repoDir, ["diff", "--name-only", "--no-renames", "--diff-filter=A", "HEAD", target]);
+  if (added === null) return null;
+  return added.split("\n").filter((p) => p !== "" && ((): boolean => { try { lstatSync(join(repoDir, p)); return true; } catch { return false; } })());
+}
+/** The ref a pull request is really opened against: LOKI_PR_BASE when set (a stacked slice or --base-current; a loki/* parent is a valid one here,
+ *  unlike in resolveBase), else the default branch. Fetches that one branch best effort. Null: nothing to compare with. */
+export function prTargetRef(repoDir: string, prBase: string | undefined, fetchRemote = true): string | null {
+  if (!prBase) return resolveBase(repoDir, "", fetchRemote)?.ref ?? null;
+  if (fetchRemote && process.env.LOKI_E10_NO_FETCH !== "1" && git(repoDir, ["remote", "get-url", "origin"]) !== null) git(repoDir, ["fetch", "-q", "origin", prBase], 10000, { GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes" });
+  return exists(repoDir, `origin/${prBase}`) ? `origin/${prBase}` : exists(repoDir, prBase) ? prBase : null;
+}
+/** PR-BASE rule 1. Nothing changes, and nothing is fetched, when HEAD is already in the target. Otherwise, in this order: (a) a clean tree starts
+ *  from the target tip; (b) --base-current (LOKI_BASE_CURRENT=1) targets the current branch when origin has it and HEAD is in it; (c) refuse with the
+ *  two commands that work. A dirty tracked tree and a detached HEAD keep what intake does today (refusal; start from that commit). Never writes. */
+export function prBasePlan(repoDir: string, o: { baseCurrent: boolean; env?: NodeJS.ProcessEnv }): PrBasePlan {
+  const env = o.env ?? process.env, keep = (target: string | null, line: string | null = null): PrBasePlan => ({ action: "keep", target, start_sha: null, pr_base: null, line, header: null });
+  const anc = (ref: string): boolean => ok(repoDir, ["merge-base", "--is-ancestor", "HEAD", ref]);
+  if (env.LOKI_PR_BASE) return keep(prTargetRef(repoDir, env.LOKI_PR_BASE, false)); // a stacked slice (loki issues run): the caller chose the target
+  let t = resolveBase(repoDir, "", false); // "" and not LOKI_E10_BASE: the push opens the pull request into the default branch unless LOKI_PR_BASE names another
+  if (!t || !t.ref.startsWith("origin/")) return keep(null); // no origin, or origin has no default branch: there is no pull request target to compare with, so nothing is recorded or measured
+  if (anc(t.ref)) return keep(t.ref); // the normal run: no fetch, nothing printed
+  t = resolveBase(repoDir, "") ?? t; // HEAD is not in the local view of the target: look at the real one, once
+  if (!t.ref.startsWith("origin/")) return keep(null);
+  if (anc(t.ref) || stackedOnLokiRun(repoDir, t)) return keep(t.ref); // intake already moves an all-Loki run branch to the target tip
+  const branch = git(repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]) || null, head = git(repoDir, ["rev-parse", "HEAD"]), tname = t.ref.replace(/^origin\//, "");
+  const n = Number(git(repoDir, ["rev-list", "--count", `${t.ref}..HEAD`]) ?? "0") || 0, commits = (k: number): string => `${k} other commit${k === 1 ? "" : "s"}`;
+  const refuse = (why: string, cmds: [string, string]): PrBasePlan => ({ action: "refuse", target: t!.ref, start_sha: null, pr_base: null, header: null, line: `${why}. Nothing was run. Either: ${cmds[0]}; or: ${cmds[1]}` });
+  const stackCmd = branch ? `git push -u origin ${branch}, then rerun with --base-current (pull request into ${branch})` : `git switch -c <branch>, git push -u origin <branch>, then rerun with --base-current`;
+  const wtCmd = `git worktree add ../${basename(repoDir)}-${tname.replace(/[^A-Za-z0-9._-]+/g, "-")} ${t.ref}, then rerun there (pull request into ${tname})`;
+  if (o.baseCurrent) {
+    if (!branch) return refuse(`--base-current needs a branch, and HEAD is detached at ${short(head)}: a pull request into ${tname} would carry ${commits(n)}`, [stackCmd, wtCmd]);
+    if (git(repoDir, ["remote", "get-url", "origin"]) !== null && env.LOKI_E10_NO_FETCH !== "1") git(repoDir, ["fetch", "-q", "origin", branch], 10000, { GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes" });
+    const remote = `origin/${branch}`;
+    if (exists(repoDir, remote) && anc(remote)) return { action: "current-branch", target: remote, start_sha: null, pr_base: branch, header: `PR target: ${remote}, base: ${branch}`, line: `building on your branch ${branch}: the pull request targets ${branch}, not ${tname} (stacked pull request)` };
+    const un = exists(repoDir, remote) ? Number(git(repoDir, ["rev-list", "--count", `${remote}..HEAD`]) ?? "0") || 0 : n;
+    return refuse(exists(repoDir, remote) ? `your branch ${branch} has ${un} commit${un === 1 ? "" : "s"} that origin/${branch} does not, so the pull request would carry ${commits(un)}` : `your branch ${branch} is not on origin, so the pull request would go into ${tname} and carry ${commits(n)}`,
+      [stackCmd, `rerun without --base-current to start from ${t.ref} (pull request into ${tname}, this change only)`]);
+  }
+  if (!branch) return keep(t.ref, `detached HEAD ${short(head)} is not in ${t.ref}: the pull request would carry ${commits(n)}, so the label is held at PARTIAL and the pull request opens as a draft (check out a branch, or pass --no-pr)`);
+  const dirt = trackedDirt(repoDir);
+  if (dirt === null) return refuse(`cannot read the working tree state, so the run cannot safely start from ${t.ref} instead of your branch ${branch}`, [stackCmd, wtCmd]);
+  if (dirt.length > 0) { // intake refuses a dirty tracked tree itself (unchanged); only a modified lockfile passes it, and that cannot be carried to another commit
+    const { blocking } = splitDirty(repoDir, dirt);
+    return blocking.length > 0 ? keep(t.ref) : refuse(`your branch ${branch} is not in ${t.ref} and the working tree has uncommitted changes (${dirt.map((l) => l.slice(3)).slice(0, 3).join(", ")}), so the run cannot start from ${t.ref} without touching them`, [stackCmd, wtCmd]);
+  }
+  const hit = checkoutCollisions(repoDir, t.ref), sha = git(repoDir, ["rev-parse", "--verify", "-q", `${t.ref}^{commit}`]);
+  if (hit === null || !sha || !/^[0-9a-f]{40}$/.test(sha)) return refuse(`${t.ref} cannot be read, so the run cannot start from it instead of your branch ${branch}`, [stackCmd, wtCmd]);
+  if (hit.length > 0) return refuse(`your branch ${branch} is not in ${t.ref}, and starting from ${t.ref} would overwrite ${hit.length} file${hit.length === 1 ? "" : "s"} in your working tree that ${branch} does not track (${hit.slice(0, 3).join(", ")}${hit.length > 3 ? `, +${hit.length - 3} more` : ""})`, [stackCmd, wtCmd]);
+  return { action: "target-tip", target: t.ref, start_sha: sha, pr_base: null, header: `PR target: ${t.ref}, base: ${t.ref}`, line: `starting from ${t.ref}, not from your branch ${branch}, so the pull request holds only this change (use --base-current to build on your branch)` };
+}
+/** The refusal intake gives when the checkout of the target tip fails after all (case c, before any session). */
+export const startFromRefusal = (target: string, branch: string | null, repoDir: string): string =>
+  `cannot start from ${target}: git could not create the run branch there without touching your working tree. Nothing was run. Either: ${branch ? `git push -u origin ${branch}, then rerun with --base-current (pull request into ${branch})` : "check out a branch and rerun with --base-current"}; or: git worktree add ../${basename(repoDir)}-base ${target}, then rerun there`;
+
+/** What a pull request into `target` would hold, against what the run measured (base_sha..head). GitHub's own semantics: files are the diff
+ *  from the merge base, commits are target..head, so a target that only moved forward changes nothing. Any git error is `ok: false`: never green. */
+export interface PrScope { target: string; target_sha: string | null; merge_base: string | null; base_sha: string; head_sha: string | null; pr_files: number | null; measured_files: number | null; pr_commits: number | null; measured_commits: number | null; unmeasured_files: number; ok: boolean; reason: string | null }
+export function prScope(repoDir: string, a: { target: string | null; baseSha: string | null; head?: string }): PrScope {
+  const headRef = a.head ?? "HEAD", target = a.target ?? "unresolved", base = a.baseSha ?? "";
+  const none: PrScope = { target, target_sha: null, merge_base: null, base_sha: base, head_sha: null, pr_files: null, measured_files: null, pr_commits: null, measured_commits: null, unmeasured_files: 0, ok: false, reason: `the pull request target ${target} could not be read, so what it would merge was not compared with what the label measured` };
+  if (!a.target || !/^[0-9a-f]{40}$/.test(base)) return a.target ? { ...none, reason: "the run recorded no base commit, so what the pull request would merge was not compared with what the label measured" } : none;
+  const tsha = git(repoDir, ["rev-parse", "--verify", "-q", `${a.target}^{commit}`]), head = git(repoDir, ["rev-parse", "--verify", "-q", `${headRef}^{commit}`]);
+  if (!tsha || !head) return none;
+  const mb = git(repoDir, ["merge-base", tsha, head]);
+  const list = (args: string[]): string[] | null => { const o = git(repoDir, args); return o === null ? null : o.split("\n").filter((l) => l !== ""); };
+  const files = (from: string): string[] | null => list(["diff", "--name-only", "--no-renames", from, head, "--", ".", ":(exclude).loki"]);
+  const prF = mb ? files(mb) : null, mF = files(base), prC = list(["rev-list", `${tsha}..${head}`]), mC = list(["rev-list", `${base}..${head}`]);
+  if (!mb || !prF || !mF || !prC || !mC) return { ...none, target_sha: tsha, head_sha: head, merge_base: mb };
+  const measured = new Set(mF), mine = new Set(mC), extraF = prF.filter((f) => !measured.has(f)).length, extraC = prC.filter((c) => !mine.has(c)).length;
+  const same = extraF === 0 && extraC === 0 && prF.length === mF.length && prC.length === mC.length;
+  const reason = same ? null : extraF > 0 ? `the pull request would merge ${extraF} file${extraF === 1 ? "" : "s"} the label did not measure (${prF.length} files and ${prC.length} commits into ${target}; the label measured ${mF.length} files and ${mC.length} commits from ${short(base)})`
+    : `the pull request into ${target} would not hold what the label measured (${prF.length} files and ${prC.length} commits, ${extraC} of them not this run's; the label measured ${mF.length} files and ${mC.length} commits from ${short(base)})`;
+  return { target, target_sha: tsha, merge_base: mb, base_sha: base, head_sha: head, pr_files: prF.length, measured_files: mF.length, pr_commits: prC.length, measured_commits: mC.length, unmeasured_files: extraF, ok: same, reason };
+}
+/** Intake's record of the plan (PR mode only: the supervisor exports LOKI_E10_PR_TARGET); absent otherwise, so other receipts keep their keys. */
+export function intakePrBase(repoDir: string, env: NodeJS.ProcessEnv, startBranch: string | null, fromTarget: boolean): { pr_base?: { target: string; target_sha: string | null; start_branch: string | null; mode: "target-tip" | "current-branch" | "head" } } {
+  const target = env.LOKI_E10_PR_TARGET;
+  if (!target || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,250}$/.test(target)) return {};
+  return { pr_base: { target, target_sha: git(repoDir, ["rev-parse", "--verify", "-q", `${target}^{commit}`]), start_branch: startBranch, mode: fromTarget ? "target-tip" : env.LOKI_PR_BASE ? "current-branch" : "head" } };
+}
+/** Seal time (the worker, no network): the same measurement, as one open note that holds the label at PARTIAL and one receipt block. Both empty when intake recorded no target. */
+export function sealPrScope(repoDir: string, intake: Record<string, unknown> | undefined, baseSha: string, head: string): { notes: string[]; receipt: Record<string, unknown> } {
+  const pb = intake?.["pr_base"] as { target?: unknown; mode?: unknown; start_branch?: unknown } | undefined;
+  if (!pb || typeof pb.target !== "string") return { notes: [], receipt: {} };
+  const s = prScope(repoDir, { target: pb.target, baseSha, head });
+  return { notes: s.ok ? [] : [s.reason!], receipt: { pr_base: { target: s.target, target_sha: s.target_sha, merge_base: s.merge_base, base_sha: s.base_sha, pr_files: s.pr_files, measured_files: s.measured_files, pr_commits: s.pr_commits, measured_commits: s.measured_commits, mode: typeof pb.mode === "string" ? pb.mode : "head", start_branch: typeof pb.start_branch === "string" ? pb.start_branch : null, line: prScopeLine(s) } } };
+}
+/** The one line the receipt and the pull request body carry: base and target. */
+export const prScopeLine = (s: PrScope): string => `Base and target: built from ${short(s.base_sha) || "an unrecorded base"}, pull request into ${s.target.replace(/^origin\//, "")}${s.target_sha ? ` at ${short(s.target_sha)}` : ""}; ${s.pr_files ?? "unknown"} file${s.pr_files === 1 ? "" : "s"} and ${s.pr_commits ?? "unknown"} commit${s.pr_commits === 1 ? "" : "s"} against that target, ${s.measured_files ?? "unknown"} file${s.measured_files === 1 ? "" : "s"} measured.`;
+// ---- PR-BASE end
 
 /** The recorded note from an intake stage.completed data object (null when absent). */
 export function noteOf(intake: Record<string, unknown> | undefined): string | null {
@@ -395,7 +502,7 @@ const tipOf = (repoDir: string, ref: string): string | null => {
 };
 export const keepRunBranch = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_KEEP_RUN_BRANCH === "1";
 export interface RunEnd { orig: string | null; pushed: boolean; deferred?: boolean; keepWork?: boolean; baseSha?: string | null }
-export interface BranchRecord { branch: string; head_sha: string; pushed: boolean; bundle: string | null; orig_branch?: string | null; deferred?: boolean }
+export interface BranchRecord { branch: string; head_sha: string; pushed: boolean; bundle: string | null; orig_branch?: string | null; deferred?: boolean; start_sha?: string } // start_sha: a deferred run that started on a detached HEAD returns to that commit (PR-BASE)
 
 function checkedOut(repoDir: string): { branches: Set<string>; trees: { path: string; head: string; detached: boolean }[] } {
   const branches = new Set<string>(), trees: { path: string; head: string; detached: boolean }[] = [];
@@ -509,8 +616,9 @@ export function finishRunBranch(repoDir: string, runId: string, end: RunEnd, env
   try {
     if (end.deferred && tip) {
       mkdirSync(runDir, { recursive: true });
-      writeFileSync(join(runDir, "branch.json"), JSON.stringify({ branch, head_sha: tip, pushed: end.pushed, bundle: null, orig_branch: end.orig, deferred: true } satisfies BranchRecord, null, 2) + "\n");
-      return `engine10: the checkout stays on ${branch} while the background deep verify runs, then returns to ${end.orig ?? "the starting branch"}\n`;
+      const detachedAt = !end.orig && end.baseSha && /^[0-9a-f]{40}$/.test(end.baseSha) ? end.baseSha : null; // a detached start has no branch to record: keep its commit so the deferred end can return to it
+      writeFileSync(join(runDir, "branch.json"), JSON.stringify({ branch, head_sha: tip, pushed: end.pushed, bundle: null, orig_branch: end.orig, deferred: true, ...(detachedAt ? { start_sha: detachedAt } : {}) } satisfies BranchRecord, null, 2) + "\n");
+      return `engine10: the checkout stays on ${branch} while the background deep verify runs, then returns to ${end.orig ?? (detachedAt ? `commit ${detachedAt.slice(0, 7)}, detached` : "the starting branch")}\n`;
     }
     removeRunWorktrees(repoDir, end.baseSha);
     migrateSessionFiles(repoDir, runLive);
@@ -533,7 +641,7 @@ export function finishDeferredRun(repoDir: string, runId: string, env: NodeJS.Pr
   const rec = readRecord(join(repoDir, ".loki", "runs", runId, "branch.json"));
   if (!rec?.deferred || rec.branch !== `loki/${runId}`) return "";
   const tip = tipOf(repoDir, `refs/heads/${rec.branch}`);
-  return finishRunBranch(repoDir, runId, { orig: rec.orig_branch ?? null, pushed: rec.pushed === true && tip === rec.head_sha }, env);
+  return finishRunBranch(repoDir, runId, { orig: rec.orig_branch ?? null, pushed: rec.pushed === true && tip === rec.head_sha, ...(!rec.orig_branch && typeof rec.start_sha === "string" && /^[0-9a-f]{40}$/.test(rec.start_sha) ? { baseSha: rec.start_sha } : {}) }, env);
 }
 
 /** Saves and removes loki/e10-* branches earlier runs left: never a branch checked out anywhere, a live run's, or the resumable run's. */

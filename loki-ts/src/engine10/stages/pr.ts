@@ -12,6 +12,7 @@ import { withSealRoute } from "../../runner/router/route_block.ts"; import { aiM
 import { intentSection } from "../../util/intent_card.ts";
 import { specPrLine } from "../../util/spec_file.ts"; import { triagePrLine } from "../../features/triage.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
+import { type PrScope, prScope, prScopeLine, prTargetRef } from "../../util/base_guard.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { collapseNotProven, pushErrLine } from "../../util/term_width.ts";
 import { parseSliceHead, sealAccuracyOfFile, stackBase, stackSection } from "../../util/run_outputs.ts"; import { publishFallback } from "../../util/engine_origin.ts";
 import { postReceiptComment, renderReceiptComment } from "../../util/receipt_surface.ts";
@@ -184,13 +185,28 @@ export function failedHead(verdict: Verdict, failing: readonly string[], notProv
   return [`## Failing checks`, `This run sealed FAILED: ${why}. Opened as a draft so the committed work is visible; it is not ready to merge until these pass.`, ...failing.slice(0, 10).map((c) => `- ${clip(c)}`), ...(failing.length > 10 ? [`- (+${failing.length - 10} more)`] : []), "",
     ...(np.length ? [`## Not proven`, ...np.slice(0, 10).map((r) => `- ${clip(r)}`), ...(np.length > 10 ? [`- (+${np.length - 10} more, total ${np.length}; the full list is in the receipt)`] : []), ""] : [])].join("\n") + "\n";
 }
+/** PR-BASE rule 2, the check before a pull request is opened, never skipped: the files and commits it would hold against its target must be the
+ *  ones the run measured (util/base_guard.ts prScope; the target is fetched first). The seal makes the same measurement and holds its own label,
+ *  so this is the backstop for what changed between the seal and the push (the target moved, a commit was added): a pull request that would merge
+ *  anything else is never opened green. It opens as a draft with the reason first, and, when the receipt carries the seal's own measurement (pr_base), says the receipt was sealed before that. */
+export function prScopeGate(ctx: PrContext, sealed: Verdict, sealedNotes: readonly string[], sealMeasured: boolean): { verdict: Verdict; notProven: string[]; line: string; scope: PrScope } {
+  const b = stackBase(process.env), o = ctx.outputs();
+  const baseSha = String((o.intake as { base_sha?: unknown } | undefined)?.base_sha ?? ctx.baseSha ?? "");
+  const scope = prScope(ctx.repoDir, { target: b === null ? null : prTargetRef(ctx.repoDir, b), baseSha, head: `refs/heads/${ctx.branch}` }); // the branch the push sends, whatever the checkout is on
+  const line = `\n${prScopeLine(scope)}\n`;
+  if (scope.ok) return { verdict: sealed, notProven: [], line, scope };
+  const capped = sealed === "VERIFIED", after = capped && sealMeasured; // after: the receipt holds pr_base, so the seal measured a match and the difference appeared afterwards; without it the seal never measured
+  const reason = after ? `${scope.reason!}; the receipt was sealed before the target or the branch changed, so the label is not carried and this is a draft` : scope.reason!;
+  return { verdict: capped ? "PARTIAL" : sealed, notProven: sealedNotes.includes(scope.reason!) ? [] : [reason], line: after ? `${line}The receipt was sealed before the pull request's target or branch changed: its label describes ${scope.measured_files ?? "an unknown number of"} files, not what this pull request would merge.\n` : line, scope };
+}
 export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions = {}): Promise<StageResult> {
   if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before pr started" };
   const pinnedOrigin = ctx.pinnedOrigin;
   if (!pinnedOrigin) return { status: "failed", data: {}, reason: "no pinned origin: refusing to push (Rule of Two)" };
   const seal = (ctx.outputs().seal ?? {}) as { verdict?: Verdict; not_proven?: string[]; receipt_path?: string; receipt_sha256?: string; signed?: boolean; route_line?: string; mutation_line?: string };
-  const verdict = seal.verdict ?? "PARTIAL"; // fail-safe: an unknown verdict is never treated as VERIFIED
-  const notProven = collapseNotProven(seal.not_proven ?? []); // FC-OUTCOME-FLOOD: display only; receipt.json keeps the full list
+  const scopeGate = prScopeGate(ctx, seal.verdict ?? "PARTIAL", seal.not_proven ?? [], (() => { try { return !!seal.receipt_path && "pr_base" in (JSON.parse(readFileSync(seal.receipt_path, "utf8")) as object); } catch { return false; } })()); // PR-BASE: the one call of the pre-open check; an unknown verdict is never treated as VERIFIED (fail-safe)
+  const verdict = scopeGate.verdict;
+  const notProven = collapseNotProven([...scopeGate.notProven, ...(seal.not_proven ?? [])]); // FC-OUTCOME-FLOOD: display only; receipt.json keeps the full list
   const capHit = ctx.capHit?.() ?? false;
   const draft = verdict !== "VERIFIED" || capHit || process.env.LOKI_PR_DRAFT === "1" || (ctx as PrContext).draft === true; // MASS-1: `loki issues run --draft` asks for drafts only; it never un-drafts
   const base = stackBase(process.env);
@@ -215,7 +231,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const stopNote = stopSection(verdict, sealedOk, capHit, `if the cost cap was hit, loki start --max-cost <higher>, then ${rerun}; if the time cap, ${rerun} with more time`);
   const reviewerBody = lead + acceptanceHead(verdict, sealedReceipt) + partialHead(verdict, notProven, sealedReceipt?.["prove"]) + (lead ? "" : failedHead(verdict, failing, notProven)) + stopNote + renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs(), sealAccuracy: sealAccuracyOfFile(seal.receipt_path ?? null), receipt: sealedReceipt }); // AWE-3: proof, conventions and cost sections read the sealed receipt
   const tpl = readPrTemplate(ctx.repoDir), shaped = tpl === null ? reviewerBody : applyPrTemplate(reviewerBody, tpl, receiptProof(verdict, ctx.outputs(), seal.receipt_sha256 ?? null)); // no template: today's body, byte-identical
-  writeFileSync(bodyFile, withAiMarker(withSealRoute(shaped, process.env, seal), aiMarkerLine({ runId: ctx.runId, provider: ctx.provider, model: ctx.model })) + intentSection(ctx.outputs().plan) + specPrLine(process.env) + triagePrLine(ctx.outputs().intake) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + link + stackSection(process.env, base, link !== "", ctx.repoDir) + (ctx.handoffMd ?? ""), "utf8");
+  writeFileSync(bodyFile, withAiMarker(withSealRoute(shaped, process.env, seal), aiMarkerLine({ runId: ctx.runId, provider: ctx.provider, model: ctx.model })) + intentSection(ctx.outputs().plan) + specPrLine(process.env) + triagePrLine(ctx.outputs().intake) + scopeGate.line +evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + link + stackSection(process.env, base, link !== "", ctx.repoDir) + (ctx.handoffMd ?? ""), "utf8");
   const title = prTitle(verdict, ctx.runDir, String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? ""), failing); // PR-FIRST-1 prefix, FireLater#21 wording, FAILED-PR check label
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
   const env = pushEnv(ctx.repoDir, pinnedOrigin); opts.onSpawnEnv?.(env);
@@ -247,7 +263,8 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const commentMiss = postReceiptComment({ scriptPath, env, runDir: ctx.runDir, url, timeoutMs: prChildTimeoutMs(), comment: receiptComment });
   if (commentMiss) notProvenOut.push(commentMiss);
   if (verdict !== "SPEC_CONFLICT") await (await import("../../integrations/writeback.ts")).writeBack({ phase: verdict === "FAILED" ? "failed" : "done", ...(verdict === "FAILED" ? { reason: `failing: ${failing.join(", ") || "see the receipt"}` } : {}), verdict, prUrl: url, receiptSha256: seal.receipt_sha256 ?? null, task: String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? "") }); // B6: opt-in, never throws
-  return { status: "completed", data: { pr_url: url, draft, existing, ...(notProvenOut.length ? { not_proven: notProvenOut } : {}) } };
+  if (scopeGate.notProven.length) notProvenOut.unshift(...scopeGate.notProven); // PR-BASE: the run's own not-proven list and console carry the reason too
+  return { status: "completed", data: { pr_url: url, draft, existing, pr_scope: scopeGate.scope, ...(notProvenOut.length ? { not_proven: notProvenOut } : {}) } };
 }
 export const stage: Stage = {
   name: "pr", targetS: 15, limitS: 60, run: (ctx, signal) => runPr(ctx as PrContext, signal),
