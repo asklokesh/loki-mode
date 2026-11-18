@@ -6,7 +6,7 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rm
 import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { discoverControlUrl, instancePath } from "../../../packages/control-plane/src/shipper/discover.ts";
+import { instancePath, isLoopbackHttp, isThrowawayPath } from "../../../packages/control-plane/src/shipper/discover.ts";
 import { ingestAndWatch } from "../../../packages/control-plane/src/shipper/watch.ts";
 import { backfill } from "../../../packages/control-plane/src/shipper/backfill.ts";
 import { openDb } from "../../../packages/control-plane/src/db/migrate.ts";
@@ -67,7 +67,7 @@ const installedVersion = (): string => { try { return readFileSync(join(REPO_ROO
 export async function restartStaleControlPlane(env: NodeJS.ProcessEnv, current: string = installedVersion(), opts: StaleOpts = {}): Promise<number | null> {
   const alive = opts.alive ?? pidAlive;
   let inst: { pid?: unknown; url?: unknown; version?: unknown; install_path?: unknown };
-  try { inst = JSON.parse(readFileSync(instancePath(env), "utf8")); } catch { return null; }
+  try { inst = JSON.parse(readFileSync(recordFile(env, opts), "utf8")); } catch { return null; }
   if (!Number.isInteger(inst.pid) || (inst.pid as number) <= 1 || (inst.pid as number) === process.pid || typeof inst.url !== "string") return null;
   const pid = inst.pid as number;
   if (!alive(pid)) return null;
@@ -79,8 +79,36 @@ export async function restartStaleControlPlane(env: NodeJS.ProcessEnv, current: 
 }
 
 export interface Health { service?: string; pid?: number; version?: string; install_path?: string; ui?: boolean }
-export interface StaleOpts { alive?: (pid: number) => boolean; waitMs?: number; fetchImpl?: typeof fetch; /** does this path exist (tests) */ exists?: (p: string) => boolean; /** this install has a built dashboard page (tests) */ ownUi?: boolean }
+export interface StaleOpts { alive?: (pid: number) => boolean; waitMs?: number; fetchImpl?: typeof fetch; /** does this path exist (tests) */ exists?: (p: string) => boolean; /** this install has a built dashboard page (tests) */ ownUi?: boolean; /** this install lives in a throwaway path (tests) */ throwaway?: boolean }
 const UI_INDEX = "packages/control-plane/ui/dist/index.html";
+
+/** An install in a temp directory (a test or CI install, a fixture). LOKI_CONTROL_THROWAWAY_INSTALL=1 says so for any install (it only makes this one more careful). */
+export const isThrowawayInstall = (env: NodeJS.ProcessEnv): boolean => env.LOKI_CONTROL_THROWAWAY_INSTALL === "1" || isThrowawayPath(REPO_ROOT);
+
+/** The record this install reads, writes and acts on: ~/.loki/control/instance.json. The one exception: an install in a throwaway path, while
+ *  instance.json names a live process of ANOTHER install (the person's real dashboard), uses instance.throwaway.json beside it. So a test or CI
+ *  install of another version never stops that dashboard and never rewrites its record: it starts its own on a free port, finds it
+ *  again through its own record, and `control stop` from it stops only its own. (The mirror image of a stale server being reused: a throwaway
+ *  install must not be able to take the real one down.) */
+export function recordFile(env: NodeJS.ProcessEnv, o: { alive?: (pid: number) => boolean; throwaway?: boolean } = {}): string {
+  const main = instancePath(env);
+  if (!(o.throwaway ?? isThrowawayInstall(env))) return main;
+  try {
+    const r = JSON.parse(readFileSync(main, "utf8")) as { pid?: unknown; install_path?: unknown };
+    if (Number.isInteger(r.pid) && (r.pid as number) > 1 && r.pid !== process.pid && typeof r.install_path === "string" && r.install_path !== REPO_ROOT && (o.alive ?? pidAlive)(r.pid as number)) return join(dirname(main), "instance.throwaway.json");
+  } catch { /* no record, or not one of ours to judge: the usual file */ }
+  return main;
+}
+
+/** The URL in a record file when its process is alive, the URL is loopback http and /health answers there as a Control Plane; else null. */
+async function recordedUrl(file: string, o: StaleOpts): Promise<string | null> {
+  try {
+    const r = JSON.parse(readFileSync(file, "utf8")) as { pid?: unknown; url?: unknown };
+    if (!Number.isInteger(r.pid) || typeof r.url !== "string" || !(o.alive ?? pidAlive)(r.pid as number) || !isLoopbackHttp(r.url)) return null; // a planted record must never point off this machine
+    const u = r.url.replace(/\/+$/, "");
+    return (await healthOf(u, 300, o.fetchImpl)) ? u : null;
+  } catch { return null; }
+}
 
 /** /health of a Control Plane, or null when nothing answers there as one. */
 async function healthOf(url: string, ms: number, f: typeof fetch = fetch): Promise<Health | null> {
@@ -120,10 +148,10 @@ export async function liveControlPlane(env: NodeJS.ProcessEnv, o: StaleOpts & { 
   if (env.LOKI_CONTROL_URL) { const u = env.LOKI_CONTROL_URL.replace(/\/+$/, ""); return (await healthOf(u, 1000, o.fetchImpl)) ? u : null; }
   const current = o.current ?? installedVersion();
   await restartStaleControlPlane(env, current, o);
-  const found = await discoverControlUrl(env, { fetchImpl: o.fetchImpl, alive: o.alive });
+  const found = await recordedUrl(recordFile(env, o), o);
   if (found) {
     let inst: { install_path?: unknown; version?: unknown } | null = null;
-    try { inst = JSON.parse(readFileSync(instancePath(env), "utf8")); } catch { /* judged from /health alone */ }
+    try { inst = JSON.parse(readFileSync(recordFile(env, o), "utf8")); } catch { /* judged from /health alone */ }
     const h = await healthOf(found, 1000, o.fetchImpl);
     if (h && !staleReason(h, inst, current, o)) return found;
   }
@@ -143,7 +171,7 @@ export async function liveControlPlane(env: NodeJS.ProcessEnv, o: StaleOpts & { 
  *  A dead or missing record is not an error (exit 0); a live PID whose /health does not match is refused (exit 1) and never signalled. */
 export async function stopControlPlane(env: NodeJS.ProcessEnv, opts: { alive?: (pid: number) => boolean; waitMs?: number } = {}): Promise<number> {
   const alive = opts.alive ?? pidAlive;
-  const file = instancePath(env);
+  const file = recordFile(env, opts);
   let inst: { pid?: unknown; url?: unknown };
   try { inst = JSON.parse(readFileSync(file, "utf8")); } catch { process.stdout.write("loki control: not running\n"); return 0; }
   const pid = inst.pid;
@@ -208,7 +236,7 @@ export async function ensureControlPlane(env: NodeJS.ProcessEnv, o: EnsureOpts =
   } catch (e) { throw new Error(`it could not be started (${(e as Error).message.split("\n")[0]!.slice(0, 80)})`); }
   const nap = (ms: number): Promise<void> => new Promise((r) => { const t = setTimeout(r, ms); if (o.unref) (t as { unref?: () => void }).unref?.(); });
   for (const until = Date.now() + wait; ;) {
-    const url = await discoverControlUrl(env, { fetchImpl: o.fetchImpl, alive: o.alive });
+    const url = await recordedUrl(recordFile(env, o), o);
     if (url) return { url, started: true };
     if (pid && !alive(pid)) throw new Error("it stopped as it started (see ~/.loki/control/serve.log)");
     if (Date.now() >= until) throw new Error(`it did not answer within ${Math.round(wait / 1000)} s (see ~/.loki/control/serve.log)`);
@@ -275,7 +303,7 @@ async function serve(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
   const child = Bun.spawn(cmd, { env: { ...env, PORT: port, LOKI_CONTROL_DB: db, LOKI_CONTROL_VERSION: installedVersion(), LOKI_VERSION_FILE: join(REPO_ROOT, "VERSION"), LOKI_CONTROL_PORT_FALLBACK: explicit === undefined ? "1" : "0" }, stdio: ["inherit", "pipe", "inherit"] });
   // the service must not outlive this CLI: forward stop signals and also kill on any exit path
   for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => child.kill());
-  const inst = instancePath(env);
+  const inst = recordFile(env); // a throwaway install never rewrites another install's live record
   const rmInst = (): void => { try { if ((JSON.parse(readFileSync(inst, "utf8")) as { pid?: number }).pid === process.pid) rmSync(inst, { force: true }); } catch { /* none */ } };
   process.on("exit", () => { child.kill(); rmInst(); });
   // tee the child's stdout; its "listening on" line publishes ~/.loki/control/instance.json for run discovery (C2)

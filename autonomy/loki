@@ -36215,6 +36215,7 @@ cmd_control() {
             echo ""
             echo "Commands:"
             echo "  serve [--port N] [--db PATH]   Run the control plane + UI on 127.0.0.1"
+            echo "  open [--no-open]               Open the dashboard in your browser and print its URL; starts it first when needed (also: loki dashboard)"
             echo "  backfill [DIR]                 Ship DIR/.loki/runs to the control plane"
             echo "  prune --repo OWNER/NAME | --before ISO_DATE [--dry-run] [--db PATH]"
             echo "                                 Delete matching runs, their events and orphaned sources"

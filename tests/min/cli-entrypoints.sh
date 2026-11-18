@@ -133,7 +133,7 @@ db_hint="$(grep -c 'Control Plane UI: ${CYAN}loki dashboard${NC}' "$ROOT/autonom
 # Which running Control Plane may be reused, and what replaces a stale one (driver: tests/min/fixtures/control-open.js, stand-in
 # servers on free ports under this test's HOME, LOKI_CONTROL_PORT=0 so the default port 47821 is never probed, nothing real started):
 co="$(bun --no-env-file --config=/dev/null "$ROOT/tests/min/fixtures/control-open.js" "$ROOT" 2>&1)"
-for leg in stale-install-gone-is-replaced version-mismatch-is-replaced healthy-matching-is-reused missing-page-is-replaced explicit-url-and-off-switch-stop-nothing no-record-is-never-signalled server-answers-a-missing-install-in-plain-words none-running-so-one-is-started stale-one-is-stopped-and-a-new-one-started cannot-start-gives-one-short-reason browser-rules; do
+for leg in stale-install-gone-is-replaced version-mismatch-is-replaced healthy-matching-is-reused missing-page-is-replaced explicit-url-and-off-switch-stop-nothing no-record-is-never-signalled throwaway-install-leaves-the-real-dashboard-alone server-answers-a-missing-install-in-plain-words none-running-so-one-is-started stale-one-is-stopped-and-a-new-one-started cannot-start-gives-one-short-reason browser-rules; do
     grep -qx "PASS $leg" <<< "$co" && ok "dashboard, $leg" || bad "dashboard, $leg: $(grep "^FAIL $leg" <<< "$co" | cut -c1-300)"
 done
 # The commands themselves, against a real server from this checkout on a free port (never 47821), in this test's HOME.

@@ -6,7 +6,7 @@
 // (New file: these legs need live stand-in servers and child processes, which no existing fixture provides.)
 // Usage: bun control-open.js <repo root> [leg ...]   prints "PASS <leg>" or "FAIL <leg>: <why>" per leg.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = process.argv[2], only = process.argv.slice(3);
@@ -104,6 +104,32 @@ const legs = {
       } finally { s.stop(); }
     }
     return null;
+  },
+  // An install in a throwaway path (a test or CI install; said here with LOKI_CONTROL_THROWAWAY_INSTALL=1) of another version meets the
+  // person's healthy recorded dashboard: it must not signal it and must not rewrite its record. It starts its own on another port, finds
+  // it again on the next call, and its `control stop` stops only its own. This leg runs the real commands (a real server on a free port).
+  "throwaway-install-leaves-the-real-dashboard-alone": async () => {
+    const dir = install(), s = standIn({ version: "0.0.1", install_path: join(dir, "packages/control-plane/src/server"), ui: true }, { version: "0.0.1", install_path: dir });
+    const rec = join(HOME, ".loki/control/instance.json"), own = join(HOME, ".loki/control/instance.throwaway.json"), before = readFileSync(rec, "utf8");
+    const cli = async (...args) => { const p = Bun.spawn(["bun", "--no-env-file", "--config=/dev/null", join(ROOT, "loki-ts/src/cli.ts"), "control", ...args], { cwd: HOME, env: { ...env(), LOKI_CONTROL_THROWAWAY_INSTALL: "1", LOKI_CONTROL_AUTOINGEST: "0", LOKI_CONTROL_START_WAIT_MS: "30000", LOKI_NO_BROWSER: "1" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" }); const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]); return { out, err, code }; };
+    let ownPid = null;
+    try {
+      const a = await cli("open", "--no-open"), url = a.out.split("\n")[0];
+      try { ownPid = JSON.parse(readFileSync(own, "utf8")).pid; } catch { /* reported below */ }
+      if (a.code !== 0 || !/^http:\/\/127\.0\.0\.1:\d+\/$/.test(url)) return `control open: exit ${a.code}, printed "${a.out.slice(0, 200)}" ${a.err.slice(0, 200)}`;
+      if (url === `${s.url}/` || url.includes(":47821/")) return `it used ${url} (the recorded dashboard is ${s.url})`;
+      if (!alive(s.pid)) return "the recorded dashboard of the other install was stopped";
+      if (readFileSync(rec, "utf8") !== before) return "instance.json was rewritten";
+      if (!Number.isInteger(ownPid) || !alive(ownPid)) return "its own server is not recorded in instance.throwaway.json";
+      const b = await cli("open", "--no-open"); if (b.out.split("\n")[0] !== url || /Started the dashboard/.test(b.out)) return `a second call did not reuse its own server: ${b.out.slice(0, 200)}`;
+      const c = await cli("stop"); if (c.code !== 0 || !(await gone(ownPid))) return `control stop: exit ${c.code}, its own server ${alive(ownPid) ? "still runs" : "stopped"}: ${c.out}${c.err}`;
+      if (!alive(s.pid) || readFileSync(rec, "utf8") !== before) return "control stop touched the other install's dashboard or its record";
+      return null;
+    } finally {
+      // whatever went wrong, the real server this leg started must not outlive it: it is the process either record names that is not the stand-in
+      for (const f of [own, rec]) { try { const r = JSON.parse(readFileSync(f, "utf8")); if (Number.isInteger(r.pid) && r.pid !== s.pid && r.install_path === ROOT && alive(r.pid)) { process.kill(r.pid, "SIGTERM"); await gone(r.pid); } } catch { /* no such record */ } }
+      s.stop(); rmSync(own, { force: true });
+    }
   },
   // The server itself: a page request after its dashboard page or its whole install was removed gets one plain sentence, never a raw
   // file error, and the server is told to stop only when the whole install is gone.
