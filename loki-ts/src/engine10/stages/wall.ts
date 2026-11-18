@@ -129,7 +129,7 @@ export function wallRoute(ctx: Pick<RunContext, "repoDir" | "externalPatch" | "t
 }
 /** The exec-spec call execSpecWall makes, built from the same inputs; intake passes it to prefetchExecSpec so the generator call overlaps the baseline run. */
 export const execSpecCall = (ctx: Pick<RunContext, "repoDir" | "runId" | "sessions">, task: string, runners: RunnerName[], existingTests: string[], signal: AbortSignal): Parameters<typeof execSpecAuthor>[0] =>
-  ({ task, repoDir: ctx.repoDir, runners, existingTests, sessions: ctx.sessions as never, iterationId: `${ctx.runId}-execspec`, signal, ...(nrdEnabled() ? { probe: nrdProbeIntake } : tournamentEnabled() ? { probe: probeIntake } : {}) });
+  ({ task, repoDir: ctx.repoDir, runners, existingTests, sessions: ctx.sessions as never, iterationId: `${ctx.runId}-execspec`, signal, ...(nrdEnabled() ? { probe: nrdProbeIntake() } : tournamentEnabled() ? { probe: probeIntake } : {}) });
 
 /** Session plus compile check. Writes only <runDir>/wall (sealed copies); repoDir is read, never written. */
 export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: { model: string; suffix: string; note?: string | undefined }): Promise<WallAuthorOutcome> {

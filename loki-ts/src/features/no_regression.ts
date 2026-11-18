@@ -138,15 +138,17 @@ const goSources = (repoDir: string, dirRel: string): Record<string, string> => {
   } catch { /* an unreadable package gets no ledger */ }
   return out;
 };
-/** Passed to execSpecAuthor in place of probeIntake: the same fixed rules (cache-stable) plus the keep list for the code the issue names and its same-package callers. */
-export const nrdProbeIntake = {
+/** Passed to execSpecAuthor in place of probeIntake: the same fixed rules (cache-stable) plus the keep list for the code the issue names and its same-package callers.
+ *  Built on call, not at module load: tournament.ts and this file sit on an import cycle (via e10ext/commit_filter.ts -> util/base_guard.ts), and a
+ *  top-level spread of probeIntake threw "Cannot access before initialization" whenever tournament.ts was loaded first. */
+export const nrdProbeIntake = (): typeof probeIntake & { ledger(sites: ResolvedSite[], repoDir: string): string } => ({
   ...probeIntake,
   ledger(sites: ResolvedSite[], repoDir: string): string {
     const go = sites.filter((s) => s.file.endsWith(".go")); if (!go.length) return "";
     const dir = dirname(go[0]!.file).replace(/^\.$/, ""), files = goSources(repoDir, dir), names = go.filter((s) => dirname(s.file).replace(/^\.$/, "") === dir).map((s) => s.symbol.split(".").pop()!);
     return ledgerText(outputSites(files, [...names, ...callersOf(names, files)]));
   },
-};
+});
 
 export const SYS_NRD_PROBE = "You write a small behavioral probe program. Output only one fenced code block.";
 /** The post-implement probe call fires only when an edited function has a same-package caller the issue does not name: the exec-spec call wrote its
