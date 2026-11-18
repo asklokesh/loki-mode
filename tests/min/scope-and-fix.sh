@@ -1393,6 +1393,81 @@ gate="$(ev 'sum(1 for e in E if e["type"]=="loop.repeat" and "LOKI_E10_HAIKU_IND
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_LINTBAD=1 E2E_STUB_FIX=linttwice LOKI_RISK_TIER=medium LOKI_SESSION_MODEL=haiku LOKI_E10_HAIKU_INDEP_FIX=0 PATH="$T/fakelint:$FIX/bin:$PATH"
 [ "$(fix_sessions)" = "2" ] && ok "indep gate: LOKI_E10_HAIKU_INDEP_FIX=0 restores the two lint fix rounds on Haiku" || { bad "indep gate off: $(fix_sessions) fix sessions (want 2)"; dump; }
 
+# ---- LINT-OWN begin (playwright#44124 on 11.155.0): a lint error the run's own change put in a file it changed --------------------------------------
+# The real run, Loki on Haiku: 4 of 4 asks done, 0 of 159 tests broken, labelled FAILED (exit 1) on "lint:eslint failed: 'fs' is defined but never used",
+# two unused imports its own change added. The INDEP-GATE above gave it no fix round, and seal turned the lint red into FAILED. Now an eslint, ruff or
+# shellcheck diagnostic that is the change's own (not on base: those stay excused as before) in a file it changed is an independent check: it gets a fix round
+# with the exact lint lines, and if it is still there after the rounds the label is PARTIAL with the lint line in NOT PROVEN, never FAILED while every test
+# passes. bash -n and tsc are not in this set (the gate leg above keeps its no-round rule). A fake eslint in the repo's node_modules/.bin (what
+# `npx --no-install eslint` runs) reports an import whose name is never used again, in eslint's default and `-f unix` formats.
+#   own:   Haiku, the implement session adds an unused import of fs to calc.ts: one fix round whose brief carries the lint line, the round removes it, VERIFIED.
+#   stuck: the same with a fix round that leaves the import: receipt PARTIAL (never FAILED), the lint line in NOT PROVEN.
+#   base:  the same unused import already on base: excused as today, no fix round, VERIFIED.
+#   tsc:   a type error the change adds (fake tsc, tsconfig.json in the repo) that survives the fix round: the round ran (the gate let it through on Haiku),
+#          and the label stays FAILED, as today: a type, compile or build error is a real defect, never held at PARTIAL.
+# Planted defects (each reverted afterwards; run from source):
+#   LOa. verify.ts: drop ownLintNames from indepNames; own gets no fix round on Haiku (0 sessions) and ends PARTIAL.
+#   LOb. seal.ts: drop the lintOnly cap (pass live to verdictOf as before); stuck ends FAILED.
+#   LOc. seal.ts: take the own-lint lines from every verify check (base-red included) instead of live; base gets a NOT PROVEN lint line and ends PARTIAL.
+#   LOd. verify.ts: record tsc in own_lint too (OWN_LINT matches lint:tsc); tsc ends PARTIAL.
+#   LOe. verify.ts: drop ownTypeNames from indepNames; tsc gets no fix round on Haiku.
+mkdir -p "$T/seed-eslint/node_modules/.bin"
+printf 'node_modules\n' > "$T/seed-eslint/.gitignore"
+printf 'export default [];\n' > "$T/seed-eslint/eslint.config.js"
+cat > "$T/seed-eslint/node_modules/.bin/eslint" <<'PY'
+#!/usr/bin/env python3
+import re, sys
+a, files, unix, stdin_name, i = sys.argv[1:], [], False, None, 0
+while i < len(a):
+    x = a[i]
+    if x == "-f": unix = a[i + 1] == "unix"; i += 2; continue
+    if x == "--stdin-filename": stdin_name = a[i + 1]; i += 2; continue
+    if not x.startswith("-"): files.append(x)
+    i += 1
+texts = [(stdin_name, sys.stdin.read())] if stdin_name else [(f, open(f).read()) for f in files]
+bad = 0
+for f, t in texts:
+    for n, line in enumerate(t.split("\n"), 1):
+        m = re.match(r"import (?:\* as )?(\w+) from ", line)
+        if m and not re.search(r"\b%s\b" % m.group(1), t.replace(line, "", 1)):
+            bad += 1
+            msg = "'%s' is defined but never used" % m.group(1)
+            print("%s:%d:8: %s [Error/no-unused-vars]" % (f, n, msg) if unix else "%s\n  %d:8  error  %s  no-unused-vars" % (f, n, msg))
+sys.exit(1 if bad else 0)
+PY
+chmod +x "$T/seed-eslint/node_modules/.bin/eslint"
+lo_np() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); np=r.get("not_proven",[]); print(r.get("verdict"), sum("lint:eslint" in n and "is defined but never used" in n for n in np))' "$RUNDIR/receipt.json" 2>/dev/null; }
+SEED="$T/seed-eslint" run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_UNUSED_IMPORT=1 E2E_STUB_FIX=unlint LOKI_SESSION_MODEL=haiku E2E_STUB_PROMPT_LOG="$T/lo-own.prompt"
+f="$(lo_np)"
+[ "$(fix_sessions)" = "1" ] && ok "lint own: a Haiku run whose change adds an unused import gets one fix round" || { bad "lint own: $(fix_sessions) fix sessions (want 1)"; dump; }
+grep -qh "'fs' is defined but never used" "$T"/lo-own.prompt.* 2>/dev/null && ok "lint own: the fix brief carries the exact lint line" || bad "lint own: no session brief carries the lint line"
+[ "$f" = "VERIFIED 0" ] && [ "$(outcome)" = "VERIFIED" ] && ! git -C "$REPO" show HEAD:calc.ts | grep -q 'import fs' && ok "lint own: the round removes it and the run is VERIFIED" || { bad "lint own: receipt '$f', outcome $(outcome)"; dump; }
+SEED="$T/seed-eslint" run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_UNUSED_IMPORT=1 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku
+f="$(lo_np)"
+[ "$f" = "PARTIAL 1" ] && [ "$(outcome)" != "FAILED" ] && ok "lint stuck: the lint error is still there after the fix rounds, every test passes: PARTIAL with the lint line in NOT PROVEN, never FAILED (outcome $(outcome), rc $RC)" || { bad "lint stuck: receipt '$f', outcome $(outcome), rc $RC"; dump; }
+[ "$(fix_sessions)" -ge 1 ] && ok "lint stuck: the fix rounds ran ($(fix_sessions))" || bad "lint stuck: no fix round ran"
+mkdir -p "$T/seed-eslint-base" && cp -R "$T/seed-eslint/." "$T/seed-eslint-base/" && { printf 'import fs from "node:fs";\n'; cat "$FIX/repo/calc.ts"; } > "$T/seed-eslint-base/calc.ts"
+SEED="$T/seed-eslint-base" run_engine "$TASK" E2E_STUB_MODE=done LOKI_SESSION_MODEL=haiku
+f="$(lo_np)"
+[ "$f" = "VERIFIED 0" ] && [ "$(fix_sessions)" = "0" ] && ok "lint base: the same unused import already on base stays excused: no fix round, VERIFIED" || { bad "lint base: receipt '$f', $(fix_sessions) fix sessions"; dump; }
+mkdir -p "$T/seed-tsc/node_modules/.bin" && cp "$T/seed-eslint/.gitignore" "$T/seed-tsc/" && printf '{"compilerOptions":{"strict":true,"noEmit":true}}\n' > "$T/seed-tsc/tsconfig.json"
+cat > "$T/seed-tsc/node_modules/.bin/tsc" <<'PY'
+#!/usr/bin/env python3
+import os, re, sys
+bad = 0
+for f in sorted(x for x in os.listdir(".") if x.endswith(".ts")):
+    for n, line in enumerate(open(f).read().split("\n"), 1):
+        if re.search(r': number = "', line):
+            bad += 1; print("%s(%d,14): error TS2322: Type 'string' is not assignable to type 'number'." % (f, n))
+sys.exit(2 if bad else 0)
+PY
+chmod +x "$T/seed-tsc/node_modules/.bin/tsc"
+SEED="$T/seed-tsc" run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TYPE_ERROR=1 E2E_STUB_FIX=noprogress LOKI_SESSION_MODEL=haiku
+f="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r.get("verdict"), any(c.get("name","").startswith("lint:tsc") and c.get("result")=="fail" for c in r.get("checks",[])))' "$RUNDIR/receipt.json" 2>/dev/null)"
+[ "$(fix_sessions)" -ge 1 ] && ok "lint tsc: a type error the change added gets a fix round on Haiku ($(fix_sessions))" || { bad "lint tsc: $(fix_sessions) fix sessions (want at least 1)"; dump; }
+[ "$f" = "FAILED True" ] && [ "$(outcome)" != "PARTIAL" ] && ok "lint tsc: the type error survives the round: FAILED as today (outcome $(outcome)), never held at PARTIAL" || { bad "lint tsc: receipt '$f', outcome $(outcome)"; dump; }
+# ---- LINT-OWN end ----------------------------------------------------------------------------------------------------------------------------------------
+
 run_engine "$TASK" E2E_STUB_MODE=agentonly LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 LOKI_E10_PUBLIC_GAP=1
 notes="$([ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("not_proven"))' "$RUNDIR/receipt.json" 2>/dev/null)"
 [ "$(outcome)" = "PARTIAL" ] && ok "agent-only: an added public function only the session's own test calls caps the run at PARTIAL" || { bad "agent-only: outcome is '$(outcome)'"; dump; }

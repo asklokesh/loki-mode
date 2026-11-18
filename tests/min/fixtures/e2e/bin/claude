@@ -29,6 +29,8 @@
 # E2E_STUB_SCOPE_EDIT=1: the implement session also edits util.ts (when the repo has one).
 # E2E_STUB_BREAK_CFG=1: it also writes {"ok": false} to cfg.json (when the repo has one); E2E_STUB_LINTBAD=1: it also writes a tool.sh
 # that fails bash -n. Fix modes: cfgfirst fixes cfg.json first, multiply() next; linttwice leaves tool.sh broken in a new way once, then fixes it.
+# E2E_STUB_TYPE_ERROR=1: the implement session also appends `export const typed: number = "not a number";` to calc.ts (a tsc error, never seen by bun).
+# E2E_STUB_UNUSED_IMPORT=1: the implement session also puts `import fs from "node:fs";` (never used) on line 1 of calc.ts; fix mode unlint removes it (tests/min/scope-and-fix.sh LINT-OWN).
 # E2E_STUB_FIX (fix sessions, told apart by LOKI_E10_STAGE=fix): conflict answers LOKI_SPEC_CONFLICT and edits
 # nothing; wallconflict does the same citing loki_wall_multiply.test.ts; noprogress edits calc.ts without fixing multiply();
 # fixit turns the wrong multiply() right; twostep needs two rounds. E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
@@ -278,6 +280,7 @@ if [ "${LOKI_E10_STAGE:-}" = "fix" ]; then # before the implement branch: a fix 
     cfgfirst) if grep -q '"ok": false' cfg.json; then printf '{"ok": true}\n' > cfg.json
       else python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; fi
       echo "LOKI_DONE"; exit 0 ;;
+    unlint) python3 -I -c 's=open("calc.ts").read(); open("calc.ts","w").write(s.replace("import fs from \"node:fs\";\n", "", 1))'; echo "LOKI_DONE"; exit 0 ;; # LINT-OWN: removes the unused import E2E_STUB_UNUSED_IMPORT added
     linttwice) if grep -q BROKEN_A tool.sh; then printf '#!/usr/bin/env bash\necho BROKEN_B )\n' > tool.sh; else printf '#!/usr/bin/env bash\necho fixed\n' > tool.sh; fi
       echo "LOKI_DONE"; exit 0 ;;
     twostep) # round 1 fixes multiply() but adds a failing extra.test.ts (a different failing set); round 2 fixes that test
@@ -444,6 +447,8 @@ if [ "$stage" = "implement" ]; then
     fi
     if [ "${E2E_STUB_SCOPE_EDIT:-}" = "1" ] && [ -f util.ts ]; then printf 'export const MODE = 2;\n' >> util.ts; fi
     if [ "${E2E_STUB_BREAK_CFG:-}" = "1" ] && [ -f cfg.json ]; then printf '{"ok": false}\n' > cfg.json; fi
+    if [ "${E2E_STUB_TYPE_ERROR:-}" = "1" ]; then printf '\nexport const typed: number = "not a number";\n' >> calc.ts; fi # LINT-OWN: a type error bun never checks (tsc does)
+    if [ "${E2E_STUB_UNUSED_IMPORT:-}" = "1" ]; then python3 -I -c 's=open("calc.ts").read(); open("calc.ts","w").write("import fs from \"node:fs\";\n" + s)'; fi # LINT-OWN: an import the change never uses
     if [ "${E2E_STUB_LINTBAD:-}" = "1" ]; then printf '#!/usr/bin/env bash\nif true; then\n  echo BROKEN_A\n' > tool.sh; fi
     if [ "${E2E_STUB_SECRET:-}" = "1" ] && ! grep -q searchConfig calc.ts; then printf '\nexport const searchConfig = { apiKey: globalThis.ELASTICSEARCH_API_KEY_VALUE };\n' >> calc.ts; fi # SECRET-PUSH: a config key the security scan's tier 2 matches (calc.ts line 5)
     if [ "${E2E_STUB_MODE:-}" = "attempts" ]; then # EXP-0010: the session in attempts/B<E2E_STUB_RIGHT> is right, every other one wrong

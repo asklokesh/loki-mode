@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- A lint error that Loki's own change put in a file it changed no longer seals a working change as FAILED. In a recorded run (playwright issue 44124, Loki 11.155.0 on Haiku) the change did all 4 things the issue asked and broke none of 159 tests, but its two unused imports failed eslint; the run got no fix round (on Haiku a lint red did not count as an independent check) and was labelled FAILED. Now an eslint, ruff or shellcheck error that is the change's own, and a tsc error the change introduced, both count as independent checks, so a Haiku run gets a fix round whose brief carries the exact lint lines. If a style lint error (eslint, ruff, shellcheck) is still there after the fix rounds and every test passes, the label is PARTIAL with the lint line in NOT PROVEN, never FAILED. A type error the change introduced that survives the rounds stays FAILED, as before. A lint error already on the base commit is excused exactly as before. Other failing checks are unchanged.
+
 ## v11.157.0 (2026-11-18)
 
 ### Finished work is kept, the console redraws in place, and a text task with its own checklist is proved
