@@ -60,11 +60,17 @@
 #   sets the whole work tree aside with the stash command and is then stopped (SIGKILL) before any pop, as the opencode 63310 fix session was.
 #   E2E_STUB_STASH_THEN=edit: before it is stopped it also writes another change to calc.ts (the stash can then not go back cleanly);
 #   E2E_STUB_STASH_THEN=branch: it commits its work on a new branch stub-side instead of stashing, and is stopped there;
+#   E2E_STUB_STASH_THEN=partial: it writes a second file extra.ts, sets only that file aside, and ends normally (not stopped);
 #   E2E_STUB_STASH_THEN=killworker: after the stash it also kills the engine worker (found as the child of the pid in run.pid), as a crash would.
 set -u
 if [ -n "${E2E_STUB_STASH:-}" ] && [ "${LOKI_E10_STAGE:-}" = "$E2E_STUB_STASH" ] && [ -n "${E2E_STUB_STASH_MARK:-}" ] && [ ! -f "$E2E_STUB_STASH_MARK" ] && case " $* " in *" -p "*) true ;; *) false ;; esac; then
   _stub_set_aside() {
     : > "$E2E_STUB_STASH_MARK"
+    if [ "${E2E_STUB_STASH_THEN:-}" = partial ]; then # a second file, set aside alone; the session then ends normally (its reply and exit code stand)
+      printf '// a second file of the same change\n' > extra.ts
+      git stash push -q -u -- extra.ts 2>> "$E2E_STUB_STASH_MARK.err"
+      return 0
+    fi
     if [ "${E2E_STUB_STASH_THEN:-}" = branch ]; then
       { git checkout -q -b stub-side && git -c user.name=stub -c user.email=stub@example.invalid commit -q -a -m "stub: work on a side branch"; } 2>> "$E2E_STUB_STASH_MARK.err"
     else

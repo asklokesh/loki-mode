@@ -179,7 +179,7 @@ export function workRunOf(cfg: SessionRunnerConfig, cwd: string, env: NodeJS.Pro
 }
 /** WORK-RECOVERY: restores what the run's sessions set aside (util/base_guard.ts recoverRunWork) and emits work.recovered / work.kept. Skipped while another session runs in the repository. */
 export function recoverSessionWork(cfg: SessionRunnerConfig, run: { repoDir: string; runDir: string; branch: string } | null, stage: string, sessionId: string, when: "start" | "end"): void {
-  if (!run || (liveInRepo.get(run.runDir) ?? 0) > 0) return;
+  if (!run || (liveInRepo.get(run.runDir) ?? 0) > 0 || /^(0|off|false|no)$/i.test((process.env["LOKI_E10_SESSION_RECOVERY"] ?? "").trim())) return; // =0: only the commit stage and the run end restore (the label is then held at PARTIAL for files no check saw)
   const r = recoverRunWork({ ...run, stage, where: "session" });
   if (r.recovered.length > 0) cfg.emit?.("work.recovered", stage, { session_id: sessionId, files: r.recovered.reduce((n, x) => n + x.files, 0), stashes: r.recovered.map((x) => x.sha), from: "stash", when: `session ${when}` });
   if (r.kept.length > 0) cfg.emit?.("work.kept", stage, { session_id: sessionId, stashes: r.kept.map((x) => ({ ref: x.sha, reason: x.reason })) });

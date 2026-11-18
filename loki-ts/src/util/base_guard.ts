@@ -7,7 +7,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { classifyCheck, goRunner, sealedWallCopy } from "./check_result.ts";
+import { classifyCheck, fileHashes, goRunner, sealedWallCopy } from "./check_result.ts";
 import { LEGACY_BRANCHES_DIR, listRunIds } from "../commands/run_status.ts";
 import { runOwnerAlive } from "./run_pid.ts";
 import { findInterrupted } from "./run_outputs.ts";
@@ -556,7 +556,7 @@ export function sweepRunBranches(repoDir: string, env: NodeJS.ProcessEnv = proce
 // dropped. Nothing here ever discards work: a restore that cannot be clean keeps the entry and names it.
 const WORK_LEDGER = "work-ledger.jsonl";
 export const workLedgerPath = (runDir: string): string => join(runDir, WORK_LEDGER);
-type LedgerLine = { k: string; sha?: string; stashes?: string[]; at?: number; files?: number; reason?: string; stage?: string; where?: string; subject?: string; note?: string };
+type LedgerLine = { k: string; sha?: string; stashes?: string[]; at?: number; files?: number; paths?: string[]; reason?: string; stage?: string; where?: string; subject?: string; note?: string };
 function readLedger(runDir: string): LedgerLine[] | null {
   let text: string;
   try { text = readFileSync(workLedgerPath(runDir), "utf8"); } catch { return null; }
@@ -583,14 +583,14 @@ export function recordStashBaseline(repoDir: string, runDir: string): void {
   if (list === null) return;
   appendLedger(runDir, { k: "baseline", stashes: list.map((e) => e.sha), at: Date.now() });
 }
-export interface WorkRecovery { recovered: { sha: string; files: number }[]; kept: { sha: string; reason: string }[]; foreign: { sha: string; subject: string }[]; moved: string | null }
+export interface WorkRecovery { recovered: { sha: string; files: number; paths: string[] }[]; kept: { sha: string; reason: string }[]; foreign: { sha: string; subject: string }[]; moved: string | null }
 const NO_RECOVERY = (): WorkRecovery => ({ recovered: [], kept: [], foreign: [], moved: null });
 /** True when `subject` is the reflog line `git stash` writes on `branch` ("WIP on <branch>: ..." or, with -m, "On <branch>: ..."). */
 export const stashMadeOn = (subject: string, branch: string): boolean => subject.startsWith(`WIP on ${branch}: `) || subject.startsWith(`On ${branch}: `);
 const chunks = <T>(xs: T[], n = 200): T[][] => { const out: T[][] = []; for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n)); return out; };
 /** One stash entry back onto the work tree. Returns the file count, or the reason it was kept. Applies only when the apply cannot conflict:
  *  HEAD is the commit the stash was made on and none of its files has another change in the tree. Verified against the stash commit before the entry is dropped. */
-function restoreStash(repoDir: string, sha: string): { files: number } | { reason: string } {
+function restoreStash(repoDir: string, sha: string): { files: number; paths: string[] } | { reason: string } {
   const head = git(repoDir, ["rev-parse", "HEAD"]), base = git(repoDir, ["rev-parse", "--verify", "-q", `${sha}^1`]);
   if (!head || !base) return { reason: "its base commit could not be read" };
   if (head !== base) return { reason: `the checkout moved to ${head.slice(0, 12)} after the stash was made on ${base.slice(0, 12)}` };
@@ -615,12 +615,13 @@ function restoreStash(repoDir: string, sha: string): { files: number } | { reaso
   if (untracked.some((f) => { try { lstatSync(join(repoDir, f)); return false; } catch { return true; } })) return { reason: "an untracked file of the stash was not restored" };
   // drop by SHA: the stack can shift under another worktree, so stash@{n} is resolved again right before the drop and the list is compared after it
   const before = stashList(repoDir), idx = before?.findIndex((e) => e.sha === sha) ?? -1;
-  if (before === null || idx < 0) return { files: tracked.length + untracked.length }; // already gone: the work is in the tree either way
+  const done = { files: tracked.length + untracked.length, paths: [...tracked, ...untracked] };
+  if (before === null || idx < 0) return done; // already gone: the work is in the tree either way
   if (git(repoDir, ["rev-parse", "--verify", "-q", `stash@{${idx}}`]) !== sha) return { reason: "the stash list changed while restoring; the entry is applied to the work tree and kept on the stack" };
   if (git(repoDir, ["stash", "drop", "-q", `stash@{${idx}}`]) === null) return { reason: "the entry is applied to the work tree but could not be dropped" };
   const after = new Set((stashList(repoDir) ?? []).map((e) => e.sha));
   for (const e of [...before].reverse()) if (e.sha !== sha && !after.has(e.sha)) git(repoDir, ["stash", "store", "-q", "-m", e.subject, e.sha]); // another entry vanished in the same instant: put it back (its commit still exists)
-  return { files: tracked.length + untracked.length };
+  return done;
 }
 /** Puts the checkout back on the run branch when a session left it elsewhere, without touching a file and without moving any other branch.
  *  Same commit: HEAD is re-pointed. Commits made during the run on top of the run branch: the run branch is fast-forwarded to them. A plain
@@ -665,25 +666,41 @@ export function recoverRunWork(o: { repoDir: string; runDir: string; branch: str
       if (base.stashes.has(e.sha)) continue; // existed before the run: the user's, never read further
       if (!stashMadeOn(e.subject, o.branch)) { res.foreign.push(e); if (!said("foreign", e.sha)) appendLedger(o.runDir, { k: "foreign", sha: e.sha, subject: e.subject.slice(0, 200), where: o.where }); continue; }
       const r = restoreStash(o.repoDir, e.sha);
-      if ("files" in r) { res.recovered.push({ sha: e.sha, files: r.files }); appendLedger(o.runDir, { k: "recovered", sha: e.sha, files: r.files, where: o.where, ...(o.stage ? { stage: o.stage } : {}) }); }
+      if ("files" in r) { res.recovered.push({ sha: e.sha, files: r.files, paths: r.paths }); appendLedger(o.runDir, { k: "recovered", sha: e.sha, files: r.files, paths: r.paths.length > RECOVERED_PATHS_MAX ? [...r.paths.slice(0, RECOVERED_PATHS_MAX), MORE_PATHS] : r.paths, where: o.where, ...(o.stage ? { stage: o.stage } : {}) }); }
       else { res.kept.push({ sha: e.sha, reason: r.reason }); if (!said("kept", e.sha, r.reason)) appendLedger(o.runDir, { k: "kept", sha: e.sha, reason: r.reason, where: o.where }); }
     }
   } catch { /* a recovery bug never fails a session or a commit */ }
   return res;
 }
 export const WORK_RECOVERED_NOTE = "work recovered";
+const RECOVERED_PATHS_MAX = 2000, MORE_PATHS = "(more files than the record lists)"; // a path that is no file: it never has a verify hash, so an over-long list always reads as not checked
+/** LATE-RECOVERY: the restored files no check saw. A file counts as checked only when the last verify recorded a hash for it (file_hashes, taken when verify starts)
+ *  and the file still has those bytes; no verify output, or one without hashes (a stopped verify), means none was. Empty when nothing was restored. */
+export function unverifiedRecovered(runDir: string, repoDir: string, verify: Record<string, unknown> | undefined): string[] {
+  const lines = readLedger(runDir);
+  if (!baselineOf(lines)) return [];
+  const paths = [...new Set(lines!.filter((l) => l.k === "recovered").flatMap((l) => (Array.isArray(l.paths) ? l.paths.filter((p): p is string => typeof p === "string") : [MORE_PATHS])))];
+  if (paths.length === 0) return [];
+  const seen = verify && verify["file_hashes"] !== null && typeof verify["file_hashes"] === "object" ? (verify["file_hashes"] as Record<string, unknown>) : null;
+  if (!seen) return paths;
+  const now = fileHashes(repoDir, paths);
+  return paths.filter((p) => typeof seen[p] !== "string" || seen[p] !== now[p]);
+}
+/** LATE-RECOVERY: a run whose restored work no check saw is never VERIFIED (or ALREADY_SATISFIED): the label is held at PARTIAL, and workRecoveryNotes names the files. */
+export const capLateRecovery = <V extends string>(verdict: V, unverified: readonly string[]): V | "PARTIAL" => (unverified.length > 0 && (verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED") ? "PARTIAL" : verdict);
 /** The receipt lines of this run's record: what was restored, what was kept and where it is, and a branch a session left the checkout on. `repoDir` drops a
  *  kept or foreign line whose entry is no longer on the stash stack (restored by a later pass, or taken back by its owner). */
-export function workRecoveryNotes(runDir: string, repoDir: string): string[] {
+export function workRecoveryNotes(runDir: string, repoDir: string, unverified: readonly string[] = []): string[] {
   const lines = readLedger(runDir);
   if (!baselineOf(lines)) return [];
   const live = new Set((stashList(repoDir) ?? []).map((e) => e.sha)), recovered = new Set(lines!.filter((l) => l.k === "recovered").map((l) => l.sha)), out: string[] = [];
   const lastKept = new Map<string, LedgerLine>(); for (const l of lines!) if (l.k === "kept" && l.sha) lastKept.set(l.sha, l); // one line per entry: the latest reason
   for (const l of lines!) {
     const id = String(l.sha ?? "").slice(0, 12);
-    if (l.k === "recovered") out.push(l.where === "session"
-      ? `${WORK_RECOVERED_NOTE}: ${l.files} file(s) a ${l.stage ?? "stage"} session had set aside with git stash were put back on the work tree when that session ended (stash ${id}); every later check ran on the restored tree (disclosed, does not cap)`
-      : `${WORK_RECOVERED_NOTE}: ${l.files} file(s) set aside with git stash during the run were put back on the work tree at the end of the run (stash ${id}), after the checks ran: the checks did not see these files`);
+    if (l.k === "recovered") {
+      const unseen = (Array.isArray(l.paths) ? l.paths : [MORE_PATHS]).filter((p) => unverified.includes(p)), what = `${WORK_RECOVERED_NOTE}: ${l.files} file(s) ${l.where === "session" ? `a ${l.stage ?? "stage"} session had set aside with git stash` : "set aside with git stash during the run"} were put back on the work tree (stash ${id})`;
+      out.push(unseen.length > 0 ? `${what} after the last check ran: no check saw ${unseen.slice(0, 5).join(", ")}${unseen.length > 5 ? ` (+${unseen.length - 5} more)` : ""}; the label is held at PARTIAL` : `${what}; the checks ran on the restored files (disclosed, does not cap)`);
+    }
     else if (l.k === "kept" && l.sha && lastKept.get(l.sha) === l && live.has(l.sha) && !recovered.has(l.sha)) out.push(`work NOT restored: stash ${id} was made during this run on its branch and is kept, not dropped: ${l.reason}; it is not in the delivered change; restore it with: git stash apply ${l.sha}`);
     else if (l.k === "foreign" && l.sha && live.has(l.sha)) out.push(`a stash entry made during the run was left untouched because it was not made on this run's branch: ${id} (${l.subject}); if it holds this run's work, restore it with: git stash apply ${l.sha}`);
     else if (l.k === "branch" && l.note) out.push(l.note);

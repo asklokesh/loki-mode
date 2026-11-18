@@ -1552,6 +1552,8 @@ fi
 #   WRg. base_guard.ts returnToRunBranch: drop the `own` (made during the run) test; the unit's oldcommits case fast-forwards the run branch onto the user's commits.
 #   WRh. seal.ts commit stage: drop moveBranch; e2e branch leaves the run branch at the base (nothing delivered on it).
 #   WRi. engine10/session.ts writerDenyList: return the stage list only; the deny-rule checks fail.
+#   WRl. seal.ts: drop capLateRecovery from the verdict chain; late reads VERIFIED on a file no check saw.
+#   WRm. base_guard.ts unverifiedRecovered: return [] (every restored file counts as checked); late reads VERIFIED and loses its receipt line.
 #   WRj. base_guard.ts restoreStash: drop the entry without the verify (`git diff --quiet <stash>`) step, with the apply made to fail silently; the unit's verify case loses the entry.
 unit_work_recovery() {
     local R OUT RC U USER_STASH f run
@@ -1562,7 +1564,7 @@ unit_work_recovery() {
         printf '// my own unfinished note\n' >> "$R/calc.ts"
         git -C "$R" stash push -q -m "the user's own stash"
         USER_STASH="$(git -C "$R" rev-parse 'stash@{0}')"
-        OUT="$(cd "$R" && env "$@" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit E2E_STUB_STASH=fix E2E_STUB_STASH_MARK="$T/wr-$name.mark" E2E_STUB_ARGV_LOG="$T/wr-$name.argv" ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "$TASK" --no-pr </dev/null 2>&1)"; RC=$?
+        OUT="$(cd "$R" && env E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit E2E_STUB_STASH=fix E2E_STUB_STASH_MARK="$T/wr-$name.mark" E2E_STUB_ARGV_LOG="$T/wr-$name.argv" "$@" ${TOM[@]+"${TOM[@]}"} bash "$ROOT/bin/loki" "$TASK" --no-pr </dev/null 2>&1)"; RC=$?
         run="$(ls -d "$R"/.loki/runs/e10-* 2>/dev/null | head -1)"
     }
     wr_facts() { # -> "<verdict> <work.recovered events> <files> <when> <receipt recovered lines> <receipt kept lines> <kept names apply cmd> <start record is the user's stash only>"
@@ -1582,6 +1584,7 @@ print(receipt.get("verdict"), len(rec), sum(e["data"].get("files", 0) for e in r
 PY
     }
     wr_branch_has() { git -C "$R" show "loki/$(basename "$run"):calc.ts" 2>/dev/null | grep -q 'return a \* b;'; }
+    wr_has_multiply() { git -C "$R" show "loki/$(basename "$run"):calc.ts" 2>/dev/null | grep -q 'export function multiply'; }
 
     wr_run stash
     f="$(wr_facts)"
@@ -1611,6 +1614,19 @@ PY
     wr_branch_has && ok "e2e killed: the engine worker died with the fix in a stash (no session-end handler ran); the run-end commit on the run's branch holds the fix" || { bad "e2e killed: loki/$(basename "$run") does not hold the fix (rc $RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; cat "$T/wr-killed.mark.err" 2>/dev/null | sed 's/^/    | stub: /'; }
     grep -q '"k":"recovered".*"where":"run-end"' "$run/work-ledger.jsonl" 2>/dev/null && ok "e2e killed: the run's record says the stash was restored at the end of the run" || bad "e2e killed: no run-end recovery in $(cat "$run/work-ledger.jsonl" 2>&1 | tr '\n' ' ')"
     [ "$(git -C "$R" stash list --format=%H | tr '\n' ' ')" = "$USER_STASH " ] && [ "$(git -C "$R" branch --show-current)" = feature ] && ok "e2e killed: only the user's own stash is left and the checkout is back on its start branch" || bad "e2e killed: stash list [$(git -C "$R" stash list --format='%H %gs' | tr '\n' ';')], branch $(git -C "$R" branch --show-current)"
+
+    # LATE-RECOVERY: work restored after the last check ran is never sealed VERIFIED. The implement session writes multiply() and a second file, sets only the
+    # second file aside and ends normally. With the session-end restore off (LOKI_E10_SESSION_RECOVERY=0) verify passes on the tree without that file and the
+    # commit stage restores it: delivered, label held at PARTIAL, the receipt names the file. With the default (restored when the session ends, before verify)
+    # the same run is VERIFIED: verify ran on the restored tree.
+    wr_late() { python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); np=r.get("not_proven",[]); print(r.get("verdict"), sum("no check saw extra.ts; the label is held at PARTIAL" in n for n in np), sum(n.startswith("work recovered: ") and n.endswith("(disclosed, does not cap)") for n in np))' "$run/receipt.json" 2>&1; }
+    wr_run late E2E_STUB_MODE=done E2E_STUB_FIX= E2E_STUB_STASH=implement E2E_STUB_STASH_THEN=partial LOKI_E10_SESSION_RECOVERY=0
+    f="$(wr_late)"
+    [ "$f" = "PARTIAL 1 0" ] && ok "late: a file restored at the commit stage, after verify passed without it, is delivered with the label held at PARTIAL and named on the receipt" || { bad "late facts: $f (rc $RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; cat "$T/wr-late.mark.err" 2>/dev/null | sed 's/^/    | stub: /'; }
+    git -C "$R" show "loki/$(basename "$run"):extra.ts" >/dev/null 2>&1 && wr_has_multiply && ok "late: the restored file and the change are both on the run's branch" || bad "late: loki/$(basename "$run") lacks extra.ts or multiply()"
+    wr_run early E2E_STUB_MODE=done E2E_STUB_FIX= E2E_STUB_STASH=implement E2E_STUB_STASH_THEN=partial
+    f="$(wr_late)"
+    [ "$f" = "VERIFIED 0 1" ] && git -C "$R" show "loki/$(basename "$run"):extra.ts" >/dev/null 2>&1 && ok "early: the same file restored when the session ends is seen by verify: VERIFIED, disclosed, no cap" || { bad "early facts: $f (rc $RC)"; printf '%s\n' "$OUT" | tail -12 | sed 's/^/    | /'; }
 
     cat > "$T/wr-unit.ts" <<'TS'
 import { execFileSync } from "node:child_process";
@@ -1642,6 +1658,12 @@ const yn = (...b: boolean[]): string => b.map((x) => (x ? "y" : "n")).join("");
   const x = rec(r), notes = bg.workRecoveryNotes(r.runDir, r.dir);
   out.ok = yn(x.recovered.length === 1 && x.recovered[0].files === 2, x.kept.length === 0 && x.foreign.length === 0, calc(r.dir).includes("export const fixed = 1;") && !calc(r.dir).includes("the user's note"), existsSync(join(r.dir, "new.ts")),
     JSON.stringify(stashes(r.dir)) === JSON.stringify([user]), notes.length === 1 && notes[0].startsWith("work recovered: 2 file(s) a fix session had set aside") && notes[0].endsWith("(disclosed, does not cap)"), rec(r).recovered.length === 0);
+  // LATE-RECOVERY: a restored file counts as checked only when the last verify hashed it with the bytes it has now
+  const cr = await import(join(src, "util/check_result.ts")), both = ["calc.ts", "new.ts"], seen = cr.fileHashes(r.dir, both);
+  const u = (v: unknown) => JSON.stringify(bg.unverifiedRecovered(r.runDir, r.dir, v));
+  const late = bg.workRecoveryNotes(r.runDir, r.dir, ["new.ts"]);
+  out.late = yn(u({ file_hashes: seen }) === "[]", u({ file_hashes: { "calc.ts": seen["calc.ts"] } }) === '["new.ts"]', u({ file_hashes: { ...seen, "new.ts": "0".repeat(64) } }) === '["new.ts"]', u(undefined) === JSON.stringify(both), u({ checks: [] }) === JSON.stringify(both),
+    late.length === 1 && late[0].includes("no check saw new.ts; the label is held at PARTIAL"), bg.capLateRecovery("VERIFIED", ["new.ts"]) === "PARTIAL" && bg.capLateRecovery("ALREADY_SATISFIED", ["x"]) === "PARTIAL" && bg.capLateRecovery("VERIFIED", []) === "VERIFIED" && bg.capLateRecovery("FAILED", ["x"]) === "FAILED" && bg.capLateRecovery("PARTIAL", ["x"]) === "PARTIAL");
 }
 { // preexisting: an entry made on the run branch that is in the start record (a resumed run) is never read
   const r = repo("pre"); g(r.dir, "checkout", "-q", "-b", BR); appendFileSync(join(r.dir, "calc.ts"), "// before the record\n"); g(r.dir, "stash", "push", "-q"); const pre = stashes(r.dir);
@@ -1709,6 +1731,7 @@ for (const [k, v] of Object.entries(out)) console.log(`${k}=${v}`);
 TS
     U="$(cd "$ROOT/loki-ts" && bun "$T/wr-unit.ts" "$ROOT/loki-ts/src" "$FIX/repo" "$T" 2>&1)"
     has "unit ok: a stash made on the run branch during the run is applied, verified and dropped (tracked and untracked), the user's earlier entry untouched, one receipt line, a second pass does nothing" "$U" "ok=yyyyyyy"
+    has "unit late: a restored file is checked only when the last verify hashed the bytes it has now; otherwise VERIFIED and ALREADY_SATISFIED are held at PARTIAL and the receipt names the file" "$U" "late=yyyyyyy"
     has "unit preexisting: an entry in the start record is never applied or dropped, even on the run branch" "$U" "preexisting=yyyy"
     has "unit foreign: an entry made during the run on another branch is left and disclosed with its ref" "$U" "foreign=yyyy"
     has "unit conflict: a stash whose file has another change is kept and named, the tree byte-identical, nothing unmerged" "$U" "conflict=yyyyy"
