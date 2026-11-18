@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join, relative } from "node:path";
 import { withStagePrefix } from "../../features/lean_prefix.ts"; import { fragmentWriterOn, outOfRepoReask, outOfRepoTests } from "../../project_model/conventions.ts";
 import { learningsBlock, lessonsForBrief, orgKnowledgeBlock } from "../../util/pr_lessons.ts"; export { learningsBlock }; // learningsBlock lives with the other brief-note helpers
-import { FINISH_LINE, fixedRules, briefRecord, ISSUE_FINISH_LINE, issueRunBrief, pinnedTestUpdateEnabled, PLAN_HINT_LEAD, planHintsOn, proveByRunningBlock, type BriefRecord } from "../../e10ext/context.ts"; import { pinnedTestUpdates } from "../../util/test_guard.ts";
+import { FINISH_LINE, fixedRules, briefRecord, ISSUE_FINISH_LINE, TEXT_FINISH_LINE, issueRunBrief, pinnedTestUpdateEnabled, PLAN_HINT_LEAD, planHintsOn, proveByRunningBlock, type BriefRecord } from "../../e10ext/context.ts"; import { pinnedTestUpdates } from "../../util/test_guard.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
 import { attemptModels, attemptsK, type ExtraAttemptsDeps } from "../../features/attempts.ts";
@@ -44,7 +44,7 @@ export const briefCtx = (ctx: RunContext, model?: string): BriefRecord => briefR
 // Plan skipped: fixed lines (this one, then the folded coverage line), no per-task text, placed right after FIXED_RULES so every skipped-plan brief shares the same cache-stable prefix.
 export const FOLD_PLAN_INSTRUCTION = "Before editing, write the files you will change and the test you will run, in at most 10 lines, then proceed.";
 const REPRO_LINE = "If the task reports a bug, first add a new test function that reproduces it, run it and see it fail, then fix the code and run that test again.";
-export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = "", spec: string | null = null, assumptions: unknown = undefined, remedy: unknown = undefined, issue = false): string {
+export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = "", spec: string | null = null, assumptions: unknown = undefined, remedy: unknown = undefined, issue: boolean | "text" = false): string {
   return withStagePrefix([ // FIXED_RULES leads and FINISH_LINE closes, both byte-identical per task
     fixedRules(process.env, issue), // Z2: the pinned-test rule, or the v11.139.0 text with LOKI_E10_PINNED_TEST_UPDATE=0; issue: the issue-run rules constant (e10ext/context.ts issueRules)
     ...(plan ? [] : [FOLD_PLAN_INSTRUCTION, ...coverageFoldLines()]), // LOKI_E10_COVERAGE_RESUME fold (default): fixed bytes before any per-task text; turn and off add nothing (main's brief)
@@ -55,7 +55,7 @@ export function buildImplementBrief(task: string, plan: string | null, impactedT
     plan ? (planHintsOn() ? `${PLAN_HINT_LEAD}\n${plan}` : `Follow this plan:\n${plan}`) : "No separate plan was made: plan the change yourself in this session, then implement it." + (process.env.LOKI_E10_REPRO === "1" ? " " + REPRO_LINE : ""), // TEN-QUALITY-08: default off, lean path only
     ...(repoMap ? [repoMap] : []),
     impactedTests.length ? `Impacted tests (a starting hint, not a limit): ${impactedTests.join(", ")}.` : "Impacted tests: none known; run the targeted tests for the code you change (the harness runs the full suite after you stop when the diff's risk tier is medium or high).",
-    issue ? ISSUE_FINISH_LINE : FINISH_LINE,
+    issue === "text" ? TEXT_FINISH_LINE : issue ? ISSUE_FINISH_LINE : FINISH_LINE, // "text": a text task on the work road is sent the road's lines with "task" for "issue" (types.ts taskWording)
   ].join("\n\n"));
 }
 
@@ -184,7 +184,7 @@ export const implementStage: Stage = {
     const known = issue ? repoCardBrief(ctx.repoDir, scratch?.dir ?? null, process.env, setupCheck) : null; // REPO CARD: what earlier runs here verified (e10ext/repomemory.ts), in the brief and as $LOKI_SCRATCH/loki-setup.sh; LOKI_REPO_CARD=0 opts out
     if (known) { try { writeFileSync(join(ctx.runDir, "repo-card.json"), JSON.stringify(known.record) + "\n"); } catch { /* the record is evidence only */ } ctx.emit("repo.card", "implement", { when: "read", ...known.record }); }
     const card = issue ? envCard(ctx) : null; // the small environment card (util/stack_tools.ts envCard): server binaries off PATH that the repository needs
-    const fullBrief = buildImplementBrief(task, plan, impacted, known ? `${repoMap}${repoMap ? "\n\n" : ""}${known.text}` : repoMap, [specBriefBlock(spec), execSpecBriefOf(ctx.runDir), ...adviceBlock(choiceAdvice), proveByRunningBlock(ctx.provider, prior.intake?.source, process.env, card?.line ?? null)].filter(Boolean).join("\n\n") || null, prior.intake?.assumptions, rankedRemedyEnabled() ? prior.intake?.ranked_remedy : undefined, issue); // the advice joins the per-task part of the brief, never the cache-stable prefix // LOKI_E10_EXEC_SPEC: the binding and advisory spec cases the lean Wall stage left
+    const fullBrief = buildImplementBrief(task, plan, impacted, known ? `${repoMap}${repoMap ? "\n\n" : ""}${known.text}` : repoMap, [specBriefBlock(spec), execSpecBriefOf(ctx.runDir), ...adviceBlock(choiceAdvice), proveByRunningBlock(ctx.provider, prior.intake?.source, process.env, card?.line ?? null)].filter(Boolean).join("\n\n") || null, prior.intake?.assumptions, rankedRemedyEnabled() ? prior.intake?.ranked_remedy : undefined, issue && prior.intake?.source === "text" ? "text" : issue); // the advice joins the per-task part of the brief, never the cache-stable prefix // LOKI_E10_EXEC_SPEC: the binding and advisory spec cases the lean Wall stage left
     try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, ATTEMPT_BRIEF_FILE), fullBrief, "utf8"); } catch { /* best effort: without it the machine starts no extra attempt */ } // EXP-0010: the extra attempts after a red verify start from this exact brief
     const firstAttemptModel = attemptsK(ctx.model) > 0 ? attemptModels()[0] : undefined; // LOKI_E10_ATTEMPT_MODELS entry 1: the first of the best-of-N attempts (a downgrade still wins)
     const first: SessionRunOptions = {

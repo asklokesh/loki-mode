@@ -189,6 +189,8 @@ bun --no-env-file --config=/dev/null "$LCD" "$LCC" worker-stderr-inherited 2>&1 
 #         --seal-existing, a group unit, a provider other than claude and LOKI_E10_PROVE_BY_RUNNING=0 keep theirs; LOKI_E10_ONE_ROAD=0 turns the road off; an issue ref and an issue supplied as a file are "issue".
 #   gate: a text source is on the proof and acceptance road only with the run's flag, only on claude, and not under the prove-by-running opt-out; an issue
 #         source is as before.
+#   words: the three lines written for an issue run (the finish line, take the time, deliver each) say "task" to a text task on the road; an issue run is
+#         sent them as they were; nothing else in the rules differs between the two. Plant: types.ts taskWording: return its input (cells 1 and 2 read true).
 #   cap:  a text task on the road gets the issue floor (2400 s) exactly as a run directory with issue.json does; a plain text task keeps the sized cap (900 s);
 #         a fixed cap wins.
 # Plants: supervisor.ts workRoad: drop the small bar (road row 2 reads true); drop `deliverables(task, []).large` (row 3 reads true); drop the list test (row 11, prose, reads true);
@@ -210,8 +212,11 @@ const on = { LOKI_E10_WORK_ROAD: "1" };
 const gate = [ty.issueRunBrief("claude", "text", {}), ty.issueRunBrief("claude", "text", on), ty.issueRunBrief("opencode", "text", on), ty.issueRunBrief("claude", "text", { ...on, LOKI_E10_PROVE_BY_RUNNING: "0" }), ty.issueRunBrief("claude", "issue", {}), ty.issueRunBrief("claude", undefined, on)];
 const cap = [rc.resizeCap(T + "/rw-run-plain", null, true, undefined, {}), rc.resizeCap(T + "/rw-run-plain", null, true, undefined, on), rc.resizeCap(T + "/rw-run-issue", null, true, undefined, {}),
   rc.resizeCap(T + "/rw-run-plain", null, true, undefined, { LOKI_E10_ISSUE_JSON: T + "/rw-issue.json" }), rc.resizeCap(T + "/rw-run-plain", null, true, 500, on), rc.resizeCap(T + "/rw-run-plain", null, false, undefined, on)];
-console.log([road.join(","), gate.join(","), cap.join(",")].join(" | "));' 2>&1 | tail -1)"
-[ "$rw" = "true,false,false,false,false,false,false,false,false,false,false,true,false,work,issue,issue,work,spec,text | false,true,false,false,true,false | 900,2400,2400,2400,500,2400" ] \
+const cx = await import("./src/e10ext/context.ts"), blk = (src) => cx.proveByRunningBlock("claude", src, on), tail = (b) => b.split("\n\n").slice(-2).join(" ");
+const words = [/\bissue\b/.test(ty.TEXT_FINISH_LINE), /\bissue\b/.test(tail(blk("text"))), /\btask\b/.test(tail(blk("text"))), cx.fixedRules({}, "text").endsWith(ty.TEXT_FINISH_LINE), cx.fixedRules({}, true).endsWith(ty.ISSUE_FINISH_LINE),
+  blk("issue").includes("This is an issue to deliver in full") && blk("issue").includes("This issue lists several things"), cx.fixedRules({}, "text").slice(0, -ty.TEXT_FINISH_LINE.length) === cx.fixedRules({}, true).slice(0, -ty.ISSUE_FINISH_LINE.length)];
+console.log([road.join(","), gate.join(","), cap.join(","), words.join(",")].join(" | "));' 2>&1 | tail -1)"
+[ "$rw" = "true,false,false,false,false,false,false,false,false,false,false,true,false,work,issue,issue,work,spec,text | false,true,false,false,true,false | 900,2400,2400,2400,500,2400 | false,false,true,true,true,true,true" ] \
     && ok "RW-02 road, gate and cap: a description of work with its own acceptance list takes the work road and the issue time cap rule; prose stays plain (=all opts it in); a short goal, a spec, --spec, --seal-existing, a group unit, another provider, the prove-by-running opt-out and the road opt-out keep theirs ($rw)" || bad "RW-02 road, gate and cap gave: $rw"
 # ---- end RW-02 ----
 

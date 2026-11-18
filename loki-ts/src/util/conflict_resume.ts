@@ -21,7 +21,7 @@ import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
 import { editShapeBrief, editShapeSites, precedenceBrief, precedenceCheckEnabled } from "./edit_shape.ts";
 import { isTestFile } from "./test_file_text.ts";
 import { extractSpecAtoms, resolveSites } from "../features/exec_spec.ts";
-import { FINISH_LINE, ISSUE_FINISH_LINE, issueRunBrief, taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
+import { FINISH_LINE, ISSUE_FINISH_LINE, TEXT_FINISH_LINE, issueRunBrief, taskBlock, type EventEnvelope, type RunContext, type RunnerName, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
 import type { ReadOnlyFile } from "../engine10/stages/implement.ts";
 
 // In-place answer to a BLOCKED run (`loki answer <run-id> "<text>"`): the supervisor appends run.resumed with answered:true and the answer, and the
@@ -200,7 +200,7 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
     if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) { ended = "time"; break; }
     spent = o.spentUsd(); if (spent !== null && spent >= usdLine) { ended = "dollar line"; break; }
     const before = o.fingerprint();
-    const r = await resumeWith(ctx, base, cur, continueBrief(outstanding, missing(), issueRunBrief(ctx.provider, ctx.outputs?.()?.intake?.source, env) ? ISSUE_FINISH_LINE : FINISH_LINE), `-k${n}`);
+    const r = await resumeWith(ctx, base, cur, continueBrief(outstanding, missing(), issueRunBrief(ctx.provider, ctx.outputs?.()?.intake?.source, env) ? (ctx.outputs?.()?.intake?.source === "text" ? TEXT_FINISH_LINE : ISSUE_FINISH_LINE) : FINISH_LINE), `-k${n}`);
     ids.push(r.iterationId); base = { ...base, iterationId: r.iterationId }; if (o.normalize) r.reply = o.normalize(r.reply); // H1: a resume's own no-test conflict is unfinished too
     ctx.emit("s1b.resumed", "implement", { resume: n, iteration_id: r.iterationId, compactions: o.compactions([r.iterationId]), finish_line: r.reply.markers.finishLine ?? null });
     cur = { ...r.reply, durationS: cur.durationS + r.reply.durationS };

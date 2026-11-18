@@ -274,6 +274,11 @@ export function pushArgv(a: PushArgs): string[] {
 export const FINISH_LINE = "Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason; cite test as path:line>."; // E-150: the brief's last line, byte-identical every task (e10ext/context.ts re-exports it)
 /** Candidate 1 (e10ext/context.ts): the issue-run finish rule, the opt-out and the scope rule, here in the leaf so conflict_resume and machine import them without a cycle. */
 export const ISSUE_FINISH_LINE = "Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason; cite test as path:line>, or LOKI_UNFINISHED: <what is left> when something the issue requires is not delivered. An item the issue marks optional is not required: do it or skip it, say which in your reply, and still finish with LOKI_DONE. Use LOKI_SPEC_CONFLICT only when a test in the repository contradicts the task.";
+/** RW-02: the road's own lines as a text task is sent them. The three lines written for an issue run (this finish line, and the take-the-time and deliver-each
+ *  lines in e10ext/context.ts) call the task "the issue"; a text task on the work road is sent the same lines with "task" in its place. An issue run is sent
+ *  the constants as they are, byte for byte. */
+export const taskWording = (s: string): string => s.replace(/\bThis is an issue\b/g, "This is a task").replace(/\bThis issue\b/g, "This task").replace(/\bthe issue\b/g, "the task");
+export const TEXT_FINISH_LINE = taskWording(ISSUE_FINISH_LINE);
 export const proveByRunningOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PROVE_BY_RUNNING"] ?? "").trim());
 /** RW-02 ONE ROAD (LOKI_E10_ONE_ROAD, default on; 0/off/false/no keeps a text task on the plain road): a text task that describes work in an existing repository
  *  takes the same proof and acceptance road as a GitHub issue. The supervisor decides once per run (engine10/supervisor.ts workRoad) and carries the answer to

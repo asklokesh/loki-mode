@@ -11,7 +11,7 @@ import type { RepoMap } from "../engine10/repomap.ts";
 export const planHintsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PLAN_HINTS"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 export const PLAN_HINT_LEAD = "A plan from an earlier session (a hint, not the scope: the task decides what to change; cover every case the task states even where the plan leaves it out, and edit any file the fix needs):";
 import { loadRepoMap } from "../engine10/sizing.ts";
-import { FINISH_LINE, ISSUE_FINISH_LINE, issueRunBrief, proveByRunningOn, type RunContext, type TestMap, type TestRef } from "../engine10/types.ts";
+import { FINISH_LINE, ISSUE_FINISH_LINE, issueRunBrief, proveByRunningOn, taskWording, TEXT_FINISH_LINE, type RunContext, type TestMap, type TestRef } from "../engine10/types.ts";
 import { unitBrief } from "../features/speed/unit_mode.ts";
 import { signatureDigest } from "../util/ts_signatures.ts";
 import { contextPack, packEnabled, type ContextPack } from "../util/context_pack.ts";
@@ -26,7 +26,7 @@ export interface ContextDeps {
 
 // S41-10b: the implement/fix brief's leading block. A plain constant, no task text or interpolation, so
 // every brief starts with the same bytes (cache-stable prefix). Per-task context is appended after it. E-150: repeated verbatim as the brief's last line (recency); same bytes every task.
-export { FINISH_LINE, ISSUE_FINISH_LINE, issueRunBrief, proveByRunningOn }; // defined in engine10/types.ts, a leaf module, so conflict_resume and steer import it without a cycle through this file
+export { FINISH_LINE, ISSUE_FINISH_LINE, issueRunBrief, proveByRunningOn, TEXT_FINISH_LINE }; // defined in engine10/types.ts, a leaf module, so conflict_resume and steer import it without a cycle through this file
 // Z2 LOKI_E10_PINNED_TEST_UPDATE (default on, =0 opts out): an existing test that pins the OLD behavior the issue explicitly asks to change is updated, not declared a spec conflict.
 // On the real-world bench this rule's older form ("an existing test that contradicts the task is a spec conflict") made Haiku skip a site the issue named (old tests pinned private
 // state the fix had to change), and stopped two other runs BLOCKED; raw Haiku simply updated those tests. Each update is reported on an UPDATED TEST line that the implement stage
@@ -84,9 +84,9 @@ export const LEGACY_FIXED_RULES = [
 export const ISSUE_RULE_LINE = "- You may start this repository's own services and throwaway dependencies to exercise your change. Bind anything you start to 127.0.0.1 or a unix socket, never to all interfaces. Create data directories, sockets and scratch files under $TMPDIR. Leave what you started running; Loki stops it after the session. Never stop or signal a process you did not start. Use only a database, cache or server you started yourself under $TMPDIR; never connect to one named in the repository's env files or in your environment, and never apply migrations to it.";
 const SERVER_RULES = "- Never leave a long-lived server running.\n- Never kill processes.";
 /** An issue run's rules: the given rules constant with the two process rules and the finish rule replaced, everything else word for word. */
-export function issueRules(rules: string): string {
+export function issueRules(rules: string, text = false): string {
   if (!rules.includes(SERVER_RULES) || !rules.endsWith(FINISH_LINE)) return rules; // a rules text without these lines is left as it is
-  return rules.replace(SERVER_RULES, ISSUE_RULE_LINE).slice(0, -FINISH_LINE.length) + ISSUE_FINISH_LINE;
+  return rules.replace(SERVER_RULES, ISSUE_RULE_LINE).slice(0, -FINISH_LINE.length) + (text ? TEXT_FINISH_LINE : ISSUE_FINISH_LINE); // text: a text task on the work road (types.ts taskWording)
 }
 export const PROVE_BY_RUNNING_BLOCK = "Before you finish, prove the change works by running it, not by reading it. Exercise each thing the task asks for the way its user or caller reaches it: start the service or program this repository provides (if it needs a database or another dependency, start a throwaway one in a temporary directory), and call every new or changed entry point exactly as its real caller does; for a web or API client, use the exact paths the client code sends. Never use a fixed port number: pick a port you have just checked is free, or a unix socket inside your temporary directory, and call only the processes you started; before the first call, confirm the process answering on that port is the one whose process id you recorded. Prove a fresh install, not only an existing one: start from an empty database or data directory, set it up with the repository's own migrations or setup command, and create the first account, tenant or other record through the product's own code path after your change. Fix whatever fails and run it again. You may say something cannot be run only after you have tried: list each command you tried to find or start it and what it printed. A missing program on PATH is not enough; look where this machine installs it. Before the finish line, list each requested item with the command you ran to prove it and what it returned, then one line starting `Fresh install:` with the commands that built the empty environment and created the first record, and what they returned. Loki checks the label against this list, so an item with no command and result counts as not proved.";
 /** The script the session leaves so Loki can re-run the proof itself (engine10/proof_rerun.ts): the label comes from that run, not from the reply. */
@@ -95,10 +95,10 @@ export const TAKE_THE_TIME_LINE = "This is an issue to deliver in full, not a qu
 export const DELIVER_EACH_LINE = "This issue lists several things to deliver. Deliver each one. If a required one is left undone, finish with LOKI_UNFINISHED and say which. An item the issue marks optional may be skipped: say so and finish with LOKI_DONE.";
 /** The per-task issue-run lines (block, take the time, deliver each, and the environment card line when one was made), or "" outside an issue run on claude. */
 export const proveByRunningBlock = (provider: string, source: unknown, env: NodeJS.ProcessEnv = process.env, cardLine: string | null = null): string =>
-  issueRunBrief(provider, source, env) ? [PROVE_BY_RUNNING_BLOCK, PROOF_SCRIPT_LINE, ...(repoCardOn(env) ? [SETUP_FIRST_LINE] : []), TAKE_THE_TIME_LINE, DELIVER_EACH_LINE, ...(cardLine ? [cardLine] : [])].join("\n\n") : "";
+  issueRunBrief(provider, source, env) ? [PROVE_BY_RUNNING_BLOCK, PROOF_SCRIPT_LINE, ...(repoCardOn(env) ? [SETUP_FIRST_LINE] : []), ...[TAKE_THE_TIME_LINE, DELIVER_EACH_LINE].map((l) => (source === "text" ? taskWording(l) : l)), ...(cardLine ? [cardLine] : [])].join("\n\n") : "";
 export const pinnedTestUpdateEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PINNED_TEST_UPDATE"] ?? "").trim());
 /** The rules block the implement and fix briefs lead with: FIXED_RULES by default, the v11.139.0 text with the knob off. Either way a constant, so the prefix stays cache-stable. */
-export const fixedRules = (env: NodeJS.ProcessEnv = process.env, issue = false): string => { const r = pinnedTestUpdateEnabled(env) ? (docUpdateRuleOn(env) ? FIXED_RULES : FIXED_RULES_DOC_V139) : LEGACY_FIXED_RULES; return issue ? issueRules(r) : r; }; // issue: the caller's issueRunBrief(provider, source); each result is a constant, so the prefix stays cache-stable per route
+export const fixedRules = (env: NodeJS.ProcessEnv = process.env, issue: boolean | "text" = false): string => { const r = pinnedTestUpdateEnabled(env) ? (docUpdateRuleOn(env) ? FIXED_RULES : FIXED_RULES_DOC_V139) : LEGACY_FIXED_RULES; return issue ? issueRules(r, issue === "text") : r; }; // issue: the caller's issueRunBrief(provider, source); each result is a constant, so the prefix stays cache-stable per route
 
 /** REPO-GUIDES (LOKI_E10_REPO_GUIDES, default on): the lead of the one per-repository block the implement and fix briefs carry when the repository's own guides
  *  name a test command, a setup command or a prohibition (project_model/guides.ts guideSentence, read at intake). The sentence after it differs per repository,
