@@ -122,6 +122,39 @@ seal=true,true'
 [ "$RW3" = "$RW3_WANT" ] && ok "rw-03 unit: Loki's own causes read 'Loki could not finish checking', a failing check and the cap keep their reason, no outcome word or exit code moved, open items carry their class" || bad "rw-03 unit gave: $RW3"
 # ---- end RW-03 ----
 
+# ---- RW-03 VERIFIED FLAG AND REVIEWER FLAG COUNT (unit 2 step 2) ----
+# Unit, from source. The reviewer's findings on a receipt are counted beside the label and read first in NOT PROVEN; a summary with none is byte for byte
+# what it was. LOKI_VERIFIED turns verified mode on, its bounds have defaults and overrides, the header says what this build does, and the receipt block
+# exists only when the mode is on.
+# Planted defects (each reverted): closure.ts reviewerFlagsSuffix returns "" (the count leaves the label); output.ts drops flagsFirst (the finding is no
+# longer first); closure.ts verifiedReceiptBlock returns the block always (off reads a block); closure.ts verifiedOn accepts any value (off reads on).
+RW3B="$(cd "$ROOT/loki-ts" && bun -e '
+const o = await import("./src/engine10/output.ts"), c = await import("./src/engine10/closure.ts");
+const base = { pr: null, verdict: "VERIFIED", flaky: [], cost: { usd: 1, provider: "claude", tokens: 10 }, wallS: 10, stages: [{ label: "implement", seconds: 10 }] };
+const np = ["kill switch not checked", "cross-review flag (claude): bulk status has no transition rules", "cross-review flag (claude): delete orphans rows"];
+const withFlags = o.formatSummary({ ...base, notProven: np }).split("\n"), plain = o.formatSummary({ ...base, notProven: ["kill switch not checked"] }).split("\n");
+console.log([
+  "label=" + withFlags[0].replace(/\s+/g, " "),
+  "first=" + withFlags.find((l) => l.startsWith("NOT PROVEN")).replace(/^NOT PROVEN:\s+/, "").slice(0, 34),
+  "plain=" + plain[0].replace(/\s+/g, " ") + "|" + plain.find((l) => l.startsWith("NOT PROVEN")).replace(/^NOT PROVEN:\s+/, ""),
+  "one=" + c.reviewerFlagsSuffix(["cross-review block (claude): x"]) + "|none=" + JSON.stringify(c.reviewerFlagsSuffix(["cross-review not run: claude exited 1", "cross-review skipped: low risk (claude not run)"])),
+  "on=" + [c.verifiedOn({ LOKI_VERIFIED: "1" }), c.verifiedOn({}), c.verifiedOn({ LOKI_VERIFIED: "0" })].join(","),
+  "bounds=" + JSON.stringify(c.verifiedBounds({})) + JSON.stringify(c.verifiedBounds({ LOKI_VERIFIED_ROUNDS: "2", LOKI_VERIFIED_MAX_S: "600", LOKI_VERIFIED_MAX_USD: "1.5", LOKI_VERIFIED_MAX_TOKENS: "bad" })),
+  "block=" + JSON.stringify(c.verifiedReceiptBlock({})) + (c.verifiedReceiptBlock({ LOKI_VERIFIED: "1" }).verified_mode ? "+on" : "+missing"),
+  "header=" + (c.verifiedHeader({}).startsWith("verified mode: ") && (c.CLOSURE_ROUNDS_BUILT || /not in this build/.test(c.verifiedHeader({})))),
+].join("\n"));
+' 2>&1)"
+RW3B_WANT='label=Outcome: VERIFIED, 2 reviewer flags open
+first=cross-review flag (claude): bulk s
+plain=Outcome: VERIFIED|kill switch not checked
+one=, 1 reviewer flag open|none=""
+on=true,false,false
+bounds={"rounds":3,"wall_s":7200,"usd":5,"tokens":3000000}{"rounds":2,"wall_s":600,"usd":1.5,"tokens":3000000}
+block={}+on
+header=true'
+[ "$RW3B" = "$RW3B_WANT" ] && ok "rw-03 unit: reviewer findings are counted beside the label and read first; no finding leaves the summary as it was; verified mode has its switch, bounds and receipt block" || bad "rw-03 step 2 unit gave: $RW3B"
+# ---- end RW-03 step 2 unit ----
+
 # Unit: ENCLOSING-DECL. An edit inside an indented method whose @@ context is a template-literal line (git's default funcname for .js) names the
 # enclosing method from the head file; a context that names something keeps that name only; column-0 code names nothing (commander.js run).
 U="$(cd "$ROOT/loki-ts" && bun -e '
@@ -1008,5 +1041,25 @@ if [ -n "$RUNDIR" ] && [ -f "$RUNDIR/receipt.json" ]; then
     [ "$bsv" = "PARTIAL True" ] && ok "BACKSTOP-SEAL the receipt is PARTIAL with the time-ran-out reason" || bad "BACKSTOP-SEAL receipt facts: $bsv"
     grep -q 'export function multiply' "$REPO/calc.ts" 2>/dev/null || git -C "$REPO" show HEAD:calc.ts 2>/dev/null | grep -q 'export function multiply' && ok "BACKSTOP-SEAL the sealed tree holds the session's change" || bad "BACKSTOP-SEAL the change is missing from the sealed tree"
 else bad "BACKSTOP-SEAL no receipt after the backstop kill"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; fi
+
+# ---- RW-03 VERIFIED FLAG on the stub (unit 2 step 2) ----
+# `--verified` reaches the engine through bin/loki and the route: the start line says verified mode is on, the receipt carries verified_mode, and the
+# label and exit code are those of the same run without the flag. Without the flag the start line and the receipt carry nothing of it.
+# Planted defects (each reverted): autonomy/route.sh drops --verified from the engine flags (the `loki start` run exits 2 with no receipt);
+# supervisor.ts ignores --verified (unknown flag, exit 2); seal.ts drops verifiedReceiptBlock (no verified_mode on the flagged run).
+rw3_vm() { python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); v=r.get("verified_mode"); print(r.get("verdict"), "block" if v else "none", (v or {}).get("bounds", {}).get("rounds", "-"))' "$RUNDIR/receipt.json" 2>/dev/null || echo "no-receipt"; }
+run_engine done --verified
+RW3V="$RC $(rw3_vm) $(grep -c 'verified mode: ' <<< "$OUT")"
+run_engine done
+RW3P="$RC $(rw3_vm) $(grep -c 'verified mode: ' <<< "$OUT")"
+LOKI_VERIFIED=1 run_engine done
+RW3E="$RC $(rw3_vm) $(grep -c 'verified mode: ' <<< "$OUT")"
+E2E_VERB=start run_engine done --verified # through `loki start`, where autonomy/route.sh decides which flags reach the engine
+RW3S="$RC $(rw3_vm) $(grep -c 'verified mode: ' <<< "$OUT")"
+[ "$RW3V" = "0 VERIFIED block 3 1" ] && [ "$RW3P" = "0 VERIFIED none - 0" ] && [ "$RW3E" = "0 VERIFIED block 3 1" ] && [ "$RW3S" = "0 VERIFIED block 3 1" ] \
+    && ok "rw-03: --verified and LOKI_VERIFIED=1 are said on the start line and recorded in the receipt; label and exit code are those of the plain run; a plain run carries nothing of it" \
+    || bad "rw-03 verified flag: flag '$RW3V' plain '$RW3P' env '$RW3E' start '$RW3S'"
+unset -f rw3_vm
+# ---- end RW-03 step 2 ----
 
 finish

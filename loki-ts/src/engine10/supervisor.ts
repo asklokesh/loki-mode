@@ -15,7 +15,7 @@ import { loadSpecFile, type LoadedSpec } from "../util/spec_file.ts";
 import { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker } from "../util/engine_origin.ts";
 export { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker }; // re-exported: callers and tests import these from here
 import { stageCapability, workerStages } from "./worker.ts"; import { withholdGithubTokens } from "../runner/github_token.ts"; import { readAliveBeat, writeAliveBeat, writeRunPid } from "../util/run_pid.ts";
-import { EventLog, conflictReasonOf, fold, partialCost, runCostUsd, summaryCost, readEvents, tail } from "./events.ts"; import { stageShareText } from "../util/cost_breakdown.ts";
+import { EventLog, conflictReasonOf, fold, partialCost, runCostUsd, summaryCost, readEvents, tail } from "./events.ts"; import { stageShareText } from "../util/cost_breakdown.ts"; import { verifiedHeader, verifiedOn } from "./closure.ts";
 import { disclosureLine } from "../providers/provider_guard.ts";
 import { resolveRunProvider } from "../runner/state.ts";
 import { budgetNext, capNote, groupEnv, parseCapUsd, priorSpend, resolveCap, SUBSCRIPTION_NOTE, unenforceableNote, writeBudgetStop } from "../e10ext/budget_cap.ts";
@@ -317,6 +317,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     const a = args[i]!;
     if (a === "--no-pr") noPr = true;
     else if (a === "--deep") deep = true;
+    else if (a === "--verified") process.env.LOKI_VERIFIED = "1"; // RW-03: the worker and every stage read the variable, so the flag and the variable are one switch
     else if (a === "--json") json = true;
     else if (a === "--verbose") verbose = true;
     else if (a === "--quiet") quiet = true; // OC-OUTPUT: unified summary only
@@ -331,7 +332,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (a.startsWith("--label=")) label = a.slice(8);
     else if (a === "--seal-existing") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --seal-existing needs a patch file\n"); noteRefusal("unsupported_flag"); return 2; } sealPatch = resolve(v); noPr = true; i++; } // CW-12: the changes already exist as this patch; implement applies it instead of running a session, and no PR is ever opened
     else if (a === "--" && !eoo) eoo = true; // TEN-STABILITY-37: `--` ends options, the rest is task text
-    else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--json] [--verbose] [--quiet] [--max-cost N] [--provider P] [--spec F] [--seal-existing PATCH] [--resume] [--fresh] [-- <task>]\n`); noteRefusal("unsupported_flag"); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
+    else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--verified] [--json] [--verbose] [--quiet] [--max-cost N] [--provider P] [--spec F] [--seal-existing PATCH] [--resume] [--fresh] [-- <task>]\n`); noteRefusal("unsupported_flag"); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
     else words.push(a);
   }
   let task = words.join(" ").trim(); if (resume) return (await import("../util/run_outputs.ts")).resumeFlag(words[0], noPr);
@@ -414,7 +415,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const routeStart = routeStartLine(process.env, provider); // FC-35: printed before any stage, so it states the pre-plan state only (route.json does not exist yet). R1-15: null unless LOKI_ROUTER is on, so the start line is byte-identical otherwise
   const costEst = encodeEstimate(process.env, repoDir, undefined, model); if (costEst) env.LOKI_E10_COST_ESTIMATE = costEst; // 11.3.0 T1: null under LOKI_COST_PREVIEW=0
   const downgrades = modelDowngrades(provider); // D86 L1: any downgrade is printed here and recorded on run.started (key only when non-empty, receipt hashes stay stable)
-  if (!json) process.stdout.write(`${START_LINE}, ${baseLine(repoDir)}, ${capNote(cap.usd, cap.source)}${modelWhy ? `, model ${model} (${modelWhy})` : ""}${downgrades.length ? `; downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : ""}${routeStart ? `; ${routeStart}` : ""}${costEst ? `; ${startText(JSON.parse(costEst), cap.usd)}` : ""}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
+  if (!json) process.stdout.write(`${START_LINE}, ${baseLine(repoDir)}, ${capNote(cap.usd, cap.source)}${modelWhy ? `, model ${model} (${modelWhy})` : ""}${downgrades.length ? `; downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : ""}${routeStart ? `; ${routeStart}` : ""}${costEst ? `; ${startText(JSON.parse(costEst), cap.usd)}` : ""}${verifiedOn(env) ? `; ${verifiedHeader(env)}` : ""}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
   if (costEst && process.env.LOKI_COST_CONFIRM === "1" && process.stdin.isTTY && !json && !(await (await import("../commands/issues_run.ts")).askYesNo("Proceed with this run? [y/N] "))) { process.stdout.write("Run cancelled before start (LOKI_COST_CONFIRM).\n"); return 1; }
   const capLine = !json ? [disclosureLine(provider), unenforceableNote(provider, cap.usd)].filter(Boolean).join("\n") : null; if (capLine) process.stdout.write(`${capLine}\n`); // LM-004: one line when the provider lacks a guarantee claude has; claude prints nothing extra
   const t0 = Date.now();

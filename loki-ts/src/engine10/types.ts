@@ -200,6 +200,7 @@ export interface Receipt {
   no_regression?: string[]; // LOKI_E10_NRD: keep-case differential lines; omitted (hash unchanged) when none ran
   tournament?: string[]; // LOKI_E10_TOURNAMENT: one line per candidate, per probe disagreement, and the decision; omitted (hash unchanged) when no tournament ran
   attempts?: string[]; // LOKI_E10_ATTEMPTS: one line per implement attempt and the selection reason; omitted (hash unchanged) when no extra attempt ran
+  verified_mode?: { bounds: { rounds: number; wall_s: number; usd: number; tokens: number }; closure_rounds_built: boolean; rounds: unknown[] }; // RW-03: present only on a `--verified` / LOKI_VERIFIED=1 run
   cost_preview?: Record<string, unknown>; // 11.3.0 T1: absent under LOKI_COST_PREVIEW=0
   verdict: Verdict;
   toolchain?: import("../util/receipt_signer.ts").Toolchain; loki_version?: string; // TEN-GATES-22: absent on receipts sealed before it existed, which still verify; loki_version (VERSION at seal) likewise

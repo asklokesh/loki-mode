@@ -19,7 +19,7 @@ _ROUTE_OPTVAL_FLAGS=" --mirofish "
 # engine rather than configure it: the route still resolves (R_FRONT=1) but the dispatcher leaves the call to the front end.
 _ROUTE_FRONT_FLAGS=" --workspace --deploy --health-url --health-match --auto-rollback --destination --canary --domain "
 # Flags engine10 honors as-is.
-_ROUTE_E10_FLAGS=" --no-pr --deep --json --verbose --quiet --resume --provider --max-cost --spec --attempts --seal-existing --detach -d "
+_ROUTE_E10_FLAGS=" --no-pr --deep --verified --json --verbose --quiet --resume --provider --max-cost --spec --attempts --seal-existing --detach -d "
 # The largest PRD engine10 takes: it carries the task in env vars and CLI arguments (with a context pack added under
 # --session-model), and Linux caps one string at 128 KiB. A bigger PRD runs on the legacy engine, or is refused under
 # SDK mode with claude (the legacy engine has no SDK path).

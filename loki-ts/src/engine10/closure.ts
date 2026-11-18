@@ -17,6 +17,28 @@ export function ownReason(stage: unknown, reason: unknown): string | undefined {
 /** A reason with the lead removed, for readers that match on the cause itself. */
 export const withoutOwnLead = (reason: string): string => (reason.startsWith(LOKI_OWN_LEAD) ? reason.slice(LOKI_OWN_LEAD.length) : reason);
 
+/** RW-03 VERIFIED MODE (`--verified`, LOKI_VERIFIED=1): opt-in. The user accepts more time and spend so that Loki keeps working toward VERIFIED. */
+export const verifiedOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_VERIFIED"] ?? "").trim());
+/** The bounds of verified mode's closure phase: rounds and wall clock always, dollars when every session is priced, new tokens. Each has its own override. */
+export interface VerifiedBounds { rounds: number; wall_s: number; usd: number; tokens: number }
+const boundOf = (raw: string | undefined, dflt: number, max: number): number => { const n = Number((raw ?? "").trim()); return (raw ?? "").trim() !== "" && Number.isFinite(n) && n > 0 ? Math.min(n, max) : dflt; };
+export const verifiedBounds = (env: NodeJS.ProcessEnv = process.env): VerifiedBounds => ({ rounds: Math.floor(boundOf(env["LOKI_VERIFIED_ROUNDS"], 3, 10)), wall_s: Math.floor(boundOf(env["LOKI_VERIFIED_MAX_S"], 7200, 14400)), usd: boundOf(env["LOKI_VERIFIED_MAX_USD"], 5, 1000), tokens: Math.floor(boundOf(env["LOKI_VERIFIED_MAX_TOKENS"], 3_000_000, 50_000_000)) });
+/** Whether this build runs closure rounds. False until the round itself lands, so the header and the receipt never promise work that does not happen. */
+export const CLOSURE_ROUNDS_BUILT = false;
+/** The start-line text for a verified-mode run: the bounds that apply, said plainly. */
+export function verifiedHeader(env: NodeJS.ProcessEnv = process.env): string {
+  const b = verifiedBounds(env), hours = b.wall_s % 3600 === 0 ? `${b.wall_s / 3600} h` : `${Math.round(b.wall_s / 60)} min`;
+  return CLOSURE_ROUNDS_BUILT ? `verified mode: up to ${b.rounds} closure rounds, ${hours}, $${b.usd.toFixed(2)} when every session is priced, ${(b.tokens / 1e6).toFixed(1)}M new tokens` : "verified mode: on (recorded in the receipt; closure rounds are not in this build, so the run itself is unchanged)";
+}
+/** The receipt block of a verified-mode run. */
+export const verifiedReceiptBlock = (env: NodeJS.ProcessEnv = process.env): { verified_mode?: { bounds: VerifiedBounds; closure_rounds_built: boolean; rounds: unknown[] } } => (verifiedOn(env) ? { verified_mode: { bounds: verifiedBounds(env), closure_rounds_built: CLOSURE_ROUNDS_BUILT, rounds: [] } } : {});
+/** The independent reviewer's findings on a receipt's NOT PROVEN list (flags and blocks), in receipt order. The label rule does not read this. */
+export const reviewerFlags = (notProven: readonly unknown[]): string[] => notProven.filter((n): n is string => typeof n === "string" && /^cross-review (flag|block) \(/.test(n));
+/** Beside the label: ", 5 reviewer flags open", or "" when there are none. */
+export const reviewerFlagsSuffix = (notProven: readonly unknown[]): string => { const n = reviewerFlags(notProven).length; return n ? `, ${n} reviewer flag${n === 1 ? "" : "s"} open` : ""; };
+/** The same list with the reviewer's findings first, so they are read before the disclosures. Order within each part is kept. */
+export const flagsFirst = <T,>(notProven: readonly T[]): T[] => { const f = new Set<unknown>(reviewerFlags(notProven)); return f.size ? [...notProven.filter((n) => f.has(n)), ...notProven.filter((n) => !f.has(n))] : [...notProven]; };
+
 /** One structured reason seal's evaluation held the label below VERIFIED: the kind, and the check name or receipt line it came from. */
 export interface CapReason { kind: string; detail: string }
 export type ItemClass = "a" | "b" | "c";

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- The independent reviewer's findings are counted beside the label and read first. A run whose reviewer filed findings now prints, for example, `Outcome: VERIFIED, 5 reviewer flags open`, and those findings lead the NOT PROVEN line instead of sitting among the disclosures. The label rule is unchanged, and a run with no finding prints what it printed before.
+- `loki start --verified` (or `LOKI_VERIFIED=1`) is accepted and recorded: the start line says verified mode is on and the receipt carries a `verified_mode` block with its bounds (3 closure rounds, 2 hours, 5.00 dollars, 3 million new tokens; `LOKI_VERIFIED_ROUNDS`, `LOKI_VERIFIED_MAX_S`, `LOKI_VERIFIED_MAX_USD`, `LOKI_VERIFIED_MAX_TOKENS` override each). In this version the flag changes nothing else: the closure rounds that use those bounds are not built yet, and the start line says so.
+
 ## v11.156.0 (2026-11-17)
 
 ### Loki follows the repository's own test instructions

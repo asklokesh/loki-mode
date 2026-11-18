@@ -4,7 +4,7 @@ import { clipWords, collapseNotProven, formatClock, formatDuration, formatTokens
 export { formatClock, formatDuration, formatTokens }; // one owner: util/term_width.ts
 import { registryLoader } from "./registry.ts";
 import { redactSecrets } from "../util/redact.ts"; import { fatalReason } from "../runner/retry_class.ts";
-import { conflictReasonOf, summaryCost } from "./events.ts"; import { LOKI_OWN_LEAD, ownReason } from "./closure.ts"; import { isBlockingFail } from "../util/failure_memory.ts";
+import { conflictReasonOf, summaryCost } from "./events.ts"; import { flagsFirst, LOKI_OWN_LEAD, ownReason, reviewerFlagsSuffix } from "./closure.ts"; import { isBlockingFail } from "../util/failure_memory.ts";
 const NAME_WIDTH = 12; // fits "implement" + padding to align the next column
 const STATUS_WIDTH = 8; // E-44: "skipped" plus one separating space (7 ran it into the duration)
 const LABEL_WIDTH = 12; // fits "NOT PROVEN:" + one space
@@ -131,10 +131,10 @@ export function formatSummary(input: SummaryInput): string {
   const prLine = input.pr
     ? `${labelCol("PR")}${input.pr.url}${input.pr.draft ? ` (draft: ${input.pr.draftReason ?? "draft"})` : ""}`
     : `${labelCol("PR")}none`;
-  const verdictLine = `${labelCol("Outcome")}${input.outcome ?? input.verdict}`;
+  const verdictLine = `${labelCol("Outcome")}${input.outcome ?? input.verdict}${reviewerFlagsSuffix(input.notProven)}`; // RW-03: the reviewer's open findings are counted beside the label; the label rule is unchanged
   const r = input.receipt;
   const receiptLine = r ? [`${labelCol("Receipt")}${r.tampered ? "TAMPERED (event log modified; receipt not trustworthy)" : r.sha ? `sha256:${r.sha}${r.signed === false ? " (UNSIGNED)" : r.signed === null ? " (UNCHECKED)" : ""}` : "none (UNCHECKED)"}`] : [];
-  const npText = collapseNotProven(input.notProven).map((n) => n.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/ {2,}/g, " ").trim()).join(", ") || (input.receipt && !input.receipt.sha ? "everything (no receipt sealed)" : "");
+  const npText = collapseNotProven(flagsFirst(input.notProven)).map((n) => n.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/ {2,}/g, " ").trim()).join(", ") || (input.receipt && !input.receipt.sha ? "everything (no receipt sealed)" : "");
   const npBody = [npText, input.flaky.length > 8 ? `flaky ${input.flaky.length} tests (listed in receipt.json)` : input.flaky.length ? `flaky ${input.flaky.join(", ")}` : ""].filter(Boolean).join("; "); // FC-OUTCOME-FLOOD; an empty list prints no line
   const costLine =
     input.cost.usd != null
