@@ -138,6 +138,11 @@ FIX="$ROOT/tests/min/fixtures/e2e"
 export LOKI_TS_ENTRY="$ROOT/loki-ts/dist/loki.js"
 export LOKI_NO_COMPLETIONS=1
 mkdir -p "$T/tmp" "$T/bin"
+# EPIC_MET: the stub's answer to the acceptance line check (stages/xreview.ts issueLineCheck) for the epic's five acceptance lines, all MET with evidence.
+# Since 58af19094 (2026-11-16) the check is on by default for an issue with its own list, and a stub that cannot answer it caps the run at PARTIAL
+# ("acceptance not reviewed"), which is that guard working (its own legs are under Q1 ISSUE-ACCEPTANCE below). Legs about something else (the prove stage,
+# one PR for the whole route) pass this file so their label rests on what they test.
+EPIC_MET="$T/epic-met.txt"; { for i in 1 2 3 4 5; do printf 'MET %s: the diff and its passing test cover it\n' "$i"; done; } > "$EPIC_MET"
 export TMPDIR="$T/tmp" # slice worktrees and stamps land under the run-owned dir lib.sh removes
 TO=(); command -v timeout >/dev/null 2>&1 && TO=(timeout 300)
 
@@ -334,10 +339,18 @@ print(" ".join("%s:%s" % (e["stage"], e["type"].split(".")[1]) for e in ev if e[
 # normalized implement brief as on the base commit (8c7ae842b, captured by this same leg there).
 # F5 adds one block to an issue run's brief, so this leg runs under LOKI_E10_PROVE_BY_RUNNING=0: the opt-out gives the base brief byte for byte.
 # Q1 PROVE adds a stage and a receipt key to an issue run on claude, so the leg also runs under LOKI_E10_PROVE=0: the opt-out gives the base run byte for byte.
+# Issue acceptance is on by default since 58af19094 (2026-11-16) and adds four receipt keys and the implement key final_reply for an issue with its own
+# list, so the leg also runs under LOKI_E10_ISSUE_ACCEPTANCE=0: with it the stage order and both key sets are the base commit's again (measured).
+# The brief hash was fa2041fa29ead36e on the base commit (reproduced there from source) and is 56283bbaf3afe29d since 4fc499ebb (2026-11-17, "A run may
+# change the tests it added"): the one difference between the two briefs is the sentence that commit added to the fixed rules, after "cite it.": "Two more
+# cases are not spec conflicts either. A test file this run itself added is yours ... say in your reply which test and why." A rule the product added on
+# purpose, so the pin follows it. Plant: context.ts FIXED_RULES: drop "A test file this run itself added is yours: change it as the work needs. " (the hash
+# moves and this leg fails).
 W3="$T/whole-sig"; make_repo "$W3" 0
-LOKI_E10_PROVE=0 LOKI_E10_PROVE_BY_RUNNING=0 E2E_STUB_MODE=done run_loki "$W3" "$T/whole-sig-stub.log" start acme/search#24 --no-pr --max-cost 5
+LOKI_E10_PROVE=0 LOKI_E10_PROVE_BY_RUNNING=0 LOKI_E10_ISSUE_ACCEPTANCE=0 E2E_STUB_MODE=done run_loki "$W3" "$T/whole-sig-stub.log" start acme/search#24 --no-pr --max-cost 5
+cp "$(dirname "$(ls "$W3"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")/implement-brief.txt" "${S1B_KEEP:-/dev/null}" 2>/dev/null # S1B_KEEP=<file>: keep the brief the hash is taken from (for a diff when the pin moves)
 W3SIG="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$(dirname "$(ls "$W3"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")" "$W3" 2>&1)"
-[ "$W3SIG" = "stages=intake,{plan,wall},implement,verify,commit,seal; receipt=base_sha,checks,context,cost,cost_preview,diff_sha256,events_sha256,evidence,head_sha,log_seal,loki_version,model,model_source,mutation_outcome,mutation_proof,not_applicable,not_proven,provider,receipt_sha256,repo,resumed,run_id,schema,seal_accuracy,seeded_corpus,self_review,task,time,toolchain,tree,verdict,verification,wall; implement=already_done_evidence,brief_files,cascade,coverage_resume,diff_stat,duration_s,exit,impacted_tests,iteration_ids,model,self_review,session_id,session_resume,spec_conflict_reason,summary_tail,tests_reverted; brief=fa2041fa29ead36e" ] \
+[ "$W3SIG" = "stages=intake,{plan,wall},implement,verify,commit,seal; receipt=base_sha,checks,context,cost,cost_preview,diff_sha256,events_sha256,evidence,head_sha,log_seal,loki_version,model,model_source,mutation_outcome,mutation_proof,not_applicable,not_proven,provider,receipt_sha256,repo,resumed,run_id,schema,seal_accuracy,seeded_corpus,self_review,task,time,toolchain,tree,verdict,verification,wall; implement=already_done_evidence,brief_files,cascade,coverage_resume,diff_stat,duration_s,exit,impacted_tests,iteration_ids,model,self_review,session_id,session_resume,spec_conflict_reason,summary_tail,tests_reverted; brief=56283bbaf3afe29d" ] \
     && ok "S1b no-loss (issue run): stage order, receipt key set, implement key set and the normalized implement brief equal the base commit's" || bad "S1b no-loss (issue run) differs from the base commit: $W3SIG"
 
 # --- F4 rerun guard: before any model call, an open Loki pull request from the origin's owner that covers the issue stops `loki start owner/repo#N` --------
@@ -391,7 +404,11 @@ printf '%s\n' "$OUT" | grep '^loki: acme/search#24' | sed 's/^/    rerun e2e: /'
     && ok "rerun guard e2e: a rerun of #24 with an open Loki PR exits 2 naming it, starts no model session and no engine run, and never writes to the PR" \
     || { bad "rerun guard e2e: rc $RC, stub calls $(wc -l < "$T/rerun-e2e-stub.log" 2>/dev/null), gh writes $(cat "$T/rerun-gh-writes.log" 2>/dev/null)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
 
-# --- whole-first is for Sonnet and stronger models: a run that implements on Haiku keeps the split; LOKI_ISSUE_WHOLE_FIRST=1 forces whole on Haiku --
+# --- whole-first on every model: an issue runs whole whatever model implements it; LOKI_ISSUE_WHOLE_FIRST=0 is the split, opt-in ----------------------
+# Re-pinned for c83ef2483 (2026-11-16, "Every model runs an issue whole"): issueWholeFirst used to keep the split for a run that implements on Haiku; measured
+# again with the proof loop (FireLater#24 on Haiku: whole met 10 of 10 lines at $0.26 to $0.33, the split FAILED at $1.94), it returns true for every model.
+# The legs below pinned the old rule (haiku pin=split, triage "runs split into slices", --session-model haiku splits) and had failed since that commit.
+# Plant: decompose.ts issueWholeFirst: `return !haikuRun(env);` in place of `return true;` (the table reads haiku pin=split and the haiku e2e leg splits).
 HAIKU_M="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const { issueWholeFirst } = await import(process.env.ROOT + "/loki-ts/src/features/decompose.ts");
 const { triageItem } = await import(process.env.ROOT + "/loki-ts/src/features/triage.ts");
@@ -399,15 +416,15 @@ const cases = [["none", {}], ["sonnet pin", { LOKI_SESSION_MODEL: "sonnet" }], [
   ["small pin, LOKI_ALLOW_HAIKU=false", { LOKI_SESSION_MODEL: "small", LOKI_ALLOW_HAIKU: "false" }], ["default haiku", { LOKI_DEFAULT_SESSION_MODEL: "haiku" }], ["--haiku (router auto)", { LOKI_ROUTER: "auto" }],
   ["router auto, LOKI_ALLOW_HAIKU=false", { LOKI_ROUTER: "auto", LOKI_ALLOW_HAIKU: "false" }], ["router auto, sonnet pin", { LOKI_ROUTER: "auto", LOKI_SESSION_MODEL: "sonnet" }], ["override haiku", { LOKI_MODEL_OVERRIDE: "claude-haiku-5-5" }],
   ["dev tier haiku", { LOKI_CLAUDE_MODEL_DEVELOPMENT: "haiku" }], ["LOKI_ALLOW_HAIKU=true alone", { LOKI_ALLOW_HAIKU: "true" }], ["opencode haiku", { LOKI_PROVIDER: "opencode", LOKI_OPENCODE_MODEL: "openrouter/anthropic/claude-haiku-4.5" }],
-  ["opencode deepseek", { LOKI_PROVIDER: "opencode", LOKI_OPENCODE_MODEL: "openrouter/deepseek/deepseek-v3.2" }], ["haiku pin, =1", { LOKI_SESSION_MODEL: "haiku", LOKI_ISSUE_WHOLE_FIRST: "1" }], ["sonnet pin, =0", { LOKI_SESSION_MODEL: "sonnet", LOKI_ISSUE_WHOLE_FIRST: "0" }]];
+  ["opencode deepseek", { LOKI_PROVIDER: "opencode", LOKI_OPENCODE_MODEL: "openrouter/deepseek/deepseek-v3.2" }], ["haiku pin, =1", { LOKI_SESSION_MODEL: "haiku", LOKI_ISSUE_WHOLE_FIRST: "1" }], ["sonnet pin, =0", { LOKI_SESSION_MODEL: "sonnet", LOKI_ISSUE_WHOLE_FIRST: "0" }], ["haiku pin, =0", { LOKI_SESSION_MODEL: "haiku", LOKI_ISSUE_WHOLE_FIRST: "0" }]];
 const out = cases.map(([k, e]) => k + "=" + (issueWholeFirst(e) ? "whole" : "split"));
 for (const k of ["LOKI_SESSION_MODEL", "LOKI_ISSUE_WHOLE_FIRST"]) delete process.env[k]; process.env.LOKI_SESSION_MODEL = "haiku";
 out.push("triage haiku=" + triageItem({ title: process.env.EPIC_TITLE, body: process.env.EPIC_BODY, labels: [] }).reason.split("; ")[1]);
 console.log(out.join("; "));
 ' 2>&1)"
 printf '    model scope: %s\n' "$HAIKU_M"
-[ "$HAIKU_M" = "none=whole; sonnet pin=whole; opus pin=whole; haiku pin=split; small pin=split; small pin, LOKI_ALLOW_HAIKU=false=whole; default haiku=split; --haiku (router auto)=split; router auto, LOKI_ALLOW_HAIKU=false=whole; router auto, sonnet pin=whole; override haiku=split; dev tier haiku=split; LOKI_ALLOW_HAIKU=true alone=whole; opencode haiku=split; opencode deepseek=whole; haiku pin, =1=whole; sonnet pin, =0=split; triage haiku=runs split into slices" ] \
-    && ok "whole-first model scope: every way a run implements on Haiku keeps the split (pin, small, default, --haiku, override, dev tier, opencode); Sonnet, Opus and no pin run whole; =1 forces whole on Haiku; triage says split on Haiku" \
+[ "$HAIKU_M" = "none=whole; sonnet pin=whole; opus pin=whole; haiku pin=whole; small pin=whole; small pin, LOKI_ALLOW_HAIKU=false=whole; default haiku=whole; --haiku (router auto)=whole; router auto, LOKI_ALLOW_HAIKU=false=whole; router auto, sonnet pin=whole; override haiku=whole; dev tier haiku=whole; LOKI_ALLOW_HAIKU=true alone=whole; opencode haiku=whole; opencode deepseek=whole; haiku pin, =1=whole; sonnet pin, =0=split; haiku pin, =0=split; triage haiku=runs as one run" ] \
+    && ok "whole-first model scope: every model runs the issue whole, every way a run implements on Haiku included (pin, small, default, --haiku, override, dev tier, opencode); =0 is the split on any model; triage says one run on Haiku" \
     || bad "whole-first model scope gave: $HAIKU_M"
 hk_leg() { # hk_leg <name> <VAR=value...> -- <start args...>: the structural epic #24 on the stub; sets HKSPLIT (yes/no) and HKEP (epic records)
     local name="$1" d="$T/$1"; shift; local envs=(); while [ "$1" != "--" ]; do envs+=("$1"); shift; done; shift
@@ -426,8 +443,10 @@ run_loki_env() { # run_loki_env <repo> <log> <VAR=value...> -- <args...>: run_lo
 hk_leg hk-haiku -- --session-model haiku; HK1="$HKSPLIT/$HKEP"
 hk_leg hk-sonnet -- --session-model sonnet; HK2="$HKSPLIT/$HKEP"
 HK_KNOB=1 hk_leg hk-haiku-forced -- --session-model haiku; HK3="$HKSPLIT/$HKEP"
-echo "    model scope e2e: haiku pin $HK1, sonnet pin $HK2, haiku pin with =1 $HK3 (split/epic records)"
-[ "$HK1" = "yes/1" ] && ok "whole-first model scope e2e: --session-model haiku on the epic splits as before (one epic record)" || bad "whole-first: --session-model haiku gave split/epic $HK1 (want yes/1)"
+HK_KNOB=0 hk_leg hk-haiku-split -- --session-model haiku; HK4="$HKSPLIT/$HKEP"
+echo "    model scope e2e: haiku pin $HK1, sonnet pin $HK2, haiku pin with =1 $HK3, haiku pin with =0 $HK4 (split/epic records)"
+[ "$HK1" = "no/0" ] && ok "whole-first model scope e2e: --session-model haiku runs the epic whole (no split, no epic record)" || bad "whole-first: --session-model haiku gave split/epic $HK1 (want no/0)"
+[ "$HK4" = "yes/1" ] && ok "whole-first model scope e2e: LOKI_ISSUE_WHOLE_FIRST=0 on Haiku splits the epic (one epic record)" || bad "whole-first: =0 on Haiku gave split/epic $HK4 (want yes/1)"
 [ "$HK2" = "no/0" ] && ok "whole-first model scope e2e: --session-model sonnet runs the epic whole" || bad "whole-first: --session-model sonnet gave split/epic $HK2 (want no/0)"
 [ "$HK3" = "no/0" ] && ok "whole-first model scope e2e: LOKI_ISSUE_WHOLE_FIRST=1 runs the epic whole on Haiku" || bad "whole-first: =1 on Haiku gave split/epic $HK3 (want no/0)"
 
@@ -510,8 +529,8 @@ pv_run() { # pv_run <name> [pr] <VAR=value...>: start acme/search#24 on the stub
     local name="$1" d="$T/pv-$1" pr=""; shift; [ "${1:-}" = pr ] && { pr=1; shift; }
     make_repo "$d" 0; PVR="$d"
     if [ -n "$pr" ]; then git init -q --bare "$d-origin.git"; git -C "$d" remote add origin "$d-origin.git"; git -C "$d" push -q origin main
-        run_loki_env "$d" "$T/pv-$name-stub.log" LOKI_E10_PROVE=1 E2E_STUB_MODE=done E2E_STUB_PROVE_LOG="$T/pv-$name.prove.log" "$@" -- start acme/search#24 --max-cost 5
-    else run_loki_env "$d" "$T/pv-$name-stub.log" LOKI_E10_PROVE=1 E2E_STUB_MODE=done E2E_STUB_PROVE_LOG="$T/pv-$name.prove.log" "$@" -- start acme/search#24 --no-pr --max-cost 5; fi
+        run_loki_env "$d" "$T/pv-$name-stub.log" LOKI_E10_PROVE=1 E2E_STUB_MODE=done E2E_STUB_LINECHECK_FILE="$EPIC_MET" E2E_STUB_PROVE_LOG="$T/pv-$name.prove.log" "$@" -- start acme/search#24 --max-cost 5
+    else run_loki_env "$d" "$T/pv-$name-stub.log" LOKI_E10_PROVE=1 E2E_STUB_MODE=done E2E_STUB_LINECHECK_FILE="$EPIC_MET" E2E_STUB_PROVE_LOG="$T/pv-$name.prove.log" "$@" -- start acme/search#24 --no-pr --max-cost 5; fi
     PVD="$(dirname "$(ls "$d"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"
     PVS="$(python3 -I - "$PVD" "$d" <<'PY' 2>&1
 import glob, json, sys
@@ -621,7 +640,7 @@ sleep 0.5; pvlive=""; for p in $pvids; do kill -0 "$p" 2>/dev/null && pvlive="$p
     && ok "prove interrupt: after SIGINT during an ask, no recorded process id is alive (one in the driver's group, one in its own session: $pvids)" || { bad "prove interrupt: recorded '$pvids', alive '$pvlive'"; for p in $pvlive; do kill -TERM "$p" 2>/dev/null; done; }
 PVAID="$(basename "$(dirname "$(ls "$PVA"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")")"
 pvcalls0="$(grep -c '^prove' "$T/pv-abort-stub.log" 2>/dev/null)"
-run_loki_env "$PVA" "$T/pv-abort-stub.log" LOKI_E10_PROVE=1 E2E_STUB_MODE=done E2E_STUB_PROVE=abort -- start --resume "$PVAID" --no-pr --max-cost 5
+run_loki_env "$PVA" "$T/pv-abort-stub.log" LOKI_E10_PROVE=1 E2E_STUB_MODE=done E2E_STUB_PROVE=abort E2E_STUB_LINECHECK_FILE="$EPIC_MET" -- start --resume "$PVAID" --no-pr --max-cost 5
 PVD="$PVA/.loki/runs/$PVAID"
 pvres="$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); p=r.get("prove",{}); print(r["verdict"], p.get("reused"), ",".join(a["result"] for a in p.get("asks",[])))' "$PVD/receipt.json" 2>&1)"
 [ "$pvcalls0" = 2 ] && [ "$(grep -c '^prove' "$T/pv-abort-stub.log" 2>/dev/null)" = 2 ] && [ "$pvres" = "VERIFIED True proved,proved" ] \
@@ -1007,7 +1026,7 @@ make_repo "$PW" 0
 git init -q --bare "$T/prmode-whole-origin.git"
 git -C "$PW" remote add origin "$T/prmode-whole-origin.git"
 git -C "$PW" push -q origin main
-E2E_STUB_MODE=done run_loki "$PW" "$T/prmode-whole-stub.log" start acme/search#24 --max-cost 5
+E2E_STUB_MODE=done E2E_STUB_LINECHECK_FILE="$EPIC_MET" run_loki "$PW" "$T/prmode-whole-stub.log" start acme/search#24 --max-cost 5
 printf '%s\n' "$OUT" | grep -E '^(Outcome:|PR:|Cost:)' | sed 's/^/    pr mode whole: /'
 wpr="$(printf '%s\n' "$OUT" | grep -E '^PR: +local:///' | sed -E 's/.*#//')"
 WSTRAND="$( [ -n "$wpr" ] && stranded "$PW" "$T/prmode-whole-origin.git" "$wpr")"
