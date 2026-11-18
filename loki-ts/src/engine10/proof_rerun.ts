@@ -16,14 +16,14 @@ import { issueRunBrief } from "./types.ts";
 
 /** RW-02 TITLE STAND-IN (LOKI_E10_TITLE_ACCEPTANCE, default on; 0/off/false/no opts out): the lines of a run on the proof road whose task has no acceptance
  *  list of its own. The plan's intent-card "Acceptance:" lines when a plan session ran for its own reasons (a large or hard task, consent); otherwise the
- *  task's title line, as intake recorded it, is the one item. No plan session is added to get lines: a plan makes the implement stage leave the coverage
+ *  task's title line (the first line of the task text on intake's record, whole, up to 500 characters) is the one item. No plan session is added to get lines: a plan makes the implement stage leave the coverage
  *  fold, the patch path and the systematic-edit completion (they run only with no plan), and costs a session. Without a stand-in a prose issue had no line,
  *  and passing checks of Loki's own run counted for nothing (playwright 44124 given as an issue file: 2 passing checks, proof.rerun statuses []). The title
  *  is on intake's record before the implement session starts, so the session cannot change it. */
 export const titleAcceptanceOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TITLE_ACCEPTANCE"] ?? "").trim());
 export function fallbackLines(plan: unknown, intake: Record<string, unknown> | undefined, env: NodeJS.ProcessEnv = process.env): { lines: string[]; source: "plan" | "title" } {
   const fromPlan = acceptanceLines(plan as never); if (fromPlan.length || !titleAcceptanceOn(env)) return { lines: fromPlan, source: "plan" };
-  const raw = typeof intake?.["title"] === "string" && intake["title"].trim() ? intake["title"] : String(intake?.["task"] ?? "").split("\n").find((l) => l.trim() !== "") ?? "";
+  const first = String(intake?.["task"] ?? "").split("\n").find((l) => l.trim() !== ""), raw = first ?? (typeof intake?.["title"] === "string" ? intake["title"] : ""); // the task's own first line, whole: intake's `title` is that line cut at 72 characters for display
   const t = raw.replace(/^\s*#+\s*/, "").replace(/[\x00-\x1f\x7f`]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 500);
   return t ? { lines: [t], source: "title" } : { lines: [], source: "plan" };
 }

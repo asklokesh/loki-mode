@@ -1079,8 +1079,14 @@ unset -f rw3_vm
 #               issue time cap rule; with a prose body, the title line.
 #   cap:        a text task on the road is resized to the issue floor (2400 s); every other text task stays at 900 s.
 #   resume:     a road run cut in implement and started again is still on the road.
-# Sessions the road adds to a run (measured here on the stub, counted from its log): none when the session leaves its proof script; one implement resume
-# when it leaves none (the request for the script); one tool-less acceptance check call at the seal in both cases. The plain road is unchanged.
+# Model calls per run, read from the stub's log by the legs below (implement = one implement turn; linecheck = one tool-less acceptance check; review = the
+# independent review session):
+#   plain road (prose, short, opt-outs):            implement implement                                    2 calls, as on main
+#   listed text task, proof script left, passing:   implement linecheck review implement linecheck         5 calls: +1 review session, +2 checks
+#   listed text task, no proof script:              implement implement implement linecheck                4 calls: +1 implement turn (the request for the script), +1 check
+#   listed text task, one check failing:            implement x5, linecheck                                6 calls: +3 implement turns (the hand-backs), +1 check
+#   prose issue, no proof script, stand-in on/off:  implement x3 linecheck / implement x3                  the stand-in adds 1 check
+#   prose issue, proof script left, stand-in on:    implement linecheck review implement linecheck         against implement implement with it off: +1 review session, +2 checks
 # Plants (each makes the named leg fail):
 #   R1. proof_rerun.ts noOwnProofNotes: return [] always (no-script reads VERIFIED).
 #   R2. proof_rerun.ts ruleStatus: `e.proved > 0 && e.failed === 0` -> `e.proved > 0` in both tests (failing reads line 2 met). This is the count rule on
@@ -1127,6 +1133,7 @@ rw_engine() { # rw_engine <name> <task or file> [VAR=value...] -> RWOUT, RWRUN (
         E2E_STUB_MODE=done E2E_STUB_LOG="$d/stub.log" E2E_STUB_PROMPT_LOG="$RWP" E2E_STUB_LINECHECK_FILE="$RWD/met.txt" LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" "$@" \
         ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start "$task" --no-pr </dev/null 2>&1)"
     RWRUN="$(dirname "$(ls "$d"/repo/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"; RWSTAGES="$(tr '\n' ' ' < "$d/stub.log" 2>/dev/null)"
+    echo "    sessions $name: $RWSTAGES"
 }
 rw_facts() { python3 -I - "$RWRUN" <<'RWPY'
 import json, os, sys
@@ -1150,12 +1157,14 @@ RWPY
 rw_proof -
 rw_engine noscript "$RWD/list.md"; RWF="$(rw_facts)"
 [ "$RWF" = "PARTIAL road=work source=text lines=2 receipt=met,met own=0 reruns=no noscript=yes plan=skipped src=issue cap=2400" ] \
-    && ok "RW-02 no-script: a text task whose session leaves no proof script is PARTIAL with the reason, though the acceptance check marked both lines MET; it is on the road (2 lines from its own list, cap 2400)" || bad "RW-02 no-script gave: $RWF"
+&& [ "$RWSTAGES" = "implement implement implement linecheck " ] \
+    && ok "RW-02 no-script: a text task whose session leaves no proof script is PARTIAL with the reason, though the acceptance check marked both lines MET; it is on the road (2 lines from its own list, cap 2400); 4 model calls ($RWSTAGES)" || bad "RW-02 no-script gave: $RWF; sessions '$RWSTAGES'"
 grep -q 'loki-proof.sh' "$RWP.implement0" && grep -q 'acceptance.txt' "$RWP.implement0" && ok "RW-02 no-script: the implement brief carries the proof script instructions an issue run gets" || bad "RW-02 no-script: the implement brief lacks the proof script instructions"
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
 rw_engine proved "$RWD/list.md"; RWF="$(rw_facts)"
 [ "$RWF" = "VERIFIED road=work source=text lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
-    && ok "RW-02 proved: the same text task with a proof script that passes in Loki's own run is VERIFIED, both lines met by Loki's own count" || bad "RW-02 proved gave: $RWF ($(grep -E '^(Outcome|NOT PROVEN)' <<< "$RWOUT" | tr '\n' ' ' | cut -c1-600))"
+&& [ "$RWSTAGES" = "implement linecheck review implement linecheck " ] \
+    && ok "RW-02 proved: the same text task with a proof script that passes in Loki's own run is VERIFIED, both lines met by Loki's own count; 5 model calls ($RWSTAGES)" || bad "RW-02 proved gave: $RWF; sessions '$RWSTAGES' ($(grep -E '^(Outcome|NOT PROVEN)' <<< "$RWOUT" | tr '\n' ' ' | cut -c1-600))"
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts' 'false' # line 2 has one passing and one failing check
 rw_engine failing "$RWD/list.md"; RWF="$(rw_facts)"
 [ "$RWF" = "PARTIAL road=work source=text lines=2 receipt=met,unmet own=1 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
@@ -1202,6 +1211,11 @@ rw_engine json-prose "$RWD/prose.md" LOKI_E10_ISSUE_JSON="$RWD/issue-prose.json"
 [ "$RWF" = "VERIFIED road=issue source=issue lines=0 receipt=met own=1 reruns=yes noscript=no plan=skipped src=title cap=2400" ] && ! grep -q plan <<< "$RWSTAGES" \
     && ok "RW-02 issue json, prose: an issue file with no list has its title as the one line, with no plan session added, and Loki's own passing check is counted for it" || bad "RW-02 issue json (prose) gave: $RWF"
 rw_proof -
+rw_engine json-prose-noscript "$RWD/prose.md" LOKI_E10_ISSUE_JSON="$RWD/issue-prose.json"; RWF="$(rw_facts)"; RWS_ON="$RWSTAGES"
+rw_engine json-prose-off "$RWD/prose.md" LOKI_E10_ISSUE_JSON="$RWD/issue-prose.json" LOKI_E10_TITLE_ACCEPTANCE=0; RWF0="$(rw_facts)"; RWS_OFF="$RWSTAGES"
+[ "$RWF" = "VERIFIED road=issue source=issue lines=0 receipt=met own=0 reruns=no noscript=no plan=skipped src=title cap=2400" ] && [ "$RWF0" = "VERIFIED road=issue source=issue lines=0 receipt=none own=0 reruns=no noscript=no plan=skipped src=None cap=2400" ] \
+    && [ "$RWS_ON" = "implement implement implement linecheck " ] && [ "$RWS_OFF" = "implement implement implement " ] \
+    && ok "RW-02 issue json, prose, no proof script: the stand-in line is read by the acceptance check and never holds the label; it adds one check call to the run ($RWS_ON against $RWS_OFF)" || bad "RW-02 issue json (prose, no script) gave: on '$RWF' [$RWS_ON] off '$RWF0' [$RWS_OFF]"
 rw_engine prove-off "$RWD/list.md" LOKI_E10_PROVE_BY_RUNNING=0; RWF="$(rw_facts)"
 [ "$RWF" = "VERIFIED road=text source=text lines=0 receipt=none own=0 reruns=no noscript=no plan=skipped src=None cap=none" ] && ! grep -q 'loki-proof.sh' "$RWP.implement0" \
     && ok "RW-02 prove-by-running off: a run that is never asked for a proof script is not on the road, gets no lines and is not held for leaving none" || bad "RW-02 prove-by-running off gave: $RWF"
