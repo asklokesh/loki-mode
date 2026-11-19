@@ -854,6 +854,22 @@ export function sameUnattributableRed(repoDir: string, baseSha: string, full: Fu
     return !!b && b.ran && !b.attributable && !b.timed_out && b.reason !== "baseline budget used up" && b.failing_ids.length === 0 && !!b.failing_shape && b.failing_shape === c.shape && b.exit_code === c.exit;
   }).map((c) => c.name);
 }
+/** BASE-UNATTRIBUTED (LOKI_E10_BASE_UNATTRIBUTED, default on; =0/off/false/no opts out). closed-set-2 pw43305 on 11.158.0: six of six seeds pass the hidden test and
+ *  were sealed FAILED on "full suite: playwright-internal" alone. Its command (`npm test`) fails on the untouched base too (exit 1 in the seeds' own base records; 200 failed tests in two reruns on the base commit),
+ *  no failing id can be parsed on either side, and the same-shape rule above can never match it: two runs of the same tree print their progress lines in another order.
+ *  The failing full-suite checks whose base run, on exactly this base commit and the same command, was red and unattributable (not cut off), and that are red on head
+ *  with the same exit code and no parseable id either. Nothing is excused here: the check stays failed and listed "not excused"; seal's unattributedRed reads the names
+ *  so that such a check holds the label at PARTIAL, never FAILED, because Loki could not tell a failure the change caused from the ones already there. */
+export const baseUnattributedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BASE_UNATTRIBUTED"] ?? "").trim());
+export function redUnattributableOnBase(repoDir: string, baseSha: string, full: FullCheck[]): string[] {
+  if (!baseUnattributedOn()) return [];
+  const p = loadProfile(repoDir); if (!p || p.revision !== baseSha) return [];
+  return full.filter((c) => {
+    if (c.result !== "fail" || (c.ids ?? []).length > 0 || typeof c.exit !== "number") return false;
+    const b = baseFor(repoDir, p, c.cmd, true);
+    return !!b && b.ran && !b.attributable && !b.timed_out && b.reason !== "baseline budget used up" && b.failing_ids.length === 0 && typeof b.exit_code === "number" && b.exit_code !== 0 && b.exit_code === c.exit;
+  }).map((c) => c.name);
+}
 export const SAME_RED_NOTE = "excused as red on base in the identical kind (same command, same exit code, the same unparseable output shape; no failing id could be compared)";
 export function attributeFullSuite(repoDir: string, baseSha: string, full: FullCheck[], blocked: string[], changed: string[], symbols: readonly string[] = [], shownIds: ReadonlySet<string> = new Set()): Attribution {
   const same = sameUnattributableRed(repoDir, baseSha, full);

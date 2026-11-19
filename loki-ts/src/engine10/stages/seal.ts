@@ -255,7 +255,8 @@ export const secretPushLine = (r: PushRefusal): string => `not pushed: the ${r.c
  *  failing lint, typecheck or scan, are the change's own and stay FAILED. */
 export function unattributedRed(o: Partial<Record<StageName, Obj>>, c: Pick<ReceiptCheck, "name" | "provenance">): boolean {
   const cut = o.verify?.stopped_at === "limit" || o.verify?.stopped_at === "cap", head = c.name.split(":")[0]!;
-  return cut && c.provenance === "exogenous" && c.name.includes(":") && !/^(lint|typecheck|holdout|select-tests|build|patch|turn)$/.test(head);
+  const baseRed = head === "full suite" && strs(o.verify?.base_unattributed).includes(c.name); // BASE-UNATTRIBUTED (repo_profile.ts redUnattributableOnBase): a full suite red and unattributable on base and on head was never attributed either, whether or not verify finished
+  return (cut || baseRed) && c.provenance === "exogenous" && c.name.includes(":") && !/^(lint|typecheck|holdout|select-tests|build|patch|turn)$/.test(head);
 }
 export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean, proof: boolean, targetProof = false, uncovered: string[] = [], leanGap: string[] = [], copyGap: string[] = [], clauseGap: string[] = []): Verdict {
   const exit = o.implement?.exit;

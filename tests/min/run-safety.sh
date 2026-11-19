@@ -126,6 +126,7 @@
 #       names-symbol) and the fl24 targeted unit (othererr) read excused. Or attribute's absent-rerun path drops sameWay: the targeted unit's othererr reads 2:0.
 #  24g. (fl24) verify.ts attribute call: drop the depsAsIntake condition (rebuild dist); real vitest delpkg is delivered PARTIAL (p9, broken by the deleted package, has no parsed id and is suite-only).
 #  24e. repo_profile.ts sameUnattributableRed: drop the failing_shape comparison (the base-red-shape unit's new-failure case reads pre), or runOnce stops recording failing_shape (it reads noshape).
+#  24f. stages/seal.ts unattributedRed: `return cut &&` in place of `return (cut || baseRed) &&` (the base-unattributed unit's first seal cell reads FAILED).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -982,6 +983,33 @@ console.log(r.join(" | "));
 X5="shape:false | pre | introduced | introduced | introduced | introduced | noted | marker"
 [ "$A5" = "$X5" ] && ok "unit: a suite red on base with unparseable ids is excused only when head fails in the identical kind (same exit, same output shape up to timings); a newly broken test, another exit code, parseable head ids or LOKI_E10_BASE_RED_SHAPE=0 stay introduced, and the excuse is disclosed" \
     || bad "base-red-shape unit gave: $A5 (want: $X5)"
+
+# BASE-UNATTRIBUTED (closed-set-2 pw43305 on 11.158.0: six of six seeds pass the hidden test and were sealed FAILED on "full suite: playwright-internal" alone). The
+# suite's command fails on the untouched base too, no id is parsed on either side, and its output shape never repeats (a parallel runner prints progress lines in
+# another order on every run), so BASE-RED-SHAPE cannot excuse it. Such a check is not excused: verify lists it (base_unattributed) and seal holds the label at
+# PARTIAL instead of FAILED. Scope: a suite green on base, one with parseable ids on head or on base, another exit code, a cut-off base run and
+# LOKI_E10_BASE_UNATTRIBUTED=0 are not listed; in seal a check that is not listed, a per-file test, the run's own test and lint stay FAILED.
+# Plant: stages/seal.ts unattributedRed: `return cut &&` in place of `return (cut || baseRed) &&` (the first seal cell reads FAILED).
+A6="$(G="$G5" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), se = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/seal.ts"), { writeFileSync } = await import("node:fs"), { execFileSync } = await import("node:child_process");
+const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), name = "full suite: pw", cmd = "npm test";
+const run = (n) => "Running 9 tests using 3 workers\n" + (n ? "[2/9] b.spec.ts:1:1 \u203a b\n[1/9] a.spec.ts:1:1 \u203a a\n" : "[1/9] a.spec.ts:1:1 \u203a a\n[2/9] b.spec.ts:1:1 \u203a b\n") + "  1) a.spec.ts:1:1 \u203a a\n    Error: browserType.launch: Executable does not exist\n  2 failed\n";
+const prof = (b) => writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: b }));
+const base = (o) => ({ ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: [], attributable: false, reason: "failing test ids not parseable, failures cannot be attributed", ...o });
+const chk = (o = {}) => [{ name, cmd, result: "fail", ids: [], exit: 1, ...o }], list = (c = chk()) => rp.redUnattributableOnBase(g, sha, c).join(",") || "-";
+prof(base({})); const r = [list(), rp.attributeFullSuite(g, sha, chk(), [], ["src/x.ts"]).preExistingChecks.length ? "excused" : "not-excused"];
+r.push(list(chk({ ids: ["a.spec.ts::a"] })), list(chk({ exit: 2 })), list(chk({ result: "pass" })));
+prof(base({ exit_code: 0 })); r.push(list()); prof(base({ timed_out: true })); r.push(list()); prof(base({ attributable: true, failing_ids: ["a.spec.ts::a"] })); r.push(list());
+prof(base({})); process.env.LOKI_E10_BASE_UNATTRIBUTED = "0"; r.push(list()); delete process.env.LOKI_E10_BASE_UNATTRIBUTED;
+const c = (n, prov = "exogenous") => [{ name: n, cmd: "x", result: "fail", duration_s: 1, provenance: prov }], o = (bu) => ({ implement: { exit: "done" }, verify: bu ? { base_unattributed: bu } : {} }), v = (oo, cs) => se.verdictOf(oo, cs, false, true, false, true);
+r.push(v(o([name]), c(name)), v(o(null), c(name)), v(o(["full suite: other"]), c(name)), v(o(["pytest:tests/a.py"]), c("pytest:tests/a.py")), v(o([name]), c(name, "agent_authored")), v(o([name]), [...c(name), ...c("lint:tsc")]));
+console.log(r.join(" | "));
+' 2>&1)"
+X6="full suite: pw | not-excused | - | - | - | - | - | - | - | PARTIAL | FAILED | FAILED | FAILED | FAILED | FAILED"
+[ "$A6" = "$X6" ] && ok "unit: a full suite red and unattributable on base and on head (same exit code, no id on either side) is listed, never excused, and holds the label at PARTIAL; a suite green on base, parseable ids, another exit code, a cut-off base, the knob off, an unlisted check, a per-file test, the run's own test and lint stay as they were" \
+    || bad "base-unattributed unit gave: $A6 (want: $X6)"
+VBU="$ROOT/loki-ts/src/engine10/stages/verify.ts"
+grep -q 'const namesChange = lineNamesChange(changed); baseUnattributed.push(' "$VBU" && grep -q 'baseUnattributed.push(...redUnattributableOnBase(ctx.repoDir, ctx.baseSha, full).filter((n) => !fa.preExistingChecks.includes(n) && !(full.find((c) => c.name === n)?.excerpt ?? "").split("\\n").some(namesChange)))' "$VBU" && grep -q '(baseUnattributed.length ? { base_unattributed: baseUnattributed } : {})' "$VBU" && ok "base-unattributed wiring: verify lists the checks (never one the attribution excused, never one whose kept failure lines name a changed file) under base_unattributed" || bad "base-unattributed wiring: verify does not record base_unattributed"
 
 # Base run budget (v131 STALLED tq runs): a suite that takes ~250 s on the change got 60 s on base, timed out, and its pre-existing red was blamed on the change.
 # A base run now gets the same 300 s its own run gets (bounded by a third of the run cap); a cut base run is recorded on the receipt line as "base run
