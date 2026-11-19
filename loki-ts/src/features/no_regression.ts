@@ -9,6 +9,7 @@
 // Calls (tool-less, single turn): the keep cases ride inside exec-spec's one pre-implement call (nrdProbeIntake), so the default path adds no
 // call before implement. A post-implement probe call fires only when an edited function has same-package callers the issue does not name.
 // The judge call fires only when a keep case or a base-test replay result changed. A fix that changes only what the issue asks costs no call.
+import { armTimer, defaultBudgetsOn } from "../engine10/types.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -272,7 +273,7 @@ export function differential(run: (state: "base" | "patched") => ProbeRunResult,
 
 export type GoTestRun = Map<string, { ok: boolean; out: string }>;
 /** Per-test results of one `go test -json` run of a package. Subtests are folded into their parent. */
-export function goTestResults(dir: string, pkgRel: string, timeoutMs = 120_000): GoTestRun {
+export function goTestResults(dir: string, pkgRel: string, timeoutMs = defaultBudgetsOn() ? 120_000 : Infinity): GoTestRun { // NO-DEFAULT-BUDGET: no limit runs under the silence guard (spawnGroupSync)
   const r = spawnGroupSync("go", ["test", "-count=1", "-vet=off", "-json", `./${pkgRel || "."}`], { cwd: dir, env: plainTestEnv(), timeoutMs });
   const res: GoTestRun = new Map(), outs = new Map<string, string[]>();
   for (const l of r.output.split("\n")) {
@@ -384,7 +385,7 @@ export function makeScratch(repoDir: string, baseSha: string, skip: Set<string>,
 // ---------------- the implement-stage gate ----------------
 export interface NrdSummary { status: "skipped" | "clean" | "fired" | "error"; reason: string; calls: number; usd: number; groups?: FailureGroup[]; receipt?: string[] }
 const skip = (reason: string, extra: Partial<NrdSummary> = {}): NrdSummary => ({ status: "skipped", reason, calls: 0, usd: 0, ...extra });
-const nrdBudgetS = (env: NodeJS.ProcessEnv): number => { const n = Number(env.LOKI_E10_NRD_BUDGET_S); return env.LOKI_E10_NRD_BUDGET_S !== undefined && env.LOKI_E10_NRD_BUDGET_S !== "" && Number.isFinite(n) && n >= 0 ? n : 120; };
+export const nrdBudgetS = (env: NodeJS.ProcessEnv): number => { const n = Number(env.LOKI_E10_NRD_BUDGET_S); return env.LOKI_E10_NRD_BUDGET_S !== undefined && env.LOKI_E10_NRD_BUDGET_S !== "" && Number.isFinite(n) && n >= 0 ? n : defaultBudgetsOn(env) ? 120 : Infinity; }; // NO-DEFAULT-BUDGET: no wall budget unless set (each go test runs under the silence guard)
 class NrdBudgetError extends Error {}
 /** Receipt line for a differential that could not complete: NOT PROVEN, never a block. */
 const notProven = (why: string): string => `NOT PROVEN: regression check incomplete: ${why}`;
@@ -401,7 +402,7 @@ export async function runNrdGate(ctx: RunContext, signal: AbortSignal, session: 
   let scratch: ReturnType<typeof makeScratch> | null = null;
   const deadline = Date.now() + nrdBudgetS(env) * 1000, left = (): number => deadline - Date.now();
   const check = (): void => { if (left() <= 0) throw new NrdBudgetError(`the ${nrdBudgetS(env)} s wall budget for the whole differential ran out`); };
-  const timed = <T,>(f: () => Promise<T>): Promise<T> => { check(); return Promise.race([f(), new Promise<never>((_, rej) => setTimeout(() => rej(new NrdBudgetError(`the ${nrdBudgetS(env)} s wall budget for the whole differential ran out`)), left()).unref())]); };
+  const timed = <T,>(f: () => Promise<T>): Promise<T> => { check(); return Promise.race([f(), new Promise<never>((_, rej) => { armTimer(() => rej(new NrdBudgetError(`the ${nrdBudgetS(env)} s wall budget for the whole differential ran out`)), left(), { unref: true }); })]); }; // armTimer: no budget (Infinity) arms nothing
   const tl: LlmCall = (sys, user, tag) => timed(() => llm(sys, user, tag));
   try {
     const sealed = new Set(wallPaths), issue = String(ctx.outputs().intake?.task ?? "");
