@@ -7,7 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- A change to a JavaScript or TypeScript file no longer runs every test that imports some other module of the same name, nor any Python test that imports a module of that name. A test is matched through an import only when the import points at the changed file, or when Loki cannot tell where it points (a package, an alias from a nested tsconfig). On the hermes-agent tree, a change to apps/desktop/src/store/gateway.ts would have selected 772 tests (677 of them Python) and now selects 95. LOKI_E10_JS_IMPORT_RESOLVE=0 restores the old matching.
 
 ## v11.160.0 (2026-11-19)
 
