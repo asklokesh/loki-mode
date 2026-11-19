@@ -333,6 +333,20 @@ export function depsListing(root: string): string[] | null {
   } catch { return null; }
   return out.sort();
 }
+/** EXOGENOUS-RED: the first installed package intake listed under `pkgDir`'s node_modules or .venv that is gone now ("<dir>: <name>"), or null. A package
+ *  that was there at intake and is missing after the run is the run's doing: a test that fails for it is blamed on the change, though no base run can show
+ *  it (the base tree gets no dependencies once the environment changed). An added package says nothing here: an install step adds them. */
+export function depsGoneSince(repoDir: string, pkgDir: string, deps?: Record<string, string[] | null>): string | null {
+  if (!deps) return null;
+  for (const d of ["node_modules", ".venv"]) {
+    const rel = relative(repoDir, join(pkgDir, d)), was = deps[rel]; if (!was?.length) continue;
+    let now: string[] | null = null; try { now = existsSync(join(pkgDir, d)) ? depsListing(join(pkgDir, d)) : []; } catch { now = null; }
+    if (!now) continue;
+    const have = new Set(now), gone = was.find((n) => !have.has(n));
+    if (gone !== undefined) return `${rel}: ${gone}`;
+  }
+  return null;
+}
 /** True (withhold) unless the environment is as intake left it at `sinceMs`: every ignored entry intake listed still exists, and no entry under
  *  `pkgDir`'s node_modules or .venv, and no ignored file intake listed, had its status changed since (ctime, which a process cannot set back;
  *  one `find` walk that never follows symlinks; runner cache dirs pruned). Additions count as changes: an added nested package or .pth file can

@@ -985,6 +985,29 @@ export const baseRedShapeOn = (env: NodeJS.ProcessEnv = process.env): boolean =>
 export function failureLines(out: string): string[] {
   return out.split("\n").map((l) => l.replace(/\s+$/, "").replace(/\b\d{4}-\d{2}-\d{2}[T ][\d:._,]+Z?/g, "<ts>").replace(/\b\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?\b/g, "<clock>").replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|sec|secs|seconds|m|min)\b/g, "<t>").replace(/\b0x[0-9a-f]{4,}\b/gi, "<hex>")).filter((l) => l !== "");
 }
+/** EXOGENOUS-RED: the facts of one suite run that say whether a base run of it can be compared with a head run. `load_errors`: the first line per module that
+ *  could not be found or loaded, at most 12 (a tree whose dependencies do not resolve fails tests the checkout passes: opencode's cli suite ran 123 tests with 84
+ *  failures in the base tree against 408 with 8 in the checkout). `executed`: the tests the run executed (ran, or bun's own "Ran N tests" line). */
+const LOAD_ERROR_RE = /Cannot find (?:package|module) ['"]|Could not resolve: ["']|preload not found|ModuleNotFoundError: |ERR_MODULE_NOT_FOUND/;
+/** The module a load-error line names (its first quoted text; the whole line when it quotes nothing). */
+export const loadErrorModule = (line: string): string => /['"]([^'"]+)['"]/.exec(line)?.[1] ?? line;
+export function loadErrors(raw: string): string[] {
+  const seen = new Set<string>(), out: string[] = [];
+  for (const l of stripAnsi(raw).split("\n").map((x) => x.trim())) {
+    if (!LOAD_ERROR_RE.test(l) || seen.has(loadErrorModule(l))) continue;
+    seen.add(loadErrorModule(l)); out.push(l.slice(0, 200)); if (out.length >= 12) break;
+  }
+  return out;
+}
+export const firstLoadError = (raw: string): string | null => loadErrors(raw)[0] ?? null;
+export function suiteFacts(out: string): { executed?: number; load_errors?: string[] } {
+  const bun = /^Ran (\d+) tests? across \d+ files?\./m.exec(stripAnsi(out)); // bun's own total: ran() reads no count from bun output
+  const n = ran(out) ?? (bun ? +bun[1]! : null), le = loadErrors(out);
+  return {
+    ...(typeof n === "number" ? { executed: n } : {}),
+    ...(le.length ? { load_errors: le } : {}),
+  };
+}
 export function failureShape(out: string): string {
   return createHash("sha256").update(failureLines(out).join("\n")).digest("hex");
 }

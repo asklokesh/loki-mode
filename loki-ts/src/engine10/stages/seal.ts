@@ -39,6 +39,7 @@ import { collapseNotProven } from "../../util/term_width.ts";
 import { consultNotes, neverStopNotes } from "../../features/opus_consult.ts"; import { namedUnchangedNote, namedUnchangedOf, unfinishedNotes } from "../../util/conflict_resume.ts"; import { envCardReceiptBlock, neededServices } from "../../util/stack_tools.ts"; import { updateRepoCard } from "../../e10ext/repomemory.ts"; import { PROOF_SCRIPT, baseFacts, fallbackLines, noOwnProofNotes, proofBaseCapOn, proofBaseOn, proofFacts, proofOnBase, proofRerunOn, proofRerunS, provesNothing, provesNothingReason, rerunProof, ruleStatus, unusedNewFileNote, unusedNewFiles } from "../proof_rerun.ts"; import { issueRunBrief } from "../types.ts"; import { proveDisclosures, proveNotes, proveReceiptBlock } from "./prove.ts";
 import { tournamentReceiptBlock } from "../../features/tournament.ts"; import { attemptsReceiptBlock } from "../../features/attempts.ts"; import { nrdReceiptBlock, settleNrd } from "../../features/no_regression.ts";
 import { commitHookBypassOn, type SafeGitKeep, safeGit, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, capLateRecovery, recoverRunWork, sealPrScope, splitDeclaredAdvisories, unverifiedRecovered, workRecoveryNotes } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { conventionsBlock, fragmentNoticeLine, misplacedNamedNotes, releaseNoteSkipBlock } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
+import { exogenousRedOn, holdsPartial, type ExogenousAttribution } from "../../runner/repo_profile.ts"; // EXOGENOUS-RED
 const SYSTEM_INTERP = "tests ran on the system interpreter", SYSTEM_INTERP_SUFFIX = " (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)"; // verify.ts writes the note
 
 export const SIGNING_UNAVAILABLE = "receipt signing unavailable (no usable signing key: invalid key or unwritable ~/.loki/keys)", AGENT_ONLY_REASON = "only agent-authored tests executed (no agent-independent proof)", WALL_GREEN_ON_BASE_REASON = "Wall green on base: no Wall test discriminates the change"; // TEN-GATES-02
@@ -256,8 +257,11 @@ export const secretPushLine = (r: PushRefusal): string => `not pushed: the ${r.c
  *  failing lint, typecheck or scan, are the change's own and stay FAILED. */
 export function unattributedRed(o: Partial<Record<StageName, Obj>>, c: Pick<ReceiptCheck, "name" | "provenance">): boolean {
   const cut = o.verify?.stopped_at === "limit" || o.verify?.stopped_at === "cap", head = c.name.split(":")[0]!;
-  const baseRed = head === "full suite" && strs(o.verify?.base_unattributed).includes(c.name); // BASE-UNATTRIBUTED (repo_profile.ts redUnattributableOnBase): a full suite red and unattributable on base and on head was never attributed either, whether or not verify finished
-  return (cut || baseRed) && c.provenance === "exogenous" && c.name.includes(":") && !/^(lint|typecheck|holdout|select-tests|build|patch|turn)$/.test(head);
+  if (c.provenance !== "exogenous" || !c.name.includes(":") || /^(lint|typecheck|holdout|select-tests|build|patch|turn)$/.test(head)) return false;
+  // EXOGENOUS-RED (repo_profile.ts exogenousState): verify's record for this check says whether the failure is attributed to the change. With no record the
+  // old rule stands: unattributed only when verify itself was stopped. Off (LOKI_E10_EXOGENOUS_RED=0) reads no record.
+  const a = exogenousRedOn() ? (o.verify?.exogenous_attribution as Record<string, ExogenousAttribution> | undefined)?.[c.name] : undefined;
+  return a ? holdsPartial(a) : cut;
 }
 /** ALREADY-DONE-SHOWN (FireLater#24 on 11.162.0): a run whose implement session found the work already done (or whose intake found it already satisfied),
  *  whose verify agreed and whose commit changed nothing seals ALREADY_SATISFIED only on Loki's own evidence: its own re-run of the session's kept proof script on

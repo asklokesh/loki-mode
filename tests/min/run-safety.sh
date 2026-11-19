@@ -126,7 +126,13 @@
 #       names-symbol) and the fl24 targeted unit (othererr) read excused. Or attribute's absent-rerun path drops sameWay: the targeted unit's othererr reads 2:0.
 #  24g. (fl24) verify.ts attribute call: drop the depsAsIntake condition (rebuild dist); real vitest delpkg is delivered PARTIAL (p9, broken by the deleted package, has no parsed id and is suite-only).
 #  24e. repo_profile.ts sameUnattributableRed: drop the failing_shape comparison (the base-red-shape unit's new-failure case reads pre), or runOnce stops recording failing_shape (it reads noshape).
-#  24f. stages/seal.ts unattributedRed: `return cut &&` in place of `return (cut || baseRed) &&` (the base-unattributed unit's first seal cell reads FAILED).
+#  24f. repo_profile.ts exogenousState: drop the `baseOnly.length` return (the exogenous-red unit's opencode cell reads FAILED).
+#  24g. repo_profile.ts attributedToChange: `!!a && a.names_changed` (the exogenous-red unit's compared cells read PARTIAL).
+#  24i. repo_profile.ts exogenousState: drop the `the base run passed and the head run fails` return (the exogenous-red unit's green-base cells read PARTIAL).
+#  24j. repo_profile.ts exogenousState: `baseRanTooFew(` without `!testsChanged &&` (the exogenous-red unit's grown-suite cell reads not comparable).
+#  24k. repo_profile.ts exogenousState: drop the `headOnly.length` return (the exogenous-red unit's head-only load error cell reads PARTIAL).
+#  24l. repo_profile.ts exogenousState: drop the `the base run passed but ran` line (the exogenous-red unit's green-base 10 of 400 cell reads FAILED).
+#  24m. base_guard.ts depsGoneSince: `was.find((n) => have.has(n))` (the exogenous-red unit's gone-package cell names a package that is present).
 #  24h. base_guard.ts linkWorkspaceMembers: `const refused: string[] = [];` in place of the filter that links (the base-tree-members unit's sibling cell reads no-deps).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1015,32 +1021,61 @@ X5="shape:false | pre | introduced | introduced | introduced | introduced | note
 [ "$A5" = "$X5" ] && ok "unit: a suite red on base with unparseable ids is excused only when head fails in the identical kind (same exit, same output shape up to timings); a newly broken test, another exit code, parseable head ids or LOKI_E10_BASE_RED_SHAPE=0 stay introduced, and the excuse is disclosed" \
     || bad "base-red-shape unit gave: $A5 (want: $X5)"
 
-# BASE-UNATTRIBUTED (closed-set-2 pw43305 on 11.158.0: six of six seeds pass the hidden test and were sealed FAILED on "full suite: playwright-internal" alone). The
-# suite's command fails on the untouched base too, no id is parsed on either side, and its output shape never repeats (a parallel runner prints progress lines in
-# another order on every run), so BASE-RED-SHAPE cannot excuse it. Such a check is not excused: verify lists it (base_unattributed) and seal holds the label at
-# PARTIAL instead of FAILED. Scope: a suite green on base, one with parseable ids on head or on base, another exit code, a cut-off base run and
-# LOKI_E10_BASE_UNATTRIBUTED=0 are not listed; in seal a check that is not listed, a per-file test, the run's own test and lint stay FAILED.
-# Plant: stages/seal.ts unattributedRed: `return cut &&` in place of `return (cut || baseRed) &&` (the first seal cell reads FAILED).
+# EXOGENOUS-RED (closed-set-2, 11.158.0 to 11.164.0: hm155462, oc63960 and pw43305 seeds pass the hidden test and were sealed FAILED on suites and test files the
+# change did not write, whose base run never started, was not comparable, or printed no readable id). A failing check the run did not write makes the run FAILED
+# only when it is attributed to the change: a comparable base run shows a failing id not red on base, or a kept failure line names a changed file. Otherwise it
+# holds PARTIAL and is never excused. One state per check (repo_profile.ts exogenousState): compared, cut, not started, unattributable, not comparable (the base
+# run cannot load a module head loads, passed without running a test, or, only when no test file changed, ran fewer than half of head's tests).
+# Scope: a suite green on base and red on head (with or without a readable id), and a base run that printed ids where head prints none, are compared and FAILED;
+# a per-file test with no readable id gets no record; a Wall, holdout, the run's own test, lint and a check with no record on a finished verify stay FAILED; LOKI_E10_EXOGENOUS_RED=0 reads no record;
+# LOKI_E10_BASE_UNATTRIBUTED=0 (11.163.0's opt-out) turns off the unattributable state alone.
+# Plants: 24f. repo_profile.ts exogenousState: drop the `baseOnly.length` return (the opencode cell reads FAILED).
+#         24g. repo_profile.ts attributedToChange: `!!a && a.names_changed` (the compared cells read PARTIAL).
+#         24i. repo_profile.ts exogenousState: drop the `return st("compared", Math.max(1, ids.length), "the base run passed` line (the green-base cells read PARTIAL).
+#         24j. repo_profile.ts exogenousState: `baseRanTooFew(` without `!testsChanged &&` (the grown-suite cell reads not comparable and PARTIAL).
+#         24k. repo_profile.ts exogenousState: drop the `headOnly.length` return (the head-only load error cell reads compared:0 and PARTIAL).
+#         24l. repo_profile.ts exogenousState: drop the `the base run passed but ran` line (the green-base cell that ran 10 of 400 reads FAILED).
+#         24m. base_guard.ts depsGoneSince: `was.find((n) => have.has(n))` (the gone-package cell reads node_modules: a).
+#         24n. verify.ts: `const gone = ` calls depsGoneSince when the records are built instead of reading goneAtStart (the wiring leg fails: a package a
+#              verify command removed would blame the change).
 A6="$(G="$G5" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
-const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), se = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/seal.ts"), { writeFileSync } = await import("node:fs"), { execFileSync } = await import("node:child_process");
-const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), name = "full suite: pw", cmd = "npm test";
-const run = (n) => "Running 9 tests using 3 workers\n" + (n ? "[2/9] b.spec.ts:1:1 \u203a b\n[1/9] a.spec.ts:1:1 \u203a a\n" : "[1/9] a.spec.ts:1:1 \u203a a\n[2/9] b.spec.ts:1:1 \u203a b\n") + "  1) a.spec.ts:1:1 \u203a a\n    Error: browserType.launch: Executable does not exist\n  2 failed\n";
-const prof = (b) => writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: b }));
-const base = (o) => ({ ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: [], attributable: false, reason: "failing test ids not parseable, failures cannot be attributed", ...o });
-const chk = (o = {}) => [{ name, cmd, result: "fail", ids: [], exit: 1, ...o }], list = (c = chk()) => rp.redUnattributableOnBase(g, sha, c).join(",") || "-";
-prof(base({})); const r = [list(), rp.attributeFullSuite(g, sha, chk(), [], ["src/x.ts"]).preExistingChecks.length ? "excused" : "not-excused"];
-r.push(list(chk({ ids: ["a.spec.ts::a"] })), list(chk({ exit: 2 })), list(chk({ result: "pass" })));
-prof(base({ exit_code: 0 })); r.push(list()); prof(base({ timed_out: true })); r.push(list()); prof(base({ attributable: true, failing_ids: ["a.spec.ts::a"] })); r.push(list());
-prof(base({})); process.env.LOKI_E10_BASE_UNATTRIBUTED = "0"; r.push(list()); delete process.env.LOKI_E10_BASE_UNATTRIBUTED;
-const c = (n, prov = "exogenous") => [{ name: n, cmd: "x", result: "fail", duration_s: 1, provenance: prov }], o = (bu) => ({ implement: { exit: "done" }, verify: bu ? { base_unattributed: bu } : {} }), v = (oo, cs) => se.verdictOf(oo, cs, false, true, false, true);
-r.push(v(o([name]), c(name)), v(o(null), c(name)), v(o(["full suite: other"]), c(name)), v(o(["pytest:tests/a.py"]), c("pytest:tests/a.py")), v(o([name]), c(name, "agent_authored")), v(o([name]), [...c(name), ...c("lint:tsc")]));
+const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), se = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/seal.ts"), cr = await import(process.env.ROOT + "/loki-ts/src/util/check_result.ts"), { writeFileSync } = await import("node:fs"), { execFileSync } = await import("node:child_process");
+const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), name = "full suite: x", cmd = "npm test";
+const prof = (b, rev = sha) => writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: rev, manifest_hash: "h", created_at: "t", commands: [], baseline: b }));
+const base = (o) => ({ ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ["a.test.ts::a"], attributable: true, ...o });
+const chk = (o = {}) => ({ name, cmd, result: "fail", ids: ["a.test.ts::a"], exit: 1, ...o }), st = (c = chk(), tc = false) => { const r = rp.exogenousState(g, sha, c, tc); return r.state + (r.state === "compared" ? ":" + r.fresh : ""); };
+const one = (n, prov = "exogenous") => [{ name: n, cmd: "x", result: "fail", duration_s: 1, provenance: prov }], v = (oo, cs) => se.verdictOf(oo, cs, false, true, false, true);
+const vs = (cc, tc = false) => v({ implement: { exit: "done" }, verify: { exogenous_attribution: { [name]: { ...rp.exogenousState(g, sha, cc, tc), names_changed: false } } } }, one(name));
+const E = "error: Cannot find package \x27effect\x27 from \x27/b/packages/util/src/npm.ts\x27", F = "error: Cannot find module \x27@fixture/plugin/server\x27 from \x27/c/t.ts\x27", Y = "error: Cannot find module \x27./broken\x27 from \x27/c/src/x.ts\x27";
+const r = [];
+prof(base({}), "othersha"); r.push(st()); prof(base({ ran: false, reason: "deferred: measured on base on demand, after implement" })); r.push(st()); prof(base({ timed_out: true })); r.push(st());
+prof(base({ failing_ids: [], attributable: false, reason: "failing test ids not parseable, failures cannot be attributed" })); r.push(st(chk({ ids: [] })));
+prof(base({ load_errors: [E] })); r.push(st(), rp.exogenousState(g, sha, chk()).evidence.includes("Cannot find package") ? "names-line" : "no-line", st(chk({ load_errors: [E] })), st(chk({ load_errors: [F] })));
+prof(base({ load_errors: [F] })); r.push(st(chk({ load_errors: [Y, F] })) + "=" + vs(chk({ load_errors: [Y, F] })), st(chk({ load_errors: [] })) + "=" + vs(chk({ load_errors: [] })));
+prof(base({ executed: 123 })); r.push(st(chk({ executed: 408 })), rp.exogenousState(g, sha, chk({ executed: 408 })).evidence);
+prof(base({ executed: 10 })); const grown = chk({ ids: ["a.test.ts::a", "old.test.ts::broken"], executed: 25 }); r.push(st(grown, true) + "=" + vs(grown, true), st(grown, false));
+prof(base({})); r.push(st(chk({ ids: ["a.test.ts::a", "b.test.ts::b"] })), st()); prof(base({ flaky_ids: ["b.test.ts::b"] })); r.push(st(chk({ ids: ["a.test.ts::a", "b.test.ts::b"] })));
+prof(base({ exit_code: 0, failing_ids: [], attributable: true, executed: 10 })); r.push([vs(chk({ ids: [] })), vs(chk({ ids: [], load_errors: [Y] })), vs(chk({ ids: [], executed: 400 })), vs(chk({ ids: [], executed: 400 }), true)].join("+"));
+prof(base({ exit_code: 0, failing_ids: [], attributable: true, zero_tests: true })); r.push(st(chk({ ids: [] }))); prof(base({ exit_code: 0, failing_ids: [], attributable: true, executed: 0 })); r.push(st(chk({ ids: [] })) + "=" + vs(chk({ ids: [] })));
+prof(base({})); const d = rp.exogenousState(g, sha, chk({ ids: [], exit: 2 })); r.push(st(chk({ ids: [], exit: 2 })) + "=" + vs(chk({ ids: [], exit: 2 })), d.exit + "/" + d.base_exit);
+const rec = (state, fresh = 0, names_changed = false) => ({ state, fresh, names_changed, evidence: "e" }), o = (a, n = name, extra = {}) => ({ implement: { exit: "done" }, verify: { ...(a ? { exogenous_attribution: { [n]: a } } : {}), ...extra } });
+r.push(v(o(rec("compared", 1)), one(name)), v(o(rec("compared", 0)), one(name)), v(o(rec("not started", 0, true)), one(name)));
+r.push(["not started", "cut", "unattributable", "not comparable"].map((s) => v(o(rec(s)), one(name))).join("+"), v(o(rec("not started"), "pytest:tests/a.py"), one("pytest:tests/a.py")));
+r.push(v(o(null), one(name)), v(o(null, name, { stopped_at: "limit" }), one(name)), v(o(rec("not started")), one(name, "agent_authored")), v(o(rec("not started"), "lint:tsc"), one("lint:tsc")), v(o(rec("not started")), [...one(name), ...one("lint:tsc")]));
+prof(base({ failing_ids: ["x.test.ts::x"], executed: 123, load_errors: [E] })); r.push(vs(chk({ ids: ["test/plugin-add.test.ts::p", "test/mini-timeout.test.ts::m"], executed: 408, load_errors: [F] })));
+process.env.LOKI_E10_BASE_UNATTRIBUTED = "0"; r.push(v(o(rec("unattributable")), one(name)) + "+" + v(o(rec("not started")), one(name))); delete process.env.LOKI_E10_BASE_UNATTRIBUTED;
+process.env.LOKI_E10_EXOGENOUS_RED = "0"; r.push(v(o(rec("not started")), one(name)), v(o(rec("not started"), name, { stopped_at: "cap" }), one(name))); delete process.env.LOKI_E10_EXOGENOUS_RED;
+const f = cr.suiteFacts("bun test v1\n\na.test.ts:\n(pass) one [1.00ms]\n(fail) two [2.00ms]\n" + E + "\n" + E + "\n" + F + "\n\n 2 pass\n 1 fail\nRan 3 tests across 2 files. [1.00s]\n");
+r.push(JSON.stringify([f.executed, (f.load_errors ?? []).map(cr.loadErrorModule)]), String(cr.firstLoadError("1 pass\n0 fail\n")));
+const bg = await import(process.env.ROOT + "/loki-ts/src/util/base_guard.ts"), { mkdirSync } = await import("node:fs"); mkdirSync(g + "/node_modules/a", { recursive: true }); mkdirSync(g + "/node_modules/b", { recursive: true });
+r.push([bg.depsGoneSince(g, g, { node_modules: ["a", "b", "c"] }), bg.depsGoneSince(g, g, { node_modules: ["a"] }), bg.depsGoneSince(g, g, undefined), bg.depsGoneSince(g, g + "/pkg", { "pkg/node_modules": ["x"] })].join("+"));
 console.log(r.join(" | "));
 ' 2>&1)"
-X6="full suite: pw | not-excused | - | - | - | - | - | - | - | PARTIAL | FAILED | FAILED | FAILED | FAILED | FAILED"
-[ "$A6" = "$X6" ] && ok "unit: a full suite red and unattributable on base and on head (same exit code, no id on either side) is listed, never excused, and holds the label at PARTIAL; a suite green on base, parseable ids, another exit code, a cut-off base, the knob off, an unlisted check, a per-file test, the run's own test and lint stay as they were" \
-    || bad "base-unattributed unit gave: $A6 (want: $X6)"
+X6='not started | not started | cut | unattributable | not comparable | names-line | compared:0 | not comparable | compared:1=FAILED | not comparable=PARTIAL | not comparable | base ran 123 of head'"'"'s 408 tests | compared:1=FAILED | not comparable | compared:1 | compared:0 | compared:0 | FAILED+FAILED+PARTIAL+FAILED | not comparable | not comparable=PARTIAL | compared:1=FAILED | 2/1 | FAILED | FAILED | FAILED | PARTIAL+PARTIAL+PARTIAL+PARTIAL | PARTIAL | FAILED | PARTIAL | FAILED | FAILED | FAILED | PARTIAL | FAILED+PARTIAL | FAILED | PARTIAL | [3,["effect","@fixture/plugin/server"]] | null | node_modules: c+++pkg/node_modules: x'
+[ "$A6" = "$X6" ] && ok "unit: a failing check the run did not write is FAILED when the base run passed, when head cannot load a module base loaded, when base printed ids and head none, when the base comparison did not excuse it (an id not red on base, or every id red on base with another error), when a package installed at intake is gone, or when a failure line names a changed file; a base run cut, not started, unreadable while red, or not comparable (a module head loads and base cannot, a pass with no test run, or fewer than half of head's tests while no test file changed, whether base was red or green) holds PARTIAL; the run's own test, lint, an unrecorded check and the knobs off stay as they were" \
+    || bad "exogenous-red unit gave: $A6 (want: $X6)"
 VBU="$ROOT/loki-ts/src/engine10/stages/verify.ts"
-grep -q 'const namesChange = lineNamesChange(changed); baseUnattributed.push(' "$VBU" && grep -q 'baseUnattributed.push(...redUnattributableOnBase(ctx.repoDir, ctx.baseSha, full).filter((n) => !fa.preExistingChecks.includes(n) && !(full.find((c) => c.name === n)?.excerpt ?? "").split("\\n").some(namesChange)))' "$VBU" && grep -q '(baseUnattributed.length ? { base_unattributed: baseUnattributed } : {})' "$VBU" && ok "base-unattributed wiring: verify lists the checks (never one the attribution excused, never one whose kept failure lines name a changed file) under base_unattributed" || bad "base-unattributed wiring: verify does not record base_unattributed"
+grep -q '(Object.keys(exoAttr).length ? { exogenous_attribution: exoAttr } : {})' "$VBU" && grep -q 'c.result !== "fail" || !c.ids?.length || preRed.names.includes(c.name) || targetNames.has(c.name) || wallNames0.has(c.name) || isHold(c) || changed.includes(t.path) || exoAttr\[c.name\]) continue;' "$VBU" && grep -q ', ...unrunSuitesCarried(ctx.outputs().verify?.not_proven, checks)\]), ...exoHeld,' "$VBU" && grep -q 'failOuts.set(check, attempt.out)' "$VBU" && grep -q 'names_changed: named(failOuts.get(c) ?? excerpts.get(c) ?? "")' "$VBU" && ! grep -q 'prev\[c.name\]' "$VBU" && grep -q ': headOnly && cmp ? { state: "compared"' "$VBU" && [ "$(grep -c 'withGone(' "$VBU")" = 2 ] && [ "$(grep -c 'depsGoneSince(' "$VBU")" = 1 ] && [ "$(grep -n 'const goneAtStart = new Map' "$VBU" | cut -d: -f1)" -lt "$(grep -n 'await runTests(split.first);' "$VBU" | cut -d: -f1)" ] && grep -q 'const gone = (cwd: string): string | null => goneAtStart.get(' "$VBU" && ok "exogenous-red wiring: verify records one attribution per failing suite or untouched test file it did not excuse (never a Wall, holdout or task-named test, never a file with no failing id), reads the changed-file flag from the whole output, carries no record from an earlier verify, blames a head-only load error only against a live base rerun, blames a package that was gone since intake when verify started (read before its first command, never after), and lists each held check under NOT PROVEN" || bad "exogenous-red wiring: verify does not record exogenous_attribution as the rule needs"
 
 # Base run budget (v131 STALLED tq runs): a suite that takes ~250 s on the change got 60 s on base, timed out, and its pre-existing red was blamed on the change.
 # A base run now gets the same 300 s its own run gets (bounded by a third of the run cap); a cut base run is recorded on the receipt line as "base run
