@@ -27,6 +27,9 @@ _min_cleanup() {
 }
 trap _min_cleanup EXIT
 mkdir -p "$T/home"
+# npm reuses the real cache (captured before HOME is replaced): a cold cache in the throwaway HOME made real-tool installs miss their time limit and
+# skip their legs (run-safety's 18 real-vitest legs, twice on 2026-11-19). Only the download cache is shared; no npm config or credentials are.
+export npm_config_cache="${npm_config_cache:-${HOME:+$HOME/.npm}}"
 export HOME="$T/home"
 
 ok()  { printf '  PASS: %s\n' "$1"; _min_pass=$((_min_pass + 1)); }

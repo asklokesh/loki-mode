@@ -1381,7 +1381,7 @@ PY
 RVROOT="$T/realvitest"
 rv_install() { # rv_install <version>: npm-install real vitest into its own dir; silent when it worked
     mkdir -p "$RVROOT/$1" && printf '{"private":true}\n' > "$RVROOT/$1/package.json"
-    (cd "$RVROOT/$1" && ${TO[@]+"${TO[@]}"} npm install "vitest@$1" --no-audit --no-fund --silent >/dev/null 2>&1) && [ -x "$RVROOT/$1/node_modules/.bin/vitest" ]
+    (cd "$RVROOT/$1" && ${TOM[@]+"${TOM[@]}"} npm install "vitest@$1" --no-audit --no-fund --silent >/dev/null 2>&1) && [ -x "$RVROOT/$1/node_modules/.bin/vitest" ] # TOM (300 s): an install is not a 60 s check
 }
 unit_rv() { # unit_rv <version> <case>
     local ver="$1" RVOUT RVRC RVS
