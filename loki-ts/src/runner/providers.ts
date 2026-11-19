@@ -731,7 +731,8 @@ export interface SdkLoopExtraOptions {
   fallbackModel?: string;
   tools?: string[];
   model?: string;
-  settings?: { advisorModel?: string; autoCompactWindow?: number; permissions?: WriteFence["permissions"]; autoMemoryDirectory?: string };
+  settings?: { advisorModel?: string; autoCompactWindow?: number; permissions?: WriteFence["permissions"]; autoMemoryDirectory?: string } & Record<string, unknown>;
+  authEnv?: Record<string, string>; // the user's auth and proxy env from ~/.claude/settings.json, for a session that does not load the user source
   noAppend?: boolean;
   systemPrompt?: string;
   excludeDynamic?: boolean;
@@ -751,6 +752,22 @@ export function engine10StaticPrefix(env: Readonly<Record<string, string | undef
   if (env["LOKI_E10_FULL_SESSION"] === "1") return { tools: [], excludeDynamic: env["LOKI_E10_STABLE_PREFIX"] !== "0" };
   const lean = env["LOKI_E10_PREFIX"] === "lean";
   return { tools: ENGINE10_TOOLS, ...(lean ? { systemPrompt: LEAN_PREFIX } : {}), excludeDynamic: !lean && env["LOKI_E10_STABLE_PREFIX"] !== "0" };
+}
+// An engine10 session loads only the project source (above), so a user whose base URL, proxy or key lives in ~/.claude/settings.json lost it (measured on
+// the SDK route through sdkQueryProvider: an env ANTHROPIC_BASE_URL and an apiKeyHelper there gave "Not logged in" and no request). Forwarded: env keys
+// for auth, endpoint, proxy and certificates that the process does not already set, and the credential helpers. Nothing else of the user source.
+const USER_AUTH_ENV = /^(ANTHROPIC_[A-Z_]+|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)|CLAUDE_CODE_SKIP_(BEDROCK|VERTEX|FOUNDRY)_AUTH|AWS_[A-Z_]+|CLOUD_ML_REGION|VERTEX_REGION_[A-Z0-9_]+|GOOGLE_[A-Z_]+|HTTPS?_PROXY|https?_proxy|NO_PROXY|no_proxy|NODE_EXTRA_CA_CERTS|SSL_CERT_(FILE|DIR)|CLAUDE_CODE_CLIENT_(CERT|KEY|KEY_PASSPHRASE))$/;
+const USER_AUTH_KEYS = ["apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "otelHeadersHelper"] as const;
+/** The auth and proxy parts of the user's own Claude settings, for a session that does not load the user source. Never throws; empty when there is none. */
+export function userAuthSettings(env: Readonly<Record<string, string | undefined>> = process.env): { env: Record<string, string>; settings: Record<string, string> } {
+  const out = { env: {} as Record<string, string>, settings: {} as Record<string, string> };
+  try {
+    const dir = env["CLAUDE_CONFIG_DIR"] || resolve(env["HOME"] ?? "", ".claude");
+    const u = JSON.parse(readFileSync(resolve(dir, "settings.json"), "utf8")) as { env?: Record<string, unknown> } & Record<string, unknown>;
+    for (const [k, v] of Object.entries(u.env ?? {})) if (USER_AUTH_ENV.test(k) && typeof v === "string" && env[k] === undefined) out.env[k] = v;
+    for (const k of USER_AUTH_KEYS) if (typeof u[k] === "string") out.settings[k] = u[k] as string;
+  } catch { /* no user settings, or unreadable: nothing to forward */ }
+  return out;
 }
 export function buildSdkLoopOptions(args: {
   tier: string | undefined;
@@ -811,6 +828,11 @@ export function buildSdkLoopOptions(args: {
   // settingSources: match the shell route's claude_code preset behavior (project
   // + user settings resolved by the CLI). Explicit so the SDK does not diverge.
   out.settingSources = engine10 ? ["project"] : ["user", "project", "local"];
+  if (engine10) { // the user source is not loaded: carry only its auth and proxy parts (userAuthSettings), so a user whose login lives there still signs in
+    const ua = userAuthSettings();
+    if (Object.keys(ua.settings).length) out.settings = { ...ua.settings, ...out.settings };
+    if (Object.keys(ua.env).length) out.authEnv = ua.env;
+  }
 
   // effort tier (same mapping as buildAutoFlags).
   try {
@@ -903,6 +925,7 @@ export function sdkQueryProvider(): ProviderInvoker {
           allowHaiku: process.env["LOKI_ALLOW_HAIKU"] === "true",
         });
         if (extra.settings?.autoMemoryDirectory) delete env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"]; // TASK MEMORY: a session with Loki's task memory drops an inherited off switch; every other session's env is unchanged
+        for (const [k, v] of Object.entries(extra.authEnv ?? {})) if (env[k] === undefined) env[k] = v; // user-settings auth and proxy env, never over a value the process has
 
         // SLICE 6b note: the Agent SDK query() prompt contract is a plain
         // string (or a stream of SDKUserMessage objects), NOT raw content

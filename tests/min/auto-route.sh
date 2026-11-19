@@ -23,6 +23,7 @@
 #   already:  Haiku claims already-done with no diff: one sonnet redo (trigger already_done_claim).
 #   notice:   LOKI_IMPLEMENT_HAIKU_FIRST=1 prints the deprecation note once and maps to LOKI_ROUTER=auto; --haiku with
 #             LOKI_ROUTER=1 prints one line and keeps LOKI_ROUTER=1.
+#   auth:     an engine10 SDK session carries the user's credential helper and auth or proxy env from ~/.claude/settings.json (project-only sources).
 #   default:  without LOKI_ROUTER=auto (stray LOKI_ROUTER_EXECUTOR=haiku set) nothing is routed: no haiku, no advisor.
 #   pins:     LOKI_SESSION_MODEL=sonnet wins over the preset; LOKI_ALLOW_HAIKU=false makes the executor sonnet.
 #   wall:     the Wall author runs on the preset executor (sizing.ts wallModel): haiku under the preset (also for a large task and
@@ -63,6 +64,7 @@
 #  27. implement.ts: drop `routerRedid ||` from challenge() (already leg: implement models read 'haiku sonnet sonnet').
 #  28. implement_route.ts routeEscalate: run the claim redo with `first` unchanged (already leg: the redo brief has no challenge).
 #  29. implement.ts: pass `false` for resumeAfterEmptyDone's challenge (already leg: the empty-done correction after the redo has no challenge).
+#  30. providers.ts buildSdkLoopOptions: drop the userAuthSettings block (user-settings auth leg: engine=project;none;noplugins;{}).
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
 need git
@@ -137,6 +139,21 @@ console.log(out.join(" "));
 ' 2>&1)"
 want="mode=auto exec=haiku nohaiku=sonnet fixed=sonnet record=preset:claude-haiku-5-5:true hard:bigrepo=null hard:names4=null hard:names5=true hard:large=task sized large hard:trunc=null hard:spelled3=null hard:suffix=null hard:mono1=null hard:mono5=true hard:dot5=true hard:updir5=null size:mono9=normal size:spelled9=large nodescend=claude-sonnet-5-5 climb1=claude-sonnet-5-5 redact=false scopeoff=null fixadv=opus router1floor=sonnet pin=false devpin=false opusadv=null opusadv1=opus adc=claude-sonnet-5-5 sdkwin=100000,none,none sdktitle=loki plan: fix the off-by-one in paginate() please yyyyyyyyyyyyyyyyyyyy|loki intake|undefined|true win=100000/100000,none/none,none/none,none/100000 kept=true:: tsnote=1:unset wall:preset=haiku:haiku:haiku wall:off=sonnet wall:nohaiku=sonnet wall:tier=sonnet wall:override=sonnet wall:sesspin=sonnet wall:why=Wall pin (LOKI_ROUTER=auto preset executor) ad:preset=sonnet ad:tier=haiku ad:why=already-done check pin cascade=sonnet"
 [ "$U" = "$want" ] && ok "unit: preset executor and record, hardReason on task evidence only, never descend, redacted climb evidence, scoped advisor keeps the executor, --model and LOKI_MODEL_DEVELOPMENT pin, no opus advisor on an opus executor, an already-done claim climbs, the kept-router note, the Wall on the preset executor unless pinned" || bad "unit gave: $U"
+
+# --- user-settings auth on the SDK route: an engine10 session loads only the project source, so the user's credential helper and auth or proxy env ------
+# from ~/.claude/settings.json are carried by Loki (never other env, never over a value the process has); outside engine10 the user source is loaded.
+mkdir -p "$T/ua-home/.claude"; printf '{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9","OTEL_FIXTURE_X":"no","ANTHROPIC_CUSTOM_HEADERS":"from-settings"},"apiKeyHelper":"/x/helper.sh","enabledPlugins":{"p@m":true}}\n' > "$T/ua-home/.claude/settings.json"
+UA="$(cd "$ROOT/loki-ts" && env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u LOKI_E10_STAGE -u CLAUDE_CONFIG_DIR -u LOKI_ROUTER HOME="$T/ua-home" ANTHROPIC_CUSTOM_HEADERS=from-env bun -e '
+import { buildSdkLoopOptions } from "./src/runner/providers.ts";
+const fs = await import("node:fs"), src = fs.readFileSync("./src/runner/providers.ts", "utf8");
+const pick = (o) => [o.settingSources.join(","), o.settings?.apiKeyHelper ?? "none", o.settings?.enabledPlugins ? "plugins" : "noplugins", JSON.stringify(o.authEnv ?? {})].join(";");
+process.env.LOKI_E10_STAGE = "implement"; const e = pick(buildSdkLoopOptions({ tier: "development", model: "claude-sonnet-5-5", cwd: "/nonexistent" }));
+delete process.env.LOKI_E10_STAGE; const l = pick(buildSdkLoopOptions({ tier: "development", model: "claude-sonnet-5-5", cwd: "/nonexistent" }));
+console.log(`engine=${e} legacy=${l} merge=${src.includes("for (const [k, v] of Object.entries(extra.authEnv ?? {})) if (env[k] === undefined) env[k] = v;")}`);
+' 2>&1)"
+[ "$UA" = 'engine=project;/x/helper.sh;noplugins;{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9"} legacy=user,project,local;none;noplugins;{} merge=true' ] \
+    && ok "user-settings auth (SDK route): an engine10 session carries the user's apiKeyHelper and auth or proxy env from ~/.claude/settings.json (not other env, not plugins, not over a value the process has) and merges that env under the process env; outside engine10 the user source is loaded instead" \
+    || bad "user-settings auth (SDK route) gave: $UA"
 
 # --- e2e on the stub provider ---------------------------------------------------------------------------------------
 # run_engine <task> <env...> -> REPO, OUT, RUNDIR, ROUTES ("<stage> <iteration> model=<m> advisor=<a> wall=<0|1>" per session)
