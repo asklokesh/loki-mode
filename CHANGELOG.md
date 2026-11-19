@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- The receipt names what kept a run below VERIFIED. Seal already computed these holds; a receipt below VERIFIED now carries them as `held_by: [{kind, detail}]` (for example `check fails`, `verify not proven`, `changed symbol not referenced`), including the Wall test hold that publish adds. A VERIFIED receipt is unchanged and no label changes. Used today on a no-spend replay of 3 stored C2 runs (closed-set-2 F0): each receipt listed its holds, 8 to 18 per run.
 
 ## v11.164.0 (2026-11-19)
 
