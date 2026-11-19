@@ -1,5 +1,6 @@
 // E-15: Wall author (ENGINE.md 4). One provider session, cwd a fresh temp dir holding only task.md and repomap.txt (never sees the code), writes loki_wall_* tests, copied into the repo (never on abort/kill/timeout, E-54) and
 // sealed under <runDir>/wall/ (sha256 each); wall.sealed before Implement; clean base-tree pass short-circuits to already_satisfied. E-64: skipped outright on the small-task lean path (plan.ts logs the same decision).
+import { specificPin } from "../../util/claude_model.ts";
 import { wallOnLeanOn } from "../../util/wall_knobs.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -180,7 +181,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
     brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), [...(unitSpec()?.acceptance ?? []), ...wallRequiredCases(ctx.runDir, task)], relative(ctx.repoDir, targetDir), clauseSet, evidence, isTinyGreenfield(sz.size, task, testMap)) + wallCasesBrief(runners) + goPackageBrief(ctx.repoDir, targetDir, runners, srcTexts, (d) => goPackagePath(readText, ctx.repoDir, d)) + (retry?.note ? `\n\n${retry.note}` : ""), // CCR-06: "" unless LOKI_E10_WALL_CASES=1 on a Python repo
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
     tier: "development",
-    model,
+    model, ...specificPin("test", "LOKI_E10_WALL_TIER"), // ROLE-MODELS: LOKI_E10_WALL_TIER is narrower than the test role
     iterationId,
     limitS: wallLimitS(sz.size), maxOutputTokens: wallOutputCap(), // W1-S3
     signal,
@@ -191,7 +192,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const planText = typeof prior.plan?.plan === "string" ? prior.plan.plan : null, repoFiles = repoMap?.files ?? [];
   const goPkgPath = goPackagePath(readText, ctx.repoDir, targetDir), planned = runners.includes("go") ? plannedGoDir(ctx.repoDir, srcTexts) : null, goTested = planned?.pkg && planned.dir !== targetDir ? goPackagePath(readText, ctx.repoDir, planned.dir) : undefined; // the Wall directory's import path, and the package under test when the Wall sits elsewhere (a black-box tests/ package)
   const oor = (): { name: string; why: string }[] => readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)).flatMap((name) => { const text = readFileSync(join(cwd, name), "utf8"), why = outOfRepoTarget(text) ?? dotenvFileRead(text) ?? vacuousCheck(name, text, goPkgPath, goTested) ?? phantomReason(phantomRepoPaths(text, name, targetDir, ctx.repoDir, planText, task), repoFiles, relative(ctx.repoDir, targetDir), pkg?.root ?? "", task); return why ? [{ name, why }] : []; });
-  const bad1 = oor(); if (bad1.length > 0 && !wallCasesRunner(runners) && !signal.aborted && !ctx.overCap?.()) await ctx.sessions.run({ stage: "wall", brief: withStagePrefix(outOfRepoReask("Rewrite these Wall files in place, keeping the same names and acceptance coverage.", bad1)), tier: "development", model, iterationId: `${iterationId}-oor`, limitS: wallLimitS(sz.size), maxOutputTokens: wallOutputCap(), signal, cwd }); // FC-WALL-OUT-OF-REPO-TARGET: re-ask once in the same directory with the precise reason
+  const bad1 = oor(); if (bad1.length > 0 && !wallCasesRunner(runners) && !signal.aborted && !ctx.overCap?.()) await ctx.sessions.run({ stage: "wall", brief: withStagePrefix(outOfRepoReask("Rewrite these Wall files in place, keeping the same names and acceptance coverage.", bad1)), tier: "development", model, ...specificPin("test", "LOKI_E10_WALL_TIER"), iterationId: `${iterationId}-oor`, limitS: wallLimitS(sz.size), maxOutputTokens: wallOutputCap(), signal, cwd }); // FC-WALL-OUT-OF-REPO-TARGET: re-ask once in the same directory with the precise reason
   const oorBad = new Map(oor().map((b) => [b.name, b.why])), all = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)), held = stashHoldout({ runId: ctx.runId, repoDir: ctx.repoDir, srcDir: cwd, targetDir, names: all.filter((n) => !oorBad.has(n) && !reject(n, readFileSync(join(cwd, n), "utf8"))), runnerOf: (n) => guessRunner(n, runners) }), generated = all.filter((n) => !held?.names.has(n)); // P12-05: the held-out subset never reaches the repo, runDir or the implementer
   const sealedDir = sealStageDir(ctx.runId, ctx.repoDir); rmSync(sealedDir, { recursive: true, force: true }); // staged outside the repo tree; publishSealed moves it to <runDir>/wall at install
   if (generated.length > 0) mkdirSync(sealedDir, { recursive: true });

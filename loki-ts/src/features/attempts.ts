@@ -18,7 +18,7 @@ import { isTestFile } from "../engine10/testmap.ts";
 import { FINISH_LINE, type Obj, type RunContext, type SessionResult, type SessionRunOptions, type TestRef } from "../engine10/types.ts";
 import { rankAttempts, type AttemptCandidate, type AttemptCheck, type AttemptSignal } from "../e10ext/select.ts";
 import { consultCallFor } from "./opus_consult.ts";
-import { resolveClaudeModel } from "../util/claude_model.ts";
+import { resolveClaudeModel, roleModel } from "../util/claude_model.ts";
 import { CASCADE_DEFAULT_MODELS, cascadeV0On } from "../util/wall_knobs.ts";
 import { anchoredPlanScope, outsideScope } from "../e10ext/scope.ts";
 import { parseStaged, type Staged } from "../e10ext/commit_filter.ts";
@@ -234,7 +234,9 @@ export interface ExtraAttemptsOutcome { winner: number; launched: number; summar
 // ---- the tie review --------------------------------------------------------
 /** Sonnet by default (cost is secondary to picking the mergeable attempt); LOKI_E10_SELECT_REVIEW_MODEL overrides (`opus` gives a reviewer independent of a Sonnet
  *  judge), LOKI_E10_ATTEMPTS_REVIEW_MODEL is its older name, LOKI_E10_ATTEMPTS_REVIEW=0 turns the review off (lowest index wins a tie). Aliases go through the model catalog. */
-export const attemptsReviewModel = (env: NodeJS.ProcessEnv = process.env): string => { const m = (env.LOKI_E10_SELECT_REVIEW_MODEL || env.LOKI_E10_ATTEMPTS_REVIEW_MODEL || "").trim(); return m ? resolveClaudeModel(m) : "claude-sonnet-5-5"; };
+export const attemptsReviewModel = (env: NodeJS.ProcessEnv = process.env): string => { const m = (env.LOKI_E10_SELECT_REVIEW_MODEL || env.LOKI_E10_ATTEMPTS_REVIEW_MODEL || "").trim(); return m ? resolveClaudeModel(m) : roleModel("review", env) ?? "claude-sonnet-5-5"; }; // ROLE-MODELS: the review role after the two older names
+/** ROLE-MODELS: an explicit LOKI_E10_ATTEMPT_MODELS list is narrower than the dev role, so under a dev pin its entries still name each attempt. */
+export const attemptListPinned = (env: NodeJS.ProcessEnv = process.env): boolean => (env.LOKI_E10_ATTEMPT_MODELS ?? "").trim() !== "" && roleModel("dev", env) !== undefined;
 export const attemptsReviewOn = (env: NodeJS.ProcessEnv = process.env): boolean => env.LOKI_E10_ATTEMPTS_REVIEW !== "0";
 /** The repo's own statements of how a change should look: contribution guide and PR template first, then style configs. Read at the base commit, so no attempt can write them. */
 export const CONVENTION_FILES = ["CONTRIBUTING.md", ".github/CONTRIBUTING.md", "docs/CONTRIBUTING.md", "CONTRIBUTING.rst", "CONTRIBUTING", ".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md"];
@@ -324,10 +326,10 @@ export async function runExtraAttempts(ctx: RunContext, signal: AbortSignal, dep
   const ops = treeswapOps({
     primary: ctx.repoDir, runDir: ctx.runDir, base: ctx.baseSha, k: deps.k, wallPaths: new Set(deps.wallPaths), ...(deps.wallContent ? { wallContent: new Map(Object.entries(deps.wallContent)) } : {}), outputs: () => ctx.outputs(),
     keep: (p) => userUntracked.has(p) || deps.wallPaths.includes(p) || owned(p),
-    runSession: (i, cwd, sig): Promise<SessionResult> => { const o: SessionRunOptions = { stage: "implement", brief: variantBrief(deps.brief, i), tier: "development", iterationId: ids[i - 1]!, limitS: deps.limitS, signal: sig, cwd, ...(attemptModel(i, deps.model) ? { model: attemptModel(i, deps.model) } : {}) }; return ctx.sessions.run(o); }, // LOKI_E10_ATTEMPT_MODELS: entry i+1, else the session model
+    runSession: (i, cwd, sig): Promise<SessionResult> => { const o: SessionRunOptions = { stage: "implement", brief: variantBrief(deps.brief, i), tier: "development", iterationId: ids[i - 1]!, limitS: deps.limitS, signal: sig, cwd, ...(attemptModel(i, deps.model) ? { model: attemptModel(i, deps.model) } : {}), ...(attemptListPinned() ? { pinSource: "specific" as const } : {}) }; return ctx.sessions.run(o); }, // LOKI_E10_ATTEMPT_MODELS: entry i+1, else the session model
     score,
   });
-  const reviewCall = call ?? (attemptsReviewOn() ? consultCallFor(attemptsReviewModel(), process.env.LOKI_DIR ?? join(ctx.repoDir, ".loki"), process.env, 180_000, { maxTokens: 1500, thinking: "off" }) : undefined);
+  const reviewCall = call ?? (attemptsReviewOn() ? consultCallFor(attemptsReviewModel(), process.env.LOKI_DIR ?? join(ctx.repoDir, ".loki"), process.env, 180_000, { maxTokens: 1500, thinking: "off", role: "review" }) : undefined);
   const review = reviewCall ? (tied: { index: number; diff: string }[]) => reviewTie(reviewCall, reviewContext(ctx.repoDir, ctx.baseSha, String(ctx.outputs().intake?.task ?? ""), tied.map((t) => t.diff)), tied) : undefined;
   try {
     const r = await runAttempts({ ...ops, ...(review ? { review } : {}) }, deps.k, signal);

@@ -15,7 +15,7 @@ import type { ProviderName, SessionTier } from "../runner/types.ts";
 import { resolveRunProvider } from "../runner/state.ts";
 import { tokenFreeEnv, safeGitRun } from "../util/safe_git.ts";
 import { REPO_ROOT } from "../util/paths.ts";
-import { GENERIC_TIERS, VALID_TIERS } from "../util/claude_model.ts";
+import { GENERIC_TIERS, ROLE_FLAG_ENV, roleConflictError, roleSettings, VALID_TIERS } from "../util/claude_model.ts";
 import { applyCostProfile, COST_PROFILES, routerKeptNote } from "../util/cost_profile.ts";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 import { suggestWord } from "../cli/registry.ts";
@@ -32,8 +32,11 @@ function argVal(args: readonly string[], flag: string): string | undefined {
   return undefined;
 }
 
+// ROLE-MODELS: one model per role (util/claude_model.ts roleSettings), exported for engine10; validated below, a bad value exits 2.
+const ROLE_FLAGS = ROLE_FLAG_ENV;
 // RUNNER value-flags: consume the next token, map to a ParsedStartOpts field.
 const VALUE_FLAGS = new Set([
+  ...ROLE_FLAGS.keys(),
   "--max-iterations",
   "--max-retries",
   "--budget-limit",
@@ -52,7 +55,7 @@ const VALUE_FLAGS = new Set([
 
 // TEN-STABILITY-33: free-text value flags. A missing, empty or dash-leading value is an error (use --flag=-x for a dash-leading value).
 // TEN-UX-48: --provider, --session-model, --cost and --spec take a required value too.
-const TEXT_VALUE_FLAGS = new Set(["--prd", "--brief", "--completion-promise", "--provider", "--session-model", "--cost", "--spec"]);
+const TEXT_VALUE_FLAGS = new Set(["--prd", "--brief", "--completion-promise", "--provider", "--session-model", "--cost", "--spec", ...ROLE_FLAGS.keys()]);
 
 // RUNNER boolean env-mapping flags: no value token; set an env var the runner
 // already reads (or, for --skip-memory, now reads -- see build_prompt/runner).
@@ -79,6 +82,7 @@ const NOOP_BOOL_FLAGS = new Set(["--yes", "-y", "--no-plan", "--no-mirofish", "-
 // --prd / --brief pick the spec. Every other runner flag is refused with exit 2, never dropped.
 // Without --attempts the 11.3.0 surface above applies unchanged.
 const ATTEMPTS_VALUE_FLAGS = new Set([
+  ...ROLE_FLAGS.keys(), // ROLE-MODELS: engine10 honors them, so attempts and --spec runs accept them
   "--budget-limit",
   "--budget",
   "--provider",
@@ -149,6 +153,8 @@ export const START_USAGE =
   "                        [--prd FILE | --brief TEXT] [--simple|--complex] [--allow-haiku]\n" +
   "                        [--regen-prd] [--skip-memory] [--cost lean|off] [--haiku]\n" +
   "                        [--spec FILE | --spec-first] [--dry-run]\n" +
+  "                        [--plan-model M] [--dev-model M] [--test-model M] [--review-model M] [--advisor-model M]\n" +
+  "                        [--helper-model M] [--escalate-model M] [--models plan=M,dev=M,...]\n" +
   "                        [--workspace NAME | --deploy [--health-url URL [--health-match STR]] [--auto-rollback]\n" +
   "                                  [--destination preview|staging|production] [--canary] [--env-file FILE] [--domain HOST] [--github]]\n" +
   "  <spec> = a PRD path, or a one-line brief. (Issue refs / --github / --parallel /\n" +
@@ -157,6 +163,14 @@ export const START_USAGE =
   "  --cost lean|off   opt-in cost profile (also LOKI_COST_PROFILE=lean): sets LOKI_ROUTER=auto, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set; recorded in .loki/cost-profile.json\n" +
   "  --haiku          opt in to Haiku for implement and fix (LOKI_ROUTER=auto, the lean levers, plus LOKI_COST_FIRST=1). A failed check climbs to Sonnet. Without it the model is the provider default, same as a raw session\n" +
   "  Proof            loki start sets LOKI_MUTATION_STRICT=1 and LOKI_E10_TRIM=1 unless you set them. A behavior change is VERIFIED only when a Wall test fails on the old code. Tool logs are trimmed before the next turn. Opt out with either var set to 0\n" +
+  "  --plan-model M ... --models plan=M,dev=M,test=M,review=M,advisor=M,helper=M,escalate=M\n" +
+  "                pick the model per role (M = haiku|sonnet|opus|fable or a model id; an opencode id on opencode). Roles: plan (the plan session),\n" +
+  "                dev (implement, fix, extra attempts), test (Wall tests, exec spec, prove), review (cross-review, acceptance check, attempt pick,\n" +
+  "                referee), advisor (consult and the router advisor), helper (intake checks), escalate (a fix round after a repeated failure).\n" +
+  "                Also LOKI_ROLE_<ROLE> or LOKI_MODELS. A set role is exact: never capped, downgraded or climbed; a dev pin escalates only to\n" +
+  "                --escalate-model. Unset roles keep Loki's choice. Older per-call variables (LOKI_E10_WALL_TIER, LOKI_E10_CONSULT_MODEL, ...) still win\n" +
+  "                --advisor-model picks the advisor's model only; it does not turn the advisor on. Turn it on with LOKI_E10_OPUS_CONSULT=1 (the consult)\n" +
+  "                or LOKI_ADVISOR=1 (the advisor tool alone; LOKI_ROUTER=1 or auto also attaches it)\n" +
   "  --fresh       skip the offer to resume an interrupted or cancelled run (also LOKI_NO_RESUME=1); without it, loki start offers to resume or start fresh itself\n" +
   "  --base-current  build on the branch you are on and open the pull request into that branch (also LOKI_BASE_CURRENT=1); without it, a run started on a branch that is not in the pull request's target starts from the target, so the pull request holds only this change\n" +
   "  --dry-run     validate every flag, run the preflight and print the provider, model and cost cap this run would use, then exit 0 without spending a token\n" +
@@ -318,6 +332,12 @@ export function parseStartArgs(
   // Export the pin the way run.sh does (translated, e.g. high -> planning), so
   // the provider's opus pin and every child process read the same value.
   if (tierRaw) applyEnv("LOKI_SESSION_MODEL", tierRaw);
+  // ROLE-MODELS: --plan-model, --dev-model, --test-model, --review-model, --advisor-model, --helper-model, --escalate-model and --models.
+  const roleEnv: Record<string, string> = {};
+  for (const [flag, key] of ROLE_FLAGS) { const v = argVal(args, flag); if (v !== undefined) roleEnv[key] = v; }
+  try { roleSettings({ ...process.env, ...roleEnv }); } catch (e) { err(`start: ${(e as Error).message}\n`); return 2; }
+  { const ce = roleConflictError({ ...process.env, ...roleEnv }, providerRaw ?? process.env["LOKI_PROVIDER"] ?? "claude"); if (ce) { err(`start: ${ce}\n`); return 2; } }
+  for (const [k, v] of Object.entries(roleEnv)) applyEnv(k, v);
 
   // TEN-COST-01: opt-in cost profile; fills only unset levers, records them, names them on one line.
   // TEN-COST-27: loki.yaml cost.profile is the team default; --cost and LOKI_COST_PROFILE win. An invalid yaml value warns and falls back.

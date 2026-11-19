@@ -4,7 +4,7 @@ import { routeStartLine } from "../runner/router/route_block.ts";
 import { execFileSync, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
 import { redactEventData } from "../util/redact.ts"; import { deadlineCapS, localBranchNote, parseDurationS, resolveRunCapS, TIME_FLAGS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
-import { terminalWidth } from "../util/term_width.ts";
+import { terminalWidth } from "../util/term_width.ts"; import { ROLE_FLAG_ENV } from "../util/claude_model.ts";
 import { diffStat, runHead, formatRunSummary, handoffSection, readRiskSummary, writeHandoff, withNextLine, withFoldLine, withRiskLine, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT, RISKTIER
 import { commitUnsealedWork, deepAfterPr, deliverAsDraft, guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey, secretPushLine, secretPushRefusal } from "./stages/seal.ts";
@@ -361,8 +361,13 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (a === "--label") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --label needs a value\n"); noteRefusal("unsupported_flag"); return 2; } label = v; i++; } // MANY: `loki start owner/repo --label L` runs every open issue carrying the label
     else if (a.startsWith("--label=")) label = a.slice(8);
     else if (a === "--seal-existing") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --seal-existing needs a patch file\n"); noteRefusal("unsupported_flag"); return 2; } sealPatch = resolve(v); noPr = true; i++; } // CW-12: the changes already exist as this patch; implement applies it instead of running a session, and no PR is ever opened
+    else if (!eoo && ROLE_FLAG_ENV.has(a.includes("=") ? a.slice(0, a.indexOf("=")) : a)) { // ROLE-MODELS: --plan-model M ... --models plan=M,...; validated with the rest below
+      const name = a.includes("=") ? a.slice(0, a.indexOf("=")) : a, v = a.includes("=") ? a.slice(a.indexOf("=") + 1) : args[++i];
+      if (v === undefined || v === "" || (!a.includes("=") && v.startsWith("-"))) { process.stderr.write(`engine10: ${name} needs a value\n`); noteRefusal("unsupported_flag"); return 2; }
+      process.env[ROLE_FLAG_ENV.get(name)!] = v;
+    }
     else if (a === "--" && !eoo) eoo = true; // TEN-STABILITY-37: `--` ends options, the rest is task text
-    else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--verified] [--json] [--verbose] [--quiet] [--max-cost N] [--max-time DUR] [--verify-max-time DUR] [--provider P] [--spec F] [--seal-existing PATCH] [--resume] [--fresh] [--base-current] [-- <task>]\n`); noteRefusal("unsupported_flag"); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
+    else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--verified] [--json] [--verbose] [--quiet] [--max-cost N] [--max-time DUR] [--verify-max-time DUR] [--provider P] [--spec F] [--seal-existing PATCH] [--resume] [--fresh] [--base-current] [--plan-model M --dev-model M --test-model M --review-model M --advisor-model M --helper-model M --escalate-model M | --models plan=M,...] [-- <task>]\n`); noteRefusal("unsupported_flag"); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
     else words.push(a);
   }
   let task = words.join(" ").trim(); if (resume) return (await import("../util/run_outputs.ts")).resumeFlag(words[0], noPr);
@@ -409,10 +414,12 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     if (ch.pin) process.env.LOKI_SESSION_MODEL = ch.pin;
     process.env.LOKI_SESSION_MODEL_SOURCE = ch.source; modelWhy = ch.why;
   }
+  let roleLine = ""; try { const cm = await import("../util/claude_model.ts"); cm.roleSettings(process.env); const ce = cm.roleConflictError(process.env, provider); if (ce) throw new Error(ce); roleLine = cm.roleStartLine(process.env); } catch (err) { process.stderr.write(`engine10: ${err instanceof Error ? err.message : String(err)}\n`); return 2; } // ROLE-MODELS: a bad role value is refused before any call, never dropped
   const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
   const runDir = join(repoDir, ".loki", "runs", runId);
   const cap = resolveCap(maxCost, repoDir); if ("error" in cap) { process.stderr.write(`engine10: ${cap.error}\n`); return 2; }
   const trackerRef = parseTrackerRef(task), isIssue = ISSUE_RE.test(task) || trackerRef !== null, model = resolveModel(provider), env: NodeJS.ProcessEnv = { ...process.env, ...(!quiet && !verbose && !json ? { LOKI_E10_READINESS_FOLD: "1" } : {}) };
+  env.LOKI_E10_RUN_PROVIDER = provider; // ROLE-MODELS: the worker's tool-less calls and role resolution read the run's provider (--provider sets only a local here)
   if (quiet || verbose || json) delete env.LOKI_E10_READINESS_FOLD; // an inherited fold flag would hide the Readiness line outside default mode
   if (trackerRef && !process.env.LOKI_WRITEBACK_ISSUE) { process.env.LOKI_WRITEBACK_ISSUE = env.LOKI_WRITEBACK_ISSUE = trackerRef.key; process.env.LOKI_WRITEBACK_KIND = env.LOKI_WRITEBACK_KIND = trackerRef.source; } // writeback keys off the intake ref (direct `loki jira:KEY` path)
   { const rp = await (await import("../util/pr_lessons.ts")).replayKnownVerdict(repoDir, task, { fresh, json, skip: isIssue || spec !== null || sealPatch !== null || deep, provider, model }); if (rp !== null) return rp; } // L007: an identical rerun with a known verdict replays at zero cost, before any run state; --fresh runs the full pipeline
@@ -455,7 +462,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   if (prPlan?.pr_base) process.env.LOKI_PR_BASE = env.LOKI_PR_BASE = prPlan.pr_base; // the push opens the pull request into the user's branch (stages/pr.ts stackBase)
   // The header is at most three short lines: target and base; the model and how to change it; the cap (when one is set), the estimate and, under --verified, the verified-mode bounds. The rest (no-cap note, downgrades) is behind --verbose. Only a run with LOKI_ROUTER on gets a fourth line: its route and the downgrades that route makes.
   const downLine = downgrades.length ? `downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : "";
-  const headLines = [`${START_LINE}, ${prPlan?.header ?? baseLine(repoDir)}`, modelWhy ? `model ${model} (${modelWhy})` : "", [cap.usd > 0 ? capNote(cap.usd, cap.source) : "", costEst ? startText(JSON.parse(costEst), cap.usd) : "", verifiedOn(env) ? verifiedHeader(env) : ""].filter(Boolean).join("; "), routeStart ? [routeStart, downLine].filter(Boolean).join("; ") : "",
+  const headLines = [`${START_LINE}, ${prPlan?.header ?? baseLine(repoDir)}`, modelWhy ? `model ${model} (${modelWhy})` : "", roleLine, [cap.usd > 0 ? capNote(cap.usd, cap.source) : "", costEst ? startText(JSON.parse(costEst), cap.usd) : "", verifiedOn(env) ? verifiedHeader(env) : ""].filter(Boolean).join("; "), routeStart ? [routeStart, downLine].filter(Boolean).join("; ") : "",
     verbose ? [cap.usd > 0 ? "" : capNote(cap.usd, cap.source), routeStart ? "" : downLine].filter(Boolean).join("; ") : ""].filter(Boolean);
   if (!json) process.stdout.write(`${headLines.join("\n")}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: the start lines name the engine; provider, model and run id are in the receipt
   if (prPlan?.line) (json ? process.stderr : process.stdout).write(`${prPlan.line}\n`); // said once, in plain words, before any session

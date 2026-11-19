@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { describeJudgeOutcome, toolLessCall } from "../runner/sdk_invoker.ts";
-import { resolveClaudeModel } from "../util/claude_model.ts";
+import { noteRoleModel, resolveClaudeModel, roleModel } from "../util/claude_model.ts";
 import { assertionFailure, commandFor, plainTestEnv, pytestKindsAreAssertion, spawnGroupSync, stripAnsi, vitestErrorsAreAssertion } from "../util/check_result.ts";
 import { escapeRegex } from "../util/regex_escape.ts";
 import { keptUnderLean } from "../util/cost_profile.ts";
@@ -456,11 +456,12 @@ export function implementBlock(e: Emitter, destRel: string, sel: SpecSelection, 
 export type SpecGenerator = (brief: string, o: { model: string; iterationId: string; signal: AbortSignal; maxTokens?: number; meter?: { usd?: number | null } }) => Promise<string | null | { none: string }>; // meter.usd: the call's dollars when the generator prices it itself
 let generatorOverride: SpecGenerator | null = null;
 export const setExecSpecGenerator = (g: SpecGenerator | null): void => { generatorOverride = g; };
-export const execSpecModel = (env: NodeJS.ProcessEnv = process.env): string => env.LOKI_E10_EXEC_SPEC_MODEL || "haiku";
+export const execSpecModel = (env: NodeJS.ProcessEnv = process.env): string => env.LOKI_E10_EXEC_SPEC_MODEL || roleModel("test", env) || "haiku"; // ROLE-MODELS: the test role after the older name
 export const EXEC_SPEC_LEDGER_PHASE = "exec_spec";
 export function toolLessGenerator(repoDir: string): SpecGenerator {
   return async (brief, o) => {
     if (o.signal.aborted) return null;
+    noteRoleModel("test", resolveClaudeModel(o.model));
     const r = await toolLessCall({ model: resolveClaudeModel(o.model), prompt: brief, maxTokens: o.maxTokens ?? 4096, thinking: "low", timeoutMs: 120_000, ledger: { lokiDir: join(repoDir, ".loki"), phase: EXEC_SPEC_LEDGER_PHASE } });
     if (o.meter) o.meter.usd = r.usd;
     if (r.outcome.kind === "ok") return r.outcome.value;

@@ -4,7 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { claudeTierRank } from "../../util/claude_model.ts";
+import { claudeTierRank, roleValue } from "../../util/claude_model.ts";
 import { isNewer } from "../../util/update_check.ts";
 import { envOverride } from "./decision.ts";
 
@@ -15,13 +15,15 @@ export const ADVISOR_ERROR_LIMIT = 3;
 
 /** The one advisor every router caller attaches. */
 export const ROUTER_ADVISOR_MODEL = "opus";
+/** ROLE-MODELS: the advisor role (--advisor-model, LOKI_ROLE_ADVISOR, LOKI_MODELS advisor=) when set, else ROUTER_ADVISOR_MODEL. */
+export const routerAdvisorModel = (env: Record<string, string | undefined> = process.env): string => roleValue("advisor", env as NodeJS.ProcessEnv, "claude") ?? ROUTER_ADVISOR_MODEL;
 
 /**
  * The one executor/advisor pair every probeAdvisor caller passes, so the invalid_pair rule holds on every path. The executor is the
  * caller's model, else the explicit model override, else Opus (the router-on plan session).
  */
 export function advisorPair(env: Record<string, string | undefined>, executorModel?: string): { executor: string; advisor: string } {
-  return { executor: executorModel || envOverride(env) || "opus", advisor: ROUTER_ADVISOR_MODEL };
+  return { executor: executorModel || envOverride(env) || "opus", advisor: routerAdvisorModel(env) };
 }
 
 export interface AdvisorProbe {

@@ -792,6 +792,9 @@ if [ -f "$REPO_ROOT/autonomy/route.sh" ]; then
             case "$R_SESSION_MODEL" in small) R_SESSION_MODEL=fast ;; medium) R_SESSION_MODEL=development ;; high) R_SESSION_MODEL=planning ;; esac
             export LOKI_SESSION_MODEL="$R_SESSION_MODEL"
         fi
+        # ROLE-MODELS: --plan-model ... --models become LOKI_ROLE_<ROLE> / LOKI_MODELS for engine10 (it validates them and exits 2 on a bad one)
+        for _r_kv in ${R_ROLE_ENV[@]+"${R_ROLE_ENV[@]}"}; do export "${_r_kv%%=*}=${_r_kv#*=}"; done
+        unset _r_kv
         if [ "$R_E10" = "1" ] && [ -n "${R_E10_CAP_S:-}" ]; then export LOKI_E10_CAP_S="$R_E10_CAP_S"; fi
         if [ "$R_E10" = "1" ] && [ -n "${R_DEADLINE_S:-}" ]; then export LOKI_RUN_DEADLINE_S="$R_DEADLINE_S"; fi # --max-time
         if [ "$R_ENGINE" = "verify-pr" ]; then

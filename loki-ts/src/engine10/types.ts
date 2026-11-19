@@ -116,6 +116,9 @@ export interface SessionMarkers {
 /** ROUTER-1 R1-08/R1-09: optional per-session cost telemetry copied onto the cost event when the cost record carries it. */
 export const ROUTER_COST_FIELDS = ["requests_total", "requests_over_100k", "advisor_calls", "advisor_input_tokens", "advisor_output_tokens"] as const;
 export interface SessionRunOptions {
+  role?: import("../util/claude_model.ts").Role; // ROLE-MODELS: the role this call belongs to when the stage alone does not say it (stageRole); "escalate" for a repeated-failure fix round
+  pinSource?: "specific"; roleModel?: string; // ROLE-MODELS: set by the session runner only: the role pin this call runs on
+ // ROLE-MODELS: opts.model came from an older per-call variable (LOKI_E10_WALL_TIER, LOKI_E10_ATTEMPT_MODELS, ...), which wins over the role
   pathAppend?: string[]; // candidate 1 env card: directories appended (never prepended) to this session's PATH; implement and its resumes only, and the prove stage's prover, scripts and repair resumes
   sessionEnv?: Record<string, string>; // Q1 RUN-SCRATCH: LOKI_SCRATCH, LOKI_SCRATCH_SINCE and TMPDIR for the implement session and its resumes only // candidate 1 env card: directories appended (never prepended) to this session's PATH; implement and its resumes only
   stage: StageName;
@@ -220,6 +223,7 @@ export interface Receipt {
   checks: ReceiptCheck[];
   wall_oracle?: { cost_usd: number | null; duration_s: number | null }; cascade?: { fired: boolean; from?: string | null; to?: string | null }; // CASCADE-V0 receipt facts
   model_source?: "explicit" | "default" | "provider"; // acc-156: who chose `model` (a flag or env, Loki's DEFAULT_SESSION_MODEL, or the Claude CLI's own default)
+  models_by_role?: Partial<Record<import("../util/claude_model.ts").Role, string[]>>; tool_calls_skipped?: { call: string; reason: string }[]; // ROLE-MODELS: present only when a role is set: the model each role started, in call order
   implement?: { exit: "external"; patch_sha256: string }; // CW-12 B3: present only when no Loki session wrote the code; the receipt names no implementing model
   push_refused?: PushRefusal; // SECRET-PUSH: the security scan matched a secret in an added line, so the run's work must not leave the machine unreviewed
   not_proven: string[]; not_applicable?: string[]; // FC-SEAL-NA-AS-UNPROVEN: informational notes (package without tests, no app to boot, not selected by risk tier); never part of any verdict

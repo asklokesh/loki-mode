@@ -1,3 +1,4 @@
+import { noteRoleModel, roleModel } from "../util/claude_model.ts";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"; import { join } from "node:path";
 import { symbolSpans } from "../util/context_pack.ts"; import { safeGit } from "../util/safe_git.ts"; import { ISSUE_CONTEXT_HEAD, type IssueComment } from "../engine10/fetch_issue.ts";
 import { escapeRegex } from "../util/regex_escape.ts";
@@ -252,7 +253,8 @@ export type PrecedentCall = (system: string, prompt: string) => Promise<string |
 /** The default voter: toolLessCall on the small model, thinking off, priced into the child ledger and cut off by the run's dollar cap. null on any non-ok outcome. */
 async function defaultVoteCall(system: string, prompt: string): Promise<string | null> {
   const { toolLessCall } = await import("../runner/sdk_invoker.ts"), { modelRouteModel } = await import("../providers/model_routes.ts");
-  const dir = process.env["LOKI_DIR"], r = await toolLessCall({ model: process.env["LOKI_E10_PRECEDENT_MODEL"] || modelRouteModel() || "claude-haiku-5-5", system, prompt, maxTokens: 1024, thinking: "off", timeoutMs: 30_000, ...(dir ? { ledger: { lokiDir: dir, phase: "precedent-vote" } } : {}) });
+  const vm = process.env["LOKI_E10_PRECEDENT_MODEL"] || roleModel("helper") || modelRouteModel() || "claude-haiku-5-5"; noteRoleModel("helper", vm);
+  const dir = process.env["LOKI_DIR"], r = await toolLessCall({ model: vm, system, prompt, maxTokens: 1024, thinking: "off", timeoutMs: 30_000, ...(dir ? { ledger: { lokiDir: dir, phase: "precedent-vote" } } : {}) });
   return r.outcome.kind === "ok" ? r.outcome.value : null;
 }
 /** One vote per open choice that nothing else decided (no maintainer reply, no stated preference, no pinned test, not an acceptable-outputs list) and that has at least two sibling definitions. Fewer than two siblings cannot agree, so no call. Never throws; a failed or capped call leaves that entry undefined. */

@@ -45,7 +45,7 @@ import { createConfigFenceHook, createHostGuardHook, HOST_GUARD_SCRIPT, hookTime
 import { fenceEnabled, fencedDenyRules, harnessOutputs, stateDenyRules } from "../util/config_fence.ts";
 import { createStopChecksHook, parseStopChecks, STOP_HOOK_MARGIN_S } from "./stop_checks.ts";
 import { compactCardOn, createCompactCardHook, createPostCompactRecordHook, TASK_CARD_ENV } from "./compact_card.ts";
-import { advisorPair, probeAdvisor, ROUTER_ADVISOR_MODEL } from "./router/advisor_probe.ts";
+import { advisorPair, probeAdvisor, routerAdvisorModel } from "./router/advisor_probe.ts";
 import { advisorOnlyEnabled, routerEnabled, routerPreset, sessionPlanEnabled } from "./router/flag.ts";
 import type {
   ProviderInvocation,
@@ -260,6 +260,8 @@ export function useProviderDefaultModel(call: ProviderInvocation): boolean {
 }
 
 export function claudeModelFor(call: ProviderInvocation): string {
+  const roleModel = (process.env["LOKI_E10_ROLE_MODEL"] ?? "").trim(); // ROLE-MODELS: engine10 session.ts sets it only for a call whose role the user pinned; exact, ahead of every mapping below
+  if (roleModel) return roleModel;
   const routedModel = modelRouteModel(process.env); // OC-MODELS: openrouter/ollama/... route wins
   if (routedModel) return routedModel;
   const opusPin =
@@ -457,13 +459,13 @@ export function planRouterSession(args: {
   if (routed && routerPreset(env) && /opus/i.test(args.model)) return null; // LOKI_ROUTER=auto: an Opus executor (a plan, or a fix round that climbed to Opus) gets no Opus advisor
   const probe = probeAdvisor(env, "claude", args.claudeCodeVersion, args.runDir, advisorPair(env, args.model));
   // Advisor alone (#246): the advisor and nothing else. No executor swap, no compact window, so the only variable is the advisor.
-  if (!routed) return probe.available ? { model: args.model, settings: { advisorModel: ROUTER_ADVISOR_MODEL } } : null;
+  if (!routed) return probe.available ? { model: args.model, settings: { advisorModel: routerAdvisorModel(env) } } : null;
   if (probe.available) {
     return {
       model: args.model,
       ...(/sonnet/i.test(args.model) ? { effort: ROUTER_SONNET_ADVISOR_EFFORT } : {}),
       settings: {
-        advisorModel: ROUTER_ADVISOR_MODEL,
+        advisorModel: routerAdvisorModel(env),
         ...compactWindowSettings(args.model, true),
       },
     };
@@ -546,7 +548,7 @@ export function claudeProvider(): ProviderInvoker {
             claudeCodeVersion: await installedClaudeCodeVersion(cli),
           })
         : null;
-      const model = routed ? routed.model : baseModel;
+      const model = routed && !process.env["LOKI_E10_ROLE_MODEL"] ? routed.model : baseModel; // ROLE-MODELS: a role pin keeps its model; the advisor settings still attach
       const window = compactWindowSettings(model); // T036: every Haiku session, routed or not
       const memory = taskMemorySettings(model); // TASK MEMORY: a Haiku implement session only (the SDK route reads the same helper)
       const sessionSettings = routed?.settings || window || memory ? { ...window, ...routed?.settings, ...memory } : undefined;
@@ -787,7 +789,7 @@ export function buildSdkLoopOptions(args: {
       })
     : null;
   if (router) {
-    out.model = router.model;
+    if (!process.env["LOKI_E10_ROLE_MODEL"]) out.model = router.model; // ROLE-MODELS: a role pin keeps its model on the SDK route too
     if (router.settings) out.settings = router.settings;
   }
   const window = compactWindowSettings(out.model ?? args.model); // T036: every Haiku session, routed or not

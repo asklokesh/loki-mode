@@ -12,7 +12,7 @@ import { readRiskRecord } from "../../util/run_summary.ts"; import { capWhole, r
 import { writeReviewerCost } from "../../providers/provider_cost.ts"; import { consultCallFor, type ConsultCall } from "../../features/opus_consult.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { capToSessionPin } from "../../runner/model_rank.ts";
-import { PROVIDER_DEFAULT_MODEL } from "../../util/claude_model.ts";
+import { isClaudeModel, noteRoleModel, PROVIDER_DEFAULT_MODEL, roleModel } from "../../util/claude_model.ts";
 import { backstopS, type RunContext, type Verdict } from "../types.ts";
 export type ReviewLevel = "pass" | "flag" | "block" | "not_run";
 export type ReviewedBy = "model" | "deterministic" | "none";
@@ -117,7 +117,7 @@ export interface LineCheckRecord { model: string; outcome: string; usd: number |
 let lineCheckOverride: ConsultCall | null = null;
 /** TEST SEAM: replace the line check call. Production code must never call this. */
 export function __setLineCheckCallForTests(c: ConsultCall | null): void { lineCheckOverride = c; }
-export const lineCheckModel = (ctxModel: string | undefined, env: NodeJS.ProcessEnv = process.env): string => (env["LOKI_E10_ISSUE_ACCEPTANCE_MODEL"] ?? "").trim() || (ctxModel && /^claude-/.test(ctxModel) ? ctxModel : ctxModel && /^(opus|sonnet|haiku)$/.test(ctxModel) ? `claude-${ctxModel}-5-5` : "claude-sonnet-5-5"); // the label judge runs on the run's own model (an alias is mapped), never silently on a weaker one
+export const lineCheckModel = (ctxModel: string | undefined, env: NodeJS.ProcessEnv = process.env): string => (env["LOKI_E10_ISSUE_ACCEPTANCE_MODEL"] ?? "").trim() || roleModel("review", env) || (ctxModel && /^claude-/.test(ctxModel) ? ctxModel : ctxModel && /^(opus|sonnet|haiku)$/.test(ctxModel) ? `claude-${ctxModel}-5-5` : "claude-sonnet-5-5"); // the label judge runs on the run's own model (an alias is mapped), never silently on a weaker one
 /** Runs the check once, and once more when no line parses; a call that cannot run or still parses nothing records not_reviewed (the seal caps on it). */
 export async function issueLineCheck(ctx: RunContext, asks: string[], head: string, checks: { name: string; result: string }[], reply: string, facts: string[] = []): Promise<LineCheckRecord> {
   const model = lineCheckModel(ctx.model);
@@ -125,7 +125,7 @@ export async function issueLineCheck(ctx: RunContext, asks: string[], head: stri
   const n = await safeGitRun(ctx.repoDir, ["diff", "--name-only", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return { model, outcome: "no_diff", usd: null, calls: 0, input_chars: 0, diff_cut: [], diff_truncated: false, not_reviewed: "the diff could not be read" };
   const cd = lineCheckDiff(d.stdout), prompt = lineCheckPrompt(asks, cd.text, (n?.stdout ?? "").split("\n").filter(Boolean), checks, reply, facts);
-  const call = lineCheckOverride ?? consultCallFor(model, join(ctx.repoDir, ".loki"), process.env, 120_000, { maxTokens: 8000, thinking: "off" }); // 2500 cut a ten-line answer short on the smallest model ("truncated", twice), which left the label with no second reader
+  const call = lineCheckOverride ?? consultCallFor(model, join(ctx.repoDir, ".loki"), process.env, 120_000, { maxTokens: 8000, thinking: "off", role: "review" }); // 2500 cut a ten-line answer short on the smallest model ("truncated", twice), which left the label with no second reader
   let usd: number | null = null, calls = 0, outcome = "failed", parsed: ReturnType<typeof parseLineCheck> = null;
   for (let i = 0; i < 2 && !parsed; i++) {
     let r: { text: string | null; usd: number | null; outcome: string }; try { r = await call(LINE_CHECK_SYSTEM, prompt, "issue-acceptance"); } catch { r = { text: null, usd: null, outcome: "transport" }; }
@@ -152,7 +152,8 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   const tier = early ? "high" : readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier, medium = tier === "medium";
   let hy: string[] = [], hyOk = false, hyNote = ""; // medium: the deterministic hygiene scan of files the run added (no model call); it can only add a flag, never lift a verdict
   if (medium) { const a = await safeGitRun(ctx.repoDir, ["diff", "--no-color", "--name-only", "-z", "--diff-filter=A", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null); if (a && a.exitCode === 0) { hyOk = true; const added = a.stdout.split("\0").filter(Boolean); const box = Number(process.env["LOKI_E10_HYGIENE_BOX_MS"]), ig = await ignoredPaths(ctx.repoDir, added, box > 0 ? box : 20000); if (ig) hy = hygieneFindings(added, ig); else { hy = hygieneFindings(added, new Set()); hyOk = false; hyNote = "hygiene scan unavailable (git check-ignore did not complete): NOT PROVEN that run-added files are free of ignored or build artifacts"; } } }
-  const pin = medium && p === "claude" ? fastTierModel(process.env) : dflt && p === "claude" && ctx.model && ctx.model !== PROVIDER_DEFAULT_MODEL ? capToSessionPin(ctx.model) : undefined; // medium reviews on the fast tier (same mapping as the plan session); the unconfigured high-tier default review runs on the run's own model, never above a LOKI_SESSION_MODEL pin (a Haiku run reviews on Haiku); the provider-default label is a record, never a --model value (the CLI rejects it and the review exited 1), so a default-model run omits --model; an agent-configured model wins (agent?.model || pin, so an empty one falls back to the pin)
+  const reviewRole = p === "claude" ? roleModel("review", process.env, "claude") : undefined; // ROLE-MODELS: the review role (a configured agent model still wins below); a non-Claude id never reaches the claude CLI
+  const pin = (reviewRole && isClaudeModel(reviewRole) ? reviewRole : undefined) ?? (medium && p === "claude" ? fastTierModel(process.env) : dflt && p === "claude" && ctx.model && ctx.model !== PROVIDER_DEFAULT_MODEL ? capToSessionPin(ctx.model) : undefined); // medium reviews on the fast tier (same mapping as the plan session); the unconfigured high-tier default review runs on the run's own model, never above a LOKI_SESSION_MODEL pin (a Haiku run reviews on Haiku); the provider-default label is a record, never a --model value (the CLI rejects it and the review exited 1), so a default-model run omits --model; an agent-configured model wins (agent?.model || pin, so an empty one falls back to the pin)
   const tag = <T extends CrossReview>(r: T): T => {
     const modelRan = r.level !== "not_run", level = hy.length && (r.level === "pass" || r.level === "not_run") ? "flag" : r.level;
     return { ...r, level, notes: hyNote ? [...r.notes, hyNote] : r.notes, ...(hy.length ? { hygiene: hy } : {}), reviewed_by: modelRan ? "model" : hyOk ? "deterministic" : "none", ...(modelRan && p === "claude" && (agent?.model || pin) ? { reviewer_model: (agent?.model || pin)! } : {}), ...(dflt ? { same_vendor_default: true } : {}) };
@@ -167,6 +168,7 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
     "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...acceptancePromptBlock(reviewAcceptance(ctx)), ...reviewChecksBlock(ctx), ...(rd.truncated || rd.cut.length ? [`The diff below is NOT the whole change: ${rd.truncated ? "it is cut at its end" : "it is complete except for the files named next"}${rd.cut.length ? `; lockfile, snapshot and generated files are left out (${rd.cut.slice(0, 8).join(", ")})` : ""}. Every changed file is listed here; read any you need with your tools before saying something is missing: ${changedList}`] : []), "", "```diff", rd.text, "```"].join("\n");
   try {
     if (p === "claude") await ensureClaudeHelpCache();
+    if (p === "claude") noteRoleModel("review", agent?.model || pin || ctx.model); // ROLE-MODELS: the receipt's models_by_role
     const r = await withChildLedger(run, join(ctx.repoDir, ".loki"), "xreview")(reviewArgv(p, prompt, process.env, p === "claude" ? agent?.model || pin : undefined), { cwd: ctx.repoDir, timeoutMs: boxFor(ctx) * 1000, group: true, signal });
     const costId = `${ctx.runId}-xreview-${p}${early ? "-early" : ""}`; // the reviewer's own result-cost file, so seal's cost read includes it
     writeReviewerCost(join(ctx.repoDir, ".loki"), costId, { reviewer: `xreview-${p}`, provider: p, model: p === "claude" ? agent?.model || pin : undefined, stdout: r.stdout, stderr: r.stderr });

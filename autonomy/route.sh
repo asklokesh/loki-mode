@@ -10,7 +10,7 @@
 # Bash 3.2 compatible (no associative arrays, no ${var,,}).
 
 # Flags that take a separate value token.
-_ROUTE_VALUE_FLAGS=" --provider --budget --budget-limit --max-cost --max-time --max-iterations --max-retries --session-model --completion-promise --base-wait --max-wait --prd --brief --attempts --spec --isolation --output --engine --mirofish-rounds --mirofish-timeout --max-duration --log-level --compliance --cost --remote --issue --bmad-project --openspec --mirofish-docker --destination --domain --env-file --health-url --health-match --workspace --config --vars --seal-existing --label "
+_ROUTE_VALUE_FLAGS=" --plan-model --dev-model --test-model --review-model --advisor-model --helper-model --escalate-model --models --provider --budget --budget-limit --max-cost --max-time --max-iterations --max-retries --session-model --completion-promise --base-wait --max-wait --prd --brief --attempts --spec --isolation --output --engine --mirofish-rounds --mirofish-timeout --max-duration --log-level --compliance --cost --remote --issue --bmad-project --openspec --mirofish-docker --destination --domain --env-file --health-url --health-match --workspace --config --vars --seal-existing --label "
 # Flags whose value is optional (cmd_start reads one only when it is present): --mirofish takes a URL (a token that does not
 # start with --, as _loki_start_optval_consumes). Declared here so a refused one still consumes its value. --parallel is NOT
 # here: cmd_start treats it as a plain boolean (_loki_start_flag_kind), so "--parallel 3" leaves 3 as a positional.
@@ -150,14 +150,14 @@ _route_classify() {
 
 # loki_route_resolve VERB ARGS...   VERB = start | quick | bare
 # Sets: R_DECIDED R_E10 R_HARD R_ENGINE R_REASON R_INPUT_TYPE R_INPUT R_PROVIDER
-#       R_MODEL R_NOTICE R_ERR R_EXPLAIN R_JSON R_E10_ARGS[] R_CLEAN[] R_SESSION_MODEL R_VERB
+#       R_MODEL R_NOTICE R_ERR R_EXPLAIN R_JSON R_E10_ARGS[] R_CLEAN[] R_SESSION_MODEL R_VERB R_ROLE_ENV[] (KEY=VALUE per-role model settings)
 # R_* are the result interface read by the sourcing caller.
 # shellcheck disable=SC2034
 loki_route_resolve() {
     local verb="$1"; shift
     R_DECIDED=0; R_E10=0; R_HARD=0; R_ENGINE=""; R_REASON=""; R_INPUT_TYPE=""; R_INPUT=""
     R_PROVIDER=""; R_MODEL=""; R_NOTICE=""; R_ERR=""; R_EXPLAIN=0; R_JSON=0; R_SESSION_MODEL=""; R_VERB=""
-    R_FRONT=0; R_E10_ARGS=(); R_CLEAN=(); R_ADAPTER=""; R_CAPDIFF=(); R_E10_CAP_S=""; R_DEADLINE_S=""; R_DRY=0; R_MAXCOST=""; R_PR_ARGS=()
+    R_ROLE_ENV=(); R_FRONT=0; R_E10_ARGS=(); R_CLEAN=(); R_ADAPTER=""; R_CAPDIFF=(); R_E10_CAP_S=""; R_DEADLINE_S=""; R_DRY=0; R_MAXCOST=""; R_PR_ARGS=()
     if [ "$verb" = "start" ] && _route_pr_mode "$@"; then return 0; fi
 
     local a engine_req="" dry=0 help=0 front_flag="" legacy_flag="" session_model="" provider_flag="" max_duration="" max_time="" cap_err="" input_flag=""
@@ -199,6 +199,8 @@ loki_route_resolve() {
                     --prd|--brief) input_flag="$name"; positionals+=("$val"); continue ;;
                     --provider) provider_flag="$val"; passthru+=(--provider "$val"); continue ;;
                     --session-model) session_model="$val"; continue ;;
+                    # ROLE-MODELS: per-role models for engine10 (loki-ts/src/util/claude_model.ts roleSettings validates them; bin/loki exports R_ROLE_ENV)
+                    --plan-model|--dev-model|--test-model|--review-model|--advisor-model|--helper-model|--escalate-model|--models) R_ROLE_ENV+=("$(_route_role_key "$name")=$val"); continue ;;
                     --budget|--budget-limit|--max-cost) passthru+=(--max-cost "$val"); R_MAXCOST="$val"; continue ;;
                     --dry-run) dry=1; continue ;;
                     --json) R_JSON=1; passthru+=(--json); continue ;;
@@ -436,8 +438,20 @@ loki: this project saved provider '$R_PROVIDER' in .loki/state/provider; switch 
             R_REASON="default: $R_INPUT_TYPE input runs on engine10 regardless of flag order"
         fi
     fi
+    if [ "$R_ENGINE" = "legacy" ] && [ "${#R_ROLE_ENV[@]}" -gt 0 ]; then
+        R_ERR="loki: per-role model flags (--plan-model, --dev-model, --models, ...) run only on the Loki 10 engine; drop them or the legacy request"
+        return 0
+    fi
     _route_adapter_and_diffs "$legacy_flag"
     return 0
+}
+
+# ROLE-MODELS: the env var a per-role model flag sets (--plan-model -> LOKI_ROLE_PLAN, --models -> LOKI_MODELS).
+_route_role_key() {
+    case "$1" in
+        --models) printf '%s' LOKI_MODELS ;;
+        *) local r="${1#--}"; r="${r%-model}"; printf 'LOKI_ROLE_%s' "$(printf '%s' "$r" | tr '[:lower:]' '[:upper:]')" ;;
+    esac
 }
 
 # Sets R_ADAPTER and R_CAPDIFF[] from R_ENGINE / R_PROVIDER. Empty R_CAPDIFF means the

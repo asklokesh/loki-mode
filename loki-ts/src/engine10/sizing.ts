@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { readRepoMapCache, repoCacheDir, repoKey } from "./cache.ts";
 import { speedLikelyFiles } from "../features/speed/lean_select.ts"; import { deliverables } from "../features/decompose.ts";
-import { resolveClaudeModel } from "../util/claude_model.ts"; import { presetExecutor, routerPreset } from "../runner/router/flag.ts"; import { envOverride } from "../runner/router/decision.ts"; import { isTestFile } from "../util/test_file_text.ts"; import { wallConcurrent } from "../util/wall_knobs.ts";
+import { resolveClaudeModel, roleModel } from "../util/claude_model.ts"; import { presetExecutor, routerPreset } from "../runner/router/flag.ts"; import { envOverride } from "../runner/router/decision.ts"; import { isTestFile } from "../util/test_file_text.ts"; import { wallConcurrent } from "../util/wall_knobs.ts";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap, TestRef } from "./types.ts";
 import { escapeRegex } from "../util/regex_escape.ts";
@@ -111,11 +111,11 @@ export const resolveModelAlias = resolveClaudeModel;
 export const wallPinModel = (env = process.env): string => resolveModelAlias(env.LOKI_E10_WALL_TIER || "sonnet");
 /** The Wall test author's model: wallPinModel, except under LOKI_ROUTER=auto with no LOKI_E10_WALL_TIER and no model pin, where it is the preset executor (Haiku under --haiku).
  *  Measured: benchmarks/h2h/results/2026-11-02-haiku-wall-916ddc95a.json (bench v2, Wall on Haiku: same pass rate, no false VERIFIED, about a tenth of the Sonnet Wall's cost). */
-export const wallModel = (env = process.env): string => (!env.LOKI_E10_WALL_TIER && routerPreset(env) && envOverride(env) === null ? resolveModelAlias(presetExecutor(env).model) : wallPinModel(env));
+export const wallModel = (env = process.env): string => (!env.LOKI_E10_WALL_TIER && roleModel("test", env) !== undefined ? roleModel("test", env)! : !env.LOKI_E10_WALL_TIER && routerPreset(env) && envOverride(env) === null ? resolveModelAlias(presetExecutor(env).model) : wallPinModel(env));
 /** COST-11: first Wall author rung. Haiku for small/normal tasks, re-authored once on wallModel() when the result is unusable (wall.ts runWall).
  *  Fail-safe: any pin (LOKI_E10_WALL_TIER, LOKI_MODEL_OVERRIDE), concurrent Wall (its base run is not validated at author time), an unknown/large size or LOKI_E10_WALL_FIRST=0 uses wallModel() directly, so no escalation applies. */
 export const wallFirstModel = (size: TaskSize, env = process.env): string => {
-  if (knob(env.LOKI_E10_WALL_FIRST, ["0", "off", "false"]) || env.LOKI_E10_WALL_TIER || env.LOKI_MODEL_OVERRIDE || wallConcurrent(env)) return wallModel(env);
+  if (knob(env.LOKI_E10_WALL_FIRST, ["0", "off", "false"]) || env.LOKI_E10_WALL_TIER || env.LOKI_MODEL_OVERRIDE || wallConcurrent(env) || roleModel("test", env) !== undefined) return wallModel(env); // ROLE-MODELS: a test pin is exact, no Haiku first rung
   return size === "small" || size === "normal" ? resolveModelAlias("haiku") : wallModel(env);
 };
 /** E-64: the cascade's first implement call pins to the same sonnet alias Wall already uses (E-45). */

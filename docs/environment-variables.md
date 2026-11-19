@@ -72,6 +72,8 @@ interact and why hitting one is a failure rather than a success.
 | `LOKI_MODEL_API_KEY` | unset | Token for a `custom/<id>` route (optional). OpenRouter reads `OPENROUTER_API_KEY`. |
 | `LOKI_OPENCODE_MODEL` | unset | `provider/model` id passed to opencode (for example `openrouter/deepseek/deepseek-v3.2`). Also `LOKI_OPENCODE_FLAGS` and `LOKI_OPENCODE_CLI`. |
 | `LOKI_EDIT_MODEL` | unset | Model for `loki edit`. |
+| `LOKI_ROLE_PLAN`, `LOKI_ROLE_DEV`, `LOKI_ROLE_TEST`, `LOKI_ROLE_REVIEW`, `LOKI_ROLE_ADVISOR`, `LOKI_ROLE_HELPER`, `LOKI_ROLE_ESCALATE` | unset | The model for one role of a Loki 10 run (`--plan-model`, `--dev-model`, ... on `loki start`). See "A model per role" below. |
+| `LOKI_MODELS` | unset | All roles on one line, `plan=opus,dev=haiku,test=haiku,review=sonnet,advisor=opus` (`--models`). A `LOKI_ROLE_<ROLE>` variable wins over its entry here. |
 | `LOKI_ENGINE` | unset | `legacy` forces the previous loop; the `--engine` flag wins over it. |
 | `LOKI_SUMMARY_JSON` | unset | `1` prints the end-of-run summary as one JSON line on the previous loop. |
 | `LOKI_TIER` | `oss` | **Not a model setting.** The open-core licensing seam. Leave it unset. |
@@ -80,6 +82,39 @@ interact and why hitting one is a failure rather than a success.
 | `verify.test_command` (loki.yaml, not an env var) | unset | The repo's committed test command for a Maven, Gradle, .NET or plain-javac repo, e.g. `verify:` then `  test_command: ./mvnw -B -pl app test`. Verify runs it instead of the detected `mvn`, `gradle` or `dotnet` invocation; its output must still carry the build tool's own test summary or the check is NOT PROVEN, never a pass. Changing loki.yaml in a run caps the verdict. Without it, Loki detects pom.xml, build.gradle(.kts), gradlew, mvnw, *.sln and *.csproj and uses the repo wrapper when present. |
 | `LOKI_REPO_BASELINE` | unset | `0` skips the intake repo profile and baseline test run. |
 | `LOKI_ALLOW_CLAUDE_SIDECALLS` | unset | `1` (exactly) lets PRD enrichment, done recognition, the council voters, the USAGE.md refresh and the quickstart intent check prompt the `claude` CLI under a non-claude provider; `loki doctor --airgap` then reports that as required egress to Anthropic. |
+
+### A model per role
+
+A Loki 10 run (`loki start`, `loki "<task>"`) can run each kind of work on its own model:
+
+```bash
+loki start ./prd.md --plan-model opus --dev-model haiku --test-model haiku --review-model sonnet
+loki start ./prd.md --models plan=opus,dev=haiku,test=haiku,review=sonnet,advisor=opus,escalate=sonnet
+```
+
+| Role | Flag | What runs on it |
+|---|---|---|
+| `plan` | `--plan-model` | the plan session |
+| `dev` | `--dev-model` | implement, its retries and extra attempts, fix rounds, the patch protocol, the tournament candidates |
+| `test` | `--test-model` | the Wall test author and re-author, the executable spec, the prove sessions |
+| `review` | `--review-model` | the cross-review, the issue acceptance check, the pick between attempts, the conflict referee, the tournament judge |
+| `advisor` | `--advisor-model` | the consult and the router advisor tool. It picks the model only and does not turn the advisor on: the consult is on with `LOKI_E10_OPUS_CONSULT=1`, the advisor tool with `LOKI_ADVISOR=1` (alone) or `LOKI_ROUTER=1` / `LOKI_ROUTER=auto` (with the router) |
+| `helper` | `--helper-model` | intake checks: the already-done confirmation, project-model discovery, the open-choice vote, the ranked-remedy check |
+| `escalate` | `--escalate-model` | a fix round after the same test failure repeats |
+
+A value is `haiku`, `sonnet`, `opus` or a full model id (on `--provider opencode`, an opencode id). A role you set is exact: it is never
+capped to `--model`, never downgraded, never climbed by the router, and the Wall keeps it instead of re-authoring on another model. With `--dev-model`
+set, a repeated failure escalates only when `--escalate-model` names the model. A role you do not set keeps Loki's own choice, so a run with no role
+behaves exactly as before. Precedence for each call: an older per-call variable (`LOKI_E10_WALL_TIER`, `LOKI_E10_ATTEMPT_MODELS`, `LOKI_E10_CONSULT_MODEL`,
+`LOKI_E10_SELECT_REVIEW_MODEL`, `LOKI_E10_ISSUE_ACCEPTANCE_MODEL`, `LOKI_E10_EXEC_SPEC_MODEL`, `LOKI_E10_TOURNAMENT_MODEL`, `LOKI_E10_PRECEDENT_MODEL`,
+`LOKI_E10_RANKED_REMEDY_MODEL`), then the role, then `--model` / `--session-model`, then Loki's default. When a role is set the start line names the
+model per role (`models: plan opus, dev haiku, ...`; `auto` means Loki picks per call) and the receipt records the models each role started under
+`models_by_role`. A full model id is passed to the provider exactly as written. A bad value, the `fable` alias, a route id (`openrouter/...`: choose a route for the
+whole run with `--model`), a role above `LOKI_MAX_TIER`, or any Claude role while `LOKI_MODEL_ROUTE` is set (the route serves every call; unset the
+role or the route) exits 2 before any session, naming the role. On opencode, a call that only runs on the Anthropic API
+(the consult, the votes, the acceptance check, the attempt pick, the tournament, the executable spec) is skipped when its role names a
+non-Claude model, and the receipt's `tool_calls_skipped` names each skipped call with the reason (as it does for `LOKI_E10_PATCH`, which runs on
+claude only). The legacy engine refuses the role flags.
 
 ### Picking a model without naming one
 

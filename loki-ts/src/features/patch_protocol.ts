@@ -4,6 +4,7 @@
 // applies the rest all-or-nothing, runs the targeted check itself and allows at most one compact repair call. Anything
 // short of a green check restores every file it wrote, and the caller runs today's agentic session: the outcome floor is unchanged.
 // New file because no module owns model-written edit blocks; implement.ts only wires it (see the stage).
+import { noteRoleModel } from "../util/claude_model.ts";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, relative, sep } from "node:path";
 import { LOCK_RULES } from "../util/lock_ecosystems.ts";
@@ -266,6 +267,7 @@ export function patchCallFor(model: string, lokiDir: string, timeoutMs = 180_000
     } catch { return { text: null, usd: null }; }
   };
   return async ({ system, messages }) => {
+    noteRoleModel("dev", model);
     const r = await toolLessCall({ model, system, prompt: flattenMessages(messages), maxTokens: PATCH_MAX_TOKENS, thinking: "off", timeoutMs, ledger: { lokiDir, phase: "implement-patch" } });
     return { text: r.outcome.kind === "ok" ? r.outcome.value : null, usd: r.usd };
   };

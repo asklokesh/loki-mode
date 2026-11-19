@@ -1,4 +1,5 @@
 // loki-ts/src/engine10/already_done.ts -- E-66: "already implemented" as a first-class v10 outcome (docs/v10/ENGINE.md section 4, Intake). Deterministic evidence search over the repo map, test map and CHANGELOG/README, gated by one short cheap-model confirmation that must cite files before Intake ever claims already-done. Reuses the LOKI_ALREADY_DONE marker session.ts already parses (implement.ts's contract), so there is no new marker to teach the provider.
+import { specificPin } from "../util/claude_model.ts";
 import { capToRunTier, wallPinModel } from "./sizing.ts";
 import type { RepoMap } from "./repomap.ts";
 import { buildAlreadyDoneCommentArgv, buildConfirmBrief, citesRealHit, evidenceLines, findEvidence, renderAlreadyDoneComment, type EvidenceHit } from "../util/already_done_evidence.ts";
@@ -25,7 +26,7 @@ export async function checkAlreadyDone(
     stage: "intake",
     brief: buildConfirmBrief(task, hits),
     tier: "fast",
-    model: capToRunTier(wallPinModel(), ctx.model, ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE"]),
+    model: capToRunTier(wallPinModel(), ctx.model, ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE"]), ...specificPin("helper", "LOKI_E10_WALL_TIER"), // ROLE-MODELS: the helper role replaces it in the session runner unless LOKI_E10_WALL_TIER is set
     iterationId: `${ctx.runId}-already-done`,
     limitS: 30,
     signal,

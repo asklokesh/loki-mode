@@ -1,6 +1,7 @@
 // ROUTER-1: every model decision the engine10 stages make under LOKI_ROUTER=1 lives here, outside the engine10 line budget.
 // Invariant (L1, tested semantically in tests/engine10/route_matrix.test.ts): a session is never started below the run's model
 // unless a VALID Opus route record (plan.units: every unit executor "haiku" with a reason, nothing NOT PROVEN) names haiku.
+import { roleModel } from "../../util/claude_model.ts";
 import { resolveModelAlias } from "../../engine10/sizing.ts";
 import { PROVIDER_DEFAULT_MODEL, resolveModel, sessionPinModel } from "../../engine10/session.ts";
 import { envOverride, unitRedo } from "./decision.ts";
@@ -80,7 +81,7 @@ export function routedFix(runModel: string, out: StageOutputs, o: { repeated: bo
 
 /** R1-13: a verify stall may climb once, only on a code-owned failure and only when the router is active (a lint-only or harness-owned stall, or a user override, is unchanged). The same routedFix decides here and in the fix stage. */
 export function stallClimb(runModel: string, out: StageOutputs, reason: string): UnitEscalation | null {
-  if (!routerActive() || out["fix"]?.["stall_escalated"]) return null;
+  if (!routerActive() || out["fix"]?.["stall_escalated"] || roleModel("dev") !== undefined) return null; // ROLE-MODELS: a dev pin is exact, so a stall never climbs
   const groups = (out["verify"]?.["failures_grouped"] as { signature: string }[] | undefined) ?? [];
   return routedFix(runModel, out, { repeated: false, stall: true, groups, reason }).climbed;
 }

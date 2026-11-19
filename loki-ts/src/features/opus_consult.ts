@@ -13,6 +13,7 @@
 // Never-stop (same knob): a headless run that would end SPEC_CONFLICT instead infers the most likely intent, implements it, names
 // the choice on an ASSUMPTION line, and is capped at PARTIAL by seal (neverStopNotes). LOKI_E10_INTAKE_ASK=1 is the explicit
 // interactive opt-in that keeps the old stop (a person is there to answer `loki answer`).
+import { noteRoleModel, roleModel, type Role } from "../util/claude_model.ts";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { keptUnderLean } from "../util/cost_profile.ts";
@@ -34,7 +35,7 @@ const CAP = { task: 5000, evidence: 2500, diff: 5000, code: 6000 }; // about 5k 
 export const consultEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => keptUnderLean(env.LOKI_E10_OPUS_CONSULT, env);
 /** Never-stop is on with the knob unless the run explicitly asks a person (LOKI_E10_INTAKE_ASK=1). */
 export const neverStopActive = (env: NodeJS.ProcessEnv = process.env): boolean => consultEnabled(env) && env.LOKI_E10_INTAKE_ASK !== "1";
-export const consultModel = (env: NodeJS.ProcessEnv = process.env): string => env.LOKI_E10_CONSULT_MODEL || CONSULT_MODEL_DEFAULT;
+export const consultModel = (env: NodeJS.ProcessEnv = process.env): string => env.LOKI_E10_CONSULT_MODEL || roleModel("advisor", env) || CONSULT_MODEL_DEFAULT; // ROLE-MODELS: the advisor role after the older name (it picks the model; the consult stays off or on as before)
 const consultMax = (env: NodeJS.ProcessEnv): number => { const n = Number(env.LOKI_E10_CONSULT_MAX); return Number.isInteger(n) && n >= 0 ? n : 1; };
 
 export interface ConsultRecord { trigger: ConsultTrigger; stage: string; model: string; outcome: string; usd: number | null; advice: string | null }
@@ -47,8 +48,9 @@ export const consultAvailable = (runDir: string, env: NodeJS.ProcessEnv = proces
 export type ConsultCall = (system: string, prompt: string, phase: string) => Promise<{ text: string | null; usd: number | null; outcome: string }>;
 /** The tool-less call: the CLI invoker (tests/min e2e stub, legacy installs) runs `claude -p` with no tools, priced by withChildLedger exactly like
  *  patch_protocol.ts patchCallFor; otherwise sdk_invoker toolLessCall (ledgered, run-cap aware). Opus 5.5 rejects disabled thinking, so "low". */
-export function consultCallFor(model: string, lokiDir: string, env: NodeJS.ProcessEnv = process.env, timeoutMs = 180_000, opts: { maxTokens?: number; thinking?: "off" | "low" } = {}): ConsultCall { // opts: the ranked-remedy check (conflict_resume.ts) runs Haiku at 50 tokens with thinking off
+export function consultCallFor(model: string, lokiDir: string, env: NodeJS.ProcessEnv = process.env, timeoutMs = 180_000, opts: { maxTokens?: number; thinking?: "off" | "low"; role?: Role } = {}): ConsultCall { // opts: the ranked-remedy check (conflict_resume.ts) runs Haiku at 50 tokens with thinking off
   if (env.LOKI_E10_INVOKER === "cli") return async (system, prompt, phase) => {
+    noteRoleModel(opts.role ?? "advisor", model); // ROLE-MODELS: the receipt's models_by_role
     try {
       const r = await withChildLedger(run, lokiDir, phase, model)([env.LOKI_CLAUDE_CLI || "claude", "-p", prompt, "--output-format", "json", "--tools", "", "--model", model, "--system-prompt", system, "--strict-mcp-config", "--setting-sources", "project"], { timeoutMs, group: true });
       const j = JSON.parse(r.stdout) as { result?: unknown; is_error?: boolean; total_cost_usd?: number };
@@ -57,8 +59,9 @@ export function consultCallFor(model: string, lokiDir: string, env: NodeJS.Proce
     } catch { return { text: null, usd: null, outcome: "transport" }; }
   };
   return async (system, prompt, phase) => {
+    noteRoleModel(opts.role ?? "advisor", model);
     const r = await toolLessCall({ model, system, prompt, maxTokens: opts.maxTokens ?? MAX_TOKENS, thinking: opts.thinking ?? "low", timeoutMs, ledger: { lokiDir, phase }, noCache: true });
-    return { text: r.outcome.kind === "ok" ? r.outcome.value : null, usd: r.usd, outcome: r.outcome.kind };
+    return { text: r.outcome.kind === "ok" ? r.outcome.value : null, usd: r.usd, outcome: r.outcome.kind === "unsupported" ? `unsupported: ${r.outcome.reason}` : r.outcome.kind }; // ROLE-MODELS: a skip names its reason in the call's own record
   };
 }
 let callOverride: ConsultCall | null = null;

@@ -2,6 +2,7 @@
 // `cryptography`). The key is the A-120 local key, created on first use. An empty token means UNSIGNED, never presented as attested.
 import { loadProjectApi } from "../../project_model/resolve.ts";
 import { isOff } from "../../council/role_agents.ts";
+import { roleModelsReceiptBlock } from "../../util/claude_model.ts";
 import { capFenceVerdict, fenceNotes, readFenceRecord } from "../../util/config_fence.ts";
 import { sanitizeReason } from "../../util/redact.ts";
 import { acceptanceLines, FRESH_INSTALL_ASK, issueAcceptanceCapOn, issueAcceptanceOf, issueAcceptanceStatus, notAddressedNotes } from "../../util/intent_card.ts"; import { specReceiptBlock } from "../../util/spec_file.ts"; import { triageReceiptBlock } from "../../features/triage.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock, sealAccuracyBlock } from "../../util/run_outputs.ts"; import { contextCoverageBlock } from "../../util/context_pack.ts";
@@ -574,6 +575,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
       ...(strs(o.wall?.iteration_ids).length ? { wall_oracle: { cost_usd: ctx.cost.read(ctx.repoDir, strs(o.wall?.iteration_ids)).usd, duration_s: typeof o.wall?.duration_s === "number" ? o.wall.duration_s : null } } : {}), // CASCADE-V0: the oracle's own price and time, per run
       ...(cascadeV0On() ? { cascade: (() => { const c = ((o.implement?.attempts ?? {}) as Obj).cascade as Obj | undefined; return c ? { fired: true, from: str(c.from) ?? null, to: str(c.to) ?? null } : { fired: false }; })() } : {}), // CASCADE-V0: whether it escalated, from which model to which
       ...(!externalRun(o) && /^(explicit|default|provider)$/.test(process.env.LOKI_SESSION_MODEL_SOURCE ?? "") ? { model_source: process.env.LOKI_SESSION_MODEL_SOURCE as "explicit" | "default" | "provider" } : {}), // acc-156: who chose the model (explicit flag or env, Loki's default, or the CLI's own default)
+      ...(!externalRun(o) ? roleModelsReceiptBlock() : {}), // ROLE-MODELS: { models_by_role } only when a role is set (util/claude_model.ts), so a run with no role keeps its receipt bytes
       ...(externalRun(o) ? { implement: { exit: "external" as const, patch_sha256: str(o.implement?.patch_sha256) ?? "" } } : {}),
       resumed: o.intake?.resumed === true,
       events_sha256: sha256(existsSync(eventsPath) ? readFileSync(eventsPath) : ""),

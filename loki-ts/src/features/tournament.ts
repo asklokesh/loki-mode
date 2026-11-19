@@ -11,6 +11,7 @@
 //   - Incumbent-safe selection: the agent's check-passing tree is displaced only by a challenger that regresses no spec case the
 //     agent passes, wins at least `margin` anchored (or margin + 1) consistent verdicts and loses none.
 //   - Calls go through sdk_invoker toolLessCall (no tools, thinking off, priced into the run ledger and the dollar cap).
+import { noteRoleModel, roleModel } from "../util/claude_model.ts";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { plainTestEnv, spawnGroupSync, stripAnsi } from "../util/check_result.ts";
@@ -531,8 +532,10 @@ const extractGoBlock = (text: string): string | null => /```go[^\n]*\n([\s\S]*?)
 export function toolLessLlm(model = tournamentModel(), env: NodeJS.ProcessEnv = process.env): LlmCall {
   return async (system, user, tag) => {
     const lokiDir = env.LOKI_DIR, maxTokens = tag === "judge" ? 2048 : 8192;
-    const r = await toolLessCall({ model, system, prompt: user, maxTokens, thinking: "off", timeoutMs: 180_000, ...(lokiDir ? { ledger: { lokiDir, phase: `tournament-${tag}` } } : {}) });
-    return { text: r.outcome.kind === "ok" ? r.outcome.value : "", usage: { costUsd: r.usd ?? 0 }, outcome: r.outcome.kind };
+    const use = env.LOKI_E10_TOURNAMENT_MODEL ? model : roleModel(tag === "judge" ? "review" : "dev", env) ?? model; // ROLE-MODELS: the judge on the review role, the candidates and probes on the dev role, unless LOKI_E10_TOURNAMENT_MODEL names one model for all
+    noteRoleModel(tag === "judge" ? "review" : "dev", use);
+    const r = await toolLessCall({ model: use, system, prompt: user, maxTokens, thinking: "off", timeoutMs: 180_000, ...(lokiDir ? { ledger: { lokiDir, phase: `tournament-${tag}` } } : {}) });
+    return { text: r.outcome.kind === "ok" ? r.outcome.value : "", usage: { costUsd: r.usd ?? 0 }, outcome: r.outcome.kind === "unsupported" ? `unsupported: ${r.outcome.reason}` : r.outcome.kind };
   };
 }
 

@@ -1,7 +1,7 @@
 // E-17: Fix rounds (ENGINE.md 4, 16). One fix round is one provider session: the fixed rules, the task, the failing tests with their first error lines and the diff of the files the run changed (no plan, repo map or file list, so the session does not reread the repo). The machine loops [Fix -> Fast verify], calling this stage
 // again after each failure; MAX_FIX_ROUNDS caps rounds itself (a 3rd call is a no-op stage.skipped, moving to Seal/PARTIAL). Depends on session.ts/verify.ts only through types.ts shapes.
 import { withStagePrefix } from "../../features/lean_prefix.ts"; import { FINISH_LINE, fixedRules } from "../../e10ext/context.ts";
-import { routedFix, routerActive } from "../../runner/router/unit_model.ts";
+import { routedFix, routerActive } from "../../runner/router/unit_model.ts"; import { roleModel } from "../../util/claude_model.ts";
 import { cascadeDowngrade, escalationModel } from "../sizing.ts";
 import { MAX_FIX_ROUNDS, type RunContext, type Stage, type StageResult, taskBlock } from "../types.ts";
 import { environmentShaped, type FailureGroup } from "../failures.ts";
@@ -29,6 +29,15 @@ export function buildFixBrief(task: string, groups: FailureGroup[], diff: string
   ].join("\n\n"));
 }
 
+/** The fix round's model pick. ROLE-MODELS: escalate= (LOKI_ROLE_ESCALATE) names the repeated-failure model; a dev pin alone never escalates, never
+ *  downgrades and never climbs (rolePin). No role set: exactly the pre-role rule (escalationModel on a repeat, the opt-in cascade downgrade otherwise). */
+export function fixRoundModel(runModel: string, repeated: boolean, routed: boolean, testFailures: number, env: NodeJS.ProcessEnv = process.env): { devPin?: string; escPin?: string; rolePin?: string; downgrade: ReturnType<typeof cascadeDowngrade>; pinnedModel?: string } {
+  const devPin = roleModel("dev", env), escPin = repeated ? roleModel("escalate", env) : undefined, rolePin = escPin ?? devPin;
+  const downgrade = routed || rolePin ? null : cascadeDowngrade(runModel, env); // the router replaces the opt-in downgrade list
+  const pinnedModel = rolePin ? rolePin : repeated ? escalationModel(runModel) : downgrade && testFailures === 0 ? downgrade.to : undefined;
+  return { ...(devPin ? { devPin } : {}), ...(escPin ? { escPin } : {}), ...(rolePin ? { rolePin } : {}), downgrade, ...(pinnedModel ? { pinnedModel } : {}) };
+}
+
 export const fixStage: Stage = {
   name: "fix",
   targetS: 90,
@@ -52,16 +61,15 @@ export const fixStage: Stage = {
     const testFailures = groups.filter(isTestFailure);
     const signatures = groups.filter((g) => !g.carried).map((g) => g.signature).sort().join("|"); // L025: a carried (not rerun) failure never makes a round look repeated
     const repeated = testFailures.length > 0 && prior.fix?.signatures === signatures;
-    const downgrade = routed ? null : cascadeDowngrade(ctx.model); // the router replaces the opt-in downgrade list
+    const { devPin, escPin, rolePin, downgrade, pinnedModel } = fixRoundModel(ctx.model, repeated, routed, testFailures.length);
     const reason = testFailures.map((g) => g.signature).join(", ");
-    const pinnedModel = repeated ? escalationModel(ctx.model) : downgrade && testFailures.length === 0 ? downgrade.to : undefined;
-    const { pin: routedPin, climbed } = routed ? routedFix(ctx.model, prior, { repeated, stall: prior.fix?.stall_pending === true, groups, reason }) : { pin: undefined, climbed: null };
+    const { pin: routedPin, climbed } = routed && !rolePin ? routedFix(ctx.model, prior, { repeated, stall: prior.fix?.stall_pending === true, groups, reason }) : { pin: undefined, climbed: null };
     const actualModel = routedPin ?? pinnedModel ?? ctx.model;
     if (downgrade && pinnedModel === downgrade.to) process.stderr.write(`${downgrade.note}\n`);
     if (climbed) ctx.emit("route.escalated", "fix", { ...climbed });
     const prevDiag = (prior.fix?.diagnosis as string | undefined) ?? null; const chain = { sessionId: (prior.fix?.session_id ?? prior.implement?.session_id ?? null) as string | null, model: (prior.fix?.model ?? prior.implement?.model ?? ctx.model) as string };
     const effort = hooks.effort?.fix(round, testFailures.length > 0, { model: actualModel, envOnly: environmentShaped(groups.filter((g) => !g.carried)) });
-    const sessionBase = { stage: "fix" as const, tier: "development" as const, limitS: fixStage.limitS, signal, cwd: ctx.repoDir, ...suiteCmdsOpt(ctx.repoDir, prior.intake?.testmap), ...(effort ? { effort } : {}), ...(pinnedModel ? { model: pinnedModel } : {}), ...(routedPin ? { model: routedPin } : {}) };
+    const sessionBase = { stage: "fix" as const, tier: "development" as const, limitS: fixStage.limitS, signal, cwd: ctx.repoDir, ...suiteCmdsOpt(ctx.repoDir, prior.intake?.testmap), ...(effort ? { effort } : {}), ...(pinnedModel ? { model: pinnedModel } : {}), ...(routedPin ? { model: routedPin } : {}), ...(escPin ? { role: "escalate" as const } : {}) };
     const hints = siteHints(ctx); // LOKI_E10_SITE_HINTS, advisory
     // LOKI_E10_OPUS_CONSULT: a round after a never-stop fix conflict (machine.ts kept going instead of BLOCKED) gets the never-stop brief; a red verify after the first round gets the one consult (trigger stop or red-verify)
     const priorConflict = typeof prior.fix?.spec_conflict_reason === "string" && prior.fix?.exit === "spec_conflict" && neverStopActive() ? prior.fix.spec_conflict_reason : null;
@@ -76,9 +84,9 @@ export const fixStage: Stage = {
       round,
       groups: groups.map((g) => ({ signature: g.signature, count: g.count, sample: g.sample })),
       model: actualModel,
-      escalated: repeated || climbed !== null, fix_resume: r.mode, cache_read_tokens: r.cacheRead,
+      escalated: (repeated && (!devPin || !!escPin)) || climbed !== null, // ROLE-MODELS: a dev pin with no escalate= stays on the pin, so a repeated round is not an escalation fix_resume: r.mode, cache_read_tokens: r.cacheRead,
       ...(downgrade && pinnedModel === downgrade.to ? { model_downgrade: downgrade.note } : {}),
-      ...(repeated ? { escalation_reason: reason, escalation_model: actualModel } : {}),
+      ...(repeated && (!devPin || escPin) ? { escalation_reason: reason, escalation_model: actualModel } : {}),
     });
 
     const capStop = capStopOf(r.session.summary), capNote = capStop ? `fix round ${round} stopped by the harness (${capStop}): the failures it was fed are NOT PROVEN fixed` : null; // E5: a runaway or no-edit fix session is a harness stop, never a believed fix
