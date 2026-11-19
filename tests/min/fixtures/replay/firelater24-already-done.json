@@ -1,0 +1,25 @@
+{
+ "_source": "FireLater#24 on loki-mode 11.162.0, run e10-20261119T171256Z-7414 (2026-11-19): stage.completed data of intake, implement, verify and commit, trimmed to the keys seal reads here; the run sealed PARTIAL",
+ "intake": {
+  "already_satisfied": false,
+  "base_sha": "ff60789246c194fe3dc60765665a90335274372b"
+ },
+ "implement": {
+  "exit": "already_done",
+  "already_done_evidence": "backend/src/services/search.ts:200 (ts_rank_cd weighted ranking, verified by the title-vs-description ranking check), backend/src/migrations/037_advanced_search.ts (GIN indexes, search_history, saved_searches), backend/src/lib/search/filters.ts:55 (nested AND/OR filters), backend/src/services/search.ts:636,443,734 (templates, history, analytics)The described behaviour already holds, so I made no r"
+ },
+ "verify": {
+  "already_satisfied": true,
+  "checks": [],
+  "flaky": [],
+  "failures_grouped": [],
+  "changed_files": [],
+  "duration_s": 0.178
+ },
+ "commit": {
+  "committed": false,
+  "discarded": 0,
+  "duration_s": 0.088
+ },
+ "sealed_verdict": "PARTIAL"
+}

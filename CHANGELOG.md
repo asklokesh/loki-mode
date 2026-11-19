@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- A run that finds the work already done now seals ALREADY_SATISFIED when Loki's own re-run of the session's kept proof script passes on the unchanged tree (exit 0, at least one line proved, none failed). Before, verify ran no check on that path and the label could only be PARTIAL "no tests to run" (FireLater#24 on 11.162.0). With no passing re-run the run stays PARTIAL and the receipt says why ("already done claimed; Loki's own re-run of the kept proof script did not show it"). The session's word alone never labels a run ALREADY_SATISFIED.
 
 ## v11.166.0 (2026-11-20)
 

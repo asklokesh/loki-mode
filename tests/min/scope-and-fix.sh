@@ -245,6 +245,9 @@
 # 115. exec_spec.ts isBinding: drop the one-example rule (any unit per literal) (exec spec atoms read bind=100001).
 # 116. exec_spec.ts isBinding: drop the caseLiterals check, want literals only (exec spec atoms read bind=110001 or more).
 # 117. seal.ts: drop specGap from verdictOf (the second-site leg reads VERIFIED).
+# ADSa. seal.ts alreadyDoneShown: drop `run.exit === 0 &&` (the failing re-run cell reads ALREADY_SATISFIED).
+# ADSb. seal.ts alreadyDoneShown: `run.proved > 99` in place of `run.proved > 0` (a passing re-run no longer shows it: the ALREADY_SATISFIED replay cell fails).
+# ADSc. seal.ts: drop `alreadyOk || ` from proof (the wiring cell fails).
 # 119. exec_spec.ts capSites: return every uncovered site (the passing-mention leg reads PARTIAL).
 # 120. seal.ts specSiteGap: ignore the changed-symbol list (exec spec atoms read gap=Report,Report,-).
 # 124. exec_spec.ts defectSites: count every span of a clause with a defect word again (the comparison, negated-scope and see legs read PARTIAL).
@@ -1029,7 +1032,7 @@ import { classifyRunnerOutput } from "$ROOT/loki-ts/src/runner/runner_errors.ts"
 import { buildFixResumeBrief, runFixSession } from "$ROOT/loki-ts/src/runner/session_resume.ts";
 import { rememberSessionEffort, sessionEffortFor } from "$ROOT/loki-ts/src/engine10/session.ts";
 import { quickSplit } from "$ROOT/loki-ts/src/e10ext/select.ts";
-import { verdictOf } from "$ROOT/loki-ts/src/engine10/stages/seal.ts";
+import { verdictOf, alreadyDoneClaimed, alreadyDoneShown, alreadyDoneNotShownNote } from "$ROOT/loki-ts/src/engine10/stages/seal.ts";
 import { buildImplementBrief } from "$ROOT/loki-ts/src/engine10/stages/implement.ts";
 import { consumeSdkStream, isSuiteRun } from "$ROOT/loki-ts/src/runner/sdk_stream_parser.ts";
 const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
@@ -1073,6 +1076,17 @@ const sp = quickSplit([t("wall.test.ts"), t("a.test.ts"), t("b.test.ts"), t("c.t
 res("L025 quick selection: blocking, Wall and impacted-since tests first, the rest after", sp.first.map((x) => x.path).join() === "wall.test.ts,b.test.ts,c.test.ts" && sp.rest.map((x) => x.path).join() === "a.test.ts");
 const pass = [{ name: "bun:a.test.ts", cmd: "bun test a.test.ts", result: "pass", duration_s: 0 }] as never;
 res("L025 a run whose last verify was quick-only never seals VERIFIED", verdictOf({ implement: { exit: "done" } }, pass, false, true, false, true) !== "VERIFIED" && verdictOf({ implement: { exit: "done" } }, pass, false, false, false, true) === "VERIFIED");
+// ALREADY-DONE-SHOWN replay: the stored stage outputs of FireLater#24 on 11.162.0 (implement already_done, verify already_satisfied with 0 checks, nothing
+// committed), which sealed PARTIAL "no tests to run". With Loki's own passing re-run of the kept proof script it seals ALREADY_SATISFIED; with no re-run, a
+// failing one, one that proved nothing or a refused one it stays PARTIAL with the specific line; a failed commit or a verify that did not agree is no claim.
+const fl24 = JSON.parse(readFileSync("$ROOT/tests/min/fixtures/replay/firelater24-already-done.json", "utf8")), so = { intake: fl24.intake, implement: fl24.implement, verify: fl24.verify, commit: fl24.commit } as never;
+const asv = (run: never) => verdictOf(so, [], true, false, false, alreadyDoneShown(so, run));
+res("ADS replay FireLater#24: a passing Loki re-run on the unchanged tree seals ALREADY_SATISFIED (the run itself sealed " + fl24.sealed_verdict + ")", alreadyDoneClaimed(so) && asv({ exit: 0, proved: 23, failed: 0 } as never) === "ALREADY_SATISFIED");
+res("ADS replay FireLater#24: no re-run, a failing one, one that exited non-zero after some passes, one that proved nothing, or a refused one stays PARTIAL", ([null, { exit: 1, proved: 20, failed: 3 }, { exit: 2, proved: 5, failed: 0 }, { exit: 0, proved: 0, failed: 0 }, { refused: "network", exit: null, proved: 0, failed: 0 }] as never[]).every((r) => asv(r) === "PARTIAL"));
+res("ADS note: the held run says why", alreadyDoneNotShownNote(null).includes("no proof script was kept") && alreadyDoneNotShownNote({ exit: 1, proved: 20, failed: 3 }).includes("exit 1, 20 proved, 3 failed") && alreadyDoneNotShownNote({ refused: "x", exit: null, proved: 0, failed: 0 }).includes("not run: x"));
+res("ADS claim: a failed commit or a verify that did not agree is not an already-done claim", !alreadyDoneClaimed({ ...fl24, commit: { failed: true } } as never) && !alreadyDoneClaimed({ ...fl24, verify: { already_satisfied: false } } as never) && alreadyDoneClaimed({ intake: { already_satisfied: true }, implement: { exit: "done" }, verify: { already_satisfied: true }, commit: {} } as never));
+const sealSrc = readFileSync("$ROOT/loki-ts/src/engine10/stages/seal.ts", "utf8");
+res("ADS wiring: seal re-runs the proof on the unchanged tree, counts it as proof, reuses it for the issue lines and names a held run", sealSrc.includes('const alreadyRun = alreadyDoneClaimed(o) && (!diffOk || diff.stdout === "") ? await rerunProof(ctx.repoDir, ctx.runDir, signal) : null, alreadyOk = alreadyDoneShown(o, alreadyRun);') && sealSrc.includes("proof = alreadyOk || (!strictProof") && sealSrc.includes("const proofRun = alreadyRun ?? (") && sealSrc.includes("notProven.add(alreadyDoneNotShownNote(alreadyRun))"));
 
 res("L026 brief: no invitation to run the full suite", !FIXED_RULES.includes("including the package's full suite") && FIXED_RULES.includes("not the package's full suite") && FIXED_RULES.includes("medium or high"));
 const nb = buildImplementBrief("task", null, []);
