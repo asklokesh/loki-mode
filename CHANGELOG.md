@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Also in this release: two test checks updated to the 11.162.0 behaviour (continues end on no progress; the self-review resume has no default turn cap). Both were not run before 11.162.0 shipped; the full hermetic gate now runs before every release.
 
-Not run before this release: the three real-toolchain legs of tests/min/stacks.sh (Maven, Gradle, .NET), whose tools are not installed on the release machine; this change does not touch those stacks. Every other leg of the 33 hermetic files ran, including the 18 real-vitest legs.
+Not run before this release: the three real-toolchain legs of tests/min/stacks.sh (Maven, Gradle, .NET), whose tools are not installed on the release machine; this change does not touch those stacks. Every other leg of the 31 files the local gate runs (all tests/min files but scratch-real-services) ran, including the 18 real-vitest legs.
 
 ## v11.162.0 (2026-11-19)
 
