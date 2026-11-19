@@ -169,10 +169,10 @@ export function selectClaudeInvokerKind(
 // sonnet for every tier (v7.104.0), except fast -> haiku under LOKI_ALLOW_HAIKU.
 // An explicit per-tier pin beats the haiku gate, as it does on bash.
 export function claudeTierToModel(tier: SessionTier): string {
-  // fable unavailable, collapse to opus. Claude Fable 5 is not available at the
-  // Claude API ("use Opus 4.8"). Per-tier pins do not apply, matching the bash
-  // resolver's `fable) model="opus"` arm (v7.39.1).
-  if (tier === "fable") return "opus";
+  // Fable runs as fable (2026-11-19: claude -p --model fable and claude-fable-5-2 both answer, modelUsage claude-fable-5-2), so the engine10
+  // sessions no longer collapse it to opus. Per-tier pins do not apply. The legacy bash resolver (providers/claude.sh) still maps fable to opus;
+  // the raw /v1/messages route (tool-less calls with an API key) is not yet verified for fable, and the start line and receipt say so.
+  if (tier === "fable") return "fable";
   // EXACT "true" to mirror bash (claude.sh:294, claude-flags.sh:104) and the
   // Bun fallbackForPrimary (claude_flags.ts:101). LOKI_ALLOW_HAIKU=1 must NOT
   // enable haiku on either route (v7.41.4 parity fix).
@@ -312,6 +312,7 @@ function applyMaxTierCeiling(tier: SessionTier, model: string): string {
       }
       return model;
     case "opus":
+      return /fable/i.test(model) ? "opus" : model; // the ceiling clamps the choice (docs/environment-variables.md); fable ranks above opus
     default:
       return model;
   }
@@ -1087,12 +1088,12 @@ export function sdkQueryProvider(): ProviderInvoker {
 export const PROVIDER_COMMIT_HYGIENE =
   "Commit hygiene still applies: git checkpoints are LOCAL only. Never push or force-push. Stage files by explicit path, never `git add -A` or `git add .`, and never commit secrets, credentials, .env files, or untracked files you did not author this session.";
 
-/** The model a LOKI_SESSION_MODEL pin names for a claude run (undefined when unset). Throws on an unrecognized value (never the provider default). opus|sonnet|haiku are themselves, fable collapses to opus as the bash resolver does, and a tier
+/** The model a LOKI_SESSION_MODEL pin names for a claude run (undefined when unset). Throws on an unrecognized value (never the provider default). opus|sonnet|haiku|fable are themselves (engine10 runs fable as fable; the legacy bash resolver still maps it to opus), and a tier
  *  name takes that tier's configured model. An explicit haiku pin is honored without LOKI_ALLOW_HAIKU: the user asked for it; bash would dispatch sonnet there. */
 export function sessionPinModel(e: NodeJS.ProcessEnv = process.env): string | undefined {
   const pin = canonicalSessionPin(e["LOKI_SESSION_MODEL"]);
   if (!pin) return undefined;
-  if (pin === "fable") return "opus";
+  if (pin === "fable") return "fable";
   if (pin === "planning" || pin === "development" || pin === "fast") return explicitSetupModel(pin, e) ?? claudeTierToModel(pin);
   return pin;
 }

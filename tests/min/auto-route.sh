@@ -190,7 +190,7 @@ out.push(`line=${roleStartLine({ LOKI_ROLE_PLAN: "opus", LOKI_ROLE_DEV: "haiku" 
 out.push(`route=${roleModel("plan", { LOKI_ROLE_PLAN: "opus", LOKI_MODEL_ROUTE: "openrouter/x/y" }, "claude") ?? "inert"}`);
 const refuse = (e) => { try { roleSettings(e); return "accepted"; } catch (x) { return "refused"; } };
 out.push(`refuse=${[{ LOKI_MODELS: "chef=opus" }, { LOKI_MODELS: "plan" }, { LOKI_ROLE_TEST: "so net" }, { LOKI_ROLE_PLAN: "fable" }, { LOKI_ROLE_TEST: "gpt-5" }].map(refuse).join(",")}`);
-out.push(`ceil=${roleConflictError({ LOKI_MAX_TIER: "sonnet", LOKI_ROLE_PLAN: "opus" }, "claude") !== null}:${roleConflictError({ LOKI_MAX_TIER: "sonnet", LOKI_ROLE_PLAN: "haiku" }, "claude")}:${roleConflictError({ LOKI_ROLE_PLAN: "opus" }, "claude")}:${roleConflictError({ LOKI_MAX_TIER: "opus", LOKI_ROLE_DEV: "claude-fable-5-2" }, "claude")}`, `routeconf=${roleConflictError({ LOKI_MODEL_ROUTE: "openrouter/x/y", LOKI_ROLE_PLAN: "opus" }, "claude") !== null}:${roleConflictError({ LOKI_MODEL_ROUTE: "openrouter/x/y" }, "claude")}`);
+out.push(`ceil=${roleConflictError({ LOKI_MAX_TIER: "sonnet", LOKI_ROLE_PLAN: "opus" }, "claude") !== null}:${roleConflictError({ LOKI_MAX_TIER: "sonnet", LOKI_ROLE_PLAN: "haiku" }, "claude")}:${roleConflictError({ LOKI_ROLE_PLAN: "opus" }, "claude")}:${roleConflictError({ LOKI_MAX_TIER: "opus", LOKI_ROLE_DEV: "claude-fable-5-2" }, "claude") !== null}:${roleConflictError({ LOKI_MAX_TIER: "fable", LOKI_ROLE_DEV: "fable" }, "claude")}`, `routeconf=${roleConflictError({ LOKI_MODEL_ROUTE: "openrouter/x/y", LOKI_ROLE_PLAN: "opus" }, "claude") !== null}:${roleConflictError({ LOKI_MODEL_ROUTE: "openrouter/x/y" }, "claude")}`);
 out.push(`stages=${["plan", "wall", "prove", "intake", "implement", "fix"].map(stageRole).join(",")}`);
 process.env.LOKI_E10_RUN_PROVIDER = "opencode"; process.env.LOKI_ROLE_REVIEW = "openai/gpt-5"; const oc = await toolLessCall({ model: "openai/gpt-5", prompt: "x", maxTokens: 10, thinking: "off" }); delete process.env.LOKI_E10_RUN_PROVIDER; delete process.env.LOKI_ROLE_REVIEW; // the role names the model, so no request is sent
 out.push(`oc=${oc.outcome.kind}`, `skipped=${JSON.stringify(roleModelsReceiptBlock({}).tool_calls_skipped)}`);
@@ -201,7 +201,7 @@ const fx = (env, rep) => fam(fixRoundModel("claude (provider default)", rep, fal
 out.push(`fix=${fx({}, true)},${fx({}, false)},${fx({ LOKI_ROLE_DEV: "haiku" }, true)},${fx({ LOKI_ROLE_DEV: "haiku", LOKI_ROLE_ESCALATE: "opus" }, true)},${fx({ LOKI_ROLE_DEV: "haiku", LOKI_ROLE_ESCALATE: "opus" }, false)},${fx({ LOKI_ROLE_ESCALATE: "sonnet" }, true)}`);
 console.log(out.join(" "));
 ' 2>&1)"
-RWANT='none=claude-sonnet-5-5,claude-sonnet-5-5,claude-opus-5-5,claude-sonnet-5-5,haiku,claude-sonnet-5-5,opus|{}|true|{} set=sonnet,sonnet,sonnet,sonnet,sonnet,sonnet,sonnet|dev=sonnet|plan=opus narrow=claude-opus-5-5:haiku line=models: plan opus, dev haiku, test auto, review auto, advisor auto, helper auto, escalate none route=inert refuse=refused,refused,refused,refused,accepted ceil=true:null:null:null routeconf=true:null stages=plan,test,test,helper,dev,dev oc=unsupported skipped=[{"call":"toolless","reason":"openai/gpt-5 is not a Claude model and this call runs on the Anthropic API only (opencode run)"}] start=opus:dev=haiku,escalate=opus:opts:2 fix=opus,run,haiku,opus,haiku,sonnet'
+RWANT='none=claude-sonnet-5-5,claude-sonnet-5-5,claude-opus-5-5,claude-sonnet-5-5,haiku,claude-sonnet-5-5,opus|{}|true|{} set=sonnet,sonnet,sonnet,sonnet,sonnet,sonnet,sonnet|dev=sonnet|plan=opus narrow=claude-opus-5-5:haiku line=models: plan opus, dev haiku, test auto, review auto, advisor auto, helper auto, escalate none route=inert refuse=refused,refused,refused,accepted,accepted ceil=true:null:null:true:null routeconf=true:null stages=plan,test,test,helper,dev,dev oc=unsupported skipped=[{"call":"toolless","reason":"openai/gpt-5 is not a Claude model and this call runs on the Anthropic API only (opencode run)"}] start=opus:dev=haiku,escalate=opus:opts:2 fix=opus,run,haiku,opus,haiku,sonnet'
 [ "$RU" = "$RWANT" ] && ok "role unit: no role keeps every per-call default; a role moves its calls; older per-call vars win; LOKI_ROLE_<R> beats LOKI_MODELS; inert under a route; bad values refused; a role above LOKI_MAX_TIER or under LOKI_MODEL_ROUTE refused; opencode non-Claude tool-less call skipped and its reason recorded for the receipt; start flags export; fix escalates to opus only with no dev pin, to escalate= when set, never under a bare dev pin" \
     || { bad "role unit gave: $RU"; printf '    want: %s\n' "$RWANT"; }
 RW="$(cd "$ROOT/loki-ts" && env -u LOKI_MODELS -u LOKI_ROLE_PLAN -u LOKI_ROLE_DEV -u LOKI_ROLE_ESCALATE -u LOKI_ROUTER -u LOKI_SESSION_MODEL -u LOKI_MODEL_OVERRIDE -u LOKI_MODEL_DEVELOPMENT -u LOKI_ALLOW_HAIKU bun -e '
@@ -224,11 +224,19 @@ dry() { (cd "$T/dry" && env -u LOKI_PROVIDER -u LOKI_MODELS -u LOKI_ROLE_DEV -u 
 DT=""; for v in sonet opsu claude-sonet-5-5 gpt-5; do o="$(dry --dev-model "$v")"; case "$o" in *"role dev: unknown model '$v'"*"nearest: "*rc=2) DT="$DT $v:2" ;; *) DT="$DT $v:${o##*rc=}" ;; esac; done
 [ "$DT" = " sonet:2 opsu:2 claude-sonet-5-5:2 gpt-5:2" ] && ok "role typos: sonet, opsu, claude-sonet-5-5 and gpt-5 exit 2 at the dry-run preflight, naming the role, the value and the nearest known id" || bad "role typos gave:$DT"
 o="$(dry --dev-model claude-sonet-5-5)"; has "role typos: claude-sonet-5-5 names claude-sonnet-5-5 as the nearest id" "$o" "nearest: claude-sonnet-5-5"
-DV=""; for v in claude-opus-5-5 claude-sonnet-5-5 claude-haiku-5-5 claude-fable-5-1 haiku; do o="$(dry --dev-model "$v")"; DV="$DV $v:${o##*rc=}"; done
-[ "$DV" = " claude-opus-5-5:0 claude-sonnet-5-5:0 claude-haiku-5-5:0 claude-fable-5-1:0 haiku:0" ] && ok "role ids: catalog ids (claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5, claude-fable-5-1) and the aliases pass the dry-run" || bad "role ids gave:$DV"
+DV=""; for v in claude-opus-5-5 claude-sonnet-5-5 claude-haiku-5-5 claude-fable-5-2 claude-fable-5-1 haiku fable; do o="$(dry --dev-model "$v")"; DV="$DV $v:${o##*rc=}"; done
+[ "$DV" = " claude-opus-5-5:0 claude-sonnet-5-5:0 claude-haiku-5-5:0 claude-fable-5-2:0 claude-fable-5-1:0 haiku:0 fable:0" ] && ok "role ids: catalog ids (claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5, claude-fable-5-2, claude-fable-5-1) and the aliases, fable included, pass the dry-run" || bad "role ids gave:$DV"
 o="$(dry --plan-model opus --dev-model haiku)"; has "dry-run: prints the same models line as the real start" "$o" "models: plan opus, dev haiku, test auto, review auto, advisor auto, helper auto, escalate none"
 o="$(dry --dev-model openrouter/a/b)"; has "role ids: a route id on the claude provider exits 2 (a route covers the whole run)" "$o" "'openrouter/a/b' is a route"
 o="$(dry --provider opencode --dev-model openrouter/deepseek/deepseek-v3.2)"; case "$o" in *"models: plan auto, dev openrouter/deepseek/deepseek-v3.2"*"opencode checks the ids"*rc=0) ok "role ids on opencode: passed through as given, and the models line says opencode checks them" ;; *) bad "role ids on opencode gave: $(printf '%s' "$o" | tail -4 | tr '\n' '|')" ;; esac
+RF="$(cd "$ROOT/loki-ts" && env -u ANTHROPIC_API_KEY bun -e '
+import { toolLessCall, __setSdkClientForTests, __setTokenCounterForTests } from "./src/runner/sdk_invoker.ts";
+__setTokenCounterForTests(async () => 10); const seen = [];
+__setSdkClientForTests({ messages: { create: async (b) => { seen.push(b.model); return /fable/.test(b.model) ? { stop_reason: "refusal", content: [], usage: { input_tokens: 1, output_tokens: 0 }, model: b.model, stop_details: { category: "cyber" } } : { stop_reason: "end_turn", content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 }, model: b.model }; } } });
+const r = await toolLessCall({ model: "claude-fable-5-2", prompt: "x", maxTokens: 50, thinking: "off" });
+console.log(`${r.outcome.kind}:${r.outcome.category} ${seen.join(",")}`);' 2>&1)"
+[ "$RF" = "loki: claude-fable-5-2 on the raw API: refused (cyber) (not retried on another model)
+refused:cyber claude-fable-5-2" ] && ok "fable raw API: a refused Fable call is reported with the API's reason on stderr and never re-run (no server-side fallback to another model)" || bad "fable raw API gave: $RF"
 RT="$(env -u LOKI_ENGINE bash -c '. "$1/providers/loader.sh"; . "$1/autonomy/route.sh"; loki_route_dispatch start "add multiply" --plan-model opus --models dev=haiku --no-pr 2>/dev/null; printf "%s|%s|%s|%s" "$R_ENGINE" "${R_ROLE_ENV[*]}" "${R_E10_ARGS[*]}" "$R_ERR"; loki_route_dispatch start "add multiply" --dev-model haiku --engine legacy 2>/dev/null; printf " legacy=%s" "${R_ERR:0:40}"' _ "$ROOT" 2>&1)"
 [ "$RT" = "engine10|LOKI_ROLE_PLAN=opus LOKI_MODELS=dev=haiku|add multiply --no-pr| legacy=loki: per-role model flags (--plan-model" ] \
     && ok "route.sh: role flags stay on engine10 as LOKI_ROLE_<R>/LOKI_MODELS (their values are never a task word); the legacy engine refuses them" || bad "route.sh role flags gave: $RT"
@@ -353,7 +361,7 @@ auth="$(awk '$1 == "wall" && $2 !~ /-wa$/ { sub(/^model=/, "", $3); print $3 }' 
 
 # --- ROLE-MODELS e2e: what the stub provider receives per session (--model on its argv, advisorModel in --settings) --------------
 norm() { sed -E 's/e10-[0-9TZ]+-[0-9a-f]+//' "$ROUTES"; }
-head3() { printf '%s\n' "$OUT" | head -3 | sed -E 's/e10-[0-9TZ]+-[0-9a-f]+//g'; }
+head3() { printf '%s\n' "$OUT" | sed -n '1,3p' | sed -E 's/e10-[0-9TZ]+-[0-9a-f]+//g'; } # sed -n reads all input: no early-exit reader under pipefail
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit LOKI_ROUTER= LOKI_E10_PLAN=1 LOKI_E10_WALL=1
 R0="$(norm)"; H0="$(head3)"; rcpt_none() { python3 -I -c 'import json,sys; print("absent" if "models_by_role" not in json.load(open(sys.argv[1])) else "present")' "$RUNDIR/receipt.json" 2>/dev/null; }
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit LOKI_ROUTER= LOKI_E10_PLAN=1 LOKI_E10_WALL=1 LOKI_MODELS= LOKI_ROLE_PLAN= LOKI_ROLE_DEV= LOKI_ROLE_TEST= LOKI_ROLE_REVIEW= LOKI_ROLE_ADVISOR= LOKI_ROLE_HELPER= LOKI_ROLE_ESCALATE=
@@ -387,9 +395,18 @@ EXTRA_ARGS=(--dev-model haiku); run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_
     && ok "roles dev pin: the run record names no climb and the fix round's recorded model is the pin" || { bad "roles dev pin: events.jsonl records a climb or another fix model"; grep -E '"route.escalated"|"fix.round"' "$RUNDIR/events.jsonl" 2>/dev/null | cut -c1-200 | sed 's/^/    | /'; }
 EXTRA_ARGS=(--advisor-model sonnet); run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit; EXTRA_ARGS=()
 [ "$(adv_of fix)" = "sonnet" ] && [ "$(model_of fix)" = "sonnet" ] && ok "roles advisor: the router advisor attached to the fix round is the advisor role (sonnet), the ladder is unchanged" || { bad "roles advisor: fix '$(model_of fix)' advisor '$(adv_of fix)'"; dump; }
-EXTRA_ARGS=(--dev-model claude-fable-5-1 --plan-model claude-opus-5-5); run_engine "$TASK" E2E_STUB_MODE=done LOKI_ROUTER= LOKI_E10_PLAN=1 LOKI_MAX_TIER=opus; EXTRA_ARGS=()
+EXTRA_ARGS=(--dev-model claude-fable-5-2 --plan-model claude-opus-5-5); run_engine "$TASK" E2E_STUB_MODE=done LOKI_ROUTER= LOKI_E10_PLAN=1 LOKI_MAX_TIER=fable; EXTRA_ARGS=()
 raw_of() { awk -v s="$1" '$1 == s && $2 !~ /-rv$/ { sub(/^model=/, "", $3); print $3 }' "$ROUTES" | tr '\n' ' ' | sed 's/ $//'; }
-[ "$(raw_of plan)" = "claude-opus-5-5" ] && [ "$(raw_of implement)" = "claude-fable-5-1" ] && ok "roles full id: a catalog model id a role names reaches the provider exactly (no alias rewrite, no tier clamp under LOKI_MAX_TIER=opus)" || { bad "roles full id: plan '$(raw_of plan)', implement '$(raw_of implement)'"; dump; }
+[ "$(raw_of plan)" = "claude-opus-5-5" ] && [ "$(raw_of implement)" = "claude-fable-5-2" ] && ok "roles full id: a catalog model id a role names reaches the provider exactly (no alias rewrite, no tier clamp under LOKI_MAX_TIER=fable)" || { bad "roles full id: plan '$(raw_of plan)', implement '$(raw_of implement)'"; dump; }
+# FABLE: --model fable and --session-model fable run fable on engine10 (the opus collapse was removed; the legacy bash engine keeps it).
+EXTRA_ARGS=(--model fable); START_VERB=start run_engine "$TASK" E2E_STUB_MODE=done LOKI_ROUTER= LOKI_E10_PLAN=1; EXTRA_ARGS=()
+[ "$(raw_of plan)" = "fable" ] && [ "$(raw_of implement)" = "fable" ] && ok "fable: loki start --model fable sends fable to the provider for plan and implement, never opus" || { bad "fable: plan '$(raw_of plan)', implement '$(raw_of implement)'"; dump; }
+run_engine "$TASK" E2E_STUB_MODE=done LOKI_ROUTER= LOKI_SESSION_MODEL=fable
+[ "$(raw_of implement)" = "fable" ] && ! grep -q 'model=[^ ]*opus' "$ROUTES" && ok "fable: LOKI_SESSION_MODEL=fable runs fable (no session on opus)" || { bad "fable: session pin gave implement '$(raw_of implement)'"; dump; }
+EXTRA_ARGS=(--dev-model fable); run_engine "$TASK" E2E_STUB_MODE=done LOKI_ROUTER= ANTHROPIC_API_KEY=sk-ant-fake-for-the-stub; EXTRA_ARGS=()
+has "fable: with an API key the start line says fable on the raw API is not verified" "$OUT" "fable on the raw API is not verified; a refused call is reported, never swapped for another model"
+[ "$(raw_of implement)" = "claude-fable-5-2" ] && [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r.get("fable_raw_api","").startswith("fable on the raw API is not verified") else 1)' "$RUNDIR/receipt.json" \
+    && ok "fable: the dev role runs claude-fable-5-2 and the receipt carries the raw-API note" || { bad "fable: implement '$(raw_of implement)' or no fable_raw_api in the receipt"; dump; }
 EXTRA_ARGS=(--plan-model opus); run_engine "$TASK" E2E_STUB_MODE=done LOKI_ROUTER= LOKI_E10_PLAN=1 LOKI_MODEL_ROUTE=openrouter/x/y; EXTRA_ARGS=()
 has "roles under a route: a Claude role with LOKI_MODEL_ROUTE exits before any session, naming the role" "$OUT" "role plan names opus, but LOKI_MODEL_ROUTE=openrouter/x/y serves every call of the run"
 [ ! -s "$ROUTES" ] && ok "roles under a route: no session started" || { bad "roles under a route: sessions ran"; dump; }
@@ -397,7 +414,7 @@ EXTRA_ARGS=(--dev-model "so net"); run_engine "$TASK" E2E_STUB_MODE=done LOKI_RO
 has "roles refused: a bad role value exits before any session" "$OUT" "engine10: bad model 'so net' for role dev"
 [ ! -s "$ROUTES" ] && ok "roles refused: no session started" || { bad "roles refused: sessions ran"; dump; }
 EXTRA_ARGS=(--dev-model sonet); run_engine "$TASK" E2E_STUB_MODE=done LOKI_ROUTER=; EXTRA_ARGS=()
-has "roles typo on a real run: --dev-model sonet exits before any session, naming the nearest id" "$OUT" "engine10: role dev: unknown model 'sonet' on the claude provider; use haiku, sonnet or opus, or a model id from the catalog (nearest: sonnet)"
+has "roles typo on a real run: --dev-model sonet exits before any session, naming the nearest id" "$OUT" "engine10: role dev: unknown model 'sonet' on the claude provider; use haiku, sonnet, opus or fable, or a model id from the catalog (nearest: sonnet)"
 [ ! -s "$ROUTES" ] && ok "roles typo on a real run: no session started" || { bad "roles typo on a real run: sessions ran"; dump; }
 
 finish

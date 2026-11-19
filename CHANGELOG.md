@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Pick the model per role on loki start, and --model fable now runs Fable
+
+- `loki start` takes `--plan-model`, `--dev-model`, `--test-model`, `--review-model`, `--advisor-model`, `--helper-model` and `--escalate-model`, or one line `--models plan=opus,dev=haiku,...` (also `LOKI_ROLE_<ROLE>` and `LOKI_MODELS`). A role you set is exact: never capped to `--model`, never downgraded or climbed, and a dev pin escalates only to `--escalate-model`. A role you do not set keeps Loki's choice, so a run with no role behaves as before. The start line and `--dry-run` name the model per role, and the receipt records `models_by_role`. A typo, a route id, a role above `LOKI_MAX_TIER`, or a Claude role under `LOKI_MODEL_ROUTE` exits 2 before any session, with the nearest known model id. `--advisor-model` picks the model only; it does not turn the advisor on. See docs/environment-variables.md, "A model per role".
+- Behaviour change: `--model fable`, `--session-model fable` and a `fable` role now run Fable (`claude-fable-5-2`, added to the model catalog as the current Fable) on `loki start`, instead of Opus. The legacy bash engine still maps fable to opus. Fable is confirmed on the Claude CLI and the Agent SDK sessions; on the raw API (tool-less calls with `ANTHROPIC_API_KEY`) it is not verified yet. The start line and the receipt say so, and a refused Fable call prints the API's reason and is never re-run on another model. `claude-fable-5-2` is priced by the fable row of the pricing table (the Fable 5.1 rate); its own rate is not verified.
 
 ## v11.163.0 (2026-11-19)
 

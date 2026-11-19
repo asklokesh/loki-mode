@@ -414,7 +414,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     if (ch.pin) process.env.LOKI_SESSION_MODEL = ch.pin;
     process.env.LOKI_SESSION_MODEL_SOURCE = ch.source; modelWhy = ch.why;
   }
-  let roleLine = ""; try { const cm = await import("../util/claude_model.ts"); cm.roleSettings(process.env); const ce = cm.roleValueError(process.env, provider) ?? cm.roleConflictError(process.env, provider); if (ce) throw new Error(ce); roleLine = cm.roleStartLine(process.env, provider); } catch (err) { process.stderr.write(`engine10: ${err instanceof Error ? err.message : String(err)}\n`); return 2; } // ROLE-MODELS: a bad role value is refused before any call, never dropped
+  let roleLine = ""; try { const cm = await import("../util/claude_model.ts"); cm.roleSettings(process.env); const ce = cm.roleValueError(process.env, provider) ?? cm.roleConflictError(process.env, provider); if (ce) throw new Error(ce); roleLine = [cm.roleStartLine(process.env, provider), provider === "claude" ? cm.fableRawApiNote(process.env) : ""].filter(Boolean).join("\n"); } catch (err) { process.stderr.write(`engine10: ${err instanceof Error ? err.message : String(err)}\n`); return 2; } // ROLE-MODELS: a bad role value is refused before any call, never dropped
   const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
   const runDir = join(repoDir, ".loki", "runs", runId);
   const cap = resolveCap(maxCost, repoDir); if ("error" in cap) { process.stderr.write(`engine10: ${cap.error}\n`); return 2; }

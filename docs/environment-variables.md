@@ -102,21 +102,27 @@ loki start ./prd.md --models plan=opus,dev=haiku,test=haiku,review=sonnet,adviso
 | `helper` | `--helper-model` | intake checks: the already-done confirmation, project-model discovery, the open-choice vote, the ranked-remedy check |
 | `escalate` | `--escalate-model` | a fix round after the same test failure repeats |
 
-A value is `haiku`, `sonnet`, `opus` or a model id (on `--provider opencode`, an opencode id). A role you set is exact: it is never
+A value is `haiku`, `sonnet`, `opus`, `fable` or a model id (on `--provider opencode`, an opencode id). A role you set is exact: it is never
 capped to `--model`, never downgraded, never climbed by the router, and the Wall keeps it instead of re-authoring on another model. With `--dev-model`
 set, a repeated failure escalates only when `--escalate-model` names the model. A role you do not set keeps Loki's own choice, so a run with no role
 behaves exactly as before. Precedence for each call: an older per-call variable (`LOKI_E10_WALL_TIER`, `LOKI_E10_ATTEMPT_MODELS`, `LOKI_E10_CONSULT_MODEL`,
 `LOKI_E10_SELECT_REVIEW_MODEL`, `LOKI_E10_ISSUE_ACCEPTANCE_MODEL`, `LOKI_E10_EXEC_SPEC_MODEL`, `LOKI_E10_TOURNAMENT_MODEL`, `LOKI_E10_PRECEDENT_MODEL`,
 `LOKI_E10_RANKED_REMEDY_MODEL`), then the role, then `--model` / `--session-model`, then Loki's default. When a role is set the start line names the
 model per role (`models: plan opus, dev haiku, ...`; `auto` means Loki picks per call) and the receipt records the models each role started under
-`models_by_role`. On the claude provider a value is `haiku`, `sonnet`, `opus` or a model id from the catalog (`providers/model_catalog.json`, or
+`models_by_role`. On the claude provider a value is `haiku`, `sonnet`, `opus`, `fable` or a model id from the catalog (`providers/model_catalog.json`, or
 `LOKI_MODEL_CATALOG`), passed to the provider exactly as written; any other value (a typo such as `sonet`, another vendor's id) exits 2 with the
-nearest known id. On opencode a value is passed through and opencode checks it. A bad value, the `fable` alias, a route id (`openrouter/...`: choose a route for the
+nearest known id. On opencode a value is passed through and opencode checks it. A bad value, a route id (`openrouter/...`: choose a route for the
 whole run with `--model`), a role above `LOKI_MAX_TIER`, or any Claude role while `LOKI_MODEL_ROUTE` is set (the route serves every call; unset the
 role or the route) exits 2 before any session, naming the role. On opencode, a call that only runs on the Anthropic API
 (the consult, the votes, the acceptance check, the attempt pick, the tournament, the executable spec) is skipped when its role names a
 non-Claude model, and the receipt's `tool_calls_skipped` names each skipped call with the reason (as it does for `LOKI_E10_PATCH`, which runs on
 claude only). The legacy engine refuses the role flags.
+
+Fable (`fable`, `claude-fable-5-2`) runs as Fable on `loki start`, through `--model fable`, `--session-model fable` or a role; earlier releases ran
+Opus for a `fable` pin, and the legacy bash engine still does. Fable answers on the Claude CLI and the Agent SDK sessions. With `ANTHROPIC_API_KEY` set,
+the tool-less calls go to `/v1/messages`, where Fable is not yet verified: the start line and the receipt (`fable_raw_api`) say so, and a refused or
+failed Fable call prints the API's reason and is never re-run on another model. `claude-fable-5-2` is priced by the fable row of the pricing table
+(the Fable 5.1 rate); its own rate is not verified.
 
 ### Picking a model without naming one
 

@@ -208,7 +208,6 @@ export function roleSettings(e: NodeJS.ProcessEnv = process.env): Partial<Record
   const check = (role: string, v: string, from: string): void => {
     if (!(ROLES as readonly string[]).includes(role)) throw new Error(`unknown role '${role}' in ${from} (${ROLES.join("|")})`);
     if (!ROLE_VALUE.test(v)) throw new Error(`bad model '${v}' for role ${role} in ${from} (haiku|sonnet|opus|fable or a model id)`);
-    if (/^fable$/i.test(v)) throw new Error(`role ${role}: fable is not available at the Claude API (a fable session pin runs opus); name opus or a model id`);
     out[role as Role] = v;
   };
   const line = (e["LOKI_MODELS"] ?? "").trim();
@@ -233,24 +232,24 @@ const editDistance = (a: string, b: string): number => { let prev = Array.from({
  *  preflight with the accepted aliases and the nearest known id. On opencode the provider validates its own ids (the start line says so). Null when valid. */
 export function roleValueError(e: NodeJS.ProcessEnv = process.env, provider: string = providerOf(e)): string | null {
   if (provider === "opencode") return null;
-  const ids = catalogClaudeIds(), known = new Set(["haiku", "sonnet", "opus", ...ids]);
+  const ids = catalogClaudeIds(), known = new Set(["haiku", "sonnet", "opus", "fable", ...ids]);
   for (const [role, v] of Object.entries(roleSettings(e))) {
     if (known.has(v)) continue;
     if (ROUTE_ID.test(v)) return `role ${role}: '${v}' is a route; set a route for the whole run with --model, per-role routes are not supported`;
     const near = [...known].sort((a, b) => editDistance(v.toLowerCase(), a) - editDistance(v.toLowerCase(), b))[0];
-    return `role ${role}: unknown model '${v}' on the claude provider; use haiku, sonnet or opus, or a model id from the catalog${near ? ` (nearest: ${near})` : ""}`;
+    return `role ${role}: unknown model '${v}' on the claude provider; use haiku, sonnet, opus or fable, or a model id from the catalog${near ? ` (nearest: ${near})` : ""}`;
   }
   return null;
 }
 /** A role that the run's other settings would silently override is refused, so the user resolves the conflict (no setting ever does nothing):
- *  a Claude role under LOKI_MODEL_ROUTE (the route serves every call of the run), and a role above LOKI_MAX_TIER (haiku < sonnet < opus/fable; the
+ *  a Claude role under LOKI_MODEL_ROUTE (the route serves every call of the run), and a role above LOKI_MAX_TIER (haiku < sonnet < opus < fable; the
  *  role pin is exact and the ceiling is a cost guard). Null when nothing conflicts, or for an id with no known family against the ceiling. */
 export function roleConflictError(e: NodeJS.ProcessEnv = process.env, provider: string = providerOf(e)): string | null {
   const route = (e["LOKI_MODEL_ROUTE"] ?? "").trim(), set = Object.entries(roleSettings(e));
   if (route && provider !== "opencode" && set.length) return `role ${set[0]![0]} names ${set[0]![1]}, but LOKI_MODEL_ROUTE=${route} serves every call of the run; unset the role or the route`;
-  const cap = (e["LOKI_MAX_TIER"] ?? "").trim().toLowerCase(), order = ["haiku", "sonnet", "opus"];
-  const fam = (m: string): number => { const f = /haiku|sonnet|opus|fable/i.exec(resolveClaudeModel(m))?.[0]?.toLowerCase(); return f ? order.indexOf(f === "fable" ? "opus" : f) : -1; };
-  const capRank = order.indexOf(cap === "fable" ? "opus" : cap);
+  const cap = (e["LOKI_MAX_TIER"] ?? "").trim().toLowerCase(), order = ["haiku", "sonnet", "opus", "fable"];
+  const fam = (m: string): number => { const f = /haiku|sonnet|opus|fable/i.exec(resolveClaudeModel(m))?.[0]?.toLowerCase(); return f ? order.indexOf(f) : -1; };
+  const capRank = order.indexOf(cap);
   if (capRank < 0) return null;
   const s = Object.fromEntries(set) as Partial<Record<Role, string>>;
   for (const r of ROLES) { const v = s[r]; if (v && fam(v) > capRank) return `role ${r} names ${v}, above LOKI_MAX_TIER=${cap}; lower the role or raise the ceiling`; }
@@ -296,6 +295,14 @@ export const __resetRoleModelsForTests = (): void => { roleUsed.clear(); roleSki
 /** ROLE-MODELS: { pinSource: "specific" } when an older per-call variable chose this call's model and its role is also set, so the narrower setting
  *  wins in the session runner; {} otherwise (with no role set the call's options are unchanged). */
 export const specificPin = (role: Role, varName: string, e: NodeJS.ProcessEnv = process.env): { pinSource?: "specific" } => ((e[varName] ?? "").trim() !== "" && roleModel(role, e) !== undefined ? { pinSource: "specific" } : {});
+/** FABLE-RAW-API: Fable answers on the CLI and Agent SDK sessions, but a tool-less call with an API key goes to /v1/messages, where Fable is not yet
+ *  verified. When a role, the session pin or LOKI_MODEL_OVERRIDE names Fable and ANTHROPIC_API_KEY is set, the start line and the receipt say so; a refused
+ *  call is reported with the API's error (sdk_invoker toolLessCall), never swapped for another model. "" when it does not apply. */
+export function fableRawApiNote(e: NodeJS.ProcessEnv = process.env): string {
+  if (!(e["ANTHROPIC_API_KEY"] ?? "").trim()) return "";
+  const named = [...Object.values(safeSettings(e)), e["LOKI_SESSION_MODEL"] ?? "", e["LOKI_MODEL_OVERRIDE"] ?? ""].some((v) => /fable/i.test(v));
+  return named ? "fable on the raw API is not verified; a refused call is reported, never swapped for another model" : "";
+}
 /** ROLE-MODELS receipt block, spread into the sealed receipt: { models_by_role } when any role is set, so a run with no role keeps its receipt bytes. */
-export const roleModelsReceiptBlock = (e: NodeJS.ProcessEnv = process.env): { models_by_role?: Partial<Record<Role, string[]>>; tool_calls_skipped?: { call: string; reason: string }[] } =>
-  ({ ...(Object.keys(safeSettings(e)).length ? { models_by_role: roleModelsUsed() } : {}), ...(roleSkips.length ? { tool_calls_skipped: roleSkips.map((x) => ({ ...x })) } : {}) }); // tool_calls_skipped: present only when a call was skipped (a role naming a non-Claude model, or LOKI_E10_PATCH on opencode)
+export const roleModelsReceiptBlock = (e: NodeJS.ProcessEnv = process.env): { models_by_role?: Partial<Record<Role, string[]>>; tool_calls_skipped?: { call: string; reason: string }[]; fable_raw_api?: string } =>
+  ({ ...(Object.keys(safeSettings(e)).length ? { models_by_role: roleModelsUsed() } : {}), ...(roleSkips.length ? { tool_calls_skipped: roleSkips.map((x) => ({ ...x })) } : {}), ...(fableRawApiNote(e) ? { fable_raw_api: fableRawApiNote(e) } : {}) }); // tool_calls_skipped: present only when a call was skipped (a role naming a non-Claude model, or LOKI_E10_PATCH on opencode)

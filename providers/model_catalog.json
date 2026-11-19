@@ -15,21 +15,30 @@
       "latest_development": "claude-sonnet-5-5",
       "latest_fast": "claude-haiku-5-5",
       "cli_aliases": {
-        "fable": "claude-fable-5-1",
+        "fable": "claude-fable-5-2",
         "opus": "claude-opus-5-5",
         "sonnet": "claude-sonnet-5-5",
         "haiku": "claude-haiku-5-5"
       },
       "models": [
         {
-          "id": "claude-fable-5-1",
+          "id": "claude-fable-5-2",
           "alias": "fable",
           "tier": "advisor",
           "context_window": 1000000,
           "max_output": 128000,
           "thinking": {"types": ["adaptive"]},
           "effort": {"levels": ["low", "medium", "high", "xhigh", "max"], "default": "high"},
-          "notes": "Top-tier advisory model, released 2026-09-01. Pricing $10/$50 per MTok. Cache reads are 0.025x base input ($0.25/MTok), not the usual 0.1x. Doc-supported for architecture/root-cause; opt-in only (cost). Refuses cyber content, so NOT used for security review."
+          "notes": "Current Fable. Id confirmed 2026-11-19 by a real call (claude -p --model claude-fable-5-2 and --model fable, no tools, modelUsage key claude-fable-5-2); the CLI fable alias resolves to it. Not yet confirmed on a direct /v1/messages call with an API key. Prices by the fable family row of model-pricing.json (the Fable 5.1 rate, $10/$50); its own rate is not verified. Opt-in only (cost). Refuses cyber content, so NOT used for security review."
+        },
+        {
+          "id": "claude-fable-5-1",
+          "tier": "advisor",
+          "context_window": 1000000,
+          "max_output": 128000,
+          "thinking": {"types": ["adaptive"]},
+          "effort": {"levels": ["low", "medium", "high", "xhigh", "max"], "default": "high"},
+          "notes": "Superseded by claude-fable-5-2 (2026-11-19; still answers on the CLI). Catalog-only, not an alias target. Released 2026-09-01. Pricing $10/$50 per MTok. Cache reads are 0.025x base input ($0.25/MTok), not the usual 0.1x. Doc-supported for architecture/root-cause; opt-in only (cost). Refuses cyber content, so NOT used for security review."
         },
         {
           "id": "claude-opus-5-5",

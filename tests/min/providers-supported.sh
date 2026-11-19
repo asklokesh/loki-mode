@@ -435,7 +435,7 @@ timeout=transport:1:-:transport
 timeout_record=true
 classify=output_cap,transient,transient,transient,fatal,fatal,fatal'
 [ "$t201" = "$want_t201" ] && ok "T201 toolless: a failed call records its class, message, HTTP status, CLI stderr and timeout; the output-cap error is truncated and not retried; 529, 429 and a reset connection retry with backoff up to 3 calls; auth, no result and our own timeout stop at once" || { bad "T201 toolless gave:"; printf '%s\n' "$t201" | sed 's/^/    | /'; }
-grep -q 'export const REMEDY_MAX_TOKENS = 256;' "$ROOT/loki-ts/src/util/conflict_resume.ts" && grep -q '{ maxTokens: REMEDY_MAX_TOKENS, thinking: "off" }' "$ROOT/loki-ts/src/util/conflict_resume.ts" && grep -q 'if (client() === null) return toolLessViaAgentSdkRetrying(p, ledger, remaining);' "$ROOT/loki-ts/src/runner/sdk_invoker.ts" && ok "T201 wiring: toolLessCall takes the retrying Agent SDK route, and the remedy check runs at a 256-token cap" || bad "T201 wiring: the retrying route or the remedy cap is not wired"
+grep -q 'export const REMEDY_MAX_TOKENS = 256;' "$ROOT/loki-ts/src/util/conflict_resume.ts" && grep -q '{ maxTokens: REMEDY_MAX_TOKENS, thinking: "off", role: "helper" }' "$ROOT/loki-ts/src/util/conflict_resume.ts" && grep -q 'if (client() === null) return toolLessViaAgentSdkRetrying(p, ledger, remaining);' "$ROOT/loki-ts/src/runner/sdk_invoker.ts" && ok "T201 wiring: toolLessCall takes the retrying Agent SDK route, and the remedy check runs at a 256-token cap" || bad "T201 wiring: the retrying route or the remedy cap is not wired"
 
 # --- no removed provider name in shipped code ------------------------------
 # Allowed: the removed lists and message, GEMINI.md (an agent-rules file name), and model-family price/key rows

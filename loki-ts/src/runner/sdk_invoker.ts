@@ -15,7 +15,7 @@
 // REJECT / block). It NEVER throws for a normal failure. judgeJsonOutcome()
 // returns the same call as a typed JudgeOutcome naming the cause.
 
-import { isClaudeModel, noteRoleSkip, providerOf, roleNamesModel } from "../util/claude_model.ts";
+import { isClaudeModel, noteRoleSkip, providerOf, roleNamesModel } from "../util/claude_model.ts"; import { redactSecrets } from "../util/redact.ts";
 import { inferenceGeoParam } from "../providers/model_routes.ts";
 import { assertStaticSchema } from "../council/finding_schema.ts";
 import { tmpdir } from "node:os";
@@ -289,7 +289,12 @@ const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const TRUNCATION_RETRY_CAP = Math.max(...Object.values(EFFORT_MAX_TOKENS)); // the effort table's ceiling, so an xhigh/max default is never capped below its own size
 
 function fallbackEligible(model: string): boolean {
-  return /^claude-(fable|opus|sonnet)-5(-\d+)?$/i.test(model);
+  return /^claude-(opus|sonnet)-5(-\d+)?$/i.test(model); // FABLE-RAW-API: a Fable call is never re-run on another model; a refusal is reported (fableFailure)
+}
+/** FABLE-RAW-API: a Fable tool-less call that fails or is refused on /v1/messages says so on stderr with the API's own text (redacted), so a refusal is
+ *  visible and never mistaken for a swap; other models keep their quiet outcome records. */
+function fableFailure(model: string, what: string): void {
+  if (/fable/i.test(model)) process.stderr.write(`loki: ${model} on the raw API: ${redactSecrets(what).replace(/\s+/g, " ").slice(0, 400)} (not retried on another model)\n`);
 }
 
 // Refusal categories the default fallback does NOT retry (claude-api model
@@ -407,9 +412,11 @@ async function runJudge(params: JudgeParams | TextParams, schema: Record<string,
         return { kind: "context_exceeded" };
       }
       noteJudgeFailure(ledger, model, "transport", max, pt);
+      fableFailure(model, err instanceof Error ? err.message : String(err));
       return { kind: "transport" };
     }
     const outcome = classifyStop(msg);
+    if (outcome.kind === "refused") fableFailure(model, `refused${outcome.category ? ` (${outcome.category})` : ""}`);
     const billed = typeof msg.model === "string" && msg.model ? msg.model : model;
     noteJudgeUsage(ledger, billed, msg, describeJudgeOutcome(outcome), max, pt);
 
