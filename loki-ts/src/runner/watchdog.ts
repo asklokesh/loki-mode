@@ -1,5 +1,6 @@
 // Progress classes + stall watchdog (P12-12, B04). Pure and clock-injected: the session heartbeat
 // feeds it one observation per tick; no runner module owned liveness before this.
+import { loopKillS, SILENCE_KILL_S } from "../engine10/types.ts";
 export type ProgressClass = "progressing" | "idle" | "looping" | "stalled";
 export const DEFAULT_STALL_S = 900; // below the 1800s run_outputs STALE_S
 export const IDLE_S = 120;
@@ -31,6 +32,12 @@ export function stallKillS(env: string | undefined = process.env["LOKI_E10_STALL
   return positiveEnv("LOKI_E10_STALL_KILL_S", env, dflt);
 }
 
+/** NO-DEFAULT-BUDGET: the kills one session runs under. A session with no time limit (limitS Infinity) ends on silence (SILENCE_KILL_S, 1800 s) or on output with
+ *  no tree change (LOOP_KILL_S, 3600 s); one with a limit keeps the old default (no kill) and its limit ends it. LOKI_E10_STALL_KILL_S / LOKI_E10_LOOP_KILL_S win. */
+export function sessionKillsS(limitS: number, env: NodeJS.ProcessEnv = process.env): { stallS: number; loopS: number } {
+  const noLimit = !Number.isFinite(limitS);
+  return { stallS: stallKillS(env["LOKI_E10_STALL_KILL_S"], noLimit ? SILENCE_KILL_S : 0), loopS: noLimit ? loopKillS(env) : 0 };
+}
 export interface Watchdog {
   /** One observation: cumulative output bytes and a diff signature. */
   tick(bytes: number, diff: string): { cls: ProgressClass; idleS: number; stalledNow: boolean; diffIdleS: number };

@@ -1544,7 +1544,8 @@ rw_proof -
 # by default; a run ends when it is done or makes no progress, always with a draft PR of what is done. Planted defects (each shown red, then reverted):
 #   NB1. util/run_cap.ts resolveRunCapS: drop the no-limit return (the default cap comes back): "no user limit means no cap" goes red.
 #   NB2. engine10/types.ts armTimer: drop the non-finite early return: the Infinity timer fires at once.
-#   NB3. engine10/session.ts: stallKillS(undefined, 0) for a no-limit session: the stuck session never ends and the stuck leg times out.
+#   NB3. runner/watchdog.ts sessionKillsS: `noLimit ? SILENCE_KILL_S : 0` -> 0: the no-limit default leg goes red (the e2e stuck leg sets
+#        LOKI_E10_STALL_KILL_S=20, so it tests the override and stayed green under the old plant).
 #   NB4. engine10/machine.ts fix loop: drop the `stillRounds++`: the no-progress fix loop never ends (unit) .
 #   NB5. e10ext/budget_cap.ts resolveCap: return DEFAULT_MAX_COST_USD with an API key: the no-default-dollar-cap leg goes red.
 #   NB6. autonomy/route.sh: drop the --max-time arm: the --max-time dry-run leg goes red.
@@ -1587,6 +1588,8 @@ try {
   const chatty = await sh.run(["sh", "-c", "for i in 1 2 3 4 5 6 7 8; do echo $i; sleep 0.1; done"], { timeoutMs: Infinity, silenceMs: 400 });
   const prevSil = process.env.LOKI_E10_CMD_SILENCE_S; process.env.LOKI_E10_CMD_SILENCE_S = "0.3"; const tImp = Date.now(), implied = await sh.run(["sh", "-c", "sleep 20"], { timeoutMs: Infinity }); if (prevSil === undefined) delete process.env.LOKI_E10_CMD_SILENCE_S; else process.env.LOKI_E10_CMD_SILENCE_S = prevSil;
   res("NO-DEFAULT-BUDGET a command with no time limit is stopped after its silence window (given, or implied by Infinity: LOKI_E10_CMD_SILENCE_S), while a command that keeps printing runs to its end", quiet.silent === true && quiet.timedOut === true && Date.now() - t0 < 10_000 && implied.silent === true && Date.now() - tImp < 10_000 && chatty.exitCode === 0 && !chatty.silent && chatty.stdout.includes("8"));
+  const kInf = wd.sessionKillsS(Infinity, {}), kLim = wd.sessionKillsS(480, {}), kEnv = wd.sessionKillsS(Infinity, { LOKI_E10_STALL_KILL_S: "20", LOKI_E10_LOOP_KILL_S: "40" });
+  res("NO-DEFAULT-BUDGET a session with no time limit ends on 1800 s of silence or 3600 s of output with no tree change by default (env unset); one with a limit keeps no kill; the env values win", kInf.stallS === 1800 && kInf.loopS === 3600 && kLim.stallS === 0 && kLim.loopS === 0 && kEnv.stallS === 20 && kEnv.loopS === 40);
   let now = 0; const w = wd.createWatchdog(() => now, 10_000); w.tick(10, "d1"); now = 5_000; w.tick(20, "d1"); now = 9_000; const tk = w.tick(30, "d1");
   res("NO-DEFAULT-BUDGET the loop guard sees output with no tree change (diffIdleS grows while output streams)", tk.diffIdleS === 9 && tk.cls !== "stalled");
   const hung = await wp.spawnWorker([process.execPath, "-e", "setTimeout(() => {}, 20000)"], { PATH: process.env.PATH ?? "" }, d, Infinity, 500, () => {}, { silenceS: 0.4, lastEventMs: () => 0 });
@@ -1601,7 +1604,7 @@ try {
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/nobudget.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || { bad "no-default-budget unit script crashed or exited non-zero"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 16 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 16"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 17 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 17"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
