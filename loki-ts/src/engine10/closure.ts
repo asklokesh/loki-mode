@@ -1,6 +1,7 @@
 // RW-03: what held a run below VERIFIED, as structured items read from its receipt. A leaf (no engine imports): output.ts, seal.ts and the pull request
 // body read it. Class a: closable by more checking with no model. Class b: closable by the session. Class c: not closable in the run (a person, the
 // environment, or a fault of Loki's own). This file owns the classification only; it never changes a verdict.
+import { defaultBudgetsOn } from "./types.ts";
 
 /** The lead of every reason whose cause is Loki's own (a check it could not run, its own limit, an internal error), never the change failing a check. */
 export const LOKI_OWN_LEAD = "Loki could not finish checking: ";
@@ -21,14 +22,15 @@ export const withoutOwnLead = (reason: string): string => (reason.startsWith(LOK
 export const verifiedOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_VERIFIED"] ?? "").trim());
 /** The bounds of verified mode's closure phase: rounds and wall clock always, dollars when every session is priced, new tokens. Each has its own override. */
 export interface VerifiedBounds { rounds: number; wall_s: number; usd: number; tokens: number }
-const boundOf = (raw: string | undefined, dflt: number, max: number): number => { const n = Number((raw ?? "").trim()); return (raw ?? "").trim() !== "" && Number.isFinite(n) && n > 0 ? Math.min(n, max) : dflt; };
-export const verifiedBounds = (env: NodeJS.ProcessEnv = process.env): VerifiedBounds => ({ rounds: Math.floor(boundOf(env["LOKI_VERIFIED_ROUNDS"], 3, 10)), wall_s: Math.floor(boundOf(env["LOKI_VERIFIED_MAX_S"], 7200, 14400)), usd: boundOf(env["LOKI_VERIFIED_MAX_USD"], 5, 1000), tokens: Math.floor(boundOf(env["LOKI_VERIFIED_MAX_TOKENS"], 3_000_000, 50_000_000)) });
+// NO-DEFAULT-BUDGET: a bound is the user's value (never clamped by Loki), else its old default only with LOKI_E10_DEFAULT_BUDGETS=1, else none (Infinity; null in the receipt).
+const boundOf = (raw: string | undefined, dflt: number, env: NodeJS.ProcessEnv): number => { const n = Number((raw ?? "").trim()); return (raw ?? "").trim() !== "" && Number.isFinite(n) && n > 0 ? n : defaultBudgetsOn(env) ? dflt : Infinity; };
+export const verifiedBounds = (env: NodeJS.ProcessEnv = process.env): VerifiedBounds => ({ rounds: Math.floor(boundOf(env["LOKI_VERIFIED_ROUNDS"], 3, env)), wall_s: Math.floor(boundOf(env["LOKI_VERIFIED_MAX_S"], 7200, env)), usd: boundOf(env["LOKI_VERIFIED_MAX_USD"], 5, env), tokens: Math.floor(boundOf(env["LOKI_VERIFIED_MAX_TOKENS"], 3_000_000, env)) });
 /** Whether this build runs closure rounds. False until the round itself lands, so the header and the receipt never promise work that does not happen. */
 export const CLOSURE_ROUNDS_BUILT = false;
 /** The start-line text for a verified-mode run: the bounds that apply, said plainly. */
 export function verifiedHeader(env: NodeJS.ProcessEnv = process.env): string {
-  const b = verifiedBounds(env), hours = b.wall_s % 3600 === 0 ? `${b.wall_s / 3600} h` : `${Math.round(b.wall_s / 60)} min`;
-  return CLOSURE_ROUNDS_BUILT ? `verified mode: up to ${b.rounds} closure rounds, ${hours}, $${b.usd.toFixed(2)} when every session is priced, ${(b.tokens / 1e6).toFixed(1)}M new tokens` : "verified mode: on (recorded in the receipt; closure rounds are not in this build, so the run itself is unchanged)";
+  const b = verifiedBounds(env), lim = (v: number, f: (x: number) => string): string => (Number.isFinite(v) ? f(v) : "no limit"), hours = lim(b.wall_s, (w) => (w % 3600 === 0 ? `${w / 3600} h` : `${Math.round(w / 60)} min`));
+  return CLOSURE_ROUNDS_BUILT ? `verified mode: up to ${lim(b.rounds, String)} closure rounds, ${hours}, ${lim(b.usd, (u) => `$${u.toFixed(2)}`)} when every session is priced, ${lim(b.tokens, (t) => `${(t / 1e6).toFixed(1)}M`)} new tokens` : "verified mode: on (recorded in the receipt; closure rounds are not in this build, so the run itself is unchanged)";
 }
 /** The receipt block of a verified-mode run. */
 export const verifiedReceiptBlock = (env: NodeJS.ProcessEnv = process.env): { verified_mode?: { bounds: VerifiedBounds; closure_rounds_built: boolean; rounds: unknown[] } } => (verifiedOn(env) ? { verified_mode: { bounds: verifiedBounds(env), closure_rounds_built: CLOSURE_ROUNDS_BUILT, rounds: [] } } : {});

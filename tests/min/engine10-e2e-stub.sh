@@ -139,7 +139,7 @@ console.log([
   "plain=" + plain[0].replace(/\s+/g, " ") + "|" + plain.find((l) => l.startsWith("NOT PROVEN")).replace(/^NOT PROVEN:\s+/, ""),
   "one=" + c.reviewerFlagsSuffix(["cross-review block (claude): x"]) + "|none=" + JSON.stringify(c.reviewerFlagsSuffix(["cross-review not run: claude exited 1", "cross-review skipped: low risk (claude not run)"])),
   "on=" + [c.verifiedOn({ LOKI_VERIFIED: "1" }), c.verifiedOn({}), c.verifiedOn({ LOKI_VERIFIED: "0" })].join(","),
-  "bounds=" + JSON.stringify(c.verifiedBounds({})) + JSON.stringify(c.verifiedBounds({ LOKI_VERIFIED_ROUNDS: "2", LOKI_VERIFIED_MAX_S: "600", LOKI_VERIFIED_MAX_USD: "1.5", LOKI_VERIFIED_MAX_TOKENS: "bad" })),
+  "bounds=" + JSON.stringify(c.verifiedBounds({})) + JSON.stringify(c.verifiedBounds({ LOKI_VERIFIED_ROUNDS: "2", LOKI_VERIFIED_MAX_S: "600", LOKI_VERIFIED_MAX_USD: "1.5", LOKI_VERIFIED_MAX_TOKENS: "bad" })) + JSON.stringify(c.verifiedBounds({ LOKI_E10_DEFAULT_BUDGETS: "1" })) + JSON.stringify(c.verifiedBounds({ LOKI_VERIFIED_ROUNDS: "50" }).rounds), // NO-DEFAULT-BUDGET: no bound unless set (null), never clamped; the knob restores the old bounds
   "block=" + JSON.stringify(c.verifiedReceiptBlock({})) + (c.verifiedReceiptBlock({ LOKI_VERIFIED: "1" }).verified_mode ? "+on" : "+missing"),
   "header=" + (c.verifiedHeader({}).startsWith("verified mode: ") && (c.CLOSURE_ROUNDS_BUILT || /not in this build/.test(c.verifiedHeader({})))),
 ].join("\n"));
@@ -149,7 +149,7 @@ first=cross-review flag (claude): bulk s
 plain=Outcome: VERIFIED|kill switch not checked
 one=, 1 reviewer flag open|none=""
 on=true,false,false
-bounds={"rounds":3,"wall_s":7200,"usd":5,"tokens":3000000}{"rounds":2,"wall_s":600,"usd":1.5,"tokens":3000000}
+bounds={"rounds":null,"wall_s":null,"usd":null,"tokens":null}{"rounds":2,"wall_s":600,"usd":1.5,"tokens":null}{"rounds":3,"wall_s":7200,"usd":5,"tokens":3000000}50
 block={}+on
 header=true'
 [ "$RW3B" = "$RW3B_WANT" ] && ok "rw-03 unit: reviewer findings are counted beside the label and read first; no finding leaves the summary as it was; verified mode has its switch, bounds and receipt block" || bad "rw-03 step 2 unit gave: $RW3B"
