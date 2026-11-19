@@ -1658,6 +1658,9 @@ console.log([typeof ok === "object", env.LOKI_RUN_DEADLINE_S, env.LOKI_E10_VERIF
 [ "$NBO" = "true 120 90 2 false 5400 null true" ] && ok "NO-DEFAULT-BUDGET loki start --max-time 2m sets a 120 s outer limit and --verify-max-time=90 a 90 s verify limit; a bad duration is refused; without them nothing is set; both are in --help" || bad "NO-DEFAULT-BUDGET start time flags gave: $NBO"
 NBE="$(cd "$NBD" && bash -c '. "$1/autonomy/route.sh" 2>/dev/null; loki_route_resolve start "add a multiply function" --max-time 90m >/dev/null 2>&1; printf "%s" "${R_DEADLINE_S:-}"' _ "$ROOT" 2>/dev/null)"
 [ "$NBE" = 5400 ] && ok "NO-DEFAULT-BUDGET --max-time 90m resolves to a 5400 s deadline" || bad "NO-DEFAULT-BUDGET --max-time 90m resolved to '$NBE'"
+# A user's own --max-duration is never capped by Loki (it was clamped to 3600 s). Plant NB10: restore the clamp in route.sh; this reads 3600.
+NBM="$(cd "$NBD" && bash -c '. "$1/autonomy/route.sh" 2>/dev/null; loki_route_resolve start "add a multiply function" --max-duration 3h >/dev/null 2>&1; printf "%s|%s" "${R_E10_CAP_S:-}" "${R_NOTICE:-}"' _ "$ROOT" 2>/dev/null)"
+[ "$NBM" = "10800|" ] && ok "NO-DEFAULT-BUDGET --max-duration 3h stays 10800 s with no clamp notice" || bad "NO-DEFAULT-BUDGET --max-duration 3h resolved to '$NBM'"
 # ---- end NO-DEFAULT-BUDGET ----
 
 finish

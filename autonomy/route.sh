@@ -24,8 +24,6 @@ _ROUTE_E10_FLAGS=" --no-pr --deep --verified --json --verbose --quiet --resume -
 # --session-model), and Linux caps one string at 128 KiB. A bigger PRD runs on the legacy engine, or is refused under
 # SDK mode with claude (the legacy engine has no SDK path).
 _ROUTE_PRD_MAX=100000
-# The most a run cap can reach (capCeilingS(true) in loki-ts/src/util/run_cap.ts: the subscription ceiling).
-_ROUTE_CAP_CEILING_S=3600
 # Accepted and dropped (no-ops on a non-interactive run).
 # --pr is a no-op because engine10 opens a PR by default (--no-pr turns it off).
 _ROUTE_NOOP_FLAGS=" --yes -y --no-plan --no-mirofish --no-dashboard --pr "
@@ -395,13 +393,9 @@ $(loki_removed_saved_provider_hint "$R_PROVIDER")"
         R_ERR="loki: flag $legacy_flag is not supported by the Loki 10 engine; $(_route_refusal_hint "$legacy_flag")"
         return 0
     fi
-    # Wall-clock cap: LOKI_E10_CAP_S seconds, bounded by the run-cap ceiling.
+    # Wall-clock cap: LOKI_E10_CAP_S seconds, exactly as the user set it (NO-DEFAULT-BUDGET: Loki never caps a user's own limit).
     if [ -n "$max_duration" ] && [ "$engine_req" != "legacy" ]; then
         R_E10_CAP_S="$max_duration"
-        if [ "$R_E10_CAP_S" -gt "$_ROUTE_CAP_CEILING_S" ]; then
-            R_E10_CAP_S="$_ROUTE_CAP_CEILING_S"
-            R_NOTICE="loki: --max-duration $max_duration s is above the engine10 run-cap ceiling; using ${_ROUTE_CAP_CEILING_S}s."
-        fi
     fi
     if [ -n "$max_time" ] && [ "$engine_req" != "legacy" ]; then R_DEADLINE_S="$max_time"; fi
     if [ -n "$provider_flag" ] && [ "$engine_req" != "legacy" ]; then
