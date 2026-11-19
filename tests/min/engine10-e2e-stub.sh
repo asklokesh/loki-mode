@@ -1555,6 +1555,7 @@ rw_proof -
 #   NB12. runner/repo_profile.ts shellRunner: drop the no-limit branch (spawnSync with an Infinity timeout): the silent intake command is never stopped.
 #   NB13. stages/prove.ts proveBudgetS: default 600 again: the prove leg goes red.  NB14. features/no_regression.ts nrdBudgetS: default 120 again: the NRD leg.
 #   NB15. engine10/types.ts deepCapS: always DEEP_CAP_S: the worker-cap leg.  NB16. engine10/closure.ts boundOf: dflt always: the RW-03 bounds line.
+#   NB17. util/conflict_resume.ts outstandingWords: keep the whole text as one item (no normalization): the rephrase leg goes red.
 #   NB9. runner/repo_profile.ts asyncShellRunner: setTimeout(stop, timeoutMs) again: the no-limit base run is cut at once.
 cat > "$T/nobudget.ts" <<'TS'
 import { mkdtempSync, rmSync } from "node:fs";
@@ -1598,6 +1599,8 @@ try {
   res("NO-DEFAULT-BUDGET the loop guard sees output with no tree change (diffIdleS grows while output streams)", tk.diffIdleS === 9 && tk.cls !== "stalled");
   const hung = await wp.spawnWorker([process.execPath, "-e", "setTimeout(() => {}, 20000)"], { PATH: process.env.PATH ?? "" }, d, Infinity, 500, () => {}, { silenceS: 0.4, lastEventMs: () => 0 });
   res("NO-DEFAULT-BUDGET the supervisor's hang guard stops a silent worker that runs no process, and says it was hung (no backstop is armed)", hung.killed === true && hung.hung === true);
+  const crw = await import(root + "/loki-ts/src/util/conflict_resume.ts"), said0 = crw.outstandingWords("Progress made. Still outstanding: the docs for multiply.");
+  res("NO-DEFAULT-BUDGET a continue reply that only rephrases the outstanding work an earlier one named names nothing new (no progress); one that names more does", !crw.namesNewWork(crw.outstandingWords("Remaining work: multiply docs."), said0) && !crw.namesNewWork(crw.outstandingWords("Next: write the docs for multiply"), said0) && crw.namesNewWork(crw.outstandingWords("Still outstanding: the docs for multiply, and a divide() test."), said0));
   const pv = await import(root + "/loki-ts/src/engine10/stages/prove.ts"), nr = await import(root + "/loki-ts/src/features/no_regression.ts");
   res("NO-DEFAULT-BUDGET the prove stage has no 600 s budget and its listing no 3-turn cap unless set (the knob or LOKI_E10_PROVE_BUDGET_S / LOKI_E10_PROVE_LIST_TURNS); a user cap still reserves 600 s for it when sizing implement", pv.proveBudgetS({}) === Infinity && pv.proveBudgetS(B) === 600 && pv.proveBudgetS({ LOKI_E10_PROVE_BUDGET_S: "45" }) === 45 && pv.proveReserveOfS({}) === 600 && pv.proveListTurns({}) === undefined && pv.proveListTurns(B) === 3 && pv.proveListTurns({ LOKI_E10_PROVE_LIST_TURNS: "5" }) === 5);
   res("NO-DEFAULT-BUDGET the no-regression differential has no 120 s wall budget unless set; the knob restores it", nr.nrdBudgetS({}) === Infinity && nr.nrdBudgetS(B) === 120 && nr.nrdBudgetS({ LOKI_E10_NRD_BUDGET_S: "30" }) === 30);
@@ -1614,7 +1617,7 @@ try {
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/nobudget.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || { bad "no-default-budget unit script crashed or exited non-zero"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 21 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 21"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 22 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 22"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

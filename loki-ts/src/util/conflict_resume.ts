@@ -164,6 +164,14 @@ export function outstandingOf(summary: string | null | undefined): string {
   const lines = (summary ?? "").split("\n").map((l) => l.trim()).filter(Boolean).slice(-4).join(" ").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
   return lines.length > 400 ? `...${lines.slice(-397)}` : lines;
 }
+// NO-DEFAULT-BUDGET: the work a reply names as outstanding, as a set of content words (lower case, no punctuation or digits, a trailing plural s dropped,
+// filler and progress words removed), so a reply that only rephrases what an earlier one named ("the docs for multiply" -> "multiply docs remain") names nothing new.
+const FILLER = new Set(["the", "and", "for", "with", "that", "this", "then", "than", "into", "from", "are", "was", "were", "has", "have", "had", "will", "would", "should", "can", "could", "still", "also", "just", "now", "next", "yet", "all", "any", "some", "more", "remaining", "remain", "remains", "outstanding", "left", "todo", "need", "needs", "needed", "pending", "progress", "made", "work", "working", "going", "done", "finish", "finished", "write", "writing", "add", "adding", "implement", "update", "item", "items", "task", "tasks", "not", "yet", "which", "what", "there", "here", "its", "our", "your", "you", "they", "them", "one", "two"]);
+export function outstandingWords(text: string | null | undefined): Set<string> {
+  return new Set((text ?? "").toLowerCase().replace(/[^a-z\s]+/g, " ").split(/\s+/).map((w) => (w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w)).filter((w) => w.length >= 3 && !FILLER.has(w)));
+}
+/** True when `words` names work no earlier reply named. */
+export const namesNewWork = (words: ReadonlySet<string>, named: ReadonlySet<string>): boolean => [...words].some((w) => !named.has(w));
 /** The resume brief: the summary request is over and was not the task, the reply's own outstanding list, plan-scope files not in the tree, the finish rule (FINISH_LINE, word for word). */
 export function continueBrief(outstanding: string, missing: readonly string[], finish: string = FINISH_LINE): string {
   return [
@@ -199,7 +207,7 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
   // NO-DEFAULT-BUDGET: with no count the bound is progress. A resume makes progress when a plan-scope file it was missing now exists or its reply names
   // outstanding work it never named before; a changed tree alone is not progress (a session can edit forever), so noProgressRounds() such resumes in a row end the loop.
   let cur = session, outstanding = outstandingOf(session.summary), base = first, ended: ContinueEnd = max === 0 ? "continue off" : "count cap", spent: number | null = null;
-  const noCount = !Number.isFinite(max), saidBefore = new Set<string>([outstanding]); let fewestMissing = noCount ? missing().length : 0;
+  const noCount = !Number.isFinite(max), named = outstandingWords(outstanding); let fewestMissing = noCount ? missing().length : 0;
   for (let n = 1; n <= max; n++) {
     if (o.signal.aborted) { ended = "aborted"; break; }
     if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) { ended = "time"; break; }
@@ -215,8 +223,8 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
     const after = o.fingerprint();
     if (before === null || after === null) { ended = "tree unknown"; break; }
     if (noCount) {
-      const left = missing().length, said = outstandingOf(r.reply.summary), moved = left < fewestMissing || (said !== "" && !saidBefore.has(said));
-      fewestMissing = Math.min(fewestMissing, left); saidBefore.add(said);
+      const left = missing().length, words = outstandingWords(outstandingOf(r.reply.summary)), moved = left < fewestMissing || namesNewWork(words, named);
+      fewestMissing = Math.min(fewestMissing, left); for (const w of words) named.add(w);
       if (moved) unchanged = 0; else if (++unchanged >= noProgressRounds(env)) { ended = "no progress"; break; }
       continue;
     }
