@@ -649,12 +649,16 @@ run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=consultfix LOKI_E10_OPUS_CON
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=wrong E2E_STUB_FIX=consultfix LOKI_E10_OPUS_CONSULT=1
 [ "$(consults)" = 1 ] && [ "$(ctrig)" = "stop" ] && ok "consult cap 1: the stop consult spends the run's one consult; the later red verify gets none" || { bad "consult cap 1: $(consults) consults, triggers '$(ctrig)'"; dump; }
 
-run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress LOKI_E10_OPUS_CONSULT=0 # the stall rule alone; with the consult on, round 2 gets the red-verify consult first (legs above)
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress LOKI_E10_OPUS_CONSULT=0 LOKI_E10_DEFAULT_BUDGETS=1 # the stall rule alone under budgets; with the consult on, round 2 gets the red-verify consult first (legs above)
 n="$(fix_sessions)"
 [ "$n" = "1" ] && ok "no progress: one fix round, then fixing stops" || { bad "no progress: $n fix sessions (want 1)"; dump; }
 [ "$(ev 'sum(1 for e in E if e["type"]=="fix.round")')" = "1" ] && ok "no progress: one fix.round event" || bad "no progress: fix.round events: $(ev 'sum(1 for e in E if e["type"]=="fix.round")')"
 [ "$(ev 'sum(1 for e in E if e["type"]=="stage.started" and e["stage"]=="verify")')" = "2" ] && ok "no progress: verify ran twice" || bad "no progress: verify ran $(ev 'sum(1 for e in E if e["type"]=="stage.started" and e["stage"]=="verify")') times (want 2)"
 [ "$(outcome)" = "STALLED" ] && ok "no progress: run ends STALLED" || bad "no progress: outcome is '$(outcome)', not STALLED"
+# NO-DEFAULT-BUDGET: with no budget the round count is not the bound; two rounds in a row without progress end the loop (plant NB4: drop stillRounds++ and this run never stops fixing).
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress LOKI_E10_OPUS_CONSULT=0
+[ "$(fix_sessions)" = 2 ] && [ "$(ev 'sum(1 for e in E if e["type"]=="stage.started" and e["stage"]=="verify")')" = 3 ] && [ "$(outcome)" = "STALLED" ] \
+    && ok "no progress, no budget: two fix rounds without progress, then fixing stops; STALLED" || { bad "no progress, no budget: $(fix_sessions) fix sessions, outcome '$(outcome)'"; dump; }
 
 run_engine "$TASK" E2E_STUB_MODE=wallphantom E2E_STUB_FIX=wallconflict E2E_STUB_WALL_SLEEP=3 LOKI_SESSION_MODEL=haiku E2E_STUB_ARGV_LOG="$T/argv.log"
 order="$(ev 'min([e["seq"] for e in E if e["type"]=="stage.started" and e["stage"]=="implement"] or [10**9]) < min([e["seq"] for e in E if e["type"] in ("stage.completed","stage.failed") and e["stage"]=="wall"] or [-1])')"
@@ -694,21 +698,24 @@ committed_multiply() { local c; c="$(git -C "$REPO" show HEAD:calc.ts 2>/dev/nul
 run_engine "$TASK" E2E_STUB_NOFINISH=once
 [ "$(kits)" = 1 ] && [ "$(s1bev)" = 1 ] && [ "$(fin)" = "1|finish line|None" ] && [ "$(iexit)" = done ] && [ "$(unfin)" = 0 ] && committed_multiply \
     && ok "S1b once: a session whose final text has no finish line is resumed once (one s1b.resumed event), finishes, exits done; multiply() committed ($(outcome))" || { bad "S1b once: resumes $(kits), events $(s1bev), finish '$(fin)', exit $(iexit), cap lines $(unfin), outcome $(outcome)"; dump; }
-run_engine "$TASK" E2E_STUB_NOFINISH=never
+run_engine "$TASK" E2E_STUB_NOFINISH=never LOKI_E10_DEFAULT_BUDGETS=1 # the count cap is a budget (NO-DEFAULT-BUDGET)
 [ "$(kits)" = 4 ] && [ "$(s1bev)" = 4 ] && [ "$(fin)" = "4|count cap|None" ] && [ "$(iexit)" = incomplete ] && [ "$(unfin)" = 1 ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
     && ok "S1b never: four resumes that each change the tree but never finish stop at the count cap; exit incomplete, PARTIAL with one NOT PROVEN line, the work committed" || { bad "S1b never: resumes $(kits), finish '$(fin)', exit $(iexit), cap lines $(unfin), outcome $(outcome)"; dump; }
 has "S1b never: the NOT PROVEN line names why and what the reply said was outstanding" "$(rnp)" "implement ended without a finish line (count cap after 4 resumes): Progress made. Still outstanding: the docs for multiply."
-run_engine "$TASK" E2E_STUB_NOFINISH=still
+run_engine "$TASK" E2E_STUB_NOFINISH=never # NO-DEFAULT-BUDGET: no count; resumes that change the tree but name the same outstanding work are no progress
+[ "$(kits)" = 2 ] && [ "$(fin)" = "2|no progress|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
+    && ok "S1b never, no budget: resumes that change the tree but never finish and name the same outstanding work end after 2 as no progress; PARTIAL, the work committed" || { bad "S1b never, no budget: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
+run_engine "$TASK" E2E_STUB_NOFINISH=still LOKI_E10_DEFAULT_BUDGETS=1
 [ "$(kits)" = 2 ] && [ "$(fin)" = "2|tree unchanged|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
     && ok "S1b still: resumes that change nothing end the loop at the second in a row (2 of the 4 allowed); exit incomplete, PARTIAL, the work committed" || { bad "S1b still: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
-run_engine "$TASK" E2E_STUB_NOFINISH=unfinished # candidate 1: the named ending LOKI_UNFINISHED is not a finish line (finishLineOf reads only the three)
+run_engine "$TASK" E2E_STUB_NOFINISH=unfinished LOKI_E10_DEFAULT_BUDGETS=1 # candidate 1: the named ending LOKI_UNFINISHED is not a finish line (finishLineOf reads only the three)
 [ "$(kits)" = 2 ] && [ "$(fin)" = "2|tree unchanged|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
     && has "S1b LOKI_UNFINISHED: a reply ending LOKI_UNFINISHED is resumed; unchanged twice in a row, it exits incomplete, PARTIAL (never VERIFIED), with its own what-is-left text on the receipt" "$(rnp)" "LOKI_UNFINISHED: the docs for multiply are not written" \
     || { bad "S1b LOKI_UNFINISHED: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
 run_engine "$TASK" E2E_STUB_NOFINISH=never LOKI_E10_CONTINUE_MAX=0
 [ "$(kits)" = 0 ] && [ "$(fin)" = "0|continue off|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] \
     && ok "S1b LOKI_E10_CONTINUE_MAX=0: no resume, and the unfinished session still exits incomplete (PARTIAL)" || { bad "S1b resume off: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
-run_engine "$TASK" E2E_STUB_NOFINISH=never LOKI_E10_SELF_REVIEW=always
+run_engine "$TASK" E2E_STUB_NOFINISH=never LOKI_E10_SELF_REVIEW=always LOKI_E10_DEFAULT_BUDGETS=1
 rv_unfinished="$(grep -cE '^implement [^ ]*-rv ' "$ITERS" || true)"; out_unfinished="$(outcome)"
 run_engine "$TASK" E2E_STUB_MODE=done LOKI_E10_SELF_REVIEW=always
 rv_done="$(grep -cE '^implement [^ ]*-rv ' "$ITERS" || true)"
@@ -924,13 +931,13 @@ res("patch receipt: green, error and every other status map to green, error and 
   const absent = cr.claimedChangeAbsent(d, base, claims);
   res("coverage claim: SITE lines parse (changed claims only, backticks allowed)", claims.length === 3, JSON.stringify(claims));
   res("coverage claim: a changed line passes, a byte-identical line is claimed_change_absent, a file new on the base passes", absent.join() === "src/parse.js:2", absent.join());
-  const mt = [{}, { LOKI_E10_COVERAGE_MAX_TURNS: "4" }, { LOKI_E10_COVERAGE_MAX_TURNS: "0" }, { LOKI_E10_COVERAGE_MAX_TURNS: "off" }, { LOKI_E10_COVERAGE_MAX_TURNS: "x" }].map((e) => String(cr.coverageMaxTurns(e))).join(",");
-  res("coverage cap: the coverage turn caps at 10 turns by default; a positive integer sets it, =0/off lifts it, garbage keeps 10", mt === "10,4,undefined,undefined,10", mt);
+  const NB = { LOKI_E10_DEFAULT_BUDGETS: "1" }, mt = [NB, { ...NB, LOKI_E10_COVERAGE_MAX_TURNS: "4" }, { ...NB, LOKI_E10_COVERAGE_MAX_TURNS: "0" }, { ...NB, LOKI_E10_COVERAGE_MAX_TURNS: "off" }, { ...NB, LOKI_E10_COVERAGE_MAX_TURNS: "x" }, {}, { LOKI_E10_COVERAGE_MAX_TURNS: "4" }].map((e) => String(cr.coverageMaxTurns(e))).join(",");
+  res("coverage cap: with budgets the coverage turn caps at 10 turns by default; a positive integer sets it, =0/off lifts it, garbage keeps 10; with no budget there is no cap unless set (NO-DEFAULT-BUDGET)", mt === "10,4,undefined,undefined,10,0,4", mt);
   const seen = [], ok1 = { exit: 0, markers: { done: true, specConflict: null, alreadyDone: null }, durationS: 1, killed: false, summary: "SITE src/parse.js:2: changed\nLOKI_DONE" };
   const sctx = { provider: "stub", repoDir: d, baseSha: base, sessions: { run: async (o) => { seen.push(`${o.iterationId}:${o.maxTurns}`); return ok1; } } };
-  const prevMt = process.env.LOKI_E10_COVERAGE_MAX_TURNS, prevCc = process.env.LOKI_E10_CLAIM_CHECK; delete process.env.LOKI_E10_COVERAGE_MAX_TURNS; process.env.LOKI_E10_CLAIM_CHECK = "1";
+  const prevMt = process.env.LOKI_E10_COVERAGE_MAX_TURNS, prevCc = process.env.LOKI_E10_CLAIM_CHECK; delete process.env.LOKI_E10_COVERAGE_MAX_TURNS; process.env.LOKI_E10_CLAIM_CHECK = "1"; process.env.LOKI_E10_DEFAULT_BUDGETS = "1";
   await cr.resumeForCoverage(sctx, { stage: "implement", brief: "b", tier: "development", iterationId: "it", limitS: 600, signal: new AbortController().signal }, ok1);
-  if (prevMt === undefined) delete process.env.LOKI_E10_COVERAGE_MAX_TURNS; else process.env.LOKI_E10_COVERAGE_MAX_TURNS = prevMt; if (prevCc === undefined) delete process.env.LOKI_E10_CLAIM_CHECK; else process.env.LOKI_E10_CLAIM_CHECK = prevCc;
+  if (prevMt === undefined) delete process.env.LOKI_E10_COVERAGE_MAX_TURNS; else process.env.LOKI_E10_COVERAGE_MAX_TURNS = prevMt; if (prevCc === undefined) delete process.env.LOKI_E10_CLAIM_CHECK; else process.env.LOKI_E10_CLAIM_CHECK = prevCc; delete process.env.LOKI_E10_DEFAULT_BUDGETS;
   res("coverage cap: the coverage turn and its claim re-ask both run under the cap", seen.join() === "it-c:10,it-c2:10", seen.join());
   const cc = (e) => cr.claimCheckEnabled(e) ? 1 : 0, ccs = [{}, { LOKI_E10_CLAIM_CHECK: "1" }, { LOKI_E10_CLAIM_CHECK: "0" }, { LOKI_E10_LEAN_CALLS: "0" }, { LOKI_E10_LEAN_CALLS: "0", LOKI_E10_CLAIM_CHECK: "0" }, { LOKI_E10_LEAN_CALLS: "", LOKI_E10_CLAIM_CHECK: " " }].map(cc).join("");
   res("coverage claim: off by default under LOKI_E10_LEAN_CALLS (the re-ask edited nothing on the bench); =1 keeps it, =0 keeps it off, LOKI_E10_LEAN_CALLS=0 restores the old default on", ccs === "010100", ccs);
@@ -1080,10 +1087,12 @@ res("L026 parser: result-cost records full_suite_runs per session (2 of 3 Bash c
   const fctx = { provider: "claude", repoDir: "$T/l026", runDir: "$T/l026/run", runId: "e10-x", emit: (t: string) => evs.push(t), sessions: { run: async (o: { iterationId: string; brief: string }) => { runs.push(o.brief); tree++; return { exit: 0, killed: false, durationS: 1, markers: { done: true, alreadyDone: null, specConflict: null, finishLine: null }, summary: "still going: docs outstanding" }; } } } as never;
   const unfinished = { exit: 0, killed: false, durationS: 1, markers: { done: true, alreadyDone: null, specConflict: null, finishLine: null }, summary: "Summary.\n**Result:** LOKI_BLOCKED: docs outstanding" } as never;
   const opts = (usd: number | null, env: Record<string, string>) => ({ fingerprint: () => String(tree), spentUsd: () => usd, compactions: () => null, signal: new AbortController().signal, env });
-  const d1 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(5.0, {}));
+  const d1 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(5.0, { LOKI_E10_DEFAULT_BUDGETS: "1" })); // the default dollar line and count are budgets: on only with budgets (NO-DEFAULT-BUDGET)
   const d2 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(0.2, { LOKI_E10_CONTINUE_MAX: "2" }));
   const d3 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(0.2, { LOKI_E10_CONTINUE_MAX_USD: "0.1" }));
   res("S1b bounds: spend at or past LOKI_E10_CONTINUE_MAX_USD (default 5.00) stops before any resume; LOKI_E10_CONTINUE_MAX=2 stops after 2; neither is a finish", d1.record.ended === "dollar line" && d1.iterationIds.length === 0 && d2.record.ended === "count cap" && d2.iterationIds.length === 2 && d2.session.markers.finishLine === null && d3.record.ended === "dollar line" && evs.length === 2);
+  { const d4 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(50, {}));
+    res("S1b NO-DEFAULT-BUDGET: with no budget there is no count and no dollar line; resumes that change the tree but name the same outstanding work end after 2 as no progress", d4.record.ended === "no progress" && d4.iterationIds.length === 2 && d4.session.markers.finishLine === null); }
   res("S1b brief (no session id to resume, so the full brief goes first): it says the summary request is over and was not the task, quotes the outstanding lines, and ends with FINISH_LINE word for word", runs[0]!.includes("\\n\\nAny earlier request to stop and write a text-only summary is over; it was not the task.") && runs[0]!.includes("LOKI_BLOCKED: docs outstanding") && runs[0]!.endsWith((await import("$ROOT/loki-ts/src/engine10/types.ts")).FINISH_LINE) && runs[1]!.includes("still going: docs outstanding"));
   res("S1b scope: claude only; a result whose final text was not read (finishLine absent, a patch-green result) is never resumed", cr.lacksFinishLine("claude", unfinished) && !cr.lacksFinishLine("opencode", unfinished) && !cr.lacksFinishLine("claude", { markers: { done: true, alreadyDone: null, specConflict: null } } as never));
 }
@@ -1096,7 +1105,7 @@ res("E5 effort: Haiku is medium in every round and for a code-owned repeat, neve
 res("E5 effort: Haiku with only environment-shaped groups is low", fixEffort(1, true, {}, { model: E5H, envOnly: true }) === "low");
 res("E5 effort: Sonnet keeps high then xhigh, no model keeps the old policy, policy off is undefined", fixEffort(1, true, {}, { model: E5S }) === "high" && fixEffort(2, true, {}, { model: E5S }) === "xhigh" && fixEffort(2, true, {}) === "xhigh" && fixEffort(1, true, { LOKI_E10_EFFORT_POLICY: "off" }, { model: E5H }) === undefined);
 res("E5 env-shaped: a runner that never started is environment-shaped; a failing assertion, a mixed set and an empty set are not", environmentShaped([{ signature: "vitest:a", sample: "Error: No test files found" }]) && !environmentShaped([{ signature: "vitest:a", sample: "Error: Cannot find module './helperz' imported from /r/src/a.ts" }]) && !environmentShaped([{ signature: "pytest:t", sample: "ImportError: cannot import name parse_v2\nInterrupted: 1 error during collection" }]) && !environmentShaped([{ signature: "jest:t", sample: "Test suite failed to run\nSyntaxError: Unexpected token" }]) && !environmentShaped([{ signature: "vitest:a", sample: "expected 1 to be 2" }]) && !environmentShaped([{ signature: "vitest:a", sample: "No test files found" }, { signature: "vitest:b", sample: "expected 1 to be 2" }]) && !environmentShaped([]));
-res("E5 caps: Haiku fix has turns, tokens and the no-edit turn; Haiku implement has turns and tokens only", sessionCaps("fix", E5H, {})?.noEditByTurn === 8 && sessionCaps("fix", E5H, {})?.turns === 36 && sessionCaps("implement", E5H, {})?.turns === 45 && sessionCaps("implement", E5H, {})?.noEditByTurn === undefined);
+res("E5 caps (with budgets): Haiku fix has turns, tokens and the no-edit turn; Haiku implement has turns and tokens only", sessionCaps("fix", E5H, { LOKI_E10_DEFAULT_BUDGETS: "1" })?.noEditByTurn === 8 && sessionCaps("fix", E5H, { LOKI_E10_DEFAULT_BUDGETS: "1" })?.turns === 36 && sessionCaps("implement", E5H, { LOKI_E10_DEFAULT_BUDGETS: "1" })?.turns === 45 && sessionCaps("implement", E5H, { LOKI_E10_DEFAULT_BUDGETS: "1" })?.noEditByTurn === undefined);
 res("E5 caps: Sonnet, other stages, the policy off and LOKI_E10_SESSION_CAPS=off get none; an env value replaces a cap", sessionCaps("fix", E5S, {}) === undefined && sessionCaps("verify", E5H, {}) === undefined && sessionCaps("fix", E5H, { LOKI_E10_EFFORT_POLICY: "off" }) === undefined && sessionCaps("fix", E5H, { LOKI_E10_SESSION_CAPS: "off" }) === undefined && sessionCaps("fix", E5H, { LOKI_E10_SESSION_TURNS: "50" })?.turns === 50);
 { const { openDecisionNotes: odn } = await import("$ROOT/loki-ts/src/engine10/stages/seal.ts"); // FALSEVER-OPEN-DECISION (v11.137 bench: cli-2459, cli-2478, lh-1474 were VERIFIED and failed hidden)
   const nr = (receipt: string[]) => ({ implement: { no_regression: { receipt } } });

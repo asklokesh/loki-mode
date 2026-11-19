@@ -1,5 +1,6 @@
 // FC-19: a LOKI_SPEC_CONFLICT from implement gets exactly one resume with a correction before it is believed. No wording of the model's reason is
 // inspected (L0): the model itself says whether its conflict was only about Loki's own rules or about the task.
+import { budgetsOn, noProgressRounds } from "../engine10/types.ts";
 import { isOff } from "../council/role_agents.ts";
 import { consultCallFor, neverStopBrief } from "../features/opus_consult.ts";
 import { createHash } from "node:crypto";
@@ -152,9 +153,9 @@ export const continueMax = (env: NodeJS.ProcessEnv = process.env): number => {
   const v = (env["LOKI_E10_CONTINUE_MAX"] ?? "").trim().toLowerCase();
   if (isOff(v)) return 0;
   const n = Number(v);
-  return v !== "" && Number.isInteger(n) && n >= 0 ? Math.min(n, 10) : CONTINUE_MAX_DEFAULT;
+  return v !== "" && Number.isInteger(n) && n >= 0 ? Math.min(n, 10) : budgetsOn(env) ? CONTINUE_MAX_DEFAULT : Infinity; // NO-DEFAULT-BUDGET: no count; resumeToFinish ends on no tree progress
 };
-export const continueMaxUsd = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_CONTINUE_MAX_USD"] ?? "").trim()); return (env["LOKI_E10_CONTINUE_MAX_USD"] ?? "").trim() !== "" && Number.isFinite(n) && n >= 0 ? n : CONTINUE_MAX_USD_DEFAULT; };
+export const continueMaxUsd = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_CONTINUE_MAX_USD"] ?? "").trim()); return (env["LOKI_E10_CONTINUE_MAX_USD"] ?? "").trim() !== "" && Number.isFinite(n) && n >= 0 ? n : budgetsOn(env) ? CONTINUE_MAX_USD_DEFAULT : Infinity; }; // NO-DEFAULT-BUDGET: no dollar line unless set
 /** S1b applies to this result: a claude session whose final text was read (finishLine is not undefined) and carries no finish line. */
 export const lacksFinishLine = (provider: string, s: SessionResult): boolean => provider === "claude" && s.markers.finishLine === null;
 /** What the reply itself listed as outstanding: its last non-empty lines, one line, clipped to 400 characters. */
@@ -171,7 +172,7 @@ export function continueBrief(outstanding: string, missing: readonly string[], f
     finish, // FINISH_LINE, or ISSUE_FINISH_LINE on an issue run on claude (the rule that session was given)
   ].join("\n\n");
 }
-export type ContinueEnd = "finish line" | "continue off" | "count cap" | "dollar line" | "time" | "tree unchanged" | "tree unknown" | "killed or error" | "aborted";
+export type ContinueEnd = "finish line" | "continue off" | "count cap" | "dollar line" | "time" | "tree unchanged" | "no progress" | "tree unknown" | "killed or error" | "aborted";
 export interface ContinueRecord { continues: number; ended: ContinueEnd; outstanding: string | null; spent_usd?: number | null; compactions: number | null }
 // H1 CONFLICT-NEEDS-TEST (LOKI_E10_CONFLICT_NEEDS_TEST, default off; 1/on/true/yes turns it on), implement replies of an issue run on claude only: a
 // LOKI_SPEC_CONFLICT line whose reason cites no test file is an unfinished reply, not a conflict. Stored evidence (verdicts/q1-haiku-stop.md): of 11 implement
@@ -194,7 +195,10 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
   const env = o.env ?? process.env, ids: string[] = [], max = continueMax(env), usdLine = continueMaxUsd(env);
   const missing = (): string[] => readPlanScope(ctx.runDir).filter((f) => !existsSync(join(ctx.repoDir, f)));
   let unchanged = 0; // a reply that only waits on a subagent leaves the tree as it was: one such resume is allowed, a second ends the loop
+  // NO-DEFAULT-BUDGET: with no count the bound is progress. A resume makes progress when a plan-scope file it was missing now exists or its reply names
+  // outstanding work it never named before; a changed tree alone is not progress (a session can edit forever), so noProgressRounds() such resumes in a row end the loop.
   let cur = session, outstanding = outstandingOf(session.summary), base = first, ended: ContinueEnd = max === 0 ? "continue off" : "count cap", spent: number | null = null;
+  const noCount = !Number.isFinite(max), saidBefore = new Set<string>([outstanding]); let fewestMissing = noCount ? missing().length : 0;
   for (let n = 1; n <= max; n++) {
     if (o.signal.aborted) { ended = "aborted"; break; }
     if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) { ended = "time"; break; }
@@ -209,6 +213,12 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
     if (r.reply.killed || r.reply.exit !== 0) { ended = "killed or error"; break; }
     const after = o.fingerprint();
     if (before === null || after === null) { ended = "tree unknown"; break; }
+    if (noCount) {
+      const left = missing().length, said = outstandingOf(r.reply.summary), moved = left < fewestMissing || (said !== "" && !saidBefore.has(said));
+      fewestMissing = Math.min(fewestMissing, left); saidBefore.add(said);
+      if (moved) unchanged = 0; else if (++unchanged >= noProgressRounds(env)) { ended = "no progress"; break; }
+      continue;
+    }
     if (before === after) { if (++unchanged >= 2) { ended = "tree unchanged"; break; } } else unchanged = 0;
   }
   return { session: cur, iterationIds: ids, record: { continues: ids.length, ended, outstanding: outstanding || null, spent_usd: spent ?? o.spentUsd() } };
@@ -339,7 +349,7 @@ export const coverageMaxTurns = (env = process.env): number | undefined => {
   const v = (env.LOKI_E10_COVERAGE_MAX_TURNS ?? "").trim();
   if (isOff(v)) return undefined;
   const n = Number(v);
-  return v !== "" && Number.isInteger(n) && n > 0 ? n : COVERAGE_MAX_TURNS_DEFAULT;
+  return v !== "" && Number.isInteger(n) && n > 0 ? n : budgetsOn(env) ? COVERAGE_MAX_TURNS_DEFAULT : 0; // NO-DEFAULT-BUDGET: 0 = no turn cap
 };
 
 // LOKI_E10_SITE_HINTS (default on, =0/off/false opts out): the edit-shape sites (sibling, residual, precedence) of the tree's diff as advisory text in the fix brief and the coverage turn. Never a verdict.

@@ -12,7 +12,7 @@ import { FLOW, runMachine } from "./machine.ts";
 import { withFailover, type FailoverRecord } from "../runner/provider_failover.ts";
 import { cancelSessions, createSessionRunner, resolveModel, type EmitFn } from "./session.ts";
 import { RealTestMapProvider } from "./testmap.ts";
-import { DEEP_CAP_S, DEFAULT_CAP_S, envCapS, type EventType, type RunContext, type StageName } from "./types.ts";
+import { budgetsOn, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, type EventType, type RunContext, type StageName } from "./types.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { cancelProve } from "./stages/prove.ts";
 export type WorkerEmit = (type: EventType, stage: StageName | null, data: Record<string, unknown>) => void;
@@ -42,7 +42,7 @@ export async function runWorker(
   await drive((type, stage, data) => write(JSON.stringify({ type, stage, data }) + "\n"));
 }
 /** P12-07l: deep honors the same cap env as fast (remaining cap on resume; the supervisor sets the full cap otherwise). */
-export function workerCapS(deep: boolean, env: NodeJS.ProcessEnv): number { return envCapS(env.LOKI_E10_CAP_S) ?? (deep ? DEEP_CAP_S : DEFAULT_CAP_S); }
+export function workerCapS(deep: boolean, env: NodeJS.ProcessEnv): number { return envCapS(env.LOKI_E10_CAP_S) ?? (deep ? DEEP_CAP_S : budgetsOn(env) ? DEFAULT_CAP_S : Infinity); } // NO-DEFAULT-BUDGET: unset means no time limit (types.ts budgetsOn)
 
 /** The receipt's cost reader: files for tokens and records, the run's cost events (runCost, the number shown everywhere) for dollars. */
 export const workerCostReader = (runId: string, events: () => { type: string; data: Record<string, unknown> }[] = () => []): RunContext["cost"] => ({ read: (dir, ids) => { const l = join(dir, ".loki"); return costTotalsOf(sealedRunCost(sumRunCosts(l, liveArchivedCosts(l, ids, UNMETERED), [], runId), events().map((e) => ({ ...e, run: runId })), l)); } });
@@ -89,7 +89,7 @@ export async function main(args: string[]): Promise<number> {
       outputs: () => ({}), // replaced by the machine
     };
     // Rule of Two: pr is never loaded here; the supervisor runs it after this process exits.
-    const resize = deep ? undefined : (): number => resizeCap(ctx.runDir, loadProjectApi(repoDir), !(Number(parseCapUsd(process.env.LOKI_E10_MAX_COST_USD)) > 0), Number(process.env.LOKI_E10_CAP_FIXED_S) || undefined); // FC-21b: one resize after plan||wall; the machine never shrinks the cap
+    const resize = deep || !Number.isFinite(ctx.capS) ? undefined : (): number => resizeCap(ctx.runDir, loadProjectApi(repoDir), !(Number(parseCapUsd(process.env.LOKI_E10_MAX_COST_USD)) > 0), Number(process.env.LOKI_E10_CAP_FIXED_S) || undefined); // FC-21b: one resize after plan||wall; the machine never shrinks the cap
     let flow = FLOW.filter((s) => s !== "pr"), restored: Partial<Record<StageName, Record<string, unknown>>> | undefined;
     if (process.env.LOKI_E10_RESUME === "1") { // P12-07i: seed ctx from the durable log, then run only the unsettled stages; refuse (fail closed) on an invalid resume point
       const p = join(repoDir, eventsRelPath(runId)), r = (await import("../util/run_outputs.ts")).resumeMachineOpts(ctx as never, readEvents(p), readFileSync(p, "utf8"), flow);

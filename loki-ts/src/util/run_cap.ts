@@ -2,7 +2,7 @@
 // An explicit cap (LOKI_E10_CAP_S or loki.yaml budgets.run_cap_s) is fixed: never shrunk or grown, and it wins over the ceiling.
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_CAP_S, envCapS, warnBadCap, workRoadOn } from "../engine10/types.ts";
+import { DEFAULT_CAP_S, defaultBudgetsOn, envCapS, warnBadCap, workRoadOn } from "../engine10/types.ts";
 import { dependentsOf } from "../project_model/graph.ts";
 import type { ProjectApi } from "../project_model/api.ts";
 import { lokiYamlTexts, yamlKey } from "./yaml_key.ts";
@@ -93,6 +93,10 @@ export function resolveRunCapS(repoDir: string, subscription: boolean, env: Node
   const first = texts.find((t) => yamlKey(t, "budgets", "run_cap_s") !== null); // the first file that sets the key wins, like resolveCap
   const yamlS = first !== undefined ? yamlRunCapS(first) : null;
   const set = fixedCapS(envCapS(env.LOKI_E10_CAP_S) ?? undefined, yamlS), dl = deadlineCapS(env), fixedS = dl === undefined ? set : Math.min(set ?? dl, dl);
+  // NO-DEFAULT-BUDGET: no user time limit means no cap at all (Infinity). A limit the user set but wrote unusably (LOKI_E10_CAP_S, budgets.run_cap_s or
+  // LOKI_RUN_DEADLINE_S, each already warned about) fails closed to the sized default cap, as before; so does LOKI_E10_DEFAULT_BUDGETS=1.
+  const badLimit = (env.LOKI_E10_CAP_S ?? "").trim() !== "" || (first !== undefined && yamlS === null) || (env.LOKI_RUN_DEADLINE_S ?? "").trim() !== "";
+  if (fixedS === undefined && !badLimit && !defaultBudgetsOn(env)) return { capS: Infinity, ceilingS: Infinity };
   return { capS: fixedS ?? DEFAULT_CAP_S, fixedS, ceilingS: fixedS ?? capCeilingS(subscription) };
 }
 /** The line appended to the implement brief (after the cache-stable prefix) so the model can checkpoint. */

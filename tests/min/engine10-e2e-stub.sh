@@ -1517,4 +1517,107 @@ RW_REUSE="$RWDIR" rw_engine resume2 "$RWD/list.md" E2E_STUB_LIMIT=implement E2E_
 rw_proof -
 # ---- end RW-02 ----
 
+# ---------------------------------------------------------------- NO-DEFAULT-BUDGET (founder 2026-11-18): Loki sets no time, round, turn, test-count or dollar budget
+# by default; a run ends when it is done or makes no progress, always with a draft PR of what is done. Planted defects (each shown red, then reverted):
+#   NB1. util/run_cap.ts resolveRunCapS: drop the no-limit return (the default cap comes back): "no user limit means no cap" goes red.
+#   NB2. engine10/types.ts armTimer: drop the non-finite early return: the Infinity timer fires at once.
+#   NB3. engine10/session.ts: stallKillS(undefined, 0) for a no-limit session: the stuck session never ends and the stuck leg times out.
+#   NB4. engine10/machine.ts fix loop: drop the `stillRounds++`: the no-progress fix loop never ends (unit) .
+#   NB5. e10ext/budget_cap.ts resolveCap: return DEFAULT_MAX_COST_USD with an API key: the no-default-dollar-cap leg goes red.
+#   NB6. autonomy/route.sh: drop the --max-time arm: the --max-time dry-run leg goes red.
+#   NB7. util/shell.ts: drop the implied silence guard for a non-finite timeout: the silent command is never stopped.
+cat > "$T/nobudget.ts" <<'TS'
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const root = process.argv[2]!;
+const ty = await import(root + "/loki-ts/src/engine10/types.ts"), rc = await import(root + "/loki-ts/src/util/run_cap.ts"), mc = await import(root + "/loki-ts/src/engine10/machine.ts");
+const vf = await import(root + "/loki-ts/src/engine10/stages/verify.ts"), cr = await import(root + "/loki-ts/src/util/conflict_resume.ts"), sr = await import(root + "/loki-ts/src/features/self_review.ts");
+const ep = await import(root + "/loki-ts/src/contrib/effort_policy.ts"), bc = await import(root + "/loki-ts/src/e10ext/budget_cap.ts"), sh = await import(root + "/loki-ts/src/util/shell.ts");
+const wk = await import(root + "/loki-ts/src/engine10/worker.ts"), sv = await import(root + "/loki-ts/src/engine10/supervisor.ts"), wp = await import(root + "/loki-ts/src/runner/worker_proc.ts"), wd = await import(root + "/loki-ts/src/runner/watchdog.ts");
+const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
+const B = { LOKI_E10_DEFAULT_BUDGETS: "1" };
+const d = mkdtempSync(join(tmpdir(), "nb-"));
+try {
+  const r0 = rc.resolveRunCapS(d, true, {}), rb = rc.resolveRunCapS(d, true, B), ru = rc.resolveRunCapS(d, true, { LOKI_E10_CAP_S: "600" }), rbad = rc.resolveRunCapS(d, true, { LOKI_E10_CAP_S: "soon" });
+  res("NO-DEFAULT-BUDGET no user limit means no cap and no ceiling; the control knob restores 900 s; a user cap is fixed; an unusable one fails closed to 900 s", r0.capS === Infinity && r0.ceilingS === Infinity && r0.fixedS === undefined && rb.capS === 900 && ru.capS === 600 && ru.fixedS === 600 && rbad.capS === 900);
+  res("NO-DEFAULT-BUDGET the worker cap: unset is no limit, a set cap is that cap, deep keeps its own", wk.workerCapS(false, {}) === Infinity && wk.workerCapS(false, { LOKI_E10_CAP_S: "700" }) === 700 && wk.workerCapS(true, {}) === ty.DEEP_CAP_S && wk.workerCapS(false, B) === 900);
+  const env: Record<string, string> = { LOKI_E10_CAP_S: "900", LOKI_E10_CAP_FIXED_S: "900" }; sv.applyCapEnv(env, Infinity, { fixedS: undefined });
+  res("NO-DEFAULT-BUDGET no limit reaches the worker as an unset cap, never the string Infinity", !("LOKI_E10_CAP_S" in env) && !("LOKI_E10_CAP_FIXED_S" in env));
+  let fired = 0; const t1 = ty.armTimer(() => fired++, Infinity), t2 = ty.armTimer(() => fired++, 2 ** 31 + 5), t3 = ty.armTimer(() => fired += 10, 5);
+  await Bun.sleep(80); t1.clear(); t2.clear(); t3.clear();
+  res("NO-DEFAULT-BUDGET armTimer: Infinity arms nothing, a delay past 2^31-1 ms does not fire at once (Bun fires a raw one after 1 ms), a short one fires", fired === 10);
+  res("NO-DEFAULT-BUDGET verify has no maximum with no run cap, the user's LOKI_E10_VERIFY_MAX_S still applies, and a run cap keeps the 900 s maximum", mc.verifyLimitFor(120, Infinity, 50, {}) === Infinity && mc.verifyLimitFor(120, Infinity, 50, { LOKI_E10_VERIFY_MAX_S: "77" }) === 77 && mc.verifyLimitFor(120, 99999, 0, {}) === mc.VERIFY_MAX_S);
+  res("NO-DEFAULT-BUDGET the suite timeout: none by default, 300 s with budgets, the user's value when set", vf.suiteTimeoutFor(undefined, 0, {}) === Infinity && vf.suiteTimeoutFor(undefined, 0, B) === 300_000 && vf.suiteTimeoutFor(undefined, 0, { LOKI_E10_SUITE_TIMEOUT_S: "42" }) === 42_000);
+  res("NO-DEFAULT-BUDGET counts and turn caps are opt-in: continues, the continue dollar line, coverage, self-review and verified-finish turns", cr.continueMax({}) === Infinity && cr.continueMaxUsd({}) === Infinity && cr.coverageMaxTurns({}) === 0 && sr.selfReviewMaxTurns({}) === 0 && sr.verifiedFinishMaxTurns({}) === 0 && cr.continueMax(B) === 4 && cr.continueMaxUsd(B) === 5 && cr.coverageMaxTurns(B) === 10 && sr.selfReviewMaxTurns(B) === 12 && sr.verifiedFinishMaxTurns(B) === 8 && cr.continueMax({ LOKI_E10_CONTINUE_MAX: "2" }) === 2);
+  const hi = ep.sessionCaps("implement", "claude-haiku-5-5", {}), hf = ep.sessionCaps("fix", "claude-haiku-5-5", {}), hb = ep.sessionCaps("implement", "claude-haiku-5-5", B);
+  res("NO-DEFAULT-BUDGET the Haiku turn and token caps are opt-in; the fix session's no-edit rule (a no-progress stop) stays", hi === undefined && hf?.noEditByTurn === 8 && hf.turns === undefined && hb?.turns === 45);
+  const e2: Record<string, string> = {}; wp.clampBashTimeoutEnv(e2, Infinity);
+  res("NO-DEFAULT-BUDGET a session with no time limit gets no derived turn cap and keeps Claude's own Bash timeouts", !("LOKI_E10_MAX_TURNS" in e2) && e2["BASH_MAX_TIMEOUT_MS"] === "600000" && e2["BASH_DEFAULT_TIMEOUT_MS"] === "120000");
+  const fp = mc.fixProgressOf({ checks: [{ result: "fail", ids: ["a", "b"] }, { result: "fail" }, { result: "pass" }, { result: "not_run" }] });
+  res("NO-DEFAULT-BUDGET fix-loop progress counts failing ids (an id-less failing check once) and the checks that ran", fp.failing === 3 && fp.ran === 3);
+  const ck = bc.resolveCap(null, d, { ANTHROPIC_API_KEY: "x" }), cs = bc.resolveCap(null, d, {}), cbad = bc.resolveCap(null, d, { LOKI_BUDGET_LIMIT: "lots" }), cflag = bc.resolveCap("5", d, { ANTHROPIC_API_KEY: "x" });
+  res("NO-DEFAULT-BUDGET no default dollar cap with an API key; the start line says how to set one; a user cost limit is kept and an unusable one fails closed", "usd" in ck && ck.usd === 0 && bc.capNote(ck.usd, ck.source) === bc.NO_COST_LIMIT_NOTE && "usd" in cs && cs.usd === 0 && "error" in cbad && "usd" in cflag && cflag.usd === 5);
+  const t0 = Date.now(), quiet = await sh.run(["sh", "-c", "sleep 20"], { timeoutMs: Infinity, silenceMs: 300 });
+  const chatty = await sh.run(["sh", "-c", "for i in 1 2 3 4 5 6 7 8; do echo $i; sleep 0.1; done"], { timeoutMs: Infinity, silenceMs: 400 });
+  res("NO-DEFAULT-BUDGET a command with no time limit is stopped after its silence window, while a command that keeps printing runs to its end", quiet.silent === true && quiet.timedOut === true && Date.now() - t0 < 10_000 && chatty.exitCode === 0 && !chatty.silent && chatty.stdout.includes("8"));
+  let now = 0; const w = wd.createWatchdog(() => now, 10_000); w.tick(10, "d1"); now = 5_000; w.tick(20, "d1"); now = 9_000; const tk = w.tick(30, "d1");
+  res("NO-DEFAULT-BUDGET the loop guard sees output with no tree change (diffIdleS grows while output streams)", tk.diffIdleS === 9 && tk.cls !== "stalled");
+  const hung = await wp.spawnWorker([process.execPath, "-e", "setTimeout(() => {}, 20000)"], { PATH: process.env.PATH ?? "" }, d, Infinity, 500, () => {}, { silenceS: 0.4, lastEventMs: () => 0 });
+  res("NO-DEFAULT-BUDGET the supervisor's hang guard stops a silent worker that runs no process, and says it was hung (no backstop is armed)", hung.killed === true && hung.hung === true);
+} finally { rmSync(d, { recursive: true, force: true }); }
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/nobudget.ts" "$ROOT" 2>&1; echo "EXIT $?")"
+grep -q '^EXIT 0$' <<< "$out" || { bad "no-default-budget unit script crashed or exited non-zero"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 14 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 14"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+# End to end, no limit set: the default run is VERIFIED with no cap anywhere (no LOKI_E10_CAP_S in the session, no derived turn cap, no time note, no cap.hit).
+NBTO=(${TO[@]+"${TO[@]}"}); TO=(${NBTO[@]+"${NBTO[@]}"}); run_engine done
+NBF="$(python3 -I - "$RUNDIR" "$STUBENV" <<'PY'
+import json, os, sys
+rd, envlog = sys.argv[1], sys.argv[2]
+ev = [json.loads(l) for l in open(os.path.join(rd, "events.jsonl")) if l.strip().startswith("{")]
+st = next(e["data"] for e in ev if e["type"] == "run.started")
+imp = [l.split() for l in open(envlog) if l.startswith("implement BUDGET ")]
+print(json.load(open(os.path.join(rd, "receipt.json"))).get("verdict"), st.get("cap_s"), sum(e["type"] in ("cap.hit", "cap.sized") for e in ev), len(imp) > 0 and all(x[2:] == ["CAP=", "TURNS=", "TIMENOTE=0"] for x in imp))
+PY
+)"
+[ "$NBF" = "VERIFIED None 0 True" ] && ok "NO-DEFAULT-BUDGET a run with no limit set is VERIFIED with no cap: run.started cap_s null, no cap event, the session got no cap, no turn cap and no time note" || { bad "NO-DEFAULT-BUDGET default run facts: $NBF"; printf '%s\n' "$OUT" | tail -6 | sed 's/^/    | /'; }
+# A stuck session (silent after its edit) with no limit set still ends, and the run delivers a draft PR of what was done.
+TO=(LOKI_E10_STALL_KILL_S=20 E2E_STUB_SLEEP=900); command -v timeout >/dev/null 2>&1 && TO+=(timeout 400)
+NB0=$(date +%s); run_pr nb-stuck none LOKI_RISK_TIER=medium; NBW=$(( $(date +%s) - NB0 ))
+NBF="$(python3 -I - "$RUNDIR" <<'PY'
+import json, os, sys
+rd = sys.argv[1]
+ev = [json.loads(l) for l in open(os.path.join(rd, "events.jsonl")) if l.strip().startswith("{")]
+pr = [e for e in ev if e.get("type") == "pr.opened"]
+ended = [e["data"] for e in ev if e["type"] == "session.ended" and e.get("stage") == "implement"]
+print(json.load(open(os.path.join(rd, "receipt.json"))).get("verdict"), len(pr), bool(pr and pr[0]["data"].get("draft")), any("stalled" in str(x.get("cause", "")) or x.get("killed") for x in ended), sum(e["type"] == "cap.hit" for e in ev))
+PY
+)"
+[ "$NBW" -lt 400 ] && [ "${NBF%% *}" != VERIFIED ] && [ "$(cut -d' ' -f2-5 <<< "$NBF")" = "1 True True 0" ] && ok "NO-DEFAULT-BUDGET a stuck session with no limit ends on its silence (${NBW}s), the run is not VERIFIED and opens a draft PR of what was done ($NBF)" || { bad "NO-DEFAULT-BUDGET stuck run (${NBW}s): $NBF"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+# A limit the user set that is hit still ends in a draft PR of what was done.
+TO=(LOKI_RUN_DEADLINE_S=95 E2E_STUB_SLEEP=200); command -v timeout >/dev/null 2>&1 && TO+=(timeout 300)
+run_pr nb-deadline none LOKI_RISK_TIER=medium
+NBF="$(python3 -I - "$RUNDIR" <<'PY'
+import json, os, sys
+rd = sys.argv[1]
+ev = [json.loads(l) for l in open(os.path.join(rd, "events.jsonl")) if l.strip().startswith("{")]
+pr = [e for e in ev if e.get("type") == "pr.opened"]
+print(json.load(open(os.path.join(rd, "receipt.json"))).get("verdict"), sum(e["type"] == "cap.hit" for e in ev) > 0, len(pr), bool(pr and pr[0]["data"].get("draft")))
+PY
+)"
+[ "$(cut -d' ' -f2- <<< "$NBF")" = "True 1 True" ] && [ "${NBF%% *}" != VERIFIED ] && ok "NO-DEFAULT-BUDGET a user time limit that is hit ends the run with cap.hit and a draft PR of what was done ($NBF)" || { bad "NO-DEFAULT-BUDGET user-limit run: $NBF"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
+TO=(${NBTO[@]+"${NBTO[@]}"})
+# --max-time is the opt-in outer limit (LOKI_RUN_DEADLINE_S); with neither it nor --max-duration the dry run names no time limit.
+NBD="$(mktemp -d "$T/nbdry.XXXXXX")"; git -C "$NBD" init -q -b main; git -C "$NBD" commit -q --allow-empty -m base
+NBO="$(cd "$NBD" && bash "$ROOT/bin/loki" start "add a multiply function" --max-time 2m --dry-run 2>&1)"; NBN="$(cd "$NBD" && bash "$ROOT/bin/loki" start "add a multiply function" --dry-run 2>&1)"
+has "NO-DEFAULT-BUDGET --max-time 2m becomes a 120 s outer limit" "$NBO" "run-cap: 120s (--max-time)"
+has "NO-DEFAULT-BUDGET with no limit the dry run says the run stops when it is done or makes no progress" "$NBN" "run-cap: none (the run stops when it is done or makes no progress)"
+NBE="$(cd "$NBD" && bash -c '. "$1/autonomy/route.sh" 2>/dev/null; loki_route_resolve start "add a multiply function" --max-time 90m >/dev/null 2>&1; printf "%s" "${R_DEADLINE_S:-}"' _ "$ROOT" 2>/dev/null)"
+[ "$NBE" = 5400 ] && ok "NO-DEFAULT-BUDGET --max-time 90m resolves to a 5400 s deadline" || bad "NO-DEFAULT-BUDGET --max-time 90m resolved to '$NBE'"
+# ---- end NO-DEFAULT-BUDGET ----
+
 finish

@@ -35,6 +35,23 @@ while spending almost nothing and completing no iteration, so neither of those
 breakers ever trips. The wall-clock cap is the one that catches it. We added it
 after a run burned $34 reaching an external timeout.
 
+## Time and progress (Loki 10 engine)
+
+There is no default time limit. `--max-time 90m` (or `LOKI_RUN_DEADLINE_S`) sets an outer limit the run finishes
+inside; `--max-duration`, `LOKI_E10_CAP_S` and `budgets.run_cap_s` set a run cap. With any of them the engine budgets
+every stage as before. With none, the run stops on no progress:
+
+| Guard | Ends | Default |
+|---|---|---|
+| No-progress rounds | fix rounds, proof re-runs, continues that do not improve on the best round | 2 in a row (`LOKI_E10_NO_PROGRESS_ROUNDS`) |
+| Silent session | a session with no output and no tree change | 1800 s (`LOKI_E10_STALL_KILL_S`) |
+| Looping session | a session that prints but changes nothing in the tree | 3600 s (`LOKI_E10_LOOP_KILL_S`) |
+| Silent command | a test or check with no output | 1800 s (`LOKI_E10_CMD_SILENCE_S`) |
+| Hung worker | no event and no running process | 1800 s (`LOKI_E10_HANG_SILENCE_S`) |
+
+Each ends the run with commit, seal and a draft PR of what is done. `LOKI_E10_DEFAULT_BUDGETS=1` restores the old
+default budgets.
+
 ## Budget contract
 
 The per-run spend cap: its default, how it is chosen, what it covers, where it is
@@ -44,7 +61,14 @@ section must agree; tests pin them.
 
 ### Default
 
-The default cap is **100 USD per run**.
+**Loki 10 engine (the default route): no default cap.** Since the no-default-budget change (founder, 2026-11-18), the
+engine sets no dollar cap, with an API key or on a subscription, and no time, round, turn or test-count budget either. A
+run ends when it is done or makes no progress (see "Time and progress" below), always with a draft PR of what is done.
+An API-key run prints: "no cost limit is set: the run stops when it is done or makes no progress (--max-cost <usd> sets
+one)". A limit you set (`--max-cost`, `LOKI_BUDGET_LIMIT`, `budgets.per_run`) is enforced exactly as before, and an
+unusable value fails closed.
+
+**Previous loop (`autonomy/run.sh`): 100 USD per run.**
 
 The number lives in one file, `loki-ts/data/model-pricing.json`
 (`default_max_cost_usd`). Both routes read it:
@@ -61,7 +85,7 @@ Where the default applies:
 
 | Route | Default applies | What the cap does |
 | --- | --- | --- |
-| engine10 (`loki "<task>"`, the Loki 10 engine) | Only when an API key is set (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`). A subscription run (no key) has no dollar cap. | Stops starting stages and seals what exists (see "What you keep at the cap"). |
+| engine10 (`loki "<task>"`, the Loki 10 engine) | Never: no default dollar cap, with or without an API key. A cap you set stops starting stages and seals what exists. | Stops starting stages and seals what exists (see "What you keep at the cap"). |
 | Bash loop (`loki start`, `autonomy/run.sh`) | Always, key or not. | Pauses the run (writes `.loki/PAUSE` and `.loki/signals/BUDGET_EXCEEDED`); remove both to resume. |
 
 The README and the engine guide have shown different figures in the past (100 and

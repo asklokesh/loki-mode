@@ -4,6 +4,7 @@
 // stage owns a session kept away from the implementer's reply, nor harness-run user-level scripts. FireLater#24: 22 attempts scored blind by starting
 // the product; 13 scored 6 of 9 or less with tests, lint and typecheck green on 21 of 22, and 4 of 7 runs labelled VERIFIED were broken.
 // Static imports stay off seal.ts, machine.ts and implement.ts (seal and pr import this file; implement imports seal): machine.ts loads lazily.
+import { MAX_TIMER_MS } from "../types.ts";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -206,7 +207,7 @@ export async function runPass(root: string, dir: string, out: string, ids: strin
   const live: LivePass = { pgid: proc.pid, dir, root, tmp, out, env, since, scratch }; LIVE.add(live);
   let cut = false, endpoints: PassResult["endpoints"] = [], skipped: string | null = null, done = false;
   const stop = (): void => { cut = true; killGroup(proc.pid, "SIGKILL"); };
-  const timer = setTimeout(stop, Math.max(1, passS) * 1000);
+  const timer = setTimeout(stop, Math.min(MAX_TIMER_MS, Math.max(1, passS) * 1000)); // a pass with no limit (Infinity) waits the longest a timer can (Bun fires a longer delay at once)
   if (signal.aborted) stop(); else signal.addEventListener("abort", stop, { once: true });
   void proc.exited.then(() => { done = true; });
   try {

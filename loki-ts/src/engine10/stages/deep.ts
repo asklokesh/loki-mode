@@ -13,7 +13,7 @@ import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv, suiteTimeoutOn } from "../../project_model/package_suite.ts";
 import { classifyCheck, corroboratePass, failureExcerpt, failureShape, firstError, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { errorsById, failIds, unhandledBlock } from "../failures.ts"; import { attributeFullSuite, BASELINE_CMD_TIMEOUT_S, suiteEmptyOnBase } from "../../runner/repo_profile.ts";
-import { DEEP_CAP_S, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, STAGE_BUDGETS } from "../types.ts";
+import { budgetsOn, cmdSilenceS, DEEP_CAP_S, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, STAGE_BUDGETS } from "../types.ts";
 import { safeGitRun } from "../../util/safe_git.ts"; import { REPO_ROOT } from "../../util/paths.ts";
 import { DEFAULT_PUSH_SH, SHA_RE } from "./pr.ts";
 /** RunContext plus the value this stage needs that E-03 will eventually  inject (same local-extension pattern pr.ts's PrContext already uses). */
@@ -41,10 +41,10 @@ export interface DeepOptions {
   post?: boolean; // DEEP-POST: false when the detached deep-post poster (deepPost) posts the comment and status; the worker holds withheld credentials and could not
 }
 export const DEFAULT_SECRET_SCAN_SH = join(REPO_ROOT, "autonomy/lib/secret-scan.sh"); // HONEST-VERIFIED: a fixed depth from import.meta.url pointed outside the package in the dist bundle, so the security scan never ran there (NOT PROVEN on every high-risk run)
-const FULL_SUITE_TIMEOUT_MS = BASELINE_CMD_TIMEOUT_S * 1000; // 5 min per runner, the same budget its base run gets (repo_profile.ts); deep's own stage limit (2700s) is the outer bound
+const fullSuiteMs = (): number => (budgetsOn() ? BASELINE_CMD_TIMEOUT_S * 1000 : Infinity); // NO-DEFAULT-BUDGET: no time limit means no suite timeout (shell.run's silence guard ends a silent suite); with budgets, 5 min per runner, the same budget its base run gets (repo_profile.ts); deep's own stage limit (2700s) is the outer bound
 /** One check per detected runner, run to completion (no retry: flaky-rerun  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
 export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
-  if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.suiteTimeoutMs ?? opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), changed: opts.changed, proofFiles: opts.proofFiles, wallBaseRed: opts.wallBaseRed, targetPassed: opts.targetPassed, ...(opts.ownedOnly ? { ownedOnly: true } : {}), ...(opts.scope ? { scope: true } : {}), ...(opts.ensureBase ? { ensureBase: opts.ensureBase } : {}) }, checks, notProven)) return;
+  if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.suiteTimeoutMs ?? opts.fullSuiteTimeoutMs ?? fullSuiteMs(), baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), changed: opts.changed, proofFiles: opts.proofFiles, wallBaseRed: opts.wallBaseRed, targetPassed: opts.targetPassed, ...(opts.ownedOnly ? { ownedOnly: true } : {}), ...(opts.scope ? { scope: true } : {}), ...(opts.ensureBase ? { ensureBase: opts.ensureBase } : {}) }, checks, notProven)) return;
   const map = await ctx.tests.detect(ctx.repoDir);
   if (map.runners.length === 0) {
     notProven.add("full suite (no test runner detected)");
@@ -61,7 +61,7 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
     const started = Date.now();
     const r = await run([spec.cmd, ...spec.args], {
       cwd: ctx.repoDir,
-      timeoutMs: opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS,
+      timeoutMs: opts.fullSuiteTimeoutMs ?? fullSuiteMs(),
       env: suiteEnv(opts.path),
       ...(suiteTimeoutOn() ? { group: true, signal } : {}), // SUITE-TIMEOUT: the whole process tree stops at the limit, and at an abort (its own group is outside the worker's)
     });
@@ -71,7 +71,7 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
       notProven.add(`not run: ${name} (aborted)`);
       continue;
     }
-    if (r.timedOut && suiteTimeoutOn()) { const why = `timed out after ${Math.round((opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS) / 1000)}s`; checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS, reason: why }); notProven.add(`not run: ${name} (${why})`); continue; } // SUITE-TIMEOUT (dev2 ink s1, pipx s2): a suite killed at its limit is not_run, never FAILED
+    if (r.timedOut && suiteTimeoutOn()) { const why = r.silent ? `stopped after ${cmdSilenceS()}s with no output` : `timed out after ${Math.round((opts.fullSuiteTimeoutMs ?? fullSuiteMs()) / 1000)}s`; checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS, reason: why }); notProven.add(`not run: ${name} (${why})`); continue; } // SUITE-TIMEOUT (dev2 ink s1, pipx s2): a suite killed at its limit is not_run, never FAILED
     const out = stripAnsi(`${r.stdout}\n${r.stderr}`), lr = r.exitCode === 0 ? undefined : await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), out, cmd: spec.cmd, args: spec.args, signal, ...(opts.path ? { env: { PATH: opts.path } } : {}) });
     if (lr) { checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS }); notProven.add(`${lr} (${name}; harness-owned)`); continue; } // FC-02: harness-owned, never a code failure
     const cls = await corroboratePass(classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...goRunner(spec.cmd, spec.args) }), out, spec.cmd, spec.args, { cwd: ctx.repoDir, env: suiteEnv(opts.path), signal });

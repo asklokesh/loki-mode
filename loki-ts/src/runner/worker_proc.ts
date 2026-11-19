@@ -8,6 +8,7 @@ import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdirSync,
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { providerCause } from "./retry_class.ts";
+import { armTimer } from "../engine10/types.ts";
 
 const CANCEL_GRACE_MS = Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) > 0 ? Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) : 10000; // SIGINT/SIGTERM: time the worker gets to stop sessions and record usage before SIGKILL
 const DRAIN_MS = 2000; // after the worker exits, how long P0 waits for stdout to drain before closing it
@@ -41,7 +42,7 @@ export function maxTurnsFor(limitS: number, env: NodeJS.ProcessEnv): number {
 }
 /** Clamp Claude Code's Bash timeouts to the stage budget (minus a margin, floored) so one command cannot outlive the stage; a smaller user value wins. Also hands the session its maxTurns cap. */
 export function clampBashTimeoutEnv(env: NodeJS.ProcessEnv, limitS: number): void {
-  env["LOKI_E10_MAX_TURNS"] = String(maxTurnsFor(limitS, env));
+  const turns = maxTurnsFor(limitS, env); if (Number.isFinite(turns)) env["LOKI_E10_MAX_TURNS"] = String(turns); else delete env["LOKI_E10_MAX_TURNS"]; // NO-DEFAULT-BUDGET: no stage limit, no derived turn cap (the session's silence and loop guards end it)
   const budget = Math.max(BASH_CLAMP_FLOOR_MS, Math.floor(limitS * 1000) - BASH_CLAMP_MARGIN_MS);
   for (const [k, dflt] of [["BASH_DEFAULT_TIMEOUT_MS", 120_000], ["BASH_MAX_TIMEOUT_MS", 600_000]] as const) {
     const cur = Number(env[k]);
@@ -85,9 +86,15 @@ export function ulimitArgv(argv: string[], env: NodeJS.ProcessEnv): string[] {
 // backstopMs with SIGTERM then SIGKILL after escalateMs, clamped so a SIGTERM-trapping worker cannot outlive the cap.
 /** True only while the live console owns the terminal (console.ts sets the mark while its wrapper is installed) and this process's stderr is that terminal. */
 export const forwardsWorkerStderr = (stream: { isTTY?: boolean } = process.stderr): boolean => stream.isTTY === true && (globalThis as Record<symbol, unknown>)[Symbol.for("loki.consoleOwnsTerminal")] === true;
+const HANG_POLL_MS = 30_000;
+/** True when `pid` has at least one child process (pgrep -P). An unreadable process table reads as true: the hang guard never kills on a failed probe. */
+export function hasChildProcess(pid: number): boolean {
+  try { const r = spawnSync("pgrep", ["-P", String(pid)], { encoding: "utf8", timeout: 5000 }); return r.status === 1 && r.stdout.trim() === "" ? false : true; } catch { return true; }
+}
 export function spawnWorker(
-  argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, escalateMs: number, onLine: (l: string) => void, onStopped: (stopped: boolean) => void = () => {},
-): Promise<{ code: number | null; killed: boolean; cancelled?: NodeJS.Signals }> {
+  argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, escalateMs: number, onLine: (l: string) => void,
+  hang?: { silenceS: number; lastEventMs: () => number }, onStopped: (stopped: boolean) => void = () => {},
+): Promise<{ code: number | null; killed: boolean; cancelled?: NodeJS.Signals; hung?: true }> {
   return new Promise((resolve) => {
     if (!argv[0]) return resolve({ code: null, killed: false });
     let wrapped: string[];
@@ -135,18 +142,25 @@ export function spawnWorker(
       process.off("SIGTERM", onStop);
       process.off("SIGHUP", onStop);
       (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = false;
-      for (const t of timers) clearTimeout(t);
+      for (const t of timers) clearTimeout(t); backstop.clear(); if (hangBeat) clearInterval(hangBeat);
       rl.close();
       child.stdout?.destroy();
       if (fwd && child.stderr) { for (let b = child.stderr.read() as Buffer | string | null; b !== null; b = child.stderr.read() as Buffer | string | null) onErr(b); flushErr(); child.stderr.off("data", onErr); child.stderr.destroy(); }
       killGroup(child.pid, "SIGKILL"); onStopped(cancelled !== undefined); // reap anything the worker left in its group, and every announced session group (backstop and worker-exit paths too)
-      resolve({ code, killed, ...(cancelled ? { cancelled } : {}) });
+      resolve({ code, killed, ...(cancelled ? { cancelled } : {}), ...(hung ? { hung: true as const } : {}) });
     };
-    timers.push(setTimeout(() => {
+    const stopWorker = (): void => {
+      if (killed) return;
       killed = true;
       killGroup(child.pid, "SIGTERM");
       timers.push(setTimeout(() => killGroup(child.pid, "SIGKILL"), escalateMs));
-    }, backstopMs));
+    };
+    const backstop = armTimer(stopWorker, backstopMs); // NO-DEFAULT-BUDGET: Infinity (no time limit) arms nothing
+    // NO-DEFAULT-BUDGET hang guard (only when there is no backstop): no worker event for hang.silenceS while the worker runs no process of its own. A long
+    // test suite or a model session is a child process with its own silence guard, so it never trips this.
+    let hung = false;
+    const hangBeat = hang ? setInterval(() => { if (!killed && Date.now() - hang.lastEventMs() >= hang.silenceS * 1000 && child.pid !== undefined && !hasChildProcess(child.pid)) { hung = true; stopWorker(); } }, Math.max(100, Math.min(HANG_POLL_MS, Math.floor(hang.silenceS * 500)))) : null;
+    hangBeat?.unref();
     child.on("error", () => finish(null));
     child.on("exit", (code) => {
       const drained = (): boolean => (child.stdout?.readableEnded ?? true) && (!fwd || (child.stderr?.readableEnded ?? true)); // a piped stderr is read to its end too

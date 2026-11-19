@@ -2553,7 +2553,7 @@ _loki_start_handoff() {
 _loki_start_flag_kind() {
     _LOKI_START_FLAG_KIND=""
     case "${1%%=*}" in
-        --provider|--brief|--budget|--cost|--prd|--issue|--isolation|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--mirofish-docker) _LOKI_START_FLAG_KIND=value ;;
+        --provider|--brief|--budget|--cost|--prd|--issue|--isolation|--compliance|--max-duration|--max-time|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--mirofish-docker) _LOKI_START_FLAG_KIND=value ;;
         --mirofish) _LOKI_START_FLAG_KIND=optional ;;
         --parallel|--allow-haiku|--haiku|--regen-prd|--regenerate-prd|--regen|--fresh-prd|--bg|--background|--simple|--complex|--github|--no-dashboard|--api|--sandbox|--skip-memory|--yes|-y|--quiet|--mirofish-bg|--no-mirofish|--no-plan|--fast|--repo-fast|--full|--repo-full|--dry-run|--no-start|--worktree|-w|--pr|--prepare-pr|--ship|--detach|-d|--help|-h|--resume|--) _LOKI_START_FLAG_KIND=bool ;;
         *) return 1 ;;
@@ -2943,6 +2943,8 @@ cmd_start() {
                 echo "  --quiet               Suppress [INFO]/[STEP]; warnings and errors still print"
                 echo "  --log-level LEVEL     debug | info | warn | error (default: info)"
                 echo "  --max-duration DUR    Wall-clock cap: seconds, or 90m / 2h (default: none)"
+                echo "  --max-time DUR        Outer time limit the run finishes inside, sealing what is done (LOKI_RUN_DEADLINE_S): seconds, or 90m / 2h."
+                echo "                        Default: none. With no limit the run stops when it is done or makes no progress."
                 echo "  --deploy              After a start that exits 0, run the gated loki deploy --execute. Deploy flags:"
                 echo "                        --destination preview|staging|production, --canary, --domain HOST,"
                 echo "                        --env-file FILE (the deploy env file, not config, when --deploy is set),"
@@ -3172,6 +3174,27 @@ cmd_start() {
                     shift 2
                 else
                     echo "Error: --max-duration requires a value (e.g. 90m)" >&2
+                    return 1
+                fi
+                ;;
+            # NO-DEFAULT-BUDGET: an opt-in outer time limit (LOKI_RUN_DEADLINE_S); same duration forms as --max-duration.
+            --max-time)
+                if [[ -n "${2:-}" ]]; then
+                    local _mt="$2" _mtn _mtmul=1
+                    case "$_mt" in
+                        *s) _mtn="${_mt%s}" ;;
+                        *m) _mtn="${_mt%m}"; _mtmul=60 ;;
+                        *h) _mtn="${_mt%h}"; _mtmul=3600 ;;
+                        *)  _mtn="$_mt" ;;
+                    esac
+                    if ! [[ "$_mtn" =~ ^[0-9]+$ ]] || [ "$_mtn" -eq 0 ]; then
+                        echo "Error: --max-time must be a positive duration (e.g. 5400, 90m, 2h); got '$2'" >&2
+                        return 1
+                    fi
+                    export LOKI_RUN_DEADLINE_S=$(( _mtn * _mtmul ))
+                    shift 2
+                else
+                    echo "Error: --max-time requires a value (e.g. 90m)" >&2
                     return 1
                 fi
                 ;;

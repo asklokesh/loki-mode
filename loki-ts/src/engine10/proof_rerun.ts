@@ -3,6 +3,7 @@
 // each requested item; after the session and every fix round, Loki runs that script itself in a new run-owned scratch directory and records the real
 // exit code and output. The acceptance line check reads that output, not the reply. (New file: no module owned a harness-run proof; stages/prove.ts is
 // the separate prover session, off by default.)
+import { budgetsOn } from "./types.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statfsSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -215,7 +216,7 @@ export function tallyProof(out: string, token: string): Record<string, { proved:
 export const proofChecks = (out: string, token: string): ProofCheck[] => proofLines(out, token).map((c) => ({ item: c.item, what: checkKey(c.text), ok: c.ok }));
 const MAX_SCRIPT_BYTES = 200_000, TAIL_CHARS = 8000;
 /** Seconds Loki gives its own re-run (LOKI_E10_PROOF_RERUN_S overrides). */
-export const proofRerunS = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_E10_PROOF_RERUN_S"]); return n > 0 ? n : 600; };
+export const proofRerunS = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_E10_PROOF_RERUN_S"]); return n > 0 ? n : budgetsOn(env) ? 600 : Infinity; }; // NO-DEFAULT-BUDGET: no limit unless set (shell.run's silence guard ends a silent proof)
 /** How many times Loki hands a failing re-run back to the session before sealing (LOKI_E10_PROOF_LOOP_MAX, default 3; 0 only reports). */
 export const proofLoopMax = (env: NodeJS.ProcessEnv = process.env): number => { const v = (env["LOKI_E10_PROOF_LOOP_MAX"] ?? "").trim(), n = Number(v); return v !== "" && Number.isInteger(n) && n >= 0 ? n : 3; };
 /** On by default; LOKI_E10_PROOF_RERUN=0 opts out (the label then rests on the session's own description again). */

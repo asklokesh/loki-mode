@@ -10,7 +10,6 @@ import { accessSync, constants as fsConstants, existsSync as pathExists, mkdirSy
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { basename, join, resolve } from "node:path";
-import { DEFAULT_MAX_COST_USD } from "../e10ext/budget_cap.ts"; // LM-002: help states the real default
 import type { ProviderName, SessionTier } from "../runner/types.ts";
 import { resolveRunProvider } from "../runner/state.ts";
 import { tokenFreeEnv, safeGitRun } from "../util/safe_git.ts";
@@ -158,7 +157,9 @@ export const START_USAGE =
   "  --dry-run     validate every flag, run the preflight and print the provider, model and cost cap this run would use, then exit 0 without spending a token\n" +
   "  --spec-first  write the acceptance criteria to .loki/specs/<slug>.md and stop, so you can edit them\n" +
   "  --spec FILE   run Loki 10 against an edited spec as the authoritative intent (a spec that does not parse exits 2 with the line)\n" +
-  `  --budget-limit USD  per-run spend cap (default $${DEFAULT_MAX_COST_USD}; Loki 10 applies it with an API key and none on a subscription; see docs/cost-controls.md)\n` +
+  "  --budget-limit USD  per-run spend cap (default: none, with an API key or on a subscription; see docs/cost-controls.md)\n" +
+  "  --max-time DUR      outer time limit the run finishes inside, sealing what is done (LOKI_RUN_DEADLINE_S): seconds, or 90m / 2h.\n" +
+  "                      Default: none. With no limit the run stops when it is done or makes no progress, with a draft PR of what is done.\n" +
   "       loki start <spec> --attempts N [--no-pr] [--provider P] [--budget USD] [--session-model T]\n" +
   "  --attempts N  run N (1-5) independent Loki 10 engine attempts in separate git worktrees; the one with\n" +
   "                the most executed passing checks is applied and every loser is recorded on the attempts\n" +

@@ -10,7 +10,7 @@
 # Bash 3.2 compatible (no associative arrays, no ${var,,}).
 
 # Flags that take a separate value token.
-_ROUTE_VALUE_FLAGS=" --provider --budget --budget-limit --max-cost --max-iterations --max-retries --session-model --completion-promise --base-wait --max-wait --prd --brief --attempts --spec --isolation --output --engine --mirofish-rounds --mirofish-timeout --max-duration --log-level --compliance --cost --remote --issue --bmad-project --openspec --mirofish-docker --destination --domain --env-file --health-url --health-match --workspace --config --vars --seal-existing --label "
+_ROUTE_VALUE_FLAGS=" --provider --budget --budget-limit --max-cost --max-time --max-iterations --max-retries --session-model --completion-promise --base-wait --max-wait --prd --brief --attempts --spec --isolation --output --engine --mirofish-rounds --mirofish-timeout --max-duration --log-level --compliance --cost --remote --issue --bmad-project --openspec --mirofish-docker --destination --domain --env-file --health-url --health-match --workspace --config --vars --seal-existing --label "
 # Flags whose value is optional (cmd_start reads one only when it is present): --mirofish takes a URL (a token that does not
 # start with --, as _loki_start_optval_consumes). Declared here so a refused one still consumes its value. --parallel is NOT
 # here: cmd_start treats it as a plain boolean (_loki_start_flag_kind), so "--parallel 3" leaves 3 as a positional.
@@ -157,10 +157,10 @@ loki_route_resolve() {
     local verb="$1"; shift
     R_DECIDED=0; R_E10=0; R_HARD=0; R_ENGINE=""; R_REASON=""; R_INPUT_TYPE=""; R_INPUT=""
     R_PROVIDER=""; R_MODEL=""; R_NOTICE=""; R_ERR=""; R_EXPLAIN=0; R_JSON=0; R_SESSION_MODEL=""; R_VERB=""
-    R_FRONT=0; R_E10_ARGS=(); R_CLEAN=(); R_ADAPTER=""; R_CAPDIFF=(); R_E10_CAP_S=""; R_DRY=0; R_MAXCOST=""; R_PR_ARGS=()
+    R_FRONT=0; R_E10_ARGS=(); R_CLEAN=(); R_ADAPTER=""; R_CAPDIFF=(); R_E10_CAP_S=""; R_DEADLINE_S=""; R_DRY=0; R_MAXCOST=""; R_PR_ARGS=()
     if [ "$verb" = "start" ] && _route_pr_mode "$@"; then return 0; fi
 
-    local a engine_req="" dry=0 help=0 front_flag="" legacy_flag="" session_model="" provider_flag="" max_duration="" cap_err="" input_flag=""
+    local a engine_req="" dry=0 help=0 front_flag="" legacy_flag="" session_model="" provider_flag="" max_duration="" max_time="" cap_err="" input_flag=""
     local -a positionals=() passthru=()
     local i=0 n=$#
     local -a argv=("$@")
@@ -211,6 +211,12 @@ loki_route_resolve() {
                         max_duration="$(_route_duration_s "$val")"
                         if [ -z "$max_duration" ] && [ -z "$cap_err" ]; then
                             cap_err="loki: --max-duration '$val' is not a duration (use seconds, or 90m / 2h)"
+                        fi
+                        continue ;;
+                    --max-time) # NO-DEFAULT-BUDGET: an outer wall-clock limit the run finishes inside (LOKI_RUN_DEADLINE_S); no limit is set by default
+                        max_time="$(_route_duration_s "$val")"
+                        if [ -z "$max_time" ] && [ -z "$cap_err" ]; then
+                            cap_err="loki: --max-time '$val' is not a duration (use seconds, or 90m / 2h)"
                         fi
                         continue ;;
                 esac
@@ -395,6 +401,7 @@ $(loki_removed_saved_provider_hint "$R_PROVIDER")"
             R_NOTICE="loki: --max-duration $max_duration s is above the engine10 run-cap ceiling; using ${_ROUTE_CAP_CEILING_S}s."
         fi
     fi
+    if [ -n "$max_time" ] && [ "$engine_req" != "legacy" ]; then R_DEADLINE_S="$max_time"; fi
     if [ -n "$provider_flag" ] && [ "$engine_req" != "legacy" ]; then
         if ! validate_provider "$provider_flag"; then
             R_ERR="loki: --provider $provider_flag has no Loki 10 engine invoker (use $(loki_supported_providers_joined " or "), or pass --engine legacy)"
@@ -521,7 +528,7 @@ loki_route_dispatch() {
     if [ "$R_EXPLAIN" = "1" ]; then loki_route_print; return 7; fi
     if [ "$R_DRY" = "1" ]; then
         loki_route_print
-        printf 'max-cost: %s\nrun-cap: %ss\ndry-run: nothing was started\n' "${R_MAXCOST:-default (engine10 resolves its own)}" "${R_E10_CAP_S:-$_ROUTE_CAP_CEILING_S}"
+        printf 'max-cost: %s\nrun-cap: %s\ndry-run: nothing was started\n' "${R_MAXCOST:-none (engine10 resolves loki.yaml and LOKI_BUDGET_LIMIT)}" "$(if [ -n "$R_E10_CAP_S" ]; then printf '%ss' "$R_E10_CAP_S"; elif [ -n "$R_DEADLINE_S" ]; then printf '%ss (--max-time)' "$R_DEADLINE_S"; else printf 'none (the run stops when it is done or makes no progress)'; fi)"
         return 7
     fi
     if [ -n "$R_NOTICE" ]; then echo "$R_NOTICE" >&2; fi
@@ -549,5 +556,5 @@ _route_task_first() {
     else
         R_E10_ARGS=(--no-pr "$@")
     fi
-    R_DECIDED=1; R_E10=1; R_HARD=0; R_ENGINE=engine10; R_VERB="$verb"; R_SESSION_MODEL=""; R_E10_CAP_S=""
+    R_DECIDED=1; R_E10=1; R_HARD=0; R_ENGINE=engine10; R_VERB="$verb"; R_SESSION_MODEL=""; R_E10_CAP_S=""; R_DEADLINE_S=""
 }

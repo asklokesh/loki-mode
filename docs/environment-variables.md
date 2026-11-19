@@ -23,7 +23,14 @@ with nowhere to look them up.
 |---|---|---|
 | `LOKI_PRD_FILE` | none | Path to a spec file, as an alternative to the positional argument. |
 | `LOKI_MAX_ITERATIONS` | `1000` | Hard cap on iterations. Reaching it is a deterministic terminal failure, not a success. Also in `config schema`. |
-| `LOKI_BUDGET_LIMIT` | `100.00` | Spend cap in USD on the previous loop (the Loki 10 engine uses `--max-cost`, `budgets.per_run` or a default of $100 only when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set; none on a subscription). Also enforced by kill on opencode in the Loki 10 engine. Breaching it **pauses** the run (writes `.loki/PAUSE` and saves state); it never kills work or discards a deliverable. Remove `.loki/PAUSE` to resume, or raise the cap. Set to `""` for no cap. A warning is logged at 80%. |
+| `LOKI_BUDGET_LIMIT` | `100.00` on the previous loop; none on the Loki 10 engine | Spend cap in USD. The previous loop (`autonomy/run.sh`) defaults to $100. The Loki 10 engine sets no dollar cap by default, with an API key or on a subscription; `--max-cost`, this variable or `budgets.per_run` sets one, and an unusable value fails closed. |
+| `LOKI_RUN_DEADLINE_S` | unset (no limit) | Loki 10 engine: an outer wall-clock limit the run finishes inside, sealing what is done with a draft PR. `loki start --max-time 90m` sets it. |
+| `LOKI_E10_DEFAULT_BUDGETS` | unset (off) | `1` restores the Loki 10 engine's old default budgets (900 s run cap sized up to 3600 s, stage limits, 2 fix rounds, 3 proof re-runs, 4 continues and $5 continue line, turn caps, the 20-file dependents cap). Without it, and with no user time limit, a run has no budget and ends when it is done or makes no progress. |
+| `LOKI_E10_NO_PROGRESS_ROUNDS` | `2` | With no budget: fix rounds, proof re-runs and continues end after this many rounds in a row without progress (fewer failing checks or unmet acceptance lines than the best round so far, a check that now ran, a plan file that now exists, or new outstanding work named). |
+| `LOKI_E10_STALL_KILL_S` | `1800` with no time limit, else off | A session with no new output and no tree change for this many seconds is ended. |
+| `LOKI_E10_LOOP_KILL_S` | `3600` | With no time limit: a session that keeps printing but changes nothing in the tree for this long is ended. |
+| `LOKI_E10_CMD_SILENCE_S` | `1800` | A test or check command with no time limit is stopped after this long with no output, reported as not run. |
+| `LOKI_E10_HANG_SILENCE_S` | `1800` | With no time limit: the supervisor stops a worker that sent no event and runs no process for this long, and seals what is done. |
 | `LOKI_MAX_DURATION` | unset (no cap) | Wall-clock cap in seconds. Stops cleanly at the next iteration boundary with a `max_duration_reached` terminal status. `loki start --max-duration` also accepts `90m` / `2h`. |
 | `LOKI_AUTO_CONFIRM` | unset | `true`/`false` to control prompts. Takes precedence over `CI`. |
 | `LOKI_CONFIG_DUMP` | `0` | `1` prints the resolved configuration and exits **without starting a run or spending anything**. |

@@ -793,6 +793,7 @@ if [ -f "$REPO_ROOT/autonomy/route.sh" ]; then
             export LOKI_SESSION_MODEL="$R_SESSION_MODEL"
         fi
         if [ "$R_E10" = "1" ] && [ -n "${R_E10_CAP_S:-}" ]; then export LOKI_E10_CAP_S="$R_E10_CAP_S"; fi
+        if [ "$R_E10" = "1" ] && [ -n "${R_DEADLINE_S:-}" ]; then export LOKI_RUN_DEADLINE_S="$R_DEADLINE_S"; fi # --max-time
         if [ "$R_ENGINE" = "verify-pr" ]; then
             set -- verify-pr "${R_PR_ARGS[@]}"
         elif [ "$R_E10" != "1" ]; then

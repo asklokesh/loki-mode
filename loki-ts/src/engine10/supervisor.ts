@@ -31,7 +31,7 @@ import { cleanTreeId, failedCheckNames, recordFingerprints } from "../util/failu
 import { modelDowngrades } from "../runner/model_downgrades.ts";
 import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
-import { type EventEnvelope, type PushEnv, type StageName, type Verdict, backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, proveByRunningOn, pushArgv, STAGE_BUDGETS, WORK_ROAD_ENV } from "./types.ts";
+import { type EventEnvelope, type PushEnv, type StageName, type Verdict, backstopS, BACKSTOP_GRACE_S, budgetsOn, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, hangSilenceS, proveByRunningOn, pushArgv, STAGE_BUDGETS, WORK_ROAD_ENV } from "./types.ts";
 import { baseLine, finishRunBranch, prBasePlan } from "../util/base_guard.ts";
 import { alreadyDoneTextComment, policyGate, prGate, renderMainOutput, runIntent, summaryCache, summaryTokens, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
 
@@ -86,6 +86,7 @@ const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "S
 const ALIVE_BEAT_MS = 15_000;
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
 export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap minus grace)";
+export const HANG_NOT_PROVEN = "worker stopped by the supervisor: no event and no running process for the hang window (LOKI_E10_HANG_SILENCE_S)", HANG_SEALED_NOTE = "the worker made no progress (no event and no running process for the hang window) and was stopped; the current tree was sealed by a seal pass";
 export const BACKSTOP_SEALED_NOTE = "time ran out: the worker was stopped at its time limit and the current tree was sealed by a seal pass";
 export const backstopSealOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BACKSTOP_SEAL"] ?? "").trim());
 export const BACKSTOP_SEAL_MAX_MS = 45_000, BACKSTOP_SEAL_MIN_MS = 10_000, BACKSTOP_SEAL_MARGIN_S = 25; // the deadline margin is 30 s (util/run_cap.ts DEADLINE_MARGIN_S): stay 5 s inside it
@@ -187,6 +188,7 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
 }
 /** P12-07l: the worker cap env. A deep worker reads the same cap env as fast, never a stale user value; a sized (fast) run also pins or clears the fixed-cap marker. */
 export function applyCapEnv(env: NodeJS.ProcessEnv, capS: number, sized: { fixedS?: number } | null): void {
+  if (!Number.isFinite(capS)) { delete env.LOKI_E10_CAP_S; delete env.LOKI_E10_CAP_FIXED_S; return; } // NO-DEFAULT-BUDGET: no time limit reaches the worker as an unset cap, never "Infinity"
   env.LOKI_E10_CAP_S = String(capS);
   if (sized) { if (sized.fixedS) env.LOKI_E10_CAP_FIXED_S = String(sized.fixedS); else delete env.LOKI_E10_CAP_FIXED_S; }
 }
@@ -213,21 +215,22 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   if (opts.started?.["road"] === "work") workerEnv[WORK_ROAD_ENV] = "1"; else delete workerEnv[WORK_ROAD_ENV]; // RW-02 ONE ROAD: every worker of a run, a resumed one included (its started data is the first run.started), reads the road the run was started on
   // T3: the worker has no terminal; only the supervisor can ask the LOKI_CONFIRM question.
   workerEnv.LOKI_INTENT_TTY = env.LOKI_CONFIRM === "1" && process.stdin.isTTY === true && process.stdout.isTTY === true ? "1" : "0";
-  const capS = opts.capS ?? envCapS(env.LOKI_E10_CAP_S) ?? DEFAULT_CAP_S;
+  const capS = opts.capS ?? envCapS(env.LOKI_E10_CAP_S) ?? (budgetsOn(env) ? DEFAULT_CAP_S : Infinity); // NO-DEFAULT-BUDGET: no user limit, no cap
   const ceilingS = Math.max(capS, opts.capCeilingS ?? capS);
-  const backstopMs = backstopS(ceilingS, opts.graceS ?? BACKSTOP_GRACE_S) * 1000; // hard SIGKILL safety net for a stage blocking past the worker's own soft cap
-  const escalateMs = Math.max(0, Math.min(2000, ceilingS * 1000 - backstopMs)); // SIGTERM->SIGKILL clamped so a trapping worker cannot outlive the cap
+  const backstopMs = backstopS(ceilingS, opts.graceS ?? BACKSTOP_GRACE_S) * 1000; // hard SIGKILL safety net for a stage blocking past the worker's own soft cap (Infinity: never armed)
+  const escalateMs = Number.isFinite(ceilingS) ? Math.max(0, Math.min(2000, ceilingS * 1000 - backstopMs)) : 2000; // SIGTERM->SIGKILL clamped so a trapping worker cannot outlive the cap
+  let lastEventMs = Date.now(); const hang = Number.isFinite(ceilingS) ? undefined : { silenceS: hangSilenceS(env), lastEventMs: () => lastEventMs }; // NO-DEFAULT-BUDGET: with no backstop, a worker silent this long with no process of its own is hung
   let spawnArgv: string[] = opts.workerArgv; try { spawnArgv = ulimitArgv(opts.workerArgv, workerEnv); } catch { /* spawnWorker refuses the same input */ } log.append("capability.recorded", null, { stages: workerStages().map((st) => stageCapability(st, envWithPwd(workerEnv, opts.repoDir), spawnArgv)) }); // GAME10-05a: worker stages are read from the env and argv spawnWorker is given; pr is recorded by recordSpawnEnv at its own spawn
   let sealed: Record<string, unknown> | null = null; const origBranch = opts.restoreBranch !== undefined ? opts.restoreBranch : currentBranch(opts.repoDir), sessionGroups = new Set<number>(); // session children are detached (own group), so the worker's group kill misses them
   const onWorkerLine = (line: string): void => {
-    const e = log.ingest(line); if (e) { stuck.event(String(e.stage ?? "unknown"), Date.now()); quiet.event(e.stage ?? null, e.type, Date.now()); }
+    const e = log.ingest(line); if (e) { lastEventMs = Date.now(); stuck.event(String(e.stage ?? "unknown"), Date.now()); quiet.event(e.stage ?? null, e.type, Date.now()); }
     if (e?.type === "session.started" && typeof e.data.pgid === "number") sessionGroups.add(e.data.pgid); if (e?.type === "receipt.sealed") { sealed = e.data; log.checkpoint(e.data["receipt_sha256"]); }
     if (e?.type === "variant" && e.data.intent_confirm === true && workerEnv.LOKI_INTENT_TTY === "1") {
       void askIntent(String(e.data.card ?? ""), join(opts.repoDir, ".loki", "runs", opts.runId));
     }
   };
   let workerStopped = false;
-  let worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, onWorkerLine, (stopped) => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); workerStopped = stopped; if (stopped && !(backstopSealOn(env) && !sealed)) restoreBranch(opts.repoDir, origBranch); }).finally(() => clearInterval(beat)); // BACKSTOP-SEAL: a kill with no receipt keeps the tree on the run branch for the seal pass
+  let worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, onWorkerLine, hang, (stopped) => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); workerStopped = stopped; if (stopped && !(backstopSealOn(env) && !sealed)) restoreBranch(opts.repoDir, origBranch); }).finally(() => clearInterval(beat)); // BACKSTOP-SEAL: a kill with no receipt keeps the tree on the run branch for the seal pass
   { const rdir = join(opts.repoDir, ".loki", "runs", opts.runId), own = cleanupScratchRecord(rdir), sc = own ?? readExitCleanup(rdir); if (sc && (sc.stopped.length || sc.left.length)) log.append("scratch.cleanup", null, { when: own ? "after the worker exited" : "at the worker's exit", stopped: sc.stopped, left: sc.left, removed: sc.removed, ...(sc.kept ? { kept: sc.kept } : {}) }); } // Q1 SCRATCH-OWNED: a worker stopped by a signal or the backstop never ran its own cleanup
   // BACKSTOP-SEAL (dev4 gitoxide on 11.141.5: the worker's own soft cap never fired, the backstop killed it at 1141 s and no receipt existed): a worker killed by the
   // backstop before it sealed gets one seal pass. A fresh worker resumes from the durable log with only commit and seal (LOKI_E10_SEAL_ONLY), seals the current tree as
@@ -239,7 +242,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
       sealPass = true; process.stderr.write(`engine10: the backstop stopped the worker before it sealed; sealing the current tree (up to ${Math.round(leftMs / 1000)} s)\n`);
       try { const runBr = `loki/${opts.runId}`; if (currentBranch(opts.repoDir) !== runBr) safeGit(opts.repoDir, ["checkout", runBr], { stdio: "ignore" }); } catch { /* the seal pass seals whatever tree is checked out */ }
       log.sealLog();
-      const sealed2 = await spawnWorker(opts.workerArgv, { ...workerEnv, LOKI_E10_RESUME: "1", LOKI_E10_SEAL_ONLY: "1" }, opts.repoDir, leftMs, escalateMs, onWorkerLine, () => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); });
+      const sealed2 = await spawnWorker(opts.workerArgv, { ...workerEnv, LOKI_E10_RESUME: "1", LOKI_E10_SEAL_ONLY: "1" }, opts.repoDir, leftMs, escalateMs, onWorkerLine, undefined, () => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); });
       if (sealed) worker = { ...sealed2, killed: true };
     }
   }
@@ -249,7 +252,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const v = sealedData?.verdict;
   const receiptVerdict = workerExit === 0 && typeof v === "string" && VERDICTS.has(v), verdict: Verdict = receiptVerdict ? (v as Verdict) : "FAILED"; // FC-21b (3): a sealed receipt is the one source of truth for the outcome
   const notProven = Array.isArray(sealedData?.not_proven) ? (sealedData.not_proven as unknown[]).map(String) : [];
-  if (worker.killed) notProven.push(sealPass && sealed ? BACKSTOP_SEALED_NOTE : BACKSTOP_NOT_PROVEN); const ev0 = readEvents(log.path), usage = worker.cancelled ? null : usageLimitOfRun(ev0); // USAGE-LIMIT: a session hit a provider usage limit; the run closes as a resumable stop, never sealed FAILED
+  if (worker.killed) notProven.push(worker.hung ? (sealPass && sealed ? HANG_SEALED_NOTE : HANG_NOT_PROVEN) : sealPass && sealed ? BACKSTOP_SEALED_NOTE : BACKSTOP_NOT_PROVEN);/* NO-DEFAULT-BUDGET: a hung worker is named as hung */ const ev0 = readEvents(log.path), usage = worker.cancelled ? null : usageLimitOfRun(ev0); // USAGE-LIMIT: a session hit a provider usage limit; the run closes as a resumable stop, never sealed FAILED
   const cancelled: string | null = worker.cancelled ?? (ev0.some((e) => e.type === "cancel_effective") ? "request" : usage ? "usage limit" : null); /* P12-10b: a loki cancel honoured at a stage boundary completes as cancelled too */ if (cancelled) notProven.push(usage && cancelled === "usage limit" ? `not sealed: run paused by a provider usage limit at stage ${usage.stage}` : `run cancelled by ${cancelled}`); // the Reason line (output.ts usagePauseLine) is the one line naming the limit and its reset // SIGINT/SIGTERM: usage so far is kept, no PR or backstop commit
   let prUrl: string | null = null;
   const intact = log.verify(); // unconditional re-check before the PR

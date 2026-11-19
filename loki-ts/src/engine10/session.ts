@@ -16,6 +16,7 @@ import { readSessionId } from "../runner/session_resume.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { exitKind, routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
+import { armTimer, loopKillS, SILENCE_KILL_S } from "./types.ts";
 import { clampBashTimeoutEnv, envWithPwd, pinBashShellEnv, killGroupWithGrace, reapLiveGroup } from "../runner/worker_proc.ts"; import { engine10StaticPrefix, sessionPinModel } from "../runner/providers.ts"; export { sessionPinModel }; import { capToSessionPin } from "../runner/model_rank.ts"; import { idleGapMs, prefixParts, prefixSha } from "../util/cost_breakdown.ts";
 import { allowFor, appendFence, conflictNamed, createdOf, markCreated, fenceEnabled, fenceTask, HARNESS_OUTPUTS_ENV, healRecord, mergeDenials, restoreFenced, snapshotFenced } from "../util/config_fence.ts"; // E1: config and lockfile write fence
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
@@ -231,14 +232,14 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       };
       cfg.emit?.("session.started", opts.stage, { session_id: sessionId, provider: cfg.provider, model: opts.model ?? cfg.model ?? null, pgid: pgid ?? null });
       const onAbort = () => kill("aborted");
-      const limitTimer = setTimeout(() => kill("limit"), opts.limitS * 1000);
+      const limitTimer = armTimer(() => kill("limit"), opts.limitS * 1000); // NO-DEFAULT-BUDGET: limitS Infinity (no time limit) arms nothing
       const capUsd = parseCapUsd(process.env["LOKI_E10_MAX_COST_USD"]), effDir = cfg.lokiRoot ? join(cfg.lokiRoot, "metrics", "efficiency") : null, effBase = effDir !== null && capUsd !== null ? calculateCostFromRecords(readEfficiencyDir(effDir)) : 0; const stopBudgetWatch = isGuarded(cfg.provider) && capUsd !== null ? watchBudget(() => (cfg.remaining?.() ?? 1) <= 0 || (effDir !== null && calculateCostFromRecords(readEfficiencyDir(effDir)) - effBase >= capUsd), () => { cfg.emit?.("guard.budget_stop", opts.stage, { provider: cfg.provider }); kill("limit"); }) : () => {}; // PARITY-ENFORCE: live kill on the run cap (LOKI_E10_MAX_COST_USD), not the unset BUDGET_LIMIT
-      const watchdog = createWatchdog(Date.now), stallKill = stallKillS(); // FC-17: 0 (default) never kills
+      const noLimit = !Number.isFinite(opts.limitS), watchdog = createWatchdog(Date.now), stallKill = stallKillS(undefined, noLimit ? SILENCE_KILL_S : 0), loopKill = noLimit ? loopKillS() : 0; // FC-17: 0 (default) never kills; NO-DEFAULT-BUDGET: a session with no time limit ends on silence (1800 s) or on output with no tree change (3600 s)
       const heartbeatTimer = setInterval(() => {
         const un = untrackedList(opts.cwd), diff = diffShortstat(opts.cwd, un), w = watchdog.tick(stdout.length + errBytes, diffSignature(opts.cwd, diff, un)); // one ls-files per tick, shared (TEN-SPEED-21)
         const live = readSessionId(opts.cwd ?? process.cwd(), opts.iterationId); // mirrors the provider session id into the append-only log so a SIGKILL cannot lose it; key absent until known
         cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff, progress: w.cls, ...(live ? { provider_session_id: live } : {}) });
-        if (w.stalledNow) cfg.emit?.("session.stalled", opts.stage, { session_id: sessionId, idle_s: w.idleS, threshold_s: stallThresholdS() }); if (stallKill > 0 && w.idleS >= stallKill) kill("stalled");
+        if (w.stalledNow) cfg.emit?.("session.stalled", opts.stage, { session_id: sessionId, idle_s: w.idleS, threshold_s: stallThresholdS() }); if (stallKill > 0 && w.idleS >= stallKill) kill("stalled"); else if (loopKill > 0 && w.diffIdleS >= loopKill) { cfg.emit?.("session.looping", opts.stage, { session_id: sessionId, no_tree_change_s: Math.round(w.diffIdleS), threshold_s: loopKill }); kill("stalled"); }
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);
       opts.signal.addEventListener("abort", onAbort, { once: true });
       const untrack = trackSession(() => kill("aborted"));
@@ -247,7 +248,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
         child.on("exit", () => reapLiveGroup(pgid, () => cfg.emit?.("session.group_reaped", opts.stage, { session_id: sessionId, pgid })));
         // "close", not "exit": stdout may still be draining, and the marker is usually last.
         child.on("close", (code) => {
-          clearTimeout(limitTimer);
+          limitTimer.clear();
           clearInterval(heartbeatTimer);
           stopBudgetWatch();
           if (workRun) { liveInRepo.set(workRun.runDir, Math.max(0, (liveInRepo.get(workRun.runDir) ?? 1) - 1)); recoverSessionWork(cfg, workRun, opts.stage, sessionId, "end"); } // WORK-RECOVERY: every way a session ends (its own exit, a stop rule, the stage limit, the run cap, the watchdog, a cancel) passes here; before the guard and the fence judge the tree

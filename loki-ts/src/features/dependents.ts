@@ -1,5 +1,6 @@
 // RX-3: tests of the depth-1 reverse dependents of changed JS, TS and Python sources. impacted() finds tests that import a changed file; a test of a module that imports it ran nothing, so a break there could seal VERIFIED.
 // Imports are resolved to repo paths (relative specs, dotted Python modules, `from pkg import mod`), never matched by bare basename. Scans every tracked file (listProjectFiles), bounded by bytes and time.
+import { budgetsOn } from "../engine10/types.ts";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { listProjectFiles } from "../util/safe_git.ts";
@@ -45,7 +46,8 @@ export function dependentTests(repoDir: string, map: TestMap, changed: readonly 
   }
   if (deps.size === 0) return { ...none, truncated };
   const all = map.tests.filter((t) => !have.has(t.path) && importsAny(read(repoDir, t.path), t.path, deps, js)).sort((a, b) => a.path.localeCompare(b.path));
-  return { tests: all.slice(0, MAX_DEPENDENT_TESTS), dropped: Math.max(0, all.length - MAX_DEPENDENT_TESTS), truncated };
+  const cap = budgetsOn() ? MAX_DEPENDENT_TESTS : all.length; // NO-DEFAULT-BUDGET: every reverse-dependent test runs unless a budget is on
+  return { tests: all.slice(0, cap), dropped: Math.max(0, all.length - cap), truncated };
 }
 /** NOT PROVEN lines for a dependents result. */
 export const dependentNotes = (d: Dependents): string[] => [...(d.truncated ? ["reverse-dependent scan hit its byte or time bound: some importers of changed files may not have been tested"] : []), ...(d.dropped ? [`reverse-dependent tests dropped by the ${MAX_DEPENDENT_TESTS}-file cap: ${d.dropped}`] : [])];

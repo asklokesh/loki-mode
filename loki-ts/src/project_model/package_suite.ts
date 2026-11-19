@@ -2,6 +2,7 @@
 // Each package that declares a test command runs it in its own directory. Returns false when the model is
 // absent or single-root, so the caller keeps its legacy per-runner path unchanged.
 // FC-BASELINE-PER-PACKAGE: fullSuiteSpecs is the one list of full-suite commands; verify runs it and the intake baseline records it.
+import { cmdSilenceS } from "../engine10/types.ts";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { harnessLoadReason } from "../runner/load_owner.ts";
@@ -151,7 +152,7 @@ export async function runPackageSuites(
     const r = await run(["bash", "-c", line], { cwd: join(repoDir, cwd), timeoutMs, env: suiteEnv(opts.path), ...(suiteTimeoutOn() ? { group: true, signal } : {}) }); // SUITE-TIMEOUT: the whole process tree stops at the limit, and at an abort (its own group is outside the worker's, so an abort must reach it here)
     const duration_s = (Date.now() - started) / 1000;
     if (signal.aborted) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`not run: ${name} (aborted)`); continue; }
-    if (r.timedOut && suiteTimeoutOn()) { const why = `timed out after ${Math.round(timeoutMs / 1000)}s`; checks.push({ name, cmd, result: "not_run", duration_s, reason: why }); notProven.add(`not run: ${name} (${why})`); continue; } // SUITE-TIMEOUT: a suite killed at its limit says nothing about the change: not_run (caps below VERIFIED), never FAILED
+    if (r.timedOut && suiteTimeoutOn()) { const why = r.silent ? `stopped after ${cmdSilenceS()}s with no output` : `timed out after ${Math.round(timeoutMs / 1000)}s`; /* NO-DEFAULT-BUDGET: a silent suite is named as silent */ checks.push({ name, cmd, result: "not_run", duration_s, reason: why }); notProven.add(`not run: ${name} (${why})`); continue; } // SUITE-TIMEOUT: a suite killed at its limit says nothing about the change: not_run (caps below VERIFIED), never FAILED
     // FC-16 C1 / FC-02: the same parser and load-error ownership as the legacy per-runner path, per package.
     const out = stripAnsi(`${r.stdout}\n${r.stderr}`).replace(go ? /^make(?:\[\d+\])?: .*$/gm : /(?!)/, ""); // FC-FULLSUITE-ANSI-IDS; a make-wrapped Go suite (goMakeSuite) drops make's own lines so the go test -json stream reads whole
     const lr = r.exitCode === 0 || !opts.baseSha ? undefined : await harnessLoadReason({ repoDir, baseSha: opts.baseSha, ...(opts.skip ? { skip: opts.skip } : {}), out, cmd: "bash", args: ["-c", line], signal, cwd: join(repoDir, cwd), env: suiteEnv(opts.path) });

@@ -1,11 +1,14 @@
 // D60-5 (INTEL-2): the per-run dollar cap. Resolution order: --max-cost, then LOKI_BUDGET_LIMIT, then loki.yaml budgets.per_run, then the default.
-// D82-COSTCAP: the default is $100 when an API key is set in the env, and NO dollar cap on a subscription run (no key); only whether the key variable is SET is checked, never its value.
+// D82-COSTCAP / NO-DEFAULT-BUDGET (founder 2026-11-18): there is no default dollar cap, with an API key or on a subscription; the run stops when it is done or
+// makes no progress. A cost limit the user sets (--max-cost, LOKI_BUDGET_LIMIT, loki.yaml budgets.per_run) is enforced exactly as before, and an unusable one fails closed.
 // Enforced in the worker (worker.ts -> machine.ts overCap): once priced cost reaches the cap no further stage starts and the
 // run ends BUDGET_STOP (exit 3). Unpriced sessions (usd null) never count, so an unmetered run is not stopped by a guess.
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts"; import { ledgerSum, loadDefaultMaxCostUsd } from "../runner/budget.ts"; export { ledgerSum };
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"; import { join, resolve } from "node:path"; import { capability } from "../providers/provider_guard.ts";
 export const DEFAULT_MAX_COST_USD = loadDefaultMaxCostUsd(); // LM-002: default per-run cap lives in loki-ts/data/model-pricing.json, read by runner/budget.ts
 export const SUBSCRIPTION_NOTE = "subscription: no dollar cap; usage counts against your plan limits";
+/** The start line of an API-key run with no cost limit set. */
+export const NO_COST_LIMIT_NOTE = "no cost limit is set: the run stops when it is done or makes no progress (--max-cost <usd> sets one)";
 export type CapSource = "--max-cost" | "env" | "loki.yaml" | "default" | "subscription";
 /** True when a provider API key variable is set (presence only; the value is never read). */
 export function hasApiKey(env: NodeJS.ProcessEnv): boolean { return ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "LOKI_MODEL_API_KEY"].some((k) => (env[k] ?? "") !== ""); }
@@ -27,10 +30,10 @@ export function resolveCap(cli: string | null, repoDir: string, env: NodeJS.Proc
     const raw = yamlKey(text, "budgets", "per_run");
     if (raw !== null && !isZeroCap(raw)) return { error: `loki.yaml budgets.per_run must be a positive number of US dollars (got "${raw}")` };
   }
-  return hasApiKey(env) ? { usd: DEFAULT_MAX_COST_USD, source: "default" } : { usd: 0, source: "subscription" };
+  return { usd: 0, source: hasApiKey(env) ? "default" : "subscription" }; // NO-DEFAULT-BUDGET: no default dollar cap (was $100 with an API key)
 }
 export function capNote(usd: number, source: CapSource): string {
-  if (usd <= 0) return "no dollar cap (subscription)";
+  if (usd <= 0) return source === "default" ? NO_COST_LIMIT_NOTE : "no dollar cap (subscription)";
   return `cap $${usd.toFixed(2)} (${source})`; }
 /** Env for group/unit children: the resolved run cap becomes their LOKI_BUDGET_LIMIT, so a flag cap cannot be re-defaulted per unit.
  *  P12-22r: with repoDir, also exports ONE absolute LOKI_BUDGET_LEDGER (kept if already set) so parallel units in separate worktrees share a single cap. */
@@ -79,7 +82,7 @@ export function costMeter(capUsd: number, seedUsd = 0): { add(usd: unknown): voi
 }
 /** LOKI_BUDGET_LIMIT for one session child: what is left of the cap, floored so a spent cap still reads as a (tiny) limit. null = no dollar cap. */
 export function childBudgetLimit(remaining: number | null): string | null { return remaining === null ? null : String(Math.round(Math.max(remaining, 0.01) * 100) / 100); }
-/** Legacy runner default: an explicit limit wins, else the same resolveCap answer engine10 uses (env, loki.yaml, $100 with an API key); undefined = no dollar cap. */
+/** Legacy runner default: an explicit limit wins, else the same resolveCap answer engine10 uses (env, loki.yaml; no default cap); undefined = no dollar cap. */
 export function runnerBudget(explicit: number | undefined, repoDir: string, env: NodeJS.ProcessEnv = process.env): { usd: number | undefined; note: string | null } {
   if (explicit !== undefined) return { usd: explicit, note: null };
   const c = resolveCap(null, repoDir, env);

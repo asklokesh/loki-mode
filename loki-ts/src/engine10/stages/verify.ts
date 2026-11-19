@@ -14,7 +14,7 @@ import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { avaTargets, guessRunner, isTestFile, mochaTargets } from "../testmap.ts"; import { coveredStem } from "../../util/test_file_text.ts"; import { comparableIds, errorsById, lineNamesChange, noiseOnlyErrors, sameErrors } from "../failures.ts"; export { errorsById, sameErrors } from "../failures.ts";
 import { failureLines, venvSkipNotes, goJsonStream, GO_JSON_KEEP, withoutStaleWall, failureExcerpt, EXCERPT_TOTAL_CAP, changedFiles, hiddenEdits, ignoreRuleChanges, classifyCheck, unmeasuredTail, corroboratePass, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount, SECURITY_SCAN, fileHashes, briefGroups, failureSignature } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
-import { type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
+import { budgetsOn, cmdSilenceS, type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, envChangedSince, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
 export const timeoutCarryOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TIMEOUT_CARRY"] ?? "").trim());
@@ -51,12 +51,14 @@ export function sameFailureLines(headOut: string, base: { ok: boolean; out: stri
  *  gets (LOKI_E10_SUITE_TIMEOUT_S overrides that maximum). 0 means the suite is not started. No deadline (a caller outside the machine): the maximum. */
 export const SUITE_MARGIN_MS = 5000;
 export function suiteTimeoutFor(deadlineMs: number | undefined, nowMs: number, env: NodeJS.ProcessEnv = process.env): number {
-  const v = Number((env["LOKI_E10_SUITE_TIMEOUT_S"] ?? "").trim()), max = Number.isFinite(v) && v >= 1 ? Math.floor(v * 1000) : 300_000;
+  const v = Number((env["LOKI_E10_SUITE_TIMEOUT_S"] ?? "").trim()), max = Number.isFinite(v) && v >= 1 ? Math.floor(v * 1000) : budgetsOn(env) ? 300_000 : Infinity; // NO-DEFAULT-BUDGET: no limit unless set (shell.run's silence guard ends a silent suite)
   if (deadlineMs === undefined) return max;
   const left = deadlineMs - nowMs - SUITE_MARGIN_MS;
   return left < 1000 ? 0 : Math.min(max, left);
 }
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
+/** NO-DEFAULT-BUDGET: the per-check limit with budgets on; with none, a check has no time limit and stops only after cmdSilenceS() with no output. */
+const checkTimeoutMs = (): number => (budgetsOn() ? CHECK_TIMEOUT_MS : Infinity);
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
 interface ImplementOutput { exit?: ImplementExit; }
 /** wall.ts's full output isn't in the contract either; only the sealed file list, shaped like  Receipt["wall"].files, is needed here. */
@@ -174,9 +176,11 @@ export { ran, skipped } from "../../util/check_result.ts"; // FC-16: the one sha
 export { testConfigChanged } from "../../features/runner_config.ts"; // D86 FC-09r: the one runner-config registry lives in features/
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
  *  never retried (a hung check must not burn 2x its timeout). `out` is a 64 KB tail, unread when cut. The result comes from exit + timeout, never pipe EOF (an orphaned grandchild may hold the pipes). */
-export async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string; spawnTool?: string }> {
+export async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string; spawnTool?: string; silent?: boolean }> {
   if (!Bun.which(cmd, { PATH: opts.path ?? process.env["PATH"] ?? "" })) return { ok: false, missing: true, cut: false, out: "" };
-  const timeout = AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS);
+  const tmo = opts.timeoutMs ?? checkTimeoutMs(), silence = new AbortController(); let silent = false, lastByte = Date.now();
+  const timeout = Number.isFinite(tmo) ? AbortSignal.timeout(Math.max(0, tmo)) : silence.signal; // AbortSignal.timeout(Infinity) throws in Bun: no limit is the silence guard alone
+  const quiet = Number.isFinite(tmo) ? undefined : setInterval(() => { if (Date.now() - lastByte >= cmdSilenceS() * 1000) { silent = true; silence.abort(); } }, Math.min(30_000, Math.max(50, cmdSilenceS() * 250)));
   const proc = Bun.spawn([cmd, ...args], {
     cwd,
     stdin: opts.stdin !== undefined ? Buffer.from(opts.stdin) : "ignore",
@@ -187,12 +191,12 @@ export async function runOnce(cmd: string, args: string[], cwd: string, signal: 
   });
   if (!opts.group) { const hard = (): void => { const t = setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* gone */ } }, KILL_AFTER_MS); void proc.exited.finally(() => clearTimeout(t)); }; const any = AbortSignal.any([signal, timeout]); if (any.aborted) hard(); else any.addEventListener("abort", hard, { once: true }); } // TIMEOUT-WAIT (dev4 aiohttp: a 60 s timeout cost 150 to 160 s)
   const killGroup = () => { try { process.kill(-proc.pid, "SIGKILL"); } catch { /* gone */ } }; if (opts.group) { AbortSignal.any([signal, timeout]).addEventListener("abort", killGroup, { once: true }); if (signal.aborted || timeout.aborted) killGroup(); } let tail = ""; const keep = goJsonStream(cmd, args) ? GO_JSON_KEEP : 65536, rs = [proc.stdout, proc.stderr].map((s) => s.getReader()); // a go test -json stream is parsed whole (a head-truncated stream reads as torn and never counts), so it keeps far more than the 64 KB tail
-  const pumps = rs.map(async (r) => { const d = new TextDecoder(); for (;;) { const c = await r.read().catch(() => ({ done: true, value: undefined })); if (c.done) return; tail += d.decode(c.value, { stream: true }); if (tail.length > keep * 2) tail = tail.slice(-keep); } });
-  const exitCode = await proc.exited;
+  const pumps = rs.map(async (r) => { const d = new TextDecoder(); for (;;) { const c = await r.read().catch(() => ({ done: true, value: undefined })); if (c.done) return; lastByte = Date.now(); tail += d.decode(c.value, { stream: true }); if (tail.length > keep * 2) tail = tail.slice(-keep); } });
+  const exitCode = await proc.exited; if (quiet) clearInterval(quiet);
   await Promise.race([Promise.all(pumps), new Promise((r) => setTimeout(r, 300))]); rs.forEach((r) => r.cancel().catch(() => {}));
   if (opts.group) killGroup(); const cut = timeout.aborted || signal.aborted;
   const out = cut ? "" : stripAnsi(tail.slice(-keep)), spawnTool = exitCode !== 0 && !cut ? spawnFailedTool(out, exitCode) : null; // SPAWN-NOT-RUN: a tool that could not start is a missing tool, never a code failure
-  return { ok: exitCode === 0 && !cut, missing: spawnTool !== null, cut, out, ...(spawnTool ? { spawnTool } : {}) }; // FC-69
+  return { ok: exitCode === 0 && !cut, missing: spawnTool !== null, cut, out, ...(spawnTool ? { spawnTool } : {}), ...(silent ? { silent } : {}) }; // FC-69
 }
 /** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, a  timed-out/aborted run, or a run that executed 0 tests is recorded once as not_run and never retried. */
 export async function runCheck(
@@ -208,7 +212,7 @@ export async function runCheck(
     const lr = kind === "test" && !a.ok && !a.cut && !a.missing ? await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs?.().intake?.install_created), out: a.out, cmd, args, signal, cwd, protect: opts.protect, ...(opts.path ? { env: { PATH: opts.path } } : {}) }) : undefined; // FC-02: only kind "test"; lint/tsc/selector (kind "static") never reach it
     if (lr) c = { result: "not_run", reason: lr, owner: "harness" };
     if (!lr && kind === "static" && !a.ok && !a.cut && !a.missing && opts.wall?.size && wallOwnedFailure(a.out, cwd, ctx.repoDir, opts.wall)) c = { result: "not_run", reason: WALL_COMPILE_REASON, owner: "harness" }; // FC-23: never a fix round on a read-only Wall file // harness-owned load error: never retried, never a fix round
-    const reason = a.missing ? (a.spawnTool ? `${a.spawnTool} could not be started (not installed)${installHint(a.spawnTool)}` : `${cmd} not found on PATH${installHint(cmd)}`) : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`) : c.reason;
+    const reason = a.missing ? (a.spawnTool ? `${a.spawnTool} could not be started (not installed)${installHint(a.spawnTool)}` : `${cmd} not found on PATH${installHint(cmd)}`) : a.cut ? (signal.aborted ? "aborted" : a.silent ? `stopped after ${cmdSilenceS()}s with no output` : `timed out after ${(opts.timeoutMs ?? checkTimeoutMs()) / 1000}s`) : c.reason;
     return { ...c, ...(reason ? { reason } : {}) };
   };
   let attempt = await runOnce(cmd, args, cwd, signal, opts);
@@ -237,7 +241,7 @@ export async function runCheck(
 export const verifyBatchOn = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_E10_VERIFY_BATCH"] !== "0";
 const BATCH_MIN = 2;
 const UNHANDLED_RE = /Unhandled (?:Errors?|Rejection)\b/;
-const batchTimeoutMs = (files: number): number => Math.max(CHECK_TIMEOUT_MS, Math.min(300_000, files * 5_000));
+const batchTimeoutMs = (files: number): number => budgetsOn() ? Math.max(CHECK_TIMEOUT_MS, Math.min(300_000, files * 5_000)) : Infinity;
 interface VitestAssertion { status?: unknown; title?: unknown; ancestorTitles?: unknown; failureMessages?: unknown }
 type FileRun = { ok: boolean; out: string };
 /** A plain per-file vitest command (check_result.ts runnerCmd): `npx --no-install vitest run <file>`; anything else (a repo test command) is never batched. */
@@ -545,7 +549,7 @@ const ESLINT_CONFIGS = [".eslintrc", ".eslintrc.json", ".eslintrc.js", ".eslintr
 /** ENGINE.md section 4's named tool per language: bash -n + shellcheck for shell, tsc + eslint  (when configured) for TS/JS, ruff for Python. Every named tool that applies to the changed set  gets
  *  a check entry: a missing tool is not_run, never silently absent (section 9 NOT PROVEN). */
 /** TEN-QUALITY-03: a failed ruff/shellcheck/eslint check whose every diagnostic is also on the base content (git show, fed on stdin, same per-check timeout) is pre-existing. */
-const excuseLint = (ctx: RunContext, signal: AbortSignal, c: VerifyCheck, tool: StaticTool, cmd: string, prefix: string[], cwd: string, rel: string[], opts: RunOpts): Promise<boolean> => c.result !== "fail" || signal.aborted ? Promise.resolve(false) : staticPreExisting(tool, prefix, rel, { run: async (a, stdin) => { if (signal.aborted) return null; const r = await runOnce(cmd, a, cwd, AbortSignal.any([signal, AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS)]), { ...opts, ...(stdin !== undefined ? { stdin } : {}) }); return r.missing || r.cut ? null : r; }, base: (f) => { try { return safeGit(ctx.repoDir, ["show", `${ctx.baseSha}:${relative(ctx.repoDir, join(cwd, f))}`], { stdio: ["ignore", "pipe", "ignore"] }); } catch { return null; } } });
+const excuseLint = (ctx: RunContext, signal: AbortSignal, c: VerifyCheck, tool: StaticTool, cmd: string, prefix: string[], cwd: string, rel: string[], opts: RunOpts): Promise<boolean> => c.result !== "fail" || signal.aborted ? Promise.resolve(false) : staticPreExisting(tool, prefix, rel, { run: async (a, stdin) => { if (signal.aborted) return null; const r = await runOnce(cmd, a, cwd, AbortSignal.any([signal, (Number.isFinite(opts.timeoutMs ?? checkTimeoutMs()) ? AbortSignal.timeout(opts.timeoutMs ?? checkTimeoutMs()) : new AbortController().signal)]), { ...opts, ...(stdin !== undefined ? { stdin } : {}) }); return r.missing || r.cut ? null : r; }, base: (f) => { try { return safeGit(ctx.repoDir, ["show", `${ctx.baseSha}:${relative(ctx.repoDir, join(cwd, f))}`], { stdio: ["ignore", "pipe", "ignore"] }); } catch { return null; } } });
 /** tsc's unused-declaration diagnostics (noUnusedLocals/Parameters): decided by one file's own text, so an edit elsewhere never causes one. */
 const TSC_LOCAL = new Set(["TS6133", "TS6138", "TS6192", "TS6196", "TS6198", "TS6199", "TS6205"]);
 const TSC_DIAG = /^(\S.*?)(?:\(\d+,\d+\)|:\d+:\d+)\s*(?::|-)\s*error (TS\d+)/gm;
@@ -614,7 +618,7 @@ async function tscOnBase(ctx: RunContext, groupCwd: string, signal: AbortSignal,
       const cwd = join(shared.dir, relative(ctx.repoDir, groupCwd));
       if (!existsSync(join(cwd, "tsconfig.json")) || !shared.link(cwd)) return null;
       if (cwd !== shared.dir) shared.link(shared.dir);
-      const r = await runOnce("npx", ["--no-install", "tsc", "--noEmit", "-p", "."], cwd, AbortSignal.any([signal, AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS)]), { ...opts });
+      const r = await runOnce("npx", ["--no-install", "tsc", "--noEmit", "-p", "."], cwd, AbortSignal.any([signal, (Number.isFinite(opts.timeoutMs ?? checkTimeoutMs()) ? AbortSignal.timeout(opts.timeoutMs ?? checkTimeoutMs()) : new AbortController().signal)]), { ...opts });
       return r.missing || r.cut ? null : r.out;
     } catch { return null; }
   }
@@ -624,7 +628,7 @@ async function tscOnBase(ctx: RunContext, groupCwd: string, signal: AbortSignal,
     const cwd = join(dir, relative(ctx.repoDir, groupCwd)), link = baseDepsLinker(dir, ctx.repoDir);
     if (!existsSync(join(cwd, "tsconfig.json")) || !link(cwd)) return null;
     if (cwd !== dir) link(dir);
-    const r = await runOnce("npx", ["--no-install", "tsc", "--noEmit", "-p", "."], cwd, AbortSignal.any([signal, AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS)]), { ...opts });
+    const r = await runOnce("npx", ["--no-install", "tsc", "--noEmit", "-p", "."], cwd, AbortSignal.any([signal, (Number.isFinite(opts.timeoutMs ?? checkTimeoutMs()) ? AbortSignal.timeout(opts.timeoutMs ?? checkTimeoutMs()) : new AbortController().signal)]), { ...opts });
     return r.missing || r.cut ? null : r.out;
   } catch { return null; } finally {
     try { git(["worktree", "remove", "--force", dir]); } catch { /* pruned below */ }

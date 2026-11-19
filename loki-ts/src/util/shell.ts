@@ -3,12 +3,14 @@
 // (claude, opencode, jq, git, docker, curl, etc.).
 import { $ } from "bun";
 import { envWithPwd, killGroup } from "../runner/worker_proc.ts";
+import { armTimer, cmdSilenceS } from "../engine10/types.ts";
 
 export type ShellResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
   timedOut?: boolean; // SUITE-TIMEOUT: set only when the timeoutMs timer stopped the process
+  silent?: boolean; // NO-DEFAULT-BUDGET: set (with timedOut) when the silence guard stopped it: no output for silenceMs
 };
 
 export type ShellOpts = {
@@ -18,6 +20,7 @@ export type ShellOpts = {
   group?: boolean; // own process group: a timeout/abort kills the whole tree (wrapper scripts that do not exec), and strays are reaped on exit
   signal?: AbortSignal; // abort: SIGTERM, then SIGKILL after 2s (same as a timeout)
   onFirstStdout?: () => void; // fires once when the first stdout byte arrives (a throwing callback is ignored)
+  silenceMs?: number; // NO-DEFAULT-BUDGET: stop the process after this long with no stdout or stderr byte; a non-finite timeoutMs implies cmdSilenceS()
 };
 
 // v7.77.0 (W77-D LOW): cap how many bytes we slurp from a child's stdout.
@@ -35,6 +38,7 @@ export async function readStreamCapped(
   stream: ReadableStream<Uint8Array>,
   maxBytes = MAX_STDOUT_BYTES,
   onFirstChunk?: () => void,
+  onChunk?: () => void,
 ): Promise<string> {
   const reader = stream.getReader();
   let first = onFirstChunk;
@@ -46,6 +50,7 @@ export async function readStreamCapped(
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
+      if (onChunk && value.byteLength > 0) { try { onChunk(); } catch { /* observer only */ } }
       if (first && value.byteLength > 0) {
         const cb = first;
         first = undefined;
@@ -109,7 +114,7 @@ export async function run(
     ...(opts.group ? { detached: true } : {}),
   });
 
-  let timer: Timer | undefined;
+  let timer: { clear: () => void } | undefined;
   let killTimer: Timer | undefined;
   const stop = (): void => {
     // SIGTERM first; if the process ignores it, SIGKILL after 2s.
@@ -129,20 +134,23 @@ export async function run(
     }, 2000);
   };
   let timedOut = false; // SUITE-TIMEOUT: the caller learns the kill was the timer, not the program's own exit
-  if (opts.timeoutMs && opts.timeoutMs > 0) timer = setTimeout(() => { timedOut = true; stop(); }, opts.timeoutMs);
+  if (opts.timeoutMs && opts.timeoutMs > 0) timer = armTimer(() => { timedOut = true; stop(); }, opts.timeoutMs); // NO-DEFAULT-BUDGET: Infinity arms nothing
+  const silenceMs = opts.silenceMs ?? (opts.timeoutMs !== undefined && !Number.isFinite(opts.timeoutMs) ? cmdSilenceS() * 1000 : undefined);
+  let lastByte = Date.now(), silent = false; const touch = (): void => { lastByte = Date.now(); };
+  const quiet = silenceMs !== undefined && Number.isFinite(silenceMs) && silenceMs > 0 ? setInterval(() => { if (Date.now() - lastByte >= silenceMs) { silent = true; timedOut = true; stop(); } }, Math.min(30_000, Math.max(50, Math.floor(silenceMs / 4)))) : undefined;
   if (opts.signal) { if (opts.signal.aborted) stop(); else opts.signal.addEventListener("abort", stop, { once: true }); }
 
   try {
     const [stdout, stderr, exitCode] = await Promise.all([
       // v7.77.0 (W77-D LOW): bounded read so a runaway child cannot OOM the
       // parent. Timeout behavior above is preserved -- the cap is independent.
-      readStreamCapped(proc.stdout as ReadableStream<Uint8Array>, MAX_STDOUT_BYTES, opts.onFirstStdout),
-      new Response(proc.stderr).text(),
+      readStreamCapped(proc.stdout as ReadableStream<Uint8Array>, MAX_STDOUT_BYTES, opts.onFirstStdout, quiet ? touch : undefined),
+      quiet ? readStreamCapped(proc.stderr as ReadableStream<Uint8Array>, MAX_STDOUT_BYTES, undefined, touch) : new Response(proc.stderr).text(),
       proc.exited,
     ]);
-    return { stdout, stderr, exitCode, ...(timedOut ? { timedOut: true } : {}) };
+    return { stdout, stderr, exitCode, ...(timedOut ? { timedOut: true } : {}), ...(silent ? { silent: true } : {}) };
   } finally {
-    if (timer) clearTimeout(timer);
+    timer?.clear(); if (quiet) clearInterval(quiet);
     if (killTimer) clearTimeout(killTimer);
     opts.signal?.removeEventListener("abort", stop);
     if (opts.group) killGroup(proc.pid, "SIGKILL");

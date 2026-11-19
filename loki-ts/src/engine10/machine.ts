@@ -8,7 +8,7 @@ import { assumptionOf, consultAvailable, neverStopActive, readConsults, type Nev
 import { rerunOnQuota, sessionKind, usageLimitOf } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./failures.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote, timeNoteOn } from "../util/run_cap.ts"; import { FINISH_LINE, issueRunBrief } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, isClean, MIN_ATTEMPT_WINDOW_S, runExtraAttempts, signalNotProven, type AttemptSignal } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
-import { backstopS, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, MAX_FIX_ROUNDS, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
+import { armTimer, backstopS, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, hangSilenceS, MAX_FIX_ROUNDS, noProgressRounds, unlimited, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
 import { stallSame, stallSignature } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
 import { PROVE_MIN_S, proveApplies, proveBudgetS, proveNotRun, proveScope, recheckProve, type ProveRecord } from "./stages/prove.ts"; import { capCeilingS } from "../util/run_cap.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
 
@@ -122,8 +122,13 @@ const KILL_GRACE_MS = 2000;
 export const VERIFY_MAX_S = 900;
 const VERIFY_TAIL_S = STAGE_BUDGETS.commit.limitS + STAGE_BUDGETS.seal.limitS + STAGE_BUDGETS.pr.limitS;
 export function verifyLimitFor(floorS: number, softS: number, elapsedS: number, env: NodeJS.ProcessEnv = process.env): number {
-  const v = Number((env["LOKI_E10_VERIFY_MAX_S"] ?? "").trim()), max = Number.isFinite(v) && v >= 1 ? Math.floor(v) : VERIFY_MAX_S;
+  const v = Number((env["LOKI_E10_VERIFY_MAX_S"] ?? "").trim()), max = Number.isFinite(v) && v >= 1 ? Math.floor(v) : Number.isFinite(softS) ? VERIFY_MAX_S : Infinity; // NO-DEFAULT-BUDGET: no run cap, no verify maximum unless the user set one
   return Math.min(Math.max(floorS, Math.floor(softS - elapsedS - VERIFY_TAIL_S)), max);
+}
+/** NO-DEFAULT-BUDGET fix-loop progress: failing check ids (a failing check with no ids counts once) and checks that ran (not not_run). */
+export function fixProgressOf(d: Obj | undefined): { failing: number; ran: number } {
+  const checks = Array.isArray(d?.checks) ? (d!.checks as Obj[]) : [];
+  return { failing: checks.filter((c) => c?.result === "fail").reduce((n, c) => n + Math.max(1, Array.isArray(c.ids) ? c.ids.length : 0), 0) + (Number(d?.holdout_failed) > 0 ? Number(d!.holdout_failed) : 0), ran: checks.filter((c) => c?.result !== "not_run").length };
 }
 /** What an extra-attempts window leaves for the re-verify and the tail (commit, seal, pr). */
 const ATTEMPTS_TAIL_S = STAGE_BUDGETS.verify.limitS + STAGE_BUDGETS.commit.limitS + STAGE_BUDGETS.seal.limitS + STAGE_BUDGETS.pr.limitS;
@@ -142,16 +147,17 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   const timeline: NonNullable<typeof ctx.timeline> = ctx.timeline ??= [], intentRevs = ctx.intentRevisions ??= [];
   let capAtMs = startMs + softCapS(ctx.capS) * 1000; // 14/15 of capS for the default/deep caps; see softCapS above
   const capCtl = new AbortController();
-  let capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
+  let capTimer = armTimer(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now())); // NO-DEFAULT-BUDGET: no cap (Infinity) arms nothing
+  const unbounded = unlimited(ctx.capS) && !ctx.deep; // NO-DEFAULT-BUDGET: no time limit on any stage or session; loops end on no progress (noProgressRounds)
   let implementStartMs: number | null = null;
   const withTimeNote = (brief: string, limitS: number): string => brief.endsWith(FINISH_LINE) ? `${brief.slice(0, -FINISH_LINE.length)}${timeBudgetNote(limitS)}\n\n${FINISH_LINE}` : `${brief}\n\n${timeBudgetNote(limitS)}`;
   const startedIds = new Set<string>(); // TEN-COST-11 r3: every session this run started, whatever its stage later returned; seal unions these into the cost read so a killed or failed stage's spend is never lost
   const sessions = { run: async (o0: Parameters<typeof ctx.sessions.run>[0]) => {
     if (limited) return { exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true }; // USAGE-LIMIT: no session starts after a limit
     startedIds.add(o0.iterationId);
-    const n0 = intentRevs.length, o = withSteer(o0, ctx.repoDir, intentRevs); // operator steer (.loki/HUMAN_INPUT.md), consumed once
+    const n0 = intentRevs.length, o = withSteer(unbounded ? { ...o0, limitS: Infinity } : o0, ctx.repoDir, intentRevs); // operator steer (.loki/HUMAN_INPUT.md), consumed once
     if (intentRevs.length > n0) ctx.emit("intent.revised", o.stage, { revisions: intentRevs }); // P12-07h will seed ctx from these on re-entry; durable in events.jsonl
-    const left = implementStartMs === null ? Infinity : Math.max(1, implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000), imp = o.stage === "implement" ? { ...o, limitS: Math.min(Math.max(o.limitS, implementBudgetS), left) } : o, r = await rerunOnQuota(() => ctx.sessions.run(imp.stage === "implement" && typeof imp.brief === "string" && imp.limitS > 0 && !issueRunBrief(ctx.provider, outputs.intake?.source) && timeNoteOn() ? { ...imp, brief: withTimeNote(imp.brief, imp.limitS) } : imp), sessionKind, ctx.clock, imp.signal, capAtMs, () => ctx.overCap?.() === true); // FC-21 (c): the time note goes after the byte-stable prefix and body; FC-21b A2: a resumed session gets only the budget left, and the note sits BEFORE the closing FINISH_LINE
+    const left = implementStartMs === null ? Infinity : Math.max(1, implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000), imp = o.stage === "implement" ? { ...o, limitS: Math.min(Math.max(o.limitS, implementBudgetS), left) } : o, r = await rerunOnQuota(() => ctx.sessions.run(imp.stage === "implement" && typeof imp.brief === "string" && imp.limitS > 0 && Number.isFinite(imp.limitS) && !issueRunBrief(ctx.provider, outputs.intake?.source) && timeNoteOn() ? { ...imp, brief: withTimeNote(imp.brief, imp.limitS) } : imp), sessionKind, ctx.clock, imp.signal, unbounded ? ctx.clock.now() + hangSilenceS() * 1000 : capAtMs, () => ctx.overCap?.() === true); // FC-21 (c): the time note goes after the byte-stable prefix and body; FC-21b A2: a resumed session gets only the budget left, and the note sits BEFORE the closing FINISH_LINE
     const k = r.exit === 0 ? null : sessionKind(r as { exit: number; stderrTail?: string }); // P12-09: quota waits and reruns inside rerunOnQuota; it is fatal only if no cap ended the wait
     if (k === "auth" || (k === "quota_exhausted" && !capReached())) fatal ??= `fatal:${k}`; if (ctx.overCap?.() || (k === "quota_exhausted" && capReached())) capCtl.abort(); // D60-5: dollar cap reached, stop the running stage too
     const lim = k === "usage_limit" ? usageLimitOf(r as { exit: number | null; killed?: boolean; stderrTail?: string }) : null;
@@ -163,8 +169,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   /** FC-21b: the one post-plan resize. Never below the current cap or the elapsed time; recomputes capAtMs and re-arms the soft-cap timer. */
   const applyResize = (proposedS: number): void => {
     if (!(proposedS > ctx.capS) || proposedS <= elapsedS() || capCtl.signal.aborted) return;
-    ctx.capS = sctx.capS = proposedS; capAtMs = startMs + softCapS(proposedS) * 1000; clearTimeout(capTimer);
-    capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
+    ctx.capS = sctx.capS = proposedS; capAtMs = startMs + softCapS(proposedS) * 1000; capTimer.clear();
+    capTimer = armTimer(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
     ctx.emit("cap.sized", null, { cap_s: proposedS });
   };
   // The timer alone can miss a cap that has just passed (it fires a tick later), so check the clock too.
@@ -179,7 +185,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   let implementBudgetS = 0; const implementLimitS = (floorS: number): number => Math.max(floorS, Math.floor(softCapS(ctx.capS) - elapsedS() - (STAGE_BUDGETS.verify.limitS ?? 0) - proveReserveS())); // leaves verify's window (and the prove stage's budget) before the soft cap
   // A fix round scales with the task the plan sized: the cap grows with the packages and files in scope (run_cap.ts), so a round on a 1490 s
   // FireLater-sized cap gets 298 s instead of being killed at 180 s; a default 900 s cap keeps 180 s, and a round never gets more than twice that.
-  const fixLimitS = (baseS: number): number => Math.max(baseS, Math.min(2 * baseS, Math.round((baseS * ctx.capS) / DEFAULT_CAP_S)));
+  const fixLimitS = (baseS: number): number => unbounded ? Infinity : Math.max(baseS, Math.min(2 * baseS, Math.round((baseS * ctx.capS) / DEFAULT_CAP_S)));
   const verifyLimitS = (floorS: number): number => verifyLimitFor(floorS, softCapS(ctx.capS), elapsedS()); // verify gets the run budget left too, so the checks that prove the task are not cut at a fixed 120s; the soft cap still stops it
   /** Runs one stage; returns its result, or null when it was skipped. */
   const runStage = async (name: StageName, underCap: boolean): Promise<StageResult | null> => {
@@ -190,7 +196,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       return null;
     }
     if (underCap && capReached()) { markCap(name); return null; }
-    const limitS = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : (name === "verify" && st.limitS >= STAGE_BUDGETS.verify.limitS ? verifyLimitS(st.limitS) : name === "fix" ? fixLimitS(st.limitS) : name === "prove" ? (sctx.proveBudgetS ?? st.limitS) : st.limitS) + (st.extraLimitS?.(sctx) ?? 0); if (name === "implement") { implementBudgetS = limitS; implementStartMs = ctx.clock.now(); } // FC-19: implement gets the run budget left, not a fixed 480s
+    const limitS0 = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : (name === "verify" && st.limitS >= STAGE_BUDGETS.verify.limitS ? verifyLimitS(st.limitS) : name === "fix" ? fixLimitS(st.limitS) : name === "prove" ? (sctx.proveBudgetS ?? st.limitS) : st.limitS) + (st.extraLimitS?.(sctx) ?? 0), limitS = unbounded && name !== "verify" ? Infinity : limitS0; if (name === "implement") { implementBudgetS = limitS; implementStartMs = ctx.clock.now(); } // FC-19: implement gets the run budget left, not a fixed 480s
     ctx.emit("stage.started", name, { target_s: st.targetS, limit_s: limitS, ...(name === "wall" ? { start_ms: ctx.clock.now() } : {}) });
     const t0 = ctx.clock.now();
     if (name === "verify") sctx.verifyDeadlineMs = Date.now() + Math.max(0, Math.min(limitS * 1000, underCap ? capAtMs - ctx.clock.now() : Infinity));
@@ -199,7 +205,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     const ctl = new AbortController();
     let why: "limit" | "cap" | "usage" | null = null;
     const kill = (w: "limit" | "cap" | "usage"): void => { if (!why) { why = w; ctl.abort(); } };
-    const limitTimer = setTimeout(() => kill("limit"), limitS * 1000);
+    const limitTimer = armTimer(() => kill("limit"), limitS * 1000);
     const onCap = (): void => kill("cap"), onUsage = (): void => kill("usage");
     limitCtl.signal.addEventListener("abort", onUsage);
     if (underCap) {
@@ -217,7 +223,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     } catch (err) {
       r = { status: "failed", data: {}, reason: err instanceof Error ? err.message : String(err) };
     } finally {
-      clearTimeout(limitTimer);
+      limitTimer.clear();
       capCtl.signal.removeEventListener("abort", onCap); limitCtl.signal.removeEventListener("abort", onUsage);
     }
     if (limited) why = "usage" as "limit" | "cap" | "usage"; // a stage that settled after its session hit the limit is cut too: its result is never kept
@@ -267,7 +273,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     if (!brief0) return note("the implement brief was not saved");
     const wallTail = cascadeV0On() ? cascadeWallTail(ctx.runDir, outputs.verify) : null; // CASCADE-V0: the retry sees the oracle's own failing output
     const brief = wallTail ? `${brief0}\n\n${CASCADE_LEAD}\n${wallTail}` : brief0;
-    const room = Math.floor(softCapS(ctx.capS) - elapsedS() - ATTEMPTS_TAIL_S), limitS = Math.min(STAGE_BUDGETS.implement.limitS, room);
+    const room = Math.floor(softCapS(ctx.capS) - elapsedS() - ATTEMPTS_TAIL_S), limitS = unbounded ? Infinity : Math.min(STAGE_BUDGETS.implement.limitS, room);
     if (limitS < MIN_ATTEMPT_WINDOW_S) return note(`not enough run time left (${Math.max(room, 0)}s)`);
     if (capReached()) return note("cost or time cap reached");
     implementBudgetS = limitS; implementStartMs = ctx.clock.now(); // the session wrapper clamps an implement session to the window left since implementStartMs
@@ -311,9 +317,9 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     return r.status === "completed" && (earlyExit(r.data) || outputs.intake?.already_satisfied === true); // D61-04: a deferred already-done hit lands on intake's data mid-implement
   };
   // WC-01b: by default (LOKI_E10_WALL_CONCURRENT=0 restores sequential) the Wall is authored alongside plan and implement, then installed once before verify.
-  interface WallJob { fresh?: boolean; /* CASCADE-V0: the snapshot failed, the base run uses a fresh base checkout */ snap: Promise<string | null>; split: WallSplit; promise: Promise<{ kind: string } & Record<string, unknown>>; ctl: AbortController; aborted: Promise<null>; t0: number; timer: ReturnType<typeof setTimeout>; why: () => "limit" | "cap" | null; onCap: () => void; }
+  interface WallJob { fresh?: boolean; /* CASCADE-V0: the snapshot failed, the base run uses a fresh base checkout */ snap: Promise<string | null>; split: WallSplit; promise: Promise<{ kind: string } & Record<string, unknown>>; ctl: AbortController; aborted: Promise<null>; t0: number; timer: { clear: () => void }; why: () => "limit" | "cap" | null; onCap: () => void; }
   let wallJob: WallJob | null = null;
-  const closeWallJob = (j: WallJob): void => { clearTimeout(j.timer); capCtl.signal.removeEventListener("abort", j.onCap); };
+  const closeWallJob = (j: WallJob): void => { j.timer.clear(); capCtl.signal.removeEventListener("abort", j.onCap); };
   const dropSnap = (j: WallJob): void => { j.snap.then((d) => { if (d) rmSync(d, { recursive: true, force: true }); }, () => {}); };
   const abortWall = (): void => { const j = wallJob; wallJob = null; if (!j) return; closeWallJob(j); dropSnap(j); j.ctl.abort(); j.promise.catch(() => {}); }; // an abort before install installs nothing (E-54)
   const startWallAuthor = async (): Promise<boolean> => {
@@ -322,7 +328,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     if (!st?.split) return false;
     const ctl = new AbortController(); let why: "limit" | "cap" | null = null;
     const kill = (w: "limit" | "cap"): void => { if (!why) { why = w; ctl.abort(); } };
-    const timer = setTimeout(() => kill("limit"), st.limitS * 1000), onCap = (): void => kill("cap");
+    const timer = armTimer(() => kill("limit"), (unbounded ? Infinity : st.limitS) * 1000), onCap = (): void => kill("cap");
     if (capCtl.signal.aborted) onCap(); else capCtl.signal.addEventListener("abort", onCap);
     const aborted = new Promise<null>((res) => ctl.signal.addEventListener("abort", () => res(null)));
     ctx.emit("stage.started", "wall", { target_s: st.targetS, limit_s: st.limitS, start_ms: ctx.clock.now() });
@@ -424,6 +430,9 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
           if (x.changed) { scaffoldNow(); const v = await runStage("verify", true); sigs.push(sigOf(outputs.verify, v)); }
         }
         let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
+        // NO-DEFAULT-BUDGET: with no time limit the round count is not the bound. A round makes progress when the failing count falls below the best so far or
+        // a check that had not run now ran (both bounded, so the loop always ends); noProgressRounds() rounds in a row without either end it.
+        let fixBest = fixProgressOf(outputs.verify), stillRounds = 0;
         let noopSig: string | null = null; // anti-loop: the verify signature that fed the last fix round that left the tree unchanged
         const suiteSkip = suiteFixSkipEnabled() && !fatal && !capHit && outputs.implement?.exit === "done" && hasFailures(outputs.verify) && suiteOnlyRed(outputs.verify);
         // INDEP-GATE LOKI_E10_HAIKU_INDEP_FIX (default on, =0 opts out): a Haiku run gets no fix round at all unless an independent check failed (verify.ts independent_fail:
@@ -431,7 +440,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         const indepSkip = !fatal && !capHit && hasFailures(outputs.verify) && fixGateOf(outputs.verify, `${String(outputs.implement?.model ?? "")} ${ctx.model}`).startsWith("closed");
         if (indepSkip) { outputs.verify = { ...outputs.verify, fix_gate: "haiku: no independent check failed, no fix round" }; ctx.emit("loop.repeat", "fix", { reason: "haiku: no independent check failed (LOKI_E10_HAIKU_INDEP_FIX)", round: 0, skipped: true }); }
         if (suiteSkip) { outputs.verify = { ...outputs.verify, not_proven: [...(Array.isArray(outputs.verify?.not_proven) ? outputs.verify.not_proven : []), SUITE_FIX_SKIP_NOTE] }; ctx.emit("loop.repeat", "fix", { reason: SUITE_FIX_SKIP_NOTE, round: 0, skipped: true }); }
-        for (let round = 1; !indepSkip && round <= MAX_FIX_ROUNDS + extraRounds && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && !((round > 1 || suiteSkip) && onlyFullSuiteRed(outputs.verify)) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
+        for (let round = 1; !indepSkip && (unbounded ? stillRounds < noProgressRounds() : round <= MAX_FIX_ROUNDS + extraRounds) && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && !((round > 1 || suiteSkip) && onlyFullSuiteRed(outputs.verify)) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
           const wallBefore = wallSignature(outputs, ctx.repoDir);
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;
@@ -468,6 +477,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
           noopSig = noop ? fedBy : null;
           const v = await runStage("verify", true);
           sigs.push(sigOf(outputs.verify, v));
+          { const now = fixProgressOf(outputs.verify); if (now.failing < fixBest.failing || now.ran > fixBest.ran) { fixBest = { failing: Math.min(now.failing, fixBest.failing), ran: Math.max(now.ran, fixBest.ran) }; stillRounds = 0; } else stillRounds++; }
           if (mustJump("verify", v)) break;
           if (wallOnlyAfterFix(outputs, ctx.repoDir) && wallSignature(outputs, ctx.repoDir) === wallBefore) break; // only Loki's own Wall still fails, the same tests the same way, while the repo's own tests pass: the round made no progress on it, so delivery below decides; a round that moved the Wall gets the rounds left
           if (hasFailures(outputs.verify) && sigs.length >= 2 && stallSame(sigs[sigs.length - 2]!, sigs[sigs.length - 1]!)) { // no progress: the round left the same failing set, so another round would only spend
@@ -479,6 +489,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
               continue;
             }
             if (round === 1 && round < MAX_FIX_ROUNDS + extraRounds && consultAvailable(ctx.runDir)) continue; // LOKI_E10_OPUS_CONSULT: a red verify after the first fix round gets the one consult in round 2 before any stall stop
+            if (unbounded && stillRounds < noProgressRounds()) continue; // NO-DEFAULT-BUDGET: one round without progress is allowed; the next one ends the loop
             stopped = "stalled"; break;
           }
         }
@@ -489,7 +500,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         }
         const wasConflict = outputs.implement?.exit === "spec_conflict";
         if (!fatal && !capHit && stopped === null && await deliverOverWallConflict(outputs, ctx.repoDir, () => runStage("verify", true), (path, why) => ctx.emit("wall.arbitrated", "wall", { path, discarded: why }), { runDir: ctx.runDir, restored: (v) => ctx.emit("stage.completed", "verify", { ...v, restored: true }) }) && wasConflict) ctx.emit("spec.conflict", "implement", { delivered: true, reason: outputs.implement?.spec_conflict_reason ?? null }); // a Wall defect never discards correct code (util/conflict_resume.ts)
-        if (outputs.prove) outputs.prove = await recheckProve(sctx, outputs.prove as unknown as ProveRecord, fatal || capHit ? 0 : Math.floor(softCapS(ctx.capS) - elapsedS() - (STAGE_BUDGETS.commit.limitS + STAGE_BUDGETS.seal.limitS + STAGE_BUDGETS.pr.limitS)), capCtl.signal) as unknown as Obj; // Q1 PROVE: a fix round, a rule completion or another attempt changed the tree the scripts ran on: rerun them, or cap
+        if (outputs.prove) outputs.prove = await recheckProve(sctx, outputs.prove as unknown as ProveRecord, fatal || capHit ? 0 : unbounded ? proveBudgetS() : Math.floor(softCapS(ctx.capS) - elapsedS() - (STAGE_BUDGETS.commit.limitS + STAGE_BUDGETS.seal.limitS + STAGE_BUDGETS.pr.limitS)), capCtl.signal) as unknown as Obj; // Q1 PROVE: a fix round, a rule completion or another attempt changed the tree the scripts ran on: rerun them, or cap
         if (fatal) { stopped = fatal; jumped = true; }
         if (capHit) jumped = true;
       }
@@ -500,6 +511,6 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     throw err;
   } finally {
     abortWall();
-    clearTimeout(capTimer); removeHoldout(ctx.runId, ctx.repoDir);
+    capTimer.clear(); removeHoldout(ctx.runId, ctx.repoDir);
   }
 }

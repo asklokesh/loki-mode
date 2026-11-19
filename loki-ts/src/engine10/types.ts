@@ -17,6 +17,44 @@ export const STAGE_BUDGETS: Readonly<Record<StageName, { targetS: number | null;
 };
 export const DEFAULT_CAP_S = 900;
 export const DEEP_CAP_S = 2700;
+/** NO-DEFAULT-BUDGET (founder 2026-11-18, "if a user has to, then he will, make it optional"): Loki sets no time, round, turn or test-count budget by default.
+ *  A run ends when it is done or makes no progress (NO_PROGRESS_ROUNDS, SILENCE_KILL_S, LOOP_KILL_S, HANG_SILENCE_S below). A user time limit (LOKI_E10_CAP_S,
+ *  loki.yaml budgets.run_cap_s, LOKI_RUN_DEADLINE_S or `loki start --max-time`) restores every budget exactly as before, and so does LOKI_E10_DEFAULT_BUDGETS=1
+ *  (the control arm). Inside the worker "no limit" is capS = Infinity; a timer is never armed with it (util/run_cap.ts armTimer: Bun fires a delay over 2^31-1 ms at once). */
+export const defaultBudgetsOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_DEFAULT_BUDGETS"] ?? "").trim());
+/** True when this process runs with budgets: the control knob, or LOKI_E10_CAP_S set at all (the supervisor sets it from every user time limit, and only then).
+ *  A set but unusable value fails closed: budgets stay on and the cap falls back to DEFAULT_CAP_S with a warning, as before. */
+export const budgetsOn = (env: NodeJS.ProcessEnv = process.env): boolean => defaultBudgetsOn(env) || (env["LOKI_E10_CAP_S"] ?? "").trim() !== "";
+/** A run cap that means "no time limit". */
+export const unlimited = (capS: number | undefined): boolean => capS !== undefined && !Number.isFinite(capS);
+const posEnv = (raw: string | undefined, dflt: number): number => { const n = Number((raw ?? "").trim()); return (raw ?? "").trim() !== "" && Number.isFinite(n) && n > 0 ? n : dflt; };
+/** No-progress stop: a loop (fix rounds, proof re-runs, S1b continues) ends after this many rounds in a row without progress (LOKI_E10_NO_PROGRESS_ROUNDS). */
+export const NO_PROGRESS_ROUNDS = 2;
+export const noProgressRounds = (env: NodeJS.ProcessEnv = process.env): number => Math.floor(posEnv(env["LOKI_E10_NO_PROGRESS_ROUNDS"], NO_PROGRESS_ROUNDS));
+/** A session (or a test command) with no new output and no tree change for this long is stuck and is ended (LOKI_E10_STALL_KILL_S keeps its meaning). */
+export const SILENCE_KILL_S = 1800;
+/** A session that streams output but changes neither the tree nor its outcome for this long is looping and is ended (LOKI_E10_LOOP_KILL_S). */
+export const LOOP_KILL_S = 3600;
+export const loopKillS = (env: NodeJS.ProcessEnv = process.env): number => posEnv(env["LOKI_E10_LOOP_KILL_S"], LOOP_KILL_S);
+/** A test or check command with no time limit is stopped after this long with no output byte (LOKI_E10_CMD_SILENCE_S). */
+export const cmdSilenceS = (env: NodeJS.ProcessEnv = process.env): number => posEnv(env["LOKI_E10_CMD_SILENCE_S"], SILENCE_KILL_S);
+/** The supervisor ends a worker that sent no event for this long while running no process of its own (LOKI_E10_HANG_SILENCE_S). */
+export const HANG_SILENCE_S = 1800;
+export const hangSilenceS = (env: NodeJS.ProcessEnv = process.env): number => posEnv(env["LOKI_E10_HANG_SILENCE_S"], HANG_SILENCE_S);
+/** A stage or helper budget: the user's value when set, else `dflt` with budgets on, else no limit (Infinity). */
+export const budgetS = (raw: string | undefined, dflt: number, env: NodeJS.ProcessEnv = process.env): number => { const n = Number((raw ?? "").trim()); return (raw ?? "").trim() !== "" && Number.isFinite(n) && n > 0 ? n : budgetsOn(env) ? dflt : Infinity; };
+/** The largest delay a timer takes: Bun and Node fire any longer delay (and Infinity) after 1 ms (measured on Bun 1.3.13). */
+export const MAX_TIMER_MS = 2 ** 31 - 1;
+/** setTimeout for a delay that can be "no limit": a non-finite or negative-infinite delay arms nothing, a delay past MAX_TIMER_MS is re-armed in steps.
+ *  clear() is safe to call any number of times. unref: the timer never holds the process open. */
+export function armTimer(fn: () => void, ms: number, o: { unref?: boolean } = {}): { clear: () => void } {
+  let t: ReturnType<typeof setTimeout> | null = null, done = false;
+  if (!Number.isFinite(ms) && ms > 0) return { clear: () => {} };
+  const due = Date.now() + Math.max(0, Number.isFinite(ms) ? ms : 0);
+  const arm = (): void => { const left = due - Date.now(); t = setTimeout(() => { if (done) return; if (due - Date.now() > 0 && left > MAX_TIMER_MS) arm(); else { done = true; fn(); } }, Math.min(Math.max(0, left), MAX_TIMER_MS)); if (o.unref) (t as { unref?: () => void }).unref?.(); };
+  arm();
+  return { clear: () => { done = true; if (t) clearTimeout(t); } };
+}
 const warnedCap = new Set<string>();
 /** Warn once per source+value on stderr that a set cap is unusable and the default applies. Never loosens the cap. */
 export function warnBadCap(source: string, raw: string): void {
@@ -38,7 +76,7 @@ export const MAX_FIX_ROUNDS = 2;
 export const VERIFY_STOPPED_NOTE = { limit: "verify stopped at its time limit before all checks ran", cap: "verify stopped at the run time cap before all checks ran" } as const;
 export const EVENT_TYPES = [
   "run.started", "run.resumed", "stage.started", "stage.completed", "stage.failed", "stage.skipped",
-  "heartbeat", "session.started", "session.ended", "session.stalled", "cost", "budget", "wall.sealed", "wall.reauthor", "wall.arbitrated",
+  "heartbeat", "session.started", "session.ended", "session.stalled", "session.looping", "cost", "budget", "wall.sealed", "wall.reauthor", "wall.arbitrated",
   "tests.restored", "test.result", "test.scoped_out", "test.skipped_on_base", "fix.round", "already.satisfied", "spec.conflict",
   "session.group_reaped",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
