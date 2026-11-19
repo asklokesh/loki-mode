@@ -437,6 +437,24 @@ export function baseDepsView(baseDir: string, repoDir: string, gate: Pick<ZeroGa
   return (cwd) => { const src = join(repoDir, relative(baseDir, cwd)); if (!seen.has(src)) { let ok = false; try { ok = build(src, cwd); } catch { ok = false; } seen.set(src, ok); } return seen.get(src)!; };
 }
 
+/** BASE-TREE-MEMBERS (LOKI_E10_BASE_TREE_MEMBERS, default on; =0/off/false/no opts out). A suite in a workspace imports its sibling packages from source, and
+ *  a sibling resolves its own dependencies from its own node_modules. Linking only the suite's package and the root left every sibling in the base worktree
+ *  without one: on opencode the cli suite ran 123 tests with 84 failures in the base tree ("Cannot find package 'effect' from packages/util/src/...") against
+ *  408 with 8 in the checkout, so 7 of the 8 tests red on base read "not red on base". Every tracked directory with a package.json that has a node_modules in
+ *  the checkout gets its dependencies in the base worktree through the same `link` (baseDepsLinker, else baseDepsView): the base tree then resolves what the
+ *  checkout resolves. `manifests` are the tracked package.json paths (repo-relative). Returns how many member directories there were and the ones `link`
+ *  refused (fail closed: nothing is linked for those, and the caller discloses them). */
+export const baseTreeMembersOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BASE_TREE_MEMBERS"] ?? "").trim());
+export const BASE_TREE_MEMBER_MAX = 400;
+export function linkWorkspaceMembers(baseDir: string, repoDir: string, link: (cwd: string) => boolean, manifests: readonly string[]): { members: number; refused: string[] } {
+  if (!baseTreeMembersOn()) return { members: 0, refused: [] };
+  const dirs = [...new Set(manifests.filter((f) => f === "package.json" || f.endsWith("/package.json")).map((f) => dirname(f)))]
+    .filter((d) => d !== "." && !d.split("/").includes("node_modules") && existsSync(join(repoDir, d, "node_modules")) && existsSync(join(baseDir, d)))
+    .sort().slice(0, BASE_TREE_MEMBER_MAX);
+  const refused = dirs.filter((d) => { try { return !link(join(baseDir, d)); } catch { return true; } });
+  return { members: dirs.length, refused };
+}
+
 /** True when one finished run of a test command executed zero tests (the shared mapping of 0 tests to not_run; a cut or missing run never counts). */
 export function isZeroRun(c: { cmd: string; args: string[] }, b: { ok: boolean; cut: boolean; missing: boolean; out: string }): boolean {
   const last = c.args[c.args.length - 1] ?? "";

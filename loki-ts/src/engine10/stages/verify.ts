@@ -16,7 +16,7 @@ import { failureLines, venvSkipNotes, goJsonStream, GO_JSON_KEEP, withoutStaleWa
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { defaultBudgetsOn, cmdSilenceS, type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, envChangedSince, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, redUnattributableOnBase, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, linkWorkspaceMembers, envChangedSince, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, redUnattributableOnBase, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
 export const timeoutCarryOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TIMEOUT_CARRY"] ?? "").trim());
 export const TIMEOUT_CARRY_NOTE = "carried from an earlier verify of this run, not rerun (untouched file)";
 /** TIMEOUT-WAIT: after a check's timeout (or abort) fires, a process still alive this long later is SIGKILLed, so a test that ignores SIGTERM costs its limit, not minutes more. */
@@ -674,9 +674,10 @@ export async function runLintChecks(
 /** RW-01: one detached worktree of the base commit per verify, created on first use (the on-demand suite base runs and the no-id comparison share it)
  *  and always removed. `link` links the head's dependency dirs into a directory of it under baseDepsLinker's guards, or builds baseDepsView's node_modules when the only objection is a workspace's own member links (false: nothing linked, fail closed);
  *  no link at all when the change edits a dependency manifest. */
-interface BaseTree { get(changed: readonly string[], gate: ZeroGate): string | null; link(cwd: string): boolean; dispose(): void }
+interface BaseTree { get(changed: readonly string[], gate: ZeroGate): string | null; link(cwd: string): boolean; members(): { members: number; refused: string[] }; dispose(): void }
 function baseTree(ctx: RunContext): BaseTree {
   let dir: string | null | undefined, linker: ((cwd: string) => boolean) | null = null, view: ((cwd: string) => boolean) | null = null;
+  let mem: { members: number; refused: string[] } | null = null; // BASE-TREE-MEMBERS: settled once per base tree
   const git = (args: string[]): void => { safeGit(ctx.repoDir, args, { stdio: "ignore", repoDrivers: true }); };
   return {
     get(changed, gate) {
@@ -689,6 +690,14 @@ function baseTree(ctx: RunContext): BaseTree {
       return dir;
     },
     link: (cwd) => (linker && view ? linker(cwd) || view(cwd) : false), // a workspace whose packages link to each other gets a node_modules view whose member links point at base (baseDepsView)
+    members() { // BASE-TREE-MEMBERS (base_guard.ts linkWorkspaceMembers): every workspace member with dependencies in the checkout gets them in the base tree
+      if (mem) return mem;
+      if (!dir || !linker || !view) return { members: 0, refused: [] };
+      let manifests: string[] = []; try { manifests = safeGit(ctx.repoDir, ["ls-files", "-z", "--", "package.json", "*/package.json"]).split("\0").filter(Boolean); } catch { /* no list: no member is linked */ }
+      const l = linker, v = view;
+      mem = linkWorkspaceMembers(dir, ctx.repoDir, (cwd) => l(cwd) || v(cwd), manifests);
+      return mem;
+    },
     dispose() {
       if (!dir) return;
       try { git(["worktree", "remove", "--force", dir]); } catch { /* pruned below */ }
@@ -789,11 +798,13 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
     const zg0 = zeroGate((ctx.outputs().intake as { zero_baseline?: unknown } | undefined)?.zero_baseline);
     // RW-01 BASE-ON-DEMAND: the base record of one full-suite command, measured now on the base worktree (intake no longer measures a multi-package repository)
     const suiteSpecs: SuiteSpec[] = (() => { try { return baseOnDemandOn() ? fullSuiteSpecs(ctx.repoDir, map.runners) : []; } catch { return []; } })(), baseUnmeasured = new Set<string>();
+    let baseMemberNote: string | null = null; // BASE-TREE-MEMBERS: disclosed on the receipt's baseline line
     const ensureBase = async (spec: { name: string; cmd: string; cwd: string; run: string }): Promise<void> => {
       if (!baseOnDemandOn() || signal.aborted) return;
       const tmo = Math.floor(suiteTimeoutFor(deadline, Date.now()) / 1000); if (tmo < 1) return;
       const dir = bt.get(changed, zg0); if (!dir) return;
       const cwd = join(dir, spec.cwd), linked = bt.link(cwd) && (cwd === dir || bt.link(dir));
+      if (linked) { const m = bt.members(); if (m.refused.length) baseMemberNote = `base tree: ${m.refused.length} of ${m.members} workspace member(s) could not be given their dependencies, so a base run that imports them is not the checkout's run: ${m.refused.slice(0, 6).join(", ")}`; }
       if (!linked && [spec.cwd, "."].some((d) => ["node_modules", ".venv"].some((x) => existsSync(join(ctx.repoDir, d, x))))) { baseUnmeasured.add(`${spec.name} (\`${spec.cmd}\`) ${BASE_NOT_MEASURED}`); return; } // a base run without the dependencies it needs measures nothing, and would leave a record a later run reads
       await baselineSuiteOnDemand(ctx.repoDir, ctx.baseSha, spec, dir, asyncShellRunner(signal), tmo, () => signal.aborted);
     };
@@ -826,7 +837,7 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
       for (const c of cand) {
         if (!dir || signal.aborted || (deadline !== undefined && Date.now() > deadline - SUITE_MARGIN_MS)) break;
         const t = tests.find((x) => testCheckName(x) === c.name)!, tc = commandFor(t, ctx.repoDir, api), head = noIdOut.get(c)!;
-        const cwd = sub(tc.cwd); bt.link(cwd); if (cwd !== dir) bt.link(dir);
+        const cwd = sub(tc.cwd); bt.link(cwd); if (cwd !== dir) bt.link(dir); bt.members();
         // the identical command: the same tool, with the checkout's paths mapped to the base worktree. A tool that lives in the checkout and is absent on base (a .venv
         // the linker refused) is never run from the checkout: its environment can import the changed sources, so the check stays a failure.
         const cmd = sub(tc.cmd);
@@ -935,6 +946,7 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
     notProven.push(...wallDropped.map((p) => `Wall test not executed: ${p}: ${NO_RUNNER_REASON}`));
     const wallNames = new Set(wallTests.map(testCheckName)), wallRun = checks.filter((c) => wallNames.has(c.name) || isHold(c)), wallFailTail = writeWallFailureTail(ctx.runDir, checks.filter((c) => wallNames.has(c.name) && c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, out: failTails.get(c) ?? "" }))), wallPassed = wallRun.some((c) => c.result === "fail") ? false : wallRun.length > 0 && wallDropped.length === 0 && wallRun.every((c) => c.result === "pass") ? true : undefined; // the receipt's wall.passed: false on any failure, true only when every Wall and holdout check ran and passed, unset otherwise
     await settleNrd(ctx); // SPEED-NRD-OVERLAP: the differential implement started has run beside these checks; its group joins this verify's
+    if (baseMemberNote) attr.line = [attr.line, baseMemberNote].filter(Boolean).join("; "); // BASE-TREE-MEMBERS disclosure (the receipt's baseline line)
     if (touchedExcused.length) attr.line = [attr.line, ...touchedExcused.map((n) => `${TOUCHED_RED}: ${n}`)].filter(Boolean).join("; ") || null; // TOUCHED-BASE-RED disclosure (the receipt's baseline line)
     return { status: "completed", data: { checks: pub, flaky, verify_scope: complete ? "complete" : "quick", ...(ntf ? { no_test_fallback: true } : {}), ...(uncaused.length ? { uncaused_reds: uncaused } : {}), ...(lintUntouchedNames.length ? { lint_untouched: lintUntouchedNames } : {}), ...(ownLintNames.length ? { own_lint: ownLintNames } : {}), independent_fail: independentFail, ...(independentReds.length ? { independent_reds: independentReds } : {}), fix_gate: fixGateOf({ independent_fail: independentFail, independent_reds: independentReds }, `${String(ctx.outputs().implement?.model ?? "")} ${ctx.model}`, failuresGrouped.length > 0), file_hashes: hashes, blocking_checks: blockingNames, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: [...failuresGrouped, ...nrdGroupsFor(ctx.outputs().implement, fixRounds)], holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size || depsNotes.na.length ? { not_applicable: [...[...fullNotProven].filter(naNote).map(naText), ...depsNotes.na] } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(notExcused.length ? { not_excused: notExcused } : {}), ...(baseUnattributed.length ? { base_unattributed: baseUnattributed } : {}), ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}), ...(preRed.sameError.length ? { known_red_same_error: preRed.sameError } : {}), ...(baseRed.length ? { base_red_checks: baseRed } : {}), skipped_on_base: preRed.zero, ...(collateralSame.length && fixRounds === 0 ? { collateral_same_error: collateralSame } : {}), ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
   }

@@ -127,6 +127,7 @@
 #  24g. (fl24) verify.ts attribute call: drop the depsAsIntake condition (rebuild dist); real vitest delpkg is delivered PARTIAL (p9, broken by the deleted package, has no parsed id and is suite-only).
 #  24e. repo_profile.ts sameUnattributableRed: drop the failing_shape comparison (the base-red-shape unit's new-failure case reads pre), or runOnce stops recording failing_shape (it reads noshape).
 #  24f. stages/seal.ts unattributedRed: `return cut &&` in place of `return (cut || baseRed) &&` (the base-unattributed unit's first seal cell reads FAILED).
+#  24h. base_guard.ts linkWorkspaceMembers: `const refused: string[] = [];` in place of the filter that links (the base-tree-members unit's sibling cell reads no-deps).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -959,6 +960,36 @@ console.log(r.join(" | "));
 X3="full suite: w | full suite: w | full suite: w | full suite: w | none | vitest.config.ts"
 [ "$A3" = "$X3" ] && ok "unit: a root package suite '(cd . && X)' matches the baseline's plain X (pre-existing excused, introduced ids still block, other cwd not excused); build output vite.config.d.ts and .nx/cache are not test configuration, a real vitest.config.ts is" \
     || bad "attribution unit gave: $A3 (want: $X3)"
+
+# BASE-TREE-MEMBERS (closed-set-2 oc63152 and oc63960: the opencode cli suite ran 123 tests with 84 failures in verify's base tree, "Cannot find package
+# 'effect' from packages/util/src/...", against 408 with 8 in the checkout, so tests red on base read "not red on base"). A suite imports sibling workspace
+# packages from source and a sibling needs its own node_modules. Every tracked package.json directory that has a node_modules in the checkout gets its
+# dependencies in the base tree through the same link (linker, else view). Scope: a member with no node_modules is not counted, a member whose dependencies
+# cannot be re-pointed is refused and named (nothing linked for it), and LOKI_E10_BASE_TREE_MEMBERS=0 links none.
+# Plant 24h: base_guard.ts linkWorkspaceMembers: `const refused: string[] = [];` in place of the filter that links (the sibling cell reads no-deps).
+WSM="$T/wsmembers"; mkdir -p "$WSM/node_modules/.store/dep" "$WSM/node_modules/@ws" "$WSM/packages/cli/node_modules" "$WSM/packages/util/node_modules" "$WSM/packages/util/src" "$WSM/packages/nodeps" "$WSM/packages/leak/node_modules/x"
+printf '{"name":"ws","private":true,"workspaces":["packages/*"]}\n' > "$WSM/package.json"; printf 'node_modules\n' > "$WSM/.gitignore"; printf 'module.exports = 1;\n' > "$WSM/node_modules/.store/dep/index.js"
+for m in cli util nodeps leak; do printf '{"name":"@ws/%s"}\n' "$m" > "$WSM/packages/$m/package.json"; done; printf 'export const u = 1;\n' > "$WSM/packages/util/src/u.ts"
+ln -s ../../packages/util "$WSM/node_modules/@ws/util"; ln -s ../../../node_modules/.store/dep "$WSM/packages/cli/node_modules/dep"; ln -s ../../../node_modules/.store/dep "$WSM/packages/util/node_modules/dep"
+ln -s ../../../../packages/util/src "$WSM/packages/leak/node_modules/x/inner"
+git -C "$WSM" init -q -b main && git -C "$WSM" add -- . && git -C "$WSM" -c user.name=t -c user.email=t@t commit -qm base
+AM="$(G="$WSM" ROOT="$ROOT" T="$T" bun --no-env-file --config=/dev/null -e '
+const g = await import(process.env.ROOT + "/loki-ts/src/util/base_guard.ts"), fs = await import("node:fs"), { join } = await import("node:path"), { execFileSync } = await import("node:child_process");
+const repo = process.env.G, git = (a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+const manifests = git(["ls-files", "-z", "--", "package.json", "*/package.json"]).split("\0").filter(Boolean), r = [];
+const tree = (n) => { const d = join(process.env.T, "wsbase" + n); git(["worktree", "add", "--detach", d, "HEAD"]); const l = g.baseDepsLinker(d, repo), v = g.baseDepsView(d, repo); return { d, link: (c) => l(c) || v(c) }; };
+const has = (d, m) => { try { return fs.realpathSync(join(d, "packages", m, "node_modules", "dep")).endsWith("/node_modules/.store/dep") ? "deps" : "wrong"; } catch { return "no-deps"; } };
+const a = tree(1); r.push(String(a.link(join(a.d, "packages/cli")) && a.link(a.d)), has(a.d, "util"));
+const m = g.linkWorkspaceMembers(a.d, repo, a.link, manifests); r.push(m.members + ":" + m.refused.join(","), has(a.d, "util"), has(a.d, "cli"), fs.existsSync(join(a.d, "packages/nodeps/node_modules")) ? "made" : "none", fs.existsSync(join(a.d, "packages/leak/node_modules")) ? "linked" : "not-linked");
+process.env.LOKI_E10_BASE_TREE_MEMBERS = "0"; const b = tree(2), off = g.linkWorkspaceMembers(b.d, repo, b.link, manifests); r.push(off.members + ":" + has(b.d, "util")); delete process.env.LOKI_E10_BASE_TREE_MEMBERS;
+for (const n of [1, 2]) git(["worktree", "remove", "--force", join(process.env.T, "wsbase" + n)]);
+console.log(r.join(" | "));
+' 2>&1)"
+XM="true | no-deps | 3:packages/leak | deps | deps | none | not-linked | 0:no-deps"
+[ "$AM" = "$XM" ] && ok "unit: every workspace member with a node_modules in the checkout gets its dependencies in the base tree, not only the suite's package and the root; a member with none is left alone, one whose dependencies cannot be re-pointed is refused and named, and LOKI_E10_BASE_TREE_MEMBERS=0 links none" \
+    || bad "base-tree-members unit gave: $AM (want: $XM)"
+VBM="$ROOT/loki-ts/src/engine10/stages/verify.ts"
+grep -q 'if (linked) { const m = bt.members(); if (m.refused.length) baseMemberNote = ' "$VBM" && grep -q 'mem = linkWorkspaceMembers(dir, ctx.repoDir, (cwd) => l(cwd) || v(cwd), manifests);' "$VBM" && grep -q 'if (baseMemberNote) attr.line = \[attr.line, baseMemberNote\]' "$VBM" && ok "base-tree-members wiring: verify links the members once per base tree before a base suite run and names any it could not link on the baseline line" || bad "base-tree-members wiring: verify does not link the workspace members before a base suite run"
 
 # BASE-RED-SHAPE (verify-dev 2026-11-13: marshmallow, markdown, pino, valibot ended FAILED on a suite already red on base whose failing ids no parser
 # reads, "the base run is not attributable"). The same command failing in the identical kind on head (same exit code, no ids, the same output shape
