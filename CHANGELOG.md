@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 
+## v11.162.0 (2026-11-19)
+
+### No run cap, verify limit, round count or dollar cap by default on the Loki 10 engine: you set one if you want one; a stage Loki stopped never alone makes a run FAILED
+
+- No default budget on the Loki 10 engine. A `loki start` run with no limit set has no run cap, no stage time limit, no verify maximum (the old 900 s), no fixed number of fix rounds, proof re-runs or continues, and no default dollar cap, with an API key or on a subscription. An API-key run prints: "no cost limit is set: the run stops when it is done or makes no progress (--max-cost <usd> sets one)".
+- A run with no limit ends when it is done or stops making progress: fix rounds, proof re-runs and continues end after 2 rounds in a row that do not improve on the best one (`LOKI_E10_NO_PROGRESS_ROUNDS`). Guards for stuck work, each a setting: a silent session (1800 s, `LOKI_E10_STALL_KILL_S`), a session that prints but changes nothing (3600 s, `LOKI_E10_LOOP_KILL_S`), a silent test command (1800 s, `LOKI_E10_CMD_SILENCE_S`), a hung worker (1800 s, `LOKI_E10_HANG_SILENCE_S`). Every stop ends with commit, seal and a draft PR of what is done.
+- Limits are yours to set: `loki start --max-time 90m` (or `LOKI_RUN_DEADLINE_S`) sets an outer limit the run finishes inside; `--verify-max-time 20m` (or `LOKI_E10_VERIFY_MAX_S`) limits one verify stage; `--max-cost`, `LOKI_BUDGET_LIMIT` or `budgets.per_run` sets a dollar cap, enforced as before. `LOKI_E10_DEFAULT_BUDGETS=1` restores every old default at once.
+- Label rule: when verify is stopped by a limit before it could attribute a failing pre-existing repo test, that test holds the label at PARTIAL, never FAILED. This covers only runs whose verify a limit stopped. In the C2 set on 11.158.0, 18 Loki seeds on three tasks passed the hidden tests and were labeled FAILED; replaying this rule on their stored outputs moves 12 of them (all hermes-agent 155462 and opencode 63960 seeds) off FAILED. It leaves the 6 playwright 43305 seeds, which finished verify and were labeled FAILED on a full-suite check with no per-test ids that also fails on base; that is not fixed here. With no default verify limit the rule only fires when a user's own limit cuts verify; whether the base comparison then completes on these repos is not yet measured by a run. A failing acceptance (Wall) test, holdout, a test the run wrote or edited, lint, typecheck or build is the change's own and still makes the run FAILED.
+- The previous loop (`autonomy/run.sh`) keeps its 100 USD default.
+- Still Loki defaults in this release (the next release makes each one opt-in): intake baseline runs (300 s per command), the prove stage's internal 600 s, the no-regression differential's 120 s, the prove listing's 3-turn cap, `--deep` (2700 s) and the `--verified` bounds, and a 3600 s ceiling the router puts on a `--max-duration` you pass.
+
+Measured: the hermetic test files on the merged tree (counts in the release commit's checks). Not yet measured: a real run on a large repository under the no-budget default; the C2 ten-issue set runs on it next.
+
+Correction to 11.159.0: its first heading said a passing change was no longer sealed FAILED on a time limit. That was true only for hermes-agent issue 155462, whose verify now finishes in about 8 minutes; the 900 s limit was still on until this release. The heading on the GitHub release and in CHANGELOG.md was reworded on 2026-11-19.
+
 ## v11.161.0 (2026-11-19)
 
 ### A JavaScript or TypeScript change runs only the tests whose imports point at it
