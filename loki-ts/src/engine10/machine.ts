@@ -150,7 +150,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   let capTimer = armTimer(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now())); // NO-DEFAULT-BUDGET: no cap (Infinity) arms nothing
   // NO-DEFAULT-BUDGET: Loki sets no stage limit, round count or turn cap of its own (only LOKI_E10_DEFAULT_BUDGETS=1 restores them); a user time limit
   // bounds the run through capS alone (the soft cap, and implement and verify sized from the time left); loops end on no progress (noProgressRounds).
-  const unbounded = !defaultBudgetsOn() && !ctx.deep;
+  const unbounded = !defaultBudgetsOn(); // a --deep run too (its 2700 s cap, 1800 s implement and stage limits are budgets)
   let implementStartMs: number | null = null;
   const withTimeNote = (brief: string, limitS: number): string => brief.endsWith(FINISH_LINE) ? `${brief.slice(0, -FINISH_LINE.length)}${timeBudgetNote(limitS)}\n\n${FINISH_LINE}` : `${brief}\n\n${timeBudgetNote(limitS)}`;
   const startedIds = new Set<string>(); // TEN-COST-11 r3: every session this run started, whatever its stage later returned; seal unions these into the cost read so a killed or failed stage's spend is never lost

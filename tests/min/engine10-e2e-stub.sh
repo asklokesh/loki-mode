@@ -1571,7 +1571,7 @@ const d = mkdtempSync(join(tmpdir(), "nb-"));
 try {
   const r0 = rc.resolveRunCapS(d, true, {}), rb = rc.resolveRunCapS(d, true, B), ru = rc.resolveRunCapS(d, true, { LOKI_E10_CAP_S: "600" }), rbad = rc.resolveRunCapS(d, true, { LOKI_E10_CAP_S: "soon" });
   res("NO-DEFAULT-BUDGET no user limit means no cap and no ceiling; the control knob restores 900 s; a user cap is fixed; an unusable one fails closed to 900 s", r0.capS === Infinity && r0.ceilingS === Infinity && r0.fixedS === undefined && rb.capS === 900 && ru.capS === 600 && ru.fixedS === 600 && rbad.capS === 900);
-  res("NO-DEFAULT-BUDGET the worker cap: unset is no limit, a set cap is that cap, deep keeps its own", wk.workerCapS(false, {}) === Infinity && wk.workerCapS(false, { LOKI_E10_CAP_S: "700" }) === 700 && wk.workerCapS(true, {}) === ty.DEEP_CAP_S && wk.workerCapS(false, B) === 900);
+  res("NO-DEFAULT-BUDGET the worker cap: unset is no limit, a set cap is that cap, --deep has no 2700 s cap unless budgets are on", wk.workerCapS(false, {}) === Infinity && wk.workerCapS(false, { LOKI_E10_CAP_S: "700" }) === 700 && wk.workerCapS(true, {}) === Infinity && wk.workerCapS(true, B) === ty.DEEP_CAP_S && ty.deepCapS({}) === Infinity && wk.workerCapS(false, B) === 900);
   const env: Record<string, string> = { LOKI_E10_CAP_S: "900", LOKI_E10_CAP_FIXED_S: "900" }; sv.applyCapEnv(env, Infinity, { fixedS: undefined });
   res("NO-DEFAULT-BUDGET no limit reaches the worker as an unset cap, never the string Infinity", !("LOKI_E10_CAP_S" in env) && !("LOKI_E10_CAP_FIXED_S" in env));
   let fired = 0; const t1 = ty.armTimer(() => fired++, Infinity), t2 = ty.armTimer(() => fired++, 2 ** 31 + 5), t3 = ty.armTimer(() => fired += 10, 5);

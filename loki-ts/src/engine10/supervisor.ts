@@ -31,7 +31,7 @@ import { cleanTreeId, failedCheckNames, recordFingerprints } from "../util/failu
 import { modelDowngrades } from "../runner/model_downgrades.ts";
 import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
-import { type EventEnvelope, type PushEnv, type StageName, type Verdict, backstopS, BACKSTOP_GRACE_S, budgetsOn, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, hangSilenceS, proveByRunningOn, pushArgv, STAGE_BUDGETS, WORK_ROAD_ENV } from "./types.ts";
+import { type EventEnvelope, type PushEnv, type StageName, type Verdict, backstopS, BACKSTOP_GRACE_S, budgetsOn, deepCapS, DEFAULT_CAP_S, envCapS, hangSilenceS, proveByRunningOn, pushArgv, STAGE_BUDGETS, WORK_ROAD_ENV } from "./types.ts";
 import { baseLine, finishRunBranch, prBasePlan } from "../util/base_guard.ts";
 import { alreadyDoneTextComment, policyGate, prGate, renderMainOutput, runIntent, summaryCache, summaryTokens, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
 
@@ -499,7 +499,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   }
   let reqMap: { requirements: { id: string; text: string; status: string }[] } | null | undefined; // REQTRACE: computed once, before the PR stage, from intake/spec plus verify results; undefined = not yet computed
   const reqOnce = async (evs: ReturnType<typeof readEvents>): Promise<NonNullable<typeof reqMap> | null> => { if (reqMap === undefined) { const rq = await import("../features/contract.ts"); reqMap = rq.writeFromEngine10(repoDir, join(repoDir, ".loki"), runDir, isIssue ? null : task, evs); } return reqMap; }; // also removes a prior run's stale map when this run has no requirements
-  const sized = deep ? null : resolveRunCapS(repoDir, cap.usd <= 0, env), dlS = deep ? deadlineCapS(env) : undefined, capS = sized?.capS ?? (dlS === undefined ? DEEP_CAP_S : Math.min(DEEP_CAP_S, dlS)); // RUN-DEADLINE: a deep run honors the outer deadline too
+  const sized = deep ? null : resolveRunCapS(repoDir, cap.usd <= 0, env), dlS = deep ? deadlineCapS(env) : undefined, capS = sized?.capS ?? (dlS === undefined ? deepCapS(env) : Math.min(deepCapS(env), dlS)); /* NO-DEFAULT-BUDGET: --deep has no 2700 s cap unless budgets are on */ // RUN-DEADLINE: a deep run honors the outer deadline too
   applyCapEnv(env, capS, sized); // FC-21b: starts at DEFAULT_CAP_S; the worker resizes once after plan from plan-scope.json unless the cap is fixed
   const statusStep = noPr || !ISSUE_RE.test(task) ? undefined : (await import("../util/run_outputs.ts")).issueStatusProjector({ pushSh: (await import("./stages/pr.ts")).DEFAULT_PUSH_SH, env, origin: readOriginUrl(repoDir), repoDir, runDir, runId, issueRef: task, eventsPath }), stopPlan = statusStep ? tail(eventsPath, (e) => { if (e.type === "stage.completed" && e.stage === "plan") void statusStep(); }, { intervalMs: 500 }) : () => {};
   let refusedAs: PreflightBlocker = "other"; // AN-08

@@ -12,7 +12,7 @@ import { FLOW, runMachine } from "./machine.ts";
 import { withFailover, type FailoverRecord } from "../runner/provider_failover.ts";
 import { cancelSessions, createSessionRunner, resolveModel, type EmitFn } from "./session.ts";
 import { RealTestMapProvider } from "./testmap.ts";
-import { budgetsOn, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, type EventType, type RunContext, type StageName } from "./types.ts";
+import { budgetsOn, deepCapS, DEFAULT_CAP_S, envCapS, type EventType, type RunContext, type StageName } from "./types.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { cancelProve } from "./stages/prove.ts";
 export type WorkerEmit = (type: EventType, stage: StageName | null, data: Record<string, unknown>) => void;
@@ -42,7 +42,7 @@ export async function runWorker(
   await drive((type, stage, data) => write(JSON.stringify({ type, stage, data }) + "\n"));
 }
 /** P12-07l: deep honors the same cap env as fast (remaining cap on resume; the supervisor sets the full cap otherwise). */
-export function workerCapS(deep: boolean, env: NodeJS.ProcessEnv): number { return envCapS(env.LOKI_E10_CAP_S) ?? (deep ? DEEP_CAP_S : budgetsOn(env) ? DEFAULT_CAP_S : Infinity); } // NO-DEFAULT-BUDGET: unset means no time limit (types.ts budgetsOn)
+export function workerCapS(deep: boolean, env: NodeJS.ProcessEnv): number { return envCapS(env.LOKI_E10_CAP_S) ?? (deep ? deepCapS(env) : budgetsOn(env) ? DEFAULT_CAP_S : Infinity); } // NO-DEFAULT-BUDGET: unset means no time limit (types.ts budgetsOn)
 
 /** The receipt's cost reader: files for tokens and records, the run's cost events (runCost, the number shown everywhere) for dollars. */
 export const workerCostReader = (runId: string, events: () => { type: string; data: Record<string, unknown> }[] = () => []): RunContext["cost"] => ({ read: (dir, ids) => { const l = join(dir, ".loki"); return costTotalsOf(sealedRunCost(sumRunCosts(l, liveArchivedCosts(l, ids, UNMETERED), [], runId), events().map((e) => ({ ...e, run: runId })), l)); } });

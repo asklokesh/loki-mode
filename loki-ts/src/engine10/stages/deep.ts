@@ -13,7 +13,7 @@ import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv, suiteTimeoutOn } from "../../project_model/package_suite.ts";
 import { classifyCheck, corroboratePass, failureExcerpt, failureShape, firstError, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { errorsById, failIds, unhandledBlock } from "../failures.ts"; import { attributeFullSuite, BASELINE_CMD_TIMEOUT_S, suiteEmptyOnBase } from "../../runner/repo_profile.ts";
-import { defaultBudgetsOn, cmdSilenceS, DEEP_CAP_S, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, STAGE_BUDGETS } from "../types.ts";
+import { defaultBudgetsOn, cmdSilenceS, deepCapS, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, STAGE_BUDGETS } from "../types.ts";
 import { safeGitRun } from "../../util/safe_git.ts"; import { REPO_ROOT } from "../../util/paths.ts";
 import { DEFAULT_PUSH_SH, SHA_RE } from "./pr.ts";
 /** RunContext plus the value this stage needs that E-03 will eventually  inject (same local-extension pattern pr.ts's PrContext already uses). */
@@ -242,7 +242,7 @@ export async function deepWorker(args: string[], deps: { opts?: DeepOptions } = 
   // ctx.model is the run's own model passed through (a DeepContext field, not a session option object); built without a conditional spread so the never-below-raw guard does not read it as a session pin.
   const pinned = origin ? { pinnedOrigin: origin } : {};
   const ctx: DeepContext = {
-    runId, repoDir, runDir, baseSha, branch: `loki/${runId}`, provider, model: resolved, deep: true, capS: DEEP_CAP_S,
+    runId, repoDir, runDir, baseSha, branch: `loki/${runId}`, provider, model: resolved, deep: true, capS: deepCapS(),
     emit: () => {}, sessions, failovers: () => [],
     tests: new (await import("../testmap.ts")).RealTestMapProvider(),
     cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
@@ -265,7 +265,7 @@ export async function deepWorker(args: string[], deps: { opts?: DeepOptions } = 
 export async function deepPost(args: string[], deps: { pushScriptPath?: string; pushExtraEnv?: Record<string, string>; pollMs?: number; waitCapMs?: number } = {}): Promise<number> {
   const [runId, pidArg = "", origin = ""] = args, pid = Number(pidArg);
   if (!runId || !/^e10-[A-Za-z0-9-]+$/.test(runId) || !Number.isInteger(pid) || pid <= 1) { process.stderr.write("engine10 deep-post: usage: deep-post <run-id> <deep-pid> <origin>\n"); return 2; }
-  const repoDir = process.cwd(), runDir = join(repoDir, ".loki", "runs", runId), pollMs = deps.pollMs ?? 2000, capMs = deps.waitCapMs ?? (DEEP_CAP_S + 300) * 1000;
+  const repoDir = process.cwd(), runDir = join(repoDir, ".loki", "runs", runId), pollMs = deps.pollMs ?? 2000, capMs = deps.waitCapMs ?? (deepCapS() + 300) * 1000; // NO-DEFAULT-BUDGET: Infinity waits while the deep worker lives (its own guards end it)
   const alive = (): boolean => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } };
   for (const t0 = Date.now(); alive() && Date.now() - t0 < capMs; ) await new Promise((r) => setTimeout(r, pollMs));
   const read = (f: string): Record<string, unknown> | null => { try { return JSON.parse(readFileSync(join(runDir, f), "utf8")) as Record<string, unknown>; } catch { return null; } };

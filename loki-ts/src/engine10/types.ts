@@ -17,6 +17,8 @@ export const STAGE_BUDGETS: Readonly<Record<StageName, { targetS: number | null;
 };
 export const DEFAULT_CAP_S = 900;
 export const DEEP_CAP_S = 2700;
+/** NO-DEFAULT-BUDGET: a --deep run's cap: 2700 s only with LOKI_E10_DEFAULT_BUDGETS=1; otherwise none unless the user sets a time limit. */
+export const deepCapS = (env: NodeJS.ProcessEnv = process.env): number => (defaultBudgetsOn(env) ? DEEP_CAP_S : Infinity);
 /** NO-DEFAULT-BUDGET (founder 2026-11-18, "if a user has to, then he will, make it optional"): Loki sets no time, round, turn or test-count budget by default.
  *  A run ends when it is done or makes no progress (NO_PROGRESS_ROUNDS, SILENCE_KILL_S, LOOP_KILL_S, HANG_SILENCE_S below). A user time limit (LOKI_E10_CAP_S,
  *  loki.yaml budgets.run_cap_s, LOKI_RUN_DEADLINE_S or `loki start --max-time`) restores every budget exactly as before, and so does LOKI_E10_DEFAULT_BUDGETS=1
