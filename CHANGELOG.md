@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 
+## v11.160.0 (2026-11-19)
+
+### An Agent SDK run keeps the sign-in a user set in their own Claude settings
+
+- An engine run on the Agent SDK route loads only the project's Claude settings, so a user whose sign-in lives in ~/.claude/settings.json (an apiKeyHelper, a custom ANTHROPIC_BASE_URL, a proxy or certificate setting) got "Not logged in" and no request was sent. Loki now forwards those sign-in, endpoint, proxy and certificate values, and the credential helper settings, to its own sessions. It never overrides a value the process already has, and still loads no plugins, skills, model or other user settings. Measured with a stand-in server: before, 0 requests and "Not logged in"; after, 6 requests, each with the helper's key.
+- Correction to the v11.159.0 headline: verify's default 900 second limit is still in place. 11.159.0 makes the hermes-agent issue 155462 checks finish well inside it (465 to 494 seconds); removing the default limit ships separately.
+
+Measured: tests/min auto-route 48, engine10-e2e-stub 262, decompose-and-intake 167, cli-entrypoints 72, run-safety 220, all 0 failed. One run-safety leg with an 8 second verify limit (scope limit) failed once at high machine load and passed on 3 reruns and a full rerun; it is timing sensitive and is being made robust.
+Not measured: a real run on this build with a real user settings file.
+
 ## v11.159.0 (2026-11-19)
 
 ### Verify picks the tests a Python change can affect and reads per-file test wrappers, so a passing change is no longer sealed FAILED on a time limit
