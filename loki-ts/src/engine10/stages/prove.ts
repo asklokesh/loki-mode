@@ -4,7 +4,7 @@
 // stage owns a session kept away from the implementer's reply, nor harness-run user-level scripts. FireLater#24: 22 attempts scored blind by starting
 // the product; 13 scored 6 of 9 or less with tests, lint and typecheck green on 21 of 22, and 4 of 7 runs labelled VERIFIED were broken.
 // Static imports stay off seal.ts, machine.ts and implement.ts (seal and pr import this file; implement imports seal): machine.ts loads lazily.
-import { MAX_TIMER_MS } from "../types.ts";
+import { defaultBudgetsOn, MAX_TIMER_MS } from "../types.ts";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -28,7 +28,11 @@ export const proveScope = (provider: string, o: Partial<Record<string, Obj>>, en
 /** The stage runs, and seal requires its record, when implement ended done (any other exit is already below VERIFIED). */
 export const proveApplies = (provider: string, o: Partial<Record<string, Obj>>, env: NodeJS.ProcessEnv = process.env): boolean => proveScope(provider, o, env) && o.implement?.exit === "done" && o.intake?.already_satisfied !== true;
 /** The stage's own budget (listing, prover session, head pass, base pass), held back from implement and added to a sized run cap. */
-export const proveBudgetS = (env: NodeJS.ProcessEnv = process.env): number => num(env["LOKI_E10_PROVE_BUDGET_S"], 600);
+export const proveBudgetS = (env: NodeJS.ProcessEnv = process.env): number => num(env["LOKI_E10_PROVE_BUDGET_S"], defaultBudgetsOn(env) ? 600 : Infinity); // NO-DEFAULT-BUDGET: no stage budget unless set; a user run cap still bounds it (machine.ts proveNow room)
+/** What the machine holds back for the prove stage when it sizes implement under a user's run cap: the stage's own budget, or 600 s when it has none. */
+export const proveReserveOfS = (env: NodeJS.ProcessEnv = process.env): number => { const b = proveBudgetS(env); return Number.isFinite(b) ? b : 600; };
+/** NO-DEFAULT-BUDGET: the listing session's turn cap: 3 only with LOKI_E10_DEFAULT_BUDGETS=1 or LOKI_E10_PROVE_LIST_TURNS; otherwise none (the session's silence and loop kills end it). */
+export const proveListTurns = (env: NodeJS.ProcessEnv = process.env): number | undefined => { const n = Number((env["LOKI_E10_PROVE_LIST_TURNS"] ?? "").trim()); return Number.isInteger(n) && n > 0 ? n : defaultBudgetsOn(env) ? 3 : undefined; };
 export const scriptLimitS = (env: NodeJS.ProcessEnv = process.env): number => num(env["LOKI_E10_PROVE_SCRIPT_S"], 120);
 /** Repair (default on; LOKI_E10_PROVE_REPAIR=0 opts out): unproved asks go back to the implement session by same-session resume, at most MAX_REPAIR_ROUNDS. */
 export const proveRepairOn = (env: NodeJS.ProcessEnv = process.env): boolean => !off(env["LOKI_E10_PROVE_REPAIR"]);
@@ -279,7 +283,7 @@ export const proveStage: Stage = {
       let accepted: string[] | null = null, rejected: string[] = [];
       for (let attempt = 1; attempt <= 2 && !signal.aborted && accepted === null; attempt++) {
         const out = join(dir, `asks-list-${attempt}.json`), cwd = mkdtempSync(join(tmpdir(), "loki-prove-list-")), id = `${ctx.runId}-prove-ls${attempt}`; rec.iteration_ids.push(id);
-        try { await ctx.sessions.run({ stage: "prove", brief: listBrief(issue, out, rejected), tier: "development", iterationId: id, limitS: LIST_S, maxTurns: 3, signal, cwd, outputs: [out] }); } finally { rmSync(cwd, { recursive: true, force: true }); }
+        try { await ctx.sessions.run({ stage: "prove", brief: listBrief(issue, out, rejected), tier: "development", iterationId: id, limitS: LIST_S, ...(proveListTurns() ? { maxTurns: proveListTurns() } : {}), signal, cwd, outputs: [out] }); } finally { rmSync(cwd, { recursive: true, force: true }); }
         let raw: string | null = null; try { raw = readFileSync(out, "utf8"); } catch { /* nothing written */ }
         const c = checkAsks(raw, issue);
         if (!c.error && c.bad.length === 0) accepted = c.asks; else rejected = c.bad.length ? c.bad : [c.error ?? "no list"];

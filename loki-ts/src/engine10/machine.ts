@@ -10,7 +10,7 @@ import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./f
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote, timeNoteOn } from "../util/run_cap.ts"; import { FINISH_LINE, issueRunBrief } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, isClean, MIN_ATTEMPT_WINDOW_S, runExtraAttempts, signalNotProven, type AttemptSignal } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
 import { armTimer, backstopS, defaultBudgetsOn, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, hangSilenceS, MAX_FIX_ROUNDS, noProgressRounds, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
 import { stallSame, stallSignature } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
-import { PROVE_MIN_S, proveApplies, proveBudgetS, proveNotRun, proveScope, recheckProve, type ProveRecord } from "./stages/prove.ts"; import { capCeilingS } from "../util/run_cap.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
+import { PROVE_MIN_S, proveApplies, proveBudgetS, proveReserveOfS, proveNotRun, proveScope, recheckProve, type ProveRecord } from "./stages/prove.ts"; import { capCeilingS } from "../util/run_cap.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
 
 /** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
 interface WallSplit { author(ctx: RunContext, signal: AbortSignal): Promise<{ kind: string } & Record<string, unknown>>; install(ctx: RunContext, a: never, baseDir: string): StageResult; }
@@ -183,7 +183,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     capHit = true;
     ctx.emit("cap.hit", name, { elapsed_s: elapsedS() });
   };
-  const proveReserveS = (): number => (proveScope(ctx.provider, outputs) ? proveBudgetS() : 0); // Q1 PROVE: 0 on every run the stage does not own, so their budgets are unchanged
+  const proveReserveS = (): number => (proveScope(ctx.provider, outputs) ? proveReserveOfS() : 0); // Q1 PROVE: 0 on every run the stage does not own, so their budgets are unchanged
   let implementBudgetS = 0; const implementLimitS = (floorS: number): number => Math.max(floorS, Math.floor(softCapS(ctx.capS) - elapsedS() - (STAGE_BUDGETS.verify.limitS ?? 0) - proveReserveS())); // leaves verify's window (and the prove stage's budget) before the soft cap
   // A fix round scales with the task the plan sized: the cap grows with the packages and files in scope (run_cap.ts), so a round on a 1490 s
   // FireLater-sized cap gets 298 s instead of being killed at 180 s; a default 900 s cap keeps 180 s, and a round never gets more than twice that.

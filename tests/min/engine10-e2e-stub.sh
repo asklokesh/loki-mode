@@ -1598,7 +1598,8 @@ try {
   res("NO-DEFAULT-BUDGET the loop guard sees output with no tree change (diffIdleS grows while output streams)", tk.diffIdleS === 9 && tk.cls !== "stalled");
   const hung = await wp.spawnWorker([process.execPath, "-e", "setTimeout(() => {}, 20000)"], { PATH: process.env.PATH ?? "" }, d, Infinity, 500, () => {}, { silenceS: 0.4, lastEventMs: () => 0 });
   res("NO-DEFAULT-BUDGET the supervisor's hang guard stops a silent worker that runs no process, and says it was hung (no backstop is armed)", hung.killed === true && hung.hung === true);
-  const nr = await import(root + "/loki-ts/src/features/no_regression.ts");
+  const pv = await import(root + "/loki-ts/src/engine10/stages/prove.ts"), nr = await import(root + "/loki-ts/src/features/no_regression.ts");
+  res("NO-DEFAULT-BUDGET the prove stage has no 600 s budget and its listing no 3-turn cap unless set (the knob or LOKI_E10_PROVE_BUDGET_S / LOKI_E10_PROVE_LIST_TURNS); a user cap still reserves 600 s for it when sizing implement", pv.proveBudgetS({}) === Infinity && pv.proveBudgetS(B) === 600 && pv.proveBudgetS({ LOKI_E10_PROVE_BUDGET_S: "45" }) === 45 && pv.proveReserveOfS({}) === 600 && pv.proveListTurns({}) === undefined && pv.proveListTurns(B) === 3 && pv.proveListTurns({ LOKI_E10_PROVE_LIST_TURNS: "5" }) === 5);
   res("NO-DEFAULT-BUDGET the no-regression differential has no 120 s wall budget unless set; the knob restores it", nr.nrdBudgetS({}) === Infinity && nr.nrdBudgetS(B) === 120 && nr.nrdBudgetS({ LOKI_E10_NRD_BUDGET_S: "30" }) === 30);
   const rp = await import(root + "/loki-ts/src/runner/repo_profile.ts"), base = await rp.asyncShellRunner()("sleep 0.3; echo base-ran", d, Infinity);
   res("NO-DEFAULT-BUDGET intake baselines have no 300 s limit of Loki's own: none by default, a third of a user's run cap, the user's LOKI_E10_BASELINE_CMD_S; the knob restores 300 s; the shared suite budget likewise", rp.baselineCmdS(Infinity, {}) === Infinity && rp.baselineCmdS(600, {}) === 200 && rp.baselineCmdS(Infinity, { LOKI_E10_BASELINE_CMD_S: "50" }) === 50 && rp.baselineCmdS(Infinity, B) === 300 && rp.suiteBaselineBudgetS({}) === Infinity && rp.suiteBaselineBudgetS(B) === 300);
@@ -1613,7 +1614,7 @@ try {
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/nobudget.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || { bad "no-default-budget unit script crashed or exited non-zero"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 20 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 20"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 21 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 21"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
