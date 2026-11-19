@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 
+## v11.163.0 (2026-11-19)
+
+### A full test suite that fails the same way with and without the change, and reports no test names, holds the run at PARTIAL instead of FAILED
+
+- When a full-suite check is red on the change, Loki runs the same command on the untouched base commit. If that base run is red too, with the same exit code, and neither run prints a test name Loki can parse, the failure is not the change's own and the run is labeled PARTIAL, not FAILED. It is never excused: the run is not VERIFIED on that suite, and the receipt says why. A failure line that names a file the change touched takes the rule away and the run stays FAILED. `LOKI_E10_BASE_UNATTRIBUTED=0` turns the rule off.
+- Measured on stored runs: in the C2 set (11.158.0), all 6 playwright issue 43305 Loki seeds passed the hidden tests and were labeled FAILED on `npm test` (Playwright's library suite, 200 tests red on base and on the change). Replaying this rule on their stored outputs labels them PARTIAL. A Playwright test-id parser was written and not shipped: two runs of the same base tree gave 200-id sets that differ by one test (the reporter stops at 200 failures), so a per-test comparison would make the label change from run to run.
+- Under the C2 scoring rules PARTIAL on a passing change is still a wrong label; this release removes a wrong FAILED, it does not win the task. Not yet measured in a live run.
+
+Also in this release: two test checks updated to the 11.162.0 behaviour (continues end on no progress; the self-review resume has no default turn cap). Both were not run before 11.162.0 shipped; the full hermetic gate now runs before every release.
+
+Not run before this release: the three real-toolchain legs of tests/min/stacks.sh (Maven, Gradle, .NET), whose tools are not installed on the release machine; this change does not touch those stacks. Every other leg of the 33 hermetic files ran, including the 18 real-vitest legs.
+
 ## v11.162.0 (2026-11-19)
 
 ### No run cap, verify limit, round count or dollar cap by default on the Loki 10 engine: you set one if you want one; a stage Loki stopped never alone makes a run FAILED
