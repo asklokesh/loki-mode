@@ -499,11 +499,11 @@ c1_has "$ISSUE_P" "$CARD_LINE" && [ "$ISSUE_PATH" = "$ISSUE_PLANPATH:$T/fake-opt
 c1_run issue-none none start acme/search#24 --no-pr --max-cost 5 --
 c1_has "$C1P" "This issue lists several things to deliver." && ! c1_has "$C1P" "Available on this machine" && [ "$C1PATH" = "$C1PLANPATH" ] \
     && ok "candidate 1 card: an issue run on a repo that needs no service gets no card line and an unchanged PATH" || bad "candidate 1 card: repo needing nothing got a card or a PATH change"
-c1_run text-pg pg "add a multiply(a, b) function to calc.ts" --no-pr --
+c1_run text-pg pg "add a multiply(a, b) function to calc.ts" --no-pr -- LOKI_E10_DEFAULT_BUDGETS=1 # the time sentence exists only under a time limit (NO-DEFAULT-BUDGET); the knob restores today's limit
 c1_has "$C1P" "- Never kill processes." && c1_has "$C1P" "Time budget: about" && ! c1_has "$C1P" "LOKI_UNFINISHED" && ! c1_has "$C1P" "prove the change works by running it" && ! c1_has "$C1P" "Available on this machine" && [ -n "$C1PATH" ] && ! c1_has "$C1PATH" "$T/fake-opt" \
     && ok "candidate 1: a text goal keeps today's rules, finish line and time sentence, gets no block and no card, and no keg directory reaches its PATH" \
     || bad "candidate 1: the text goal changed: old rule $(grep -c 'Never kill processes' <<< "$C1P"), time $(grep -c 'Time budget' <<< "$C1P"), UNFINISHED $(grep -c LOKI_UNFINISHED <<< "$C1P"), block $(grep -c 'prove the change works' <<< "$C1P"), card $(grep -c 'Available on this' <<< "$C1P"), keg on PATH $(grep -c fake-opt <<< "$C1PATH"), PATH set $([ -n "$C1PATH" ] && echo yes || echo no)"
-c1_run issue-off pg start acme/search#24 --no-pr --max-cost 5 -- LOKI_E10_PROVE_BY_RUNNING=0
+c1_run issue-off pg start acme/search#24 --no-pr --max-cost 5 -- LOKI_E10_PROVE_BY_RUNNING=0 LOKI_E10_DEFAULT_BUDGETS=1 # time sentence needs a time limit (NO-DEFAULT-BUDGET)
 c1_has "$C1P" "- Never kill processes." && c1_has "$C1P" "Time budget: about" && ! c1_has "$C1P" "LOKI_UNFINISHED" && ! c1_has "$C1P" "Available on this machine" && [ "$C1PATH" = "$C1PLANPATH" ] \
     && ok "candidate 1: LOKI_E10_PROVE_BY_RUNNING=0 restores today's issue-run rules, time sentence and PATH, with no block and no card" || bad "candidate 1: the opt-out left a candidate-1 change"
 c1_run issue-cardoff pg start acme/search#24 --no-pr --max-cost 5 -- LOKI_E10_ENV_CARD=0
@@ -852,8 +852,11 @@ case "$H1A" in "1|0|done|"*) ok "H1: on an issue run a conflict citing no test g
 case "$H1B" in "0|"[1-9]*"|spec_conflict|"*) ok "H1: off by default (LOKI_E10_CONFLICT_NEEDS_TEST unset) keeps today's path (the -r correction, then the conflict is believed)" ;; *) bad "H1 opt-out gave $H1B (want 0|>0|spec_conflict|...)" ;; esac
 case "$H1C" in "0|"[1-9]*"|spec_conflict|"*) ok "H1: a conflict citing a test (calc.test.ts:3) behaves exactly as today" ;; *) bad "H1 cited conflict gave $H1C (want 0|>0|spec_conflict|...)" ;; esac
 case "$H1D" in "0|"[1-9]*"|spec_conflict|"*) ok "H1: a text goal keeps today's conflict path (issue runs only)" ;; *) bad "H1 text goal gave $H1D (want 0|>0|spec_conflict|...)" ;; esac
-c1_run tn-default none "add a multiply(a, b) function to calc.ts" --no-pr --; TN0="$C1P"; TNSIG0="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$C1RUN" "$T/c1-tn-default" 2>&1 | sed 's/; brief=.*//')"
-c1_run tn-off none "add a multiply(a, b) function to calc.ts" --no-pr -- LOKI_E10_TIME_NOTE=0; TN1="$C1P"; TNSIG1="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$C1RUN" "$T/c1-tn-off" 2>&1 | sed 's/; brief=.*//')"
+c1_run tn-nb none "add a multiply(a, b) function to calc.ts" --no-pr --; TNNB="$C1P"
+! grep -qF "Time budget: about" <<< "$TNNB" && grep -qF -- "- Never kill processes." <<< "$TNNB" && ok "NO-DEFAULT-BUDGET: with no time limit the implement prompt has no time-budget sentence; the rules are unchanged" || bad "NO-DEFAULT-BUDGET: the no-limit implement prompt has a time sentence ($(grep -c 'Time budget' <<< "$TNNB"))"
+# the knob measures the time note under today's time limit
+c1_run tn-default none "add a multiply(a, b) function to calc.ts" --no-pr -- LOKI_E10_DEFAULT_BUDGETS=1; TN0="$C1P"; TNSIG0="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$C1RUN" "$T/c1-tn-default" 2>&1 | sed 's/; brief=.*//')"
+c1_run tn-off none "add a multiply(a, b) function to calc.ts" --no-pr -- LOKI_E10_TIME_NOTE=0 LOKI_E10_DEFAULT_BUDGETS=1; TN1="$C1P"; TNSIG1="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$C1RUN" "$T/c1-tn-off" 2>&1 | sed 's/; brief=.*//')"
 grep -qF "Time budget: about" <<< "$TN0" && ! grep -qF "Time budget: about" <<< "$TN1" && grep -qF -- "- Never kill processes." <<< "$TN1" && [ "$TNSIG0" = "$TNSIG1" ] \
     && ok "Haiku arm: LOKI_E10_TIME_NOTE=0 drops only the time-budget sentence from the implement prompt; the rules, stage order and receipt keys are unchanged" \
     || bad "Haiku arm: time-note knob: default has the sentence $(grep -c 'Time budget' <<< "$TN0"), knob has it $(grep -c 'Time budget' <<< "$TN1"), signatures equal $([ "$TNSIG0" = "$TNSIG1" ] && echo yes || echo no)"

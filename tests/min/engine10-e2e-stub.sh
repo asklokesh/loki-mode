@@ -1417,6 +1417,7 @@ rw_engine() { # rw_engine <name> <task or file> [VAR=value...] -> RWOUT, RWRUN (
         git -C "$d/repo" add calc.ts calc.test.ts bunfig.toml; git -C "$d/repo" commit -q -m base
     fi
     RWDIR="$d"; RWP="$d/prompt"
+    # LOKI_E10_DEFAULT_BUDGETS=1 below: the RW-02 legs read the issue cap rule (cap=2400), which sizes only a run cap; with no budget there is none (NO-DEFAULT-BUDGET)
     RWOUT="$(cd "$d/repo" && env -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_E10_ISSUE_JSON -u LOKI_E10_WORK_ROAD LOKI_E10_DEFAULT_BUDGETS=1 LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$RWD/bin/claude" PATH="$FIX/bin:$PATH" \
         E2E_STUB_MODE=done E2E_STUB_LOG="$d/stub.log" E2E_STUB_PROMPT_LOG="$RWP" E2E_STUB_LINECHECK_FILE="$RWD/met.txt" LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" "$@" \
         ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start "$task" --no-pr </dev/null 2>&1)"
