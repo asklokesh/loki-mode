@@ -113,6 +113,11 @@ const FAIL_EVIDENCE = /\[(?:build|setup) failed\]|^--- FAIL|^[\w./-]+\.go:\d+:\d
 /** Extra failure evidence honoured only for a Go runner under a non-zero exit: a package FAIL line (log.Fatal, init panic, timeout) or a panic. */
 const GO_FAIL_EVIDENCE = /^FAIL\t\S+\t[\d.]+s$|^panic: /m;
 export const UNMEASURED_REASON = "executed count unmeasured (Loki could not parse the runner summary, harness-owned)";
+/** UNMEASURED-TAIL: the last 40 lines of a check that read UNMEASURED_REASON, ANSI stripped and secrets redacted, kept on its test.result event only (never the receipt).
+ *  hm155462 (11.158.0) left 227 unmeasured checks with no output at all, so the cause could only be replayed from the scorer's logs of other files. */
+export const UNMEASURED_TAIL_LINES = 40;
+export const unmeasuredTail = (c: { result?: unknown; reason?: unknown }, out: string): { out_tail?: string } =>
+  c.result === "not_run" && c.reason === UNMEASURED_REASON ? { out_tail: redactSecrets(stripAnsi(out).trimEnd().split("\n").slice(-UNMEASURED_TAIL_LINES).map((l) => l.replace(UNSAFE_TERMINAL_CHARS_RE, "")).join("\n")) } : {};
 
 /** PRETTY LOKI_E10_PYTEST_PRETTY (default on, =0 opts out): a repo that loads pytest-pretty (pydantic) prints "Results (0.66s):" then "   271 passed", "    25 skipped"
  *  and no "N passed in Xs" line, so every pytest check read "executed count unmeasured". The block counts only when it ends the output and every line in it is a count. */

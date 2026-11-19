@@ -335,6 +335,10 @@
 # 299. testmap.ts impactedRefs: drop the coveredStem keep (the name-floor leg reads dropped).
 # 300. testmap.ts impactedRefs: drop the `.py`-only check (the TypeScript leg reads mapped by its name).
 # 301. testmap.ts pyImportResolveOn: always true (the =0 leg fails).
+# 302. check_result.ts unmeasuredTail: drop redactSecrets (the UNMEASURED-TAIL token leg keeps the token).
+# 303. check_result.ts unmeasuredTail: drop the 40-line slice (the UNMEASURED-TAIL 40-lines leg reads 61 lines).
+# 304. check_result.ts unmeasuredTail: drop the not_run/UNMEASURED_REASON condition (the measured-pass leg carries a tail).
+# 305. verify.ts runCheck: spread unmeasuredTail into the check itself (the event-only leg finds the tail on the check).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1649,6 +1653,31 @@ TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/pyres.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || bad "py-resolve unit script crashed or exited non-zero"
 [ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 11 ] || bad "py-resolve unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 11"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+grep -q '^NO ' <<< "$out" && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
+# UNMEASURED-TAIL: hm155462 left 227 unmeasured checks with no output at all; the event now keeps the last 40 lines, redacted, and the receipt does not.
+cat > "$T/utail.ts" <<'TS'
+const root = process.argv[2]!, T = process.argv[3]!;
+import { mkdtempSync } from "node:fs"; import { join } from "node:path";
+const vf = await import(root + "/loki-ts/src/engine10/stages/verify.ts"), cr = await import(root + "/loki-ts/src/util/check_result.ts");
+const res = (n: string, okk: boolean) => console.log((okk ? "OK " : "NO ") + n);
+const d = mkdtempSync(join(T, "utail-")), ev: Record<string, unknown>[] = [];
+const ctx = { repoDir: d, baseSha: "", runDir: d, emit: (t: string, _s: string, x: Record<string, unknown>) => { if (t === "test.result") ev.push(x); }, outputs: () => ({}) } as never;
+const secret = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+const script = `for i in $(seq 1 60); do echo "line $i"; done; printf '\\033[31mGITHUB_TOKEN=${secret}\\033[0m\\n'`;
+const checks: unknown[] = [], c = await vf.runCheck(ctx, "pytest:t.py", "sh", ["-c", script], new AbortController().signal, checks as never, { kind: "test" });
+const e = ev[0] ?? {}, tail = String(e.out_tail ?? ""), ls = tail.split("\n");
+res("UNMEASURED-TAIL an unmeasured check's event keeps its last 40 output lines", c.result === "not_run" && c.reason === cr.UNMEASURED_REASON && ls.length === 40 && ls[0] === "line 22" && ls[38] === "line 60");
+res("UNMEASURED-TAIL a planted token in the tail is redacted and colour codes are stripped", !tail.includes(secret) && !tail.includes("\u001b") && /GITHUB_TOKEN=\[REDACTED/.test(ls[39] ?? ""));
+res("UNMEASURED-TAIL the tail is on the event only, never on the check the receipt reads", !("out_tail" in (c as object)) && !JSON.stringify(checks).includes("line 60"));
+const ev0 = ev.length; await vf.runCheck(ctx, "pytest:p.py", "sh", ["-c", "echo '3 passed in 0.01s'"], new AbortController().signal, [] as never, { kind: "test" });
+res("UNMEASURED-TAIL a measured pass carries no tail", ev.length === ev0 + 1 && !("out_tail" in ev[ev0]!) && ev[ev0]!.result === "pass");
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/utail.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
+grep -q '^EXIT 0$' <<< "$out" || bad "unmeasured-tail unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 4 ] || bad "unmeasured-tail unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 4"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

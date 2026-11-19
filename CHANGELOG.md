@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- A test check whose runner summary Loki could not read now keeps the last 40 lines of its output, with secrets redacted, on its test.result event (not in the receipt), so the cause can be read from the run record. The hermes-agent issue 155462 run left 227 such checks with no output at all.
 - A change to a Python file no longer runs every test that imports some other module of the same name. In a recorded run (hermes-agent issue 155462, Loki 11.158.0, both Sonnet and Haiku) the change to hermes_cli/gateway.py matched 772 tests by the name "gateway" alone (590 of them import the separate top-level gateway package, 94 are TypeScript tests), verify ran 253 of them in 896 seconds, hit its 900 second limit and sealed a passing change FAILED. Now a test is matched through an import only when its imports (including `from pkg import mod` and monkeypatch strings) point at the changed file, or when Loki cannot tell where the import points; a TypeScript test never matches a Python file. On that run's tree the selection drops from 773 to 77 tests. LOKI_E10_PY_IMPORT_RESOLVE=0 restores the old matching.
 
 ## v11.158.0 (2026-11-18)
