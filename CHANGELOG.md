@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 
+## v11.159.0 (2026-11-19)
+
+### Verify picks the tests a Python change can affect and reads per-file test wrappers, so a passing change is no longer sealed FAILED on a time limit
+
+- Loki reads the Summary line of a test wrapper that runs each pytest file in its own process (hermes-agent scripts/run_tests.sh). Before, every such check read "executed count unmeasured": 227 of 253 checks in the recorded hermes-agent issue 155462 run, and 27 of 34 in issue 140569. The Summary is read only when it is the runner's own last line and the only one; a FLAKY block, a failure report or a second Summary leaves the count unmeasured, and skipped tests never count. A pytest run that deselects every test now reads "no tests executed" instead of a code failure.
+- A change to a Python file no longer runs every test that imports some other module of the same name. In the recorded hermes-agent issue 155462 run (Loki 11.158.0, Sonnet and Haiku), the change to hermes_cli/gateway.py matched 772 tests by the name "gateway" alone. Verify ran 253 of them in 896 seconds, hit its 900 second limit and sealed a passing change FAILED. Now a test matches through an import only when its imports (including `from pkg import mod` and monkeypatch strings) point at the changed file, or when Loki cannot tell where the import points. On that run's tree the selection drops from 773 to 77 tests, and the 97 files it runs finish in 465 to 494 seconds. LOKI_E10_PY_IMPORT_RESOLVE=0 restores the old matching.
+- A test check whose runner summary Loki could not read keeps the last 40 lines of its output, with secrets redacted, on its test.result event (not in the receipt), so the cause can be read from the run record.
+- Opt-in task memory (LOKI_E10_TASK_MEMORY=1): a Haiku implement session keeps its task in a read-only MEMORY.md that is read again after each compaction. Off by default: in a two-seed trial it met fewer asks than the control on one of two issues.
+- Opt-in compact card (LOKI_E10_COMPACT_CARD=1, Agent SDK route): at each compaction the session gets the task card and Loki's progress again. Off by default: in a two-seed trial on two issues it tied the control on asks met and labels and re-read the task more often.
+
+Measured: tests/min decompose-and-intake 167, engine10-e2e-stub 262, run-safety 220, scope-and-fix 894, auto-route 47, cli-entrypoints 72, one-line-goal 36, all 0 failed. Selection and timing measured on the hermes-agent issue 155462 trees of five recorded runs.
+Not measured: a new end-to-end real run on this build. The fixes do not remove verify's 900 second default limit; that change ships separately.
+
 ## v11.158.0 (2026-11-18)
 
 ### The label describes exactly what the pull request merges, and a lint slip Loki made gets fixed instead of failing the run
