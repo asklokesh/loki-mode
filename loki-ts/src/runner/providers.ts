@@ -44,6 +44,7 @@ import { createTrimHook } from "./trim.ts";
 import { createConfigFenceHook, createHostGuardHook, HOST_GUARD_SCRIPT, hookTimeoutSeconds } from "./host_guard.ts";
 import { fenceEnabled, fencedDenyRules, harnessOutputs, stateDenyRules } from "../util/config_fence.ts";
 import { createStopChecksHook, parseStopChecks, STOP_HOOK_MARGIN_S } from "./stop_checks.ts";
+import { compactCardOn, createCompactCardHook, createPostCompactRecordHook, TASK_CARD_ENV } from "./compact_card.ts";
 import { advisorPair, probeAdvisor, ROUTER_ADVISOR_MODEL } from "./router/advisor_probe.ts";
 import { advisorOnlyEnabled, routerEnabled, routerPreset, sessionPlanEnabled } from "./router/flag.ts";
 import type {
@@ -941,6 +942,7 @@ export function sdkQueryProvider(): ProviderInvoker {
               ? {
                   hooks: {
                     ...(stopSpec ? { Stop: [{ timeout: stopSpec.budgetS + STOP_HOOK_MARGIN_S, hooks: [createStopChecksHook(stopSpec)] }] } : {}),
+                    ...(process.env["LOKI_E10_STAGE"] && compactCardOn() && process.env[TASK_CARD_ENV] ? { SessionStart: [{ matcher: "compact", hooks: [createCompactCardHook(call.cwd)] }], PostCompact: [{ hooks: [createPostCompactRecordHook(call.cwd)] }] } : {}), // COMPACT CARD: the task card and Loki's progress block after every compaction (runner/compact_card.ts)
                     ...(hostGuardRequired(call.cwd) || process.env["LOKI_E10_STAGE"]
                       ? {
                           PreToolUse: [

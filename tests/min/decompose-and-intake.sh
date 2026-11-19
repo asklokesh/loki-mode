@@ -125,6 +125,11 @@
 #  O14 (measured on 6a44b64b8). issues_combine.ts: never retry the refused push under the run's own branch name; J, K fail.   O15. earlierCombinedPrs returns []; K fails (rerun on ab9315e7c+).
 #  The engine of 6a44b64b8 (it closed earlier combined PRs and retried on any push failure), swapped in for issues_combine.ts, fails K and P.
 #  Q (the gh api tip) fails when nonFastForward reads only git ls-remote.
+# TASK MEMORY (each planted, the legs run, reverted):
+#  M1. providers.ts taskMemorySettings: drop isHaikuModel(model); the task memory unit check fails (Sonnet and Opus carry autoMemoryDirectory).
+#  M2. proof_rerun.ts writeTaskMemory: drop the two chmod calls; the task memory unit check fails (write=...:700:600).
+#  M3. implement.ts: drop LOKI_E10_TASK_MEMORY_DIR from the first session's sessionEnv; the Haiku task memory e2e check fails (implement argv none).
+#  C1. compact_card.ts createCompactCardHook: answer every SessionStart source; the compact card unit check fails (startup gets the card).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -876,6 +881,23 @@ console.log(out.join(" "));
 [ "$TMU" = '{"autoMemoryDirectory":"/x/task-memory"} null null null null null null {} {} {} {"CLAUDE_CODE_DISABLE_AUTO_MEMORY":"0"} sdk=/x/task-memory,none,none sdkenv=true text=true:true:true:true:false write=true:555:444:true cleanup=true:false' ] \
     && ok "task memory unit: only a Haiku implement session with an absolute memory directory carries autoMemoryDirectory with LOKI_E10_TASK_MEMORY=1 (not Sonnet, Opus, fix, =0, the default or a relative path), on the SDK options too; Loki adds no auto-memory env to any other session (an inherited off switch is cleared for a memory session); MEMORY.md is byte-stable, untrusted-framed, read-only (555 directory, 444 file), and the scratch cleanup still removes it" \
     || bad "task memory unit gave: $TMU"
+# COMPACT CARD (LOKI_E10_COMPACT_CARD=1, SDK route): the SessionStart(compact) hook re-sends the task card plus Loki's progress block and records a marker;
+# PostCompact records how many acceptance lines the summary kept. Unit only: the stub CLI never compacts.
+CCU="$(cd "$ROOT/loki-ts" && G="$T/cc-repo" && mkdir -p "$G" && git -C "$G" init -q && printf 'a\n' > "$G/a.txt" && git -C "$G" add a.txt && git -C "$G" -c user.name=t -c user.email=t@example.invalid commit -qm base && printf 'b\n' >> "$G/a.txt" && mkdir -p "$T/cc-run" && printf '{"type":"proof.rerun","data":{"exit":0,"proved":2,"failed":1}}\n{"type":"acceptance.round","data":{"met":1,"unmet":2}}\n' > "$T/cc-run/events.jsonl" && env -u LOKI_ITERATION LOKI_DIR="$T/cc-loki" CCG="$G" CCR="$T/cc-run" bun --no-env-file --config=/dev/null -e '
+const cc = await import("./src/runner/compact_card.ts"), fs = await import("node:fs");
+const card = cc.taskCardText({ title: "Fix the pager", asks: Array.from({ length: 60 }, (_, i) => "ask number " + i + " " + "x".repeat(60)), sites: [{ symbol: "paginate", path: "src/p.ts", line: 3 }], briefPath: "/r/implement-brief.txt", finishRule: "End with LOKI_DONE." });
+const base = (await import("node:child_process")).execSync("git -C " + process.env.CCG + " rev-parse HEAD").toString().trim();
+const env = { LOKI_E10_TASK_CARD: card, LOKI_E10_CARD_BASE: base, LOKI_E10_CARD_RUN_DIR: process.env.CCR };
+const h = cc.createCompactCardHook(process.env.CCG, env), pc = cc.createPostCompactRecordHook(process.env.CCG, env);
+const startup = await h({ source: "startup" }), comp = await h({ source: "compact" }), ctx = comp.hookSpecificOutput?.additionalContext ?? "";
+await pc({ trigger: "auto", compact_summary: "kept: ask number 1 " + "x".repeat(60) + " and nothing else" });
+const marks = fs.readFileSync(process.env.LOKI_DIR + "/metrics/compact-card-0.jsonl", "utf8").trim().split("\n").map((l) => JSON.parse(l));
+const src = fs.readFileSync("./src/runner/providers.ts", "utf8");
+console.log([card.length <= cc.CARD_MAX_CHARS, card.includes("more acceptance lines in $LOKI_SCRATCH/acceptance.txt"), JSON.stringify(startup), ctx.startsWith(card), ctx.includes("a.txt | 1 +"), ctx.includes("2 PROVED, 1 FAILED"), ctx.includes("1 line(s) met, 2 not met"), marks.map((m) => m.kind).join("+"), marks[1].acceptance_kept + "/" + (marks[1].acceptance_total > 10), cc.compactCardOn({}), cc.compactCardOn({ LOKI_E10_COMPACT_CARD: "1" }), src.includes("SessionStart: [{ matcher: \"compact\", hooks: [createCompactCardHook(call.cwd)] }]")].join(" "));
+' 2>&1)"
+[ "$CCU" = 'true true {} true true true true card_injected+post_compact 1/true false true true' ] \
+    && ok "compact card unit: the card stays under 2,000 characters (extra acceptance lines point at acceptance.txt); the hook answers only a compact start, with the card plus Loki's diff stat and its last proof run and acceptance round; it records card_injected and post_compact markers and how many acceptance lines the summary kept; off unless LOKI_E10_COMPACT_CARD=1; wired on the SDK route" \
+    || bad "compact card unit gave: $CCU"
 tm_facts() { # <name>: implement argv carries the memory dir | implement disable | plan disable | dir mode/file mode | MEMORY.md has the task and asks | scratch gone
     local d="$T/c1-$1"
     python3 -I - "$d.argv" "$d.mem" <<'PY'
