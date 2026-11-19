@@ -82,7 +82,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   env["LOKI_ITERATION"] = opts.iterationId;
   env["LOKI_E10_STAGE"] = opts.stage;
   env["LOKI_E10_BRIEF"] = opts.brief;
-  delete env["LOKI_SCRATCH"]; delete env["LOKI_SCRATCH_SINCE"]; // Q1 RUN-SCRATCH: never inherited, so a user's own value can never relax the host guard
+  delete env["LOKI_SCRATCH"]; delete env["LOKI_SCRATCH_SINCE"]; delete env["LOKI_E10_TASK_MEMORY_DIR"]; // Q1 RUN-SCRATCH: never inherited, so a user's own value can never relax the host guard; TASK MEMORY: only the implement stage's sessionEnv names a memory directory
   if (opts.sessionEnv) for (const [k, v] of Object.entries(opts.sessionEnv)) env[k] = v;
   if (opts.sessionEnv?.["LOKI_SCRATCH"]) for (const k of Object.keys(env)) if (CONNECTION_ENV.test(k)) delete env[k]; // an issue run's implement session is told to start its own database and apply migrations: it must never inherit settings that point at the user's
   if (opts.pathAppend?.length) env["PATH"] = [...(env["PATH"] ?? "").split(":").filter(Boolean), ...opts.pathAppend].join(":"); // candidate 1 env card: append only

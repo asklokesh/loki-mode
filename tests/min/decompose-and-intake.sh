@@ -853,6 +853,55 @@ grep -qF "Time budget: about" <<< "$TN0" && ! grep -qF "Time budget: about" <<< 
     && ok "Haiku arm: LOKI_E10_TIME_NOTE=0 drops only the time-budget sentence from the implement prompt; the rules, stage order and receipt keys are unchanged" \
     || bad "Haiku arm: time-note knob: default has the sentence $(grep -c 'Time budget' <<< "$TN0"), knob has it $(grep -c 'Time budget' <<< "$TN1"), signatures equal $([ "$TNSIG0" = "$TNSIG1" ] && echo yes || echo no)"
 
+# --- Haiku arm: TASK MEMORY (LOKI_E10_TASK_MEMORY=1 opts in; default off). A Haiku implement session carries autoMemoryDirectory naming a read-only
+# MEMORY.md in its scratch (task title, acceptance lines, named sites), which Claude Code reads again after each compaction; Sonnet, the default and =0
+# carry no memory setting, and Loki adds no auto-memory env to any other session.
+TMU="$(cd "$ROOT/loki-ts" && env -u LOKI_E10_STAGE -u LOKI_E10_TASK_MEMORY -u LOKI_E10_TASK_MEMORY_DIR -u LOKI_ROUTER -u LOKI_ADVISOR_ONLY TMDIR="$T/tm-unit" bun --no-env-file --config=/dev/null -e '
+const pv = await import("./src/runner/providers.ts"), pr = await import("./src/engine10/proof_rerun.ts"), wp = await import("./src/runner/worker_proc.ts"), fs = await import("node:fs");
+const H = "claude-haiku-5-5", I = { LOKI_E10_STAGE: "implement", LOKI_E10_TASK_MEMORY_DIR: "/x/task-memory", LOKI_E10_TASK_MEMORY: "1" }, j = (v) => JSON.stringify(v ?? null);
+const out = [j(pv.taskMemorySettings(H, I)), j(pv.taskMemorySettings("claude-sonnet-5-5", I)), j(pv.taskMemorySettings("claude-opus-5-5", I)), j(pv.taskMemorySettings(H, { ...I, LOKI_E10_STAGE: "fix" })), j(pv.taskMemorySettings(H, { ...I, LOKI_E10_TASK_MEMORY: "0" })), j(pv.taskMemorySettings(H, { LOKI_E10_STAGE: "implement", LOKI_E10_TASK_MEMORY_DIR: "/x/task-memory" })), j(pv.taskMemorySettings(H, { ...I, LOKI_E10_TASK_MEMORY_DIR: "rel/dir" }))];
+out.push(j(pv.autoMemoryEnv({}, false)), j(pv.autoMemoryEnv({ LOKI_E10_STAGE: "plan" }, false)), j(pv.autoMemoryEnv(I, true)), j(pv.autoMemoryEnv({ ...I, CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" }, true)));
+const sdk = (m, extra = {}) => { Object.assign(process.env, I, extra); const o = pv.buildSdkLoopOptions({ tier: "development", model: m, cwd: "/nonexistent" }); for (const k of [...Object.keys(I), ...Object.keys(extra)]) delete process.env[k]; return o.settings?.autoMemoryDirectory ?? "none"; };
+out.push(`sdk=${sdk(H)},${sdk("claude-sonnet-5-5")},${sdk(H, { LOKI_E10_TASK_MEMORY: "0" })}`);
+const src = fs.readFileSync("./src/runner/providers.ts", "utf8");
+out.push(`sdkenv=${src.includes("if (extra.settings?.autoMemoryDirectory) delete env[\"CLAUDE_CODE_DISABLE_AUTO_MEMORY\"];") && !src.includes("CLAUDE_CODE_DISABLE_AUTO_MEMORY: \"1\"")}`);
+const t = { title: "Fix  the\tpager", asks: ["first ask", "second\nask"], sites: [{ symbol: "paginate", path: "src/p.ts", line: 3 }], siteRule: "RULE." };
+const a = pr.taskMemoryText(t), b = pr.taskMemoryText(t);
+out.push(`text=${a === b}:${a.includes("Task (untrusted, quoted): Fix the pager")}:${a.includes("\n1. first ask\n2. second ask\n")}:${a.includes("Sites the task names: paginate (src/p.ts:3). RULE.")}:${/\d{4}-\d\d-\d\d|e10-/.test(a)}`);
+const sc = wp.createSessionScratch(), d = pr.writeTaskMemory(sc.dir, a), mode = (p) => (fs.statSync(p).mode & 0o777).toString(8);
+out.push(`write=${d === sc.dir + "/task-memory"}:${mode(d)}:${mode(d + "/MEMORY.md")}:${fs.readFileSync(d + "/MEMORY.md", "utf8") === a}`);
+const c = wp.cleanupSessionScratch(sc, { termWaitMs: 200 }); out.push(`cleanup=${c.removed}:${fs.existsSync(sc.dir)}`);
+console.log(out.join(" "));
+' 2>&1)"
+[ "$TMU" = '{"autoMemoryDirectory":"/x/task-memory"} null null null null null null {} {} {} {"CLAUDE_CODE_DISABLE_AUTO_MEMORY":"0"} sdk=/x/task-memory,none,none sdkenv=true text=true:true:true:true:false write=true:555:444:true cleanup=true:false' ] \
+    && ok "task memory unit: only a Haiku implement session with an absolute memory directory carries autoMemoryDirectory with LOKI_E10_TASK_MEMORY=1 (not Sonnet, Opus, fix, =0, the default or a relative path), on the SDK options too; Loki adds no auto-memory env to any other session (an inherited off switch is cleared for a memory session); MEMORY.md is byte-stable, untrusted-framed, read-only (555 directory, 444 file), and the scratch cleanup still removes it" \
+    || bad "task memory unit gave: $TMU"
+tm_facts() { # <name>: implement argv carries the memory dir | implement disable | plan disable | dir mode/file mode | MEMORY.md has the task and asks | scratch gone
+    local d="$T/c1-$1"
+    python3 -I - "$d.argv" "$d.mem" <<'PY'
+import os, re, sys
+argv = open(sys.argv[1]).read().splitlines() if os.path.exists(sys.argv[1]) else []
+mem = open(sys.argv[2]).read() if os.path.exists(sys.argv[2]) else ""
+impl = [l for l in argv if l.startswith("implement")]
+carries = "yes" if impl and all('"autoMemoryDirectory":"' in l for l in impl) else "none" if not any("autoMemoryDirectory" in l for l in argv) else "some"
+heads = [l for l in mem.splitlines() if re.match(r"^\w+ disable=", l)]
+def f(stage, key):
+    v = [re.search(key + r"=(\S+)", l).group(1) for l in heads if l.startswith(stage + " ")]
+    return ",".join(sorted(set(v))) or "nosession"
+dirs = [re.search(r"dir=(\S+)", l).group(1) for l in heads if l.startswith("implement ")]
+gone = "gone" if dirs and dirs[0] != "none" and not os.path.exists(os.path.dirname(dirs[0])) else "na" if not dirs or dirs[0] == "none" else "left"
+body = "task+asks" if "Task (untrusted, quoted): " in mem and "\n1. " in mem else "nobody"
+print("|".join([carries, f("implement", "disable"), f("plan", "disable"), f("implement", "dirmode") + "/" + f("implement", "filemode"), body, gone]))
+PY
+}
+c1_run tm-haiku none start acme/search#24 --no-pr --max-cost 5 --session-model haiku -- LOKI_E10_TASK_MEMORY=1 E2E_STUB_ARGV_LOG="$T/c1-tm-haiku.argv" E2E_STUB_MEMORY_LOG="$T/c1-tm-haiku.mem"; TMA="$(tm_facts tm-haiku)"
+c1_run tm-off none start acme/search#24 --no-pr --max-cost 5 --session-model haiku -- E2E_STUB_ARGV_LOG="$T/c1-tm-off.argv" E2E_STUB_MEMORY_LOG="$T/c1-tm-off.mem"; TMB="$(tm_facts tm-off)"
+c1_run tm-sonnet none start acme/search#24 --no-pr --max-cost 5 --session-model sonnet -- LOKI_E10_TASK_MEMORY=1 E2E_STUB_ARGV_LOG="$T/c1-tm-sonnet.argv" E2E_STUB_MEMORY_LOG="$T/c1-tm-sonnet.mem"; TMC="$(tm_facts tm-sonnet)"
+echo "    task memory (implement argv | implement disable | plan disable | modes | MEMORY.md | scratch): haiku =1 $TMA; default $TMB; sonnet =1 $TMC"
+case "$TMA" in "yes|unset|unset|555/444|task+asks|gone") ok "task memory e2e: with LOKI_E10_TASK_MEMORY=1 a Haiku issue run's implement session carries autoMemoryDirectory and finds a read-only MEMORY.md with the task and its numbered acceptance lines; the plan session gets no auto-memory env from Loki; the scratch is removed after the run" ;; *) bad "task memory e2e (haiku) gave $TMA" ;; esac
+case "$TMB" in "none|unset|unset|"*"|nobody|na") ok "task memory e2e: by default (LOKI_E10_TASK_MEMORY unset) Loki writes no memory and no session carries a memory setting or env" ;; *) bad "task memory e2e (default) gave $TMB" ;; esac
+case "$TMC" in "none|unset|unset|"*) ok "task memory e2e: a Sonnet run with LOKI_E10_TASK_MEMORY=1 carries no memory setting or env on any session" ;; *) bad "task memory e2e (sonnet) gave $TMC" ;; esac
+
 # --- split repair: a list detail is repaired, any other refusal is re-asked once with the exact error ------------------------
 # FireLater#24 (v11.116.0): one 520-character acceptance criterion refused the whole split and the epic ran as one 413 s session.
 SPLITR="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '

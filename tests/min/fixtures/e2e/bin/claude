@@ -56,6 +56,7 @@
 # E2E_STUB_SPLIT (JSON text): the MASS-2 split planning session writes it to the file its brief names.
 # E2E_STUB_SPEC_REPLY (text): the exec-spec generator session (its brief names spec_reply.md, LOKI_E10_EXEC_SPEC) writes it there.
 # E2E_STUB_IMPL_CONFLICT=<text>: an implement session not on sonnet answers LOKI_SPEC_CONFLICT: <text>; on sonnet it implements.
+# E2E_STUB_MEMORY_LOG gets "<stage> disable=<CLAUDE_CODE_DISABLE_AUTO_MEMORY> dir=<LOKI_E10_TASK_MEMORY_DIR> dirmode=<octal> filemode=<octal>" per call, then the MEMORY.md text.
 # E2E_STUB_ROUTE_LOG gets "<LOKI_E10_STAGE> <iteration> model=<--model> advisor=<advisorModel> wall=<0|1>" per call.
 # Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo); E2E_STUB_BUDGET_LOG gets its LOKI_BUDGET_LIMIT and LEDGER.
 # WORK-RECOVERY (tests/min/run-safety.sh): E2E_STUB_STASH=<engine stage> with E2E_STUB_STASH_MARK=<file>: that stage's first session, after its edit,
@@ -143,6 +144,14 @@ if [ -n "${E2E_STUB_ROUTE_LOG:-}" ]; then # one line per session: engine stage, 
 fi
 if [ -n "${E2E_STUB_BUDGET_LOG:-}" ]; then echo "$stage limit=${LOKI_BUDGET_LIMIT:-} ledger=${LOKI_BUDGET_LEDGER:-}" >> "$E2E_STUB_BUDGET_LOG"; fi
 if [ -n "${E2E_STUB_ENV_LOG:-}" ]; then printf '%s LOKI_SCRATCH=%s TMPDIR=%s\n' "$stage" "${LOKI_SCRATCH:-}" "${TMPDIR:-}" >> "$E2E_STUB_ENV_LOG"; fi # Q1 RUN-SCRATCH: what each stage's session got
+if [ -n "${E2E_STUB_MEMORY_LOG:-}" ]; then # TASK MEMORY (tests/min/decompose-and-intake.sh): per session the auto-memory switch, the memory directory it was given, the modes and MEMORY.md
+  python3 -I -c 'import os, sys
+st, log, d, dis = sys.argv[1:5]
+m = lambda p: oct(os.stat(p).st_mode & 0o777)[2:] if os.path.exists(p) else "none"
+with open(log, "a") as f:
+    f.write("%s disable=%s dir=%s dirmode=%s filemode=%s\n" % (st, dis or "unset", d or "none", m(d) if d else "none", m(os.path.join(d, "MEMORY.md")) if d else "none"))
+    if d and os.path.exists(os.path.join(d, "MEMORY.md")): f.write(open(os.path.join(d, "MEMORY.md")).read() + "=== end\n")' "$stage" "$E2E_STUB_MEMORY_LOG" "${LOKI_E10_TASK_MEMORY_DIR:-}" "${CLAUDE_CODE_DISABLE_AUTO_MEMORY:-}"
+fi
 if [ "$stage" = implement ] && [ "${E2E_STUB_SCRATCH:-}" = leave ] && [ -n "${LOKI_SCRATCH:-}" ] && [ ! -f "$LOKI_SCRATCH/pids" ]; then # RUN-SCRATCH: start a daemon-like process in the scratch directory and leave it running
   # a daemon (pg_ctl, redis --daemonize) in its own session with no inherited std fds, so it survives a process-group kill and never holds the session's stdout pipe
   perl -e 'setpgrp(0,0); open(STDIN,"</dev/null"); open(STDOUT,">/dev/null"); open(STDERR,">/dev/null"); chdir($ENV{LOKI_SCRATCH}); exec("/bin/sh","-c","sleep 300; :","x","--token=e2escratchsecret")' </dev/null >/dev/null 2>&1 &

@@ -188,6 +188,8 @@ export function spawnDetached(cmd: string, args: string[], opts: { cwd?: string;
 // title overwrites the environment area) and is found only when its --dir is in scratch. macOS also hides the environment of its own platform binaries
 // (/bin/sleep and the like) from ps; such a process is found only by its directory, its command line or its parent.
 export const SCRATCH_MARKER = ".loki-scratch-owned", SCRATCH_RECORD = "scratch.json", OWNER_ENV = "LOKI_RUN_OWNER";
+/** TASK MEMORY: the read-only subdirectory of an implement scratch that holds Loki's MEMORY.md (engine10/proof_rerun.ts writeTaskMemory). */
+export const TASK_MEMORY_SUBDIR = "task-memory";
 export interface SessionScratch { dir: string; since: number; nonce: string }
 export function createSessionScratch(runDir?: string): SessionScratch {
   const base = existsSync("/tmp") ? realpathSync("/tmp") : realpathSync(tmpdir());
@@ -278,7 +280,7 @@ export function cleanupSessionScratch(s: SessionScratch, o: { signal?: (pid: num
   const live = stopped.filter((x) => still.some((y) => y.pid === x.pid));
   if (live.length) return { dir: s.dir, stopped, left, removed: false, kept: `kept: ${live.length} owned process(es) did not stop: ${live.map((x) => x.pid).join(", ")}` };
   let removed = false;
-  try { if (readFileSync(join(s.dir, SCRATCH_MARKER), "utf8") === s.dir) { rmSync(s.dir, { recursive: true, force: true }); removed = !existsSync(s.dir); } } catch { removed = !existsSync(s.dir); }
+  try { if (readFileSync(join(s.dir, SCRATCH_MARKER), "utf8") === s.dir) { try { chmodSync(join(s.dir, TASK_MEMORY_SUBDIR), 0o700); } catch { /* no task memory here */ } rmSync(s.dir, { recursive: true, force: true }); removed = !existsSync(s.dir); } } catch { removed = !existsSync(s.dir); } // TASK MEMORY: its read-only directory is made writable first, or the removal fails on it
   return { dir: s.dir, stopped, left, removed };
 }
 /** The record a run wrote at scratch creation, when its directory still exists. */
