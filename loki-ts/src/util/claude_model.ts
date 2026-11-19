@@ -201,14 +201,13 @@ export type Role = (typeof ROLES)[number];
 export const ROLE_FLAG_ENV: ReadonlyMap<string, string> = new Map([...ROLES.map((r): [string, string] => [`--${r}-model`, `LOKI_ROLE_${r.toUpperCase()}`]), ["--models", "LOKI_MODELS"]]);
 const ROLE_VALUE = /^[A-Za-z0-9][\w.:@/[\]-]*$/;
 const ROUTE_ID = /^(openrouter|ollama|lmstudio|llamacpp|vllm|custom)\//;
-/** The raw role values the user set, validated. Throws on an unknown role, an empty or malformed value, or a route id (a route sets the base URL
- *  for the whole run, so it is chosen with --model; a per-role route is not supported). */
+/** The raw role values the user set, validated for shape. Throws on an unknown role, an empty or malformed value, or the fable alias. Whether a value is
+ *  a model the provider knows is roleValueError's job (it needs the provider: an opencode id such as openrouter/deepseek/... is valid there). */
 export function roleSettings(e: NodeJS.ProcessEnv = process.env): Partial<Record<Role, string>> {
   const out: Partial<Record<Role, string>> = {};
   const check = (role: string, v: string, from: string): void => {
     if (!(ROLES as readonly string[]).includes(role)) throw new Error(`unknown role '${role}' in ${from} (${ROLES.join("|")})`);
     if (!ROLE_VALUE.test(v)) throw new Error(`bad model '${v}' for role ${role} in ${from} (haiku|sonnet|opus|fable or a model id)`);
-    if (ROUTE_ID.test(v)) throw new Error(`role ${role}: '${v}' is a route; set a route for the whole run with --model, per-role routes are not supported`);
     if (/^fable$/i.test(v)) throw new Error(`role ${role}: fable is not available at the Claude API (a fable session pin runs opus); name opus or a model id`);
     out[role as Role] = v;
   };
@@ -220,6 +219,28 @@ export function roleSettings(e: NodeJS.ProcessEnv = process.env): Partial<Record
   }
   for (const r of ROLES) { const v = (e[`LOKI_ROLE_${r.toUpperCase()}`] ?? "").trim(); if (v) check(r, v, `LOKI_ROLE_${r.toUpperCase()}`); }
   return out;
+}
+/** The Claude model ids the catalog knows (providers/model_catalog.json claude.models[].id, the file resolveClaudeModel reads; LOKI_MODEL_CATALOG overrides). */
+export function catalogClaudeIds(): string[] {
+  try {
+    const path = process.env["LOKI_MODEL_CATALOG"] || resolve(REPO_ROOT, "providers/model_catalog.json");
+    const ms = JSON.parse(readFileSync(path, "utf8")).providers?.claude?.models;
+    return Array.isArray(ms) ? ms.map((m: { id?: unknown }) => m?.id).filter((x: unknown): x is string => typeof x === "string") : [];
+  } catch { return []; }
+}
+const editDistance = (a: string, b: string): number => { let prev = Array.from({ length: b.length + 1 }, (_, j) => j); for (let i = 1; i <= a.length; i++) { const cur = [i]; for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = cur; } return prev[b.length]!; };
+/** On a Claude run a role value must be haiku|sonnet|opus or a catalog id, so a typo (sonet, claude-sonet-5-5) or another vendor's id (gpt-5) is refused at
+ *  preflight with the accepted aliases and the nearest known id. On opencode the provider validates its own ids (the start line says so). Null when valid. */
+export function roleValueError(e: NodeJS.ProcessEnv = process.env, provider: string = providerOf(e)): string | null {
+  if (provider === "opencode") return null;
+  const ids = catalogClaudeIds(), known = new Set(["haiku", "sonnet", "opus", ...ids]);
+  for (const [role, v] of Object.entries(roleSettings(e))) {
+    if (known.has(v)) continue;
+    if (ROUTE_ID.test(v)) return `role ${role}: '${v}' is a route; set a route for the whole run with --model, per-role routes are not supported`;
+    const near = [...known].sort((a, b) => editDistance(v.toLowerCase(), a) - editDistance(v.toLowerCase(), b))[0];
+    return `role ${role}: unknown model '${v}' on the claude provider; use haiku, sonnet or opus, or a model id from the catalog${near ? ` (nearest: ${near})` : ""}`;
+  }
+  return null;
 }
 /** A role that the run's other settings would silently override is refused, so the user resolves the conflict (no setting ever does nothing):
  *  a Claude role under LOKI_MODEL_ROUTE (the route serves every call of the run), and a role above LOKI_MAX_TIER (haiku < sonnet < opus/fable; the
@@ -259,10 +280,10 @@ export function roleNamesModel(model: string, e: NodeJS.ProcessEnv = process.env
 /** The session role of an engine stage; a caller names the role itself where the stage is ambiguous (the conflict referee runs as "wall"). */
 export const stageRole = (stage: string): Role => (stage === "plan" ? "plan" : stage === "wall" || stage === "prove" ? "test" : stage === "intake" ? "helper" : "dev");
 /** The start line, only when a role is set (otherwise the header is byte-identical): "models: plan opus, dev haiku, ... (auto: Loki picks per call)". */
-export function roleStartLine(e: NodeJS.ProcessEnv = process.env): string {
+export function roleStartLine(e: NodeJS.ProcessEnv = process.env, provider: string = providerOf(e)): string {
   const s = safeSettings(e);
   if (!Object.keys(s).length) return "";
-  return `models: ${ROLES.map((r) => `${r} ${s[r] ? s[r] : r === "escalate" ? (s.dev ? "none" : "auto") : "auto"}`).join(", ")}`;
+  return `models: ${ROLES.map((r) => `${r} ${s[r] ? s[r] : r === "escalate" ? (s.dev ? "none" : "auto") : "auto"}`).join(", ")}${provider === "opencode" ? " (passed to opencode as given; opencode checks the ids)" : ""}`;
 }
 /** ROLE-MODELS receipt: the model each role really started, in this process, in call order (deduplicated). Read by the seal into models_by_role. */
 const roleUsed = new Map<Role, string[]>();

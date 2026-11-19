@@ -15,7 +15,7 @@ import type { ProviderName, SessionTier } from "../runner/types.ts";
 import { resolveRunProvider } from "../runner/state.ts";
 import { tokenFreeEnv, safeGitRun } from "../util/safe_git.ts";
 import { REPO_ROOT } from "../util/paths.ts";
-import { GENERIC_TIERS, ROLE_FLAG_ENV, roleConflictError, roleSettings, VALID_TIERS } from "../util/claude_model.ts";
+import { GENERIC_TIERS, ROLE_FLAG_ENV, roleConflictError, roleSettings, roleStartLine, roleValueError, VALID_TIERS } from "../util/claude_model.ts";
 import { applyCostProfile, COST_PROFILES, routerKeptNote } from "../util/cost_profile.ts";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 import { suggestWord } from "../cli/registry.ts";
@@ -336,7 +336,6 @@ export function parseStartArgs(
   const roleEnv: Record<string, string> = {};
   for (const [flag, key] of ROLE_FLAGS) { const v = argVal(args, flag); if (v !== undefined) roleEnv[key] = v; }
   try { roleSettings({ ...process.env, ...roleEnv }); } catch (e) { err(`start: ${(e as Error).message}\n`); return 2; }
-  { const ce = roleConflictError({ ...process.env, ...roleEnv }, providerRaw ?? process.env["LOKI_PROVIDER"] ?? "claude"); if (ce) { err(`start: ${ce}\n`); return 2; } }
   for (const [k, v] of Object.entries(roleEnv)) applyEnv(k, v);
 
   // TEN-COST-01: opt-in cost profile; fills only unset levers, records them, names them on one line.
@@ -663,6 +662,7 @@ export async function dryRunStart(o: ParsedStartOpts, repoDir: string, env: Node
     out("preflight: this folder is not a git repository; loki start would set one up if the folder is empty\n");
   }
   out(`dry-run: provider ${provider}, model ${o.sessionModel ?? "default tier routing"}, ${capNote(cap.usd, cap.source).replace("(--max-cost)", "(--budget-limit)")}, spec ${JSON.stringify(o.prdPath || o.specPath || "")}\n`);
+  { const ce = roleValueError(env as NodeJS.ProcessEnv, provider) ?? roleConflictError(env as NodeJS.ProcessEnv, provider); if (ce) { err(`start: ${ce}\n`); return 2; } const rl = roleStartLine(env as NodeJS.ProcessEnv, provider); if (rl) out(`${rl}\n`); } // ROLE-MODELS: refused as the real start refuses (the provider is resolved here, the saved choice included); the same per-role line // ROLE-MODELS: the same per-role line the real start prints
   out("dry-run: flags valid, preflight passed, nothing was run and no tokens were spent\n");
   return 0;
 }
