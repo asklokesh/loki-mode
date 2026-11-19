@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 
+## v11.161.0 (2026-11-19)
+
+### A JavaScript or TypeScript change runs only the tests whose imports point at it
+
+- A change to a JavaScript or TypeScript file no longer runs every test that imports some other module of the same name, nor any Python test that imports a module of that name. A test is matched through an import only when the import points at the changed file, or when Loki cannot tell where it points (a package, an alias from a nested tsconfig). On the hermes-agent tree, a change to apps/desktop/src/store/gateway.ts would have selected 772 tests (677 of them Python) and now selects 95. LOKI_E10_JS_IMPORT_RESOLVE=0 restores the old matching.
+
+Measured: tests/min scope-and-fix 904, stacks 92, decompose-and-intake 167, engine10-e2e-stub 262, run-safety 220, all 0 failed. Reach: no recorded run changes its selection (opencode issue 63960 four runs and merged PR 3 to 3; playwright 43017 and 43071 0 to 0); on the hermes-agent tree a change to apps/desktop/src/store/gateway.ts would select 95 tests instead of 772. This ships as a correctness fix, not a measured gain.
+Not measured: a real run on this build.
+
 ## v11.160.0 (2026-11-19)
 
 ### An Agent SDK run keeps the sign-in a user set in their own Claude settings
