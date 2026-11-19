@@ -208,6 +208,9 @@ export interface ReceiptCheck {
   result: "pass" | "fail" | "not_run";
   owner?: "harness"; // additive: a non-pass check the harness (not the code) owns
   duration_s: number; provenance?: import("../util/check_result.ts").CheckProvenance; n?: number; count?: string /* FC-FULL-SUITE-EXIT-CODED-SCRIPT */; pre_red?: true; repo_skipped?: true; /* FC-REPO-SKIPPED-TEST-DOWNGRADES: not_run, zero tests on base and head, file untouched; additive */ // FC-PR-BODY-PUBLIC-HYGIENE pre_red: a fail that also fails on base, additive; TEN-GATES-02 provenance, TEN-GATES-03-F1 n (executed test count): additive; absent on older receipts, which still verify byte-stable
+  /** SCAN-WHY: a failed security scan's secret hits ("<file>:<line>", never the matched text; [] when only a secure-scan HIGH finding failed it) and its reason. */
+  secret_matches?: string[];
+  reason?: string;
 }
 /** .loki/runs/<id>/receipt.json. receipt_sha256 = sha256 of canonical JSON without `verification`. */
 /** SECRET-PUSH: why the run's branch is not pushed: the check, where it matched ("<file>:<line>", never the matched text) and the command to push after review. */

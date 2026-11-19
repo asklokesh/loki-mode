@@ -1166,6 +1166,11 @@ verify_gate_nomock() {
 #   so a match is only counted if the matched LINE survives the placeholder /
 #   env-reference deny filter. That keeps obvious non-secrets (your-api-key-here,
 #   REDACTED, ${API_KEY}, process.env.X) clean.
+# The source-file filter of the tier-2 matcher (kept identical in autonomy/lib/secret-scan.sh and autonomy/verify.sh): drops a generic
+# match (one per line) whose value is an unquoted dotted chain of two or more identifiers, each at most 24 characters, with no digit
+# anywhere (record.finish.tokens, parsed.data.API_KEY): that is a member expression, not a literal. Every other value still counts.
+_secret_scan_drop_member_chain() { LC_ALL=C grep -Ev '(:=|[:=])[[:space:]]*[A-Za-z_]{1,24}([.][A-Za-z_]{1,24})+$' 2>/dev/null; }
+
 verify_secret_scan_file() {
     local file="$1"
 
@@ -1223,7 +1228,8 @@ verify_secret_scan_file() {
     # TIER 2: generic assignments. Grab matching lines, drop denied ones, count.
     # api_key / apikey / secret / token / password / passwd / access_key, an
     # assignment operator (= or :), then a quoted >=16-char high-entropy value.
-    local tier2='(api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret|auth)[A-Za-z0-9_]*[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9_/+.=-]{16,}'
+    # Go's short declaration (token := "<literal>") is an assignment too: `:=` is tried before a lone `:` or `=`.
+    local tier2='(api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret|auth)[A-Za-z0-9_]*[[:space:]]*(:=|[:=])[[:space:]]*["'"'"']?[A-Za-z0-9_/+.=-]{16,}'
     # Bearer tokens: "Bearer <>=20 high-entropy chars>".
     local bearer='[Bb]earer[[:space:]]+[A-Za-z0-9_.\-]{20,}'
     # URI-embedded credentials: scheme://user:password@host (DATABASE_URL=
@@ -1240,7 +1246,15 @@ verify_secret_scan_file() {
     # A parser's `const tokens = tokenizeSearchQuery(input);` failed a whole run as a "secret match" (FireLater#24, 2026-11-16).
     local kept
     kept="$(LC_ALL=C grep -EiI "$tier2|$bearer|$uricred" "$file" 2>/dev/null | LC_ALL=C grep -Eiv "$deny" 2>/dev/null)"
-    surviving="$(printf '%s\n' "$kept" | LC_ALL=C grep -Ei "$bearer|$uricred" 2>/dev/null)$(printf '%s\n' "$kept" | LC_ALL=C grep -Eio "$tier2"'\(?' 2>/dev/null | LC_ALL=C grep -v '($' 2>/dev/null)"
+    # In a source file whose language quotes its string literals, a generic match whose unquoted value is a member chain is code, not a literal:
+    # `tokens: record.finish.tokens,` (opencode packages/core/src/session/runner/step.ts) failed the security scan and refused the push on all
+    # 5 oc58562 seeds. Any other unquoted value (KEY=value inside a string, a comment, a docstring, a hex number) still counts, as do quoted
+    # values, tier 1, bearer and URI credentials, and config and env files (TOKEN=<value> in .env). Rule from Fable's cold review of F1.
+    local chain_filter=cat
+    case "$file" in
+        *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.py|*.go|*.rs|*.java|*.kt|*.rb|*.php|*.cs|*.swift) chain_filter=_secret_scan_drop_member_chain ;;
+    esac
+    surviving="$(printf '%s\n' "$kept" | LC_ALL=C grep -Ei "$bearer|$uricred" 2>/dev/null)$(printf '%s\n' "$kept" | LC_ALL=C grep -Eio "$tier2"'\(?' 2>/dev/null | LC_ALL=C grep -v '($' 2>/dev/null | "$chain_filter")"
     if [ -n "$surviving" ]; then
         return 0
     fi

@@ -10,6 +10,11 @@
 #
 # No emojis. No em dashes.
 
+# The source-file filter of the tier-2 matcher (kept identical in autonomy/lib/secret-scan.sh and autonomy/verify.sh): drops a generic
+# match (one per line) whose value is an unquoted dotted chain of two or more identifiers, each at most 24 characters, with no digit
+# anywhere (record.finish.tokens, parsed.data.API_KEY): that is a member expression, not a literal. Every other value still counts.
+_secret_scan_drop_member_chain() { LC_ALL=C grep -Ev '(:=|[:=])[[:space:]]*[A-Za-z_]{1,24}([.][A-Za-z_]{1,24})+$' 2>/dev/null; }
+
 _commit_scan_secret_file() {
     # Two-tier secret matcher. Returns 0 if a high-confidence secret is found in
     # the file, 1 otherwise. Patterns copied verbatim from the shipped scanner
@@ -73,7 +78,8 @@ _commit_scan_secret_file() {
     esac
 
     # TIER 2: generic assignments + bearer tokens + connection-string creds.
-    local tier2='(api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret|auth)[A-Za-z0-9_]*[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9_/+.=-]{16,}'
+    # Go's short declaration (token := "<literal>") is an assignment too: `:=` is tried before a lone `:` or `=`.
+    local tier2='(api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret|auth)[A-Za-z0-9_]*[[:space:]]*(:=|[:=])[[:space:]]*["'"'"']?[A-Za-z0-9_/+.=-]{16,}'
     local bearer='[Bb]earer[[:space:]]+[A-Za-z0-9_.\-]{20,}'
     # URI-embedded credentials: scheme://user:password@host. The #1 leak vector
     # in 12-factor apps (DATABASE_URL=postgres://u:pass@h, mongodb+srv://, redis://).
@@ -89,7 +95,15 @@ _commit_scan_secret_file() {
     # A parser's `const tokens = tokenizeSearchQuery(input);` failed a whole run as a "secret match" (FireLater#24, 2026-11-16).
     local kept
     kept="$(LC_ALL=C grep -EiI "$tier2|$bearer|$uricred" "$file" 2>/dev/null | LC_ALL=C grep -Eiv "$deny" 2>/dev/null)"
-    surviving="$(printf '%s\n' "$kept" | LC_ALL=C grep -Ei "$bearer|$uricred" 2>/dev/null)$(printf '%s\n' "$kept" | LC_ALL=C grep -Eio "$tier2"'\(?' 2>/dev/null | LC_ALL=C grep -v '($' 2>/dev/null)"
+    # In a source file whose language quotes its string literals, a generic match whose unquoted value is a member chain is code, not a literal:
+    # `tokens: record.finish.tokens,` (opencode packages/core/src/session/runner/step.ts) failed the security scan and refused the push on all
+    # 5 oc58562 seeds. Any other unquoted value (KEY=value inside a string, a comment, a docstring, a hex number) still counts, as do quoted
+    # values, tier 1, bearer and URI credentials, and config and env files (TOKEN=<value> in .env). Rule from Fable's cold review of F1.
+    local chain_filter=cat
+    case "$file" in
+        *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.py|*.go|*.rs|*.java|*.kt|*.rb|*.php|*.cs|*.swift) chain_filter=_secret_scan_drop_member_chain ;;
+    esac
+    surviving="$(printf '%s\n' "$kept" | LC_ALL=C grep -Ei "$bearer|$uricred" 2>/dev/null)$(printf '%s\n' "$kept" | LC_ALL=C grep -Eio "$tier2"'\(?' 2>/dev/null | LC_ALL=C grep -v '($' 2>/dev/null | "$chain_filter")"
     if [ -n "$surviving" ]; then
         return 0
     fi

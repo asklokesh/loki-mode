@@ -460,7 +460,7 @@ if [ "$stage" = "implement" ]; then
     if [ "${E2E_STUB_TYPE_ERROR:-}" = "1" ]; then printf '\nexport const typed: number = "not a number";\n' >> calc.ts; fi # LINT-OWN: a type error bun never checks (tsc does)
     if [ "${E2E_STUB_UNUSED_IMPORT:-}" = "1" ]; then python3 -I -c 's=open("calc.ts").read(); open("calc.ts","w").write("import fs from \"node:fs\";\n" + s)'; fi # LINT-OWN: an import the change never uses
     if [ "${E2E_STUB_LINTBAD:-}" = "1" ]; then printf '#!/usr/bin/env bash\nif true; then\n  echo BROKEN_A\n' > tool.sh; fi
-    if [ "${E2E_STUB_SECRET:-}" = "1" ] && ! grep -q searchConfig calc.ts; then printf '\nexport const searchConfig = { apiKey: globalThis.ELASTICSEARCH_API_KEY_VALUE };\n' >> calc.ts; fi # SECRET-PUSH: a config key the security scan's tier 2 matches (calc.ts line 5)
+    if [ "${E2E_STUB_SECRET:-}" = "1" ] && ! grep -q searchConfig calc.ts; then printf '\nexport const searchConfig = { apiKey: "%s" };\n' "q7Zp$(printf 'Lm4Rt8')Vw2Xy6Bn" >> calc.ts; fi # SECRET-PUSH: a config key the security scan's tier 2 matches (calc.ts line 5)
     if [ "${E2E_STUB_MODE:-}" = "attempts" ]; then # EXP-0010: the session in attempts/B<E2E_STUB_RIGHT> is right, every other one wrong
       n=0; case "$(pwd -P)" in */loki-attempts-*/B[0-9]*) n="$(pwd -P)"; n="${n##*/B}" ;; esac
       op='+'; [ "$n" = "${E2E_STUB_RIGHT:-none}" ] && op='*'

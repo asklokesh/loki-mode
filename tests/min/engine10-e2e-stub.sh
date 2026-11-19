@@ -72,6 +72,12 @@
 #   34. loki-ts/src/util/receipt_surface.ts proofCardOf: go green on verdict VERIFIED instead of mutation_outcome "yes" (the never-green and states proof card unit lines fail).
 #   35. loki-ts/src/e10ext/liveline.ts CandidateView: clear the pending flag on the first test.result instead of on verify's stage.completed (the diff-early, label-until-verify and stopped-verify unit lines fail).
 #   36. loki-ts/src/e10ext/liveline.ts CandidateView: clear the pending flag on a failed verify too (the stopped-verify unit line fails).
+#   66. secret-scan.sh and verify.sh tier2: `[:=]` in place of `(:=|[:=])`; the F1 Go short-declaration leg reads no/no.
+#   65. stages/seal.ts scanWhy: return {} (rebuild dist); the SCAN-WHY leg reads null None.
+#   61. autonomy/lib/secret-scan.sh: chain_filter stays `cat` for source files (drop the case); the F1 step.ts and auth.py legs read hit.
+#   62. _secret_scan_drop_member_chain in both files: drop every unquoted value (the 459fddf4b rule, `grep -E '[:=][[:space:]]*[\"'\'']'`); the F1 deploy.py, envstr.ts, tpl.js, doc.py and digit.ts legs read no.
+#   63. autonomy/verify.sh only: drop the source-file case (the lockstep break); the F1 step.ts and auth.py legs read no/hit.
+#   64. _secret_scan_drop_member_chain in both files: allow digits in a segment (`[A-Za-z0-9_]`); the F1 digit.ts leg reads no.
 #   37. loki-ts/src/engine10/supervisor.ts: drop failedPr from the push condition (rebuild dist); the FAILED-run legs read no PR, no pushed branch and no failing-checks body.
 #   38. loki-ts/src/engine10/supervisor.ts: drop !refusal from the push condition (rebuild dist); the secret-match legs read a PR and a pushed branch.
 #   39. loki-ts/src/engine10/stages/deep.ts runSecretScan: skip locate() (rebuild dist); every match reads "file name looks like a secret file", never calc.ts:5.
@@ -659,21 +665,25 @@ rd = sys.argv[1]
 ev = [json.loads(l) for l in open(os.path.join(rd, "events.jsonl")) if l.strip().startswith("{")]
 rec = json.load(open(os.path.join(rd, "receipt.json")))
 print(rec.get("verdict"), sum(e.get("type") == "pr.opened" for e in ev), json.dumps(rec.get("push_refused", {}).get("matches")), any(n.startswith("not pushed: the security scan matched a secret at calc.ts:5") for n in rec.get("not_proven", [])))
+sc = next((c for c in rec.get("checks", []) if c.get("name") == "security scan"), {})
+print("SCANWHY", json.dumps(sc.get("secret_matches")), sc.get("reason"))
 PY
 )"
+has "secret match: the receipt's failed security scan check records where it matched and why (SCAN-WHY)" "$f" 'SCANWHY ["calc.ts:5"] secret match: calc.ts:5'
+f="$(printf '%s\n' "$f" | head -1)"
 [ "$f" = 'FAILED 0 ["calc.ts:5"] True' ] && ok "secret match: no PR, the receipt names calc.ts:5 in push_refused and NOT PROVEN" || { bad "secret match facts: $f"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
 [ -z "$(git -C "$D/origin.git" rev-parse --verify -q "loki/$(basename "$RUNDIR")")" ] && ok "secret match: nothing was pushed" || bad "secret match: loki/<run> reached the origin"
 [ -n "$(git -C "$REPO" rev-parse --verify -q "loki/$(basename "$RUNDIR")")" ] && ok "secret match: the run branch is kept locally" || bad "secret match: the run branch is gone"
 has "secret match: one line names the file:line and the push command" "$OUT" "engine10: run $(basename "$RUNDIR"): not pushed: the security scan matched a secret at calc.ts:5; review it, then push by hand: git push -u origin loki/$(basename "$RUNDIR")"
 case "$OUT" in *"ended FAILED with no PR"*) bad "secret match: the no-PR line repeats the refusal" ;; *) ok "secret match: the refusal is not repeated by the no-PR line" ;; esac
-grep -q 'globalThis.ELASTICSEARCH' <<< "$OUT" && bad "secret match: the matched text was printed" || ok "secret match: the matched text is never printed"
+grep -q 'q7ZpLm4Rt8' <<< "$OUT" && bad "secret match: the matched text was printed" || ok "secret match: the matched text is never printed"
 
 # Unit: the scan's line location (git -U0 hunks to head lines, bisection over the matcher), the refusal's fail-safe rules, the FAILED title and body, the writeback text.
 U="$(cd "$ROOT/loki-ts" && T="$T" bun -e '
 const d = await import("./src/engine10/stages/deep.ts"), s = await import("./src/engine10/stages/seal.ts"), p = await import("./src/engine10/stages/pr.ts"), w = await import("./src/integrations/writeback.ts");
 const { mkdirSync, writeFileSync } = await import("node:fs"); const root = process.env.T + "/secline";
 mkdirSync(root + "/backend/src/config", { recursive: true });
-const cfg = ["import { z } from \"zod\";", "const schema = z.object({", "  ELASTICSEARCH_URL: z.string().optional(),", "  ELASTICSEARCH_API_KEY: z.string().optional(),", "});", "export const search = {", "  url: parsed.data.ELASTICSEARCH_URL,", "    apiKey: parsed.data.ELASTICSEARCH_API_KEY,", "};"];
+const cfg = ["import { z } from \"zod\";", "const schema = z.object({", "  ELASTICSEARCH_URL: z.string().optional(),", "  ELASTICSEARCH_API_KEY: z.string().optional(),", "});", "export const search = {", "  url: parsed.data.ELASTICSEARCH_URL,", "    apiKey: \"q7Zp" + "Lm4Rt8Vw2Xy6Bn\",", "};"]; // F1: a quoted literal (an unquoted parsed.data.X in a .ts file is an expression, never a match)
 writeFileSync(root + "/backend/src/config/index.ts", cfg.join("\n") + "\n");
 console.log("lines=" + JSON.stringify(await d.secretLines(d.DEFAULT_SECRET_SCAN_SH, root, "backend/src/config/index.ts")));
 console.log("hunks=" + JSON.stringify(d.addedLineNumbers("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -3,0 +4,2 @@\n+a\n+b\n@@ -10 +12 @@\n-old\n+new\n")));
@@ -683,7 +693,7 @@ console.log("title=" + p.prTitle("FAILED", root, "add search", ["security scan"]
 console.log("head=" + JSON.stringify(p.failedHead("FAILED", ["security scan"], ["one reviewer"]).split("\n").slice(0, 3)) + " other=" + JSON.stringify(p.failedHead("PARTIAL", ["x"], ["y"])));
 console.log("wb=" + JSON.stringify(w.commentText({ phase: "failed", verdict: "FAILED", prUrl: "https://github.com/o/r/pull/9", receiptSha256: null, task: "", reason: "failing: security scan" })));
 ' 2>&1)"
-has "unit: bisection finds the incident's flagged config line (apiKey, line 8 here), not the schema lines" "$U" "lines=[7]"
+has "unit: bisection finds the flagged config line (a quoted apiKey literal, line 8 here), not the schema lines" "$U" "lines=[7]"
 has "unit: -U0 hunks map added lines to head line numbers" "$U" "hunks=[4,5,12]"
 has "unit: a secret match refuses the push with the push command" "$U" 'refuse={"check":"security scan","matches":["a.ts:3"],"command":"git push -u origin loki/e10-x"}'
 has "unit: a scan failed only by a secure-scan HIGH finding does not refuse" "$U" "high_only=null"
@@ -692,6 +702,39 @@ has "unit: a passing scan never refuses" "$U" "pass=null"
 has "unit: the FAILED title names the failing check, then how many more" "$U" "title=[FAILED: security scan] add search | [FAILED: vitest:frontend/src/app/applications/... +2] add search | [FAILED] add search | [PARTIAL] add search"
 has "unit: the FAILED body leads with the failing checks; other verdicts get none" "$U" 'head=["## Failing checks","This run sealed FAILED: 1 blocking check still fails. Opened as a draft so the committed work is visible; it is not ready to merge until these pass.","- security scan"] other=""'
 has "unit: the failed writeback names the draft PR" "$U" 'wb="Loki run failed; its committed work is in draft PR https://github.com/o/r/pull/9.\nReason: failing: security scan"'
+# F1 (oc58562, 5 of 5 seeds refused their push): in a source file whose language quotes its string literals, an unquoted tier-2 value that is a dotted
+# chain of identifiers with no digit (record.finish.tokens) is a member expression, not a literal; every other unquoted value still counts (Fable's review). Both scanners (autonomy/lib/secret-scan.sh and autonomy/verify.sh, kept in lockstep) read every case; the values are assembled here.
+F1D="$T/f1scan"; mkdir -p "$F1D/packages/core/src" "$F1D/svc" "$F1D/conf"; F1V="abcdefghijklmnop$(printf '1234')"; F1H="Q7zp$(printf 'Lm4Rt8')Vw2Xy6Bn"
+printf '          const usage = { tokens: record.finish.tokens,\n' > "$F1D/packages/core/src/step.ts"
+printf 'export const cfg = { token: "%s" };\n' "$F1V" > "$F1D/packages/core/src/quoted.ts"
+printf 'TOKEN=%s\n' "$F1V" > "$F1D/.env"
+printf "const apiKey = 'sk-%s';\n" "$(printf 'A1b2C3d4')E5f6G7h8I9j0K1l2" > "$F1D/packages/core/src/sk.ts"
+printf 'password = "%s"\n' "$F1H" > "$F1D/svc/db.py"
+printf 'token = session.access_token_value\n' > "$F1D/svc/auth.py"
+printf 'token: %s\n' "$F1V" > "$F1D/conf/app.yaml"
+printf 'package cfg\n\nfunc Load() {\n\ttoken := "%s"\n\t_ = token\n}\n' "$F1H" > "$F1D/svc/cfg.go"
+printf 'cmd = "export SECRET_KEY=%s && deploy"\n' "$F1V" > "$F1D/svc/deploy.py"
+printf 'const s = "TOKEN=%s";\n' "$F1V" > "$F1D/packages/core/src/envstr.ts"
+printf 'const env = `\nAPI_KEY=%s\n`;\n' "$F1V" > "$F1D/packages/core/src/tpl.js"
+printf 'def run():\n    """set auth_token=%s"""\n' "$F1V" > "$F1D/svc/doc.py"
+printf 'const token = abcdefgh.ijklmnop%s;\n' "$(printf 1)" > "$F1D/packages/core/src/digit.ts"
+F1="$(for f in packages/core/src/step.ts packages/core/src/quoted.ts .env packages/core/src/sk.ts svc/db.py svc/auth.py conf/app.yaml svc/cfg.go svc/deploy.py packages/core/src/envstr.ts packages/core/src/tpl.js svc/doc.py packages/core/src/digit.ts; do
+  a=no; b=no; bash -c '. "$1"; _commit_scan_secret_file "$2"' _ "$ROOT/autonomy/lib/secret-scan.sh" "$F1D/$f" && a=hit
+  bash -c '. "$1" >/dev/null 2>&1; verify_secret_scan_file "$2"' _ "$ROOT/autonomy/verify.sh" "$F1D/$f" && b=hit
+  printf '%s=%s/%s ' "$f" "$a" "$b"; done)"
+has "F1: the oc58562 line (tokens: record.finish.tokens, unquoted in a .ts file) is not a secret, in both scanners" "$F1" "packages/core/src/step.ts=no/no "
+has "F1: an unquoted member chain in a .py file (session.access_token_value) is not a secret, in both scanners" "$F1" "svc/auth.py=no/no "
+has "F1: a quoted token literal in a .ts file is still a secret, in both scanners" "$F1" "packages/core/src/quoted.ts=hit/hit "
+has "F1: a high-entropy quoted password in a .py file is still a secret, in both scanners" "$F1" "svc/db.py=hit/hit "
+has "F1: a .env KEY=value is still a secret, in both scanners" "$F1" ".env=hit/hit "
+has "F1: an unquoted value in a config file is still a secret, in both scanners" "$F1" "conf/app.yaml=hit/hit "
+has "F1: an sk- key in single quotes is still a secret, in both scanners" "$F1" "packages/core/src/sk.ts=hit/hit "
+has "F1: a Go short declaration of a quoted literal (token := \"...\") is a secret, in both scanners (missed before F1)" "$F1" "svc/cfg.go=hit/hit "
+has "F1: KEY=value inside a quoted shell command in a .py file is still a secret, in both scanners" "$F1" "svc/deploy.py=hit/hit "
+has "F1: TOKEN=value inside a quoted string in a .ts file is still a secret, in both scanners" "$F1" "packages/core/src/envstr.ts=hit/hit "
+has "F1: API_KEY=value on a template literal line in a .js file is still a secret, in both scanners" "$F1" "packages/core/src/tpl.js=hit/hit "
+has "F1: auth_token=value in a .py docstring is still a secret, in both scanners" "$F1" "svc/doc.py=hit/hit "
+has "F1: an unquoted dotted value with a digit is still a secret, in both scanners" "$F1" "packages/core/src/digit.ts=hit/hit "
 
 # ---- DELIVER-WHAT-EXISTS begin (2026-11-17): a run that produced a change never ends with "PR: none" -------------------------------------------
 # Every way a run ends other than the user cancelling it, a usage-limit pause (resumable by design) and a security-scan secret match (the one

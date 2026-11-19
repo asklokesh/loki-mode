@@ -313,13 +313,19 @@ export function targetProofOf(v: Obj | undefined): boolean {
   return raw.some((c) => names.has(String(c.name)) && hasExecutedProof([c]));
 }
 
+/** SCAN-WHY: a failed security scan keeps where it matched and why on the receipt (the F0 oc58562 replays read "security scan: fail" with nothing else; the
+ *  locations were only in events.jsonl and push_refused). File:line and rule names only, never the matched text, as deep.ts records them. */
+export const scanWhy = (c: Obj): { secret_matches?: string[]; reason?: string } => c.name !== "security scan" || c.result !== "fail" ? {} : {
+  ...(Array.isArray(c.secret_matches) ? { secret_matches: (c.secret_matches as unknown[]).filter((x): x is string => typeof x === "string") } : {}),
+  ...(typeof c.reason === "string" && c.reason ? { reason: c.reason } : {}),
+};
 function checksOf(v: unknown, pc: ProvenanceCtx, preRed: readonly string[] = [], repoSkipped: readonly string[] = []): ReceiptCheck[] { // TEN-GATES-02: each check carries who authored its evidence (additive key)
   if (!Array.isArray(v)) return [];
   return v.filter((c): c is Obj => !!c && typeof c === "object").map((c) => ({
     name: String(c.name ?? ""),
     cmd: String(c.cmd ?? ""),
     result: c.result === "pass" || (c.result === "fail" && c.owner !== "harness") ? c.result : "not_run", // never-worse-than-raw floor: a gate that failed for a harness reason is not a code failure; it seals not_run (PARTIAL), never FAILED
-    duration_s: typeof c.duration_s === "number" ? c.duration_s : 0, ...(c.owner === "harness" && c.result !== "pass" ? { owner: "harness" as const } : {}), provenance: checkProvenance(String(c.name ?? ""), pc), ...(typeof c.n === "number" ? { n: c.n } : {}), ...(typeof c.count === "string" ? { count: c.count } : {}), ...(c.result === "fail" && preRed.includes(String(c.name ?? "")) ? { pre_red: true as const } : {}), ...(c.result !== "pass" && c.result !== "fail" && repoSkipped.includes(String(c.name ?? "")) ? { repo_skipped: true as const } : {}), // pre_red (FC-PR-BODY-PUBLIC-HYGIENE); n: TEN-GATES-03-F1 verify --require-exogenous counts only executed proof (n > 0); additive like provenance
+    duration_s: typeof c.duration_s === "number" ? c.duration_s : 0, ...(c.owner === "harness" && c.result !== "pass" ? { owner: "harness" as const } : {}), provenance: checkProvenance(String(c.name ?? ""), pc), ...(typeof c.n === "number" ? { n: c.n } : {}), ...(typeof c.count === "string" ? { count: c.count } : {}), ...(c.result === "fail" && preRed.includes(String(c.name ?? "")) ? { pre_red: true as const } : {}), ...(c.result !== "pass" && c.result !== "fail" && repoSkipped.includes(String(c.name ?? "")) ? { repo_skipped: true as const } : {}), ...scanWhy(c), // pre_red (FC-PR-BODY-PUBLIC-HYGIENE); n: TEN-GATES-03-F1 verify --require-exogenous counts only executed proof (n > 0); additive like provenance
   }));
 }
 
