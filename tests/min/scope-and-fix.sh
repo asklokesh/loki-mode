@@ -288,6 +288,12 @@
 # 250. attempts.ts attemptModel: always entry 1 (the cascade leg runs the extra attempt on Haiku).
 # 251. testmap.ts buildTestMap: stop passing `marks` to scopeRunnersByPackage (the multi-module go map leg reads no tests).
 # 283. implement.ts: `verifiedFinishOn() && false` in the SR block (rebuild dist): the VF cut-context and revert legs read a -rv resume and no finish.
+# 306. testmap.ts impactedRefs: viaJs always true (the JS-RESOLVE relative, alias and Python legs read mapped).
+# 307. testmap.ts impactedRefs: drop the `r.open` keep (the JS-RESOLVE package leg reads dropped).
+# 308. testmap.ts buildTestMap: jsCfg = null (no alias resolution; the JS-RESOLVE alias-to-another-module leg reads mapped).
+# 309. testmap.ts impactedRefs: drop the coveredStem keep in viaJs (the JS-RESOLVE name-floor leg reads dropped).
+# 310. testmap.ts impactedRefs: drop the JS-only check in viaJs (the JS-RESOLVE Python leg reads tests/test_gateway.py mapped).
+# 311. testmap.ts jsImportResolveOn: always true (the JS-RESOLVE =0 leg fails).
 # 252. check_result.ts jsAssertionFailure: drop JS_MISSING_API (the assert-js unit's missing-function case reads true).
 # 253. check_result.ts spawnFailedTool: drop the 6-line bound (the spawn-not-run leg's long ENOENT output reads missing).
 # 254. testmap.ts buildTestMap: ignore pyCfg (the pytest-fallback leg's conftest.py case reads unittest).
@@ -4329,5 +4335,43 @@ grep -q '^EXIT 0$' <<< "$out" || bad "rw01 unit script crashed or exited non-zer
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
+
+# JS-RESOLVE: a changed JS/TS file matched every test importing any other ".../<name>" module (the Python form cost hermes-agent issue 155462 its verify). A changed
+# JS/TS file keeps a test matched through an import only when the import resolves to that file, or when it resolves to nothing in the repo (kept, unknown).
+cat > "$T/jsres.ts" <<'TS'
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+const root = process.argv[2]!, T = process.argv[3]!;
+const tm = await import(root + "/loki-ts/src/engine10/testmap.ts");
+const res = (n: string, okk: boolean) => console.log((okk ? "OK " : "NO ") + n);
+const r = mkdtempSync(join(T, "jsres-")), put = (f: string, t: string) => { mkdirSync(dirname(join(r, f)), { recursive: true }); writeFileSync(join(r, f), t); };
+put("package.json", "{\"devDependencies\":{\"vitest\":\"2.0.0\"}}\n"); put("tsconfig.json", "{ \"compilerOptions\": { \"baseUrl\": \".\", \"paths\": { \"@app/*\": [\"src/*\"] } } }\n"); put("pytest.ini", "[pytest]\n");
+put("src/store/gateway.ts", "export const a = 1;\n"); put("src/api/gateway.ts", "export const x = 1;\n"); put("src/store/index.ts", "export const s = 1;\n"); put("gateway/__init__.py", "");
+const t = (spec: string, n: string) => `import { ${n} } from '${spec}';\nimport { test } from 'vitest';\ntest('t', () => {});\n`;
+put("src/api/client.test.ts", t("./gateway", "x")); put("src/store/store.test.ts", t("./gateway", "a")); put("src/views/view.test.ts", t("@app/store/gateway", "a"));
+put("src/views/other.test.ts", t("@app/api/gateway", "x")); put("src/views/esm.test.ts", t("../store/gateway.js", "a")); put("src/views/pkg.test.ts", t("some-pkg/gateway", "g"));
+put("src/views/idx.test.ts", t("../store", "s")); put("web/other/gateway.test.ts", "import { test } from 'vitest';\ntest('name only', () => {});\n");
+put("tests/test_client.py", "from gateway import run\n\ndef test_c():\n    pass\n"); put("tests/test_gateway.py", "def test_name():\n    pass\n");
+for (const a of [["init", "-q"], ["add", "-A"]]) Bun.spawnSync(["git", "-C", r, ...a]);
+const sel = (f: string) => tm.impactedRefs(tm.buildTestMap(r), [f]).map((x: { path: string }) => x.path), on = sel("src/store/gateway.ts"), has = (p: string) => on.includes(p);
+res("JS-RESOLVE a relative import of another gateway module is not mapped to src/store/gateway.ts", !has("src/api/client.test.ts"));
+res("JS-RESOLVE a tsconfig paths alias to another gateway module is not mapped", !has("src/views/other.test.ts"));
+res("JS-RESOLVE a Python test is never mapped to a TypeScript file, by import or by name", !has("tests/test_client.py") && !has("tests/test_gateway.py"));
+res("JS-RESOLVE a relative import of the file is mapped", has("src/store/store.test.ts"));
+res("JS-RESOLVE a tsconfig paths alias to the file is mapped", has("src/views/view.test.ts"));
+res("JS-RESOLVE a .js spec for the .ts file is mapped", has("src/views/esm.test.ts"));
+res("JS-RESOLVE an import that resolves to no repo file (a package) is kept", has("src/views/pkg.test.ts"));
+res("JS-RESOLVE a directory import maps the index file", sel("src/store/index.ts").includes("src/views/idx.test.ts"));
+res("JS-RESOLVE the <stem>.test.ts name floor is kept", has("web/other/gateway.test.ts"));
+process.env.LOKI_E10_JS_IMPORT_RESOLVE = "0"; const off = sel("src/store/gateway.ts"); delete process.env.LOKI_E10_JS_IMPORT_RESOLVE;
+res("JS-RESOLVE =0 maps by basename as before (the other gateway modules and the Python tests come back)", ["src/api/client.test.ts", "src/views/other.test.ts", "tests/test_client.py"].every((p) => off.includes(p)) && !tm.jsImportResolveOn({ LOKI_E10_JS_IMPORT_RESOLVE: "0" }) && tm.jsImportResolveOn({}));
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/jsres.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
+grep -q '^EXIT 0$' <<< "$out" || bad "js-resolve unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 10 ] || bad "js-resolve unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 10"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+grep -q '^NO ' <<< "$out" && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
 
 finish
