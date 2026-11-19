@@ -4,10 +4,11 @@ import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { listProjectFiles } from "../util/safe_git.ts";
 import { loadProjectApi } from "../project_model/resolve.ts"; import { languageBytes } from "../project_model/linguist.ts"; 
 import { attachScope, scopeRefs } from "../project_model/scope.ts";
+import { importTargets } from "../features/dependents.ts";
 import { CS_TEST_RE, DOTNET_MANIFEST_RE, JAVA_TEST_RE, missingStackTool, pascalWords, repoTestCommand, toolOk } from "../util/stack_tools.ts"; export { missingStackTool };
 import { projectInterpreter, pytestPython } from "../util/python.ts"; export { projectInterpreter };
 import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
-import { FOREIGN_SOURCE_RE, GO_TEST_RE, JS_SPEC_RE, JS_TEST_RE, PY_TEST_RE, STDLIB_RUNNERS, coveredStem, detectFromPackageJson, importedRunners, isTestFile, PYTEST_IMPORT_RE, referencedBasenames, scopeRunnersByPackage, COMMANDS, RUNNER_ORDER, guessRunner, type CommandSpec } from "../util/test_file_text.ts";
+import { FOREIGN_SOURCE_RE, GO_TEST_RE, JS_SPEC_RE, JS_TEST_RE, PY_TEST_RE, PY_FROM_RE, PY_IMPORT_RE, pySpecToBasename, STDLIB_RUNNERS, coveredStem, detectFromPackageJson, importedRunners, isTestFile, PYTEST_IMPORT_RE, referencedBasenames, scopeRunnersByPackage, COMMANDS, RUNNER_ORDER, guessRunner, type CommandSpec } from "../util/test_file_text.ts";
 export { isTestFile, COMMANDS, REPORT_RUNNERS, CARGO_TEST_FILE_RE, guessRunner, type CommandSpec } from "../util/test_file_text.ts"; // tables and guessRunner live in util/test_file_text.ts (core line budget)
 /** Extra fields beyond E-01's TestMap. `sourceRefs` is read back by `impacted()` and is not meant for callers outside this file. */
 export interface EngineTestMap extends TestMap {
@@ -16,6 +17,8 @@ export interface EngineTestMap extends TestMap {
   commands: Partial<Record<RunnerName, CommandSpec>>;
   /** source basename -> repo-relative test paths that import/reference it. */
   readonly sourceRefs: Record<string, string[]>;
+  /** PY-RESOLVE: per Python test, the repo files its imports resolve to (`files`) and the stems of the imports that resolve to no repo file or are relative (`open`). */
+  readonly pyImports?: Record<string, { files: string[]; open: string[] }>;
   /** Package ownership and locally declared runners for each discovered test package. */
   readonly testPackages: Record<string, string>;
   readonly packageRunners: Record<string, RunnerName[]>;
@@ -36,9 +39,36 @@ const pickHarnessRunners = (runners: RunnerName[], files: readonly string[], env
 /** RX-1: manifest -> the runner its own language toolchain ships (COMMANDS holds the command), plus that language's source extension. A manifest only makes a toolchain eligible; in a polyglot repo the focus files (changed or sealed) choose among the eligible ones by language, else the first eligible wins. */
 const TOOLCHAINS: readonly (readonly [RegExp, RunnerName, RegExp])[] = [[/(?:^|\/)package\.json$/, "node", /\.[cm]?[jt]sx?$/], [/(?:^|\/)go\.mod$/, "go", /\.go$/], [/(?:^|\/)Cargo\.toml$/, "cargo", /\.rs$/], [/(?:^|\/)pom\.xml$/, "maven", /\.java$/], [DOTNET_MANIFEST_RE, "dotnet", /\.cs$/], [/(?:^|\/)(?:build|settings)\.gradle(?:\.kts)?$|(?:^|\/)gradlew$/, "gradle", /\.java$/], [/(?:^|\/)(?:pyproject\.toml|setup\.py|setup\.cfg|requirements(?:[-_.][\w.-]+)?\.txt|tox\.ini|pytest\.ini)$/, "pytest", /\.py$/]];
 const toolchainRunner = (files: readonly string[], focus: readonly string[] = []): RunnerName[] => { const el = TOOLCHAINS.filter(([m]) => files.some((f) => m.test(f))), votes = (t: (typeof TOOLCHAINS)[number]): number => focus.filter((f) => t[2].test(f)).length; return el.length ? [el.reduce((b, t) => (votes(t) > votes(b) ? t : b))[1]] : []; };
+/** "a/b/c.py" -> ["a/", "a/b/"]: the package directories above a file (PY-RESOLVE namespace packages). */
+const ancestors = (f: string): string[] => { const parts = f.split("/").slice(0, -1); return parts.map((_, k) => `${parts.slice(0, k + 1).join("/")}/`); };
 const readText = (p: string): string => { try { return readFileSync(p, "utf8"); } catch { return ""; } };
 const normalizeRel = (raw: string): string => raw.split(sep).join("/").replace(/^\.\//, "");
 /** EVIDENCE-PER-PACKAGE (LOKI_E10_EVIDENCE_PER_PACKAGE, default on, =0 opts out): package scoping reads every file that proves a runner, not only the first one listed. */
+/** PY-RESOLVE (LOKI_E10_PY_IMPORT_RESOLVE, default on, =0 opts out; hermes-agent issue 155462, 11.158.0): a test is mapped to a changed Python source by its
+ *  basename alone, so hermes_cli/gateway.py matched 772 tests (590 import the top-level `gateway` package, 94 TypeScript tests import '@/store/gateway', 57 import
+ *  hermes_cli.gateway) and verify ran out of time on file 253. With it on, a changed .py file keeps a test matched through an import only when that test's imports
+ *  resolve to the file itself (dotted modules from the repo root or the test's directory, `from pkg import mod`, the same resolver as RX-3 dependents, or a dotted
+ *  string such as monkeypatch.setattr("hermes_cli.gateway.find_gateway_pids", ...)), or when the
+ *  import that named the stem resolves to no repo file or is relative (unknown, kept as before). A JavaScript or TypeScript test never maps to a .py file, by
+ *  import or by name (apps/desktop/src/store/gateway.test.ts). The test_<stem>.py name floor is unchanged. */
+export const pyImportResolveOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PY_IMPORT_RESOLVE"] ?? "").trim());
+/** PY-RESOLVE: module files a dotted string names, as in monkeypatch.setattr("pkg.mod.attr", ...) or mock.patch("pkg.mod.attr"): each prefix of two or more parts. */
+function dottedTargets(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/["']([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)["']/g)) { const parts = m[1]!.split("."); for (let k = 2; k <= parts.length; k++) { const b = parts.slice(0, k).join("/"); out.push(`${b}.py`, `${b}/__init__.py`); } }
+  return out;
+}
+/** PY-RESOLVE: the stems of a Python file's imports that resolve to no repo module (a src layout, an installed package) or are relative. */
+function openPyStems(rel: string, text: string, has: (p: string) => boolean): string[] {
+  const out = new Set<string>(), dir = dirname(rel), mod = (b: string): boolean => has(`${b}.py`) || has(`${b}/__init__.py`) || has(`${b}/`); // a package directory with no __init__.py (namespace package) resolves too
+  for (const m of [...text.matchAll(PY_FROM_RE), ...text.matchAll(PY_IMPORT_RE)]) {
+    const spec = m[1] ?? "", stem = pySpecToBasename(spec);
+    if (spec.startsWith(".")) { out.add(stem); continue; }
+    const path = spec.split(".").filter(Boolean).join("/");
+    if (path && ![".", dir].some((r) => mod(r === "." ? path : `${r}/${path}`))) out.add(stem);
+  }
+  return [...out];
+}
 export const evidencePerPackageOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_EVIDENCE_PER_PACKAGE"] ?? "").trim());
 /** PYTEST-FALLBACK (LOKI_E10_PYTEST_FALLBACK, default on, =0 opts out): Python tests that only test_*.py file names marked as pytest (no pytest config, no test
  *  file importing pytest) run under the stdlib unittest when the repo's own virtualenv cannot import pytest. A system interpreter is never probed (that case keeps pytest). */
@@ -97,8 +127,11 @@ export function buildTestMap(root: string): EngineTestMap {
   const goMods = files.filter((f) => basename(f) === "go.mod").map((f) => ({ dir: dirname(f), path: /^module\s+(\S+)/m.exec(readText(join(root, f)))?.[1] })).filter((m): m is { dir: string; path: string } => !!m.path).sort((a, b) => b.path.length - a.path.length);
   const goImportDir = (imp: string): string | null => { const m = goMods.find((x) => imp === x.path || imp.startsWith(`${x.path}/`)); if (!m) return null; const rel = join(m.dir, imp.slice(m.path.length + 1)); return rel === "" ? "." : rel; };
   const specs: Record<string, string[]> = Object.create(null);
+  const pyOn = pyImportResolveOn(), pyImports: Record<string, { files: string[]; open: string[] }> = Object.create(null);
+  const known = pyOn ? new Set(files.flatMap((f) => (f.endsWith(".py") ? [f, ...ancestors(f)] : []))) : new Set<string>(), has = (p: string): boolean => known.has(p);
   for (const t of tests) {
     const text = jsText.get(t.path) ?? readText(join(root, t.path));
+    if (pyOn && t.path.endsWith(".py")) pyImports[t.path] = { files: [...new Set([...importTargets(t.path, text), ...dottedTargets(text)].filter(has))], open: openPyStems(t.path, text, has) };
     specs[t.path] = [...text.matchAll(JS_SPEC_RE)].map((m) => m[1] ?? "");
     const names = referencedBasenames(text);
     names.add(coveredStem(t.path));
@@ -109,7 +142,7 @@ export function buildTestMap(root: string): EngineTestMap {
   const runners: RunnerName[] = [...RUNNER_ORDER.filter((r) => r in evidence), ...(pyUnittest ? ["unittest" as const] : [])];
   const commands: Partial<Record<RunnerName, CommandSpec>> = {};
   for (const r of runners) commands[r] = r === "pytest" ? { ...COMMANDS.pytest, cmd: `${pytestPython(root)} -m pytest -q <files>` } : COMMANDS[r];
-  const map: EngineTestMap = { runners, tests, evidence, commands, sourceRefs, testPackages, packageRunners: Object.fromEntries(packageRunners) };
+  const map: EngineTestMap = { runners, tests, evidence, commands, sourceRefs, testPackages, packageRunners: Object.fromEntries(packageRunners), ...(pyOn ? { pyImports } : {}) };
   attachScope(map, api, specs);
   return map;
 }
@@ -137,7 +170,9 @@ export function impactedRefs(map: TestMap, changedFiles: readonly string[]): Tes
     const stems = [stem];
     const entry = stem === "index" || stem === "__init__" || (stem === "mod" && extname(rel) === ".rs");
     if (entry && dirname(rel) !== ".") stems.push(basename(dirname(rel)));
-    for (const s of stems) for (const p of sourceRefs[s] ?? []) add(map.tests.find((t) => t.path === p));
+    const py = rel.endsWith(".py") ? (map as EngineTestMap).pyImports : undefined; // PY-RESOLVE: present only when buildTestMap ran with it on
+    const viaImport = (p: string, s: string): boolean => { if (!py) return true; if (!p.endsWith(".py")) return false; if (coveredStem(p) === s) return true; const r = py[p]; return !!r && (r.files.includes(rel) || r.open.includes(s)); };
+    for (const s of stems) for (const p of sourceRefs[s] ?? []) if (viaImport(p, s)) add(map.tests.find((t) => t.path === p));
     if (extname(rel) === ".go") { // Go is package-scoped: the package's own tests (same directory) and every test importing its directory
       for (const t of map.tests) if (t.runner === "go" && dirname(t.path) === dirname(rel)) add(t);
       for (const p of sourceRefs[`godir:${dirname(rel)}`] ?? []) add(map.tests.find((t) => t.path === p));

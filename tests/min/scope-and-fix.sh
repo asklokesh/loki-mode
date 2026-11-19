@@ -327,6 +327,14 @@
 # 291. check_result.ts ran: drop `(?:=+ )?` from the pytest trailer rule (the PYTEST -rA/xdist and deselect-all legs read unmeasured).
 # 292. check_result.ts classifyCheck: a non-zero exit reads not_run unmeasured in place of fail (the PYTEST collection-error and pytest-timeout leg).
 # 293. check_result.ts classifyCheck: drop the `i.cut` line (the PYTEST Loki-timeout leg reads fail).
+# 294. testmap.ts impactedRefs: viaImport always true (the PY-RESOLVE collision, tests.gateway/namespace and TypeScript legs read mapped).
+# 295. testmap.ts impactedRefs: drop the `r.open` keep (exact resolution only; the relative and src-layout legs read dropped).
+# 296. testmap.ts buildTestMap: drop dottedTargets from pyImports (the monkeypatch-string leg reads dropped).
+# 297. testmap.ts buildTestMap: drop importTargets from pyImports (the direct-import and `from hermes_cli import gateway` legs read dropped).
+# 298. testmap.ts openPyStems: drop the `${b}/` package-directory check (the namespace-directory leg reads mapped).
+# 299. testmap.ts impactedRefs: drop the coveredStem keep (the name-floor leg reads dropped).
+# 300. testmap.ts impactedRefs: drop the `.py`-only check (the TypeScript leg reads mapped by its name).
+# 301. testmap.ts pyImportResolveOn: always true (the =0 leg fails).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1601,6 +1609,50 @@ for (const a of [["init", "-q"], ["add", "-A", "--", ".", ":!.loki"]]) Bun.spawn
 const m = await tm.buildTestMap(r); process.env.LOKI_E10_EVIDENCE_PER_PACKAGE = "0"; const off = tm.buildTestMap(r).tests.length;
 console.log(m.tests.map((t) => t.runner + ":" + t.path).join(",") + " | " + tm.impactedRefs(m, ["middleware/charset.go"]).map((t) => t.path).join(",") + " | off=" + off);' "$T" 2>&1)"
 [ "$GE" = "go:middleware/charset_test.go | middleware/charset_test.go | off=0" ] && ok "go map: in a multi-module repo every module that holds Go evidence keeps the go runner (a nested go.mod listed first does not empty the root's tests)" || bad "go map (multi-module) gave: $GE"
+# PY-RESOLVE (hermes-agent issue 155462, 11.158.0): a change to hermes_cli/gateway.py matched every test whose import's last part is "gateway" (590 import the
+# top-level gateway package, 94 TypeScript tests import '@/store/gateway'), so verify selected 793 files and ran out of time on file 253. A changed .py file keeps a
+# test matched through an import only when its imports resolve to that file, or when the import resolves to nothing in the repo (kept, unknown).
+cat > "$T/pyres.ts" <<'TS'
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+const root = process.argv[2]!, T = process.argv[3]!;
+const tm = await import(root + "/loki-ts/src/engine10/testmap.ts");
+const res = (n: string, okk: boolean) => console.log((okk ? "OK " : "NO ") + n);
+const r = mkdtempSync(join(T, "pyres-")), put = (f: string, t: string) => { mkdirSync(dirname(join(r, f)), { recursive: true }); writeFileSync(join(r, f), t); };
+put("pytest.ini", "[pytest]\n"); put("gateway/__init__.py", ""); put("gateway/run.py", "X = 1\n"); put("hermes_cli/__init__.py", ""); put("hermes_cli/gateway.py", "def f():\n    return 1\n");
+put("tests/gateway/__init__.py", ""); put("tests/gateway/helpers.py", "H = 1\n"); put("tools/connectors/gateway/x.py", "Y = 1\n"); put("src/pkgsrc/mod.py", "def g():\n    return 2\n");
+put("tests/test_a_collision.py", "from gateway import run\n\ndef test_a():\n    assert run.X\n");
+put("tests/test_b_direct.py", "from hermes_cli.gateway import f\n\ndef test_b():\n    assert f()\n");
+put("tests/test_c_from_pkg.py", "from gateway import run\nfrom hermes_cli import gateway as gw\n\ndef test_c():\n    assert gw.f()\n");
+put("tests/test_d_patch.py", "from gateway import run\n\ndef test_d(monkeypatch):\n    monkeypatch.setattr(\"hermes_cli.gateway.f\", lambda: 2)\n");
+put("tests/test_e_tests_pkg.py", "from tests.gateway import helpers\n\ndef test_e():\n    assert helpers.H\n");
+put("tests/test_f_ns.py", "from tools.connectors.gateway import x\n\ndef test_f():\n    assert x.Y\n");
+put("tests/test_gateway.py", "def test_name_only():\n    assert True\n");
+put("tests/sub/test_g_relative.py", "from .gateway import thing\n\ndef test_g():\n    assert thing\n");
+put("tests/test_h_src.py", "from pkgsrc.mod import g\n\ndef test_h():\n    assert g()\n");
+put("web/package.json", "{\"devDependencies\":{\"vitest\":\"2.0.0\"}}\n"); put("web/store/gateway.ts", "export const a = 1;\n"); put("web/store/gateway.test.ts", "import { a } from '@/store/gateway';\nimport { test } from 'vitest';\ntest('a', () => {});\n");
+for (const a of [["init", "-q"], ["add", "-A"]]) Bun.spawnSync(["git", "-C", r, ...a]);
+const sel = (f: string) => tm.impactedRefs(tm.buildTestMap(r), [f]).map((t: { path: string }) => t.path), on = sel("hermes_cli/gateway.py"), has = (p: string) => on.includes(p);
+res("PY-RESOLVE a test whose `from gateway import` names the top-level gateway package is not mapped to hermes_cli/gateway.py", !has("tests/test_a_collision.py"));
+res("PY-RESOLVE tests.gateway (a package) and tools.connectors.gateway (a namespace directory) are other modules, not mapped", !has("tests/test_e_tests_pkg.py") && !has("tests/test_f_ns.py"));
+res("PY-RESOLVE a TypeScript test is never mapped to a .py file, by import or by name", !has("web/store/gateway.test.ts"));
+res("PY-RESOLVE a test importing hermes_cli.gateway is mapped", has("tests/test_b_direct.py"));
+res("PY-RESOLVE `from hermes_cli import gateway` beside a colliding import is mapped", has("tests/test_c_from_pkg.py"));
+res("PY-RESOLVE a monkeypatch string naming hermes_cli.gateway is mapped", has("tests/test_d_patch.py"));
+res("PY-RESOLVE the test_<stem>.py name floor is kept", has("tests/test_gateway.py"));
+res("PY-RESOLVE a relative import is kept (unknown)", has("tests/sub/test_g_relative.py"));
+res("PY-RESOLVE an import that resolves to no repo module (src layout) is kept", sel("src/pkgsrc/mod.py").includes("tests/test_h_src.py"));
+res("PY-RESOLVE a JavaScript change still maps its TypeScript test", sel("web/store/gateway.ts").includes("web/store/gateway.test.ts"));
+process.env.LOKI_E10_PY_IMPORT_RESOLVE = "0"; const off = sel("hermes_cli/gateway.py"); delete process.env.LOKI_E10_PY_IMPORT_RESOLVE;
+res("PY-RESOLVE =0 maps by basename as before (the collision, tests.gateway and the TypeScript test come back)", ["tests/test_a_collision.py", "tests/test_e_tests_pkg.py", "web/store/gateway.test.ts"].every((p) => off.includes(p)) && !tm.pyImportResolveOn({ LOKI_E10_PY_IMPORT_RESOLVE: "0" }) && tm.pyImportResolveOn({}));
+TS
+out="$(cd "$ROOT/loki-ts" && bun "$T/pyres.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
+grep -q '^EXIT 0$' <<< "$out" || bad "py-resolve unit script crashed or exited non-zero"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 11 ] || bad "py-resolve unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 11"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$out"
+grep -q '^NO ' <<< "$out" && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | sed 's/^/    | /'
 
 # deliver: the delivery over a Wall conflict decides on the re-verify, so a Go Wall file that breaks its package's build
 # (the full suite fails, no targeted check of the repo's own ran) no longer keeps correct code out.
