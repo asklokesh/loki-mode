@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LOKI_E10_DEFAULT_BUDGETS=1` restores every old default at once. The previous loop's $100 default and the 120 s limit on the base flaky-probe rerun are unchanged.
 - Known limits: a count that keeps changing to values never seen before while the tree keeps changing still reads as progress (only a time or round limit, which this release removes, would end it); a count that only oscillates between values already reported stops. A reply that names no number, right after one that did, counts as progress once per run when the tree changed. After `--deep`, the step that posts the result reads the worker's start time itself, so a worker pid reused before that first reading keeps it waiting while the other process lives.
 - Measured: each new guard was shown to fail its test with the guard removed (13 planted defects in this series). Not yet measured in a live run.
+- When verify hits its time limit before any package suite starts and a fix round follows, the label still names every suite that never ran. Before, the quick re-check after the fix round dropped them and the receipt said only "full suite" (seen as a flaky run-safety test under load).
 
 ## v11.169.0 (2026-11-20)
 

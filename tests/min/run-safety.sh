@@ -1463,6 +1463,9 @@ unit_rv() { # unit_rv <version> <case>
 #   touched:   the change breaks core's own test: FAILED.
 #   newerr:    the change makes legacy's base-red test throw a new error under the same id: never excused, FAILED.
 #   limit:     verify is stopped at its limit while app's suite still runs and nothing that ran failed: PARTIAL (never FAILED, never VERIFIED), app named.
+#   limitearly: the limit (1 s) lands before any package suite starts, so the pre-red legacy test, not yet measured on base, draws a fix round and a quick
+#              re-verify follows: still PARTIAL, and the receipt still names app's suite (the quick verify used to drop it and keep only a bare "full suite"; the
+#              8 s limit case read that way once under load).
 #   limitred:  the same stop with core's own test red: FAILED, not delivered as passing.
 #   links, linksnewerr: clean and newerr in an installed workspace (node_modules/@ws/<member> is a symlink to the member, and app and legacy import core
 #              through it). The base run reads the base copy of core, never the changed one: legacy is excused in links, and in linksnewerr (the change makes
@@ -1476,6 +1479,7 @@ unit_rv() { # unit_rv <version> <case>
 #   RWd. repo_profile.ts attributeFullSuite: ids only (drop the same-error comparison); newerr excuses legacy.
 #   RWe. intake.ts: let the branch lookup throw again; detached ends with no receipt.
 #   RWf. verify.ts no-id block: `cand = []`; norunner is FAILED after a fix round.
+#   RWh. verify.ts unrunSuitesCarried: return [] (a quick re-verify carries no unrun suite); limitearly reads not_proven "full suite" without @ws/app.
 #   RWg. LOKI_E10_BASE_ON_DEMAND=0 in the run: clean runs all five suites and intake measures them (the opt-out is the old behaviour).
 scope_fixture() { # scope_fixture <dir> [slowcore | slowapp | norunner | links]
     local d="$1" v="${2:-}" p dep script core="../../core/src/core"
@@ -1537,7 +1541,7 @@ PY
 )"
 }
 scope_get() { printf '%s\n' "$SCS" | sed -n "s/^$1 //p"; }
-scope_want() { case " ${SCOPE_CASES:-clean detached ownerslow touched newerr limit norunner limitred links linksnewerr} " in *" $1 "*) return 0 ;; esac; return 1; } # SCOPE_CASES="clean limit" runs a subset (planting a defect)
+scope_want() { case " ${SCOPE_CASES:-clean detached ownerslow touched newerr limit limitearly norunner limitred links linksnewerr} " in *" $1 "*) return 0 ;; esac; return 1; } # SCOPE_CASES="clean limit" runs a subset (planting a defect)
 unit_scope() {
 if scope_want clean; then
 SR="$T/scope-clean"; scope_fixture "$SR"; scope_run "$SR" "$SCOPE_OK"
@@ -1576,6 +1580,12 @@ SR="$T/scope-limit"; scope_fixture "$SR" slowapp; scope_run "$SR" "$SCOPE_OK" LO
 [ -n "${RS_SHOW:-}" ] && printf 'limit rc=%s\n%s\n' "$SCRC" "$SCS"
 [ "$(scope_get verdict)" = PARTIAL ] && ok "scope limit: verify stopped at its limit with nothing red: PARTIAL, never FAILED and never VERIFIED" || bad "scope limit: verdict $(scope_get verdict), want PARTIAL (stopped: $(scope_get stopped))"
 case "$(scope_get not_proven)" in *"full suite: @ws/app"*) ok "scope limit: the suite that did not finish is named NOT PROVEN" ;; *) bad "scope limit: the unfinished suite is not named: $(scope_get not_proven)" ;; esac
+fi
+if scope_want limitearly; then
+SR="$T/scope-limitearly"; scope_fixture "$SR" slowapp; scope_run "$SR" "$SCOPE_OK" LOKI_E10_VERIFY_MAX_S=1
+[ -n "${RS_SHOW:-}" ] && printf 'limitearly rc=%s\n%s\n' "$SCRC" "$SCS"
+[ "$(scope_get verdict)" = PARTIAL ] && ok "scope limitearly: a verify limit that lands before any suite starts is PARTIAL, never FAILED and never VERIFIED" || bad "scope limitearly: verdict $(scope_get verdict), want PARTIAL"
+case "$(scope_get not_proven)" in *"not run: full suite: @ws/app (no time left before the verify limit)"*) ok "scope limitearly: the suite that never started is still named NOT PROVEN after the quick re-verify" ;; *) bad "scope limitearly: the unstarted suite is not named: $(scope_get not_proven)" ;; esac
 fi
 if scope_want norunner; then
 SR="$T/scope-norunner"; scope_fixture "$SR" norunner; scope_run "$SR" "$SCOPE_OK"
