@@ -23,13 +23,13 @@
 // DEFAULT OFF (LOKI_REPO_PROFILE). With the flag unset, profileFragment()
 // returns "" and nothing is read or written, so build_prompt parity is exact.
 
-import { armTimer, cmdSilenceS } from "../engine10/types.ts"; import { MAX_STDOUT_BYTES, readStreamCapped } from "../util/shell.ts";
+import { armTimer, cmdSilenceS, defaultBudgetsOn } from "../engine10/types.ts"; import { MAX_STDOUT_BYTES, readStreamCapped } from "../util/shell.ts";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { comparableIds, errorsById, failIds, idNamesFile, lineNamesChange, noiseOnlyErrors, sameErrors, unhandledBlock } from "../engine10/failures.ts";
-import { baseRedShapeOn, classifyCheck, emptyDiscovery, exitCodedId, failureShape, goRunner, isExitCodedScript, plainTestEnv, resolveTool, stripAnsi, toolFallbacks, type Classified } from "../util/check_result.ts";
+import { baseRedShapeOn, classifyCheck, emptyDiscovery, exitCodedId, failureShape, goRunner, isExitCodedScript, plainTestEnv, resolveTool, spawnGroupSync, stripAnsi, toolFallbacks, type Classified } from "../util/check_result.ts";
 import { safeGit, safeGitSpawn } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
 import { atomicWriteFileSync } from "./state.ts";
@@ -303,7 +303,13 @@ export const BASELINE_CMD_TIMEOUT_S = 300;
 export const intakeCapS = (env: NodeJS.ProcessEnv = process.env): number | null => { const v = (env.LOKI_E10_INTAKE_CAP_S ?? "").trim(); const n = Number(v); return v !== "" && Number.isFinite(n) && n > 0 ? Math.floor(n) : null; };
 export const INTAKE_BUDGET_LINE = "loki: intake budget spent after";
 export function intakeBudgetNote(spentS: number, what: string): void { try { process.stderr.write(`${INTAKE_BUDGET_LINE} ${Math.round(spentS)} s (LOKI_E10_INTAKE_CAP_S): ${what}\n`); } catch { /* a note, never a reason to stop */ } }
-export const baselineCmdS = (capS: number | undefined): number => Math.max(1, Math.min(BASELINE_CMD_TIMEOUT_S, Math.floor((capS ?? Infinity) / 3)));
+/** NO-DEFAULT-BUDGET: one intake baseline command's limit. With LOKI_E10_DEFAULT_BUDGETS=1, 300 s (and a third of the cap) as before; otherwise the user's
+ *  LOKI_E10_BASELINE_CMD_S, else a third of a user's run cap, else none (the command then stops only after cmdSilenceS() with no output). */
+export const baselineCmdS = (capS: number | undefined, env: NodeJS.ProcessEnv = process.env): number => {
+  if (defaultBudgetsOn(env)) return Math.max(1, Math.min(BASELINE_CMD_TIMEOUT_S, Math.floor((capS ?? Infinity) / 3)));
+  const v = Number((env["LOKI_E10_BASELINE_CMD_S"] ?? "").trim()), user = (env["LOKI_E10_BASELINE_CMD_S"] ?? "").trim() !== "" && Number.isFinite(v) && v >= 1 ? Math.floor(v) : Infinity;
+  return Math.max(1, Math.min(user, Math.floor((capS ?? Infinity) / 3)));
+};
 const cutShort = (b: { timed_out: boolean; duration_s: number | null } | undefined, tmoS: number): boolean => !!b?.timed_out && (b.duration_s ?? 0) < tmoS - 1;
 export const MANIFESTS = ["requirements.txt", "package.json", "Makefile", "makefile", "GNUmakefile", "pyproject.toml", "tox.ini", "pytest.ini", "setup.cfg", "go.mod", "Cargo.toml", "tsconfig.json"];
 const NO_TEST = /no test specified/i;
@@ -544,6 +550,7 @@ export function runFormatters(repoDir: string, files: string[], env: NodeJS.Proc
 
 /** Default runner: `sh -c` in repoDir, an explicit scoped env (token-free, no color, no bytecode litter), SIGKILL on timeout. */
 export const shellRunner: BaselineRunner = (cmd, cwd, timeoutMs) => {
+  if (!Number.isFinite(timeoutMs)) { const g = spawnGroupSync("sh", ["-c", cmd], { cwd, env: { ...plainTestEnv(), PYTHONDONTWRITEBYTECODE: "1", CI: "1" }, timeoutMs }); return { code: g.status, timedOut: g.status === null, out: stripAnsi(g.output), missing: g.status === 127 }; } // NO-DEFAULT-BUDGET: no limit runs under the silence guard (spawnSync has none)
   const r = spawnSync("sh", ["-c", cmd], { cwd, env: { ...plainTestEnv(), PYTHONDONTWRITEBYTECODE: "1", CI: "1" }, encoding: "utf8", timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: 8 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
   const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || (r.status === null && r.signal === "SIGKILL");
   return { code: r.status, timedOut, out: stripAnsi(`${r.stdout ?? ""}\n${r.stderr ?? ""}`), missing: r.status === 127 };
@@ -626,6 +633,8 @@ function baseFor(repoDir: string, p: CommandProfile, cmd: string, ranOnly: boole
   return all.find((b) => normCmd(b.command ?? "") === normCmd(cmd)) ?? all.find((b) => repoRelCmd(repoDir, b.command ?? "") === repoRelCmd(repoDir, cmd)) ?? ((!ranOnly || p.baseline.ran) && sameRootScript(repoDir, p.baseline.command ?? "", cmd) ? p.baseline : undefined);
 }
 export const SUITE_BASELINE_BUDGET_S = 300;
+/** NO-DEFAULT-BUDGET: the shared budget for the per-package suite baselines: 300 s only with LOKI_E10_DEFAULT_BUDGETS=1; LOKI_E10_INTAKE_CAP_S is the user's own. */
+export const suiteBaselineBudgetS = (env: NodeJS.ProcessEnv = process.env): number => (defaultBudgetsOn(env) ? SUITE_BASELINE_BUDGET_S : Infinity);
 /** RW-01 BASE-ON-DEMAND (LOKI_E10_BASE_ON_DEMAND, default on, =0 opts out): in a repository with a package suite below the root, intake no longer runs every
  *  package's suite on base before the model starts (opencode#63152: 308 s of a 900 s run went to 4 of 36 suites, the other 32 were never measured). Each
  *  suite is recorded not run (BASE_DEFERRED, attributable:false), so every reader fails closed, and verify measures on a base worktree only the suites
@@ -657,7 +666,7 @@ export function baselineSuites(repoDir: string, specs: { name: string; cmd: stri
     if (!p || p.revision !== headOf(repoDir)) return null;
     const dl = (): number => (opts.deadlineMs === undefined ? Infinity : Math.floor((opts.deadlineMs - Date.now()) / 1000)); // R3 intake cap: what is left of intake's baseline budget
     if (opts.rerun && p.baseline.ran && dl() >= 1) p.baseline = runBaseline(repoDir, p.commands, opts.deadlineMs === undefined ? opts : { ...opts, timeoutS: Math.max(1, Math.min(opts.timeoutS ?? BASELINE_CMD_TIMEOUT_S, dl())) });
-    let left = Math.min(opts.budgetS ?? SUITE_BASELINE_BUDGET_S, dl());
+    let left = Math.min(opts.budgetS ?? suiteBaselineBudgetS(), dl());
     const old = p.suites ?? [];
     const rootSpeaks = (run: string): boolean => repoRelCmd(repoDir, run) === repoRelCmd(repoDir, p.baseline.command ?? "") || (p.baseline.ran && p.baseline.attributable && !p.baseline.timed_out && sameRootScript(repoDir, p.baseline.command ?? "", run)); // an alias is reused only when its base run is complete and attributable; otherwise the suite is measured under its own command
     const lazy = baseOnDemandOn() && (specs.some((s) => s.cwd !== ".") || p.baseline.reason === BASE_DEFERRED); // RW-01: a repository with a package suite below the root measures its suites on demand (verify), never all of them here
