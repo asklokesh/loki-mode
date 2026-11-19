@@ -1,6 +1,6 @@
 // SR LOKI_E10_SELF_REVIEW: the pre-delivery review self-check. New file: no module owns a review that may EDIT the diff before delivery (stages/xreview.ts is a
 // read-only reviewer that can only lower the verdict, after verify). Deterministic checks first, then at most one bounded resume of the implement session.
-import { budgetsOn } from "../engine10/types.ts";
+import { defaultBudgetsOn } from "../engine10/types.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { buildArtifacts, runOutputs, type Staged } from "../e10ext/commit_filter.ts";
@@ -21,7 +21,7 @@ export type SelfReviewMode = "off" | "on" | "always";
 export const selfReviewMode = (env: NodeJS.ProcessEnv = process.env): SelfReviewMode => { const v = (env["LOKI_E10_SELF_REVIEW"] ?? "").trim().toLowerCase(); return /^(0|off|false|no)$/.test(v) ? "off" : v === "always" ? "always" : "on"; };
 /** The turn cap of the review resume (cost cap); LOKI_E10_SELF_REVIEW_MAX_TURNS overrides, 0 or junk keeps the default. */
 export const SELF_REVIEW_MAX_TURNS = 12;
-export const selfReviewMaxTurns = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_SELF_REVIEW_MAX_TURNS"] ?? "").trim()); return Number.isInteger(n) && n > 0 ? n : budgetsOn(env) ? SELF_REVIEW_MAX_TURNS : 0; }; // NO-DEFAULT-BUDGET: 0 = no turn cap (session.ts sets none)
+export const selfReviewMaxTurns = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_SELF_REVIEW_MAX_TURNS"] ?? "").trim()); return Number.isInteger(n) && n > 0 ? n : defaultBudgetsOn(env) ? SELF_REVIEW_MAX_TURNS : 0; }; // NO-DEFAULT-BUDGET: 0 = no turn cap (session.ts sets none)
 
 export type ItemKey = "release_note" | "stray_files" | "test" | "format" | "scope" | "cases" | "siblings" | "docs" | "conventions";
 export type ItemStatus = "ok" | "flagged" | "fixed" | "justified" | "unresolved" | "auto";
@@ -315,7 +315,7 @@ export const selfReviewReceiptBlock = (implement: Record<string, unknown> | unde
  *  each modified file, and the repo's contribution rules and release-note convention: no task text, no implement transcript. The turn guard always runs on it. */
 export const verifiedFinishOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_VERIFIED_FINISH"] ?? "").trim());
 export const VERIFIED_FINISH_MAX_TURNS = 8;
-export const verifiedFinishMaxTurns = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_VERIFIED_FINISH_MAX_TURNS"] ?? "").trim()); return Number.isInteger(n) && n > 0 ? n : budgetsOn(env) ? VERIFIED_FINISH_MAX_TURNS : 0; }; // NO-DEFAULT-BUDGET: 0 = no turn cap
+export const verifiedFinishMaxTurns = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_VERIFIED_FINISH_MAX_TURNS"] ?? "").trim()); return Number.isInteger(n) && n > 0 ? n : defaultBudgetsOn(env) ? VERIFIED_FINISH_MAX_TURNS : 0; }; // NO-DEFAULT-BUDGET: 0 = no turn cap
 export type FinishRecord = { fired: true; iteration: string | null; brief_chars: number; diff_files: string[]; left_out: string[] };
 export const FINISH_DIFF_MAX = 40_000, FINISH_FILE_MAX = 12_000, FINISH_FILES_MAX = 36_000;
 export const FINISH_LEAD = "Finish pass. The change below is already applied, uncommitted, in this checkout. Do not redo, rewrite or extend the fix itself; only bring the change up to the repository's rules.";

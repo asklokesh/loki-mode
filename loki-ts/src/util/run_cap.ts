@@ -82,6 +82,13 @@ export function yamlRunCapS(text: string): number | null {
  *  budgeted inside it and the machine's soft cap seals the current diff (cap.hit, PARTIAL "time ran out") about a minute before the deadline instead of
  *  being killed with no receipt (dev4: all 4 cap kills ran a 3600 s budget under a 1200 s kill). Measured from this process's start. Unset: unchanged. */
 export const DEADLINE_MARGIN_S = 30, DEADLINE_MIN_CAP_S = 60;
+/** NO-DEFAULT-BUDGET: the user's time-limit flags (`--max-time` -> LOKI_RUN_DEADLINE_S, `--verify-max-time` -> LOKI_E10_VERIFY_MAX_S). A duration is whole
+ *  seconds, or a number with s, m or h (90m, 2h); null for anything else, so a bad value is refused, never read as "no limit". */
+export const TIME_FLAGS: Readonly<Record<string, string>> = { "--max-time": "LOKI_RUN_DEADLINE_S", "--verify-max-time": "LOKI_E10_VERIFY_MAX_S" };
+export function parseDurationS(raw: string | undefined): number | null {
+  const m = /^\s*(\d+)\s*([smh]?)\s*$/.exec(raw ?? ""); if (!m) return null;
+  const n = Number(m[1]) * (m[2] === "h" ? 3600 : m[2] === "m" ? 60 : 1); return n > 0 ? n : null;
+}
 export function deadlineCapS(env: NodeJS.ProcessEnv = process.env, uptimeS: number = process.uptime()): number | undefined {
   const raw = env.LOKI_RUN_DEADLINE_S; if (raw === undefined || raw.trim() === "") return undefined;
   const v = Number(raw); if (!Number.isFinite(v) || v <= 0) { warnBadCap("LOKI_RUN_DEADLINE_S", raw); return undefined; }

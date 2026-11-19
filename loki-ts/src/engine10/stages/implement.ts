@@ -15,7 +15,7 @@ import { NAMED_SITE_LINE, namedSites, namedSitesEnabled, type ContinueRecord, as
 import { INTERRUPTED_BRIEF, interruptedSession, planChain, readSessionId } from "../../runner/session_resume.ts"; import { issueAcceptanceCapOn, issueAcceptanceOf } from "../../util/intent_card.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
 import { routerActive } from "../../runner/router/unit_model.ts";
-import { noProgressRounds, unlimited, type ImplementExit, type RunContext, type SessionResult, type SessionRunOptions, type Stage, type StageResult, type TestMap, type TestRef, taskBlock } from "../types.ts";
+import { defaultBudgetsOn, noProgressRounds, type ImplementExit, type RunContext, type SessionResult, type SessionRunOptions, type Stage, type StageResult, type TestMap, type TestRef, taskBlock } from "../types.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { runPickedChoice, sha256 } from "./seal.ts";
 import { adviceBlock, assumptionOf, consultEnabled, neverStopActive, runConsult, type NeverStopRecord } from "../../features/opus_consult.ts"; import { currentDiff } from "../../runner/session_resume.ts";
 import { assumptionsBlock, rankedRemedyBlock, rankedRemedyEnabled } from "../../features/spec_ambiguity.ts";
@@ -282,7 +282,7 @@ export const implementStage: Stage = {
     let reviewedEarly = false, earlyReviewCost: string | null = null; let proofFails = 0, lineTurns = 0; const LINE_TURNS_MAX = 2;
     // NO-DEFAULT-BUDGET: with no time limit the proof and acceptance turn counts are not the bound. A round makes progress when Loki's own proof run fails fewer
     // checks, or fewer acceptance lines are unmet, than the best round so far; noProgressRounds() rounds in a row without either end the loop.
-    const noBudget = unlimited(ctx.capS) && !ctx.deep; let proofBest = { failed: Infinity, unmet: Infinity }, proofStill = 0;
+    const noBudget = !defaultBudgetsOn() && !ctx.deep; let proofBest = { failed: Infinity, unmet: Infinity }, proofStill = 0;
     const proofStep = (failed: number, unmet: number): void => { if (failed < proofBest.failed || unmet < proofBest.unmet) { proofBest = { failed: Math.min(failed, proofBest.failed), unmet: Math.min(unmet, proofBest.unmet) }; proofStill = 0; } else proofStill++; }; // the acceptance check has its own two turns: a session that used every proof turn to get the script passing (Haiku did) used to get no acceptance feedback at all
     // One independent review during the run, with its findings handed back; true when the session was resumed and the proof must run again.
     const reviewRound = async (tree: string): Promise<boolean> => {

@@ -8,7 +8,7 @@ import { assumptionOf, consultAvailable, neverStopActive, readConsults, type Nev
 import { rerunOnQuota, sessionKind, usageLimitOf } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./failures.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote, timeNoteOn } from "../util/run_cap.ts"; import { FINISH_LINE, issueRunBrief } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, isClean, MIN_ATTEMPT_WINDOW_S, runExtraAttempts, signalNotProven, type AttemptSignal } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
-import { armTimer, backstopS, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, hangSilenceS, MAX_FIX_ROUNDS, noProgressRounds, unlimited, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
+import { armTimer, backstopS, defaultBudgetsOn, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, hangSilenceS, MAX_FIX_ROUNDS, noProgressRounds, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
 import { stallSame, stallSignature } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
 import { PROVE_MIN_S, proveApplies, proveBudgetS, proveNotRun, proveScope, recheckProve, type ProveRecord } from "./stages/prove.ts"; import { capCeilingS } from "../util/run_cap.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
 
@@ -122,7 +122,7 @@ const KILL_GRACE_MS = 2000;
 export const VERIFY_MAX_S = 900;
 const VERIFY_TAIL_S = STAGE_BUDGETS.commit.limitS + STAGE_BUDGETS.seal.limitS + STAGE_BUDGETS.pr.limitS;
 export function verifyLimitFor(floorS: number, softS: number, elapsedS: number, env: NodeJS.ProcessEnv = process.env): number {
-  const v = Number((env["LOKI_E10_VERIFY_MAX_S"] ?? "").trim()), max = Number.isFinite(v) && v >= 1 ? Math.floor(v) : Number.isFinite(softS) ? VERIFY_MAX_S : Infinity; // NO-DEFAULT-BUDGET: no run cap, no verify maximum unless the user set one
+  const v = Number((env["LOKI_E10_VERIFY_MAX_S"] ?? "").trim()), max = Number.isFinite(v) && v >= 1 ? Math.floor(v) : defaultBudgetsOn(env) ? VERIFY_MAX_S : Infinity; // NO-DEFAULT-BUDGET: no verify maximum unless the user sets one (LOKI_E10_VERIFY_MAX_S, --verify-max-time); a user run cap still bounds it through softS
   return Math.min(Math.max(floorS, Math.floor(softS - elapsedS - VERIFY_TAIL_S)), max);
 }
 /** NO-DEFAULT-BUDGET fix-loop progress: failing check ids (a failing check with no ids counts once) and checks that ran (not not_run). */
@@ -148,7 +148,9 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   let capAtMs = startMs + softCapS(ctx.capS) * 1000; // 14/15 of capS for the default/deep caps; see softCapS above
   const capCtl = new AbortController();
   let capTimer = armTimer(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now())); // NO-DEFAULT-BUDGET: no cap (Infinity) arms nothing
-  const unbounded = unlimited(ctx.capS) && !ctx.deep; // NO-DEFAULT-BUDGET: no time limit on any stage or session; loops end on no progress (noProgressRounds)
+  // NO-DEFAULT-BUDGET: Loki sets no stage limit, round count or turn cap of its own (only LOKI_E10_DEFAULT_BUDGETS=1 restores them); a user time limit
+  // bounds the run through capS alone (the soft cap, and implement and verify sized from the time left); loops end on no progress (noProgressRounds).
+  const unbounded = !defaultBudgetsOn() && !ctx.deep;
   let implementStartMs: number | null = null;
   const withTimeNote = (brief: string, limitS: number): string => brief.endsWith(FINISH_LINE) ? `${brief.slice(0, -FINISH_LINE.length)}${timeBudgetNote(limitS)}\n\n${FINISH_LINE}` : `${brief}\n\n${timeBudgetNote(limitS)}`;
   const startedIds = new Set<string>(); // TEN-COST-11 r3: every session this run started, whatever its stage later returned; seal unions these into the cost read so a killed or failed stage's spend is never lost
@@ -157,7 +159,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     startedIds.add(o0.iterationId);
     const n0 = intentRevs.length, o = withSteer(unbounded ? { ...o0, limitS: Infinity } : o0, ctx.repoDir, intentRevs); // operator steer (.loki/HUMAN_INPUT.md), consumed once
     if (intentRevs.length > n0) ctx.emit("intent.revised", o.stage, { revisions: intentRevs }); // P12-07h will seed ctx from these on re-entry; durable in events.jsonl
-    const left = implementStartMs === null ? Infinity : Math.max(1, implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000), imp = o.stage === "implement" ? { ...o, limitS: Math.min(Math.max(o.limitS, implementBudgetS), left) } : o, r = await rerunOnQuota(() => ctx.sessions.run(imp.stage === "implement" && typeof imp.brief === "string" && imp.limitS > 0 && Number.isFinite(imp.limitS) && !issueRunBrief(ctx.provider, outputs.intake?.source) && timeNoteOn() ? { ...imp, brief: withTimeNote(imp.brief, imp.limitS) } : imp), sessionKind, ctx.clock, imp.signal, unbounded ? ctx.clock.now() + hangSilenceS() * 1000 : capAtMs, () => ctx.overCap?.() === true); // FC-21 (c): the time note goes after the byte-stable prefix and body; FC-21b A2: a resumed session gets only the budget left, and the note sits BEFORE the closing FINISH_LINE
+    const left = implementStartMs === null ? Infinity : Math.max(1, implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000), imp = o.stage === "implement" ? { ...o, limitS: Math.min(Math.max(o.limitS, implementBudgetS), left) } : o, r = await rerunOnQuota(() => ctx.sessions.run(imp.stage === "implement" && typeof imp.brief === "string" && imp.limitS > 0 && Number.isFinite(imp.limitS) && !issueRunBrief(ctx.provider, outputs.intake?.source) && timeNoteOn() ? { ...imp, brief: withTimeNote(imp.brief, imp.limitS) } : imp), sessionKind, ctx.clock, imp.signal, Number.isFinite(capAtMs) ? capAtMs : ctx.clock.now() + hangSilenceS() * 1000, () => ctx.overCap?.() === true); // FC-21 (c): the time note goes after the byte-stable prefix and body; FC-21b A2: a resumed session gets only the budget left, and the note sits BEFORE the closing FINISH_LINE
     const k = r.exit === 0 ? null : sessionKind(r as { exit: number; stderrTail?: string }); // P12-09: quota waits and reruns inside rerunOnQuota; it is fatal only if no cap ended the wait
     if (k === "auth" || (k === "quota_exhausted" && !capReached())) fatal ??= `fatal:${k}`; if (ctx.overCap?.() || (k === "quota_exhausted" && capReached())) capCtl.abort(); // D60-5: dollar cap reached, stop the running stage too
     const lim = k === "usage_limit" ? usageLimitOf(r as { exit: number | null; killed?: boolean; stderrTail?: string }) : null;
@@ -196,7 +198,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       return null;
     }
     if (underCap && capReached()) { markCap(name); return null; }
-    const limitS0 = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : (name === "verify" && st.limitS >= STAGE_BUDGETS.verify.limitS ? verifyLimitS(st.limitS) : name === "fix" ? fixLimitS(st.limitS) : name === "prove" ? (sctx.proveBudgetS ?? st.limitS) : st.limitS) + (st.extraLimitS?.(sctx) ?? 0), limitS = unbounded && name !== "verify" ? Infinity : limitS0; if (name === "implement") { implementBudgetS = limitS; implementStartMs = ctx.clock.now(); } // FC-19: implement gets the run budget left, not a fixed 480s
+    const limitS0 = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : (name === "verify" && st.limitS >= STAGE_BUDGETS.verify.limitS ? verifyLimitS(st.limitS) : name === "fix" ? fixLimitS(st.limitS) : name === "prove" ? (sctx.proveBudgetS ?? st.limitS) : st.limitS) + (st.extraLimitS?.(sctx) ?? 0), limitS = unbounded && !(name === "verify" || (name === "implement" && Number.isFinite(ctx.capS))) ? Infinity : limitS0; /* a user time limit still sizes implement and verify from the time left */ if (name === "implement") { implementBudgetS = limitS; implementStartMs = ctx.clock.now(); } // FC-19: implement gets the run budget left, not a fixed 480s
     ctx.emit("stage.started", name, { target_s: st.targetS, limit_s: limitS, ...(name === "wall" ? { start_ms: ctx.clock.now() } : {}) });
     const t0 = ctx.clock.now();
     if (name === "verify") sctx.verifyDeadlineMs = Date.now() + Math.max(0, Math.min(limitS * 1000, underCap ? capAtMs - ctx.clock.now() : Infinity));

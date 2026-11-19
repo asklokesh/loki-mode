@@ -703,8 +703,8 @@ run_engine "$TASK" E2E_STUB_NOFINISH=never LOKI_E10_DEFAULT_BUDGETS=1 # the coun
     && ok "S1b never: four resumes that each change the tree but never finish stop at the count cap; exit incomplete, PARTIAL with one NOT PROVEN line, the work committed" || { bad "S1b never: resumes $(kits), finish '$(fin)', exit $(iexit), cap lines $(unfin), outcome $(outcome)"; dump; }
 has "S1b never: the NOT PROVEN line names why and what the reply said was outstanding" "$(rnp)" "implement ended without a finish line (count cap after 4 resumes): Progress made. Still outstanding: the docs for multiply."
 run_engine "$TASK" E2E_STUB_NOFINISH=never # NO-DEFAULT-BUDGET: no count; resumes that change the tree but name the same outstanding work are no progress
-[ "$(kits)" = 2 ] && [ "$(fin)" = "2|no progress|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
-    && ok "S1b never, no budget: resumes that change the tree but never finish and name the same outstanding work end after 2 as no progress; PARTIAL, the work committed" || { bad "S1b never, no budget: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
+[ "$(kits)" = 3 ] && [ "$(fin)" = "3|no progress|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
+    && ok "S1b never, no budget: the first resume names new outstanding work (progress); the next 2 change the tree but name the same work and end the loop as no progress; PARTIAL, the work committed" || { bad "S1b never, no budget: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
 run_engine "$TASK" E2E_STUB_NOFINISH=still LOKI_E10_DEFAULT_BUDGETS=1
 [ "$(kits)" = 2 ] && [ "$(fin)" = "2|tree unchanged|None" ] && [ "$(iexit)" = incomplete ] && [ "$(outcome)" = PARTIAL ] && committed_multiply \
     && ok "S1b still: resumes that change nothing end the loop at the second in a row (2 of the 4 allowed); exit incomplete, PARTIAL, the work committed" || { bad "S1b still: resumes $(kits), finish '$(fin)', exit $(iexit), outcome $(outcome)"; dump; }
@@ -1092,7 +1092,7 @@ res("L026 parser: result-cost records full_suite_runs per session (2 of 3 Bash c
   const d3 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(0.2, { LOKI_E10_CONTINUE_MAX_USD: "0.1" }));
   res("S1b bounds: spend at or past LOKI_E10_CONTINUE_MAX_USD (default 5.00) stops before any resume; LOKI_E10_CONTINUE_MAX=2 stops after 2; neither is a finish", d1.record.ended === "dollar line" && d1.iterationIds.length === 0 && d2.record.ended === "count cap" && d2.iterationIds.length === 2 && d2.session.markers.finishLine === null && d3.record.ended === "dollar line" && evs.length === 2);
   { const d4 = await cr.resumeToFinish(fctx, { iterationId: "it", brief: "FULL BRIEF" } as never, unfinished, opts(50, {}));
-    res("S1b NO-DEFAULT-BUDGET: with no budget there is no count and no dollar line; resumes that change the tree but name the same outstanding work end after 2 as no progress", d4.record.ended === "no progress" && d4.iterationIds.length === 2 && d4.session.markers.finishLine === null); }
+    res("S1b NO-DEFAULT-BUDGET: with no budget there is no count and no dollar line; after the first resume names new outstanding work, 2 that name the same work end the loop as no progress", d4.record.ended === "no progress" && d4.iterationIds.length === 3 && d4.session.markers.finishLine === null); }
   res("S1b brief (no session id to resume, so the full brief goes first): it says the summary request is over and was not the task, quotes the outstanding lines, and ends with FINISH_LINE word for word", runs[0]!.includes("\\n\\nAny earlier request to stop and write a text-only summary is over; it was not the task.") && runs[0]!.includes("LOKI_BLOCKED: docs outstanding") && runs[0]!.endsWith((await import("$ROOT/loki-ts/src/engine10/types.ts")).FINISH_LINE) && runs[1]!.includes("still going: docs outstanding"));
   res("S1b scope: claude only; a result whose final text was not read (finishLine absent, a patch-green result) is never resumed", cr.lacksFinishLine("claude", unfinished) && !cr.lacksFinishLine("opencode", unfinished) && !cr.lacksFinishLine("claude", { markers: { done: true, alreadyDone: null, specConflict: null } } as never));
 }
@@ -1391,7 +1391,7 @@ suites="$(ev 'sum(1 for e in E if e["type"]=="test.result" and str(e["data"].get
 sig="$(ev '[g["signature"] for e in E if e["type"]=="fix.round" for g in e["data"]["groups"] if g["signature"].startswith("full suite")][0]')"
 case "$sig" in "full suite: bun "?*) ok "full suite signature carries its first failing line: $sig" ;; *) bad "full suite signature is only the check name: '$sig'" ;; esac
 
-run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress LOKI_RISK_TIER=medium LOKI_E10_OPUS_CONSULT=0 # the stall rule alone, as the no-progress leg
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=noprogress LOKI_RISK_TIER=medium LOKI_E10_OPUS_CONSULT=0 LOKI_E10_DEFAULT_BUDGETS=1 # the stall rule alone under budgets, as the no-progress leg
 last="$(ev '[e["data"] for e in E if e["type"]=="stage.completed" and e["stage"]=="verify"][-1]')"
 has "quick-only end: the last verify is quick" "$last" "'verify_scope': 'quick'"
 has "quick-only end: verify lists the missing complete verify as NOT PROVEN" "$last" "quick re-verify only"
@@ -2334,7 +2334,7 @@ if [ ! -x "$FL_VT_NM/.bin/vitest" ]; then mkdir -p "$T/vt-fl"; printf '{"name":"
 if [ -x "$FL_VT_NM/.bin/vitest" ]; then
     VT_NM="$FL_VT_NM"; export VT_NM
     FL_ALL='[id]/page.test.ts;charts/issue-trends-chart.test.ts;issues/page.test.ts;layout/Sidebar.test.ts;login/page.test.ts'
-    FL_OFF="LOKI_E10_NAMED_EXACT=0 LOKI_E10_OWN_BY_PATH=0 LOKI_E10_TOUCHED_BASE_RED=0 LOKI_E10_COLLATERAL_BASELINE=0 LOKI_E10_ID_PKG_RELATIVE=0 LOKI_E10_PROOF_PROJECT_API=0"
+    FL_OFF="LOKI_E10_NAMED_EXACT=0 LOKI_E10_OWN_BY_PATH=0 LOKI_E10_TOUCHED_BASE_RED=0 LOKI_E10_COLLATERAL_BASELINE=0 LOKI_E10_ID_PKG_RELATIVE=0 LOKI_E10_PROOF_PROJECT_API=0 LOKI_E10_DEFAULT_BUDGETS=1" # the FireLater#24 run had budgets (one stall round)
     # shellcheck disable=SC2086
     fl_run $FL_OFF; FL_BEFORE="$(fl_sig)"
     case "$FL_BEFORE" in STALLED*"|fix=1|quick"|FAILED*"|quick") ok "fl24 monorepo before (every acc-154 knob off): reproduces FireLater#24: base-red page, chart and edited tests block, a fix round chases them, the verify stays quick ($FL_BEFORE)" ;; *) bad "fl24 monorepo before: $FL_BEFORE"; dump ;; esac
@@ -4334,9 +4334,10 @@ rmSync(noPytest, { recursive: true, force: true }); rmSync(withPytest, { recursi
 // ---- time: verify's limit is what is left before commit, seal and the PR, bounded above; a suite's timeout is what is left of the stage
 res("BUDGET the opencode record (cap 900 s, 355 s gone): verify's limit is 335 s, not 155 s", mc.verifyLimitFor(120, 840, 355, {}) === 335);
 res("BUDGET with intake at 5 s on the same cap verify gets 645 s", mc.verifyLimitFor(120, 840, 45, {}) === 645);
-res("BUDGET on a 3600 s cap verify is bounded at 900 s (LOKI_E10_VERIFY_MAX_S)", mc.verifyLimitFor(120, 3360, 560, {}) === 900 && mc.verifyLimitFor(120, 3360, 560, { LOKI_E10_VERIFY_MAX_S: "1500" }) === 1500);
+res("BUDGET on a 3600 s cap verify gets the time left (no 900 s maximum of Loki's own, NO-DEFAULT-BUDGET); LOKI_E10_VERIFY_MAX_S bounds it; the control knob restores 900 s", mc.verifyLimitFor(120, 3360, 560, {}) === 3360 - 560 - 150 && mc.verifyLimitFor(120, 3360, 560, { LOKI_E10_VERIFY_MAX_S: "1500" }) === 1500 && mc.verifyLimitFor(120, 3360, 560, { LOKI_E10_DEFAULT_BUDGETS: "1" }) === 900);
 res("BUDGET the stage floor still holds when little is left", mc.verifyLimitFor(120, 840, 800, {}) === 120);
-res("BUDGET a suite's timeout is the time left of the stage, at most 300 s; none left means it is not started", vf.suiteTimeoutFor(1_000_000, 0, {}) === 300_000 && vf.suiteTimeoutFor(100_000, 40_000, {}) === 55_000 && vf.suiteTimeoutFor(100_000, 97_000, {}) === 0 && vf.suiteTimeoutFor(undefined, 0, {}) === 300_000 && vf.suiteTimeoutFor(undefined, 0, { LOKI_E10_SUITE_TIMEOUT_S: "3" }) === 3000);
+const NB1 = { LOKI_E10_DEFAULT_BUDGETS: "1" }; // NO-DEFAULT-BUDGET: the 300 s maximum is a budget
+res("BUDGET a suite's timeout is the time left of the stage, at most 300 s with budgets; none left means it is not started", vf.suiteTimeoutFor(1_000_000, 0, NB1) === 300_000 && vf.suiteTimeoutFor(100_000, 40_000, NB1) === 55_000 && vf.suiteTimeoutFor(100_000, 97_000, NB1) === 0 && vf.suiteTimeoutFor(undefined, 0, NB1) === 300_000 && vf.suiteTimeoutFor(undefined, 0, { LOKI_E10_SUITE_TIMEOUT_S: "3" }) === 3000);
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/rw01.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || bad "rw01 unit script crashed or exited non-zero: $(printf '%s\n' "$out" | tail -3)"

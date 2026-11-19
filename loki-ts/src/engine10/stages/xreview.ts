@@ -1,6 +1,6 @@
 // B4: opt-in cross-lab review between verify and seal. A second provider reads the committed diff read-only and may only DOWNGRADE the verdict (flag adds NOT PROVEN, block caps at PARTIAL). Off
 // unless loki.yaml `review:`, LOKI_REVIEW_PROVIDER or LOKI_XVENDOR_DEFAULT is set; a medium- or high-tier run with none of these reviews with its own CLI (LOKI_REVIEW_PROVIDER=off|none opts out). L003: this is the run's only review session.
-import { budgetsOn } from "../types.ts";
+import { defaultBudgetsOn } from "../types.ts";
 import { join } from "node:path";
 import { asProvider, isOff, loadReviewStageAgent, reviewCli, reviewProvider, xvendorDefault, type ReviewProvider } from "../../council/role_agents.ts";
 export { reviewProvider, xvendorDefault, type ReviewProvider } from "../../council/role_agents.ts"; // re-exported: callers and tests import the review provider pick from here
@@ -71,7 +71,7 @@ export function parseReview(p: ReviewProvider, out: string): CrossReview {
 /** Rule 6 (h2h 2026-11-01, 115 Loki runs): the unconfigured same-vendor review changed no verdict and was 74% of Loki-on-Haiku spend. It stays on by default for the high tier (auth, crypto, payments, migrations, CI, public API: no ready PR there without a review) and is opt-in for medium (LOKI_REVIEW_DEFAULT=1). A configured reviewer (loki.yaml review:, LOKI_REVIEW_PROVIDER, a reviewer agent) always runs. */
 export const reviewDefaultOn = (tier: string, env: NodeJS.ProcessEnv = process.env): boolean => tier === "high" || (tier === "medium" && env["LOKI_REVIEW_DEFAULT"] === "1");
 // Review time box: 300s (real claude reviews often exceed 60s); LOKI_E10_REVIEW_BOX_S overrides (tests). Seal's limit grows by it when a review is planned.
-export const reviewBoxS = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_E10_REVIEW_BOX_S"]); return n > 0 ? n : budgetsOn(env) ? 300 : Infinity; }; // NO-DEFAULT-BUDGET: no box unless set (shell.run's silence guard ends a silent review)
+export const reviewBoxS = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_E10_REVIEW_BOX_S"]); return n > 0 ? n : defaultBudgetsOn(env) ? 300 : Infinity; }; // NO-DEFAULT-BUDGET: no box unless set (shell.run's silence guard ends a silent review)
 function pickReviewer(ctx: RunContext, agent: ReturnType<typeof configuredReviewer>): { p: ReviewProvider | null; dflt: boolean } {
   const p = reviewProvider(ctx.repoDir, process.env, ctx.provider) ?? agent?.provider ?? null; if (p) return { p, dflt: false };
   const ok = reviewDefaultOn(String(readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier)) && !isOff(process.env["LOKI_REVIEW_PROVIDER"]) && ctx.provider === "claude"; // FC-MEDIUM-REVIEWER-UNCREDITED + L003: with nothing configured, high (and medium with LOKI_REVIEW_DEFAULT=1) runs the run's own CLI as the one reviewer; otherwise "one reviewer" stays on NOT PROVEN (never credited); LOKI_REVIEW_PROVIDER=off|none opts out

@@ -1,6 +1,6 @@
 // ER-01 / COST-1: per-stage reasoning effort. Pure; on by default (LOKI_E10_EFFORT_POLICY=off|0|false|legacy opts out).
 // implement and wall run at medium, fix round 1 at high, fix round 2+ at xhigh only for a code-owned failure (Haiku: medium every round, see fixEffort).
-import { budgetsOn } from "../engine10/types.ts";
+import { defaultBudgetsOn } from "../engine10/types.ts";
 export function effortPolicyOn(env: NodeJS.ProcessEnv = process.env): boolean {
   const v = (env["LOKI_E10_EFFORT_POLICY"] ?? "").trim().toLowerCase();
   return !(v === "off" || v === "0" || v === "false" || v === "legacy");
@@ -27,7 +27,7 @@ export const HAIKU_CAPS = { implement: { turns: 45, newTokens: 160_000 }, fix: {
 /** Stop rules for a stage session, or undefined: not implement or fix, not Haiku, the policy off, or LOKI_E10_SESSION_CAPS=off. A positive-integer LOKI_E10_SESSION_TURNS or LOKI_E10_SESSION_TOKENS replaces a cap. */
 export function sessionCaps(stage: string, model: string, env: NodeJS.ProcessEnv = process.env): { turns?: number; newTokens?: number; noEditByTurn?: number } | undefined {
   if (!effortPolicyOn(env) || !isHaikuModel(model) || (env["LOKI_E10_SESSION_CAPS"] ?? "").trim().toLowerCase() === "off") return undefined;
-  if (!budgetsOn(env) && !(env["LOKI_E10_SESSION_TURNS"] ?? "").trim() && !(env["LOKI_E10_SESSION_TOKENS"] ?? "").trim() && !/^(1|on|true|yes)$/i.test((env["LOKI_E10_SESSION_CAPS"] ?? "").trim())) return stage === "fix" ? { noEditByTurn: HAIKU_CAPS.fix.noEditByTurn } : undefined; // NO-DEFAULT-BUDGET: the Haiku turn and token caps are opt-in (LOKI_E10_SESSION_CAPS=1 or a set value); the fix session's no-edit rule is a no-progress stop and stays
+  if (!defaultBudgetsOn(env) && !(env["LOKI_E10_SESSION_TURNS"] ?? "").trim() && !(env["LOKI_E10_SESSION_TOKENS"] ?? "").trim() && !/^(1|on|true|yes)$/i.test((env["LOKI_E10_SESSION_CAPS"] ?? "").trim())) return stage === "fix" ? { noEditByTurn: HAIKU_CAPS.fix.noEditByTurn } : undefined; // NO-DEFAULT-BUDGET: the Haiku turn and token caps are opt-in (LOKI_E10_SESSION_CAPS=1 or a set value); the fix session's no-edit rule is a no-progress stop and stays
   const base = stage === "implement" ? HAIKU_CAPS.implement : stage === "fix" ? HAIKU_CAPS.fix : undefined;
   if (!base) return undefined;
   const pos = (v: string | undefined): number | undefined => { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : undefined; };

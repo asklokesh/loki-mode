@@ -5,6 +5,7 @@
 // every other start is routed straight to engine10 by route.sh. --workspace and --deploy are
 // handed to the bash front end (autonomy/loki) unchanged.
 
+import { parseDurationS, TIME_FLAGS } from "../util/run_cap.ts";
 import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 import { accessSync, constants as fsConstants, existsSync as pathExists, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,6 +46,8 @@ const VALUE_FLAGS = new Set([
   "--prd", // explicit spec path (overrides positional)
   "--brief", // one-liner spec text
   "--cost", // TEN-COST-01: cost profile (lean|off); also LOKI_COST_PROFILE
+  "--max-time", // NO-DEFAULT-BUDGET: the user's outer time limit (LOKI_RUN_DEADLINE_S)
+  "--verify-max-time", // NO-DEFAULT-BUDGET: the user's verify time limit (LOKI_E10_VERIFY_MAX_S)
 ]);
 
 // TEN-STABILITY-33: free-text value flags. A missing, empty or dash-leading value is an error (use --flag=-x for a dash-leading value).
@@ -84,6 +87,8 @@ const ATTEMPTS_VALUE_FLAGS = new Set([
   "--brief",
   "--cost",
   "--attempts", // N independent attempts in separate worktrees (1-5)
+  "--max-time",
+  "--verify-max-time",
 ]);
 const ATTEMPTS_NOOP_BOOL_FLAGS = new Set(["--yes", "-y", "--no-plan", "--no-mirofish", "--no-dashboard", "--no-pr"]);
 
@@ -138,7 +143,7 @@ export interface ParsedStartOpts {
 }
 
 export const START_USAGE =
-  "usage: loki start <spec> [--max-iterations N] [--max-retries N] [--budget-limit USD]\n" +
+  "usage: loki start <spec> [--max-iterations N] [--max-retries N] [--budget-limit USD] [--max-time DUR] [--verify-max-time DUR]\n" +
   "                        [--provider claude|opencode] [--session-model small|medium|high|opus|sonnet|haiku]\n" +
   "                        [--completion-promise TEXT] [--base-wait S] [--max-wait S]\n" +
   "                        [--prd FILE | --brief TEXT] [--simple|--complex] [--allow-haiku]\n" +
@@ -159,6 +164,7 @@ export const START_USAGE =
   "  --spec FILE   run Loki 10 against an edited spec as the authoritative intent (a spec that does not parse exits 2 with the line)\n" +
   "  --budget-limit USD  per-run spend cap (default: none, with an API key or on a subscription; see docs/cost-controls.md)\n" +
   "  --max-time DUR      outer time limit the run finishes inside, sealing what is done (LOKI_RUN_DEADLINE_S): seconds, or 90m / 2h.\n" +
+  "  --verify-max-time DUR  time limit for one verify stage (LOKI_E10_VERIFY_MAX_S): seconds, or 90m / 2h. Default: none.\n" +
   "                      Default: none. With no limit the run stops when it is done or makes no progress, with a draft PR of what is done.\n" +
   "       loki start <spec> --attempts N [--no-pr] [--provider P] [--budget USD] [--session-model T]\n" +
   "  --attempts N  run N (1-5) independent Loki 10 engine attempts in separate git worktrees; the one with\n" +
@@ -246,6 +252,11 @@ export function parseStartArgs(
         continue;
       }
       if ((specMode ? SPEC_NOOP_BOOL_FLAGS : attemptsMode ? ATTEMPTS_NOOP_BOOL_FLAGS : NOOP_BOOL_FLAGS).has(name)) continue;
+      if (TIME_FLAGS[name]) { // NO-DEFAULT-BUDGET: no time limit is set by default; these set the user's own
+        const v = a.includes("=") ? a.slice(a.indexOf("=") + 1) : args[i + 1], sec = parseDurationS(v);
+        if (sec === null) { err(`start: ${name} needs a duration (seconds, or 90m / 2h), got '${v ?? ""}'\n`); return 2; }
+        applyEnv(TIME_FLAGS[name]!, String(sec)); if (!a.includes("=")) i++; continue;
+      }
       if (TEXT_VALUE_FLAGS.has(name)) {
         const inline = a.includes("=");
         const v = inline ? a.slice(a.indexOf("=") + 1) : args[i + 1];

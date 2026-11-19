@@ -23,6 +23,7 @@
 // DEFAULT OFF (LOKI_REPO_PROFILE). With the flag unset, profileFragment()
 // returns "" and nothing is read or written, so build_prompt parity is exact.
 
+import { armTimer, cmdSilenceS } from "../engine10/types.ts"; import { MAX_STDOUT_BYTES, readStreamCapped } from "../util/shell.ts";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -637,11 +638,14 @@ export type AsyncBaselineRunner = (cmd: string, cwd: string, timeoutMs: number) 
 export const asyncShellRunner = (signal?: AbortSignal): AsyncBaselineRunner => async (cmd, cwd, timeoutMs) => {
   const proc = Bun.spawn(["sh", "-c", cmd], { cwd, env: { ...plainTestEnv(), PYTHONDONTWRITEBYTECODE: "1", CI: "1" }, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
   let stopped = false; const kill = (): void => { try { process.kill(-proc.pid, "SIGKILL"); } catch { /* gone */ } }, stop = (): void => { stopped = true; kill(); };
-  const timer = setTimeout(stop, timeoutMs); if (signal?.aborted) stop(); else signal?.addEventListener("abort", stop, { once: true });
+  // NO-DEFAULT-BUDGET: a base run with no limit (Infinity) arms no timer (Bun fires one at once) and stops only after cmdSilenceS() with no output.
+  const timer = armTimer(stop, timeoutMs), open = !Number.isFinite(timeoutMs); let last = Date.now(); const touch = (): void => { last = Date.now(); };
+  const quiet = open ? setInterval(() => { if (Date.now() - last >= cmdSilenceS() * 1000) stop(); }, Math.min(30_000, Math.max(50, cmdSilenceS() * 250))) : undefined;
+  if (signal?.aborted) stop(); else signal?.addEventListener("abort", stop, { once: true });
   try {
-    const [o, e, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    const [o, e, code] = await Promise.all([open ? readStreamCapped(proc.stdout as ReadableStream<Uint8Array>, MAX_STDOUT_BYTES, undefined, touch) : new Response(proc.stdout).text(), open ? readStreamCapped(proc.stderr as ReadableStream<Uint8Array>, MAX_STDOUT_BYTES, undefined, touch) : new Response(proc.stderr).text(), proc.exited]);
     return { code: stopped ? null : code, timedOut: stopped, out: stripAnsi(`${o}\n${e}`).slice(-8 * 1024 * 1024), missing: code === 127 };
-  } finally { clearTimeout(timer); signal?.removeEventListener("abort", stop); kill(); }
+  } finally { timer.clear(); if (quiet) clearInterval(quiet); signal?.removeEventListener("abort", stop); kill(); }
 };
 /** FC-BASELINE-PER-PACKAGE: a baseline per full-suite command verify will run (`specs`: package_suite.ts fullSuiteSpecs, the one source), added to the
  *  profile ensureProfile wrote for this HEAD. An entry for the same command is reused unless `rerun` (a dependency install succeeded

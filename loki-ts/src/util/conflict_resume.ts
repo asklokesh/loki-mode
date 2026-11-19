@@ -1,6 +1,6 @@
 // FC-19: a LOKI_SPEC_CONFLICT from implement gets exactly one resume with a correction before it is believed. No wording of the model's reason is
 // inspected (L0): the model itself says whether its conflict was only about Loki's own rules or about the task.
-import { budgetsOn, noProgressRounds } from "../engine10/types.ts";
+import { defaultBudgetsOn, noProgressRounds } from "../engine10/types.ts";
 import { isOff } from "../council/role_agents.ts";
 import { consultCallFor, neverStopBrief } from "../features/opus_consult.ts";
 import { createHash } from "node:crypto";
@@ -153,9 +153,9 @@ export const continueMax = (env: NodeJS.ProcessEnv = process.env): number => {
   const v = (env["LOKI_E10_CONTINUE_MAX"] ?? "").trim().toLowerCase();
   if (isOff(v)) return 0;
   const n = Number(v);
-  return v !== "" && Number.isInteger(n) && n >= 0 ? Math.min(n, 10) : budgetsOn(env) ? CONTINUE_MAX_DEFAULT : Infinity; // NO-DEFAULT-BUDGET: no count; resumeToFinish ends on no tree progress
+  return v !== "" && Number.isInteger(n) && n >= 0 ? Math.min(n, 10) : defaultBudgetsOn(env) ? CONTINUE_MAX_DEFAULT : Infinity; // NO-DEFAULT-BUDGET: no count; resumeToFinish ends on no tree progress
 };
-export const continueMaxUsd = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_CONTINUE_MAX_USD"] ?? "").trim()); return (env["LOKI_E10_CONTINUE_MAX_USD"] ?? "").trim() !== "" && Number.isFinite(n) && n >= 0 ? n : budgetsOn(env) ? CONTINUE_MAX_USD_DEFAULT : Infinity; }; // NO-DEFAULT-BUDGET: no dollar line unless set
+export const continueMaxUsd = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_CONTINUE_MAX_USD"] ?? "").trim()); return (env["LOKI_E10_CONTINUE_MAX_USD"] ?? "").trim() !== "" && Number.isFinite(n) && n >= 0 ? n : defaultBudgetsOn(env) ? CONTINUE_MAX_USD_DEFAULT : Infinity; }; // NO-DEFAULT-BUDGET: no dollar line unless set
 /** S1b applies to this result: a claude session whose final text was read (finishLine is not undefined) and carries no finish line. */
 export const lacksFinishLine = (provider: string, s: SessionResult): boolean => provider === "claude" && s.markers.finishLine === null;
 /** What the reply itself listed as outstanding: its last non-empty lines, one line, clipped to 400 characters. */
@@ -349,7 +349,7 @@ export const coverageMaxTurns = (env = process.env): number | undefined => {
   const v = (env.LOKI_E10_COVERAGE_MAX_TURNS ?? "").trim();
   if (isOff(v)) return undefined;
   const n = Number(v);
-  return v !== "" && Number.isInteger(n) && n > 0 ? n : budgetsOn(env) ? COVERAGE_MAX_TURNS_DEFAULT : 0; // NO-DEFAULT-BUDGET: 0 = no turn cap
+  return v !== "" && Number.isInteger(n) && n > 0 ? n : defaultBudgetsOn(env) ? COVERAGE_MAX_TURNS_DEFAULT : 0; // NO-DEFAULT-BUDGET: 0 = no turn cap
 };
 
 // LOKI_E10_SITE_HINTS (default on, =0/off/false opts out): the edit-shape sites (sibling, residual, precedence) of the tree's diff as advisory text in the fix brief and the coverage turn. Never a verdict.

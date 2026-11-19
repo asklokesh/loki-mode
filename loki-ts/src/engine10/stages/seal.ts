@@ -249,6 +249,14 @@ export function secretPushRefusal(verify: Obj | undefined, runId: string): PushR
 }
 /** SECRET-PUSH: the one line a refused push prints (and the receipt's NOT PROVEN entry). */
 export const secretPushLine = (r: PushRefusal): string => `not pushed: the ${r.check} matched a secret at ${r.matches.join(", ")}; review it, then push by hand: ${r.command}`;
+/** LIMIT-NOT-FAILED (hm155462 on 11.158.0: both Loki arms sealed FAILED on a passing change because verify reached its 900 s limit): a verify Loki itself
+ *  stopped (its time limit or the run cap) never attributed its red tests to the change or to the base, so a failing pre-existing repo test (exogenous
+ *  provenance, a runner check) is unattributed: it holds the label at PARTIAL, never FAILED. A failing Wall, holdout, or test the run wrote or edited, and a
+ *  failing lint, typecheck or scan, are the change's own and stay FAILED. */
+export function unattributedRed(o: Partial<Record<StageName, Obj>>, c: Pick<ReceiptCheck, "name" | "provenance">): boolean {
+  const cut = o.verify?.stopped_at === "limit" || o.verify?.stopped_at === "cap", head = c.name.split(":")[0]!;
+  return cut && c.provenance === "exogenous" && c.name.includes(":") && !/^(lint|typecheck|holdout|select-tests|build|patch|turn)$/.test(head);
+}
 export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean, proof: boolean, targetProof = false, uncovered: string[] = [], leanGap: string[] = [], copyGap: string[] = [], clauseGap: string[] = []): Verdict {
   const exit = o.implement?.exit;
   // FC-16: no success verdict without a Loki-executed check with n>0 and a pass; otherwise PARTIAL (NOT PROVEN, "no tests executed").
@@ -259,7 +267,7 @@ export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptChe
   // FC-21b (1): a limit-killed implement is VERIFIED only when the harness itself ran every check green, a Wall or task-named test passed with n>0 (targetProof), and the limit was recorded.
   if (exit === "killed") return typeof o.implement?.limit_s === "number" && targetProof && uncovered.length === 0 && copyGap.length === 0 && clauseGap.length === 0 && proof && !wallGreenOnBase && !verifyNotProven && checks.length > 0 && checks.every((c) => c.result === "pass") ? "VERIFIED" : "PARTIAL";
   if (typeof o.implement?.limit_s === "number") return "PARTIAL"; // A1: a limit that did not kill the session (an error or a throw) is never a clean verdict
-  if (checks.some((c) => c.result === "fail")) return "FAILED";
+  if (checks.some((c) => c.result === "fail" && !unattributedRed(o, c))) return "FAILED";
   // E-98a B1: verify's own NOT PROVEN (e.g. a system interpreter) downgrades too -- never a silent VERIFIED.
   if (exit === "external" && !(Array.isArray(o.wall?.files) && o.wall.files.length > 0)) return "PARTIAL"; // FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED: an external diff has no watched implement session, so with no Wall file that ran it is never VERIFIED
   if (copyGap.length > 0 || clauseGap.length > 0) return "PARTIAL"; // FALSEVER-SEALCOPY: a Wall file whose sealed copy is missing or not the sealed bytes cannot be shown to be what ran; FALSEVER-CLAUSE: a spec acceptance clause no passing sealed Wall file proves (a marker plus an assertion) is likewise never VERIFIED

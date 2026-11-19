@@ -14,7 +14,7 @@ import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { avaTargets, guessRunner, isTestFile, mochaTargets } from "../testmap.ts"; import { coveredStem } from "../../util/test_file_text.ts"; import { comparableIds, errorsById, lineNamesChange, noiseOnlyErrors, sameErrors } from "../failures.ts"; export { errorsById, sameErrors } from "../failures.ts";
 import { failureLines, venvSkipNotes, goJsonStream, GO_JSON_KEEP, withoutStaleWall, failureExcerpt, EXCERPT_TOTAL_CAP, changedFiles, hiddenEdits, ignoreRuleChanges, classifyCheck, unmeasuredTail, corroboratePass, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount, SECURITY_SCAN, fileHashes, briefGroups, failureSignature } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
-import { budgetsOn, cmdSilenceS, type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
+import { defaultBudgetsOn, cmdSilenceS, type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, envChangedSince, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
 export const timeoutCarryOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TIMEOUT_CARRY"] ?? "").trim());
@@ -51,14 +51,14 @@ export function sameFailureLines(headOut: string, base: { ok: boolean; out: stri
  *  gets (LOKI_E10_SUITE_TIMEOUT_S overrides that maximum). 0 means the suite is not started. No deadline (a caller outside the machine): the maximum. */
 export const SUITE_MARGIN_MS = 5000;
 export function suiteTimeoutFor(deadlineMs: number | undefined, nowMs: number, env: NodeJS.ProcessEnv = process.env): number {
-  const v = Number((env["LOKI_E10_SUITE_TIMEOUT_S"] ?? "").trim()), max = Number.isFinite(v) && v >= 1 ? Math.floor(v * 1000) : budgetsOn(env) ? 300_000 : Infinity; // NO-DEFAULT-BUDGET: no limit unless set (shell.run's silence guard ends a silent suite)
+  const v = Number((env["LOKI_E10_SUITE_TIMEOUT_S"] ?? "").trim()), max = Number.isFinite(v) && v >= 1 ? Math.floor(v * 1000) : defaultBudgetsOn(env) ? 300_000 : Infinity; // NO-DEFAULT-BUDGET: no limit unless set (shell.run's silence guard ends a silent suite)
   if (deadlineMs === undefined) return max;
   const left = deadlineMs - nowMs - SUITE_MARGIN_MS;
   return left < 1000 ? 0 : Math.min(max, left);
 }
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** NO-DEFAULT-BUDGET: the per-check limit with budgets on; with none, a check has no time limit and stops only after cmdSilenceS() with no output. */
-const checkTimeoutMs = (): number => (budgetsOn() ? CHECK_TIMEOUT_MS : Infinity);
+const checkTimeoutMs = (): number => (defaultBudgetsOn() ? CHECK_TIMEOUT_MS : Infinity);
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
 interface ImplementOutput { exit?: ImplementExit; }
 /** wall.ts's full output isn't in the contract either; only the sealed file list, shaped like  Receipt["wall"].files, is needed here. */
@@ -241,7 +241,7 @@ export async function runCheck(
 export const verifyBatchOn = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_E10_VERIFY_BATCH"] !== "0";
 const BATCH_MIN = 2;
 const UNHANDLED_RE = /Unhandled (?:Errors?|Rejection)\b/;
-const batchTimeoutMs = (files: number): number => budgetsOn() ? Math.max(CHECK_TIMEOUT_MS, Math.min(300_000, files * 5_000)) : Infinity;
+const batchTimeoutMs = (files: number): number => defaultBudgetsOn() ? Math.max(CHECK_TIMEOUT_MS, Math.min(300_000, files * 5_000)) : Infinity;
 interface VitestAssertion { status?: unknown; title?: unknown; ancestorTitles?: unknown; failureMessages?: unknown }
 type FileRun = { ok: boolean; out: string };
 /** A plain per-file vitest command (check_result.ts runnerCmd): `npx --no-install vitest run <file>`; anything else (a repo test command) is never batched. */
