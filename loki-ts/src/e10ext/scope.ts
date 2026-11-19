@@ -94,8 +94,21 @@ function ownerOf(repoDir: string, f: string): { dir: string; name: string } | nu
     if (d === "." || d === "") return null;
   }
 }
-/** The staged test files to reset (see scopeTestDropEnabled). `tracked` lists the repo's tracked files (for "the package has source files"). */
-export function crossPackageTestEdits(repoDir: string, staged: Staged[], task: string, tracked: readonly string[]): string[] {
+/** F2 LOKI_E10_J3_KEEP (default on, =0 opts out): J3 never resets a test file when the reset would leave the change with no added or edited test file, when the test's
+ *  owner is the repository root (owner dir "."), or when the kept proof script (`proofText`, the run's loki-proof.sh) names it. The failure (C2 pw43305, 6 of 6 Loki
+ *  seeds): the run's only regression test, tests/playwright-test/esm.spec.ts (a root-owned test of a change in packages/playwright), was reset as "outside the change's
+ *  packages", so the pull request carried no test while every plain session shipped it; on oc58562 the dropped packages/ai test was the one the proof script ran.
+ *  The case J3 was built for still drops: a coverage test added in a neighbouring package while the change keeps a test of its own. */
+export const j3KeepEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_J3_KEEP"] ?? "").trim());
+/** The staged test files to reset (see scopeTestDropEnabled). `tracked` lists the repo's tracked files (for "the package has source files"); `proofText` is the kept proof script. */
+export function crossPackageTestEdits(repoDir: string, staged: Staged[], task: string, tracked: readonly string[], proofText = "", env: NodeJS.ProcessEnv = process.env): string[] {
+  const out = crossPackageCandidates(repoDir, staged, task, tracked, env);
+  if (!j3KeepEnabled(env) || out.length === 0) return out;
+  const kept = out.filter((f) => ownerOf(repoDir, f)?.dir !== "." && !(proofText && (mentions(proofText, f) || mentions(proofText, basename(f)))));
+  const tests = staged.filter(({ st, f }) => (st === "A" || st === "M") && !f.startsWith(".loki/") && isTestFile(f)).map(({ f }) => f);
+  return tests.every((f) => kept.includes(f)) ? [] : kept; // resetting every test the change has would leave it with none: keep them all
+}
+function crossPackageCandidates(repoDir: string, staged: Staged[], task: string, tracked: readonly string[], env: NodeJS.ProcessEnv): string[] {
   const live = staged.filter(({ st, f }) => (st === "A" || st === "M") && !f.startsWith(".loki/"));
   const src = live.filter(({ f }) => !isTestFile(f) && (f.endsWith(".go") || JS_EXT.test(f)));
   if (src.length === 0) return [];
@@ -106,7 +119,7 @@ export function crossPackageTestEdits(repoDir: string, staged: Staged[], task: s
     if (!isTestFile(f)) return false;
     const o = ownerOf(repoDir, f); if (!o || srcOwners.has(o.dir)) return false;
     if (mentions(task, f) || mentions(task, basename(f)) || (o.dir !== "." && (mentions(task, o.dir) || mentions(task, basename(o.dir)))) || mentions(task, o.name)) return false;
-    if (testReachEnabled() && exercisesChange(repoDir, f, src.map(({ f: s }) => s))) return false; // TK: it imports the changed code, so it is the change's own test
+    if (testReachEnabled(env) && exercisesChange(repoDir, f, src.map(({ f: s }) => s))) return false; // TK: it imports the changed code, so it is the change's own test
     return hasSource(o, f.endsWith(".go"));
   }).map(({ f }) => f);
 }

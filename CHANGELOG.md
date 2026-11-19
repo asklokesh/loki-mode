@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- The commit stage no longer drops the change's own test as "outside the change's packages" (`LOKI_E10_J3_KEEP`, on by default, `=0` restores the old drop). A test file is kept when dropping it would leave the change with no test, when it belongs to the repository root package, or when the run's kept proof script names it. On C2 pw43305 every Loki run lost its only regression test this way (tests/playwright-test/esm.spec.ts) while every plain session shipped it. A coverage test added to a neighbouring package next to a test of the change's own is still dropped.
 
 ## v11.165.0 (2026-11-19)
 

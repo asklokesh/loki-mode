@@ -321,6 +321,11 @@
 # 275. check_result.ts testCount: drop the PRETTY block (the PRETTY leg reads null).
 # 276. implement.ts: `guard = false && preTurn && ...` in the SR block (rebuild dist): the TG revert leg keeps the review turn's breaking test (TG).
 # 268. scope.ts crossPackageTestEdits: `if (false) return false;` in place of the TK exercisesChange line (the TK leg drops the e2e, relative-import and Go reach tests).
+# F2a. scope.ts crossPackageTestEdits: `true &&` in place of the root-owner test (the F2 leg drops tests/root.spec.ts).
+# F2b. scope.ts crossPackageTestEdits: `true` in place of the proof-names-it test (the F2 leg drops the proof-named packages/b test).
+# F2c. scope.ts crossPackageTestEdits: `return kept;` in place of the leave-no-test guard (the F2 leg drops the change's only test).
+# F2d. scope.ts crossPackageTestEdits: `return [];` (keep everything; the F2 leg no longer drops the neighbouring coverage test beside the change's own test).
+# F2e. seal.ts: drop the proof-script argument from the crossPackageTestEdits call (the F2 wiring check fails).
 # 281. mutation_proof.ts editableBaseEnv: `if (true || !mapped.length) return {};` (BASE-SEES-HEAD); the leg reads no with no file named.
 # 282. wall_snapshot.ts snapshotTree: drop the rebaseSnapshot call (BASE-SEES-HEAD); the leg reads link-into-live|pth-into-live.
 # 284. test_guard.ts excusedEdit: subjectOf returns `() => true` (any changed non-test file); the MOCK-PKG unrelated-file leg reads not weakened.
@@ -461,7 +466,7 @@ for f in packages/a/src/a.test.ts packages/b/src/b.test.ts pkg/y/y_test.go tests
 XPR="$(cd "$ROOT/loki-ts" && XP="$XP" bun -e '
 const sc = await import("./src/e10ext/scope.ts"), d = process.env.XP;
 const tracked = ["packages/a/src/a.ts", "packages/b/src/b.ts", "pkg/x/x.go", "pkg/y/y.go", "py/m.py", "packages/a/src/a.test.ts", "packages/b/src/b.test.ts", "pkg/y/y_test.go", "tests/t_test.go", "py/test_m.py", "package.json", "packages/a/package.json", "packages/b/package.json"];
-const M = (...fs) => fs.map((f) => ({ st: "M", f })), x = (staged, task = "fix the parser bug") => sc.crossPackageTestEdits(d, staged, task, tracked).join("+") || "-";
+const M = (...fs) => fs.map((f) => ({ st: "M", f })), x = (staged, task = "fix the parser bug") => sc.crossPackageTestEdits(d, staged, task, tracked, "", { LOKI_E10_J3_KEEP: "0" }).join("+") || "-";
 console.log([
   x(M("packages/a/src/a.ts", "packages/b/src/b.test.ts")),
   x(M("packages/a/src/a.ts", "packages/b/src/b.test.ts"), "fix the parser bug and cover packages/b"),
@@ -475,6 +480,25 @@ console.log([
   [sc.scopeTestDropEnabled({}), sc.scopeTestDropEnabled({ LOKI_E10_SCOPE_TEST_DROP: "0" })].join(),
 ].join(" | "));' 2>&1)"
 [ "$XPR" = "packages/b/src/b.test.ts | - | - | - | - | pkg/y/y_test.go | - | - | packages/b/src/new.test.ts | true,false" ] && ok "J3 scope: a test edit or new test in a package (JS workspace or Go directory) the change does not touch is dropped; the task naming the path or package, a test in the changed package, a test-only change, a Go tests-only directory and Python stay; =0 opts out ($XPR)" || bad "J3 scope gave: $XPR"
+# F2 LOKI_E10_J3_KEEP (default on): J3 never resets a test when that leaves the change with no test, when the test is owned by the repository root, or when the kept
+# proof script names it (C2 pw43305: tests/playwright-test/esm.spec.ts, root-owned, was the run's only test and was dropped). The neighbouring-package coverage test
+# beside a test of the change's own still drops (the planted-defect shape the plan names). The J3 cells above run with F2 off, so they keep testing the J3 rule itself.
+F2R="$(cd "$ROOT/loki-ts" && XP="$XP" bun -e '
+const sc = await import("./src/e10ext/scope.ts"), d = process.env.XP;
+const tracked = ["packages/a/src/a.ts", "packages/b/src/b.ts", "pkg/x/x.go", "pkg/y/y.go", "py/m.py", "packages/a/src/a.test.ts", "packages/b/src/b.test.ts", "pkg/y/y_test.go", "tests/t_test.go", "py/test_m.py", "package.json", "packages/a/package.json", "packages/b/package.json", "tests/root.spec.ts", "scripts/tool.ts"];
+const M = (...fs) => fs.map((f) => ({ st: "M", f })), x = (staged, proof = "", env = {}) => sc.crossPackageTestEdits(d, staged, "fix the parser bug", tracked, proof, env).join("+") || "-";
+console.log([
+  x(M("packages/a/src/a.ts", "packages/b/src/b.test.ts")),
+  x(M("packages/a/src/a.ts", "packages/a/src/a.test.ts", "packages/b/src/b.test.ts")),
+  x(M("pkg/x/x.go", "pkg/x/x_test.go", "pkg/y/y_test.go")),
+  x(M("packages/a/src/a.ts", "packages/a/src/a.test.ts", "tests/root.spec.ts")),
+  x(M("packages/a/src/a.ts", "packages/a/src/a.test.ts", "tests/root.spec.ts"), "", { LOKI_E10_J3_KEEP: "0" }),
+  x(M("packages/a/src/a.ts", "packages/a/src/a.test.ts", "packages/b/src/b.test.ts"), "cd \"$LOKI_REPO\" && bun test packages/b/src/b.test.ts"),
+  x(M("packages/a/src/a.ts", "packages/a/src/a.test.ts", "packages/b/src/b.test.ts"), "bun test packages/b/src/other.test.ts"),
+  x(M("packages/a/src/a.ts", "packages/b/src/b.test.ts"), "", { LOKI_E10_J3_KEEP: "0" }),
+  [sc.j3KeepEnabled({}), sc.j3KeepEnabled({ LOKI_E10_J3_KEEP: "0" })].join(),
+].join(" | "));' 2>&1)"
+[ "$F2R" = "- | packages/b/src/b.test.ts | pkg/y/y_test.go | - | tests/root.spec.ts | - | packages/b/src/b.test.ts | packages/b/src/b.test.ts | true,false" ] && ok "F2 J3 keep: the change's only test, a root-owned test and a test the proof script names are kept; a neighbouring-package test beside the change's own test still drops (JS and Go), a proof naming another file does not save it; =0 restores the drop ($F2R)" || bad "F2 J3 keep gave: $F2R"
 # TK LOKI_E10_TEST_REACH: layouts unlike the tuning set. A test that imports the changed code is never dropped by J3: a JS tests workspace importing the changed package by
 # name, a relative import into the changed file, a Go package importing the changed package path. Python src-layout and a Rust tests/ dir are never J3 candidates.
 TK="$T/reach"; rm -rf "$TK"; mkdir -p "$TK/packages/a/src" "$TK/packages/e2e/src" "$TK/packages/b/src" "$TK/pkg/x" "$TK/pkg/y" "$TK/src/pkg" "$TK/tests" "$TK/rs/src" "$TK/rs/tests"
@@ -490,7 +514,7 @@ printf 'from pkg.mod import f\n' > "$TK/tests/test_mod.py"; printf 'use rs::x;\n
 TKR="$(cd "$ROOT/loki-ts" && TK="$TK" bun -e '
 const sc = await import("./src/e10ext/scope.ts"), d = process.env.TK;
 const tracked = ["packages/a/src/a.ts", "packages/e2e/src/util.ts", "packages/b/src/b.ts", "pkg/x/x.go", "pkg/y/y.go", "src/pkg/mod.py", "rs/src/lib.rs", "package.json", "packages/a/package.json", "packages/e2e/package.json", "packages/b/package.json", "go.mod"];
-const S = (src, test) => [{ st: "M", f: src }, { st: "A", f: test }], x = (staged) => sc.crossPackageTestEdits(d, staged, "fix the parser bug", tracked).join("+") || "-";
+const S = (src, test) => [{ st: "M", f: src }, { st: "A", f: test }], x = (staged) => sc.crossPackageTestEdits(d, staged, "fix the parser bug", tracked, "", { ...process.env, LOKI_E10_J3_KEEP: "0" }).join("+") || "-";
 const off = (f) => { process.env.LOKI_E10_TEST_REACH = "0"; try { return f(); } finally { delete process.env.LOKI_E10_TEST_REACH; } };
 console.log([
   x(S("packages/a/src/a.ts", "packages/e2e/src/a.test.ts")),
@@ -521,13 +545,14 @@ printf 'import { deep } from "./deep";\ntest("c", () => {});\n' > "$RH/tests/pag
 RHR="$(cd "$ROOT/loki-ts" && RH="$RH" bun -e '
 const sc = await import("./src/e10ext/scope.ts"), d = process.env.RH;
 const tracked = ["package.json", "packages/core/package.json", "packages/core/src/page.ts", "scripts/tool.ts", "tests/config/utils.ts", "tests/page/fixture.ts", "tests/page/deep.ts", "tests/page/deeper.ts", "tests/page/a.spec.ts", "tests/page/b.spec.ts", "tests/page/c.spec.ts"];
-const x = (test) => sc.crossPackageTestEdits(d, [{ st: "M", f: "packages/core/src/page.ts" }, { st: "M", f: test }], "aria snapshots time out on svg documents", tracked).join("+") || "-";
+const x = (test) => sc.crossPackageTestEdits(d, [{ st: "M", f: "packages/core/src/page.ts" }, { st: "M", f: test }], "aria snapshots time out on svg documents", tracked, "", { ...process.env, LOKI_E10_J3_KEEP: "0" }).join("+") || "-";
 const off = (f) => { process.env.LOKI_E10_TEST_REACH_HELPERS = "0"; try { return f(); } finally { delete process.env.LOKI_E10_TEST_REACH_HELPERS; } };
 console.log([x("tests/page/a.spec.ts"), x("tests/page/b.spec.ts"), x("tests/page/c.spec.ts"), off(() => x("tests/page/a.spec.ts"))].join(" | "));' 2>&1)"
 [ "$RHR" = "- | tests/page/b.spec.ts | tests/page/c.spec.ts | tests/page/a.spec.ts" ] && ok "RW-02 J3 keeps an edited test whose own helper imports the changed package (one hop); a test with no such helper and a two-hop reach are still dropped; =0 restores the drop ($RHR)" || bad "RW-02 J3 helper reach gave: $RHR"
 # ---- end RW-02 ----
 SJ3="$ROOT/loki-ts/src/engine10/stages/seal.ts"
 grep -q 'const xpkg = scopeTestDropEnabled() ? crossPackageTestEdits(ctx.repoDir, staged.filter' "$SJ3" && grep -q 'const dropped = new Set(\[...drop.map(({ f }) => f), ...xpkg\])' "$SJ3" && grep -q 'const notes = \[...xpkg.map(crossPackageTestNote),' "$SJ3" && ok "J3 wiring: the commit stage resets the cross-package test edits before commit, keeps them out of the formatter pass and names each one" || bad "J3 wiring: the commit stage does not reset and name the cross-package test edits"
+grep -q 'out.split("\\0").filter(Boolean), (() => { try { return readFileSync(join(ctx.runDir, PROOF_SCRIPT), "utf8"); } catch { return ""; } })()) : \[\]; // F2' "$SJ3" && ok "F2 wiring: the commit stage passes the kept proof script (runDir loki-proof.sh) to J3" || bad "F2 wiring: J3 is not given the kept proof script"
 
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_TEST_EDIT=delete LOKI_EXOGENOUS_PROOF=0 # proof opt-out: the deleted assertion alone must cap, not the agent-only-proof rule
 git -C "$REPO" show HEAD:calc.test.ts 2>/dev/null | grep -q 'calc.add(2, 3)' && bad "delete: the deleted assertion came back" || ok "delete: the session's deletion of an assertion is kept, not restored"
