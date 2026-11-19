@@ -453,7 +453,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const wallPub0 = wp.files.length > 0 ? await publishWall(g(ctx), ctx.runId, ctx.repoDir, wp.files, wallDone) : false; if (wp.files.length > 0 && !wallPub0) notProven.add("Wall tests not published (child commit failed or committed bytes differ from the sealed copy)");
     // #238: the Wall proof counts only at the committed path: re-run each published file where the tree holds it, with the runner that owns it. A failure there is NOT PROVEN, named by path, and the verdict is PARTIAL.
     const reproved = wallPub0 ? new RealBaseTestRunner().runEach(ctx.repoDir, wp.files.map((f) => ({ runner: f.runner as RunnerName, path: f.rel })), 2, true) : null, reprovedBad = reproved ? (await reproved).flatMap((r, i) => (r.pass === 1 ? [] : [wp.files[i]!.rel])) : [];
-    for (const rel of reprovedBad) notProven.add(`Wall test fails at its committed path: ${rel}`);
+    for (const rel of reprovedBad) { notProven.add(`Wall test fails at its committed path: ${rel}`); reasons.push({ kind: "Wall test fails at its committed path", detail: rel }); } // held_by names this hold too: it is the one publish adds
     if (reprovedBad.length > 0 && !wallDone) { await g(ctx)(["update-ref", "HEAD", "HEAD^"]); await g(ctx)(["read-tree", "HEAD"]); } // drop the child: nothing unproven is published
     const wallPub = wallPub0 && reprovedBad.length === 0, verdict: Verdict = reprovedBad.length > 0 ? "PARTIAL" : verdict3;
     { const sx = o.implement?.sysedit as Obj | undefined, sites = (Array.isArray(sx?.rewrites) ? (sx!.rewrites as Obj[]) : []).map((r) => `${String(r.file)}:${String(r.line)}`); if (sites.length) notProven.add(`completed by rule, no model (LOKI_E10_SYSEDIT; a failing check now passes): ${sites.join(", ")}`); } // a disclosure of lines the run did not write itself, never an input to the verdict
@@ -554,6 +554,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
       wall: { files: wallFiles.map((f) => ({ path: String(f.path), sha256: String(f.sha256) })), passed: wallPassed, ...(typeof o.wall?.manifest_sha256 === "string" && /^[0-9a-f]{64}$/.test(o.wall.manifest_sha256) ? { manifest_sha256: o.wall.manifest_sha256 } : {}) },
       checks,
       not_proven: [],
+      ...(verdict !== "VERIFIED" && reasons.length ? { held_by: reasons.map((r) => ({ kind: r.kind, detail: r.detail })) } : {}), // F0: the structured holds that kept the verdict below VERIFIED, as evaluateSeal computed them (absent on a VERIFIED receipt)
       verdict, ...(patchReceipt(o.implement?.patch) ? { patch: patchReceipt(o.implement?.patch)! } : {}), ...(sessionCaps(o).length ? { session_caps: sessionCaps(o) } : {}), ...(typeof o.implement?.limit_s === "number" ? { implement_limit: { limit_s: o.implement.limit_s, elapsed_s: typeof o.implement.elapsed_s === "number" ? o.implement.elapsed_s : 0, ...(o.implement.stop_cause === "max_turns" ? { stop_cause: "max_turns" as const, owner: "harness" as const } : {}) } } : {}), ...(grp.section ? { group: grp.section } : {}), ...(ctx.failovers && ctx.failovers().length > 0 ? { failover: ctx.failovers() } : {}),
       ...(str(o.implement?.spec_conflict_reason) !== null
         ? { spec_conflict_reason: sanitizeReason(str(o.implement?.spec_conflict_reason)!) }

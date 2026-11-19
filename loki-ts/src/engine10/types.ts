@@ -226,7 +226,7 @@ export interface Receipt {
   models_by_role?: Partial<Record<import("../util/claude_model.ts").Role, string[]>>; tool_calls_skipped?: { call: string; reason: string }[]; fable_raw_api?: string; // ROLE-MODELS: present only when a role is set: the model each role started, in call order
   implement?: { exit: "external"; patch_sha256: string }; // CW-12 B3: present only when no Loki session wrote the code; the receipt names no implementing model
   push_refused?: PushRefusal; // SECRET-PUSH: the security scan matched a secret in an added line, so the run's work must not leave the machine unreviewed
-  not_proven: string[]; not_applicable?: string[]; // FC-SEAL-NA-AS-UNPROVEN: informational notes (package without tests, no app to boot, not selected by risk tier); never part of any verdict
+  not_proven: string[]; not_applicable?: string[]; held_by?: { kind: string; detail: string }[]; // F0: seal's reasons, present only below VERIFIED; // FC-SEAL-NA-AS-UNPROVEN: informational notes (package without tests, no app to boot, not selected by risk tier); never part of any verdict
   unit_spec?: { sha256: string }; // #317b: present only for a unit run; the sha256 of its canonical spec (id, items, acceptance, writeSet, base)
   spec?: { path: string; sha256: string }; triage?: { class: "implement" | "spec" | "human"; reason: string }; intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[]; // P12-02 (omitted when none); SPEC-FIRST-INTENT: present only when a user spec file drove the run
   seeded_corpus?: import("../util/run_outputs.ts").SeededCorpus; /* TEN-GATES-15 */ supply?: import("../supply/supply_guard.ts").SupplyBlock; // T10: present only when the guard found newly added dependencies

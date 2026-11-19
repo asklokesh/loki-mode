@@ -23,6 +23,7 @@
 #   P6 review_queue.ts judgePassport: trust the envelope's embedded key instead of --pubkey; PR 7 turns READY.
 #   P7 review_queue.ts assess: pass process.env to classifyRisk; PR 3 is no longer high (the test exports LOKI_RISK_TIER=low).
 #   P8 autonomy/loki _merge_pr_gated: replace the receipt head_sha filter with `true`; the stale-head leg merges.
+#   H1 seal.ts: leave the "check fails" kind out of held_by; the F0 held_by leg fails (fails [] vs [...]).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -274,5 +275,33 @@ grep -q "^pr merge" "$GH_LOG" && bad "merge gate: merged a PR head with no recei
 out="$(gate "$PP/bad" "$HEAD_SHA")"
 has "merge gate: a PARTIAL run receipt is refused as a verdict" "$out" "gate: verdict"
 grep -q "^pr merge" "$GH_LOG" && bad "merge gate: merged a PARTIAL run" || ok "merge gate: no gh pr merge for a PARTIAL run"
+
+
+# --- F0 held_by: seal's reasons (the holds that keep the verdict below VERIFIED) are written into the receipt as held_by; a VERIFIED receipt has none ---
+# Two engine runs on the stub provider: "wrong" (multiply() adds, calc.test.ts fails, no fix lands) and "done" (VERIFIED).
+FIX="$ROOT/tests/min/fixtures/e2e"
+hb_run() { # hb_run <name> <mode> -> prints the run's receipt path
+    local d="$T/hb-$1"; mkdir -p "$d"; cp -R "$FIX/repo" "$d/repo"
+    git -C "$d/repo" init -q -b main; git -C "$d/repo" config user.name e2e; git -C "$d/repo" config user.email e2e@example.invalid
+    git -C "$d/repo" add calc.ts calc.test.ts bunfig.toml; git -C "$d/repo" commit -q -m base
+    (cd "$d/repo" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$FIX/bin:$PATH" \
+        E2E_STUB_MODE="$2" E2E_STUB_LOG="$d/stub.log" LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" bash "$ROOT/bin/loki" "add a multiply(a, b) function to calc.ts" --no-pr >"$d/out" 2>&1)
+    ls "$d"/repo/.loki/runs/*/receipt.json 2>/dev/null | head -1
+}
+HBW="$(hb_run wrong wrong)"; HBD="$(hb_run done done)"
+HB="$(python3 -I - "$HBW" "$HBD" <<'PY'
+import json, sys
+def load(p):
+    try: return json.load(open(p))
+    except Exception: return None
+w, d = load(sys.argv[1]), load(sys.argv[2])
+if not w or not d: print("no receipt: wrong=%s done=%s" % (bool(w), bool(d))); sys.exit()
+hb = w.get("held_by")
+failing = sorted(c["name"] for c in w.get("checks", []) if c.get("result") == "fail")
+held_fail = sorted(h["detail"] for h in (hb or []) if h.get("kind") == "check fails")
+print("|".join([w["verdict"], "list" if isinstance(hb, list) and hb and all(set(h) == {"kind", "detail"} for h in hb) else "none", "fails-match" if failing and held_fail == failing else "fails %s vs %s" % (held_fail, failing), d["verdict"], "absent" if "held_by" not in d else "present"]))
+PY
+)"
+case "$HB" in "FAILED|list|fails-match|VERIFIED|absent"|"PARTIAL|list|fails-match|VERIFIED|absent") ok "F0 held_by: a run held below VERIFIED by a failing check carries held_by [{kind, detail}] with one 'check fails' entry per failing check in the receipt; a VERIFIED receipt has no held_by" ;; *) bad "F0 held_by gave: $HB" ;; esac
 
 finish
