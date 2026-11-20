@@ -96,7 +96,8 @@
 #  49. config_env(): drop LOKI_WORKED_EXAMPLE from the -learn suffix; the lap-2 injected-example check must fail.
 #  50. calibration_patch(): copy the solution for nofix too; calibration U2 nofix must fail.
 #  51. calibration_patch(): skip the plant line; calibration U2 plant and U3 plant must fail.
-#  52. run_one(): keep hidden_leaks for calibration configs; calibration U3 must fail (leaked files recorded).
+#  52. run_one(): keep hidden_leaks for calibration configs. NOT detectable by U3: the engine returns the checkout to main before the leak check, so
+#      hidden_leaks finds nothing either way; the calibration guard line stays as a defensive line (VERIFY-PLAN V1 P3).
 #  53. stub apply mode: apply nothing; calibration U3 merged must fail (FAILED, applied False).
 #  54. calibration_stats(): count STAND_IN_KINDS in good_holds; calibration U1 holds must fail.
 #  55. loki_metrics(): drop held_by; calibration U3 must fail (held False).
