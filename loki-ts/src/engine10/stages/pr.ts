@@ -13,7 +13,7 @@ import { intentSection } from "../../util/intent_card.ts";
 import { specPrLine } from "../../util/spec_file.ts"; import { triagePrLine } from "../../features/triage.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
 import { type PrScope, prScope, prScopeLine, prTargetRef } from "../../util/base_guard.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { collapseNotProven, pushErrLine } from "../../util/term_width.ts";
+import { diffAgainstBase, safeGit } from "../../util/safe_git.ts"; import { collapseNotProven, pushErrLine } from "../../util/term_width.ts";
 import { parseSliceHead, sealAccuracyOfFile, stackBase, stackSection } from "../../util/run_outputs.ts"; import { publishFallback } from "../../util/engine_origin.ts";
 import { postReceiptComment, renderReceiptComment } from "../../util/receipt_surface.ts";
 import { buildPassport } from "../../util/receipt_bundle.ts";
@@ -211,6 +211,10 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const draft = verdict !== "VERIFIED" || capHit || process.env.LOKI_PR_DRAFT === "1" || (ctx as PrContext).draft === true; // MASS-1: `loki issues run --draft` asks for drafts only; it never un-drafts
   const base = stackBase(process.env);
   if (base === null) return { status: "failed", data: {}, reason: "LOKI_PR_BASE is not a valid branch name: refusing to push" };
+  { // EMPTY-PUSH: never push a branch that changes nothing against the run's base (FireLater#24 on 11.162.0 pushed one, then gh pr create failed); unknown goes on
+    const b0 = (ctx.outputs().intake as { base_sha?: unknown } | undefined)?.base_sha, runBase = typeof b0 === "string" && /^[0-9a-f]{40,64}$/.test(b0) ? b0 : typeof ctx.baseSha === "string" && /^[0-9a-f]{40,64}$/.test(ctx.baseSha) ? ctx.baseSha : null;
+    if (runBase && diffAgainstBase(ctx.repoDir, runBase, `refs/heads/${ctx.branch}`) === false) return { status: "skipped", data: {}, reason: `nothing to push: ${ctx.branch} has no change against the base ${runBase.slice(0, 12)}` };
+  }
   mkdirSync(ctx.runDir, { recursive: true });
   const link = issueLink(ctx.runDir, verdict);
   const bodyFile = join(ctx.runDir, "pr-body.md");

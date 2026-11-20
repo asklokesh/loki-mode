@@ -3,7 +3,7 @@ import { cleanupScratchRecord, cleanupStaleScratches, readExitCleanup } from "..
 import { routeStartLine } from "../runner/router/route_block.ts";
 import { execFileSync, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
-import { redactEventData } from "../util/redact.ts"; import { deadlineCapS, localBranchNote, parseDurationS, resolveRunCapS, TIME_FLAGS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
+import { diffAgainstBase } from "../util/safe_git.ts"; import { redactEventData } from "../util/redact.ts"; import { deadlineCapS, localBranchNote, parseDurationS, resolveRunCapS, TIME_FLAGS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
 import { terminalWidth } from "../util/term_width.ts"; import { ROLE_FLAG_ENV } from "../util/claude_model.ts";
 import { diffStat, runHead, formatRunSummary, handoffSection, readRiskSummary, writeHandoff, withNextLine, withFoldLine, withRiskLine, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT, RISKTIER
 import { commitUnsealedWork, deepAfterPr, deliverAsDraft, guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
@@ -263,9 +263,11 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     const stages = fold(readEvents(log.path)).stages; // A-104c: a failed commit stage already chose what to exclude (Wall files, lockfiles, pre-run dirt); a blanket `add -A` would undo it
     const baseE = stages["intake"], base = validBase(baseE?.type === "stage.completed" ? baseE.data.base_sha : null); // D50-F4b: a worker-written base is never an option or ref
     if (verdict === "FAILED" && stages["commit"]?.type !== "stage.failed") { const why = guardedBackstop(intact, opts.repoDir, workerEnv, opts.runId, base, baseE?.type === "stage.completed" ? baseE.data.preexisting_dirty : undefined, baseE?.type === "stage.completed" ? baseE.data.install_created : undefined, baseE?.type === "stage.completed" ? baseE.data.preexisting_untracked_blobs : undefined, baseE?.type === "stage.completed" && typeof baseE.data.task === "string" ? baseE.data.task : undefined); if (why) notProven.push(why); } // no completed intake = no run branch: repoDir is still the user's own branch, never `add -A` there
-    if (base === null && verdict !== "FAILED") hasDiff = true; else try { // no recorded base: nothing to compare, keep the pre-P1 behaviour; otherwise // net diff against base (a revert commit can leave HEAD past base with nothing to publish); any failure counts as a diff
-      safeGit(opts.repoDir, ["diff", "--quiet", String(base), "HEAD", "--", ".", ":(exclude).loki"], { env: workerEnv, stdio: "ignore" });
-    } catch { hasDiff = base !== null; }
+    if (base === null && verdict !== "FAILED") hasDiff = true; else if (base !== null) { // no recorded base: nothing to compare, keep the pre-P1 behaviour; otherwise the net diff against base (a revert commit can leave HEAD past base with nothing to publish)
+      const ch = diffAgainstBase(opts.repoDir, base, "HEAD", workerEnv); // EMPTY-PUSH: tri-state; a hardened call that fails falls back to plain git before anything counts as unknown
+      hasDiff = ch !== false; // unknown still counts as a diff (work is never kept back silently); pr.ts runPr re-checks the branch itself and never pushes one equal to base
+      if (ch === null) process.stderr.write(`engine10: run ${opts.runId}: could not compare HEAD with the base ${base.slice(0, 12)}; treating it as changed\n`);
+    }
   }
   // FAILED-PR: a FAILED run with a sealed receipt and committed work opens a labelled DRAFT PR ("[FAILED: <check>]", the failing checks first), so committed work is never kept silently local.
   // SECRET-PUSH: the one exception is a security scan secret match (stages/seal.ts secretPushRefusal): that change must not leave the machine before a review, whatever the verdict.

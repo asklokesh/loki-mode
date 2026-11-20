@@ -365,3 +365,14 @@ export function treeDiffStat(repoDir: string, a: string | null, b: string | null
     return paths.length === 0 ? null : { files: paths.length, added: paths.reduce((n, p) => n + p.added, 0), removed: paths.reduce((n, p) => n + p.removed, 0), paths };
   } catch { return null; }
 }
+
+/** EMPTY-PUSH (FireLater#24 on 11.162.0: an already-done run pushed loki/<id> at the base commit to GitHub and only `gh pr create` failed): does `ref` change
+ *  anything against `base` outside .loki? true / false, or null when it cannot be told. A commit-to-commit `diff --quiet` reads no work tree, so the fallback
+ *  (used only when the hardened call itself fails, e.g. a repo config it cannot enumerate) runs plain git with fsmonitor, hooks, external diff and textconv off. */
+export function diffAgainstBase(repoDir: string, base: string, ref: string, env: NodeJS.ProcessEnv = process.env): boolean | null {
+  const args = ["diff", "--quiet", "--no-ext-diff", "--no-textconv", base, ref, "--", ".", ":(exclude).loki"];
+  const r = safeGitSpawn(repoDir, args, { env, stdio: "ignore", timeout: 30_000 });
+  if (!r.error && (r.status === 0 || r.status === 1)) return r.status === 1;
+  const plain = spawnSync("git", ["-C", repoDir, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", ...args], { env: tokenFreeEnv(env), stdio: "ignore", timeout: 30_000 });
+  return !plain.error && (plain.status === 0 || plain.status === 1) ? plain.status === 1 : null;
+}

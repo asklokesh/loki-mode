@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Loki never pushes a branch that changes nothing against the run's base. The PR step now checks the run branch itself and skips with "nothing to push" when it equals the base. The supervisor's no-diff gate uses the same three-way check (changed, unchanged, unknown) with a plain-git fallback, instead of counting any failed comparison as a change. On FireLater#24 (11.162.0) an already-done run pushed loki/<id> at the base commit to GitHub and only `gh pr create` failed.
 
 ## v11.167.0 (2026-11-20)
 

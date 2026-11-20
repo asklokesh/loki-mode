@@ -263,6 +263,28 @@ awe() { python3 -I -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.ar
 [ "$(awe card_line)" = "Proof: yes, calc.test.ts fails on your code and passes after the change | Proof: no (the new tests also pass on your old code, so they do not show the fix) | Proof: not run (inconclusive: timeout) | Proof: not run (the fail-then-pass proof runs only on a VERIFIED run) | Proof: not run (no trusted receipt was sealed)" ] && ok "awe proof card, one line (D48 default): yes names the proving test; no and not run say why" || bad "awe proof card line: got $(awe card_line)"
 [ "$(awe pr_no_model_cmp)" = "true,false" ] && ok "PR body (runPr, VERIFIED): no model-tier or model-comparison text, no 'opus' (Loki's own cost only)" || bad "PR body model comparison: got $(awe pr_no_model_cmp)"
 [ "$(awe pr_off)" = "true,false,true" ] && ok "awe PR body off: LOKI_AWE_LIVE_COST=0 is the old body; LOKI_AWE_PROOF_CARD=0 drops only the proof section" || bad "awe PR body off: got $(awe pr_off)"
+# EMPTY-PUSH (FireLater#24 on 11.162.0: an already-done run pushed loki/<id> at the base commit and only gh pr create failed). runPr never spawns the push
+# script for a branch equal to the run's base; a branch with a commit still reaches it. diffAgainstBase is tri-state: changed, unchanged, unknown (a bad ref).
+# The supervisor's P1 gate uses the same helper instead of a bare safeGit call whose throw counted as a diff.
+# Plants: EPa pr.ts drop the `=== false) return { status: "skipped"` guard (the empty branch reaches the push script); EPb safe_git.ts diffAgainstBase
+# `return r.status === 0;` in place of `return r.status === 1;` (unchanged reads changed); EPc supervisor.ts back to the bare safeGit diff (the wiring check fails).
+git -C "$AWR" branch -q loki/e10-empty "$AWB"; git -C "$AWR" stash -q -u; git -C "$AWR" checkout -q -b loki/e10-full; printf 'export const more = 2;\n' > "$AWR/more.ts"; git -C "$AWR" add more.ts; git -C "$AWR" commit -q -m full; git -C "$AWR" checkout -q main; git -C "$AWR" stash pop -q
+cat > "$T/emptypush.ts" <<'TS'
+const SRC = process.env.EP_SRC!, [repo, base, dir] = process.argv.slice(2);
+const { runPr } = await import(`${SRC}/engine10/stages/pr.ts`), { diffAgainstBase } = await import(`${SRC}/util/safe_git.ts`);
+const { writeFileSync, existsSync, chmodSync, mkdirSync } = await import("node:fs");
+mkdirSync(dir, { recursive: true }); const fake = `${dir}/push.sh`, mark = `${dir}/pushed`; writeFileSync(fake, `#!/bin/sh\necho "$@" >> "${mark}"\nexit 1\n`); chmodSync(fake, 0o755);
+const run = async (branch: string) => (await runPr({ runId: "e10-ep", repoDir: repo, runDir: `${dir}/run-${branch.replace(/\W/g, "")}`, baseSha: base, branch, provider: "claude", model: "sonnet", deep: false, capS: 0, pinnedOrigin: "https://github.com/acme/calc.git", emit: () => {}, outputs: () => ({ seal: { verdict: "PARTIAL", not_proven: [], receipt_path: null, receipt_sha256: null }, intake: { task: "t", base_sha: base }, verify: { changed_files: [] } }) } as never, new AbortController().signal, { pushScriptPath: fake, gitlabPushScriptPath: fake }).catch((e: unknown) => ({ status: "threw", reason: String(e) }))) as { status: string; reason?: string };
+const empty = await run("loki/e10-empty"), pushedAfterEmpty = existsSync(mark), full = await run("loki/e10-full");
+console.log(JSON.stringify({ empty: [empty.status, /nothing to push/.test(empty.reason ?? ""), pushedAfterEmpty].join(","), full: [full.status !== "skipped", existsSync(mark)].join(","),
+  tri: [diffAgainstBase(repo, base, "refs/heads/loki/e10-empty"), diffAgainstBase(repo, base, "refs/heads/loki/e10-full"), diffAgainstBase(repo, base, "refs/heads/no-such-branch")].map(String).join(",") }));
+TS
+EP="$(cd "$ROOT/loki-ts" && EP_SRC="$ROOT/loki-ts/src" bun "$T/emptypush.ts" "$AWR" "$AWB" "$T/emptypush" 2>&1 | tail -1)"
+epv() { python3 -I -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2]))' "$EP" "$1" 2>/dev/null; }
+[ "$(epv empty)" = "skipped,true,false" ] && ok "EMPTY-PUSH runPr: a branch equal to the run's base is skipped ('nothing to push') and the push script is never spawned" || bad "EMPTY-PUSH empty branch: got $(epv empty) ($EP)"
+[ "$(epv full)" = "true,true" ] && ok "EMPTY-PUSH runPr: a branch with a commit still reaches the push script" || bad "EMPTY-PUSH full branch: got $(epv full) ($EP)"
+[ "$(epv tri)" = "false,true,null" ] && ok "EMPTY-PUSH diffAgainstBase: unchanged, changed, and unknown for a ref git cannot read" || bad "EMPTY-PUSH diffAgainstBase: got $(epv tri) ($EP)"
+grep -q 'const ch = diffAgainstBase(opts.repoDir, base, "HEAD", workerEnv);' "$ROOT/loki-ts/src/engine10/supervisor.ts" && grep -q 'hasDiff = ch !== false;' "$ROOT/loki-ts/src/engine10/supervisor.ts" && ! grep -q 'any failure counts as a diff' "$ROOT/loki-ts/src/engine10/supervisor.ts" && ok "EMPTY-PUSH wiring: the supervisor's P1 gate uses the tri-state helper" || bad "EMPTY-PUSH wiring: the supervisor's P1 gate does not use diffAgainstBase"
 
 echo "TEST: engine10 end to end on the stub provider"
 
