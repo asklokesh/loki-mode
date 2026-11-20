@@ -4815,4 +4815,75 @@ while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
 
+# ---------------------------------------------------------------- VERIFY-PLAN V5 STRUCTURED-RESULTS (LOKI_E10_STRUCTURED_RESULTS, off by default; observe never moves the label).
+# A per-file pytest, bun, vitest or jest check also writes the runner's own report; verify compares it with the text parse. Planted defects (each reverted):
+#   V5-1. util/test_report.ts reportArgs: return null for bun: T1 bun cell and T4 agree cell fail.
+#   V5-2. readReport junit: count skipped as run: T2 fails.
+#   V5-3. stages/verify.ts runCheck: build cmdStr from the extended args: T4 cmd cell fails.
+#   V5-4. runCheck: never remove the report dir: T4 cleanup cell fails.
+#   V5-5. test_report.ts structuredResultsMode: default observe: T4 unset cell fails.
+#   V5-6. runCheck: drop the fallback: T5 reads fail.
+#   V5-7. runCheck: the fallback runs once without the flaky retry: T5b reads fail.
+#   V5-8. runCheck: the fallback fires on a cut run: T5c counter reads 2.
+cat > "$T/v5.ts" <<'TS'
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, chmodSync, existsSync } from "node:fs";
+import { join } from "node:path";
+const root = process.argv[2]!, base = process.argv[3]!;
+const tr = await import(root + "/loki-ts/src/util/test_report.ts"), vf = await import(root + "/loki-ts/src/engine10/stages/verify.ts");
+const res = (name: string, pass: boolean, got?: unknown) => console.log((pass ? "OK " : "NO ") + name + (pass || got === undefined ? "" : ` (got ${JSON.stringify(got)})`));
+const F = "/r/report.xml";
+res("V5 T1 reportArgs: pytest gets --junitxml with xunit1", JSON.stringify(tr.reportArgs("python3", ["-m", "pytest", "-q", "t.py"], F)) === JSON.stringify(["--junitxml=" + F, "-o", "junit_family=xunit1"]));
+res("V5 T1 reportArgs: bun test gets the junit reporter and its outfile", JSON.stringify(tr.reportArgs("bun", ["test", "a.test.ts"], F)) === JSON.stringify(["--reporter=junit", "--reporter-outfile=" + F]));
+res("V5 T1 reportArgs: vitest run gets default plus junit with outputFile.junit", JSON.stringify(tr.reportArgs("npx", ["--no-install", "vitest", "run", "a.test.ts"], F)) === JSON.stringify(["--reporter=default", "--reporter=junit", "--outputFile.junit=" + F]));
+res("V5 T1 reportArgs: jest gets --json and --outputFile", JSON.stringify(tr.reportArgs("npx", ["--no-install", "jest", "a.test.ts"], F)) === JSON.stringify(["--json", "--outputFile=" + F]));
+res("V5 T1 reportArgs: go test -json, bash -c and python -m unittest get none", tr.reportArgs("go", ["test", "-json", "./x"], F) === null && tr.reportArgs("bash", ["-c", "x"], F) === null && tr.reportArgs("python3", ["-m", "unittest", "t.py"], F) === null);
+const d = mkdtempSync(join(base, "v5-"));
+const w = (n: string, t: string) => { const p = join(d, n); writeFileSync(p, t); return p; };
+const x1 = w("x1.xml", '<?xml version="1.0"?><testsuites><testsuite name="pytest" tests="3"><testcase classname="tests.test_x.TestC" name="test_y" file="tests/test_x.py" time="0"><failure message="boom">x</failure></testcase><testcase classname="tests.test_x" name="test_ok" file="tests/test_x.py"/><testcase classname="tests.test_x" name="test_skip" file="tests/test_x.py"><skipped message="s"/></testcase></testsuite></testsuites>');
+const r1 = tr.readReport(x1, "junit");
+res("V5 T2 readReport junit: 3 testcases, one failure in class TestC, one skipped: run 2, failed 1, skipped 1, id file::class::name", r1?.run === 2 && r1?.failed === 1 && r1?.skipped === 1 && JSON.stringify(r1?.failedIds) === JSON.stringify(["tests/test_x.py::TestC::test_y"]), r1);
+const x2 = w("x2.xml", '<testsuites><testsuite><testcase classname="C" name="a &amp; b &#62; c"><error/></testcase></testsuite></testsuites>');
+res("V5 T2 readReport junit: an entity in a name decodes", JSON.stringify(tr.readReport(x2, "junit")?.failedIds) === JSON.stringify(["C > a & b > c"]), tr.readReport(x2, "junit"));
+res("V5 T2 readReport junit: a truncated file and an empty file read null", tr.readReport(w("x3.xml", '<testsuites><testsuite><testcase name="a"/>'), "junit") === null && tr.readReport(w("x4.xml", ""), "junit") === null && tr.readReport(join(d, "missing.xml"), "junit") === null);
+const j1 = w("j.json", JSON.stringify({ testResults: [{ assertionResults: [{ status: "passed", fullName: "a" }, { status: "passed", fullName: "b" }, { status: "failed", fullName: "s c" }, { status: "pending", fullName: "d" }] }] }));
+const r3 = tr.readReport(j1, "jest-json");
+res("V5 T3 readReport jest-json: 2 passed, 1 failed, 1 pending: run 3, failed 1, skipped 1, id fullName", r3?.run === 3 && r3?.failed === 1 && r3?.skipped === 1 && JSON.stringify(r3?.failedIds) === JSON.stringify(["s c"]), r3);
+// T4 and T5: runCheck on a real bun and on fake runners; the report dir lives under TMPDIR, pointed at a fresh dir per cell.
+const repo = join(d, "repo"); mkdirSync(repo);
+writeFileSync(join(repo, "two.test.ts"), 'import { expect, test } from "bun:test";\ntest("one", () => { expect(1).toBe(1); });\ntest("two", () => { expect(1).toBe(2); });\n');
+const sig = new AbortController().signal, ctx = { repoDir: repo, baseSha: "", runDir: join(d, "run"), outputs: () => ({}), emit: () => {} } as never;
+const tmpd = (n: string) => { const t = join(d, "tmp-" + n); mkdirSync(t); process.env.TMPDIR = t; return t; };
+const run = async (cmd: string, args: string[], o: Record<string, unknown> = {}) => { const checks: unknown[] = []; const c = await vf.runCheck(ctx, "bun:two.test.ts", cmd, args, sig, checks as never, o as never) as { result: string; cmd: string }; return { c, s: vf.structuredSummary(checks as never) }; };
+process.env.LOKI_E10_STRUCTURED_RESULTS = "observe";
+let t = tmpd("t4");
+const a = await run("bun", ["test", "./two.test.ts"]);
+res("V5 T4 real bun with observe: the report agrees with the text parse (2 run, 1 failed)", a.c.result === "fail" && a.s.read === 1 && a.s.agree === 1, { r: a.c.result, s: a.s });
+res("V5 T4 the check's cmd is the original command, with no reporter text", a.c.cmd === "bun test ./two.test.ts", a.c.cmd);
+res("V5 T4 the temp report dir is gone afterwards", readdirSync(t).filter((n) => n.startsWith("loki-report-")).length === 0, readdirSync(t));
+const fake = join(d, "fake"); mkdirSync(fake); const argv = join(d, "argv.log"), ctr = join(d, "ctr");
+const fakeBun = (body: string) => { writeFileSync(join(fake, "bun"), "#!/bin/bash\nprintf '%s\\n' \"$*\" >> " + argv + "\n" + body + "\n"); chmodSync(join(fake, "bun"), 0o755); };
+const PASS = 'printf "1 pass\\n0 fail\\nRan 1 tests across 1 files.\\n"; exit 0', FAIL = 'printf "0 pass\\n1 fail\\nRan 1 tests across 1 files.\\n"; exit 1';
+const path = fake + ":" + (process.env.PATH ?? "");
+delete process.env.LOKI_E10_STRUCTURED_RESULTS; fakeBun(PASS); rmSync(argv, { force: true }); t = tmpd("t4u");
+const u = await run("bun", ["test", "./two.test.ts"], { path });
+res("V5 T4 knob unset: the runner sees exactly today's arguments and no report dir is made", readFileSync(argv, "utf8") === "test ./two.test.ts\n" && readdirSync(t).filter((n) => n.startsWith("loki-report-")).length === 0 && u.s.read === 0 && u.s.unsupported === 0, readFileSync(argv, "utf8"));
+process.env.LOKI_E10_STRUCTURED_RESULTS = "observe";
+fakeBun('case "$*" in *--reporter=junit*) exit 2 ;; esac\n' + PASS); rmSync(argv, { force: true }); tmpd("t5");
+const r5 = await run("bun", ["test", "./two.test.ts"], { path });
+res("V5 T5 a runner that rejects the report flag: run again without it, pass, cmd unchanged, report_unsupported", r5.c.result === "pass" && r5.c.cmd === "bun test ./two.test.ts" && r5.s.unsupported === 1, { r: r5.c.result, s: r5.s });
+fakeBun('case "$*" in *--reporter=junit*) exit 2 ;; esac\nn=$(cat ' + ctr + ' 2>/dev/null || echo 0); echo $((n + 1)) > ' + ctr + '\nif [ "$n" = 0 ]; then ' + FAIL + '; fi\n' + PASS); rmSync(ctr, { force: true }); tmpd("t5b");
+const r5b = await run("bun", ["test", "./two.test.ts"], { path });
+res("V5 T5b the fallback keeps the flaky retry: fail then pass without the flag reads flaky", r5b.c.result === "flaky", r5b.c.result);
+fakeBun('n=$(cat ' + ctr + ' 2>/dev/null || echo 0); echo $((n + 1)) > ' + ctr + '\nsleep 3\n' + PASS); rmSync(ctr, { force: true }); tmpd("t5c");
+const r5c = await run("bun", ["test", "./two.test.ts"], { path, timeoutMs: 400 });
+res("V5 T5c a cut run never falls back: not_run and the runner ran once", r5c.c.result === "not_run" && readFileSync(ctr, "utf8").trim() === "1", { r: r5c.c.result, n: existsSync(ctr) ? readFileSync(ctr, "utf8").trim() : "none" });
+rmSync(d, { recursive: true, force: true });
+TS
+v5out="$(cd "$ROOT/loki-ts" && env -u LOKI_E10_STRUCTURED_RESULTS bun "$T/v5.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
+grep -q '^EXIT 0$' <<< "$v5out" || { bad "V5 unit script crashed or exited non-zero"; printf '%s\n' "$v5out" | tail -6 | sed 's/^/    | /'; }
+[ "$(printf '%s\n' "$v5out" | grep -c '^OK ')" = 16 ] || bad "V5 unit script produced $(printf '%s\n' "$v5out" | grep -c '^OK ') passing legs, want 16"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$v5out"
+
 finish

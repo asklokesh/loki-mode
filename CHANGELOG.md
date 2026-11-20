@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Every receipt now carries `verified_by`: what Loki ran before the label and the one thing that proved the change, or `none`. A new label rule can run in observe mode first: it writes what it would have decided to the receipt's `observe` list and never changes the label.
 
+### Test results can be read from the runner's own report
+
+- With `LOKI_E10_STRUCTURED_RESULTS=observe`, a per-file pytest, bun, vitest or jest run also writes the runner's machine-readable report (JUnit XML or jest JSON), and verify records how often that report and Loki's reading of the printed output agree on how many tests ran and failed. A runner that rejects the report options is run again without them and its result is read as before. The label does not change. Off by default; not measured on any run in this release.
+
 ## v11.172.0 (2026-11-20)
 
 ### A low-risk run checks the full test suite before it can say VERIFIED
