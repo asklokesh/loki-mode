@@ -309,6 +309,25 @@ const RUNNER_CACHE_DIRS = [".vite", ".vite-temp", ".vitest", ".vitest-cache", ".
 // fl24 (FireLater#24, v11.139.0): an ignored file a typecheck, linter or Finder rewrites as its own output, never something a test imports. The implement
 // session's `tsc --noEmit` rewrote frontend/tsconfig.tsbuildinfo, so every base rerun ran without node_modules, parsed no ids, and 22 page tests red on base blocked.
 const TOOL_OUTPUT_FILE = /(?:^|\/)(?:[^/]*\.tsbuildinfo|\.eslintcache|\.stylelintcache|\.DS_Store|next-env\.d\.ts)$/; // next-env.d.ts: Next rewrites this ignored file on every dev or build start; a proof script that started `next dev` changed it and the base rerun lost its node_modules (FireLater#24)
+/** TOOL-OUTPUT-IN-DEPS (LOKI_E10_TOOL_OUTPUT_IN_DEPS, default on; =0/off/false/no opts out). True for a dot-named directory that holds nothing but tool
+ *  output files (TOOL_OUTPUT_FILE), at most 64 entries deep and wide together. A project can point its typecheck's build info inside node_modules
+ *  (opencode's packages/core: "tsBuildInfoFile": "node_modules/.ts-dist/source.tsbuildinfo"), so Loki's own `tsc --noEmit` lint creates that directory
+ *  after intake. No test imports it and a dot name is never a package name, yet it read as "the environment changed since intake": the base tree got no
+ *  dependencies for that package and its suite was "not measured on base" in every closed-set-2 run of oc63960. Anything else in the directory (an emitted
+ *  .d.ts, a script) makes it an ordinary entry again. */
+export const toolOutputInDepsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TOOL_OUTPUT_IN_DEPS"] ?? "").trim());
+export function toolOutputDir(dir: string): boolean {
+  if (!toolOutputInDepsOn() || !basename(dir).startsWith(".")) return false;
+  let n = 0;
+  const only = (d: string): boolean => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (++n > 64) return false;
+      if (e.isDirectory()) { if (!only(join(d, e.name))) return false; } else if (!e.isFile() || !TOOL_OUTPUT_FILE.test(e.name)) return false;
+    }
+    return true;
+  };
+  try { return lstatSync(dir).isDirectory() && only(dir) && n > 0; } catch { return false; }
+}
 /** The packages a dependency dir holds (names, "@scope/name" for scoped ones; a venv's site-packages entries as "py/<name>"), runner caches left out; null
  *  past the bound. A deleted or renamed package changes this list and nothing a files-only walk can see (the parent directory's ctime also moves when a
  *  runner adds its cache entry, so directories alone cannot tell the two apart). */
@@ -316,7 +335,7 @@ export function depsListing(root: string): string[] | null {
   const out: string[] = [], skip = (n: string): boolean => RUNNER_CACHE_DIRS.includes(n) || n === "__pycache__";
   const list = (dir: string, prefix: string): void => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
-      if (skip(e.name)) continue;
+      if (skip(e.name) || (e.isDirectory() && toolOutputDir(join(dir, e.name)))) continue; // TOOL-OUTPUT-IN-DEPS
       if (e.name.startsWith("@") && (e.isDirectory() || e.isSymbolicLink())) { try { list(join(dir, e.name), `${prefix}${e.name}/`); continue; } catch { /* a link to nowhere is listed as itself */ } }
       out.push(prefix + e.name);
       if (out.length > 50000) throw new RangeError("bound");
@@ -373,11 +392,11 @@ export function envChangedSince(repoDir: string, pkgDir: string, sinceMs: number
     writeFileSync(stamp, "");
     utimesSync(stamp, sinceMs / 1000, sinceMs / 1000);
     const prune = RUNNER_CACHE_DIRS.flatMap((n, i) => [...(i ? ["-o"] : []), "-name", n]);
-    const out = execFileSync("find", ["-P", ...new Set(roots), "(", ...prune, ")", "-prune", "-o", "(", "-type", "f", "-o", "-type", "l", ")", "-cnewer", stamp, "-print", "-quit"] /* files and links only: a runner adding a cache entry changes its parent directory's ctime, which is not a dependency change */, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120000 });
-    if (out.trim() !== "") return true;
+    const out = execFileSync("find", ["-P", ...new Set(roots), "(", ...prune, ")", "-prune", "-o", "(", "-type", "f", "-o", "-type", "l", ")", "-cnewer", stamp, "-print"] /* files and links only: a runner adding a cache entry changes its parent directory's ctime, which is not a dependency change */, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120000 });
+    if (out.split("\n").some((f) => f !== "" && !(TOOL_OUTPUT_FILE.test(f) && toolOutputDir(dirname(f))))) return true; // TOOL-OUTPUT-IN-DEPS: a tool's own output in a directory that holds nothing else
     // directories: a changed directory is a dependency change unless it is a dependency root or site-packages (the listing above covers them) or holds a runner cache
     const dirs = execFileSync("find", ["-P", ...new Set(roots), "(", ...prune, ")", "-prune", "-o", "-type", "d", "-cnewer", stamp, "-print"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120000, maxBuffer: 64 * 1024 * 1024 }).split("\n").filter(Boolean);
-    return dirs.some((d) => !(roots.includes(d) || /(?:^|\/)site-packages$/.test(d) || RUNNER_CACHE_DIRS.concat("__pycache__").some((c) => existsSync(join(d, c)))));
+    return dirs.some((d) => !(roots.includes(d) || /(?:^|\/)site-packages$/.test(d) || RUNNER_CACHE_DIRS.concat("__pycache__").some((c) => existsSync(join(d, c))) || toolOutputDir(d)));
   } catch { return true; } finally { if (stampDir) rmSync(stampDir, { recursive: true, force: true }); }
 }
 

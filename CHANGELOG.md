@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### A typecheck's build info inside node_modules no longer stops the base comparison
+
+- Before a base run, Loki checks that the installed dependencies are as they were when the run started. A project can keep its typecheck's build info inside `node_modules` (opencode's `packages/core` writes `node_modules/.ts-dist/source.tsbuildinfo`), and Loki's own `tsc --noEmit` lint then created that directory during the run. Loki read it as a changed environment, gave the base tree no dependencies for that package, and reported its suite as "not measured on base", so the suite's failures counted against the change.
+- A dot-named directory in a dependency directory that holds only tool output files is no longer a dependency change. Anything else in it, a changed package file and a deleted package still are. `LOKI_E10_TOOL_OUTPUT_IN_DEPS=0` opts out.
+- Measured: unit legs; on a clone of the stored opencode base, the check read "changed" after Loki's lint command before this change and "unchanged" after it. Not yet measured in a full run.
+
 ### A failing test the run did not write makes the run FAILED only when Loki can attribute it to the change
 
 - A red suite or test file that the run did not write used to make the run FAILED whenever Loki could not excuse it, including when its comparison with the base commit never happened or could not be trusted. Runs whose change passed the hidden test were labeled FAILED on this in the closed sets (hermes-agent 155462, opencode 63960, playwright 43305).

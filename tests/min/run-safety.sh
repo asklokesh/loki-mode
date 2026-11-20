@@ -134,6 +134,7 @@
 #  24l. repo_profile.ts exogenousState: drop the `the base run passed but ran` line (the exogenous-red unit's green-base 10 of 400 cell reads FAILED).
 #  24m. base_guard.ts depsGoneSince: `was.find((n) => have.has(n))` (the exogenous-red unit's gone-package cell names a package that is present).
 #  24h. base_guard.ts linkWorkspaceMembers: `const refused: string[] = [];` in place of the filter that links (the base-tree-members unit's sibling cell reads no-deps).
+#  24o. base_guard.ts toolOutputDir: `return true` for every dot-named directory (the tool-output-in-deps unit's emitted-declaration cell reads false).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -996,6 +997,27 @@ XM="true | no-deps | 3:packages/leak | deps | deps | none | not-linked | 0:no-de
     || bad "base-tree-members unit gave: $AM (want: $XM)"
 VBM="$ROOT/loki-ts/src/engine10/stages/verify.ts"
 grep -q 'if (linked) { const m = bt.members(); if (m.refused.length) baseMemberNote = ' "$VBM" && grep -q 'mem = linkWorkspaceMembers(dir, ctx.repoDir, (cwd) => l(cwd) || v(cwd), manifests);' "$VBM" && grep -q 'if (baseMemberNote) attr.line = \[attr.line, baseMemberNote\]' "$VBM" && ok "base-tree-members wiring: verify links the members once per base tree before a base suite run and names any it could not link on the baseline line" || bad "base-tree-members wiring: verify does not link the workspace members before a base suite run"
+# TOOL-OUTPUT-IN-DEPS (closed-set-2 oc63960: "full suite: @opencode/core not measured on base" in every run). opencode's packages/core tsconfig sets
+# "tsBuildInfoFile": "node_modules/.ts-dist/source.tsbuildinfo", so Loki's own lint (`tsc --noEmit -p .`) creates node_modules/.ts-dist after intake; on a clone
+# of the stored base envChangedSince read true after that one command (listing 50 to 51 entries, added .ts-dist), and the base tree got no dependencies for the
+# package. A dot-named directory inside a dependency dir that holds nothing but tool output files is not a dependency change. Scope: anything else in it (an
+# emitted .d.ts), a changed file of a package, a deleted package and LOKI_E10_TOOL_OUTPUT_IN_DEPS=0 all still read as changed.
+# Plant 24o: base_guard.ts toolOutputDir: `return true` for every dot-named directory (the emitted-declaration cell reads false).
+TOD="$T/tooloutdeps"; mkdir -p "$TOD/node_modules/a" "$TOD/node_modules/b"; printf 'module.exports = 1;\n' > "$TOD/node_modules/a/index.js"; printf 'module.exports = 2;\n' > "$TOD/node_modules/b/index.js"
+AT="$(G="$TOD" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const bg = await import(process.env.ROOT + "/loki-ts/src/util/base_guard.ts"), fs = await import("node:fs"), g = process.env.G, nm = g + "/node_modules";
+const deps = { node_modules: bg.depsListing(nm) }, since = Date.now(), wait = () => new Promise((x) => setTimeout(x, 1100)), ch = () => bg.envChangedSince(g, g, since, [], deps), r = [];
+await wait(); r.push(ch());
+fs.mkdirSync(nm + "/.ts-dist"); fs.writeFileSync(nm + "/.ts-dist/source.tsbuildinfo", "{}"); r.push(ch(), bg.depsListing(nm).join(","), bg.toolOutputDir(nm + "/.ts-dist"));
+process.env.LOKI_E10_TOOL_OUTPUT_IN_DEPS = "0"; r.push(ch()); delete process.env.LOKI_E10_TOOL_OUTPUT_IN_DEPS;
+fs.mkdirSync(nm + "/.ts-dist/source"); fs.writeFileSync(nm + "/.ts-dist/source/a.d.ts", "export {};"); r.push(ch(), bg.toolOutputDir(nm + "/.ts-dist")); fs.rmSync(nm + "/.ts-dist/source", { recursive: true }); r.push(ch());
+fs.mkdirSync(nm + "/.empty"); r.push(bg.toolOutputDir(nm + "/.empty"), bg.toolOutputDir(nm + "/a")); fs.rmSync(nm + "/.empty", { recursive: true });
+fs.writeFileSync(nm + "/a/index.js", "module.exports = 3;\n"); r.push(ch());
+const deps2 = { node_modules: bg.depsListing(nm) }, since2 = Date.now(); await wait(); fs.rmSync(nm + "/b", { recursive: true }); r.push(bg.envChangedSince(g, g, since2, [], deps2));
+console.log(r.join(" | "));' 2>&1)"
+XT='false | false | a,b | true | true | true | false | false | false | false | true | true'
+[ "$AT" = "$XT" ] && ok "unit: a dot-named directory in a dependency dir that holds only a typecheck's build info is not an environment change (the base tree keeps its dependencies); an emitted file beside it, a changed package file, a deleted package and LOKI_E10_TOOL_OUTPUT_IN_DEPS=0 still are" \
+    || bad "tool-output-in-deps unit gave: $AT (want: $XT)"
 
 # BASE-RED-SHAPE (verify-dev 2026-11-13: marshmallow, markdown, pino, valibot ended FAILED on a suite already red on base whose failing ids no parser
 # reads, "the base run is not attributable"). The same command failing in the identical kind on head (same exit code, no ids, the same output shape
