@@ -1,6 +1,9 @@
 // No module owns rules a repository was taught by earlier misses; features/ holds the other opt-in rule modules (no_regression.ts, runner_config.ts).
 // VERIFY-PLAN V10 (LOKI_E10_CHECKLIST, observe by default): a tracked .loki-checklist.json at the repository root, read from the base commit only.
 import { ruleMode } from "../engine10/closure.ts";
+import { lstatSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { globToRegExp } from "../util/check_result.ts";
 import { safeGit } from "../util/safe_git.ts";
 
 export interface ChecklistItem { id: string; trigger: { paths?: string[]; added?: string }; check: { forbid_added?: string; cmd?: string }; why: string; taught_by: string }
@@ -12,17 +15,6 @@ export const checklistMode = (env: NodeJS.ProcessEnv = process.env) => ruleMode(
 /** cmd items run only when LOKI_E10_CHECKLIST is set to observe or enforce explicitly; with it unset only forbid_added items are evaluated. */
 export const checklistCmdOn = (env: NodeJS.ProcessEnv = process.env): boolean => (env["LOKI_E10_CHECKLIST"] ?? "").trim() !== "" && checklistMode(env) !== "off";
 
-/** A path glob: `*` matches within one segment, `**` across segments. */
-export function globToRegExp(glob: string): RegExp {
-  let re = "";
-  for (let i = 0; i < glob.length; i++) {
-    const ch = glob[i]!;
-    if (ch === "*" && glob[i + 1] === "*") { re += ".*"; i++; if (glob[i + 1] === "/") i++; }
-    else if (ch === "*") re += "[^/]*";
-    else re += ch.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
-  }
-  return new RegExp(`^${re}$`);
-}
 const regexOk = (s: unknown): boolean => { if (typeof s !== "string") return false; try { new RegExp(s); return true; } catch { return false; } };
 function validItem(v: unknown): string | null {
   const it = v as Partial<ChecklistItem> | null;
@@ -53,7 +45,27 @@ export function readChecklist(repoDir: string, baseSha: string): { items: Checkl
   }
   return { items: d.items as ChecklistItem[] };
 }
-const matching = (it: ChecklistItem, changed: readonly string[]): string[] => { const res = (it.trigger.paths ?? []).map(globToRegExp); return changed.filter((f) => !res.length || res.some((r) => r.test(f))); };
+/** `paths` globs are anchored at the repository root and read by check_result.ts globToRegExp (`*` within a segment, `**` across, `?` one character). */
+const matching = (it: ChecklistItem, changed: readonly string[]): string[] => { const res = (it.trigger.paths ?? []).map((p) => globToRegExp("/" + p)); return changed.filter((f) => !res.length || res.some((r) => r.test(f))); };
+/** The lines the change adds to `f`, with their line numbers: the -U0 diff against the base commit, or, for a path the base commit does not hold (a file the
+ *  change creates, untracked until seal, so absent from `git diff <base>`), every line of the regular file in the checkout, numbered from 1. */
+export function addedLines(repoDir: string, baseSha: string, f: string): { lines: string[]; nos: number[] } {
+  const a: { lines: string[]; nos: number[] } = { lines: [], nos: [] };
+  let inBase = true;
+  if (baseSha) try { safeGit(repoDir, ["cat-file", "-e", `${baseSha}:${f}`]); } catch { inBase = false; }
+  if (!inBase) {
+    try {
+      const p = join(repoDir, f);
+      if (!lstatSync(p).isFile()) return a; // a symlink or directory: never read through it
+      const ls = readFileSync(p, "utf8").split("\n"); if (ls[ls.length - 1] === "") ls.pop();
+      ls.forEach((l, i) => { a.lines.push(l); a.nos.push(i + 1); });
+    } catch { /* not in the checkout either: no added lines */ }
+    return a;
+  }
+  let n = 0;
+  try { for (const l of safeGit(repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", baseSha, "--", f]).split("\n")) { const h = /^@@ -\S+ \+(\d+)/.exec(l); if (h) { n = Number(h[1]); continue; } if (l.startsWith("+") && !l.startsWith("+++")) { a.lines.push(l.slice(1)); a.nos.push(n++); } } } catch { /* no diff: no added lines */ }
+  return a;
+}
 /** The items whose trigger the change matches: a changed file under one of `paths` (absent: any changed file) and, when `added` is set, an added line there that matches it. */
 export function firedItems(items: readonly ChecklistItem[], changed: readonly string[], addedLines: (f: string) => string[]): ChecklistItem[] {
   return items.filter((it) => { const files = matching(it, changed); if (!files.length) return false; if (it.trigger.added === undefined) return true; const re = new RegExp(it.trigger.added); return files.some((f) => addedLines(f).some((l) => re.test(l))); });

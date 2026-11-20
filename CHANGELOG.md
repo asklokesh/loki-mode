@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### A repository can teach Loki a check that fires on matching changes
 
-- A tracked `.loki-checklist.json` at the repository root lists checks that run only when a change matches their trigger (a path pattern, optionally an added-line pattern), each with the run that taught it. Loki reads the file from the base commit only, never from the change. In this release a failing item is reported on the receipt and does not change the label. Items that forbid an added line are checked by default; items that run a command run only with `LOKI_E10_CHECKLIST` set, and a command that also fails on the base commit is not counted against the change. `LOKI_E10_CHECKLIST=enforce` makes a failing item a failing check.
+- A tracked `.loki-checklist.json` at the repository root lists checks that run only when a change matches their trigger (a path pattern, optionally an added-line pattern), each with the run that taught it. Loki reads the file from the base commit only, never from the change. In this release a failing item is reported on the receipt and does not change the label. Items that forbid an added line are checked by default, and every line of a file the change creates counts as added; items that run a command run only with `LOKI_E10_CHECKLIST` set, and a command that also fails on the base commit is not counted against the change. `LOKI_E10_CHECKLIST=enforce` makes a failing item a failing check.
 
 ### Loki can boot the change before it labels it
 
