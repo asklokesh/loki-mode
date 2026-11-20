@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Loki's own `uv run` no longer creates a `.venv` in your checkout
+
+- In a repository with a `uv.lock` and no virtualenv, Loki runs Python tools through `uv run`. `uv run` creates `.venv` in the project, even with `--no-sync`. On hermes-agent, Loki's own lint (`uv run -- ruff check`) created a root `.venv` with the runtime packages and no pytest. The receipt then said the tests ran outside the project virtualenv, listed the `.venv` files as ignored files created during the run, and could not compare the full suite with the base because the environment had changed. Each of those kept the run below VERIFIED.
+- Loki's `uv run` now keeps its environment in a directory the run owns. A repository's own `.venv`, and a `UV_PROJECT_ENVIRONMENT` you set, are used as before. `LOKI_E10_UV_ENV_OUTSIDE=0` opts out.
+- A tool that `uv run` could not start is still reported as not started when uv prints its first-run setup lines before the error.
+- Measured on a clone of the stored hermes-agent base: after the lint command the checkout has no `.venv` and the missing ruff reads as not started. Not yet measured in a full run.
+
 ### A Python module that is only named setup.py is not installed as a package
 
 - Loki treated every tracked `setup.py` as a package manifest and planned `python3 -m pip install -e .` in its directory. In hermes-agent four ordinary modules are named `setup.py` (a setup wizard and helpers), so a run carried four "install exited 1" notes and "package hermes_cli defines no test command", each of which kept the run below VERIFIED.

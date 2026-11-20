@@ -311,6 +311,8 @@
 # 311. testmap.ts jsImportResolveOn: always true (the JS-RESOLVE =0 leg fails).
 # 252. check_result.ts jsAssertionFailure: drop JS_MISSING_API (the assert-js unit's missing-function case reads true).
 # 253. check_result.ts spawnFailedTool: drop the 6-line bound (the spawn-not-run leg's long ENOENT output reads missing).
+# 253b. check_result.ts resolveTool: drop the UV-ENV-OUTSIDE-CHECKOUT return (the uv-env-outside leg's first cell reads `uv project run -- ruff`).
+# 253c. check_result.ts spawnFailedTool: count uv's setup lines again (drop `&& !UV_PROGRESS.test(l)`; the uv-env-outside leg's first-run cell reads null).
 # 254. testmap.ts buildTestMap: ignore pyCfg (the pytest-fallback leg's conftest.py case reads unittest).
 # 255. package_suite.ts runPackageSuites: drop the cwd !== "." guard (the empty-subsuite-na leg's root package reads not applicable).
 # 256. check_result.ts assertionFailure REPORTED-KIND type path: drop the MISSING_API guard (the reported-kind unit's ImportError case reads true).
@@ -2275,6 +2277,26 @@ const v = await import("./src/engine10/stages/verify.ts"), d = process.env.SN, s
 const one = async (c) => { const r = await v.runOnce(d + "/bin/" + c, [], d, sig, opts); return `${r.missing}:${r.spawnTool ?? "-"}`; };
 const r = [await one("uvx"), await one("sh127"), await one("longtest")]; process.env.LOKI_E10_SPAWN_NOT_RUN = "0"; r.push(await one("uvx")); console.log(r.join(","));' 2>&1)"
 [ "$SR" = "true:ruff,true:ruff,false:-,false:-" ] && ok "spawn-not-run: a tool that could not start (uv spawn error, shell exit 127) is a missing tool, not a failure; a long test output naming ENOENT and LOKI_E10_SPAWN_NOT_RUN=0 stay failures" || bad "spawn-not-run gave: $SR"
+# UV-ENV-OUTSIDE-CHECKOUT (closed-set-2 hm155462: verify's own `uv run -- ruff check` created the root .venv, 66 runtime packages and no pytest; the receipt then
+# carried "tests ran on python3, outside the project virtualenv", ".venv/.gitignore was added", "an ignored file that can change what verify runs", and the full
+# suite was "not measured on base"). `uv run` creates .venv in the checkout even with --no-sync, so a harness-run `uv run` in a repository with no virtualenv
+# keeps its environment in a directory this process owns (UV_PROJECT_ENVIRONMENT). A repository with its own .venv, a user-set UV_PROJECT_ENVIRONMENT and
+# LOKI_E10_UV_ENV_OUTSIDE=0 keep the old command. uv's setup lines (a first run in a new environment prints five or more) no longer hide a tool that could
+# not be started. Measured on a clone of the stored base: no .venv in the checkout after the lint command, and the missing ruff still reads as not started.
+UVO="$T/uvout"; mkdir -p "$UVO/repo" "$UVO/venvrepo/.venv/bin" "$UVO/bin" "$UVO/scratch"; : > "$UVO/repo/uv.lock"; : > "$UVO/venvrepo/uv.lock"
+printf '#!/bin/sh\nexit 0\n' > "$UVO/bin/uv"; printf '#!/bin/sh\nexit 0\n' > "$UVO/venvrepo/.venv/bin/ruff"; chmod +x "$UVO/bin/uv" "$UVO/venvrepo/.venv/bin/ruff"
+UVR="$(cd "$ROOT/loki-ts" && UVO="$UVO" LOKI_SCRATCH="$UVO/scratch" PATH="$UVO/bin:$PATH" bun --no-env-file --config=/dev/null -e '
+const cr = await import("./src/util/check_result.ts"), d = process.env.UVO, sc = require("node:fs").realpathSync(d + "/scratch"), r = [];
+const show = (repo) => { const [cmd, kind, pre] = cr.resolveTool(d + "/" + repo, "ruff", "ruff"); return [cmd.replace(d, "<t>"), kind, pre.map((x) => x.replace(/=.*\/uv-env\/[0-9a-f]{12}$/, "=<owned>")).join(" ")].join(" "); };
+r.push(show("repo")); const dir = cr.uvEnvDir(d + "/repo"); r.push(String(!!dir && require("node:fs").realpathSync(require("node:path").dirname(require("node:path").dirname(dir))).startsWith(sc) && !dir.startsWith(d + "/repo")));
+r.push(show("venvrepo")); process.env.UV_PROJECT_ENVIRONMENT = "/x/y"; r.push(show("repo")); delete process.env.UV_PROJECT_ENVIRONMENT;
+process.env.LOKI_E10_UV_ENV_OUTSIDE = "0"; r.push(show("repo")); delete process.env.LOKI_E10_UV_ENV_OUTSIDE;
+const first = "Using CPython 3.14.9\nCreating virtual environment at: /t/x\n   Building app @ file:///t\n      Built app @ file:///t\nInstalled 66 packages in 82ms\nerror: Failed to spawn: `ruff`\n  Caused by: No such file or directory (os error 2)\n";
+r.push(String(cr.spawnFailedTool(first, 2)), String(cr.spawnFailedTool(first + "a.py:1:1: F401\nb.py:1:1: F401\nc.py:1:1: F401\nd.py:1:1: F401\ne.py:1:1: F401\n", 2)));
+console.log(r.join(" | "));' 2>&1)"
+XUVR='env project UV_PROJECT_ENVIRONMENT=<owned> uv run -- ruff | true | <t>/venvrepo/.venv/bin/ruff project  | uv project run -- ruff | uv project run -- ruff | ruff | null'
+[ "$UVR" = "$XUVR" ] && ok "uv-env-outside: a harness-run uv run in a repository with no virtualenv keeps its environment in a directory the run owns, never in the checkout; a repository's own .venv, a user-set UV_PROJECT_ENVIRONMENT and LOKI_E10_UV_ENV_OUTSIDE=0 keep the old command; uv's setup lines do not hide a tool that could not start" \
+    || bad "uv-env-outside gave: $UVR (want: $XUVR)"
 # PYTEST-FALLBACK (verify-dev 2026-11-13, Python-Markdown: a unittest repo whose venv has no pytest; every test_*.py ran as pytest and "failed" in 0.05 s with no ids):
 # tests marked pytest only by their test_*.py names run under unittest when the repo's .venv cannot import pytest. A venv that has pytest, a conftest.py,
 # a test file importing pytest, and LOKI_E10_PYTEST_FALLBACK=0 keep pytest. (The .venv python here is a stand-in that answers only `-c "import pytest"`.)

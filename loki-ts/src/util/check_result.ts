@@ -1976,10 +1976,11 @@ export function assertionFailure(runner: string, output: string, reported: Repor
 /** SPAWN-NOT-RUN (LOKI_E10_SPAWN_NOT_RUN, default on, =0 opts out): the tool a failed check could not start, or null. A wrapper that could not spawn its tool
  *  (`uv run -- ruff`: "error: Failed to spawn: `ruff`"), a shell that could not find it (exit 127, "ruff: command not found"), or node's "spawn ruff ENOENT",
  *  and only when that is essentially all the output (at most 6 non-empty lines), so a test that itself spawns a missing program still reads as its own failure. */
+const UV_PROGRESS = /^\s*(?:Using CPython|Creating virtual environment|Building |Built |Installed \d+ packages?|Uninstalled \d+ packages?|Resolved \d+ packages?|Prepared \d+ packages?|Audited \d+ packages?|Downloading |Downloaded )/; // printed by `uv run` before it starts the tool; a first run in a new environment prints five or more
 export const spawnNotRunOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SPAWN_NOT_RUN"] ?? "").trim());
 export function spawnFailedTool(out: string, exitCode: number | null): string | null {
   if (!spawnNotRunOn() || exitCode === 0) return null;
-  const t = stripAnsi(out), lines = t.split("\n").filter((l) => l.trim() !== "");
+  const t = stripAnsi(out), lines = t.split("\n").filter((l) => l.trim() !== "" && !UV_PROGRESS.test(l)); // uv's own setup lines are not the tool's output
   if (lines.length > 6) return null;
   const uv = /^\s*error: Failed to spawn: `([^`]+)`/m.exec(t); if (uv) return uv[1]!;
   const sh = exitCode === 127 ? /^(?:\S*sh: (?:line \d+: )?)?([\w.+-]+): (?:command )?not found\s*$/m.exec(t) : null; if (sh) return sh[1]!;
@@ -2083,11 +2084,27 @@ export function canImport(py: string, module: string): boolean {
 }
 /** The receipt lines for the virtualenvs resolveTool skipped in `repoDir` during this run: which interpreter ran the tests, and why. */
 export const venvSkipNotes = (repoDir: string): string[] => [...venvSkips].filter(([k]) => k.startsWith(`${repoDir}\0`)).map(([, v]) => v);
+/** UV-ENV-OUTSIDE-CHECKOUT (LOKI_E10_UV_ENV_OUTSIDE, default on; =0/off/false/no opts out). `uv run` in a project with no .venv creates one in the
+ *  checkout, even with --no-sync. closed-set-2 hm155462: verify's own lint (`uv run -- ruff check`) created the root .venv (66 runtime packages, no
+ *  pytest); after that the receipt carried "tests ran on python3, outside the project virtualenv", ".venv/.gitignore was added", "an ignored file that
+ *  can change what verify runs", and the full suite was "not measured on base" (the environment changed since intake). A harness-run `uv run` now
+ *  keeps its environment in a directory this process owns (UV_PROJECT_ENVIRONMENT, one per repository), so the checkout stays as intake left it.
+ *  Only taken when the repository has no virtualenv of its own; null (the plain `uv run`) on Windows, when the user set the variable, or with no owned dir. */
+export const uvEnvOutsideOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_UV_ENV_OUTSIDE"] ?? "").trim());
+export function uvEnvDir(repoDir: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (!uvEnvOutsideOn(env) || process.platform === "win32" || env["UV_PROJECT_ENVIRONMENT"]) return null;
+  const e: Record<string, string> = {}; for (const [k, v] of Object.entries(env)) if (typeof v === "string") e[k] = v;
+  const root = testHomeRoot(e); if (!root) return null;
+  let real = repoDir; try { real = realpathSync(repoDir); } catch { /* the path as given */ }
+  return join(root, "uv-env", createHash("sha256").update(real).digest("hex").slice(0, 12));
+}
 export function resolveTool(repoDir: string, bin: string, fallback: string, lastResort = fallback, module?: string): [string, Interpreter, string[]] {
   const inRepo = (p: string): boolean => { try { const r = relative(realpathSync(repoDir), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
   const venvEnv = process.env["VIRTUAL_ENV"], onPath = (b: string): string | null => Bun.which(b, { PATH: process.env["PATH"] ?? "" }); // Bun.which caches the startup PATH unless given the live one
   const project = [join(repoDir, ".venv", "bin", bin), join(repoDir, "venv", "bin", bin), ...(venvEnv && inRepo(venvEnv) ? [join(venvEnv, "bin", bin)] : [])].find(existsSync);
   if (project && module && !canImport(project, module)) { const sys = onPath(fallback) ? fallback : lastResort; venvSkips.set(`${repoDir}\0${project}\0${module}`, `tests ran on ${sys}, outside the project virtualenv: ${relative(repoDir, project)} cannot import ${module}`); return [sys, "system", []]; }
+  const uvDir = project ? null : uvEnvDir(repoDir);
+  if (!project && uvDir && existsSync(join(repoDir, "uv.lock")) && onPath("uv") && onPath("env")) return ["env", "project", [`UV_PROJECT_ENVIRONMENT=${uvDir}`, "uv", "run", "--", bin]]; // UV-ENV-OUTSIDE-CHECKOUT
   return project ? [project, "project", []] : existsSync(join(repoDir, "uv.lock")) && onPath("uv") ? ["uv", "project", ["run", "--", bin]] : [onPath(fallback) ? fallback : lastResort, "system", []]; // TEN-QUALITY-11: uv.lock, no venv: uv run is the project interpreter
 }
 /** FC-WALL-GO-FILE-RUNS-WHOLE-PACKAGE: the Test, Fuzz and Example function names of one Go file, matched by name only. Over-inclusion is harmless for -run (a name that is no test matches nothing); a signature check would drop valid tests (multi-line, unnamed or aliased *testing.T, non-ASCII names) and turn a red Wall into no run. TestMain is excluded; [] when unreadable or none. */
