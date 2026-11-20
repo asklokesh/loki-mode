@@ -190,7 +190,7 @@ export function writeProofKit(dir: string, asks: string[] | null): void {
   try { writeFileSync(join(dir, PROOF_HELPER), PROOF_HELPER_SH, { mode: 0o600 }); if (asks?.length) writeFileSync(join(dir, ACCEPTANCE_FILE), asks.map((a, i) => `${i + 1}. ${a}`).join("\n") + "\n", { mode: 0o600 }); } catch { /* the proof then has no helper; the re-run reports it */ }
 }
 /** One check line of a run: the acceptance item it names, what it says it proves (run-specific values removed, see checkKey) and whether it passed. */
-export interface ProofCheck { item: string; what: string; ok: boolean; real?: true /* OWN-PROOF: a passing step that ran repository code (realStep) */; cmd?: string /* that step's command, kept in memory only */; exit?: number; out?: string /* a failed step: its exit code, and its command with the last lines it printed */ }
+export interface ProofCheck { item: string; what: string; ok: boolean; real?: true /* OWN-PROOF: a passing step that ran repository code (realStep) */; cmd?: string /* that step's command, kept in memory only */; exit?: number; out?: string /* a failed step: its exit code, and its command with the last lines it printed */; printed?: string /* a failed step: the last lines it printed, alone */ }
 /** A check's description as a key that is the same in two runs of one script: the text before the helper's own result part, lower case, with ids, hashes
  *  and every number replaced (a port, a row id or a duration differs between two runs of the same check). Two checks of one item that then read the same
  *  are paired by count, never merged. */
@@ -258,7 +258,7 @@ export function realStep(text: string, repoDir?: string): boolean {
   });
 }
 /** The same lines as a list of checks, for the comparison with the base commit (proofOnBase). */
-export const proofChecks = (out: string, token: string, repoDir?: string): ProofCheck[] => proofLines(out, token).map((c) => ({ item: c.item, what: checkKey(c.text), ok: c.ok, ...(c.ok && repoDir && realStep(c.text, repoDir) ? { real: true as const, cmd: (c.text.split(" | cmd: ")[1] ?? "").split(" | ")[0]!.replace(/%7C/g, "|") } : {}), ...(c.ok ? {} : { exit: Number(/ \| exit (\d+)(?: \||$)/.exec(c.text)?.[1] ?? NaN), out: c.text.split(" | cmd: ").slice(1).join(" | cmd: ") }) }));
+export const proofChecks = (out: string, token: string, repoDir?: string): ProofCheck[] => proofLines(out, token).map((c) => ({ item: c.item, what: checkKey(c.text), ok: c.ok, ...(c.ok && repoDir && realStep(c.text, repoDir) ? { real: true as const, cmd: (c.text.split(" | cmd: ")[1] ?? "").split(" | ")[0]!.replace(/%7C/g, "|") } : {}), ...(c.ok ? {} : { exit: Number(/ \| exit (\d+)(?: \||$)/.exec(c.text)?.[1] ?? NaN), out: c.text.split(" | cmd: ").slice(1).join(" | cmd: "), printed: (() => { const t = c.text.split(" | cmd: ").slice(1).join(" | cmd: "), i = t.indexOf("| "); return i < 0 ? "" : t.slice(i + 2).trim(); })() }) }));
 const MAX_SCRIPT_BYTES = 200_000, TAIL_CHARS = 8000;
 /** Seconds Loki gives its own re-run (LOKI_E10_PROOF_RERUN_S overrides). */
 export const proofRerunS = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_E10_PROOF_RERUN_S"]); return n > 0 ? n : defaultBudgetsOn(env) ? 600 : Infinity; }; // NO-DEFAULT-BUDGET: no limit unless set (shell.run's silence guard ends a silent proof)
@@ -470,12 +470,13 @@ export function stepNamesFile(cmd: string, file: string): boolean {
 }
 /** The steps of the change's own proof: passing, repository-running steps on the change that also pass in an untouched copy of the checkout (the control: a
  *  step that fails there fails because of the copy, not because the change is gone) and that the copy without the change printed FAILED for, with a failure
- *  that is not a start failure (stepStartFailure). Paired by item and description, as compareWithBase pairs them; a step a run never reached, or that passed
+ *  that is not a start failure (stepStartFailure) and that printed at least one line: a silent failure (`cli newcmd | grep -q ok` swallows the base's "unknown
+ *  command" and exits 1) says nothing about why the step failed, so it proves nothing about behaviour. Paired by item and description, as compareWithBase pairs them; a step a run never reached, or that passed
  *  without the change, is not one. Pure. */
 export function failsWithoutChange(head: ProofCheck[], control: ProofCheck[], without: ProofCheck[]): string[] {
   const k = (c: ProofCheck): string => `${c.item}\u0001${c.what}`, set = (cs: ProofCheck[], ok: boolean): Set<string> => new Set(cs.filter((c) => c.ok === ok).map(k));
-  const cOk = set(control, true), cBad = set(control, false), wOk = set(without, true), wBad = set(without, false), wStart = new Set(without.filter(stepStartFailure).map(k));
-  return [...new Set(head.filter((c) => c.ok && c.real === true && cOk.has(k(c)) && !cBad.has(k(c)) && wBad.has(k(c)) && !wOk.has(k(c)) && !wStart.has(k(c))).map((c) => c.what))];
+  const cOk = set(control, true), cBad = set(control, false), wOk = set(without, true), wBad = set(without, false), wStart = new Set(without.filter(stepStartFailure).map(k)), wSaid = new Set(without.filter((c) => !c.ok && (c.printed ?? "").trim() !== "").map(k));
+  return [...new Set(head.filter((c) => c.ok && c.real === true && cOk.has(k(c)) && !cBad.has(k(c)) && wBad.has(k(c)) && !wOk.has(k(c)) && !wStart.has(k(c)) && wSaid.has(k(c))).map((c) => c.what))];
 }
 export interface OwnProof { ok: boolean; steps: string[]; cmds: string[] /* the counted steps' commands: which changed test file a step ran (never written to the receipt) */; why?: string; seconds: number; built?: true; checks_without: number; checks_control: number }
 /** Runs the kept proof script in a copy of the checkout without the change (see the block comment above). `revert`: the change's non-test files, each with
