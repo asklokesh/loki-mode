@@ -383,13 +383,28 @@ export function stripInventedReleaseRefs(repoDir: string, baseSha: string, stage
   return out;
 }
 export const releaseRefsReceiptBlock = (implement: Record<string, unknown> | undefined): { changelog_refs_removed?: string[] } => (Array.isArray(implement?.["changelog_refs_removed"]) && (implement!["changelog_refs_removed"] as unknown[]).length ? { changelog_refs_removed: implement!["changelog_refs_removed"] as string[] } : {});
+/** The head line number of each added line of a `git diff -U0` (in diff order; the same "+" filter the added-lines copy uses). */
+export function addedLineNumbers(diff: string): number[] {
+  const out: number[] = []; let n = 0;
+  for (const l of diff.split("\n")) {
+    const h = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(l);
+    if (h) { n = Number(h[1]); continue; }
+    if (l.startsWith("+") && !l.startsWith("+++")) out.push(n++);
+  }
+  return out;
+}
+/** The lines one path adds against base, with their head line numbers: the whole file numbered from 1 for a new path (every split piece, the final empty one
+ *  included), the -U0 diff of the working tree for a tracked one. null when the file or the diff cannot be read. */
+export function addedLinesOf(repoDir: string, baseSha: string, f: string, isNew: boolean): { lines: string[]; nos: number[] } | null {
+  if (isNew) { try { const lines = readFileSync(join(repoDir, f), "utf8").split("\n"); return { lines, nos: lines.map((_, i) => i + 1) }; } catch { return null; } }
+  let d: string;
+  try { d = safeGit(repoDir, ["diff", "--no-color", "-U0", baseSha, "--", f]); } catch { return null; }
+  return { lines: d.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)), nos: addedLineNumbers(d) };
+}
 /** The lines each path adds against base: a diff of the working tree for a tracked path, the whole file for a new one. */
 export function addedLines(repoDir: string, baseSha: string, paths: Staged[]): Map<string, string[]> {
   const m = new Map<string, string[]>();
-  for (const { st, f } of paths) {
-    if (st === "A") { try { m.set(f, readFileSync(join(repoDir, f), "utf8").split("\n")); } catch { /* gone */ } continue; }
-    try { m.set(f, safeGit(repoDir, ["diff", "--no-color", "-U0", baseSha, "--", f]).split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1))); } catch { /* unreadable */ }
-  }
+  for (const { st, f } of paths) { const a = addedLinesOf(repoDir, baseSha, f, st === "A"); if (a) m.set(f, a.lines); }
   return m;
 }
 /** The staged list against base for an uncommitted tree (index untouched: diff of the working tree plus untracked files). */

@@ -1,10 +1,11 @@
 // No module owns rules a repository was taught by earlier misses; features/ holds the other opt-in rule modules (no_regression.ts, runner_config.ts).
 // VERIFY-PLAN V10 (LOKI_E10_CHECKLIST, observe by default): a tracked .loki-checklist.json at the repository root, read from the base commit only.
 import { ruleMode } from "../engine10/closure.ts";
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import { globToRegExp } from "../util/check_result.ts";
 import { safeGit } from "../util/safe_git.ts";
+import { addedLinesOf } from "./self_review.ts";
 
 export interface ChecklistItem { id: string; trigger: { paths?: string[]; added?: string }; check: { forbid_added?: string; cmd?: string }; why: string; taught_by: string }
 export interface ChecklistResult { id: string; result: "pass" | "fail" | "not_run"; detail: string }
@@ -45,25 +46,18 @@ export function readChecklist(repoDir: string, baseSha: string): { items: Checkl
   }
   return { items: d.items as ChecklistItem[] };
 }
-/** `paths` globs are anchored at the repository root and read by check_result.ts globToRegExp (`*` within a segment, `**` across, `?` one character). */
+/** `paths` globs are anchored at the repository root and read by check_result.ts globToRegExp (`*` within a segment, `**` across, `?` one character). A pattern
+ *  whose last segment matches a directory matches everything under it: `src` and `src/*` both match src/a/b.ts. */
 const matching = (it: ChecklistItem, changed: readonly string[]): string[] => { const res = (it.trigger.paths ?? []).map((p) => globToRegExp("/" + p)); return changed.filter((f) => !res.length || res.some((r) => r.test(f))); };
-/** The lines the change adds to `f`, with their line numbers: the -U0 diff against the base commit, or, for a path the base commit does not hold (a file the
- *  change creates, untracked until seal, so absent from `git diff <base>`), every line of the regular file in the checkout, numbered from 1. */
+/** The lines the change adds to `f`, with their line numbers, read by self_review.ts addedLinesOf: the -U0 diff against the base commit, or, for a path the base
+ *  commit does not hold (a file the change creates, untracked until seal, so absent from `git diff <base>`), every line of the regular file in the checkout,
+ *  numbered from 1, without the empty piece after a final newline. */
 export function addedLines(repoDir: string, baseSha: string, f: string): { lines: string[]; nos: number[] } {
-  const a: { lines: string[]; nos: number[] } = { lines: [], nos: [] };
   let inBase = true;
   if (baseSha) try { safeGit(repoDir, ["cat-file", "-e", `${baseSha}:${f}`]); } catch { inBase = false; }
-  if (!inBase) {
-    try {
-      const p = join(repoDir, f);
-      if (!lstatSync(p).isFile()) return a; // a symlink or directory: never read through it
-      const ls = readFileSync(p, "utf8").split("\n"); if (ls[ls.length - 1] === "") ls.pop();
-      ls.forEach((l, i) => { a.lines.push(l); a.nos.push(i + 1); });
-    } catch { /* not in the checkout either: no added lines */ }
-    return a;
-  }
-  let n = 0;
-  try { for (const l of safeGit(repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", baseSha, "--", f]).split("\n")) { const h = /^@@ -\S+ \+(\d+)/.exec(l); if (h) { n = Number(h[1]); continue; } if (l.startsWith("+") && !l.startsWith("+++")) { a.lines.push(l.slice(1)); a.nos.push(n++); } } } catch { /* no diff: no added lines */ }
+  if (!inBase) { try { if (!lstatSync(join(repoDir, f)).isFile()) return { lines: [], nos: [] }; } catch { return { lines: [], nos: [] }; } } // a symlink or directory: never read through it
+  const a = addedLinesOf(repoDir, baseSha, f, !inBase) ?? { lines: [], nos: [] };
+  if (!inBase && a.lines[a.lines.length - 1] === "") { a.lines.pop(); a.nos.pop(); }
   return a;
 }
 /** The items whose trigger the change matches: a changed file under one of `paths` (absent: any changed file) and, when `added` is set, an added line there that matches it. */

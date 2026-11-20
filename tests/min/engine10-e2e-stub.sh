@@ -704,13 +704,13 @@ grep -q 'q7ZpLm4Rt8' <<< "$OUT" && bad "secret match: the matched text was print
 
 # Unit: the scan's line location (git -U0 hunks to head lines, bisection over the matcher), the refusal's fail-safe rules, the FAILED title and body, the writeback text.
 U="$(cd "$ROOT/loki-ts" && T="$T" bun -e '
-const d = await import("./src/engine10/stages/deep.ts"), s = await import("./src/engine10/stages/seal.ts"), p = await import("./src/engine10/stages/pr.ts"), w = await import("./src/integrations/writeback.ts");
+const d = await import("./src/engine10/stages/deep.ts"), sr = await import("./src/features/self_review.ts"), s = await import("./src/engine10/stages/seal.ts"), p = await import("./src/engine10/stages/pr.ts"), w = await import("./src/integrations/writeback.ts");
 const { mkdirSync, writeFileSync } = await import("node:fs"); const root = process.env.T + "/secline";
 mkdirSync(root + "/backend/src/config", { recursive: true });
 const cfg = ["import { z } from \"zod\";", "const schema = z.object({", "  ELASTICSEARCH_URL: z.string().optional(),", "  ELASTICSEARCH_API_KEY: z.string().optional(),", "});", "export const search = {", "  url: parsed.data.ELASTICSEARCH_URL,", "    apiKey: \"q7Zp" + "Lm4Rt8Vw2Xy6Bn\",", "};"]; // F1: a quoted literal (an unquoted parsed.data.X in a .ts file is an expression, never a match)
 writeFileSync(root + "/backend/src/config/index.ts", cfg.join("\n") + "\n");
 console.log("lines=" + JSON.stringify(await d.secretLines(d.DEFAULT_SECRET_SCAN_SH, root, "backend/src/config/index.ts")));
-console.log("hunks=" + JSON.stringify(d.addedLineNumbers("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -3,0 +4,2 @@\n+a\n+b\n@@ -10 +12 @@\n-old\n+new\n")));
+console.log("hunks=" + JSON.stringify(sr.addedLineNumbers("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -3,0 +4,2 @@\n+a\n+b\n@@ -10 +12 @@\n-old\n+new\n")));
 const fail = (m) => ({ checks: [{ name: "security scan", result: "fail", ...(m === undefined ? {} : { secret_matches: m }) }] });
 console.log("refuse=" + JSON.stringify(s.secretPushRefusal(fail(["a.ts:3"]), "e10-x")) + " high_only=" + JSON.stringify(s.secretPushRefusal(fail([]), "e10-x")) + " unrecorded=" + JSON.stringify(s.secretPushRefusal(fail(undefined), "e10-x")?.matches) + " pass=" + JSON.stringify(s.secretPushRefusal({ checks: [{ name: "security scan", result: "pass" }] }, "e10-x")));
 console.log("title=" + p.prTitle("FAILED", root, "add search", ["security scan"]) + " | " + p.prTitle("FAILED", root, "add search", ["vitest:frontend/src/app/applications/page.test.tsx", "security scan", "lint"]) + " | " + p.prTitle("FAILED", root, "add search") + " | " + p.prTitle("PARTIAL", root, "add search", ["x"]));
@@ -1118,7 +1118,7 @@ has "V8 Q5: with the deadline inside the suite margin no base run is made and no
 # matches its trigger. K4 runs the engine on the stub with a base checklist whose forbid_added item fires on the multiply() line the done change adds.
 # Plants (each reverted): read the working-tree file instead of the base (K3 edit cell); fire on context lines (K1); an invalid regex matches everything (K3);
 # enforce writes no check (K4 enforce reads VERIFIED); observe changes the label (K4 observe); a cmd failure that also fails on base counted as fail (K5);
-# cmd items run with the knob unset (K5 cmdOn cell); read tracked diffs only, no new-file branch in addedLines (K6 new-file cell reads pass and fires none).
+# cmd items run with the knob unset (K5 cmdOn cell); read tracked diffs only, no new-file branch in addedLines (K6 new-file cell reads pass and fires none); read the whole tracked file (K6 old.sh reads old.sh:1 and four lines).
 k_prep() { # k_prep <repo>: a base checklist that forbids adding an exported multiply
     printf '{"version": 1, "items": [{"id": "no-multiply", "trigger": {"paths": ["*.ts"]}, "check": {"forbid_added": "export function multiply"}, "why": "stub", "taught_by": "k4"}]}\n' > "$1/.loki-checklist.json"
     git -C "$1" add .loki-checklist.json; git -C "$1" commit -q --amend -m base
@@ -1145,8 +1145,8 @@ KJ="$(mktemp -d "$T/k3j.XXXXXX")"; git -C "$KJ" init -q -b main; git -C "$KJ" co
 printf '{not json\n' > "$KJ/.loki-checklist.json"; git -C "$KJ" add -A; git -C "$KJ" commit -q -m bad; KJB="$(git -C "$KJ" rev-parse HEAD)"
 printf '{"version": 1, "items": [{"id": "r", "trigger": {"added": "("}, "check": {"forbid_added": "x"}, "why": "w", "taught_by": "t"}]}\n' > "$KJ/.loki-checklist.json"; git -C "$KJ" add -A; git -C "$KJ" commit -q -m badre; KJR="$(git -C "$KJ" rev-parse HEAD)"
 KA="$(mktemp -d "$T/k6.XXXXXX")"; git -C "$KA" init -q -b main; git -C "$KA" config user.name t; git -C "$KA" config user.email t@example.invalid
-printf 'a\nb\n' > "$KA/old.sh"; git -C "$KA" add -A; git -C "$KA" commit -q -m base; KAB="$(git -C "$KA" rev-parse HEAD)"
-printf 'a\nb\ngrep -q x\n' > "$KA/old.sh"; printf 'echo hi\ncurl -s z\ngrep -q y\n' > "$KA/new.sh"; printf 'grep -q outside\n' > "$T/k6-outside.sh"; ln -s "$T/k6-outside.sh" "$KA/link.sh"
+printf 'grep -q base\na\nb\n' > "$KA/old.sh"; git -C "$KA" add -A; git -C "$KA" commit -q -m base; KAB="$(git -C "$KA" rev-parse HEAD)"
+printf 'grep -q base\na\nb\ngrep -q x\n' > "$KA/old.sh"; printf 'echo hi\ncurl -s z\ngrep -q y\n' > "$KA/new.sh"; printf 'grep -q outside\n' > "$T/k6-outside.sh"; ln -s "$T/k6-outside.sh" "$KA/link.sh"
 KU="$(cd "$ROOT/loki-ts" && bun -e '
 import { addedLines, checklistCmdOn, firedItems, readChecklist, runChecklist } from "./src/features/checklist.ts";
 const [kg, kb, kn, knb, kj, kjb, kjr, ka, kab] = process.argv.slice(1);
@@ -1170,14 +1170,19 @@ console.log("K5", c0[0].result, c0runs, c1[0].result, c2[0].result, c2[0].detail
 console.log("K5c", checklistCmdOn({} as never), checklistCmdOn({ LOKI_E10_CHECKLIST: "observe" } as never), checklistCmdOn({ LOKI_E10_CHECKLIST: "0" } as never));
 const ch = ["old.sh", "new.sh", "link.sh"], alg = (f: string) => addedLines(ka, kab, f).lines;
 const k6 = await runChecklist([it("no-grep-q-old", { paths: ["old.sh"] }, { forbid_added: "grep -q" }), it("no-grep-q-new", { paths: ["new.sh"] }, { forbid_added: "grep -q" })], alg, { cmdOn: false, changed: ch, lineNo: (f, i) => addedLines(ka, kab, f).nos[i], run: no, runBase: async () => null });
-console.log("K6", k6[0].result, k6[0].detail.includes("old.sh:3: grep -q x"), k6[1].result, k6[1].detail.includes("new.sh:3: grep -q y"), names(firedItems([it("trig-new", { paths: ["*.sh"], added: "curl -s" }, { forbid_added: "x" })], ch, alg)), JSON.stringify(addedLines(ka, kab, "new.sh").nos), alg("link.sh").length, "end");
+console.log("K6", k6[0].result, k6[0].detail.includes("old.sh:4: grep -q x"), JSON.stringify(addedLines(ka, kab, "old.sh")), k6[1].result, k6[1].detail.includes("new.sh:3: grep -q y"), names(firedItems([it("trig-new", { paths: ["*.sh"], added: "curl -s" }, { forbid_added: "x" })], ch, alg)), JSON.stringify(addedLines(ka, kab, "new.sh").nos), alg("link.sh").length, "end");
 ' "$KG" "$KB" "$KN" "$KNB" "$KJ" "$KJB" "$KJR" "$KA" "$KAB" 2>&1)"
 has "V10 K1 firedItems: a path glob hit and miss, ** across directories, an added-line regex on added lines only (a context-only pattern never fires), and no paths fires on any file" "$KU" "K1 glob-hit,deep,added-hit,any end"
 has "V10 K2 forbid_added: an added matching line fails naming file:line; the same text on an unchanged line passes" "$KU" "K2 fail true pass"
 has "V10 K3 readChecklist: the base commit's file is read and a working-tree edit ignored; a file only in the change reads as none; bad JSON and a bad regex are problems, never a throw" "$KU" "K3 base-item none noproblem none problem re-problem end"
 has "V10 K5 cmd: not run without the knob (never run); fails on head and passes on base fails; fails on both is not run; no base tree is not run; passes on head never runs base" "$KU" "K5 not_run 0 fail not_run true not_run true pass 0"
 has "V10 K5 checklistCmdOn: unset false, observe true, 0 false" "$KU" "K5c false true false"
-has "V10 K6 addedLines (real git): a modified tracked file fails at its diff line; an untracked file the change creates counts every line as added (fails at new.sh:3, a trigger.added item fires on it, lines numbered 1-3 with no phantom trailing line); an untracked symlink is never read" "$KU" "K6 fail true fail true trig-new [1,2,3] 0 end"
+has "V10 K6 addedLines (real git): a modified tracked file fails at its diff line; an untracked file the change creates counts every line as added (fails at new.sh:3, a trigger.added item fires on it, lines numbered 1-3 with no phantom trailing line); an untracked symlink is never read" "$KU" 'K6 fail true {"lines":["grep -q x"],"nos":[4]} fail true trig-new [1,2,3] 0 end'
+# K7 one reader: the -U0 hunk numbering and the per-file added-lines read live only in features/self_review.ts (cold review of V10). Plant (reverted): a hunk
+# loop copied back into checklist.ts, or addedLineNumbers defined again in deep.ts, reads "K7 dup".
+k7_defs="$(grep -rl 'function addedLineNumbers' "$ROOT/loki-ts/src" | sed "s#^$ROOT/##" | tr '\n' ' ')"
+if [ "$k7_defs" = "loki-ts/src/features/self_review.ts " ] && ! grep -qE '"diff"|@@' "$ROOT/loki-ts/src/features/checklist.ts" && grep -q 'addedLinesOf' "$ROOT/loki-ts/src/features/checklist.ts" && ! grep -q 'stages/deep' "$ROOT/loki-ts/src/features/checklist.ts"; then k7="K7 one"; else k7="K7 dup ($k7_defs)"; fi
+[ "$k7" = "K7 one" ] && ok "V10 K7: addedLineNumbers is defined once (features/self_review.ts); checklist.ts reads added lines through addedLinesOf, runs no diff of its own and never imports deep.ts" || bad "V10 K7 gave: $k7"
 
 # VERIFY-PLAN V11 CASCADE-INTRODUCED (LOKI_E10_CASCADE_INTRODUCED, off by default, only with LOKI_E10_CASCADE_V0=1): the cascade also starts on a failure the
 # calibrated verify attributes to the change (closure.ts failureClasses), and the next attempt's brief carries check-failures.txt under its own lead. The Wall is
