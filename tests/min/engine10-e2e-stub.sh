@@ -670,7 +670,7 @@ print("SCANWHY", json.dumps(sc.get("secret_matches")), sc.get("reason"))
 PY
 )"
 has "secret match: the receipt's failed security scan check records where it matched and why (SCAN-WHY)" "$f" 'SCANWHY ["calc.ts:5"] secret match: calc.ts:5'
-f="$(printf '%s\n' "$f" | head -1)"
+f="${f%%$'\n'*}"
 [ "$f" = 'FAILED 0 ["calc.ts:5"] True' ] && ok "secret match: no PR, the receipt names calc.ts:5 in push_refused and NOT PROVEN" || { bad "secret match facts: $f"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
 [ -z "$(git -C "$D/origin.git" rev-parse --verify -q "loki/$(basename "$RUNDIR")")" ] && ok "secret match: nothing was pushed" || bad "secret match: loki/<run> reached the origin"
 [ -n "$(git -C "$REPO" rev-parse --verify -q "loki/$(basename "$RUNDIR")")" ] && ok "secret match: the run branch is kept locally" || bad "secret match: the run branch is gone"
