@@ -5,6 +5,7 @@
 // the separate prover session, off by default.)
 import { defaultBudgetsOn } from "./types.ts";
 import { createHash, randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statfsSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { cleanupSessionScratch, createSessionScratch, scratchSessionEnv, TASK_MEMORY_SUBDIR } from "../runner/worker_proc.ts";
@@ -189,7 +190,7 @@ export function writeProofKit(dir: string, asks: string[] | null): void {
   try { writeFileSync(join(dir, PROOF_HELPER), PROOF_HELPER_SH, { mode: 0o600 }); if (asks?.length) writeFileSync(join(dir, ACCEPTANCE_FILE), asks.map((a, i) => `${i + 1}. ${a}`).join("\n") + "\n", { mode: 0o600 }); } catch { /* the proof then has no helper; the re-run reports it */ }
 }
 /** One check line of a run: the acceptance item it names, what it says it proves (run-specific values removed, see checkKey) and whether it passed. */
-export interface ProofCheck { item: string; what: string; ok: boolean }
+export interface ProofCheck { item: string; what: string; ok: boolean; real?: true /* OWN-PROOF: a passing step that ran repository code (realStep) */ }
 /** A check's description as a key that is the same in two runs of one script: the text before the helper's own result part, lower case, with ids, hashes
  *  and every number replaced (a port, a row id or a duration differs between two runs of the same check). Two checks of one item that then read the same
  *  are paired by count, never merged. */
@@ -257,7 +258,7 @@ export function realStep(text: string, repoDir?: string): boolean {
   });
 }
 /** The same lines as a list of checks, for the comparison with the base commit (proofOnBase). */
-export const proofChecks = (out: string, token: string): ProofCheck[] => proofLines(out, token).map((c) => ({ item: c.item, what: checkKey(c.text), ok: c.ok }));
+export const proofChecks = (out: string, token: string, repoDir?: string): ProofCheck[] => proofLines(out, token).map((c) => ({ item: c.item, what: checkKey(c.text), ok: c.ok, ...(c.ok && repoDir && realStep(c.text, repoDir) ? { real: true as const } : {}) }));
 const MAX_SCRIPT_BYTES = 200_000, TAIL_CHARS = 8000;
 /** Seconds Loki gives its own re-run (LOKI_E10_PROOF_RERUN_S overrides). */
 export const proofRerunS = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_E10_PROOF_RERUN_S"]); return n > 0 ? n : defaultBudgetsOn(env) ? 600 : Infinity; }; // NO-DEFAULT-BUDGET: no limit unless set (shell.run's silence guard ends a silent proof)
@@ -340,7 +341,7 @@ export async function rerunProof(repoDir: string, runDir: string, signal?: Abort
   const r = await runProofScript(env, signal, runDir, async () => ({ script, cwd: repoDir }));
   if (!r) return { exit: null, seconds: 0, proved: 0, failed: 0, tail: "Loki could not create a scratch directory for its own re-run", script_chars: scriptChars, stopped: 0, left: 0, lines: {} };
   const lines = tallyProof(r.results, r.token, repoDir), vals = Object.values(lines); // from the result file when it has lines, else from the output
-  return { exit: r.exit, seconds: r.seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: r.stopped, left: r.left, lines, checks: proofChecks(r.results, r.token) };
+  return { exit: r.exit, seconds: r.seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: r.stopped, left: r.left, lines, checks: proofChecks(r.results, r.token, repoDir) };
 }
 
 // ---- PROVES THE CHANGE: the same proof script, run against the base commit ----
@@ -442,6 +443,71 @@ export async function proofOnBase(repoDir: string, runDir: string, baseSha: stri
   const checks = proofChecks(r.results, r.token);
   keep({ seconds: r.seconds, exit: r.exit, checks, tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-2000) });
   return { ...compareWithBase(head.checks, checks), seconds: r.seconds };
+}
+// ---- OWN-PROOF: the change's own test, failing before the change and passing after it, in the same environment, for any tool ----
+// The fail-then-pass proof in seal reads a test file through a runner Loki knows and counts a base failure only when it can read an assertion, which it can
+// for pytest and vitest. For every other tool a change had no proof of its own (closed-set-2 pw43305: "no tests executed", though the session's proof script
+// ran the change's behaviour through the repository's own CLI). The proof script is the tool-neutral test: Loki runs it on the change, then runs the same
+// script in a COPY of the checkout in which only the change's non-test files are put back to the base commit. A step counts when it ran repository code
+// (realStep), passed on the change, and the copy printed FAILED for the same step. The copy is the same environment: installed dependencies, build output and
+// ignored files are the checkout's own, so a step cannot fail there for a missing install. It can only err the safe way: build output made from the change
+// lets the step pass without it, and then nothing is proved. For that case the owning package's build command, when the project model has one, is run in the
+// copy and the script is run once more.
+/** On by default; LOKI_E10_OWN_PROOF=0 opts out (the proof is then the runner-read fail-then-pass alone). */
+export const ownProofOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_OWN_PROOF"] ?? "").trim());
+/** The steps of the change's own proof: passing, repository-running steps on the change that the run without the change printed FAILED for (paired by item and
+ *  description, as compareWithBase pairs them; a step the other run never reached, or also passed, is not one). Pure. */
+export function failsWithoutChange(head: ProofCheck[], without: ProofCheck[]): string[] {
+  const k = (c: ProofCheck): string => `${c.item}\u0001${c.what}`, passed = new Set(without.filter((c) => c.ok).map(k)), failed = new Set(without.filter((c) => !c.ok).map(k));
+  return [...new Set(head.filter((c) => c.ok && c.real === true && failed.has(k(c)) && !passed.has(k(c))).map((c) => c.what))];
+}
+export interface OwnProof { ok: boolean; steps: string[]; why?: string; seconds: number; built?: true; checks_without: number }
+/** Runs the kept proof script in a copy of the checkout without the change (see the block comment above). `revert`: the change's non-test files, each with
+ *  whether the change added it (then it is removed in the copy; otherwise its base content is written back, read from the repository's objects, so no git
+ *  command runs inside the copy and the run's own index is never touched). `builds`: the build commands of the packages that own those files, tried only when
+ *  no step fails without them. Null when it is off or there is nothing to run. Never throws, never touches the working tree. */
+export async function proofWithoutChange(repoDir: string, runDir: string, baseSha: string | undefined, head: ProofRerun | null, revert: readonly { path: string; added: boolean }[], builds: readonly { cmd: string; cwd: string }[], signal?: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<OwnProof | null> {
+  if (!ownProofOn(env) || !proofRerunOn(env) || !baseSha || !head || head.refused || head.exit !== 0 || head.failed > 0 || !head.checks?.some((c) => c.ok && c.real) || revert.length === 0) return null;
+  let text = ""; try { text = readFileSync(join(runDir, PROOF_SCRIPT), "utf8"); } catch { return null; }
+  const no = (why: string, seconds = 0): OwnProof => ({ ok: false, steps: [], why, seconds, checks_without: 0 });
+  let total = 0;
+  const once = async (build: boolean): Promise<OwnProof> => {
+    let prepWhy = "", wt = "";
+    const r = await runProofScript(env, signal, runDir, async (scratchDir) => {
+      wt = join(scratchDir, "without");
+      if (process.platform !== "darwin") { try { const f = statfsSync(scratchDir); if (Number(f.bavail) * Number(f.bsize) < 5 * 2 ** 30) { prepWhy = "less than 5 GiB of disk is free, and off macOS the copy of the checkout may be a full copy"; return null; } } catch { /* unknown free space: the copy's own time limit still holds */ } }
+      const cp = await run(process.platform === "darwin" ? ["cp", "-cR", repoDir, wt] : ["cp", "-R", "--reflink=auto", repoDir, wt], { timeoutMs: DEPS_COPY_MS, signal });
+      if (cp.exitCode !== 0) { prepWhy = "Loki could not copy the checkout for the run without the change"; return null; }
+      for (const f of revert) {
+        const dst = join(wt, f.path);
+        try {
+          if (f.added) { rmSync(dst, { force: true }); continue; }
+          const bytes = execFileSync("git", ["-C", repoDir, "show", `${baseSha}:${f.path}`], { maxBuffer: 64 << 20, timeout: 20_000, stdio: ["ignore", "pipe", "ignore"] }); // bytes, not text: a changed file need not be UTF-8
+          mkdirSync(dirname(dst), { recursive: true }); writeFileSync(dst, bytes);
+        } catch { prepWhy = `Loki could not put ${f.path} back to the base commit in the copy`; return null; }
+      }
+      if (build) for (const b of builds) { const br = await run(["bash", "-c", b.cmd], { cwd: join(wt, b.cwd), timeoutMs: proofRerunS(env) * 1000, group: true, signal }); if (br.exitCode !== 0) { prepWhy = `the build (${b.cmd}) did not finish in the copy without the change`; return null; } }
+      const real = (() => { try { return realpathSync(repoDir); } catch { return repoDir; } })(), names = [...new Set([real, repoDir, real.replace(/^\/private\//, "/")])].filter((d) => d.length > 5).sort((a, b) => b.length - a.length);
+      let t = text; for (const d of names) t = t.split(d).join(wt); // a script that names the repository's path as a literal must run the copy, not the changed tree
+      const rel = relative(real, (() => { try { return realpathSync(runDir); } catch { return runDir; } })()), dir = rel && !rel.startsWith("..") && !rel.startsWith("/") ? join(wt, rel) : join(scratchDir, "without-proof");
+      mkdirSync(dir, { recursive: true }); writeProofKit(dir, null); writeFileSync(join(dir, PROOF_SCRIPT), t, { mode: 0o700 });
+      for (const f of HANDED) { try { const su = join(runDir, f); if (existsSync(su)) copyFileSync(su, join(dir, f)); } catch { /* a script that needs it says so */ } }
+      return { script: join(dir, PROOF_SCRIPT), cwd: wt, extra: { LOKI_REPO: wt }, limitS: proofRerunS(env) };
+    });
+    if (wt) { try { rmSync(wt, { recursive: true, force: true }); } catch { /* the scratch cleanup removes it */ } }
+    if (!r) return no("Loki could not create a scratch directory for the run without the change");
+    total += r.seconds;
+    if (!r.ran) return no(prepWhy || "the run without the change could not be prepared", total);
+    if (r.exit === null || r.timedOut) return no("the run without the change did not finish", total);
+    const without = proofChecks(r.results, r.token), steps = failsWithoutChange(head.checks!, without);
+    return { ok: steps.length > 0, steps, seconds: total, checks_without: without.length, ...(build ? { built: true as const } : {}), ...(steps.length ? {} : { why: without.length === 0 ? "the proof script printed no check when run without the change" : "every step that passes on the change also passes without it, so the proof does not tell the change from no change" }) };
+  };
+  try {
+    const first = await once(false);
+    if (first.ok || builds.length === 0 || first.checks_without === 0 || signal?.aborted) return first;
+    const second = await once(true); // build output made from the change can let a step pass without it: build in the copy and run once more
+    return second.ok ? second : { ...first, seconds: total };
+  } catch (e) { return no(`the run without the change did not complete: ${(e as Error).message}`.slice(0, 200), total); }
 }
 /** One run of a bash script that Loki owns from start to end: a new scratch directory holding Loki's own copy of the helper, an EMPTY directory inside it as
  *  the script's argument (a script that checks for emptiness refused the scratch itself), the user's own database settings blanked, a time cap, and the
