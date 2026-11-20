@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `LOKI_E10_WALL=observe` runs the Wall author as usual (tests written from the issue by a session that never sees the code, sealed and run on the base commit) but keeps its tests out of the checkout, the fix rounds and the label. A complete verify runs them at the end and the receipt records how they did and what label they would have given. The default is unchanged (the Wall stays off).
 
+### A stalled fix loop can re-plan once
+
+- With `LOKI_E10_REPLAN=1`, when the fix rounds stop making progress Loki runs one more round in a fresh session that is shown the earlier rounds' own summaries, told to take a different approach, and asked to fix the whole class of each failure. If that round makes progress the run is labeled from its result instead of ending stalled. It never runs after a spec conflict, a Wall-only or full-suite-only stop, or a limit. Off by default until a scored run measures it; `LOKI_E10_REPLAN_MAX` sets how many such rounds a run gets (default 1, 0 for none).
+
 ## v11.172.0 (2026-11-20)
 
 ### A low-risk run checks the full test suite before it can say VERIFIED

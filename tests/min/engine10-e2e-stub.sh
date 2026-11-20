@@ -986,6 +986,56 @@ has "V3 W6: in observe mode observeWall clears wallSealed, moves the record unde
 has "V3 W6: with the knob unset observeWall leaves wallSealed set and the record untouched" "$W46" "W6u true true true"
 has "V3 W6: a failed Wall in observe mode is recorded and never fails the run" "$W46" "W6f completed failed boom"
 
+# VERIFY-PLAN V6 REPLAN (LOKI_E10_REPLAN, off by default; LOKI_E10_REPLAN_MAX default 1, 0 allows none). At a stalled fix loop that no designed stop already
+# decided, one more fix round runs in a fresh session past the round cap, with a STEP BACK block (the earlier rounds' own summaries and the class-of-failure
+# sentence) in place of the ESCALATED ROUND paragraph. E2E_STUB_FIX=stepback fixes multiply() only from a STEP BACK brief. Plants (each reverted): replanDue
+# ignores the knob (R2 gains an event); the fix stage keeps the cap for a replan (R1 STALLED); fixChain keeps the old session id (R1b); buildFixBrief drops the
+# STEP BACK block (R5, R1 STALLED); the block sits beside ESCALATED ROUND instead of replacing it (R5); replanMax read through posEnv (R4); replanDue drops the
+# wallOnly (R6), suiteOnly (R7) or fixExit (R8) test; stopped not reset after a moving replan (R1c reads STALLED; a green replan reads VERIFIED either way).
+rp_facts() { python3 -I - "$RUNDIR/events.jsonl" "$RUNDIR/receipt.json" <<'PY'
+import json, sys
+ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]
+rp = [e for e in ev if e["type"] == "loop.repeat" and (e.get("data") or {}).get("reason", "").startswith("re-plan:")]
+fx = [e.get("data") or {} for e in ev if e.get("stage") == "fix" and e["type"] == "stage.completed"]
+try: rec = json.load(open(sys.argv[2]))
+except Exception: rec = {}
+last = ((fx[-1].get("fix_rounds") or [{}])[-1]) if fx else {}
+print(rec.get("verdict"), "replans=%d" % len(rp), "lastreplan=%s" % bool(last.get("replan")), "diagnoses=%s" % any("diagnoses" in d for d in fx))
+PY
+}
+rp_brief() { python3 -I -c 'import sys; t = open(sys.argv[1]).read() if __import__("os").path.exists(sys.argv[1]) else ""; seg = t.split("The previous Fast verify run failed.")[-1] if "STEP BACK." in t else ""; print("stepback" if "STEP BACK." in seg else "nostep", "carried" if "stub fix: kept the add approach" in seg else "notcarried", "escalated" if "ESCALATED ROUND" in seg else "clean")' "$T/rp.prompt.implement0"; }
+rm -f "$T"/rp.prompt*; E2E_STUB_FIX=stepback E2E_STUB_PROMPT_LOG="$T/rp.prompt" LOKI_E10_REPLAN=1 run_engine wrong
+r1="$(rp_facts) $(rp_brief) $(outcome)"
+[ "$r1" = "VERIFIED replans=1 lastreplan=True diagnoses=True stepback carried clean VERIFIED" ] && ok "V6 R1: a stalled fix loop re-plans once in a fresh round whose STEP BACK brief carries the earlier summary and no ESCALATED ROUND; it fixes multiply() and the run is VERIFIED ($r1)" || bad "V6 R1 gave: $r1 (outcome $(outcome))"
+E2E_STUB_FIX=stepbackhalf LOKI_E10_REPLAN=1 run_engine wrong
+r1c="$(rp_facts) $(outcome)"
+case "$r1c" in *" replans=1 "*" FAILED") ok "V6 R1c: a replan round that moves but leaves a failure ends the stall: the run is labeled from its tree (FAILED), not STALLED ($r1c)" ;; *) bad "V6 R1c gave: $r1c" ;; esac
+E2E_STUB_FIX=stepback run_engine wrong
+r2="$(rp_facts) $(outcome)"
+[ "$r2" = "FAILED replans=0 lastreplan=False diagnoses=False STALLED" ] && ok "V6 R2: with the knob unset the stall ends as today (STALLED, receipt FAILED), no re-plan event and no diagnoses key ($r2)" || bad "V6 R2 gave: $r2"
+LOKI_E10_REPLAN=1 run_engine wrong
+r3="$(rp_facts) $(outcome)"
+case "$r3" in *" replans=1 "*" STALLED") ok "V6 R3: a replan that does not move leaves the run STALLED after exactly one re-plan ($r3)" ;; *) bad "V6 R3 gave: $r3" ;; esac
+RPU="$(cd "$ROOT/loki-ts" && bun -e '
+import { replanDue, replanMax, replanOn } from "./src/engine10/types.ts"; import { buildFixBrief, fixChain, stepBackBlock } from "./src/engine10/stages/fix.ts";
+const prior = { fix: { session_id: "s-fix", model: "m-fix" }, implement: { session_id: "s-imp", model: "m-imp" } } as never;
+console.log("R1b", JSON.stringify(fixChain(prior, true, "m-act", "m-run")), JSON.stringify(fixChain(prior, false, "m-act", "m-run")), JSON.stringify(fixChain({} as never, false, "m-act", "m-run")));
+const st = { replans: 0, roundsRan: 1, fatal: false, capHit: false, stopped: "stalled", stillRounds: 0, failures: true, wallOnly: false, suiteOnly: false, fixExit: undefined, implementExit: "done", verifyStoppedAt: undefined };
+const on = { LOKI_E10_REPLAN: "1" }, due = (o: object, e: object = on) => replanDue({ ...st, ...o } as never, e as never);
+console.log("R4", replanMax({ LOKI_E10_REPLAN_MAX: "0" } as never), due({}, { ...on, LOKI_E10_REPLAN_MAX: "0" }), replanMax({} as never), replanMax({ LOKI_E10_REPLAN_MAX: "x" } as never), replanMax({ LOKI_E10_REPLAN_MAX: "2" } as never), due({ replans: 1 }, { ...on, LOKI_E10_REPLAN_MAX: "2" }));
+console.log("R6", due({}), due({ wallOnly: true }), "R7", due({ suiteOnly: true }), "R8", due({ fixExit: "spec_conflict" }), "R9", due({ stopped: null, stillRounds: 0 }), due({ stopped: null, stillRounds: 1 }), "off", due({}, {}), replanOn({ LOKI_E10_REPLAN: "yes" } as never));
+const g = [{ signature: "bun:calc.test.ts", count: 1, sample: "expected 12 got 7" }] as never;
+const sb = buildFixBrief("t", g, "diff", { priorDiagnosis: "d", stepBack: ["a", "b"] });
+console.log("R5", sb.includes(stepBackBlock(["a", "b"])), sb.includes("1. a") && sb.includes("2. b"), sb.includes("Fix the whole class of each failure"), !sb.includes("ESCALATED ROUND"));
+const esc = buildFixBrief("t", g, "diff", { priorDiagnosis: "d" }), none = buildFixBrief("t", g, "diff", undefined);
+console.log("R5b", esc.includes("ESCALATED ROUND: the same failure repeated after your previous fix. Re-read the full failure output above, find the root cause, and do not repeat the earlier approach.\nYour previous diagnosis: d"), !esc.includes("STEP BACK"), !none.includes("ESCALATED ROUND") && !none.includes("STEP BACK"));
+' 2>&1)"
+has "V6 R1b: fixChain starts a replan round fresh on the round's model, and keeps today's chain otherwise" "$RPU" 'R1b {"sessionId":null,"model":"m-act"} {"sessionId":"s-fix","model":"m-fix"} {"sessionId":null,"model":"m-run"}'
+has "V6 R4: LOKI_E10_REPLAN_MAX 0 allows none, unset and garbage read 1, 2 allows a second" "$RPU" "R4 0 false 1 1 2 true"
+has "V6 R6 to R9: a stalled state re-plans; a Wall-only, full-suite-only or spec-conflict stop, a last round that moved, or the knob off never does" "$RPU" "R6 true false R7 false R8 false R9 false true off false true"
+has "V6 R5: a replan brief carries both summaries numbered and the class sentence, in place of the ESCALATED ROUND paragraph" "$RPU" "R5 true true true true"
+has "V6 R5: without stepBack the ESCALATED ROUND paragraph is today's text, and an ordinary brief has neither block" "$RPU" "R5b true true true"
+
 att_ev() { python3 -I -c '
 import json, sys
 for l in open(sys.argv[1]):

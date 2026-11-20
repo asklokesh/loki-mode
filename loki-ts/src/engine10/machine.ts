@@ -8,7 +8,7 @@ import { assumptionOf, consultAvailable, neverStopActive, readConsults, type Nev
 import { rerunOnQuota, sessionKind, usageLimitOf } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./failures.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote, timeNoteOn } from "../util/run_cap.ts"; import { FINISH_LINE, issueRunBrief } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, isClean, MIN_ATTEMPT_WINDOW_S, runExtraAttempts, signalNotProven, type AttemptSignal } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase, observeWall } from "./stages/wall.ts";
-import { armTimer, backstopS, defaultBudgetsOn, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, hangSilenceS, MAX_FIX_ROUNDS, noProgressRounds, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
+import { replanDue, REPLAN_REASON, type ReplanState } from "./types.ts"; import { armTimer, backstopS, defaultBudgetsOn, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, hangSilenceS, MAX_FIX_ROUNDS, noProgressRounds, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
 import { newFailingIds, stallSame, stallSignature, SUITE_FIX_SKIP_NOTE, suiteSkipHolds } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
 import { PROVE_MIN_S, proveApplies, proveBudgetS, proveReserveOfS, proveNotRun, proveScope, recheckProve, type ProveRecord } from "./stages/prove.ts"; import { capCeilingS } from "../util/run_cap.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
 
@@ -439,6 +439,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         // NO-DEFAULT-BUDGET: with no time limit the round count is not the bound. A round makes progress when the failing count falls below the best so far or
         // a check that had not run now ran (both bounded, so the loop always ends); noProgressRounds() rounds in a row without either end it.
         let fewestNew = newFailingIds(outputs.verify).size, mostRan = checksRan(outputs.verify), stillRounds = 0, suitePrev = Infinity, suiteNow = newFailingIds(outputs.verify, true).size; // G5: progress = fewer measured NEW failing ids than the best so far; a full-suite-only red stops a later round only when the suite's new ids did not shrink
+        let replans = 0, roundsRan = 0; // VERIFY-PLAN V6
         let noopSig: string | null = null; // anti-loop: the verify signature that fed the last fix round that left the tree unchanged
         const suiteSkip = suiteFixSkipEnabled() && !fatal && !capHit && outputs.implement?.exit === "done" && hasFailures(outputs.verify) && suiteOnlyRed(outputs.verify);
         // INDEP-GATE LOKI_E10_HAIKU_INDEP_FIX (default on, =0 opts out): a Haiku run gets no fix round at all unless an independent check failed (verify.ts independent_fail:
@@ -450,6 +451,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         for (let round = 1; !indepSkip && (unbounded ? stillRounds < noProgressRounds() : round <= MAX_FIX_ROUNDS + extraRounds) && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && !(suiteSkip && onlyFullSuiteRed(outputs.verify)) && !suiteOnlyStop(round, onlyFullSuiteRed(outputs.verify), suiteNow, suitePrev) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
           const wallBefore = wallSignature(outputs, ctx.repoDir);
           const fx = await runStage("fix", true);
+          roundsRan++; // VERIFY-PLAN V6
           if (!fx || mustJump("fix", fx) || fatal) break;
           { const ns = (outputs.implement?.never_stop as (NeverStopRecord & { pending?: boolean })[] | undefined) ?? [], last = ns[ns.length - 1]; if (last?.pending && fx.status === "completed") { delete last.pending; last.assumption = assumptionOf(String(outputs.fix?.diagnosis ?? "")); last.consulted = readConsults(ctx.runDir).some((c) => c.stage.startsWith("fix") && c.advice !== null); } } // LOKI_E10_OPUS_CONSULT: the round after a settled fix conflict names the choice it made
           // FireLater#21: a fix-round conflict over failures verify showed failing the same way on base, in tests that only import a named file, is checked by one
@@ -498,6 +500,17 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
             if (round === 1 && round < MAX_FIX_ROUNDS + extraRounds && consultAvailable(ctx.runDir)) continue; // LOKI_E10_OPUS_CONSULT: a red verify after the first fix round gets the one consult in round 2 before any stall stop
             if (unbounded && stillRounds < noProgressRounds()) continue; // NO-DEFAULT-BUDGET: one round without progress is allowed; the next one ends the loop
             stopped = "stalled"; break;
+          }
+        }
+        // VERIFY-PLAN V6: one fresh round with a step-back brief before the run ends stalled (LOKI_E10_REPLAN, off by default).
+        const replanState = (): ReplanState => ({ replans, roundsRan, fatal: !!fatal, capHit, stopped, stillRounds, failures: hasFailures(outputs.verify), wallOnly: wallOnlyAfterFix(outputs, ctx.repoDir), suiteOnly: onlyFullSuiteRed(outputs.verify), fixExit: outputs.fix?.exit, implementExit: outputs.implement?.exit, verifyStoppedAt: outputs.verify?.stopped_at });
+        if (replanDue(replanState())) {
+          replans++; outputs.fix = { ...outputs.fix, replan_pending: true };
+          ctx.emit("loop.repeat", "fix", { reason: REPLAN_REASON, round: Number(outputs.fix?.round ?? 0) + 1, replan: replans });
+          const fx = await runStage("fix", true);
+          if (fx && !mustJump("fix", fx) && !fatal && outputs.fix?.exit !== "spec_conflict") {
+            const v = await runStage("verify", true); sigs.push(sigOf(outputs.verify, v));
+            if (!mustJump("verify", v) && (!hasFailures(outputs.verify) || fixRoundMoved(newFailingIds(outputs.verify).size, checksRan(outputs.verify), fewestNew, mostRan))) stopped = null;
           }
         }
         if (!fatal && !capHit && (stopped === null || stopped === "stalled") && !attemptsRan && !cascadeV0On() && !isClean(attemptSignalOf(outputs, outputs.implement?.exit === "spec_conflict"))) { // EXP-0010: a first attempt that is not clean (red, a conflict, or NOT PROVEN lines) gets N-1 more in parallel (not again when the early switch already ran them)

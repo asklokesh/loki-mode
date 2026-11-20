@@ -33,6 +33,16 @@ const posEnv = (raw: string | undefined, dflt: number): number => { const n = Nu
 /** No-progress stop: a loop (fix rounds, proof re-runs, S1b continues) ends after this many rounds in a row without progress (LOKI_E10_NO_PROGRESS_ROUNDS). */
 export const NO_PROGRESS_ROUNDS = 2;
 export const noProgressRounds = (env: NodeJS.ProcessEnv = process.env): number => Math.floor(posEnv(env["LOKI_E10_NO_PROGRESS_ROUNDS"], NO_PROGRESS_ROUNDS));
+/** VERIFY-PLAN V6 LOKI_E10_REPLAN (off by default, 1/on/true/yes turns it on): when the fix rounds stall, one more round in a fresh session told to step
+ *  back and take a different approach. LOKI_E10_REPLAN_MAX (default 1; 0 allows none) bounds how many such rounds one run gets. */
+export const replanOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_REPLAN"] ?? "").trim());
+export const replanMax = (env: NodeJS.ProcessEnv = process.env): number => { const r = (env["LOKI_E10_REPLAN_MAX"] ?? "").trim(); return /^\d+$/.test(r) ? Number(r) : 1; }; // not posEnv: posEnv reads 0 as the default
+export const REPLAN_REASON = "re-plan: the fix rounds stopped making progress, so one fresh session is asked for a different approach";
+/** The V6 trigger, pure. Every field is read by machine.ts after the fix loop. */
+export interface ReplanState { replans: number; roundsRan: number; fatal: boolean; capHit: boolean; stopped: string | null; stillRounds: number; failures: boolean; wallOnly: boolean; suiteOnly: boolean; fixExit: unknown; implementExit: unknown; verifyStoppedAt: unknown }
+export const replanDue = (s: ReplanState, env: NodeJS.ProcessEnv = process.env): boolean =>
+  replanOn(env) && s.replans < replanMax(env) && s.roundsRan > 0 && !s.fatal && !s.capHit && s.failures && (s.stopped === "stalled" || (s.stopped === null && s.stillRounds >= 1))
+  && !s.wallOnly && !s.suiteOnly && s.fixExit !== "spec_conflict" && s.implementExit !== "spec_conflict" && s.implementExit !== "external" && !s.verifyStoppedAt;
 /** A session (or a test command) with no new output and no tree change for this long is stuck and is ended (LOKI_E10_STALL_KILL_S keeps its meaning). */
 export const SILENCE_KILL_S = 1800;
 /** A session that streams output but changes neither the tree nor its outcome for this long is looping and is ended (LOKI_E10_LOOP_KILL_S). */
