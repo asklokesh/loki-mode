@@ -29,7 +29,7 @@
 #   V7c verificationStamp: drop the !i.proof test; S2h fails.
 #   V7d verificationStamp: drop the wallPassed test; S2i fails.
 #   V7e verificationStamp: put the Wall branch before alreadyOk; S2a fails.
-#   V7f seal.ts: write observed entries into notProven (item 4 C3 cell shows it; recorded in run-safety.sh).
+#   V7f seal.ts: write observed entries into notProven (shown red by the V2 W2 cell in run-safety.sh, which reads seal.ts).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
