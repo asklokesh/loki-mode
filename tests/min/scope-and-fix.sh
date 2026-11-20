@@ -4826,6 +4826,7 @@ done <<< "$out"
 #   V5-6. runCheck: drop the fallback: T5 reads fail.
 #   V5-7. runCheck: the fallback runs once without the flaky retry: T5b reads fail.
 #   V5-8. runCheck: the fallback fires on a cut run: T5c counter reads 2.
+#   V5-9. util/python.ts scanJunitCases: the testcase regex not quote-aware (<testcase\b([^>]*?)): T2b reads the id "t.m > ".
 cat > "$T/v5.ts" <<'TS'
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, chmodSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -4846,6 +4847,9 @@ res("V5 T2 readReport junit: 3 testcases, one failure in class TestC, one skippe
 const x2 = w("x2.xml", '<testsuites><testsuite><testcase classname="C" name="a &amp; b &#62; c"><error/></testcase></testsuite></testsuites>');
 res("V5 T2 readReport junit: an entity in a name decodes", JSON.stringify(tr.readReport(x2, "junit")?.failedIds) === JSON.stringify(["C > a & b > c"]), tr.readReport(x2, "junit"));
 res("V5 T2 readReport junit: a truncated file and an empty file read null", tr.readReport(w("x3.xml", '<testsuites><testsuite><testcase name="a"/>'), "junit") === null && tr.readReport(w("x4.xml", ""), "junit") === null && tr.readReport(join(d, "missing.xml"), "junit") === null);
+const x5 = w("x5.xml", '<testsuites><testsuite><testcase classname="t.m" name="test_cmp[a>b]"><failure/></testcase><testcase classname="t.m" name="test_xf"><skipped type="pytest.xfail" message="r"/></testcase><testcase classname="t.m" name="test_ok"/></testsuite></testsuites>');
+const r5x = tr.readReport(x5, "junit");
+res("V5 T2b readReport junit (the shared python.ts scanJunitCases): a raw > inside a quoted name keeps the whole id, and an xfail counts as skipped", r5x?.run === 2 && r5x?.failed === 1 && r5x?.skipped === 1 && JSON.stringify(r5x?.failedIds) === JSON.stringify(["t.m > test_cmp[a>b]"]), r5x);
 const j1 = w("j.json", JSON.stringify({ testResults: [{ assertionResults: [{ status: "passed", fullName: "a" }, { status: "passed", fullName: "b" }, { status: "failed", fullName: "s c" }, { status: "pending", fullName: "d" }] }] }));
 const r3 = tr.readReport(j1, "jest-json");
 res("V5 T3 readReport jest-json: 2 passed, 1 failed, 1 pending: run 3, failed 1, skipped 1, id fullName", r3?.run === 3 && r3?.failed === 1 && r3?.skipped === 1 && JSON.stringify(r3?.failedIds) === JSON.stringify(["s c"]), r3);
@@ -4882,7 +4886,7 @@ rmSync(d, { recursive: true, force: true });
 TS
 v5out="$(cd "$ROOT/loki-ts" && env -u LOKI_E10_STRUCTURED_RESULTS bun "$T/v5.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$v5out" || { bad "V5 unit script crashed or exited non-zero"; printf '%s\n' "$v5out" | tail -6 | sed 's/^/    | /'; }
-[ "$(printf '%s\n' "$v5out" | grep -c '^OK ')" = 16 ] || bad "V5 unit script produced $(printf '%s\n' "$v5out" | grep -c '^OK ') passing legs, want 16"
+[ "$(printf '%s\n' "$v5out" | grep -c '^OK ')" = 17 ] || bad "V5 unit script produced $(printf '%s\n' "$v5out" | grep -c '^OK ') passing legs, want 17"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$v5out"

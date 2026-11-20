@@ -1,8 +1,9 @@
-// util/check_result.ts parses a runner's printed text; this module reads the machine-readable report file a runner writes when asked, a different input. No existing module reads JUnit or jest JSON.
+// util/check_result.ts parses a runner's printed text; this module reads the machine-readable report file a runner writes when asked. util/python.ts already reads pytest's JUnit report (scanJunitCases, used here for every testcase) and contrib/verify_pr_f2p.ts reportShowsPass reads JUnit and jest JSON totals; new here are the report arguments per runner and the per-assertion failed ids from jest JSON.
 // VERIFY-PLAN V5 (LOKI_E10_STRUCTURED_RESULTS, off by default; observe compares the report with the text parse, enforce is accepted and behaves as observe).
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { ruleMode } from "../engine10/closure.ts";
+import { scanJunitCases } from "./python.ts";
 
 export interface TestReport { source: "junit" | "jest-json"; run: number; failed: number; skipped: number; failedIds: string[] }
 export const structuredResultsMode = (env: NodeJS.ProcessEnv = process.env) => ruleMode("LOKI_E10_STRUCTURED_RESULTS", "off", env);
@@ -25,23 +26,15 @@ export function reportArgs(cmd: string, args: readonly string[], file: string): 
   return null; // go already streams -json; unittest, node, mocha, ava, cargo, maven, gradle, javac, dotnet and a repo command through bash -c have none
 }
 
-const decode = (s: string): string => s
-  .replace(/&#x([0-9a-fA-F]+);/g, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
-  .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
-  .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&apos;/g, "'").replace(/&amp;/g, "&");
-const attr = (attrs: string, name: string): string | null => { const m = new RegExp(`\\s${name}="([^"]*)"`).exec(attrs); return m ? decode(m[1]!) : null; };
-
 function readJunit(text: string): TestReport | null {
   if (!/<testsuites?\b/.test(text) || !/<\/testsuites?>\s*$/.test(text.trim() + "\n")) return null; // a truncated file has no closing tag
   let run = 0, failed = 0, skipped = 0; const failedIds: string[] = [];
-  const re = /<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g;
-  for (let m = re.exec(text); m; m = re.exec(text)) {
-    const attrs = m[1] ?? "", body = m[3] ?? "";
-    if (/<skipped\b/.test(body)) { skipped++; continue; }
+  for (const { attrs, outcome } of scanJunitCases(text)) {
+    if (outcome === "skipped" || outcome === "xfailed") { skipped++; continue; }
     run++;
-    if (!/<(failure|error)\b/.test(body)) continue;
+    if (outcome !== "failed" && outcome !== "error") continue;
     failed++;
-    const name = attr(attrs, "name") ?? "", cls = attr(attrs, "classname") ?? "", file = attr(attrs, "file");
+    const name = attrs.name ?? "", cls = attrs.classname ?? "", file = attrs.file;
     if (file) {
       const mod = file.replace(/\.[^./]+$/, "").replace(/\//g, ".");
       const rest = (cls.startsWith(mod) ? cls.slice(mod.length) : cls).split(".").filter(Boolean);
