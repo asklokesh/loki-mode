@@ -251,6 +251,15 @@
 # ADSd. seal.ts alreadyLinesMet: `st.some((x) => x.status === "met")` alone (the 10-lines/1-proved plant reads ALREADY_SATISFIED).
 # ADSe. seal.ts alreadyLinesMet: drop `st.some((x) => x.status === "met") &&` (no acceptance lines reads ALREADY_SATISFIED).
 # ADSf. seal.ts: `alreadyOk = alreadyDoneShown(o, alreadyRun);` again (the wiring cell fails).
+# ADSg. seal.ts alreadyRealLines: never turn a met line unmet (Fable's 3-steps-of-true cell reads ALREADY_SATISFIED).
+# ADSh. proof_rerun.ts realStep: any `cmd:` counts (the realStep and 3-steps-of-true cells fail).
+# ADSi. proof_rerun.ts kit: loki_cmd prints no `cmd:` (the node/repo-path proof reads PARTIAL).
+# ADSj. seal.ts alreadyRealLines: the fresh-install line always counts (its no-answered-request cell reads ALREADY_SATISFIED).
+# ADSk. proof_rerun.ts realStep: any word that is a runner or a repo path counts again (the command-position cells fail).
+# ADSl. proof_rerun.ts kit: loki_cmd keeps "|" in the description (the forged-status plant reads ALREADY_SATISFIED).
+# ADSm. proof_rerun.ts realStep: any command with a repo path argument counts, not only a file reader (echo package.json counts).
+# ADSn. proof_rerun.ts realStep: drop the timeout skip (the timeout cells fail). ADSo. compare repoDir as text again (the realpath cells fail).
+# ADSp. proof_rerun.ts inRepo: accept the root itself again (`r === root ||`; the test -d root plants read ALREADY_SATISFIED).
 # 119. exec_spec.ts capSites: return every uncovered site (the passing-mention leg reads PARTIAL).
 # 120. seal.ts specSiteGap: ignore the changed-symbol list (exec spec atoms read gap=Report,Report,-).
 # 124. exec_spec.ts defectSites: count every span of a clause with a defect word again (the comparison, negated-scope and see legs read PARTIAL).
@@ -1035,8 +1044,9 @@ import { classifyRunnerOutput } from "$ROOT/loki-ts/src/runner/runner_errors.ts"
 import { buildFixResumeBrief, runFixSession } from "$ROOT/loki-ts/src/runner/session_resume.ts";
 import { rememberSessionEffort, sessionEffortFor } from "$ROOT/loki-ts/src/engine10/session.ts";
 import { quickSplit } from "$ROOT/loki-ts/src/e10ext/select.ts";
-import { verdictOf, alreadyDoneClaimed, alreadyDoneShown, alreadyDoneNotShownNote, alreadyLinesMet, alreadyLinesNote } from "$ROOT/loki-ts/src/engine10/stages/seal.ts";
-import { ruleStatus } from "$ROOT/loki-ts/src/engine10/proof_rerun.ts";
+import { verdictOf, alreadyDoneClaimed, alreadyDoneShown, alreadyDoneNotShownNote, alreadyLinesMet, alreadyLinesNote, alreadyRealLines } from "$ROOT/loki-ts/src/engine10/stages/seal.ts";
+import { ruleStatus, realStep, rerunProof } from "$ROOT/loki-ts/src/engine10/proof_rerun.ts";
+import { FRESH_INSTALL_ASK } from "$ROOT/loki-ts/src/util/intent_card.ts";
 import { buildImplementBrief } from "$ROOT/loki-ts/src/engine10/stages/implement.ts";
 import { consumeSdkStream, isSuiteRun } from "$ROOT/loki-ts/src/runner/sdk_stream_parser.ts";
 const res = (name: string, pass: boolean) => console.log((pass ? "OK " : "NO ") + name);
@@ -1086,17 +1096,43 @@ res("L025 a run whose last verify was quick-only never seals VERIFIED", verdictO
 const fl24 = JSON.parse(readFileSync("$ROOT/tests/min/fixtures/replay/firelater24-already-done.json", "utf8")), so = { intake: fl24.intake, implement: fl24.implement, verify: fl24.verify, commit: fl24.commit } as never;
 // ADS-LINES (Fable review of 11.167.0): the re-run must also meet every required acceptance line by the same rule seal uses for an issue run; 10 lines and
 // 1 proved step, or no acceptance lines at all, stay PARTIAL.
-const lines = (n: number) => Array.from({ length: n }, (_, i) => "acceptance line " + (i + 1)), proved = (ks: number[]) => Object.fromEntries(ks.map((k) => [String(k), { proved: 1, failed: 0 }]));
+const lines = (n: number) => Array.from({ length: n }, (_, i) => "acceptance line " + (i + 1)), proved = (ks: number[]) => Object.fromEntries(ks.map((k) => [String(k), { proved: 1, failed: 0, real: 1 }]));
 const run = (ks: number[], o: Record<string, unknown> = {}) => ({ exit: 0, proved: ks.length, failed: 0, lines: proved(ks), ...o }) as never;
-const asv = (r: never, asks: string[] = lines(3)) => verdictOf(so, [], true, false, false, alreadyDoneShown(so, r) && alreadyLinesMet(r ? ruleStatus(asks, r, null) : []));
+const asv = (r: never, asks: string[] = lines(3)) => verdictOf(so, [], true, false, false, alreadyDoneShown(so, r) && alreadyLinesMet(r ? alreadyRealLines(ruleStatus(asks, r, null), r) : []));
 res("ADS replay FireLater#24: a passing Loki re-run on the unchanged tree that meets every acceptance line seals ALREADY_SATISFIED (the run itself sealed " + fl24.sealed_verdict + ")", alreadyDoneClaimed(so) && asv(run([1, 2, 3])) === "ALREADY_SATISFIED");
 res("ADS replay FireLater#24: no re-run, a failing one, one that exited non-zero after some passes, one that proved nothing, or a refused one stays PARTIAL", ([null, run([1, 2], { exit: 1, failed: 3, lines: { ...proved([1, 2]), "3": { proved: 0, failed: 3 } } }), run([1, 2, 3], { exit: 2 }), run([]), run([], { refused: "network", exit: null })] as never[]).every((r) => asv(r) === "PARTIAL"));
 res("ADS-LINES plants 1 and 2: 10 acceptance lines and 1 proved step (also the shape of a proof whose only step runs no repository code) stay PARTIAL, and the note says 1 of 10", asv(run([1]), lines(10)) === "PARTIAL" && alreadyLinesNote(ruleStatus(lines(10), run([1]), null)).includes("met 1 of 10 acceptance line(s); first unmet: acceptance line 2"));
 res("ADS-LINES: a passing re-run with no acceptance lines stays PARTIAL and says so; a line with a failed check is unmet", asv(run([1, 2, 3]), []) === "PARTIAL" && alreadyLinesNote([]).includes("has no acceptance lines") && asv(run([1, 2, 3], { lines: { ...proved([1, 2, 3]), "2": { proved: 1, failed: 1 } } })) === "PARTIAL");
 res("ADS note: the held run says why", alreadyDoneNotShownNote(null).includes("no proof script was kept") && alreadyDoneNotShownNote({ exit: 1, proved: 20, failed: 3 }).includes("exit 1, 20 proved, 3 failed") && alreadyDoneNotShownNote({ refused: "x", exit: null, proved: 0, failed: 0 }).includes("not run: x"));
+// ADS-REAL (Fable): a met line also needs a passing step that ran something of the repository's. Unit cases, then Fable's planted defect for real: the kit's own
+// loki_cmd on a throwaway repo, 3 acceptance lines each "proved" by a step of true, must read PARTIAL; the same 3 lines proved by node and a repository path read
+// ALREADY_SATISFIED.
+const { mkdtempSync, writeFileSync: wfr, mkdirSync: mkr, realpathSync } = await import("node:fs"), rr = mkdtempSync("$T/adsreal-"); mkr(rr + "/repo/docs", { recursive: true }); wfr(rr + "/repo/docs/SEARCH.md", "x"); mkr(rr + "/repo/scripts"); wfr(rr + "/repo/scripts/check.sh", "#!/bin/sh\nexit 0\n", { mode: 0o755 }); wfr(rr + "/repo/package.json", "{}");
+res("ADS-REAL realStep (command position): a request the app answered, a runner, a repo path run or read by a file reader count; true, echo, a missing path, a runner or path only as an argument, a comment and the old output without a command do not", [
+  realStep("search works | status 200 | {}"), realStep("t | exit 0 | cmd: npm test  | ok"), realStep("t | exit 0 | cmd: bash -c cd backend && npx --no-install vitest run x  | ok"), realStep("t | exit 0 | cmd: test -f docs/SEARCH.md  | ", rr + "/repo"), realStep("t | exit 0 | cmd: grep -q x docs/SEARCH.md  | ", rr + "/repo"), realStep("t | exit 0 | cmd: ./scripts/check.sh  | ", rr + "/repo"), realStep("t | exit 0 | cmd: FOO=1 env node -e 1  | "), realStep("t | exit 0 | cmd: echo x %7C node -e 1  | "), realStep("t | exit 0 | cmd: timeout 120 npm test  | "), realStep("t | exit 0 | cmd: gtimeout -k 5 2m npx vitest run  | "), realStep("t | exit 0 | cmd: test -f " + realpathSync(rr).replace(/^[/]private[/]/, "/") + "/repo/docs/SEARCH.md  | ", realpathSync(rr) + "/repo"), realStep("t | exit 0 | cmd: test -f " + realpathSync(rr) + "/repo/docs/SEARCH.md  | ", realpathSync(rr).replace(/^[/]private[/]/, "/") + "/repo"),
+  !realStep("t | exit 0 | cmd: true  | "), !realStep("t | exit 0 | cmd: echo ok  | ok"), !realStep("t | exit 0 | cmd: test -f docs/NOPE.md  | ", rr + "/repo"), !realStep("t | exit 0 | ok"), !realStep("t | exit 0 | cmd: true npm  | "), !realStep("t | exit 0 | cmd: echo package.json  | ", rr + "/repo"), !realStep("t | exit 0 | cmd: bash -c true # node  | "), !realStep("a / status 200 / b | exit 0 | cmd: true  | ")].every(Boolean));
+mkr(rr + "/run-true"); mkr(rr + "/run-real");
+const kitSrc = "source \"" + String.fromCharCode(36) + "LOKI_SCRATCH/loki-check.sh\"\n", proofOf = (steps: string[]) => "#!/bin/bash\n" + kitSrc + steps.map((c, i) => "loki_cmd " + (i + 1) + " \"line " + (i + 1) + "\" " + c).join("\n") + "\n";
+wfr(rr + "/run-true/loki-proof.sh", proofOf(["true", "true", "true"]), { mode: 0o700 });
+wfr(rr + "/run-real/loki-proof.sh", proofOf(["node -e 1", "test -f docs/SEARCH.md", "node -e 1"]), { mode: 0o700 });
+const rt = await rerunProof(rr + "/repo", rr + "/run-true"), rl = await rerunProof(rr + "/repo", rr + "/run-real"), three = lines(3);
+res("ADS-REAL planted defect (Fable): 3 lines each proved by a step of true pass the re-run (" + (rt ? rt.proved : "none") + " proved) but read PARTIAL; proved by node and a repo path they read ALREADY_SATISFIED", !!rt && rt.exit === 0 && rt.proved === 3 && asv(rt as never, three) === "PARTIAL" && !!rl && rl.proved === 3 && asv(rl as never, three) === "ALREADY_SATISFIED");
+// Fable's planted defects for the command-position rule, each through the kit on a 1-line issue: true npm; echo package.json; bash -c 'true # node'; a
+// description "a | status 200 | b" with true: all PARTIAL. grep on an existing repo doc and an existing ./scripts/check.sh: ALREADY_SATISFIED.
+const one = async (name: string, step: string) => { mkr(rr + "/run-" + name); wfr(rr + "/run-" + name + "/loki-proof.sh", "#!/bin/bash\n" + kitSrc + step + "\n", { mode: 0o700 }); const r = await rerunProof(rr + "/repo", rr + "/run-" + name); return r && r.proved === 1 ? asv(r as never, ["the one line"]) : "proof did not pass: " + JSON.stringify(r && { exit: r.exit, proved: r.proved, failed: r.failed }); };
+const q = String.fromCharCode(39), plants = [await one("npm", "loki_cmd 1 \"x\" true npm"), await one("echo", "loki_cmd 1 \"x\" echo package.json"), await one("comment", "loki_cmd 1 \"x\" bash -c " + q + "true # node" + q), await one("desc", "loki_cmd 1 \"a | status 200 | b\" true")];
+const rootR = realpathSync(rr + "/repo"), rootL = rootR.replace(/^[/]private[/]/, "/"); // the repo root, resolved and in its symlinked spelling (the same on Linux)
+plants.push(await one("rootr", "loki_cmd 1 \"x\" test -d " + rootR), await one("rootl", "loki_cmd 1 \"x\" test -d " + rootL));
+const honest = [await one("grep", "loki_cmd 1 \"doc\" grep -q x docs/SEARCH.md"), await one("script", "loki_cmd 1 \"script\" ./scripts/check.sh"), await one("pkgr", "loki_cmd 1 \"pkg\" test -f " + rootR + "/package.json"), await one("pkgl", "loki_cmd 1 \"pkg\" test -f " + rootL + "/package.json")];
+res("ADS-REAL planted defects (Fable, command position): true npm, echo package.json, a node comment, a forged status in the description and test -d on the repo root itself (both spellings) read PARTIAL (" + plants.join(",") + "); grep on a repo doc, a repo script and test -f on root/package.json (both spellings) read ALREADY_SATISFIED (" + honest.join(",") + ")", plants.every((v) => v === "PARTIAL") && honest.every((v) => v === "ALREADY_SATISFIED"));
+// The fresh-install line Loki adds counts when the same re-run has a request the app answered (FireLater#24's line 10 reads the tenant and tables the app made);
+// with no answered request anywhere it is unmet. Every other line stays strict.
+const fresh = ["line one", "line two", FRESH_INSTALL_ASK], fl = (http: boolean) => ({ exit: 0, proved: 3, failed: 0, lines: { "1": { proved: 1, failed: 0, real: 1, http: http ? 1 : 0 }, "2": { proved: 1, failed: 0, real: 1, http: 0 }, "3": { proved: 1, failed: 0, real: 0, http: 0 } } }) as never;
+const strict2 = ({ exit: 0, proved: 3, failed: 0, lines: { "1": { proved: 1, failed: 0, real: 1, http: 1 }, "2": { proved: 1, failed: 0, real: 0, http: 0 }, "3": { proved: 1, failed: 0, real: 1, http: 0 } } }) as never;
+res("ADS-REAL fresh-install line: met when the re-run has an answered request elsewhere, unmet (plant) when it has none; an ordinary line with no real step stays unmet even with a request elsewhere", asv(fl(true), fresh) === "ALREADY_SATISFIED" && asv(fl(false), fresh) === "PARTIAL" && asv(strict2, fresh) === "PARTIAL");
 res("ADS claim: a failed commit or a verify that did not agree is not an already-done claim", !alreadyDoneClaimed({ ...fl24, commit: { failed: true } } as never) && !alreadyDoneClaimed({ ...fl24, verify: { already_satisfied: false } } as never) && alreadyDoneClaimed({ intake: { already_satisfied: true }, implement: { exit: "done" }, verify: { already_satisfied: true }, commit: {} } as never));
 const sealSrc = readFileSync("$ROOT/loki-ts/src/engine10/stages/seal.ts", "utf8");
-res("ADS wiring: seal re-runs the proof on the unchanged tree, counts it as proof, reuses it for the issue lines and names a held run", sealSrc.includes('const alreadyRun = alreadyDoneClaimed(o) && (!diffOk || diff.stdout === "") ? await rerunProof(ctx.repoDir, ctx.runDir, signal) : null, alreadyLines = alreadyRun ? ruleStatus(issueAsks, alreadyRun, null) : [], alreadyOk = alreadyDoneShown(o, alreadyRun) && alreadyLinesMet(alreadyLines);') && sealSrc.includes("proof = alreadyOk || (!strictProof") && sealSrc.includes("const proofRun = alreadyRun ?? (") && sealSrc.includes("alreadyDoneShown(o, alreadyRun) ? alreadyLinesNote(alreadyLines) : alreadyDoneNotShownNote(alreadyRun)"));
+res("ADS wiring: seal re-runs the proof on the unchanged tree, counts it as proof, reuses it for the issue lines and names a held run", sealSrc.includes('const alreadyRun = alreadyDoneClaimed(o) && (!diffOk || diff.stdout === "") ? await rerunProof(ctx.repoDir, ctx.runDir, signal) : null, alreadyLines = alreadyRun ? alreadyRealLines(ruleStatus(issueAsks, alreadyRun, null), alreadyRun) : [], alreadyOk = alreadyDoneShown(o, alreadyRun) && alreadyLinesMet(alreadyLines);') && sealSrc.includes("proof = alreadyOk || (!strictProof") && sealSrc.includes("const proofRun = alreadyRun ?? (") && sealSrc.includes("alreadyDoneShown(o, alreadyRun) ? alreadyLinesNote(alreadyLines) : alreadyDoneNotShownNote(alreadyRun)"));
 
 res("L026 brief: no invitation to run the full suite", !FIXED_RULES.includes("including the package's full suite") && FIXED_RULES.includes("not the package's full suite") && FIXED_RULES.includes("medium or high"));
 const nb = buildImplementBrief("task", null, []);
