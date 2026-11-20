@@ -95,6 +95,51 @@ export function verificationStamp(i: StampInput): VerificationStamp {
     : "none";
   return { ran: ran.length ? ran : ["none"], proved_by };
 }
+type V2Outputs = Partial<Record<string, Record<string, unknown>>>;
+const v2strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
+const v2raw = (o: V2Outputs): Record<string, unknown>[] => (Array.isArray(o.verify?.checks) ? (o.verify!.checks as Record<string, unknown>[]) : []);
+/** The file a per-file check runs: the part of its name after the first ":". */
+export const fileOfCheck = (name: string): string => name.slice(name.indexOf(":") + 1);
+/** The Wall checks of the last verify: a check whose file is one of the Wall files the Wall stage kept (each was red on base when it was written). */
+export const wallCheckNames = (o: V2Outputs): Set<string> => {
+  const files = (Array.isArray(o.wall?.files) ? (o.wall!.files as Record<string, unknown>[]) : []).map((f) => String(f.path ?? "")).filter(Boolean);
+  return new Set(v2raw(o).map((c) => String(c.name)).filter((n) => n.includes(":") && files.some((f) => f === fileOfCheck(n) || f.endsWith("/" + fileOfCheck(n)))));
+};
+/** VERIFY-PLAN V2 (LOKI_E10_INTRODUCED, default observe; enforce is accepted and behaves as observe until verify owns it): each failing check
+ *  verify did not excuse, sorted by what one differential measurement shows. introduced: the change's own check (a Wall, holdout, task-named
+ *  or changed test file, a lint, typecheck, scan or selector check), a check verify attributed to the change (introduced_checks), or one whose
+ *  base run was compared and showed a failing id not red on base (fresh >= 1) or whose failure names a changed file. pre_existing: compared,
+ *  every failing id also red on base (fresh 0), the same error as on base (known_red_same_error), and nothing names a changed file.
+ *  unknown: any other failing check, with why (the error differs from base, the base run was cut, not started, not comparable or
+ *  unattributable, or no base comparison was recorded). */
+export const introducedMode = (env: NodeJS.ProcessEnv = process.env): RuleMode => ruleMode("LOKI_E10_INTRODUCED", "observe", env);
+export const V2_ERROR_DIFFERS = "every failing id is red on base, but its error differs from the base run";
+export const V2_SUITE_NOT_EXCUSED = "a full suite red on base with the same error that verify did not excuse (see its not_excused line)";
+export const V2_NO_RECORD = "no base comparison was recorded for this check";
+export interface FailureClasses { introduced: string[]; pre_existing: string[]; unknown: { name: string; why: string }[] }
+export function failureClasses(o: V2Outputs): FailureClasses {
+  const v = o.verify, raw = v2raw(o), pre = new Set(v2strs(v?.pre_red_checks)), changed = new Set(v2strs(v?.changed_files)), own = new Set(v2strs(v?.own_checks));
+  const noIdCmp = new Set(v2strs(v?.no_id_compared)), intro = new Set(v2strs(v?.introduced_checks)), ownLint = new Set(v2strs(v?.own_lint)), same = new Set(v2strs(v?.known_red_same_error));
+  const wall = wallCheckNames(o), attr = (v?.exogenous_attribution ?? {}) as Record<string, { state?: string; fresh?: number; names_changed?: boolean; evidence?: string } | undefined>;
+  const out: FailureClasses = { introduced: [], pre_existing: [], unknown: [] };
+  for (const c of raw) {
+    const name = String(c.name ?? "");
+    if (c.result !== "fail" || c.owner === "harness" || pre.has(name)) continue;
+    const ownCheck = name === "holdout" || name.startsWith("holdout:") || wall.has(name) || own.has(name) || ownLint.has(name) || /^(lint|typecheck)(:|$)/.test(name) || name === "security scan" || name === "select-tests" || name === "app boot" || name === "checklist" || (name.includes(":") && !name.startsWith("full suite") && changed.has(fileOfCheck(name)));
+    if (ownCheck || intro.has(name) || noIdCmp.has(name)) { out.introduced.push(name); continue; }
+    const ids = v2strs(c.ids);
+    if (ids.some((i) => [...changed].some((f) => i.includes(f)))) { out.introduced.push(name); continue; } // an id naming a changed file is the change's own failure
+    const a = attr[name];
+    if (a?.names_changed) out.introduced.push(name);
+    else if (a?.state === "compared" && Number(a.fresh) >= 1) out.introduced.push(name);
+    else if (a?.state === "compared" && a.fresh === 0 && !same.has(name)) out.unknown.push({ name, why: V2_ERROR_DIFFERS });
+    else if (a?.state === "compared" && a.fresh === 0 && name.startsWith("full suite")) out.unknown.push({ name, why: V2_SUITE_NOT_EXCUSED });
+    else if (a?.state === "compared" && a.fresh === 0) out.pre_existing.push(name);
+    else if (a) out.unknown.push({ name, why: String(a.evidence ?? a.state ?? "not comparable") });
+    else out.unknown.push({ name, why: V2_NO_RECORD });
+  }
+  return out;
+}
 export type ItemClass = "a" | "b" | "c";
 export interface OpenItem {
   kind: string;

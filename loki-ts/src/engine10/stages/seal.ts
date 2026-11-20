@@ -32,7 +32,7 @@ import { suiteSkipHolds, SUITE_FIX_SKIP_NOTE, sealedWallDir, checkProvenance, ch
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
-import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts"; import { COULD_NOT_RUN_LEAD, LOKI_OWN_LEAD, verifiedReceiptBlock, type CapReason, ruleMode, verificationStamp, type ObservedRule, type RuleMode } from "../closure.ts";
+import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts"; import { COULD_NOT_RUN_LEAD, LOKI_OWN_LEAD, verifiedReceiptBlock, type CapReason, ruleMode, verificationStamp, type ObservedRule, type RuleMode, failureClasses, introducedMode, fileOfCheck, wallCheckNames, type FailureClasses } from "../closure.ts";
 import { atomicWriteText } from "../../util/atomic.ts";
 import { patchReceipt } from "../../features/patch_protocol.ts";
 import { collapseNotProven } from "../../util/term_width.ts";
@@ -273,12 +273,6 @@ export function unattributedRed(o: Partial<Record<StageName, Obj>>, c: Pick<Rece
  *  The plan's out-of-repo stop (machine.ts FC-OUT-OF-REPO) is a question asked before any work, not a label on finished work, and keeps SPEC_CONFLICT. */
 export const measuredLabelsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_MEASURED_LABELS"] ?? "").trim());
 const rawChecks = (o: Partial<Record<StageName, Obj>>): Obj[] => (Array.isArray(o.verify?.checks) ? (o.verify!.checks as Obj[]) : []);
-const fileOfCheck = (name: string): string => name.slice(name.indexOf(":") + 1);
-/** The Wall checks of the last verify: a check whose file is one of the Wall files the Wall stage kept (each was red on base when it was written). */
-const wallCheckNames = (o: Partial<Record<StageName, Obj>>): Set<string> => {
-  const files = (Array.isArray(o.wall?.files) ? (o.wall!.files as Obj[]) : []).map((f) => String(f.path ?? "")).filter(Boolean);
-  return new Set(rawChecks(o).map((c) => String(c.name)).filter((n) => n.includes(":") && files.some((f) => f === fileOfCheck(n) || f.endsWith("/" + fileOfCheck(n)))));
-};
 /** The failing check that shows the claimed conflict, or null. On the last verify (not stopped, so it ran on the delivered tree): a Wall file the Wall stage
  *  reproduced red on base passed with n > 0, so the change satisfies the issue; a check the run did not write fails and verify attributes it to the change
  *  (its base run passed, or a failing id is not red on base), so satisfying the issue broke it; and the claim names that check's file (for a full suite,
@@ -327,6 +321,16 @@ export const alreadyLinesNote = (st: { line: string; status: string; optional?: 
   const req = st.filter((x) => !x.optional), met = req.filter((x) => x.status === "met").length, first = req.find((x) => x.status !== "met");
   return st.length === 0 ? "already done claimed; Loki's own re-run of the kept proof script passed, but the run has no acceptance lines to check it against" : `already done claimed; Loki's own re-run of the kept proof script met ${met} of ${req.length} acceptance line(s)${first ? `; first unmet: ${first.line.slice(0, 160)}` : ""}`;
 };
+/** VERIFY-PLAN V2 observe: the receipt checks as enforce would read them. A pre-existing failure is dropped; an unknown one counts as not run,
+ *  so it holds PARTIAL (the pattern lintOnly uses for its own lint lines). */
+export const v2Live = <C extends { name: string; result: string }>(liveV: readonly C[], fc: FailureClasses): C[] =>
+  liveV.filter((c) => !(c.result === "fail" && fc.pre_existing.includes(c.name))).map((c) => (c.result === "fail" && fc.unknown.some((u) => u.name === c.name) ? { ...c, result: "not_run" as const } : c));
+/** The observe entry's detail: each class cut to 5 names plus "and N more"; when the fail-then-pass gate was shut and nothing proved the change, says so. */
+export function v2Detail(fc: FailureClasses, ftpShutNoProof: boolean): string {
+  const cut = (xs: string[]): string => xs.slice(0, 5).join(", ") + (xs.length > 5 ? ` and ${xs.length - 5} more` : "");
+  const parts = [...(fc.introduced.length ? [`introduced: ${cut(fc.introduced)}`] : []), ...(fc.pre_existing.length ? [`pre-existing: ${cut(fc.pre_existing)}`] : []), ...(fc.unknown.length ? [`unknown: ${cut(fc.unknown.map((u) => `${u.name} (${u.why})`))}`] : [])];
+  return parts.join("; ") + (ftpShutNoProof ? "; the change's own fail-then-pass proof was not run" : "");
+}
 export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean, proof: boolean, targetProof = false, uncovered: string[] = [], leanGap: string[] = [], copyGap: string[] = [], clauseGap: string[] = []): Verdict {
   const exit = o.implement?.exit;
   // FC-16: no success verdict without a Loki-executed check with n>0 and a pass; otherwise PARTIAL (NOT PROVEN, "no tests executed").
@@ -534,6 +538,8 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const vLifted = vCand.length > 0 && verdict0a === "PARTIAL" && ftpGate ? unrunnableLifted({ o, checks: liveV, vraw, verdict: verdict0a, proof: await (async () => { const f = await ftp(); if (f.ok) return f; const w = await own(); return w?.ok ? { ok: true, files: rawDiff.filter((x, i) => i % 2 === 1 && isTestFile(x) && w.cmds.some((c) => stepNamesFile(c, x))), steps: w.steps.length } : f; })() /* own proof: the changed test files a counted step's command names are the proved ones */, notes: capVerify.filter((n) => !pinDropped.has(n)),
       rest: (cs, ns) => capGroupVerdict(verdictOf(o, cs, !diffOk || diff.stdout === "", ns.length > 0 || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp) }) : { names: [], notes: [] };
     const vLift = vLifted.names, verdict0: Verdict = vLift.length > 0 ? "VERIFIED" : verdict0a;
+    const fc = failureClasses(o), v2 = introducedMode(); // VERIFY-PLAN V2, observe only (enforce behaves as observe): never read by the label
+    if (v2 !== "off" && (fc.pre_existing.length || fc.unknown.length)) { const verdictE = capGroupVerdict(verdictOf(o, v2Live(liveV, fc), !diffOk || diff.stdout === "", capVerify.some((n) => !pinDropped.has(n)) || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp); if (verdictE !== verdict0a) observed.push({ rule: "LOKI_E10_INTRODUCED", would_label: verdictE, detail: v2Detail(fc, !ftpGate && !proof) }); }
 
     // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
     const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.repoDir), process.env);
@@ -694,6 +700,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
       ...(verdict !== "VERIFIED" && reasons.length ? { held_by: reasons.map((r) => ({ kind: r.kind, detail: r.detail })) } : {}), // F0: the structured holds that kept the verdict below VERIFIED, as evaluateSeal computed them (absent on a VERIFIED receipt)
       verified_by: verificationStamp({ checks: checks.map((c) => ({ name: c.name, result: c.result, ...(typeof c.n === "number" ? { n: c.n } : {}) })), wallFiles: wallFiles.length, proofRun: proofRun ? { exit: proofRun.exit, proved: proofRun.proved, failed: proofRun.failed } : null, ownProof: ownP ? { ok: ownP.ok, steps: ownP.steps.length } : null, ftp: ftpRes ? { ok: ftpRes.ok, files: ftpRes.files } : null, alreadyOk, exoProof, noWall, strictProof, executed, proof, wallPassed: o.verify?.wall_passed === true }), // VERIFY-PLAN V7
       ...(observed.length ? { observe: observed } : {}), // VERIFY-PLAN V7: never in held_by or not_proven, so it can never hold the label
+      ...(v2 !== "off" && (fc.introduced.length || fc.pre_existing.length || fc.unknown.length) ? { failure_classes: fc } : {}), // VERIFY-PLAN V2
       verdict, ...(patchReceipt(o.implement?.patch) ? { patch: patchReceipt(o.implement?.patch)! } : {}), ...(sessionCaps(o).length ? { session_caps: sessionCaps(o) } : {}), ...(typeof o.implement?.limit_s === "number" ? { implement_limit: { limit_s: o.implement.limit_s, elapsed_s: typeof o.implement.elapsed_s === "number" ? o.implement.elapsed_s : 0, ...(o.implement.stop_cause === "max_turns" ? { stop_cause: "max_turns" as const, owner: "harness" as const } : {}) } } : {}), ...(grp.section ? { group: grp.section } : {}), ...(ctx.failovers && ctx.failovers().length > 0 ? { failover: ctx.failovers() } : {}),
       ...(str(o.implement?.spec_conflict_reason) !== null
         ? { spec_conflict_reason: sanitizeReason(str(o.implement?.spec_conflict_reason)!) }

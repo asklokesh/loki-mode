@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - With `LOKI_E10_STRUCTURED_RESULTS=observe`, a per-file pytest, bun, vitest or jest run also writes the runner's machine-readable report (JUnit XML or jest JSON), and verify records how often that report and Loki's reading of the printed output agree on how many tests ran and failed. A runner that rejects the report options is run again without them and its result is read as before. The label does not change. Off by default; not measured on any run in this release.
 
+### Each failure is sorted into introduced, pre-existing or unknown
+
+- Every receipt with a failing check now lists each one as introduced by the change, pre-existing (a test file that fails on the base commit too, by every failing test id and the same error), or unknown (no base comparison could be made, or the error differs from the base run). The label does not change: the receipt's observe list shows each run where dropping pre-existing failures and holding unknown ones would have given another label. `LOKI_E10_INTRODUCED=0` turns it off; `enforce` is accepted and behaves as observe in this release.
+
 ## v11.172.0 (2026-11-20)
 
 ### A low-risk run checks the full test suite before it can say VERIFIED

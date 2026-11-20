@@ -234,6 +234,7 @@ export interface Receipt {
   not_proven: string[]; not_applicable?: string[]; held_by?: { kind: string; detail: string }[]; // F0: seal's reasons, present only below VERIFIED; // FC-SEAL-NA-AS-UNPROVEN: informational notes (package without tests, no app to boot, not selected by risk tier); never part of any verdict
   verified_by?: import("./closure.ts").VerificationStamp; // VERIFY-PLAN V7: always written by seal; optional so older receipts still type
   observe?: import("./closure.ts").ObservedRule[]; // VERIFY-PLAN V7: observe-mode rules that would have changed the label; absent when none
+  failure_classes?: { introduced: string[]; pre_existing: string[]; unknown: { name: string; why: string }[] }; // VERIFY-PLAN V2: absent with LOKI_E10_INTRODUCED=0 or no failing check
   unit_spec?: { sha256: string }; // #317b: present only for a unit run; the sha256 of its canonical spec (id, items, acceptance, writeSet, base)
   spec?: { path: string; sha256: string }; triage?: { class: "implement" | "spec" | "human"; reason: string }; intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[]; // P12-02 (omitted when none); SPEC-FIRST-INTENT: present only when a user spec file drove the run
   seeded_corpus?: import("../util/run_outputs.ts").SeededCorpus; /* TEN-GATES-15 */ supply?: import("../supply/supply_guard.ts").SupplyBlock; // T10: present only when the guard found newly added dependencies
