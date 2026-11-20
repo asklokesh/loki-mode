@@ -172,6 +172,16 @@ export function outstandingWords(text: string | null | undefined): Set<string> {
 }
 /** True when `words` names work no earlier reply named. */
 export const namesNewWork = (words: ReadonlySet<string>, named: ReadonlySet<string>): boolean => [...words].some((w) => !named.has(w));
+/** The numbers a reply names ("12 of 40 tests still fail" -> [12, 40]): a count that changed is progress evidence the words alone cannot show. */
+export const outstandingNumbers = (text: string | null | undefined): number[] => ((text ?? "").match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
+/** NO-DEFAULT-BUDGET: whether one S1b resume made progress (fable-planner review of eef27cdb6). A plan-scope file that now exists always counts. Otherwise the
+ *  resume must have changed the tree AND its reply must name work no earlier reply named, or report numbers that changed against the previous reply
+ *  ("12 of 40 fail" -> "8 of 40 fail"). A reply that only adds a new reason while the tree stays as it was is no progress, so a session that keeps explaining
+ *  why it is blocked ends after noProgressRounds() such resumes. */
+export function continueMoved(o: { left: number; fewestMissing: number; treeChanged: boolean; words: ReadonlySet<string>; named: ReadonlySet<string>; nums: readonly number[]; prevNums: readonly number[] }): boolean {
+  if (o.left < o.fewestMissing) return true;
+  return o.treeChanged && (namesNewWork(o.words, o.named) || o.nums.join(",") !== o.prevNums.join(","));
+}
 /** The resume brief: the summary request is over and was not the task, the reply's own outstanding list, plan-scope files not in the tree, the finish rule (FINISH_LINE, word for word). */
 export function continueBrief(outstanding: string, missing: readonly string[], finish: string = FINISH_LINE): string {
   return [
@@ -204,10 +214,10 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
   const env = o.env ?? process.env, ids: string[] = [], max = continueMax(env), usdLine = continueMaxUsd(env);
   const missing = (): string[] => readPlanScope(ctx.runDir).filter((f) => !existsSync(join(ctx.repoDir, f)));
   let unchanged = 0; // a reply that only waits on a subagent leaves the tree as it was: one such resume is allowed, a second ends the loop
-  // NO-DEFAULT-BUDGET: with no count the bound is progress. A resume makes progress when a plan-scope file it was missing now exists or its reply names
-  // outstanding work it never named before; a changed tree alone is not progress (a session can edit forever), so noProgressRounds() such resumes in a row end the loop.
+  // NO-DEFAULT-BUDGET: with no count the bound is progress (continueMoved): a plan-scope file that now exists, or a changed tree together with new named work
+  // or a changed count; noProgressRounds() resumes in a row without it end the loop.
   let cur = session, outstanding = outstandingOf(session.summary), base = first, ended: ContinueEnd = max === 0 ? "continue off" : "count cap", spent: number | null = null;
-  const noCount = !Number.isFinite(max), named = outstandingWords(outstanding); let fewestMissing = noCount ? missing().length : 0;
+  const noCount = !Number.isFinite(max), named = outstandingWords(outstanding); let fewestMissing = noCount ? missing().length : 0, prevNums = outstandingNumbers(outstanding);
   for (let n = 1; n <= max; n++) {
     if (o.signal.aborted) { ended = "aborted"; break; }
     if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) { ended = "time"; break; }
@@ -223,8 +233,9 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
     const after = o.fingerprint();
     if (before === null || after === null) { ended = "tree unknown"; break; }
     if (noCount) {
-      const left = missing().length, words = outstandingWords(outstandingOf(r.reply.summary)), moved = left < fewestMissing || namesNewWork(words, named);
-      fewestMissing = Math.min(fewestMissing, left); for (const w of words) named.add(w);
+      const said = outstandingOf(r.reply.summary), left = missing().length, words = outstandingWords(said), nums = outstandingNumbers(said);
+      const moved = continueMoved({ left, fewestMissing, treeChanged: before !== after, words, named, nums, prevNums });
+      fewestMissing = Math.min(fewestMissing, left); for (const w of words) named.add(w); prevNums = nums;
       if (moved) unchanged = 0; else if (++unchanged >= noProgressRounds(env)) { ended = "no progress"; break; }
       continue;
     }

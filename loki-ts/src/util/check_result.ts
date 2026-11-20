@@ -2005,7 +2005,7 @@ const c = spawn(cmd, args, { cwd: cwd || undefined, env, detached: true, stdio: 
 let w; try { const a = wd.slice(1); a[a.length - 1] = a[a.length - 1].replace("__O__", String(process.pid)).replace("__G__", String(c.pid)); w = spawn(wd[0], a, { detached: true, stdio: "ignore", env: { PATH: process.env.PATH || "" } }); w.on("error", () => {}); } catch {}
 const kill = (s) => { try { process.kill(-c.pid, s); } catch { try { c.kill(s); } catch {} } };
 const done = (code, sig) => { if (fin) return; fin = true; kill("SIGKILL"); try { w.kill("SIGKILL"); } catch {} const b = Buffer.from(JSON.stringify({ status: to || sig ? null : code, output: out + "\\n" + err })); for (let i = 0; i < b.length;) { try { i += fs.writeSync(1, b, i); } catch (e) { if (e.code !== "EAGAIN") break; } } process.exit(0); };
-const expire = () => { to = true; kill("SIGTERM"); setTimeout(() => done(null, 1), 1000); }; if (ms) setTimeout(expire, ms); if (sil) { const q = setInterval(() => { if (Date.now() - last >= sil) { clearInterval(q); expire(); } }, Math.min(30000, Math.max(50, Math.floor(sil / 4)))); }
+const expire = () => { to = true; kill("SIGTERM"); setTimeout(() => done(null, 1), 1000); }; if (ms) setTimeout(expire, Math.min(ms, 2147483647)); if (sil) { const q = setInterval(() => { if (Date.now() - last >= sil) { clearInterval(q); expire(); } }, Math.min(30000, Math.max(50, Math.floor(sil / 4)))); }
 const over = () => { if (out.length > MAX || err.length > MAX) { to = true; kill("SIGKILL"); } };
 c.stdout.on("data", (d) => { last = Date.now(); out += d; over(); }); c.stderr.on("data", (d) => { last = Date.now(); err += d; over(); });
 c.on("error", () => done(null, 1)); c.on("close", done); c.on("exit", (a, b) => setTimeout(() => done(a, b), 500)); `;

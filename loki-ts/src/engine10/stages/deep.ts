@@ -1,5 +1,6 @@
 // loki-ts/src/engine10/stages/deep.ts -- E-23 Deep verify (ENGINE.md section 4). Runs after Seal + PR: full suite, app-boot probe, secret scan; reports via engine10-push.sh (comment + addendum + status). A refused or unavailable check is NOT PROVEN, never red; only a failing full suite (minus failures already red on base) or a secret match is failure. Rule of Two: assertWorkerEnv asserts no real GitHub token, since the deep worker runs repo code. L003: no model session here; the run's one review is seal's pre-seal xreview, whose verdict and cost reach the receipt.
 import { installOwned } from "../../project_model/install.ts";
+import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -262,12 +263,17 @@ export async function deepWorker(args: string[], deps: { opts?: DeepOptions } = 
  *  beside it with the push env. It runs no repository code: it waits for the deep worker's pid, reads the signed addendum the worker wrote, and posts the comment
  *  and the final status. When the worker died without an addendum it posts "error", so the status never stays pending.
  *  `engine10 deep-post <run-id> <deep-pid> <origin>`; the PR url comes from the run's pr.opened event and the head sha from the sealed receipt. */
-export async function deepPost(args: string[], deps: { pushScriptPath?: string; pushExtraEnv?: Record<string, string>; pollMs?: number; waitCapMs?: number } = {}): Promise<number> {
+export async function deepPost(args: string[], deps: { pushScriptPath?: string; pushExtraEnv?: Record<string, string>; pollMs?: number; waitCapMs?: number; addendumGraceMs?: number } = {}): Promise<number> {
   const [runId, pidArg = "", origin = ""] = args, pid = Number(pidArg);
   if (!runId || !/^e10-[A-Za-z0-9-]+$/.test(runId) || !Number.isInteger(pid) || pid <= 1) { process.stderr.write("engine10 deep-post: usage: deep-post <run-id> <deep-pid> <origin>\n"); return 2; }
   const repoDir = process.cwd(), runDir = join(repoDir, ".loki", "runs", runId), pollMs = deps.pollMs ?? 2000, capMs = deps.waitCapMs ?? (deepCapS() + 300) * 1000; // NO-DEFAULT-BUDGET: Infinity waits while the deep worker lives (its own guards end it)
   const alive = (): boolean => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } };
-  for (const t0 = Date.now(); alive() && Date.now() - t0 < capMs; ) await new Promise((r) => setTimeout(r, pollMs));
+  // NO-DEFAULT-BUDGET (fable-planner review): with no cap the wait must still end. It ends when the pid's start time changes (the worker exited and the pid
+  // was reused, even by another user, where kill(0) reads EPERM), or once the worker's addendum has existed for addendumGraceMs (the worker writes it last).
+  const startOf = (): string => { try { const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 5000 }); return r.status === 0 ? r.stdout.trim() : ""; } catch { return ""; } };
+  const born = startOf(), addPath = join(runDir, "receipt-addendum-1.json"), graceMs = deps.addendumGraceMs ?? 60_000; let sawAdd: number | null = null;
+  const waiting = (): boolean => { if (!alive() || (born !== "" && startOf() !== born)) return false; if (existsSync(addPath)) { sawAdd ??= Date.now(); if (Date.now() - sawAdd >= graceMs) return false; } return true; };
+  for (const t0 = Date.now(); waiting() && Date.now() - t0 < capMs; ) await new Promise((r) => setTimeout(r, pollMs));
   const read = (f: string): Record<string, unknown> | null => { try { return JSON.parse(readFileSync(join(runDir, f), "utf8")) as Record<string, unknown>; } catch { return null; } };
   const receipt = read("receipt.json"), headSha = typeof receipt?.head_sha === "string" && SHA_RE.test(receipt.head_sha) ? receipt.head_sha : "";
   let prUrl: string | undefined;

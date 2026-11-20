@@ -1250,6 +1250,10 @@ try {
   await dp.deepPost([id, String(w2.pid), "https://github.com/o/r.git"], { pushScriptPath: stub, pushExtraEnv: { STUB_LOG: log }, pollMs: 50 });
   res("DEEP-POST an addendum of another run is never trusted (error)", readFileSync(log, "utf8").includes(`status|${sha}|error|`));
   res("DEEP-POST bad arguments exit 2 and post nothing", (await dp.deepPost(["../x", "1", ""], {})) === 2);
+  // NO-DEFAULT-BUDGET (fable-planner review): with no cap the wait still ends. An unrelated long-lived process on the pid, with the worker's addendum written, posts after the grace.
+  writeFileSync(join(run, "receipt-addendum-1.json"), JSON.stringify({ run_id: id, status_state: "success", checks: [], not_proven: [] })); writeFileSync(log, "");
+  const other = sleeper(60), tq = Date.now(); await dp.deepPost([id, String(other.pid), "https://github.com/o/r.git"], { pushScriptPath: stub, pushExtraEnv: { STUB_LOG: log }, pollMs: 50, waitCapMs: Infinity, addendumGraceMs: 300 }); other.kill();
+  res("DEEP-POST with no wait cap a pid that never exits is left once the addendum has existed for the grace, and the status is posted", Date.now() - tq < 10_000 && readFileSync(log, "utf8").includes(`status|${sha}|success|`));
 } finally { process.chdir(cwd0); }
 const a = sup.deepPostArgv(["/bun", "--smol", "/cli.ts", "engine10", "deep-worker", id, "claude", "sonnet"], "https://github.com/o/r.git", 4242);
 res("DEEP-POST argv reuses the runtime and CLI with run id, worker pid and origin", JSON.stringify(a) === JSON.stringify(["/bun", "--smol", "/cli.ts", "engine10", "deep-post", id, "4242", "https://github.com/o/r.git"]));
@@ -1269,7 +1273,7 @@ rmSync(R, { recursive: true, force: true });
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/fl24-deeppost.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || bad "fl24-deeppost unit script crashed or exited non-zero"
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 12 ] || bad "fl24-deeppost unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 12"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 13 ] || bad "fl24-deeppost unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 13"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
@@ -1556,6 +1560,8 @@ rw_proof -
 #   NB13. stages/prove.ts proveBudgetS: default 600 again: the prove leg goes red.  NB14. features/no_regression.ts nrdBudgetS: default 120 again: the NRD leg.
 #   NB15. engine10/types.ts deepCapS: always DEEP_CAP_S: the worker-cap leg.  NB16. engine10/closure.ts boundOf: dflt always: the RW-03 bounds line.
 #   NB17. util/conflict_resume.ts outstandingWords: keep the whole text as one item (no normalization): the rephrase leg goes red.
+#   NB18. util/conflict_resume.ts continueMoved: drop `o.treeChanged &&`: the reason-only sequence reads moved.  NB19. drop the number comparison: the counts read no.
+#   NB20. stages/deep.ts deepPost: drop the addendum grace: the no-cap DEEP-POST leg waits out the 60 s sleeper.
 #   NB9. runner/repo_profile.ts asyncShellRunner: setTimeout(stop, timeoutMs) again: the no-limit base run is cut at once.
 cat > "$T/nobudget.ts" <<'TS'
 import { mkdtempSync, rmSync } from "node:fs";
@@ -1601,6 +1607,8 @@ try {
   res("NO-DEFAULT-BUDGET the supervisor's hang guard stops a silent worker that runs no process, and says it was hung (no backstop is armed)", hung.killed === true && hung.hung === true);
   const crw = await import(root + "/loki-ts/src/util/conflict_resume.ts"), said0 = crw.outstandingWords("Progress made. Still outstanding: the docs for multiply.");
   res("NO-DEFAULT-BUDGET a continue reply that only rephrases the outstanding work an earlier one named names nothing new (no progress); one that names more does", !crw.namesNewWork(crw.outstandingWords("Remaining work: multiply docs."), said0) && !crw.namesNewWork(crw.outstandingWords("Next: write the docs for multiply"), said0) && crw.namesNewWork(crw.outstandingWords("Still outstanding: the docs for multiply, and a divide() test."), said0));
+  const seq = (texts: string[], tree: boolean): string => { let named = crw.outstandingWords(texts[0]), prev = crw.outstandingNumbers(texts[0]); const out: string[] = []; for (const t of texts.slice(1)) { const w = crw.outstandingWords(t), n = crw.outstandingNumbers(t); out.push(crw.continueMoved({ left: 0, fewestMissing: 0, treeChanged: tree, words: w, named, nums: n, prevNums: prev }) ? "moved" : "no"); for (const x of w) named.add(x); prev = n; } return out.join(","); };
+  res("NO-DEFAULT-BUDGET continue progress (fable-planner review): a count that falls is progress, a new reason with an unchanged tree is not", seq(["items 5 to 10 remain", "items 7 to 10 remain", "items 9 to 10 remain"], true) === "moved,moved" && seq(["12 of 40 tests still fail", "8 of 40 tests still fail", "3 of 40 tests still fail"], true) === "moved,moved" && seq(["the docs for multiply remain", "multiply documentation is blocked", "multiply docs await a network retry", "multiply docs paused until rate limit clears"], false) === "no,no,no");
   const pv = await import(root + "/loki-ts/src/engine10/stages/prove.ts"), nr = await import(root + "/loki-ts/src/features/no_regression.ts");
   res("NO-DEFAULT-BUDGET the prove stage has no 600 s budget and its listing no 3-turn cap unless set (the knob or LOKI_E10_PROVE_BUDGET_S / LOKI_E10_PROVE_LIST_TURNS); a user cap still reserves 600 s for it when sizing implement", pv.proveBudgetS({}) === Infinity && pv.proveBudgetS(B) === 600 && pv.proveBudgetS({ LOKI_E10_PROVE_BUDGET_S: "45" }) === 45 && pv.proveReserveOfS({}) === 600 && pv.proveListTurns({}) === undefined && pv.proveListTurns(B) === 3 && pv.proveListTurns({ LOKI_E10_PROVE_LIST_TURNS: "5" }) === 5);
   res("NO-DEFAULT-BUDGET the no-regression differential has no 120 s wall budget unless set; the knob restores it", nr.nrdBudgetS({}) === Infinity && nr.nrdBudgetS(B) === 120 && nr.nrdBudgetS({ LOKI_E10_NRD_BUDGET_S: "30" }) === 30);
@@ -1617,7 +1625,7 @@ try {
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/nobudget.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || { bad "no-default-budget unit script crashed or exited non-zero"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 22 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 22"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 23 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 23"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
