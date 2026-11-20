@@ -279,15 +279,18 @@ const wallCheckNames = (o: Partial<Record<StageName, Obj>>): Set<string> => {
 };
 /** The failing check that shows the claimed conflict, or null. On the last verify (not stopped, so it ran on the delivered tree): a Wall file the Wall stage
  *  reproduced red on base passed with n > 0, so the change satisfies the issue; a check the run did not write fails and verify attributes it to the change
- *  (its base run passed, or a failing id is not red on base), so satisfying the issue broke it; and the claim names that check's file. */
+ *  (its base run passed, or a failing id is not red on base), so satisfying the issue broke it; and the claim names that check's file (for a full suite,
+ *  the file of one of its failing ids). */
 export function measuredConflictOf(o: Partial<Record<StageName, Obj>>): string | null {
   const v = o.verify, w = o.wall, reason = String(o.implement?.spec_conflict_reason ?? "");
   if (!v || v.stopped_at || !w || w.already_satisfied === true || w.reproduction_green_on_base === true || reason === "") return null;
   const wall = wallCheckNames(o), raw = rawChecks(o), pre = new Set(strs(v.pre_red_checks)), targets = new Set(strs(v.target_checks)), introduced = new Set(strs(v.introduced_checks));
   if (!raw.some((c) => wall.has(String(c.name)) && hasExecutedProof([c]))) return null;
   const attr = (v.exogenous_attribution ?? {}) as Record<string, ExogenousAttribution>, changed = new Set(strs(v.changed_files));
-  const named = (n: string): boolean => { const f = fileOfCheck(n), tail = f.split("/").slice(1).join("/"); return f !== "" && (reason.includes(f) || (tail.includes("/") && reason.includes(tail))); };
-  const hit = raw.find((c) => { const n = String(c.name); return c.result === "fail" && n.includes(":") && !wall.has(n) && !targets.has(n) && !pre.has(n) && !changed.has(fileOfCheck(n)) && (introduced.has(n) || (attr[n]?.state === "compared" && (attr[n]?.fresh ?? 0) >= 1)) && named(n); });
+  const namedFile = (f: string): boolean => { const tail = f.split("/").slice(1).join("/"); return f !== "" && (reason.includes(f) || (tail.includes("/") && reason.includes(tail))); };
+  // a per-file check is named by its file; a full suite by the file of one of its failing ids ("calc.test.ts::add", "src/a.test.tsx > Suite > case")
+  const files = (c: Obj): string[] => String(c.name).startsWith("full suite") ? strs(c.ids).map((i) => i.split("::")[0]!.split(" > ")[0]!.trim()) : [fileOfCheck(String(c.name))];
+  const hit = raw.find((c) => { const n = String(c.name); return c.result === "fail" && n.includes(":") && !wall.has(n) && !targets.has(n) && !pre.has(n) && files(c).every((f) => !changed.has(f)) && (introduced.has(n) || (attr[n]?.state === "compared" && (attr[n]?.fresh ?? 0) >= 1)) && files(c).some(namedFile); });
   return hit ? String(hit.name) : null;
 }
 /** A failing check an unmeasured claim holds at PARTIAL: a test file the run did not write, failing with readable ids, that verify recorded no base

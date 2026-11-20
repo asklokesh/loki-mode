@@ -755,6 +755,7 @@ has "F1: an unquoted dotted value with a digit is still a secret, in both scanne
 #   DWd. engine10/stages/pr.ts lokiLabelFor: the green label for any verdict that is not FAILED; the unit's label check fails.
 #   DWe. util/base_guard.ts finishRunBranch: drop the answerable test; blocked loses its local run branch after the push.
 #   DWf. engine10/supervisor.ts: start the deep verify for a SPEC_CONFLICT draft again (drop deepAfterPr); blocked reads deep.started 1.
+#   DWg. engine10/stages/seal.ts measuredConflictOf namedFile: return false (condition c); the measured leg reads FAILED (rebuild dist).
 run_dw() { # [DW_ARGS="<loki flags>"] run_dw <label> [env...] -> D, REPO, OUT, RC, RUNDIR: run_pr without the deep-verify waits (none of these runs starts one)
     local label="$1"; shift
     D="$T/dw-$label"; REPO="$D/repo"; mkdir -p "$D"
@@ -790,7 +791,7 @@ PY
 }
 dw_body_has() { grep -qF -- "$1" "$RUNDIR/pr-body.md" 2>/dev/null; }
 
-run_dw blocked LOKI_RISK_TIER=medium E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict
+run_dw blocked LOKI_RISK_TIER=medium E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict LOKI_E10_MEASURED_LABELS=0 # the stub's claim is not measured (the full suite blames the change): =0 keeps this leg on the draft plumbing; the measured leg follows
 f="$(dw_facts)"; rid="$(basename "$RUNDIR")"
 [ "$f" = "SPEC_CONFLICT True 1 True 0 True | ## Loki needs one answer" ] && ok "blocked run with a change: a draft PR opened on the pushed branch, its body leads with the question, no deep verify" || { bad "blocked run facts: $f (rc $RC)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /'; }
 dw_body_has "calc.test.ts:7 expects multiply(3, 4) to be 12" && dw_body_has "loki answer $rid --text" && ok "blocked run: the body states the question and the command that answers it" || bad "blocked run: the body lacks the question or 'loki answer $rid --text'"
@@ -798,6 +799,15 @@ dw_body_has "## What is done" && [ "$(grep -n '^## ' "$RUNDIR/pr-body.md" | sed 
 [ -n "$(git -C "$REPO" rev-parse --verify -q "loki/$rid")" ] && [ "$(git -C "$REPO" rev-parse "loki/$rid")" = "$(git -C "$D/origin.git" rev-parse "loki/$rid")" ] && ok "blocked run: the run branch stays local (the answer resumes on it) and equals the pushed one" || bad "blocked run: local loki/$rid is gone or differs from the origin"
 grep -Eq '^PR:[[:space:]]+none' <<< "$OUT" && bad "blocked run: the summary says PR: none while a change exists" || ok "blocked run: the summary never says PR: none"
 [ "$RC" -eq 4 ] && grep -Eq '^Outcome:[[:space:]]+BLOCKED' <<< "$OUT" && ok "blocked run: outcome and exit code are unchanged (BLOCKED, 4)" || bad "blocked run: rc $RC, $(grep '^Outcome' <<< "$OUT")"
+# blocked, measured (MEASURED-LABELS on, the default): implement writes a right multiply() and changes add(), so the multiply Wall (red on base) passes,
+# calc.test.ts and the full suite pass on base and fail on head, and the fix session's conflict names calc.test.ts. Loki measured the conflict, so the
+# user gets the answer path exactly as before: SPEC_CONFLICT, a draft PR leading with the question and `loki answer`, BLOCKED, exit 4. The blocked
+# leg above runs with =0 (its stub claim is not measured). Plant DWg: seal.ts namedFile returns false (this leg reads FAILED, not SPEC_CONFLICT).
+run_dw measured LOKI_RISK_TIER=medium E2E_STUB_MODE=breakadd E2E_STUB_FIX=conflict E2E_STUB_WALL=multiply LOKI_E10_WALL=1 LOKI_E10_WALL_ON_LEAN=1
+f="$(dw_facts)"; rid="$(basename "$RUNDIR")"
+[ "$f" = "SPEC_CONFLICT True 1 True 0 True | ## Loki needs one answer" ] && dw_body_has "loki answer $rid --text" && [ "$RC" -eq 4 ] && grep -Eq '^Outcome:[[:space:]]+BLOCKED' <<< "$OUT" \
+    && ok "measured conflict (rule on): SPEC_CONFLICT, a draft PR on the pushed branch leading with the question and 'loki answer $rid --text', BLOCKED, exit 4" \
+    || { bad "measured conflict (rule on): facts $f, rc $RC, $(grep '^Outcome' <<< "$OUT")"; printf '%s\n' "$OUT" | tail -20; }
 
 run_dw unsealed E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit E2E_STUB_STASH=fix E2E_STUB_STASH_THEN=killworker E2E_STUB_STASH_MARK="$T/dw-unsealed.mark"
 f="$(dw_facts)"; rid="$(basename "$RUNDIR")"

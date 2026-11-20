@@ -9,6 +9,7 @@
 #   slice: the implement session appends slice_<id>() for the "Slice <id> of N" it was given (tests/min/decompose-and-intake.sh)
 #   coverage: multiply() and subtract() on the first turn; negate() only when the prompt carries the coverage brief, or all three on a first turn whose brief carries the folded coverage line (tests/min/scope-and-fix.sh, LOKI_E10_COVERAGE_RESUME)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
+#   breakadd: a right multiply() plus add() changed to a + b + 1 (calc.test.ts green on base, red on head; tests/min/engine10-e2e-stub.sh measured conflict)
 # E2E_STUB_NOFINISH=once|never|still|unfinished|conflict|conflictcited (unfinished: every reply ends LOKI_UNFINISHED, the continue changes nothing; conflict: the first reply
 #   is a LOKI_SPEC_CONFLICT citing no test and a continue finishes; conflictcited: every non-continue reply is a conflict citing calc.test.ts:3): the first implement reply has no finish line (LOKI_BLOCKED summary); a continue then finishes (once), keeps editing
 #   without finishing (never) or changes nothing (still). once writes multiply() only on the continue; never and still write it on the first turn.
@@ -470,6 +471,9 @@ if [ "$stage" = "implement" ]; then
       else printf '\nexport function multiply(a: number, b: number): number {\n  return a %s b;\n}\n' "$op" >> calc.ts; fi
     elif [ "${E2E_STUB_MODE:-}" = "wrong" ]; then
       printf '\nexport function multiply(a: number, b: number): number {\n  return a + b;\n}\n' >> calc.ts
+    elif [ "${E2E_STUB_MODE:-}" = "breakadd" ]; then # MEASURED-LABELS: a right multiply() (the multiply Wall passes) that also changes add(), so calc.test.ts passes on base and fails on head
+      python3 -I -c 's=open("calc.ts").read(); open("calc.ts","w").write(s.replace("return a + b;", "return a + b + 1;", 1))'
+      printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts
     elif [ "${E2E_STUB_MODE:-}" = "coverage" ]; then # the task names multiply, subtract and negate: the first turn does two of the three, the coverage resume does the third
       if printf '%s' "$prompt" | grep -q "List each site, symbol, example or case"; then printf '\nexport function negate(a: number): number {\n  return -a;\n}\n' >> calc.ts
       elif printf '%s' "$prompt" | grep -q "go over every site, symbol, example or case the task names"; then printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function subtract(a: number, b: number): number {\n  return a - b;\n}\n\nexport function negate(a: number): number {\n  return -a;\n}\n' >> calc.ts # the folded coverage line (LOKI_E10_COVERAGE_RESUME default fold): the first turn covers all three
