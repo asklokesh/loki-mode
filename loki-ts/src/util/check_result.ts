@@ -891,15 +891,22 @@ export function newFailingIds(d: Record<string, unknown> | undefined, suiteOnly 
  *  ids recorded red on base had nothing new to fix, so the skip was right and must not hold the label (oc63960). */
 export const suiteSkipHolds = (d: Record<string, unknown> | undefined): boolean => newFailingIds(d, true).size > 0;
 /** G5 LINE-FALLBACK: a test file the change edited or added never ends not_run because the runner's summary could not be parsed. The verdict then comes from
- *  the exit code plus the per-test result lines the common runners print (pytest -v "::name PASSED", "FAILED path::name", vitest/jest/mocha check and cross
- *  marks, go "--- PASS:"/"--- FAIL:", TAP "ok N"/"not ok N"). A FAIL line fails it, even under exit 0; exit 0 with at least one PASS line and no FAIL line passes
- *  it with n = the PASS lines; nothing recognisable keeps it not_run. The receipt says so through `count`. */
+ *  the exit code plus per-test result lines that NAME THIS FILE (summary-parse review of 08952e0e1: a bare check mark, "ok 1" or "--- PASS:" from any program
+ *  about any file passed a test that never ran): pytest "<file>::name PASSED" / "FAILED <file>::name", vitest/jest/mocha file lines with a check or cross mark
+ *  or a PASS/FAIL header naming the file. TAP "ok N" / "not ok N" count only for a node runner (node --test prints them for the one file it ran). Output that
+ *  says no tests ran ("no tests", "0 tests", "collected 0") keeps not_run. A FAIL line fails it, even under exit 0; exit 0 with at least one PASS line and no
+ *  FAIL line passes it with n = the PASS lines; nothing recognisable keeps it not_run. Go never takes this path (its own parse decides). The receipt says so
+ *  through `count`. */
 export const LINE_FALLBACK_COUNT = "measured from the exit code and per-test pass and fail lines (the runner's summary could not be parsed)";
-const PASS_LINE = /(::\S+\s+PASSED\b)|(^\s*PASSED\s+\S+::)|(^\s*(?:\u2713|\u2714|\u221a)\s+\S)|(^\s*--- PASS: )|(^ok \d+\b)/gm;
-const FAIL_LINE = /(::\S+\s+(?:FAILED|ERROR)\b)|(^\s*(?:FAILED|ERROR)\s+\S+::)|(^\s*(?:\u2715|\u2717|\u00d7)\s+\S)|(^\s*--- FAIL: )|(^not ok \d+\b)/m;
-export function lineVerdict(out: string, ok: boolean): Classified | null {
-  const text = stripAnsi(out), passes = (text.match(PASS_LINE) ?? []).length;
-  if (FAIL_LINE.test(text)) return { result: "fail", count: LINE_FALLBACK_COUNT };
+const NO_TESTS_LINE = /\bno tests?\b|\b0 tests?\b|\bcollected 0\b|\bno test files?\b/i;
+const escRe = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function lineVerdict(out: string, ok: boolean, file: string, runner: string): Classified | null {
+  if (!file || runner === "go") return null;
+  const text = stripAnsi(out), base = file.split("/").pop()!, f = `(?:${escRe(file)}|${escRe(base)})`, lines = text.split("\n");
+  if (NO_TESTS_LINE.test(text)) return null;
+  const pass = new RegExp(`(${f}::\\S+\\s+PASSED\\b)|(^\\s*PASSED\\s+${f}::)|(^\\s*(?:\\u2713|\\u2714|\\u221a|PASS)\\s+\\S*${f}\\b)`), fail = new RegExp(`(${f}::\\S+\\s+(?:FAILED|ERROR)\\b)|(^\\s*(?:FAILED|ERROR)\\s+${f}::)|(^\\s*(?:\\u2715|\\u2717|\\u00d7|FAIL)\\s+\\S*${f}\\b)`);
+  const tap = runner === "node", passes = lines.filter((l) => pass.test(l) || (tap && /^ok \d+\b/.test(l))).length, fails = lines.some((l) => fail.test(l) || (tap && /^not ok \d+\b/.test(l)));
+  if (fails) return { result: "fail", count: LINE_FALLBACK_COUNT };
   return ok && passes > 0 ? { result: "pass", n: passes, count: LINE_FALLBACK_COUNT } : null;
 }
 /** One attempt of one check. static = lint/typecheck/scan (exit code decides, no count). test = a test runner: pass needs n>0. */

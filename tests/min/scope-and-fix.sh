@@ -4474,6 +4474,7 @@ grep -q '^NO ' <<< "$out" && printf '%s\n' "$out" | grep -v '^OK ' | tail -8 | s
 # is measured from the exit code plus per-test result lines when the summary cannot be parsed; the receipt count says so. Planted defects (each reverted):
 #   G5-1. stages/verify.ts runCheck: drop the LINE-FALLBACK line: the changed-file pass reads not_run.
 #   G5-2. util/check_result.ts lineVerdict: ignore FAIL lines: the exit-0 failing run reads passing.
+#   G5-7. util/check_result.ts lineVerdict: count any check-mark, TAP ok or PASS line, naming the file or not: the three never-ran cases read passing.
 cat > "$T/g5-lf.ts" <<'TS'
 import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -4488,6 +4489,7 @@ try {
   const failz = runner("fail0.sh", 'echo "tests/test_x.py::test_a PASSED"; echo "FAILED tests/test_x.py::test_b - assert 1 == 2"; echo "wrapper swallowed the exit code"; exit 0');
   const fail1 = runner("fail1.sh", 'echo "FAILED tests/test_x.py::test_b - assert 1 == 2"; exit 1');
   const blank = runner("blank.sh", 'echo "nothing a parser or the fallback can read"; exit 0');
+  const built = runner("built.sh", 'printf "\\342\\234\\223 Compiled successfully in 1.2s\\nno tests found for tests/test_x.py\\n"; exit 0'), tapx = runner("tapx.sh", 'echo "ok 1 - prebuild"; echo "runner: unknown output"; exit 0'), other = runner("other.sh", 'printf " \\342\\234\\223 src/other.test.ts (2 tests) 5ms\\n"; exit 0');
   const ctx = { repoDir: d, baseSha: "", outputs: () => ({}), emit: () => {} } as never, sig = new AbortController().signal;
   const one = async (cmd: string, changedTest: boolean) => { const checks: unknown[] = []; return await vf.runCheck(ctx, "pytest:tests/test_x.py", cmd, [], sig, checks as never, { changedTest, path: process.env.PATH }) as { result: string; reason?: string; n?: number; count?: string }; };
   const p1 = await one(pass, true), p0 = await one(pass, false), f0 = await one(failz, true), f1 = await one(fail1, true), b1 = await one(blank, true);
@@ -4495,11 +4497,13 @@ try {
   res("G5 LINE-FALLBACK a test file the change did not touch keeps the unmeasured not_run (unchanged)", p0.result === "not_run" && p0.reason === cr.UNMEASURED_REASON);
   res("G5 LINE-FALLBACK a changed test file reads failing from a FAIL line even when the runner exits 0, and failing on a non-zero exit", f0.result === "fail" && f1.result === "fail");
   res("G5 LINE-FALLBACK a changed test file with no line the fallback can read stays not_run (never a pass from nothing)", b1.result === "not_run");
+  const n1 = await one(built, true), n2 = await one(tapx, true), n3 = await one(other, true);
+  res("G5 LINE-FALLBACK (summary-parse review) a check mark from a build step, a TAP ok from another program and a pass line for a different file never pass the changed test; each stays not_run", n1.result === "not_run" && n2.result === "not_run" && n3.result === "not_run");
 } finally { rmSync(d, { recursive: true, force: true }); }
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/g5-lf.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || { bad "G5 line-fallback unit script crashed or exited non-zero"; printf '%s\n' "$out" | tail -6 | sed 's/^/    | /'; }
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 4 ] || bad "G5 line-fallback unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 4"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 5 ] || bad "G5 line-fallback unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 5"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

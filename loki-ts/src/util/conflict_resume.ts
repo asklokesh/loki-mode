@@ -218,7 +218,7 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
   // or a changed count; noProgressRounds() resumes in a row without it end the loop.
   let cur = session, outstanding = outstandingOf(session.summary), base = first, ended: ContinueEnd = max === 0 ? "continue off" : "count cap", spent: number | null = null;
   const noCount = !Number.isFinite(max), named = outstandingWords(outstanding); let fewestMissing = noCount ? missing().length : 0; const seenNums = new Set<string>([outstandingNumbers(outstanding).join(",")]);
-  let bestMeasured: number | null = noCount && o.measure ? await o.measure() : null; // G5: the measured failing count before the first resume (null: nothing to measure yet)
+  let bestMeasured: number | null = noCount && o.measure ? await o.measure() : null, flatMoves = 0; // G5: the measured failing count before the first resume (null: nothing to measure yet)
   for (let n = 1; n <= max; n++) {
     if (o.signal.aborted) { ended = "aborted"; break; }
     if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) { ended = "time"; break; }
@@ -237,8 +237,12 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
       const said = outstandingOf(r.reply.summary), left = missing().length, words = outstandingWords(said), nums = outstandingNumbers(said);
       // G5: a measurement (Loki's own proof script, o.measure) decides when one exists: progress = fewer failing than the best so far. Only with no measurement does
       // the reply's words-and-tree rule decide (continueMoved), so a session that edits every round and never finishes still ends.
-      const measured = o.measure ? await o.measure() : null;
-      const moved = left < fewestMissing || (measured !== null ? measured < (bestMeasured ?? Infinity) : continueMoved({ left, fewestMissing, treeChanged: before !== after, words, named, nums, seenNums }));
+      // summary-parse review: a measured count that stays flat while the tree changes and the reply names new work is still progress (a multi-step change whose
+      // proof stays red until its last step), but only for 2 x noProgressRounds() such resumes in a row, so a session that edits forever still ends.
+      const measured = o.measure ? await o.measure() : null, wordsMoved = continueMoved({ left, fewestMissing, treeChanged: before !== after, words, named, nums, seenNums });
+      const improved = measured !== null && measured < (bestMeasured ?? Infinity);
+      flatMoves = measured !== null && !improved && wordsMoved ? flatMoves + 1 : 0;
+      const moved = left < fewestMissing || improved || (wordsMoved && (measured === null || flatMoves <= 2 * noProgressRounds(env)));
       if (measured !== null) bestMeasured = Math.min(bestMeasured ?? Infinity, measured);
       fewestMissing = Math.min(fewestMissing, left); for (const w of words) named.add(w); seenNums.add(nums.join(","));
       if (moved) unchanged = 0; else if (++unchanged >= noProgressRounds(env)) { ended = "no progress"; break; }

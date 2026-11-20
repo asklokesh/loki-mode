@@ -433,7 +433,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
         // NO-DEFAULT-BUDGET: with no time limit the round count is not the bound. A round makes progress when the failing count falls below the best so far or
         // a check that had not run now ran (both bounded, so the loop always ends); noProgressRounds() rounds in a row without either end it.
-        let fewestNew = newFailingIds(outputs.verify).size, stillRounds = 0, suitePrev = Infinity, suiteNow = newFailingIds(outputs.verify, true).size; // G5: progress = fewer measured NEW failing ids than the best so far; a full-suite-only red stops a later round only when the suite's new ids did not shrink
+        const ranOf = (d: Obj | undefined): number => (Array.isArray(d?.checks) ? (d!.checks as Obj[]) : []).filter((c) => c?.result !== "not_run").length; // summary-parse review: a check that now runs is progress (a not_run or id-less check showing its real failing ids)
+        let fewestNew = newFailingIds(outputs.verify).size, mostRan = ranOf(outputs.verify), stillRounds = 0, suitePrev = Infinity, suiteNow = newFailingIds(outputs.verify, true).size; // G5: progress = fewer measured NEW failing ids than the best so far; a full-suite-only red stops a later round only when the suite's new ids did not shrink
         let noopSig: string | null = null; // anti-loop: the verify signature that fed the last fix round that left the tree unchanged
         const suiteSkip = suiteFixSkipEnabled() && !fatal && !capHit && outputs.implement?.exit === "done" && hasFailures(outputs.verify) && suiteOnlyRed(outputs.verify);
         // INDEP-GATE LOKI_E10_HAIKU_INDEP_FIX (default on, =0 opts out): a Haiku run gets no fix round at all unless an independent check failed (verify.ts independent_fail:
@@ -479,7 +480,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
           noopSig = noop ? fedBy : null;
           const v = await runStage("verify", true);
           sigs.push(sigOf(outputs.verify, v));
-          { const now = newFailingIds(outputs.verify).size; suitePrev = suiteNow; suiteNow = newFailingIds(outputs.verify, true).size; if (now < fewestNew) { fewestNew = now; stillRounds = 0; } else stillRounds++; }
+          { const now = newFailingIds(outputs.verify).size, ran = ranOf(outputs.verify); suitePrev = suiteNow; suiteNow = newFailingIds(outputs.verify, true).size; if (now < fewestNew || ran > mostRan) { fewestNew = Math.min(now, fewestNew); mostRan = Math.max(ran, mostRan); stillRounds = 0; } else stillRounds++; }
           if (mustJump("verify", v)) break;
           if (wallOnlyAfterFix(outputs, ctx.repoDir) && wallSignature(outputs, ctx.repoDir) === wallBefore) break; // only Loki's own Wall still fails, the same tests the same way, while the repo's own tests pass: the round made no progress on it, so delivery below decides; a round that moved the Wall gets the rounds left
           if (hasFailures(outputs.verify) && sigs.length >= 2 && stallSame(sigs[sigs.length - 2]!, sigs[sigs.length - 1]!)) { // no progress: the round left the same failing set, so another round would only spend
