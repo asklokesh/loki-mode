@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 
+## v11.165.0 (2026-11-19)
+
+### The receipt names what kept a run below VERIFIED
+
+- Seal already computed the holds that keep a verdict below VERIFIED. A receipt below VERIFIED now carries them as `held_by: [{kind, detail}]`, for example `check fails`, `verify not proven`, `changed symbol not referenced` and `no agent-independent proof`, including the Wall test hold that publish adds after seal. A VERIFIED receipt is byte for byte as before. No label changes.
+- Used today on a no-spend replay of 3 stored C2 Loki changes (a stand-in replaces the model): the receipts listed 18, 8 and 14 holds. That replay is how the next fix was chosen: in 2 of the 3, the full suite was never run on the untouched base, so its failures stayed counted against the change.
+
+Not measured in a live run. Gate: the full hermetic local gate (31 of the 32 tests/min files; scratch-real-services is excluded) on the merged tree; the Maven, Gradle and .NET legs of stacks.sh do not run on the release machine, and this change does not touch them.
+
 ## v11.164.0 (2026-11-19)
 
 
