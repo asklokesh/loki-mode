@@ -30,6 +30,7 @@ import tempfile
 import threading
 import time
 import traceback
+from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -58,6 +59,23 @@ LOKI_PINS = {"loki-haiku": "haiku", "loki-sonnet": "sonnet", "loki-opus": "opus"
 VERIFY_SENTENCE = "Before you finish, run the repository's tests and check that your change works."
 # Offline configs for checking the task set itself: oracle applies tasks/<id>/solution, noop changes nothing.
 CHECK_CONFIGS = ["oracle", "noop"]
+# Calibration (VERIFY-PLAN V1): the real engine on the stub CLI (tests/min/fixtures/e2e/bin/claude apply mode), whose first implement
+# session applies a fixed change: merged = the upstream fix plus its tests (should read VERIFIED), nofix = its tests only (FAILED),
+# plant = the fix, its tests and one line that breaks the fixed module at import (FAILED), inert = the base version of the fixed file
+# plus one unused function and no tests (all checks green, nothing proves the change: PARTIAL). The hidden tests score the truth as for
+# every other config. No model is called. Named with --configs only.
+CALIBRATE_CONFIGS = ["loki-cal-merged", "loki-cal-nofix", "loki-cal-plant", "loki-cal-inert"]
+CAL_EXPECTED = {"loki-cal-merged": "VERIFIED", "loki-cal-nofix": "FAILED", "loki-cal-plant": "FAILED", "loki-cal-inert": "PARTIAL"}
+CAL_EXT = {"py": (".py",), "go": (".go",), "ts": (".ts", ".tsx"), "js": (".js", ".mjs", ".cjs")}
+PLANT_LINE = {"py": '\nraise RuntimeError("loki calibration plant: this module must not import")\n',
+              "go": '\nfunc init() { panic("loki calibration plant") }\n',
+              "ts": '\nthrow new Error("loki calibration plant");\n', "js": '\nthrow new Error("loki calibration plant");\n'}
+INERT_LINE = {"py": '\n\ndef _loki_calibration_unused():\n    return None\n', "go": '\nfunc lokiCalibrationUnused() {}\n',
+              "ts": '\nexport function lokiCalibrationUnused(): void {}\n', "js": '\nexport function lokiCalibrationUnused() {}\n'}
+STAND_IN_KINDS = ("open note", "review note", "review block")  # holds only a real session can clear; reported apart from accuracy
+CAL_LOAD_MAX = 12.0  # daytime machine cap: a calibration case starts only at a 1-minute load at or below this
+CAL_LOAD_WAIT_S = 1800  # at most 30 minutes of waiting for the load; then the case is recorded as a harness error
+ALL_CONFIGS = CONFIGS + LOW_EFFORT_CONFIGS + CHECK_CONFIGS + CALIBRATE_CONFIGS
 # Learning protocol (--sequences): Loki on Haiku with what it learns from earlier runs in the same repo.
 # learn: run lessons and the worked example both on; lessons: run lessons only; example: the worked example
 # only; nolearn: both off. Each arm sets every knob explicitly, so an engine default never decides an arm.
@@ -284,12 +302,14 @@ def contestant_env(home, shared=None):
     return env
 
 
-def make_home(path):
+def make_home(path, link_auth=True):
     """Throwaway HOME. Claude auth must still resolve: on macOS the OAuth token is in the
     login keychain, found through $HOME/Library/Keychains; on Linux it is
     ~/.claude/.credentials.json. Only that is linked, so no user CLAUDE.md, hooks,
     settings or Loki state leak into either contestant."""
     path.mkdir(parents=True)
+    if not link_auth:  # calibration configs call no model: nothing to resolve
+        return path
     real = Path(os.environ.get("H2H_REAL_HOME") or Path.home())
     if os.environ.get("H2H_NO_AUTH_LINK") == "1":
         return path
@@ -324,7 +344,7 @@ def contestant_cmd(config, task):
         return ["bash", "-c", 'command claude "$@"', "claude", "-p", text, "--model", model,
                 "--output-format", "json", "--dangerously-skip-permissions"] + (
                     ["--effort", LOW_EFFORT] if config in LOW_EFFORT_CONFIGS else [])
-    if config in LOKI_PINS or config == "loki-default" or config in SEQUENCE_CONFIGS:
+    if config in LOKI_PINS or config == "loki-default" or config in SEQUENCE_CONFIGS or config in CALIBRATE_CONFIGS:
         return ["bash", str(ROOT / "bin" / "loki"), text, "--no-pr"]
     if config == "loki-haiku-flag":
         return ["bash", str(ROOT / "bin" / "loki"), text, "--no-pr", "--haiku"]
@@ -359,6 +379,20 @@ def config_env(config, env):
             env["LOKI_NO_PR_LESSONS"] = "1"
     if config == "loki-auto-learn":
         env["LOKI_ROUTER"] = "auto"  # runner/router/flag.ts routerActive: history-routed executor (repoHistoryFloor)
+    if config in CALIBRATE_CONFIGS:  # VERIFY-PLAN V1: the stub CLI replays the change; no model, no dashboard, no capture
+        stub = ROOT / "tests" / "min" / "fixtures" / "e2e" / "bin"
+        env["PATH"] = f"{stub}:{env.get('PATH', '')}"
+        # The engine's default invoker is the Agent SDK, which never reads PATH's claude: pin the CLI invoker to the stub,
+        # and drop any API key, so no session can reach a model (the tests/min engine legs pin the same two knobs).
+        env["LOKI_E10_INVOKER"] = "cli"
+        env["LOKI_CLAUDE_CLI"] = str(stub / "claude")
+        for k in [k for k in env if k.startswith("ANTHROPIC_")]:
+            del env[k]
+        env["E2E_STUB_MODE"] = "apply"
+        env["LOKI_CONTROL"] = "0"
+        env["LOKI_NO_CAPTURE"] = "1"
+        if os.environ.get("H2H_CAL_ENGINE") != "dist":
+            env["BUN_FROM_SOURCE"] = "1"
     if config.startswith("loki-"):
         env.update(loki_env_overrides())  # validated at startup; Loki contestants only (raw configs never see them)
     if config == "loki-auto-learn" and env.get("LOKI_ROUTER") != "auto":
@@ -426,6 +460,62 @@ def run_contestant(cmd, cwd, env, timeout_s, out_path, err_path):
 
 def apply_oracle(task, repo):
     shutil.copytree(task["dir"] / "solution", repo, dirs_exist_ok=True)
+
+
+def calibration_patch(task, repo, config, out):
+    """The change a calibration config replays, as a git diff of the base commit, built in a copy of the repo so the repo the engine
+    runs in stays at its base commit. merged: solution and hidden tests; nofix: hidden tests; plant: merged plus PLANT_LINE appended to
+    the target file; inert: INERT_LINE appended to the base version of the target file, nothing else. The target is the first solution
+    file (sorted) whose extension is in CAL_EXT for the task language."""
+    sol = task["dir"] / "solution"
+    ext = CAL_EXT.get(task["lang"])
+    target = line = None
+    if config in ("loki-cal-plant", "loki-cal-inert"):
+        line = (PLANT_LINE if config == "loki-cal-plant" else INERT_LINE).get(task["lang"])
+        if ext is None or line is None:
+            raise RuntimeError(f"h2h: no calibration plant for language {task['lang']}")
+        target = next((r for r in sorted(p.relative_to(sol).as_posix() for p in sol.rglob("*") if p.is_file()) if r.endswith(ext)), None)
+        if target is None:
+            raise RuntimeError(f"h2h: no {task['lang']} solution file to plant in")
+    tmp = out.parent / "cal-tree"
+    shutil.copytree(repo, tmp, symlinks=True)
+    try:
+        if config in ("loki-cal-merged", "loki-cal-plant"):
+            shutil.copytree(sol, tmp, dirs_exist_ok=True)
+        if config in ("loki-cal-merged", "loki-cal-nofix", "loki-cal-plant"):
+            for src, dest in task["hidden"].items():  # exactly as score() copies them
+                d = tmp / dest
+                d.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(task["dir"] / "hidden" / src, d)
+        if config == "loki-cal-plant":
+            with open(tmp / target, "a") as fh:
+                fh.write(line)
+        if config == "loki-cal-inert":
+            if not (tmp / target).is_file():
+                raise RuntimeError(f"h2h: inert change needs the base version of {target}")
+            with open(tmp / target, "a") as fh:
+                fh.write(line)
+        git(tmp, "add", "-A")
+        diff = git(tmp, "diff", "--cached", "--binary")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if not diff.strip():
+        raise RuntimeError("h2h: empty calibration change")
+    out.write_text(diff)
+
+
+def wait_for_load(load=lambda: os.getloadavg()[0], sleep=time.sleep, clock=time.monotonic, cap=CAL_LOAD_MAX, limit_s=CAL_LOAD_WAIT_S):
+    """Daytime machine cap: returns once the 1-minute load is at or below cap; raises after limit_s seconds of waiting, so the
+    worker records the case as a harness error instead of waiting for ever. Logs once per wait."""
+    t0 = clock()
+    logged = False
+    while load() > cap:
+        if clock() - t0 >= limit_s:
+            raise RuntimeError(f"h2h: 1-minute load stayed above {cap} for {limit_s // 60} minutes; calibration case not started")
+        if not logged:
+            log(f"h2h: 1-minute load above {cap}; waiting before the next calibration case")
+            logged = True
+        sleep(30)
 
 
 def hidden_leaks(task, repo, base):
@@ -609,6 +699,11 @@ def loki_metrics(repo):
         run_dir = cands[-1] if cands else None
     if run_dir is None:
         return {"cost_usd": None, "sessions": 0, "fix_rounds": 0, "run_id": None, "stages": {}, "verdict": None, "models": []}
+    try:
+        receipt = json.loads((run_dir / "receipt.json").read_text())
+        receipt = receipt if isinstance(receipt, dict) else {}
+    except (OSError, ValueError):
+        receipt = {}
     events = []
     for line in (run_dir / "events.jsonl").read_text().splitlines():
         try:
@@ -682,6 +777,11 @@ def loki_metrics(repo):
         "models": sorted(models),
         "session_models": session_models,
         "event_types": sorted({e.get("type") for e in events if e.get("type")}),
+        # VERIFY-PLAN V1: the receipt's own label, holds, stamp and observe-mode entries
+        "held_by": [{"kind": str(h.get("kind")), "detail": str(h.get("detail"))[:200]} for h in receipt.get("held_by") or [] if isinstance(h, dict)],
+        "observe": receipt.get("observe") or [],
+        "verified_by": receipt.get("verified_by"),
+        "receipt_verdict": receipt.get("verdict"),
     }
 
 
@@ -714,7 +814,12 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
     d = Path(tempfile.mkdtemp(prefix=f"{config}.{task['id']}.{rep}.", dir=work))
     repo = d / "repo"
     base = prepare_repo(task, repo)
-    env = config_env(config, contestant_env(make_home(d / "home"), work))
+    env = config_env(config, contestant_env(make_home(d / "home", link_auth=config not in CALIBRATE_CONFIGS), work))
+    if config in CALIBRATE_CONFIGS:  # VERIFY-PLAN V1: the stub's first implement session applies this change
+        patch = d / "change.patch"
+        calibration_patch(task, repo, config, patch)
+        env["E2E_STUB_APPLY_PATCH"] = str(patch)
+        env["E2E_STUB_APPLY_MARK"] = str(d / "applied")
     rec = {"config": config, "task": task["id"], "kind": task["kind"], "lang": task["lang"],
            "difficulty": task.get("difficulty", "normal"), "shape": task.get("shape"), "rep": rep}
     if config == "oracle":
@@ -727,7 +832,8 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
         rc, secs, timed_out = run_contestant(contestant_cmd(config, task), repo, env, timeout_s,
                                              d / "contestant.out", d / "contestant.err")
     # The hidden tests must not exist in the contestant's copy before scoring starts.
-    leaked = hidden_leaks(task, repo, base)
+    # Calibration changes carry the maintainer's own tests by design; restore_protected and score still decide the truth.
+    leaked = [] if config in CALIBRATE_CONFIGS else hidden_leaks(task, repo, base)
     branch = loki_branch_checkout(repo, base) if config.startswith("loki") else None
     files = changed_files(repo, base)
     edits = test_edits(task, files)
@@ -752,6 +858,8 @@ def run_one(config, task, rep, work, timeout_s, keep_dir):
         "files_changed": len(files), "files": files, "hidden_leaked_before_scoring": leaked,
         "scored_branch": branch, "hidden_tail": tail if not passed else "", **m,
     })
+    if config in CALIBRATE_CONFIGS:  # after the engine ran (the mark exists only then) and before the work dir goes
+        rec["calibration"] = {"change": config.rsplit("-", 1)[1], "expected": CAL_EXPECTED[config], "applied": (d / "applied").is_file()}
     if not keep_dir:
         shutil.rmtree(d, ignore_errors=True)
     else:
@@ -1181,6 +1289,61 @@ def verdict_stats(rs):
     }
 
 
+def calibration_stats(rs):
+    """V1: Loki's label on fixed known-good and known-bad changes. A run counts only when it has a receipt, the stub applied the change,
+    it did not time out or hit a harness error, and the hidden tests agree with the change (merged passes, the bad changes fail);
+    every other run goes to invalid with its reason. right: the receipt verdict is the expected one. verifier_right also counts a merged
+    run held only by STAND_IN_KINDS (a real session clears those). good_holds counts every held_by kind on a merged run that is not
+    VERIFIED: the false positives to remove (R4). Per observe rule, right_if_enforced_upper_bound reads the label the rule gave at its own
+    step of the seal; later steps can only lower a label, so it is an upper bound on how often enforcing the rule would be right."""
+    valid, invalid = [], []
+    for r in rs:
+        cal = r.get("calibration") or {}
+        merged = r.get("config") == "loki-cal-merged"
+        reason = ("harness error" if r.get("harness_error") else "timed out" if r.get("timed_out")
+                  else "no receipt" if not isinstance(r.get("receipt_verdict"), str)
+                  else "the stub never applied the change" if not cal.get("applied")
+                  else "hidden tests failed on the merged fix" if merged and r.get("pass") != 1
+                  else "hidden tests passed on a bad change" if not merged and r.get("pass") != 0 else None)
+        if reason:
+            invalid.append({"config": r.get("config"), "task": r.get("task"), "reason": reason})
+        else:
+            valid.append(r)
+    kinds = lambda r: [str(h.get("kind")) for h in r.get("held_by") or []]
+    is_merged = lambda r: r["config"] == "loki-cal-merged"
+    ok = lambda r, label: (label == "VERIFIED") if is_merged(r) else (label != "VERIFIED")
+    entries = lambda r: [e for e in r.get("observe") or [] if isinstance(e, dict)]
+    right = sum(1 for r in valid if r["receipt_verdict"] == CAL_EXPECTED.get(r["config"]))
+    verifier_right = right + sum(1 for r in valid if is_merged(r) and r["receipt_verdict"] != "VERIFIED" and kinds(r)
+                                 and all(k in STAND_IN_KINDS for k in kinds(r)))
+    good_holds, stand_in_holds, bad_holds = Counter(), Counter(), Counter()
+    for r in valid:
+        if is_merged(r):
+            if r["receipt_verdict"] != "VERIFIED":
+                for k in kinds(r):
+                    (stand_in_holds if k in STAND_IN_KINDS else good_holds)[k] += 1
+        else:
+            for k in kinds(r):
+                bad_holds[k] += 1
+    observe = {}
+    for rule in sorted({str(e.get("rule")) for r in valid for e in entries(r)}):
+        fired = [(r, e) for r in valid for e in entries(r) if str(e.get("rule")) == rule]
+        observe[rule] = {
+            "fired": len(fired),
+            "right_now": sum(1 for r, _ in fired if ok(r, r["receipt_verdict"])),
+            "right_if_enforced_upper_bound": sum(1 for r, e in fired if ok(r, e.get("would_label"))),
+            "false_verified_if_enforced": sum(1 for r, e in fired if not is_merged(r) and e.get("would_label") == "VERIFIED")
+            + sum(1 for r in valid if not is_merged(r) and r["receipt_verdict"] == "VERIFIED"
+                  and not any(str(e.get("rule")) == rule for e in entries(r))),
+        }
+    return {
+        "n": len(valid), "invalid": invalid, "right": right, "verifier_right": verifier_right,
+        "false_verified": sum(1 for r in valid if not is_merged(r) and r["receipt_verdict"] == "VERIFIED"),
+        "good_holds": dict(good_holds), "stand_in_holds": dict(stand_in_holds), "bad_holds": dict(bad_holds),
+        "observe": observe, "r4_candidates": sorted(k for k in good_holds if k not in bad_holds),
+    }
+
+
 def summarize(results, configs):
     rows = []
     for c in configs:
@@ -1220,6 +1383,8 @@ def summarize(results, configs):
             })
         if c.startswith("loki"):
             row.update(verdict_stats(rs))
+            if c in CALIBRATE_CONFIGS:
+                row["calibration"] = calibration_stats(rs)
         rows.append(row)
     return rows
 
@@ -1274,7 +1439,7 @@ def select_tasks(tasks, configs, named):
 def main(argv=None):
     loki_env_overrides()  # refuse a bad H2H_LOKI_ENV before any run starts
     ap = argparse.ArgumentParser(prog="benchmarks/h2h/run.sh", description=__doc__.splitlines()[0])
-    ap.add_argument("--configs", default=",".join(CONFIGS), help=f"comma list from {CONFIGS + LOW_EFFORT_CONFIGS + CHECK_CONFIGS} "
+    ap.add_argument("--configs", default=",".join(CONFIGS), help=f"comma list from {ALL_CONFIGS} "
                     f"(default: {','.join(CONFIGS)})")
     ap.add_argument("--suite", default="tasks", choices=sorted(SUITES), help="task suite: tasks (synthetic, default) "
                     "or replay (real closed issues replayed at the fix's parent commit)")
@@ -1303,7 +1468,7 @@ def main(argv=None):
 
     configs = [c for c in a.configs.split(",") if c]
     for c in configs:
-        if c not in CONFIGS + LOW_EFFORT_CONFIGS + CHECK_CONFIGS:
+        if c not in ALL_CONFIGS:
             ap.error(f"unknown config {c}")
         if c in LOW_EFFORT_CONFIGS and c.startswith("loki-"):
             config_env(c, {})  # refuse an H2H_LOKI_ENV effort that contradicts the arm before any paid run starts
@@ -1351,6 +1516,8 @@ def main(argv=None):
                 rep, task, c = queue.pop(0)
                 log(f"h2h: {c} {task['id']} rep {rep} (ledger ${spent:.4f}, {len(queue)} queued)")
             try:
+                if c in CALIBRATE_CONFIGS:
+                    wait_for_load()
                 rec = run_one(c, task, rep, work, a.timeout, a.keep)
             except Exception as exc:  # a harness fault is recorded as a failed run, never dropped
                 rec = {"config": c, "task": task["id"], "kind": task["kind"], "lang": task["lang"],
@@ -1369,7 +1536,7 @@ def main(argv=None):
                 write_results(out, results, configs, sha, a, state["stopped"])
 
     try:
-        if any(c not in CHECK_CONFIGS for c in configs) and queue:
+        if any(c not in CHECK_CONFIGS + CALIBRATE_CONFIGS for c in configs) and queue:
             ok, detail = auth_ok(work)
             if not ok:
                 log(f"h2h: claude auth does not resolve under the throwaway HOME; refusing to run\n{detail}")
@@ -1412,6 +1579,8 @@ def write_results(out, results, configs, sha, a, stopped):
         "loki_env": loki_env_overrides(), "tasks": sorted({r["task"] for r in results}),
         "summary": summarize(results, configs), "runs": results,
     }
+    if any(c in CALIBRATE_CONFIGS for c in configs):  # VERIFY-PLAN V1: the cross-config table
+        doc["calibration"] = calibration_stats([r for r in results if r["config"] in CALIBRATE_CONFIGS])
     out.write_text(json.dumps(doc, indent=2) + "\n")
 
 

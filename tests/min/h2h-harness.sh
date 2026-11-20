@@ -94,6 +94,16 @@
 #  47. first_pass(): ignore fix_rounds; the curve first-pass counts must fail.
 #  48. paired(): key records on (sequence, rep, step) instead of run_index; the paired pair count and values must fail.
 #  49. config_env(): drop LOKI_WORKED_EXAMPLE from the -learn suffix; the lap-2 injected-example check must fail.
+#  50. calibration_patch(): copy the solution for nofix too; calibration U2 nofix must fail.
+#  51. calibration_patch(): skip the plant line; calibration U2 plant and U3 plant must fail.
+#  52. run_one(): keep hidden_leaks for calibration configs; calibration U3 must fail (leaked files recorded).
+#  53. stub apply mode: apply nothing; calibration U3 merged must fail (FAILED, applied False).
+#  54. calibration_stats(): count STAND_IN_KINDS in good_holds; calibration U1 holds must fail.
+#  55. loki_metrics(): drop held_by; calibration U3 must fail (held False).
+#  56. calibration_patch(): plant the first solution file whatever its extension; calibration U2 plant must fail.
+#  57. calibration_stats(): count invalid runs; calibration U1 n must fail.
+#  58. wait_for_load(): never raise; calibration U4 high must fail.
+#  59. calibration_patch(): copy the solution for inert; calibration U2 inert must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -363,6 +373,99 @@ check "task set: at least 4 languages" test "$(meta 'len({x["lang"] for x in m})
 check "task set: 4 to 6 tasks per language" test "$(meta 'all(4 <= sum(1 for y in m if y["lang"] == l) <= 6 for l in {x["lang"] for x in m})')" = True
 check "task set: at least 10 multi-file normal tasks" test "$(meta 'sum(1 for x in m if x["kind"] == "multifile" and x.get("difficulty", "normal") == "normal")')" -ge 10
 check "task set: at least 4 hard tasks" test "$(meta 'sum(1 for x in m if x.get("difficulty") == "hard")')" -ge 4
+
+# VERIFY-PLAN V1 calibration configs (loki-cal-merged, -nofix, -plant, -inert): U1 calibration_stats on fixed records, U2
+# calibration_patch on a task in $T, U4 wait_for_load with a fake clock, U3 the real engine on the stub CLI's apply mode.
+cal_u1="$(cd benchmarks/h2h && python3 -I -c '
+import sys; sys.path.insert(0, "."); import h2h
+print("names", all(c in h2h.ALL_CONFIGS for c in h2h.CALIBRATE_CONFIGS) and not any(c in h2h.CHECK_CONFIGS for c in h2h.CALIBRATE_CONFIGS))
+def r(cfg, p, v, held=(), obs=(), applied=True):
+    c = "loki-cal-" + cfg
+    return {"config": c, "task": "t", "pass": p, "timed_out": False, "receipt_verdict": v, "held_by": [{"kind": k, "detail": ""} for k in held],
+            "observe": list(obs), "calibration": {"change": cfg, "expected": h2h.CAL_EXPECTED[c], "applied": applied}}
+R = [{"rule": "R", "would_label": "VERIFIED"}]
+def recs(h4):
+    return [r("merged", 1, "VERIFIED"), r("merged", 1, "PARTIAL", ["open note"]), r("merged", 1, "PARTIAL", ["check fails", "open note"], R),
+            r("nofix", 0, "FAILED", h4, R), r("plant", 0, "VERIFIED"), r("inert", 0, "PARTIAL", ["no fail-then-pass test"]),
+            r("merged", 0, "VERIFIED"), r("nofix", 0, None), r("plant", 0, "FAILED", applied=False)]
+s = h2h.calibration_stats(recs(["check fails"]))
+print("n", s["n"], "invalid", [x["reason"] for x in s["invalid"]])
+print("right", s["right"], "vr", s["verifier_right"], "fv", s["false_verified"])
+print("good", s["good_holds"], "stand", s["stand_in_holds"], "bad", sorted(s["bad_holds"].items()), "r4", s["r4_candidates"])
+print("obs", s["observe"]["R"])
+s = h2h.calibration_stats(recs(["no fail-then-pass test"]))
+print("set2", s["bad_holds"], s["r4_candidates"])
+' 2>&1)"
+has "calibration U1: the four configs are runnable configs and not check configs" "$cal_u1" "names True"
+has "calibration U1: only valid runs count; invalid ones carry their reason in record order" "$cal_u1" "n 6 invalid ['hidden tests failed on the merged fix', 'no receipt', 'the stub never applied the change']"
+has "calibration U1: right 3, verifier_right 4 (a merged run held only by a stand-in), one false VERIFIED" "$cal_u1" "right 3 vr 4 fv 1"
+has "calibration U1: good, stand-in and bad holds are counted apart; no R4 candidate when the kind also fired on a bad change" "$cal_u1" "good {'check fails': 1} stand {'open note': 2} bad [('check fails', 1), ('no fail-then-pass test', 1)] r4 []"
+has "calibration U1: an observe rule's fired, right now, upper bound if enforced, and false VERIFIED if enforced" "$cal_u1" "obs {'fired': 2, 'right_now': 1, 'right_if_enforced_upper_bound': 1, 'false_verified_if_enforced': 2}"
+has "calibration U1: a kind that fired only on good changes is an R4 candidate" "$cal_u1" "set2 {'no fail-then-pass test': 2} ['check fails']"
+CT="$T/caltask"; mkdir -p "$CT/repo" "$CT/solution" "$CT/hidden"
+printf 'def f():\n    return 1\n' > "$CT/repo/a.py"
+git -C "$CT/repo" init -q -b main; git -C "$CT/repo" config user.name t; git -C "$CT/repo" config user.email t@example.invalid
+git -C "$CT/repo" add -A; git -C "$CT/repo" commit -q -m base
+printf 'notes\n' > "$CT/solution/A_NOTES.md"; printf 'def f():\n    return 2\n' > "$CT/solution/a.py"; printf 'from a import f\n\ndef test_f():\n    assert f() == 2\n' > "$CT/hidden/test_a.py"
+cal_u2="$(cd benchmarks/h2h && python3 -I -c '
+import sys, re; from pathlib import Path; sys.path.insert(0, "."); import h2h
+d = Path(sys.argv[1]); task = {"dir": d, "lang": "py", "hidden": {"test_a.py": "test_a.py"}}
+def go(c, lang="py"):
+    out = d / ("p-" + c + ".patch")
+    h2h.calibration_patch(dict(task, lang=lang), d / "repo", c, out)
+    t = out.read_text(); return t, sorted(set(re.findall(r"^diff --git a/(\S+)", t, re.M)))
+t, f = go("loki-cal-merged"); print("merged", f)
+t, f = go("loki-cal-nofix"); print("nofix", f)
+t, f = go("loki-cal-plant"); a = t.split("diff --git a/a.py")[1].split("diff --git")[0]; n = t.split("diff --git a/A_NOTES.md")[1].split("diff --git")[0]
+print("plant", f, "planted" if "+raise RuntimeError(\"loki calibration plant" in a else "no-plant", "notes-clean" if "calibration" not in n else "notes-planted")
+t, f = go("loki-cal-inert"); print("inert", f, "base-kept" if "return 2" not in t else "solution-copied", "inert-line" if "+def _loki_calibration_unused():" in t else "no-inert")
+try:
+    go("loki-cal-plant", "rs"); print("rs no-raise")
+except RuntimeError as e: print("rs", e)
+print("tree-left", (d / "cal-tree").exists())
+' "$CT" 2>&1)"
+has "calibration U2: merged replays the solution files and the hidden test" "$cal_u2" "merged ['A_NOTES.md', 'a.py', 'test_a.py']"
+has "calibration U2: nofix replays only the hidden test" "$cal_u2" "nofix ['test_a.py']"
+has "calibration U2: plant appends the plant line to the first .py solution file, not the first file" "$cal_u2" "plant ['A_NOTES.md', 'a.py', 'test_a.py'] planted notes-clean"
+has "calibration U2: inert changes only the base version of the target file" "$cal_u2" "inert ['a.py'] base-kept inert-line"
+has "calibration U2: a language with no plant line raises" "$cal_u2" "rs h2h: no calibration plant for language rs"
+has "calibration U2: the scratch copy is removed" "$cal_u2" "tree-left False"
+cal_u4="$(cd benchmarks/h2h && python3 -I -c '
+import sys; sys.path.insert(0, "."); import h2h
+t = [0.0]; slept = []
+class Looped(Exception): pass
+def sleep(s):
+    slept.append(s); t[0] += s
+    if len(slept) > 200: raise Looped()  # a wait that never gives up fails this cell instead of hanging it
+try:
+    h2h.wait_for_load(load=lambda: 20.0, sleep=sleep, clock=lambda: t[0], cap=12.0, limit_s=1800); print("high returned")
+except RuntimeError as e: print("high", "stayed above" in str(e), len(slept))
+except Looped: print("high looped past the limit")
+slept.clear(); h2h.wait_for_load(load=lambda: 3.0, sleep=sleep, clock=lambda: t[0]); print("low", len(slept))
+' 2>&1)"
+has "calibration U4: a load that stays above the cap raises after the wait limit" "$cal_u4" "high True 60"
+has "calibration U4: a load under the cap starts at once" "$cal_u4" "low 0"
+# U3: one real engine run per change on the stub (BUN_FROM_SOURCE=1, set by config_env), on a bun task built from the e2e fixture.
+CK="$T/caltasks/cal-calc"; mkdir -p "$CK/solution" "$CK/hidden" "$T/calwork"
+cp -R "$ROOT/tests/min/fixtures/e2e/repo" "$CK/repo"
+{ cat "$ROOT/tests/min/fixtures/e2e/repo/calc.ts"; printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n'; } > "$CK/solution/calc.ts"
+printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n' > "$CK/hidden/calc_multiply.test.ts"
+printf '{"difficulty": "normal", "shape": "single-file", "lang": "ts", "kind": "tasks", "hidden": {"calc_multiply.test.ts": "calc_multiply.test.ts"}, "hidden_cmd": ["bun", "test"], "visible_cmd": ["bun", "test"], "protected": []}\n' > "$CK/meta.json"
+printf 'add a multiply(a, b) function to calc.ts\n' > "$CK/task.txt"
+cal_u3="$(cd benchmarks/h2h && env -u E2E_STUB_MODE TMPDIR="$T" python3 -I -c '
+import sys, json; from pathlib import Path; sys.path.insert(0, "."); import h2h
+task = h2h.load_task("cal-calc", Path(sys.argv[1])); work = Path(sys.argv[2])
+for c in h2h.CALIBRATE_CONFIGS:
+    r = h2h.run_one(c, task, 1, work, 600, False)
+    print(c.rsplit("-", 1)[1], "verdict", r.get("receipt_verdict"), "pass", r["pass"], "exit", r["exit_code"], "applied", r["calibration"]["applied"],
+          "held", isinstance(r.get("held_by"), list), "leaked", r["hidden_leaked_before_scoring"], "kinds", [h["kind"] for h in r.get("held_by") or []])
+' "$T/caltasks" "$T/calwork" 2>&1)"
+printf '%s\n' "$cal_u3" | sed 's/^/  U3: /' | grep -E 'U3: (merged|nofix|plant|inert) ' || printf '%s\n' "$cal_u3" | tail -20
+has "calibration U3: the merged fix reads VERIFIED on the stub, scores pass and was applied" "$cal_u3" "merged verdict VERIFIED pass 1 exit 0 applied True held True leaked []"
+cal_nf="$(printf '%s\n' "$cal_u3" | grep '^nofix ')"; cal_pl="$(printf '%s\n' "$cal_u3" | grep '^plant ')"; cal_in="$(printf '%s\n' "$cal_u3" | grep '^inert ')"
+case "$cal_nf" in "nofix verdict FAILED pass 0 exit "[15]" applied True held True leaked []"*) ok "calibration U3: the tests without the fix read FAILED (exit 1, or 5 when the fix rounds stall)" ;; *) bad "calibration U3 nofix: $cal_nf" ;; esac
+case "$cal_pl" in "plant verdict FAILED pass 0 exit "[15]" applied True held True leaked []"*) ok "calibration U3: the fix with a planted import break reads FAILED" ;; *) bad "calibration U3 plant: $cal_pl" ;; esac
+case "$cal_in" in "inert verdict "*" pass 0 exit "*" applied True held True leaked []"*) case "$cal_in" in *"verdict VERIFIED "*) bad "calibration U3 inert read VERIFIED: $cal_in" ;; *) ok "calibration U3: an unused function with no tests is not VERIFIED (${cal_in%% pass*})" ;; esac ;; *) bad "calibration U3 inert: $cal_in" ;; esac
 
 # Learning protocol (--sequences): every step of every sequence runs in one repo copy. The reference
 # solutions applied in order pass each step's hidden tests, an untouched repo passes none, and no

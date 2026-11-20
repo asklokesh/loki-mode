@@ -272,6 +272,7 @@ These knobs together implement the RARV-C (closure) loop: findings -> override c
 - `LOKI_E10_PRECEDENT` -- sibling-implementation precedent is added to open either/or choices in the task. `=0` (or `off`/`false`) removes it. Code: `resolveChoices` in `loki-ts/src/features/spec_ambiguity.ts`.
 - `LOKI_E10_DEFECT_PIN` -- existing assertions that pin the wrong value the issue reports are listed in the implement brief, and a pure value replacement of exactly such an assertion is not counted as a weakened test (it never counts as fail-then-pass proof, and the receipt always lists the rewrite). `=0` turns both off. Code: `findDefectPins` in `loki-ts/src/e10ext/context.ts`, `pinLift` in `loki-ts/src/engine10/stages/seal.ts`.
 - `LOKI_E10_ATTEMPTS` and `LOKI_E10_ATTEMPTS_EARLY` stay off by default (N=1) until the bench decides; the older form (2 extra attempts after a red verify) raised cost per run 17-47% on the v131 ledger with no accuracy evidence.
+- `H2H_CAL_ENGINE` -- unset by default (calibration runs the source tree through `BUN_FROM_SOURCE=1`); `dist` runs the built bundle (VERIFY-PLAN V1; `benchmarks/h2h/h2h.py` CALIBRATE_CONFIGS). The four calibration configs replay fixed changes on the stub CLI (`tests/min/fixtures/e2e/bin/claude` apply mode), never call a model and never probe claude auth. `scripts/release.sh` ship_require_calibration refuses a release that changes a label file with no calibration file committed since the last tag.
 
 ## Pull request base and target (`loki-ts/src/util/base_guard.ts`, PR-BASE)
 
