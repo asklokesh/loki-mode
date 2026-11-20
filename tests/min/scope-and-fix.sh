@@ -318,6 +318,28 @@
 # 311. testmap.ts jsImportResolveOn: always true (the JS-RESOLVE =0 leg fails).
 # 252. check_result.ts jsAssertionFailure: drop JS_MISSING_API (the assert-js unit's missing-function case reads true).
 # 253. check_result.ts spawnFailedTool: drop the 6-line bound (the spawn-not-run leg's long ENOENT output reads missing).
+# 253b. check_result.ts resolveTool: drop the UV-ENV-OUTSIDE-CHECKOUT return (the uv-env-outside leg's first cell reads `uv project run -- ruff`).
+# 253c. check_result.ts spawnFailedTool: count uv's setup lines again (drop `&& !UV_PROGRESS.test(l)`; the uv-env-outside leg's first-run cell reads null).
+# 253d. verify.ts: drop the writeCheckFailureTails call (the check-failure-tails leg's wiring fails).
+# 253e. verify.ts writeCheckFailureTails: `const per = WALL_FAILURE_TAIL_CAP` (40 big checks pass the 256 KiB bound; the leg's size cell reads false).
+# 253f. install.ts installDeclared: `return true` first (the declared-installs leg's bare cell reads pass).
+# 253g. base_guard.ts guardEnv: `return run();` first (the env guard lint and tsc legs keep the created dir and lose the N/A note).
+# 253i. install.ts installDeclared: ignore CI files (the declared-installs leg's ci cell reads not_run).
+# 253r. install.ts installDeclared: drop the package.json rule (the npmfresh cell reads not_run).
+# 253s. install.ts prepareDeps: run an unlocked pip install as written instead of through the intake venv's python (the pyreq cell's system flag reads 1).
+# 253t. install.ts installDeclared: ignore repo guides (the guide cell reads not_run).
+# 253u. install.ts pipInVenv: drop the `-m pip --version` probe (the pynopip cell reads fail).
+# 253v. install.ts PIP_INSTALL: `pip3?` in place of `pip[\d.]*` (the pip311 cell reads not_run).
+# 253w. install.ts pythonEnvAt: drop the .venv/venv check (the pyhave cell reads pass).
+# 253x. install.ts pythonEnvAt: drop the VIRTUAL_ENV check (the pyve cell reads pass).
+# 253y. install.ts prepareDeps: drop the intake-only check (the pyverify cell reads pass).
+# 253z. install.ts lokiVenvNotes: return [] (the receipt cell reads false).
+# 253aa. install.ts withLokiVenvs: return created unchanged (the pyfailrec rec cell reads an empty record and .venv files in changedFiles).
+# 253h. check_result.ts ignoreRuleChanges: drop the lokiKeptOwns skip (the env guard move-and-keep unit's kept ignore cell reads 1).
+# 253j..253n. base_guard.ts envMoveRefusal: drop one refusal line each (not alone, existed, link, outside, tracked; that refusal cell reads null).
+# 253o. check_result.ts lokiKeptOwns: return true without the time comparison (the later cell reads false).
+# 253p. base_guard.ts guardEnv: rmSync the path instead of renameSync (the moved cell's dest and ledger read false).
+# 253q. install.ts unusedInstallNotes: undeclared lines go to N/A unconditionally (the undeclared install cap leg's first cell reads na).
 # 254. testmap.ts buildTestMap: ignore pyCfg (the pytest-fallback leg's conftest.py case reads unittest).
 # 255. package_suite.ts runPackageSuites: drop the cwd !== "." guard (the empty-subsuite-na leg's root package reads not applicable).
 # 256. check_result.ts assertionFailure REPORTED-KIND type path: drop the MISSING_API guard (the reported-kind unit's ImportError case reads true).
@@ -2238,7 +2260,7 @@ make_pyw_go_repo() {
     printf 'module example.com/calc\n\ngo 1.20\n' > "$1/go.mod"
     printf 'package calc\n\nfunc Add(a, b int) int {\n\treturn a + b\n}\n\nfunc Double(a int) int {\n\treturn a + a + 1\n}\n' > "$1/calc.go"
     printf 'package calc\n\nimport "testing"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(2, 3) != 5 {\n\t\tt.Fatal("add")\n\t}\n}\n' > "$1/calc_test.go"
-    # the build backend does not exist, so the install fails offline on every machine, also after intake's PEP 668 retry into a .venv (which a plain pyproject passes)
+    # the build backend does not exist, so the install fails offline on every machine; ./install.sh is a tracked script, so intake runs it (G2 DECLARED-INSTALLS)
     printf '[build-system]\nrequires = []\nbuild-backend = "loki_no_such_backend"\n\n[project]\nname = "calc-wrapper"\nversion = "0"\n' > "$1/packaging/pypi/pyproject.toml"
     printf '#!/bin/sh\necho "error: externally-managed-environment" >&2\necho "hint: See PEP 668 for the detailed specification." >&2\nexit 1\n' > "$1/packaging/pypi/install.sh"; chmod +x "$1/packaging/pypi/install.sh"
     return 0
@@ -2358,6 +2380,42 @@ const v = await import("./src/engine10/stages/verify.ts"), d = process.env.SN, s
 const one = async (c) => { const r = await v.runOnce(d + "/bin/" + c, [], d, sig, opts); return `${r.missing}:${r.spawnTool ?? "-"}`; };
 const r = [await one("uvx"), await one("sh127"), await one("longtest")]; process.env.LOKI_E10_SPAWN_NOT_RUN = "0"; r.push(await one("uvx")); console.log(r.join(","));' 2>&1)"
 [ "$SR" = "true:ruff,true:ruff,false:-,false:-" ] && ok "spawn-not-run: a tool that could not start (uv spawn error, shell exit 127) is a missing tool, not a failure; a long test output naming ENOENT and LOKI_E10_SPAWN_NOT_RUN=0 stay failures" || bad "spawn-not-run gave: $SR"
+# UV-ENV-OUTSIDE-CHECKOUT (closed-set-2 hm155462: verify's own `uv run -- ruff check` created the root .venv, 66 runtime packages and no pytest; the receipt then
+# carried "tests ran on python3, outside the project virtualenv", ".venv/.gitignore was added", "an ignored file that can change what verify runs", and the full
+# suite was "not measured on base"). `uv run` creates .venv in the checkout even with --no-sync, so a harness-run `uv run` in a repository with no virtualenv
+# keeps its environment in a directory this process owns (UV_PROJECT_ENVIRONMENT). A repository with its own .venv, a user-set UV_PROJECT_ENVIRONMENT and
+# LOKI_E10_UV_ENV_OUTSIDE=0 keep the old command. uv's setup lines (a first run in a new environment prints five or more) no longer hide a tool that could
+# not be started. Measured on a clone of the stored base: no .venv in the checkout after the lint command, and the missing ruff still reads as not started.
+UVO="$T/uvout"; mkdir -p "$UVO/repo" "$UVO/venvrepo/.venv/bin" "$UVO/bin" "$UVO/scratch"; : > "$UVO/repo/uv.lock"; : > "$UVO/venvrepo/uv.lock"
+printf '#!/bin/sh\nexit 0\n' > "$UVO/bin/uv"; printf '#!/bin/sh\nexit 0\n' > "$UVO/venvrepo/.venv/bin/ruff"; chmod +x "$UVO/bin/uv" "$UVO/venvrepo/.venv/bin/ruff"
+UVR="$(cd "$ROOT/loki-ts" && UVO="$UVO" LOKI_SCRATCH="$UVO/scratch" PATH="$UVO/bin:$PATH" bun --no-env-file --config=/dev/null -e '
+const cr = await import("./src/util/check_result.ts"), d = process.env.UVO, sc = require("node:fs").realpathSync(d + "/scratch"), r = [];
+const show = (repo) => { const [cmd, kind, pre] = cr.resolveTool(d + "/" + repo, "ruff", "ruff"); return [cmd.replace(d, "<t>"), kind, pre.map((x) => x.replace(/=.*\/uv-env\/[0-9a-f]{12}$/, "=<owned>")).join(" ")].join(" "); };
+r.push(show("repo")); const dir = cr.uvEnvDir(d + "/repo"); r.push(String(!!dir && require("node:fs").realpathSync(require("node:path").dirname(require("node:path").dirname(dir))).startsWith(sc) && !dir.startsWith(d + "/repo")));
+r.push(show("venvrepo")); process.env.UV_PROJECT_ENVIRONMENT = "/x/y"; r.push(show("repo")); delete process.env.UV_PROJECT_ENVIRONMENT;
+process.env.LOKI_E10_UV_ENV_OUTSIDE = "0"; r.push(show("repo")); delete process.env.LOKI_E10_UV_ENV_OUTSIDE;
+const first = "Using CPython 3.14.9\nCreating virtual environment at: /t/x\n   Building app @ file:///t\n      Built app @ file:///t\nInstalled 66 packages in 82ms\nerror: Failed to spawn: `ruff`\n  Caused by: No such file or directory (os error 2)\n";
+r.push(String(cr.spawnFailedTool(first, 2)), String(cr.spawnFailedTool(first + "a.py:1:1: F401\nb.py:1:1: F401\nc.py:1:1: F401\nd.py:1:1: F401\ne.py:1:1: F401\n", 2)));
+console.log(r.join(" | "));' 2>&1)"
+XUVR='env project UV_PROJECT_ENVIRONMENT=<owned> uv run -- ruff | true | <t>/venvrepo/.venv/bin/ruff project  | uv project run -- ruff | uv project run -- ruff | ruff | null'
+[ "$UVR" = "$XUVR" ] && ok "uv-env-outside: a harness-run uv run in a repository with no virtualenv keeps its environment in a directory the run owns, never in the checkout; a repository's own .venv, a user-set UV_PROJECT_ENVIRONMENT and LOKI_E10_UV_ENV_OUTSIDE=0 keep the old command; uv's setup lines do not hide a tool that could not start" \
+    || bad "uv-env-outside gave: $UVR (want: $XUVR)"
+# CHECK-FAILURE-TAILS (closed-set-2 hm155462: one test file failed the same 7 tests on base and on head, was not attributed, and both fix rounds chased it until
+# the run STALLED; the base output was kept in base-runs.json and the head output nowhere, so nobody could say why). Verify keeps the redacted tail of every
+# check that is still failing in <run dir>/check-failures.txt: overwritten by each verify, removed when nothing fails, 256 KiB in all and 16 KiB per check,
+# never a held-out or pre-existing check. Diagnostics only; no label reads it.
+CFT="$(cd "$ROOT/loki-ts" && CFD="$T/checkfail" bun --no-env-file --config=/dev/null -e '
+const v = await import("./src/engine10/stages/verify.ts"), fs = require("node:fs"), d = process.env.CFD; fs.mkdirSync(d, { recursive: true }); const f = d + "/" + v.CHECK_FAILURES_FILE, r = [];
+r.push(String(v.writeCheckFailureTails(d, [{ name: "pytest:tests/a.py", out: "FAILED tests/a.py::t - AssertionError: 1 != 2" }, { name: "full suite: x", out: "boom" }])), fs.readFileSync(f, "utf8").replace(/\n/g, "~"));
+const big = "x".repeat(40000) + "END"; v.writeCheckFailureTails(d, Array.from({ length: 40 }, (_, i) => ({ name: "c" + i, out: big }))); const t = fs.readFileSync(f, "utf8"); r.push(String(t.length <= v.CHECK_FAILURES_CAP + 40 * 16), String((t.match(/END/g) ?? []).length), String(t.includes("== c39 ==")));
+v.writeCheckFailureTails(d, [{ name: "one", out: big }]); r.push(String(fs.readFileSync(f, "utf8").length <= 16384 + 16)); r.push(String(v.writeCheckFailureTails(d, [])), String(fs.existsSync(f)));
+r.push(v.wallTailOf("token ghp_" + "a".repeat(36) + " in " + d + "/src/x.py", d).includes("ghp_a") ? "leaks" : "redacted");
+console.log(r.join(" | "));' 2>&1)"
+XCFT='check-failures.txt | == pytest:tests/a.py ==~FAILED tests/a.py::t - AssertionError: 1 != 2~~== full suite: x ==~boom~ | true | 40 | true | true | undefined | false | redacted'
+VCF="$ROOT/loki-ts/src/engine10/stages/verify.ts"
+[ "$CFT" = "$XCFT" ] && grep -q 'if (ctx.runDir) writeCheckFailureTails(ctx.runDir, checks.filter((c) => c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name) && failTails.has(c)).map((c) => ({ name: c.name, out: failTails.get(c)! })));' "$VCF" \
+    && ok "check-failure-tails: verify keeps the redacted tail of each still-failing check in the run dir (never a held-out or pre-existing one), within 256 KiB in all and 16 KiB per check, and removes the file when nothing fails" \
+    || bad "check-failure-tails gave: $CFT (want: $XCFT)"
 # PYTEST-FALLBACK (verify-dev 2026-11-13, Python-Markdown: a unittest repo whose venv has no pytest; every test_*.py ran as pytest and "failed" in 0.05 s with no ids):
 # tests marked pytest only by their test_*.py names run under unittest when the repo's .venv cannot import pytest. A venv that has pytest, a conftest.py,
 # a test file importing pytest, and LOKI_E10_PYTEST_FALLBACK=0 keep pytest. (The .venv python here is a stand-in that answers only `-c "import pytest"`.)
@@ -2624,47 +2682,206 @@ const o = "src/v3/tests/a.test.ts:56:8 - error TS6196: \x27_Cat\x27 is declared 
 console.log([u(o, "packages/zod", new Set(["packages/zod/src/v4/x.ts"]), ["packages/zod/src/v4/x.ts"], o), u(o, "packages/zod", new Set(["packages/zod/src/v3/tests/a.test.ts"]), [], o), u(o + "src/c.ts:1:1 - error TS2322: no\n", "packages/zod", new Set(), [], o), u(o, "packages/zod", new Set(), ["packages/zod/tsconfig.json"], o), u("", ".", new Set(), [], ""), u("error TS6133 unparsed\n", ".", new Set(), [], "error TS6133 unparsed\n")].join(","));' 2>&1)"
 [ "$TU" = "true,false,false,false,false,false" ] && ok "tsc untouched unit: only unused-declaration errors in untouched, unnamed files with no tsconfig edit are excused ($TU)" || bad "tsc untouched unit: '$TU'"
 
-# PEP 668 install (real pip, venv, pytest and ruff; rule 22): a system python that refuses `pip install` as externally managed (a shim stands in for ONLY that refusal, every other
-# call reaches the real python3) must not leave the run on the system interpreter. prepareDeps retries into .venv and adds the runners verify names (pytest, and ruff when the project
-# declares it), so the project's own pytest and ruff run and pass. Plant: venvInstallCmd returns null and the install stays not_run with the PEP 668 line (the leg turns red).
-# Needs network (pip fetches pytest and ruff); skipped cleanly offline or with no python3 venv module.
-if command -v python3 >/dev/null 2>&1 && python3 -c 'import venv, ensurepip' >/dev/null 2>&1 && curl -sfI -m 8 https://pypi.org/simple/pytest/ >/dev/null 2>&1; then
-    PV="$T/pep668"; rm -rf "$PV"; mkdir -p "$PV/bin" "$PV/repo" && REALPY="$(command -v python3)"
-    printf '#!/bin/sh\ncase "$*" in "-m pip install"*) printf "error: externally-managed-environment\\n\\nhint: See PEP 668 for the detailed specification.\\n" >&2; exit 1 ;; esac\nexec "%s" "$@"\n' "$REALPY" > "$PV/bin/python3"; chmod +x "$PV/bin/python3"
-    cd "$PV/repo" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
-    printf '[project]\nname = "calc"\nversion = "0"\ndependencies = []\n\n[tool.ruff]\nline-length = 100\n\n[build-system]\nrequires = ["setuptools"]\nbuild-backend = "setuptools.build_meta"\n\n[tool.setuptools]\npy-modules = ["calc"]\n' > pyproject.toml
-    printf 'def half(a):\n    return a / 2\n' > calc.py; printf 'import calc\n\n\ndef test_half():\n    assert calc.half(3) == 1.5\n' > test_calc.py
-    git add -- . && git commit -q -m base; cd "$ROOT"
-    PD="$(cd "$ROOT/loki-ts" && PATH="$PV/bin:$PATH" timeout 280 bun -e 'import { prepareDeps } from "./src/project_model/install.ts"; import { spawnSync } from "node:child_process"; import { existsSync } from "node:fs";
-const repo = process.argv[1]; const model = { installFor: () => ({ cmd: "python3 -m pip install -e .", cwd: ".", cite: ["pyproject.toml"] }) } as any;
-const r = await prepareDeps({ repoDir: repo, model, failed: [{ root: ".", harnessOwned: true }], signal: new AbortController().signal, timeoutMs: 280000, opts: { runId: "pep668" } });
-const c = r.checks[0]; const py = repo + "/.venv/bin/"; const t = spawnSync(py + "python", ["-m", "pytest", "-q", "test_calc.py"], { cwd: repo, encoding: "utf8" }); const l = existsSync(py + "ruff") ? spawnSync(py + "ruff", ["check", "."], { cwd: repo, encoding: "utf8" }) : { status: -1 };
-console.log([c?.result, c?.reason ?? "", existsSync(py + "pytest"), t.status, l.status, r.notProven.length].join("|"));' "$PV/repo" 2>&1 | tail -1)"
-    [ "$PD" = "pass||true|0|0|0" ] && ok "pep668 install: the refused system install is retried into .venv and the project's own pytest and ruff pass ($PD)" || bad "pep668 install: got '$PD'"
-    cd "$ROOT"
+# G2 DECLARED-INSTALLS and INTAKE-VENV (rule 22, fake python3, pip3.11, poetry and npm on PATH, no network).
+# A non-pip install runs only when the repository declares it: a guide's setup line (README.md), a cited file holding the command's own text (Makefile), a CI
+# workflow, or a tracked script run by its path (./install.sh). `poetry install` named nowhere is not run, and with no check result to clear it stays NOT PROVEN.
+# A plain `npm install` from a package.json runs on a fresh clone (no node_modules) and not when node_modules is there (lead ruling 2026-11-20).
+# An unlocked pip install (lead ruling 2026-11-20) gets a .venv Loki makes in the checkout at intake, and runs only as `.venv/bin/python -m pip`, never through the
+# machine's Python or a PATH pip:
+#   - pyreq (requirements.txt), pyproj (`pip install -e .`) and pip311 (`pip3.11 install -e .` is pip) get .venv and the install inside it;
+#   - pyhave (an existing .venv) and pyve (VIRTUAL_ENV set) are never replaced or reinstalled;
+#   - pynopip (the made venv has no pip) and pyfail (venv creation fails) are skipped. pyfail's note says requirements.txt was not installed and gives the
+#     virtualenv command;
+#   - pyverify (a call that is not intake) makes no .venv;
+#   - pyfailrec (no .venv in .gitignore, the venv's pip install fails): the .venv stays, is recorded in install_created and is in neither changedFiles nor the commit;
+#   - the receipt line names the Loki-made .venv;
+#   - with intake's baseline recorded after it, as intake.ts does, envChangedSince and the ignore notes do not read it as a change.
+# Plants:
+#   - 253f: installDeclared returns true always (bare runs);
+#   - 253i: ignore CI files (ci reads not_run);
+#   - 253t: ignore guides (guide reads not_run);
+#   - 253r: drop the package.json rule (npmfresh reads not_run);
+#   - 253s: run an unlocked pip as written, not through the venv (pyreq's system ran.flag reads true);
+#   - 253u: pipInVenv skips the `-m pip --version` probe (pynopip reads fail);
+#   - 253v: the pip regex back to `pip3?` (pip311 reads not_run);
+#   - 253w: drop the existing-env check (pyhave reads pass);
+#   - 253x: drop the VIRTUAL_ENV check (pyve reads pass);
+#   - 253y: drop the intake-only check (pyverify reads pass);
+#   - 253z: lokiVenvNotes returns [] (the receipt cell reads false);
+#   - 253aa: withLokiVenvs returns install_created unchanged (the rec cell reads an empty record and .venv files in changedFiles).
+DI="$T/declared-installs"; rm -rf "$DI"; mkdir -p "$DI/bin" "$DI/outside-venv"
+cat > "$DI/bin/python3" <<'PY'
+#!/bin/sh
+if [ "$1 $2" = "-m venv" ]; then
+    [ -n "$G2_VENV_FAIL" ] && exit 1
+    mkdir -p "$3/bin"
+    if [ -n "$G2_VENV_NOPIP" ]; then printf '#!/bin/sh\n[ "$1 $2" = "-m pip" ] && exit 1\nexit 0\n' > "$3/bin/python"
+    else printf '#!/bin/sh\n[ "$3" = --version ] && exit 0\n[ -n "$G2_PIP_FAIL" ] && exit 1\ntouch "$PWD/venv.flag"\nexit 0\n' > "$3/bin/python"; fi
+    chmod +x "$3/bin/python"; printf 'home = /usr/bin\n' > "$3/pyvenv.cfg"; exit 0
+fi
+touch "$PWD/ran.flag"; exit 0
+PY
+chmod +x "$DI/bin/python3"; printf '#!/bin/sh\ntouch "$PWD/ran.flag"\nexit 0\n' > "$DI/bin/poetry"; chmod +x "$DI/bin/poetry"; for b in npm pip pip3 pip3.11; do cp "$DI/bin/poetry" "$DI/bin/$b"; done
+CELLS="guide cite ci script bare off npmfresh npmhave pyreq pyproj pip311 pyhave pyve pynopip pyfail pyverify pyfailrec"
+for k in $CELLS; do
+    mkdir -p "$DI/$k" && printf '[project]\nname = "calc"\nversion = "0"\n' > "$DI/$k/pyproject.toml" && printf 'def f():\n    return 1\n' > "$DI/$k/calc.py" && printf '.venv/\nnode_modules\n' > "$DI/$k/.gitignore"
+    (cd "$DI/$k" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid)
+done
+printf '# calc\n\n## Installation\n\n```\npoetry install\n```\n' > "$DI/guide/README.md"
+printf 'install:\n\tpoetry install\n' > "$DI/cite/Makefile"
+mkdir -p "$DI/ci/.github/workflows" && printf 'jobs:\n  test:\n    steps:\n      - run: poetry install\n' > "$DI/ci/.github/workflows/ci.yml"
+printf '#!/bin/sh\ntouch "$PWD/ran.flag"\n' > "$DI/script/install.sh"; chmod +x "$DI/script/install.sh"
+for k in npmfresh npmhave; do printf '{"name":"c","private":true}\n' > "$DI/$k/package.json"; done; mkdir -p "$DI/npmhave/node_modules/x"
+for k in pyreq pyfail; do printf 'requests\n' > "$DI/$k/requirements.txt"; done
+printf 'node_modules\n' > "$DI/pyfailrec/.gitignore" # no .venv line: an unrecorded Loki-made .venv would land in the change
+mkdir -p "$DI/pyhave/.venv/bin" && printf 'home = /usr/bin\n' > "$DI/pyhave/.venv/pyvenv.cfg" && printf 'mine\n' > "$DI/pyhave/.venv/marker"
+for k in $CELLS; do (cd "$DI/$k" && git add -- . && git commit -q -m base); done
+DI_OUT="$(cd "$ROOT/loki-ts" && env -u VIRTUAL_ENV PATH="$DI/bin:$PATH" timeout 120 bun -e 'import { prepareDeps, unusedInstallNotes, UNDECLARED_INSTALL, lokiVenvNotes, withLokiVenvs, installOwned } from "./src/project_model/install.ts"; import { changedFiles } from "./src/util/check_result.ts"; import { dropSet } from "./src/e10ext/commit_filter.ts"; import { execFileSync } from "node:child_process"; import { envChangedSince, depsListing } from "./src/util/base_guard.ts"; import { ignoreSnapshot, ignoreRuleChanges } from "./src/util/check_result.ts"; import { existsSync, readFileSync } from "node:fs";
+const d = process.argv[1], out: string[] = [];
+const cmdOf: Record<string, string> = { npmfresh: "npm install", npmhave: "npm install", script: "./install.sh", pyreq: "python3 -m pip install -r requirements.txt", pyfail: "python3 -m pip install -r requirements.txt", pyproj: "pip install -e .", pip311: "pip3.11 install -e .", pyhave: "pip install -e .", pyve: "pip install -e .", pynopip: "pip install -e .", pyverify: "pip install -e .", pyfailrec: "pip install -e ." };
+const citeOf: Record<string, string[]> = { cite: ["Makefile"], npmfresh: ["package.json"], npmhave: ["package.json"] };
+for (const k of process.argv[2]!.split(" ")) {
+  const env0 = { ...process.env }; if (k === "off") process.env["LOKI_E10_DECLARED_INSTALLS"] = "0"; if (k === "pyve") process.env["VIRTUAL_ENV"] = d + "/outside-venv"; if (k === "pynopip") process.env["G2_VENV_NOPIP"] = "1"; if (k === "pyfail") process.env["G2_VENV_FAIL"] = "1"; if (k === "pyfailrec") process.env["G2_PIP_FAIL"] = "1";
+  const model = { installFor: () => ({ cmd: cmdOf[k] ?? "poetry install", cwd: ".", cite: citeOf[k] ?? ["pyproject.toml"] }), packages: () => [] } as any;
+  const r = await prepareDeps({ repoDir: d + "/" + k, model, failed: [{ root: ".", harnessOwned: true }], signal: new AbortController().signal, timeoutMs: 60000, opts: { runId: "di-" + k }, intake: k !== "pyverify" });
+  for (const x of ["LOKI_E10_DECLARED_INSTALLS", "VIRTUAL_ENV", "G2_VENV_NOPIP", "G2_VENV_FAIL", "G2_PIP_FAIL"]) { if (env0[x] === undefined) delete process.env[x]; else process.env[x] = env0[x]; }
+  const und = r.notProven.filter((l) => l.startsWith(UNDECLARED_INSTALL)), na = unusedInstallNotes(r.notProven, model, [], [], d + "/" + k);
+  const f = (n: string) => existsSync(d + "/" + k + "/" + n) ? 1 : 0;
+  out.push(`${k}:${r.checks[0]?.result}:${f("ran.flag")}${f("venv.flag")}${f(".venv")}:${und.length}:${na.na.length}/${na.cap.length}`);
+  if (k === "pyfailrec") { // review of 7b196ff16: a made .venv whose install failed is still recorded, so it is in neither changedFiles nor the commit
+    const repo = d + "/pyfailrec", base = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), created = withLokiVenvs(null, r.lokiVenvMade);
+    const ch = changedFiles(repo, base, installOwned(repo, created)).filter((f) => f.startsWith(".venv"));
+    execFileSync("git", ["-C", repo, "add", "-A", "--", "."]); const parts = execFileSync("git", ["-C", repo, "diff", "--cached", "--name-status", "--no-renames", "-z", base], { encoding: "utf8" }).split("\0").filter(Boolean);
+    const staged = [] as { st: string; f: string }[]; for (let i = 0; i + 1 < parts.length; i += 2) staged.push({ st: parts[i]!, f: parts[i + 1]! });
+    const dropped = new Set(dropSet(repo, staged, undefined, process.env, created, undefined, base).map((x) => x.f));
+    out.push(`rec:${(created?.dirs ?? []).join("+")}:${ch.length}:${staged.filter((x) => x.f.startsWith(".venv/") && !dropped.has(x.f)).length}`);
+  }
+  if (k === "pyhave") out.push(`keep:${readFileSync(d + "/pyhave/.venv/marker", "utf8").trim()}`);
+  if (k === "pyfail") out.push(`failnote:${und.some((l) => l.includes("requirements.txt present; Loki did not install it") && l.includes("run: python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt") && l.includes("never installs into the machine"))}`);
+  if (k === "pyreq") {
+    out.push(`receipt:${lokiVenvNotes({ loki_venv: r.lokiVenv }).some((n) => n.startsWith("Loki created .venv at intake"))}`);
+    const repo = d + "/pyreq", snap = ignoreSnapshot(repo), deps = { ".venv": depsListing(repo + "/.venv") }, since = Date.now(); // recorded after the install, as intake.ts does
+    out.push(`baseline:${envChangedSince(repo, repo, since, [], deps)},${ignoreRuleChanges(repo, snap).length}`);
+  }
+}
+console.log(out.join(" "));' "$DI" "$CELLS" 2>&1 | tail -1)"
+DI_WANT="guide:pass:100:0:0/0 cite:pass:100:0:0/0 ci:pass:100:0:0/0 script:pass:100:0:0/0 bare:not_run:000:1:0/1 off:pass:100:0:0/0 npmfresh:pass:100:0:0/0 npmhave:not_run:000:1:0/1 pyreq:pass:011:0:0/0 receipt:true baseline:false,0 pyproj:pass:011:0:0/0 pip311:pass:011:0:0/0 pyhave:not_run:001:1:0/1 keep:mine pyve:not_run:000:1:0/1 pynopip:not_run:001:1:0/1 pyfail:not_run:000:1:0/1 failnote:true pyverify:not_run:000:1:0/1 pyfailrec:not_run:001:0:0/1 rec:.venv/:0:0"
+[ "$DI_OUT" = "$DI_WANT" ] && ok "declared installs and intake venv: declared non-pip installs run, an invented one does not; an unlocked pip install gets a Loki-made .venv at intake and runs only through its python -m pip; an existing .venv or VIRTUAL_ENV is never replaced; no pip or a failed venv is skipped with the note; never outside intake; the receipt names it and it is the baseline ($DI_OUT)" || bad "declared installs and intake venv: got '$DI_OUT' want '$DI_WANT'"
+
+# G2 ENV-GUARD, lint (rule 22, real pytest, fake uv on PATH): a uv project (uv.lock) whose uv ignores UV_PROJECT_ENVIRONMENT, so the lint Loki chose (`uv run -- ruff`) creates a
+# .venv in the checkout, as `uv run ruff` did on hm155462; the tests run through the same uv on the real pytest. The .venv is Loki's own change: the guard removes it, the receipt carries "Loki's own command changed the environment" under N/A, no hold, and the Python fix stays VERIFIED. Plant 253g: guardEnv returns run() unguarded
+# (the .venv stays, the note is gone and the ignored pyvenv.cfg caps the run).
+make_g2_py_repo() { make_py_repo "$1"; printf '.venv/\n' > "$1/.gitignore"; printf '[project]\nname = "calc"\nversion = "0"\ndependencies = []\n' > "$1/pyproject.toml"; printf 'version = 1\n' > "$1/uv.lock"; }
+G2BIN="$T/g2bin"; rm -rf "$G2BIN"; mkdir -p "$G2BIN/py"
+cat > "$G2BIN/py/uv" <<'UV'
+#!/bin/sh
+# a uv that ignores UV_PROJECT_ENVIRONMENT: `run -- ruff` makes .venv in the checkout; python and pytest reach the real interpreter; sync does nothing
+[ "$1" = run ] || exit 0
+shift; [ "$1" = -- ] && shift
+b="$1"; shift
+case "$b" in
+    ruff) mkdir -p .venv/lib && printf 'home = /usr/bin\n' > .venv/pyvenv.cfg; exit 0 ;;
+    pytest) exec python3 -m pytest "$@" ;;
+    python|python3) exec python3 "$@" ;;
+esac
+exec "$b" "$@"
+UV
+chmod +x "$G2BIN/py/uv"
+g2rec() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); na=r.get("not_applicable") or []; print(r.get("verdict"), "held_by" in r, sum(sys.argv[2] in n for n in na))' "$RUNDIR/receipt.json" "$1" 2>/dev/null; }
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    MAKE_REPO=make_g2_py_repo run_engine "add a multiply(a, b) function to calc.py" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py \
+        E2E_STUB_SNIPPET=$'def multiply(a, b):\n    return a * b\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 PATH="$G2BIN/py:$FIX/bin:$PATH"
+    g="$(g2rec "Loki's own command changed the environment: \`lint:ruff\` created .venv; moved .venv to .loki/runs/")"
+    [ "$g" = "VERIFIED False 1" ] && [ ! -e "$REPO/.venv" ] && [ -f "$RUNDIR/env-moved/.venv/pyvenv.cfg" ] && grep -q "	moved	.venv	" "$RUNDIR/env-moved/LEDGER.txt" && [ "$(outcome)" = "VERIFIED" ] && ok "env guard lint: the .venv a Loki-chosen lint created is moved into the run folder with a ledger line, disclosed under N/A, no hold, VERIFIED ($g)" || { bad "env guard lint: receipt '$g', .venv $([ -e "$REPO/.venv" ] && echo present || echo absent), outcome $(outcome)"; dump; }
 else
-    echo "  SKIP: pep668 install: needs python3 with venv and network (pypi.org)"
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "env guard lint: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: env guard lint: pytest is not installed"; fi
 fi
 
-# PEP 668 retry that FAILS after creating .venv (rule 22, real venv and pip, no network needed): the repo has no .gitignore and the venv has no .gitignore of its own (Python 3.12 and older write none),
-# so a failed install records nothing as install-created; the commit stage's stage list (git add -A, then dropSet) must still hold zero .venv paths, and the check must not claim "installed into .venv".
+# G2 ENV-GUARD, typecheck (rule 22, fake tsc in node_modules/.bin): a typecheck Loki chose that writes a new package into node_modules is removed the same way; the dependency
+# listing intake recorded is unchanged afterwards and the receipt names it. Plant 253g turns this red too.
+mkdir -p "$T/seed-g2tsc/node_modules/.bin" && printf 'node_modules\n' > "$T/seed-g2tsc/.gitignore" && printf '{"compilerOptions":{"strict":true,"noEmit":true}}\n' > "$T/seed-g2tsc/tsconfig.json"
+printf '#!/bin/sh\nmkdir -p node_modules/loki-g2-typegen && printf "export {};\\n" > node_modules/loki-g2-typegen/index.d.ts\nexit 0\n' > "$T/seed-g2tsc/node_modules/.bin/tsc"; chmod +x "$T/seed-g2tsc/node_modules/.bin/tsc"
+SEED="$T/seed-g2tsc" run_engine "$TASK" E2E_STUB_MODE=done LOKI_SESSION_MODEL=haiku
+g="$(g2rec "\`lint:tsc\` created node_modules/loki-g2-typegen; moved node_modules/loki-g2-typegen to .loki/runs/")"
+[ "$g" = "VERIFIED False 1" ] && [ ! -e "$REPO/node_modules/loki-g2-typegen" ] && [ -f "$RUNDIR/env-moved/node_modules/loki-g2-typegen/index.d.ts" ] && [ -x "$REPO/node_modules/.bin/tsc" ] && ok "env guard tsc: the package a Loki-chosen typecheck wrote into node_modules is moved into the run folder, the repo's own entries stay, disclosed under N/A, VERIFIED ($g)" || { bad "env guard tsc: receipt '$g', typegen $([ -e "$REPO/node_modules/loki-g2-typegen" ] && echo present || echo absent), outcome $(outcome)"; dump; }
+
+# G2 ENV-GUARD, kept and moved (unit, no tools). Nothing is ever deleted. A created path the guard may take is moved into <run dir>/env-moved/<path> with a ledger line.
+# A path it may not take stays in place, and the readers subtract it only as it was when the guard finished.
+# Cells:
+#  - moved: a lone command's new .venv is moved, the ledger names it, the source is gone.
+#  - kept: with another harness command in flight it stays; the ignore notes and envChangedSince leave it out, while the same .venv made by the change is still reported.
+#  - refusals (review B3): envMoveRefusal names why for each condition:
+#      not alone; existed before; a link; resolves outside the checkout (node_modules linked elsewhere); tracked.
+#    The integration cell shows the outside entry is still in its real dir after guardEnv.
+#  - later (review B2): a kept node_modules entry, then a file written into it after the guard, and then a new package after the guard: envChangedSince reads true both times.
+# Plants:
+#  - 253g: guardEnv returns run() unguarded.
+#  - 253h: drop the lokiKeptOwns skip in ignoreRuleChanges.
+#  - 253j..253n: drop one refusal line each (not alone, existed, link, outside, tracked).
+#  - 253o: lokiKeptOwns ignores the time (the later cell reads false).
+#  - 253p: guardEnv rmSync instead of renameSync (the moved cell's ledger and dest read false).
+GK="$T/env-guard-kept"; rm -rf "$GK"; mkdir -p "$GK/a" "$GK/b" "$GK/c" "$GK/outside/newpkg"
+for k in a b c; do (cd "$GK/$k" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid && printf '.venv/\nnode_modules\n.loki/\n' > .gitignore && printf 'x = 1\n' > m.py && mkdir -p trk && printf 't\n' > trk/a.txt && git add -- . && git commit -q -m base && mkdir -p .loki/runs/r); done
+mkdir -p "$GK/c/node_modules/dep" && ln -s "$GK/outside" "$GK/c/linked" && ln -s /nonexistent-loki-g2 "$GK/c/.venv2"
+GK_OUT="$(cd "$ROOT/loki-ts" && timeout 60 bun -e 'import { guardEnv, harnessCmdBegin, envChangedSince, envMoveRefusal, depsListing } from "./src/util/base_guard.ts"; import { ignoreSnapshot, ignoreRuleChanges, lokiEnvNotes, lokiEnvKept } from "./src/util/check_result.ts"; import { mkdirSync, writeFileSync, existsSync, readFileSync, symlinkSync } from "node:fs";
+const [a, b, c, outside] = process.argv.slice(1); const out: string[] = []; const rd = (d: string) => d + "/.loki/runs/r";
+const mk = (d: string) => { mkdirSync(d + "/.venv/bin", { recursive: true }); writeFileSync(d + "/.venv/pyvenv.cfg", "home = /usr/bin\n"); };
+// moved
+await guardEnv(c, "lint:ruff", async () => { mk(c); }, rd(c));
+const led = (() => { try { return readFileSync(rd(c) + "/env-moved/LEDGER.txt", "utf8"); } catch { return ""; } })();
+out.push("moved:" + [!existsSync(c + "/.venv"), existsSync(rd(c) + "/env-moved/.venv/pyvenv.cfg"), /\tmoved\t\.venv\t.*\tcreated by lint:ruff/.test(led), lokiEnvNotes(c).some((n) => n.includes("moved .venv to .loki/runs/r/env-moved"))].join(","));
+// kept
+const sa = ignoreSnapshot(a), sb = ignoreSnapshot(b), t0 = Date.now() - 1000;
+const other = harnessCmdBegin(); await guardEnv(a, "lint:ruff", async () => { mk(a); }, rd(a)); other();
+mk(b);
+out.push("kept:" + [existsSync(a + "/.venv"), lokiEnvKept(a).map((k) => k.rel).join("+"), lokiEnvNotes(a).some((n) => n.includes("left .venv in place (another harness command was running)") && n.includes("not counted against the change")), ignoreRuleChanges(a, sa).length, ignoreRuleChanges(b, sb).length > 0, envChangedSince(a, a, t0, [], {}), envChangedSince(b, b, t0, [], {})].join(","));
+// refusals
+const no = () => false;
+out.push("refuse:" + [envMoveRefusal(c, "trk2", no, false), envMoveRefusal(c, "m.py", () => true, true), envMoveRefusal(c, ".venv2", no, true), envMoveRefusal(c, "linked/newpkg", no, true), envMoveRefusal(c, "trk", no, true)].map((x) => x ?? "null").join("|"));
+// integration: a node_modules linked outside the checkout; the entry its command adds lives outside and is never moved
+symlinkSync(outside, b + "/node_modules");
+await guardEnv(b, "lint:tsc", async () => { mkdirSync(outside + "/added", { recursive: true }); writeFileSync(outside + "/added/x.js", "1\n"); }, rd(b));
+out.push("outside-kept:" + [existsSync(outside + "/added/x.js"), lokiEnvKept(b).some((k) => k.rel === "node_modules/added"), lokiEnvNotes(b).some((n) => n.includes("it resolves outside the checkout"))].join(","));
+// later (B2): node_modules exists at intake; a kept entry, then real changes after the guard
+mkdirSync(a + "/node_modules/dep", { recursive: true }); writeFileSync(a + "/node_modules/dep/index.js", "1\n");
+await new Promise((r) => setTimeout(r, 30)); const deps = { node_modules: depsListing(a + "/node_modules") }, t1 = Date.now();
+const o2 = harnessCmdBegin(); await guardEnv(a, "lint:tsc", async () => { mkdirSync(a + "/node_modules/typegen", { recursive: true }); writeFileSync(a + "/node_modules/typegen/index.d.ts", "export {};\n"); }, rd(a)); o2();
+const quiet = envChangedSince(a, a, t1, [], deps);
+const keptThere = existsSync(a + "/node_modules/typegen/index.d.ts"); await new Promise((r) => setTimeout(r, 30)); mkdirSync(a + "/node_modules/typegen", { recursive: true }); writeFileSync(a + "/node_modules/typegen/later.js", "2\n"); const later = envChangedSince(a, a, t1, [], deps);
+const { rmSync } = await import("node:fs"); rmSync(a + "/node_modules/typegen/later.js"); await new Promise((r) => setTimeout(r, 30)); mkdirSync(a + "/node_modules/realpkg"); writeFileSync(a + "/node_modules/realpkg/i.js", "3\n");
+out.push("later:" + [keptThere, quiet, later, envChangedSince(a, a, t1, [], deps)].join(","));
+console.log(out.join(" "));' "$GK/a" "$GK/b" "$GK/c" "$GK/outside" 2>&1 | tail -1)"
+GK_WANT="moved:true,true,true,true kept:true,.venv,true,0,true,false,true refuse:another harness command was running|it existed before the command|it is a link|it resolves outside the checkout|git tracks it outside-kept:true,true,true later:true,false,true,true"
+[ "$GK_OUT" = "$GK_WANT" ] && ok "env guard move and keep: a lone command's .venv is moved to the run folder with a ledger line; a kept one is subtracted only as it was; each refusal is named; nothing outside is touched; a later install into a kept dir still counts ($GK_OUT)" || bad "env guard move and keep: got '$GK_OUT'"
+
+# G2 undeclared install and the cap (review B4, unit): an install Loki did not run is N/A only when nothing depends on it, or every non-lint check of its ecosystem passed.
+# A failing check (even one excused as red on base, maybe for want of the very dependencies) keeps it on NOT PROVEN, and so does a used package with no check at all.
+# Plant 253q: undeclared lines go to N/A unconditionally (the fail cell reads na).
+UB="$T/undeclared-cap"; rm -rf "$UB"; mkdir -p "$UB/repo/sub" && printf '[project]\nname = "x"\n' > "$UB/repo/pyproject.toml" && printf '[project]\nname = "s"\n' > "$UB/repo/sub/pyproject.toml"
+UB_OUT="$(cd "$ROOT/loki-ts" && timeout 60 bun -e 'import { unusedInstallNotes, UNDECLARED_INSTALL } from "./src/project_model/install.ts";
+const repo = process.argv[1]; const line = (r: string) => `${UNDECLARED_INSTALL} for this package (x); to install the dependencies yourself, run: pip install -e . (install:${r}; harness-owned)`;
+const pk = (root: string) => ({ name: root, root, commands: { test: null, lint: null, build: null, start: null } });
+const model = { packages: () => [pk("."), pk("sub")], packageOf: () => null, installFor: () => ({ cmd: "pip install -e .", cwd: ".", cite: [] }) } as any;
+const k = (r: string, res: { name: string; result: string }[]) => { const n = unusedInstallNotes([line(r)], model, [], res.map((c) => c.name), repo, res); return n.na.length ? "na" : n.cap.length ? "cap" : "none"; };
+console.log([k(".", [{ name: "pytest:test_a.py", result: "fail" }]), k(".", [{ name: "pytest:test_a.py", result: "pass" }, { name: "lint:ruff", result: "fail" }]), k(".", []), k("sub", [])].join(","));' "$UB/repo" 2>&1 | tail -1)"
+[ "$UB_OUT" = "cap,na,cap,na" ] && ok "undeclared install cap: a failing test of its ecosystem or no check at all keeps it on NOT PROVEN; all passing, or a package nothing uses, is N/A ($UB_OUT)" || bad "undeclared install cap: got '$UB_OUT'"
+
+# .venv output in the commit (rule 22, real venv, no network needed): the repo has no .gitignore and the venv has no .gitignore of its own (Python 3.12 and older write none), so the
+# commit stage's stage list (git add -A, then dropSet with nothing recorded as install-created) must still hold zero .venv paths.
 # Plant: drop the .venv entry from OUTPUT_DIRS (lock_ecosystems.ts) and hundreds of .venv files are kept for the commit (the leg turns red).
-if command -v python3 >/dev/null 2>&1 && python3 -c 'import venv, ensurepip' >/dev/null 2>&1; then
-    PF="$T/pep668-fail"; rm -rf "$PF"; mkdir -p "$PF/bin" "$PF/repo" && REALPY="$(command -v python3)"
-    printf '#!/bin/sh\ncase "$*" in "-m pip install"*) if [ -z "$VIRTUAL_ENV" ] && [ "$1 $2" = "-m pip" ]; then printf "error: externally-managed-environment\\n\\nhint: See PEP 668 for the detailed specification.\\n" >&2; exit 1; fi ;; esac\nexec "%s" "$@"\n' "$REALPY" > "$PF/bin/python3"; chmod +x "$PF/bin/python3"
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import venv' >/dev/null 2>&1; then
+    PF="$T/venv-commit"; rm -rf "$PF"; mkdir -p "$PF/repo"
     cd "$PF/repo" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
-    printf 'nonexistent-loki-pkg-xyz==9.9.9\n' > requirements.txt; printf 'def f():\n    return 1\n' > calc.py; git add -- . && git commit -q -m base; BASE="$(git rev-parse HEAD)"; cd "$ROOT"
-    PF_OUT="$(cd "$ROOT/loki-ts" && PATH="$PF/bin:$PATH" PIP_NO_INDEX=1 timeout 280 bun -e 'import { prepareDeps } from "./src/project_model/install.ts"; import { dropSet } from "./src/e10ext/commit_filter.ts"; import { execFileSync } from "node:child_process"; import { rmSync, existsSync } from "node:fs";
-const [repo, base] = process.argv.slice(1); const model = { installFor: () => ({ cmd: "python3 -m pip install -r requirements.txt", cwd: ".", cite: ["requirements.txt"] }) } as any;
-const r = await prepareDeps({ repoDir: repo, model, failed: [{ root: ".", harnessOwned: true }], signal: new AbortController().signal, timeoutMs: 280000, opts: { runId: "pep668fail" } });
-rmSync(repo + "/.venv/.gitignore", { force: true });
+    printf 'def f():\n    return 1\n' > calc.py; git add -- . && git commit -q -m base; BASE="$(git rev-parse HEAD)"; python3 -m venv --without-pip .venv; rm -f .venv/.gitignore; cd "$ROOT"
+    PF_OUT="$(cd "$ROOT/loki-ts" && timeout 120 bun -e 'import { dropSet } from "./src/e10ext/commit_filter.ts"; import { execFileSync } from "node:child_process"; import { existsSync } from "node:fs";
+const [repo, base] = process.argv.slice(1);
 execFileSync("git", ["-C", repo, "add", "-A", "--", "."]);
 const parts = execFileSync("git", ["-C", repo, "diff", "--cached", "--name-status", "--no-renames", "-z", base], { encoding: "utf8" }).split("\0").filter(Boolean); const staged = [] as { st: string; f: string }[]; for (let i = 0; i + 1 < parts.length; i += 2) staged.push({ st: parts[i]!, f: parts[i + 1]! });
 const dropped = new Set(dropSet(repo, staged, undefined, process.env, null, undefined, base).map((d) => d.f)); const kept = staged.filter((s) => !dropped.has(s.f) && s.f.startsWith(".venv/")).length;
-const c = r.checks[0]; console.log([existsSync(repo + "/.venv/pyvenv.cfg"), c?.result, String(c?.lock_note ?? "").includes("installed into .venv"), kept].join("|"));' "$PF/repo" "$BASE" 2>&1 | tail -1)"
-    [ "$PF_OUT" = "true|not_run|false|0" ] && ok "pep668 failed retry: .venv exists, the check is not_run, no 'installed into .venv' note, zero .venv paths kept for the commit ($PF_OUT)" || bad "pep668 failed retry: got '$PF_OUT'"
+console.log([existsSync(repo + "/.venv/pyvenv.cfg"), staged.some((s) => s.f.startsWith(".venv/")), kept].join("|"));' "$PF/repo" "$BASE" 2>&1 | tail -1)"
+    [ "$PF_OUT" = "true|true|0" ] && ok "venv commit: .venv exists and is staged by git add -A, zero .venv paths kept for the commit ($PF_OUT)" || bad "venv commit: got '$PF_OUT'"
 else
-    echo "  SKIP: pep668 failed retry: needs python3 with venv"
+    echo "  SKIP: venv commit: needs python3 with venv"
 fi
 
 # setuptools install output (rule 22, real venv and pip): `pip install -e .` writes <name>.egg-info/ (with PKG-INFO) into the repo. The commit stage's stage list (git add -A, then dropSet with

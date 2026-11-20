@@ -1621,7 +1621,7 @@ const TOOL_CACHE_GITIGNORE: Record<string, string> = {
 };
 const CACHE_CODE_EXT = /\.(py[a-z]?|pth|so|pyd|dylib|dll|js|mjs|cjs|ts|sh|rb|pl)$/i;
 /** True only when `dir` (repo-relative) is a known pure tool cache: its .gitignore is exactly that tool's own text and nothing under it is importable, executable, linked, or a virtual environment. Any doubt is false. */
-function pureToolCache(repoDir: string, dir: string): boolean {
+export function pureToolCache(repoDir: string, dir: string): boolean {
   const text = TOOL_CACHE_GITIGNORE[basename(dir)];
   if (text === undefined) return false;
   try {
@@ -1657,14 +1657,14 @@ export function ignoreRuleChanges(repoDir: string, snap: unknown, baseSha?: stri
     const gi = new Set(changedFiles(repoDir, baseSha ?? "HEAD").filter((f) => basename(f) === ".gitignore"));
     const hidden: string[] = [];
     for (const [f, h] of Object.entries(cur)) {
-      if (prior[f] === h) continue;
+      if (prior[f] === h || lokiKeptOwns(repoDir, f)) continue; // G2: a file a Loki-chosen command created and left is Loki's, never the change's (a later change still counts)
       if (basename(f) === ".gitignore" && pureToolCache(repoDir, dirname(f))) continue;
       if (basename(f) === ".gitignore") gi.add(f); else hidden.push(f);
     }
     if (gi.size) notes.push(`ignore rules changed while the run was in progress: ${[...gi].slice(0, 20).join(", ")} was added or edited, so git may hide files the run created`);
     if (hidden.length) notes.push(`an ignored file that can change what verify runs or imports was added or changed during the run: ${hidden.slice(0, 20).join(", ")}${hidden.length > 20 ? ` (+${hidden.length - 20} more)` : ""}`);
     if (notes.length === 0) return [];
-    const made = listIgnoredFiles(repoDir).filter((f) => { try { const st = statSync(join(repoDir, f)); return Math.max(st.birthtimeMs, st.mtimeMs) >= s.at!; } catch { return false; } });
+    const made = listIgnoredFiles(repoDir).filter((f) => !lokiKeptOwns(repoDir, f)).filter((f) => { try { const st = statSync(join(repoDir, f)); return Math.max(st.birthtimeMs, st.mtimeMs) >= s.at!; } catch { return false; } });
     if (made.length) notes.push(`ignored file created during the run, hidden from the diff and the receipt: ${made.slice(0, 20).join(", ")}${made.length > 20 ? ` (+${made.length - 20} more)` : ""}`);
     return notes;
   } catch { return ["ignore rules could not be compared with the intake snapshot: git failed"]; }
@@ -2047,10 +2047,11 @@ export function assertionFailure(runner: string, output: string, reported: Repor
 /** SPAWN-NOT-RUN (LOKI_E10_SPAWN_NOT_RUN, default on, =0 opts out): the tool a failed check could not start, or null. A wrapper that could not spawn its tool
  *  (`uv run -- ruff`: "error: Failed to spawn: `ruff`"), a shell that could not find it (exit 127, "ruff: command not found"), or node's "spawn ruff ENOENT",
  *  and only when that is essentially all the output (at most 6 non-empty lines), so a test that itself spawns a missing program still reads as its own failure. */
+const UV_PROGRESS = /^\s*(?:Using CPython|Creating virtual environment|Building |Built |Installed \d+ packages?|Uninstalled \d+ packages?|Resolved \d+ packages?|Prepared \d+ packages?|Audited \d+ packages?|Downloading |Downloaded )/; // printed by `uv run` before it starts the tool; a first run in a new environment prints five or more
 export const spawnNotRunOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SPAWN_NOT_RUN"] ?? "").trim());
 export function spawnFailedTool(out: string, exitCode: number | null): string | null {
   if (!spawnNotRunOn() || exitCode === 0) return null;
-  const t = stripAnsi(out), lines = t.split("\n").filter((l) => l.trim() !== "");
+  const t = stripAnsi(out), lines = t.split("\n").filter((l) => l.trim() !== "" && !UV_PROGRESS.test(l)); // uv's own setup lines are not the tool's output
   if (lines.length > 6) return null;
   const uv = /^\s*error: Failed to spawn: `([^`]+)`/m.exec(t); if (uv) return uv[1]!;
   const sh = exitCode === 127 ? /^(?:\S*sh: (?:line \d+: )?)?([\w.+-]+): (?:command )?not found\s*$/m.exec(t) : null; if (sh) return sh[1]!;
@@ -2146,6 +2147,33 @@ export function toolFallbacks(repoDir: string, tool: string, env: NodeJS.Process
  *  existed, and 33 files failed in 0.06 s with "No module named pytest". With the probe red the tests run on the interpreter outside the virtualenv, as
  *  they did before the .venv appeared (`uv run` is skipped too: it runs in that same .venv), and venvSkipNotes names the interpreter and the reason. */
 const importProbe = new Map<string, boolean>(), venvSkips = new Map<string, string>();
+/** G2 ENV-GUARD (util/base_guard.ts guardEnv): a virtualenv a harness command created and the guard removed is forgotten here too, so neither the import
+ *  probe nor the "tests ran outside the project virtualenv" note outlives it. */
+export function forgetVenv(dir: string): void {
+  for (const k of [...importProbe.keys()]) if (k.startsWith(`${dir}/`)) importProbe.delete(k);
+  for (const k of [...venvSkips.keys()]) if (k.includes(`\0${dir}/`)) venvSkips.delete(k);
+}
+/** G2 ENV-GUARD registry, per repository: the informational lines guardEnv wrote ("Loki's own command changed the environment") and the paths a Loki-chosen
+ *  command created that could not be moved out safely (kept), each with the time the guard finished and, for a dependency directory, its listing then.
+ *  Readers that judge the environment subtract only what existed at that time: a file or directory under a kept path whose ctime or mtime is later, or a
+ *  kept dependency directory whose listing changed since, still counts, so a real install into it after the guard is never hidden. Lives for the run's worker process. */
+export interface LokiKept { rel: string; at: number; listing: string[] | null }
+const lokiEnv = new Map<string, { notes: string[]; kept: Map<string, LokiKept> }>();
+export function recordLokiEnv(repoDir: string, note: string, kept: readonly LokiKept[]): void {
+  const e = lokiEnv.get(repoDir) ?? { notes: [], kept: new Map<string, LokiKept>() }; if (!e.notes.includes(note)) e.notes.push(note);
+  for (const k of kept) { const rel = k.rel.replace(/\/$/, ""); if (!e.kept.has(rel)) e.kept.set(rel, { ...k, rel }); }
+  lokiEnv.set(repoDir, e);
+}
+export const lokiEnvNotes = (repoDir: string): string[] => [...(lokiEnv.get(repoDir)?.notes ?? [])];
+export const lokiEnvKept = (repoDir: string): LokiKept[] => [...(lokiEnv.get(repoDir)?.kept.values() ?? [])];
+/** The kept record `rel` (repo-relative) lies in or is, if any. */
+export const lokiKeptFor = (repoDir: string, rel: string): LokiKept | undefined => lokiEnvKept(repoDir).find((k) => rel === k.rel || rel.startsWith(`${k.rel}/`));
+/** True only when `rel` is under a kept path AND was last changed no later than the guard that kept it (lstat: a link is judged itself). */
+export function lokiKeptOwns(repoDir: string, rel: string): boolean {
+  const k = lokiKeptFor(repoDir, rel); if (!k) return false;
+  try { const st = lstatSync(join(repoDir, rel)); return Math.max(st.ctimeMs, st.mtimeMs) <= k.at; } catch { return false; }
+}
+export function resetLokiEnv(): void { lokiEnv.clear(); }
 export function canImport(py: string, module: string): boolean {
   if (!/^[A-Za-z_][\w.]*$/.test(module)) return false;
   const k = `${py}\0${module}`;
@@ -2154,11 +2182,27 @@ export function canImport(py: string, module: string): boolean {
 }
 /** The receipt lines for the virtualenvs resolveTool skipped in `repoDir` during this run: which interpreter ran the tests, and why. */
 export const venvSkipNotes = (repoDir: string): string[] => [...venvSkips].filter(([k]) => k.startsWith(`${repoDir}\0`)).map(([, v]) => v);
+/** UV-ENV-OUTSIDE-CHECKOUT (LOKI_E10_UV_ENV_OUTSIDE, default on; =0/off/false/no opts out). `uv run` in a project with no .venv creates one in the
+ *  checkout, even with --no-sync. closed-set-2 hm155462: verify's own lint (`uv run -- ruff check`) created the root .venv (66 runtime packages, no
+ *  pytest); after that the receipt carried "tests ran on python3, outside the project virtualenv", ".venv/.gitignore was added", "an ignored file that
+ *  can change what verify runs", and the full suite was "not measured on base" (the environment changed since intake). A harness-run `uv run` now
+ *  keeps its environment in a directory this process owns (UV_PROJECT_ENVIRONMENT, one per repository), so the checkout stays as intake left it.
+ *  Only taken when the repository has no virtualenv of its own; null (the plain `uv run`) on Windows, when the user set the variable, or with no owned dir. */
+export const uvEnvOutsideOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_UV_ENV_OUTSIDE"] ?? "").trim());
+export function uvEnvDir(repoDir: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (!uvEnvOutsideOn(env) || process.platform === "win32" || env["UV_PROJECT_ENVIRONMENT"]) return null;
+  const e: Record<string, string> = {}; for (const [k, v] of Object.entries(env)) if (typeof v === "string") e[k] = v;
+  const root = testHomeRoot(e); if (!root) return null;
+  let real = repoDir; try { real = realpathSync(repoDir); } catch { /* the path as given */ }
+  return join(root, "uv-env", createHash("sha256").update(real).digest("hex").slice(0, 12));
+}
 export function resolveTool(repoDir: string, bin: string, fallback: string, lastResort = fallback, module?: string): [string, Interpreter, string[]] {
   const inRepo = (p: string): boolean => { try { const r = relative(realpathSync(repoDir), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
   const venvEnv = process.env["VIRTUAL_ENV"], onPath = (b: string): string | null => Bun.which(b, { PATH: process.env["PATH"] ?? "" }); // Bun.which caches the startup PATH unless given the live one
   const project = [join(repoDir, ".venv", "bin", bin), join(repoDir, "venv", "bin", bin), ...(venvEnv && inRepo(venvEnv) ? [join(venvEnv, "bin", bin)] : [])].find(existsSync);
   if (project && module && !canImport(project, module)) { const sys = onPath(fallback) ? fallback : lastResort; venvSkips.set(`${repoDir}\0${project}\0${module}`, `tests ran on ${sys}, outside the project virtualenv: ${relative(repoDir, project)} cannot import ${module}`); return [sys, "system", []]; }
+  const uvDir = project ? null : uvEnvDir(repoDir);
+  if (!project && uvDir && existsSync(join(repoDir, "uv.lock")) && onPath("uv") && onPath("env")) return ["env", "project", [`UV_PROJECT_ENVIRONMENT=${uvDir}`, "uv", "run", "--", bin]]; // UV-ENV-OUTSIDE-CHECKOUT
   return project ? [project, "project", []] : existsSync(join(repoDir, "uv.lock")) && onPath("uv") ? ["uv", "project", ["run", "--", bin]] : [onPath(fallback) ? fallback : lastResort, "system", []]; // TEN-QUALITY-11: uv.lock, no venv: uv run is the project interpreter
 }
 /** FC-WALL-GO-FILE-RUNS-WHOLE-PACKAGE: the Test, Fuzz and Example function names of one Go file, matched by name only. Over-inclusion is harmless for -run (a name that is no test matches nothing); a signature check would drop valid tests (multi-line, unnamed or aliased *testing.T, non-ASCII names) and turn a red Wall into no run. TestMain is excluded; [] when unreadable or none. */

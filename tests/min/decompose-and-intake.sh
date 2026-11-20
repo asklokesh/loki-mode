@@ -104,6 +104,7 @@
 #  29b. discover.ts: drop the fanOut early return (fall through to the session); the diet check fails (fan 1 session instead of 0).
 #  29c. discover.ts fanOutSessionEnabled: always false; the diet check fails (fan-on false).
 #  30. manifestModel: members only from tracked package.json files; the diet check fails (packages/gen missing).
+#  33. runner/repo_profile.ts isPackagingSetupPy: `return true`; the setup-py check fails (cli, a module named setup.py, is a package with a pip install).
 # PROVE (each planted, rebuilt, the prove legs run, reverted):
 #  P1. machine.ts: drop the proveNow call before verify; every e2e prove leg fails (no stage, no record).
 #  P2. seal.ts: drop ...proveNotes from openNotes; the listing, exit-3, setup, base, no-script, timeout and port legs fail (VERIFIED).
@@ -1802,5 +1803,23 @@ console.log([lines.join(","), fixed.join(","), ns.join(",")].join(" | "));' 2>&1
 [ "$RWU" = '2/plan,1/title/Fix the startup wait,1/title/Fix it,0/plan,2/issue,0/plan,1/title/Fix from the task text,true,1/title/Only a title | 2,plan,2,2,met+unmet | 1,0,0,0,0' ] \
     && ok "RW-02 acceptance lines: with no list the plan lines stand, else the title line from intake; the lines are fixed in the run records (a session editing its own copy changes nothing); a listed text task with no run of Loki's own gets the note, a stand-in line does not" || bad "RW-02 acceptance lines gave: $RWU"
 # ---- end RW-02 ----
+
+# --- setup-py: a module that is only named setup.py is not a package manifest (closed-set-2 hm155462) -----------------------------------------
+# hermes-agent has four ordinary modules named setup.py (a setup wizard, helpers). Each became a package with `python3 -m pip install -e .`, which fails
+# ("Getting requirements to build editable ... ModuleNotFoundError"), so the run carried four "install exited 1" holds and "package hermes_cli defines no
+# test command". A setup.py is a manifest only when it imports setuptools or distutils. Measured on the stored base: 17 packages before, 13 after, the four gone.
+# Plant 33: repo_profile.ts isPackagingSetupPy: `return true` (the wizard directory is a package again).
+SPY="$T/setuppy"; mkdir -p "$SPY/cli" "$SPY/legacy" "$SPY/tests"
+printf '[project]\nname = "app"\nversion = "1"\n[tool.pytest.ini_options]\ntestpaths = ["tests"]\n' > "$SPY/pyproject.toml"; printf 'def test_a():\n    assert True\n' > "$SPY/tests/test_a.py"
+printf '"""Interactive setup wizard."""\ndef run_setup():\n    return "setuptools is not imported here"\n' > "$SPY/cli/setup.py"
+printf 'from setuptools import setup\nsetup(name="legacy")\n' > "$SPY/legacy/setup.py"; printf 'def test_b():\n    assert True\n' > "$SPY/legacy/test_b.py"
+git -C "$SPY" init -q -b main && git -C "$SPY" add -A && git -C "$SPY" -c user.name=t -c user.email=t@t commit -qm init
+ASPY="$(cd "$ROOT/loki-ts" && SPY="$SPY" bun --no-env-file --config=/dev/null -e '
+const rp = await import("./src/runner/repo_profile.ts"), g = process.env.SPY, m = rp.manifestModel(g);
+const roots = m && m.packages ? m.packages.map((p) => p.root + "=" + (p.install?.cmd ?? "none")).join(";") : JSON.stringify(m);
+console.log([rp.isPackagingSetupPy(g, "cli/setup.py"), rp.isPackagingSetupPy(g, "legacy/setup.py"), rp.isPackagingSetupPy(g, "missing/setup.py"), roots].join(" | "));' 2>&1)"
+XSPY='false | true | false | .=python3 -m pip install -e .;legacy=python3 -m pip install -e .'
+[ "$ASPY" = "$XSPY" ] && ok "setup-py: a module that is only named setup.py makes no package and plans no install; a setup.py that imports setuptools still does" \
+    || bad "setup-py gave: $ASPY (want: $XSPY)"
 
 finish
