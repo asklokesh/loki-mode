@@ -323,14 +323,14 @@ export function unrunnableCandidates(o: Partial<Record<StageName, Obj>>, checks:
  *  targeted check or proof step, not inside a candidate and not as a full suite; and with the candidates and their own lines taken out, `rest` (the label rule
  *  over everything else) reads VERIFIED, so nothing else holds the label. The machine's "fix round skipped" note goes with them only when no other full suite
  *  still fails. A lifted check keeps its result on the receipt, is never excused, and is listed "could not run here". */
-export function unrunnableLifted(a: { o: Partial<Record<StageName, Obj>>; checks: ReceiptCheck[]; vraw: readonly Obj[]; verdict: Verdict; proof: { ok: boolean; files: string[]; steps?: number } | null; notes: readonly string[]; rest: (checks: ReceiptCheck[], notes: string[]) => Verdict }, env: NodeJS.ProcessEnv = process.env): string[] {
-  const cand = unrunnableCandidates(a.o, a.checks, env);
-  if (cand.length === 0 || a.verdict !== "PARTIAL" || a.proof?.ok !== true) return [];
+export function unrunnableLifted(a: { o: Partial<Record<StageName, Obj>>; checks: ReceiptCheck[]; vraw: readonly Obj[]; verdict: Verdict; proof: { ok: boolean; files: string[]; steps?: number } | null; notes: readonly string[]; rest: (checks: ReceiptCheck[], notes: string[]) => Verdict }, env: NodeJS.ProcessEnv = process.env): { names: string[]; notes: string[] } {
+  const cand = unrunnableCandidates(a.o, a.checks, env), no = { names: [], notes: [] };
+  if (cand.length === 0 || a.verdict !== "PARTIAL" || a.proof?.ok !== true) return no;
   const own = (c: Obj): boolean => isExecutedProof(c as { result?: unknown; n?: unknown }) && !String(c.name).startsWith("full suite") && !cand.includes(String(c.name));
-  if (!((a.proof.steps ?? 0) > 0) && !a.proof.files.some((f) => a.vraw.some((c) => own(c) && String(c.name).endsWith(`:${f}`)))) return [];
+  if (!((a.proof.steps ?? 0) > 0) && !a.proof.files.some((f) => a.vraw.some((c) => own(c) && String(c.name).endsWith(`:${f}`)))) return no;
   const left = a.checks.filter((c) => !cand.includes(c.name)), gone = new Set(strs(a.o.verify?.could_not_run_notes));
   if (!left.some((c) => c.result === "fail" && c.name.startsWith("full suite"))) gone.add(SUITE_FIX_SKIP_NOTE);
-  return a.rest(left, a.notes.filter((n) => !gone.has(n))) === "VERIFIED" ? cand : [];
+  return a.rest(left, a.notes.filter((n) => !gone.has(n))) === "VERIFIED" ? { names: cand, notes: [...gone] } : no; // notes: the lines that said these checks hold the label, which no longer describe the receipt
 }
 
 /** FALSEVER-OPEN-DECISION (LOKI_E10_OPEN_DECISION_CAP, default on, =0 opts out): NOT PROVEN lines for what the run decided without the issue deciding it.
@@ -473,9 +473,9 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const lintOpenNotes = lintOnly ? openLint.map((c) => `lint error the change introduced, still failing after the fix rounds: ${c.name}: ${String(((Array.isArray(o.verify?.checks) ? (o.verify!.checks as Obj[]) : []).find((x) => x.name === c.name)?.first_error) ?? "see the check output").slice(0, 200)} (every test passed; the label is held at PARTIAL)`) : [];
     const verdict0a = capGroupVerdict(verdictOf(o, liveV, !diffOk || diff.stdout === "", capVerify.some((n) => !pinDropped.has(n)) || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp);
     // UNRUNNABLE-CHECK: applied here, before every later step, so supply, review, open notes and the publish can still only lower the label.
-    const vLift = vCand.length > 0 && verdict0a === "PARTIAL" && ftpGate ? unrunnableLifted({ o, checks: liveV, vraw, verdict: verdict0a, proof: await ftp(), notes: capVerify.filter((n) => !pinDropped.has(n)),
-      rest: (cs, ns) => capGroupVerdict(verdictOf(o, cs, !diffOk || diff.stdout === "", ns.length > 0 || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp) }) : [];
-    const verdict0: Verdict = vLift.length > 0 ? "VERIFIED" : verdict0a;
+    const vLifted = vCand.length > 0 && verdict0a === "PARTIAL" && ftpGate ? unrunnableLifted({ o, checks: liveV, vraw, verdict: verdict0a, proof: await ftp(), notes: capVerify.filter((n) => !pinDropped.has(n)),
+      rest: (cs, ns) => capGroupVerdict(verdictOf(o, cs, !diffOk || diff.stdout === "", ns.length > 0 || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp) }) : { names: [], notes: [] };
+    const vLift = vLifted.names, verdict0: Verdict = vLift.length > 0 ? "VERIFIED" : verdict0a;
 
     // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
     const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.repoDir), process.env);
@@ -612,6 +612,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
       (cost as { router?: Record<string, number> }).router ?? (routerEnabled(process.env) ? sumResultCosts(join(ctx.repoDir, ".loki"), liveArchivedCosts(join(ctx.repoDir, ".loki"), iterIds, UNMETERED)).router : undefined), ctx.model);
     if (routeBlock) for (const l of routeNotProven(routeBlock)) notProven.add(l);
 
+    if (vLift.length > 0) for (const n of vLifted.notes) notProven.delete(n); // UNRUNNABLE-CHECK: a line that says a lifted check holds the label is replaced by its "could not run here" line
     const body: Omit<Receipt, "receipt_sha256" | "verification"> = {
       schema: "loki.v10.receipt/1",
       ...(vLift.length > 0 ? { could_not_run: vLift } : {}),
