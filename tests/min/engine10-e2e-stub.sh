@@ -1609,6 +1609,8 @@ rw_proof -
 #   NB20. stages/deep.ts deepPost: drop the addendum grace: the no-cap DEEP-POST leg waits out the 60 s sleeper.
 #   G5-3. engine10/machine.ts newFailingIds: count base-red checks too: the new-ids leg goes red.
 #   G5-6. engine10/machine.ts suiteOnlyStop: stop whenever only full suites are red (the old rule): the falling-ids case reads stop.
+#   G5-9. util/conflict_resume.ts resumeToFinish: words never count once a measurement exists: the stepping leg ends at 2.
+#   G5-11. engine10/machine.ts fixRoundMoved: drop the ran term: a round that makes a check run reads no progress.
 #   G5-5. util/check_result.ts suiteSkipHolds: always true: the base-red-only suite holds again.
 #   G5-4. util/conflict_resume.ts resumeToFinish: ignore o.measure (always the words rule): the measured-count leg goes red.
 #   NB9. runner/repo_profile.ts asyncShellRunner: setTimeout(stop, timeoutMs) again: the no-limit base run is cut at once.
@@ -1674,7 +1676,8 @@ try {
       return { ended: r.record.ended, n: r.iterationIds.length }; };
     const falling = await run(["the docs for multiply remain"], [5, 4, 3, 2, 1, 0, 0, 0]), stuck = await run(["the docs for multiply remain"], [3, 3, 3, 3, 3]);
     const steps = await run(["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima"], [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]);
-    res("G5 continue progress where a measurement exists: a count that falls keeps going although the words never change; a flat count with the same work ends at 2; a flat count while the tree changes and each reply names new work runs past 2 and ends at the cap (summary-parse review)", falling.n >= 5 && stuck.ended === "no progress" && stuck.n === 2 && steps.ended === "no progress" && steps.n > 2 && steps.n <= 8); }
+    res("G5 continue progress where a measurement exists: a count that falls keeps going although the words never change; a flat count with the same work ends at 2; a flat count while the tree changes and each reply names new work goes on (no extra cap) and ends only when the words repeat", falling.n >= 5 && stuck.ended === "no progress" && stuck.n === 2 && steps.ended === "no progress" && steps.n >= 12); }
+  res("G5 fix-loop progress: fewer new failing ids, or a check that now runs (more checks ran than ever before), is progress; the same ids with the same checks is not (summary-parse D3)", mc.fixRoundMoved(2, 5, 3, 5) && mc.fixRoundMoved(3, 6, 3, 5) && mc.fixRoundMoved(5, 6, 3, 5) && !mc.fixRoundMoved(3, 5, 3, 5) && !mc.fixRoundMoved(4, 4, 3, 5) && mc.checksRan({ checks: [{ result: "pass" }, { result: "fail" }, { result: "not_run" }] }) === 2);
   const pv = await import(root + "/loki-ts/src/engine10/stages/prove.ts"), nr = await import(root + "/loki-ts/src/features/no_regression.ts");
   res("NO-DEFAULT-BUDGET the prove stage has no 600 s budget and its listing no 3-turn cap unless set (the knob or LOKI_E10_PROVE_BUDGET_S / LOKI_E10_PROVE_LIST_TURNS); a user cap still reserves 600 s for it when sizing implement", pv.proveBudgetS({}) === Infinity && pv.proveBudgetS(B) === 600 && pv.proveBudgetS({ LOKI_E10_PROVE_BUDGET_S: "45" }) === 45 && pv.proveReserveOfS({}) === 600 && pv.proveListTurns({}) === undefined && pv.proveListTurns(B) === 3 && pv.proveListTurns({ LOKI_E10_PROVE_LIST_TURNS: "5" }) === 5);
   res("NO-DEFAULT-BUDGET the no-regression differential has no 120 s wall budget unless set; the knob restores it", nr.nrdBudgetS({}) === Infinity && nr.nrdBudgetS(B) === 120 && nr.nrdBudgetS({ LOKI_E10_NRD_BUDGET_S: "30" }) === 30);
@@ -1691,7 +1694,7 @@ try {
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/nobudget.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || { bad "no-default-budget unit script crashed or exited non-zero"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 27 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 27"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 28 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 28"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
