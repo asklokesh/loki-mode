@@ -1608,6 +1608,7 @@ rw_proof -
 #   NB21. continueMoved: compare with the previous reply only (`seenNums` holds just the last tuple): the oscillating counts read moved every round.
 #   NB20. stages/deep.ts deepPost: drop the addendum grace: the no-cap DEEP-POST leg waits out the 60 s sleeper.
 #   G5-3. engine10/machine.ts newFailingIds: count base-red checks too: the new-ids leg goes red.
+#   G5-5. util/check_result.ts suiteSkipHolds: always true: the base-red-only suite holds again.
 #   G5-4. util/conflict_resume.ts resumeToFinish: ignore o.measure (always the words rule): the measured-count leg goes red.
 #   NB9. runner/repo_profile.ts asyncShellRunner: setTimeout(stop, timeoutMs) again: the no-limit base run is cut at once.
 cat > "$T/nobudget.ts" <<'TS'
@@ -1640,6 +1641,8 @@ try {
   res("NO-DEFAULT-BUDGET a session with no time limit gets no derived turn cap and keeps Claude's own Bash timeouts", !("LOKI_E10_MAX_TURNS" in e2) && e2["BASH_MAX_TIMEOUT_MS"] === "600000" && e2["BASH_DEFAULT_TIMEOUT_MS"] === "120000");
   const nf = mc.newFailingIds({ checks: [{ name: "pytest:a", result: "fail", ids: ["t1", "t2"] }, { name: "pytest:b", result: "fail" }, { name: "pytest:old", result: "fail", ids: ["t9"] }, { name: "pytest:env", result: "fail", owner: "harness" }, { name: "full suite: x", result: "fail", ids: ["s1"] }, { name: "pytest:c", result: "pass" }, { name: "pytest:d", result: "not_run" }], pre_red_checks: ["pytest:old"], holdout_failed: 1 });
   res("G5 fix-loop progress counts only NEW failing ids: base-red and harness-owned failures are left out, an id-less failing check counts once, each held-out failure once; the suite-only view keeps the full suite", nf.size === 5 && nf.has("pytest:a::t1") && nf.has("pytest:b") && !nf.has("pytest:old::t9") && !nf.has("pytest:env") && nf.has("holdout#1") && mc.newFailingIds({ checks: [{ name: "full suite: x", result: "fail", ids: ["s1"] }, { name: "pytest:a", result: "fail" }] }, true).size === 1);
+  { const cr5 = await import(root + "/loki-ts/src/util/check_result.ts"), suite = (ids: string[], pre: string[]) => ({ checks: [{ name: "full suite: npm", result: "fail", ids }, { name: "pytest:t", result: "pass", n: 3 }], pre_red: pre });
+    res("G5 the suite-skip note holds a run only when the skipped full-suite red has a NEW failing id: red only on base ids does not hold (oc63960), one new id does", !cr5.suiteSkipHolds(suite(["a", "b"], ["a", "b"])) && cr5.suiteSkipHolds(suite(["a", "c"], ["a"])) && !cr5.suiteSkipHolds({ ...suite(["a"], []), base_red_checks: ["full suite: npm"] })); }
   const ck = bc.resolveCap(null, d, { ANTHROPIC_API_KEY: "x" }), cs = bc.resolveCap(null, d, {}), cbad = bc.resolveCap(null, d, { LOKI_BUDGET_LIMIT: "lots" }), cflag = bc.resolveCap("5", d, { ANTHROPIC_API_KEY: "x" });
   res("NO-DEFAULT-BUDGET no default dollar cap with an API key; the start line says how to set one; a user cost limit is kept and an unusable one fails closed", "usd" in ck && ck.usd === 0 && bc.capNote(ck.usd, ck.source) === bc.NO_COST_LIMIT_NOTE && "usd" in cs && cs.usd === 0 && "error" in cbad && "usd" in cflag && cflag.usd === 5);
   const t0 = Date.now(), quiet = await sh.run(["sh", "-c", "sleep 20"], { timeoutMs: Infinity, silenceMs: 300 });
@@ -1685,7 +1688,7 @@ try {
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/nobudget.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || { bad "no-default-budget unit script crashed or exited non-zero"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 25 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 25"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 26 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 26"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"

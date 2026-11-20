@@ -9,7 +9,7 @@ import { rerunOnQuota, sessionKind, usageLimitOf } from "../runner/retry_class.t
 import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./failures.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote, timeNoteOn } from "../util/run_cap.ts"; import { FINISH_LINE, issueRunBrief } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, isClean, MIN_ATTEMPT_WINDOW_S, runExtraAttempts, signalNotProven, type AttemptSignal } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
 import { armTimer, backstopS, defaultBudgetsOn, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, hangSilenceS, MAX_FIX_ROUNDS, noProgressRounds, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
-import { stallSame, stallSignature } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
+import { newFailingIds, stallSame, stallSignature, SUITE_FIX_SKIP_NOTE, suiteSkipHolds } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
 import { PROVE_MIN_S, proveApplies, proveBudgetS, proveReserveOfS, proveNotRun, proveScope, recheckProve, type ProveRecord } from "./stages/prove.ts"; import { capCeilingS } from "../util/run_cap.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
 
 /** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
@@ -95,7 +95,7 @@ export function freshBaseCheckout(repoDir: string, baseSha: string): string | nu
 }
 export { haikuIndepFixOn } from "./stages/verify.ts"; import { fixGateOf } from "./stages/verify.ts"; // FIX-GATE: the gate predicate lives beside the independent set it reads, and verify records its reading
 export const suiteFixSkipEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SUITE_FIX_SKIP"] ?? "").trim());
-export const SUITE_FIX_SKIP_NOTE = "fix round skipped: only full-suite failures remained while the change's own targeted tests passed, so those failures are NOT PROVEN unrelated to the change (LOKI_E10_SUITE_FIX_SKIP=0 runs the round)";
+export { SUITE_FIX_SKIP_NOTE } from "../util/check_result.ts"; // one owner: check_result.ts (seal reads it)
 export const suiteOnlyRed = (d: Obj | undefined): boolean => {
   const checks = Array.isArray(d?.checks) ? (d.checks as Obj[]) : [], changed = (Array.isArray(d?.changed_files) ? d.changed_files : []).map(String).filter((f) => f && !f.startsWith(".loki/"));
   const namesChanged = checks.some((c) => c?.result === "fail" && String(c.name ?? "").startsWith("full suite") && (Array.isArray(c.ids) ? c.ids : []).some((i) => changed.some((f) => String(i).includes(f)))); // a failing id in a file the change edited is the change's own failure: the round runs
@@ -125,19 +125,7 @@ export function verifyLimitFor(floorS: number, softS: number, elapsedS: number, 
   const v = Number((env["LOKI_E10_VERIFY_MAX_S"] ?? "").trim()), max = Number.isFinite(v) && v >= 1 ? Math.floor(v) : defaultBudgetsOn(env) ? VERIFY_MAX_S : Infinity; // NO-DEFAULT-BUDGET: no verify maximum unless the user sets one (LOKI_E10_VERIFY_MAX_S, --verify-max-time); a user run cap still bounds it through softS
   return Math.min(Math.max(floorS, Math.floor(softS - elapsedS - VERIFY_TAIL_S)), max);
 }
-/** G5 fix-loop progress: the failing ids Loki measured as NEW on head, as "check::id" (a failing check with no ids counts once as "check"). A check verify recorded
- *  red on base (pre_red_checks) and a harness-owned failure are not new; each held-out failure counts once. `suiteOnly` keeps only the full-suite checks. */
-export function newFailingIds(d: Obj | undefined, suiteOnly = false): Set<string> {
-  const checks = Array.isArray(d?.checks) ? (d!.checks as Obj[]) : [], pre = new Set(Array.isArray(d?.pre_red_checks) ? (d!.pre_red_checks as unknown[]).map(String) : []), out = new Set<string>();
-  for (const c of checks) {
-    const name = String(c?.name ?? "");
-    if (c?.result !== "fail" || pre.has(name) || c?.owner === "harness" || (suiteOnly && !name.startsWith("full suite"))) continue;
-    const ids = Array.isArray(c.ids) ? (c.ids as unknown[]).map(String) : [];
-    if (ids.length) for (const i of ids) out.add(`${name}::${i}`); else out.add(name);
-  }
-  if (!suiteOnly) for (let k = 0; k < (Number(d?.holdout_failed) > 0 ? Number(d!.holdout_failed) : 0); k++) out.add(`holdout#${k + 1}`);
-  return out;
-}
+export { newFailingIds } from "../util/check_result.ts"; // G5: the one owner is check_result.ts (seal reads it too)
 /** What an extra-attempts window leaves for the re-verify and the tail (commit, seal, pr). */
 const ATTEMPTS_TAIL_S = STAGE_BUDGETS.verify.limitS + STAGE_BUDGETS.commit.limitS + STAGE_BUDGETS.seal.limitS + STAGE_BUDGETS.pr.limitS;
 export function softCapS(capS: number): number { const plain = (capS * 14) / 15, budget = backstopS(capS) - ((STAGE_BUDGETS.commit.targetS ?? 0) + (STAGE_BUDGETS.seal.targetS ?? 0) + KILL_GRACE_MS / 1000 + 2); return Math.max(0, Math.min(plain, budget)); } // tightens 14/15 of capS so commit+seal's tail (plus a 2s margin: this clock starts after worker boot, the backstop's starts at spawn) fits before the backstop; when the tail can never fit at all (budget < 0), 0 still maximizes the gap to the backstop instead of the old plain-point fallback, which left as little as 0.17s to seal (E-67 round 5 REJECT finding 1)
@@ -449,7 +437,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         // the Wall, a targeted test the diff touches, or a base-green test now red). dev2: rounds ran on 11 of 20 Loki-Haiku runs and flipped none of the losses. Fire marker: verify.fix_gate.
         const indepSkip = !fatal && !capHit && hasFailures(outputs.verify) && fixGateOf(outputs.verify, `${String(outputs.implement?.model ?? "")} ${ctx.model}`).startsWith("closed");
         if (indepSkip) { outputs.verify = { ...outputs.verify, fix_gate: "haiku: no independent check failed, no fix round" }; ctx.emit("loop.repeat", "fix", { reason: "haiku: no independent check failed (LOKI_E10_HAIKU_INDEP_FIX)", round: 0, skipped: true }); }
-        if (suiteSkip) { outputs.verify = { ...outputs.verify, not_proven: [...(Array.isArray(outputs.verify?.not_proven) ? outputs.verify.not_proven : []), SUITE_FIX_SKIP_NOTE] }; ctx.emit("loop.repeat", "fix", { reason: SUITE_FIX_SKIP_NOTE, round: 0, skipped: true }); }
+        if (suiteSkip && suiteSkipHolds(outputs.verify)) { outputs.verify = { ...outputs.verify, not_proven: [...(Array.isArray(outputs.verify?.not_proven) ? outputs.verify.not_proven : []), SUITE_FIX_SKIP_NOTE] }; }
+        if (suiteSkip) { ctx.emit("loop.repeat", "fix", { reason: SUITE_FIX_SKIP_NOTE, round: 0, skipped: true }); }
         for (let round = 1; !indepSkip && (unbounded ? stillRounds < noProgressRounds() : round <= MAX_FIX_ROUNDS + extraRounds) && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && !(suiteSkip && onlyFullSuiteRed(outputs.verify)) && !(round > 1 && onlyFullSuiteRed(outputs.verify) && suiteNow >= suitePrev) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
           const wallBefore = wallSignature(outputs, ctx.repoDir);
           const fx = await runStage("fix", true);

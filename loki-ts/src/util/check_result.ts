@@ -870,6 +870,26 @@ export function emptyDiscovery(cls: Classified, out: string): boolean {
 }
 /** classifyCheck result plus the rerun-only "flaky" verdict (TEN-QUALITY-17); kept separate so existing classifyCheck callers keep the narrow type. */
 export interface ClassifiedRerun extends Omit<Classified, "result"> { result: Classified["result"] | "flaky"; rerun?: { first: "fail"; second: "pass"; n?: number } }
+export const SUITE_FIX_SKIP_NOTE = "fix round skipped: only full-suite failures remained while the change's own targeted tests passed, so those failures are NOT PROVEN unrelated to the change (LOKI_E10_SUITE_FIX_SKIP=0 runs the round)";
+/** G5: the failing ids Loki measured as NEW on head, as "check::id" (a failing check with no ids counts once as "check"). Not new: a check verify recorded red
+ *  on base (pre_red_checks, base_red_checks), an id it recorded red on base (pre_red), and a harness-owned failure; each held-out failure counts once.
+ *  `suiteOnly` keeps only the full-suite checks. Fix-loop progress is this set shrinking; the suite-skip note holds a run only when the suite view is non-empty. */
+export function newFailingIds(d: Record<string, unknown> | undefined, suiteOnly = false): Set<string> {
+  const list = (k: string): string[] => (Array.isArray(d?.[k]) ? (d![k] as unknown[]).map(String) : []);
+  const checks = Array.isArray(d?.checks) ? (d!.checks as Record<string, unknown>[]) : [], pre = new Set([...list("pre_red_checks"), ...list("base_red_checks")]), preIds = new Set(list("pre_red")), out = new Set<string>();
+  for (const c of checks) {
+    const name = String(c?.name ?? "");
+    if (c?.result !== "fail" || pre.has(name) || c?.owner === "harness" || (suiteOnly && !name.startsWith("full suite"))) continue;
+    const ids = Array.isArray(c.ids) ? (c.ids as unknown[]).map(String) : [], fresh = ids.filter((i) => !preIds.has(i));
+    if (ids.length) for (const i of fresh) out.add(`${name}::${i}`); else out.add(name);
+  }
+  const held = Number(d?.holdout_failed) > 0 ? Number(d!.holdout_failed) : 0;
+  if (!suiteOnly) for (let k = 0; k < held; k++) out.add(`holdout#${k + 1}`);
+  return out;
+}
+/** G5: the suite-skip note (SUITE_FIX_SKIP_NOTE) holds a run only when the skipped full-suite red contains at least one NEW failing id. A suite red only on
+ *  ids recorded red on base had nothing new to fix, so the skip was right and must not hold the label (oc63960). */
+export const suiteSkipHolds = (d: Record<string, unknown> | undefined): boolean => newFailingIds(d, true).size > 0;
 /** G5 LINE-FALLBACK: a test file the change edited or added never ends not_run because the runner's summary could not be parsed. The verdict then comes from
  *  the exit code plus the per-test result lines the common runners print (pytest -v "::name PASSED", "FAILED path::name", vitest/jest/mocha check and cross
  *  marks, go "--- PASS:"/"--- FAIL:", TAP "ok N"/"not ok N"). A FAIL line fails it, even under exit 0; exit 0 with at least one PASS line and no FAIL line passes
