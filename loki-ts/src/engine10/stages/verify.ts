@@ -16,7 +16,7 @@ import { failureLines, venvSkipNotes, goJsonStream, GO_JSON_KEEP, withoutStaleWa
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { defaultBudgetsOn, cmdSilenceS, type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, linkWorkspaceMembers, envChangedSince, depsGoneSince, manifestBlocksBaseLink, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, holdsPartial, exogenousHeldLine, couldNotRun, unrunnableCheckOn, unrunnableSuites, exogenousRedOn, exogenousState, type ExogenousAttribution, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, linkWorkspaceMembers, envChangedSince, depsGoneSince, manifestBlocksBaseLink, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, holdsPartial, exogenousHeldLine, couldNotRun, couldNotRunIfProved, missingTool, unrunnableCheckOn, unrunnableSuites, exogenousRedOn, exogenousState, type ExogenousAttribution, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
 export const timeoutCarryOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TIMEOUT_CARRY"] ?? "").trim());
 export const TIMEOUT_CARRY_NOTE = "carried from an earlier verify of this run, not rerun (untouched file)";
 /** TIMEOUT-WAIT: after a check's timeout (or abort) fires, a process still alive this long later is SIGKILLed, so a test that ignores SIGTERM costs its limit, not minutes more. */
@@ -982,17 +982,23 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
     const pkgOf = (f: string): string => { const r = api?.packageRootOf(f) ?? "."; return r === "" ? "." : r; };
     const unrunSuite = new Set(unrunnableCheckOn() ? unrunnableSuites(ctx.repoDir, ctx.baseSha, fullSeen) : []);
     const changedStems = changed.map((f) => f.replace(/\.[^./]+$/, "").split("/").pop() ?? "").filter((x) => x.length > 1), namesAChange = (text: string): boolean => { const n = lineNamesChange(changed); return text.split("\n").some(n) || changedStems.some((x) => new RegExp(`(?<![\\w$])${escapeRegex(x)}(?![\\w$])`).test(text)); };
-    const unrunCands = [
+    const unrunCands: { name: string; pkg: string; namesChanged: boolean }[] = [
       ...fullSeen.filter((c) => unrunSuite.has(c.name) && !!exoAttr[c.name] && holdsPartial(exoAttr[c.name]!)).map((c) => ({ name: c.name, pkg: pkgOf(`${suiteSpecs.find((sp) => sp.name === c.name)?.cwd ?? "."}/x`), namesChanged: exoAttr[c.name]!.names_changed })),
       ...checks.filter((c) => c.result === "not_run" && typeof c.reason === "string" && (c.reason.startsWith(NO_ID_BASE_REASON) || c.reason.startsWith(BCE_REASON)) && tests.some((t) => testCheckName(t) === c.name)).map((c) => ({ name: c.name, pkg: pkgOf(tests.find((t) => testCheckName(t) === c.name)!.path), namesChanged: c.reason!.startsWith(BCE_REASON) && namesAChange(c.reason!) })),
     ];
-    const couldNot = couldNotRun(unrunCands, changed, pkgOf);
+    // An install step whose own tool is not on this machine (missingTool): it ran at intake, on the base commit, and the machine is the same for the change.
+    const depsCap = unrunnableCheckOn() ? unusedInstallNotes(intake?.deps_not_proven ?? [], api, changed, checks.map((c) => c.name), ctx.repoDir).cap : [];
+    const installCands = ((Array.isArray((intake as Record<string, unknown> | undefined)?.["deps_install"]) ? (intake as Record<string, unknown>)["deps_install"] : []) as Record<string, unknown>[]).filter((c) => c.result === "not_run" && typeof c.name === "string" && typeof c.reason === "string" && depsCap.includes(`${c.reason} (${c.name}; harness-owned)`) && missingTool(c.reason, String(c.cmd ?? "")) !== null)
+      .map((c) => ({ name: String(c.name), pkg: pkgOf(`${String(c.name).slice("install:".length)}/x`), namesChanged: namesAChange(String(c.reason)), note: `${String(c.reason)} (${String(c.name)}; harness-owned)` }));
+    unrunCands.push(...installCands);
+    const couldNot = couldNotRun(unrunCands, changed, pkgOf), couldNotIf = couldNotRunIfProved(unrunCands, changed, pkgOf, isTestFile), couldAll = [...couldNot, ...Object.keys(couldNotIf)];
     const couldNotNotes = [
-      ...couldNot.filter((n) => !!exoAttr[n]).map((n) => exogenousHeldLine(n, exoAttr[n]!)),
-      ...preRed.envCrash.filter((e) => couldNot.includes(e.name)).map((e) => `${e.name}: ${BCE_REASON} (${e.sig})`),
-      ...noIdGroups.filter((g) => g.names.every((n) => couldNot.includes(n))).map((g) => g.note),
+      ...couldAll.filter((n) => !!exoAttr[n]).map((n) => exogenousHeldLine(n, exoAttr[n]!)),
+      ...preRed.envCrash.filter((e) => couldAll.includes(e.name)).map((e) => `${e.name}: ${BCE_REASON} (${e.sig})`),
+      ...noIdGroups.filter((g) => g.names.every((n) => couldAll.includes(n))).map((g) => g.note),
+      ...installCands.filter((c) => couldAll.includes(c.name)).map((c) => c.note),
     ];
-    const couldNotOut = couldNot.length ? { could_not_run: couldNot, could_not_run_notes: couldNotNotes } : {};
+    const couldNotOut = couldAll.length ? { could_not_run: couldNot, ...(Object.keys(couldNotIf).length ? { could_not_run_if_proved: couldNotIf } : {}), could_not_run_notes: couldNotNotes } : {};
     const uncaused = uncausedOn() ? checks.filter((c) => feedsFixRound(c, preRed) && !indepNames.has(c.name) && uncausedRed(c, changed, symbols, excerpts.get(c) ?? "")).map((c) => c.name) : [];
     const independentFail = checks.some((c) => c.result === "fail" && indepNames.has(c.name) && !preRed.names.includes(c.name)), independentReds = checks.filter((c) => c.result === "fail" && indepNames.has(c.name) && !preRed.names.includes(c.name)).map((c) => c.name);
     const { groups: failuresGrouped, names: blockingNames } = briefGroups(checks.filter((c) => !uncaused.includes(c.name)).filter((c) => feedsFixRound(c, preRed) || (fixRounds === 0 && collateralSame.includes(c.name) && !collateralBase.includes(c.name))), (c) => excerpts.get(c) ?? "", (c) => suites.has(c), EXCERPT_TOTAL_CAP, qs && !complete ? { prev: ctx.outputs().verify, ran: new Set(checks.map((c) => c.name)) } : undefined); // known red failing the same way as on base (or a full suite repeating those and Wall ids) never feeds a fix round; a different error does; TEN-QUALITY-01: sample = rerun cmd + redacted excerpt, 6 KB across all groups

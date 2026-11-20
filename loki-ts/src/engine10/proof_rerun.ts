@@ -190,7 +190,7 @@ export function writeProofKit(dir: string, asks: string[] | null): void {
   try { writeFileSync(join(dir, PROOF_HELPER), PROOF_HELPER_SH, { mode: 0o600 }); if (asks?.length) writeFileSync(join(dir, ACCEPTANCE_FILE), asks.map((a, i) => `${i + 1}. ${a}`).join("\n") + "\n", { mode: 0o600 }); } catch { /* the proof then has no helper; the re-run reports it */ }
 }
 /** One check line of a run: the acceptance item it names, what it says it proves (run-specific values removed, see checkKey) and whether it passed. */
-export interface ProofCheck { item: string; what: string; ok: boolean; real?: true /* OWN-PROOF: a passing step that ran repository code (realStep) */ }
+export interface ProofCheck { item: string; what: string; ok: boolean; real?: true /* OWN-PROOF: a passing step that ran repository code (realStep) */; cmd?: string /* that step's command, kept in memory only */ }
 /** A check's description as a key that is the same in two runs of one script: the text before the helper's own result part, lower case, with ids, hashes
  *  and every number replaced (a port, a row id or a duration differs between two runs of the same check). Two checks of one item that then read the same
  *  are paired by count, never merged. */
@@ -258,7 +258,7 @@ export function realStep(text: string, repoDir?: string): boolean {
   });
 }
 /** The same lines as a list of checks, for the comparison with the base commit (proofOnBase). */
-export const proofChecks = (out: string, token: string, repoDir?: string): ProofCheck[] => proofLines(out, token).map((c) => ({ item: c.item, what: checkKey(c.text), ok: c.ok, ...(c.ok && repoDir && realStep(c.text, repoDir) ? { real: true as const } : {}) }));
+export const proofChecks = (out: string, token: string, repoDir?: string): ProofCheck[] => proofLines(out, token).map((c) => ({ item: c.item, what: checkKey(c.text), ok: c.ok, ...(c.ok && repoDir && realStep(c.text, repoDir) ? { real: true as const, cmd: (c.text.split(" | cmd: ")[1] ?? "").split(" | ")[0]!.replace(/%7C/g, "|") } : {}) }));
 const MAX_SCRIPT_BYTES = 200_000, TAIL_CHARS = 8000;
 /** Seconds Loki gives its own re-run (LOKI_E10_PROOF_RERUN_S overrides). */
 export const proofRerunS = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number(env["LOKI_E10_PROOF_RERUN_S"]); return n > 0 ? n : defaultBudgetsOn(env) ? 600 : Infinity; }; // NO-DEFAULT-BUDGET: no limit unless set (shell.run's silence guard ends a silent proof)
@@ -463,7 +463,7 @@ export function failsWithoutChange(head: ProofCheck[], control: ProofCheck[], wi
   const cOk = set(control, true), cBad = set(control, false), wOk = set(without, true), wBad = set(without, false);
   return [...new Set(head.filter((c) => c.ok && c.real === true && cOk.has(k(c)) && !cBad.has(k(c)) && wBad.has(k(c)) && !wOk.has(k(c))).map((c) => c.what))];
 }
-export interface OwnProof { ok: boolean; steps: string[]; why?: string; seconds: number; built?: true; checks_without: number; checks_control: number }
+export interface OwnProof { ok: boolean; steps: string[]; cmds: string[] /* the counted steps' commands: which changed test file a step ran (never written to the receipt) */; why?: string; seconds: number; built?: true; checks_without: number; checks_control: number }
 /** Runs the kept proof script in a copy of the checkout without the change (see the block comment above). `revert`: the change's non-test files, each with
  *  whether the change added it (then it is removed in the copy; otherwise its base content is written back, read from the repository's objects, so no git
  *  command runs inside the copy and the run's own index is never touched). `builds`: the build commands of the packages that own those files, tried only when
@@ -471,7 +471,7 @@ export interface OwnProof { ok: boolean; steps: string[]; why?: string; seconds:
 export async function proofWithoutChange(repoDir: string, runDir: string, baseSha: string | undefined, head: ProofRerun | null, revert: readonly { path: string; added: boolean }[], builds: readonly { cmd: string; cwd: string }[], signal?: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<OwnProof | null> {
   if (!ownProofOn(env) || !proofRerunOn(env) || !baseSha || !head || head.refused || head.exit !== 0 || head.failed > 0 || !head.checks?.some((c) => c.ok && c.real) || revert.length === 0) return null;
   let text = ""; try { text = readFileSync(join(runDir, PROOF_SCRIPT), "utf8"); } catch { return null; }
-  const no = (why: string, seconds = 0): OwnProof => ({ ok: false, steps: [], why, seconds, checks_without: 0, checks_control: 0 });
+  const no = (why: string, seconds = 0): OwnProof => ({ ok: false, steps: [], cmds: [], why, seconds, checks_without: 0, checks_control: 0 });
   let total = 0;
   const once = async (mode: "control" | "without" | "built"): Promise<ProofCheck[] | string> => {
     const build = mode === "built";
@@ -508,7 +508,7 @@ export async function proofWithoutChange(repoDir: string, runDir: string, baseSh
     const control = await once("control"); if (typeof control === "string") return no(control, total);
     const key = (c: ProofCheck): string => `${c.item}\u0001${c.what}`, cOk = new Set(control.filter((c) => c.ok).map(key));
     if (!head.checks!.some((c) => c.ok && c.real && cOk.has(key(c)))) return { ...no("no step of the proof script passes in a copy of the checkout, so a failure there would say nothing about the change", total), checks_control: control.length };
-    const result = (without: ProofCheck[], built: boolean): OwnProof => { const steps = failsWithoutChange(head.checks!, control, without); return { ok: steps.length > 0, steps, seconds: total, checks_without: without.length, checks_control: control.length, ...(built ? { built: true as const } : {}), ...(steps.length ? {} : { why: without.length === 0 ? "the proof script printed no check when run without the change" : "every step that passes on the change also passes without it, so the proof does not tell the change from no change" }) }; };
+    const result = (without: ProofCheck[], built: boolean): OwnProof => { const steps = failsWithoutChange(head.checks!, control, without); return { ok: steps.length > 0, steps, cmds: head.checks!.filter((c) => c.ok && c.real && steps.includes(c.what)).map((c) => c.cmd ?? ""), seconds: total, checks_without: without.length, checks_control: control.length, ...(built ? { built: true as const } : {}), ...(steps.length ? {} : { why: without.length === 0 ? "the proof script printed no check when run without the change" : "every step that passes on the change also passes without it, so the proof does not tell the change from no change" }) }; };
     const w1 = await once("without"); if (typeof w1 === "string") return { ...no(w1, total), checks_control: control.length };
     const first = result(w1, false);
     if (first.ok || builds.length === 0 || w1.length === 0 || signal?.aborted) return first;

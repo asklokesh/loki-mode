@@ -947,6 +947,26 @@ export function couldNotRun(cands: readonly { name: string; pkg: string; namesCh
   const touched = new Set(changed.map(pkgOf));
   return cands.filter((c) => !c.namesChanged && !touched.has(c.pkg)).map((c) => c.name);
 }
+/** Point 2 relaxation (lead, 2026-11-20): the candidates that couldNotRun refuses ONLY because changed test files are in their package, with those files.
+ *  Seal lifts such a check only when every one of those files is a test the change's own proof showed failing before the change and passing after it: the
+ *  change is then proved directly and the unrunnable check adds nothing about it. A changed non-test file in the package always blocks, and so does output
+ *  that names a changed file. {} with the knob off. */
+export function couldNotRunIfProved(cands: readonly { name: string; pkg: string; namesChanged: boolean }[], changed: readonly string[], pkgOf: (f: string) => string, isTest: (f: string) => boolean): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (!unrunnableCheckOn()) return out;
+  for (const c of cands) { if (c.namesChanged) continue; const inPkg = changed.filter((f) => pkgOf(f) === c.pkg); if (inPkg.length > 0 && inPkg.every(isTest)) out[c.name] = inPkg; }
+  return out;
+}
+/** An install step that could not start because its own tool is not on this machine: the tool's name, or null. The base run and the run on the change share
+ *  the machine, so a tool missing from PATH is the same start failure on both sides by construction. All of: the shell or the spawn said the tool was not found
+ *  (exit 127, or ENOENT); the tool is a word of the install command itself, not of a script it ran; and the tool is still not on PATH now (`which`). */
+export function missingTool(reason: string, cmd: string, which: (tool: string) => string | null = (t) => Bun.which(t)): string | null {
+  if (!/^install (?:exited 127\b|could not start)/.test(reason)) return null;
+  const m = /(?:^|[\s:])([A-Za-z0-9_.+-]+): (?:command )?not found\b/.exec(reason) ?? /\bspawn ([A-Za-z0-9_.+-]+) ENOENT\b/.exec(reason) ?? /\benv: ([A-Za-z0-9_.+-]+): No such file or directory/.exec(reason);
+  const tool = m?.[1]; if (!tool || /^(?:line|bash|sh|zsh|env)$/.test(tool)) return null;
+  if (!cmd.split(/[\s;&|()]+/).includes(tool)) return null;
+  try { return which(tool) === null ? tool : null; } catch { return null; }
+}
 export const exogenousHeldLine = (name: string, a: Pick<ExogenousAttribution, "state" | "evidence">): string => `not attributed to this change, so it holds the label at PARTIAL and is not excused: ${name}: base run ${a.state} (${a.evidence})`;
 export const SAME_RED_NOTE = "excused as red on base in the identical kind (same command, same exit code, the same unparseable output shape; no failing id could be compared)";
 export function attributeFullSuite(repoDir: string, baseSha: string, full: FullCheck[], blocked: string[], changed: string[], symbols: readonly string[] = [], shownIds: ReadonlySet<string> = new Set()): Attribution {
