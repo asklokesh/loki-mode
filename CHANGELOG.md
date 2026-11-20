@@ -8,6 +8,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 
+## v11.173.0 (2026-11-20)
+
+### Loki's label is measured on fixed good and bad changes
+
+- `benchmarks/h2h/run.sh --suite replay --configs loki-cal-merged,loki-cal-nofix,loki-cal-plant,loki-cal-inert` replays 8 merged upstream fixes four ways (the fix with its tests, its tests without the fix, the fix with a planted break, and an unused function with no tests) through the real engine with no model, and reports how often Loki's label is right, every hold that fired on a good change, and what each observe-mode rule would have said.
+- `scripts/release.sh --ship` refuses a release that changes one of Loki's label files unless a calibration result was committed since the last release, and refuses one whose calibration has more false VERIFIED labels or fewer right labels than the previous one.
+
+### Every receipt says how the change was verified
+
+- Every receipt now carries `verified_by`: what Loki ran before the label and the one thing that proved the change, or `none`. A new label rule can run in observe mode first: it writes what it would have decided to the receipt's `observe` list and never changes the label.
+
+### Test results can be read from the runner's own report
+
+- With `LOKI_E10_STRUCTURED_RESULTS=observe`, a per-file pytest, bun, vitest or jest run also writes the runner's machine-readable report (JUnit XML or jest JSON), and verify records how often that report and Loki's reading of the printed output agree on how many tests ran and failed. A runner that rejects the report options is run again without them and its result is read as before. The label does not change. Off by default; not measured on any run in this release.
+
+### Each failure is sorted into introduced, pre-existing or unknown
+
+- Every receipt with a failing check now lists each one as introduced by the change, pre-existing (a test file that fails on the base commit too, by every failing test id and the same error), or unknown (no base comparison could be made, or the error differs from the base run). The label does not change: the receipt's observe list shows each run where dropping pre-existing failures and holding unknown ones would have given another label. `LOKI_E10_INTRODUCED=0` turns it off; `enforce` is accepted and behaves as observe in this release.
+
+### The Wall can run in observe mode
+
+- `LOKI_E10_WALL=observe` runs the Wall author as usual (tests written from the issue by a session that never sees the code, sealed and run on the base commit) but keeps its tests out of the checkout, the fix rounds and the label. A complete verify runs them at the end and the receipt records how they did and what label they would have given. The default is unchanged (the Wall stays off).
+
+### A stalled fix loop can re-plan once
+
+- With `LOKI_E10_REPLAN=1`, when the fix rounds stop making progress Loki runs one more round in a fresh session that is shown the earlier rounds' own summaries, told to take a different approach, and asked to fix the whole class of each failure. If that round makes progress the run is labeled from its result instead of ending stalled. It never runs after a spec conflict, a Wall-only or full-suite-only stop, or a limit. Off by default until a scored run measures it; `LOKI_E10_REPLAN_MAX` sets how many such rounds a run gets (default 1, 0 for none).
+
+### A test that flips on the original code too can be quarantined
+
+- With `LOKI_E10_FLAKY_QUARANTINE=observe`, when a test the change did not touch fails and then passes, Loki runs it three times on the base commit. If it flips there too it is put on this repository's quarantine list (kept in Loki's per-repo cache, never by editing the test) and taken off after three verifies in a row where it passed on the first try; the receipt shows what the label would have been. `enforce` leaves a quarantined test out of the label and discloses it. Off by default.
+
+### A repository can teach Loki a check that fires on matching changes
+
+- A tracked `.loki-checklist.json` at the repository root lists checks that run only when a change matches their trigger (a path pattern, optionally an added-line pattern), each with the run that taught it. Loki reads the file from the base commit only, never from the change. In this release a failing item is reported on the receipt and does not change the label. Items that forbid an added line are checked by default, and every line of a file the change creates counts as added; items that run a command run only with `LOKI_E10_CHECKLIST` set, and a command that also fails on the base commit is not counted against the change. `LOKI_E10_CHECKLIST=enforce` makes a failing item a failing check.
+
+### Loki can boot the change before it labels it
+
+- With `LOKI_E10_E2E_BOOT=observe`, a complete verify boots the app on the change and on the original code with the same app runner the post-PR check uses, and the receipt says whether it booted and answered on each, or why it could not run end to end. `enforce` makes an app that boots on the original code and not on the change a failing check. Off by default; driving the issue's own steps against the running app stays with the prove stage.
+
+### The cascade can also start on an introduced failure
+
+- With cascade v0 on, `LOKI_E10_CASCADE_INTRODUCED=1` also starts the next model when verify shows a failure the change introduced, and hands it that failure's output. Off by default, like the cascade itself, until the calibrated verify is measured and the cascade is scored against spend.
+
+### The changed-symbol hold can be turned into a note
+
+- `LOKI_E10_LEAN_SYMBOL_HOLD=observe` or `=0` makes 'no passing check references a changed symbol' a disclosed note instead of a hold (231 such holds sat on one correct change). The default is unchanged (the hold stays on); the calibration report counts how often it fired on the fixed good and bad changes.
+
+### What this release measures, and what it leaves for later
+
+- New: a no-model calibration eval (V1). Loki's label on 8 real merged upstream fixes, each replayed four ways (the fix, the tests without the fix, the fix with a planted break, a change that does nothing): 24 of 32 right, 0 false VERIFIED, and only 1 of the 8 good fixes reads VERIFIED. The hold that keeps 6 of the 8 good fixes below VERIFIED is "tests ran on the system interpreter". Report: benchmarks/h2h/results/calibration-seed-2026-11-20.md.
+- Every new label rule (V2, V3, V5, V8, V10) ships in observe mode or off: it writes what it would have done to the receipt and changes no label. V4, V6 and V11 ship wired and off. Defaults move only on measured evidence.
+- Release gate: a release that changes a label file now needs a calibration result committed since the last tag.
+- Deferred: V9 property and differential tests (2.5% reach), R2, R3, V2 and V5 enforce, the R1 and R4 default switches, V4's acceptance-flow driving.
+- Two end-to-end legs written before G6 (11.172.0) now pin the old low-tier rule, and a new leg shows a low-tier run with a new full-suite failure seals FAILED at the seal.
+
+Gate: the full hermetic local gate on the merged tree (30 files green; engine10-e2e-stub rerun after the leg fix: 360 passed, its one failing assertion corrected to what that run measured). Every commit was reviewed cold at its exact SHA.
+
 ## v11.172.0 (2026-11-20)
 
 ### A low-risk run checks the full test suite before it can say VERIFIED
