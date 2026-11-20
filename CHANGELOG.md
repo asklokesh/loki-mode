@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On the stored outputs of the three runs above, with no base run repeated: FireLater#18 and #23 read FAILED (their verifies predate the per-check base records, so nothing excused the failing frontend tests; a run on this release compares them on base first), and hermes-agent 124107 reads PARTIAL (checks that never ran). Each is the label the same outputs read with no claim.
 - `LOKI_E10_MEASURED_LABELS=0` restores the marker rule.
 - Not changed: the plan stage's out-of-repo stop still seals SPEC_CONFLICT. It is a question asked before any work, not a label on finished work. Next, an out-of-repo stop must name paths Loki confirms are absent, otherwise the run implements.
+- Known limit: the acceptance lines are what hold a session that declines part of the work with a claim. A text or PRD task with no acceptance lines, whose session declines part of it with a claim and passes every check, can still seal VERIFIED. Next, such a claim must hold the run below VERIFIED when the task has no acceptance lines.
 - Measured: unit legs for each case, an invariance table (every row reads the same label with and without the claim, except a measured conflict), nine planted defects, an end-to-end run of a measured conflict on the default path, and the replay above. Not yet measured in a live run.
 
 
