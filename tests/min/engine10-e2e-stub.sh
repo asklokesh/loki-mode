@@ -1413,7 +1413,8 @@ LOKI_VERIFIED=1 run_engine done
 RW3E="$RC $(rw3_vm) $(grep -c 'verified mode: ' <<< "$OUT")"
 E2E_VERB=start run_engine done --verified # through `loki start`, where autonomy/route.sh decides which flags reach the engine
 RW3S="$RC $(rw3_vm) $(grep -c 'verified mode: ' <<< "$OUT")"
-[ "$RW3V" = "0 VERIFIED block 3 1" ] && [ "$RW3P" = "0 VERIFIED none - 0" ] && [ "$RW3E" = "0 VERIFIED block 3 1" ] && [ "$RW3S" = "0 VERIFIED block 3 1" ] \
+# NO-DEFAULT-BUDGET: the --verified bounds have no default (closure.ts verifiedBounds), so the block records rounds as null (None), never Loki's old 3.
+[ "$RW3V" = "0 VERIFIED block None 1" ] && [ "$RW3P" = "0 VERIFIED none - 0" ] && [ "$RW3E" = "0 VERIFIED block None 1" ] && [ "$RW3S" = "0 VERIFIED block None 1" ] \
     && ok "rw-03: --verified and LOKI_VERIFIED=1 are said on the start line and recorded in the receipt; label and exit code are those of the plain run; a plain run carries nothing of it" \
     || bad "rw-03 verified flag: flag '$RW3V' plain '$RW3P' env '$RW3E' start '$RW3S'"
 unset -f rw3_vm

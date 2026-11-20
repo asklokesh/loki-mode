@@ -195,11 +195,12 @@ SDKF="$(python3 -I -c 'import json,sys,glob
 ev = glob.glob(sys.argv[1] + "/.loki/runs/*/events.jsonl")
 f = next((json.loads(l)["data"].get("finish") for l in open(ev[0]) if "\"stage.completed\"" in l and "\"implement\"" in l), None) if ev else None
 print("none" if f is None else "%s|%s|%s" % (f.get("continues"), f.get("ended"), f.get("compactions")))' "$REPO" 2>/dev/null)"
-# NO-DEFAULT-BUDGET (11.162.0): no continue count by default; the continues end on 2 rounds in a row without progress (here 3 continues).
-case "$SDKF" in "3|no progress|"[1-9]*) grep -Eq '^Outcome:[[:space:]]+PARTIAL' <<< "$OUT" \
-    && ok "S1b SDK path: a reply with no finish line is resumed until 2 rounds in a row make no progress (3 continues, no count cap), the record counts the SDK's compactions (${SDKF##*|}), and the run is PARTIAL" \
+# NO-DEFAULT-BUDGET: no continue count by default; the continues end on 2 rounds in a row without progress. Each continue reply here names only work the
+# first reply already named (the docs for multiply) and no count, so neither is progress (util/conflict_resume.ts continueMoved): 2 continues.
+case "$SDKF" in "2|no progress|"[1-9]*) grep -Eq '^Outcome:[[:space:]]+PARTIAL' <<< "$OUT" \
+    && ok "S1b SDK path: a reply with no finish line is resumed until 2 rounds in a row make no progress (2 continues, no count cap), the record counts the SDK's compactions (${SDKF##*|}), and the run is PARTIAL" \
     || bad "S1b SDK path: finish $SDKF but outcome $(printf '%s\n' "$OUT" | grep '^Outcome:')" ;;
-  *) bad "S1b SDK path: finish record '$SDKF' (want 3|no progress|<compactions>)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /' ;; esac
+  *) bad "S1b SDK path: finish record '$SDKF' (want 2|no progress|<compactions>)"; printf '%s\n' "$OUT" | tail -8 | sed 's/^/    | /' ;; esac
 fixture_repo key-full
 run_goal "$REPO" "$FULLPATH"; full_rc=$RC; full_out="$OUT"; full_repo="$REPO"
 bare_outcome="$(printf '%s\n' "$bare_out" | sed -n 's/^Outcome:[[:space:]]*//p' | head -1)"
