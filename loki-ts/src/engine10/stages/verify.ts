@@ -16,7 +16,7 @@ import { LINE_FALLBACK_COUNT, lineVerdict, UNMEASURED_REASON, failureLines, venv
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { defaultBudgetsOn, cmdSilenceS, type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { readReport, reportArgs, reportSource, structuredResultsMode } from "../../util/test_report.ts"; import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, linkWorkspaceMembers, envChangedSince, depsGoneSince, manifestBlocksBaseLink, zeroGate, zeroOnBase, type ZeroGate, guardEnv, harnessCmdBegin } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, changedForLines, baseRedIds, headRerunOn, passedOnRerun, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, holdsPartial, exogenousHeldLine, couldNotRun, couldNotRunIfProved, missingTool, unrunnableCheckOn, unrunnableSuites, exogenousRedOn, exogenousState, type ExogenousAttribution, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts"; import { lokiEnvNotes } from "../../util/check_result.ts"; import { lokiVenvNotes } from "../../project_model/install.ts";
+import { readReport, reportArgs, reportSource, structuredResultsMode } from "../../util/test_report.ts"; import { pruneQuarantine, readQuarantine, writeQuarantine } from "../../util/failure_memory.ts"; import { repoCacheDir, repoKey } from "../cache.ts"; import { ruleMode } from "../closure.ts"; import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, linkWorkspaceMembers, envChangedSince, depsGoneSince, manifestBlocksBaseLink, zeroGate, zeroOnBase, type ZeroGate, guardEnv, harnessCmdBegin } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, changedForLines, baseRedIds, headRerunOn, passedOnRerun, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, holdsPartial, exogenousHeldLine, couldNotRun, couldNotRunIfProved, missingTool, unrunnableCheckOn, unrunnableSuites, exogenousRedOn, exogenousState, type ExogenousAttribution, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts"; import { lokiEnvNotes } from "../../util/check_result.ts"; import { lokiVenvNotes } from "../../project_model/install.ts";
 export const timeoutCarryOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TIMEOUT_CARRY"] ?? "").trim());
 export const TIMEOUT_CARRY_NOTE = "carried from an earlier verify of this run, not rerun (untouched file)";
 /** TIMEOUT-WAIT: after a check's timeout (or abort) fires, a process still alive this long later is SIGKILLed, so a test that ignores SIGTERM costs its limit, not minutes more. */
@@ -772,6 +772,21 @@ export const unrunSuitesCarried = (prior: unknown, ran: readonly { name: string;
 export const BASE_NOT_MEASURED = "not measured on base (its dependency directories link into this checkout, a dependency manifest changed, or the environment changed since intake), so its failures cannot be compared";
 /** VERIFY-PLAN V3: the observed Wall's tests, run once at the end of a complete verify: each sealed copy is put at its path, run alone with the
  *  runner it was sealed with, classified like any test check, and removed. Never a VerifyCheck: nothing here reaches the label, fix rounds or cascade. */
+/** VERIFY-PLAN V8: the flaky checks a base run may quarantine: a test check (not the Wall, holdout or a task-named test) whose file the change did not edit. */
+export const flakyCandidates = <C extends { name: string; result: string }>(checks: readonly C[], o: { wall: ReadonlySet<string>; target: ReadonlySet<string>; changed: readonly string[]; testNames: ReadonlySet<string>; hold: (c: C) => boolean }): C[] =>
+  checks.filter((c) => c.result === "flaky" && !o.wall.has(c.name) && !o.hold(c) && !o.target.has(c.name) && !o.changed.includes(c.name.slice(c.name.indexOf(":") + 1)) && o.testNames.has(c.name));
+/** VERIFY-PLAN V8: a flaky candidate's command run up to three times on the base tree, classified like any test check. Stops before any run once the
+ *  deadline is inside SUITE_MARGIN_MS (the NO-ID block's guard); null when no run was made. */
+export async function flakyOnBase(run: () => Promise<{ ok: boolean; cut: boolean; missing: boolean; out: string }>, deadline: number | undefined, now: () => number = Date.now): Promise<{ pass: number; fail: number; not_run: number } | null> {
+  const r = { pass: 0, fail: 0, not_run: 0 }; let ran = 0;
+  for (let i = 0; i < 3; i++) {
+    if (deadline !== undefined && now() > deadline - SUITE_MARGIN_MS) break;
+    const a = await run(); ran++;
+    const k = classifyCheck({ kind: "test", ok: a.ok, cut: a.cut, missing: a.missing, out: a.out });
+    if (k.result === "pass") r.pass++; else if (k.result === "fail") r.fail++; else r.not_run++;
+  }
+  return ran ? r : null;
+}
 export async function runObservedWall(ctx: RunContext, signal: AbortSignal, api: ProjectApi | null): Promise<{ files: { path: string; result: "pass" | "fail" | "not_run"; n?: number; reason?: string }[] } | undefined> {
   const obs = (ctx.outputs().wall as { observe_files?: unknown } | undefined)?.observe_files, list = Array.isArray(obs) ? (obs as { path: string; runner?: string }[]) : [];
   if (!list.length) return undefined;
@@ -942,6 +957,29 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
       }
       for (const [line, names] of byLine) noIdNotes.push(`${NO_ID_BASE_REASON} (${line.slice(0, 160)}): ${names.length} check(s), first ${names[0]}`);
       for (const [line, names] of byLine) noIdGroups.push({ note: `${NO_ID_BASE_REASON} (${line.slice(0, 160)}): ${names.length} check(s), first ${names[0]}`, names });
+    }
+    // VERIFY-PLAN V8 (LOKI_E10_FLAKY_QUARANTINE, off by default): a flaky test the change did not touch is run three times on the base tree; one pass and one
+    // fail there quarantines it in this repository's list. The list is per-repo state, never the label (seal reads it only under the knob).
+    const flakyQ = ruleMode("LOKI_E10_FLAKY_QUARANTINE", "off"), quarantined: string[] = [], flakyBase: Record<string, { pass: number; fail: number; not_run: number }> = {};
+    if (flakyQ !== "off" && !signal.aborted) {
+      const qDir = repoCacheDir(repoKey(null, ctx.repoDir)), q = readQuarantine(qDir), added: Record<string, string> = {};
+      const cands = flakyCandidates(checks, { wall: wallNames0, target: targetNames, changed, testNames: new Set(tests.map(testCheckName)), hold: isHold });
+      let qdir: string | null | undefined;
+      for (const c of cands) {
+        if (q[c.name]) { quarantined.push(c.name); continue; } // already quarantined for this repo: never retried until green
+        if (signal.aborted) break;
+        if (qdir === undefined) qdir = bt.get(changed, zg0);
+        if (!qdir) break;
+        const d = qdir, sub = (x: string): string => x.split(ctx.repoDir).join(d), t = tests.find((x) => testCheckName(x) === c.name)!, tc = commandFor(t, ctx.repoDir, api);
+        const cwd = sub(tc.cwd); bt.link(cwd); if (cwd !== d) bt.link(d);
+        const cmd = sub(tc.cmd);
+        if (isAbsolute(cmd) && !existsSync(cmd)) continue; // a tool that lives in the checkout and is absent on base: not quarantined
+        const r = await flakyOnBase(() => runOnce(cmd, tc.args.map(sub), cwd, signal, {}), deadline);
+        if (!r) break; // the deadline guard: no base run past the stage's margin
+        flakyBase[c.name] = r;
+        if (r.pass >= 1 && r.fail >= 1) { quarantined.push(c.name); added[c.name] = `${r.pass} pass, ${r.fail} fail of 3 on the base commit`; }
+      }
+      try { writeQuarantine(qDir, pruneQuarantine(q, checks.filter((c) => c.result === "pass").map((c) => c.name), checks.filter((c) => c.result === "flaky").map((c) => c.name), added, ctx.runId)); } catch { /* best effort: per-repo state */ }
     }
     for (const c of checks) { // RW-01: collateralOnBaseline and attribute (below) read the owning package's suite record for a check its base rerun showed failing the same way, or gave nothing to compare: measured now
       if (c.result !== "fail" || preRed.names.includes(c.name) || targetNames.has(c.name) || changed.includes(c.name.slice(c.name.indexOf(":") + 1)) || (preRed.compared.includes(c.name) && !preRed.sameError.includes(c.name))) continue;
@@ -1116,6 +1154,7 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
       own_checks: [...new Set([...targetNames].map((n) => (isHoldoutCheck(n) ? "holdout" : n)))], // VERIFY-PLAN V2: the Wall and task-named test checks, whatever their result
       ...(noIdCompared.length ? { no_id_compared: noIdCompared } : {}), // VERIFY-PLAN V2
       ...(wallObs ? { wall_observe: wallObs } : {}), // VERIFY-PLAN V3: the observed Wall's results, never a check
+      ...(quarantined.length ? { flaky_quarantine: quarantined, flaky_base: flakyBase } : {}), // VERIFY-PLAN V8
     } };
   }
 }

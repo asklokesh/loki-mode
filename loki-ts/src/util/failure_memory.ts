@@ -1,6 +1,6 @@
-// Per-repo flaky-test list and failure-signature log, stored in the E-18 per-repo cache dir
+// Per-repo flaky quarantine (VERIFY-PLAN V8) and failure-signature log, stored in the E-18 per-repo cache dir
 // (engine10/cache.ts, ENGINE.md section 13). Moved out of engine10/cache.ts to keep the core under its
-// line cap; only e10ext/repomemory.ts consumes it. Reads never throw: missing or corrupt = empty.
+// line cap. Reads never throw: missing or corrupt = empty.
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -11,9 +11,6 @@ export interface FailureSignature {
   signature: string;
   count: number;
   sample: string;
-}
-function isStringArray(v: unknown): v is string[] {
-  return Array.isArray(v) && v.every((x) => typeof x === "string");
 }
 function isFailureSignature(v: unknown): v is FailureSignature {
   const r = v as Partial<FailureSignature> | null;
@@ -26,14 +23,32 @@ function isFailureSignature(v: unknown): v is FailureSignature {
     typeof r.sample === "string"
   );
 }
-/** Flaky test paths seen across past runs (deduped, sorted). */
-export function readFlaky(dir: string): string[] {
-  return readJson<string[]>(resolve(dir, "flaky.json"), isStringArray) ?? [];
+/** VERIFY-PLAN V8: the per-repo flaky quarantine (flaky-quarantine.json in the E-18 per-repo cache dir). A check is quarantined when it came back flaky
+ *  on the change and also flipped between pass and fail on the base commit; it leaves the list after QUARANTINE_CLEAN_RUNS verifies in a row where it
+ *  passed on its first try. Reads never throw: missing or corrupt is empty. */
+export interface QuarantineEntry { first_run: string; last_run: string; base: string; clean: number }
+export const QUARANTINE_CLEAN_RUNS = 3;
+const QUARANTINE_FILE = "flaky-quarantine.json";
+const isEntry = (v: unknown): v is QuarantineEntry => { const e = v as Partial<QuarantineEntry> | null; return typeof e === "object" && e !== null && typeof e.first_run === "string" && typeof e.last_run === "string" && typeof e.base === "string" && typeof e.clean === "number" && Number.isFinite(e.clean); };
+const isQuarantine = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+export function readQuarantine(dir: string): Record<string, QuarantineEntry> {
+  const raw = readJson<Record<string, unknown>>(resolve(dir, QUARANTINE_FILE), isQuarantine) ?? {};
+  return Object.fromEntries(Object.entries(raw).filter((kv): kv is [string, QuarantineEntry] => isEntry(kv[1])));
 }
-/** Unions `testPaths` into the existing flaky list and writes it back. */
-export function recordFlaky(dir: string, testPaths: readonly string[]): void {
-  const merged = new Set([...readFlaky(dir), ...testPaths]);
-  writeJson(resolve(dir, "flaky.json"), dir, [...merged].sort());
+export function writeQuarantine(dir: string, q: Record<string, QuarantineEntry>): void {
+  writeJson(resolve(dir, QUARANTINE_FILE), dir, q);
+}
+/** One verify's update: a listed name that passed on its first try counts one clean run (and leaves at QUARANTINE_CLEAN_RUNS); a listed name that came
+ *  back flaky resets to 0; each newly quarantined name is added with its base-run text. */
+export function pruneQuarantine(q: Record<string, QuarantineEntry>, ranPass: readonly string[], flakyNow: readonly string[], added: Record<string, string>, runId: string): Record<string, QuarantineEntry> {
+  const out: Record<string, QuarantineEntry> = {};
+  for (const [n, e] of Object.entries(q)) {
+    if (flakyNow.includes(n)) out[n] = { ...e, clean: 0, last_run: runId };
+    else if (ranPass.includes(n)) { if (e.clean + 1 < QUARANTINE_CLEAN_RUNS) out[n] = { ...e, clean: e.clean + 1 }; }
+    else out[n] = e;
+  }
+  for (const [n, base] of Object.entries(added)) out[n] = { first_run: runId, last_run: runId, base, clean: 0 };
+  return out;
 }
 function failuresPath(dir: string): string {
   return resolve(dir, "failures.jsonl");

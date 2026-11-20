@@ -1036,6 +1036,71 @@ has "V6 R6 to R9: a stalled state re-plans; a Wall-only, full-suite-only or spec
 has "V6 R5: a replan brief carries both summaries numbered and the class sentence, in place of the ESCALATED ROUND paragraph" "$RPU" "R5 true true true true"
 has "V6 R5: without stepBack the ESCALATED ROUND paragraph is today's text, and an ordinary brief has neither block" "$RPU" "R5b true true true"
 
+# VERIFY-PLAN V8 FLAKY QUARANTINE (LOKI_E10_FLAKY_QUARANTINE, off by default; observe keeps the per-repo list and reports, enforce applies it). A flaky test the
+# change did not touch is run three times on the base tree; one pass and one fail there quarantines it in ~/.loki/cache/v10/<repo key>/flaky-quarantine.json
+# (each engine cell below gets its own HOME). The fixture's flaky.test.ts flips on a counter in $T, on the base too; headonly.test.ts fails once, on its first
+# run with multiply() present (head), and always passes on base. Plants (each reverted): quarantine a check that flips only on head (Q4b quarantined); quarantine the change's own edited test file (Qc); drop the
+# deadline guard (Q5); keep the `not run:` line under enforce (Q3 enforce); observe applies to the label (Q3 observe reads VERIFIED); pruneQuarantine never
+# removes (Q2); default read as observe (Q3 off runs base commands).
+q_prep() { # q_prep <repo>: a flaky test the change never touches, committed in the base
+    local ctr="$T/q.ctr"; rm -f "$ctr"
+    printf 'import { expect, test } from "bun:test";\nimport { add } from "./calc";\nimport { existsSync, readFileSync, writeFileSync } from "node:fs";\nconst p = "%s", n = existsSync(p) ? Number(readFileSync(p, "utf8")) : 0;\nwriteFileSync(p, String(n + 1));\ntest("flaky", () => {\n  expect(add(1, 1)).toBe(2);\n  expect((n + 1) %% 2).toBe(0);\n});\n' "$ctr" > "$1/flaky.test.ts"
+    git -C "$1" add flaky.test.ts; git -C "$1" commit -q --amend -m base; rm -f "$ctr"
+}
+q_prep_head() { # q_prep_head <repo>: a test that flips only once multiply() exists (head), stable on base
+    local ctr="$T/q.ctr"; rm -f "$ctr"
+    printf 'import { expect, test } from "bun:test";\nimport * as calc from "./calc";\nimport { existsSync, writeFileSync } from "node:fs";\nconst p = "%s", first = "multiply" in calc && !existsSync(p);\nif (first) writeFileSync(p, "1");\ntest("head only", () => {\n  expect(calc.add(1, 1)).toBe(2);\n  expect(first).toBe(false);\n});\n' "$ctr.head" > "$1/headonly.test.ts"
+    git -C "$1" add headonly.test.ts; git -C "$1" commit -q --amend -m base; rm -f "$ctr" "$ctr.head"
+}
+q_facts() { python3 -I - "$RUNDIR/events.jsonl" "$RUNDIR/receipt.json" "$1" <<'PY'
+import json, sys, glob
+ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]
+vd = [e.get("data") or {} for e in ev if e.get("stage") == "verify" and e["type"] == "stage.completed"]
+v = vd[-1] if vd else {}
+try: rec = json.load(open(sys.argv[2]))
+except Exception: rec = {}
+np = rec.get("not_proven") or []
+lst = [json.load(open(p)) for p in glob.glob(sys.argv[3] + "/.loki/cache/v10/*/flaky-quarantine.json")]
+ent = [o["would_label"] for o in rec.get("observe") or [] if o.get("rule") == "LOKI_E10_FLAKY_QUARANTINE"]
+print(rec.get("verdict"), "q=" + ",".join(v.get("flaky_quarantine") or []), "base=" + ",".join("%s:%d/%d" % (k, b["pass"], b["fail"]) for k, b in (v.get("flaky_base") or {}).items()),
+      "list=" + ",".join(sorted(k for d in lst for k in d)), "entry=" + (ent[0] if ent else "none"),
+      "notrun" if any(n.startswith("not run: ") and "flaky.test.ts" in n for n in np) else "no-notrun",
+      "disclosed" if any(n.startswith("quarantined flaky test: bun:flaky.test.ts") and n.endswith("(disclosed, does not cap)") for n in np) else "undisclosed")
+PY
+}
+q_run() { local h="$T/qhome-$1"; shift; rm -rf "$h"; mkdir -p "$h"; HOME="$h" LOKI_E10_LOW_TIER_FULL_SUITE=0 run_engine done "$@"; }
+E2E_PREP=q_prep LOKI_E10_FLAKY_QUARANTINE=observe q_run obs; qo="$(q_facts "$T/qhome-obs")"; qo_n="$(cat "$T/q.ctr")"
+[ "$qo" = "PARTIAL q=bun:flaky.test.ts base=bun:flaky.test.ts:1/2 list=bun:flaky.test.ts entry=VERIFIED notrun undisclosed" ] && ok "V8 Q4/Q3 observe: an untouched test that flips on head and on base is quarantined in the per-repo list; the label stays PARTIAL and the receipt says it would be VERIFIED ($qo)" || bad "V8 Q4/Q3 observe gave: $qo"
+E2E_PREP=q_prep LOKI_E10_FLAKY_QUARANTINE=enforce q_run enf; qe="$(q_facts "$T/qhome-enf")"
+[ "$qe" = "VERIFIED q=bun:flaky.test.ts base=bun:flaky.test.ts:1/2 list=bun:flaky.test.ts entry=none no-notrun disclosed" ] && ok "V8 Q3 enforce: the quarantined test is left out of the label (VERIFIED), disclosed, and has no 'not run:' open item ($qe)" || bad "V8 Q3 enforce gave: $qe"
+E2E_PREP=q_prep q_run off; qf="$(q_facts "$T/qhome-off")"; qf_n="$(cat "$T/q.ctr")"
+[ "$qf" = "PARTIAL q= base= list= entry=none notrun undisclosed" ] && [ "$((qo_n - qf_n))" = 3 ] && ok "V8 Q3/Q4 off (default): PARTIAL as today, no list, no entry, and no base run (the counter shows 3 fewer runs than observe: $qo_n vs $qf_n)" || bad "V8 Q3/Q4 off gave: $qf (counter observe $qo_n, off $qf_n)"
+E2E_PREP=q_prep_head LOKI_E10_FLAKY_QUARANTINE=observe q_run head; qh="$(q_facts "$T/qhome-head") $(python3 -I -c 'import json, sys; ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]; v = [e["data"] for e in ev if e.get("stage") == "verify" and e["type"] == "stage.completed"][-1]; print("flaky=" + ",".join(c["name"] for c in v["checks"] if c["result"] == "flaky"))' "$RUNDIR/events.jsonl")"
+case "$qh" in "PARTIAL q= base= list= "*" flaky=bun:headonly.test.ts") ok "V8 Q4b: a test that flips only on the change passes three times on base and is never quarantined (a real regression is not hidden) ($qh)" ;; *) bad "V8 Q4b gave: $qh" ;; esac
+QU="$(cd "$ROOT/loki-ts" && bun -e '
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs"; import { join } from "node:path"; import { tmpdir } from "node:os";
+import { pruneQuarantine, readQuarantine, writeQuarantine, QUARANTINE_CLEAN_RUNS } from "./src/util/failure_memory.ts"; import { flakyCandidates, flakyOnBase } from "./src/engine10/stages/verify.ts";
+const d = mkdtempSync(join(tmpdir(), "q1-")), e = { first_run: "r1", last_run: "r1", base: "1 pass, 2 fail of 3 on the base commit", clean: 0 };
+writeQuarantine(d, { "bun:a.test.ts": e }); const back = readQuarantine(d);
+writeFileSync(join(d, "flaky-quarantine.json"), "{not json"); const bad = readQuarantine(d);
+writeFileSync(join(d, "flaky-quarantine.json"), JSON.stringify({ "bun:a.test.ts": e, "bun:b.test.ts": { first_run: "r1", base: "x", clean: 0 } })); const part = readQuarantine(d);
+console.log("Q1", JSON.stringify(back) === JSON.stringify({ "bun:a.test.ts": e }), JSON.stringify(bad), Object.keys(part).join(","));
+let q = { "bun:a.test.ts": e } as Record<string, typeof e>;
+for (let i = 0; i < QUARANTINE_CLEAN_RUNS; i++) q = pruneQuarantine(q, ["bun:a.test.ts"], [], {}, "r" + (i + 2));
+const r = pruneQuarantine({ "bun:a.test.ts": { ...e, clean: 2 } }, [], ["bun:a.test.ts"], {}, "r9"), n = pruneQuarantine({}, [], [], { "bun:n.test.ts": "2 pass, 1 fail of 3 on the base commit" }, "r5");
+console.log("Q2", JSON.stringify(q), r["bun:a.test.ts"]!.clean, r["bun:a.test.ts"]!.last_run, JSON.stringify(n["bun:n.test.ts"]));
+const c = (name: string) => ({ name, result: "flaky" }), opts = { wall: new Set(["bun:loki_wall_x.test.ts"]), target: new Set(["bun:task.test.ts"]), changed: ["edited.test.ts"], testNames: new Set(["bun:untouched.test.ts", "bun:edited.test.ts", "bun:task.test.ts", "bun:loki_wall_x.test.ts", "bun:held.test.ts"]), hold: (x: { name: string }) => x.name === "bun:held.test.ts" };
+console.log("Qc", flakyCandidates([c("bun:untouched.test.ts"), c("bun:edited.test.ts"), c("bun:task.test.ts"), c("bun:loki_wall_x.test.ts"), c("bun:held.test.ts"), c("full suite: bun test"), { name: "bun:untouched.test.ts", result: "fail" }], opts).map((x) => x.name).join(","), "end");
+let ran = 0; const now = 1_000_000, run = async () => { ran++; return { ok: true, cut: false, missing: false, out: "1 pass\n0 fail\nRan 1 tests across 1 files." }; };
+const near = await flakyOnBase(run, now + 1000, () => now), ranNear = ran, far = await flakyOnBase(run, now + 60_000, () => now);
+console.log("Q5", near, ranNear, JSON.stringify(far));
+rmSync(d, { recursive: true, force: true });
+' 2>&1)"
+has "V8 Q1: the quarantine list round-trips; corrupt JSON reads empty; an entry missing a field is dropped" "$QU" "Q1 true {} bun:a.test.ts"
+has "V8 Q2: three clean first-try passes remove an entry; a flaky run resets clean; a new name is added with its base text" "$QU" 'Q2 {} 0 r9 {"first_run":"r5","last_run":"r5","base":"2 pass, 1 fail of 3 on the base commit","clean":0}'
+has "V8 Qc: only an untouched test check is a candidate (never the change's edited file, a task-named test, the Wall, holdout or a full suite)" "$QU" "Qc bun:untouched.test.ts end"
+has "V8 Q5: with the deadline inside the suite margin no base run is made and nothing can be quarantined; with time left it runs three times" "$QU" 'Q5 null 0 {"pass":3,"fail":0,"not_run":0}'
+
 att_ev() { python3 -I -c '
 import json, sys
 for l in open(sys.argv[1]):

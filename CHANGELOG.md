@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - With `LOKI_E10_REPLAN=1`, when the fix rounds stop making progress Loki runs one more round in a fresh session that is shown the earlier rounds' own summaries, told to take a different approach, and asked to fix the whole class of each failure. If that round makes progress the run is labeled from its result instead of ending stalled. It never runs after a spec conflict, a Wall-only or full-suite-only stop, or a limit. Off by default until a scored run measures it; `LOKI_E10_REPLAN_MAX` sets how many such rounds a run gets (default 1, 0 for none).
 
+### A test that flips on the original code too can be quarantined
+
+- With `LOKI_E10_FLAKY_QUARANTINE=observe`, when a test the change did not touch fails and then passes, Loki runs it three times on the base commit. If it flips there too it is put on this repository's quarantine list (kept in Loki's per-repo cache, never by editing the test) and taken off after three verifies in a row where it passed on the first try; the receipt shows what the label would have been. `enforce` leaves a quarantined test out of the label and discloses it. Off by default.
+
 ## v11.172.0 (2026-11-20)
 
 ### A low-risk run checks the full test suite before it can say VERIFIED
