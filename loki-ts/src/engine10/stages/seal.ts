@@ -590,6 +590,9 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
       ...(typeof o.verify?.checklist_problem === "string" ? [`checklist not read: ${o.verify.checklist_problem} (disclosed, does not cap)`] : []),
       ...(clMode !== "off" && strs(o.verify?.changed_files).includes(".loki-checklist.json") ? ["checklist file changed by this change; the base commit's version was used (disclosed, does not cap)"] : [])];
     if (clMode === "observe" && clFail.length && verdict0a !== "FAILED") observed.push({ rule: "LOKI_E10_CHECKLIST", would_label: "FAILED", detail: clFail.map((r) => `${r.id}: ${r.detail}`).join("; ") });
+    // VERIFY-PLAN V4 (LOKI_E10_E2E_BOOT): the boot comparison's observe entry and disclosure; enforce already added a failing "app boot" check in verify
+    const e2e = ((o.verify?.end_to_end ?? {}) as { outcome?: { observe?: ObservedRule | null; disclosure?: string | null } }).outcome;
+    if (e2e?.observe) observed.push(e2e.observe);
     // VERIFY-PLAN V3 (LOKI_E10_WALL=observe): what the observed Wall would have done to the label; an observe entry and a disclosure only
     const wObs = (o.verify?.wall_observe as { files?: { path: string; result: string }[] } | undefined)?.files ?? [];
     let wallObsLine: string | null = null;
@@ -662,6 +665,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     if (typeof o.verify?.baseline_line === "string" && strs(o.verify?.pre_red).length) notProven.add(o.verify.baseline_line); // REPOMEM: the one-line pre-existing vs introduced split; listed only when a baseline failure was excused, never downgrades
     if (wallObsLine) notProven.add(`${wallObsLine} (disclosed, does not cap)`); // VERIFY-PLAN V3
     for (const n of checklistNotes) notProven.add(n); // VERIFY-PLAN V10
+    if (e2e?.disclosure) notProven.add(e2e.disclosure); // VERIFY-PLAN V4
     for (const n of lintOpenNotes) notProven.add(n); // LINT-OWN
     for (const n of strs(o.verify?.lint_untouched)) notProven.add(`lint red only in files the change did not touch (disclosed, not blocking): ${n}`); // LINT-UNTOUCHED: never silent
     for (const n of strs(o.verify?.not_excused)) notProven.add(n); // why a failing full-suite check was not excused as pre-existing; the check already blocks, this only names the rule

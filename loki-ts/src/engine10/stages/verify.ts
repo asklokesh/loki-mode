@@ -772,6 +772,20 @@ export const unrunSuitesCarried = (prior: unknown, ran: readonly { name: string;
 export const BASE_NOT_MEASURED = "not measured on base (its dependency directories link into this checkout, a dependency manifest changed, or the environment changed since intake), so its failures cannot be compared";
 /** VERIFY-PLAN V3: the observed Wall's tests, run once at the end of a complete verify: each sealed copy is put at its path, run alone with the
  *  runner it was sealed with, classified like any test check, and removed. Never a VerifyCheck: nothing here reaches the label, fix rounds or cascade. */
+/** VERIFY-PLAN V4: what one boot comparison means. boot/http are the appProbe check results ("pass" | "fail" | "not_run" | "n/a"). */
+export interface BootSummary { boot: string; http: string; reason: string | null }
+export interface BootOutcome { hold: boolean; check: { name: "app boot"; cmd: string; result: "fail"; duration_s: number; reason: string } | null; observe: { rule: "LOKI_E10_E2E_BOOT"; would_label: "FAILED"; detail: string } | null; disclosure: string | null }
+export function bootOutcome(head: BootSummary | null, base: BootSummary | null, mode: "off" | "observe" | "enforce", duration_s = 0): BootOutcome {
+  if (mode === "off") return { hold: false, check: null, observe: null, disclosure: null };
+  const hold = head?.boot === "fail" && base?.boot === "pass";
+  const check = hold && mode === "enforce" ? { name: "app boot" as const, cmd: "autonomy/app-runner.sh", result: "fail" as const, duration_s, reason: "the app boots on the base commit and does not boot with the change" } : null;
+  const observe = hold && mode === "observe" ? { rule: "LOKI_E10_E2E_BOOT" as const, would_label: "FAILED" as const, detail: "the app boots on the base commit and not with the change" } : null;
+  const disclosure = !head || head.boot === "n/a" || head.boot === "not_run" ? `not run end to end: ${head?.reason ?? "no app was detected"} (disclosed, does not cap)`
+    : head.boot === "pass" && base?.boot === "pass" && (head.http === "pass" || head.http === "n/a") && (base.http === "pass" || base.http === "n/a") ? "ran end to end: the app booted and answered (head and base) (disclosed, does not cap)"
+    : `ran end to end: head boot ${head.boot}, base boot ${base?.boot ?? "not run"} (disclosed, does not cap)`;
+  return { hold, check, observe, disclosure };
+}
+const bootSummary = (r: { checks: { name: string; result: string; reason?: string }[] }): BootSummary => { const b = r.checks.find((c) => c.name === "app boot"), h = r.checks.find((c) => c.name === "http probe"); return { boot: b?.result ?? "not_run", http: h?.result ?? "not_run", reason: b && b.result !== "pass" ? (b.reason ?? null) : null }; };
 /** VERIFY-PLAN V8: the flaky checks a base run may quarantine: a test check (not the Wall, holdout or a task-named test) whose file the change did not edit. */
 export const flakyCandidates = <C extends { name: string; result: string }>(checks: readonly C[], o: { wall: ReadonlySet<string>; target: ReadonlySet<string>; changed: readonly string[]; testNames: ReadonlySet<string>; hold: (c: C) => boolean }): C[] =>
   checks.filter((c) => c.result === "flaky" && !o.wall.has(c.name) && !o.hold(c) && !o.target.has(c.name) && !o.changed.includes(c.name.slice(c.name.indexOf(":") + 1)) && o.testNames.has(c.name));
@@ -1036,6 +1050,18 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
         runBase: async (cmd) => { if (signal.aborted || (deadline !== undefined && Date.now() > deadline - SUITE_MARGIN_MS)) return null; const dir = bt.get(changed, zg0); if (!dir) return null; bt.link(dir); return runOnce("bash", ["-c", cmd], dir, signal, {}); } });
       if (checklistMode() === "enforce") for (const r of cl.filter((x) => x.result === "fail")) { const k: VerifyCheck = { name: "checklist", cmd: ".loki-checklist.json", result: "fail", duration_s: 0, reason: `${r.id}: ${r.detail}` }; checks.push(k); }
     }
+    // VERIFY-PLAN V4 (LOKI_E10_E2E_BOOT, off by default): boot the app on the change and on the base tree before the seal (the post-seal app runner, deep.ts runAppBoot).
+    let endToEnd: { head: BootSummary; base: BootSummary | null; outcome: BootOutcome } | undefined;
+    { const bootMode = ruleMode("LOKI_E10_E2E_BOOT", "off");
+      if (bootMode !== "off" && complete && !signal.aborted) {
+        const t0 = Date.now(), { appProbe } = await import("../../util/app_probe.ts");
+        const head = bootSummary(await appProbe(ctx.repoDir, join(ctx.repoDir, ".loki")));
+        const bdir = deadline !== undefined && Date.now() > deadline - SUITE_MARGIN_MS ? null : bt.get(changed, zg0); if (bdir) bt.link(bdir);
+        const base = bdir && !signal.aborted ? bootSummary(await appProbe(bdir, join(bdir, ".loki"))) : null;
+        const outcome = bootOutcome(head, base, bootMode, (Date.now() - t0) / 1000);
+        endToEnd = { head, base, outcome };
+        if (outcome.check) checks.push({ ...outcome.check });
+      } }
     const notExcused: string[] = []; const fullSeen: DeepCheck[] = []; const fullNotProven = new Set<string>(); // no-runner entries are dropped at not_proven: nothing ran, and the risk record keeps the full test command deferred
     const fullErr = new Map<string, Record<string, string[]>>(); // fl24: each full suite's head error lines, for baseRedById below
     const ranDeeper: string[] = []; // selected deeper checks verify executed (pass or fail); markExecuted rebuilds the deferred list from all of them
@@ -1171,6 +1197,7 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
       ...(wallObs ? { wall_observe: wallObs } : {}), // VERIFY-PLAN V3: the observed Wall's results, never a check
       ...(quarantined.length ? { flaky_quarantine: quarantined, flaky_base: flakyBase } : {}), // VERIFY-PLAN V8
       ...(cl.length || clProblem ? { checklist: cl, ...(clProblem ? { checklist_problem: clProblem } : {}) } : {}), // VERIFY-PLAN V10
+      ...(endToEnd ? { end_to_end: endToEnd } : {}), // VERIFY-PLAN V4
     } };
   }
 }

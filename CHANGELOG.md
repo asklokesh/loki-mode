@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A tracked `.loki-checklist.json` at the repository root lists checks that run only when a change matches their trigger (a path pattern, optionally an added-line pattern), each with the run that taught it. Loki reads the file from the base commit only, never from the change. In this release a failing item is reported on the receipt and does not change the label. Items that forbid an added line are checked by default; items that run a command run only with `LOKI_E10_CHECKLIST` set, and a command that also fails on the base commit is not counted against the change. `LOKI_E10_CHECKLIST=enforce` makes a failing item a failing check.
 
+### Loki can boot the change before it labels it
+
+- With `LOKI_E10_E2E_BOOT=observe`, a complete verify boots the app on the change and on the original code with the same app runner the post-PR check uses, and the receipt says whether it booted and answered on each, or why it could not run end to end. `enforce` makes an app that boots on the original code and not on the change a failing check. Off by default; driving the issue's own steps against the running app stays with the prove stage.
+
 ## v11.172.0 (2026-11-20)
 
 ### A low-risk run checks the full test suite before it can say VERIFIED

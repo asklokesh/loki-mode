@@ -4898,4 +4898,31 @@ console.log("W5", n(() => ({ wall: { observe: true } }), false), n(() => ({ wall
 ' "$W5D" 2>&1)"
 has "V3 W5: staleAtSeal: an observed Wall stales nothing, an enforce Wall record does, and wallSealed still does" "$W5" "W5 0 1 1"
 
+# ---------------------------------------------------------------- VERIFY-PLAN V4 E2E-BOOT (LOKI_E10_E2E_BOOT, off by default): verify boots the app on the change and on the base tree
+# before the seal with the post-seal app runner. E1 to E5 are pure cells on bootOutcome; E6 reads seal.ts: the outcome's observe entry goes only to the observe
+# list and its disclosure only to NOT PROVEN, never a label input. Plants (each reverted): compare head only (E5 holds); enforce without the base-pass test
+# (E5 check set); observe sets the check (E2 check set); seal pushes the disclosure into the label path (E6).
+EB="$(cd "$ROOT/loki-ts" && bun -e '
+import { bootOutcome } from "./src/engine10/stages/verify.ts";
+const s = (boot: string, http = "pass", reason: string | null = null) => ({ boot, http, reason });
+const f = (o: ReturnType<typeof bootOutcome>) => [o.hold, o.check ? o.check.name : "nocheck", o.observe ? o.observe.would_label : "noentry", o.disclosure ?? "nodisc"].join("|");
+console.log("E1", f(bootOutcome(s("fail"), s("pass"), "off")));
+console.log("E2", f(bootOutcome(s("fail"), s("pass"), "observe")));
+console.log("E3", f(bootOutcome(s("fail"), s("pass"), "enforce")));
+console.log("E4", f(bootOutcome(s("n/a", "n/a", "no app detected"), null, "enforce")));
+console.log("E5", f(bootOutcome(s("pass"), s("fail"), "enforce")), "/", f(bootOutcome(s("pass"), s("pass"), "observe")));
+' 2>&1)"
+has "V4 E1: mode off gives nothing" "$EB" "E1 false|nocheck|noentry|nodisc"
+has "V4 E2: observe, the app boots on base and not with the change: an observe entry FAILED and no check" "$EB" "E2 true|nocheck|FAILED|ran end to end: head boot fail, base boot pass (disclosed, does not cap)"
+has "V4 E3: enforce, the same: a failing app boot check and no entry" "$EB" "E3 true|app boot|noentry|ran end to end: head boot fail, base boot pass (disclosed, does not cap)"
+has "V4 E4: no app: the not run end to end disclosure, no entry, no check" "$EB" "E4 false|nocheck|noentry|not run end to end: no app detected (disclosed, does not cap)"
+has "V4 E5: a change that fixed the boot holds nothing; both booting reads ran end to end" "$EB" "E5 false|nocheck|noentry|ran end to end: head boot pass, base boot fail (disclosed, does not cap) / false|nocheck|noentry|ran end to end: the app booted and answered (head and base) (disclosed, does not cap)"
+python3 -I - "$ROOT/loki-ts/src/engine10/stages/seal.ts" <<'PY' && ok "V4 E6: seal puts the boot outcome's observe entry only in the observe list and its disclosure only in NOT PROVEN (never a label input)" || bad "V4 E6: seal reads the boot outcome beyond its observe entry and disclosure"
+import re, sys
+s = re.sub(r"//[^\n]*", "", open(sys.argv[1]).read())
+uses = re.findall(r"\be2e\b[^;\n]{0,40}", s)
+want = ["e2e = ((o.verify?.end_to_end ?? {}) as { ou", "e2e?.observe) observed.push(e2e.observe)", "e2e?.disclosure) notProven.add(e2e.disclosu"]
+sys.exit(0 if sorted(uses) == sorted(want) else 1)
+PY
+
 finish
