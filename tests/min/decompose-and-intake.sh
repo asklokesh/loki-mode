@@ -1128,13 +1128,14 @@ printf '%s\n' "$OUT" | grep -E '^(backlog: #25 [A-Z]|#25 |Total:)' | sed 's/^/  
 
 # --- PR mode, one slice stops on its own SPEC_CONFLICT while the others open PRs: the split is PARTIAL (exit 6), not FAILED ---------
 # LOKI_SPLIT_ONE_PR=0: the per-slice PR path stays covered end to end (the one-PR default is the pr mode leg above).
+# LOKI_E10_MEASURED_LABELS=0: the stub slice's conflict claim is unmeasured, so it would seal PARTIAL; this leg is about the split outcome of a SPEC_CONFLICT slice.
 C2="$T/conflict-split"
 make_repo "$C2" 0
 git init -q --bare "$T/conflict-origin.git"
 git -C "$C2" remote add origin "$T/conflict-origin.git"
 git -C "$C2" push -q origin main
 SPLIT3='{"slices":[{"id":"s1","title":"search backend","acceptance":["full-text search returns ranked rows"],"depends_on":[],"files":["calc.ts"]},{"id":"s2","title":"search index","acceptance":["the index is rebuilt nightly"],"depends_on":[],"files":["calc.ts"]},{"id":"s3","title":"search UI","acceptance":["the search box shows ranked results"],"depends_on":[],"files":["calc.ts"]}]}'
-LOKI_ISSUE_WHOLE_FIRST=0 LOKI_SPLIT_ONE_PR=0 E2E_STUB_MODE=slice E2E_STUB_CONFLICT_SLICE=s2 E2E_STUB_SPLIT="$SPLIT3" LOKI_EPIC_PARALLEL=1 LOKI_E10_OPUS_CONSULT=0 run_loki "$C2" "$T/conflict-stub.log" start acme/search#25 --max-cost 5
+LOKI_ISSUE_WHOLE_FIRST=0 LOKI_SPLIT_ONE_PR=0 E2E_STUB_MODE=slice E2E_STUB_CONFLICT_SLICE=s2 E2E_STUB_SPLIT="$SPLIT3" LOKI_EPIC_PARALLEL=1 LOKI_E10_OPUS_CONSULT=0 LOKI_E10_MEASURED_LABELS=0 run_loki "$C2" "$T/conflict-stub.log" start acme/search#25 --max-cost 5
 printf '%s\n' "$OUT" | grep -E '^(#25 s[123] (PARTIAL|VERIFIED|SPEC_CONFLICT)|Outcome:|Reason:|PR:)' | sed 's/^/    conflict e2e: /'
 [ "$RC" -eq 6 ] && grep -Eq '^Outcome: +PARTIAL$' <<< "$OUT" && grep -Eq '^Reason: +slice s2: SPEC_CONFLICT .*\(2 of 3 slices opened a PR' <<< "$OUT" \
     && [ "$(printf '%s\n' "$OUT" | grep -cE '^PR: +local:///.+#loki/')" = 2 ] \
