@@ -10,7 +10,7 @@
 // guardTree is the only destructive call: it restores a tracked file (literal pathspec) only when the file was clean before the
 // install and the install changed it, and counts it restored only if a re-snapshot shows it clean. A file that was already dirty
 // (the agent's work) is never touched, only listed. If a snapshot fails the guard did not run and NOT PROVEN says so.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { safeGit } from "../util/safe_git.ts";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
@@ -255,7 +255,7 @@ export const UNDECLARED_INSTALL = "install not run by Loki:";
  *  Loki's run, since a system Python may refuse it (PEP 668) and Loki no longer makes a .venv in the checkout. */
 export function undeclaredNote(cwd: string, cmd: string, noVenv = false): string {
   const req = ["requirements.txt", "requirements-dev.txt", "dev-requirements.txt"].filter((f) => existsSync(join(cwd, f)));
-  const pip = /^\s*(?:python3?(?:\.\d+)?\s+-m\s+pip3?|pip3?)\s+install\b(.*)$/.exec(cmd);
+  const pip = /^\s*(?:python3?(?:\.\d+)?\s+-m\s+pip[\d.]*|pip[\d.]*)\s+install\b(.*)$/.exec(cmd);
   const run = pip ? `python3 -m venv .venv && .venv/bin/python -m pip install${pip[1]}` : cmd.trim();
   return `${UNDECLARED_INSTALL} ${noVenv ? "the repository names this pip install, but it has no lockfile and the checkout has no .venv for it to land in, so it would change the machine's own Python" : "the repository declares no install command for this package (no committed lockfile, tracked install script, cited file, guide or CI file names it), so Loki did not invent one"}${req.length ? `; ${req.join(", ")} present; Loki did not install it (not declared or locked)` : ""}; to install the dependencies yourself, run: ${run}`;
 }
@@ -268,13 +268,21 @@ function ciTexts(repoDir: string): string[] {
   return out;
 }
 /** A pip install (`pip`, `pip3`, `python3 -m pip`). */
-const PIP_INSTALL = /^\s*(?:python3?(?:\.\d+)?\s+-m\s+pip3?|pip3?)\s+install\b/;
+const PIP_INSTALL = /^\s*(?:python3?(?:\.\d+)?\s+-m\s+pip[\d.]*|pip[\d.]*)\s+install\b(.*)$/; // pip, pip3, pip3.11, python3 -m pip (review: pip3.11 slipped past)
+/** The unlocked pip install as `<venv>/bin/python -m pip install <args>`, run only when that interpreter can run pip (review: a `uv venv` has no pip, and a bare `pip`
+ *  would then resolve to the machine's). null: no runnable pip there, so the install is skipped. */
+export function pipInVenv(cmd: string, venv: string): string | null {
+  const m = PIP_INSTALL.exec(cmd); if (!m) return null;
+  const py = join(venv, "bin", "python");
+  try { if (spawnSync(py, ["-m", "pip", "--version"], { stdio: "ignore", timeout: 30000 }).status !== 0) return null; } catch { return null; }
+  return `${py} -m pip install${m[1]}`;
+}
 /** true: run as is. A string: a declared but unlocked pip install, which runs only inside that checkout virtualenv (lead ruling 2026-11-20, one rule for every
  *  source, README, cited file or CI: a Python install lands in the repo or does not run; a locked tool command is already `locked`). "pip-no-venv": declared,
  *  but the checkout has no .venv, so it is skipped with its note. false: not declared. */
 export function installDeclared(repoDir: string, mc: { cmd: string; cwd: string; cite?: readonly string[] }, li: LockedInstall): boolean | string {
   if (li.locked) return true;
-  const norm = (x: string): string => x.replace(/\s+/g, " ").trim().replace(/\bpython3?(?:\.\d+)? -m pip3?\b/g, "pip").replace(/\bpip3\b/g, "pip"), want = norm(mc.cmd);
+  const norm = (x: string): string => x.replace(/\s+/g, " ").trim().replace(/\bpython3?(?:\.\d+)? -m pip[\d.]*(?=\s|$)/g, "pip").replace(/\bpip[\d.]+(?=\s|$)/g, "pip"), want = norm(mc.cmd);
   if (!want) return false;
   // a JS manifest is the repo's own declaration of its dependencies (lead ruling 2026-11-20): a fresh clone (no node_modules) gets the package manager's install once, at intake, before any baseline
   if (/^(?:npm|pnpm|yarn)(?: install)?$/.test(want) && existsSync(join(repoDir, mc.cwd, "package.json")) && !existsSync(join(repoDir, mc.cwd, "node_modules"))) return true;
@@ -285,7 +293,8 @@ export function installDeclared(repoDir: string, mc: { cmd: string; cwd: string;
     || ciTexts(repoDir).some((t) => norm(t).includes(want)); // a CI workflow
   if (!named) return false;
   if (!PIP_INSTALL.test(mc.cmd)) return true;
-  return [join(repoDir, mc.cwd, ".venv"), join(repoDir, ".venv")].find((v) => existsSync(join(v, "bin", "python")) && !lstatSync(v).isSymbolicLink()) ?? "pip-no-venv";
+  const venv = [join(repoDir, mc.cwd, ".venv"), join(repoDir, ".venv")].find((v) => existsSync(join(v, "bin", "python")) && !lstatSync(v).isSymbolicLink());
+  return venv && pipInVenv(mc.cmd, venv) ? venv : "pip-no-venv";
 }
 
 /** One short honest line from the install output (L3): the last non-empty line, whitespace collapsed. */
@@ -329,7 +338,8 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
     }
     const before = snapshot(input.repoDir, env);
     const t0 = Date.now();
-    const runEnv = typeof decl === "string" ? { ...env, VIRTUAL_ENV: decl, PATH: `${join(decl, "bin")}:${env["PATH"] ?? ""}` } : env; // an unlocked pip install: into the checkout's own .venv
+    if (typeof decl === "string") li = { ...li, cmd: pipInVenv(mc.cmd, decl)! }; // an unlocked pip install: through the checkout venv's own python -m pip, never a PATH lookup
+    const runEnv = typeof decl === "string" ? { ...env, VIRTUAL_ENV: decl, PATH: `${join(decl, "bin")}:${env["PATH"] ?? ""}` } : env;
     let r = await runDetached(li.cmd, cwd, runEnv, input.signal, budget);
     const uvNeed = r.code !== 0 && !r.cut && uvRequiredOn() ? UV_REQUIRED.exec(r.tail) : null, uvCmd = uvNeed ? uvRequiredCmd(li.cmd, uvNeed[1]!) : null; // UVR: the repo's own required uv version, not the host's
     if (uvCmd) { // a workspace member's sync runs at the workspace root, as the repo's CI does: a member-only sync of the shared .venv would drop the root's own test dependencies
