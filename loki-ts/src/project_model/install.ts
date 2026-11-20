@@ -48,6 +48,7 @@ export interface PrepareInput {
   timeoutMs: number; // the cap left; the install gets min(300s, this)
   env?: Record<string, string | undefined> | undefined;
   opts: { runId: string };
+  intake?: boolean; // G2 INTAKE-VENV: only intakeDeps sets it; a .venv is never created outside intake (never during verify)
 }
 export interface PrepareResult {
   checks: InstallCheck[];
@@ -56,6 +57,7 @@ export interface PrepareResult {
   unrestored: string[]; // tracked files the install changed that were already dirty before (left alone)
   untracked: string[]; // new untracked files outside ignored-style dirs
   skipped: "opt-out" | null;
+  lokiVenv: string[]; // G2 INTAKE-VENV: the repo-relative .venv dirs Loki created at intake (shown on the receipt; intake's baseline, recorded after them)
 }
 const TAIL_BYTES = 65_536;
 const STATUS_MAX_BUFFER = 64 * 1024 * 1024;
@@ -257,7 +259,7 @@ export function undeclaredNote(cwd: string, cmd: string, noVenv = false): string
   const req = ["requirements.txt", "requirements-dev.txt", "dev-requirements.txt"].filter((f) => existsSync(join(cwd, f)));
   const pip = /^\s*(?:python3?(?:\.\d+)?\s+-m\s+pip[\d.]*|pip[\d.]*)\s+install\b(.*)$/.exec(cmd);
   const run = pip ? `python3 -m venv .venv && .venv/bin/python -m pip install${pip[1]}` : cmd.trim();
-  return `${UNDECLARED_INSTALL} ${noVenv ? "the repository names this pip install, but it has no lockfile and the checkout has no .venv for it to land in, so it would change the machine's own Python" : "the repository declares no install command for this package (no committed lockfile, tracked install script, cited file, guide or CI file names it), so Loki did not invent one"}${req.length ? `; ${req.join(", ")} present; Loki did not install it (not declared or locked)` : ""}; to install the dependencies yourself, run: ${run}`;
+  return `${UNDECLARED_INSTALL} ${noVenv ? "Loki could not make a .venv with pip in the checkout for this Python install (python3 -m venv failed or gave no pip), and it never installs into the machine's own Python" : "the repository declares no install command for this package (no committed lockfile, tracked install script, cited file, guide or CI file names it), so Loki did not invent one"}${req.length ? `; ${req.join(", ")} present; Loki did not install it (not declared or locked)` : ""}; to install the dependencies yourself, run: ${run}`;
 }
 export const declaredInstallsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DECLARED_INSTALLS"] ?? "").trim());
 const CI_FILES = [".gitlab-ci.yml", ".circleci/config.yml", "azure-pipelines.yml", ".travis.yml", "bitbucket-pipelines.yml"];
@@ -277,10 +279,8 @@ export function pipInVenv(cmd: string, venv: string): string | null {
   try { if (spawnSync(py, ["-m", "pip", "--version"], { stdio: "ignore", timeout: 30000 }).status !== 0) return null; } catch { return null; }
   return `${py} -m pip install${m[1]}`;
 }
-/** true: run as is. A string: a declared but unlocked pip install, which runs only inside that checkout virtualenv (lead ruling 2026-11-20, one rule for every
- *  source, README, cited file or CI: a Python install lands in the repo or does not run; a locked tool command is already `locked`). "pip-no-venv": declared,
- *  but the checkout has no .venv, so it is skipped with its note. false: not declared. */
-export function installDeclared(repoDir: string, mc: { cmd: string; cwd: string; cite?: readonly string[] }, li: LockedInstall): boolean | string {
+/** Whether a non-pip install is declared (an unlocked pip install never asks: prepareDeps gives it the intake .venv, see pythonEnvAt and makeIntakeVenv). */
+export function installDeclared(repoDir: string, mc: { cmd: string; cwd: string; cite?: readonly string[] }, li: LockedInstall): boolean {
   if (li.locked) return true;
   const norm = (x: string): string => x.replace(/\s+/g, " ").trim().replace(/\bpython3?(?:\.\d+)? -m pip[\d.]*(?=\s|$)/g, "pip").replace(/\bpip[\d.]+(?=\s|$)/g, "pip"), want = norm(mc.cmd);
   if (!want) return false;
@@ -291,10 +291,26 @@ export function installDeclared(repoDir: string, mc: { cmd: string; cwd: string;
   const named = (mc.cite ?? []).some((f) => { try { return norm(readFileSync(join(repoDir, f), "utf8")).includes(want); } catch { return false; } }) // a cited file
     || (() => { try { return guidesFor(join(repoDir, mc.cwd), repoDir).setup.some((g) => norm(g.cmd).includes(want)); } catch { return false; } })() // a repo guide
     || ciTexts(repoDir).some((t) => norm(t).includes(want)); // a CI workflow
-  if (!named) return false;
-  if (!PIP_INSTALL.test(mc.cmd)) return true;
-  const venv = [join(repoDir, mc.cwd, ".venv"), join(repoDir, ".venv")].find((v) => existsSync(join(v, "bin", "python")) && !lstatSync(v).isSymbolicLink());
-  return venv && pipInVenv(mc.cmd, venv) ? venv : "pip-no-venv";
+  return named;
+}
+
+/** An existing Python environment for `cwd`: a .venv or venv (with pyvenv.cfg or bin/python) in the package dir or the repo root, or VIRTUAL_ENV naming a real dir.
+ *  Loki never replaces or reinstalls one. Returns how to name it, or null. */
+export function pythonEnvAt(repoDir: string, cwd: string, env: NodeJS.ProcessEnv): string | null {
+  const ve = env["VIRTUAL_ENV"]; if (ve && existsSync(ve)) return `VIRTUAL_ENV=${ve}`;
+  for (const d of new Set([cwd, realpathSync(repoDir)])) for (const n of [".venv", "venv"]) { const v = join(d, n); if (existsSync(join(v, "pyvenv.cfg")) || existsSync(join(v, "bin", "python"))) return relative(realpathSync(repoDir), v) || n; }
+  return null;
+}
+/** `python3 -m venv .venv` in the package dir, at intake only. The interpreter that makes it is the machine's, but nothing is ever installed into that one:
+ *  every install then runs as `.venv/bin/python -m pip`. Returns the venv path, or null when creation failed. */
+export function makeIntakeVenv(cwd: string, env: NodeJS.ProcessEnv): string | null {
+  const v = join(cwd, ".venv");
+  try { const r = spawnSync("python3", ["-m", "venv", ".venv"], { cwd, env, stdio: "ignore", timeout: 120000 }); return r.status === 0 && existsSync(join(v, "bin", "python")) ? v : null; } catch { return null; }
+}
+/** The receipt line for each .venv Loki created at intake (verify files it under N/A). Intake records its environment baseline after this, so it is never a dependency change. */
+export function lokiVenvNotes(intake: unknown): string[] {
+  const v = (intake as { loki_venv?: unknown } | null | undefined)?.loki_venv;
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").map((x) => `Loki created ${x} at intake (the checkout had no Python environment) and installed the repository's dependencies into it with its own python -m pip; it is the intake baseline, not a change`) : [];
 }
 
 /** One short honest line from the install output (L3): the last non-empty line, whitespace collapsed. */
@@ -305,7 +321,7 @@ const excerpt = (tail: string): string => {
 
 /** Install dependencies for each package whose selected check hit a harness-owned load error; see the file header. */
 export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
-  const res: PrepareResult = { checks: [], notProven: [], restored: [], unrestored: [], untracked: [], skipped: null };
+  const res: PrepareResult = { checks: [], notProven: [], restored: [], unrestored: [], untracked: [], skipped: null, lokiVenv: [] };
   const env = mergedEnv(input.env);
   const roots = [...new Set(input.failed.filter((f) => f.harnessOwned).map((f) => f.root))];
   if (roots.length === 0) return res;
@@ -331,10 +347,18 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
       if (isAbsolute(mc.cwd) || rel.startsWith("..") || isAbsolute(rel)) { notRun(`install cwd ${mc.cwd} resolves outside the repo`); continue; }
     } catch { notRun(`install cwd ${mc.cwd} does not exist`); continue; }
     li = lockedInstall(input.repoDir, cwd, mc.cmd);
-    const decl = declaredInstallsOn(env) ? installDeclared(input.repoDir, mc, li) : true;
-    if (!decl || decl === "pip-no-venv") { // G2: never an install Loki invents, and never an unlocked pip install into the machine's own Python
-      const why = undeclaredNote(cwd, mc.cmd, decl === "pip-no-venv");
-      res.checks.push(mk("not_run", 0, why)); res.notProven.push(`${why} (${name}; harness-owned)`); continue;
+    const skip = (why: string): void => { res.checks.push(mk("not_run", 0, why)); res.notProven.push(`${why} (${name}; harness-owned)`); };
+    let decl: boolean | string = true;
+    if (declaredInstallsOn(env) && !li.locked && PIP_INSTALL.test(mc.cmd)) { // G2 INTAKE-VENV (lead ruling 2026-11-20): an unlocked Python install lands in a .venv Loki makes in the checkout, or does not run
+      const have = pythonEnvAt(input.repoDir, cwd, env);
+      if (have) { skip(`${UNDECLARED_INSTALL} a Python environment already exists (${have}); Loki never replaces or reinstalls it`); continue; }
+      if (!input.intake) { skip(`${UNDECLARED_INSTALL} Loki makes a .venv only at intake, before any baseline, never later`); continue; }
+      const made = makeIntakeVenv(cwd, env);
+      if (!made || !pipInVenv(mc.cmd, made)) { skip(undeclaredNote(cwd, mc.cmd, true)); continue; } // a venv that failed or has no pip: never the machine's Python (a made dir stays: nothing is deleted)
+      decl = made; res.lokiVenv.push(relative(realpathSync(input.repoDir), made) || ".venv");
+    } else if (declaredInstallsOn(env)) {
+      decl = installDeclared(input.repoDir, mc, li);
+      if (!decl) { skip(undeclaredNote(cwd, mc.cmd)); continue; } // G2: never an install Loki invents
     }
     const before = snapshot(input.repoDir, env);
     const t0 = Date.now();
@@ -431,14 +455,14 @@ export type IntakeTiming = Partial<Record<"setup" | "repo_walk" | "exec_spec_pre
 export interface DepsTiming { install?: PhaseTiming; baseline_ms?: number }
 export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit"> & { capS?: number; baselineLeftS?: number }, signal: AbortSignal, runners: RunnerName[], timing?: DepsTiming): Promise<Record<string, unknown>> {
   const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model), before = untrackedTops(ctx.repoDir), t0 = Date.now();
-  const r = await prepareDeps({ repoDir: ctx.repoDir, model, failed: roots.map((root) => ({ root, harnessOwned: true })), signal, timeoutMs: INSTALL_CAP_MS, opts: { runId: ctx.runId } });
+  const r = await prepareDeps({ repoDir: ctx.repoDir, model, failed: roots.map((root) => ({ root, harnessOwned: true })), signal, timeoutMs: INSTALL_CAP_MS, opts: { runId: ctx.runId }, intake: true });
   for (const c of r.checks) ctx.emit("deps.install", "intake", { ...c });
   const created = r.checks.some((c) => c.result === "pass") ? installCreatedSince(ctx.repoDir, before) : null; // a failed install records nothing, so nothing is hidden
   const installMs = Date.now() - t0, tb = Date.now();
   baselineSuites(ctx.repoDir, fullSuiteSpecs(ctx.repoDir, runners), { rerun: r.checks.some((c) => c.result === "pass"), timeoutS: baselineCmdS(ctx.capS), budgetS: Math.min(suiteBaselineBudgetS(), baselineCmdS(ctx.capS)), ...(ctx.baselineLeftS !== undefined ? { deadlineMs: tb + ctx.baselineLeftS * 1000 } : {}) }); // baselineLeftS: what the root baseline left of intake's baseline budget (R3, counted after the install)
   const install: PhaseTiming = r.checks.length ? { ms: installMs } : { skipped: r.notProven.length ? "install not attempted" : "no dependencies to install" };
   if (timing) { timing.install = install; timing.baseline_ms = Date.now() - tb; }
-  return { ...(r.checks.length || r.notProven.length ? { deps_install: r.checks, deps_not_proven: r.notProven } : {}), ...(created ? { install_created: created } : {}) };
+  return { ...(r.checks.length || r.notProven.length ? { deps_install: r.checks, deps_not_proven: r.notProven } : {}), ...(created ? { install_created: created } : {}), ...(r.lokiVenv.length ? { loki_venv: r.lokiVenv } : {}) };
 }
 
 // --no-filters: never run a clean filter from the agent-writable .git/config
