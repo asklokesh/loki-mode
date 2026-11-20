@@ -388,6 +388,18 @@ export async function zeroOnBase(
  *  of a suite that needs its dependencies can run at all. The returned function answers false (nothing linked, the base run stays without
  *  dependencies: fail closed) when the head's deps can see head sources (depsSeeHead) or, with a lazy `gate`, when envChangedSince finds the
  *  environment changed since intake. One guard walk per package dir. Shared by zeroOnBase and verify's base-red subtraction. */
+/** BASE-LINK-SCOPE (LOKI_E10_BASE_LINK_SCOPE, default on, =0 opts out; FireLater#18 on 11.164.0): a changed dependency manifest stops the head's dependency dirs
+ *  being linked into the base worktree only for the packages it can affect: the package whose root holds it, every package above it (a root manifest or lockfile
+ *  blocks everything) and every package inside its directory (a workspace root). A manifest in a sibling package does not. The failure: backend/package.json
+ *  changed, so the frontend's vitest files also ran on a bare base, gave no ids, could not be compared, and 22 page tests red on base were fed to the fix rounds
+ *  as the change's own until a fix round called them a spec conflict. `cwdRel` is the check's working directory relative to the repository ("." for the root). */
+export const baseLinkScopeOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BASE_LINK_SCOPE"] ?? "").trim());
+export function manifestBlocksBaseLink(changed: readonly string[], cwdRel: string, isManifest: (f: string) => boolean, env: NodeJS.ProcessEnv = process.env): boolean {
+  const ms = changed.filter(isManifest); if (ms.length === 0) return false;
+  const cwd = cwdRel.replace(/^\.\/?/, "").replace(/\/+$/, "");
+  if (!baseLinkScopeOn(env) || cwd === "" || cwd.startsWith("..")) return true; // off, the root package, or a directory outside the repo: any changed manifest blocks
+  return ms.some((m) => { const d = m.includes("/") ? m.slice(0, m.lastIndexOf("/")) : ""; return d === "" || d === cwd || cwd.startsWith(`${d}/`) || d.startsWith(`${cwd}/`); });
+}
 export function baseDepsLinker(baseDir: string, repoDir: string, gate: Pick<ZeroGate, "sinceMs" | "ignored" | "deps"> = {}): (cwd: string) => boolean {
   const seen = new Map<string, boolean>();
   return (cwd) => {

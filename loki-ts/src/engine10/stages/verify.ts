@@ -16,7 +16,7 @@ import { failureLines, venvSkipNotes, goJsonStream, GO_JSON_KEEP, withoutStaleWa
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { defaultBudgetsOn, cmdSilenceS, type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, linkWorkspaceMembers, envChangedSince, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, redUnattributableOnBase, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, linkWorkspaceMembers, envChangedSince, manifestBlocksBaseLink, zeroGate, zeroOnBase, type ZeroGate } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, redUnattributableOnBase, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts";
 export const timeoutCarryOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TIMEOUT_CARRY"] ?? "").trim());
 export const TIMEOUT_CARRY_NOTE = "carried from an earlier verify of this run, not rerun (untouched file)";
 /** TIMEOUT-WAIT: after a check's timeout (or abort) fires, a process still alive this long later is SIGKILLed, so a test that ignores SIGTERM costs its limit, not minutes more. */
@@ -487,26 +487,27 @@ export async function subtractBase(
     const red = un.filter(({ c }) => c.result === "fail" && c.ids?.length && !base.has(c));
     // A suite that needs its dependencies (a vitest package with its own node_modules) yields no ids on a bare base, so its pre-existing failures
     // could never be told apart from new ones (FireLater#24: 23 page tests red on base were fed to the fix rounds). The head's dependency dirs are
-    // linked in only when no dependency manifest changed and baseDepsLinker's guards hold (fail closed otherwise); vitest files run batched per package.
-    const link = changed.some((f) => MANIFESTS.test(f)) ? null : baseDepsLinker(dir, ctx.repoDir, zeroIntake);
+    // linked in only when no dependency manifest that can affect that package changed (BASE-LINK-SCOPE) and baseDepsLinker's guards hold (fail closed otherwise); vitest files run batched per package.
+    const blocked = (cwd: string): boolean => manifestBlocksBaseLink(changed, relative(dir, cwd) || ".", (f) => MANIFESTS.test(f)); // BASE-LINK-SCOPE: only for the packages a changed manifest can affect
+    const link0 = baseDepsLinker(dir, ctx.repoDir, zeroIntake), link = (cwd: string): boolean => !blocked(cwd) && link0(cwd);
     const cmds = red.map((p) => ({ ...p, bc: commandFor(p.t, dir, api) }));
-    for (const bc of new Set(cmds.map((x) => x.bc.cwd))) link?.(bc);
-    const linked = link !== null;
-    for (const x of cmds) { const hit = memo.get(memo.key(dir, x.bc, linked)); if (hit) record(x.c, hit); } // BASE-MEMO: an earlier verify of this run already ran it on this base
+    for (const bc of new Set(cmds.map((x) => x.bc.cwd))) link(bc);
+    const linkedAt = (cwd: string): boolean => !blocked(cwd); // the memo key: whether this cwd's run was allowed the head's dependency dirs
+    for (const x of cmds) { const hit = memo.get(memo.key(dir, x.bc, linkedAt(x.bc.cwd))); if (hit) record(x.c, hit); } // BASE-MEMO: an earlier verify of this run already ran it on this base
     if (verifyBatchOn() && !signal.aborted) {
       const byCwd = new Map<string, typeof cmds>();
       for (const x of cmds) if (!base.has(x.c) && vitestFile(x.t, x.bc)) byCwd.set(x.bc.cwd, [...(byCwd.get(x.bc.cwd) ?? []), x]);
       for (const [cwd, g] of byCwd) {
         if (g.length < BATCH_MIN || signal.aborted) continue;
         const res = await vitestBatch(cwd, g.map((x) => x.bc.args[3]!), signal);
-        for (const x of g) { const f = res?.get(x.bc.args[3]!); if (f) { record(x.c, f); if (!signal.aborted) memo.put(memo.key(dir, x.bc, linked), f); } }
+        for (const x of g) { const f = res?.get(x.bc.args[3]!); if (f) { record(x.c, f); if (!signal.aborted) memo.put(memo.key(dir, x.bc, linkedAt(x.bc.cwd)), f); } }
       }
     }
     await baseGoBatch(cmds.filter((x) => !base.has(x.c)).map((x) => ({ c: x.c, t: x.t, bc: x.bc })), signal, record);
-    for (const { c, bc } of cmds) if (!base.has(c) && !signal.aborted) record(c, await once(bc, linked));
+    for (const { c, bc } of cmds) if (!base.has(c) && !signal.aborted) record(c, await once(bc, linkedAt(bc.cwd)));
     for (const { c, t } of crash) { // BCE: the same command on base, deps linked as for a red check
       if (signal.aborted) break;
-      link?.(dir); link?.(commandFor(t, dir, api).cwd); const bc = commandFor(t, dir, api); // deps (the head's .venv or node_modules) linked first, so the command resolves the same interpreter
+      link(dir); link(commandFor(t, dir, api).cwd); const bc = commandFor(t, dir, api); // deps (the head's .venv or node_modules) linked first, so the command resolves the same interpreter
       const b = await runOnce(bc.cmd, bc.args, bc.cwd, signal, {}), sig = b.ok || b.cut ? null : crashSignature(b.out);
       if (sig && sig === crashSigs.get(c)) out.envCrash.push({ name: c.name, sig });
     }
@@ -676,7 +677,7 @@ export async function runLintChecks(
  *  no link at all when the change edits a dependency manifest. */
 interface BaseTree { get(changed: readonly string[], gate: ZeroGate): string | null; link(cwd: string): boolean; members(): { members: number; refused: string[] }; dispose(): void }
 function baseTree(ctx: RunContext): BaseTree {
-  let dir: string | null | undefined, linker: ((cwd: string) => boolean) | null = null, view: ((cwd: string) => boolean) | null = null;
+  let dir: string | null | undefined, linker: ((cwd: string) => boolean) | null = null, view: ((cwd: string) => boolean) | null = null, scopeBlocked: (cwd: string) => boolean = () => true;
   let mem: { members: number; refused: string[] } | null = null; // BASE-TREE-MEMBERS: settled once per base tree
   const git = (args: string[]): void => { safeGit(ctx.repoDir, args, { stdio: "ignore", repoDrivers: true }); };
   return {
@@ -686,16 +687,16 @@ function baseTree(ctx: RunContext): BaseTree {
       // The gate here asks about the dependency dirs alone (as depsAsIntake does), not every ignored file: this worktree holds the base commit's tracked files and
       // nothing ignored, whatever happened to an ignored file in the checkout since intake, so only a changed node_modules or .venv can make its run not a base run.
       gate = gate.ignored ? { ...gate, ignored: [] } : gate;
-      try { git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", d, ctx.baseSha]); dir = d; linker = changed.some((f) => MANIFESTS.test(f)) ? null : baseDepsLinker(d, ctx.repoDir, gate); view = linker ? baseDepsView(d, ctx.repoDir, gate) : null; } catch { rmSync(d, { recursive: true, force: true }); dir = null; }
+      try { git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", d, ctx.baseSha]); dir = d; linker = baseDepsLinker(d, ctx.repoDir, gate); view = baseDepsView(d, ctx.repoDir, gate); scopeBlocked = (cwd: string): boolean => manifestBlocksBaseLink(changed, relative(d, cwd) || ".", (f) => MANIFESTS.test(f)); } catch { rmSync(d, { recursive: true, force: true }); dir = null; }
       return dir;
     },
-    link: (cwd) => (linker && view ? linker(cwd) || view(cwd) : false), // a workspace whose packages link to each other gets a node_modules view whose member links point at base (baseDepsView)
+    link: (cwd) => (linker && view && !scopeBlocked(cwd) ? linker(cwd) || view(cwd) : false), // a workspace whose packages link to each other gets a node_modules view whose member links point at base (baseDepsView)
     members() { // BASE-TREE-MEMBERS (base_guard.ts linkWorkspaceMembers): every workspace member with dependencies in the checkout gets them in the base tree
       if (mem) return mem;
       if (!dir || !linker || !view) return { members: 0, refused: [] };
       let manifests: string[] = []; try { manifests = safeGit(ctx.repoDir, ["ls-files", "-z", "--", "package.json", "*/package.json"]).split("\0").filter(Boolean); } catch { /* no list: no member is linked */ }
       const l = linker, v = view;
-      mem = linkWorkspaceMembers(dir, ctx.repoDir, (cwd) => l(cwd) || v(cwd), manifests);
+      mem = linkWorkspaceMembers(dir, ctx.repoDir, (cwd) => !scopeBlocked(cwd) && (l(cwd) || v(cwd)), manifests); // BASE-LINK-SCOPE applies to members too
       return mem;
     },
     dispose() {
@@ -948,7 +949,7 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
     await settleNrd(ctx); // SPEED-NRD-OVERLAP: the differential implement started has run beside these checks; its group joins this verify's
     if (baseMemberNote) attr.line = [attr.line, baseMemberNote].filter(Boolean).join("; "); // BASE-TREE-MEMBERS disclosure (the receipt's baseline line)
     if (touchedExcused.length) attr.line = [attr.line, ...touchedExcused.map((n) => `${TOUCHED_RED}: ${n}`)].filter(Boolean).join("; ") || null; // TOUCHED-BASE-RED disclosure (the receipt's baseline line)
-    return { status: "completed", data: { checks: pub, flaky, verify_scope: complete ? "complete" : "quick", ...(ntf ? { no_test_fallback: true } : {}), ...(uncaused.length ? { uncaused_reds: uncaused } : {}), ...(lintUntouchedNames.length ? { lint_untouched: lintUntouchedNames } : {}), ...(ownLintNames.length ? { own_lint: ownLintNames } : {}), independent_fail: independentFail, ...(independentReds.length ? { independent_reds: independentReds } : {}), fix_gate: fixGateOf({ independent_fail: independentFail, independent_reds: independentReds }, `${String(ctx.outputs().implement?.model ?? "")} ${ctx.model}`, failuresGrouped.length > 0), file_hashes: hashes, blocking_checks: blockingNames, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: [...failuresGrouped, ...nrdGroupsFor(ctx.outputs().implement, fixRounds)], holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size || depsNotes.na.length ? { not_applicable: [...[...fullNotProven].filter(naNote).map(naText), ...depsNotes.na] } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(notExcused.length ? { not_excused: notExcused } : {}), ...(baseUnattributed.length ? { base_unattributed: baseUnattributed } : {}), ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}), ...(preRed.sameError.length ? { known_red_same_error: preRed.sameError } : {}), ...(baseRed.length ? { base_red_checks: baseRed } : {}), skipped_on_base: preRed.zero, ...(collateralSame.length && fixRounds === 0 ? { collateral_same_error: collateralSame } : {}), ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
+    return { status: "completed", data: { checks: pub, flaky, verify_scope: complete ? "complete" : "quick", ...(preRed.compared.length ? { base_compared: [...new Set(preRed.compared)] } : {}), ...(ntf ? { no_test_fallback: true } : {}), ...(uncaused.length ? { uncaused_reds: uncaused } : {}), ...(lintUntouchedNames.length ? { lint_untouched: lintUntouchedNames } : {}), ...(ownLintNames.length ? { own_lint: ownLintNames } : {}), independent_fail: independentFail, ...(independentReds.length ? { independent_reds: independentReds } : {}), fix_gate: fixGateOf({ independent_fail: independentFail, independent_reds: independentReds }, `${String(ctx.outputs().implement?.model ?? "")} ${ctx.model}`, failuresGrouped.length > 0), file_hashes: hashes, blocking_checks: blockingNames, ...(wallFailTail ? { wall_failure_tail: wallFailTail } : {}), ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: [...failuresGrouped, ...nrdGroupsFor(ctx.outputs().implement, fixRounds)], holdout_failed: holdoutFailed, changed_files: changed, ...(depNames.size ? { dependent_checks: [...depNames] } : {}), not_proven: notProven, ...(fullNotProven.size || depsNotes.na.length ? { not_applicable: [...[...fullNotProven].filter(naNote).map(naText), ...depsNotes.na] } : {}), pre_red: preRed.ids, pre_red_checks: preRed.names, ...(notExcused.length ? { not_excused: notExcused } : {}), ...(baseUnattributed.length ? { base_unattributed: baseUnattributed } : {}), ...(preRed.knownRed.length ? { known_red_checks: preRed.knownRed } : {}), ...(preRed.sameError.length ? { known_red_same_error: preRed.sameError } : {}), ...(baseRed.length ? { base_red_checks: baseRed } : {}), skipped_on_base: preRed.zero, ...(collateralSame.length && fixRounds === 0 ? { collateral_same_error: collateralSame } : {}), ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
   }
 }
 export const stage = verifyStage;

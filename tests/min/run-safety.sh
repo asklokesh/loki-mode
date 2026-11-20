@@ -1140,6 +1140,26 @@ console.log(r.join(" | "));
 Y6="same 1:false | noise 1:true | value 1,1 | shape 1 | names-file 1 | names-symbol 1 | noise-alone 0 | blocked 1:true:true | basered 1,0,0,0,0,1 | onlyBaseRed true,false,true,false,false | claim true,true,false"
 [ "$B6" = "$Y6" ] && ok "unit: a base-red id whose error differs only by noise (a stack path, a :line:col) is excused with a NOT PROVEN line; a changed number or quoted value, another error shape or a failure naming a changed file or symbol still blocks; a suite held by an unexcused targeted check says so; a fix round's pre-existing stop needs every live failure red in a baseline" \
     || bad "fl24 attribution unit gave: $B6 (want: $Y6)"
+# FL18 (FireLater#18 on 11.164.0, sealed SPEC_CONFLICT): backend/package.json changed, so the global manifest gate kept every package's node_modules out of
+# the base worktree; the frontend's vitest files could not start on a bare base (npx: missing vitest), gave no ids, and 22 page tests red on base (73 of 1008
+# ids, same first error, measured with the frontend's own deps linked) were fed to the fix rounds as the change's own. BASE-LINK-SCOPE: a changed manifest
+# blocks the dep link only for its own package, the packages above it and the packages inside it; verify also records which checks the base rerun ran
+# (base_compared). Replayed on the stored #18 changed files (tests/min/fixtures/replay).
+# Plants: F18a base_guard.ts manifestBlocksBaseLink `return true || ms.some(...)` (the frontend cell blocks); F18b drop `cwd.startsWith(`${d}/`) ||` (the
+#         nested-cwd cell links); F18c verify.ts back to `changed.some((f) => MANIFESTS.test(f)) ? null` at either site (the wiring cell fails).
+F18="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const bg = await import(process.env.ROOT + "/loki-ts/src/util/base_guard.ts"), { MANIFESTS } = await import(process.env.ROOT + "/loki-ts/src/contrib/wall_snapshot.ts");
+const { readFileSync } = await import("node:fs"), fx = JSON.parse(readFileSync(process.env.ROOT + "/tests/min/fixtures/replay/firelater18-fix-conflict.json", "utf8"));
+const ch = fx.verify.changed_files, man = (f) => MANIFESTS.test(f), blk = (c, cwd, env = {}) => bg.manifestBlocksBaseLink(c, cwd, man, env);
+const r = [];
+r.push("link " + [blk(ch, "frontend"), blk(ch, "backend"), blk(ch, "."), blk([...ch, "frontend/package-lock.json"], "frontend"), blk(["package.json"], "frontend"), blk(["packages/a/package.json"], "packages"), blk(["frontend/package.json"], "frontend/src"), blk(ch, "frontend", { LOKI_E10_BASE_LINK_SCOPE: "0" }), blk(["frontend/src/x.ts"], ".")].join(","));
+const vsrc = readFileSync(process.env.ROOT + "/loki-ts/src/engine10/stages/verify.ts", "utf8");
+r.push("wiring " + [(vsrc.match(/manifestBlocksBaseLink\(changed, relative\(/g) ?? []).length, vsrc.includes("base_compared: [...new Set(preRed.compared)]"), vsrc.includes("changed.some((f) => MANIFESTS.test(f)) ? null")].join(","));
+console.log(r.join(" | "));
+' 2>&1)"
+YF18="link false,true,true,true,true,true,true,true,false | wiring 2,true,false"
+[ "$F18" = "$YF18" ] && ok "FL18 replay: on the stored #18 changed files a backend manifest no longer blocks the frontend's base run; root, own-package, lockfile, nested and workspace manifests still do; =0 restores the global gate; verify records base_compared" \
+    || bad "FL18 replay gave: $F18 (want: $YF18)"
 
 # FireLater#24 on 2026-11-17, synthetic and modeled on its verify record: untouched page tests (a bare title and a full id per failure) whose every failing
 # id is in the package suite's base failures, a root baseline with no ids, and a base rerun that parsed no id (the environment gate left it without its

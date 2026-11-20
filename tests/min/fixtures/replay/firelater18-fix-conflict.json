@@ -1,0 +1,135 @@
+{
+ "_source": "FireLater#18 on loki-mode 11.164.0, run e10-20261119T234303Z-b8f1 (2026-11-19): the last verify (seq 240, quick) and fix round 2, trimmed to the keys machine.ts reads; the run sealed SPEC_CONFLICT",
+ "verify": {
+  "checks": [
+   {
+    "name": "vitest:frontend/src/app/(auth)/forgot-password/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(auth)/login/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(auth)/register/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/email/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/integrations/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/roles/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/settings/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/sla/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/applications/[id]/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/applications/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/catalog/[id]/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/catalog/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/cloud/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/cloud/resources/[id]/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/dashboard/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/knowledge-base/[id]/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/oncall/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/oncall/schedules/[id]/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/reports/[id]/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/reports/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/reports/builder/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/requests/[id]/__tests__/page.test.tsx",
+    "result": "fail"
+   },
+   {
+    "name": "vitest:backend/tests/performance/query-plan.regression.test.ts",
+    "result": "not_run"
+   },
+   {
+    "name": "lint:tsc:backend",
+    "result": "pass"
+   },
+   {
+    "name": "lint:eslint:backend",
+    "result": "pass"
+   }
+  ],
+  "pre_red_checks": [],
+  "changed_files": [
+   ".github/workflows/ci.yml",
+   "backend/package.json",
+   "backend/src/config/database.ts",
+   "backend/src/index.ts",
+   "frontend/src/components/layout/sidebar.tsx",
+   "frontend/tsconfig.json",
+   "backend/src/routes/query-analytics.ts",
+   "backend/src/services/indexAdvisor.ts",
+   "backend/src/services/queryStats.ts",
+   "backend/src/services/slowQueryAlerts.ts",
+   "backend/tests/performance/baseline.json",
+   "backend/tests/performance/pool-wrapper.regression.test.ts",
+   "backend/tests/performance/query-plan.regression.test.ts",
+   "backend/tests/unit/indexAdvisor.test.ts",
+   "backend/tests/unit/queryStats.test.ts",
+   "backend/tests/unit/slowQueryAlerts.test.ts",
+   "docs/PERFORMANCE_BEST_PRACTICES.md",
+   "frontend/src/app/(dashboard)/admin/query-analytics/__tests__/page.test.tsx",
+   "frontend/src/app/(dashboard)/admin/query-analytics/page.tsx"
+  ],
+  "verify_scope": "quick"
+ },
+ "fix": {
+  "exit": "spec_conflict",
+  "round": 2,
+  "spec_conflict_reason": "the named frontend tests pin pre-redesign markup and classes and fail identically on clean HEAD (e.g. `frontend/src/app/(auth)/forgot-password/__tests__/page.test.tsx` \"renders flame icon\", `frontend/src/app/(dashboard)/oncall/__tests__/page.test.tsx:1069` expects `border-blue-500`, `frontend/src/app/(dashboard)/admin/sla/__tests__/page.test.tsx:510` expects `bg-red-100`); fixing them means reverting commit be0799f's UI redesign or editing read-only tests.I'll start by looking at the current diff and the frontend changes that could affect these tests."
+ }
+}
