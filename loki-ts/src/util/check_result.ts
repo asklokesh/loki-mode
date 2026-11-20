@@ -990,7 +990,7 @@ export function failureLines(out: string): string[] {
  *  failures in the base tree against 408 with 8 in the checkout). `executed`: the tests the run executed (ran, or bun's own "Ran N tests" line). */
 const LOAD_ERROR_RE = /Cannot find (?:package|module) ['"]|Could not resolve: ["']|preload not found|ModuleNotFoundError: |ERR_MODULE_NOT_FOUND/;
 /** The module a load-error line names (its first quoted text; the whole line when it quotes nothing). */
-export const loadErrorModule = (line: string): string => /['"]([^'"]+)['"]/.exec(line)?.[1] ?? line;
+export const loadErrorModule = (line: string): string => { const m = /['"]([^'"]+)['"]/.exec(line)?.[1] ?? line; return m.startsWith("/") ? m.split("/").filter(Boolean).slice(-2).join("/") : m; }; // an absolute path differs between the base tree, the checkout and a temp dir: its last two segments are the key
 export function loadErrors(raw: string): string[] {
   const seen = new Set<string>(), out: string[] = [];
   for (const l of stripAnsi(raw).split("\n").map((x) => x.trim())) {

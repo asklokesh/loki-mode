@@ -8,7 +8,7 @@ export interface FailureGroup {
 }
 const ID_LINE = /^(?:(?:FAILED|ERROR)\s+(\S+::\S*)(?:\s.*)?|\u25cf\s+(?!Console|Test suite failed)(.+)|not ok \d+ - (.+?)(?:\s+#.*)?|\u2716\s+(?!failing tests:)(.+?)(?:\s+\([\d.]+ms\))?|FAIL\s+(.+)|\u00d7\s+(.+?)(?:\s+\d+(?:\.\d+)?\s*m?s)?)$/;
 /** The runner's own failed-plus-errored count: pytest "N failed, M error", jest/vitest "Tests: N failed", node "fail N". */
-function failCount(out: string): number | null {
+export function failCount(out: string): number | null {
   const n = (s: string, re: RegExp): number => +(s.match(re)?.[1] ?? 0);
   const l = out.split("\n").reverse().map((x) => x.trim()).find((x) => /^(?:=+ )?\d+ \w+.* in [\d.]+s|^Tests?:?\s+\d/.test(x)), m = /^(?:#|\u2139) fail (\d+)$/m.exec(out);
   return l ? n(l, /(\d+) failed/) + n(l, /(\d+) errors?/) : m ? +m[1]! : null;
@@ -53,7 +53,7 @@ function bunIds(output: string): string[] | null {
   if (!lines.some((l) => /^Ran \d+ tests? across \d+ files?\./.test(l.trim()))) return null;
   for (const l of lines) { const f = /^([\w./@-]+\.[cm]?[jt]sx?):$/.exec(l.trim()), m = /^(?:\(fail\)|✗)\s+(.+?)(?:\s+\[[\d.]+m?s\])?$/.exec(l.trim()); if (f) file = f[1]!; else if (m) ids.push(`${file}::${m[1]!.trim()}`); }
   const u = [...new Set(ids)];
-  return count && u.length >= count ? u : [];
+  return count && ids.length >= count ? u : []; // REPEATED-NAMES: a name printed twice is one id failing twice, so the printed lines are counted against the fail total, not the distinct names (opencode tui: 26 fail lines, 22 names, and every id was dropped)
 }
 /** True when a failure id names the changed repo file `f`: the id carries the repo path (`packages/a/src/x.test.ts > t`), or a vitest project prefix and a path relative to
  *  the project (`|a| src/x.test.ts > t`, printed by a run from a root config with `projects`), which names `f` when `f` ends with that relative path. */
@@ -143,6 +143,53 @@ export function sameErrors(head: string | Map<string, string[]>, base: string | 
   const keys = (i: string): string[] => (h.has(i) ? [i] : [...h.keys()].filter((k) => k.endsWith(` > ${i}`)));
   return all.length > 0 && all.every((i) => { const ks = keys(i); return ks.length > 0 && ks.every((k) => eq(b.get(k), h.get(k))); });
 }
+/** SILENT-IDS (LOKI_E10_SILENT_IDS, default on; =0/off/false/no opts out). A runner can name a failing test and print no message for it that a parser can
+ *  attach to the id (a wrapper that prints "FAILED <id>" in a box, a failure whose text sits in a block above the result line). sameErrors calls such an id
+ *  "not the same error", so a suite whose ids all fail on base too was still counted against the change (closed-set-2: opencode core 11 of 27 shared ids,
+ *  server 2 of 6, hermes-agent 7 of 7 and 468 of 468). For an id red on both sides with no error line on EITHER side the question becomes: did the change
+ *  show up in the failure at all? It is the same failure only when every head output line that names a changed file or a changed symbol also appears on
+ *  base, as a multiset, after the run-to-run noise is masked (normError and errorShape: absolute paths, timestamps, durations, hex ids, the directories and
+ *  :line:col of a file reference). A change that breaks an already-red test in a new way prints a line about itself (a frame in the edited file, an error
+ *  from the edited function) that base did not print. Guards: an id with an error line on one side only is never the same; where both sides print a failed
+ *  count, head's may not be higher; more lines than the bound means not comparable. Ids that do have error lines are compared by sameErrors as before. */
+/** The failed count a run printed, whatever the runner: the known summary lines, bun's "N fail" lines summed, else the last line that says "N failed". */
+export function failedCount(out: string): number | null {
+  const t = stripAnsi(out), known = failCount(t); if (known !== null) return known;
+  const bun = [...t.matchAll(/^\s*(\d+) fail$/gm)]; if (bun.length) return bun.reduce((a, m) => a + +m[1]!, 0);
+  const last = t.split("\n").reverse().map((l) => /\b(\d+) failed\b/.exec(l)).find(Boolean); return last ? +last[1]! : null;
+}
+export const silentIdsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SILENT_IDS"] ?? "").trim());
+export const CHANGE_LINES_MAX = 5000;
+/** The masked lines of `out` that name a changed file or symbol, sorted (a multiset); null past the bound, so nothing is compared on a truncated list.
+ *  A frame printed as `File "x.py", line 12, in f` carries its line number apart from the file: the same noise errorShape masks in x.py:12, masked here. */
+export function changeLines(out: string, changed: readonly string[], symbols: readonly string[] = [], max = CHANGE_LINES_MAX): string[] | null {
+  const names = lineNamesChange(changed, symbols), res: string[] = [];
+  for (const raw of stripAnsi(out).split("\n")) { const l = raw.trim(); if (!l || !names(l)) continue; res.push(errorShape(normError(l)).replace(/\bline \d+\b/g, "line <n>")); if (res.length > max) return null; }
+  return res.sort();
+}
+/** True when every line of `head` is in `base` at least as many times (both multisets). */
+export function linesCovered(head: readonly string[], base: readonly string[]): boolean {
+  const left = new Map<string, number>(); for (const l of base) left.set(l, (left.get(l) ?? 0) + 1);
+  for (const l of head) { const n = left.get(l) ?? 0; if (n === 0) return false; left.set(l, n - 1); }
+  return true;
+}
+export interface SideFacts { lines: readonly string[] | null; failed: number | null }
+/** sameErrors plus SILENT-IDS. `silent` is how many of the ids were compared by the lines naming the change (0 when the rule was not needed or is off). */
+export function sameFailures(head: string | Map<string, string[]> | Record<string, string[]>, base: string | Map<string, string[]> | Record<string, string[]>, ids: readonly string[] | undefined, hf?: SideFacts, bf?: SideFacts): { same: boolean; silent: number } {
+  const asMap = (x: string | Map<string, string[]> | Record<string, string[]>): Map<string, string[]> => typeof x === "string" ? errorsById(x) : x instanceof Map ? x : new Map(Object.entries(x));
+  const h = asMap(head), b = asMap(base), all = [...(ids ?? [])], no = { same: false, silent: 0 };
+  if (all.length === 0) return no;
+  if (!silentIdsOn()) return { same: sameErrors(h, b, all), silent: 0 };
+  const keys = (m: Map<string, string[]>, i: string): string[] => (m.has(i) ? [i] : [...m.keys()].filter((k) => k.endsWith(` > ${i}`))), has = (m: Map<string, string[]>, i: string): boolean => keys(m, i).some((k) => (m.get(k) ?? []).length > 0);
+  const loud: string[] = [], silent: string[] = [];
+  for (const i of all) { const hh = has(h, i), bb = has(b, i); if (hh && bb) loud.push(i); else if (!hh && !bb) silent.push(i); else return no; } // an error line on one side only is not the same failure
+  if (loud.length && !sameErrors(h, b, loud)) return no;
+  if (silent.length === 0) return { same: true, silent: 0 };
+  if (!hf || !bf || hf.lines === null || bf.lines === null) return no; // nothing to compare the silent ids by
+  if (hf.failed !== null && bf.failed !== null && hf.failed > bf.failed) return no; // head fails more tests than base did
+  return linesCovered(hf.lines, bf.lines) ? { same: true, silent: silent.length } : no;
+}
+export const SILENT_IDS_NOTE = "red before and after; the runner printed no message for them, so they were compared by the lines naming the change";
 /** fl24: half of the second chance when sameErrors says the text differs (noiseOnlyErrors). True when every id has head error lines and none of them
  *  names a changed file (its repo path, or its file name when that has an extension) or a changed symbol (a whole word, 3 characters or more). The
  *  caller has already required the id red on base and the test file untouched; go and cargo output carries no error lines, so it never passes (fail

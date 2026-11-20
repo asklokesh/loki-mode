@@ -6,12 +6,12 @@ import { cmdSilenceS } from "../engine10/types.ts";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { harnessLoadReason } from "../runner/load_owner.ts";
-import { suiteEmptyOnBase } from "../runner/repo_profile.ts";
+import { changedForLines, suiteEmptyOnBase } from "../runner/repo_profile.ts";
 import { classifyCheck, corroboratePass, failureExcerpt, failureShape, suiteFacts, firstError, fullSuiteCmd, goRunner, exitCodedId, isExitCodedScript, NO_TESTS_REASON, plainTestEnv, stripAnsi } from "../util/check_result.ts";
 import { run, shellWord } from "../util/shell.ts";
 import type { ProfileCommand } from "../runner/repo_profile.ts"; // type-only: no import cycle
 import { STACK_TOOLS, repoTestCommand, toolOk } from "../util/stack_tools.ts";
-import { errorsById, failIds, lineNamesChange, unhandledBlock } from "../engine10/failures.ts";
+import { changeLines, errorsById, failedCount, failIds, lineNamesChange, unhandledBlock } from "../engine10/failures.ts";
 import type { RunnerName } from "../engine10/types.ts";
 import type { ProjectApi } from "./api.ts";
 import { isMultiRoot, loadProjectApi } from "./resolve.ts";
@@ -135,7 +135,7 @@ export const suiteTimeoutOn = (env: NodeJS.ProcessEnv = process.env): boolean =>
 export async function runPackageSuites(
   repoDir: string,
   signal: AbortSignal,
-  opts: { path?: string | undefined; timeoutMs: number | (() => number); baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; proofFiles?: string[] | undefined; wallBaseRed?: boolean | undefined; targetPassed?: boolean | undefined; ownedOnly?: boolean; scope?: boolean; ensureBase?: (spec: SuiteSpec) => Promise<void> }, // RW-01: timeoutMs as a function is asked before each suite (the time left of the stage; 0: the suite is not started); scope: scopedSuites; ensureBase: measure this suite on base now (the base record is no longer taken at intake)
+  opts: { path?: string | undefined; timeoutMs: number | (() => number); baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; symbols?: readonly string[] | undefined; proofFiles?: string[] | undefined; wallBaseRed?: boolean | undefined; targetPassed?: boolean | undefined; ownedOnly?: boolean; scope?: boolean; ensureBase?: (spec: SuiteSpec) => Promise<void> }, // RW-01: timeoutMs as a function is asked before each suite (the time left of the stage; 0: the suite is not started); scope: scopedSuites; ensureBase: measure this suite on base now (the base record is no longer taken at intake)
   checks: SuiteCheck[],
   notProven: Set<string>,
 ): Promise<boolean> {
@@ -160,7 +160,7 @@ export async function runPackageSuites(
     const cls = await corroboratePass(classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...(go ? { runner: "go" as const } : goRunner(line)), exitCoded: !go && isExitCodedScript(line) }), out, go ?? line, undefined, { cwd: join(repoDir, cwd), env: suiteEnv(opts.path), signal }); // FC-FULL-SUITE-EXIT-CODED-SCRIPT
     if (cls.result === "not_run" && r.exitCode === 0 && (opts.targetPassed === true || (cwd !== "." && emptySubsuiteNaOn())) && opts.ensureBase) await opts.ensureBase(spec); // RW-01: the base record suiteEmptyOnBase reads is measured now
     if (cls.result === "not_run" && r.exitCode === 0 && (opts.targetPassed === true || (cwd !== "." && emptySubsuiteNaOn())) && suiteEmptyOnBase(repoDir, opts.baseSha, line, cmd, cls, out, cwd)) { notProven.add(`${NA_PREFIX}${name} (ran 0 tests on base and head; ${opts.targetPassed === true ? "the Wall or a task-named check passed with executed tests" : "a sub-module package with no tests on either side"})`); continue; } // EMPTY-SUBSUITE-NA: a package below the root that executes exactly 0 tests on base and head is not applicable without a target check // a full suite that discovers nothing is a disclosed note, not a gate, once a target check proved the change
-    checks.push({ name, cmd, result: cls.result, duration_s, ...(cls.count ? { count: cls.count } : {}), ...(cls.result === "fail" ? { exit: r.exitCode, ...(cls.count || failIds(out).length ? {} : { shape: failureShape(out) }), ids: cls.count ? [exitCodedId(line, out, repoDir) ?? []].flat() as string[] : failIds(out), errors: Object.fromEntries(errorsById(out)), ...(unhandledBlock(out).length ? { unhandled: unhandledBlock(out) } : {}), first_error: firstError(out), excerpt: failureExcerpt(out, repoDir), ...suiteFacts(out), names_changed: stripAnsi(out).split("\n").some(lineNamesChange(opts.changed ?? [])) } : {}) });
+    checks.push({ name, cmd, result: cls.result, duration_s, ...(cls.count ? { count: cls.count } : {}), ...(cls.result === "fail" ? { exit: r.exitCode, ...(cls.count || failIds(out).length ? {} : { shape: failureShape(out) }), ids: cls.count ? [exitCodedId(line, out, repoDir) ?? []].flat() as string[] : failIds(out), errors: Object.fromEntries(errorsById(out)), ...(unhandledBlock(out).length ? { unhandled: unhandledBlock(out) } : {}), first_error: firstError(out), excerpt: failureExcerpt(out, repoDir), ...suiteFacts(out), names_changed: stripAnsi(out).split("\n").some(lineNamesChange(opts.changed ?? [])), change_lines: changeLines(out, changedForLines(repoDir, opts.baseSha, opts.changed ?? []), opts.symbols ?? []), failed: failedCount(out) } : {}) }); // SILENT-IDS facts: the lines naming the change and the printed failed count
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);
   }
   // FC-SEAL-NA-AS-UNPROVEN: a package with no test command is N/A only beside a suite that really ran; changed files it owns with no Wall proof (or an unknown diff) stay NOT PROVEN.
