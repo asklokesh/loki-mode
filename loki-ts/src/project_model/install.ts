@@ -57,7 +57,8 @@ export interface PrepareResult {
   unrestored: string[]; // tracked files the install changed that were already dirty before (left alone)
   untracked: string[]; // new untracked files outside ignored-style dirs
   skipped: "opt-out" | null;
-  lokiVenv: string[]; // G2 INTAKE-VENV: the repo-relative .venv dirs Loki created at intake (shown on the receipt; intake's baseline, recorded after them)
+  lokiVenv: string[]; // G2 INTAKE-VENV: the repo-relative .venv dirs Loki created at intake and installed into (shown on the receipt; intake's baseline, recorded after them)
+  lokiVenvMade: string[]; // every .venv dir Loki made at intake, as "dir/", whatever the install did: always recorded in install_created, so never part of the change
 }
 const TAIL_BYTES = 65_536;
 const STATUS_MAX_BUFFER = 64 * 1024 * 1024;
@@ -321,7 +322,7 @@ const excerpt = (tail: string): string => {
 
 /** Install dependencies for each package whose selected check hit a harness-owned load error; see the file header. */
 export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
-  const res: PrepareResult = { checks: [], notProven: [], restored: [], unrestored: [], untracked: [], skipped: null, lokiVenv: [] };
+  const res: PrepareResult = { checks: [], notProven: [], restored: [], unrestored: [], untracked: [], skipped: null, lokiVenv: [], lokiVenvMade: [] };
   const env = mergedEnv(input.env);
   const roots = [...new Set(input.failed.filter((f) => f.harnessOwned).map((f) => f.root))];
   if (roots.length === 0) return res;
@@ -354,6 +355,7 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
       if (have) { skip(`${UNDECLARED_INSTALL} a Python environment already exists (${have}); Loki never replaces or reinstalls it`); continue; }
       if (!input.intake) { skip(`${UNDECLARED_INSTALL} Loki makes a .venv only at intake, before any baseline, never later`); continue; }
       const made = makeIntakeVenv(cwd, env);
+      if (existsSync(join(cwd, ".venv"))) res.lokiVenvMade.push(`${relative(realpathSync(input.repoDir), join(cwd, ".venv"))}/`); // review of 7b196ff16: kept in place and recorded even when the install then fails
       if (!made || !pipInVenv(mc.cmd, made)) { skip(undeclaredNote(cwd, mc.cmd, true)); continue; } // a venv that failed or has no pip: never the machine's Python (a made dir stays: nothing is deleted)
       decl = made; res.lokiVenv.push(relative(realpathSync(input.repoDir), made) || ".venv");
     } else if (declaredInstallsOn(env)) {
@@ -457,7 +459,7 @@ export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "em
   const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model), before = untrackedTops(ctx.repoDir), t0 = Date.now();
   const r = await prepareDeps({ repoDir: ctx.repoDir, model, failed: roots.map((root) => ({ root, harnessOwned: true })), signal, timeoutMs: INSTALL_CAP_MS, opts: { runId: ctx.runId }, intake: true });
   for (const c of r.checks) ctx.emit("deps.install", "intake", { ...c });
-  const created = r.checks.some((c) => c.result === "pass") ? installCreatedSince(ctx.repoDir, before) : null; // a failed install records nothing, so nothing is hidden
+  const created = withLokiVenvs(r.checks.some((c) => c.result === "pass") ? installCreatedSince(ctx.repoDir, before) : null, r.lokiVenvMade); // a failed install records nothing, so nothing is hidden, except a .venv Loki itself made
   const installMs = Date.now() - t0, tb = Date.now();
   baselineSuites(ctx.repoDir, fullSuiteSpecs(ctx.repoDir, runners), { rerun: r.checks.some((c) => c.result === "pass"), timeoutS: baselineCmdS(ctx.capS), budgetS: Math.min(suiteBaselineBudgetS(), baselineCmdS(ctx.capS)), ...(ctx.baselineLeftS !== undefined ? { deadlineMs: tb + ctx.baselineLeftS * 1000 } : {}) }); // baselineLeftS: what the root baseline left of intake's baseline budget (R3, counted after the install)
   const install: PhaseTiming = r.checks.length ? { ms: installMs } : { skipped: r.notProven.length ? "install not attempted" : "no dependencies to install" };
@@ -475,6 +477,11 @@ export function installCreatedSince(repoDir: string, before: Set<string>): Insta
   const files: Record<string, string> = {}, dirs: string[] = [];
   for (const p of untrackedTops(repoDir)) if (!before.has(p) && !p.startsWith(".loki/")) { if (p.endsWith("/")) dirs.push(p); else { try { files[p] = hashOf(repoDir, p); } catch { /* unreadable: left visible */ } } }
   return dirs.length || Object.keys(files).length ? { files, dirs } : null;
+}
+/** install_created plus every .venv Loki made at intake (as "dir/"), whatever its install did: a Loki-made virtualenv is never part of changedFiles or the commit. */
+export function withLokiVenvs(created: InstallCreated | null, made: readonly string[]): InstallCreated | null {
+  if (!made.length) return created;
+  return { files: created?.files ?? {}, dirs: [...new Set([...(created?.dirs ?? []), ...made])] };
 }
 /** True for what the install made and the run has not touched: a recorded file only while its content still matches its intake hash
  *  (an agent-edited lockfile stays a change), anything under a recorded directory unconditionally. */

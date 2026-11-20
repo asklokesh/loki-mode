@@ -327,6 +327,7 @@
 # 253x. install.ts pythonEnvAt: drop the VIRTUAL_ENV check (the pyve cell reads pass).
 # 253y. install.ts prepareDeps: drop the intake-only check (the pyverify cell reads pass).
 # 253z. install.ts lokiVenvNotes: return [] (the receipt cell reads false).
+# 253aa. install.ts withLokiVenvs: return created unchanged (the pyfailrec rec cell reads an empty record and .venv files in changedFiles).
 # 253h. check_result.ts ignoreRuleChanges: drop the lokiKeptOwns skip (the env guard move-and-keep unit's kept ignore cell reads 1).
 # 253j..253n. base_guard.ts envMoveRefusal: drop one refusal line each (not alone, existed, link, outside, tracked; that refusal cell reads null).
 # 253o. check_result.ts lokiKeptOwns: return true without the time comparison (the later cell reads false).
@@ -2609,6 +2610,7 @@ console.log([u(o, "packages/zod", new Set(["packages/zod/src/v4/x.ts"]), ["packa
 #   - pynopip (the made venv has no pip) and pyfail (venv creation fails) are skipped. pyfail's note says requirements.txt was not installed and gives the
 #     virtualenv command;
 #   - pyverify (a call that is not intake) makes no .venv;
+#   - pyfailrec (no .venv in .gitignore, the venv's pip install fails): the .venv stays, is recorded in install_created and is in neither changedFiles nor the commit;
 #   - the receipt line names the Loki-made .venv;
 #   - with intake's baseline recorded after it, as intake.ts does, envChangedSince and the ignore notes do not read it as a change.
 # Plants:
@@ -2622,7 +2624,8 @@ console.log([u(o, "packages/zod", new Set(["packages/zod/src/v4/x.ts"]), ["packa
 #   - 253w: drop the existing-env check (pyhave reads pass);
 #   - 253x: drop the VIRTUAL_ENV check (pyve reads pass);
 #   - 253y: drop the intake-only check (pyverify reads pass);
-#   - 253z: lokiVenvNotes returns [] (the receipt cell reads false).
+#   - 253z: lokiVenvNotes returns [] (the receipt cell reads false);
+#   - 253aa: withLokiVenvs returns install_created unchanged (the rec cell reads an empty record and .venv files in changedFiles).
 DI="$T/declared-installs"; rm -rf "$DI"; mkdir -p "$DI/bin" "$DI/outside-venv"
 cat > "$DI/bin/python3" <<'PY'
 #!/bin/sh
@@ -2630,13 +2633,13 @@ if [ "$1 $2" = "-m venv" ]; then
     [ -n "$G2_VENV_FAIL" ] && exit 1
     mkdir -p "$3/bin"
     if [ -n "$G2_VENV_NOPIP" ]; then printf '#!/bin/sh\n[ "$1 $2" = "-m pip" ] && exit 1\nexit 0\n' > "$3/bin/python"
-    else printf '#!/bin/sh\n[ "$3" = --version ] && exit 0\ntouch "$PWD/venv.flag"\nexit 0\n' > "$3/bin/python"; fi
+    else printf '#!/bin/sh\n[ "$3" = --version ] && exit 0\n[ -n "$G2_PIP_FAIL" ] && exit 1\ntouch "$PWD/venv.flag"\nexit 0\n' > "$3/bin/python"; fi
     chmod +x "$3/bin/python"; printf 'home = /usr/bin\n' > "$3/pyvenv.cfg"; exit 0
 fi
 touch "$PWD/ran.flag"; exit 0
 PY
 chmod +x "$DI/bin/python3"; printf '#!/bin/sh\ntouch "$PWD/ran.flag"\nexit 0\n' > "$DI/bin/poetry"; chmod +x "$DI/bin/poetry"; for b in npm pip pip3 pip3.11; do cp "$DI/bin/poetry" "$DI/bin/$b"; done
-CELLS="guide cite ci script bare off npmfresh npmhave pyreq pyproj pip311 pyhave pyve pynopip pyfail pyverify"
+CELLS="guide cite ci script bare off npmfresh npmhave pyreq pyproj pip311 pyhave pyve pynopip pyfail pyverify pyfailrec"
 for k in $CELLS; do
     mkdir -p "$DI/$k" && printf '[project]\nname = "calc"\nversion = "0"\n' > "$DI/$k/pyproject.toml" && printf 'def f():\n    return 1\n' > "$DI/$k/calc.py" && printf '.venv/\nnode_modules\n' > "$DI/$k/.gitignore"
     (cd "$DI/$k" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid)
@@ -2647,20 +2650,29 @@ mkdir -p "$DI/ci/.github/workflows" && printf 'jobs:\n  test:\n    steps:\n     
 printf '#!/bin/sh\ntouch "$PWD/ran.flag"\n' > "$DI/script/install.sh"; chmod +x "$DI/script/install.sh"
 for k in npmfresh npmhave; do printf '{"name":"c","private":true}\n' > "$DI/$k/package.json"; done; mkdir -p "$DI/npmhave/node_modules/x"
 for k in pyreq pyfail; do printf 'requests\n' > "$DI/$k/requirements.txt"; done
+printf 'node_modules\n' > "$DI/pyfailrec/.gitignore" # no .venv line: an unrecorded Loki-made .venv would land in the change
 mkdir -p "$DI/pyhave/.venv/bin" && printf 'home = /usr/bin\n' > "$DI/pyhave/.venv/pyvenv.cfg" && printf 'mine\n' > "$DI/pyhave/.venv/marker"
 for k in $CELLS; do (cd "$DI/$k" && git add -- . && git commit -q -m base); done
-DI_OUT="$(cd "$ROOT/loki-ts" && env -u VIRTUAL_ENV PATH="$DI/bin:$PATH" timeout 120 bun -e 'import { prepareDeps, unusedInstallNotes, UNDECLARED_INSTALL, lokiVenvNotes } from "./src/project_model/install.ts"; import { envChangedSince, depsListing } from "./src/util/base_guard.ts"; import { ignoreSnapshot, ignoreRuleChanges } from "./src/util/check_result.ts"; import { existsSync, readFileSync } from "node:fs";
+DI_OUT="$(cd "$ROOT/loki-ts" && env -u VIRTUAL_ENV PATH="$DI/bin:$PATH" timeout 120 bun -e 'import { prepareDeps, unusedInstallNotes, UNDECLARED_INSTALL, lokiVenvNotes, withLokiVenvs, installOwned } from "./src/project_model/install.ts"; import { changedFiles } from "./src/util/check_result.ts"; import { dropSet } from "./src/e10ext/commit_filter.ts"; import { execFileSync } from "node:child_process"; import { envChangedSince, depsListing } from "./src/util/base_guard.ts"; import { ignoreSnapshot, ignoreRuleChanges } from "./src/util/check_result.ts"; import { existsSync, readFileSync } from "node:fs";
 const d = process.argv[1], out: string[] = [];
-const cmdOf: Record<string, string> = { npmfresh: "npm install", npmhave: "npm install", script: "./install.sh", pyreq: "python3 -m pip install -r requirements.txt", pyfail: "python3 -m pip install -r requirements.txt", pyproj: "pip install -e .", pip311: "pip3.11 install -e .", pyhave: "pip install -e .", pyve: "pip install -e .", pynopip: "pip install -e .", pyverify: "pip install -e ." };
+const cmdOf: Record<string, string> = { npmfresh: "npm install", npmhave: "npm install", script: "./install.sh", pyreq: "python3 -m pip install -r requirements.txt", pyfail: "python3 -m pip install -r requirements.txt", pyproj: "pip install -e .", pip311: "pip3.11 install -e .", pyhave: "pip install -e .", pyve: "pip install -e .", pynopip: "pip install -e .", pyverify: "pip install -e .", pyfailrec: "pip install -e ." };
 const citeOf: Record<string, string[]> = { cite: ["Makefile"], npmfresh: ["package.json"], npmhave: ["package.json"] };
 for (const k of process.argv[2]!.split(" ")) {
-  const env0 = { ...process.env }; if (k === "off") process.env["LOKI_E10_DECLARED_INSTALLS"] = "0"; if (k === "pyve") process.env["VIRTUAL_ENV"] = d + "/outside-venv"; if (k === "pynopip") process.env["G2_VENV_NOPIP"] = "1"; if (k === "pyfail") process.env["G2_VENV_FAIL"] = "1";
+  const env0 = { ...process.env }; if (k === "off") process.env["LOKI_E10_DECLARED_INSTALLS"] = "0"; if (k === "pyve") process.env["VIRTUAL_ENV"] = d + "/outside-venv"; if (k === "pynopip") process.env["G2_VENV_NOPIP"] = "1"; if (k === "pyfail") process.env["G2_VENV_FAIL"] = "1"; if (k === "pyfailrec") process.env["G2_PIP_FAIL"] = "1";
   const model = { installFor: () => ({ cmd: cmdOf[k] ?? "poetry install", cwd: ".", cite: citeOf[k] ?? ["pyproject.toml"] }), packages: () => [] } as any;
   const r = await prepareDeps({ repoDir: d + "/" + k, model, failed: [{ root: ".", harnessOwned: true }], signal: new AbortController().signal, timeoutMs: 60000, opts: { runId: "di-" + k }, intake: k !== "pyverify" });
-  for (const x of ["LOKI_E10_DECLARED_INSTALLS", "VIRTUAL_ENV", "G2_VENV_NOPIP", "G2_VENV_FAIL"]) { if (env0[x] === undefined) delete process.env[x]; else process.env[x] = env0[x]; }
+  for (const x of ["LOKI_E10_DECLARED_INSTALLS", "VIRTUAL_ENV", "G2_VENV_NOPIP", "G2_VENV_FAIL", "G2_PIP_FAIL"]) { if (env0[x] === undefined) delete process.env[x]; else process.env[x] = env0[x]; }
   const und = r.notProven.filter((l) => l.startsWith(UNDECLARED_INSTALL)), na = unusedInstallNotes(r.notProven, model, [], [], d + "/" + k);
   const f = (n: string) => existsSync(d + "/" + k + "/" + n) ? 1 : 0;
   out.push(`${k}:${r.checks[0]?.result}:${f("ran.flag")}${f("venv.flag")}${f(".venv")}:${und.length}:${na.na.length}/${na.cap.length}`);
+  if (k === "pyfailrec") { // review of 7b196ff16: a made .venv whose install failed is still recorded, so it is in neither changedFiles nor the commit
+    const repo = d + "/pyfailrec", base = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), created = withLokiVenvs(null, r.lokiVenvMade);
+    const ch = changedFiles(repo, base, installOwned(repo, created)).filter((f) => f.startsWith(".venv"));
+    execFileSync("git", ["-C", repo, "add", "-A", "--", "."]); const parts = execFileSync("git", ["-C", repo, "diff", "--cached", "--name-status", "--no-renames", "-z", base], { encoding: "utf8" }).split("\0").filter(Boolean);
+    const staged = [] as { st: string; f: string }[]; for (let i = 0; i + 1 < parts.length; i += 2) staged.push({ st: parts[i]!, f: parts[i + 1]! });
+    const dropped = new Set(dropSet(repo, staged, undefined, process.env, created, undefined, base).map((x) => x.f));
+    out.push(`rec:${(created?.dirs ?? []).join("+")}:${ch.length}:${staged.filter((x) => x.f.startsWith(".venv/") && !dropped.has(x.f)).length}`);
+  }
   if (k === "pyhave") out.push(`keep:${readFileSync(d + "/pyhave/.venv/marker", "utf8").trim()}`);
   if (k === "pyfail") out.push(`failnote:${und.some((l) => l.includes("requirements.txt present; Loki did not install it") && l.includes("run: python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt") && l.includes("never installs into the machine"))}`);
   if (k === "pyreq") {
@@ -2670,7 +2682,7 @@ for (const k of process.argv[2]!.split(" ")) {
   }
 }
 console.log(out.join(" "));' "$DI" "$CELLS" 2>&1 | tail -1)"
-DI_WANT="guide:pass:100:0:0/0 cite:pass:100:0:0/0 ci:pass:100:0:0/0 script:pass:100:0:0/0 bare:not_run:000:1:0/1 off:pass:100:0:0/0 npmfresh:pass:100:0:0/0 npmhave:not_run:000:1:0/1 pyreq:pass:011:0:0/0 receipt:true baseline:false,0 pyproj:pass:011:0:0/0 pip311:pass:011:0:0/0 pyhave:not_run:001:1:0/1 keep:mine pyve:not_run:000:1:0/1 pynopip:not_run:001:1:0/1 pyfail:not_run:000:1:0/1 failnote:true pyverify:not_run:000:1:0/1"
+DI_WANT="guide:pass:100:0:0/0 cite:pass:100:0:0/0 ci:pass:100:0:0/0 script:pass:100:0:0/0 bare:not_run:000:1:0/1 off:pass:100:0:0/0 npmfresh:pass:100:0:0/0 npmhave:not_run:000:1:0/1 pyreq:pass:011:0:0/0 receipt:true baseline:false,0 pyproj:pass:011:0:0/0 pip311:pass:011:0:0/0 pyhave:not_run:001:1:0/1 keep:mine pyve:not_run:000:1:0/1 pynopip:not_run:001:1:0/1 pyfail:not_run:000:1:0/1 failnote:true pyverify:not_run:000:1:0/1 pyfailrec:not_run:001:0:0/1 rec:.venv/:0:0"
 [ "$DI_OUT" = "$DI_WANT" ] && ok "declared installs and intake venv: declared non-pip installs run, an invented one does not; an unlocked pip install gets a Loki-made .venv at intake and runs only through its python -m pip; an existing .venv or VIRTUAL_ENV is never replaced; no pip or a failed venv is skipped with the note; never outside intake; the receipt names it and it is the baseline ($DI_OUT)" || bad "declared installs and intake venv: got '$DI_OUT' want '$DI_WANT'"
 
 # G2 ENV-GUARD, lint (rule 22, real pytest, fake uv on PATH): a uv project (uv.lock) whose uv ignores UV_PROJECT_ENVIRONMENT, so the lint Loki chose (`uv run -- ruff`) creates a
