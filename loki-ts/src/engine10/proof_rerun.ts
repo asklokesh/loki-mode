@@ -455,13 +455,15 @@ export async function proofOnBase(repoDir: string, runDir: string, baseSha: stri
 // copy and the script is run once more.
 /** On by default; LOKI_E10_OWN_PROOF=0 opts out (the proof is then the runner-read fail-then-pass alone). */
 export const ownProofOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_OWN_PROOF"] ?? "").trim());
-/** The steps of the change's own proof: passing, repository-running steps on the change that the run without the change printed FAILED for (paired by item and
- *  description, as compareWithBase pairs them; a step the other run never reached, or also passed, is not one). Pure. */
-export function failsWithoutChange(head: ProofCheck[], without: ProofCheck[]): string[] {
-  const k = (c: ProofCheck): string => `${c.item}\u0001${c.what}`, passed = new Set(without.filter((c) => c.ok).map(k)), failed = new Set(without.filter((c) => !c.ok).map(k));
-  return [...new Set(head.filter((c) => c.ok && c.real === true && failed.has(k(c)) && !passed.has(k(c))).map((c) => c.what))];
+/** The steps of the change's own proof: passing, repository-running steps on the change that also pass in an untouched copy of the checkout (the control: a
+ *  step that fails there fails because of the copy, not because the change is gone) and that the copy without the change printed FAILED for. Paired by item
+ *  and description, as compareWithBase pairs them; a step a run never reached, or that passed without the change, is not one. Pure. */
+export function failsWithoutChange(head: ProofCheck[], control: ProofCheck[], without: ProofCheck[]): string[] {
+  const k = (c: ProofCheck): string => `${c.item}\u0001${c.what}`, set = (cs: ProofCheck[], ok: boolean): Set<string> => new Set(cs.filter((c) => c.ok === ok).map(k));
+  const cOk = set(control, true), cBad = set(control, false), wOk = set(without, true), wBad = set(without, false);
+  return [...new Set(head.filter((c) => c.ok && c.real === true && cOk.has(k(c)) && !cBad.has(k(c)) && wBad.has(k(c)) && !wOk.has(k(c))).map((c) => c.what))];
 }
-export interface OwnProof { ok: boolean; steps: string[]; why?: string; seconds: number; built?: true; checks_without: number }
+export interface OwnProof { ok: boolean; steps: string[]; why?: string; seconds: number; built?: true; checks_without: number; checks_control: number }
 /** Runs the kept proof script in a copy of the checkout without the change (see the block comment above). `revert`: the change's non-test files, each with
  *  whether the change added it (then it is removed in the copy; otherwise its base content is written back, read from the repository's objects, so no git
  *  command runs inside the copy and the run's own index is never touched). `builds`: the build commands of the packages that own those files, tried only when
@@ -469,16 +471,17 @@ export interface OwnProof { ok: boolean; steps: string[]; why?: string; seconds:
 export async function proofWithoutChange(repoDir: string, runDir: string, baseSha: string | undefined, head: ProofRerun | null, revert: readonly { path: string; added: boolean }[], builds: readonly { cmd: string; cwd: string }[], signal?: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<OwnProof | null> {
   if (!ownProofOn(env) || !proofRerunOn(env) || !baseSha || !head || head.refused || head.exit !== 0 || head.failed > 0 || !head.checks?.some((c) => c.ok && c.real) || revert.length === 0) return null;
   let text = ""; try { text = readFileSync(join(runDir, PROOF_SCRIPT), "utf8"); } catch { return null; }
-  const no = (why: string, seconds = 0): OwnProof => ({ ok: false, steps: [], why, seconds, checks_without: 0 });
+  const no = (why: string, seconds = 0): OwnProof => ({ ok: false, steps: [], why, seconds, checks_without: 0, checks_control: 0 });
   let total = 0;
-  const once = async (build: boolean): Promise<OwnProof> => {
+  const once = async (mode: "control" | "without" | "built"): Promise<ProofCheck[] | string> => {
+    const build = mode === "built";
     let prepWhy = "", wt = "";
     const r = await runProofScript(env, signal, runDir, async (scratchDir) => {
       wt = join(scratchDir, "without");
       if (process.platform !== "darwin") { try { const f = statfsSync(scratchDir); if (Number(f.bavail) * Number(f.bsize) < 5 * 2 ** 30) { prepWhy = "less than 5 GiB of disk is free, and off macOS the copy of the checkout may be a full copy"; return null; } } catch { /* unknown free space: the copy's own time limit still holds */ } }
       const cp = await run(process.platform === "darwin" ? ["cp", "-cR", repoDir, wt] : ["cp", "-R", "--reflink=auto", repoDir, wt], { timeoutMs: DEPS_COPY_MS, signal });
       if (cp.exitCode !== 0) { prepWhy = "Loki could not copy the checkout for the run without the change"; return null; }
-      for (const f of revert) {
+      if (mode !== "control") for (const f of revert) {
         const dst = join(wt, f.path);
         try {
           if (f.added) { rmSync(dst, { force: true }); continue; }
@@ -495,18 +498,23 @@ export async function proofWithoutChange(repoDir: string, runDir: string, baseSh
       return { script: join(dir, PROOF_SCRIPT), cwd: wt, extra: { LOKI_REPO: wt }, limitS: proofRerunS(env) };
     });
     if (wt) { try { rmSync(wt, { recursive: true, force: true }); } catch { /* the scratch cleanup removes it */ } }
-    if (!r) return no("Loki could not create a scratch directory for the run without the change");
+    if (!r) return "Loki could not create a scratch directory for the run without the change";
     total += r.seconds;
-    if (!r.ran) return no(prepWhy || "the run without the change could not be prepared", total);
-    if (r.exit === null || r.timedOut) return no("the run without the change did not finish", total);
-    const without = proofChecks(r.results, r.token), steps = failsWithoutChange(head.checks!, without);
-    return { ok: steps.length > 0, steps, seconds: total, checks_without: without.length, ...(build ? { built: true as const } : {}), ...(steps.length ? {} : { why: without.length === 0 ? "the proof script printed no check when run without the change" : "every step that passes on the change also passes without it, so the proof does not tell the change from no change" }) };
+    if (!r.ran) return prepWhy || "the run without the change could not be prepared";
+    if (r.exit === null || r.timedOut) return mode === "control" ? "the proof script did not finish in a copy of the checkout" : "the run without the change did not finish";
+    return proofChecks(r.results, r.token);
   };
   try {
-    const first = await once(false);
-    if (first.ok || builds.length === 0 || first.checks_without === 0 || signal?.aborted) return first;
-    const second = await once(true); // build output made from the change can let a step pass without it: build in the copy and run once more
-    return second.ok ? second : { ...first, seconds: total };
+    const control = await once("control"); if (typeof control === "string") return no(control, total);
+    const key = (c: ProofCheck): string => `${c.item}\u0001${c.what}`, cOk = new Set(control.filter((c) => c.ok).map(key));
+    if (!head.checks!.some((c) => c.ok && c.real && cOk.has(key(c)))) return { ...no("no step of the proof script passes in a copy of the checkout, so a failure there would say nothing about the change", total), checks_control: control.length };
+    const result = (without: ProofCheck[], built: boolean): OwnProof => { const steps = failsWithoutChange(head.checks!, control, without); return { ok: steps.length > 0, steps, seconds: total, checks_without: without.length, checks_control: control.length, ...(built ? { built: true as const } : {}), ...(steps.length ? {} : { why: without.length === 0 ? "the proof script printed no check when run without the change" : "every step that passes on the change also passes without it, so the proof does not tell the change from no change" }) }; };
+    const w1 = await once("without"); if (typeof w1 === "string") return { ...no(w1, total), checks_control: control.length };
+    const first = result(w1, false);
+    if (first.ok || builds.length === 0 || w1.length === 0 || signal?.aborted) return first;
+    const w2 = await once("built"); // build output made from the change can let a step pass without it: build in the copy and run once more
+    const second = typeof w2 === "string" ? null : result(w2, true);
+    return second?.ok ? second : { ...first, seconds: total };
   } catch (e) { return no(`the run without the change did not complete: ${(e as Error).message}`.slice(0, 200), total); }
 }
 /** One run of a bash script that Loki owns from start to end: a new scratch directory holding Loki's own copy of the helper, an EMPTY directory inside it as

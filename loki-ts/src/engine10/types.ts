@@ -258,6 +258,8 @@ export interface Receipt {
   review?: { provider: string | null; vendor_differs: boolean };
   /** UNRUNNABLE-CHECK: the checks that could not run on the base commit or on the change, stayed failed or not run on this receipt, and did not hold the label; absent when none. */
   could_not_run?: string[];
+  /** OWN-PROOF (G3): Loki's run of the kept proof script in a copy of the checkout with the change's non-test files put back to the base commit. */
+  own_proof?: { ok: boolean; steps: string[]; seconds: number; checks_control: number; checks_without: number; built?: true; why?: string };
   /** T2: the counted outcome for METRICS: "yes" | "no" | "inconclusive". */
   mutation_outcome?: "yes" | "no" | "inconclusive";
   /** AWE-2: on a "yes" proof only, each proving test file's own base-run output lines (redacted, local paths cut); omitted otherwise. Display only (proof card, PR body). */
