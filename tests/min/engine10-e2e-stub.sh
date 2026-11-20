@@ -450,7 +450,7 @@ PY
 E2E_PREP=ntf_prep LOKI_E10_NO_TEST_FALLBACK=1 run_engine done
 f="$(ntf_facts)"; set -- $f
 [ "$1" = True ] && [ "$2" = True ] && ok "no-test fallback: a low-tier verify that ran no test runs the repo's own test command, and it passed ($3)" || bad "no-test fallback facts: $f (rc $RC)"
-E2E_PREP=ntf_prep LOKI_E10_NO_TEST_FALLBACK=0 run_engine done
+E2E_PREP=ntf_prep LOKI_E10_NO_TEST_FALLBACK=0 LOKI_E10_LOW_TIER_FULL_SUITE=0 run_engine done # the old low-tier rule; G6 (11.172.0) runs the full suite at every tier
 f="$(ntf_facts)"; set -- $f
 [ "$1" = False ] && [ "$2" = False ] && ok "no-test fallback: LOKI_E10_NO_TEST_FALLBACK=0 keeps the low tier's deferred test command" || bad "no-test fallback off facts: $f"
 unset -f ntf_prep
@@ -650,9 +650,13 @@ grep -q '"base_red": true' "$RUNDIR/receipt-addendum-1.json" && ok "addendum mar
 [ "$6" = VERIFIED ] && ok "F3: a run with no reviewer keeps its verdict (VERIFIED, as on the base commit)" || bad "F3: no-reviewer run verdict $6 (want VERIFIED, as on the base commit)"
 [ "$2" = True ] && [ "$7" = True ] && ok "draft run 3: result-cost sum equals receipt cost to the cent" || bad "draft run 3 facts: $f"
 
-run_pr new new
+run_pr new new LOKI_E10_LOW_TIER_FULL_SUITE=0 # the old low-tier rule: the full suite runs only in the post-seal deep worker
 f="$(pr_facts)"; set -- $f
 [ "$8" = failure ] && ok "a new failing id beyond the base-red ones keeps status failure" || bad "new full-suite failure gave status $8 ($f)"
+# G6 LOW-TIER-FULL-SUITE (default on): the same low-tier run now runs the full suite before the seal, so the new failing id seals FAILED at the seal.
+run_pr new-g6 new
+f="$(pr_facts)"; set -- $f
+[ "$6" = FAILED ] && ok "G6: a low-tier run with a new full-suite failure seals FAILED at the seal, not VERIFIED with a later deep-worker failure (the work still goes out as a draft PR)" || bad "G6: low-tier new failure gave verdict $6 ($f)"
 # The two runs above are low tier: their seal-time verify runs only bun:calc.test.ts and the npm suite runs in the post-seal deep worker, so suiteSkip never sees
 # it (probe e10-20261120T142527Z-fb46: receipt checks [bun:calc.test.ts], the new id only in receipt-addendum-1). Medium tier runs the suite inside verify.
 run_pr snstable stable LOKI_RISK_TIER=medium LOKI_PR_DRAFT=1
