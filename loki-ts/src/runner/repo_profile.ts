@@ -401,6 +401,12 @@ function withGuides(repoDir: string, out: ProfileCommand[]): ProfileCommand[] {
  *  workspace returns { fanOut: <package.json that does> } instead. Never throws. */
 const SKIP_PKG_DIR = /^(node_modules|vendor|third_party|test-?data|.*fixtures?|__\w+__|examples?|samples?|templates?|docs?|tests?|e2e|benchmarks?|\..*)$/;
 const PKG_MANIFESTS = ["package.json", "go.mod", "Cargo.toml", "pyproject.toml", "setup.py"];
+/** SETUP-PY-IS-PACKAGING (closed-set-2 hm155462): a file named setup.py is a package manifest only when it is a packaging script, one that imports setuptools
+ *  or distutils. hermes-agent has four ordinary modules named setup.py (a setup wizard, helpers); each made its directory a package, Loki planned
+ *  `python3 -m pip install -e .` there, and the run carried four "install exited 1" holds and "package hermes_cli defines no test command". Unreadable: not one. */
+export function isPackagingSetupPy(repoDir: string, rel: string): boolean {
+  try { return /^\s*(?:from|import)\s+(?:setuptools|distutils)\b/m.test(readFileSync(join(repoDir, rel), "utf8").slice(0, 262144)); } catch { return false; }
+}
 const LOCK_INSTALLS: [string, string][] = [["pnpm-lock.yaml", "pnpm install"], ["yarn.lock", "yarn install"], ["bun.lock", "bun install"], ["bun.lockb", "bun install"], ["package-lock.json", "npm install"], ["uv.lock", "uv sync"], ["poetry.lock", "poetry install"], ["Cargo.lock", "cargo fetch"], ["go.mod", "go mod download"]];
 const UI_DEPS = ["react-dom", "vue", "svelte", "@angular/core", "next", "nuxt", "solid-js", "preact", "astro"];
 const MAX_MODEL_PACKAGES = 200;
@@ -419,6 +425,7 @@ function fansOut(scripts: Record<string, unknown>): boolean {
 export function manifestModel(repoDir: string): Record<string, unknown> | { fanOut: string } | null {
   let tracked: string[];
   try { tracked = safeGit(repoDir, ["ls-files", "-z"], { maxBuffer: 256 * 1024 * 1024 }).split("\0").filter(Boolean); } catch { return null; }
+  tracked = tracked.filter((p) => basename(p) !== "setup.py" || isPackagingSetupPy(repoDir, p)); // SETUP-PY-IS-PACKAGING: a module that is only named setup.py is no manifest, here and in every reading below
   const trackedSet = new Set(tracked), at = (dir: string, f: string): string => (dir === "." ? f : `${dir}/${f}`);
   const json = (dir: string): Record<string, unknown> | null => { try { const j = JSON.parse(read(join(repoDir, dir, "package.json"))) as unknown; return j && typeof j === "object" && !Array.isArray(j) ? (j as Record<string, unknown>) : null; } catch { return null; } };
   const isFile = (rel: string): boolean => trackedSet.has(rel) || (() => { try { return lstatSync(join(repoDir, rel)).isFile(); } catch { return false; } })();

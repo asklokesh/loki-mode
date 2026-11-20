@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### A Python module that is only named setup.py is not installed as a package
+
+- Loki treated every tracked `setup.py` as a package manifest and planned `python3 -m pip install -e .` in its directory. In hermes-agent four ordinary modules are named `setup.py` (a setup wizard and helpers), so a run carried four "install exited 1" notes and "package hermes_cli defines no test command", each of which kept the run below VERIFIED.
+- A `setup.py` is now a manifest only when it imports `setuptools` or `distutils`.
+- Measured on the stored hermes-agent base with the package model itself: 17 packages before, 13 after; the four directories and their install commands are gone and the rest is unchanged. Not yet measured in a full run.
 
 ## v11.170.0 (2026-11-20)
 
