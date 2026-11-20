@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 
+## v11.169.0 (2026-11-20)
+
+### Verify's base tree runs a workspace suite with the dependencies the checkout has
+
+- When a suite is red on the change, Loki runs it on the untouched base commit in a separate tree to see which failures were already there. In a workspace, that tree used to get dependencies only for the suite's own package and the root, so sibling packages the suite imports could not load theirs. On opencode the cli suite ran 123 tests with 84 failures there, against 408 tests with 8 failures in the checkout, so failures that already existed on base read as new.
+- Every workspace member that has a `node_modules` in the checkout now gets its dependencies in the base tree the same way. A member that cannot be linked is named on the receipt's baseline line. `LOKI_E10_BASE_TREE_MEMBERS=0` opts out.
+- Measured on the real opencode base: the call links 37 of 37 members in under a second. With all members linked, the base-tree cli run fails the same 8 tests as the checkout (408 ran on both sides). Also covered by unit legs on a fixture workspace.
+- Not yet measured: a full replay of a stored run. On the oc63960 replay with this change alone, the label stays FAILED. Two holds moved as predicted, and the rest are being fixed in the next releases. No label changes on their own.
+
+Gate: the full hermetic local gate (31 of the 32 tests/min files; scratch-real-services is excluded) on the merged tree. Reviewed cold by a second model before release.
+
 ## v11.168.0 (2026-11-20)
 
 ### Loki never pushes a branch that changes nothing against the run's base
