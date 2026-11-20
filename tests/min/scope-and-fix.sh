@@ -2702,11 +2702,11 @@ mkdirSync(a + "/node_modules/dep", { recursive: true }); writeFileSync(a + "/nod
 await new Promise((r) => setTimeout(r, 30)); const deps = { node_modules: depsListing(a + "/node_modules") }, t1 = Date.now();
 const o2 = harnessCmdBegin(); await guardEnv(a, "lint:tsc", async () => { mkdirSync(a + "/node_modules/typegen", { recursive: true }); writeFileSync(a + "/node_modules/typegen/index.d.ts", "export {};\n"); }, rd(a)); o2();
 const quiet = envChangedSince(a, a, t1, [], deps);
-await new Promise((r) => setTimeout(r, 30)); writeFileSync(a + "/node_modules/typegen/later.js", "2\n"); const later = envChangedSince(a, a, t1, [], deps);
+const keptThere = existsSync(a + "/node_modules/typegen/index.d.ts"); await new Promise((r) => setTimeout(r, 30)); mkdirSync(a + "/node_modules/typegen", { recursive: true }); writeFileSync(a + "/node_modules/typegen/later.js", "2\n"); const later = envChangedSince(a, a, t1, [], deps);
 const { rmSync } = await import("node:fs"); rmSync(a + "/node_modules/typegen/later.js"); await new Promise((r) => setTimeout(r, 30)); mkdirSync(a + "/node_modules/realpkg"); writeFileSync(a + "/node_modules/realpkg/i.js", "3\n");
-out.push("later:" + [quiet, later, envChangedSince(a, a, t1, [], deps)].join(","));
+out.push("later:" + [keptThere, quiet, later, envChangedSince(a, a, t1, [], deps)].join(","));
 console.log(out.join(" "));' "$GK/a" "$GK/b" "$GK/c" "$GK/outside" 2>&1 | tail -1)"
-GK_WANT="moved:true,true,true,true kept:true,.venv,true,0,true,false,true refuse:another harness command was running|it existed before the command|it is a link|it resolves outside the checkout|git tracks it outside-kept:true,true,true later:false,true,true"
+GK_WANT="moved:true,true,true,true kept:true,.venv,true,0,true,false,true refuse:another harness command was running|it existed before the command|it is a link|it resolves outside the checkout|git tracks it outside-kept:true,true,true later:true,false,true,true"
 [ "$GK_OUT" = "$GK_WANT" ] && ok "env guard move and keep: a lone command's .venv is moved to the run folder with a ledger line; a kept one is subtracted only as it was; each refusal is named; nothing outside is touched; a later install into a kept dir still counts ($GK_OUT)" || bad "env guard move and keep: got '$GK_OUT'"
 
 # G2 undeclared install and the cap (review B4, unit): an install Loki did not run is N/A only when nothing depends on it, or every non-lint check of its ecosystem passed.
