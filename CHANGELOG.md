@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Fix to 11.167.0: a run that finds the work already done seals ALREADY_SATISFIED only when Loki's own re-run of the kept proof script also meets every required acceptance line of the run (the issue's own lines, or the plan's for a prose issue), by the same rule seal uses for an issue run. A session-written proof with 1 proved step for 10 acceptance lines sealed ALREADY_SATISFIED in 11.167.0; it is now PARTIAL with "met 1 of 10 acceptance line(s)". A run with no acceptance lines stays PARTIAL, as before 11.167.0. Known limit: the proof steps and the line numbers they carry are written by the session, so an issue of any number of lines "proved" by one step per line that runs no repository code still reads ALREADY_SATISFIED; for a prose issue the lines are the plan's own, so both the lines and the proof are model-written. A detector for steps that run no repository code follows separately.
 
 ## v11.169.0 (2026-11-20)
 
