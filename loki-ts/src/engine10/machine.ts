@@ -9,7 +9,7 @@ import { rerunOnQuota, sessionKind, usageLimitOf } from "../runner/retry_class.t
 import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./failures.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote, timeNoteOn } from "../util/run_cap.ts"; import { FINISH_LINE, issueRunBrief } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, isClean, MIN_ATTEMPT_WINDOW_S, runExtraAttempts, signalNotProven, type AttemptSignal } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
 import { armTimer, backstopS, defaultBudgetsOn, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, hangSilenceS, MAX_FIX_ROUNDS, noProgressRounds, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
-import { stallSame, stallSignature } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
+import { newFailingIds, stallSame, stallSignature, SUITE_FIX_SKIP_NOTE, suiteSkipHolds } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
 import { PROVE_MIN_S, proveApplies, proveBudgetS, proveReserveOfS, proveNotRun, proveScope, recheckProve, type ProveRecord } from "./stages/prove.ts"; import { capCeilingS } from "../util/run_cap.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
 
 /** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
@@ -77,6 +77,13 @@ export const onlyBaseRed = (d: Obj | undefined): boolean => {
 export const PRE_EXISTING_CLAIM = /\bpre-?exist|\balready (?:fail|red|broken)|\bidentical(?:ly)?\b|\bon (?:the )?(?:clean |unmodified |original )?(?:base|HEAD|main|master)\b|\bbefore (?:this|the|my|any) change|\bnot caused by\b|\bunrelated to (?:this|the) (?:change|task)/i;
 export const BASE_RED_CONFLICT = "a fix round stopped saying the remaining failures pre-exist on base; every failing id is red on base and no failure names a changed file or symbol, so they are excused as pre-existing (error text not compared, not proven unrelated to this change)";
 /** Cost step b: every blocking group is a full-suite failure or a startup failure: a second fix round rarely fixes a suite the change did not touch or a runner that never started (failures.ts environmentShaped), so one round is the cap there. */
+/** G5: the fix loop's full-suite-only stop. From round 2 on, when only full suites are red, the loop stops only if the full suite's NEW failing ids did not shrink
+ *  since the round before (suiteNow >= suitePrev); a suite whose new ids are still falling gets its next round. Round 1 is never stopped here (suiteSkip owns it). */
+/** G5 fix-loop progress: fewer NEW failing ids than the best so far, or more checks that ran than ever before (a round that makes a not_run check run, showing
+ *  its real failing ids, unblocked it: summary-parse review D3). Both are bounded, so the loop always ends. */
+export const checksRan = (d: Obj | undefined): number => (Array.isArray(d?.checks) ? (d!.checks as Obj[]) : []).filter((c) => c?.result !== "not_run").length;
+export const fixRoundMoved = (newNow: number, ranNow: number, fewestNew: number, mostRan: number): boolean => newNow < fewestNew || ranNow > mostRan;
+export const suiteOnlyStop = (round: number, onlySuiteRed: boolean, suiteNow: number, suitePrev: number): boolean => round > 1 && onlySuiteRed && suiteNow >= suitePrev;
 export const onlyFullSuiteRed = (d: Obj | undefined): boolean => Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0 && (d.failures_grouped as { signature?: unknown; sample?: unknown }[]).every((g) => String(g.signature ?? "").startsWith("full suite") || environmentShaped([{ signature: String(g.signature ?? ""), sample: String(g.sample ?? "") }]));
 /** LOKI_E10_SUITE_FIX_SKIP (default on; =0/off/false opts out): no fix round at all when every blocking group is a full-suite or startup failure (onlyFullSuiteRed),
  *  no failing full-suite id names a file the change edited, no held-out check failed, and a targeted test of the change ran and passed. On the v11.137 Haiku bench arms, 21 such first rounds turned none of their runs
@@ -95,7 +102,7 @@ export function freshBaseCheckout(repoDir: string, baseSha: string): string | nu
 }
 export { haikuIndepFixOn } from "./stages/verify.ts"; import { fixGateOf } from "./stages/verify.ts"; // FIX-GATE: the gate predicate lives beside the independent set it reads, and verify records its reading
 export const suiteFixSkipEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SUITE_FIX_SKIP"] ?? "").trim());
-export const SUITE_FIX_SKIP_NOTE = "fix round skipped: only full-suite failures remained while the change's own targeted tests passed, so those failures are NOT PROVEN unrelated to the change (LOKI_E10_SUITE_FIX_SKIP=0 runs the round)";
+export { SUITE_FIX_SKIP_NOTE } from "../util/check_result.ts"; // one owner: check_result.ts (seal reads it)
 export const suiteOnlyRed = (d: Obj | undefined): boolean => {
   const checks = Array.isArray(d?.checks) ? (d.checks as Obj[]) : [], changed = (Array.isArray(d?.changed_files) ? d.changed_files : []).map(String).filter((f) => f && !f.startsWith(".loki/"));
   const namesChanged = checks.some((c) => c?.result === "fail" && String(c.name ?? "").startsWith("full suite") && (Array.isArray(c.ids) ? c.ids : []).some((i) => changed.some((f) => String(i).includes(f)))); // a failing id in a file the change edited is the change's own failure: the round runs
@@ -125,11 +132,7 @@ export function verifyLimitFor(floorS: number, softS: number, elapsedS: number, 
   const v = Number((env["LOKI_E10_VERIFY_MAX_S"] ?? "").trim()), max = Number.isFinite(v) && v >= 1 ? Math.floor(v) : defaultBudgetsOn(env) ? VERIFY_MAX_S : Infinity; // NO-DEFAULT-BUDGET: no verify maximum unless the user sets one (LOKI_E10_VERIFY_MAX_S, --verify-max-time); a user run cap still bounds it through softS
   return Math.min(Math.max(floorS, Math.floor(softS - elapsedS - VERIFY_TAIL_S)), max);
 }
-/** NO-DEFAULT-BUDGET fix-loop progress: failing check ids (a failing check with no ids counts once) and checks that ran (not not_run). */
-export function fixProgressOf(d: Obj | undefined): { failing: number; ran: number } {
-  const checks = Array.isArray(d?.checks) ? (d!.checks as Obj[]) : [];
-  return { failing: checks.filter((c) => c?.result === "fail").reduce((n, c) => n + Math.max(1, Array.isArray(c.ids) ? c.ids.length : 0), 0) + (Number(d?.holdout_failed) > 0 ? Number(d!.holdout_failed) : 0), ran: checks.filter((c) => c?.result !== "not_run").length };
-}
+export { newFailingIds } from "../util/check_result.ts"; // G5: the one owner is check_result.ts (seal reads it too)
 /** What an extra-attempts window leaves for the re-verify and the tail (commit, seal, pr). */
 const ATTEMPTS_TAIL_S = STAGE_BUDGETS.verify.limitS + STAGE_BUDGETS.commit.limitS + STAGE_BUDGETS.seal.limitS + STAGE_BUDGETS.pr.limitS;
 export function softCapS(capS: number): number { const plain = (capS * 14) / 15, budget = backstopS(capS) - ((STAGE_BUDGETS.commit.targetS ?? 0) + (STAGE_BUDGETS.seal.targetS ?? 0) + KILL_GRACE_MS / 1000 + 2); return Math.max(0, Math.min(plain, budget)); } // tightens 14/15 of capS so commit+seal's tail (plus a 2s margin: this clock starts after worker boot, the backstop's starts at spawn) fits before the backstop; when the tail can never fit at all (budget < 0), 0 still maximizes the gap to the backstop instead of the old plain-point fallback, which left as little as 0.17s to seal (E-67 round 5 REJECT finding 1)
@@ -434,15 +437,16 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
         // NO-DEFAULT-BUDGET: with no time limit the round count is not the bound. A round makes progress when the failing count falls below the best so far or
         // a check that had not run now ran (both bounded, so the loop always ends); noProgressRounds() rounds in a row without either end it.
-        let fixBest = fixProgressOf(outputs.verify), stillRounds = 0;
+        let fewestNew = newFailingIds(outputs.verify).size, mostRan = checksRan(outputs.verify), stillRounds = 0, suitePrev = Infinity, suiteNow = newFailingIds(outputs.verify, true).size; // G5: progress = fewer measured NEW failing ids than the best so far; a full-suite-only red stops a later round only when the suite's new ids did not shrink
         let noopSig: string | null = null; // anti-loop: the verify signature that fed the last fix round that left the tree unchanged
         const suiteSkip = suiteFixSkipEnabled() && !fatal && !capHit && outputs.implement?.exit === "done" && hasFailures(outputs.verify) && suiteOnlyRed(outputs.verify);
         // INDEP-GATE LOKI_E10_HAIKU_INDEP_FIX (default on, =0 opts out): a Haiku run gets no fix round at all unless an independent check failed (verify.ts independent_fail:
         // the Wall, a targeted test the diff touches, or a base-green test now red). dev2: rounds ran on 11 of 20 Loki-Haiku runs and flipped none of the losses. Fire marker: verify.fix_gate.
         const indepSkip = !fatal && !capHit && hasFailures(outputs.verify) && fixGateOf(outputs.verify, `${String(outputs.implement?.model ?? "")} ${ctx.model}`).startsWith("closed");
         if (indepSkip) { outputs.verify = { ...outputs.verify, fix_gate: "haiku: no independent check failed, no fix round" }; ctx.emit("loop.repeat", "fix", { reason: "haiku: no independent check failed (LOKI_E10_HAIKU_INDEP_FIX)", round: 0, skipped: true }); }
-        if (suiteSkip) { outputs.verify = { ...outputs.verify, not_proven: [...(Array.isArray(outputs.verify?.not_proven) ? outputs.verify.not_proven : []), SUITE_FIX_SKIP_NOTE] }; ctx.emit("loop.repeat", "fix", { reason: SUITE_FIX_SKIP_NOTE, round: 0, skipped: true }); }
-        for (let round = 1; !indepSkip && (unbounded ? stillRounds < noProgressRounds() : round <= MAX_FIX_ROUNDS + extraRounds) && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && !((round > 1 || suiteSkip) && onlyFullSuiteRed(outputs.verify)) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
+        if (suiteSkip && suiteSkipHolds(outputs.verify)) { outputs.verify = { ...outputs.verify, not_proven: [...(Array.isArray(outputs.verify?.not_proven) ? outputs.verify.not_proven : []), SUITE_FIX_SKIP_NOTE] }; }
+        if (suiteSkip) { ctx.emit("loop.repeat", "fix", { reason: SUITE_FIX_SKIP_NOTE, round: 0, skipped: true }); }
+        for (let round = 1; !indepSkip && (unbounded ? stillRounds < noProgressRounds() : round <= MAX_FIX_ROUNDS + extraRounds) && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && !(suiteSkip && onlyFullSuiteRed(outputs.verify)) && !suiteOnlyStop(round, onlyFullSuiteRed(outputs.verify), suiteNow, suitePrev) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
           const wallBefore = wallSignature(outputs, ctx.repoDir);
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;
@@ -479,7 +483,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
           noopSig = noop ? fedBy : null;
           const v = await runStage("verify", true);
           sigs.push(sigOf(outputs.verify, v));
-          { const now = fixProgressOf(outputs.verify); if (now.failing < fixBest.failing || now.ran > fixBest.ran) { fixBest = { failing: Math.min(now.failing, fixBest.failing), ran: Math.max(now.ran, fixBest.ran) }; stillRounds = 0; } else stillRounds++; }
+          { const now = newFailingIds(outputs.verify).size, ran = checksRan(outputs.verify); suitePrev = suiteNow; suiteNow = newFailingIds(outputs.verify, true).size; if (fixRoundMoved(now, ran, fewestNew, mostRan)) { fewestNew = Math.min(now, fewestNew); mostRan = Math.max(ran, mostRan); stillRounds = 0; } else stillRounds++; }
           if (mustJump("verify", v)) break;
           if (wallOnlyAfterFix(outputs, ctx.repoDir) && wallSignature(outputs, ctx.repoDir) === wallBefore) break; // only Loki's own Wall still fails, the same tests the same way, while the repo's own tests pass: the round made no progress on it, so delivery below decides; a round that moved the Wall gets the rounds left
           if (hasFailures(outputs.verify) && sigs.length >= 2 && stallSame(sigs[sigs.length - 2]!, sigs[sigs.length - 1]!)) { // no progress: the round left the same failing set, so another round would only spend

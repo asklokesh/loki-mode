@@ -870,6 +870,54 @@ export function emptyDiscovery(cls: Classified, out: string): boolean {
 }
 /** classifyCheck result plus the rerun-only "flaky" verdict (TEN-QUALITY-17); kept separate so existing classifyCheck callers keep the narrow type. */
 export interface ClassifiedRerun extends Omit<Classified, "result"> { result: Classified["result"] | "flaky"; rerun?: { first: "fail"; second: "pass"; n?: number } }
+export const SUITE_FIX_SKIP_NOTE = "fix round skipped: only full-suite failures remained while the change's own targeted tests passed, so those failures are NOT PROVEN unrelated to the change (LOKI_E10_SUITE_FIX_SKIP=0 runs the round)";
+/** G5: the failing ids Loki measured as NEW on head, as "check::id" (a failing check with no ids counts once as "check"). Not new: a check verify recorded red
+ *  on base (pre_red_checks, base_red_checks), an id it recorded red on base (pre_red), and a harness-owned failure; each held-out failure counts once.
+ *  `suiteOnly` keeps only the full-suite checks. Fix-loop progress is this set shrinking; the suite-skip note holds a run only when the suite view is non-empty. */
+export function newFailingIds(d: Record<string, unknown> | undefined, suiteOnly = false): Set<string> {
+  const list = (k: string): string[] => (Array.isArray(d?.[k]) ? (d![k] as unknown[]).map(String) : []);
+  const checks = Array.isArray(d?.checks) ? (d!.checks as Record<string, unknown>[]) : [], pre = new Set([...list("pre_red_checks"), ...list("base_red_checks")]), preIds = new Set(list("pre_red")), out = new Set<string>();
+  for (const c of checks) {
+    const name = String(c?.name ?? "");
+    if (c?.result !== "fail" || pre.has(name) || c?.owner === "harness" || (suiteOnly && !name.startsWith("full suite"))) continue;
+    const ids = Array.isArray(c.ids) ? (c.ids as unknown[]).map(String) : [], fresh = ids.filter((i) => !preIds.has(i));
+    if (ids.length) for (const i of fresh) out.add(`${name}::${i}`); else out.add(name);
+  }
+  const held = Number(d?.holdout_failed) > 0 ? Number(d!.holdout_failed) : 0;
+  if (!suiteOnly) for (let k = 0; k < held; k++) out.add(`holdout#${k + 1}`);
+  return out;
+}
+/** G5: the suite-skip note (SUITE_FIX_SKIP_NOTE) holds a run only when the skipped full-suite red contains at least one NEW failing id. A suite red only on
+ *  ids recorded red on base had nothing new to fix, so the skip was right and must not hold the label (oc63960). */
+export const suiteSkipHolds = (d: Record<string, unknown> | undefined): boolean => newFailingIds(d, true).size > 0;
+/** G5 LINE-FALLBACK: a test file the change edited or added never ends not_run because the runner's summary could not be parsed. The verdict then comes from
+ *  the exit code plus per-test result lines that NAME THIS FILE (summary-parse review of 08952e0e1: a bare check mark, "ok 1" or "--- PASS:" from any program
+ *  about any file passed a test that never ran): pytest "<file>::name PASSED" / "FAILED <file>::name", vitest/jest/mocha file lines with a check or cross mark
+ *  or a PASS/FAIL header naming the file. TAP "ok N" / "not ok N" count only for a node runner (node --test prints them for the one file it ran). Output that
+ *  says no tests ran ("no tests", "0 tests", "collected 0") keeps not_run. A FAIL line fails it, even under exit 0; exit 0 with at least one PASS line and no
+ *  FAIL line passes it with n = the PASS lines; nothing recognisable keeps it not_run. Go never takes this path (its own parse decides). The receipt says so
+ *  through `count`. */
+export const LINE_FALLBACK_COUNT = "measured from the exit code and per-test pass and fail lines (the runner's summary could not be parsed)";
+const NO_TESTS_LINE = /\bno tests?\b|\b0 tests?\b|\bcollected 0\b|\bno test files?\b/i;
+// The path a per-test line names: pytest "<path>::name PASSED" / "PASSED <path>::name" (and FAILED/ERROR), vitest/jest/mocha "<mark> <path> (..)" and
+// "PASS <path>" / "FAIL <path>" headers.
+const PASS_PATH = [/^\s*(\S+?)::\S+\s+PASSED\b/, /^\s*PASSED\s+(\S+?)::/, /^\s*(?:\u2713|\u2714|\u221a|PASS)\s+(\S+)/];
+const FAIL_PATH = [/^\s*(\S+?)::\S+\s+(?:FAILED|ERROR)\b/, /^\s*(?:FAILED|ERROR)\s+(\S+?)::/, /^\s*(?:\u2715|\u2717|\u00d7|FAIL)\s+(\S+)/];
+const pathOf = (line: string, res: RegExp[]): string | null => { for (const r of res) { const m = r.exec(line); if (m?.[1]) return m[1].replace(/[:,]+$/, ""); } return null; };
+export function lineVerdict(out: string, ok: boolean, file: string, runner: string): Classified | null {
+  if (!file || runner === "go") return null;
+  const text = stripAnsi(out), lines = text.split("\n");
+  if (NO_TESTS_LINE.test(text)) return null;
+  const named = lines.map((l) => ({ l, pass: pathOf(l, PASS_PATH), fail: pathOf(l, FAIL_PATH) })), base = file.split("/").pop()!;
+  // summary-parse review (5875e7732): a different file whose name ends in the basename, or the same basename in another directory, never counts. A printed path
+  // matches only as the whole repo-relative path, or a suffix of it that starts at a "/" (the cwd-relative form a package runner prints), or a longer path that
+  // ends in "/<file>" (an absolute path). The basename alone counts only when the output prints no path with a "/" for any test.
+  const anyDir = named.some((x) => (x.pass ?? x.fail ?? "").includes("/"));
+  const same = (t: string | null): boolean => !!t && (t === file || (t.includes("/") && file.endsWith(`/${t}`)) || t.endsWith(`/${file}`) || (!anyDir && t === base));
+  const tap = runner === "node", passes = named.filter((x) => same(x.pass) || (tap && /^ok \d+\b/.test(x.l))).length, fails = named.some((x) => same(x.fail) || (tap && /^not ok \d+\b/.test(x.l)));
+  if (fails) return { result: "fail", count: LINE_FALLBACK_COUNT };
+  return ok && passes > 0 ? { result: "pass", n: passes, count: LINE_FALLBACK_COUNT } : null;
+}
 /** One attempt of one check. static = lint/typecheck/scan (exit code decides, no count). test = a test runner: pass needs n>0. */
 export function classifyCheck(i: ClassifyInput): Classified {
   if (i.missing) return { result: "not_run", reason: "tool not found on PATH" };

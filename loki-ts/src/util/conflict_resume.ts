@@ -210,7 +210,7 @@ export function citesTestFile(text: string): boolean {
 export const asUnfinishedConflict = (s: SessionResult): SessionResult =>
   s.markers.specConflict !== null && !citesTestFile(s.markers.specConflict) ? { ...s, markers: { ...s.markers, specConflict: null, finishLine: s.markers.finishLine === "spec_conflict" ? null : s.markers.finishLine } } : s;
 /** The loop. Returns the session the stage goes on with (the first resume whose final text has a finish line, else the last reply), the iteration ids it ran, and the record. */
-export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, session: SessionResult, o: { fingerprint: () => string | null; spentUsd: () => number | null; compactions: (ids: string[]) => number | null; signal: AbortSignal; env?: NodeJS.ProcessEnv; normalize?: (s: SessionResult) => SessionResult }): Promise<{ session: SessionResult; iterationIds: string[]; record: Omit<ContinueRecord, "compactions"> }> {
+export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, session: SessionResult, o: { fingerprint: () => string | null; spentUsd: () => number | null; compactions: (ids: string[]) => number | null; signal: AbortSignal; env?: NodeJS.ProcessEnv; normalize?: (s: SessionResult) => SessionResult; measure?: () => Promise<number | null> }): Promise<{ session: SessionResult; iterationIds: string[]; record: Omit<ContinueRecord, "compactions"> }> {
   const env = o.env ?? process.env, ids: string[] = [], max = continueMax(env), usdLine = continueMaxUsd(env);
   const missing = (): string[] => readPlanScope(ctx.runDir).filter((f) => !existsSync(join(ctx.repoDir, f)));
   let unchanged = 0; // a reply that only waits on a subagent leaves the tree as it was: one such resume is allowed, a second ends the loop
@@ -218,6 +218,7 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
   // or a changed count; noProgressRounds() resumes in a row without it end the loop.
   let cur = session, outstanding = outstandingOf(session.summary), base = first, ended: ContinueEnd = max === 0 ? "continue off" : "count cap", spent: number | null = null;
   const noCount = !Number.isFinite(max), named = outstandingWords(outstanding); let fewestMissing = noCount ? missing().length : 0; const seenNums = new Set<string>([outstandingNumbers(outstanding).join(",")]);
+  let bestMeasured: number | null = noCount && o.measure ? await o.measure() : null; // G5: the measured failing count before the first resume (null: nothing to measure yet)
   for (let n = 1; n <= max; n++) {
     if (o.signal.aborted) { ended = "aborted"; break; }
     if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) { ended = "time"; break; }
@@ -234,7 +235,13 @@ export async function resumeToFinish(ctx: RunContext, first: SessionRunOptions, 
     if (before === null || after === null) { ended = "tree unknown"; break; }
     if (noCount) {
       const said = outstandingOf(r.reply.summary), left = missing().length, words = outstandingWords(said), nums = outstandingNumbers(said);
-      const moved = continueMoved({ left, fewestMissing, treeChanged: before !== after, words, named, nums, seenNums });
+      // G5: a measurement (Loki's own proof script, o.measure) decides when one exists: progress = fewer failing than the best so far. Only with no measurement does
+      // the reply's words-and-tree rule decide (continueMoved), so a session that edits every round and never finishes still ends.
+      // Progress is a falling measured count (Loki's own proof script) OR the words-and-tree rule (lead ruling on summary-parse's D2): a multi-step change whose proof
+      // stays red until its last step goes on while it names new work; the words rule's own no-progress stop bounds it, with no extra cap.
+      const measured = o.measure ? await o.measure() : null, wordsMoved = continueMoved({ left, fewestMissing, treeChanged: before !== after, words, named, nums, seenNums });
+      const moved = left < fewestMissing || (measured !== null && measured < (bestMeasured ?? Infinity)) || wordsMoved;
+      if (measured !== null) bestMeasured = Math.min(bestMeasured ?? Infinity, measured);
       fewestMissing = Math.min(fewestMissing, left); for (const w of words) named.add(w); seenNums.add(nums.join(","));
       if (moved) unchanged = 0; else if (++unchanged >= noProgressRounds(env)) { ended = "no progress"; break; }
       continue;

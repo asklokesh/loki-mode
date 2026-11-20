@@ -626,6 +626,9 @@ console.log([r6.notes.length, r6.notes[0], r6.notes.filter(x.isUnmetNote).length
 [ "$U3" = '5 | cross-review flag (claude): UNMET: Acceptance: six is cut today | 1 | ["cross-review flag (claude): one","cross-review flag (claude): two"] | true | false' ] \
     && ok "F3 unit: an UNMET reason written sixth is kept (sorted first, the cap stays 5); a review with no UNMET keeps its order; bold UNMET counts, the word inside a reason does not" || bad "F3 unit gave: $U3"
 
+# G5 SKIP-NOTE end to end (oc63960): a full suite red only on base ids must seal without the "fix round skipped" note holding it; the same run with one
+# new failing id in that suite is held by it. Plant G5-10: util/check_result.ts suiteSkipHolds always false: the new-id run seals without the note.
+snote() { python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r.get("verdict"), any(str(n).startswith("fix round skipped: only full-suite failures remained") for n in r.get("not_proven", [])))' "$RUNDIR/receipt.json" 2>/dev/null || echo no-receipt; }
 run_pr stable stable LOKI_PR_DRAFT=1
 f="$(pr_facts)"; set -- $f
 [ "$8" = success ] && ok "deep full suite red only on base-red ids: status success" || bad "base-red full suite gave status $8 ($f)"
@@ -637,6 +640,14 @@ grep -q '"base_red": true' "$RUNDIR/receipt-addendum-1.json" && ok "addendum mar
 run_pr new new
 f="$(pr_facts)"; set -- $f
 [ "$8" = failure ] && ok "a new failing id beyond the base-red ones keeps status failure" || bad "new full-suite failure gave status $8 ($f)"
+# The two runs above are low tier: their seal-time verify runs only bun:calc.test.ts and the npm suite runs in the post-seal deep worker, so suiteSkip never sees
+# it (probe e10-20261120T142527Z-fb46: receipt checks [bun:calc.test.ts], the new id only in receipt-addendum-1). Medium tier runs the suite inside verify.
+run_pr snstable stable LOKI_RISK_TIER=medium LOKI_PR_DRAFT=1
+SNB="$(snote)"
+run_pr snnew new LOKI_RISK_TIER=medium LOKI_PR_DRAFT=1
+SNN="$(snote)"
+[ "$SNB" = "VERIFIED False" ] && ok "G5 skip note: a full suite red only on base ids seals VERIFIED with no fix-round-skipped note holding it" || bad "G5 skip note: base-red-only suite sealed '$SNB' (want VERIFIED False)"
+case "$SNN" in "VERIFIED"*) bad "G5 skip note: a suite with a new failing id sealed VERIFIED ($SNN)" ;; *" True") ok "G5 skip note: the same suite with one new failing id is held by the fix-round-skipped note ($SNN)" ;; *) bad "G5 skip note: the new-id suite sealed '$SNN' (want the note to hold it)" ;; esac
 
 # FAILED-PR (2026-11-16, work-ps-1): a FAILED run with committed work opens a labelled draft PR instead of keeping its branch local,
 # with the failing checks first in the body and no pending deep-verify status. SECRET-PUSH: the one exception is a security scan
@@ -1617,6 +1628,12 @@ rw_proof -
 #   NB18. util/conflict_resume.ts continueMoved: drop `o.treeChanged &&`: the reason-only sequence reads moved.  NB19. drop the number comparison: the counts read no.
 #   NB21. continueMoved: compare with the previous reply only (`seenNums` holds just the last tuple): the oscillating counts read moved every round.
 #   NB20. stages/deep.ts deepPost: drop the addendum grace: the no-cap DEEP-POST leg waits out the 60 s sleeper.
+#   G5-3. engine10/machine.ts newFailingIds: count base-red checks too: the new-ids leg goes red.
+#   G5-6. engine10/machine.ts suiteOnlyStop: stop whenever only full suites are red (the old rule): the falling-ids case reads stop.
+#   G5-9. util/conflict_resume.ts resumeToFinish: words never count once a measurement exists: the stepping leg ends at 2.
+#   G5-11. engine10/machine.ts fixRoundMoved: drop the ran term: a round that makes a check run reads no progress.
+#   G5-5. util/check_result.ts suiteSkipHolds: always true: the base-red-only suite holds again.
+#   G5-4. util/conflict_resume.ts resumeToFinish: ignore o.measure (always the words rule): the measured-count leg goes red.
 #   NB9. runner/repo_profile.ts asyncShellRunner: setTimeout(stop, timeoutMs) again: the no-limit base run is cut at once.
 cat > "$T/nobudget.ts" <<'TS'
 import { mkdtempSync, rmSync } from "node:fs";
@@ -1646,8 +1663,11 @@ try {
   res("NO-DEFAULT-BUDGET the Haiku turn and token caps are opt-in; the fix session's no-edit rule (a no-progress stop) stays", hi === undefined && hf?.noEditByTurn === 8 && hf.turns === undefined && hb?.turns === 45);
   const e2: Record<string, string> = {}; wp.clampBashTimeoutEnv(e2, Infinity);
   res("NO-DEFAULT-BUDGET a session with no time limit gets no derived turn cap and keeps Claude's own Bash timeouts", !("LOKI_E10_MAX_TURNS" in e2) && e2["BASH_MAX_TIMEOUT_MS"] === "600000" && e2["BASH_DEFAULT_TIMEOUT_MS"] === "120000");
-  const fp = mc.fixProgressOf({ checks: [{ result: "fail", ids: ["a", "b"] }, { result: "fail" }, { result: "pass" }, { result: "not_run" }] });
-  res("NO-DEFAULT-BUDGET fix-loop progress counts failing ids (an id-less failing check once) and the checks that ran", fp.failing === 3 && fp.ran === 3);
+  const nf = mc.newFailingIds({ checks: [{ name: "pytest:a", result: "fail", ids: ["t1", "t2"] }, { name: "pytest:b", result: "fail" }, { name: "pytest:old", result: "fail", ids: ["t9"] }, { name: "pytest:env", result: "fail", owner: "harness" }, { name: "full suite: x", result: "fail", ids: ["s1"] }, { name: "pytest:c", result: "pass" }, { name: "pytest:d", result: "not_run" }], pre_red_checks: ["pytest:old"], holdout_failed: 1 });
+  res("G5 fix-loop progress counts only NEW failing ids: base-red and harness-owned failures are left out, an id-less failing check counts once, each held-out failure once; the suite-only view keeps the full suite", nf.size === 5 && nf.has("pytest:a::t1") && nf.has("pytest:b") && !nf.has("pytest:old::t9") && !nf.has("pytest:env") && nf.has("holdout#1") && mc.newFailingIds({ checks: [{ name: "full suite: x", result: "fail", ids: ["s1"] }, { name: "pytest:a", result: "fail" }] }, true).size === 1);
+  { const cr5 = await import(root + "/loki-ts/src/util/check_result.ts"), suite = (ids: string[], pre: string[]) => ({ checks: [{ name: "full suite: npm", result: "fail", ids }, { name: "pytest:t", result: "pass", n: 3 }], pre_red: pre });
+    res("G5 the suite-skip note holds a run only when the skipped full-suite red has a NEW failing id: red only on base ids does not hold (oc63960), one new id does", !cr5.suiteSkipHolds(suite(["a", "b"], ["a", "b"])) && cr5.suiteSkipHolds(suite(["a", "c"], ["a"])) && !cr5.suiteSkipHolds({ ...suite(["a"], []), base_red_checks: ["full suite: npm"] })); }
+  res("G5 the full-suite-only stop fires from round 2 only when the suite's new failing ids did not shrink: falling ids get the next round, flat or rising ids stop, round 1 is never stopped here", !mc.suiteOnlyStop(2, true, 3, 5) && mc.suiteOnlyStop(2, true, 5, 5) && mc.suiteOnlyStop(3, true, 6, 5) && !mc.suiteOnlyStop(1, true, 5, 5) && !mc.suiteOnlyStop(2, false, 5, 5));
   const ck = bc.resolveCap(null, d, { ANTHROPIC_API_KEY: "x" }), cs = bc.resolveCap(null, d, {}), cbad = bc.resolveCap(null, d, { LOKI_BUDGET_LIMIT: "lots" }), cflag = bc.resolveCap("5", d, { ANTHROPIC_API_KEY: "x" });
   res("NO-DEFAULT-BUDGET no default dollar cap with an API key; the start line says how to set one; a user cost limit is kept and an unusable one fails closed", "usd" in ck && ck.usd === 0 && bc.capNote(ck.usd, ck.source) === bc.NO_COST_LIMIT_NOTE && "usd" in cs && cs.usd === 0 && "error" in cbad && "usd" in cflag && cflag.usd === 5);
   const t0 = Date.now(), quiet = await sh.run(["sh", "-c", "sleep 20"], { timeoutMs: Infinity, silenceMs: 300 });
@@ -1669,6 +1689,16 @@ try {
     const first = { exit: 0, killed: false, durationS: 1, markers: { done: true, alreadyDone: null, specConflict: null, finishLine: null }, summary: "12 of 40 tests still fail" } as never;
     const osc = await crw.resumeToFinish(fx, { iterationId: "it", brief: "B" } as never, first, { fingerprint: () => String(tree), spentUsd: () => null, compactions: () => null, signal: AbortSignal.timeout(5000), env: {} }); // bounded: a loop that never stops ends "aborted" and reads red, never hangs this file
     res("NO-DEFAULT-BUDGET an S1b loop whose count only oscillates (12, 13, 12 of 40) while the tree keeps changing ends as no progress", osc.record.ended === "no progress" && osc.iterationIds.length === 3); }
+  { // G5: where a measurement exists (Loki's own proof script), a continue's progress is its failing count, not the reply's words
+    const run = async (says: string[], counts: (number | null)[]): Promise<{ ended: string; n: number }> => { let tree = 0, k = 0, m = 0;
+      const fx = { provider: "claude", repoDir: d, runDir: d, runId: "e10-x", emit: () => {}, sessions: { run: async () => { await Bun.sleep(1); tree++; return { exit: 0, killed: false, durationS: 1, markers: { done: true, alreadyDone: null, specConflict: null, finishLine: null }, summary: says[k++ % says.length] }; } } } as never;
+      const first = { exit: 0, killed: false, durationS: 1, markers: { done: true, alreadyDone: null, specConflict: null, finishLine: null }, summary: says[0] } as never;
+      const r = await crw.resumeToFinish(fx, { iterationId: "it", brief: "B" } as never, first, { fingerprint: () => String(tree), spentUsd: () => null, compactions: () => null, signal: AbortSignal.timeout(5000), env: {}, measure: async () => counts[Math.min(m++, counts.length - 1)] ?? null });
+      return { ended: r.record.ended, n: r.iterationIds.length }; };
+    const falling = await run(["the docs for multiply remain"], [5, 4, 3, 2, 1, 0, 0, 0]), stuck = await run(["the docs for multiply remain"], [3, 3, 3, 3, 3]);
+    const steps = await run(["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima"], [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]);
+    res("G5 continue progress where a measurement exists: a count that falls keeps going although the words never change; a flat count with the same work ends at 2; a flat count while the tree changes and each reply names new work goes on (no extra cap) and ends only when the words repeat", falling.n >= 5 && stuck.ended === "no progress" && stuck.n === 2 && steps.ended === "no progress" && steps.n >= 12); }
+  res("G5 fix-loop progress: fewer new failing ids, or a check that now runs (more checks ran than ever before), is progress; the same ids with the same checks is not (summary-parse D3)", mc.fixRoundMoved(2, 5, 3, 5) && mc.fixRoundMoved(3, 6, 3, 5) && mc.fixRoundMoved(5, 6, 3, 5) && !mc.fixRoundMoved(3, 5, 3, 5) && !mc.fixRoundMoved(4, 4, 3, 5) && mc.checksRan({ checks: [{ result: "pass" }, { result: "fail" }, { result: "not_run" }] }) === 2);
   const pv = await import(root + "/loki-ts/src/engine10/stages/prove.ts"), nr = await import(root + "/loki-ts/src/features/no_regression.ts");
   res("NO-DEFAULT-BUDGET the prove stage has no 600 s budget and its listing no 3-turn cap unless set (the knob or LOKI_E10_PROVE_BUDGET_S / LOKI_E10_PROVE_LIST_TURNS); a user cap still reserves 600 s for it when sizing implement", pv.proveBudgetS({}) === Infinity && pv.proveBudgetS(B) === 600 && pv.proveBudgetS({ LOKI_E10_PROVE_BUDGET_S: "45" }) === 45 && pv.proveReserveOfS({}) === 600 && pv.proveListTurns({}) === undefined && pv.proveListTurns(B) === 3 && pv.proveListTurns({ LOKI_E10_PROVE_LIST_TURNS: "5" }) === 5);
   res("NO-DEFAULT-BUDGET the no-regression differential has no 120 s wall budget unless set; the knob restores it", nr.nrdBudgetS({}) === Infinity && nr.nrdBudgetS(B) === 120 && nr.nrdBudgetS({ LOKI_E10_NRD_BUDGET_S: "30" }) === 30);
@@ -1685,7 +1715,7 @@ try {
 TS
 out="$(cd "$ROOT/loki-ts" && bun "$T/nobudget.ts" "$ROOT" 2>&1; echo "EXIT $?")"
 grep -q '^EXIT 0$' <<< "$out" || { bad "no-default-budget unit script crashed or exited non-zero"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
-[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 24 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 24"
+[ "$(printf '%s\n' "$out" | grep -c '^OK ')" = 28 ] || bad "no-default-budget unit script produced $(printf '%s\n' "$out" | grep -c '^OK ') passing legs, want 28"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
