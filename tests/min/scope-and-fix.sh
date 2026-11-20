@@ -2610,12 +2610,25 @@ for (const [k, cite] of [["guide", ["pyproject.toml"]], ["cite", ["Makefile"]], 
 console.log(out.join(" "));' "$DI" 2>&1 | tail -1)"
 [ "$DI_OUT" = "guide:pass:true:0:0/0 cite:pass:true:0:0/0 script:pass:true:0:0/0 bare:not_run:false:1:1/0 off:pass:true:0:0/0" ] && ok "declared installs: a guide-documented and a cited install run; the same command from a bare manifest is not run and is N/A, never a cap; =0 runs it ($DI_OUT)" || bad "declared installs: got '$DI_OUT'"
 
-# G2 ENV-GUARD, lint (rule 22, real pytest, fake ruff on PATH): a lint Loki chose that creates a .venv in the checkout (as `uv run ruff` did on hm155462) is Loki's own change: the guard
-# removes it, the receipt carries "Loki's own command changed the environment" under N/A, no hold, and the Python fix stays VERIFIED. Plant 253g: guardEnv returns run() unguarded
+# G2 ENV-GUARD, lint (rule 22, real pytest, fake uv on PATH): a uv project (uv.lock) whose uv ignores UV_PROJECT_ENVIRONMENT, so the lint Loki chose (`uv run -- ruff`) creates a
+# .venv in the checkout, as `uv run ruff` did on hm155462; the tests run through the same uv on the real pytest. The .venv is Loki's own change: the guard removes it, the receipt carries "Loki's own command changed the environment" under N/A, no hold, and the Python fix stays VERIFIED. Plant 253g: guardEnv returns run() unguarded
 # (the .venv stays, the note is gone and the ignored pyvenv.cfg caps the run).
-make_g2_py_repo() { make_py_repo "$1"; printf '.venv/\n' > "$1/.gitignore"; }
+make_g2_py_repo() { make_py_repo "$1"; printf '.venv/\n' > "$1/.gitignore"; printf '[project]\nname = "calc"\nversion = "0"\ndependencies = []\n' > "$1/pyproject.toml"; printf 'version = 1\n' > "$1/uv.lock"; }
 G2BIN="$T/g2bin"; rm -rf "$G2BIN"; mkdir -p "$G2BIN/py"
-printf '#!/bin/sh\nmkdir -p .venv/lib && printf "home = /usr/bin\\n" > .venv/pyvenv.cfg\nexit 0\n' > "$G2BIN/py/ruff"; chmod +x "$G2BIN/py/ruff"
+cat > "$G2BIN/py/uv" <<'UV'
+#!/bin/sh
+# a uv that ignores UV_PROJECT_ENVIRONMENT: `run -- ruff` makes .venv in the checkout; python and pytest reach the real interpreter; sync does nothing
+[ "$1" = run ] || exit 0
+shift; [ "$1" = -- ] && shift
+b="$1"; shift
+case "$b" in
+    ruff) mkdir -p .venv/lib && printf 'home = /usr/bin\n' > .venv/pyvenv.cfg; exit 0 ;;
+    pytest) exec python3 -m pytest "$@" ;;
+    python|python3) exec python3 "$@" ;;
+esac
+exec "$b" "$@"
+UV
+chmod +x "$G2BIN/py/uv"
 g2rec() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); na=r.get("not_applicable") or []; print(r.get("verdict"), "held_by" in r, sum(sys.argv[2] in n for n in na))' "$RUNDIR/receipt.json" "$1" 2>/dev/null; }
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     MAKE_REPO=make_g2_py_repo run_engine "add a multiply(a, b) function to calc.py" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py \
