@@ -899,13 +899,22 @@ export const suiteSkipHolds = (d: Record<string, unknown> | undefined): boolean 
  *  through `count`. */
 export const LINE_FALLBACK_COUNT = "measured from the exit code and per-test pass and fail lines (the runner's summary could not be parsed)";
 const NO_TESTS_LINE = /\bno tests?\b|\b0 tests?\b|\bcollected 0\b|\bno test files?\b/i;
-const escRe = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// The path a per-test line names: pytest "<path>::name PASSED" / "PASSED <path>::name" (and FAILED/ERROR), vitest/jest/mocha "<mark> <path> (..)" and
+// "PASS <path>" / "FAIL <path>" headers.
+const PASS_PATH = [/^\s*(\S+?)::\S+\s+PASSED\b/, /^\s*PASSED\s+(\S+?)::/, /^\s*(?:\u2713|\u2714|\u221a|PASS)\s+(\S+)/];
+const FAIL_PATH = [/^\s*(\S+?)::\S+\s+(?:FAILED|ERROR)\b/, /^\s*(?:FAILED|ERROR)\s+(\S+?)::/, /^\s*(?:\u2715|\u2717|\u00d7|FAIL)\s+(\S+)/];
+const pathOf = (line: string, res: RegExp[]): string | null => { for (const r of res) { const m = r.exec(line); if (m?.[1]) return m[1].replace(/[:,]+$/, ""); } return null; };
 export function lineVerdict(out: string, ok: boolean, file: string, runner: string): Classified | null {
   if (!file || runner === "go") return null;
-  const text = stripAnsi(out), base = file.split("/").pop()!, f = `(?:${escRe(file)}|${escRe(base)})`, lines = text.split("\n");
+  const text = stripAnsi(out), lines = text.split("\n");
   if (NO_TESTS_LINE.test(text)) return null;
-  const pass = new RegExp(`(${f}::\\S+\\s+PASSED\\b)|(^\\s*PASSED\\s+${f}::)|(^\\s*(?:\\u2713|\\u2714|\\u221a|PASS)\\s+\\S*${f}\\b)`), fail = new RegExp(`(${f}::\\S+\\s+(?:FAILED|ERROR)\\b)|(^\\s*(?:FAILED|ERROR)\\s+${f}::)|(^\\s*(?:\\u2715|\\u2717|\\u00d7|FAIL)\\s+\\S*${f}\\b)`);
-  const tap = runner === "node", passes = lines.filter((l) => pass.test(l) || (tap && /^ok \d+\b/.test(l))).length, fails = lines.some((l) => fail.test(l) || (tap && /^not ok \d+\b/.test(l)));
+  const named = lines.map((l) => ({ l, pass: pathOf(l, PASS_PATH), fail: pathOf(l, FAIL_PATH) })), base = file.split("/").pop()!;
+  // summary-parse review (5875e7732): a different file whose name ends in the basename, or the same basename in another directory, never counts. A printed path
+  // matches only as the whole repo-relative path, or a suffix of it that starts at a "/" (the cwd-relative form a package runner prints), or a longer path that
+  // ends in "/<file>" (an absolute path). The basename alone counts only when the output prints no path with a "/" for any test.
+  const anyDir = named.some((x) => (x.pass ?? x.fail ?? "").includes("/"));
+  const same = (t: string | null): boolean => !!t && (t === file || file.endsWith(`/${t}`) || t.endsWith(`/${file}`) || (!anyDir && t === base));
+  const tap = runner === "node", passes = named.filter((x) => same(x.pass) || (tap && /^ok \d+\b/.test(x.l))).length, fails = named.some((x) => same(x.fail) || (tap && /^not ok \d+\b/.test(x.l)));
   if (fails) return { result: "fail", count: LINE_FALLBACK_COUNT };
   return ok && passes > 0 ? { result: "pass", n: passes, count: LINE_FALLBACK_COUNT } : null;
 }
