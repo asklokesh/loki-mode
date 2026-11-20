@@ -32,14 +32,14 @@ import { sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publ
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
-import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts"; import { LOKI_OWN_LEAD, verifiedReceiptBlock, type CapReason } from "../closure.ts";
+import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts"; import { COULD_NOT_RUN_LEAD, LOKI_OWN_LEAD, SUITE_FIX_SKIP_NOTE, verifiedReceiptBlock, type CapReason } from "../closure.ts";
 import { atomicWriteText } from "../../util/atomic.ts";
 import { patchReceipt } from "../../features/patch_protocol.ts";
 import { collapseNotProven } from "../../util/term_width.ts";
 import { consultNotes, neverStopNotes } from "../../features/opus_consult.ts"; import { namedUnchangedNote, namedUnchangedOf, unfinishedNotes } from "../../util/conflict_resume.ts"; import { envCardReceiptBlock, neededServices } from "../../util/stack_tools.ts"; import { updateRepoCard } from "../../e10ext/repomemory.ts"; import { PROOF_SCRIPT, baseFacts, fallbackLines, noOwnProofNotes, proofBaseCapOn, proofBaseOn, proofFacts, proofOnBase, proofRerunOn, proofRerunS, provesNothing, provesNothingReason, rerunProof, ruleStatus, unusedNewFileNote, unusedNewFiles } from "../proof_rerun.ts"; import { issueRunBrief } from "../types.ts"; import { proveDisclosures, proveNotes, proveReceiptBlock } from "./prove.ts";
 import { tournamentReceiptBlock } from "../../features/tournament.ts"; import { attemptsReceiptBlock } from "../../features/attempts.ts"; import { nrdReceiptBlock, settleNrd } from "../../features/no_regression.ts";
 import { commitHookBypassOn, type SafeGitKeep, safeGit, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, capLateRecovery, recoverRunWork, sealPrScope, splitDeclaredAdvisories, unverifiedRecovered, workRecoveryNotes } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { conventionsBlock, fragmentNoticeLine, misplacedNamedNotes, releaseNoteSkipBlock } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
-import { exogenousRedOn, holdsPartial, type ExogenousAttribution } from "../../runner/repo_profile.ts"; // EXOGENOUS-RED
+import { exogenousRedOn, holdsPartial, unrunnableCheckOn, type ExogenousAttribution } from "../../runner/repo_profile.ts"; // EXOGENOUS-RED, UNRUNNABLE-CHECK
 const SYSTEM_INTERP = "tests ran on the system interpreter", SYSTEM_INTERP_SUFFIX = " (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)"; // verify.ts writes the note
 
 export const SIGNING_UNAVAILABLE = "receipt signing unavailable (no usable signing key: invalid key or unwritable ~/.loki/keys)", AGENT_ONLY_REASON = "only agent-authored tests executed (no agent-independent proof)", WALL_GREEN_ON_BASE_REASON = "Wall green on base: no Wall test discriminates the change"; // TEN-GATES-02
@@ -307,6 +307,32 @@ export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptChe
   return "VERIFIED";
 }
 
+/** UNRUNNABLE-CHECK (LOKI_E10_UNRUNNABLE_CHECK, default on, =0 opts out; runner/repo_profile.ts). The checks verify listed could_not_run that are still on the
+ *  receipt in the state the rule covers: a failed full suite whose attribution record holds it at PARTIAL, or a check sealed not_run. [] with the knob off,
+ *  when a limit stopped verify or implement, or when verify was a quick one. It reads verify's list only, never unattributedRed: that rule also answers for a
+ *  base run that was cut or never started, and such a check must keep holding the label. */
+export function unrunnableCandidates(o: Partial<Record<StageName, Obj>>, checks: readonly Pick<ReceiptCheck, "name" | "result">[], env: NodeJS.ProcessEnv = process.env): string[] {
+  if (!unrunnableCheckOn(env)) return [];
+  const v = o.verify;
+  if (!v || v.stopped_at !== undefined || v.verify_scope !== "complete" || typeof o.implement?.limit_s === "number") return [];
+  const listed = new Set(strs(v.could_not_run)), attr = (v.exogenous_attribution ?? {}) as Record<string, ExogenousAttribution>;
+  return checks.filter((c) => listed.has(c.name) && (c.result === "fail" ? c.name.startsWith("full suite") && !!attr[c.name] && holdsPartial(attr[c.name]!) : c.result === "not_run")).map((c) => c.name);
+}
+/** The rule itself (founder decision 2026-11-20): the candidates that stop holding the label, or []. All of: the label is PARTIAL; the change's own proof
+ *  holds (`proof.ok`: a test the change added or edited fails before the change and passes after it, in the same environment); that test ran as its own
+ *  targeted check or proof step, not inside a candidate and not as a full suite; and with the candidates and their own lines taken out, `rest` (the label rule
+ *  over everything else) reads VERIFIED, so nothing else holds the label. The machine's "fix round skipped" note goes with them only when no other full suite
+ *  still fails. A lifted check keeps its result on the receipt, is never excused, and is listed "could not run here". */
+export function unrunnableLifted(a: { o: Partial<Record<StageName, Obj>>; checks: ReceiptCheck[]; vraw: readonly Obj[]; verdict: Verdict; proof: { ok: boolean; files: string[]; steps?: number } | null; notes: readonly string[]; rest: (checks: ReceiptCheck[], notes: string[]) => Verdict }, env: NodeJS.ProcessEnv = process.env): string[] {
+  const cand = unrunnableCandidates(a.o, a.checks, env);
+  if (cand.length === 0 || a.verdict !== "PARTIAL" || a.proof?.ok !== true) return [];
+  const own = (c: Obj): boolean => isExecutedProof(c as { result?: unknown; n?: unknown }) && !String(c.name).startsWith("full suite") && !cand.includes(String(c.name));
+  if (!((a.proof.steps ?? 0) > 0) && !a.proof.files.some((f) => a.vraw.some((c) => own(c) && String(c.name).endsWith(`:${f}`)))) return [];
+  const left = a.checks.filter((c) => !cand.includes(c.name)), gone = new Set(strs(a.o.verify?.could_not_run_notes));
+  if (!left.some((c) => c.result === "fail" && c.name.startsWith("full suite"))) gone.add(SUITE_FIX_SKIP_NOTE);
+  return a.rest(left, a.notes.filter((n) => !gone.has(n))) === "VERIFIED" ? cand : [];
+}
+
 /** FALSEVER-OPEN-DECISION (LOKI_E10_OPEN_DECISION_CAP, default on, =0 opts out): NOT PROVEN lines for what the run decided without the issue deciding it.
  *  An intake assumption (an either/or the vote or the model picked), a no-regression change the issue does not decide (advisory), and a differential that did not run or complete. */
 /** An intake open-choice line the run settled itself: no evidence picked an option, or the precedent vote did. A choice the task, a maintainer or an existing test settles, and any other assumption (a brief's defaults), is not one. */
@@ -352,6 +378,7 @@ export function renderReceiptMd(r: Receipt): string {
   return [
     `## Loki receipt: ${r.verdict}`,
     "",
+    ...(r.could_not_run?.length ? [`- Could not run here, on the original code either: ${r.could_not_run.join(", ")} (the change is proved by its own test, which fails before the change and passes after it)`] : []),
     ...(r.verdict === "SPEC_CONFLICT" && r.spec_conflict_reason ? [`- Reason: \`${r.spec_conflict_reason}\``] : []),
     `- Run: ${r.run_id}`,
     `- Base: ${r.base_sha}  Head: ${r.head_sha}`,
@@ -421,7 +448,8 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const proofText = (() => { try { return readFileSync(join(ctx.runDir, PROOF_SCRIPT), "utf8"); } catch { return ""; } })();
     const proofOnly = proofText ? checks.filter((c) => { if (c.result !== "not_run") return false; const f = c.name.slice(c.name.indexOf(":") + 1), b = f.slice(f.lastIndexOf("/") + 1); return b.length > 5 && pctx.addedFiles.some((a) => a === f || a.endsWith(`/${f}`)) && proofText.includes(b); }).map((c) => c.name) : [];
     const live = checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name)) && c.repo_skipped !== true && !lintGone.includes(c.name) && !proofOnly.includes(c.name)), executed = hasExecutedProof(vraw), strictProof = process.env["LOKI_EXOGENOUS_PROOF"] !== "0", noWall = !(Array.isArray(o.wall?.files) && o.wall.files.length > 0);
-    const ftpGate = strictProof && noWall && diffOk && !externalRun(o) && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done" && weakTests.length === 0 && !live.some((c) => c.result === "fail") && mutationEnabled(); // only a run that could still read VERIFIED pays for the base-tree runs; a check red on the base too (pre_red) is not this change failing, exactly as verdictOf reads it (FireLater#24 s1: a red frontend suite on base shut this gate, so the new backend tests never earned their fail-then-pass proof and a clean slice read PARTIAL)
+    const vCand = unrunnableCandidates(o, live); // UNRUNNABLE-CHECK: [] with the knob off; a candidate does not shut the fail-then-pass gate below, since that proof is what the rule requires
+    const ftpGate = strictProof && noWall && diffOk && !externalRun(o) && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done" && weakTests.length === 0 && !live.some((c) => c.result === "fail" && !vCand.includes(c.name)) && mutationEnabled(); // only a run that could still read VERIFIED pays for the base-tree runs; a check red on the base too (pre_red) is not this change failing, exactly as verdictOf reads it (FireLater#24 s1: a red frontend suite on base shut this gate, so the new backend tests never earned their fail-then-pass proof and a clean slice read PARTIAL)
     // E4 defect pin: a pure value replacement of an existing assertion that pins the wrong value the issue reports is listed as "value change (defect pin)", not weakened. It never counts as proof (an edited pre-existing test is agent-authored).
     const pinEdits = diffOk ? rawDiff.flatMap((m, i) => { const st = m.trim().split(" ").pop() ?? ""; const f = rawDiff[i + 1]; return i % 2 === 0 && st === "M" && f && isTestFile(f) && !weakTests.includes(f) ? defectPinEdits(ctx.repoDir, ctx.baseSha, head, f, loadTaskText(ctx, str(o.intake?.task) ?? undefined)) : []; }) : [];
     const pinFiles = new Set(pinEdits.map((e) => e.file));
@@ -443,7 +471,11 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const lintOnly = openLint.length > 0 && live.every((c) => c.result !== "fail" || ownLint.has(c.name)) && live.some((c) => c.result === "pass" && !c.name.startsWith("lint:"));
     const liveV = lintOnly ? live.map((c) => (openLint.includes(c) ? { ...c, result: "not_run" as const } : c)) : live;
     const lintOpenNotes = lintOnly ? openLint.map((c) => `lint error the change introduced, still failing after the fix rounds: ${c.name}: ${String(((Array.isArray(o.verify?.checks) ? (o.verify!.checks as Obj[]) : []).find((x) => x.name === c.name)?.first_error) ?? "see the check output").slice(0, 200)} (every test passed; the label is held at PARTIAL)`) : [];
-    const verdict0 = capGroupVerdict(verdictOf(o, liveV, !diffOk || diff.stdout === "", capVerify.some((n) => !pinDropped.has(n)) || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp);
+    const verdict0a = capGroupVerdict(verdictOf(o, liveV, !diffOk || diff.stdout === "", capVerify.some((n) => !pinDropped.has(n)) || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp);
+    // UNRUNNABLE-CHECK: applied here, before every later step, so supply, review, open notes and the publish can still only lower the label.
+    const vLift = vCand.length > 0 && verdict0a === "PARTIAL" && ftpGate ? unrunnableLifted({ o, checks: liveV, vraw, verdict: verdict0a, proof: await ftp(), notes: capVerify.filter((n) => !pinDropped.has(n)),
+      rest: (cs, ns) => capGroupVerdict(verdictOf(o, cs, !diffOk || diff.stdout === "", ns.length > 0 || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp) }) : [];
+    const verdict0: Verdict = vLift.length > 0 ? "VERIFIED" : verdict0a;
 
     // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
     const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.repoDir), process.env);
@@ -479,6 +511,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const prScopeSeal = sealPrScope(ctx.repoDir, o.intake, ctx.baseSha, head); // PR-BASE (util/base_guard.ts): what a pull request into the recorded target would hold against what this receipt measured; one open note, a cap toward PARTIAL only
     const openNotes = [...prScopeSeal.notes, ...issueNotes, ...proofNotes, ...neverStopNotes(o.implement), ...(allLinesMet ? [] : unfinished), ...proveNotes(ctx.provider, o, process.env, ctx.runDir), ...(allLinesMet && proofRun?.exit === 0 ? twoReaders : (xr?.notes ?? []).filter(isUnmetNote)), ...openDecisionNotes(o), /* one judge for the acceptance lines: when every line is met on evidence from Loki's own passing re-run, a reviewer UNMET (it reads the diff only and cannot see that run) is disclosed on the receipt, not a cap */ ...namedOpen.filter((s) => s.why === null).map(namedUnchangedNote)], verdict3: Verdict = openNotes.length > 0 && verdict3a === "VERIFIED" ? "PARTIAL" : verdict3a; // FALSEVER-OPEN-DECISION: an open either/or the run picked itself, or a behavior change or regression check the run could not settle, is never VERIFIED
     const deepG = deepGaps(o.verify?.risk, vraw, Array.isArray(o.deep?.checks) ? (o.deep.checks as Obj[]) : [], modelReviewRan(xr)), notProven = new Set<string>([...(sealOnlyPass() ? [TIME_RAN_OUT_NOTE] : []), ...deepG.notProven, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? []), ...reviewReceipt(ctx.provider, xr).notProven, ...openNotes]);
+    for (const n of vLift) notProven.add(`${COULD_NOT_RUN_LEAD}${n}`); // UNRUNNABLE-CHECK: one line per check that stayed failed or not run and did not hold the label
     const reasons: CapReason[] = [], rz = (kind: string, xs: readonly string[]): void => { for (const d of xs) reasons.push({ kind, detail: d }); }; // RW-03: read-only, from the values the verdict above was computed from
     rz("check fails", live.filter((c) => c.result === "fail").map((c) => c.name)); rz("check not run", live.filter((c) => c.result === "not_run").map((c) => c.name)); rz("verify not proven", capVerify.filter((n) => !pinDropped.has(n))); rz("weakened test", weakTests); rz("runner config", capRc);
     if (!proof) rz("no agent-independent proof", [executed ? AGENT_ONLY_REASON : NO_TESTS_REASON]); if (ftpRes && !ftpRes.ok) rz("no fail-then-pass test", [ftpRes.line]); if (wallGreenOnBase) rz("Wall green on base", [WALL_GREEN_ON_BASE_REASON]);
@@ -581,6 +614,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
 
     const body: Omit<Receipt, "receipt_sha256" | "verification"> = {
       schema: "loki.v10.receipt/1",
+      ...(vLift.length > 0 ? { could_not_run: vLift } : {}),
       run_id: ctx.runId,
       task: { source: source === "issue" ? "issue" : "text", sha256: str(o.intake?.task_sha256) ?? "" },
       repo: repo ?? "",

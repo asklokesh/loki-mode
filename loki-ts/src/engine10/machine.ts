@@ -95,7 +95,7 @@ export function freshBaseCheckout(repoDir: string, baseSha: string): string | nu
 }
 export { haikuIndepFixOn } from "./stages/verify.ts"; import { fixGateOf } from "./stages/verify.ts"; // FIX-GATE: the gate predicate lives beside the independent set it reads, and verify records its reading
 export const suiteFixSkipEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SUITE_FIX_SKIP"] ?? "").trim());
-export const SUITE_FIX_SKIP_NOTE = "fix round skipped: only full-suite failures remained while the change's own targeted tests passed, so those failures are NOT PROVEN unrelated to the change (LOKI_E10_SUITE_FIX_SKIP=0 runs the round)";
+import { SUITE_FIX_SKIP_NOTE } from "./closure.ts"; export { SUITE_FIX_SKIP_NOTE }; // defined in closure.ts (a leaf) so seal can read it without importing the machine
 export const suiteOnlyRed = (d: Obj | undefined): boolean => {
   const checks = Array.isArray(d?.checks) ? (d.checks as Obj[]) : [], changed = (Array.isArray(d?.changed_files) ? d.changed_files : []).map(String).filter((f) => f && !f.startsWith(".loki/"));
   const namesChanged = checks.some((c) => c?.result === "fail" && String(c.name ?? "").startsWith("full suite") && (Array.isArray(c.ids) ? c.ids : []).some((i) => changed.some((f) => String(i).includes(f)))); // a failing id in a file the change edited is the change's own failure: the round runs

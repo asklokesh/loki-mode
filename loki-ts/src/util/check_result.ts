@@ -1000,12 +1000,35 @@ export function loadErrors(raw: string): string[] {
   return out;
 }
 export const firstLoadError = (raw: string): string | null => loadErrors(raw)[0] ?? null;
-export function suiteFacts(out: string): { executed?: number; load_errors?: string[] } {
+/** UNRUNNABLE-CHECK (runner/repo_profile.ts unrunnableOnBothSides): what one run of a check says about whether it could run at all, read without knowing the
+ *  tool. `lines`: its distinct error lines, with paths and numbers replaced so two runs of one tree give the same set whatever order a parallel runner prints
+ *  in (at most 60; `more` when there were more, and then nothing is concluded). `start`: how many of them are a start failure, something missing before any
+ *  test could run (an executable, a module, a command, a connection). `assertion`: one of them reads like a test that ran and failed. `passed`: the run reports
+ *  a test that passed. `failed`: the failed count it prints, or null. closed-set-2 pw43305: two base runs of `npm test` print the same 4 lines (198 and 2
+ *  "Executable doesn't exist", 2 reporter lines), 200 failed, none passed; their failureLines sets differ in about 298 lines each way. */
+export interface StartFacts { lines: string[]; more?: true; start: number; assertion: boolean; passed: boolean; failed: number | null }
+const ERRORISH_RE = /(?:^|[^A-Za-z])(?:[A-Za-z_.]*Error|error|ERROR|[A-Za-z_.]*Exception|FAILED|fatal|panic)(?::|\s)/;
+const START_FAILURE_RE = /[Ee]xecutable (?:doesn't|does not) exist|[Ee]xecutable file not found|command not found|: not found(?:$|\s)|No such file or directory|is not installed|Cannot find (?:package|module)|ModuleNotFoundError|No module named|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|preload not found|Could not resolve|ECONNREFUSED|[Cc]onnection refused|could not connect to|cannot open shared object file|spawn \S+ ENOENT/;
+const ASSERTION_RE = /assert|\bexpect(?:ed|ation)?\b|\btoBe|\btoEqual|\bshould (?:be|equal|have|not)\b|\bnot equal\b|!=|mismatch/i;
+const PASSED_RE = /(?:^|[^\d.])[1-9]\d* (?:passed|passing|pass)\b|^ok\s+\S|^# pass [1-9]/m;
+export function startFacts(raw: string): StartFacts {
+  const out = stripAnsi(raw), seen = new Set<string>(); let more = false;
+  for (const l0 of out.split("\n")) {
+    const l = l0.trim(); if (l === "" || !(ERRORISH_RE.test(l) || START_FAILURE_RE.test(l))) continue;
+    const n = l.replace(/(?:[A-Za-z]:)?(?:[\w.@+~-]*[/\\]){2,}[\w.@+~-]*/g, "<path>").replace(/\d+/g, "N").slice(0, 240);
+    if (seen.size >= 60 && !seen.has(n)) { more = true; continue; }
+    seen.add(n);
+  }
+  const lines = [...seen].sort(), fm = [...out.matchAll(/(?:^|[^\d.])(\d+) (?:failed|failing|failures?)\b/g)].pop();
+  return { lines, ...(more ? { more: true as const } : {}), start: lines.filter((x) => START_FAILURE_RE.test(x)).length, assertion: lines.some((x) => !START_FAILURE_RE.test(x) && ASSERTION_RE.test(x)), passed: PASSED_RE.test(out), failed: fm ? +fm[1]! : null };
+}
+export function suiteFacts(out: string): { executed?: number; load_errors?: string[]; start?: StartFacts } {
   const bun = /^Ran (\d+) tests? across \d+ files?\./m.exec(stripAnsi(out)); // bun's own total: ran() reads no count from bun output
   const n = ran(out) ?? (bun ? +bun[1]! : null), le = loadErrors(out);
   return {
     ...(typeof n === "number" ? { executed: n } : {}),
     ...(le.length ? { load_errors: le } : {}),
+    start: startFacts(out),
   };
 }
 export function failureShape(out: string): string {
