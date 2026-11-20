@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### A session's conflict claim no longer labels the run; only what Loki measured does
+
+- A run whose session stopped with LOKI_SPEC_CONFLICT (at implement or in a fix round) used to seal SPEC_CONFLICT on that word alone, before any check result was read. FireLater#18 (11.164.0), FireLater#23 (11.165.0) and hermes-agent 124107 on Haiku (seed 2, 11.158.0) sealed SPEC_CONFLICT this way: the first two on a fix round saying the failing frontend tests "fail identically on clean HEAD", which no base run had compared, the third on a gate verify never ran.
+- Now a claimed conflict seals SPEC_CONFLICT only when the last verify shows it: a Wall test that was red on base passes, a check the run did not write fails and verify attributes it to the change (its base run passed, or a failing id is not red on base), and the claim names that check's file (for a full suite, the file of one of its failing ids that is not red on base; verify's base record now lists those ids). On such a conflict the user gets the same answer path as before: a draft PR leading with the question and `loki answer`, BLOCKED, exit 4. Otherwise the claim moves no label: it is printed on the receipt, and the run is labeled exactly as the same outputs with no claim would be (a failing check the change owns or Loki could not excuse is FAILED, an empty diff is FAILED, a check verify could not compare on base holds PARTIAL by its own record).
+- A session that declines part of the issue with a claim while every check passes can no longer reach VERIFIED on the claim's silence: the claim labels nothing, and the issue's acceptance lines still hold it (an unmet line caps the run at PARTIAL, as for any run). With the claim and all checks passing and Loki's proof, the label is what the run earns without the claim, VERIFIED included.
+- Unchanged: a failure verify measured as red on base is excused as before (a fix round's "pre-existing" stop is believed only then), and an "already done" claim needs Loki's own proof re-run.
+- On the stored outputs of the three runs above, with no base run repeated: FireLater#18 and #23 read FAILED (their verifies predate the per-check base records, so nothing excused the failing frontend tests; a run on this release compares them on base first), and hermes-agent 124107 reads PARTIAL (checks that never ran). Each is the label the same outputs read with no claim.
+- `LOKI_E10_MEASURED_LABELS=0` restores the marker rule.
+- Not changed: the plan stage's out-of-repo stop still seals SPEC_CONFLICT. It is a question asked before any work, not a label on finished work. Next, an out-of-repo stop must name paths Loki confirms are absent, otherwise the run implements.
+- Measured: unit legs for each case, an invariance table (every row reads the same label with and without the claim, except a measured conflict), nine planted defects, an end-to-end run of a measured conflict on the default path, and the replay above. Not yet measured in a live run.
+
 
 ## v11.170.0 (2026-11-20)
 

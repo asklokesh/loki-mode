@@ -1128,13 +1128,14 @@ printf '%s\n' "$OUT" | grep -E '^(backlog: #25 [A-Z]|#25 |Total:)' | sed 's/^/  
 
 # --- PR mode, one slice stops on its own SPEC_CONFLICT while the others open PRs: the split is PARTIAL (exit 6), not FAILED ---------
 # LOKI_SPLIT_ONE_PR=0: the per-slice PR path stays covered end to end (the one-PR default is the pr mode leg above).
+# LOKI_E10_MEASURED_LABELS=0: the stub slice's conflict claim is unmeasured, so it would seal PARTIAL; this leg is about the split outcome of a SPEC_CONFLICT slice.
 C2="$T/conflict-split"
 make_repo "$C2" 0
 git init -q --bare "$T/conflict-origin.git"
 git -C "$C2" remote add origin "$T/conflict-origin.git"
 git -C "$C2" push -q origin main
 SPLIT3='{"slices":[{"id":"s1","title":"search backend","acceptance":["full-text search returns ranked rows"],"depends_on":[],"files":["calc.ts"]},{"id":"s2","title":"search index","acceptance":["the index is rebuilt nightly"],"depends_on":[],"files":["calc.ts"]},{"id":"s3","title":"search UI","acceptance":["the search box shows ranked results"],"depends_on":[],"files":["calc.ts"]}]}'
-LOKI_ISSUE_WHOLE_FIRST=0 LOKI_SPLIT_ONE_PR=0 E2E_STUB_MODE=slice E2E_STUB_CONFLICT_SLICE=s2 E2E_STUB_SPLIT="$SPLIT3" LOKI_EPIC_PARALLEL=1 LOKI_E10_OPUS_CONSULT=0 run_loki "$C2" "$T/conflict-stub.log" start acme/search#25 --max-cost 5
+LOKI_ISSUE_WHOLE_FIRST=0 LOKI_SPLIT_ONE_PR=0 E2E_STUB_MODE=slice E2E_STUB_CONFLICT_SLICE=s2 E2E_STUB_SPLIT="$SPLIT3" LOKI_EPIC_PARALLEL=1 LOKI_E10_OPUS_CONSULT=0 LOKI_E10_MEASURED_LABELS=0 run_loki "$C2" "$T/conflict-stub.log" start acme/search#25 --max-cost 5
 printf '%s\n' "$OUT" | grep -E '^(#25 s[123] (PARTIAL|VERIFIED|SPEC_CONFLICT)|Outcome:|Reason:|PR:)' | sed 's/^/    conflict e2e: /'
 [ "$RC" -eq 6 ] && grep -Eq '^Outcome: +PARTIAL$' <<< "$OUT" && grep -Eq '^Reason: +slice s2: SPEC_CONFLICT .*\(2 of 3 slices opened a PR' <<< "$OUT" \
     && [ "$(printf '%s\n' "$OUT" | grep -cE '^PR: +local:///.+#loki/')" = 2 ] \
@@ -1688,6 +1689,14 @@ IA9="$(ia_facts)"
 ia_run noevidence "$T/ia-noevidence.txt"
 IANE="$(ia_facts)"
 [ "$IANE" = 'PARTIAL 9 8 8 1 check ["not addressed: Optimize search performance for large datasets"]' ] && ok "issue acceptance e2e: a MET with no evidence phrase counts as not addressed" || bad "issue acceptance MET without evidence gave: $IANE"
+# MEASURED-LABELS (G4, summary-parse review): the session does the work and still declines part of the issue with a conflict claim; every check passes and
+# one acceptance line is unmet. The claim labels nothing (the run reads as with no claim), so the gate that holds it is ISSUE-ACCEPTANCE in seal.ts
+# (issueNotes from notAddressedNotes, which caps VERIFIED at PARTIAL): PARTIAL with that line not addressed and the claim disclosed, never VERIFIED.
+# Planted defect: seal.ts issueNotes = [] (the acceptance gate bypassed); this leg then reads VERIFIED (rebuild dist).
+ia_run claimpart "$T/ia-noevidence.txt" E2E_STUB_DONE_CONFLICT="calc.test.ts:3 pins add(); optimizing search for large datasets is out of scope here"
+IACL="$(ia_facts)"
+[ "$IACL" = 'PARTIAL 9 8 8 1 check ["not addressed: Optimize search performance for large datasets"]' ] && python3 -I -c 'import json,sys; np=json.load(open(sys.argv[1]))["not_proven"]; sys.exit(0 if any(n.startswith("conflict claimed by the session and not measured by Loki") for n in np) else 1)' "$IARUN/receipt.json" \
+    && ok "declined part (MEASURED-LABELS): a conflict claim over one unmet acceptance line with every check passing seals PARTIAL with the line not addressed and the claim disclosed, never VERIFIED" || bad "declined part gave: $IACL"
 ia_run fail "$T/ia-missing.txt"
 IAF="$(ia_facts)"
 case "$IAF" in 'PARTIAL 9 0 0 1 check ["acceptance not reviewed: '*) ok "issue acceptance e2e: a line check that cannot answer (after one retry) caps PARTIAL with one 'acceptance not reviewed' line" ;; *) bad "issue acceptance failed check gave: $IAF" ;; esac

@@ -260,6 +260,13 @@
 # ADSm. proof_rerun.ts realStep: any command with a repo path argument counts, not only a file reader (echo package.json counts).
 # ADSn. proof_rerun.ts realStep: drop the timeout skip (the timeout cells fail). ADSo. compare repoDir as text again (the realpath cells fail).
 # ADSp. proof_rerun.ts inRepo: accept the root itself again (`r === root ||`; the test -d root plants read ALREADY_SATISFIED).
+# G4a. seal.ts verdictOf: return SPEC_CONFLICT on the claim again (`true ||` for `!measuredLabelsOn() ||`; plants 1 and 2, invariance and the replay fail).
+# G4b. seal.ts verdictOf: put claimHeld back (a claim with a red test that has no record reads PARTIAL; the invariance cell fails).
+# G4c. measuredConflictOf: drop the Wall-pass test (no-Wall-pass reads a conflict). G4d. measuredConflictOf: drop named() (another file reads a conflict).
+# G4e. seal.ts verdictOf: skip the empty-diff gate for a claim (the empty-diff row reads PARTIAL; plant 1 and invariance fail).
+# G4f. measuredConflictOf at(): match any substring (a claim naming pkgs/tests/old.test.ts reads a conflict). G4g. measuredConflictOf: drop condition (a),
+#   any failing named check counts (the no-(a) cell reads SPEC_CONFLICT). G4h. seal.ts verdictOf: drop the out-of-repo carve-out (the out-of-repo wiring
+#   cell reads PARTIAL). G4i. measuredConflictOf files(): a full suite reads every failing id, not only fresh_ids (the D3 cell reads SPEC_CONFLICT).
 # 119. exec_spec.ts capSites: return every uncovered site (the passing-mention leg reads PARTIAL).
 # 120. seal.ts specSiteGap: ignore the changed-symbol list (exec spec atoms read gap=Report,Report,-).
 # 124. exec_spec.ts defectSites: count every span of a clause with a defect word again (the comparison, negated-scope and see legs read PARTIAL).
@@ -642,11 +649,14 @@ run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict # the default (cons
 n="$(fix_sessions)"
 [ "$n" = "1" ] && ok "conflict: one fix session, no retry" || { bad "conflict: $n fix sessions (want 1)"; dump; }
 grep -q -- '-r ' "$ITERS" && bad "conflict: a '-r' retry session started" || ok "conflict: no '-r' retry iteration"
-[ "$(outcome)" = "BLOCKED" ] && ok "conflict: run ends BLOCKED" || bad "conflict: outcome is '$(outcome)', not BLOCKED"
+[ "$(outcome)" = "FAILED" ] && python3 -I -c 'import json,sys; np=json.load(open(sys.argv[1]))["not_proven"]; sys.exit(0 if any(n.startswith("conflict claimed by the session and not measured by Loki") for n in np) and any(n.startswith("conflict claimed by the session; these failing checks label the run FAILED") for n in np) else 1)' "$RUNDIR/receipt.json" \
+    && ok "conflict (MEASURED-LABELS): a fix-round claim Loki did not measure labels nothing: the wrong multiply() fails calc.test.ts and the full suite, so FAILED as with no claim, both lines on the receipt; never BLOCKED on the word alone" || { bad "conflict: outcome is '$(outcome)', not FAILED with the claim lines on the receipt"; dump; }
 rid="$(basename "${RUNDIR:-none}")"
 git -C "$REPO" rev-parse -q --verify "refs/heads/loki/$rid" >/dev/null && ok "conflict: the blocked run keeps its branch loki/$rid" || bad "conflict: the blocked run's branch loki/$rid is gone"
-grep -q 'export function multiply' "$REPO/calc.ts" && ok "conflict: the code the blocked run wrote is on that branch" || { bad "conflict: the blocked run's multiply() is not on a visible branch"; dump; }
+grep -q 'export function multiply' "$REPO/calc.ts" && ok "conflict: the code the stopped run wrote is on that branch" || { bad "conflict: the blocked run's multiply() is not on a visible branch"; dump; }
 [ "$(git -C "$REPO" rev-parse --abbrev-ref HEAD)" = "loki/$rid" ] && [ "$(git -C "$REPO" log -1 --format=%s main)" = "base" ] && ok "conflict: main is untouched; the work sits only on the run branch" || bad "conflict: main moved or the run branch was not checked out"
+run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=conflict LOKI_E10_MEASURED_LABELS=0
+[ "$(outcome)" = "BLOCKED" ] && ok "conflict, LOKI_E10_MEASURED_LABELS=0: the marker rule is back (BLOCKED)" || bad "conflict =0: outcome is '$(outcome)', not BLOCKED"
 
 # ---------------------------------------------------------------- LOKI_E10_OPUS_CONSULT (off by default under LOKI_E10_LEAN_CALLS, =1 opts in): never-stop plus one tool-less Opus consult
 # consults <n>: stub consult calls this run; ctrig: the recorded triggers; rnp: the receipt NOT PROVEN list; rusd: receipt dollars and child sessions
@@ -670,10 +680,10 @@ run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_OPUS_CONSU
 [ "$(consults)" = 0 ] && [ "$(outcome)" = "PARTIAL" ] && ok "consult cap 0: no consult call, never-stop still delivers PARTIAL" || { bad "consult cap 0: $(consults) consults, outcome '$(outcome)'"; dump; }
 # opt-out and the explicit interactive opt-in keep the stop: BLOCKED, no consult, no '-n' resume
 for coff in LOKI_E10_OPUS_CONSULT=0 LOKI_E10_OPUS_CONSULT=; do
-    run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 "$coff"
+    run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 "$coff" LOKI_E10_MEASURED_LABELS=0 # the stop's label; MEASURED-LABELS on is the conflict leg above
     [ "$(outcome)" = "BLOCKED" ] && [ "$(consults)" = 0 ] && ! grep -q -- '-n ' "$ITERS" && ok "consult off: $coff (=0, and unset: the default under LOKI_E10_LEAN_CALLS) ends BLOCKED with no consult and no never-stop resume" || { bad "consult off ($coff): outcome '$(outcome)', $(consults) consults"; dump; }
 done
-run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_OPUS_CONSULT=1 LOKI_E10_INTAKE_ASK=1
+run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 LOKI_E10_OPUS_CONSULT=1 LOKI_E10_INTAKE_ASK=1 LOKI_E10_MEASURED_LABELS=0
 [ "$(outcome)" = "BLOCKED" ] && ! grep -q -- '-n ' "$ITERS" && ok "never-stop: the explicit interactive opt-in (LOKI_E10_INTAKE_ASK=1) keeps the stop (BLOCKED)" || { bad "never-stop interactive: outcome '$(outcome)'"; dump; }
 # never-stop on a fix round: round 1 conflicts with the tree unchanged; round 2 gets the never-stop brief and the consult and fixes multiply()
 run_engine "$TASK" E2E_STUB_MODE=wrong E2E_STUB_FIX=nsconflict LOKI_E10_OPUS_CONSULT=1
@@ -776,7 +786,7 @@ S1B_SIG="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$RUNDIR" "$REPO
 run_engine "$TASK" E2E_STUB_MODE=already
 [ "$(kits)" = 0 ] && [ "$(fin)" = none ] && ok "S1b already-done: an already-done reply gets no resume and no finish key ($(outcome))" || { bad "S1b already-done: resumes $(kits), finish '$(fin)'"; dump; }
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 # every implement turn answers LOKI_SPEC_CONFLICT (consult off, so no never-stop brief)
-[ "$(kits)" = 0 ] && [ "$(fin)" = none ] && [ "$(outcome)" = BLOCKED ] && ok "S1b spec conflict: a conflict reply gets no resume and still ends BLOCKED" || { bad "S1b spec conflict: resumes $(kits), finish '$(fin)', outcome $(outcome)"; dump; }
+[ "$(kits)" = 0 ] && [ "$(fin)" = none ] && [ "$(outcome)" = FAILED ] && ok "S1b spec conflict: a conflict reply gets no resume; the claim is unmeasured and the diff empty, so it reads FAILED as an empty diff with no claim does (MEASURED-LABELS)" || { bad "S1b spec conflict: resumes $(kits), finish '$(fin)', outcome $(outcome)"; dump; }
 
 # ---------------------------------------------------------------- coverage (L4, LOKI_E10_COVERAGE_RESUME: default fold, =1 the separate turn, =0 neither)
 # SR LOKI_E10_SELF_REVIEW end to end on the stub (run_engine pins it off for the session-count legs; unit legs live in tests/min/context-pack.sh):
@@ -1133,6 +1143,79 @@ res("ADS-REAL fresh-install line: met when the re-run has an answered request el
 res("ADS claim: a failed commit or a verify that did not agree is not an already-done claim", !alreadyDoneClaimed({ ...fl24, commit: { failed: true } } as never) && !alreadyDoneClaimed({ ...fl24, verify: { already_satisfied: false } } as never) && alreadyDoneClaimed({ intake: { already_satisfied: true }, implement: { exit: "done" }, verify: { already_satisfied: true }, commit: {} } as never));
 const sealSrc = readFileSync("$ROOT/loki-ts/src/engine10/stages/seal.ts", "utf8");
 res("ADS wiring: seal re-runs the proof on the unchanged tree, counts it as proof, reuses it for the issue lines and names a held run", sealSrc.includes('const alreadyRun = alreadyDoneClaimed(o) && (!diffOk || diff.stdout === "") ? await rerunProof(ctx.repoDir, ctx.runDir, signal) : null, alreadyLines = alreadyRun ? alreadyRealLines(ruleStatus(issueAsks, alreadyRun, null), alreadyRun) : [], alreadyOk = alreadyDoneShown(o, alreadyRun) && alreadyLinesMet(alreadyLines);') && sealSrc.includes("proof = alreadyOk || (!strictProof") && sealSrc.includes("const proofRun = alreadyRun ?? (") && sealSrc.includes("alreadyDoneShown(o, alreadyRun) ? alreadyLinesNote(alreadyLines) : alreadyDoneNotShownNote(alreadyRun)"));
+
+// MEASURED-LABELS (G4): a label comes from Loki's measurement, never from the session's claim. A conflict claim seals SPEC_CONFLICT only when the last verify
+// shows it (a Wall red on base passes, a check the run did not write fails attributed to the change, the claim names it); with no measurement the run is
+// PARTIAL with the claim disclosed; a measured false claim is FAILED; a measured pre-existing failure is excused. Then the stored runs that sealed SPEC_CONFLICT.
+const g4 = await import("$ROOT/loki-ts/src/engine10/stages/seal.ts"), g4m = await import("$ROOT/loki-ts/src/engine10/machine.ts");
+const why = "tests/old.test.ts fails identically on clean HEAD, so it cannot pass without editing a read-only test", fc = (n: string) => ({ name: n, result: "fail", provenance: "exogenous" }) as never, pc = (n: string) => ({ name: n, result: "pass", provenance: "exogenous" }) as never;
+const cv = (extra: Record<string, unknown> = {}) => ({ checks: [{ name: "vitest:tests/old.test.ts", result: "fail", ids: ["keeps the old title"] }, { name: "vitest:tests/wall_title.test.ts", result: "pass", n: 3 }], target_checks: ["vitest:tests/wall_title.test.ts"], changed_files: ["src/title.ts"], ...extra });
+const co = (v: Record<string, unknown>, o: Record<string, unknown> = {}) => ({ implement: { exit: "spec_conflict", spec_conflict_reason: why }, verify: v, commit: {}, ...o }) as never;
+const cmp1 = { "vitest:tests/old.test.ts": { state: "compared", fresh: 1, names_changed: false, evidence: "the base run passed and the head run fails" } }, wall = { files: [{ path: "/r/tests/wall_title.test.ts", sha256: "x" }] };
+const lab = (o: never, cs: never[] = [fc("vitest:tests/old.test.ts"), pc("vitest:tests/wall_title.test.ts")], empty = false) => verdictOf(o, cs, empty, false, false, true, true);
+const nc = (o: any) => ({ ...o, implement: { exit: "done" } }) as never, notStarted = { "vitest:tests/old.test.ts": { state: "not started", fresh: 0, names_changed: false, evidence: "its base rerun ran none of its tests" } };
+res("G4 plant 1: a claim Loki never measured reads what the same outputs read with no claim: a red test verify could not compare on base PARTIAL (its own 'not started' record), a red test with no record FAILED, an empty diff FAILED", lab(co(cv({ exogenous_attribution: notStarted }))) === "PARTIAL" && lab(co(cv())) === "FAILED" && lab(co({ checks: [], changed_files: [] }), [], true) === "FAILED"
+  && lab(co(cv({ exogenous_attribution: notStarted }))) === lab(nc(co(cv({ exogenous_attribution: notStarted })))) && lab(co(cv())) === lab(nc(co(cv()))));
+res("G4 plant 2: a claim Loki measured false (the test passes on base and fails on head, no Wall shows the issue needs it) is FAILED", lab(co(cv({ exogenous_attribution: cmp1 }))) === "FAILED");
+const preV = cv({ checks: [{ name: "vitest:tests/old.test.ts", result: "fail", ids: ["keeps the old title"] }, { name: "vitest:tests/wall_title.test.ts", result: "pass", n: 3 }], pre_red_checks: ["vitest:tests/old.test.ts"], base_red_checks: ["vitest:tests/old.test.ts"] });
+res("G4 plant 3: a failure Loki measured as pre-existing (red on base by every id) is excused: the fix-round claim is believed (onlyBaseRed), and the run reads what it reads with no claim, never FAILED or SPEC_CONFLICT", g4m.onlyBaseRed({ ...preV, pre_red_checks: [] }) && g4m.PRE_EXISTING_CLAIM.test(why) && lab(co(preV), [pc("vitest:tests/wall_title.test.ts")]) === lab(nc(co(preV)), [pc("vitest:tests/wall_title.test.ts")]) && !["FAILED", "SPEC_CONFLICT"].includes(lab(co(preV), [pc("vitest:tests/wall_title.test.ts")])));
+res("G4 plant 4: a conflict Loki measured (a Wall red on base passes, the named test passes on base and fails on head) keeps SPEC_CONFLICT", lab(co(cv({ exogenous_attribution: cmp1 }), { wall })) === "SPEC_CONFLICT" && g4.measuredConflictOf(co(cv({ exogenous_attribution: cmp1 }), { wall })) === "vitest:tests/old.test.ts");
+res("G4 measured conflict needs all three: no Wall pass, a Wall green on base, a claim that names another file, a failing id red on base (fresh 0), or a stopped verify each leave no measured conflict", [
+  co(cv({ exogenous_attribution: cmp1, checks: [{ name: "vitest:tests/old.test.ts", result: "fail", ids: ["k"] }, { name: "vitest:tests/wall_title.test.ts", result: "fail", n: 3 }] }), { wall }),
+  co(cv({ exogenous_attribution: cmp1 }), { wall: { ...wall, reproduction_green_on_base: true } }),
+  ({ implement: { exit: "spec_conflict", spec_conflict_reason: "tests/other.test.ts pins the old title" }, verify: cv({ exogenous_attribution: cmp1 }), wall, commit: {} }) as never,
+  co(cv({ exogenous_attribution: { "vitest:tests/old.test.ts": { ...cmp1["vitest:tests/old.test.ts"], fresh: 0 } } }), { wall }),
+  co(cv({ exogenous_attribution: cmp1, stopped_at: "limit" }), { wall })].every((o) => g4.measuredConflictOf(o) === null));
+// The invariance table (summary-parse review): with no measured conflict the claim moves no label. Each row is labeled with the claim and with the same
+// outputs and no claim; only a row where measuredConflictOf finds the conflict may differ, and that row must read SPEC_CONFLICT.
+const inv: [string, any, never[], boolean][] = [
+  ["unmeasured red (no record)", co(cv()), [fc("vitest:tests/old.test.ts"), pc("vitest:tests/wall_title.test.ts")], false],
+  ["unmeasured red (not started)", co(cv({ exogenous_attribution: notStarted })), [fc("vitest:tests/old.test.ts"), pc("vitest:tests/wall_title.test.ts")], false],
+  ["measured red, no Wall", co(cv({ exogenous_attribution: cmp1 })), [fc("vitest:tests/old.test.ts"), pc("vitest:tests/wall_title.test.ts")], false],
+  ["red already on base", co(preV), [pc("vitest:tests/wall_title.test.ts")], false],
+  ["empty diff", co({ checks: [], changed_files: [] }), [], true],
+  ["all pass", co(cv({ checks: [{ name: "vitest:tests/old.test.ts", result: "pass", n: 2 }, { name: "vitest:tests/wall_title.test.ts", result: "pass", n: 3 }] })), [pc("vitest:tests/old.test.ts"), pc("vitest:tests/wall_title.test.ts")], false],
+  ["a failing Wall", co(cv({ checks: [{ name: "vitest:tests/wall_title.test.ts", result: "fail", ids: ["t"] }] }), { wall }), [fc("vitest:tests/wall_title.test.ts")], false],
+  ["lint red", co(cv({ checks: [{ name: "lint:eslint", result: "fail", ids: ["x"] }] })), [fc("lint:eslint")], false],
+  ["measured conflict", co(cv({ exogenous_attribution: cmp1 }), { wall }), [fc("vitest:tests/old.test.ts"), pc("vitest:tests/wall_title.test.ts")], false]];
+const invOut = inv.map(([n, o, cs, e]) => { const w = lab(o, cs, e), wo = lab(nc(o), cs, e), m = g4.measuredConflictOf(o) !== null; return { n, ok: m ? w === "SPEC_CONFLICT" : w === wo, s: n + ": " + w + "/" + wo }; });
+res("G4 invariance: with the claim and without it every row reads the same label except the measured conflict, which reads SPEC_CONFLICT (" + invOut.map((r) => r.s).join("; ") + ")", invOut.every((r) => r.ok) && invOut.filter((r) => r.s.startsWith("measured conflict: SPEC_CONFLICT/")).length === 1);
+const offEnv = process.env.LOKI_E10_MEASURED_LABELS; process.env.LOKI_E10_MEASURED_LABELS = "0"; const offLab = lab(co(cv())); if (offEnv === undefined) delete process.env.LOKI_E10_MEASURED_LABELS; else process.env.LOKI_E10_MEASURED_LABELS = offEnv;
+res("G4 each condition off on its own: without (a), the named test not compared on base though a Wall passes, it reads PARTIAL (its no-claim label); with (a) and no passing Wall it reads FAILED; with (a) and (b) and a claim naming another file it is FAILED, not SPEC_CONFLICT", lab(co(cv({ exogenous_attribution: notStarted }), { wall })) === "PARTIAL"
+  && lab(co(cv({ exogenous_attribution: cmp1, checks: [{ name: "vitest:tests/old.test.ts", result: "fail", ids: ["k"] }, { name: "vitest:tests/wall_title.test.ts", result: "fail", n: 3 }] }), { wall }), [fc("vitest:tests/old.test.ts"), fc("vitest:tests/wall_title.test.ts")]) === "FAILED"
+  && lab(({ implement: { exit: "spec_conflict", spec_conflict_reason: "tests/other.test.ts pins the old title" }, verify: cv({ exogenous_attribution: cmp1 }), wall, commit: {} }) as never) === "FAILED"
+  && lab(({ implement: { exit: "spec_conflict", spec_conflict_reason: "pkgs/tests/old.test.ts pins the old title" }, verify: cv({ exogenous_attribution: cmp1 }), wall, commit: {} }) as never) === "FAILED");
+const fsV = cv({ checks: [{ name: "vitest:tests/wall_title.test.ts", result: "pass", n: 3 }, { name: "full suite: vitest", result: "fail", ids: ["tests/old.test.ts > Title > keeps the old title"] }], exogenous_attribution: { "full suite: vitest": { state: "compared", fresh: 1, names_changed: false, evidence: "the base run passed and the head run fails", fresh_ids: ["tests/old.test.ts > Title > keeps the old title"] } } });
+res("G4 full suite: (a) and (c) read a full suite's failing ids, so a full suite that passed on base, fails on head, with a failing id in the named file, measures the conflict; one whose ids name another file does not", lab(co(fsV, { wall }), [pc("vitest:tests/wall_title.test.ts"), fc("full suite: vitest")]) === "SPEC_CONFLICT"
+  && lab(co({ ...fsV, checks: [fsV.checks[0], { ...fsV.checks[1], ids: ["tests/other.test.ts > x"] }], exogenous_attribution: { "full suite: vitest": { ...fsV.exogenous_attribution["full suite: vitest"], fresh_ids: ["tests/other.test.ts > x"] } } }, { wall }), [pc("vitest:tests/wall_title.test.ts"), fc("full suite: vitest")]) === "FAILED");
+// summary-parse D3: (c) reads only the suite's fresh failing ids. Base red at calc.test.ts::x, the change newly breaks other.test.ts::y: a claim naming
+// calc.test.ts names a failure that was already there, so it is not a measured conflict and the run reads its no-claim label.
+const d3V = { checks: [{ name: "vitest:tests/wall_title.test.ts", result: "pass", n: 3 }, { name: "full suite: vitest", result: "fail", ids: ["calc.test.ts::x", "other.test.ts::y"] }], target_checks: ["vitest:tests/wall_title.test.ts"], changed_files: ["src/title.ts"],
+  exogenous_attribution: { "full suite: vitest": { state: "compared", fresh: 1, names_changed: false, evidence: "1 failing id(s) not red on base (first: other.test.ts::y)", fresh_ids: ["other.test.ts::y"] } } };
+const d3o = { implement: { exit: "spec_conflict", spec_conflict_reason: "calc.test.ts:3 pins the old behaviour" }, verify: d3V, wall, commit: {} } as never, d3cs = [pc("vitest:tests/wall_title.test.ts"), fc("full suite: vitest")];
+const d3recIds = (await import("$ROOT/loki-ts/src/runner/repo_profile.ts")).exogenousState.toString().includes("fresh);");
+res("G4 D3: a full suite red on base at calc.test.ts::x that the change newly breaks at other.test.ts::y, with a claim naming calc.test.ts, is no measured conflict and reads its no-claim label (" + lab(d3o, d3cs) + "); a claim naming other.test.ts is; a record with no fresh_ids names no file; exogenousState records the fresh ids",
+  g4.measuredConflictOf(d3o) === null && lab(d3o, d3cs) === lab(nc(d3o), d3cs) && lab(d3o, d3cs) !== "SPEC_CONFLICT"
+  && lab(({ ...(d3o as any), implement: { exit: "spec_conflict", spec_conflict_reason: "other.test.ts:9 pins the old behaviour" } }) as never, d3cs) === "SPEC_CONFLICT"
+  && g4.measuredConflictOf(({ ...(d3o as any), implement: { exit: "spec_conflict", spec_conflict_reason: "other.test.ts:9 pins it" }, verify: { ...d3V, exogenous_attribution: { "full suite: vitest": { state: "compared", fresh: 1, names_changed: false, evidence: "x" } } } }) as never) === null && d3recIds);
+const oor = { plan: { out_of_repo: true, spec_conflict_reason: "out-of-repo: the change belongs in the hosted billing service" }, implement: { exit: "spec_conflict", spec_conflict_reason: "out-of-repo: the change belongs in the hosted billing service", changed_files: [] }, verify: { checks: [] }, commit: {} } as never;
+const machSrc = readFileSync("$ROOT/loki-ts/src/engine10/machine.ts", "utf8");
+res("G4 out-of-repo wiring: the plan's out-of-repo stop is unchanged, it still pins implement.exit spec_conflict and seals SPEC_CONFLICT (a question before any work, outside the measured rule)", lab(oor, [], true) === "SPEC_CONFLICT" && machSrc.includes('if (outputs.plan?.out_of_repo === true && !jumped) {') && machSrc.includes('outputs.implement = { exit: "spec_conflict", spec_conflict_reason: outputs.plan.spec_conflict_reason ?? "out-of-repo", changed_files: [] };'));
+res("G4 opt-out: LOKI_E10_MEASURED_LABELS=0 restores the marker rule (the unmeasured claim reads SPEC_CONFLICT); a failed commit is FAILED under a claim", offLab === "SPEC_CONFLICT" && lab(co(cv(), { commit: { failed: true } })) === "FAILED");
+// The stored runs, trimmed by mkfixture.py: the last output of each stage and the receipt's checks. A fix round's conflict is pinned as machine.ts does it
+// (its collateral and base-red claims would re-run verify, which a replay cannot); the receipt's checks minus verify's pre-existing ones are the live checks.
+const crp = JSON.parse(readFileSync("$ROOT/tests/min/fixtures/replay/claim-label-replays.json", "utf8")), replayOf = (k: string, env?: string) => {
+  const r = crp[k], o: Record<string, any> = { implement: { ...r.implement }, verify: r.verify, wall: r.wall, commit: r.commit, ...(r.fix ? { fix: r.fix } : {}) };
+  if (r.fix?.exit === "spec_conflict") { if (g4m.onlyCollateralRed(r.verify) || (g4m.PRE_EXISTING_CLAIM.test(String(r.fix.spec_conflict_reason ?? "")) && g4m.onlyBaseRed(r.verify))) return "re-verify (not replayable)"; o.implement = { ...o.implement, exit: "spec_conflict", spec_conflict_reason: r.fix.spec_conflict_reason }; }
+  const pre = new Set(r.verify.pre_red_checks ?? []), live = r.receipt_checks.filter((c: any) => !(c.result === "fail" && pre.has(c.name)));
+  if (env === "noclaim") { o.implement = { exit: "done" }; env = undefined; } // the same outputs with no claim
+  const old = process.env.LOKI_E10_MEASURED_LABELS; if (env !== undefined) process.env.LOKI_E10_MEASURED_LABELS = env;
+  try { return verdictOf(o as never, live, false, false, o.wall?.reproduction_green_on_base === true, true, g4.targetProofOf(o.verify)); } finally { if (old === undefined) delete process.env.LOKI_E10_MEASURED_LABELS; else process.env.LOKI_E10_MEASURED_LABELS = old; }
+};
+const rk = ["firelater18", "firelater23", "hm124107_haiku_s2"], before = rk.map((k) => replayOf(k, "0")), after = rk.map((k) => replayOf(k)), noClaim = rk.map((k) => replayOf(k, "noclaim"));
+res("G4 replay: the stored FireLater#18, FireLater#23 and hm124107 Haiku seed 2 runs, each sealed SPEC_CONFLICT on a session's claim, read SPEC_CONFLICT with the rule off (" + before.join(",") + ") and with it what their outputs read with no claim (" + after.join(",") + "; no claim " + noClaim.join(",") + ")", rk.every((k) => crp[k].sealed === "SPEC_CONFLICT") && before.every((v) => v === "SPEC_CONFLICT") && after.join(",") === "FAILED,FAILED,PARTIAL" && after.join(",") === noClaim.join(","));
+const sealSrcG4 = readFileSync("$ROOT/loki-ts/src/engine10/stages/seal.ts", "utf8");
+res("G4 wiring: verdictOf labels a claim only through measuredConflictOf (no claimHeld), and the receipt names the claim and what refuted it", sealSrcG4.includes('if (exit === "spec_conflict" && (!measuredLabelsOn() || o.plan?.out_of_repo === true || measuredConflictOf(o) !== null)) return "SPEC_CONFLICT";') && !sealSrcG4.includes("claimHeld") && sealSrcG4.includes("notProven.add(" + String.fromCharCode(96) + String.fromCharCode(36) + "{CLAIM_NOT_MEASURED}") && sealSrcG4.includes("CLAIM_REFUTED}"));
 
 res("L026 brief: no invitation to run the full suite", !FIXED_RULES.includes("including the package's full suite") && FIXED_RULES.includes("not the package's full suite") && FIXED_RULES.includes("medium or high"));
 const nb = buildImplementBrief("task", null, []);

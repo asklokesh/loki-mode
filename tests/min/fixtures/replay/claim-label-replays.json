@@ -1,0 +1,1163 @@
+{
+ "_source": "the last stage.completed output of each stage in each run's events.jsonl and the receipt's checks, trimmed to the keys the label reads; made by ~/.loki-dev/handoff/verdicts/g4-replay-2026-11-20/mkfixture.py",
+ "firelater18": {
+  "_source": "FireLater#18 on loki-mode 11.164.0, run e10-20261119T234303Z-b8f1, sealed SPEC_CONFLICT",
+  "sealed": "SPEC_CONFLICT",
+  "implement": {
+   "exit": "done",
+   "spec_conflict_reason": null
+  },
+  "fix": {
+   "exit": "spec_conflict",
+   "spec_conflict_reason": "the named frontend tests pin pre-redesign markup and classes and fail identically on clean HEAD (e.g. `frontend/src/app/(auth)/forgot-password/__tests__/page.test.tsx` \"renders flame icon\", `frontend/src/app/(dashboard)/oncall/__tests__/page.test.tsx:1069` expects `border-blue-500`, `frontend/src/app/(dashboard)/admin/sla/__tests__/page.test.tsx:510` expects `bg-red-100`); fixing them means reverting commit be0799f's UI redesign or editing read-only tests.I'll start by looking at the current diff and the frontend changes that could affect these tests.",
+   "round": 2
+  },
+  "verify": {
+   "checks": [
+    {
+     "name": "vitest:frontend/src/app/(auth)/forgot-password/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "renders flame icon",
+      "src/app/(auth)/forgot-password/__tests__/page.test.tsx > ForgotPasswordPage > Initial Render > renders flame icon"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(auth)/login/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "shows error alert with icon",
+      "has gray background"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(auth)/register/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "has gray background",
+      "submit button spans full width"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/admin/email/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "starts with Configurations tab active",
+      "switches tabs on click"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/admin/integrations/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "defaults to API Keys tab",
+      "switches to Webhooks tab"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/admin/roles/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "allows selecting individual permissions",
+      "src/app/(dashboard)/admin/roles/__tests__/page.test.tsx > RolesPage > Create Role Modal > allows selecting individual permissions"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/admin/settings/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "defaults to General section",
+      "highlights active section"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/admin/sla/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "displays Active Policies count",
+      "defaults to Policies tab"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/applications/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "should call router.back when clicking back button",
+      "src/app/(dashboard)/applications/[id]/__tests__/page.test.tsx > ApplicationDetailPage > navigation > should call router.back when clicking back button"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/applications/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "shows green icon for score >= 90",
+      "shows yellow icon for score 70-89"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/catalog/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "should show required indicators for required fields",
+      "should call router.back when clicking back button"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/catalog/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "applies correct status colors",
+      "src/app/(dashboard)/catalog/__tests__/page.test.tsx > CatalogPage > My Requests Tab > applies correct status colors"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/cloud/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "shows Cloud Accounts tab by default",
+      "switches to Resources tab when clicked"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/cloud/resources/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "applies orange for AWS provider",
+      "applies blue for Azure provider"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/dashboard/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "renders all stat cards with correct values",
+      "shows loading state for issue trends"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/knowledge-base/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "shows content tab by default",
+      "switches to history tab when clicked"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/oncall/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "highlights active tab",
+      "src/app/(dashboard)/oncall/__tests__/page.test.tsx > OnCallPage > Tab Navigation > highlights active tab"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/oncall/schedules/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "should display shifts in calendar",
+      "src/app/(dashboard)/oncall/schedules/[id]/__tests__/page.test.tsx > ScheduleEditorPage > calendar display > should display shifts in calendar"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/reports/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "selects PDF by default",
+      "changes format when clicked"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/reports/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "defaults to templates tab",
+      "switches to history tab"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/reports/builder/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "selects pdf and csv by default",
+      "toggles format selection when clicked"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/requests/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "shows Cancelled status in progress when cancelled",
+      "shows Rejected status in progress when rejected"
+     ]
+    },
+    {
+     "name": "vitest:backend/tests/performance/query-plan.regression.test.ts",
+     "result": "not_run"
+    },
+    {
+     "name": "lint:tsc:backend",
+     "result": "pass"
+    },
+    {
+     "name": "lint:eslint:backend",
+     "result": "pass"
+    }
+   ],
+   "pre_red_checks": [],
+   "target_checks": [],
+   "changed_files": [
+    ".github/workflows/ci.yml",
+    "backend/package.json",
+    "backend/src/config/database.ts",
+    "backend/src/index.ts",
+    "frontend/src/components/layout/sidebar.tsx",
+    "frontend/tsconfig.json",
+    "backend/src/routes/query-analytics.ts",
+    "backend/src/services/indexAdvisor.ts",
+    "backend/src/services/queryStats.ts",
+    "backend/src/services/slowQueryAlerts.ts",
+    "backend/tests/performance/baseline.json",
+    "backend/tests/performance/pool-wrapper.regression.test.ts",
+    "backend/tests/performance/query-plan.regression.test.ts",
+    "backend/tests/unit/indexAdvisor.test.ts",
+    "backend/tests/unit/queryStats.test.ts",
+    "backend/tests/unit/slowQueryAlerts.test.ts",
+    "docs/PERFORMANCE_BEST_PRACTICES.md",
+    "frontend/src/app/(dashboard)/admin/query-analytics/__tests__/page.test.tsx",
+    "frontend/src/app/(dashboard)/admin/query-analytics/page.tsx"
+   ],
+   "blocking_checks": [
+    "vitest:frontend/src/app/(auth)/forgot-password/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(auth)/login/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(auth)/register/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/admin/email/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/admin/integrations/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/admin/roles/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/admin/settings/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/admin/sla/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/applications/[id]/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/applications/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/catalog/[id]/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/catalog/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/cloud/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/cloud/resources/[id]/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/dashboard/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/knowledge-base/[id]/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/oncall/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/oncall/schedules/[id]/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/reports/[id]/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/reports/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/reports/builder/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/requests/[id]/__tests__/page.test.tsx",
+    "full suite: frontend",
+    "security scan"
+   ]
+  },
+  "wall": null,
+  "commit": {},
+  "receipt_checks": [
+   {
+    "name": "vitest:frontend/src/app/(auth)/forgot-password/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(auth)/login/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(auth)/register/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/email/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/integrations/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/roles/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/settings/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/sla/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/applications/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/applications/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/catalog/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/catalog/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/cloud/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/cloud/resources/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/dashboard/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/knowledge-base/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/oncall/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/oncall/schedules/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/reports/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/reports/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/reports/builder/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/requests/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:backend/tests/performance/query-plan.regression.test.ts",
+    "result": "not_run",
+    "provenance": "agent_authored"
+   },
+   {
+    "name": "lint:tsc:backend",
+    "result": "pass",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "lint:eslint:backend",
+    "result": "pass",
+    "provenance": "exogenous"
+   }
+  ]
+ },
+ "firelater23": {
+  "_source": "FireLater#23 on loki-mode 11.165.0, run e10-20261120T005926Z-704e, sealed SPEC_CONFLICT",
+  "sealed": "SPEC_CONFLICT",
+  "implement": {
+   "exit": "done",
+   "spec_conflict_reason": null
+  },
+  "fix": {
+   "exit": "spec_conflict",
+   "spec_conflict_reason": "the 27 named failures (e.g. frontend/src/components/layout/__tests__/Header.test.tsx:56, which expects a \"search issues, changes, applications\" placeholder, and the `bg-blue-600` avatar assertion in the same file) pin pre-redesign markup and fail identically on unmodified HEAD, so they can't be fixed without editing read-only tests or reverting the HEAD UI.I'll start by looking at the repo state and one of the failing tests.",
+   "round": 2
+  },
+  "verify": {
+   "checks": [
+    {
+     "name": "vitest:frontend/src/components/layout/__tests__/Header.test.tsx",
+     "result": "fail",
+     "ids": [
+      "renders search input",
+      "search input has correct type"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/components/layout/__tests__/Sidebar.test.tsx",
+     "result": "fail",
+     "ids": [
+      "renders logout button",
+      "admin section has divider"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(auth)/forgot-password/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "renders flame icon",
+      "src/app/(auth)/forgot-password/__tests__/page.test.tsx > ForgotPasswordPage > Initial Render > renders flame icon"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(auth)/login/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "shows error alert with icon",
+      "has gray background"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(auth)/register/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "has gray background",
+      "submit button spans full width"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/admin/email/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "starts with Configurations tab active",
+      "switches tabs on click"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/admin/integrations/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "defaults to API Keys tab",
+      "switches to Webhooks tab"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/admin/roles/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "allows selecting individual permissions",
+      "src/app/(dashboard)/admin/roles/__tests__/page.test.tsx > RolesPage > Create Role Modal > allows selecting individual permissions"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/admin/settings/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "defaults to General section",
+      "highlights active section"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/admin/sla/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "displays Active Policies count",
+      "defaults to Policies tab"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/applications/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "should call router.back when clicking back button",
+      "src/app/(dashboard)/applications/[id]/__tests__/page.test.tsx > ApplicationDetailPage > navigation > should call router.back when clicking back button"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/applications/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "shows green icon for score >= 90",
+      "shows yellow icon for score 70-89"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/catalog/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "should show required indicators for required fields",
+      "should call router.back when clicking back button"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/catalog/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "applies correct status colors",
+      "src/app/(dashboard)/catalog/__tests__/page.test.tsx > CatalogPage > My Requests Tab > applies correct status colors"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/cloud/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "shows Cloud Accounts tab by default",
+      "switches to Resources tab when clicked"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/cloud/resources/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "applies orange for AWS provider",
+      "applies blue for Azure provider"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/dashboard/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "renders all stat cards with correct values",
+      "shows loading state for issue trends"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/knowledge-base/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "shows content tab by default",
+      "switches to history tab when clicked"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/oncall/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "highlights active tab",
+      "src/app/(dashboard)/oncall/__tests__/page.test.tsx > OnCallPage > Tab Navigation > highlights active tab"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/oncall/schedules/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "should display shifts in calendar",
+      "src/app/(dashboard)/oncall/schedules/[id]/__tests__/page.test.tsx > ScheduleEditorPage > calendar display > should display shifts in calendar"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/reports/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "selects PDF by default",
+      "changes format when clicked"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/reports/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "defaults to templates tab",
+      "switches to history tab"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/reports/builder/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "selects pdf and csv by default",
+      "toggles format selection when clicked"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/app/(dashboard)/requests/[id]/__tests__/page.test.tsx",
+     "result": "fail",
+     "ids": [
+      "shows Cancelled status in progress when cancelled",
+      "shows Rejected status in progress when rejected"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/components/charts/__tests__/issue-trends-chart.test.tsx",
+     "result": "fail",
+     "ids": [
+      "applies white background to container",
+      "applies rounded corners to container"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/components/ui/__tests__/empty-state.test.tsx",
+     "result": "fail",
+     "ids": [
+      "icon wrapper has correct styling",
+      "action button has correct styling"
+     ]
+    },
+    {
+     "name": "vitest:frontend/src/components/ui/__tests__/error-boundary.test.tsx",
+     "result": "fail",
+     "ids": [
+      "error icon has correct styling",
+      "Go Home link has correct styling"
+     ]
+    }
+   ],
+   "pre_red_checks": [],
+   "target_checks": [],
+   "changed_files": [
+    "backend/src/app.ts",
+    "backend/src/index.ts",
+    "backend/src/migrations/run.ts",
+    "backend/src/routes/users.ts",
+    "backend/src/services/auth.ts",
+    "backend/src/services/email.ts",
+    "backend/src/services/users.ts",
+    "backend/src/types/index.ts",
+    "backend/src/utils/errors.ts",
+    "frontend/next.config.ts",
+    "frontend/package-lock.json",
+    "frontend/package.json",
+    "frontend/src/app/(auth)/forgot-password/page.tsx",
+    "frontend/src/app/(auth)/login/page.tsx",
+    "frontend/src/app/(auth)/register/page.tsx",
+    "frontend/src/app/(auth)/reset-password/page.tsx",
+    "frontend/src/app/(auth)/verify-email/page.tsx",
+    "frontend/src/app/(dashboard)/admin/access-recertification/page.tsx",
+    "frontend/src/app/(dashboard)/admin/audit-logs/page.tsx",
+    "frontend/src/app/(dashboard)/admin/compliance-reports/page.tsx",
+    "frontend/src/app/(dashboard)/admin/data-security/page.tsx",
+    "frontend/src/app/(dashboard)/admin/email/page.tsx",
+    "frontend/src/app/(dashboard)/admin/groups/page.tsx",
+    "frontend/src/app/(dashboard)/admin/integrations/page.tsx",
+    "frontend/src/app/(dashboard)/admin/maker-checker/page.tsx",
+    "frontend/src/app/(dashboard)/admin/pam/page.tsx",
+    "frontend/src/app/(dashboard)/admin/roles/page.tsx",
+    "frontend/src/app/(dashboard)/admin/settings/page.tsx",
+    "frontend/src/app/(dashboard)/admin/sla/page.tsx",
+    "frontend/src/app/(dashboard)/admin/sod-policies/page.tsx",
+    "frontend/src/app/(dashboard)/admin/users/page.tsx",
+    "frontend/src/app/(dashboard)/admin/vendor-risk/page.tsx",
+    "frontend/src/app/(dashboard)/admin/workflows/page.tsx",
+    "frontend/src/app/(dashboard)/applications/[id]/edit/page.tsx",
+    "frontend/src/app/(dashboard)/applications/[id]/page.tsx",
+    "frontend/src/app/(dashboard)/applications/new/page.tsx",
+    "frontend/src/app/(dashboard)/applications/page.tsx",
+    "frontend/src/app/(dashboard)/assets/page.tsx",
+    "frontend/src/app/(dashboard)/catalog/[id]/page.tsx",
+    "frontend/src/app/(dashboard)/catalog/page.tsx",
+    "frontend/src/app/(dashboard)/changes/[id]/page.tsx",
+    "frontend/src/app/(dashboard)/changes/cab/page.tsx",
+    "frontend/src/app/(dashboard)/changes/calendar/page.tsx",
+    "frontend/src/app/(dashboard)/changes/new/page.tsx",
+    "frontend/src/app/(dashboard)/changes/page.tsx",
+    "frontend/src/app/(dashboard)/cloud/page.tsx",
+    "frontend/src/app/(dashboard)/cloud/resources/[id]/page.tsx",
+    "frontend/src/app/(dashboard)/dashboard/page.tsx",
+    "frontend/src/app/(dashboard)/issues/[id]/page.tsx",
+    "frontend/src/app/(dashboard)/issues/new/page.tsx",
+    "frontend/src/app/(dashboard)/issues/page.tsx",
+    "frontend/src/app/(dashboard)/knowledge-base/[id]/page.tsx",
+    "frontend/src/app/(dashboard)/knowledge-base/new/page.tsx",
+    "frontend/src/app/(dashboard)/knowledge-base/page.tsx",
+    "frontend/src/app/(dashboard)/oncall/page.tsx",
+    "frontend/src/app/(dashboard)/oncall/schedules/[id]/page.tsx",
+    "frontend/src/app/(dashboard)/problems/[id]/page.tsx",
+    "frontend/src/app/(dashboard)/problems/new/page.tsx",
+    "frontend/src/app/(dashboard)/problems/page.tsx",
+    "frontend/src/app/(dashboard)/reports/[id]/page.tsx",
+    "frontend/src/app/(dashboard)/reports/builder/page.tsx",
+    "frontend/src/app/(dashboard)/reports/page.tsx",
+    "frontend/src/app/(dashboard)/requests/[id]/page.tsx",
+    "frontend/src/app/(dashboard)/requests/approvals/page.tsx",
+    "frontend/src/app/(dashboard)/requests/page.tsx",
+    "frontend/src/app/(dashboard)/search/analytics/page.tsx",
+    "frontend/src/app/(dashboard)/search/page.tsx",
+    "frontend/src/app/error.tsx",
+    "frontend/src/app/layout.tsx",
+    "frontend/src/app/not-found.tsx",
+    "frontend/src/components/charts/health-distribution-chart.tsx",
+    "frontend/src/components/charts/issue-trends-chart.tsx",
+    "frontend/src/components/layout/header.tsx",
+    "frontend/src/components/layout/sidebar.tsx",
+    "frontend/src/components/search/FilterBuilder.tsx",
+    "frontend/src/components/search/SavedSearches.tsx",
+    "frontend/src/components/search/SearchBox.tsx",
+    "frontend/src/components/ui/empty-state.tsx",
+    "frontend/src/components/ui/error-boundary.tsx",
+    "frontend/src/lib/api.ts",
+    "frontend/tsconfig.json",
+    "backend/src/lib/__tests__/i18n.test.ts",
+    "backend/src/lib/i18n.ts",
+    "backend/src/locales/ar.json",
+    "backend/src/locales/de.json",
+    "backend/src/locales/en.json",
+    "backend/src/locales/es.json",
+    "backend/src/locales/fr.json",
+    "backend/src/locales/he.json",
+    "backend/src/locales/it.json",
+    "backend/src/locales/ja.json",
+    "backend/src/locales/pt.json",
+    "backend/src/locales/ru.json",
+    "backend/src/locales/zh.json",
+    "backend/src/migrations/038_user_locale.ts",
+    "backend/tests/unit/i18n/catalog-coverage.test.ts",
+    "backend/tests/unit/i18n/i18n.test.ts",
+    "backend/tests/unit/i18n/translation-tools.test.ts",
+    "backend/tests/unit/i18n/uncovered-templates.json",
+    "docs/i18n-translation-workflow.md",
+    "frontend/messages/ar.json",
+    "frontend/messages/de.json",
+    "frontend/messages/en.json",
+    "frontend/messages/es.json",
+    "frontend/messages/fr.json",
+    "frontend/messages/he.json",
+    "frontend/messages/it.json",
+    "frontend/messages/ja.json",
+    "frontend/messages/pt.json",
+    "frontend/messages/ru.json",
+    "frontend/messages/zh.json",
+    "frontend/src/components/LanguageSwitcher.tsx",
+    "frontend/src/components/i18n/LanguageSwitcher.tsx",
+    "frontend/src/i18n/__tests__/i18n.test.tsx",
+    "frontend/src/i18n/__tests__/proxy.test.ts",
+    "frontend/src/i18n/config.ts",
+    "frontend/src/i18n/request.ts",
+    "frontend/src/i18n/useT.ts",
+    "frontend/src/lib/__tests__/format.test.ts",
+    "frontend/src/lib/format.ts",
+    "frontend/src/proxy.ts",
+    "scripts/i18n-export.ts",
+    "scripts/i18n-import.ts",
+    "scripts/i18n.mjs"
+   ],
+   "blocking_checks": [
+    "vitest:frontend/src/components/layout/__tests__/Header.test.tsx",
+    "vitest:frontend/src/components/layout/__tests__/Sidebar.test.tsx",
+    "vitest:frontend/src/app/(auth)/forgot-password/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(auth)/login/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(auth)/register/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/admin/email/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/admin/integrations/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/admin/roles/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/admin/settings/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/admin/sla/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/applications/[id]/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/applications/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/catalog/[id]/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/catalog/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/cloud/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/cloud/resources/[id]/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/dashboard/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/knowledge-base/[id]/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/oncall/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/oncall/schedules/[id]/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/reports/[id]/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/reports/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/reports/builder/__tests__/page.test.tsx",
+    "vitest:frontend/src/app/(dashboard)/requests/[id]/__tests__/page.test.tsx",
+    "vitest:frontend/src/components/charts/__tests__/issue-trends-chart.test.tsx",
+    "vitest:frontend/src/components/ui/__tests__/empty-state.test.tsx",
+    "vitest:frontend/src/components/ui/__tests__/error-boundary.test.tsx",
+    "full suite: frontend",
+    "security scan"
+   ]
+  },
+  "wall": null,
+  "commit": {},
+  "receipt_checks": [
+   {
+    "name": "vitest:frontend/src/components/layout/__tests__/Header.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/components/layout/__tests__/Sidebar.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(auth)/forgot-password/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(auth)/login/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(auth)/register/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/email/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/integrations/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/roles/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/settings/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/admin/sla/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/applications/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/applications/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/catalog/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/catalog/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/cloud/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/cloud/resources/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/dashboard/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/knowledge-base/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/oncall/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/oncall/schedules/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/reports/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/reports/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/reports/builder/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/app/(dashboard)/requests/[id]/__tests__/page.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/components/charts/__tests__/issue-trends-chart.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/components/ui/__tests__/empty-state.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "vitest:frontend/src/components/ui/__tests__/error-boundary.test.tsx",
+    "result": "fail",
+    "provenance": "exogenous"
+   }
+  ]
+ },
+ "hm124107_haiku_s2": {
+  "_source": "hermes-agent 124107, Loki on Haiku seed 2, loki-mode 11.158.0 (closed-set-2), run e10-20261119T083907Z-00ae, sealed SPEC_CONFLICT",
+  "sealed": "SPEC_CONFLICT",
+  "implement": {
+   "exit": "spec_conflict",
+   "spec_conflict_reason": "the repo gate `scripts/run_tests.sh evals/compaction/test_region_scoping.py` requires pytest-collectable tests, but `evals/compaction/test_region_scoping.py:95` is a read-only `__main__` script with none, so the gate cannot pass without editing that Wall file. The adoption work itself is delivered, with the proof passing 3 of 3.The gate still fails for the same reason, and this round I did not change anything."
+  },
+  "fix": null,
+  "verify": {
+   "checks": [
+    {
+     "name": "pytest:tests/hermes_state/test_adoption_compacted_rows.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/tui_gateway/test_stranded_session_adoption.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:plugins/hermes-achievements/tests/test_achievement_engine.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/acp_adapter/test_empty_session_persistence.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/acp_adapter/test_failed_turn_closure.py",
+     "result": "fail",
+     "ids": [
+      "tests/acp_adapter/test_failed_turn_closure.py::test_acp_refusal_closes_the_turn_and_is_not_replayed_into_the_next_prompt"
+     ]
+    },
+    {
+     "name": "pytest:tests/acp_adapter/test_session_cwd_column.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/acp_adapter/test_session_db_private_access.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/acp_adapter/test_session_provenance.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/acp_adapter/test_session.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/agent/test_413_compression.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/agent/test_860_dedup.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/agent/test_api_content_row_addressed_backfill.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/agent/test_api_content_sidecar.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/agent/test_async_token_accounting.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/agent/test_background_review_cache_parity.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/agent/test_background_review_usage.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/agent/test_codex_app_server_persist.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/agent/test_codex_app_server_thread_resume.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/agent/test_codex_echo_ownership.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/agent/test_codex_gpt55_autoraise_notice.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/agent/test_compaction_anti_thrash.py",
+     "result": "not_run"
+    },
+    {
+     "name": "pytest:tests/agent/test_compression_abort_state_reset.py",
+     "result": "not_run"
+    },
+    {
+     "name": "lint:ruff",
+     "result": "pass"
+    },
+    {
+     "name": "full suite: hermes-agent",
+     "result": "not_run"
+    }
+   ],
+   "pre_red_checks": [
+    "pytest:tests/acp_adapter/test_failed_turn_closure.py"
+   ],
+   "target_checks": [],
+   "changed_files": [
+    "hermes_state_portability.py",
+    "tests/tui_gateway/test_stranded_session_adoption.py",
+    "tests/hermes_state/test_adoption_compacted_rows.py"
+   ],
+   "blocking_checks": []
+  },
+  "wall": null,
+  "commit": {},
+  "receipt_checks": [
+   {
+    "name": "pytest:tests/hermes_state/test_adoption_compacted_rows.py",
+    "result": "not_run",
+    "provenance": "agent_authored"
+   },
+   {
+    "name": "pytest:tests/tui_gateway/test_stranded_session_adoption.py",
+    "result": "not_run",
+    "provenance": "agent_authored"
+   },
+   {
+    "name": "pytest:plugins/hermes-achievements/tests/test_achievement_engine.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/acp_adapter/test_empty_session_persistence.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/acp_adapter/test_failed_turn_closure.py",
+    "result": "fail",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/acp_adapter/test_session_cwd_column.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/acp_adapter/test_session_db_private_access.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/acp_adapter/test_session_provenance.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/acp_adapter/test_session.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/agent/test_413_compression.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/agent/test_860_dedup.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/agent/test_api_content_row_addressed_backfill.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/agent/test_api_content_sidecar.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/agent/test_async_token_accounting.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/agent/test_background_review_cache_parity.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/agent/test_background_review_usage.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/agent/test_codex_app_server_persist.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/agent/test_codex_app_server_thread_resume.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/agent/test_codex_echo_ownership.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/agent/test_codex_gpt55_autoraise_notice.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/agent/test_compaction_anti_thrash.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "pytest:tests/agent/test_compression_abort_state_reset.py",
+    "result": "not_run",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "lint:ruff",
+    "result": "pass",
+    "provenance": "exogenous"
+   },
+   {
+    "name": "full suite: hermes-agent",
+    "result": "not_run",
+    "provenance": "exogenous"
+   }
+  ]
+ }
+}

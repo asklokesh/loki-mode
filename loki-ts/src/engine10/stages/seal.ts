@@ -263,6 +263,43 @@ export function unattributedRed(o: Partial<Record<StageName, Obj>>, c: Pick<Rece
   const a = exogenousRedOn() ? (o.verify?.exogenous_attribution as Record<string, ExogenousAttribution> | undefined)?.[c.name] : undefined;
   return a ? holdsPartial(a) : cut;
 }
+/** MEASURED-LABELS (G4; LOKI_E10_MEASURED_LABELS, default on, =0/off/false/no restores the marker rule): a label comes only from what Loki measured, never
+ *  from what a session claims. A LOKI_SPEC_CONFLICT (an implement stop, or a fix round's that machine.ts pinned) seals
+ *  SPEC_CONFLICT only when measuredConflictOf finds the conflict in the last verify. Otherwise the claim is disclosed and the
+ *  run is labeled exactly as the same outputs with no claim would be. An "already done" claim is measured by Loki's own proof
+ *  re-run (ALREADY-DONE-SHOWN below) and a "pre-existing on base" one by verify's base comparison (machine.ts onlyBaseRed); both are unchanged here.
+ *  The plan's out-of-repo stop (machine.ts FC-OUT-OF-REPO) is a question asked before any work, not a label on finished work, and keeps SPEC_CONFLICT. */
+export const measuredLabelsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_MEASURED_LABELS"] ?? "").trim());
+const rawChecks = (o: Partial<Record<StageName, Obj>>): Obj[] => (Array.isArray(o.verify?.checks) ? (o.verify!.checks as Obj[]) : []);
+const fileOfCheck = (name: string): string => name.slice(name.indexOf(":") + 1);
+/** The Wall checks of the last verify: a check whose file is one of the Wall files the Wall stage kept (each was red on base when it was written). */
+const wallCheckNames = (o: Partial<Record<StageName, Obj>>): Set<string> => {
+  const files = (Array.isArray(o.wall?.files) ? (o.wall!.files as Obj[]) : []).map((f) => String(f.path ?? "")).filter(Boolean);
+  return new Set(rawChecks(o).map((c) => String(c.name)).filter((n) => n.includes(":") && files.some((f) => f === fileOfCheck(n) || f.endsWith("/" + fileOfCheck(n)))));
+};
+/** The failing check that shows the claimed conflict, or null. On the last verify (not stopped, so it ran on the delivered tree): a Wall file the Wall stage
+ *  reproduced red on base passed with n > 0, so the change satisfies the issue; a check the run did not write fails and verify attributes it to the change
+ *  (its base run passed, or a failing id is not red on base), so satisfying the issue broke it; and the claim names that check's file (for a full suite,
+ *  the file of one of its failing ids that is not red on base, never an id that already failed there). */
+export function measuredConflictOf(o: Partial<Record<StageName, Obj>>): string | null {
+  const v = o.verify, w = o.wall, reason = String(o.implement?.spec_conflict_reason ?? "");
+  if (!v || v.stopped_at || !w || w.already_satisfied === true || w.reproduction_green_on_base === true || reason === "") return null;
+  const wall = wallCheckNames(o), raw = rawChecks(o), pre = new Set(strs(v.pre_red_checks)), targets = new Set(strs(v.target_checks)), introduced = new Set(strs(v.introduced_checks));
+  if (!raw.some((c) => wall.has(String(c.name)) && hasExecutedProof([c]))) return null;
+  const attr = (v.exogenous_attribution ?? {}) as Record<string, ExogenousAttribution>, changed = new Set(strs(v.changed_files));
+  // the path as a whole word of the claim: at its start or after a space, quote, backtick or bracket, and followed by its end or a non-path character
+  const at = (f: string): boolean => { for (let i = reason.indexOf(f); i >= 0; i = reason.indexOf(f, i + 1)) { const b = i === 0 ? " " : reason[i - 1]!, e = reason[i + f.length] ?? " "; if (/[\s'"`(\[]/.test(b) && !/[\w./-]/.test(e)) return true; } return false; };
+  const namedFile = (f: string): boolean => { const tail = f.split("/").slice(1).join("/"); return f !== "" && (at(f) || (tail.includes("/") && at(tail))); };
+  // a per-file check is named by its file; a full suite by the file of one of its FRESH failing ids, the ones not red on base ("calc.test.ts::add",
+  // "src/a.test.tsx > Suite > case"): the record's fresh_ids, or every id when the suite was green on base (introduced). With neither, a full suite names no file.
+  const idFile = (i: string): string => i.split("::")[0]!.split(" > ")[0]!.trim();
+  const files = (c: Obj): string[] => { const n = String(c.name); if (!n.startsWith("full suite")) return [fileOfCheck(n)]; const fr = attr[n]?.fresh_ids; return (Array.isArray(fr) ? fr : introduced.has(n) ? strs(c.ids) : []).map(idFile); };
+  const hit = raw.find((c) => { const n = String(c.name); return c.result === "fail" && n.includes(":") && !wall.has(n) && !targets.has(n) && !pre.has(n) && files(c).every((f) => !changed.has(f)) && (introduced.has(n) || (attr[n]?.state === "compared" && (attr[n]?.fresh ?? 0) >= 1)) && files(c).some(namedFile); });
+  return hit ? String(hit.name) : null;
+}
+export const CLAIM_NOT_MEASURED = "conflict claimed by the session and not measured by Loki, so it labels nothing";
+export const CLAIM_REFUTED = "conflict claimed by the session; these failing checks label the run FAILED, as they would with no claim";
+
 /** ALREADY-DONE-SHOWN (FireLater#24 on 11.162.0): a run whose implement session found the work already done (or whose intake found it already satisfied),
  *  whose verify agreed and whose commit changed nothing seals ALREADY_SATISFIED only on Loki's own evidence: its own re-run of the session's kept proof script on
  *  the unchanged tree passed (exit 0, at least one line proved, none failed). verify runs no check on that path, so before this the label could only be PARTIAL
@@ -292,7 +329,10 @@ export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptChe
   const exit = o.implement?.exit;
   // FC-16: no success verdict without a Loki-executed check with n>0 and a pass; otherwise PARTIAL (NOT PROVEN, "no tests executed").
   if (o.commit?.failed !== true && strs(o.commit?.not_proven).length === 0 && (o.intake?.already_satisfied === true || exit === "already_done")) return (proof || wallGreenOnBase) && o.wall?.reproduction_green_on_base !== true ? "ALREADY_SATISFIED" : "PARTIAL"; // FC-VACUOUS-WALL-GREEN: a Wall green on base proves a claim, never makes the claim itself; GAME10-08b: recorded runtime evidence the Wall did not reproduce is never "already satisfied"
-  if (exit === "spec_conflict") return "SPEC_CONFLICT"; if (o.commit?.failed === true || strs(o.commit?.not_proven).length > 0) return "FAILED"; // r3: an unrestored user file is never a clean verdict; A-104b r2: a failed commit never seals VERIFIED
+  // MEASURED-LABELS: a conflict claim labels the run only when Loki measured the conflict (the plan's out-of-repo stop, a question before any work, is
+  // unchanged). Otherwise every rule below reads the checks exactly as for the same outputs with no claim, so the claim never moves the label.
+  if (exit === "spec_conflict" && (!measuredLabelsOn() || o.plan?.out_of_repo === true || measuredConflictOf(o) !== null)) return "SPEC_CONFLICT";
+  if (o.commit?.failed === true || strs(o.commit?.not_proven).length > 0) return "FAILED"; // r3: an unrestored user file is never a clean verdict; A-104b r2: a failed commit never seals VERIFIED
   // Section 2: an empty diff without the LOKI_ALREADY_DONE marker is FAILED, never VERIFIED.
   if (emptyDiff) return "FAILED";
   // FC-21b (1): a limit-killed implement is VERIFIED only when the harness itself ran every check green, a Wall or task-named test passed with n>0 (targetProof), and the limit was recorded.
@@ -500,6 +540,10 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     for (const n of consultNotes(ctx.runDir)) notProven.add(n); // LOKI_E10_OPUS_CONSULT: what each consult cost and said, a disclosure only (the verdict is already decided)
     if (verdict === "VERIFIED") for (const n of wpAll.weak) notProven.add(n); // WALL-ASSERT-STRENGTH: a disclosure on the final VERIFIED verdict only, never an input to it
     if (wallGreenOnBase && verdict === "PARTIAL" && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done") notProven.add(WALL_GREEN_ON_BASE_REASON);
+    if (o.implement?.exit === "spec_conflict" && verdict !== "SPEC_CONFLICT" && measuredLabelsOn() && o.plan?.out_of_repo !== true) { // MEASURED-LABELS: what the session claimed, and what Loki did with it
+      const why = sanitizeReason(String(o.implement?.spec_conflict_reason ?? "no reason given")).slice(0, 400), own = liveV.filter((c) => c.result === "fail" && !unattributedRed(o, c)).map((c) => c.name);
+      notProven.add(`${CLAIM_NOT_MEASURED}: ${why}`); if (verdict === "FAILED" && own.length) notProven.add(`${CLAIM_REFUTED}: ${own.join(", ")}`);
+    }
     if (alreadyDoneClaimed(o) && !alreadyOk && verdict === "PARTIAL") notProven.add(alreadyDoneShown(o, alreadyRun) ? alreadyLinesNote(alreadyLines) : alreadyDoneNotShownNote(alreadyRun)); // ALREADY-DONE-SHOWN: why a run that found the work done is held
     if (!proof && !(wallGreenOnBase && verdict === "ALREADY_SATISFIED") && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = vraw; notProven.add(executed ? AGENT_ONLY_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
     if (ftpRes && !ftpRes.ok && verdict === "PARTIAL") notProven.add(`${NO_FAIL_THEN_PASS}${ftpRes.line ? `: ${ftpRes.line}` : ""}`); // only when the harness actually ran it and nothing discriminated
