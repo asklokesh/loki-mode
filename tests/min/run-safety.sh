@@ -1537,8 +1537,10 @@ unit_rv() { # unit_rv <version> <case>
 #   RWd. repo_profile.ts attributeFullSuite: ids only (drop the same-error comparison); newerr excuses legacy.
 #   RWe. intake.ts: let the branch lookup throw again; detached ends with no receipt.
 #   RWf. verify.ts no-id block: `cand = []`; norunner is FAILED after a fix round.
-#   RWh. verify.ts unrunSuitesCarried: return [] (a quick re-verify carries no unrun suite); limitearly reads not_proven "full suite" without @ws/app
-#        (only on the quick re-verify path; under heavy load the limit can land before suites are chosen, where nothing is carried and RWh is not exercised).
+#   RWh. verify.ts unrunSuitesCarried: return [] (a quick re-verify carries no unrun suite); the carry unit reads `[] | []` on every run, and limitearly
+#        reads not_proven "full suite" without @ws/app when its quick re-verify path is taken (under heavy load the limit can land before suites are chosen).
+#   RWj. (harness) the SCS block prints `quick_verifies 0` and leaves "verify stopped" out of its not_proven filter: limitearly's guard fires (neither path).
+#   RWk. verify.ts: drop `...unrunSuitesCarried(...)` from the quick-verify not_proven line; the carry wiring check fails.
 #   RWi. verify.ts unrunSuitesCarried: ignore `ran` (keep every carried line); the carry unit keeps "@ws/app" though that suite ran.
 #   RWg. LOKI_E10_BASE_ON_DEMAND=0 in the run: clean runs all five suites and intake measures them (the opt-out is the old behaviour).
 scope_fixture() { # scope_fixture <dir> [slowcore | slowapp | norunner | links]
@@ -1651,7 +1653,7 @@ SR="$T/scope-limitearly"; scope_fixture "$SR" slowapp; scope_run "$SR" "$SCOPE_O
 if [ "$(scope_get quick_verifies)" -ge 1 ] 2>/dev/null; then
     case "$(scope_get not_proven)" in *"not run: full suite: @ws/app (no time left before the verify limit)"*) ok "scope limitearly: the suite that never started is still named NOT PROVEN after the quick re-verify" ;; *) bad "scope limitearly: the unstarted suite is not named after the quick re-verify: $(scope_get not_proven)" ;; esac
 else
-    case "$(scope_get not_proven)" in *"verify stopped at its time limit before all checks ran"*) ok "scope limitearly: the limit landed before verify chose its suites (no quick re-verify): the receipt names the stop" ;; *) bad "scope limitearly: neither a quick re-verify nor the stop note: $(scope_get not_proven)" ;; esac
+    case "$(scope_get not_proven)" in *"verify stopped at its time limit before all checks ran"*) ok "scope limitearly: the limit landed before verify chose its suites (no quick re-verify): the receipt names the stop" ;; *) bad "scope limitearly: guard: neither a quick re-verify nor the stop note: $(scope_get not_proven)" ;; esac
 fi
 fi
 if scope_want carry; then
@@ -1660,6 +1662,8 @@ const v = await import(process.argv[1] + "/loki-ts/src/engine10/stages/verify.ts
 const prior = ["not run: full suite: @ws/app (no time left before the verify limit)", "not run: full suite: @ws/legacy (timed out after 2s)", "quick re-verify only: x"];
 console.log(JSON.stringify(v.unrunSuitesCarried(prior, [{ name: "full suite: @ws/app", result: "pass" }, { name: "full suite: @ws/legacy", result: "not_run" }])) + " | " + JSON.stringify(v.unrunSuitesCarried(prior, [{ name: "full suite: @ws/legacy", result: "fail" }])));' "$ROOT" 2>&1)"
 [ "$CU" = '["not run: full suite: @ws/legacy (timed out after 2s)"] | ["not run: full suite: @ws/app (no time left before the verify limit)"]' ] && ok "scope carry: a suite this verify ran to a pass or fail loses its carried not-run line; one still not run keeps it" || bad "scope carry: $CU"
+CW="$T/carry-wiring.ts"; sed 's#//.*##' "$ROOT/loki-ts/src/engine10/stages/verify.ts" > "$CW" # comments stripped, so a comment naming the call cannot satisfy the check
+grep -qF '[QUICK_ONLY_NOTE, ...unrunSuitesCarried(ctx.outputs().verify?.not_proven, checks)]' "$CW" && ok "scope carry: wiring: the quick-verify NOT PROVEN line spreads unrunSuitesCarried with this verify's checks" || bad "scope carry: wiring: the quick-verify line no longer carries unrun suites"
 fi
 if scope_want norunner; then
 SR="$T/scope-norunner"; scope_fixture "$SR" norunner; scope_run "$SR" "$SCOPE_OK"
