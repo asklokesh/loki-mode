@@ -1161,6 +1161,44 @@ X9="PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[2] | PARTIAL>VE
 [ "$A9" = "$X9" ] && ok "unit, unrunnable check (P1 to P4, D1 to D33): a check that could not run on either side stops holding the label only beside the change's own fail-before, pass-after proof, with no changed file in its package, the same start failure on both sides and nothing else open; every planted defect reads the knob-off label, never VERIFIED" \
     || bad "unrunnable-check unit gave: $A9 (want: $X9)"
 
+# OWN-PROOF (G3 (a), LOKI_E10_OWN_PROOF, default on): the change's own proof for any tool. Loki runs the kept proof script on the change, in an untouched copy
+# of the checkout (the control) and in a copy whose non-test files are put back to the base commit. A step counts only when it ran repository code, passed on
+# the change, passed in the control and printed FAILED without the change. Pure cells (failsWithoutChange): F1 counts; F2 failed in the control; F3 passed
+# without the change; F4 not a repository-running step; F5 never reached without the change; F6 both passed and failed without the change; F7 failed on the
+# change. Real cells (proofWithoutChange on a real repository, real copies): O1 counts; O2 a step that passes without the change; O3 a step that runs nothing of
+# the repository; O4 a step fails on the change; O5 knob off; O6 no non-test file changed; O7 a step that fails in any copy (its failure is the copy, not the
+# change); O8 stale build output lets the step pass without the change until the build runs in the copy; O9 an added file is removed in the copy (a pure
+# feature add counts here, unlike the runner-read fail-then-pass: pinned as the stated limit); O10 the user's tree is byte-identical afterwards.
+# Plants: failsWithoutChange: drop `cOk.has` (F2, O7); drop `!wOk.has` (F6); `!wOk.has` in place of `wBad.has` (F5); drop `c.real` (F4, O3);
+# proofWithoutChange: drop `head.failed > 0` (O4); drop the knob (O5); revert in the control too (O1); never build (O8); drop `revert.length === 0` (O6).
+G6="$T/ownproof"; mkdir -p "$G6/tools" "$G6/.loki/runs/r1" && git -C "$G6" init -q -b main && : > "$G6/.loki/runs/r1/kept" # the run directory exists before the first status is read
+printf 'mul() { echo $(( $1 + $2 )); }\nadd() { echo $(( $1 + $2 )); }\n' > "$G6/lib.sh"
+printf '. ./lib.sh; [ "$(mul 3 4)" = 12 ]\n' > "$G6/tools/mulcheck.sh"; printf '. ./lib.sh; [ "$(add 3 4)" = 7 ]\n' > "$G6/tools/addcheck.sh"
+printf 'sh tools/mulcheck.sh && [ "$(basename "$(pwd -P)")" != without ]\n' > "$G6/tools/notcopy.sh"
+printf 'mkdir -p out && cp lib.sh out/lib.sh\n' > "$G6/build.sh"; printf '. out/lib.sh; [ "$(mul 3 4)" = 12 ]\n' > "$G6/tools/builtcheck.sh"; printf 'out/\n.loki/\n' > "$G6/.gitignore"
+git -C "$G6" add -A && git -C "$G6" -c user.name=t -c user.email=t@t commit -qm base
+printf 'mul() { echo $(( $1 * $2 )); }\nadd() { echo $(( $1 + $2 )); }\n' > "$G6/lib.sh"; printf '. ./lib.sh; [ "$(mul 5 5)" = 25 ]\n' > "$G6/newcheck.sh"; (cd "$G6" && sh build.sh)
+A10="$(G="$G6" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const pr = await import(process.env.ROOT + "/loki-ts/src/engine10/proof_rerun.ts"), { writeFileSync, readFileSync } = await import("node:fs"), { execFileSync } = await import("node:child_process");
+const g = process.env.G, run = g + "/.loki/runs/r1", sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const c = (what, ok, real = true, item = "1") => ({ item, what, ok, ...(real && ok ? { real: true } : {}) }), H = [c("a", true)];
+const pure = [pr.failsWithoutChange(H, [c("a", true)], [c("a", false)]), pr.failsWithoutChange(H, [c("a", false)], [c("a", false)]), pr.failsWithoutChange(H, [c("a", true)], [c("a", true)]), pr.failsWithoutChange([c("a", true, false)], [c("a", true)], [c("a", false)]),
+  pr.failsWithoutChange(H, [c("a", true)], []), pr.failsWithoutChange(H, [c("a", true)], [c("a", true), c("a", false)]), pr.failsWithoutChange([c("a", false)], [c("a", true)], [c("a", false)])].map((x) => x.length);
+const status = () => execFileSync("git", ["-C", g, "status", "--porcelain", "--ignored"], { encoding: "utf8" }) + readFileSync(g + "/lib.sh", "utf8"), before = status();
+const REV = [{ path: "lib.sh", added: false }], go = async (steps, o = {}) => {
+  writeFileSync(run + "/loki-proof.sh", "#!/bin/bash\n. \"$LOKI_SCRATCH/loki-check.sh\"\n" + steps.map((s) => "loki_cmd 1 " + s).join("\n") + "\n");
+  const env = { ...process.env, ...(o.env ?? {}) }, head = await pr.rerunProof(g, run, undefined, env), r = await pr.proofWithoutChange(g, run, sha, head, o.revert ?? REV, o.builds ?? [], undefined, env);
+  return r === null ? "null" : (r.ok ? "ok" : "no") + ":" + r.steps.length + (r.built ? ":built" : "") + ":" + r.checks_control + "/" + r.checks_without;
+};
+const MUL = "\"mul gives the product\" sh tools/mulcheck.sh";
+const real = [await go([MUL]), await go(["\"add still adds\" sh tools/addcheck.sh"]), await go(["\"nothing of the repository\" true"]), await go([MUL, "\"a missing script\" sh tools/nope.sh"]), await go([MUL], { env: { LOKI_E10_OWN_PROOF: "0" } }), await go([MUL], { revert: [] }),
+  await go(["\"mul gives the product, outside a copy\" sh tools/notcopy.sh"]), await go(["\"the built copy gives the product\" sh tools/builtcheck.sh"], { builds: [{ cmd: "sh build.sh", cwd: "." }] }), await go(["\"the new check passes\" sh newcheck.sh"], { revert: [...REV, { path: "newcheck.sh", added: true }] })];
+console.log([...pure, ...real, status() === before ? "tree-same" : "TREE-CHANGED"].join(" | "));
+' 2>&1)"
+X10="1 | 0 | 0 | 0 | 0 | 0 | 0 | ok:1:1/1 | no:0:1/1 | null | null | null | null | no:0:1/0 | ok:1:built:1/1 | ok:1:1/1 | tree-same"
+[ "$A10" = "$X10" ] && ok "unit, own proof (F1 to F7, O1 to O10): a proof-script step is the change's own proof only when it ran repository code, passed on the change and in an untouched copy of the checkout, and printed FAILED in a copy without the change; stale build output is rebuilt in the copy; the user's tree is untouched" \
+    || bad "own-proof unit gave: $A10 (want: $X10)"
+
 # Base run budget (v131 STALLED tq runs): a suite that takes ~250 s on the change got 60 s on base, timed out, and its pre-existing red was blamed on the change.
 # A base run now gets the same 300 s its own run gets (bounded by a third of the run cap); a cut base run is recorded on the receipt line as "base run
 # incomplete" and excuses nothing; a base entry cut with a shorter budget is measured again, one cut at the current budget is kept.
