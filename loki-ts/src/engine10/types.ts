@@ -256,6 +256,10 @@ export interface Receipt {
   exec_spec?: { status: string; seconds: number; binding: number; usd: number | null }; // present only when the exec spec stage ran: its wall seconds and the generator session's dollars (null when unmetered or no session ran)
   /** XV-1: cross-review judge and whether it is a different vendor than the builder (LOKI_XVENDOR_DEFAULT=1 only). */
   review?: { provider: string | null; vendor_differs: boolean };
+  /** UNRUNNABLE-CHECK: the checks that could not run on the base commit or on the change, stayed failed or not run on this receipt, and did not hold the label; absent when none. */
+  could_not_run?: string[];
+  /** OWN-PROOF (G3): Loki's run of the kept proof script in a copy of the checkout with the change's non-test files put back to the base commit. */
+  own_proof?: { ok: boolean; steps: string[]; seconds: number; checks_control: number; checks_without: number; built?: true; why?: string };
   /** T2: the counted outcome for METRICS: "yes" | "no" | "inconclusive". */
   mutation_outcome?: "yes" | "no" | "inconclusive";
   /** AWE-2: on a "yes" proof only, each proving test file's own base-run output lines (redacted, local paths cut); omitted otherwise. Display only (proof card, PR body). */

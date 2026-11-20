@@ -32,14 +32,14 @@ import { suiteSkipHolds, SUITE_FIX_SKIP_NOTE, sealedWallDir, checkProvenance, ch
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
-import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts"; import { LOKI_OWN_LEAD, verifiedReceiptBlock, type CapReason } from "../closure.ts";
+import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts"; import { COULD_NOT_RUN_LEAD, LOKI_OWN_LEAD, verifiedReceiptBlock, type CapReason } from "../closure.ts";
 import { atomicWriteText } from "../../util/atomic.ts";
 import { patchReceipt } from "../../features/patch_protocol.ts";
 import { collapseNotProven } from "../../util/term_width.ts";
-import { consultNotes, neverStopNotes } from "../../features/opus_consult.ts"; import { namedUnchangedNote, namedUnchangedOf, unfinishedNotes } from "../../util/conflict_resume.ts"; import { envCardReceiptBlock, neededServices } from "../../util/stack_tools.ts"; import { updateRepoCard } from "../../e10ext/repomemory.ts"; import { PROOF_SCRIPT, baseFacts, fallbackLines, noOwnProofNotes, proofBaseCapOn, proofBaseOn, proofFacts, proofOnBase, proofRerunOn, proofRerunS, provesNothing, provesNothingReason, rerunProof, ruleStatus, unusedNewFileNote, unusedNewFiles } from "../proof_rerun.ts"; import { issueRunBrief } from "../types.ts"; import { proveDisclosures, proveNotes, proveReceiptBlock } from "./prove.ts";
+import { consultNotes, neverStopNotes } from "../../features/opus_consult.ts"; import { namedUnchangedNote, namedUnchangedOf, unfinishedNotes } from "../../util/conflict_resume.ts"; import { envCardReceiptBlock, neededServices } from "../../util/stack_tools.ts"; import { updateRepoCard } from "../../e10ext/repomemory.ts"; import { PROOF_SCRIPT, baseFacts, fallbackLines, noOwnProofNotes, proofBaseCapOn, proofBaseOn, proofFacts, proofOnBase, proofRerunOn, proofRerunS, provesNothing, provesNothingReason, rerunProof, ruleStatus, unusedNewFileNote, unusedNewFiles, ownProofOn, proofWithoutChange, stepNamesFile, type OwnProof, type ProofRerun } from "../proof_rerun.ts"; import { issueRunBrief } from "../types.ts"; import { proveDisclosures, proveNotes, proveReceiptBlock } from "./prove.ts";
 import { tournamentReceiptBlock } from "../../features/tournament.ts"; import { attemptsReceiptBlock } from "../../features/attempts.ts"; import { nrdReceiptBlock, settleNrd } from "../../features/no_regression.ts";
 import { commitHookBypassOn, type SafeGitKeep, safeGit, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes, capLateRecovery, recoverRunWork, sealPrScope, splitDeclaredAdvisories, unverifiedRecovered, workRecoveryNotes } from "../../util/base_guard.ts"; import { readPlanScope } from "../../util/run_cap.ts"; import { toolchainDropNotes } from "../../util/lock_ecosystems.ts"; import { conventionsBlock, fragmentNoticeLine, misplacedNamedNotes, releaseNoteSkipBlock } from "../../project_model/conventions.ts"; import { declaresPythonEnv } from "../../util/python.ts"; import { testFileWeakened } from "../../util/test_guard.ts";
-import { exogenousRedOn, holdsPartial, type ExogenousAttribution } from "../../runner/repo_profile.ts"; // EXOGENOUS-RED
+import { exogenousRedOn, holdsPartial, loadProfile, unrunnableCheckOn, type ExogenousAttribution } from "../../runner/repo_profile.ts"; // EXOGENOUS-RED, UNRUNNABLE-CHECK
 const SYSTEM_INTERP = "tests ran on the system interpreter", SYSTEM_INTERP_SUFFIX = " (the repo declares no Python dependencies, so this is its interpreter; informational, does not cap)"; // verify.ts writes the note
 
 export const SIGNING_UNAVAILABLE = "receipt signing unavailable (no usable signing key: invalid key or unwritable ~/.loki/keys)", AGENT_ONLY_REASON = "only agent-authored tests executed (no agent-independent proof)", WALL_GREEN_ON_BASE_REASON = "Wall green on base: no Wall test discriminates the change"; // TEN-GATES-02
@@ -57,6 +57,8 @@ export function missingLintChecks(vraw: readonly Obj[], env: NodeJS.ProcessEnv =
   return vraw.filter((c) => String(c.name ?? "").startsWith("lint:") && c.result === "not_run" && c.skip_code === "tool_not_on_path").map((c) => String(c.name));
 }
 export const LEAN_NO_SYMBOL = "no passing check references a changed symbol and no Wall file ran";
+/** G3 (a): the same finding beside the change's own fail-before, pass-after proof. It is disclosed and does not hold the label (closure.ts NO_CAP reads "does not cap"). */
+export const LEAN_PROVED_LEAD = "changed symbol named by no passing check (disclosed, does not cap: the change's own test fails without the change and passes with it): ";
 export const NO_FAIL_THEN_PASS = "no test shown to fail on the base commit and pass on the change";
 /** Wall-off verdict (EVAL-2026-11-05-3): an agent-authored or edited test is proof only when the HARNESS shows it fails on the base commit with the head's test bytes and passes on the change (util/mutation_proof.ts, the same base-worktree run T2 uses). An edited file's own base version must be green on the base first, so a pre-existing red file never reads as discriminating. */
 /** The symbols the diff declares or modifies in non-test code files (the lean rule and the fail-then-pass relevance rule share it). */
@@ -109,7 +111,7 @@ export function specSiteGap(o: Partial<Record<StageName, Obj>>, vraw: Obj[], pct
  *  pub (HONEST-VERIFIED-2): every public function the run ADDS (util/check_result.ts addedPublicFunctions) must be named, directly or through a covered caller, by an agent-independent passing test: a Wall file that passed, a test file the run did not touch (a full-suite pass that counted tests contributes every untouched test file), Tests the implementer wrote or edited never clear it. Off by default; LOKI_E10_PUBLIC_GAP=1 turns it on.
  *  Both are [] for an external run (its own rule) and an already-satisfied claim. */
 const CALLER_SCAN = 3000, CALLER_MAX_BYTES = 200_000;
-async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[], wallOff: { pctx: ProvenanceCtx; ftp: () => Promise<boolean> } | null = null): Promise<{ lean: string[]; pub: string[] }> {
+async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, rawDiff: string[], head: string, vraw: Obj[], wallOff: { pctx: ProvenanceCtx; ftp: () => Promise<boolean>; proved?: string[] } | null = null): Promise<{ lean: string[]; pub: string[] }> {
   const none = { lean: [], pub: [] };
   if (externalRun(o) || o.intake?.already_satisfied === true || o.implement?.exit === "already_done") return none;
   const touched = new Set<string>(), code: string[] = [], added: string[] = [];
@@ -120,7 +122,7 @@ async function symbolGaps(ctx: RunContext, o: Partial<Record<StageName, Obj>>, r
   const allSources = (wallOff ? executed.filter((c) => checkProvenance(String(c.name ?? ""), wallOff.pctx) !== "agent_authored") : executed).map(testOf).filter((p): p is string => p !== null).map(read); // Wall off: a test the run wrote or edited names the symbol trivially, so it counts only through the fail-then-pass proof below
   const ranWall = Array.isArray(o.wall?.files) && o.wall.files.length > 0, leanFiles = code.filter((f) => CODE_FILE_EXT.test(f));
   let lean: string[] = [];
-  if (!ranWall && leanFiles.length) { const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...leanFiles], { timeoutMs: 20000 }); if (d.exitCode === 0) lean = symbolGap(changedSymbols(d.stdout, read), allSources); if (lean.length > 0 && wallOff && await wallOff.ftp()) lean = []; }
+  if (!ranWall && leanFiles.length) { const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...leanFiles], { timeoutMs: 20000 }); if (d.exitCode === 0) lean = symbolGap(changedSymbols(d.stdout, read), allSources); if (lean.length > 0 && wallOff && await wallOff.ftp()) { wallOff.proved = lean; lean = []; } } // OWN-PROOF (G3): beside the change's own fail-before, pass-after proof the gap is a disclosed note (wallOff.proved), never a hold
   if (process.env["LOKI_E10_PUBLIC_GAP"] !== "1") return { lean, pub: [] }; // off by default: the span lines of a file with multi-line docstrings or template literals shift against the stripped text (follow-up task)
   const files = code.filter((f) => API_FILE_EXT.test(f)).map((path) => ({ path, src: read(path) }));
   const fns: string[] = [];
@@ -347,6 +349,35 @@ export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptChe
   return "VERIFIED";
 }
 
+/** UNRUNNABLE-CHECK (LOKI_E10_UNRUNNABLE_CHECK, default on, =0 opts out; runner/repo_profile.ts). The checks verify listed could_not_run that are still on the
+ *  receipt in the state the rule covers: a failed full suite whose attribution record holds it at PARTIAL, or a check sealed not_run. [] with the knob off,
+ *  when a limit stopped verify or implement, or when verify was a quick one. It reads verify's list only, never unattributedRed: that rule also answers for a
+ *  base run that was cut or never started, and such a check must keep holding the label. */
+export function unrunnableCandidates(o: Partial<Record<StageName, Obj>>, checks: readonly Pick<ReceiptCheck, "name" | "result">[], env: NodeJS.ProcessEnv = process.env): string[] {
+  if (!unrunnableCheckOn(env)) return [];
+  const v = o.verify;
+  if (!v || v.stopped_at !== undefined || v.verify_scope !== "complete" || typeof o.implement?.limit_s === "number") return [];
+  const listed = new Set([...strs(v.could_not_run), ...Object.keys((v.could_not_run_if_proved ?? {}) as Obj)]), attr = (v.exogenous_attribution ?? {}) as Record<string, ExogenousAttribution>;
+  return [...checks.filter((c) => listed.has(c.name) && (c.result === "fail" ? c.name.startsWith("full suite") && !!attr[c.name] && holdsPartial(attr[c.name]!) : c.result === "not_run")).map((c) => c.name),
+    ...[...listed].filter((n) => n.startsWith("install:") && !checks.some((c) => c.name === n))]; // an install step is on the receipt as its line only, never as a check
+}
+/** The rule itself (founder decision 2026-11-20): the candidates that stop holding the label, or []. All of: the label is PARTIAL; the change's own proof
+ *  holds (`proof.ok`: a test the change added or edited fails before the change and passes after it, in the same environment); that test ran as its own
+ *  targeted check or proof step, not inside a candidate and not as a full suite; and with the candidates and their own lines taken out, `rest` (the label rule
+ *  over everything else) reads VERIFIED, so nothing else holds the label. The machine's "fix round skipped" note goes with them only when no other full suite
+ *  still fails. A lifted check keeps its result on the receipt, is never excused, and is listed "could not run here". */
+export function unrunnableLifted(a: { o: Partial<Record<StageName, Obj>>; checks: ReceiptCheck[]; vraw: readonly Obj[]; verdict: Verdict; proof: { ok: boolean; files: string[]; steps?: number } | null; notes: readonly string[]; rest: (checks: ReceiptCheck[], notes: string[]) => Verdict }, env: NodeJS.ProcessEnv = process.env): { names: string[]; notes: string[] } {
+  const cand = unrunnableCandidates(a.o, a.checks, env), no = { names: [], notes: [] };
+  if (cand.length === 0 || a.verdict !== "PARTIAL" || a.proof?.ok !== true) return no;
+  const own = (c: Obj): boolean => isExecutedProof(c as { result?: unknown; n?: unknown }) && !String(c.name).startsWith("full suite") && !cand.includes(String(c.name));
+  if (!((a.proof.steps ?? 0) > 0) && !a.proof.files.some((f) => a.vraw.some((c) => own(c) && String(c.name).endsWith(`:${f}`)))) return no;
+  const need = (a.o.verify?.could_not_run_if_proved ?? {}) as Record<string, unknown>; // Point 2: a check with changed test files in its package is lifted only when each of them is a proved test
+  if (cand.some((n) => n in need && !strs(need[n]).every((f) => a.proof!.files.includes(f)))) return no;
+  const left = a.checks.filter((c) => !cand.includes(c.name)), gone = new Set(strs(a.o.verify?.could_not_run_notes));
+  if (!left.some((c) => c.result === "fail" && c.name.startsWith("full suite"))) gone.add(SUITE_FIX_SKIP_NOTE);
+  return a.rest(left, a.notes.filter((n) => !gone.has(n))) === "VERIFIED" ? { names: cand, notes: [...gone] } : no; // notes: the lines that said these checks hold the label, which no longer describe the receipt
+}
+
 /** FALSEVER-OPEN-DECISION (LOKI_E10_OPEN_DECISION_CAP, default on, =0 opts out): NOT PROVEN lines for what the run decided without the issue deciding it.
  *  An intake assumption (an either/or the vote or the model picked), a no-regression change the issue does not decide (advisory), and a differential that did not run or complete. */
 /** An intake open-choice line the run settled itself: no evidence picked an option, or the precedent vote did. A choice the task, a maintainer or an existing test settles, and any other assumption (a brief's defaults), is not one. */
@@ -392,6 +423,8 @@ export function renderReceiptMd(r: Receipt): string {
   return [
     `## Loki receipt: ${r.verdict}`,
     "",
+    ...(r.own_proof?.ok ? [`- Proof of the change: ${r.own_proof.steps.length} step(s) of the proof script pass on the change and fail in a copy of the checkout without it${r.own_proof.built ? " (after a build there)" : ""}: ${r.own_proof.steps.slice(0, 3).join("; ")}`] : []),
+    ...(r.could_not_run?.length ? [`- Could not run here, on the original code either: ${r.could_not_run.join(", ")} (the change is proved by its own test, which fails before the change and passes after it)`] : []),
     ...(r.verdict === "SPEC_CONFLICT" && r.spec_conflict_reason ? [`- Reason: \`${r.spec_conflict_reason}\``] : []),
     `- Run: ${r.run_id}`,
     `- Base: ${r.base_sha}  Head: ${r.head_sha}`,
@@ -462,7 +495,8 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const proofText = (() => { try { return readFileSync(join(ctx.runDir, PROOF_SCRIPT), "utf8"); } catch { return ""; } })();
     const proofOnly = proofText ? checks.filter((c) => { if (c.result !== "not_run") return false; const f = c.name.slice(c.name.indexOf(":") + 1), b = f.slice(f.lastIndexOf("/") + 1); return b.length > 5 && pctx.addedFiles.some((a) => a === f || a.endsWith(`/${f}`)) && proofText.includes(b); }).map((c) => c.name) : [];
     const live = checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name)) && c.repo_skipped !== true && !lintGone.includes(c.name) && !proofOnly.includes(c.name)), executed = hasExecutedProof(vraw), strictProof = process.env["LOKI_EXOGENOUS_PROOF"] !== "0", noWall = !(Array.isArray(o.wall?.files) && o.wall.files.length > 0);
-    const ftpGate = strictProof && noWall && diffOk && !externalRun(o) && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done" && weakTests.length === 0 && !live.some((c) => c.result === "fail") && mutationEnabled(); // only a run that could still read VERIFIED pays for the base-tree runs; a check red on the base too (pre_red) is not this change failing, exactly as verdictOf reads it (FireLater#24 s1: a red frontend suite on base shut this gate, so the new backend tests never earned their fail-then-pass proof and a clean slice read PARTIAL)
+    const vCand = unrunnableCandidates(o, live); // UNRUNNABLE-CHECK: [] with the knob off; a candidate does not shut the fail-then-pass gate below, since that proof is what the rule requires
+    const ftpGate = strictProof && noWall && diffOk && !externalRun(o) && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done" && weakTests.length === 0 && !live.some((c) => c.result === "fail" && !vCand.includes(c.name)) && mutationEnabled(); // only a run that could still read VERIFIED pays for the base-tree runs; a check red on the base too (pre_red) is not this change failing, exactly as verdictOf reads it (FireLater#24 s1: a red frontend suite on base shut this gate, so the new backend tests never earned their fail-then-pass proof and a clean slice read PARTIAL)
     // E4 defect pin: a pure value replacement of an existing assertion that pins the wrong value the issue reports is listed as "value change (defect pin)", not weakened. It never counts as proof (an edited pre-existing test is agent-authored).
     const pinEdits = diffOk ? rawDiff.flatMap((m, i) => { const st = m.trim().split(" ").pop() ?? ""; const f = rawDiff[i + 1]; return i % 2 === 0 && st === "M" && f && isTestFile(f) && !weakTests.includes(f) ? defectPinEdits(ctx.repoDir, ctx.baseSha, head, f, loadTaskText(ctx, str(o.intake?.task) ?? undefined)) : []; }) : [];
     const pinFiles = new Set(pinEdits.map((e) => e.file));
@@ -471,11 +505,19 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const issueOwn = listed.length ? listed : fromPlan, needs = issueOwn.length ? (() => { try { return neededServices(ctx.repoDir); } catch { return []; } })() : []; // ISSUE-ACCEPTANCE (on by default, LOKI_E10_ISSUE_ACCEPTANCE=0 opts out): the issue's own lines decide the label
     const issueAsks = issueOwn.length && needs.length ? [...issueOwn, FRESH_INSTALL_ASK] : issueOwn; // a repository that needs a database gets one more required line: the change works on a fresh install (the false VERIFIED of 2026-11-16 broke new-tenant creation and no diff reader could see it)
     const alreadyRun = alreadyDoneClaimed(o) && (!diffOk || diff.stdout === "") ? await rerunProof(ctx.repoDir, ctx.runDir, signal) : null, alreadyLines = alreadyRun ? alreadyRealLines(ruleStatus(issueAsks, alreadyRun, null), alreadyRun) : [], alreadyOk = alreadyDoneShown(o, alreadyRun) && alreadyLinesMet(alreadyLines); // ALREADY-DONE-SHOWN: Loki's own re-run on the unchanged tree
-    const exoProof = hasExogenousProof(vraw, pctx), proof = alreadyOk || (!strictProof ? executed : !noWall ? exoProof : exoProof || (ftpGate && (await ftp()).ok)); // FC-16: executed n>0 pass from verify's raw checks (a Wall green on base proves only a claim, inside verdictOf); TEN-GATES-02 (D104): that pass must be agent-independent (LOKI_EXOGENOUS_PROOF=0 opts out)
+    let rerunMemo: Promise<ProofRerun | null> | null = null; const rerun = (): Promise<ProofRerun | null> => (rerunMemo ??= rerunProof(ctx.repoDir, ctx.runDir, signal)); // one re-run of the kept script on the change, shared by the acceptance lines and the own proof
+    // OWN-PROOF (G3 (a), LOKI_E10_OWN_PROOF, default on): the proof for any tool. Only for a run that could still read VERIFIED (the fail-then-pass gate) and only
+    // when the runner-read proof found nothing: the kept proof script must pass on the change, pass in an untouched copy of the checkout, and print FAILED for a
+    // repository-running step in a copy whose non-test files are put back to the base commit (proof_rerun.ts proofWithoutChange).
+    const ownRevert = rawDiff.flatMap((m, i) => { const f = rawDiff[i + 1]; return i % 2 === 0 && f && !isTestFile(f) ? [{ path: f, added: (m.trim().split(" ").pop() ?? "") === "A" }] : []; });
+    let ownMemo: Promise<OwnProof | null> | null = null; const own = (): Promise<OwnProof | null> => (ownMemo ??= (async () => (ftpGate && !alreadyRun && diff.stdout !== "" && ownProofOn() ? proofWithoutChange(ctx.repoDir, ctx.runDir, ctx.baseSha, await rerun(), ownRevert, (loadProfile(ctx.repoDir)?.commands ?? []).filter((c) => c.kind === "build").slice(0, 1).map((c) => ({ cmd: c.cmd, cwd: "." })), signal) : null))());
+    const changeProof = async (): Promise<boolean> => (ftpGate && (await ftp()).ok) || (await own())?.ok === true; // the change's own test fails before the change and passes after it: read through a runner Loki knows, else by its own run of the proof script
+    const exoProof = hasExogenousProof(vraw, pctx), proof = alreadyOk || (!strictProof ? executed : !noWall ? exoProof : exoProof || (await changeProof())); // FC-16: executed n>0 pass from verify's raw checks (a Wall green on base proves only a claim, inside verdictOf); TEN-GATES-02 (D104): that pass must be agent-independent (LOKI_EXOGENOUS_PROOF=0 opts out)
     const pinLift = !isOff(process.env["LOKI_E10_DEFECT_PIN"]); // on by default, =0 opts out: lifts the cap only for the exact pinned file:line of a pure value replacement; the rewritten file never counts as proof and the receipt note is always on
     const pinDropped = pinDroppedNotes(verifyNotProven, pinEdits, pinLift);
     const uncoveredAfterLimit = o.implement?.exit === "killed" ? strs(o.verify?.uncovered_changed) : []; // FC-21b: changed code no passing impacted check covered; limit path only
-    const { lean: leanGap, pub: pubGap } = diffOk ? await symbolGaps(ctx, o, rawDiff, head, vraw, strictProof && noWall ? { pctx, ftp: async () => ftpGate && (await ftp()).ok } : null) : { lean: [], pub: [] }; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL; HONEST-VERIFIED-2
+    const leanCtx: { pctx: ProvenanceCtx; ftp: () => Promise<boolean>; proved?: string[] } | null = strictProof && noWall ? { pctx, ftp: changeProof } : null;
+    const { lean: leanGap, pub: pubGap } = diffOk ? await symbolGaps(ctx, o, rawDiff, head, vraw, leanCtx) : { lean: [], pub: [] }, leanProved = leanCtx?.proved ?? []; // FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL; HONEST-VERIFIED-2
     const specGap = strs(((o.wall?.exec_spec ?? {}) as Obj).uncovered_sites).length && diffOk ? specSiteGap(o, vraw, pctx, (p) => { try { return readFileSync(join(ctx.repoDir, p), "utf8"); } catch { return ""; } }, (await codeSymbols(ctx, rawDiff, head)).all) : []; // exec spec: a defective named site no binding case covers and the diff left alone
     const wpAll = publishableWall(ctx.repoDir, ctx.runDir, o, process.env, loadTaskText(ctx, str(o.intake?.task) ?? undefined)); // pure read of the sealed copies; publishing still happens only on VERIFIED
     // LINT-OWN: a run whose only red checks are lint errors its own change introduced (verify's own_lint), with a passing test and no other red, is held at PARTIAL
@@ -484,7 +526,11 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const lintOnly = openLint.length > 0 && live.every((c) => c.result !== "fail" || ownLint.has(c.name)) && live.some((c) => c.result === "pass" && !c.name.startsWith("lint:"));
     const liveV = lintOnly ? live.map((c) => (openLint.includes(c) ? { ...c, result: "not_run" as const } : c)) : live;
     const lintOpenNotes = lintOnly ? openLint.map((c) => `lint error the change introduced, still failing after the fix rounds: ${c.name}: ${String(((Array.isArray(o.verify?.checks) ? (o.verify!.checks as Obj[]) : []).find((x) => x.name === c.name)?.first_error) ?? "see the check output").slice(0, 200)} (every test passed; the label is held at PARTIAL)`) : [];
-    const verdict0 = capGroupVerdict(verdictOf(o, liveV, !diffOk || diff.stdout === "", capVerify.some((n) => !pinDropped.has(n)) || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp);
+    const verdict0a = capGroupVerdict(verdictOf(o, liveV, !diffOk || diff.stdout === "", capVerify.some((n) => !pinDropped.has(n)) || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp);
+    // UNRUNNABLE-CHECK: applied here, before every later step, so supply, review, open notes and the publish can still only lower the label.
+    const vLifted = vCand.length > 0 && verdict0a === "PARTIAL" && ftpGate ? unrunnableLifted({ o, checks: liveV, vraw, verdict: verdict0a, proof: await (async () => { const f = await ftp(); if (f.ok) return f; const w = await own(); return w?.ok ? { ok: true, files: rawDiff.filter((x, i) => i % 2 === 1 && isTestFile(x) && w.cmds.some((c) => stepNamesFile(c, x))), steps: w.steps.length } : f; })() /* own proof: the changed test files a counted step's command names are the proved ones */, notes: capVerify.filter((n) => !pinDropped.has(n)),
+      rest: (cs, ns) => capGroupVerdict(verdictOf(o, cs, !diffOk || diff.stdout === "", ns.length > 0 || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp) }) : { names: [], notes: [] };
+    const vLift = vLifted.names, verdict0: Verdict = vLift.length > 0 ? "VERIFIED" : verdict0a;
 
     // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
     const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.repoDir), process.env);
@@ -498,7 +544,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const namedOpen = namedUnchangedOf(ctx.repoDir, ctx.baseSha, o.implement); // R2 LOKI_E10_NAMED_SITES: named sites the final diff leaves unchanged; an unexplained one caps VERIFIED below
     const stoppedByHarness = (((o.implement?.scratch_cleanup as Obj | undefined)?.stopped ?? []) as Obj[]).map((p) => `${String(p.name)}${p.port ? ` on port ${String(p.port)}` : ""}`);
     const lineFacts = issueAsks.length ? [...(needs.length ? [`This repository needs: ${needs.join(", ")}.`] : []), stoppedByHarness.length ? `Processes this run started that Loki found still running and stopped after the session: ${[...new Set(stoppedByHarness)].join(", ")}.` : "Loki found no process of this run still running after the session (the session may have stopped its own, or started none).", `The implement session ended: ${String(o.implement?.exit ?? "unknown")}.`, ...(Array.isArray(o.fix?.fix_rounds) && (o.fix!.fix_rounds as unknown[]).length ? [`After the session's own proof, ${(o.fix!.fix_rounds as unknown[]).length} fix round(s) changed the code again; a result the reply shows from before those rounds does not prove the lines the fix touched.`] : [])] : [];
-    const proofRun = alreadyRun ?? (issueAsks.length && diffOk && diff.stdout !== "" ? await rerunProof(ctx.repoDir, ctx.runDir, signal) : null); if (issueAsks.length) lineFacts.push(...proofFacts(ctx.runDir, proofRun, true)); // REPO CARD: what this run verified is kept for the next run in this repository (e10ext/repomemory.ts) // PROOF RE-RUN: Loki runs the session's proof script itself, after every fix round, so the evidence is a fact the harness holds
+    const proofRun = alreadyRun ?? (issueAsks.length && diffOk && diff.stdout !== "" ? await rerun() : null); if (issueAsks.length) lineFacts.push(...proofFacts(ctx.runDir, proofRun, true)); // REPO CARD: what this run verified is kept for the next run in this repository (e10ext/repomemory.ts) // PROOF RE-RUN: Loki runs the session's proof script itself, after every fix round, so the evidence is a fact the harness holds
     const proofBase = issueAsks.length && proofRun && !alreadyRun ? await proofOnBase(ctx.repoDir, ctx.runDir, ctx.baseSha, proofRun, signal) : null, baseEmpty = provesNothing(issueAsks, proofRun, proofBase); lineFacts.push(...baseFacts(issueAsks, proofRun, proofBase)); // PROVES THE CHANGE: the same script against the base commit (the implement loop's result is reused when the script did not change); a line whose passing checks all pass there too is told to the reviewer and disclosed, and is not met under LOKI_E10_PROOF_BASE_CAP=1
     const baseNotes = !proofBase ? [] : !proofBase.available ? [`proof not compared with the base commit: ${proofBase.why ?? "not available"} (disclosed, does not cap: Loki could not show that these checks fail without the change)`] : proofBaseCapOn() ? [] : baseEmpty.map((n) => `acceptance line ${n} (${issueAsks[n - 1]!.slice(0, 80)}): ${provesNothingReason(proofBase, n)} (disclosed, does not cap; LOKI_E10_PROOF_BASE_CAP=1 makes it a cap)`);
     const lineCheck = issueAsks.length && diffOk && diff.stdout !== "" && (verdict3a === "VERIFIED" || verdict3a === "PARTIAL") ? await issueLineCheck(ctx, issueAsks, head, (Array.isArray(o.verify?.checks) ? (o.verify!.checks as Obj[]) : []).map((c) => ({ name: String(c.name), result: String(c.result) })), typeof o.implement?.final_reply === "string" ? o.implement.final_reply : "", lineFacts) : null; // runs on PARTIAL too, so every pull request shows each line's status
@@ -520,6 +566,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const prScopeSeal = sealPrScope(ctx.repoDir, o.intake, ctx.baseSha, head); // PR-BASE (util/base_guard.ts): what a pull request into the recorded target would hold against what this receipt measured; one open note, a cap toward PARTIAL only
     const openNotes = [...prScopeSeal.notes, ...issueNotes, ...proofNotes, ...neverStopNotes(o.implement), ...(allLinesMet ? [] : unfinished), ...proveNotes(ctx.provider, o, process.env, ctx.runDir), ...(allLinesMet && proofRun?.exit === 0 ? twoReaders : (xr?.notes ?? []).filter(isUnmetNote)), ...openDecisionNotes(o), /* one judge for the acceptance lines: when every line is met on evidence from Loki's own passing re-run, a reviewer UNMET (it reads the diff only and cannot see that run) is disclosed on the receipt, not a cap */ ...namedOpen.filter((s) => s.why === null).map(namedUnchangedNote)], verdict3: Verdict = openNotes.length > 0 && verdict3a === "VERIFIED" ? "PARTIAL" : verdict3a; // FALSEVER-OPEN-DECISION: an open either/or the run picked itself, or a behavior change or regression check the run could not settle, is never VERIFIED
     const deepG = deepGaps(o.verify?.risk, vraw, Array.isArray(o.deep?.checks) ? (o.deep.checks as Obj[]) : [], modelReviewRan(xr)), notProven = new Set<string>([...(sealOnlyPass() ? [TIME_RAN_OUT_NOTE] : []), ...deepG.notProven, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? []), ...reviewReceipt(ctx.provider, xr).notProven, ...openNotes]);
+    for (const n of vLift) notProven.add(`${COULD_NOT_RUN_LEAD}${n}`); // UNRUNNABLE-CHECK: one line per check that stayed failed or not run and did not hold the label
     const reasons: CapReason[] = [], rz = (kind: string, xs: readonly string[]): void => { for (const d of xs) reasons.push({ kind, detail: d }); }; // RW-03: read-only, from the values the verdict above was computed from
     rz("check fails", live.filter((c) => c.result === "fail").map((c) => c.name)); rz("check not run", live.filter((c) => c.result === "not_run").map((c) => c.name)); rz("verify not proven", capVerify.filter((n) => !pinDropped.has(n))); rz("weakened test", weakTests); rz("runner config", capRc);
     if (!proof) rz("no agent-independent proof", [executed ? AGENT_ONLY_REASON : NO_TESTS_REASON]); if (ftpRes && !ftpRes.ok) rz("no fail-then-pass test", [ftpRes.line]); if (wallGreenOnBase) rz("Wall green on base", [WALL_GREEN_ON_BASE_REASON]);
@@ -547,7 +594,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     }
     if (alreadyDoneClaimed(o) && !alreadyOk && verdict === "PARTIAL") notProven.add(alreadyDoneShown(o, alreadyRun) ? alreadyLinesNote(alreadyLines) : alreadyDoneNotShownNote(alreadyRun)); // ALREADY-DONE-SHOWN: why a run that found the work done is held
     if (!proof && !(wallGreenOnBase && verdict === "ALREADY_SATISFIED") && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = vraw; notProven.add(executed ? AGENT_ONLY_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
-    if (ftpRes && !ftpRes.ok && verdict === "PARTIAL") notProven.add(`${NO_FAIL_THEN_PASS}${ftpRes.line ? `: ${ftpRes.line}` : ""}`); // only when the harness actually ran it and nothing discriminated
+    if (ftpRes && !ftpRes.ok && verdict === "PARTIAL" && (ownMemo ? await ownMemo : null)?.ok !== true) notProven.add(`${NO_FAIL_THEN_PASS}${ftpRes.line ? `: ${ftpRes.line}` : ""}`); // only when the harness actually ran it and nothing discriminated
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
     for (const n of strs(o.wall?.not_proven)) notProven.add(n);
     for (const n of strs(o.fix?.not_proven)) notProven.add(n); // E5: a fix session the harness stopped
@@ -587,6 +634,8 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     for (const n of strs(o.verify?.lint_untouched)) notProven.add(`lint red only in files the change did not touch (disclosed, not blocking): ${n}`); // LINT-UNTOUCHED: never silent
     for (const n of strs(o.verify?.not_excused)) notProven.add(n); // why a failing full-suite check was not excused as pre-existing; the check already blocks, this only names the rule
     if (leanGap.length > 0) notProven.add(`${LEAN_NO_SYMBOL}: ${leanGap.join(", ")}`);
+    if (leanProved.length > 0) notProven.add(`${LEAN_PROVED_LEAD}${leanProved.join(", ")}`); // G3 (a): a disclosed note, never a hold
+    const ownP = ownMemo ? await ownMemo : null; if (ownP && !ownP.ok && ownP.why && !proof) notProven.add(`Loki ran the proof script without the change and it did not show the change: ${ownP.why} (disclosed, does not cap by itself: the missing proof holds the label)`);
     if (pubGap.length > 0) notProven.add(`${UNEXERCISED_PUBLIC}: ${pubGap.join(", ")}`);
     if (specGap.length > 0) notProven.add(`${SPEC_SITE_UNCOVERED}: ${specGap.join(", ")}`);
     if (externalRun(o) && !(Array.isArray(o.wall?.files) && o.wall.files.length > 0)) notProven.add(EXTERNAL_NO_WALL); // FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED
@@ -624,8 +673,11 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
       (cost as { router?: Record<string, number> }).router ?? (routerEnabled(process.env) ? sumResultCosts(join(ctx.repoDir, ".loki"), liveArchivedCosts(join(ctx.repoDir, ".loki"), iterIds, UNMETERED)).router : undefined), ctx.model);
     if (routeBlock) for (const l of routeNotProven(routeBlock)) notProven.add(l);
 
+    if (vLift.length > 0) for (const n of vLifted.notes) notProven.delete(n); // UNRUNNABLE-CHECK: a line that says a lifted check holds the label is replaced by its "could not run here" line
     const body: Omit<Receipt, "receipt_sha256" | "verification"> = {
       schema: "loki.v10.receipt/1",
+      ...(vLift.length > 0 ? { could_not_run: vLift } : {}),
+      ...(ownP ? { own_proof: { ok: ownP.ok, steps: ownP.steps.slice(0, 20), seconds: ownP.seconds, checks_control: ownP.checks_control, checks_without: ownP.checks_without, ...(ownP.built ? { built: true as const } : {}), ...(ownP.why ? { why: ownP.why } : {}) } } : {}), // OWN-PROOF: Loki's run of the proof script in a copy of the checkout without the change
       run_id: ctx.runId,
       task: { source: source === "issue" ? "issue" : "text", sha256: str(o.intake?.task_sha256) ?? "" },
       repo: repo ?? "",

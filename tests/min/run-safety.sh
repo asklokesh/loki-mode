@@ -1155,6 +1155,127 @@ X6='not started | not started | cut | unattributable | not comparable | names-li
 VBU="$ROOT/loki-ts/src/engine10/stages/verify.ts"
 grep -q '(Object.keys(exoAttr).length ? { exogenous_attribution: exoAttr } : {})' "$VBU" && grep -q 'c.result !== "fail" || !c.ids?.length || preRed.names.includes(c.name) || targetNames.has(c.name) || wallNames0.has(c.name) || isHold(c) || changed.includes(t.path) || exoAttr\[c.name\]) continue;' "$VBU" && grep -q ', ...unrunSuitesCarried(ctx.outputs().verify?.not_proven, checks)\]), ...exoHeld,' "$VBU" && grep -q 'failOuts.set(check, attempt.out)' "$VBU" && grep -q 'names_changed: named(failOuts.get(c) ?? excerpts.get(c) ?? "")' "$VBU" && ! grep -q 'prev\[c.name\]' "$VBU" && grep -q ': headOnly && cmp ? { state: "compared"' "$VBU" && [ "$(grep -c 'withGone(' "$VBU")" = 2 ] && [ "$(grep -c 'depsGoneSince(' "$VBU")" = 1 ] && [ "$(grep -n 'const goneAtStart = new Map' "$VBU" | cut -d: -f1)" -lt "$(grep -n 'await runTests(split.first);' "$VBU" | cut -d: -f1)" ] && grep -q 'const gone = (cwd: string): string | null => goneAtStart.get(' "$VBU" && ok "exogenous-red wiring: verify records one attribution per failing suite or untouched test file it did not excuse (never a Wall, holdout or task-named test, never a file with no failing id), reads the changed-file flag from the whole output, carries no record from an earlier verify, blames a head-only load error only against a live base rerun, blames a package that was gone since intake when verify started (read before its first command, never after), and lists each held check under NOT PROVEN" || bad "exogenous-red wiring: verify does not record exogenous_attribution as the rule needs"
 
+# UNRUNNABLE-CHECK (LOKI_E10_UNRUNNABLE_CHECK, default on; founder decision 2026-11-20). A check that could not run on the base commit or on the change, for
+# the same reason, does not hold the label when all hold: the change's own test fails before the change and passes after it; no changed file is in the check's
+# package and nothing it printed names one; the start failure is the same on both sides (same exit code, the same set of error lines, one of them a start
+# failure, none that reads like a test that ran and failed, no passed test, a failed count not higher on the change); the receipt lists it "could not run
+# here". The check keeps its result and is never excused. Cells: P1 a suite, P2 a test file sealed not_run, P3 two suites, P4 with the machine's skip note.
+# Every D cell is P1 with one change and must read the knob-off label, never VERIFIED:
+#   D1 no proof; D2 proof not ok; D3 proof not ok though a file failed on base (a rewritten pin); D4 the proof ran only inside the unrunnable check;
+#   D5 a failure line names a changed file; D6 a changed file in the check's package; D7 the suite passes on base; D8 another exit code; D9 base cut off;
+#   D10 base never started; D11 other error lines on the change; D12 an assertion line on both sides; D13 a passed test on both sides; D14 no start failure
+#   among the lines; D15 a higher failed count on the change; D16 a count on base only; D17 a base record written before the facts existed; D18 a head check
+#   without them; D19 more than 60 distinct error lines; D20 to D23 another hold (a not_run check, a held lint, a capping verify note, a lean gap);
+#   D24 to D26 the change's own red (its test, lint, typecheck); D27 runner config changed; D28 a weakened test; D29 verify stopped by a limit;
+#   D30 a quick verify; D31 knob off; D32 a per-file check that failed and is not listed; D33 a not_run test file whose crash names a changed file.
+# P5: the proof is Loki's own run of the proof script (OWN-PROOF steps), which never ran inside the unrunnable check.
+# Point 2 (lead ruling): T1 a changed test file in the check's package that the proof showed failing before and passing after does not block; T2 the same file
+# unproven blocks; T3 a changed source file in the package blocks though every test file there is proved.
+# Install steps (an install is on the receipt as its line only): I1 the install's own tool is not on this machine (exit 127, "cargo: command not found", cargo
+# not on PATH) lifts; I2 the tool is on PATH now; I3 a changed file in the install's package; I4 its output names a changed file; I5 another exit code; I6 the
+# missing tool is not a word of the install command; I7 exit 127 with no missing tool named; I8 knob off.
+# Plants for these: couldNotRunIfProved: drop `inPkg.every(isTest)` (T3); unrunnableLifted: drop the proved-files test (T2); missingTool: drop the exit test
+# (I5); drop the command-word test (I6); drop the PATH test (I2); verify.ts is covered by the from-source engine runs only.
+# Plants (each must turn the named cells): seal.ts unrunnableLifted: `!a.proof` in place of `a.proof?.ok !== true` (D3); drop the own-check line (D4); drop its `steps` half (P5); return
+# the candidates without calling rest (D20 to D23, D27, D28); do not drop the skip note (P4); seal.ts unrunnableCandidates: drop the listed.has test (D20, D21: a check
+# not run for another reason is taken for one that could not run); drop the stopped_at test (D29); drop the verify_scope test (D30); repo_profile.ts couldNotRun: drop the namesChanged test (D33); drop the
+# touched test (D6); knob default off (P1 to P4); sameStartFailure: drop the line-set comparison (D11); drop the start test (D14); drop the assertion test
+# (D12); drop the passed test (D13); `return true` for the counts (D15, D16); drop the missing-facts test (D17, D18); drop the `more` test (D19);
+# unrunnableSuites: drop `b.exit_code === c.exit` (D8); drop `!b.timed_out` (D9).
+A9="$(G="$G5" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), se = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/seal.ts"), cl = await import(process.env.ROOT + "/loki-ts/src/engine10/closure.ts"), cr = await import(process.env.ROOT + "/loki-ts/src/util/check_result.ts"), { writeFileSync } = await import("node:fs"), { execFileSync } = await import("node:child_process");
+const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), S = "full suite: web", S2 = "full suite: docs", INST = "install:tools", WT = "web/test/w.test.ts", T = "bun:lib/test/new.test.ts", OLD = "bun:lib/test/old.test.ts", K = "pytest:tools/tests/a.py", PF = "lib/test/new.test.ts";
+const OUT = "[1/9] a.spec\nError: browserType.launch: Executable does not exist at /x/y/chrome\n2 failed\n", facts = (t) => cr.startFacts(t);
+const base = (o = {}) => ({ ran: true, command: "npm test", exit_code: 1, duration_s: 1, timed_out: false, failing_ids: [], attributable: false, reason: "failing test ids not parseable, failures cannot be attributed", start: facts(OUT), ...o });
+const head = (o = {}) => ({ name: S, cmd: "npm test", result: "fail", ids: [], exit: 1, start: facts(OUT), ...o });
+const pkgOf = (f) => (f.startsWith("web/") ? "web" : f.startsWith("docs/") ? "docs" : f.startsWith("tools/") ? "tools" : f.startsWith("lib/") ? "lib" : ".");
+const leg = (d = {}) => {
+  if (d.knob === false) process.env.LOKI_E10_UNRUNNABLE_CHECK = "0"; else delete process.env.LOKI_E10_UNRUNNABLE_CHECK;
+  const b = d.base === null ? { ran: false, command: "npm test", exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: "the base tree could not start" } : base(d.base); for (const k of d.dropBase ?? []) delete b[k];
+  writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: b, suites: d.two ? [{ ...base({ command: "npm run docs" }), name: S2 }] : [] }));
+  const h = head(d.head); for (const k of d.dropHead ?? []) delete h[k];
+  const full = d.k || d.inst ? [] : [h, ...(d.two ? [head({ name: S2, cmd: "npm run docs" })] : [])], changed = d.changed ?? ["lib/src/x.ts", PF];
+  const attr = Object.fromEntries(full.map((c) => [c.name, { ...rp.exogenousState(g, sha, c), names_changed: d.names === true }]));
+  const suites = new Set(rp.unrunnableSuites(g, sha, full));
+  const cands = [...full.filter((c) => suites.has(c.name) && rp.holdsPartial(attr[c.name])).map((c) => ({ name: c.name, pkg: c.name === S ? "web" : "docs", namesChanged: attr[c.name].names_changed })), ...(d.k === "not_run" ? [{ name: K, pkg: "tools", namesChanged: d.kNames === true }] : []), ...(d.inst && rp.missingTool(d.inst.reason, d.inst.cmd, d.inst.which ?? (() => null)) !== null ? [{ name: INST, pkg: "tools", namesChanged: d.inst.names === true }] : [])];
+  const listed = rp.couldNotRun(cands, changed, pkgOf), ifProved = rp.couldNotRunIfProved(cands, changed, pkgOf, (f) => /\.test\.ts$/.test(f)), all = [...listed, ...Object.keys(ifProved)], held = Object.entries(attr).filter(([, a]) => rp.holdsPartial(a)).map(([n, a]) => rp.exogenousHeldLine(n, a));
+  const kNote = d.k === "not_run" ? [K + ": fails the same way on base, so its result cannot be read: the environment, not the change (sig)"] : d.inst ? [d.inst.reason + " (" + INST + "; harness-owned)"] : [], KN = d.inst ? INST : K;
+  const proofName = d.noProof ? OLD : T, c = (name, result, provenance, n) => ({ name, cmd: "x", result, duration_s: 1, provenance, ...(n ? { n } : {}) });
+  const raw = [{ name: proofName, result: "pass", n: 3 }, ...full.map((x) => ({ name: x.name, result: "fail" })), ...(d.k ? [{ name: K, result: d.k }] : []), ...(d.checks ?? []).map((x) => ({ name: x.name, result: x.result }))];
+  const checks = [c(proofName, "pass", d.noProof ? "exogenous" : "agent_authored", 3), ...full.map((x) => c(x.name, "fail", "exogenous")), ...(d.k ? [c(K, d.k, "exogenous")] : []), ...(d.checks ?? [])];
+  const notes = [...held, ...kNote, ...(d.notes ?? [])];
+  const o = { implement: { exit: "done" }, verify: { checks: raw, exogenous_attribution: attr, ...(all.length ? { could_not_run: listed, ...(Object.keys(ifProved).length ? { could_not_run_if_proved: ifProved } : {}), could_not_run_notes: [...held.filter((n) => all.some((x) => n.includes(": " + x + ": "))), ...kNote.filter(() => all.includes(KN))] } : {}), verify_scope: "complete", ...(d.verify ?? {}) } };
+  const rest = (cs, ns) => se.verdictOf(o, cs, false, ns.length > 0, false, true, false, [], d.lean ?? []), off = rest(checks, notes), proof = d.proof === undefined ? { ok: true, files: [PF] } : d.proof;
+  const lifted = se.unrunnableLifted ? se.unrunnableLifted({ o, checks, vraw: raw, verdict: off, proof, notes, rest }).names : [], on = lifted.length ? "VERIFIED" : off;
+  return d.p ? off + ">" + on + (lifted.length ? "[" + lifted.length + "]" : "") : on === off && on !== "VERIFIED" ? on : "BAD(" + off + ">" + on + ")";
+};
+const x = (name, result, provenance = "exogenous") => ({ name, cmd: "x", result, duration_s: 1, provenance }), no = { ok: false, files: [] }, f2 = (t) => ({ start: facts(t) });
+const CARGO = { reason: "install exited 127: bash: line 1: cargo: command not found", cmd: "cargo fetch --locked" };
+const many = Array.from({ length: 70 }, (_, i) => "Error: missing module m" + String.fromCharCode(97 + (i % 26)) + String.fromCharCode(97 + Math.floor(i / 26)) + ": Cannot find module").join("\n");
+const r = [leg({ p: 1 }), leg({ p: 1, k: "not_run" }), leg({ p: 1, two: 1 }), leg({ p: 1, notes: [cr.SUITE_FIX_SKIP_NOTE] }),
+  leg({ noProof: 1, proof: null }), leg({ proof: no }), leg({ proof: { ok: false, files: [PF] } }), leg({ noProof: 1 }),
+  leg({ names: true }), leg({ changed: ["lib/src/x.ts", PF, "web/src/page.ts"] }), leg({ base: { exit_code: 0, attributable: true } }), leg({ head: { exit: 2 } }), leg({ base: { timed_out: true } }), leg({ base: null }),
+  leg({ head: f2("Error: spawn chromium ENOENT\n2 failed\n") }), leg({ base: f2(OUT + "AssertionError: expected 1 to be 2\n"), head: f2(OUT + "AssertionError: expected 1 to be 2\n") }), leg({ base: f2(OUT + "3 passed\n"), head: f2(OUT + "3 passed\n") }), leg({ base: f2("TypeError: boom\n2 failed\n"), head: f2("TypeError: boom\n2 failed\n") }),
+  leg({ head: f2(OUT.replace("2 failed", "3 failed")) }), leg({ head: f2(OUT.replace("2 failed\n", "")) }), leg({ dropBase: ["start"] }), leg({ dropHead: ["start"] }), leg({ base: f2(many), head: f2(many) }),
+  leg({ checks: [x("bun:lib/test/other.test.ts", "not_run")] }), leg({ checks: [x("lint:eslint", "not_run")] }), leg({ notes: ["reverse-dependent scan hit its byte or time bound"] }), leg({ lean: ["no passing check references a changed symbol and no Wall file ran: f"] }),
+  leg({ checks: [x("bun:lib/test/mine.test.ts", "fail", "agent_authored")] }), leg({ checks: [x("lint:tsc", "fail")] }), leg({ checks: [x("typecheck:tsc", "fail")] }),
+  leg({ notes: ["runner config changed: playwright.config.ts"] }), leg({ notes: ["weakened test: tests/a.spec.ts"] }), leg({ verify: { stopped_at: "limit" } }), leg({ verify: { verify_scope: "quick" } }), leg({ knob: false }), leg({ k: "fail" }), leg({ k: "not_run", kNames: true }), leg({ p: 1, noProof: 1, proof: { ok: true, files: [], steps: 1 } }),
+  leg({ p: 1, changed: ["lib/src/x.ts", PF, WT], proof: { ok: true, files: [PF, WT] } }), leg({ changed: ["lib/src/x.ts", PF, WT] }), leg({ changed: ["lib/src/x.ts", PF, WT, "web/src/page.ts"], proof: { ok: true, files: [PF, WT] } }),
+  leg({ p: 1, inst: CARGO }), leg({ inst: { ...CARGO, which: () => "/usr/local/bin/cargo" } }), leg({ inst: CARGO, changed: ["lib/src/x.ts", PF, "tools/build.rs"] }), leg({ inst: { ...CARGO, names: true } }),
+  leg({ inst: { ...CARGO, reason: "install exited 1: bash: line 1: cargo: command not found" } }), leg({ inst: { ...CARGO, reason: "install exited 127: sh: 1: protoc: not found" } }), leg({ inst: { ...CARGO, reason: "install exited 127: error: could not compile the crate" } }), leg({ inst: CARGO, knob: false })];
+console.log(r.join(" | "));
+' 2>&1)"
+X9="PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[2] | PARTIAL>VERIFIED[1] | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | PARTIAL | FAILED | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | FAILED | FAILED | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | PARTIAL | PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[1] | PARTIAL | PARTIAL | PARTIAL>VERIFIED[1] | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL"
+[ "$A9" = "$X9" ] && ok "unit, unrunnable check (P1 to P5, D1 to D33, T1 to T3, I1 to I8): a check that could not run on either side stops holding the label only beside the change's own fail-before, pass-after proof, with no changed file in its package, the same start failure on both sides and nothing else open; every planted defect reads the knob-off label, never VERIFIED" \
+    || bad "unrunnable-check unit gave: $A9 (want: $X9)"
+
+# OWN-PROOF (G3 (a), LOKI_E10_OWN_PROOF, default on): the change's own proof for any tool. Loki runs the kept proof script on the change, in an untouched copy
+# of the checkout (the control) and in a copy whose non-test files are put back to the base commit. A step counts only when it ran repository code, passed on
+# the change, passed in the control and printed FAILED without the change. Pure cells (failsWithoutChange): F1 counts; F2 failed in the control; F3 passed
+# without the change; F4 not a repository-running step; F5 never reached without the change; F6 both passed and failed without the change; F7 failed on the
+# change; F8 failed without the change with exit 127; F9 with "No module named"; F10 with "unknown command" (a start failure is never proof: review P1);
+# F11 failed with an assertion (counts). N: which commands name tests/unit/test_utils.py: its path, an absolute path ending in it and a cwd-relative path with a
+# directory do; the bare file name and the same name in another directory do not (review P2). Real cells (proofWithoutChange on a real repository, real copies): O1 counts; O2 a step that passes without the change; O3 a step that runs nothing of
+# the repository; O4 a step fails on the change; O5 knob off; O6 no non-test file changed; O7 a step that fails in any copy (its failure is the copy, not the
+# change); O8 stale build output lets the step pass without the change until the build runs in the copy; O9 a change that only adds a file has no own proof (the
+# added file stays in the copy); O11 an added check that fails on the modified function's behaviour counts; O12 a step that only loads an added file passes
+# without the change; O13 a step against an added command fails with "unknown command" (a start failure); O14 a step that cannot start without the change
+# (exit 127); last: the user's tree is byte-identical afterwards.
+# Plants: failsWithoutChange: drop `cOk.has` (F2, O7); drop `!wOk.has` (F6); `!wOk.has` in place of `wBad.has` (F5); drop `c.real` (F4, O3);
+# drop `!wStart.has` (F8 to F10, O13, O14); stepNamesFile: match the bare file name (N); proofWithoutChange: remove an added file in the copy (O12); accept a change with only added files (O9); drop `head.failed > 0` (O4); drop the knob (O5); revert in the control too (O1); never build (O8); drop `revert.length === 0` (O6).
+G6="$T/ownproof"; mkdir -p "$G6/tools" "$G6/.loki/runs/r1" && git -C "$G6" init -q -b main && : > "$G6/.loki/runs/r1/kept" # the run directory exists before the first status is read
+printf 'mul() { echo $(( $1 + $2 )); }\nadd() { echo $(( $1 + $2 )); }\n' > "$G6/lib.sh"
+printf '. ./lib.sh; [ "$(mul 3 4)" = 12 ]\n' > "$G6/tools/mulcheck.sh"; printf '. ./lib.sh; [ "$(add 3 4)" = 7 ]\n' > "$G6/tools/addcheck.sh"
+printf 'sh tools/mulcheck.sh && [ "$(basename "$(pwd -P)")" != without ]\n' > "$G6/tools/notcopy.sh"
+printf 'mkdir -p out && cp lib.sh out/lib.sh\n' > "$G6/build.sh"; printf '. out/lib.sh; [ "$(mul 3 4)" = 12 ]\n' > "$G6/tools/builtcheck.sh"; printf 'out/\n.loki/\n' > "$G6/.gitignore"
+printf 'case "$1" in add) exit 0 ;; *) echo "error: unknown command: $1"; exit 2 ;; esac\n' > "$G6/cli.sh"; printf 'no-such-tool-loki-g3 3 4\n' > "$G6/tools/run.sh"
+git -C "$G6" add -A && git -C "$G6" -c user.name=t -c user.email=t@t commit -qm base
+printf 'mul() { echo $(( $1 * $2 )); }\nadd() { echo $(( $1 + $2 )); }\n' > "$G6/lib.sh"; printf 'exit 0\n' > "$G6/newcheck.sh"; printf '. ./lib.sh; [ "$(mul 5 5)" = 25 ]\n' > "$G6/mulnew.sh"; printf 'case "$1" in add) exit 0 ;; frob) exit 0 ;; *) echo "error: unknown command: $1"; exit 2 ;; esac\n' > "$G6/cli.sh"; printf '. ./lib.sh; [ "$(mul 3 4)" = 12 ]\n' > "$G6/tools/run.sh"; (cd "$G6" && sh build.sh)
+A10="$(G="$G6" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const pr = await import(process.env.ROOT + "/loki-ts/src/engine10/proof_rerun.ts"), { writeFileSync, readFileSync } = await import("node:fs"), { execFileSync } = await import("node:child_process");
+const g = process.env.G, run = g + "/.loki/runs/r1", sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const c = (what, ok, real = true, item = "1") => ({ item, what, ok, ...(real && ok ? { real: true } : {}) }), H = [c("a", true)], bad = (exit, out) => ({ item: "1", what: "a", ok: false, exit, out });
+const pure = [pr.failsWithoutChange(H, [c("a", true)], [c("a", false)]), pr.failsWithoutChange(H, [c("a", false)], [c("a", false)]), pr.failsWithoutChange(H, [c("a", true)], [c("a", true)]), pr.failsWithoutChange([c("a", true, false)], [c("a", true)], [c("a", false)]),
+  pr.failsWithoutChange(H, [c("a", true)], []), pr.failsWithoutChange(H, [c("a", true)], [c("a", true), c("a", false)]), pr.failsWithoutChange([c("a", false)], [c("a", true)], [c("a", false)]),
+  pr.failsWithoutChange(H, [c("a", true)], [bad(127, "")]), pr.failsWithoutChange(H, [c("a", true)], [bad(1, "python3 -c import newmod | ModuleNotFoundError: No module named newmod")]), pr.failsWithoutChange(H, [c("a", true)], [bad(2, "app frob | error: unknown command frob")]), pr.failsWithoutChange(H, [c("a", true)], [bad(1, "python3 tools/check.py | AssertionError: 7 != 12")])].map((x) => x.length);
+const TU = "tests/unit/test_utils.py", names = [pr.stepNamesFile("python3 -m pytest -q tests/unit/test_utils.py", TU), pr.stepNamesFile("pytest /w/copy/tests/unit/test_utils.py::test_a", TU), pr.stepNamesFile("sh -c cd tests && pytest unit/test_utils.py", TU), pr.stepNamesFile("sh -c cd tests/unit && pytest test_utils.py", TU), pr.stepNamesFile("pytest tests/integration/test_utils.py", TU)].map((b) => (b ? "y" : "n")).join("");
+const status = () => execFileSync("git", ["-C", g, "status", "--porcelain", "--ignored"], { encoding: "utf8" }) + readFileSync(g + "/lib.sh", "utf8"), before = status();
+const REV = [{ path: "lib.sh", added: false }], go = async (steps, o = {}) => {
+  writeFileSync(run + "/loki-proof.sh", "#!/bin/bash\n. \"$LOKI_SCRATCH/loki-check.sh\"\n" + steps.map((s) => "loki_cmd 1 " + s).join("\n") + "\n");
+  const env = { ...process.env, ...(o.env ?? {}) }, head = await pr.rerunProof(g, run, undefined, env), r = await pr.proofWithoutChange(g, run, sha, head, o.revert ?? REV, o.builds ?? [], undefined, env);
+  return r === null ? "null" : (r.ok ? "ok" : "no") + ":" + r.steps.length + (r.built ? ":built" : "") + ":" + r.checks_control + "/" + r.checks_without;
+};
+const MUL = "\"mul gives the product\" sh tools/mulcheck.sh";
+const real = [await go([MUL]), await go(["\"add still adds\" sh tools/addcheck.sh"]), await go(["\"nothing of the repository\" true"]), await go([MUL, "\"a missing script\" sh tools/nope.sh"]), await go([MUL], { env: { LOKI_E10_OWN_PROOF: "0" } }), await go([MUL], { revert: [] }),
+  await go(["\"mul gives the product, outside a copy\" sh tools/notcopy.sh"]), await go(["\"the built copy gives the product\" sh tools/builtcheck.sh"], { builds: [{ cmd: "sh build.sh", cwd: "." }] }), await go(["\"the new check passes\" sh newcheck.sh"], { revert: [{ path: "newcheck.sh", added: true }] }),
+  await go(["\"mul through an added check\" sh mulnew.sh"], { revert: [...REV, { path: "mulnew.sh", added: true }] }), await go(["\"the added file loads\" sh newcheck.sh"], { revert: [...REV, { path: "newcheck.sh", added: true }] }),
+  await go(["\"the new command answers\" sh cli.sh frob"], { revert: [...REV, { path: "cli.sh", added: false }] }), await go(["\"the runner script gives the product\" sh tools/run.sh"], { revert: [...REV, { path: "tools/run.sh", added: false }] })];
+console.log([...pure, names, ...real, status() === before ? "tree-same" : "TREE-CHANGED"].join(" | "));
+' 2>&1)"
+X10="1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | yyynn | ok:1:1/1 | no:0:1/1 | null | null | null | null | no:0:1/0 | ok:1:built:1/1 | null | ok:1:1/1 | no:0:1/1 | no:0:1/1 | no:0:1/1 | tree-same"
+[ "$A10" = "$X10" ] && ok "unit, own proof (F1 to F11, N, O1 to O14): a proof-script step is the change's own proof only when it ran repository code, passed on the change and in an untouched copy of the checkout, and printed FAILED in a copy without the change; stale build output is rebuilt in the copy; the user's tree is untouched" \
+    || bad "own-proof unit gave: $A10 (want: $X10)"
+
 # Base run budget (v131 STALLED tq runs): a suite that takes ~250 s on the change got 60 s on base, timed out, and its pre-existing red was blamed on the change.
 # A base run now gets the same 300 s its own run gets (bounded by a third of the run cap); a cut base run is recorded on the receipt line as "base run
 # incomplete" and excuses nothing; a base entry cut with a shorter budget is measured again, one cut at the current budget is kept.

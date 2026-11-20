@@ -38,6 +38,10 @@ export const verifiedReceiptBlock = (env: NodeJS.ProcessEnv = process.env): { ve
 export const reviewerFlags = (notProven: readonly unknown[]): string[] => notProven.filter((n): n is string => typeof n === "string" && /^cross-review (flag|block) \(/.test(n));
 /** Beside the label: ", 5 reviewer flags open", or "" when there are none. */
 export const reviewerFlagsSuffix = (notProven: readonly unknown[]): string => { const n = reviewerFlags(notProven).length; return n ? `, ${n} reviewer flag${n === 1 ? "" : "s"} open` : ""; };
+/** UNRUNNABLE-CHECK: the lead of the receipt line for a check that could not run on the base commit or on the change and so did not hold the label. */
+export const COULD_NOT_RUN_LEAD = "could not run here, on the original code either: ";
+/** Beside the label: ", 1 check could not run here (on the original code either)", or "" when there is none. */
+export const couldNotRunSuffix = (notProven: readonly unknown[]): string => { const n = notProven.filter((x) => typeof x === "string" && x.startsWith(COULD_NOT_RUN_LEAD)).length; return n ? `, ${n} check${n === 1 ? "" : "s"} could not run here (on the original code either)` : ""; };
 /** The same list with the reviewer's findings first, so they are read before the disclosures. Order within each part is kept. */
 export const flagsFirst = <T,>(notProven: readonly T[]): T[] => { const f = new Set<unknown>(reviewerFlags(notProven)); return f.size ? [...notProven.filter((n) => f.has(n)), ...notProven.filter((n) => !f.has(n))] : [...notProven]; };
 
@@ -63,7 +67,7 @@ export interface ReceiptView {
   cost?: { fix_rounds?: unknown } | null;
 }
 /** Lines that are on the receipt for disclosure and never hold the label. */
-const NO_CAP = /does not cap|disclosed, not blocking|informational|^n\/a|^pre red:|^flaky test:|^cost |^completed by rule|^Wall failure output kept|kill blocking not enforced|^release note|^edited test kept uncapped|^value change|^repo identity unknown|receipt signing unavailable|^skipped by the repo|^lint red only in files|^linter not installed|^excused as red on base|^already failing on base|^not excused:|judge shares builder vendor|^cross-review skipped: low risk|^one reviewer|^new file nothing uses|^proof not compared with the base|ran no test in verify, runs in the proof script|^visual evidence skipped|^baseline: |^outside stated scope|^route\.|^full test command$|^full suite$|^security scan$|^test update reported/i;
+const NO_CAP = /^could not run here|does not cap|disclosed, not blocking|informational|^n\/a|^pre red:|^flaky test:|^cost |^completed by rule|^Wall failure output kept|kill blocking not enforced|^release note|^edited test kept uncapped|^value change|^repo identity unknown|receipt signing unavailable|^skipped by the repo|^lint red only in files|^linter not installed|^excused as red on base|^already failing on base|^not excused:|judge shares builder vendor|^cross-review skipped: low risk|^one reviewer|^new file nothing uses|^proof not compared with the base|ran no test in verify, runs in the proof script|^visual evidence skipped|^baseline: |^outside stated scope|^route\.|^full test command$|^full suite$|^security scan$|^test update reported/i;
 const RULES: readonly (readonly [string, ItemClass, RegExp])[] = [
   ["Loki could not finish checking", "c", /^Loki could not finish checking: /],
   ["verify stopped at its time limit", "a", /^verify stopped at its time limit/],

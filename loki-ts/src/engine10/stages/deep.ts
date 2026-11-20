@@ -13,7 +13,7 @@ import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv, suiteTimeoutOn } from "../../project_model/package_suite.ts";
-import { classifyCheck, corroboratePass, failureExcerpt, failureShape, suiteFacts, firstError, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { errorsById, failIds, unhandledBlock, lineNamesChange, changeLines, failedCount } from "../failures.ts"; import { attributeFullSuite, BASELINE_CMD_TIMEOUT_S, changedForLines, suiteEmptyOnBase } from "../../runner/repo_profile.ts";
+import { classifyCheck, corroboratePass, failureExcerpt, failureShape, suiteFacts, type StartFacts, firstError, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { errorsById, failIds, unhandledBlock, lineNamesChange, changeLines, failedCount } from "../failures.ts"; import { attributeFullSuite, BASELINE_CMD_TIMEOUT_S, changedForLines, suiteEmptyOnBase } from "../../runner/repo_profile.ts";
 import { defaultBudgetsOn, cmdSilenceS, deepCapS, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, STAGE_BUDGETS } from "../types.ts";
 import { safeGitRun } from "../../util/safe_git.ts"; import { REPO_ROOT } from "../../util/paths.ts";
 import { DEFAULT_PUSH_SH, SHA_RE } from "./pr.ts";
@@ -24,7 +24,7 @@ export type DeepContext = RunContext & {
 /** ReceiptCheck (types.ts) plus a `reason` field the contract does not carry,  the same disclosed-extra-field pattern testmap.ts's EngineTestMap and  verify.ts's VerifyCheck already use. */
 export interface DeepCheck extends ReceiptCheck {
   secret_matches?: string[]; // SECRET-PUSH: set on every security scan fail: "<file>:<head line>" per secret hit ([] when only a secure-scan HIGH finding failed it); never the matched text
-  reason?: string; exit?: number | null; shape?: string; executed?: number; load_errors?: string[]; names_changed?: boolean; change_lines?: string[] | null; failed?: number | null; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; first_error?: string; excerpt?: string; base_red?: boolean; // first_error: the suite's first failing line (L005 stall signature); base_red: a full-suite fail whose every failing id already failed on base (repo-profile suites), never a red status; excerpt: redacted failure text for the fix brief; ids: failing test ids of the real run (failIds), read by verify's baseline attribution
+  reason?: string; exit?: number | null; shape?: string; executed?: number; load_errors?: string[]; start?: StartFacts; names_changed?: boolean; change_lines?: string[] | null; failed?: number | null; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; first_error?: string; excerpt?: string; base_red?: boolean; // first_error: the suite's first failing line (L005 stall signature); base_red: a full-suite fail whose every failing id already failed on base (repo-profile suites), never a red status; excerpt: redacted failure text for the fix brief; ids: failing test ids of the real run (failIds), read by verify's baseline attribution
 }
 export interface DeepOptions {
   pushScriptPath?: string;

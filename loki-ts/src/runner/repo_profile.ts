@@ -29,7 +29,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { changeLines, comparableIds, errorsById, failedCount, failIds, idNamesFile, lineNamesChange, noiseOnlyErrors, sameErrors, sameFailures, SILENT_IDS_NOTE, unhandledBlock } from "../engine10/failures.ts"; import { redactSecrets } from "../util/redact.ts"; import { isTestFile } from "../util/test_file_text.ts";
-import { baseRedShapeOn, suiteFacts, loadErrorModule, classifyCheck, emptyDiscovery, exitCodedId, failureShape, goRunner, isExitCodedScript, plainTestEnv, resolveTool, spawnGroupSync, stripAnsi, toolFallbacks, type Classified } from "../util/check_result.ts";
+import { baseRedShapeOn, suiteFacts, type StartFacts, loadErrorModule, classifyCheck, emptyDiscovery, exitCodedId, failureShape, goRunner, isExitCodedScript, plainTestEnv, resolveTool, spawnGroupSync, stripAnsi, toolFallbacks, type Classified } from "../util/check_result.ts";
 import { safeGit, safeGitSpawn } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
 import { atomicWriteFileSync } from "./state.ts";
@@ -284,7 +284,8 @@ export interface CommandProfile {
   manifest_hash: string;
   created_at: string;
   commands: ProfileCommand[];
-  baseline: { ran: boolean; command: string | null; exit_code: number | null; duration_s: number | null; timed_out: boolean; failing_ids: string[]; attributable: boolean; reason?: string; zero_tests?: boolean; failing_unhandled?: string[]; failing_errors?: Record<string, string[]> /* FireLater#21: errorsById of the run, so a full suite is excused only for the same errors */; failing_shape?: string /* BASE-RED-SHAPE: failureShape of a red run whose ids were not parseable */; flaky_ids?: string[] /* ids that failed on exactly one of two base passes */; out_file?: string /* SILENT-IDS: the red run's whole output (secrets redacted), a file name under .loki/state/base-out */; out_sha256?: string /* of that file, checked on read: a later record of the same command writes the same name */; failed?: number /* SILENT-IDS: the failed count that run printed */; flaky_probe?: string /* "done", or why the second pass was skipped; absent on an entry written before the probe */; executed?: number /* EXOGENOUS-RED: tests the base run executed */; load_errors?: string[] /* EXOGENOUS-RED: its module-resolution lines, one per module */ };
+  baseline: { ran: boolean; command: string | null; exit_code: number | null; duration_s: number | null; timed_out: boolean; failing_ids: string[]; attributable: boolean; reason?: string; zero_tests?: boolean; failing_unhandled?: string[]; failing_errors?: Record<string, string[]> /* FireLater#21: errorsById of the run, so a full suite is excused only for the same errors */; failing_shape?: string /* BASE-RED-SHAPE: failureShape of a red run whose ids were not parseable */; flaky_ids?: string[] /* ids that failed on exactly one of two base passes */; out_file?: string /* SILENT-IDS: the red run's whole output (secrets redacted), a file name under .loki/state/base-out */; out_sha256?: string /* of that file, checked on read: a later record of the same command writes the same name */; failed?: number /* SILENT-IDS: the failed count that run printed */; flaky_probe?: string /* "done", or why the second pass was skipped; absent on an entry written before the probe */; executed?: number /* EXOGENOUS-RED: tests the base run executed */; load_errors?: string[] /* EXOGENOUS-RED: its module-resolution lines, one per module */;
+    start?: StartFacts /* UNRUNNABLE-CHECK: the error lines of a red, finished run and whether any is a start failure; absent on an entry written before the field */ };
   suites?: (CommandProfile["baseline"] & { name: string })[]; // FC-BASELINE-PER-PACKAGE: one per full-suite command verify runs; `command` is the check's cmd
 }
 export interface BaselineRun { code: number | null; timedOut: boolean; out: string; missing?: boolean }
@@ -568,7 +569,7 @@ function runOnce(repoDir: string, cmd: string, cwd: string, tmo: number, opts: B
   rmNewUntracked(repoDir, before);
   return measured(repoDir, cmd, r, dur);
 }
-const baseFacts = (out: string): { executed?: number; load_errors?: string[] } => suiteFacts(out);
+const baseFacts = (out: string): { executed?: number; load_errors?: string[]; start?: StartFacts } => suiteFacts(out);
 /** One finished base run as a baseline record (shared by intake's blocking run and verify's on-demand run). */
 /** SILENT-IDS: a red base run's whole output is kept beside the profile (secrets redacted, at most BASE_OUT_MAX bytes; a longer one is not kept and the
  *  silent ids of that suite are then not comparable), because which lines name the change is only known once there is a change. */
@@ -880,7 +881,7 @@ function cargoTouched(changed: string[]): boolean {
  *  already failed (`blocked`) or one naming a changed file is never excused. */
 /** FireLater#21 (review): ids alone never excuse a full suite. Each failing id must fail on base with the same error lines (sameErrors against the baseline's
  *  failing_errors); a suite whose output or baseline has no error lines for an id (a baseline recorded before failing_errors, go, cargo) is not excused. */
-type FullCheck = { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; exit?: number | null; shape?: string; executed?: number; load_errors?: string[]; change_lines?: string[] | null; failed?: number | null };
+type FullCheck = { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; exit?: number | null; shape?: string; executed?: number; load_errors?: string[]; change_lines?: string[] | null; failed?: number | null; start?: StartFacts };
 /** BASE-RED-SHAPE: the failing full-suite checks whose base run, on exactly this base commit and the same command, was red and unattributable (no
  *  parseable ids; not cut off) and failed in the identical kind on head: the same exit code, no parseable ids on head either, and the same output
  *  shape (failureShape). A new failing test, a different message or count, or a changed exit code gives a different kind, so nothing the change broke
@@ -967,6 +968,58 @@ export const attributedToChange = (a: Pick<ExogenousAttribution, "state" | "fres
 export const baseUnattributedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_BASE_UNATTRIBUTED"] ?? "").trim());
 /** True when the record holds the label at PARTIAL: not attributed to the change, and not an unattributable check with that state turned off. The one predicate verify (the receipt line) and seal (the verdict) both read. */
 export const holdsPartial = (a: Pick<ExogenousAttribution, "state" | "fresh" | "names_changed">): boolean => !attributedToChange(a) && !(a.state === "unattributable" && !baseUnattributedOn());
+/** UNRUNNABLE-CHECK (LOKI_E10_UNRUNNABLE_CHECK, default on; =0/off/false/no opts out). Founder decision 2026-11-20: a check that cannot run on the base commit
+ *  or on the change, for the same reason, gives no evidence either way and does not block VERIFIED, when the change's own test fails before the change and
+ *  passes after it (seal.ts unrunnableLifted decides that part). This file decides which checks could not run. `sameStartFailure`: both runs printed the same
+ *  set of error lines, at least one of them a start failure (something missing before a test could run), none that reads like a test that ran and failed, no
+ *  passed test on either side, and a failed count that is not higher on the change when both print one. A base record or check written before the facts
+ *  existed is unknown, never unrunnable. What it cannot see: a failure the change caused that prints exactly the error text of a failure already on base, in
+ *  a suite that prints no count or stops at a failure cap. */
+export const unrunnableCheckOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_UNRUNNABLE_CHECK"] ?? "").trim());
+export function sameStartFailure(base: StartFacts | undefined, head: StartFacts | undefined): boolean {
+  if (!base || !head || base.more || head.more || base.lines.length === 0 || base.lines.length !== head.lines.length) return false;
+  const b = new Set(base.lines); if (head.lines.some((l) => !b.has(l))) return false;
+  if (base.start === 0 || head.start === 0 || base.assertion || head.assertion || base.passed || head.passed) return false;
+  return base.failed === null ? head.failed === null : typeof head.failed === "number" && head.failed <= base.failed;
+}
+/** The failing full-suite checks that could not run on either side: its base run of the same command on this base commit finished red with the same exit
+ *  code, neither side printed a failing test id, and the two runs show the same start failure. */
+export function unrunnableSuites(repoDir: string, baseSha: string, full: FullCheck[]): string[] {
+  const p = loadProfile(repoDir); if (!p || p.revision !== baseSha) return [];
+  return full.filter((c) => {
+    if (c.result !== "fail" || (c.ids ?? []).length > 0 || typeof c.exit !== "number") return false;
+    const b = baseFor(repoDir, p, c.cmd, true);
+    return !!b && b.ran && !b.timed_out && b.reason !== "baseline budget used up" && b.failing_ids.length === 0 && typeof b.exit_code === "number" && b.exit_code !== 0 && b.exit_code === c.exit && sameStartFailure(b.start, c.start);
+  }).map((c) => c.name);
+}
+/** The checks rule (b) may lift, from the ones verify already found could not run: `suites` (unrunnableSuites) and `notRun` (a test file sealed not_run because
+ *  it fails the same way with the change removed, or crashes with the same signature on base). One is kept only when no changed file is in its package
+ *  (`pkgOf` gives a file's owning package root, `pkg` is the check's) and nothing it printed names a changed file (`namesChanged`). [] with the knob off. */
+export function couldNotRun(cands: readonly { name: string; pkg: string; namesChanged: boolean }[], changed: readonly string[], pkgOf: (f: string) => string): string[] {
+  if (!unrunnableCheckOn()) return [];
+  const touched = new Set(changed.map(pkgOf));
+  return cands.filter((c) => !c.namesChanged && !touched.has(c.pkg)).map((c) => c.name);
+}
+/** Point 2 relaxation (lead, 2026-11-20): the candidates that couldNotRun refuses ONLY because changed test files are in their package, with those files.
+ *  Seal lifts such a check only when every one of those files is a test the change's own proof showed failing before the change and passing after it: the
+ *  change is then proved directly and the unrunnable check adds nothing about it. A changed non-test file in the package always blocks, and so does output
+ *  that names a changed file. {} with the knob off. */
+export function couldNotRunIfProved(cands: readonly { name: string; pkg: string; namesChanged: boolean }[], changed: readonly string[], pkgOf: (f: string) => string, isTest: (f: string) => boolean): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (!unrunnableCheckOn()) return out;
+  for (const c of cands) { if (c.namesChanged) continue; const inPkg = changed.filter((f) => pkgOf(f) === c.pkg); if (inPkg.length > 0 && inPkg.every(isTest)) out[c.name] = inPkg; }
+  return out;
+}
+/** An install step that could not start because its own tool is not on this machine: the tool's name, or null. The base run and the run on the change share
+ *  the machine, so a tool missing from PATH is the same start failure on both sides by construction. All of: the shell or the spawn said the tool was not found
+ *  (exit 127, or ENOENT); the tool is a word of the install command itself, not of a script it ran; and the tool is still not on PATH now (`which`). */
+export function missingTool(reason: string, cmd: string, which: (tool: string) => string | null = (t) => Bun.which(t)): string | null {
+  if (!/^install (?:exited 127\b|could not start)/.test(reason)) return null;
+  const m = /(?:^|[\s:])([A-Za-z0-9_.+-]+): (?:command )?not found\b/.exec(reason) ?? /\bspawn ([A-Za-z0-9_.+-]+) ENOENT\b/.exec(reason) ?? /\benv: ([A-Za-z0-9_.+-]+): No such file or directory/.exec(reason);
+  const tool = m?.[1]; if (!tool || /^(?:line|bash|sh|zsh|env)$/.test(tool)) return null;
+  if (!cmd.split(/[\s;&|()]+/).includes(tool)) return null;
+  try { return which(tool) === null ? tool : null; } catch { return null; }
+}
 export const exogenousHeldLine = (name: string, a: Pick<ExogenousAttribution, "state" | "evidence">): string => `not attributed to this change, so it holds the label at PARTIAL and is not excused: ${name}: base run ${a.state} (${a.evidence})`;
 export const SAME_RED_NOTE = "excused as red on base in the identical kind (same command, same exit code, the same unparseable output shape; no failing id could be compared)";
 export function attributeFullSuite(repoDir: string, baseSha: string, full: FullCheck[], blocked: string[], changed: string[], symbols: readonly string[] = [], shownIds: ReadonlySet<string> = new Set()): Attribution {
