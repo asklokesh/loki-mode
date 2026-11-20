@@ -317,6 +317,7 @@
 # 253e. verify.ts writeCheckFailureTails: `const per = WALL_FAILURE_TAIL_CAP` (40 big checks pass the 256 KiB bound; the leg's size cell reads false).
 # 253f. install.ts installDeclared: `return true` first (the declared-installs leg's bare cell reads pass:true).
 # 253g. base_guard.ts guardEnv: `return run();` first (the env guard lint and tsc legs keep the created dir and lose the N/A note).
+# 253i. install.ts installDeclared: `return false` in place of the ciTexts line (the declared-installs leg's ci cell reads not_run).
 # 253h. check_result.ts ignoreRuleChanges: drop the underLokiKept skip (the env-guard-kept unit's ignore cell reads a note).
 # 254. testmap.ts buildTestMap: ignore pyCfg (the pytest-fallback leg's conftest.py case reads unittest).
 # 255. package_suite.ts runPackageSuites: drop the cwd !== "." guard (the empty-subsuite-na leg's root package reads not applicable).
@@ -2585,30 +2586,35 @@ console.log([u(o, "packages/zod", new Set(["packages/zod/src/v4/x.ts"]), ["packa
 [ "$TU" = "true,false,false,false,false,false" ] && ok "tsc untouched unit: only unused-declaration errors in untouched, unnamed files with no tsconfig edit are excused ($TU)" || bad "tsc untouched unit: '$TU'"
 
 # G2 DECLARED-INSTALLS (rule 22, fake python3 on PATH, no network): Loki runs an install only when the repository declares it. A repo guide that documents the command under an
-# install heading (README.md), a cited file that holds the command's own text (Makefile) and a script the repo tracks (./install.sh) all run it; the same command from a bare pyproject.toml (Loki would be inventing it) is
+# install heading (README.md), a cited file that holds the command's own text (Makefile), a script the repo tracks (./install.sh) and a CI workflow (`pip install -e .`, the same
+# command as `python3 -m pip`) all run it; an unlocked requirements.txt install nothing names is not run and its note says requirements.txt was present and what to run (in a
+# virtualenv, since a system Python may refuse pip under PEP 668), while the same file named in the README is run; the same command from a bare pyproject.toml (Loki would be inventing it) is
 # not run, its line starts with the undeclared text and unusedInstallNotes files it under N/A, never a cap; LOKI_E10_DECLARED_INSTALLS=0 runs it as before.
-# Plant 253f: installDeclared returns true always and the bare-manifest repo's install runs (the leg turns red).
+# Plant 253f: installDeclared returns true always and the bare-manifest repo's install runs (the leg turns red). Plant 253i: installDeclared ignores CI files (the ci cell reads not_run).
 DI="$T/declared-installs"; rm -rf "$DI"; mkdir -p "$DI/bin"
 printf '#!/bin/sh\ntouch "$PWD/ran.flag"\nexit 0\n' > "$DI/bin/python3"; chmod +x "$DI/bin/python3"
-for k in guide cite script bare off; do
+for k in guide cite script ci req reqdoc bare off; do
     mkdir -p "$DI/$k" && printf '[project]\nname = "calc"\nversion = "0"\n' > "$DI/$k/pyproject.toml" && printf 'def f():\n    return 1\n' > "$DI/$k/calc.py"
     (cd "$DI/$k" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid)
 done
 printf '# calc\n\n## Installation\n\n```\npython3 -m pip install -e .\n```\n' > "$DI/guide/README.md"
 printf 'install:\n\tpython3 -m pip install -e .\n' > "$DI/cite/Makefile"
 printf '#!/bin/sh\ntouch "$PWD/ran.flag"\n' > "$DI/script/install.sh"; chmod +x "$DI/script/install.sh"
-for k in guide cite script bare off; do (cd "$DI/$k" && git add -- . && git commit -q -m base); done
+mkdir -p "$DI/ci/.github/workflows" && printf 'jobs:\n  test:\n    steps:\n      - run: pip install -e .\n' > "$DI/ci/.github/workflows/ci.yml"
+printf 'requests\n' > "$DI/req/requirements.txt"; printf 'requests\n' > "$DI/reqdoc/requirements.txt"; printf '# calc\n\n## Installation\n\n```\npip install -r requirements.txt\n```\n' > "$DI/reqdoc/README.md"
+for k in guide cite script ci req reqdoc bare off; do (cd "$DI/$k" && git add -- . && git commit -q -m base); done
 DI_OUT="$(cd "$ROOT/loki-ts" && PATH="$DI/bin:$PATH" timeout 120 bun -e 'import { prepareDeps, unusedInstallNotes, UNDECLARED_INSTALL } from "./src/project_model/install.ts"; import { existsSync } from "node:fs";
 const d = process.argv[1], out: string[] = [];
-for (const [k, cite] of [["guide", ["pyproject.toml"]], ["cite", ["Makefile"]], ["script", ["pyproject.toml"]], ["bare", ["pyproject.toml"]], ["off", ["pyproject.toml"]]] as const) {
+for (const [k, cite] of [["guide", ["pyproject.toml"]], ["cite", ["Makefile"]], ["script", ["pyproject.toml"]], ["ci", ["pyproject.toml"]], ["req", ["requirements.txt"]], ["reqdoc", ["requirements.txt"]], ["bare", ["pyproject.toml"]], ["off", ["pyproject.toml"]]] as const) {
   if (k === "off") process.env["LOKI_E10_DECLARED_INSTALLS"] = "0";
-  const model = { installFor: () => ({ cmd: k === "script" ? "./install.sh" : "python3 -m pip install -e .", cwd: ".", cite }), packages: () => [] } as any;
+  const model = { installFor: () => ({ cmd: k === "script" ? "./install.sh" : k.startsWith("req") ? "python3 -m pip install -r requirements.txt" : "python3 -m pip install -e .", cwd: ".", cite }), packages: () => [] } as any;
   const r = await prepareDeps({ repoDir: d + "/" + k, model, failed: [{ root: ".", harnessOwned: true }], signal: new AbortController().signal, timeoutMs: 60000, opts: { runId: "di-" + k } });
   const und = r.notProven.filter((l) => l.startsWith(UNDECLARED_INSTALL)), na = unusedInstallNotes(r.notProven, model, [], [], d + "/" + k);
   out.push(`${k}:${r.checks[0]?.result}:${existsSync(d + "/" + k + "/ran.flag")}:${und.length}:${na.na.length}/${na.cap.length}`);
+  if (k === "req") out.push(`reqnote:${und.some((l) => l.includes("requirements.txt present; Loki did not install it (not declared or locked)") && l.includes("run: python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt"))}`);
 }
 console.log(out.join(" "));' "$DI" 2>&1 | tail -1)"
-[ "$DI_OUT" = "guide:pass:true:0:0/0 cite:pass:true:0:0/0 script:pass:true:0:0/0 bare:not_run:false:1:1/0 off:pass:true:0:0/0" ] && ok "declared installs: a guide-documented and a cited install run; the same command from a bare manifest is not run and is N/A, never a cap; =0 runs it ($DI_OUT)" || bad "declared installs: got '$DI_OUT'"
+[ "$DI_OUT" = "guide:pass:true:0:0/0 cite:pass:true:0:0/0 script:pass:true:0:0/0 ci:pass:true:0:0/0 req:not_run:false:1:1/0 reqnote:true reqdoc:pass:true:0:0/0 bare:not_run:false:1:1/0 off:pass:true:0:0/0" ] && ok "declared installs: a guide-documented and a cited install run; the same command from a bare manifest is not run and is N/A, never a cap; =0 runs it ($DI_OUT)" || bad "declared installs: got '$DI_OUT'"
 
 # G2 ENV-GUARD, lint (rule 22, real pytest, fake uv on PATH): a uv project (uv.lock) whose uv ignores UV_PROJECT_ENVIRONMENT, so the lint Loki chose (`uv run -- ruff`) creates a
 # .venv in the checkout, as `uv run ruff` did on hm155462; the tests run through the same uv on the real pytest. The .venv is Loki's own change: the guard removes it, the receipt carries "Loki's own command changed the environment" under N/A, no hold, and the Python fix stays VERIFIED. Plant 253g: guardEnv returns run() unguarded
