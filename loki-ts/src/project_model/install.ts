@@ -250,14 +250,14 @@ export function projectDeclaresRuff(repoDir: string): boolean {
  *  and `pip` are the same command for this match. A plain `npm|pnpm|yarn install` from a package.json with no node_modules yet is declared too (the manifest is the
  *  repo's own dependency list and a fresh clone needs it); a lockfile, when there is one, already gives its frozen form above. An install Loki would have to invent (`pip install -e .` from a bare manifest) is not run: across 37 stored C1, C2 and
  *  real-world runs no unlocked install ever passed (0 of 59). Replaces the PEP 668 retry, which invented a .venv inside the checkout. */
-export const UNDECLARED_INSTALL = "install not run: the repository declares no install command";
+export const UNDECLARED_INSTALL = "install not run by Loki:";
 /** The disclosed line for an install Loki declined to invent: what was skipped, and what the user can run. A pip install is shown inside a virtualenv outside
  *  Loki's run, since a system Python may refuse it (PEP 668) and Loki no longer makes a .venv in the checkout. */
-export function undeclaredNote(cwd: string, cmd: string): string {
+export function undeclaredNote(cwd: string, cmd: string, ciOnly = false): string {
   const req = ["requirements.txt", "requirements-dev.txt", "dev-requirements.txt"].filter((f) => existsSync(join(cwd, f)));
   const pip = /^\s*(?:python3?(?:\.\d+)?\s+-m\s+pip3?|pip3?)\s+install\b(.*)$/.exec(cmd);
   const run = pip ? `python3 -m venv .venv && .venv/bin/python -m pip install${pip[1]}` : cmd.trim();
-  return `${UNDECLARED_INSTALL} for this package (no committed lockfile, tracked install script, cited file, guide or CI file names it), so Loki did not invent one${req.length ? `; ${req.join(", ")} present; Loki did not install it (not declared or locked)` : ""}; to install the dependencies yourself, run: ${run}`;
+  return `${UNDECLARED_INSTALL} ${ciOnly ? "a CI workflow names this Python install, but the checkout has no .venv for it to land in and no lockfile, so it would change the machine's own Python" : "the repository declares no install command for this package (no committed lockfile, tracked install script, cited file, guide or CI file names it), so Loki did not invent one"}${req.length ? `; ${req.join(", ")} present; Loki did not install it (not declared or locked)` : ""}; to install the dependencies yourself, run: ${run}`;
 }
 export const declaredInstallsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DECLARED_INSTALLS"] ?? "").trim());
 const CI_FILES = [".gitlab-ci.yml", ".circleci/config.yml", "azure-pipelines.yml", ".travis.yml", "bitbucket-pipelines.yml"];
@@ -267,7 +267,11 @@ function ciTexts(repoDir: string): string[] {
   try { for (const f of readdirSync(join(repoDir, ".github", "workflows"))) if (/\.ya?ml$/.test(f)) { try { out.push(readFileSync(join(repoDir, ".github", "workflows", f), "utf8")); } catch { /* unreadable */ } } } catch { /* no workflows */ }
   return out;
 }
-export function installDeclared(repoDir: string, mc: { cmd: string; cwd: string; cite?: readonly string[] }, li: LockedInstall): boolean {
+/** A pip install (`pip`, `pip3`, `python3 -m pip`). */
+const PIP_INSTALL = /^\s*(?:python3?(?:\.\d+)?\s+-m\s+pip3?|pip3?)\s+install\b/;
+/** true: run as is. A string: declared only by a CI workflow and a pip install, so it runs inside that checkout virtualenv (lead ruling 2026-11-20: a Python
+ *  install from CI lands in the repo or does not run; a locked tool command is already `locked`). "ci-no-venv": the same with no .venv, so it is skipped. false: not declared. */
+export function installDeclared(repoDir: string, mc: { cmd: string; cwd: string; cite?: readonly string[] }, li: LockedInstall): boolean | string {
   if (li.locked) return true;
   const norm = (x: string): string => x.replace(/\s+/g, " ").trim().replace(/\bpython3?(?:\.\d+)? -m pip3?\b/g, "pip").replace(/\bpip3\b/g, "pip"), want = norm(mc.cmd);
   if (!want) return false;
@@ -277,7 +281,9 @@ export function installDeclared(repoDir: string, mc: { cmd: string; cwd: string;
   if (exe.includes("/") && !isAbsolute(exe)) { try { const rel = relative(repoDir, join(repoDir, mc.cwd, exe)); if (!rel.startsWith("..") && safeGit(repoDir, ["ls-files", "--error-unmatch", "--", rel]).trim()) return true; } catch { /* untracked or outside: not a declaration */ } }
   for (const f of mc.cite ?? []) { try { if (norm(readFileSync(join(repoDir, f), "utf8")).includes(want)) return true; } catch { /* unreadable cite: not a declaration */ } }
   try { if (guidesFor(join(repoDir, mc.cwd), repoDir).setup.some((g) => norm(g.cmd).includes(want))) return true; } catch { /* no guides */ }
-  return ciTexts(repoDir).some((t) => norm(t).includes(want));
+  if (!ciTexts(repoDir).some((t) => norm(t).includes(want))) return false;
+  if (!PIP_INSTALL.test(mc.cmd)) return true;
+  return [join(repoDir, mc.cwd, ".venv"), join(repoDir, ".venv")].find((v) => existsSync(join(v, "bin", "python")) && !lstatSync(v).isSymbolicLink()) ?? "ci-no-venv";
 }
 
 /** One short honest line from the install output (L3): the last non-empty line, whitespace collapsed. */
@@ -314,13 +320,15 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
       if (isAbsolute(mc.cwd) || rel.startsWith("..") || isAbsolute(rel)) { notRun(`install cwd ${mc.cwd} resolves outside the repo`); continue; }
     } catch { notRun(`install cwd ${mc.cwd} does not exist`); continue; }
     li = lockedInstall(input.repoDir, cwd, mc.cmd);
-    if (declaredInstallsOn(env) && !installDeclared(input.repoDir, mc, li)) { // G2: never an install Loki invents
-      const why = undeclaredNote(cwd, mc.cmd);
+    const decl = declaredInstallsOn(env) ? installDeclared(input.repoDir, mc, li) : true;
+    if (!decl || decl === "ci-no-venv") { // G2: never an install Loki invents, and never a CI pip install into the machine's own Python
+      const why = undeclaredNote(cwd, mc.cmd, decl === "ci-no-venv");
       res.checks.push(mk("not_run", 0, why)); res.notProven.push(`${why} (${name}; harness-owned)`); continue;
     }
     const before = snapshot(input.repoDir, env);
     const t0 = Date.now();
-    let r = await runDetached(li.cmd, cwd, env, input.signal, budget);
+    const runEnv = typeof decl === "string" ? { ...env, VIRTUAL_ENV: decl, PATH: `${join(decl, "bin")}:${env["PATH"] ?? ""}` } : env; // CI pip: into the checkout's own .venv
+    let r = await runDetached(li.cmd, cwd, runEnv, input.signal, budget);
     const uvNeed = r.code !== 0 && !r.cut && uvRequiredOn() ? UV_REQUIRED.exec(r.tail) : null, uvCmd = uvNeed ? uvRequiredCmd(li.cmd, uvNeed[1]!) : null; // UVR: the repo's own required uv version, not the host's
     if (uvCmd) { // a workspace member's sync runs at the workspace root, as the repo's CI does: a member-only sync of the shared .venv would drop the root's own test dependencies
       const ws = uvWorkspaceRoot(realpathSync(input.repoDir), cwd), at = ws ?? cwd;
