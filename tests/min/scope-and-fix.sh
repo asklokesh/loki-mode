@@ -786,7 +786,7 @@ S1B_SIG="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$RUNDIR" "$REPO
 run_engine "$TASK" E2E_STUB_MODE=already
 [ "$(kits)" = 0 ] && [ "$(fin)" = none ] && ok "S1b already-done: an already-done reply gets no resume and no finish key ($(outcome))" || { bad "S1b already-done: resumes $(kits), finish '$(fin)'"; dump; }
 run_engine "$TASK" E2E_STUB_MODE=done E2E_STUB_NS_CONFLICT=1 # every implement turn answers LOKI_SPEC_CONFLICT (consult off, so no never-stop brief)
-[ "$(kits)" = 0 ] && [ "$(fin)" = none ] && [ "$(outcome)" = BLOCKED ] && ok "S1b spec conflict: a conflict reply gets no resume and still ends BLOCKED" || { bad "S1b spec conflict: resumes $(kits), finish '$(fin)', outcome $(outcome)"; dump; }
+[ "$(kits)" = 0 ] && [ "$(fin)" = none ] && [ "$(outcome)" = FAILED ] && ok "S1b spec conflict: a conflict reply gets no resume; the claim is unmeasured and the diff empty, so it reads FAILED as an empty diff with no claim does (MEASURED-LABELS)" || { bad "S1b spec conflict: resumes $(kits), finish '$(fin)', outcome $(outcome)"; dump; }
 
 # ---------------------------------------------------------------- coverage (L4, LOKI_E10_COVERAGE_RESUME: default fold, =1 the separate turn, =0 neither)
 # SR LOKI_E10_SELF_REVIEW end to end on the stub (run_engine pins it off for the session-count legs; unit legs live in tests/min/context-pack.sh):

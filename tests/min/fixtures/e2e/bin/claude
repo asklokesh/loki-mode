@@ -57,6 +57,7 @@
 # E2E_STUB_SPLIT (JSON text): the MASS-2 split planning session writes it to the file its brief names.
 # E2E_STUB_SPEC_REPLY (text): the exec-spec generator session (its brief names spec_reply.md, LOKI_E10_EXEC_SPEC) writes it there.
 # E2E_STUB_IMPL_CONFLICT=<text>: an implement session not on sonnet answers LOKI_SPEC_CONFLICT: <text>; on sonnet it implements.
+# E2E_STUB_DONE_CONFLICT=<text>: in done mode the implement session writes multiply() once (never a second copy) and answers LOKI_SPEC_CONFLICT: <text> (tests/min/decompose-and-intake.sh declined-part leg).
 # E2E_STUB_MEMORY_LOG gets "<stage> disable=<CLAUDE_CODE_DISABLE_AUTO_MEMORY> dir=<LOKI_E10_TASK_MEMORY_DIR> dirmode=<octal> filemode=<octal>" per call, then the MEMORY.md text.
 # E2E_STUB_ROUTE_LOG gets "<LOKI_E10_STAGE> <iteration> model=<--model> advisor=<advisorModel> wall=<0|1>" per call.
 # Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo); E2E_STUB_BUDGET_LOG gets its LOKI_BUDGET_LIMIT and LEDGER.
@@ -485,11 +486,13 @@ if [ "$stage" = "implement" ]; then
       printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n\nexport function scale(a: number, k: number): number {\n  return a * k;\n}\n' >> calc.ts
     elif [ "${E2E_STUB_MODE:-}" = "localvar" ]; then # FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: multiply() with a local variable and a comment word a test could echo
       printf '\n// let users multiply two numbers\nexport function multiply(a: number, b: number): number {\n  const result = a * b;\n  return result;\n}\n' >> calc.ts
+    elif [ -n "${E2E_STUB_DONE_CONFLICT:-}" ]; then # MEASURED-LABELS: does the work once (a resume adds no second copy) and still declines part of the issue with a conflict claim
+      grep -q 'function multiply' calc.ts || printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts
     else
     printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts
     fi
     [ -n "${E2E_STUB_REPLY_MARK:-}" ] && echo "$E2E_STUB_REPLY_MARK" # Q1 PROVE: a line only the implementer's reply carries (the prover's brief must not)
-    echo "LOKI_DONE"
+    if [ -n "${E2E_STUB_DONE_CONFLICT:-}" ]; then echo "LOKI_SPEC_CONFLICT: $E2E_STUB_DONE_CONFLICT"; else echo "LOKI_DONE"; fi
   fi
 fi
 if [ "$stage" = "implement" ] && [ -n "${E2E_STUB_SLEEP:-}" ]; then sleep "$E2E_STUB_SLEEP"; fi

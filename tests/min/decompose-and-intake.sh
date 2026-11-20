@@ -1689,6 +1689,14 @@ IA9="$(ia_facts)"
 ia_run noevidence "$T/ia-noevidence.txt"
 IANE="$(ia_facts)"
 [ "$IANE" = 'PARTIAL 9 8 8 1 check ["not addressed: Optimize search performance for large datasets"]' ] && ok "issue acceptance e2e: a MET with no evidence phrase counts as not addressed" || bad "issue acceptance MET without evidence gave: $IANE"
+# MEASURED-LABELS (G4, summary-parse review): the session does the work and still declines part of the issue with a conflict claim; every check passes and
+# one acceptance line is unmet. The claim labels nothing (the run reads as with no claim), so the gate that holds it is ISSUE-ACCEPTANCE in seal.ts
+# (issueNotes from notAddressedNotes, which caps VERIFIED at PARTIAL): PARTIAL with that line not addressed and the claim disclosed, never VERIFIED.
+# Planted defect: seal.ts issueNotes = [] (the acceptance gate bypassed); this leg then reads VERIFIED (rebuild dist).
+ia_run claimpart "$T/ia-noevidence.txt" E2E_STUB_DONE_CONFLICT="calc.test.ts:3 pins add(); optimizing search for large datasets is out of scope here"
+IACL="$(ia_facts)"
+[ "$IACL" = 'PARTIAL 9 8 8 1 check ["not addressed: Optimize search performance for large datasets"]' ] && python3 -I -c 'import json,sys; np=json.load(open(sys.argv[1]))["not_proven"]; sys.exit(0 if any(n.startswith("conflict claimed by the session and not measured by Loki") for n in np) else 1)' "$IARUN/receipt.json" \
+    && ok "declined part (MEASURED-LABELS): a conflict claim over one unmet acceptance line with every check passing seals PARTIAL with the line not addressed and the claim disclosed, never VERIFIED" || bad "declined part gave: $IACL"
 ia_run fail "$T/ia-missing.txt"
 IAF="$(ia_facts)"
 case "$IAF" in 'PARTIAL 9 0 0 1 check ["acceptance not reviewed: '*) ok "issue acceptance e2e: a line check that cannot answer (after one retry) caps PARTIAL with one 'acceptance not reviewed' line" ;; *) bad "issue acceptance failed check gave: $IAF" ;; esac
