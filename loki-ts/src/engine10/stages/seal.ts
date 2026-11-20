@@ -32,7 +32,7 @@ import { suiteSkipHolds, SUITE_FIX_SKIP_NOTE, sealedWallDir, checkProvenance, ch
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
-import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts"; import { COULD_NOT_RUN_LEAD, LOKI_OWN_LEAD, verifiedReceiptBlock, type CapReason } from "../closure.ts";
+import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts"; import { COULD_NOT_RUN_LEAD, LOKI_OWN_LEAD, verifiedReceiptBlock, type CapReason, ruleMode, verificationStamp, type ObservedRule, type RuleMode } from "../closure.ts";
 import { atomicWriteText } from "../../util/atomic.ts";
 import { patchReceipt } from "../../features/patch_protocol.ts";
 import { collapseNotProven } from "../../util/term_width.ts";
@@ -427,6 +427,7 @@ export function renderReceiptMd(r: Receipt): string {
     ...(r.could_not_run?.length ? [`- Could not run here, on the original code either: ${r.could_not_run.join(", ")} (the change is proved by its own test, which fails before the change and passes after it)`] : []),
     ...(r.verdict === "SPEC_CONFLICT" && r.spec_conflict_reason ? [`- Reason: \`${r.spec_conflict_reason}\``] : []),
     `- Run: ${r.run_id}`,
+    ...(r.verified_by ? [`- Verified by: ${r.verified_by.proved_by}; ran: ${r.verified_by.ran.join(", ")}`] : []),
     `- Base: ${r.base_sha}  Head: ${r.head_sha}`,
     `- receipt_sha256: ${r.receipt_sha256}`,
     `- Signature: ${sig}`,
@@ -441,6 +442,7 @@ export function renderReceiptMd(r: Receipt): string {
     ...(r.checks.some((c) => c.provenance !== undefined) ? [...sec("### Agent-independent checks", r.checks.filter(indep)), "", ...sec("### Agent-authored / advisory checks", r.checks.filter((c) => !indep(c)))] : sec("### Checks", r.checks)),
     "",
     ...(r.evidence.length ? ["### Evidence (already-satisfied)", ...r.evidence.map((e) => `- ${e}`), ""] : []),
+    ...(r.observe?.length ? ["### Observe mode (would have changed the label; not applied)", ...r.observe.map((x) => `- ${x.rule}: ${x.would_label}: ${sanitizeReason(x.detail)}`), ""] : []),
     "### NOT PROVEN",
     ...collapseNotProven(r.not_proven).map((n) => `- ${sanitizeReason(n)}`), ...(r.not_applicable?.length ? ["", "### N/A (not applicable, or not selected by risk tier)", ...r.not_applicable.map((n) => `- ${sanitizeReason(n)}`)] : []),
     "",
@@ -526,6 +528,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const lintOnly = openLint.length > 0 && live.every((c) => c.result !== "fail" || ownLint.has(c.name)) && live.some((c) => c.result === "pass" && !c.name.startsWith("lint:"));
     const liveV = lintOnly ? live.map((c) => (openLint.includes(c) ? { ...c, result: "not_run" as const } : c)) : live;
     const lintOpenNotes = lintOnly ? openLint.map((c) => `lint error the change introduced, still failing after the fix rounds: ${c.name}: ${String(((Array.isArray(o.verify?.checks) ? (o.verify!.checks as Obj[]) : []).find((x) => x.name === c.name)?.first_error) ?? "see the check output").slice(0, 200)} (every test passed; the label is held at PARTIAL)`) : [];
+    const observed: ObservedRule[] = []; // VERIFY-PLAN V7: observe-mode rules push here; read only in publish, never by the label
     const verdict0a = capGroupVerdict(verdictOf(o, liveV, !diffOk || diff.stdout === "", capVerify.some((n) => !pinDropped.has(n)) || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp);
     // UNRUNNABLE-CHECK: applied here, before every later step, so supply, review, open notes and the publish can still only lower the label.
     const vLifted = vCand.length > 0 && verdict0a === "PARTIAL" && ftpGate ? unrunnableLifted({ o, checks: liveV, vraw, verdict: verdict0a, proof: await (async () => { const f = await ftp(); if (f.ok) return f; const w = await own(); return w?.ok ? { ok: true, files: rawDiff.filter((x, i) => i % 2 === 1 && isTestFile(x) && w.cmds.some((c) => stepNamesFile(c, x))), steps: w.steps.length } : f; })() /* own proof: the changed test files a counted step's command names are the proved ones */, notes: capVerify.filter((n) => !pinDropped.has(n)),
@@ -689,6 +692,8 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
       checks,
       not_proven: [],
       ...(verdict !== "VERIFIED" && reasons.length ? { held_by: reasons.map((r) => ({ kind: r.kind, detail: r.detail })) } : {}), // F0: the structured holds that kept the verdict below VERIFIED, as evaluateSeal computed them (absent on a VERIFIED receipt)
+      verified_by: verificationStamp({ checks: checks.map((c) => ({ name: c.name, result: c.result, ...(typeof c.n === "number" ? { n: c.n } : {}) })), wallFiles: wallFiles.length, proofRun: proofRun ? { exit: proofRun.exit, proved: proofRun.proved, failed: proofRun.failed } : null, ownProof: ownP ? { ok: ownP.ok, steps: ownP.steps.length } : null, ftp: ftpRes ? { ok: ftpRes.ok, files: ftpRes.files } : null, alreadyOk, exoProof, noWall, strictProof, executed, proof, wallPassed: o.verify?.wall_passed === true }), // VERIFY-PLAN V7
+      ...(observed.length ? { observe: observed } : {}), // VERIFY-PLAN V7: never in held_by or not_proven, so it can never hold the label
       verdict, ...(patchReceipt(o.implement?.patch) ? { patch: patchReceipt(o.implement?.patch)! } : {}), ...(sessionCaps(o).length ? { session_caps: sessionCaps(o) } : {}), ...(typeof o.implement?.limit_s === "number" ? { implement_limit: { limit_s: o.implement.limit_s, elapsed_s: typeof o.implement.elapsed_s === "number" ? o.implement.elapsed_s : 0, ...(o.implement.stop_cause === "max_turns" ? { stop_cause: "max_turns" as const, owner: "harness" as const } : {}) } } : {}), ...(grp.section ? { group: grp.section } : {}), ...(ctx.failovers && ctx.failovers().length > 0 ? { failover: ctx.failovers() } : {}),
       ...(str(o.implement?.spec_conflict_reason) !== null
         ? { spec_conflict_reason: sanitizeReason(str(o.implement?.spec_conflict_reason)!) }

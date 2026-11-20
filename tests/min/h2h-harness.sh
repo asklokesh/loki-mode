@@ -459,6 +459,7 @@ for c in h2h.CALIBRATE_CONFIGS:
     r = h2h.run_one(c, task, 1, work, 600, False)
     print(c.rsplit("-", 1)[1], "verdict", r.get("receipt_verdict"), "pass", r["pass"], "exit", r["exit_code"], "applied", r["calibration"]["applied"],
           "held", isinstance(r.get("held_by"), list), "leaked", r["hidden_leaked_before_scoring"], "kinds", [h["kind"] for h in r.get("held_by") or []])
+    print("stamp", c.rsplit("-", 1)[1], isinstance(r.get("verified_by"), dict))
 ' "$T/caltasks" "$T/calwork" 2>&1)"
 printf '%s\n' "$cal_u3" | sed 's/^/  U3: /' | grep -E 'U3: (merged|nofix|plant|inert) ' || printf '%s\n' "$cal_u3" | tail -20
 has "calibration U3: the merged fix reads VERIFIED on the stub, scores pass and was applied" "$cal_u3" "merged verdict VERIFIED pass 1 exit 0 applied True held True leaked []"
@@ -466,6 +467,7 @@ cal_nf="$(printf '%s\n' "$cal_u3" | grep '^nofix ')"; cal_pl="$(printf '%s\n' "$
 case "$cal_nf" in "nofix verdict FAILED pass 0 exit "[15]" applied True held True leaked []"*) ok "calibration U3: the tests without the fix read FAILED (exit 1, or 5 when the fix rounds stall)" ;; *) bad "calibration U3 nofix: $cal_nf" ;; esac
 case "$cal_pl" in "plant verdict FAILED pass 0 exit "[15]" applied True held True leaked []"*) ok "calibration U3: the fix with a planted import break reads FAILED" ;; *) bad "calibration U3 plant: $cal_pl" ;; esac
 case "$cal_in" in "inert verdict "*" pass 0 exit "*" applied True held True leaked []"*) case "$cal_in" in *"verdict VERIFIED "*) bad "calibration U3 inert read VERIFIED: $cal_in" ;; *) ok "calibration U3: an unused function with no tests is not VERIFIED (${cal_in%% pass*})" ;; esac ;; *) bad "calibration U3 inert: $cal_in" ;; esac
+[ "$(printf '%s\n' "$cal_u3" | grep -c '^stamp .* True$')" = 4 ] && ok "calibration U3: every calibration record carries the receipt's verified_by stamp (VERIFY-PLAN V7)" || bad "calibration U3: verified_by missing: $(printf '%s\n' "$cal_u3" | grep '^stamp')"
 
 # Learning protocol (--sequences): every step of every sequence runs in one repo copy. The reference
 # solutions applied in order pass each step's hidden tests, an untouched repo passes none, and no

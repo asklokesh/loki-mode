@@ -47,6 +47,54 @@ export const flagsFirst = <T,>(notProven: readonly T[]): T[] => { const f = new 
 
 /** One structured reason seal's evaluation held the label below VERIFIED: the kind, and the check name or receipt line it came from. */
 export interface CapReason { kind: string; detail: string }
+/** VERIFY-PLAN V7: the mode of one label rule. off: the rule does nothing; observe: it runs and writes what it would have done to the receipt's
+ *  `observe` list, never the label; enforce: it decides the label. 0/off/false/no is off, observe is observe, 1/on/true/yes/enforce is enforce,
+ *  empty or anything else is the rule's default. */
+export type RuleMode = "off" | "observe" | "enforce";
+export function ruleMode(name: string, dflt: RuleMode, env: NodeJS.ProcessEnv = process.env): RuleMode {
+  const v = (env[name] ?? "").trim().toLowerCase();
+  return /^(0|off|false|no)$/.test(v) ? "off" : v === "observe" ? "observe" : /^(1|on|true|yes|enforce)$/.test(v) ? "enforce" : dflt;
+}
+/** One observe-mode rule that would have changed the label: the rule's knob, the label it would give at its own step of the seal, and why. */
+export interface ObservedRule { rule: string; would_label: string; detail: string }
+/** VERIFY-PLAN V7 stamp: what Loki ran before the label and the one thing that proved the change, or "none". */
+export interface VerificationStamp { ran: string[]; proved_by: string }
+export interface StampInput {
+  checks: readonly { name: string; result: string; n?: number }[];
+  wallFiles: number;
+  proofRun: { exit: number | null; proved: number; failed: number } | null;
+  ownProof: { ok: boolean; steps: number } | null;
+  ftp: { ok: boolean; files: string[] } | null;
+  alreadyOk: boolean;
+  exoProof: boolean;
+  noWall: boolean;
+  strictProof: boolean;
+  executed: boolean;
+  proof: boolean; // seal's own proof value: no proof, no proved_by
+  wallPassed: boolean; // verify's wall_passed === true: only then did a Wall test prove the change
+}
+export function verificationStamp(i: StampInput): VerificationStamp {
+  const ran: string[] = [], done = (c: { result: string }): boolean => c.result === "pass" || c.result === "fail";
+  const targeted = i.checks.filter((c) => done(c) && c.name.includes(":") && !c.name.startsWith("full suite") && !c.name.startsWith("lint:") && !c.name.startsWith("holdout")).length;
+  if (targeted) ran.push(`${targeted} targeted test file(s)`);
+  for (const c of i.checks) if (done(c) && c.name.startsWith("full suite")) ran.push(c.name);
+  const stat = i.checks.filter((c) => done(c) && (c.name.startsWith("lint:") || c.name === "security scan" || c.name === "select-tests")).length;
+  if (stat) ran.push(`${stat} static check(s)`);
+  if (i.wallFiles > 0) ran.push(`Wall: ${i.wallFiles} file(s)`);
+  if (i.checks.some((c) => c.name === "holdout" && done(c))) ran.push("held-out Wall tests");
+  if (i.proofRun) ran.push(`proof script re-run (exit ${i.proofRun.exit === null ? "none" : i.proofRun.exit}, ${i.proofRun.proved} proved, ${i.proofRun.failed} failed)`);
+  if (i.ownProof) ran.push(`proof script without the change (${i.ownProof.steps} step(s) counted)`);
+  if (i.ftp) ran.push("the change's own tests on the base commit");
+  const proved_by = !i.proof ? "none"
+    : i.alreadyOk ? "Loki's re-run of the kept proof script on the unchanged tree"
+    : !i.noWall && i.exoProof && i.wallPassed ? "a Wall test written from the issue before the code"
+    : i.exoProof ? "an agent-independent passing test"
+    : i.ftp?.ok ? `a test that fails on the base commit and passes on the change: ${i.ftp.files.join(", ")}`
+    : i.ownProof?.ok ? "a proof script step that fails without the change and passes with it"
+    : !i.strictProof && i.executed ? "executed tests (LOKI_EXOGENOUS_PROOF=0)"
+    : "none";
+  return { ran: ran.length ? ran : ["none"], proved_by };
+}
 export type ItemClass = "a" | "b" | "c";
 export interface OpenItem {
   kind: string;

@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `benchmarks/h2h/run.sh --suite replay --configs loki-cal-merged,loki-cal-nofix,loki-cal-plant,loki-cal-inert` replays 8 merged upstream fixes four ways (the fix with its tests, its tests without the fix, the fix with a planted break, and an unused function with no tests) through the real engine with no model, and reports how often Loki's label is right, every hold that fired on a good change, and what each observe-mode rule would have said.
 - `scripts/release.sh --ship` refuses a release that changes one of Loki's label files unless a calibration result was committed since the last release, and refuses one whose calibration has more false VERIFIED labels or fewer right labels than the previous one.
 
+### Every receipt says how the change was verified
+
+- Every receipt now carries `verified_by`: what Loki ran before the label and the one thing that proved the change, or `none`. A new label rule can run in observe mode first: it writes what it would have decided to the receipt's `observe` list and never changes the label.
+
 ## v11.172.0 (2026-11-20)
 
 ### A low-risk run checks the full test suite before it can say VERIFIED
