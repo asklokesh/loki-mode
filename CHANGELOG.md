@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 
+## v11.168.0 (2026-11-20)
+
+### Loki never pushes a branch that changes nothing against the run's base
+
+- The PR step now checks the run branch against the recorded base before the push script runs, and skips with "nothing to push: <branch> has no change against the base <sha>" when they are equal. The supervisor's no-diff check uses the same helper; if Loki's hardened git call fails it falls back to plain git (fsmonitor, hooks, external diff and textconv off), and only an answer neither can give counts as "changed", now logged.
+- Found on a real user run: FireLater#24 on 11.162.0 pushed loki/e10-20261119T171256Z-7414 at the base commit to GitHub; only `gh pr create` failed. That branch has been deleted. Why the earlier no-diff check counted a change on that run is not established (its clone was removed before it was read); the PR step's own check makes it harmless either way.
+
+Gate: the full hermetic local gate ran green on this tree (4a6ff8599, 31 of the 32 tests/min files). Not measured in a live run.
+
 ## v11.167.0 (2026-11-20)
 
 ### A run that finds the work already done seals ALREADY_SATISFIED on Loki's own evidence
