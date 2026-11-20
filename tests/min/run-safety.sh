@@ -1112,7 +1112,8 @@ grep -q '(Object.keys(exoAttr).length ? { exogenous_attribution: exoAttr } : {})
 #   without them; D19 more than 60 distinct error lines; D20 to D23 another hold (a not_run check, a held lint, a capping verify note, a lean gap);
 #   D24 to D26 the change's own red (its test, lint, typecheck); D27 runner config changed; D28 a weakened test; D29 verify stopped by a limit;
 #   D30 a quick verify; D31 knob off; D32 a per-file check that failed and is not listed; D33 a not_run test file whose crash names a changed file.
-# Plants (each must turn the named cells): seal.ts unrunnableLifted: `!a.proof` in place of `a.proof?.ok !== true` (D3); drop the own-check line (D4); return
+# P5 (last cell): the proof is Loki's own run of the proof script (OWN-PROOF steps), which never ran inside the unrunnable check.
+# Plants (each must turn the named cells): seal.ts unrunnableLifted: `!a.proof` in place of `a.proof?.ok !== true` (D3); drop the own-check line (D4); drop its `steps` half (P5); return
 # the candidates without calling rest (D20 to D23, D27, D28); do not drop the skip note (P4); seal.ts unrunnableCandidates: drop the listed.has test (D20, D21: a check
 # not run for another reason is taken for one that could not run); drop the stopped_at test (D29); drop the verify_scope test (D30); repo_profile.ts couldNotRun: drop the namesChanged test (D33); drop the
 # touched test (D6); knob default off (P1 to P4); sameStartFailure: drop the line-set comparison (D11); drop the start test (D14); drop the assertion test
@@ -1154,11 +1155,11 @@ const r = [leg({ p: 1 }), leg({ p: 1, k: "not_run" }), leg({ p: 1, two: 1 }), le
   leg({ head: f2(OUT.replace("2 failed", "3 failed")) }), leg({ head: f2(OUT.replace("2 failed\n", "")) }), leg({ dropBase: ["start"] }), leg({ dropHead: ["start"] }), leg({ base: f2(many), head: f2(many) }),
   leg({ checks: [x("bun:lib/test/other.test.ts", "not_run")] }), leg({ checks: [x("lint:eslint", "not_run")] }), leg({ notes: ["reverse-dependent scan hit its byte or time bound"] }), leg({ lean: ["no passing check references a changed symbol and no Wall file ran: f"] }),
   leg({ checks: [x("bun:lib/test/mine.test.ts", "fail", "agent_authored")] }), leg({ checks: [x("lint:tsc", "fail")] }), leg({ checks: [x("typecheck:tsc", "fail")] }),
-  leg({ notes: ["runner config changed: playwright.config.ts"] }), leg({ notes: ["weakened test: tests/a.spec.ts"] }), leg({ verify: { stopped_at: "limit" } }), leg({ verify: { verify_scope: "quick" } }), leg({ knob: false }), leg({ k: "fail" }), leg({ k: "not_run", kNames: true })];
+  leg({ notes: ["runner config changed: playwright.config.ts"] }), leg({ notes: ["weakened test: tests/a.spec.ts"] }), leg({ verify: { stopped_at: "limit" } }), leg({ verify: { verify_scope: "quick" } }), leg({ knob: false }), leg({ k: "fail" }), leg({ k: "not_run", kNames: true }), leg({ p: 1, noProof: 1, proof: { ok: true, files: [], steps: 1 } })];
 console.log(r.join(" | "));
 ' 2>&1)"
-X9="PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[2] | PARTIAL>VERIFIED[1] | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | PARTIAL | FAILED | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | FAILED | FAILED | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | PARTIAL"
-[ "$A9" = "$X9" ] && ok "unit, unrunnable check (P1 to P4, D1 to D33): a check that could not run on either side stops holding the label only beside the change's own fail-before, pass-after proof, with no changed file in its package, the same start failure on both sides and nothing else open; every planted defect reads the knob-off label, never VERIFIED" \
+X9="PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[2] | PARTIAL>VERIFIED[1] | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | PARTIAL | FAILED | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | FAILED | FAILED | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | PARTIAL | PARTIAL>VERIFIED[1]"
+[ "$A9" = "$X9" ] && ok "unit, unrunnable check (P1 to P5, D1 to D33): a check that could not run on either side stops holding the label only beside the change's own fail-before, pass-after proof, with no changed file in its package, the same start failure on both sides and nothing else open; every planted defect reads the knob-off label, never VERIFIED" \
     || bad "unrunnable-check unit gave: $A9 (want: $X9)"
 
 # OWN-PROOF (G3 (a), LOKI_E10_OWN_PROOF, default on): the change's own proof for any tool. Loki runs the kept proof script on the change, in an untouched copy
