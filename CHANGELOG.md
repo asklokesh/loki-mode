@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 
+## v11.167.0 (2026-11-20)
+
+### A run that finds the work already done seals ALREADY_SATISFIED on Loki's own evidence
+
+- When the session says the work is already done (or intake finds it already satisfied), verify agrees and the commit changes nothing, seal re-runs the session's kept proof script on the unchanged tree. Exit 0, at least one line proved and none failed seals ALREADY_SATISFIED. Anything else stays PARTIAL with the line "already done claimed; Loki's own re-run of the kept proof script did not show it (...)". The session's word alone never gives the label.
+- Found on a real user run: FireLater#24 on 11.162.0 found the issue already implemented on main (commit dd40254) and sealed PARTIAL "no tests to run", because seal re-ran the proof only on a non-empty diff. A replay of that run's stored stage outputs now seals ALREADY_SATISFIED with a passing re-run and PARTIAL without one.
+
+Gate: the full hermetic local gate ran green on a tree holding this change, the previous release and the next one (4a6ff8599); this release's own tree passed the release checks. Not measured in a live run.
+
 ## v11.166.0 (2026-11-20)
 
 ### The commit stage keeps the change's own test
