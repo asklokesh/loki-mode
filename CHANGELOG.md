@@ -7,12 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-### Verify's base tree runs a workspace suite with the dependencies the checkout has
-
-- When a suite is red on the change, Loki runs it on the untouched base commit in a separate tree to see which failures were already there. In a workspace that tree only got the dependencies of the suite's own package and the root, so sibling packages the suite imports could not load theirs. On opencode the cli suite ran 123 tests with 84 failures there against 408 with 8 in the checkout, and failures that exist on base read as new.
-- Every workspace member that has a `node_modules` in the checkout now gets its dependencies in the base tree the same way. A member that cannot be linked is named on the receipt's baseline line. `LOKI_E10_BASE_TREE_MEMBERS=0` opts out.
-- Measured: unit legs on a fixture workspace; on the real opencode base the call links 37 of 37 members. Not yet measured: a full run.
-
 
 ## v11.168.0 (2026-11-20)
 
