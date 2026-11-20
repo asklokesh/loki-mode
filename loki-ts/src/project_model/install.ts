@@ -247,7 +247,8 @@ export function projectDeclaresRuff(repoDir: string): boolean {
 /** G2 DECLARED-INSTALLS (LOKI_E10_DECLARED_INSTALLS, default on; =0 off): Loki runs an install only when the repository declares it: the frozen form of a
  *  lockfile it commits (lockedInstall answers locked), a script the repository tracks run by its path (`./install.sh`), the command's own text in a file
  *  the project model cited for it or in a CI file the repository commits (CI_FILES), or a setup command a repo guide documents for that directory; `python3 -m pip`
- *  and `pip` are the same command for this match. An install Loki would have to invent (`pip install -e .` from a bare manifest) is not run: across 37 stored C1, C2 and
+ *  and `pip` are the same command for this match. A plain `npm|pnpm|yarn install` from a package.json with no node_modules yet is declared too (the manifest is the
+ *  repo's own dependency list and a fresh clone needs it); a lockfile, when there is one, already gives its frozen form above. An install Loki would have to invent (`pip install -e .` from a bare manifest) is not run: across 37 stored C1, C2 and
  *  real-world runs no unlocked install ever passed (0 of 59). Replaces the PEP 668 retry, which invented a .venv inside the checkout. */
 export const UNDECLARED_INSTALL = "install not run: the repository declares no install command";
 /** The disclosed line for an install Loki declined to invent: what was skipped, and what the user can run. A pip install is shown inside a virtualenv outside
@@ -270,6 +271,8 @@ export function installDeclared(repoDir: string, mc: { cmd: string; cwd: string;
   if (li.locked) return true;
   const norm = (x: string): string => x.replace(/\s+/g, " ").trim().replace(/\bpython3?(?:\.\d+)? -m pip3?\b/g, "pip").replace(/\bpip3\b/g, "pip"), want = norm(mc.cmd);
   if (!want) return false;
+  // a JS manifest is the repo's own declaration of its dependencies (lead ruling 2026-11-20): a fresh clone (no node_modules) gets the package manager's install once, at intake, before any baseline
+  if (/^(?:npm|pnpm|yarn)(?: install)?$/.test(want) && existsSync(join(repoDir, mc.cwd, "package.json")) && !existsSync(join(repoDir, mc.cwd, "node_modules"))) return true;
   const exe = want.split(" ")[0]!;
   if (exe.includes("/") && !isAbsolute(exe)) { try { const rel = relative(repoDir, join(repoDir, mc.cwd, exe)); if (!rel.startsWith("..") && safeGit(repoDir, ["ls-files", "--error-unmatch", "--", rel]).trim()) return true; } catch { /* untracked or outside: not a declaration */ } }
   for (const f of mc.cite ?? []) { try { if (norm(readFileSync(join(repoDir, f), "utf8")).includes(want)) return true; } catch { /* unreadable cite: not a declaration */ } }
@@ -363,15 +366,20 @@ const ecoOfDir = (repoDir: string | undefined, root: string): string | null => {
 const ECO_PREFIX: [RegExp, string][] = [[/^go:/, "go"], [/^(?:pytest|unittest|lint:ruff|lint:mypy|lint:pyright)\b/, "py"], [/^(?:vitest|jest|bun|node|mocha|ava|lint:eslint|lint:tsc|tsc)\b/, "js"], [/^cargo:/, "rust"], [/^(?:maven|gradle|javac):/, "jvm"], [/^dotnet:/, "dotnet"]];
 /** REPO-GUIDES: the receipt's informational lines gain which documented test command ran and where it came from, and each guide command Loki ignored (guides.ts guideNotes). Never a cap. */
 export function withGuideNotes<T extends { na: string[] }>(notes: T, repoDir: string): T { try { const g = guideNotes(repoDir); return g.length ? { ...notes, na: [...notes.na, ...g] } : notes; } catch { return notes; } }
-export function unusedInstallNotes(lines: readonly string[], model: ProjectApi | null | undefined, changed: readonly string[], checkNames: readonly string[], repoDir?: string): { cap: string[]; na: string[] } {
+export function unusedInstallNotes(lines: readonly string[], model: ProjectApi | null | undefined, changed: readonly string[], checkNames: readonly string[], repoDir?: string, results?: readonly { name: string; result: string }[]): { cap: string[]; na: string[] } {
   const cap: string[] = [], na: string[] = [];
   const checkEco = (n: string): string | null => { for (const [re, e] of ECO_PREFIX) if (re.test(n)) return e; const pk = n.startsWith("full suite: ") ? model?.packages().find((p) => `full suite: ${p.name}` === n) : undefined; return pk ? ecoOfDir(repoDir, pk.root) ?? (pk.commands.test ? ecoOfCmd(pk.commands.test.cmd) : null) : null; };
   for (const l of lines) {
-    if (l.startsWith(UNDECLARED_INSTALL)) { na.push(l); continue; } // G2: an install Loki declined to invent is disclosed; a check that then lacks a dependency caps on its own
     const root = /\(install:([^;()]+); harness-owned\)$/.exec(l)?.[1], pkg = root && root !== "." ? model?.packages().find((p) => p.root === root) : undefined;
     const inRoot = (f: string): boolean => f === root || f.startsWith(`${root}/`), owned = (f: string): boolean => model?.packageOf(f)?.root === root || inRoot(f);
     const eco = pkg ? (model?.installFor(pkg.root)?.cmd ? ecoOfCmd(model.installFor(pkg.root)!.cmd) : null) ?? ecoOfDir(repoDir, pkg.root) : null;
     const used = !pkg || !eco || !!pkg.commands.test || changed.some(owned) || checkNames.some((n) => n === `full suite: ${pkg.name}` || inRoot(n.slice(n.indexOf(":") + 1).trim()) || (checkEco(n) ?? eco) === eco);
+    if (l.startsWith(UNDECLARED_INSTALL)) { // G2 (review B4): an install Loki declined to invent is N/A only when nothing depends on it, or every check of its ecosystem passed;
+      // a check that failed, even one excused as red on base, may be failing for want of the very dependencies (same ImportError both sides), so it stays NOT PROVEN
+      const de = (pkg ? eco : null) ?? ecoOfDir(repoDir, root ?? ".") ?? (model?.installFor(root ?? ".")?.cmd ? ecoOfCmd(model.installFor(root ?? ".")!.cmd) : null);
+      const mine = (results ?? []).filter((c) => !c.name.startsWith("lint:") && (!de || (checkEco(c.name) ?? de) === de || (!!root && root !== "." && inRoot(c.name.slice(c.name.indexOf(":") + 1).trim()))));
+      (!used || (mine.length > 0 && mine.every((c) => c.result === "pass" || c.result === "flaky")) ? na : cap).push(l); continue;
+    }
     (used ? cap : na).push(used ? l : `install failed for a package no check or changed file depends on: ${l}`);
   }
   return { cap, na };

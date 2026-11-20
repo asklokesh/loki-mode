@@ -318,7 +318,12 @@
 # 253f. install.ts installDeclared: `return true` first (the declared-installs leg's bare cell reads pass:true).
 # 253g. base_guard.ts guardEnv: `return run();` first (the env guard lint and tsc legs keep the created dir and lose the N/A note).
 # 253i. install.ts installDeclared: `return false` in place of the ciTexts line (the declared-installs leg's ci cell reads not_run).
-# 253h. check_result.ts ignoreRuleChanges: drop the underLokiKept skip (the env-guard-kept unit's ignore cell reads a note).
+# 253h. check_result.ts ignoreRuleChanges: drop the lokiKeptOwns skip (the env guard move-and-keep unit's kept ignore cell reads 1).
+# 253j..253n. base_guard.ts envMoveRefusal: drop one refusal line each (not alone, existed, link, outside, tracked; that refusal cell reads null).
+# 253o. check_result.ts lokiKeptOwns: return true without the time comparison (the later cell reads false).
+# 253p. base_guard.ts guardEnv: rmSync the path instead of renameSync (the moved cell's dest and ledger read false).
+# 253q. install.ts unusedInstallNotes: undeclared lines go to N/A unconditionally (the undeclared install cap leg's first cell reads na).
+# 253r. install.ts installDeclared: drop the package.json rule (the declared-installs leg's npmfresh cell reads not_run).
 # 254. testmap.ts buildTestMap: ignore pyCfg (the pytest-fallback leg's conftest.py case reads unittest).
 # 255. package_suite.ts runPackageSuites: drop the cwd !== "." guard (the empty-subsuite-na leg's root package reads not applicable).
 # 256. check_result.ts assertionFailure REPORTED-KIND type path: drop the MISSING_API guard (the reported-kind unit's ImportError case reads true).
@@ -2589,11 +2594,12 @@ console.log([u(o, "packages/zod", new Set(["packages/zod/src/v4/x.ts"]), ["packa
 # install heading (README.md), a cited file that holds the command's own text (Makefile), a script the repo tracks (./install.sh) and a CI workflow (`pip install -e .`, the same
 # command as `python3 -m pip`) all run it; an unlocked requirements.txt install nothing names is not run and its note says requirements.txt was present and what to run (in a
 # virtualenv, since a system Python may refuse pip under PEP 668), while the same file named in the README is run; the same command from a bare pyproject.toml (Loki would be inventing it) is
-# not run, its line starts with the undeclared text and unusedInstallNotes files it under N/A, never a cap; LOKI_E10_DECLARED_INSTALLS=0 runs it as before.
-# Plant 253f: installDeclared returns true always and the bare-manifest repo's install runs (the leg turns red). Plant 253i: installDeclared ignores CI files (the ci cell reads not_run).
+# not run, its line starts with the undeclared text and with no check result to clear it, unusedInstallNotes keeps it on NOT PROVEN (the undeclared install cap leg covers the N/A side); LOKI_E10_DECLARED_INSTALLS=0 runs it as before.
+# A plain `npm install` from a package.json with no node_modules (a fresh clone) runs; with node_modules present it does not (lead ruling 2026-11-20).
+# Plant 253f: installDeclared returns true always and the bare-manifest repo's install runs (the leg turns red). Plant 253i: installDeclared ignores CI files (the ci cell reads not_run). Plant 253r: drop the package.json rule (the npmfresh cell reads not_run).
 DI="$T/declared-installs"; rm -rf "$DI"; mkdir -p "$DI/bin"
-printf '#!/bin/sh\ntouch "$PWD/ran.flag"\nexit 0\n' > "$DI/bin/python3"; chmod +x "$DI/bin/python3"
-for k in guide cite script ci req reqdoc bare off; do
+printf '#!/bin/sh\ntouch "$PWD/ran.flag"\nexit 0\n' > "$DI/bin/python3"; chmod +x "$DI/bin/python3"; cp "$DI/bin/python3" "$DI/bin/npm"
+for k in guide cite script ci req reqdoc npmfresh npmhave bare off; do
     mkdir -p "$DI/$k" && printf '[project]\nname = "calc"\nversion = "0"\n' > "$DI/$k/pyproject.toml" && printf 'def f():\n    return 1\n' > "$DI/$k/calc.py"
     (cd "$DI/$k" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid)
 done
@@ -2601,20 +2607,21 @@ printf '# calc\n\n## Installation\n\n```\npython3 -m pip install -e .\n```\n' > 
 printf 'install:\n\tpython3 -m pip install -e .\n' > "$DI/cite/Makefile"
 printf '#!/bin/sh\ntouch "$PWD/ran.flag"\n' > "$DI/script/install.sh"; chmod +x "$DI/script/install.sh"
 mkdir -p "$DI/ci/.github/workflows" && printf 'jobs:\n  test:\n    steps:\n      - run: pip install -e .\n' > "$DI/ci/.github/workflows/ci.yml"
+for k in npmfresh npmhave; do printf '{"name":"c","private":true}\n' > "$DI/$k/package.json"; done; mkdir -p "$DI/npmhave/node_modules/x"
 printf 'requests\n' > "$DI/req/requirements.txt"; printf 'requests\n' > "$DI/reqdoc/requirements.txt"; printf '# calc\n\n## Installation\n\n```\npip install -r requirements.txt\n```\n' > "$DI/reqdoc/README.md"
-for k in guide cite script ci req reqdoc bare off; do (cd "$DI/$k" && git add -- . && git commit -q -m base); done
+for k in guide cite script ci req reqdoc npmfresh npmhave bare off; do (cd "$DI/$k" && git add -- . && git commit -q -m base); done
 DI_OUT="$(cd "$ROOT/loki-ts" && PATH="$DI/bin:$PATH" timeout 120 bun -e 'import { prepareDeps, unusedInstallNotes, UNDECLARED_INSTALL } from "./src/project_model/install.ts"; import { existsSync } from "node:fs";
 const d = process.argv[1], out: string[] = [];
-for (const [k, cite] of [["guide", ["pyproject.toml"]], ["cite", ["Makefile"]], ["script", ["pyproject.toml"]], ["ci", ["pyproject.toml"]], ["req", ["requirements.txt"]], ["reqdoc", ["requirements.txt"]], ["bare", ["pyproject.toml"]], ["off", ["pyproject.toml"]]] as const) {
+for (const [k, cite] of [["guide", ["pyproject.toml"]], ["cite", ["Makefile"]], ["script", ["pyproject.toml"]], ["ci", ["pyproject.toml"]], ["req", ["requirements.txt"]], ["reqdoc", ["requirements.txt"]], ["npmfresh", ["package.json"]], ["npmhave", ["package.json"]], ["bare", ["pyproject.toml"]], ["off", ["pyproject.toml"]]] as const) {
   if (k === "off") process.env["LOKI_E10_DECLARED_INSTALLS"] = "0";
-  const model = { installFor: () => ({ cmd: k === "script" ? "./install.sh" : k.startsWith("req") ? "python3 -m pip install -r requirements.txt" : "python3 -m pip install -e .", cwd: ".", cite }), packages: () => [] } as any;
+  const model = { installFor: () => ({ cmd: k === "script" ? "./install.sh" : k.startsWith("npm") ? "npm install" : k.startsWith("req") ? "python3 -m pip install -r requirements.txt" : "python3 -m pip install -e .", cwd: ".", cite }), packages: () => [] } as any;
   const r = await prepareDeps({ repoDir: d + "/" + k, model, failed: [{ root: ".", harnessOwned: true }], signal: new AbortController().signal, timeoutMs: 60000, opts: { runId: "di-" + k } });
   const und = r.notProven.filter((l) => l.startsWith(UNDECLARED_INSTALL)), na = unusedInstallNotes(r.notProven, model, [], [], d + "/" + k);
   out.push(`${k}:${r.checks[0]?.result}:${existsSync(d + "/" + k + "/ran.flag")}:${und.length}:${na.na.length}/${na.cap.length}`);
   if (k === "req") out.push(`reqnote:${und.some((l) => l.includes("requirements.txt present; Loki did not install it (not declared or locked)") && l.includes("run: python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt"))}`);
 }
 console.log(out.join(" "));' "$DI" 2>&1 | tail -1)"
-[ "$DI_OUT" = "guide:pass:true:0:0/0 cite:pass:true:0:0/0 script:pass:true:0:0/0 ci:pass:true:0:0/0 req:not_run:false:1:1/0 reqnote:true reqdoc:pass:true:0:0/0 bare:not_run:false:1:1/0 off:pass:true:0:0/0" ] && ok "declared installs: a guide-documented and a cited install run; the same command from a bare manifest is not run and is N/A, never a cap; =0 runs it ($DI_OUT)" || bad "declared installs: got '$DI_OUT'"
+[ "$DI_OUT" = "guide:pass:true:0:0/0 cite:pass:true:0:0/0 script:pass:true:0:0/0 ci:pass:true:0:0/0 req:not_run:false:1:0/1 reqnote:true reqdoc:pass:true:0:0/0 npmfresh:pass:true:0:0/0 npmhave:not_run:false:1:0/1 bare:not_run:false:1:0/1 off:pass:true:0:0/0" ] && ok "declared installs: a guide-documented and a cited install run; the same command from a bare manifest is not run and, with no check to clear it, stays NOT PROVEN; a fresh-clone npm install runs; =0 runs it ($DI_OUT)" || bad "declared installs: got '$DI_OUT'"
 
 # G2 ENV-GUARD, lint (rule 22, real pytest, fake uv on PATH): a uv project (uv.lock) whose uv ignores UV_PROJECT_ENVIRONMENT, so the lint Loki chose (`uv run -- ruff`) creates a
 # .venv in the checkout, as `uv run ruff` did on hm155462; the tests run through the same uv on the real pytest. The .venv is Loki's own change: the guard removes it, the receipt carries "Loki's own command changed the environment" under N/A, no hold, and the Python fix stays VERIFIED. Plant 253g: guardEnv returns run() unguarded
@@ -2639,8 +2646,8 @@ g2rec() { [ -n "$RUNDIR" ] && python3 -I -c 'import json,sys; r=json.load(open(s
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     MAKE_REPO=make_g2_py_repo run_engine "add a multiply(a, b) function to calc.py" E2E_STUB_MODE=stack E2E_STUB_TARGET=calc.py \
         E2E_STUB_SNIPPET=$'def multiply(a, b):\n    return a * b\n' LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 PATH="$G2BIN/py:$FIX/bin:$PATH"
-    g="$(g2rec "Loki's own command changed the environment: \`lint:ruff\` created .venv; removed .venv")"
-    [ "$g" = "VERIFIED False 1" ] && [ ! -e "$REPO/.venv" ] && [ "$(outcome)" = "VERIFIED" ] && ok "env guard lint: the .venv a Loki-chosen lint created is removed, disclosed under N/A, no hold, VERIFIED ($g)" || { bad "env guard lint: receipt '$g', .venv $([ -e "$REPO/.venv" ] && echo present || echo absent), outcome $(outcome)"; dump; }
+    g="$(g2rec "Loki's own command changed the environment: \`lint:ruff\` created .venv; moved .venv to .loki/runs/")"
+    [ "$g" = "VERIFIED False 1" ] && [ ! -e "$REPO/.venv" ] && [ -f "$RUNDIR/env-moved/.venv/pyvenv.cfg" ] && grep -q "	moved	.venv	" "$RUNDIR/env-moved/LEDGER.txt" && [ "$(outcome)" = "VERIFIED" ] && ok "env guard lint: the .venv a Loki-chosen lint created is moved into the run folder with a ledger line, disclosed under N/A, no hold, VERIFIED ($g)" || { bad "env guard lint: receipt '$g', .venv $([ -e "$REPO/.venv" ] && echo present || echo absent), outcome $(outcome)"; dump; }
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "env guard lint: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: env guard lint: pytest is not installed"; fi
 fi
@@ -2650,25 +2657,69 @@ fi
 mkdir -p "$T/seed-g2tsc/node_modules/.bin" && printf 'node_modules\n' > "$T/seed-g2tsc/.gitignore" && printf '{"compilerOptions":{"strict":true,"noEmit":true}}\n' > "$T/seed-g2tsc/tsconfig.json"
 printf '#!/bin/sh\nmkdir -p node_modules/loki-g2-typegen && printf "export {};\\n" > node_modules/loki-g2-typegen/index.d.ts\nexit 0\n' > "$T/seed-g2tsc/node_modules/.bin/tsc"; chmod +x "$T/seed-g2tsc/node_modules/.bin/tsc"
 SEED="$T/seed-g2tsc" run_engine "$TASK" E2E_STUB_MODE=done LOKI_SESSION_MODEL=haiku
-g="$(g2rec "\`lint:tsc\` created node_modules/loki-g2-typegen; removed node_modules/loki-g2-typegen")"
-[ "$g" = "VERIFIED False 1" ] && [ ! -e "$REPO/node_modules/loki-g2-typegen" ] && [ -x "$REPO/node_modules/.bin/tsc" ] && ok "env guard tsc: the package a Loki-chosen typecheck wrote into node_modules is removed, the repo's own entries stay, disclosed under N/A, VERIFIED ($g)" || { bad "env guard tsc: receipt '$g', typegen $([ -e "$REPO/node_modules/loki-g2-typegen" ] && echo present || echo absent), outcome $(outcome)"; dump; }
+g="$(g2rec "\`lint:tsc\` created node_modules/loki-g2-typegen; moved node_modules/loki-g2-typegen to .loki/runs/")"
+[ "$g" = "VERIFIED False 1" ] && [ ! -e "$REPO/node_modules/loki-g2-typegen" ] && [ -f "$RUNDIR/env-moved/node_modules/loki-g2-typegen/index.d.ts" ] && [ -x "$REPO/node_modules/.bin/tsc" ] && ok "env guard tsc: the package a Loki-chosen typecheck wrote into node_modules is moved into the run folder, the repo's own entries stay, disclosed under N/A, VERIFIED ($g)" || { bad "env guard tsc: receipt '$g', typegen $([ -e "$REPO/node_modules/loki-g2-typegen" ] && echo present || echo absent), outcome $(outcome)"; dump; }
 
-# G2 ENV-GUARD, kept (unit, no tools): when another harness command is in flight the guard never deletes. It keeps what the Loki-chosen command created, says so, and the
-# environment readers subtract it: the ignore-rule notes stay empty and envChangedSince reads unchanged, while the same .venv made by anyone else is still reported by both.
-# Plant 253h turns the ignore cell red; plant 253g turns every cell red.
-GK="$T/env-guard-kept"; rm -rf "$GK"; mkdir -p "$GK/a" "$GK/b"
-for k in a b; do (cd "$GK/$k" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid && printf '.venv/\n' > .gitignore && printf 'x = 1\n' > m.py && git add -- . && git commit -q -m base); done
-GK_OUT="$(cd "$ROOT/loki-ts" && timeout 60 bun -e 'import { guardEnv, harnessCmdBegin, envChangedSince } from "./src/util/base_guard.ts"; import { ignoreSnapshot, ignoreRuleChanges, lokiEnvNotes, lokiEnvKept } from "./src/util/check_result.ts"; import { mkdirSync, writeFileSync, existsSync } from "node:fs";
-const [a, b] = process.argv.slice(1); const out: string[] = [];
+# G2 ENV-GUARD, kept and moved (unit, no tools). Nothing is ever deleted. A created path the guard may take is moved into <run dir>/env-moved/<path> with a ledger line.
+# A path it may not take stays in place, and the readers subtract it only as it was when the guard finished.
+# Cells:
+#  - moved: a lone command's new .venv is moved, the ledger names it, the source is gone.
+#  - kept: with another harness command in flight it stays; the ignore notes and envChangedSince leave it out, while the same .venv made by the change is still reported.
+#  - refusals (review B3): envMoveRefusal names why for each condition:
+#      not alone; existed before; a link; resolves outside the checkout (node_modules linked elsewhere); tracked.
+#    The integration cell shows the outside entry is still in its real dir after guardEnv.
+#  - later (review B2): a kept node_modules entry, then a file written into it after the guard, and then a new package after the guard: envChangedSince reads true both times.
+# Plants:
+#  - 253g: guardEnv returns run() unguarded.
+#  - 253h: drop the lokiKeptOwns skip in ignoreRuleChanges.
+#  - 253j..253n: drop one refusal line each (not alone, existed, link, outside, tracked).
+#  - 253o: lokiKeptOwns ignores the time (the later cell reads false).
+#  - 253p: guardEnv rmSync instead of renameSync (the moved cell's ledger and dest read false).
+GK="$T/env-guard-kept"; rm -rf "$GK"; mkdir -p "$GK/a" "$GK/b" "$GK/c" "$GK/outside/newpkg"
+for k in a b c; do (cd "$GK/$k" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid && printf '.venv/\nnode_modules\n.loki/\n' > .gitignore && printf 'x = 1\n' > m.py && mkdir -p trk && printf 't\n' > trk/a.txt && git add -- . && git commit -q -m base && mkdir -p .loki/runs/r); done
+mkdir -p "$GK/c/node_modules/dep" && ln -s "$GK/outside" "$GK/c/linked" && ln -s /nonexistent-loki-g2 "$GK/c/.venv2"
+GK_OUT="$(cd "$ROOT/loki-ts" && timeout 60 bun -e 'import { guardEnv, harnessCmdBegin, envChangedSince, envMoveRefusal, depsListing } from "./src/util/base_guard.ts"; import { ignoreSnapshot, ignoreRuleChanges, lokiEnvNotes, lokiEnvKept } from "./src/util/check_result.ts"; import { mkdirSync, writeFileSync, existsSync, readFileSync, symlinkSync } from "node:fs";
+const [a, b, c, outside] = process.argv.slice(1); const out: string[] = []; const rd = (d: string) => d + "/.loki/runs/r";
 const mk = (d: string) => { mkdirSync(d + "/.venv/bin", { recursive: true }); writeFileSync(d + "/.venv/pyvenv.cfg", "home = /usr/bin\n"); };
+// moved
+await guardEnv(c, "lint:ruff", async () => { mk(c); }, rd(c));
+const led = (() => { try { return readFileSync(rd(c) + "/env-moved/LEDGER.txt", "utf8"); } catch { return ""; } })();
+out.push("moved:" + [!existsSync(c + "/.venv"), existsSync(rd(c) + "/env-moved/.venv/pyvenv.cfg"), /\tmoved\t\.venv\t.*\tcreated by lint:ruff/.test(led), lokiEnvNotes(c).some((n) => n.includes("moved .venv to .loki/runs/r/env-moved"))].join(","));
+// kept
 const sa = ignoreSnapshot(a), sb = ignoreSnapshot(b), t0 = Date.now() - 1000;
-const other = harnessCmdBegin(); await guardEnv(a, "lint:ruff", async () => { mk(a); }); other();
-mk(b); // the same .venv, made by the change under test
-out.push(String(existsSync(a + "/.venv")), lokiEnvKept(a).join(","), String(lokiEnvNotes(a).some((n) => n.includes("kept .venv (another harness command was running)") && n.includes("not counted against the change"))));
-out.push(String(ignoreRuleChanges(a, sa).length), String(ignoreRuleChanges(b, sb).length > 0));
-out.push(String(envChangedSince(a, a, t0, [], {})), String(envChangedSince(b, b, t0, [], {})));
-console.log(out.join("|"));' "$GK/a" "$GK/b" 2>&1 | tail -1)"
-[ "$GK_OUT" = "true|.venv|true|0|true|false|true" ] && ok "env guard kept: with another harness command running the created .venv is kept and named, subtracted from the ignore notes and envChangedSince; the change's own .venv is still reported ($GK_OUT)" || bad "env guard kept: got '$GK_OUT'"
+const other = harnessCmdBegin(); await guardEnv(a, "lint:ruff", async () => { mk(a); }, rd(a)); other();
+mk(b);
+out.push("kept:" + [existsSync(a + "/.venv"), lokiEnvKept(a).map((k) => k.rel).join("+"), lokiEnvNotes(a).some((n) => n.includes("left .venv in place (another harness command was running)") && n.includes("not counted against the change")), ignoreRuleChanges(a, sa).length, ignoreRuleChanges(b, sb).length > 0, envChangedSince(a, a, t0, [], {}), envChangedSince(b, b, t0, [], {})].join(","));
+// refusals
+const no = () => false;
+out.push("refuse:" + [envMoveRefusal(c, "trk2", no, false), envMoveRefusal(c, "m.py", () => true, true), envMoveRefusal(c, ".venv2", no, true), envMoveRefusal(c, "linked/newpkg", no, true), envMoveRefusal(c, "trk", no, true)].map((x) => x ?? "null").join("|"));
+// integration: a node_modules linked outside the checkout; the entry its command adds lives outside and is never moved
+symlinkSync(outside, b + "/node_modules");
+await guardEnv(b, "lint:tsc", async () => { mkdirSync(outside + "/added", { recursive: true }); writeFileSync(outside + "/added/x.js", "1\n"); }, rd(b));
+out.push("outside-kept:" + [existsSync(outside + "/added/x.js"), lokiEnvKept(b).some((k) => k.rel === "node_modules/added"), lokiEnvNotes(b).some((n) => n.includes("it resolves outside the checkout"))].join(","));
+// later (B2): node_modules exists at intake; a kept entry, then real changes after the guard
+mkdirSync(a + "/node_modules/dep", { recursive: true }); writeFileSync(a + "/node_modules/dep/index.js", "1\n");
+await new Promise((r) => setTimeout(r, 30)); const deps = { node_modules: depsListing(a + "/node_modules") }, t1 = Date.now();
+const o2 = harnessCmdBegin(); await guardEnv(a, "lint:tsc", async () => { mkdirSync(a + "/node_modules/typegen", { recursive: true }); writeFileSync(a + "/node_modules/typegen/index.d.ts", "export {};\n"); }, rd(a)); o2();
+const quiet = envChangedSince(a, a, t1, [], deps);
+await new Promise((r) => setTimeout(r, 30)); writeFileSync(a + "/node_modules/typegen/later.js", "2\n"); const later = envChangedSince(a, a, t1, [], deps);
+const { rmSync } = await import("node:fs"); rmSync(a + "/node_modules/typegen/later.js"); await new Promise((r) => setTimeout(r, 30)); mkdirSync(a + "/node_modules/realpkg"); writeFileSync(a + "/node_modules/realpkg/i.js", "3\n");
+out.push("later:" + [quiet, later, envChangedSince(a, a, t1, [], deps)].join(","));
+console.log(out.join(" "));' "$GK/a" "$GK/b" "$GK/c" "$GK/outside" 2>&1 | tail -1)"
+GK_WANT="moved:true,true,true,true kept:true,.venv,true,0,true,false,true refuse:another harness command was running|it existed before the command|it is a link|it resolves outside the checkout|git tracks it outside-kept:true,true,true later:false,true,true"
+[ "$GK_OUT" = "$GK_WANT" ] && ok "env guard move and keep: a lone command's .venv is moved to the run folder with a ledger line; a kept one is subtracted only as it was; each refusal is named; nothing outside is touched; a later install into a kept dir still counts ($GK_OUT)" || bad "env guard move and keep: got '$GK_OUT'"
+
+# G2 undeclared install and the cap (review B4, unit): an install Loki did not run is N/A only when nothing depends on it, or every non-lint check of its ecosystem passed.
+# A failing check (even one excused as red on base, maybe for want of the very dependencies) keeps it on NOT PROVEN, and so does a used package with no check at all.
+# Plant 253q: undeclared lines go to N/A unconditionally (the fail cell reads na).
+UB="$T/undeclared-cap"; rm -rf "$UB"; mkdir -p "$UB/repo/sub" && printf '[project]\nname = "x"\n' > "$UB/repo/pyproject.toml" && printf '[project]\nname = "s"\n' > "$UB/repo/sub/pyproject.toml"
+UB_OUT="$(cd "$ROOT/loki-ts" && timeout 60 bun -e 'import { unusedInstallNotes, UNDECLARED_INSTALL } from "./src/project_model/install.ts";
+const repo = process.argv[1]; const line = (r: string) => `${UNDECLARED_INSTALL} for this package (x); to install the dependencies yourself, run: pip install -e . (install:${r}; harness-owned)`;
+const pk = (root: string) => ({ name: root, root, commands: { test: null, lint: null, build: null, start: null } });
+const model = { packages: () => [pk("."), pk("sub")], packageOf: () => null, installFor: () => ({ cmd: "pip install -e .", cwd: ".", cite: [] }) } as any;
+const k = (r: string, res: { name: string; result: string }[]) => { const n = unusedInstallNotes([line(r)], model, [], res.map((c) => c.name), repo, res); return n.na.length ? "na" : n.cap.length ? "cap" : "none"; };
+console.log([k(".", [{ name: "pytest:test_a.py", result: "fail" }]), k(".", [{ name: "pytest:test_a.py", result: "pass" }, { name: "lint:ruff", result: "fail" }]), k(".", []), k("sub", [])].join(","));' "$UB/repo" 2>&1 | tail -1)"
+[ "$UB_OUT" = "cap,na,cap,na" ] && ok "undeclared install cap: a failing test of its ecosystem or no check at all keeps it on NOT PROVEN; all passing, or a package nothing uses, is N/A ($UB_OUT)" || bad "undeclared install cap: got '$UB_OUT'"
 
 # .venv output in the commit (rule 22, real venv, no network needed): the repo has no .gitignore and the venv has no .gitignore of its own (Python 3.12 and older write none), so the
 # commit stage's stage list (git add -A, then dropSet with nothing recorded as install-created) must still hold zero .venv paths.

@@ -3,11 +3,11 @@
 // commits that exist only in target..HEAD (Loki's own unmerged work or the user's own).
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, renameSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { classifyCheck, fileHashes, forgetVenv, goRunner, lokiEnvKept, pureToolCache, recordLokiEnv, sealedWallCopy } from "./check_result.ts";
+import { classifyCheck, fileHashes, forgetVenv, goRunner, lokiEnvKept, lokiKeptFor, lokiKeptOwns, pureToolCache, recordLokiEnv, sealedWallCopy, type LokiKept } from "./check_result.ts";
 import { LEGACY_BRANCHES_DIR, listRunIds } from "../commands/run_status.ts";
 import { runOwnerAlive } from "./run_pid.ts";
 import { findInterrupted } from "./run_outputs.ts";
@@ -382,10 +382,12 @@ export function envChangedSince(repoDir: string, pkgDir: string, sinceMs: number
     }
     const depRoots: string[] = [];
     for (const d of ["node_modules", ".venv"]) if (existsSync(join(pkgDir, d))) { roots.push(join(pkgDir, d)); depRoots.push(join(pkgDir, d)); }
-    const kept = lokiEnvKept(repoDir).map((k) => join(repoDir, k)), lokiMade = (f: string): boolean => kept.some((k) => f === k || f.startsWith(`${k}/`)); // G2: what a Loki-chosen command created and left is not a change of the environment under test
+    // G2: what a Loki-chosen command created and left, as it was when the guard finished, is not a change of the environment under test; anything later is
+    const keptRel = new Set(lokiEnvKept(repoDir).map((k) => k.rel)), lokiMade = (f: string): boolean => { const rel = relative(repoDir, f); return !rel.startsWith("..") && lokiKeptOwns(repoDir, rel); };
     if (deps) for (const r of depRoots) { // a package deleted or renamed since intake (a record from before this field skips the check)
-      if (lokiMade(r)) continue; // G2: a dependency root a Loki-chosen command created and left
-      const was = deps[relative(repoDir, r)], now = depsListing(r)?.filter((n) => !lokiMade(join(r, n))) ?? null;
+      const kr = keptRel.has(relative(repoDir, r)) ? lokiKeptFor(repoDir, relative(repoDir, r)) : undefined;
+      if (kr) { const now = depsListing(r); if (!kr.listing || !now || kr.listing.length !== now.length || kr.listing.some((n, i) => n !== now[i])) return true; continue; } // a root Loki's command made: compared with its own listing then
+      const was = deps[relative(repoDir, r)], now = depsListing(r)?.filter((n) => !keptRel.has(relative(repoDir, join(r, n)))) ?? null;
       if (!was || !now || was.length !== now.length || was.some((n, i) => n !== now[i])) return true;
     }
     if (roots.length === 0) return false;
@@ -398,20 +400,22 @@ export function envChangedSince(repoDir: string, pkgDir: string, sinceMs: number
     if (out.split("\n").some((f) => f !== "" && !lokiMade(f) && !(TOOL_OUTPUT_FILE.test(f) && toolOutputDir(dirname(f))))) return true; // TOOL-OUTPUT-IN-DEPS: a tool's own output in a directory that holds nothing else
     // directories: a changed directory is a dependency change unless it is a dependency root or site-packages (the listing above covers them) or holds a runner cache
     const dirs = execFileSync("find", ["-P", ...new Set(roots), "(", ...prune, ")", "-prune", "-o", "-type", "d", "-cnewer", stamp, "-print"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120000, maxBuffer: 64 * 1024 * 1024 }).split("\n").filter(Boolean);
-    return dirs.some((d) => !(roots.includes(d) || lokiMade(d) || kept.some((k) => dirname(k) === d) || /(?:^|\/)site-packages$/.test(d) || RUNNER_CACHE_DIRS.concat("__pycache__").some((c) => existsSync(join(d, c))) || toolOutputDir(d)));
+    return dirs.some((d) => !(roots.includes(d) || lokiMade(d) || [...keptRel].some((k) => dirname(join(repoDir, k)) === d && (() => { try { const st = lstatSync(d); return Math.max(st.ctimeMs, st.mtimeMs) <= (lokiKeptFor(repoDir, k)?.at ?? 0); } catch { return false; } })()) || /(?:^|\/)site-packages$/.test(d) || RUNNER_CACHE_DIRS.concat("__pycache__").some((c) => existsSync(join(d, c))) || toolOutputDir(d)));
   } catch { return true; } finally { if (stampDir) rmSync(stampDir, { recursive: true, force: true }); }
 }
 
 // ---- G2 ENV-GUARD (LOKI_E10_ENV_GUARD, default on; =0 off): verify never changes the environment it judges ----
 // A command Loki itself chose (a lint or typecheck it picked, kind "static" in verify's runCheck) is fingerprinted before and after with what the environment
 // readers already use: the untracked and ignored tops git lists (a new .venv, a tool cache) and the raw listing of each dependency root that existed (a new
-// entry written into node_modules). What it created is Loki's own change. It is removed when that is provably safe (no other harness command was in flight,
-// the path did not exist before, is untracked, is not a link and lies inside the checkout), else kept and registered so envChangedSince and the ignore-rule
-// notes subtract it. Either way the receipt carries one informational line, never a cap. Repo-declared commands (the repo's own tests) are not guarded.
+// entry written into node_modules). What it created is Loki's own change. Nothing is ever deleted: a created path is MOVED into the run's own folder
+// (<run dir>/env-moved/<path>, one ledger line each in env-moved/LEDGER.txt), so even a file the user made in the same moment can be put back, and only when
+// every condition holds (no other harness command was in flight, the path did not exist before, is untracked, is not a link, lies inside the checkout, and the
+// run folder is on the same volume). Otherwise it stays where it is and is registered with the guard's end time, so envChangedSince and the ignore-rule notes
+// subtract exactly what existed then. Either way the receipt carries one informational line, never a cap. Repo-declared commands are not guarded.
 export const envGuardOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_ENV_GUARD"] ?? "").trim());
 export const ENV_DIR_NAMES = ["node_modules", ".venv", "venv", ".tox", ".nox", "__pypackages__"];
 let cmdsInFlight = 0, cmdStarts = 0;
-/** Called by every harness command spawn (verify's runOnce): the guard deletes only when its own command ran alone. */
+/** Called by every harness command spawn (verify's runOnce): the guard moves anything only when its own command ran alone. */
 export function harnessCmdBegin(): () => void { cmdsInFlight++; cmdStarts++; let done = false; return () => { if (!done) { done = true; cmdsInFlight--; } }; }
 interface EnvSnap { tops: Set<string>; lists: Map<string, string[] | null> }
 function envSnap(repoDir: string): EnvSnap | null {
@@ -423,7 +427,17 @@ function envSnap(repoDir: string): EnvSnap | null {
   } catch { return null; }
 }
 const insideRepo = (repoDir: string, abs: string): boolean => { try { const r = relative(realpathSync(repoDir), realpathSync(dirname(abs))); return !r.startsWith("..") && !r.startsWith(sep); } catch { return false; } };
-export async function guardEnv<T>(repoDir: string, label: string, run: () => Promise<T>): Promise<T> {
+/** The checks that decide whether a created path may be moved out; each is its own line so each has its own plant (scope-and-fix 253j..253n). */
+export function envMoveRefusal(repoDir: string, rel: string, existed: (rel: string) => boolean, alone: boolean): string | null {
+  const abs = join(repoDir, rel);
+  if (!alone) return "another harness command was running";
+  if (existed(rel)) return "it existed before the command";
+  try { if (lstatSync(abs).isSymbolicLink()) return "it is a link"; } catch { return "it could not be read"; }
+  if (!insideRepo(repoDir, abs)) return "it resolves outside the checkout";
+  try { if (safeGit(repoDir, ["ls-files", "-z", "--", rel]).length > 0) return "git tracks it"; } catch { return "git could not say whether it is tracked"; }
+  return null;
+}
+export async function guardEnv<T>(repoDir: string, label: string, run: () => Promise<T>, runDir?: string): Promise<T> {
   if (!envGuardOn()) return run();
   const before = envSnap(repoDir); if (!before) return run();
   const alone0 = cmdsInFlight === 0, s0 = cmdStarts;
@@ -433,17 +447,27 @@ export async function guardEnv<T>(repoDir: string, label: string, run: () => Pro
   for (const [root, was] of before.lists) { const now = after.lists.get(root); if (was && now) for (const n of now) if (!was.includes(n)) created.push(`${root}/${n}`); }
   const made = created.filter((rel) => !pureToolCache(repoDir, rel) && !toolOutputDir(join(repoDir, rel))); // a tool's own cache (.ruff_cache, .mypy_cache) is already exempt everywhere: not an environment change
   if (made.length === 0) return r;
-  const removed: string[] = [], kept: string[] = [];
+  const moved: string[] = [], kept: string[] = [], why = new Set<string>(), keptRecs: LokiKept[] = [], at = Date.now();
+  const into = runDir ? join(runDir, "env-moved") : null;
+  const existed = (x: string): boolean => before.tops.has(x) || before.tops.has(`${x}/`) || (before.lists.get(dirname(x))?.includes(basename(x)) ?? false);
   for (const rel of made) {
-    const abs = join(repoDir, rel);
-    let safe = alone && insideRepo(repoDir, abs);
-    try { if (safe && lstatSync(abs).isSymbolicLink()) safe = false; } catch { safe = false; }
-    try { if (safe && safeGit(repoDir, ["ls-files", "-z", "--", rel]).length > 0) safe = false; } catch { safe = false; }
-    if (safe) { try { rmSync(abs, { recursive: true, force: true }); forgetVenv(abs); removed.push(rel); continue; } catch { /* kept below */ } }
-    kept.push(rel);
+    let refusal = into ? envMoveRefusal(repoDir, rel, existed, alone) : "the run has no folder to move it into";
+    if (!refusal && into) {
+      const dest = join(into, rel);
+      try {
+        if (existsSync(dest)) throw new Error("taken");
+        mkdirSync(dirname(dest), { recursive: true }); renameSync(join(repoDir, rel), dest); // a rename: same volume only, never a copy-and-delete
+        appendFileSync(join(into, "LEDGER.txt"), `${new Date(at).toISOString()}\tmoved\t${rel}\t${dest}\tcreated by ${label}\n`);
+        forgetVenv(join(repoDir, rel)); moved.push(rel); continue;
+      } catch { refusal = "it could not be moved into the run folder"; }
+    }
+    kept.push(rel); why.add(refusal!);
+    let listing: string[] | null = null; if (ENV_DIR_NAMES.includes(basename(rel))) { try { listing = depsListing(join(repoDir, rel)); } catch { listing = null; } }
+    keptRecs.push({ rel, at, listing });
   }
   const show = (xs: string[]): string => xs.slice(0, 6).join(", ") + (xs.length > 6 ? ` (+${xs.length - 6} more)` : "");
-  recordLokiEnv(repoDir, `Loki's own command changed the environment: \`${label}\` created ${show(made)}${removed.length ? `; removed ${show(removed)}` : ""}${kept.length ? `; kept ${show(kept)} (${alone ? "it could not be removed safely" : "another harness command was running"}), and subtracted from the environment checks` : ""}; not counted against the change`, kept);
+  const where = into ? relative(repoDir, into) || into : "";
+  recordLokiEnv(repoDir, `Loki's own command changed the environment: \`${label}\` created ${show(made)}${moved.length ? `; moved ${show(moved)} to ${where} (ledger ${where}/LEDGER.txt)` : ""}${kept.length ? `; left ${show(kept)} in place (${[...why].join("; ")}), and subtracted from the environment checks as it was then` : ""}; not counted against the change`, keptRecs);
   return r;
 }
 

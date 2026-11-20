@@ -1586,14 +1586,14 @@ export function ignoreRuleChanges(repoDir: string, snap: unknown, baseSha?: stri
     const gi = new Set(changedFiles(repoDir, baseSha ?? "HEAD").filter((f) => basename(f) === ".gitignore"));
     const hidden: string[] = [];
     for (const [f, h] of Object.entries(cur)) {
-      if (prior[f] === h || underLokiKept(repoDir, f)) continue; // G2: a file a Loki-chosen command created and left is Loki's, never the change's
+      if (prior[f] === h || lokiKeptOwns(repoDir, f)) continue; // G2: a file a Loki-chosen command created and left is Loki's, never the change's (a later change still counts)
       if (basename(f) === ".gitignore" && pureToolCache(repoDir, dirname(f))) continue;
       if (basename(f) === ".gitignore") gi.add(f); else hidden.push(f);
     }
     if (gi.size) notes.push(`ignore rules changed while the run was in progress: ${[...gi].slice(0, 20).join(", ")} was added or edited, so git may hide files the run created`);
     if (hidden.length) notes.push(`an ignored file that can change what verify runs or imports was added or changed during the run: ${hidden.slice(0, 20).join(", ")}${hidden.length > 20 ? ` (+${hidden.length - 20} more)` : ""}`);
     if (notes.length === 0) return [];
-    const made = listIgnoredFiles(repoDir).filter((f) => !underLokiKept(repoDir, f)).filter((f) => { try { const st = statSync(join(repoDir, f)); return Math.max(st.birthtimeMs, st.mtimeMs) >= s.at!; } catch { return false; } });
+    const made = listIgnoredFiles(repoDir).filter((f) => !lokiKeptOwns(repoDir, f)).filter((f) => { try { const st = statSync(join(repoDir, f)); return Math.max(st.birthtimeMs, st.mtimeMs) >= s.at!; } catch { return false; } });
     if (made.length) notes.push(`ignored file created during the run, hidden from the diff and the receipt: ${made.slice(0, 20).join(", ")}${made.length > 20 ? ` (+${made.length - 20} more)` : ""}`);
     return notes;
   } catch { return ["ignore rules could not be compared with the intake snapshot: git failed"]; }
@@ -2083,16 +2083,25 @@ export function forgetVenv(dir: string): void {
   for (const k of [...venvSkips.keys()]) if (k.includes(`\0${dir}/`)) venvSkips.delete(k);
 }
 /** G2 ENV-GUARD registry, per repository: the informational lines guardEnv wrote ("Loki's own command changed the environment") and the paths a Loki-chosen
- *  command created that could not be removed safely (kept). Readers that judge the environment subtract the kept paths, so Loki's own change is never
- *  counted against the change under test. Lives for the run's worker process. */
-const lokiEnv = new Map<string, { notes: string[]; kept: Set<string> }>();
-export function recordLokiEnv(repoDir: string, note: string, kept: readonly string[]): void {
-  const e = lokiEnv.get(repoDir) ?? { notes: [], kept: new Set<string>() }; if (!e.notes.includes(note)) e.notes.push(note); for (const k of kept) e.kept.add(k.replace(/\/$/, "")); lokiEnv.set(repoDir, e);
+ *  command created that could not be moved out safely (kept), each with the time the guard finished and, for a dependency directory, its listing then.
+ *  Readers that judge the environment subtract only what existed at that time: a file or directory under a kept path whose ctime or mtime is later, or a
+ *  kept dependency directory whose listing changed since, still counts, so a real install into it after the guard is never hidden. Lives for the run's worker process. */
+export interface LokiKept { rel: string; at: number; listing: string[] | null }
+const lokiEnv = new Map<string, { notes: string[]; kept: Map<string, LokiKept> }>();
+export function recordLokiEnv(repoDir: string, note: string, kept: readonly LokiKept[]): void {
+  const e = lokiEnv.get(repoDir) ?? { notes: [], kept: new Map<string, LokiKept>() }; if (!e.notes.includes(note)) e.notes.push(note);
+  for (const k of kept) { const rel = k.rel.replace(/\/$/, ""); if (!e.kept.has(rel)) e.kept.set(rel, { ...k, rel }); }
+  lokiEnv.set(repoDir, e);
 }
 export const lokiEnvNotes = (repoDir: string): string[] => [...(lokiEnv.get(repoDir)?.notes ?? [])];
-export const lokiEnvKept = (repoDir: string): string[] => [...(lokiEnv.get(repoDir)?.kept ?? [])];
-/** True when `rel` (repo-relative) is a path a Loki-chosen command created and left, or lies inside one. */
-export const underLokiKept = (repoDir: string, rel: string): boolean => lokiEnvKept(repoDir).some((k) => rel === k || rel.startsWith(`${k}/`));
+export const lokiEnvKept = (repoDir: string): LokiKept[] => [...(lokiEnv.get(repoDir)?.kept.values() ?? [])];
+/** The kept record `rel` (repo-relative) lies in or is, if any. */
+export const lokiKeptFor = (repoDir: string, rel: string): LokiKept | undefined => lokiEnvKept(repoDir).find((k) => rel === k.rel || rel.startsWith(`${k.rel}/`));
+/** True only when `rel` is under a kept path AND was last changed no later than the guard that kept it (lstat: a link is judged itself). */
+export function lokiKeptOwns(repoDir: string, rel: string): boolean {
+  const k = lokiKeptFor(repoDir, rel); if (!k) return false;
+  try { const st = lstatSync(join(repoDir, rel)); return Math.max(st.ctimeMs, st.mtimeMs) <= k.at; } catch { return false; }
+}
 export function resetLokiEnv(): void { lokiEnv.clear(); }
 export function canImport(py: string, module: string): boolean {
   if (!/^[A-Za-z_][\w.]*$/.test(module)) return false;
