@@ -24,6 +24,12 @@
 #   P7 review_queue.ts assess: pass process.env to classifyRisk; PR 3 is no longer high (the test exports LOKI_RISK_TIER=low).
 #   P8 autonomy/loki _merge_pr_gated: replace the receipt head_sha filter with `true`; the stale-head leg merges.
 #   H1 seal.ts: leave the "check fails" kind out of held_by; the F0 held_by leg fails (fails [] vs [...]).
+#   V7a closure.ts ruleMode: read "observe" as enforce; S1 fails.
+#   V7b closure.ts verificationStamp: drop the "none" fallback; S2j (proof true, no branch) fails.
+#   V7c verificationStamp: drop the !i.proof test; S2h fails.
+#   V7d verificationStamp: drop the wallPassed test; S2i fails.
+#   V7e verificationStamp: put the Wall branch before alreadyOk; S2a fails.
+#   V7f seal.ts: write observed entries into notProven (shown red by the V2 W2 cell in run-safety.sh, which reads seal.ts).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -303,5 +309,48 @@ print("|".join([w["verdict"], "list" if isinstance(hb, list) and hb and all(set(
 PY
 )"
 case "$HB" in "FAILED|list|fails-match|VERIFIED|absent"|"PARTIAL|list|fails-match|VERIFIED|absent") ok "F0 held_by: a run held below VERIFIED by a failing check carries held_by [{kind, detail}] with one 'check fails' entry per failing check in the receipt; a VERIFIED receipt has no held_by" ;; *) bad "F0 held_by gave: $HB" ;; esac
+
+# --- VERIFY-PLAN V7: ruleMode (S1), verificationStamp (S2, one cell per proved_by branch in order), and the seal's stamp on real receipts (S3) ---
+S12="$(cd "$ROOT/loki-ts" && bun -e '
+import { ruleMode, verificationStamp } from "./src/engine10/closure.ts";
+const m = (v: string | undefined, d: "off" | "observe" | "enforce") => ruleMode("K", d, v === undefined ? {} : { K: v });
+console.log("S1", [m("", "observe"), m("0", "enforce"), m("OFF ", "enforce"), m("observe", "off"), m(" Observe", "off"), m("1", "off"), m("enforce", "off"), m("garbage", "enforce"), m(undefined, "off")].join(","));
+const base = { checks: [{ name: "test:calc.test.ts", result: "pass", n: 2 }, { name: "full suite (bun test)", result: "pass" }, { name: "lint:eslint", result: "pass" }], wallFiles: 0, proofRun: null, ownProof: null, ftp: null, alreadyOk: false, exoProof: false, noWall: true, strictProof: true, executed: false, proof: true, wallPassed: false };
+const s = (o: object) => verificationStamp({ ...base, ...o } as never).proved_by;
+console.log("S2a", s({ alreadyOk: true, noWall: false, exoProof: true, wallPassed: true, ftp: { ok: true, files: ["x"] } }));
+console.log("S2b", s({ noWall: false, exoProof: true, wallPassed: true, wallFiles: 1 }));
+console.log("S2c", s({ exoProof: true }));
+console.log("S2d", s({ ftp: { ok: true, files: ["a.test.ts", "b.test.ts"] } }));
+console.log("S2e", s({ ownProof: { ok: true, steps: 2 } }));
+console.log("S2f", s({ strictProof: false, executed: true }));
+const none = verificationStamp({ ...base, checks: [], proof: false } as never);
+console.log("S2g", none.proved_by, JSON.stringify(none.ran));
+console.log("S2h", s({ proof: false, ftp: { ok: true, files: ["x"] }, exoProof: true }));
+console.log("S2j", s({}));
+console.log("S2i", s({ noWall: false, wallFiles: 1, exoProof: true, wallPassed: false }));
+console.log("S2ran", JSON.stringify(verificationStamp(base as never).ran));
+' 2>&1)"
+has "V7 S1 ruleMode: empty is the default, 0/OFF off, observe in any case observe, 1/enforce enforce, anything else the default" "$S12" "S1 observe,off,off,observe,observe,enforce,enforce,enforce,off"
+has "V7 S2: Loki's own re-run of the kept proof on an unchanged tree wins over every other branch" "$S12" "S2a Loki's re-run of the kept proof script on the unchanged tree"
+has "V7 S2: a Wall that ran and passed is the Wall line" "$S12" "S2b a Wall test written from the issue before the code"
+has "V7 S2: an agent-independent pass with no Wall" "$S12" "S2c an agent-independent passing test"
+has "V7 S2: a fail-then-pass test names its files" "$S12" "S2d a test that fails on the base commit and passes on the change: a.test.ts, b.test.ts"
+has "V7 S2: an own-proof step" "$S12" "S2e a proof script step that fails without the change and passes with it"
+has "V7 S2: executed tests when LOKI_EXOGENOUS_PROOF=0" "$S12" "S2f executed tests (LOKI_EXOGENOUS_PROOF=0)"
+has "V7 S2: nothing ran and nothing proved gives none and ran [none]" "$S12" 'S2g none ["none"]'
+has "V7 S2: proof true with no branch that names it falls back to none" "$S12" "S2j none"
+has "V7 S2: no proof gives none even with a passing fail-then-pass record and an exogenous pass" "$S12" "S2h none"
+has "V7 S2: a Wall that did not pass never reads as the Wall line" "$S12" "S2i an agent-independent passing test"
+has "V7 S2: ran lists targeted files, the full suite and static checks" "$S12" 'S2ran ["1 targeted test file(s)","full suite (bun test)","1 static check(s)"]'
+S3="$(python3 -I -c '
+import json, sys
+def load(p):
+    try: return json.load(open(p))
+    except Exception: return {}
+w, d = load(sys.argv[1]), load(sys.argv[2])
+vb = lambda r: (r.get("verified_by") or {}).get("proved_by")
+print("S3", d.get("verdict"), "proved" if vb(d) not in (None, "none") else "proved=%s" % vb(d), "observe-absent" if "observe" not in d else "observe-present", w.get("verdict"), vb(w))
+' "$HBW" "$HBD")"
+has "V7 S3: a VERIFIED receipt carries verified_by with a proof and no observe key; a run with no proof carries proved_by none" "$S3" "S3 VERIFIED proved observe-absent FAILED none"
 
 finish

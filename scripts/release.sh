@@ -69,6 +69,7 @@ DRY_RUN="false"
 BUMP_ONLY="false"
 CHECK_CLEAN="false"
 CHECK_CI="false"
+CHECK_CAL="false"
 SHIP="false"
 SHIP_NOTES=""
 BUMP_TYPE=""
@@ -94,6 +95,9 @@ parse_args() {
                 ;;
             --check-ci)
                 CHECK_CI="true"
+                ;;
+            --check-calibration)
+                CHECK_CAL="true"
                 ;;
             --ship)
                 SHIP="true"
@@ -135,7 +139,7 @@ parse_args() {
         exit 1
     fi
 
-    if [[ -z "$BUMP_TYPE" && "$CHECK_CLEAN" != "true" && "$CHECK_CI" != "true" ]]; then
+    if [[ -z "$BUMP_TYPE" && "$CHECK_CLEAN" != "true" && "$CHECK_CI" != "true" && "$CHECK_CAL" != "true" ]]; then
         log_error "Bump type required: patch, minor, or major"
         usage
         exit 1
@@ -158,6 +162,10 @@ Options:
                  only when the latest completed run of each on HEAD, or on its parent when
                  HEAD has none, succeeded; exit 6 (SHIP_CI_NOT_GREEN) otherwise. Unset or
                  empty (the default): no CI run is required, exit 0. --ship runs the same check.
+  --check-calibration
+               Exit 0 when the release changes no label file, or a calibration result
+               was committed since the last tag and is no worse than the previous one;
+               exit 4 (SHIP_NO_CALIBRATION, SHIP_CALIBRATION_*) otherwise. --ship runs it.
   --check-clean  Run after the release commit: exit 1 naming any tracked file
                still modified (E-151: a version file left out of the commit).
   --ship --notes FILE
@@ -608,6 +616,48 @@ ship_require_ci_green() {
     log_info "CI green on $head: $(printf '%s\n' "$lines" | awk -F'\t' '{printf "%s run %s ", $1, $3}')"
 }
 
+# CALIBRATION (VERIFY-PLAN V1, exit 4). A release that changes one of Loki's label files must carry
+# a calibration result (benchmarks/h2h/results/calibration-*.json, from the four loki-cal-* configs)
+# committed since the last tag, with no fewer valid runs, no more false VERIFIED labels and no fewer
+# right labels than the previous committed calibration file. The first file has no previous one, so
+# only its presence is checked. LOKI_RELEASE_CAL_REPO, LOKI_RELEASE_CAL_FROM and LOKI_RELEASE_CAL_TO
+# are test-only overrides (tests/min/release-notes.sh) for the repo, the last tag and HEAD.
+ship_require_calibration() {
+    local repo from to files new prev new_doc prev_doc cmp rc
+    repo="${LOKI_RELEASE_CAL_REPO:-$ROOT_DIR}"
+    from="${LOKI_RELEASE_CAL_FROM:-v$(get_current_version)}"
+    to="${LOKI_RELEASE_CAL_TO:-HEAD}"
+    files="loki-ts/src/engine10/stages/verify.ts loki-ts/src/engine10/stages/seal.ts loki-ts/src/runner/repo_profile.ts loki-ts/src/engine10/failures.ts loki-ts/src/util/check_result.ts loki-ts/src/engine10/closure.ts"
+    git -C "$repo" rev-parse --verify -q "$from^{commit}" >/dev/null || ship_refuse SHIP_CALIBRATION_NO_BASE "cannot resolve $from in $repo (fetch the tags: git fetch --tags)"
+    # shellcheck disable=SC2086 # word-split path lists on purpose
+    git -C "$repo" diff --quiet "$from" "$to" -- $files && return 0
+    new="$(git -C "$repo" log -1 --format= --name-only --diff-filter=AM "$from..$to" -- 'benchmarks/h2h/results/calibration-*.json' | awk 'NF')"
+    [ -n "$new" ] || ship_refuse SHIP_NO_CALIBRATION "this release changes a label file and no benchmarks/h2h/results/calibration-*.json was added or changed since $from; run bash benchmarks/h2h/run.sh --suite replay --configs loki-cal-merged,loki-cal-nofix,loki-cal-plant,loki-cal-inert --jobs 1 --timeout 1800 --out benchmarks/h2h/results/calibration-<version>.json and commit it"
+    prev="$(git -C "$repo" log -1 --format= --name-only --diff-filter=AM "$from" -- 'benchmarks/h2h/results/calibration-*.json' | awk 'NF')"
+    if [ -z "$prev" ]; then
+        log_info "Calibration: $new (the first calibration file; presence checked)"
+        return 0
+    fi
+    new_doc="$(git -C "$repo" show "$to:$new")" || ship_refuse SHIP_CALIBRATION_UNREADABLE "$new"
+    prev_doc="$(git -C "$repo" show "$from:$prev")" || ship_refuse SHIP_CALIBRATION_UNREADABLE "$prev"
+    rc=0
+    cmp="$(python3 -I -c 'import json, sys
+try:
+    n, p = (json.loads(a)["calibration"] for a in sys.argv[1:3])
+    vals = {k: (int(n[k]), int(p[k])) for k in ("n", "false_verified", "verifier_right")}
+except (ValueError, KeyError, TypeError):
+    print("not a calibration result"); sys.exit(3)
+print(", ".join("%s %d (previous %d)" % (k, a, b) for k, (a, b) in vals.items()))
+if vals["n"][0] < vals["n"][1]: sys.exit(2)
+if vals["false_verified"][0] > vals["false_verified"][1] or vals["verifier_right"][0] < vals["verifier_right"][1]: sys.exit(1)' "$new_doc" "$prev_doc")" || rc=$?
+    case "$rc" in
+        0) log_info "Calibration: $new vs $prev: $cmp" ;;
+        2) ship_refuse SHIP_CALIBRATION_FEWER_RUNS "$new has fewer valid runs than $prev ($cmp): rerun the calibration (its invalid list says why)" ;;
+        1) ship_refuse SHIP_CALIBRATION_WORSE "$new vs $prev: $cmp" ;;
+        *) ship_refuse SHIP_CALIBRATION_UNREADABLE "$new or $prev: $cmp" ;;
+    esac
+}
+
 # A linked worktree has a git-dir distinct from the common dir. --ship pushes,
 # and the pre-push hook refuses pushes from linked worktrees, so refuse up
 # front, before any VERSION edit or commit, and name the main checkout.
@@ -754,6 +804,7 @@ run_ship() {
     [ -z "$dirty" ] || ship_refuse SHIP_DIRTY_RELEASE_FILES "differ from HEAD: $(printf '%s' "$dirty" | tr '\n' ' ') (commit them through review or git restore them)"
     ship_require_ancestor
     ship_require_ci_green
+    ship_require_calibration
 
     ship_phase "bump version files"
     # Tracked generator outputs already dirty before the bump are the user's own
@@ -894,6 +945,10 @@ main() {
     fi
     if [ "$CHECK_CI" = "true" ]; then
         ship_require_ci_green
+        return
+    fi
+    if [ "$CHECK_CAL" = "true" ]; then
+        ship_require_calibration
         return
     fi
 

@@ -2,13 +2,13 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"; import { tmpdir } from "node:os"; import { baseDepsLinker } from "../util/base_guard.ts";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { noteRegenerated, regenDropOn } from "../e10ext/commit_filter.ts";
-import { hooks } from "./hooks.ts"; import { cascadeV0On, wallConcurrent } from "../util/wall_knobs.ts"; import { attemptModel, CASCADE_LEAD, cascadeWallTail, wallFailedOf } from "../features/attempts.ts"; import { wallEnabled } from "./sizing.ts";
+import { hooks } from "./hooks.ts"; import { cascadeIntroducedOn, cascadeV0On, wallConcurrent } from "../util/wall_knobs.ts"; import { attemptModel, CASCADE_INTRODUCED_LEAD, CASCADE_LEAD, cascadeIntroducedTail, cascadeWallTail, wallFailedOf } from "../features/attempts.ts"; import { failureClasses } from "./closure.ts"; import { wallEnabled } from "./sizing.ts";
 import { safeGit, commitHookBypassOn, treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { assumptionOf, consultAvailable, neverStopActive, readConsults, type NeverStopRecord } from "../features/opus_consult.ts";
 import { rerunOnQuota, sessionKind, usageLimitOf } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts"; import { environmentShaped } from "./failures.ts";
-import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote, timeNoteOn } from "../util/run_cap.ts"; import { FINISH_LINE, issueRunBrief } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, isClean, MIN_ATTEMPT_WINDOW_S, runExtraAttempts, signalNotProven, type AttemptSignal } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
-import { armTimer, backstopS, defaultBudgetsOn, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, hangSilenceS, MAX_FIX_ROUNDS, noProgressRounds, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
+import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote, timeNoteOn } from "../util/run_cap.ts"; import { FINISH_LINE, issueRunBrief } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { attemptDeps, restoreReadOnly, savedImplementBrief, type ReadOnlyFile } from "./stages/implement.ts"; import { AttemptsRestoreError, attemptsEarly, attemptsK, isClean, MIN_ATTEMPT_WINDOW_S, runExtraAttempts, signalNotProven, type AttemptSignal } from "../features/attempts.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase, observeWall } from "./stages/wall.ts";
+import { replanDue, REPLAN_REASON, type ReplanState } from "./types.ts"; import { armTimer, backstopS, defaultBudgetsOn, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, hangSilenceS, MAX_FIX_ROUNDS, noProgressRounds, STAGE_BUDGETS, VERIFY_STOPPED_NOTE, type EventType, type Obj, type RunContext, type Stage, type StageName, type StageResult } from "./types.ts";
 import { newFailingIds, stallSame, stallSignature, SUITE_FIX_SKIP_NOTE, suiteSkipHolds } from "../util/check_result.ts"; import { repeatedNoopFix } from "../util/anti_loop.ts"; import { deliverOverWallConflict, wallOnlyAfterFix, wallSignature } from "../util/conflict_resume.ts";
 import { PROVE_MIN_S, proveApplies, proveBudgetS, proveReserveOfS, proveNotRun, proveScope, recheckProve, type ProveRecord } from "./stages/prove.ts"; import { capCeilingS } from "../util/run_cap.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
 
@@ -276,8 +276,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     const note = (why: string): typeof none => { outputs.implement = { ...impl, attempts: { skipped: why } }; return none; };
     const brief0 = savedImplementBrief(ctx);
     if (!brief0) return note("the implement brief was not saved");
-    const wallTail = cascadeV0On() ? cascadeWallTail(ctx.runDir, outputs.verify) : null; // CASCADE-V0: the retry sees the oracle's own failing output
-    const brief = wallTail ? `${brief0}\n\n${CASCADE_LEAD}\n${wallTail}` : brief0;
+    const wallTail = cascadeV0On() ? cascadeWallTail(ctx.runDir, outputs.verify) : null, introTail = !wallTail && cascadeIntroducedOn() ? cascadeIntroducedTail(ctx.runDir) : null; // CASCADE-V0: the retry sees the oracle's own failing output; VERIFY-PLAN V11: else verify's own introduced failures
+    const brief = wallTail ? `${brief0}\n\n${CASCADE_LEAD}\n${wallTail}` : introTail ? `${brief0}\n\n${CASCADE_INTRODUCED_LEAD}\n${introTail}` : brief0;
     const room = Math.floor(softCapS(ctx.capS) - elapsedS() - ATTEMPTS_TAIL_S), limitS = unbounded ? Infinity : Math.min(STAGE_BUDGETS.implement.limitS, room);
     if (limitS < MIN_ATTEMPT_WINDOW_S) return note(`not enough run time left (${Math.max(room, 0)}s)`);
     if (capReached()) return note("cost or time cap reached");
@@ -371,6 +371,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         } finally { rmSync(base, { recursive: true, force: true }); if (fresh) { try { safeGit(ctx.repoDir, ["worktree", "prune"]); } catch { /* best effort */ } } }
       }
     } catch (err) { r = { status: "failed", data: {}, reason: err instanceof Error ? err.message : String(err) }; }
+    r = observeWall(sctx, r); // VERIFY-PLAN V3: in observe mode the record moves under observe_* keys and the files leave the checkout; otherwise unchanged
     if (r.status === "completed") { outputs.wall = r.data; ctx.emit("stage.completed", "wall", { ...r.data, duration_s: dur() }); }
     else if (r.status === "skipped") { if (Array.isArray(r.data.not_proven)) outputs.wall = r.data; ctx.emit("stage.skipped", "wall", { ...r.data, reason: r.reason ?? "skipped by stage" }); } // TEN-COST-09: a skip that disclosed what it left unproven reaches seal, as runStage does
     else ctx.emit("stage.failed", "wall", { ...r.data, duration_s: dur(), reason: r.reason ?? "failed" });
@@ -429,7 +430,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (todo[0] === "verify") {
         sigs.push(sigOf(outputs.verify, results[0]));
         let attemptsRan = false;
-        const cascadeNow = cascadeV0On() && !fatal && !capHit && wallFailedOf(outputs.verify); // CASCADE-V0: only the Wall's own failing tests start the next model, before any fix round
+        const cascadeNow = cascadeV0On() && !fatal && !capHit && (wallFailedOf(outputs.verify) || (cascadeIntroducedOn() && failureClasses(outputs).introduced.length > 0)); // VERIFY-PLAN V11: or an introduced failure, behind its own knob // CASCADE-V0: only the Wall's own failing tests start the next model, before any fix round
         if (cascadeNow || (!cascadeV0On() && attemptsEarly() && !fatal && !capHit && hasFailures(outputs.verify) && /haiku/i.test(String(outputs.implement?.model ?? ctx.model)))) { // EXP-0010 early: a red first attempt on Haiku gets its parallel attempts BEFORE any fix round; a green winner leaves nothing for the fix loop below
           const x = await extraAttempts(); attemptsRan = x.ran;
           if (x.changed) { scaffoldNow(); const v = await runStage("verify", true); sigs.push(sigOf(outputs.verify, v)); }
@@ -438,6 +439,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         // NO-DEFAULT-BUDGET: with no time limit the round count is not the bound. A round makes progress when the failing count falls below the best so far or
         // a check that had not run now ran (both bounded, so the loop always ends); noProgressRounds() rounds in a row without either end it.
         let fewestNew = newFailingIds(outputs.verify).size, mostRan = checksRan(outputs.verify), stillRounds = 0, suitePrev = Infinity, suiteNow = newFailingIds(outputs.verify, true).size; // G5: progress = fewer measured NEW failing ids than the best so far; a full-suite-only red stops a later round only when the suite's new ids did not shrink
+        let replans = 0, roundsRan = 0; // VERIFY-PLAN V6
         let noopSig: string | null = null; // anti-loop: the verify signature that fed the last fix round that left the tree unchanged
         const suiteSkip = suiteFixSkipEnabled() && !fatal && !capHit && outputs.implement?.exit === "done" && hasFailures(outputs.verify) && suiteOnlyRed(outputs.verify);
         // INDEP-GATE LOKI_E10_HAIKU_INDEP_FIX (default on, =0 opts out): a Haiku run gets no fix round at all unless an independent check failed (verify.ts independent_fail:
@@ -449,6 +451,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         for (let round = 1; !indepSkip && (unbounded ? stillRounds < noProgressRounds() : round <= MAX_FIX_ROUNDS + extraRounds) && !fatal && !capHit && !(outputs.implement?.attempts as Obj | undefined)?.error && !(suiteSkip && onlyFullSuiteRed(outputs.verify)) && !suiteOnlyStop(round, onlyFullSuiteRed(outputs.verify), suiteNow, suitePrev) && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict" && outputs.implement?.exit !== "external"; round++) { // CW-12: an external change is never rewritten by a fix session, the failing Wall is the verdict; FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
           const wallBefore = wallSignature(outputs, ctx.repoDir);
           const fx = await runStage("fix", true);
+          roundsRan++; // VERIFY-PLAN V6
           if (!fx || mustJump("fix", fx) || fatal) break;
           { const ns = (outputs.implement?.never_stop as (NeverStopRecord & { pending?: boolean })[] | undefined) ?? [], last = ns[ns.length - 1]; if (last?.pending && fx.status === "completed") { delete last.pending; last.assumption = assumptionOf(String(outputs.fix?.diagnosis ?? "")); last.consulted = readConsults(ctx.runDir).some((c) => c.stage.startsWith("fix") && c.advice !== null); } } // LOKI_E10_OPUS_CONSULT: the round after a settled fix conflict names the choice it made
           // FireLater#21: a fix-round conflict over failures verify showed failing the same way on base, in tests that only import a named file, is checked by one
@@ -497,6 +500,17 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
             if (round === 1 && round < MAX_FIX_ROUNDS + extraRounds && consultAvailable(ctx.runDir)) continue; // LOKI_E10_OPUS_CONSULT: a red verify after the first fix round gets the one consult in round 2 before any stall stop
             if (unbounded && stillRounds < noProgressRounds()) continue; // NO-DEFAULT-BUDGET: one round without progress is allowed; the next one ends the loop
             stopped = "stalled"; break;
+          }
+        }
+        // VERIFY-PLAN V6: one fresh round with a step-back brief before the run ends stalled (LOKI_E10_REPLAN, off by default).
+        const replanState = (): ReplanState => ({ replans, roundsRan, fatal: !!fatal, capHit, stopped, stillRounds, failures: hasFailures(outputs.verify), wallOnly: wallOnlyAfterFix(outputs, ctx.repoDir), suiteOnly: onlyFullSuiteRed(outputs.verify), fixExit: outputs.fix?.exit, implementExit: outputs.implement?.exit, verifyStoppedAt: outputs.verify?.stopped_at });
+        if (replanDue(replanState())) {
+          replans++; outputs.fix = { ...outputs.fix, replan_pending: true };
+          ctx.emit("loop.repeat", "fix", { reason: REPLAN_REASON, round: Number(outputs.fix?.round ?? 0) + 1, replan: replans });
+          const fx = await runStage("fix", true);
+          if (fx && !mustJump("fix", fx) && !fatal && outputs.fix?.exit !== "spec_conflict") {
+            const v = await runStage("verify", true); sigs.push(sigOf(outputs.verify, v));
+            if (!mustJump("verify", v) && (!hasFailures(outputs.verify) || fixRoundMoved(newFailingIds(outputs.verify).size, checksRan(outputs.verify), fewestNew, mostRan))) stopped = null;
           }
         }
         if (!fatal && !capHit && (stopped === null || stopped === "stalled") && !attemptsRan && !cascadeV0On() && !isClean(attemptSignalOf(outputs, outputs.implement?.exit === "spec_conflict"))) { // EXP-0010: a first attempt that is not clean (red, a conflict, or NOT PROVEN lines) gets N-1 more in parallel (not again when the early switch already ran them)

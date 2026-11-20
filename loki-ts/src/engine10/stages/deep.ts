@@ -16,6 +16,7 @@ import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv, suiteTimeoutOn }
 import { classifyCheck, corroboratePass, failureExcerpt, failureShape, suiteFacts, type StartFacts, firstError, fullSuiteCmd, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { errorsById, failIds, unhandledBlock, lineNamesChange, changeLines, failedCount } from "../failures.ts"; import { attributeFullSuite, BASELINE_CMD_TIMEOUT_S, changedForLines, suiteEmptyOnBase } from "../../runner/repo_profile.ts";
 import { defaultBudgetsOn, cmdSilenceS, deepCapS, type ReceiptCheck, type RunContext, type RunnerName, type SessionRunner, type Stage, type StageResult, STAGE_BUDGETS } from "../types.ts";
 import { safeGitRun } from "../../util/safe_git.ts"; import { REPO_ROOT } from "../../util/paths.ts";
+import { addedLineNumbers } from "../../features/self_review.ts";
 import { DEFAULT_PUSH_SH, SHA_RE } from "./pr.ts";
 /** RunContext plus the value this stage needs that E-03 will eventually  inject (same local-extension pattern pr.ts's PrContext already uses). */
 export type DeepContext = RunContext & {
@@ -108,16 +109,6 @@ export async function secretLines(scriptPath: string, root: string, rel: string,
     const mid = (lo + hi) >> 1; await walk(lo, mid); await walk(mid, hi);
   };
   try { mkdirSync(dirname(probe), { recursive: true }); await walk(0, lines.length); return found; } catch { return null; } finally { rmSync(dir, { recursive: true, force: true }); }
-}
-/** The head line number of each added line of a `git diff -U0` (in diff order; the same "+" filter the added-lines copy uses). */
-export function addedLineNumbers(diff: string): number[] {
-  const out: number[] = []; let n = 0;
-  for (const l of diff.split("\n")) {
-    const h = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(l);
-    if (h) { n = Number(h[1]); continue; }
-    if (l.startsWith("+") && !l.startsWith("+++")) out.push(n++);
-  }
-  return out;
 }
 /** One "security scan" check over the changed files: secret-scan.sh's two matchers (sourced, never edited) plus secure-scan.py.  A secret hit or a HIGH secure-scan finding is fail; else a missing or broken scanner is not_run (NOT PROVEN), never pass. */
 export async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {

@@ -10,6 +10,10 @@
 #   coverage: multiply() and subtract() on the first turn; negate() only when the prompt carries the coverage brief, or all three on a first turn whose brief carries the folded coverage line (tests/min/scope-and-fix.sh, LOKI_E10_COVERAGE_RESUME)
 #   wrong: the implement session appends a multiply() that adds (calc.test.ts then fails)
 #   breakadd: a right multiply() plus add() changed to a + b + 1 (calc.test.ts green on base, red on head; tests/min/engine10-e2e-stub.sh measured conflict)
+#   apply: replay a fixed change with no model (benchmarks/h2h calibration configs). The first implement session in the repo
+#     applies E2E_STUB_APPLY_PATCH (git apply) once, marked by the file E2E_STUB_APPLY_MARK; every later implement or fix
+#     session changes nothing; every one ends LOKI_DONE. The acceptance line check answers MET for lines 1 to 40, the
+#     cross-review answers VERDICT: PASS, and every other call (plan, intake, prove, listing, Wall author) gets an empty reply.
 # E2E_STUB_NOFINISH=once|never|still|unfinished|conflict|conflictcited (unfinished: every reply ends LOKI_UNFINISHED, the continue changes nothing; conflict: the first reply
 #   is a LOKI_SPEC_CONFLICT citing no test and a continue finishes; conflictcited: every non-continue reply is a conflict citing calc.test.ts:3): the first implement reply has no finish line (LOKI_BLOCKED summary); a continue then finishes (once), keeps editing
 #   without finishing (never) or changes nothing (still). once writes multiply() only on the continue; never and still write it on the first turn.
@@ -32,6 +36,8 @@
 # that fails bash -n. Fix modes: cfgfirst fixes cfg.json first, multiply() next; linttwice leaves tool.sh broken in a new way once, then fixes it.
 # E2E_STUB_TYPE_ERROR=1: the implement session also appends `export const typed: number = "not a number";` to calc.ts (a tsc error, never seen by bun).
 # E2E_STUB_UNUSED_IMPORT=1: the implement session also puts `import fs from "node:fs";` (never used) on line 1 of calc.ts; fix mode unlint removes it (tests/min/scope-and-fix.sh LINT-OWN).
+# E2E_STUB_FIX=stepback (VERIFY-PLAN V6): a fix round changes nothing and says "stub fix: kept the add approach" unless its brief carries the STEP BACK block, which fixes multiply();
+#   stepbackhalf: the STEP BACK round also adds a failing extra.test.ts (the round moved and the run is still red).
 # E2E_STUB_FIX (fix sessions, told apart by LOKI_E10_STAGE=fix): conflict answers LOKI_SPEC_CONFLICT and edits
 # nothing; wallconflict does the same citing loki_wall_multiply.test.ts; noprogress edits calc.ts without fixing multiply();
 # fixit turns the wrong multiply() right; twostep needs two rounds. E2E_STUB_ITER_LOG gets "<stage> <iteration> <prompt bytes>"
@@ -177,6 +183,16 @@ if [ -n "${E2E_STUB_USAGE:-}" ] && [ -n "${LOKI_ITERATION:-}" ]; then
   mkdir -p .loki/metrics
   printf '{"total_cost_usd":0.01,"input_tokens":%s,"output_tokens":%s,"cache_read_tokens":0,"cache_creation_tokens":0,"model":"stub","source":"e2e-stub"}\n' "$(( ${#prompt} / 4 ))" "$E2E_STUB_USAGE" > ".loki/metrics/result-cost-$LOKI_ITERATION.json"
 fi
+if [ "${E2E_STUB_MODE:-}" = "apply" ]; then
+  case "$stage" in
+    implement)
+      if [ ! -f "${E2E_STUB_APPLY_MARK:?}" ]; then git apply --whitespace=nowarn "${E2E_STUB_APPLY_PATCH:?}" >&2 && : > "$E2E_STUB_APPLY_MARK"; fi
+      echo "LOKI_DONE"; exit 0 ;;
+    linecheck) python3 -I -c 'import json; print(json.dumps({"type": "result", "result": "\n".join("MET %d: replay stand-in (no model reading)" % n for n in range(1, 41)), "total_cost_usd": 0}))'; exit 0 ;;
+    review) echo '{"type":"result","result":"VERDICT: PASS","total_cost_usd":0}'; exit 0 ;;
+    *) exit 0 ;;
+  esac
+fi
 if [ -n "${E2E_STUB_SPEC_REPLY:-}" ]; then case "$prompt" in *"to the file spec_reply.md in the current directory"*) printf '%s\n' "$E2E_STUB_SPEC_REPLY" > spec_reply.md; echo "LOKI_DONE"; exit 0 ;; esac; fi
 if [ "$stage" = attemptsreview ]; then # E2E_STUB_PICK=<letter>: the review picks that candidate (default: no PICK line, so the tie keeps the lowest index)
   printf '{"type":"result","subtype":"success","is_error":false,"result":"stub review%s","total_cost_usd":0.001,"usage":{"input_tokens":100,"output_tokens":5}}\n' "${E2E_STUB_PICK:+\\nPICK: $E2E_STUB_PICK}"
@@ -289,6 +305,8 @@ if [ "${LOKI_E10_STAGE:-}" = "fix" ]; then # before the implement branch: a fix 
     noprogress) if [ -f calc.py ]; then printf '# stub fix pass\n' >> calc.py; else printf '// stub fix pass\n' >> calc.ts; fi; echo "LOKI_DONE"; exit 0 ;;
     rank) printf '// ranked with ts_rank\n' >> frontend/src/hooks/useApi.ts; echo "LOKI_DONE"; exit 0 ;; # moves the vitestred Wall (C2 passes, C3 still fails)
     fixit) python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; echo "LOKI_DONE"; exit 0 ;;
+    stepbackhalf) if printf '%s' "$prompt" | grep -q "^STEP BACK\. "; then python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; printf 'import { expect, test } from "bun:test";\nimport { add } from "./calc";\n\ntest("extra", () => {\n  expect(add(1, 1)).toBe(3);\n});\n' > extra.test.ts; else echo "stub fix: kept the add approach"; fi; echo "LOKI_DONE"; exit 0 ;; # V6: the STEP BACK round fixes multiply() but adds a failing extra.test.ts (it moved, still red)
+    stepback) if printf '%s' "$prompt" | grep -q "^STEP BACK\. "; then python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; else echo "stub fix: kept the add approach"; fi; echo "LOKI_DONE"; exit 0 ;; # VERIFY-PLAN V6: only the replan round's STEP BACK brief fixes multiply()
     cfgfirst) if grep -q '"ok": false' cfg.json; then printf '{"ok": true}\n' > cfg.json
       else python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])'; fi
       echo "LOKI_DONE"; exit 0 ;;

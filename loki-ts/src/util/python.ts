@@ -291,9 +291,10 @@ const unesc = (v: string): string => v.replace(/&(lt|gt|quot|apos|amp|#x?[0-9a-f
     : String.fromCodePoint(e[1] === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)));
 const SEVERITY: TestOutcome[] = ["passed", "xpassed", "skipped", "xfailed", "failed", "error"];
 
-/** Per-testcase outcome from the junit report, keyed "classname::name"; a duplicated key keeps its worst outcome. */
-function parseJunitCases(xml: string): Record<string, TestOutcome> {
-  const out: Record<string, TestOutcome> = {};
+/** Every junit testcase in document order: its decoded attributes, its body and its outcome (error, then failure, then skipped or
+ *  xfail, else passed). The one testcase reader: parseJunitCases below and util/test_report.ts readJunit build on it. */
+export function scanJunitCases(xml: string): { attrs: Record<string, string>; body: string; outcome: TestOutcome }[] {
+  const cases: { attrs: Record<string, string>; body: string; outcome: TestOutcome }[] = [];
   for (const m of xml.matchAll(/<testcase\b((?:[^>"]|"[^"]*")*?)(\/>|>)/g)) {
     const attrs: Record<string, string> = {};
     for (const [, k, v] of (m[1] ?? "").matchAll(/([\w:.-]+)="([^"]*)"/g)) attrs[k!] = unesc(v ?? "");
@@ -303,8 +304,17 @@ function parseJunitCases(xml: string): Record<string, TestOutcome> {
       body = xml.slice((m.index ?? 0) + m[0].length, end < 0 ? undefined : end);
     }
     const sk = /<skipped\b([^>]*)>/.exec(body);
-    const o: TestOutcome = /<error\b/.test(body) ? "error" : /<failure\b/.test(body) ? "failed"
+    const outcome: TestOutcome = /<error\b/.test(body) ? "error" : /<failure\b/.test(body) ? "failed"
       : sk ? (/type="pytest\.xfail"/.test(sk[1] ?? "") ? "xfailed" : "skipped") : "passed";
+    cases.push({ attrs, body, outcome });
+  }
+  return cases;
+}
+
+/** Per-testcase outcome from the junit report, keyed "classname::name"; a duplicated key keeps its worst outcome. */
+function parseJunitCases(xml: string): Record<string, TestOutcome> {
+  const out: Record<string, TestOutcome> = {};
+  for (const { attrs, outcome: o } of scanJunitCases(xml)) {
     const key = `${attrs.classname ?? ""}::${attrs.name ?? ""}`;
     const prev = out[key];
     if (prev === undefined || SEVERITY.indexOf(o) > SEVERITY.indexOf(prev)) out[key] = o;

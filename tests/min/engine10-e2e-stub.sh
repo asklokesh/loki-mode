@@ -44,7 +44,7 @@
 #   5. stages/xreview.ts: default reviewer on medium only (the unit line must fail).
 #   6. loki-ts/src/engine10/stages/seal.ts: sysInfo always null (the no-manifest leg reads PARTIAL).
 #   7. loki-ts/src/util/python.ts: declaresPythonEnv always false (the requirements.txt leg reads VERIFIED).
-#   8. loki-ts/src/engine10/stages/seal.ts: drop leanGap from verdictOf (the never-calls-multiply leg reads VERIFIED).
+#   8. loki-ts/src/engine10/stages/seal.ts: drop leanHold from verdictOf (the never-calls-multiply leg reads VERIFIED).
 #   9. loki-ts/src/util/check_result.ts: changedSymbols counts any removed line as removed code (the
 #      never-calls-multiply leg reads VERIFIED: the replaced comment credits add()).
 #   10. loki-ts/src/engine10/stages/deep.ts: DEFAULT_SECRET_SCAN_SH back to new URL("../../../../autonomy/...",
@@ -525,6 +525,19 @@ if python3 -m pytest --version >/dev/null 2>&1; then
     PY_UNTESTED=1 py_engine calc.py
     [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "python, impacted test passes but never calls multiply(): not VERIFIED ($(outcome))" || { bad "python, unexercised change: outcome '$(outcome)'"; printf '%s\n' "$NOTES" | sed 's/^/    np | /'; }
     grep -q "no passing check references a changed symbol.*multiply" <<< "$NOTES" && ok "python, unexercised change: the receipt names multiply as unexercised" || bad "python, unexercised change: no changed-symbol note"
+    # VERIFY-PLAN R1 (LOKI_E10_LEAN_SYMBOL_HOLD, enforce by default): L1 is the leg above. L2 observe: the label without the hold and one observe entry; L3 =0: the label
+    # without the hold, the line disclosed, no entry. Plants (each reverted): off still passes leanGap (L3 PARTIAL); observe applies the hold (L2 PARTIAL, no entry).
+    l_facts() { python3 -I -c 'import json, sys, glob
+r = json.load(open(glob.glob(sys.argv[1] + "/.loki/runs/*/receipt.json")[0]))
+e = [o["would_label"] for o in r.get("observe") or [] if o.get("rule") == "LOKI_E10_LEAN_SYMBOL_HOLD"]
+ln = [n for n in r.get("not_proven") or [] if n.startswith("no passing check references a changed symbol")]
+print(r["verdict"], "entry=" + (e[0] if e else "none"), ("disclosed" if "(disclosed, does not cap)" in ln[0] else "hold") if ln else "noline", "held" if any(h["kind"] == "changed symbol not referenced" for h in r.get("held_by") or []) else "notheld")' "$REPO" 2>&1; }
+    l1="$(l_facts)"
+    LOKI_E10_LEAN_SYMBOL_HOLD=observe PY_UNTESTED=1 py_engine calc.py; l2="$(l_facts)"
+    LOKI_E10_LEAN_SYMBOL_HOLD=0 PY_UNTESTED=1 py_engine calc.py; l3="$(l_facts)"
+    case "$l1" in "PARTIAL entry=none hold held") ok "R1 L1 enforce (default): the changed-symbol hold holds the label and is on held_by ($l1)" ;; *) bad "R1 L1 gave: $l1" ;; esac
+    [ "$l2" = "${l3%% *} entry=PARTIAL disclosed notheld" ] && [ "${l3%% *}" != PARTIAL ] && ok "R1 L2 observe: the label without the hold (${l2%% *}) and one observe entry saying PARTIAL ($l2)" || bad "R1 L2 gave: $l2 (L3: $l3)"
+    case "$l3" in "PARTIAL "*) bad "R1 L3 =0 still held: $l3" ;; *" entry=none disclosed notheld") ok "R1 L3 =0: the label without the hold, the line disclosed, no entry ($l3)" ;; *) bad "R1 L3 gave: $l3" ;; esac
     # acc-162 BCE: a test whose conftest cannot import on base and head alike is the environment, not the change: not_run on NOT PROVEN, never FAILED.
     bce_prep() { printf 'import loki_missing_module_bce\n' > "$REPO/tests/conftest.py"; }
     PY_PREP=bce_prep LOKI_E10_BASE_CRASH_ENV=1 py_engine calc.py
@@ -691,13 +704,13 @@ grep -q 'q7ZpLm4Rt8' <<< "$OUT" && bad "secret match: the matched text was print
 
 # Unit: the scan's line location (git -U0 hunks to head lines, bisection over the matcher), the refusal's fail-safe rules, the FAILED title and body, the writeback text.
 U="$(cd "$ROOT/loki-ts" && T="$T" bun -e '
-const d = await import("./src/engine10/stages/deep.ts"), s = await import("./src/engine10/stages/seal.ts"), p = await import("./src/engine10/stages/pr.ts"), w = await import("./src/integrations/writeback.ts");
+const d = await import("./src/engine10/stages/deep.ts"), sr = await import("./src/features/self_review.ts"), s = await import("./src/engine10/stages/seal.ts"), p = await import("./src/engine10/stages/pr.ts"), w = await import("./src/integrations/writeback.ts");
 const { mkdirSync, writeFileSync } = await import("node:fs"); const root = process.env.T + "/secline";
 mkdirSync(root + "/backend/src/config", { recursive: true });
 const cfg = ["import { z } from \"zod\";", "const schema = z.object({", "  ELASTICSEARCH_URL: z.string().optional(),", "  ELASTICSEARCH_API_KEY: z.string().optional(),", "});", "export const search = {", "  url: parsed.data.ELASTICSEARCH_URL,", "    apiKey: \"q7Zp" + "Lm4Rt8Vw2Xy6Bn\",", "};"]; // F1: a quoted literal (an unquoted parsed.data.X in a .ts file is an expression, never a match)
 writeFileSync(root + "/backend/src/config/index.ts", cfg.join("\n") + "\n");
 console.log("lines=" + JSON.stringify(await d.secretLines(d.DEFAULT_SECRET_SCAN_SH, root, "backend/src/config/index.ts")));
-console.log("hunks=" + JSON.stringify(d.addedLineNumbers("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -3,0 +4,2 @@\n+a\n+b\n@@ -10 +12 @@\n-old\n+new\n")));
+console.log("hunks=" + JSON.stringify(sr.addedLineNumbers("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -3,0 +4,2 @@\n+a\n+b\n@@ -10 +12 @@\n-old\n+new\n")));
 const fail = (m) => ({ checks: [{ name: "security scan", result: "fail", ...(m === undefined ? {} : { secret_matches: m }) }] });
 console.log("refuse=" + JSON.stringify(s.secretPushRefusal(fail(["a.ts:3"]), "e10-x")) + " high_only=" + JSON.stringify(s.secretPushRefusal(fail([]), "e10-x")) + " unrecorded=" + JSON.stringify(s.secretPushRefusal(fail(undefined), "e10-x")?.matches) + " pass=" + JSON.stringify(s.secretPushRefusal({ checks: [{ name: "security scan", result: "pass" }] }, "e10-x")));
 console.log("title=" + p.prTitle("FAILED", root, "add search", ["security scan"]) + " | " + p.prTitle("FAILED", root, "add search", ["vitest:frontend/src/app/applications/page.test.tsx", "security scan", "lint"]) + " | " + p.prTitle("FAILED", root, "add search") + " | " + p.prTitle("PARTIAL", root, "add search", ["x"]));
@@ -928,6 +941,275 @@ f="$(wall_facts)"; set -- $f
 E2E_STUB_WALL=multiply LOKI_E10_WALL=1 LOKI_E10_WALL_ON_LEAN=1 LOKI_E10_WALL_SNAPSHOT_MAX_MB=0.000001 run_engine done
 f="$(wall_facts)"; set -- $f
 [ "$1" = stage.failed ] && ok "snapshot fallback: without the cascade flag a failed snapshot still fails the Wall stage, as before ($f)" || bad "snapshot no-flag facts: $f"
+
+# VERIFY-PLAN V3 WALL OBSERVE (LOKI_E10_WALL=observe; unset stays off). The Wall author writes and seals its tests, observeWall moves the record under observe_*
+# keys and takes the files out of the checkout, a complete verify runs the sealed copies last (wall_observe), and seal writes an observe entry when they would
+# change the label. W1 agrees (done), W2 disagrees (multiply adds, and the base calc.test.ts no longer calls multiply, so today's label is not FAILED), W2off is
+# the same run with the Wall off, W3 is enforce. Plants (each reverted): observeWall keeps `files` (W1 wall.files non-empty); observeWall does not remove the
+# installed files (W1/W2 a loki_wall file in the checkout or in an implement prompt); runObservedWall pushes into checks (W2 label moves); the seal block
+# applies `would` to the label (W2 label FAILED); wallMode reads observe as enforce (W1 wall.files non-empty, W4); observeWall leaves wallSealed set (W6).
+wobs_facts() { python3 -I - "$RUNDIR/events.jsonl" "$RUNDIR/receipt.json" "$REPO" <<'PY'
+import json, sys, os, subprocess
+ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]
+vd = [e.get("data") or {} for e in ev if e.get("stage") == "verify" and e["type"] == "stage.completed"]
+v = vd[-1] if vd else {}
+try: rec = json.load(open(sys.argv[2]))
+except Exception: rec = {}
+wo = (v.get("wall_observe") or {}).get("files") or []
+obs = [o for o in rec.get("observe") or [] if o.get("rule") == "LOKI_E10_WALL"]
+left = [f for f in os.listdir(sys.argv[3]) if f.startswith("loki_wall")]
+tree = subprocess.run(["git", "-C", sys.argv[3], "ls-tree", "-r", "--name-only", "HEAD"], capture_output=True, text=True).stdout.split()
+print(rec.get("verdict"), "files=%d" % len(rec.get("wall", {}).get("files") or []), "obs=" + ",".join(f["result"] for f in wo) if wo else "obs=none",
+      "entry=" + (obs[0]["would_label"] if obs else "none"), "left=%d" % len(left), "committed=%d" % sum(1 for t in tree if "loki_wall" in t),
+      "disclosed" if any(n.startswith("Wall (observe):") and n.endswith("(disclosed, does not cap)") for n in rec.get("not_proven") or []) else "undisclosed")
+PY
+}
+wobs_prep() { # W2: the base calc.test.ts stops calling multiply, so a wrong multiply() is caught by the Wall only
+    python3 -I -c 'import sys; p = sys.argv[1] + "/calc.test.ts"; s = open(p).read(); open(p, "w").write("".join(l for l in s.splitlines(True) if "multiply" not in l))' "$1"
+    git -C "$1" add calc.test.ts; git -C "$1" commit -q --amend -m base
+}
+E2E_STUB_WALL=multiply LOKI_E10_WALL=observe LOKI_E10_WALL_ON_LEAN=1 run_engine done
+w1="$(wobs_facts)"
+[ "$w1" = "VERIFIED files=0 obs=pass entry=none left=0 committed=0 disclosed" ] && ok "V3 W1: observe on a right change: VERIFIED as with the Wall off, no Wall files on the receipt, the observed Wall passed, no entry, nothing left in the checkout or committed ($w1)" || bad "V3 W1 gave: $w1"
+E2E_PREP=wobs_prep E2E_STUB_WALL=multiply LOKI_E10_WALL=0 run_engine wrong; w2off="$(outcome)"
+rm -f "$T"/wobs.prompt*; E2E_PREP=wobs_prep E2E_STUB_WALL=multiply E2E_STUB_PROMPT_LOG="$T/wobs.prompt" LOKI_E10_WALL=observe LOKI_E10_WALL_ON_LEAN=1 run_engine wrong
+w2="$(wobs_facts)"; w2o="$(outcome)"
+case "$w2" in *" files=0 obs=fail entry=FAILED left=0 committed=0 disclosed") [ "$w2o" = "$w2off" ] && [ "$w2o" != FAILED ] && ok "V3 W2: observe on a wrong change: the label is the Wall-off label ($w2o), the observed Wall failed and the receipt says it would be FAILED ($w2)" || bad "V3 W2: label $w2o, Wall-off label $w2off ($w2)" ;; *) bad "V3 W2 gave: $w2 (Wall-off label $w2off)" ;; esac
+! grep -qs 'loki_wall' "$T"/wobs.prompt.implement* && ok "V3 W2: no implement or fix brief names a loki_wall file" || bad "V3 W2: an implement or fix brief named the observed Wall file"
+E2E_PREP=wobs_prep E2E_STUB_WALL=multiply LOKI_E10_WALL=1 LOKI_E10_WALL_ON_LEAN=1 run_engine wrong
+w3="$(wobs_facts) $(python3 -I -c 'import json, sys; ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]; w = [e for e in ev if e.get("stage") == "wall" and e["type"] == "stage.completed"]; print("wallran=%d" % len((w[-1].get("data") or {}).get("files") or []) if w else "wallran=none")' "$RUNDIR/events.jsonl")"
+case "$w3" in "PARTIAL files=0 obs=none entry=none left=0 committed=0 undisclosed wallran=1") grep -q 'wall test discarded: loki_wall_multiply.test.ts (only Loki' <<< "$OUT" && ok "V3 W3: LOKI_E10_WALL=1 is today's Wall: it runs, its red test is set aside as a Wall-only failure (PARTIAL), and nothing is observed ($w3)" || bad "V3 W3: no Wall-only set-aside line ($w3)" ;; *) bad "V3 W3 gave: $w3" ;; esac
+W46="$(cd "$ROOT/loki-ts" && bun -e '
+import { wallMode } from "./src/engine10/sizing.ts"; import { observeWall } from "./src/engine10/stages/wall.ts";
+import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs"; import { join } from "node:path"; import { tmpdir } from "node:os";
+const m = (e: Record<string, string>) => wallMode(e as never);
+console.log("W4", [m({}), m({ LOKI_E10_WALL: "observe" }), m({ LOKI_E10_WALL: " Observe " }), m({ LOKI_E10_WALL: "1" }), m({ LOKI_E10_WALL: "0" }), m({ LOKI_E10_CASCADE_V0: "1" }), m({ LOKI_E10_CASCADE_V0: "1", LOKI_E10_WALL: "0" }), m({ LOKI_E10_CASCADE_V0: "1", LOKI_E10_WALL: "observe" })].join(","));
+const d = mkdtempSync(join(tmpdir(), "w6-")), f = join(d, "loki_wall_x.test.ts"); writeFileSync(f, "x");
+const r = { status: "completed", data: { files: [{ path: f, sha256: "s" }], readOnlyFiles: [{ path: f }], base_run: { pass: 0, fail: 1 }, not_proven: ["n"], iteration_ids: ["i"] } } as never;
+const c1 = { wallSealed: true }, o1 = observeWall(c1, r, { LOKI_E10_WALL: "observe" } as never) as { status: string; data: Record<string, unknown> };
+console.log("W6o", c1.wallSealed, o1.status, o1.data.observe, "files" in o1.data, "not_proven" in o1.data, existsSync(f), JSON.stringify(o1.data.observe_base_run));
+writeFileSync(f, "x"); const c2 = { wallSealed: true }, o2 = observeWall(c2, r, {} as never);
+console.log("W6u", c2.wallSealed, o2 === r, existsSync(f));
+const c3 = { wallSealed: true }, o3 = observeWall(c3, { status: "failed", data: {}, reason: "boom" } as never, { LOKI_E10_WALL: "observe" } as never) as { status: string; data: Record<string, unknown> };
+console.log("W6f", o3.status, o3.data.observe_status, o3.data.observe_reason);
+rmSync(d, { recursive: true, force: true });
+' 2>&1)"
+has "V3 W4: wallMode reads observe in any case, 1 and cascade v0 as enforce, 0 and unset as off, and observe wins over cascade v0" "$W46" "W4 off,observe,observe,enforce,off,enforce,off,observe"
+has "V3 W6: in observe mode observeWall clears wallSealed, moves the record under observe_* keys, drops files and not_proven, removes the installed file" "$W46" 'W6o false completed true false false false {"pass":0,"fail":1}'
+has "V3 W6: with the knob unset observeWall leaves wallSealed set and the record untouched" "$W46" "W6u true true true"
+has "V3 W6: a failed Wall in observe mode is recorded and never fails the run" "$W46" "W6f completed failed boom"
+
+# VERIFY-PLAN V6 REPLAN (LOKI_E10_REPLAN, off by default; LOKI_E10_REPLAN_MAX default 1, 0 allows none). At a stalled fix loop that no designed stop already
+# decided, one more fix round runs in a fresh session past the round cap, with a STEP BACK block (the earlier rounds' own summaries and the class-of-failure
+# sentence) in place of the ESCALATED ROUND paragraph. E2E_STUB_FIX=stepback fixes multiply() only from a STEP BACK brief. Plants (each reverted): replanDue
+# ignores the knob (R2 gains an event); the fix stage keeps the cap for a replan (R1 STALLED); fixChain keeps the old session id (R1b); buildFixBrief drops the
+# STEP BACK block (R5, R1 STALLED); the block sits beside ESCALATED ROUND instead of replacing it (R5); replanMax read through posEnv (R4); replanDue drops the
+# wallOnly (R6), suiteOnly (R7) or fixExit (R8) test; stopped not reset after a moving replan (R1c reads STALLED; a green replan reads VERIFIED either way).
+rp_facts() { python3 -I - "$RUNDIR/events.jsonl" "$RUNDIR/receipt.json" <<'PY'
+import json, sys
+ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]
+rp = [e for e in ev if e["type"] == "loop.repeat" and (e.get("data") or {}).get("reason", "").startswith("re-plan:")]
+fx = [e.get("data") or {} for e in ev if e.get("stage") == "fix" and e["type"] == "stage.completed"]
+try: rec = json.load(open(sys.argv[2]))
+except Exception: rec = {}
+last = ((fx[-1].get("fix_rounds") or [{}])[-1]) if fx else {}
+print(rec.get("verdict"), "replans=%d" % len(rp), "lastreplan=%s" % bool(last.get("replan")), "diagnoses=%s" % any("diagnoses" in d for d in fx))
+PY
+}
+rp_brief() { python3 -I -c 'import sys; t = open(sys.argv[1]).read() if __import__("os").path.exists(sys.argv[1]) else ""; seg = t.split("The previous Fast verify run failed.")[-1] if "STEP BACK." in t else ""; print("stepback" if "STEP BACK." in seg else "nostep", "carried" if "stub fix: kept the add approach" in seg else "notcarried", "escalated" if "ESCALATED ROUND" in seg else "clean")' "$T/rp.prompt.implement0"; }
+rm -f "$T"/rp.prompt*; E2E_STUB_FIX=stepback E2E_STUB_PROMPT_LOG="$T/rp.prompt" LOKI_E10_REPLAN=1 run_engine wrong
+r1="$(rp_facts) $(rp_brief) $(outcome)"
+[ "$r1" = "VERIFIED replans=1 lastreplan=True diagnoses=True stepback carried clean VERIFIED" ] && ok "V6 R1: a stalled fix loop re-plans once in a fresh round whose STEP BACK brief carries the earlier summary and no ESCALATED ROUND; it fixes multiply() and the run is VERIFIED ($r1)" || bad "V6 R1 gave: $r1 (outcome $(outcome))"
+E2E_STUB_FIX=stepbackhalf LOKI_E10_REPLAN=1 run_engine wrong
+r1c="$(rp_facts) $(outcome)"
+case "$r1c" in *" replans=1 "*" FAILED") ok "V6 R1c: a replan round that moves but leaves a failure ends the stall: the run is labeled from its tree (FAILED), not STALLED ($r1c)" ;; *) bad "V6 R1c gave: $r1c" ;; esac
+E2E_STUB_FIX=stepback run_engine wrong
+r2="$(rp_facts) $(outcome)"
+[ "$r2" = "FAILED replans=0 lastreplan=False diagnoses=False STALLED" ] && ok "V6 R2: with the knob unset the stall ends as today (STALLED, receipt FAILED), no re-plan event and no diagnoses key ($r2)" || bad "V6 R2 gave: $r2"
+LOKI_E10_REPLAN=1 run_engine wrong
+r3="$(rp_facts) $(outcome)"
+case "$r3" in *" replans=1 "*" STALLED") ok "V6 R3: a replan that does not move leaves the run STALLED after exactly one re-plan ($r3)" ;; *) bad "V6 R3 gave: $r3" ;; esac
+RPU="$(cd "$ROOT/loki-ts" && bun -e '
+import { replanDue, replanMax, replanOn } from "./src/engine10/types.ts"; import { buildFixBrief, fixChain, stepBackBlock } from "./src/engine10/stages/fix.ts";
+const prior = { fix: { session_id: "s-fix", model: "m-fix" }, implement: { session_id: "s-imp", model: "m-imp" } } as never;
+console.log("R1b", JSON.stringify(fixChain(prior, true, "m-act", "m-run")), JSON.stringify(fixChain(prior, false, "m-act", "m-run")), JSON.stringify(fixChain({} as never, false, "m-act", "m-run")));
+const st = { replans: 0, roundsRan: 1, fatal: false, capHit: false, stopped: "stalled", stillRounds: 0, failures: true, wallOnly: false, suiteOnly: false, fixExit: undefined, implementExit: "done", verifyStoppedAt: undefined };
+const on = { LOKI_E10_REPLAN: "1" }, due = (o: object, e: object = on) => replanDue({ ...st, ...o } as never, e as never);
+console.log("R4", replanMax({ LOKI_E10_REPLAN_MAX: "0" } as never), due({}, { ...on, LOKI_E10_REPLAN_MAX: "0" }), replanMax({} as never), replanMax({ LOKI_E10_REPLAN_MAX: "x" } as never), replanMax({ LOKI_E10_REPLAN_MAX: "2" } as never), due({ replans: 1 }, { ...on, LOKI_E10_REPLAN_MAX: "2" }));
+console.log("R6", due({}), due({ wallOnly: true }), "R7", due({ suiteOnly: true }), "R8", due({ fixExit: "spec_conflict" }), "R9", due({ stopped: null, stillRounds: 0 }), due({ stopped: null, stillRounds: 1 }), "off", due({}, {}), replanOn({ LOKI_E10_REPLAN: "yes" } as never));
+const g = [{ signature: "bun:calc.test.ts", count: 1, sample: "expected 12 got 7" }] as never;
+const sb = buildFixBrief("t", g, "diff", { priorDiagnosis: "d", stepBack: ["a", "b"] });
+console.log("R5", sb.includes(stepBackBlock(["a", "b"])), sb.includes("1. a") && sb.includes("2. b"), sb.includes("Fix the whole class of each failure"), !sb.includes("ESCALATED ROUND"));
+const esc = buildFixBrief("t", g, "diff", { priorDiagnosis: "d" }), none = buildFixBrief("t", g, "diff", undefined);
+console.log("R5b", esc.includes("ESCALATED ROUND: the same failure repeated after your previous fix. Re-read the full failure output above, find the root cause, and do not repeat the earlier approach.\nYour previous diagnosis: d"), !esc.includes("STEP BACK"), !none.includes("ESCALATED ROUND") && !none.includes("STEP BACK"));
+' 2>&1)"
+has "V6 R1b: fixChain starts a replan round fresh on the round's model, and keeps today's chain otherwise" "$RPU" 'R1b {"sessionId":null,"model":"m-act"} {"sessionId":"s-fix","model":"m-fix"} {"sessionId":null,"model":"m-run"}'
+has "V6 R4: LOKI_E10_REPLAN_MAX 0 allows none, unset and garbage read 1, 2 allows a second" "$RPU" "R4 0 false 1 1 2 true"
+has "V6 R6 to R9: a stalled state re-plans; a Wall-only, full-suite-only or spec-conflict stop, a last round that moved, or the knob off never does" "$RPU" "R6 true false R7 false R8 false R9 false true off false true"
+has "V6 R5: a replan brief carries both summaries numbered and the class sentence, in place of the ESCALATED ROUND paragraph" "$RPU" "R5 true true true true"
+has "V6 R5: without stepBack the ESCALATED ROUND paragraph is today's text, and an ordinary brief has neither block" "$RPU" "R5b true true true"
+
+# VERIFY-PLAN V8 FLAKY QUARANTINE (LOKI_E10_FLAKY_QUARANTINE, off by default; observe keeps the per-repo list and reports, enforce applies it). A flaky test the
+# change did not touch is run three times on the base tree; one pass and one fail there quarantines it in ~/.loki/cache/v10/<repo key>/flaky-quarantine.json
+# (each engine cell below gets its own HOME). The fixture's flaky.test.ts flips on a counter in $T, on the base too; headonly.test.ts fails once, on its first
+# run with multiply() present (head), and always passes on base. Plants (each reverted): quarantine a check that flips only on head (Q4b quarantined); quarantine the change's own edited test file (Qc); drop the
+# deadline guard (Q5); keep the `not run:` line under enforce (Q3 enforce); observe applies to the label (Q3 observe reads VERIFIED); pruneQuarantine never
+# removes (Q2); default read as observe (Q3 off runs base commands).
+q_prep() { # q_prep <repo>: a flaky test the change never touches, committed in the base
+    local ctr="$T/q.ctr"; rm -f "$ctr"
+    printf 'import { expect, test } from "bun:test";\nimport { add } from "./calc";\nimport { existsSync, readFileSync, writeFileSync } from "node:fs";\nconst p = "%s", n = existsSync(p) ? Number(readFileSync(p, "utf8")) : 0;\nwriteFileSync(p, String(n + 1));\ntest("flaky", () => {\n  expect(add(1, 1)).toBe(2);\n  expect((n + 1) %% 2).toBe(0);\n});\n' "$ctr" > "$1/flaky.test.ts"
+    git -C "$1" add flaky.test.ts; git -C "$1" commit -q --amend -m base; rm -f "$ctr"
+}
+q_prep_head() { # q_prep_head <repo>: a test that flips only once multiply() exists (head), stable on base
+    local ctr="$T/q.ctr"; rm -f "$ctr"
+    printf 'import { expect, test } from "bun:test";\nimport * as calc from "./calc";\nimport { existsSync, writeFileSync } from "node:fs";\nconst p = "%s", first = "multiply" in calc && !existsSync(p);\nif (first) writeFileSync(p, "1");\ntest("head only", () => {\n  expect(calc.add(1, 1)).toBe(2);\n  expect(first).toBe(false);\n});\n' "$ctr.head" > "$1/headonly.test.ts"
+    git -C "$1" add headonly.test.ts; git -C "$1" commit -q --amend -m base; rm -f "$ctr" "$ctr.head"
+}
+q_facts() { python3 -I - "$RUNDIR/events.jsonl" "$RUNDIR/receipt.json" "$1" <<'PY'
+import json, sys, glob
+ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]
+vd = [e.get("data") or {} for e in ev if e.get("stage") == "verify" and e["type"] == "stage.completed"]
+v = vd[-1] if vd else {}
+try: rec = json.load(open(sys.argv[2]))
+except Exception: rec = {}
+np = rec.get("not_proven") or []
+lst = [json.load(open(p)) for p in glob.glob(sys.argv[3] + "/.loki/cache/v10/*/flaky-quarantine.json")]
+ent = [o["would_label"] for o in rec.get("observe") or [] if o.get("rule") == "LOKI_E10_FLAKY_QUARANTINE"]
+print(rec.get("verdict"), "q=" + ",".join(v.get("flaky_quarantine") or []), "base=" + ",".join("%s:%d/%d" % (k, b["pass"], b["fail"]) for k, b in (v.get("flaky_base") or {}).items()),
+      "list=" + ",".join(sorted(k for d in lst for k in d)), "entry=" + (ent[0] if ent else "none"),
+      "notrun" if any(n.startswith("not run: ") and "flaky.test.ts" in n for n in np) else "no-notrun",
+      "disclosed" if any(n.startswith("quarantined flaky test: bun:flaky.test.ts") and n.endswith("(disclosed, does not cap)") for n in np) else "undisclosed")
+PY
+}
+q_run() { local h="$T/qhome-$1"; shift; rm -rf "$h"; mkdir -p "$h"; HOME="$h" LOKI_E10_LOW_TIER_FULL_SUITE=0 run_engine done "$@"; }
+E2E_PREP=q_prep LOKI_E10_FLAKY_QUARANTINE=observe q_run obs; qo="$(q_facts "$T/qhome-obs")"; qo_n="$(cat "$T/q.ctr")"
+[ "$qo" = "PARTIAL q=bun:flaky.test.ts base=bun:flaky.test.ts:1/2 list=bun:flaky.test.ts entry=VERIFIED notrun undisclosed" ] && ok "V8 Q4/Q3 observe: an untouched test that flips on head and on base is quarantined in the per-repo list; the label stays PARTIAL and the receipt says it would be VERIFIED ($qo)" || bad "V8 Q4/Q3 observe gave: $qo"
+E2E_PREP=q_prep LOKI_E10_FLAKY_QUARANTINE=enforce q_run enf; qe="$(q_facts "$T/qhome-enf")"
+[ "$qe" = "VERIFIED q=bun:flaky.test.ts base=bun:flaky.test.ts:1/2 list=bun:flaky.test.ts entry=none no-notrun disclosed" ] && ok "V8 Q3 enforce: the quarantined test is left out of the label (VERIFIED), disclosed, and has no 'not run:' open item ($qe)" || bad "V8 Q3 enforce gave: $qe"
+E2E_PREP=q_prep q_run off; qf="$(q_facts "$T/qhome-off")"; qf_n="$(cat "$T/q.ctr")"
+[ "$qf" = "PARTIAL q= base= list= entry=none notrun undisclosed" ] && [ "$((qo_n - qf_n))" = 3 ] && ok "V8 Q3/Q4 off (default): PARTIAL as today, no list, no entry, and no base run (the counter shows 3 fewer runs than observe: $qo_n vs $qf_n)" || bad "V8 Q3/Q4 off gave: $qf (counter observe $qo_n, off $qf_n)"
+E2E_PREP=q_prep_head LOKI_E10_FLAKY_QUARANTINE=observe q_run head; qh="$(q_facts "$T/qhome-head") $(python3 -I -c 'import json, sys; ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]; v = [e["data"] for e in ev if e.get("stage") == "verify" and e["type"] == "stage.completed"][-1]; print("flaky=" + ",".join(c["name"] for c in v["checks"] if c["result"] == "flaky"))' "$RUNDIR/events.jsonl")"
+case "$qh" in "PARTIAL q= base= list= "*" flaky=bun:headonly.test.ts") ok "V8 Q4b: a test that flips only on the change passes three times on base and is never quarantined (a real regression is not hidden) ($qh)" ;; *) bad "V8 Q4b gave: $qh" ;; esac
+QU="$(cd "$ROOT/loki-ts" && bun -e '
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs"; import { join } from "node:path"; import { tmpdir } from "node:os";
+import { pruneQuarantine, readQuarantine, writeQuarantine, QUARANTINE_CLEAN_RUNS } from "./src/util/failure_memory.ts"; import { flakyCandidates, flakyOnBase } from "./src/engine10/stages/verify.ts";
+const d = mkdtempSync(join(tmpdir(), "q1-")), e = { first_run: "r1", last_run: "r1", base: "1 pass, 2 fail of 3 on the base commit", clean: 0 };
+writeQuarantine(d, { "bun:a.test.ts": e }); const back = readQuarantine(d);
+writeFileSync(join(d, "flaky-quarantine.json"), "{not json"); const bad = readQuarantine(d);
+writeFileSync(join(d, "flaky-quarantine.json"), JSON.stringify({ "bun:a.test.ts": e, "bun:b.test.ts": { first_run: "r1", base: "x", clean: 0 } })); const part = readQuarantine(d);
+console.log("Q1", JSON.stringify(back) === JSON.stringify({ "bun:a.test.ts": e }), JSON.stringify(bad), Object.keys(part).join(","));
+let q = { "bun:a.test.ts": e } as Record<string, typeof e>;
+for (let i = 0; i < QUARANTINE_CLEAN_RUNS; i++) q = pruneQuarantine(q, ["bun:a.test.ts"], [], {}, "r" + (i + 2));
+const r = pruneQuarantine({ "bun:a.test.ts": { ...e, clean: 2 } }, [], ["bun:a.test.ts"], {}, "r9"), n = pruneQuarantine({}, [], [], { "bun:n.test.ts": "2 pass, 1 fail of 3 on the base commit" }, "r5");
+console.log("Q2", JSON.stringify(q), r["bun:a.test.ts"]!.clean, r["bun:a.test.ts"]!.last_run, JSON.stringify(n["bun:n.test.ts"]));
+const c = (name: string) => ({ name, result: "flaky" }), opts = { wall: new Set(["bun:loki_wall_x.test.ts"]), target: new Set(["bun:task.test.ts"]), changed: ["edited.test.ts"], testNames: new Set(["bun:untouched.test.ts", "bun:edited.test.ts", "bun:task.test.ts", "bun:loki_wall_x.test.ts", "bun:held.test.ts"]), hold: (x: { name: string }) => x.name === "bun:held.test.ts" };
+console.log("Qc", flakyCandidates([c("bun:untouched.test.ts"), c("bun:edited.test.ts"), c("bun:task.test.ts"), c("bun:loki_wall_x.test.ts"), c("bun:held.test.ts"), c("full suite: bun test"), { name: "bun:untouched.test.ts", result: "fail" }], opts).map((x) => x.name).join(","), "end");
+let ran = 0; const now = 1_000_000, run = async () => { ran++; return { ok: true, cut: false, missing: false, out: "1 pass\n0 fail\nRan 1 tests across 1 files." }; };
+const near = await flakyOnBase(run, now + 1000, () => now), ranNear = ran, far = await flakyOnBase(run, now + 60_000, () => now);
+console.log("Q5", near, ranNear, JSON.stringify(far));
+rmSync(d, { recursive: true, force: true });
+' 2>&1)"
+has "V8 Q1: the quarantine list round-trips; corrupt JSON reads empty; an entry missing a field is dropped" "$QU" "Q1 true {} bun:a.test.ts"
+has "V8 Q2: three clean first-try passes remove an entry; a flaky run resets clean; a new name is added with its base text" "$QU" 'Q2 {} 0 r9 {"first_run":"r5","last_run":"r5","base":"2 pass, 1 fail of 3 on the base commit","clean":0}'
+has "V8 Qc: only an untouched test check is a candidate (never the change's edited file, a task-named test, the Wall, holdout or a full suite)" "$QU" "Qc bun:untouched.test.ts end"
+has "V8 Q5: with the deadline inside the suite margin no base run is made and nothing can be quarantined; with time left it runs three times" "$QU" 'Q5 null 0 {"pass":3,"fail":0,"not_run":0}'
+
+# VERIFY-PLAN V10 CHECKLIST (LOKI_E10_CHECKLIST, observe by default). A tracked .loki-checklist.json read only from the base commit; an item fires when the diff
+# matches its trigger. K4 runs the engine on the stub with a base checklist whose forbid_added item fires on the multiply() line the done change adds.
+# Plants (each reverted): read the working-tree file instead of the base (K3 edit cell); fire on context lines (K1); an invalid regex matches everything (K3);
+# enforce writes no check (K4 enforce reads VERIFIED); observe changes the label (K4 observe); a cmd failure that also fails on base counted as fail (K5);
+# cmd items run with the knob unset (K5 cmdOn cell); read tracked diffs only, no new-file branch in addedLines (K6 new-file cell reads pass and fires none); read the whole tracked file (K6 old.sh reads old.sh:1 and four lines).
+k_prep() { # k_prep <repo>: a base checklist that forbids adding an exported multiply
+    printf '{"version": 1, "items": [{"id": "no-multiply", "trigger": {"paths": ["*.ts"]}, "check": {"forbid_added": "export function multiply"}, "why": "stub", "taught_by": "k4"}]}\n' > "$1/.loki-checklist.json"
+    git -C "$1" add .loki-checklist.json; git -C "$1" commit -q --amend -m base
+}
+k_facts() { python3 -I -c 'import json, sys
+r = json.load(open(sys.argv[1]))
+np = r.get("not_proven") or []
+e = [o["would_label"] for o in r.get("observe") or [] if o.get("rule") == "LOKI_E10_CHECKLIST"]
+line = [n for n in np if n.startswith("checklist item no-multiply failed:")]
+print(r["verdict"], "entry=" + (e[0] if e else "none"), ("line-observe" if line[0].endswith("(observe mode: disclosed, does not cap)") else "line-enforce") if line else "no-line", "checkfail" if any(c["name"] == "checklist" and c["result"] == "fail" for c in r["checks"]) else "nocheck")' "$RUNDIR/receipt.json" 2>&1; }
+E2E_PREP=k_prep run_engine done; k_obs="$(k_facts)"
+E2E_PREP=k_prep LOKI_E10_CHECKLIST=enforce run_engine done; k_enf="$(k_facts)"
+E2E_PREP=k_prep LOKI_E10_CHECKLIST=0 run_engine done; k_off="$(k_facts)"
+[ "$k_obs" = "VERIFIED entry=FAILED line-observe nocheck" ] && ok "V10 K4 observe (default): the label stays VERIFIED, the receipt says it would be FAILED and lists the item as a disclosed line ($k_obs)" || bad "V10 K4 observe gave: $k_obs"
+[ "$k_enf" = "FAILED entry=none line-enforce checkfail" ] && ok "V10 K4 enforce: a failing item is a failing check named checklist and the label is FAILED ($k_enf)" || bad "V10 K4 enforce gave: $k_enf"
+[ "$k_off" = "VERIFIED entry=none no-line nocheck" ] && ok "V10 K4 off: no item is read ($k_off)" || bad "V10 K4 off gave: $k_off"
+KG="$(mktemp -d "$T/k3.XXXXXX")"; git -C "$KG" init -q -b main; git -C "$KG" config user.name t; git -C "$KG" config user.email t@example.invalid
+printf '{"version": 1, "items": [{"id": "base-item", "trigger": {}, "check": {"forbid_added": "x"}, "why": "w", "taught_by": "t"}]}\n' > "$KG/.loki-checklist.json"; printf 'a\n' > "$KG/f.txt"
+git -C "$KG" add -A; git -C "$KG" commit -q -m base; KB="$(git -C "$KG" rev-parse HEAD)"
+printf '{"version": 1, "items": [{"id": "edited-item", "trigger": {}, "check": {"forbid_added": "x"}, "why": "w", "taught_by": "t"}]}\n' > "$KG/.loki-checklist.json"
+KN="$(mktemp -d "$T/k3n.XXXXXX")"; git -C "$KN" init -q -b main; git -C "$KN" config user.name t; git -C "$KN" config user.email t@example.invalid; printf 'a\n' > "$KN/f.txt"; git -C "$KN" add -A; git -C "$KN" commit -q -m base; KNB="$(git -C "$KN" rev-parse HEAD)"
+printf '{"version": 1, "items": []}\n' > "$KN/.loki-checklist.json"
+KJ="$(mktemp -d "$T/k3j.XXXXXX")"; git -C "$KJ" init -q -b main; git -C "$KJ" config user.name t; git -C "$KJ" config user.email t@example.invalid
+printf '{not json\n' > "$KJ/.loki-checklist.json"; git -C "$KJ" add -A; git -C "$KJ" commit -q -m bad; KJB="$(git -C "$KJ" rev-parse HEAD)"
+printf '{"version": 1, "items": [{"id": "r", "trigger": {"added": "("}, "check": {"forbid_added": "x"}, "why": "w", "taught_by": "t"}]}\n' > "$KJ/.loki-checklist.json"; git -C "$KJ" add -A; git -C "$KJ" commit -q -m badre; KJR="$(git -C "$KJ" rev-parse HEAD)"
+KA="$(mktemp -d "$T/k6.XXXXXX")"; git -C "$KA" init -q -b main; git -C "$KA" config user.name t; git -C "$KA" config user.email t@example.invalid
+printf 'grep -q base\na\nb\n' > "$KA/old.sh"; git -C "$KA" add -A; git -C "$KA" commit -q -m base; KAB="$(git -C "$KA" rev-parse HEAD)"
+printf 'grep -q base\na\nb\ngrep -q x\n' > "$KA/old.sh"; printf 'echo hi\ncurl -s z\ngrep -q y\n' > "$KA/new.sh"; printf 'grep -q outside\n' > "$T/k6-outside.sh"; ln -s "$T/k6-outside.sh" "$KA/link.sh"
+KU="$(cd "$ROOT/loki-ts" && bun -e '
+import { addedLines, checklistCmdOn, firedItems, readChecklist, runChecklist } from "./src/features/checklist.ts";
+const [kg, kb, kn, knb, kj, kjb, kjr, ka, kab] = process.argv.slice(1);
+const it = (id: string, trigger: object, check: object) => ({ id, trigger, check, why: "w", taught_by: "t" }) as never;
+const added: Record<string, string[]> = { "src/a.ts": ["const x = 1;", "grep -q ok proof"], "lib/deep/b.ts": ["y"], "docs/c.md": ["z"] }, al = (f: string) => added[f] ?? [];
+const names = (xs: { id: string }[]) => xs.map((x) => x.id).join(",") || "none";
+console.log("K1", names(firedItems([it("glob-hit", { paths: ["src/*.ts"] }, {}), it("glob-miss", { paths: ["test/*.ts"] }, {}), it("deep", { paths: ["lib/**/*.ts"] }, {}), it("added-hit", { paths: ["src/*.ts"], added: "grep -q" }, {}), it("context-only", { paths: ["src/*.ts"], added: "never added" }, {}), it("any", {}, {})], Object.keys(added), al)), "end");
+const fa = it("no-grep-q", { paths: ["src/*.ts"] }, { forbid_added: "grep -q" }), no = async () => ({ ok: true, cut: false, missing: false, out: "" });
+const k2 = await runChecklist([fa], al, { cmdOn: false, changed: ["src/a.ts"], lineNo: (f, i) => [10, 11][i], run: no, runBase: async () => null });
+const k2b = await runChecklist([fa], (f) => (f === "src/a.ts" ? ["const x = 1;"] : []), { cmdOn: false, changed: ["src/a.ts"], run: no, runBase: async () => null });
+console.log("K2", k2[0].result, k2[0].detail.includes("src/a.ts:11"), k2b[0].result);
+console.log("K3", names(readChecklist(kg, kb).items), names(readChecklist(kn, knb).items), readChecklist(kn, knb).problem ?? "noproblem", names(readChecklist(kj, kjb).items), readChecklist(kj, kjb).problem ? "problem" : "noproblem", readChecklist(kj, kjr).problem ? "re-problem" : "re-ok", "end");
+const ci = it("cmd", {}, { cmd: "false" });
+let runs = 0, bases = 0; const r = (ok: boolean) => async () => { runs++; return { ok, cut: false, missing: false, out: "" }; }, b = (v: boolean | null) => async () => { bases++; return v === null ? null : { ok: v, cut: false, missing: false, out: "" }; };
+const c0 = await runChecklist([ci], al, { cmdOn: false, changed: [], run: r(false), runBase: b(true) }); const c0runs = runs;
+const c1 = await runChecklist([ci], al, { cmdOn: true, changed: [], run: r(false), runBase: b(true) });
+const c2 = await runChecklist([ci], al, { cmdOn: true, changed: [], run: r(false), runBase: b(false) });
+const c3 = await runChecklist([ci], al, { cmdOn: true, changed: [], run: r(false), runBase: b(null) });
+bases = 0; const c4 = await runChecklist([ci], al, { cmdOn: true, changed: [], run: r(true), runBase: b(true) });
+console.log("K5", c0[0].result, c0runs, c1[0].result, c2[0].result, c2[0].detail.includes("fails on the base commit too"), c3[0].result, c3[0].detail.startsWith("not compared"), c4[0].result, bases);
+console.log("K5c", checklistCmdOn({} as never), checklistCmdOn({ LOKI_E10_CHECKLIST: "observe" } as never), checklistCmdOn({ LOKI_E10_CHECKLIST: "0" } as never));
+const ch = ["old.sh", "new.sh", "link.sh"], alg = (f: string) => addedLines(ka, kab, f).lines;
+const k6 = await runChecklist([it("no-grep-q-old", { paths: ["old.sh"] }, { forbid_added: "grep -q" }), it("no-grep-q-new", { paths: ["new.sh"] }, { forbid_added: "grep -q" })], alg, { cmdOn: false, changed: ch, lineNo: (f, i) => addedLines(ka, kab, f).nos[i], run: no, runBase: async () => null });
+console.log("K6", k6[0].result, k6[0].detail.includes("old.sh:4: grep -q x"), JSON.stringify(addedLines(ka, kab, "old.sh")), k6[1].result, k6[1].detail.includes("new.sh:3: grep -q y"), names(firedItems([it("trig-new", { paths: ["*.sh"], added: "curl -s" }, { forbid_added: "x" })], ch, alg)), JSON.stringify(addedLines(ka, kab, "new.sh").nos), alg("link.sh").length, "end");
+' "$KG" "$KB" "$KN" "$KNB" "$KJ" "$KJB" "$KJR" "$KA" "$KAB" 2>&1)"
+has "V10 K1 firedItems: a path glob hit and miss, ** across directories, an added-line regex on added lines only (a context-only pattern never fires), and no paths fires on any file" "$KU" "K1 glob-hit,deep,added-hit,any end"
+has "V10 K2 forbid_added: an added matching line fails naming file:line; the same text on an unchanged line passes" "$KU" "K2 fail true pass"
+has "V10 K3 readChecklist: the base commit's file is read and a working-tree edit ignored; a file only in the change reads as none; bad JSON and a bad regex are problems, never a throw" "$KU" "K3 base-item none noproblem none problem re-problem end"
+has "V10 K5 cmd: not run without the knob (never run); fails on head and passes on base fails; fails on both is not run; no base tree is not run; passes on head never runs base" "$KU" "K5 not_run 0 fail not_run true not_run true pass 0"
+has "V10 K5 checklistCmdOn: unset false, observe true, 0 false" "$KU" "K5c false true false"
+has "V10 K6 addedLines (real git): a modified tracked file fails at its diff line; an untracked file the change creates counts every line as added (fails at new.sh:3, a trigger.added item fires on it, lines numbered 1-3 with no phantom trailing line); an untracked symlink is never read" "$KU" 'K6 fail true {"lines":["grep -q x"],"nos":[4]} fail true trig-new [1,2,3] 0 end'
+# K7 one reader: the -U0 hunk numbering and the per-file added-lines read live only in features/self_review.ts (cold review of V10). Plant (reverted): a hunk
+# loop copied back into checklist.ts, or addedLineNumbers defined again in deep.ts, reads "K7 dup".
+k7_defs="$(grep -rl 'function addedLineNumbers' "$ROOT/loki-ts/src" | sed "s#^$ROOT/##" | tr '\n' ' ')"
+if [ "$k7_defs" = "loki-ts/src/features/self_review.ts " ] && ! grep -qE '"diff"|@@' "$ROOT/loki-ts/src/features/checklist.ts" && grep -q 'addedLinesOf' "$ROOT/loki-ts/src/features/checklist.ts" && ! grep -q 'stages/deep' "$ROOT/loki-ts/src/features/checklist.ts"; then k7="K7 one"; else k7="K7 dup ($k7_defs)"; fi
+[ "$k7" = "K7 one" ] && ok "V10 K7: addedLineNumbers is defined once (features/self_review.ts); checklist.ts reads added lines through addedLinesOf, runs no diff of its own and never imports deep.ts" || bad "V10 K7 gave: $k7"
+
+# VERIFY-PLAN V11 CASCADE-INTRODUCED (LOKI_E10_CASCADE_INTRODUCED, off by default, only with LOKI_E10_CASCADE_V0=1): the cascade also starts on a failure the
+# calibrated verify attributes to the change (closure.ts failureClasses), and the next attempt's brief carries check-failures.txt under its own lead. The Wall is
+# off (LOKI_E10_WALL=0), so the Wall oracle cannot start it. Plants (each reverted): cascadeIntroducedOn ignores CASCADE_V0 (X3 starts an attempt); machine
+# reads pre_existing instead of introduced (X1 no attempt); the introduced tail uses CASCADE_LEAD (X1 brief).
+x_att() { python3 -I -c 'import json, sys
+n = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]
+s = [e for e in n if e["type"] == "attempts.selected"]
+print("attempts=%s" % ((s[0].get("data") or {}).get("total") if s else "none"))' "$RUNDIR/events.jsonl"; }
+x_brief() { python3 -I -c 'import sys, glob
+t = "".join(open(p).read() for p in glob.glob(sys.argv[1] + ".*"))
+print("lead" if "The previous attempt at this task left these checks failing, and Loki attributes them to the change." in t else "nolead", "oldlead" if "The previous attempt at this task failed these acceptance tests" in t else "noold", "tail" if "calc.test.ts" in t.split("Loki attributes them to the change. Their failing output:")[-1] else "notail")' "$T/x.prompt"; }
+rm -f "$T"/x.prompt*; E2E_STUB_PROMPT_LOG="$T/x.prompt" LOKI_E10_CASCADE_V0=1 LOKI_E10_WALL=0 LOKI_E10_CASCADE_INTRODUCED=1 LOKI_SESSION_MODEL=haiku run_engine wrong; x1="$(x_att) $(x_brief)"
+[ "$x1" = "attempts=2 lead noold tail" ] && ok "V11 X1: with cascade v0 and the knob, an introduced failure starts one more attempt whose brief carries check-failures.txt under its own lead, not the Wall's ($x1)" || bad "V11 X1 gave: $x1"
+LOKI_E10_CASCADE_V0=1 LOKI_E10_WALL=0 LOKI_SESSION_MODEL=haiku run_engine wrong; x2="$(x_att)"
+[ "$x2" = "attempts=none" ] && ok "V11 X2: with the knob unset nothing cascades without a Wall failure (today)" || bad "V11 X2 gave: $x2"
+LOKI_E10_WALL=0 LOKI_E10_CASCADE_INTRODUCED=1 LOKI_SESSION_MODEL=haiku run_engine wrong; x3="$(x_att)"
+[ "$x3" = "attempts=none" ] && ok "V11 X3: the knob without LOKI_E10_CASCADE_V0 starts nothing" || bad "V11 X3 gave: $x3"
+XU="$(cd "$ROOT/loki-ts" && bun -e '
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs"; import { join } from "node:path"; import { tmpdir } from "node:os";
+import { cascadeIntroducedTail } from "./src/features/attempts.ts"; import { cascadeIntroducedOn } from "./src/util/wall_knobs.ts";
+const d = mkdtempSync(join(tmpdir(), "x4-")), body = "a".repeat(1000) + "b".repeat(6000); writeFileSync(join(d, "check-failures.txt"), body);
+const t = cascadeIntroducedTail(d), e = mkdtempSync(join(tmpdir(), "x4e-"));
+console.log("X4", t?.length, t === body.slice(-6000), cascadeIntroducedTail(e), cascadeIntroducedOn({ LOKI_E10_CASCADE_INTRODUCED: "1" } as never), cascadeIntroducedOn({ LOKI_E10_CASCADE_INTRODUCED: "1", LOKI_E10_CASCADE_V0: "1" } as never));
+rmSync(d, { recursive: true, force: true }); rmSync(e, { recursive: true, force: true });
+' 2>&1)"
+has "V11 X4: cascadeIntroducedTail keeps the last 6000 characters and reads null for a missing file; the knob needs cascade v0" "$XU" "X4 6000 true null false true"
 
 att_ev() { python3 -I -c '
 import json, sys

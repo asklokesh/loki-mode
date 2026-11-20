@@ -103,6 +103,8 @@ rm -f loki-mode-*.tgz
 ```
 If any check fails, do not release; fix the root cause first.
 
+Calibration gate (VERIFY-PLAN V1): when the release changes loki-ts/src/engine10/stages/verify.ts, loki-ts/src/engine10/stages/seal.ts, loki-ts/src/runner/repo_profile.ts, loki-ts/src/engine10/failures.ts, loki-ts/src/util/check_result.ts or loki-ts/src/engine10/closure.ts, run `cd benchmarks/h2h && bash run.sh --suite replay --configs loki-cal-merged,loki-cal-nofix,loki-cal-plant,loki-cal-inert --jobs 1 --timeout 1800 --out results/calibration-<version>.json` (no model, one case at a time, each started at a 1-minute load of 12 or below) and commit it. `scripts/release.sh --ship` refuses the release (SHIP_NO_CALIBRATION) when no calibration file was added or changed since the last tag, (SHIP_CALIBRATION_FEWER_RUNS) when it has fewer valid runs than the previous committed calibration file, and (SHIP_CALIBRATION_WORSE) when its `calibration.false_verified` is higher, or its `calibration.verifier_right` lower, than the previous file's. The first calibration file has no previous one, so only its presence is checked. `bash scripts/release.sh --check-calibration` runs the same check alone.
+
 ### 4. Commit and land
 
 Stage files by name (never `git add -A` or `git add .`). A VERSION push to main publishes to npm under `latest` and `next` at once; the

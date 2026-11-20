@@ -801,9 +801,10 @@ S1B_DONE_ITERS="$(cut -d' ' -f1-3 "$ITERS" | sed -E 's/e10-[0-9TZ]+-[0-9a-f]+/RU
 # brief; with that one addition removed, today's normalized brief hashes to b055d0660abb4bd7 again. Any other change to a text goal's brief turns this leg red.
 # It moved to de106c6cf947932f with ce0e9c178 (2026-11-17), which adds STASH_RULE ("Never run git stash ...", e10ext/context.ts) to the fixed rules of every
 # session that writes code, on purpose (opencode 63310 lost its change in a stash); the issue-run pin in decompose-and-intake.sh moved with it. Measured: the kept brief with that one line removed hashes to e7dc8ddd3cae1e07 again.
+# The receipt key set gained verified_by with VERIFY-PLAN V7 (2026-11-20): every receipt now says what verified the change; nothing else in the signature moved.
 [ -n "${S1B_KEEP_DIR:-}" ] && { cp "$RUNDIR/implement-brief.txt" "$S1B_KEEP_DIR/brief.txt"; printf '%s\n%s\n' "$REPO" "$(basename "$RUNDIR")" > "$S1B_KEEP_DIR/where.txt"; } # S1B_KEEP_DIR=<dir>: keep the brief and its repo/run for a diff when the pin moves
 S1B_SIG="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$RUNDIR" "$REPO" 2>&1)"
-[ "$S1B_SIG" = "stages=intake,{plan,wall},implement,verify,commit,seal; receipt=base_sha,checks,context,cost,cost_preview,diff_sha256,events_sha256,evidence,head_sha,log_seal,loki_version,model,model_source,mutation_outcome,mutation_proof,not_applicable,not_proven,provider,receipt_sha256,repo,resumed,run_id,schema,seal_accuracy,seeded_corpus,task,time,toolchain,tree,verdict,verification,wall,wall_oracle; implement=already_done_evidence,brief_files,cascade,context_pack,coverage_resume,diff_stat,duration_s,exit,impacted_tests,iteration_ids,model,session_id,session_resume,spec_conflict_reason,summary_tail,tests_reverted; brief=de106c6cf947932f" ] \
+[ "$S1B_SIG" = "stages=intake,{plan,wall},implement,verify,commit,seal; receipt=base_sha,checks,context,cost,cost_preview,diff_sha256,events_sha256,evidence,head_sha,log_seal,loki_version,model,model_source,mutation_outcome,mutation_proof,not_applicable,not_proven,provider,receipt_sha256,repo,resumed,run_id,schema,seal_accuracy,seeded_corpus,task,time,toolchain,tree,verdict,verification,verified_by,wall,wall_oracle; implement=already_done_evidence,brief_files,cascade,context_pack,coverage_resume,diff_stat,duration_s,exit,impacted_tests,iteration_ids,model,session_id,session_resume,spec_conflict_reason,summary_tail,tests_reverted; brief=de106c6cf947932f" ] \
     && ok "S1b no-loss (text goal): stage order, receipt key set and implement key set equal the base commit's (8c7ae842b); the normalized implement brief is that commit's plus the two not-a-conflict sentences 4fc499ebb added to the pinned-test rule" || bad "S1b no-loss (text goal) differs from the pinned signature: $S1B_SIG"
 run_engine "$TASK" E2E_STUB_MODE=already
 [ "$(kits)" = 0 ] && [ "$(fin)" = none ] && ok "S1b already-done: an already-done reply gets no resume and no finish key ($(outcome))" || { bad "S1b already-done: resumes $(kits), finish '$(fin)'"; dump; }
@@ -4814,5 +4815,119 @@ grep -q '^EXIT 0$' <<< "$out" || { bad "G5 line-fallback unit script crashed or 
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
+
+# ---------------------------------------------------------------- VERIFY-PLAN V5 STRUCTURED-RESULTS (LOKI_E10_STRUCTURED_RESULTS, off by default; observe never moves the label).
+# A per-file pytest, bun, vitest or jest check also writes the runner's own report; verify compares it with the text parse. Planted defects (each reverted):
+#   V5-1. util/test_report.ts reportArgs: return null for bun: T1 bun cell and T4 agree cell fail.
+#   V5-2. readReport junit: count skipped as run: T2 fails.
+#   V5-3. stages/verify.ts runCheck: build cmdStr from the extended args: T4 cmd cell fails.
+#   V5-4. runCheck: never remove the report dir: T4 cleanup cell fails.
+#   V5-5. test_report.ts structuredResultsMode: default observe: T4 unset cell fails.
+#   V5-6. runCheck: drop the fallback: T5 reads fail.
+#   V5-7. runCheck: the fallback runs once without the flaky retry: T5b reads fail.
+#   V5-8. runCheck: the fallback fires on a cut run: T5c counter reads 2.
+#   V5-9. util/python.ts scanJunitCases: the testcase regex not quote-aware (<testcase\b([^>]*?)): T2b reads the id "t.m > ".
+cat > "$T/v5.ts" <<'TS'
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, chmodSync, existsSync } from "node:fs";
+import { join } from "node:path";
+const root = process.argv[2]!, base = process.argv[3]!;
+const tr = await import(root + "/loki-ts/src/util/test_report.ts"), vf = await import(root + "/loki-ts/src/engine10/stages/verify.ts");
+const res = (name: string, pass: boolean, got?: unknown) => console.log((pass ? "OK " : "NO ") + name + (pass || got === undefined ? "" : ` (got ${JSON.stringify(got)})`));
+const F = "/r/report.xml";
+res("V5 T1 reportArgs: pytest gets --junitxml with xunit1", JSON.stringify(tr.reportArgs("python3", ["-m", "pytest", "-q", "t.py"], F)) === JSON.stringify(["--junitxml=" + F, "-o", "junit_family=xunit1"]));
+res("V5 T1 reportArgs: bun test gets the junit reporter and its outfile", JSON.stringify(tr.reportArgs("bun", ["test", "a.test.ts"], F)) === JSON.stringify(["--reporter=junit", "--reporter-outfile=" + F]));
+res("V5 T1 reportArgs: vitest run gets default plus junit with outputFile.junit", JSON.stringify(tr.reportArgs("npx", ["--no-install", "vitest", "run", "a.test.ts"], F)) === JSON.stringify(["--reporter=default", "--reporter=junit", "--outputFile.junit=" + F]));
+res("V5 T1 reportArgs: jest gets --json and --outputFile", JSON.stringify(tr.reportArgs("npx", ["--no-install", "jest", "a.test.ts"], F)) === JSON.stringify(["--json", "--outputFile=" + F]));
+res("V5 T1 reportArgs: go test -json, bash -c and python -m unittest get none", tr.reportArgs("go", ["test", "-json", "./x"], F) === null && tr.reportArgs("bash", ["-c", "x"], F) === null && tr.reportArgs("python3", ["-m", "unittest", "t.py"], F) === null);
+const d = mkdtempSync(join(base, "v5-"));
+const w = (n: string, t: string) => { const p = join(d, n); writeFileSync(p, t); return p; };
+const x1 = w("x1.xml", '<?xml version="1.0"?><testsuites><testsuite name="pytest" tests="3"><testcase classname="tests.test_x.TestC" name="test_y" file="tests/test_x.py" time="0"><failure message="boom">x</failure></testcase><testcase classname="tests.test_x" name="test_ok" file="tests/test_x.py"/><testcase classname="tests.test_x" name="test_skip" file="tests/test_x.py"><skipped message="s"/></testcase></testsuite></testsuites>');
+const r1 = tr.readReport(x1, "junit");
+res("V5 T2 readReport junit: 3 testcases, one failure in class TestC, one skipped: run 2, failed 1, skipped 1, id file::class::name", r1?.run === 2 && r1?.failed === 1 && r1?.skipped === 1 && JSON.stringify(r1?.failedIds) === JSON.stringify(["tests/test_x.py::TestC::test_y"]), r1);
+const x2 = w("x2.xml", '<testsuites><testsuite><testcase classname="C" name="a &amp; b &#62; c"><error/></testcase></testsuite></testsuites>');
+res("V5 T2 readReport junit: an entity in a name decodes", JSON.stringify(tr.readReport(x2, "junit")?.failedIds) === JSON.stringify(["C > a & b > c"]), tr.readReport(x2, "junit"));
+res("V5 T2 readReport junit: a truncated file and an empty file read null", tr.readReport(w("x3.xml", '<testsuites><testsuite><testcase name="a"/>'), "junit") === null && tr.readReport(w("x4.xml", ""), "junit") === null && tr.readReport(join(d, "missing.xml"), "junit") === null);
+const x5 = w("x5.xml", '<testsuites><testsuite><testcase classname="t.m" name="test_cmp[a>b]"><failure/></testcase><testcase classname="t.m" name="test_xf"><skipped type="pytest.xfail" message="r"/></testcase><testcase classname="t.m" name="test_ok"/></testsuite></testsuites>');
+const r5x = tr.readReport(x5, "junit");
+res("V5 T2b readReport junit (the shared python.ts scanJunitCases): a raw > inside a quoted name keeps the whole id, and an xfail counts as skipped", r5x?.run === 2 && r5x?.failed === 1 && r5x?.skipped === 1 && JSON.stringify(r5x?.failedIds) === JSON.stringify(["t.m > test_cmp[a>b]"]), r5x);
+const j1 = w("j.json", JSON.stringify({ testResults: [{ assertionResults: [{ status: "passed", fullName: "a" }, { status: "passed", fullName: "b" }, { status: "failed", fullName: "s c" }, { status: "pending", fullName: "d" }] }] }));
+const r3 = tr.readReport(j1, "jest-json");
+res("V5 T3 readReport jest-json: 2 passed, 1 failed, 1 pending: run 3, failed 1, skipped 1, id fullName", r3?.run === 3 && r3?.failed === 1 && r3?.skipped === 1 && JSON.stringify(r3?.failedIds) === JSON.stringify(["s c"]), r3);
+// T4 and T5: runCheck on a real bun and on fake runners; the report dir lives under TMPDIR, pointed at a fresh dir per cell.
+const repo = join(d, "repo"); mkdirSync(repo);
+writeFileSync(join(repo, "two.test.ts"), 'import { expect, test } from "bun:test";\ntest("one", () => { expect(1).toBe(1); });\ntest("two", () => { expect(1).toBe(2); });\n');
+const sig = new AbortController().signal, ctx = { repoDir: repo, baseSha: "", runDir: join(d, "run"), outputs: () => ({}), emit: () => {} } as never;
+const tmpd = (n: string) => { const t = join(d, "tmp-" + n); mkdirSync(t); process.env.TMPDIR = t; return t; };
+const run = async (cmd: string, args: string[], o: Record<string, unknown> = {}) => { const checks: unknown[] = []; const c = await vf.runCheck(ctx, "bun:two.test.ts", cmd, args, sig, checks as never, o as never) as { result: string; cmd: string }; return { c, s: vf.structuredSummary(checks as never) }; };
+process.env.LOKI_E10_STRUCTURED_RESULTS = "observe";
+let t = tmpd("t4");
+const a = await run("bun", ["test", "./two.test.ts"]);
+res("V5 T4 real bun with observe: the report agrees with the text parse (2 run, 1 failed)", a.c.result === "fail" && a.s.read === 1 && a.s.agree === 1, { r: a.c.result, s: a.s });
+res("V5 T4 the check's cmd is the original command, with no reporter text", a.c.cmd === "bun test ./two.test.ts", a.c.cmd);
+res("V5 T4 the temp report dir is gone afterwards", readdirSync(t).filter((n) => n.startsWith("loki-report-")).length === 0, readdirSync(t));
+const fake = join(d, "fake"); mkdirSync(fake); const argv = join(d, "argv.log"), ctr = join(d, "ctr");
+const fakeBun = (body: string) => { writeFileSync(join(fake, "bun"), "#!/bin/bash\nprintf '%s\\n' \"$*\" >> " + argv + "\n" + body + "\n"); chmodSync(join(fake, "bun"), 0o755); };
+const PASS = 'printf "1 pass\\n0 fail\\nRan 1 tests across 1 files.\\n"; exit 0', FAIL = 'printf "0 pass\\n1 fail\\nRan 1 tests across 1 files.\\n"; exit 1';
+const path = fake + ":" + (process.env.PATH ?? "");
+delete process.env.LOKI_E10_STRUCTURED_RESULTS; fakeBun(PASS); rmSync(argv, { force: true }); t = tmpd("t4u");
+const u = await run("bun", ["test", "./two.test.ts"], { path });
+res("V5 T4 knob unset: the runner sees exactly today's arguments and no report dir is made", readFileSync(argv, "utf8") === "test ./two.test.ts\n" && readdirSync(t).filter((n) => n.startsWith("loki-report-")).length === 0 && u.s.read === 0 && u.s.unsupported === 0, readFileSync(argv, "utf8"));
+process.env.LOKI_E10_STRUCTURED_RESULTS = "observe";
+fakeBun('case "$*" in *--reporter=junit*) exit 2 ;; esac\n' + PASS); rmSync(argv, { force: true }); tmpd("t5");
+const r5 = await run("bun", ["test", "./two.test.ts"], { path });
+res("V5 T5 a runner that rejects the report flag: run again without it, pass, cmd unchanged, report_unsupported", r5.c.result === "pass" && r5.c.cmd === "bun test ./two.test.ts" && r5.s.unsupported === 1, { r: r5.c.result, s: r5.s });
+fakeBun('case "$*" in *--reporter=junit*) exit 2 ;; esac\nn=$(cat ' + ctr + ' 2>/dev/null || echo 0); echo $((n + 1)) > ' + ctr + '\nif [ "$n" = 0 ]; then ' + FAIL + '; fi\n' + PASS); rmSync(ctr, { force: true }); tmpd("t5b");
+const r5b = await run("bun", ["test", "./two.test.ts"], { path });
+res("V5 T5b the fallback keeps the flaky retry: fail then pass without the flag reads flaky", r5b.c.result === "flaky", r5b.c.result);
+fakeBun('n=$(cat ' + ctr + ' 2>/dev/null || echo 0); echo $((n + 1)) > ' + ctr + '\nsleep 3\n' + PASS); rmSync(ctr, { force: true }); tmpd("t5c");
+const r5c = await run("bun", ["test", "./two.test.ts"], { path, timeoutMs: 400 });
+res("V5 T5c a cut run never falls back: not_run and the runner ran once", r5c.c.result === "not_run" && readFileSync(ctr, "utf8").trim() === "1", { r: r5c.c.result, n: existsSync(ctr) ? readFileSync(ctr, "utf8").trim() : "none" });
+rmSync(d, { recursive: true, force: true });
+TS
+v5out="$(cd "$ROOT/loki-ts" && env -u LOKI_E10_STRUCTURED_RESULTS bun "$T/v5.ts" "$ROOT" "$T" 2>&1; echo "EXIT $?")"
+grep -q '^EXIT 0$' <<< "$v5out" || { bad "V5 unit script crashed or exited non-zero"; printf '%s\n' "$v5out" | tail -6 | sed 's/^/    | /'; }
+[ "$(printf '%s\n' "$v5out" | grep -c '^OK ')" = 17 ] || bad "V5 unit script produced $(printf '%s\n' "$v5out" | grep -c '^OK ') passing legs, want 17"
+while IFS= read -r line; do
+    case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
+done <<< "$v5out"
+
+# ---------------------------------------------------------------- VERIFY-PLAN V3 W5 steer staleness with an observed Wall (util/steer.ts staleAtSeal). An observed Wall froze nothing
+# the label reads, so a steer consumed after its author started does not stale the seal; an enforce record still does, and so does wallSealed (the P12-13c race rule).
+# Planted defect (reverted): drop the observe test in steer.ts (the observe cell returns the revision).
+W5D="$(mktemp -d "$T/w5.XXXXXX")"
+W5="$(cd "$ROOT/loki-ts" && bun -e '
+import { staleAtSeal } from "./src/util/steer.ts";
+const dir = process.argv[1]!, rev = () => [{ rev: 1, source: null, actor: null, sha: "x", at: 2000 }], tl = [{ stage: "wall", startMs: 1000 }];
+const n = (outputs: () => object, wallSealed: boolean) => staleAtSeal(dir, { intentRevisions: rev() as never, timeline: tl, outputs: outputs as never, wallSealed }).length;
+console.log("W5", n(() => ({ wall: { observe: true } }), false), n(() => ({ wall: { files: [] } }), false), n(() => ({ wall: { observe: true } }), true));
+' "$W5D" 2>&1)"
+has "V3 W5: staleAtSeal: an observed Wall stales nothing, an enforce Wall record does, and wallSealed still does" "$W5" "W5 0 1 1"
+
+# ---------------------------------------------------------------- VERIFY-PLAN V4 E2E-BOOT (LOKI_E10_E2E_BOOT, off by default): verify boots the app on the change and on the base tree
+# before the seal with the post-seal app runner. E1 to E5 are pure cells on bootOutcome; E6 reads seal.ts: the outcome's observe entry goes only to the observe
+# list and its disclosure only to NOT PROVEN, never a label input. Plants (each reverted): compare head only (E5 holds); enforce without the base-pass test
+# (E5 check set); observe sets the check (E2 check set); seal pushes the disclosure into the label path (E6).
+EB="$(cd "$ROOT/loki-ts" && bun -e '
+import { bootOutcome } from "./src/engine10/stages/verify.ts";
+const s = (boot: string, http = "pass", reason: string | null = null) => ({ boot, http, reason });
+const f = (o: ReturnType<typeof bootOutcome>) => [o.hold, o.check ? o.check.name : "nocheck", o.observe ? o.observe.would_label : "noentry", o.disclosure ?? "nodisc"].join("|");
+console.log("E1", f(bootOutcome(s("fail"), s("pass"), "off")));
+console.log("E2", f(bootOutcome(s("fail"), s("pass"), "observe")));
+console.log("E3", f(bootOutcome(s("fail"), s("pass"), "enforce")));
+console.log("E4", f(bootOutcome(s("n/a", "n/a", "no app detected"), null, "enforce")));
+console.log("E5", f(bootOutcome(s("pass"), s("fail"), "enforce")), "/", f(bootOutcome(s("pass"), s("pass"), "observe")));
+' 2>&1)"
+has "V4 E1: mode off gives nothing" "$EB" "E1 false|nocheck|noentry|nodisc"
+has "V4 E2: observe, the app boots on base and not with the change: an observe entry FAILED and no check" "$EB" "E2 true|nocheck|FAILED|ran end to end: head boot fail, base boot pass (disclosed, does not cap)"
+has "V4 E3: enforce, the same: a failing app boot check and no entry" "$EB" "E3 true|app boot|noentry|ran end to end: head boot fail, base boot pass (disclosed, does not cap)"
+has "V4 E4: no app: the not run end to end disclosure, no entry, no check" "$EB" "E4 false|nocheck|noentry|not run end to end: no app detected (disclosed, does not cap)"
+has "V4 E5: a change that fixed the boot holds nothing; both booting reads ran end to end" "$EB" "E5 false|nocheck|noentry|ran end to end: head boot pass, base boot fail (disclosed, does not cap) / false|nocheck|noentry|ran end to end: the app booted and answered (head and base) (disclosed, does not cap)"
+python3 -I - "$ROOT/loki-ts/src/engine10/stages/seal.ts" <<'PY' && ok "V4 E6: seal puts the boot outcome's observe entry only in the observe list and its disclosure only in NOT PROVEN (never a label input)" || bad "V4 E6: seal reads the boot outcome beyond its observe entry and disclosure"
+import re, sys
+s = re.sub(r"//[^\n]*", "", open(sys.argv[1]).read())
+uses = re.findall(r"\be2e\b[^;\n]{0,40}", s)
+want = ["e2e = ((o.verify?.end_to_end ?? {}) as { ou", "e2e?.observe) observed.push(e2e.observe)", "e2e?.disclosure) notProven.add(e2e.disclosu"]
+sys.exit(0 if sorted(uses) == sorted(want) else 1)
+PY
 
 finish

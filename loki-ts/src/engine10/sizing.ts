@@ -95,7 +95,12 @@ const knob = (v: string | undefined, words: string[]): boolean => words.includes
 export const planMode = (env = process.env): "auto" | "always" | "never" =>
   knob(env.LOKI_E10_PLAN, ["0", "off", "never", "false"]) ? "never" : knob(env.LOKI_E10_PLAN, ["1", "on", "always", "true"]) ? "always" : "auto";
 /** EVAL-2026-11-05-3: the single-attempt Wall session lost to no Wall (merge-ready 9/20 vs 11/20, 1 false VERIFIED vs 0, higher cost per merge-ready), so it is OFF unless LOKI_E10_WALL=1/on/true opts in. The code stays reachable for a parallel-attempt selector. */
-export const wallEnabled = (env = process.env): boolean => knob(env.LOKI_E10_WALL, ["1", "on", "true"]) || (cascadeV0On(env) && !knob(env.LOKI_E10_WALL, ["0", "off", "false"])); // CASCADE-V0: the oracle needs the Wall
+/** VERIFY-PLAN V3: the Wall's mode. enforce: LOKI_E10_WALL=1/on/true (or cascade v0 on and the Wall not turned off), today's Wall. observe: the Wall author
+ *  writes and seals its tests as usual, but the tests leave the checkout at once and run only at the end of a complete verify, where their results
+ *  are recorded and never read by the label, the fix rounds or the cascade. off: no Wall. */
+export const wallMode = (env = process.env): "off" | "observe" | "enforce" => (env.LOKI_E10_WALL ?? "").trim().toLowerCase() === "observe" ? "observe" : wallEnabledEnforce(env) ? "enforce" : "off";
+const wallEnabledEnforce = (env = process.env): boolean => knob(env.LOKI_E10_WALL, ["1", "on", "true"]) || (cascadeV0On(env) && !knob(env.LOKI_E10_WALL, ["0", "off", "false"])); // CASCADE-V0: the oracle needs the Wall
+export const wallEnabled = (env = process.env): boolean => wallMode(env) !== "off";
 /** W1-S3: Wall session cap, 90s small / 180s normal; LOKI_E10_WALL_LIMIT_S overrides (clamped to 300; garbage, zero or negative falls back). */
 export const wallLimitS = (size: TaskSize, env = process.env): number => {
   const raw = env.LOKI_E10_WALL_LIMIT_S, n = Number(raw), dflt = size === "small" ? 90 : 180;

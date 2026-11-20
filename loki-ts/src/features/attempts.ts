@@ -46,6 +46,11 @@ export function cascadeWallTail(runDir: string, v: Obj | undefined): string | nu
   if (!wallFailedOf(v)) return null;
   try { const t = readFileSync(join(runDir, basename(String(v!.wall_failure_tail))), "utf8").trim(); return t ? t.slice(-6000) : null; } catch { return null; }
 }
+export const CASCADE_INTRODUCED_LEAD = "The previous attempt at this task left these checks failing, and Loki attributes them to the change. Their failing output:";
+/** VERIFY-PLAN V11: the tail of verify's check-failures.txt (verify.ts CHECK_FAILURES_FILE), at most 6000 characters from its end; null when missing or empty. */
+export function cascadeIntroducedTail(runDir: string): string | null {
+  try { const t = readFileSync(join(runDir, "check-failures.txt"), "utf8").trim(); return t ? t.slice(-6000) : null; } catch { return null; }
+}
 /** The extra sessions, N - 1 (0 is off). */
 export const attemptsK = (model: string | undefined, env: NodeJS.ProcessEnv = process.env): number => Math.max(attemptsTotal(model, env) - 1, cascadeV0On(env) ? 1 : 0); // CASCADE-V0: one more attempt at least
 /** LOKI_E10_ATTEMPT_MODELS (unset by default: every attempt runs on the session model): a comma list naming one model per attempt in order, so `haiku,sonnet` runs

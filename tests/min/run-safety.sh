@@ -1234,6 +1234,76 @@ X9="PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[2] | PARTIAL>VE
 [ "$A9" = "$X9" ] && ok "unit, unrunnable check (P1 to P5, D1 to D33, T1 to T3, I1 to I8): a check that could not run on either side stops holding the label only beside the change's own fail-before, pass-after proof, with no changed file in its package, the same start failure on both sides and nothing else open; every planted defect reads the knob-off label, never VERIFIED" \
     || bad "unrunnable-check unit gave: $A9 (want: $X9)"
 
+# VERIFY-PLAN V2 INTRODUCED (LOKI_E10_INTRODUCED, observe by default; enforce is accepted and behaves as observe). closure.ts failureClasses sorts each failing
+# check verify did not excuse into introduced, pre-existing (compared, every failing id red on base, the same error, nothing naming a changed file) or unknown;
+# seal.ts v2Live is the would-be label's checks (pre-existing dropped, unknown held as not run). Cells C1 to C15 below; W1 and W2 read seal.ts itself: the V2
+# block only writes an observe entry (enforce reads as observe), and observe entries reach the receipt's observe key only (never notProven, never the label).
+# Plants (each reverted): drop the same-error test (C3b reads pre_existing, VERIFIED); drop the full-suite exclusion (C3s); drop the id-names-changed rule
+# (C3i); treat fresh 0 as introduced (C3); treat fresh >= 1 as pre-existing (C2); drop the names_changed test (C4); classify a no-record check as
+# pre-existing (C6); drop the own_checks rule (C13); drop the no_id_compared rule (C14); drop the own changed-file rule (C1); v2Live keeps unknown checks
+# as fail (C3b); the V2 block assigns verdictE to the label (W1); enforce reads as a mode that changes the label (W1); seal writes observed entries into
+# notProven (W2, VERIFY-PLAN V7 plant V7f).
+V2C="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const se = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/seal.ts"), cl = await import(process.env.ROOT + "/loki-ts/src/engine10/closure.ts");
+const NEW = "bun:test/new.test.ts", OLD = "bun:test/old.test.ts", SUITE = "full suite: bun test", cmp = (fresh, o = {}) => ({ state: "compared", fresh, names_changed: false, evidence: fresh === 0 ? "every failing id is red on base" : fresh + " failing id(s) not red on base", ...o });
+const cell = (d) => {
+  const fail = d.fail ?? OLD, rc = { name: fail, cmd: "x", result: "fail", ids: d.ids ?? ["test/old.test.ts > old case"], ...(d.harness ? { owner: "harness" } : {}) };
+  const raw = [{ name: NEW, cmd: "x", result: "pass", n: 3 }, rc, ...(d.extra ?? [])];
+  const attr = d.attr === null ? {} : { [fail]: d.attr ?? cmp(0) };
+  const o = { implement: { exit: "done" }, ...(d.wall ? { wall: { files: [{ path: d.wall }] } } : {}), verify: { checks: raw, changed_files: d.changed ?? ["src/x.ts", "test/new.test.ts"], pre_red_checks: d.pre ?? [], own_checks: d.own ?? [NEW], no_id_compared: d.noid ?? [], introduced_checks: [], own_lint: [], known_red_same_error: d.same ?? [fail], exogenous_attribution: attr } };
+  const checks = raw.filter((c) => !(d.pre ?? []).includes(c.name)).map((c) => ({ name: c.name, cmd: "x", result: c.owner === "harness" ? "not_run" : c.result, duration_s: 1, provenance: "exogenous", ...(c.n ? { n: c.n } : {}) }));
+  const proof = d.proof ?? true, fc = cl.failureClasses(o), label = se.verdictOf(o, checks, false, false, false, proof), would = se.verdictOf(o, se.v2Live(checks, fc), false, false, false, proof);
+  const entry = (fc.pre_existing.length || fc.unknown.length) && would !== label ? would : "none";
+  const cls = fc.introduced.includes(fail) ? "introduced" : fc.pre_existing.includes(fail) ? "pre_existing" : fc.unknown.find((u) => u.name === fail) ? "unknown(" + fc.unknown.find((u) => u.name === fail).why + ")" : "none";
+  return cls + " " + label + ">" + would + " entry=" + entry + (d.detail ? " detail=" + se.v2Detail(fc, !proof) : "");
+};
+const r = {
+  C1: cell({ fail: NEW, ids: [], attr: null, own: [] }), C2: cell({ attr: cmp(2) }), C3: cell({}), C3b: cell({ same: [] }), C3s: cell({ fail: SUITE, ids: ["a > b"] }), C3i: cell({ ids: ["src/x.ts > case"] }),
+  C3r: cell({ proof: false, detail: 1 }), C4: cell({ attr: cmp(0, { names_changed: true }) }), C5: cell({ attr: { state: "not comparable", evidence: "the base run was cut" } }), C6: cell({ ids: [], attr: null }),
+  C13: cell({ fail: "bun:test/task.test.ts", own: [NEW, "bun:test/task.test.ts"], attr: null }), C14: cell({ ids: [], attr: null, noid: [OLD] }), C7: cell({ fail: "lint:eslint", ids: [], attr: null }),
+  C8: cell({ pre: [OLD] }), C9: cell({ harness: true }), C10: cell({ fail: "bun:loki_wall_x.test.ts", wall: "loki_wall_x.test.ts", attr: null }),
+  C12: cell({ attr: { state: "not comparable", evidence: "cut" }, extra: [{ name: "lint:eslint", cmd: "x", result: "fail" }] }),
+};
+r.C11 = [cl.introducedMode({}), cl.introducedMode({ LOKI_E10_INTRODUCED: "0" }), cl.introducedMode({ LOKI_E10_INTRODUCED: "enforce" })].join(",");
+for (const [k, v] of Object.entries(r)) console.log(k + " " + v);
+' 2>&1)"
+v2c() { printf '%s\n' "$V2C" | grep "^$1 " | head -1 | cut -d' ' -f2-; }
+v2leg() { local got; got="$(v2c "$1")"; [ "$got" = "$2" ] && ok "V2 $1: $3" || bad "V2 $1: $3 (got: $got; want: $2)"; }
+v2leg C1 "introduced FAILED>FAILED entry=none" "the change's own changed test file red is introduced; no entry"
+v2leg C2 "introduced FAILED>FAILED entry=none" "an untouched test compared on base with a fresh failing id is introduced"
+v2leg C3 "pre_existing FAILED>VERIFIED entry=VERIFIED" "every failing id red on base with the same error is pre-existing; the observe entry says VERIFIED, the label stays FAILED"
+v2leg C3b "unknown(every failing id is red on base, but its error differs from the base run) FAILED>PARTIAL entry=PARTIAL" "the same ids with a different error is unknown, held at PARTIAL (never the unsafe id-only VERIFIED)"
+v2leg C3s "unknown(a full suite red on base with the same error that verify did not excuse (see its not_excused line)) FAILED>PARTIAL entry=PARTIAL" "a full suite is never pre-existing here"
+v2leg C3i "introduced FAILED>FAILED entry=none" "a failing id naming a changed file is introduced"
+v2leg C3r "pre_existing FAILED>PARTIAL entry=PARTIAL detail=pre-existing: bun:test/old.test.ts; the change's own fail-then-pass proof was not run" "with no proof the would-be label is PARTIAL and the detail says the fail-then-pass proof was not run"
+v2leg C4 "introduced FAILED>FAILED entry=none" "names_changed is introduced"
+v2leg C5 "unknown(the base run was cut) PARTIAL>PARTIAL entry=none" "a base run that was not comparable is unknown with its evidence; held at PARTIAL (today's label already holds it, so no entry)"
+v2leg C6 "unknown(no base comparison was recorded for this check) FAILED>PARTIAL entry=PARTIAL" "an untouched test with no base comparison is unknown"
+v2leg C13 "introduced FAILED>FAILED entry=none" "a failing task-named test (own_checks) is introduced"
+v2leg C14 "introduced FAILED>FAILED entry=none" "a no-id failing test whose base command did not fail the same way is introduced"
+v2leg C7 "introduced FAILED>FAILED entry=none" "a failing lint is introduced"
+v2leg C8 "none VERIFIED>VERIFIED entry=none" "a check verify excused (pre_red_checks) is in no class"
+v2leg C9 "none PARTIAL>PARTIAL entry=none" "a harness-owned failure is in no class"
+v2leg C10 "introduced FAILED>FAILED entry=none" "a red Wall check is introduced"
+v2leg C11 "observe,off,enforce" "the knob: observe by default, 0 is off, enforce is read as enforce"
+v2leg C12 "unknown(cut) FAILED>FAILED entry=none" "a would-be label equal to today's writes no entry"
+SEAL_SRC="$ROOT/loki-ts/src/engine10/stages/seal.ts"
+python3 -I - "$SEAL_SRC" <<'PY' && ok "V2 W1/C15: the seal's V2 block runs for observe and enforce alike (v2 !== \"off\") and its would-be label only fills an observe entry" || bad "V2 W1/C15: the seal's V2 block reads its would-be label beyond the observe entry, or treats enforce apart"
+import re, sys
+s = open(sys.argv[1]).read()
+blk = [l for l in s.splitlines() if "const verdictE = " in l]
+ok = len(blk) == 1 and 'if (v2 !== "off" &&' in blk[0] and blk[0].count("verdictE") == 3 and "if (verdictE !== verdict0a) observed.push({ rule: \"LOKI_E10_INTRODUCED\", would_label: verdictE," in blk[0]
+ok = ok and len(re.findall(r"\bverdictE\b", s)) == 3 and not re.search(r"v2 === \"enforce\"|introducedMode\(\) === \"enforce\"", s)
+sys.exit(0 if ok else 1)
+PY
+python3 -I - "$SEAL_SRC" <<'PY' && ok "V2 W2 (V7): observe entries reach only the receipt's observe key, never notProven, reasons or a label input" || bad "V2 W2 (V7): the observed list is read somewhere other than the receipt's observe key"
+import re, sys
+s = re.sub(r"//[^\n]*", "", open(sys.argv[1]).read())
+uses = [m.group(0) for m in re.finditer(r"\bobserved\b[^;\n]{0,24}", s) if not m.group(0).startswith("observed: [], wanted")]  # an unrelated object key elsewhere in seal.ts
+ok = all(u.startswith("observed: ObservedRule[]") or u.startswith("observed.push(") or u.startswith("observed.length ? { observe: obs") for u in uses) and len(uses) >= 3
+sys.exit(0 if ok else 1)
+PY
+
 # OWN-PROOF (G3 (a), LOKI_E10_OWN_PROOF, default on): the change's own proof for any tool. Loki runs the kept proof script on the change, in an untouched copy
 # of the checkout (the control) and in a copy whose non-test files are put back to the base commit. A step counts only when it ran repository code, passed on
 # the change, passed in the control and printed FAILED without the change. Pure cells (failsWithoutChange): F1 counts; F2 failed in the control; F3 passed
