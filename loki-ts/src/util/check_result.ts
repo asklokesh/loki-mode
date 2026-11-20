@@ -870,6 +870,18 @@ export function emptyDiscovery(cls: Classified, out: string): boolean {
 }
 /** classifyCheck result plus the rerun-only "flaky" verdict (TEN-QUALITY-17); kept separate so existing classifyCheck callers keep the narrow type. */
 export interface ClassifiedRerun extends Omit<Classified, "result"> { result: Classified["result"] | "flaky"; rerun?: { first: "fail"; second: "pass"; n?: number } }
+/** G5 LINE-FALLBACK: a test file the change edited or added never ends not_run because the runner's summary could not be parsed. The verdict then comes from
+ *  the exit code plus the per-test result lines the common runners print (pytest -v "::name PASSED", "FAILED path::name", vitest/jest/mocha check and cross
+ *  marks, go "--- PASS:"/"--- FAIL:", TAP "ok N"/"not ok N"). A FAIL line fails it, even under exit 0; exit 0 with at least one PASS line and no FAIL line passes
+ *  it with n = the PASS lines; nothing recognisable keeps it not_run. The receipt says so through `count`. */
+export const LINE_FALLBACK_COUNT = "measured from the exit code and per-test pass and fail lines (the runner's summary could not be parsed)";
+const PASS_LINE = /(::\S+\s+PASSED\b)|(^\s*PASSED\s+\S+::)|(^\s*(?:\u2713|\u2714|\u221a)\s+\S)|(^\s*--- PASS: )|(^ok \d+\b)/gm;
+const FAIL_LINE = /(::\S+\s+(?:FAILED|ERROR)\b)|(^\s*(?:FAILED|ERROR)\s+\S+::)|(^\s*(?:\u2715|\u2717|\u00d7)\s+\S)|(^\s*--- FAIL: )|(^not ok \d+\b)/m;
+export function lineVerdict(out: string, ok: boolean): Classified | null {
+  const text = stripAnsi(out), passes = (text.match(PASS_LINE) ?? []).length;
+  if (FAIL_LINE.test(text)) return { result: "fail", count: LINE_FALLBACK_COUNT };
+  return ok && passes > 0 ? { result: "pass", n: passes, count: LINE_FALLBACK_COUNT } : null;
+}
 /** One attempt of one check. static = lint/typecheck/scan (exit code decides, no count). test = a test runner: pass needs n>0. */
 export function classifyCheck(i: ClassifyInput): Classified {
   if (i.missing) return { result: "not_run", reason: "tool not found on PATH" };
