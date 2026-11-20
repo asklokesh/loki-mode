@@ -28,7 +28,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
-import { comparableIds, errorsById, failIds, idNamesFile, lineNamesChange, noiseOnlyErrors, sameErrors, unhandledBlock } from "../engine10/failures.ts";
+import { changeLines, comparableIds, errorsById, failedCount, failIds, idNamesFile, lineNamesChange, noiseOnlyErrors, sameErrors, sameFailures, SILENT_IDS_NOTE, unhandledBlock } from "../engine10/failures.ts"; import { redactSecrets } from "../util/redact.ts"; import { isTestFile } from "../util/test_file_text.ts";
 import { baseRedShapeOn, suiteFacts, loadErrorModule, classifyCheck, emptyDiscovery, exitCodedId, failureShape, goRunner, isExitCodedScript, plainTestEnv, resolveTool, spawnGroupSync, stripAnsi, toolFallbacks, type Classified } from "../util/check_result.ts";
 import { safeGit, safeGitSpawn } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
@@ -284,7 +284,7 @@ export interface CommandProfile {
   manifest_hash: string;
   created_at: string;
   commands: ProfileCommand[];
-  baseline: { ran: boolean; command: string | null; exit_code: number | null; duration_s: number | null; timed_out: boolean; failing_ids: string[]; attributable: boolean; reason?: string; zero_tests?: boolean; failing_unhandled?: string[]; failing_errors?: Record<string, string[]> /* FireLater#21: errorsById of the run, so a full suite is excused only for the same errors */; failing_shape?: string /* BASE-RED-SHAPE: failureShape of a red run whose ids were not parseable */; flaky_ids?: string[] /* ids that failed on exactly one of two base passes */; flaky_probe?: string /* "done", or why the second pass was skipped; absent on an entry written before the probe */; executed?: number /* EXOGENOUS-RED: tests the base run executed */; load_errors?: string[] /* EXOGENOUS-RED: its module-resolution lines, one per module */ };
+  baseline: { ran: boolean; command: string | null; exit_code: number | null; duration_s: number | null; timed_out: boolean; failing_ids: string[]; attributable: boolean; reason?: string; zero_tests?: boolean; failing_unhandled?: string[]; failing_errors?: Record<string, string[]> /* FireLater#21: errorsById of the run, so a full suite is excused only for the same errors */; failing_shape?: string /* BASE-RED-SHAPE: failureShape of a red run whose ids were not parseable */; flaky_ids?: string[] /* ids that failed on exactly one of two base passes */; out_file?: string /* SILENT-IDS: the red run's whole output (secrets redacted), a file name under .loki/state/base-out */; out_sha256?: string /* of that file, checked on read: a later record of the same command writes the same name */; failed?: number /* SILENT-IDS: the failed count that run printed */; flaky_probe?: string /* "done", or why the second pass was skipped; absent on an entry written before the probe */; executed?: number /* EXOGENOUS-RED: tests the base run executed */; load_errors?: string[] /* EXOGENOUS-RED: its module-resolution lines, one per module */ };
   suites?: (CommandProfile["baseline"] & { name: string })[]; // FC-BASELINE-PER-PACKAGE: one per full-suite command verify runs; `command` is the check's cmd
 }
 export interface BaselineRun { code: number | null; timedOut: boolean; out: string; missing?: boolean }
@@ -570,11 +570,41 @@ function runOnce(repoDir: string, cmd: string, cwd: string, tmo: number, opts: B
 }
 const baseFacts = (out: string): { executed?: number; load_errors?: string[] } => suiteFacts(out);
 /** One finished base run as a baseline record (shared by intake's blocking run and verify's on-demand run). */
+/** SILENT-IDS: a red base run's whole output is kept beside the profile (secrets redacted, at most BASE_OUT_MAX bytes; a longer one is not kept and the
+ *  silent ids of that suite are then not comparable), because which lines name the change is only known once there is a change. */
+export const BASE_OUT_DIR = "base-out", BASE_OUT_MAX = 16 * 1024 * 1024;
+const baseOutPath = (repoDir: string, name: string): string => join(repoDir, ".loki", "state", BASE_OUT_DIR, name);
+function baseOutFacts(repoDir: string, cmd: string, out: string, red: boolean): { out_file?: string; out_sha256?: string; failed?: number } {
+  if (!red) return {};
+  const failed = failedCount(out), res: { out_file?: string; out_sha256?: string; failed?: number } = failed === null ? {} : { failed };
+  try {
+    const text = redactSecrets(stripAnsi(out)); if (Buffer.byteLength(text, "utf8") > BASE_OUT_MAX) return res;
+    const name = `${createHash("sha256").update(cmd).digest("hex").slice(0, 16)}.txt`; mkdirSync(dirname(baseOutPath(repoDir, name)), { recursive: true }); writeFileSync(baseOutPath(repoDir, name), text); res.out_file = name; res.out_sha256 = createHash("sha256").update(text).digest("hex");
+  } catch { /* not kept: the silent ids of this suite are not comparable */ }
+  return res;
+}
+/** SILENT-IDS: the changed files a failure line is read against. A test file the change ADDED is left out: no test that existed before can run through it,
+ *  its own tests are ids of their own (never excused: an id that names a changed file is the change's), and a runner's progress line for it ("ok
+ *  test_new.py") would otherwise read as the change showing up in an old failure (hermes-agent: 1 such line among 4.6 MB kept 468 ids refused). A test
+ *  file the change EDITED, and every other changed file, stays in. */
+const linesChangedMemo = new Map<string, string[]>();
+export function changedForLines(repoDir: string, baseSha: string | undefined, changed: readonly string[]): string[] {
+  const k = `${repoDir}\0${baseSha ?? ""}\0${changed.join("\0")}`, hit = linesChangedMemo.get(k); if (hit) return hit;
+  const onBase = (f: string): boolean => { if (!baseSha) return true; try { safeGit(repoDir, ["cat-file", "-e", `${baseSha}:${f}`], { stdio: "ignore" }); return true; } catch { return false; } };
+  const out = changed.filter((f) => !(isTestFile(f) && !onBase(f)));
+  linesChangedMemo.set(k, out); return out;
+}
+/** The base side of SILENT-IDS for one record: the lines of its kept output that name the change, and its failed count. */
+export function baseSideFacts(repoDir: string, b: { out_file?: string; out_sha256?: string; failed?: number } | undefined, changed: readonly string[], symbols: readonly string[]): { lines: string[] | null; failed: number | null } {
+  let lines: string[] | null = null;
+  try { if (b?.out_file && /^[0-9a-f]{16}\.txt$/.test(b.out_file)) { const text = readFileSync(baseOutPath(repoDir, b.out_file), "utf8"); if (b.out_sha256 && createHash("sha256").update(text).digest("hex") === b.out_sha256) lines = changeLines(text, changed, symbols); } } catch { lines = null; }
+  return { lines, failed: b?.failed ?? null };
+}
 function measured(repoDir: string, cmd: string, r: BaselineRun, dur: number): { b: CommandProfile["baseline"]; missing: boolean } {
   const ids = r.code !== 0 && !r.timedOut ? (failIds(r.out).length ? failIds(r.out) : isExitCodedScript(cmd) && r.code !== null ? [exitCodedId(cmd, r.out, repoDir) ?? []].flat() as string[] : []) : [], missing = r.missing === true;
   const attributable = !r.timedOut && !missing && r.code !== null && (r.code === 0 || ids.length > 0);
   const reason = attributable ? undefined : r.timedOut ? "timed out" : missing ? "command not found" : "failing test ids not parseable, failures cannot be attributed";
-  return { b: { ran: true, command: cmd, exit_code: r.code, duration_s: dur, timed_out: r.timedOut, failing_ids: ids, attributable, ...(reason ? { reason } : {}), ...(ids.length ? { failing_errors: Object.fromEntries(errorsById(r.out)) } : {}), ...(!attributable && !r.timedOut && r.code !== 0 && baseRedShapeOn() ? { failing_shape: failureShape(r.out) } : {}), ...(unhandledBlock(r.out).length ? { failing_unhandled: unhandledBlock(r.out) } : {}), ...baseFacts(r.out), zero_tests: r.code === 0 && emptyDiscovery(classifyCheck({ kind: "test", ok: true, out: r.out, ...goRunner(cmd) }), r.out) }, missing };
+  return { b: { ran: true, command: cmd, exit_code: r.code, duration_s: dur, timed_out: r.timedOut, failing_ids: ids, attributable, ...(reason ? { reason } : {}), ...(ids.length ? { failing_errors: Object.fromEntries(errorsById(r.out)) } : {}), ...(!attributable && !r.timedOut && r.code !== 0 && baseRedShapeOn() ? { failing_shape: failureShape(r.out) } : {}), ...(unhandledBlock(r.out).length ? { failing_unhandled: unhandledBlock(r.out) } : {}), ...baseFacts(r.out), ...baseOutFacts(repoDir, cmd, r.out, ids.length > 0), zero_tests: r.code === 0 && emptyDiscovery(classifyCheck({ kind: "test", ok: true, out: r.out, ...goRunner(cmd) }), r.out) }, missing };
 }
 /** A suite red at base is run a second time (only when the first pass fit FLAKE_PROBE_MAX_S and did not time out): an id that fails on one pass and not the other is flaky,
  *  recorded as flaky_ids, so a head run is not blamed for an id that flips without any change (tanstack-query: 2054 to 2183 red ids, up to 14 new flaky ids per pass). */
@@ -850,7 +880,7 @@ function cargoTouched(changed: string[]): boolean {
  *  already failed (`blocked`) or one naming a changed file is never excused. */
 /** FireLater#21 (review): ids alone never excuse a full suite. Each failing id must fail on base with the same error lines (sameErrors against the baseline's
  *  failing_errors); a suite whose output or baseline has no error lines for an id (a baseline recorded before failing_errors, go, cargo) is not excused. */
-type FullCheck = { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; exit?: number | null; shape?: string; executed?: number; load_errors?: string[] };
+type FullCheck = { name: string; cmd: string; result: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; exit?: number | null; shape?: string; executed?: number; load_errors?: string[]; change_lines?: string[] | null; failed?: number | null };
 /** BASE-RED-SHAPE: the failing full-suite checks whose base run, on exactly this base commit and the same command, was red and unattributable (no
  *  parseable ids; not cut off) and failed in the identical kind on head: the same exit code, no parseable ids on head either, and the same output
  *  shape (failureShape). A new failing test, a different message or count, or a changed exit code gives a different kind, so nothing the change broke
@@ -905,6 +935,29 @@ export function exogenousState(repoDir: string, baseSha: string, c: FullCheck, t
   const known = new Set([...b0.failing_ids, ...(b0.flaky_ids ?? [])]), fresh = ids.filter((i) => !known.has(i));
   return st("compared", fresh.length, fresh.length ? `${fresh.length} failing id(s) not red on base (first: ${fresh[0]})` : "every failing id is red on base", fresh);
 }
+/** HEAD-RERUN (LOKI_E10_HEAD_RERUN, default on; =0/off/false/no opts out): the ids a suite's usable base record shows red (failing or flaky), or null when
+ *  there is no such record for this commit and command (not run, cut, or not attributable): then nothing is rerun and nothing is dropped. */
+export const headRerunOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_HEAD_RERUN"] ?? "").trim());
+/** The head-only ids a rerun of the same command shows PASSED. An id missing from the rerun's failing ids is not a pass: the rerun may have stopped early
+ *  (a bail flag, a crash) or its output may have been cut, and the id never ran or its line was lost. So an id is dropped only on positive evidence:
+ *  the rerun's output is under the stream cap and it executed at least as many tests as the first head run (an exit 0 that discovered nothing, or a
+ *  wrapper that exits 0 on its own, proves no pass), and then either it passed (exit 0) or it failed with a printed failed count equal to the failing ids
+ *  read from it. Anything else drops nothing. */
+export const RERUN_OUT_CAP = 8 * 1024 * 1024;
+export function passedOnRerun(only: readonly string[], rerun: { code: number | null; out: string }, headExecuted: number | undefined): string[] {
+  if (rerun.code === null || Buffer.byteLength(rerun.out, "utf8") >= RERUN_OUT_CAP - 4096) return [];
+  const ran = suiteFacts(rerun.out).executed;
+  if (typeof headExecuted !== "number" || typeof ran !== "number" || ran < 1 || ran < headExecuted) return []; // an exit 0 that ran nothing, or fewer tests than the first run, proves no pass either
+  if (rerun.code === 0) return [...only];
+  const again = new Set(failIds(rerun.out)), printed = failedCount(rerun.out);
+  if (again.size === 0 || printed === null || printed !== again.size) return [];
+  return only.filter((i) => !again.has(i));
+}
+export function baseRedIds(repoDir: string, baseSha: string, cmd: string): Set<string> | null {
+  const p = loadProfile(repoDir), b = p && p.revision === baseSha ? baseFor(repoDir, p, cmd, false) : undefined;
+  if (!b || !b.ran || b.timed_out || b.reason === "baseline budget used up" || (b.exit_code !== 0 && !b.attributable)) return null;
+  return new Set([...b.failing_ids, ...(b.flaky_ids ?? [])]);
+}
 /** True when the attribution blames the change: only then may an exogenous red make the run FAILED. A compared check that is still failing was not
  *  excused by the base comparison, so the comparison itself found against the change: a failing id not red on base (`fresh`), or, with every id red on
  *  base (`fresh` 0), an error that differs from base, an id that names a changed file, or an id that also fails in a targeted check that was not excused
@@ -942,7 +995,7 @@ function attributeFullSuiteById(repoDir: string, baseSha: string, full: FullChec
   if (cut.length) return { ...none, line: `NOT PROVEN: base run incomplete for ${cut.map((c) => `"${c.cmd}"`).join(", ")} (cut off on the original code), so its failures are not excusable` };
   const ids = (cmd: string): string[] => { const b = of(cmd); return b?.attributable ? [...b.failing_ids, ...(b.flaky_ids ?? [])] : []; }, miss = bad.find((c) => !of(c.cmd));
   if (miss) return { ...none, line: `baseline: ran ${runs.map((b) => `"${b.command}"`).join(", ") || "nothing"}, not the full suite command "${miss.cmd}", ids not comparable, full suite failures not excused` };
-  const massive = (cmd: string): boolean => (of(cmd)?.failing_ids.length ?? 0) >= MASSIVE_RED_IDS, known = new Set(bad.flatMap((c) => ids(c.cmd))), block = new Set(blocked), sameAsBase = (c: (typeof bad)[number]): boolean => { const b = of(c.cmd), be = b?.failing_errors, hu = c.unhandled ?? [], bu = b?.failing_unhandled ?? []; /* every id, flaky or not, must repeat its stored base error (a flaky id keeps the error of the pass it failed on), at the same multiplicity, whatever the suite size */ return !!be && !!c.errors && hu.length === bu.length && hu.every((x, n) => x === bu[n]) /* an unhandled-errors block names no id: it must repeat on base */ && sameErrors(new Map(Object.entries(c.errors)), be, comparableIds(c.ids ?? [])); },
+  const massive = (cmd: string): boolean => (of(cmd)?.failing_ids.length ?? 0) >= MASSIVE_RED_IDS, known = new Set(bad.flatMap((c) => ids(c.cmd))), block = new Set(blocked), sameAsBase = (c: (typeof bad)[number]): boolean => { const b = of(c.cmd), be = b?.failing_errors, hu = c.unhandled ?? [], bu = b?.failing_unhandled ?? []; /* every id, flaky or not, must repeat its stored base error (a flaky id keeps the error of the pass it failed on), at the same multiplicity, whatever the suite size */ return !!be && !!c.errors && hu.length === bu.length && hu.every((x, n) => x === bu[n]) /* an unhandled-errors block names no id: it must repeat on base */ && silentOf(c).same; }, /* SILENT-IDS: ids with no error line on either side are compared by the lines naming the change */ silentOf = (c: (typeof bad)[number]): { same: boolean; silent: number } => { const b = of(c.cmd); return b?.failing_errors && c.errors ? sameFailures(new Map(Object.entries(c.errors)), b.failing_errors, comparableIds(c.ids ?? []), { lines: c.change_lines ?? null, failed: c.failed ?? null }, baseSideFacts(repoDir, b, changedForLines(repoDir, baseSha, changed), symbols)) : { same: false, silent: 0 }; },
     /* fl24: the second chance when the text differs: the same unhandled block, the same error shapes (noise only) and no head error line naming a changed file or symbol (noiseOnlyErrors); listed NOT PROVEN below */ quietAsBase = (c: (typeof bad)[number]): boolean => { const be = of(c.cmd)?.failing_errors, hu = c.unhandled ?? [], bu = of(c.cmd)?.failing_unhandled ?? []; return !!be && !!c.errors && hu.length === bu.length && hu.every((x, n) => x === bu[n]) && noiseOnlyErrors(c.errors, be, comparableIds(c.ids ?? []), changed, symbols); },
     /* a flaky id, or any id of a suite red at base, whose head error text names a file the change edited is the change's own failure, whatever the id */ errNamesChanged = (c: (typeof bad)[number]): boolean => { const fl = new Set(of(c.cmd)?.flaky_ids ?? []), all = massive(c.cmd), keys = Object.keys(c.errors ?? {}).filter((k) => all || [...fl].some((i) => k === i || k.endsWith(` > ${i}`))); return keys.some((k) => (c.errors?.[k] ?? []).some((l) => changed.some((f) => l.includes(f)))); };
   if (known.size === 0) return none;
@@ -953,6 +1006,8 @@ function attributeFullSuiteById(repoDir: string, baseSha: string, full: FullChec
   if (redLine) res.line = [res.line, redLine].filter(Boolean).join("; ");
   const flakyOnly = bad.filter((c) => res.preExistingChecks.includes(c.name)).flatMap((c) => { const b = of(c.cmd), base = new Set(b?.failing_ids ?? []), hit = comparableIds(c.ids ?? []).filter((i) => (b?.flaky_ids ?? []).includes(i) && !base.has(i)); return hit.length ? [`NOT PROVEN: "${c.cmd}" was excused with ${hit.length} id(s) that fail on only some base passes (flaky), e.g. ${hit[0]}; the change was not shown to leave them alone`] : []; }).join("; ");
   if (flakyOnly) res.line = [res.line, flakyOnly].filter(Boolean).join("; ");
+  const silentLine = bad.filter((c) => res.preExistingChecks.includes(c.name) && sameAsBase(c) && silentOf(c).silent > 0).map((c) => `${silentOf(c).silent} test(s) of "${c.cmd}" ${SILENT_IDS_NOTE}`).join("; "); // SILENT-IDS disclosure: a plain line on the receipt's baseline, not a NOT PROVEN
+  if (silentLine) res.line = [res.line, silentLine].filter(Boolean).join("; ");
   const quiet = bad.filter((c) => res.preExistingChecks.includes(c.name) && !sameAsBase(c)).map((c) => `NOT PROVEN: "${c.cmd}" was excused as red on base although its error text differs from base (by noise only: the same error shapes); no changed file or symbol appears in any failure`).join("; ");
   if (quiet) res.line = [res.line, quiet].filter(Boolean).join("; ");
   if (!unproven.length && !rust.length) return res;

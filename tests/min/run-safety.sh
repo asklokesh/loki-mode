@@ -1043,6 +1043,60 @@ X5="shape:false | pre | introduced | introduced | introduced | introduced | note
 [ "$A5" = "$X5" ] && ok "unit: a suite red on base with unparseable ids is excused only when head fails in the identical kind (same exit, same output shape up to timings); a newly broken test, another exit code, parseable head ids or LOKI_E10_BASE_RED_SHAPE=0 stay introduced, and the excuse is disclosed" \
     || bad "base-red-shape unit gave: $A5 (want: $X5)"
 
+# SILENT-IDS and REPEATED-NAMES (G1; closed-set-2 oc63960 and hm155462). With base measured, the failing ids of head and base agree on every held suite of
+# both tasks, and no shared id has a differing error line; the suites were still refused because shared ids have no error line a parser can attach to them
+# (opencode core 11 of 27, server 2 of 6; hermes-agent 7 of 7 and 468 of 468: its runner prints "FAILED <id>" in a box) and because bunIds dropped every id
+# when a test name repeats (opencode tui: 26 fail lines, 22 names). failures.ts sameFailures: an id red on both sides with no error line on EITHER side is
+# the same failure only when every head line naming a changed file or symbol also appears on base (a multiset, noise masked), head's printed failed count is
+# not higher, and the lines are within the bound. An error line on one side only, a different message, a new line about the change, and LOKI_E10_SILENT_IDS=0
+# all refuse as before. A test file the change added is not a "changed file" for this (its progress line is not an old failure).
+# Plants: 24s. failures.ts sameFailures: `return { same: true, silent: silent.length }` without the linesCovered test (the new-line cell reads true).
+#         24t. failures.ts sameFailures: drop the failed-count guard (the higher-count cell reads true).
+#         24u. failures.ts sameFailures: treat an id with an error line on one side only as silent (the one-side cells read true).
+#         24v. failures.ts bunIds: `u.length >= count` again (the repeated-name cell reads 0 ids).
+#         24w. repo_profile.ts changedForLines: return every changed file (the added-test-file cell reads false).
+#         24z2. repo_profile.ts passedOnRerun: `return only.filter((i) => !again.has(i));` right after `again` is read (an id absent from the rerun's failures
+#               counts as passed: the bailed, capped and lost-line cells read 1; summary-parse's review of 53872e846).
+#         24z3. repo_profile.ts passedOnRerun: `if (rerun.code === 0) return [...only];` as its first line (an exit 0 that ran nothing drops every head-only id:
+#               the three exit-0 cells read 1; summary-parse's review of 643df6fd9).
+#         24w2. failures.ts changeLines: mask the function name of a frame too (`.replace(/, in \w+$/, "")`; the other-function cell reads true).
+SIL="$T/silent"; mkdir -p "$SIL/tests" "$SIL/src" && git -C "$SIL" init -q -b main && printf 'def f():\n    return 1\n' > "$SIL/src/gateway.py" && printf 'def test_old():\n    assert 1\n' > "$SIL/tests/test_old.py" && git -C "$SIL" add -A && git -C "$SIL" -c user.name=t -c user.email=t@t commit -qm base && printf 'def test_new():\n    assert 1\n' > "$SIL/tests/test_new.py" && printf '# edit\n' >> "$SIL/tests/test_old.py"
+ASIL="$(cd "$ROOT/loki-ts" && SIL="$SIL" bun --no-env-file --config=/dev/null -e '
+const F = await import("./src/engine10/failures.ts"), rp = await import("./src/runner/repo_profile.ts"), cr = await import("./src/util/check_result.ts"), g = process.env.SIL, r = [];
+const base = require("node:child_process").execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), changed = ["src/gateway.py"], syms = ["systemd_status"];
+const box = (ids, extra = "", n = ids.length) => ["  ╔═══╗", ...ids.map((i) => "  ║ FAILED " + i), "  ╚═══╝", extra, `=== Summary: 1 files, 35 tests passed, ${n} failed; FAILED: 1 of 1 file in 9.4s (14 workers) ===`].join("\n");
+const ids = ["tests/a.py::t1", "tests/a.py::t2"], facts = (o) => ({ lines: F.changeLines(o, changed, syms), failed: F.failedCount(o) }), cmp = (h, b, i = ids) => { const x = F.sameFailures(h, b, i, facts(h), facts(b)); return x.same + ":" + x.silent; };
+const frame = (n) => `  File "/private/var/folders/x/T/run.${n}/src/gateway.py", line ${n}, in f`;
+r.push(cmp(box(ids), box(ids).replace("9.4s", "28.0s")));                                                       // the boxed output, nothing about the change, only the duration differs
+r.push(cmp(box(ids, frame(12)), box(ids, frame(40))));                                                            // a frame in the changed file on both sides, another temp dir and line
+r.push(cmp(box(ids, frame(12) + "\nTypeError: systemd_status() got an unexpected keyword"), box(ids, frame(40)))); // a new line naming a changed symbol
+r.push(cmp(box(ids, frame(12) + "\n" + frame(13)), box(ids, frame(40))));                                          // the changed file named twice on head, once on base
+r.push(cmp(box(ids, frame(12).replace("in f", "in other_fn")), box(ids, frame(40))));                              // a frame in the changed file on both sides, but in another function: the failure moved
+r.push(cmp(box([...ids, "tests/a.py::t3"], "", 3), box(ids), ids));                                                // head prints a higher failed count
+const loud = (msg) => "FAILED tests/a.py::t1 - " + msg + "\n" + box(["tests/a.py::t2"]) ;
+r.push(cmp(loud("AssertionError: 1 != 2"), loud("AssertionError: 1 != 2")), cmp(loud("TypeError: bad call"), loud("AssertionError: 1 != 2")));   // one loud id with the same message, then with another message
+r.push(cmp(loud("AssertionError: 1 != 2"), box(ids)), cmp(box(ids), loud("AssertionError: 1 != 2")));          // an error line on one side only, either side
+r.push(F.sameFailures(box(ids), box(ids), ids).same + ":" + F.sameFailures(box(ids), box(ids), ids, { lines: null, failed: 2 }, { lines: [], failed: 2 }).same); // no facts, or a head list past the bound
+process.env.LOKI_E10_SILENT_IDS = "0"; r.push(cmp(box(ids), box(ids))); delete process.env.LOKI_E10_SILENT_IDS;
+const bun = "bun test v1.3\n\ntest/a.test.tsx:\n(fail) renders [1.00ms]\n(fail) renders [2.00ms]\n(fail) other [1.00ms]\n\n 5 pass\n 3 fail\nRan 8 tests across 1 files. [1.00s]\n"; r.push(F.failIds(bun).join("+"), String(F.failedCount(bun)));
+// HEAD-RERUN evidence (repo_profile.ts passedOnRerun): an id is dropped only when the rerun shows it ran and passed
+const py = (fails, total) => fails.map((i) => "FAILED " + i + " - AssertionError: x").join("\n") + `\n===== ${fails.length} failed, ${total - fails.length} passed in 1.00s =====\n`, only = ["tests/a.py::new"], red = ["tests/a.py::old1", "tests/a.py::old2"];
+r.push([rp.passedOnRerun(only, { code: 0, out: "===== 10 passed in 1.00s =====\n" }, 10).length,                                    // the whole rerun passed
+  rp.passedOnRerun(only, { code: 0, out: "no tests ran in 0.01s\n" }, 10).length, rp.passedOnRerun(only, { code: 0, out: "===== 3 passed in 1.00s =====\n" }, 10).length, rp.passedOnRerun(only, { code: 0, out: "done\n" }, 10).length, // exit 0 that ran nothing, fewer tests than the first run, or printed no count
+  rp.passedOnRerun(only, { code: 1, out: py(red, 10) }, 10).length,                                                                 // the rerun ran everything and the id is not among its failures
+  rp.passedOnRerun(only, { code: 1, out: py([...red, ...only], 10) }, 10).length,                                                   // the id failed again
+  rp.passedOnRerun(only, { code: 1, out: py([red[0]], 1) }, 10).length,                                                             // the rerun bailed after the first base-red failure (1 test run of 10)
+  rp.passedOnRerun(only, { code: 1, out: py(red, 10) + "x".repeat(rp.RERUN_OUT_CAP) }, 10).length,                                  // the output reached the stream cap
+  rp.passedOnRerun(only, { code: 1, out: py(red, 10).replace("2 failed", "3 failed") }, 10).length,                                 // the printed failed count is not the ids read (a line was lost)
+  rp.passedOnRerun(only, { code: 1, out: py(red, 10) }, undefined).length, rp.passedOnRerun(only, { code: null, out: "" }, 10).length].join(""));  // no head count; a rerun that never exited
+r.push(rp.changedForLines(g, base, ["src/gateway.py", "tests/test_new.py", "tests/test_old.py"]).join("+"));  // an added test file is left out; an edited one and a source file stay
+r.push(cr.loadErrorModule("error: Cannot find module \x27/private/var/T/loki-run.A/work/packages/core/src/x.ts\x27 from \x27/a\x27") + "|" + cr.loadErrorModule("error: Cannot find package \x27effect\x27 from \x27/b\x27"));
+console.log(r.join(" | "));' 2>&1)"
+XSIL='true:2 | true:2 | false:0 | false:0 | false:0 | false:0 | true:1 | false:0 | false:0 | false:0 | false:false | false:0 | test/a.test.tsx::renders+test/a.test.tsx::other | 3 | 10001000000 | src/gateway.py+tests/test_old.py | src/x.ts|effect'
+RPS="$ROOT/loki-ts/src/runner/repo_profile.ts"; VFS="$ROOT/loki-ts/src/engine10/stages/verify.ts"
+[ "$ASIL" = "$XSIL" ] && grep -q 'baseSideFacts(repoDir, b, changedForLines(repoDir, baseSha, changed), symbols)) : { same: false, silent: 0 }; },' "$RPS" && grep -q 'if (sf.same) { out.sameError.push(c.name); if (sf.silent) out.silent\[c.name\] = sf.silent; }' "$VFS" && grep -q 'await runFullSuite(ctx, signal, { changed, symbols, ' "$VFS" \
+    && ok "silent ids: ids red on both sides with no error line on either side are the same failure only when head prints nothing about the change that base did not print and no higher failed count; a new line naming a changed symbol or file, a frame of the changed file in another function, an error line on one side only, a different message and LOKI_E10_SILENT_IDS=0 are refused; a repeated bun name keeps its ids; a head-only id is dropped by the rerun only when the rerun shows it ran and passed, never when the rerun bailed, was cut or lost a line; an added test file is not read as the change; a load-error key is relative" \
+    || bad "silent ids gave: $ASIL (want: $XSIL)"
 # EXOGENOUS-RED (closed-set-2, 11.158.0 to 11.164.0: hm155462, oc63960 and pw43305 seeds pass the hidden test and were sealed FAILED on suites and test files the
 # change did not write, whose base run never started, was not comparable, or printed no readable id). A failing check the run did not write makes the run FAILED
 # only when it is attributed to the change: a comparable base run shows a failing id not red on base, or a kept failure line names a changed file. Otherwise it
@@ -1561,6 +1615,8 @@ scope_fixture() { # scope_fixture <dir> [slowcore | slowapp | norunner | links]
     printf 'import { test, expect } from "bun:test";\nimport { add } from "%s";\ntest("old sum", () => { expect(String(add(1, 1))).toBe("3"); });\n' "$core" > "$d/packages/legacy/test/old.test.ts"
     printf 'import { test, expect } from "bun:test";\ntest("slow ok", () => { expect(1).toBe(1); });\n' > "$d/packages/slow/test/slow.test.ts"
     printf 'import { test, expect } from "bun:test";\ntest("other red", () => { expect(1).toBe(2); });\n' > "$d/packages/other/test/other.test.ts"
+    # flaky: app's suite has one more test that fails exactly once, in a whole-suite run (npm sets npm_lifecycle_event; a per-file check starts bun itself), then passes
+    [ "$v" = flaky ] && printf 'import { existsSync, writeFileSync } from "node:fs";\ntest("flaky once", () => { const f = process.env.FLAKY_ONCE; if (f && process.env.npm_lifecycle_event === "test" && !existsSync(f)) { writeFileSync(f, ""); expect(1).toBe(2); } });\n' >> "$d/packages/app/test/app.test.ts"
     git -C "$d" init -q -b main && git -C "$d" config user.name rs && git -C "$d" config user.email rs@example.invalid
     printf 'node_modules\n' > "$d/.gitignore"
     git -C "$d" add -A . && git -C "$d" commit -q -m base
@@ -1598,13 +1654,15 @@ print("failed %s" % ",".join(sorted(c["name"] for c in rec.get("checks", []) if 
 print("not_applicable %s" % " ;; ".join(n for n in rec.get("not_applicable", []) if "full suite" in n))
 print("stopped %s" % ",".join(e["data"].get("reason", "") for e in ev if e["type"] == "stage.failed" and e["stage"] == "verify"))
 print("quick_verifies %d" % sum(1 for x in vs if x.get("verify_scope") == "quick"))
+print("head_rerun %d" % sum(int(h.get("count") or 0) for x in vs for h in (x.get("head_rerun") or [])))
+print("rerun_disclosed %s" % any("passed when the same command was run again" in n for n in rec.get("not_proven", [])))
 if os.environ.get("RS_SHOW"):
     for i, x in enumerate(vs): print("dbg verify%d %s" % (i, json.dumps({k: x.get(k) for k in ("verify_scope", "pre_red_checks", "known_red_checks", "known_red_same_error", "baseline_line", "not_proven", "blocking_checks")} | {"checks": ["%s=%s" % (c["name"], c["result"]) for c in x.get("checks", [])]})))
 PY
 )"
 }
 scope_get() { printf '%s\n' "$SCS" | sed -n "s/^$1 //p"; }
-scope_want() { case " ${SCOPE_CASES:-clean detached ownerslow touched newerr limit limitearly carry norunner limitred links linksnewerr} " in *" $1 "*) return 0 ;; esac; return 1; } # SCOPE_CASES="clean limit" runs a subset (planting a defect)
+scope_want() { case " ${SCOPE_CASES:-clean detached ownerslow touched newerr limit limitearly carry norunner limitred links linksnewerr flaky} " in *" $1 "*) return 0 ;; esac; return 1; } # SCOPE_CASES="clean limit" runs a subset (planting a defect)
 unit_scope() {
 if scope_want clean; then
 SR="$T/scope-clean"; scope_fixture "$SR"; scope_run "$SR" "$SCOPE_OK"
@@ -1632,6 +1690,7 @@ if scope_want touched; then
 SR="$T/scope-touched"; scope_fixture "$SR"; scope_run "$SR" "$SCOPE_BREAK"
 [ -n "${RS_SHOW:-}" ] && printf 'touched rc=%s\n%s\n' "$SCRC" "$SCS"
 [ "$(scope_get verdict)" = FAILED ] && ok "scope touched: a failing test in the package the change touched blocks (FAILED)" || bad "scope touched: verdict $(scope_get verdict), want FAILED"
+[ "$(scope_get head_rerun)" = 0 ] && [ "$(scope_get rerun_disclosed)" = False ] && ok "scope touched: a test that fails on the change every time is never dropped by the head rerun" || bad "scope touched: head_rerun $(scope_get head_rerun), disclosed $(scope_get rerun_disclosed) (want 0, False)"
 fi
 if scope_want newerr; then
 SR="$T/scope-newerr"; scope_fixture "$SR"; scope_run "$SR" "$SCOPE_THROW"
@@ -1664,6 +1723,21 @@ console.log(JSON.stringify(v.unrunSuitesCarried(prior, [{ name: "full suite: @ws
 [ "$CU" = '["not run: full suite: @ws/legacy (timed out after 2s)"] | ["not run: full suite: @ws/app (no time left before the verify limit)"]' ] && ok "scope carry: a suite this verify ran to a pass or fail loses its carried not-run line; one still not run keeps it" || bad "scope carry: $CU"
 CW="$T/carry-wiring.ts"; sed 's#//.*##' "$ROOT/loki-ts/src/engine10/stages/verify.ts" > "$CW" # comments stripped, so a comment naming the call cannot satisfy the check
 grep -qF '[QUICK_ONLY_NOTE, ...unrunSuitesCarried(ctx.outputs().verify?.not_proven, checks)]' "$CW" && ok "scope carry: wiring: the quick-verify NOT PROVEN line spreads unrunSuitesCarried with this verify's checks" || bad "scope carry: wiring: the quick-verify line no longer carries unrun suites"
+fi
+if scope_want flaky; then
+# HEAD-RERUN end to end (G1): app's suite fails once on the change (one test that is red in the first whole-suite run and green afterwards; it never fails on
+# base). The suite's base is measured, the head-only id gets one rerun of the same command and passes, so it is not counted against the change and is
+# disclosed with the flaky tests. With LOKI_E10_HEAD_RERUN=0 the same failure counts as before. A test that fails every time stays the change's (touched, newerr).
+# Plant: 24z. verify.ts HEAD-RERUN: `passed = only;` (every head-only id is dropped without looking at the rerun: scope touched reads head_rerun 1).
+SR="$T/scope-flaky"; scope_fixture "$SR" flaky; scope_run "$SR" "$SCOPE_OK" FLAKY_ONCE="$T/once-flaky"
+[ -n "${RS_SHOW:-}" ] && printf 'flaky rc=%s\n%s\n%s\n' "$SCRC" "$SCS" "$(printf '%s\n' "$SCOUT" | tail -8)"
+[ "$(scope_get head_rerun)" = 1 ] && [ "$(scope_get rerun_disclosed)" = True ] && [ -z "$(scope_get failed)" ] && [ "$(scope_get fix_rounds)" = 0 ] && [ "$(scope_get verdict)" != FAILED ] && [ -e "$T/once-flaky" ] \
+    && ok "head rerun e2e: a suite test that fails once on the change and passes when the same command is run again is not a failure of the change, draws no fix round and is disclosed ($(scope_get verdict))" \
+    || bad "head rerun e2e: verdict $(scope_get verdict) head_rerun $(scope_get head_rerun) disclosed $(scope_get rerun_disclosed) failed [$(scope_get failed)] fix_rounds $(scope_get fix_rounds)"
+SR="$T/scope-flakyoff"; scope_fixture "$SR" flaky; scope_run "$SR" "$SCOPE_OK" FLAKY_ONCE="$T/once-flakyoff" LOKI_E10_HEAD_RERUN=0
+[ "$(scope_get head_rerun)" = 0 ] && [ "$(scope_get verdict)" != VERIFIED ] && case "$(scope_get failed)" in *"@ws/app"*) true ;; *) false ;; esac \
+    && ok "head rerun e2e off (LOKI_E10_HEAD_RERUN=0): the test that failed once counts against the change as before ($(scope_get verdict))" \
+    || bad "head rerun e2e off: verdict $(scope_get verdict) head_rerun $(scope_get head_rerun) failed [$(scope_get failed)]"
 fi
 if scope_want norunner; then
 SR="$T/scope-norunner"; scope_fixture "$SR" norunner; scope_run "$SR" "$SCOPE_OK"
