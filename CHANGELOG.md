@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A continue round counts as progress only when a planned file appears, or the tree changed and the reply names new work or a changed count ("12 of 40 tests fail" then "8 of 40"). A reply that only rephrases earlier work, or only adds a new reason while nothing in the tree changed, is no progress, so such a session ends after 2 rounds.
 - After a `--deep` run, the step that posts its result stops waiting once the deep worker's process id belongs to another process, or 60 s after the worker wrote its result, so it cannot wait forever now that `--deep` has no time cap.
 - `LOKI_E10_DEFAULT_BUDGETS=1` restores every old default at once. The previous loop's $100 default and the 120 s limit on the base flaky-probe rerun are unchanged.
-- Measured: each new guard was shown to fail its test with the guard removed (12 planted defects in this series). Not yet measured in a live run.
+- Known limits: a count that keeps changing to values never seen before while the tree keeps changing still reads as progress (only a time or round limit, which this release removes, would end it); a count that only oscillates between values already reported stops. A reply that names no number, right after one that did, counts as progress once per run when the tree changed. After `--deep`, the step that posts the result reads the worker's start time itself, so a worker pid reused before that first reading keeps it waiting while the other process lives.
+- Measured: each new guard was shown to fail its test with the guard removed (13 planted defects in this series). Not yet measured in a live run.
 
 ## v11.169.0 (2026-11-20)
 
