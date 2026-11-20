@@ -879,12 +879,12 @@ export function sameUnattributableRed(repoDir: string, baseSha: string, full: Fu
  *  closed-set-2 (11.158.0 to 11.164.0): pw43305 unattributable (six of six seeds), hm155462 and oc63960 not started or not comparable; takes over BASE-UNATTRIBUTED. */
 export const exogenousRedOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_EXOGENOUS_RED"] ?? "").trim());
 export type BaseState = "compared" | "cut" | "not started" | "unattributable" | "not comparable";
-export interface ExogenousAttribution { state: BaseState; fresh: number; names_changed: boolean; evidence: string; exit?: number | null; base_exit?: number | null }
+export interface ExogenousAttribution { state: BaseState; fresh: number; names_changed: boolean; evidence: string; exit?: number | null; base_exit?: number | null; fresh_ids?: string[] } // fresh_ids: the failing ids not red on base (seal measuredConflictOf reads them)
 /** The half-count test: a base run that executed fewer than half of what head executed did not run the same suite. */
 export const baseRanTooFew = (base: number | undefined, head: number | null | undefined): boolean => typeof base === "number" && typeof head === "number" && head > 0 && base * 2 < head;
-export function exogenousState(repoDir: string, baseSha: string, c: FullCheck, testsChanged = false): Pick<ExogenousAttribution, "state" | "fresh" | "evidence" | "exit" | "base_exit"> {
+export function exogenousState(repoDir: string, baseSha: string, c: FullCheck, testsChanged = false): Pick<ExogenousAttribution, "state" | "fresh" | "evidence" | "exit" | "base_exit" | "fresh_ids"> {
   const p = loadProfile(repoDir), b0 = p && p.revision === baseSha ? baseFor(repoDir, p, c.cmd, false) : undefined;
-  const st = (state: BaseState, fresh: number, evidence: string) => ({ state, fresh, evidence, exit: c.exit ?? null, base_exit: b0?.exit_code ?? null });
+  const st = (state: BaseState, fresh: number, evidence: string, freshIds?: string[]) => ({ state, fresh, evidence, exit: c.exit ?? null, base_exit: b0?.exit_code ?? null, ...(freshIds ? { fresh_ids: freshIds } : {}) });
   if (!p || p.revision !== baseSha) return st("not started", 0, "no base record for this commit");
   if (!b0 || !b0.ran) return st("not started", 0, b0?.reason ?? "the base run of this command did not start");
   if (b0.timed_out || b0.reason === "baseline budget used up") return st("cut", 0, b0.timed_out ? "the base run timed out" : "the baseline budget ran out");
@@ -892,7 +892,7 @@ export function exogenousState(repoDir: string, baseSha: string, c: FullCheck, t
   if (b0.exit_code === 0) { // a base run that passed is a comparison that blames the change whatever head printed, unless it passed by running nothing
     if (b0.zero_tests === true || b0.executed === 0) return st("not comparable", 0, "the base run passed without executing a test");
     if (!testsChanged && baseRanTooFew(b0.executed, c.executed)) return st("not comparable", 0, `the base run passed but ran ${b0.executed} of head's ${c.executed} tests`); // head's failures can be in tests base never ran
-    return st("compared", Math.max(1, ids.length), "the base run passed and the head run fails");
+    return st("compared", Math.max(1, ids.length), "the base run passed and the head run fails", ids); // base passed: every failing id is fresh
   }
   const bm = new Map((b0.load_errors ?? []).map((l) => [loadErrorModule(l), l] as const)), hm = new Map((c.load_errors ?? []).map((l) => [loadErrorModule(l), l] as const));
   const baseOnly = [...bm.keys()].filter((m) => !hm.has(m)), headOnly = [...hm.keys()].filter((m) => !bm.has(m));
@@ -903,7 +903,7 @@ export function exogenousState(repoDir: string, baseSha: string, c: FullCheck, t
   if (!b0.attributable) return st("unattributable", 0, b0.reason ?? "no failing id parsed on base");
   if (!ids.length) return st("unattributable", 0, "no failing id parsed on head");
   const known = new Set([...b0.failing_ids, ...(b0.flaky_ids ?? [])]), fresh = ids.filter((i) => !known.has(i));
-  return st("compared", fresh.length, fresh.length ? `${fresh.length} failing id(s) not red on base (first: ${fresh[0]})` : "every failing id is red on base");
+  return st("compared", fresh.length, fresh.length ? `${fresh.length} failing id(s) not red on base (first: ${fresh[0]})` : "every failing id is red on base", fresh);
 }
 /** True when the attribution blames the change: only then may an exogenous red make the run FAILED. A compared check that is still failing was not
  *  excused by the base comparison, so the comparison itself found against the change: a failing id not red on base (`fresh`), or, with every id red on

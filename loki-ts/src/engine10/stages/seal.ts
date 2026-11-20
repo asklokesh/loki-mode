@@ -280,7 +280,7 @@ const wallCheckNames = (o: Partial<Record<StageName, Obj>>): Set<string> => {
 /** The failing check that shows the claimed conflict, or null. On the last verify (not stopped, so it ran on the delivered tree): a Wall file the Wall stage
  *  reproduced red on base passed with n > 0, so the change satisfies the issue; a check the run did not write fails and verify attributes it to the change
  *  (its base run passed, or a failing id is not red on base), so satisfying the issue broke it; and the claim names that check's file (for a full suite,
- *  the file of one of its failing ids). */
+ *  the file of one of its failing ids that is not red on base, never an id that already failed there). */
 export function measuredConflictOf(o: Partial<Record<StageName, Obj>>): string | null {
   const v = o.verify, w = o.wall, reason = String(o.implement?.spec_conflict_reason ?? "");
   if (!v || v.stopped_at || !w || w.already_satisfied === true || w.reproduction_green_on_base === true || reason === "") return null;
@@ -290,8 +290,10 @@ export function measuredConflictOf(o: Partial<Record<StageName, Obj>>): string |
   // the path as a whole word of the claim: at its start or after a space, quote, backtick or bracket, and followed by its end or a non-path character
   const at = (f: string): boolean => { for (let i = reason.indexOf(f); i >= 0; i = reason.indexOf(f, i + 1)) { const b = i === 0 ? " " : reason[i - 1]!, e = reason[i + f.length] ?? " "; if (/[\s'"`(\[]/.test(b) && !/[\w./-]/.test(e)) return true; } return false; };
   const namedFile = (f: string): boolean => { const tail = f.split("/").slice(1).join("/"); return f !== "" && (at(f) || (tail.includes("/") && at(tail))); };
-  // a per-file check is named by its file; a full suite by the file of one of its failing ids ("calc.test.ts::add", "src/a.test.tsx > Suite > case")
-  const files = (c: Obj): string[] => String(c.name).startsWith("full suite") ? strs(c.ids).map((i) => i.split("::")[0]!.split(" > ")[0]!.trim()) : [fileOfCheck(String(c.name))];
+  // a per-file check is named by its file; a full suite by the file of one of its FRESH failing ids, the ones not red on base ("calc.test.ts::add",
+  // "src/a.test.tsx > Suite > case"): the record's fresh_ids, or every id when the suite was green on base (introduced). With neither, a full suite names no file.
+  const idFile = (i: string): string => i.split("::")[0]!.split(" > ")[0]!.trim();
+  const files = (c: Obj): string[] => { const n = String(c.name); if (!n.startsWith("full suite")) return [fileOfCheck(n)]; const fr = attr[n]?.fresh_ids; return (Array.isArray(fr) ? fr : introduced.has(n) ? strs(c.ids) : []).map(idFile); };
   const hit = raw.find((c) => { const n = String(c.name); return c.result === "fail" && n.includes(":") && !wall.has(n) && !targets.has(n) && !pre.has(n) && files(c).every((f) => !changed.has(f)) && (introduced.has(n) || (attr[n]?.state === "compared" && (attr[n]?.fresh ?? 0) >= 1)) && files(c).some(namedFile); });
   return hit ? String(hit.name) : null;
 }
