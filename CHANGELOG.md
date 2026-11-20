@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Every receipt with a failing check now lists each one as introduced by the change, pre-existing (a test file that fails on the base commit too, by every failing test id and the same error), or unknown (no base comparison could be made, or the error differs from the base run). The label does not change: the receipt's observe list shows each run where dropping pre-existing failures and holding unknown ones would have given another label. `LOKI_E10_INTRODUCED=0` turns it off; `enforce` is accepted and behaves as observe in this release.
 
+### The Wall can run in observe mode
+
+- `LOKI_E10_WALL=observe` runs the Wall author as usual (tests written from the issue by a session that never sees the code, sealed and run on the base commit) but keeps its tests out of the checkout, the fix rounds and the label. A complete verify runs them at the end and the receipt records how they did and what label they would have given. The default is unchanged (the Wall stays off).
+
 ## v11.172.0 (2026-11-20)
 
 ### A low-risk run checks the full test suite before it can say VERIFIED

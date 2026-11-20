@@ -929,6 +929,63 @@ E2E_STUB_WALL=multiply LOKI_E10_WALL=1 LOKI_E10_WALL_ON_LEAN=1 LOKI_E10_WALL_SNA
 f="$(wall_facts)"; set -- $f
 [ "$1" = stage.failed ] && ok "snapshot fallback: without the cascade flag a failed snapshot still fails the Wall stage, as before ($f)" || bad "snapshot no-flag facts: $f"
 
+# VERIFY-PLAN V3 WALL OBSERVE (LOKI_E10_WALL=observe; unset stays off). The Wall author writes and seals its tests, observeWall moves the record under observe_*
+# keys and takes the files out of the checkout, a complete verify runs the sealed copies last (wall_observe), and seal writes an observe entry when they would
+# change the label. W1 agrees (done), W2 disagrees (multiply adds, and the base calc.test.ts no longer calls multiply, so today's label is not FAILED), W2off is
+# the same run with the Wall off, W3 is enforce. Plants (each reverted): observeWall keeps `files` (W1 wall.files non-empty); observeWall does not remove the
+# installed files (W1/W2 a loki_wall file in the checkout or in an implement prompt); runObservedWall pushes into checks (W2 label moves); the seal block
+# applies `would` to the label (W2 label FAILED); wallMode reads observe as enforce (W1 wall.files non-empty, W4); observeWall leaves wallSealed set (W6).
+wobs_facts() { python3 -I - "$RUNDIR/events.jsonl" "$RUNDIR/receipt.json" "$REPO" <<'PY'
+import json, sys, os, subprocess
+ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]
+vd = [e.get("data") or {} for e in ev if e.get("stage") == "verify" and e["type"] == "stage.completed"]
+v = vd[-1] if vd else {}
+try: rec = json.load(open(sys.argv[2]))
+except Exception: rec = {}
+wo = (v.get("wall_observe") or {}).get("files") or []
+obs = [o for o in rec.get("observe") or [] if o.get("rule") == "LOKI_E10_WALL"]
+left = [f for f in os.listdir(sys.argv[3]) if f.startswith("loki_wall")]
+tree = subprocess.run(["git", "-C", sys.argv[3], "ls-tree", "-r", "--name-only", "HEAD"], capture_output=True, text=True).stdout.split()
+print(rec.get("verdict"), "files=%d" % len(rec.get("wall", {}).get("files") or []), "obs=" + ",".join(f["result"] for f in wo) if wo else "obs=none",
+      "entry=" + (obs[0]["would_label"] if obs else "none"), "left=%d" % len(left), "committed=%d" % sum(1 for t in tree if "loki_wall" in t),
+      "disclosed" if any(n.startswith("Wall (observe):") and n.endswith("(disclosed, does not cap)") for n in rec.get("not_proven") or []) else "undisclosed")
+PY
+}
+wobs_prep() { # W2: the base calc.test.ts stops calling multiply, so a wrong multiply() is caught by the Wall only
+    python3 -I -c 'import sys; p = sys.argv[1] + "/calc.test.ts"; s = open(p).read(); open(p, "w").write("".join(l for l in s.splitlines(True) if "multiply" not in l))' "$1"
+    git -C "$1" add calc.test.ts; git -C "$1" commit -q --amend -m base
+}
+E2E_STUB_WALL=multiply LOKI_E10_WALL=observe LOKI_E10_WALL_ON_LEAN=1 run_engine done
+w1="$(wobs_facts)"
+[ "$w1" = "VERIFIED files=0 obs=pass entry=none left=0 committed=0 disclosed" ] && ok "V3 W1: observe on a right change: VERIFIED as with the Wall off, no Wall files on the receipt, the observed Wall passed, no entry, nothing left in the checkout or committed ($w1)" || bad "V3 W1 gave: $w1"
+E2E_PREP=wobs_prep E2E_STUB_WALL=multiply LOKI_E10_WALL=0 run_engine wrong; w2off="$(outcome)"
+rm -f "$T"/wobs.prompt*; E2E_PREP=wobs_prep E2E_STUB_WALL=multiply E2E_STUB_PROMPT_LOG="$T/wobs.prompt" LOKI_E10_WALL=observe LOKI_E10_WALL_ON_LEAN=1 run_engine wrong
+w2="$(wobs_facts)"; w2o="$(outcome)"
+case "$w2" in *" files=0 obs=fail entry=FAILED left=0 committed=0 disclosed") [ "$w2o" = "$w2off" ] && [ "$w2o" != FAILED ] && ok "V3 W2: observe on a wrong change: the label is the Wall-off label ($w2o), the observed Wall failed and the receipt says it would be FAILED ($w2)" || bad "V3 W2: label $w2o, Wall-off label $w2off ($w2)" ;; *) bad "V3 W2 gave: $w2 (Wall-off label $w2off)" ;; esac
+! grep -qs 'loki_wall' "$T"/wobs.prompt.implement* && ok "V3 W2: no implement or fix brief names a loki_wall file" || bad "V3 W2: an implement or fix brief named the observed Wall file"
+E2E_PREP=wobs_prep E2E_STUB_WALL=multiply LOKI_E10_WALL=1 LOKI_E10_WALL_ON_LEAN=1 run_engine wrong
+w3="$(wobs_facts) $(python3 -I -c 'import json, sys; ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]; w = [e for e in ev if e.get("stage") == "wall" and e["type"] == "stage.completed"]; print("wallran=%d" % len((w[-1].get("data") or {}).get("files") or []) if w else "wallran=none")' "$RUNDIR/events.jsonl")"
+case "$w3" in "PARTIAL files=0 obs=none entry=none left=0 committed=0 undisclosed wallran=1") grep -q 'wall test discarded: loki_wall_multiply.test.ts (only Loki' <<< "$OUT" && ok "V3 W3: LOKI_E10_WALL=1 is today's Wall: it runs, its red test is set aside as a Wall-only failure (PARTIAL), and nothing is observed ($w3)" || bad "V3 W3: no Wall-only set-aside line ($w3)" ;; *) bad "V3 W3 gave: $w3" ;; esac
+W46="$(cd "$ROOT/loki-ts" && bun -e '
+import { wallMode } from "./src/engine10/sizing.ts"; import { observeWall } from "./src/engine10/stages/wall.ts";
+import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs"; import { join } from "node:path"; import { tmpdir } from "node:os";
+const m = (e: Record<string, string>) => wallMode(e as never);
+console.log("W4", [m({}), m({ LOKI_E10_WALL: "observe" }), m({ LOKI_E10_WALL: " Observe " }), m({ LOKI_E10_WALL: "1" }), m({ LOKI_E10_WALL: "0" }), m({ LOKI_E10_CASCADE_V0: "1" }), m({ LOKI_E10_CASCADE_V0: "1", LOKI_E10_WALL: "0" }), m({ LOKI_E10_CASCADE_V0: "1", LOKI_E10_WALL: "observe" })].join(","));
+const d = mkdtempSync(join(tmpdir(), "w6-")), f = join(d, "loki_wall_x.test.ts"); writeFileSync(f, "x");
+const r = { status: "completed", data: { files: [{ path: f, sha256: "s" }], readOnlyFiles: [{ path: f }], base_run: { pass: 0, fail: 1 }, not_proven: ["n"], iteration_ids: ["i"] } } as never;
+const c1 = { wallSealed: true }, o1 = observeWall(c1, r, { LOKI_E10_WALL: "observe" } as never) as { status: string; data: Record<string, unknown> };
+console.log("W6o", c1.wallSealed, o1.status, o1.data.observe, "files" in o1.data, "not_proven" in o1.data, existsSync(f), JSON.stringify(o1.data.observe_base_run));
+writeFileSync(f, "x"); const c2 = { wallSealed: true }, o2 = observeWall(c2, r, {} as never);
+console.log("W6u", c2.wallSealed, o2 === r, existsSync(f));
+const c3 = { wallSealed: true }, o3 = observeWall(c3, { status: "failed", data: {}, reason: "boom" } as never, { LOKI_E10_WALL: "observe" } as never) as { status: string; data: Record<string, unknown> };
+console.log("W6f", o3.status, o3.data.observe_status, o3.data.observe_reason);
+rmSync(d, { recursive: true, force: true });
+' 2>&1)"
+has "V3 W4: wallMode reads observe in any case, 1 and cascade v0 as enforce, 0 and unset as off, and observe wins over cascade v0" "$W46" "W4 off,observe,observe,enforce,off,enforce,off,observe"
+has "V3 W6: in observe mode observeWall clears wallSealed, moves the record under observe_* keys, drops files and not_proven, removes the installed file" "$W46" 'W6o false completed true false false false {"pass":0,"fail":1}'
+has "V3 W6: with the knob unset observeWall leaves wallSealed set and the record untouched" "$W46" "W6u true true true"
+has "V3 W6: a failed Wall in observe mode is recorded and never fails the run" "$W46" "W6f completed failed boom"
+
 att_ev() { python3 -I -c '
 import json, sys
 for l in open(sys.argv[1]):

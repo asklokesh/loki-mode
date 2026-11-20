@@ -4886,4 +4886,16 @@ while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$v5out"
 
+# ---------------------------------------------------------------- VERIFY-PLAN V3 W5 steer staleness with an observed Wall (util/steer.ts staleAtSeal). An observed Wall froze nothing
+# the label reads, so a steer consumed after its author started does not stale the seal; an enforce record still does, and so does wallSealed (the P12-13c race rule).
+# Planted defect (reverted): drop the observe test in steer.ts (the observe cell returns the revision).
+W5D="$(mktemp -d "$T/w5.XXXXXX")"
+W5="$(cd "$ROOT/loki-ts" && bun -e '
+import { staleAtSeal } from "./src/util/steer.ts";
+const dir = process.argv[1]!, rev = () => [{ rev: 1, source: null, actor: null, sha: "x", at: 2000 }], tl = [{ stage: "wall", startMs: 1000 }];
+const n = (outputs: () => object, wallSealed: boolean) => staleAtSeal(dir, { intentRevisions: rev() as never, timeline: tl, outputs: outputs as never, wallSealed }).length;
+console.log("W5", n(() => ({ wall: { observe: true } }), false), n(() => ({ wall: { files: [] } }), false), n(() => ({ wall: { observe: true } }), true));
+' "$W5D" 2>&1)"
+has "V3 W5: staleAtSeal: an observed Wall stales nothing, an enforce Wall record does, and wallSealed still does" "$W5" "W5 0 1 1"
+
 finish

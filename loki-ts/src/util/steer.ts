@@ -213,7 +213,8 @@ export function staleAtSeal(repoDir: string, ctx: { intentRevisions?: IntentRevi
   (ctx.intentRevisions ??= []).push(...late);
   // P12-13: only a Wall that completed froze tests. A skipped Wall (trivial tier) has none to go stale, so only unapplied steers refuse; ctx without outputs() keeps the timeline rule.
   // P12-13c: wall.sealed (ctx.wallSealed) is frozen too: a limit-timer race can install the loki_wall_* checks and seal while outputs.wall is still unset.
-  const frozen = ctx.outputs === undefined || ctx.outputs().wall !== undefined || ctx.wallSealed === true;
+  const w = ctx.outputs?.().wall as { observe?: unknown } | undefined; // VERIFY-PLAN V3: an observed Wall froze nothing the label reads
+  const frozen = ctx.outputs === undefined || (w !== undefined && w.observe !== true) || ctx.wallSealed === true;
   return [...new Set([...staleWallRevisions(ctx.intentRevisions, frozen ? ctx.timeline : []), ...late])];
 }
 

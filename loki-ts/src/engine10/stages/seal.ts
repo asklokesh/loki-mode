@@ -580,6 +580,16 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     rz("check fails", live.filter((c) => c.result === "fail").map((c) => c.name)); rz("check not run", live.filter((c) => c.result === "not_run").map((c) => c.name)); rz("verify not proven", capVerify.filter((n) => !pinDropped.has(n))); rz("weakened test", weakTests); rz("runner config", capRc);
     if (!proof) rz("no agent-independent proof", [executed ? AGENT_ONLY_REASON : NO_TESTS_REASON]); if (ftpRes && !ftpRes.ok) rz("no fail-then-pass test", [ftpRes.line]); if (wallGreenOnBase) rz("Wall green on base", [WALL_GREEN_ON_BASE_REASON]);
     rz("changed symbol not referenced", leanGap); rz("public function not exercised", pubGap); rz("spec site uncovered", specGap); rz("Wall copy or clause", [...wpAll.notes, ...wpAll.clauseGap]); rz(xr?.level === "block" ? "review block" : "review note", xr?.notes ?? []); rz("open note", openNotes);
+    // VERIFY-PLAN V3 (LOKI_E10_WALL=observe): what the observed Wall would have done to the label; an observe entry and a disclosure only
+    const wObs = (o.verify?.wall_observe as { files?: { path: string; result: string }[] } | undefined)?.files ?? [];
+    let wallObsLine: string | null = null;
+    if (wObs.length) {
+      const WALL_CLEARS = ["no agent-independent proof", "no fail-then-pass test", "changed symbol not referenced"]; // a passing Wall clears the lean hold too: lean is computed only when no Wall ran
+      const wf = wObs.filter((f) => f.result === "fail"), wnr = wObs.filter((f) => f.result === "not_run"), wp = wObs.filter((f) => f.result === "pass"), wb = ((o.wall?.observe_base_run ?? {}) as Obj);
+      const would = wf.length ? "FAILED" : !(Number(wb.fail ?? 0) > 0) ? (verdict0a === "VERIFIED" ? "PARTIAL" : verdict0a) /* green on base proves nothing, FC-VACUOUS-WALL-GREEN */ : wnr.length ? (verdict0a === "VERIFIED" ? "PARTIAL" : verdict0a) : verdict0a === "PARTIAL" && reasons.every((x) => WALL_CLEARS.includes(x.kind)) ? "VERIFIED" : verdict0a;
+      wallObsLine = `Wall (observe): ${wObs.length} file(s); base run ${Number(wb.pass ?? 0)} pass, ${Number(wb.fail ?? 0)} fail; on the change ${wp.length} pass, ${wf.length} fail, ${wnr.length} not run`;
+      if (would !== verdict0a) observed.push({ rule: "LOKI_E10_WALL", would_label: would, detail: wallObsLine });
+    }
     const publish = async (): Promise<StageResult> => {
     { const cu = issueAsks.length ? updateRepoCard({ repoDir: ctx.repoDir, runId: ctx.runId, baseSha: ctx.baseSha, headSha: head, script: (() => { try { return readFileSync(join(ctx.runDir, PROOF_SCRIPT), "utf8"); } catch { return null; } })(), proof: proofRun, checks: (Array.isArray(o.verify?.checks) ? (o.verify!.checks as Obj[]) : []).map((c) => ({ name: String(c.name), cmd: String(c.cmd ?? ""), result: String(c.result) })), needs }) : null; if (cu) ctx.emit("repo.card", "seal", { when: "written", wrote: cu.wrote, facts: cu.facts, setup: cu.setup, ...(cu.why ? { why: cu.why } : {}) }); } // REPO CARD: written at publish, once per run
     const wp = verdict3 === "VERIFIED" && commitWallEnabled() ? wpAll : { files: [], notes: wpAll.notes }, wallKept = verdict3 === "VERIFIED" && !commitWallEnabled() ? wpAll.files : []; // J2: off by default, the sealed copy, its hash and the rerun command stay in the run dir and the receipt for (const n of wp.notes) notProven.add(n); if (verdict3 === "PARTIAL") for (const n of wpAll.clauseGap) notProven.add(n); // FC-VERIFIED-PR-WITHOUT-ITS-TEST: only on VERIFIED, after the receipt's head, tree and diff are fixed
@@ -639,6 +649,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     for (const n of [...strs(o.commit?.not_proven), ...strs(o.commit?.scope_notes), ...(o.commit?.failed === true ? [`${LOKI_OWN_LEAD}git commit failed: ${str(o.commit?.commit_error) ?? "no error recorded"}`] : [])]) notProven.add(n); // D58: scope_notes = edits flagged outside stated scope (never reverted) or scope undetermined; separate key so they never force FAILED
     for (const id of strs(o.verify?.pre_red)) notProven.add(`pre red: ${id}`); // A-112: listed, never downgrades (not via verifyNotProven)
     if (typeof o.verify?.baseline_line === "string" && strs(o.verify?.pre_red).length) notProven.add(o.verify.baseline_line); // REPOMEM: the one-line pre-existing vs introduced split; listed only when a baseline failure was excused, never downgrades
+    if (wallObsLine) notProven.add(`${wallObsLine} (disclosed, does not cap)`); // VERIFY-PLAN V3
     for (const n of lintOpenNotes) notProven.add(n); // LINT-OWN
     for (const n of strs(o.verify?.lint_untouched)) notProven.add(`lint red only in files the change did not touch (disclosed, not blocking): ${n}`); // LINT-UNTOUCHED: never silent
     for (const n of strs(o.verify?.not_excused)) notProven.add(n); // why a failing full-suite check was not excused as pre-existing; the check already blocks, this only names the rule

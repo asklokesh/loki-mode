@@ -5,12 +5,12 @@ import { installHint } from "../../util/stack_tools.ts";
 import { atomicWriteText } from "../../util/atomic.ts"; import { redactSecrets } from "../../util/redact.ts";
 import { installOwned, projectDeclaresRuff, unusedInstallNotes, withGuideNotes } from "../../project_model/install.ts"; import { nrdGroupsFor, settleNrd } from "../../features/no_regression.ts";
 import { scopedOutOf } from "../../project_model/scope.ts";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"; import { MANIFESTS } from "../../contrib/wall_snapshot.ts"; import { classifyRunnerOutput } from "../../runner/runner_errors.ts";
 import { hiddenConfigChanged, testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst, QUICK_ONLY_NOTE, quickScope, quickSplit } from "../../e10ext/select.ts"; import { dependentNotes, dependentTests } from "../../features/dependents.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
-import { loadRepoMap, namedFiles } from "../sizing.ts";
+import { loadRepoMap, namedFiles, wallMode } from "../sizing.ts"; import { sealedWallCopy } from "../../util/check_result.ts";
 import { avaTargets, guessRunner, isTestFile, mochaTargets } from "../testmap.ts"; import { coveredStem } from "../../util/test_file_text.ts"; import { comparableIds, errorsById, lineNamesChange, noiseOnlyErrors, sameErrors, changeLines, failedCount, sameFailures, SILENT_IDS_NOTE, CHANGE_LINES_MAX, PER_FILE_CUT_BYTES } from "../failures.ts"; export { errorsById, sameErrors } from "../failures.ts";
 import { LINE_FALLBACK_COUNT, lineVerdict, UNMEASURED_REASON, failureLines, venvSkipNotes, goJsonStream, GO_JSON_KEEP, withoutStaleWall, failureExcerpt, EXCERPT_TOTAL_CAP, changedFiles, hiddenEdits, ignoreRuleChanges, classifyCheck, unmeasuredTail, corroboratePass, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount, SECURITY_SCAN, fileHashes, briefGroups, failureSignature } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
@@ -770,6 +770,28 @@ export const unrunSuitesCarried = (prior: unknown, ran: readonly { name: string;
   return Array.isArray(prior) ? prior.map(String).filter((n) => n.startsWith("not run: full suite: ") && !done.has(n.slice("not run: ".length).replace(/ \(.*$/, ""))) : [];
 };
 export const BASE_NOT_MEASURED = "not measured on base (its dependency directories link into this checkout, a dependency manifest changed, or the environment changed since intake), so its failures cannot be compared";
+/** VERIFY-PLAN V3: the observed Wall's tests, run once at the end of a complete verify: each sealed copy is put at its path, run alone with the
+ *  runner it was sealed with, classified like any test check, and removed. Never a VerifyCheck: nothing here reaches the label, fix rounds or cascade. */
+export async function runObservedWall(ctx: RunContext, signal: AbortSignal, api: ProjectApi | null): Promise<{ files: { path: string; result: "pass" | "fail" | "not_run"; n?: number; reason?: string }[] } | undefined> {
+  const obs = (ctx.outputs().wall as { observe_files?: unknown } | undefined)?.observe_files, list = Array.isArray(obs) ? (obs as { path: string; runner?: string }[]) : [];
+  if (!list.length) return undefined;
+  const runners = (await ctx.tests.detect(ctx.repoDir)).runners, out: { path: string; result: "pass" | "fail" | "not_run"; n?: number; reason?: string }[] = [];
+  for (const f of list) {
+    if (signal.aborted) break;
+    const rel = isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path, abs = join(ctx.repoDir, rel), sealed = sealedWallCopy(ctx.runDir, f.path);
+    if (!existsSync(sealed)) { out.push({ path: rel, result: "not_run", reason: "sealed copy missing" }); continue; }
+    const runner = (f.runner as RunnerName | undefined) ?? guessRunner(basename(rel), runners, rel);
+    if (!runner) { out.push({ path: rel, result: "not_run", reason: NO_RUNNER_REASON }); continue; }
+    try {
+      mkdirSync(dirname(abs), { recursive: true }); copyFileSync(sealed, abs);
+      const tc = commandFor({ runner, path: rel }, ctx.repoDir, api), a = await runOnce(tc.cmd, tc.args, tc.cwd, signal, { group: true });
+      const k = classifyCheck({ kind: "test", ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, ...goRunner(tc.cmd, tc.args) });
+      const result = k.result === "pass" || k.result === "fail" ? k.result : "not_run";
+      out.push({ path: rel, result, ...(typeof k.n === "number" ? { n: k.n } : {}), ...(k.reason ? { reason: k.reason } : {}) });
+    } finally { rmSync(abs, { force: true }); }
+  }
+  return { files: out };
+}
 export const verifyStage: Stage = {
   name: "verify",
   targetS: STAGE_BUDGETS.verify.targetS,
@@ -1010,6 +1032,7 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
       for (const c of sec) { const k: VerifyCheck = { name: c.name, cmd: c.cmd, result: c.result as VerifyCheck["result"], duration_s: c.duration_s, ...(c.reason ? { reason: c.reason } : {}), ...(c.secret_matches ? { secret_matches: c.secret_matches } : {}) }; checks.push(k); ctx.emit("test.result", "verify", { ...k }); }
       if (sec.some((c) => c.result === "pass" || c.result === "fail")) { ranDeeper.push(SECURITY_SCAN); risk = markExecuted(risk, ranDeeper); recordRisk(ctx.repoDir, risk); }
     }
+    const wallObs = complete && !signal.aborted && wallMode() === "observe" ? await runObservedWall(ctx, signal, api) : undefined; // VERIFY-PLAN V3: last, recorded only
     const covered = (f: string): boolean => [...ctx.tests.impacted(map, [f]), ...(tests === tests0 ? [] : [...mochaTargets(ctx.repoDir, [f]), ...avaTargets(ctx.repoDir, [f])])].some((t) => checks.some((c) => c.name === testCheckName(t) && hasExecutedProof([c])));
     const uncoveredChanged = changed.filter((f) => CODE_EXT.test(f) && !isTestFile(f) && !wallPaths.has(f) && !cfgChanged.includes(f) && !covered(f)); // FC-21b: changed code no passing impacted check ran; seal denies VERIFIED after a limit
     const flaky = checks.filter((c) => c.result === "flaky").map((c) => (isHold(c) ? "holdout" : c.name)).concat(headRerun.map((h) => `${h.check}: ${h.count} test(s) failed once on the change and passed when the same command was run again (first: ${h.passed_on_rerun[0]}); not counted against the change`)); // HEAD-RERUN: disclosed with the flaky checks
@@ -1092,6 +1115,7 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
       ...(structuredResultsMode() !== "off" ? { structured_results: structuredSummary(checks) } : {}), // VERIFY-PLAN V5 observe: never read by the label
       own_checks: [...new Set([...targetNames].map((n) => (isHoldoutCheck(n) ? "holdout" : n)))], // VERIFY-PLAN V2: the Wall and task-named test checks, whatever their result
       ...(noIdCompared.length ? { no_id_compared: noIdCompared } : {}), // VERIFY-PLAN V2
+      ...(wallObs ? { wall_observe: wallObs } : {}), // VERIFY-PLAN V3: the observed Wall's results, never a check
     } };
   }
 }

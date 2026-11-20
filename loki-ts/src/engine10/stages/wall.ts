@@ -13,7 +13,7 @@ import { unitSpec } from "../../features/speed/unit_mode.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
-import { hasRelevantTests, isTinyGreenfield, WALL_TINY_BOUND, loadRepoMap, namedFiles, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallOutputCap, wallModel, capToRunTier } from "../sizing.ts";
+import { hasRelevantTests, isTinyGreenfield, WALL_TINY_BOUND, loadRepoMap, namedFiles, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallMode, wallFirstModel, wallLimitS, wallOutputCap, wallModel, capToRunTier } from "../sizing.ts";
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { publishSealed, removeHoldout, sealStageDir, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { clauseEvidenceBlock, evidenceOf, ingestWallCases, wallCasesBrief, wallCasesRunner, withUnreproducedEvidence, type WallEvidence } from "../../util/wall_cases.ts"; import { commandFor } from "./verify.ts"; import { guessRunner, harnessRunners, missingStackTool, projectInterpreter, type EngineTestMap } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
@@ -193,7 +193,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const goPkgPath = goPackagePath(readText, ctx.repoDir, targetDir), planned = runners.includes("go") ? plannedGoDir(ctx.repoDir, srcTexts) : null, goTested = planned?.pkg && planned.dir !== targetDir ? goPackagePath(readText, ctx.repoDir, planned.dir) : undefined; // the Wall directory's import path, and the package under test when the Wall sits elsewhere (a black-box tests/ package)
   const oor = (): { name: string; why: string }[] => readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)).flatMap((name) => { const text = readFileSync(join(cwd, name), "utf8"), why = outOfRepoTarget(text) ?? dotenvFileRead(text) ?? vacuousCheck(name, text, goPkgPath, goTested) ?? phantomReason(phantomRepoPaths(text, name, targetDir, ctx.repoDir, planText, task), repoFiles, relative(ctx.repoDir, targetDir), pkg?.root ?? "", task); return why ? [{ name, why }] : []; });
   const bad1 = oor(); if (bad1.length > 0 && !wallCasesRunner(runners) && !signal.aborted && !ctx.overCap?.()) await ctx.sessions.run({ stage: "wall", brief: withStagePrefix(outOfRepoReask("Rewrite these Wall files in place, keeping the same names and acceptance coverage.", bad1)), tier: "development", model, ...specificPin("test", "LOKI_E10_WALL_TIER"), iterationId: `${iterationId}-oor`, limitS: wallLimitS(sz.size), maxOutputTokens: wallOutputCap(), signal, cwd }); // FC-WALL-OUT-OF-REPO-TARGET: re-ask once in the same directory with the precise reason
-  const oorBad = new Map(oor().map((b) => [b.name, b.why])), all = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)), held = stashHoldout({ runId: ctx.runId, repoDir: ctx.repoDir, srcDir: cwd, targetDir, names: all.filter((n) => !oorBad.has(n) && !reject(n, readFileSync(join(cwd, n), "utf8"))), runnerOf: (n) => guessRunner(n, runners) }), generated = all.filter((n) => !held?.names.has(n)); // P12-05: the held-out subset never reaches the repo, runDir or the implementer
+  const oorBad = new Map(oor().map((b) => [b.name, b.why])), all = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)), held = wallMode() === "observe" ? null : stashHoldout({ runId: ctx.runId, repoDir: ctx.repoDir, srcDir: cwd, targetDir, names: all.filter((n) => !oorBad.has(n) && !reject(n, readFileSync(join(cwd, n), "utf8"))), runnerOf: (n) => guessRunner(n, runners) }), generated = all.filter((n) => !held?.names.has(n)); // P12-05: the held-out subset never reaches the repo, runDir or the implementer
   const sealedDir = sealStageDir(ctx.runId, ctx.repoDir); rmSync(sealedDir, { recursive: true, force: true }); // staged outside the repo tree; publishSealed moves it to <runDir>/wall at install
   if (generated.length > 0) mkdirSync(sealedDir, { recursive: true });
 
@@ -286,6 +286,19 @@ export function reauthorNote(d: Record<string, unknown>): string {
   const b = (d.base_run ?? {}) as Record<string, unknown>, rows = [...((d.discarded as { file: string; reason: string }[] | undefined) ?? []), ...((d.not_run_files as { file: string; reason: string }[] | undefined) ?? [])];
   return ["Your previous Wall attempt left no test that ran on the base tree, so it proved nothing and was dropped.", `Base run: pass ${Number(b.pass ?? 0)}, fail ${Number(b.fail ?? 0)}, not run ${Number(b.not_run ?? 0)}.`, ...rows.slice(0, 5).map((r) => `- ${String(r.file)}: ${String(r.reason).slice(0, 300)}`), "Write the Wall again so every test runs. An assertion about behaviour the repository already has must pass on the base tree; only assertions about the new behaviour may fail there."].join("\n");
 }
+/** VERIFY-PLAN V3: in observe mode the finished Wall record moves under observe_* keys, so every reader of outputs.wall (files, base_run,
+ *  readOnlyFiles, holdout_dir, clauses, discarded, arbitrated) sees no Wall, and its installed files leave the checkout; the sealed copies stay
+ *  under <runDir>/wall for verify's observe run. ctx.wallSealed (set by installCore) is cleared, so steer staleness (steer.ts staleAtSeal)
+ *  reads an observed Wall as no Wall. Any other mode passes through unchanged. */
+export function observeWall(ctx: { wallSealed?: boolean }, r: StageResult, env = process.env): StageResult {
+  if (wallMode(env) !== "observe") return r;
+  ctx.wallSealed = false;
+  const d = (r.data ?? {}) as Record<string, unknown>, files = r.status === "completed" && Array.isArray(d.files) ? (d.files as { path: string; sha256: string; runner?: string }[]) : [];
+  for (const f of files) rmSync(f.path, { force: true });
+  const { files: _f, readOnlyFiles: _r, not_proven: _n, ...rest } = d;
+  // a skipped or failed Wall in observe mode is recorded and never fails or holds the run: no not_proven reaches seal
+  return { status: "completed", data: { observe: true, observe_status: r.status, ...(r.reason ? { observe_reason: r.reason } : {}), observe_files: files, observe_base_run: r.status === "completed" ? d.base_run ?? null : null, observe_data: rest, iteration_ids: d.iteration_ids ?? [] } };
+}
 export const WALL_REAUTHOR_EXHAUSTED = "Wall re-authored once and still no Wall test ran on the base tree";
 
 export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOptions = {}): Promise<StageResult> {
@@ -314,7 +327,7 @@ export const wallStage: Stage = {
   name: "wall",
   targetS: 45,
   limitS: WALL_STAGE_LIMIT_S, // B2: room for both rungs (each a session at the wallLimitS cap plus a base run), so the sonnet retry is never cut off by the stage ceiling
-  run: (ctx, signal) => runWall(ctx, signal),
+  run: async (ctx, signal) => observeWall(ctx, await runWall(ctx, signal)),
 };
 /** WC-01b: the split halves, read by the machine unless LOKI_E10_WALL_CONCURRENT=0. */
 export const stage = Object.assign(wallStage, { split: { author: wallAuthor, install: installWall } });
