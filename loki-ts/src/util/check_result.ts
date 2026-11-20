@@ -1550,7 +1550,7 @@ const TOOL_CACHE_GITIGNORE: Record<string, string> = {
 };
 const CACHE_CODE_EXT = /\.(py[a-z]?|pth|so|pyd|dylib|dll|js|mjs|cjs|ts|sh|rb|pl)$/i;
 /** True only when `dir` (repo-relative) is a known pure tool cache: its .gitignore is exactly that tool's own text and nothing under it is importable, executable, linked, or a virtual environment. Any doubt is false. */
-function pureToolCache(repoDir: string, dir: string): boolean {
+export function pureToolCache(repoDir: string, dir: string): boolean {
   const text = TOOL_CACHE_GITIGNORE[basename(dir)];
   if (text === undefined) return false;
   try {
@@ -1586,14 +1586,14 @@ export function ignoreRuleChanges(repoDir: string, snap: unknown, baseSha?: stri
     const gi = new Set(changedFiles(repoDir, baseSha ?? "HEAD").filter((f) => basename(f) === ".gitignore"));
     const hidden: string[] = [];
     for (const [f, h] of Object.entries(cur)) {
-      if (prior[f] === h) continue;
+      if (prior[f] === h || underLokiKept(repoDir, f)) continue; // G2: a file a Loki-chosen command created and left is Loki's, never the change's
       if (basename(f) === ".gitignore" && pureToolCache(repoDir, dirname(f))) continue;
       if (basename(f) === ".gitignore") gi.add(f); else hidden.push(f);
     }
     if (gi.size) notes.push(`ignore rules changed while the run was in progress: ${[...gi].slice(0, 20).join(", ")} was added or edited, so git may hide files the run created`);
     if (hidden.length) notes.push(`an ignored file that can change what verify runs or imports was added or changed during the run: ${hidden.slice(0, 20).join(", ")}${hidden.length > 20 ? ` (+${hidden.length - 20} more)` : ""}`);
     if (notes.length === 0) return [];
-    const made = listIgnoredFiles(repoDir).filter((f) => { try { const st = statSync(join(repoDir, f)); return Math.max(st.birthtimeMs, st.mtimeMs) >= s.at!; } catch { return false; } });
+    const made = listIgnoredFiles(repoDir).filter((f) => !underLokiKept(repoDir, f)).filter((f) => { try { const st = statSync(join(repoDir, f)); return Math.max(st.birthtimeMs, st.mtimeMs) >= s.at!; } catch { return false; } });
     if (made.length) notes.push(`ignored file created during the run, hidden from the diff and the receipt: ${made.slice(0, 20).join(", ")}${made.length > 20 ? ` (+${made.length - 20} more)` : ""}`);
     return notes;
   } catch { return ["ignore rules could not be compared with the intake snapshot: git failed"]; }
@@ -2076,6 +2076,24 @@ export function toolFallbacks(repoDir: string, tool: string, env: NodeJS.Process
  *  existed, and 33 files failed in 0.06 s with "No module named pytest". With the probe red the tests run on the interpreter outside the virtualenv, as
  *  they did before the .venv appeared (`uv run` is skipped too: it runs in that same .venv), and venvSkipNotes names the interpreter and the reason. */
 const importProbe = new Map<string, boolean>(), venvSkips = new Map<string, string>();
+/** G2 ENV-GUARD (util/base_guard.ts guardEnv): a virtualenv a harness command created and the guard removed is forgotten here too, so neither the import
+ *  probe nor the "tests ran outside the project virtualenv" note outlives it. */
+export function forgetVenv(dir: string): void {
+  for (const k of [...importProbe.keys()]) if (k.startsWith(`${dir}/`)) importProbe.delete(k);
+  for (const k of [...venvSkips.keys()]) if (k.includes(`\0${dir}/`)) venvSkips.delete(k);
+}
+/** G2 ENV-GUARD registry, per repository: the informational lines guardEnv wrote ("Loki's own command changed the environment") and the paths a Loki-chosen
+ *  command created that could not be removed safely (kept). Readers that judge the environment subtract the kept paths, so Loki's own change is never
+ *  counted against the change under test. Lives for the run's worker process. */
+const lokiEnv = new Map<string, { notes: string[]; kept: Set<string> }>();
+export function recordLokiEnv(repoDir: string, note: string, kept: readonly string[]): void {
+  const e = lokiEnv.get(repoDir) ?? { notes: [], kept: new Set<string>() }; if (!e.notes.includes(note)) e.notes.push(note); for (const k of kept) e.kept.add(k.replace(/\/$/, "")); lokiEnv.set(repoDir, e);
+}
+export const lokiEnvNotes = (repoDir: string): string[] => [...(lokiEnv.get(repoDir)?.notes ?? [])];
+export const lokiEnvKept = (repoDir: string): string[] => [...(lokiEnv.get(repoDir)?.kept ?? [])];
+/** True when `rel` (repo-relative) is a path a Loki-chosen command created and left, or lies inside one. */
+export const underLokiKept = (repoDir: string, rel: string): boolean => lokiEnvKept(repoDir).some((k) => rel === k || rel.startsWith(`${k}/`));
+export function resetLokiEnv(): void { lokiEnv.clear(); }
 export function canImport(py: string, module: string): boolean {
   if (!/^[A-Za-z_][\w.]*$/.test(module)) return false;
   const k = `${py}\0${module}`;

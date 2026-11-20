@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Verify never changes the environment it judges
+
+- A lint or typecheck Loki chose that creates something in the checkout (a `.venv`, a new entry in `node_modules`) is now treated as Loki's own change: it is removed when that is provably safe, otherwise kept and left out of the environment checks, and the receipt says "Loki's own command changed the environment" under N/A. It is never counted against the change.
+- Intake runs only installs the repository declares (a committed lockfile, a tracked install script, the command in a cited file or a guide). An install Loki would have to invent is not run and is listed under N/A. This replaces the retry that created a `.venv` inside the checkout on an externally managed Python. In 37 stored runs no unlocked install ever passed (0 of 59).
+- Knobs: `LOKI_E10_ENV_GUARD=0`, `LOKI_E10_DECLARED_INSTALLS=0`.
+
 ### The output of a check that stays red is kept in the run folder
 
 - When a test or lint check that verify ran itself is still failing, its output tail is now kept in `.loki/runs/<run>/check-failures.txt` (secrets redacted, 16 KiB per check, 256 KiB in all). A held-out check and a failure already shown to exist on the base are left out. The file is replaced by each verify and removed when nothing fails.

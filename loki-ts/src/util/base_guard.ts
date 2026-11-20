@@ -7,7 +7,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { classifyCheck, fileHashes, goRunner, sealedWallCopy } from "./check_result.ts";
+import { classifyCheck, fileHashes, forgetVenv, goRunner, lokiEnvKept, pureToolCache, recordLokiEnv, sealedWallCopy } from "./check_result.ts";
 import { LEGACY_BRANCHES_DIR, listRunIds } from "../commands/run_status.ts";
 import { runOwnerAlive } from "./run_pid.ts";
 import { findInterrupted } from "./run_outputs.ts";
@@ -382,8 +382,10 @@ export function envChangedSince(repoDir: string, pkgDir: string, sinceMs: number
     }
     const depRoots: string[] = [];
     for (const d of ["node_modules", ".venv"]) if (existsSync(join(pkgDir, d))) { roots.push(join(pkgDir, d)); depRoots.push(join(pkgDir, d)); }
+    const kept = lokiEnvKept(repoDir).map((k) => join(repoDir, k)), lokiMade = (f: string): boolean => kept.some((k) => f === k || f.startsWith(`${k}/`)); // G2: what a Loki-chosen command created and left is not a change of the environment under test
     if (deps) for (const r of depRoots) { // a package deleted or renamed since intake (a record from before this field skips the check)
-      const was = deps[relative(repoDir, r)], now = depsListing(r);
+      if (lokiMade(r)) continue; // G2: a dependency root a Loki-chosen command created and left
+      const was = deps[relative(repoDir, r)], now = depsListing(r)?.filter((n) => !lokiMade(join(r, n))) ?? null;
       if (!was || !now || was.length !== now.length || was.some((n, i) => n !== now[i])) return true;
     }
     if (roots.length === 0) return false;
@@ -393,11 +395,56 @@ export function envChangedSince(repoDir: string, pkgDir: string, sinceMs: number
     utimesSync(stamp, sinceMs / 1000, sinceMs / 1000);
     const prune = RUNNER_CACHE_DIRS.flatMap((n, i) => [...(i ? ["-o"] : []), "-name", n]);
     const out = execFileSync("find", ["-P", ...new Set(roots), "(", ...prune, ")", "-prune", "-o", "(", "-type", "f", "-o", "-type", "l", ")", "-cnewer", stamp, "-print"] /* files and links only: a runner adding a cache entry changes its parent directory's ctime, which is not a dependency change */, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120000 });
-    if (out.split("\n").some((f) => f !== "" && !(TOOL_OUTPUT_FILE.test(f) && toolOutputDir(dirname(f))))) return true; // TOOL-OUTPUT-IN-DEPS: a tool's own output in a directory that holds nothing else
+    if (out.split("\n").some((f) => f !== "" && !lokiMade(f) && !(TOOL_OUTPUT_FILE.test(f) && toolOutputDir(dirname(f))))) return true; // TOOL-OUTPUT-IN-DEPS: a tool's own output in a directory that holds nothing else
     // directories: a changed directory is a dependency change unless it is a dependency root or site-packages (the listing above covers them) or holds a runner cache
     const dirs = execFileSync("find", ["-P", ...new Set(roots), "(", ...prune, ")", "-prune", "-o", "-type", "d", "-cnewer", stamp, "-print"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120000, maxBuffer: 64 * 1024 * 1024 }).split("\n").filter(Boolean);
-    return dirs.some((d) => !(roots.includes(d) || /(?:^|\/)site-packages$/.test(d) || RUNNER_CACHE_DIRS.concat("__pycache__").some((c) => existsSync(join(d, c))) || toolOutputDir(d)));
+    return dirs.some((d) => !(roots.includes(d) || lokiMade(d) || kept.some((k) => dirname(k) === d) || /(?:^|\/)site-packages$/.test(d) || RUNNER_CACHE_DIRS.concat("__pycache__").some((c) => existsSync(join(d, c))) || toolOutputDir(d)));
   } catch { return true; } finally { if (stampDir) rmSync(stampDir, { recursive: true, force: true }); }
+}
+
+// ---- G2 ENV-GUARD (LOKI_E10_ENV_GUARD, default on; =0 off): verify never changes the environment it judges ----
+// A command Loki itself chose (a lint or typecheck it picked, kind "static" in verify's runCheck) is fingerprinted before and after with what the environment
+// readers already use: the untracked and ignored tops git lists (a new .venv, a tool cache) and the raw listing of each dependency root that existed (a new
+// entry written into node_modules). What it created is Loki's own change. It is removed when that is provably safe (no other harness command was in flight,
+// the path did not exist before, is untracked, is not a link and lies inside the checkout), else kept and registered so envChangedSince and the ignore-rule
+// notes subtract it. Either way the receipt carries one informational line, never a cap. Repo-declared commands (the repo's own tests) are not guarded.
+export const envGuardOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_ENV_GUARD"] ?? "").trim());
+export const ENV_DIR_NAMES = ["node_modules", ".venv", "venv", ".tox", ".nox", "__pypackages__"];
+let cmdsInFlight = 0, cmdStarts = 0;
+/** Called by every harness command spawn (verify's runOnce): the guard deletes only when its own command ran alone. */
+export function harnessCmdBegin(): () => void { cmdsInFlight++; cmdStarts++; let done = false; return () => { if (!done) { done = true; cmdsInFlight--; } }; }
+interface EnvSnap { tops: Set<string>; lists: Map<string, string[] | null> }
+function envSnap(repoDir: string): EnvSnap | null {
+  try {
+    const ls = (extra: string[]): string[] => safeGit(repoDir, ["-c", "core.quotePath=false", "ls-files", "-o", "--directory", "--exclude-standard", ...extra, "-z"], { maxBuffer: 64 << 20 }).split("\0").filter(Boolean);
+    const tops = new Set([...ls([]), ...ls(["--ignored"])]), lists = new Map<string, string[] | null>();
+    for (const t of tops) { const rel = t.replace(/\/$/, ""); if (ENV_DIR_NAMES.includes(basename(rel))) { try { lists.set(rel, readdirSync(join(repoDir, rel)).sort()); } catch { lists.set(rel, null); } } }
+    return { tops, lists };
+  } catch { return null; }
+}
+const insideRepo = (repoDir: string, abs: string): boolean => { try { const r = relative(realpathSync(repoDir), realpathSync(dirname(abs))); return !r.startsWith("..") && !r.startsWith(sep); } catch { return false; } };
+export async function guardEnv<T>(repoDir: string, label: string, run: () => Promise<T>): Promise<T> {
+  if (!envGuardOn()) return run();
+  const before = envSnap(repoDir); if (!before) return run();
+  const alone0 = cmdsInFlight === 0, s0 = cmdStarts;
+  const r = await run();
+  const alone = alone0 && cmdsInFlight === 0 && cmdStarts - s0 <= 1, after = envSnap(repoDir); if (!after) return r;
+  const beforeDirs = [...before.tops].filter((t) => t.endsWith("/")), created = [...after.tops].filter((t) => !before.tops.has(t) && !beforeDirs.some((b) => t.startsWith(b))).map((t) => t.replace(/\/$/, ""));
+  for (const [root, was] of before.lists) { const now = after.lists.get(root); if (was && now) for (const n of now) if (!was.includes(n)) created.push(`${root}/${n}`); }
+  const made = created.filter((rel) => !pureToolCache(repoDir, rel) && !toolOutputDir(join(repoDir, rel))); // a tool's own cache (.ruff_cache, .mypy_cache) is already exempt everywhere: not an environment change
+  if (made.length === 0) return r;
+  const removed: string[] = [], kept: string[] = [];
+  for (const rel of made) {
+    const abs = join(repoDir, rel);
+    let safe = alone && insideRepo(repoDir, abs);
+    try { if (safe && lstatSync(abs).isSymbolicLink()) safe = false; } catch { safe = false; }
+    try { if (safe && safeGit(repoDir, ["ls-files", "-z", "--", rel]).length > 0) safe = false; } catch { safe = false; }
+    if (safe) { try { rmSync(abs, { recursive: true, force: true }); forgetVenv(abs); removed.push(rel); continue; } catch { /* kept below */ } }
+    kept.push(rel);
+  }
+  const show = (xs: string[]): string => xs.slice(0, 6).join(", ") + (xs.length > 6 ? ` (+${xs.length - 6} more)` : "");
+  recordLokiEnv(repoDir, `Loki's own command changed the environment: \`${label}\` created ${show(made)}${removed.length ? `; removed ${show(removed)}` : ""}${kept.length ? `; kept ${show(kept)} (${alone ? "it could not be removed safely" : "another harness command was running"}), and subtracted from the environment checks` : ""}; not counted against the change`, kept);
+  return r;
 }
 
 /** FC-ZERO-ON-BASE: for each zero-executed candidate run its command once in the base worktree `baseDir` (deps linked from the head checkout, never

@@ -22,7 +22,7 @@ import type { RunContext, RunnerName } from "../engine10/types.ts";
 import type { ProjectApi } from "./api.ts";
 import { fullSuiteSpecs } from "./package_suite.ts";
 import { loadProjectApi } from "./resolve.ts";
-import { guideNotes } from "./guides.ts";
+import { guideNotes, guidesFor } from "./guides.ts";
 
 export const INSTALL_CAP_MS = 300_000;
 const memo = new Set<string>(); // `${runId}\0${root}`: once per package per run, across fix rounds
@@ -244,15 +244,21 @@ export function projectDeclaresRuff(repoDir: string): boolean {
   const files = ["pyproject.toml", "setup.cfg", "tox.ini", ".pre-commit-config.yaml", "Pipfile", "requirements.txt", "requirements-dev.txt", "dev-requirements.txt"];
   return files.some((f) => { try { return /\bruff\b/i.test(readFileSync(join(repoDir, f), "utf8")); } catch { return false; } });
 }
-const PEP668 = /externally[- ]managed[- ]environment|PEP 668/i;
-/** A plain pip install the system interpreter refused as externally managed (PEP 668) becomes the same install into a project .venv, plus the runners verify
- *  names for that venv (pytest always, ruff when the project declares it), because resolveTool prefers .venv/bin and a venv without pytest would turn every check not_run.
- *  Only a bare `[python3 -m] pip install <args>` is rewritten: a shell operator, redirect or substitution in the command returns null (never reinterpreted). */
-export function venvInstallCmd(cmd: string, cwd: string): string | null {
-  const m = /^\s*(?:python3?\s+-m\s+pip3?|pip3?)\s+install\b([^&|;<>`$()\n]*)$/.exec(cmd);
-  if (!m) return null;
-  const tools = ["pytest", ...(projectDeclaresRuff(cwd) ? ["ruff"] : [])].join(" ");
-  return `python3 -m venv .venv && .venv/bin/python -m pip install${m[1]} && .venv/bin/python -m pip install ${tools}`;
+/** G2 DECLARED-INSTALLS (LOKI_E10_DECLARED_INSTALLS, default on; =0 off): Loki runs an install only when the repository declares it: the frozen form of a
+ *  lockfile it commits (lockedInstall answers locked), a script the repository tracks run by its path (`./install.sh`), the command's own text in a file
+ *  the project model cited for it, or a setup command a repo guide documents for that directory. An install Loki would have to invent (`pip install -e .` from a bare manifest) is not run: across 37 stored C1, C2 and
+ *  real-world runs no unlocked install ever passed (0 of 59). Replaces the PEP 668 retry, which invented a .venv inside the checkout. */
+export const UNDECLARED_INSTALL = "install not run: the repository declares no install command";
+export const declaredInstallsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DECLARED_INSTALLS"] ?? "").trim());
+export function installDeclared(repoDir: string, mc: { cmd: string; cwd: string; cite?: readonly string[] }, li: LockedInstall): boolean {
+  if (li.locked) return true;
+  const norm = (x: string): string => x.replace(/\s+/g, " ").trim(), want = norm(mc.cmd);
+  if (!want) return false;
+  const exe = want.split(" ")[0]!;
+  if (exe.includes("/") && !isAbsolute(exe)) { try { const rel = relative(repoDir, join(repoDir, mc.cwd, exe)); if (!rel.startsWith("..") && safeGit(repoDir, ["ls-files", "--error-unmatch", "--", rel]).trim()) return true; } catch { /* untracked or outside: not a declaration */ } }
+  for (const f of mc.cite ?? []) { try { if (norm(readFileSync(join(repoDir, f), "utf8")).includes(want)) return true; } catch { /* unreadable cite: not a declaration */ } }
+  try { if (guidesFor(join(repoDir, mc.cwd), repoDir).setup.some((g) => norm(g.cmd).includes(want))) return true; } catch { /* no guides */ }
+  return false;
 }
 
 /** One short honest line from the install output (L3): the last non-empty line, whitespace collapsed. */
@@ -289,11 +295,13 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
       if (isAbsolute(mc.cwd) || rel.startsWith("..") || isAbsolute(rel)) { notRun(`install cwd ${mc.cwd} resolves outside the repo`); continue; }
     } catch { notRun(`install cwd ${mc.cwd} does not exist`); continue; }
     li = lockedInstall(input.repoDir, cwd, mc.cmd);
+    if (declaredInstallsOn(env) && !installDeclared(input.repoDir, mc, li)) { // G2: never an install Loki invents
+      const why = `${UNDECLARED_INSTALL} for this package (a committed lockfile, or the command in a file it cites or a guide), and Loki does not invent one: ${mc.cmd}`;
+      res.checks.push(mk("not_run", 0, why)); res.notProven.push(`${why} (${name}; harness-owned)`); continue;
+    }
     const before = snapshot(input.repoDir, env);
     const t0 = Date.now();
     let r = await runDetached(li.cmd, cwd, env, input.signal, budget);
-    const venv = r.code !== 0 && !r.cut && PEP668.test(r.tail) ? venvInstallCmd(li.cmd, cwd) : null;
-    if (venv) { li = { ...li, cmd: venv, locked: false, rewritten: false }; r = await runDetached(venv, cwd, env, input.signal, Math.max(1, budget - (Date.now() - t0))); if (r.code === 0 && !r.cut) li = { ...li, note: "system python is externally managed (PEP 668): installed into .venv" }; }
     const uvNeed = r.code !== 0 && !r.cut && uvRequiredOn() ? UV_REQUIRED.exec(r.tail) : null, uvCmd = uvNeed ? uvRequiredCmd(li.cmd, uvNeed[1]!) : null; // UVR: the repo's own required uv version, not the host's
     if (uvCmd) { // a workspace member's sync runs at the workspace root, as the repo's CI does: a member-only sync of the shared .venv would drop the root's own test dependencies
       const ws = uvWorkspaceRoot(realpathSync(input.repoDir), cwd), at = ws ?? cwd;
@@ -343,6 +351,7 @@ export function unusedInstallNotes(lines: readonly string[], model: ProjectApi |
   const cap: string[] = [], na: string[] = [];
   const checkEco = (n: string): string | null => { for (const [re, e] of ECO_PREFIX) if (re.test(n)) return e; const pk = n.startsWith("full suite: ") ? model?.packages().find((p) => `full suite: ${p.name}` === n) : undefined; return pk ? ecoOfDir(repoDir, pk.root) ?? (pk.commands.test ? ecoOfCmd(pk.commands.test.cmd) : null) : null; };
   for (const l of lines) {
+    if (l.startsWith(UNDECLARED_INSTALL)) { na.push(l); continue; } // G2: an install Loki declined to invent is disclosed; a check that then lacks a dependency caps on its own
     const root = /\(install:([^;()]+); harness-owned\)$/.exec(l)?.[1], pkg = root && root !== "." ? model?.packages().find((p) => p.root === root) : undefined;
     const inRoot = (f: string): boolean => f === root || f.startsWith(`${root}/`), owned = (f: string): boolean => model?.packageOf(f)?.root === root || inRoot(f);
     const eco = pkg ? (model?.installFor(pkg.root)?.cmd ? ecoOfCmd(model.installFor(pkg.root)!.cmd) : null) ?? ecoOfDir(repoDir, pkg.root) : null;
