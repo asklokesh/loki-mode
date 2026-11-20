@@ -1177,25 +1177,32 @@ X9="PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[2] | PARTIAL>VE
 # of the checkout (the control) and in a copy whose non-test files are put back to the base commit. A step counts only when it ran repository code, passed on
 # the change, passed in the control and printed FAILED without the change. Pure cells (failsWithoutChange): F1 counts; F2 failed in the control; F3 passed
 # without the change; F4 not a repository-running step; F5 never reached without the change; F6 both passed and failed without the change; F7 failed on the
-# change. Real cells (proofWithoutChange on a real repository, real copies): O1 counts; O2 a step that passes without the change; O3 a step that runs nothing of
+# change; F8 failed without the change with exit 127; F9 with "No module named"; F10 with "unknown command" (a start failure is never proof: review P1);
+# F11 failed with an assertion (counts). N: which commands name tests/unit/test_utils.py: its path, an absolute path ending in it and a cwd-relative path with a
+# directory do; the bare file name and the same name in another directory do not (review P2). Real cells (proofWithoutChange on a real repository, real copies): O1 counts; O2 a step that passes without the change; O3 a step that runs nothing of
 # the repository; O4 a step fails on the change; O5 knob off; O6 no non-test file changed; O7 a step that fails in any copy (its failure is the copy, not the
-# change); O8 stale build output lets the step pass without the change until the build runs in the copy; O9 an added file is removed in the copy (a pure
-# feature add counts here, unlike the runner-read fail-then-pass: pinned as the stated limit); O10 the user's tree is byte-identical afterwards.
+# change); O8 stale build output lets the step pass without the change until the build runs in the copy; O9 a change that only adds a file has no own proof (the
+# added file stays in the copy); O11 an added check that fails on the modified function's behaviour counts; O12 a step that only loads an added file passes
+# without the change; O13 a step against an added command fails with "unknown command" (a start failure); O14 a step that cannot start without the change
+# (exit 127); last: the user's tree is byte-identical afterwards.
 # Plants: failsWithoutChange: drop `cOk.has` (F2, O7); drop `!wOk.has` (F6); `!wOk.has` in place of `wBad.has` (F5); drop `c.real` (F4, O3);
-# proofWithoutChange: keep an added file in the copy (O9); drop `head.failed > 0` (O4); drop the knob (O5); revert in the control too (O1); never build (O8); drop `revert.length === 0` (O6).
+# drop `!wStart.has` (F8 to F10, O13, O14); stepNamesFile: match the bare file name (N); proofWithoutChange: remove an added file in the copy (O12); accept a change with only added files (O9); drop `head.failed > 0` (O4); drop the knob (O5); revert in the control too (O1); never build (O8); drop `revert.length === 0` (O6).
 G6="$T/ownproof"; mkdir -p "$G6/tools" "$G6/.loki/runs/r1" && git -C "$G6" init -q -b main && : > "$G6/.loki/runs/r1/kept" # the run directory exists before the first status is read
 printf 'mul() { echo $(( $1 + $2 )); }\nadd() { echo $(( $1 + $2 )); }\n' > "$G6/lib.sh"
 printf '. ./lib.sh; [ "$(mul 3 4)" = 12 ]\n' > "$G6/tools/mulcheck.sh"; printf '. ./lib.sh; [ "$(add 3 4)" = 7 ]\n' > "$G6/tools/addcheck.sh"
 printf 'sh tools/mulcheck.sh && [ "$(basename "$(pwd -P)")" != without ]\n' > "$G6/tools/notcopy.sh"
 printf 'mkdir -p out && cp lib.sh out/lib.sh\n' > "$G6/build.sh"; printf '. out/lib.sh; [ "$(mul 3 4)" = 12 ]\n' > "$G6/tools/builtcheck.sh"; printf 'out/\n.loki/\n' > "$G6/.gitignore"
+printf 'case "$1" in add) exit 0 ;; *) echo "error: unknown command: $1"; exit 2 ;; esac\n' > "$G6/cli.sh"; printf 'no-such-tool-loki-g3 3 4\n' > "$G6/tools/run.sh"
 git -C "$G6" add -A && git -C "$G6" -c user.name=t -c user.email=t@t commit -qm base
-printf 'mul() { echo $(( $1 * $2 )); }\nadd() { echo $(( $1 + $2 )); }\n' > "$G6/lib.sh"; printf 'exit 0\n' > "$G6/newcheck.sh"; (cd "$G6" && sh build.sh)
+printf 'mul() { echo $(( $1 * $2 )); }\nadd() { echo $(( $1 + $2 )); }\n' > "$G6/lib.sh"; printf 'exit 0\n' > "$G6/newcheck.sh"; printf '. ./lib.sh; [ "$(mul 5 5)" = 25 ]\n' > "$G6/mulnew.sh"; printf 'case "$1" in add) exit 0 ;; frob) exit 0 ;; *) echo "error: unknown command: $1"; exit 2 ;; esac\n' > "$G6/cli.sh"; printf '. ./lib.sh; [ "$(mul 3 4)" = 12 ]\n' > "$G6/tools/run.sh"; (cd "$G6" && sh build.sh)
 A10="$(G="$G6" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const pr = await import(process.env.ROOT + "/loki-ts/src/engine10/proof_rerun.ts"), { writeFileSync, readFileSync } = await import("node:fs"), { execFileSync } = await import("node:child_process");
 const g = process.env.G, run = g + "/.loki/runs/r1", sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-const c = (what, ok, real = true, item = "1") => ({ item, what, ok, ...(real && ok ? { real: true } : {}) }), H = [c("a", true)];
+const c = (what, ok, real = true, item = "1") => ({ item, what, ok, ...(real && ok ? { real: true } : {}) }), H = [c("a", true)], bad = (exit, out) => ({ item: "1", what: "a", ok: false, exit, out });
 const pure = [pr.failsWithoutChange(H, [c("a", true)], [c("a", false)]), pr.failsWithoutChange(H, [c("a", false)], [c("a", false)]), pr.failsWithoutChange(H, [c("a", true)], [c("a", true)]), pr.failsWithoutChange([c("a", true, false)], [c("a", true)], [c("a", false)]),
-  pr.failsWithoutChange(H, [c("a", true)], []), pr.failsWithoutChange(H, [c("a", true)], [c("a", true), c("a", false)]), pr.failsWithoutChange([c("a", false)], [c("a", true)], [c("a", false)])].map((x) => x.length);
+  pr.failsWithoutChange(H, [c("a", true)], []), pr.failsWithoutChange(H, [c("a", true)], [c("a", true), c("a", false)]), pr.failsWithoutChange([c("a", false)], [c("a", true)], [c("a", false)]),
+  pr.failsWithoutChange(H, [c("a", true)], [bad(127, "")]), pr.failsWithoutChange(H, [c("a", true)], [bad(1, "python3 -c import newmod | ModuleNotFoundError: No module named newmod")]), pr.failsWithoutChange(H, [c("a", true)], [bad(2, "app frob | error: unknown command frob")]), pr.failsWithoutChange(H, [c("a", true)], [bad(1, "python3 tools/check.py | AssertionError: 7 != 12")])].map((x) => x.length);
+const TU = "tests/unit/test_utils.py", names = [pr.stepNamesFile("python3 -m pytest -q tests/unit/test_utils.py", TU), pr.stepNamesFile("pytest /w/copy/tests/unit/test_utils.py::test_a", TU), pr.stepNamesFile("sh -c cd tests && pytest unit/test_utils.py", TU), pr.stepNamesFile("sh -c cd tests/unit && pytest test_utils.py", TU), pr.stepNamesFile("pytest tests/integration/test_utils.py", TU)].map((b) => (b ? "y" : "n")).join("");
 const status = () => execFileSync("git", ["-C", g, "status", "--porcelain", "--ignored"], { encoding: "utf8" }) + readFileSync(g + "/lib.sh", "utf8"), before = status();
 const REV = [{ path: "lib.sh", added: false }], go = async (steps, o = {}) => {
   writeFileSync(run + "/loki-proof.sh", "#!/bin/bash\n. \"$LOKI_SCRATCH/loki-check.sh\"\n" + steps.map((s) => "loki_cmd 1 " + s).join("\n") + "\n");
@@ -1204,11 +1211,13 @@ const REV = [{ path: "lib.sh", added: false }], go = async (steps, o = {}) => {
 };
 const MUL = "\"mul gives the product\" sh tools/mulcheck.sh";
 const real = [await go([MUL]), await go(["\"add still adds\" sh tools/addcheck.sh"]), await go(["\"nothing of the repository\" true"]), await go([MUL, "\"a missing script\" sh tools/nope.sh"]), await go([MUL], { env: { LOKI_E10_OWN_PROOF: "0" } }), await go([MUL], { revert: [] }),
-  await go(["\"mul gives the product, outside a copy\" sh tools/notcopy.sh"]), await go(["\"the built copy gives the product\" sh tools/builtcheck.sh"], { builds: [{ cmd: "sh build.sh", cwd: "." }] }), await go(["\"the new check passes\" sh newcheck.sh"], { revert: [{ path: "newcheck.sh", added: true }] })];
-console.log([...pure, ...real, status() === before ? "tree-same" : "TREE-CHANGED"].join(" | "));
+  await go(["\"mul gives the product, outside a copy\" sh tools/notcopy.sh"]), await go(["\"the built copy gives the product\" sh tools/builtcheck.sh"], { builds: [{ cmd: "sh build.sh", cwd: "." }] }), await go(["\"the new check passes\" sh newcheck.sh"], { revert: [{ path: "newcheck.sh", added: true }] }),
+  await go(["\"mul through an added check\" sh mulnew.sh"], { revert: [...REV, { path: "mulnew.sh", added: true }] }), await go(["\"the added file loads\" sh newcheck.sh"], { revert: [...REV, { path: "newcheck.sh", added: true }] }),
+  await go(["\"the new command answers\" sh cli.sh frob"], { revert: [...REV, { path: "cli.sh", added: false }] }), await go(["\"the runner script gives the product\" sh tools/run.sh"], { revert: [...REV, { path: "tools/run.sh", added: false }] })];
+console.log([...pure, names, ...real, status() === before ? "tree-same" : "TREE-CHANGED"].join(" | "));
 ' 2>&1)"
-X10="1 | 0 | 0 | 0 | 0 | 0 | 0 | ok:1:1/1 | no:0:1/1 | null | null | null | null | no:0:1/0 | ok:1:built:1/1 | ok:1:1/1 | tree-same"
-[ "$A10" = "$X10" ] && ok "unit, own proof (F1 to F7, O1 to O10): a proof-script step is the change's own proof only when it ran repository code, passed on the change and in an untouched copy of the checkout, and printed FAILED in a copy without the change; stale build output is rebuilt in the copy; the user's tree is untouched" \
+X10="1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | yyynn | ok:1:1/1 | no:0:1/1 | null | null | null | null | no:0:1/0 | ok:1:built:1/1 | null | ok:1:1/1 | no:0:1/1 | no:0:1/1 | no:0:1/1 | tree-same"
+[ "$A10" = "$X10" ] && ok "unit, own proof (F1 to F11, N, O1 to O14): a proof-script step is the change's own proof only when it ran repository code, passed on the change and in an untouched copy of the checkout, and printed FAILED in a copy without the change; stale build output is rebuilt in the copy; the user's tree is untouched" \
     || bad "own-proof unit gave: $A10 (want: $X10)"
 
 # Base run budget (v131 STALLED tq runs): a suite that takes ~250 s on the change got 60 s on base, timed out, and its pre-existing red was blamed on the change.
