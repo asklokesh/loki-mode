@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### A low-risk run checks the full test suite before it can say VERIFIED
+
+- At low risk tier, verify used to run only the tests closest to the change before sealing. The repo's full test suite ran only after the label, in the deep check of a pull request, so a change that broke another part of the repo could seal VERIFIED and show only as a failed status afterwards.
+- Now every tier runs the repo's full test command before the seal, through the same base comparison as medium and high tier. Low-tier runs take longer on repos with large suites.
+- `LOKI_E10_LOW_TIER_FULL_SUITE=0` restores the old rule.
+- Not measured: no test or run was done on this change (founder's call for this release).
 
 ## v11.171.0 (2026-11-20)
 
