@@ -1170,14 +1170,14 @@ X9="PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[2] | PARTIAL>VE
 # change); O8 stale build output lets the step pass without the change until the build runs in the copy; O9 an added file is removed in the copy (a pure
 # feature add counts here, unlike the runner-read fail-then-pass: pinned as the stated limit); O10 the user's tree is byte-identical afterwards.
 # Plants: failsWithoutChange: drop `cOk.has` (F2, O7); drop `!wOk.has` (F6); `!wOk.has` in place of `wBad.has` (F5); drop `c.real` (F4, O3);
-# proofWithoutChange: drop `head.failed > 0` (O4); drop the knob (O5); revert in the control too (O1); never build (O8); drop `revert.length === 0` (O6).
+# proofWithoutChange: keep an added file in the copy (O9); drop `head.failed > 0` (O4); drop the knob (O5); revert in the control too (O1); never build (O8); drop `revert.length === 0` (O6).
 G6="$T/ownproof"; mkdir -p "$G6/tools" "$G6/.loki/runs/r1" && git -C "$G6" init -q -b main && : > "$G6/.loki/runs/r1/kept" # the run directory exists before the first status is read
 printf 'mul() { echo $(( $1 + $2 )); }\nadd() { echo $(( $1 + $2 )); }\n' > "$G6/lib.sh"
 printf '. ./lib.sh; [ "$(mul 3 4)" = 12 ]\n' > "$G6/tools/mulcheck.sh"; printf '. ./lib.sh; [ "$(add 3 4)" = 7 ]\n' > "$G6/tools/addcheck.sh"
 printf 'sh tools/mulcheck.sh && [ "$(basename "$(pwd -P)")" != without ]\n' > "$G6/tools/notcopy.sh"
 printf 'mkdir -p out && cp lib.sh out/lib.sh\n' > "$G6/build.sh"; printf '. out/lib.sh; [ "$(mul 3 4)" = 12 ]\n' > "$G6/tools/builtcheck.sh"; printf 'out/\n.loki/\n' > "$G6/.gitignore"
 git -C "$G6" add -A && git -C "$G6" -c user.name=t -c user.email=t@t commit -qm base
-printf 'mul() { echo $(( $1 * $2 )); }\nadd() { echo $(( $1 + $2 )); }\n' > "$G6/lib.sh"; printf '. ./lib.sh; [ "$(mul 5 5)" = 25 ]\n' > "$G6/newcheck.sh"; (cd "$G6" && sh build.sh)
+printf 'mul() { echo $(( $1 * $2 )); }\nadd() { echo $(( $1 + $2 )); }\n' > "$G6/lib.sh"; printf 'exit 0\n' > "$G6/newcheck.sh"; (cd "$G6" && sh build.sh)
 A10="$(G="$G6" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const pr = await import(process.env.ROOT + "/loki-ts/src/engine10/proof_rerun.ts"), { writeFileSync, readFileSync } = await import("node:fs"), { execFileSync } = await import("node:child_process");
 const g = process.env.G, run = g + "/.loki/runs/r1", sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
@@ -1192,7 +1192,7 @@ const REV = [{ path: "lib.sh", added: false }], go = async (steps, o = {}) => {
 };
 const MUL = "\"mul gives the product\" sh tools/mulcheck.sh";
 const real = [await go([MUL]), await go(["\"add still adds\" sh tools/addcheck.sh"]), await go(["\"nothing of the repository\" true"]), await go([MUL, "\"a missing script\" sh tools/nope.sh"]), await go([MUL], { env: { LOKI_E10_OWN_PROOF: "0" } }), await go([MUL], { revert: [] }),
-  await go(["\"mul gives the product, outside a copy\" sh tools/notcopy.sh"]), await go(["\"the built copy gives the product\" sh tools/builtcheck.sh"], { builds: [{ cmd: "sh build.sh", cwd: "." }] }), await go(["\"the new check passes\" sh newcheck.sh"], { revert: [...REV, { path: "newcheck.sh", added: true }] })];
+  await go(["\"mul gives the product, outside a copy\" sh tools/notcopy.sh"]), await go(["\"the built copy gives the product\" sh tools/builtcheck.sh"], { builds: [{ cmd: "sh build.sh", cwd: "." }] }), await go(["\"the new check passes\" sh newcheck.sh"], { revert: [{ path: "newcheck.sh", added: true }] })];
 console.log([...pure, ...real, status() === before ? "tree-same" : "TREE-CHANGED"].join(" | "));
 ' 2>&1)"
 X10="1 | 0 | 0 | 0 | 0 | 0 | 0 | ok:1:1/1 | no:0:1/1 | null | null | null | null | no:0:1/0 | ok:1:built:1/1 | ok:1:1/1 | tree-same"
