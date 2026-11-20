@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 
+## v11.166.0 (2026-11-20)
+
+### The commit stage keeps the change's own test
+
+- J3 (the rule that resets a test-only edit in a package the change does not touch) no longer resets a test when that would leave the change with no added or edited test, when the test belongs to the repository root, or when the run's kept proof script names it. A coverage test added in a neighbouring package next to the change's own test is still reset. `LOKI_E10_J3_KEEP=0` restores the old drop.
+- Measured on stored runs: in the C2 set (11.158.0) all 6 playwright issue 43305 Loki seeds lost their only regression test this way (tests/playwright-test/esm.spec.ts, root-owned), so the pull request carried no test while every plain session shipped one. Under C2 scoring this does not by itself win the task; those seeds are also held by the playwright suite that cannot run here.
+
+Gate: the full hermetic local gate (31 of the 32 tests/min files; scratch-real-services is excluded) ran green on a tree holding this change plus the next two releases (4a6ff8599); this release's own tree passed the release checks. The Maven, Gradle and .NET legs of stacks.sh do not run on the release machine. Not measured in a live run.
+
 ## v11.165.0 (2026-11-19)
 
 ### The receipt names what kept a run below VERIFIED
