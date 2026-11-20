@@ -626,7 +626,11 @@ console.log([r6.notes.length, r6.notes[0], r6.notes.filter(x.isUnmetNote).length
 [ "$U3" = '5 | cross-review flag (claude): UNMET: Acceptance: six is cut today | 1 | ["cross-review flag (claude): one","cross-review flag (claude): two"] | true | false' ] \
     && ok "F3 unit: an UNMET reason written sixth is kept (sorted first, the cap stays 5); a review with no UNMET keeps its order; bold UNMET counts, the word inside a reason does not" || bad "F3 unit gave: $U3"
 
+# G5 SKIP-NOTE end to end (oc63960): a full suite red only on base ids must seal without the "fix round skipped" note holding it; the same run with one
+# new failing id in that suite is held by it. Plant G5-10: util/check_result.ts suiteSkipHolds always false: the new-id run seals without the note.
+snote() { python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r.get("verdict"), any(str(n).startswith("fix round skipped: only full-suite failures remained") for n in r.get("not_proven", [])))' "$RUNDIR/receipt.json" 2>/dev/null || echo no-receipt; }
 run_pr stable stable LOKI_PR_DRAFT=1
+SNB="$(snote)"
 f="$(pr_facts)"; set -- $f
 [ "$8" = success ] && ok "deep full suite red only on base-red ids: status success" || bad "base-red full suite gave status $8 ($f)"
 grep -q '"base_red": true' "$RUNDIR/receipt-addendum-1.json" && ok "addendum marks the base-red suite" || bad "addendum lacks base_red"
@@ -635,8 +639,11 @@ grep -q '"base_red": true' "$RUNDIR/receipt-addendum-1.json" && ok "addendum mar
 [ "$2" = True ] && [ "$7" = True ] && ok "draft run 3: result-cost sum equals receipt cost to the cent" || bad "draft run 3 facts: $f"
 
 run_pr new new
+SNN="$(snote)"
 f="$(pr_facts)"; set -- $f
 [ "$8" = failure ] && ok "a new failing id beyond the base-red ones keeps status failure" || bad "new full-suite failure gave status $8 ($f)"
+[ "$SNB" = "VERIFIED False" ] && ok "G5 skip note: a full suite red only on base ids seals VERIFIED with no fix-round-skipped note holding it" || bad "G5 skip note: base-red-only suite sealed '$SNB' (want VERIFIED False)"
+case "$SNN" in "VERIFIED"*) bad "G5 skip note: a suite with a new failing id sealed VERIFIED ($SNN)" ;; *" True") ok "G5 skip note: the same suite with one new failing id is held by the fix-round-skipped note ($SNN)" ;; *) bad "G5 skip note: the new-id suite sealed '$SNN' (want the note to hold it)" ;; esac
 
 # FAILED-PR (2026-11-16, work-ps-1): a FAILED run with committed work opens a labelled draft PR instead of keeping its branch local,
 # with the failing checks first in the body and no pending deep-verify status. SECRET-PUSH: the one exception is a security scan
