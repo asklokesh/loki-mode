@@ -44,7 +44,7 @@
 #   5. stages/xreview.ts: default reviewer on medium only (the unit line must fail).
 #   6. loki-ts/src/engine10/stages/seal.ts: sysInfo always null (the no-manifest leg reads PARTIAL).
 #   7. loki-ts/src/util/python.ts: declaresPythonEnv always false (the requirements.txt leg reads VERIFIED).
-#   8. loki-ts/src/engine10/stages/seal.ts: drop leanGap from verdictOf (the never-calls-multiply leg reads VERIFIED).
+#   8. loki-ts/src/engine10/stages/seal.ts: drop leanHold from verdictOf (the never-calls-multiply leg reads VERIFIED).
 #   9. loki-ts/src/util/check_result.ts: changedSymbols counts any removed line as removed code (the
 #      never-calls-multiply leg reads VERIFIED: the replaced comment credits add()).
 #   10. loki-ts/src/engine10/stages/deep.ts: DEFAULT_SECRET_SCAN_SH back to new URL("../../../../autonomy/...",
@@ -525,6 +525,19 @@ if python3 -m pytest --version >/dev/null 2>&1; then
     PY_UNTESTED=1 py_engine calc.py
     [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "python, impacted test passes but never calls multiply(): not VERIFIED ($(outcome))" || { bad "python, unexercised change: outcome '$(outcome)'"; printf '%s\n' "$NOTES" | sed 's/^/    np | /'; }
     grep -q "no passing check references a changed symbol.*multiply" <<< "$NOTES" && ok "python, unexercised change: the receipt names multiply as unexercised" || bad "python, unexercised change: no changed-symbol note"
+    # VERIFY-PLAN R1 (LOKI_E10_LEAN_SYMBOL_HOLD, enforce by default): L1 is the leg above. L2 observe: the label without the hold and one observe entry; L3 =0: the label
+    # without the hold, the line disclosed, no entry. Plants (each reverted): off still passes leanGap (L3 PARTIAL); observe applies the hold (L2 PARTIAL, no entry).
+    l_facts() { python3 -I -c 'import json, sys, glob
+r = json.load(open(glob.glob(sys.argv[1] + "/.loki/runs/*/receipt.json")[0]))
+e = [o["would_label"] for o in r.get("observe") or [] if o.get("rule") == "LOKI_E10_LEAN_SYMBOL_HOLD"]
+ln = [n for n in r.get("not_proven") or [] if n.startswith("no passing check references a changed symbol")]
+print(r["verdict"], "entry=" + (e[0] if e else "none"), ("disclosed" if "(disclosed, does not cap)" in ln[0] else "hold") if ln else "noline", "held" if any(h["kind"] == "changed symbol not referenced" for h in r.get("held_by") or []) else "notheld")' "$REPO" 2>&1; }
+    l1="$(l_facts)"
+    LOKI_E10_LEAN_SYMBOL_HOLD=observe PY_UNTESTED=1 py_engine calc.py; l2="$(l_facts)"
+    LOKI_E10_LEAN_SYMBOL_HOLD=0 PY_UNTESTED=1 py_engine calc.py; l3="$(l_facts)"
+    case "$l1" in "PARTIAL entry=none hold held") ok "R1 L1 enforce (default): the changed-symbol hold holds the label and is on held_by ($l1)" ;; *) bad "R1 L1 gave: $l1" ;; esac
+    [ "$l2" = "${l3%% *} entry=PARTIAL disclosed notheld" ] && [ "${l3%% *}" != PARTIAL ] && ok "R1 L2 observe: the label without the hold (${l2%% *}) and one observe entry saying PARTIAL ($l2)" || bad "R1 L2 gave: $l2 (L3: $l3)"
+    case "$l3" in "PARTIAL "*) bad "R1 L3 =0 still held: $l3" ;; *" entry=none disclosed notheld") ok "R1 L3 =0: the label without the hold, the line disclosed, no entry ($l3)" ;; *) bad "R1 L3 gave: $l3" ;; esac
     # acc-162 BCE: a test whose conftest cannot import on base and head alike is the environment, not the change: not_run on NOT PROVEN, never FAILED.
     bce_prep() { printf 'import loki_missing_module_bce\n' > "$REPO/tests/conftest.py"; }
     PY_PREP=bce_prep LOKI_E10_BASE_CRASH_ENV=1 py_engine calc.py

@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - With cascade v0 on, `LOKI_E10_CASCADE_INTRODUCED=1` also starts the next model when verify shows a failure the change introduced, and hands it that failure's output. Off by default, like the cascade itself, until the calibrated verify is measured and the cascade is scored against spend.
 
+### The changed-symbol hold can be turned into a note
+
+- `LOKI_E10_LEAN_SYMBOL_HOLD=observe` or `=0` makes 'no passing check references a changed symbol' a disclosed note instead of a hold (231 such holds sat on one correct change). The default is unchanged (the hold stays on); the calibration report counts how often it fired on the fixed good and bad changes.
+
 ## v11.172.0 (2026-11-20)
 
 ### A low-risk run checks the full test suite before it can say VERIFIED
