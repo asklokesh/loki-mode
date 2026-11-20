@@ -160,9 +160,14 @@ export function failedCount(out: string): number | null {
 }
 export const silentIdsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SILENT_IDS"] ?? "").trim());
 export const CHANGE_LINES_MAX = 5000;
-/** The masked lines of `out` that name a changed file or symbol, sorted (a multiset); null past the bound, so nothing is compared on a truncated list.
+/** A captured output this long may have been cut: the base runner keeps the last 8 MiB of a run and the shell helper the first 16 MiB of each stream, so
+ *  the lines that would name the change can be the ones that were dropped. Past it, nothing is compared (the smaller cap, less a margin, for both sides). */
+export const CAPTURE_CUT_BYTES = 8 * 1024 * 1024 - 4096;
+/** The masked lines of `out` that name a changed file or symbol, sorted (a multiset); null past the bound, or when the capture itself may have been cut
+ *  (CAPTURE_CUT_BYTES), so nothing is compared on a truncated list or a truncated output.
  *  A frame printed as `File "x.py", line 12, in f` carries its line number apart from the file: the same noise errorShape masks in x.py:12, masked here. */
 export function changeLines(out: string, changed: readonly string[], symbols: readonly string[] = [], max = CHANGE_LINES_MAX): string[] | null {
+  if (Buffer.byteLength(out, "utf8") >= CAPTURE_CUT_BYTES) return null;
   const names = lineNamesChange(changed, symbols), res: string[] = [];
   for (const raw of stripAnsi(out).split("\n")) { const l = raw.trim(); if (!l || !names(l)) continue; res.push(errorShape(normError(l)).replace(/\bline \d+\b/g, "line <n>")); if (res.length > max) return null; }
   return res.sort();

@@ -1055,6 +1055,7 @@ X5="shape:false | pre | introduced | introduced | introduced | introduced | note
 #         24u. failures.ts sameFailures: treat an id with an error line on one side only as silent (the one-side cells read true).
 #         24v. failures.ts bunIds: `u.length >= count` again (the repeated-name cell reads 0 ids).
 #         24w. repo_profile.ts changedForLines: return every changed file (the added-test-file cell reads false).
+#         24w3. failures.ts changeLines: drop the CAPTURE_CUT_BYTES test (an output that may have been cut is compared: the cut cell reads true:2/true:2).
 #         24z2. repo_profile.ts passedOnRerun: `return only.filter((i) => !again.has(i));` right after `again` is read (an id absent from the rerun's failures
 #               counts as passed: the bailed, capped and lost-line cells read 1; summary-parse's review of 53872e846).
 #         24z3. repo_profile.ts passedOnRerun: `if (rerun.code === 0) return [...only];` as its first line (an exit 0 that ran nothing drops every head-only id:
@@ -1077,6 +1078,7 @@ const loud = (msg) => "FAILED tests/a.py::t1 - " + msg + "\n" + box(["tests/a.py
 r.push(cmp(loud("AssertionError: 1 != 2"), loud("AssertionError: 1 != 2")), cmp(loud("TypeError: bad call"), loud("AssertionError: 1 != 2")));   // one loud id with the same message, then with another message
 r.push(cmp(loud("AssertionError: 1 != 2"), box(ids)), cmp(box(ids), loud("AssertionError: 1 != 2")));          // an error line on one side only, either side
 r.push(F.sameFailures(box(ids), box(ids), ids).same + ":" + F.sameFailures(box(ids), box(ids), ids, { lines: null, failed: 2 }, { lines: [], failed: 2 }).same); // no facts, or a head list past the bound
+{ const big = box(ids) + "\n" + "x".repeat(F.CAPTURE_CUT_BYTES); r.push(cmp(big, box(ids)) + "/" + cmp(box(ids), big) + "/" + String(F.changeLines(big, changed, syms))); } // a capture that may have been cut, on head or on base: not comparable
 process.env.LOKI_E10_SILENT_IDS = "0"; r.push(cmp(box(ids), box(ids))); delete process.env.LOKI_E10_SILENT_IDS;
 const bun = "bun test v1.3\n\ntest/a.test.tsx:\n(fail) renders [1.00ms]\n(fail) renders [2.00ms]\n(fail) other [1.00ms]\n\n 5 pass\n 3 fail\nRan 8 tests across 1 files. [1.00s]\n"; r.push(F.failIds(bun).join("+"), String(F.failedCount(bun)));
 // HEAD-RERUN evidence (repo_profile.ts passedOnRerun): an id is dropped only when the rerun shows it ran and passed
@@ -1092,10 +1094,10 @@ r.push([rp.passedOnRerun(only, { code: 0, out: "===== 10 passed in 1.00s =====\n
 r.push(rp.changedForLines(g, base, ["src/gateway.py", "tests/test_new.py", "tests/test_old.py"]).join("+"));  // an added test file is left out; an edited one and a source file stay
 r.push(cr.loadErrorModule("error: Cannot find module \x27/private/var/T/loki-run.A/work/packages/core/src/x.ts\x27 from \x27/a\x27") + "|" + cr.loadErrorModule("error: Cannot find package \x27effect\x27 from \x27/b\x27"));
 console.log(r.join(" | "));' 2>&1)"
-XSIL='true:2 | true:2 | false:0 | false:0 | false:0 | false:0 | true:1 | false:0 | false:0 | false:0 | false:false | false:0 | test/a.test.tsx::renders+test/a.test.tsx::other | 3 | 10001000000 | src/gateway.py+tests/test_old.py | src/x.ts|effect'
+XSIL='true:2 | true:2 | false:0 | false:0 | false:0 | false:0 | true:1 | false:0 | false:0 | false:0 | false:false | false:0/false:0/null | false:0 | test/a.test.tsx::renders+test/a.test.tsx::other | 3 | 10001000000 | src/gateway.py+tests/test_old.py | src/x.ts|effect'
 RPS="$ROOT/loki-ts/src/runner/repo_profile.ts"; VFS="$ROOT/loki-ts/src/engine10/stages/verify.ts"
 [ "$ASIL" = "$XSIL" ] && grep -q 'baseSideFacts(repoDir, b, changedForLines(repoDir, baseSha, changed), symbols)) : { same: false, silent: 0 }; },' "$RPS" && grep -q 'if (sf.same) { out.sameError.push(c.name); if (sf.silent) out.silent\[c.name\] = sf.silent; }' "$VFS" && grep -q 'await runFullSuite(ctx, signal, { changed, symbols, ' "$VFS" \
-    && ok "silent ids: ids red on both sides with no error line on either side are the same failure only when head prints nothing about the change that base did not print and no higher failed count; a new line naming a changed symbol or file, a frame of the changed file in another function, an error line on one side only, a different message and LOKI_E10_SILENT_IDS=0 are refused; a repeated bun name keeps its ids; a head-only id is dropped by the rerun only when the rerun shows it ran and passed, never when the rerun bailed, was cut or lost a line; an added test file is not read as the change; a load-error key is relative" \
+    && ok "silent ids: ids red on both sides with no error line on either side are the same failure only when head prints nothing about the change that base did not print and no higher failed count; a new line naming a changed symbol or file, a frame of the changed file in another function, an error line on one side only, a different message, an output that may have been cut on either side and LOKI_E10_SILENT_IDS=0 are refused; a repeated bun name keeps its ids; a head-only id is dropped by the rerun only when the rerun shows it ran and passed, never when the rerun bailed, was cut or lost a line; an added test file is not read as the change; a load-error key is relative" \
     || bad "silent ids gave: $ASIL (want: $XSIL)"
 # EXOGENOUS-RED (closed-set-2, 11.158.0 to 11.164.0: hm155462, oc63960 and pw43305 seeds pass the hidden test and were sealed FAILED on suites and test files the
 # change did not write, whose base run never started, was not comparable, or printed no readable id). A failing check the run did not write makes the run FAILED
