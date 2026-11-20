@@ -317,8 +317,9 @@ export function unrunnableCandidates(o: Partial<Record<StageName, Obj>>, checks:
   if (!unrunnableCheckOn(env)) return [];
   const v = o.verify;
   if (!v || v.stopped_at !== undefined || v.verify_scope !== "complete" || typeof o.implement?.limit_s === "number") return [];
-  const listed = new Set(strs(v.could_not_run)), attr = (v.exogenous_attribution ?? {}) as Record<string, ExogenousAttribution>;
-  return checks.filter((c) => listed.has(c.name) && (c.result === "fail" ? c.name.startsWith("full suite") && !!attr[c.name] && holdsPartial(attr[c.name]!) : c.result === "not_run")).map((c) => c.name);
+  const listed = new Set([...strs(v.could_not_run), ...Object.keys((v.could_not_run_if_proved ?? {}) as Obj)]), attr = (v.exogenous_attribution ?? {}) as Record<string, ExogenousAttribution>;
+  return [...checks.filter((c) => listed.has(c.name) && (c.result === "fail" ? c.name.startsWith("full suite") && !!attr[c.name] && holdsPartial(attr[c.name]!) : c.result === "not_run")).map((c) => c.name),
+    ...[...listed].filter((n) => n.startsWith("install:") && !checks.some((c) => c.name === n))]; // an install step is on the receipt as its line only, never as a check
 }
 /** The rule itself (founder decision 2026-11-20): the candidates that stop holding the label, or []. All of: the label is PARTIAL; the change's own proof
  *  holds (`proof.ok`: a test the change added or edited fails before the change and passes after it, in the same environment); that test ran as its own
@@ -330,6 +331,8 @@ export function unrunnableLifted(a: { o: Partial<Record<StageName, Obj>>; checks
   if (cand.length === 0 || a.verdict !== "PARTIAL" || a.proof?.ok !== true) return no;
   const own = (c: Obj): boolean => isExecutedProof(c as { result?: unknown; n?: unknown }) && !String(c.name).startsWith("full suite") && !cand.includes(String(c.name));
   if (!((a.proof.steps ?? 0) > 0) && !a.proof.files.some((f) => a.vraw.some((c) => own(c) && String(c.name).endsWith(`:${f}`)))) return no;
+  const need = (a.o.verify?.could_not_run_if_proved ?? {}) as Record<string, unknown>; // Point 2: a check with changed test files in its package is lifted only when each of them is a proved test
+  if (cand.some((n) => n in need && !strs(need[n]).every((f) => a.proof!.files.includes(f)))) return no;
   const left = a.checks.filter((c) => !cand.includes(c.name)), gone = new Set(strs(a.o.verify?.could_not_run_notes));
   if (!left.some((c) => c.result === "fail" && c.name.startsWith("full suite"))) gone.add(SUITE_FIX_SKIP_NOTE);
   return a.rest(left, a.notes.filter((n) => !gone.has(n))) === "VERIFIED" ? { names: cand, notes: [...gone] } : no; // notes: the lines that said these checks hold the label, which no longer describe the receipt
@@ -484,7 +487,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const lintOpenNotes = lintOnly ? openLint.map((c) => `lint error the change introduced, still failing after the fix rounds: ${c.name}: ${String(((Array.isArray(o.verify?.checks) ? (o.verify!.checks as Obj[]) : []).find((x) => x.name === c.name)?.first_error) ?? "see the check output").slice(0, 200)} (every test passed; the label is held at PARTIAL)`) : [];
     const verdict0a = capGroupVerdict(verdictOf(o, liveV, !diffOk || diff.stdout === "", capVerify.some((n) => !pinDropped.has(n)) || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp);
     // UNRUNNABLE-CHECK: applied here, before every later step, so supply, review, open notes and the publish can still only lower the label.
-    const vLifted = vCand.length > 0 && verdict0a === "PARTIAL" && ftpGate ? unrunnableLifted({ o, checks: liveV, vraw, verdict: verdict0a, proof: await (async () => { const f = await ftp(); if (f.ok) return f; const w = await own(); return w?.ok ? { ok: true, files: [], steps: w.steps.length } : f; })(), notes: capVerify.filter((n) => !pinDropped.has(n)),
+    const vLifted = vCand.length > 0 && verdict0a === "PARTIAL" && ftpGate ? unrunnableLifted({ o, checks: liveV, vraw, verdict: verdict0a, proof: await (async () => { const f = await ftp(); if (f.ok) return f; const w = await own(); return w?.ok ? { ok: true, files: rawDiff.filter((x, i) => i % 2 === 1 && isTestFile(x) && w.cmds.some((c) => c.includes(x) || (basename(x).length > 5 && c.includes(basename(x))))), steps: w.steps.length } : f; })() /* own proof: the changed test files a counted step's command names are the proved ones */, notes: capVerify.filter((n) => !pinDropped.has(n)),
       rest: (cs, ns) => capGroupVerdict(verdictOf(o, cs, !diffOk || diff.stdout === "", ns.length > 0 || weakTests.length > 0 || capRc.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit, [...leanGap, ...pubGap, ...specGap], wpAll.notes, wpAll.clauseGap), grp) }) : { names: [], notes: [] };
     const vLift = vLifted.names, verdict0: Verdict = vLift.length > 0 ? "VERIFIED" : verdict0a;
 
