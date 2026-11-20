@@ -15,9 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The prove stage has no 600 s budget and its listing session no 3-turn cap (`LOKI_E10_PROVE_BUDGET_S`, `LOKI_E10_PROVE_LIST_TURNS` set them). The no-regression differential has no 120 s wall budget (`LOKI_E10_NRD_BUDGET_S`), and each go test in it runs under the silence guard.
 - `--deep` has no 2700 s cap, 1800 s implement limit or stage limits; its sessions and commands use the same silence and no-progress guards as every run.
 - The `--verified` bounds (rounds, wall time, dollars, tokens) have no default, and a value you set is never clamped by Loki (it was capped at 10 rounds and 4 h).
-- A continue round whose reply only rephrases the outstanding work an earlier reply named now counts as no progress, so a session that keeps restating the same work ends after 2 such rounds.
+- A continue round counts as progress only when a planned file appears, or the tree changed and the reply names new work or a changed count ("12 of 40 tests fail" then "8 of 40"). A reply that only rephrases earlier work, or only adds a new reason while nothing in the tree changed, is no progress, so such a session ends after 2 rounds.
+- After a `--deep` run, the step that posts its result stops waiting once the deep worker's process id belongs to another process, or 60 s after the worker wrote its result, so it cannot wait forever now that `--deep` has no time cap.
 - `LOKI_E10_DEFAULT_BUDGETS=1` restores every old default at once. The previous loop's $100 default and the 120 s limit on the base flaky-probe rerun are unchanged.
-- Measured: each new guard was shown to fail its test with the guard removed (9 planted defects in this series). Not yet measured in a live run.
+- Measured: each new guard was shown to fail its test with the guard removed (12 planted defects in this series). Not yet measured in a live run.
 
 ## v11.169.0 (2026-11-20)
 
