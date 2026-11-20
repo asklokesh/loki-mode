@@ -1159,6 +1159,33 @@ has "V10 K3 readChecklist: the base commit's file is read and a working-tree edi
 has "V10 K5 cmd: not run without the knob (never run); fails on head and passes on base fails; fails on both is not run; no base tree is not run; passes on head never runs base" "$KU" "K5 not_run 0 fail not_run true not_run true pass 0"
 has "V10 K5 checklistCmdOn: unset false, observe true, 0 false" "$KU" "K5c false true false"
 
+# VERIFY-PLAN V11 CASCADE-INTRODUCED (LOKI_E10_CASCADE_INTRODUCED, off by default, only with LOKI_E10_CASCADE_V0=1): the cascade also starts on a failure the
+# calibrated verify attributes to the change (closure.ts failureClasses), and the next attempt's brief carries check-failures.txt under its own lead. The Wall is
+# off (LOKI_E10_WALL=0), so the Wall oracle cannot start it. Plants (each reverted): cascadeIntroducedOn ignores CASCADE_V0 (X3 starts an attempt); machine
+# reads pre_existing instead of introduced (X1 no attempt); the introduced tail uses CASCADE_LEAD (X1 brief).
+x_att() { python3 -I -c 'import json, sys
+n = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]
+s = [e for e in n if e["type"] == "attempts.selected"]
+print("attempts=%s" % ((s[0].get("data") or {}).get("total") if s else "none"))' "$RUNDIR/events.jsonl"; }
+x_brief() { python3 -I -c 'import sys, glob
+t = "".join(open(p).read() for p in glob.glob(sys.argv[1] + ".*"))
+print("lead" if "The previous attempt at this task left these checks failing, and Loki attributes them to the change." in t else "nolead", "oldlead" if "The previous attempt at this task failed these acceptance tests" in t else "noold", "tail" if "calc.test.ts" in t.split("Loki attributes them to the change. Their failing output:")[-1] else "notail")' "$T/x.prompt"; }
+rm -f "$T"/x.prompt*; E2E_STUB_PROMPT_LOG="$T/x.prompt" LOKI_E10_CASCADE_V0=1 LOKI_E10_WALL=0 LOKI_E10_CASCADE_INTRODUCED=1 LOKI_SESSION_MODEL=haiku run_engine wrong; x1="$(x_att) $(x_brief)"
+[ "$x1" = "attempts=2 lead noold tail" ] && ok "V11 X1: with cascade v0 and the knob, an introduced failure starts one more attempt whose brief carries check-failures.txt under its own lead, not the Wall's ($x1)" || bad "V11 X1 gave: $x1"
+LOKI_E10_CASCADE_V0=1 LOKI_E10_WALL=0 LOKI_SESSION_MODEL=haiku run_engine wrong; x2="$(x_att)"
+[ "$x2" = "attempts=none" ] && ok "V11 X2: with the knob unset nothing cascades without a Wall failure (today)" || bad "V11 X2 gave: $x2"
+LOKI_E10_WALL=0 LOKI_E10_CASCADE_INTRODUCED=1 LOKI_SESSION_MODEL=haiku run_engine wrong; x3="$(x_att)"
+[ "$x3" = "attempts=none" ] && ok "V11 X3: the knob without LOKI_E10_CASCADE_V0 starts nothing" || bad "V11 X3 gave: $x3"
+XU="$(cd "$ROOT/loki-ts" && bun -e '
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs"; import { join } from "node:path"; import { tmpdir } from "node:os";
+import { cascadeIntroducedTail } from "./src/features/attempts.ts"; import { cascadeIntroducedOn } from "./src/util/wall_knobs.ts";
+const d = mkdtempSync(join(tmpdir(), "x4-")), body = "a".repeat(1000) + "b".repeat(6000); writeFileSync(join(d, "check-failures.txt"), body);
+const t = cascadeIntroducedTail(d), e = mkdtempSync(join(tmpdir(), "x4e-"));
+console.log("X4", t?.length, t === body.slice(-6000), cascadeIntroducedTail(e), cascadeIntroducedOn({ LOKI_E10_CASCADE_INTRODUCED: "1" } as never), cascadeIntroducedOn({ LOKI_E10_CASCADE_INTRODUCED: "1", LOKI_E10_CASCADE_V0: "1" } as never));
+rmSync(d, { recursive: true, force: true }); rmSync(e, { recursive: true, force: true });
+' 2>&1)"
+has "V11 X4: cascadeIntroducedTail keeps the last 6000 characters and reads null for a missing file; the knob needs cascade v0" "$XU" "X4 6000 true null false true"
+
 att_ev() { python3 -I -c '
 import json, sys
 for l in open(sys.argv[1]):

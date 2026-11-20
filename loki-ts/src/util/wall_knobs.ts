@@ -8,6 +8,9 @@ export const wallConcurrent = (env = process.env): boolean => !off(env.LOKI_E10_
  *  It turns the Wall on for the run. Only a Wall check that fails on the first candidate starts one more attempt, on the next model, before any fix round, and that
  *  attempt's brief carries the Wall's failing output. Any other red (lint, a collateral test, a NOT PROVEN line) never cascades. machine.ts extraAttempts, features/attempts.ts. */
 export const cascadeV0On = (env = process.env): boolean => /^(1|on|true|yes)$/i.test((env.LOKI_E10_CASCADE_V0 ?? "").trim());
+/** VERIFY-PLAN V11 LOKI_E10_CASCADE_INTRODUCED (off by default, =1 turns it on, only with LOKI_E10_CASCADE_V0=1): the cascade also starts when the
+ *  calibrated verify (VERIFY-PLAN V2, closure.ts failureClasses) shows an introduced failure. */
+export const cascadeIntroducedOn = (env = process.env): boolean => cascadeV0On(env) && /^(1|on|true|yes)$/i.test((env.LOKI_E10_CASCADE_INTRODUCED ?? "").trim());
 export const CASCADE_DEFAULT_MODELS = "haiku,sonnet";
 /** WALL-ON-LEAN LOKI_E10_WALL_ON_LEAN (off by default, =1 opts in; implied by LOKI_E10_CASCADE_V0=1): a Wall that is on also runs on the lean path (a small or normal task
  *  with a relevant visible test), without forcing plan. Off, the lean path skips the Wall as before, whatever LOKI_E10_WALL says. */

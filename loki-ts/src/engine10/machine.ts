@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"; import { tmpdir } from "node:os"; import { baseDepsLinker } from "../util/base_guard.ts";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { noteRegenerated, regenDropOn } from "../e10ext/commit_filter.ts";
-import { hooks } from "./hooks.ts"; import { cascadeV0On, wallConcurrent } from "../util/wall_knobs.ts"; import { attemptModel, CASCADE_LEAD, cascadeWallTail, wallFailedOf } from "../features/attempts.ts"; import { wallEnabled } from "./sizing.ts";
+import { hooks } from "./hooks.ts"; import { cascadeIntroducedOn, cascadeV0On, wallConcurrent } from "../util/wall_knobs.ts"; import { attemptModel, CASCADE_INTRODUCED_LEAD, CASCADE_LEAD, cascadeIntroducedTail, cascadeWallTail, wallFailedOf } from "../features/attempts.ts"; import { failureClasses } from "./closure.ts"; import { wallEnabled } from "./sizing.ts";
 import { safeGit, commitHookBypassOn, treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { assumptionOf, consultAvailable, neverStopActive, readConsults, type NeverStopRecord } from "../features/opus_consult.ts";
 import { rerunOnQuota, sessionKind, usageLimitOf } from "../runner/retry_class.ts";
@@ -276,8 +276,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     const note = (why: string): typeof none => { outputs.implement = { ...impl, attempts: { skipped: why } }; return none; };
     const brief0 = savedImplementBrief(ctx);
     if (!brief0) return note("the implement brief was not saved");
-    const wallTail = cascadeV0On() ? cascadeWallTail(ctx.runDir, outputs.verify) : null; // CASCADE-V0: the retry sees the oracle's own failing output
-    const brief = wallTail ? `${brief0}\n\n${CASCADE_LEAD}\n${wallTail}` : brief0;
+    const wallTail = cascadeV0On() ? cascadeWallTail(ctx.runDir, outputs.verify) : null, introTail = !wallTail && cascadeIntroducedOn() ? cascadeIntroducedTail(ctx.runDir) : null; // CASCADE-V0: the retry sees the oracle's own failing output; VERIFY-PLAN V11: else verify's own introduced failures
+    const brief = wallTail ? `${brief0}\n\n${CASCADE_LEAD}\n${wallTail}` : introTail ? `${brief0}\n\n${CASCADE_INTRODUCED_LEAD}\n${introTail}` : brief0;
     const room = Math.floor(softCapS(ctx.capS) - elapsedS() - ATTEMPTS_TAIL_S), limitS = unbounded ? Infinity : Math.min(STAGE_BUDGETS.implement.limitS, room);
     if (limitS < MIN_ATTEMPT_WINDOW_S) return note(`not enough run time left (${Math.max(room, 0)}s)`);
     if (capReached()) return note("cost or time cap reached");
@@ -430,7 +430,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (todo[0] === "verify") {
         sigs.push(sigOf(outputs.verify, results[0]));
         let attemptsRan = false;
-        const cascadeNow = cascadeV0On() && !fatal && !capHit && wallFailedOf(outputs.verify); // CASCADE-V0: only the Wall's own failing tests start the next model, before any fix round
+        const cascadeNow = cascadeV0On() && !fatal && !capHit && (wallFailedOf(outputs.verify) || (cascadeIntroducedOn() && failureClasses(outputs).introduced.length > 0)); // VERIFY-PLAN V11: or an introduced failure, behind its own knob // CASCADE-V0: only the Wall's own failing tests start the next model, before any fix round
         if (cascadeNow || (!cascadeV0On() && attemptsEarly() && !fatal && !capHit && hasFailures(outputs.verify) && /haiku/i.test(String(outputs.implement?.model ?? ctx.model)))) { // EXP-0010 early: a red first attempt on Haiku gets its parallel attempts BEFORE any fix round; a green winner leaves nothing for the fix loop below
           const x = await extraAttempts(); attemptsRan = x.ran;
           if (x.changed) { scaffoldNow(); const v = await runStage("verify", true); sigs.push(sigOf(outputs.verify, v)); }

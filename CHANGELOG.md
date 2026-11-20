@@ -44,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - With `LOKI_E10_E2E_BOOT=observe`, a complete verify boots the app on the change and on the original code with the same app runner the post-PR check uses, and the receipt says whether it booted and answered on each, or why it could not run end to end. `enforce` makes an app that boots on the original code and not on the change a failing check. Off by default; driving the issue's own steps against the running app stays with the prove stage.
 
+### The cascade can also start on an introduced failure
+
+- With cascade v0 on, `LOKI_E10_CASCADE_INTRODUCED=1` also starts the next model when verify shows a failure the change introduced, and hands it that failure's output. Off by default, like the cascade itself, until the calibrated verify is measured and the cascade is scored against spend.
+
 ## v11.172.0 (2026-11-20)
 
 ### A low-risk run checks the full test suite before it can say VERIFIED
