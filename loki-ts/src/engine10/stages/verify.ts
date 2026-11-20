@@ -97,6 +97,21 @@ export function crashSignature(out: string): string | null {
   const m = /^(?:[.sxXFE]*(?=Fatal Python error: )Fatal Python error: [^\n]+|Segmentation fault[^\n]*|E\s+ModuleNotFoundError: No module named '[^']+'|ModuleNotFoundError: No module named '[^']+'|ImportError while (?:loading conftest|importing test module)[^\n]*)$/m.exec(out);
   return m ? m[0].replace(/^[.sxXFE]+(?=Fatal Python error: )/, "").replace(/\s+/g, " ").replace(/'\/[^']*\//g, "'").trim() : null; // pytest's progress marks before the fatal line differ between base and head
 }
+/** CHECK-FAILURE-TAILS: the redacted tail of every check that is still failing after this verify (never a held-out or opaque check: they get no tail),
+ *  kept in the run dir as check-failures.txt so a failure Loki did not attribute can be read afterwards. closed-set-2 hm155462: one test file failed the same
+ *  7 tests on base and on head, was not attributed, and both fix rounds chased it until the run STALLED; the base output was in base-runs.json and the head
+ *  output was nowhere, so the two could not be compared. Overwritten by each verify, removed when nothing fails. 256 KiB in all, 16 KiB per check at most. */
+export const CHECK_FAILURES_FILE = "check-failures.txt", CHECK_FAILURES_CAP = 262144;
+export function writeCheckFailureTails(runDir: string, failed: { name: string; out: string }[]): string | undefined {
+  const file = join(runDir, CHECK_FAILURES_FILE);
+  try {
+    if (failed.length === 0) { rmSync(file, { force: true }); return undefined; }
+    const per = Math.min(WALL_FAILURE_TAIL_CAP, Math.floor(CHECK_FAILURES_CAP / failed.length));
+    const tail = (t: string): string => { const b = Buffer.from(t, "utf8"); return b.length <= per ? t : b.subarray(b.length - per).toString("utf8").replace(/^\uFFFD+/, ""); };
+    atomicWriteText(file, failed.map((f) => `== ${f.name} ==\n${tail(f.out)}\n`).join("\n"), { durable: false });
+    return CHECK_FAILURES_FILE;
+  } catch { return undefined; } // diagnostics only: never alters a verdict
+}
 const noIdOut = new WeakMap<object, string>(); // RW-01 NO-ID: the output of a failing test check that parsed no test id, read only by the no-id base comparison
 const headErrors = new WeakMap<object, Map<string, string[]>>(); // each failing id's error line, read from the whole output (never the cut tail), for sameErrors
 export { WALL_FAILURE_TAIL_FILE } from "../../util/check_result.ts"; import { WALL_FAILURE_TAIL_FILE } from "../../util/check_result.ts";
@@ -987,6 +1002,7 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
     const notProven = [...(complete ? [] : [QUICK_ONLY_NOTE, ...unrunSuitesCarried(ctx.outputs().verify?.not_proven, checks)]), ...exoHeld, ...preRed.envCrash.map((e) => `${e.name}: ${BCE_REASON} (${e.sig})`), ...noIdNotes, ...venvSkipNotes(ctx.repoDir), ...weakened, ...hiddenEdits(ctx.repoDir), ...ignoreRuleChanges(ctx.repoDir, (intake as { ignore_snapshot?: unknown } | undefined)?.ignore_snapshot, ctx.baseSha), ...dependentNotes(dep).filter((n) => !(fullSuiteRan && n.startsWith("reverse-dependent tests dropped"))), ...depsNotes.cap, ...pub.filter((c) => c.name === "holdout" && c.result !== "pass").map((c) => (c.result === "not_run" ? "holdout not executed" : "holdout check failed")), ...[...fullNotProven].filter((n) => !naNote(n)), ...pub.filter((c) => c.owner === "harness" && c.name !== "holdout").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
     const wallDropped = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p)); // FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: sealed, but no runner of this repo can run it
     notProven.push(...wallDropped.map((p) => `Wall test not executed: ${p}: ${NO_RUNNER_REASON}`));
+    if (ctx.runDir) writeCheckFailureTails(ctx.runDir, checks.filter((c) => c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name) && failTails.has(c)).map((c) => ({ name: c.name, out: failTails.get(c)! }))); // CHECK-FAILURE-TAILS
     const wallNames = new Set(wallTests.map(testCheckName)), wallRun = checks.filter((c) => wallNames.has(c.name) || isHold(c)), wallFailTail = writeWallFailureTail(ctx.runDir, checks.filter((c) => wallNames.has(c.name) && c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, out: failTails.get(c) ?? "" }))), wallPassed = wallRun.some((c) => c.result === "fail") ? false : wallRun.length > 0 && wallDropped.length === 0 && wallRun.every((c) => c.result === "pass") ? true : undefined; // the receipt's wall.passed: false on any failure, true only when every Wall and holdout check ran and passed, unset otherwise
     await settleNrd(ctx); // SPEED-NRD-OVERLAP: the differential implement started has run beside these checks; its group joins this verify's
     if (baseMemberNote) attr.line = [attr.line, baseMemberNote].filter(Boolean).join("; "); // BASE-TREE-MEMBERS disclosure (the receipt's baseline line)

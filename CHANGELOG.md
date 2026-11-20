@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### The output of a check that stays red is kept in the run folder
+
+- When a test or lint check that verify ran itself is still failing, its output tail is now kept in `.loki/runs/<run>/check-failures.txt` (secrets redacted, 16 KiB per check, 256 KiB in all). A held-out check and a failure already shown to exist on the base are left out. The file is replaced by each verify and removed when nothing fails.
+- Why: on hermes-agent one test file failed the same 7 tests before and after the change, Loki did not attribute it, and two fix rounds chased it until the run stalled. The base output was kept; the head output was not, so the two could not be compared afterwards. A full suite's output is already kept in the receipt as an excerpt.
+- No label reads this file.
+
 ### Loki's own `uv run` no longer creates a `.venv` in your checkout
 
 - In a repository with a `uv.lock` and no virtualenv, Loki runs Python tools through `uv run`. `uv run` creates `.venv` in the project, even with `--no-sync`. On hermes-agent, Loki's own lint (`uv run -- ruff check`) created a root `.venv` with the runtime packages and no pytest. The receipt then said the tests ran outside the project virtualenv, listed the `.venv` files as ignored files created during the run, and could not compare the full suite with the base because the environment had changed. Each of those kept the run below VERIFIED.

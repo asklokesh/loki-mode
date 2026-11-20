@@ -313,6 +313,8 @@
 # 253. check_result.ts spawnFailedTool: drop the 6-line bound (the spawn-not-run leg's long ENOENT output reads missing).
 # 253b. check_result.ts resolveTool: drop the UV-ENV-OUTSIDE-CHECKOUT return (the uv-env-outside leg's first cell reads `uv project run -- ruff`).
 # 253c. check_result.ts spawnFailedTool: count uv's setup lines again (drop `&& !UV_PROGRESS.test(l)`; the uv-env-outside leg's first-run cell reads null).
+# 253d. verify.ts: drop the writeCheckFailureTails call (the check-failure-tails leg's wiring fails).
+# 253e. verify.ts writeCheckFailureTails: `const per = WALL_FAILURE_TAIL_CAP` (40 big checks pass the 256 KiB bound; the leg's size cell reads false).
 # 254. testmap.ts buildTestMap: ignore pyCfg (the pytest-fallback leg's conftest.py case reads unittest).
 # 255. package_suite.ts runPackageSuites: drop the cwd !== "." guard (the empty-subsuite-na leg's root package reads not applicable).
 # 256. check_result.ts assertionFailure REPORTED-KIND type path: drop the MISSING_API guard (the reported-kind unit's ImportError case reads true).
@@ -2297,6 +2299,22 @@ console.log(r.join(" | "));' 2>&1)"
 XUVR='env project UV_PROJECT_ENVIRONMENT=<owned> uv run -- ruff | true | <t>/venvrepo/.venv/bin/ruff project  | uv project run -- ruff | uv project run -- ruff | ruff | null'
 [ "$UVR" = "$XUVR" ] && ok "uv-env-outside: a harness-run uv run in a repository with no virtualenv keeps its environment in a directory the run owns, never in the checkout; a repository's own .venv, a user-set UV_PROJECT_ENVIRONMENT and LOKI_E10_UV_ENV_OUTSIDE=0 keep the old command; uv's setup lines do not hide a tool that could not start" \
     || bad "uv-env-outside gave: $UVR (want: $XUVR)"
+# CHECK-FAILURE-TAILS (closed-set-2 hm155462: one test file failed the same 7 tests on base and on head, was not attributed, and both fix rounds chased it until
+# the run STALLED; the base output was kept in base-runs.json and the head output nowhere, so nobody could say why). Verify keeps the redacted tail of every
+# check that is still failing in <run dir>/check-failures.txt: overwritten by each verify, removed when nothing fails, 256 KiB in all and 16 KiB per check,
+# never a held-out or pre-existing check. Diagnostics only; no label reads it.
+CFT="$(cd "$ROOT/loki-ts" && CFD="$T/checkfail" bun --no-env-file --config=/dev/null -e '
+const v = await import("./src/engine10/stages/verify.ts"), fs = require("node:fs"), d = process.env.CFD; fs.mkdirSync(d, { recursive: true }); const f = d + "/" + v.CHECK_FAILURES_FILE, r = [];
+r.push(String(v.writeCheckFailureTails(d, [{ name: "pytest:tests/a.py", out: "FAILED tests/a.py::t - AssertionError: 1 != 2" }, { name: "full suite: x", out: "boom" }])), fs.readFileSync(f, "utf8").replace(/\n/g, "~"));
+const big = "x".repeat(40000) + "END"; v.writeCheckFailureTails(d, Array.from({ length: 40 }, (_, i) => ({ name: "c" + i, out: big }))); const t = fs.readFileSync(f, "utf8"); r.push(String(t.length <= v.CHECK_FAILURES_CAP + 40 * 16), String((t.match(/END/g) ?? []).length), String(t.includes("== c39 ==")));
+v.writeCheckFailureTails(d, [{ name: "one", out: big }]); r.push(String(fs.readFileSync(f, "utf8").length <= 16384 + 16)); r.push(String(v.writeCheckFailureTails(d, [])), String(fs.existsSync(f)));
+r.push(v.wallTailOf("token ghp_" + "a".repeat(36) + " in " + d + "/src/x.py", d).includes("ghp_a") ? "leaks" : "redacted");
+console.log(r.join(" | "));' 2>&1)"
+XCFT='check-failures.txt | == pytest:tests/a.py ==~FAILED tests/a.py::t - AssertionError: 1 != 2~~== full suite: x ==~boom~ | true | 40 | true | true | undefined | false | redacted'
+VCF="$ROOT/loki-ts/src/engine10/stages/verify.ts"
+[ "$CFT" = "$XCFT" ] && grep -q 'if (ctx.runDir) writeCheckFailureTails(ctx.runDir, checks.filter((c) => c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name) && failTails.has(c)).map((c) => ({ name: c.name, out: failTails.get(c)! })));' "$VCF" \
+    && ok "check-failure-tails: verify keeps the redacted tail of each still-failing check in the run dir (never a held-out or pre-existing one), within 256 KiB in all and 16 KiB per check, and removes the file when nothing fails" \
+    || bad "check-failure-tails gave: $CFT (want: $XCFT)"
 # PYTEST-FALLBACK (verify-dev 2026-11-13, Python-Markdown: a unittest repo whose venv has no pytest; every test_*.py ran as pytest and "failed" in 0.05 s with no ids):
 # tests marked pytest only by their test_*.py names run under unittest when the repo's .venv cannot import pytest. A venv that has pytest, a conftest.py,
 # a test file importing pytest, and LOKI_E10_PYTEST_FALLBACK=0 keep pytest. (The .venv python here is a stand-in that answers only `-c "import pytest"`.)
