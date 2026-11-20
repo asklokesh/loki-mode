@@ -1099,6 +1099,68 @@ X6='not started | not started | cut | unattributable | not comparable | names-li
 VBU="$ROOT/loki-ts/src/engine10/stages/verify.ts"
 grep -q '(Object.keys(exoAttr).length ? { exogenous_attribution: exoAttr } : {})' "$VBU" && grep -q 'c.result !== "fail" || !c.ids?.length || preRed.names.includes(c.name) || targetNames.has(c.name) || wallNames0.has(c.name) || isHold(c) || changed.includes(t.path) || exoAttr\[c.name\]) continue;' "$VBU" && grep -q ', ...unrunSuitesCarried(ctx.outputs().verify?.not_proven, checks)\]), ...exoHeld,' "$VBU" && grep -q 'failOuts.set(check, attempt.out)' "$VBU" && grep -q 'names_changed: named(failOuts.get(c) ?? excerpts.get(c) ?? "")' "$VBU" && ! grep -q 'prev\[c.name\]' "$VBU" && grep -q ': headOnly && cmp ? { state: "compared"' "$VBU" && [ "$(grep -c 'withGone(' "$VBU")" = 2 ] && [ "$(grep -c 'depsGoneSince(' "$VBU")" = 1 ] && [ "$(grep -n 'const goneAtStart = new Map' "$VBU" | cut -d: -f1)" -lt "$(grep -n 'await runTests(split.first);' "$VBU" | cut -d: -f1)" ] && grep -q 'const gone = (cwd: string): string | null => goneAtStart.get(' "$VBU" && ok "exogenous-red wiring: verify records one attribution per failing suite or untouched test file it did not excuse (never a Wall, holdout or task-named test, never a file with no failing id), reads the changed-file flag from the whole output, carries no record from an earlier verify, blames a head-only load error only against a live base rerun, blames a package that was gone since intake when verify started (read before its first command, never after), and lists each held check under NOT PROVEN" || bad "exogenous-red wiring: verify does not record exogenous_attribution as the rule needs"
 
+# UNRUNNABLE-CHECK (LOKI_E10_UNRUNNABLE_CHECK, default on; founder decision 2026-11-20). A check that could not run on the base commit or on the change, for
+# the same reason, does not hold the label when all hold: the change's own test fails before the change and passes after it; no changed file is in the check's
+# package and nothing it printed names one; the start failure is the same on both sides (same exit code, the same set of error lines, one of them a start
+# failure, none that reads like a test that ran and failed, no passed test, a failed count not higher on the change); the receipt lists it "could not run
+# here". The check keeps its result and is never excused. Cells: P1 a suite, P2 a test file sealed not_run, P3 two suites, P4 with the machine's skip note.
+# Every D cell is P1 with one change and must read the knob-off label, never VERIFIED:
+#   D1 no proof; D2 proof not ok; D3 proof not ok though a file failed on base (a rewritten pin); D4 the proof ran only inside the unrunnable check;
+#   D5 a failure line names a changed file; D6 a changed file in the check's package; D7 the suite passes on base; D8 another exit code; D9 base cut off;
+#   D10 base never started; D11 other error lines on the change; D12 an assertion line on both sides; D13 a passed test on both sides; D14 no start failure
+#   among the lines; D15 a higher failed count on the change; D16 a count on base only; D17 a base record written before the facts existed; D18 a head check
+#   without them; D19 more than 60 distinct error lines; D20 to D23 another hold (a not_run check, a held lint, a capping verify note, a lean gap);
+#   D24 to D26 the change's own red (its test, lint, typecheck); D27 runner config changed; D28 a weakened test; D29 verify stopped by a limit;
+#   D30 a quick verify; D31 knob off; D32 a per-file check that failed and is not listed.
+# Plants (each must turn the named cells): seal.ts unrunnableLifted: `!a.proof` in place of `a.proof?.ok !== true` (D3); drop the own-check line (D4); return
+# the candidates without calling rest (D20 to D23, D27, D28); do not drop the skip note (P4); seal.ts unrunnableCandidates: drop the listed.has test (D5, D6,
+# D11 to D19); drop the stopped_at test (D29); drop the verify_scope test (D30); repo_profile.ts couldNotRun: drop the namesChanged test (D5); drop the
+# touched test (D6); knob default off (P1 to P4); sameStartFailure: drop the line-set comparison (D11); drop the start test (D14); drop the assertion test
+# (D12); drop the passed test (D13); `return true` for the counts (D15, D16); drop the missing-facts test (D17, D18); drop the `more` test (D19);
+# unrunnableSuites: drop `b.exit_code === c.exit` (D8); drop `!b.timed_out` (D9).
+A9="$(G="$G5" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), se = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/seal.ts"), cl = await import(process.env.ROOT + "/loki-ts/src/engine10/closure.ts"), cr = await import(process.env.ROOT + "/loki-ts/src/util/check_result.ts"), { writeFileSync } = await import("node:fs"), { execFileSync } = await import("node:child_process");
+const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), S = "full suite: web", S2 = "full suite: docs", T = "bun:lib/test/new.test.ts", OLD = "bun:lib/test/old.test.ts", K = "pytest:tools/tests/a.py", PF = "lib/test/new.test.ts";
+const OUT = "[1/9] a.spec\nError: browserType.launch: Executable does not exist at /x/y/chrome\n2 failed\n", facts = (t) => cr.startFacts(t);
+const base = (o = {}) => ({ ran: true, command: "npm test", exit_code: 1, duration_s: 1, timed_out: false, failing_ids: [], attributable: false, reason: "failing test ids not parseable, failures cannot be attributed", start: facts(OUT), ...o });
+const head = (o = {}) => ({ name: S, cmd: "npm test", result: "fail", ids: [], exit: 1, start: facts(OUT), ...o });
+const pkgOf = (f) => (f.startsWith("web/") ? "web" : f.startsWith("docs/") ? "docs" : f.startsWith("tools/") ? "tools" : f.startsWith("lib/") ? "lib" : ".");
+const leg = (d = {}) => {
+  if (d.knob === false) process.env.LOKI_E10_UNRUNNABLE_CHECK = "0"; else delete process.env.LOKI_E10_UNRUNNABLE_CHECK;
+  const b = d.base === null ? { ran: false, command: "npm test", exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: "the base tree could not start" } : base(d.base); for (const k of d.dropBase ?? []) delete b[k];
+  writeFileSync(g + "/.loki/state/repo-profile.json", JSON.stringify({ version: 1, revision: sha, manifest_hash: "h", created_at: "t", commands: [], baseline: b, suites: d.two ? [{ ...base({ command: "npm run docs" }), name: S2 }] : [] }));
+  const h = head(d.head); for (const k of d.dropHead ?? []) delete h[k];
+  const full = d.k ? [] : [h, ...(d.two ? [head({ name: S2, cmd: "npm run docs" })] : [])], changed = d.changed ?? ["lib/src/x.ts", PF];
+  const attr = Object.fromEntries(full.map((c) => [c.name, { ...rp.exogenousState(g, sha, c), names_changed: d.names === true }]));
+  const suites = new Set(rp.unrunnableSuites(g, sha, full));
+  const cands = [...full.filter((c) => suites.has(c.name) && rp.holdsPartial(attr[c.name])).map((c) => ({ name: c.name, pkg: c.name === S ? "web" : "docs", namesChanged: attr[c.name].names_changed })), ...(d.k === "not_run" ? [{ name: K, pkg: "tools", namesChanged: false }] : [])];
+  const listed = rp.couldNotRun(cands, changed, pkgOf), held = Object.entries(attr).filter(([, a]) => rp.holdsPartial(a)).map(([n, a]) => rp.exogenousHeldLine(n, a));
+  const kNote = d.k === "not_run" ? [K + ": fails the same way on base, so its result cannot be read: the environment, not the change (sig)"] : [];
+  const proofName = d.noProof ? OLD : T, c = (name, result, provenance, n) => ({ name, cmd: "x", result, duration_s: 1, provenance, ...(n ? { n } : {}) });
+  const raw = [{ name: proofName, result: "pass", n: 3 }, ...full.map((x) => ({ name: x.name, result: "fail" })), ...(d.k ? [{ name: K, result: d.k }] : []), ...(d.checks ?? []).map((x) => ({ name: x.name, result: x.result }))];
+  const checks = [c(proofName, "pass", d.noProof ? "exogenous" : "agent_authored", 3), ...full.map((x) => c(x.name, "fail", "exogenous")), ...(d.k ? [c(K, d.k, "exogenous")] : []), ...(d.checks ?? [])];
+  const notes = [...held, ...kNote, ...(d.notes ?? [])];
+  const o = { implement: { exit: "done" }, verify: { checks: raw, exogenous_attribution: attr, ...(listed.length ? { could_not_run: listed, could_not_run_notes: [...held.filter((n) => listed.some((x) => n.includes(": " + x + ": "))), ...kNote.filter(() => listed.includes(K))] } : {}), verify_scope: "complete", ...(d.verify ?? {}) } };
+  const rest = (cs, ns) => se.verdictOf(o, cs, false, ns.length > 0, false, true, false, [], d.lean ?? []), off = rest(checks, notes), proof = d.proof === undefined ? { ok: true, files: [PF] } : d.proof;
+  const lifted = se.unrunnableLifted ? se.unrunnableLifted({ o, checks, vraw: raw, verdict: off, proof, notes, rest }).names : [], on = lifted.length ? "VERIFIED" : off;
+  return d.p ? off + ">" + on + (lifted.length ? "[" + lifted.length + "]" : "") : on === off && on !== "VERIFIED" ? on : "BAD(" + off + ">" + on + ")";
+};
+const x = (name, result, provenance = "exogenous") => ({ name, cmd: "x", result, duration_s: 1, provenance }), no = { ok: false, files: [] }, f2 = (t) => ({ start: facts(t) });
+const many = Array.from({ length: 70 }, (_, i) => "Error: missing module m" + String.fromCharCode(97 + (i % 26)) + String.fromCharCode(97 + Math.floor(i / 26)) + ": Cannot find module").join("\n");
+const r = [leg({ p: 1 }), leg({ p: 1, k: "not_run" }), leg({ p: 1, two: 1 }), leg({ p: 1, notes: [cl.SUITE_FIX_SKIP_NOTE] }),
+  leg({ noProof: 1, proof: null }), leg({ proof: no }), leg({ proof: { ok: false, files: [PF] } }), leg({ noProof: 1 }),
+  leg({ names: true }), leg({ changed: ["lib/src/x.ts", PF, "web/src/page.ts"] }), leg({ base: { exit_code: 0, attributable: true } }), leg({ head: { exit: 2 } }), leg({ base: { timed_out: true } }), leg({ base: null }),
+  leg({ head: f2("Error: spawn chromium ENOENT\n2 failed\n") }), leg({ base: f2(OUT + "AssertionError: expected 1 to be 2\n"), head: f2(OUT + "AssertionError: expected 1 to be 2\n") }), leg({ base: f2(OUT + "3 passed\n"), head: f2(OUT + "3 passed\n") }), leg({ base: f2("TypeError: boom\n2 failed\n"), head: f2("TypeError: boom\n2 failed\n") }),
+  leg({ head: f2(OUT.replace("2 failed", "3 failed")) }), leg({ head: f2(OUT.replace("2 failed\n", "")) }), leg({ dropBase: ["start"] }), leg({ dropHead: ["start"] }), leg({ base: f2(many), head: f2(many) }),
+  leg({ checks: [x("bun:lib/test/other.test.ts", "not_run")] }), leg({ checks: [x("lint:eslint", "not_run")] }), leg({ notes: ["reverse-dependent scan hit its byte or time bound"] }), leg({ lean: ["no passing check references a changed symbol and no Wall file ran: f"] }),
+  leg({ checks: [x("bun:lib/test/mine.test.ts", "fail", "agent_authored")] }), leg({ checks: [x("lint:tsc", "fail")] }), leg({ checks: [x("typecheck:tsc", "fail")] }),
+  leg({ notes: ["runner config changed: playwright.config.ts"] }), leg({ notes: ["weakened test: tests/a.spec.ts"] }), leg({ verify: { stopped_at: "limit" } }), leg({ verify: { verify_scope: "quick" } }), leg({ knob: false }), leg({ k: "fail" })];
+console.log(r.join(" | "));
+' 2>&1)"
+X9="PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[2] | PARTIAL>VERIFIED[1] | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | PARTIAL | FAILED | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | FAILED | FAILED | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED"
+[ "$A9" = "$X9" ] && ok "unit, unrunnable check (P1 to P4, D1 to D32): a check that could not run on either side stops holding the label only beside the change's own fail-before, pass-after proof, with no changed file in its package, the same start failure on both sides and nothing else open; every planted defect reads the knob-off label, never VERIFIED" \
+    || bad "unrunnable-check unit gave: $A9 (want: $X9)"
+
 # Base run budget (v131 STALLED tq runs): a suite that takes ~250 s on the change got 60 s on base, timed out, and its pre-existing red was blamed on the change.
 # A base run now gets the same 300 s its own run gets (bounded by a third of the run cap); a cut base run is recorded on the receipt line as "base run
 # incomplete" and excuses nothing; a base entry cut with a shorter budget is measured again, one cut at the current budget is kept.
