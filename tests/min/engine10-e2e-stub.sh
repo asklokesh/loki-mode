@@ -630,7 +630,6 @@ console.log([r6.notes.length, r6.notes[0], r6.notes.filter(x.isUnmetNote).length
 # new failing id in that suite is held by it. Plant G5-10: util/check_result.ts suiteSkipHolds always false: the new-id run seals without the note.
 snote() { python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r.get("verdict"), any(str(n).startswith("fix round skipped: only full-suite failures remained") for n in r.get("not_proven", [])))' "$RUNDIR/receipt.json" 2>/dev/null || echo no-receipt; }
 run_pr stable stable LOKI_PR_DRAFT=1
-SNB="$(snote)"
 f="$(pr_facts)"; set -- $f
 [ "$8" = success ] && ok "deep full suite red only on base-red ids: status success" || bad "base-red full suite gave status $8 ($f)"
 grep -q '"base_red": true' "$RUNDIR/receipt-addendum-1.json" && ok "addendum marks the base-red suite" || bad "addendum lacks base_red"
@@ -639,9 +638,14 @@ grep -q '"base_red": true' "$RUNDIR/receipt-addendum-1.json" && ok "addendum mar
 [ "$2" = True ] && [ "$7" = True ] && ok "draft run 3: result-cost sum equals receipt cost to the cent" || bad "draft run 3 facts: $f"
 
 run_pr new new
-SNN="$(snote)"
 f="$(pr_facts)"; set -- $f
 [ "$8" = failure ] && ok "a new failing id beyond the base-red ones keeps status failure" || bad "new full-suite failure gave status $8 ($f)"
+# The two runs above are low tier: their seal-time verify runs only bun:calc.test.ts and the npm suite runs in the post-seal deep worker, so suiteSkip never sees
+# it (probe e10-20261120T142527Z-fb46: receipt checks [bun:calc.test.ts], the new id only in receipt-addendum-1). Medium tier runs the suite inside verify.
+run_pr snstable stable LOKI_RISK_TIER=medium LOKI_PR_DRAFT=1
+SNB="$(snote)"
+run_pr snnew new LOKI_RISK_TIER=medium LOKI_PR_DRAFT=1
+SNN="$(snote)"
 [ "$SNB" = "VERIFIED False" ] && ok "G5 skip note: a full suite red only on base ids seals VERIFIED with no fix-round-skipped note holding it" || bad "G5 skip note: base-red-only suite sealed '$SNB' (want VERIFIED False)"
 case "$SNN" in "VERIFIED"*) bad "G5 skip note: a suite with a new failing id sealed VERIFIED ($SNN)" ;; *" True") ok "G5 skip note: the same suite with one new failing id is held by the fix-round-skipped note ($SNN)" ;; *) bad "G5 skip note: the new-id suite sealed '$SNN' (want the note to hold it)" ;; esac
 
