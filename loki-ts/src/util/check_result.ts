@@ -913,7 +913,7 @@ export function lineVerdict(out: string, ok: boolean, file: string, runner: stri
   // matches only as the whole repo-relative path, or a suffix of it that starts at a "/" (the cwd-relative form a package runner prints), or a longer path that
   // ends in "/<file>" (an absolute path). The basename alone counts only when the output prints no path with a "/" for any test.
   const anyDir = named.some((x) => (x.pass ?? x.fail ?? "").includes("/"));
-  const same = (t: string | null): boolean => !!t && (t === file || file.endsWith(`/${t}`) || t.endsWith(`/${file}`) || (!anyDir && t === base));
+  const same = (t: string | null): boolean => !!t && (t === file || (t.includes("/") && file.endsWith(`/${t}`)) || t.endsWith(`/${file}`) || (!anyDir && t === base));
   const tap = runner === "node", passes = named.filter((x) => same(x.pass) || (tap && /^ok \d+\b/.test(x.l))).length, fails = named.some((x) => same(x.fail) || (tap && /^not ok \d+\b/.test(x.l)));
   if (fails) return { result: "fail", count: LINE_FALLBACK_COUNT };
   return ok && passes > 0 ? { result: "pass", n: passes, count: LINE_FALLBACK_COUNT } : null;
