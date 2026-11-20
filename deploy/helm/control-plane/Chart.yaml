@@ -3,5 +3,5 @@ name: loki-control-plane
 description: Loki Control Plane (run ingest API and UI)
 type: application
 version: 0.1.0
-appVersion: "11.170.0"
+appVersion: "11.171.0"
 home: https://www.autonomi.dev
