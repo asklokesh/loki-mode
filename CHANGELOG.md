@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- VERIFIED's proof is the change's own test failing before the change and passing after it, for any language or tool (`LOKI_E10_OWN_PROOF`, on by default). Until now that proof was read only through a runner Loki knows, and a failure on the base commit counted only where Loki can read an assertion (pytest and vitest), so a change proved through any other tool read "no tests executed". Loki now also runs the kept proof script in a copy of the checkout with the change's non-test files put back to the base commit, and in an untouched copy as a control: a step that ran repository code, passes on the change and in the control, and fails without the change is the proof. Beside either proof, "no passing check references a changed symbol" is a disclosed note and no longer a hold. Limits: only issue runs keep a proof script; a pure addition counts (a step that needs an added file fails without it).
+- A check that cannot run on the base commit or on the change does not block VERIFIED (`LOKI_E10_UNRUNNABLE_CHECK`, on by default), when all four hold: the change's own proof is fail-before, pass-after; no changed file is in the check's package or named in its output; the start failure is the same on both sides and no test ran (no passed test, no assertion, no parsed id); the receipt lists it as "could not run here, on the original code either". The check keeps its failed result and is never excused.
+
 
 ## v11.170.0 (2026-11-20)
 
