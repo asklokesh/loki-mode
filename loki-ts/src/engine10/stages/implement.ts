@@ -254,7 +254,9 @@ export const implementStage: Stage = {
 
     let finish: Omit<ContinueRecord, "compactions"> | undefined; // S1b FINISH-LINE (claude only): a session whose final text has no finish line is resumed before every follow-up gate
     if (patch?.status !== "green" && !session.killed && session.exit === 0 && !signal.aborted && lacksFinishLine(ctx.provider, session)) {
-      const r = await resumeToFinish(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, { fingerprint: () => treeFingerprint(ctx.repoDir, ctx.baseSha), spentUsd: () => ctx.cost.read(ctx.repoDir, ctx.sessionIds?.() ?? ids).usd, compactions: (xs) => compactionsOf(ctx, xs), signal, normalize: h1n });
+      // G5: where Loki's own proof script exists, a continue's progress is its measured failing count, not the reply's words (resumeToFinish o.measure).
+      const proofMeasure = async (): Promise<number | null> => { if (!scratch || !proofRerunOn() || !existsSync(join(scratch.dir, PROOF_SCRIPT)) || !keepProofScript(scratch.dir, ctx.runDir)) return null; const pr = await rerunProof(ctx.repoDir, ctx.runDir, signal); return pr ? (pr.exit === 0 ? pr.failed : Math.max(1, pr.failed)) : null; };
+      const r = await resumeToFinish(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, { fingerprint: () => treeFingerprint(ctx.repoDir, ctx.baseSha), spentUsd: () => ctx.cost.read(ctx.repoDir, ctx.sessionIds?.() ?? ids).usd, compactions: (xs) => compactionsOf(ctx, xs), signal, normalize: h1n, measure: proofMeasure });
       session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); finish = r.record;
     }
     const incomplete = finish !== undefined && finish.ended !== "finish line";
