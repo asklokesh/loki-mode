@@ -30,7 +30,7 @@ import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
 import { suiteSkipHolds, SUITE_FIX_SKIP_NOTE, sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, commitWallEnabled, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, identifierSet, moduleToken, isExecutedProof, CODE_FILE_EXT, reportedErrors, type ReportedErrors, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
-import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
+import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts"; import { checklistMode, readChecklist } from "../../features/checklist.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
 import { hooks } from "../hooks.ts"; import { partialCostText } from "../output.ts"; import { COULD_NOT_RUN_LEAD, LOKI_OWN_LEAD, verifiedReceiptBlock, type CapReason, ruleMode, verificationStamp, type ObservedRule, type RuleMode, failureClasses, introducedMode, fileOfCheck, wallCheckNames, type FailureClasses } from "../closure.ts";
 import { atomicWriteText } from "../../util/atomic.ts";
@@ -582,6 +582,14 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     rz("check fails", live.filter((c) => c.result === "fail").map((c) => c.name)); rz("check not run", live.filter((c) => c.result === "not_run").map((c) => c.name)); rz("verify not proven", capVerify.filter((n) => !pinDropped.has(n))); rz("weakened test", weakTests); rz("runner config", capRc);
     if (!proof) rz("no agent-independent proof", [executed ? AGENT_ONLY_REASON : NO_TESTS_REASON]); if (ftpRes && !ftpRes.ok) rz("no fail-then-pass test", [ftpRes.line]); if (wallGreenOnBase) rz("Wall green on base", [WALL_GREEN_ON_BASE_REASON]);
     rz("changed symbol not referenced", leanGap); rz("public function not exercised", pubGap); rz("spec site uncovered", specGap); rz("Wall copy or clause", [...wpAll.notes, ...wpAll.clauseGap]); rz(xr?.level === "block" ? "review block" : "review note", xr?.notes ?? []); rz("open note", openNotes);
+    // VERIFY-PLAN V10 (LOKI_E10_CHECKLIST): the base commit's checklist items this diff fired. Enforce: verify already added a failing "checklist" check.
+    const clMode = checklistMode(), clRes = (Array.isArray(o.verify?.checklist) ? (o.verify!.checklist as { id: string; result: string; detail: string }[]) : []), clItems = new Map(readChecklist(ctx.repoDir, ctx.baseSha).items.map((i) => [i.id, i] as const));
+    const clFail = clRes.filter((r) => r.result === "fail"), checklistNotes = [
+      ...clFail.map((r) => `checklist item ${r.id} failed: ${r.detail} (taught by ${clItems.get(r.id)?.taught_by ?? "unknown"})${clMode === "enforce" ? "" : " (observe mode: disclosed, does not cap)"}`),
+      ...clRes.filter((r) => r.result === "not_run").map((r) => `checklist item ${r.id} not run: ${r.detail} (disclosed, does not cap)`),
+      ...(typeof o.verify?.checklist_problem === "string" ? [`checklist not read: ${o.verify.checklist_problem} (disclosed, does not cap)`] : []),
+      ...(clMode !== "off" && strs(o.verify?.changed_files).includes(".loki-checklist.json") ? ["checklist file changed by this change; the base commit's version was used (disclosed, does not cap)"] : [])];
+    if (clMode === "observe" && clFail.length && verdict0a !== "FAILED") observed.push({ rule: "LOKI_E10_CHECKLIST", would_label: "FAILED", detail: clFail.map((r) => `${r.id}: ${r.detail}`).join("; ") });
     // VERIFY-PLAN V3 (LOKI_E10_WALL=observe): what the observed Wall would have done to the label; an observe entry and a disclosure only
     const wObs = (o.verify?.wall_observe as { files?: { path: string; result: string }[] } | undefined)?.files ?? [];
     let wallObsLine: string | null = null;
@@ -653,6 +661,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     for (const id of strs(o.verify?.pre_red)) notProven.add(`pre red: ${id}`); // A-112: listed, never downgrades (not via verifyNotProven)
     if (typeof o.verify?.baseline_line === "string" && strs(o.verify?.pre_red).length) notProven.add(o.verify.baseline_line); // REPOMEM: the one-line pre-existing vs introduced split; listed only when a baseline failure was excused, never downgrades
     if (wallObsLine) notProven.add(`${wallObsLine} (disclosed, does not cap)`); // VERIFY-PLAN V3
+    for (const n of checklistNotes) notProven.add(n); // VERIFY-PLAN V10
     for (const n of lintOpenNotes) notProven.add(n); // LINT-OWN
     for (const n of strs(o.verify?.lint_untouched)) notProven.add(`lint red only in files the change did not touch (disclosed, not blocking): ${n}`); // LINT-UNTOUCHED: never silent
     for (const n of strs(o.verify?.not_excused)) notProven.add(n); // why a failing full-suite check was not excused as pre-existing; the check already blocks, this only names the rule

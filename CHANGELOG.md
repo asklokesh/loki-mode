@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - With `LOKI_E10_FLAKY_QUARANTINE=observe`, when a test the change did not touch fails and then passes, Loki runs it three times on the base commit. If it flips there too it is put on this repository's quarantine list (kept in Loki's per-repo cache, never by editing the test) and taken off after three verifies in a row where it passed on the first try; the receipt shows what the label would have been. `enforce` leaves a quarantined test out of the label and discloses it. Off by default.
 
+### A repository can teach Loki a check that fires on matching changes
+
+- A tracked `.loki-checklist.json` at the repository root lists checks that run only when a change matches their trigger (a path pattern, optionally an added-line pattern), each with the run that taught it. Loki reads the file from the base commit only, never from the change. In this release a failing item is reported on the receipt and does not change the label. Items that forbid an added line are checked by default; items that run a command run only with `LOKI_E10_CHECKLIST` set, and a command that also fails on the base commit is not counted against the change. `LOKI_E10_CHECKLIST=enforce` makes a failing item a failing check.
+
 ## v11.172.0 (2026-11-20)
 
 ### A low-risk run checks the full test suite before it can say VERIFIED

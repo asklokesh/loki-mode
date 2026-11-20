@@ -1101,6 +1101,64 @@ has "V8 Q2: three clean first-try passes remove an entry; a flaky run resets cle
 has "V8 Qc: only an untouched test check is a candidate (never the change's edited file, a task-named test, the Wall, holdout or a full suite)" "$QU" "Qc bun:untouched.test.ts end"
 has "V8 Q5: with the deadline inside the suite margin no base run is made and nothing can be quarantined; with time left it runs three times" "$QU" 'Q5 null 0 {"pass":3,"fail":0,"not_run":0}'
 
+# VERIFY-PLAN V10 CHECKLIST (LOKI_E10_CHECKLIST, observe by default). A tracked .loki-checklist.json read only from the base commit; an item fires when the diff
+# matches its trigger. K4 runs the engine on the stub with a base checklist whose forbid_added item fires on the multiply() line the done change adds.
+# Plants (each reverted): read the working-tree file instead of the base (K3 edit cell); fire on context lines (K1); an invalid regex matches everything (K3);
+# enforce writes no check (K4 enforce reads VERIFIED); observe changes the label (K4 observe); a cmd failure that also fails on base counted as fail (K5);
+# cmd items run with the knob unset (K5 cmdOn cell).
+k_prep() { # k_prep <repo>: a base checklist that forbids adding an exported multiply
+    printf '{"version": 1, "items": [{"id": "no-multiply", "trigger": {"paths": ["*.ts"]}, "check": {"forbid_added": "export function multiply"}, "why": "stub", "taught_by": "k4"}]}\n' > "$1/.loki-checklist.json"
+    git -C "$1" add .loki-checklist.json; git -C "$1" commit -q --amend -m base
+}
+k_facts() { python3 -I -c 'import json, sys
+r = json.load(open(sys.argv[1]))
+np = r.get("not_proven") or []
+e = [o["would_label"] for o in r.get("observe") or [] if o.get("rule") == "LOKI_E10_CHECKLIST"]
+line = [n for n in np if n.startswith("checklist item no-multiply failed:")]
+print(r["verdict"], "entry=" + (e[0] if e else "none"), ("line-observe" if line[0].endswith("(observe mode: disclosed, does not cap)") else "line-enforce") if line else "no-line", "checkfail" if any(c["name"] == "checklist" and c["result"] == "fail" for c in r["checks"]) else "nocheck")' "$RUNDIR/receipt.json" 2>&1; }
+E2E_PREP=k_prep run_engine done; k_obs="$(k_facts)"
+E2E_PREP=k_prep LOKI_E10_CHECKLIST=enforce run_engine done; k_enf="$(k_facts)"
+E2E_PREP=k_prep LOKI_E10_CHECKLIST=0 run_engine done; k_off="$(k_facts)"
+[ "$k_obs" = "VERIFIED entry=FAILED line-observe nocheck" ] && ok "V10 K4 observe (default): the label stays VERIFIED, the receipt says it would be FAILED and lists the item as a disclosed line ($k_obs)" || bad "V10 K4 observe gave: $k_obs"
+[ "$k_enf" = "FAILED entry=none line-enforce checkfail" ] && ok "V10 K4 enforce: a failing item is a failing check named checklist and the label is FAILED ($k_enf)" || bad "V10 K4 enforce gave: $k_enf"
+[ "$k_off" = "VERIFIED entry=none no-line nocheck" ] && ok "V10 K4 off: no item is read ($k_off)" || bad "V10 K4 off gave: $k_off"
+KG="$(mktemp -d "$T/k3.XXXXXX")"; git -C "$KG" init -q -b main; git -C "$KG" config user.name t; git -C "$KG" config user.email t@example.invalid
+printf '{"version": 1, "items": [{"id": "base-item", "trigger": {}, "check": {"forbid_added": "x"}, "why": "w", "taught_by": "t"}]}\n' > "$KG/.loki-checklist.json"; printf 'a\n' > "$KG/f.txt"
+git -C "$KG" add -A; git -C "$KG" commit -q -m base; KB="$(git -C "$KG" rev-parse HEAD)"
+printf '{"version": 1, "items": [{"id": "edited-item", "trigger": {}, "check": {"forbid_added": "x"}, "why": "w", "taught_by": "t"}]}\n' > "$KG/.loki-checklist.json"
+KN="$(mktemp -d "$T/k3n.XXXXXX")"; git -C "$KN" init -q -b main; git -C "$KN" config user.name t; git -C "$KN" config user.email t@example.invalid; printf 'a\n' > "$KN/f.txt"; git -C "$KN" add -A; git -C "$KN" commit -q -m base; KNB="$(git -C "$KN" rev-parse HEAD)"
+printf '{"version": 1, "items": []}\n' > "$KN/.loki-checklist.json"
+KJ="$(mktemp -d "$T/k3j.XXXXXX")"; git -C "$KJ" init -q -b main; git -C "$KJ" config user.name t; git -C "$KJ" config user.email t@example.invalid
+printf '{not json\n' > "$KJ/.loki-checklist.json"; git -C "$KJ" add -A; git -C "$KJ" commit -q -m bad; KJB="$(git -C "$KJ" rev-parse HEAD)"
+printf '{"version": 1, "items": [{"id": "r", "trigger": {"added": "("}, "check": {"forbid_added": "x"}, "why": "w", "taught_by": "t"}]}\n' > "$KJ/.loki-checklist.json"; git -C "$KJ" add -A; git -C "$KJ" commit -q -m badre; KJR="$(git -C "$KJ" rev-parse HEAD)"
+KU="$(cd "$ROOT/loki-ts" && bun -e '
+import { checklistCmdOn, firedItems, readChecklist, runChecklist } from "./src/features/checklist.ts";
+const [kg, kb, kn, knb, kj, kjb, kjr] = process.argv.slice(1);
+const it = (id: string, trigger: object, check: object) => ({ id, trigger, check, why: "w", taught_by: "t" }) as never;
+const added: Record<string, string[]> = { "src/a.ts": ["const x = 1;", "grep -q ok proof"], "lib/deep/b.ts": ["y"], "docs/c.md": ["z"] }, al = (f: string) => added[f] ?? [];
+const names = (xs: { id: string }[]) => xs.map((x) => x.id).join(",") || "none";
+console.log("K1", names(firedItems([it("glob-hit", { paths: ["src/*.ts"] }, {}), it("glob-miss", { paths: ["test/*.ts"] }, {}), it("deep", { paths: ["lib/**/*.ts"] }, {}), it("added-hit", { paths: ["src/*.ts"], added: "grep -q" }, {}), it("context-only", { paths: ["src/*.ts"], added: "never added" }, {}), it("any", {}, {})], Object.keys(added), al)), "end");
+const fa = it("no-grep-q", { paths: ["src/*.ts"] }, { forbid_added: "grep -q" }), no = async () => ({ ok: true, cut: false, missing: false, out: "" });
+const k2 = await runChecklist([fa], al, { cmdOn: false, changed: ["src/a.ts"], lineNo: (f, i) => [10, 11][i], run: no, runBase: async () => null });
+const k2b = await runChecklist([fa], (f) => (f === "src/a.ts" ? ["const x = 1;"] : []), { cmdOn: false, changed: ["src/a.ts"], run: no, runBase: async () => null });
+console.log("K2", k2[0].result, k2[0].detail.includes("src/a.ts:11"), k2b[0].result);
+console.log("K3", names(readChecklist(kg, kb).items), names(readChecklist(kn, knb).items), readChecklist(kn, knb).problem ?? "noproblem", names(readChecklist(kj, kjb).items), readChecklist(kj, kjb).problem ? "problem" : "noproblem", readChecklist(kj, kjr).problem ? "re-problem" : "re-ok", "end");
+const ci = it("cmd", {}, { cmd: "false" });
+let runs = 0, bases = 0; const r = (ok: boolean) => async () => { runs++; return { ok, cut: false, missing: false, out: "" }; }, b = (v: boolean | null) => async () => { bases++; return v === null ? null : { ok: v, cut: false, missing: false, out: "" }; };
+const c0 = await runChecklist([ci], al, { cmdOn: false, changed: [], run: r(false), runBase: b(true) }); const c0runs = runs;
+const c1 = await runChecklist([ci], al, { cmdOn: true, changed: [], run: r(false), runBase: b(true) });
+const c2 = await runChecklist([ci], al, { cmdOn: true, changed: [], run: r(false), runBase: b(false) });
+const c3 = await runChecklist([ci], al, { cmdOn: true, changed: [], run: r(false), runBase: b(null) });
+bases = 0; const c4 = await runChecklist([ci], al, { cmdOn: true, changed: [], run: r(true), runBase: b(true) });
+console.log("K5", c0[0].result, c0runs, c1[0].result, c2[0].result, c2[0].detail.includes("fails on the base commit too"), c3[0].result, c3[0].detail.startsWith("not compared"), c4[0].result, bases);
+console.log("K5c", checklistCmdOn({} as never), checklistCmdOn({ LOKI_E10_CHECKLIST: "observe" } as never), checklistCmdOn({ LOKI_E10_CHECKLIST: "0" } as never));
+' "$KG" "$KB" "$KN" "$KNB" "$KJ" "$KJB" "$KJR" 2>&1)"
+has "V10 K1 firedItems: a path glob hit and miss, ** across directories, an added-line regex on added lines only (a context-only pattern never fires), and no paths fires on any file" "$KU" "K1 glob-hit,deep,added-hit,any end"
+has "V10 K2 forbid_added: an added matching line fails naming file:line; the same text on an unchanged line passes" "$KU" "K2 fail true pass"
+has "V10 K3 readChecklist: the base commit's file is read and a working-tree edit ignored; a file only in the change reads as none; bad JSON and a bad regex are problems, never a throw" "$KU" "K3 base-item none noproblem none problem re-problem end"
+has "V10 K5 cmd: not run without the knob (never run); fails on head and passes on base fails; fails on both is not run; no base tree is not run; passes on head never runs base" "$KU" "K5 not_run 0 fail not_run true not_run true pass 0"
+has "V10 K5 checklistCmdOn: unset false, observe true, 0 false" "$KU" "K5c false true false"
+
 att_ev() { python3 -I -c '
 import json, sys
 for l in open(sys.argv[1]):

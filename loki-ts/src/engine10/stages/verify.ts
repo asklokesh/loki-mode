@@ -16,7 +16,7 @@ import { LINE_FALLBACK_COUNT, lineVerdict, UNMEASURED_REASON, failureLines, venv
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { defaultBudgetsOn, cmdSilenceS, type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { readReport, reportArgs, reportSource, structuredResultsMode } from "../../util/test_report.ts"; import { pruneQuarantine, readQuarantine, writeQuarantine } from "../../util/failure_memory.ts"; import { repoCacheDir, repoKey } from "../cache.ts"; import { ruleMode } from "../closure.ts"; import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, linkWorkspaceMembers, envChangedSince, depsGoneSince, manifestBlocksBaseLink, zeroGate, zeroOnBase, type ZeroGate, guardEnv, harnessCmdBegin } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, changedForLines, baseRedIds, headRerunOn, passedOnRerun, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, holdsPartial, exogenousHeldLine, couldNotRun, couldNotRunIfProved, missingTool, unrunnableCheckOn, unrunnableSuites, exogenousRedOn, exogenousState, type ExogenousAttribution, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts"; import { lokiEnvNotes } from "../../util/check_result.ts"; import { lokiVenvNotes } from "../../project_model/install.ts";
+import { readReport, reportArgs, reportSource, structuredResultsMode } from "../../util/test_report.ts"; import { pruneQuarantine, readQuarantine, writeQuarantine } from "../../util/failure_memory.ts"; import { checklistCmdOn, checklistMode, firedItems, readChecklist, runChecklist, type ChecklistResult } from "../../features/checklist.ts"; import { repoCacheDir, repoKey } from "../cache.ts"; import { ruleMode } from "../closure.ts"; import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, linkWorkspaceMembers, envChangedSince, depsGoneSince, manifestBlocksBaseLink, zeroGate, zeroOnBase, type ZeroGate, guardEnv, harnessCmdBegin } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, changedForLines, baseRedIds, headRerunOn, passedOnRerun, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, holdsPartial, exogenousHeldLine, couldNotRun, couldNotRunIfProved, missingTool, unrunnableCheckOn, unrunnableSuites, exogenousRedOn, exogenousState, type ExogenousAttribution, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts"; import { lokiEnvNotes } from "../../util/check_result.ts"; import { lokiVenvNotes } from "../../project_model/install.ts";
 export const timeoutCarryOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TIMEOUT_CARRY"] ?? "").trim());
 export const TIMEOUT_CARRY_NOTE = "carried from an earlier verify of this run, not rerun (untouched file)";
 /** TIMEOUT-WAIT: after a check's timeout (or abort) fires, a process still alive this long later is SIGKILLed, so a test that ignores SIGTERM costs its limit, not minutes more. */
@@ -1021,6 +1021,21 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
         });
       }
     }
+    // VERIFY-PLAN V10 (LOKI_E10_CHECKLIST, observe by default): the base commit's .loki-checklist.json, items fired by this diff. forbid_added items read the
+    // diff only; cmd items run only with the knob set explicitly, and a failing one is run once in the base tree under the NO-ID block's guards.
+    let cl: ChecklistResult[] = [], clProblem: string | undefined;
+    if (checklistMode() !== "off" && complete && !signal.aborted) {
+      const rc = readChecklist(ctx.repoDir, ctx.baseSha); clProblem = rc.problem;
+      const added = new Map<string, { lines: string[]; nos: number[] }>(), addedOf = (f: string): { lines: string[]; nos: number[] } => {
+        let a = added.get(f);
+        if (!a) { a = { lines: [], nos: [] }; let n = 0; try { for (const l of safeGit(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", ctx.baseSha, "--", f]).split("\n")) { const h = /^@@ -\S+ \+(\d+)/.exec(l); if (h) { n = Number(h[1]); continue; } if (l.startsWith("+") && !l.startsWith("+++")) { a.lines.push(l.slice(1)); a.nos.push(n++); } } } catch { /* no diff: no added lines */ } added.set(f, a); }
+        return a;
+      };
+      const fired = firedItems(rc.items, changed, (f) => addedOf(f).lines);
+      if (fired.length) cl = await runChecklist(fired, (f) => addedOf(f).lines, { cmdOn: checklistCmdOn(), changed, lineNo: (f, i) => addedOf(f).nos[i], run: (cmd) => runOnce("bash", ["-c", cmd], ctx.repoDir, signal, {}),
+        runBase: async (cmd) => { if (signal.aborted || (deadline !== undefined && Date.now() > deadline - SUITE_MARGIN_MS)) return null; const dir = bt.get(changed, zg0); if (!dir) return null; bt.link(dir); return runOnce("bash", ["-c", cmd], dir, signal, {}); } });
+      if (checklistMode() === "enforce") for (const r of cl.filter((x) => x.result === "fail")) { const k: VerifyCheck = { name: "checklist", cmd: ".loki-checklist.json", result: "fail", duration_s: 0, reason: `${r.id}: ${r.detail}` }; checks.push(k); }
+    }
     const notExcused: string[] = []; const fullSeen: DeepCheck[] = []; const fullNotProven = new Set<string>(); // no-runner entries are dropped at not_proven: nothing ran, and the risk record keeps the full test command deferred
     const fullErr = new Map<string, Record<string, string[]>>(); // fl24: each full suite's head error lines, for baseRedById below
     const ranDeeper: string[] = []; // selected deeper checks verify executed (pass or fail); markExecuted rebuilds the deferred list from all of them
@@ -1155,6 +1170,7 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
       ...(noIdCompared.length ? { no_id_compared: noIdCompared } : {}), // VERIFY-PLAN V2
       ...(wallObs ? { wall_observe: wallObs } : {}), // VERIFY-PLAN V3: the observed Wall's results, never a check
       ...(quarantined.length ? { flaky_quarantine: quarantined, flaky_base: flakyBase } : {}), // VERIFY-PLAN V8
+      ...(cl.length || clProblem ? { checklist: cl, ...(clProblem ? { checklist_problem: clProblem } : {}) } : {}), // VERIFY-PLAN V10
     } };
   }
 }
