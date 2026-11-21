@@ -628,7 +628,7 @@ export function splitDeclaredAdvisories(notes: string[], c: DeclaredAdvisoryCtx)
 // a branch is deleted only once its history is safe (pushed, reachable from another branch, remote or tag, or saved as a verified
 // git bundle under .loki/runs/<id>/). LOKI_KEEP_RUN_BRANCH=1 turns all of it off (the --attempts and issues-run worktree flows set it:
 // they manage their own branches). Never touches a non-loki branch, a branch checked out in any worktree, a live run's branch, or a run `loki start` can still resume.
-const E10_BRANCH_RE = /^loki\/(e10-[A-Za-z0-9-]+)$/;
+export const E10_BRANCH_RE = /^loki\/(e10-[A-Za-z0-9-]+)$/;
 const RUN_TMP_WORKTREE_RE = /^(?:e10-base-|e10-loadown-|loki-mutproof-)/; // verify, load-owner and mutation-proof base worktrees (removed in their own finally; a SIGKILL leaks them)
 const NOT_ELSEWHERE = ["--not", "--remotes", "--tags", "--exclude=loki/*", "--branches"]; // commits only loki/ branches hold
 const tipOf = (repoDir: string, ref: string): string | null => {

@@ -14,6 +14,16 @@
 #   detached-outcome  do not call on_exit in _reap_child
 #   jobs-source       drop the AUTOPAUSE_EXEMPT check
 #   review            remove the TRUSTED_ASSOCIATIONS check; make _remove_review_clone a no-op
+#   R1h address-optin drop the _address_post_on() check in _address_on_clone (the opt-in-off cell runs address)
+#   R1i reply-skip    drop the in_reply_to_id skip in handle_pull_request_review_comment_event (the reply cell runs address)
+#   R1j live-release  drop release() from done() in _address_on_clone (the live-mark-released cell and every later review fail)
+#   R1k loki-branch   drop the LOKI_RUN_BRANCH_RE check (the feature-x review runs address)
+#   R1l sync-loop     drop the loki/ head ref skip in handle_pull_request_event (a synchronize on a Loki branch runs start)
+#   R1m empty-review  drop the empty commented review skip (the empty commented review cell runs address)
+#   R1ad live-skip    drop the `pr_ref in _ADDRESS_LIVE` check in _address_on_clone (the already-running cell runs address)
+#   R1ae keep-record  make _keep_address_record return True without copying (the keep-record cells fail)
+#   R1af keep-clone   remove the clone in done() whatever the exit code (the failed-run keep cell fails)
+#   R1ag root-release move root.mkdir back above its try in _address_on_clone (the unusable review root cell raises, the mark stays)
 #   cli               make --resume leave paused true
 #   http-e2e          route workflow_run to handle_issues_event in TRIGGERS
 
@@ -26,7 +36,7 @@ SRV="$ROOT/autonomy/trigger-server.py"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
-# Fixture: bare origin with main and feature-x, a clone, and a stub loki.
+# Fixture: bare origin with main, feature-x and the Loki run branch loki/e10-r1 (same commit), a clone, and a stub loki.
 mkdir -p "$T/bin" "$T/seed"
 git init -q -b main "$T/seed"
 printf 'one\n' > "$T/seed/a.txt"
@@ -34,6 +44,7 @@ git -C "$T/seed" add a.txt && git -C "$T/seed" commit -q -m init
 git -C "$T/seed" checkout -q -b feature-x
 printf 'two\n' > "$T/seed/b.txt"
 git -C "$T/seed" add b.txt && git -C "$T/seed" commit -q -m feat
+git -C "$T/seed" branch loki/e10-r1
 git clone -q --bare "$T/seed" "$T/origin.git"
 git clone -q "$T/origin.git" "$T/repo"
 FX_SHA="$(git -C "$T/origin.git" rev-parse feature-x)"
@@ -41,6 +52,14 @@ MAIN_SHA="$(git -C "$T/origin.git" rev-parse main)"
 cat > "$T/bin/loki" <<'EOF'
 #!/usr/bin/env bash
 printf '%s|%s|%s\n' "$PWD" "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" "$*" >> "$STUB_DIR/calls.log"
+if [ "${1:-}" = "address" ] && [ -f "$STUB_DIR/address_write" ]; then
+    # keep-record cells: what a real address run leaves in its clone (a run dir, the replies, a run branch with a commit)
+    id="$(cat "$STUB_DIR/address_write")" b="$(git rev-parse --abbrev-ref HEAD)"
+    mkdir -p ".loki/runs/$id" ".loki/address/acme-calc-5"
+    printf '{"run_id":"%s"}\n' "$id" > ".loki/runs/$id/receipt.json"
+    printf '{"entries":[]}\n' > ".loki/address/acme-calc-5/replies.json"
+    git checkout -q -b "loki/$id" && printf 'fix\n' > fix.txt && git add fix.txt && git -c user.name=t -c user.email=t@example.com commit -q -m fix && git checkout -q "$b"
+fi
 sleep "${STUB_SLEEP:-0}"
 exit "$(cat "$STUB_DIR/rc" 2>/dev/null || echo 0)"
 EOF
@@ -70,7 +89,7 @@ def run_calls():
     out = []
     for l in calls.read_text().splitlines():
         parts = l.split("|", 2)
-        if len(parts) == 3 and parts[2].startswith(("start ", "verify-pr ")):
+        if len(parts) == 3 and parts[2].startswith(("start ", "verify-pr ", "address ")):
             out.append(l)
     return out
 
@@ -181,14 +200,13 @@ mod.HEALTH.set_paused("slack", True)
 s, st = mod.dispatch_event(mod.JOB_EVENT, dict(job))
 check("jobs-source: a paused source fails the job with a terminal status", st == mod.JOB_STATUS_FAILED)
 
-# review
-def review(**kw):
-    p = {"action": "submitted", "repository": {"full_name": "acme/calc"},
-         "review": {"state": "changes_requested", "author_association": "MEMBER", "body": "please fix",
-                    "user": {"login": "rev", "type": "User"}},
-         "pull_request": {"number": 5, "state": "open",
-                          "head": {"ref": "feature-x", "sha": os.environ["FX_SHA"],
-                                   "repo": {"full_name": "acme/calc"}}}}
+# review (R1 review loop): a trusted review or new inline comment on a Loki PR runs `loki address o/r#N --post` on a fresh clone,
+# only with LOKI_TRIGGER_ADDRESS_POST=1 in the server environment
+def pr_payload(p, kw):
+    p.update({"repository": {"full_name": "acme/calc"},
+              "pull_request": {"number": 5, "state": "open",
+                               "head": {"ref": "loki/e10-r1", "sha": os.environ["FX_SHA"],
+                                        "repo": {"full_name": "acme/calc"}}}})
     for k, v in kw.items():
         cur = p
         parts = k.split("__")
@@ -197,28 +215,115 @@ def review(**kw):
         cur[parts[-1]] = v
     return p
 
+def review(**kw):
+    return pr_payload({"action": "submitted",
+                       "review": {"state": "changes_requested", "author_association": "MEMBER", "body": "please fix",
+                                  "user": {"login": "rev", "type": "User"}}}, kw)
+
+def review_comment(**kw):
+    return pr_payload({"action": "created",
+                       "comment": {"id": 9, "author_association": "MEMBER", "body": "rename x", "path": "b.txt",
+                                   "user": {"login": "rev", "type": "User"}}}, kw)
+
+os.environ["LOKI_TRIGGER_ADDRESS_POST"] = "1"
 reset(rc=0)
 s, st = mod.dispatch_event("pull_request_review", review())
 rc = run_calls()
 check("review: fired", st == "fired")
-check("review: one verify-pr respond call", len(rc) == 1 and rc[0].endswith("|verify-pr respond acme/calc#5"))
+check("review: one address call with --post", len(rc) == 1 and rc[0].endswith("|address acme/calc#5 --post"))
 cwd_part, branch_part = (rc[0].split("|")[0], rc[0].split("|")[1]) if rc else ("", "")
-check("review: ran in a clone under .loki/triggers/review on feature-x",
-      "/.loki/triggers/review/pr-5-" in cwd_part and branch_part == "feature-x")
+check("review: ran in a clone under .loki/triggers/review on loki/e10-r1",
+      "/.loki/triggers/review/pr-5-" in cwd_part and branch_part == "loki/e10-r1")
 check("review: clone removed afterwards", not os.path.exists(cwd_part))
+check("review: the per-PR live mark is released when the run ends", "acme/calc#5" not in mod._ADDRESS_LIVE)
+reset(rc=0)
+s, st = mod.dispatch_event("pull_request_review", review(review__state="commented"))
+check("review: a commented review fires too", st == "fired" and len(run_calls()) == 1)
+reset(rc=0)
+s, st = mod.dispatch_event("pull_request_review", review(review__state="commented", review__body=""))
+check("review: an empty commented review (how a lone inline comment or a Loki reply can arrive) is not run",
+      st.startswith("skipped") and len(run_calls()) == 0)
+reset(rc=0)
+s, st = mod.dispatch_event("pull_request_review_comment", review_comment())
+rc = run_calls()
+check("review comment: a new trusted inline comment fires the same address call",
+      st == "fired" and len(rc) == 1 and rc[0].endswith("|address acme/calc#5 --post"))
 for desc, kw in (("author NONE", {"review__author_association": "NONE"}),
                  ("state approved", {"review__state": "approved"}),
                  ("fork head", {"pull_request__head__repo": {"full_name": "evil/calc"}}),
                  ("moved head sha", {"pull_request__head__sha": "d" * 40}),
                  ("bot reviewer", {"review__user": {"login": "x[bot]", "type": "Bot"}}),
                  ("closed PR", {"pull_request__state": "closed"}),
-                 ("bad ref", {"pull_request__head__ref": "../x"})):
+                 ("bad ref", {"pull_request__head__ref": "../x"}),
+                 ("not a Loki branch", {"pull_request__head__ref": "feature-x"})):
     reset(rc=0)
     s, st = mod.dispatch_event("pull_request_review", review(**kw))
     check("review: %s is not run" % desc, st.startswith(("skipped", "rejected")) and len(run_calls()) == 0)
+for desc, kw in (("a reply in a thread", {"comment__in_reply_to_id": 3}),
+                 ("a Loki reply", {"comment__body": "Addressed in abc.\n<!-- loki-respond -->"}),
+                 ("a bot comment", {"comment__user": {"login": "x[bot]", "type": "Bot"}}),
+                 ("an edited comment", {"action": "edited"})):
+    reset(rc=0)
+    s, st = mod.dispatch_event("pull_request_review_comment", review_comment(**kw))
+    check("review comment: %s is not run" % desc, st.startswith("skipped") and len(run_calls()) == 0)
+reset(rc=0)
+mod._ADDRESS_LIVE.add("acme/calc#5")
+s, st = mod.dispatch_event("pull_request_review", review())
+check("review: a second event while an address runs for the PR is skipped",
+      "already running" in str(st) and len(run_calls()) == 0)
+mod._ADDRESS_LIVE.discard("acme/calc#5")
+os.environ.pop("LOKI_TRIGGER_ADDRESS_POST", None)
+reset(rc=0)
+s, st = mod.dispatch_event("pull_request_review", review())
+check("review: without LOKI_TRIGGER_ADDRESS_POST=1 nothing runs (the loop pushes and replies only on the server's opt-in)",
+      "LOKI_TRIGGER_ADDRESS_POST" in str(st) and len(run_calls()) == 0)
+os.environ["LOKI_TRIGGER_ADDRESS_POST"] = "1"
+reset(rc=0)
+sync = {"action": "synchronize", "repository": {"full_name": "acme/calc"},
+        "pull_request": {"number": 5, "head": {"ref": "loki/e10-r1", "sha": os.environ["FX_SHA"]}}}
+s, st = mod.dispatch_event("pull_request", sync)
+check("synchronize: a push to a Loki branch (the review loop's own push) starts no run", st.startswith("skipped") and len(run_calls()) == 0)
+reset(rc=0)
+sync["pull_request"]["head"]["ref"] = "feature-x"
+s, st = mod.dispatch_event("pull_request", sync)
+check("synchronize: a push to any other PR branch still runs start", st == "fired" and len(run_calls()) == 1)
+# keep-record (B2): what only the clone holds (receipts the replies name, the replies, unpushed commits) outlives the clone
+(T / "address_write").write_text("e10-k1\n")
+reset(rc=0)
+s, st = mod.dispatch_event("pull_request_review", review())
+rc = run_calls()
+cwd_part = rc[0].split("|")[0] if rc else ""
+kept = pathlib.Path(".loki/triggers/address") / os.path.basename(cwd_part) if cwd_part else T / "none"
+check("keep-record: the run's receipt is kept under .loki/triggers/address/<clone>/runs/<run> and then the clone is removed",
+      st == "fired" and (kept / "runs/e10-k1/receipt.json").is_file() and not os.path.exists(cwd_part))
+check("keep-record: the run branch's commits are bundled in its kept run dir", (kept / "runs/e10-k1/branch.bundle").is_file())
+check("keep-record: the address replies are kept beside them", (kept / "address/acme-calc-5/replies.json").is_file())
+check("keep-record: nothing is copied into the server checkout's own .loki/runs", not pathlib.Path(".loki/runs/e10-k1").exists())
+(T / "address_write").write_text("e10-k2\n")
+reset(rc=1)
+s, st = mod.dispatch_event("pull_request_review", review())
+rc = run_calls()
+cwd_part = rc[0].split("|")[0] if rc else ""
+check("keep-record: a failed address run keeps its whole clone (and its record)",
+      cwd_part != "" and os.path.isdir(cwd_part) and "acme/calc#5" not in mod._ADDRESS_LIVE
+      and (pathlib.Path(".loki/triggers/address") / os.path.basename(cwd_part) / "runs/e10-k2/receipt.json").is_file())
+(T / "address_write").unlink()
+# review root (N5): a review root that cannot be made is an error that still releases the per-PR live mark
+blocker = T / "not-a-dir"
+blocker.write_text("x\n")
+orig_root = mod._review_root
+mod._review_root = lambda: blocker / "review"
+reset(rc=0)
+try:
+    s, st = mod.dispatch_event("pull_request_review", review())
+except Exception as e:  # the plant raises here
+    st = "raised %s" % e
+mod._review_root = orig_root
+check("review root: an unusable review root is an error and releases the per-PR live mark",
+      st == "error" and "acme/calc#5" not in mod._ADDRESS_LIVE and len(run_calls()) == 0)
 reset(rc=1, pause_after=1)
 mod.dispatch_event("pull_request_review", review())
-check("review: a failed respond run pauses the review source", hj().get("review", {}).get("paused") is True)
+check("review: a failed address run pauses the review source", hj().get("review", {}).get("paused") is True)
 PYEOF
 
 out="$(cd "$T/repo" && SRV="$SRV" FX_SHA="$FX_SHA" python3 -I "$T/driver.py" 2>&1)"
@@ -295,5 +400,11 @@ has "http: /status has triggers" "$status_json" '"triggers"'
 case "$status_json" in *enabled_events*) bad "http: /status still has enabled_events" ;; *) ok "http: /status has no enabled_events" ;; esac
 kill "$SRV_PID" 2>/dev/null
 trap _min_cleanup EXIT
+
+# R1 D1: every git call in a review clone goes through _clone_git (fsmonitor, hooks and ssh command off), because a fix run had exec in that
+# clone and the trigger server holds the credentials. Plant: write one clone call as plain ["git", "-C", str(clone), ...] and this cell reads 1.
+raw="$(grep -c '"git", "-C", str(clone)' "$ROOT/autonomy/trigger-server.py")"
+hard="$(grep -c 'core.fsmonitor=' "$ROOT/autonomy/trigger-server.py")"
+[ "$raw" = 0 ] && [ "$hard" -ge 1 ] && ok "review clone: every git call is hardened (fsmonitor, hooks, ssh command off)" || bad "review clone: $raw unhardened git call(s), hardening lines $hard"
 
 finish

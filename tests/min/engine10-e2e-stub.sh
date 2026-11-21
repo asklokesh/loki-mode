@@ -329,6 +329,153 @@ epv() { python3 -I -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.ar
 [ "$(epv tri)" = "false,true,null" ] && ok "EMPTY-PUSH diffAgainstBase: unchanged, changed, and unknown for a ref git cannot read" || bad "EMPTY-PUSH diffAgainstBase: got $(epv tri) ($EP)"
 grep -q 'const ch = diffAgainstBase(opts.repoDir, base, "HEAD", workerEnv);' "$ROOT/loki-ts/src/engine10/supervisor.ts" && grep -q 'hasDiff = ch !== false;' "$ROOT/loki-ts/src/engine10/supervisor.ts" && ! grep -q 'any failure counts as a diff' "$ROOT/loki-ts/src/engine10/supervisor.ts" && ok "EMPTY-PUSH wiring: the supervisor's P1 gate uses the tri-state helper" || bad "EMPTY-PUSH wiring: the supervisor's P1 gate does not use diffAgainstBase"
 
+# R1 PR review loop (`loki address`, util/pr_lessons.ts respondToReview): a fake gh (one JSON answer per endpoint), a fake fixer that commits
+# on its own loki/e10-fixN branch and writes that run's receipt, an injected receipt check, an injected push. No network, no model.
+# Cells: A1 a non-Loki head branch refuses before any fix; A2 no receipt comment refuses; A3 a receipt comment from someone other than the PR
+# author refuses; A4 a comment from a read-only author is skipped (denied), the write author's thread and review summary are fixed and the
+# branch fast-forwards to the receipt's head commit; A5 the addressed reply names the sha, the run, the receipt sha and the marker, the review
+# reply carries the review marker; A6 a receipt measured from another commit is held and the branch does not move; A7 an intact signed
+# receipt whose own verdict is PARTIAL is held (verifyReceipt VERIFIED is integrity only), and the held reply names .loki/runs/<run>, not a
+# branch; A8 without --post nothing is pushed or posted and replies.json is written; A9 with --post one push, one reply per item, a held
+# reply carries the held marker at the pushed tip and goes to the right endpoint; A10 a rerun without --post on the addressed checkout says
+# how to publish; A11 --post on it publishes the saved result with no new fix run; A12 a held reply at the current PR head settles its item
+# (no new run), one at an older head does not. One cell per accept guard, each built so only that guard can hold it: A13 a receipt of
+# another run; A14 a receipt verifyReceipt reads UNSIGNED; A15 a run whose own result line is not VERIFIED; A16 a receipt that is not the
+# one the run sealed; A17 a receipt with push_refused; A18 a head commit that is not on the run's branch; A19 a commit that changes nothing.
+# Post guards: A20 the PR head moved after proof; A21 origin changed during the fix; A22 defaultRespondPush hands LOKI_PR_FORK=0 and the
+# pinned origin to the push script even when the caller set LOKI_PR_FORK=1, and a "created" answer throws. Stops (B3): A23 a fix run that
+# leaves the tree dirty holds its item and stops, the accepted item before it is saved and --post still publishes it; A24 a fix run that
+# moves the PR branch holds its item, and --post refuses to push a tip no receipt accepted. A25 a reply POST that fails after the push:
+# the rerun posts only the reply that did not go out, with no new run and no push.
+# Plants: R1a pr_lessons.ts respondToReview drop the lokiRunOfBranch refusal (A1 red); R1b hasLokiReceipt drop the PR-author test (A3 red);
+# R1c canWrite return true when the permission is unreadable or read (A4 red); R1d acceptAddressRun drop the base_sha === pre test (A6 red);
+# R1e respondToReview push when post is false (A8 red); R1f respondToReview drop the saved-result path (A11 red); R1g openReviewComments
+# drop the heldMark test from settles (A12 red: the item held at this head runs again); R1n acceptAddressRun drop the receipt verdict
+# check (A7 red); R1o drop the receipt run_id check (A13 red); R1p drop the verifyReceipt VERIFIED check (A14 red); R1q drop the outcome
+# check (A15 red); R1r drop the sealed-sha check (A16 red); R1s drop the push_refused check (A17 red); R1t drop the merge-base ancestor
+# check (A18 red); R1u drop the diffAgainstBase no-change check (A19 red); R1v respondToReview drop the head-moved-after-proof check (A20
+# red); R1w drop the origin re-read check (A21 red); R1x defaultRespondPush drop LOKI_PR_FORK: "0" (A22 red); R1y make the dirty-tree stop
+# throw again (A23 red); R1z drop the tip === landed push guard (A24 red); R1aa drop `if (e.posted) continue` (A25 red: both replies post
+# again); R1ab held replies marked at proofHead instead of landed (A9 red); R1ac renderAddressReply names loki/<run> again (A7 red).
+cat > "$T/address.ts" <<'TS'
+const SRC = process.env.AD_SRC!, root = process.argv[2]!;
+const m = await import(`${SRC}/util/pr_lessons.ts`);
+const { execFileSync } = await import("node:child_process"), { mkdirSync, writeFileSync, existsSync, readFileSync } = await import("node:fs");
+const g = (d: string, a: string[]) => execFileSync("git", ["-C", d, ...a], { encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } }).trim();
+const mkrepo = (name: string): { dir: string; h0: string } => {
+  const dir = `${root}/${name}`; mkdirSync(dir, { recursive: true }); g(dir, ["init", "-q", "-b", "main"]); writeFileSync(`${dir}/a.ts`, "export const a = 1;\n"); g(dir, ["add", "a.ts"]); g(dir, ["commit", "-q", "-m", "base"]);
+  g(dir, ["checkout", "-q", "-b", "loki/e10-orig"]); writeFileSync(`${dir}/b.ts`, "export const x = 2;\n"); g(dir, ["add", "b.ts"]); g(dir, ["commit", "-q", "-m", "run"]); g(dir, ["remote", "add", "origin", "https://github.com/acme/calc.git"]);
+  return { dir, h0: g(dir, ["rev-parse", "HEAD"]) };
+};
+type Mode = "ok" | "wrongbase" | "partial" | "nullreview" | "otherrun" | "unsigned" | "outcome" | "sha" | "refused" | "offbranch" | "empty" | "dirty2" | "moved2";
+type O = { ref?: string; receiptBy?: string | null; mode?: Mode; heldAt?: (h0: string) => string; prHead?: () => string; headMovesAfter?: boolean; failPost?: number; originFlip?: boolean };
+async function scenario(name: string, o: O, post: boolean, repo?: { dir: string; h0: string }) {
+  const r = repo ?? mkrepo(name), calls: string[] = [], posts: string[] = [], pushes: string[] = []; let fixes = 0, reads = 0, nPost = 0, origins = 0;
+  const gh = async (args: string[]) => {
+    const a = args.join(" "); calls.push(a);
+    const J = (v: unknown) => ({ code: 0, stdout: JSON.stringify(v), stderr: "" });
+    if (args.includes("POST")) { nPost++; if (o.failPost === nPost) return { code: 1, stdout: "", stderr: "HTTP 502" }; posts.push(a); return J({}); }
+    if (a === "api repos/acme/calc/pulls/5") { reads++; return J({ head: { ref: o.ref ?? "loki/e10-orig", sha: o.headMovesAfter && reads > 1 ? "e".repeat(40) : o.prHead ? o.prHead() : r.h0 }, state: "open", user: { login: "lokibot" } }); }
+    if (a === "api --paginate repos/acme/calc/issues/5/comments") return J(o.receiptBy === null ? [] : [{ user: { login: o.receiptBy ?? "lokibot" }, body: "<!-- loki-receipt -->\n## Loki receipt\n- Verify: `loki verify e10-orig`\n" }]);
+    if (a === "api --paginate repos/acme/calc/pulls/5/comments") return J([...(o.heldAt ? [{ id: 98, in_reply_to_id: 11, body: `Not changed yet.\n<!-- loki-respond-held:${o.heldAt(r.h0)} -->`, user: { login: "lokibot" } }] : []), { id: 11, body: "rename x to y", path: "b.ts", line: 1, user: { login: "alice" }, diff_hunk: "@@ -0,0 +1 @@\n+export const x = 2;", html_url: "https://github.com/acme/calc/pull/5#discussion_r11" }, { id: 12, body: "drive-by", path: "b.ts", line: 1, user: { login: "mallory" } }]);
+    if (a.startsWith("api graphql")) return J({ data: { repository: { pullRequest: { reviewThreads: { nodes: [] } } } } });
+    if (a === "api --paginate repos/acme/calc/pulls/5/reviews") return J([{ id: 21, state: "CHANGES_REQUESTED", body: "also add a note", user: { login: "alice" }, html_url: "https://github.com/acme/calc/pull/5#pullrequestreview-21" }]);
+    if (a === "api repos/acme/calc/collaborators/alice/permission") return J({ permission: "write" });
+    if (a === "api repos/acme/calc/collaborators/mallory/permission") return J({ permission: "read" });
+    return { code: 1, stdout: "", stderr: `unexpected: ${a}` };
+  };
+  const fix = async (c: { kind: string }, headRef: string) => {
+    fixes++; if (o.mode === "nullreview" && c.kind === "review") return null;
+    const id = `e10-fix${fixes}`, pre = g(r.dir, ["rev-parse", "HEAD"]), second = c.kind === "review", rs = `${"a".repeat(63)}${fixes}`;
+    const moved = o.mode === "moved2" && second, dirty = o.mode === "dirty2" && second; // moved2: commits on the PR branch itself; dirty2: leaves an untracked file on its run branch
+    if (!moved) g(r.dir, ["checkout", "-q", "-b", o.mode === "offbranch" ? `loki/side${fixes}` : `loki/${id}`]);
+    if (o.mode === "empty") g(r.dir, ["commit", "-q", "--allow-empty", "-m", `fix ${fixes}`]);
+    else { writeFileSync(`${r.dir}/f${fixes}.ts`, `export const f${fixes} = ${fixes};\n`); g(r.dir, ["add", `f${fixes}.ts`]); g(r.dir, ["commit", "-q", "-m", `fix ${fixes}`]); }
+    const head = g(r.dir, ["rev-parse", "HEAD"]);
+    if (dirty) writeFileSync(`${r.dir}/junk.txt`, "left behind\n"); else if (!moved) g(r.dir, ["checkout", "-q", headRef]);
+    mkdirSync(`${r.dir}/.loki/runs/${id}`, { recursive: true });
+    writeFileSync(`${r.dir}/.loki/runs/${id}/receipt.json`, JSON.stringify({ schema: "loki.v10.receipt/1", run_id: o.mode === "otherrun" ? "e10-other" : id, base_sha: o.mode === "wrongbase" ? "0".repeat(40) : pre, head_sha: head, receipt_sha256: rs, verdict: o.mode === "partial" ? "PARTIAL" : "VERIFIED", ...(o.mode === "refused" ? { push_refused: ["a secret in the diff"] } : {}) }));
+    return { runId: id, outcome: o.mode === "outcome" ? "PARTIAL" : "VERIFIED", receiptSha256: o.mode === "sha" ? "b".repeat(64) : rs };
+  };
+  const verify = async (p: string) => ({ verdict: o.mode === "unsigned" ? "UNSIGNED" : "VERIFIED", reasons: [], receiptSha256: (JSON.parse(readFileSync(p, "utf8")) as { receipt_sha256: string }).receipt_sha256 });
+  let res: any = null, err = "";
+  const originUrl = () => (o.originFlip && ++origins > 1 ? "https://github.com/evil/calc.git" : "https://github.com/acme/calc.git");
+  try { res = await m.respondToReview(r.dir, "acme/calc#5", { gh, fix, verify, post, push: (h: string) => { pushes.push(h); }, originUrl }); } catch (e) { err = String((e as Error).message); }
+  const file = `${r.dir}/.loki/address/acme-calc-5/replies.json`, state = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
+  return { r, res, err, fixes, posts, pushes, tip: g(r.dir, ["rev-parse", "HEAD"]), saved: state !== null, state };
+}
+const out: Record<string, string> = {};
+{ const s = await scenario("a1", { ref: "feature-x" }, false); out.a1 = [/not a Loki pull request/.test(s.err), s.fixes].join(","); }
+{ const s = await scenario("a2", { receiptBy: null }, false); out.a2 = [/carries no Loki receipt/.test(s.err), s.fixes].join(","); }
+{ const s = await scenario("a3", { receiptBy: "mallory" }, false); out.a3 = [/carries no Loki receipt/.test(s.err), s.fixes].join(","); }
+const a4 = await scenario("a4", { mode: "ok" }, false);
+{ const e = a4.res?.entries ?? []; out.a4 = [a4.err, a4.res?.fixed, a4.res?.denied, a4.fixes, e.map((x: any) => `${x.kind}:${x.id}:${x.status}`).join("+"), a4.tip === e[1]?.sha].join(",");
+  const t = e[0]?.reply ?? "", v = e[1]?.reply ?? "";
+  out.a5 = [t.includes(`Addressed in ${String(e[0]?.sha).slice(0, 12)}`), t.includes("Loki run e10-fix1"), t.includes(`receipt sha256:${"a".repeat(63)}1`), t.includes("<!-- loki-respond -->"), v.includes("<!-- loki-respond-review:21 -->"), v.startsWith("Re: https://github.com/acme/calc/pull/5#pullrequestreview-21")].join(",");
+  out.a8 = [a4.pushes.length, a4.posts.length, a4.saved, a4.res?.posted].join(","); }
+{ const s = await scenario("a6", { mode: "wrongbase" }, false); out.a6 = [s.res?.fixed, s.res?.held, /measures from 000000000000/.test(s.res?.entries?.[0]?.reason ?? ""), s.tip === s.r.h0].join(","); }
+const held = async (name: string, mode: Mode, re: RegExp, extra?: (s: any) => unknown) => { const s = await scenario(name, { mode }, false); return [s.res?.fixed, s.res?.held, re.test(s.res?.entries?.[0]?.reason ?? ""), s.tip === s.r.h0, ...(extra ? [extra(s)] : [])].join(","); };
+out.a7 = await held("a7", "partial", /^its receipt records the run as PARTIAL, not VERIFIED$/, (s) => { const t = String(s.res?.entries?.[0]?.reply ?? ""); return t.includes("kept under .loki/runs/e10-fix1 where Loki ran") && !t.includes("local branch"); });
+out.a13 = await held("a13", "otherrun", /^its receipt belongs to run e10-other, not e10-fix1$/);
+out.a14 = await held("a14", "unsigned", /^its receipt reads UNSIGNED$/);
+out.a15 = await held("a15", "outcome", /^the fix run ended PARTIAL$/);
+out.a16 = await held("a16", "sha", /^its receipt is not the one the run sealed$/);
+out.a17 = await held("a17", "refused", /security scan refused the push/);
+out.a18 = await held("a18", "offbranch", /is not on loki\/e10-fix1 on top of the branch tip/);
+out.a19 = await held("a19", "empty", /^the run changed nothing against the branch tip$/);
+{ const s = await scenario("a9", { mode: "nullreview" }, true), p = s.posts;
+  out.a9 = [s.err, s.pushes.join(" "), p.length, p.some((x) => x.includes("repos/acme/calc/pulls/5/comments/11/replies") && x.includes("<!-- loki-respond -->")), p.some((x) => x.includes("repos/acme/calc/issues/5/comments") && x.includes(`<!-- loki-respond-held-review:21:${s.tip} -->`) && !x.includes("<!-- loki-respond -->")), s.res?.posted, s.tip !== s.r.h0].join(","); }
+{ const s = await scenario("a10", { mode: "ok" }, false, a4.r); out.a10 = [/publish it with: loki address acme\/calc#5 --post/.test(s.err), s.fixes].join(","); }
+{ const s = await scenario("a11", { mode: "ok" }, true, a4.r); out.a11 = [s.err, s.fixes, s.pushes.length, s.posts.length, s.res?.fixed].join(","); }
+{ const now = await scenario("a12now", { mode: "ok", heldAt: (h) => h }, false), old = await scenario("a12old", { mode: "ok", heldAt: () => "f".repeat(40) }, false);
+  out.a12 = [now.fixes, now.res?.entries?.map((x: any) => x.id).join("+"), old.fixes].join(","); }
+{ const s = await scenario("a20", { mode: "ok", headMovesAfter: true }, true); out.a20 = [/^head moved after proof/.test(s.err), s.pushes.length, s.posts.length].join(","); }
+{ const s = await scenario("a21", { mode: "ok", originFlip: true }, true); out.a21 = [/^origin changed during the fix/.test(s.err), s.pushes.length, s.posts.length].join(","); }
+{ const dir = `${root}/a22`; mkdirSync(dir, { recursive: true }); const sh = `${dir}/push.sh`, rec = `${dir}/env.txt`;
+  writeFileSync(sh, 'printf "%s|%s|%s\\n" "${LOKI_PR_FORK:-unset}" "${_LOKI_PINNED_ORIGIN:-unset}" "$1" > "$PUSH_REC"\nprintf "%s\\n" "${FAKE_PR_STATE:-reused}" "https://github.com/acme/calc/pull/5"\n');
+  process.env.LOKI_PR_FORK = "1"; process.env.PUSH_REC = rec;
+  let e1 = "", e2 = ""; try { m.defaultRespondPush(dir, "loki/e10-orig", sh, "https://github.com/acme/calc.git", 20000); } catch (e) { e1 = String((e as Error).message); }
+  const seen = existsSync(rec) ? readFileSync(rec, "utf8").trim() : "none";
+  process.env.FAKE_PR_STATE = "created"; try { m.defaultRespondPush(dir, "loki/e10-orig", sh, "https://github.com/acme/calc.git", 20000); } catch (e) { e2 = String((e as Error).message); }
+  delete process.env.FAKE_PR_STATE; delete process.env.LOKI_PR_FORK; delete process.env.PUSH_REC;
+  out.a22 = [e1, seen, /a NEW PR was opened/.test(e2)].join(","); }
+{ const s = await scenario("a23", { mode: "dirty2" }, true), e = s.res?.entries ?? [];
+  out.a23 = [s.err, s.pushes.length, s.posts.length, e.map((x: any) => `${x.kind}:${x.status}`).join("+"), /^the fix run left uncommitted changes/.test(e[1]?.reason ?? ""), s.state?.entries?.length, s.state?.head === e[0]?.sha].join(","); }
+{ const s = await scenario("a24", { mode: "moved2" }, true), e = s.state?.entries ?? [];
+  out.a24 = [/its last accepted commit is/.test(s.err), s.pushes.length, s.posts.length, e.map((x: any) => `${x.kind}:${x.status}`).join("+"), /moved during the fix run/.test(e[1]?.reason ?? "")].join(","); }
+{ const a = await scenario("a25", { mode: "ok", failPost: 2 }, true), tip = String(a.state?.head ?? "");
+  const b = await scenario("a25b", { mode: "ok", prHead: () => tip }, true, a.r);
+  out.a25 = [/HTTP 502/.test(a.err), a.pushes.length, a.posts.length, b.err, b.fixes, b.pushes.length, b.posts.length, b.posts.every((x) => x.includes("repos/acme/calc/issues/5/comments")), b.state?.posted].join(","); }
+console.log(JSON.stringify(out));
+TS
+AD="$(cd "$ROOT/loki-ts" && AD_SRC="$ROOT/loki-ts/src" bun "$T/address.ts" "$T/address" 2>&1 | tail -1)"
+adv() { python3 -I -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2]))' "$AD" "$1" 2>/dev/null; }
+[ "$(adv a1)" = "true,0" ] && ok "R1 address A1: a head branch that is not loki/<run> refuses before any fix run" || bad "R1 A1: got $(adv a1) ($AD)"
+[ "$(adv a2)" = "true,0" ] && ok "R1 address A2: no local receipt and no receipt comment refuses" || bad "R1 A2: got $(adv a2)"
+[ "$(adv a3)" = "true,0" ] && ok "R1 address A3: a receipt comment from someone other than the PR author is not a receipt" || bad "R1 A3: got $(adv a3)"
+[ "$(adv a4)" = ",2,1,2,thread:11:addressed+review:21:addressed,true" ] && ok "R1 address A4: the read-only author is skipped, the thread and the review summary are fixed, the branch is at the last receipt's head" || bad "R1 A4: got $(adv a4)"
+[ "$(adv a5)" = "true,true,true,true,true,true" ] && ok "R1 address A5: the reply names the sha, the run, the receipt sha and the marker; the review reply carries the review marker" || bad "R1 A5: got $(adv a5)"
+[ "$(adv a6)" = "0,2,true,true" ] && ok "R1 address A6: a receipt measured from another commit is held and the branch does not move" || bad "R1 A6: got $(adv a6)"
+[ "$(adv a7)" = "0,2,true,true,true" ] && ok "R1 address A7: an intact signed receipt whose own verdict is PARTIAL is held; the held reply names .loki/runs/<run>, not a branch" || bad "R1 A7: got $(adv a7)"
+[ "$(adv a8)" = "0,0,true,false" ] && ok "R1 address A8: without --post nothing is pushed or posted; replies.json is written" || bad "R1 A8: got $(adv a8)"
+[ "$(adv a9)" = ",loki/e10-orig,2,true,true,true,true" ] && ok "R1 address A9: --post pushes once and posts one reply per item; the held review reply has the held marker at the pushed tip on the issue thread" || bad "R1 A9: got $(adv a9)"
+[ "$(adv a10)" = "true,0" ] && ok "R1 address A10: a rerun without --post on the addressed checkout says how to publish and runs nothing" || bad "R1 A10: got $(adv a10)"
+[ "$(adv a11)" = ",0,1,2,2" ] && ok "R1 address A11: --post on the addressed checkout publishes the saved result with no new fix run" || bad "R1 A11: got $(adv a11)"
+[ "$(adv a12)" = "1,21,2" ] && ok "R1 address A12: a held reply at the current PR head settles its item; one at an older head does not" || bad "R1 A12: got $(adv a12)"
+[ "$(adv a13)" = "0,2,true,true" ] && ok "R1 address A13: a receipt of another run is held" || bad "R1 A13: got $(adv a13)"
+[ "$(adv a14)" = "0,2,true,true" ] && ok "R1 address A14: a receipt verifyReceipt reads UNSIGNED is held" || bad "R1 A14: got $(adv a14)"
+[ "$(adv a15)" = "0,2,true,true" ] && ok "R1 address A15: a run whose result line is not VERIFIED is held, though its receipt reads VERIFIED" || bad "R1 A15: got $(adv a15)"
+[ "$(adv a16)" = "0,2,true,true" ] && ok "R1 address A16: a receipt that is not the one the run sealed is held" || bad "R1 A16: got $(adv a16)"
+[ "$(adv a17)" = "0,2,true,true" ] && ok "R1 address A17: a receipt whose security scan refused the push is held" || bad "R1 A17: got $(adv a17)"
+[ "$(adv a18)" = "0,2,true,true" ] && ok "R1 address A18: a head commit on top of the tip but not on the run's own branch is held" || bad "R1 A18: got $(adv a18)"
+[ "$(adv a19)" = "0,2,true,true" ] && ok "R1 address A19: a run commit that changes nothing is held" || bad "R1 A19: got $(adv a19)"
+[ "$(adv a20)" = "true,0,0" ] && ok "R1 address A20: --post refuses when the PR head moved after proof; nothing pushed or posted" || bad "R1 A20: got $(adv a20)"
+[ "$(adv a21)" = "true,0,0" ] && ok "R1 address A21: --post refuses when origin changed during the fix; nothing pushed or posted" || bad "R1 A21: got $(adv a21)"
+[ "$(adv a22)" = ",0|https://github.com/acme/calc.git|push-pr,true" ] && ok "R1 address A22: the push gets LOKI_PR_FORK=0 and the pinned origin even under LOKI_PR_FORK=1; a created PR throws" || bad "R1 A22: got $(adv a22)"
+[ "$(adv a23)" = ",1,2,thread:addressed+review:held,true,2,true" ] && ok "R1 address A23: a fix run that leaves the tree dirty holds its item and stops; the accepted item is saved and --post publishes it" || bad "R1 A23: got $(adv a23)"
+[ "$(adv a24)" = "true,0,0,thread:addressed+review:held,true" ] && ok "R1 address A24: a fix run that moves the PR branch is held, and --post refuses a tip no receipt accepted" || bad "R1 A24: got $(adv a24)"
+[ "$(adv a25)" = "true,1,1,,0,0,1,true,true" ] && ok "R1 address A25: after a reply POST fails past the push, the rerun posts only the missing reply, with no run and no push" || bad "R1 A25: got $(adv a25)"
+
 echo "TEST: engine10 end to end on the stub provider"
 
 FIX="$ROOT/tests/min/fixtures/e2e"
