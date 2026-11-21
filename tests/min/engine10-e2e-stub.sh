@@ -301,10 +301,12 @@ grep -q 'const ch = diffAgainstBase(opts.repoDir, base, "HEAD", workerEnv);' "$R
 # reply carries the review marker; A6 a receipt measured from another commit is held and the branch does not move; A7 a receipt that reads
 # PARTIAL is held; A8 without --post nothing is pushed or posted and replies.json is written; A9 with --post one push, one reply per item,
 # a held reply carries the held marker and goes to the right endpoint; A10 a rerun without --post on the addressed checkout says how to publish;
-# A11 --post on it publishes the saved result with no new fix run.
+# A11 --post on it publishes the saved result with no new fix run; A12 a held reply at the current PR head settles its item (no new run), one
+# at an older head does not.
 # Plants: R1a pr_lessons.ts respondToReview drop the lokiRunOfBranch refusal (A1 red); R1b hasLokiReceipt drop the PR-author test (A3 red);
 # R1c canWrite return true when the permission is unreadable or read (A4 red); R1d acceptAddressRun drop the base_sha === pre test (A6 red);
-# R1e respondToReview push when post is false (A8 red); R1f respondToReview drop the saved-result path (A11 red).
+# R1e respondToReview push when post is false (A8 red); R1f respondToReview drop the saved-result path (A11 red); R1g openReviewComments
+# drop the heldMark test from settles (A12 red: the item held at this head runs again).
 cat > "$T/address.ts" <<'TS'
 const SRC = process.env.AD_SRC!, root = process.argv[2]!;
 const m = await import(`${SRC}/util/pr_lessons.ts`);
@@ -315,7 +317,7 @@ const mkrepo = (name: string): { dir: string; h0: string } => {
   g(dir, ["checkout", "-q", "-b", "loki/e10-orig"]); writeFileSync(`${dir}/b.ts`, "export const x = 2;\n"); g(dir, ["add", "b.ts"]); g(dir, ["commit", "-q", "-m", "run"]); g(dir, ["remote", "add", "origin", "https://github.com/acme/calc.git"]);
   return { dir, h0: g(dir, ["rev-parse", "HEAD"]) };
 };
-type O = { ref?: string; receiptBy?: string | null; mode?: "ok" | "wrongbase" | "partial" | "nullreview" };
+type O = { ref?: string; receiptBy?: string | null; mode?: "ok" | "wrongbase" | "partial" | "nullreview"; heldAt?: (h0: string) => string };
 async function scenario(name: string, o: O, post: boolean, repo?: { dir: string; h0: string }) {
   const r = repo ?? mkrepo(name), calls: string[] = [], posts: string[] = [], pushes: string[] = []; let fixes = 0;
   const gh = async (args: string[]) => {
@@ -324,7 +326,7 @@ async function scenario(name: string, o: O, post: boolean, repo?: { dir: string;
     if (args.includes("POST")) { posts.push(a); return J({}); }
     if (a === "api repos/acme/calc/pulls/5") return J({ head: { ref: o.ref ?? "loki/e10-orig", sha: r.h0 }, state: "open", user: { login: "lokibot" } });
     if (a === "api --paginate repos/acme/calc/issues/5/comments") return J(o.receiptBy === null ? [] : [{ user: { login: o.receiptBy ?? "lokibot" }, body: "<!-- loki-receipt -->\n## Loki receipt\n- Verify: `loki verify e10-orig`\n" }]);
-    if (a === "api --paginate repos/acme/calc/pulls/5/comments") return J([{ id: 11, body: "rename x to y", path: "b.ts", line: 1, user: { login: "alice" }, diff_hunk: "@@ -0,0 +1 @@\n+export const x = 2;", html_url: "https://github.com/acme/calc/pull/5#discussion_r11" }, { id: 12, body: "drive-by", path: "b.ts", line: 1, user: { login: "mallory" } }]);
+    if (a === "api --paginate repos/acme/calc/pulls/5/comments") return J([...(o.heldAt ? [{ id: 98, in_reply_to_id: 11, body: `Not changed yet.\n<!-- loki-respond-held:${o.heldAt(r.h0)} -->`, user: { login: "lokibot" } }] : []), { id: 11, body: "rename x to y", path: "b.ts", line: 1, user: { login: "alice" }, diff_hunk: "@@ -0,0 +1 @@\n+export const x = 2;", html_url: "https://github.com/acme/calc/pull/5#discussion_r11" }, { id: 12, body: "drive-by", path: "b.ts", line: 1, user: { login: "mallory" } }]);
     if (a.startsWith("api graphql")) return J({ data: { repository: { pullRequest: { reviewThreads: { nodes: [] } } } } });
     if (a === "api --paginate repos/acme/calc/pulls/5/reviews") return J([{ id: 21, state: "CHANGES_REQUESTED", body: "also add a note", user: { login: "alice" }, html_url: "https://github.com/acme/calc/pull/5#pullrequestreview-21" }]);
     if (a === "api repos/acme/calc/collaborators/alice/permission") return J({ permission: "write" });
@@ -357,9 +359,11 @@ const a4 = await scenario("a4", { mode: "ok" }, false);
 { const s = await scenario("a6", { mode: "wrongbase" }, false); out.a6 = [s.res?.fixed, s.res?.held, /measures from 000000000000/.test(s.res?.entries?.[0]?.reason ?? ""), s.tip === s.r.h0].join(","); }
 { const s = await scenario("a7", { mode: "partial" }, false); out.a7 = [s.res?.fixed, /receipt reads PARTIAL/.test(s.res?.entries?.[0]?.reason ?? ""), s.tip === s.r.h0].join(","); }
 { const s = await scenario("a9", { mode: "nullreview" }, true), p = s.posts;
-  out.a9 = [s.err, s.pushes.join(" "), p.length, p.some((x) => x.includes("repos/acme/calc/pulls/5/comments/11/replies") && x.includes("<!-- loki-respond -->")), p.some((x) => x.includes("repos/acme/calc/issues/5/comments") && x.includes("<!-- loki-respond-held -->") && !x.includes("<!-- loki-respond -->")), s.res?.posted].join(","); }
+  out.a9 = [s.err, s.pushes.join(" "), p.length, p.some((x) => x.includes("repos/acme/calc/pulls/5/comments/11/replies") && x.includes("<!-- loki-respond -->")), p.some((x) => x.includes("repos/acme/calc/issues/5/comments") && x.includes(`<!-- loki-respond-held-review:21:${s.r.h0} -->`) && !x.includes("<!-- loki-respond -->")), s.res?.posted].join(","); }
 { const s = await scenario("a10", { mode: "ok" }, false, a4.r); out.a10 = [/publish it with: loki address acme\/calc#5 --post/.test(s.err), s.fixes].join(","); }
 { const s = await scenario("a11", { mode: "ok" }, true, a4.r); out.a11 = [s.err, s.fixes, s.pushes.length, s.posts.length, s.res?.fixed].join(","); }
+{ const now = await scenario("a12now", { mode: "ok", heldAt: (h) => h }, false), old = await scenario("a12old", { mode: "ok", heldAt: () => "f".repeat(40) }, false);
+  out.a12 = [now.fixes, now.res?.entries?.map((x: any) => x.id).join("+"), old.fixes].join(","); }
 console.log(JSON.stringify(out));
 TS
 AD="$(cd "$ROOT/loki-ts" && AD_SRC="$ROOT/loki-ts/src" bun "$T/address.ts" "$T/address" 2>&1 | tail -1)"
@@ -375,6 +379,7 @@ adv() { python3 -I -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.ar
 [ "$(adv a9)" = ",loki/e10-orig,2,true,true,true" ] && ok "R1 address A9: --post pushes once and posts one reply per item; the held review reply has the held marker on the issue thread" || bad "R1 A9: got $(adv a9)"
 [ "$(adv a10)" = "true,0" ] && ok "R1 address A10: a rerun without --post on the addressed checkout says how to publish and runs nothing" || bad "R1 A10: got $(adv a10)"
 [ "$(adv a11)" = ",0,1,2,2" ] && ok "R1 address A11: --post on the addressed checkout publishes the saved result with no new fix run" || bad "R1 A11: got $(adv a11)"
+[ "$(adv a12)" = "1,21,2" ] && ok "R1 address A12: a held reply at the current PR head settles its item; one at an older head does not" || bad "R1 A12: got $(adv a12)"
 
 echo "TEST: engine10 end to end on the stub provider"
 

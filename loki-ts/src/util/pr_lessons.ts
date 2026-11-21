@@ -711,9 +711,10 @@ export interface RespondDeps {
 export interface AddressEntry { kind: "thread" | "review"; id: number; url: string; path: string; status: "addressed" | "held"; reason: string; sha: string | null; run_id: string | null; receipt_sha256: string | null; reply: string; posted: boolean }
 export interface RespondResult { fixed: number; held: number; skipped: number; denied: number; shas: string[]; dir: string; posted: boolean; entries: AddressEntry[] }
 export const RESPOND_MARK = "<!-- loki-respond -->";
-/** A held reply: not an answer, so the item is tried again on the next call. */
-export const RESPOND_HELD_MARK = "<!-- loki-respond-held -->";
 export const reviewMark = (id: number): string => `<!-- loki-respond-review:${id} -->`;
+/** A held reply settles its item for the PR head it was tried at (so no event can make Loki retry it at that head, its own reply included);
+ *  once the branch moves, the item is open again. */
+export const heldMark = (head: string, reviewId?: number): string => reviewId === undefined ? `<!-- loki-respond-held:${head} -->` : `<!-- loki-respond-held-review:${reviewId}:${head} -->`;
 export const MAX_RESPOND = 5;
 const RECEIPT_MARK = "<!-- loki-receipt -->"; // util/receipt_surface.ts renderReceiptComment
 const LOKI_TEXT = "<!-- loki-"; // any Loki-authored text is never an item
@@ -748,21 +749,25 @@ async function resolvedRoots(gh: GhClient, repo: string, num: number): Promise<S
 }
 
 /** Open items of a PR, in order: top-level comments of unresolved threads with no Loki answer, then (with issueComments) review summaries
- *  (CHANGES_REQUESTED or COMMENTED, non-empty) with no Loki answer. Text holding a Loki marker is never an item. With canWrite, an item whose
- *  author lacks write access is left out and counted in `denied`. */
-export async function openReviewComments(gh: GhClient, repo: string, num: number, o: { issueComments?: ReadonlyArray<Record<string, any>>; canWrite?: (login: string) => Promise<boolean> } = {}): Promise<{ open: OpenComment[]; skipped: number; denied: number }> {
+ *  (CHANGES_REQUESTED or COMMENTED, non-empty) with no Loki answer. A held reply at `head` counts as an answer. Text holding a Loki marker
+ *  is never an item. With canWrite, an item whose author lacks write access is left out and counted in `denied`. */
+export async function openReviewComments(gh: GhClient, repo: string, num: number, o: { issueComments?: ReadonlyArray<Record<string, any>>; canWrite?: (login: string) => Promise<boolean>; head?: string } = {}): Promise<{ open: OpenComment[]; skipped: number; denied: number }> {
   const all = parsePages(await ghText(gh, ["api", "--paginate", `repos/${repo}/pulls/${num}/comments`]));
   const resolved = await resolvedRoots(gh, repo, num);
-  const answered = new Set(all.filter((c) => c.in_reply_to_id && String(c.body ?? "").includes(RESPOND_MARK)).map((c) => Number(c.in_reply_to_id)));
+  const settles = (b: string, reviewId?: number): boolean => { // an addressed reply, or a held reply at this head
+    const addressed = b.includes(RESPOND_MARK) && (reviewId === undefined || b.includes(reviewMark(reviewId)));
+    return addressed || (o.head !== undefined && b.includes(heldMark(o.head, reviewId)));
+  };
+  const answered = new Set(all.filter((c) => c.in_reply_to_id && settles(String(c.body ?? ""))).map((c) => Number(c.in_reply_to_id)));
   const roots = all.filter((c) => !c.in_reply_to_id && Number.isInteger(c.id));
   const items: OpenComment[] = roots.filter((c) => { const b = String(c.body ?? ""); return b.trim() !== "" && !b.includes(LOKI_TEXT) && !resolved.has(c.id) && !answered.has(c.id); })
     .map((c) => ({ id: c.id as number, body: String(c.body), path: String(c.path ?? ""), line: Number.isInteger(c.line) ? (c.line as number) : null, url: String(c.html_url ?? ""), author: String(c.user?.login ?? ""), kind: "thread" as const, hunk: String(c.diff_hunk ?? "").slice(-1500) }));
   let summaries = 0;
   if (o.issueComments) {
-    const done = o.issueComments.map((c) => String(c?.body ?? "")).filter((b) => b.includes(RESPOND_MARK));
+    const done = o.issueComments.map((c) => String(c?.body ?? "")).filter((b) => b.includes("<!-- loki-respond"));
     const reviews = parsePages(await ghText(gh, ["api", "--paginate", `repos/${repo}/pulls/${num}/reviews`])).filter((r) => Number.isInteger(r?.id) && (r?.state === "CHANGES_REQUESTED" || r?.state === "COMMENTED") && String(r?.body ?? "").trim() !== "");
     summaries = reviews.length;
-    for (const r of reviews) if (!String(r.body).includes(LOKI_TEXT) && !done.some((b) => b.includes(reviewMark(r.id as number)))) items.push({ id: r.id as number, body: String(r.body), path: "", line: null, url: String(r.html_url ?? ""), author: String(r.user?.login ?? ""), kind: "review", hunk: "" });
+    for (const r of reviews) if (!String(r.body).includes(LOKI_TEXT) && !done.some((b) => settles(b, r.id as number))) items.push({ id: r.id as number, body: String(r.body), path: "", line: null, url: String(r.html_url ?? ""), author: String(r.user?.login ?? ""), kind: "review", hunk: "" });
   }
   const open: OpenComment[] = [];
   let denied = 0;
@@ -805,9 +810,9 @@ export async function acceptAddressRun(repoDir: string, run: FixRun | null, pre:
   return { ok: true, head };
 }
 /** One reply. Addressed: what changed and the evidence (the run's receipt covers this item's change only). Held: why, and that nothing was pushed for it. */
-export function renderAddressReply(c: Pick<OpenComment, "kind" | "id" | "url">, r: { ok: true; head: string; runId: string; receiptSha256: string; pre: string; stat: string; files: string[] } | { ok: false; reason: string; runId: string | null }): string {
+export function renderAddressReply(c: Pick<OpenComment, "kind" | "id" | "url">, r: { ok: true; head: string; runId: string; receiptSha256: string; pre: string; stat: string; files: string[] } | { ok: false; reason: string; runId: string | null; at: string }): string {
   const lead = c.kind === "review" ? `Re: ${/^https:\/\/github\.com\//.test(c.url) ? c.url : "your review"}\n\n` : "";
-  if (!r.ok) return `${lead}Not changed yet: ${fence(r.reason)}. Nothing was pushed for this comment${r.runId ? `; the run's work stays on the local branch loki/${r.runId} where Loki ran` : ""}.\n${RESPOND_HELD_MARK}\n`;
+  if (!r.ok) return `${lead}Not changed yet: ${fence(r.reason)}. Nothing was pushed for this comment${r.runId ? `; the run's work stays on the local branch loki/${r.runId} where Loki ran` : ""}. Loki tries it again once the branch moves.\n${heldMark(r.at, c.kind === "review" ? c.id : undefined)}\n`;
   const files = r.files.slice(0, 5).map((f) => `\`${fence(f)}\``).join(", ") + (r.files.length > 5 ? ` and ${r.files.length - 5} more` : "");
   return `${lead}Addressed in ${r.head.slice(0, 12)}: ${r.stat || "changed"}${files ? ` (${files})` : ""}.\nEvidence: Loki run ${r.runId}, receipt sha256:${r.receiptSha256}, verdict VERIFIED, measured from ${r.pre.slice(0, 12)} (this comment's change only). Check it with \`loki verify ${r.runId}\`.\n${RESPOND_MARK}${c.kind === "review" ? `\n${reviewMark(c.id)}` : ""}\n`;
 }
@@ -885,7 +890,7 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
     entries = saved.entries.map((e) => ({ ...e, posted: false }));
   } else {
     const cache = new Map<string, boolean>();
-    const found = await openReviewComments(gh, pr.repo, pr.num, { issueComments, canWrite: (l) => canWrite(gh, pr.repo, l, cache) });
+    const found = await openReviewComments(gh, pr.repo, pr.num, { issueComments, canWrite: (l) => canWrite(gh, pr.repo, l, cache), head: proofHead });
     skipped = found.skipped; denied = found.denied;
     for (const c of found.open.slice(0, Number.isInteger(max) && max > 0 ? max : MAX_RESPOND)) {
       const pre = vcs(["rev-parse", "HEAD"]).trim();
@@ -901,7 +906,7 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
         entries.push({ ...base, status: "addressed", reason: "", sha: gate.head, receipt_sha256: run!.receiptSha256, reply: renderAddressReply(c, { ok: true, head: gate.head, runId: run!.runId, receiptSha256: run!.receiptSha256 ?? "", pre, stat, files }) });
       } else {
         const kept = base.run_id !== null && (() => { try { vcs(["rev-parse", "-q", "--verify", `refs/heads/loki/${base.run_id}`]); return true; } catch { return false; } })(); // name the run branch only when it exists
-        entries.push({ ...base, status: "held", reason: gate.reason, sha: null, receipt_sha256: null, reply: renderAddressReply(c, { ok: false, reason: gate.reason, runId: kept ? base.run_id : null }) });
+        entries.push({ ...base, status: "held", reason: gate.reason, sha: null, receipt_sha256: null, reply: renderAddressReply(c, { ok: false, reason: gate.reason, runId: kept ? base.run_id : null, at: proofHead }) });
       }
     }
   }

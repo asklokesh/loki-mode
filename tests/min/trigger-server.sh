@@ -14,11 +14,12 @@
 #   detached-outcome  do not call on_exit in _reap_child
 #   jobs-source       drop the AUTOPAUSE_EXEMPT check
 #   review            remove the TRUSTED_ASSOCIATIONS check; make _remove_review_clone a no-op
-#   R1f address-optin drop the _address_post_on() check in _address_on_clone (the opt-in-off cell runs address)
-#   R1g reply-skip    drop the in_reply_to_id skip in handle_pull_request_review_comment_event (the reply cell runs address)
-#   R1h live-release  drop release() from done() in _address_on_clone (the second review after a finished one is skipped)
-#   R1i loki-branch   drop the LOKI_RUN_BRANCH_RE check (the feature-x review runs address)
-#   R1j sync-loop     drop the loki/ head ref skip in handle_pull_request_event (a synchronize on a Loki branch runs start)
+#   R1h address-optin drop the _address_post_on() check in _address_on_clone (the opt-in-off cell runs address)
+#   R1i reply-skip    drop the in_reply_to_id skip in handle_pull_request_review_comment_event (the reply cell runs address)
+#   R1j live-release  drop release() from done() in _address_on_clone (the live-mark-released cell and every later review fail)
+#   R1k loki-branch   drop the LOKI_RUN_BRANCH_RE check (the feature-x review runs address)
+#   R1l sync-loop     drop the loki/ head ref skip in handle_pull_request_event (a synchronize on a Loki branch runs start)
+#   R1m empty-review  drop the empty commented review skip (the empty commented review cell runs address)
 #   cli               make --resume leave paused true
 #   http-e2e          route workflow_run to handle_issues_event in TRIGGERS
 
@@ -226,6 +227,10 @@ check("review: the per-PR live mark is released when the run ends", "acme/calc#5
 reset(rc=0)
 s, st = mod.dispatch_event("pull_request_review", review(review__state="commented"))
 check("review: a commented review fires too", st == "fired" and len(run_calls()) == 1)
+reset(rc=0)
+s, st = mod.dispatch_event("pull_request_review", review(review__state="commented", review__body=""))
+check("review: an empty commented review (how a lone inline comment or a Loki reply can arrive) is not run",
+      st.startswith("skipped") and len(run_calls()) == 0)
 reset(rc=0)
 s, st = mod.dispatch_event("pull_request_review_comment", review_comment())
 rc = run_calls()

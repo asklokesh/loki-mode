@@ -1726,6 +1726,10 @@ def handle_pull_request_review_event(payload, dry_run=False):
     state = str(review.get("state", "")).lower()
     if state not in REVIEW_ITEM_STATES:
         return None, "skipped (review state=%s)" % _clip(state, 30)
+    if state == "commented" and not str(review.get("body") or "").strip():
+        # A lone inline comment (a thread reply, Loki's own included) can arrive wrapped in an empty COMMENTED review. The comment
+        # itself arrives as pull_request_review_comment, so an empty one never starts a run, and Loki's replies cannot loop.
+        return None, "skipped (commented review with no summary: its inline comments arrive as review comment events)"
     why = _untrusted_author(review)
     if why:
         return None, "skipped (review %s)" % why
