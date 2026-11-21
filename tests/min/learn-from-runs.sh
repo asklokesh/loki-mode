@@ -682,7 +682,7 @@ print(json.dumps(d,sort_keys=True))' "$1" 2>/dev/null; }
 [ "$(aj off)" = '{"reads_proposed": true, "stored_plain": true}' ] && ok "approval-off: LOKI_PR_LESSONS_APPROVAL=0 stores no approval and reads proposed lessons (today's behaviour)" || bad "approval-off: $(aj off)"
 CID="$(aj ids.cli_approve | tr -d '"')"
 c_out="$(cd "$AP" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" lessons 2>&1)"
-case "$c_out" in *"proposed: later runs do not read it"*"approve: loki lessons approve"*) ok "approval-cli: loki lessons lists a proposed lesson with how to approve it" ;; *) bad "approval-cli: list was: $(printf '%s' "$c_out" | head -5)" ;; esac
+case "$c_out" in *"proposed: later runs do not read it"*"approve: loki lessons approve"*) ok "approval-cli: loki lessons lists a proposed lesson with how to approve it" ;; *) bad "approval-cli: list was: ${c_out:0:400}" ;; esac
 c_out="$(cd "$AP" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" lessons approve "$CID" 2>&1)"; c_rc=$?
 u_out="$(cd "$AP" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" lessons approve prl-ffffffffffff 2>&1)"; u_rc=$?
 [ "$c_rc" -eq 0 ] && [ "$u_rc" -eq 1 ] && case "$c_out" in *"Approved $CID"*) true ;; *) false ;; esac \
