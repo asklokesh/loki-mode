@@ -42,9 +42,12 @@ TASKS_DIR = HERE / "tasks"
 # because two issue texts keep characters (emoji, en and em dashes) this repository's text rule bans.
 # Both keep only meta.json and task.txt; materialize() rebuilds the snapshot from the pinned commits.
 # --suite hc2: held-out calibration set 2 (replay/HELDOUT-CAL-2.md), the replay format in the same directory under an hc2- prefix.
-# --suite replay leaves every hc2- task out, so a tuning run on replay never reads a held-out task.
-SUITES = {"tasks": TASKS_DIR, "replay": HERE / "replay", "hard": HERE / "fixtures" / "hard", "hc2": HERE / "replay"}
-SUITE_PREFIX = {"hc2": "hc2-"}
+# --suite hc3: held-out calibration set 3 (replay/HELDOUT-CAL-3.md), the same format under an hc3- prefix; scoring only.
+# --suite replay leaves every hc2- and hc3- task out, and each held-out suite lists only its own prefix, so a tuning run
+# on replay never reads a held-out task and one held-out set never reads another.
+SUITES = {"tasks": TASKS_DIR, "replay": HERE / "replay", "hard": HERE / "fixtures" / "hard", "hc2": HERE / "replay",
+          "hc3": HERE / "replay"}
+SUITE_PREFIX = {"hc2": "hc2-", "hc3": "hc3-"}
 
 
 def suite_task_ids(suite):
@@ -1454,7 +1457,8 @@ def main(argv=None):
     ap.add_argument("--configs", default=",".join(CONFIGS), help=f"comma list from {ALL_CONFIGS} "
                     f"(default: {','.join(CONFIGS)})")
     ap.add_argument("--suite", default="tasks", choices=sorted(SUITES), help="task suite: tasks (synthetic, default) "
-                    "or replay (real closed issues replayed at the fix's parent commit); hc2 is the held-out calibration set 2")
+                    "or replay (real closed issues replayed at the fix's parent commit); hc2 and hc3 are the held-out "
+                    "calibration sets 2 and 3")
     ap.add_argument("--tasks", default="", help="comma list of task ids from the suite (default: all)")
     ap.add_argument("--reps", type=int, default=1)
     ap.add_argument("--timeout", type=int, default=600, help="contestant timeout in seconds (default 600)")
