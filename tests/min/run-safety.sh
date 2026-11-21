@@ -135,6 +135,12 @@
 #  24m. base_guard.ts depsGoneSince: `was.find((n) => have.has(n))` (the exogenous-red unit's gone-package cell names a package that is present).
 #  24h. base_guard.ts linkWorkspaceMembers: `const refused: string[] = [];` in place of the filter that links (the base-tree-members unit's sibling cell reads no-deps).
 #  24o. base_guard.ts toolOutputDir: `return true` for every dot-named directory (the tool-output-in-deps unit's emitted-declaration cell reads false).
+#  P9. load_owner.ts externalMissing: ignore `provided` (the UNRUNNABLE-EXTERNAL tenacity/ cell returns ["tenacity"]: the change's own package untested would lift);
+#      or repoProvides drops `<` from its path test (the absolute-path cell returns ["<repo>/dist/x.js"]: a repo file missing on both sides would lift).
+#  P10. load_owner.ts externalMissing: base subset of head instead of set equality (the newdep cell returns ["mypy","newdep"]).
+#  P11. repo_profile.ts couldNotRun: keep every candidate in a touched package (the non-external cell is listed: the founder rule is gone).
+#  P12. verify.ts couldNotNotes: drop the externalCouldNotNotes entry, or externalCouldNotNotes returns [] (the external seal leg reads PARTIAL>PARTIAL although the check was listed).
+#  P13. load_owner.ts harnessLoad: compute external without ownedOnBase's acceptance (on any load error): the named-changed-file cell gets a candidate (a false VERIFIED path through a load error the change caused).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -1233,6 +1239,44 @@ console.log(r.join(" | "));
 X9="PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[2] | PARTIAL>VERIFIED[1] | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | PARTIAL | FAILED | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | FAILED | FAILED | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | FAILED | PARTIAL | PARTIAL>VERIFIED[1] | PARTIAL>VERIFIED[1] | PARTIAL | PARTIAL | PARTIAL>VERIFIED[1] | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL"
 [ "$A9" = "$X9" ] && ok "unit, unrunnable check (P1 to P5, D1 to D33, T1 to T3, I1 to I8): a check that could not run on either side stops holding the label only beside the change's own fail-before, pass-after proof, with no changed file in its package, the same start failure on both sides and nothing else open; every planted defect reads the knob-off label, never VERIFIED" \
     || bad "unrunnable-check unit gave: $A9 (want: $X9)"
+
+# UNRUNNABLE-EXTERNAL (LOKI_E10_UNRUNNABLE_EXTERNAL, default on; needs LOKI_E10_UNRUNNABLE_CHECK). A test check sealed not_run on a harness-owned load error that
+# misses the same external modules on base and head (python-rsa: mypy; tenacity: typeguard, tornado), where the repo provides none of them and the error names no
+# changed file, is a could-not-run candidate even in a package the change touches; seal lifts it only beside the change's own fail-then-pass proof.
+# Cells: externalMissing (7), missingModules (2) and loadSignature's keys unchanged for the same output, couldNotRun external versus not, the seal leg with proof
+# ok and not ok, and harnessLoad on a scratch repo (a reproduced load error gives the modules; one naming a changed file gives nothing). Plants P9 to P13.
+GX="$T/unrun-ext"; mkdir -p "$GX/tenacity" "$GX/tests/helpers" "$GX/packages/lp" && git -C "$GX" init -q -b main && printf 'x = 1\n' > "$GX/tenacity/__init__.py" && printf 'def f():\n    return 1\n' > "$GX/calc.py" \
+    && printf '{"name": "left-pad"}\n' > "$GX/packages/lp/package.json" && printf '' > "$GX/tests/helpers/__init__.py" && git -C "$GX" add -A . && git -C "$GX" -c user.name=t -c user.email=t@t commit -qm base && printf 'def f():\n    return 2\n' > "$GX/calc.py"
+AX="$(G="$GX" ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const lo = await import(process.env.ROOT + "/loki-ts/src/runner/load_owner.ts"), rp = await import(process.env.ROOT + "/loki-ts/src/runner/repo_profile.ts"), se = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/seal.ts"), vf = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/verify.ts"), { execFileSync } = await import("node:child_process");
+const g = process.env.G, sha = execFileSync("git", ["-C", g, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), J = JSON.stringify, Q = "\x27";
+const prov = (t) => lo.repoProvides(t, [g], ["calc.py"], g), em = (h, b) => J(lo.externalMissing(h, b, prov));
+const r = [em(["mypy"], ["mypy"]), em(["typeguard", "tornado"], ["tornado", "typeguard"]), em(["mypy", "newdep"], ["mypy"]), em(["tenacity"], ["tenacity"]), em(["tests.helpers"], ["tests.helpers"]), em(["left-pad"], ["left-pad"]), em([], [])];
+const ABS = "Error: Cannot find module " + Q + g + "/dist/x.js" + Q + "\n"; r.push(J(lo.externalMissing(lo.missingModules(ABS, [g]), lo.missingModules(ABS, [g]), prov)));
+const MY = "_____ ERROR collecting tests/test_mypy.py _____\nImportError while importing test module " + Q + "/x/tests/test_mypy.py" + Q + ".\nE   ModuleNotFoundError: No module named " + Q + "mypy" + Q + "\nInterrupted: 1 error during collection\n";
+const col = (f, m) => "_____ ERROR collecting tests/" + f + " _____\nE   ModuleNotFoundError: No module named " + Q + m + Q + "\n";
+const TEN = col("test_after.py", "typeguard") + col("test_asyncio.py", "typeguard") + col("test_tenacity.py", "typeguard") + col("test_tornado.py", "tornado") + "Interrupted: 4 errors during collection\n";
+r.push(J(lo.missingModules(MY)), J(lo.missingModules(TEN)), J([...lo.loadSignature(MY, []).keys]));
+const S = "full suite: pytest", T = "pytest:tests/test_new.py", PF = "tests/test_new.py", one = () => ".";
+r.push(J(rp.couldNotRun([{ name: S, pkg: ".", namesChanged: false, external: true }], ["rsa/key.py", PF], one)), J(rp.couldNotRun([{ name: S, pkg: ".", namesChanged: false }], ["rsa/key.py", PF], one)));
+const LN = "runner could not load: collection error: _____ ERROR collecting tests/test_mypy.py _____ (" + S + "; harness-owned)";
+const sealLeg = (ok) => {
+  const raw = [{ name: T, result: "pass", n: 3 }, { name: S, result: "not_run", load_external: ["mypy"], load_note: LN }];
+  const cands = vf.externalUnrunCands(raw, one), listed = rp.couldNotRun(cands, ["rsa/key.py", PF], one), ifp = rp.couldNotRunIfProved(cands, ["rsa/key.py", PF], one, (f) => f.startsWith("tests/"));
+  const o = { implement: { exit: "done" }, verify: { checks: raw, verify_scope: "complete", ...(listed.length ? { could_not_run: listed, could_not_run_notes: vf.externalCouldNotNotes(cands, listed) } : {}) } };
+  const c = (name, result, provenance, n) => ({ name, cmd: "x", result, duration_s: 1, provenance, ...(n ? { n } : {}) }), checks = [c(T, "pass", "agent_authored", 3), c(S, "not_run", "exogenous")], notes = [LN];
+  const rest = (cs, ns) => se.verdictOf(o, cs, false, ns.length > 0, false, true, false, [], []), off = rest(checks, notes);
+  const lifted = se.unrunnableLifted({ o, checks, vraw: raw, verdict: off, proof: { ok, files: [PF] }, notes, rest }).names;
+  return off + ">" + (lifted.length ? "VERIFIED" : off) + (Object.keys(ifp).length ? "+ifp" : "");
+};
+r.push(sealLeg(true), sealLeg(false));
+const hl = async (out) => { const x = await lo.harnessLoad({ repoDir: g, baseSha: sha, out, cmd: "sh", args: ["-c", "printf \"%s\" \"$LX\"; exit 2"], signal: new AbortController().signal, env: { LX: out } }); return x ? J(x.external) : "none"; };
+r.push(await hl(MY), await hl(MY.replace("E   Module", "E   from calc import f\nE   Module")), await hl(MY.split("mypy" + Q).join("tenacity" + Q)));
+console.log(r.join(" | "));
+' 2>&1)"
+XX='["mypy"] | ["tornado","typeguard"] | [] | [] | [] | [] | [] | [] | ["mypy"] | ["tornado","typeguard"] | [] | ["full suite: pytest"] | [] | PARTIAL>VERIFIED | PARTIAL>PARTIAL | ["mypy"] | none | []'
+[ "$AX" = "$XX" ] && ok "unit, unrunnable external: a harness-owned load error missing the same external modules on base and head, none of them the repo's own, is a could-not-run candidate in the changed package, lifted only beside the change's own proof; a module only head misses, a repo-provided module, and an error naming a changed file give none" \
+    || bad "unrunnable-external unit gave: $AX (want: $XX)"
 
 # VERIFY-PLAN V2 INTRODUCED (LOKI_E10_INTRODUCED, observe by default; enforce is accepted and behaves as observe). closure.ts failureClasses sorts each failing
 # check verify did not excuse into introduced, pre-existing (compared, every failing id red on base, the same error, nothing naming a changed file) or unknown;

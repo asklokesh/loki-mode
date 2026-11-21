@@ -983,6 +983,11 @@ export const holdsPartial = (a: Pick<ExogenousAttribution, "state" | "fresh" | "
  *  existed is unknown, never unrunnable. What it cannot see: a failure the change caused that prints exactly the error text of a failure already on base, in
  *  a suite that prints no count or stops at a failure cap. */
 export const unrunnableCheckOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_UNRUNNABLE_CHECK"] ?? "").trim());
+/** UNRUNNABLE-EXTERNAL (LOKI_E10_UNRUNNABLE_EXTERNAL, default on; =0/off/false/no opts out; needs UNRUNNABLE-CHECK). A check whose harness-owned load error
+ *  misses the same external modules on base and on the change (runner/load_owner.ts harnessLoad, externalMissing) is a could-not-run candidate even in a
+ *  package the change touches: a module neither tree has cannot be affected by the change. Seal still lifts it only beside the change's own fail-then-pass
+ *  proof (seal.ts unrunnableLifted). Residual risk: pytest stops the whole suite at a collection error, so a lifted pytest full suite ran no test on either side. */
+export const unrunnableExternalOn = (env: NodeJS.ProcessEnv = process.env): boolean => unrunnableCheckOn(env) && !/^(0|off|false|no)$/i.test((env["LOKI_E10_UNRUNNABLE_EXTERNAL"] ?? "").trim());
 export function sameStartFailure(base: StartFacts | undefined, head: StartFacts | undefined): boolean {
   if (!base || !head || base.more || head.more || base.lines.length === 0 || base.lines.length !== head.lines.length) return false;
   const b = new Set(base.lines); if (head.lines.some((l) => !b.has(l))) return false;
@@ -1001,20 +1006,21 @@ export function unrunnableSuites(repoDir: string, baseSha: string, full: FullChe
 }
 /** The checks rule (b) may lift, from the ones verify already found could not run: `suites` (unrunnableSuites) and `notRun` (a test file sealed not_run because
  *  it fails the same way with the change removed, or crashes with the same signature on base). One is kept only when no changed file is in its package
- *  (`pkgOf` gives a file's owning package root, `pkg` is the check's) and nothing it printed names a changed file (`namesChanged`). [] with the knob off. */
-export function couldNotRun(cands: readonly { name: string; pkg: string; namesChanged: boolean }[], changed: readonly string[], pkgOf: (f: string) => string): string[] {
+ *  (`pkgOf` gives a file's owning package root, `pkg` is the check's) and nothing it printed names a changed file (`namesChanged`). An `external` candidate
+ *  (UNRUNNABLE-EXTERNAL: the same external modules missing on both sides) is kept in a touched package too. [] with the knob off. */
+export function couldNotRun(cands: readonly { name: string; pkg: string; namesChanged: boolean; external?: boolean }[], changed: readonly string[], pkgOf: (f: string) => string): string[] {
   if (!unrunnableCheckOn()) return [];
   const touched = new Set(changed.map(pkgOf));
-  return cands.filter((c) => !c.namesChanged && !touched.has(c.pkg)).map((c) => c.name);
+  return cands.filter((c) => !c.namesChanged && ((c.external === true && unrunnableExternalOn()) || !touched.has(c.pkg))).map((c) => c.name);
 }
 /** Point 2 relaxation (lead, 2026-11-20): the candidates that couldNotRun refuses ONLY because changed test files are in their package, with those files.
  *  Seal lifts such a check only when every one of those files is a test the change's own proof showed failing before the change and passing after it: the
  *  change is then proved directly and the unrunnable check adds nothing about it. A changed non-test file in the package always blocks, and so does output
  *  that names a changed file. {} with the knob off. */
-export function couldNotRunIfProved(cands: readonly { name: string; pkg: string; namesChanged: boolean }[], changed: readonly string[], pkgOf: (f: string) => string, isTest: (f: string) => boolean): Record<string, string[]> {
+export function couldNotRunIfProved(cands: readonly { name: string; pkg: string; namesChanged: boolean; external?: boolean }[], changed: readonly string[], pkgOf: (f: string) => string, isTest: (f: string) => boolean): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   if (!unrunnableCheckOn()) return out;
-  for (const c of cands) { if (c.namesChanged) continue; const inPkg = changed.filter((f) => pkgOf(f) === c.pkg); if (inPkg.length > 0 && inPkg.every(isTest)) out[c.name] = inPkg; }
+  for (const c of cands) { if (c.namesChanged || (c.external === true && unrunnableExternalOn())) continue; /* an external candidate is couldNotRun's, never listed twice */ const inPkg = changed.filter((f) => pkgOf(f) === c.pkg); if (inPkg.length > 0 && inPkg.every(isTest)) out[c.name] = inPkg; }
   return out;
 }
 /** An install step that could not start because its own tool is not on this machine: the tool's name, or null. The base run and the run on the change share

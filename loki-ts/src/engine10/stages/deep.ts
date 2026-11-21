@@ -8,7 +8,7 @@ import { appProbe, type AppProbeResult } from "../../util/app_probe.ts";
 import { secureScanChanged } from "../../util/secure_scan.ts";
 import { postDeepResults } from "../../util/receipt_surface.ts";
 import { run } from "../../util/shell.ts";
-import { harnessLoadReason } from "../../runner/load_owner.ts";
+import { harnessLoad } from "../../runner/load_owner.ts";
 import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
@@ -25,6 +25,8 @@ export type DeepContext = RunContext & {
 /** ReceiptCheck (types.ts) plus a `reason` field the contract does not carry,  the same disclosed-extra-field pattern testmap.ts's EngineTestMap and  verify.ts's VerifyCheck already use. */
 export interface DeepCheck extends ReceiptCheck {
   secret_matches?: string[]; // SECRET-PUSH: set on every security scan fail: "<file>:<head line>" per secret hit ([] when only a secure-scan HIGH finding failed it); never the matched text
+  load_external?: string[]; // UNRUNNABLE-EXTERNAL: the external modules a harness-owned load error misses on base and head alike (load_owner.ts harnessLoad)
+  load_note?: string; // UNRUNNABLE-EXTERNAL: the exact NOT PROVEN line that load error produced, so verify can list it as a could-not-run note
   reason?: string; exit?: number | null; shape?: string; executed?: number; load_errors?: string[]; start?: StartFacts; names_changed?: boolean; change_lines?: string[] | null; failed?: number | null; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; first_error?: string; excerpt?: string; base_red?: boolean; // first_error: the suite's first failing line (L005 stall signature); base_red: a full-suite fail whose every failing id already failed on base (repo-profile suites), never a red status; excerpt: redacted failure text for the fix brief; ids: failing test ids of the real run (failIds), read by verify's baseline attribution
 }
 export interface DeepOptions {
@@ -74,8 +76,8 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
       continue;
     }
     if (r.timedOut && suiteTimeoutOn()) { const why = r.silent ? `stopped after ${cmdSilenceS()}s with no output` : `timed out after ${Math.round((opts.fullSuiteTimeoutMs ?? fullSuiteMs()) / 1000)}s`; checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS, reason: why }); notProven.add(`not run: ${name} (${why})`); continue; } // SUITE-TIMEOUT (dev2 ink s1, pipx s2): a suite killed at its limit is not_run, never FAILED
-    const out = stripAnsi(`${r.stdout}\n${r.stderr}`), lr = r.exitCode === 0 ? undefined : await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), out, cmd: spec.cmd, args: spec.args, signal, ...(opts.path ? { env: { PATH: opts.path } } : {}) });
-    if (lr) { checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS }); notProven.add(`${lr} (${name}; harness-owned)`); continue; } // FC-02: harness-owned, never a code failure
+    const out = stripAnsi(`${r.stdout}\n${r.stderr}`), hl = r.exitCode === 0 ? undefined : await harnessLoad({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), out, cmd: spec.cmd, args: spec.args, signal, ...(opts.path ? { env: { PATH: opts.path } } : {}) }), lr = hl?.reason;
+    if (lr) { const note = `${lr} (${name}; harness-owned)`; checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS, ...(hl!.external.length ? { load_external: hl!.external, load_note: note } : {}) }); notProven.add(note); continue; } // FC-02: harness-owned, never a code failure; UNRUNNABLE-EXTERNAL: the missing external modules and the line they produced
     const cls = await corroboratePass(classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...goRunner(spec.cmd, spec.args) }), out, spec.cmd, spec.args, { cwd: ctx.repoDir, env: suiteEnv(opts.path), signal });
     if (cls.result === "not_run" && r.exitCode === 0 && opts.targetPassed === true && suiteEmptyOnBase(ctx.repoDir, ctx.baseSha, [spec.cmd, ...spec.args].join(" "), [spec.cmd, ...spec.args].join(" "), cls, out)) { notProven.add(`${NA_PREFIX}${name} (ran 0 tests on base and head; the Wall or a task-named check passed with executed tests)`); continue; } // a full suite that discovers nothing is a disclosed note, not a gate, once a target check proved the change
     checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: cls.result, duration_s: durationS, ...(cls.result === "fail" ? { exit: r.exitCode, ...(failIds(out).length ? {} : { shape: failureShape(out) }), ids: failIds(out), errors: Object.fromEntries(errorsById(out)), ...(unhandledBlock(out).length ? { unhandled: unhandledBlock(out) } : {}), first_error: firstError(out), excerpt: failureExcerpt(out, ctx.repoDir), ...suiteFacts(out), names_changed: stripAnsi(out).split("\n").some(lineNamesChange(opts.changed ?? [])), change_lines: changeLines(out, changedForLines(ctx.repoDir, ctx.baseSha, opts.changed ?? []), opts.symbols ?? []), failed: failedCount(out) } : {}) }); // SILENT-IDS facts: the lines naming the change and the printed failed count // FC-16: exit 0 with no executed tests is not a pass
