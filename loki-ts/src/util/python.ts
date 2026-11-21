@@ -550,11 +550,13 @@ export function setupCfgDeclaresDeps(text: string): boolean {
   }
   return false;
 }
+/** A Python dependency manifest or lock that is not setup.py, setup.cfg or pyproject.toml (those are read for content). One list for declaresPythonEnv
+ *  and for declaredRuntimeRequirements (SYSTEM-PROVIDES-DEPS), so a file that marks a repo as declaring an environment always keeps the
+ *  system-interpreter hold there too. */
+const PY_MANIFEST = /^(?:[\w.-]*requirements[\w.-]*\.(?:txt|in)|Pipfile(?:\.lock)?|poetry\.lock|uv\.lock|pdm\.lock|environment\.ya?ml|conda\.ya?ml)$/i;
 export function declaresPythonEnv(root: string, ref: string): boolean {
   const on = setupDepsOn();
-  const MANIFEST = on
-    ? /^(?:[\w.-]*requirements[\w.-]*\.(?:txt|in)|Pipfile(?:\.lock)?|poetry\.lock|uv\.lock|pdm\.lock|environment\.ya?ml|conda\.ya?ml)$/i
-    : /^(?:[\w.-]*requirements[\w.-]*\.(?:txt|in)|Pipfile(?:\.lock)?|setup\.py|poetry\.lock|uv\.lock|pdm\.lock|environment\.ya?ml|conda\.ya?ml)$/i;
+  const MANIFEST = { test: (b: string): boolean => PY_MANIFEST.test(b) || (!on && /^setup\.py$/i.test(b)) }; // knob off: any setup.py, as before SETUP-DEPS
   const DEPS: Record<string, (text: string) => boolean> = on
     ? { "pyproject.toml": pyprojectDeclaresDeps, "setup.py": setupPyDeclaresDeps, "setup.cfg": setupCfgDeclaresDeps }
     : { "pyproject.toml": pyprojectDeclaresDeps, "setup.cfg": (t) => /^\s*install_requires\s*=/m.test(t) };
@@ -569,9 +571,6 @@ export function declaresPythonEnv(root: string, ref: string): boolean {
 }
 /** SYSTEM-PROVIDES-DEPS (LOKI_E10_SYSTEM_PROVIDES_DEPS; on by default, `0`/off/false/no opts out): see systemProvidesDeclared. */
 export const systemProvidesOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SYSTEM_PROVIDES_DEPS"] ?? "").trim());
-/** A manifest Loki cannot split into runtime requirements and tooling (declaresPythonEnv's list without setup.py, plus any file under a
- *  requirements/ directory). Any one of them in the tree keeps the system-interpreter hold. */
-const UNSPLIT_MANIFEST = /^(?:[\w.-]*requirements[\w.-]*\.(?:txt|in)|Pipfile(?:\.lock)?|poetry\.lock|uv\.lock|pdm\.lock|environment\.ya?ml|conda\.ya?ml)$/i;
 const DIST_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 /** One poetry constraint as a PEP 440 specifier ("" for any version), or null when Loki cannot translate it (`||`, a pre-release in a caret or
  *  tilde bound, any unknown form). `^1.2.3` is `>=1.2.3,<2.0.0`, `^0.2.3` is `>=0.2.3,<0.3.0`, `^0.0.3` is `>=0.0.3,<0.0.4`, `^0` is `>=0,<1`;
@@ -614,7 +613,8 @@ export function setupPyRuntimeRequirements(text: string): string[] | null {
   }
   return seen === uses ? out : null;
 }
-/** setup.cfg `[options] install_requires` lines (same line after `=`, then indented continuation lines; full-line `#` or `;` comments and inline ` #` comments cut).
+/** setup.cfg `[options] install_requires` lines (the key matched as setupCfgDeclaresDeps matches it: `install_requires` or `install-requires`, any case, as
+ *  configparser lowercases it; same line after `=`, then indented continuation lines; full-line `#` or `;` comments and inline ` #` comments cut).
  *  `;` stays (it starts a PEP 508 marker). null for a `file:` or `attr:` directive or `%(` interpolation, which Loki does not resolve. */
 export function setupCfgRuntimeRequirements(text: string): string[] | null {
   const out: string[] = []; let sec = "", inKey = false;
@@ -623,7 +623,7 @@ export function setupCfgRuntimeRequirements(text: string): string[] | null {
     if (h) { sec = h[1]!.trim(); inKey = false; continue; }
     const kv = /^(\S[^=:]*?)\s*[=:]\s*(.*)$/.exec(line);
     if (/^\s*[#;]/.test(line)) continue;
-    if (kv && !/^\s/.test(line)) { inKey = sec === "options" && kv[1]!.trim() === "install_requires"; if (inKey) { const v = kv[2]!.replace(/\s#.*$/, "").trim(); if (/^(?:file|attr)\s*:/.test(v)) return null; if (v) out.push(v); } continue; }
+    if (kv && !/^\s/.test(line)) { inKey = sec === "options" && /^install[_-]requires$/i.test(kv[1]!.trim()); if (inKey) { const v = kv[2]!.replace(/\s#.*$/, "").trim(); if (/^(?:file|attr)\s*:/.test(v)) return null; if (v) out.push(v); } continue; }
     if (inKey && /^\s+\S/.test(line)) { const v = line.replace(/\s#.*$/, "").trim(); if (v) out.push(v); continue; }
     if (line.trim() !== "") inKey = false;
   }
@@ -663,13 +663,13 @@ export function pyprojectRuntimeRequirements(text: string): string[] | null {
   return out;
 }
 /** Every runtime requirement the tree at `ref` declares, read from each pyproject.toml, setup.cfg and setup.py; null when any of them
- *  cannot be read or split (see the three readers), or when a manifest Loki cannot split (UNSPLIT_MANIFEST) exists anywhere in the tree. */
+ *  cannot be read or split (see the three readers), or when a manifest Loki cannot split into runtime requirements and tooling (PY_MANIFEST, or any file under a requirements/ directory) exists anywhere in the tree. */
 export function declaredRuntimeRequirements(paths: string[], read: (path: string) => string): string[] | null {
   const readers: Record<string, (t: string) => string[] | null> = { "pyproject.toml": pyprojectRuntimeRequirements, "setup.cfg": setupCfgRuntimeRequirements, "setup.py": setupPyRuntimeRequirements };
   const out: string[] = [];
   for (const f of paths) {
     const b = f.slice(f.lastIndexOf("/") + 1);
-    if (UNSPLIT_MANIFEST.test(b) || /(?:^|\/)requirements\//i.test(f)) return null;
+    if (PY_MANIFEST.test(b) || /(?:^|\/)requirements\//i.test(f)) return null;
     const r = readers[b];
     if (!r) continue;
     let got: string[] | null;
@@ -680,7 +680,7 @@ export function declaredRuntimeRequirements(paths: string[], read: (path: string
   return out;
 }
 const PY_SATISFIES = `
-import json, sys
+import json, os, site, sys
 try:
     from packaging.requirements import Requirement
 except Exception:
@@ -692,6 +692,7 @@ import importlib.metadata as md
 reqs = json.load(sys.stdin)
 if not isinstance(reqs, list) or not reqs:
     print(json.dumps({"ok": False, "why": "no requirements"})); sys.exit(4)
+path = [os.getcwd()] + [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p] + ([] if os.environ.get("PYTHONNOUSERSITE") else [site.getusersitepackages()]) + sys.path
 unmet = []
 for s in reqs:
     try:
@@ -703,10 +704,10 @@ for s in reqs:
     if r.marker is not None and not r.marker.evaluate({"extra": ""}):
         continue
     try:
-        v = md.version(r.name)
+        vs = [d.version for d in md.distributions(name=r.name, path=path)]
     except Exception:
         unmet.append(s); continue
-    if not r.specifier.contains(v):
+    if not vs or not all(r.specifier.contains(v) for v in vs):
         unmet.append(s)
 print(json.dumps({"ok": not unmet, "n": len(reqs), "unmet": unmet}))
 `;
@@ -714,13 +715,17 @@ print(json.dumps({"ok": not unmet, "n": len(reqs), "unmet": unmet}))
  *  interpreter, or the distribution installed at a version the specifier contains (packaging, else pip's vendored copy, and importlib.metadata;
  *  an installed pre-release counts only when the specifier itself allows one). A bare name is resolved on `env`'s PATH, the PATH the checks ran with.
  *  Any parse error, missing packaging, an extra or URL requirement, a non-zero exit, a timeout (10 s), unreadable output or an unmet entry is
- *  false. An empty list is false: nothing read is not evidence. */
-export function interpreterSatisfies(python: string, reqs: string[], env: NodeJS.ProcessEnv = tokenFreeEnv(process.env)): boolean {
+ *  false. An empty list is false: nothing read is not evidence.
+ *  The probe runs in `cwd`, the directory the checks ran in (the repo root), so a pyenv, asdf or mise shim that picks an interpreter by
+ *  `.python-version` or `.tool-versions` picks the same one; -I keeps that directory off the probe's own import path. Tests run without -I, so
+ *  the working directory, PYTHONPATH and the user site come before site-packages: every copy of a distribution on that search path must
+ *  satisfy the specifier, and at least one must exist. Not covered: a `.python-version` inside a package directory whose checks run there. */
+export function interpreterSatisfies(python: string, reqs: string[], cwd: string, env: NodeJS.ProcessEnv = tokenFreeEnv(process.env)): boolean {
   if (!python || reqs.length === 0) return false;
   const bin = isAbsolute(python) ? python : Bun.which(python, { PATH: env["PATH"] ?? "" });
   if (!bin) return false;
   try {
-    const r = spawnSync(bin, ["-I", "-c", PY_SATISFIES], { input: JSON.stringify(reqs), encoding: "utf8", env, cwd: tmpdir(), timeout: 10_000, killSignal: "SIGKILL", maxBuffer: 1 << 20, stdio: ["pipe", "pipe", "ignore"] });
+    const r = spawnSync(bin, ["-I", "-c", PY_SATISFIES], { input: JSON.stringify(reqs), encoding: "utf8", env, cwd, timeout: 10_000, killSignal: "SIGKILL", maxBuffer: 1 << 20, stdio: ["pipe", "pipe", "ignore"] });
     if (r.status !== 0 || r.error) return false;
     const v = JSON.parse((r.stdout ?? "").trim().split("\n").pop() ?? "") as { ok?: unknown; n?: unknown };
     return v.ok === true && v.n === reqs.length;
@@ -733,6 +738,6 @@ export function systemProvidesDeclared(root: string, ref: string, python: string
   try {
     const paths = safeGit(root, ["ls-tree", "-r", "-z", "--name-only", ref]).split("\0").filter(Boolean);
     const reqs = declaredRuntimeRequirements(paths, (f) => safeGit(root, ["show", `${ref}:${f}`]));
-    return reqs !== null && interpreterSatisfies(python, reqs, env);
+    return reqs !== null && interpreterSatisfies(python, reqs, root, env); // the repo root: the cwd verify's checks ran in
   } catch { return false; }
 }

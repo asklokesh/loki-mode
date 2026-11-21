@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- A Python repo that declares runtime dependencies is no longer held at PARTIAL by "tests ran on the system interpreter" when that interpreter has every one installed at an allowed version (SYSTEM-PROVIDES-DEPS, `LOKI_E10_SYSTEM_PROVIDES_DEPS=0` restores the hold). Requirements come from pyproject.toml, setup.cfg and setup.py; a requirements or lock file, a computed or dynamic list, an extra or URL requirement, or any copy on the tests' import path at a failing version keeps the hold. The probe runs in the repo root so a pyenv, asdf or mise shim picks the same interpreter.
 
 ## v11.174.0 (2026-11-20)
 

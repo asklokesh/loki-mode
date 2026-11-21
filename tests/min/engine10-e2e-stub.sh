@@ -45,7 +45,7 @@
 #   6. loki-ts/src/engine10/stages/seal.ts: sysInfo always null (the no-manifest leg reads PARTIAL).
 #   7. loki-ts/src/util/python.ts: declaresPythonEnv always false (the requirements.txt leg reads VERIFIED).
 #   7b. loki-ts/src/util/python.ts: pyprojectDeclaresDeps counts [build-system] requires again (the BUILD-REQUIRES cell reads true for build_only).
-#   7c. loki-ts/src/util/python.ts: MANIFEST keeps setup.py with LOKI_E10_SETUP_DEPS on (the SETUP-DEPS tenacity-repo cell reads true before requirements.txt).
+#   7c. loki-ts/src/util/python.ts: declaresPythonEnv's MANIFEST counts setup.py with LOKI_E10_SETUP_DEPS on (drop the `!on &&`; the SETUP-DEPS tenacity-repo cell reads true before requirements.txt).
 #   7d. loki-ts/src/util/python.ts: setupCfgDeclaresDeps back to the key-only regex /^\s*install_requires\s*=/m (the SETUP-DEPS tenacity cfg cell reads true).
 #   7e. loki-ts/src/util/python.ts: setupPyDeclaresDeps reads a non-literal install_requires as empty (the install_requires=reqs cell reads false: false VERIFIED direction),
 #       or drops the `(?:[,)}]|$)` tail of the empty-literal test (the `[] + reqs` and `[] if x else` cells read false).
@@ -56,9 +56,21 @@
 #   7i. verify.ts reusableRun: drop the pass-or-fail test (the unit's not_run record cell is reused: a timed-out suite would never run again).
 #   7i2. deep.ts runFullSuite: add a reuse line to notProven instead of relying on the check's reused field (the unit's runFullSuite cell reads np.size 1: every reused run held).
 #   7j. loki-ts/src/util/python.ts PY_SATISFIES: every entry counted as met (markers and versions ignored); the SYSTEM-PROVIDES-DEPS ">=9999" cell reads true.
-#   7k. loki-ts/src/util/python.ts declaredRuntimeRequirements: requirements and lock files not checked; the SYSTEM-PROVIDES-DEPS requirements.txt cell reads true.
+#   7k. loki-ts/src/util/python.ts declaredRuntimeRequirements: requirements and lock files not checked (PY_MANIFEST); the SYSTEM-PROVIDES-DEPS requirements.txt cell reads true.
 #   7l. loki-ts/src/util/python.ts setupPyRuntimeRequirements: drop the (?=\s*[,)]) end-of-argument check; the `+ extra` and conditional reader cells read ["a"] (false VERIFIED).
 #   7m. loki-ts/src/engine10/stages/seal.ts sysProvided: return true always (rebuild dist); the pip>=9999 python leg reads VERIFIED.
+#   7n. loki-ts/src/util/python.ts interpreterSatisfies: spawn with cwd: tmpdir() again; the SYSTEM-PROVIDES-DEPS .python-version shim cell reads true (the probe asks another interpreter than the tests).
+#   7o. loki-ts/src/util/python.ts PY_SATISFIES: read only sys.path (md.version(r.name)); the PYTHONPATH pip 0.0.1 cell reads true (the tests import that copy).
+#   7p. loki-ts/src/util/python.ts setupPyRuntimeRequirements: drop the `**` unpacking test; the SPR setup(**kw) cell reads [].
+#   7q. setupPyRuntimeRequirements: drop the distutils `requires=` test; the SPR setup(requires=["a"]) cell reads [].
+#   7r. pyprojectRuntimeRequirements: drop the [tool.flit.metadata] requires and [tool.pdm] dependencies test; the SPR flit and pdm cells read [].
+#   7s. setupCfgRuntimeRequirements: drop the file:/attr: test; the SPR file: and attr: cells read the directive as a requirement.
+#   7t. setupCfgRuntimeRequirements: drop the `%(` test; the SPR interpolation cell reads ["a%(x)s"].
+#   7u. PY_SATISFIES: drop the `r.url or r.extras` test; the SYSTEM-PROVIDES-DEPS extras and URL cells read true.
+#   7v. declaredRuntimeRequirements: drop the requirements/ directory test; the SPR requirements/ cell reads ["pip>=1"] and the reqdir interpreter cell reads true.
+#   7w. setupCfgRuntimeRequirements: match only the exact key install_requires again; the SPR install-requires, Install_Requires and two-manifest cells
+#       read [] and ["pip>=1"] (declaresPythonEnv says declared, the reader sees nothing, and a met second manifest lifts unchecked).
+#   7x. python.ts stripPyComments: not triple-quote aware; the SPR triple-quote cell reads [] (a `#` in a URL then hides install_requires).
 #   8. loki-ts/src/engine10/stages/seal.ts: drop leanHold from verdictOf (the never-calls-multiply leg reads VERIFIED).
 #   9. loki-ts/src/util/check_result.ts: changedSymbols counts any removed line as removed code (the
 #      never-calls-multiply leg reads VERIFIED: the replaced comment credits add()).
@@ -552,20 +564,34 @@ console.log(pyc.map(py).join(" ") + " | " + cfc.map(cfg).join(" ") + " | " + bef
 [ "$SD" = "false false false true true true false true true false | false true true false false | false true" ] && ok "SETUP-DEPS: a setup.py or setup.cfg counts as a Python environment only with runtime requirements (tenacity's reads false, a requirements.txt makes it true)" || bad "SETUP-DEPS unit gave: $SD"
 # SYSTEM-PROVIDES-DEPS (util/python.ts systemProvidesDeclared, seal.ts sysInfo): a repo that declares runtime requirements reads the
 # system-interpreter note as informational only when the interpreter that ran the tests meets every one. Readers first (no interpreter): poetry
-# caret and tilde bounds as PEP 440 (^0.x is the lift-direction trap), a computed setup.py list unreadable, [project] dynamic dependencies unreadable.
+# caret and tilde bounds as PEP 440 (^0.x is the lift-direction trap), a computed setup.py list unreadable, [project] dynamic dependencies unreadable;
+# one value per fail-closed guard (plants 7p to 7t, 7v to 7x): `**`, distutils requires=, flit and pdm tables, file:, attr:, `%(`, a requirements/ file,
+# both setup.cfg key spellings, a triple-quoted string before a URL fragment, and two manifests whose second needs the key match (control: docs/base.txt).
 SPR="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
 const m = await import("./src/util/python.ts");
 const j = (v) => JSON.stringify(v);
+const pp = "[project]\ndependencies = [\"pip>=1\"]\n", rd = (other) => (f) => (f === "pyproject.toml" ? pp : other);
 console.log([m.poetryConstraintToPep440("^1.2.3"), m.poetryConstraintToPep440("^0.2.3"), m.poetryConstraintToPep440("^0.0.3"), m.poetryConstraintToPep440("~1.2.3"), j(m.poetryConstraintToPep440("1.0||2.0")),
   j(m.pyprojectRuntimeRequirements("[tool.poetry.dependencies]\npython = \"^3.8\"\npyasn1 = \">=0.1.3\"\n")), j(m.pyprojectRuntimeRequirements("[project]\ndynamic = [\"dependencies\"]\n")),
   j(m.pyprojectRuntimeRequirements("[tool.poetry.dependencies]\nx = { git = \"https://example.invalid/x\" }\n")), j(m.setupPyRuntimeRequirements("setup(install_requires=reqs)")),
   j(m.setupPyRuntimeRequirements("setup(install_requires=[\"a>=1\"], setup_requires=[\"s\"])")), j(m.setupCfgRuntimeRequirements("[options]\ninstall_requires =\npython_requires = >=3.10\n")),
-  j(m.setupPyRuntimeRequirements("setup(install_requires=[\"a\"] + extra)")), j(m.setupPyRuntimeRequirements("setup(install_requires=[\"a\"] if x else [\"b\"])"))].join(" "));' 2>&1)"
-SPR_WANT='>=1.2.3,<2.0.0 >=0.2.3,<0.3.0 >=0.0.3,<0.0.4 >=1.2.3,<1.3 null ["pyasn1>=0.1.3"] null null null ["a>=1"] [] null null'
+  j(m.setupPyRuntimeRequirements("setup(install_requires=[\"a\"] + extra)")), j(m.setupPyRuntimeRequirements("setup(install_requires=[\"a\"] if x else [\"b\"])")),
+  j(m.setupPyRuntimeRequirements("setup(**kw)")), j(m.setupPyRuntimeRequirements("setup(requires=[\"a\"])")), j(m.pyprojectRuntimeRequirements("[tool.flit.metadata]\nrequires = [\"a\"]\n")),
+  j(m.pyprojectRuntimeRequirements("[tool.pdm]\ndependencies = [\"a\"]\n")), j(m.setupCfgRuntimeRequirements("[options]\ninstall_requires = file: r.txt\n")),
+  j(m.setupCfgRuntimeRequirements("[options]\ninstall_requires = attr: pkg.REQS\n")), j(m.setupCfgRuntimeRequirements("[options]\ninstall_requires =\n    a%(x)s\n")),
+  j(m.declaredRuntimeRequirements(["pyproject.toml", "requirements/base.txt"], rd("pip\n"))), j(m.declaredRuntimeRequirements(["pyproject.toml", "docs/base.txt"], rd("pip\n"))),
+  j(m.setupCfgRuntimeRequirements("[options]\ninstall-requires = zzz\n")), j(m.setupCfgRuntimeRequirements("[options]\nInstall_Requires = zzz\n")),
+  j(m.setupPyRuntimeRequirements("\"\"\"5\" disk\"\"\"\nsetup(url=\"https://x/#r\", install_requires=[\"zzz\"])")),
+  j(m.declaredRuntimeRequirements(["pyproject.toml", "setup.cfg"], rd("[options]\nInstall_Requires = zzz\n")))].join(" "));' 2>&1)"
+SPR_WANT='>=1.2.3,<2.0.0 >=0.2.3,<0.3.0 >=0.0.3,<0.0.4 >=1.2.3,<1.3 null ["pyasn1>=0.1.3"] null null null ["a>=1"] [] null null null null null null null null null null ["pip>=1"] ["zzz"] ["zzz"] ["zzz"] ["pip>=1","zzz"]'
 [ "$SPR" = "$SPR_WANT" ] && ok "SYSTEM-PROVIDES-DEPS readers: caret and tilde bounds translate, computed, dynamic and git requirements are unreadable" || bad "SYSTEM-PROVIDES-DEPS readers gave: $SPR"
 # Interpreter cells, on scratch repos, against a distribution this python3 really has (pip, version probed, never hardcoded). Plants:
 #   7j. util/python.ts PY_SATISFIES: append every entry as met (skip the marker and specifier checks); the ">=9999" cell reads true (false VERIFIED).
-#   7k. util/python.ts declaredRuntimeRequirements: drop the UNSPLIT_MANIFEST check; the requirements.txt cell reads true (false VERIFIED).
+#   7k. util/python.ts declaredRuntimeRequirements: drop the PY_MANIFEST check; the requirements.txt cell reads true (false VERIFIED).
+#   7n. interpreterSatisfies back to cwd: tmpdir(): the pyver cell (a shim that picks its interpreter by .python-version in the working directory, as pyenv,
+#       asdf and mise do) reads true; nopyver is its control (no .python-version, the shim's other interpreter has the requirement: true either way).
+#   7o. PY_SATISFIES reads only sys.path: the PYTHONPATH pip 0.0.1 cell reads true; a PYTHONPATH pip 99.0 copy is its control (true).
+#   7u. no url/extras test: the extras and URL cells read true. 7v. no requirements/ directory test: the reqdir cell reads true.
 if python3 -I -c 'import importlib.metadata as m; m.version("pip")
 try:
     import packaging.requirements
@@ -582,13 +608,27 @@ except Exception:
     spd_repo computed 'setup.py=from setuptools import setup\nsetup(install_requires=reqs)\n'
     spd_repo reqtxt 'pyproject.toml=[project]\nname = "x"\ndependencies = ["pip>=1"]\n' 'requirements.txt=pip\n'
     spd_repo tooling 'pyproject.toml=[project]\nname = "x"\n[project.optional-dependencies]\ntest = ["pytest"]\n'
+    spd_repo extras 'pyproject.toml=[project]\nname = "x"\ndependencies = ["pip[x]>=1"]\n'
+    spd_repo url 'pyproject.toml=[project]\nname = "x"\ndependencies = ["pip @ https://example.invalid/pip.whl"]\n'
+    spd_repo reqdir 'pyproject.toml=[project]\nname = "x"\ndependencies = ["pip>=1"]\n' 'requirements/base.txt=pip\n'
+    spd_repo pyver 'pyproject.toml=[project]\nname = "x"\ndependencies = ["lokifakespd>=1"]\n' '.python-version=system\n'
+    spd_repo nopyver 'pyproject.toml=[project]\nname = "x"\ndependencies = ["lokifakespd>=1"]\n'
+    for d in spd-fake/lokifakespd-1.0 spd-pp-low/pip-0.0.1 spd-pp-high/pip-99.0; do # dist-info copies: name and version from the directory
+        mkdir -p "$T/$d.dist-info"; n="${d#*/}"; printf 'Metadata-Version: 2.1\nName: %s\nVersion: %s\n' "${n%-*}" "${n##*-}" > "$T/$d.dist-info/METADATA"
+    done
+    printf '#!/bin/sh\n# picks its interpreter by working directory, as a pyenv shim does: with .python-version here the real python3, elsewhere one that also sees %s\nif [ -f .python-version ]; then exec python3 "$@"; fi\nexec python3 -I -c "import sys; sys.path.insert(0, \\"%s\\"); exec(sys.argv[1])" "$3"\n' "$T/spd-fake" "$T/spd-fake" > "$T/spd-cwd-python"; chmod +x "$T/spd-cwd-python"
     printf '#!/bin/sh\n# a python3 whose packaging and pip cannot be imported; argv is -I -c <script>\nexec python3 -I -c "import sys; sys.modules[\\"packaging\\"] = None; sys.modules[\\"pip\\"] = None; exec(sys.argv[1])" "$3"\n' > "$T/spd-nopkg-python"; chmod +x "$T/spd-nopkg-python"
     SPD="$(cd "$ROOT/loki-ts" && T="$T" bun --no-env-file --config=/dev/null -e '
 const { systemProvidesDeclared: f } = await import("./src/util/python.ts");
 const T = process.env.T;
 console.log([f(`${T}/spd-rsa`, "HEAD", "python3"), f(`${T}/spd-high`, "HEAD", "python3"), f(`${T}/spd-marker`, "HEAD", "python3"), f(`${T}/spd-computed`, "HEAD", "python3"),
-  f(`${T}/spd-reqtxt`, "HEAD", "python3"), f(`${T}/spd-rsa`, "HEAD", `${T}/spd-nopkg-python`), f(`${T}/spd-tooling`, "HEAD", "python3")].join(" "));' 2>&1)"
-    [ "$SPD" = "true false true false false false false" ] && ok "SYSTEM-PROVIDES-DEPS: a met poetry requirement and a marker-false entry lift; an unmet version, a computed list, a requirements.txt, no packaging and no runtime requirement keep the hold" || bad "SYSTEM-PROVIDES-DEPS unit gave: $SPD (want: true false true false false false false)"
+  f(`${T}/spd-reqtxt`, "HEAD", "python3"), f(`${T}/spd-rsa`, "HEAD", `${T}/spd-nopkg-python`), f(`${T}/spd-tooling`, "HEAD", "python3"),
+  f(`${T}/spd-extras`, "HEAD", "python3"), f(`${T}/spd-url`, "HEAD", "python3"), f(`${T}/spd-reqdir`, "HEAD", "python3"),
+  f(`${T}/spd-pyver`, "HEAD", `${T}/spd-cwd-python`), f(`${T}/spd-nopyver`, "HEAD", `${T}/spd-cwd-python`),
+  f(`${T}/spd-rsa`, "HEAD", "python3", { PATH: process.env.PATH, HOME: process.env.HOME, PYTHONPATH: `${T}/spd-pp-low` }),
+  f(`${T}/spd-rsa`, "HEAD", "python3", { PATH: process.env.PATH, HOME: process.env.HOME, PYTHONPATH: `${T}/spd-pp-high` })].join(" "));' 2>&1)"
+    SPD_WANT="true false true false false false false false false false false true false true"
+    [ "$SPD" = "$SPD_WANT" ] && ok "SYSTEM-PROVIDES-DEPS: a met poetry requirement and a marker-false entry lift; an unmet version, a computed list, a requirements.txt, no packaging, no runtime requirement, an extra, a URL, a requirements/ file, an interpreter chosen by the repo's .python-version and a failing PYTHONPATH copy keep the hold" || bad "SYSTEM-PROVIDES-DEPS unit gave: $SPD (want: $SPD_WANT)"
 elif [ "${CI:-}" = "true" ]; then
     bad "SYSTEM-PROVIDES-DEPS: python3 has no pip distribution or packaging (required in CI)"
 else
