@@ -84,14 +84,20 @@ before the set below was frozen.
 
 The lead cleared the 15 first-list candidates against the held-out corpora and excluded two: BurntSushi/toml
 and spf13/pflag (excluded: held-out overlap, cleared by the lead). The first lists ran out (4 Python and 2
-Go tasks qualified on the first pass), so reserves were added, each batch cleared by the lead before any of
-its PRs was read: Python reserves are the pure-Python, permissively licensed distributions installed on this
-machine's python3, in the alphabetical order `pip list` prints them, starting after the names already used
-(fastapi/annotated-doc, annotated-types/annotated-types, python-trio/async_generator, aio-libs/async-timeout,
-then python-attrs/attrs, litl/backoff, pypa/build, cloudpipe/cloudpickle, python-distro/distro,
-rr-/docstring_parser); Go reserves are small zero-dependency libraries in alphabetical order
-(agnivade/levenshtein, go-logfmt/logfmt, huandu/xstrings, rivo/uniseg, shopspring/decimal). None of them
-overlaps the held-out material.
+Go tasks qualified on the first pass), so reserves were added. They were hand-picked, as the first lists were, not a
+mechanical sample: Python reserves are small pure-Python libraries taken in alphabetical order from the
+distributions installed on this machine (`pip list`), passing over the ones that are not small libraries,
+not pure Python, not permissively licensed or already used (aiokafka, aiosmtplib, aiosqlite, alembic, the
+ansible packages, anthropic, anyio, APScheduler, argon2-cffi, asgiref, and later bcrypt, black, cachetools,
+certifi, cffi, charset-normalizer, click, chromadb): fastapi/annotated-doc, annotated-types/annotated-types,
+python-trio/async_generator, aio-libs/async-timeout, then python-attrs/attrs, litl/backoff, pypa/build,
+cloudpipe/cloudpickle, python-distro/distro, rr-/docstring_parser. Go reserves are small Go libraries in
+alphabetical order, chosen as likely to have few dependencies (agnivade/levenshtein, go-logfmt/logfmt,
+huandu/xstrings, rivo/uniseg, shopspring/decimal; levenshtein and logfmt turned out to have require lines,
+which the go.mod rule handles per PR). The lead cleared every reserve with no held-out overlap, but the order
+was not as clean as clearance-first: annotated-doc and annotated-types were scanned and annotated-types #69
+and #63 A/B-tested before the second clearance request was sent, and levenshtein, logfmt and xstrings were
+scanned while it was pending. The answer was all clear, so no selection changed.
 
 ### Correction made while building (same rule, environment read right)
 
@@ -128,8 +134,8 @@ this reason alone.
 | 9 | facelessuser/bracex | N (no [project] dependencies; hatch env lists only) | **#64** taken (the newest PR, no skip) |
 | R1 | fastapi/annotated-doc | N | skipped: the only PR passing the mechanical filter, #69, automates releases (not a bug fix; its source file is scripts/prepare_release.py) |
 | R2 | annotated-types/annotated-types | D (`typing-extensions>=4.0.0; python_version<'3.9'`) | **#63** taken. Skipped before it: #115 (quote style), #105 (tooling), #97 (Python version support), #65 (feature: Unit type), #69 (typing and docstring only; the suite passes before the fix). Mechanical: no test file #119, #118, #109, #103, #100, #90, #84, #80, #70; no source file #120, #116, #117, #111, #114, #110, #104, #96, #92, #88, #87, #86, #83 |
-| R3 | python-trio/async_generator | D | skipped: none of its 9 merged PRs passes the mechanical filter |
-| R4 | aio-libs/async-timeout | D (`typing_extensions>=3.6.5; python_version < "3.8"` in setup.cfg install_requires) | **#363** taken (fixes #362). Skipped before it: #422 (feature: asyncio.Timeout compatibility), #421 (removes a deprecated API). Mechanical: no test file #364; no source file for the other 78 newer PRs (#473 to #334) |
+| R3 | python-trio/async_generator | not read (no PR qualified, so the manifest was never needed) | skipped: none of its 9 merged PRs passes the mechanical filter |
+| R4 | aio-libs/async-timeout | D (`typing_extensions>=3.6.5; python_version < "3.8"` in setup.cfg install_requires) | **#363** taken (fixes #362, "Tasks are not uncancelled in python 3.11"; upstream filed its changelog entry as CHANGES/362.feature, but the linked issue describes wrong behaviour, which is the rule's bug-fix test). Skipped before it: #422 (feature: asyncio.Timeout compatibility), #421 (removes a deprecated API). Mechanical: no test file #364; no source file for the other 78 newer PRs (#473 to #334) |
 
 With R4 the quota is full: 5 Python tasks, D 3 (python-rsa, annotated-types, async-timeout), N 2 (tenacity,
 bracex). python-attrs/attrs, litl/backoff, pypa/build, cloudpipe/cloudpickle, python-distro/distro and
@@ -142,7 +148,9 @@ How "declares real runtime dependencies" reads on these five, stated plainly: py
 time on every Python. The annotated-types and async-timeout declarations are non-empty lists, so they count
 as D under the rule as written, but each entry carries a python_version marker that is false on 3.14, so on
 this machine neither installs anything. Counting only dependencies active on Python 3.14, the set has 1
-task with real runtime dependencies, not 2. The engine's own reading (loki-ts/src/util/python.ts
+task with real runtime dependencies, not 2. Only python-rsa has dependencies active on 3.14. The lead ruled, before the run, that the
+classification stands as written (the rule under test counts any non-empty dependencies or install_requires,
+whatever its markers), and it is not changed after the results. The engine's own reading (loki-ts/src/util/python.ts
 declaresPythonEnv) treats 4 of the 5 as declaring a Python environment: python-rsa ([tool.poetry]),
 annotated-types ([project] dependencies), async-timeout (setup.py, requirements.txt and install_requires)
 and tenacity (setup.py, and setup.cfg `install_requires =` with an empty value); only bracex reads as none.
@@ -180,6 +188,17 @@ ignores 4 test files that need typeguard or tornado; python-rsa ignores tests/te
 python-rsa and async-timeout drop the pytest --cov addopts (pytest-cov is not in the benchmark toolchain,
 as for py-parse-tz-groups); emoji in annotated-types and xstrings test string literals become escapes; en
 dashes in tenacity copyright comments become '-'.
+
+### What the engine will see on the base commit (measured before the calibration run)
+
+Oracle and noop score with hidden_cmd, ignored files included; Loki's verifier runs the repository's suite
+itself. The plain full suite with no --ignore (`python3 -m pytest -q -p no:cacheprovider` with
+PYTHONNOUSERSITE=1 and a throwaway HOME, or `go test -count=1 ./...`), run on a copy of each cached base
+snapshot: red for hc2-py-rsa-encrypt-modulus (exit 2, tests/test_mypy.py cannot import mypy) and
+hc2-py-tenacity-ordinal-teens (exit 2, 4 collection errors: typeguard and tornado); green for
+annotated-types (252 passed), async-timeout (33 passed), bracex (417 passed) and the three Go tasks. This was
+recorded before any loki-cal-* run and changes no selection; the report reads base-green and base-red merged
+runs separately.
 
 ### Verification as h2h does it
 
