@@ -41,7 +41,19 @@ TASKS_DIR = HERE / "tasks"
 # --suite hard: the same format, chosen for multi-file fixes in larger projects. It lives under fixtures/
 # because two issue texts keep characters (emoji, en and em dashes) this repository's text rule bans.
 # Both keep only meta.json and task.txt; materialize() rebuilds the snapshot from the pinned commits.
-SUITES = {"tasks": TASKS_DIR, "replay": HERE / "replay", "hard": HERE / "fixtures" / "hard"}
+# --suite hc2: held-out calibration set 2 (replay/HELDOUT-CAL-2.md), the replay format in the same directory under an hc2- prefix.
+# --suite replay leaves every hc2- task out, so a tuning run on replay never reads a held-out task.
+SUITES = {"tasks": TASKS_DIR, "replay": HERE / "replay", "hard": HERE / "fixtures" / "hard", "hc2": HERE / "replay"}
+SUITE_PREFIX = {"hc2": "hc2-"}
+
+
+def suite_task_ids(suite):
+    """Task ids of a suite: the dirs holding a meta.json, only those with the suite's prefix, and none with another suite's."""
+    ids = sorted(p.name for p in SUITES[suite].iterdir() if (p / "meta.json").is_file())
+    own = SUITE_PREFIX.get(suite)
+    return [i for i in ids if i.startswith(own)] if own else [i for i in ids if not i.startswith(tuple(SUITE_PREFIX.values()))]
+
+
 CONFIGS = ["raw-haiku", "raw-sonnet", "raw-opus", "raw-haiku-verify", "raw-sonnet-verify", "raw-opus-verify",
            "loki-haiku", "loki-sonnet", "loki-opus", "loki-default", "loki-haiku-flag"]
 # Low-effort Opus arms: every session runs at effort low (raw: `claude --effort low`; Loki: LOKI_E10_EFFORT=low, the
@@ -1442,7 +1454,7 @@ def main(argv=None):
     ap.add_argument("--configs", default=",".join(CONFIGS), help=f"comma list from {ALL_CONFIGS} "
                     f"(default: {','.join(CONFIGS)})")
     ap.add_argument("--suite", default="tasks", choices=sorted(SUITES), help="task suite: tasks (synthetic, default) "
-                    "or replay (real closed issues replayed at the fix's parent commit)")
+                    "or replay (real closed issues replayed at the fix's parent commit); hc2 is the held-out calibration set 2")
     ap.add_argument("--tasks", default="", help="comma list of task ids from the suite (default: all)")
     ap.add_argument("--reps", type=int, default=1)
     ap.add_argument("--timeout", type=int, default=600, help="contestant timeout in seconds (default 600)")
@@ -1473,7 +1485,7 @@ def main(argv=None):
         if c in LOW_EFFORT_CONFIGS and c.startswith("loki-"):
             config_env(c, {})  # refuse an H2H_LOKI_ENV effort that contradicts the arm before any paid run starts
     tasks_dir = SUITES[a.suite]
-    all_tasks = sorted(p.name for p in tasks_dir.iterdir() if (p / "meta.json").is_file())
+    all_tasks = suite_task_ids(a.suite)
     task_ids = [t for t in a.tasks.split(",") if t] or all_tasks
     for t in task_ids:
         if t not in all_tasks:

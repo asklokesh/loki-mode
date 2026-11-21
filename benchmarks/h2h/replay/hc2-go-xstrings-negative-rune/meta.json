@@ -1,0 +1,95 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "go",
+  "kind": "replay",
+  "hidden": {
+    "translate_test.go": "translate_test.go"
+  },
+  "hidden_cmd": [
+    "go",
+    "test",
+    "-count=1",
+    "./..."
+  ],
+  "visible_cmd": [
+    "go",
+    "test",
+    "-count=1",
+    "./..."
+  ],
+  "protected": [
+    "convert_test.go",
+    "count_test.go",
+    "format_test.go",
+    "manipulate_test.go",
+    "regression_test.go",
+    "translate_test.go",
+    "util_test.go"
+  ],
+  "source": {
+    "upstream": "https://github.com/huandu/xstrings",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/huandu/xstrings/issues/77",
+    "fix_pr": "https://github.com/huandu/xstrings/pull/78",
+    "fix_commit": "e5f85a2a42a0e8bcff67ae9a229e4b1cf42edb9c",
+    "parent_commit": "28aabebffe3cd509e1c66eadba569ec8a187d5d3",
+    "vendored_paths": [
+      "LICENSE",
+      "README.md",
+      "go.mod",
+      "common.go",
+      "convert.go",
+      "convert_test.go",
+      "count.go",
+      "count_test.go",
+      "doc.go",
+      "format.go",
+      "format_test.go",
+      "manipulate.go",
+      "manipulate_test.go",
+      "regression_test.go",
+      "stringbuilder.go",
+      "stringbuilder_go110.go",
+      "translate.go",
+      "translate_test.go",
+      "util_test.go"
+    ],
+    "solution_files": [
+      "translate.go"
+    ],
+    "note": "Emoji codepoints are rewritten to meet this repository's text rule, without changing behaviour: in string literals as escapes (Go \\U0001F600, Python \\U0001F60A and similar).",
+    "patch_files": {
+      "repo/convert_test.go": [
+        [
+          "\ud83d\ude00",
+          "\\U0001F600",
+          4
+        ]
+      ],
+      "repo/count_test.go": [
+        [
+          "\ud83d\ude00",
+          "\\U0001F600",
+          3
+        ]
+      ],
+      "repo/manipulate_test.go": [
+        [
+          "\ud83d\ude00",
+          "\\U0001F600",
+          2
+        ]
+      ],
+      "repo/regression_test.go": [
+        [
+          "\ud83d\ude00",
+          "\\U0001F600",
+          2
+        ]
+      ]
+    }
+  },
+  "snapshot_sha256": "50d64be76f94d27f3ebc9ba4bd44ac8aafed0384997da2ef806a0e58174d504f"
+}

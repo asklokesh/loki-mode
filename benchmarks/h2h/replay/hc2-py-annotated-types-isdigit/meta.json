@@ -1,0 +1,79 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "annotated_types/test_cases.py": "annotated_types/test_cases.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "annotated_types/test_cases.py"
+  ],
+  "source": {
+    "upstream": "https://github.com/annotated-types/annotated-types",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/annotated-types/annotated-types/issues/63",
+    "fix_pr": "https://github.com/annotated-types/annotated-types/pull/63",
+    "fix_commit": "89e3d2ec0c828b2cd8a1bd08132daf355bc34fe2",
+    "parent_commit": "59a50d17126f97a6ad383d886c21e03d5de54972",
+    "vendored_paths": [
+      "LICENSE",
+      "README.md",
+      "pyproject.toml",
+      "annotated_types",
+      "tests"
+    ],
+    "solution_files": [
+      "annotated_types/__init__.py"
+    ],
+    "note": "Emoji codepoints are rewritten to meet this repository's text rule, without changing behaviour: in string literals as escapes (Go \\U0001F600, Python \\U0001F60A and similar). The PR links no issue: issue is the PR's own number on the issue tracker, and task.txt is the PR title and body.",
+    "patch_files": {
+      "repo/annotated_types/test_cases.py": [
+        [
+          "\ud83d\ude0a",
+          "\\U0001F60A",
+          1
+        ],
+        [
+          "\ud83d\udc40",
+          "\\U0001F440",
+          1
+        ]
+      ],
+      "hidden/annotated_types/test_cases.py": [
+        [
+          "\ud83d\ude0a",
+          "\\U0001F60A",
+          1
+        ],
+        [
+          "\ud83d\udc40",
+          "\\U0001F440",
+          1
+        ]
+      ]
+    }
+  },
+  "snapshot_sha256": "c60925a1cea652e7965b098b9609b07c8f6965f5a9afeeb03b74170c51103ea4"
+}

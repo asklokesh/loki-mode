@@ -1,0 +1,6 @@
+Extreme value in encrypt_int not covered.
+
+For the case where the message equals the modulus.
+
+modified:   Fixed a bug in rsa/core.py where the message should not be equal to the modulus
+modified:   Added test cases in tests/test_integers.py

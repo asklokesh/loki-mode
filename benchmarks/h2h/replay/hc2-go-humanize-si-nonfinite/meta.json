@@ -1,0 +1,79 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "go",
+  "kind": "replay",
+  "hidden": {
+    "si_test.go": "si_test.go"
+  },
+  "hidden_cmd": [
+    "go",
+    "test",
+    "-count=1",
+    "./..."
+  ],
+  "visible_cmd": [
+    "go",
+    "test",
+    "-count=1",
+    "./..."
+  ],
+  "protected": [
+    "bigbytes_test.go",
+    "bytes_test.go",
+    "comma_fuzz_test.go",
+    "comma_test.go",
+    "commaf_fuzz_test.go",
+    "commaf_test.go",
+    "common_test.go",
+    "ftoa_precision_test.go",
+    "ftoa_test.go",
+    "number_test.go",
+    "ordinals_test.go",
+    "si_test.go",
+    "times_test.go"
+  ],
+  "source": {
+    "upstream": "https://github.com/dustin/go-humanize",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/dustin/go-humanize/issues/165",
+    "fix_pr": "https://github.com/dustin/go-humanize/pull/165",
+    "fix_commit": "1b638b2c0d9b358cbae4b51b74f136d9a6055d1a",
+    "parent_commit": "ac100271b177ad70370353d75f05ff5185a74ffc",
+    "vendored_paths": [
+      "LICENSE",
+      "README.markdown",
+      "go.mod",
+      "big.go",
+      "bigbytes.go",
+      "bigbytes_test.go",
+      "bytes.go",
+      "bytes_test.go",
+      "comma.go",
+      "comma_fuzz_test.go",
+      "comma_test.go",
+      "commaf.go",
+      "commaf_fuzz_test.go",
+      "commaf_test.go",
+      "common_test.go",
+      "ftoa.go",
+      "ftoa_precision_test.go",
+      "ftoa_test.go",
+      "humanize.go",
+      "number.go",
+      "number_test.go",
+      "ordinals.go",
+      "ordinals_test.go",
+      "si.go",
+      "si_test.go",
+      "times.go",
+      "times_test.go"
+    ],
+    "solution_files": [
+      "si.go"
+    ],
+    "note": "The PR links no issue: issue is the PR's own number on the issue tracker, and task.txt is the PR title and body."
+  },
+  "snapshot_sha256": "8fe96c1b0a3e9d48981f139d742c4b743c922dd5a33f5504e96801cf2df6aa12"
+}

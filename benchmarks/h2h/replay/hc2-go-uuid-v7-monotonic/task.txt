@@ -1,0 +1,50 @@
+Monotonicity in UUIDv7
+
+UUIDv7 was shipped in #139 (and is included in v1.5.0), but appears to have skipped the [part of the spec that expects monotonic ordering for batch creation](https://datatracker.ietf.org/doc/html/draft-peabody-dispatch-new-uuid-format-03#monotonicity_counters).
+
+> Additionally, care MUST be taken to ensure UUIDs generated in batches are also monotonic. That is, if one-thousand UUIDs are generated for the same timestamp; there is sufficient logic for organizing the creation order of those one-thousand UUIDs. For batch UUID creation implementions MAY utilize a monotonic counter which SHOULD increment for each UUID created during a given timestamp.
+
+In the following code sample, the output is always:
+
+```
+➜  go run main.go
+uuidv7 false
+```
+
+```go
+package main
+
+import (
+	"fmt"
+
+	"github.com/google/uuid"
+	"golang.org/x/exp/constraints"
+)
+
+func main() {
+	length := 10000
+
+	uuids := make([]string, length)
+	for i := 0; i < length; i++ {
+		uuidString, _ := uuid.NewV7()
+		uuids[i] = uuidString.String()
+	}
+
+	fmt.Println("uuidv7", isSorted(uuids))
+}
+
+func isSorted[T constraints.Ordered](collection []T) bool {
+	for i := 1; i < len(collection); i++ {
+		if collection[i-1] > collection[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+```
+
+Can this implementation be modified to support monotonically increasing UUIDs?
+
+Thank you!

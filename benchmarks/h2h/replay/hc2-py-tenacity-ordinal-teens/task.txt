@@ -1,0 +1,19 @@
+Fix ordinal suffix generation for large numbers ending in 11, 12, 13
+
+This PR fixes a logical error in the `_utils.find_ordinal` helper where numbers greater than 20 ending in 11, 12, or 13 were incorrectly suffixed.
+
+**The Issue:**
+Previously, the code checked for the 11-13 exception range only on the raw number. For numbers > 20, it recursed using `num % 10`.
+
+* *Input:* `111`
+* *Old Logic:* `111 > 20` -> recurse `find_ordinal(1)` -> returns `"st"` -> Output: `"111st"` (Incorrect)
+
+**The Fix:**
+Added a check for `pos_num % 100` to catch the 11-13 pattern for larger numbers before recursing.
+
+* *New Logic:* `111 % 100` is `11` -> returns `"th"` -> Output: `"111th"` (Correct)
+
+**Changes:**
+
+* Modified `tenacity/_utils.py`: Added modulo 100 check.
+* Updated `tests/test_utils.py`: Added specific test cases for 111, 112, and 113.

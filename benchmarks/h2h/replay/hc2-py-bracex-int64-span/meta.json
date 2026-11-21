@@ -1,0 +1,54 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/brace-cases.txt": "tests/brace-cases.txt",
+    "tests/brace-results.txt": "tests/brace-results.txt",
+    "tests/test_brace.py": "tests/test_brace.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml"
+  ],
+  "source": {
+    "upstream": "https://github.com/facelessuser/bracex",
+    "license": "MIT",
+    "license_file": "LICENSE.md",
+    "issue": "https://github.com/facelessuser/bracex/issues/64",
+    "fix_pr": "https://github.com/facelessuser/bracex/pull/64",
+    "fix_commit": "cd73b9c37786461c75c53f93b87452063681d75f",
+    "parent_commit": "33190b8168d10cee6889586d3a58d7bbf86ac602",
+    "vendored_paths": [
+      "LICENSE.md",
+      "README.md",
+      "pyproject.toml",
+      "bracex",
+      "tests"
+    ],
+    "solution_files": [
+      "bracex/__init__.py"
+    ],
+    "note": "The PR links no issue: issue is the PR's own number on the issue tracker, and task.txt is the PR title and body."
+  },
+  "snapshot_sha256": "79b06dab9059f55d1597a504591bbff5297665bb15a9326bf983a15b3e2cd0bc"
+}

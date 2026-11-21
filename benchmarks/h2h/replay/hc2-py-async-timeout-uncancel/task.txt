@@ -1,0 +1,32 @@
+Tasks are not uncancelled in python 3.11
+
+Python 3.11 introduced the concept of uncancelling a cancelled task.
+
+From https://docs.python.org/3/library/asyncio-task.html#task-cancellation
+> user code should not generally call [uncancel](https://docs.python.org/3/library/asyncio-task.html#asyncio.Task.uncancel). However, in cases when suppressing [asyncio.CancelledError](https://docs.python.org/3/library/asyncio-exceptions.html#asyncio.CancelledError) is truly desired, it is necessary to also call uncancel() to completely remove the cancellation state.
+
+async-timeout needs to be updated to run `uncancel` to be compliant with python 3.11.
+
+An example of this being problematic is using `async-timeout` and something that uses `anyio==3.7.1`.
+Here is a minimal example using `httpx==0.24.1`
+
+```
+import asyncio
+import async_timeout
+import httpx
+
+async def main():
+    try:
+        async with async_timeout.timeout(1):
+            await asyncio.sleep(5)
+    except TimeoutError:
+        pass
+
+    client = httpx.AsyncClient()
+    await client.get("https://www.google.com")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+This causes an `asyncio.exceptions.CancelledError` at the point of the `await client.get(...)` call, raised somewhere in `anyio` due to the cancelling state of the main task not being removed.

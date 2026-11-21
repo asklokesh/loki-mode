@@ -1,0 +1,23 @@
+TranslateRune panics for negative rune inputs with ASCII patterns
+
+`Translator.TranslateRune` panics on a negative `rune` when the pattern contains an ASCII literal. The same scalar value is returned unchanged by a Unicode-only pattern, an empty pattern, or an ASCII range.
+
+Reproduced on `master` at `28aabebffe3cd509e1c66eadba569ec8a187d5d3`, with Go 1.25.4 on macOS arm64:
+
+```go
+tr := xstrings.NewTranslator("a", "x")
+got, matched := tr.TranslateRune(-1)
+fmt.Println(got, matched)
+```
+
+Actual: `panic: runtime error: index out of range [-1]`.
+
+Expected: `(-1, false)`, consistent with the documented unmatched-input behavior and `NewTranslator("中", "x").TranslateRune(-1)`.
+
+A Go `rune` can contain negative values even though these are not Unicode scalar values. The public method currently does not reject these values consistently: only the ASCII dictionary path panics. This does not arise from decoding a string with `Translate`.
+
+The ASCII lookup checks `r <= unicode.MaxASCII` without checking `r >= 0`. Checking both bounds would leave unmatched inputs, range/map lookup, and complement/deletion handling on their existing paths.
+
+I also reproduced the problem with `-2` and the minimum int32 value. Tests of eight pattern shapes give 15 failing and nine passing control subcases before that guard is added.
+
+Found while testing the scalar API with synthetic inputs, using OpenAI Codex assistance; no production incident is claimed.

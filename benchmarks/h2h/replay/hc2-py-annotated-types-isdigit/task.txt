@@ -1,0 +1,3 @@
+Fix IsDigit -> IsDigits
+
+There are few typos that mistakenly claim the annotation is called `IsDigit`, while it's actually `IsDigits`.

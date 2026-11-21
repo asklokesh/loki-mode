@@ -1,0 +1,67 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_integers.py": "tests/test_integers.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--ignore=tests/test_mypy.py",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--ignore=tests/test_mypy.py",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "setup.cfg",
+    "tox.ini"
+  ],
+  "source": {
+    "upstream": "https://github.com/sybrenstuvel/python-rsa",
+    "license": "Apache-2.0",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/sybrenstuvel/python-rsa/issues/215",
+    "fix_pr": "https://github.com/sybrenstuvel/python-rsa/pull/215",
+    "fix_commit": "b94766f775aa3cdc541a66355cb00e439aab3e55",
+    "parent_commit": "5045b149ba255349730e1c7ad78c61700427c5da",
+    "vendored_paths": [
+      "LICENSE",
+      "README.md",
+      "pyproject.toml",
+      "setup.cfg",
+      "tox.ini",
+      "rsa",
+      "tests"
+    ],
+    "solution_files": [
+      "rsa/core.py"
+    ],
+    "note": "Ignored test files (not installed on the benchmark machine, unrelated to the fix): tests/test_mypy.py (needs mypy). pytest addopts: the --cov options were removed (pytest-cov is not in the benchmark toolchain). The PR links no issue: issue is the PR's own number on the issue tracker, and task.txt is the PR title and body.",
+    "patch_files": {
+      "repo/tox.ini": [
+        [
+          "addopts = -v --cov rsa --cov-report term-missing",
+          "addopts = -v",
+          1
+        ]
+      ]
+    }
+  },
+  "snapshot_sha256": "2d8d4a36dd13f1236bb53117ab48d035ee5e905c3f66ffbb652b9e40f0ec38d7"
+}

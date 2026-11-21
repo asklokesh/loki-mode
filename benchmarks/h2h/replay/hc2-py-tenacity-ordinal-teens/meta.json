@@ -1,0 +1,104 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_utils.py": "tests/test_utils.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--ignore=tests/test_after.py",
+    "--ignore=tests/test_asyncio.py",
+    "--ignore=tests/test_tenacity.py",
+    "--ignore=tests/test_tornado.py",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--ignore=tests/test_after.py",
+    "--ignore=tests/test_asyncio.py",
+    "--ignore=tests/test_tenacity.py",
+    "--ignore=tests/test_tornado.py",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "setup.cfg",
+    "tox.ini",
+    "setup.py"
+  ],
+  "source": {
+    "upstream": "https://github.com/jd/tenacity",
+    "license": "Apache-2.0",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/jd/tenacity/issues/556",
+    "fix_pr": "https://github.com/jd/tenacity/pull/556",
+    "fix_commit": "0bdf1d9e5f42b7179e7aae52cb70d26283a4c5ed",
+    "parent_commit": "d4e868d6b8368c00b5a1fad54de36c2c8c3a0fb3",
+    "vendored_paths": [
+      "LICENSE",
+      "README.rst",
+      "doc/source/index.rst",
+      "pyproject.toml",
+      "setup.cfg",
+      "setup.py",
+      "tox.ini",
+      "tenacity",
+      "tests"
+    ],
+    "solution_files": [
+      "tenacity/_utils.py"
+    ],
+    "note": "Ignored test files (not installed on the benchmark machine, unrelated to the fix): tests/test_after.py (imports tests/test_tenacity.py); tests/test_asyncio.py (imports tests/test_tenacity.py); tests/test_tenacity.py (needs typeguard); tests/test_tornado.py (needs tornado). README.rst is a symlink to doc/source/index.rst, so its target is vendored too. En dashes (U+2013) in five copyright comments are replaced by '-' to meet this repository's text rule. The PR links no issue: issue is the PR's own number on the issue tracker, and task.txt is the PR title and body.",
+    "patch_files": {
+      "repo/tests/test_tenacity.py": [
+        [
+          "\u2013",
+          "-",
+          1
+        ]
+      ],
+      "repo/tenacity/stop.py": [
+        [
+          "\u2013",
+          "-",
+          1
+        ]
+      ],
+      "repo/tenacity/wait.py": [
+        [
+          "\u2013",
+          "-",
+          1
+        ]
+      ],
+      "repo/tenacity/retry.py": [
+        [
+          "\u2013",
+          "-",
+          1
+        ]
+      ],
+      "repo/tenacity/asyncio/retry.py": [
+        [
+          "\u2013",
+          "-",
+          1
+        ]
+      ]
+    }
+  },
+  "snapshot_sha256": "d30760eb7da7e732d4002c065161c1c3ca6b489d569d79aa5cb4b88e3596430e"
+}

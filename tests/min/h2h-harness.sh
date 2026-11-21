@@ -31,7 +31,8 @@
 #     snapshot is rebuilt at the pinned commits, matched against snapshot_sha256, cached, and refused on a
 #     digest mismatch, a wrong patch count or an unfetchable commit; the fix passes and the parent fails; the
 #     leak check flags hidden content (also over the visible test of the same name) but not namesakes;
-#     H2H_SELFCHECK_FETCH=1 also runs oracle/noop over every real replay and hard task.
+#     H2H_SELFCHECK_FETCH=1 also runs oracle/noop over every real replay, hard and hc2 task; --suite replay
+#     never lists a held-out hc2- task and --suite hc2 lists only those.
 #   learning curve (--sequences with raw-haiku/raw-sonnet and loki-sonnet-learn, loki-sonnet-nolearn, loki-auto-learn arms, --laps N):
 #     each arm's env is exact (the four haiku arms unchanged), a raw sequence step records the arm's own cost and session,
 #     every lap starts from the base tree and re-applies work, reset_lap keeps .loki memory, run_index runs 1..laps*steps,
@@ -105,6 +106,7 @@
 #  57. calibration_stats(): count invalid runs; calibration U1 n must fail.
 #  58. wait_for_load(): never raise; calibration U4 high must fail.
 #  59. calibration_patch(): copy the solution for inert; calibration U2 inert must fail.
+#  60. suite_task_ids(): drop the prefix filter; the hc2 suite-split check must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -776,6 +778,8 @@ spec_check='
 import json, glob, os, re, sys
 ok, n = True, 0
 for p in glob.glob(sys.argv[1] + "/*/meta.json"):
+    if os.path.basename(os.path.dirname(p)).startswith("hc2-") != (sys.argv[2] == "hc2"):
+        continue  # replay/ holds the hc2 held-out set too; each suite is checked on its own tasks
     m = json.load(open(p)); s = m["source"]; d = os.path.dirname(p); n += 1
     ok &= sorted(os.listdir(d)) == ["meta.json", "task.txt"] and os.path.getsize(os.path.join(d, "task.txt")) > 0
     ok &= s["license"] in ("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause") and m["kind"] == "replay"
@@ -789,14 +793,23 @@ print(ok, n)'
 nrep="$(python3 -I -c "$spec_check" benchmarks/h2h/replay replay)"
 check "replay: every task is a pinned spec with a permissive license, its license file, the issue and both commits" test "${nrep% *}" = True
 check "replay: 6 to 10 tasks (${nrep#* })" test "${nrep#* }" -ge 6 -a "${nrep#* }" -le 10
+nhc2="$(python3 -I -c "$spec_check" benchmarks/h2h/replay hc2)"
+check "hc2: every held-out task is a pinned spec with a permissive license, its license file, the issue and both commits" test "${nhc2% *}" = True
+check "hc2: 8 held-out tasks (${nhc2#* })" test "${nhc2#* }" = 8
+# --suite replay never lists a held-out hc2- task, --suite hc2 lists only those, and together they are every replay/ task.
+check "hc2: suite_task_ids splits replay/ into the tuning set and the hc2 held-out set" test "$(python3 -I -c '
+import sys; sys.path.insert(0, "benchmarks/h2h"); import h2h
+r, h = h2h.suite_task_ids("replay"), h2h.suite_task_ids("hc2")
+every = sorted(p.name for p in h2h.SUITES["replay"].iterdir() if (p / "meta.json").is_file())
+print(bool(r) and len(h) == 8 and all(i.startswith("hc2-") for i in h) and not any(i.startswith("hc2-") for i in r) and sorted(r + h) == every)')" = True
 nhard="$(python3 -I -c "$spec_check" benchmarks/h2h/fixtures/hard hard)"
 check "hard: every task is a pinned multi-file spec with a permissive license, its license file, the issue and both commits" test "${nhard% *}" = True
 check "hard: at least 8 candidate tasks (${nhard#* })" test "${nhard#* }" -ge 8
 
 if [ "${H2H_SELFCHECK_FETCH:-0}" = 1 ]; then
-    for suite in replay hard; do
+    for suite in replay hard hc2; do
         J="$T/$suite.json"
-        case "$suite" in replay) n="${nrep#* }" ;; *) n="${nhard#* }" ;; esac
+        case "$suite" in replay) n="${nrep#* }" ;; hc2) n="${nhc2#* }" ;; *) n="${nhard#* }" ;; esac
         TMPDIR="$T" bash benchmarks/h2h/run.sh --suite "$suite" --configs oracle,noop --jobs 4 --out "$J" >"$T/$suite.log" 2>&1
         check "$suite oracle/noop: runner exits 0 (snapshots rebuilt, no leak, no harness error)" test "$?" = 0
         check "$suite: self-check covered every task ($n)" test "$(runs 'len(d["tasks"])')" = "$n"

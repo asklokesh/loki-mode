@@ -1,0 +1,68 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "go",
+  "kind": "replay",
+  "hidden": {
+    "uuid_test.go": "uuid_test.go"
+  },
+  "hidden_cmd": [
+    "go",
+    "test",
+    "-count=1",
+    "./..."
+  ],
+  "visible_cmd": [
+    "go",
+    "test",
+    "-count=1",
+    "./..."
+  ],
+  "protected": [
+    "json_test.go",
+    "null_test.go",
+    "seq_test.go",
+    "sql_test.go",
+    "uuid_test.go"
+  ],
+  "source": {
+    "upstream": "https://github.com/google/uuid",
+    "license": "BSD-3-Clause",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/google/uuid/issues/148",
+    "fix_pr": "https://github.com/google/uuid/pull/150",
+    "fix_commit": "a2b2b32373ff0b1a312b7fdf6d38a977099698a6",
+    "parent_commit": "c58770eb495f55fe2ced6284f93c5158a62e53e3",
+    "vendored_paths": [
+      "LICENSE",
+      "README.md",
+      "go.mod",
+      "dce.go",
+      "doc.go",
+      "hash.go",
+      "json_test.go",
+      "marshal.go",
+      "node.go",
+      "node_js.go",
+      "node_net.go",
+      "null.go",
+      "null_test.go",
+      "seq_test.go",
+      "sql.go",
+      "sql_test.go",
+      "time.go",
+      "util.go",
+      "uuid.go",
+      "uuid_test.go",
+      "version1.go",
+      "version4.go",
+      "version6.go",
+      "version7.go"
+    ],
+    "solution_files": [
+      "version7.go"
+    ],
+    "note": ""
+  },
+  "snapshot_sha256": "f8c82994051c96175f8ed9cb2c1c7b87707cc30b34b4f4f3f2e9bcb74b583062"
+}

@@ -1,0 +1,66 @@
+{
+  "difficulty": "normal",
+  "shape": "single-file",
+  "lang": "py",
+  "kind": "replay",
+  "hidden": {
+    "tests/test_timeout.py": "tests/test_timeout.py"
+  },
+  "hidden_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "visible_cmd": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "tests"
+  ],
+  "protected": [
+    "tests",
+    "pyproject.toml",
+    "setup.cfg",
+    "setup.py"
+  ],
+  "source": {
+    "upstream": "https://github.com/aio-libs/async-timeout",
+    "license": "Apache-2.0",
+    "license_file": "LICENSE",
+    "issue": "https://github.com/aio-libs/async-timeout/issues/362",
+    "fix_pr": "https://github.com/aio-libs/async-timeout/pull/363",
+    "fix_commit": "3cfabe24a10a0bd5cea13a682881503255911ab9",
+    "parent_commit": "adf9e28f6a91117ff02b2635c6de8ed2cec993c0",
+    "vendored_paths": [
+      "LICENSE",
+      "README.rst",
+      "pyproject.toml",
+      "requirements.txt",
+      "setup.cfg",
+      "setup.py",
+      "async_timeout",
+      "tests"
+    ],
+    "solution_files": [
+      "async_timeout/__init__.py"
+    ],
+    "note": "pytest addopts: the --cov options were removed (pytest-cov is not in the benchmark toolchain).",
+    "patch_files": {
+      "repo/setup.cfg": [
+        [
+          "addopts= --cov=async_timeout --cov-report=term --cov-report=html --cov-branch\n",
+          "",
+          1
+        ]
+      ]
+    }
+  },
+  "snapshot_sha256": "236e200ac2740374328e43d81901fc9036df70a255d63ef2bdc591e5fd737dbb"
+}

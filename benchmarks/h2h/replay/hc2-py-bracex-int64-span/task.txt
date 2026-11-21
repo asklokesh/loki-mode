@@ -1,0 +1,13 @@
+Keep ranges literal when their span overflows int64
+
+`get_int_range` checks that each endpoint fits in int64 but not the distance between them. Bash 5.3 keeps the sequence literal when `|end - start|` is larger than INT64_MAX, while bracex expands it:
+
+```
+{-1..9223372036854775807..4611686018427387904}
+bash 5.3: {-1..9223372036854775807..4611686018427387904}
+bracex:   -1 4611686018427387903 9223372036854775807
+```
+
+`{-1..9223372036854775806..4611686018427387904}` (one less) still expands in both. I added the boundary pairs to `brace-cases.txt` and regenerated the results with `generate.sh` under Bash 5.3.
+
+`test_large_integer_range_limit_boundaries` used a step of `2**54`, which makes its ranges span about 1.8e19. Bash 5.0 through 5.3 all keep those literal, so I changed the step to `2**53`, where Bash expands them to the same 1000 and 1001 items the test counts.

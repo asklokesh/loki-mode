@@ -1,0 +1,18 @@
+si: don't give infinities and NaN an SI prefix
+
+`ComputeSI` clamps the exponent to the range `siPrefixTable` can name (#154). An infinite input has an exponent of `+Inf`, so the clamp pins it to 30 and the result is labelled with the largest prefix:
+
+```go
+humanize.ComputeSI(math.Inf(1))    // (+Inf, "Q")
+humanize.SI(math.Inf(1), "x")      // "+Inf Qx"
+humanize.SI(math.Inf(-1), "x")     // "-Inf Qx"
+humanize.SIWithDigits(math.Inf(1), 2, "x") // "+Inf Qx"
+```
+
+"+Inf Qx" reads as a finite quantity scaled by 10^30. Before the clamp (v1.0.1) the same inputs weren't right either: the value was `Inf / Inf`, so `SI(math.Inf(1), "x")` came back as `"NaN x"`.
+
+This change makes `ComputeSI` return non-finite inputs unchanged and without a prefix, the same way it already handles zero. `SI(math.Inf(1), "x")` now returns `"+Inf x"` and `SI(math.NaN(), "x")` still returns `"NaN x"`. Finite inputs never reach the new branch.
+
+## Tests
+
+`TestComputeSINonFinite` checks `ComputeSI`, `SI` and `SIWithDigits` for +Inf, -Inf and NaN. On master it fails for both infinities (prefix `"Q"`, `"+Inf Qx"`, `"-Inf Qx"`). With the change it passes, and so does the rest of `go test ./...`. `go vet ./...` is clean, and `gofmt` reports no changes in the two touched files.
