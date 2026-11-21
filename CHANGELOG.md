@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-### A Python project's build requirements no longer stop a passing change from reading VERIFIED
-
-- When tests run on the machine's own Python, Loki holds the label unless the repo declares no Python dependencies, because a system interpreter may not match the project's. It read the `requires` line under `[build-system]` in pyproject.toml as a declared environment. That line lists what builds a wheel (setuptools, flit_core), not what the code imports, so every pure-Python library looked like it had dependencies, and its passing fixes stayed PARTIAL.
-- Now only runtime dependencies count: a non-empty `[project] dependencies` list, optional dependencies, `install_requires`, or a poetry, pdm, uv or dependency-groups table. A project that declares any of these is still held as before.
-- Measured on the V1 calibration tuning set (the 8 fixes the bug was found on, so not an independent score): merged fixes VERIFIED went from 1 of 8 to 5 of 8, all cases right from 24 of 32 to 28 of 32, false VERIFIED stayed 0. Report: benchmarks/h2h/results/calibration-2026-11-20-build-requires.json.
 
 ## v11.173.0 (2026-11-20)
 
