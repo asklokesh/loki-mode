@@ -591,6 +591,7 @@ SPR_WANT='>=1.2.3,<2.0.0 >=0.2.3,<0.3.0 >=0.0.3,<0.0.4 >=1.2.3,<1.3 null ["pyasn
 #   7n. interpreterSatisfies back to cwd: tmpdir(): the pyver cell (a shim that picks its interpreter by .python-version in the working directory, as pyenv,
 #       asdf and mise do) reads true; nopyver is its control (no .python-version, the shim's other interpreter has the requirement: true either way).
 #   7o. PY_SATISFIES reads only sys.path: the PYTHONPATH pip 0.0.1 cell reads true; a PYTHONPATH pip 99.0 copy is its control (true).
+#       Both get the caller's whole environment with only PYTHONPATH set, so they differ from the rsa cell by that one variable.
 #   7u. no url/extras test: the extras and URL cells read true. 7v. no requirements/ directory test: the reqdir cell reads true.
 if python3 -I -c 'import importlib.metadata as m; m.version("pip")
 try:
@@ -615,7 +616,7 @@ except Exception:
     spd_repo nopyver 'pyproject.toml=[project]\nname = "x"\ndependencies = ["lokifakespd>=1"]\n'
     for d in spd-fake/lokifakespd-1.0 spd-pp-low/pip-0.0.1 spd-pp-high/pip-99.0; do # dist-info copies: name and version from the directory
         mkdir -p "$T/$d.dist-info"; n="${d#*/}"; printf 'Metadata-Version: 2.1\nName: %s\nVersion: %s\n' "${n%-*}" "${n##*-}" > "$T/$d.dist-info/METADATA"
-    done
+    done; unset d n
     printf '#!/bin/sh\n# picks its interpreter by working directory, as a pyenv shim does: with .python-version here the real python3, elsewhere one that also sees %s\nif [ -f .python-version ]; then exec python3 "$@"; fi\nexec python3 -I -c "import sys; sys.path.insert(0, \\"%s\\"); exec(sys.argv[1])" "$3"\n' "$T/spd-fake" "$T/spd-fake" > "$T/spd-cwd-python"; chmod +x "$T/spd-cwd-python"
     printf '#!/bin/sh\n# a python3 whose packaging and pip cannot be imported; argv is -I -c <script>\nexec python3 -I -c "import sys; sys.modules[\\"packaging\\"] = None; sys.modules[\\"pip\\"] = None; exec(sys.argv[1])" "$3"\n' > "$T/spd-nopkg-python"; chmod +x "$T/spd-nopkg-python"
     SPD="$(cd "$ROOT/loki-ts" && T="$T" bun --no-env-file --config=/dev/null -e '
@@ -625,8 +626,8 @@ console.log([f(`${T}/spd-rsa`, "HEAD", "python3"), f(`${T}/spd-high`, "HEAD", "p
   f(`${T}/spd-reqtxt`, "HEAD", "python3"), f(`${T}/spd-rsa`, "HEAD", `${T}/spd-nopkg-python`), f(`${T}/spd-tooling`, "HEAD", "python3"),
   f(`${T}/spd-extras`, "HEAD", "python3"), f(`${T}/spd-url`, "HEAD", "python3"), f(`${T}/spd-reqdir`, "HEAD", "python3"),
   f(`${T}/spd-pyver`, "HEAD", `${T}/spd-cwd-python`), f(`${T}/spd-nopyver`, "HEAD", `${T}/spd-cwd-python`),
-  f(`${T}/spd-rsa`, "HEAD", "python3", { PATH: process.env.PATH, HOME: process.env.HOME, PYTHONPATH: `${T}/spd-pp-low` }),
-  f(`${T}/spd-rsa`, "HEAD", "python3", { PATH: process.env.PATH, HOME: process.env.HOME, PYTHONPATH: `${T}/spd-pp-high` })].join(" "));' 2>&1)"
+  f(`${T}/spd-rsa`, "HEAD", "python3", { ...process.env, PYTHONPATH: `${T}/spd-pp-low` }),
+  f(`${T}/spd-rsa`, "HEAD", "python3", { ...process.env, PYTHONPATH: `${T}/spd-pp-high` })].join(" "));' 2>&1)"
     SPD_WANT="true false true false false false false false false false false true false true"
     [ "$SPD" = "$SPD_WANT" ] && ok "SYSTEM-PROVIDES-DEPS: a met poetry requirement and a marker-false entry lift; an unmet version, a computed list, a requirements.txt, no packaging, no runtime requirement, an extra, a URL, a requirements/ file, an interpreter chosen by the repo's .python-version and a failing PYTHONPATH copy keep the hold" || bad "SYSTEM-PROVIDES-DEPS unit gave: $SPD (want: $SPD_WANT)"
 elif [ "${CI:-}" = "true" ]; then
