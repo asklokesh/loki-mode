@@ -7,11 +7,11 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 ## Counts
 
 - KEEP: 12
-- HIDE: 43
+- HIDE: 45
 - FOLD: 61
 - REMOVED: 29
-- Total rows: 145
-- Registry paths (commands and nested subcommands): 219
+- Total rows: 147
+- Registry paths (commands and nested subcommands): 223
 
 ## Commands
 
@@ -23,6 +23,7 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 | doctor | bun route, bash fallthrough | KEEP | Core onboarding gate |  |
 | provider | bun route, bash fallthrough | FOLD | Provider-agnostic core | loki config set provider NAME |
 | memory | bun route, bash fallthrough | HIDE | Memory still carries legacy store paths |  |
+| lessons | loki-ts/src/cli.ts | HIDE | R3 approved learning; the same subtree as loki memory lessons |  |
 | knowledge | loki-ts/src/cli.ts | HIDE | Shown by doctor --repo; the visible command list stays at 11 |  |
 | rollback | bun route, bash fallthrough | FOLD | Checkpoint restore is engine-neutral | loki undo <run> |
 | backup | autonomy/loki | HIDE | Enterprise retention and backup (D99 item 7) |  |
@@ -44,6 +45,7 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 | issues | loki-ts/src/cli.ts | FOLD | Mass issue pickup on the T7 queue | loki start owner/repo --label L --limit N --parallel K |
 | undo | loki-ts/src/cli.ts | KEEP | UNDO-1/2: --plan is read-only, apply behind LOKI_UNDO=1 |  |
 | verify-pr | loki-ts/src/cli.ts | FOLD | VPR-2: fail-to-pass check, LOKI_VERIFY_PR=1 | loki verify <PR url> |
+| address | loki-ts/src/cli.ts | HIDE | R1 PR review loop: one verified run per comment; --post pushes and replies |  |
 | answer | loki-ts/src/cli.ts | FOLD | v10 blocked-run flow | loki start --answer "<text>" |
 | engine10 | loki-ts/src/cli.ts | HIDE | The v10 engine |  |
 | internal | loki-ts/src/cli.ts | HIDE | Hidden plumbing |  |
