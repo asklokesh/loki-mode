@@ -100,16 +100,25 @@ export const playwrightTestPkg = (repoDir: string): string | null => {
 };
 /** Spec source: one test per page, each saving its own short video to the path given (shots are [route, absolute .webm]); the config sets use.video and use.trace. Everything is JSON-encoded, never interpolated raw. */
 export const e2eSpecSource = (pkgDir: string, base: string, shots: [string, string][]): string =>
-  `const { test } = require(${JSON.stringify(pkgDir)});\nfor (const [r, out] of ${JSON.stringify(shots)}) {\n  test("loki e2e " + r, async ({ page }) => {\n    await page.goto(${JSON.stringify(base)} + r); await page.waitForLoadState("load"); await page.waitForTimeout(500);\n    const v = page.video(); if (v) { await page.close(); try { await v.saveAs(out); } catch { /* no video for this page */ } }\n  });\n}\n`;
+  `const { test } = require(${JSON.stringify(pkgDir)});\nfor (const [r, out] of ${JSON.stringify(shots)}) {\n  test("loki e2e " + r, async ({ page }) => {\n    await page.goto(${JSON.stringify(base)} + r); await page.waitForLoadState("load"); await page.waitForTimeout(500);\n    const v = page.video(); if (v) { await page.close(); try { await Promise.race([v.saveAs(out), new Promise((r) => setTimeout(r, 5000))]); } catch { /* no video for this page */ } }\n  });\n}\n`;
 export const e2eConfigSource = (video: boolean): string =>
   `module.exports = { testDir: ".", testMatch: "walk.spec.cjs", outputDir: "./out", reporter: "null", workers: 1, use: { video: ${JSON.stringify(video ? "on" : "off")}, trace: "on" } };\n`;
 /** Run-dir relative video path per route, beside its screenshot (<relDir>/<screenName>.webm). */
 export const videoRels = (relDir: string, routes: string[]): string[] => routes.map((r) => join(relDir, `${screenName(r)}.webm`));
 /** The NOT PROVEN line for an e2e media skip; the video-on text is the one shipped since 10.7. */
 export const e2eSkipNote = (video: boolean, why: string): string => `playwright e2e ${video ? "video and trace" : "trace"} skipped: ${why}`;
+/** Which e2e files go into the receipt. saved: per-page videos that exist; outFiles: run-dir relative files under e2e/out. With no saved page video, the runner's own
+ *  out/ copies are kept (the shipped walkthrough behavior), so the worst case equals the pre-R2 capture. */
+export function e2eRels(video: boolean, saved: string[], outFiles: string[]): { rels: string[]; skipped: string | null } {
+  const zips = outFiles.filter((f) => /\.zip$/.test(f)), vids = !video ? [] : saved.length > 0 ? saved : outFiles.filter((f) => /\.webm$/.test(f));
+  const rels = [...vids, ...zips];
+  if (rels.length === 0) return { rels, skipped: e2eSkipNote(video, `no ${video ? "video or trace" : "trace"} was produced`) };
+  return { rels, skipped: video && vids.length === 0 ? "playwright e2e video skipped: no video was produced" : null };
+}
 /** Record a short video per page (beside its screenshot) and a trace. Never throws. rels are run-dir relative. A skip is a clear one-line reason. */
 async function recordE2eMedia(dirs: string[], runDir: string, relDir: string, base: string, routes: string[], ms: number, signal: AbortSignal | undefined, video: boolean): Promise<{ rels: string[]; skipped: string | null }> {
-  const pw = dirs.map(playwrightBin).find((x) => x !== null) ?? null, pkg = dirs.map(playwrightTestPkg).find((x) => x !== null) ?? null; // app dir first, then the repo root (hoisted node_modules), as the screenshot path does
+  const home = dirs.find((d) => playwrightBin(d) !== null && playwrightTestPkg(d) !== null); // app dir first, then the repo root (hoisted node_modules); the CLI and the library from one install
+  const pw = home ? playwrightBin(home) : null, pkg = home ? playwrightTestPkg(home) : null;
   if (!pw || !pkg) return { rels: [], skipped: e2eSkipNote(video, "@playwright/test is not installed in the repo") };
   try {
     const dir = join(runDir, relDir, "e2e"), vids = videoRels(relDir, routes);
@@ -117,17 +126,16 @@ async function recordE2eMedia(dirs: string[], runDir: string, relDir: string, ba
     writeFileSync(join(dir, "walk.spec.cjs"), e2eSpecSource(pkg, base, routes.map((r, i) => [r, join(runDir, vids[i]!)])));
     writeFileSync(join(dir, "playwright.config.cjs"), e2eConfigSource(video));
     if (!(await shoot(pw, ["test", "--config", join(dir, "playwright.config.cjs")], dirs[0]!, ms, signal))) return { rels: [], skipped: e2eSkipNote(video, "the run failed or timed out") };
-    const rels = video ? vids.filter((v) => !isSymlink(join(runDir, v)) && isRegularFile(join(runDir, v))) : [], gotVideo = rels.length > 0;
-    const walk = (d: string): void => { // traces only: Playwright's own .webm copies under out/ duplicate the saved ones
+    const saved = video ? vids.filter((v) => !isSymlink(join(runDir, v)) && isRegularFile(join(runDir, v))) : [], outFiles: string[] = [];
+    const walk = (d: string): void => {
       for (const e of readdirSync(d, { withFileTypes: true })) {
         const full = join(d, e.name);
         if (e.isDirectory()) walk(full);
-        else if (e.isFile() && /\.zip$/.test(e.name)) rels.push(join(relDir, "e2e", relative(dir, full)));
+        else if (e.isFile() && /\.(webm|zip)$/.test(e.name)) outFiles.push(join(relDir, "e2e", relative(dir, full)));
       }
     };
     if (existsSync(join(dir, "out"))) walk(join(dir, "out"));
-    if (rels.length === 0) return { rels, skipped: e2eSkipNote(video, `no ${video ? "video or trace" : "trace"} was produced`) };
-    return { rels, skipped: video && !gotVideo ? "playwright e2e video skipped: no video was produced" : null };
+    return e2eRels(video, saved, outFiles);
   } catch (e) { return { rels: [], skipped: e2eSkipNote(video, String((e as Error)?.message ?? e).slice(0, 120)) }; }
 }
 export interface CaptureOpts { budgetMs?: number; maxRoutes?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv; onServer?: (pgid: number) => void } // onServer: the dev server's own process group, so a supervisor can reap it on a hard kill

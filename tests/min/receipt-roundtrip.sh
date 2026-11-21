@@ -31,13 +31,14 @@
 #   V7e verificationStamp: put the Wall branch before alreadyOk; S2a fails.
 #   V7f seal.ts: write observed entries into notProven (shown red by the V2 W2 cell in run-safety.sh, which reads seal.ts).
 #
-# R2 video evidence legs (features/visual_evidence.ts, integrations/before_after.ts) and the defects planted to prove them:
+# R2 video evidence legs (loki-ts/src/features/visual_evidence.ts, loki-ts/src/integrations/before_after.ts) and the defects planted to prove them:
 #   R2a visualVideoEnabled: return true whatever LOKI_VISUAL_VIDEO says; R2-1 and R2-3 fail.
 #   R2b e2eSpecSource: interpolate the route list raw instead of JSON.stringify; R2-2 fails.
 #   R2c checkScreens: `continue` on entries ending .webm; R2-5 fails (an altered video reads clean).
 #   R2d evidenceSection: print every entry flat (drop the nesting); R2-6 fails.
 #   R2e beforeAfterSection: drop the vid(...) suffix; the with-video R2-7 cell fails.
 #   R2f videoRels: use the raw route instead of screenName; R2-4 fails.
+#   R2g e2eRels: drop the out/ .webm fallback (keep only saved page videos); the second R2-8 case fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -365,7 +366,7 @@ has "V7 S3: a VERIFIED receipt carries verified_by with a proof and no observe k
 # --- R2 video evidence: knob, per-page video spec, verify recheck of a video hash, PR Evidence nesting, Before / After cell ---
 mkdir -p "$T/r2"
 R2OUT="$(cd "$ROOT/loki-ts" && R2D="$T/r2" bun -e '
-import { visualVideoEnabled, e2eSpecSource, e2eConfigSource, videoRels, e2eSkipNote, receiptScreensProblem, evidenceSection, sha256File } from "./src/features/visual_evidence.ts";
+import { visualVideoEnabled, e2eSpecSource, e2eConfigSource, videoRels, e2eSkipNote, e2eRels, receiptScreensProblem, evidenceSection, sha256File } from "./src/features/visual_evidence.ts";
 import { beforeAfterSection } from "./src/integrations/before_after.ts";
 import { mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -397,6 +398,8 @@ const want7a = head + "| index | before_after/before/evidence/x/index.png (sha25
 const want7b = head + "| index | before_after/before/evidence/x/index.png (sha256:p1) | before_after/after/evidence/y/index.png (sha256:p2) |\n";
 const got7a = beforeAfterSection({ ...bb, beforeVideos: [{ path: "before_after/before/evidence/x/index.webm", sha256: "v1" }], afterVideos: [{ path: "before_after/after/evidence/y/index.webm", sha256: "v2" }] });
 const got7b = beforeAfterSection(bb);
+const e8 = (v: boolean, sv: string[], of: string[]) => { const r = e2eRels(v, sv, of); return r.rels.join(",") + ">" + String(r.skipped); }, outs = ["e/e2e/out/t/video.webm", "e/e2e/out/t/trace.zip"];
+console.log("R2-8", [e8(true, ["e/a.webm"], outs), e8(true, [], outs), e8(false, [], outs), e8(true, [], ["x.zip"]), e8(true, [], [])].join(" | "));
 console.log("R2-7", got7a === want7a ? "with-video" : "got " + JSON.stringify(got7a), got7b === want7b ? "unchanged" : "got " + JSON.stringify(got7b));
 ' 2>&1)"
 has "R2-1 LOKI_VISUAL_VIDEO: on when unset, empty or 1; 0 turns it off" "$R2OUT" "R2-1 true,false,true,true"
@@ -405,6 +408,7 @@ has "R2-3 the e2e config records video only when the knob is on; the trace and o
 has "R2-4 each page video sits beside its screenshot under the screen name; the skip line names what was skipped" "$R2OUT" "R2-4 evidence/ab/index.webm,evidence/ab/about.webm,evidence/ab/a_b.webm | playwright e2e video and trace skipped: x | playwright e2e trace skipped: x"
 has "R2-5 verify rechecks a video hash: untouched passes, a changed byte or a symlinked video is named" "$R2OUT" "R2-5 null | evidence video was altered: evidence/ab/index.webm | evidence video path is a symlink: evidence/ab/index.webm"
 has "R2-6 the PR Evidence section lists each page video under its screenshot; a trace stays top-level" "$R2OUT" "R2-6 nested"
+has "R2-8 receipt files: saved page videos win, the runner's own out/ video is the fallback, video off keeps only traces, a missing video is named" "$R2OUT" "R2-8 e/a.webm,e/e2e/out/t/trace.zip>null | e/e2e/out/t/video.webm,e/e2e/out/t/trace.zip>null | e/e2e/out/t/trace.zip>null | x.zip>playwright e2e video skipped: no video was produced | >playwright e2e video and trace skipped: no video or trace was produced"
 has "R2-7 Before / After cells carry each side video; with no video the table bytes are unchanged" "$R2OUT" "R2-7 with-video unchanged"
 
 finish
