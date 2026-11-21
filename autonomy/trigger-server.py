@@ -1677,12 +1677,12 @@ def _keep_address_record(clone, start_sha):
         else:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(replies, dst, symlinks=True)
-    refs = subprocess.run(["git", "-C", str(clone), "for-each-ref", "--format=%(refname:short)", "refs/heads/loki/"],
+    refs = subprocess.run(_clone_git(clone) + ["for-each-ref", "--format=%(refname:short)", "refs/heads/loki/"],
                           capture_output=True, text=True, timeout=30, env=env, check=True).stdout.split()
     for branch in refs:
         if not LOKI_RUN_BRANCH_RE.match(branch):
             continue
-        ahead = subprocess.run(["git", "-C", str(clone), "rev-list", "--count", "%s..refs/heads/%s" % (start_sha, branch)],
+        ahead = subprocess.run(_clone_git(clone) + ["rev-list", "--count", "%s..refs/heads/%s" % (start_sha, branch)],
                                capture_output=True, text=True, timeout=30, env=env, check=True).stdout.strip()
         if ahead == "0":
             continue
@@ -1694,15 +1694,22 @@ def _keep_address_record(clone, start_sha):
             ok = False
             continue
         dest_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "-C", str(clone), "bundle", "create", str(bundle.resolve()),
+        subprocess.run(_clone_git(clone) + ["bundle", "create", str(bundle.resolve()),
                         "%s..refs/heads/%s" % (start_sha, branch)], capture_output=True, timeout=120, env=env, check=True)
     return ok
+
+
+def _clone_git(clone):
+    """git argv prefix for the review clone a fix run just had exec in: a planted fsmonitor, hook or ssh command never runs
+    with the trigger server's credentials (the hardening of autonomy/lib/check_author.py and loki-ts SAFE_GIT_CONFIG)."""
+    return ["git", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "core.sshCommand=",
+            "-c", "protocol.ext.allow=never", "-C", str(clone)]
 
 
 def _clone_dirty(clone):
     """True when the clone holds uncommitted work outside .loki (or git cannot tell)."""
     try:
-        out = subprocess.run(["git", "-C", str(clone), "status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).loki"],
+        out = subprocess.run(_clone_git(clone) + ["status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).loki"],
                              capture_output=True, text=True, timeout=30, env=_scoped_child_env(), check=True).stdout
     except (OSError, subprocess.SubprocessError):
         return True
@@ -1770,7 +1777,7 @@ def _address_on_clone(payload, summary, dry_run=False):
         subprocess.run(["git", "clone", "--quiet", "--depth", "50", "--single-branch", "--branch", ref,
                         "--", origin, str(clone)], capture_output=True, timeout=REVIEW_CLONE_TIMEOUT,
                        env=env, check=True)
-        got = subprocess.run(["git", "-C", str(clone), "rev-parse", "HEAD"], capture_output=True,
+        got = subprocess.run(_clone_git(clone) + ["rev-parse", "HEAD"], capture_output=True,
                              text=True, timeout=30, env=env).stdout.strip()
     except (OSError, subprocess.SubprocessError) as e:
         logging.error("review clone failed: %s", e)

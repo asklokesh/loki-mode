@@ -401,4 +401,10 @@ case "$status_json" in *enabled_events*) bad "http: /status still has enabled_ev
 kill "$SRV_PID" 2>/dev/null
 trap _min_cleanup EXIT
 
+# R1 D1: every git call in a review clone goes through _clone_git (fsmonitor, hooks and ssh command off), because a fix run had exec in that
+# clone and the trigger server holds the credentials. Plant: write one clone call as plain ["git", "-C", str(clone), ...] and this cell reads 1.
+raw="$(grep -c '"git", "-C", str(clone)' "$ROOT/autonomy/trigger-server.py")"
+hard="$(grep -c 'core.fsmonitor=' "$ROOT/autonomy/trigger-server.py")"
+[ "$raw" = 0 ] && [ "$hard" -ge 1 ] && ok "review clone: every git call is hardened (fsmonitor, hooks, ssh command off)" || bad "review clone: $raw unhardened git call(s), hardening lines $hard"
+
 finish
