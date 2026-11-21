@@ -117,7 +117,7 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("list", "All learnings", { flags: [bool("--json", "Print the learnings summary as JSON")] }),
       sub("index", "Show or rebuild the memory index", { positionals: [{ name: "action", type: "enum", values: ["rebuild"] }] }),
       sub("learn", "Learn lessons from a merged PR's review comments", { positionals: [{ name: "pr", type: "string" }] }),
-      sub("lessons", "List PR review lessons with uses and outcomes", { flags: [bool("--json", "Print the lessons as JSON")] }),
+      sub("lessons", "List PR review lessons with approval state, uses and outcomes; approve <id> or apply <id> (same as loki lessons)", { flags: [bool("--json", "Print the lessons as JSON")] }),
       sub("brief", "Print the lessons and learnings block an engine10 run injects", { flags: [str("--task", "text", "Task text used to pick relevant lessons")] }),
       sub("show", "Show one learning"),
       sub("search", "Search learnings"),
@@ -125,6 +125,12 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("consolidate", "Episodic-to-semantic pipeline"),
       sub("compound", "Compound learnings"),
     ],
+  }),
+  cmd("lessons", "HIDE", "bun", "Review lessons learned from merged PRs: list them, approve one so later runs read it, or write its proposed guidance edit", "R3 approved learning; the same subtree as loki memory lessons", {
+    flags: [json], subcommands: [
+      sub("approve", "Approve one lesson so later runs read it (local to this checkout)", { positionals: [{ name: "id", type: "string" }] }),
+      sub("apply", "Write the lesson's proposed AGENTS.md line or .loki-checklist.json item into the working tree for you to commit", { positionals: [{ name: "id", type: "string" }] }),
+    ], example: "loki lessons approve prl-0123456789ab",
   }),
   cmd("knowledge", "HIDE", "bun", "What Loki has verified about this repository (the repo card); export writes it for a team to commit", "Shown by doctor --repo; the visible command list stays at 11", {
     flags: [json], subcommands: [sub("show", "Print the repo card"), sub("export", "Write .github/loki-repo-card.md")], example: "loki knowledge export",

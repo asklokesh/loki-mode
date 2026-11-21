@@ -93,6 +93,8 @@ async function dispatch(argv: readonly string[]): Promise<number> {
 
     case "memory":
       return runMemory(rest);
+    case "lessons": // R3 approved learning: `loki lessons [approve|apply <id>]` is `loki memory lessons ...`
+      return runMemory(["lessons", ...rest]);
     case "knowledge":
       return runKnowledge(rest);
 

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Lessons from review comments need an engineer's approval before runs read them
+
+- `loki memory learn` used to store every review comment of a merged PR as a lesson that later runs could read straight away. Now a new lesson is proposed: runs read it only after an engineer approves it with `loki lessons approve <id>`, or after its proposed guidance edit is merged on the base branch (read from the base commit only, so a run's own edit approves nothing).
+- A comment worth keeping comes with that edit ready: a `.loki-checklist.json` item when the comment says not to use a named piece of code, otherwise one line under `## Review lessons` in AGENTS.md. `loki lessons apply <id>` writes it into your checkout for you to commit; Loki never commits, pushes or posts it.
+- Lessons stored before this release keep working as they did. `LOKI_PR_LESSONS_APPROVAL=0` turns approval off. Lessons still reach a run only with `LOKI_PR_LESSONS=1`.
+
 
 ## v11.174.0 (2026-11-20)
 

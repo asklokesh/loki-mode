@@ -36,15 +36,21 @@ export function readChecklist(repoDir: string, baseSha: string): { items: Checkl
   try { text = safeGit(repoDir, ["show", `${baseSha}:${CHECKLIST_FILE}`]); } catch { return { items: [] }; } // no checklist in the base commit
   let doc: unknown;
   try { doc = JSON.parse(text); } catch { return { items: [], problem: `${CHECKLIST_FILE} is not valid JSON` }; }
+  const problem = checklistProblem(doc);
+  return problem ? { items: [], problem } : { items: (doc as { items: ChecklistItem[] }).items };
+}
+/** Why a parsed checklist document is not read (one bad item, a duplicate id or too many items reject the whole file), or null. Also run by
+ *  util/pr_lessons.ts applyProposal on the merged document before it writes an approved-lesson item, so a proposal never silences the file. */
+export function checklistProblem(doc: unknown): string | null {
   const d = doc as { version?: unknown; items?: unknown };
-  if (!d || typeof d !== "object" || d.version !== 1 || !Array.isArray(d.items)) return { items: [], problem: `${CHECKLIST_FILE} must be {"version": 1, "items": [...]}` };
-  if (d.items.length > CHECKLIST_MAX_ITEMS) return { items: [], problem: `${CHECKLIST_FILE} has ${d.items.length} items (at most ${CHECKLIST_MAX_ITEMS})` };
+  if (!d || typeof d !== "object" || d.version !== 1 || !Array.isArray(d.items)) return `${CHECKLIST_FILE} must be {"version": 1, "items": [...]}`;
+  if (d.items.length > CHECKLIST_MAX_ITEMS) return `${CHECKLIST_FILE} has ${d.items.length} items (at most ${CHECKLIST_MAX_ITEMS})`;
   const seen = new Set<string>();
   for (const it of d.items) {
-    const why = validItem(it); if (why) return { items: [], problem: why };
-    const id = (it as ChecklistItem).id; if (seen.has(id)) return { items: [], problem: `item id ${id} is not unique` }; seen.add(id);
+    const why = validItem(it); if (why) return why;
+    const id = (it as ChecklistItem).id; if (seen.has(id)) return `item id ${id} is not unique`; seen.add(id);
   }
-  return { items: d.items as ChecklistItem[] };
+  return null;
 }
 /** `paths` globs are anchored at the repository root and read by check_result.ts globToRegExp (`*` within a segment, `**` across, `?` one character). A pattern
  *  whose last segment matches a directory matches everything under it: `src` and `src/*` both match src/a/b.ts. */

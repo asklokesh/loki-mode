@@ -48,6 +48,13 @@
 #              no patch; LOKI_REPO_CARD=0 runs nothing. No services: the setup is plain bash.
 #   default:   with neither LOKI_PR_LESSONS nor LOKI_WORKED_EXAMPLE set (the default, rule 6), the same similar task gets
 #              no worked example and no run-lessons block, and the run still records its lesson. Every other leg opts in.
+#   approval:  (R3, LOKI_PR_LESSONS_APPROVAL default on) a lesson `memory learn` stores from a merged PR is proposed, bound to its text by
+#              sha256; a human comment worth keeping carries a proposed AGENTS.md line (one marker, its own) or, for "do not use `x`" on
+#              a file, a .loki-checklist.json item (escaped forbid_added, `**/*.<ext>`, the lesson id); LGTM and a bot comment carry none.
+#              Runs read a lesson stored before (no approval field) as before and a proposed one only once approved: `loki lessons
+#              approve` (an unknown id is refused, an edited text is held until approved again) or the base commit's guidance holding
+#              it (the applied edit uncommitted, or an older base, approves nothing; `apply` twice writes once; an invalid checklist is
+#              refused, never overwritten). lessons-injected.json counts held lessons. LOKI_PR_LESSONS_APPROVAL=0 is today's behaviour.
 #
 # Planted defects used to prove this test can fail (each reverted afterwards):
 #   W1. pr_lessons.ts learnFromRun: skip the edited-existing-test add (the weakened legs find no lesson and no injected line).
@@ -76,6 +83,14 @@
 #  22. (FR06) org_context default max_bytes 100000 (org-cap).
 #  23. (FR06) pr_lessons.ts orgKnowledgeBlock: drop the fence() call (org-safety).
 #  24. (FR06) knowledge_graph.py merge_repo: let the load error propagate from `brief` (org-failsafe).
+#  R3-1. pr_lessons.ts readForRuns: return true (approval-held fails).
+#  R3-2. pr_lessons.ts approvedOnBase: read the working-tree file instead of git show <base>:<file> (approval-base uncommitted fails).
+#  R3-3. pr_lessons.ts readForRuns: drop the text_sha256 comparison (approval-edited fails).
+#  R3-4. pr_lessons.ts learnFromPr: never attach the approval field (approval-learn fails).
+#  R3-5. pr_lessons.ts approvalOn: default off (approval-learn and approval-held fail).
+#  R3-6. pr_lessons.ts proposalFor: forbid_added without escapeRegex (approval-learn checklist item fails).
+#  R3-7. cli.ts: drop the `lessons` case (approval-cli fails).
+#  R3-8. pr_lessons.ts guideText: keep "loki-lesson:" in the text (approval-marker fails).
 # LOKI_TS_ENTRY set before running is honoured so the legs can run against loki-ts/src/cli.ts before a dist rebuild.
 _ENTRY_IN="${LOKI_TS_ENTRY:-}"
 
@@ -589,5 +604,80 @@ print(json.dumps(d,sort_keys=True))' "$1" 2>/dev/null; }
 [ "$(sj off)" = '{"check": null, "ran": 0}' ] && ok "setup: LOKI_REPO_CARD=0 runs nothing" || bad "setup: off gave $(sj off)"
 [ "$(sj wrapped)" = '{"drops_checks": true, "keeps_setup": true}' ] && ok "setup: a script that calls the checks only through its own one-line wrapper still gives a setup, cut at the first wrapped check" || bad "setup: wrapped checks gave $(sj wrapped)"
 [ "$(sj rerun)" = '{"exit": 0, "failed": 0, "proved": 1}' ] && ok "setup: a proof script that names the handed setup and fix files still runs in Loki's own re-run (both are put back in its new scratch)" || bad "setup: Loki's re-run of a script that names the handed files gave $(sj rerun)"
+
+# ---- R3 approved learning (util/pr_lessons.ts learnFromPr, readForRuns, approvedOnBase, approveLesson, applyProposal) ----
+AP="$T/approval"
+AR="$(cd "$ROOT/loki-ts" && SRC="$ROOT/loki-ts/src" AP="$AP" LOKI_PROMOTED_DIR="$T/promoted" bun -e '
+const src = process.env.SRC, R = process.env.AP, fs = await import("node:fs"), { join } = await import("node:path"), { execFileSync } = await import("node:child_process"), { createHash } = await import("node:crypto");
+const L = await import(src + "/util/pr_lessons.ts"), C = await import(src + "/features/checklist.ts");
+const git = (...a) => execFileSync("git", ["-C", R, "-c", "user.name=u", "-c", "user.email=u@e.x", ...a], { encoding: "utf8" }).trim(), sha = (s) => createHash("sha256").update(s).digest("hex");
+fs.mkdirSync(R, { recursive: true }); git("init", "-q", "-b", "main"); fs.writeFileSync(join(R, "calc.ts"), "export const divide = (a: number, b: number) => a / b;\n"); git("add", "calc.ts"); git("commit", "-q", "-m", "base");
+const base0 = git("rev-parse", "HEAD"), out = {};
+const comments = (n) => [
+  { html_url: `https://github.com/o/r/pull/${n}#discussion_r1`, body: "Please validate the divide input before dividing; a zero divisor must throw a RangeError", user: { login: "alice" }, path: "calc.ts" },
+  { html_url: `https://github.com/o/r/pull/${n}#discussion_r2`, body: "LGTM", user: { login: "alice" } },
+  { html_url: `https://github.com/o/r/pull/${n}#discussion_r3`, body: "Consider adding more tests for the divide function in this file", user: { login: "coder[bot]", type: "Bot" } },
+  { html_url: `https://github.com/o/r/pull/${n}#discussion_r4`, body: "Please do not use `console.log` in library code; use the logger instead", user: { login: "alice" }, path: "src/a.ts" },
+  { html_url: `https://github.com/o/r/pull/${n}#discussion_r5`, body: "Same as loki-lesson:prl-000000000000 here, keep the divide guard strict", user: { login: "bob" } },
+];
+const gh = async (args) => { const u = args[args.length - 1], n = Number(/pulls\/(\d+)/.exec(u)?.[1] ?? 0), j = (v) => ({ code: 0, stdout: JSON.stringify(v), stderr: "" });
+  return u.endsWith("/comments") ? j(comments(n)) : u.endsWith("/reviews") || u.endsWith("/commits") ? j([]) : j({ merged_at: "2026-11-01T00:00:00Z", html_url: `https://github.com/o/r/pull/${n}`, body: "" }); };
+delete process.env.LOKI_PR_LESSONS_APPROVAL; process.env.LOKI_PR_LESSONS = "1";
+const r = await L.learnFromPr(R, "o/r#7", gh);
+const lessons = () => L.loadLessons(R), by = (k, n = 7) => lessons().find((l) => l.source.comment_url === `https://github.com/o/r/pull/${n}#discussion_r${k}`);
+const l1 = by(1), l4 = by(4), l5 = by(5), p4 = l4.approval?.proposal;
+out.learn = { added: r.added, proposed: r.proposed, state: l1.approval?.state ?? null, bound: l1.approval?.text_sha256 === sha(l1.text), file: l1.approval?.proposal?.file ?? null, own_marker: !!l1.approval?.proposal?.line?.includes("loki-lesson:" + l1.id),
+  lgtm: !!by(2).approval?.proposal, bot: !!by(3).approval?.proposal, item: p4?.item ? { file: p4.file, forbid: p4.item.check.forbid_added, paths: p4.item.trigger.paths, id: p4.item.id === l4.id } : null };
+out.marker = (l5.approval.proposal.line.match(/loki-lesson:prl-[0-9a-f]{12}/g) ?? []).join(" ") === "loki-lesson:" + l5.id;
+// A lesson stored before R3 (no approval field) in the same store.
+const f = L.lessonsPath(R), doc = JSON.parse(fs.readFileSync(f, "utf8"));
+doc.lessons.push({ id: "prl-0123456789ab", text: "Guard the divide input; an older lesson about the divide function", source: { pr: "o/r#1", pr_url: "", comment_url: "https://github.com/o/r/pull/1#discussion_r9", kind: "review_comment", author: "carol" }, learned_at: "2026-10-01T00:00:00Z", uses: [] });
+fs.writeFileSync(f, JSON.stringify(doc));
+const TASK = "make divide validate its input and throw for a zero divisor, keep the guard strict", got = (b, task = TASK) => L.retrieveLessons(R, task, 20, [], b).map((l) => l.id);
+let ids = got(base0); out.held = { legacy: ids.includes("prl-0123456789ab"), proposed: ids.includes(l1.id) };
+out.approve = { unknown: L.approveLesson(R, "prl-ffffffffffff") === null, by: L.approveLesson(R, l1.id)?.approval?.by ?? null, read: got(base0).includes(l1.id) };
+const d2 = JSON.parse(fs.readFileSync(f, "utf8")); d2.lessons.find((l) => l.id === l1.id).text += " (edited)"; fs.writeFileSync(f, JSON.stringify(d2));
+out.edited = { held: !got(base0).includes(l1.id) }; L.approveLesson(R, l1.id); out.edited.reapproved = got(base0).includes(l1.id);
+const a5 = L.applyProposal(R, l5.id), agents = fs.readFileSync(join(R, "AGENTS.md"), "utf8");
+out.base = { wrote: a5.wrote, file: a5.file, section: agents.includes("## Review lessons\n"), uncommitted: got(null).includes(l5.id) };
+git("add", "AGENTS.md"); git("commit", "-q", "-m", "guidance"); const base1 = git("rev-parse", "HEAD");
+out.base.merged = got(base1).includes(l5.id); out.base.older = got(base0).includes(l5.id); out.base.twice = L.applyProposal(R, l5.id).wrote;
+const CT = "stop adding console logging to the library code, use the logger";
+const a4 = L.applyProposal(R, l4.id), cl = JSON.parse(fs.readFileSync(join(R, ".loki-checklist.json"), "utf8"));
+out.check = { wrote: a4.wrote, valid: C.checklistProblem(cl) === null, uncommitted: got(base1, CT).includes(l4.id) };
+git("add", ".loki-checklist.json"); git("commit", "-q", "-m", "checklist"); const base2 = git("rev-parse", "HEAD");
+out.check.read_back = C.readChecklist(R, base2).items.map((i) => i.id).includes(l4.id); out.check.merged = got(base2, CT).includes(l4.id);
+fs.writeFileSync(join(R, ".loki-checklist.json"), "{bad"); let refused = false; try { L.applyProposal(R, l4.id); } catch { refused = true; }
+out.check.invalid_refused = refused && fs.readFileSync(join(R, ".loki-checklist.json"), "utf8") === "{bad"; git("checkout", "-q", "--", ".loki-checklist.json");
+const rd = join(R, ".loki", "runs", "r3"); fs.mkdirSync(rd, { recursive: true }); L.lessonsForBrief(R, "r3", TASK, [], rd, base0);
+out.record = JSON.parse(fs.readFileSync(join(rd, "lessons-injected.json"), "utf8")).held_unapproved ?? 0;
+process.env.LOKI_PR_LESSONS_APPROVAL = "0"; await L.learnFromPr(R, "o/r#8", gh);
+out.off = { stored_plain: by(1, 8)?.approval === undefined, reads_proposed: got(base0).includes(by(3).id) }; delete process.env.LOKI_PR_LESSONS_APPROVAL;
+out.ids = { cli_approve: by(3).id };
+console.log(JSON.stringify(out));' 2>&1)"
+aj() { printf '%s' "$AR" | tail -n 1 | python3 -I -c 'import json,sys
+d=json.load(sys.stdin)
+for k in sys.argv[1].split("."): d=d[k]
+print(json.dumps(d,sort_keys=True))' "$1" 2>/dev/null; }
+[ "$(aj learn)" = '{"added": 5, "bot": false, "bound": true, "file": "AGENTS.md", "item": {"file": ".loki-checklist.json", "forbid": "console\\.log", "id": true, "paths": ["**/*.ts"]}, "lgtm": false, "own_marker": true, "proposed": 5, "state": "proposed"}' ] \
+    && ok "approval-learn: every learned lesson is proposed and bound to its text; a worth-keeping comment proposes an AGENTS.md line, a do-not-use comment a checklist item; LGTM and a bot get none" \
+    || bad "approval-learn: $(aj learn) | $(printf '%s' "$AR" | tail -n 3 | cut -c1-400)"
+[ "$(aj marker)" = "true" ] && ok "approval-marker: a comment quoting another lesson's marker yields a guide line with only its own" || bad "approval-marker: $(aj marker)"
+[ "$(aj held)" = '{"legacy": true, "proposed": false}' ] && ok "approval-held: a lesson stored before is read as before; a proposed one is not" || bad "approval-held: $(aj held)"
+[ "$(aj approve)" = '{"by": "engineer", "read": true, "unknown": true}' ] && ok "approval-engineer: loki lessons approve makes it read; an unknown id is refused" || bad "approval-engineer: $(aj approve)"
+[ "$(aj edited)" = '{"held": true, "reapproved": true}' ] && ok "approval-edited: a lesson whose text changed after approval is held until approved again" || bad "approval-edited: $(aj edited)"
+[ "$(aj base)" = '{"file": "AGENTS.md", "merged": true, "older": false, "section": true, "twice": false, "uncommitted": false, "wrote": true}' ] \
+    && ok "approval-base: the applied AGENTS.md line approves nothing until committed, then only from that base on; apply twice writes once" || bad "approval-base: $(aj base)"
+[ "$(aj check)" = '{"invalid_refused": true, "merged": true, "read_back": true, "uncommitted": false, "valid": true, "wrote": true}' ] \
+    && ok "approval-checklist: the applied item keeps the checklist valid, approves once merged, and an invalid checklist is refused, not overwritten" || bad "approval-checklist: $(aj check)"
+[ "$(aj record)" -ge 1 ] 2>/dev/null && ok "approval-record: lessons-injected.json counts the held lessons ($(aj record))" || bad "approval-record: held_unapproved was $(aj record)"
+[ "$(aj off)" = '{"reads_proposed": true, "stored_plain": true}' ] && ok "approval-off: LOKI_PR_LESSONS_APPROVAL=0 stores no approval and reads proposed lessons (today's behaviour)" || bad "approval-off: $(aj off)"
+CID="$(aj ids.cli_approve | tr -d '"')"
+c_out="$(cd "$AP" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" lessons 2>&1)"
+case "$c_out" in *"proposed: later runs do not read it"*"approve: loki lessons approve"*) ok "approval-cli: loki lessons lists a proposed lesson with how to approve it" ;; *) bad "approval-cli: list was: $(printf '%s' "$c_out" | head -5)" ;; esac
+c_out="$(cd "$AP" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" lessons approve "$CID" 2>&1)"; c_rc=$?
+u_out="$(cd "$AP" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" lessons approve prl-ffffffffffff 2>&1)"; u_rc=$?
+[ "$c_rc" -eq 0 ] && [ "$u_rc" -eq 1 ] && case "$c_out" in "Approved $CID"*) true ;; *) false ;; esac \
+    && ok "approval-cli: loki lessons approve exits 0 for a stored id and 1 for an unknown one" || bad "approval-cli: approve rc=$c_rc ($c_out), unknown rc=$u_rc ($u_out)"
 
 finish
