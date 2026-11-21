@@ -316,6 +316,13 @@
 # 309. testmap.ts impactedRefs: drop the coveredStem keep in viaJs (the JS-RESOLVE name-floor leg reads dropped).
 # 310. testmap.ts impactedRefs: drop the JS-only check in viaJs (the JS-RESOLVE Python leg reads tests/test_gateway.py mapped).
 # 311. testmap.ts jsImportResolveOn: always true (the JS-RESOLVE =0 leg fails).
+# 312. mutation_proof.ts mutationProof: skip the supportFiles overlay (PROOF-TEST-SIDE P1; the C1 leg reads PARTIAL, the C3 comment-only leg reads "yes" from the stale
+#      data file, the mutationProof unit cell reads yes|tests/test_two.py for the support run; the C3 fix leg stays VERIFIED, since stale.txt also fails on base).
+# 313. test_file_text.ts isTestSidePath: return true for every path (P2; the C4 leg reads "no" and PARTIAL, the testSideSupport unit cell lists src/table.txt and calc.py).
+# 314. mutation_proof.ts testSideSupport: keep status A only (P3; the C2 leg reads "yes" and VERIFIED, a false VERIFIED from half the data edit; the unit cells drop the M and D paths).
+# 315. mutation_proof.ts reset(): drop the applySide() call (P4; the jobs=2 mutationProof unit cell reads no: the confirming serial re-run had the base data).
+# 321. mutation_proof.ts applySide: write every support file as a plain file (drop the symlink branch and the chmodSync; the mutationProof unit cell reads
+#      yes|tests/test_cases.py,tests/test_two.py for the support run: test_two.py loses its executable helper and its symlink on base).
 # 252. check_result.ts jsAssertionFailure: drop JS_MISSING_API (the assert-js unit's missing-function case reads true).
 # 253. check_result.ts spawnFailedTool: drop the 6-line bound (the spawn-not-run leg's long ENOENT output reads missing).
 # 253b. check_result.ts resolveTool: drop the UV-ENV-OUTSIDE-CHECKOUT return (the uv-env-outside leg's first cell reads `uv project run -- ruff`).
@@ -2162,6 +2169,81 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     wo_legs pytest make_wo_py_repo calc.py test_calc.py $'    return a * 2' $'    return a * 3' $'    return a + a + 1' $'\n\ndef test_double():\n    assert calc.double(3) == 6\n' $'\n\ndef test_names_double():\n    assert callable(calc.double)\n' $'\n\nimport pytest\n\n\n@pytest.mark.skip\ndef test_later():\n    pass\n' $'    return a * 3\n\n\ndef triple(a):\n    return a * 3' $'\n\ndef test_triple():\n    assert calc.triple(2) == 6\n' $'\n\nfrom calc import triple\n\n\ndef test_imports():\n    pass\n' $'\n\ndef test_triple_exists():\n    assert hasattr(calc, "triple") and callable(calc.triple)\n'
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "pytest wall-off: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: pytest wall-off: pytest is not installed"; fi
+fi
+# PROOF-TEST-SIDE (LOKI_E10_PROOF_TEST_SIDE, default on, =0 opts out; real pytest, Wall off): the fail-then-pass base worktree gets the change's whole test side (test files, and
+# every path under tests/, test/, __tests__/, testdata/ or __snapshots__/, deletions included), not only the test files that ran. hc2 bracex: the head test read its cases from
+# tests/brace-cases.txt, ran the OLD cases on base and passed, so a correct fix read PARTIAL. calc.f doubles x but is off by one from 10 up; tests/test_cases.py reads
+# tests/cases.txt with tests/results.txt (and tests/results-2.txt when present) and asserts each pair through calc.f; tests/data/*.txt is read only by a test a change adds.
+# Plants 312 to 315 in the header. Written for the NEXT4 release and NOT run before it (founder: no testing until the release is complete).
+make_side_py_repo() {
+    mkdir -p "$1/tests/data"
+    printf 'def f(x):\n    # doubles x\n    if x >= 10:\n        return x * 2 + 1\n    return x * 2\n' > "$1/calc.py"
+    printf '1\n2\n3\n' > "$1/tests/cases.txt"
+    printf '2\n4\n6\n' > "$1/tests/results.txt"
+    printf '1 2\n' > "$1/tests/data/one.txt"
+    printf '3 7\n' > "$1/tests/data/stale.txt" # wrong for the old and the new code alike: only a test that still reads it fails on it
+    printf 'import os\n\nimport calc\n\nHERE = os.path.dirname(os.path.abspath(__file__))\n\n\ndef _read(name):\n    p = os.path.join(HERE, name)\n    return [l.strip() for l in open(p) if l.strip()] if os.path.exists(p) else []\n\n\ndef test_cases():\n    cases = _read("cases.txt")\n    results = _read("results.txt") + _read("results-2.txt")\n    assert len(cases) == len(results)\n    for c, r in zip(cases, results):\n        assert calc.f(int(c)) == int(r)\n' > "$1/tests/test_cases.py"
+    return 0
+}
+# C4: production data (src/table.txt) is not test side, so it stays at base and the proof judges the change by it.
+make_table_py_repo() {
+    mkdir -p "$1/src" "$1/tests"
+    printf 'import os\n\nHERE = os.path.dirname(os.path.abspath(__file__))\n\n\ndef lookup(k):\n    for line in open(os.path.join(HERE, "src", "table.txt")):\n        key, val = line.split("=")\n        if key == k:\n            return int(val)\n    return None\n' > "$1/calc.py"
+    printf 'a=1\nb=3\n' > "$1/src/table.txt"
+    printf 'import calc\n\n\ndef test_a():\n    assert calc.lookup("a") == 1\n' > "$1/tests/test_table.py"
+    return 0
+}
+# side_leg <make_repo> <task> <env assignments...>: one Wall-off engine run; sets notes (not_proven) and mp (the mutation_proof line).
+side_leg() {
+    local mk="$1" task="$2"; shift 2
+    MAKE_REPO="$mk" run_engine "$task" E2E_WALL= E2E_STUB_MODE=stack LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 "$@"; notes="$(wo_receipt np)"; mp="$(wo_receipt mp)"
+}
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    # Unit: testSideSupport and isTestSidePath on a listing with every status, then mutationProof itself on a two-commit repo (real pytest): with the data files the head test fails
+    # on base by assertion; LOKI_MUTATION_PROOF_JOBS=2 confirms the concurrent failure by a serial re-run that gets the data files again. tests/test_two.py needs the head's
+    # executable tests/bin/ok and symlink tests/cases-link.txt as they are (mode kept): with them it passes on base; the old overlay leaves both out, so test_cases.py passes there
+    # and test_two.py fails for want of its helpers, a "yes" about the wrong file that the change's code did not cause.
+    tsu="$(cd "$ROOT/loki-ts" && bun -e 'const { testSideSupport } = await import("./src/util/mutation_proof.ts"); const { isTestSidePath } = await import("./src/util/test_file_text.ts"); const raw = [":100644 100644 a b M", "tests/test_cases.py", ":100644 100644 a b M", "tests/cases.txt", ":000000 100644 0 b A", "tests/results-2.txt", ":100644 000000 a 0 D", "tests/data/stale.txt", ":100644 100644 a b M", "src/table.txt", ":100644 100644 a b M", "calc.py", ":100644 100644 a b M", "test_other.py", ":100644 100644 a b M", "pkg/__snapshots__/a.snap", ":100644 100755 a b M", "tests/helper.bin", ":100644 120000 a b T", "tests/link.txt"]; const fmt = (l) => l.map((x) => x.path + (x.deleted ? "-" : "+") + (x.mode ?? "")).join(","); const paths = ["tests/brace-cases.txt", "test/x.json", "pkg/__tests__/a.snap", "a/testdata/x", "__snapshots__/s", "src/table.txt", "calc.py", "latest/x.txt", "contests/x.txt", "test_calc.py"]; console.log([fmt(testSideSupport(raw, ["tests/test_cases.py"], isTestSidePath, {})), fmt(testSideSupport(raw, ["tests/test_cases.py"], isTestSidePath, { LOKI_E10_PROOF_TEST_SIDE: "0" })), paths.map((p) => (isTestSidePath(p) ? 1 : 0)).join("")].join(" "))' 2>&1 | tail -1)"
+    [ "$tsu" = "tests/cases.txt+100644,tests/results-2.txt+100644,tests/data/stale.txt-000000,test_other.py+100644,pkg/__snapshots__/a.snap+100644,tests/helper.bin+100755,tests/link.txt+120000  1111100001" ] && ok "PROOF-TEST-SIDE unit: every added, modified, type-changed and deleted test-side path that did not run is a support file with its head mode (src/table.txt and calc.py are not); =0 gives none ($tsu)" || bad "PROOF-TEST-SIDE unit: got '$tsu'"
+    TSR="$T/pts"; rm -rf "$TSR"; make_side_py_repo "$TSR"; cd "$TSR" && git init -q -b main && git config user.name e2e && git config user.email e2e@example.invalid
+    git add -- . && git commit -q -m base && BASE="$(git rev-parse HEAD)"
+    printf 'def f(x):\n    # doubles x\n    return x * 2\n' > calc.py; printf '10\n' >> tests/cases.txt; printf '20\n' >> tests/results.txt
+    printf '\n\ndef test_count():\n    assert len(_read("cases.txt")) >= 3\n' >> tests/test_cases.py; printf 'import os\n\nimport calc\n\nHERE = os.path.dirname(os.path.abspath(__file__))\n\n\ndef test_two():\n    assert calc.f(1) == 2\n    assert os.access(os.path.join(HERE, "bin", "ok"), os.X_OK)\n    assert os.path.islink(os.path.join(HERE, "cases-link.txt"))\n' > tests/test_two.py
+    mkdir -p tests/bin && printf '#!/bin/sh\nexit 0\n' > tests/bin/ok && chmod 755 tests/bin/ok && ln -s cases.txt tests/cases-link.txt
+    git add -- . && git commit -q -m head && HEADSHA="$(git rev-parse HEAD)"; cd "$ROOT"
+    tsm="$(cd "$ROOT/loki-ts" && bun -e 'const { mutationProof, testSideSupport } = await import("./src/util/mutation_proof.ts"); const { baseProofRunner } = await import("./src/engine10/stages/seal.ts"); const { isTestSidePath } = await import("./src/util/test_file_text.ts"); const { execFileSync } = await import("node:child_process"); const [repo, base, head] = process.argv.slice(1); const raw = execFileSync("git", ["-C", repo, "diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", base, head], { encoding: "utf8" }).split("\0").filter(Boolean); const files = ["tests/test_cases.py", "tests/test_two.py"], side = testSideSupport(raw, files, isTestSidePath, {}); const one = async (supportFiles, env) => { const r = await mutationProof({ repoDir: repo, baseSha: base, runDir: repo + "/.loki", wallFiles: files.map((path) => ({ path })), checks: files.map((f) => ({ name: "pytest:" + f })), runner: baseProofRunner, headSha: head, requireAssertion: true, baseMustPass: ["tests/test_cases.py"], supportFiles, env, timeoutS: 40 }); return r.outcome + "|" + (r.failed ?? []).join(","); }; const env = { ...process.env, LOKI_MUTATION_PROOF_JOBS: "1" }; console.log([side.map((x) => x.path + (x.deleted ? "-" : "+") + (x.mode ?? "")).join(","), await one(side, env), await one([], env), await one(side, { ...env, LOKI_MUTATION_PROOF_JOBS: "2" })].join(" "))' "$TSR" "$BASE" "$HEADSHA" 2>&1 | tail -1)"
+    [ "$tsm" = "tests/bin/ok+100755,tests/cases-link.txt+120000,tests/cases.txt+100644,tests/results.txt+100644 yes|tests/test_cases.py yes|tests/test_two.py yes|tests/test_cases.py" ] && ok "PROOF-TEST-SIDE mutationProof: the data files, the executable helper and the symlink reach the base worktree as at the head (yes, naming test_cases.py), the old overlay names the wrong file, and the jobs=2 confirming re-run gets them again ($tsm)" || bad "PROOF-TEST-SIDE mutationProof: got '$tsm'"
+    side_c1() { side_leg make_side_py_repo "fix f(x) in calc.py so it returns twice x for every x" E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'        return x * 2 + 1' E2E_STUB_SNIPPET=$'        return x * 2' E2E_STUB_TEST_FILE=tests/cases.txt E2E_STUB_TEST_APPEND=10 E2E_STUB_TEST_FILE2=tests/results.txt E2E_STUB_TEST_APPEND2=20 E2E_STUB_EDIT_FILE=tests/test_cases.py E2E_STUB_EDIT_FROM='def test_cases():' E2E_STUB_EDIT_TO=$'def test_count():\n    assert len(_read("cases.txt")) >= 3\n\n\ndef test_cases():' "$@"; }
+    # C1 (bracex shape): the fix plus one new case line and its result line; the edited test fails on base only once both data files are there.
+    side_c1
+    [ "$(outcome)" = "VERIFIED" ] && ok "PROOF-TEST-SIDE C1: a data-driven fix whose new case lives in the data files is VERIFIED" || { bad "PROOF-TEST-SIDE C1: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$mp" in *"fails without the fix: yes"*"tests/test_cases.py"*) ok "PROOF-TEST-SIDE C1: the proof line names tests/test_cases.py ($mp)" ;; *) bad "PROOF-TEST-SIDE C1: no proof line naming tests/test_cases.py: '$mp'" ;; esac
+    # C5: the knob off copies only the test files that ran, so C1 reads the old "no".
+    side_c1 LOKI_E10_PROOF_TEST_SIDE=0
+    [ "$(outcome)" = "PARTIAL" ] && ok "PROOF-TEST-SIDE C5: LOKI_E10_PROOF_TEST_SIDE=0 gives C1 the old PARTIAL" || { bad "PROOF-TEST-SIDE C5: outcome is '$(outcome)'"; dump; }
+    has "PROOF-TEST-SIDE C5: the NO_FAIL_THEN_PASS note carries the proof line, which reads no" "$notes" "fails without the fix: no" # mutation_proof is a receipt key only on a VERIFIED run
+    # C2: a comment edit inside f plus a case (tests/cases.txt, modified) whose result goes in a new tests/results-2.txt (added); the old code already handles it, so nothing
+    # discriminates. Plant 314 (status A only) applies the new result without the new case and the base run fails on the length check: a false VERIFIED.
+    side_leg make_side_py_repo "fix f(x) in calc.py so it returns twice x for every x" E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE='    # doubles x' E2E_STUB_SNIPPET='    # returns twice x' E2E_STUB_TEST_FILE=tests/cases.txt E2E_STUB_TEST_APPEND=4 E2E_STUB_TEST_FILE2=tests/results-2.txt E2E_STUB_TEST_APPEND2=8 E2E_STUB_EDIT_FILE=tests/test_cases.py E2E_STUB_EDIT_FROM='def test_cases():' E2E_STUB_EDIT_TO=$'def test_count():\n    assert len(_read("cases.txt")) >= 3\n\n\ndef test_cases():'
+    [ "$(outcome)" = "PARTIAL" ] && ok "PROOF-TEST-SIDE C2: a comment edit with a new case the old code already handles is PARTIAL" || { bad "PROOF-TEST-SIDE C2: outcome is '$(outcome)'"; dump; }
+    has "PROOF-TEST-SIDE C2: the receipt names the missing fail-then-pass proof" "$notes" "no test shown to fail on the base commit and pass on the change"
+    has "PROOF-TEST-SIDE C2: the NO_FAIL_THEN_PASS note carries the proof line, which reads no" "$notes" "fails without the fix: no"
+    # C3: the change adds tests/test_glob.py (asserts every tests/data/*.txt pair) and deletes tests/data/stale.txt, which both codes fail. With only a comment edit the base
+    # worktree must not keep the deleted file, or the base run fails on stale data for a change whose code did nothing ("no", PARTIAL); with a real fix and a new
+    # tests/data/ten.txt the old code fails, the proof is "yes" and the run VERIFIED.
+    side_glob=$'import glob\nimport os\n\nimport calc\n\n\ndef test_glob():\n    for p in sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "*.txt"))):\n        a, b = open(p).read().split()\n        assert calc.f(int(a)) == int(b), p'
+    side_leg make_side_py_repo "fix f(x) in calc.py so it returns twice x for every x" E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE='    # doubles x' E2E_STUB_SNIPPET='    # returns twice x' E2E_STUB_TEST_FILE=tests/test_glob.py E2E_STUB_TEST_APPEND="$side_glob" E2E_STUB_RM=tests/data/stale.txt
+    [ "$(outcome)" = "PARTIAL" ] && ok "PROOF-TEST-SIDE C3: a deleted stale data file is gone from the base worktree, so a comment-only change is PARTIAL" || { bad "PROOF-TEST-SIDE C3: outcome is '$(outcome)'"; dump; }
+    has "PROOF-TEST-SIDE C3: the proof is judged on the code diff only and reads no" "$notes" "fails without the fix: no"
+    side_leg make_side_py_repo "fix f(x) in calc.py so it returns twice x for every x" E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'        return x * 2 + 1' E2E_STUB_SNIPPET=$'        return x * 2' E2E_STUB_TEST_FILE=tests/test_glob.py E2E_STUB_TEST_APPEND="$side_glob" E2E_STUB_TEST_FILE2=tests/data/ten.txt E2E_STUB_TEST_APPEND2='10 20' E2E_STUB_RM=tests/data/stale.txt
+    [ "$(outcome)" = "VERIFIED" ] && ok "PROOF-TEST-SIDE C3 fix: with a real fix and a new data case beside the deletion the run is VERIFIED" || { bad "PROOF-TEST-SIDE C3 fix: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$mp" in *"fails without the fix: yes"*"tests/test_glob.py"*) ok "PROOF-TEST-SIDE C3 fix: the proof line names tests/test_glob.py ($mp)" ;; *) bad "PROOF-TEST-SIDE C3 fix: proof line '$mp'" ;; esac
+    # C4: the fix is in src/table.txt (b=3 to b=2) beside a no-op edit to lookup; production data is not test side, so the base keeps b=3, the new test fails there: "yes", VERIFIED.
+    side_leg make_table_py_repo 'fix lookup(k) in calc.py so lookup("b") returns 2' E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'            return int(val)' E2E_STUB_SNIPPET=$'            return int(val.strip())' E2E_STUB_EDIT_FILE=src/table.txt E2E_STUB_EDIT_FROM='b=3' E2E_STUB_EDIT_TO='b=2' E2E_STUB_TEST_FILE=tests/test_table.py E2E_STUB_TEST_APPEND=$'\n\ndef test_b():\n    assert calc.lookup("b") == 2'
+    [ "$(outcome)" = "VERIFIED" ] && ok "PROOF-TEST-SIDE C4: production data stays at base, so a fix in src/table.txt is VERIFIED" || { bad "PROOF-TEST-SIDE C4: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$mp" in *"fails without the fix: yes"*"tests/test_table.py"*) ok "PROOF-TEST-SIDE C4: the proof line names tests/test_table.py ($mp)" ;; *) bad "PROOF-TEST-SIDE C4: proof line '$mp'" ;; esac
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "PROOF-TEST-SIDE: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: PROOF-TEST-SIDE: pytest is not installed"; fi
 fi
 # Base proof on a repo that declares its Python environment (pyproject dependencies) and has no venv, beside a deep test path (a narrow terminal cuts the reason from pytest's FAILED line) with one assertion failure and one OverflowError on the base (rule 22, real pytest):
 # the head ran under the system interpreter, so the base proof must too (was "inconclusive: the base version of each edited test file is not green"), and the file counts as an assertion failure (was "yes" with no file named).

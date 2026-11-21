@@ -14,6 +14,10 @@ export function isTestFile(rel: string): boolean {
   const name = basename(rel);
   return JS_TEST_RE.test(name) || PY_TEST_RE.test(name) || GO_TEST_RE.test(name) || RS_TEST_RE.test(rel) || SH_TEST_RE.test(rel) || /^test[-_].+\.(sh|bash)$/.test(name) || JAVA_TEST_RE.test(rel) || CS_TEST_RE.test(rel);
 }
+/** PROOF-TEST-SIDE: a directory whose files belong to the test side of a change (data, fixtures, snapshots), whatever their extension. */
+export const TEST_SIDE_DIR_RE = /(^|\/)(tests?|__tests__|testdata|__snapshots__)\//;
+/** PROOF-TEST-SIDE: a test file, or any path under a test-side directory (tests/brace-cases.txt). The fail-then-pass base worktree gets every such path of the change. */
+export const isTestSidePath = (rel: string): boolean => isTestFile(rel) || TEST_SIDE_DIR_RE.test(rel);
 export function detectFromPackageJson(text: string, rel: string, mark: (r: RunnerName, file: string) => void): void {
   let pkg: {
     scripts?: Record<string, unknown>;
