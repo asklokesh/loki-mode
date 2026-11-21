@@ -19,6 +19,7 @@ import { canonicalJson } from "./receipt_signer.ts";
 import { getVersion } from "../version.ts";
 import { stopBlocksPath } from "../runner/stop_checks.ts";
 import { namedFiles } from "../engine10/sizing.ts";
+import { E10_BRANCH_RE } from "./base_guard.ts";
 
 export interface GhResult { code: number; stdout: string; stderr: string }
 /** Injected in tests. A spawn failure (gh not installed) must resolve with code 127, never throw. */
@@ -720,7 +721,7 @@ const RECEIPT_MARK = "<!-- loki-receipt -->"; // util/receipt_surface.ts renderR
 const LOKI_TEXT = "<!-- loki-"; // any Loki-authored text is never an item
 
 /** The Loki 10 run id a pull request head branch names (loki/<run id>, engine10/supervisor.ts), else null. */
-export function lokiRunOfBranch(ref: string): string | null { const m = /^loki\/(e10-[A-Za-z0-9-]+)$/.exec(ref); return m ? m[1]! : null; }
+export function lokiRunOfBranch(ref: string): string | null { const m = E10_BRANCH_RE.exec(ref); return m ? m[1]! : null; }
 /** The PR carries a Loki receipt for that run: a local .loki/runs/<run>/receipt.json, or a receipt comment naming `loki verify <run>` posted by
  *  the PR author (stages/pr.ts posts it with the identity that opened the PR). A fresh trigger clone has no .loki, so the comment is the usual proof there. */
 export function hasLokiReceipt(repoDir: string, runId: string, prAuthor: string, issueComments: ReadonlyArray<Record<string, any>>): boolean {
@@ -789,9 +790,11 @@ export function parseFixRun(stdout: string): FixRun | null {
   }
   return null;
 }
-/** The accept gate, the same receipt rules as the first PR: the run ended VERIFIED, its receipt verifies as VERIFIED, is the one it sealed,
- *  measures from `pre` (the branch tip before this fix), was not refused a push by its security scan, and names a head commit on the run's
- *  own branch, on top of `pre`, that changes something. The PR branch then moves to exactly that commit, never past it. */
+/** The accept gate, the same receipt rules as the first PR: the run ended VERIFIED, its receipt is intact and signed (verifyReceipt VERIFIED,
+ *  which is integrity only), belongs to this run and itself records the verdict VERIFIED, is the one it sealed, measures from `pre` (the
+ *  branch tip before this fix), was not refused a push by its security scan, and names a head commit on the run's own branch, on top of
+ *  `pre`, that changes something. The PR branch then moves to exactly that commit, never past it. run_outputs.ts signedReceiptFacts is not
+ *  reused: its runStateProblem refuses any run the supervisor closed (it is the publish-resume check), so every finished fix run would hold. */
 export async function acceptAddressRun(repoDir: string, run: FixRun | null, pre: string, vcs: (a: string[]) => string, verify: NonNullable<RespondDeps["verify"]>): Promise<{ ok: true; head: string } | { ok: false; reason: string }> {
   if (!run) return { ok: false, reason: "the fix run did not start or printed no result" };
   if (!/^e10-[A-Za-z0-9-]+$/.test(run.runId)) return { ok: false, reason: "the fix run printed no valid run id" };
@@ -800,6 +803,8 @@ export async function acceptAddressRun(repoDir: string, run: FixRun | null, pre:
   if (v.verdict !== "VERIFIED") return { ok: false, reason: `its receipt reads ${v.verdict}${v.reasons?.[0] ? ` (${v.reasons[0].slice(0, 160)})` : ""}` };
   let rec: Record<string, unknown>;
   try { rec = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>; } catch { return { ok: false, reason: "its receipt is unreadable" }; }
+  if (rec["run_id"] !== run.runId) return { ok: false, reason: `its receipt belongs to run ${String(rec["run_id"] ?? "none").replace(/[^A-Za-z0-9-]/g, "").slice(0, 60) || "none"}, not ${run.runId}` };
+  if (rec["verdict"] !== "VERIFIED") return { ok: false, reason: `its receipt records the run as ${String(rec["verdict"] ?? "no verdict").replace(/[^A-Za-z_ ]/g, "").slice(0, 30) || "no verdict"}, not VERIFIED` }; // the task verdict the receipt hash covers, never the child's stdout alone
   const head = String(rec["head_sha"] ?? ""), sha = String(rec["receipt_sha256"] ?? "");
   if (sha === "" || sha !== run.receiptSha256 || (v.receiptSha256 !== undefined && v.receiptSha256 !== sha)) return { ok: false, reason: "its receipt is not the one the run sealed" };
   if (rec["base_sha"] !== pre) return { ok: false, reason: `its receipt measures from ${String(rec["base_sha"] ?? "").slice(0, 12) || "no commit"}, not the branch tip ${pre.slice(0, 12)}` };
@@ -812,7 +817,7 @@ export async function acceptAddressRun(repoDir: string, run: FixRun | null, pre:
 /** One reply. Addressed: what changed and the evidence (the run's receipt covers this item's change only). Held: why, and that nothing was pushed for it. */
 export function renderAddressReply(c: Pick<OpenComment, "kind" | "id" | "url">, r: { ok: true; head: string; runId: string; receiptSha256: string; pre: string; stat: string; files: string[] } | { ok: false; reason: string; runId: string | null; at: string }): string {
   const lead = c.kind === "review" ? `Re: ${/^https:\/\/github\.com\//.test(c.url) ? c.url : "your review"}\n\n` : "";
-  if (!r.ok) return `${lead}Not changed yet: ${fence(r.reason)}. Nothing was pushed for this comment${r.runId ? `; the run's work stays on the local branch loki/${r.runId} where Loki ran` : ""}. Loki tries it again once the branch moves.\n${heldMark(r.at, c.kind === "review" ? c.id : undefined)}\n`;
+  if (!r.ok) return `${lead}Not changed yet: ${fence(r.reason)}. Nothing was pushed for this comment${r.runId ? `; the run's receipt and log are kept under .loki/runs/${r.runId} where Loki ran (on a trigger server, under .loki/triggers/address/), its commits on loki/${r.runId} or in a bundle beside them` : ""}. Loki tries it again once the branch moves.\n${heldMark(r.at, c.kind === "review" ? c.id : undefined)}\n`;
   const files = r.files.slice(0, 5).map((f) => `\`${fence(f)}\``).join(", ") + (r.files.length > 5 ? ` and ${r.files.length - 5} more` : "");
   return `${lead}Addressed in ${r.head.slice(0, 12)}: ${r.stat || "changed"}${files ? ` (${files})` : ""}.\nEvidence: Loki run ${r.runId}, receipt sha256:${r.receiptSha256}, verdict VERIFIED, measured from ${r.pre.slice(0, 12)} (this comment's change only). Check it with \`loki verify ${r.runId}\`.\n${RESPOND_MARK}${c.kind === "review" ? `\n${reviewMark(c.id)}` : ""}\n`;
 }
@@ -856,7 +861,8 @@ async function fetchHeadOid(gh: GhClient, repo: string, num: number): Promise<st
  *  one fix run each; a change lands (fast-forward) only through acceptAddressRun. The replies are always written to the address dir. With post,
  *  the first PR's push guards run, the branch is pushed once and every item gets its reply. Never merges the PR, never resolves a thread.
  *  With post on a checkout that holds exactly the saved unposted result (saved base is the live PR head, saved head is the local tip), that
- *  result is published without new runs. */
+ *  result is published without new runs; so is a pushed result whose replies did not all post (saved head is the live PR head), and only
+ *  its unposted replies go out. The state is saved after every item, so a later item that fails never strands one already accepted. */
 export async function respondToReview(repoDir: string, ref: string, deps: RespondDeps): Promise<RespondResult> {
   const pr = parsePrRef(ref);
   if (!pr) throw new GhError(`Invalid PR reference '${ref}'. Expected owner/repo#123.`);
@@ -882,38 +888,59 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
   if (current !== headRef) throw new GhError(`Checkout is '${current}' but the PR branch is '${headRef}'. Check out the PR branch first.`);
   if (vcs(STATUS_ARGS).trim() !== "") throw new GhError("Working tree has uncommitted changes. Commit or stash them before running loki address.");
   const localHead = vcs(["rev-parse", "HEAD"]).trim(), dir = addressDir(repoDir, pr.repo, pr.num), saved = readAddressState(dir);
-  let entries: AddressEntry[] = [], skipped = 0, denied = 0;
-  if (localHead !== proofHead) {
-    const same = saved !== null && !saved.posted && saved.branch === headRef && saved.base === proofHead && saved.head === localHead;
+  let entries: AddressEntry[] = [], skipped = 0, denied = 0, landed = localHead, stateBase = proofHead; // landed: the PR branch tip after the last accepted item, the only tip --post may push
+  const unposted = saved !== null && !saved.posted && saved.branch === headRef && saved.head === localHead && saved.entries.some((e) => !e.posted) && (saved.base !== saved.head || saved.entries.some((e) => e.posted)); // pushed or partly posted; an all-held unposted result runs again as before
+  if (localHead !== proofHead || unposted) { // a saved result: not pushed yet (saved base is the PR head), or pushed with some replies not posted (saved head is the PR head)
+    const same = saved !== null && !saved.posted && saved.branch === headRef && saved.head === localHead && (saved.base === proofHead || saved.head === proofHead);
     if (!same) throw new GhError(`Local HEAD ${localHead.slice(0, 12)} is not the PR head ${proofHead.slice(0, 12)} (headRefOid); update the checkout to the PR head first.`);
-    if (!post) throw new GhError(`${headRef} already holds the addressed result saved in ${dir} (from ${proofHead.slice(0, 12)} to ${localHead.slice(0, 12)}); publish it with: loki address ${ref} --post`);
-    entries = saved.entries.map((e) => ({ ...e, posted: false }));
+    if (!post) throw new GhError(`${headRef} already holds the addressed result saved in ${dir} (from ${saved.base.slice(0, 12)} to ${localHead.slice(0, 12)}, ${saved.entries.filter((e) => !e.posted).length} repl(ies) not posted); publish it with: loki address ${ref} --post`);
+    entries = saved.entries.map((e) => ({ ...e })); // a reply already posted is never posted twice
+    stateBase = saved.base;
   } else {
     const cache = new Map<string, boolean>();
     const found = await openReviewComments(gh, pr.repo, pr.num, { issueComments, canWrite: (l) => canWrite(gh, pr.repo, l, cache), head: proofHead });
     skipped = found.skipped; denied = found.denied;
+    const tipOf = (): string => vcs(["rev-parse", "--verify", "-q", `refs/heads/${headRef}^{commit}`]).trim();
+    // A held reply marks the tip --post pushes (N3), so Loki's own push never reopens it; it names the run dir only when it exists (B2, N7).
+    const save = (): void => {
+      for (const e of entries) if (e.status === "held") e.reply = renderAddressReply(e, { ok: false, reason: e.reason, runId: e.run_id !== null && existsSync(join(repoDir, ".loki", "runs", e.run_id)) ? e.run_id : null, at: landed });
+      writeAddressState(dir, { branch: headRef, base: stateBase, head: landed, posted: false, entries });
+    };
     for (const c of found.open.slice(0, Number.isInteger(max) && max > 0 ? max : MAX_RESPOND)) {
-      const pre = vcs(["rev-parse", "HEAD"]).trim();
-      const run = await deps.fix(c, headRef);
-      const after = vcs(["rev-parse", "--abbrev-ref", "HEAD"]).trim();
-      if (vcs(STATUS_ARGS).trim() !== "") throw new GhError(`The fix run left uncommitted changes on '${after}'; refusing to commit, push or reply.`);
-      if (after !== headRef) vcs(["checkout", headRef]); // a run whose end could not return the checkout; the tree is clean, so this moves nothing
-      if (vcs(["rev-parse", "HEAD"]).trim() !== pre) throw new GhError(`${headRef} moved during the fix run (was ${pre.slice(0, 12)}); refusing to continue.`);
-      const gate = await acceptAddressRun(repoDir, run, pre, vcs, verify), base = { kind: c.kind, id: c.id, url: c.url, path: c.path, run_id: run && /^e10-[A-Za-z0-9-]+$/.test(run.runId) ? run.runId : null, posted: false };
-      if (gate.ok) {
-        vcs(["merge", "--ff-only", gate.head]);
-        const stat = vcs(["diff", "--shortstat", pre, gate.head, "--", ".", ":(exclude).loki"]).trim(), files = vcs(["diff", "--name-only", pre, gate.head, "--", ".", ":(exclude).loki"]).split("\n").filter((f) => f !== "");
-        entries.push({ ...base, status: "addressed", reason: "", sha: gate.head, receipt_sha256: run!.receiptSha256, reply: renderAddressReply(c, { ok: true, head: gate.head, runId: run!.runId, receiptSha256: run!.receiptSha256 ?? "", pre, stat, files }) });
-      } else {
-        const kept = base.run_id !== null && (() => { try { vcs(["rev-parse", "-q", "--verify", `refs/heads/loki/${base.run_id}`]); return true; } catch { return false; } })(); // name the run branch only when it exists
-        entries.push({ ...base, status: "held", reason: gate.reason, sha: null, receipt_sha256: null, reply: renderAddressReply(c, { ok: false, reason: gate.reason, runId: kept ? base.run_id : null, at: proofHead }) });
-      }
+      const pre = landed, base = { kind: c.kind, id: c.id, url: c.url, path: c.path, run_id: null as string | null, posted: false };
+      let stop = "";
+      try { // B3: whatever this item hits, the items accepted before it stay saved and publishable; a stop holds this item and ends the loop
+        const run = await deps.fix(c, headRef);
+        base.run_id = run && /^e10-[A-Za-z0-9-]+$/.test(run.runId) ? run.runId : null;
+        const after = vcs(["rev-parse", "--abbrev-ref", "HEAD"]).trim();
+        if (vcs(STATUS_ARGS).trim() !== "") stop = `the fix run left uncommitted changes on '${after}', so Loki committed nothing for it and stopped before the next comment`;
+        else {
+          if (after !== headRef) vcs(["checkout", headRef]); // a run whose end could not return the checkout; the tree is clean, so this moves nothing
+          const now = tipOf();
+          if (now !== pre) stop = `${headRef} moved during the fix run (from ${pre.slice(0, 12)} to ${now.slice(0, 12)}), so Loki stopped; --post pushes only a branch at its last accepted commit`;
+        }
+        if (!stop) {
+          const gate = await acceptAddressRun(repoDir, run, pre, vcs, verify);
+          if (gate.ok) {
+            vcs(["merge", "--ff-only", gate.head]);
+            landed = gate.head;
+            let stat = "", files: string[] = [];
+            try { stat = vcs(["diff", "--shortstat", pre, gate.head, "--", ".", ":(exclude).loki"]).trim(); files = vcs(["diff", "--name-only", pre, gate.head, "--", ".", ":(exclude).loki"]).split("\n").filter((f) => f !== ""); } catch { /* the reply still names the commit */ }
+            entries.push({ ...base, status: "addressed", reason: "", sha: gate.head, receipt_sha256: run!.receiptSha256, reply: renderAddressReply(c, { ok: true, head: gate.head, runId: run!.runId, receiptSha256: run!.receiptSha256 ?? "", pre, stat, files }) });
+          } else entries.push({ ...base, status: "held", reason: gate.reason, sha: null, receipt_sha256: null, reply: "" });
+        }
+      } catch (e) { stop = `Loki stopped on this comment: ${String((e as Error)?.message ?? e).replace(/\s+/g, " ").slice(0, 200)}`; }
+      if (stop) entries.push({ ...base, status: "held", reason: stop, sha: null, receipt_sha256: null, reply: "" });
+      save();
+      if (stop) break;
     }
+    if (entries.length === 0) writeAddressState(dir, { branch: headRef, base: stateBase, head: landed, posted: false, entries });
   }
-  const done = entries.filter((e) => e.status === "addressed"), tip = vcs(["rev-parse", "HEAD"]).trim();
-  writeAddressState(dir, { branch: headRef, base: proofHead, head: tip, posted: false, entries });
-  if (post && entries.length > 0) {
-    if (done.length > 0) { // the first PR's push guards (stages/pr.ts runPr): pinned origin, a branch that changes something, the PR still where the proof started
+  const done = entries.filter((e) => e.status === "addressed"), snapshot = (): AddressState => ({ branch: headRef, base: stateBase, head: landed, posted: entries.every((e) => e.posted), entries });
+  if (post && entries.some((e) => !e.posted)) {
+    if (landed !== proofHead) { // the first PR's push guards (stages/pr.ts runPr): pinned origin, a branch that changes something, the PR still where the proof started
+      const tip = vcs(["rev-parse", "--verify", "-q", `refs/heads/${headRef}^{commit}`]).trim();
+      if (tip !== landed) throw new GhError(`${headRef} is at ${tip.slice(0, 12)} but its last accepted commit is ${landed.slice(0, 12)}; a commit no receipt accepted is never pushed, so nothing was pushed or posted.`);
       for (const { sha } of done) {
         try { vcs(["merge-base", "--is-ancestor", String(sha), `refs/heads/${headRef}`]); } catch { throw new GhError(`commit ${String(sha).slice(0, 12)} is not on '${headRef}'; refusing to push or reply.`); }
       }
@@ -923,13 +950,14 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
       if (diffAgainstBase(repoDir, proofHead, `refs/heads/${headRef}`) !== true) throw new GhError(`nothing to push: ${headRef} has no change against the PR head ${proofHead.slice(0, 12)}; no reply posted.`);
       push(headRef, origin!);
     }
-    for (const e of entries) {
+    for (const e of entries) { // N1: each reply is saved as posted the moment it is, so a rerun after a failed POST posts only the rest
+      if (e.posted) continue;
       await ghText(gh, ["api", "-X", "POST", e.kind === "review" ? `repos/${pr.repo}/issues/${pr.num}/comments` : `repos/${pr.repo}/pulls/${pr.num}/comments/${e.id}/replies`, "-f", `body=${e.reply}`]);
       e.posted = true;
+      writeAddressState(dir, snapshot());
     }
-    writeAddressState(dir, { branch: headRef, base: proofHead, head: tip, posted: true, entries });
   }
-  return { fixed: done.length, held: entries.length - done.length, skipped, denied, shas: done.map((d) => String(d.sha)), dir, posted: post && entries.length > 0, entries };
+  return { fixed: done.length, held: entries.length - done.length, skipped, denied, shas: done.map((d) => String(d.sha)), dir, posted: post && entries.length > 0 && entries.every((e) => e.posted), entries };
 }
 
 /** INJECT: top relevant learnings (.loki/state/relevant-learnings.json) as a fenced untrusted block. Missing or malformed file means "". Confidence is a fixed 0.50 because the writer records none: never claim more than ran. */

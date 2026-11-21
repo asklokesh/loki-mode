@@ -1021,6 +1021,8 @@ def handle_pull_request_event(payload, dry_run=False):
         return None, "rejected (invalid PR number)"
     if repo_full_name and not valid_repo_full_name(repo_full_name):
         return None, "rejected (invalid repository full_name)"
+    # Every loki/ head is Loki's own push (loki/e10-<run> from Loki 10, loki/session-<ts>-<pid> from autonomy/run.sh), so the
+    # prefix is wider than LOKI_RUN_BRANCH_RE on purpose: no Loki push of either kind may start another run.
     if str((pr.get("head") or {}).get("ref") or "").startswith("loki/"):
         return None, "skipped (Loki's own branch: its pushes never start another run; reviews use the review loop)"
     ref = str(pr_number)
@@ -1612,8 +1614,9 @@ def _remove_review_clone(path):
 
 
 # R1 review loop: `loki address o/r#N --post` on a fresh clone of a Loki PR branch. It pushes and replies, so it runs only when the
-# server's own environment opts in (LOKI_TRIGGER_ADDRESS_POST=1), never because of anything in a payload; a clone is deleted on exit,
-# so a run without --post there would spend and keep nothing. One review fires one review event plus one comment event per inline
+# server's own environment opts in (LOKI_TRIGGER_ADDRESS_POST=1), never because of anything in a payload. A clone is deleted on exit
+# only after _keep_address_record copied what it alone holds (run receipts, replies, new commits); a run without --post there
+# would spend and keep nothing. One review fires one review event plus one comment event per inline
 # comment: one address per PR runs at a time (it answers every open comment), and Loki's own replies are never items.
 ADDRESS_POST_ENV = "LOKI_TRIGGER_ADDRESS_POST"
 LOKI_RUN_BRANCH_RE = re.compile(r"^loki/e10-[A-Za-z0-9-]+$")
@@ -1636,6 +1639,74 @@ def _untrusted_author(item):
     if LOKI_COMMENT_MARKER in str(item.get("body") or ""):
         return "loki-authored"
     return None
+
+
+RUN_ID_RE = re.compile(r"^e10-[A-Za-z0-9-]+$")
+
+
+def _keep_address_record(clone, start_sha):
+    """Copy what a review clone alone holds into .loki/triggers/address/<clone name>/ before the clone goes: every .loki/runs/e10-*
+    run dir to runs/<run> (the receipts the posted replies name; check one with `loki verify <that dir>/receipt.json`), the address
+    replies, and a bundle of every loki/e10-* branch with commits past start_sha (the clone's PR head; the clone is shallow), as
+    branch.bundle in its copied run dir or <run>.bundle beside the replies. Never the server's own .loki/runs: a dir from a clone an
+    agent worked in must never become the server checkout's latest or resumable run. Never overwrites. Returns True only when every
+    piece was kept, so a False keeps the whole clone."""
+    clone = Path(clone)
+    env = _scoped_child_env()
+    ok = True
+    runs = clone / ".loki" / "runs"
+    side = get_loki_dir() / "address" / clone.name
+    kept_runs = {}
+    for d in (sorted(runs.iterdir()) if runs.is_dir() else []):
+        if d.is_symlink() or not d.is_dir() or not RUN_ID_RE.match(d.name):
+            continue
+        dst = side / "runs" / d.name
+        if dst.exists() or dst.is_symlink():
+            logging.error("review clone %s: %s already exists; not overwritten, clone kept", clone, dst)
+            ok = False
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(d, dst, symlinks=True)
+        kept_runs[d.name] = dst
+    replies = clone / ".loki" / "address"
+    if replies.is_dir() and not replies.is_symlink():
+        dst = side / "address"
+        if dst.exists() or dst.is_symlink():
+            logging.error("review clone %s: %s already exists; not overwritten, clone kept", clone, dst)
+            ok = False
+        else:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(replies, dst, symlinks=True)
+    refs = subprocess.run(["git", "-C", str(clone), "for-each-ref", "--format=%(refname:short)", "refs/heads/loki/"],
+                          capture_output=True, text=True, timeout=30, env=env, check=True).stdout.split()
+    for branch in refs:
+        if not LOKI_RUN_BRANCH_RE.match(branch):
+            continue
+        ahead = subprocess.run(["git", "-C", str(clone), "rev-list", "--count", "%s..refs/heads/%s" % (start_sha, branch)],
+                               capture_output=True, text=True, timeout=30, env=env, check=True).stdout.strip()
+        if ahead == "0":
+            continue
+        run_id = branch[len("loki/"):]
+        dest_dir = kept_runs.get(run_id, side)
+        bundle = dest_dir / ("branch.bundle" if run_id in kept_runs else "%s.bundle" % run_id)
+        if bundle.exists():
+            logging.error("review clone %s: %s already exists; not overwritten, clone kept", clone, bundle)
+            ok = False
+            continue
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "-C", str(clone), "bundle", "create", str(bundle.resolve()),
+                        "%s..refs/heads/%s" % (start_sha, branch)], capture_output=True, timeout=120, env=env, check=True)
+    return ok
+
+
+def _clone_dirty(clone):
+    """True when the clone holds uncommitted work outside .loki (or git cannot tell)."""
+    try:
+        out = subprocess.run(["git", "-C", str(clone), "status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).loki"],
+                             capture_output=True, text=True, timeout=30, env=_scoped_child_env(), check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return out.strip() != ""
 
 
 def _address_on_clone(payload, summary, dry_run=False):
@@ -1687,8 +1758,13 @@ def _address_on_clone(payload, summary, dry_run=False):
     if not origin:
         release()
         return summary, "error"
-    root = _review_root()
-    root.mkdir(parents=True, exist_ok=True)
+    try:
+        root = _review_root()
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logging.error("review root unavailable: %s", e)
+        release()
+        return summary, "error"
     clone = root / ("pr-%s-%s" % (number, secrets.token_hex(4)))
     try:
         subprocess.run(["git", "clone", "--quiet", "--depth", "50", "--single-branch", "--branch", ref,
@@ -1707,9 +1783,20 @@ def _address_on_clone(payload, summary, dry_run=False):
         release()
         return None, "skipped (PR head moved)"
 
-    def done(_rc):
-        _remove_review_clone(clone)
-        release()
+    def done(rc):
+        # Keep first, delete after: a failed run, uncommitted work, or any piece that could not be copied keeps the whole clone.
+        try:
+            kept = _keep_address_record(clone, sha)
+        except (OSError, subprocess.SubprocessError, shutil.Error) as e:
+            logging.error("review clone %s: keeping its record failed: %s", clone, e)
+            kept = False
+        try:
+            if kept and rc in (0, None) and not _clone_dirty(clone):  # None: the launch failed, nothing ran in the clone
+                _remove_review_clone(clone)
+            else:
+                logging.warning("review clone kept at %s (exit %s): its run branches and receipts are there", clone, rc)
+        finally:
+            release()
 
     success = run_loki_command(args, cwd=str(clone), on_exit=done)  # on_exit runs once the child ends, a failed launch included
     if success:

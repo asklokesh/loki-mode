@@ -20,6 +20,10 @@
 #   R1k loki-branch   drop the LOKI_RUN_BRANCH_RE check (the feature-x review runs address)
 #   R1l sync-loop     drop the loki/ head ref skip in handle_pull_request_event (a synchronize on a Loki branch runs start)
 #   R1m empty-review  drop the empty commented review skip (the empty commented review cell runs address)
+#   R1ad live-skip    drop the `pr_ref in _ADDRESS_LIVE` check in _address_on_clone (the already-running cell runs address)
+#   R1ae keep-record  make _keep_address_record return True without copying (the keep-record cells fail)
+#   R1af keep-clone   remove the clone in done() whatever the exit code (the failed-run keep cell fails)
+#   R1ag root-release move root.mkdir back above its try in _address_on_clone (the unusable review root cell raises, the mark stays)
 #   cli               make --resume leave paused true
 #   http-e2e          route workflow_run to handle_issues_event in TRIGGERS
 
@@ -48,6 +52,14 @@ MAIN_SHA="$(git -C "$T/origin.git" rev-parse main)"
 cat > "$T/bin/loki" <<'EOF'
 #!/usr/bin/env bash
 printf '%s|%s|%s\n' "$PWD" "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" "$*" >> "$STUB_DIR/calls.log"
+if [ "${1:-}" = "address" ] && [ -f "$STUB_DIR/address_write" ]; then
+    # keep-record cells: what a real address run leaves in its clone (a run dir, the replies, a run branch with a commit)
+    id="$(cat "$STUB_DIR/address_write")" b="$(git rev-parse --abbrev-ref HEAD)"
+    mkdir -p ".loki/runs/$id" ".loki/address/acme-calc-5"
+    printf '{"run_id":"%s"}\n' "$id" > ".loki/runs/$id/receipt.json"
+    printf '{"entries":[]}\n' > ".loki/address/acme-calc-5/replies.json"
+    git checkout -q -b "loki/$id" && printf 'fix\n' > fix.txt && git add fix.txt && git -c user.name=t -c user.email=t@example.com commit -q -m fix && git checkout -q "$b"
+fi
 sleep "${STUB_SLEEP:-0}"
 exit "$(cat "$STUB_DIR/rc" 2>/dev/null || echo 0)"
 EOF
@@ -275,6 +287,40 @@ reset(rc=0)
 sync["pull_request"]["head"]["ref"] = "feature-x"
 s, st = mod.dispatch_event("pull_request", sync)
 check("synchronize: a push to any other PR branch still runs start", st == "fired" and len(run_calls()) == 1)
+# keep-record (B2): what only the clone holds (receipts the replies name, the replies, unpushed commits) outlives the clone
+(T / "address_write").write_text("e10-k1\n")
+reset(rc=0)
+s, st = mod.dispatch_event("pull_request_review", review())
+rc = run_calls()
+cwd_part = rc[0].split("|")[0] if rc else ""
+kept = pathlib.Path(".loki/triggers/address") / os.path.basename(cwd_part) if cwd_part else T / "none"
+check("keep-record: the run's receipt is kept under .loki/triggers/address/<clone>/runs/<run> and then the clone is removed",
+      st == "fired" and (kept / "runs/e10-k1/receipt.json").is_file() and not os.path.exists(cwd_part))
+check("keep-record: the run branch's commits are bundled in its kept run dir", (kept / "runs/e10-k1/branch.bundle").is_file())
+check("keep-record: the address replies are kept beside them", (kept / "address/acme-calc-5/replies.json").is_file())
+check("keep-record: nothing is copied into the server checkout's own .loki/runs", not pathlib.Path(".loki/runs/e10-k1").exists())
+(T / "address_write").write_text("e10-k2\n")
+reset(rc=1)
+s, st = mod.dispatch_event("pull_request_review", review())
+rc = run_calls()
+cwd_part = rc[0].split("|")[0] if rc else ""
+check("keep-record: a failed address run keeps its whole clone (and its record)",
+      cwd_part != "" and os.path.isdir(cwd_part) and "acme/calc#5" not in mod._ADDRESS_LIVE
+      and (pathlib.Path(".loki/triggers/address") / os.path.basename(cwd_part) / "runs/e10-k2/receipt.json").is_file())
+(T / "address_write").unlink()
+# review root (N5): a review root that cannot be made is an error that still releases the per-PR live mark
+blocker = T / "not-a-dir"
+blocker.write_text("x\n")
+orig_root = mod._review_root
+mod._review_root = lambda: blocker / "review"
+reset(rc=0)
+try:
+    s, st = mod.dispatch_event("pull_request_review", review())
+except Exception as e:  # the plant raises here
+    st = "raised %s" % e
+mod._review_root = orig_root
+check("review root: an unusable review root is an error and releases the per-PR live mark",
+      st == "error" and "acme/calc#5" not in mod._ADDRESS_LIVE and len(run_calls()) == 0)
 reset(rc=1, pause_after=1)
 mod.dispatch_event("pull_request_review", review())
 check("review: a failed address run pauses the review source", hj().get("review", {}).get("paused") is True)
