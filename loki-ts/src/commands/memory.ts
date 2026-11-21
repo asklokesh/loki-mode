@@ -11,7 +11,7 @@ import { homeLokiDir, lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { runInline } from "../util/python.ts";
 import { redactSecrets } from "../util/redact.ts";
 import { run } from "../util/shell.ts";
-import { GhError, orgKnowledgeBlock, type Lesson, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, MAX_RECENT, defaultGh, loadLessons, promoteLesson, removeLesson, retrieveLessons } from "../util/pr_lessons.ts";
+import { GhError, orgKnowledgeBlock, type Lesson, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, MAX_RECENT, defaultGh, loadLessons, promoteLesson, removeLesson, retrieveLessons, approvedOnBase, approveLesson, applyProposal, readForRuns, approvalLabel } from "../util/pr_lessons.ts";
 import { learningsBlock } from "../engine10/stages/implement.ts";
 import { exportRepoCard, mergedCard, renderCardText } from "../e10ext/repomemory.ts";
 
@@ -179,11 +179,19 @@ export function searchMemory(root: string, text: string): MemoryHit[] {
 }
 
 // verified_ratio is VERIFIED uses over uses with a settled verdict; null while none has settled.
-function lessonJson(l: Lesson): Record<string, unknown> {
+function lessonJson(l: Lesson, onBase: () => Set<string>): Record<string, unknown> {
   const settled = l.uses.filter((u) => u.verdict !== null);
   const verified = settled.filter((u) => u.verdict === "VERIFIED").length;
-  return { id: l.id, text: l.text, source: l.source, uses: l.uses.length, verified_ratio: settled.length ? verified / settled.length : null, ...(l.kind === "run" ? { kind: l.kind, category: l.category, seen: l.seen, subs: l.subs, files: l.files } : {}) };
+  return { id: l.id, text: l.text, source: l.source, uses: l.uses.length, verified_ratio: settled.length ? verified / settled.length : null, ...(l.kind === "run" ? { kind: l.kind, category: l.category, seen: l.seen, subs: l.subs, files: l.files } : {}),
+    ...(l.approval ? { approval: { ...l.approval, read_by_runs: readForRuns(l, onBase), status: approvalLabel(l, onBase) } } : {}) }; // R3: where a learned lesson stands
 }
+/** R3: the lesson ids this checkout's HEAD guidance approves, read once and only when a proposed lesson asks (util/pr_lessons.ts approvedOnBase). */
+function headApprovals(): () => Set<string> {
+  let ids: Set<string> | null = null;
+  return () => (ids ??= approvedOnBase(process.cwd(), null));
+}
+const PROPOSED_NOTE = "later runs read a proposed lesson only once it is approved: see loki lessons";
+const LESSONS_USAGE = "Usage: loki lessons [--json]          list the lessons, where each stands and its proposed guidance edit\n       loki lessons approve <id>     approve one so later runs read it (local to this checkout)\n       loki lessons apply <id>       write its proposed AGENTS.md line or .loki-checklist.json item for you to commit\n(also: loki memory lessons ...)";
 
 // "Did you mean" line for a mistyped flag, or empty when no allowed flag is close.
 function flagHint(bad: string, allowed: readonly string[]): string {
@@ -219,19 +227,36 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
   if (argv.length === 0) {
     // Bare `loki memory`: the learnings summary followed by this repo's PR lessons.
     const rc = await runMemoryList();
-    process.stdout.write(`\n${formatLessonList(loadLessons(process.cwd()))}`);
+    process.stdout.write(`\n${formatLessonList(loadLessons(process.cwd()), headApprovals())}`);
     return rc;
   }
   const sub = argv[0] ?? "list";
   switch (sub) {
     case "lessons": {
-      if (unknownFlag("lessons", argv.slice(1), ["--json"], "Usage: loki memory lessons [--json]")) return 2;
-      const lessons = loadLessons(process.cwd());
+      const act = argv[1];
+      if (act === "approve" || act === "apply") { // R3 approved learning: nothing here commits, pushes or posts
+        const id = argv[2];
+        if (!id || id.startsWith("-") || argv.length > 3) { process.stderr.write(`${LESSONS_USAGE}\n`); return 2; }
+        if (act === "approve") {
+          const l = approveLesson(process.cwd(), id);
+          if (!l) { process.stderr.write(`Error: no such lesson '${id}'\n`); return 1; }
+          process.stdout.write(`Approved ${l.id}: later runs read it (lessons reach a brief with LOKI_PR_LESSONS=1). This approval lives in this checkout's .loki; to share it with the team, run 'loki lessons apply ${l.id}' and merge the edit.\n`);
+          return 0;
+        }
+        try {
+          const r = applyProposal(process.cwd(), id);
+          process.stdout.write(r.wrote ? `Wrote the proposed edit for ${id} to ${r.file}. Loki does not commit it: review it, commit it on a branch and open a PR. Once it is merged on the base branch, later runs read this lesson.\n` : `${r.file} already carries ${id}; nothing written.\n`);
+          return 0;
+        } catch (e) { process.stderr.write(`Error: ${e instanceof Error ? e.message : String(e)}\n`); return 1; }
+      }
+      if (act !== undefined && !act.startsWith("-")) { process.stderr.write(`Error: unknown subcommand '${act}' for 'lessons'\n${LESSONS_USAGE}\n`); return 2; }
+      if (unknownFlag("lessons", argv.slice(1), ["--json"], LESSONS_USAGE)) return 2;
+      const lessons = loadLessons(process.cwd()), onBase = headApprovals();
       if (argv.slice(1).includes("--json")) {
-        process.stdout.write(`${JSON.stringify(lessons.map(lessonJson), null, 2)}\n`);
+        process.stdout.write(`${JSON.stringify(lessons.map((l) => lessonJson(l, onBase)), null, 2)}\n`);
         return 0;
       }
-      process.stdout.write(formatLessonList(lessons));
+      process.stdout.write(formatLessonList(lessons, onBase));
       return 0;
     }
     case "brief": {
@@ -262,7 +287,7 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
       if (!id) { process.stderr.write("Usage: loki memory promote <prl-id>\n"); return 2; }
       const got = promoteLesson(process.cwd(), id);
       if (!got) { process.stderr.write(`Error: no such lesson '${id}'\n`); return 1; }
-      process.stdout.write(`Promoted ${got.id}: it can now appear in briefs for every repo. 'loki memory forget ${got.id}' withdraws it.\n`);
+      process.stdout.write(`Promoted ${got.id}: it can now appear in briefs for every repo. 'loki memory forget ${got.id}' withdraws it.\n${got.approval?.state === "proposed" ? `It is still proposed, so no run reads it anywhere until it is approved: loki lessons approve ${got.id}\n` : ""}`);
       return 0;
     }
     case "forget": {
@@ -293,8 +318,8 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
           if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { process.stderr.write(`Error: cannot determine the repo; pass --repo owner/repo\n${usage}`); return 2; }
           const rows = await learnRecent(process.cwd(), repo, n);
           for (const r of rows) process.stdout.write(`${r.pr}: ${r.error ? `error: ${r.error}` : `${r.added} added, ${r.duplicates} already known, ${r.skipped} skipped${r.reason ? ` (${r.reason})` : ""}`}\n`);
-          const t = rows.reduce((a, r) => a + r.added, 0);
-          process.stdout.write(`Learned from ${rows.length} merged PR(s): ${t} added\n`);
+          const t = rows.reduce((a, r) => a + r.added, 0), pr = rows.reduce((a, r) => a + (r.proposed ?? 0), 0);
+          process.stdout.write(`Learned from ${rows.length} merged PR(s): ${t} added${pr ? `, ${pr} proposed (${PROPOSED_NOTE})` : ""}\n`);
           return 0;
         } catch (e) {
           if (e instanceof GhError) { process.stderr.write(`Error: ${e.message}\n`); return 1; }
@@ -305,7 +330,7 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
       try {
         const r = await learnFromPr(process.cwd(), argv[1]);
         if (r.reason) process.stdout.write(`${r.reason}\n`);
-        process.stdout.write(`Learned from ${argv[1]}: ${r.added} added, ${r.duplicates} already known, ${r.skipped} skipped (empty)\n`);
+        process.stdout.write(`Learned from ${argv[1]}: ${r.added} added, ${r.duplicates} already known, ${r.skipped} skipped (empty)${r.proposed ? `; ${r.proposed} proposed (${PROPOSED_NOTE})` : ""}\n`);
         return 0;
       } catch (e) {
         if (e instanceof GhError) { process.stderr.write(`Error: ${e.message}\n`); return 1; }
