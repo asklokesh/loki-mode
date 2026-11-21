@@ -323,6 +323,12 @@
 # 315. mutation_proof.ts reset(): drop the applySide() call (P4; the jobs=2 mutationProof unit cell reads no: the confirming serial re-run had the base data).
 # 321. mutation_proof.ts applySide: write every support file as a plain file (drop the symlink branch and the chmodSync; the mutationProof unit cell reads
 #      yes|tests/test_cases.py,tests/test_two.py for the support run: test_two.py loses its executable helper and its symlink on base).
+# 316. check_result.ts reachesChanged: `return seeds.length > 0;` in place of the call closure (PROOF-REACH P5; the R3 and exists-only legs read VERIFIED, a false VERIFIED;
+#      the R4 unit cell reads 111000).
+# 317. check_result.ts reachesChanged: drop the import condition on seeds (`viaImport = true`; P6; the R4 unit cell reads 110100).
+# 318. check_result.ts reachesChanged: `return false;` first (P7; the R1 leg reads PARTIAL, the async-timeout cause back; the R4 unit cell reads 000000).
+# 319. check_result.ts reachesChanged: `if (x.container) continue;` (exercisedViaCallers' rule; P8; the R1 leg reads PARTIAL: a call to Box never reaches its _scale; R4 reads 010000).
+# 320. check_result.ts reachesChanged: drop `onBase.has(name)` from the seed test (an invented entry point seeds; the R6 leg reads VERIFIED, a false VERIFIED; R4 reads 110001).
 # 252. check_result.ts jsAssertionFailure: drop JS_MISSING_API (the assert-js unit's missing-function case reads true).
 # 253. check_result.ts spawnFailedTool: drop the 6-line bound (the spawn-not-run leg's long ENOENT output reads missing).
 # 253b. check_result.ts resolveTool: drop the UV-ENV-OUTSIDE-CHECKOUT return (the uv-env-outside leg's first cell reads `uv project run -- ruff`).
@@ -2244,6 +2250,46 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     case "$mp" in *"fails without the fix: yes"*"tests/test_table.py"*) ok "PROOF-TEST-SIDE C4: the proof line names tests/test_table.py ($mp)" ;; *) bad "PROOF-TEST-SIDE C4: proof line '$mp'" ;; esac
 else
     if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "PROOF-TEST-SIDE: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: PROOF-TEST-SIDE: pytest is not installed"; fi
+fi
+# PROOF-REACH (LOKI_E10_PROOF_REACH, default on, =0 opts out; real pytest, Wall off): the change's own base-red, head-green test also counts as its proof when it reaches a changed
+# symbol through the changed module, not only when it names one (hc2 async-timeout: the test calls the unchanged timeout(), which builds the changed Timeout class). box.make()
+# builds a Box whose value() returns _scale(); the change fixes _scale. .gitattributes picks git's python hunk header, so the changed symbol is the method _scale, not the class:
+# only a call through the class span reaches it (plant 319). The seed must be a name the base already has: a test that asserts only that an invented triple() exists fails on the
+# base whatever the change does, even when triple() calls the changed double() (R6, plant 320). The existing exists-only (E) and calls-a-new-function (A) legs above stay PARTIAL
+# with reach on (R2: their triple() calls nothing, and add() never calls double()). Plants 316 to 320 in the header. Written for the NEXT4 release and NOT run before it (founder:
+# no testing until the release is complete).
+make_reach_py_repo() {
+    mkdir -p "$1"
+    printf '*.py diff=python\n' > "$1/.gitattributes"
+    printf 'class Box:\n    def __init__(self, n):\n        self.n = n\n\n    def value(self):\n        return self._scale()\n\n    def _scale(self):\n        return self.n * 2 + 1\n\n\ndef make(n):\n    return Box(n)\n' > "$1/box.py"
+    printf 'from box import make\n\n\ndef test_make():\n    assert make(1) is not None\n' > "$1/test_box.py"
+    return 0
+}
+# R4 unit (bun, no runner): the R1 sources reach _scale and Box; R3 (the test calls add(), which calls nothing) does not; a test that names make() without importing box does not;
+# empty targets never do; R6 (an invented triple() that calls double()) does not seed.
+r4="$(cd "$ROOT/loki-ts" && bun -e 'const { reachesChanged, identifierSet } = await import("./src/util/check_result.ts"); const boxBase = "class Box:\n    def __init__(self, n):\n        self.n = n\n\n    def value(self):\n        return self._scale()\n\n    def _scale(self):\n        return self.n * 2 + 1\n\n\ndef make(n):\n    return Box(n)\n"; const box = [{ path: "box.py", src: boxBase.replace("self.n * 2 + 1", "self.n * 2") }], ob = identifierSet(boxBase); const calcBase = "def add(a, b):\n    return a + b\n\n\ndef double(a):\n    return a + a + 1\n", oc = identifierSet(calcBase); const calcR3 = [{ path: "calc.py", src: "def add(a, b):\n    return a + b\n\n\ndef double(a):\n    return a * 3\n\n\ndef triple(a):\n    return a * 3\n" }], calcR6 = [{ path: "calc.py", src: "def add(a, b):\n    return a + b\n\n\ndef double(a):\n    return a * 3\n\n\ndef triple(a):\n    return double(a) + a\n" }]; const t1 = "from box import make\n\n\ndef test_value():\n    assert make(2).value() == 4\n", noImp = "def test_value():\n    assert make(2).value() == 4\n", t3 = "import calc\n\n\ndef test_add_and_triple():\n    assert calc.add(0, 0) == 0 and hasattr(calc, \"triple\")\n", t6 = "import calc\n\n\ndef test_triple_exists():\n    assert hasattr(calc, \"triple\") and callable(calc.triple)\n"; console.log([reachesChanged(["_scale"], t1, box, ob), reachesChanged(["Box"], t1, box, ob), reachesChanged(["double"], t3, calcR3, oc), reachesChanged(["_scale"], noImp, box, ob), reachesChanged([], t1, box, ob), reachesChanged(["double"], t6, calcR6, oc)].map((b) => (b ? 1 : 0)).join(""))' 2>&1 | tail -1)"
+[ "$r4" = "110000" ] && ok "PROOF-REACH R4 unit: reach through make() to Box and its _scale; no reach from an unrelated add(), without the import, with no targets, or from an invented entry point ($r4)" || bad "PROOF-REACH R4 unit: got '$r4'"
+if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    reach_r1() { side_leg make_reach_py_repo "fix the scaling in box.py so a box of 2 has value 4" E2E_STUB_TARGET=box.py E2E_STUB_REPLACE=$'        return self.n * 2 + 1' E2E_STUB_SNIPPET=$'        return self.n * 2' E2E_STUB_TEST_FILE=test_box.py E2E_STUB_TEST_APPEND=$'\n\ndef test_value():\n    assert make(2).value() == 4' "$@"; }
+    # R1 (async-timeout shape): the new test names make() and value(), never _scale; it fails on base by assertion and reaches _scale through Box.
+    reach_r1
+    [ "$(outcome)" = "VERIFIED" ] && ok "PROOF-REACH R1: a test that reaches the changed method through the unchanged make() is the change's proof (VERIFIED)" || { bad "PROOF-REACH R1: outcome is '$(outcome)' ($notes)"; dump; }
+    case "$mp" in *"fails without the fix: yes"*"test_box.py"*) ok "PROOF-REACH R1: the proof line names test_box.py ($mp)" ;; *) bad "PROOF-REACH R1: no proof line naming test_box.py: '$mp'" ;; esac
+    # R5: the knob off keeps only a test that names a changed symbol.
+    reach_r1 LOKI_E10_PROOF_REACH=0
+    [ "$(outcome)" = "PARTIAL" ] && ok "PROOF-REACH R5: LOKI_E10_PROOF_REACH=0 gives R1 PARTIAL" || { bad "PROOF-REACH R5: outcome is '$(outcome)'"; dump; }
+    has "PROOF-REACH R5: the receipt names the missing fail-then-pass proof" "$notes" "no test shown to fail on the base commit and pass on the change"
+    has "PROOF-REACH R5: the base run did fail (yes), but no failing file names a changed symbol" "$notes" "fails without the fix: yes"
+    # R3: a broken double() plus an added triple(); the test asserts add(0, 0) == 0 and that triple exists. add() never calls double(), so nothing reaches the change.
+    side_leg make_wo_py_repo "fix double(a) in calc.py so it returns twice a" E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a + 1' E2E_STUB_SNIPPET=$'    return a * 3\n\n\ndef triple(a):\n    return a * 3' E2E_STUB_TEST_FILE=test_calc.py E2E_STUB_TEST_APPEND=$'\n\ndef test_add_and_triple():\n    assert calc.add(0, 0) == 0 and hasattr(calc, "triple")\n'
+    [ "$(outcome)" = "PARTIAL" ] && ok "PROOF-REACH R3: a test that calls only an unrelated public function of the changed module is not proof (PARTIAL)" || { bad "PROOF-REACH R3: outcome is '$(outcome)'"; dump; }
+    has "PROOF-REACH R3: the receipt names the missing fail-then-pass proof" "$notes" "no test shown to fail on the base commit and pass on the change"
+    # R6: the same broken double(), but the invented triple() calls it; the test asserts only that triple exists. triple is not on the base, so it never seeds.
+    side_leg make_wo_py_repo "fix double(a) in calc.py so it returns twice a" E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'    return a + a + 1' E2E_STUB_SNIPPET=$'    return a * 3\n\n\ndef triple(a):\n    return double(a) + a' E2E_STUB_TEST_FILE=test_calc.py E2E_STUB_TEST_APPEND=$'\n\ndef test_triple_exists():\n    assert hasattr(calc, "triple") and callable(calc.triple)\n'
+    [ "$(outcome)" = "PARTIAL" ] && ok "PROOF-REACH R6: an invented entry point that calls the changed function is not proof (PARTIAL)" || { bad "PROOF-REACH R6: outcome is '$(outcome)'"; dump; }
+    has "PROOF-REACH R6: the receipt names the missing fail-then-pass proof" "$notes" "no test shown to fail on the base commit and pass on the change"
+else
+    if [ "${LOKI_STACKS_REQUIRE:-0}" = 1 ]; then bad "PROOF-REACH: pytest is not installed (LOKI_STACKS_REQUIRE=1: this leg must run here)"; else echo "  SKIP: PROOF-REACH: pytest is not installed"; fi
 fi
 # Base proof on a repo that declares its Python environment (pyproject dependencies) and has no venv, beside a deep test path (a narrow terminal cuts the reason from pytest's FAILED line) with one assertion failure and one OverflowError on the base (rule 22, real pytest):
 # the head ran under the system interpreter, so the base proof must too (was "inconclusive: the base version of each edited test file is not green"), and the file counts as an assertion failure (was "yes" with no file named).
