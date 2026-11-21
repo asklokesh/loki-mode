@@ -1025,6 +1025,12 @@ export function changedSymbols(diffU0: string, readNew?: (path: string) => strin
   flush();
   return [...out];
 }
+/** PROOF-TEST-SIDE: the code files in which the diff declares or modifies no symbol: changedSymbols on each file's own `git diff -U0` (path -> its diff, null when that
+ *  diff could not be read, which counts as no symbol). Each diff holds one file, so its `+++` line is rewritten to the key before changedSymbols reads it: git ends that path
+ *  with a tab when it has a space and C-quotes it when it has a non-ASCII byte, and either way the head file was never read for the enclosing declaration (seal.ts proofSupport). */
+export function inertCodeFiles(diffs: ReadonlyMap<string, string | null>, readNew?: (path: string) => string | null): Set<string> {
+  return new Set([...diffs].filter(([f, d]) => d === null || changedSymbols(d.replace(/^\+\+\+ .*$/m, () => `+++ b/${f}`), readNew).length === 0).map(([f]) => f));
+}
 /** BASE-RED-SHAPE (LOKI_E10_BASE_RED_SHAPE, default on, =0 off): a red suite whose failing ids cannot be parsed is compared by the shape of its whole
  *  output instead: ANSI already stripped, trailing space and blank lines dropped, and only time-like tokens (durations, clock times, timestamps, hex
  *  addresses) normalized. Counts, names and messages stay, so a new failing test, a changed message or a new count gives a different shape. */
@@ -1114,7 +1120,7 @@ function goInterfaceMethod(name: string, methods: ReadonlySet<string>): boolean 
 export const API_FILE_EXT = /\.(?:[cm]?[jt]sx?|py|go|rs)$/;
 // Not API: generated code, type declarations, and test support code that lives outside *_test/test_* files.
 const GENERATED_PATH = /(?:\.pb\.go|_pb2(?:_grpc)?\.pyi?|\.pb\.[cm]?[jt]s|[._-]gen(?:erated)?\.\w+|\.d\.[cm]?ts)$/;
-const TEST_SUPPORT_PATH = /(^|\/)(?:tests?|__tests__|spec|testutils?|testhelpers?|test_?helpers?|testing|testdata|fixtures?|mocks?)\/|(^|\/)conftest\.py$/;
+export const TEST_SUPPORT_PATH = /(^|\/)(?:tests?|__tests__|spec|testutils?|testhelpers?|test_?helpers?|testing|testdata|fixtures?|mocks?)\/|(^|\/)conftest\.py$/;
 const GENERATED_HEADER = /^\s*(?:\/\/|#)\s*Code generated .* DO NOT EDIT\.?\s*$|@generated\b/m;
 /** True when `path` holds no public API a test is owed: a test file, test support code, a generated file or a type declaration file. */
 export const notApiFile = (path: string, src = ""): boolean => !API_FILE_EXT.test(path) || isTestFile(path) || TEST_SUPPORT_PATH.test(path) || isGeneratedSource(path, src);
@@ -1187,6 +1193,28 @@ export function exercisedViaCallers(unexercised: readonly string[], seed: (name:
   const covered = new Set<string>(seeds), work = [...covered];
   for (let n = work.pop(); n !== undefined; n = work.pop()) for (const called of byName.get(n) ?? []) for (const c of called) if (byName.has(c) && !covered.has(c)) { covered.add(c); work.push(c); }
   return unexercised.filter((f) => !covered.has(f));
+}
+/** PROOF-REACH (LOKI_E10_PROOF_REACH, default on, =0/off/false/no opts out): a base-red, head-green test of the change also counts as its proof when it reaches a changed symbol through the changed module. */
+export const proofReachOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PROOF_REACH"] ?? "").trim());
+/** PROOF-REACH: whether a test reaches one of `targets` (changed symbols the base already has) through calls inside the changed files `files` (non-test code, at the head).
+ *  Nodes are every span of every file, classes included (a class span covers its methods, so a call that builds the class reaches them); a node's callees are calledNames over
+ *  the code-only text of its span. Seeds are the top-level functions and classes of a file whose module the test imports, that the test names in code, and that the base
+ *  already has (`onBase`): an entry point the change invented proves nothing, since a test fails on the base for want of it whatever the change does. Reached is the seeds'
+ *  call closure plus every callee name of a covered node. Untouched callers are not followed in this version (callerFiles with the pub-gap bounds is the follow-up). */
+export function reachesChanged(targets: readonly string[], testSrc: string, files: readonly { path: string; src: string }[], onBase: ReadonlySet<string>): boolean {
+  if (targets.length === 0 || files.length === 0) return false;
+  const named = identifierSet(testSrc), imported = identifierSet(testSrc, true), byName = new Map<string, Set<string>[]>(), seeds: string[] = [];
+  for (const f of files) {
+    const lines = f.src.split("\n"), viaImport = imported.has(moduleToken(f.path));
+    for (const x of symbolSpans(f.path, f.src)) {
+      const name = x.name.split(".").pop()!, called = calledNames(codeOnly(lines.slice(x.start - 1, x.end).join("\n"))); // the whole span, header line included (a one-line `def make(n): return Box(n)` holds its body there; start is 1-based), stripped on its own so a multi-line string never shifts it
+      (byName.get(name) ?? byName.set(name, []).get(name)!).push(called);
+      if (viaImport && !x.name.includes(".") && named.has(name) && onBase.has(name)) seeds.push(name);
+    }
+  }
+  const covered = new Set<string>(seeds), reached = new Set<string>(seeds), work = [...covered];
+  for (let n = work.pop(); n !== undefined; n = work.pop()) for (const called of byName.get(n) ?? []) for (const c of called) { reached.add(c); if (byName.has(c) && !covered.has(c)) { covered.add(c); work.push(c); } }
+  return targets.some((t) => reached.has(t));
 }
 /** TEN-GATES-14: per-gate legibility for `loki verify --explain`. exogenous/independent evidence is exogenous; agent_authored and llm_judge are agent-influenced; absent or unknown provenance is unrecorded, never exogenous. */
 export interface ExplainGate { name: string; class: "exogenous" | "agent-influenced" | "unrecorded"; provenance: string | null; result: string; n: number | null; evidence: string }

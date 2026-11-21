@@ -2,7 +2,7 @@
 // (pre-fix) tree. The Wall test files are applied, the fix's source changes are not. Data-only helper (D42, lives in util/ to stay out of the e10ext and features line caps): the test
 // runner is injected by seal.ts, so this file imports nothing from stages/. A "no" downgrades only under LOKI_MUTATION_STRICT=1 with a declared behavior change (seal.ts).
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative } from "node:path";
 import { safeGit } from "./safe_git.ts";
@@ -26,6 +26,37 @@ export interface MutationInput {
   baseMustPass?: string[];
   /** A file counts in `failed` only when its base failure was an assertion (runner reports assertFail), never an import, collection or attribute error. */
   requireAssertion?: boolean;
+  /** PROOF-TEST-SIDE (headSha mode only): test-side paths the change added, modified or deleted that are not themselves run (data files, fixtures), and, when there is any, the
+   *  change's other non-code files, and its code files in which the diff declares or modifies no symbol (seal.ts proofSupport). Each is written byte-exact from headSha, or removed when `deleted`, after the test overlay, so the base run differs from
+   *  the head run only in the change's code (testSideSupport builds the list). */
+  supportFiles?: SupportFile[];
+}
+/** PROOF-TEST-SIDE: one test-side path of the change. `mode` is its git mode at the head (100644, 100755, 120000 for a symlink): the overlay keeps the exec bit and the link. */
+export interface SupportFile {
+  path: string;
+  deleted: boolean;
+  mode?: string;
+}
+/** PROOF-TEST-SIDE (LOKI_E10_PROOF_TEST_SIDE, default on, =0/off/false/no opts out): the fail-then-pass base worktree gets the change's whole test side, not only the test files that ran. */
+export const proofTestSideOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PROOF_TEST_SIDE"] ?? "").trim());
+/** PROOF-TEST-SIDE: the support files of a fail-then-pass proof from a `git diff-tree -r -z --raw --no-renames` listing (status line, path, status line, path, ...): every path with
+ *  status A, M, T or D that `isSide` calls test side and that is not one of the `run` test files, with its head mode (the second field of the status line). [] with the knob off
+ *  (only the run test files are copied, as before). */
+export function testSideSupport(rawDiff: readonly string[], run: readonly string[], isSide: (rel: string) => boolean, env: NodeJS.ProcessEnv = process.env): SupportFile[] {
+  if (!proofTestSideOn(env)) return [];
+  const out: SupportFile[] = [], ran = new Set(run);
+  for (let k = 0; k + 1 < rawDiff.length; k += 2) {
+    const f = rawDiff[k]!.trim().split(" "), st = f.pop() ?? "", path = rawDiff[k + 1]!;
+    if ((st === "A" || st === "M" || st === "T" || st === "D") && !ran.has(path) && isSide(path) && !out.some((s) => s.path === path)) out.push({ path, deleted: st === "D", ...(f[1] ? { mode: f[1] } : {}) });
+  }
+  return out;
+}
+/** A repo-relative path that stays inside the worktree: no absolute path, no `..` segment, and no existing ancestor that is a symlink (a linked node_modules or .venv points into the real repo). */
+function insideWorktree(wt: string, rel: string): boolean {
+  if (isAbsolute(rel) || rel.split("/").some((p) => p === ".." || p === "")) return false;
+  const parts = rel.split("/");
+  for (let n = 1; n < parts.length; n++) { const p = join(wt, ...parts.slice(0, n)); try { if (lstatSync(p).isSymbolicLink()) return false; } catch { return true; } }
+  return true;
 }
 /** CTO ruling: the downgrade to PARTIAL is off unless LOKI_MUTATION_STRICT=1 (and then only for a model-declared behavior change). */
 export const mutationStrict = (env: NodeJS.ProcessEnv = process.env): boolean => (env["LOKI_MUTATION_STRICT"] ?? "").trim() === "1";
@@ -95,7 +126,14 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
     if (add.status !== 0) return np("could not create the base worktree");
     const srcs: [string, string | Buffer][] = [], reset = (): boolean => { // clean base tree for a confirming re-run: the concurrent run may have left files in the shared worktree; linked dependency dirs stay
       if (git(wt as string, ["reset", "-q", "--hard", i.baseSha]).status !== 0 || git(wt as string, ["clean", "-fdxq", ...DEP_DIRS.flatMap((d) => ["-e", d])]).status !== 0) return false;
-      for (const [rel, src] of srcs) { mkdirSync(dirname(join(wt as string, rel)), { recursive: true }); writeFileSync(join(wt as string, rel), typeof src === "string" ? readFileSync(src) : src); } return true; };
+      for (const [rel, src] of srcs) { mkdirSync(dirname(join(wt as string, rel)), { recursive: true }); writeFileSync(join(wt as string, rel), typeof src === "string" ? readFileSync(src) : src); }
+      applySide(); return true; }; // PROOF-TEST-SIDE: the hard reset put the base data back (and restored deleted files), so the confirming re-run gets the test side again
+    const side: { rel: string; buf: Buffer | null; mode: string }[] = [], applySide = (): void => { // buf null: the change deletes the path. Deletions first, then writes, each as a fresh entry (never through a leaf symlink)
+      for (const e of side) if (e.buf === null) rmSync(join(wt as string, e.rel), { force: true });
+      for (const e of side) if (e.buf !== null) {
+        const dst = join(wt as string, e.rel); mkdirSync(dirname(dst), { recursive: true }); rmSync(dst, { force: true });
+        if (e.mode === "120000") symlinkSync(e.buf.toString("utf8"), dst); else { writeFileSync(dst, e.buf); if (e.mode === "100755") chmodSync(dst, 0o755); } // a symlink's blob is its target; the exec bit as at the head
+      } };
     // B1: the bare worktree has no installed dependencies; link each one that exists in the repo (root and every test file ancestor) so a missing package is never read as a failing test.
     const venvs: string[] = [];
     for (const rel of rels) { const parts = rel.split("/").slice(0, -1); for (let n = 0; n <= parts.length; n++) { const anc = parts.slice(0, n).join("/"); for (const d of DEP_DIRS) { const src = join(i.repoDir, anc, d), dst = join(wt, anc, d); if (existsSync(src) && !existsSync(dst)) { try { symlinkSync(src, dst); if (d !== "node_modules") venvs.push(src); } catch { /* the run decides */ } } } } }
@@ -113,6 +151,16 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
       const src = existsSync(sealed) ? sealed : join(i.repoDir, rel);
       if (!existsSync(src)) return np(`Wall file missing: ${rel}`);
       mkdirSync(dirname(join(wt, rel)), { recursive: true }); writeFileSync(join(wt, rel), readFileSync(src)); srcs.push([rel, src]);
+    }
+    if (i.headSha) { // PROOF-TEST-SIDE: the rest of the change's test side (data files, fixtures, deletions), byte-exact from the head, so base and head differ only in non-test code
+      for (const s of i.supportFiles ?? []) {
+        if (remaining() <= 0) return np("timeout"); // one git show per path, and the widened list (seal.ts) can be long
+        if (!insideWorktree(wt, s.path)) return np(`support path outside the base worktree: ${s.path}`);
+        if (s.mode === "160000") return np(`support path is a submodule: ${s.path}`); // a gitlink has no bytes to copy; never half-apply the test side
+        if (s.deleted) { side.push({ rel: s.path, buf: null, mode: "" }); continue; }
+        try { side.push({ rel: s.path, mode: s.mode ?? "100644", buf: execFileSync("git", ["-C", i.repoDir, "show", `${i.headSha}:${s.path}`], { maxBuffer: 16 << 20, timeout: 20_000 }) }); } catch { return np(`could not read ${s.path} at the head commit`); }
+      }
+      applySide();
     }
     let pass = 0, fail = 0, notRun = 0;
     if (remaining() <= 0) return np("timeout");
