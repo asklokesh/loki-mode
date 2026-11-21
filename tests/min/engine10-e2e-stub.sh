@@ -55,6 +55,7 @@
 #   7h. verify.ts: drop the `if (deferSuite) notProven.push(FULL_SUITE_DEFERRED_NOTE)` line (K2's first-verify assertion fails; a deferred verify could back VERIFIED).
 #   7i. verify.ts reusableRun: drop the pass-or-fail test (the unit's not_run record cell is reused: a timed-out suite would never run again).
 #   7i2. deep.ts runFullSuite: add a reuse line to notProven instead of relying on the check's reused field (the unit's runFullSuite cell reads np.size 1: every reused run held).
+#   7j. loki-ts/src/engine10/machine.ts syseditBroke: drop the suiteUnmeasured term (the sysedit cell's first case reads both base-red suite ids: a correct zero-model repair is undone).
 #   8. loki-ts/src/engine10/stages/seal.ts: drop leanHold from verdictOf (the never-calls-multiply leg reads VERIFIED).
 #   9. loki-ts/src/util/check_result.ts: changedSymbols counts any removed line as removed code (the
 #      never-calls-multiply leg reads VERIFIED: the replaced comment credits add()).
@@ -739,6 +740,18 @@ console.log([k1, ds, df, ru, rf2, lab].join(" | "));' 2>&1)"
 [ "$G6R" = "true | true,true,true | true,false,true,false,false,false,false,false,false | true,true,true,true,true,true,true,true,true,true | true,true,true | PARTIAL" ] \
     && ok "G6 relief unit: the reuse key moves with any changed content, file, deletion or dependency entry (every changed path in every suite's key); a runner cache does not move the stamp; the suite is deferred at low tier only on a red that feeds the fix round; a result is reused only on an equal key, from a pass or fail, after an unstopped verify, as a copy marked on the check, and a quick verify carries it; runFullSuite pushes it without a NOT PROVEN line; a deferred verify caps the label" \
     || bad "G6 relief unit gave: $G6R"
+# G6 RELIEF sysedit cell (machine.ts syseditBroke, plant 7j): with FULL-SUITE-FINAL-ONLY the first low-tier verify ran no suite, so the sysedit re-verify is the
+# suite's first run. A suite failing only on base-red ids (pre_red) is not broken by the completion (none); one new id counts every suite id (undo, the
+# fail-safe direction); a first verify that was not deferred compares as before (the base-red id it never saw counts).
+SXB="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const m = await import("./src/engine10/machine.ts");
+const own = (r) => ({ name: "bun:calc.test.ts", result: r }), suite = (ids) => ({ name: "full suite: bun", result: "fail", ids });
+const first = { full_suite_deferred: true, checks: [own("fail")] }, now = (ids) => ({ checks: [own("pass"), suite(ids)], pre_red: ["t > base1", "t > base2"] });
+const show = (a) => (a.length ? a.join(",") : "none");
+console.log([show(m.syseditBroke(first, now(["t > base1", "t > base2"]))), show(m.syseditBroke(first, now(["t > base1", "t > new"]))), show(m.syseditBroke({ checks: [own("fail")] }, now(["t > base1"])))].join(" | "));' 2>&1)"
+[ "$SXB" = "none | full suite: bun t > base1,full suite: bun t > new | full suite: bun t > base1" ] \
+    && ok "G6 relief sysedit: after a deferred first verify a suite red only on base keeps the zero-model repair, a new suite id still undoes it, and a non-deferred first verify compares as before" \
+    || bad "G6 relief sysedit cell gave: $SXB"
 # K2 (engine, low tier): implement leaves the task's test red (wrong), the fix round makes it green (fixit). With FULL-SUITE-FINAL-ONLY on the suite runs once
 # (on the final candidate), with it off twice; the first verify's not_proven names the deferred line and the receipt does not. Plant 7h (no deferred line)
 # fails the first-verify assertion; plant 7g (defer whatever is red) turns K5 above.
