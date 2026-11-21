@@ -50,7 +50,8 @@ parent_commit decides.
 - Python D, in order: 1 pallets/jinja (MarkupSafe), 2 sqlalchemy/mako (MarkupSafe), 3 pexpect/pexpect (ptyprocess), 4 pyasn1/pyasn1-modules
   (pyasn1), 5 httplib2/httplib2 (pyparsing), 6 googleapis/proto-plus (protobuf), 7 psf/requests (charset-normalizer, idna, urllib3, certifi),
   8 pytest-dev/pytest-mock (pytest), 9 pytest-dev/pytest-asyncio (pytest). Reserves 8 and 9 were added by rule: an installed distribution in
-  the scored environment whose own runtime requirements are all installed there.
+  the scored environment (67 listed by importlib.metadata) whose own runtime requirements are all installed there. hc2's four D candidates
+  gave one active-dependency task, so the D list is the long one.
 - Python N, in order: 1 pyparsing/pyparsing, 2 PyCQA/pycodestyle, 3 jpadilla/pyjwt, 4 kjd/idna, 5 python-hyper/uritemplate, 6 eliben/pycparser,
   7 pytest-dev/iniconfig, 8 pygments/pygments, 9 pyasn1/pyasn1.
 - Go, in order: 1 hashicorp/go-version, 2 yuin/goldmark, 3 dlclark/regexp2, 4 oklog/ulid, 5 rs/xid, 6 segmentio/ksuid, 7 gofrs/uuid,
@@ -62,6 +63,10 @@ parent_commit decides.
   exist is recorded as skipped, reason "no such repository").
 - One shares a repository name with an excluded one: gofrs/uuid (google/uuid is hc2). It is a different library and stays unless the lead
   excludes it.
+- One has a name-only hit in HELDOUT-CAL-2.md: pyasn1. HELDOUT-CAL-2.md names it at lines 22, 128 and 147 as python-rsa's runtime
+  dependency, not as a walked, reserve or excluded repository. It is candidate N9 (pyasn1/pyasn1) and the dependency of D4
+  (pyasn1/pyasn1-modules). It is not an exact owner/name match, so the exclusion rule does not drop it, but the system-interpreter fix
+  (item 1d) was reasoned on python-rsa and pyasn1, so the lead rules on both N9 and D4 at clearance.
 
 Overlap check against the parts of the exclusion list this builder may read, run 2026-11-21 in the build worktree (it covers the
 benchmarks/h2h meta.json upstreams, HELDOUT-CAL-2.md and the C2 and FireLater slugs; it does not cover the held-out corpora, which
@@ -73,7 +78,9 @@ not a meta.json upstream on this base), every owner/name token in HELDOUT-CAL-2.
 Verification, as h2h does it: `bash benchmarks/h2h/run.sh --suite hc3 --configs oracle,noop --jobs 2` with a run-owned TMPDIR: oracle
 8 of 8, noop 0 of 8, snapshot_sha256 rebuilt from a clean cache. No loki-cal-* config is run on hc3 before the set is frozen.
 
-Scoring run (after the release, by the lead; no model):
+Scoring run (after the release, by the lead; no model). Do not run it before the task commit: until hc3- tasks exist, `--suite hc3`
+with any config writes an empty result and exits 0 (h2h.py main; the same holds for any empty suite). Such a run cannot pass the bar,
+since merged VERIFIED at least 7 of 8 fails on zero tasks, but it is not a result:
 `H2H_CAL_ENGINE=dist TMPDIR=<dir from loki_run_tmp_create> bash benchmarks/h2h/run.sh --suite hc3 --configs loki-cal-merged,loki-cal-nofix,loki-cal-plant,loki-cal-inert --jobs 1 --timeout 1800 --out benchmarks/h2h/results/calibration-heldout3-<date>.json`
 on the release commit's built dist (its sha1 recorded before and after). Bar: merged VERIFIED at least 7 of 8 (above 6), false
 VERIFIED 0 of 24. Base-green and base-red merged runs are reported apart, and right and verifier_right apart (a stub stand-in hold
@@ -87,6 +94,10 @@ Pending. The lead's answer to the clearance request was: treat every listed upst
 the benchmark or eval held-out paths, which the builder must not read itself; the builder stops after this selection record and
 reports the list as pending clearance. The builder cannot tell which names appear in those paths without reading them, so no
 candidate is cleared yet. As of this record no PR, issue, file, clone or API query of any of the 28 candidates has been made.
+
+What the lead still has to answer: which of the 28 candidates the held-out corpora exclude (or that none are), and a ruling on pyasn1
+(N9 and D4, above). This file is so far a selection record, not the WP-3 delivery: WP-3 merges when its build check passes (the oracle
+and noop verification above), and that needs the 8 tasks.
 
 ### Python walk
 

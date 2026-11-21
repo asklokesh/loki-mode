@@ -31,8 +31,9 @@
 #     snapshot is rebuilt at the pinned commits, matched against snapshot_sha256, cached, and refused on a
 #     digest mismatch, a wrong patch count or an unfetchable commit; the fix passes and the parent fails; the
 #     leak check flags hidden content (also over the visible test of the same name) but not namesakes;
-#     H2H_SELFCHECK_FETCH=1 also runs oracle/noop over every real replay, hard and hc2 task; --suite replay
-#     never lists a held-out hc2- task and --suite hc2 lists only those.
+#     H2H_SELFCHECK_FETCH=1 also runs oracle/noop over every real replay, hard, hc2 and hc3 task (hc3 skipped while it
+#     has no task); --suite replay never lists a held-out hc2- or hc3- task, --suite hc2 and --suite hc3 list only
+#     their own prefix, and hc3 holds 0 tasks (not built yet) or 8, never a partial set.
 #   learning curve (--sequences with raw-haiku/raw-sonnet and loki-sonnet-learn, loki-sonnet-nolearn, loki-auto-learn arms, --laps N):
 #     each arm's env is exact (the four haiku arms unchanged), a raw sequence step records the arm's own cost and session,
 #     every lap starts from the base tree and re-applies work, reset_lap keeps .loki memory, run_index runs 1..laps*steps,
@@ -107,6 +108,8 @@
 #  58. wait_for_load(): never raise; calibration U4 high must fail.
 #  59. calibration_patch(): copy the solution for inert; calibration U2 inert must fail.
 #  60. suite_task_ids(): drop the prefix filter; the hc2 suite-split check must fail.
+#  61. SUITE_PREFIX: drop the "hc3" entry; the replay/hc2/hc3 suite-split check must fail (--suite hc3 then lists the
+#      tuning tasks, with or without any hc3- task built).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need python3
@@ -778,8 +781,9 @@ spec_check='
 import json, glob, os, re, sys
 ok, n = True, 0
 for p in glob.glob(sys.argv[1] + "/*/meta.json"):
-    if os.path.basename(os.path.dirname(p)).startswith("hc2-") != (sys.argv[2] == "hc2"):
-        continue  # replay/ holds the hc2 held-out set too; each suite is checked on its own tasks
+    name, own = os.path.basename(os.path.dirname(p)), {"hc2": "hc2-", "hc3": "hc3-"}.get(sys.argv[2])
+    if (not name.startswith(own)) if own else name.startswith(("hc2-", "hc3-")):
+        continue  # replay/ holds the hc2 and hc3 held-out sets too; each suite is checked on its own tasks
     m = json.load(open(p)); s = m["source"]; d = os.path.dirname(p); n += 1
     ok &= sorted(os.listdir(d)) == ["meta.json", "task.txt"] and os.path.getsize(os.path.join(d, "task.txt")) > 0
     ok &= s["license"] in ("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause") and m["kind"] == "replay"
@@ -796,20 +800,28 @@ check "replay: 6 to 10 tasks (${nrep#* })" test "${nrep#* }" -ge 6 -a "${nrep#* 
 nhc2="$(python3 -I -c "$spec_check" benchmarks/h2h/replay hc2)"
 check "hc2: every held-out task is a pinned spec with a permissive license, its license file, the issue and both commits" test "${nhc2% *}" = True
 check "hc2: 8 held-out tasks (${nhc2#* })" test "${nhc2#* }" = 8
-# --suite replay never lists a held-out hc2- task, --suite hc2 lists only those, and together they are every replay/ task.
-check "hc2: suite_task_ids splits replay/ into the tuning set and the hc2 held-out set" test "$(python3 -I -c '
+nhc3="$(python3 -I -c "$spec_check" benchmarks/h2h/replay hc3)"
+check "hc3: every held-out task is a pinned spec with a permissive license, its license file, the issue and both commits" test "${nhc3% *}" = True
+# hc3 is 0 tasks until its build commit (HELDOUT-CAL-3.md) and 8 after it; any other count is a partial or padded set.
+check "hc3: 0 (not built) or 8 held-out tasks (${nhc3#* })" test "${nhc3#* }" = 0 -o "${nhc3#* }" = 8
+# --suite replay never lists a held-out hc2- or hc3- task, --suite hc2 and --suite hc3 list only their own prefix,
+# and together they are every replay/ task.
+check "hc2/hc3: suite_task_ids splits replay/ into the tuning set, the hc2 and the hc3 held-out sets" test "$(python3 -I -c '
 import sys; sys.path.insert(0, "benchmarks/h2h"); import h2h
-r, h = h2h.suite_task_ids("replay"), h2h.suite_task_ids("hc2")
+r, h, h3 = h2h.suite_task_ids("replay"), h2h.suite_task_ids("hc2"), h2h.suite_task_ids("hc3")
 every = sorted(p.name for p in h2h.SUITES["replay"].iterdir() if (p / "meta.json").is_file())
-print(bool(r) and len(h) == 8 and all(i.startswith("hc2-") for i in h) and not any(i.startswith("hc2-") for i in r) and sorted(r + h) == every)')" = True
+print(bool(r) and len(h) == 8 and all(i.startswith("hc2-") for i in h) and len(h3) in (0, 8) and all(i.startswith("hc3-") for i in h3)
+      and not any(i.startswith(("hc2-", "hc3-")) for i in r) and sorted(r + h + h3) == every)')" = True
 nhard="$(python3 -I -c "$spec_check" benchmarks/h2h/fixtures/hard hard)"
 check "hard: every task is a pinned multi-file spec with a permissive license, its license file, the issue and both commits" test "${nhard% *}" = True
 check "hard: at least 8 candidate tasks (${nhard#* })" test "${nhard#* }" -ge 8
 
 if [ "${H2H_SELFCHECK_FETCH:-0}" = 1 ]; then
-    for suite in replay hard hc2; do
+    for suite in replay hard hc2 hc3; do
         J="$T/$suite.json"
-        case "$suite" in replay) n="${nrep#* }" ;; hc2) n="${nhc2#* }" ;; *) n="${nhard#* }" ;; esac
+        case "$suite" in replay) n="${nrep#* }" ;; hc2) n="${nhc2#* }" ;; hc3) n="${nhc3#* }" ;; *) n="${nhard#* }" ;; esac
+        # An empty suite writes an empty result and exits 0, which would read as a pass; hc3 has no task until it is built.
+        if [ "$n" = 0 ]; then echo "  SKIP: $suite oracle/noop self-check: no task built yet"; continue; fi
         TMPDIR="$T" bash benchmarks/h2h/run.sh --suite "$suite" --configs oracle,noop --jobs 4 --out "$J" >"$T/$suite.log" 2>&1
         check "$suite oracle/noop: runner exits 0 (snapshots rebuilt, no leak, no harness error)" test "$?" = 0
         check "$suite: self-check covered every task ($n)" test "$(runs 'len(d["tasks"])')" = "$n"

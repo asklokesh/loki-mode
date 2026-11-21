@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Benchmarks: `--suite hc3` lists the held-out calibration set 3 (benchmarks/h2h/replay/HELDOUT-CAL-3.md, task prefix `hc3-`, 0 tasks until the set is built); `--suite replay` leaves every hc2- and hc3- task out. tests/min/h2h-harness.sh now checks the hc3 specs, a count of 0 or 8, the three-way replay/hc2/hc3 split, and covers hc3 in the H2H_SELFCHECK_FETCH loop (skipped while it has no task).
 
 ## v11.174.0 (2026-11-20)
 
