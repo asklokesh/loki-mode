@@ -329,8 +329,22 @@
 # 318. check_result.ts reachesChanged: `return false;` first (P7; the R1 leg reads PARTIAL, the async-timeout cause back; the R4 unit cell reads 00000000).
 # 319. check_result.ts reachesChanged: `if (x.container) continue;` (exercisedViaCallers' rule; P8; the R1 leg reads PARTIAL: a call to Box never reaches its _scale; R4 reads 01000000).
 # 320. check_result.ts reachesChanged: drop `onBase.has(name)` from the seed test (an invented entry point seeds; the R6 leg reads VERIFIED, a false VERIFIED; R4 reads 11000101).
-# 322. seal.ts failThenPass: `supportFiles: side` (drop the non-code widening; the C2 fixtures leg reads "yes" and VERIFIED, a false VERIFIED: tests/results.txt reaches the
-#      base without the new case line in fixtures/cases.txt, and the base run fails on the length check).
+# 322. seal.ts proofSupport: drop `|| !CODE_FILE_EXT.test(p)` (the non-code widening; the proofSupport unit cell's B row reads "B=tests/results.txt|yes|tests/test_cases.py"
+#      and AB loses data/cases.txt: the result line reaches the base without its case in data/cases.txt and the base run fails on the length check, a false VERIFIED. The
+#      C2 fixtures leg stays PARTIAL under this plant alone, since fixtures/ is test side by TEST_SUPPORT_PATH).
+# 325. seal.ts proofSupport: `const isSide = (p: string): boolean => isTestSidePath(p),` (drop TEST_SUPPORT_PATH; the proofSupport unit cell's DF row reads
+#      "DF=tests/results.txt|yes|tests/test_cases.py": fixtures/cases.py, whose edit sits inside def cases(), stays at base while its result line is applied, a false VERIFIED.
+#      D and E stay "no" under this plant alone: their case modules declare no symbol, so the inert clause still sends them).
+# 326. seal.ts proofSupport: drop `inert.has(p) ||` (the unit cell's D2 row reads "D2=tests/results.txt|yes|tests/test_cases.py" and D3 reads "D3=|yes|tests/test_cases.py";
+#      the D2 leg reads "yes" and VERIFIED: a new case in data/cases.py, a code file whose diff declares no symbol, stays at base. Both are false VERIFIED. S then reads
+#      "S=|no|" and L "L=|yes|tests/test_calc.py", since neither sends its inert file).
+# 327. seal.ts proofSupport: gate the inert clause on the test side (`(p) => (wide && (inert.has(p) || isSide(p) || !CODE_FILE_EXT.test(p)))`; the unit cell's D3 row reads
+#      "D3=|yes|tests/test_cases.py": with no test-side data edit, data/cases.py stays at base and the edited test's own expected value fails there, a false VERIFIED;
+#      AD3, S and L change the same way as under 326).
+# 329. check_result.ts inertCodeFiles: `changedSymbols(d, readNew)` (no +++ rewrite; the inertCodeFiles unit cell names a b.py and the non-ASCII caf\u00e9.py beside gone.py: a real fix
+#      inside a method of a file whose path has a space or a non-ASCII byte goes to base and loses its proof).
+# 328. seal.ts supportProof: `return first;` first (no confirming run with the inert files at base; the proofSupport unit cell's S row reads
+#      "S=config.py|yes|tests/test_calc.py": the head bytes of config.py fail the base for a change that does nothing, a false VERIFIED).
 # 323. check_result.ts reachesChanged: `lines.slice(x.start, x.end)` (the span without its header line; the R4 unit cell reads 11000000: a one-line `def make(n): return Box(n)`
 #      is never followed, so a correct fix through it reads PARTIAL).
 # 324. check_result.ts reachesChanged: drop `!x.name.includes(".")` from the seed test (a method seeds by its bare name; the R4 unit cell reads 11000011: a test that imports box
@@ -2200,6 +2214,18 @@ make_side_py_repo() {
 }
 # C2 fixtures: the same repo with its cases in fixtures/cases.txt, outside the test-side directories; tests/test_cases.py reads it as ../fixtures/cases.txt.
 make_side_fx_repo() { make_side_py_repo "$1" ../fixtures/cases.txt; }
+# Review of 37a33cc6c (D, E, D2): the cases live in a file outside tests/, relative to the repo root ($2): a .txt file of lines, or a Python module whose CASES list
+# (or, given a body in $3, whose cases()) tests/test_cases.py reads by exec. With CASES = [1, 2, 3] a new case is one appended `CASES.append(n)` line, which declares no symbol.
+make_side_mod_repo() {
+    mkdir -p "$1/tests" "$(dirname "$1/$2")"
+    printf 'def f(x):\n    # doubles x\n    if x >= 10:\n        return x * 2 + 1\n    return x * 2\n' > "$1/calc.py"
+    case "$2" in *.txt) printf '1\n2\n3\n' > "$1/$2" ;; *) printf '%s\n' "${3:-CASES = [1, 2, 3]}" > "$1/$2" ;; esac
+    printf '2\n4\n6\n' > "$1/tests/results.txt"
+    printf 'import os\n\nimport calc\n\nHERE = os.path.dirname(os.path.abspath(__file__))\n\n\ndef _read(name):\n    p = os.path.join(HERE, name)\n    return [l.strip() for l in open(p) if l.strip()] if os.path.exists(p) else []\n\n\ndef _cases():\n    p = os.path.join(HERE, "..", "%s")\n    if p.endswith(".txt"):\n        return [l.strip() for l in open(p) if l.strip()]\n    ns = {}\n    exec(open(p).read(), ns)\n    return ns["CASES"] if "CASES" in ns else ns["cases"]()\n\n\ndef test_cases():\n    cases = _cases()\n    results = _read("results.txt")\n    assert len(cases) == len(results)\n    for c, r in zip(cases, results):\n        assert calc.f(int(c)) == int(r)\n' "$2" > "$1/tests/test_cases.py"
+    return 0
+}
+make_mod_cf_repo() { make_side_mod_repo "$1" conftest.py; }      # E: the cases in a root conftest.py (TEST_SUPPORT_PATH)
+make_mod_data_repo() { make_side_mod_repo "$1" data/cases.py; }  # D2: the cases in data/cases.py (no test directory, and the edit declares no symbol)
 # C4: production data (src/table.txt) is not test side, so it stays at base and the proof judges the change by it.
 make_table_py_repo() {
     mkdir -p "$1/src" "$1/tests"
@@ -2228,6 +2254,54 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     git add -- . && git commit -q -m head && HEADSHA="$(git rev-parse HEAD)"; cd "$ROOT"
     tsm="$(cd "$ROOT/loki-ts" && bun -e 'const { mutationProof, testSideSupport } = await import("./src/util/mutation_proof.ts"); const { baseProofRunner } = await import("./src/engine10/stages/seal.ts"); const { isTestSidePath } = await import("./src/util/test_file_text.ts"); const { execFileSync } = await import("node:child_process"); const [repo, base, head] = process.argv.slice(1); const raw = execFileSync("git", ["-C", repo, "diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", base, head], { encoding: "utf8" }).split("\0").filter(Boolean); const files = ["tests/test_cases.py", "tests/test_two.py"], side = testSideSupport(raw, files, isTestSidePath, {}); const one = async (supportFiles, env) => { const r = await mutationProof({ repoDir: repo, baseSha: base, runDir: repo + "/.loki", wallFiles: files.map((path) => ({ path })), checks: files.map((f) => ({ name: "pytest:" + f })), runner: baseProofRunner, headSha: head, requireAssertion: true, baseMustPass: ["tests/test_cases.py"], supportFiles, env, timeoutS: 40 }); return r.outcome + "|" + (r.failed ?? []).join(","); }; const env = { ...process.env, LOKI_MUTATION_PROOF_JOBS: "1" }; console.log([side.map((x) => x.path + (x.deleted ? "-" : "+") + (x.mode ?? "")).join(","), await one(side, env), await one([], env), await one(side, { ...env, LOKI_MUTATION_PROOF_JOBS: "2" })].join(" "))' "$TSR" "$BASE" "$HEADSHA" 2>&1 | tail -1)"
     [ "$tsm" = "tests/bin/ok+100755,tests/cases-link.txt+120000,tests/cases.txt+100644,tests/results.txt+100644 yes|tests/test_cases.py yes|tests/test_two.py yes|tests/test_cases.py" ] && ok "PROOF-TEST-SIDE mutationProof: the data files, the executable helper and the symlink reach the base worktree as at the head (yes, naming test_cases.py), the old overlay names the wrong file, and the jobs=2 confirming re-run gets them again ($tsm)" || bad "PROOF-TEST-SIDE mutationProof: got '$tsm'"
+    # inertCodeFiles unit: each file's own diff decides, with its +++ line rewritten to its key. An edit inside an indented method, whose @@ line names nothing, is named
+    # through the enclosing def even when git ends the +++ path with a tab (a path with a space) or C-quotes it (a non-ASCII byte); a diff that could not be read is
+    # inert. Plant 329 (no +++ rewrite) also names a b.py and caf\u00e9.py.
+    inu="$(cd "$ROOT/loki-ts" && bun -e 'const { inertCodeFiles } = await import("./src/util/check_result.ts"); const src = "class Box:\n    def value(self):\n        x = 2\n        return x\n", body = "@@ -3 +3 @@\n-        x = 1\n+        x = 2\n"; const m = new Map([["a b.py", "diff --git a/a b.py b/a b.py\n--- a/a b.py\t\n+++ b/a b.py\t\n" + body], ["caf\u00e9.py", "diff --git \"a/caf\\303\\251.py\" \"b/caf\\303\\251.py\"\n--- \"a/caf\\303\\251.py\"\n+++ \"b/caf\\303\\251.py\"\n" + body], ["gone.py", null]]); console.log([...inertCodeFiles(m, (p) => (p === "a b.py" || p === "caf\u00e9.py" ? src : null))].join("|"))' 2>&1 | tail -1)"
+    [ "$inu" = "gone.py" ] && ok "PROOF-TEST-SIDE inertCodeFiles: a tab-ended or quoted +++ path still names the enclosing def; an unreadable diff is inert ($inu)" || bad "PROOF-TEST-SIDE inertCodeFiles: got '$inu'"
+    # proofSupport unit (review of 37a33cc6c, real pytest): seal.ts supportProof over proofSupport and codeSymbols' inert set, running mutationProof, on two-commit repos.
+    # Each row reads <name>=<first support list>|<outcome>|<proof files>. A comment edit in calc.f plus a case the old code already handles reads "no" with the case in
+    # data/cases.txt (B), fixtures/cases.py (D), a root conftest.py (E), data/cases.py (D2), fixtures/cases.py inside def cases() (DF), and data/cases.py read by an edited test
+    # that holds the expected value itself, with no test-side data edit (D3). Every real-fix twin (case 10, result 20; A with the cases in tests/cases.py) names
+    # tests/test_cases.py, so a broken fixture never passes as "no". S (split no-op: K = 2 to 1 in config.py, x * K to x * K * 2 in calc.py, a new tests/test_calc.py)
+    # names no file: config.py at head bytes fails the base, at base bytes it passes, and supportProof counts only a failure under both. L (a real fix in calc.f, and
+    # meta.py newly imports the g() the fix adds) names no file either: the inert meta.py fails to import on base, the accepted cost. Plants 322 (B), 325 (DF), 326 (D2,
+    # D3), 327 (D3) and 328 (S) in the header.
+    # psu_pair <dir> <cases file> <0 comment edit | 1 real fix> [fn | one | split | lost]: prints the base and head shas.
+    psu_pair() {
+        local d="$1" cf="$2" n=4 r=8; [ "$3" = 1 ] && n=10 r=20
+        rm -rf "$d"
+        case "${4:-}" in split | lost)
+            mkdir -p "$d/tests"
+            if [ "$4" = split ]; then printf 'K = 2\n' > "$d/config.py"; printf 'from config import K\n\n\ndef f(x):\n    return x * K\n' > "$d/calc.py"; else printf 'def f(x):\n    return x * 2 + 1\n' > "$d/calc.py"; printf 'VERSION = 1\n' > "$d/meta.py"; fi
+            git -C "$d" init -q -b main && git -C "$d" config user.name e2e && git -C "$d" config user.email e2e@example.invalid && git -C "$d" add -- . && git -C "$d" commit -q -m base || return 1
+            git -C "$d" rev-parse HEAD
+            if [ "$4" = split ]; then printf 'K = 1\n' > "$d/config.py"; printf 'from config import K\n\n\ndef f(x):\n    return x * K * 2\n' > "$d/calc.py"; printf 'import calc\n\n\ndef test_f():\n    assert calc.f(3) == 6\n' > "$d/tests/test_calc.py"
+            else printf 'def f(x):\n    return x * 2\n\n\ndef g():\n    return 1\n' > "$d/calc.py"; printf 'from calc import g\nVERSION = g()\n' > "$d/meta.py"; printf 'import calc\nimport meta\n\n\ndef test_f():\n    assert calc.f(3) == 6\n' > "$d/tests/test_calc.py"; fi
+            git -C "$d" add -- . && git -C "$d" commit -q -m head && git -C "$d" rev-parse HEAD; return
+        esac
+        if [ "${4:-}" = fn ]; then make_side_mod_repo "$d" "$cf" $'def cases():\n    return [1, 2, 3]'; else make_side_mod_repo "$d" "$cf"; fi
+        git -C "$d" init -q -b main && git -C "$d" config user.name e2e && git -C "$d" config user.email e2e@example.invalid && git -C "$d" add -- . && git -C "$d" commit -q -m base || return 1
+        git -C "$d" rev-parse HEAD
+        if [ "$3" = 1 ]; then printf 'def f(x):\n    # doubles x\n    return x * 2\n' > "$d/calc.py"; else printf 'def f(x):\n    # returns twice x\n    if x >= 10:\n        return x * 2 + 1\n    return x * 2\n' > "$d/calc.py"; fi
+        if [ "${4:-}" = one ]; then
+            printf 'EXTRA = %s\n' "$n" >> "$d/$cf"; printf '\n\ndef test_extra():\n    ns = {}\n    exec(open(os.path.join(HERE, "..", "%s")).read(), ns)\n    assert calc.f(ns.get("EXTRA", 0)) == %s\n' "$cf" "$r" >> "$d/tests/test_cases.py"
+        else
+            case "$cf:${4:-}" in *.txt:*) printf '%s\n' "$n" >> "$d/$cf" ;; *:fn) printf 'def cases():\n    return [1, 2, 3, %s]\n' "$n" > "$d/$cf" ;; *) printf 'CASES.append(%s)\n' "$n" >> "$d/$cf" ;; esac
+            printf '%s\n' "$r" >> "$d/tests/results.txt"; printf '\n\ndef test_count():\n    assert len(_cases()) >= 3\n' >> "$d/tests/test_cases.py"
+        fi
+        git -C "$d" add -- . && git -C "$d" commit -q -m head && git -C "$d" rev-parse HEAD
+    }
+    psu_args=()
+    for row in "A tests/cases.py 1" "B data/cases.txt 0" "D fixtures/cases.py 0" "E conftest.py 0" "D2 data/cases.py 0" "DF fixtures/cases.py 0 fn" "D3 data/cases.py 0 one" "AB data/cases.txt 1" "A2 fixtures/cases.py 1" "AE conftest.py 1" "AD2 data/cases.py 1" "ADF fixtures/cases.py 1 fn" "AD3 data/cases.py 1 one" "S - 0 split" "L - 1 lost"; do
+        read -r psu_name psu_cf psu_fix psu_kind <<EOF
+$row
+EOF
+        psu_shas="$(psu_pair "$T/psu-$psu_name" "$psu_cf" "$psu_fix" "$psu_kind" | tr '\n' ' ')"
+        psu_args+=("$psu_name" "$T/psu-$psu_name" ${psu_shas})
+    done
+    psu="$(cd "$ROOT/loki-ts" && bun -e 'const { mutationProof } = await import("./src/util/mutation_proof.ts"); const { baseProofRunner, codeSymbols, proofSupport, supportProof } = await import("./src/engine10/stages/seal.ts"); const { execFileSync } = await import("node:child_process"); const a = process.argv.slice(1), out = []; for (let i = 0; i + 4 <= a.length; i += 4) { const [name, repo, base, head] = a.slice(i, i + 4); const raw = execFileSync("git", ["-C", repo, "diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", base, head], { encoding: "utf8" }).split("\0").filter(Boolean); const files = [raw.includes("tests/test_calc.py") ? "tests/test_calc.py" : "tests/test_cases.py"], modified = files.filter((f) => raw.some((x, k) => x === f && k > 0 && raw[k - 1].trim().endsWith(" M"))), cs = await codeSymbols({ repoDir: repo, baseSha: base }, raw, head), sup = proofSupport(raw, files, cs.inert, {}); const r = await supportProof((supportFiles) => mutationProof({ repoDir: repo, baseSha: base, runDir: repo + "/.loki", wallFiles: files.map((path) => ({ path })), checks: files.map((f) => ({ name: "pytest:" + f })), runner: baseProofRunner, headSha: head, requireAssertion: true, baseMustPass: modified, supportFiles, env: { ...process.env, LOKI_MUTATION_PROOF_JOBS: "1" }, timeoutS: 40 }), raw, files, cs.inert, {}); out.push(name + "=" + sup.map((x) => x.path).join(",") + "|" + r.outcome + "|" + (r.failed ?? []).join(",")); } console.log(out.join(" "))' "${psu_args[@]}" 2>&1 | tail -1)"
+    [ "$psu" = "A=tests/cases.py,tests/results.txt|yes|tests/test_cases.py B=data/cases.txt,tests/results.txt|no| D=fixtures/cases.py,tests/results.txt|no| E=conftest.py,tests/results.txt|no| D2=data/cases.py,tests/results.txt|no| DF=fixtures/cases.py,tests/results.txt|no| D3=data/cases.py|no| AB=data/cases.txt,tests/results.txt|yes|tests/test_cases.py A2=fixtures/cases.py,tests/results.txt|yes|tests/test_cases.py AE=conftest.py,tests/results.txt|yes|tests/test_cases.py AD2=data/cases.py,tests/results.txt|yes|tests/test_cases.py ADF=fixtures/cases.py,tests/results.txt|yes|tests/test_cases.py AD3=data/cases.py|yes|tests/test_cases.py S=config.py|yes| L=meta.py|yes|" ] && ok "PROOF-TEST-SIDE proofSupport: a case module outside tests/ (fixtures/, conftest.py, a code file whose diff declares no symbol) goes to base with its result line, so a comment edit reads no, each real fix still names its test, and a proof resting on a no-symbol file holds only with that file at base too ($psu)" || bad "PROOF-TEST-SIDE proofSupport: got '$psu'"
     side_c1() { side_leg make_side_py_repo "fix f(x) in calc.py so it returns twice x for every x" E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE=$'        return x * 2 + 1' E2E_STUB_SNIPPET=$'        return x * 2' E2E_STUB_TEST_FILE=tests/cases.txt E2E_STUB_TEST_APPEND=10 E2E_STUB_TEST_FILE2=tests/results.txt E2E_STUB_TEST_APPEND2=20 E2E_STUB_EDIT_FILE=tests/test_cases.py E2E_STUB_EDIT_FROM='def test_cases():' E2E_STUB_EDIT_TO=$'def test_count():\n    assert len(_read("cases.txt")) >= 3\n\n\ndef test_cases():' "$@"; }
     # C1 (bracex shape): the fix plus one new case line and its result line; the edited test fails on base only once both data files are there.
     side_c1
@@ -2244,12 +2318,24 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     has "PROOF-TEST-SIDE C2: the receipt names the missing fail-then-pass proof" "$notes" "no test shown to fail on the base commit and pass on the change"
     has "PROOF-TEST-SIDE C2: the NO_FAIL_THEN_PASS note carries the proof line, which reads no" "$notes" "fails without the fix: no"
     # C2 fixtures (review of PROOF-TEST-SIDE): the same comment edit, with the new case in fixtures/cases.txt (not a test-side directory) and its result in tests/results.txt.
-    # The test side is non-empty, so the change's other non-code files go with it: the base gets both lines and passes ("no", PARTIAL). Plant 322 (no widening) applies
-    # tests/results.txt alone, the base run fails on the length check and reads "yes": a false VERIFIED from a data edit that straddles the directory rule.
+    # fixtures/ is test side (TEST_SUPPORT_PATH), and with a non-empty test side the change's other non-code files go too: the base gets both lines and passes ("no",
+    # PARTIAL). Either clause alone sends fixtures/cases.txt, so plants 322 and 325 each leave this leg PARTIAL; the proofSupport unit cell's B and DF rows pin them.
     side_leg make_side_fx_repo "fix f(x) in calc.py so it returns twice x for every x" E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE='    # doubles x' E2E_STUB_SNIPPET='    # returns twice x' E2E_STUB_TEST_FILE=fixtures/cases.txt E2E_STUB_TEST_APPEND=4 E2E_STUB_TEST_FILE2=tests/results.txt E2E_STUB_TEST_APPEND2=8 E2E_STUB_EDIT_FILE=tests/test_cases.py E2E_STUB_EDIT_FROM='def test_cases():' E2E_STUB_EDIT_TO=$'def test_count():\n    assert len(_read("../fixtures/cases.txt")) >= 3\n\n\ndef test_cases():'
     [ "$(outcome)" = "PARTIAL" ] && ok "PROOF-TEST-SIDE C2 fixtures: a comment edit whose new case sits in fixtures/ beside its result in tests/ is PARTIAL" || { bad "PROOF-TEST-SIDE C2 fixtures: outcome is '$(outcome)'"; dump; }
     has "PROOF-TEST-SIDE C2 fixtures: the receipt names the missing fail-then-pass proof" "$notes" "no test shown to fail on the base commit and pass on the change"
     has "PROOF-TEST-SIDE C2 fixtures: the NO_FAIL_THEN_PASS note carries the proof line, which reads no" "$notes" "fails without the fix: no"
+    # E and D2 (review of 37a33cc6c): the same comment edit, with the new case appended to a Python module the test reads (a root conftest.py; data/cases.py) and its result
+    # in tests/results.txt. conftest.py is test side by TEST_SUPPORT_PATH; the data/cases.py edit declares no symbol, so it goes to base too. Both read "no" and PARTIAL.
+    # Plant 326 (no inert clause) keeps data/cases.py at base: the D2 leg reads "yes" and VERIFIED, a false VERIFIED.
+    mod_leg() { side_leg "$1" "fix f(x) in calc.py so it returns twice x for every x" E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE='    # doubles x' E2E_STUB_SNIPPET='    # returns twice x' E2E_STUB_TEST_FILE="$2" E2E_STUB_TEST_APPEND='CASES.append(4)' E2E_STUB_TEST_FILE2=tests/results.txt E2E_STUB_TEST_APPEND2=8 E2E_STUB_EDIT_FILE=tests/test_cases.py E2E_STUB_EDIT_FROM='def test_cases():' E2E_STUB_EDIT_TO=$'def test_count():\n    assert len(_cases()) >= 3\n\n\ndef test_cases():'; }
+    for leg in "E make_mod_cf_repo conftest.py" "D2 make_mod_data_repo data/cases.py"; do
+        read -r leg_name leg_mk leg_cf <<EOF
+$leg
+EOF
+        mod_leg "$leg_mk" "$leg_cf"
+        [ "$(outcome)" = "PARTIAL" ] && ok "PROOF-TEST-SIDE $leg_name: a comment edit whose new case is appended to $leg_cf beside its result in tests/ is PARTIAL" || { bad "PROOF-TEST-SIDE $leg_name: outcome is '$(outcome)'"; dump; }
+        has "PROOF-TEST-SIDE $leg_name: the NO_FAIL_THEN_PASS note carries the proof line, which reads no" "$notes" "fails without the fix: no"
+    done
     # C3: the change adds tests/test_glob.py (asserts every tests/data/*.txt pair) and deletes tests/data/stale.txt, which both codes fail. With only a comment edit the base
     # worktree must not keep the deleted file, or the base run fails on stale data for a change whose code did nothing ("no", PARTIAL); with a real fix and a new
     # tests/data/ten.txt the old code fails, the proof is "yes" and the run VERIFIED.

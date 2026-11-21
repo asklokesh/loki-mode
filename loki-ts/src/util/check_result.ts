@@ -1025,6 +1025,12 @@ export function changedSymbols(diffU0: string, readNew?: (path: string) => strin
   flush();
   return [...out];
 }
+/** PROOF-TEST-SIDE: the code files in which the diff declares or modifies no symbol: changedSymbols on each file's own `git diff -U0` (path -> its diff, null when that
+ *  diff could not be read, which counts as no symbol). Each diff holds one file, so its `+++` line is rewritten to the key before changedSymbols reads it: git ends that path
+ *  with a tab when it has a space and C-quotes it when it has a non-ASCII byte, and either way the head file was never read for the enclosing declaration (seal.ts proofSupport). */
+export function inertCodeFiles(diffs: ReadonlyMap<string, string | null>, readNew?: (path: string) => string | null): Set<string> {
+  return new Set([...diffs].filter(([f, d]) => d === null || changedSymbols(d.replace(/^\+\+\+ .*$/m, () => `+++ b/${f}`), readNew).length === 0).map(([f]) => f));
+}
 /** BASE-RED-SHAPE (LOKI_E10_BASE_RED_SHAPE, default on, =0 off): a red suite whose failing ids cannot be parsed is compared by the shape of its whole
  *  output instead: ANSI already stripped, trailing space and blank lines dropped, and only time-like tokens (durations, clock times, timestamps, hex
  *  addresses) normalized. Counts, names and messages stay, so a new failing test, a changed message or a new count gives a different shape. */
@@ -1114,7 +1120,7 @@ function goInterfaceMethod(name: string, methods: ReadonlySet<string>): boolean 
 export const API_FILE_EXT = /\.(?:[cm]?[jt]sx?|py|go|rs)$/;
 // Not API: generated code, type declarations, and test support code that lives outside *_test/test_* files.
 const GENERATED_PATH = /(?:\.pb\.go|_pb2(?:_grpc)?\.pyi?|\.pb\.[cm]?[jt]s|[._-]gen(?:erated)?\.\w+|\.d\.[cm]?ts)$/;
-const TEST_SUPPORT_PATH = /(^|\/)(?:tests?|__tests__|spec|testutils?|testhelpers?|test_?helpers?|testing|testdata|fixtures?|mocks?)\/|(^|\/)conftest\.py$/;
+export const TEST_SUPPORT_PATH = /(^|\/)(?:tests?|__tests__|spec|testutils?|testhelpers?|test_?helpers?|testing|testdata|fixtures?|mocks?)\/|(^|\/)conftest\.py$/;
 const GENERATED_HEADER = /^\s*(?:\/\/|#)\s*Code generated .* DO NOT EDIT\.?\s*$|@generated\b/m;
 /** True when `path` holds no public API a test is owed: a test file, test support code, a generated file or a type declaration file. */
 export const notApiFile = (path: string, src = ""): boolean => !API_FILE_EXT.test(path) || isTestFile(path) || TEST_SUPPORT_PATH.test(path) || isGeneratedSource(path, src);

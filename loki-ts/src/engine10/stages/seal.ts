@@ -9,7 +9,7 @@ import { acceptanceLines, FRESH_INSTALL_ASK, issueAcceptanceCapOn, issueAcceptan
 import { createHash } from "node:crypto"; import { execFileSync } from "node:child_process"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
-import { mutationEnabled, mutationProof, mutationStrict, testSideSupport, type ProofBefore } from "../../util/mutation_proof.ts";
+import { mutationEnabled, mutationProof, mutationStrict, testSideSupport, type MutationProof, type ProofBefore, type SupportFile } from "../../util/mutation_proof.ts";
 import { isTestSidePath } from "../../util/test_file_text.ts";
 import { RealBaseTestRunner, loadTaskText } from "./wall.ts"; import { defectPinEdits, defectPinNote, pinDroppedNotes, pinnedUpdateNotes, weakenExcuse, type PinnedTestUpdate } from "../../util/test_guard.ts";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
@@ -29,7 +29,7 @@ import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
-import { suiteSkipHolds, SUITE_FIX_SKIP_NOTE, sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, commitWallEnabled, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, symbolGap, proofReachOn, reachesChanged, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, identifierSet, moduleToken, isExecutedProof, CODE_FILE_EXT, reportedErrors, type ReportedErrors, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
+import { suiteSkipHolds, SUITE_FIX_SKIP_NOTE, sealedWallDir, checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, commitWallEnabled, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, changedSymbols, inertCodeFiles, TEST_SUPPORT_PATH, symbolGap, proofReachOn, reachesChanged, addedPublicFunctions, API_FILE_EXT, exercisedViaCallers, callerFiles, notApiFile, identifierSet, moduleToken, isExecutedProof, CODE_FILE_EXT, reportedErrors, type ReportedErrors, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts"; import { checklistMode, readChecklist } from "../../features/checklist.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
@@ -65,13 +65,39 @@ export const NO_FAIL_THEN_PASS = "no test shown to fail on the base commit and p
 /** Wall-off verdict (EVAL-2026-11-05-3): an agent-authored or edited test is proof only when the HARNESS shows it fails on the base commit with the head's test bytes and passes on the change (util/mutation_proof.ts, the same base-worktree run T2 uses). An edited file's own base version must be green on the base first, so a pre-existing red file never reads as discriminating. */
 /** The non-test code files the diff adds or modifies (not deleted), from the `--raw -z` listing: what codeSymbols reads and what PROOF-REACH follows calls through. */
 const codeFilesOf = (rawDiff: readonly string[]): string[] => { const code: string[] = []; for (let i = 0; i + 1 < rawDiff.length; i += 2) { const st = rawDiff[i]!.trim().split(" ").pop() ?? "", f = rawDiff[i + 1]!; if (st !== "D" && CODE_FILE_EXT.test(f) && !isTestFile(f)) code.push(f); } return code; };
-/** The symbols the diff declares or modifies in non-test code files (the lean rule and the fail-then-pass relevance rule share it). */
-async function codeSymbols(ctx: RunContext, rawDiff: string[], head: string): Promise<{ all: string[]; onBase: Set<string> }> {
+/** The symbols the diff declares or modifies in non-test code files (the lean rule and the fail-then-pass relevance rule share it). `inert`: the code files in which it
+ *  declares or modifies none (inertCodeFiles over one diff per file; a file whose diff cannot be read is one); failThenPass sends them to the base worktree (proofSupport). */
+export async function codeSymbols(ctx: RunContext, rawDiff: string[], head: string): Promise<{ all: string[]; onBase: Set<string>; inert: Set<string> }> {
   const code = codeFilesOf(rawDiff);
-  const onBase = new Set<string>(); if (code.length === 0) return { all: [], onBase };
+  const onBase = new Set<string>(); if (code.length === 0) return { all: [], onBase, inert: new Set() };
   for (let i = 0; i + 1 < rawDiff.length; i += 2) { const f = rawDiff[i + 1]!; if (code.includes(f) && (rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A") { const b = await safeGitRun(ctx.repoDir, ["show", `${ctx.baseSha}:${f}`], { timeoutMs: 20000 }); if (b.exitCode === 0) for (const id of identifierSet(b.stdout)) onBase.add(id); } }
   const d = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", ...code], { timeoutMs: 20000 });
-  return { all: d.exitCode === 0 ? changedSymbols(d.stdout, (p) => readFileSync(join(ctx.repoDir, p), "utf8")) : [], onBase }; // ENCLOSING-DECL: the committed head is the worktree here
+  const rd = (p: string): string => readFileSync(join(ctx.repoDir, p), "utf8"); // ENCLOSING-DECL: the committed head is the worktree here
+  const own = new Map<string, string | null>(); for (const f of code) { const r = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", f], { timeoutMs: 20000 }); own.set(f, r.exitCode === 0 ? r.stdout : null); } // PROOF-TEST-SIDE: one diff per file, so a quoted or tab-ended `+++` path never decides
+  return { all: d.exitCode === 0 ? changedSymbols(d.stdout, rd) : [], onBase, inert: inertCodeFiles(own, rd) };
+}
+/** PROOF-TEST-SIDE: what the fail-then-pass base worktree gets beside the files that ran, so base and head differ only in the change's code.
+ *  The test side is isTestSidePath or TEST_SUPPORT_PATH (conftest.py, fixtures/, mocks/, testing/ ...: a case module there is test data, so it never stays at base while
+ *  its result line in tests/ is applied). Once the test side is non-empty the change's other non-code files go too (fixtures/cases.txt beside tests/results.txt). A changed
+ *  code file in which the diff declares or modifies no symbol (`inert`: a new case in data/cases.py) goes always and never widens: such an edit may be data. It may
+ *  also be code (K = 1 in config.py), so supportProof confirms every proof that rests on it with the inert files left at base. */
+export function proofSupport(rawDiff: readonly string[], files: readonly string[], inert: ReadonlySet<string>, env: NodeJS.ProcessEnv = process.env): SupportFile[] {
+  const isSide = (p: string): boolean => isTestSidePath(p) || TEST_SUPPORT_PATH.test(p), wide = testSideSupport(rawDiff, files, isSide, env).length > 0;
+  return testSideSupport(rawDiff, files, (p) => inert.has(p) || (wide && (isSide(p) || !CODE_FILE_EXT.test(p))), env);
+}
+/** PROOF-TEST-SIDE: the fail-then-pass base run over proofSupport. An inert file is data (its head bytes belong on base) or code (its base bytes do), and the diff cannot
+ *  say which, so when the inert set changes the support list and the first run reads yes, a second run over proofSupport with no inert set confirms it: a file counts
+ *  only when it fails by assertion under both. A split no-op (K = 2 to 1 in config.py, x * K to x * K * 2 in calc.py) reads yes on the first run alone, a false
+ *  VERIFIED. This only withholds a proof. Cost: a real fix whose inert file only imports, re-exports or registers a name the fix adds fails to import on the first run,
+ *  so it loses its proof (PARTIAL, never a false VERIFIED). */
+export async function supportProof(run: (supportFiles: SupportFile[]) => Promise<MutationProof>, rawDiff: readonly string[], files: readonly string[], inert: ReadonlySet<string>, env: NodeJS.ProcessEnv = process.env): Promise<MutationProof> {
+  const support = proofSupport(rawDiff, files, inert, env), first = await run(support);
+  const plain = proofSupport(rawDiff, files, new Set(), env), key = (l: SupportFile[]): string => l.map((x) => x.path).sort().join("\0");
+  if (first.outcome !== "yes" || key(support) === key(plain)) return first;
+  const second = await run(plain), both = (first.failed ?? []).filter((f) => second.outcome === "yes" && (second.failed ?? []).includes(f));
+  if (both.length === (first.failed ?? []).length) return first;
+  const atBase = support.filter((x) => !plain.some((y) => y.path === x.path)).map((x) => x.path).join(", ");
+  return { ...first, failed: both, line: `${first.line}; with ${atBase} at base: ${second.line}` };
 }
 /** The fail-then-pass base runner. Every file it runs already passed on the head under this same interpreter, so a base assertion failure under it is a like-for-like difference: trustSystem is on even when the repo declares a Python environment (4 of 4 more-itertools runs read inconclusive without it). */
 /** PROOF-PROJECT-API (LOKI_E10_PROOF_PROJECT_API, default on, =0 opts out): the fail-then-pass proof runs each test with the real repo's Project Model. RealBaseTestRunner
@@ -79,12 +105,11 @@ async function codeSymbols(ctx: RunContext, rawDiff: string[], head: string): Pr
  *  (no vitest there) and the proof read "inconclusive (the Wall command did not execute to a result)". Package roots are repo-relative, so they hold in the worktree. */
 export const proofProjectApiOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PROOF_PROJECT_API"] ?? "").trim());
 export const baseProofRunner = (ms: number, reported: ReportedErrors = { observed: [], wanted: [] }, repoDir?: string): RealBaseTestRunner => new RealBaseTestRunner(repoDir && proofProjectApiOn() ? loadProjectApi(repoDir) : undefined, ms, {}, true, reported); // PROOF-PROJECT-API: the Project Model of the real repo (the base worktree has no .loki/), so a package's test runs in its package dir; // reported: the errors the issue quotes (reportedErrors), a base failure raising exactly one counts like an assertion
-async function failThenPass(ctx: RunContext, vraw: Obj[], pctx: ProvenanceCtx, head: string, cs: { all: string[]; onBase: Set<string> }, task: string, rewritten: ReadonlySet<string> = new Set(), rawDiff: readonly string[] = []): Promise<{ ok: boolean; line: string; files: string[]; before?: ProofBefore[] }> {
+async function failThenPass(ctx: RunContext, vraw: Obj[], pctx: ProvenanceCtx, head: string, cs: { all: string[]; onBase: Set<string>; inert: ReadonlySet<string> }, task: string, rewritten: ReadonlySet<string> = new Set(), rawDiff: readonly string[] = []): Promise<{ ok: boolean; line: string; files: string[]; before?: ProofBefore[] }> {
   const files = [...new Set(vraw.filter((c) => isExecutedProof(c as { result?: unknown; n?: unknown }) && checkProvenance(String(c.name ?? ""), pctx) === "agent_authored").map((c) => String(c.name).slice(String(c.name).indexOf(":") + 1)))];
   if (files.length === 0) return { ok: false, line: "", files: [] };
-  const side = testSideSupport(rawDiff, files, isTestSidePath); // PROOF-TEST-SIDE: once the change has a test side beyond the files that ran, its other non-code files go with it (fixtures/cases.txt beside tests/results.txt), so a data edit that straddles the directory rule is never half applied
-  const mp = await mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: files.map((path) => ({ path })), checks: vraw as { name: string }[], runner: (ms: number) => baseProofRunner(ms, reportedErrors(task), ctx.repoDir), headSha: head, requireAssertion: true, baseMustPass: files.filter((f) => pctx.modifiedFiles?.includes(f)),
-    supportFiles: side.length ? testSideSupport(rawDiff, files, (p) => isTestSidePath(p) || !CODE_FILE_EXT.test(p)) : side }); // PROOF-TEST-SIDE: the change's other test-side paths (data files, deletions) and, with any of them, its other non-code files, so base and head differ only in the change's code
+  const mp = await supportProof((supportFiles) => mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: files.map((path) => ({ path })), checks: vraw as { name: string }[], runner: (ms: number) => baseProofRunner(ms, reportedErrors(task), ctx.repoDir), headSha: head, requireAssertion: true, baseMustPass: files.filter((f) => pctx.modifiedFiles?.includes(f)),
+    supportFiles }), rawDiff, files, cs.inert); // PROOF-TEST-SIDE: the change's other test-side paths (data files, deletions, conftest.py, fixtures/), with any of them its other non-code files, and its code files with no changed symbol (confirmed with those at base), so base and head differ only in the change's code
   const symbols = cs.all.filter((s) => cs.onBase.has(s) || new RegExp(`(?<![\\w$])${s.replace(/[$]/g, "\\$")}(?![\\w$])`).test(task)); // a symbol the base already has (a modified one), or one the task itself asks to add: a test that only names a function the change invented proves nothing about the change
   const read = (p: string): string => { try { return execFileSync("git", ["-C", ctx.repoDir, "show", `${head}:${p}`], { encoding: "utf8", maxBuffer: 16 << 20, timeout: 20_000 }); } catch { return ""; } };
   let heads: { path: string; src: string }[] | null = null; const reach = (t: string): boolean => proofReachOn() && reachesChanged(symbols, t, (heads ??= codeFilesOf(rawDiff).map((path) => ({ path, src: read(path) }))), cs.onBase); // PROOF-REACH: the changed code at the head, read once and only when a literal gap needs it

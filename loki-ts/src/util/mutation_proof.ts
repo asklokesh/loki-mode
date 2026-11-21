@@ -27,7 +27,7 @@ export interface MutationInput {
   /** A file counts in `failed` only when its base failure was an assertion (runner reports assertFail), never an import, collection or attribute error. */
   requireAssertion?: boolean;
   /** PROOF-TEST-SIDE (headSha mode only): test-side paths the change added, modified or deleted that are not themselves run (data files, fixtures), and, when there is any, the
-   *  change's other non-code files (seal.ts failThenPass). Each is written byte-exact from headSha, or removed when `deleted`, after the test overlay, so the base run differs from
+   *  change's other non-code files, and its code files in which the diff declares or modifies no symbol (seal.ts proofSupport). Each is written byte-exact from headSha, or removed when `deleted`, after the test overlay, so the base run differs from
    *  the head run only in the change's code (testSideSupport builds the list). */
   supportFiles?: SupportFile[];
 }
