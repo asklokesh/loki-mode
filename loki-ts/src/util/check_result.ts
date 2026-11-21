@@ -1201,7 +1201,7 @@ export function reachesChanged(targets: readonly string[], testSrc: string, file
   for (const f of files) {
     const lines = f.src.split("\n"), viaImport = imported.has(moduleToken(f.path));
     for (const x of symbolSpans(f.path, f.src)) {
-      const name = x.name.split(".").pop()!, called = calledNames(codeOnly(lines.slice(x.start, x.end).join("\n"))); // the span below its header line, stripped on its own so a multi-line string never shifts it
+      const name = x.name.split(".").pop()!, called = calledNames(codeOnly(lines.slice(x.start - 1, x.end).join("\n"))); // the whole span, header line included (a one-line `def make(n): return Box(n)` holds its body there; start is 1-based), stripped on its own so a multi-line string never shifts it
       (byName.get(name) ?? byName.set(name, []).get(name)!).push(called);
       if (viaImport && !x.name.includes(".") && named.has(name) && onBase.has(name)) seeds.push(name);
     }

@@ -26,8 +26,9 @@ export interface MutationInput {
   baseMustPass?: string[];
   /** A file counts in `failed` only when its base failure was an assertion (runner reports assertFail), never an import, collection or attribute error. */
   requireAssertion?: boolean;
-  /** PROOF-TEST-SIDE (headSha mode only): test-side paths the change added, modified or deleted that are not themselves run (data files, fixtures). Each is written byte-exact from
-   *  headSha, or removed when `deleted`, after the test overlay, so the base run differs from the head run only in the change's non-test code (testSideSupport builds the list). */
+  /** PROOF-TEST-SIDE (headSha mode only): test-side paths the change added, modified or deleted that are not themselves run (data files, fixtures), and, when there is any, the
+   *  change's other non-code files (seal.ts failThenPass). Each is written byte-exact from headSha, or removed when `deleted`, after the test overlay, so the base run differs from
+   *  the head run only in the change's code (testSideSupport builds the list). */
   supportFiles?: SupportFile[];
 }
 /** PROOF-TEST-SIDE: one test-side path of the change. `mode` is its git mode at the head (100644, 100755, 120000 for a symlink): the overlay keeps the exec bit and the link. */
@@ -153,6 +154,7 @@ export async function mutationProof(i: MutationInput): Promise<MutationProof> {
     }
     if (i.headSha) { // PROOF-TEST-SIDE: the rest of the change's test side (data files, fixtures, deletions), byte-exact from the head, so base and head differ only in non-test code
       for (const s of i.supportFiles ?? []) {
+        if (remaining() <= 0) return np("timeout"); // one git show per path, and the widened list (seal.ts) can be long
         if (!insideWorktree(wt, s.path)) return np(`support path outside the base worktree: ${s.path}`);
         if (s.mode === "160000") return np(`support path is a submodule: ${s.path}`); // a gitlink has no bytes to copy; never half-apply the test side
         if (s.deleted) { side.push({ rel: s.path, buf: null, mode: "" }); continue; }

@@ -324,11 +324,17 @@
 # 321. mutation_proof.ts applySide: write every support file as a plain file (drop the symlink branch and the chmodSync; the mutationProof unit cell reads
 #      yes|tests/test_cases.py,tests/test_two.py for the support run: test_two.py loses its executable helper and its symlink on base).
 # 316. check_result.ts reachesChanged: `return seeds.length > 0;` in place of the call closure (PROOF-REACH P5; the R3 and exists-only legs read VERIFIED, a false VERIFIED;
-#      the R4 unit cell reads 111000).
-# 317. check_result.ts reachesChanged: drop the import condition on seeds (`viaImport = true`; P6; the R4 unit cell reads 110100).
-# 318. check_result.ts reachesChanged: `return false;` first (P7; the R1 leg reads PARTIAL, the async-timeout cause back; the R4 unit cell reads 000000).
-# 319. check_result.ts reachesChanged: `if (x.container) continue;` (exercisedViaCallers' rule; P8; the R1 leg reads PARTIAL: a call to Box never reaches its _scale; R4 reads 010000).
-# 320. check_result.ts reachesChanged: drop `onBase.has(name)` from the seed test (an invented entry point seeds; the R6 leg reads VERIFIED, a false VERIFIED; R4 reads 110001).
+#      the R4 unit cell reads 11100001).
+# 317. check_result.ts reachesChanged: drop the import condition on seeds (`viaImport = true`; P6; the R4 unit cell reads 11010001).
+# 318. check_result.ts reachesChanged: `return false;` first (P7; the R1 leg reads PARTIAL, the async-timeout cause back; the R4 unit cell reads 00000000).
+# 319. check_result.ts reachesChanged: `if (x.container) continue;` (exercisedViaCallers' rule; P8; the R1 leg reads PARTIAL: a call to Box never reaches its _scale; R4 reads 01000000).
+# 320. check_result.ts reachesChanged: drop `onBase.has(name)` from the seed test (an invented entry point seeds; the R6 leg reads VERIFIED, a false VERIFIED; R4 reads 11000101).
+# 322. seal.ts failThenPass: `supportFiles: side` (drop the non-code widening; the C2 fixtures leg reads "yes" and VERIFIED, a false VERIFIED: tests/results.txt reaches the
+#      base without the new case line in fixtures/cases.txt, and the base run fails on the length check).
+# 323. check_result.ts reachesChanged: `lines.slice(x.start, x.end)` (the span without its header line; the R4 unit cell reads 11000000: a one-line `def make(n): return Box(n)`
+#      is never followed, so a correct fix through it reads PARTIAL).
+# 324. check_result.ts reachesChanged: drop `!x.name.includes(".")` from the seed test (a method seeds by its bare name; the R4 unit cell reads 11000011: a test that imports box
+#      and only names a local variable `value` reaches _scale through the method Box.value).
 # 252. check_result.ts jsAssertionFailure: drop JS_MISSING_API (the assert-js unit's missing-function case reads true).
 # 253. check_result.ts spawnFailedTool: drop the 6-line bound (the spawn-not-run leg's long ENOENT output reads missing).
 # 253b. check_result.ts resolveTool: drop the UV-ENV-OUTSIDE-CHECKOUT return (the uv-env-outside leg's first cell reads `uv project run -- ruff`).
@@ -2182,15 +2188,18 @@ fi
 # tests/cases.txt with tests/results.txt (and tests/results-2.txt when present) and asserts each pair through calc.f; tests/data/*.txt is read only by a test a change adds.
 # Plants 312 to 315 in the header. Written for the NEXT4 release and NOT run before it (founder: no testing until the release is complete).
 make_side_py_repo() {
-    mkdir -p "$1/tests/data"
+    local cases="${2:-cases.txt}" # the cases file, relative to tests/ (make_side_fx_repo: ../fixtures/cases.txt)
+    mkdir -p "$1/tests/data" "$(dirname "$1/tests/$cases")"
     printf 'def f(x):\n    # doubles x\n    if x >= 10:\n        return x * 2 + 1\n    return x * 2\n' > "$1/calc.py"
-    printf '1\n2\n3\n' > "$1/tests/cases.txt"
+    printf '1\n2\n3\n' > "$1/tests/$cases"
     printf '2\n4\n6\n' > "$1/tests/results.txt"
     printf '1 2\n' > "$1/tests/data/one.txt"
     printf '3 7\n' > "$1/tests/data/stale.txt" # wrong for the old and the new code alike: only a test that still reads it fails on it
-    printf 'import os\n\nimport calc\n\nHERE = os.path.dirname(os.path.abspath(__file__))\n\n\ndef _read(name):\n    p = os.path.join(HERE, name)\n    return [l.strip() for l in open(p) if l.strip()] if os.path.exists(p) else []\n\n\ndef test_cases():\n    cases = _read("cases.txt")\n    results = _read("results.txt") + _read("results-2.txt")\n    assert len(cases) == len(results)\n    for c, r in zip(cases, results):\n        assert calc.f(int(c)) == int(r)\n' > "$1/tests/test_cases.py"
+    printf 'import os\n\nimport calc\n\nHERE = os.path.dirname(os.path.abspath(__file__))\n\n\ndef _read(name):\n    p = os.path.join(HERE, name)\n    return [l.strip() for l in open(p) if l.strip()] if os.path.exists(p) else []\n\n\ndef test_cases():\n    cases = _read("%s")\n    results = _read("results.txt") + _read("results-2.txt")\n    assert len(cases) == len(results)\n    for c, r in zip(cases, results):\n        assert calc.f(int(c)) == int(r)\n' "$cases" > "$1/tests/test_cases.py"
     return 0
 }
+# C2 fixtures: the same repo with its cases in fixtures/cases.txt, outside the test-side directories; tests/test_cases.py reads it as ../fixtures/cases.txt.
+make_side_fx_repo() { make_side_py_repo "$1" ../fixtures/cases.txt; }
 # C4: production data (src/table.txt) is not test side, so it stays at base and the proof judges the change by it.
 make_table_py_repo() {
     mkdir -p "$1/src" "$1/tests"
@@ -2234,6 +2243,13 @@ if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     [ "$(outcome)" = "PARTIAL" ] && ok "PROOF-TEST-SIDE C2: a comment edit with a new case the old code already handles is PARTIAL" || { bad "PROOF-TEST-SIDE C2: outcome is '$(outcome)'"; dump; }
     has "PROOF-TEST-SIDE C2: the receipt names the missing fail-then-pass proof" "$notes" "no test shown to fail on the base commit and pass on the change"
     has "PROOF-TEST-SIDE C2: the NO_FAIL_THEN_PASS note carries the proof line, which reads no" "$notes" "fails without the fix: no"
+    # C2 fixtures (review of PROOF-TEST-SIDE): the same comment edit, with the new case in fixtures/cases.txt (not a test-side directory) and its result in tests/results.txt.
+    # The test side is non-empty, so the change's other non-code files go with it: the base gets both lines and passes ("no", PARTIAL). Plant 322 (no widening) applies
+    # tests/results.txt alone, the base run fails on the length check and reads "yes": a false VERIFIED from a data edit that straddles the directory rule.
+    side_leg make_side_fx_repo "fix f(x) in calc.py so it returns twice x for every x" E2E_STUB_TARGET=calc.py E2E_STUB_REPLACE='    # doubles x' E2E_STUB_SNIPPET='    # returns twice x' E2E_STUB_TEST_FILE=fixtures/cases.txt E2E_STUB_TEST_APPEND=4 E2E_STUB_TEST_FILE2=tests/results.txt E2E_STUB_TEST_APPEND2=8 E2E_STUB_EDIT_FILE=tests/test_cases.py E2E_STUB_EDIT_FROM='def test_cases():' E2E_STUB_EDIT_TO=$'def test_count():\n    assert len(_read("../fixtures/cases.txt")) >= 3\n\n\ndef test_cases():'
+    [ "$(outcome)" = "PARTIAL" ] && ok "PROOF-TEST-SIDE C2 fixtures: a comment edit whose new case sits in fixtures/ beside its result in tests/ is PARTIAL" || { bad "PROOF-TEST-SIDE C2 fixtures: outcome is '$(outcome)'"; dump; }
+    has "PROOF-TEST-SIDE C2 fixtures: the receipt names the missing fail-then-pass proof" "$notes" "no test shown to fail on the base commit and pass on the change"
+    has "PROOF-TEST-SIDE C2 fixtures: the NO_FAIL_THEN_PASS note carries the proof line, which reads no" "$notes" "fails without the fix: no"
     # C3: the change adds tests/test_glob.py (asserts every tests/data/*.txt pair) and deletes tests/data/stale.txt, which both codes fail. With only a comment edit the base
     # worktree must not keep the deleted file, or the base run fails on stale data for a change whose code did nothing ("no", PARTIAL); with a real fix and a new
     # tests/data/ten.txt the old code fails, the proof is "yes" and the run VERIFIED.
@@ -2266,9 +2282,10 @@ make_reach_py_repo() {
     return 0
 }
 # R4 unit (bun, no runner): the R1 sources reach _scale and Box; R3 (the test calls add(), which calls nothing) does not; a test that names make() without importing box does not;
-# empty targets never do; R6 (an invented triple() that calls double()) does not seed.
-r4="$(cd "$ROOT/loki-ts" && bun -e 'const { reachesChanged, identifierSet } = await import("./src/util/check_result.ts"); const boxBase = "class Box:\n    def __init__(self, n):\n        self.n = n\n\n    def value(self):\n        return self._scale()\n\n    def _scale(self):\n        return self.n * 2 + 1\n\n\ndef make(n):\n    return Box(n)\n"; const box = [{ path: "box.py", src: boxBase.replace("self.n * 2 + 1", "self.n * 2") }], ob = identifierSet(boxBase); const calcBase = "def add(a, b):\n    return a + b\n\n\ndef double(a):\n    return a + a + 1\n", oc = identifierSet(calcBase); const calcR3 = [{ path: "calc.py", src: "def add(a, b):\n    return a + b\n\n\ndef double(a):\n    return a * 3\n\n\ndef triple(a):\n    return a * 3\n" }], calcR6 = [{ path: "calc.py", src: "def add(a, b):\n    return a + b\n\n\ndef double(a):\n    return a * 3\n\n\ndef triple(a):\n    return double(a) + a\n" }]; const t1 = "from box import make\n\n\ndef test_value():\n    assert make(2).value() == 4\n", noImp = "def test_value():\n    assert make(2).value() == 4\n", t3 = "import calc\n\n\ndef test_add_and_triple():\n    assert calc.add(0, 0) == 0 and hasattr(calc, \"triple\")\n", t6 = "import calc\n\n\ndef test_triple_exists():\n    assert hasattr(calc, \"triple\") and callable(calc.triple)\n"; console.log([reachesChanged(["_scale"], t1, box, ob), reachesChanged(["Box"], t1, box, ob), reachesChanged(["double"], t3, calcR3, oc), reachesChanged(["_scale"], noImp, box, ob), reachesChanged([], t1, box, ob), reachesChanged(["double"], t6, calcR6, oc)].map((b) => (b ? 1 : 0)).join(""))' 2>&1 | tail -1)"
-[ "$r4" = "110000" ] && ok "PROOF-REACH R4 unit: reach through make() to Box and its _scale; no reach from an unrelated add(), without the import, with no targets, or from an invented entry point ($r4)" || bad "PROOF-REACH R4 unit: got '$r4'"
+# empty targets never do; R6 (an invented triple() that calls double()) does not seed; a test that imports box and only names a local variable `value` does not seed the method
+# Box.value (plant 324); a one-line `def make(n): return Box(n)`, last in its file, is followed from its header line (plant 323).
+r4="$(cd "$ROOT/loki-ts" && bun -e 'const { reachesChanged, identifierSet } = await import("./src/util/check_result.ts"); const boxBase = "class Box:\n    def __init__(self, n):\n        self.n = n\n\n    def value(self):\n        return self._scale()\n\n    def _scale(self):\n        return self.n * 2 + 1\n\n\ndef make(n):\n    return Box(n)\n"; const box = [{ path: "box.py", src: boxBase.replace("self.n * 2 + 1", "self.n * 2") }], ob = identifierSet(boxBase); const calcBase = "def add(a, b):\n    return a + b\n\n\ndef double(a):\n    return a + a + 1\n", oc = identifierSet(calcBase); const calcR3 = [{ path: "calc.py", src: "def add(a, b):\n    return a + b\n\n\ndef double(a):\n    return a * 3\n\n\ndef triple(a):\n    return a * 3\n" }], calcR6 = [{ path: "calc.py", src: "def add(a, b):\n    return a + b\n\n\ndef double(a):\n    return a * 3\n\n\ndef triple(a):\n    return double(a) + a\n" }]; const t1 = "from box import make\n\n\ndef test_value():\n    assert make(2).value() == 4\n", noImp = "def test_value():\n    assert make(2).value() == 4\n", t3 = "import calc\n\n\ndef test_add_and_triple():\n    assert calc.add(0, 0) == 0 and hasattr(calc, \"triple\")\n", t6 = "import calc\n\n\ndef test_triple_exists():\n    assert hasattr(calc, \"triple\") and callable(calc.triple)\n", tLocal = "import box\n\n\ndef test_local():\n    value = 4\n    assert value == 4\n"; const oneBase = boxBase.replace("def make(n):\n    return Box(n)\n", "def make(n): return Box(n)\n"), boxOne = [{ path: "box.py", src: oneBase.replace("self.n * 2 + 1", "self.n * 2") }], oo = identifierSet(oneBase); console.log([reachesChanged(["_scale"], t1, box, ob), reachesChanged(["Box"], t1, box, ob), reachesChanged(["double"], t3, calcR3, oc), reachesChanged(["_scale"], noImp, box, ob), reachesChanged([], t1, box, ob), reachesChanged(["double"], t6, calcR6, oc), reachesChanged(["_scale"], tLocal, box, ob), reachesChanged(["_scale"], t1, boxOne, oo)].map((b) => (b ? 1 : 0)).join(""))' 2>&1 | tail -1)"
+[ "$r4" = "11000001" ] && ok "PROOF-REACH R4 unit: reach through make() to Box and its _scale, also from a one-line make(); no reach from an unrelated add(), without the import, with no targets, from an invented entry point, or from a local variable named like a method ($r4)" || bad "PROOF-REACH R4 unit: got '$r4'"
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
     reach_r1() { side_leg make_reach_py_repo "fix the scaling in box.py so a box of 2 has value 4" E2E_STUB_TARGET=box.py E2E_STUB_REPLACE=$'        return self.n * 2 + 1' E2E_STUB_SNIPPET=$'        return self.n * 2' E2E_STUB_TEST_FILE=test_box.py E2E_STUB_TEST_APPEND=$'\n\ndef test_value():\n    assert make(2).value() == 4' "$@"; }
     # R1 (async-timeout shape): the new test names make() and value(), never _scale; it fails on base by assertion and reaches _scale through Box.
