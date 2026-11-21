@@ -471,8 +471,9 @@ export function projectInterpreter(root: string): "project" | "system" {
   return [join(root, ".venv", "bin", "python"), join(root, "venv", "bin", "python"), ...(ve && inRepo(ve) ? [join(ve, "bin", "python")] : [])].some(existsSync) ? "project" : "system";
 }
 /** The system-interpreter advisory (verify.ts) is a cap only when the repo declares a Python environment the system interpreter may not match.
- *  True when any file in the tree at `ref` is a dependency manifest or lock (requirements*.txt, Pipfile, setup.py, poetry/uv/pdm lock,
- *  conda environment), a setup.cfg with install_requires, or a pyproject.toml declaring dependencies. Fails closed: an unreadable tree is true. */
+ *  True when any file in the tree at `ref` is a dependency manifest or lock (requirements*.txt, Pipfile, poetry/uv/pdm lock, conda environment),
+ *  a setup.py or setup.cfg with runtime requirements (SETUP-DEPS; knob off: any setup.py, and a setup.cfg with the install_requires key), or a
+ *  pyproject.toml declaring dependencies. Fails closed: an unreadable tree is true. */
 /** BUILD-REQUIRES: true when a pyproject.toml declares dependencies the code needs to run. `requires` under [build-system] lists what builds a wheel
  *  (setuptools, flit_core), not what the code imports, so it is not counted, and neither is an empty `dependencies = []`. A non-empty [project]
  *  `dependencies` list, any optional-dependencies, and a poetry, pdm, uv or dependency-groups table count. Measured on the V1 calibration seed: all six
@@ -493,9 +494,70 @@ export function pyprojectDeclaresDeps(text: string): boolean {
   }
   return false;
 }
+/** SETUP-DEPS (LOKI_E10_SETUP_DEPS, default on; =0/off/false/no opts out). */
+export const setupDepsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SETUP_DEPS"] ?? "").trim());
+/** Python source with every comment removed and every string kept: a `#` inside a quoted string (a URL fragment) is not a comment, so it can
+ *  never hide an `install_requires` that follows it on the same line. */
+function stripPyComments(text: string): string {
+  let out = "", q = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (q) {
+      if (ch === "\\") { out += ch + (text[i + 1] ?? ""); i++; continue; }
+      if (text.startsWith(q, i)) { out += q; i += q.length - 1; q = ""; continue; }
+      out += ch; continue;
+    }
+    if (ch === "#") { while (i < text.length && text[i] !== "\n") i++; out += "\n"; continue; }
+    if (ch === "'" || ch === '"') { q = text.startsWith(ch.repeat(3), i) ? ch.repeat(3) : ch; out += q; i += q.length - 1; continue; }
+    out += ch;
+  }
+  return out;
+}
+/** SETUP-DEPS: true when a setup.py passes runtime requirements. An `install_requires` keyword argument (or a `"install_requires":` dict key) counts
+ *  unless its whole value is an empty list or tuple literal (`[]`, `()`, `[ ]`, followed by `,`, `)`, `}` or the end); any other value (a non-empty literal, a name, a call, a comprehension)
+ *  counts, because Loki cannot evaluate Python (fail closed). A `**name` expansion also counts: it can carry install_requires out of sight.
+ *  `setup_requires` and `tests_require` never count (build and test tooling, as [build-system] requires in pyprojectDeclaresDeps), and
+ *  `extras_require` is not counted, matching setup.cfg. Comments are ignored. Measured on hc2 tenacity: its setup.py is
+ *  `setuptools.setup(setup_requires=["setuptools_scm"], use_scm_version=True)`, which declares nothing the code imports. */
+export function setupPyDeclaresDeps(text: string): boolean {
+  const code = stripPyComments(text);
+  if (/\*\*\s*[A-Za-z_]/.test(code)) return true;
+  const re = /(?:\binstall_requires\s*=(?!=)|["']install_requires["']\s*:)\s*/g;
+  for (let m = re.exec(code); m; m = re.exec(code)) {
+    const v = code.slice(m.index + m[0].length);
+    if (!/^(?:\[\s*\]|\(\s*\))\s*(?:[,)}]|$)/.test(v)) return true; // empty only when the literal is the whole value: `[] + reqs` and `[] if x else [...]` count
+  }
+  return false;
+}
+/** SETUP-DEPS: true when a setup.cfg's `[options]` section gives `install_requires` a value: text after `=` (or `:`) on the same line, or an
+ *  indented continuation line that is not blank and not a comment. `[options.extras_require]` is not counted. hc2 tenacity's
+ *  `install_requires =` followed by `python_requires = >=3.10` is false. */
+export function setupCfgDeclaresDeps(text: string): boolean {
+  let section = "", inKey = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const h = /^\[([^\]]+)\]\s*$/.exec(raw);
+    if (h) { section = h[1]!.trim(); inKey = false; continue; }
+    if (inKey) {
+      if (/^\s+\S/.test(raw)) { if (!/^\s*[#;]/.test(raw)) return true; continue; }
+      if (/^\s*$/.test(raw)) continue;
+      inKey = false;
+    }
+    if (section !== "options") continue;
+    const k = /^install[_-]requires\s*[=:](.*)$/i.exec(raw);
+    if (!k) continue;
+    if (k[1]!.trim() !== "" && !/^\s*[#;]/.test(k[1]!)) return true;
+    inKey = true;
+  }
+  return false;
+}
 export function declaresPythonEnv(root: string, ref: string): boolean {
-  const MANIFEST = /^(?:[\w.-]*requirements[\w.-]*\.(?:txt|in)|Pipfile(?:\.lock)?|setup\.py|poetry\.lock|uv\.lock|pdm\.lock|environment\.ya?ml|conda\.ya?ml)$/i;
-  const DEPS: Record<string, (text: string) => boolean> = { "pyproject.toml": pyprojectDeclaresDeps, "setup.cfg": (t) => /^\s*install_requires\s*=/m.test(t) };
+  const on = setupDepsOn();
+  const MANIFEST = on
+    ? /^(?:[\w.-]*requirements[\w.-]*\.(?:txt|in)|Pipfile(?:\.lock)?|poetry\.lock|uv\.lock|pdm\.lock|environment\.ya?ml|conda\.ya?ml)$/i
+    : /^(?:[\w.-]*requirements[\w.-]*\.(?:txt|in)|Pipfile(?:\.lock)?|setup\.py|poetry\.lock|uv\.lock|pdm\.lock|environment\.ya?ml|conda\.ya?ml)$/i;
+  const DEPS: Record<string, (text: string) => boolean> = on
+    ? { "pyproject.toml": pyprojectDeclaresDeps, "setup.py": setupPyDeclaresDeps, "setup.cfg": setupCfgDeclaresDeps }
+    : { "pyproject.toml": pyprojectDeclaresDeps, "setup.cfg": (t) => /^\s*install_requires\s*=/m.test(t) };
   try {
     for (const f of safeGit(root, ["ls-tree", "-r", "-z", "--name-only", ref]).split("\0").filter(Boolean)) {
       const b = f.slice(f.lastIndexOf("/") + 1);

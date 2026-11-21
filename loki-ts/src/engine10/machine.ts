@@ -84,6 +84,14 @@ export const BASE_RED_CONFLICT = "a fix round stopped saying the remaining failu
 export const checksRan = (d: Obj | undefined): number => (Array.isArray(d?.checks) ? (d!.checks as Obj[]) : []).filter((c) => c?.result !== "not_run").length;
 export const fixRoundMoved = (newNow: number, ranNow: number, fewestNew: number, mostRan: number): boolean => newNow < fewestNew || ranNow > mostRan;
 export const suiteOnlyStop = (round: number, onlySuiteRed: boolean, suiteNow: number, suitePrev: number): boolean => round > 1 && onlySuiteRed && suiteNow >= suitePrev;
+/** LOKI_E10_SYSEDIT keep/undo: every failing check id of a verify, as "<check name> <id>" ("*" for a failing check with no ids). */
+export const syseditFails = (d: Obj | undefined): Set<string> => new Set((Array.isArray(d?.checks) ? (d!.checks as Obj[]) : []).filter((c) => c.result === "fail").flatMap((c) => (Array.isArray(c.ids) && c.ids.length ? (c.ids as unknown[]) : ["*"]).map((id) => `${String(c.name)} ${String(id)}`)));
+/** LOKI_E10_SYSEDIT keep/undo: the failing ids the re-verify `now` shows that the first verify did not. FULL-SUITE-FINAL-ONLY: a deferred first verify ran no suite, so when
+ *  every suite id failing now is red on base (no new suite id), those ids are not something the completion broke; one new suite id keeps every suite id (fail-safe: undo). */
+export const syseditBroke = (first: Obj | undefined, now: Obj | undefined): string[] => {
+  const suiteUnmeasured = first?.full_suite_deferred === true && newFailingIds(now, true).size === 0, before = syseditFails(first);
+  return [...syseditFails(now)].filter((k) => !before.has(k) && !(suiteUnmeasured && k.startsWith("full suite")));
+};
 export const onlyFullSuiteRed = (d: Obj | undefined): boolean => Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0 && (d.failures_grouped as { signature?: unknown; sample?: unknown }[]).every((g) => String(g.signature ?? "").startsWith("full suite") || environmentShaped([{ signature: String(g.signature ?? ""), sample: String(g.sample ?? "") }]));
 /** LOKI_E10_SUITE_FIX_SKIP (default on; =0/off/false opts out): no fix round at all when every blocking group is a full-suite or startup failure (onlyFullSuiteRed),
  *  no failing full-suite id names a file the change edited, no held-out check failed, and a targeted test of the change ran and passed. On the v11.137 Haiku bench arms, 21 such first rounds turned none of their runs
@@ -421,8 +429,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         try { rep = hooks.sysEdit(ctx.repoDir, ctx.baseSha); } catch { rep = null; }
         if (rep) {
           const first = outputs.verify!, v = await runStage("verify", true);
-          const fails = (d: Obj | undefined): Set<string> => new Set((Array.isArray(d?.checks) ? (d!.checks as Obj[]) : []).filter((c) => c.result === "fail").flatMap((c) => (Array.isArray(c.ids) && c.ids.length ? (c.ids as unknown[]) : ["*"]).map((id) => `${String(c.name)} ${String(id)}`)));
-          const before = fails(first), after = fails(outputs.verify), fixed = [...before].filter((k) => !after.has(k)), broke = [...after].filter((k) => !before.has(k));
+          const after = syseditFails(outputs.verify), fixed = [...syseditFails(first)].filter((k) => !after.has(k)), broke = syseditBroke(first, outputs.verify); // FULL-SUITE-FINAL-ONLY: a base-red suite id first seen here is not broken by the completion
           if (v?.status === "completed" && !mustJump("verify", v) && fixed.length && !broke.length) { outputs.implement = { ...outputs.implement, sysedit: { rewrites: rep.rewrites, fixed } }; ctx.emit("sysedit.kept", "verify", { rewrites: rep.rewrites.length, fixed }); }
           else { rep.undo(); outputs.verify = first; ctx.emit("sysedit.undone", "verify", { supersedes: "the re-verify after the completion", rewrites: rep.rewrites.length, fixed: fixed.length, broke }); if (mustJump("verify", v)) { jumped = true; continue; } }
         }

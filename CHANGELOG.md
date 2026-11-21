@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- The zero-model systematic-edit repair (LOKI_E10_SYSEDIT) is no longer undone when a low-tier first verify deferred the full suite (LOKI_E10_FULL_SUITE_FINAL_ONLY) and the re-verify finds the suite red only on tests that already fail on base. A suite test that newly fails still undoes the repair.
 
 ## v11.174.0 (2026-11-20)
 

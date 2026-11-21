@@ -8,7 +8,7 @@ import { appProbe, type AppProbeResult } from "../../util/app_probe.ts";
 import { secureScanChanged } from "../../util/secure_scan.ts";
 import { postDeepResults } from "../../util/receipt_surface.ts";
 import { run } from "../../util/shell.ts";
-import { harnessLoadReason } from "../../runner/load_owner.ts";
+import { harnessLoad } from "../../runner/load_owner.ts";
 import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
@@ -25,6 +25,10 @@ export type DeepContext = RunContext & {
 /** ReceiptCheck (types.ts) plus a `reason` field the contract does not carry,  the same disclosed-extra-field pattern testmap.ts's EngineTestMap and  verify.ts's VerifyCheck already use. */
 export interface DeepCheck extends ReceiptCheck {
   secret_matches?: string[]; // SECRET-PUSH: set on every security scan fail: "<file>:<head line>" per secret hit ([] when only a secure-scan HIGH finding failed it); never the matched text
+  load_external?: string[]; // UNRUNNABLE-EXTERNAL: the external modules a harness-owned load error misses on base and head alike (load_owner.ts harnessLoad)
+  load_note?: string; // UNRUNNABLE-EXTERNAL: the exact NOT PROVEN line that load error produced, so verify can list it as a could-not-run note
+  reused?: boolean; // FULL-SUITE-REUSE: this result is the previous verify's run of the same suite on the same key (verify.ts reusableRun), not a new run
+  reused_key?: string; // FULL-SUITE-REUSE: the key both runs share (verify.ts fullSuiteKey)
   reason?: string; exit?: number | null; shape?: string; executed?: number; load_errors?: string[]; start?: StartFacts; names_changed?: boolean; change_lines?: string[] | null; failed?: number | null; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; first_error?: string; excerpt?: string; base_red?: boolean; // first_error: the suite's first failing line (L005 stall signature); base_red: a full-suite fail whose every failing id already failed on base (repo-profile suites), never a red status; excerpt: redacted failure text for the fix brief; ids: failing test ids of the real run (failIds), read by verify's baseline attribution
 }
 export interface DeepOptions {
@@ -41,12 +45,13 @@ export interface DeepOptions {
   env?: NodeJS.ProcessEnv; // for assertWorkerEnv; defaults to process.env
   pushExtraEnv?: Record<string, string>; // merged into the push child's env, tests only (e.g. a stub's own log path)
   post?: boolean; // DEEP-POST: false when the detached deep-post poster (deepPost) posts the comment and status; the worker holds withheld credentials and could not
+  reuse?: (s: { name: string; cmd: string; cwd: string }) => DeepCheck | null; // FULL-SUITE-REUSE (verify only, low tier): asked before each suite runs; a check it returns is pushed as the suite's result (marked reused on the check, never in notProven) and the suite is not run
 }
 export const DEFAULT_SECRET_SCAN_SH = join(REPO_ROOT, "autonomy/lib/secret-scan.sh"); // HONEST-VERIFIED: a fixed depth from import.meta.url pointed outside the package in the dist bundle, so the security scan never ran there (NOT PROVEN on every high-risk run)
 const fullSuiteMs = (): number => (defaultBudgetsOn() ? BASELINE_CMD_TIMEOUT_S * 1000 : Infinity); // NO-DEFAULT-BUDGET: no time limit means no suite timeout (shell.run's silence guard ends a silent suite); with budgets, 5 min per runner, the same budget its base run gets (repo_profile.ts); deep's own stage limit (2700s) is the outer bound
 /** One check per detected runner, run to completion (no retry: flaky-rerun  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
 export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
-  if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.suiteTimeoutMs ?? opts.fullSuiteTimeoutMs ?? fullSuiteMs(), baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), changed: opts.changed, symbols: opts.symbols, proofFiles: opts.proofFiles, wallBaseRed: opts.wallBaseRed, targetPassed: opts.targetPassed, ...(opts.ownedOnly ? { ownedOnly: true } : {}), ...(opts.scope ? { scope: true } : {}), ...(opts.ensureBase ? { ensureBase: opts.ensureBase } : {}) }, checks, notProven)) return;
+  if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.suiteTimeoutMs ?? opts.fullSuiteTimeoutMs ?? fullSuiteMs(), baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), changed: opts.changed, symbols: opts.symbols, proofFiles: opts.proofFiles, wallBaseRed: opts.wallBaseRed, targetPassed: opts.targetPassed, ...(opts.ownedOnly ? { ownedOnly: true } : {}), ...(opts.scope ? { scope: true } : {}), ...(opts.ensureBase ? { ensureBase: opts.ensureBase } : {}), ...(opts.reuse ? { reuse: opts.reuse } : {}) }, checks, notProven)) return;
   const map = await ctx.tests.detect(ctx.repoDir);
   if (map.runners.length === 0) {
     notProven.add("full suite (no test runner detected)");
@@ -60,6 +65,8 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
       notProven.add(`not run: ${name}`);
       continue;
     }
+    const reused = opts.reuse?.({ name, cmd: [spec.cmd, ...spec.args].join(" "), cwd: "." }) ?? null;
+    if (reused) { checks.push(reused); continue; } // FULL-SUITE-REUSE: the disclosure is the check's own reused field; a NOT PROVEN line would cap every reused run
     const started = Date.now();
     const r = await run([spec.cmd, ...spec.args], {
       cwd: ctx.repoDir,
@@ -74,8 +81,8 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
       continue;
     }
     if (r.timedOut && suiteTimeoutOn()) { const why = r.silent ? `stopped after ${cmdSilenceS()}s with no output` : `timed out after ${Math.round((opts.fullSuiteTimeoutMs ?? fullSuiteMs()) / 1000)}s`; checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS, reason: why }); notProven.add(`not run: ${name} (${why})`); continue; } // SUITE-TIMEOUT (dev2 ink s1, pipx s2): a suite killed at its limit is not_run, never FAILED
-    const out = stripAnsi(`${r.stdout}\n${r.stderr}`), lr = r.exitCode === 0 ? undefined : await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), out, cmd: spec.cmd, args: spec.args, signal, ...(opts.path ? { env: { PATH: opts.path } } : {}) });
-    if (lr) { checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS }); notProven.add(`${lr} (${name}; harness-owned)`); continue; } // FC-02: harness-owned, never a code failure
+    const out = stripAnsi(`${r.stdout}\n${r.stderr}`), hl = r.exitCode === 0 ? undefined : await harnessLoad({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), out, cmd: spec.cmd, args: spec.args, signal, ...(opts.path ? { env: { PATH: opts.path } } : {}) }), lr = hl?.reason;
+    if (lr) { const note = `${lr} (${name}; harness-owned)`; checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS, ...(hl!.external.length ? { load_external: hl!.external, load_note: note } : {}) }); notProven.add(note); continue; } // FC-02: harness-owned, never a code failure; UNRUNNABLE-EXTERNAL: the missing external modules and the line they produced
     const cls = await corroboratePass(classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...goRunner(spec.cmd, spec.args) }), out, spec.cmd, spec.args, { cwd: ctx.repoDir, env: suiteEnv(opts.path), signal });
     if (cls.result === "not_run" && r.exitCode === 0 && opts.targetPassed === true && suiteEmptyOnBase(ctx.repoDir, ctx.baseSha, [spec.cmd, ...spec.args].join(" "), [spec.cmd, ...spec.args].join(" "), cls, out)) { notProven.add(`${NA_PREFIX}${name} (ran 0 tests on base and head; the Wall or a task-named check passed with executed tests)`); continue; } // a full suite that discovers nothing is a disclosed note, not a gate, once a target check proved the change
     checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: cls.result, duration_s: durationS, ...(cls.result === "fail" ? { exit: r.exitCode, ...(failIds(out).length ? {} : { shape: failureShape(out) }), ids: failIds(out), errors: Object.fromEntries(errorsById(out)), ...(unhandledBlock(out).length ? { unhandled: unhandledBlock(out) } : {}), first_error: firstError(out), excerpt: failureExcerpt(out, ctx.repoDir), ...suiteFacts(out), names_changed: stripAnsi(out).split("\n").some(lineNamesChange(opts.changed ?? [])), change_lines: changeLines(out, changedForLines(ctx.repoDir, ctx.baseSha, opts.changed ?? []), opts.symbols ?? []), failed: failedCount(out) } : {}) }); // SILENT-IDS facts: the lines naming the change and the printed failed count // FC-16: exit 0 with no executed tests is not a pass

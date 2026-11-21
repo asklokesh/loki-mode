@@ -5,7 +5,7 @@
 //  (b) no changed file is named in the error output (path, or module stem such as `from calc import`);
 //  (c) the check is not a Wall test or a task-relevant test (callers pass `protect`), and its target file is not itself new or edited.
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { classifyRunnerOutput } from "./runner_errors.ts";
@@ -45,8 +45,9 @@ export function changedFilesNamed(out: string, repoDir: string, changed: string[
   });
 }
 
-/** Identity of a load error: the missing module or tool names, else the classified reason, with checkout roots normalized. */
-function loadSignature(out: string, roots: string[]): { keys: Set<string>; reason: string } {
+/** Identity of a load error: the missing module or tool names, else the classified reason, with checkout roots normalized. Exported for the
+ *  UNRUNNABLE-EXTERNAL cell that guards it: Python's `No module named` is deliberately not a key here (see missingModules). */
+export function loadSignature(out: string, roots: string[]): { keys: Set<string>; reason: string } {
   let o = out;
   for (const r of roots.flatMap((x) => { try { return [x, realpathSync(x)]; } catch { return [x]; } }).sort((a, b) => b.length - a.length)) o = o.split(r).join("<repo>");
   const keys = new Set<string>();
@@ -62,6 +63,42 @@ function sameLoadError(head: string, base: string, headRoots: string[], baseRoot
   const h = loadSignature(head, headRoots), b = loadSignature(base, baseRoots);
   if (b.keys.size) return h.keys.size > 0 && [...b.keys].every((k) => h.keys.has(k));
   return h.keys.size === 0 && h.reason === b.reason;
+}
+
+/** UNRUNNABLE-EXTERNAL (LOKI_E10_UNRUNNABLE_EXTERNAL, runner/repo_profile.ts unrunnableExternalOn): the sorted distinct module names a load error says are
+ *  missing: Python `No module named '<name>'` and JS `Cannot find module '<name>'` / `Cannot find package '<name>'`, checkout roots normalized as
+ *  loadSignature does. Used only for externalMissing; loadSignature and sameLoadError keep their keys, so no not_run versus fail decision moves. */
+export function missingModules(out: string, roots: readonly string[] = []): string[] {
+  let o = out;
+  for (const r of roots.flatMap((x) => { try { return [x, realpathSync(x)]; } catch { return [x]; } }).sort((a, b) => b.length - a.length)) o = o.split(r).join("<repo>");
+  const names = new Set<string>();
+  for (const m of o.matchAll(/No module named '([^']+)'/g)) names.add(m[1]!);
+  for (const m of o.matchAll(/Cannot find (?:module|package) '([^']+)'/g)) names.add(m[1]!);
+  return [...names].sort();
+}
+/** UNRUNNABLE-EXTERNAL: the modules both sides are missing and the repo does not provide, or []. All of: head names at least one; the base run names the
+ *  same SET (set equality, not base subset of head: a module only head misses is the change's doing); and no name's top segment is provided by the repo
+ *  (`provided`: the repo's own package, a test helper directory, a workspace package). Any doubt is []. */
+export function externalMissing(head: readonly string[], base: readonly string[], provided: (top: string) => boolean): string[] {
+  const h = [...new Set(head)].sort(), b = new Set(base);
+  if (h.length === 0 || h.length !== b.size || h.some((n) => !b.has(n))) return [];
+  const tops = (n: string): string[] => [n.split(".")[0]!, n.startsWith("@") ? n.split("/").slice(0, 2).join("/") : n.split("/")[0]!];
+  return h.some((n) => tops(n).some((t) => provided(t))) ? [] : h;
+}
+/** UNRUNNABLE-EXTERNAL: true when the repo provides module `top`, read on every root given (the checkout, the base worktree, the check's own cwd on each):
+ *  a Python `<top>.py` or `<top>/` at a root or under its `src/`, a changed file whose stem is `top`, a JS relative or absolute specifier or a path inside
+ *  a checkout (`<repo>/...` after missingModules), or a bare
+ *  specifier that a package.json of the repo (outside node_modules) declares as its `name`. A listing or a package.json that cannot be read counts as
+ *  provided (fail closed: the module may be the repo's own, so the check keeps holding). */
+export function repoProvides(top: string, roots: readonly string[], changed: readonly string[], repoDir: string): boolean {
+  if (!top || /^[./#<]/.test(top) || top.startsWith("node:")) return true; // `<repo>`: a path inside a checkout, normalized by missingModules
+  for (const r of roots) for (const d of [r, join(r, "src")]) if (existsSync(join(d, `${top}.py`)) || existsSync(join(d, top))) return true;
+  if (changed.some((f) => basename(f, extname(f)) === top)) return true;
+  try {
+    const files = safeGit(repoDir, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]).split("\0").filter((f) => /(?:^|\/)package\.json$/.test(f) && !/(?:^|\/)node_modules\//.test(f));
+    for (const f of files) { const n = (JSON.parse(readFileSync(join(repoDir, f), "utf8")) as { name?: unknown }).name; if (n === top) return true; }
+  } catch { return true; }
+  return false;
 }
 
 /** Process ids under pid (inclusive), found through pgrep -P; every pid is one this call spawned. */
@@ -100,27 +137,44 @@ function changedSince(repoDir: string, baseSha: string, skip?: (f: string) => bo
   return [...new Set([...g(["diff", "--name-only", baseSha]), ...g(["ls-files", "--others", "--exclude-standard"])])].filter((f) => !f.startsWith(".loki/") && !skip?.(f));
 }
 
-export async function loadErrorIsHarnessOwned(i: LoadOwnerInput): Promise<boolean> {
-  if (i.protect || !i.baseSha || i.signal.aborted) return false;
-  let changed: string[]; try { changed = changedSince(i.repoDir, i.baseSha, i.skip); } catch { return false; } // unknown diff: fail-safe
-  if (changedFilesNamed(i.out, i.repoDir, changed).length > 0) return false;
-  if (i.args.some((a) => changed.includes(a.replace(/^\.\//, "")))) return false; // the target test file is the agent's own
+/** The base worktree's view of a load error that is harness-owned: `then` reads the base run's output, the worktree and the changed files before the
+ *  worktree is removed. undefined when any FC-02 condition fails (the same conditions loadErrorIsHarnessOwned has always applied). */
+async function ownedOnBase<T>(i: LoadOwnerInput, then: (base: string, dir: string, changed: string[]) => T): Promise<T | undefined> {
+  if (i.protect || !i.baseSha || i.signal.aborted) return undefined;
+  let changed: string[]; try { changed = changedSince(i.repoDir, i.baseSha, i.skip); } catch { return undefined; } // unknown diff: fail-safe
+  if (changedFilesNamed(i.out, i.repoDir, changed).length > 0) return undefined;
+  if (i.args.some((a) => changed.includes(a.replace(/^\.\//, "")))) return undefined; // the target test file is the agent's own
   const dir = mkdtempSync(join(tmpdir(), "e10-loadown-"));
   const git = (args: string[]): void => { safeGit(i.repoDir, args, { stdio: "ignore" }); };
   try {
     git(["worktree", "add", "--detach", dir, i.baseSha]);
     const base = await runOnBase(i, dir);
-    return base !== null && classifyRunnerOutput(base).kind === "load_error" && sameLoadError(i.out, base, [i.repoDir, ...(i.cwd ? [i.cwd] : [])], [dir]);
-  } catch { return false; } finally {
+    return base !== null && classifyRunnerOutput(base).kind === "load_error" && sameLoadError(i.out, base, [i.repoDir, ...(i.cwd ? [i.cwd] : [])], [dir]) ? then(base, dir, changed) : undefined;
+  } catch { return undefined; } finally {
     try { git(["worktree", "remove", "--force", dir]); } catch { /* pruned below */ }
     rmSync(dir, { recursive: true, force: true });
     try { git(["worktree", "prune"]); } catch { /* best effort */ }
   }
 }
+export async function loadErrorIsHarnessOwned(i: LoadOwnerInput): Promise<boolean> {
+  return (await ownedOnBase(i, () => true)) === true;
+}
 
 /** The one call every stage makes after a failed TEST run (verify, deep, per-package suites): the load-error reason when the
  *  failure is harness-owned, else undefined (a code failure). Static checks (kind "static") never come through here. */
 export async function harnessLoadReason(i: LoadOwnerInput): Promise<string | undefined> {
+  return (await harnessLoad(i))?.reason;
+}
+/** harnessLoadReason plus UNRUNNABLE-EXTERNAL's evidence: `external` is computed only after the FC-02 conditions accepted the load error as harness-owned
+ *  (the base run reproduced it, no changed file is named, the target file is not the change's own), and holds the modules both sides miss that the repo
+ *  does not provide (externalMissing), else []. */
+export async function harnessLoad(i: LoadOwnerInput): Promise<{ reason: string; external: string[] } | undefined> {
   const c = classifyRunnerOutput(i.out);
-  return c.kind === "load_error" && await loadErrorIsHarnessOwned(i) ? c.reason : undefined;
+  if (c.kind !== "load_error") return undefined;
+  const headRoots = [i.repoDir, ...(i.cwd ? [i.cwd] : [])];
+  const external = await ownedOnBase(i, (base, dir, changed) => {
+    const sub = (x: string): string => x.split(i.repoDir).join(dir), roots = [...headRoots, ...headRoots.map(sub)];
+    return externalMissing(missingModules(i.out, headRoots), missingModules(base, [dir]), (top) => repoProvides(top, roots, changed, i.repoDir));
+  });
+  return external === undefined ? undefined : { reason: c.reason ?? "", external };
 }

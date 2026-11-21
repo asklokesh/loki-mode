@@ -45,6 +45,17 @@
 #   6. loki-ts/src/engine10/stages/seal.ts: sysInfo always null (the no-manifest leg reads PARTIAL).
 #   7. loki-ts/src/util/python.ts: declaresPythonEnv always false (the requirements.txt leg reads VERIFIED).
 #   7b. loki-ts/src/util/python.ts: pyprojectDeclaresDeps counts [build-system] requires again (the BUILD-REQUIRES cell reads true for build_only).
+#   7c. loki-ts/src/util/python.ts: MANIFEST keeps setup.py with LOKI_E10_SETUP_DEPS on (the SETUP-DEPS tenacity-repo cell reads true before requirements.txt).
+#   7d. loki-ts/src/util/python.ts: setupCfgDeclaresDeps back to the key-only regex /^\s*install_requires\s*=/m (the SETUP-DEPS tenacity cfg cell reads true).
+#   7e. loki-ts/src/util/python.ts: setupPyDeclaresDeps reads a non-literal install_requires as empty (the install_requires=reqs cell reads false: false VERIFIED direction),
+#       or drops the `(?:[,)}]|$)` tail of the empty-literal test (the `[] + reqs` and `[] if x else` cells read false).
+#   7f. loki-ts/src/engine10/stages/verify.ts fullSuiteKey: build the key from paths only, no content hash (the G6 relief unit's changed-content cell reads the same key:
+#       a stale pass would be reused after a fix round edits a file).
+#   7g. verify.ts deferFullSuite: defer at low tier whatever is red (drop the keep/changed test; the unit's lint-only cell reads true and K5 reads PARTIAL instead of FAILED).
+#   7h. verify.ts: drop the `if (deferSuite) notProven.push(FULL_SUITE_DEFERRED_NOTE)` line (K2's first-verify assertion fails; a deferred verify could back VERIFIED).
+#   7i. verify.ts reusableRun: drop the pass-or-fail test (the unit's not_run record cell is reused: a timed-out suite would never run again).
+#   7i2. deep.ts runFullSuite: add a reuse line to notProven instead of relying on the check's reused field (the unit's runFullSuite cell reads np.size 1: every reused run held).
+#   7j. loki-ts/src/engine10/machine.ts syseditBroke: drop the suiteUnmeasured term (the sysedit cell's first case reads both base-red suite ids: a correct zero-model repair is undone).
 #   8. loki-ts/src/engine10/stages/seal.ts: drop leanHold from verdictOf (the never-calls-multiply leg reads VERIFIED).
 #   9. loki-ts/src/util/check_result.ts: changedSymbols counts any removed line as removed code (the
 #      never-calls-multiply leg reads VERIFIED: the replaced comment credits add()).
@@ -515,6 +526,27 @@ const c = ["[build-system]\nrequires = [\"setuptools\"]\n[project]\nname = \"x\"
   "[project]\ndependencies = [\"requests\"]\n", "[project]\ndependencies = [\n  \"attrs\",\n]\n", "[project.optional-dependencies]\ntest = [\"pytest\"]\n", "[tool.poetry.dependencies]\npython = \"3\"\n", "[dependency-groups]\ndev = [\"pytest\"]\n"];
 console.log(c.map(f).join(" "));' 2>&1)"
 [ "$BR" = "false false false true true true true true" ] && ok "BUILD-REQUIRES: build-system requires and an empty dependencies list do not count as a Python environment; real dependencies do" || bad "BUILD-REQUIRES unit gave: $BR"
+# SETUP-DEPS (util/python.ts setupPyDeclaresDeps, setupCfgDeclaresDeps, declaresPythonEnv): a setup.py counts only with an install_requires that is
+# not an empty literal (computed values count, fail closed; setup_requires never counts), a setup.cfg only with a non-empty [options] install_requires.
+# hc2 tenacity has both triggers: setup.py with only setup_requires and setup.cfg with an empty `install_requires =`. Plants 7c, 7d, 7e.
+SD="$(cd "$ROOT/loki-ts" && SD_DIR="$T/setup-deps" bun --no-env-file --config=/dev/null -e '
+const { setupPyDeclaresDeps: py, setupCfgDeclaresDeps: cfg, declaresPythonEnv } = await import("./src/util/python.ts");
+const { mkdirSync, writeFileSync } = await import("node:fs"); const { spawnSync } = await import("node:child_process");
+const ten = "#!/usr/bin/env python\n# Licensed under the Apache License\nimport setuptools\n\nsetuptools.setup(\n    setup_requires=[\"setuptools_scm\"],\n    use_scm_version=True,\n)\n";
+const pyc = [ten, "from setuptools import setup\nsetup()\n", "setup(name=\"x\", install_requires=[])\n", "setup(install_requires=[\"a>=1\"])\n",
+  "setup(install_requires=reqs)\n", "setup(install_requires=open(\"r.txt\").read().splitlines())\n", "setup(name=\"x\")  # install_requires=[\"a\"]\n",
+  "setup(install_requires=[] + reqs)\n", "setup(install_requires=[] if x else [\"a\"])\n", "setup(\n    install_requires=[],\n)\n"];
+const tenCfg = "[metadata]\nname = tenacity\n\n[options]\ninstall_requires =\npython_requires = >=3.10\npackages = find:\n\n[options.extras_require]\ntest =\n    pytest\n    tornado>=4.5\n    typeguard\n";
+const cfc = [tenCfg, "[options]\ninstall_requires =\n    a>=1\n", "[options]\ninstall_requires = a\n", "[options]\ninstall_requires =\n    # none\n", "[options.extras_require]\ninstall_requires = a\n"];
+const d = process.env.SD_DIR; mkdirSync(d, { recursive: true });
+const git = (...a) => spawnSync("git", ["-C", d, ...a], { encoding: "utf8" });
+git("init", "-q", "-b", "main"); git("config", "user.name", "e2e"); git("config", "user.email", "e2e@example.invalid");
+writeFileSync(d + "/setup.py", ten); writeFileSync(d + "/setup.cfg", tenCfg);
+writeFileSync(d + "/pyproject.toml", "[build-system]\nrequires = [\"setuptools\", \"setuptools_scm[toml]>=3.4\"]\n\n[tool.ruff]\nline-length = 88\n");
+git("add", "-A", "."); git("commit", "-q", "-m", "base"); const before = declaresPythonEnv(d, "HEAD");
+writeFileSync(d + "/requirements.txt", "tornado\n"); git("add", "requirements.txt"); git("commit", "-q", "-m", "reqs");
+console.log(pyc.map(py).join(" ") + " | " + cfc.map(cfg).join(" ") + " | " + before + " " + declaresPythonEnv(d, "HEAD"));' 2>&1)"
+[ "$SD" = "false false false true true true false true true false | false true true false false | false true" ] && ok "SETUP-DEPS: a setup.py or setup.cfg counts as a Python environment only with runtime requirements (tenacity's reads false, a requirements.txt makes it true)" || bad "SETUP-DEPS unit gave: $SD"
 # High tier through the BUNDLE (LOKI_TS_ENTRY is dist/loki.js): the security scan must find its script from the package
 # root. A path relative to the bundle file points outside the package and reads "secret-scan.sh not found" (PARTIAL).
 LOKI_RISK_TIER=high LOKI_SESSION_MODEL=haiku E2E_STUB_ARGV_LOG="$T/high-argv.log" run_engine done
@@ -667,6 +699,82 @@ f="$(pr_facts)"; set -- $f
 run_pr new-g6 new
 f="$(pr_facts)"; set -- $f
 [ "$6" = FAILED ] && ok "G6: a low-tier run with a new full-suite failure seals FAILED at the seal, not VERIFIED with a later deep-worker failure (the work still goes out as a draft PR)" || bad "G6: low-tier new failure gave verdict $6 ($f)"
+# K5: the G6 leg above (a break only the full suite sees) must still read FAILED with FULL-SUITE-FINAL-ONLY and FULL-SUITE-REUSE on (both default on).
+# G6 RELIEF unit (verify.ts fullSuiteKey, depStamp, deferFullSuite, reusableRun, nextSuiteRuns; deep.ts runFullSuite reuse). K1: the key moves with a changed
+# file's content, an added untracked file, a deleted file and a dependency entry, and (a deliberate deviation from the spec's per-package scope) with a changed
+# file in another package too: a package suite reads its dependencies' sources and a relative import across packages declares nothing, so every changed
+# path is in every suite's key. depStamp ignores a runner cache and moves with an added or reinstalled package. deferFullSuite defers at low tier only on a
+# red that feeds the fix round. reusableRun (K3, K3b, 7i): equal key and a pass or fail record reuses, marked on the check; another key, a stopped
+# previous verify or a not_run record never does; a quick verify carries the record forward; the reused check is a copy. runFullSuite pushes a reused
+# result without running the suite and adds no NOT PROVEN line (7i2). Seal's label rule caps a verify that carries the deferred line (7h).
+G6R="$(cd "$ROOT/loki-ts" && G6R_DIR="$T/g6r" bun --no-env-file --config=/dev/null -e '
+const v = await import("./src/engine10/stages/verify.ts"), se = await import("./src/engine10/stages/seal.ts"), dp = await import("./src/engine10/stages/deep.ts");
+const { mkdirSync, writeFileSync } = await import("node:fs"); const { spawnSync } = await import("node:child_process");
+const H = { "calc.ts": "a1", "calc.test.ts": "b1" }, B = { baseSha: "s0", name: "full suite: bun", cmd: "bun test", cwd: ".", hashes: H, deps: ["node_modules/x=pkg:10:1"] }, K = (o) => v.fullSuiteKey({ ...B, ...o }), k0 = K({});
+const PA = { cwd: "packages/a", name: "full suite: a" };
+const k1 = [K({}) === k0, K({ hashes: { ...H, "calc.ts": "a2" } }) !== k0, K({ hashes: { ...H, "new.ts": "c1" } }) !== k0, K({ hashes: { ...H, "calc.ts": "-" } }) !== k0, K({ deps: [...B.deps, "node_modules/y=pkg:3:1"] }) !== k0,
+  K({ ...PA, hashes: { ...H, "packages/b/x.ts": "d1" } }) !== K(PA), K({ ...PA, hashes: { ...H, "root.ts": "r1" } }) !== K(PA), K({ hashes: { "calc.test.ts": "b1", "calc.ts": "a1" } }) === k0].every(Boolean);
+const d = process.env.G6R_DIR; mkdirSync(d + "/node_modules/foo", { recursive: true }); writeFileSync(d + "/node_modules/foo/package.json", "{\"version\":\"1.0.0\"}");
+const s1 = v.depStamp(d, "."); mkdirSync(d + "/node_modules/.vite", { recursive: true }); writeFileSync(d + "/node_modules/.vite/dep.json", "{}"); const s2 = v.depStamp(d, ".");
+mkdirSync(d + "/node_modules/bar", { recursive: true }); writeFileSync(d + "/node_modules/bar/package.json", "{}"); const s3 = v.depStamp(d, ".");
+writeFileSync(d + "/node_modules/foo/package.json", "{\"version\":\"1.10.0\"}"); const s4 = v.depStamp(d, ".");
+const ds = [JSON.stringify(s1) === JSON.stringify(s2), JSON.stringify(s2) !== JSON.stringify(s3), JSON.stringify(s3) !== JSON.stringify(s4)].join(",");
+const lowIn = (o) => ({ tier: "low", ntf: false, settle: false, checks: [{ name: "bun:calc.test.ts", result: "fail" }], touchedRed: new Set(), keep: new Set(["bun:calc.test.ts"]), changed: ["calc.ts"], ...o });
+const df = [v.deferFullSuite(lowIn({})), v.deferFullSuite(lowIn({ checks: [{ name: "lint:eslint", result: "fail" }] })), v.deferFullSuite(lowIn({ keep: new Set(), checks: [{ name: "bun:t/x.test.ts", result: "fail" }], changed: ["calc.ts", "t/x.test.ts"] })),
+  v.deferFullSuite(lowIn({ touchedRed: new Set(["bun:calc.test.ts"]) })), v.deferFullSuite(lowIn({ tier: "medium" })), v.deferFullSuite(lowIn({ ntf: true })), v.deferFullSuite(lowIn({ settle: true })),
+  v.deferFullSuite(lowIn({}), { LOKI_E10_FULL_SUITE_FINAL_ONLY: "0" }), v.deferFullSuite(lowIn({ checks: [{ name: "bun:calc.test.ts", result: "pass" }] }))].join(",");
+const S = { name: B.name, cmd: B.cmd, cwd: "." }, rec = (key, result) => ({ ...S, key, check: { name: B.name, cmd: B.cmd, result, duration_s: 40, ...(result === "fail" ? { ids: ["t > a"] } : {}) } });
+const r0 = v.reusableRun({ full_suite_runs: [rec(k0, "pass")] }, S, k0), rf = v.reusableRun({ full_suite_runs: [rec(k0, "fail")] }, S, k0);
+const carried = v.nextSuiteRuns([rec(k0, "pass")], []), replaced = v.nextSuiteRuns([rec(k0, "pass")], [rec("k9", "fail")]);
+if (rf) rf.ids.push("t > b"); const orig = rec(k0, "fail"), again = v.reusableRun({ full_suite_runs: [orig] }, S, k0); if (again) again.ids.push("t > c");
+const ru = [r0?.reused === true && r0?.reused_key === k0 && r0?.result === "pass", rf?.result === "fail", v.reusableRun({ full_suite_runs: [rec(k0, "pass")] }, S, "other") === null, v.reusableRun({ stopped_at: "limit", full_suite_runs: [rec(k0, "pass")] }, S, k0) === null,
+  v.reusableRun({ full_suite_runs: [rec(k0, "not_run")] }, S, k0) === null, v.reusableRun({ full_suite_runs: [rec(k0, "pass")] }, { ...S, cwd: "packages/a" }, k0) === null, v.reusableRun(undefined, S, k0) === null,
+  carried.length === 1 && v.reusableRun({ full_suite_runs: carried }, S, k0)?.reused === true, replaced.length === 1 && replaced[0].key === "k9", orig.check.ids.length === 1].join(",");
+const g = d + "/repo"; mkdirSync(g, { recursive: true }); spawnSync("git", ["-C", g, "init", "-q", "-b", "main"]); writeFileSync(g + "/a.txt", "x\n"); spawnSync("git", ["-C", g, "add", "a.txt"]); spawnSync("git", ["-C", g, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "b"]);
+const asked = [], ctx = { repoDir: g, baseSha: "HEAD", outputs: () => ({}), tests: { detect: async () => ({ runners: ["bun"], tests: [] }) } }, full = [], np = new Set();
+await dp.runFullSuite(ctx, new AbortController().signal, { reuse: (s) => { asked.push(s.cwd); return v.reusableRun({ full_suite_runs: [{ ...rec(k0, "pass"), name: s.name, cmd: s.cmd }] }, s, k0); } }, full, np);
+const rf2 = [full.length === 1 && full[0].reused === true && full[0].result === "pass", np.size === 0, asked.join(",") === "."].join(",");
+const o = { implement: { exit: "done" }, verify: { checks: [{ name: "bun:calc.test.ts", result: "pass", n: 2 }], verify_scope: "complete", full_suite_deferred: true, not_proven: [v.FULL_SUITE_DEFERRED_NOTE] } };
+const lab = se.verdictOf(o, [{ name: "bun:calc.test.ts", cmd: "bun test calc.test.ts", result: "pass", duration_s: 1, provenance: "agent_authored", n: 2 }], false, o.verify.not_proven.length > 0, false, true);
+console.log([k1, ds, df, ru, rf2, lab].join(" | "));' 2>&1)"
+[ "$G6R" = "true | true,true,true | true,false,true,false,false,false,false,false,false | true,true,true,true,true,true,true,true,true,true | true,true,true | PARTIAL" ] \
+    && ok "G6 relief unit: the reuse key moves with any changed content, file, deletion or dependency entry (every changed path in every suite's key); a runner cache does not move the stamp; the suite is deferred at low tier only on a red that feeds the fix round; a result is reused only on an equal key, from a pass or fail, after an unstopped verify, as a copy marked on the check, and a quick verify carries it; runFullSuite pushes it without a NOT PROVEN line; a deferred verify caps the label" \
+    || bad "G6 relief unit gave: $G6R"
+# G6 RELIEF sysedit cell (machine.ts syseditBroke, plant 7j): with FULL-SUITE-FINAL-ONLY the first low-tier verify ran no suite, so the sysedit re-verify is the
+# suite's first run. A suite failing only on base-red ids (pre_red) is not broken by the completion (none); one new id counts every suite id (undo, the
+# fail-safe direction); a first verify that was not deferred compares as before (the base-red id it never saw counts).
+SXB="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const m = await import("./src/engine10/machine.ts");
+const own = (r) => ({ name: "bun:calc.test.ts", result: r }), suite = (ids) => ({ name: "full suite: bun", result: "fail", ids });
+const first = { full_suite_deferred: true, checks: [own("fail")] }, now = (ids) => ({ checks: [own("pass"), suite(ids)], pre_red: ["t > base1", "t > base2"] });
+const show = (a) => (a.length ? a.join(",") : "none");
+console.log([show(m.syseditBroke(first, now(["t > base1", "t > base2"]))), show(m.syseditBroke(first, now(["t > base1", "t > new"]))), show(m.syseditBroke({ checks: [own("fail")] }, now(["t > base1"])))].join(" | "));' 2>&1)"
+[ "$SXB" = "none | full suite: bun t > base1,full suite: bun t > new | full suite: bun t > base1" ] \
+    && ok "G6 relief sysedit: after a deferred first verify a suite red only on base keeps the zero-model repair, a new suite id still undoes it, and a non-deferred first verify compares as before" \
+    || bad "G6 relief sysedit cell gave: $SXB"
+# K2 (engine, low tier): implement leaves the task's test red (wrong), the fix round makes it green (fixit). With FULL-SUITE-FINAL-ONLY on the suite runs once
+# (on the final candidate), with it off twice; the first verify's not_proven names the deferred line and the receipt does not. Plant 7h (no deferred line)
+# fails the first-verify assertion; plant 7g (defer whatever is red) turns K5 above.
+g6r_facts() { python3 -I - "$RUNDIR/events.jsonl" "$RUNDIR/receipt.json" <<'PY'
+import json, sys
+ev = [json.loads(l) for l in open(sys.argv[1])]
+runs = [e for e in ev if e.get("type") == "test.result" and str((e.get("data") or {}).get("name", "")).startswith("full suite") and not (e.get("data") or {}).get("reused")]
+ver = [e["data"] for e in ev if e.get("type") == "stage.completed" and "checks" in (e.get("data") or {}) and "verify_scope" in (e.get("data") or {})]
+note = "full suite deferred: a targeted check is red"
+first = any(str(n).startswith(note) for n in (ver[0].get("not_proven", []) if ver else []))
+try: r = json.load(open(sys.argv[2]))
+except Exception: r = {}
+print(len(runs), first, any(str(n).startswith(note) for n in r.get("not_proven", [])), r.get("verdict"), len(ver))
+PY
+}
+E2E_STUB_FIX=fixit run_engine wrong
+f="$(g6r_facts)"; set -- $f
+G6R_ON="$4"
+[ "$1" = 1 ] && [ "$2" = True ] && [ "$3" = False ] && ok "K2: a low-tier run whose first verify is red runs the full suite once, on the final candidate; the deferred line is on the first verify only" || bad "K2 (FINAL-ONLY on) facts: $f (want: 1 True False <verdict> <verifies>)"
+LOKI_E10_FULL_SUITE_FINAL_ONLY=0 E2E_STUB_FIX=fixit run_engine wrong
+f="$(g6r_facts)"; set -- $f
+[ "$1" = 2 ] && [ "$2" = False ] && [ "$4" = "$G6R_ON" ] && ok "K2: LOKI_E10_FULL_SUITE_FINAL_ONLY=0 runs the suite on both verifies and seals the same label ($4)" || bad "K2 (FINAL-ONLY off) facts: $f (want: 2 False $G6R_ON <verifies>)"
+unset -f g6r_facts
 # The two runs above are low tier: their seal-time verify runs only bun:calc.test.ts and the npm suite runs in the post-seal deep worker, so suiteSkip never sees
 # it (probe e10-20261120T142527Z-fb46: receipt checks [bun:calc.test.ts], the new id only in receipt-addendum-1). Medium tier runs the suite inside verify.
 run_pr snstable stable LOKI_RISK_TIER=medium LOKI_PR_DRAFT=1

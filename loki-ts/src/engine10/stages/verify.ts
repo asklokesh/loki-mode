@@ -5,18 +5,18 @@ import { installHint } from "../../util/stack_tools.ts";
 import { atomicWriteText } from "../../util/atomic.ts"; import { redactSecrets } from "../../util/redact.ts";
 import { installOwned, projectDeclaresRuff, unusedInstallNotes, withGuideNotes } from "../../project_model/install.ts"; import { nrdGroupsFor, settleNrd } from "../../features/no_regression.ts";
 import { scopedOutOf } from "../../project_model/scope.ts";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs"; import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"; import { MANIFESTS } from "../../contrib/wall_snapshot.ts"; import { classifyRunnerOutput } from "../../runner/runner_errors.ts";
 import { hiddenConfigChanged, testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
-import { failedFirst, QUICK_ONLY_NOTE, quickScope, quickSplit } from "../../e10ext/select.ts"; import { dependentNotes, dependentTests } from "../../features/dependents.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
+import { failedFirst, QUICK_ONLY_NOTE, quickScope, quickSplit } from "../../e10ext/select.ts"; import { dependentNotes, dependentTests } from "../../features/dependents.ts"; import { harnessLoad } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles, wallMode } from "../sizing.ts"; import { sealedWallCopy } from "../../util/check_result.ts";
 import { avaTargets, guessRunner, isTestFile, mochaTargets } from "../testmap.ts"; import { coveredStem } from "../../util/test_file_text.ts"; import { comparableIds, errorsById, lineNamesChange, noiseOnlyErrors, sameErrors, changeLines, failedCount, sameFailures, SILENT_IDS_NOTE, CHANGE_LINES_MAX, PER_FILE_CUT_BYTES } from "../failures.ts"; export { errorsById, sameErrors } from "../failures.ts";
 import { LINE_FALLBACK_COUNT, lineVerdict, UNMEASURED_REASON, failureLines, venvSkipNotes, goJsonStream, GO_JSON_KEEP, withoutStaleWall, failureExcerpt, EXCERPT_TOTAL_CAP, changedFiles, hiddenEdits, ignoreRuleChanges, classifyCheck, unmeasuredTail, corroboratePass, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount, SECURITY_SCAN, fileHashes, briefGroups, failureSignature } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import { defaultBudgetsOn, cmdSilenceS, type ImplementExit, type RunContext, type RunnerName, type Stage, type StageResult, type TestRef, STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { readReport, reportArgs, reportSource, structuredResultsMode } from "../../util/test_report.ts"; import { pruneQuarantine, readQuarantine, writeQuarantine } from "../../util/failure_memory.ts"; import { addedLines, checklistCmdOn, checklistMode, firedItems, readChecklist, runChecklist, type ChecklistResult } from "../../features/checklist.ts"; import { repoCacheDir, repoKey } from "../cache.ts"; import { ruleMode } from "../closure.ts"; import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, linkWorkspaceMembers, envChangedSince, depsGoneSince, manifestBlocksBaseLink, zeroGate, zeroOnBase, type ZeroGate, guardEnv, harnessCmdBegin } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, changedForLines, baseRedIds, headRerunOn, passedOnRerun, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, holdsPartial, exogenousHeldLine, couldNotRun, couldNotRunIfProved, missingTool, unrunnableCheckOn, unrunnableSuites, exogenousRedOn, exogenousState, type ExogenousAttribution, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts"; import { lokiEnvNotes } from "../../util/check_result.ts"; import { lokiVenvNotes } from "../../project_model/install.ts";
+import { readReport, reportArgs, reportSource, structuredResultsMode } from "../../util/test_report.ts"; import { pruneQuarantine, readQuarantine, writeQuarantine } from "../../util/failure_memory.ts"; import { addedLines, checklistCmdOn, checklistMode, firedItems, readChecklist, runChecklist, type ChecklistResult } from "../../features/checklist.ts"; import { repoCacheDir, repoKey } from "../cache.ts"; import { ruleMode } from "../closure.ts"; import { safeGit } from "../../util/safe_git.ts"; import { testFileWeakened } from "../../util/test_guard.ts"; import { baseDepsLinker, baseDepsView, depsListing, linkWorkspaceMembers, envChangedSince, depsGoneSince, manifestBlocksBaseLink, zeroGate, zeroOnBase, type ZeroGate, guardEnv, harnessCmdBegin } from "../../util/base_guard.ts"; import { fullSuiteSpecs, type SuiteSpec } from "../../project_model/package_suite.ts"; import { asyncShellRunner, changedForLines, baseRedIds, headRerunOn, passedOnRerun, baseOnDemandOn, baselineSuiteOnDemand, writeBaselineRecord, TOUCHED_RED, collateralOnBaseline, touchedRedOnBase, attribute, attributeFullSuite, holdsPartial, exogenousHeldLine, couldNotRun, couldNotRunIfProved, missingTool, unrunnableCheckOn, unrunnableExternalOn, unrunnableSuites, exogenousRedOn, exogenousState, type ExogenousAttribution, baseRedById, staticPreExisting, whyFullSuiteNotExcused, type StaticTool } from "../../runner/repo_profile.ts"; import { lokiEnvNotes } from "../../util/check_result.ts"; import { lokiVenvNotes } from "../../project_model/install.ts";
 export const timeoutCarryOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TIMEOUT_CARRY"] ?? "").trim());
 export const TIMEOUT_CARRY_NOTE = "carried from an earlier verify of this run, not rerun (untouched file)";
 /** TIMEOUT-WAIT: after a check's timeout (or abort) fires, a process still alive this long later is SIGKILLed, so a test that ignores SIGTERM costs its limit, not minutes more. */
@@ -76,7 +76,26 @@ export interface VerifyCheck {
   interpreter?: Interpreter; // E-98a: which python/ruff this check actually ran on
   secret_matches?: string[]; // SECRET-PUSH: the security scan's secret hits, "<file>:<head line>" (deep.ts runSecretScan); seal and the supervisor refuse the push on them
   owner?: "harness"; skip_code?: SkipCode; /* machine-readable twin of the "<cmd> not found on PATH" reason */ // FC-02: the runner could not load or collect; not_run, never a code failure
+  load_external?: string[]; // UNRUNNABLE-EXTERNAL: the external modules a harness-owned load error misses on base and head alike (load_owner.ts harnessLoad)
+  load_note?: string; // UNRUNNABLE-EXTERNAL: the exact NOT PROVEN line that load error produced (harnessNote, or deep.ts's full-suite line)
+  reused?: boolean; // FULL-SUITE-REUSE: a full-suite result reused from the previous verify on the same key (reusableRun); the disclosure is here, never in not_proven
+  reused_key?: string; // FULL-SUITE-REUSE: the key it was reused on (fullSuiteKey)
 }
+/** The NOT PROVEN line of a per-file check sealed not_run because its runner could not load (FC-02). One template, used where the line is listed and where
+ *  UNRUNNABLE-EXTERNAL records it as load_note, so the two can never drift. */
+export const harnessNote = (reason: string | undefined, name: string): string => `${reason} (${name}; harness-owned, no fix rounds)`;
+/** UNRUNNABLE-EXTERNAL (repo_profile.ts unrunnableExternalOn): the could-not-run candidates of checks sealed not_run on a harness-owned load error that
+ *  misses the same external modules on base and head. namesChanged is false by construction: harnessLoad sets load_external only after
+ *  loadErrorIsHarnessOwned's conditions accepted the error, and those refuse output naming a changed file and a target file the change edited. A holdout
+ *  check is never one. [] with the knob off. */
+export function externalUnrunCands(checks: readonly Pick<VerifyCheck, "name" | "result" | "load_external" | "load_note">[], pkg: (name: string) => string, env: NodeJS.ProcessEnv = process.env): { name: string; pkg: string; namesChanged: boolean; external: true; note: string }[] {
+  if (!unrunnableExternalOn(env)) return [];
+  return checks.filter((c) => c.result === "not_run" && (c.load_external?.length ?? 0) > 0 && typeof c.load_note === "string" && c.load_note !== "" && !isHoldoutCheck(c.name))
+    .map((c) => ({ name: c.name, pkg: pkg(c.name), namesChanged: false, external: true as const, note: c.load_note! }));
+}
+/** UNRUNNABLE-EXTERNAL: the lines that held the label for each listed external candidate; verify adds them to could_not_run_notes, which seal's
+ *  unrunnableLifted removes from the capping notes only when it lifts the candidates. */
+export const externalCouldNotNotes = (cands: readonly { name: string; note: string }[], listed: readonly string[]): string[] => cands.filter((c) => listed.includes(c.name)).map((c) => c.note);
 export { runnerCmd, commandFor, firstError } from "../../util/check_result.ts"; // one owner: check_result.ts (test invocation resolver and failure-line normalizer)
 import type { DeepCheck } from "./deep.ts"; import { loadErrors, loadErrorModule, toolFallbacks, type SkipCode, changedSymbols, firstFileLineAnchor, runnerCmd, commandFor, firstError, resolveTool, spawnFailedTool, NO_TESTS_REASON, NO_RUNNER_REASON, CODE_FILE_EXT as CODE_EXT } from "../../util/check_result.ts"; import { naNote, naText, wallRedOnBaseOf, wallProofOf } from "../../project_model/package_suite.ts";
 /** TEN-QUALITY-01: stage-local failure excerpts keyed by check object; never on VerifyCheck, never emitted, never set for a held-out check. */
@@ -159,6 +178,77 @@ export function collateralTests(relevant: TestRef[], named: string[]): TestRef[]
 export const noTestFallbackOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_NO_TEST_FALLBACK"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 /** G6 LOW-TIER-FULL-SUITE (LOKI_E10_LOW_TIER_FULL_SUITE, default on; =0/off/false/no restores the old rule): a low-tier verify also runs the repo's full test command before the seal, so a change that breaks another part of the repo cannot seal VERIFIED and surface only in the post-seal deep worker. */
 export const lowTierFullSuiteOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_LOW_TIER_FULL_SUITE"] ?? "").trim());
+/** G6 relief, FULL-SUITE-FINAL-ONLY (LOKI_E10_FULL_SUITE_FINAL_ONLY, default on; =0/off/false/no opts out). Low tier only. */
+export const fullSuiteFinalOnlyOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_FULL_SUITE_FINAL_ONLY"] ?? "").trim());
+/** G6 relief, FULL-SUITE-REUSE (LOKI_E10_FULL_SUITE_REUSE, default on; =0/off/false/no opts out). Low tier only. */
+export const fullSuiteReuseOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_FULL_SUITE_REUSE"] ?? "").trim());
+/** FULL-SUITE-FINAL-ONLY: the NOT PROVEN line of a verify that deferred its full suite. Every verify not_proven line caps (seal.ts capVerify), so a verify
+ *  that deferred can never back VERIFIED; the text matches no closure.ts NO_CAP pattern, so held_by lists it. */
+export const FULL_SUITE_DEFERRED_NOTE = "full suite deferred: a targeted check is red, so the full suite runs on the final candidate (LOKI_E10_FULL_SUITE_FINAL_ONLY)";
+/** FULL-SUITE-FINAL-ONLY: true when a low-tier verify defers its full suite because a check that will certainly feed a fix round is red: a check with result
+ *  fail, not excused as red on base (touchedRed), that is a blocking, Wall or task-named check (`keep`) or a test file the change touched. This is verify's
+ *  `decisive` without its `qs !== null` term, so only a verify before the first fix round changes (a later red one is already quick). Never with the
+ *  no-test fallback (ntf), on a stall re-run (settle), at medium or high tier, or with LOKI_E10_LOW_TIER_FULL_SUITE off (the suite would not run anyway). */
+export function deferFullSuite(i: { tier: string | undefined; ntf: boolean; settle: boolean; checks: readonly Pick<VerifyCheck, "name" | "result">[]; touchedRed: ReadonlySet<string>; keep: ReadonlySet<string>; changed: readonly string[] }, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (i.tier !== "low" || i.ntf || i.settle || !fullSuiteFinalOnlyOn(env) || !lowTierFullSuiteOn(env)) return false;
+  return i.checks.some((c) => c.result === "fail" && !i.touchedRed.has(c.name) && (i.keep.has(c.name) || i.changed.includes(c.name.slice(c.name.indexOf(":") + 1))));
+}
+/** FULL-SUITE-REUSE: one suite's last run, carried in verify's output (full_suite_runs) across quick and deferred verifies. `check` is the whole result as the
+ *  suite returned it (before HEAD-RERUN edits it), never a reused one. */
+export interface FullSuiteRun { name: string; cmd: string; cwd: string; key: string; check: DeepCheck }
+/** FULL-SUITE-REUSE: the dependency directories' stamp for a suite run at `cwd`: for node_modules, .venv and venv at the repo root and at cwd, every entry
+ *  base_guard.ts depsListing lists (runner caches and __pycache__ left out, so a suite's own cache writes do not move it), each with what changes when it
+ *  is installed again: a link's target, a file's size and mtime, a node package's package.json size and mtime; a site-packages directory by name (its
+ *  dist-info name carries the version). An unreadable directory or entry stamps a fresh random value, so its key never matches (fail closed). */
+export function depStamp(repoDir: string, cwd: string): string[] {
+  const out: string[] = [], never = (): string[] => [`unreadable:${randomUUID()}`];
+  for (const root of [...new Set([repoDir, join(repoDir, cwd)])]) for (const d of ["node_modules", ".venv", "venv"]) {
+    const dir = join(root, d);
+    if (!existsSync(dir)) continue;
+    const names = depsListing(dir); if (names === null) return never();
+    const sites = (() => { try { return ["lib", "lib64", "Lib"].flatMap((l) => (l === "Lib" ? [join(dir, l, "site-packages")] : existsSync(join(dir, l)) ? readdirSync(join(dir, l)).filter((p) => /^python/.test(p)).map((p) => join(dir, l, p, "site-packages")) : [])).filter((x) => existsSync(x)); } catch { return null; } })();
+    if (sites === null) return never();
+    const rel = relative(repoDir, dir);
+    for (const n of names) {
+      const p = n.startsWith("py/") ? sites.map((x) => join(x, n.slice(3))).find((x) => existsSync(x)) : join(dir, n);
+      if (!p) return never();
+      try {
+        const st = lstatSync(p), pj = join(p, "package.json");
+        const v = st.isSymbolicLink() ? `link:${readlinkSync(p)}` : st.isFile() ? `${st.size}:${st.mtimeMs}` : d === "node_modules" && existsSync(pj) ? (() => { const j = statSync(pj); return `pkg:${j.size}:${j.mtimeMs}`; })() : "dir";
+        out.push(`${rel}/${n}=${v}`);
+      } catch { return never(); }
+    }
+  }
+  return out.sort();
+}
+/** FULL-SUITE-REUSE: sha256 of a canonical JSON of format version 1, baseSha, the suite's name, cmd and cwd, the sorted [path, content hash] of EVERY
+ *  changed path (fileHashes over verify's changed set: the tracked diff from base plus untracked non-ignored files; a deleted path is "D"), and the
+ *  dependency stamp. Every changed path is in every suite's scope, not only the paths under its package: a package suite reads its dependencies' sources
+ *  (scopedSuites runs a dependent's suite for that reason) and a relative import across packages declares nothing, so a narrower scope could reuse a stale
+ *  pass. A file outside the diff is byte-identical to base by definition. */
+export function fullSuiteKey(k: { baseSha: string; name: string; cmd: string; cwd: string; hashes: Readonly<Record<string, string>>; deps: readonly string[] }): string {
+  const files = Object.entries(k.hashes).map(([p, h]) => [p, h === "-" ? "D" : h] as const).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return createHash("sha256").update(JSON.stringify([1, k.baseSha, k.name, k.cmd, k.cwd, files, [...k.deps].sort()])).digest("hex");
+}
+/** FULL-SUITE-REUSE: the well-formed records of a verify output's full_suite_runs. */
+export function suiteRunsOf(v: unknown): FullSuiteRun[] {
+  return (Array.isArray(v) ? v : []).filter((r): r is FullSuiteRun => !!r && typeof r === "object" && typeof r.name === "string" && typeof r.cmd === "string" && typeof r.cwd === "string" && typeof r.key === "string" && !!r.check && typeof r.check === "object" && typeof r.check.name === "string");
+}
+/** FULL-SUITE-REUSE: the previous verify's result for suite `s` on `key`, marked reused on the check, or null. Only when the previous verify was not stopped
+ *  (stopped_at unset), a record for the same name, cmd and cwd exists, its key equals `key`, and its result is pass or fail (a not_run, a timeout or a cut,
+ *  is run again). The caller passes null for prev with the knob off or above the low tier. */
+export function reusableRun(prev: Record<string, unknown> | undefined, s: { name: string; cmd: string; cwd: string }, key: string): DeepCheck | null {
+  if (!prev || prev["stopped_at"] !== undefined) return null;
+  const r = suiteRunsOf(prev["full_suite_runs"]).find((x) => x.name === s.name && x.cmd === s.cmd && x.cwd === s.cwd);
+  if (!r || r.key !== key || (r.check.result !== "pass" && r.check.result !== "fail")) return null;
+  return { ...(structuredClone(r.check) as DeepCheck), reused: true, reused_key: key };
+}
+/** FULL-SUITE-REUSE: the records this verify writes: every previous record carried forward unchanged, and each suite this verify ran replacing its own. */
+export function nextSuiteRuns(prev: readonly FullSuiteRun[], ran: readonly FullSuiteRun[]): FullSuiteRun[] {
+  const id = (r: FullSuiteRun): string => `${r.name}\0${r.cmd}\0${r.cwd}`, m = new Map(prev.map((r) => [id(r), r]));
+  for (const r of ran) m.set(id(r), r);
+  return [...m.values()];
+}
 export const ownByPathOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_OWN_BY_PATH"] ?? "").trim());
 export function ownTests(relevant: TestRef[], named: string[], changed: readonly string[]): TestRef[] {
   const src = named.filter((f) => !isTestFile(f) && changed.includes(f)).map((f) => { const d = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "."; const s = basename(f).replace(/\.[^.]+$/, ""); return { d, s }; });
@@ -241,10 +331,10 @@ export async function runCheck(
   const kind = opts.kind ?? "test";
   const cwd = opts.cwd ?? ctx.repoDir;
   const one = async (a: Awaited<ReturnType<typeof runOnce>>) => {
-    let c: ReturnType<typeof classifyCheck> & { owner?: "harness" } = await corroboratePass(classifyCheck({ kind, ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, ...goRunner(cmd, args), path: /\.[cm]?[jt]s$/.test(args[args.length - 1] ?? "") ? args[args.length - 1] : undefined }), a.out, cmd, args, { cwd, env: opts.path ? { ...plainTestEnv(), PATH: opts.path } : plainTestEnv(), signal });
+    let c: ReturnType<typeof classifyCheck> & { owner?: "harness"; load_external?: string[] } = await corroboratePass(classifyCheck({ kind, ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, ...goRunner(cmd, args), path: /\.[cm]?[jt]s$/.test(args[args.length - 1] ?? "") ? args[args.length - 1] : undefined }), a.out, cmd, args, { cwd, env: opts.path ? { ...plainTestEnv(), PATH: opts.path } : plainTestEnv(), signal });
     if (c.result === "not_run" && c.reason === UNMEASURED_REASON && opts.changedTest) { const fb = lineVerdict(a.out, a.ok, name.slice(name.indexOf(":") + 1), name.slice(0, Math.max(0, name.indexOf(":")))); if (fb) c = fb; } // G5 LINE-FALLBACK: never unmeasured on the change's own test file
-    const lr = kind === "test" && !a.ok && !a.cut && !a.missing ? await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs?.().intake?.install_created), out: a.out, cmd, args, signal, cwd, protect: opts.protect, ...(opts.path ? { env: { PATH: opts.path } } : {}) }) : undefined; // FC-02: only kind "test"; lint/tsc/selector (kind "static") never reach it
-    if (lr) c = { result: "not_run", reason: lr, owner: "harness" };
+    const hl = kind === "test" && !a.ok && !a.cut && !a.missing ? await harnessLoad({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs?.().intake?.install_created), out: a.out, cmd, args, signal, cwd, protect: opts.protect, ...(opts.path ? { env: { PATH: opts.path } } : {}) }) : undefined, lr = hl?.reason; // FC-02: only kind "test"; lint/tsc/selector (kind "static") never reach it
+    if (lr) c = { result: "not_run", reason: lr, owner: "harness", ...(hl!.external.length ? { load_external: hl!.external } : {}) }; // UNRUNNABLE-EXTERNAL: the modules both sides miss
     if (!lr && kind === "static" && !a.ok && !a.cut && !a.missing && opts.wall?.size && wallOwnedFailure(a.out, cwd, ctx.repoDir, opts.wall)) c = { result: "not_run", reason: WALL_COMPILE_REASON, owner: "harness" }; // FC-23: never a fix round on a read-only Wall file // harness-owned load error: never retried, never a fix round
     const reason = a.missing ? (a.spawnTool ? `${a.spawnTool} could not be started (not installed)${installHint(a.spawnTool)}` : `${cmd} not found on PATH${installHint(cmd)}`) : a.cut ? (signal.aborted ? "aborted" : a.silent ? `stopped after ${cmdSilenceS()}s with no output` : `timed out after ${(opts.timeoutMs ?? checkTimeoutMs()) / 1000}s`) : c.reason;
     return { ...c, ...(reason ? { reason } : {}) };
@@ -272,7 +362,9 @@ export async function runCheck(
   }
   const reason = c.reason;
   const anchor = result === "fail" ? firstFileLineAnchor(attempt.out.slice(-65536)) : null;
-  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out), ...(anchor ? { anchor } : {}) } : result === "pass" && kind === "test" ? { n: c.n ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(attempt.missing ? { skip_code: "tool_not_on_path" as const } : {}), ...(c.owner ? { owner: "harness" as const } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}), ...(c.count === LINE_FALLBACK_COUNT ? { count: c.count } : {}) };
+  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out), ...(anchor ? { anchor } : {}) } : result === "pass" && kind === "test" ? { n: c.n ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(attempt.missing ? { skip_code: "tool_not_on_path" as const } : {}), ...(c.owner ? { owner: "harness" as const } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}), ...(c.count === LINE_FALLBACK_COUNT ? { count: c.count } : {}),
+    ...(result === "not_run" && c.owner === "harness" && c.load_external?.length ? { load_external: c.load_external, load_note: harnessNote(reason, name) } : {}), // UNRUNNABLE-EXTERNAL: the line verify lists for this check below
+  };
   if (repFile && !st) { const tr = readReport(repFile, rep!); if (tr) st = { source: tr.source, run: tr.run, failed: tr.failed, skipped: tr.skipped, text_run: check.n ?? c.n ?? ran(attempt.out) ?? null, text_failed: check.ids?.length ?? null, agrees: (check.n ?? c.n ?? ran(attempt.out) ?? -1) === tr.run && (check.result !== "fail" || (check.ids?.length ?? -1) === tr.failed) }; }
   if (st) structured.set(check, st);
   if (result === "fail" && !opts.opaque && !isHold(check)) { { const cs = crashSignature(attempt.out); if (cs) crashSigs.set(check, cs); } excerpts.set(check, failureExcerpt(attempt.out, ctx.repoDir)); failOuts.set(check, attempt.out); failTails.set(check, wallTailOf(attempt.out, ctx.repoDir)); headErrors.set(check, errorsById(attempt.out)); if (kind === "test" && !check.ids?.length) noIdOut.set(check, attempt.out); }
@@ -1068,11 +1160,26 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
     // NTF LOKI_E10_NO_TEST_FALLBACK (default on, =0 opts out): a low-tier verify that executed no test at all (ink: lint:tsc only; tera: cargo maps no test file) runs the repo's own
     // test command for the packages that own the changed files, through the same full-suite path and its base attribution. Nothing executable there stays NOT PROVEN ("no tests executed").
     const ntf = noTestFallbackOn() && risk?.tier === "low" && !checks.some((c) => !c.name.startsWith("lint:") && (c.result === "pass" || c.result === "fail"));
-    if (risk && (risk.tier !== "low" || ntf || lowTierFullSuiteOn()) && !signal.aborted && (complete || settle)) { // RISKTIER: medium and high run the detected full test command (deep.ts runner table); the reviewer and council stay recorded as not run
+    // G6 relief (FULL-SUITE-FINAL-ONLY, FULL-SUITE-REUSE; low tier only): defer the suite while a check that feeds the fix round is red, and reuse the previous
+    // verify's result for a suite whose key (fullSuiteKey) is unchanged. full_suite_runs is carried across quick and deferred verifies.
+    const deferSuite = !!risk && complete && !signal.aborted && deferFullSuite({ tier: risk.tier, ntf, settle, checks, touchedRed, keep, changed });
+    const reuseOn = fullSuiteReuseOn() && risk?.tier === "low", prevVerify = ctx.outputs().verify as Record<string, unknown> | undefined, prevRuns = reuseOn ? suiteRunsOf(prevVerify?.["full_suite_runs"]) : [];
+    const ranRuns: FullSuiteRun[] = [], askedKeys = new Map<string, { cwd: string; key: string }>();
+    const reuse = (s: { name: string; cmd: string; cwd: string }): DeepCheck | null => {
+      let key: string;
+      try { key = fullSuiteKey({ baseSha: ctx.baseSha, ...s, hashes: fileHashes(ctx.repoDir, changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))), deps: depStamp(ctx.repoDir, s.cwd) }); } catch { return null; } // read now, before the suite runs: the key describes the tree it runs on; unknown diff: no key, no record, no reuse
+      askedKeys.set(`${s.name}\0${s.cmd}`, { cwd: s.cwd, key });
+      return reusableRun(prevVerify, s, key);
+    };
+    if (risk && (risk.tier !== "low" || ntf || lowTierFullSuiteOn()) && !signal.aborted && (complete || settle) && !deferSuite) { // RISKTIER: medium and high run the detected full test command (deep.ts runner table); the reviewer and council stay recorded as not run
       const { runFullSuite } = await import("./deep.ts"); // lazy: deep.ts imports this module
       const full: Parameters<typeof runFullSuite>[3] = [];
-      await runFullSuite(ctx, signal, { changed, symbols, ...(ntf && risk?.tier === "low" && !lowTierFullSuiteOn() ? { ownedOnly: true } : {}), ...(baseOnDemandOn() ? { scope: true, suiteTimeoutMs: () => suiteTimeoutFor(deadline, Date.now()), ensureBase } : {}), targetPassed: checks.some((c) => targetNames.has(c.name) && c.result === "pass" && hasExecutedProof([c])), wallBaseRed: wallRedOnBaseOf(ctx.outputs().wall?.base_run), proofFiles: wallProofOf(checks, [...wallTests.map((t) => ({ name: testCheckName(t), path: t.path })), ...(hold?.tests ?? []).map((h, i) => ({ name: `holdout:${i + 1}`, path: (h as TestRef).path }))]) }, full, fullNotProven);
-      for (const c of full) { const k: VerifyCheck = { name: c.name, cmd: c.cmd, result: c.result as VerifyCheck["result"], duration_s: c.duration_s, ...(c.reason ? { reason: c.reason } : {}), ...(c.count ? { count: c.count } : {}), ...(c.result === "fail" ? { ...(c.ids ? { ids: c.ids } : {}), ...(c.first_error ? { first_error: c.first_error } : {}) } : {}) }; suites.add(k); checks.push(k); ctx.emit("test.result", "verify", { ...k }); if (c.excerpt) excerpts.set(k, c.excerpt); } // P12-01: full-suite checks leave the same test.result evidence per-file checks do
+      await runFullSuite(ctx, signal, { ...(reuseOn ? { reuse } : {}), changed, symbols, ...(ntf && risk?.tier === "low" && !lowTierFullSuiteOn() ? { ownedOnly: true } : {}), ...(baseOnDemandOn() ? { scope: true, suiteTimeoutMs: () => suiteTimeoutFor(deadline, Date.now()), ensureBase } : {}), targetPassed: checks.some((c) => targetNames.has(c.name) && c.result === "pass" && hasExecutedProof([c])), wallBaseRed: wallRedOnBaseOf(ctx.outputs().wall?.base_run), proofFiles: wallProofOf(checks, [...wallTests.map((t) => ({ name: testCheckName(t), path: t.path })), ...(hold?.tests ?? []).map((h, i) => ({ name: `holdout:${i + 1}`, path: (h as TestRef).path }))]) }, full, fullNotProven);
+      for (const c of full) { const a = askedKeys.get(`${c.name}\0${c.cmd}`); if (reuseOn && a && !c.reused) ranRuns.push({ name: c.name, cmd: c.cmd, cwd: a.cwd, key: a.key, check: structuredClone(c) }); } // FULL-SUITE-REUSE: recorded before HEAD-RERUN below edits the checks in place
+      for (const c of full) { const k: VerifyCheck = { name: c.name, cmd: c.cmd, result: c.result as VerifyCheck["result"], duration_s: c.duration_s, ...(c.reason ? { reason: c.reason } : {}), ...(c.count ? { count: c.count } : {}), ...(c.result === "fail" ? { ...(c.ids ? { ids: c.ids } : {}), ...(c.first_error ? { first_error: c.first_error } : {}) } : {}),
+        ...(c.load_external?.length && c.load_note ? { load_external: c.load_external, load_note: c.load_note } : {}), // UNRUNNABLE-EXTERNAL
+        ...(c.reused ? { reused: true, ...(c.reused_key ? { reused_key: c.reused_key } : {}) } : {}), // FULL-SUITE-REUSE: on the check, never in not_proven
+      }; suites.add(k); checks.push(k); ctx.emit("test.result", "verify", { ...k }); if (c.excerpt) excerpts.set(k, c.excerpt); } // P12-01: full-suite checks leave the same test.result evidence per-file checks do
       for (const c of full) if (c.errors) fullErr.set(c.name, c.errors);
       fullSeen.push(...full); // EXOGENOUS-RED reads them after every excuse is settled
       for (const c of full) { const spec = c.result === "fail" ? suiteSpecs.find((sp) => sp.name === c.name && sp.cmd === c.cmd) : undefined; if (spec) await ensureBase(spec); } // RW-01: only a suite red on head is measured on base
@@ -1153,7 +1260,7 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
     const pkgOf = (f: string): string => { const r = api?.packageRootOf(f) ?? "."; return r === "" ? "." : r; };
     const unrunSuite = new Set(unrunnableCheckOn() ? unrunnableSuites(ctx.repoDir, ctx.baseSha, fullSeen) : []);
     const changedStems = changed.map((f) => f.replace(/\.[^./]+$/, "").split("/").pop() ?? "").filter((x) => x.length > 1), namesAChange = (text: string): boolean => { const n = lineNamesChange(changed); return text.split("\n").some(n) || changedStems.some((x) => new RegExp(`(?<![\\w$])${escapeRegex(x)}(?![\\w$])`).test(text)); };
-    const unrunCands: { name: string; pkg: string; namesChanged: boolean }[] = [
+    const unrunCands: { name: string; pkg: string; namesChanged: boolean; external?: boolean }[] = [
       ...fullSeen.filter((c) => unrunSuite.has(c.name) && !!exoAttr[c.name] && holdsPartial(exoAttr[c.name]!)).map((c) => ({ name: c.name, pkg: pkgOf(`${suiteSpecs.find((sp) => sp.name === c.name)?.cwd ?? "."}/x`), namesChanged: exoAttr[c.name]!.names_changed })),
       ...checks.filter((c) => c.result === "not_run" && typeof c.reason === "string" && (c.reason.startsWith(NO_ID_BASE_REASON) || c.reason.startsWith(BCE_REASON)) && tests.some((t) => testCheckName(t) === c.name)).map((c) => ({ name: c.name, pkg: pkgOf(tests.find((t) => testCheckName(t) === c.name)!.path), namesChanged: c.reason!.startsWith(BCE_REASON) && namesAChange(c.reason!) })),
     ];
@@ -1162,12 +1269,15 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
     const installCands = ((Array.isArray((intake as Record<string, unknown> | undefined)?.["deps_install"]) ? (intake as Record<string, unknown>)["deps_install"] : []) as Record<string, unknown>[]).filter((c) => c.result === "not_run" && typeof c.name === "string" && typeof c.reason === "string" && depsCap.includes(`${c.reason} (${c.name}; harness-owned)`) && missingTool(c.reason, String(c.cmd ?? "")) !== null)
       .map((c) => ({ name: String(c.name), pkg: pkgOf(`${String(c.name).slice("install:".length)}/x`), namesChanged: namesAChange(String(c.reason)), note: `${String(c.reason)} (${String(c.name)}; harness-owned)` }));
     unrunCands.push(...installCands);
+    const externalCands = externalUnrunCands(checks, (n) => { const t = tests.find((x) => testCheckName(x) === n); return t ? pkgOf(t.path) : pkgOf(`${suiteSpecs.find((sp) => sp.name === n)?.cwd ?? "."}/x`); }); // UNRUNNABLE-EXTERNAL: kept by couldNotRun even in a touched package
+    unrunCands.push(...externalCands);
     const couldNot = couldNotRun(unrunCands, changed, pkgOf), couldNotIf = couldNotRunIfProved(unrunCands, changed, pkgOf, isTestFile), couldAll = [...couldNot, ...Object.keys(couldNotIf)];
     const couldNotNotes = [
       ...couldAll.filter((n) => !!exoAttr[n]).map((n) => exogenousHeldLine(n, exoAttr[n]!)),
       ...preRed.envCrash.filter((e) => couldAll.includes(e.name)).map((e) => `${e.name}: ${BCE_REASON} (${e.sig})`),
       ...noIdGroups.filter((g) => g.names.every((n) => couldAll.includes(n))).map((g) => g.note),
       ...installCands.filter((c) => couldAll.includes(c.name)).map((c) => c.note),
+      ...externalCouldNotNotes(externalCands, couldAll), // UNRUNNABLE-EXTERNAL: the load lines that held the label for these checks
     ];
     const couldNotOut = couldAll.length ? { could_not_run: couldNot, ...(Object.keys(couldNotIf).length ? { could_not_run_if_proved: couldNotIf } : {}), could_not_run_notes: couldNotNotes } : {};
     const uncaused = uncausedOn() ? checks.filter((c) => feedsFixRound(c, preRed) && !indepNames.has(c.name) && uncausedRed(c, changed, symbols, excerpts.get(c) ?? "")).map((c) => c.name) : [];
@@ -1181,9 +1291,10 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
     const fullChecks = checks.filter((c) => c.name.startsWith("full suite")), fullSuiteRan = fullChecks.length > 0 && fullChecks.every((c) => c.result === "pass" || c.result === "fail") && ![...fullNotProven].some((n) => n.includes(" not run: no changed file is in this package")); // the importers of a changed file that the 20-file cap left out still ran when the whole suite ran: its failures are compared with base per id, so the dropped-files note no longer caps the label (a Haiku run with every acceptance line met was PARTIAL on it alone)
     const depsNotes0 = withGuideNotes(unusedInstallNotes(intake?.deps_not_proven ?? [], api, changed, checks.map((c) => c.name), ctx.repoDir, checks), ctx.repoDir); // an install failure no check or changed file depends on is disclosed (n/a), never a cap
     const depsNotes = { ...depsNotes0, na: [...depsNotes0.na, ...lokiVenvNotes(intake), ...lokiEnvNotes(ctx.repoDir)] }; // G2: what Loki's own commands did to the environment, informational
-    const notProven = [...(complete ? [] : [QUICK_ONLY_NOTE, ...unrunSuitesCarried(ctx.outputs().verify?.not_proven, checks)]), ...exoHeld, ...preRed.envCrash.map((e) => `${e.name}: ${BCE_REASON} (${e.sig})`), ...noIdNotes, ...venvSkipNotes(ctx.repoDir), ...weakened, ...hiddenEdits(ctx.repoDir), ...ignoreRuleChanges(ctx.repoDir, (intake as { ignore_snapshot?: unknown } | undefined)?.ignore_snapshot, ctx.baseSha), ...dependentNotes(dep).filter((n) => !(fullSuiteRan && n.startsWith("reverse-dependent tests dropped"))), ...depsNotes.cap, ...pub.filter((c) => c.name === "holdout" && c.result !== "pass").map((c) => (c.result === "not_run" ? "holdout not executed" : "holdout check failed")), ...[...fullNotProven].filter((n) => !naNote(n)), ...pub.filter((c) => c.owner === "harness" && c.name !== "holdout").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
+    const notProven = [...(complete ? [] : [QUICK_ONLY_NOTE, ...unrunSuitesCarried(ctx.outputs().verify?.not_proven, checks)]), ...exoHeld, ...preRed.envCrash.map((e) => `${e.name}: ${BCE_REASON} (${e.sig})`), ...noIdNotes, ...venvSkipNotes(ctx.repoDir), ...weakened, ...hiddenEdits(ctx.repoDir), ...ignoreRuleChanges(ctx.repoDir, (intake as { ignore_snapshot?: unknown } | undefined)?.ignore_snapshot, ctx.baseSha), ...dependentNotes(dep).filter((n) => !(fullSuiteRan && n.startsWith("reverse-dependent tests dropped"))), ...depsNotes.cap, ...pub.filter((c) => c.name === "holdout" && c.result !== "pass").map((c) => (c.result === "not_run" ? "holdout not executed" : "holdout check failed")), ...[...fullNotProven].filter((n) => !naNote(n)), ...pub.filter((c) => c.owner === "harness" && c.name !== "holdout").map((c) => harnessNote(c.reason, c.name)), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
     const wallDropped = [...wallPaths].filter((p) => !wallTests.some((t) => t.path === p)); // FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: sealed, but no runner of this repo can run it
     notProven.push(...wallDropped.map((p) => `Wall test not executed: ${p}: ${NO_RUNNER_REASON}`));
+    if (deferSuite) notProven.push(FULL_SUITE_DEFERRED_NOTE); // FULL-SUITE-FINAL-ONLY: caps this verify, so it can never back VERIFIED
     if (ctx.runDir) writeCheckFailureTails(ctx.runDir, checks.filter((c) => c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name) && failTails.has(c)).map((c) => ({ name: c.name, out: failTails.get(c)! }))); // CHECK-FAILURE-TAILS
     const wallNames = new Set(wallTests.map(testCheckName)), wallRun = checks.filter((c) => wallNames.has(c.name) || isHold(c)), wallFailTail = writeWallFailureTail(ctx.runDir, checks.filter((c) => wallNames.has(c.name) && c.result === "fail" && !isHold(c) && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, out: failTails.get(c) ?? "" }))), wallPassed = wallRun.some((c) => c.result === "fail") ? false : wallRun.length > 0 && wallDropped.length === 0 && wallRun.every((c) => c.result === "pass") ? true : undefined; // the receipt's wall.passed: false on any failure, true only when every Wall and holdout check ran and passed, unset otherwise
     await settleNrd(ctx); // SPEED-NRD-OVERLAP: the differential implement started has run beside these checks; its group joins this verify's
@@ -1198,6 +1309,8 @@ async function runVerify(ctx: RunContext, signal: AbortSignal, bt: BaseTree): Pr
       ...(quarantined.length ? { flaky_quarantine: quarantined, flaky_base: flakyBase } : {}), // VERIFY-PLAN V8
       ...(cl.length || clProblem ? { checklist: cl, ...(clProblem ? { checklist_problem: clProblem } : {}) } : {}), // VERIFY-PLAN V10
       ...(endToEnd ? { end_to_end: endToEnd } : {}), // VERIFY-PLAN V4
+      ...(deferSuite ? { full_suite_deferred: true } : {}), // FULL-SUITE-FINAL-ONLY
+      ...(reuseOn ? { full_suite_runs: nextSuiteRuns(prevRuns, ranRuns) } : {}), // FULL-SUITE-REUSE: carried forward through a verify that ran no suite
     } };
   }
 }

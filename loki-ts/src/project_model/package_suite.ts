@@ -5,7 +5,7 @@
 import { cmdSilenceS } from "../engine10/types.ts";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
-import { harnessLoadReason } from "../runner/load_owner.ts";
+import { harnessLoad } from "../runner/load_owner.ts";
 import { changedForLines, suiteEmptyOnBase } from "../runner/repo_profile.ts";
 import { classifyCheck, corroboratePass, failureExcerpt, failureShape, suiteFacts, firstError, fullSuiteCmd, goRunner, exitCodedId, isExitCodedScript, NO_TESTS_REASON, plainTestEnv, stripAnsi } from "../util/check_result.ts";
 import { run, shellWord } from "../util/shell.ts";
@@ -17,7 +17,13 @@ import type { ProjectApi } from "./api.ts";
 import { isMultiRoot, loadProjectApi } from "./resolve.ts";
 import { cmdRunners, guideSuite } from "./guides.ts";
 
-interface SuiteCheck { name: string; cmd: string; result: "pass" | "fail" | "not_run"; duration_s: number; reason?: string; exit?: number | null; shape?: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; first_error?: string; excerpt?: string; count?: string }
+interface SuiteCheck {
+  name: string; cmd: string; result: "pass" | "fail" | "not_run"; duration_s: number; reason?: string; exit?: number | null; shape?: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; first_error?: string; excerpt?: string; count?: string;
+  load_external?: string[]; // UNRUNNABLE-EXTERNAL: deep.ts DeepCheck's field of the same name
+  load_note?: string; // UNRUNNABLE-EXTERNAL: deep.ts DeepCheck's field of the same name
+  reused?: boolean; // FULL-SUITE-REUSE: deep.ts DeepCheck's field of the same name
+  reused_key?: string; // FULL-SUITE-REUSE: deep.ts DeepCheck's field of the same name
+}
 
 /** One full-suite command: `name` and `cmd` are the check's own fields, `run` is what executes in the repo-relative `cwd`. */
 export interface SuiteSpec { name: string; cmd: string; cwd: string; run: string; go?: string } // go: the plain `go test -json <pkgs>` a Go full suite is read and corroborated as (goMakeSuite)
@@ -135,7 +141,7 @@ export const suiteTimeoutOn = (env: NodeJS.ProcessEnv = process.env): boolean =>
 export async function runPackageSuites(
   repoDir: string,
   signal: AbortSignal,
-  opts: { path?: string | undefined; timeoutMs: number | (() => number); baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; symbols?: readonly string[] | undefined; proofFiles?: string[] | undefined; wallBaseRed?: boolean | undefined; targetPassed?: boolean | undefined; ownedOnly?: boolean; scope?: boolean; ensureBase?: (spec: SuiteSpec) => Promise<void> }, // RW-01: timeoutMs as a function is asked before each suite (the time left of the stage; 0: the suite is not started); scope: scopedSuites; ensureBase: measure this suite on base now (the base record is no longer taken at intake)
+  opts: { path?: string | undefined; timeoutMs: number | (() => number); baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; symbols?: readonly string[] | undefined; proofFiles?: string[] | undefined; wallBaseRed?: boolean | undefined; targetPassed?: boolean | undefined; ownedOnly?: boolean; scope?: boolean; ensureBase?: (spec: SuiteSpec) => Promise<void>; reuse?: (s: { name: string; cmd: string; cwd: string }) => SuiteCheck | null }, // RW-01: timeoutMs as a function is asked before each suite (the time left of the stage; 0: the suite is not started); scope: scopedSuites; ensureBase: measure this suite on base now (the base record is no longer taken at intake)
   checks: SuiteCheck[],
   notProven: Set<string>,
 ): Promise<boolean> {
@@ -147,6 +153,8 @@ export async function runPackageSuites(
   for (const s of sc?.skipped ?? []) notProven.add(scopedOutNote(s));
   for (const spec of specs) {
     const { name, cmd, cwd, run: line, go } = spec, timeoutMs = typeof opts.timeoutMs === "function" ? opts.timeoutMs() : opts.timeoutMs;
+    const reused = opts.reuse?.({ name, cmd, cwd }) ?? null;
+    if (reused) { checks.push(reused); continue; } // FULL-SUITE-REUSE (verify.ts reusableRun): the previous verify's result on the same key, marked reused on the check, never in notProven
     if (timeoutMs <= 0 && !signal.aborted) { checks.push({ name, cmd, result: "not_run", duration_s: 0, reason: "no time left before the verify limit" }); notProven.add(`not run: ${name} (no time left before the verify limit)`); continue; }
     const started = Date.now();
     const r = await run(["bash", "-c", line], { cwd: join(repoDir, cwd), timeoutMs, env: suiteEnv(opts.path), ...(suiteTimeoutOn() ? { group: true, signal } : {}) }); // SUITE-TIMEOUT: the whole process tree stops at the limit, and at an abort (its own group is outside the worker's, so an abort must reach it here)
@@ -155,8 +163,8 @@ export async function runPackageSuites(
     if (r.timedOut && suiteTimeoutOn()) { const why = r.silent ? `stopped after ${cmdSilenceS()}s with no output` : `timed out after ${Math.round(timeoutMs / 1000)}s`; /* NO-DEFAULT-BUDGET: a silent suite is named as silent */ checks.push({ name, cmd, result: "not_run", duration_s, reason: why }); notProven.add(`not run: ${name} (${why})`); continue; } // SUITE-TIMEOUT: a suite killed at its limit says nothing about the change: not_run (caps below VERIFIED), never FAILED
     // FC-16 C1 / FC-02: the same parser and load-error ownership as the legacy per-runner path, per package.
     const out = stripAnsi(`${r.stdout}\n${r.stderr}`).replace(go ? /^make(?:\[\d+\])?: .*$/gm : /(?!)/, ""); // FC-FULLSUITE-ANSI-IDS; a make-wrapped Go suite (goMakeSuite) drops make's own lines so the go test -json stream reads whole
-    const lr = r.exitCode === 0 || !opts.baseSha ? undefined : await harnessLoadReason({ repoDir, baseSha: opts.baseSha, ...(opts.skip ? { skip: opts.skip } : {}), out, cmd: "bash", args: ["-c", line], signal, cwd: join(repoDir, cwd), env: suiteEnv(opts.path) });
-    if (lr) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`${lr} (${name}; harness-owned)`); continue; }
+    const hl = r.exitCode === 0 || !opts.baseSha ? undefined : await harnessLoad({ repoDir, baseSha: opts.baseSha, ...(opts.skip ? { skip: opts.skip } : {}), out, cmd: "bash", args: ["-c", line], signal, cwd: join(repoDir, cwd), env: suiteEnv(opts.path) }), lr = hl?.reason;
+    if (lr) { const note = `${lr} (${name}; harness-owned)`; checks.push({ name, cmd, result: "not_run", duration_s, ...(hl!.external.length ? { load_external: hl!.external, load_note: note } : {}) }); notProven.add(note); continue; } // UNRUNNABLE-EXTERNAL: deep.ts runFullSuite's fields
     const cls = await corroboratePass(classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...(go ? { runner: "go" as const } : goRunner(line)), exitCoded: !go && isExitCodedScript(line) }), out, go ?? line, undefined, { cwd: join(repoDir, cwd), env: suiteEnv(opts.path), signal }); // FC-FULL-SUITE-EXIT-CODED-SCRIPT
     if (cls.result === "not_run" && r.exitCode === 0 && (opts.targetPassed === true || (cwd !== "." && emptySubsuiteNaOn())) && opts.ensureBase) await opts.ensureBase(spec); // RW-01: the base record suiteEmptyOnBase reads is measured now
     if (cls.result === "not_run" && r.exitCode === 0 && (opts.targetPassed === true || (cwd !== "." && emptySubsuiteNaOn())) && suiteEmptyOnBase(repoDir, opts.baseSha, line, cmd, cls, out, cwd)) { notProven.add(`${NA_PREFIX}${name} (ran 0 tests on base and head; ${opts.targetPassed === true ? "the Wall or a task-named check passed with executed tests" : "a sub-module package with no tests on either side"})`); continue; } // EMPTY-SUBSUITE-NA: a package below the root that executes exactly 0 tests on base and head is not applicable without a target check // a full suite that discovers nothing is a disclosed note, not a gate, once a target check proved the change
